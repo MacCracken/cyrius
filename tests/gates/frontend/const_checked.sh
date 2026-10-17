@@ -51,6 +51,14 @@
 #      caller const — builds with its value (each refused "'L' is already declared in this scope"
 #      before), a nested-block call and calls in two fns as before; the replay's const stays invisible
 #      after the call (R10); the nine values again on aarch64 under qemu (R-a64)
+#   F  (6.7.14) a field access in a const fn, or on a const, is refused once by its own rule: a field store /
+#      read on a const fn's local or parameter ("a field is not in a const fn: ...", at the `.`; the run-time
+#      compile of the refused body no longer adds "no struct type in scope for 'a'"), a store / read on a
+#      top-level or local const ("cannot assign to a field of const 'C'" / "const 'C' has no fields - a
+#      const has no storage"; they blamed a missing include, and a local const added "undefined variable
+#      'L'"), and `C.x` in a const context (a const's value, a const fn body, an array size, a local
+#      const's value). The two filed repros verbatim (F3, F8). Controls: a local const named like a global
+#      struct leaves `L.x` the global's field (F14), a struct local beside a const (F15)
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -87,6 +95,10 @@
 # slot-open compiler the same); restoring without clearing -> S17 RED. PARSE_FNCALL's replay ending
 # with a bare `SSDEP` (no `_inl_scope_end`) -> R1, R2, R5-R7, R9 RED (refused, as on the slot-open
 # compiler; the aarch64 leg is built from the tree's src/, so a mutant there reddens R-a64 the same).
+# F (run 2026-10-16): the compiler before the bite (0095e161) -> F1-F13 RED (F14 / F15 green); `_ce_fld_refused`
+# answering 0 -> F1-F3, F9-F13 RED; `_cst_fld_at` answering 0 -> F4-F8 RED; `_ce_fld_said` never standing down
+# -> F2, F3 RED (the run-time body's "no struct type in scope for 'a'"); the read refused without
+# `_pair_sync_ti` -> F8 RED (the statement after `var v = C.x;` skipped: "undefined variable 'L'").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -314,8 +326,59 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         done
     else bad "R-a64: src/main_aarch64.cyr did not build"; fi
 else echo "  SKIP R-a64: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+# F (6.7.14) — a field access in a const fn, or on a const, names its own refusal, once
+# (issues/2026-10-08-const-field-access-diagnostics-misname-refusal.md). The filed repros verbatim (F3, F8).
+refusedf() {   # <name> <want error lines> <what> <fragment>... : $T/<name>.cyr already written
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    n=$(grep -c '^error' "$T/$nm.err")
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$n" -ne "$want" ]; then bad "$what: $n error lines (want $want): $(grep '^error' "$T/$nm.err" | head -4 | tr '\n' '|')"; return; fi
+    for fr in "$@"; do grep -qF "$fr" "$T/$nm.err" || { bad "$what: no \"$fr\": $(grep '^error' "$T/$nm.err" | tr '\n' '|')"; return; }; done
+    ok "$what: refused, $want error line(s), each its own"
+}
+FC="a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)"
+FS="a const has no storage"
+FM='fn main() { return 0; }\nvar r = main();\n'
+refusedn f1 1 "F1: a field store in a const fn (was \"expected ';', got '.'\")" "const fn f(n) {\n    var a = n;\n    a.x = n;\n    return a;\n}\n$FM" "3:6: $FC"
+refusedn f2 1 "F2: a field read in a const fn (+ the run-time body's \"no struct type in scope for 'a'\")" "const fn f(n) {\n    var a = n;\n    var b = a.x;\n    return b;\n}\n$FM" "3:14: $FC"
+cat > "$T/f3.cyr" <<'EOF'
+# 1 / 2 — const fn body
+const fn f(n) {
+    var a = n;
+    a.x = n;          # 1: expected ';', got '.'
+    var b = a.x;      # 2: expected ';', got '.'  + no struct type in scope for 'a'
+    return b;
+}
+EOF
+refusedf f3 1 "F3: the filed repro 1 / 2, verbatim (the check stops at its first refusal; the body's run-time field errors stand down)" "4:6: $FC"
+refusedn f4 1 "F4: C.x = 1 on a top-level const (was \"no struct type in scope for 'C'\")" "struct P { x; y; }\nconst C = 5;\nfn main() {\n    C.x = 1;\n    return 0;\n}\nvar r = main();\n" "4:6: cannot assign to a field of const 'C' - $FS"
+refusedn f5 1 "F5: var v = C.x; on a top-level const" "struct P { x; y; }\nconst C = 5;\nfn main() {\n    var v = C.x;\n    return v;\n}\nvar r = main();\n" "4:14: const 'C' has no fields - $FS"
+refusedn f6 1 "F6: L.x = 1 on a local const (was \"undefined variable 'L'\" + \"no struct type in scope for 'L'\")" "struct P { x; y; }\nfn main() {\n    const L = 5;\n    L.x = 1;\n    return 0;\n}\nvar r = main();\n" "4:6: cannot assign to a field of const 'L' - $FS"
+refusedn f7 1 "F7: var v = L.x; on a local const" "struct P { x; y; }\nfn main() {\n    const L = 5;\n    var v = L.x;\n    return v;\n}\nvar r = main();\n" "4:14: const 'L' has no fields - $FS"
+cat > "$T/f8.cyr" <<'EOF'
+# 3 / 4 — const receivers
+struct P { x; y; }
+const C = 5;
+fn main() {
+    C.x = 1;          # 3: no struct type in scope for 'C'; a '.field' assignment needs ...
+    var v = C.x;      # 3: no struct type in scope for 'C'; a '.field' access needs ...
+    const L = 5;
+    L.x = 1;          # 4: undefined variable 'L'  +  no struct type in scope for 'L'
+    return v;
+}
+var r = main();
+EOF
+refusedf f8 3 "F8: the filed repro 3 / 4, verbatim (the read is refused in sync: the const L after it is still declared)" "5:6: cannot assign to a field of const 'C' - $FS" "6:14: const 'C' has no fields - $FS" "8:6: cannot assign to a field of const 'L' - $FS"
+refusedn f9 1 "F9: a const context, const K = C.x; (was \"expected ';' after a const's value\")" "const C = 5;\nconst K = C.x;\nsyscall(60, K);\n" "2:12: const 'C' has no fields - $FS"
+refusedn f10 1 "F10: C.x in a const fn body" "const C = 5;\nconst fn f(n) {\n    return C.x;\n}\n$FM" "3:13: const 'C' has no fields - $FS"
+refusedn f11 1 "F11: an array size, i64[C.x] (was \"expected ']', got '.'\")" "struct P { x; }\nconst C = 5;\nfn main() {\n    var a: i64[C.x];\n    return 0;\n}\nvar r = main();\n" "4:17: const 'C' has no fields - $FS"
+refusedn f12 1 "F12: a const fn's parameter, p.x" "const fn f(p) {\n    return p.x;\n}\n$FM" "2:13: $FC"
+refusedn f13 1 "F13: a local const in a local const's value, const M = L.x;" "fn main() {\n    const L = 5;\n    const M = L.x;\n    return M;\n}\nvar r = main();\n" "3:16: const 'L' has no fields - $FS"
+exits f14 12 "F14: control — a local const L beside a global struct L: L.x stores and reads the global's field, as before" 'struct P { x; y; }\nvar L = P { 0, 0 };\nfn main() {\n    const L = 5;\n    L.x = 7;\n    return L.x + L;\n}\nsyscall(60, main());\n'
+exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), and an #inline / generic body's local const ends with its replay (R, x86 + aarch64)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), and a field on a const fn's local or on a const names its rule once (F)"

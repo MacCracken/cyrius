@@ -6211,7 +6211,8 @@ fn f(v): i64 {
 - **A `const` has no storage.** Every use is its value — an integer folds like an enum
   constant, an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
-  (a `for` step included, 6.7.3).
+  (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
+  const context alike (6.7.14: it was blamed on a missing struct declaration).
   It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
 - **Top level and inside fns.** Top-level consts are found by one pre-scan, so they may be used
   above their declaration and in any order (a const defined in terms of itself is refused);
@@ -6238,8 +6239,9 @@ fn f(v): i64 {
   break, continue, calls of const fns (recursion included), the exact f64 builtins
   (`f64_add`..`f64_div`, `f64_from`,
   `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
-  `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields), syscalls, globals, an
-  ordinary fn's call, a transcendental builtin, a generic const fn.
+  `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields — `a.x` is refused
+  naming the rule, 6.7.14), syscalls, globals, an ordinary fn's call, a transcendental builtin, a
+  generic const fn.
 - **The same answer as run time.** Typing is the runtime's: an operator takes its f64 form when
   its LEFT operand is f64, and an integer right operand contributes its bits. f64 is computed
   by an integer-only IEEE-754 implementation (the bootstrap compiler has no float), bit-exact

@@ -9169,10 +9169,22 @@ fn _ce_badn(S, msg, noff, tail): i64 {
 # the check never reached. 1 = this report is that one. CHANGELOG [6.7.14]
 var _ce_bn = 0 - 1;
 var _ce_fn_rname = 0 - 1;
+var _ce_fn_refd = 0;
 fn _ce_name_said(S, noff): i64 {
     if (_ce_fn_rname < 0) { return 0; }
     if (STREQ(S, _ce_fn_rname, noff) == 0) { return 0; }
     _had_error = 1;
+    return 1;
+}
+# 6.7.14 — a field arm's refusal in the run-time body of a const fn whose definition check refused it
+# (`_ce_fn_refd`): a field is never in a const fn, so the check refused this one by the subset's rule (or a
+# const's), or stopped at an earlier refusal; the run-time compile said "no struct type in scope for 'a'",
+# blaming a missing include. Counted as ERR_IDENT would count it (the statement resyncs), not printed.
+# 1 = stood down. CHANGELOG [6.7.14]
+fn _ce_fld_said(S): i64 {
+    if (_ce_fn_refd == 0) { return 0; }
+    _had_error = 1;
+    _panic = 1;
     return 1;
 }
 # A runtime fault (division by zero, NaN, overflow of a conversion) — only when executing.
@@ -9496,6 +9508,19 @@ fn _ce_fcmpb(S, t, a, b): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — `.field` after a name the evaluator holds as a value (`_ce_ti` on the name): a const fn's local
+# (`isc` 0) is refused by the pure subset's rule, a const (`isc` 1: a top-level or local const, or a `const` in a
+# const fn body) by its own — at the `.`. Both said "expected ';', got '.'" (an array size "expected ']'", a const's
+# value "expected ';' after a const's value"). A method call `.m(` is not a field (not this refusal). 1 = refused.
+# CHANGELOG [6.7.14]
+fn _ce_fld_refused(S, noff, isc): i64 {
+    if (_mchain_at(S, _ce_ti + 1) == 0) { return 0; }
+    if (TOKTYP(S, _ce_ti + 3) == 10) { return 0; }
+    _ce_ti = _ce_ti + 1;
+    if (isc == 1) { _ce_badn(S, "const ", noff, " has no fields - a const has no storage"); return 1; }
+    _ce_bad(S, "a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 83);
+    return 1;
+}
 # An identifier: a frame local, a local const, a top-level const, an enum constant, sizeof, or a
 # const fn call — anything else is not a constant.
 fn _ce_name(S): i64 {
@@ -9506,6 +9531,7 @@ fn _ce_name(S): i64 {
     if (_ce_fb >= 0) { if (_ce_infn == 1) {
             var fi = _ce_fr_find(S, noff);
             if (fi >= 0) {
+                if (_ce_fld_refused(S, noff, load64(_ce_st + fi * 40 + 32)) == 1) { return 0; }   # 6.7.14
                 _ce_ti = _ce_ti + 1;
                 var fe = _ce_st + fi * 40;
                 _ce_k = load64(fe + 16);
@@ -9515,6 +9541,7 @@ fn _ce_name(S): i64 {
     if (_ce_infn == 0) { if (_ce_top == 0) {
             var lc = _lc_find(S, noff);
             if (lc >= 0) {
+                if (_ce_fld_refused(S, noff, 1) == 1) { return 0; }   # 6.7.14
                 _ce_ti = _ce_ti + 1;
                 _ce_k = L64(_lc_tab + lc * 48 + 24);
                 return L64(_lc_tab + lc * 48 + 32);
@@ -9526,6 +9553,7 @@ fn _ce_name(S): i64 {
         } }
     var ci = _cst_find(S, noff);
     if (ci >= 0) {
+        if (_ce_fld_refused(S, noff, 1) == 1) { return 0; }   # 6.7.14
         # a `private` const of another file is refused here as a read of it is anywhere
         var vsv = GTI(S);
         STI(S, _ce_ti);
@@ -10396,7 +10424,7 @@ fn _ce_check_fn(S, fi): i64 {
     }
     _ce_skip = _ce_skip - 1;
     _ce_ret = 0;
-    if (_ce_err == 1) { _ce_fn_rname = _ce_bn; }   # 6.7.14: the run-time body's (`_ce_name_said`)
+    if (_ce_err == 1) { _ce_fn_rname = _ce_bn; _ce_fn_refd = 1; }   # 6.7.14: the run-time body's (`_ce_name_said`, `_ce_fld_said`)
     if (_panic == 0) { _panic = pw; }
     _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
     return 0;
@@ -10765,6 +10793,27 @@ fn _cst_named(S, noff): i64 {
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
     if (_vcst_ix(S, _findvar_core(S, noff)) >= 0) { return 1; }
     return 0;
+}
+# ⛔ 6.7.14 — `.field` on a const in run-time code (the cursor past `.field`, token `dti` its `.`): a field
+# store (`st` 1) or read (0) of a top-level or local const, refused by name at the `.`, once. A top-level
+# const's size-0 slot has no struct ("no struct type in scope for 'C'; ... (missing include?)"), and a local
+# const has no slot at all ("undefined variable 'L'" AND the no-struct error). Asked only where the base
+# resolved to nothing a field can reach (PARSE_FIELD_STORE / _LOAD's undefined and `sid == 0` arms), so
+# nothing that compiles changes. A read is refused IN SYNC — its expression and statement parse on to their
+# end — so the latch is that statement's alone (`_pair_sync_ti`, `_stmt_resync`): the statement after
+# `var v = C.x;` was skipped, and a `const L` declared there read as "undefined variable 'L'". 1 = refused
+# (or stood down in a refused const fn's body). CHANGELOG [6.7.14]
+fn _cst_fld_at(S, noff, st, dti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_cst_named(S, noff) == 0) { return 0; }
+    if (_ce_fld_said(S) == 1) { return 1; }
+    if (st == 0) { if (_panic == 0) { _pair_sync_ti = GTI(S); } }
+    var sv = GTI(S);
+    STI(S, dti);
+    if (st == 1) { ERR_IDENT(S, "cannot assign to a field of const ", noff, " - a const has no storage", 0 - 1); }
+    else { ERR_IDENT(S, "const ", noff, " has no fields - a const has no storage", 0 - 1); }
+    STI(S, sv);
+    return 1;
 }
 # A const on the left of `=` / `OP=`, or under `&`: refused by name (it has no storage).
 fn _cst_lvalue_check(S, noff, what): i64 {
@@ -16345,8 +16394,10 @@ fn PARSE_FN_DEF(S): i64 {
     var _lc_sv_n = _lc_n;
     var _lc_sv_f = _lc_floor;
     _lc_floor = _lc_n;
-    var _rn_sv = _ce_fn_rname;   # 6.7.14: a const fn's refused name is its own body's (`_ce_name_said`)
+    var _rn_sv = _ce_fn_rname;   # 6.7.14: a const fn's refused name / check is its own body's (`_ce_name_said`, `_ce_fld_said`)
+    var _rf_sv = _ce_fn_refd;
     _ce_fn_rname = 0 - 1;
+    _ce_fn_refd = 0;
     # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
     # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
     # caller, not to firmware", which is true of a RETURN but not of an EXIT —
@@ -16358,6 +16409,7 @@ fn PARSE_FN_DEF(S): i64 {
     _lc_n = _lc_sv_n;
     _lc_floor = _lc_sv_f;
     _ce_fn_rname = _rn_sv;
+    _ce_fn_refd = _rf_sv;
     _rd_exit();
     _xd_check(S, 0, "fn body");
     _xdepth = _xd_outer;

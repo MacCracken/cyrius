@@ -1670,6 +1670,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # diagnostic, keeping the stream in sync. See _syntax_only.
             if (_syntax_only == 1) { sid = 0; }
             else {
+                if (PEEKT(S) != 10) { if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; } }   # 6.7.14: a local const
                 # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
@@ -2079,6 +2080,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
         if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
+        if (_ce_fld_said(S) == 1) { return 0; }                        # 6.7.14: a refused const fn's body
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
@@ -2347,6 +2350,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
             # diagnostic, keeping the stream in sync. See _syntax_only.
             if (_syntax_only == 1) { sid = 0; }
             else {
+                if (_cst_fld_at(S, noff, 1, GTI(S) - 2) == 1) { return 0; }   # 6.7.14: a local const
                 # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
@@ -2364,6 +2368,8 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         # consumed at this point, so it must be parsed exactly as the resolvable path
         # below does or the leftover `=` becomes an INVENTED syntax error.
         if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
+        if (_cst_fld_at(S, noff, 1, GTI(S) - 2) == 1) { return 0; }   # 6.7.14: a top-level const
+        if (_ce_fld_said(S) == 1) { return 0; }                       # 6.7.14: a refused const fn's body
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
