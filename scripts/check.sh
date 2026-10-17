@@ -1707,6 +1707,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tarball_inputs_exist.sh"
 # scripts/release-scripts.sh, which fails on a listed entry it cannot find (the user's D4).
 _chk_gate "$ROOT/tests/gates/toolchain/macos_tarball_ships_release_scripts.sh"
 
+# 6.7.14 — scripts/cyrius-watch.sh builds through `cyrius build` (the user's D60): the bare
+# `cat | cycc` it ran failed an entry-relative include, hid the diagnostic, emptied the output on
+# a failed build, and on Apple Silicon wrote an unsigned binary that was killed at launch.
+_chk_gate "$ROOT/tests/gates/toolchain/cyrius_watch_builds_like_build.sh"
+
 # 6.6.20 — two selectors started in ONE worktree both rebuild build/cyrius_check without
 # colliding: the driver compiles into a per-run side file (`.new.<pid>`), not one fixed name.
 _chk_gate "$ROOT/tests/gates/toolchain/check_concurrent_selectors_one_tree.sh"
