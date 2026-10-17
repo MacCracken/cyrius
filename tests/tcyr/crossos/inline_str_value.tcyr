@@ -113,6 +113,25 @@ fn h_step(): i64 { var a = str_from("abcde"); var t: Str; var i = 0; for (i = 0;
 fn h_cap(): i64 { var a = str_from("abcde"); var c = || { var t: Str = Str { "zz", 2 }; t = a; return t.len * 10 + f(t); }; return callptr(c); }
 fn h_ginl(): i64 { var a = str_from("abcde"); gi = a; a.len = 1; return gi.len * 10 + f(gi); }
 
+# ── a `Str` method's operand (lib/str.cyr types it since 6.7.14, D18 (c)) and a `*Str` declaration take the header ──
+fn q_eq(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("abcdefg"); return h.eq(t); }
+fn q_cat(): i64 { var t: Str = Str { "abcdefg", 7 }; var h = str_from("abcdefg"); return str_len(h.cat(t)); }
+fn q_has(): i64 {
+    var n: Str = Str { "cde", 3 };
+    var p: Str = Str { "abc", 3 };
+    var s: Str = Str { "efg", 3 };
+    var h = str_from("abcdefg");
+    return h.contains(n) * 100 + h.starts_with(p) * 10 + h.ends_with(s);
+}
+fn q_not(): i64 { var t: Str = Str { "abcdefz", 7 }; var x: Str = Str { "xyz", 3 }; var h = str_from("abcdefg"); return h.eq(t) + h.contains(x) + h.starts_with(x) + h.ends_with(x); }
+fn q_glob(): i64 { var h = str_from("abcdefg"); return h.eq(gt) * 10 + h.contains(gt); }
+fn q_lit(): i64 { var h = str_from("abcdefg"); return h.eq("abcdefg") * 1000 + h.contains("cde") * 100 + h.starts_with("abc") * 10 + h.ends_with("efg"); }
+fn q_catl(): i64 { var h = str_from("abcdefg"); return str_len(h.cat("xy")); }
+fn q_ptr(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = t; p.len = 3; return t.len * 10 + str_len(p); }
+fn q_pglob(): i64 { var p: *Str = gt; var q: *Str = (gt); return str_len(p) * 10 + str_len(q); }
+fn q_pbare(): i64 { var t: Str; t = str_from("abcde"); var p: *Str = (t); p.len = 2; return t.len; }
+fn q_pcap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = t; return str_len(p); }; return callptr(c); }
+
 # ── a global inline `Str`: its static address, wherever it goes ─────────────────────────────────────────────
 fn mkg(): Str { return gt; }
 fn mkgp(): Str { return (gt); }
@@ -175,6 +194,8 @@ gi2 = GA;                    # at top level: an inline Str global <- a Str handl
 var R_TOP2 = gi2.len * 10 + f(gi2);
 gi3 = str_from("xyz");       # ... <- a `: Str` call
 var R_TOP3 = gi3.len * 10 + f(gi3);
+var P_TOP: *Str = gt;        # a `*Str` declaration after the first statement: gt's static address (D18 (c))
+var R_TOP4 = str_len(P_TOP);
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
 assert_eq(t_paren(), 7, "f((t))");
@@ -218,6 +239,17 @@ assert_eq(h_wrap(), 53, "t = (a); u = ((str_from(..)))");
 assert_eq(h_step(), 55, "a for step t = a");
 assert_eq(h_cap(), 55, "a closure's own inline Str <- a captured Str handle");
 assert_eq(h_ginl(), 55, "an inline Str global <- a Str handle local (a copy: a.len = 1 after)");
+assert_eq(q_eq(), 1, "h.eq(t): Str_eq's `other: Str` takes t's header (D18 (c); 0 through 6.7.13)");
+assert_eq(q_cat(), 14, "h.cat(t): Str_cat's `other: Str`");
+assert_eq(q_has(), 111, "h.contains(n) / h.starts_with(p) / h.ends_with(s)");
+assert_eq(q_not(), 0, "the same methods answer 0 for strings that differ");
+assert_eq(q_glob(), 11, "h.eq(gt) / h.contains(gt): an inline global's static address");
+assert_eq(q_lit(), 1111, "a string literal into the typed methods is a Str (each was 0 through 6.7.13)");
+assert_eq(q_catl(), 9, "h.cat(\"xy\") (3 through 6.7.13)");
+assert_eq(q_ptr(), 33, "var p: *Str = t; takes t's header: p.len = 3 writes t.len (D18 (c))");
+assert_eq(q_pglob(), 77, "var p: *Str = gt; / = (gt);");
+assert_eq(q_pbare(), 2, "var p: *Str = (t); of a bare t binds its header");
+assert_eq(q_pcap(), 7, "var p: *Str = t; inside a closure: the environment's copy");
 assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
 assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
 assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");
@@ -241,4 +273,5 @@ assert_eq(e_derive(), 1, "#derive(Serialize): a Str field from an inline global"
 assert_eq(R_TOP, 7, "f(gt) at top level");
 assert_eq(R_TOP2, 55, "top level: an inline Str global <- a Str handle global");
 assert_eq(R_TOP3, 33, "top level: an inline Str global <- a `: Str` call");
+assert_eq(R_TOP4, 7, "top level: var P: *Str = gt; (after the first statement)");
 var r = assert_summary();

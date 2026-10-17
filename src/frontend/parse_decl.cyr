@@ -926,9 +926,9 @@ fn _var_rhs_msid(S, ti): i64 {
 # peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
 # result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
 # `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
-fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
+fn _var_rhs_post(S, sid0, pscale, sl, start, ann): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
-    _istr_decl(S, pscale, start);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header
+    _istr_decl(S, pscale, start, ann);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header; 6.7.14: `*Str`
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
@@ -7033,12 +7033,35 @@ fn _istr_src(S, pscale): i64 {
     if (_istr_name(S, TOKVAL(S, GTI(S) + 1 + pk)) == 0) { return 0; }
     return 1;
 }
-# PARSE_VAR's initialiser just parsed from `start` into a `Str` declaration: the header's address.
-fn _istr_decl(S, pscale, start): i64 {
+# PARSE_VAR's initialiser just parsed from `start` into a `Str` declaration — or, since 6.7.14, a `*Str` one (`ann`
+# the annotation's first token, `_istr_pann`; the user's D18 (c), 2026-10-16: `var p: *Str = t;` takes the header,
+# as a `p: *Str` parameter does — it took t's data word): the header's address.
+fn _istr_decl(S, pscale, start, ann): i64 {
+    if (pscale > 0) { return _istr_pdecl(S, pscale, start, ann); }
     if (pscale >= 0) { return 0; }
     if (0 - pscale != _STR_SID(S)) { return 0; }
     _istr_ra(S, _istr_at(S, start, GTI(S)));
     return 0;
+}
+# The `*Str` arm: the header's address, typed as the declaration's pointer (`ps` its step), so the declaration does
+# not warn "assigning non-pointer to typed pointer" about an inline global's (the factor leaves its scale 0).
+fn _istr_pdecl(S, ps, start, ann): i64 {
+    if (_istr_pann(S, ann) == 0) { return 0; }
+    var k = _istr_at(S, start, GTI(S));
+    if (k == 0) { return 0; }
+    _istr_ra(S, k);
+    SPSC(S, ps);
+    return 0;
+}
+# 1 = the annotation at token `ann` is `*Str` (one `*`, then the name of the `Str` struct).
+fn _istr_pann(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 2) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, ann + 1)) != ss) { return 0; }
+    return 1;
 }
 # `name = <src>` just parsed from `st` (`_pcmpe_struct_assign`), `dnoff` a `Str` handle — a local or a by-value
 # parameter (rebound to the header) or a global (refused from a frame's `Str`). An inline destination copied
@@ -9015,7 +9038,7 @@ fn PARSE_VAR(S): i64 {
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
     _decl_float_init(S, lfloat, scv_start);
-    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start);   # 6.7.9; 6.7.10
+    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start, ann_ti);   # 6.7.9; 6.7.10
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);
