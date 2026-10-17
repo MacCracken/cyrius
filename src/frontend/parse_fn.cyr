@@ -10147,8 +10147,13 @@ fn _ce_xpend_check(S): i64 {
     _ce_pend_n = 0;
     return 0;
 }
+# 6.7.14 — under `_ce_top_expr`'s latch rule (the arm is a declaration's own tokens): its mismatch
+# latched `_panic` past the sweep, so the next const's mismatch and a default's refusal were never
+# printed. CHANGELOG [6.7.14]
 fn _ce_xpend_one(S, bt, cl): i64 {
     var sv_ti = _ce_ti; var sv_top = _ce_top; var sv_in = _ce_infn; var sv_err = _ce_err; var sv_skip = _ce_skip;
+    var sv_pn = _panic;
+    _panic = 0;
     _ce_ti = bt;
     _ce_top = 1;
     _ce_infn = 0;
@@ -10158,6 +10163,7 @@ fn _ce_xpend_one(S, bt, cl): i64 {
     var c2 = _ce_xcls(_ce_k);
     if (_ce_err == 0) { if (c2 != 0) { if (c2 != cl) { _ce_xmix_err(S, bt, cl, c2); } } }
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip;
+    _panic = sv_pn;
     return 0;
 }
 

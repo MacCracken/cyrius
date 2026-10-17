@@ -44,7 +44,8 @@
 #      end-of-pass-1 sweep's next const, a default after a bad const, a const after a bad enum value or
 #      global array size, a local const in pass 2 after a pass-1 refusal (it was swallowed, or the
 #      statement after it was, so its name read as a FALSE "undefined variable 'L'") — each prints its
-#      own error once; two consts not ending at `;`; the two controls that always reported both
+#      own error once; two consts not ending at `;`; the two controls that always reported both;
+#      a forward if-expression arm's mismatch re-checked at the sweep's end holds no latch either
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -77,6 +78,8 @@
 # but not clearing -> S3, S4 RED; `_tl_pass1` without its `_panic = 0` -> S8 RED; `_cst_semi_refuse`
 # latching -> S9 RED; `_ce_said` never deduping -> LC4, S12-S14 RED (each token printed twice).
 # `_ce_site` back to returning in skip mode -> V3a-V3g RED (built), V3w / V3w2 RED (no warning).
+# `_ce_xpend_one` without its latch save / restore -> S15-S17 RED (the second error swallowed; the
+# slot-open compiler the same); restoring without clearing -> S17 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -255,6 +258,12 @@ refusedn s8 2 "S8: a bad enum value, then a bad local const after a var (no fals
 refusedn s9 2 "S9: two consts that do not end at their ';'" 'const A = 1 2;\nconst B = 3 4;\nsyscall(60, 0);\n' "1:13: expected ';' after a const's value" "2:13: expected ';' after a const's value"
 refusedn s10 2 "S10: (control) two bad defaults" 'fn g(a = yy, b = ww): i64 { return a; }\nsyscall(60, g());\n' "1:10: $CU 'yy'" "1:18: $CU 'ww'"
 refusedn s11 2 "S11: (control) a bad local const in each of two fns" 'fn f(): i64 { const L = yy; return L; }\nfn h(): i64 { const M = ww; return M; }\nsyscall(60, f() + h());\n' "1:25: $CU 'yy'" "2:25: $CU 'ww'"
+# ... nor does the re-walk of an if-expression arm that named a forward const (`_ce_xpend_one`): its
+# mismatch held the latch past the sweep (found beside the filed table, 6.7.14)
+XM="if expression branches differ in type"
+refusedn s15 2 "S15: two consts whose forward arms mismatch" 'const X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nconst Y = if (1 == 1) { 3 } else { C };\nconst C = 1.5;\nsyscall(60, 0);\n' "1:36: $XM: a string here" "3:36: $XM: an f64 here"
+refusedn s16 2 "S16: a forward arm's mismatch, then a default that is not one expression" 'const X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nfn g(a = 1 2): i64 { return a; }\nsyscall(60, g());\n' "1:36: $XM" "3:12: a parameter default is one constant expression"
+refusedn s17 2 "S17: a bad enum value, then a forward arm's mismatch" 'enum E { Q = yy }\nconst X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:36: $XM"
 # ... and a const fn body that a const runs at the end of pass 1 and pass 2 checks at its definition
 # is reported once per token (`_ce_said`), not once per walk (S12-S14; LC4 above is the annotation's)
 refusedn s12 1 "S12: a global read in a const fn body a const runs" 'var g = 1;\nconst fn h(x) { return g; }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'g' is a variable"
