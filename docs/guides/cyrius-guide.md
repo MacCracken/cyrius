@@ -3954,7 +3954,9 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
 - Duplicate definitions between two **non-private** files are unchanged: still a
   `duplicate fn ... last definition wins` warning (a hard error if the two disagree about
   arity, since v6.5.37). Two definitions **in one file** are likewise still a duplicate —
-  that is a redefinition of one symbol, not a collision between two files.
+  that is a redefinition of one symbol, not a collision between two files. Every call
+  reaches the last definition (6.6.20), and under `CYRIUS_DCE=1` an earlier one keeps
+  nothing alive: a fn only a losing body calls is unreachable and removed (6.7.14).
 - **The boundary covers every way of reaching a fn, not just a direct call (v6.6.4).**
   `&_helper` (address-of, then `callptr` / `fncallN`), `s.method()`, a struct-returning
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return
@@ -5467,7 +5469,12 @@ displacements) and NOP-fills. The image's `.bss` and `.rodata` follow the code, 
 with it, and every data address in the code moves with them; the move is a multiple of 16, so an
 array keeps its 16-byte alignment. A dead fn the compiler keeps because it cannot size one of its
 instructions (an `out dx, al` in an `asm` block) keeps its body, and its calls into removed fns
-become `ud2`. `CYRIUS_WX=0` executables, whose data also follows the code, compact the same way.
+become `ud2`. So does a dead fn whose range holds a live one: a generic instance is emitted inline,
+inside the fn that first needs it, and an inline replay can leave the outer instance dead while the
+inner one is called (6.7.14; until then it was removed with the outer one, on every target).
+`CYRIUS_WX=0` executables, whose data also follows the code, compact the same way. There is no
+dead-fn count past which compaction gives up (6.7.14; until then more than 4,096 dead-code runs
+declined it, and the dead bytes stayed NOP-filled).
 
 ## Enums
 
