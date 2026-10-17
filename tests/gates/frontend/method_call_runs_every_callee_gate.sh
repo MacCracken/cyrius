@@ -60,6 +60,11 @@
 #        diagnostic rows red (the controls stop building, arity reads one short)
 #   1a as first cut (the old anchor comment gone)          -> [helpers] red on a correct tree —
 #        the false RED this edit removes
+#   (6.7.14 — the method arm names `MG.one` and counts as written, without `self`; the free arm keeps
+#    its count. `drow`'s 5th argument is the method arm's text)
+#   N10 `_owncall_args_at` passes 0 for p0 to `_check_arity_p0` -> rows arity_over / arity_under red
+#        (the method arm says "expects 2 arguments, got 3" again); no_self stays green (a method with
+#        no parameter keeps the receiver in its count)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
@@ -112,7 +117,7 @@ vrow() {
 # A DIAGNOSTIC row: both arms must be REFUSED, and the free arm must really carry the message
 # (so "both produced nothing" cannot pass).
 drow() {
-    _row=$1; _mbody=$2; _fbody=$3; _msg=$4
+    _row=$1; _mbody=$2; _fbody=$3; _msg=$4; _mmsg=${5:-$4}   # 6.7.14: the method arm's own text, if it differs
     build_run "m_$_row" "$_mbody"; _mref=$refused
     build_run "f_$_row" "$_fbody"; _fref=$refused
     if ! grep -q "$_msg" "$T/f_$_row.err"; then
@@ -124,8 +129,8 @@ drow() {
         echo "  FAIL: method_call_gates [$_row]: the METHOD arm compiled and emitted a binary where the identical free fn is refused"
         fail=1; return
     fi
-    if ! grep -q "$_msg" "$T/m_$_row.err"; then
-        echo "  FAIL: method_call_gates [$_row]: the method arm refused, but not with \"$_msg\""
+    if ! grep -qF "$_mmsg" "$T/m_$_row.err"; then
+        echo "  FAIL: method_call_gates [$_row]: the method arm refused, but not with \"$_mmsg\""
         head -3 "$T/m_$_row.err" | sed 's/^/      /'; fail=1
     fi
 }
@@ -211,14 +216,14 @@ drow arity_over \
 fn main(): i64 { var g: MG; g.a = 0; return g.one(5, 99); }" \
 "fn free_one(self, x): i64 { return x + 1; }
 fn main(): i64 { return free_one(0, 5, 99); }" \
-"expects 2 arguments, got 3"
+"expects 2 arguments, got 3" "'MG.one' expects 1 argument, got 2"
 
 drow arity_under \
 "impl MG { fn one(self, x): i64 { return x + 1; } }
 fn main(): i64 { var g: MG; g.a = 0; return g.one(); }" \
 "fn free_one(self, x): i64 { return x + 1; }
 fn main(): i64 { return free_one(0); }" \
-"expects 2 arguments, got 1"
+"expects 2 arguments, got 1" "'MG.one' expects 1 argument, got 0"
 
 # ── row no_self — the ONE shape whose acceptance changed. `obj.m()` on a method that declares
 # no `self` parameter pushes `&obj` as an argument the callee never asked for; 6.6.4 built it
@@ -232,7 +237,7 @@ drow no_self \
 fn main(): i64 { var g: MG; g.a = 0; return g.zero(); }" \
 "fn free_zero(): i64 { return 7; }
 fn main(): i64 { var g: MG; g.a = 0; return free_zero(&g); }" \
-"expects 0 arguments, got 1"
+"expects 0 arguments, got 1" "'MG.zero' expects 0 arguments, got 1"
 
 # ── row ctor_mangled — the positive control for no_self: the SAME self-less definition called
 # in the mangled form must still build and return its value. Without this, "refuse every
@@ -277,7 +282,11 @@ ARGONE=$(sed -n '/^fn _call_arg_one(/,/^}/p' src/frontend/parse_fn.cyr)
 [ -n "$ARGONE" ] || { echo "  FAIL: method_call_gates [helpers]: fn _call_arg_one not found in parse_fn.cyr"; fail=1; }
 echo "$MARM" | grep -qE '_owncall_args_at\(S, mfi, mname, [^,]+, 1, m_line\)' || { echo "  FAIL: method_call_gates [helpers]: the method-call arm no longer marshals through _owncall_args_at with self as parameter 0"; fail=1; }
 echo "$FNCALL" | grep -q '_owncall_args_at(' || { echo "  FAIL: method_call_gates [helpers]: PARSE_FNCALL no longer marshals through _owncall_args_at (two call paths again)"; fail=1; }
-for h in _call_arg_one _simd_arg_second_pass _CHECK_ARITY; do
+# 6.7.14: the arity check through `_check_arity_p0` (the method form's message counts without `self`), which
+# must itself call _CHECK_ARITY.
+CHKP0=$(sed -n '/^fn _check_arity_p0(/,/^}/p' src/frontend/parse_fn.cyr)
+echo "$CHKP0" | grep -q '_CHECK_ARITY(' || { echo "  FAIL: method_call_gates [helpers]: _check_arity_p0 no longer calls _CHECK_ARITY"; fail=1; }
+for h in _call_arg_one _simd_arg_second_pass _check_arity_p0; do
     echo "$MARSH" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: the shared argument marshaller (_owncall_args_at) no longer calls $h"; fail=1; }
 done
 for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _arg_push_snap _simd_arg_record; do

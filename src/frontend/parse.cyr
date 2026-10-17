@@ -36,6 +36,12 @@ var _deprecated_msg_pending = 0;
 # is the `_pub_pending` defect (see `_prescan_fn_sig`). CHANGELOG [6.6.16]
 var _pre_dep_pending = 0;
 var _pre_dep_msg = 0;
+# 6.7.14 — pass 1's own `#io` / `#alloc` pair, the same rule: `_tl_arm1` arms it where pass 1
+# steps the token, `_prescan_eff_take` ORs fn_flags bits 16 / 32 onto the fn `_prescan_fn_sig`
+# registers, so #pure's check (`_pure_effect_warn`) sees a callee defined further down.
+# CHANGELOG [6.7.14]
+var _pre_io_pending = 0;
+var _pre_alloc_pending = 0;
 
 # v5.8.20: pending fn-attribute flags for the next `fn` definition.
 # Lexer tokens 125 / 126 / 127 (#pure / #io / #alloc) set the
@@ -3840,8 +3846,7 @@ fn _asg_store_slot(S, idx, g): i64 {
 # Inside a closure, a name of the enclosing scope is a capture, and the report says so (`_asg_cap_name`).
 fn _asg_undef_report(S, noff): i64 {
     if (_asg_cap_name(S, noff) == 1) { return 0; }
-    ERR_UNDEF(S, noff, "");   # 6.7.14: once per token
-    _gv_note_blockscoped(S, noff);   # 6.6.6: see there
+    _undef_var_report(S, noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
     return 0;
 }
 # 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
@@ -4631,7 +4636,7 @@ fn _must_use_warn(S, noff): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
-            PRSTR(S + 0xEC00000 + noff);
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, _mu_fi, noff));   # 6.7.14: `S.m`, `g<i32>`
             syscall(SYS_WRITE, 2, "' is discarded\n", 15);
         }
     }
@@ -4925,6 +4930,7 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
         if (_panic == 0) { if (_asg_cap_name(S, nm) == 1) { return 0 - 1; } }   # 6.7.11: a capture
+        if (_ce_name_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it
         ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
         _gv_note_blockscoped(S, nm);
         _panic = p0;
@@ -5089,6 +5095,17 @@ fn _nested_fn_encl(S): i64 {
 # Called by PARSE_PROG's `fn` arm, the end of _PARSE_STMT_IMPL (`async fn`, and the statement
 # positions that bypass PARSE_PROG: a switch case body, `@unsafe { }`) and the generic stub-body
 # skip in PARSE_FN_DEF.
+# 6.7.14 — `async fn` AFTER THE FIRST TOP-LEVEL STATEMENT IS A FUNCTION, as a `fn` there is (the user's decision
+# D14 (a), 2026-10-16; the guide: "functions can appear after top-level statements"). PARSE_PROG's relaxed-ordering
+# arm admitted it (`_IS_FN_KW`) and pass 1 prescans it, but only `const`'s prefix was consumed, so PARSE_FN_DEF took
+# `async` for its `fn` and `fn` for the name: "expected identifier, got reserved keyword 'fn'". The prefix is taken
+# as pass 2's `_tl_scan2_def` takes it, after `_refuse_nested_fn` (whose `async fn` refusal reads the prefix itself).
+fn _tl_async_prefix(S): i64 {
+    if (PEEKT(S) != 134) { return 0; }
+    _pending_async = 1;
+    STI(S, GTI(S) + 1);
+    return 0;
+}
 fn _refuse_nested_fn(S): i64 {
     if (GINFN(S) != 1) { return 0; }
     var kw = GTI(S);
@@ -5116,6 +5133,7 @@ fn _refuse_nested_fn(S): i64 {
 }
 
 fn PARSE_STMT(S): i64 {
+    if (_decl_late(S) == 1) { return 0; }   # 6.7.14 (D13 (a)): a declaration after the first statement
     var before = GTI(S);
     # v6.5.19 (the define-body copy overflow bug): this wrapper is already the one place every statement descent
     # passes through, which makes it the natural home for the depth bound too. See
@@ -5481,41 +5499,42 @@ fn _PARSE_STMT_IMPL(S): i64 {
     }
     if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
     # Expression statements: syscall(...); store8(...); load8(...);
-    if (typ == 24) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
-    if (typ == 26) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
-    if (typ == 25) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
-    if (typ == 45) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
-    if (typ == 46) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
-    if (typ == 47) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; }
+    # 6.7.14: their `;` through `_expect_step` — an unclosed `syscall(60, 0;` then a `for` stepped the `for`.
+    if (typ == 24) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 26) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 25) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 45) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 46) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 47) { PCMPE(S); _expect_step(S, 5); return 0; }
     # f64/SIMD builtins as statements
-    if (typ >= 62) { if (typ <= 105) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 62) { if (typ <= 105) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v5.10.17: f64v_dot/scale/axpy as statements (out-of-range from
     # the existing 62-105 SIMD band; share the same PCMPE-then-`;` shape).
-    if (typ >= 128) { if (typ <= 130) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 128) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.3+ (SIMD Phase 1): f32v_add/sub/mul as statements (138-140).
-    if (typ >= 138) { if (typ <= 140) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 138) { if (typ <= 140) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.5 (SIMD Phase 2): f32v_fmadd/f32v_dot as statements (141-142).
-    if (typ >= 141) { if (typ <= 142) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 141) { if (typ <= 142) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul as statements (143-145).
-    if (typ >= 143) { if (typ <= 146) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 143) { if (typ <= 146) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.8 (SIMD Phase 4 R1): f32v8_add/sub/mul as statements (147-149).
-    if (typ >= 147) { if (typ <= 149) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 147) { if (typ <= 149) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.9 (SIMD Phase 4 R2): f32v8_fma/f32v8_dot as statements (150-151).
-    if (typ >= 150) { if (typ <= 151) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 150) { if (typ <= 151) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.5.24 (ymm widening): f64v256_add/sub/mul/div as statements (154-157). The lib
     # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
     # without this band the builtin lexes and emits fine yet is a syntax error at every
     # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
-    if (typ >= 154) { if (typ <= 162) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 154) { if (typ <= 162) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.6.2 — f64_sqrt (136) and callptr (137), renumbered out of their collisions.
     # ⚠ f64_sqrt WAS inside the 62..105 band above, so moving it without this entry would
     # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
     # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
     # error, which the filing recorded as diagnostics-only and was not.
-    if (typ >= 136) { if (typ <= 137) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 136) { if (typ <= 137) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
     # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
-    if (typ >= 164) { if (typ <= 166) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 164) { if (typ <= 166) { PCMPE(S); _expect_step(S, 5); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);
@@ -5564,8 +5583,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 PARSE_FNCALL(S, noff);
             }
             _stmt_qmark(S, _qs_pair);   # postfix `?` on the call: see _stmt_qmark
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);
+            _expect_step(S, 5);         # 6.7.14: a miss never steps the next statement's keyword
             return 0;
         }
         # struct field access: ident.field = expr; or ident.method(args);
@@ -5590,9 +5608,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
         # assignment or compound assignment: already consumed IDENT
         # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
-        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr).
-        if (_asg_lvalue_refused(S, noff) == 1) {
-            _cst_skip_decl(S);   # the rest of the statement, to its `;`
+        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr). 6.7.14: only before an
+        # `=` / `op =` (_asg_lvalue_at).
+        if (_asg_lvalue_at(S, noff) == 1) {
+            _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
             return 0;
         }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=
@@ -5691,7 +5710,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     return 0;
                 }
                 _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
-                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
+                _expect_step(S, 5); return 0;   # 6.7.14
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
@@ -5736,6 +5755,7 @@ fn PARSE_PROG(S): i64 {
                         # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
                         # relaxed-ordering arm below is for top-level code only (GINFN == 0).
                         if (_refuse_nested_fn(S) == 0) {
+                            _tl_async_prefix(S);   # 6.7.14 (D14 (a)): `async fn` too
                             # fn definition inside top-level code (relaxed ordering)
                             # Emit jmp over fn body, compile fn, patch jmp
                             # v6.6.4: this loop never parses `public` (a `public` after

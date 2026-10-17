@@ -143,6 +143,8 @@ INC='include "lib/pf.cyr"
 '
 
 # row <name> <expected-symbol> <lib-body> <caller-body>
+# (6.7.14: an impl method is named as the source spells it, `Q.seven` — whether the call is `q.seven()`, the
+# free spelling `Q_seven(&q)` or `&Q_seven`.)
 #
 # Compiles the caller with the include AFTER it (forward) and BEFORE it (backward), then
 # compares the SET of symbols each run reported as private. `expected-symbol` is the
@@ -167,26 +169,26 @@ row() {
   return 0
 }
 
-row method   Q_seven \
+row method   Q.seven \
 'private
 struct Q { a: i64; b: i64; }
 impl Q { fn seven(self) { return 42; } }' \
 'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return q.seven(); }'
 
-row mangled  Q_seven \
+row mangled  Q.seven \
 'private
 struct Q { a: i64; b: i64; }
 impl Q { fn seven(self) { return 42; } }' \
 'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return Q_seven(&q); }'
 
-row addrof   Q_seven \
+row addrof   Q.seven \
 'private
 struct Q { a: i64; b: i64; }
 impl Q { fn seven(self) { return 42; } }' \
 'include "lib/fnptr.cyr"
 fn main(): i64 { var q: Q; var f = &Q_seven; return fncall1(f, &q); }'
 
-row tailcall Q_seven \
+row tailcall Q.seven \
 'private
 struct Q { a: i64; b: i64; }
 impl Q { fn seven(self) { return 42; } }' \
@@ -202,7 +204,7 @@ fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return tc(&q); }'
 # a defect it was written to catch (measured). The struct also stays in the CALLER — a
 # typed global needs its struct above it, so moving the whole library below the use would
 # break the TYPE and no operator dispatch would happen at all.
-row operator OpV_add \
+row operator OpV.add \
 'private
 impl OpV { fn add(a, b) { return 39 + b; } }' \
 'struct OpV { v; }
@@ -498,8 +500,8 @@ var rc = main();
 sys_exit_group(rc);
 EOF
 ( cd "$T/w" && "$CC" < wrong_name.cyr > wrong_name.bin 2> wrong_name.err ) || true
-grep -q "Q7_nosuch" "$T/w/wrong_name.err" || { echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic does not name Q7_nosuch"; head -3 "$T/w/wrong_name.err" | sed 's/^/      /' || true; fail=1; }
-if grep -q "Q7_seven" "$T/w/wrong_name.err"; then echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic names Q7_seven, a method that EXISTS"; fail=1; fi
+grep -qF "Q7.nosuch" "$T/w/wrong_name.err" || { echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic does not name Q7.nosuch"; head -3 "$T/w/wrong_name.err" | sed 's/^/      /' || true; fail=1; }
+if grep -qE "Q7[._]seven" "$T/w/wrong_name.err"; then echo "  FAIL: private_forward_reference axis3 [wrong_name] — the diagnostic names Q7.seven, a method that EXISTS"; fail=1; fi
 
 # a generic with STRUCT type-args beside a second one: refused until 6.7.1, where it must not
 # have read out of bounds and invented a name (`_fnt_names[_spec]` with _spec == -3 printed

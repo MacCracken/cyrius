@@ -348,11 +348,11 @@ refuse "R8 a free call returning Pt" "cannot pass 'mkp' $MA 'bq'" \
     "${T}fn go(): i64 { return bq(mkp()); } syscall(60, go());"
 refuse "R9 a method result (Pt_dup)" "cannot pass 'Pt_dup' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} return bq(p.dup()); } syscall(60, go());"
-refuse "R10 a method's ARGUMENT, p.takeq(r)" "cannot pass 'r' $MA 'Pt_takeq'" \
+refuse "R10 a method's ARGUMENT, p.takeq(r)" "cannot pass 'r' $MA 'Pt.takeq'" \
     "${T}fn go(): i64 { ${PQ} var r: Pt; return p.takeq(r); } syscall(60, go());"
-refuse "R11 Q_cc(p), an untyped impl self" "cannot pass 'p' $MA 'Q_cc'" \
+refuse "R11 Q_cc(p), an untyped impl self" "cannot pass 'p' $MA 'Q.cc'" \
     "${T}fn go(): i64 { ${PQ} return Q_cc(p); } syscall(60, go());"
-refuse "R12 Q_cc2(p), self: Q" "cannot pass 'p' $MA 'Q_cc2'" \
+refuse "R12 Q_cc2(p), self: Q" "cannot pass 'p' $MA 'Q.cc2'" \
     "${T}fn go(): i64 { ${PQ} return Q_cc2(p); } syscall(60, go());"
 refuse "R13a a tail call, by value (8 B)" "cannot pass 't' $MA 'bs1'" \
     "${T}fn f(t: T1): i64 { return bs1(t); } fn go(): i64 { var t: T1; t.w = 9; return f(t); } syscall(60, go());"
@@ -364,15 +364,15 @@ refuse "R15 a callee defined AFTER the call (pass 1)" "cannot pass 'p' $MA 'late
     "${T}fn go(): i64 { ${PQ} return later(p); } fn later(b: Q): i64 { return b.c; } syscall(60, go());"
 
 echo "=== generics: an instance against its base, and the reverse ==="
-refuse "R16 tt(p, q), T bound by p" "cannot pass 'q' $MA 'tt\$Pt'" \
+refuse "R16 tt(p, q), T bound by p" "cannot pass 'q' $MA 'tt<Pt>'" \
     "${T}fn go(): i64 { ${PQ} return tt(p, q); } syscall(60, go());"
-refuse "R17 a trait-bounded bb(p, q)" "cannot pass 'q' $MA 'bb\$Pt'" \
+refuse "R17 a trait-bounded bb(p, q)" "cannot pass 'q' $MA 'bb<Pt>'" \
     "${T}trait Sh { fn sh(self): i64; }
 impl Sh for Pt { fn sh(self): i64 { return self.y; } }
 impl Sh for Q { fn sh(self): i64 { return self.c; } }
 fn bb<T: Sh>(x: T, y: T): i64 { return y.sh(); }
 fn go(): i64 { ${PQ} return bb(p, q); } syscall(60, go());"
-refuse "R18 gx<Pt>(a Box<Q>)" "cannot pass 'bq2' $MA 'gx\$Pt'" \
+refuse "R18 gx<Pt>(a Box<Q>)" "cannot pass 'bq2' $MA 'gx<Pt>'" \
     "${T}fn go(): i64 { ${PQ} var bq2: Box<Q> = mk1(q); return gx<Pt>(bq2); } syscall(60, go());"
 # `gx(b)` did not infer T through `b: Box<T>`, so the BASE gx (T = i64, `b: Box`) was called with
 # a Box<Pt> and read b.n at the base's offset — 4 (b.v.y) where 8 is right; refused here 6.7.3 -
@@ -424,7 +424,7 @@ fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); var bb: Box<Box<Pt>> = mk1(b); ret
 # What the instance returns is still checked against the parameter: another type is refused by name.
 refuse "R18k bi(mk1(q)), a Box<Q> from a generic call into b: Box<Pt>" "cannot pass 'mk1' $MA 'bi'" \
     "${T}fn go(): i64 { ${PQ} return bi(mk1(q)); } syscall(60, go());"
-refuse "R18l gx<Pt>(mk1(q)): the explicit outer keeps its instance" "cannot pass 'mk1' $MA 'gx\$Pt'" \
+refuse "R18l gx<Pt>(mk1(q)): the explicit outer keeps its instance" "cannot pass 'mk1' $MA 'gx<Pt>'" \
     "${T}fn go(): i64 { ${PQ} return gx<Pt>(mk1(q)); } syscall(60, go());"
 refuse "R19 a Box<Pt> local into b: Box" "cannot pass 'b' $MA 'bs'" \
     "${T}fn go(): i64 { ${PQ} var b: Box<Pt> = mk1(p); return bs(b); } syscall(60, go());"
@@ -464,7 +464,7 @@ refuse "R30 s + t with S1_add (8 B)" "cannot pass 't' $MA 'S1_add'" \
     "${T}fn go(): i64 { var s: S1; s.u = 1; var t: T1; t.w = 9; return s + t; } syscall(60, go());"
 refuse "R31 the LEFT operand: Pt_add(a: Q, b: Pt)" "cannot pass 'p' $MA 'Pt_add'" \
     "${T}fn Pt_add(a: Q, b: Pt): i64 { return a.c; } fn go(): i64 { ${PQ} return p + p; } syscall(60, go());"
-refuse "R32 the receiver: p.weird() with self: Q" "cannot pass 'p' $MA 'Pt_weird'" \
+refuse "R32 the receiver: p.weird() with self: Q" "cannot pass 'p' $MA 'Pt.weird'" \
     "${T}impl Pt { fn weird(self: Q): i64 { return self.c; } } fn go(): i64 { ${PQ} return p.weird(); } syscall(60, go());"
 
 echo "=== a Str handle, and a struct past the per-fn masks' width ==="
@@ -610,7 +610,7 @@ refuse "W7 a T1 global, wrapped, at top level" "cannot pass 'GT' $MA 'bs1'" \
     "${T}var GT = T1 { 9 }; var rr = bs1((GT)); syscall(60, rr);"
 refuse "W8 a tail call, wrapped" "cannot pass 't' $MA 'bs1'" \
     "${T}fn f(t: T1): i64 { return bs1((t)); } fn go(): i64 { var t: T1; t.w = 9; return f(t); } syscall(60, go());"
-refuse "W9 a method's argument, wrapped" "cannot pass 't' $MA 'Pt_sk'" \
+refuse "W9 a method's argument, wrapped" "cannot pass 't' $MA 'Pt.sk'" \
     "${T}impl Pt { fn sk(self, b: S1): i64 { return b.u; } } fn go(): i64 { ${PQ} var t: T1; t.w = 9; return p.sk((t)); } syscall(60, go());"
 accept "W10 the declared type, wrapped: a local, a call, a field, a method result" \
     "${T}fn go(): i64 { ${PQ} var s: S1; s.u = 2; var h: H; h.s.u = 4;
@@ -806,7 +806,7 @@ refuse "P14 ri(((s))), 8 B" "cannot pass 's' $MW 'ri'" \
     "${T}${WP}fn go(): i64 { var s: P8; s.x = 42; return ri(((s))); } syscall(60, go());"
 refuse "P15 rg<i64>(s), T = i64" "cannot pass 's' $MW 'rg'" \
     "${T}${WP}fn go(): i64 { var s: Pt; s.x = 42; return rg<i64>(s); } syscall(60, go());"
-refuse "P16 q.rd(s), a method's pointer parameter" "cannot pass 's' $MW 'Q_rd'" \
+refuse "P16 q.rd(s), a method's pointer parameter" "cannot pass 's' $MW 'Q.rd'" \
     "${T}${WP}fn go(): i64 { var q: Q; var s: Pt; s.x = 42; return q.rd(s); } syscall(60, go());"
 # A `*Str` parameter records the struct Str: another struct into it keeps 6.7.3's refusal, once (not two).
 refuse "P17 rsp(s), p: *Str (6.7.3's words, once)" "cannot pass 's' $MA 'rsp'" \

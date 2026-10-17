@@ -1,0 +1,81 @@
+# u128_closure_capture.tcyr — a u128 captured by a closure is its value (6.7.14).
+#
+# ⛔ THE DEFECT (measured 6.7.6 - 6.7.13, every target). A captured u128's env copy is two words, so the capture read
+# took the multi-word rule — the value is the ADDRESS of the copy, as a captured struct's is — and nothing marked it a
+# u128: `|q| { c == 5 }` was false for `c = 5`, `c + 0` added the env address, a truth test, `<` and `match` read the
+# address too. The read now copies the two words into a 16-byte temporary and stamps it (6.7.6's u128 stamp, k 3), so
+# every u128 path reads all 128 bits. (issues/2026-10-08-u128-params-returns-fields-captures.md, the capture half;
+# the parameter / return / field halves are refused by name, the user's decision D10 (a), 2026-10-16.)
+#
+# Each value below is set with store64 (lo, hi), the high word non-zero where it matters, and every expected answer is
+# written out by hand.
+#
+# ⚠ CROSS-HOST: the copy, the compare and the add with carry are the backend's (x86, aarch64, cx, PE, Mach-O); the
+# temporary is a frame slot of the closure, and the env object is a heap block.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+fn set2(p, lo, hi): i64 { store64(p, lo); store64(p + 8, hi); return 0; }
+
+fn tmain(): i64 {
+    alloc_init();
+    # K1-K2, the filed repro's capture half: c = 5 (high word 0).
+    var c: u128 = 5;
+    var f = |q| { if (c == 5) { return 1; } return 0; };
+    var g = |q| { return c + 0; };
+    assert_eq(callptr(f, 0), 1, "K1: `c == 5` on a captured 5 (it compared the env address)");
+    assert_eq(callptr(g, 0), 5, "K2: `c + 0` is 5 (it added the env address)");
+    # K3-K8: a high word of 1 — the low words alone would say equal / zero.
+    var h: u128 = 0;
+    set2(&h, 7, 1);
+    var eq7 = |q| { if (h == 7) { return 1; } return 0; };
+    var lt = |q| { var k: u128 = 0; set2(&k, 0, 2); if (h < k) { return 1; } return 0; };
+    var gtm = |q| { if (h > 0xFFFFFFFFFFFFFFFF) { return 1; } return 0; };
+    var tru = |q| { var z: u128 = 0; set2(&z, 0, 1); if (z) { return 1; } return 0; };
+    var cap_t = |q| { if (h) { return 1; } return 0; };
+    var add = |q| { var s: u128 = 0; s = h + 0xFFFFFFFFFFFFFFFF; return load64(&s + 8); };
+    var sub = |q| { var s: u128 = 0; s = h - 8; return load64(&s) + load64(&s + 8); };
+    assert_eq(callptr(eq7, 0), 0, "K3: `==` reads the high word (7 + 2^64 is not 7)");
+    assert_eq(callptr(lt, 0), 1, "K4: `<` against 2^65 (unsigned, all 128 bits)");
+    assert_eq(callptr(gtm, 0), 1, "K5: `>` 2^64 - 1 (the low word 7 alone is below it)");
+    assert_eq(callptr(tru, 0), 1, "K6: control: a local u128 of 2^64 is true");
+    assert_eq(callptr(cap_t, 0), 1, "K7: a truth test on the capture reads both words");
+    assert_eq(callptr(add, 0), 2, "K8: `+` carries into the high word (7 + 2^64 + 2^64 - 1)");
+    assert_eq(callptr(sub, 0), 0xFFFFFFFFFFFFFFFF, "K9: `-` borrows from the high word (2^64 + 7 - 8 = 2^64 - 1)");
+    # K10: a zero capture is false, and `!` of it true.
+    var zc: u128 = 0;
+    var ztru = |q| { if (zc) { return 1; } return 0; };
+    var znot = |q| { if (!zc) { return 1; } return 0; };
+    assert_eq(callptr(ztru, 0), 0, "K10: a zero capture is false");
+    assert_eq(callptr(znot, 0), 1, "K11: `!` of a zero capture is true");
+    # K12: match on the capture (all 128 bits: 7 + 2^64 is not 7).
+    var mt = |q| {
+        var r = 0;
+        match h {
+            7 => { r = 1; }
+            _ => { r = 2; }
+        }
+        return r;
+    };
+    assert_eq(callptr(mt, 0), 2, "K12: match reads the high word");
+    # K13: a whole store into a u128 local inside the closure takes both words.
+    var cp = |q| { var d: u128 = 0; d = h; return load64(&d) + load64(&d + 8) * 100; };
+    assert_eq(callptr(cp, 0), 107, "K13: `d = h` copies both words (7 and 1)");
+    # K14: an integer context reads the low word, as of a local.
+    var lo = |q| { var n = 0; n = h; return n; };
+    assert_eq(callptr(lo, 0), 7, "K14: an i64 receives the low word");
+    # K15: `&h` still reads the env copy (unchanged).
+    var hi = |q| { return load64(&h + 8); };
+    assert_eq(callptr(hi, 0), 1, "K15: `&h` is the env copy's address: its high word is 1");
+    # K16: a nested closure captures the outer closure's capture (the mark rides the snapshot).
+    var outer = |q| {
+        var inner = |r| { if (h == 7) { return 1; } if (h > 7) { return 2; } return 3; };
+        return callptr(inner, 0);
+    };
+    assert_eq(callptr(outer, 0), 2, "K16: a nested closure's capture of a capture is the value (7 + 2^64 > 7)");
+    return 0;
+}
+var tr = tmain();
+var r = assert_summary();

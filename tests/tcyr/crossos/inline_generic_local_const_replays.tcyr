@@ -1,0 +1,47 @@
+# inline_generic_local_const_replays.tcyr — 6.7.14: a local `const` in an `#inline` fn's body or a
+# generic fn's body belongs to each call. The body is re-parsed at every call (the inline replay, a
+# generic instance) one scope deeper than the call, and its consts outlived the replay: the second
+# call in one scope met the first one's `L` at the same depth and was refused, "'L' is already
+# declared in this scope" (issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-
+# second-call.md). Each row below was refused before; the nested-block call and the plain fn built.
+#   I  `#inline` — two calls in one expression, in two statements, a nested block, beside a caller
+#      const and a caller var of the same name, an inline fn calling another twice
+#   G  generic — one instance twice, two instances, two statements, calls in two fns
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+#inline
+fn w(): i64 { const L = 3; return L; }
+#inline
+fn v(): i64 { const L = 2; return L; }
+#inline
+fn wv(): i64 { const L = 3; return L + v() + v(); }
+fn gg<T>(x: T): i64 { const L = 3; return L; }
+
+fn i_expr(): i64 { return w() + w(); }
+fn i_stmts(): i64 { var a = w(); var b = w(); return a + b; }
+fn i_nested(): i64 { var a = w(); if (a == 3) { a = a + w(); } return a; }
+fn i_caller_const(): i64 { const L = 10; var a = w(); var b = w(); return a + b + L; }
+fn i_caller_var(): i64 { var a = w(); var L = 7; return a + L + w(); }
+fn i_inner(): i64 { return wv() + wv(); }
+fn g_one(): i64 { return gg(1) + gg(2); }
+fn g_two(): i64 { var a: i32 = 2; return gg(1) + gg(a); }
+fn g_stmts(): i64 { var a: i32 = 2; var r = gg(a); var s = gg(a); return r + s; }
+fn g_f(): i64 { return gg(1); }
+fn g_fns(): i64 { return g_f() + gg(2); }
+
+fn rows(): i64 {
+    assert_eq(i_expr(), 6, "I: w() + w()");
+    assert_eq(i_stmts(), 6, "I: var a = w(); var b = w();");
+    assert_eq(i_nested(), 6, "I: the second call in a nested block");
+    assert_eq(i_caller_const(), 16, "I: beside a caller const L");
+    assert_eq(i_caller_var(), 13, "I: beside a caller var L");
+    assert_eq(i_inner(), 14, "I: an inline fn calling another twice");
+    assert_eq(g_one(), 6, "G: gg(1) + gg(2), one instance");
+    assert_eq(g_two(), 6, "G: gg(1) + gg(a: i32), two instances");
+    assert_eq(g_stmts(), 6, "G: var r = gg(a); var s = gg(a);");
+    assert_eq(g_fns(), 6, "G: the calls in two fns");
+    return 0;
+}
+rows();
+var r = assert_summary();

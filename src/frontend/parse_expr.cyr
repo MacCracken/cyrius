@@ -184,6 +184,27 @@ fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
 }
+# The enclosing slot's u128 mark (util.cyr GLW128, bit 60 of the same word; a nested closure's snapshot keeps it,
+# `_cl_snap_extend`). 6.7.14
+fn _cl_snap_w128(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 60) & 1;
+}
+# ⛔ 6.7.14 — A CAPTURED u128 IS ITS VALUE (issues/2026-10-08-u128-params-returns-fields-captures.md). Its env copy is
+# two words, so the read took the multi-word rule — the value is the ADDRESS, as an aggregate's is — and `c == 5`
+# compared the env address with 5, `c + 0` added it. With rax = `&env[woff]` (`_CL_CAP_WORDS_RA`), the two words are
+# copied into a 16-byte temporary and the read is that temporary's low word, stamped (k 3), so `==`, `<`, `+`, `-`, a
+# truth test and `match` take 6.7.6's u128 paths (an integer context reads the low word, as of a local). `&c` still
+# reads the env copy. 1 = done. CHANGELOG [6.7.14]
+fn _cl_cap_w128(S, esl): i64 {
+    if (_cl_snap_w128(esl) == 0) { return 0; }
+    var h = _w128_tmp(S);
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCM(S, 2);
+    _w128_res(S, h);
+    return 1;
+}
 # The enclosing slot's declared-integer mark (util.cyr GLINTD, bit 59 of the same word). 6.7.6
 fn _cl_snap_intd(esl): i64 {
     if (_cl_snap == 0) { return 0; }
@@ -1162,8 +1183,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;
     }
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);                     # consume ')'
+    _expect_step(S, 11);                    # consume ')' (6.7.14: a miss keeps a `;` / keyword)
     # ⛔ v6.5.46 — THE `fncallN` FAMILY WAS EXEMPT FROM THE CALL-ARITY CHECK that ordinary calls
     # have enforced as a hard error since v6.5.1. `fncall3(f, a, b)` and `fncall1(f, a, b, c)`
     # both compiled: the name says how many arguments follow, `cp_argc` counts how many did, and
@@ -1249,8 +1269,7 @@ fn _lower_mulh64(S): i64 {
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); }
     STI(S, GTI(S) + 1);
     PCMPE(S); EPOPC(S); EMULH(S);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     _cfo = 0;
     _icall_untyped(S);
     return 0;
@@ -2124,8 +2143,8 @@ fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     if (pk != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, ord);
-    if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", noff, 0, 0 - 1); }
-    return _bx_refuse(S, t, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", noff);
+    if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", _fn_src_name(S, fi, noff), 0, 0 - 1); }
+    return _bx_refuse(S, t, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _fn_src_name(S, fi, noff));
 }
 # `return e;` in the fn being parsed. 6.7.11: in a fn returning a struct of 8 B or less, the value is
 # checked by its struct (`_ret_small_val`).
@@ -2185,8 +2204,8 @@ fn _bx_op_rhs(S, fi, rb): i64 {
     if (pk != 1) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     var pn = _bx_pname(S, fi, 1);
-    if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _bx_fname(S, fi), 0, 0 - 1); }
-    return _bx_refuse(S, rb, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _bx_fname(S, fi));
+    if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _fn_src_name(S, fi, _bx_fname(S, fi)), 0, 0 - 1); }
+    return _bx_refuse(S, rb, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _fn_src_name(S, fi, _bx_fname(S, fi)));
 }
 # A capture read (`env[k]`): the snapshot carries the enclosing slot's whole depth word, bit 58 too.
 fn _cl_cap_load(S, esl): i64 {
@@ -3301,10 +3320,10 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) {
-            ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
-            _gv_note_blockscoped(S, noff);
-        }
+        if (_syntax_only == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+                ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+                _gv_note_blockscoped(S, noff);
+            } }
         aw = 0;
     } elif (aw == 0) {
         _sub_refuse(S, noff, k, ix, d, pw);
@@ -4424,6 +4443,157 @@ fn _gv_narrow_sx(S, idx, vt, gvsz): i64 {
     return 0;
 }
 
+# The factor's "undefined variable 'x'" (a read, or `&x`, of a name declared nowhere; `tail` closes the
+# quote), at the cursor — unless the const fn being parsed was refused naming x (`_ce_name_said`, 6.7.14).
+# Out of _PARSE_FACTOR_IMPL, a cybs-ceiling fn.
+# `syscall(N, ..)`'s arity warning (`argc` counts N), against the x86 table. Out of _PARSE_FACTOR_IMPL (cybs's
+# ceiling). 6.7.14: not after a refusal in the statement (the latch): an unclosed `syscall(39, 0;` has no
+# argument count, and its warning followed the "expected ')'". CHANGELOG [6.7.14]
+fn _sc_arity_warn(S, sc_num, argc): i64 {
+    if (_panic == 1) { return 0; }
+    if (sc_num < 0) { return 0; }
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    var expect = _SC_ARITY(sc_num);
+    if (expect < 0) { return 0; }
+    var got = argc - 1;
+    if (got == expect) { return 0; }
+    # The cross-arch number-reuse shapes that are not a mismatch: see _sc_arity_skip. CHANGELOG [6.6.12]
+    if (_sc_arity_skip(sc_num, got) == 0) { WARN(S, "syscall arity mismatch", 22); }
+    return 0;
+}
+# ⛔ 6.7.14 — A STRUCT LITERAL IS AN INITIALIZER (the user's decision D12 (a), 2026-10-16). `P { .. }` /
+# `Box<i64> { .. }` is taken only as a declaration's whole initializer (PARSE_VAR, PARSE_GVAR_REG and the replay,
+# through `_lit_head_w`). Where a VALUE is parsed — an assignment's right side, an argument, an operand, a nested
+# literal element, `return` — or as a statement, `P` is no variable: it was "undefined variable 'P'" (a statement
+# "expected '='") and the `{` cascaded into two to five more errors. Cursor just past a name no variable answers
+# (`noff`): when it opens a literal (`_slit_open`), ONE error by name at the name (`--syntax-only` too: never
+# valid, whatever P holds), the `{ .. }` stepped so the parse goes on in sync, and 0 the value. 1 = refused.
+# CHANGELOG [6.7.14]
+var _slit_beg = 0 - 1;   # the last refused literal's name token and the token after it (`_slit_whole`)
+var _slit_end = 0 - 1;
+fn _slit_stray(S, noff): i64 {
+    var ti = GTI(S) - 1;
+    if (TOKVAL(S, ti) != noff) { return 0; }
+    var o = _slit_open(S, ti);
+    if (o < 0) { return 0; }
+    _slit_beg = ti;
+    _slit_err(S, ti, o);
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    _slit_end = GTI(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    _asg_tup_refd = 1;   # and the statement's typed-pointer warning is not given about it
+    return 1;
+}
+# A selector run after the stepped literal (`.f`, `.m(..)`), stepped with it: `P { 5 }.a` is one refusal.
+fn _slit_tail(S): i64 {
+    while (PEEKT(S) == 41) {
+        if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+# `return P { .. };` in a fn returning a struct over 16 B (`_ret_struct_big`, cursor on the value): refused by
+# name and stepped, the junk slot 0 (no binary is written); -1 = not a literal.
+fn _slit_ret(S): i64 {
+    var o = _slit_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    _slit_err(S, GTI(S), o);
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    return 0;
+}
+# A statement (or a for step) `P { .. };` (cursor past the name, which no variable answers): the refusal; the
+# caller steps the rest in sync (`_asg_lvalue_at`'s). 1 = refused.
+fn _slit_stmt(S, noff): i64 {
+    if (PEEKT(S) != 13) { if (PEEKT(S) != 19) { return 0; } }   # every assignment asks: `{` / `<` first
+    if (_slit_open(S, GTI(S) - 1) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    _slit_err(S, GTI(S) - 1, _slit_open(S, GTI(S) - 1));
+    return 1;
+}
+# 1 = the value just parsed (from token `b`, inside `pk` closed parentheses) was one refused literal, whole: a
+# nested struct literal element takes it as the whole field (`_spi_expr`), as a refused call, so the walk does not
+# carry it as a first leaf and report the rest of the field missing.
+fn _slit_whole(S, b, pk): i64 {
+    if (_slit_beg != b) { return 0; }
+    if (_slit_end + pk != GTI(S)) { return 0; }
+    return 1;
+}
+# 1 = token `ti` opens a struct literal. Reads tokens only.
+fn _slit_at(S, ti): i64 {
+    if (_slit_open(S, ti) < 0) { return 0; }
+    return 1;
+}
+# The `{` of the struct literal whose name is token `ti` — `P {` or `P<..> {`, P a declared struct — or -1.
+fn _slit_open(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) <= 0) { return 0 - 1; }
+    var o = ti + 1;
+    if (TOKTYP(S, o) == 19) {
+        o = _tok_targs_close(S, o + 1);
+        if (o < 0) { return 0 - 1; }
+        o = o + 1;
+    }
+    if (TOKTYP(S, o) != 13) { return 0 - 1; }
+    return o;
+}
+# The `}` closing the `{` at token `o` (the EOF token when none does).
+fn _slit_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return k - 1; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k - 1;
+}
+# The refusal, at the struct name `ti` (its `{` is token `o`); once per token (`_tn_once`: an #inline / generic
+# replay of the body).
+fn _slit_err(S, ti, o): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a struct literal is an initializer: declare `var t: ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" = ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" { .. };` and assign or pass t\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# The literal's type as written: the name, or (`Box<i64>`) the source from the name to its `{`, blanks after it
+# dropped.
+fn _slit_ptype(S, ti, o): i64 {
+    if (o == ti + 1) { return _dyn_pn(S, TOKVAL(S, ti)); }
+    var a = GTOFF(S, ti);
+    var b = GTOFF(S, o);
+    while (b > a) {
+        var c = load8(S + 0x459D000 + b - 1);
+        if (c != 32 && c != 9 && c != 10) { break; }
+        b = b - 1;
+    }
+    syscall(SYS_WRITE, 2, S + 0x459D000 + a, b - a);
+    return 0;
+}
+fn _undef_var_report(S, noff, tail): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 0; }
+    ERR_UNDEF(S, noff, tail);   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
+    _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
+    return 0;
+}
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -4707,6 +4877,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     if (cl_capi >= 0) {
                         _CL_CAP_OPTYPE(S, cl_esl, cl_capi);              # see the fn's note
                         _CL_CAP_WORDS_RA(S, cl_capi);                    # rax = &env[woff]
+                        if (_cl_cap_w128(S, cl_esl) == 1) { return 0; }   # 6.7.14: a u128 is its value
                         # 6.6.5: a multi-word capture IS those words — its value is its
                         # address, the same convention an enclosing inline aggregate has in
                         # its own frame. A single-word capture is a value; load it.
@@ -4720,13 +4891,13 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var idx = FINDVAR(S, noff);
         if (idx >= 0) { if (_cst_read_global(S, idx) == 1) { return 0; } }   # 6.7.2: an f64 / string const
         if (idx < 0) {
+            if (_slit_stray(S, noff) == 1) { return 0; }   # 6.7.14 (D12 (a)): `P { .. }` here
             # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
             # and we return exactly as the sibling success paths above do, so the
             # token stream stays in sync and no cascade is invented. See _syntax_only
             # (src/common/util.cyr) for why report-and-continue was rejected here.
             if (_syntax_only == 1) { EMOVI(S, 0); return 0; }
-            ERR_UNDEF(S, noff, " (missing include or enum?)");   # 6.7.14: once per token
-            _gv_note_blockscoped(S, noff);   # 6.6.6: see there
+            _undef_var_report(S, noff, " (missing include or enum?)");   # 6.7.14: once per token (ERR_UNDEF)
             EMOVI(S, 0); return 0;
         }
         var vt = GVTYPE(S, idx);
@@ -4890,10 +5061,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         }
         # Nothing of this name exists in any scope.
         if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
-        ERR_UNDEF(S, anoff, "");   # 6.7.14: once per token
-        _gv_note_blockscoped(S, anoff);   # 6.6.6: see there
+        _undef_var_report(S, anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
         EMOVI(S, 0); return 0;
-        return 0;
     }
     if (typ == 30) {
         # STRING literal
@@ -4928,8 +5097,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { scgo = 0; }
         }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 11);   # 6.7.14: a miss keeps a `;` / keyword (and see `_sc_arity_warn`)
         # Mach-O ARM target: the aarch64 ESYSXLAT chain translates the
         # BSD SVC whitelist (read, write, open, close, mmap, mprotect,
         # munmap, exit). Non-whitelisted syscalls fall through to svc with
@@ -5831,19 +5999,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # with wrong arity now get the runtime error rather than a
         # compile warning — acceptable tradeoff; the warning was
         # best-effort, not load-bearing.
-        if (sc_num >= 0) { if (_AARCH64_BACKEND == 0) {
-                var expect = _SC_ARITY(sc_num);
-                if (expect >= 0) {
-                    var got = argc - 1;
-                    if (got != expect) {
-                        # The cross-arch number-reuse shapes that are not a mismatch: see
-                        # _sc_arity_skip (out of this fn: the cybs per-fn cap). CHANGELOG [6.6.12]
-                        if (_sc_arity_skip(sc_num, got) == 0) {
-                            WARN(S, "syscall arity mismatch", 22);
-                        }
-                    }
-                }
-            } }
+        _sc_arity_warn(S, sc_num, argc);
         return 0;
     }
     if (typ == 25) {
@@ -5851,7 +6007,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD8(S);
         return 0;
     }
@@ -5860,7 +6016,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD16(S);
         return 0;
     }
@@ -5869,7 +6025,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD32(S);
         return 0;
     }
@@ -5878,7 +6034,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         ELOAD64(S);
         return 0;
     }
@@ -5890,7 +6046,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE8(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 45) {
@@ -5901,7 +6057,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE16(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 46) {
@@ -5912,7 +6068,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE32(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 47) {
@@ -5923,7 +6079,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         _refuse_lossy_pair(S);
         PCMPE(S); EPOPC(S); ESTORE64(S); EXORAA(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     if (typ == 8) { return _deref_read(S); }   # *expr
@@ -6260,7 +6416,7 @@ fn PF64BIN(S, tok): i64 {
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
     PCMPE(S);
     EMIT_F64_BINOP(S, tok - 62);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     return 0;
 }
 # f64 compare ops
@@ -6276,7 +6432,7 @@ fn PF64CMP(S, tok): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     # v5.11.38 path-A: f64 cmp dispatch lives in <backend>/emit.cyr.
     EF64_CMP(S, tok);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     # v6.4.56 D3 — the result is an i64 BOOLEAN, not a float. Without this the
     # builtin leaked its last operand's F64_TYID, mis-routing an outer
     # `f64_lt(..) == 1` through the f64-compare path.
@@ -6450,7 +6606,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_LOOP(S, 3, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_sqrt(dst, src, n)
@@ -6466,7 +6622,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 0, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_abs(dst, src, n)
@@ -6482,7 +6638,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 1, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # f64v_fmadd(dst, a, b, c, n)
@@ -6502,7 +6658,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F64V_FMADD(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_dot(a, b, n) → f64 in rax/x0 (sum of a[i]*b[i])
@@ -6518,7 +6674,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_DOT(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.5 (SIMD Phase 2): f32v_fmadd(dst, a, b, c, n) — dst[i]=a[i]*b[i]+c[i]
@@ -6539,7 +6695,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F32V_FMADD(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.5 (SIMD Phase 2): f32v_dot(a, b, n) → f32 bit pattern in rax (sum of
@@ -6556,7 +6712,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F32V_DOT(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul(dst, a, b, n, w) — packed integer
@@ -6582,7 +6738,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
             if (ivw != 1) { if (ivw != 2) { if (ivw != 4) { if (ivw != 8) { ERR_MSG(S, "iv width must be 1/2/4/8", 24); } } } }
             STI(S, GTI(S) + 1);
             EMIT_IVEC_BINOP(S, ivop, ivw, ivbase);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 0;
         } }
     # v6.4.7 (Phase 3b): iv_dp8(a, b, n) → i32 widening int8 dot in rax (a=u8, b=i8).
@@ -6599,7 +6755,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, dpbase, 2);   # max, never a lowering assignment
         EMIT_IVEC_DP8(S, dpbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.9 (Phase 4 R2): f32v8_fma(dst, a, b, c, n) — 256-bit AVX2 fused multiply-add
@@ -6620,7 +6776,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, fmbase, 4);   # max, never a lowering assignment
         EMIT_F32V8_FMADD(S, fmbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v6.4.9 (Phase 4 R2): f32v8_dot(a, b, n) → f32 bit pattern in rax (sum a[i]*b[i]
@@ -6637,7 +6793,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, d8base, 2);   # max, never a lowering assignment
         EMIT_F32V8_DOT(S, d8base);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_scale(dst, a, scalar, n) — dst[i] = a[i] * scalar
@@ -6655,7 +6811,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_SCALE(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # v5.10.17: f64v_axpy(y, x, alpha, n) — y[i] += alpha * x[i]
@@ -6673,7 +6829,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_AXPY(S, vbase);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # ret2(a, b) — return two values in rax:rdx
@@ -6689,18 +6845,18 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         # rax = b, stack = a → mov rdx, rax; pop rax
         EMOVRDXRAX(S);
         EPOPR(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # Don't consume ; here — PARSE_STMT handles it via expression statement path
         if (r2out == 0) { _mret_land(S); }   # rax:rdx, then the epilogue jump (6.7.7); none outside a fn (6.7.13)
         return 0;
     }
     # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
-    if (ptyp == 99) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ATAN(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 99) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ATAN(S); _expect_step(S, 11); return 0; }
     # rethi() — read rdx from last function call (mov rax, rdx)
     if (ptyp == 98) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         EMOVRA_RDX(S);
         return 0;
     }
@@ -6723,7 +6879,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
         # rax = mask. AND with shifted val.
         EMOVCA(S); EUNSPILL(S); EANDR(S);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 0;
     }
     # bitset(val, offset, width, new) → (val & ~(mask << offset)) | ((new & mask) << offset)
@@ -6749,7 +6905,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); EFLSTORE(S, bsb + 2);          # s2 = width
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bsb + 3);          # s3 = new_val
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # mask = (1 << width) - 1
         EFLLOAD(S, bsb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
@@ -6785,7 +6941,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); EFLSTORE(S, bcb + 1);          # s1 = offset
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); EFLSTORE(S, bcb + 2);          # s2 = width
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         # mask = (1 << width) - 1
         EFLLOAD(S, bcb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
         ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
@@ -6802,6 +6958,139 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
 var _cfv = 0;
 var _cfp = 0;
 var _cfo = 0;
+
+# ⛔ 6.7.14 — THE RUN-TIME FOLD TAKES A CONSTANT NAME ON THE RIGHT (issues/2026-10-08-const-init-redundant-store-and-
+# unfolded-const-operand.md item 2). An arm folded `K op L` (K armed by its factor: `_cfo`, `_cfv`, `_cfp`) only when
+# L was a literal TOKEN, so `C * 2` was one mov and `2 * C` a run-time imul, `1 + C` an add, `2 + C * 3` an add of
+# the folded `C * 3` (x86_64: `mov eax,2; push rax; mov eax,5; pop rcx; imul rcx`). The `* / << >>` arms read their
+# right factor with `_cf_fac_at`, which reads a literal or a NAME the factor loads as an integer constant — a local
+# or top-level integer const, an enum constant bare or qualified, no local, capture or other file's private global
+# in the way — without emitting; the `+ - & | ^` arms read the right TERM with `_cf_term_at`, folded by the `* / <<
+# >>` arms' own rules. Each arm keeps its windows, so a value folds where the same expression with the value
+# written out does; values are unchanged, the code is smaller. (A literal followed by a term operator the old test
+# did not list — `*%`, `*|`, `*?`, `>>>` — keeps its old reading.) CHANGELOG [6.7.14]
+var _cf_v = 0;   # the value _cf_fac_at / _cf_term_at read
+var _cf_e = 0;   # the token after it
+fn _cf_fac(S): i64 { return _cf_fac_at(S, GTI(S)); }
+fn _cf_fac_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 1) { _cf_v = TOKVAL(S, ti); _cf_e = ti + 1; return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 41) { return _cf_qual_at(S, ti); }
+    if (_cf_tail(TOKTYP(S, ti + 1)) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_lc_n > 0) {
+        var lc = _lc_find(S, noff);
+        if (lc >= 0) {
+            var le = _lc_tab + lc * 48;
+            if (L64(le + 24) != 0) { return 0; }   # an f64 / string / bool local const
+            _cf_v = L64(le + 32);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    return _cf_gconst(S, _findvar_core(S, noff), ti, ti + 1);
+}
+# `E.A` at `ti`: the variant's value, as the factor's qualified arm folds it (a variable's `.field` is not).
+fn _cf_qual_at(S, ti): i64 {
+    if (TOKTYP(S, ti + 2) != 2) { return 0; }
+    if (_cf_tail(TOKTYP(S, ti + 3)) == 0) { return 0; }
+    var bnoff = TOKVAL(S, ti);
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, bnoff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    if (_findvar_core(S, bnoff) >= 0) { return 0; }
+    return _cf_gconst(S, _enum_variant_in(S, bnoff, TOKVAL(S, ti + 2)), ti, ti + 3);
+}
+# Global slot `vi` (named at token `ti`, its factor ending before token `e`) as an integer constant.
+fn _cf_gconst(S, vi, ti, e): i64 {
+    if (vi < 0) { return 0; }
+    if (_gvk_name_ok(S, ti) == 0) { return 0; }   # another file's private global: the factor refuses it
+    if (GVTYPE(S, vi) != 0) { return 0; }
+    if (_cst_vkind(S, vi) >= 2) { return 0; }    # an f64 / string / bool const (_cst_read_global)
+    if (GVECP(S, vi) != 1) { return 0; }
+    _cf_v = L64(_vecv_base + vi * 8);
+    _cf_e = e;
+    return 1;
+}
+# 0 = the token after a name makes it more than a value: a call, a field or range, a subscript, type
+# arguments, a literal, a `?`.
+fn _cf_tail(t): i64 {
+    if (t == 10 || t == 41 || t == 28) { return 0; }
+    if (t == 19 || t == 13 || t == 124) { return 0; }
+    return 1;
+}
+# The right operand of `+ - & | ^` (cursor on it, `_cfo` armed): 1 = foldable, `_cf_v` its value, `_cf_e` the token
+# after. A literal not followed by `* / % << >>` is read as before; a literal followed by one, or a name, is the
+# term `_cf_term_at` folds.
+fn _cf_can(S): i64 {
+    if (_cfo != 1) { return 0; }
+    var ti = GTI(S);
+    var t = TOKTYP(S, ti);
+    if (t == 1) {
+        if (_cf_excl(TOKTYP(S, ti + 1)) == 0) {
+            _cf_v = TOKVAL(S, ti);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    } elif (t != 2) { return 0; }
+    return _cf_term_at(S, ti);
+}
+fn _cf_excl(nt): i64 {
+    if (nt == 8 || nt == 9 || nt == 34) { return 1; }
+    if (nt == 38 || nt == 39) { return 1; }
+    return 0;
+}
+# A term at `ti` that PARSE_TERM folds to one value: its first factor armed (0 .. 0xFFFF, as the factor arms it)
+# when an operator follows, each `*` (`*%`), `/`, `<<`, `>>` folded by its arm's rule. 0 at anything else.
+fn _cf_term_at(S, ti): i64 {
+    if (_cf_fac_at(S, ti) == 0) { return 0; }
+    var v = _cf_v;
+    var e = _cf_e;
+    var t = TOKTYP(S, e);
+    if (_cf_termop(t) == 1) {
+        if (v < 0 || v >= 0x10000) { return 0; }
+    }
+    while (_cf_termop(t) == 1) {
+        if (_cf_fac_at(S, e + 1) == 0) { return 0; }
+        e = _cf_e;
+        v = _cf_op(t, v, _cf_v);
+        if (_cf_opok == 0) { return 0; }
+        t = TOKTYP(S, e);
+    }
+    if (t == 34 || t == 152 || t == 124) { return 0; }   # `%`, `>>>`, `?`: never folded
+    if (t == 120 || t == 121) { return 0; }               # `*|`, `*?`: calls
+    _cf_v = v;
+    _cf_e = e;
+    return 1;
+}
+fn _cf_termop(t): i64 {
+    if (t == 8 || t == 119 || t == 9) { return 1; }
+    if (t == 38 || t == 39) { return 1; }
+    return 0;
+}
+# `v op crv` as the arm folds it; `_cf_opok` 0 where the arm emits the operation instead.
+var _cf_opok = 0;
+fn _cf_op(t, v, crv): i64 {
+    _cf_opok = 1;
+    if (t == 8 || t == 119) {
+        if (crv == 0) { return 0; }
+        if (crv == 1) { return v; }
+        if (crv > 0) { if (v * crv >= 0) { return v * crv; } }
+        _cf_opok = 0;
+        return 0;
+    }
+    if (crv > 0) { if (crv < 0x10000) {
+            var r = 0;
+            if (t == 9) { r = v / crv; }
+            elif (t == 38) { r = v << crv; }
+            else { r = v >> crv; }
+            if (r > 0) { if (r < 0x10000) { return r; } }
+        } }
+    _cf_opok = 0;
+    return 0;
+}
 
 # v5.6.7 O2 strength-reduction helper: if the next token is an
 # integer literal whose value is a positive power of two (2, 4, 8,
@@ -6867,7 +7156,7 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
     PCMPE(S);
     _SIMD_RESERVE(S, vbu, 2);   # max, never a lowering assignment
     EMIT_F64V4_UNARY(S, op, vbu);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    _expect_step(S, 11);
     return 1;
 }
 
@@ -6940,42 +7229,42 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
-    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
     # 6.6.13 — f64_le / f64_ge lower through the `<=` / `>=` operator compare (tok 21 / 22),
     # NaN-false on every backend; they were lib/math.cyr calls (lt, then eq). CHANGELOG [6.6.13]
     if (ptyp == 164) { PF64CMP(S, 21); return 1; }
     if (ptyp == 165) { PF64CMP(S, 22); return 1; }
-    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); _expect_step(S, 11); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
     # v6.6.2: f64_sqrt 79 -> 136 (was double-assigned with `object`).
-    if (ptyp == 136) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 136) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
     # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
     # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
     # native fabs via fmov/fabs/fmov (saves 20 B vs the prior
     # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
-    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); _expect_step(S, 11); return 1; }
     # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
-    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
-    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_trunc(x) — roundsd xmm0, xmm0, 3 / frintz (toward zero). 6.6.13, was a lib/math.cyr fn.
-    if (ptyp == 166) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 166) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
-    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
     # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
     # the converted bits in rax (full move/cvt/move sequence lives per-arch).
-    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
+    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   _expect_step(S, 11); return 1; }
+    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); _expect_step(S, 11); return 1; }
+    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); _expect_step(S, 11); return 1; }
     # f64v_add/sub/mul(dst, a, b, n) — SSE2 packed f64 batch operations.
     # v5.10.39 — route through _SIMD_STASH (was bare EFLSTORE pre-fix).
     # The v5.10.35 locname-staleness fix covered f64v_div/sqrt/abs/
@@ -7001,7 +7290,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
             EMIT_F64V_LOOP(S, ptyp - 89, vbase);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.4.3+ (SIMD Phase 1) — f32v_add/sub/mul(dst, a, b, n) — SSE2 packed f32
@@ -7021,7 +7310,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbf, 3);   # max, never a lowering assignment
             EMIT_F32V_LOOP(S, ptyp - 138, vbf);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul(dst, a, b, n) — 256-bit AVX2 packed
@@ -7040,7 +7329,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vbf8, 3);   # max, never a lowering assignment
             EMIT_F32V8_LOOP(S, ptyp - 147, vbf8);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
     # v6.5.24 (ymm widening) — f64v256_add/sub/mul/div(dst, a, b, n): 256-bit AVX2 packed
@@ -7064,7 +7353,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
             PCMPE(S);
             _SIMD_RESERVE(S, vb256, 3);   # max, never a lowering assignment
             EMIT_F64V4_LOOP(S, ptyp - 154, vb256);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            _expect_step(S, 11);
             return 1;
         } }
 
@@ -7089,7 +7378,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
         EMIT_F64V4_FMADD(S, vbf);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 
@@ -7107,7 +7396,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
         EMIT_F64V4_DOT(S, vbd);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 
@@ -7127,7 +7416,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
         PCMPE(S);
         _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
         EMIT_F64V4_SCALE(S, vbs);
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        _expect_step(S, 11);
         return 1;
     }
 
@@ -7272,14 +7561,14 @@ fn _PARSE_TERM_IMPL(S): i64 {
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
-                    if (PEEKT(S) == 1) {
-                        var crv = PEEKV(S);
-                        if (crv == 0) { STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, 0); _cfv = 0; }
-                        elif (crv == 1) { STI(S, GTI(S) + 1); }
+                    if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, 0); _cfv = 0; }
+                        elif (crv == 1) { STI(S, _cf_e); }
                         elif (crv > 0) {
                             var cfr = _cfv * crv;
                             if (cfr >= 0) {
-                                STI(S, GTI(S) + 1);
+                                STI(S, _cf_e);
                                 SCP(S, _cfp);
                                 EMOVI(S, cfr);
                                 _cfv = cfr;
@@ -7331,12 +7620,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
                 else {
-                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                            var crv = PEEKV(S);
+                    if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                            var crv = _cf_v;
                             if (crv > 0) { if (crv < 0x10000) {
                                     var cfr = _cfv / crv;
                                     if (cfr > 0) { if (cfr < 0x10000) {
-                                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                         } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
                                     else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                                 } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
@@ -7351,12 +7640,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 }
                 else { if (typ == 38) {
                         STI(S, GTI(S) + 1);
-                        if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                var crv = PEEKV(S);
+                        if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                var crv = _cf_v;
                                 if (crv > 0) { if (crv < 0x10000) {
                                         var cfr = _cfv << crv;
                                         if (cfr > 0) { if (cfr < 0x10000) {
-                                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                             } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
                                         else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; }
                                     } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
@@ -7366,12 +7655,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     }
                     else { if (typ == 39) {
                             STI(S, GTI(S) + 1);
-                            if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                    var crv = PEEKV(S);
+                            if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                    var crv = _cf_v;
                                     if (crv > 0) { if (crv < 0x10000) {
                                             var cfr = _cfv >> crv;
                                             if (cfr > 0) { if (cfr < 0x10000) {
-                                                    STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                    STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                 } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
                                             else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
                                         } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
@@ -7839,7 +8128,7 @@ fn _refuse_toplevel_op_operand(S, fi, k): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     if (k == 0) { PRSTR(": the left operand of '"); } else { PRSTR(": the right operand of '"); }
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     # 6.7.6: a by-value or untyped parameter receives a struct over 8 B by address too.
     if (_op_star_param(fi, k) == 1) { PRSTR("' is passed by address (a `*` parameter)"); }
     else { PRSTR("' is passed by address (a struct over 8 bytes)"); }
@@ -8064,21 +8353,15 @@ fn _PEXPR_IMPL(S): i64 {
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
             else {
-                # Fold only if right side is a plain literal (not followed by * / % << >>)
-                var add_can_fold = 0;
-                if (_cfo == 1) { if (PEEKT(S) == 1) {
-                        var nt = TOKTYP(S, GTI(S) + 1);
-                        if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                            add_can_fold = 1;
-                                        } } } } }
-                    } }
+                # Fold a constant right term (6.7.14: a name, or a literal's whole term — _cf_can)
+                var add_can_fold = _cf_can(S);
                 if (add_can_fold == 1) {
-                    var crv = PEEKV(S);
-                    if (crv == 0) { STI(S, GTI(S) + 1); }
+                    var crv = _cf_v;
+                    if (crv == 0) { STI(S, _cf_e); }
                     elif (crv > 0) {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
-                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                         } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
                     }
                     else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
@@ -8093,20 +8376,14 @@ fn _PEXPR_IMPL(S): i64 {
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
                 else {
-                    var sub_can_fold = 0;
-                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                            var nt = TOKTYP(S, GTI(S) + 1);
-                            if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                sub_can_fold = 1;
-                                            } } } } }
-                        } }
+                    var sub_can_fold = _cf_can(S);   # 6.7.14
                     if (sub_can_fold == 1) {
-                        var crv = PEEKV(S);
-                        if (crv == 0) { STI(S, GTI(S) + 1); }
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); }
                         elif (crv > 0) {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
-                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                             } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
                         }
                         else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
@@ -8165,19 +8442,13 @@ fn _PEXPR_IMPL(S): i64 {
                             else { if (typ == 27) {
                                     # AMPERSAND — binary AND
                                     STI(S, GTI(S) + 1);
-                                    var and_can_fold = 0;
-                                    if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                            var nt = TOKTYP(S, GTI(S) + 1);
-                                            if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                and_can_fold = 1;
-                                                            } } } } }
-                                        } }
+                                    var and_can_fold = _cf_can(S);   # 6.7.14
                                     if (and_can_fold == 1) {
-                                        var crv = PEEKV(S);
+                                        var crv = _cf_v;
                                         if (crv > 0) { if (crv < 0x10000) {
                                                 var cfr = _cfv & crv;
                                                 if (cfr > 0) { if (cfr < 0x10000) {
-                                                        STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                        STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                     } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
                                                 else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
                                             } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
@@ -8187,19 +8458,13 @@ fn _PEXPR_IMPL(S): i64 {
                                 else { if (typ == 35) {
                                         # PIPE — binary OR
                                         STI(S, GTI(S) + 1);
-                                        var or_can_fold = 0;
-                                        if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                                var nt = TOKTYP(S, GTI(S) + 1);
-                                                if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                    or_can_fold = 1;
-                                                                } } } } }
-                                            } }
+                                        var or_can_fold = _cf_can(S);   # 6.7.14
                                         if (or_can_fold == 1) {
-                                            var crv = PEEKV(S);
+                                            var crv = _cf_v;
                                             if (crv > 0) { if (crv < 0x10000) {
                                                     var cfr = _cfv | crv;
                                                     if (cfr > 0) { if (cfr < 0x10000) {
-                                                            STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                         } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
                                                     else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
                                                 } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
@@ -8209,19 +8474,13 @@ fn _PEXPR_IMPL(S): i64 {
                                     else { if (typ == 36) {
                                             # CARET — binary XOR
                                             STI(S, GTI(S) + 1);
-                                            var xor_can_fold = 0;
-                                            if (_cfo == 1) { if (PEEKT(S) == 1) {
-                                                    var nt = TOKTYP(S, GTI(S) + 1);
-                                                    if (nt != 8) { if (nt != 9) { if (nt != 34) { if (nt != 38) { if (nt != 39) {
-                                                                        xor_can_fold = 1;
-                                                                    } } } } }
-                                                } }
+                                            var xor_can_fold = _cf_can(S);   # 6.7.14
                                             if (xor_can_fold == 1) {
-                                                var crv = PEEKV(S);
+                                                var crv = _cf_v;
                                                 if (crv > 0) { if (crv < 0x10000) {
                                                         var cfr = _cfv ^ crv;
                                                         if (cfr > 0) { if (cfr < 0x10000) {
-                                                                STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
                                                             } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
                                                         else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
                                                     } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }

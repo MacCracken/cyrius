@@ -25,9 +25,11 @@
 #      forward; C15 a call through a fn pointer short of a defaulted fn's parameters; R23 a fn
 #      without defaults keeps the v6.5.1 text; R24 (F2) the forward-call issue's verbatim repros
 #      give exactly the errors the same calls get below their callees; R24c a right-count forward
-#      call to a fn with a `u128` / `*u128` / `*fn` parameter builds (pass 1 counts a type token
+#      call to a fn with a `*u128` / `*fn` parameter builds (pass 1 counts a type token
 #      that is not a name); R24d a forward call to such a fn keeps its `: f64` / struct return;
-#      U1-U5 a default after such a parameter: filled, named, D1, D3
+#      U1-U5 a default after such a parameter: filled, named, D1, D3. (6.7.14, D10 (a): a bare
+#      `u128` parameter is refused by name, so those rows take `*u128`; R24e / U6 keep the bare
+#      form — the one refusal, no arity or default error after it.)
 #   T  objdump: T1 a full-arity self tail call to a defaulted fn keeps its `jmp`; T2 a `return f(1)`
 #      that fills is a `call` (the tail arm never fills)
 #   E  E1 a default is a top-level constant (a caller's local const of the same name never reaches
@@ -373,26 +375,31 @@ r24() {   # <label> <repro> <expected error lines, '|'-separated>
     else ok "$1: refused exactly as the same calls below their callees are"; fi
 }
 [ -f "$R24D/2026-10-09-forward-call-arity-unchecked.cyr" ] || bad "R24: the issue's repro is missing"
-r24 "R24 (F2): forward calls — plain, too few, a method, a tail call" 2026-10-09-forward-call-arity-unchecked.cyr "error:<source>:12: 'g' expects 1 argument, got 2|error:<source>:16: 'g' expects 1 argument, got 2|error:<source>:17: 'h' expects 3 arguments, got 2|error:<source>:18: 'P_m' expects 2 arguments, got 3|"
+r24 "R24 (F2): forward calls — plain, too few, a method, a tail call" 2026-10-09-forward-call-arity-unchecked.cyr "error:<source>:12: 'g' expects 1 argument, got 2|error:<source>:16: 'g' expects 1 argument, got 2|error:<source>:17: 'h' expects 3 arguments, got 2|error:<source>:18: 'P.m' expects 1 argument, got 2|"
 r24 "R24b (F2): a forward call to a fn inside a top-level block" 2026-10-09-forward-call-arity-unchecked-toplevel-block.cyr "error:<source>:6: 'g' expects 1 argument, got 2|"
 # R24c: pass 1 counts a parameter whose type token is not a name (`u128`, `*u128`, the `fn` of
 # `*fn`): it stopped there, so a RIGHT-count forward call was refused ("'g' expects 1 argument").
-exits r24u 3 "R24c: a forward call with the right count to fn g(a: u128, b, c) builds and runs" 'fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: u128, b, c): i64 { return c; }\nsyscall(60, main());\n'
+# 6.7.14 (D10 (a), the user's decision, 2026-10-16): a bare `u128` parameter is refused by name, so
+# the rows that ran one take `*u128` (its first type token is no name either); R24e / U6 below keep
+# the bare form: refused once, with no arity or default error after it.
+exits r24u 3 "R24c: a forward call with the right count to fn g(a: *u128, b, c) builds and runs" 'fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: *u128, b, c): i64 { return c; }\nsyscall(60, main());\n'
 exits r24p 3 "R24c: ... to fn g(a: u64, b: *u128, c)" 'fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: u64, b: *u128, c): i64 { return c; }\nsyscall(60, main());\n'
 exits r24f 3 "R24c: ... to fn g(a: *fn, b, c), in tail position" 'fn main(): i64 { return g(1, 2, 3); }\nfn g(a: *fn, b, c): i64 { return c; }\nsyscall(60, main());\n'
-refused r24w "'g' expects 3 arguments, got 2" "R24c: ... and a wrong count to it is refused with the whole count" "fn main(): i64 { var x = g(1, 2); return x; }\nfn g(a: u128, b, c): i64 { return c; }\nsyscall(60, main());\n" "1"
+refused r24w "'g' expects 3 arguments, got 2" "R24c: ... and a wrong count to it is refused with the whole count" "fn main(): i64 { var x = g(1, 2); return x; }\nfn g(a: *u128, b, c): i64 { return c; }\nsyscall(60, main());\n" "1"
 # R24d: the same stop left pass 1's return-type scan on the parameter, so a forward call to such a
 # fn lost its `: f64` (exit 0) and its >16 B struct return (SIGSEGV) before 6.7.7.
-exits r24r 6 "R24d: a forward call to fn g(a: u128, b): f64, in f64 arithmetic" 'fn main(): i64 { var r: f64 = g(1, 3) * 2.0; return f64_to(r); }\nfn g(a: u128, b): f64 { return f64_from(b); }\nsyscall(60, main());\n'
-exits r24s 23 "R24d: ... to fn mk(a: u128, k): Big (a retptr struct return)" 'struct Big { a; b; c; }\nfn main(): i64 { var b: Big = mk(1, 2); return b.a * 100 + b.b * 10 + b.c; }\nfn mk(a: u128, k): Big { var r = Big { 1, k, 3 }; return r; }\nsyscall(60, main() - 100);\n'
+exits r24r 6 "R24d: a forward call to fn g(a: *u128, b): f64, in f64 arithmetic" 'fn main(): i64 { var r: f64 = g(1, 3) * 2.0; return f64_to(r); }\nfn g(a: *u128, b): f64 { return f64_from(b); }\nsyscall(60, main());\n'
+exits r24s 23 "R24d: ... to fn mk(a: *u128, k): Big (a retptr struct return)" 'struct Big { a; b; c; }\nfn main(): i64 { var b: Big = mk(1, 2); return b.a * 100 + b.b * 10 + b.c; }\nfn mk(a: *u128, k): Big { var r = Big { 1, k, 3 }; return r; }\nsyscall(60, main() - 100);\n'
+refused r24e "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "R24e (6.7.14, D10 (a)): fn g(a: u128, b, c), called forward with the right count: the parameter refused, no arity error" "fn main(): i64 { var x = g(1, 2, 3); return x; }\nfn g(a: u128, b, c): i64 { return c; }\nsyscall(60, main());\n" "2:9"
 # U: a default after a parameter whose type token is not a name. Pass 1 counted the list short, so
 # the default was never recorded, evaluated, refused or filled — while pass 2's count let the
 # short call through: the callee read an unset register (exit 0 / 2, silently).
-exits u1 7 "U1: a default after a u128 parameter is filled" 'fn g(a: u128, b = 7): i64 { return b; }\nfn main(): i64 { var r = g(5); return r; }\nsyscall(60, main());\n'
+exits u1 7 "U1: a default after a *u128 parameter is filled" 'fn g(a: *u128, b = 7): i64 { return b; }\nfn main(): i64 { var r = g(5); return r; }\nsyscall(60, main());\n'
 exits u2 7 "U2: ... after a *fn parameter (a stale argument register in the callee)" 'fn h(x, y, z): i64 { return 99; }\nfn g(a: *fn, b = 7): i64 { return b; }\nfn main(): i64 { h(1, 2, 3); var r = g(5); return r; }\nsyscall(60, main());\n'
-exits u3 71 "U3: ... a named call after a u128 parameter" 'fn g(a: u128, b = 7, c = 9): i64 { return b * 10 + c; }\nfn main(): i64 { var r = g(5, c: 1); return r; }\nsyscall(60, main());\n'
+exits u3 71 "U3: ... a named call after a *u128 parameter" 'fn g(a: *u128, b = 7, c = 9): i64 { return b * 10 + c; }\nfn main(): i64 { var r = g(5, c: 1); return r; }\nsyscall(60, main());\n'
 exits u3t 79 "U3b: ... after a *u128 parameter, filled in tail position" 'fn g(a: *u128, b = 7, c = 9): i64 { return b * 10 + c; }\nfn t(): i64 { return g(0); }\nsyscall(60, t());\n'
-refused u4 "parameter 'c' of 'g' needs a default: it follows one that has a default (defaults are trailing)" "U4: D1 after a u128 parameter" "fn g(a: u128, b = 1, c): i64 { return c; }$E" "1:22"
+refused u4 "parameter 'c' of 'g' needs a default: it follows one that has a default (defaults are trailing)" "U4: D1 after a *u128 parameter" "fn g(a: *u128, b = 1, c): i64 { return c; }$E" "1:23"
+refused u6 "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U6 (6.7.14, D10 (a)): a default after a refused u128 parameter: one error" "fn g(a: u128, b = 7): i64 { return b; }\nfn main(): i64 { var r = g(5); return r; }\nsyscall(60, main());\n" "1:9"
 refused u5 "unknown name 'nope' in a const context" "U5: D3 after a *fn parameter" "fn g(a: *fn, b = 1 + nope): i64 { return b; }$E" "1:22"
 
 # ── E: scope, generics, routing ──────────────────────────────────────────────────────────────

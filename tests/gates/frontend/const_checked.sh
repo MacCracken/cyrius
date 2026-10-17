@@ -27,7 +27,10 @@
 #      local const, a global and a local array size, an enum value, `#assert`, a case label, and the
 #      named-argument form — is refused once, at the call, as a run-time call is; a same-file call
 #      and a `public const fn` of a private file build; a `#deprecated` const fn warns once per call
-#      site in every const context (V2w). All of them built silently before
+#      site in every const context (V2w). All of them built silently before; (6.7.14) V3 the same call
+#      in an arm the evaluator SKIPS — `1 || pk()`, `0 && pk() == 3`, an untaken else / elif arm, a
+#      local const, an #inline body, an arm re-walked beside a forward const — refused once at the call,
+#      and a #deprecated one warns once (V3w), as the run-time `var X = 1 || pk();` (V3r) always was
 #   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
 #      heavy consts each within its OWN step budget; (6.7.7) an uncalled const fn whose parameter type
 #      holds a comma inside `<..>` builds (the definition check's two parameter counts agree)
@@ -37,6 +40,29 @@
 #      `pick(0, 1, 7)` is refused (it bound a phantom parameter named `i64`; the user's decision (a),
 #      2026-10-13); `*Pair<..>`, the generic parameter last, `Vec<Vec<i64>>` (`>>`), `Pair<i64,
 #      Vec<Vec<i64>>>` (`>>>`), a default holding `<`, the default fill and the named form
+#   S  (6.7.14) a refused const does not hold the cascade latch: the filed repro and its table — the
+#      end-of-pass-1 sweep's next const, a default after a bad const, a const after a bad enum value or
+#      global array size, a local const in pass 2 after a pass-1 refusal (it was swallowed, or the
+#      statement after it was, so its name read as a FALSE "undefined variable 'L'") — each prints its
+#      own error once; two consts not ending at `;`; the two controls that always reported both;
+#      a forward if-expression arm's mismatch re-checked at the sweep's end holds no latch either
+#   R  (6.7.14) a local const in an `#inline` / generic body ends with its replay: the issue's table —
+#      two calls in one expression / two statements, one instance twice, two instances, beside a
+#      caller const — builds with its value (each refused "'L' is already declared in this scope"
+#      before), a nested-block call and calls in two fns as before; the replay's const stays invisible
+#      after the call (R10); the nine values again on aarch64 under qemu (R-a64)
+#   B  (6.7.14) a statement or a for step naming a const or an enum constant without `=` / `op =` — `N;`,
+#      `N + 1;`, `N == 5;`, `GREEN;`, `Color.GREEN;`, a local const `L;`, a step `N` — is "expected '='", once
+#      (it was "cannot assign to const 'N'"); B9 the variable it now matches, B10 / B11 a real assignment's
+#      lvalue refusal kept
+#   F  (6.7.14) a field access in a const fn, or on a const, is refused once by its own rule: a field store /
+#      read on a const fn's local or parameter ("a field is not in a const fn: ...", at the `.`; the run-time
+#      compile of the refused body no longer adds "no struct type in scope for 'a'"), a store / read on a
+#      top-level or local const ("cannot assign to a field of const 'C'" / "const 'C' has no fields - a
+#      const has no storage"; they blamed a missing include, and a local const added "undefined variable
+#      'L'"), and `C.x` in a const context (a const's value, a const fn body, an array size, a local
+#      const's value). The two filed repros verbatim (F3, F8). Controls: a local const named like a global
+#      struct leaves `L.x` the global's field (F14), a struct local beside a const (F15)
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -63,6 +89,26 @@
 # name never bound) -> LC1, LC2, LC4, LC5, LC5n RED (the "undefined variable 'k'" line is back);
 # `_cst_pre_at` without its `: T =` arm -> LC3, LC5t RED (each read of K above and below is a second
 # error).
+# 6.7.14 (run 2026-10-16): the slot-open compiler -> S0-S9 RED (one error each where two or three are
+# due; S6 and S8 a false "undefined variable 'L'") and S14 (two identical lines); `_ce_top_expr` without
+# its latch save / restore -> S0-S5, S10 RED (`_pd_eval`'s own `pw` rule is gone); keeping the restore
+# but not clearing -> S3, S4 RED; `_tl_pass1` without its `_panic = 0` -> S8 RED; `_cst_semi_refuse`
+# latching -> S9 RED; `_ce_said` never deduping -> LC4, S12-S14 RED (each token printed twice).
+# `_ce_site` back to returning in skip mode -> V3a-V3g RED (built), V3w / V3w2 RED (no warning).
+# `_ce_xpend_one` without its latch save / restore -> S15-S17 RED (the second error swallowed; the
+# slot-open compiler the same); restoring without clearing -> S17 RED. PARSE_FNCALL's replay ending
+# with a bare `SSDEP` (no `_inl_scope_end`) -> R1, R2, R5-R7, R9 RED (refused, as on the slot-open
+# compiler; the aarch64 leg is built from the tree's src/, so a mutant there reddens R-a64 the same).
+# B12 / B13 (run 2026-10-16): the compiler before the repair (753a8e92) -> B12, B13 RED (3 of 5, 3 of 4: every
+# other statement lost); `_cst_skip_sync` without its `_pair_sync_ti` -> B12, B13 RED.
+# B (run 2026-10-16): the compiler before the bite (abeb7839) -> B0-B8 RED ("cannot assign to ..."; B6 too);
+# `_asg_lvalue_at` without its `_asg_pair_at` test (always the refusal) -> B0-B3, B5, B6 RED; `_asg_lvalue_at`
+# falling through to the statement's own `expected '='` (no report, no step-over) -> B6 RED (a second error,
+# "undefined variable 'L'"); `_enum_qual_store_refused` without its `_asg_pair_at` test -> B4, B7, B8 RED.
+# F (run 2026-10-16): the compiler before the bite (0095e161) -> F1-F13 RED (F14 / F15 green); `_ce_fld_refused`
+# answering 0 -> F1-F3, F9-F13 RED; `_cst_fld_at` answering 0 -> F4-F8 RED; `_ce_fld_said` never standing down
+# -> F2, F3 RED (the run-time body's "no struct type in scope for 'a'"); the read refused without
+# `_pair_sync_ti` -> F8 RED (the statement after `var v = C.x;` skipped: "undefined variable 'L'").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -154,6 +200,16 @@ vrefused v2e "2:14: 'pk" "V2e: an enum value" 'enum E { A = pk() }\nsyscall(60, 
 vrefused v2f "2:9: 'pk" "V2f: #assert" '#assert pk() == 3, "x";\nsyscall(60, 1);\n'
 vrefused v2g "2:34: 'pk" "V2g: a case label" 'fn f(x): i64 { switch (x) { case pk(): return 5; default: return 0; } return 1; }\nsyscall(60, f(3));\n'
 vrefused v2n "2:11: 'pk2" "V2n: the named-argument form" 'const X = pk2(a: 2);\nsyscall(60, X);\n'
+# V3 (6.7.14) — ... and in an arm the evaluator SKIPS: a short-circuit's right operand, an untaken
+# if-expression arm (issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md)
+vrefused v3a "2:16: 'pk" "V3a: const X = 1 || pk(); (built, exit 1)" 'const X = 1 || pk();\nsyscall(60, X);\n'
+vrefused v3b "2:16: 'pk" "V3b: const X = 0 && pk() == 3; (built, exit 0)" 'const X = 0 && pk() == 3;\nsyscall(60, X);\n'
+vrefused v3c "2:36: 'pk" "V3c: an untaken else arm (built, exit 3)" 'const X = if (1 == 1) { 3 } else { pk() };\nsyscall(60, X);\n'
+vrefused v3d "2:45: 'pk" "V3d: an untaken elif arm" 'const X = if (1 == 1) { 3 } elif (2 == 2) { pk() } else { 4 };\nsyscall(60, X);\n'
+vrefused v3e "2:33: 'pk" "V3e: a local const's short-circuit" 'fn main(): i64 { const L = 1 || pk(); return L; }\nsyscall(60, main());\n'
+vrefused v3f "3:30: 'pk" "V3f: in an #inline body, its definition and its replay" '#inline\nfn w(): i64 { const L = 1 || pk(); return L; }\nfn main(): i64 { return w(); }\nsyscall(60, main());\n'
+vrefused v3g "2:36: 'pk" "V3g: an untaken arm beside a forward const (re-walked once every const is known)" 'const X = if (1 == 1) { B } else { pk() };\nconst B = 4;\nsyscall(60, X);\n'
+vrefused v3r "2:17: 'pk" "V3r: (control) the run-time var X = 1 || pk();" 'var X = 1 || pk();\nsyscall(60, X);\n'
 printf 'include "priv.cyr"\nconst X = pp();\nsyscall(60, X);\n' > "$T/v2/v2p.cyr"
 rc=0; ( cd "$T/v2" && timeout 60 "$CC" < v2p.cyr > v2p.bin 2> v2p.err ) || rc=$?
 if [ "$rc" -ne 0 ]; then bad "V2p: a public const fn of a private file: rc $rc: $(grep '^error' "$T/v2/v2p.err" | head -1)"
@@ -168,6 +224,12 @@ w=$(grep -c "^warning:<source>:3:11: 'dk' is deprecated: old" "$T/v2w.err"); a=$
 exits v2w2 6 "V2w2: a #deprecated const fn in all seven const contexts" "${DK}const X = dk();\nvar g: i64[dk()];\nenum E { A = dk() }\n#assert dk() == 6, \"x\";\nfn f(v): i64 { const L = dk(); var a: i64[dk()]; switch (v) { case dk(): return L; default: return 0; } return 1; }\nsyscall(60, f(A) + X - 6);\n"
 w=$(grep -c "' is deprecated: old" "$T/v2w2.err"); u=$(grep "' is deprecated: old" "$T/v2w2.err" | sort | uniq -d | wc -l)
 [ "$w" -eq 7 ] && [ "$u" -eq 0 ] && ok "V2w2: ... seven warnings, one per call site" || bad "V2w2: $w deprecation warnings ($u repeated), want 7 distinct"
+exits v3w 1 "V3w: a #deprecated const fn in a short-circuit's skipped operand" "${DK}const X = 1 || dk();\nsyscall(60, X);\n"
+w=$(grep -c "^warning:<source>:3:16: 'dk' is deprecated: old" "$T/v3w.err"); a=$(grep -c "deprecated" "$T/v3w.err")
+[ "$w" -eq 1 ] && [ "$a" -eq 1 ] && ok "V3w: ... warned once, at the call (it was silent)" || bad "V3w: $a deprecation warnings, $w at 3:16 (want 1 / 1)"
+exits v3w2 3 "V3w2: ... in an untaken arm beside a forward const (no second warning from the re-walk)" "${DK}const X = if (1 == 1) { 3 } else { B + dk() };\nconst B = 4;\nsyscall(60, X);\n"
+w=$(grep -c "^warning:<source>:3:40: 'dk' is deprecated: old" "$T/v3w2.err"); a=$(grep -c "deprecated" "$T/v3w2.err")
+[ "$w" -eq 1 ] && [ "$a" -eq 1 ] && ok "V3w2: ... warned once" || bad "V3w2: $a deprecation warnings, $w at 3:40 (want 1 / 1)"
 # C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
 exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
 # C3 (6.7.7) — the definition check's two parameter counts agree, so an uncalled const fn whose
@@ -204,7 +266,161 @@ refusedn lc5t 2 "LC5t: the top-level form, read above and below" 'fn f(): i64 { 
 refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): i64 { const k: i64 = 3; var y = nope; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:45: undefined variable 'nope'"
 exits lc6 3 "LC6: the unannotated local const, unchanged" 'fn f(): i64 { const k = 3; return k; }\nsyscall(60, f());\n'
 exits lc6t 7 "LC6t: the unannotated top-level const read above and below, unchanged" 'fn f(): i64 { return K; }\nconst K = 3;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n'
+# S (6.7.14) — a refused const does not hold the cascade latch: each evaluation prints its own error,
+# and pass 2 starts unlatched (issues/2026-10-09-const-sweep-swallows-later-const-errors.md's table)
+cp "$ROOT/docs/development/issues/repros/2026-10-09-const-sweep-swallows-later-const-errors.cyr" "$T/s0.cyr"
+build s0
+n=$(grep -c '^error' "$T/s0.err")
+if [ "$rc" -eq 0 ]; then bad "S0: the filed repro BUILT"
+elif [ "$n" -ne 3 ] || ! grep -qF "3:11: unknown name 'xx'" "$T/s0.err" || ! grep -qF "4:11: unknown name 'yy'" "$T/s0.err" || ! grep -qF "5:24: undefined variable 'zz'" "$T/s0.err"; then
+    bad "S0: the filed repro: $n error lines (want xx 3:11, yy 4:11, zz 5:24): $(grep '^error' "$T/s0.err" | tr '\n' '|')"
+else ok "S0: the filed repro: xx, yy and zz, once each"; fi
+CU="unknown name"
+refusedn s1 3 "S1: three bad consts" 'const A = xx;\nconst B = yy;\nconst D = ww;\nsyscall(60, 0);\n' "1:11: $CU 'xx'" "2:11: $CU 'yy'" "3:11: $CU 'ww'"
+refusedn s2 2 "S2: two divisions by zero" 'const A = 10 / 0;\nconst B = 1 / 0;\nsyscall(60, 0);\n' "1:17: division by zero" "2:16: division by zero"
+refusedn s3 2 "S3: a bad enum value, then a bad const" 'enum E { Q = yy }\nconst A = xx;\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:11: $CU 'xx'"
+refusedn s4 2 "S4: a bad global array size, then a bad const" 'var g: i64[yy];\nconst A = xx;\nsyscall(60, 0);\n' "1:12: $CU 'yy'" "2:11: $CU 'xx'"
+refusedn s5 2 "S5: a bad const, then a bad default (no 'expects 1 argument' cascade)" 'const A = xx;\nfn g(a = yy): i64 { return a; }\nsyscall(60, g());\n' "1:11: $CU 'xx'" "2:10: $CU 'yy'"
+refusedn s6 2 "S6: a bad const, then a bad local const after a var (no false undefined 'L')" 'const A = xx;\nfn main(): i64 { var q = 1; const L = yy; return L + q; }\nsyscall(60, main());\n' "1:11: $CU 'xx'" "2:39: $CU 'yy'"
+refusedn s7 2 "S7: a bad const, then a bad local const" 'const A = xx;\nfn main(): i64 { const L = yy; return L; }\nsyscall(60, main());\n' "1:11: $CU 'xx'" "2:28: $CU 'yy'"
+refusedn s8 2 "S8: a bad enum value, then a bad local const after a var (no false undefined 'L')" 'enum E { Q = yy }\nfn main(): i64 { var q = 1; const L = ww; return L + q; }\nsyscall(60, main());\n' "1:14: $CU 'yy'" "2:39: $CU 'ww'"
+refusedn s9 2 "S9: two consts that do not end at their ';'" 'const A = 1 2;\nconst B = 3 4;\nsyscall(60, 0);\n' "1:13: expected ';' after a const's value" "2:13: expected ';' after a const's value"
+refusedn s10 2 "S10: (control) two bad defaults" 'fn g(a = yy, b = ww): i64 { return a; }\nsyscall(60, g());\n' "1:10: $CU 'yy'" "1:18: $CU 'ww'"
+refusedn s11 2 "S11: (control) a bad local const in each of two fns" 'fn f(): i64 { const L = yy; return L; }\nfn h(): i64 { const M = ww; return M; }\nsyscall(60, f() + h());\n' "1:25: $CU 'yy'" "2:25: $CU 'ww'"
+# ... nor does the re-walk of an if-expression arm that named a forward const (`_ce_xpend_one`): its
+# mismatch held the latch past the sweep (found beside the filed table, 6.7.14)
+XM="if expression branches differ in type"
+refusedn s15 2 "S15: two consts whose forward arms mismatch" 'const X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nconst Y = if (1 == 1) { 3 } else { C };\nconst C = 1.5;\nsyscall(60, 0);\n' "1:36: $XM: a string here" "3:36: $XM: an f64 here"
+refusedn s16 2 "S16: a forward arm's mismatch, then a default that is not one expression" 'const X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nfn g(a = 1 2): i64 { return a; }\nsyscall(60, g());\n' "1:36: $XM" "3:12: a parameter default is one constant expression"
+refusedn s17 2 "S17: a bad enum value, then a forward arm's mismatch" 'enum E { Q = yy }\nconst X = if (1 == 1) { 3 } else { B };\nconst B = "s";\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:36: $XM"
+# ... and a const fn body that a const runs at the end of pass 1 and pass 2 checks at its definition
+# is reported once per token (`_ce_said`), not once per walk (S12-S14; LC4 above is the annotation's)
+refusedn s12 1 "S12: a global read in a const fn body a const runs" 'var g = 1;\nconst fn h(x) { return g; }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'g' is a variable"
+refusedn s13 1 "S13: a builtin in a const fn body a const runs" 'const fn cf(x) { return load64(x); }\nconst Z = cf(0);\nsyscall(60, Z);\n' "1:25: not a compile-time expression"
+refusedn s14 1 "S14: an ordinary fn's call in a const fn body a const runs (twice before 6.7.14)" 'fn hh(): i64 { return 1; }\nconst fn h(x) { return hh(); }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'hh' is not a \`const fn\`"
+# R (6.7.14) — a local const in an `#inline` / generic body ends with its replay: the second call in
+# one scope was refused "'L' is already declared in this scope"
+# (issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md's table)
+IW='#inline\nfn w(): i64 { const L = 3; return L; }\n'
+GG='fn gg<T>(x: T): i64 { const L = 3; return L; }\n'
+R1="${IW}fn main(): i64 { return w() + w(); }\nsyscall(60, main());\n"
+R2="${IW}fn main(): i64 { var a = w(); var b = w(); return a + b; }\nsyscall(60, main());\n"
+R3="${IW}fn main(): i64 { var a = w(); if (a == 3) { a = a + w(); } return a; }\nsyscall(60, main());\n"
+R4="${IW}fn main(): i64 { var a = w(); return a; }\nsyscall(60, main());\n"
+R5="${GG}fn main(): i64 { return gg(1) + gg(2); }\nsyscall(60, main());\n"
+R6="${GG}fn main(): i64 { var a: i32 = 2; return gg(1) + gg(a); }\nsyscall(60, main());\n"
+R7="${GG}fn main(): i64 { var a: i32 = 2; var r = gg(a); var s = gg(a); return r + s; }\nsyscall(60, main());\n"
+R8="${GG}fn f(): i64 { return gg(1); }\nfn main(): i64 { return f() + gg(2); }\nsyscall(60, main());\n"
+R9="${IW}fn main(): i64 { const L = 10; var a = w(); var b = w(); return a + b + L; }\nsyscall(60, main());\n"
+exits r1 6 "R1: #inline w() + w() (refused 2:21)" "$R1"
+exits r2 6 "R2: #inline, var a = w(); var b = w(); (refused 2:21)" "$R2"
+exits r3 6 "R3: #inline, the second call in a nested block" "$R3"
+exits r4 3 "R4: #inline, one call" "$R4"
+exits r5 6 "R5: gg(1) + gg(2), one instance twice (refused 1:29)" "$R5"
+exits r6 6 "R6: gg(1) + gg(a: i32), two instances (refused 1:29)" "$R6"
+exits r7 6 "R7: var r = gg(a); var s = gg(a); (refused 1:29)" "$R7"
+exits r8 6 "R8: the generic calls in two fns" "$R8"
+exits r9 16 "R9: beside a caller const L (refused 2:21)" "$R9"
+refused r10 "undefined variable 'L'" "R10: a replay's const stays invisible after the call (w(); return L;)" "${IW}fn main(): i64 { w(); return L; }\nsyscall(60, main());\n"
+# ... and the same rows on aarch64 (qemu): the replay is the frontend's, the values the backend's
+skips=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/xa64" 2> /dev/null && chmod +x "$T/xa64"; then
+        for row in "r1 6 $R1" "r2 6 $R2" "r3 6 $R3" "r4 3 $R4" "r5 6 $R5" "r6 6 $R6" "r7 6 $R7" "r8 6 $R8" "r9 16 $R9"; do
+            nm=${row%% *}; rest=${row#* }; want=${rest%% *}; src=${rest#* }
+            printf '%b' "$src" > "$T/${nm}a.cyr"
+            rc=0; timeout 60 "$T/xa64" < "$T/${nm}a.cyr" > "$T/${nm}a.bin" 2> "$T/${nm}a.err" || rc=$?
+            if [ "$rc" -ne 0 ]; then bad "R-a64 $nm: rc $rc: $(grep '^error' "$T/${nm}a.err" | head -1)"; continue; fi
+            chmod +x "$T/${nm}a.bin"; got=0; timeout 60 qemu-aarch64 "$T/${nm}a.bin" || got=$?
+            if [ "$got" -eq "$want" ]; then ok "R-a64 $nm: exit $got (qemu-aarch64)"; else bad "R-a64 $nm: exit $got, want $want"; fi
+        done
+    else bad "R-a64: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP R-a64: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
+# F (6.7.14) — a field access in a const fn, or on a const, names its own refusal, once
+# (issues/2026-10-08-const-field-access-diagnostics-misname-refusal.md). The filed repros verbatim (F3, F8).
+refusedf() {   # <name> <want error lines> <what> <fragment>... : $T/<name>.cyr already written
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    n=$(grep -c '^error' "$T/$nm.err")
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$n" -ne "$want" ]; then bad "$what: $n error lines (want $want): $(grep '^error' "$T/$nm.err" | head -4 | tr '\n' '|')"; return; fi
+    for fr in "$@"; do grep -qF "$fr" "$T/$nm.err" || { bad "$what: no \"$fr\": $(grep '^error' "$T/$nm.err" | tr '\n' '|')"; return; }; done
+    ok "$what: refused, $want error line(s), each its own"
+}
+FC="a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)"
+FS="a const has no storage"
+FM='fn main() { return 0; }\nvar r = main();\n'
+refusedn f1 1 "F1: a field store in a const fn (was \"expected ';', got '.'\")" "const fn f(n) {\n    var a = n;\n    a.x = n;\n    return a;\n}\n$FM" "3:6: $FC"
+refusedn f2 1 "F2: a field read in a const fn (+ the run-time body's \"no struct type in scope for 'a'\")" "const fn f(n) {\n    var a = n;\n    var b = a.x;\n    return b;\n}\n$FM" "3:14: $FC"
+cat > "$T/f3.cyr" <<'EOF'
+# 1 / 2 — const fn body
+const fn f(n) {
+    var a = n;
+    a.x = n;          # 1: expected ';', got '.'
+    var b = a.x;      # 2: expected ';', got '.'  + no struct type in scope for 'a'
+    return b;
+}
+EOF
+refusedf f3 1 "F3: the filed repro 1 / 2, verbatim (the check stops at its first refusal; the body's run-time field errors stand down)" "4:6: $FC"
+refusedn f4 1 "F4: C.x = 1 on a top-level const (was \"no struct type in scope for 'C'\")" "struct P { x; y; }\nconst C = 5;\nfn main() {\n    C.x = 1;\n    return 0;\n}\nvar r = main();\n" "4:6: cannot assign to a field of const 'C' - $FS"
+refusedn f5 1 "F5: var v = C.x; on a top-level const" "struct P { x; y; }\nconst C = 5;\nfn main() {\n    var v = C.x;\n    return v;\n}\nvar r = main();\n" "4:14: const 'C' has no fields - $FS"
+refusedn f6 1 "F6: L.x = 1 on a local const (was \"undefined variable 'L'\" + \"no struct type in scope for 'L'\")" "struct P { x; y; }\nfn main() {\n    const L = 5;\n    L.x = 1;\n    return 0;\n}\nvar r = main();\n" "4:6: cannot assign to a field of const 'L' - $FS"
+refusedn f7 1 "F7: var v = L.x; on a local const" "struct P { x; y; }\nfn main() {\n    const L = 5;\n    var v = L.x;\n    return v;\n}\nvar r = main();\n" "4:14: const 'L' has no fields - $FS"
+cat > "$T/f8.cyr" <<'EOF'
+# 3 / 4 — const receivers
+struct P { x; y; }
+const C = 5;
+fn main() {
+    C.x = 1;          # 3: no struct type in scope for 'C'; a '.field' assignment needs ...
+    var v = C.x;      # 3: no struct type in scope for 'C'; a '.field' access needs ...
+    const L = 5;
+    L.x = 1;          # 4: undefined variable 'L'  +  no struct type in scope for 'L'
+    return v;
+}
+var r = main();
+EOF
+refusedf f8 3 "F8: the filed repro 3 / 4, verbatim (the read is refused in sync: the const L after it is still declared)" "5:6: cannot assign to a field of const 'C' - $FS" "6:14: const 'C' has no fields - $FS" "8:6: cannot assign to a field of const 'L' - $FS"
+refusedn f9 1 "F9: a const context, const K = C.x; (was \"expected ';' after a const's value\")" "const C = 5;\nconst K = C.x;\nsyscall(60, K);\n" "2:12: const 'C' has no fields - $FS"
+refusedn f10 1 "F10: C.x in a const fn body" "const C = 5;\nconst fn f(n) {\n    return C.x;\n}\n$FM" "3:13: const 'C' has no fields - $FS"
+refusedn f11 1 "F11: an array size, i64[C.x] (was \"expected ']', got '.'\")" "struct P { x; }\nconst C = 5;\nfn main() {\n    var a: i64[C.x];\n    return 0;\n}\nvar r = main();\n" "4:17: const 'C' has no fields - $FS"
+refusedn f12 1 "F12: a const fn's parameter, p.x" "const fn f(p) {\n    return p.x;\n}\n$FM" "2:13: $FC"
+refusedn f13 1 "F13: a local const in a local const's value, const M = L.x;" "fn main() {\n    const L = 5;\n    const M = L.x;\n    return M;\n}\nvar r = main();\n" "3:16: const 'L' has no fields - $FS"
+exits f14 12 "F14: control — a local const L beside a global struct L: L.x stores and reads the global's field, as before" 'struct P { x; y; }\nvar L = P { 0, 0 };\nfn main() {\n    const L = 5;\n    L.x = 7;\n    return L.x + L;\n}\nsyscall(60, main());\n'
+exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
+# B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
+# syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
+# (issues/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
+# L5 / L6 above keep the lvalue refusal for a real `N = ..` / `N += ..`; enum_const_not_lvalue.sh N1-N9 too.
+cat > "$T/b0.cyr" <<'EOF'
+const N = 5;
+enum Color { RED, GREEN }
+fn main(): i64 {
+    N;              # also: N + 1;  N == 5;  GREEN;  Color.GREEN;  for (i = 0; i < 3; N) { }
+    return 0;
+}
+syscall(60, main());
+EOF
+refusedf b0 1 "B0: the filed repro, N; (was \"cannot assign to const 'N'\")" "4:6: expected '=', got ';'"
+BH='const N = 5;\nenum Color { RED, GREEN }\nfn main(): i64 {\n    '
+BT='\n    return 0;\n}\nsyscall(60, main());\n'
+refusedn b1 1 "B1: N + 1;" "${BH}N + 1;${BT}" "4:7: expected '=', got '+'"
+refusedn b2 1 "B2: N == 5;" "${BH}N == 5;${BT}" "4:7: expected '=', got '=='"
+refusedn b3 1 "B3: GREEN; (was \"cannot assign to enum constant\")" "${BH}GREEN;${BT}" "4:10: expected '=', got ';'"
+refusedn b4 1 "B4: Color.GREEN;" "${BH}Color.GREEN;${BT}" "4:16: expected '=', got ';'"
+refusedn b5 1 "B5: a for step N" "${BH}var i = 0; for (i = 0; i < 3; N) { }${BT}" "4:36: expected '=', got ')'"
+refusedn b6 1 "B6: a local const, const L = 3; L; (no \"undefined variable 'L'\" after it)" "${BH}const L = 3; L;${BT}" "4:19: expected '=', got ';'"
+refusedn b7 1 "B7: Color.GREEN + 1;" "${BH}Color.GREEN + 1;${BT}" "4:17: expected '=', got '+'"
+refusedn b8 1 "B8: a for step Color.GREEN" "${BH}var i = 0; for (i = 0; i < 3; Color.GREEN) { }${BT}" "4:46: expected '=', got ')'"
+refusedn b9 1 "B9: control — a variable, var x = 1; x;" "${BH}var x = 1; x;${BT}" "4:17: expected '=', got ';'"
+refusedn b10 1 "B10: control — Color.GREEN = 1 keeps the lvalue refusal" "${BH}Color.GREEN = 1;${BT}" "4:17: cannot assign to enum constant 'GREEN'"
+refusedn b11 1 "B11: control — a for step N += 1 keeps the lvalue refusal" "${BH}var i = 0; for (i = 0; i < 3; N += 1) { }${BT}" "4:37: cannot assign to const 'N'"
+# B12 / B13 (6.7.14, found beside the bare-const fix) — a statement refused at its first name ends in sync, so
+# the NEXT statement is parsed and reports its own error: `N = 1; GREEN = 2;` printed only N's (the resync
+# skipped every other statement in a row), in a fn and at top level.
+refusedn b12 5 "B12: five refused statements in a row, each reported" "${BH}N = 1;\n    GREEN = 2;\n    Color.RED = 3;\n    N;\n    GREEN;${BT}" "4:7: cannot assign to const 'N'" "5:11: cannot assign to enum constant 'GREEN'" "6:15: cannot assign to enum constant 'RED'" "7:6: expected '=', got ';'" "8:10: expected '=', got ';'"
+refusedn b13 4 "B13: the same at top level" 'const N = 5;\nenum Color { RED, GREEN }\nN;\nGREEN;\nColor.GREEN;\nvar x = 1;\nx;\nsyscall(60, 0);\n' "3:2: expected '=', got ';'" "4:6: expected '=', got ';'" "5:12: expected '=', got ';'" "7:2: expected '=', got ';'"
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C)"
+if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), and a bare const statement is expected '=' (B)"

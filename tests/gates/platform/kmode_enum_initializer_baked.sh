@@ -11,7 +11,10 @@
 # `kernel; enum E { A = 0x1234567; } var X = A; asm { 0xF4 x4 }` put `b8 67 45 23 01 48 b9 .. 48 89
 # 01` AFTER the asm and left X's slot zero in the image. The fold now sits at the replay, where
 # names resolve exactly as the replayed store does, and the value is BAKED (parse_decl.cyr
-# _gvk_pre / _spc_try); the store stays, so the code does not change.
+# _gvk_pre / _spc_try); the store stayed, so the code did not change. 6.7.14 drops a baked SCALAR's
+# store where the image already holds its value (_gvk_quiet; issues/2026-10-08-const-init-redundant-
+# store-and-unfolded-const-operand.md): its `movabs rax, imm64` is gone from the code, the baked copy
+# stays in the data — the D rows count that copy apart from the code form.
 #
 # HOW IT IS MEASURED.
 #   R  RUN rows. A CYRIUS_ELF64_KERNEL=1 build (agnos's own build mode) is an ELF64 that also runs
@@ -49,6 +52,19 @@
 #                                                     half of its binary64 bits), the four KF patterns
 #   M1b. converted for every float field (`!= 0`)  -> RED, 2 checks: R check 21 and RF check 8 (an f64
 #                                                     field narrowed)
+# MUTATION LEDGER (6.7.14 — the baked scalar's store dropped):
+#   0. real tree                                   -> GREEN (15 rows)
+#   D1. _gvk_pre's record removed (`S64(_vgsi_base ..)` dropped in _gvk_one) -> RED, 10 checks: R row 2,
+#       three K deltas, every D row (no data copy; the stores come back) and E's data copy
+#   D2. _gvk_quiet returning 0 (the stores kept, as 6.6.16 - 6.7.13) -> RED, 6 checks: the three K
+#       scalar deltas, the two D code-form rows and E's KX1 delta
+# MUTATION LEDGER (6.7.14 — a float scalar's float literal baked, RS / KS / W2;
+# issues/2026-10-08-kernel-float-global-init-not-baked.md):
+#   0. real tree                                   -> GREEN (17 rows)
+#   F0. the compiler before the fix (c0d6d1ba)     -> RED, 7 checks: RS check 1 and its 9 warnings, KS's warning,
+#       image bytes and late store, W2's count and W4 named
+#   F1. _gvk_flt's f32 narrowing dropped           -> RED, 1 check: RS check 2 (an f32 read as binary64 bits)
+#   F2. _gvk_flt's untyped arm dropped             -> RED, 2 checks: RS check 4 and its warning count (4)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -181,8 +197,66 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rf.cyr" > "$T/rf.bin" 2> "$T/rf.err" && [ -
 else
     bad "RF: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rf.err")"
 fi
+# RS (6.7.14) — a float SCALAR's float literal, optionally negated, is baked: an `f64` global and an
+# untyped `var K = 1.5;` as their binary64 bits, an `f32` global as its binary32 bits zero-extended (what
+# the replayed store writes: it rounds). The integer folder refused the literal, so the store was left
+# to the late replay and the kernel's program read 0 (issues/2026-10-08-kernel-float-global-init-not-
+# baked.md). A float initializer that is not a literal (a call, arithmetic) stays late and is named.
+cat > "$T/rs.cyr" <<'EOF'
+kernel;
+var G: f64 = 1.5;
+var F: f32 = 2.5;
+var N: f64 = -1.5;
+var K = 1.5;
+var KN = -2.5;
+var M: f32 = 0.1;
+var Z: f32 = -0.0;
+fn fk(): f64 { return 1.5; }
+var CX: f64 = fk();
+var CA: f64 = 1.5 + 1.0;
+var H = 7;
+fn ck(got, want, k): i64 { if (got != want) { syscall(60, k); } return 0; }
+ck(load64(&G), 0x3FF8000000000000, 1);
+ck(load64(&F), 0x40200000, 2);
+ck(load64(&N), 0xBFF8000000000000, 3);
+ck(load64(&K), 0x3FF8000000000000, 4);
+ck(load64(&KN), 0xC004000000000000, 5);
+ck(load64(&M), 0x3DCCCCCD, 6);
+ck(load64(&Z), 0x80000000, 7);
+ck(load64(&CX), 0, 8);
+ck(load64(&CA), 0, 9);
+ck(H, 7, 10);
+syscall(60, 100);
+EOF
+rows=$((rows + 1))
+if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rs.cyr" > "$T/rs.bin" 2> "$T/rs.err" && [ -s "$T/rs.bin" ]; then
+    chmod +x "$T/rs.bin"
+    rc=0
+    "$T/rs.bin" > /dev/null 2>&1 || rc=$?
+    [ "$rc" = 100 ] || bad "RS: the kernel program read a wrong float scalar at check $rc (1 f64, 2 f32 binary32, 3 f64 negated, 4-5 untyped, 6 f32 rounded, 7 f32 -0.0; 8-9 the computed ones read 0, 10 the literal control)"
+    [ "$(nwarn "$T/rs.err")" = 2 ] || bad "RS: $(nwarn "$T/rs.err") late-initializer warnings, want 2 (CX a call, CA arithmetic)"
+    grep "$WMSG 'CX'" "$T/rs.err" > /dev/null || bad "RS: no warning names CX (a call is left to the late replay)"
+    grep "$WMSG 'CA'" "$T/rs.err" > /dev/null || bad "RS: no warning names CA (float arithmetic is left to the late replay)"
+else
+    bad "RS: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rs.err")"
+fi
+# KS (6.7.14) — the filed repro, a default `kernel;` build (the ELF32 multiboot image): no warning, G's
+# image bytes are 1.5's binary64 bits with H's 7 after them, and no `movabs rax, 1.5` (the late store)
+# is left in the code. Through 6.7.13 G's bytes were zero and the store came after `call kmain`.
+rows=$((rows + 1))
+printf 'kernel;\nvar G: f64 = 1.5;\nvar H = 7;\nfn kmain(): i64 { return load64(&G) + H; }\nkmain();\n' > "$T/ks.cyr"
+if "$CC" < "$T/ks.cyr" > "$T/ks.bin" 2> "$T/ks.err" && [ -s "$T/ks.bin" ]; then
+    [ "$(nwarn "$T/ks.err")" = 0 ] || bad "KS: the filed repro warned ($(nwarn "$T/ks.err") late-initializer warnings, want 0)"
+    [ "$(count "$T/ks.bin" ' 00 00 00 00 00 00 f8 3f 07 00 00 00 00 00 00 00 ')" = 1 ] || bad "KS: the image does not hold G = 1.5 (00 .. f8 3f) followed by H = 7"
+    [ "$(count "$T/ks.bin" ' 48 b8 00 00 00 00 00 00 f8 3f ')" = 0 ] || bad "KS: a late store of 1.5 (movabs rax) is still in the code"
+else
+    bad "KS: the kernel build of the filed repro failed: $(grep -m1 '^error' "$T/ks.err")"
+fi
 
 # ---------------------------------------------------------------------------------------------
+# The DATA copies of $2 in file $1: its occurrences minus those that are a `movabs rax, imm64`'s
+# immediate (" 48 b8" + the pattern) — the code form a replayed store loads. 6.7.14
+dcount() { echo $(( $(count "$1" "$2") - $(count "$1" " 48 b8$2") )); }
 # I — image rows. row <id> <env> <test source> <control source> then pairs: <+N> <pattern>.
 row() {
     rows=$((rows + 1))
@@ -198,7 +272,7 @@ row() {
     fi
     while [ $# -ge 2 ]; do
         ct=$(count "$T/$id.bin" "$2"); cc=$(count "$T/$id.ctl" "$2")
-        [ "$ct" = $((cc + $1)) ] || bad "$id: '$2' occurs $ct times in the image, $cc in the control's; want +$1"
+        [ "$ct" = $((cc + $1)) ] || bad "$id: '$2' occurs $ct times in the image, $cc in the control's; want $1 more"
         shift 2
     done
 }
@@ -208,11 +282,28 @@ DECL='var KX1 = KA;\nvar KX2 = KE.KB;\nvar KX3 = KA + 0x100;\nvar KX4: u32 = KE.
 PRE='enum KE { KA = 0x5A17C0DE0BADF00D; KB = 0x2F3E4D5C6B7A8990; KC = 0x13579BD0; KD = 0x0102030405060708; KF = 0x1112131415161718; KG = 0x2122232425262728; KH = 0x3132333435363738; KI = 0x4142434445464748; KJ = 0x5152535455565758; KL = 0x6162636465666768; }\nstruct KP { a; b; }\nstruct KQ { x; p: KP; }\nfn kf(x): i64 { return x; }\n'
 ASM='asm { 0xF4; 0xF4; 0xF4; 0xF4; }\n'
 # KW (a call) and KT (a literal with a call leaf) are NOT baked: their constants occur equally often.
+# 6.7.14: a baked scalar's replayed store is dropped — KX1's and KX3's (`KA + 0x100` loads KA) take
+# KA's code form twice (-1 over the baked copy), KX2's (KB) and KR1's (KI) once (+0); the D rows below
+# count the data copies.
 row K '' "kernel;\n$PRE$DECL$ASM" "kernel;\n$PRE$ASM$DECL" \
-    1 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 90 89 7a 6b 5c 4d 3e 2f ' 1 ' 0d f1 ad 0b de c0 17 5a ' 1 ' d4 9b 57 13 ' \
+    -1 ' 0d f0 ad 0b de c0 17 5a ' 0 ' 90 89 7a 6b 5c 4d 3e 2f ' 1 ' 0d f1 ad 0b de c0 17 5a ' 1 ' d4 9b 57 13 ' \
     1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 ' 1 ' 28 27 26 25 24 23 22 21 ' \
-    1 ' 38 37 36 35 34 33 32 31 ' 1 ' 48 47 46 45 44 43 42 41 ' \
+    1 ' 38 37 36 35 34 33 32 31 ' 0 ' 48 47 46 45 44 43 42 41 ' \
     0 ' 58 57 56 55 54 53 52 51 ' 0 ' 68 67 66 65 64 63 62 61 '
+# D (6.7.14) — the baked scalars' DATA copy: one more than the control's (which computes them in its
+# code), and no store of them left in the test's code.
+rows=$((rows + 1))
+if [ -s "$T/K.bin" ] && [ -s "$T/K.ctl" ]; then
+    for p in ' 0d f0 ad 0b de c0 17 5a ' ' 90 89 7a 6b 5c 4d 3e 2f ' ' 48 47 46 45 44 43 42 41 '; do
+        dt=$(dcount "$T/K.bin" "$p"); dc=$(dcount "$T/K.ctl" "$p")
+        [ "$dt" = $((dc + 1)) ] || bad "D: '$p' has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
+    done
+    # KX2 / KR1 are stored by nothing now: their value's code form is the control's minus one each.
+    for p in ' 90 89 7a 6b 5c 4d 3e 2f ' ' 48 47 46 45 44 43 42 41 '; do
+        ct=$(count "$T/K.bin" " 48 b8$p"); cc=$(count "$T/K.ctl" " 48 b8$p")
+        [ "$ct" = $((cc - 1)) ] || bad "D: '$p' is loaded $ct times in the image's code, $cc in the control's; want -1 (no replayed store)"
+    done
+fi
 [ "$(od -An -tx1 -N5 "$T/K.bin" 2>/dev/null | tr -d ' ')" = 7f454c4601 ] || bad "K: the default kernel build is not the ELF32 multiboot image this row means"
 # The kmode redeclaration rows. `var X = 5; var X = A;` bakes A (K's KR1 / KI, +1 above).
 # `var X = A; var X = <constant>;`: the constant was baked by pass 1 already, and the superseded
@@ -247,9 +338,12 @@ row KU '' \
 row E 'CYRIUS_TARGET_EFI=1' \
     "kernel;\n$PRE""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\n$ASM""fn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
     "kernel;\n$PRE$ASM""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\nfn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
-    1 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 '
+    0 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 '
 if [ -s "$T/E.bin" ]; then
     [ "$(od -An -tx1 -N2 "$T/E.bin" | tr -d ' ')" = 4d5a ] || bad "E: the CYRIUS_TARGET_EFI=1 build is not an MZ/PE image"
+    # 6.7.14: KX1's store dropped (+0 above) — its baked copy is in the data.
+    dt=$(dcount "$T/E.bin" ' 0d f0 ad 0b de c0 17 5a '); dc=$(dcount "$T/E.ctl" ' 0d f0 ad 0b de c0 17 5a ')
+    [ "$dt" = $((dc + 1)) ] || bad "E: KX1 has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
 fi
 
 # ---------------------------------------------------------------------------------------------
@@ -262,13 +356,15 @@ if [ -s "$T/K.bin" ]; then
 else
     bad "W1: K did not build"
 fi
-# W2: a struct literal with a string leaf, a destructure, a float literal: each left late, each once.
+# W2: a struct literal with a string leaf, a destructure: each left late, each once. A float literal
+# (W4) is baked since 6.7.14 (RS / KS above) and named no more.
 # (6.6.17: `wp` returns the PAIR the destructure binds — a one-value fn there is now refused.)
 rows=$((rows + 1))
 printf 'kernel;\nstruct WP { a; b; }\nfn wp(): (i64, i64) { return (1, 2); }\nvar W1 = WP { 1, "s" };\nvar W2, W3 = wp();\nvar W4: f64 = 1.5;\nvar W5 = 0;\nvar W6 = 7;\nasm { 0xF4; }\n' > "$T/w2.cyr"
 if "$CC" < "$T/w2.cyr" > "$T/w2.bin" 2> "$T/w2.err"; then
-    [ "$(nwarn "$T/w2.err")" = 3 ] || bad "W2: $(nwarn "$T/w2.err") warnings, want 3 (W1 a string leaf, W2 a destructure, W4 a float literal)"
-    for n in W1 W2 W4; do grep "$WMSG '$n'" "$T/w2.err" > /dev/null || bad "W2: no warning names $n"; done
+    [ "$(nwarn "$T/w2.err")" = 2 ] || bad "W2: $(nwarn "$T/w2.err") warnings, want 2 (W1 a string leaf, W2 a destructure)"
+    for n in W1 W2; do grep "$WMSG '$n'" "$T/w2.err" > /dev/null || bad "W2: no warning names $n"; done
+    grep "$WMSG 'W4'" "$T/w2.err" > /dev/null && bad "W2: the float literal W4 is named (it is baked since 6.7.14)"
 else
     bad "W2: the kernel build failed: $(grep -m1 '^error' "$T/w2.err")"
 fi
@@ -316,7 +412,7 @@ else
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
-[ "$rows" -ge 14 ] || bad "only $rows rows ran (floor 14)"
+[ "$rows" -ge 16 ] || bad "only $rows rows ran (floor 16)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: kmode_enum_initializer_baked ($fail checks failed over $rows rows)"
     exit 1
