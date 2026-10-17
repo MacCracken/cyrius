@@ -5780,7 +5780,8 @@ silence — while `x = (3 + f());` keeps the tag as `x = 3 + f();` does, `x = (f
 
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too — and through `?`: a fn whose body propagates a pair with
-`f(..)?` returns one, wherever it is defined (6.7.14 — a fn whose ONLY pair route was a `?`, defined
+`f(..)?` returns one, wherever it is defined (a closure's `?` in it, `|a| parse(a)?`, is the closure's
+own) (6.7.14 — a fn whose ONLY pair route was a `?`, defined
 below its caller, was read there as one value: `qb(x)?` crashed and `var v = qb(x);` kept the tag).
 
 `f` is any call spelling: an explicit generic `g<T>(..)` and a method `p.m(..)` are refused,

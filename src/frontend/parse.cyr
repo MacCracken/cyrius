@@ -911,9 +911,29 @@ fn _pair_body_scan(S, a, j): i64 {
         elif (t == 124) {                 # `f(..)?` on a pair: pass 2's `?` flag, seen before the body
             if (_tok_q_is_pair(S, a, k) == 1) { return 1; }   # CHANGELOG [6.7.14]
         }
+        elif (t == 35 || t == 54) {       # a brace-less closure's `?` is its own
+            var ce = _tok_closure_expr_end(S, k);
+            if (ce > k) { k = ce - 1; }
+        }
         k = k + 1;
     }
     return 0;
+}
+# The token that ends the EXPRESSION body of the closure literal whose `|` / `||` is token k (its depth-0 `;`
+# `,` or unmatched closer, `_tok_expr_end`), or -1: k opens no literal (`_cl_lit_pos`, `_cl_lit_end`: a bitwise
+# or / logical or follows an operand), or the body is a block (`_skip_nested_body` steps over that). Since the `?`
+# counts as a pair route, `fn qce(x) { var f = |a| parse(a)?; .. }` was flagged pair-returning by the closure's
+# own `?` — "bind both" at `var z = qce(5);`, and a mixed-return warning at its plain `return`. CHANGELOG [6.7.14]
+fn _tok_closure_expr_end(S, k): i64 {
+    if (_cl_lit_pos(S, k) == 0) { return 0 - 1; }
+    var b = k + 1;
+    if (TOKTYP(S, k) == 35) {
+        var e = _cl_lit_end(S, k);
+        if (e < 0) { return 0 - 1; }
+        b = e + 1;
+    }
+    if (TOKTYP(S, b) == 13) { return 0 - 1; }
+    return _tok_expr_end(S, b);
 }
 
 # v6.6.0 — MIXED RETURNS IN A PAIR-RETURNING FN. The class that cost 19 silent defects in one

@@ -1720,7 +1720,8 @@ EOF
 # prefix), the cross compilers built from this tree by $CC. A missing tool is a SKIP that names it.
 # QF9 an inherited trait default and QF10 a dyn formed above the impl share the scan too (QF10: it compiled).
 # Mutation (a scratch copy of the tree with the `?` arm dropped, CYCC= its compiler): RED at QF1 — it
-# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 QF9 QF10 red on every leg, QF3 QF4 QF6 green.
+# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 QF9 QF10 QF12 red on every leg, QF3 QF4 QF6 QF11
+# green. QF11 (a closure's own `?`): with `_pair_body_scan`'s `|` / `||` arm dropped, RED (refused "bind both").
 QFR=docs/development/issues/repros/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged
 WP="$T/wine"
 WHM="$T/whome"
@@ -1864,6 +1865,30 @@ for leg in $QLEGS; do
         grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
     fi
 done
+# ANTI-OVER-REACH: a CLOSURE's `?` is the closure's own — an expression body (`|a| parse(a)?`, `|| parse(1)?`, a
+# literal as a call argument) as a block body is (`_tok_closure_expr_end`): the enclosing fn stays one value. The
+# scan read it as the enclosing fn's, so each single bind above was refused "bind both" (the 6.7.14 receives
+# lane gate: tests/gates/toolchain/header_spellings_and_size.sh's qce / qcz); the lane base built it, 21.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn id2(f, b) { return b; }
+fn main(): i64 { var a = qe(5); var b = qz(5); var c = qa(5); return a + b + c; }
+fn qe(x) { var f = |a| parse(a)?; return x + 1; }
+fn qz(x) { var f = || parse(1)?; return x + 2; }
+fn qa(x) { var w = id2(|a| parse(a)?, x + 3); return w; }
+syscall(60, main());
+EOF
+qf_run "a closure's own ? (|a| expr, || expr, an argument) above its fn: one value" axisQF11 21
+# ... and the fn's OWN `?` after a closure's expression body, a `|` and a `||` still makes it a pair.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn main(): i64 { var v = qc(5); return v; }
+fn qc(x) { var f = |a| a + 1; var y = (x | 1) || 0; var v = parse(x)?; return v; }
+syscall(60, main());
+EOF
+qf_refuse "var v = qc(5); above qc, its own ? after a closure, a | and a ||" axisQF12 "3:24"
 # ── axis PV — 6.7.14: PARENTHESES AROUND THE WHOLE VALUE ARE TRANSPARENT TO THE FIRST-CALL RULE (D46) ──────
 # ⛔ The user's decision of 2026-10-16 (D46): a store is judged by the call it starts with (6.7.7), and a redundant
 # outer wrap does not select another rule. `var v = (f(7) + 1);`, `h.a = (f(7) + 1);`, `x = (f(7) * 2);` kept the
