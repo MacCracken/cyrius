@@ -3648,7 +3648,20 @@ fn _tup_cap_single(S, fi): i64 {
 # `term`: 0 = no capture (not one whole call, or a provably one-value callee — the caller's R12;
 # cursor kept); 1 = a capture (the call is the cursor's); 2 = a refused one, reported and the call
 # skipped (cursor on `term`), so the caller still declares / leaves the tuple and the parse goes on.
+# 6.7.14 (D45): the call may sit inside parentheses that wrap the whole value (`_dt_wrap_k`): for a
+# capture the cursor is stepped onto it and `_tcap_k` holds the k `)` the caller closes (`_pw_close`)
+# once the call is parsed — read right after this returns, before anything is parsed. CHANGELOG [6.7.14]
+var _tcap_k = 0;
 fn _tup_cap_check(S, sid, term): i64 {
+    _tcap_k = 0;
+    var k = _dt_wrap_in(S, term);
+    var r = _tup_cap_in(S, sid, _dt_wterm(k, term));
+    if (r == 0) { STI(S, GTI(S) - k); }   # cursor kept: on the wrap's first `(`
+    elif (r == 2) { STI(S, GTI(S) + k); }   # past the wrap's `)`s, on `term`
+    else { _tcap_k = k; }
+    return r;
+}
+fn _tup_cap_in(S, sid, term): i64 {
     var o = _dt_call_open_cp(S);   # 6.7.14: `callptr(..)` too. CHANGELOG [6.7.14]
     if (o < 0) { return 0; }
     var e = _call_close(S, o) + 1;
@@ -3800,8 +3813,10 @@ fn _tup_var_cap(S, noff, pscale): i64 {
         STI(S, dti);
         return 0;
     }
+    var k = _tcap_k;
     if (GINFN(S) == 1) { _tup_cap_local(S, noff, sid, c); }
     else { _tup_cap_global(S, noff, sid, c, dti); }
+    _pw_close(S, k);   # 6.7.14 (D45): `= (two(3));`
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -3849,7 +3864,9 @@ fn _gvi_tup_cap(S, gi, idx, gps, sti, noff): i64 {
         _tup_err(S, sti + 3, "cannot initialize tuple ", noff, " with a value that is not a tuple");
         _masg_skip(S);
     } elif (c == 1) {
+        var k = _tcap_k;
         PCMPE(S);
+        _pw_close(S, k);   # 6.7.14 (D45)
         if (idx >= 0) {
             var n = GETFCOUNT(S, sid - 1);
             _tup_drain_push(S, n);
@@ -6096,10 +6113,12 @@ fn _gvi_pair_bind(S): i64 {
     STI(S, sv);
     return 0;
 }
-# A capture's first token: a name, or `callptr` (6.7.14; `_dt_call_open_cp`). CHANGELOG [6.7.14]
+# A capture's first token: a name, or `callptr` (6.7.14; `_dt_call_open_cp`), or (6.7.14, D45) the
+# first `(` of parentheses wrapping one whole call (`_dt_wrap_k`). CHANGELOG [6.7.14]
 fn _gvi_cap_tok(S): i64 {
     if (PEEKT(S) == 2) { return 1; }
     if (PEEKT(S) == 137) { return 1; }
+    if (_dt_wrap_k(S, 5) > 0) { return 1; }
     return 0;
 }
 # 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
@@ -6363,12 +6382,14 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
-            var edz = _dt_zone_check(S, egn);   # 6.6.17 (a5)
+            var ewk = _dt_wrap_in(S, 5);   # 6.7.14 (D45): `var a, b = (f(7));`
+            var edz = _dt_zone_check(S, egn, ewk);   # 6.6.17 (a5)
             var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
             if (egn == 3) { ei3 = _gv_target(S, _gv_ent_slot(S, gi, 2, eg3), gsup, 2); }
             PCMPE(S);
+            _pw_close(S, ewk);
             if (ei1 >= 0) { EVSTORE(S, ei1); }
             if (egn == 3) {
                 EMOVRA_R3(S);
@@ -6695,6 +6716,7 @@ fn _tup_gci_in(S, sid, ann): i64 {
 # below): the tuple, else -1.
 fn _tup_gci_call(S, sid): i64 {
     if (_tup_is(S, sid) == 0) { return 0 - 1; }
+    if (_dt_wrap_k(S, 5) > 0) { return sid; }   # 6.7.14 (D45): `= (two(3));`
     var o = _dt_call_open_cp(S);   # 6.7.14: `callptr(..)` too. CHANGELOG [6.7.14]
     if (o < 0) { return 0 - 1; }
     if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0 - 1; }
@@ -8113,7 +8135,6 @@ fn _rcv_ann_pr(S, ann, eq): i64 {
 # `x.m(`, with `;` right after its `)`. `dm(17, 5) + (k / 9) - 11` opens with the same tokens and
 # used to compile with the arithmetic's leftovers in rdx landing in the second target (an idiv
 # REMAINDER in `r`). v6.5.21 / 6.6.16; shared with the declaration-zone replay since 6.6.17.
-fn _dt_rhs_check(S): i64 { return _dt_rhs_check_t(S, 5); }
 # ... ending at `term` (6.7.7, T5: `;`, or a classic-for step's `)` for `a, b = f()`).
 fn _dt_rhs_check_t(S, term): i64 {
     var sc = _dt_call_open_cp(S);   # 6.7.13: `callptr(fp, ..)` too. CHANGELOG [6.7.13]
@@ -8133,6 +8154,13 @@ fn _dt_rhs_check_t(S, term): i64 {
     }
     return 0;
 }
+# ... inside the parentheses that wrap the whole call (6.7.14, D45: `_dt_wrap_k`): the cursor stepped in
+# and the call judged against their `)`. Returns k, for the caller's `_pw_close` once the call is parsed.
+fn _dt_peel(S, term): i64 {
+    var k = _dt_wrap_in(S, term);
+    _dt_rhs_check_t(S, _dt_wterm(k, term));
+    return k;
+}
 # ⛔ 6.6.17 (a5) — the declaration-zone top-level destructure (`var a, b = f();` before the first
 # statement) is replayed by EMIT_GVAR_INITS, which PCMPE'd the right-hand side with NO contract:
 # `var a, b = 42;`, a call followed by arithmetic, a declared-arity mismatch and a one-value `f`
@@ -8142,9 +8170,9 @@ fn _dt_rhs_check_t(S, term): i64 {
 # holding it is left alone. 1 = this check latched it: the replay clears it once the right-hand side
 # is parsed, so the call's own cascade (6.7.11: a 24 B callee's "needs storage in a fn's frame") is
 # not a second report.
-fn _dt_zone_check(S, n): i64 {
+fn _dt_zone_check(S, n, k): i64 {
     if (_panic == 1) { return 0; }
-    _dt_rhs_check(S);
+    _dt_rhs_check_t(S, _dt_wterm(k, 5));   # 6.7.14: `k` wrapping parentheses stepped (`_dt_wrap_in`)
     var fi = _dt_call_fn(S);
     if (fi >= 0) { _dt_arity_check(S, fi, n); }
     return _panic;
@@ -8262,6 +8290,41 @@ fn _dt_call_open_cp(S): i64 {
     if (PEEKT(S) == 137) { if (TOKTYP(S, GTI(S) + 1) == 10) { return GTI(S) + 1; } }
     return 0 - 1;
 }
+# ⛔ 6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
+# the destructure and the tuple capture, as to every other consumer of a whole call: a struct source
+# (6.7.6), a multi-value call into a named struct and `return (g(x));` (6.7.11), the pair checks (6.7.13's
+# D19 A). `var a, b = (f(7));`, `a, b = (f());`, a for step, both top-level zones, `var t: T = (two(3));`
+# and `t = ((..));` were "needs a call on the right-hand side" / "not a tuple". Cursor on the right-hand
+# side, which ends at `term`: k when it is k `(`, ONE call (`_dt_call_open_cp`'s), k `)`, then `term`;
+# else 0 — `(f(7)) + 1`, `(f(7) + 1)` and a tuple literal stay the value they were, refused as before.
+# Tokens only, linear (`_pair_unwrap_k`). The caller steps in (`_dt_wrap_in`), judges the call against
+# its `)` (`_dt_wterm`), parses it, and closes the k after (`_pw_close`), so the call compiles exactly
+# as unwrapped. CHANGELOG [6.7.14]
+fn _dt_wrap_k(S, term): i64 {
+    var st = GTI(S);
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var a = st;
+    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    STI(S, a);
+    var o = _dt_call_open_cp(S);
+    STI(S, st);
+    if (o < 0) { return 0; }
+    var e = _call_close(S, o) + 1;
+    if (_pair_unwrap_k(S, e, a - st, a) < 0) { return 0; }
+    if (TOKTYP(S, e + a - st) != term) { return 0; }
+    return a - st;
+}
+# ... the cursor stepped into that wrap: its k (0: none, the cursor kept).
+fn _dt_wrap_in(S, term): i64 {
+    var k = _dt_wrap_k(S, term);
+    STI(S, GTI(S) + k);
+    return k;
+}
+# The call's terminator inside k wrapping parentheses: their `)`, else `term`.
+fn _dt_wterm(k, term): i64 {
+    if (k > 0) { return 11; }
+    return term;
+}
 # ...and the fn it REACHES, whose return types type the bindings: a generic's instance
 # (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m`.
 fn _dt_call_fn(S): i64 {
@@ -8318,8 +8381,9 @@ fn PARSE_VAR(S): i64 {
         # A non-call right-hand side can never produce a second value, so it is
         # now rejected outright.
         # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
-        # 6.6.17 (a5): factored into `_dt_rhs_check`, which the declaration-zone replay shares.
-        _dt_rhs_check(S);
+        # 6.6.17 (a5): factored into `_dt_rhs_check_t`, which the declaration-zone replay shares.
+        # 6.7.14 (D45): inside parentheses that wrap the whole call (`_dt_peel`), closed after it.
+        var _dt_wk = _dt_peel(S, 5);
         var _dt_fi = _dt_call_fn(S);
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
@@ -8334,6 +8398,7 @@ fn PARSE_VAR(S): i64 {
             }
         }
         PCMPE(S);
+        _pw_close(S, _dt_wk);
         # rax = first value, rdx = second value (from ret2/return (a,b))
         if (GINFN(S) == 1) {
             # Register first local

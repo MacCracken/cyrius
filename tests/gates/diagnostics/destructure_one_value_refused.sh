@@ -74,6 +74,22 @@
 #           r2_ret and r2_ifelse_ret (14); `_ret_stmt_arity` without its ret2 arm -> r2_ret; `_ar_exits` without its
 #           `ret2(..);` tail -> the bail's 14 less r2_mid; without its if / else arm -> r2_mixed r2_elif
 #           r2_ifelse_ret; `_ret2_stmt` accepting any ret2 -> r2_expr refused.
+#   axis 8  6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
+#           the destructure (issues/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
+#           call on the right-hand side" twice on x86_64 / aarch64 / cx / PE; unwrapped it exits 41). `_dt_wrap_k` (k `(`,
+#           one call, k `)`, then the terminator): the issue's program verbatim (41), `((..))`, the assignment `c, d =
+#           (..);`, a for step, both top-level zones, `callptr`, a method and an explicit generic, f64 bindings typed
+#           through the wrap, a wrapped destructure inside a closure among the wrapped call's arguments (each wrap's
+#           count is its own). Still refused, by the same text at the call: `(f(7)) + 1` and `(two(7) + 1)` ("needs a
+#           call", in a fn and in the zone), a declared-arity mismatch, an undeclared count, a one-value callee and a
+#           struct callee of `a, b = (..)`. Every row on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
+#           MUTATIONS (scratch trees, run 2026-10-17, CYCC= the mutant, every leg): the tree before (79b72c77) -> every
+#           pw_ run row refused ("needs a call"), and pw_arity3 pw_count3 pw_one pw_zone_arity pw_masg_arity
+#           pw_masg_struct by that text, not their own; `_dt_wrap_k` answering 0 -> the same; PARSE_VAR without its
+#           `_pw_close` -> pw_repro pw_double pw_top pw_callptr pw_method pw_f64 pw_nested; `_masg_stmt` without it ->
+#           pw_assign (a for step's replay ends at its own `)`, so pw_for holds either way); the zone replay without it
+#           -> pw_zone; `_dt_wterm` answering `term` -> the before-tree's rows less pw_for (a for step's terminator is
+#           `)` already).
 #
 # MUTATIONS (6.7.11, each run against this gate): `_body_ends_in_loop` returning 0 -> loop_end,
 # while1_end, dowhile1_end, loop_top, loop_nested_brk, loop_switch_brk build; its `loop` arm dropped
@@ -396,7 +412,31 @@ runs7 r2_expr "fn g2() { var z = ret2(1, 2); }\nfn main(): i64 { var a, b, c = g
 runs7 r2_noelse "fn g2(x) { if (x > 0) { ret2(x, 1); } }\nfn main(): i64 { var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
 runs7 r2_fwd2 "fn g2(x) { ret2(x, 1); }\nfn f(x): (i64, i64) { return g2(x); }\nfn main(): i64 { var a, b = f(4); return a * 10 + b; }\nsyscall(60, main());\n" 41
 
-if [ "$rows" -lt 131 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 131)"; exit 1; fi
+echo "axis 8 - parentheses around the whole call are transparent to the destructure (D45), on every target:"
+TWO8='fn two(x): (i64, i64) { return (x, x + 1); }\n'
+NC8="multi-value destructure needs a call on the right-hand side"
+# The issue's program verbatim (a \`: stack\` pair and a declared pair, each wrapped: 17 + 34 - 10 = 41).
+runs7 pw_repro "enum Res: stack { ROk(v); RErr(e); }\nfn f(x) { return ROk(x); }\nfn two(x): (i64, i64) { return (x, x + 1); }\nfn t1(): i64 { var a, b = (f(7)); return a * 10 + b; }\nfn t2(): i64 { var c, d = (two(3)); return c * 10 + d; }\nsyscall(60, t1() + t2());\n" 41
+runs7 pw_double "${TWO8}fn t(): i64 { var c, d = ((two(3))); return c * 10 + d; }\nsyscall(60, t());\n" 34
+runs7 pw_assign "${TWO8}fn t(): i64 { var c = 0; var d = 0; c, d = (two(3)); return c * 10 + d; }\nsyscall(60, t());\n" 34
+runs7 pw_for "${TWO8}fn t(): i64 { var c = 0; var d = 0; for (var i = 0; i < 2; c, d = (two(i))) { i = i + 1; } return c * 10 + d; }\nsyscall(60, t());\n" 23
+runs7 pw_zone "${TWO8}var a, b = (two(3));\nsyscall(60, a * 10 + b);\n" 34
+runs7 pw_top "${TWO8}syscall(1, 1, \"\", 0);\nvar a, b = ((two(3)));\nsyscall(60, a * 10 + b);\n" 34
+runs7 pw_callptr "${TWO8}fn t(): i64 { var fp = &two; var a, b = (callptr(fp, 5)); return a * 10 + b; }\nsyscall(60, t());\n" 56
+runs7 pw_method "struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a + self.v); } }\nfn g<T>(a: T): (i64, i64) { return (a, a + 1); }\nfn t(): i64 { var b: B; b.v = 3; var c, d = (b.mk(4)); var e, f = (g<i64>(5)); return c * 10 + d + e * 100 + f * 1000; }\nsyscall(60, t() % 256);\n" 147
+runs7 pw_f64 "fn ff(x): (f64, f64) { return (1.5, 2.25); }\nfn t(): i64 { var a, b = (ff(1)); var s: f64 = a + b; if (s == 3.75) { return 7; } return 1; }\nsyscall(60, t());\n" 7
+runs7 pw_nested "include \"lib/fnptr.cyr\"\n${TWO8}fn t(): i64 { var a, b = (two(fncall0(|| { var c, d = (two(1)); return c * 10 + d; }))); return a + b; }\nsyscall(60, t());\n" 25
+refused7 pw_operand "enum Res: stack { ROk(v); RErr(e); }\nfn f(x) { return ROk(x); }\nfn t(): i64 { var a, b = (f(7)) + 1; return a * 10 + b; }\nsyscall(60, t());\n" "3:26: $NC8"
+refused7 pw_inner_op "${TWO8}fn t(): i64 { var a, b = (two(7) + 1); return a * 10 + b; }\nsyscall(60, t());\n" "2:26: $NC8"
+refused7 pw_zone_op "${TWO8}var a, b = (two(7)) + 1;\nsyscall(60, a);\n" "2:12: $NC8"
+refused7 pw_arity3 "fn three(x): (i64, i64, i64) { return (x, x, x); }\nfn t(): i64 { var a, b = (three(7)); return a * 10 + b; }\nsyscall(60, t());\n" "2:27: multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_count3 "fn dm(a, b) { return (a / b, a % b); }\nfn t(): i64 { var a, b, c = (dm(7, 2)); return a; }\nsyscall(60, t());\n" "2:30: multi-value destructure binds 3 names, but 'dm' returns 2 values"
+refused7 pw_one "fn one(x) { return x; }\nfn t(): i64 { var a, b = ((one(7))); return a; }\nsyscall(60, t());\n" "binds 2 names, but 'one' returns 1 value"
+refused7 pw_zone_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nvar a, b = (three(7));\nsyscall(60, a);\n" "2:13: multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_masg_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nfn t(): i64 { var a = 0; var b = 0; a, b = (three(1)); return a; }\nsyscall(60, t());\n" "multi-value destructure count does not match the fn's declared return arity"
+refused7 pw_masg_struct "struct P { a; b; c; }\nfn mkp(): P { var p: P; p.a = 5; return p; }\nfn t(): i64 { var a = 0; var b = 0; a, b = (mkp()); return a; }\nsyscall(60, t());\n" "cannot re-assign from 'mkp' - it returns struct 'P', not multiple values"
+
+if [ "$rows" -lt 150 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 150)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: destructure_one_value_refused - $skips leg(s) of axis 7 could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"

@@ -3109,6 +3109,9 @@ var hi, lo, bexp = dd_pow10(k);
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
 # was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
+# Parentheses around the whole call are transparent: `var a, b = (f(7));`, `a, b = ((f()));`, a for
+# step and both top-level zones destructure as unwrapped (6.7.14, the user's decision of 2026-10-16;
+# they were refused "needs a call"). `(f(7)) + 1` and `(f(7) + 1)` are not one call.
 # These are rejected rather than silently reading whatever rdx held:
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
@@ -3287,7 +3290,9 @@ fn capture(): i64 {
 The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
 one whole call — `f(..)`, `g<T>(..)`, `x.m(..)`, or a call through a fn pointer, `fncallN(fp, ..)` or
 `callptr(fp, ..)` (6.7.14: `var t: (i64, i64) = callptr(fp, 5);`, `t = callptr(..)` and a global's were
-refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it. A callee declared
+refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it but
+parentheses around the whole call, which are transparent: `var t: (i64, i64) = (two(3));`, `t = ((two(3)));` and a
+global's capture it as unwrapped (6.7.14, the user's decision of 2026-10-16; they were refused "not a tuple"). A callee declared
 `: (T1, T2[, T3])` is checked element by element: its arity must equal the tuple's, an `f64`
 element takes an `f64` value, a `bool` element a declared `bool`, an `i64` element any other
 value. A callee that declares no values — an undeclared `return (a, b)`, `ret2`, a `: stack`
@@ -3371,7 +3376,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
-| `var t: (i64, i64) = (f());`, `= one(1)`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
+| `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
 | `take(5)` into a tuple parameter (an integer literal; 6.7.14) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |

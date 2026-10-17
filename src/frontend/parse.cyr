@@ -4434,13 +4434,10 @@ fn _asg_paren(S, noff, term, which): i64 {
     var k = _pwrap_k(S, st);
     if (TOKTYP(S, _pw_end) != term) { return 0 - 1; }
     STI(S, st + k);
-    var wsv = _asg_wrapd;
-    _asg_wrapd = st + k;   # 6.7.7 (T5): `t = (f())` is no capture (the destructure refuses `(f())`)
     var r = 0;
     if (which == 0) { r = _try_aggregate_copy_assign(S, noff, 11); }
     elif (which == 1) { r = _try_struct_call_assign(S, noff, 11); }
     else { r = _pcmpe_struct_assign(S, noff, 11); }
-    _asg_wrapd = wsv;
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
         if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
@@ -4515,21 +4512,21 @@ fn _tup_asg(S, noff, term): i64 {
 # top level too (no temp: the values go from the registers straight into the slots, every one read
 # before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
 # `_tup_cap_check`'s (parse_decl.cyr), the destructure's: a refused callee is reported and skipped.
-# Not inside a wrap — `t = (f())` is a value, refused as the destructure refuses `(f())` (R12):
-# `_asg_paren` records the wrapped source's first token. 1 = done (`term` consumed).
-var _asg_wrapd = 0 - 1;
+# Inside a wrap too — `t = (f());` (6.7.14, D45: it was R12, as the destructure refused `(f())`): the
+# whole-value wrap is `_asg_paren`'s, which runs this on its inside. 1 = done (`term` consumed).
 fn _tup_asg_call(S, noff, term): i64 {
-    if (_asg_wrapd == GTI(S)) { return 0; }
     var sid = _tup_dst_sid(S, noff);
     if (sid == 0) { return 0; }
     var c = _tup_cap_check(S, sid, term);
     if (c == 0) { return 0; }
+    var k = _tcap_k;
     _agc_operand(S, noff);
     var gv = _agc_gvi;
     var idx = gv;
     if (_agc_li >= 0) { idx = 0 - 2 - _agc_li; }
     if (c == 1) {
         PCMPE(S);
+        _pw_close(S, k);
         if (idx != 0 - 1) {
             var n = GETFCOUNT(S, sid - 1);
             _tup_drain_push(S, n);
@@ -4968,14 +4965,16 @@ fn _masg_stmt(S, term): i64 {
     var x1 = _masg_target(S, t0, 1);
     var x2 = 0 - 1;
     if (n == 3) { x2 = _masg_target(S, t0, 2); }
-    _dt_rhs_check_t(S, term);
+    var wk = _dt_peel(S, term);   # 6.7.14 (D45): `a, b = (f());`, closed after the call
     var fi = _dt_call_fn(S);
     if (_masg_callee(S, fi, n) == 1) {
         _masg_skip(S);
+        _pw_close(S, wk);
         return _masg_end(S, term);
     }
     _masg_bools(S, t0, n, fi);
     PCMPE(S);
+    _pw_close(S, wk);
     _tup_drain_push(S, n);
     if (n == 3) {
         EPOPR(S);
