@@ -1022,6 +1022,102 @@ if [ "$WINE" = 1 ]; then
     pe_same VZdY3pe "VZdY3 pe: *pi of a *i64" "$D/vzdy3.cyr" 1
 fi
 
+# ⛔ 6.7.14 (D33 A, the user's decision, 2026-10-16) — `&w` INTO A VALUE-FORM VECTOR PARAMETER IS REFUSED ON WINDOWS TOO:
+# `lanes(&w)` compiled there (42: the by-address ABI copied the vector the address named) where x86_64 / aarch64 / cx
+# refuse it, and `var v: f64v2 = &w;` is refused on every target. `_sarg_pe_vform` takes `&x` no more; Win64's own-call
+# vector receives route `f64v2_add(&a, &b)` to `f64v2_add_ptr` as PARSE_FNCALL does (`_pe_venter`) — they called the
+# value form with the addresses, which refusing `&x` would have broken (6 corpus files at 6.7.13's D30 bite).
+# Filed: docs/development/issues/2026-10-16-pe-address-of-vector-into-value-form-parameter-accepted.md
+#   VZa1 the filed repro verbatim: one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64 (PE exited 42);
+#      VZa2 `lanes((&w))` the same
+#   VZa3 `f64v2_add(&a, &b)` / `f64v4_add(&p, &q)` into `var c: f64v2 =`, `d =`, a wrapped initialiser, a D30 call temp
+#      (`lanes(f64v2_add(&a, &b))`) and PARSE_RETURN's arm (`return f64v2_add(&a, &b);`, f64v4 too): exit 7 on x86_64 /
+#      IR=3 / aarch64 / cx / PE (the `_ptr` form everywhere)
+#   VZa4 `var c: f64v2 = vadd(&a, &b);` with no `vadd_ptr`: x86_64's two refusals, word for word, on PE
+#   VZa5 the six corpus files whose receives broke on PE when 6.7.13's D30 bite refused `&x` there (the regression set):
+#      each builds for PE and runs green under wine ("N passed, 0 failed")
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VZa1 `_pe_vroute` never routing                          -> RED 7: VZa3 pe and VZa5's six files (refused: `got
+#       `&a``, the receives calling the value form)
+#   M-VZa2 `_sarg_pe_vform` taking `&x` again (the 6.7.13 exemption) -> RED 2: VZa1 VZa4 pe (compiled); VZa2 green (the
+#       exemption read the first token: `(&w)` stays refused)
+cat > "$D/vza1.cyr" <<'EOF'
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 {
+    var w: f64v2 = mkv(4, 2);
+    return lanes(&w);
+}
+syscall(60, run());
+EOF
+sed 's/return lanes(&w);/return lanes((\&w));/' "$D/vza1.cyr" > "$D/vza2.cyr"
+cat > "$D/vza3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanes(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn addr(a: f64v2, b: f64v2): f64v2 { return f64v2_add(&a, &b); }
+fn add4(a: f64v4, b: f64v4): f64v4 { return f64v4_add(&a, &b); }
+fn main(): i64 {
+    var a: f64v2 = f64v2_make(1, 2);
+    var b: f64v2 = f64v2_make(3, 0);
+    var ok = 0;
+    var c: f64v2 = f64v2_add(&a, &b);
+    if (lanes(c) == 42) { ok = ok + 1; }
+    var d: f64v2;
+    d = f64v2_add(&a, &a);
+    if (lanes(d) == 24) { ok = ok + 1; }
+    var e: f64v2 = (f64v2_add(&b, &b));
+    if (lanes(e) == 60) { ok = ok + 1; }
+    if (lanes(f64v2_add(&a, &b)) == 42) { ok = ok + 1; }
+    if (lanes(addr(a, b)) == 42) { ok = ok + 1; }
+    var p: f64v4 = f64v4_make(1, 0, 0, 2);
+    var q: f64v4 = f64v4_make(3, 0, 0, 5);
+    var r: f64v4 = f64v4_add(&p, &q);
+    if (l4(r) == 4007) { ok = ok + 1; }
+    if (l4(add4(p, q)) == 4007) { ok = ok + 1; }
+    return ok;
+}
+var rc = main(); syscall(60, rc);
+EOF
+cat > "$D/vza4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn vadd(a: f64v2, b: f64v2): f64v2 { return f64v2_add(a, b); }
+fn main(): i64 {
+    var a: f64v2 = f64v2_make(1, 2);
+    var b: f64v2 = f64v2_make(3, 0);
+    var c: f64v2 = vadd(&a, &b);
+    return load64(&c);
+}
+var rc = main(); syscall(60, rc);
+EOF
+echo "VZa. &w into a value-form parameter: refused on every target; f(&a, ..) receives route to f_ptr on Win64 (D33 A)"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VZa1$lg" "VZa1 $lg: lanes(&w), the filed repro" "$(cat "$D/vza1.cyr")" "$lg" "got \`&w\`"
+    refused "VZa2$lg" "VZa2 $lg: lanes((&w))" "$(cat "$D/vza2.cyr")" "$lg" "got \`(...)\`"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VZa1pe "VZa1 pe: lanes(&w), the filed repro (PE exited 42)" "$D/vza1.cyr" 1
+    pe_same VZa2pe "VZa2 pe: lanes((&w))" "$D/vza2.cyr" 1
+    pe_same VZa4pe "VZa4 pe: vadd(&a, &b) with no vadd_ptr, into a declaration" "$D/vza4.cyr" 2
+fi
+exit_rows VZa3 "$D/vza3.cyr" 7 "seven f(&a, ..) receives through f_ptr"
+if [ "$WINE" = 1 ]; then
+    for f in tests/tcyr/codegen/f64v4_byval_return.tcyr tests/tcyr/crossos/f64v4_ymm.tcyr \
+             tests/tcyr/crossos/vector_global_storage.tcyr tests/tcyr/simd/simd_f32v4.tcyr \
+             tests/tcyr/simd/simd_overload_dispatch.tcyr tests/tcyr/simd/simd_typed_wrappers.tcyr; do
+        n=$(printf '%s' "$f" | tr -c 'a-zA-Z0-9' '_')
+        if [ ! -f "$f" ]; then bad "VZa5 pe: $f is missing"; continue; fi
+        run_leg pe "$f" "$D/za5_$n"
+        if [ "$RC" -eq -1 ]; then bad "VZa5 pe: $f did not build: $(grep -h -m1 'error' "$D/za5_$n.exe.err" 2>/dev/null | head -1)"
+        elif [ "$RC" -eq 0 ] && printf '%s' "$LAST" | grep -q ' passed, 0 failed '; then ok "VZa5 pe: $f: $LAST"
+        else bad "VZa5 pe: $f: exit $RC, '$LAST'"; fi
+    done
+fi
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -1062,4 +1158,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33)"

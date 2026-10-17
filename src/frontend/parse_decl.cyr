@@ -7472,7 +7472,7 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (vns <= 1) { return 0; }
     if (_TARGET_PE == 1) {
         var vnoff = PEEKV(S);
-        _vcall_enter(S, vfi);   # v6.6.4: PE retptr vector receive emits its own call (6.7.13: past `<..>`)
+        vfi = _pe_venter(S, vfi);   # v6.6.4: PE retptr receive emits its own call (6.7.13: past `<..>`; 6.7.14: routed)
         EFLADDR(S, dst_li);
         EPUSHR(S);
         # 6.6.6: the arguments through `_owncall_args` — the gates AND the arity check, which
@@ -7545,6 +7545,35 @@ fn _vcall_enter(S, fi): i64 {
     _callee_site_checks_here(S, fi, noff, 0);
     STI(S, o + 1);
     return 0;
+}
+# ⛔ 6.7.14 (D33 A, the user's decision, 2026-10-16) — `f64v2_add(&a, &b)` GOES TO THE POINTER FORM `f64v2_add_ptr` ON
+# EVERY TARGET, in a declaration's initialiser too. PARSE_FNCALL routes a call whose first argument is `&x` to its
+# `<base>_ptr` sibling (`_fnc_route`, v5.10.39), but Win64's own-call vector receives — `var v: f64v2 = f(..)`, `v =
+# f(..)`, a wrapped or D30 call temp (`_vrcv_pe_call`), PARSE_RETURN's arm — emit the call themselves (the hidden
+# result pointer) and called the value form with the addresses, which only worked because Win64's value-form
+# parameter is address-passed; refusing `&x` there (D33) needs them routed as the call path routes. The cursor on the
+# call `fi` (`_vcall_fi`'s): entered past its `(` as `_vcall_enter` enters it, routed first — a plain `name(&x, ..)`
+# whose `<name>_ptr` returns the same vector (the hidden result pointer is the same) goes to that sibling, its checks
+# run on it as PARSE_FNCALL's do; an explicit instance `g<T>(..)` is not routed (nor is it there: no instance has a
+# sibling). The fn to call. CHANGELOG [6.7.14]
+fn _pe_venter(S, fi): i64 {
+    var ti = GTI(S);
+    var r = _pe_vroute(S, fi, ti);
+    if (r == fi) {
+        _vcall_enter(S, fi);
+        return fi;
+    }
+    _callee_site_checks_here(S, r, L64(_fnt_names + r * 8), 0);
+    STI(S, ti + 2);
+    return r;
+}
+fn _pe_vroute(S, fi, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 10) { return fi; }
+    if (TOKTYP(S, ti + 2) != 27) { return fi; }
+    var p = _fnc_ptr_sib(S, TOKVAL(S, ti));
+    if (p < 0) { return fi; }
+    if (GFRS(S, p) != GFRS(S, fi)) { return fi; }
+    return p;
 }
 # 1 = local type `ty` is a value-form vector of 16 / 32 bytes.
 fn _vrcv_vec(S, ty): i64 {
@@ -7700,7 +7729,7 @@ fn _vrcv_emit(S, dst, ty, k): i64 {
 fn _vrcv_pe_call(S, dst): i64 {
     var fnoff = PEEKV(S);
     var fi = _vcall_fi(S, GTI(S));   # 6.7.13: an explicit instance's, past its `<..>`
-    _vcall_enter(S, fi);
+    fi = _pe_venter(S, fi);   # 6.7.14 (D33): `f(&a, ..)` -> `f_ptr`
     EFLADDR(S, dst);
     EPUSHR(S);
     var n = _owncall_args(S, fi, fnoff, 1);
@@ -8832,9 +8861,7 @@ fn PARSE_VAR(S): i64 {
                             # path at line ~1063: push &named first,
                             # then user args, ECALLPOPS pops into RCX
                             # (retptr) + RDX/R8/R9 (user args).
-                            _callee_site_checks_here(S, _f2c_look_fi, _f2c_look_noff, 0);   # v6.6.4: own-call path
-                            STI(S, GTI(S) + 1);  # consume callee IDENT
-                            STI(S, GTI(S) + 1);  # consume '('
+                            _f2c_look_fi = _pe_venter(S, _f2c_look_fi);   # v6.6.4: own-call path (6.7.14: routed)
                             EFLADDR(S, _f2c_named);
                             EPUSHR(S);
                             # The user args (retptr is int arg 0): a value-form vector arg is
@@ -8902,9 +8929,7 @@ fn PARSE_VAR(S): i64 {
                         STI(S, GTI(S) + 1);  # consume '='
                         if (_TARGET_PE == 1) {
                             # Win64 retptr-style call (mirror f64v2 Win64 branch).
-                            _callee_site_checks_here(S, _f4c_look_fi, _f4c_look_noff, 0);   # v6.6.4: own-call path
-                            STI(S, GTI(S) + 1);  # consume callee IDENT
-                            STI(S, GTI(S) + 1);  # consume '('
+                            _f4c_look_fi = _pe_venter(S, _f4c_look_fi);   # v6.6.4: own-call path (6.7.14: routed)
                             EFLADDR(S, _f4c_named);
                             EPUSHR(S);
                             # 6.6.6: `_owncall_args`, as in the f64v2 branch above. CHANGELOG [6.6.6]

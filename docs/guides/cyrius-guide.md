@@ -3877,7 +3877,10 @@ a global — is refused once, by name: `a value-form vector argument to 'lanes' 
 a call declared to return it (..) or a dereference of a pointer to its type (`*p`) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
 refused as on the other targets (`value-form SIMD arg must be a 16-byte vector`), a pointer word
 holding a vector's address too (`var pv: *f64v2 = &w; lanes(pv)`, `var p = &w; lanes(p)`) — pass
-the vector local, `lanes(w)`. Win64 takes exactly these sources (6.7.14): a vector local of another
+the vector local, `lanes(w)`. `lanes(&w)` is refused on every target (6.7.14; D33, 2026-10-16: A —
+through 6.7.13 Win64 compiled it, the by-address ABI copying the vector `&w` named): `&` converts
+into a pointer parameter, not into a value. `f64v2_add(&a, &b)` still goes to the pointer form
+`f64v2_add_ptr` on every target, a declaration's initialiser, an assignment and a `return` too. Win64 takes exactly these sources (6.7.14): a vector local of another
 type into a 16-byte parameter (an f64v4 or an f32v8 into `x: f64v2`, an f64v2 into `x: f32v4`) and a
 struct local are refused with the class words above (`.. must be a 16-byte vector`, `.. type mismatch
 (callee expects f32v4)`), a struct call result, `*ps` and an expression led by a name (`lanes(q +
