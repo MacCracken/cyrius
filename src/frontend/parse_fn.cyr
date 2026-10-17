@@ -11213,7 +11213,10 @@ fn _asg_lvalue_refused(S, noff): i64 {
 # "undefined variable 'L'"). 1 = refused. CHANGELOG [6.7.14]
 fn _asg_lvalue_at(S, noff): i64 {
     if (_slit_stmt(S, noff) == 1) { return 1; }   # 6.7.14 (D12 (a)): a statement `P { .. };`
-    if (_asg_pair_at(S) == 1) { return _asg_lvalue_refused(S, noff); }
+    if (_asg_pair_at(S) == 1) {
+        if (_asg_lvalue_refused(S, noff) == 1) { return 1; }
+        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse.cyr)
+    }
     if (_asg_lvalue_is(S, noff) == 0) { return 0; }
     ERR_EXPECT(S, 4);
     return 1;

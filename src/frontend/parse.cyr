@@ -3872,22 +3872,23 @@ fn _asg_cap_name(S, noff): i64 {
     _had_error = 1;
     return 1;
 }
-# `x = v;` in a closure whose `x` is a CAPTURE (cursor on the `=`, `ti` the name): a capture is not
-# assigned in its closure, so this is the statement's capture refusal (`_asg_cap_name`) — reported at
-# the name, before the value is parsed, and the value skipped as a refused lvalue's is. Parsed as a
-# value first, a whole tuple `u` in `t = u;` was refused too, and the caret sat on the `;`.
-# 1 = refused. CHANGELOG [6.7.11]
-fn _asg_capture_refused(S, noff, ti): i64 {
+# ⛔ 6.7.14 — A WRITE TO A CAPTURED NAME IS REFUSED BEFORE ANY GLOBAL IS LOOKED UP, the order a read
+# resolves the name in (a capture, then a global). The write arms resolved local, then GLOBAL, then
+# capture, so with a global of the name `y += d`, `y = y + d`, a classic-for init or step and
+# `a, y = f()` in a closure compiled and stored into the GLOBAL while reads in the same body saw the
+# capture — a silent wrong value. Asked before the value is parsed: by `_asg_lvalue_at` (the statement
+# arm, the for init and step) and by `_masg_resolve`. 1 = `noff` is a capture (inside a closure body:
+# not the closure's own local, one of the enclosing scope's) and the refusal (`_asg_cap_name`) named it
+# at token `ti`. CHANGELOG [6.7.14]
+fn _asg_cap_first(S, noff, ti): i64 {
     if (_syntax_only == 1) { return 0; }
     if (GINFN(S) == 0) { return 0; }
     if (FINDLOCAL(S, noff) >= 0) { return 0; }
-    if (FINDVAR(S, noff) >= 0) { return 0; }
     if (_cl_snap_find(S, noff) < 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    _asg_undef_report(S, noff);
+    _asg_cap_name(S, noff);
     STI(S, sv);
-    _cst_skip_decl(S);
     return 1;
 }
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
@@ -4926,10 +4927,10 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
             return li;
         }
     }
+    if (_panic == 0) { if (_asg_cap_first(S, nm, GTI(S)) == 1) { return 0 - 1; } }   # 6.7.11: a capture; 6.7.14: before a global
     var gi = FINDVAR(S, nm);
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
-        if (_panic == 0) { if (_asg_cap_name(S, nm) == 1) { return 0 - 1; } }   # 6.7.11: a capture
         if (_ce_name_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it
         ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
         _gv_note_blockscoped(S, nm);
@@ -5620,7 +5621,6 @@ fn _PARSE_STMT_IMPL(S): i64 {
         _asg_ufv = 0 - 1;
         _asg_tup_refd = 0;
         if (compound_op == 0) {
-            if (PEEKT(S) == 4) { if (_asg_capture_refused(S, noff, GTI(S) - 1) == 1) { return 0; } }   # 6.7.11
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below

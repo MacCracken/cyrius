@@ -1,0 +1,19 @@
+# issues/archived/2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.md, verbatim (below this
+# header). A write to a captured name in a closure, with a GLOBAL of the same name: it compiled and stored
+# into the global while the read beside it saw the capture — exit 52 (the closure's 5 * 10 + the global's
+# 100 -> 102). Run from the repo root (includes). Expected (6.7.11's rule, whether or not a global has the
+# name): refused once — 'y' is captured by value; a captured name is not assignable in a closure.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+var y = 100;
+fn main(): i64 {
+    alloc_init();
+    var y = 5;
+    var f = |d| { y += d; return y; };
+    var r = callptr(f, 2);
+    var s = "";
+    return r;
+}
+fn g(): i64 { return y; }
+var r = main();
+syscall(60, r * 10 + (g() - 100));
