@@ -5453,6 +5453,13 @@ asm { out dx, al; }             # Port output
 asm { wrmsr; rdmsr; cpuid; }    # System instructions
 ```
 
+`in` and `out` take the accumulator (`al`, `ax` or `eax`) and `dx`, and the accumulator's width is
+the encoding: `in al, dx` EC, `in ax, dx` 66 ED, `in eax, dx` ED; `out dx, al` EE, `out dx, ax`
+66 EF, `out dx, eax` EF. Any other operand (`in bl, dx`, an immediate port `in al, 0x60`) is
+refused, naming it. aarch64 has no `in` / `out`, and cx no inline asm; both refuse `in` by name.
+(6.7.14: `in` was `unexpected in`, because it lexes as the for-in keyword, and both instructions
+ignored their operands, so `out dx, eax` assembled as `out dx, al`.)
+
 ## Kernel Mode
 
 ```

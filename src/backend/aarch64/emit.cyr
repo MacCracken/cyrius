@@ -3738,6 +3738,13 @@ fn ASM_MNEMONIC(S): i64 {
     return 0;
 }
 
+# `in` lexes as the for-in keyword (76), so the asm block hands it here: aarch64 has no port input,
+# and it is refused as any mnemonic the assembler lacks is. CHANGELOG [6.7.14]
+fn ASM_KW_IN(S): i64 {
+    _asm_refuse(S, GTI(S), "unknown aarch64 asm mnemonic ");
+    return 0;
+}
+
 # v6.0.67: map an aarch64 register NAME (first bytes as L64) → number 0-30. 3-char
 # names (x10-x30) checked before 2-char (x0-x9) so "x10" doesn't match "x1".
 fn _asm_aarch64_reg(n): i64 {

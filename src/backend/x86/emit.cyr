@@ -5716,8 +5716,8 @@ fn ASM_MNEMONIC(S): i64 {
     elif (mnem & 0xFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                      # mov (cr)
     elif (mnem & 0xFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }          # invlpg
     elif (mnem & 0xFFFFFF == 0x746E69) { ASM_INT(S); }                          # int
-    elif (mnem & 0xFFFF == 0x6E69) { ASM_IN(S); }                              # in
-    elif (mnem & 0xFFFFFF == 0x74756F) { ASM_OUT(S); }                          # out
+    elif (mnem & 0xFFFF == 0x6E69) { if (ASM_IN(S) == 1) { return 0; } }       # in
+    elif (mnem & 0xFFFFFF == 0x74756F) { if (ASM_OUT(S) == 1) { return 0; } }   # out
     elif (mnem & 0xFFFFFF == 0x72746C) { ASM_LTR(S); }                          # ltr
     elif (mnem == 0x6F6C5F6D61726170) { ASM_PARAM_LOAD(S, noff); }              # param_load(reg,idx)
     else { ERR(S); }
@@ -5827,19 +5827,59 @@ fn ASM_PARAM_LOAD(S, noff): i64 {
     return 0;
 }
 
-fn ASM_IN(S): i64 {
+# `in` lexes as the for-in keyword (76), so the asm block hands it here rather than to
+# ASM_MNEMONIC; until 6.7.14 `asm { in al, dx; }`, the guide's own spelling, was `unexpected in`.
+# CHANGELOG [6.7.14]
+fn ASM_KW_IN(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 31) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    EB(S, 0xEC);
+    if (ASM_IN(S) == 1) { return 0; }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# The cursor's operand as the accumulator: al 1, ax 2, eax 4 (whole names, with the NUL); else 0.
+fn _asm_acc_width(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var n = L64(S + 0xEC00000 + PEEKV(S));
+    if (n & 0xFFFFFF == 0x6C61) { return 1; }       # al
+    if (n & 0xFFFFFF == 0x7861) { return 2; }       # ax
+    if (n & 0xFFFFFFFF == 0x786165) { return 4; }   # eax
+    return 0;
+}
+
+fn _asm_is_dx(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFF == 0x7864) { return 1; }   # dx
+    return 0;
+}
+
+# `in acc, dx` / `out dx, acc`, the cursor past the mnemonic: the accumulator's width is the encoding
+# (al EC / EE, ax 66 ED / 66 EF, eax ED / EF), and any other operand is refused by name (D16,
+# 2026-10-16). Until 6.7.14 both skipped their operands unread: `out dx, eax` assembled as out dx, al,
+# `in bl, dx` as in al, dx. Returns 1 when refused (the statement is skipped). CHANGELOG [6.7.14]
+fn ASM_IN(S): i64 {
+    var w = _asm_acc_width(S);
+    if (w == 0) { return _asm_refuse(S, GTI(S), "in takes al, ax or eax and then dx, not "); }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); _asm_skip_stmt(S); return 1; }
+    STI(S, GTI(S) + 1);
+    if (_asm_is_dx(S) == 0) { return _asm_refuse(S, GTI(S), "in takes al, ax or eax and then dx, not "); }
+    STI(S, GTI(S) + 1);
+    if (w == 2) { EB(S, 0x66); }
+    if (w == 1) { EB(S, 0xEC); } else { EB(S, 0xED); }
     return 0;
 }
 
 fn ASM_OUT(S): i64 {
+    if (_asm_is_dx(S) == 0) { return _asm_refuse(S, GTI(S), "out takes dx and then al, ax or eax, not "); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 31) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    EB(S, 0xEE);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); _asm_skip_stmt(S); return 1; }
+    STI(S, GTI(S) + 1);
+    var w = _asm_acc_width(S);
+    if (w == 0) { return _asm_refuse(S, GTI(S), "out takes dx and then al, ax or eax, not "); }
+    STI(S, GTI(S) + 1);
+    if (w == 2) { EB(S, 0x66); }
+    if (w == 1) { EB(S, 0xEE); } else { EB(S, 0xEF); }
     return 0;
 }
 

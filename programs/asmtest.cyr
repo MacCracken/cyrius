@@ -22,6 +22,8 @@ fn test_invlpg(): i64 { asm { invlpg [rax]; } return 0; }
 fn test_mfence(): i64 { asm { mfence; } return 0; }   # v6.3.3 #6 — memory barriers (unprivileged)
 fn test_lfence(): i64 { asm { lfence; } return 0; }
 fn test_sfence(): i64 { asm { sfence; } return 0; }
+fn test_in(): i64 { asm { in al, dx; in ax, dx; in eax, dx; } return 0; }   # 6.7.14: EC / 66 ED / ED
+fn test_out(): i64 { asm { out dx, al; out dx, ax; out dx, eax; } return 0; }  # EE / 66 EF / EF
 fn test_mixed(): i64 { asm { cli; } asm { mov cr3, rax; } asm { sti; } return 0; }
 
 # Can't execute privileged instructions in user mode — just verify compilation

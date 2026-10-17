@@ -1449,6 +1449,12 @@ _chk_gate "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
 # byte the SAME SIZE as the correct compiler, so no size or NOP-count assertion can see it.
 _chk_gate "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
 
+# 6.7.14 — an `asm { }` block assembles what its source says or refuses it by name (D16): `in` reaches
+# its emitter (it lexes as the for-in keyword), in / out encode the accumulator's width (out dx, eax
+# was EE), an operand they cannot take is refused naming it, and the guide's Inline Assembly block
+# keeps its bytes in a kernel and a program.
+_chk_gate "$ROOT/tests/gates/codegen/asm_mnemonics_whole.sh"
+
 # v6.5.68: the NOP runs the IR passes write AFTER every per-function compaction has already
 # run are collected by a whole-program pass, and the COMPACTED compiler must be a working one
 # that emits exactly the bytes the uncompacted one does. ⭐ The byte count only proves the

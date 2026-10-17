@@ -2421,8 +2421,8 @@ include "src/frontend/parse_decl.cyr"
 include "src/frontend/parse_fn.cyr"
 
 
-# ASM_MNEMONIC and helpers are in arch-specific emit files:
-# src/backend/x86/emit.cyr and src/backend/aarch64/emit.cyr
+# ASM_MNEMONIC, ASM_KW_IN and helpers are in arch-specific emit files:
+# src/backend/x86/emit.cyr, src/backend/aarch64/emit.cyr and src/backend/cx/emit.cyr
 
 # v6.5.19 (the include-length ifdef bug) — bound the jump-end arrays of PARSE_SWITCH and PARSE_MATCH.
 #
@@ -5458,6 +5458,8 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     # Mnemonic — dispatch to ASM_MNEMONIC
                     ASM_MNEMONIC(S);
                 }
+                # `in` lexes as the for-in keyword: the backend's ASM_KW_IN (6.7.14)
+                elif (PEEKT(S) == 76) { ASM_KW_IN(S); }
                 else { ERR(S); }
             }
         }
