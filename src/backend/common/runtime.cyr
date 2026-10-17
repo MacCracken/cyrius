@@ -107,9 +107,10 @@ fn _mode_unsupported(S, a64): i64 {
 
 # 6.6.18 — CYRIUS_DCE=1 compaction: ONE predicate DECIDES and REPORTS. Six paths declined
 # compaction and said nothing: PE, x86 Mach-O, `--pie`, `shared;`, every aarch64 target, and a
-# saturated repair registry on the one target that does compact (static x86 ELF). The last is a
-# cliff: 4,096 dead fns compact to 4,456 B, 4,097 leave 201,064 B (one-line fns) — and it was misdiagnosed on
-# record as a DECODE_WALK_OK bail. The x86 FIXUP gates wp_compact on `why == 0`, so the note
+# saturated repair registry on the one target that does compact (static x86 ELF). The last was a
+# cliff: 4,096 dead fns compacted to 4,456 B, 4,097 left 201,064 B (one-line fns) — misdiagnosed on
+# record as a DECODE_WALK_OK bail; since 6.7.14 the registries grow (util.cyr _wpnr_grow /
+# _wpsw_grow) and decline only when an alloc fails. The x86 FIXUP gates wp_compact on `why == 0`, so the note
 # cannot drift from the decision; wp_compact keeps its own guards (the CYRIUS_IR=3 seam uses
 # them) and FIXUP flags any refusal this does not classify. 0 = compaction will run.
 # `a64` = 1 from the aarch64 FIXUP. CHANGELOG [6.6.18]
@@ -127,11 +128,12 @@ fn _dce_compact_why(S, a64): i64 {
 }
 # A saturated repair registry, named — shared by the CYRIUS_DCE=1 note above and the
 # CYRIUS_IR=3 seam in main.cyr, which declined on the same flags and said nothing. 0 = none.
-# CHANGELOG [6.6.20]
+# CHANGELOG [6.6.20] — all three registries grow since 6.7.14, so each reason is a failed alloc
+# (the run and switch-table ones named a 4,096-record cap). CHANGELOG [6.7.14]
 fn _wp_registry_why(): i64 {
-    if (_wpnr_ovf == 1) { return "more than 4096 dead-code runs, the repair registry cap"; }
+    if (_wpnr_ovf == 1) { return "the dead-code run registry could not grow (alloc failed)"; }
     if (_wpjs_ovf == 1) { return "the rel32/disp32 source registry could not grow (alloc failed)"; }
-    if (_wpsw_ovf == 1) { return "more than 4096 switch tables, the repair registry cap"; }
+    if (_wpsw_ovf == 1) { return "the switch-table registry could not grow (alloc failed)"; }
     return 0;
 }
 fn _dce_target_word(S, a64): i64 {
@@ -163,8 +165,8 @@ fn _dce_nop_tail(S, a64, why, nbytes): i64 {
 }
 # The CYRIUS_DCE-unset hint. It promised "set CYRIUS_DCE=1 to eliminate" on every target, including
 # the ones that can never eliminate (dce_eliminates.sh records that broken promise from v6.5.72).
-# Unset, FIXUP still records the dead-code runs, so the 4,096-run cap shows here too; the jump and
-# switch registries record only under CYRIUS_DCE=1 / CYRIUS_IR, so those two caps cannot.
+# Unset, FIXUP still records the dead-code runs, so a run registry that could not grow shows here
+# too; the jump and switch registries record only under CYRIUS_DCE=1 / CYRIUS_IR, so theirs cannot.
 fn _dce_hint_tail(S, a64, why): i64 {
     if (why == 0) {
         PRSTR(" bytes — set CYRIUS_DCE=1 to eliminate, CYRIUS_DCE_VERBOSE=1 to list)\n");
@@ -205,7 +207,11 @@ include "src/backend/common/env.cyr"
 # shim. Flags 0x241 = O_WRONLY|O_CREAT|O_TRUNC, mode 0x1A4 = 0644. Entirely behind
 # the `sym_path != 0` guard → zero effect (byte-identical emitted programs) unless
 # CYRIUS_SYMS is set. cx never calls this (it has no symbol dump).
-fn _emit_sym_dump(S, base): i64 {
+# 6.7.14 — `skip`: 0, or a bitmap of fns to leave out. The x86 FIXUP dumps a second time after
+# CYRIUS_DCE=1 compaction, from the shifted offsets and with the fns it removed skipped: the
+# dump before it named a removed fn at a live fn's address and put every later fn too high.
+# CHANGELOG [6.7.14] — issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
+fn _emit_sym_dump(S, base, skip): i64 {
     var sym_path = _read_env("CYRIUS_SYMS");
     if (sym_path == 0) { return 0; }
     var symfd = 0;
@@ -221,6 +227,7 @@ fn _emit_sym_dump(S, base): i64 {
     var sfi = 0;
     while (sfi < sym_fnc) {
         var foff = L64(_fnt_offsets + sfi * 8);
+        if (skip != 0) { if ((load8(skip + (sfi >> 3)) & (1 << (sfi & 7))) != 0) { foff = 0 - 1; } }
         if (foff >= 0) {
             var vabuf[20];
             var va = base + foff;
@@ -485,4 +492,96 @@ fn _dce_host_fn(S, coff, fnc): i64 {
         fj = fj + 1;
     }
     return 0 - 1;
+}
+
+# 6.7.14 — 1 when code offset coff lies in a redefined fn's LOSING body, past its entry jump
+# (`_fnr_add`, util.cyr). The seed passes take a call there as no root: nothing reaches the body
+# but that jump, which stays a root (coff == old) and keeps the last definition live. The
+# reachable-undefined-call check keeps using `_dce_host_fn` alone, so a losing body that calls an
+# undefined fn is still refused. issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+fn _dce_in_loser(coff): i64 {
+    var i = 0;
+    while (i < _fnr_n) {
+        if (coff > load64(_fnr_base + i * 16)) {
+            if (coff < load64(_fnr_base + i * 16 + 8)) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 6.7.14 — A DEAD FN'S RANGE CAN HOLD A LIVE FN. A generic instance is emitted inline, inside the
+# fn being compiled when it is first needed (`_instantiate_generic_fn`: a jump over it), so a
+# forwarder's instance nests the instance it forwards to — and an inline replay of the forwarder
+# calls the inner one directly, leaving it live while the outer one is dead. Both sweeps filled /
+# removed the dead fn's whole [start, end), the live body inside it with it (x86 SIGILL on the
+# sentinel or SIGSEGV, aarch64 a hang). The sweeps now keep such a fn whole, as they keep a body
+# the decoder cannot size. `_dce_live_starts` builds the live fns' starts, sorted, once per FIXUP
+# after the reachability fixpoint; `_dce_holds_live` asks whether one lies in [dfoff, dfend).
+# CHANGELOG [6.7.14] — issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
+var _dce_ls_base = 0;   # sorted live starts, then as many slots of merge scratch; 0 = no index
+var _dce_ls_n = 0;
+fn _dce_live_starts(S, live, fnc): i64 {
+    _dce_ls_n = 0;
+    _dce_ls_base = alloc(fnc * 16 + 16);
+    if (_dce_ls_base == 0) { return 0; }
+    var fi = 0;
+    while (fi < fnc) {
+        var fo = L64(_fnt_offsets + fi * 8);
+        if (fo >= 0) {
+            if ((load8(live + (fi >> 3)) & (1 << (fi & 7))) != 0) {
+                S64(_dce_ls_base + _dce_ls_n * 8, fo);
+                _dce_ls_n = _dce_ls_n + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+    _dce_ls_sort(_dce_ls_base, _dce_ls_n);
+    return 0;
+}
+# Bottom-up mergesort of n 8-byte values at b, through the n slots after them.
+fn _dce_ls_sort(b, n): i64 {
+    var scr = b + n * 8;
+    var w = 1;
+    while (w < n) {
+        var i = 0;
+        while (i < n) {
+            var mid = i + w;
+            var hi = i + w + w;
+            if (mid > n) { mid = n; }
+            if (hi > n) { hi = n; }
+            var a = i;
+            var c = mid;
+            var o = i;
+            while (o < hi) {
+                var take_a = 0;
+                if (a < mid) {
+                    if (c >= hi) { take_a = 1; }
+                    elif (L64(b + a * 8) <= L64(b + c * 8)) { take_a = 1; }
+                }
+                if (take_a == 1) { S64(scr + o * 8, L64(b + a * 8)); a = a + 1; }
+                else { S64(scr + o * 8, L64(b + c * 8)); c = c + 1; }
+                o = o + 1;
+            }
+            i = i + w + w;
+        }
+        var k = 0;
+        while (k < n) { S64(b + k * 8, L64(scr + k * 8)); k = k + 1; }
+        w = w + w;
+    }
+    return 0;
+}
+# 1 when a live fn starts in [dfoff, dfend) — the dead fn there must be kept whole. Without an
+# index (the alloc failed) every dead fn is kept: never fill what cannot be checked.
+fn _dce_holds_live(dfoff, dfend): i64 {
+    if (_dce_ls_base == 0) { return 1; }
+    var lo = 0;
+    var hi = _dce_ls_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (L64(_dce_ls_base + mid * 8) < dfoff) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo < _dce_ls_n) { if (L64(_dce_ls_base + lo * 8) < dfend) { return 1; } }
+    return 0;
 }

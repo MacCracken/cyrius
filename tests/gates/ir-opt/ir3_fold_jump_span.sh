@@ -2,11 +2,11 @@
 # Gate: `ir_const_fold`'s overwrite span must never swallow a following jump.
 #
 # THE BUG (v6.5.2). `ir_emit` stamps a node's codebuf position from GCP(S) **at call
-# time** (src/common/ir.cyr:295), and every x86 emitter records BEFORE emitting bytes —
+# time** (src/common/ir.cyr, ir_emit), and every x86 emitter records BEFORE emitting bytes —
 # the `_IR_REC0/1/2`-as-first-statement convention — so a node's CP is the START of its
 # instruction. `ir_const_fold` depends on exactly that: it overwrites
 # `IR_NODE_CP(ni+1) - IR_NODE_CP(ni_a)` bytes and 0x90-fills the remainder
-# (src/common/ir.cyr:800-806).
+# (src/common/ir.cyr, ir_const_fold).
 #
 # `EJCC` and `EJMP0` (src/backend/x86/jump.cyr) were the ONLY two emitters that emitted
 # bytes first and recorded after, putting their CP at the END of the jump. So whenever a

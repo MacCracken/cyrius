@@ -28,6 +28,15 @@ Linux ELF loads at `0x400000` (a PE at its ImageBase), so they match the
 absolute addresses in a stack trace; with `--pie` the image base is 0, so
 match a frame's `+ 0x…` offset from the binary instead.
 
+Under `CYRIUS_DCE=1` an x86_64 ELF build (a kernel image and `CYRIUS_WX=0`
+included) removes its unreachable functions and moves the code down, and the
+file is written after that: a removed function is absent and every other one
+is at its moved address. (Until 6.7.14 the file held the pre-compaction
+addresses — a removed function at a live one's address, and everything after
+it too high.) A dead function the compiler keeps — one holding an instruction
+the length decoder cannot size, or one whose range holds a live generic
+instance — stays listed where it now sits.
+
 ## Mapping a crash to a function
 
 ```sh

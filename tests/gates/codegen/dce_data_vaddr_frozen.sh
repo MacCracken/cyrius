@@ -24,17 +24,17 @@
 # No in-tree fixture reaches that:
 #   * cycc's own source: 1,251,864 -> 1,215,000 bytes. Both land at 0x600000 — no crossing,
 #     so a gate built on it passes against the BROKEN compiler.
-#   * synthetic dead code sized past 2 MB: DCE lists the fns as dead but does NOT compact.
-#     Measured at 400 fns it compacts (220,701 bytes eliminated); at 4,200 and at 22,000 it
-#     NOPs and stops. ⚠ CORRECTED 6.6.18: this read "`DECODE_WALK_OK` fails on the generated
-#     bodies". It does not. The repair registry holds 4,096 dead-code runs (one per dead fn,
-#     `_wpnr_add`, src/common/util.cyr) and a saturated registry declines the whole pass —
-#     measured: 4,096 one-line dead fns compact, 4,097 decline, and since 6.6.18 the note says
-#     so ("compaction declined on x86_64 ELF: more than 4096 dead-code runs"). So the bound is
-#     the run count, not the body: ≤4,096 dead fns of ≳520 B each would cross a 2 MB bucket,
-#     and this gate could be made behavioural that way. Until then it stays structural.
-# Pinning the mechanism and SAYING so beats a behavioural-looking check that cannot fail —
-# the same call `deps_family_expansion_ordered.sh` documents for its own case.
+#   * synthetic dead code sized past 2 MB: until 6.7.14 DCE listed the fns as dead but did NOT
+#     compact — measured at 400 fns it compacts (220,701 bytes eliminated); at 4,200 and at
+#     22,000 it NOPs and stops. ⚠ CORRECTED 6.6.18: this read "`DECODE_WALK_OK` fails on the
+#     generated bodies". It does not: the repair registry held 4,096 dead-code runs and a
+#     saturated registry declined the whole pass.
+# Rows 1-4 pin the mechanism structurally, which beats a behavioural-looking check that cannot
+# fail — the same call `deps_family_expansion_ordered.sh` documents for its own case.
+# 6.7.14 — ROW 10 IS THE BEHAVIOURAL ONE. The run registry grows (util.cyr _wpnr_grow), so 9,000
+# dead fns of ~244 B each (2.2 MB of code, data at 0x800000) compact to a few hundred bytes of
+# code whose re-derived data base would be 0x600000: the binary must keep its data at 0x800000
+# and run. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 #
 # Mutation-proven: deleting either `_wx_dbase_frozen` guard reddens this gate, and restores
 # the sankhya segfault.
@@ -233,4 +233,28 @@ for SN in .bss .rodata; do
     [ "$H1" = "$H2" ] || fail "row 9: $SN differs between load bases 0x100000 and 0x200000 — a data word holds an address, which the compaction does not move"
 done
 
-echo "PASS: dce_data_vaddr_frozen (both backends record+consume in order; DCE build runs, RW vaddr $VD stable; CYRIUS_WX=0 and kernel; compact and move their data with the code: 16-aligned, padded, no data -> data address)"
+# 10. 6.7.14 — the bucket crossing itself, run. 9,000 dead fns put the code past 0x600000, so the
+#     plain build's data lands at 0x800000; compacted, the code is a few hundred bytes and a
+#     re-derived data base would be 0x600000 while the code addresses 0x8000xx. The frozen base
+#     keeps the RW segment at 0x800000 and the program runs.
+awk 'BEGIN { for (i = 0; i < 9000; i++) printf "fn dead%d(x): i64 { var a = x * %d; var b = a + 7; var c = b * b; var d = c - a; var e = d * 3 + b; var f = e - c + a; var g = f * f - e; var h = g + d - c; return h - a + %d; }\n", i, i + 3, i * 1000 + 7;
+             print "var G = 40;"; print "var H = 2;";
+             print "fn main(): i64 { syscall(1, 1, \"data-ok\\n\", 8); G = G + H; return G; }";
+             print "var rc = main();"; print "syscall(60, rc);" }' > "$WORK/x.cyr"
+"$CC" < "$WORK/x.cyr" > "$WORK/x0.bin" 2> /dev/null || fail "row 10: the plain build failed"
+CYRIUS_DCE=1 "$CC" < "$WORK/x.cyr" > "$WORK/x1.bin" 2> "$WORK/x1.err" || fail "row 10: the DCE build failed"
+if grep -q 'compaction declined' "$WORK/x1.err"; then fail "row 10: 9,000 dead fns decline compaction: $(cat "$WORK/x1.err")"; fi
+grep -q 'dead code eliminated' "$WORK/x1.err" || fail "row 10: 9,000 dead fns do not compact: $(cat "$WORK/x1.err")"
+X0=$(readelf -lW "$WORK/x0.bin" 2>/dev/null | awk '/LOAD/ && /RW/ {print $3}')
+X1=$(readelf -lW "$WORK/x1.bin" 2>/dev/null | awk '/LOAD/ && /RW/ {print $3}')
+XC=$(readelf -lW "$WORK/x1.bin" 2>/dev/null | awk '/LOAD/ && /R E/ {print $5}')
+[ "$X0" = 0x0000000000800000 ] || fail "row 10: the plain build's data is at $X0, not 0x800000 — the probe no longer crosses a 2 MB bucket"
+[ $((XC)) -lt 1048576 ] || fail "row 10: the compacted code is $XC B — it no longer falls below the bucket"
+[ "$X1" = "$X0" ] || fail "row 10: the compacted build's data moved $X0 -> $X1"
+chmod +x "$WORK/x1.bin"
+XRC=0
+"$WORK/x1.bin" > "$WORK/x1.out" || XRC=$?
+[ "$XRC" = 42 ] && [ "$(cat "$WORK/x1.out")" = "data-ok" ] \
+    || fail "row 10: the compacted 9,000-dead-fn binary exits $XRC with output '$(cat "$WORK/x1.out")' (want 42, 'data-ok')"
+
+echo "PASS: dce_data_vaddr_frozen (both backends record+consume in order; DCE build runs, RW vaddr $VD stable; CYRIUS_WX=0 and kernel; compact and move their data with the code: 16-aligned, padded, no data -> data address; 9,000 dead fns compact across a 2 MB bucket and run)"

@@ -80,8 +80,10 @@ fn _wx_active(S): i64 {
 # agnos loader uses 2 MB pages, so 2 MB alignment guarantees the permission split
 # isn't lost to a shared page. The file offset only needs 4 KB alignment (p_align
 # 0x1000): p_vaddr ≡ p_offset (mod 0x1000) holds since both are ≥4 KB-aligned, so the
-# virtual gap (≤2 MB) costs near-zero file bytes. entry = base + 120 (== _entry_base
-# for userland), so FIXUP and EMITELF_USER compute the SAME dbase.
+# virtual gap (≤2 MB) costs at most 4 KB of zero file padding — on x86's 4 KB p_align
+# only: aarch64's 64 KB p_align costs up to 64 KB (its EMITELF_USER; CHANGELOG [6.7.14]).
+# entry = base + 120 (== _entry_base for userland), so FIXUP and EMITELF_USER compute the
+# SAME dbase.
 fn _wx_data_vaddr(S, entry, cp): i64 {
     return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }
@@ -113,6 +115,210 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 # of 16 so the m128 padding computed against `dbase` still holds. CHANGELOG [6.7.11]
 var _wx_dbase_frozen = 0;
 
+# A zeroed bitmap of n bits (0 when the alloc fails), and setting bit i of one (a no-op on 0) —
+# FIXUP's record of the dead fns it hands the compactor, for the symbol dump after it. 6.7.14
+fn _bm_new(n): i64 {
+    var nb = (n >> 3) + 8;
+    var b = alloc(nb);
+    if (b == 0) { return 0; }
+    var i = 0;
+    while (i < nb) { store8(b + i, 0); i = i + 1; }
+    return b;
+}
+fn _bm_set(b, i): i64 {
+    if (b == 0) { return 0; }
+    store8(b + (i >> 3), load8(b + (i >> 3)) | (1 << (i & 7)));
+    return 0;
+}
+
+# 6.7.14 — THE DEAD-CODE CALL GRAPH COUNTS AN E8 / E9 ONLY WHERE AN INSTRUCTION STARTS. FIXUP's
+# seed and propagate passes took every E8 / E9 BYTE whose rel32 decodes to a fn start as a call,
+# including one inside an imm32 / disp32 / imm64. A false call only keeps a fn live, never drops
+# one, but data addresses move whenever a global is added, so whether a live instruction's
+# immediate happened to encode a call to a given dead fn moved with the global count: two unused
+# globals flipped `ir_emit1` live in the cx fork and turned dead_code_floor.sh RED.
+# Now a call that would mark a fn live (`_dce_mark`) must sit at an instruction start. The code is
+# cut into spans at every fn start and end and a redefined fn's losing-body bounds
+# (`_dce_cand_build`, once per FIXUP); the first such call in a span walks it with the length
+# decoder (decode.cyr DECODE_LEN, which every NOP-fill and the post-compaction audit already trust)
+# and marks its instruction starts. A span keeps the byte scan (every byte a candidate) unless it
+# starts at a fn start or end, walks to EXACTLY its end, holds no indirect jmp (a switch's `jmp
+# rax` is followed by its jump table: data) and lies in no fn holding a raw `asm` byte (util.cyr
+# _dce_raw_note; outside every fn, when the top level has one). So the call graph only gets more
+# precise, never unsound. Walking only where a call would mark a new fn keeps the cost to the
+# spans that decide something. issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
+var _dce_cm = 0;      # instruction-start bitmap over [0, _dce_cm_n); 0 = no map (every byte counts)
+var _dce_cm_n = 0;
+var _dce_sp = 0;      # spans, 16 B each: start offset, state (0 not walked, 1 walked, 2 byte scan)
+var _dce_sp_n = 0;
+var _dce_code_end = 0;   # GCP at FIXUP's entry, before it rounds the code up to 8
+# Marks fn fi live from the call at code offset p unless it already is or p is no instruction
+# start; 1 when it marked it.
+fn _dce_mark(live, fi, p): i64 {
+    if ((load8(live + (fi >> 3)) & (1 << (fi & 7))) != 0) { return 0; }
+    if (_dce_cand(p) == 0) { return 0; }
+    store8(live + (fi >> 3), load8(live + (fi >> 3)) | (1 << (fi & 7)));
+    return 1;
+}
+# 1 when an E8 / E9 at code offset p may be a call: its span keeps the byte scan, or p starts an
+# instruction of it. Walks the span on first use.
+fn _dce_cand(p): i64 {
+    if (_dce_cm == 0) { return 1; }
+    if (p >= _dce_cm_n) { return 1; }
+    var lo = 0;
+    var hi = _dce_sp_n;
+    while (hi - lo > 1) {
+        var mid = (lo + hi) >> 1;
+        if (L64(_dce_sp + mid * 16) <= p) { lo = mid; } else { hi = mid; }
+    }
+    var st = L64(_dce_sp + lo * 16 + 8);
+    if (st == 0) { st = _dce_span_walk(lo); }
+    if (st == 2) { return 1; }
+    return (load8(_dce_cm + (p >> 3)) >> (p & 7)) & 1;
+}
+# 1 when the instruction at p is an indirect jmp (FF /4, FF /5, after an optional REX).
+fn _dce_ijmp(p): i64 {
+    var q = _codebuf_base + p;
+    var b = load8(q);
+    if (b >= 0x40) { if (b <= 0x4F) { q = q + 1; b = load8(q); } }
+    if (b != 0xFF) { return 0; }
+    var r = (load8(q + 1) >> 3) & 7;
+    if (r == 4) { return 1; }
+    if (r == 5) { return 1; }
+    return 0;
+}
+# Walks span k, marking its instruction starts; its state becomes 1 when the walk lands exactly on
+# the span's end, else 2 (the byte scan). Returns the state.
+fn _dce_span_walk(k): i64 {
+    var p = L64(_dce_sp + k * 16);
+    var hi = _dce_cm_n;
+    if (k + 1 < _dce_sp_n) { hi = L64(_dce_sp + k * 16 + 16); }
+    var st = 1;
+    while (p < hi) {
+        var n = DECODE_LEN(_codebuf_base, p);
+        var b = load8(_codebuf_base + p);
+        if ((b & 0xF0) == 0x40) { b = load8(_codebuf_base + p + 1); }   # past a REX
+        if (n <= 0) { st = 2; p = hi; }
+        elif (b == 0xFF) {
+            if (_dce_ijmp(p) == 1) { st = 2; p = hi; }
+        }
+        if (st == 1) {
+            store8(_dce_cm + (p >> 3), load8(_dce_cm + (p >> 3)) | (1 << (p & 7)));
+            p = p + n;
+        }
+    }
+    if (p != hi) { st = 2; }
+    S64(_dce_sp + k * 16 + 8, st);
+    return st;
+}
+# Appends event v * 8 + kind at slot n of e; returns n + 1. Kinds: 0 a fn starts (cover + 1),
+# 1 a fn ends (cover - 1), 2 an aligned point, 3 a losing body's bound (not aligned), 4 / 5 a
+# raw-asm fn's range opens / closes.
+fn _dce_ev(e, n, v, kind): i64 {
+    S64(e + n * 8, v * 8 + kind);
+    return n + 1;
+}
+# The events of the raw-asm fns' ranges: a fn without an end (a closure, a constructor) taints the
+# fn whose range holds its start, or the top level.
+fn _dce_ev_raw(S, e, n, cp, fnc): i64 {
+    var i = 0;
+    while (i < _dce_raw_n) {
+        var fi = load64(_dce_raw_base + i * 8);
+        var s = L64(_fnt_offsets + fi * 8);
+        var t = GFNE(S, fi);
+        if (s >= 0) {
+            if (t <= s) {
+                var h = _dce_host_fn(S, s, fnc);
+                if (h < 0) { _dce_raw_top = 1; }
+                else { s = L64(_fnt_offsets + h * 8); t = GFNE(S, h); }
+            }
+            if (t > s) { if (t <= cp) { n = _dce_ev(e, n, s, 4); n = _dce_ev(e, n, t, 5); } }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+# Cuts [0, cp) into spans once per FIXUP, before the seed pass. code_end = where the code ends
+# before FIXUP rounds it up to 8. Leaves no map (the byte scan everywhere) when an alloc fails or
+# the raw-asm list could not grow.
+fn _dce_cand_build(S, code_end, cp, fnc): i64 {
+    _dce_cm = 0;
+    _dce_cm_n = 0;
+    _dce_sp_n = 0;
+    if (_dce_raw_ovf == 1) { return 0; }
+    var cap = fnc * 2 + _fnr_n * 2 + _dce_raw_n * 2 + 4;
+    var e = alloc(cap * 16 + 16);
+    if (e == 0) { return 0; }
+    _dce_sp = alloc(cap * 16 + 16);
+    if (_dce_sp == 0) { return 0; }
+    var nb = (cp >> 3) + 16;
+    var m = alloc(nb);
+    if (m == 0) { return 0; }
+    var z = 0;
+    while (z + 8 <= nb) { store64(m + z, 0); z = z + 8; }
+    var n = 0;
+    n = _dce_ev(e, n, 0, 2);
+    if (code_end > 0) { if (code_end < cp) { n = _dce_ev(e, n, code_end, 2); } }
+    var fi = 0;
+    while (fi < fnc) {
+        var s = L64(_fnt_offsets + fi * 8);
+        if (s >= 0 && s < cp) {
+            var t = GFNE(S, fi);
+            if (t > s && t <= cp) { n = _dce_ev(e, n, s, 0); n = _dce_ev(e, n, t, 1); }
+            elif (t <= s) { n = _dce_ev(e, n, s, 2); }
+        }
+        fi = fi + 1;
+    }
+    var li = 0;
+    while (li < _fnr_n) {
+        var lo = load64(_fnr_base + li * 16);
+        var hi = load64(_fnr_base + li * 16 + 8);
+        if (lo >= 0) { if (hi <= cp) { n = _dce_ev(e, n, lo, 3); n = _dce_ev(e, n, hi, 3); } }
+        li = li + 1;
+    }
+    n = _dce_ev_raw(S, e, n, cp, fnc);
+    _dce_ls_sort(e, n);
+    _dce_spans(e, n, cp);
+    _dce_cm = m;
+    _dce_cm_n = cp;
+    return 0;
+}
+# The sorted events become spans: one starts at each distinct event offset below cp. A span may
+# be walked (state 0) when a fn starts or ends or an aligned point sits at its start, it lies in no
+# raw-asm fn, and it is not top-level code while the top level holds a raw asm byte; else it keeps
+# the byte scan (state 2).
+fn _dce_spans(e, n, cp): i64 {
+    var cov = 0;
+    var tcov = 0;
+    var i = 0;
+    while (i < n) {
+        var v = L64(e + i * 8) >> 3;
+        var al = 0;
+        var more = 1;
+        while (more == 1) {
+            var k = L64(e + i * 8) & 7;
+            if (k == 0) { cov = cov + 1; }
+            if (k == 1) { cov = cov - 1; }
+            if (k == 4) { tcov = tcov + 1; }
+            if (k == 5) { tcov = tcov - 1; }
+            if (k != 3) { al = 1; }
+            i = i + 1;
+            more = 0;
+            if (i < n) { if ((L64(e + i * 8) >> 3) == v) { more = 1; } }
+        }
+        if (v < cp) {
+            var st = 0;
+            if (al == 0) { st = 2; }
+            if (tcov > 0) { st = 2; }
+            if (cov <= 0) { if (_dce_raw_top == 1) { st = 2; } }
+            S64(_dce_sp + _dce_sp_n * 16, v);
+            S64(_dce_sp + _dce_sp_n * 16 + 8, st);
+            _dce_sp_n = _dce_sp_n + 1;
+        }
+    }
+    return 0;
+}
+
 fn FIXUP(S): i64 {
     # 6.6.10: `object;`/`shared;` on PE and all three modes on Mach-O have no emitter —
     # refused by name BEFORE the object early return below (runtime.cyr). CHANGELOG [6.6.10]
@@ -120,6 +326,7 @@ fn FIXUP(S): i64 {
     _msx_stubs_drained();   # 6.7.12: a `call .` placeholder left unpatched would recurse for ever
     # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
+    _dce_code_end = cp;   # 6.7.14: where the code ends before the pad (_dce_cand_build)
     cp = (cp + 7) & (0 - 8);
     SCP(S, cp);
     # In object mode, skip fixup resolution — relocations go into .rela.text
@@ -229,7 +436,8 @@ fn FIXUP(S): i64 {
     # ELF `entry` this block used to (wrongly) format for the PE crash reporter.
     var sym_base = entry;
     if (_TARGET_PE == 1) { sym_base = 0x140000000 + _pe_text_rva; }
-    _emit_sym_dump(S, sym_base);
+    # 6.7.14: CYRIUS_DCE=1 compaction moves the code after this, so it dumps again below.
+    _emit_sym_dump(S, sym_base, 0);
 
     # Walk fixup table
     var fcnt = GFCNT(S);
@@ -498,6 +706,8 @@ fn FIXUP(S): i64 {
     # call) is SAFE for DCE — it only keeps extra things alive. The target
     # must be a known fn_start for the edge to count; intra-fn jumps target
     # arbitrary offsets and won't match.
+    # 6.7.14: a call marks a fn live only from an instruction start (_dce_cand_build, above FIXUP).
+    _dce_cand_build(S, _dce_code_end, cp, fnc);
     if (dce_dbg == 1) {
         syscall(SYS_WRITE, 2, "[dce] x86 seed begin fnc=", 25);
         PRNUM(fnc);
@@ -520,11 +730,12 @@ fn FIXUP(S): i64 {
                     # (_dce_hash_lookup / _dce_host_fn) — byte-identical.
                     var fnhit = _dce_hash_lookup(S, tgt);
                     if (fnhit >= 0) {
-                        # Host = fn containing scn. If none, entry = ROOT.
+                        # Host = fn containing scn. If none, entry = ROOT — unless scn lies in a
+                        # redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser).
                         var host = _dce_host_fn(S, scn, fnc);
-                        if (host < 0) {
-                            store8(&live + (fnhit >> 3), load8(&live + (fnhit >> 3)) | (1 << (fnhit & 7)));
-                        }
+                        if (host < 0) { host = 0 - 1 - _dce_in_loser(scn); }
+                        # 6.7.14: only from an instruction start (_dce_mark, above FIXUP).
+                        if (host == 0 - 1) { _dce_mark(&live, fnhit, scn); }
                     }
                 }
             }
@@ -564,12 +775,9 @@ fn FIXUP(S): i64 {
                                     # v6.1.5: probe hoisted to common/runtime.cyr
                                     # (_dce_hash_lookup) — byte-identical.
                                     var phit = _dce_hash_lookup(S, ptgt);
+                                    # 6.7.14: only from an instruction start (_dce_mark).
                                     if (phit >= 0) {
-                                        var prev_live = load8(&live + (phit >> 3)) & (1 << (phit & 7));
-                                        if (prev_live == 0) {
-                                            store8(&live + (phit >> 3), load8(&live + (phit >> 3)) | (1 << (phit & 7)));
-                                            changed = 1;
-                                        }
+                                        if (_dce_mark(&live, phit, pscn) == 1) { changed = 1; }
                                     }
                                 }
                             }
@@ -652,6 +860,10 @@ fn FIXUP(S): i64 {
         }
     }
     var dce_bytes = 0;
+    _dce_live_starts(S, &live, fnc);   # 6.7.14: for `_dce_holds_live` below (runtime.cyr)
+    # 6.7.14: the fns whose bodies go to the compactor, so the symbol dump after it skips them.
+    var _rmb = 0;
+    if (dce_enabled == 1) { _rmb = _bm_new(fnc); }
     var dwi = 0;
     while (dwi < fnc) {
         var dfoff = L64(_fnt_offsets + dwi * 8);
@@ -692,6 +904,9 @@ fn FIXUP(S): i64 {
                             if (load8(_codebuf_base + dfend - 1) == 0xC3) { safe = 1; }
                         }
                     }
+                    # 6.7.14: a live fn inside the range (an inline generic instance) keeps the
+                    # whole body, like one the decoder cannot size. runtime.cyr _dce_holds_live
+                    if (safe == 1) { safe = 1 - _dce_holds_live(dfoff, dfend); }
                     if (safe == 1) {
                         # Validation: walk the body with the length decoder
                         # (v4.4.5 — src/backend/x86/decode.cyr). Every byte
@@ -726,10 +941,11 @@ fn FIXUP(S): i64 {
                             # calls NOP-fill an "intentional tradeoff" because "code shifting
                             # would break cycc==cycc byte-identity" — disproved at v6.5.68.
                             # 6.6.18: the run is recorded whether or not the flag is set. Unset,
-                            # nothing consumes it (wp_compact runs only under CYRIUS_DCE=1), but the
-                            # 4,096-run cap is then known, so the unset hint cannot promise an
-                            # elimination the flag would decline (runtime.cyr _dce_hint_tail).
+                            # nothing consumes it (wp_compact runs only under CYRIUS_DCE=1), but a
+                            # registry that could not grow is then known, so the unset hint cannot
+                            # promise an elimination the flag would decline (runtime.cyr _dce_hint_tail).
                             _wpnr_add(S, dfoff, dfend - dfoff);
+                            _bm_set(_rmb, dwi);
                         }
                     }
                 }
@@ -895,9 +1111,10 @@ fn FIXUP(S): i64 {
         _wp_data_follows = 0;
         _dce_drift_check(S, _wpd2);
         if (_wpd2 > 0) {
+            # Zeroed, not just realigned: the move leaves the pre-compaction bytes in the 8-byte
+            # pad past the moved code (`_wp_pad_to`, as the data-follows layouts do). CHANGELOG [6.7.14]
             var _cp2 = GCP(S);
-            _cp2 = (_cp2 + 7) & (0 - 8);
-            SCP(S, _cp2);
+            _wp_pad_to(S, _cp2, (_cp2 + 7) & (0 - 8));
             # ⭐ SELF-AUDIT. Compaction that repairs one table wrongly produces a binary that
             # looks fine and faults later, which is how three attempts at this were spent. The
             # length decoder added at v6.5.68 can say whether every surviving function still
@@ -931,6 +1148,9 @@ fn FIXUP(S): i64 {
             syscall(SYS_WRITE, 2, "note: ", 6);
             PRNUM(_wpd2);
             syscall(SYS_WRITE, 2, " bytes of dead code eliminated\n", 31);
+            # 6.7.14: the dump above holds pre-compaction addresses — rewrite it from the moved
+            # offsets, without the removed fns (a kept dead body stays, where it now is).
+            _emit_sym_dump(S, sym_base, _rmb);
         }
     }
 

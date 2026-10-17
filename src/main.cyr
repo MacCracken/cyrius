@@ -50,15 +50,18 @@
 #                                        to alloc'd storage, doubling (_wpjs_grow) — it used to set
 #                                        _wpjs_ovf and decline the whole pass. Readers go through
 #                                        _wpjs_base.
-#   0xC0000   wpnr          [196608]      4096 × 24 B (cp, len, cum) NOP runs + 4096 records of
-#                                        merge scratch (_wpnr_add; overflow → _wpnr_ovf, declines;
-#                                        cycc: 2,605 runs; under CYRIUS_IR=3 it saturates on 48 of
-#                                        the 482 tcyr files — the TLS, sandhi and ws programs and
-#                                        the large-source tests, 6.6.20)
-#   0xF0000   wpsw          [65536]       4096 × 16 B (table_cp, nent) switch jump tables
-#                                        (_wpsw_add; overflow → _wpsw_ovf, declines). Ends 0x100000.
-#                                        A decline is NAMED on both paths (_wp_registry_why): the
-#                                        CYRIUS_DCE=1 note and, since 6.6.20, the CYRIUS_IR=3 seam.
+#   0xC0000   wpnr          [196608]      the FIRST 4096 × 24 B (cp, len, cum) NOP runs + 4096 records
+#                                        of merge scratch (_wpnr_add; cycc: 2,605 runs, 6.6.20). Since
+#                                        6.7.14 the 4,097th run moves the registry to alloc'd storage,
+#                                        doubling with its scratch (_wpnr_grow), and a run abutting the
+#                                        last one extends it — it used to set _wpnr_ovf and decline the
+#                                        whole pass (4,097 dead fns; under CYRIUS_IR=3, 59 of the 624
+#                                        tcyr files at 6.7.14's open). Readers go through _wpnr_base.
+#   0xF0000   wpsw          [65536]       the FIRST 4096 × 16 B (table_cp, nent) switch jump tables
+#                                        (_wpsw_add), then alloc'd, doubling (_wpsw_grow, 6.7.14).
+#                                        Ends 0x100000. Readers go through _wpsw_base. A decline (an
+#                                        alloc that failed) is NAMED on both paths (_wp_registry_why):
+#                                        the CYRIUS_DCE=1 note and, since 6.6.20, the CYRIUS_IR=3 seam.
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  (FREED v6.0.47)             was struct_names → relocated to 0x1A6018 [1024], cap 256→1024
@@ -193,7 +196,7 @@
 #   0xA2A000 fn_code_end           [65536]  _fnt_codeend
 #   0xA3A000 fn_param_struct_mask  [65536]  _fnt_structmask (v6.3.36 issue 5: bit N =
 #            param N is a plain non-Str struct >8 B → caller address-passes it.
-#            Reclaims the slot ir_nodes vacated at v6.3.28 when it moved to 0x5E9D000.)
+#            Reclaims the slot ir_nodes vacated at v6.3.28.)
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
@@ -506,23 +509,13 @@
 #   (The v5.10.24/.25/.38 param-type masks and overload tables at 0x93A000-0x9AA000 are
 #   mapped with the rest of the fn-table family above.)
 #
-# --- cycc IR region (v5.0.0; relocated v6.3.28 — see src/common/ir.cyr for the
-#     current bases. ir_nodes/ir_cp moved to the arena top (0x5E9D000/0x6E9D000);
-#     0xA3A000 was reclaimed by fn_param_struct_mask above. ir_blocks etc. unchanged.)
-#     (not cx) on an IR region: the cx driver never calls IR_SENABLE and every IR writer checks
-#     IR_ENABLED, so it never touches them — which is what lets its own fixup table at 0x150B000
-#     overlap ir_live_in/out. ir_state is read there (the IR_ENABLED test), so it is not tagged. ---
-#   0xB3A000 ir_blocks    [4194304]     (not cx) 131072 basic blocks × 32 bytes (v6.5.23: 32768 -> 131072;
-#                                        grew DOWN into the free 0xA4A000-0xE3A000 gap. The cap is NOT one
-#                                        constant — it is coupled to ir_live_in + ir_live_out, both sized
-#                                        by BLOCK COUNT, and they moved together (ir_edges did too, until
-#                                        6.6.20 removed it).)
-#   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0xF3B000  (FREED 6.6.20)             was ir_edges [1048576] — WRITE-ONLY: ir_add_edge stored every
-#                                        CFG edge here, capped itself at 8192 (cycc's own build has 52,725)
-#                                        and nothing read the list back. The CFG is the BB succ fields in
-#                                        ir_blocks. 1 MB free up to 0xF7B000 (itself free since v6.3.28).
-#   0xF7B000 (FREED v6.3.28)             was ir_cp → relocated to 0x6E9D000 (arena top)
+# --- The IR family is OFF this map (6.7.14): one alloc()'d arena, taken by IR_SENABLE when
+#     CYRIUS_IR is on, its tables growing 2x (src/common/ir.cyr). It was six fixed bands with
+#     hard caps; retired with them: ir_blocks 0xB3A000 [4 MB], ir_state 0xF3A000 [4 KB],
+#     ir_live_in / ir_live_out 0x207B000 / 0x217B000 [1 MB each], ir_nodes 0x5E9D000 [16 MB],
+#     ir_cp 0x6E9D000 [4 MB]. FREE now: 0xA4A000-0x107B000 (6.2 MB, up to fixup_tbl),
+#     0x207B000-0x457C000 (after fixup_tbl; cx_fixup_tbl covers its first 4.6 MB on cx) and
+#     0x5E1D000-0x7400000 (after local_slice_widths). CHANGELOG [6.7.14] ---
 #
 # --- Fixup table — NEW slot (v5.5.37) ---
 #   0x107B000 fixup_tbl    [16777216]    (not cx) 1048576 entries × 16 bytes — the INITIAL base;
@@ -538,8 +531,8 @@
 #                                        backend/cx/emit.cyr, main_cx.cyr's FIXUP) hardcode S + 0x150B000
 #                                        and refuse fc >= 1048576; main_cx.cyr points the shared
 #                                        _fixup_base at the same table and leaves _fixup_cap 0, so
-#                                        GFCNT never grows it elsewhere (6.6.20). It overlaps fixup_tbl and
-#                                        ir_live_in/out, which the cx driver never touches. Ends 0x250B000.
+#                                        GFCNT never grows it elsewhere (6.6.20). It overlaps fixup_tbl,
+#                                        which the cx driver never touches. Ends 0x250B000.
 #
 #   (fixup_tbl ends 0x207B000. Two pseudo-entries stood here, "brk-fixup-end" and
 #    "brk-with-ts-frontend": arena ends of layouts long gone that read like live ones. The
@@ -640,19 +633,8 @@
 #   0x5DDD000 local_types       [131072]  16384 type slots × 8B (was 0x192200)
 #   0x5DFD000 local_slice_widths[131072]  16384 slice-width slots × 8B (was 0x193400) → ends 0x5E1D000
 #
-# --- IR cross-BB liveness arrays (v6.3.27; analysis-only, touched only under CYRIUS_IR) ---
-#   0x207B000 ir_live_in         [1048576] (not cx) 131072 BB live-in reg-bitmaps × 8B (v6.5.23: RELOCATED
-#                                        from 0x5E1D000 — at 1 MB it would have run into ir_nodes @ 0x5E9D000;
-#                                        the 13 MB gap after fixup_tbl is the only place the PAIR fits)
-#   0x217B000 ir_live_out        [1048576] (not cx) 131072 BB live-out reg-bitmaps × 8B → ends 0x227B000 (v6.5.23)
-#   0x5E9D000 ir_nodes           [16 MB]   (not cx) relocated from 0xA3A000 to the arena top (v6.3.28; see src/common/ir.cyr)
-#                                        Margin (6.6.20 audit, CYRIUS_IR=1): cycc itself uses 448,518 of
-#                                        the 1,048,576 nodes and 42,715 of the 131,072 BBs, but sixteen
-#                                        stdlib folds (8.3 MB preprocessed) reach 1,017,828 nodes (97 %)
-#                                        and 107,437 BBs (82 %) — the loud "IR node buffer full" stops an
-#                                        IR build at about a third of the 24 MB preprocess cap. Sizing
-#                                        the IR family from one alloc'd arena is on the roadmap backlog.
-#   0x6E9D000 ir_cp              [4 MB]    (not cx) relocated from 0xF7B000 to the arena top (v6.3.28); ends 0x729D000
+#   (0x5E1D000-0x7400000 is FREE: ir_nodes and ir_cp lived here until 6.7.14 — the IR
+#    arena note above.)
 #
 #   0xF600000 brk-final                   246 MiB — the arena END every driver requests (brk on Linux /
 #                                        aarch64 / cx-Linux, mmap on macOS, VirtualAlloc on Windows):
@@ -911,8 +893,8 @@ var S = syscall(SYS_BRK, 0);
 # compile pays nothing for it. (Previously this comment quoted base 0x1D0B000,
 # which was stale and lands inside fixup_tbl, while the live base 0x298B000
 # overlapped tok_types.) The brk is the arena end on the heap map's brk-final
-# line, 0xF600000, where lexid_entries ends. (The IR liveness arrays this
-# comment placed at the arena top moved to 0x207B000/0x217B000 at v6.5.23.)
+# line, 0xF600000, where lexid_entries ends. (No IR table is in it: the IR
+# arena is alloc()'d when CYRIUS_IR is on — 6.7.14.)
 # v6.4.21: +512 KB lexid_entries @ 0xF400000 (LEXID cap 16384→65536).
 # 6.6.20: the extension is CHECKED. An rlimit (ulimit -v / -d) that refuses it left the arena
 # unmapped and cycc died on its first heap store with SIGSEGV 139 and no message; the Mach-O
@@ -1517,7 +1499,7 @@ if (_ir_env != 0) {
     _ir_mode = load8(_ir_env);
     var _ir_ch = _ir_mode;
     if (_ir_ch >= 49 && _ir_ch <= 51) {
-        IR_SENABLE(S, 1);
+        IR_SENABLE(S, 1);   # takes the IR arena (src/common/ir.cyr) — CHANGELOG [6.7.14]
         ir_reset(S);
     }
 }
@@ -1976,12 +1958,16 @@ if (IR_ENABLED(S) == 1) {
     # every NOP it is going to write, and before FIXUP, which is the first consumer of a
     # stored code position (its patch loop bakes rel32s from `_fnt_offsets` and the fixup
     # CPs). Nothing between the two reads one, so this is the only correct place.
+    var _wpn = _wpnr_n;   # read first: wp_compact clears the run count it consumes. CHANGELOG [6.7.14]
     var _wpd = wp_compact(S);
     if (_wpd > 0) {
+        # FIXUP rounds the code end up to 8 without writing, so zero the pad past the moved code:
+        # it held pre-compaction bytes (as the CYRIUS_DCE=1 pass's did). CHANGELOG [6.7.14]
+        _wp_pad_to(S, GCP(S), (GCP(S) + 7) & (0 - 8));
         syscall(SYS_WRITE, 2, "wp-compact: ", 12);
         PRNUM(_wpd);
         syscall(SYS_WRITE, 2, " bytes reclaimed (", 18);
-        PRNUM(_wpnr_n);
+        PRNUM(_wpn);
         syscall(SYS_WRITE, 2, " runs, ", 7);
         PRNUM(_wpsw_n);
         syscall(SYS_WRITE, 2, " switch tables)\n", 16);
@@ -1991,7 +1977,7 @@ if (IR_ENABLED(S) == 1) {
     var _wpwhy = _wp_registry_why();
     # Here the run registry holds the IR passes' NOP runs (LASE, const-fold), not dead code —
     # FIXUP's dead-code pass comes later — so the shared reason's "dead-code runs" is wrong.
-    if (_wpnr_ovf == 1) { _wpwhy = "more than 4096 NOP runs, the repair registry cap"; }
+    if (_wpnr_ovf == 1) { _wpwhy = "the NOP-run registry could not grow (alloc failed)"; }
     if (_wpwhy != 0) {
         PRSTR("wp-compact declined: ");
         PRSTR(_wpwhy);

@@ -16273,7 +16273,8 @@ fn PARSE_FN_DEF(S): i64 {
 # so the bytes, of programs with no redefinition), the earlier entry is made a jump to the new
 # one when the redefinition's body starts: every reference to it, of whatever shape, follows.
 # Chains (a third definition) are jumps to jumps. The jump lies outside every fn's range, so
-# the dead-code pass takes it as a root and keeps the winning body live. Runs ONLY for a
+# the dead-code pass takes it as a root and keeps the winning body live; the rest of the losing
+# body is recorded (`_fnr_add`), so its calls are not roots (6.7.14). Runs ONLY for a
 # redefinition, so every other program is byte-identical. The calls this cannot reach — an
 # inline replay, a generic instance — read pass 1's fn flag 2048 instead. CHANGELOG [6.6.20]
 # ⚠ Every body is at least one jump long today (the defer-init placeholder opens even an empty
@@ -16282,7 +16283,10 @@ fn PARSE_FN_DEF(S): i64 {
 fn _fn_redirect(S, fi, noff, ti): i64 {
     var old = L64(_fnt_offsets + fi * 8);
     if (old < 0) { return 0; }
-    if (EFNREDIRECT(S, old, GFNE(S, fi), GCP(S)) == 0) { return 0; }
+    if (EFNREDIRECT(S, old, GFNE(S, fi), GCP(S)) == 0) {
+        _fnr_add(old, GFNE(S, fi));   # 6.7.14: its calls are no dead-code roots (util.cyr)
+        return 0;
+    }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
@@ -18847,8 +18851,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     }
                     var _wsi = _wp_fn_sw0;
                     while (_wsi < _wpsw_n) {
-                        var _wsc = L64(S + 0xF0000 + _wsi * 16);
-                        S64(S + 0xF0000 + _wsi * 16, _wsc - _nop_shift_at(S, _nrn, _wsc));
+                        var _wsc = L64(_wpsw_base + _wsi * 16);
+                        S64(_wpsw_base + _wsi * 16, _wsc - _nop_shift_at(S, _nrn, _wsc));
                         _wsi = _wsi + 1;
                     }
                     # Stage 3c (v6.5.54): repair IR node CPs. THE REASON THE COMPACTOR USED TO

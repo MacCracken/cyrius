@@ -75,13 +75,10 @@ v6.5.40):
 0x71A000  file map + gvar_toks      file:line map (1024 entries) + the first 4,096 deferred global inits (0x729000)
 0x91A000  struct field pools 128 KB  packed field types / names (v6.0.47)
 0x93A000  fn tables       ~1 MB     INITIAL bases — growable @ v6.2.0 (2,048 → 131,072 ceiling)
-0xB3A000  IR blocks / state / edges ~5 MB (CYRIUS_IR only)
 0x107B000 fixup_tbl        16 MB    INITIAL base — growable @ v6.2.0 (1,048,576 → 64M-entry ceiling)
-0x207B000 IR liveness       2 MB    ir_live_in / ir_live_out
 0x457C000 lexid heads     ~130 KB   identifier-interning chain heads (entries live at 0xF400000)
 0x459D000 preprocess_out   24 MB    include / #derive expansion buffer (v6.5.39)
 0x5D9D000 local tables    512 KB    4 slot-indexed per-fn tables × 128 KB (the locals-cap bug, v6.1.40)
-0x5E9D000 IR nodes / cp    20 MB    the IR arena (v6.3.28)
 0x7400000 input_buf        24 MB    raw stdin + the preprocessor's working buffer (v6.5.39)
 0x8C00000 tok_types        32 MB    4,194,304 token type slots (v6.5.39)
 0xAC00000 tok_values       32 MB    4,194,304 token value slots
@@ -93,7 +90,10 @@ v6.5.40):
 
 The final output image (ELF / Mach-O / PE) is NOT in this map: since v6.4.51–.52 it is
 a 1 GiB lazily-mapped `alloc()` on every platform, and the TypeScript front end's arena
-is `alloc()`-backed too (v6.4.82).
+is `alloc()`-backed too (v6.4.82). Nor are the IR tables since 6.7.14: they were six
+fixed bands with hard caps (blocks and state at 0xB3A000, liveness at 0x207B000, nodes and
+CP offsets at 0x5E9D000) and are now one `alloc()` arena, taken only when `CYRIUS_IR` is
+on, whose tables grow 2x (`src/common/ir.cyr`).
 
 ### Preprocessing scratch (inside the compiler-state band)
 

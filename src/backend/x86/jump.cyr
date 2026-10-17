@@ -7,14 +7,14 @@
 # cycc: records IR_JCC node with condition code in flags
 fn EJCC(S, cc): i64 {
     # v6.5.2 — RECORD BEFORE EMIT. `ir_emit` stamps the node's codebuf position from
-    # GCP(S) *at call time* (ir.cyr:295), and every other x86 emitter records first
+    # GCP(S) *at call time* (ir.cyr's ir_emit), and every other x86 emitter records first
     # (the `_IR_REC0/1/2`-as-first-statement convention), so a node's CP is the START
     # of its instruction. This emitter and EJMP0 below were the only two that emitted
     # bytes first, which put their CP at the END of the jump.
     #
     # `ir_const_fold` relies on that invariant: it overwrites
     # `IR_NODE_CP(ni+1) - IR_NODE_CP(ni_a)` bytes and NOP-fills the remainder
-    # (ir.cyr:800-806). With a JCC/JMP as node ni+1 the span ran 5-6 bytes long and the
+    # (ir.cyr's ir_const_fold). With a JCC/JMP as node ni+1 the span ran 5-6 bytes long and the
     # fill ERASED THE JUMP, so control fell through — `return <const>;` in a non-tail
     # position simply continued into the next statement. Reachable only under
     # CYRIUS_IR=3, which is why default builds were unaffected.

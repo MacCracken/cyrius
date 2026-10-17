@@ -64,3 +64,72 @@ fn PEEKT(S): i64 {
     return TOKTYP(S, GTI(S));
 }
 fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
+
+# 6.7.14 — an asm-block refusal (D16, 2026-10-16: a mnemonic the assembler does not have, or an
+# operand its instruction cannot take, stops the compile) names the token at fault, token `ti`, at
+# its location with the excerpt, then skips the rest of the asm statement — to its `;`, or to the
+# block's `}` — so the block loop moves on instead of stalling on an operand. `msg` precedes the
+# quoted token; the backends call it (x86 / aarch64 / cx emit.cyr). CHANGELOG [6.7.14]
+fn _asm_refuse(S, ti, msg): i64 {
+    STI(S, ti);
+    if (_panic == 0) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": ", 2);
+        PRSTR(msg);
+        _asm_tok_text(S, ti);
+        syscall(SYS_WRITE, 2, "\n", 1);
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    STI(S, ti + 1);
+    _asm_skip_stmt(S);
+    return 1;
+}
+
+# Token `ti` quoted as the source spells it: an identifier from the name pool; anything else (a
+# number, a keyword such as `in`, punctuation) from the expanded source at its offset.
+fn _asm_tok_text(S, ti): i64 {
+    syscall(SYS_WRITE, 2, "'", 1);
+    if (TOKTYP(S, ti) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti)); }
+    else {
+        var off = GTOFF(S, ti);
+        var e = off;
+        var go = 1;
+        while (go == 1) {
+            var c = load8(S + 0x459D000 + e);
+            go = 0;
+            if (c >= 48) { if (c <= 57) { go = 1; } }
+            if (c >= 65) { if (c <= 90) { go = 1; } }
+            if (c >= 97) { if (c <= 122) { go = 1; } }
+            if (c == 95) { go = 1; }
+            if (go == 1) { e = e + 1; }
+        }
+        if (e == off) { e = off + 1; }
+        syscall(SYS_WRITE, 2, S + 0x459D000 + off, e - off);
+    }
+    syscall(SYS_WRITE, 2, "'", 1);
+    return 0;
+}
+
+fn _asm_skip_stmt(S): i64 {
+    var t = PEEKT(S);
+    var go = 1;
+    while (go == 1) {
+        if (t == 5) { go = 0; }
+        if (t == 14) { go = 0; }
+        if (t == 12) { go = 0; }
+        if (go == 1) { STI(S, GTI(S) + 1); t = PEEKT(S); }
+    }
+    if (t == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# The mnemonic at name offset noff is `param_load`, whole: "param_lo" as the first L64, then "ad" and
+# its NUL (x86 and aarch64 dispatch on it). CHANGELOG [6.7.14]
+fn _asm_is_param_load(S, noff): i64 {
+    if (L64(S + 0xEC00000 + noff) != 0x6F6C5F6D61726170) { return 0; }
+    if (L64(S + 0xEC00000 + noff + 8) & 0xFFFFFF != 0x6461) { return 0; }
+    return 1;
+}

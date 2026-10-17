@@ -3954,7 +3954,9 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
 - Duplicate definitions between two **non-private** files are unchanged: still a
   `duplicate fn ... last definition wins` warning (a hard error if the two disagree about
   arity, since v6.5.37). Two definitions **in one file** are likewise still a duplicate —
-  that is a redefinition of one symbol, not a collision between two files.
+  that is a redefinition of one symbol, not a collision between two files. Every call
+  reaches the last definition (6.6.20), and under `CYRIUS_DCE=1` an earlier one keeps
+  nothing alive: a fn only a losing body calls is unreachable and removed (6.7.14).
 - **The boundary covers every way of reaching a fn, not just a direct call (v6.6.4).**
   `&_helper` (address-of, then `callptr` / `fncallN`), `s.method()`, a struct-returning
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return
@@ -5451,6 +5453,18 @@ asm { out dx, al; }             # Port output
 asm { wrmsr; rdmsr; cpuid; }    # System instructions
 ```
 
+`in` and `out` take the accumulator (`al`, `ax` or `eax`) and `dx`, and the accumulator's width is
+the encoding: `in al, dx` EC, `in ax, dx` 66 ED, `in eax, dx` ED; `out dx, al` EE, `out dx, ax`
+66 EF, `out dx, eax` EF. Any other operand (`in bl, dx`, an immediate port `in al, 0x60`) is
+refused, naming it. aarch64 has no `in` / `out`, and cx no inline asm; both refuse `in` by name.
+(6.7.14: `in` was `unexpected in`, because it lexes as the for-in keyword, and both instructions
+ignored their operands, so `out dx, eax` assembled as `out dx, al`.)
+
+A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
+it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
+`unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
+assembled as `cli`, `inb al, dx` as `in al, dx` and `nopx` as `nop`.)
+
 ## Kernel Mode
 
 ```
@@ -5467,7 +5481,20 @@ displacements) and NOP-fills. The image's `.bss` and `.rodata` follow the code, 
 with it, and every data address in the code moves with them; the move is a multiple of 16, so an
 array keeps its 16-byte alignment. A dead fn the compiler keeps because it cannot size one of its
 instructions (an `out dx, al` in an `asm` block) keeps its body, and its calls into removed fns
-become `ud2`. `CYRIUS_WX=0` executables, whose data also follows the code, compact the same way.
+become `ud2`. So does a dead fn whose range holds a live one: a generic instance is emitted inline,
+inside the fn that first needs it, and an inline replay can leave the outer instance dead while the
+inner one is called (6.7.14; until then it was removed with the outer one, on every target).
+`CYRIUS_WX=0` executables, whose data also follows the code, compact the same way. There is no
+dead-fn count past which compaction gives up (6.7.14; until then more than 4,096 dead-code runs
+declined it, and the dead bytes stayed NOP-filled).
+
+What reaches a fn, on x86, is a `call` / `jmp rel32` that starts an instruction (6.7.14). Until then
+any `E8` / `E9` byte whose next four bytes pointed at a fn's start counted — an immediate or a
+displacement that happened to hold one kept a dead fn alive, in the `N unreachable fns` note and
+under `CYRIUS_DCE=1`, and adding an unrelated global could change which. Code the length decoder
+cannot walk exactly keeps the old byte scan, so nothing called is ever counted dead: a fn holding a
+raw `asm { 0x.. }` byte (and all top-level code once the top level has one), a fn holding a
+switch's jump table, and code holding an instruction the decoder does not know (VEX, `in` / `out`).
 
 ## Enums
 
@@ -7248,6 +7275,20 @@ sh tests/gates/memory/heapmap.sh              # Heap map overlap detection
 # Boot kernel
 qemu-system-x86_64 -kernel build/kernel -serial stdio -display none
 ```
+
+### Executable size and W^X
+
+A Linux executable is W^X by default (v6.3.12): the code is one `R E` `PT_LOAD` and the data
+another, `RW `, at a fresh 2 MB-aligned address; `CYRIUS_WX=0` opts out (one `RWE` segment). The
+data segment's file offset is aligned to the target's `p_align`, and the bytes between the end of
+the code and it are zeros outside both segments' file sizes. On x86_64 (`p_align` 4 KB) that is
+under 4 KB: `syscall(60, 7);` builds to 4,448 B. On aarch64 `p_align` is 64 KB, so an aarch64 W^X
+executable is at least ~64 KB (`syscall(60, 7);`: 65,888 B; 520 B with `CYRIUS_WX=0`) and its size
+moves in 64 KB steps — a small code change that crosses a 64 KB boundary adds 64 KB to the file.
+That is the price of exact W^X on 4, 16 and 64 KB-page arm64 kernels: the loader maps whole pages,
+and only a 64 KB-aligned data offset keeps the code's last page and the data's first apart on all
+three. It is kept (6.7.13's D45). To read how much code an aarch64 build gained, read the code
+`LOAD`'s `FileSiz` (`readelf -l -W <bin> | grep LOAD`), not the file size.
 
 ## Targeting Windows (PE) (v6.1.16+)
 

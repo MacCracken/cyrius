@@ -129,7 +129,8 @@
 #   M7    a local that is no `*T` and no array taken as a `*i64` -> RED ST1 ST1b ST3 R4a R4b R4d-f R4i;
 #         array_subscript_forms' bare / scalar / stack rows (they compile)
 #   M25   `_arr_sub_load`'s IR record of a signed load dropped -> RED Ab (CYRIUS_IR=3: `*i8` reads
-#         6293809); array_subscript_forms axis 3 IR=3
+#         6293809); array_subscript_forms axis 3 IR=3. Since 6.7.14 the record is x86 EFIELD_LOAD_W's
+#         `width < 0` arm; dropping it -> RED Ab Bb Db DRb (measured)
 #   MK    the element left untyped (SESTYPE 0) -> RED A0 (20 warnings), A0s, Aa-Ag (`p[1] * 2.0`)
 #   MB    a bool element's read not stamped boolean -> RED A0, Aa-Ag (`var b: bool = p[1]` refused)
 #   MBASE a local `*T`'s ADDRESS taken as the base -> RED Aa-Ag (exit 139 on x86 / aarch64), AS1;

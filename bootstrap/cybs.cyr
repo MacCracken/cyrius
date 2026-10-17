@@ -38,6 +38,8 @@ sys_init:
     add rsi, 0x7600040
     mov [rsi], rax
     ret
+# The input may be 15 MB (input_buf is the 16 MB region 0x0..0x1000000). Each read asks for one byte
+# past that, so an input that does not fit is refused, not cut short with exit 0. CHANGELOG [6.7.14]
 read_input:
     xor r12, r12          # r12 = total bytes read
 read_input_loop:
@@ -45,14 +47,17 @@ read_input_loop:
     xor rdi, rdi
     mov rsi, r15
     add rsi, r12          # offset into input_buf
-    mov rdx, 0xF00000     # 15MB max (input_buf is the 16MB region 0x0..0x1000000)
-    sub rdx, r12          # remaining space
-    cmp rdx, 0
-    jle read_input_done
+    mov rdx, 0xF00001     # 15 MB and one byte
+    sub rdx, r12          # remaining space (at least 1: past 15 MB was refused)
     syscall
     cmp rax, 0
     jle read_input_done   # EOF or error
     add r12, rax
+    mov rsi, err_cap
+    add rsi, 154
+    mov rdi, 60
+    cmp r12, 0xF00000
+    jg pp_cap_err
     jmp read_input_loop
 read_input_done:
     ret
@@ -2141,9 +2146,15 @@ fvn_no:
     pop r9
     pop r8
     ret
+# Pass 0 steps over the keyword AND the name, so a name that is not an IDENT stops here: at the end
+# of the input the name step went past the EOF token and every later EOF test read beyond the token
+# array (SIGSEGV, no message). parse_err steps back to the keyword's line. CHANGELOG [6.7.14]
 shallow_fn:
     push r8
     inc r11              # consume FN
+    call peek_tok_type
+    cmp rax, 2           # IDENT
+    jne parse_err
     call peek_tok_value
     mov r8, rax          # name
     mov rax, r8
@@ -2161,6 +2172,9 @@ shallow_global:
     push r8
     push r9
     inc r11              # consume VAR
+    call peek_tok_type
+    cmp rax, 2           # IDENT (as shallow_fn)
+    jne parse_err
     call peek_tok_value
     mov r8, rax          # name
     inc r11              # consume IDENT
@@ -2178,6 +2192,9 @@ shallow_g_brk:
     jmp shallow_g_reg
 shallow_g_col:
     inc r11              # consume :
+    call peek_tok_type
+    cmp rax, 2           # type IDENT (as the name: `var x:` at the end stepped past EOF)
+    jne parse_err
     inc r11              # consume type IDENT
     call peek_tok_type
     cmp rax, 28          # typed array [N]
@@ -2849,7 +2866,29 @@ parse_assign_stmt:
     je pas_cmaybe
     cmp rax, 36          # ^
     je pas_cmaybe
-    jmp parse_err
+# Any other token is the class message (`loop {`, `const N`, `do {` lex as a name here), but before
+# a `[` (cybs has no subscript) an unknown name is named first, as the read form `var a = zz[1];`
+# names it: an enum member, local, global or fn keeps the class message, anything else is
+# undefined. find_var_undef prints r8 and the line of r11 - 1, the name. CHANGELOG [6.7.14]
+    cmp rax, 28          # [
+    jne parse_err
+    mov rax, r8
+    call find_const_index
+    cmp rax, -1
+    jne parse_err
+    mov rax, r8
+    call find_fn_local_index
+    cmp rax, -1
+    jne parse_err
+    mov rax, r8
+    call find_var_or_neg
+    cmp rax, -1
+    jne parse_err
+    mov rax, r8
+    call find_fn_index
+    cmp rax, -1
+    jne parse_err
+    jmp find_var_undef
 pas_cmaybe:
     mov r9, rax          # candidate op
     mov rsi, r15
@@ -4559,7 +4598,7 @@ parse_err_at:
     mov rax, 1
     mov rdi, 2
     mov rsi, err_syntax
-    mov rdx, 140
+    mov rdx, 146
     syscall
 # rbx = a token: writes " at: " and then its line to stderr, and exits 1. Back from the token's
 # position to the LF before it (or the stream's start), forward to the LF after it (or r12, the
@@ -5284,7 +5323,8 @@ pp_rf_loop:
     mov rdi, rbx
     mov rsi, r8
     add rsi, r9
-    mov rdx, 0x100000
+    mov rdx, 0x200001    # the 2 MB slot and one byte (0 once that is read: the next read ends it)
+    sub rdx, r9
     syscall
     cmp rax, 0
     jle pp_rf_eof
@@ -5305,6 +5345,17 @@ pp_rf_fail:
     pop r8
     pop rbx
     ret
+# The preprocessor's buffers are fixed: stdin 15 MB, an include slot 2 MB (r15 + 0x9000000 + depth
+# * 0x200000), 8 slots, expand_buf 16 MB (0x8000000, ending where slot 0 begins). Past any of them a
+# file was overwritten or cut short and cybs compiled what the source does not say; each check sends
+# rsi = its line of err_cap and rdi = the line's length here. Nothing has been written to stdout.
+# CHANGELOG [6.7.14]
+pp_cap_err:
+    mov rdx, rdi
+    mov rax, 1
+    mov rdi, 2
+    syscall
+    jmp sys_exit_err
 pp_do_include:
     push rcx
     push rdx
@@ -5358,6 +5409,11 @@ pp_doinc_fld:
     shl rax, 12
     add rdi, rax
     call pp_mark
+    mov rsi, err_cap
+    add rsi, 81
+    mov rdi, 73
+    cmp rbx, 7           # slots 0..7: a file at depth 8 includes into 0xA000000 (token positions)
+    jg pp_cap_err
     mov rsi, r15
     add rsi, 0x9000000
     mov rax, rbx
@@ -5375,6 +5431,10 @@ pp_doinc_fld:
     jle pp_doinc_ret
     mov r8, rsi          # child src
     mov r9, rax          # child len
+    mov rsi, err_cap
+    mov rdi, 81
+    cmp r9, 0x200000     # pp_readfile read one byte past the slot: the file does not fit
+    jg pp_cap_err
     add rbx, 1           # child depth
     call pp_expand
 pp_doinc_ret:
@@ -5407,6 +5467,14 @@ pp_exp_loop:
     cmp rax, 10
     jne pp_exp_emit
 pp_exp_linestart:
+    mov rsi, r15
+    add rsi, 0x7700000
+    mov rdx, [rsi]       # out_cursor
+    mov rsi, err_cap
+    add rsi, 214
+    mov rdi, 93
+    cmp rdx, 0x1000000
+    jg pp_cap_err
     mov r10, rcx         # dip (skipws)
 pp_exp_sw:
     cmp r10, r9
@@ -5565,6 +5633,11 @@ preprocess:
     mov rsi, r15
     add rsi, 0x7700000
     mov r9, [rsi]        # new length = out_cursor
+    mov rsi, err_cap
+    add rsi, 214
+    mov rdi, 93
+    cmp r9, 0x1000000    # the last line, past every line-start check; the copy back fits input_buf
+    jg pp_cap_err
     xor rcx, rcx
 pp_pre_copy:
     cmp rcx, r9
@@ -5599,7 +5672,7 @@ elf_template:
     dq 0x0000000000000090
     dq 0x0000000000001000
 err_syntax:
-    db "cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while, an if-expression, unary minus, >>>, >>=),"
+    db "cybs: syntax error, or a construct the bootstrap compiler does not support (const, loop, do/while, an if-expression, unary minus, x[i], >>>, >>=),"
 err_at:
     db " at: "
 err_undef:
@@ -5610,6 +5683,8 @@ err_bang:
     db "cybs: a lone `!` (logical not) is not supported by the bootstrap compiler; write `x == 0`\n"
 err_char:
     db "cybs: the bootstrap compiler cannot lex this byte outside a string or comment: "
+err_cap:
+    db "cybs: an included file is over 2 MB, the size of the preprocessor's include slot\ncybs: includes nest more than 8 deep, the preprocessor's 8 include slots\ncybs: the input is over 15 MB, the size of the input buffer\ncybs: the input with its includes spliced in is over 16 MB, the size of the expansion buffer\n"
 pp_pat_include:
     db "include "
 pp_pat_ifdef:

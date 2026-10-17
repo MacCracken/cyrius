@@ -41,6 +41,13 @@ file offset must be page-aligned, and that alignment padding is essentially the 
 delta — the *loadable* image is 208 B (`FileSiz 0xd0`). `CYRIUS_WX=0` still emits the
 504 B single-segment binary.
 
+On **aarch64** the same split aligns the data's file offset to 64 KB (`p_align` 0x10000), so the
+padding is up to 64 KB: `syscall(60, 7);` cross-built for aarch64 is 65,888 B (520 B with
+`CYRIUS_WX=0`; measured at 6.7.14), and an aarch64 binary's size moves in 64 KB steps. That is the
+price of exact W^X on 4, 16 and 64 KB-page arm64 kernels, kept by 6.7.13's D45; compare aarch64
+code size by the code `PT_LOAD`'s `FileSiz`, not the file size (the guide's *Executable size and
+W^X*).
+
 The Go toolchain on this box reports itself as `go1.27.1-X:nodwarf5` (a distribution build
 with a `GOEXPERIMENT` set). A default `go build` embeds the module path, so its bytes move by
 tens to hundreds with the module name (the `-s -w` rows do not move). Zig 0.16.0 produced the

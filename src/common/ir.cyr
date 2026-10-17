@@ -3,21 +3,18 @@
 # Basic-block CFG between parse (frontend) and emit (backend).
 # Parse builds IR; lowering pass walks IR and calls emit functions.
 #
-# Memory layout (all relative to S). src/main.cyr's heap map is the registry —
-# tests/gates/memory/heapmap.sh checks it, not this list; these are the bases ir.cyr
-# addresses. All of it is touched ONLY under CYRIUS_IR, so it is lazy VA (zero
-# real-memory cost) on default builds.
-#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes (v6.3.28: relocated from
-#              0xA3A000 to the arena top, cap 262144 → 1048576). cycc's own build
-#              records 448,518 (6.6.20); "IR node buffer full" is a hard error.
-#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (from 0xF7B000);
-#              ends 0x729D000.
-#   0xB3A000   ir_blocks   [4MB]   131072 blocks × 32 bytes (v6.5.23: 32768 → 131072)
-#   0x207B000  ir_live_in  [1MB]   131072 BB live-in bitmaps × 8 bytes (v6.5.23)
-#   0x217B000  ir_live_out [1MB]   131072 BB live-out bitmaps × 8 bytes (v6.5.23)
-#   0xF3A000   ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB @
-#              0xF3A000..010, ENABLED @ 0xF3A020; 0xF3A018 held the edge count until
-#              6.6.20, when the write-only edge list at 0xF3B000 was removed)
+# Memory layout: the IR arena — OFF the compiler's S + 0x… heap map. One alloc(), taken
+# by IR_SENABLE when CYRIUS_IR switches recording on (a default build never takes it),
+# carved into five tables whose bases and caps are the globals below:
+#   nodes     16 B each   (_ir_nodes_base)    } grow together, 2x, in ir_emit
+#   node CP    4 B each   (_ir_cp_base)       }   (cap _ir_ncap)
+#   BBs       32 B each   (_ir_bb_base)       } grow together, 2x, in ir_bb_new
+#   live-in    8 B each   (_ir_livein_base)   }   (cap _ir_bcap)
+#   live-out   8 B each   (_ir_liveout_base)  }
+# The state (node / BB count, current BB, enabled) is four globals. This was six fixed
+# S + 0x… bands with hard caps — 1,048,576 nodes and 131,072 BBs — so an IR build stopped
+# with "IR node buffer full" on a program the default pipeline compiled, and each cap raise
+# was a relocation. CHANGELOG [6.7.14]
 #
 # IRNode (16 bytes):
 #   +0: opcode (i16) + flags (i16) packed in low 32 bits
@@ -186,18 +183,98 @@ fn _IR_REC(S, op, fl, a1, a2): i64 {
 # IR state accessors
 # ================================================================
 
-fn IR_NCNT(S): i64 { return L64(S + 0xF3A000); }
-fn IR_SNCNT(S, v): i64 { S64(S + 0xF3A000, v); return 0; }
-# v6.1.41: these 4 IR-state counters were stranded at 0x174A0xx — INSIDE the
-# fixup_tbl region (0x107B000+fc*16; fixup entry 446208 lands at 0x174A000), so
-# at ≥446k fixups with CYRIUS_IR enabled they collided. Moved into the documented
-# ir_state region [0xF3A000,0xF3B000) alongside IR_NCNT (0xF3A000).
-fn IR_BCNT(S): i64 { return L64(S + 0xF3A008); }
-fn IR_SBCNT(S, v): i64 { S64(S + 0xF3A008, v); return 0; }
-fn IR_CURBB(S): i64 { return L64(S + 0xF3A010); }
-fn IR_SCURBB(S, v): i64 { S64(S + 0xF3A010, v); return 0; }
-fn IR_ENABLED(S): i64 { return L64(S + 0xF3A020); }
-fn IR_SENABLE(S, v): i64 { S64(S + 0xF3A020, v); return 0; }
+# The IR state, and the arena's bases and caps (see the layout note at the top). Globals start
+# at 0, which is the state every driver's init used to store into the old ir_state band; the
+# accessors keep their S parameter so no call site changes. CHANGELOG [6.7.14]
+var _ir_ncnt = 0;
+var _ir_bcnt = 0;
+var _ir_curbb = 0;
+var _ir_enabled = 0;
+var _ir_nodes_base = 0;
+var _ir_cp_base = 0;
+var _ir_ncap = 0;
+var _ir_bb_base = 0;
+var _ir_livein_base = 0;
+var _ir_liveout_base = 0;
+var _ir_bcap = 0;
+fn IR_NCNT(S): i64 { return _ir_ncnt; }
+fn IR_SNCNT(S, v): i64 { _ir_ncnt = v; return 0; }
+fn IR_BCNT(S): i64 { return _ir_bcnt; }
+fn IR_SBCNT(S, v): i64 { _ir_bcnt = v; return 0; }
+fn IR_CURBB(S): i64 { return _ir_curbb; }
+fn IR_SCURBB(S, v): i64 { _ir_curbb = v; return 0; }
+fn IR_ENABLED(S): i64 { return _ir_enabled; }
+# Switching recording on takes the arena first, so no driver can enable IR without it.
+fn IR_SENABLE(S, v): i64 {
+    if (v != 0 && _ir_nodes_base == 0) { _ir_arena_init(); }
+    _ir_enabled = v;
+    return 0;
+}
+
+# The initial sizes are small on purpose: cycc's own IR build (654,161 nodes, 68,054 BBs at
+# 6.7.14's open) grows both families, so every IR self-compile walks the grow path. The
+# ceilings are runaway guards, not caps a real program meets: 64M nodes is 1.25 GiB and 16M
+# BBs 768 MiB, against a 24 MB preprocessed-input limit.
+fn _ir_arena_init(): i64 {
+    var nn = 262144;
+    var nb = 32768;
+    var b = alloc(nn * 20 + nb * 48);
+    if (b == 0) { _ir_arena_refused(); }
+    _ir_nodes_base = b;
+    _ir_cp_base = b + nn * 16;
+    _ir_ncap = nn;
+    _ir_bb_base = b + nn * 20;
+    _ir_livein_base = _ir_bb_base + nb * 32;
+    _ir_liveout_base = _ir_bb_base + nb * 40;
+    _ir_bcap = nb;
+    return 0;
+}
+fn _ir_arena_refused(): i64 {
+    syscall(SYS_WRITE, 2, "error: cannot allocate the IR arena (CYRIUS_IR)\n", 48);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+# Copy `n` bytes (a multiple of 8) from `src` to `dst`.
+fn _ir_copy8(dst, src, n): i64 {
+    var i = 0;
+    while (i < n) { store64(dst + i, load64(src + i)); i = i + 8; }
+    return 0;
+}
+# Double the node + CP tables. Called when the count reaches the cap, so both are full: the
+# whole old tables are copied. The old storage is leaked, as _fixup_grow's is (util.cyr).
+fn _ir_nodes_grow(): i64 {
+    var nc = _ir_ncap * 2;
+    if (nc > 67108864) {
+        syscall(SYS_WRITE, 2, "error: IR node table exceeds 64M nodes\n", 39);
+        syscall(SYS_EXIT, 1);
+    }
+    var b = alloc(nc * 20);
+    if (b == 0) { _ir_arena_refused(); }
+    _ir_copy8(b, _ir_nodes_base, _ir_ncap * 16);
+    _ir_copy8(b + nc * 16, _ir_cp_base, _ir_ncap * 4);
+    _ir_nodes_base = b;
+    _ir_cp_base = b + nc * 16;
+    _ir_ncap = nc;
+    return 0;
+}
+# Double the BB + live-in + live-out tables (one alloc, the same carving as the arena's).
+fn _ir_bbs_grow(): i64 {
+    var nc = _ir_bcap * 2;
+    if (nc > 16777216) {
+        syscall(SYS_WRITE, 2, "error: IR block table exceeds 16M blocks\n", 41);
+        syscall(SYS_EXIT, 1);
+    }
+    var b = alloc(nc * 48);
+    if (b == 0) { _ir_arena_refused(); }
+    _ir_copy8(b, _ir_bb_base, _ir_bcap * 32);
+    _ir_copy8(b + nc * 32, _ir_livein_base, _ir_bcap * 8);
+    _ir_copy8(b + nc * 40, _ir_liveout_base, _ir_bcap * 8);
+    _ir_bb_base = b;
+    _ir_livein_base = b + nc * 32;
+    _ir_liveout_base = b + nc * 40;
+    _ir_bcap = nc;
+    return 0;
+}
 
 # ================================================================
 # IR node read/write
@@ -210,7 +287,7 @@ fn _ir_pack_op(op, flags): i64 {
 
 # Write an IR node at index ni
 fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
-    var base = S + 0x5E9D000 + ni * 16;
+    var base = _ir_nodes_base + ni * 16;
     store32(base, opflags);
     store32(base + 4, arg1);
     store64(base + 8, arg2);
@@ -218,14 +295,14 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 }
 
 # Read IR node fields
-fn IR_NODE_CP(S, ni): i64 { return load32(S + 0x6E9D000 + ni * 4); }
+fn IR_NODE_CP(S, ni): i64 { return load32(_ir_cp_base + ni * 4); }
 # v6.5.54 — setter, so the NOP-harvest compactor can repair recorded node positions after it
 # relocates code. Without this the compactor had to be disabled entirely under IR mode
 # (`IR_ENABLED(S) == 0` in parse_fn.cyr): it repairs jump disp32s, fixup CPs and switch-table
 # entries, but the IR's node->CP table kept PRE-compaction offsets, so the IR fixpoint then
 # read and rewrote code at stale positions. Measured consequence of just lifting that gate
 # without this repair: the IR=3-built cycc dies at startup with `alloc_init: mmap failed`.
-fn IR_SNODE_CP(S, ni, v): i64 { store32(S + 0x6E9D000 + ni * 4, v); return 0; }
+fn IR_SNODE_CP(S, ni, v): i64 { store32(_ir_cp_base + ni * 4, v); return 0; }
 
 # v6.5.54 — watermark for the per-fn NOP-harvest compactor's IR-CP repair (stage 3c).
 # IR nodes are appended in parse order, so once a function has been compacted its nodes are
@@ -235,10 +312,10 @@ fn IR_SNODE_CP(S, ni, v): i64 { store32(S + 0x6E9D000 + ni * 4, v); return 0; }
 var _ir_compact_lo = 0;
 fn IR_CLO(): i64 { return _ir_compact_lo; }
 fn IR_SCLO(v): i64 { _ir_compact_lo = v; return 0; }
-fn IR_NODE_OP(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16); }
-fn IR_NODE_FL(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16 + 2); }
-fn IR_NODE_A1(S, ni): i64 { return load32(S + 0x5E9D000 + ni * 16 + 4); }
-fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x5E9D000 + ni * 16 + 8); }
+fn IR_NODE_OP(S, ni): i64 { return load16(_ir_nodes_base + ni * 16); }
+fn IR_NODE_FL(S, ni): i64 { return load16(_ir_nodes_base + ni * 16 + 2); }
+fn IR_NODE_A1(S, ni): i64 { return load32(_ir_nodes_base + ni * 16 + 4); }
+fn IR_NODE_A2(S, ni): i64 { return load64(_ir_nodes_base + ni * 16 + 8); }
 
 # ================================================================
 # Basic block read/write
@@ -251,7 +328,7 @@ fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x5E9D000 + ni * 16 + 8); }
 #   +24: succ0 | (succ1 << 32)
 
 fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
-    var base = S + 0xB3A000 + bi * 32;
+    var base = _ir_bb_base + bi * 32;
     store64(base, bi);
     store64(base + 8, first);
     store64(base + 16, count);
@@ -259,15 +336,15 @@ fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
     return 0;
 }
 
-fn IR_BB_FIRST(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 8); }
-fn IR_BB_COUNT(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 16); }
-fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 24) & 0xFFFFFFFF; }
-fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
+fn IR_BB_FIRST(S, bi): i64 { return load64(_ir_bb_base + bi * 32 + 8); }
+fn IR_BB_COUNT(S, bi): i64 { return load64(_ir_bb_base + bi * 32 + 16); }
+fn IR_BB_SUCC0(S, bi): i64 { return load64(_ir_bb_base + bi * 32 + 24) & 0xFFFFFFFF; }
+fn IR_BB_SUCC1(S, bi): i64 { return (load64(_ir_bb_base + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
 
 # ================================================================
 # Cross-BB liveness arrays (v6.3.27, analysis-only, gated under CYRIUS_IR)
 # ================================================================
-# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤131072).
+# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id).
 # Bit encoding widens the v5.6.16 2-bit DCE map: bit0=RAX, bit1=RCX, and (storage
 # reserved, no allocation meaning yet) bit2=RBX, bit3=R12, bit4=R13, bit5=R14,
 # bit6=R15. `ir_liveness_cfg` computes these as a CFG fixpoint; the register
@@ -276,14 +353,12 @@ fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xB3A000 + bi * 32 + 24) >> 32) 
 # `push`→`mov reg` instruction). Cross-BB liveness is the reusable substrate the
 # v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume.
 #
-# live_in @ S+0x207B000, live_out @ S+0x217B000, 1 MB each (131072 × 8) — in the gap
-# after fixup_tbl since v6.5.23 (v6.3.27 put them at the arena top, 0x5E1D000, at 256 KB
-# each). Zero-init by mmap/brk; only touched under CYRIUS_IR, so the default emit path is
-# unaffected.
-fn IR_LIVEIN(S, bi): i64 { return load64(S + 0x207B000 + bi * 8); }
-fn IR_SLIVEIN(S, bi, v): i64 { store64(S + 0x207B000 + bi * 8, v); return 0; }
-fn IR_LIVEOUT(S, bi): i64 { return load64(S + 0x217B000 + bi * 8); }
-fn IR_SLIVEOUT(S, bi, v): i64 { store64(S + 0x217B000 + bi * 8, v); return 0; }
+# live_in / live_out are carved from the IR arena beside the BB table and grow with it
+# (_ir_bbs_grow); ir_liveness_cfg initialises every BB's pair before it reads one.
+fn IR_LIVEIN(S, bi): i64 { return load64(_ir_livein_base + bi * 8); }
+fn IR_SLIVEIN(S, bi, v): i64 { store64(_ir_livein_base + bi * 8, v); return 0; }
+fn IR_LIVEOUT(S, bi): i64 { return load64(_ir_liveout_base + bi * 8); }
+fn IR_SLIVEOUT(S, bi, v): i64 { store64(_ir_liveout_base + bi * 8, v); return 0; }
 
 # ================================================================
 # IR builder — Phase 2 API
@@ -292,10 +367,7 @@ fn IR_SLIVEOUT(S, bi, v): i64 { store64(S + 0x217B000 + bi * 8, v); return 0; }
 # Create a new basic block. Returns block index.
 fn ir_bb_new(S): i64 {
     var bi = IR_BCNT(S);
-    if (bi >= 131072) {
-        syscall(SYS_WRITE, 2, "error: IR block table full\n", 27);
-        syscall(SYS_EXIT, 1);
-    }
+    if (bi >= _ir_bcap) { _ir_bbs_grow(); }
     var ni = IR_NCNT(S);
     _ir_set_bb(S, bi, ni, 0, 0 - 1, 0 - 1);
     IR_SBCNT(S, bi + 1);
@@ -313,19 +385,16 @@ fn ir_set_bb(S, bi): i64 {
 # Returns node index.
 fn ir_emit(S, op, flags, arg1, arg2): i64 {
     var ni = IR_NCNT(S);
-    if (ni >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: IR node buffer full\n", 27);
-        syscall(SYS_EXIT, 1);
-    }
+    if (ni >= _ir_ncap) { _ir_nodes_grow(); }
     _ir_set_node(S, ni, _ir_pack_op(op, flags), arg1, arg2);
     # Record codebuf position (32-bit, CP fits in 1MB)
-    store32(S + 0x6E9D000 + ni * 4, GCP(S));
+    store32(_ir_cp_base + ni * 4, GCP(S));
     IR_SNCNT(S, ni + 1);
 
     # Update current BB's node count
     var bi = IR_CURBB(S);
-    if (bi >= 0 && bi < 131072) {
-        var base = S + 0xB3A000 + bi * 32;
+    if (bi >= 0 && bi < _ir_bcap) {
+        var base = _ir_bb_base + bi * 32;
         store64(base + 16, load64(base + 16) + 1);
     }
     return ni;
@@ -340,7 +409,7 @@ fn ir_emit1(S, op, arg1): i64 { return ir_emit(S, op, 0, arg1, 0); }
 
 # Set BB successor (unconditional jump)
 fn ir_bb_set_succ(S, bi, target): i64 {
-    var base = S + 0xB3A000 + bi * 32;
+    var base = _ir_bb_base + bi * 32;
     var cur = load64(base + 24);
     store64(base + 24, (target & 0xFFFFFFFF) | (cur & 0xFFFFFFFF00000000));
     return 0;
@@ -348,7 +417,7 @@ fn ir_bb_set_succ(S, bi, target): i64 {
 
 # Set BB successors (conditional: true_bb, false_bb)
 fn ir_bb_set_cond(S, bi, true_bb, false_bb): i64 {
-    var base = S + 0xB3A000 + bi * 32;
+    var base = _ir_bb_base + bi * 32;
     store64(base + 24, (true_bb & 0xFFFFFFFF) | ((false_bb & 0xFFFFFFFF) << 32));
     return 0;
 }
@@ -1232,7 +1301,7 @@ fn ir_build_bbs(S): i64 {
         # Terminators end the current BB and start a new one
         if (op == IR_JMP || op == IR_JCC || op == IR_JMP_BACK || op == IR_EPILOGUE || op == IR_RET) {
             # This node belongs to current BB — update count
-            var base = S + 0xB3A000 + cur_bb * 32;
+            var base = _ir_bb_base + cur_bb * 32;
             store64(base + 16, i - IR_BB_FIRST(S, cur_bb) + 1);
 
             # Start new BB at next node
@@ -1240,7 +1309,7 @@ fn ir_build_bbs(S): i64 {
                 cur_bb = ir_bb_new(S);
                 ir_set_bb(S, cur_bb);
                 # Set first_node for the new BB
-                store64(S + 0xB3A000 + cur_bb * 32 + 8, i + 1);
+                store64(_ir_bb_base + cur_bb * 32 + 8, i + 1);
             }
         }
         # NOP with patch offset = landing pad → always starts a new BB
@@ -1248,20 +1317,20 @@ fn ir_build_bbs(S): i64 {
         elif (op == IR_NOP && i > 0 && IR_NODE_A1(S, i) != 0) {
             var cur_first = IR_BB_FIRST(S, cur_bb);
             if (i > cur_first) {
-                var base = S + 0xB3A000 + cur_bb * 32;
+                var base = _ir_bb_base + cur_bb * 32;
                 store64(base + 16, i - cur_first);
                 cur_bb = ir_bb_new(S);
                 ir_set_bb(S, cur_bb);
-                store64(S + 0xB3A000 + cur_bb * 32 + 8, i);
+                store64(_ir_bb_base + cur_bb * 32 + 8, i);
             }
         }
         # PROLOG starts a new BB (function entry)
         elif (op == IR_PROLOGUE && i > 0) {
-            var base = S + 0xB3A000 + cur_bb * 32;
+            var base = _ir_bb_base + cur_bb * 32;
             store64(base + 16, i - IR_BB_FIRST(S, cur_bb));
             cur_bb = ir_bb_new(S);
             ir_set_bb(S, cur_bb);
-            store64(S + 0xB3A000 + cur_bb * 32 + 8, i);
+            store64(_ir_bb_base + cur_bb * 32 + 8, i);
         }
 
         i = i + 1;
@@ -1270,7 +1339,7 @@ fn ir_build_bbs(S): i64 {
     # Finalize last BB's node count
     if (IR_BCNT(S) > 0) {
         var last = IR_BCNT(S) - 1;
-        var base = S + 0xB3A000 + last * 32;
+        var base = _ir_bb_base + last * 32;
         var first = load64(base + 8);
         store64(base + 16, ncnt - first);
     }
@@ -1486,8 +1555,9 @@ fn _wp_sort_prefix(S): i64 {
     # Bottom-up mergesort, not the per-fn pass's insertion sort. The run table arrives as a
     # concatenation of ascending sweeps (one per fixpoint iteration of const-fold, then one
     # from ir_apply_lase), which is the input that makes insertion sort quadratic exactly
-    # when the second sweep starts. Scratch is the upper half of the WPNR region.
-    var SCR = 4096;
+    # when the second sweep starts. Scratch is the upper half of the WPNR region: records
+    # [cap, 2 cap), which `_wpnr_grow` sizes every table for. CHANGELOG [6.7.14]
+    var SCR = _wpnr_cap;
     var w = 1;
     while (w < n) {
         var i = 0;
@@ -1504,20 +1574,20 @@ fn _wp_sort_prefix(S): i64 {
                 var take_a = 0;
                 if (a < mid) {
                     if (b >= hi) { take_a = 1; }
-                    elif (L64(S + 0xC0000 + a * 24) <= L64(S + 0xC0000 + b * 24)) { take_a = 1; }
+                    elif (L64(_wpnr_base + a * 24) <= L64(_wpnr_base + b * 24)) { take_a = 1; }
                 }
                 var src = b;
                 if (take_a == 1) { src = a; a = a + 1; } else { b = b + 1; }
-                S64(S + 0xC0000 + (SCR + o) * 24, L64(S + 0xC0000 + src * 24));
-                S64(S + 0xC0000 + (SCR + o) * 24 + 8, L64(S + 0xC0000 + src * 24 + 8));
+                S64(_wpnr_base + (SCR + o) * 24, L64(_wpnr_base + src * 24));
+                S64(_wpnr_base + (SCR + o) * 24 + 8, L64(_wpnr_base + src * 24 + 8));
                 o = o + 1;
             }
             i = i + w + w;
         }
         var k = 0;
         while (k < n) {
-            S64(S + 0xC0000 + k * 24, L64(S + 0xC0000 + (SCR + k) * 24));
-            S64(S + 0xC0000 + k * 24 + 8, L64(S + 0xC0000 + (SCR + k) * 24 + 8));
+            S64(_wpnr_base + k * 24, L64(_wpnr_base + (SCR + k) * 24));
+            S64(_wpnr_base + k * 24 + 8, L64(_wpnr_base + (SCR + k) * 24 + 8));
             k = k + 1;
         }
         w = w + w;
@@ -1536,18 +1606,18 @@ fn _wp_sort_prefix(S): i64 {
     var wq = 0;
     var rq = 1;
     while (rq < n) {
-        var pcp = L64(S + 0xC0000 + wq * 24);
-        var plen = L64(S + 0xC0000 + wq * 24 + 8);
-        var ccp = L64(S + 0xC0000 + rq * 24);
-        var clen = L64(S + 0xC0000 + rq * 24 + 8);
+        var pcp = L64(_wpnr_base + wq * 24);
+        var plen = L64(_wpnr_base + wq * 24 + 8);
+        var ccp = L64(_wpnr_base + rq * 24);
+        var clen = L64(_wpnr_base + rq * 24 + 8);
         if (ccp <= pcp + plen) {
             var nend = ccp + clen;
             if (pcp + plen > nend) { nend = pcp + plen; }
-            S64(S + 0xC0000 + wq * 24 + 8, nend - pcp);
+            S64(_wpnr_base + wq * 24 + 8, nend - pcp);
         } else {
             wq = wq + 1;
-            S64(S + 0xC0000 + wq * 24, ccp);
-            S64(S + 0xC0000 + wq * 24 + 8, clen);
+            S64(_wpnr_base + wq * 24, ccp);
+            S64(_wpnr_base + wq * 24 + 8, clen);
         }
         rq = rq + 1;
     }
@@ -1555,8 +1625,8 @@ fn _wp_sort_prefix(S): i64 {
     var cum = 0;
     var k2 = 0;
     while (k2 < n) {
-        S64(S + 0xC0000 + k2 * 24 + 16, cum);
-        cum = cum + L64(S + 0xC0000 + k2 * 24 + 8);
+        S64(_wpnr_base + k2 * 24 + 16, cum);
+        cum = cum + L64(_wpnr_base + k2 * 24 + 8);
         k2 = k2 + 1;
     }
     _wp_deleted = cum;
@@ -1571,12 +1641,12 @@ fn _wp_shift(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) < p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    return L64(S + 0xC0000 + idx * 24 + 16) + L64(S + 0xC0000 + idx * 24 + 8);
+    return L64(_wpnr_base + idx * 24 + 16) + L64(_wpnr_base + idx * 24 + 8);
 }
 
 # Is p strictly INSIDE a deleted run? Such a position has no image after compaction, so a
@@ -1590,13 +1660,13 @@ fn _wp_inside(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) < p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    var c = L64(S + 0xC0000 + idx * 24);
-    var l = L64(S + 0xC0000 + idx * 24 + 8);
+    var c = L64(_wpnr_base + idx * 24);
+    var l = L64(_wpnr_base + idx * 24 + 8);
     if (p > c) { if (p < c + l) { return 1; } }
     return 0;
 }
@@ -1609,12 +1679,12 @@ fn _wp_removed_at(S, p): i64 {
     var hi = _wpnr_n;
     while (lo < hi) {
         var mid = (lo + hi) >> 1;
-        if (L64(S + 0xC0000 + mid * 24) <= p) { lo = mid + 1; }
+        if (L64(_wpnr_base + mid * 24) <= p) { lo = mid + 1; }
         else { hi = mid; }
     }
     if (lo == 0) { return 0; }
     var idx = lo - 1;
-    if (p < L64(S + 0xC0000 + idx * 24) + L64(S + 0xC0000 + idx * 24 + 8)) { return 1; }
+    if (p < L64(_wpnr_base + idx * 24) + L64(_wpnr_base + idx * 24 + 8)) { return 1; }
     return 0;
 }
 
@@ -1672,6 +1742,23 @@ fn _wp_data_fix(S, pcoff, praw, dshift): i64 {
         if (pft != 1) { return 0; }
     }
     S64(_codebuf_base + pcoff, L64(_codebuf_base + pcoff) - dshift);
+    return 0;
+}
+
+# The redefined fns' losing bodies (`_fnr_add`, util.cyr) move like the fn ranges. The CYRIUS_IR=3
+# seam compacts BEFORE FIXUP's dead-code seed pass asks `_dce_in_loser` about them: left
+# pre-move, a range lay over whatever moved into it (the winner's redirect jump, a top-level
+# call after the loser), whose calls were then taken as no roots and live fns removed. CHANGELOG [6.7.14]
+fn _wp_fnr_shift(S): i64 {
+    var i = 0;
+    while (i < _fnr_n) {
+        var a = _fnr_base + i * 16;
+        var lo = L64(a);
+        S64(a, lo - _wp_shift(S, lo));
+        var hi = L64(a + 8);
+        S64(a + 8, hi - _wp_shift(S, hi));
+        i = i + 1;
+    }
     return 0;
 }
 
@@ -1839,6 +1926,7 @@ fn wp_compact(S): i64 {
         if (fend > 0) { S64(_fnt_codeend + qi * 8, fend - _wp_shift(S, fend)); }
         qi = qi + 1;
     }
+    _wp_fnr_shift(S);   # the losing bodies' ranges, read by FIXUP's seed pass after the seam
     # Stage 4 — switch jump tables. A table is DATA living inside `.text`, holding
     # `target_cp - table_cp` deltas; both ends move independently, so each entry is
     # recomputed from scratch rather than adjusted by one delta — the same argument
@@ -1855,8 +1943,8 @@ fn wp_compact(S): i64 {
     # exercised it yet.
     var si = 0;
     while (si < _wpsw_n) {
-        var tcp = L64(S + 0xF0000 + si * 16);
-        var nent = L64(S + 0xF0000 + si * 16 + 8);
+        var tcp = L64(_wpsw_base + si * 16);
+        var nent = L64(_wpsw_base + si * 16 + 8);
         var new_tcp = tcp - _wp_shift(S, tcp);
         var ei = 0;
         while (ei < nent) {
@@ -1885,14 +1973,14 @@ fn wp_compact(S): i64 {
     }
     # Stage 6 — move the bytes. Last, and identical in shape to the per-fn pass's stage 4.
     var end = GCP(S);
-    var wp = L64(S + 0xC0000);
+    var wp = L64(_wpnr_base);
     var rp = wp;
     var ri = 0;
     while (rp < end) {
         var skip = 0;
         if (ri < _wpnr_n) {
-            if (rp == L64(S + 0xC0000 + ri * 24)) {
-                rp = rp + L64(S + 0xC0000 + ri * 24 + 8);
+            if (rp == L64(_wpnr_base + ri * 24)) {
+                rp = rp + L64(_wpnr_base + ri * 24 + 8);
                 ri = ri + 1;
                 skip = 1;
             }
@@ -1918,8 +2006,8 @@ fn wp_compact(S): i64 {
     }
     var rs = 0;
     while (rs < _wpsw_n) {
-        var sc = L64(S + 0xF0000 + rs * 16);
-        S64(S + 0xF0000 + rs * 16, sc - _wp_shift(S, sc));
+        var sc = L64(_wpsw_base + rs * 16);
+        S64(_wpsw_base + rs * 16, sc - _wp_shift(S, sc));
         rs = rs + 1;
     }
     var _done = _wp_deleted;

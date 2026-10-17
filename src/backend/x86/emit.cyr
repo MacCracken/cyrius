@@ -769,7 +769,11 @@ fn EFLSTORE_W(S, idx, width): i64 {
 # width. Pulled out of an inline emit block in parse_decl.cyr
 # so the aarch64 + cx backends can sit alongside as peers.
 fn EFIELD_LOAD_W(S, width): i64 {
-    if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
+    # Every width the narrow ladder emits is recorded, the signed ones (-1 / -2 / -4) too. Unrecorded,
+    # the movsx counted as the bytes of the node before it, the `mov rcx, rax` whose rcx it reads, so
+    # CYRIUS_IR=3's DCE saw that rcx unread and removed both: `s.a + s.b` over i8 fields through `*S`
+    # added the field's ADDRESS. Width 8 is ELODC, which records itself. CHANGELOG [6.7.14]
+    if (width < 0 || width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
     # Same [rcx] narrow ladder as EVLOAD_W (R4, v6.4.15).
     # ⛔ 6.7.6 — and it CLEARS _flags_reflect_rax, as EVLOAD_W does: a load writes no flags (and
     # the field address's `add rcx, off` writes them for rcx), so a tracker left set by the last
@@ -4534,9 +4538,12 @@ fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     store8(a + 2, (rel >> 8) & 0xFF);
     store8(a + 3, (rel >> 16) & 0xFF);
     store8(a + 4, (rel >> 24) & 0xFF);
+    # Through `_wpjs_base`, not the fixed S + 0x60000: past 49,152 sources the registry lives in
+    # alloc'd storage (6.6.20), and the fixed region read beyond it is the run registry — the
+    # naked body's own record was missed and the rel32 repaired twice. CHANGELOG [6.7.14]
     var i = 0;
     while (i < _wpjs_n) {
-        if (L64(S + 0x60000 + i * 8) == old_off + 1) { return 0; }
+        if (L64(_wpjs_base + i * 8) == old_off + 1) { return 0; }
         i = i + 1;
     }
     _wpjs_add(S, old_off + 1);
@@ -5264,6 +5271,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 # returns split rax (lo) + rdx (hi).
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     var disp = 0 - ((idx + 1) * 8);
@@ -5306,6 +5314,7 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
 # 8-byte encoding: 66 0F 11 85 [disp32] (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     var disp = 0 - ((idx + 1) * 8);
@@ -5336,6 +5345,7 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
 # 16-byte encoding: two `66 0F 10 85 [disp32]` = 8 bytes each.
 fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
@@ -5361,6 +5371,7 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # `66 0F 11 85 [disp32]` (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
@@ -5396,6 +5407,7 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
 # 14-byte encoding total (7 bytes per mov).
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a struct local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 93);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
@@ -5423,6 +5435,7 @@ fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
 # 14-byte encoding (7 bytes per mov).
 fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
     _ECORO_REFUSE(S, "a struct local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 93);
+    _IR_REC0(S, IR_RAW_EMIT);   # unrecorded bytes count as the node before them under CYRIUS_IR=3 (see EFLADDR_X1). CHANGELOG [6.7.14]
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -5577,6 +5590,11 @@ fn _ECORO_LEA(S, lli, want_rcx): i64 {
 }
 
 fn EFLADDR_X1(S, lli): i64 {
+    # The `lea rcx` writes rcx, so it is recorded (IR-opaque, as EFLADDR's `lea rax` is). Unrecorded,
+    # its bytes counted as the node before it: after a dead store (`var u = 0; u = h.name;`)
+    # CYRIUS_IR=3's dead-store pass NOP-filled the store and the lea together, and the field was read
+    # through the rcx the previous field access left. Records nothing with IR off. CHANGELOG [6.7.14]
+    _IR_REC0(S, IR_RAW_EMIT);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(lli);
     if (_ECORO_LEA(S, lli, 1) == 1) { return 0; }
@@ -5676,33 +5694,38 @@ fn EFLSTORE(S, idx): i64 {
 # x86_64 INLINE ASM MNEMONICS
 # ================================================================
 
+# A mnemonic is matched on its WHOLE name: each test masks the name's first bytes THROUGH its NUL
+# (cli = "cli\0", 4 bytes), and a name the assembler does not have is refused by name (D16,
+# 2026-10-16). Until 6.7.14 the first bytes decided: `clix` assembled as cli, `inb al, dx` as
+# in al, dx, `nopx` as nop, `stix` as sti. `in` itself never arrives here: it lexes as the for-in
+# keyword (ASM_KW_IN). CHANGELOG [6.7.14]
 fn ASM_MNEMONIC(S): i64 {
+    var ti = GTI(S);
     var noff = PEEKV(S);
     var mnem = L64(S + 0xEC00000 + noff);
-    STI(S, GTI(S) + 1);
-    if (mnem & 0xFFFFFF == 0x696C63) { EB(S, 0xFA); }                          # cli
-    elif (mnem & 0xFFFFFF == 0x697473) { EB(S, 0xFB); }                        # sti
-    elif (mnem & 0xFFFFFF == 0x746C68) { EB(S, 0xF4); }                        # hlt
-    elif (mnem & 0xFFFFFF == 0x706F6E) { EB(S, 0x90); }                        # nop
-    elif (mnem & 0xFFFFFFFFFF == 0x7174657269) { EB(S, 0x48); EB(S, 0xCF); }   # iretq
-    elif (mnem & 0xFFFFFFFFFF == 0x72736D7277) { EB(S, 0x0F); EB(S, 0x30); }   # wrmsr
-    elif (mnem & 0xFFFFFFFFFF == 0x72736D6472) { EB(S, 0x0F); EB(S, 0x32); }   # rdmsr
-    elif (mnem & 0xFFFFFFFFFF == 0x6469757063) { EB(S, 0x0F); EB(S, 0xA2); }   # cpuid
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666D) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF0); }   # mfence (v6.3.3 #6 — full memory barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666C) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xE8); }   # lfence (v6.3.3 #6 — load barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }            # pushfq
-    elif (mnem & 0xFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }                # popfq
-    elif (mnem & 0xFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                    # lgdt
-    elif (mnem & 0xFFFFFFFF == 0x7464696C) { ASM_LIDT(S); }                    # lidt
-    elif (mnem & 0xFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                      # mov (cr)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }          # invlpg
-    elif (mnem & 0xFFFFFF == 0x746E69) { ASM_INT(S); }                          # int
-    elif (mnem & 0xFFFF == 0x6E69) { ASM_IN(S); }                              # in
-    elif (mnem & 0xFFFFFF == 0x74756F) { ASM_OUT(S); }                          # out
-    elif (mnem & 0xFFFFFF == 0x72746C) { ASM_LTR(S); }                          # ltr
-    elif (mnem == 0x6F6C5F6D61726170) { ASM_PARAM_LOAD(S, noff); }              # param_load(reg,idx)
-    else { ERR(S); }
+    STI(S, ti + 1);
+    if (mnem & 0xFFFFFFFF == 0x696C63) { EB(S, 0xFA); }                        # cli
+    elif (mnem & 0xFFFFFFFF == 0x697473) { EB(S, 0xFB); }                      # sti
+    elif (mnem & 0xFFFFFFFF == 0x746C68) { EB(S, 0xF4); }                      # hlt
+    elif (mnem & 0xFFFFFFFF == 0x706F6E) { EB(S, 0x90); }                      # nop
+    elif (mnem & 0xFFFFFFFFFFFF == 0x7174657269) { EB(S, 0x48); EB(S, 0xCF); } # iretq
+    elif (mnem & 0xFFFFFFFFFFFF == 0x72736D7277) { EB(S, 0x0F); EB(S, 0x30); } # wrmsr
+    elif (mnem & 0xFFFFFFFFFFFF == 0x72736D6472) { EB(S, 0x0F); EB(S, 0x32); } # rdmsr
+    elif (mnem & 0xFFFFFFFFFFFF == 0x6469757063) { EB(S, 0x0F); EB(S, 0xA2); } # cpuid
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E65666D) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF0); }   # mfence (v6.3.3 #6 — full memory barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E65666C) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xE8); }   # lfence (v6.3.3 #6 — load barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }          # pushfq
+    elif (mnem & 0xFFFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }              # popfq
+    elif (mnem & 0xFFFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                  # lgdt
+    elif (mnem & 0xFFFFFFFFFF == 0x7464696C) { ASM_LIDT(S); }                  # lidt
+    elif (mnem & 0xFFFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                    # mov (cr)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }        # invlpg
+    elif (mnem & 0xFFFFFFFF == 0x746E69) { ASM_INT(S); }                       # int
+    elif (mnem & 0xFFFFFFFF == 0x74756F) { if (ASM_OUT(S) == 1) { return 0; } }   # out
+    elif (mnem & 0xFFFFFFFF == 0x72746C) { ASM_LTR(S); }                       # ltr
+    elif (_asm_is_param_load(S, noff) == 1) { ASM_PARAM_LOAD(S, noff); }       # param_load(reg,idx)
+    else { _asm_refuse(S, ti, "unknown x86 asm mnemonic "); return 0; }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
 }
@@ -5777,11 +5800,9 @@ fn _asm_x86_reg(n): i64 {
 # sigil AES-NI / cyrius atomic.cyr coupling bug class). disp uses the SAME formula the
 # prologue spills params at: -(idx + 1 + _cur_fn_regalloc)*8. Byte-identical to the old
 # hand-rolled literals when _cur_fn_regalloc==0 (disp8 form, mod=01, rm=rbp). noff is
-# the mnemonic's name offset — verify the full "param_load" (first-8 matched in the
-# dispatch; check the trailing "ad"). See issue 2026-05-21-asm-block-global-symbol-pseudo.
+# the mnemonic's name offset. The dispatch matches the whole name (_asm_is_param_load, 6.7.14).
+# See issue 2026-05-21-asm-block-global-symbol-pseudo.
 fn ASM_PARAM_LOAD(S, noff): i64 {
-    if (load8(S + 0xEC00000 + noff + 8) != 97) { ERR(S); }    # 'a'
-    if (load8(S + 0xEC00000 + noff + 9) != 100) { ERR(S); }   # 'd'
     if (PEEKT(S) != 10) { ERR(S); }      # (
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR(S); }       # register identifier
@@ -5809,19 +5830,59 @@ fn ASM_PARAM_LOAD(S, noff): i64 {
     return 0;
 }
 
-fn ASM_IN(S): i64 {
+# `in` lexes as the for-in keyword (76), so the asm block hands it here rather than to
+# ASM_MNEMONIC; until 6.7.14 `asm { in al, dx; }`, the guide's own spelling, was `unexpected in`.
+# CHANGELOG [6.7.14]
+fn ASM_KW_IN(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 31) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    EB(S, 0xEC);
+    if (ASM_IN(S) == 1) { return 0; }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# The cursor's operand as the accumulator: al 1, ax 2, eax 4 (whole names, with the NUL); else 0.
+fn _asm_acc_width(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var n = L64(S + 0xEC00000 + PEEKV(S));
+    if (n & 0xFFFFFF == 0x6C61) { return 1; }       # al
+    if (n & 0xFFFFFF == 0x7861) { return 2; }       # ax
+    if (n & 0xFFFFFFFF == 0x786165) { return 4; }   # eax
+    return 0;
+}
+
+fn _asm_is_dx(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFF == 0x7864) { return 1; }   # dx
+    return 0;
+}
+
+# `in acc, dx` / `out dx, acc`, the cursor past the mnemonic: the accumulator's width is the encoding
+# (al EC / EE, ax 66 ED / 66 EF, eax ED / EF), and any other operand is refused by name (D16,
+# 2026-10-16). Until 6.7.14 both skipped their operands unread: `out dx, eax` assembled as out dx, al,
+# `in bl, dx` as in al, dx. Returns 1 when refused (the statement is skipped). CHANGELOG [6.7.14]
+fn ASM_IN(S): i64 {
+    var w = _asm_acc_width(S);
+    if (w == 0) { return _asm_refuse(S, GTI(S), "in takes al, ax or eax and then dx, not "); }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); _asm_skip_stmt(S); return 1; }
+    STI(S, GTI(S) + 1);
+    if (_asm_is_dx(S) == 0) { return _asm_refuse(S, GTI(S), "in takes al, ax or eax and then dx, not "); }
+    STI(S, GTI(S) + 1);
+    if (w == 2) { EB(S, 0x66); }
+    if (w == 1) { EB(S, 0xEC); } else { EB(S, 0xED); }
     return 0;
 }
 
 fn ASM_OUT(S): i64 {
+    if (_asm_is_dx(S) == 0) { return _asm_refuse(S, GTI(S), "out takes dx and then al, ax or eax, not "); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 31) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    EB(S, 0xEE);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); _asm_skip_stmt(S); return 1; }
+    STI(S, GTI(S) + 1);
+    var w = _asm_acc_width(S);
+    if (w == 0) { return _asm_refuse(S, GTI(S), "out takes dx and then al, ax or eax, not "); }
+    STI(S, GTI(S) + 1);
+    if (w == 2) { EB(S, 0x66); }
+    if (w == 1) { EB(S, 0xEE); } else { EB(S, 0xEF); }
     return 0;
 }
 

@@ -604,8 +604,9 @@ var _codebuf_base = 0;
 # Layout, in the 0x60000-0x100000 band freed when v6.5.40 relocated the identifier pool to
 # 0xEC00000 (verified: `S + 0x60000` has zero live users):
 #   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps — the FIRST 49152; then alloc'd (below)
-#   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
-#   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
+#   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch — the
+#                   FIRST 4096; then alloc'd (below)
+#   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables — the FIRST 4096; then alloc'd
 # Measured on a cycc self-compile at 6.6.20 (CYRIUS_IR=3 and CYRIUS_DCE=1 alike): 43,028
 # sources, 2,605 runs, 0 switch tables (v6.5.68: 32,438 sources, 2,079 runs). WPNR is the one
 # that saturates: under CYRIUS_IR=3, 48 of the 482 tcyr files (the TLS, sandhi and ws programs
@@ -616,14 +617,27 @@ var _codebuf_base = 0;
 # source past them declined the whole compaction. The 49,153rd moves the registry to alloc'd
 # storage, doubling (_wpjs_grow); _wpjs_ovf now means only that the alloc failed. Every reader
 # goes through _wpjs_base. CHANGELOG [6.6.20]
+#
+# 6.7.14 — WPNR AND WPSW GROW TOO. Their fixed 4,096 records were a cliff: 4,096 one-line dead fns
+# compacted to 4,456 B and 4,100 left 201,064 B, because one run past the cap set _wpnr_ovf and
+# declined the whole pass (kybernet's agnos-init, 4,180 dead fns: 248,440 -> 1,574,640 B). The
+# 4,097th run moves the registry to alloc'd storage, doubling, with the merge scratch in the upper
+# half (_wpnr_grow), and a run that starts where the last one ended extends it instead of taking
+# a record (contiguous dead fns, most of an unused dependency, cost one run). The switch-table
+# registry follows the same pattern (_wpsw_grow). Both _ovf flags now mean only that the alloc
+# failed. Every reader goes through _wpnr_base / _wpsw_base. CHANGELOG [6.7.14]
 var _wpjs_n = 0;      # disp32 sources recorded
 var _wpjs_ovf = 0;
 var _wpjs_base = 0;   # S + 0x60000 until the first grow, then the alloc'd copy
 var _wpjs_cap = 0;    # 0 until the first record; 49152, then doubling
 var _wpnr_n = 0;      # NOP runs recorded
 var _wpnr_ovf = 0;
+var _wpnr_base = 0;   # S + 0xC0000 until the first grow, then the alloc'd copy
+var _wpnr_cap = 0;    # 0 until the first record; 4096, then doubling (records [cap, 2 cap): scratch)
 var _wpsw_n = 0;      # switch jump tables recorded
 var _wpsw_ovf = 0;
+var _wpsw_base = 0;   # S + 0xF0000 until the first grow, then the alloc'd copy
+var _wpsw_cap = 0;    # 0 until the first record; 4096, then doubling
 var _wp_fn_js0 = 0;   # WPJS watermark at the current fn's start
 var _wp_fn_sw0 = 0;   # WPSW watermark at the current fn's start
 var _wp_deleted = 0;
@@ -674,23 +688,115 @@ fn _wpjs_add(S, cp): i64 {
     if (_wp_recording(S) == 0) { return 0; }
     return _wpjs_add_raw(S, cp);
 }
+# Grow WPNR: the first call claims the fixed region at S+0xC0000 (4,096 records + 4,096 of
+# merge scratch), each later one doubles into alloc'd storage sized for the scratch as well
+# (`_wp_sort_prefix` sorts through records [cap, 2 cap)) and copies the live records. Returns 0
+# only when the alloc fails.
+fn _wpnr_grow(S): i64 {
+    if (_wpnr_base == 0) { _wpnr_base = S + 0xC0000; _wpnr_cap = 4096; return 1; }
+    var nc = _wpnr_cap * 2;
+    var nb = alloc(nc * 48);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpnr_n * 3) { store64(nb + i * 8, load64(_wpnr_base + i * 8)); i = i + 1; }
+    _wpnr_base = nb;
+    _wpnr_cap = nc;
+    return 1;
+}
 fn _wpnr_add(S, cp, ln): i64 {
     if (ln <= 0) { return 0; }
-    if (_wpnr_n < 4096) {
-        S64(S + 0xC0000 + _wpnr_n * 24, cp);
-        S64(S + 0xC0000 + _wpnr_n * 24 + 8, ln);
-        S64(S + 0xC0000 + _wpnr_n * 24 + 16, 0);
-        _wpnr_n = _wpnr_n + 1;
-    } else { _wpnr_ovf = 1; }
+    # A run that starts where the previous one ended extends it: `_wp_sort_prefix` merges
+    # abutting runs anyway, so the compaction is the same, and the registry stays small.
+    if (_wpnr_n > 0) {
+        var pr = _wpnr_base + (_wpnr_n - 1) * 24;
+        if (L64(pr) + L64(pr + 8) == cp) { S64(pr + 8, L64(pr + 8) + ln); return 0; }
+    }
+    if (_wpnr_n >= _wpnr_cap) {
+        if (_wpnr_grow(S) == 0) { _wpnr_ovf = 1; return 0; }
+    }
+    S64(_wpnr_base + _wpnr_n * 24, cp);
+    S64(_wpnr_base + _wpnr_n * 24 + 8, ln);
+    S64(_wpnr_base + _wpnr_n * 24 + 16, 0);
+    _wpnr_n = _wpnr_n + 1;
     return 0;
+}
+# Grow WPSW: the fixed 4,096 records at S+0xF0000 first, then doubling alloc'd copies.
+fn _wpsw_grow(S): i64 {
+    if (_wpsw_base == 0) { _wpsw_base = S + 0xF0000; _wpsw_cap = 4096; return 1; }
+    var nc = _wpsw_cap * 2;
+    var nb = alloc(nc * 16);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _wpsw_n * 2) { store64(nb + i * 8, load64(_wpsw_base + i * 8)); i = i + 1; }
+    _wpsw_base = nb;
+    _wpsw_cap = nc;
+    return 1;
 }
 fn _wpsw_add(S, table_cp, nent): i64 {
     if (_wp_recording(S) == 0) { return 0; }
-    if (_wpsw_n < 4096) {
-        S64(S + 0xF0000 + _wpsw_n * 16, table_cp);
-        S64(S + 0xF0000 + _wpsw_n * 16 + 8, nent);
-        _wpsw_n = _wpsw_n + 1;
-    } else { _wpsw_ovf = 1; }
+    if (_wpsw_n >= _wpsw_cap) {
+        if (_wpsw_grow(S) == 0) { _wpsw_ovf = 1; return 0; }
+    }
+    S64(_wpsw_base + _wpsw_n * 16, table_cp);
+    S64(_wpsw_base + _wpsw_n * 16 + 8, nent);
+    _wpsw_n = _wpsw_n + 1;
+    return 0;
+}
+
+# 6.7.14 — THE LOSING BODIES OF REDEFINED FNS. `_fn_redirect` (parse_fn.cyr) turns a redefined
+# fn's earlier entry into a jump to the last definition and moves the fn table past it, so the
+# earlier body [old, old_end) lies in no fn's range — and the dead-code seed pass took every call
+# in it as a ROOT, keeping alive whatever only the losing body called. The ranges are recorded
+# here; `_dce_in_loser` (runtime.cyr) tells both seed passes a call inside one is not a root.
+# Empty, and so free, in a program with no redefinition. CHANGELOG [6.7.14]
+var _fnr_base = 0;    # (old, old_end) pairs: alloc'd on the first redefinition, then doubling
+var _fnr_n = 0;
+var _fnr_cap = 0;
+fn _fnr_add(old, old_end): i64 {
+    if (old_end <= old) { return 0; }
+    if (_fnr_n >= _fnr_cap) {
+        var nc = _fnr_cap * 2;
+        if (nc == 0) { nc = 64; }
+        var nb = alloc(nc * 16);
+        if (nb == 0) { return 0; }   # unrecorded: its calls stay roots, which only keeps more live
+        var i = 0;
+        while (i < _fnr_n * 2) { store64(nb + i * 8, load64(_fnr_base + i * 8)); i = i + 1; }
+        _fnr_base = nb;
+        _fnr_cap = nc;
+    }
+    store64(_fnr_base + _fnr_n * 16, old);
+    store64(_fnr_base + _fnr_n * 16 + 8, old_end);
+    _fnr_n = _fnr_n + 1;
+    return 0;
+}
+
+# 6.7.14 — THE FNS WHOSE CODE HOLDS A RAW `asm` BYTE. The x86 dead-code call graph walks the code
+# with the length decoder and counts an E8 / E9 only where an instruction starts (fixup.cyr
+# `_dce_cand_build`). A raw `asm { 0x.. }` byte is anything — a boot shim's 32-bit code or its
+# data — which the decoder can misread and still land on a span's end, stepping over a real call.
+# So the range of a fn noted here, and every span outside all fns once the top level has one
+# (`_dce_raw_top`), keeps the byte scan. Noted per asm block, by `_cur_fn_ix` (the fn being
+# emitted). CHANGELOG [6.7.14]
+var _dce_raw_base = 0;   # fn indices: alloc'd on the first raw byte inside a fn, then doubling
+var _dce_raw_n = 0;
+var _dce_raw_cap = 0;
+var _dce_raw_top = 0;    # 1 once a raw asm byte is emitted at the top level
+var _dce_raw_ovf = 0;    # 1 when the list could not grow: the call graph keeps the byte scan
+fn _dce_raw_note(fi): i64 {
+    if (fi < 0) { _dce_raw_top = 1; return 0; }
+    if (_dce_raw_n > 0) { if (load64(_dce_raw_base + (_dce_raw_n - 1) * 8) == fi) { return 0; } }
+    if (_dce_raw_n >= _dce_raw_cap) {
+        var nc = _dce_raw_cap * 2;
+        if (nc == 0) { nc = 64; }
+        var nb = alloc(nc * 8);
+        if (nb == 0) { _dce_raw_ovf = 1; return 0; }
+        var i = 0;
+        while (i < _dce_raw_n) { store64(nb + i * 8, load64(_dce_raw_base + i * 8)); i = i + 1; }
+        _dce_raw_base = nb;
+        _dce_raw_cap = nc;
+    }
+    store64(_dce_raw_base + _dce_raw_n * 8, fi);
+    _dce_raw_n = _dce_raw_n + 1;
     return 0;
 }
 
@@ -3135,9 +3241,7 @@ var _fpk_name = 0;
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0xF3A000..S+0xF3A028 (4 counters; relocated out of the
-# fixup_tbl-overlapping 0x174A0xx band @ v6.1.41) + global-var-init slots) to
-# zero, with two sentinel-value exceptions:
+# global-var-init slots) to zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
 # All other slots zeroed.
@@ -3146,11 +3250,10 @@ var _fpk_name = 0;
 # main_aarch64_native.cyr, main_aarch64_macho.cyr, main_x86_macho.cyr,
 # main_cx.cyr, main_win.cyr). Pre-v5.8.63 each main inlined this
 # ~30-line block; extraction here
-# saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
-# IR state (they include ir.cyr but don't actively use the IR
-# pipeline) — harmless because zero-init matches the post-brk
-# kernel-zeroed state, and every driver's arena runs to 0xF600000
-# (the heap map's brk-final line) so the writes land in mapped memory.
+# saves ~150 LOC of duplication. Every driver's arena runs to 0xF600000
+# (the heap map's brk-final line), so the writes land in mapped memory.
+# (The IR state is no longer here: it is four globals in ir.cyr, zero at
+# start — CHANGELOG [6.7.14].)
 fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);
@@ -3165,12 +3268,6 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18DA00, 0);
     S64(S + 0x18DA08, 0);
     S64(S + 0x18DA10, 0);
-    # IR state (cycc — gated by CYRIUS_IR=1 env at runtime; init
-    # unconditionally so the gate read sees zero, not garbage)
-    S64(S + 0xF3A000, 0);    # ir_node_count
-    S64(S + 0xF3A008, 0);    # ir_block_count   (v6.1.41: was 0x174A008, inside fixup_tbl)
-    S64(S + 0xF3A010, 0);    # ir_cur_block     (v6.1.41: was 0x174A010)
-    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020; 0xF3A018, the edge count, is gone with the edge list — 6.6.20)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state

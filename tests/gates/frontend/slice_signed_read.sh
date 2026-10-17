@@ -36,7 +36,8 @@
 #        (exit 132: `s[0] + 2` with a constant index, the C2-1b crash back on the signed path) and
 #        slice_read_left_operand.sh A1-A7 (139 / cxvm "guest address out of range" / PE 84)
 #   MS4  `_slice_idx_addr` without its two checks (lib/slice.cyr) -> RED T1a-T3e (15: every leg)
-#   MS5  `_arr_sub_load` without its signed-width IR record (C2-4a's M25, shared) -> RED Wb (IR=3)
+#   MS5  `_arr_sub_load` without its signed-width IR record (C2-4a's M25, shared) -> RED Wb (IR=3); since
+#        6.7.14 the record is x86 EFIELD_LOAD_W's `width < 0` arm, and dropping it -> RED Wb (measured)
 #   the C2-6a compiler (before this bite) -> RED R1-R4, Wa Wb Wf Wg We; R5 R6 T W0 W0s green; Wc Wd
 #        pass (those legs' compilers are built from this tree's src)
 set -u

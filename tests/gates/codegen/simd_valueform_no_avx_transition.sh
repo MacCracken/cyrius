@@ -56,6 +56,15 @@ best() {  # best of 5, in ms
   done
   echo $b
 }
+best_us() {  # best of 5, in microseconds (axis 2b: its ratio needs better than 1 ms resolution)
+  b=999999999; r=0
+  while [ $r -lt 5 ]; do
+    s=$(date +%s%N); "$1"; e=$(date +%s%N); m=$(( (e - s) / 1000 ))
+    [ $m -lt $b ] && b=$m
+    r=$((r + 1))
+  done
+  echo $b
+}
 
 # ── axis 1 — the VALUE form must not be slower than a hand-written 128-bit reference ────────
 cat > "$T/std.cyr" <<'EOF'
@@ -164,6 +173,20 @@ fi
 # report a huge ymm win while measuring a crash. Found for real: the sibling `.tcyr` shipped this
 # same unguarded pattern and turned the release gate RED on cass (Intel Celeron J4125 —
 # Goldmont Plus, SSE4.2, no AVX2). Probe first, and SAY when the axis is skipped.
+#
+# 6.7.14: THE FIXTURES RUN 150,000 PASSES (were 20,000) AND ARE TIMED IN MICROSECONDS. At 20,000
+# each best-of-5 was ~9-13 ms in whole ms, so one ms was ~11 % of the ratio, and under host load
+# a check.sh run read `f64v256_add 9ms vs f64v_add 9ms (100%)` and failed the strict bound. Now
+# the 128-bit run is ~47 ms on a quiet box, the 256-bit ~25 ms (a 128-bit run under 20 ms is
+# reported `too-fast`, by name), and each fixture must exit 0 having computed the right sum in
+# its last lane before it is timed: a fixture that does not run its kernel is a loud FAIL, never
+# a spectacular ratio.
+# THE BOUND IS 90 %, NOT 100 %: with f64v256_add routed through the 128-bit kernel (EMIT_F64V_LOOP
+# for EMIT_F64V4_LOOP in parse_expr.cyr's 154-157 arm) the two fixtures are the same code and read
+# 98-103 %, so `< 100 %` caught that mutation in only four runs of eight — a coin flip. A tie is
+# not a win. The real win reads 52-55 % on a quiet box. Mutation (6.7.14): that routing -> RED,
+# eight runs of eight.
+# issues/2026-10-16-simd-valueform-axis2b-reads-100-percent-under-host-load.md
 cat > "$T/hasavx.cyr" <<'EOF'
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
@@ -180,8 +203,10 @@ fn main(): i64 {
     var i = 0;
     while (i < 1024) { store64(&A + i * 8, 0x3FF0000000000000); store64(&B + i * 8, 0x4000000000000000); i = i + 1; }
     var k = 0;
-    while (k < 20000) { f64v_add(&D, &A, &B, 1024); k = k + 1; }
-    syscall(60, 0, 0, 0, 0, 0);
+    while (k < 150000) { f64v_add(&D, &A, &B, 1024); k = k + 1; }
+    var bad = 1;
+    if (load64(&D + 1023 * 8) == 0x4008000000000000) { bad = 0; }
+    syscall(60, bad, 0, 0, 0, 0);
     return 0;
 }
 EOF
@@ -193,26 +218,33 @@ fn main(): i64 {
     var i = 0;
     while (i < 1024) { store64(&A + i * 8, 0x3FF0000000000000); store64(&B + i * 8, 0x4000000000000000); i = i + 1; }
     var k = 0;
-    while (k < 20000) { f64v256_add(&D, &A, &B, 1024); k = k + 1; }
-    syscall(60, 0, 0, 0, 0, 0);
+    while (k < 150000) { f64v256_add(&D, &A, &B, 1024); k = k + 1; }
+    var bad = 1;
+    if (load64(&D + 1023 * 8) == 0x4008000000000000) { bad = 0; }
+    syscall(60, bad, 0, 0, 0, 0);
     return 0;
 }
 EOF
+KR_BOUND=90; KD=""
 if [ "$HAS_AVX2" -eq 0 ]; then
   KR="skipped(no-AVX2-on-this-host)"
 else
 build k128; build k256
-K1=$(best "$T/k128"); K2=$(best "$T/k256")
-if [ "$K1" -ge 2 ] && [ "$K2" -ge 1 ]; then
-  KR=$(( K2 * 100 / K1 ))
-  if [ "$KR" -ge 100 ]; then
+for k in k128 k256; do
+  rc=0; "$T/$k" || rc=$?
+  [ "$rc" = 0 ] || { echo "FAIL simd_valueform_no_avx_transition axis2b: the $k fixture exits $rc, want 0 (its last lane 1.0 + 2.0 = 3.0) — fixture broken, nothing to time"; exit 1; }
+done
+K1=$(best_us "$T/k128"); K2=$(best_us "$T/k256")
+if [ "$K1" -ge 20000 ]; then
+  KR=$(( K2 * 100 / K1 )); KD=" (${K2}us/${K1}us)"
+  if [ "$KR" -ge "$KR_BOUND" ]; then
     echo "FAIL simd_valueform_no_avx_transition axis2b: the ymm kernel no longer wins at batch n"
-    echo "  f64v256_add ${K2}ms vs f64v_add ${K1}ms over n=1024 (${KR}%, must be < 100%)."
+    echo "  f64v256_add ${K2}us vs f64v_add ${K1}us over n=1024 x 150,000 (${KR}%, must be < ${KR_BOUND}%)."
     echo "  If ymm stopped paying even in a batch loop, the wrappers' dispatch removal needs re-deciding."
     exit 1
   fi
 else
-  KR="skipped(too-fast)"
+  KR="skipped(too-fast: f64v_add ${K1}us, under 20,000)"
 fi
 fi
 
@@ -247,5 +279,5 @@ EOF
 build c
 "$T/c" || { echo "FAIL simd_valueform_no_avx_transition axis3: f64v4_add value form is numerically wrong"; exit 1; }
 
-echo "PASS simd_valueform_no_avx_transition: value ${S}ms/${F}ms (${R100}%) · _ptr ${PS}ms/${PF}ms (${P100}%) · ymm batch win ${KR}% · no per-call dispatch · 4 lanes correct"
+echo "PASS simd_valueform_no_avx_transition: value ${S}ms/${F}ms (${R100}%) · _ptr ${PS}ms/${PF}ms (${P100}%) · ymm batch win ${KR}%${KD} · no per-call dispatch · 4 lanes correct"
 exit 0

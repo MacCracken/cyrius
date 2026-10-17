@@ -58,6 +58,11 @@
 #      exit 30 + the low byte of `&o` where 35 is right; `o.same(x)` saw n == self), a by-value 16 B
 #      struct argument (`bs(h, x)`) and a struct-returning call's argument (`mk(x)`). Every other
 #      leg was right. Each shape is its own fn: the store, the `lea` and the reload must be adjacent.
+#   W  (6.7.14) under CYRIUS_IR=3 (A3), a field read the IR never saw went with the node before it: a
+#      signed narrow field's movsx through `*S` or a closure capture (`s.a + s.b` over i8 fields added the
+#      field's ADDRESS: an ASLR-dependent exit where 37 is right), and a struct local's `lea rcx` after a
+#      dead store (`var u = 0; u = h.name;` read through the previous field access's rcx: 8 where 41 is
+#      right, past the struct for `u = h.k`, SIGSEGV for a Str field). Every other leg was right.
 #   MP (6.7.11, the user's decision (a), 2026-10-13) a METHOD's `*T` result takes `.field`, `.m(..)` and a
 #      deeper chain, as a free call's `*T` result has since 6.6.17: `h.get().b` was refused ("cannot take a
 #      field of the result of 'H_get': it does not return a struct"). The pointer is parked as a receiver
@@ -644,8 +649,8 @@ fn strs(): i64 {
     assert_eq(str_len(s), 4, "S3: var s: Str = h.name");
     var w: Str = (h.name);
     assert_eq(str_len(w), 4, "S4: var w: Str = (h.name)");
-    # (S5, `u = h.name;` into a Str variable, is the gate's S10 row: under CYRIUS_IR=3 a plain
-    # `local = field` statement loads the wrong word, pre-existing and not this file's subject.)
+    # (S5, `u = h.name;` into a Str variable, is the gate's S10 row; under CYRIUS_IR=3 it loaded the
+    # wrong word until 6.7.14 — W7 runs that shape on every leg.)
     var o: OS;
     o.n = 0;
     o.s = h.name;
@@ -680,6 +685,43 @@ fn eladdr(): i64 {
     assert_eq(e_m3(), 35, "E3: o.with2(x + 0): the + reads the reload (IR=3: 30 + &o)");
     assert_eq(e_b1(), 35, "E4: e_bs(h, x), a 16 B by-value struct then the local (IR=3: 30 + &h)");
     assert_eq(e_r1(), 5, "E5: var b: EAB = e_mk(x), the result buffer then the local (IR=3: &b)");
+    return 0;
+}
+
+# W — a field read whose bytes CYRIUS_IR=3 could not see (the gate's A3 leg): a signed narrow field's
+# movsx and a struct local's `lea rcx` recorded no IR node, so they counted as the node before them
+# and went with it. Each shape is its own fn: the field read must follow exactly what it followed.
+struct WS { a: i8; b: i8; }
+struct WF8 { v: i8; w; }
+struct WS2 { a: i16; b: i32; }
+struct WHN { name; k; }
+fn w_sum(s: *WS): i64 { return s.a + s.b; }
+fn w_f8(f: *WF8): i64 { return f.v + 100; }
+fn w_s2(s: *WS2): i64 { return s.a + s.b + 70400; }
+fn w_ptr(): i64 { var x: WS; x.a = 30; x.b = 7; return w_sum(&x); }
+fn w_cap(): i64 { var x: WS; x.a = 30; x.b = 7; var f = |d| { return x.a + x.b + d; }; return fncall1(f, 0); }
+fn w_neg(): i64 { var x: WF8; x.v = 0 - 3; x.w = 1; return w_f8(&x); }
+fn w_wide(): i64 { var x: WS2; x.a = 0 - 300; x.b = 0 - 70000; return w_s2(&x); }
+fn w_dead(): i64 { var h: WHN; h.name = 40; h.k = 7; var u = 0; u = h.name; return u + 1; }
+fn w_dead2(): i64 { var h: WHN; h.name = 40; h.k = 7; var u = 0; u = h.k; return u + 1; }
+fn w_dstr(): i64 {
+    var h: HS;
+    h.name = str_from("abc");
+    h.k = 7;
+    var u: Str = str_from("x");
+    u = h.name;
+    return str_len(u);
+}
+fn w_elem(): i64 { var b: i8[4]; b[2] = 0 - 5; return b[2] + 10; }
+fn wfields(): i64 {
+    assert_eq(w_ptr(), 37, "W1: s.a + s.b over i8 fields through *S (IR=3: the first field's address)");
+    assert_eq(w_cap(), 37, "W2: the same through a closure capturing the struct (IR=3: 15)");
+    assert_eq(w_neg(), 97, "W3: f.v + 100, f.v an i8 holding -3 (IR=3: an address)");
+    assert_eq(w_wide(), 100, "W4: i16 + i32 fields through *S, both negative");
+    assert_eq(w_dead(), 41, "W5: var u = 0; u = h.name; (IR=3: 8, read through h.k's rcx)");
+    assert_eq(w_dead2(), 8, "W6: var u = 0; u = h.k; (IR=3: 1, read past the struct)");
+    assert_eq(w_dstr(), 3, "W7: u = h.name; into a Str variable (IR=3: SIGSEGV)");
+    assert_eq(w_elem(), 5, "W8: b[2] + 10 with b: i8[4] holding -5 (its record moved into the field load)");
     return 0;
 }
 
@@ -867,6 +909,7 @@ fn rows(): i64 {
     mp_rows();
     strs();
     eladdr();
+    wfields();
     flags();
     intrinsics();
     assert_eq(GI1 * 10 + GI2, 81, "I7: at top level (fncall1 + 1, mulh64 + 1)");

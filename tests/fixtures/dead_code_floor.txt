@@ -35,11 +35,14 @@ TS_PEEKLINE x86
 _EMIT_GVAR_STATIC_INITS cx
 _IR_REC a64 a64m a64n cx
 _IR_REC1 a64 a64m a64n cx
+_asm_is_param_load cx
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
 _fnhash_health a64 a64m a64n cx x86m
 _gvk_arm a64 a64m a64n cx win x86m
+_ir_arena_init a64 a64m a64n cx x86m
 _ir_bb_transfer a64 a64m a64n cx win x86m
+_ir_bbs_grow a64 a64m a64n cx x86m
 _ir_clobbers_rax a64 a64m a64n cx x86m
 _ir_compute_fold a64 a64m a64n cx win x86m
 _ir_def_rax_pure a64 a64m a64n cx win x86m
@@ -66,6 +69,7 @@ _prov_read a64 a64m a64n cx
 _wp_data_end a64 a64m a64n cx
 _wp_data_fix a64 a64m a64n cx
 _wp_dead_xfer a64 a64m a64n cx
+_wp_fnr_shift a64 a64m a64n cx
 _wp_inside a64 a64m a64n cx
 _wp_pad_to a64 a64m a64n cx
 _wp_removed_at a64 a64m a64n cx
@@ -76,6 +80,7 @@ _wpjs_add a64 a64m a64n cx
 _wpjs_add_raw a64 a64m a64n cx
 _wpjs_grow a64 a64m a64n cx
 _wpnr_add a64 a64m a64n cx
+_wpnr_grow a64 a64m a64n cx
 ir_apply_lase a64 a64m a64n cx win x86m
 ir_bb_new a64 a64m a64n cx x86m
 ir_bb_set_cond a64 a64m a64n cx x86m

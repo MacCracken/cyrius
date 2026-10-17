@@ -15,7 +15,7 @@
 #   5. `cyrius test` of a .tcyr sees the embed.
 #   6. a 2,000,000-byte random embed + stdlib + 3,000 other literals builds and round-trips, in
 #      under 2x the time of the SAME bytes as a hand-written module included LAST (the consumer
-#      generators' placement). The prelude puts the embed FIRST, where cycc's linear interning
+#      generators' placement) — the best of 3 alternating samples of each (6.7.14). The prelude puts the embed FIRST, where cycc's linear interning
 #      scan made every later literal re-scan 2 MB (measured 12.4 s vs 0.87 s before B0b) — so this
 #      also guards B0b's interning index at the CLI level.
 #   7. near the pool: a 2,097,150-byte embed (the per-file cap) COMPILES and its length is right,
@@ -63,8 +63,10 @@ cp -R "$ROOT/lib" "$P/lib"
 cli() { ( cd "$P" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" "$@" ); }
 # mf <entry> <[embed] lines...> — a manifest with no [package] version
 mf() { e=$1; shift; { printf '[build]\nentry = "%s"\noutput = "build/main"\ndefines = ["FOO"]\n[embed]\n' "$e"; for l in "$@"; do printf '%s\n' "$l"; done; } > "$P/cyrius.cyml"; }
-# build, then run build/main with stdout to $W/got; rc of the run in $run
-br() { rm -rf "$P/build" "$W/got"; brc=0; cli build > "$W/b.out" 2>&1 || brc=$?; run=x; [ "$brc" = 0 ] && { run=0; "$P/build/main" > "$W/got" || run=$?; }; }
+# build, then run build/main with stdout to $W/got; rc of the run in $run. br / qb / rb end in
+# `return 0`: their last command is `[ built ] && { run; }`, which is 1 for a refused build, so under
+# `bash -eo pipefail` the gate stopped at axis 3 with rc 1 and no verdict (6.7.14, found in passing).
+br() { rm -rf "$P/build" "$W/got"; brc=0; cli build > "$W/b.out" 2>&1 || brc=$?; run=x; [ "$brc" = 0 ] && { run=0; "$P/build/main" > "$W/got" || run=$?; }; return 0; }
 
 # ── axis 1 / 2: text, binary, empty ──────────────────────────────────────────────────────
 x=$FAIL
@@ -123,16 +125,33 @@ head -c 2000000 /dev/urandom > "$P/data/big.bin"
       if (c == 34) printf "\\\""; else if (c == 92) printf "\\\\"; else if (c >= 32 && c <= 126) printf "%c", c; else printf "\\x%02x", c }'
   printf '";\n}\nfn BIG_len(): i64 { return 2000000; }\n'; } > "$P/big_mod.cyr"
 { cat "$W/body"; printf 'include "big_mod.cyr"\nsyscall(60, 0);\n'; } > "$P/base.cyr"
-printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
-t0=$(date +%s%N); br; t1=$(date +%s%N)
-base_ms=$(( (t1 - t0) / 1000000 ))
-cmp -s "$P/data/big.bin" "$W/got" || fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"
-mf big.cyr 'BIG = "data/big.bin"'
-t0=$(date +%s%N); br; t1=$(date +%s%N)
-emb_ms=$(( (t1 - t0) / 1000000 ))
-cmp -s "$P/data/big.bin" "$W/got" || fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"
-[ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms, the same bytes included last ${base_ms} ms — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
-[ "$FAIL" = "$x" ] && echo "  ok axis 6: 2,000,000 B + stdlib + 3,000 literals round-trips; ${emb_ms} ms vs ${base_ms} ms hand-written-last"
+# 6.7.14: each build is timed N6 times, alternating (base, embed, base, embed, ...), and the
+# MINIMUM of each is compared. One sample of each crossed the bound under host load (load 13-19:
+# 1697 vs 693 ms, and the slot-open tree once in three at load ~6) — the margin over the quiet
+# ~1.77 ratio is ~12 % of one sample. A scheduling hiccup lengthens a sample, never shortens it, so
+# the minimum is the build's own cost; the regression guarded (B0b's index reverted) is ~14x, so
+# min-of-N keeps full sensitivity. The bound is unchanged.
+# Mutation (6.7.14): `_lex_intern` always taking `_lex_intern_scan` (B0b reverted) -> RED.
+# issues/2026-10-15-embed-build-axis6-single-sample-timing-flakes-under-load.md
+N6=3
+base_ms=0; emb_ms=0; base_all=""; emb_all=""; i6=0
+while [ $i6 -lt $N6 ]; do
+    printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
+    t0=$(date +%s%N); br; t1=$(date +%s%N)
+    ms=$(( (t1 - t0) / 1000000 )); base_all="$base_all $ms"
+    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"; break; }
+    { [ "$base_ms" = 0 ] || [ "$ms" -lt "$base_ms" ]; } && base_ms=$ms
+    mf big.cyr 'BIG = "data/big.bin"'
+    t0=$(date +%s%N); br; t1=$(date +%s%N)
+    ms=$(( (t1 - t0) / 1000000 )); emb_all="$emb_all $ms"
+    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"; break; }
+    { [ "$emb_ms" = 0 ] || [ "$ms" -lt "$emb_ms" ]; } && emb_ms=$ms
+    i6=$((i6 + 1))
+done
+if [ "$FAIL" = "$x" ]; then
+    [ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms (the best of${emb_all}), the same bytes included last ${base_ms} ms (the best of${base_all}) — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
+fi
+[ "$FAIL" = "$x" ] && echo "  ok axis 6: 2,000,000 B + stdlib + 3,000 literals round-trips; ${emb_ms} ms vs ${base_ms} ms hand-written-last (the best of $N6 alternating: embed${emb_all}, last${base_all})"
 
 # ── axis 7: the per-file cap compiles ────────────────────────────────────────────────────
 x=$FAIL
@@ -177,7 +196,7 @@ printf 'hello-embed\n' > "$Q/data/h.txt"
 printf 'syscall(1, 1, BLOB(), BLOB_len());\nsyscall(60, 0);\n' > "$Q/main.cyr"
 printf '[build]\nentry = "main.cyr"\noutput = "build/main"\n[embed]\nBLOB = "data/h.txt"\n[deps.foo]\npath = "%s"\nmodules = ["dist/foo.cyr"]\n' "$D" > "$Q/cyrius.cyml"
 # qb: build Q, then run build/main into $W/got (rc of the run in $run, x when nothing was built)
-qb() { rm -rf "$Q/build" "$W/got"; brc=0; ( cd "$Q" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$Q/build/main" ] && { run=0; "$Q/build/main" > "$W/got" || run=$?; }; }
+qb() { rm -rf "$Q/build" "$W/got"; brc=0; ( cd "$Q" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$Q/build/main" ] && { run=0; "$Q/build/main" > "$W/got" || run=$?; }; return 0; }
 gotp() { tr -d '\000' < "$W/got" 2>/dev/null | head -c 80; }   # what the probe printed (NAME_len can over-read)
 # fresh <label> <dep module text> <expected text>: no lib/ — the FIRST build refuses by name
 fresh() {
@@ -213,7 +232,7 @@ printf 'syscall(1, 1, FOLD_BLOB(), FOLD_BLOB_len());\nsyscall(60, 0);\n' > "$R/m
 # rmf <[package] header + lines> <[embed] line>: a manifest pinned to $V ([package] cyrius picks
 # the snapshot); rb: build R, run it into $W/got
 rmf() { { printf '%s' "$1"; printf 'cyrius = "%s"\n[build]\nentry = "main.cyr"\noutput = "build/main"\n[embed]\n%s\n' "$V" "$2"; } > "$R/cyrius.cyml"; }
-rb() { rm -rf "$R/build" "$W/got"; brc=0; ( cd "$R" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$R/build/main" ] && { run=0; "$R/build/main" > "$W/got" || run=$?; }; }
+rb() { rm -rf "$R/build" "$W/got"; brc=0; ( cd "$R" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$R/build/main" ] && { run=0; "$R/build/main" > "$W/got" || run=$?; }; return 0; }
 # rowned <label> <[package] lines> <[embed] line> <expected text>: refused by name, nothing built
 rowned() {
     rmf "$2" "$3"; rb

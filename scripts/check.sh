@@ -1449,6 +1449,12 @@ _chk_gate "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
 # byte the SAME SIZE as the correct compiler, so no size or NOP-count assertion can see it.
 _chk_gate "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
 
+# 6.7.14 — an `asm { }` block assembles what its source says or refuses it by name (D16): `in` reaches
+# its emitter (it lexes as the for-in keyword), in / out encode the accumulator's width (out dx, eax
+# was EE), an operand they cannot take is refused naming it, and the guide's Inline Assembly block
+# keeps its bytes in a kernel and a program.
+_chk_gate "$ROOT/tests/gates/codegen/asm_mnemonics_whole.sh"
+
 # v6.5.68: the NOP runs the IR passes write AFTER every per-function compaction has already
 # run are collected by a whole-program pass, and the COMPACTED compiler must be a working one
 # that emits exactly the bytes the uncompacted one does. ⭐ The byte count only proves the
@@ -1580,6 +1586,13 @@ _chk_gate "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 # spills to alloc'd storage. A registry that does saturate is named on the CYRIUS_IR=3 path too,
 # which declined in silence (the CYRIUS_DCE=1 path has named it since 6.6.18).
 _chk_gate "$ROOT/tests/gates/ir-opt/wp_compact_registry_caps.sh"
+
+# 6.7.14 — the IR tables are one alloc()'d arena that grows (src/common/ir.cyr), not six fixed
+# S + 0x… bands with hard caps: CYRIUS_IR stopped ("IR node buffer full" / "IR block table full")
+# on programs the default build compiled. The filed 3.0 MB repro and a 150k-BB program build and
+# run under IR=1 / IR=3, the grown IR scales exactly with a never-grown build, cycc's own IR builds
+# are sound, and no retired band literal or heap-map row is left.
+_chk_gate "$ROOT/tests/gates/ir-opt/ir_arena_grows.sh"
 
 # ⛔ v6.6.1 — `f64_exp`/`f64_exp2` returned NaN for ±inf on BOTH the native x87 path and the
 # aarch64 polyfill: the range reduction subtracts a multiple of the argument from itself, so
@@ -2827,6 +2840,11 @@ _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
 # `cmp x8` word left on ELF or arm64 Mach-O; qemu -strace twins against the runtime chain, named
 # SKIP without qemu-aarch64). Cross-builds cycc_aarch64 from src with $CYCC.
 _chk_gate "$ROOT/tests/gates/platform/esysxlat_fold.sh"
+
+# 6.7.14 — the aarch64 W^X layout 6.7.13's D45 keeps: two LOADs, the data at a 64 KB-aligned file
+# offset (0x10000 for a one-line program, zero pad before it, p_align 0x10000), the 64 KB step past
+# 64 KB of code, one RWE LOAD under CYRIUS_WX=0; qemu legs SKIP by name. Cross-builds with $CYCC.
+_chk_gate "$ROOT/tests/gates/platform/aarch64_wx_layout_64k.sh"
 
 # 6.7.12 (D1) — a raw syscall literal inside a native-aarch64 region that a compat row renumbers
 # is warned (the number it becomes, what that runs, and the 1000+N spelling or none) and still
