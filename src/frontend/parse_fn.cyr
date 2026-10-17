@@ -13607,6 +13607,7 @@ fn _parse_one_type_arg(S): i64 {
         _sl_ann_skip(S);
         return 0 - 8;
     }
+    if (PEEKT(S) != 2) { return _targ_not_name(S); }   # 6.7.14: `Box<1 + 2>`, `Box<u128>`
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
@@ -13627,6 +13628,57 @@ fn _parse_one_type_arg(S): i64 {
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
     return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
+}
+
+# ⛔ 6.7.14 — A TYPE ARGUMENT THAT IS NO NAME (`Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`, `Box<"s">`). Its token's VALUE
+# was read as a name-pool offset — a number's 1 named "truct", u128's keyword value "struct", a string's offset SIGSEGV'd
+# the compiler — and only that token was stepped, so a call's `+ 2>(3)` was left to the statement ("expected ';'" on
+# the next line, "expected '}'" at the end of the file). Refused once at the token, by what it is (u128 by its text);
+# the argument's tokens are stepped to the `,` or `>` that ends it, which the caller reads as for any argument; it is
+# read as i64, so nothing cascades. CHANGELOG [6.7.14]
+fn _targ_not_name(S): i64 {
+    var ti = GTI(S);
+    var t = TOKTYP(S, ti);
+    if (t == 105) {
+        _dyn_err(S, ti, "u128 cannot be a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)", 0, 0 - 1, 0);
+    } elif (_dyn_ebeg(S, ti) == 1) {
+        PRSTR("a type argument is a type name, got ");
+        PRSTR(TOKNAME(t));
+        if (t == 1) { PRSTR(" "); PRNUM(TOKVAL(S, ti)); }
+        _dyn_eend(S);
+    }
+    _targ_skip_arg(S);
+    return 0 - 8;
+}
+# Step one type argument's tokens, the cursor left on the `,` or the `>` / `>>` / `>>>` that ends it at its own depth
+# (or on a `)` / `]`, `;`, `{`, `}`, `=` or the end of the file, where the list was never closed). Inside `( .. )` or
+# `[ .. ]` a `<` / `>` is a comparison, so only the `<`s outside them nest. A `>>` / `>>>` closing a nested `<` and this
+# list too is paid forward to the caller's `_consume_gt`, as `_skip_targ_list`'s is (`_ta_pending_gt`).
+fn _targ_skip_arg(S): i64 {
+    var pd = 0;
+    var ad = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        var g = _targ_gt_n(t);
+        if (pd > 0) { g = 0; }
+        if (t == 12 || t == 5 || t == 13 || t == 14 || t == 4) { return 0; }
+        if (pd + ad == 0) { if (t == 31 || t == 11 || t == 29 || g > 0) { return 0; } }
+        if (t == 10 || t == 28) { pd = pd + 1; }
+        elif (t == 11 || t == 29) { if (pd > 0) { pd = pd - 1; } }
+        elif (t == 19) { if (pd == 0) { ad = ad + 1; } }
+        elif (g > 0) { ad = ad - g; }
+        STI(S, GTI(S) + 1);
+        if (ad < 0) { _ta_pending_gt = _ta_pending_gt + (0 - ad); return 0; }   # this list's close too
+    }
+    return 0;
+}
+# How many type-argument lists token `t` closes: `>` 1, `>>` 2, `>>>` 3, else 0.
+fn _targ_gt_n(t): i64 {
+    if (t == 20) { return 1; }
+    if (t == 39) { return 2; }
+    if (t == 152) { return 3; }
+    return 0;
 }
 
 # Parse fn name<T>(params) { body }

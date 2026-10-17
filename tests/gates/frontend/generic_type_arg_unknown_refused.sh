@@ -61,6 +61,18 @@
 #      carriers (two growths): 44; CF8 a parameter, 65 `var cN: T = b;`, then `z.y`: 44; CF8b 130: 44.
 #      The bounded receivers' table (`_bnr_tab`) is trait_bounds_checked.sh's B1.
 #      Filed: docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
+#   NN (6.7.14) a type argument that is NO NAME — `Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`, `Box<"s">`, `id<*Pt>`,
+#      `Box<>`, `Box<true>`: its token's VALUE was read as a name-pool offset ("unknown type 'truct'" / "'struct'" /
+#      "'num'" / "'enum'", a string SIGSEGV'd the compiler), the caret one token late, the call's `+ 2>(3)` left to the
+#      statement ("expected ';'", "expected '}'" at EOF), a signature's twice (pass 1 and pass 2). `_targ_not_name`
+#      refuses it once at the token ("a type argument is a type name, got number 1"; "u128 cannot be a type
+#      argument ..."), steps the argument to its `,` / `>` and reads it as i64. NN0 the filed repro verbatim; NN1-NN8
+#      the other tokens and positions; a control. Filed: docs/development/issues/2026-10-14-type-argument-non-name-
+#      reported-with-garbage-name.md
+#      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
+#      MNN1 `_parse_one_type_arg` without the non-name arm -> RED 9: NN0-NN8 (the garbage names, the cascade, a
+#      signature's twice); MNN2 `_targ_skip_arg` stepping one token -> RED 5: NN0 NN4-NN7 (the cascade); MNN3
+#      `_targ_skip_arg` reading a `>` inside `( .. )` as a close -> RED 1: NN5 ("expected '=', got ')'")
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -338,5 +350,60 @@ exits cf8 44 "CF8: a parameter, 65 \`var cN: T = b;\` T-typed locals, then \`z.y
 cfgen cf8b 130 ': T = b'
 exits cf8b 44 "CF8b: 130 T-typed locals (the table grows twice)"
 
+# ── 6.7.14: a type argument that is no name ────────────────────────────────────────────────────
+# `errs <name> <n> <what> <line>...`: refused with exactly <n> `^error` lines, each <line> among them (grep -F).
+errs() {
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    k=$(grep -c '^error' "$T/$nm.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$rc" -ne 1 ]; then bad "$what: the compiler died (rc $rc)"; return; fi
+    if [ "$k" -ne "$want" ]; then bad "$what: $k error lines (want $want): $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    for l in "$@"; do
+        if ! grep -qF -- "$l" "$T/$nm.err"; then bad "$what: no line '$l': $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    done
+    ok "$what: refused, $k error line(s) as wanted"
+}
+NM="a type argument is a type name, got"
+U1="u128 cannot be a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+cat > "$T/nn0.cyr" <<'EOF'
+struct Box<T> { v: T; }
+fn id<T>(x: T): T { return x; }
+fn main(): i64 {
+    var a: Box<1 + 2>;
+    var b: Box<u128>;
+    return id<1 + 2>(3);
+}
+syscall(60, main());
+EOF
+errs nn0 3 "NN0: the filed repro verbatim — one error per argument, at its token, no cascade (was 'truct' / 'struct' x3 + 2)" \
+    "error:<source>:4:16: $NM number 1" "error:<source>:5:16: $U1" "error:<source>:6:15: $NM number 1"
+NNH='struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+fn id<T>(x: T): T { return x; }'
+nn() { printf '%s\n%s\nsyscall(60, 7);\n' "$NNH" "$2" > "$T/$1.cyr"; }
+nn nn1 'fn f(): i64 { var a: Box<"s">; return 0; }'
+errs nn1 1 "NN1: Box<\"s\"> (its string offset read as a name: a garbage name, or the compiler died, rc 139)" "$NM string"
+nn nn2 'fn f(x: Box<1>): i64 { return 0; }'
+errs nn2 1 "NN2: a parameter's Box<1>, once (twice: pass 1 and pass 2)" "error:<source>:5:13: $NM number 1"
+nn nn3 'fn g<T>(x: T): *Box<1> { return 0; }
+fn h(): i64 { var a = g(1); var b = g<i32>(2); return 0; }'
+errs nn3 1 "NN3: a generic's *Box<1> return with two instances, once (three times)" "$NM number 1"
+nn nn4 'fn f(): i64 { var a: Two<1 + 2, 3>; var b: Two<i32, 1>; return 0; }'
+errs nn4 3 "NN4: Two<1 + 2, 3> and Two<i32, 1> — each argument once" \
+    "error:<source>:5:26: $NM number 1" "error:<source>:5:33: $NM number 3" "error:<source>:5:53: $NM number 1"
+nn nn5 'fn f(): i64 { var a: Box<1 + (2 > 1)>; var b: Box<Box<1>>; var c: Two<Box<1>, i32>; return sizeof(Two<Box<1>, i32>); }'
+errs nn5 4 "NN5: a comparison inside parentheses, a nested Box<Box<1>> (its >>), Two<Box<1>, i32>, sizeof(..) — no cascade" \
+    "error:<source>:5:26: $NM number 1"
+nn nn6 'fn f(): i64 { var p: Pt; return id<1 + 2>(3) + id<i32>(3) + id<*Pt>(p) + id<>(4); }'
+errs nn6 3 "NN6: id<1 + 2>(3), id<*Pt>(p), id<>(4) in one expression" "$NM number 1" "$NM '*'" "$NM '>'"
+nn nn7 'fn f(): i64 { var a: Box<true>; var b: Box<fn>; var c: Box<-1>; return 0; }'
+errs nn7 3 "NN7: Box<true>, Box<fn>, Box<-1>" "$NM true" "$NM fn" "$NM '-'"
+nn nn8 'fn f(): i64 { return id<u128>(3); }'
+errs nn8 1 "NN8: id<u128>(3), by its text, once (twice)" "$U1"
+printf '%s\nfn main(): i64 { var a: Box<i64>; a.n = 3; var b: Two<Pt, i32>; b.b = 4; return a.n + b.b + id<i32>(3) + sizeof(Box<i16>) - 20; }\nsyscall(60, main());\n' "$NNH" > "$T/nnk.cyr"
+exits nnk 0 "NN control: Box<i64>, Two<Pt, i32>, id<i32>(3), sizeof(Box<i16>) (10) unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14)"

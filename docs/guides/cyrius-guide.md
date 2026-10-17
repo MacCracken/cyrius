@@ -6440,7 +6440,12 @@ parameter may be **forwarded** — `fn outer<T>(p: T) { return inner<T>(p); }` c
 type argument is a struct, `i8`/`i16`/`i32`/`i64`, `f64`, or a type parameter in
 scope — the same names a return type accepts; anything else (an undeclared name, a
 variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error naming
-it (v6.6.8; an enum's values are i64, so write `i64`).
+it (v6.6.8; an enum's values are i64, so write `i64`). A token that is no name at all
+(`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
+it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
+cannot be a type argument*); the rest of that argument is skipped, so the statement parses
+on (6.7.14; before, the token's value was read as a name — *unknown type 'truct'* — and a
+call's `+ 2>(3)` cascaded).
 
 **Monomorphization.** Cyrius is i64-everywhere (ADR-002), so a generic
 definition's base *is* its i64 instantiation: the body is emitted once with
