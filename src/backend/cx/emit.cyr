@@ -1384,14 +1384,15 @@ fn ETAILJMP(S, fnidx): i64 {
 
 # Token access moved to src/backend/common/tokens.cyr at v6.0.8.
 
-# Inline asm — not supported in bytecode
+# Inline asm — not supported in bytecode. The refusal names the mnemonic and skips its statement:
+# until 6.7.14 it named nothing and left the cursor on the mnemonic, so the block loop spun until
+# the recovery watchdog aborted (`parser recovery aborted`). CHANGELOG [6.7.14]
 fn ASM_MNEMONIC(S): i64 {
-    ERR_MSG(S, "inline asm not supported in cyrius-x", 36);
+    _asm_refuse(S, GTI(S), "inline asm not supported in cyrius-x: ");
     return 0;
 }
 
-# `in` lexes as the for-in keyword (76), so the asm block hands it here; refused by name, the
-# statement skipped. CHANGELOG [6.7.14]
+# `in` lexes as the for-in keyword (76), so the asm block hands it here, refused as any mnemonic is.
 fn ASM_KW_IN(S): i64 {
     _asm_refuse(S, GTI(S), "inline asm not supported in cyrius-x: ");
     return 0;

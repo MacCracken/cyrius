@@ -21,7 +21,9 @@
 #      list and the fences), and programs/asmtest.cyr compiles
 #   4  an operand in / out cannot take is refused by name, rc 1, nothing written: `in bl, dx` ('bl'),
 #      `in al, 0x60` ('0x60'), `in rax, dx` ('rax'), `out dx, ebx` ('ebx'), `out al, dx` ('al')
-#   5  aarch64 and cx refuse `in` by name (no port input; cx has no inline asm), rc 1, nothing written
+#   5  aarch64 and cx refuse `in` by name (no port input; cx has no inline asm), rc 1, nothing written;
+#      cx names any mnemonic it refuses and moves on (until 6.7.14 it named none and the block loop
+#      stalled until the watchdog's `parser recovery aborted`)
 #   6  a mnemonic is matched on its whole name; one the assembler does not have is refused by name, rc 1,
 #      nothing written: x86 `clix`, `inb al, dx`, `nopx`, `stix`, `mfencex`, `outb dx, al`,
 #      `param_loadx(rax, 0)`; aarch64 `nopx`, `dmbx`, `retx`, `eretx`, `param_loadx(x0, 0)` — and the
@@ -33,6 +35,7 @@
 #   _asm_acc_width answers al for any operand                  -> 4 RED (in bl, in rax, out dx, ebx compile)
 #   x86 cli / nop / sti matched on 3 bytes again (6.7.13)      -> 6 RED (clix, nopx, stix compile)
 #   aarch64 nop matched on 3 bytes again (6.7.13)              -> 6 RED (aarch64 nopx compiles)
+#   cx ASM_MNEMONIC back to its 6.7.13 ERR_MSG                 -> 5 RED (no name; recovery aborted)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -140,6 +143,9 @@ if [ ! -s "$D/cc_a64" ] || [ ! -s "$D/cc_cx" ]; then bad "5: cannot build src/ma
 else
   refused 5 "$D/cc_a64" 'in al, dx;' "unknown aarch64 asm mnemonic 'in'"
   refused 5 "$D/cc_cx" 'in al, dx;' "inline asm not supported in cyrius-x: 'in'"
+  refused 5 "$D/cc_cx" 'cli;' "inline asm not supported in cyrius-x: 'cli'"
+  if grep -q 'parser recovery aborted' "$D/r.err"; then bad "5: cx's asm refusal stalled the block loop (parser recovery aborted)"
+  else echo "  ok   5: cx's asm refusal moves on (no recovery abort)"; fi
 fi
 
 # 6 — whole mnemonics
