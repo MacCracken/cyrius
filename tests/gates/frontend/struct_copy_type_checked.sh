@@ -561,8 +561,8 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 34 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 34)"; fail=$((fail+1)); }
-[ "$naccept" -ge 14 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 14)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 45 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 45)"; fail=$((fail+1)); }   # 6.7.14: + the D17 rows
+[ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
 # and every refusal row would report "not refused", which is loud; this says why.

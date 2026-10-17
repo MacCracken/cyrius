@@ -927,5 +927,8 @@ compiles "VK3 a Str field into *u8 is not refused" \
     "${T}${WP}struct HS { t: Str; }
 fn go(): i64 { alloc_init(); var h: HS; h.t = str_from(\"hi\"); return ru(h.t) * 0; } syscall(60, go());"
 
+# Floors (6.7.14): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.14.
+[ "$nrefuse" -ge 105 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 105)"; fail=$((fail+1)); }
+[ "$naccept" -ge 39 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 39)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
