@@ -4426,6 +4426,133 @@ fn _sc_arity_warn(S, sc_num, argc): i64 {
     if (_sc_arity_skip(sc_num, got) == 0) { WARN(S, "syscall arity mismatch", 22); }
     return 0;
 }
+# ⛔ 6.7.14 — A STRUCT LITERAL IS AN INITIALIZER (the user's decision D12 (a), 2026-10-16). `P { .. }` /
+# `Box<i64> { .. }` is taken only as a declaration's whole initializer (PARSE_VAR, PARSE_GVAR_REG and the replay,
+# through `_lit_head_w`). Where a VALUE is parsed — an assignment's right side, an argument, an operand, a nested
+# literal element, `return` — or as a statement, `P` is no variable: it was "undefined variable 'P'" (a statement
+# "expected '='") and the `{` cascaded into two to five more errors. Cursor just past a name no variable answers
+# (`noff`): when it opens a literal (`_slit_open`), ONE error by name at the name (`--syntax-only` too: never
+# valid, whatever P holds), the `{ .. }` stepped so the parse goes on in sync, and 0 the value. 1 = refused.
+# CHANGELOG [6.7.14]
+var _slit_beg = 0 - 1;   # the last refused literal's name token and the token after it (`_slit_whole`)
+var _slit_end = 0 - 1;
+fn _slit_stray(S, noff): i64 {
+    var ti = GTI(S) - 1;
+    if (TOKVAL(S, ti) != noff) { return 0; }
+    var o = _slit_open(S, ti);
+    if (o < 0) { return 0; }
+    _slit_beg = ti;
+    _slit_err(S, ti, o);
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    _slit_end = GTI(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    _asg_tup_refd = 1;   # and the statement's typed-pointer warning is not given about it
+    return 1;
+}
+# A selector run after the stepped literal (`.f`, `.m(..)`), stepped with it: `P { 5 }.a` is one refusal.
+fn _slit_tail(S): i64 {
+    while (PEEKT(S) == 41) {
+        if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+# `return P { .. };` in a fn returning a struct over 16 B (`_ret_struct_big`, cursor on the value): refused by
+# name and stepped, the junk slot 0 (no binary is written); -1 = not a literal.
+fn _slit_ret(S): i64 {
+    var o = _slit_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    _slit_err(S, GTI(S), o);
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    return 0;
+}
+# A statement (or a for step) `P { .. };` (cursor past the name, which no variable answers): the refusal; the
+# caller steps the rest in sync (`_asg_lvalue_at`'s). 1 = refused.
+fn _slit_stmt(S, noff): i64 {
+    if (PEEKT(S) != 13) { if (PEEKT(S) != 19) { return 0; } }   # every assignment asks: `{` / `<` first
+    if (_slit_open(S, GTI(S) - 1) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    _slit_err(S, GTI(S) - 1, _slit_open(S, GTI(S) - 1));
+    return 1;
+}
+# 1 = the value just parsed (from token `b`, inside `pk` closed parentheses) was one refused literal, whole: a
+# nested struct literal element takes it as the whole field (`_spi_expr`), as a refused call, so the walk does not
+# carry it as a first leaf and report the rest of the field missing.
+fn _slit_whole(S, b, pk): i64 {
+    if (_slit_beg != b) { return 0; }
+    if (_slit_end + pk != GTI(S)) { return 0; }
+    return 1;
+}
+# 1 = token `ti` opens a struct literal. Reads tokens only.
+fn _slit_at(S, ti): i64 {
+    if (_slit_open(S, ti) < 0) { return 0; }
+    return 1;
+}
+# The `{` of the struct literal whose name is token `ti` — `P {` or `P<..> {`, P a declared struct — or -1.
+fn _slit_open(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) <= 0) { return 0 - 1; }
+    var o = ti + 1;
+    if (TOKTYP(S, o) == 19) {
+        o = _tok_targs_close(S, o + 1);
+        if (o < 0) { return 0 - 1; }
+        o = o + 1;
+    }
+    if (TOKTYP(S, o) != 13) { return 0 - 1; }
+    return o;
+}
+# The `}` closing the `{` at token `o` (the EOF token when none does).
+fn _slit_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return k - 1; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k - 1;
+}
+# The refusal, at the struct name `ti` (its `{` is token `o`); once per token (`_tn_once`: an #inline / generic
+# replay of the body).
+fn _slit_err(S, ti, o): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a struct literal is an initializer: declare `var t: ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" = ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" { .. };` and assign or pass t\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# The literal's type as written: the name, or (`Box<i64>`) the source from the name to its `{`, blanks after it
+# dropped.
+fn _slit_ptype(S, ti, o): i64 {
+    if (o == ti + 1) { return _dyn_pn(S, TOKVAL(S, ti)); }
+    var a = GTOFF(S, ti);
+    var b = GTOFF(S, o);
+    while (b > a) {
+        var c = load8(S + 0x459D000 + b - 1);
+        if (c != 32 && c != 9 && c != 10) { break; }
+        b = b - 1;
+    }
+    syscall(SYS_WRITE, 2, S + 0x459D000 + a, b - a);
+    return 0;
+}
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -4734,6 +4861,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var idx = FINDVAR(S, noff);
         if (idx >= 0) { if (_cst_read_global(S, idx) == 1) { return 0; } }   # 6.7.2: an f64 / string const
         if (idx < 0) {
+            if (_slit_stray(S, noff) == 1) { return 0; }   # 6.7.14 (D12 (a)): `P { .. }` here
             # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
             # and we return exactly as the sibling success paths above do, so the
             # token stream stays in sync and no cascade is invented. See _syntax_only

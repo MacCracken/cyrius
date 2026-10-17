@@ -16,6 +16,19 @@
 #       to land in and is refused by name, like `var G: Pt = mkp();` — and that refusal is the only
 #       error: the refused value is the whole nested field, not a leaf the walk descends past.
 #
+#   D12 (6.7.14, the user's decision D12 (a), 2026-10-16: "No: one named error") A struct literal anywhere but a
+#       declaration's whole initializer — an assignment's right side (`G = P { 5 };`, a local, at top level), an
+#       argument, an operand, a nested literal element, `return` in every size class, a statement `P { 5 };`,
+#       and a generic head `Box<i64> { .. }` in each — was "undefined variable 'P'" (a statement "expected '='")
+#       and a cascade of two to five more errors (`return` of a 9-16 B struct: its by-name message, then
+#       three). Now ONE error at the name: "a struct literal is an initializer: declare `var t: P = P { .. };`
+#       and assign or pass t", the `{ .. }` (and a `.f` / `.m(..)` after it) stepped so nothing cascades, once
+#       per token in a generic / #inline replay, under --syntax-only too. And the wrap is transparent:
+#       `var q: P = (P { 5, 6 });` (any depth, a fn, either zone) IS the initializer, byte-identical to the
+#       unwrapped form; it was "undefined variable 'P'" + "expected ')'" (the run-time values are pinned by
+#       tests/tcyr/crossos/struct_literal_wrapped_initializer.tcyr on every target).
+#       (issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
+#
 # Refusal rows are checked on the MESSAGE (and that no binary was written), so a row cannot pass
 # on an unrelated syntax error. Acceptance rows are checked against the exit code AND a CONTROL
 # that builds the same value field by field.
@@ -41,6 +54,25 @@
 # (The LAYOUT half of the fix — real offsets, recursion — is pinned by the crossos tcyrs
 # struct_field_value_copy.tcyr and generic_struct_inference.tcyr, not here.)
 #   real tree                                       -> GREEN
+# (6.7.14, D12; each mutant built from the fixed tree with the one change)
+#   base: the 6.7.14 frontend lane before it        -> RED, 33 of 40 D12 rows: every S row but the two
+#     (cb75b8b7)                                       controls S17 S22 (the old "undefined variable 'P'"
+#                                                      / "expected '='" + its cascade), W1-W7 ("undefined
+#                                                      variable 'P'", "expected ')'"); green: S17 S22, the
+#                                                      guide's shapes C1-C3 and X (the tree's own cross
+#                                                      compilers)
+#   `_slit_stray` returns 0 (the factor's arm off)  -> RED S1-S7 S9-S16 S18-S20 (S8 is `_slit_ret`'s,
+#                                                      S21 `_slit_stmt`'s)
+#   `_slit_wrap_k` returns 0 (no wrap)              -> RED W1-W7
+#   `_refuse_pair_return` without its `_slit_at`    -> RED S6 S12b S20 (the 9-16 B message first)
+#   `_slit_ret` returns -1                          -> RED S8 (the > 16 B message + "unexpected ';'")
+#   `_slit_tail` returns at once                    -> RED S11 ("expected ';', got '.'" after it)
+#   `_slit_err` without `_tn_once`                  -> RED S14 S15 (one error per instance / replay)
+#   `_slit_whole` returns 0                         -> RED S5 S5b S5d (the walk carries it as a first leaf:
+#                                                      "unexpected '}'")
+#   `_slit_open` takes no `<..>` (`P {` only)       -> RED S20 S21 (the generic head: "undefined variable
+#                                                      'Box'" + four)
+#   `_slit_stmt` returns 0                          -> RED S21 ("expected '=', got '{'" + three)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -210,6 +242,274 @@ syscall(60, f());
 ' 85 "$T"'fn f(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 5; return b.n + b.v.x * 10 + b.v.y * 20; }
 syscall(60, f());
 '
+
+# ── D12 (6.7.14): a struct literal outside an initializer is ONE named error ────────────────────────
+# exact1 LABEL SOURCE EXPECTED-ERROR-LINES [compiler-args]: the compile refuses (no binary) and its `error`
+# lines are EXACTLY the expected ones (a `warning` line counts too: none may be added).
+MS='a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t'
+exact1() {
+    printf '%s' "$2" > "$D/e.cyr"
+    rc=0
+    cat "$D/e.cyr" | "$CC" ${4:-} > "$D/e.bin" 2>"$D/e.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    grep -E '^(error|warning)' "$D/e.err" > "$D/e.got" || true
+    printf '%s\n' "$3" > "$D/e.want"
+    if [ "$rc" = 0 ] && [ -s "$D/e.bin" ] && [ "${4:-}" != --syntax-only ]; then
+        printf '  FAIL: %-40s compiled (rc 0)\n' "$1"; fail=$((fail+1))
+    elif [ "$rc" = 0 ]; then
+        printf '  FAIL: %-40s rc 0\n' "$1"; fail=$((fail+1))
+    elif cmp -s "$D/e.got" "$D/e.want"; then
+        printf '  ok(one error): %-32s\n' "$1"; pass=$((pass+1))
+    else
+        printf '  FAIL: %-40s got:\n' "$1"; sed 's/^/        /' "$D/e.got"
+        printf '        want:\n'; sed 's/^/        /' "$D/e.want"
+        fail=$((fail+1))
+    fi
+}
+# same LABEL SRC-A SRC-B: both compile and the binaries are byte-identical (the wrap is transparent).
+same() {
+    naccept=$((naccept+1))
+    printf '%s' "$2" > "$D/s1.cyr"; printf '%s' "$3" > "$D/s2.cyr"
+    r1=0; cat "$D/s1.cyr" | "$CC" > "$D/s1.bin" 2>"$D/s1.err" || r1=$?
+    r2=0; cat "$D/s2.cyr" | "$CC" > "$D/s2.bin" 2>"$D/s2.err" || r2=$?
+    if [ "$r1" != 0 ] || [ "$r2" != 0 ] || [ ! -s "$D/s1.bin" ]; then
+        printf '  FAIL: %-40s compile rc %s / %s: %s\n' "$1" "$r1" "$r2" "$(grep -m1 '^error' "$D/s1.err" "$D/s2.err" | head -1)"
+        fail=$((fail+1))
+    elif cmp -s "$D/s1.bin" "$D/s2.bin"; then
+        printf '  ok(identical): %-32s\n' "$1"; pass=$((pass+1))
+    else
+        printf '  FAIL: %-40s binaries differ\n' "$1"; fail=$((fail+1))
+    fi
+}
+
+# S1 — the filed repro, verbatim.
+exact1 "S1 filed repro: G = P { 5 };" 'struct P { a; }
+var G: P = P { 1 };
+fn run(): i64 { G = P { 5 }; return 0; }
+var r = run();
+syscall(60, G.a);
+' "error:<source>:3:21: $MS"
+P2='struct P { a; b; }
+struct W { p: P; }
+struct W2 { p: P; n; }
+struct B3 { a; b; c; }
+fn f(p: P): i64 { return p.a; }
+fn g(x): i64 { return x; }
+'
+exact1 "S2 a local: l = P { 5, 6 };" "$P2"'fn run(): i64 { var l: P = P { 1, 2 }; l = P { 5, 6 }; return l.a; }
+syscall(60, run());
+' "error:<source>:7:44: $MS"
+exact1 "S3 a by-value argument: f(P { 5, 6 })" "$P2"'fn run(): i64 { return f(P { 5, 6 }); }
+syscall(60, run());
+' "error:<source>:7:26: $MS"
+exact1 "S3b an untyped argument: g(P { 5, 6 })" "$P2"'fn run(): i64 { return g(P { 5, 6 }); }
+syscall(60, run());
+' "error:<source>:7:26: $MS"
+exact1 "S4 top level, after a statement" "$P2"'var G: P = P { 1, 2 };
+var z = 1;
+z = 2;
+G = P { 5, 6 };
+syscall(60, G.a + z);
+' "error:<source>:10:5: $MS"
+exact1 "S4b top level, the first statement" "$P2"'var G: P = P { 1, 2 };
+G = P { 5, 6 };
+syscall(60, G.a);
+' "error:<source>:8:5: $MS"
+exact1 "S5 a nested literal element: W { P { 2 } }" "$P2"'fn run(): i64 { var w: W = W { P { 2, 3 } }; return w.p.a; }
+syscall(60, run());
+' "error:<source>:7:32: $MS"
+exact1 "S5c a scalar leaf's element: B3 { P { 1, 2 }, 3, 4 }" "$P2"'fn run(): i64 { var b: B3 = B3 { P { 1, 2 }, 3, 4 }; return b.b; }
+syscall(60, run());
+' "error:<source>:7:34: $MS"
+exact1 "S5d a wrapped nested element: W { (P { 2, 3 }) }" "$P2"'fn run(): i64 { var w: W = W { (P { 2, 3 }) }; return w.p.a; }
+syscall(60, run());
+' "error:<source>:7:33: $MS"
+exact1 "S5b a nested element, then a leaf" "$P2"'fn run(): i64 { var w: W2 = W2 { P { 2, 3 }, 4 }; return w.n; }
+syscall(60, run());
+' "error:<source>:7:34: $MS"
+exact1 "S6 return, a 9-16 B struct" "$P2"'fn mk(): P { return P { 5, 6 }; }
+fn run(): i64 { var q: P = mk(); return q.a; }
+syscall(60, run());
+' "error:<source>:7:21: $MS"
+exact1 "S7 return, an 8 B struct" 'struct P { a; }
+fn mk(): P { return P { 5 }; }
+fn run(): i64 { var q: P = mk(); return q.a; }
+syscall(60, run());
+' "error:<source>:2:21: $MS"
+exact1 "S8 return, a > 16 B struct" 'struct P { a; b; c; }
+fn mk(): P { return P { 5, 6, 7 }; }
+fn run(): i64 { var q: P = mk(); return q.a; }
+syscall(60, run());
+' "error:<source>:2:21: $MS"
+exact1 "S9 an operand: 1 + P { .. }" "$P2"'fn run(): i64 { var x = 1 + P { 5, 6 }; return x; }
+syscall(60, run());
+' "error:<source>:7:29: $MS"
+exact1 "S10 an operand in a condition" "$P2"'fn run(): i64 { if (P { 1, 2 } == 0) { return 1; } return 2; }
+syscall(60, run());
+' "error:<source>:7:21: $MS"
+exact1 "S11 a selector after it: P { 5 }.a" "$P2"'fn run(): i64 { var y = 0; y = P { 5, 6 }.a; return y; }
+syscall(60, run());
+' "error:<source>:7:32: $MS"
+exact1 "S12 a wrap is no initializer here: l = (..)" "$P2"'fn run(): i64 { var l: P = P { 1, 2 }; l = (P { 5, 6 }); return l.a; }
+syscall(60, run());
+' "error:<source>:7:45: $MS"
+exact1 "S12b f((P { .. })), return (P { .. })" "$P2"'fn mk(): P { return (P { 5, 6 }); }
+fn run(): i64 { return f((P { 5, 6 })); }
+syscall(60, run());
+' "error:<source>:7:22: $MS
+error:<source>:8:27: $MS"
+exact1 "S13 two statements: each its own error" "$P2"'fn run(): i64 { var l: P = P { 1, 2 }; l = P { 5, 6 }; var m: P = P { 3, 4 }; m = P { 7, 8 }; return l.a; }
+syscall(60, run());
+' "error:<source>:7:44: $MS
+error:<source>:7:83: $MS"
+exact1 "S14 a generic body: once, 3 instances" "$P2"'var G: P = P { 1, 2 };
+fn gg<T>(x: T): i64 { G = P { 5, 6 }; return 0; }
+fn run(): i64 { gg<i32>(1); gg<i64>(2); gg(3); return 0; }
+syscall(60, run());
+' "error:<source>:8:27: $MS"
+exact1 "S15 an #inline body: once, 2 calls" "$P2"'var G: P = P { 1, 2 };
+#inline
+fn il(x): i64 { G = P { 5, 6 }; return x; }
+fn run(): i64 { il(1); il(2); return 0; }
+syscall(60, run());
+' "error:<source>:9:21: $MS"
+exact1 "S16 --syntax-only: the filed repro" 'struct P { a; }
+var G: P = P { 1 };
+fn run(): i64 { G = P { 5 }; return 0; }
+var r = run();
+syscall(60, G.a);
+' "error:<source>:3:21: $MS" --syntax-only
+# S17 — a name that is no struct keeps its own error (the arm needs a declared struct).
+refuse "S17 control: an undefined name before {" "error:<source>:1:34: undefined variable 'Q'" 'fn run(): i64 { var x = 0; x = Q { 5 }; return x; }
+syscall(60, run());
+'
+# S18 — the struct's own name is printed.
+exact1 "S18 another struct's name: Rect" 'struct Rect { x; y; }
+fn run(): i64 { var r: Rect = Rect { 1, 2 }; r = Rect { 3, 4 }; return r.x; }
+syscall(60, run());
+' 'error:<source>:2:50: a struct literal is an initializer: declare `var t: Rect = Rect { .. };` and assign or pass t'
+# S19 — an argument of a builtin.
+exact1 "S19 a builtin argument: syscall(60, P{..})" "$P2"'syscall(60, P { 5, 6 });
+' "error:<source>:7:13: $MS"
+
+# S20 — a generic literal `Box<i64> { .. }` is a struct literal too: named as written.
+exact1 "S20 generic: return, assign, argument" 'struct Box<T> { v: T; w; }
+fn f(b: Box<i64>): i64 { return b.v; }
+fn mk(): Box<i64> { return Box<i64> { 1, 2 }; }
+fn run(): i64 { var q = Box<i64> { 1, 2 }; q = Box<i64> { 3, 4 }; return f(Box<Vec<i64>> { 5, 6 }); }
+syscall(60, run());
+' 'error:<source>:3:28: a struct literal is an initializer: declare `var t: Box<i64> = Box<i64> { .. };` and assign or pass t
+error:<source>:4:48: a struct literal is an initializer: declare `var t: Box<i64> = Box<i64> { .. };` and assign or pass t
+error:<source>:4:76: a struct literal is an initializer: declare `var t: Box<Vec<i64>> = Box<Vec<i64>> { .. };` and assign or pass t'
+# S21 — a statement `P { .. };` (a fn, top level, a generic head): one error each, in sync.
+exact1 "S21 a statement: P { 5 }; Box<i64> { 1, 2 };" 'struct P { a; }
+struct Box<T> { v: T; w; }
+fn run(): i64 { P { 5 }; Box<i64> { 1, 2 }; return 0; }
+P { 6 };
+syscall(60, run());
+' "error:<source>:3:17: $MS
+"'error:<source>:3:26: a struct literal is an initializer: declare `var t: Box<i64> = Box<i64> { .. };` and assign or pass t'"
+error:<source>:4:1: $MS"
+# S22 — a local named like the struct keeps its statement's syntax error.
+exact1 "S22 control: a local P, then P { 5 };" 'struct P { a; }
+fn run(): i64 { var P = 3; P { 5 }; return 0; }
+syscall(60, run());
+' "error:<source>:2:30: expected '=', got '{'"
+
+# W — the wrap is transparent: `( .. )` around the whole literal initializer IS the initializer.
+WH='struct P { a; b; }
+struct Bx<T> { v: T; w; }
+'
+same "W1 fn: var q: P = (P { 5, 6 });" "$WH"'fn run(): i64 { var q: P = (P { 5, 6 }); return q.a; }
+syscall(60, run());
+' "$WH"'fn run(): i64 { var q: P = P { 5, 6 }; return q.a; }
+syscall(60, run());
+'
+same "W2 the declaration zone" "$WH"'var G: P = (P { 5, 6 });
+syscall(60, G.a + G.b);
+' "$WH"'var G: P = P { 5, 6 };
+syscall(60, G.a + G.b);
+'
+same "W3 after a statement" "$WH"'var z = 1;
+z = 2;
+var G: P = (P { 5, 6 });
+syscall(60, G.b + z);
+' "$WH"'var z = 1;
+z = 2;
+var G: P = P { 5, 6 };
+syscall(60, G.b + z);
+'
+same "W4 a double wrap, unannotated" "$WH"'fn run(): i64 { var q = ((P { 5, 6 })); return q.b; }
+syscall(60, run());
+' "$WH"'fn run(): i64 { var q = P { 5, 6 }; return q.b; }
+syscall(60, run());
+'
+same "W5 a generic literal" "$WH"'var G = (Bx<i64> { 7, 8 });
+fn run(): i64 { var h = (Bx<i64> { 1, 2 }); return h.w + G.v; }
+syscall(60, run());
+' "$WH"'var G = Bx<i64> { 7, 8 };
+fn run(): i64 { var h = Bx<i64> { 1, 2 }; return h.w + G.v; }
+syscall(60, run());
+'
+same "W6 a named literal" "$WH"'var G: P = (P { b: 6, a: 5 });
+fn run(): i64 { var q = ((P { b: 2, a: 1 })); return q.b + G.a; }
+syscall(60, run());
+' "$WH"'var G: P = P { b: 6, a: 5 };
+fn run(): i64 { var q = P { b: 2, a: 1 }; return q.b + G.a; }
+syscall(60, run());
+'
+same "W7 a kernel build (the baked image)" "$WH"'kernel;
+var G: P = (P { 5, 6 });
+fn kmain(): i64 { return G.a; }
+var r = kmain();
+' "$WH"'kernel;
+var G: P = P { 5, 6 };
+fn kmain(): i64 { return G.a; }
+var r = kmain();
+'
+
+# C — the shapes the guide teaches are unchanged: a positional run of a nested struct's leaves and a nested
+# struct VALUE element.
+CR='struct Pt { x; y; }
+struct Rect { o: Pt; w; h; }
+'
+accept "C1 Rect { 0, 0, 10, 5 } (nested leaves)" "$CR"'fn f(): i64 { var r = Rect { 1, 2, 10, 5 }; return r.o.x + r.o.y * 10 + r.w + r.h; }
+syscall(60, f());
+' 36 "$CR"'fn f(): i64 { var r: Rect; r.o.x = 1; r.o.y = 2; r.w = 10; r.h = 5; return r.o.x + r.o.y * 10 + r.w + r.h; }
+syscall(60, f());
+'
+accept "C2 Rect { a, 10, 5 } (a struct value)" "$CR"'fn f(): i64 { var a: Pt = Pt { 3, 4 }; var r = Rect { a, 10, 5 }; return r.o.x + r.o.y * 10 + r.w + r.h; }
+syscall(60, f());
+' 58 "$CR"'fn f(): i64 { var r: Rect; r.o.x = 3; r.o.y = 4; r.w = 10; r.h = 5; return r.o.x + r.o.y * 10 + r.w + r.h; }
+syscall(60, f());
+'
+accept "C3 the zone: Rect { 1, 2, 10, 5 }" "$CR"'var G = Rect { 1, 2, 10, 5 };
+syscall(60, G.o.x + G.o.y * 10 + G.w + G.h);
+' 36 "$CR"'fn f(): i64 { var r: Rect; r.o.x = 1; r.o.y = 2; r.w = 10; r.h = 5; return r.o.x + r.o.y * 10 + r.w + r.h; }
+syscall(60, f());
+'
+
+# X — the tree's aarch64 and cx compilers (frontend shared): the filed repro is the one error there too.
+X1SRC='struct P { a; }
+var G: P = P { 1 };
+fn run(): i64 { G = P { 5 }; return 0; }
+var r = run();
+syscall(60, G.a);
+'
+for xl in aarch64 cx; do
+    if cat "src/main_$xl.cyr" | "$CC" > "$D/cycc_$xl" 2>/dev/null && [ -s "$D/cycc_$xl" ]; then
+        chmod +x "$D/cycc_$xl"
+        printf '%s' "$X1SRC" > "$D/x.cyr"
+        xr=0; cat "$D/x.cyr" | "$D/cycc_$xl" > "$D/x.bin" 2>"$D/x.err" || xr=$?
+        if [ "$xr" != 0 ] && [ "$(grep -E '^(error|warning)' "$D/x.err")" = "error:<source>:3:21: $MS" ]; then
+            printf '  ok(one error): X %-30s\n' "$xl"; pass=$((pass+1))
+        else
+            printf '  FAIL: X %-38s rc %s: %s\n' "$xl" "$xr" "$(grep -E '^(error|warning)' "$D/x.err" | tr '\n' '|')"; fail=$((fail+1))
+        fi
+    else
+        printf '  FAIL: X %-38s could not build src/main_%s.cyr\n' "$xl" "$xl"; fail=$((fail+1))
+    fi
+done
 
 echo "struct_literal_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 [ "$fail" -eq 0 ] || exit 1

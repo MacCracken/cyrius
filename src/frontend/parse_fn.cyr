@@ -3032,6 +3032,7 @@ fn _ret_struct_big(S): i64 {
     var srn_lli = _ret_ptr_src(S);   # 6.7.11: a `*S` (global, `: *S` call, field, ..) or `*E`
     if (srn_lli < 0) { srn_lli = _return_struct_call(S); }
     if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
+    if (srn_lli < 0) { srn_lli = _slit_ret(S); }   # 6.7.14 (D12 (a)): `return P { .. };`, by name
     if (srn_lli < 0) {
         if (PEEKT(S) != 2) {
             ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
@@ -6811,6 +6812,7 @@ fn _refuse_struct_tuple_return(S): i64 {
 
 fn _refuse_pair_return(S): i64 {
     if (_panic == 1) { return 0; }
+    if (_slit_at(S, GTI(S)) == 1) { return 0; }   # 6.7.14 (D12 (a)): the factor refuses the literal, once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);
@@ -10995,6 +10997,7 @@ fn _asg_lvalue_refused(S, noff): i64 {
 # caller steps the statement over as after the refusal (a local const `L;` parsed on and added
 # "undefined variable 'L'"). 1 = refused. CHANGELOG [6.7.14]
 fn _asg_lvalue_at(S, noff): i64 {
+    if (_slit_stmt(S, noff) == 1) { return 1; }   # 6.7.14 (D12 (a)): a statement `P { .. };`
     if (_asg_pair_at(S) == 1) { return _asg_lvalue_refused(S, noff); }
     if (_asg_lvalue_is(S, noff) == 0) { return 0; }
     ERR_EXPECT(S, 4);

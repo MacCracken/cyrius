@@ -1,0 +1,69 @@
+# struct_literal_wrapped_initializer.tcyr — parentheses around a whole struct literal initializer are transparent (6.7.14).
+#
+# THE DEFECT (measured 6.6.0 - 6.7.13, every target, the frontend). A struct literal `P { .. }` is taken only as a
+# declaration's whole initializer, and the three heads (PARSE_VAR, PARSE_GVAR_REG, the EMIT_GVAR_INITS replay)
+# recognised it only unwrapped: `var q: P = (P { 5, 6 });` parsed `P` as an expression and failed — "undefined
+# variable 'P'" + "expected ')'" (four errors in a fn, two in either zone), no binary. The user's decision D12 (a),
+# 2026-10-16: the wrap is transparent (6.7.6's rule for a whole struct source, 6.7.13's D19), so it is the literal
+# initializer — byte-identical to the unwrapped form — in a fn, in the declaration zone and after the first
+# top-level statement, positional, named and generic, at any depth.
+# (issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
+#
+# WHY A CROSS-HOST TEST: the literal's stores (a frame object in a fn, the replay's stores or the baked image for a
+# global) are emitted per backend — x86_64 ELF, Mach-O, PE, aarch64, cx. On a compiler without the fix this file
+# does not compile.
+include "lib/assert.cyr"
+
+struct SwP { a; b; }
+struct SwN { a: i8; b: i16; c: i32; d: i64; }
+struct SwBig { a; b; c; }
+struct SwBox<T> { v: T; w; }
+
+# The declaration zone (replayed / baked).
+var swg: SwP = (SwP { 5, 6 });
+var swg2 = ((SwP { 7, 8 }));
+var swgn: SwP = (SwP { b: 2, a: 1 });
+var swgx = (SwN { 0x77, 0x5566, 0x11223344, 0x0102030405060708 });
+var swgb = (SwBox<i64> { 9, 10 });
+var swafter = 99;
+
+fn sw_six(): i64 { return 6; }
+
+# In a fn: a frame object per call.
+fn sw_local(k): i64 {
+    var q: SwP = (SwP { 5, k });
+    var r = ((SwBig { 1, 2, k }));
+    var n: SwP = (SwP { b: k, a: 3 });
+    var g = (SwBox<i64> { k, 4 });
+    return q.a + q.b * 10 + r.c * 100 + n.a * 1000 + n.b * 10000 + g.v * 100000 + g.w * 1000000;
+}
+fn sw_rec(d): i64 {
+    var q: SwP = (SwP { d, d + 1 });
+    if (d == 0) { return q.b; }
+    return q.a + sw_rec(d - 1);
+}
+
+assert_eq(swg.a, 5, "zone: (SwP { 5, 6 }).a");
+assert_eq(swg.b, 6, "zone: (SwP { 5, 6 }).b");
+assert_eq(swg2.a + swg2.b, 15, "zone: a double wrap, unannotated");
+assert_eq(swgn.a, 1, "zone: a named literal, a");
+assert_eq(swgn.b, 2, "zone: a named literal, b");
+assert_eq(swgx.a, 0x77, "zone: narrow i8 field");
+assert_eq(swgx.b, 0x5566, "zone: narrow i16 field");
+assert_eq(swgx.c, 0x11223344, "zone: narrow i32 field");
+assert_eq(swgx.d, 0x0102030405060708, "zone: i64 field");
+assert_eq(swgb.v + swgb.w, 19, "zone: a generic literal SwBox<i64>");
+assert_eq(swafter, 99, "zone: the next global is intact");
+assert_eq(sw_local(7), 4773775, "fn: positional, > 16 B, named, generic");
+assert_eq(sw_rec(3), 7, "fn: one frame object per call (recursion)");
+
+# After the first top-level statement (PARSE_VAR's global arm).
+var swz = 0;
+swz = sw_six();
+var swh: SwP = (SwP { swz, 2 });
+var swh2 = ((SwP { b: 4, a: swz + 1 }));
+assert_eq(swh.a, 6, "after a statement: a run-time element");
+assert_eq(swh.b, 2, "after a statement: b");
+assert_eq(swh2.a + swh2.b, 11, "after a statement: a named literal in a double wrap");
+
+var r = assert_summary();

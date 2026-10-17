@@ -1212,6 +1212,21 @@ Both forms initialise a global anywhere at top level and a local in a fn. Before
 form was refused in the declaration section (top level, before the first top-level statement):
 `undefined variable 'x'`.
 
+**A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
+`var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
+level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a
+`return` value or a statement it is one error by name — a generic `Box<i64> { .. }` alike (6.7.14, the
+user's decision D12 (a), 2026-10-16):
+
+```text
+error:<source>:3:21: a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t
+```
+
+Declare the local and assign, pass or return it (`var t: P = P { 5 }; G = t;`). Parentheses around
+the whole initializer are transparent: `var q: P = (P { 5, 6 });` is the literal initializer, in a fn
+and at top level. Through 6.7.13 every one of these, the wrapped initializer too, was `undefined
+variable 'P'` followed by two to five invented errors.
+
 A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
 section says about a struct value holds for it. See [Tuples](#tuples).
 
@@ -1981,7 +1996,8 @@ struct-returning operator is still two parameters: the hidden return pointer is 
 shape — a name, a field, a call, a method or an operator result — into every struct destination:
 an argument (`rd3((a))`), a struct-typed field (`o.i = (z.k)`), a struct variable (`w = (j)`), a
 declaration in a fn or at top level (`var q: P3 = (z.k);`, `var G: P3 = (A);`), a for step, and
-(6.7.11) a nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`).
+(6.7.11) a nested-struct literal element (`H { 7, (mkq(4, 9)), 8 }`). A whole struct literal
+initializer, too (6.7.14): `var q: P = (P { 5, 6 });` is `var q: P = P { 5, 6 };`.
 Parentheses that are only PART of the source keep their meaning (`sz((a) + (b))` adds first).
 Before 6.7.6 every one of these took the struct's FIRST WORD: an address-passed argument and a
 declaration SIGSEGV'd, and a field or variable kept one word of the copy, silently. Until 6.7.11
