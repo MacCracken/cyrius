@@ -21,6 +21,13 @@
 #   S  bootstrap/cybs.cyr fits the seed's three unchecked caps: input < 131072 B (past it the seed
 #      drops the rest silently), at most 512 labels, and cybs's code < 65536 B (6.7.11: past it the
 #      seed overwrites its own label tables and output, silently)
+#   S2 src/main.cyr's include closure, as cybs's preprocessor walks it, keeps clear of the preprocessor's
+#      buffers with headroom (6.7.14): no included file reaches 2 MB (an include slot), the nesting stays
+#      under 8 (the slots), and the input and the expanded stream stay under 15 MB (the input buffer;
+#      the expansion buffer is 16 MB). cybs refuses each past its cap since 6.7.14
+#      (cybs_diagnostics_named.sh P), so this row is the early warning, before seed-derive stops. The
+#      walker (awk) is checked against cybs itself: a copy of cybs that writes its expanded stream and
+#      exits must give exactly the walker's length. issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md
 #   B  a 7- and a 9-argument call return the right values — as statements, inside an expression
 #      with a value pending (`k + f9(..)`), with a 7-argument call as an argument, and through
 #      lib/fnptr.cyr's fncall7 / fncall8 (their 7+ parameters stored, their stack arguments read by
@@ -44,6 +51,9 @@
 #   emit_fn_call_clean emits nothing                        (`k + f9(..)` pops a stale word)
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
+# 6.7.14 (S2, a scratch copy of the gate each):
+#   the file ceiling lowered to 900000 (parse_fn.cyr is ~949 KB)          -> S2 RED (names the file)
+#   the walker's `#else` arm dropped (both branches emitted)              -> S2 RED (walker != cybs)
 #   (6.7.11: emit_sp_done is a comment in cybs.cyr now, sparing a seed label; restore the label
 #   to re-run the first mutation.)
 # 6.7.11 (the CODE row; a scratch copy of the gate, because an honest over-cap cybs.cyr cannot be
@@ -90,6 +100,53 @@ if [ "$sz" -ge 131072 ]; then bad "S: bootstrap/cybs.cyr is $sz B — the seed r
 elif [ "$nl" -gt 512 ]; then bad "S: bootstrap/cybs.cyr defines $nl labels — the seed's label table holds 512"
 elif [ "$code" -ge "$CODE_CAP" ]; then bad "S: cybs's code is $code B — the seed's CODE buffer holds $CODE_CAP and past it overwrites its label tables and output, silently"
 else echo "  ok   S: bootstrap/cybs.cyr fits the seed: $sz / 131072 B input, $nl / 512 labels, $code / $CODE_CAP B code"; fi
+
+# S2 — the walk mirrors pp_expand: a directive at a line's start after blanks; #ifdef / #ifndef / #else
+# / #endif on one stack across files; a name is defined when it reads CYRIUS_ARCH_X.. or
+# CYRIUS_TARGET_L.. (pp_defined); `include "f"` taken while emitting, once per spelling, from ROOT.
+cat > "$D/walk.awk" <<'EOF'
+function defd(n) { return (substr(n, 8, 1) == "A" && substr(n, 13, 1) == "X") || (substr(n, 8, 1) == "T" && substr(n, 15, 1) == "L") }
+function nm(r) { sub(/^[ \t]+/, "", r); return r }
+function push(c) { saved[sp] = emit; cond[sp] = c; if (c == 0) emit = 0; sp++ }
+function ln(l, depth,   t, f) {
+  t = l; sub(/^[ \t]+/, "", t)
+  if (substr(t, 1, 1) == "#") {
+    if (substr(t, 2, 6) == "ifdef ") { push(defd(nm(substr(t, 8)))); return }
+    if (substr(t, 2, 7) == "ifndef ") { push(1 - defd(nm(substr(t, 9)))); return }
+    if (substr(t, 2, 4) == "else") { emit = (saved[sp - 1] == 1 && cond[sp - 1] == 0); return }
+    if (substr(t, 2, 5) == "endif") { sp--; emit = saved[sp]; return }
+  } else if (substr(t, 1, 8) == "include ") {
+    if (emit == 1 && substr(t, 9, 1) == "\"") { f = substr(t, 10); sub(/".*/, "", f); inc(f, depth) }
+    return
+  }
+  if (emit == 1) out += length(l) + 1
+}
+function inc(f, depth,   l, sz) {
+  if (f in seen) return
+  seen[f] = 1
+  if (depth + 1 > maxd) { maxd = depth + 1; deepf = f }
+  sz = 0
+  while ((getline l < f) > 0) { sz += length(l) + 1; ln(l, depth + 1) }
+  close(f)
+  if (sz > maxsz) { maxsz = sz; bigf = f }
+}
+BEGIN { emit = 1; sp = 0 }
+{ insz += length($0) + 1; ln($0, 0) }
+END { print insz, maxsz, bigf, maxd, deepf, out }
+EOF
+awk '{ print } /^    call preprocess$/ && !d { print "    mov rax, 1"; print "    mov rdi, 1"; print "    mov rsi, r15"; print "    mov rdx, r12"; print "    syscall"; print "    call sys_exit_ok"; d = 1 }' \
+  bootstrap/cybs.cyr | bootstrap/asm > "$D/cybs_pp" 2>/dev/null || true
+chmod +x "$D/cybs_pp" 2>/dev/null || true
+read -r w_in w_max w_big w_dep w_deep w_out <<EOF
+$(LC_ALL=C awk -f "$D/walk.awk" < src/main.cyr)
+EOF
+pp_out=$("$D/cybs_pp" < src/main.cyr 2>/dev/null | wc -c | tr -d ' ')
+if [ -z "${w_out:-}" ] || [ "${pp_out:-0}" -eq 0 ]; then bad "S2: the closure walk produced nothing (walker [${w_out:-}], cybs's own expansion ${pp_out:-0} B)"
+elif [ "$w_out" -ne "$pp_out" ]; then bad "S2: the walker's expansion of src/main.cyr is $w_out B, cybs's own is $pp_out B — the walker no longer mirrors pp_expand"
+elif [ "$w_max" -ge 2097152 ]; then bad "S2: $w_big is $w_max B — cybs's include slot holds 2 MB (2097152), cybs refuses it"
+elif [ "$w_dep" -ge 8 ]; then bad "S2: $w_deep is included $w_dep deep — cybs has 8 include slots"
+elif [ "$w_in" -ge 15728640 ] || [ "$w_out" -ge 15728640 ]; then bad "S2: src/main.cyr is $w_in B, $w_out B expanded — cybs's input buffer takes 15 MB, its expansion buffer 16 MB"
+else echo "  ok   S2: src/main.cyr's include closure fits cybs's preprocessor: largest $w_big $w_max / 2097152 B, $w_dep / 8 deep ($w_deep), $w_out B expanded / 15728640 (cybs's own expansion agrees)"; fi
 
 cat bootstrap/asm.cyr | "$D/cybs" > "$D/asm2" 2>/dev/null || true
 cmp -s "$D/asm2" bootstrap/asm && echo "  ok   A: closure — cybs reproduces the seed" || bad "A: closure — cybs no longer reproduces the seed"
@@ -189,4 +246,4 @@ if [ "$rc" -ne 0 ] || [ ! -s "$D/gen1" ]; then bad "D: cybs could not compile sr
 else echo "  ok   D: cybs compiles src/main.cyr"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: cybs_call_arity_named — $fail row(s) red"; exit 1; fi
-echo "PASS: cybs_call_arity_named — cybs.cyr fits the seed (input, labels, code), cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, a call through a function-pointer variable keeps argument 4, and cybs compiles src/main.cyr (closure intact)"
+echo "PASS: cybs_call_arity_named — cybs.cyr fits the seed (input, labels, code), src/main.cyr's include closure fits cybs's preprocessor with headroom, cybs passes 7+ arguments on the stack (7- and 9-argument calls, fncall7/fncall8 right), a 6-argument call works, a call through a function-pointer variable keeps argument 4, and cybs compiles src/main.cyr (closure intact)"
