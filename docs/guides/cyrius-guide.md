@@ -1915,7 +1915,9 @@ and is read with the parameter's layout. Since 6.7.11 so do an if-expression who
 pointer, whatever their steps (`t7(if (c == 1) { py } else { &s })`, `py` beside a `*B4`), and an
 integer on the LEFT of a struct pointer (`t1(m + pb)`, `t1(n + pb)` with `n: i32`, `bs1(n + sp)`) —
 through 6.7.10 those passed the address as the struct; an if-expression of a pointer and a value is
-still the value's word. Over 8 bytes this is what the address-passed parameter
+still the value's word. Since 6.7.14 so does `n + &x` with a narrow `n` (`bs1(n + &X)`, `n: i32`), the
+pointer `&x + n` is (6.7.11's rule above) — through 6.7.13 it passed the address as the struct; `n + 5`
+is still the value. Over 8 bytes this is what the address-passed parameter
 always did; through 6.7.9 a struct of 8 bytes or less got the POINTER as its one word, and the
 callee read the address as its fields, silently. An UNTYPED value is still the struct's word: an
 untyped local holding an address (`var u = &s; bs1(u)`), an integer, an `i8` / `i16` / `i32` value.

@@ -100,6 +100,10 @@
 # (every pointer form and consumer against its 16 B twin, the untyped boundary, sizes 1..8 B, top level):
 #   R3 that file on the same legs as R1, N derived from it (floor 69)
 #   R4 the filed repro, VERBATIM: exit 111 on the same legs (0 = each callee read the pointer's bits)
+#   R4n (6.7.14) `bs(n + &X)` with a narrow `n` is the pointer `bs(&X + n)` is (6.7.11's `n + &x` rule, the
+#      user's decision 2026-10-13): the filed repro, VERBATIM — exit 77 on the same legs (78 = `n + &X` read as
+#      a value; issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md); R3's
+#      `n_` rows carry every shape (i8 / i16 / i32 / u8 locals and parameters, `&s`, an operand, top level)
 #   PP (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping passed by value — a `*T`
 #      local, a `: *S7` call, an operator's right operand, a `*S7` global, a closure, and at TOP LEVEL
 #      (a hidden global temp) — exit 0, no byte past the object read
@@ -347,6 +351,11 @@
 #                                                      SIGILL, cxvm out of range), PP x2
 #   MB9 `_sarg_byval_small` without `_hl_byval_arg`  -> RED 16: R3 5 of 69 rows x7, R4 exit 0 x7, PP x2 (and
 #                                                      B1-B4)
+# 6.7.14 NARROW + ADDRESS-OF MUTATION LEDGER (2026-10-17, the gate run as CYCC=<the mutant>):
+#   MN1 `_hl_rcarry` without `_hl_amp_var` (the fix reverted) -> RED R3 x7 (14 of 102 rows: the `n_` rows but
+#                                                      the parameters, the tail call, the capture, the boundary
+#                                                      and top level, which a narrow LOCAL never reaches), R4n
+#                                                      exit 78 x7 (cxvm 14)
 # B7-1c MUTATION LEDGER (2026-10-12, the same method):
 #   the B7-1b tree (d046368e, no *T operand)          -> RED 14: R5 x7 (`l = p` held the pointer, then
 #                                                      `q = r` rebound q: SIGSEGV x86 x4 / aarch64, cxvm out of
@@ -621,7 +630,7 @@ if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GF
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
 NP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TP")
-PFLOOR=69
+PFLOOR=102   # 6.7.14: + the `n + &x` rows
 if [ "$NP" -lt "$PFLOOR" ]; then echo "FAIL: $G: only $NP rows in $TP (floor $PFLOOR) — rows were lost"; exit 1; fi
 TQ=tests/tcyr/crossos/small_struct_pointer_copy.tcyr
 [ -f "$TQ" ] || { echo "FAIL: $G: $TQ is missing"; exit 1; }
@@ -756,6 +765,29 @@ for leg in $XLEGS $OTHER; do
     if [ "$RC" -eq -1 ]; then bad "R4 $leg: did not build: $(grep '^error' "$D/r4_$n.err" | head -1)"
     elif [ "$RC" -eq 111 ]; then ok "R4 $leg: exit 111"
     else bad "R4 $leg: exit $RC, want 111"; fi
+done
+
+# 6.7.14 — the filed narrow + address-of repro, verbatim
+# (issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md).
+cat > "$D/repro_n.cyr" <<'EOF'
+struct B8 { v; }
+fn bs(b: B8): i64 { return b.v; }
+var X[2];
+fn go(): i64 {
+    store64(&X, 5);
+    store64(&X + 8, 7);
+    var n: i32 = 8;
+    return bs(&X + n) * 10 + bs(n + &X);
+}
+syscall(60, go());
+EOF
+echo "R4n. the filed narrow + address-of repro, verbatim (exit 77; 78 = \`bs(n + &X)\` read the address as the struct)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/repro_n.cyr" "$D/r4n_$n"
+    if [ "$RC" -eq -1 ]; then bad "R4n $leg: did not build: $(grep '^error' "$D/r4n_$n.err" | head -1)"
+    elif [ "$RC" -eq 77 ]; then ok "R4n $leg: exit 77"
+    else bad "R4n $leg: exit $RC, want 77"; fi
 done
 
 echo "R5. $TQ ($NQ rows: struct copies through a *T of 8 B or less)"
@@ -1795,4 +1827,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15)"

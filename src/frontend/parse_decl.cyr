@@ -9440,7 +9440,8 @@ fn _hl_ie_ptr(S, b, e): i64 {
 }
 # Step 1 on [a, e): `+` / `-` keep their LEFT operand's step (`_add_word`), so the left side of the
 # chain's last `+` / `-` carried it — but a `*T` struct pointer on the RIGHT of a `+` carries it (6.7.11,
-# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is); a primary that reads an
+# decision 1(b) extended: `n + pb` is that pointer whatever narrow local `n` is), and so does `&x` of a
+# variable (6.7.14: `n + &x` is the pointer `&x + n` is); a primary that reads an
 # i8 / i16 / i32 local (a bare name, an if-expression's branch) is a value, any other (`&s`, `pb`,
 # `mk1p()`, `h.p` of a `*T` step 1) an address.
 fn _hl_p1(S, a, e): i64 {
@@ -9467,11 +9468,30 @@ fn _hl_lastop(S, k, e): i64 {
     }
     return k;
 }
-# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`).
+# 1 = the operator at `k` is a `+` whose right operand [k + 1, e) is typed `*T` of a struct (`_hl_psid`),
+# or is `&x` of a variable (`_hl_amp_var`, 6.7.14).
 fn _hl_rcarry(S, k, e): i64 {
     var t = TOKTYP(S, k);
     if (t != 6) { if (t != 113) { return 0; } }
     if (_hl_psid(S, k + 1, e) > 0) { return 1; }
+    return _hl_amp_var(S, k + 1, e);
+}
+# ⛔ 6.7.14 — `n + &x` IS THE POINTER `&x + n` IS (6.7.11, the user's decision of 2026-10-13, guide § Pointers)
+# as a by-value argument too. 1 = [a, e), inside balanced parentheses, is exactly `& IDENT` naming a variable — a
+# local or parameter, a closure capture, a global (`&f` of a fn has no step). The right-carry asked `_hl_psid`
+# alone, which answers 0 for `&x`, so a narrow left `n` made `bs(n + &x)` a value: the callee read the address's
+# bits as its struct (78 where 77 is right, every target). CHANGELOG [6.7.14]
+fn _hl_amp_var(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    var nm = TOKVAL(S, b + 1);
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, nm) >= 0) { return 1; }
+        if (_hl_capn(S, nm) == 1) { return 1; }
+    }
+    if (_findvar_core(S, nm) >= 0) { return 1; }
     return 0;
 }
 # The first `+` / `-` (`+%` / `-%` too) of [a, e) outside any bracket, past its first token, else -1.
