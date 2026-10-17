@@ -1644,7 +1644,7 @@ fn _tup_fld_rchk(S, ft, beg): i64 {
 # Load a struct field: ident.field → emit load from var_addr + field_offset
 # Or call a method: ident.method(args) → call StructName_method(&ident, args)
 fn PARSE_FIELD_LOAD(S, noff): i64 {
-    var pfl_beg = GTI(S) - 1;   # the receiver IDENT — a method call's first token (6.6.6)
+    var pfl_beg = _pfl_beg(S);   # the receiver IDENT — a method call's first token (6.6.6); 6.7.14: a wrap's `(`
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var fnoff = PEEKV(S);

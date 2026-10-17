@@ -2067,6 +2067,14 @@ another struct's name is refused by name, as unwrapped. So is a dyn-returning ca
 element (`H { 7, (pass(o)), 8 }`, 6.7.13, the user's decision D17 (a), 2026-10-15; it was refused: *a struct
 literal does not form a dyn*); at top level the element is refused once, by name (no frame). The untyped
 `var x = (pass(o));` stays refused: a dyn result goes only into a dyn.
+A `.field` or `.m(..)` written AFTER the parentheses sees through them too (6.7.14; the user's decision D24,
+2026-10-16):
+`(s).a`, `((s)).a`, `(p).a` and `(*p).a` for a `*S`, `(s).m()`, `(mk1()).a`, `(mk3(5)).b`, `(b.mk()).b`,
+`(x + y).b` with a struct operator, `(h.q).b` for a struct-typed field and `(gp()).a` for a `: *S` call read
+the field or call the method exactly as without them, chains included, and `(s).m();` is a statement — each
+was *expected ';', got '.'* (a statement *unexpected '('*). Parentheses around a value that is no struct
+(`(x + 1).a`) are refused by name, a store through them (`(s).a = v;`, `(s).a += v;`) is refused by name
+(write `s.a = v`), and at top level a struct result is refused once (no frame), as without them.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they

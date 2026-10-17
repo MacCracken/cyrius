@@ -2997,6 +2997,247 @@ fn _mret_fld_err(S, fi, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — A `.field` / `.m(..)` AFTER PARENTHESES AROUND A STRUCT VALUE (the user's decision D24 (a), 2026-10-16):
+# `(s).a`, `((s)).a`, `(p).a` (p a `*P1`), `(*p).a`, `(s).m()`, `(mk1()).a`, `(mk3(5)).b` read the field or call the
+# method exactly as unwrapped — the wrap is transparent (guide § Parentheses, 6.7.6; 6.7.11's D35 / D44, 6.7.13's
+# D16 / D17 / D19). They were "expected ';', got '.'": the parenthesised factor returned at its `)`. The inside is
+# taken as its unwrapped spelling takes it: a name by the field-load route (`PARSE_FIELD_LOAD`, the receiver's first
+# token the wrap's `(`, so a destination's records span it), `*E` and any `*S`-typed value through its pointer, a
+# free call into a temp (`_call_field`'s convention), a method / operator / known `&f` result or a struct-typed field
+# from its record; the wrap is closed and the chain goes on. A wrap around a value that is no struct (`(x + 1).a`) is
+# refused by name; at top level a struct result is refused once (no frame), as unwrapped. Cursor on the factor's
+# `(`: 1 = taken (the chain consumed), 0 = not `( .. ) . name` (cursor untouched). CHANGELOG [6.7.14]
+fn _paren_field(S): i64 {
+    var st = GTI(S);
+    var k = _pf_wrap(S, st);
+    if (k == 0) { return 0; }
+    var e = _pf_e;
+    var a = st + k;
+    var ie = e - k;
+    if (ie == a + 1) { if (TOKTYP(S, a) == 2) { return _pf_name(S, st, a, k); } }
+    var ps = _hl_dstar_t(S, a, 11);
+    if (ps > 0) { return _pf_deref(S, st, a, k, ps); }
+    ps = _hl_psid(S, a, ie);
+    if (ps > 0) { return _pf_ptr(S, st, a, k, ps); }
+    if (_pf_iscall(S, a, ie) == 1) { return _pf_call(S, st, a, k); }
+    return _pf_value(S, st, a, k);
+}
+# The wrap at `st` when `. name` follows it: its parentheses' count, `_pf_e` the `.`; 0 when not that shape (a tuple
+# literal is no wrap).
+var _pf_e = 0;
+fn _pf_wrap(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    if (TOKTYP(S, _call_close(S, st) + 1) != 41) { return 0; }   # the common case, one scan
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    _pf_e = _pw_end;
+    _pw_end = pe;
+    if (_mchain_at(S, _pf_e) == 0) { return 0; }
+    return k;
+}
+# A name: `PARSE_FIELD_LOAD` on it with the cursor on the `.` after the wrap.
+var _pfl_bo = 0 - 1;
+fn _pfl_beg(S): i64 {
+    var b = GTI(S) - 1;
+    if (_pfl_bo >= 0) { b = _pfl_bo; _pfl_bo = 0 - 1; }
+    return b;
+}
+fn _pf_name(S, st, a, k): i64 {
+    STI(S, a + 1);
+    _pw_close(S, k);
+    _pfl_bo = st;
+    PARSE_FIELD_LOAD(S, TOKVAL(S, a));
+    _cfo = 0;
+    return 1;
+}
+# `*E`, E a `*S` (`_hl_dstar_t`): E is the struct's address — parked as a pointer receiver of S.
+fn _pf_deref(S, st, a, k, ps): i64 {
+    var nm = _hl_dnm;
+    STI(S, a + 1);
+    PARSE_FACTOR(S);
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, _ptr_park(S, ps), ps);
+}
+# A value typed `*S` (`_hl_psid`: a call or a method declared `: *T`, a `*T` field, pointer arithmetic on one).
+fn _pf_ptr(S, st, a, k, ps): i64 {
+    var nm = _hl_pnm(S, a, _pf_e - k);
+    STI(S, a);
+    PCMPE(S);
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, _ptr_park(S, ps), ps);
+}
+# After the wrap (cursor on its `.`): the chain on receiver `h` of struct `sid`.
+fn _pf_chain(S, noff, beg, h, sid): i64 {
+    STI(S, GTI(S) + 1);   # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);   # the field / method name
+    _field_load_on(S, noff, fnoff, beg, h, sid);
+    _cfo = 0;
+    return 1;
+}
+# 1 = [a, ie) is one whole free call `name(..)` / `name<..>(..)` (not a call through fncallN).
+fn _pf_iscall(S, a, ie): i64 {
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != ie) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    return 1;
+}
+# A free call: into a temp, as `mk1().a` (`_call_field`): a struct over 8 B returned in rax (`Str`) is a handle.
+fn _pf_call(S, st, a, k): i64 {
+    var fi = _gen_resolve_call(S, a);
+    if (fi < 0) { return _pf_value(S, st, a, k); }   # an undefined callee reports itself
+    var sid = GFRS(S, fi);
+    if (sid <= 0 || GINFN(S) != 1) {
+        if (_syntax_only == 0) {
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, a)); }
+            else { _refuse_toplevel_struct_call(S, TOKVAL(S, a)); }
+        }
+        return _pf_skip(S);
+    }
+    STI(S, a);
+    var h = 0;
+    if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, sid - 1) > 8) { h = 1; } }
+    _struct_call_into(S, h);
+    var t = _sci_t;
+    _pw_close(S, k);
+    return _pf_chain(S, TOKVAL(S, a), st, 0 - 2 - t, sid);
+}
+# The rest after a refusal: past the wrap, every `.name` / `(..)` of the chain.
+fn _pf_skip(S): i64 {
+    STI(S, _pf_e);
+    _mchain_skip(S);
+    _cfo = 0;
+    return 1;
+}
+# Anything else: parsed with the struct records armed — a method / operator / known `&f` call's result
+# (`_lsc_*`: a temp, or the value in rax / rax:rdx stored into one) or a whole struct-typed field (`_fla_take`:
+# its address). No struct: refused by name. At top level a struct result has no frame: refused once.
+fn _pf_value(S, st, a, k): i64 {
+    var e = _pf_e;
+    STI(S, a);
+    var w = _sc_arm(S);
+    var fw = _fla_want;
+    _fla_want = a;
+    _fla_hit = 0;
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = fw;
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return _pf_skip(S); }
+    if (_fla_hit == 1) { return _pf_fld(S, st, k); }
+    var nm = _hl_lastnm(S, a, GTI(S), TOKVAL(S, a));
+    if (_sc_beg == a) { if (_sc_end == GTI(S)) { nm = _sc_fn; } }   # a method / operator / `&f` callee: its fn
+    if (_pf_lsc(S, a) == 0) {
+        if (_sc_rbeg == a) { if (_sc_rend == GTI(S)) { return _pf_skip(S); } }   # refused at top level (no frame)
+        _pf_err(S, e);
+        return _pf_skip(S);
+    }
+    var sid = _lsc_sid;
+    if (GINFN(S) != 1) {
+        if (_syntax_only == 0) { _refuse_toplevel_struct_call(S, nm); }
+        return _pf_skip(S);
+    }
+    var t = _lsc_tmp;
+    if (t < 0) {
+        if (STRUCTSZ(S, sid - 1) <= 8) { t = _mchain_temp(S, sid); }
+        else {
+            t = _agg_temp(S, sid);
+            EFLSTORE_STRUCT_INT_PAIR(S, t);
+        }
+    }
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, 0 - 2 - t, sid);
+}
+# 1 = the struct result stamp (`_lsc_note`) spans [a, cursor) with nothing emitted after it.
+fn _pf_lsc(S, a): i64 {
+    if (_lsc_beg != a) { return 0; }
+    if (_lsc_end != GTI(S)) { return 0; }
+    if (_lsc_cp != GCP(S)) { return 0; }
+    return 1;
+}
+# A whole struct-typed field (`_fla_take` recorded it, loading nothing): its address, parked.
+fn _pf_fld(S, st, k): i64 {
+    _fla_hit = 0;
+    var ft = _fla_ft;
+    _fld_addr_ra(S, _fsc_fidx, _fsc_fsid, _fsc_foff, 0 - 1);
+    var h = _ptr_park(S, ft);
+    _pw_close(S, k);
+    return _pf_chain(S, _fla_name, st, h, ft);
+}
+fn _pf_err(S, e): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tn_once(S, e) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, e);
+    ERR_MSG(S, "a field is read only from a struct value - the value in these parentheses is not a struct (or a pointer to one)", 111);
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.14 (D24 (a)) — a STATEMENT that begins `( .. ) . name`: a method call or a read (`(s).m();`, `(mk1()).a;`)
+# is parsed as unwrapped (PARSE_FACTOR's `_paren_field`, a discarded `#must_use` result warned); a store `(s).a = v;`
+# / `(s).a += v;` is refused by name, the statement stepped over in sync — it was "unexpected '('" for every one.
+# One call in PARSE_STMT (cybs's per-fn ceiling). 1 = the statement is consumed. CHANGELOG [6.7.14]
+fn _stmt_paren_field(S): i64 {
+    var st = GTI(S);
+    if (_pf_wrap(S, st) == 0) { return 0; }
+    var x = _pf_chain_end(S, _pf_e);
+    if (_pf_asg_at(S, x) == 1) {
+        if (_syntax_only == 0) { if (_tn_once(S, _pf_e) == 1) {
+                var p0 = _panic;
+                STI(S, _pf_e);
+                ERR_MSG(S, "cannot assign to a field after parentheses - write the store without them (`s.a = v`)", 85);
+                _panic = p0;
+            } }
+        STI(S, st);
+        _cst_skip_sync(S);
+        return 1;
+    }
+    _mcall_last = 0 - 1;
+    PARSE_FACTOR(S);
+    if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
+    _expect_step(S, 5);
+    return 1;
+}
+# The token after the `.name` / `.m(..)` / `.m<..>(..)` / `[..]` chain that starts at token `i`.
+fn _pf_chain_end(S, i): i64 {
+    var go = 1;
+    while (go == 1) {
+        go = 0;
+        if (_mchain_at(S, i) == 1) {
+            i = _mchain_targs(S, i + 2);
+            if (TOKTYP(S, i) == 10) { i = _call_close(S, i) + 1; }
+            go = 1;
+        } elif (TOKTYP(S, i) == 28) {
+            i = _pf_sq_close(S, i) + 1;
+            go = 1;
+        }
+    }
+    return i;
+}
+fn _pf_sq_close(S, i): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 28) { d = d + 1; }
+        if (t == 29) {
+            d = d - 1;
+            if (d == 0) { return i; }
+        }
+        if (t == 5) { return i; }
+        i = i + 1;
+    }
+    return i;
+}
+fn _pf_asg_at(S, i): i64 {
+    if (TOKTYP(S, i) == 4) { return 1; }
+    if (_is_cop_tok(TOKTYP(S, i)) == 0) { return 0; }
+    if (TOKTYP(S, i + 1) == 4) { return 1; }
+    return 0;
+}
+
 # ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
 # parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
 # every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
@@ -4988,6 +5229,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         return 0;
     }
     if (typ == 10) {
+        if (_paren_field(S) == 1) { return 0; }   # 6.7.14 (D24 (a)): `(s).a`, `(mk1()).a`, `(s).m()`
         STI(S, GTI(S) + 1);
         PCMPE(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
