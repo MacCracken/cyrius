@@ -24,6 +24,10 @@
 #   I  the line comes from the EXPANDED stream: an error inside an included file prints that file's
 #      line, and one after an include prints the main file's
 #   E  an error at the end of the input prints the last token's line, not an empty one
+#   K  the input ends right after `fn` or `var` (`fn`, `var`, `fn ` with a trailing blank): exit 1, the class
+#      message at the keyword's line, nothing written. Pass 0 (shallow_fn / shallow_global) stepped over the
+#      name unchecked, past the EOF token, and every later EOF test read beyond the token array: SIGSEGV (139),
+#      nothing on stderr. 6.7.14, issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md
 #   V  ANTI-VACUOUS: a valid program using every neighbour of the refused shapes (`0 - a`, `>>`,
 #      `while`, an if statement, a top-level var, a forward call) compiles and runs (exit 42)
 #
@@ -33,6 +37,8 @@
 #                                                                                         if-expression row prints line 1)
 #   find_var_undef back to `jmp sys_exit_err` after its message (no name, no line)      -> N RED
 #   parse_err's end-of-input step (`dec rbx`) dropped                                   -> E RED (an empty line)
+# 6.7.14:
+#   shallow_fn's and shallow_global's IDENT test dropped (the 6.7.13 cybs)              -> K RED (rc 139, all three)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_diagnostics_named: cannot cd to $ROOT"; exit 1; }
@@ -102,6 +108,14 @@ says I inc2.cyr 'an error after an include' "${SYN}var s = r >>> 1;"
 # E — the end of the input (a fn never closed, trailing blank lines)
 printf 'fn main() {\n    var x = 1;\n    return x;\n\n\n' > "$D/eof.cyr"
 says E eof.cyr 'a fn left open at the end of the input' "${SYN}    return x;"
+
+# K — the input ends right after `fn` / `var` (no trailing LF, as the filing's printf '%s')
+printf 'fn' > "$D/kfn.cyr"
+says K kfn.cyr 'the input `fn`' "${SYN}fn"
+printf 'var' > "$D/kvar.cyr"
+says K kvar.cyr 'the input `var`' "${SYN}var"
+printf 'fn ' > "$D/kfnsp.cyr"
+says K kfnsp.cyr 'the input `fn ` (a trailing blank)' "${SYN}fn "
 
 # V — anti-vacuous
 cat > "$D/ok.cyr" <<'EOF'

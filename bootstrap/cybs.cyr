@@ -2141,9 +2141,15 @@ fvn_no:
     pop r9
     pop r8
     ret
+# Pass 0 steps over the keyword AND the name, so a name that is not an IDENT stops here: at the end
+# of the input the name step went past the EOF token and every later EOF test read beyond the token
+# array (SIGSEGV, no message). parse_err steps back to the keyword's line. CHANGELOG [6.7.14]
 shallow_fn:
     push r8
     inc r11              # consume FN
+    call peek_tok_type
+    cmp rax, 2           # IDENT
+    jne parse_err
     call peek_tok_value
     mov r8, rax          # name
     mov rax, r8
@@ -2161,6 +2167,9 @@ shallow_global:
     push r8
     push r9
     inc r11              # consume VAR
+    call peek_tok_type
+    cmp rax, 2           # IDENT (as shallow_fn)
+    jne parse_err
     call peek_tok_value
     mov r8, rax          # name
     inc r11              # consume IDENT
