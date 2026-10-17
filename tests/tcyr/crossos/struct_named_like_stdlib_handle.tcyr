@@ -1,0 +1,82 @@
+# struct_named_like_stdlib_handle.tcyr — 6.7.14. A PROGRAM'S OWN `struct Result` / `struct Option` /
+# `struct Tagged` IS A PLAIN STRUCT: into a by-value parameter it passes the struct, as any other name does.
+#
+# ⛔ THE DEFECT, through 6.7.13. The parameter classifier (`_classify_param_type`) answered the stdlib's
+# handle classes 3 / 4 / 5 for the NAMES `Result` / `Option` / `Tagged` whatever the program declared, so
+# a 16 B struct of that name was a one-word VALUE parameter: the caller pushed its first field and the
+# callee read `x.b` through it (SIGSEGV on every target: x86_64 139, aarch64 139, cx a guest fault, PE 5),
+# and a method with an untyped `self` was "no struct type in scope for 'self'". The return classifier
+# always looked the struct up first, so `fn mk(): Result` was right. Now the three names are handles only
+# while no struct takes them (lib/result.cyr's and lib/tagged.cyr's are `: stack` enums, which never enter
+# the struct table, so the stdlib compiles byte-identical); `Str` stays a handle by name.
+# Filed: docs/development/issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
+# The 8 B twins are struct_named_like_stdlib_handle_8b.tcyr. Gate (filed repro verbatim, the byte-identity
+# rows, both files on x86_64 / IR / DCE / aarch64 / cx / PE, mutation ledger):
+# tests/gates/codegen/struct_named_like_stdlib_handle.sh. CROSS-HOST: the release gate runs it on ecb /
+# ach / cass / pi.
+include "lib/assert.cyr"
+
+struct Result { a; b; }
+struct Option { a; b; }
+struct Tagged { a; b; }
+
+impl Result {
+    fn getb(self: Result): i64 { return self.b; }
+    fn sum(self): i64 { return self.a + self.b; }
+}
+impl Option { fn getb(self): i64 { return self.b; } }
+impl Tagged { fn getb(self): i64 { return self.b; } }
+
+fn rb(x: Result): i64 { return x.b; }
+fn ob(x: Option): i64 { return x.b; }
+fn tb(x: Tagged): i64 { return x.b; }
+fn rp(x: *Result): i64 { return x.b; }
+fn rbump(x: Result): i64 { x.b = 99; return x.b; }
+fn rtwo(n, x: Result, m): i64 { return n + x.b + m; }
+fn rmk(a, b): Result { var r: Result; r.a = a; r.b = b; return r; }
+
+var GR: Result = Result { 3, 7 };
+var GO: Option = Option { 3, 7 };
+var GT: Tagged = Tagged { 3, 7 };
+
+fn r_param(): i64 { var t: Result = Result { 5, 7 }; return rb(t); }
+fn o_param(): i64 { var t: Option = Option { 5, 7 }; return ob(t); }
+fn t_param(): i64 { var t: Tagged = Tagged { 5, 7 }; return tb(t); }
+fn r_inferred(): i64 { var t = Result { 5, 7 }; return rb(t); }
+fn r_assigned(): i64 { var t = Result { 5, 7 }; var u: Result; u = t; return rb(u); }
+fn r_middle(): i64 { var t = Result { 5, 7 }; return rtwo(1, t, 2); }
+fn r_copy(): i64 { var t = Result { 5, 7 }; var w = rbump(t); return t.b * 1000 + w; }
+fn r_ptr(): i64 { var t = Result { 5, 7 }; return rp(&t); }
+fn r_ret(): i64 { return rb(rmk(1, 7)); }
+fn r_method(): i64 { var t = Result { 5, 7 }; return t.getb(); }
+fn r_method_untyped(): i64 { var t = Result { 5, 2 }; return t.sum(); }
+fn o_method(): i64 { var t = Option { 5, 7 }; return t.getb(); }
+fn t_method(): i64 { var t = Tagged { 5, 7 }; return t.getb(); }
+fn r_global(): i64 { return rb(GR); }
+fn o_global(): i64 { return ob(GO); }
+fn t_global(): i64 { return tb(GT); }
+fn r_global_method(): i64 { return GR.sum() - 3; }
+fn r_param_fwd(x: Result): i64 { return rb(x); }
+
+assert_eq(r_param(), 7, "struct Result into a by-value parameter");
+assert_eq(o_param(), 7, "struct Option into a by-value parameter");
+assert_eq(t_param(), 7, "struct Tagged into a by-value parameter");
+assert_eq(r_inferred(), 7, "an inferred Result local into the parameter");
+assert_eq(r_assigned(), 7, "a Result assigned whole, then passed");
+assert_eq(r_middle(), 10, "a Result between two integer arguments");
+assert_eq(r_copy(), 7099, "the callee's write stays in its copy");
+assert_eq(r_ptr(), 7, "&t into x: *Result (control)");
+assert_eq(r_ret(), 7, "a Result returned by value, passed on");
+assert_eq(r_method(), 7, "a method with self: Result");
+assert_eq(r_method_untyped(), 7, "a method with an untyped self");
+assert_eq(o_method(), 7, "an Option method");
+assert_eq(t_method(), 7, "a Tagged method");
+assert_eq(r_global(), 7, "a Result global into the parameter");
+assert_eq(o_global(), 7, "an Option global into the parameter");
+assert_eq(t_global(), 7, "a Tagged global into the parameter");
+assert_eq(r_global_method(), 7, "a method on a Result global");
+var fwd = Result { 4, 7 };
+assert_eq(r_param_fwd(fwd), 7, "a by-value Result parameter forwarded (top level)");
+assert_eq(rb(GR), 7, "a Result global passed at top level");
+
+var r = assert_summary();

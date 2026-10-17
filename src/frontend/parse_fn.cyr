@@ -14831,14 +14831,24 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — `Result` / `Option` / `Tagged` are handle classes by NAME only while the program declares no
+# struct of that name (lib/result.cyr's and lib/tagged.cyr's are `: stack` enums, which the struct table never
+# holds). A program's own `struct Result { a; b; }` is a plain struct, as `_classify_return_type` has always read
+# it (FINDSTRUCT first): as a handle its by-value parameter was one word and the caller pushed the first field
+# (SIGSEGV on every target). `Str` stays a handle by name (settled). CHANGELOG [6.7.14]
+fn _cpt_byname(S, tnoff, c): i64 {
+    if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
+    return c;
+}
+
 # v6.3.5 CO-01 — single source of truth for param-type-name classification.
 # Returns the param-type class for a type name at tok_names offset `tnoff`:
 #   0 = int / struct / other (no special ABI mask)
 #   1 = Str       2 = cstring   3 = Result   4 = Option
 #   5 = Tagged    6 = f64v2     7 = f64v4     8 = f32v4     10 = f32v8
 #   (9 is `_param_class`'s `*V`; an integer 128-bit vector is its negative descriptor, below)
-# Pure byte-compares over the name pool (S+0x60000); zero global-var refs and
-# no calls beyond the L64/load8 memory builtins → cybs-safe by construction.
+# Byte-compares over the name pool plus one FINDSTRUCT for the three by-name handles
+# (`_cpt_byname`, 6.7.14); zero global-var refs → cybs-safe.
 # Extracted verbatim from the PARSE_FN_DEF param loop so the pass-1 signature
 # prescan (_prescan_fn_sig) and the pass-2 definition agree byte-for-byte.
 fn _classify_param_type(S, tnoff): i64 {
@@ -14860,17 +14870,17 @@ fn _classify_param_type(S, tnoff): i64 {
     # Result → 'R','e','s','u','l','t',0
     if (b0 == 82) { if (b1 == 101) { if (b2 == 115) { if (b3 == 117) {
                     if (b4 == 108) { if (b5 == 116) { if (b6 == 0) {
-                                return 3;
+                                return _cpt_byname(S, tnoff, 3);
                             } } } } } } }
     # Option → 'O','p','t','i','o','n',0
     if (b0 == 79) { if (b1 == 112) { if (b2 == 116) { if (b3 == 105) {
                     if (b4 == 111) { if (b5 == 110) { if (b6 == 0) {
-                                return 4;
+                                return _cpt_byname(S, tnoff, 4);
                             } } } } } } }
     # Tagged → 'T','a','g','g','e','d',0
     if (b0 == 84) { if (b1 == 97) { if (b2 == 103) { if (b3 == 103) {
                     if (b4 == 101) { if (b5 == 100) { if (b6 == 0) {
-                                return 5;
+                                return _cpt_byname(S, tnoff, 5);
                             } } } } } } }
     # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
     if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
@@ -15092,8 +15102,8 @@ fn _prescan_skip_fn(S): i64 {
 # plain struct >8 bytes: _classify_param_type returns 0 for it (not Str/cstring/
 # Result/Option/Tagged/SIMD, which are pointer/handle/value-passed), and the callee
 # derefs a >8-byte struct param as a pointer (v6.3.16 lf_is_ptr), so the caller must
-# address-pass it. Str/Result/Option/Tagged are 16 B structs by NAME but classify
-# non-zero → excluded (they hold a heap handle, value-passed). Used by both passes
+# address-pass it. Str (and Result/Option/Tagged where no struct takes the name, 6.7.14)
+# classify non-zero → excluded (they hold a heap handle, value-passed). Used by both passes
 # to build _fnt_structmask consistently, and by PARSE_FNCALL to gate the address push.
 # ⛔ 6.6.20 — and for a `p: *S` parameter (`isptr` 1: a `*` preceded the type) at EVERY size of S:
 # 6.6.17 (a2) made such a parameter a pointer at every size in the callee, but this bit — the

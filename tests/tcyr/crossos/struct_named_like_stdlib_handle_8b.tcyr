@@ -1,0 +1,45 @@
+# struct_named_like_stdlib_handle_8b.tcyr — 6.7.14. The 8 B twins of struct_named_like_stdlib_handle.tcyr:
+# a program's own `struct Result` / `Option` / `Tagged` of one word is a plain struct, passed by value in
+# one word (as it already was), its method with an untyped `self` compiles (it was "no struct type in
+# scope for 'self'": the classifier read the name as the stdlib's handle). A separate file because the
+# names can be declared once per program.
+# Filed: docs/development/issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
+# Gate: tests/gates/codegen/struct_named_like_stdlib_handle.sh. CROSS-HOST: the release gate runs it on
+# ecb / ach / cass / pi.
+include "lib/assert.cyr"
+
+struct Result { v; }
+struct Option { a: i32; b: i32; }
+struct Tagged { a: u8; b: u8; c: i16; }
+
+impl Result { fn get(self): i64 { return self.v; } }
+impl Option { fn get(self): i64 { return self.b; } }
+impl Tagged { fn get(self): i64 { return self.c; } }
+
+fn rv(x: Result): i64 { return x.v; }
+fn ov(x: Option): i64 { return x.b; }
+fn tv(x: Tagged): i64 { return x.c; }
+
+var GR: Result = Result { 7 };
+var GO: Option = Option { 3, 7 };
+var GT: Tagged = Tagged { 1, 2, 7 };
+
+fn r_param(): i64 { var t: Result = Result { 7 }; return rv(t); }
+fn o_param(): i64 { var t: Option = Option { 5, 7 }; return ov(t); }
+fn t_param(): i64 { var t: Tagged = Tagged { 5, 6, 7 }; return tv(t); }
+fn r_method(): i64 { var t = Result { 7 }; return t.get(); }
+fn o_method(): i64 { var t = Option { 5, 7 }; return t.get(); }
+fn t_method(): i64 { var t = Tagged { 5, 6, 7 }; return t.get(); }
+
+assert_eq(r_param(), 7, "8 B struct Result into a by-value parameter");
+assert_eq(o_param(), 7, "8 B struct Option into a by-value parameter");
+assert_eq(t_param(), 7, "4 B struct Tagged into a by-value parameter");
+assert_eq(r_method(), 7, "an 8 B Result method with an untyped self");
+assert_eq(o_method(), 7, "an 8 B Option method with an untyped self");
+assert_eq(t_method(), 7, "a 4 B Tagged method with an untyped self");
+assert_eq(rv(GR), 7, "an 8 B Result global into the parameter");
+assert_eq(ov(GO), 7, "an 8 B Option global into the parameter");
+assert_eq(tv(GT), 7, "a 4 B Tagged global into the parameter");
+assert_eq(GR.get(), 7, "a method on an 8 B Result global");
+
+var r = assert_summary();

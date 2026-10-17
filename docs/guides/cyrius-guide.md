@@ -216,7 +216,9 @@ whole`). A type with no place at a site is refused once, its `<..>` with it
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
-by name, without their `include`. A return type is a struct, `i8`..`i64`, `f64`, `bool`
+by name, without their `include`. A program's own `struct Result` / `Option` / `Tagged` is a plain
+struct, passed by value as any other (6.7.14: as a parameter it was read as the stdlib's one-word
+handle, so the caller pushed its first field and the callee faulted); `Str` stays a handle by name. A return type is a struct, `i8`..`i64`, `f64`, `bool`
 (6.7.3), a vector type, `Result`, `Option`, `Tagged`, `cstring`, a pointer `*T` (6.6.17), a
 multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dyn Tr` (6.7.8) or
 a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
@@ -1498,7 +1500,8 @@ A struct value of a different type assigned into a handle is refused
 struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address in `q.x` and left
 `q.y` stale, `a = q` put `q.x`'s value in `a`'s slot so the next `a.x` crashed, and `a = q` from a
 by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
-`Option` and `Tagged` (heap handles by name) are unchanged (an inline `Str` assigned into a `Str` handle
+`Option` and `Tagged` (heap handles by name; the last three only while no struct of the program takes the
+name, 6.7.14) are unchanged (an inline `Str` assigned into a `Str` handle
 binds it to its header: see *An inline `Str` passes its header*). Through 6.7.9 a struct of 8 bytes or
 less was outside the rule: no struct variable of that size was a handle (the handle line above),
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
