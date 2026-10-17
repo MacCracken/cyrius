@@ -4574,6 +4574,7 @@ fn _sdef_tup_prescan(S, sname_ti): i64 {
 fn _sfield_alt(S): i64 {
     var ti = GTI(S) + 1;
     if (TOKTYP(S, ti) == 10) { return 1; }
+    if (TOKTYP(S, ti) == 105) { return 1; }   # 6.7.14: `w: u128`, refused below
     return _sl_ann_at(S, ti);
 }
 # The field `fnoff: ( .. )`, cursor on its `:` — the interned tuple (`_sdef_tup_prescan`), looked up;
@@ -4582,6 +4583,15 @@ fn _sfield_alt(S): i64 {
 fn _sfield_tup(S, si, fnoff, uni): i64 {
     STI(S, GTI(S) + 1);   # consume ':'
     var ti = GTI(S);
+    # ⛔ 6.7.14 — a `u128` field is refused by name until u128 is carried as a 16-byte value (the user's decision D10
+    # (a), 2026-10-16, with the parameter): it was "expected identifier, got reserved keyword 'u128' (cannot be used as
+    # an identifier ...)", which names a non-problem. Kept as an i64 word, so its uses read on. CHANGELOG [6.7.14]
+    if (TOKTYP(S, ti) == 105) {
+        _u128_refuse(S, ti, "a field type yet");
+        STI(S, ti + 1);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
     if (_sl_ann_at(S, ti) == 1) {
         _sl_err(S, ti, "a slice cannot be a struct or union field (6.7.8: slices are fn-locals)",
           " - keep its slice_ptr / slice_len in two fields");

@@ -184,6 +184,27 @@ fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
 }
+# The enclosing slot's u128 mark (util.cyr GLW128, bit 60 of the same word; a nested closure's snapshot keeps it,
+# `_cl_snap_extend`). 6.7.14
+fn _cl_snap_w128(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 60) & 1;
+}
+# ⛔ 6.7.14 — A CAPTURED u128 IS ITS VALUE (issues/2026-10-08-u128-params-returns-fields-captures.md). Its env copy is
+# two words, so the read took the multi-word rule — the value is the ADDRESS, as an aggregate's is — and `c == 5`
+# compared the env address with 5, `c + 0` added it. With rax = `&env[woff]` (`_CL_CAP_WORDS_RA`), the two words are
+# copied into a 16-byte temporary and the read is that temporary's low word, stamped (k 3), so `==`, `<`, `+`, `-`, a
+# truth test and `match` take 6.7.6's u128 paths (an integer context reads the low word, as of a local). `&c` still
+# reads the env copy. 1 = done. CHANGELOG [6.7.14]
+fn _cl_cap_w128(S, esl): i64 {
+    if (_cl_snap_w128(esl) == 0) { return 0; }
+    var h = _w128_tmp(S);
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCM(S, 2);
+    _w128_res(S, h);
+    return 1;
+}
 # The enclosing slot's declared-integer mark (util.cyr GLINTD, bit 59 of the same word). 6.7.6
 fn _cl_snap_intd(esl): i64 {
     if (_cl_snap == 0) { return 0; }
@@ -4848,6 +4869,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     if (cl_capi >= 0) {
                         _CL_CAP_OPTYPE(S, cl_esl, cl_capi);              # see the fn's note
                         _CL_CAP_WORDS_RA(S, cl_capi);                    # rax = &env[woff]
+                        if (_cl_cap_w128(S, cl_esl) == 1) { return 0; }   # 6.7.14: a u128 is its value
                         # 6.6.5: a multi-word capture IS those words — its value is its
                         # address, the same convention an enclosing inline aggregate has in
                         # its own frame. A single-word capture is a value; load it.

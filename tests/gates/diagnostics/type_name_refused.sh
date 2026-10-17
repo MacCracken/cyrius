@@ -36,6 +36,12 @@
 #   axis 5  (6.6.17, a3) a vector global owns its 16/32 B and is used through `&g`: each value-form
 #           read / write / non-zero initializer is refused naming it (8 rows, all compiling silently
 #           before); `&g`, a folded 0 and the routed `*_ptr` form run (anti-vacuous).
+#   axis 6  (6.7.14, the user's decision D10 (a), 2026-10-16) a `u128` parameter (a fn, a trait member, a
+#           default after it, a generic's and an #inline fn's, once), return type and struct / union field
+#           type are each one error by name; the filed repro verbatim gives its two parameter refusals.
+#           Anti-vacuous: `*u128`, a `*fn(u128)`'s own list, a trait member's `: u128` return and a u128
+#           local still compile and run; --syntax-only refuses the three shapes too. The capture half runs in
+#           tests/tcyr/crossos/u128_closure_capture.tcyr.
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -63,6 +69,16 @@
 # and at 6.7.11 (the note, issues/archived/2026-10-12-return-type-refusal-note-incomplete.md), measured:
 #   _tn_ret_report's 6.6.17 note string       -> RED the four ret_known note rows naming bool, a
 #                                                multi-value, dyn Trait and a type parameter (`*T` green)
+# and at 6.7.14 (axis 6, issues/2026-10-08-u128-params-returns-fields-captures.md), measured:
+#   the lane's previous compiler (45c06049)   -> RED every u128 refusal row (a parameter compiled; a return /
+#                                                field said "expected identifier, got reserved keyword"); the
+#                                                four runs rows green
+#   `_pty_u128` takes the parameter           -> RED u128_repro / _param / _param_df / _generic / _inline /
+#                                                _tr_dflt (an inherited default is the impl's definition)
+#   `_trs_u128` takes it                      -> RED u128_trait
+#   `_ret_ann_alt` without its u128 arm       -> RED u128_ret (the reserved-keyword text)
+#   `_sfield_alt` without its u128 line       -> RED u128_field / u128_ufield
+#   `_u128_refuse` without `_tn_once`         -> RED u128_generic, u128_tr_dflt (once per instance / impl)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: type_name_refused: cannot cd to $ROOT"; exit 1; }
@@ -292,6 +308,37 @@ refused vg_init_dz      'include "lib/simd.cyr"\nvar g: f64v2 = 5;\nsyscall(60, 
 refused vg_init_late    'include "lib/simd.cyr"\nvar k = 1;\nk = 2;\nvar g: f64v4 = f64v4_make(1, 2, 3, 4);\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
 # ANTI-VACUOUS: the address, a folded 0 and the routed pointer form all compile and run.
 runs vg_addr_ok 'include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 = 0 + 0;\nvar n: i64 = 5;\nfn f(): i64 {\n    store64(&g + 8, 9);\n    var s: f64v2 = f64v2_add(&g, &g);\n    return n + (&n - &g);\n}\nsyscall(60, f());\n' 21
+
+echo "axis 6 - (6.7.14) a u128 parameter, return or field type is refused by name, once:"
+# The user's decision D10 (a), 2026-10-16: until u128 is carried as a 16-byte value a `u128` parameter is refused
+# ("pass `*u128`"); a return or field type said "expected identifier, got reserved keyword 'u128' (cannot be used as
+# an identifier ...)", which named a non-problem. (issues/2026-10-08-u128-params-returns-fields-captures.md)
+UP='`u128` is not supported as a parameter type yet - pass `*u128`'
+UR='`u128` is not supported as a fn return type yet'
+UF='`u128` is not supported as a field type yet'
+refused u128_repro 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn big(v: u128): i64 { if (v > 0xFFFFFFFFFFFFFFFF) { return 1; } return 0; }       # (1)\nfn bigl(): i64 { var v: u128 = 0; if (v > 0xFFFFFFFFFFFFFFFF) { return 1; } return 0; }\nfn hi(v: u128): i64 { return load64(&v + 8); }                                    # (1)\nfn main(): i64 {\n    alloc_init();\n    var e = 0;\n    if (big(0) != 0) { e = e | 1; }           # 0 > 2^64 - 1 is false\n    if (bigl() != 0) { e = e | 2; }           # control: a local is right since 6.7.6\n    var b: u128 = 5;\n    store64(&b + 8, 7);\n    if (hi(b) == 7) { e = e | 4; }            # documented: the parameter holds the low word only\n    var c: u128 = 5;\n    var f = |q| { if (c == 5) { return 1; } return 0; };                          # (4)\n    var g = |q| { return c + 0; };                                                # (4)\n    if (callptr(f, 0) != 1) { e = e | 8; }\n    if (callptr(g, 0) != 5) { e = e | 16; }\n    return e;\n}\nsyscall(60, main());\n' "$UP" 2
+refused u128_ret      'fn mk(): u128 { var b: u128 = 5; return b; }\nsyscall(60, 0);\n' "$UR"
+refused u128_field    'struct S { n; w: u128; }\nsyscall(60, 0);\n' "$UF"
+refused u128_ufield   'union U { n; w: u128; }\nsyscall(60, 0);\n' "$UF"
+refused u128_param    'fn big(v: u128): i64 { if (v > 0xFFFFFFFFFFFFFFFF) { return 1; } return 0; }\nsyscall(60, big(0));\n' "$UP"
+refused u128_param_df 'fn g(a: u128, b = 7): i64 { return b; }\nsyscall(60, g(5));\n' "$UP"
+refused u128_trait    'struct P { x; }\ntrait T { fn m(self, v: u128): i64; }\nimpl T for P { fn m(self, v): i64 { return 1; } }\nsyscall(60, 0);\n' "$UP"
+refused u128_generic  'fn g<T>(a: T, v: u128): i64 { return 1; }\nfn f(): i64 { var x: i32 = 1; return g(x, 2) + g<f64>(1.0, 3) + g(5, 3); }\nsyscall(60, f());\n' "$UP"
+refused u128_tr_dflt  'struct P { x; }\nstruct Q { y; }\ntrait T { fn m(self, v: u128): i64 { return 1; } }\nimpl T for P { }\nimpl T for Q { }\nsyscall(60, 0);\n' "$UP"
+refused u128_inline   '#inline\nfn g(v: u128): i64 { return 1; }\nfn f(): i64 { return g(2) + g(3); }\nsyscall(60, f());\n' "$UP"
+# ANTI-VACUOUS: `*u128` (behind a `*`) and a `*fn( .. )`'s own u128 are read as before; a trait member's
+# `: u128` return type is not a parameter (no decision covers it) and still compiles; a u128 local is untouched.
+runs u128_ptr_param   'fn lo(v: *u128): i64 { return load64(v); }\nfn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); return lo(&b); }\nsyscall(60, f());\n' 5
+runs u128_fnptr_inner 'include "lib/fnptr.cyr"\nfn k(x): i64 { return 3; }\nfn ap(cb: *fn(u128): i64): i64 { return fncall1(cb, 0); }\nsyscall(60, ap(&k));\n' 3
+runs u128_trait_ret   'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' 4
+runs u128_local       'fn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); if (b > 0xFFFFFFFFFFFFFFFF) { return 9; } return 1; }\nsyscall(60, f());\n' 9
+# --syntax-only (what `cyrius lint` runs) refuses them too: the return / field forms were its syntax error.
+for sx in u128_ret u128_field u128_param; do
+    rows=$((rows + 1))
+    rc=0; "$CC" --syntax-only < "$T/$sx.cyr" > /dev/null 2> "$T/$sx.sx" || rc=$?
+    check "$sx: --syntax-only exits 1" 1 "$rc"
+    check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
+done
 
 if [ "$rows" -lt 107 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 107)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi

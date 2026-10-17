@@ -239,6 +239,8 @@ Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i
 **A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
 plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
 `*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
+A bare `u128` (no `*`) is refused by name as a parameter since 6.7.14 (see [`u128`
+arithmetic](#operators)); `*u128` and a `*fn( .. )`'s own `u128` are read as before.
 `**T` is a pointer whose step is a pointer's 8, as a `**T` local's is, and `*p` of it is a `*T` (6.7.13, see
 [Pointers](#pointers)); `*fn( .. )` is one word, its
 names are checked, and a call does not check the fn it is given against them. Anything else is refused
@@ -912,7 +914,15 @@ zero-extended (`case -1:` is 2^64 - 1) and a `u128` arm as it is; the subject is
 any arm is tested. A `match n` on an INTEGER subject compares a `u128` arm on all 128 bits too,
 the subject zero-extended, as `n == b` does: `match 0 { b => .. }` does not take the arm for `b`
 2^64. A `u128` read where an integer is expected — an argument, `var n = b`,
-`return b` — is its low word, as it always was. A `u128` parameter is an 8-byte slot (the low word).
+`return b` — is its low word, as it always was. A `u128` captured by a closure is its value, as the
+local is (6.7.14; the capture read was the ADDRESS of its env copy, so `c == 5` and `c + 0` were
+wrong). A `u128` is not yet a parameter, return or field type: `fn f(v: u128)`, `fn f(): u128` and
+`struct S { w: u128; }` are each one error by name (6.7.14, the user's decision D10 (a), 2026-10-16),
+`` `u128` is not supported as a parameter type yet - pass `*u128` `` (`... as a fn return type yet`,
+`... as a field type yet`); pass `*u128` (or the two halves as i64s). Through 6.7.13 a `u128`
+parameter compiled as an 8-byte slot holding the low word that compared as a SIGNED 64-bit integer
+(`v > 0xFFFFFFFFFFFFFFFF` was true for 0) and whose `&v + 8` was the next frame slot; a return or
+field type was `expected identifier, got reserved keyword 'u128'`.
 Before 6.7.6 neither spelling carried (both worked on the low word and left the high word alone),
 the other operators did the same silently, a comparison read the low words as SIGNED integers, a
 truth test and a `match` / `switch` subject (and a `u128` arm of an integer `match`) read the low

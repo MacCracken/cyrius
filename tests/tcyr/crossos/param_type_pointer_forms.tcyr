@@ -41,7 +41,7 @@ fn pf_bare(cb: *fn, x): i64 { return fncall1(cb, x); }
 fn pf_gap<T>(cb: *fn(T): T, x: T): T { return fncall1(cb, x); }
 fn pf_fnp(cb: *fn(*fn(i64): i64, i64): i64): i64 { return fncall2(cb, &pf_inc, 5); }
 # --- the forms that compiled before, unchanged --------------------------------------------------
-fn pf_wide(a: u128, b: (i64, i64)): i64 { return b.1; }
+fn pf_wide(a: *u128, b: (i64, i64)): i64 { return b.1; }   # 6.7.14 (D10 (a)): a bare u128 parameter is refused
 fn pf_ptr(p: *Pf): i64 { return p.y; }
 
 fn pf_rows(): i64 {
@@ -84,7 +84,7 @@ fn pf_rows(): i64 {
     assert_eq(pf_fnp(&pf_ap), 6, "*fn(*fn(i64): i64, i64): i64");
     var t: (i64, i64) = (5, 6);
     var w: u128 = 0;
-    assert_eq(pf_wide(w, t), 6, "u128 and a tuple (unchanged)");
+    assert_eq(pf_wide(&w, t), 6, "*u128 and a tuple (unchanged)");
     assert_eq(pf_ptr(&s), 4, "*Pf (unchanged)");
     return 0;
 }

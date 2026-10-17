@@ -8595,11 +8595,11 @@ fn _trs_type(S, i, q, tail, nm): i64 {
         return i;
     }
     var t = TOKTYP(S, i);
-    if (t == 105) { return i + 1; }   # u128
-    if (t == 10) { return _trs_list(S, i + 1, q, tail, nm); }   # a tuple
+    if (t == 105) { return _trs_u128(S, i, st, nm); }   # u128 (6.7.14: not a parameter / return type yet)
+    if (t == 10) { return _trs_inner(S, i + 1, q, tail, nm); }   # a tuple
     if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
             if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
-            i = _trs_list(S, i + 2, q, tail, nm);
+            i = _trs_inner(S, i + 2, q, tail, nm);
             if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, tail, nm); } }
             return i;
         } }
@@ -8618,6 +8618,24 @@ fn _trs_type(S, i, q, tail, nm): i64 {
         if (d <= 0) { return i; }
     }
     return _trs_err(S, i, 20);
+}
+# 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
+# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. A member's `: u128` return type is not a
+# parameter and compiled (no decision covers it): it reads on.
+var _trs_lvl = 0;
+fn _trs_u128(S, i, st, nm): i64 {
+    if (nm < 0) { return i + 1; }
+    if (st == 0) { if (_trs_lvl == 0) {
+            _u128_refuse(S, i, "a parameter type yet - pass `*u128`");
+            _trs_bad = 1;
+        } }
+    return i + 1;
+}
+fn _trs_inner(S, i, q, tail, nm): i64 {
+    _trs_lvl = _trs_lvl + 1;
+    var r = _trs_list(S, i, q, tail, nm);
+    _trs_lvl = _trs_lvl - 1;
+    return r;
 }
 # The types of a `( .. )` from token `i` (just past its `(`), comma-separated: the token after `)`.
 fn _trs_list(S, i, q, tail, nm): i64 {
@@ -12038,7 +12056,7 @@ fn _pty_end(S, i, loud, inner): i64 {
         return _pty_slice(S, i, own, inner);
     }
     var t = TOKTYP(S, i);
-    if (t == 105) { return i + 1; }   # u128
+    if (t == 105) { return _pty_u128(S, i, loud, inner, n); }   # u128 (6.7.14: not a parameter type yet)
     if (t == 10) { return _pty_tuple(S, i, own, loud); }
     if (t == 32) { return _pty_fn(S, i, loud, n); }
     if (t == 2) {
@@ -12047,6 +12065,38 @@ fn _pty_end(S, i, loud, inner): i64 {
     }
     _pty_err(S, i, loud);
     return _pty_skip(S, i);
+}
+# ⛔ 6.7.14 — A `u128` PARAMETER IS REFUSED BY NAME UNTIL u128 IS CARRIED AS A 16-BYTE VALUE (the user's decision
+# D10 (a), 2026-10-16; 6.7.6's D2 rule: a u128 shape not carried is refused by name). `fn big(v: u128)` got one 8-byte
+# slot holding the caller's low word and no u128 mark, so `v > 0xFFFFFFFFFFFFFFFF` was a SIGNED 64-bit compare (`big(0)`
+# was 1) and `load64(&v + 8)` read the next frame slot. A `*u128` (`n` > 0) and a `*fn(u128)` type's own list (`inner`)
+# are unchanged. The token after the type, as before (pass 1 and the default reader agree: `_pty_bad`).
+# CHANGELOG [6.7.14]
+fn _pty_u128(S, i, loud, inner, n): i64 {
+    if (n == 0) { if (inner == 0) {
+            var b = _pty_bad;
+            _pty_bad = 1;
+            if (loud == 1) { if (b == 0) { _u128_refuse(S, i, "a parameter type yet - pass `*u128`"); } }
+        } }
+    return i + 1;
+}
+# "`u128` is not supported as <what>" at token `ti`, once per token (a generic's instances and an #inline replay
+# re-read a signature); --syntax-only too (the return / field shapes were the syntax error "expected identifier, got
+# reserved keyword 'u128'"). Not a panic: the declaration reads on.
+fn _u128_refuse(S, ti, what): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": `u128` is not supported as ");
+    PRSTR(what);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 # Past a refused token `i`, to the parameter's (or the list element's) end: the next `,` / `)` /
 # `=` at its depth, so `a: -1` / `a: 5 + 3` report once. A token that ends a parameter, and a
@@ -12197,6 +12247,11 @@ fn _ret_ann_alt(S, fi): i64 {
         _sl_err(S, GTI(S), "a slice cannot be a return type (6.7.8: slices are fn-locals)",
           " - fill a slice the caller passes as &s (slice_set), or return the pointer and the length");
         _sl_ann_skip(S);
+        return 1;
+    }
+    if (PEEKT(S) == 105) {   # 6.7.14: `: u128` refused by name (it was "expected identifier, got reserved keyword")
+        _u128_refuse(S, GTI(S), "a fn return type yet");
+        STI(S, GTI(S) + 1);
         return 1;
     }
     if (PEEKT(S) != 8) { return 0; }
