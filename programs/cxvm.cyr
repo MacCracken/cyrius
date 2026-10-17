@@ -8,13 +8,18 @@
 # Memory: 8 MiB data segment (_CX_MEM_SIZE; 1 MB until 6.7.12)
 #
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
-#   passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the guest's raw
-#   arguments, so running an untrusted .cyx == running a native binary with cxvm's privileges.
+#   translates read/write/open (0/1/2), serves getrandom/clock_gettime (318/228) through the
+#   host's stdlib and brk (12) in guest space (6.7.14), and passes a short list of SCALAR-ONLY
+#   calls (close, lseek, exit, getpid, kill, fsync … — _cx_sys_scalar) to the host kernel as
+#   they are, so running an untrusted .cyx == running a native binary with cxvm's privileges
+#   over those calls. Every other number answers
+#   -ENOSYS (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
 #   width, the translated syscall buffers likewise (-EFAULT, as Linux answers), the data and
-#   call stacks trap on overflow/underflow, the guest stack traps before it reaches the loaded
-#   image, a negative pc traps, and an unknown opcode traps —
+#   call stacks trap on overflow/underflow, the guest stack traps before it reaches the guest
+#   break (the loaded image and the brk heap above it — brk is served in guest space since
+#   6.7.14), a negative pc traps, and an unknown opcode traps —
 #   each with a `cxvm: ...` line on stderr and exit 1. docs/platform-status.md "cyrius-x guest
 #   contract" is the full statement.
 #
@@ -174,11 +179,21 @@ fn cx_reg_set(r, v): i64 { store64(_cx_regs + r * 8, v); return 0; }
 # 1. `pc` is the byte offset of the faulting instruction in the bytecode (after the 8-byte
 # header), i.e. the same numbering `_cx_pc` and the backend's code offsets use.
 var _cx_fault_pc = 0;   # pc of the instruction being executed (set by cx_run's decode)
-# End of the loaded image (code + var data + strings, copied to guest [0, _cx_image_len)). The
-# guest stack grows down from _CX_MEM_SIZE and may not cross it: a frame that would reach the
-# image traps as a guest stack overflow rather than overwriting the program's globals and its
-# heap (lib/alloc_cx.cyr's heap is a static buffer inside the var data). Set before cx_run.
+# End of the loaded image (code + var data + strings, copied to guest [0, _cx_image_len)). Set
+# before cx_run.
 var _cx_image_len = 0;
+
+# The guest's program break (6.7.14): brk (12) is served HERE, in guest space, never forwarded.
+# The heap lib/alloc_cx.cyr bumps lives in [_cx_brk_start, _cx_brk) — the free guest memory between
+# the image and the stack — instead of a 128 KB static buffer written into every allocating .cyx.
+# The break starts at the image end rounded up to 16, and the guest stack (growing down from
+# _CX_MEM_SIZE) may not cross it: a frame that would reach it traps as a guest stack overflow
+# rather than overwriting the heap and the program's globals below it. CHANGELOG [6.7.14]
+var _cx_brk_start = 0;
+var _cx_brk = 0;
+# brk grows the break only while it stays this far below the live guest sp, so a program keeps
+# 1 MiB of stack below the frame that asked (the guest stack is otherwise only bounded by the break).
+var _CX_STACK_RESERVE = 1048576;
 
 fn _cx_put(s, n): i64 { syscall(1, 2, s, n); return 0; }
 fn _cx_put_dec(v): i64 {
@@ -258,6 +273,57 @@ fn _cx_syspath(a, out): i64 {
     return 0 - 14;
 }
 
+# brk(addr) for the guest, with Linux's contract: answer the break, moved to `addr` when the move is
+# allowed and left where it was when not. 0 (or anything below the first break) only asks. The
+# break may move down to its start, and up only while `addr` stays _CX_STACK_RESERVE below the live
+# guest sp AND below the segment's top: sp (r254) is a register the guest can set past _CX_MEM_SIZE
+# (mov / add / movhi), and the zeroing below writes through _cx_mem unchecked — bounded by sp alone,
+# a raised sp had cxvm zero its own host heap past the segment. Memory a growth hands out reads
+# zero, as Linux's does — the guest stack may have used it earlier. CHANGELOG [6.7.14]
+fn _cx_guest_brk(addr): i64 {
+    if (addr < _cx_brk_start) { return _cx_brk; }
+    if (addr > cx_reg_get(254) - _CX_STACK_RESERVE) { return _cx_brk; }
+    if (addr > _CX_MEM_SIZE - _CX_STACK_RESERVE) { return _cx_brk; }
+    var z = _cx_brk;
+    while (z < addr && (z & 7) != 0) { store8(_cx_mem + z, 0); z = z + 1; }
+    while (z + 8 <= addr) { store64(_cx_mem + z, 0); z = z + 8; }
+    while (z < addr) { store8(_cx_mem + z, 0); z = z + 1; }
+    _cx_brk = addr;
+    return _cx_brk;
+}
+
+# The guest syscalls cxvm hands to the host kernel as they are: every argument and the result are
+# scalars (fds, pids, ids, flags, lengths), so no guest address reaches the host and no host address
+# comes back. Keyed on the guest's x86-Linux number, before the per-host renumbering; `a1` is the
+# second argument (fcntl's command). Every number that is neither here nor translated / served in
+# op 0x70 answers -ENOSYS (-38) without reaching the host — 6.7.14's D55 (the user, 2026-10-16).
+# Until then every other number went to the host raw, and since the guest grew to 8 MiB (6.7.12)
+# a guest address could be cxvm's own image on a Linux host: `munmap(0x400000, …)` unmapped cxvm's
+# code, `fstat(1, 0x600100)` wrote a struct stat over its globals. The list is every scalar-only
+# call a run of the cx corpus issues (every cx gate, and tests/tcyr/crossos compiled for cx), plus
+# dup; fcntl passes only for its scalar commands (F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL,
+# F_DUPFD_CLOEXEC — the lock commands take a struct pointer). Add a call only if no argument is a
+# pointer. CHANGELOG [6.7.14]
+fn _cx_sys_scalar(sn, a1): i64 {
+    if (sn == 231 || sn == 57) { return 1; }      # exit_group(code), fork()
+    if (sn == 32 || sn == 33) { return 1; }       # dup(fd), dup2(fd, fd2)
+    if (sn == 39 || sn == 110) { return 1; }      # getpid(), getppid()
+    if (sn == 62 || sn == 24) { return 1; }       # kill(pid, sig), sched_yield()
+    if (sn == 74 || sn == 75) { return 1; }       # fsync(fd), fdatasync(fd)
+    if (sn == 73 || sn == 77) { return 1; }       # flock(fd, op), ftruncate(fd, len)
+    if (sn == 91 || sn == 93) { return 1; }       # fchmod(fd, mode), fchown(fd, uid, gid)
+    if (sn == 102 || sn == 104) { return 1; }     # getuid(), getgid()
+    if (sn == 107 || sn == 108) { return 1; }     # geteuid(), getegid()
+    if (sn == 41 || sn == 50) { return 1; }       # socket(dom, type, proto), listen(fd, backlog)
+    if (sn == 272) { return 1; }                  # unshare(flags)
+    if (sn == 283 || sn == 291) { return 1; }     # timerfd_create(clk, flags), epoll_create1(flags)
+    if (sn == 72) {                               # fcntl(fd, cmd, arg): the scalar commands only
+        if (a1 >= 0 && a1 <= 4) { return 1; }
+        if (a1 == 1030) { return 1; }
+    }
+    return 0;
+}
+
 # Data stack (push/pop for expression temps)
 fn cx_push(v): i64 {
     if (_cx_dsp >= _CX_STACK_ENTRIES) { _cx_fault("data stack overflow, depth", 26, _cx_dsp); }
@@ -322,7 +388,8 @@ fn cx_run(code, code_len): i64 {
             # `sub sp, sp, n` is how a frame is reserved (backend/cx/emit.cyr ESUBRSP, the only
             # emitter that grows r254). CHANGELOG [6.6.12]
             if (ra == 254) {
-                if (cx_reg_get(254) < _cx_image_len) { _cx_fault("guest stack overflow, sp", 24, cx_reg_get(254)); }
+                # The limit is the current break: the image and the brk heap above it. CHANGELOG [6.7.14]
+                if (cx_reg_get(254) < _cx_brk) { _cx_fault("guest stack overflow, sp", 24, cx_reg_get(254)); }
             }
         }
         elif (op == 18) { cx_reg_set(ra, cx_reg_get(rb) * cx_reg_get(rc)); }
@@ -509,19 +576,23 @@ fn cx_run(code, code_len): i64 {
             # so on Windows every guest write/read/open/close/exit returned -ENOSYS
             # and did nothing (cass exit=-38, no output). Linux/macOS ignore extra
             # args, so exact-arity is equally correct there — one dispatch, 4 hosts.
-            # The `else` passes 5 args (argc 6): fine on Linux/macOS (extra ignored),
+            # The scalar pass-through passes 5 args (argc 6): fine on Linux/macOS (extra ignored),
             # honest -ENOSYS on PE (the compile-time warning is expected). 6-arg
             # syscalls (mmap) aren't supported — cxvm captures only r2..r6.
             # CHANGELOG [6.4.20].
             # getrandom and clock_gettime are served by the host's stdlib (see
             # _cx_host_getrandom / _cx_host_clock_gettime) — the host's raw syscall does
             # not keep the guest's Linux contract on every host (v6.6.8).
+            # Only the scalar-only calls (_cx_sys_scalar) reach the host as they are; every other
+            # number answers -ENOSYS without reaching it (6.7.14, D55). CHANGELOG [6.7.14]
             if (sfault != 0) { result = sfault; }
             elif (sn == 318) { result = _cx_host_getrandom(s2, s3, s4); }
             elif (sn == 0 || sn == 1 || sn == 2 || sn == 8) { result = syscall(sn, s2, s3, s4); }
             elif (sn == 228) { result = _cx_host_clock_gettime(s2, s3); }
             elif (sn == 3 || sn == 60) { result = syscall(sn, s2); }
-            else { result = syscall(sn, s2, s3, s4, s5, s6); }
+            elif (sn == 12) { result = _cx_guest_brk(s2); }   # brk, in guest space (6.7.14)
+            elif (_cx_sys_scalar(sn, s3) == 1) { result = syscall(sn, s2, s3, s4, s5, s6); }
+            else { result = 0 - 38; }
             cx_reg_set(0, result);
         }
 
@@ -621,6 +692,8 @@ var bytecode_and_data = _cx_code_len - 8;
 var copy_len = bytecode_and_data;
 if (copy_len > _CX_MEM_SIZE) { copy_len = _CX_MEM_SIZE; }
 _cx_image_len = copy_len;
+_cx_brk_start = (copy_len + 15) & (0 - 16);
+_cx_brk = _cx_brk_start;
 var ci = 0;
 while (ci < copy_len) {
     store8(_cx_mem + ci, load8(_cx_code + 8 + ci));

@@ -8,6 +8,10 @@
 # the alert recorded for the driver to send. Row R is the filed repro verbatim (exit 0 = refused).
 # In-memory, no socket. On the lib before the fix: 12 of 14 rows fail (R, U1-U3, F1, D1 — TLS_OK,
 # no alert); C1 is the control.
+# 6.7.14 (issues/2026-10-15-tls-native-hello-conformance-residue.md items 1-2, the ServerHello
+# half): T1/T2 bytes after the extension block (the handshake length grown, the block's not —
+# `pos + ext_total > blen` let them through; `!=` now, decode_error) and P1 supported_versions
+# twice in the block (_tn_find_ext took the first; illegal_parameter) — all three TLS_OK before.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -76,6 +80,34 @@ fn _sh_claim(et, el, claim): i64 {
 }
 fn _sh_with(et, el): i64 { return _sh_claim(et, el, el); }
 
+# A fresh client + server; the server's ServerHello with `hex` appended: inside the extension block
+# (`in_block` 1: the block's length and the handshake length grown) or after it (`in_block` 0: the
+# handshake length alone). Parses it on the client; returns the result, the client in G_CL.
+fn _sh_append(hex, in_block): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    G_CL = cl;
+    var ch[512];
+    var chn = tls_native_client_build_hello(cl, &ch, 512);
+    var srv = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+    tls_native_server_load_creds(srv);
+    var sh[512];
+    var shn = tls_native_server_respond_hello(srv, &ch, chn, &sh, 256);
+    if (shn <= 0) { return 0 - 999; }
+    var p = &sh;
+    var al = strlen(hex) / 2;
+    memcpy(p + shn, hex_decode(hex, strlen(hex)), al);
+    var n = shn + al;
+    var blen = n - 4;
+    store8(p + 1, (blen >> 16) & 0xFF); store8(p + 2, (blen >> 8) & 0xFF); store8(p + 3, blen & 0xFF);
+    if (in_block == 1) {
+        var eo = 4 + 2 + 32 + 1 + (load8(p + 4 + 34) & 0xFF) + 2 + 1;
+        var t = ((load8(p + eo) & 0xFF) << 8) | (load8(p + eo + 1) & 0xFF);
+        t = t + al;
+        store8(p + eo, (t >> 8) & 0xFF); store8(p + eo + 1, t & 0xFF);
+    }
+    return tls_native_client_parse_server_hello(cl, &sh, n);
+}
+
 fn main(): i64 {
     alloc_init();
     test_group("R: the filed repro — a ServerHello with an unoffered extension is refused");
@@ -105,6 +137,16 @@ fn main(): i64 {
     assert_eq(_sh_claim(0x1234, 0, 10), TLS_ERR_BAD_HANDSHAKE,
       "D1: a last extension claiming 10 bytes past the block refused");
     assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_DECODE_ERROR, "D1: decode_error");
+
+    test_group("6.7.14: the block fills the message; one extension of a type");
+    assert_eq(_sh_append("0000", 0), TLS_ERR_BAD_HANDSHAKE, "T1: two bytes after the extension block refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_DECODE_ERROR, "T1: decode_error");
+    assert_eq(_sh_append("00", 0), TLS_ERR_BAD_HANDSHAKE, "T2: one byte after the extension block refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_DECODE_ERROR, "T2: decode_error");
+    assert_eq(_sh_append("002b00020304", 1), TLS_ERR_HANDSHAKE_FAILED,
+      "P1: supported_versions (0x0304) twice in the block refused");
+    assert_eq(load64(G_CL + TLS_CTX_OFF_HS_ALERT), TLS_AD_ILLEGAL_PARAMETER, "P1: illegal_parameter");
+    assert_eq(_sh_append("", 1), TLS_OK, "P0: the splice appending nothing -> TLS_OK (the control)");
 
     var rc = assert_summary();
     return rc;

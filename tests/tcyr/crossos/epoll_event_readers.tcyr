@@ -9,6 +9,12 @@
 # both macOS peers); on Linux a real epoll_wait over two ready pipes read at EPOLL_EVENT_SIZE
 # stride, and the reactor waking BOTH waiters from ONE wait. Windows and agnos have no epoll
 # layer (their async reactors are IOCP and the agnos adapter). CHANGELOG [6.7.12]
+# 6.7.14: the WRITER for a caller-owned buffer, epoll_event_set (issues/2026-10-15-epoll-event-writer-for-
+# caller-buffers.md): epoll_event_new allocates, so lib/async.cyr's three registrations from a stack buffer
+# hand-gated data @4 / @8 per arch. Rows: an epoll_event_set round trip on a stack buffer in each peer (the
+# bytes epoll_event_new writes, and the buffer returned), and on Linux a stack registration the kernel reads
+# back through epoll_wait. lib/async.cyr's registrations call it now; the reactor rows below run them.
+# CHANGELOG [6.7.14]
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -65,6 +71,26 @@ fn main(): i64 {
     assert_eq(EPOLL_EVENT_SIZE, 12, "EPOLL_EVENT_SIZE is 12 on x86_64 (EPOLL_PACKED: data @4)");
     assert_eq(load64(ev + 4), 0x1122334455667788, "the data is at +4, where the x86_64 kernel reads it");
     #endif
+
+    test_group("epoll_event_set fills a caller-owned (stack) buffer in the peer's layout");
+    var sev[16];
+    memset(&sev, 0, 16);
+    assert_eq(epoll_event_set(&sev, EPOLLIN | EPOLLOUT, 0x1122334455667788), &sev,
+      "epoll_event_set returns the buffer");
+    assert_eq(epoll_event_events(&sev), EPOLLIN | EPOLLOUT, "epoll_event_events reads the mask back");
+    assert_eq(epoll_event_data(&sev), 0x1122334455667788, "epoll_event_data reads all 64 data bits back");
+    assert_eq(load32(&sev), load32(ev), "  the mask word epoll_event_new writes");
+    #ifdef CYRIUS_ARCH_AARCH64
+    assert_eq(load64(&sev + 8), 0x1122334455667788, "the data is at +8 on aarch64, as epoll_event_new puts it");
+    #endif
+    #ifndef CYRIUS_ARCH_AARCH64
+    assert_eq(load64(&sev + 4), 0x1122334455667788, "the data is at +4 on x86_64, as epoll_event_new puts it");
+    #endif
+    var sev2[16];
+    epoll_event_set(&sev2, EPOLLOUT, 0 - 2);
+    assert_eq(epoll_event_events(&sev2), EPOLLOUT, "a second buffer: its own mask");
+    assert_eq(epoll_event_data(&sev2), 0 - 2, "  and its own data (a negative fd-sized word, all 64 bits)");
+    assert_eq(epoll_event_data(&sev), 0x1122334455667788, "  the first buffer is untouched");
     #endif
     #endif
 
@@ -87,6 +113,23 @@ fn main(): i64 {
     assert_eq(d0 * d1, 24642, "  …each exactly once");
     assert_eq(epoll_event_events(&buf + EPOLL_EVENT_SIZE) & EPOLLIN, EPOLLIN, "the second event's mask has EPOLLIN");
     syscall(SYS_CLOSE, ep);
+
+    test_group("a stack registration filled by epoll_event_set is the one the kernel reports");
+    var sp[8];                                         # two i32 fds (8 bytes)
+    assert_eq(sys_pipe(&sp), 0, "pipe S");
+    var ep2 = syscall(SYS_EPOLL_CREATE1, 0);
+    assert(ep2 >= 0, "epoll_create1");
+    var reg[16];
+    assert_eq(syscall(SYS_EPOLL_CTL, ep2, 1, load32(&sp), epoll_event_set(&reg, EPOLLIN, 0x5151515151)), 0,
+      "EPOLL_CTL_ADD from a stack buffer, data 0x5151515151");
+    sys_write(load32(&sp + 4), "s", 1);
+    var buf2[64];
+    assert_eq(sys_epoll_wait(ep2, &buf2, 4, 1000), 1, "the pipe is reported");
+    assert_eq(epoll_event_data(&buf2), 0x5151515151, "  with the data the stack buffer registered (all 40 bits)");
+    assert_eq(epoll_event_events(&buf2) & EPOLLIN, EPOLLIN, "  and EPOLLIN");
+    syscall(SYS_CLOSE, ep2);
+    syscall(SYS_CLOSE, load32(&sp));
+    syscall(SYS_CLOSE, load32(&sp + 4));
 
     test_group("the async reactor wakes every waiter one wait reports (x86_64: the 16-byte stride)");
     var rt = async_new();

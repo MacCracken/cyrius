@@ -17,9 +17,19 @@
 #          tls_native_connect over a socketpair, the server's records pre-written (the entropy hook
 #          makes the client's ClientHello the one the server answered). Linux / macOS; a named
 #          SKIP where socketpair is refused.
+# 6.7.14 (issues/2026-10-15-tls-native-hello-conformance-residue.md items 1-3, the EE half — the
+# filed probe's four EE lines verbatim):
+#   E5/E6  an extension type twice in the block (adjacent: the filed supported_groups twice; and
+#          apart) — _tn_find_ext took the first; now illegal_parameter (E7: two distinct types pass).
+#   M3     one byte after the extension block: `ee_ext_total + 2 > ml` let it through; `!=` now
+#          (decode_error).
+#   A4/A5  an ALPN body naming two protocols (the first was selected) and one whose name runs past
+#          the list (nothing selected, TLS_OK): the server's answer must be exactly one non-empty
+#          name filling the extension (RFC 7301 §3.1, decode_error), nothing stored; A6 an empty
+#          name and A7 a list shorter than the extension the same.
 # Each row builds a fresh client + server and hands the client a flight sealed in memory, with the
 # EncryptedExtensions replaced and the CertificateVerify edited as the row needs. On the lib before
-# the fix: E1 E2 A2 A3 M1 M2 V1 V2 W1 fail.
+# the 6.7.12 fix: E1 E2 A2 A3 M1 M2 V1 V2 W1 fail; before the 6.7.14 fix: E5 E6 M3 A4 A5 A6 A7.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -233,6 +243,20 @@ fn main(): i64 {
     assert_eq(_row(ee, _ee_raw("000812340000", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
       "M2: an extensions length past the body refused");
     assert_eq(_alert(), TLS_AD_DECODE_ERROR, "M2: decode_error");
+    assert_eq(_row(ee, _ee_raw("0000ff", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "M3: one byte after the extension block refused (6.7.14)");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "M3: decode_error");
+
+    test_group("EncryptedExtensions: one extension of a type (RFC 8446 §4.2), 6.7.14");
+    assert_eq(_row(ee, _ee("000a00040002001d000a00040002001d", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
+      "E5: supported_groups twice, adjacent, refused");
+    assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "E5: illegal_parameter");
+    assert_eq(_row(ee, _ee("000a00040002001d00000000000a00040002001d", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
+      "E6: supported_groups twice, server_name between, refused");
+    assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "E6: illegal_parameter");
+    assert_eq(_row(ee, _ee("000a00040002001d00000000", ee), 0, 0), TLS_OK,
+      "E7: supported_groups and server_name, each once -> TLS_OK");
+    assert_eq(_alert(), 0, "E7: no alert recorded");
 
     test_group("ALPN: the selected protocol must be one we offered (RFC 7301 §3.2)");
     G_ALPN = 1;
@@ -247,6 +271,23 @@ fn main(): i64 {
     assert_eq(_row(ee, _ee("001000050003026832", ee), 0, 0), TLS_ERR_HANDSHAKE_FAILED,
       "A3: ALPN when the client offered none refused");
     assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "A3: unsupported_extension");
+
+    test_group("ALPN: the answer is exactly one non-empty name (RFC 7301 §3.1), 6.7.14");
+    G_ALPN = 1;
+    assert_eq(_row(ee, _ee("0010000700050268320268", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "A4: a body naming two protocols (h2, h?) refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A4: decode_error");
+    assert_eq(tls_native_get_alpn_selected(G_CL, sel, 16), 0, "A4: nothing selected (6.7.13 selected h2)");
+    assert_eq(_row(ee, _ee("00100004000268ff", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "A5: a malformed body (list 2, name length 0x68) refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A5: decode_error");
+    assert_eq(tls_native_get_alpn_selected(G_CL, sel, 16), 0, "A5: nothing selected");
+    assert_eq(_row(ee, _ee("00100003000100", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE, "A6: an empty name refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A6: decode_error");
+    assert_eq(_row(ee, _ee("001000060003026832ff", ee), 0, 0), TLS_ERR_BAD_HANDSHAKE,
+      "A7: a byte after the name list, inside the extension, refused");
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A7: decode_error");
+    G_ALPN = 0;
 
     test_group("CertificateVerify: the scheme's curve, the exact length");
     assert_eq(_row(ee, _ee("", ee), 0, 0), TLS_OK, "V0: the server's own CertificateVerify -> TLS_OK");

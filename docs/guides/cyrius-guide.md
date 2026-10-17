@@ -4975,7 +4975,16 @@ The bundle carries the same leaves, in the same order, as a compile-verified **r
 older bundle says `the committed bundle predates cyrius 6.6.18's requires block — run cyrius
 distlib --all`. A name the converged verify could attribute to no leaf, named dep or bundled module
 is printed as a warning with the targets it fails on (a deliberate consumer hook shows up there).
-A non-symbol failure on agnos alone is a warning too. A consumer whose build fails on a leaf it
+A non-symbol failure on agnos alone is a warning too.
+**Both checks read the stdlib the manifest pins** (6.7.14): the sidecar verify and the bundle
+self-check compile with `lib/` read first from a copy of `versions/<pin>/lib` in
+`dist/.dlverify-<pid>/` (the compiler's lib/ overlay), minus the files the project's own `./lib`
+holds — a leaf the project vendors still resolves from `./lib`, as in its own build — and with an
+overlay the run already set (`--locked` with no vendored `lib/`) laid over it. Until 6.7.14 a leaf
+`./lib` lacked resolved from the CLI's OWN version slot (`versions/<cycc's version>/lib`), so under
+`CYRIUS_RESOLVED=1` (no re-exec into the pinned CLI) a bundle was verified against a stdlib it does
+not pin, and with only the pinned slot installed the self-check failed `cannot open include file:
+lib/vec.cyr`. A consumer whose build fails on a leaf it
 never declared gets the remedy under the error — `hint: '<name>' is defined by stdlib leaf
 '<leaf>' — add it to [deps] stdlib in cyrius.cyml`; see
 [ecosystem-migration.md](../development/ecosystem-migration.md) § 6.6.18.
@@ -5337,8 +5346,9 @@ the dir. `cyrius capacity` (its `cap_err` capture and the compiler it
 forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt_err` / `wt_out` /
 `ls_remote` captures and the git they run) are
 stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running),
-and a distlib verify's copy of the pinned stdlib in the project, `dist/.dlverify-<pid>/` (with the
-round's `entry.cyr`), is removed too (6.7.13; before, a kill left the ~114-file mirror there).
+and a distlib verify's (since 6.7.14 also the bundle self-check's) copy of the pinned stdlib in the
+project, `dist/.dlverify-<pid>/` (with the round's `entry.cyr`), is removed too (6.7.13; before, a
+kill left the ~114-file mirror there).
 `cyrius deps`'s own git — the cached checkout's verify (rev-parse, fsck, read-tree, …, with its
 `git_err`, `git_rev_out` and `dep_verify_*` captures and private index) and `git clone` — is sent
 the signal and waited for, so git runs its own cleanup: a killed clone removes its partial

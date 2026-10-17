@@ -3664,16 +3664,27 @@ fn _distlib_vec_has_n(v, n, name): i64 {
 # fold's seven `#define LINUX`, pulled in again through tls_native) overflowed it — hidden while
 # compile()'s status was discarded, loud the moment it was not. So the unit is an entry file of
 # `include "lib/<leaf>.cyr"` lines plus the bundle's text, and include-once admits each file
-# exactly once. cycc resolves an include against the CWD first — the project's ./lib, as in its
-# own build — and only then against the entry's directory (`#@incdir`, lex.cyr READFILE), so the
-# entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's lib/: a leaf the
-# project has not vendored (the one the loop just re-added) resolves there, from the pin.
-# (Under the project, because the absolute-include path bug refuses absolute includes and cycc an absolute `#@incdir`.)
+# exactly once. The entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's
+# lib/ (under the project, because the absolute-include path bug refuses absolute includes and
+# cycc an absolute `#@incdir`), and that copy is the compiler's lib/ overlay (CYRIUS_LIB_OVERLAY,
+# which READFILE tries FIRST) for the verify and for the bundle self-check alike.
+# ⛔ 6.7.14 — WHY THE OVERLAY. cycc resolves `lib/<leaf>.cyr` against the overlay, then the CWD,
+# then ONE store slot — CYRIUS_HOME/versions/<cycc's OWN version>/lib — and only then the entry's
+# directory (`#@incdir`, lex.cyr READFILE). So a leaf the project had not vendored read the CLI's
+# own slot, not the pin: with both slots present the bundle was verified against a stdlib it does
+# not pin, and with only the pinned slot the self-check (which had no mirror at all) failed
+# "cannot open include file". The mirror therefore holds the pinned snapshot MINUS what the
+# project's ./lib holds (so the CWD-first resolution of a vendored leaf is unchanged — a project's
+# lib/sakshi.cyr at another tag is not shadowed by the snapshot's fold copy), and, when this run
+# already set an overlay (a local-mode or --locked resolve), that overlay's files on top, so they
+# still win. CHANGELOG [6.7.14]
 # ⚠ A consequence, stated: a need of a recorded leaf that a named dep's module already brings
 # by its own include (bote-core's leaf bayan uses file_open; libro's bundle includes io) is met
 # in the unit and not recorded — as it is met in every consumer's build, through that dep.
 var _dl_mirror_files = 0;   # vec of cstr: every file the mirror holds (removed by _distlib_mirror_drop)
 var _dl_mirror_dirs = 0;    # vec of cstr: its directories, parents first
+var _dl_ov_set = 0;         # 1 while the mirror is the compiler's lib/ overlay (_distlib_mirror_make)
+var _dl_ov_prev = 0;        # the overlay this run had before (0 = none), restored by the drop
 
 # Copy `src` to `dst` whole. 0, or -1 (read or write failed). `dst` is recorded BEFORE the write
 # creates it, so the kill handler's walk and the drop see every file that can exist (a short
@@ -3703,10 +3714,26 @@ fn _distlib_mirror_mkdir(d): i64 {
     return 0;
 }
 
+# 1 when the mirror leaves `rel` (a path under lib/, e.g. `vec.cyr` or `<family>/x.cyr`) out: the
+# project's own ./lib holds it (the CWD resolves it, as in the project's build), or the overlay
+# `ov` this run already set holds it (copied over the mirror afterwards). CHANGELOG [6.7.14]
+fn _distlib_mirror_skips(rel, ov): i64 {
+    if (file_exists(_distlib_join("lib", rel)) == 1) { return 1; }
+    if (ov != 0) {
+        if (file_exists(_distlib_join(ov, rel)) == 1) { return 1; }
+    }
+    return 0;
+}
+
 # Copy every `.cyr` of directory `from` into `to` (created); one level of subdirectories (the
-# stdlib's family leaves) likewise. 0, or -1.
-fn _distlib_mirror_copy_dir(from, to, depth): i64 {
-    if (_distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
+# stdlib's family leaves) likewise. `rel` is `to`'s path under the mirror's lib/ ("" at the top,
+# "<family>/" below); a file _distlib_mirror_skips names is left out (`ov`: the overlay this run
+# already set, or 0). With `over` 1 the files are laid OVER an existing mirror — a directory that
+# exists is kept, nothing is skipped (the overlay's own copy). 0, or -1.
+fn _distlib_mirror_copy_dir(from, to, depth, rel, ov, over): i64 {
+    var mk = 1;
+    if (over == 1 && is_dir(str_from(to)) == 1) { mk = 0; }
+    if (mk == 1 && _distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
     # 6.6.10: an unlistable snapshot directory fails the mirror (it read as empty, so the
     # verify compiled against a partial stdlib). CHANGELOG [6.6.10]
     var ents = _cbt_list_dir(from, "the sidecar verify cannot mirror it");
@@ -3720,16 +3747,20 @@ fn _distlib_mirror_copy_dir(from, to, depth): i64 {
         var fp = _distlib_join(from, e);
         var tp = _distlib_join(to, e);
         if (el > 4 && memeq(e + el - 4, ".cyr", 4) == 1) {
+            if (over == 0 && _distlib_mirror_skips(_cat2(rel, e), ov) == 1) { continue; }
             if (_distlib_copy_whole(fp, tp) != 0) { return 0 - 1; }
         } elif (depth == 0 && is_dir(str_from(fp)) == 1) {
-            if (_distlib_mirror_copy_dir(fp, tp, 1) != 0) { return 0 - 1; }
+            if (_distlib_mirror_copy_dir(fp, tp, 1, _cat2(e, "/"), ov, over) != 0) { return 0 - 1; }
         }
     }
     return 0;
 }
 
-# Copy snapshot `root` to `dist/.dlverify-<pid>/lib/` (the unit's `#@incdir` fallback). Returns
-# the directory, or 0 after naming the failure.
+# Copy snapshot `root` to `dist/.dlverify-<pid>/lib/` minus what the project's ./lib holds, lay
+# the overlay this run already set (if any) over it, and make that lib/ the compiler's overlay
+# (CYRIUS_LIB_OVERLAY, relative and `..`-free as lex.cyr requires) until _distlib_mirror_drop
+# restores the previous one — see the WHY above. Returns the directory, or 0 after naming the
+# failure.
 fn _distlib_mirror_make(root): i64 {
     _dl_mirror_files = vec_new();
     _dl_mirror_dirs = vec_new();
@@ -3738,22 +3769,41 @@ fn _distlib_mirror_make(root): i64 {
     str_builder_add_int(msb, sys_getpid());
     var m = str_data(str_builder_build(msb));
     if (_distlib_mirror_mkdir(m) != 0) {
-        _err_ctx("distlib: sidecar verify cannot create its scratch directory (a stale one? remove it)", m);
+        var mkm = "distlib: cannot create the pinned-stdlib mirror (a stale one? remove it)";
+        _err_ctx(mkm, m);
         return 0;
     }
     # The kill handler removes the mirror too: a SIGTERM mid-verify left all of it in the project's
     # dist/. The drop clears the slot. CHANGELOG [6.7.13]
     _cbt_sig_tree_set(_dl_mirror_files, _dl_mirror_dirs);
-    if (_distlib_mirror_copy_dir(root, _distlib_join(m, "lib"), 0) != 0) {
-        _err_ctx("distlib: sidecar verify cannot mirror the stdlib snapshot", root);
+    var ml = _distlib_join(m, "lib");
+    var ov = _dep_overlay;
+    if (_distlib_mirror_copy_dir(root, ml, 0, "", ov, 0) != 0) {
+        _err_ctx("distlib: cannot mirror the stdlib snapshot for the sidecar verify / bundle self-check", root);
         _distlib_mirror_drop();
         return 0;
     }
+    if (ov != 0 && is_dir(str_from(ov)) == 1) {
+        if (_distlib_mirror_copy_dir(ov, ml, 0, "", 0, 1) != 0) {
+            _err_ctx("distlib: cannot mirror this run's lib/ overlay for the sidecar verify / bundle self-check", ov);
+            _distlib_mirror_drop();
+            return 0;
+        }
+    }
+    _dl_ov_prev = ov;
+    _dl_ov_set = 1;
+    _dep_overlay_env(ml);
     return m;
 }
 
-# Remove everything _distlib_mirror_make created: files, then directories deepest first.
+# Remove everything _distlib_mirror_make created: files, then directories deepest first; the
+# compiler's lib/ overlay goes back to what this run had before the mirror.
 fn _distlib_mirror_drop(): i64 {
+    if (_dl_ov_set == 1) {
+        _dl_ov_set = 0;
+        _dep_overlay_env(_dl_ov_prev);
+        _dl_ov_prev = 0;
+    }
     if (_dl_mirror_files == 0) { return 0; }
     var i = 0;
     while (i < vec_len(_dl_mirror_files)) { xunlink(vec_get(_dl_mirror_files, i)); i = i + 1; }
@@ -3769,7 +3819,7 @@ fn _distlib_mirror_drop(): i64 {
 # one line per `.cyr` of the family directory `<lib>/<lf>/` in name order. A leaf that is
 # neither (not in the snapshot) adds nothing. Answers the number of include lines added.
 # ⭐ 6.6.18 (D5): THE ONE EXPANDER — the verify
-# unit (lib = its mirror's lib/) and the bundle's requires block (lib = the snapshot) both
+# unit and the bundle's requires block (lib = the snapshot, for both since 6.7.14) both
 # call it, so the block can never drift from what was compile-verified.
 fn _distlib_unit_leaf(esb, lib, lf): i64 {
     var lbase = _distlib_join(lib, lf);
@@ -3809,13 +3859,13 @@ fn _distlib_unit_leaf(esb, lib, lf): i64 {
 # with `cyrius coverage`. It keeps each token and confirms a hash hit byte for byte, and it
 # grows instead of saturating — a saturated set answered PRESENT for every name. CHANGELOG [6.6.10])
 
-# The identifiers that are OURS: the bundle, each recorded leaf in the mirror `m` (flat file or
-# family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
-# dispatcher such as syscalls.cyr brings (its per-arch peer is where `alloc` is used).
-fn _distlib_own_ids(leaves, named_deps, out_path, m): i64 {
+# The identifiers that are OURS: the bundle, each recorded leaf in the snapshot `lib` (flat file
+# or family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
+# dispatcher such as syscalls.cyr brings (its per-arch peer is where `alloc` is used). (Read from
+# the snapshot itself since 6.7.14: the mirror is the snapshot minus what ./lib holds.)
+fn _distlib_own_ids(leaves, named_deps, out_path, lib): i64 {
     var paths = vec_new();
     vec_push(paths, out_path);
-    var lib = _distlib_join(m, "lib");
     var i = 0;
     while (i < vec_len(leaves)) {
         var lf = vec_get(leaves, i);
@@ -4408,7 +4458,9 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         # must not be weakened for a convenience check. Measured: the first cut of this loop
         # captured 227 bytes of stderr that were entirely those rejections, so it saw zero
         # undefined symbols and silently re-added nothing while looking like it worked. The
-        # includes below are RELATIVE: ./lib first, the snapshot mirror as the fallback.
+        # includes below are RELATIVE: the mirror (the lib/ overlay — the pinned snapshot minus what
+        # ./lib holds) and ./lib answer them (_distlib_mirror_make). Which lines a leaf adds is read
+        # from the snapshot itself.
         var esb = str_builder_new();
         var unit_n = vec_len(leaves);         # D3: what THIS round's unit is built from
         var scope0 = vec_new();
@@ -4420,13 +4472,13 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             li = li + 1;
             # A leaf that is a NAMED DEP is the consumer's pinned module, included below.
             if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
-            _distlib_unit_leaf(esb, _distlib_join(m, "lib"), lf);
+            _distlib_unit_leaf(esb, root, lf);
         }
         # Leaves taken in only because a named dep's own leaf list brings them (see the
         # classification below): in the unit, never recorded.
         var si = 0;
         while (si < vec_len(scope)) {
-            _distlib_unit_leaf(esb, _distlib_join(m, "lib"), vec_get(scope, si));
+            _distlib_unit_leaf(esb, root, vec_get(scope, si));
             si = si + 1;
         }
         if (_dep_nd_modules != 0) {
@@ -4518,7 +4570,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
             if (scoped == 1 || brought != 0) {
                 if (own == 0) {
-                    own = _distlib_own_ids(leaves, named_deps, out_path, m);
+                    own = _distlib_own_ids(leaves, named_deps, out_path, root);
                     if (own == 0) {
                         var oim = "distlib: sidecar verify cannot index the bundle — sidecar NOT written";
                         return _distlib_verify_fail(oim, out_path);
@@ -6518,6 +6570,28 @@ fn cmd_distlib(profile): i64 {
         if (file_close(dl_efd) < 0) { dl_ew = 0 - 1; }
         if (dl_ew >= 0) { dl_wrote = 1; } else { xunlink(dl_entry); }
     }
+    # ⛔ 6.7.14: the self-check reads the PINNED stdlib, as the verify does — through the same
+    # mirror as the compiler's lib/ overlay (_distlib_mirror_make: the snapshot minus what ./lib
+    # holds). It had none, so a leaf ./lib lacks resolved from the CLI's own version slot: absent,
+    # "cannot open include file"; present, a stdlib the bundle does not pin. The verify has
+    # dropped its mirror by now; this one is made for the compile and dropped right after it.
+    var dl_root = 0;
+    var dl_mir = 0;
+    if (dl_wrote == 1) {
+        dl_root = _distlib_stdlib_root();
+        if (dl_root != 0) { dl_mir = _distlib_mirror_make(dl_root); }
+        if (dl_mir == 0) {
+            xunlink(dl_entry);
+            _skip_deps = dl_saved_skip;
+            _embeds = dl_saved_emb;
+            _build_modules = dl_saved_bm;
+            if (dl_root == 0) {
+                var nsr = "distlib: no stdlib snapshot for the pinned cyrius — the bundle self-check cannot run";
+                _err_ctx(nsr, out_path);
+            }
+            return 1;
+        }
+    }
     if (dl_wrote == 1) {
         # 6.6.20 (CBT-02): the capture is created HERE, so a compile() that bails before its child
         # opens it still leaves an (empty) file to read back, and "cannot read it" means only that.
@@ -6542,6 +6616,7 @@ fn cmd_distlib(profile): i64 {
             sys_unlink(dl_errf);
         }
         xunlink(dl_entry);
+        _distlib_mirror_drop();
     }
     _skip_deps = dl_saved_skip;
     _embeds = dl_saved_emb;

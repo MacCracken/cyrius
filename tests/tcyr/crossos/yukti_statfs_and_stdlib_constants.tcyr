@@ -60,7 +60,8 @@ var t, v = filesystem_usage(".");
 assert_eq(t, 1, "Windows: filesystem_usage is an Err (sys_statfs declines)");
 #endif
 #ifdef CYRIUS_TARGET_CX
-# The path is a guest offset the host cannot read (statfs is outside cxvm's translated set).
+# statfs is outside cxvm's translated and scalar-only sets, so cxvm answers it -38 without reaching
+# the host (6.7.14, D55; the host answered the guest-offset path -14 before).
 assert_eq(t, 1, "cx: filesystem_usage is an Err (statfs's path is not translated by cxvm)");
 #endif
 #ifndef CYRIUS_TARGET_WIN

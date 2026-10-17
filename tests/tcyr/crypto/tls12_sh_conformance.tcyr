@@ -1,0 +1,256 @@
+# tls12_sh_conformance.tcyr — 6.7.14: the TLS 1.2 client's ServerHello walks its extension block.
+#
+# issues/2026-10-15-tls-native-hello-conformance-residue.md item 4 (and items 1 and 3 on the 1.2
+# side). tls_native_client_parse_server_hello_12 looked up supported_versions, renegotiation_info,
+# extended_master_secret and ALPN and accepted the rest: an unsolicited 0x1234, an ALPN answer to a
+# client that offered none, an ALPN protocol the client did not offer and a 33-byte session id all
+# parsed TLS_OK, and no ServerHello refusal recorded an alert. Now the block is walked against the
+# 1.2 ClientHello the client sent (_tn_client_ext_walk: unsupported_extension; a repeated type
+# illegal_parameter), the ALPN answer must be exactly one name we offered (_tn_client_alpn_answer:
+# decode_error / illegal_parameter), the session id is capped at 32 (decode_error), every refusal
+# records its alert, and tls_native_connect_12 sends it (W1).
+#   R1-R4  the filed repro's four 1.2 lines (its `_sh12` verbatim), each refused with its alert.
+#   D1-D2  an extension type twice in the block (adjacent, and apart), illegal_parameter.
+#   A1-A4  an ALPN body that is not exactly one non-empty name filling the extension, decode_error,
+#          nothing selected.
+#   V1-V7  the parse's other refusals, each now with its alert.
+#   C1-C6  controls: the native 1.2 server's ServerHello, ALPN h2 offered and answered (by the
+#          native server and by hand), a 32-byte session id, an empty block, an empty server_name.
+#   W1     a real tls_native_connect (1.2-pinned) over a socketpair, the server's records
+#          pre-written: the client sends the fatal alert its refused ServerHello recorded, in the
+#          clear. A named SKIP where socketpair is refused (Windows, agnos).
+# On the lib before the fix: R1-R4, D1, D2, A1-A4, V1-V7's alert rows and W1 fail.
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+var CERT23 = "3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729";
+var KEY23 = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275";
+var ALPN_OFFER = "\x02h2\x08http/1.1";   # 12 bytes: what the ALPN rows' client offers
+
+fn _h(s): i64 { return hex_decode(s, strlen(s)); }
+fn _hn(s): i64 { return strlen(s) / 2; }
+
+var G_CL = 0;    # the client of the last row
+
+# The filed repro's helper, verbatim: a hand-built 1.2 ServerHello, suite 0xC02C, answering a
+# fresh client's own 1.2 ClientHello.
+fn _sh12(sid, exts_hex, alpn): i64 {     # a hand-built 1.2 ServerHello, suite 0xC02C
+    var cl = tls_native_new_client("localhost", 9);
+    if (alpn == 1) { tls_native_set_alpn(cl, ALPN_OFFER, 12); }
+    var ch = alloc(1024);
+    tls_native_12_build_client_hello(cl, ch, 1024);
+    var el = _hn(exts_hex);
+    var m = alloc(512);
+    var b = m + 4;
+    _tn_be16_w(b, 0x0303);
+    memset(b + 2, 0x11, 32);
+    store8(b + 34, sid);
+    memset(b + 35, 0x22, sid);
+    var p = 35 + sid;
+    _tn_be16_w(b + p, 0xC02C);
+    store8(b + p + 2, 0);
+    _tn_be16_w(b + p + 3, el);
+    if (el > 0) { memcpy(b + p + 5, _h(exts_hex), el); }
+    var blen = p + 5 + el;
+    tls_native_handshake_write_header(m, 2, blen);
+    G_CL = cl;
+    return tls_native_client_parse_server_hello_12(cl, m, 4 + blen);
+}
+
+# _sh12 with the message type `ht`, legacy_version `ver`, suite `suite` and compression `comp`
+# chosen (an empty session id, no ALPN offer), for the V rows.
+fn _sh12x(ht, ver, suite, comp, exts_hex): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    var ch = alloc(1024);
+    tls_native_12_build_client_hello(cl, ch, 1024);
+    var el = _hn(exts_hex);
+    var m = alloc(512);
+    var b = m + 4;
+    _tn_be16_w(b, ver);
+    memset(b + 2, 0x11, 32);
+    store8(b + 34, 0);
+    _tn_be16_w(b + 35, suite);
+    store8(b + 37, comp);
+    _tn_be16_w(b + 38, el);
+    if (el > 0) { memcpy(b + 40, _h(exts_hex), el); }
+    var blen = 40 + el;
+    tls_native_handshake_write_header(m, ht, blen);
+    G_CL = cl;
+    return tls_native_client_parse_server_hello_12(cl, m, 4 + blen);
+}
+
+fn _alert(): i64 { return load64(G_CL + TLS_CTX_OFF_HS_ALERT); }
+var G_SEL = 0;   # the last _sel()'s protocol bytes
+fn _sel(): i64 {
+    G_SEL = alloc(16);
+    return tls_native_get_alpn_selected(G_CL, G_SEL, 16);
+}
+
+# The native 1.2 server's own ServerHello for a fresh client's ClientHello — the server parses the
+# ClientHello (suite, group, EMS, ALPN against `srv_alpn` when it is not 0) and builds its
+# ServerHello as tls_native_12_build_server_flight does (with ec_point_formats) — parsed by that
+# client (`cl_alpn` 1: it offered ALPN_OFFER). Returns the client's result (-900 - n: setup).
+fn _native(cl_alpn, srv_alpn, srv_alpn_n): i64 {
+    var srv = tls_native_new_server(_h(CERT23), _hn(CERT23), _h(KEY23), _hn(KEY23));
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 0 - 901; }
+    if (srv_alpn != 0) { tls_native_set_alpn(srv, srv_alpn, srv_alpn_n); }
+    var cl = tls_native_new_client("localhost", 9);
+    if (cl_alpn == 1) { tls_native_set_alpn(cl, ALPN_OFFER, 12); }
+    var ch = alloc(1024);
+    var chn = tls_native_12_build_client_hello(cl, ch, 1024);
+    if (chn <= 0) { return 0 - 902; }
+    if (_tn_12_parse_client_hello(srv, ch + 4, chn - 4) <= 0) { return 0 - 903; }
+    var sr = alloc(32);
+    memset(sr, 0x5A, 32);
+    store64(srv + TLS_CTX_OFF_SERVER_RANDOM, sr);
+    var sh = alloc(512);
+    var shn = _tn_build_server_hello_12(srv, sh, 512, 1);
+    if (shn <= 0) { return 0 - 904; }
+    G_CL = cl;
+    return tls_native_client_parse_server_hello_12(cl, sh, shn);
+}
+
+# Read exactly `n` bytes of `fd` into `buf`; the count read (short at EOF / error).
+fn _read_n(fd, buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var r = sys_read(fd, buf + got, n - got);
+        if (r <= 0) { return got; }
+        got = got + r;
+    }
+    return got;
+}
+
+# W1: a 1.2-pinned tls_native_connect over a socketpair. A ServerHello carrying the unsolicited
+# 0x1234 and a ServerHelloDone are written to the server end first (one plaintext handshake
+# record); the client sends its ClientHello, reads the flight and refuses the ServerHello. Returns
+# connect's result; the alert record the client sent after its ClientHello in G_W1 ((level << 8) |
+# description, read in the clear), or -999 when socketpair is refused.
+var G_W1 = 0;
+fn _w1(): i64 {
+    G_W1 = 0 - 1;
+    var fds: i64[1];
+    if (sys_socketpair(1, 1, 0, &fds) < 0) { return 0 - 999; }
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    var fl = alloc(256);
+    var b = fl + 5 + 4;
+    _tn_be16_w(b, 0x0303);
+    memset(b + 2, 0x11, 32);
+    store8(b + 34, 0);
+    _tn_be16_w(b + 35, 0xC02C);
+    store8(b + 37, 0);
+    _tn_be16_w(b + 38, 4);
+    memcpy(b + 40, _h("12340000"), 4);
+    tls_native_handshake_write_header(fl + 5, TLS_HS_SERVER_HELLO, 44);
+    tls_native_handshake_write_header(fl + 5 + 48, TLS_HS_SERVER_HELLO_DONE, 0);
+    tls_native_record_write_header(fl, TLS_CT_HANDSHAKE, 0x0303, 52);
+    sys_write(sfd, fl, 5 + 52);
+    var cl = tls_native_new_client("localhost", 9);
+    tls_native_set_version_range(cl, TLS_VERSION_1_2, TLS_VERSION_1_2);
+    tls_native_set_deadline(cl, clock_now_ns() + 10000000000);
+    var rc = tls_native_connect(cl, cfd);
+    sys_close(cfd);
+    var hdr = alloc(8);
+    if (_read_n(sfd, hdr, 5) != 5) { sys_close(sfd); return rc; }
+    var skip = alloc(4096);
+    _read_n(sfd, skip, ((load8(hdr + 3) & 0xFF) << 8) | (load8(hdr + 4) & 0xFF));
+    var arec = alloc(16);
+    if (_read_n(sfd, arec, 7) != 7) { sys_close(sfd); G_W1 = 0 - 2; return rc; }
+    sys_close(sfd);
+    if ((load8(arec) & 0xFF) != TLS_CT_ALERT) { G_W1 = 0 - 3; return rc; }
+    if ((((load8(arec + 3) & 0xFF) << 8) | (load8(arec + 4) & 0xFF)) != 2) { G_W1 = 0 - 4; return rc; }
+    G_W1 = ((load8(arec + 5) & 0xFF) << 8) | (load8(arec + 6) & 0xFF);
+    return rc;
+}
+
+alloc_init();
+
+test_group("R: the filed repro's 1.2 lines, each refused with its alert");
+assert_eq(_sh12(0, "12340000", 0), TLS_ERR_HANDSHAKE_FAILED, "R1: an unsolicited 0x1234 refused");
+assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "R1: unsupported_extension (RFC 5246 §7.4.1.4)");
+assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "R1: the ctx failed");
+assert_eq(_sh12(0, "001000050003026832", 0), TLS_ERR_HANDSHAKE_FAILED, "R2: ALPN h2, none offered, refused");
+assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "R2: unsupported_extension");
+assert_eq(_sel(), 0, "R2: nothing selected");
+assert_eq(_sh12(0, "00100009000706737064792f33", 1), TLS_ERR_HANDSHAKE_FAILED,
+  "R3: ALPN spdy/3, h2 + http/1.1 offered, refused");
+assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "R3: illegal_parameter (RFC 7301 §3.2)");
+assert_eq(_sel(), 0, "R3: nothing selected");
+assert_eq(_sh12(33, "", 0), TLS_ERR_BAD_HANDSHAKE, "R4: a 33-byte session id refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "R4: decode_error (SessionID<0..32>)");
+
+test_group("D: an extension type twice in one block");
+assert_eq(_sh12(0, "ff01000100ff01000100", 0), TLS_ERR_HANDSHAKE_FAILED,
+  "D1: renegotiation_info twice, adjacent, refused");
+assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "D1: illegal_parameter");
+assert_eq(_sh12(0, "000b00020100ff01000100000b00020100", 0), TLS_ERR_HANDSHAKE_FAILED,
+  "D2: ec_point_formats twice, apart, refused");
+assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "D2: illegal_parameter");
+
+test_group("A: the ALPN answer is exactly one non-empty name (RFC 7301 §3.1)");
+assert_eq(_sh12(0, "0010000700050268320268", 1), TLS_ERR_BAD_HANDSHAKE, "A1: a body naming two protocols refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A1: decode_error");
+assert_eq(_sel(), 0, "A1: nothing selected (6.7.13 selected the first)");
+assert_eq(_sh12(0, "00100004000268ff", 1), TLS_ERR_BAD_HANDSHAKE, "A2: a name running past the list refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A2: decode_error");
+assert_eq(_sh12(0, "00100003000100", 1), TLS_ERR_BAD_HANDSHAKE, "A3: an empty name refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A3: decode_error");
+assert_eq(_sh12(0, "001000060003026832ff", 1), TLS_ERR_BAD_HANDSHAKE,
+  "A4: a byte after the name list, inside the extension, refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "A4: decode_error");
+
+test_group("V: the parse's other refusals record their alert");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0302, 0xC02C, 0, ""), TLS_ERR_PROTOCOL, "V1: legacy_version 0x0302 refused");
+assert_eq(_alert(), TLS_AD_PROTOCOL_VERSION, "V1: protocol_version");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0303, 0xC02C, 1, ""), TLS_ERR_PROTOCOL, "V2: compression 1 refused");
+assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "V2: illegal_parameter");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0303, 0x1301, 0, ""), TLS_ERR_HANDSHAKE_FAILED,
+  "V3: a suite the client did not offer (0x1301) refused");
+assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "V3: illegal_parameter");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0303, 0xC02C, 0, "002b00020304"), TLS_ERR_PROTOCOL,
+  "V4: supported_versions (a 1.3 server; the 1.2 ClientHello carries none) refused");
+assert_eq(_alert(), TLS_AD_UNSUPPORTED_EXTENSION, "V4: unsupported_extension");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0303, 0xC02C, 0, "ff0100020100"), TLS_ERR_PROTOCOL,
+  "V5: a renegotiation_info that is not empty refused");
+assert_eq(_alert(), TLS_AD_HANDSHAKE_FAILURE, "V5: handshake_failure (RFC 5746 §3.4)");
+assert_eq(_sh12x(TLS_HS_SERVER_HELLO, 0x0303, 0xC02C, 0, "0017000100"), TLS_ERR_PROTOCOL,
+  "V6: a non-empty extended_master_secret echo refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "V6: decode_error");
+assert_eq(_sh12x(TLS_HS_CLIENT_HELLO, 0x0303, 0xC02C, 0, ""), TLS_ERR_BAD_HANDSHAKE, "V7: not a ServerHello refused");
+assert_eq(_alert(), TLS_AD_UNEXPECTED_MESSAGE, "V7: unexpected_message");
+
+test_group("C: controls");
+assert_eq(_native(0, 0, 0), TLS_OK,
+  "C1: the native 1.2 server's ServerHello (renegotiation_info, ec_point_formats, EMS) -> TLS_OK");
+assert_eq(_alert(), 0, "C1: no alert recorded");
+assert_eq(load64(G_CL + TLS_CTX_OFF_USE_EMS), 1, "C1: the EMS echo is taken");
+assert_eq(load64(G_CL + TLS_CTX_OFF_VERSION), TLS_VERSION_1_2, "C1: TLS 1.2 negotiated");
+assert_eq(_native(1, "\x02h2", 3), TLS_OK,
+  "C2: the native server answering ALPN h2 to an h2 + http/1.1 offer -> TLS_OK");
+assert_eq(_sel(), 2, "C2: a 2-byte protocol selected");
+assert_eq(_tn_ct_eq(G_SEL, "h2", 2), 1, "C2: h2 selected");
+assert_eq(_sh12(0, "001000050003026832", 1), TLS_OK, "C3: ALPN h2 by hand, h2 + http/1.1 offered -> TLS_OK");
+assert_eq(_sel(), 2, "C3: h2 selected");
+assert_eq(_sh12(32, "", 0), TLS_OK, "C4: a 32-byte session id -> TLS_OK");
+assert_eq(_sh12(0, "", 0), TLS_OK, "C5: an empty extension block -> TLS_OK");
+assert_eq(_sh12(0, "00000000ff01000100", 0), TLS_OK,
+  "C6: an empty server_name (offered: a DNS host) and renegotiation_info, two types once each -> TLS_OK");
+assert_eq(_alert(), 0, "C6: no alert recorded");
+
+test_group("W1: the refusal's alert reaches the wire (tls_native_connect_12)");
+var w = _w1();
+if (w == 0 - 999) {
+    assert_eq(1, 1, "W1: SKIP — socketpair refused on this target");
+} else {
+    assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W1: connect refuses the ServerHello");
+    assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_UNSUPPORTED_EXTENSION,
+      "W1: the client sent a fatal unsupported_extension, in the clear");
+}
+
+var r = assert_summary();

@@ -4588,6 +4588,7 @@ syscalls::signal_ignore/1
 syscalls_aarch64_linux::epoll_event_data/1
 syscalls_aarch64_linux::epoll_event_events/1
 syscalls_aarch64_linux::epoll_event_new/2
+syscalls_aarch64_linux::epoll_event_set/3
 syscalls_aarch64_linux::err_code/1
 syscalls_aarch64_linux::is_err/1
 syscalls_aarch64_linux::sigset_add/2
@@ -4733,6 +4734,7 @@ syscalls_linux_common::sys_write/3
 syscalls_macos::epoll_event_data/1
 syscalls_macos::epoll_event_events/1
 syscalls_macos::epoll_event_new/2
+syscalls_macos::epoll_event_set/3
 syscalls_macos::err_code/1
 syscalls_macos::is_err/1
 syscalls_macos::sigset_add/2
@@ -5070,6 +5072,7 @@ syscalls_x86_64_agnos::sys_write_nb/3
 syscalls_x86_64_linux::epoll_event_data/1
 syscalls_x86_64_linux::epoll_event_events/1
 syscalls_x86_64_linux::epoll_event_new/2
+syscalls_x86_64_linux::epoll_event_set/3
 syscalls_x86_64_linux::err_code/1
 syscalls_x86_64_linux::is_err/1
 syscalls_x86_64_linux::sigset_add/2

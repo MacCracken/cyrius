@@ -760,9 +760,11 @@ are the signature reference for the wrappers not listed here (`cyrdoc <peer>` re
 
 Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sys_execve`, `sys_pipe`, `sys_waitpid`, `sys_kill`, `sys_mount`, `sys_mkdir`, `sys_rmdir`, `sys_chdir` (v6.5.7), `sys_sigprocmask`, `sys_signalfd`, `sys_epoll_create`, `sys_epoll_ctl`, `sys_epoll_wait`, `sys_timerfd_create`, `sys_fchownat`.
 
-Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
+Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `epoll_event_set` (6.7.14), `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
 
 epoll_event readers (6.7.12): `epoll_event_events(ev)` and `epoll_event_data(ev)` read one element of a `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and `const EPOLL_EVENT_SIZE` is the array stride — 12 on x86_64 Linux and x86-macOS (packed, data @4), 16 on aarch64 (unpacked, data @8). Step through the array by `EPOLL_EVENT_SIZE` instead of hand-gating `+4` / `+8` per arch.
+
+epoll_event writer (6.7.14): `epoll_event_set(ev, events, data) → ev` fills an epoll_event the caller owns — a stack `var ev[16]` (at least `EPOLL_EVENT_SIZE` bytes) — in the same layout: `events` at 0, `data` at 4 on x86_64 Linux and x86-macOS, at 8 on aarch64. It returns `ev` for `sys_epoll_ctl`. `epoll_event_new` is `alloc(16)` plus `epoll_event_set`; take the writer to register from a stack buffer instead of allocating one per call (lib/async.cyr's registrations do).
 
 Signal disposition (defined in `syscalls.cyr` itself, per-target routed inside
 one fn so the `#ifdef`-blind static checker sees a single definition):
@@ -1641,7 +1643,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format); a 1.3 server selecting a protocol not on it is refused, illegal_parameter (6.7.12) |
+| `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format); a server selecting a protocol not on it is refused, illegal_parameter (1.3 since 6.7.12, 1.2 since 6.7.14); an answer that is not exactly one non-empty name filling the extension is decode_error, nothing selected (6.7.14) |
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
@@ -1760,14 +1762,14 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 |----------|-----------|-------------|
 | `tls_native_client_build_hello` | `tls_native_client_build_hello(ctx, out, out_max) → len/err` | Build the 1.3 ClientHello: supported_groups the ctx's groups, ONE key_share on the first (x25519 by default), ECDSA / RSA-PSS / Ed25519 sig algs (6.6.15) |
 | `tls_native_client_process_hrr` | `tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max) → len/err` | Take a HelloRetryRequest (once; RFC 8446 §4.1.4 checks, alert recorded on refusal) and build the second ClientHello — new share, cookie echoed, message_hash transcript (6.6.15) |
-| `tls_native_client_parse_server_hello` | `tls_native_client_parse_server_hello(ctx, sh, sh_len) → TLS_OK/err` | Parse the ServerHello (on our share's group; after a HelloRetryRequest its cipher), ECDHE, derive handshake secrets; zeroises the ephemeral key and shared secret (6.6.15) |
+| `tls_native_client_parse_server_hello` | `tls_native_client_parse_server_hello(ctx, sh, sh_len) → TLS_OK/err` | Parse the ServerHello (on our share's group; after a HelloRetryRequest its cipher), ECDHE, derive handshake secrets; zeroises the ephemeral key and shared secret (6.6.15); the extension block fills the message and carries each type once (decode_error / illegal_parameter, 6.7.14; EncryptedExtensions the same) |
 | `tls_native_client_open_handshake` | `tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt server handshake flight with handshake key |
 | `tls_native_client_recv_flight` | `tls_native_client_recv_flight(ctx, record, record_len) → TLS_OK/err` | Process server flight record (accumulate for reassembly) |
 | `tls_native_client_seal_handshake` | `tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max) → len/err` | Encrypt client handshake message with handshake key |
 | `tls_native_client_finish` | `tls_native_client_finish(ctx, out, out_max) → len/err` | Build + encrypt Finished message, transition to CONNECTED |
 | `tls_native_client_verify_chain` | `tls_native_client_verify_chain(ctx, now_unix) → TLS_OK/err` | Verify peer certificate chain against trust store |
 | `tls_native_client_verify_hostname` | `tls_native_client_verify_hostname(ctx) → TLS_OK/err` | Verify SNI host against server cert SubjectAltName |
-| `tls_native_client_parse_server_hello_12` | `tls_native_client_parse_server_hello_12(ctx, sh, sh_len) → TLS_OK/err` | Parse TLS 1.2 ServerHello + derive handshake secrets |
+| `tls_native_client_parse_server_hello_12` | `tls_native_client_parse_server_hello_12(ctx, sh, sh_len) → TLS_OK/err` | Parse the TLS 1.2 ServerHello answering the ctx's own 1.2 ClientHello (`tls_native_12_build_client_hello` first): every extension walked against it (one not offered: unsupported_extension; a type twice: illegal_parameter), the ALPN answer exactly one offered name, a session id of at most 32 bytes; every refusal records its alert, which `tls_native_connect_12` sends (6.7.14) |
 
 **Handshake (server side — TLS 1.3):**
 

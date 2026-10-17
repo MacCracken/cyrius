@@ -55,11 +55,6 @@ include "lib/chrono.cyr"
 include "lib/args.cyr"
 include "lib/process.cyr"
 
-# ws_server_handshake's two fold helpers, which this file never reaches (only the frame writer is
-# exercised): lib/sandhi.cyr and lib/bayan.cyr would drag whole stacks in for two symbols.
-fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
-fn base64_encode(data, len): i64 { return 0; }
-
 include "lib/ws_server.cyr"
 include "lib/async.cyr"
 

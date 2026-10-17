@@ -1199,6 +1199,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh
 # crossos/derive_accessor_widths.tcyr printed `1 failed` and exited 0 on x86, aarch64 and PE.
 # The other shape is `assert_summary();` then a literal `syscall(60, 0)` (platform/pwd_grp).
 _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
+# 6.7.14: five ws tests kept the sandhi_server_find_header / base64_encode stand-ins they wrote
+# before lib/ws_server.cyr included sandhi and bayan itself (6.6.19 R2): every compile warned
+# `duplicate fn`, and in sock_send_all_short_write the stub bound last. Gone; each compiles clean.
+_chk_gate "$ROOT/tests/gates/toolchain/ws_tests_no_duplicate_fn.sh"
 # 6.6.11 B01: the check driver's .tcyr reader requires the assert summary. It scored
 # `failed == 0 && ec == 0` off the FIRST " failed" substring of stdout, so a test that died
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
@@ -2419,6 +2423,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_path_reporting_leftovers.sh"
 # leaves (tagged → boxed), not only the listed ones: a pure module published `boxed`. 6.7.13 — and
 # a fold `cyrius deps` kept over a named dep's thin profile (6.6.11 S2) is that dep's need too.
 _chk_gate "$ROOT/tests/gates/toolchain/distlib_named_dep_transitive.sh"
+# 6.7.14 — distlib's sidecar verify and bundle self-check read the PINNED stdlib (versions/<pin>/lib)
+# through the compiler's lib/ overlay, not the CLI's own version slot; ./lib and an overlay the run
+# set (--locked, no vendored lib/) still win.
+_chk_gate "$ROOT/tests/gates/toolchain/distlib_reads_pinned_stdlib.sh"
 # 6.7.12 (D10) — `cyrius deps --verify` / `--locked` on a CRLF checkout of a committed lib/ (git
 # core.autocrlf) still FAIL — cyrius.lock proves the exact bytes — but a file whose bytes with CRLF
 # read as LF hash to the locked value is named `CRLF checkout: add \`lib/** -text\` to .gitattributes`
@@ -2723,6 +2731,16 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_struct_pair.sh"
 # repro, twice when also called, the exact name; three .tcyr pass on cxvm, two pinned at the filed
 # guest-contract limits. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
+# 6.7.14 (D55, the user 2026-10-16: "cxvm answers -38") — cxvm answers a guest syscall it neither
+# translates nor lists as scalar-only -ENOSYS without reaching the host: the filed
+# `cyr_munmap(0x400000, …)` killed cxvm (139) and `fstat(1, 0x600100)` wrote over its globals once the
+# 8 MiB guest overlapped cxvm's link addresses. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_guest_syscall_refusal.sh"
+# 6.7.14 — cx alloc() bumps over the guest break cxvm serves (brk in guest space, the stack trapping
+# at the break) instead of a 128 KB static buffer written into every allocating .cyx: 3 MiB round
+# trip, the named exhaustion, zeroed reuse of stack memory, audit_walk_fifo past alloc. Mutation
+# ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_heap_guest_brk.sh"
 # 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
 # position is refused by name, uninitialised / value / address / word uses refused (decision 7). The
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's

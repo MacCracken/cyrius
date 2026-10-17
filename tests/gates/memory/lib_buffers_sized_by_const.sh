@@ -41,7 +41,9 @@
 #      cap, stride and allocation reads the const; the var only tells a caller the value. The
 #      twin set is DERIVED (every `var X = _X;`). 6.7.12: the TLS stack's twins are held too —
 #      their exemption ended with their fix (issues/2026-10-11-tls-public-bound-vars-drive-const-
-#      storage.md: every read in lib/tls_native*.cyr and lib/tls.cyr reads `_X`)
+#      storage.md: every read in lib/tls_native*.cyr and lib/tls.cyr reads `_X`). 6.7.14: the 15th,
+#      TLS_SHA256_CTX_LEN, a literal var until then, with its `_TLS_SHA256_CTX_LEN` twin (issues/2026-10-15-
+#      tls-sha256-ctx-len-literal-var-drives-transcript-clone.md)
 #   7  (6.7.9) no literal left beside a named bound: no literal-sized agnos env blob, no literal
 #      ctx offset at or past the kill state in the async kill tasks
 #
@@ -71,6 +73,9 @@
 #   tls_native_hs12.cyr one seed copy back to `memcpy(&seed, client_random, TLS12_RANDOM_LEN)` -> axis 6
 #   tls_native_lowlevel.cyr the clone copy back to `TLS_SHA384_CTX_LEN`                        -> axis 6
 #   tls.cyr tls_write's clamp back to `TLS_RECORD_MAX_PLAINTEXT`                                -> axis 6
+# MUTATION LEDGER (6.7.14, in the tree, each RED naming its site):
+#   tls_native_lowlevel.cyr the SHA-256 clone copy back to `TLS_SHA256_CTX_LEN`                 -> axis 6
+#   tls_native_lowlevel.cyr `var TLS_SHA256_CTX_LEN = 144;` (the twin undone)                  -> axes 3 + 6 (floor)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -145,6 +150,7 @@ done
 echo "axis 3 — each public bound is initialised from its const twin:"
 for row in "lib/tls_native.cyr:TLS_RECORD_MAX_PLAINTEXT" "lib/tls_native.cyr:TLS_AEAD_NONCE_LEN" \
            "lib/tls_native_lowlevel.cyr:TLS_HANDSHAKE_HEADER_LEN" "lib/tls_native_lowlevel.cyr:TLS_SHA384_CTX_LEN" \
+           "lib/tls_native_lowlevel.cyr:TLS_SHA256_CTX_LEN" \
            "lib/tls_native_keysched.cyr:TLS_HKDF_LABEL_BUF_LEN" "lib/tls_native_keysched.cyr:TLS_MAX_DIGEST_LEN" \
            "lib/tls_native_hs12.cyr:TLS12_VERIFY_DATA_LEN" "lib/tls_native_hs12.cyr:TLS12_RANDOM_LEN" \
            "lib/tls_native_hs13.cyr:TLS_RANDOM_LEN" "lib/async_macos.cyr:KEV_SIZE" \
@@ -183,8 +189,8 @@ for row in $TWINS; do
     if [ -z "$READS" ]; then _ok "$v: read nowhere in lib/ but its declaration"; continue; fi
     _fail "$v: read inside lib/ — a write to the public var then drives storage the const sized; read _$v: $(echo "$READS" | tr '\n' ' ')"
 done
-if [ "$NTW" -ge 14 ] && [ "$NCHK" -eq "$NTW" ]; then _ok "$NTW twins derived, all $NCHK held to the rule (floor 14)"
-else _fail "only $NTW twins derived / $NCHK held to the rule (floor 14, every twin held) — the derivation is reading nothing"; fi
+if [ "$NTW" -ge 15 ] && [ "$NCHK" -eq "$NTW" ]; then _ok "$NTW twins derived, all $NCHK held to the rule (floor 15)"
+else _fail "only $NTW twins derived / $NCHK held to the rule (floor 15, every twin held) — the derivation is reading nothing"; fi
 
 echo "axis 7 — no literal left beside a named bound:"
 LITENV=$(grep -nE 'var e\[[0-9]+\];|_blob_ptrs\([^,]+, 0, [0-9]+, envp|_put_elem\(b, off, [0-9]+, ' lib/process_agnos.cyr lib/regression_agnos.cyr lib/async_agnos.cyr || true)

@@ -58,7 +58,7 @@ fold releases sequenced around it (a fold may only declare `const X` once cyrius
 that are both a `var` and an enum member (the `O_*` family) and genuinely written globals are a separate decision per
 name.
 
-## Census addition: the 14 public bound vars (`var X = _X;`) — added 2026-10-15
+## Census addition: the 15 public bound vars (`var X = _X;`) — added 2026-10-15, the 15th 2026-10-17
 
 The census regex above takes literal initialisers only, so it misses the 14 public bounds that 6.7.6 split into a
 `const _X` (which sizes the storage) and a public `var X = _X;` (derived with
@@ -80,9 +80,13 @@ The census regex above takes literal initialisers only, so it misses the 14 publ
 | `TLS_MAX_DIGEST_LEN` | lib/tls_native_keysched.cyr | 48 |
 | `TLS_HANDSHAKE_HEADER_LEN` | lib/tls_native_lowlevel.cyr | 4 |
 | `TLS_SHA384_CTX_LEN` | lib/tls_native_lowlevel.cyr | 208 |
+| `TLS_SHA256_CTX_LEN` | lib/tls_native_lowlevel.cyr | 144 |
+
+The 15th, `TLS_SHA256_CTX_LEN`, was a literal `var` (so in the literal census above) until 6.7.14 gave it the twin
+shape (issues/2026-10-15-tls-sha256-ctx-len-literal-var-drives-transcript-clone.md): it moves from that census to this one.
 
 The user's decision D16 (2026-10-15, issues/archived/2026-10-11-tls-public-bound-vars-api-decision.md): until this arc they stay
 writable vars, each commented as a read-only mirror of its `_X`, and since 6.7.12 nothing in lib/ reads any of them
-(`lib_buffers_sized_by_const.sh` axis 6 holds all 14), so a write is inert. The arc converts them with the rest: `const
+(`lib_buffers_sized_by_const.sh` axis 6 holds all 15), so a write is inert. The arc converts them with the rest: `const
 X = <value>;`, the `_X` twin dropped or kept as an alias, and the same accounting (a consumer that assigns one, takes
 `&X` or declares its own `var X` stops compiling at its pin bump).
