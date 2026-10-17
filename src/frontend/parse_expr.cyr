@@ -4027,6 +4027,7 @@ fn _sub_post(S, ti0): i64 {
     var ed = 0;
     if (TOKTYP(S, ti0) == 27) {
         _psub_err(S, ": &a[i] is not supported", 0 - 1, " - write &a + i * sizeof(T) (or p + i)", "", 0);
+        _tp_refd_at = GTI(S);   # 6.7.14: its `*T` destination says nothing more (`_tp_warn`)
     } elif (TOKTYP(S, GTI(S) - 1) == 29) {
         _sub_more(S);
     } else {

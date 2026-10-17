@@ -339,5 +339,45 @@ tprow K3 0 "zone: var W: *P2 = fncall0(&gp); (1 before)" "include \"lib/fnptr.cy
 tprow K4 1 "fn: a callee held in a variable is a word (the control, D31)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var fp = &gp;\n    var w: *P2 = fncall0(fp);\n    return w.b;\n}\nsyscall(60, f());\n"
 tprow K5 0 "fn: var q: *i64 = fncall0(&gi); (1 before)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var q: *i64 = fncall0(&gi);\n    return *q;\n}\nsyscall(60, f());\n"
 
+# --- axis 14 (6.7.14; issues/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md) ---
+# A STRING LITERAL alone into a BYTE pointer (`*u8` / `*i8`) is a pointer: `var s: *u8 = "abc";`, `t = "xyz";` and the
+# zone's `var p: *u8 = "abc";` warned (D18 (a) carried the warning to the assignment and the zone), on valid code that
+# runs right (the C-string idiom). And a `*T` destination whose value was refused as `&a[i]` warned beside the refusal.
+# `_tp_exempt` (the null literal and the byte pointer's string) and `_tp_refd_at` (the `&a[i]` refusal's token; the value
+# spanning it is not warned about). Any other `*T` from a string literal still warns (SK1-SK3).
+#   the bite reverted (the D28 commit, b646484c)          -> RED 9: S0 S0z S1 S2 (warned) S0a A2 A3 A4 A5 (a warning beside)
+#   `_tp_exempt` without its string arm                   -> RED 4: S0 S0z S1 S2
+#   `_sub_post` without the `_tp_refd_at` mark            -> RED 5: S0a A2 A3 A4 A5
+#   `_tp_warn_l` passing no element kind                  -> RED 2: S0 (`t = "xyz";`) S1 (`p = "xy";`, a parameter)
+# (A1 A6 A7, a declaration, were quieted by the D28 commit's `_tp_warn_decl` / the zone's `_scv_err`.)
+tpx() {   # <name> <want warnings> <want errors> <want exit or -> <what> <source, printf %b>
+    printf '%b' "$6" > "$T"
+    build
+    n=$(warns)
+    ne=$(grep -c '^error' "$E" || true)
+    x=-
+    if [ "$4" != - ] && [ -s "$O" ]; then chmod +x "$O"; x=0; "$O" > /dev/null 2>&1 || x=$?; fi
+    if [ "$n" -ne "$2" ] || [ "$ne" -ne "$3" ] || [ "$x" != "$4" ]; then
+        echo "  FAIL axis 14 $1: $5 — $n warning(s) / $ne error(s) / exit $x, want $2 / $3 / $4"; fail=1
+    else echo "  ok axis 14 $1: $5 — $n / $ne / exit $x"; fi
+}
+RS=docs/development/issues/repros/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript
+[ -f "$RS.cyr" ] && [ -f "$RS-zone.cyr" ] && [ -f "$RS-address-of-subscript.cyr" ] || { echo "FAIL: typed_pointer_warn_sign: $RS*.cyr missing"; exit 1; }
+tpx S0 0 0 218 "the filed repro 1 verbatim: var s: *u8 = \"abc\"; t = \"xyz\"; (2 warnings before)" "$(cat "$RS.cyr")"
+tpx S0z 0 0 98 "the filed zone repro verbatim: var p: *u8 = \"abc\"; (1 warning before)" "$(cat "$RS-zone.cyr")"
+tpx S0a 0 1 - "the filed &a[i] repro verbatim: p = &a[1]; refused once (a warning beside it before)" "$(cat "$RS-address-of-subscript.cyr")"
+tpx S1 0 0 30 "fn: var s: *i8 = \"abc\"; p = \"xy\"; into a p: *u8 parameter; G = \"q\"; into a *u8 global" 'fn f(p: *u8): i64 {\n    var s: *i8 = "abc";\n    p = "xy";\n    return load8(s) + load8(p);\n}\nvar G: *u8 = 0;\nfn g(): i64 { G = "q"; return load8(G); }\nsyscall(60, f(0) + g() - 300);\n'
+tpx S2 0 0 241 "top level after a statement: var q: *u8 = \"x\"; r = \"yz\";" 'syscall(39);\nvar q: *u8 = "x";\nvar r: *u8 = 0;\nr = "yz";\nsyscall(60, load8(q) + load8(r));\n'
+tpx SK1 2 0 0 "control: a *i64 from a string literal still warns (a declaration, an assignment)" 'fn main(): i64 {\n    var s: *i64 = "abc";\n    var t: *i64 = 0;\n    t = "xyz";\n    return 0;\n}\nsyscall(60, main());\n'
+tpx SK2 1 0 0 "control: the zone's var p: *i64 = \"abc\"; still warns" 'var p: *i64 = "abc";\nsyscall(60, 0);\n'
+tpx SK3 2 0 0 "control: a *B1 (a 1-byte struct, step 1) from a string literal still warns (zone, fn)" 'struct B1 { a: u8; }\nvar p: *B1 = "abc";\nfn f(): i64 { var q: *B1 = "abc"; return 0; }\nsyscall(60, f());\n'
+tpx A1 0 1 - "fn: var q: *i64 = &a[0]; refused once" 'fn main(): i64 {\n    var a: i64[4];\n    var q: *i64 = &a[0];\n    return 0;\n}\nsyscall(60, main());\n'
+tpx A2 0 1 - "fn: G = &a[1]; into a *i64 global, refused once" 'var G: *i64 = 0;\nfn main(): i64 {\n    var a: i64[4];\n    G = &a[1];\n    return 0;\n}\nsyscall(60, main());\n'
+tpx A3 0 1 - "top level: P = &A[1]; into a *i64 global, refused once" 'var A: i64[4];\nvar P: *i64 = 0;\nsyscall(39);\nP = &A[1];\nsyscall(60, 0);\n'
+tpx A4 0 1 - "fn: pp = &ps[1]; into a *Pt local, refused once" 'struct Pt { a; b; }\nfn main(): i64 {\n    var ps: Pt[4];\n    var pp: *Pt = &ps;\n    pp = &ps[1];\n    return 0;\n}\nsyscall(60, main());\n'
+tpx A5 0 1 - "fn: p = &b[1]; with b a *i64, refused once" 'fn main(): i64 {\n    var a: i64[4];\n    var b: *i64 = &a;\n    var p: *i64 = &a;\n    p = &b[1];\n    return 0;\n}\nsyscall(60, main());\n'
+tpx A6 0 1 - "zone: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
+tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nsyscall(39);\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18)"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14)"

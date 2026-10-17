@@ -1171,7 +1171,11 @@ after the first top-level statement and in the declaration zone, and an assignme
 global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
-fn and the assignment to a `*Struct` local or a `*T` global warned on it).
+fn and the assignment to a `*Struct` local or a `*T` global warned on it). A string literal alone into a byte pointer
+is its address and never warns either (6.7.14): `var s: *u8 = "abc";`, `t = "xyz";`, a `*i8`, a parameter, a global, in
+the declaration zone (through 6.7.13 each warned); into any other `*T` (`*i64`, a one-byte struct's `*B`) it still
+warns. A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
 `*T` 1, a global 8 in the leading declaration block and 1 / 2 / 4 / 8 by `T` after the
