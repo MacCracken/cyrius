@@ -7698,6 +7698,8 @@ fn _var_rhs_csid(S, ti): i64 {
 # `_rcv_iscall`): a struct of 8 B or less (over 8 B the receive takes it, `_rcv_peel`; a dyn, 16 B, keeps
 # 6.7.8 V4d's refusal), or a `: f64` call's -9 (judged after the parse, as `var x = f();` is); else 0.
 # CHANGELOG [6.7.13]
+# 6.7.14 — and a `Str` handle, as `var t = mks();` is typed (v5.10.4): the wrapped one was an untyped word, so
+# `println(s)` took the integer overload and `s.len()` was refused. CHANGELOG [6.7.14]
 fn _var_rhs_wsid(S, ti): i64 {
     var k = _pwrap_name(S, ti);
     if (k == 0) { return 0; }
@@ -7709,6 +7711,7 @@ fn _var_rhs_wsid(S, ti): i64 {
     if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
     if (rs > 2047) { return 0; }
+    if (rs == _STR_SID(S)) { return rs; }
     if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
     return rs;
 }

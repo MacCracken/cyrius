@@ -250,6 +250,28 @@ runs() {
         if [ "$got" = "$2" ]; then ok "$1 $3 ($leg): exit $got"; else bad "$1 $3 ($leg): exit $got, want $2"; fi
     done
 }
+# prints <name> <want> <what>: compiles clean, exits 0 and prints exactly <want> (its lines joined by `|`) on every leg
+prints() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        [ "$leg" = pe ] && [ "$WINE" -eq 0 ] && continue
+        compile "$leg" "$1"
+        if [ "$crc" -ne 0 ] || [ ! -s "$T/$1.$leg" ]; then bad "$1 $3 ($leg): did not build (rc $crc): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"; continue; fi
+        chmod +x "$T/$1.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 30 "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            cx)      timeout 60 "$T/cxvm" < "$T/$1.$leg" > "$T/$1.$leg.out" 2> /dev/null || got=$? ;;
+            pe)      cp "$T/$1.$leg" "$T/$1.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$1.exe" > "$T/$1.$leg.out" 2> /dev/null) || got=$? ;;
+        esac
+        o=$(tr -d '\r' < "$T/$1.$leg.out" | tr '\n' '|')
+        if [ "$got" != 0 ]; then bad "$1 $3 ($leg): exit $got, want 0"
+        elif [ "$o" = "$2" ]; then ok "$1 $3 ($leg): printed [$o]"
+        else bad "$1 $3 ($leg): printed [$o], want [$2]"; fi
+    done
+}
 REPA=docs/development/issues/repros/2026-10-10-struct-receive-inference-a-parenthesised-call.cyr
 REPB=docs/development/issues/repros/2026-10-10-struct-receive-inference-b-scalar-annotation.cyr
 [ -f "$REPA" ] && [ -f "$REPB" ] || { echo "FAIL: $G: the issue's repro files are missing"; exit 1; }
@@ -840,7 +862,24 @@ refused GHT4 "no struct type in scope for 'a'" "\`var a: P3 = gid(w.v);\` (a fie
 ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
 runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 
-[ "$rows" -ge 159 ] || bad "only $rows rows ran (floor 159)"
+
+# 6.7.14 — A WRAPPED `Str` CALL IS A Str (issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md). `var s =
+# (mks());` with `fn mks(): Str` bound an untyped word, where `var t = mks();` is a Str (v5.10.4): `println(s)` took the
+# cstring overload and printed the header's bytes (the filed repro: `P`, a backquote line, then `abcde`), and `s.len()`
+# was "no struct type in scope for 's'". `_var_rhs_wsid` types the wrapped Str as the unwrapped peek does. WS0 the filed
+# repro verbatim; WS1 its `s.len()` form; WS2 `((mks()))`; tcyr ws* through A2.
+#   N34 `_var_rhs_wsid` without its Str test (2026-10-17) -> RED 16: WS0 (printed garbage) WS1 WS2 A2 x4 legs (refused:
+#                                                           no struct type in scope for 's'); the rest green
+REPS=docs/development/issues/repros/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.cyr
+[ -f "$REPS" ] || { echo "FAIL: $G: $REPS is missing"; exit 1; }
+cp "$REPS" "$T/WS0.cyr"
+prints WS0 "abcde|abcde|" "the filed repro verbatim: \`var s = (mks()); println(s);\` prints abcde, as \`var t = mks();\` does"
+sed 's/return 0; }$/return s.len() * 10 + t.len(); }/' "$REPS" > "$T/WS1.cyr"
+runs WS1 55 "the filed repro's \`return s.len() * 10 + t.len();\` form (refused before: no struct type in scope for 's')"
+sed 's/var s = (mks());/var s = ((mks()));/' "$T/WS1.cyr" > "$T/WS2.cyr"
+runs WS2 55 "\`var s = ((mks()));\`, two wraps"
+
+[ "$rows" -ge 162 ] || bad "only $rows rows ran (floor 162)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str (6.7.14)"

@@ -79,6 +79,20 @@ fn w8_cl(): i64 { var f = |k| { var x = (mk1()); return x.a + k; }; return fncal
 fn w16_m(): i64 { var b = Q { 1, 2 }; var x = (b.mkm()); return dq(x); }
 fn wf64(): i64 { var x = (fh()); var y = x + 1.0; var z = fh() + 1.0; if (y == z) { return 1; } return 0; }
 fn wexpr(): i64 { var x = (1 + 2); return x; }
+# --- 6.7.14: a `Str` handle (issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md) ---
+# `var s = (mks());` with `mks(): Str` bound an untyped word, where `var t = mks();` is a Str (v5.10.4): `println(s)`
+# took the cstring overload and printed the header's bytes, `s.len()` was "no struct type in scope for 's'". The
+# wrapped Str is typed as the unwrapped one is (`_var_rhs_wsid`). `who` routes on the argument's type: 2 = a Str.
+fn mks(): Str { return str_from("abcde"); }
+fn who(s: cstring): i64 { return 1; }
+fn who_str(s: Str): i64 { return 2; }
+fn who_int(n: i64): i64 { return 3; }
+fn ws(): i64 { var s = (mks()); return s.len(); }
+fn ws_2(): i64 { var s = ((mks())); return s.len(); }
+fn ws_fn(): i64 { var s = (mks()); var t = ((mks())); return str_len(s) * 10 + str_len(t); }
+fn ws_ov(): i64 { var s = (mks()); var t = ((mks())); return who(s) * 10 + who(t); }
+fn ws_cl(): i64 { var f = |k| { var s = (mks()); return s.len() + k; }; return fncall1(f, 0); }
+fn ws_u(): i64 { var t = mks(); return who(t) * 10 + t.len(); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -111,5 +125,12 @@ assert_eq(w8_cl(), 33, "var x = (mk1()); in a closure");
 assert_eq(w16_m(), 34, "var x = (b.mkm()); dq(x), a 16 B method (D42: 139 through 6.7.10)");
 assert_eq(wf64(), 1, "var x = (fh()); a : f64 call types x f64, as var x = fh(); does");
 assert_eq(wexpr(), 3, "var x = (1 + 2); stays an untyped 3");
+test_group("6.7.14: a Str handle");
+assert_eq(ws(), 5, "var s = (mks()); s.len() (refused before)");
+assert_eq(ws_2(), 5, "var s = ((mks())); s.len()");
+assert_eq(ws_fn(), 55, "(mks()) / ((mks())) then str_len(s)");
+assert_eq(ws_ov(), 22, "(mks()) / ((mks())) route to who_str (11 before: the cstring base)");
+assert_eq(ws_cl(), 5, "var s = (mks()); in a closure");
+assert_eq(ws_u(), 25, "control: var t = mks(); (unwrapped)");
 
 var r = assert_summary();

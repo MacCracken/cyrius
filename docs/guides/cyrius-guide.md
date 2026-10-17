@@ -1580,7 +1580,9 @@ or `((mk(9)))`: parentheses around the whole call are transparent (6.7.11; befor
 struct's first word, `x.z` was refused and `take(x)` passed that word as the struct's address —
 a crash), at every size since 6.7.13: `var x = (mk1());` with `mk1` returning an 8-byte struct is
 that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());` with `f` returning
-`: f64` is an f64, as `var x = f();` is. An annotation that names no struct is never replaced by the callee's struct:
+`: f64` is an f64, as `var x = f();` is. In a fn, `var s = (mks());` with `mks` returning `Str` is a `Str`, as
+`var s = mks();` is (6.7.14; it was an untyped word: `println(s)` printed the header's bytes and `s.len()`
+was refused). An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 

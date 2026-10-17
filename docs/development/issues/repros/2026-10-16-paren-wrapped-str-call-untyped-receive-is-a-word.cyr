@@ -1,0 +1,8 @@
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+fn mks(): Str { return str_from("abcde"); }
+fn main(): i64 { alloc_init(); var s = (mks()); println(s); var t = mks(); println(t); return 0; }
+syscall(60, main());
