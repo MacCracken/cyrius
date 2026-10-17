@@ -19,7 +19,7 @@
 #   D   two DIFFERENT errors in one body (`i += 1 2;` and `return zz;`), three instances: each printed once
 #   E1-E6 the other emitters, two instances each: `return );` (ERR), `var i` twice (ERRDUPVAR), an if expression
 #       with no else (ERR_MSG — and its note once), `zz = 1;` (the assignment), `return zz.a;` (the `.field` base:
-#       its two errors once each), `return &zz;`
+#       its one error once — 6.7.14's cascade fix dropped the 'no struct type' line), `return &zz;`
 #   N   the block-scope note: `tbv` declared in a top-level block, read in a generic body called at two types —
 #       one error and one note (three of each before)
 #   V   instance-dependent messages at one token: `return v.zz;` called at I, J, I — "unknown field 'zz' on struct
@@ -124,7 +124,9 @@ if [ "$nn" -eq 1 ]; then ok "E3: its note once"; else bad "E3: its note $nn time
 body E4 'fn g<T>(v: T): i64 { zz = 1; return 0; }' 'var x = I { 1, 2 }; return g(1) + g(x);'
 erows E4 "$D/E4.cyr" 1 "zz = 1; (the assignment, 3 before)" "undefined variable 'zz'"
 body E5 'fn g<T>(v: T): i64 { return zz.a; }' 'var x = I { 1, 2 }; return g(1) + g(x);'
-erows E5 "$D/E5.cyr" 2 "return zz.a; (the .field base, 6 before)" "undefined variable 'zz'" "no struct type in scope for 'zz'"
+# E5 is one line since the 6.7.14 frontend lane's cascade fix: the `.field` base's "undefined variable" IS the error, and
+# the "no struct type in scope" line that followed it is gone (issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
+erows E5 "$D/E5.cyr" 1 "return zz.a; (the .field base, 6 before)" "undefined variable 'zz'"
 body E6 'fn g<T>(v: T): i64 { return &zz; }' 'var x = I { 1, 2 }; return g(1) + g(x);'
 erows E6 "$D/E6.cyr" 1 "return &zz; (3 before)" "undefined variable 'zz'"
 
