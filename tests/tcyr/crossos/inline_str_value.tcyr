@@ -60,6 +60,13 @@ var GA: Str = 0;                       # a Str handle global (set at top level)
 var gi: Str = Str { "zz", 2 };         # an inline Str global the h_ginl row copies into
 var gi2: Str = Str { "zz", 2 };        # ... and the top-level rows
 var gi3: Str = Str { "zz", 2 };
+# ── top level: `var H: Str = gz;` is a handle to gz's header in the declaration zone and after the first statement
+#    (6.7.14, D21 (a)); `var P: *Str = gz;` takes the same address
+var gz: Str = Str { "abcdefg", 7 };
+var HZ: Str = gz;
+var HZ2: Str = ((gz));
+var HZ3: Str = gz;
+var PZ: *Str = gz;
 
 # ── the filed table (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md) ──────────────────
 fn t_call(): i64 { var t: Str = Str { "abcdefg", 7 }; return f(t); }
@@ -132,6 +139,10 @@ fn q_pglob(): i64 { var p: *Str = gt; var q: *Str = (gt); return str_len(p) * 10
 fn q_pbare(): i64 { var t: Str; t = str_from("abcde"); var p: *Str = (t); p.len = 2; return t.len; }
 fn q_pcap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = t; return str_len(p); }; return callptr(c); }
 
+fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
+fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
+fn z_rebind(): i64 { HZ3 = str_from("xy"); return f(HZ3) * 10 + gz.len; }
+
 # ── a global inline `Str`: its static address, wherever it goes ─────────────────────────────────────────────
 fn mkg(): Str { return gt; }
 fn mkgp(): Str { return (gt); }
@@ -196,6 +207,10 @@ gi3 = str_from("xyz");       # ... <- a `: Str` call
 var R_TOP3 = gi3.len * 10 + f(gi3);
 var P_TOP: *Str = gt;        # a `*Str` declaration after the first statement: gt's static address (D18 (c))
 var R_TOP4 = str_len(P_TOP);
+var HL: Str = gz;            # after the first statement: a handle to gz's header (D21 (a))
+HL.len = 4;
+var R_TOP5 = gz.len;
+gz.len = 7;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
 assert_eq(t_paren(), 7, "f((t))");
@@ -274,4 +289,8 @@ assert_eq(R_TOP, 7, "f(gt) at top level");
 assert_eq(R_TOP2, 55, "top level: an inline Str global <- a Str handle global");
 assert_eq(R_TOP3, 33, "top level: an inline Str global <- a `: Str` call");
 assert_eq(R_TOP4, 7, "top level: var P: *Str = gt; (after the first statement)");
+assert_eq(R_TOP5, 4, "top level after a statement: var HL: Str = gz; HL.len = 4 writes gz.len (D21 (a); a copy through 6.7.13)");
+assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
+assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
+assert_eq(z_rebind(), 27, "HZ3 = str_from(..) rebinds the handle global: gz is untouched");
 var r = assert_summary();

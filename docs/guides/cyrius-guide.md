@@ -3036,6 +3036,12 @@ handle's address was stored into `t.data` and `t.len` left stale, and a bare `va
 D7 (1) — its bare name its first word, so `str_len(t)` read the handle's string through that pun and `return
 t;` from a fn returning `Str` compiled.
 
+At top level, `var H: Str = gt;` with `gt` an inline `Str` global binds a handle global to gt's static
+header, as the same line in a fn does — in the declaration zone and after the first statement alike (the
+user's decision D21 (a), 2026-10-16): `H.len = 3` writes `gt.len`, `H = str_from("xy")` rebinds H and leaves
+gt. Through 6.7.13 H was a 16-byte copy of gt. `var P: *Str = gt;` takes the same address. A `gt` declared
+below H is still refused (*cannot copy-init 'H' from a global declared below it*).
+
 ## Syscalls
 
 ```

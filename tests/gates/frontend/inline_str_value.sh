@@ -44,6 +44,12 @@
 # p: *Str = t;` takes the header as a `p: *Str` parameter does (the crossos q_* rows). fncallN, callptr, a vec, a
 # tuple element and an untyped if-expression branch keep the word (K9).
 #
+# 6.7.14 (the user's decision D21 (a), 2026-10-16; issues/2026-10-15-top-level-str-declaration-from-
+# inline-str-global-copies.md): a top-level `var H: Str = gt;` (gt an inline `Str` global) binds a handle global to
+# gt's static header, as the same line in a fn does — in the declaration zone (D21a, the filed repro: 33, was 37)
+# and after the first statement (D21b: 33, was 37); a `var P: *Str = gt;` in the zone takes the same address (the
+# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below").
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
@@ -51,7 +57,9 @@
 # leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
 # every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
 # unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
-# (7), D18c `var p: *Str = gt;` (7, no warning); CMP a handle into the retyped methods builds byte-identical to the
+# (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
+# statement (33), D21c a source declared below stays refused; CMP a handle into the retyped methods builds
+# byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
 #
@@ -97,6 +105,14 @@
 #                                                     D18b x4, D18c x8
 #   e3 `_istr_pdecl` without its SPSC              -> RED 4: D18c x4 (warned "assigning non-pointer to typed pointer")
 #   e4 lib/str.cyr's five methods untyped again     -> RED 14: R1 x7, D18a x7 (0)
+#   2026-10-17 (6.7.14, D21 (a)):
+#   f1 the lane before D21 (11dc74b46)             -> RED 21: R1 x7 (HL, HZ: a copy, 7; HZ2 / PZ: the word), D21a x7
+#                                                     (37), D21b x7 (37)
+#   f2 `_istr_gz` answers 0 (the zone replay)      -> RED 14: R1 x7 and D21a x7 refused "declared below" (pass 1 made
+#                                                     H a handle, the replay's copy path refuses it)
+#   f3 `_istr_gsrc` answers 0 (pass 1 inline)      -> RED 14: R1 x7 (z_bind, z_wrap), D21a x7 (37: copied)
+#   f4 `_istr_src` after the top-level arm again   -> RED 14: R1 x7 (R_TOP5: a copy), D21b x7 (37)
+#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -219,7 +235,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=77
+FLOOR=81
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -378,6 +394,32 @@ for leg in $(legs); do
 done
 runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
 
+# --- D21: the filed repro 1 (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
+cat > "$T/D21a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var gt: Str = Str { "abcdefg", 7 };
+var H: Str = gt;
+fn main() { H.len = 3; return f(H) * 10 + gt.len; }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D21a 33 "the filed repro 1: a zone \`var H: Str = gt;\` binds gt's header (was 37, a copy)" "$XLEGS $OLEGS"
+sed 's/^var H: Str = gt;$/alloc_init();\nvar H: Str = gt;/' "$T/D21a.cyr" > "$T/D21b.cyr"
+runs D21b 33 "the same after a first top-level statement (was 37)" "$XLEGS $OLEGS"
+cat > "$T/D21c.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str) { return str_len(s); }
+var H: Str = gt;
+var gt: Str = Str { "abcdefg", 7 };
+fn main() { return f(H); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+refused D21c "cannot copy-init 'H' from a global declared below it (declare the source first): 'gt'" "gt declared below H stays refused"
+
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
 cat > "$T/CMP.cyr" <<'EOF'
@@ -435,7 +477,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=36
+FLOOR_ROWS=39
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

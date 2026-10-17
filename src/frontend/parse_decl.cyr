@@ -6581,6 +6581,7 @@ fn _gci_inline(S, sid, ann): i64 {
     var ts = _tup_gci(S, sid, ann);
     if (ts >= 0) { return ts; }
     if (sid <= 0) { return 0; }
+    if (_istr_gsrc(S, sid) == 1) { return 0; }   # 6.7.14 (D21 (a)): `var H: Str = gt;` is a handle
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (_dyn_is(S, sid) == 1) { return sid; }   # 6.7.8 (D5): a dyn global is always inline (formed or copied)
     if (_gz_star(S, GTI(S), sid) == 1) { return sid; }   # 6.7.10 (B7-1g): `*p` is a struct value
@@ -6661,6 +6662,7 @@ fn _gci_take_in(S, sid, k): i64 {
 # to put A's first word in B (SIGSEGV on `B.x`). That disagreement is refused by name — never the
 # value store. CHANGELOG [6.6.12]
 fn _gci_init(S, dgv, gps, dnoff): i64 {
+    if (_istr_gz(S, dgv, gps) == 1) { return 1; }   # 6.7.14 (D21 (a), D18 (c)): an inline `Str` global's address
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var ss = _gci_src(S, GTI(S));
@@ -6752,8 +6754,8 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     _sci_sval = 0;   # 6.7.10 (B7-1): never a stale answer for this declaration
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
+    if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
-    if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
     var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
     if (ci_pk < 0) {
@@ -7223,6 +7225,39 @@ fn _istr_rax_into(S, dli, dgv, term): i64 {
     if (dgv >= 0) { SLVAR(S, dgv); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
+# ⛔ 6.7.14 — A TOP-LEVEL `var H: Str = gt;` BINDS A HANDLE TO gt's HEADER, AS THE SAME LINE IN A FN DOES (the user's
+# decision D21 (a), 2026-10-16): gt (an inline `Str` global, `var gt: Str = Str { .. };`) has a static address, so H
+# is a handle global (8 bytes) holding it — `H.len = 3` writes gt.len — in the declaration zone and after the first
+# statement alike. Both made H an inline 16-byte COPY of gt (`_gci_inline` / `_gci_init`, `_gci_toplevel`). A `var P:
+# *Str = gt;` in the zone takes the same address, as after the first statement (6.7.14's D18 (c)). The untyped `var
+# H = gt;` keeps gt's first word at top level (the user's D22 (b): 6.7.13's D6 (b) — an untyped global keeps the
+# word). CHANGELOG [6.7.14]
+# Pass 1, cursor on the RHS: 1 = `sid` is `Str` and the RHS a whole name (inside any wrap) of an inline `Str` global.
+fn _istr_gsrc(S, sid): i64 {
+    if (sid != _STR_SID(S)) { return 0; }
+    var pk = _sci_pname(S, GTI(S));
+    if (pk < 0) { return 0; }
+    if (_istr_name(S, TOKVAL(S, GTI(S) + pk)) != 2) { return 0; }
+    return 1;
+}
+# The zone replay, cursor on the RHS (`gps` the annotation's; a `*Str` reads 0, so its tokens are asked): such a
+# `Str` / `*Str` declaration stores the global's static address into `dgv` (1, the cursor left on the `;`); else 0.
+fn _istr_gz(S, dgv, gps): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (gps != 0 - ss) {
+        if (gps != 0) { return 0; }
+        if (TOKTYP(S, GTI(S) - 4) != 49) { return 0; }
+        if (_istr_pann(S, GTI(S) - 3) == 0) { return 0; }
+    }
+    if (_istr_gsrc(S, ss) == 0) { return 0; }
+    if (gps != 0) { if (dgv >= 0) { if (_istr_ix > dgv) { return 0; } } }   # declared below H: `_gci_below` refuses it
+    var pk = _sci_pname(S, GTI(S));
+    _istr_ra(S, 2);
+    if (dgv >= 0) { _gvi_store(S, dgv); }
+    STI(S, GTI(S) + 1 + 2 * pk);   # the name and its wrap: the cursor on `;`
     return 1;
 }
 # The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then
