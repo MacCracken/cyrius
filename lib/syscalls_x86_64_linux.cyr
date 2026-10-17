@@ -594,13 +594,12 @@ fn sigset_has(set, signum): i64 {
 # sys_sigprocmask / sys_signalfd / sys_epoll_create moved to
 # lib/syscalls_linux_common.cyr at v5.11.20.
 
-# epoll_event: { u32 events, u64 data } = 12 bytes
+# epoll_event: { u32 events, u64 data } = 12 bytes. A new one, filled by epoll_event_set (16
+# bytes allocated). Returns the event, or 0 when the allocation fails.
 fn epoll_event_new(events, data): i64 {
     var ev = alloc(16);
     if (ev == 0) { return 0; }
-    store32(ev, events);
-    store64(ev + 4, data);
-    return ev;
+    return epoll_event_set(ev, events, data);
 }
 
 # The size of one epoll_event on x86_64 Linux — the array stride sys_epoll_wait writes at. The
@@ -615,6 +614,15 @@ fn epoll_event_events(ev): i64 { return load32(ev); }
 # The u64 data of the epoll_event at `ev` — at offset 4 on x86_64 (the packed layout
 # epoll_event_new writes). Step through a sys_epoll_wait array by EPOLL_EVENT_SIZE.
 fn epoll_event_data(ev): i64 { return load64(ev + 4); }
+
+# Fill the epoll_event at `ev`, a buffer the caller owns (a stack `var ev[16]`, at least
+# EPOLL_EVENT_SIZE bytes): `events` at 0 and `data` at offset 4 (x86_64's packed layout).
+# Returns ev, for sys_epoll_ctl. The allocation-free twin of epoll_event_new. CHANGELOG [6.7.14]
+fn epoll_event_set(ev, events, data): i64 {
+    store32(ev, events);
+    store64(ev + 4, data);
+    return ev;
+}
 
 # sys_epoll_ctl moved to lib/syscalls_linux_common.cyr at v5.11.20.
 

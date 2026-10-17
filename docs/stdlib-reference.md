@@ -760,9 +760,11 @@ are the signature reference for the wrappers not listed here (`cyrdoc <peer>` re
 
 Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sys_execve`, `sys_pipe`, `sys_waitpid`, `sys_kill`, `sys_mount`, `sys_mkdir`, `sys_rmdir`, `sys_chdir` (v6.5.7), `sys_sigprocmask`, `sys_signalfd`, `sys_epoll_create`, `sys_epoll_ctl`, `sys_epoll_wait`, `sys_timerfd_create`, `sys_fchownat`.
 
-Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
+Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `epoll_event_set` (6.7.14), `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
 
 epoll_event readers (6.7.12): `epoll_event_events(ev)` and `epoll_event_data(ev)` read one element of a `sys_epoll_wait` array (or an `epoll_event_new` result) in the peer's layout, and `const EPOLL_EVENT_SIZE` is the array stride — 12 on x86_64 Linux and x86-macOS (packed, data @4), 16 on aarch64 (unpacked, data @8). Step through the array by `EPOLL_EVENT_SIZE` instead of hand-gating `+4` / `+8` per arch.
+
+epoll_event writer (6.7.14): `epoll_event_set(ev, events, data) → ev` fills an epoll_event the caller owns — a stack `var ev[16]` (at least `EPOLL_EVENT_SIZE` bytes) — in the same layout: `events` at 0, `data` at 4 on x86_64 Linux and x86-macOS, at 8 on aarch64. It returns `ev` for `sys_epoll_ctl`. `epoll_event_new` is `alloc(16)` plus `epoll_event_set`; take the writer to register from a stack buffer instead of allocating one per call (lib/async.cyr's registrations do).
 
 Signal disposition (defined in `syscalls.cyr` itself, per-target routed inside
 one fn so the `#ifdef`-blind static checker sees a single definition):

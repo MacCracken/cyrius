@@ -49,6 +49,10 @@
 #      "fn epoll_event_data" AND axis B (the probe reads it: a reachable undefined fn). The
 #      readers and EPOLL_EVENT_SIZE (issues/archived/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md)
 #      sit beside epoll_event_new in both peers; axis B's probe names all three.
+#  11. (6.7.14) delete `fn epoll_event_set` from the x86-macOS peer -> FAIL axis A naming
+#      "fn epoll_event_set" AND axis B (the probe calls it). The writer for a caller-owned buffer
+#      (issues/2026-10-15-epoll-event-writer-for-caller-buffers.md) sits beside the readers in both
+#      peers; axis B's probe calls it.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -136,7 +140,7 @@ fn main(): i64 {
     var ss = sigset_new();
     sigset_add(ss, 15);
     t = t + sigset_has(ss, 15) + epoll_event_new(EPOLLIN, 1) + timerspec_new(1, 2) + timerfd_drain(0 - 1);
-    t = t + epoll_event_events(&evs) + epoll_event_data(&evs) + EPOLL_EVENT_SIZE;
+    t = t + epoll_event_events(&evs) + epoll_event_data(&evs) + EPOLL_EVENT_SIZE + epoll_event_set(&evs, EPOLLIN, 1);
     t = t + MS_BIND + MS_RDONLY + SYS_FLOCK + SYS_DUP3 + SYS_FACCESSAT + SYS_SYSINFO + SYS_INOTIFY_INIT1;
     t = t + sys_getdents64(0 - 1, &evs, 64) + sys_kill(0 - 1, 0) + sys_getrandom(&evs, 8, 0);
     t = t + sys_fchown(0 - 1, 0 - 1, 0 - 1) + sys_getrlimit(3, &evs) + sys_statx(0 - 100, ".", 0, 0x7FF, &evs);

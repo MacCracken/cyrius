@@ -882,13 +882,12 @@ fn sigset_has(set, signum): i64 {
 
 # epoll_event: { u32 events, u64 data } = 16 bytes on aarch64. Unlike x86_64 (which
 # has EPOLL_PACKED → data @4), aarch64 leaves the struct unpacked, so the u64 aligns
-# to offset 8. Must match the reactor's data offset in lib/async.cyr. (v6.4.42)
+# to offset 8. Filled by epoll_event_set, which lib/async.cyr's registrations call too. (v6.4.42)
+# Returns the event, or 0 when the allocation fails.
 fn epoll_event_new(events, data): i64 {
     var ev = alloc(16);
     if (ev == 0) { return 0; }
-    store32(ev, events);
-    store64(ev + 8, data);
-    return ev;
+    return epoll_event_set(ev, events, data);
 }
 
 # The size of one epoll_event on aarch64 — the array stride sys_epoll_wait writes at. The struct
@@ -903,6 +902,15 @@ fn epoll_event_events(ev): i64 { return load32(ev); }
 # The u64 data of the epoll_event at `ev` — at offset 8 on aarch64 (the unpacked layout
 # epoll_event_new writes). Step through a sys_epoll_wait array by EPOLL_EVENT_SIZE.
 fn epoll_event_data(ev): i64 { return load64(ev + 8); }
+
+# Fill the epoll_event at `ev`, a buffer the caller owns (a stack `var ev[16]`, at least
+# EPOLL_EVENT_SIZE bytes): `events` at 0 and `data` at offset 8 (aarch64's unpacked layout).
+# Returns ev, for sys_epoll_ctl. The allocation-free twin of epoll_event_new. CHANGELOG [6.7.14]
+fn epoll_event_set(ev, events, data): i64 {
+    store32(ev, events);
+    store64(ev + 8, data);
+    return ev;
+}
 
 # sys_epoll_ctl moved to lib/syscalls_linux_common.cyr at v5.11.20.
 
