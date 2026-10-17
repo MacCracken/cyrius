@@ -698,24 +698,27 @@ if [ "$WINE" = 1 ]; then
 fi
 
 # ⛔ 6.7.14 — ON WIN64 A VALUE-FORM VECTOR PARAMETER TAKES WHAT SYSV'S `_sar_src` TAKES (`_sarg_pe_vform`): the struct
-# arms took its argument there (Win64 passes it by address, under the struct mask), so a vector local of another type
-# and an identifier-led expression compiled and the callee read garbage, where x86_64 / aarch64 / cx
+# arms took its argument there (Win64 passes it by address, under the struct mask), so a vector local of another type,
+# a struct local and an identifier-led expression compiled and the callee read garbage, where x86_64 / aarch64 / cx
 # refuse each by name. Filed: docs/development/issues/2026-10-16-pe-16-byte-value-form-vector-argument-unchecked.md,
-# 2026-10-16-pe-identifier-led-expression-into-value-form-vector-parameter.md
+# 2026-10-16-pe-identifier-led-expression-into-value-form-vector-parameter.md,
+# 2026-10-16-pe-struct-local-into-value-form-vector-parameter.md
 #   VYw3-VYw5 the first issue's three probes on PE (an f64v4 / an f64v2 / an f32v8 local into v: f64v2 / v: f32v4 /
 #      v: f64v2: PE exited 2 / 0 / 3): exactly x86_64's one error line, word for word
 #   VYwk the control: an f64v2 local into v: f64v2 exits 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   VZw3 the second issue's repro verbatim (`lanes(q + 1) + lanes(z * 2) + lanes(w + 1)`; PE exited 5): exactly x86_64's
 #      three lines; VZw4 the literal-led control `lanes(5 + z)`: x86_64's one line
+#   VZw5 the third issue's repro verbatim (`lanesn(p)`, p: Pt; PE exited 42): x86_64's one line ("must be a 16-byte
+#      vector"); VZw6 `lanesn(mkp())` and `lanesn(*pp)` (PE exited 84): x86_64's two lines, the D30 words
 #   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane; each change alone in a scratch copy of the tree, this gate run
 #   there with CYCC=<its 2-stage mutant>; measured):
-#   M-PV0 the fix reverted (6.7.13's `_sarg_pe_v32` / `_sarg_pe_vword`) -> RED 5: VYw3-VYw5 VZw3 (PE compiled), and the
-#       VZw3 word check; VZw4 green (the literal reached `_sarg_pe_vword`)
-#   M-PV1 `_sarg_pe_vform` answering -1                         -> RED 12: as M-PV0, VZw4 too, and VYw1 VYw2 VZ3pe VZ4pe
+#   M-PV0 the fix reverted (6.7.13's `_sarg_pe_v32` / `_sarg_pe_vword`) -> RED 9: VYw3-VYw5 VZw3 VZw5 VZw6 (PE compiled),
+#       and the VZw3 / VZw5 / VZw6 word checks; VZw4 green (the literal reached `_sarg_pe_vword`)
+#   M-PV1 `_sarg_pe_vform` answering -1                         -> RED 16: as M-PV0, VZw4 too, and VYw1 VYw2 VZ3pe VZ4pe
 #       (compiled: the 32-byte check and D30's word refusal are folded into it), VZw1 VZw2 (the value parse's own
 #       line); and simd_return_shapes.sh win64 Q3
-#   M-PV2 its local arm without `_simd_arg_typecheck`           -> RED 6: VYw1 VYw2 VYw3-VYw5 VZ4pe (compiled); and
-#       simd_return_shapes.sh win64 Q3
+#   M-PV2 its local arm without `_simd_arg_typecheck`           -> RED 8: VYw1 VYw2 VYw3-VYw5 VZ4pe VZw5 (compiled), the
+#       VZw5 word check; and simd_return_shapes.sh win64 Q3
 #   M-PV3 `_spv_skip` parsing the refused argument (no skip)    -> RED 2: VZw1 VZw2 (two error lines each); VZw3 green
 #       (`q + 1` parses clean)
 # pe_same <name> <what> <src-file> <lines>: x86_64 and PE both refuse <src-file>, PE's error lines are x86_64's word for
@@ -773,7 +776,20 @@ syscall(60, run(3));
 EOF
 printf '%s\n' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }' 'fn run(z): i64 {' \
   '    return lanes(5 + z);' '}' 'syscall(60, run(3));' > "$D/vzw4.cyr"
-echo "VYw / VZw3-VZw4. Win64's value-form vector parameter takes what SysV's takes (6.7.14)"
+cat > "$D/vzw5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+struct Pt { x; y; }
+fn main(): i64 { var p: Pt; p.x = 4; p.y = 2; return lanesn(p); }
+var rc = main(); syscall(60, rc);
+EOF
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' \
+  'fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }' \
+  'struct Pt { x; y; }' 'fn mkp(): Pt { var p: Pt; p.x = 4; p.y = 2; return p; }' \
+  'fn main(): i64 { var p: Pt; p.x = 4; p.y = 2; var pp: *Pt = &p; return lanesn(mkp()) + lanesn(*pp); }' \
+  'var rc = main(); syscall(60, rc);' > "$D/vzw6.cyr"
+echo "VYw / VZw3-VZw6. Win64's value-form vector parameter takes what SysV's takes (6.7.14)"
 exit_rows VYwk "$D/vywk.cyr" 42 "an f64v2 local into v: f64v2"
 if [ "$WINE" = 1 ]; then
     pe_same VYw3 "VYw3 pe: an f64v4 local into v: f64v2 (PE exited 2)" "$D/vyw3.cyr" 1
@@ -781,6 +797,10 @@ if [ "$WINE" = 1 ]; then
     pe_same VYw5 "VYw5 pe: an f32v8 local into v: f64v2 (PE exited 3)" "$D/vyw5.cyr" 1
     pe_same VZw3 "VZw3 pe: lanes(q + 1) + lanes(z * 2) + lanes(w + 1), the filed repro (PE exited 5)" "$D/vzw3.cyr" 3
     pe_same VZw4 "VZw4 pe: lanes(5 + z), the literal-led control" "$D/vzw4.cyr" 1
+    pe_same VZw5 "VZw5 pe: lanesn(p), p: Pt, the filed repro (PE exited 42)" "$D/vzw5.cyr" 1
+    pe_same VZw6 "VZw6 pe: lanesn(mkp()) and lanesn(*pp) (PE exited 84)" "$D/vzw6.cyr" 2
+    grep -qF 'must be a 16-byte vector' "$D/VZw5.pe.e" || bad "VZw5 pe: not the 'must be a 16-byte vector' refusal"
+    [ "$(grep -cF "is a local of its type or a call declared to return it" "$D/VZw6.pe.e")" -eq 2 ] || bad "VZw6 pe: not two D30 refusals"
     [ "$(grep -cF "$VZ3F" "$D/VZw3.pe.e")" -eq 3 ] || bad "VZw3 pe: not three D30 refusals"
 fi
 
@@ -824,4 +844,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3 VZw4)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6)"
