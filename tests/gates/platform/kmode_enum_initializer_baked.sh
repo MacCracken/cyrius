@@ -58,6 +58,13 @@
 #       three K deltas, every D row (no data copy; the stores come back) and E's data copy
 #   D2. _gvk_quiet returning 0 (the stores kept, as 6.6.16 - 6.7.13) -> RED, 6 checks: the three K
 #       scalar deltas, the two D code-form rows and E's KX1 delta
+# MUTATION LEDGER (6.7.14 — a float scalar's float literal baked, RS / KS / W2;
+# issues/2026-10-08-kernel-float-global-init-not-baked.md):
+#   0. real tree                                   -> GREEN (17 rows)
+#   F0. the compiler before the fix (c0d6d1ba)     -> RED, 7 checks: RS check 1 and its 9 warnings, KS's warning,
+#       image bytes and late store, W2's count and W4 named
+#   F1. _gvk_flt's f32 narrowing dropped           -> RED, 1 check: RS check 2 (an f32 read as binary64 bits)
+#   F2. _gvk_flt's untyped arm dropped             -> RED, 2 checks: RS check 4 and its warning count (4)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -190,6 +197,61 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rf.cyr" > "$T/rf.bin" 2> "$T/rf.err" && [ -
 else
     bad "RF: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rf.err")"
 fi
+# RS (6.7.14) — a float SCALAR's float literal, optionally negated, is baked: an `f64` global and an
+# untyped `var K = 1.5;` as their binary64 bits, an `f32` global as its binary32 bits zero-extended (what
+# the replayed store writes: it rounds). The integer folder refused the literal, so the store was left
+# to the late replay and the kernel's program read 0 (issues/2026-10-08-kernel-float-global-init-not-
+# baked.md). A float initializer that is not a literal (a call, arithmetic) stays late and is named.
+cat > "$T/rs.cyr" <<'EOF'
+kernel;
+var G: f64 = 1.5;
+var F: f32 = 2.5;
+var N: f64 = -1.5;
+var K = 1.5;
+var KN = -2.5;
+var M: f32 = 0.1;
+var Z: f32 = -0.0;
+fn fk(): f64 { return 1.5; }
+var CX: f64 = fk();
+var CA: f64 = 1.5 + 1.0;
+var H = 7;
+fn ck(got, want, k): i64 { if (got != want) { syscall(60, k); } return 0; }
+ck(load64(&G), 0x3FF8000000000000, 1);
+ck(load64(&F), 0x40200000, 2);
+ck(load64(&N), 0xBFF8000000000000, 3);
+ck(load64(&K), 0x3FF8000000000000, 4);
+ck(load64(&KN), 0xC004000000000000, 5);
+ck(load64(&M), 0x3DCCCCCD, 6);
+ck(load64(&Z), 0x80000000, 7);
+ck(load64(&CX), 0, 8);
+ck(load64(&CA), 0, 9);
+ck(H, 7, 10);
+syscall(60, 100);
+EOF
+rows=$((rows + 1))
+if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rs.cyr" > "$T/rs.bin" 2> "$T/rs.err" && [ -s "$T/rs.bin" ]; then
+    chmod +x "$T/rs.bin"
+    rc=0
+    "$T/rs.bin" > /dev/null 2>&1 || rc=$?
+    [ "$rc" = 100 ] || bad "RS: the kernel program read a wrong float scalar at check $rc (1 f64, 2 f32 binary32, 3 f64 negated, 4-5 untyped, 6 f32 rounded, 7 f32 -0.0; 8-9 the computed ones read 0, 10 the literal control)"
+    [ "$(nwarn "$T/rs.err")" = 2 ] || bad "RS: $(nwarn "$T/rs.err") late-initializer warnings, want 2 (CX a call, CA arithmetic)"
+    grep "$WMSG 'CX'" "$T/rs.err" > /dev/null || bad "RS: no warning names CX (a call is left to the late replay)"
+    grep "$WMSG 'CA'" "$T/rs.err" > /dev/null || bad "RS: no warning names CA (float arithmetic is left to the late replay)"
+else
+    bad "RS: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rs.err")"
+fi
+# KS (6.7.14) — the filed repro, a default `kernel;` build (the ELF32 multiboot image): no warning, G's
+# image bytes are 1.5's binary64 bits with H's 7 after them, and no `movabs rax, 1.5` (the late store)
+# is left in the code. Through 6.7.13 G's bytes were zero and the store came after `call kmain`.
+rows=$((rows + 1))
+printf 'kernel;\nvar G: f64 = 1.5;\nvar H = 7;\nfn kmain(): i64 { return load64(&G) + H; }\nkmain();\n' > "$T/ks.cyr"
+if "$CC" < "$T/ks.cyr" > "$T/ks.bin" 2> "$T/ks.err" && [ -s "$T/ks.bin" ]; then
+    [ "$(nwarn "$T/ks.err")" = 0 ] || bad "KS: the filed repro warned ($(nwarn "$T/ks.err") late-initializer warnings, want 0)"
+    [ "$(count "$T/ks.bin" ' 00 00 00 00 00 00 f8 3f 07 00 00 00 00 00 00 00 ')" = 1 ] || bad "KS: the image does not hold G = 1.5 (00 .. f8 3f) followed by H = 7"
+    [ "$(count "$T/ks.bin" ' 48 b8 00 00 00 00 00 00 f8 3f ')" = 0 ] || bad "KS: a late store of 1.5 (movabs rax) is still in the code"
+else
+    bad "KS: the kernel build of the filed repro failed: $(grep -m1 '^error' "$T/ks.err")"
+fi
 
 # ---------------------------------------------------------------------------------------------
 # The DATA copies of $2 in file $1: its occurrences minus those that are a `movabs rax, imm64`'s
@@ -294,13 +356,15 @@ if [ -s "$T/K.bin" ]; then
 else
     bad "W1: K did not build"
 fi
-# W2: a struct literal with a string leaf, a destructure, a float literal: each left late, each once.
+# W2: a struct literal with a string leaf, a destructure: each left late, each once. A float literal
+# (W4) is baked since 6.7.14 (RS / KS above) and named no more.
 # (6.6.17: `wp` returns the PAIR the destructure binds — a one-value fn there is now refused.)
 rows=$((rows + 1))
 printf 'kernel;\nstruct WP { a; b; }\nfn wp(): (i64, i64) { return (1, 2); }\nvar W1 = WP { 1, "s" };\nvar W2, W3 = wp();\nvar W4: f64 = 1.5;\nvar W5 = 0;\nvar W6 = 7;\nasm { 0xF4; }\n' > "$T/w2.cyr"
 if "$CC" < "$T/w2.cyr" > "$T/w2.bin" 2> "$T/w2.err"; then
-    [ "$(nwarn "$T/w2.err")" = 3 ] || bad "W2: $(nwarn "$T/w2.err") warnings, want 3 (W1 a string leaf, W2 a destructure, W4 a float literal)"
-    for n in W1 W2 W4; do grep "$WMSG '$n'" "$T/w2.err" > /dev/null || bad "W2: no warning names $n"; done
+    [ "$(nwarn "$T/w2.err")" = 2 ] || bad "W2: $(nwarn "$T/w2.err") warnings, want 2 (W1 a string leaf, W2 a destructure)"
+    for n in W1 W2; do grep "$WMSG '$n'" "$T/w2.err" > /dev/null || bad "W2: no warning names $n"; done
+    grep "$WMSG 'W4'" "$T/w2.err" > /dev/null && bad "W2: the float literal W4 is named (it is baked since 6.7.14)"
 else
     bad "W2: the kernel build failed: $(grep -m1 '^error' "$T/w2.err")"
 fi
@@ -348,7 +412,7 @@ else
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
-[ "$rows" -ge 14 ] || bad "only $rows rows ran (floor 14)"
+[ "$rows" -ge 16 ] || bad "only $rows rows ran (floor 16)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: kmode_enum_initializer_baked ($fail checks failed over $rows rows)"
     exit 1

@@ -1,0 +1,54 @@
+# zone_float_scalar_baked.tcyr — a declaration-zone float scalar's float literal is baked into the image (6.7.14).
+#
+# THE DEFECT. `var G: f64 = 1.5;` before the first top-level statement was a startup store: the integer folder
+# that bakes `var X = C;` refused the float literal, so an x86 `kernel;` build (whose replay runs after its
+# program) read 0 and warned "the initializer of 'G' runs after the top-level program". The literal's bits are
+# now written into the image — binary64 for an `f64` global and an untyped `var K = 1.5;`, binary32 zero-extended
+# for an `f32` (the bits the store wrote: it rounds) — and the store is gone, as for an integer constant. So the
+# global is its value from program start on every target: a forward read sees it, and a call in an EARLIER
+# initializer that writes it keeps its write (through 6.7.13 the startup store reset it to the literal).
+# (issues/2026-10-08-kernel-float-global-init-not-baked.md)
+#
+# WHY A CROSS-HOST TEST: the image writer (and cx's startup prestore) is per backend — x86_64 ELF, Mach-O, PE,
+# aarch64, cx.
+include "lib/assert.cyr"
+
+# Forward reads: an initializer that runs before the declaration sees the baked value.
+var zf_fwd_g = load64(&ZF_G);
+var zf_fwd_k = load64(&ZF_K);
+var zf_fwd_f = load64(&ZF_F);
+# An earlier initializer's call that writes the global keeps its write.
+fn zf_set(): i64 {
+    store64(&ZF_W, 9);
+    return 0;
+}
+var zf_r = zf_set();
+var ZF_G: f64 = 1.5;
+var ZF_F: f32 = 2.5;
+var ZF_N: f64 = -1.5;
+var ZF_K = -2.5;
+var ZF_M: f32 = 0.1;
+var ZF_Z: f32 = -0.0;
+var ZF_W: f64 = 1.5;
+var ZF_H = 7;
+# A redeclaration keeps its order: the first value is read between the two.
+var ZF_R: f64 = 1.5;
+var zf_mid = load64(&ZF_R);
+var ZF_R: f64 = 2.5;
+
+assert_eq(load64(&ZF_G), 0x3FF8000000000000, "f64 1.5: binary64 bits");
+assert_eq(load64(&ZF_F), 0x40200000, "f32 2.5: binary32 bits, zero-extended");
+assert_eq(load64(&ZF_N), 0xBFF8000000000000, "f64 -1.5: the sign bit");
+assert_eq(load64(&ZF_K), 0xC004000000000000, "untyped -2.5: binary64 bits");
+assert_eq(load64(&ZF_M), 0x3DCCCCCD, "f32 0.1: rounded to nearest");
+assert_eq(load64(&ZF_Z), 0x80000000, "f32 -0.0: the binary32 sign bit");
+assert_eq(ZF_H, 7, "the integer after the floats");
+assert_eq(zf_fwd_g, 0x3FF8000000000000, "a forward read of the f64 sees 1.5");
+assert_eq(zf_fwd_k, 0xC004000000000000, "a forward read of the untyped float sees -2.5");
+assert_eq(zf_fwd_f, 0x40200000, "a forward read of the f32 sees 2.5");
+assert_eq(load64(&ZF_W), 9, "an earlier initializer's write is kept");
+assert_eq(zf_mid, 0x3FF8000000000000, "a redeclared float: the first value between the two");
+assert_eq(load64(&ZF_R), 0x4004000000000000, "a redeclared float: the last value after");
+var g = ZF_G + 1.0;
+assert_eq(load64(&g), 0x4004000000000000, "the f64 global reads as an f64");
+var r = assert_summary();

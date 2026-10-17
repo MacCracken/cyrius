@@ -6805,6 +6805,15 @@ constant of another value, before a constant still runs first (`var a = f(); var
 `C`). A `bool` global keeps its startup store (its value is judged there), and so does an
 initializer naming another file's `private` const (refused there).
 
+**So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
+optionally negated — `var G: f64 = 1.5;`, `var F: f32 = 2.5;`, an untyped `var K = -1.5;` — is
+baked the same way: the image holds the literal's binary64 bits (an `f32` global: its binary32
+bits, rounded to nearest, in the low 4 bytes — what the startup store wrote) and nothing runs at
+startup, so the global is its value from program start, as above. Through 6.7.13 it was a startup
+store: an x86 `kernel;` build's program read 0 and was warned, and an earlier initializer's read
+saw 0. A float initializer that is not a literal (`(1.5)`, `1.5 + 1.0`, a call) is still a
+deferred initializer.
+
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
 first. A kernel whose program never returns never runs them, and the program reads what the

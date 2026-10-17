@@ -5494,13 +5494,35 @@ fn _gvk_one(S, gi): i64 {
     if (gi >= _gv_ent_cap) { return 0; }
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;   # its recorded slot (_gv_ent_slot)
     if (_gvk_plain(S, vi) == 0) { return 0; }
-    _cf_enum = 1;
-    var v = _CF_TRY(S, ti, 5);
-    _cf_enum = 0;
-    if (_cf_ok == 0) { return 0; }
+    var v = _gvk_flt(S, _gv_tok(graw), vi, ti);
+    if (_gai_ok == 0) {
+        _cf_enum = 1;
+        v = _CF_TRY(S, ti, 5);
+        _cf_enum = 0;
+        if (_cf_ok == 0) { return 0; }
+    }
     S64(_vgsi_base + vi * 8, v);
     store64(_gvk_v + gi * 8, v);
     return 1;
+}
+# A float scalar's float literal, optionally negated, then `;` (`_gai_ok` 1): the bits the replayed store writes —
+# binary64 for an `f64` global or an untyped `var K = 1.5;`, binary32 zero-extended for an `f32` (_f32_init_round
+# rounds, _gai_f32 gives the same bits). The integer folder above refused the literal, so an x86 `kernel;` build left
+# `var G: f64 = 1.5;` to its late replay and the program read 0 (issues/2026-10-08-kernel-float-global-init-not-
+# baked.md). `sti` = the entry's `var`, `ti` its initializer. CHANGELOG [6.7.14]
+fn _gvk_flt(S, sti, vi, ti): i64 {
+    _gai_ok = 0;
+    var t = GVTYPE(S, vi);
+    if (t != F64_TYID) { if (t != F32_TYID) { if (TOKTYP(S, sti + 2) != 4) { return 0; } } }
+    var neg = 0;
+    if (TOKTYP(S, ti) == 7) { neg = 1; ti = ti + 1; }
+    if (TOKTYP(S, ti) != 61) { return 0; }
+    if (TOKTYP(S, ti + 1) != 5) { return 0; }
+    _gai_ok = 1;
+    var bits = FLIT_NUM(TOKVAL(S, ti));
+    if (neg == 1) { bits = bits ^ (1 << 63); }
+    if (t == F32_TYID) { return _gai_f32(bits); }
+    return bits;
 }
 
 # ⛔ 6.7.14 — A BAKED SCALAR IS NOT REPLAYED WHERE ITS STORE WROTE WHAT THE SLOT ALREADY HOLDS (issues/2026-10-08-const-
