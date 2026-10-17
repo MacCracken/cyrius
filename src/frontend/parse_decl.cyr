@@ -936,8 +936,24 @@ fn _var_rhs_post(S, sid0, pscale, sl, start): i64 {
     if (sid0 == 0 - 9) { if (GESTYPE(S) != F64_TYID) { sid0 = 0; } }
     var os = _sc_small_whole(S, start);
     if (os > 0) { return os; }
+    if (_var_rhs_if64(S, start) == 1) { return 0 - 9; }   # 6.7.14 (D25 (a)): `var a = fncall0(&f);` (not fncall0's `: i64`)
     if (sid0 != 0) { return sid0; }
     return _var_rhs_mchain(S, start, GTI(S));
+}
+# 6.7.14 (D25 (a)) — the initialiser at `start` leads with a call through fncallN / callptr to a known `&f` whose `f`
+# is declared `: f64` — inside parentheses that wrap that call alone — and the whole initialiser is still an f64: the
+# f64 `var a = f();` / `var a = (f()) * 2.0;` take (`_var_rhs_csid` / `_var_rhs_wsid`'s -9). Judged after the parse,
+# as their -9 is: a comparison or D12's integer operators leave an integer. CHANGELOG [6.7.14]
+fn _var_rhs_if64(S, start): i64 {
+    if (GESTYPE(S) != F64_TYID) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, start);
+    _pw_end = pe;
+    var c = start + k;
+    if (_icall_rs_at(S, c) != 0 - 9) { return 0; }
+    if (k == 0) { return 1; }
+    if (TOKTYP(S, _call_close(S, c + 1) + 1) != 11) { return 0; }
+    return 1;
 }
 # ⛔ 6.7.10 — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES ITS TYPE AT EVERY SIZE (the
 # user's decision 12, 2026-10-12), as over 8 B, where the result's temporary BECOMES `c` (`_sc_var_receive`).

@@ -324,5 +324,20 @@ tprow z_ref 0 "zone: var X: *P2 = mkp(); refused by D24, no warning beside the r
 tprow z_ref3 0 "zone: var X: *P3 = mk3(); refused (no frame), no warning beside the refusal" 'struct P3 { a; b; c; }\nfn mk3(): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; }\nvar X: *P3 = mk3();\nsyscall(60, 0);\n'
 tprow z_8b 1 "zone: var X: *P1 = mk1(); an 8 B struct's word warns, as in a fn (D14)" 'struct P1 { a; }\nfn mk1(): P1 { var r: P1 = P1 { 1 }; return r; }\nvar X: *P1 = mk1();\nsyscall(60, 0);\n'
 
+# --- axis 13 (6.7.14, the user's decision D26 (a), 2026-10-16; issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md) ---
+# A known `&f` callee's `: *T` result carries the pointer type, as the direct call `gp()` does: `var w: *P2 = fncall0(&gp);`
+# warned "assigning non-pointer to typed pointer" (the result was an untyped word) where `var x: *P2 = gp();` is quiet.
+# A callee held in a variable stays a word and still warns (K4). The step half (`fncall0(&gp) + 1` steps one P2) is
+# tests/tcyr/crossos/fncall_scalar_result.tcyr's.
+#   the fix reverted (the lane's D27 commit)              -> RED 5: K0 K1 K2 K3 K5 (1 warning each)
+#   `_call_scale_fix` without its `_icall_ps_beg` line     -> RED 5: K0 K1 K2 K3 K5 (the factor's fix reset the step)
+KP='struct P2 { a; b; }\nvar G: P2 = P2 { 11, 22 };\nvar GI = 5;\nfn gp(): *P2 { return &G; }\nfn gi(): *i64 { return &GI; }\n'
+tprow K0 0 "the filed repro 1, verbatim: var w: *P2 = fncall0(&gp); (1 before)" "$(cat docs/development/issues/repros/2026-10-16-known-callee-pointer-or-f64-result-untyped.cyr)"
+tprow K1 0 "fn: var w: *P2 = callptr(&gp); (1 before)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var w: *P2 = callptr(&gp);\n    return w.b;\n}\nsyscall(60, f());\n"
+tprow K2 0 "fn: w = fncall0(&gp); into a *P2 local (1 before)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var w: *P2 = &G;\n    w = fncall0(&gp);\n    return w.b;\n}\nsyscall(60, f());\n"
+tprow K3 0 "zone: var W: *P2 = fncall0(&gp); (1 before)" "include \"lib/fnptr.cyr\"\n${KP}var W: *P2 = fncall0(&gp);\nsyscall(60, W.b);\n"
+tprow K4 1 "fn: a callee held in a variable is a word (the control, D31)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var fp = &gp;\n    var w: *P2 = fncall0(fp);\n    return w.b;\n}\nsyscall(60, f());\n"
+tprow K5 0 "fn: var q: *i64 = fncall0(&gi); (1 before)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var q: *i64 = fncall0(&gi);\n    return *q;\n}\nsyscall(60, f());\n"
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18)"

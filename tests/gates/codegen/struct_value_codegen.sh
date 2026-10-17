@@ -218,6 +218,8 @@
 #   M-V3 `_scv_restore` not restoring `_scv_pk`                  -> RED Q10 (expected ';'), A1-A6 (no build)
 #   M-I3 `_icall_result` never typing f64                         -> RED I3 (exit 2), A1-A6 (tcyr I8-I11 I14)
 #   M-I4 `_icall_result` ignoring the last argument's type        -> RED A1-A6 (tcyr I13)
+#     (6.7.14, the user's D25 (a): the last argument's type is no longer read — I13 now pins the f64 an `&f`
+#     callee's `: f64` gives whatever its arguments, as the direct call; M-I4 is the shipped behaviour)
 #   M-I5 `_icall_result` ignoring the callee (`cfi` / `: f64`)    -> RED A1-A6 (tcyr I12)
 #   M-I6 `_lfa_load` not recording `_lfa_end` (no static callee)   -> RED I3, A1-A6 (tcyr I8-I11 I14)
 #   (6.7.11, the call-arguments lane, the same procedure)

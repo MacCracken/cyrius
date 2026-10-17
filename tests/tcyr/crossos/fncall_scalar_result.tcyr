@@ -1,0 +1,79 @@
+# fncall_scalar_result.tcyr — 6.7.14 (the user's decisions D25 (a) and D26 (a), 2026-10-16): a KNOWN callee's
+# `: f64` and `: *T` results through `fncallN(&f, ..)` / `callptr(&f, ..)` are typed as the direct call `f(..)`'s.
+#
+# Through 6.7.13 the known-callee hooks carried a struct, vector or dyn result only; any other declared return left
+# the call an untyped word. `var a = fncall0(&f); var y = a + 1.5;` with `f: f64` added integers (the filed repro
+# exited 0; 4 is right) — the f64 type was kept only when the call's LAST ARGUMENT was an f64 (6.7.6's rule) — and
+# `fncall0(&gp)` with `gp: *P2` had no pointer step: `fncall0(&gp) + 1` moved one byte where `gp() + 1` moves one P2,
+# and `var w: *P2 = fncall0(&gp);` warned "assigning non-pointer to typed pointer" (the warning half is
+# tests/gates/diagnostics/typed_pointer_warn_sign.sh axis 13). A callee held in a VARIABLE is unknown (6.7.11's D31):
+# its result stays a word — rows V (issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md). There is no
+# f32 row: `: f32` is not a fn return type. In this directory so the release gate runs it on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P2 { a; b; }
+var G: P2 = P2 { 11, 22 };
+var GW: i64 = 0x0102030405060708;
+
+fn gp(): *P2 { return &G; }
+fn gi(): *i32 { return &GW; }
+fn f(): f64 { return f64_from(5) / f64_from(2); }
+fn fh(x: i64): f64 { return f64_from(x) / f64_from(2); }
+fn dbl(x: f64): f64 { return x * 2.0; }
+
+# F — a `: f64` callee: an f64, whatever its arguments.
+fn floats(): i64 {
+    var a = fncall0(&f);
+    var y = a + 1.5;
+    assert_eq(f64_to(y), 4, "F1: var a = fncall0(&f); a + 1.5 (the filed repro: 4, was 0)");
+    var b = callptr(&f);
+    assert_eq(f64_to(b + 1.5), 4, "F2: var b = callptr(&f); b + 1.5");
+    assert_eq(f64_to(fncall1(&fh, 9) * 2.0), 9, "F3: an integer argument, fncall1(&fh, 9) * 2.0");
+    assert_eq(f64_to(callptr(&fh, 5) + 0.5), 3, "F4: callptr(&fh, 5) + 0.5");
+    var c = (fncall0(&f));
+    assert_eq(f64_to(c + 1.5), 4, "F5: in parentheses, (fncall0(&f))");
+    var d = fncall0(&f) * 2.0;
+    assert_eq(f64_to(d), 5, "F6: a leading call, fncall0(&f) * 2.0");
+    var e = fncall0(&f) < 3.0;
+    assert_eq(0 - e, 0 - 1, "F7: a comparison stays an integer (1)");
+    var n = -fncall0(&f);
+    assert_eq(f64_to(n), 0 - 2, "F8: -fncall0(&f) negates the f64 (-2.5)");
+    var t: f64 = 2.5;
+    assert_eq(fncall0(&f) == t, 1, "F9: an f64 compare, fncall0(&f) == 2.5");
+    assert_eq(f64_to(fncall1(&dbl, fncall0(&f))), 5, "F10: nested, fncall1(&dbl, fncall0(&f))");
+    return 0;
+}
+
+# K — a `: *T` callee: T's step, as the direct call's.
+fn ptrs(): i64 {
+    var w: *P2 = fncall0(&gp);
+    var x: *P2 = gp();
+    assert_eq(w.b + x.a, 33, "K1: var w: *P2 = fncall0(&gp) (the filed repro: 33)");
+    assert_eq(fncall0(&gp) + 1, gp() + 1, "K2: fncall0(&gp) + 1 steps one P2, as gp() + 1");
+    var c = fncall0(&gp) + 1;
+    assert_eq(c - gp(), 16, "K3: sixteen bytes (was 1)");
+    assert_eq(callptr(&gp) + 2, gp() + 2, "K4: callptr(&gp) + 2");
+    assert_eq(fncall0(&gi) + 1, gi() + 1, "K5: a *i32: four bytes");
+    var p: *P2 = fncall0(&gp) + 0;
+    assert_eq(p.b, 22, "K6: var p: *P2 = fncall0(&gp) + 0");
+    return 0;
+}
+
+# V — a callee held in a variable is unknown: its result is a word.
+fn vars(): i64 {
+    var fp = &gp;
+    var u = fncall0(fp) + 1;
+    assert_eq(u - gp(), 1, "V1: fncall0(fp) + 1 adds one byte");
+    var ff = &f;
+    var h = fncall0(ff);
+    assert_eq(h + 0, 0x4004000000000000, "V2: fncall0(ff) is 2.5's bits, a word");
+    return 0;
+}
+
+var r1 = floats();
+var r2 = ptrs();
+var r3 = vars();
+var r = assert_summary();

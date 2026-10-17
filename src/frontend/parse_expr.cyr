@@ -985,6 +985,7 @@ fn PINDIRECT_CALL(S): i64 {
 # expression is exactly `&f` resolving to fn `f` (`_lfa_load` records it, after the local / capture /
 # global shadowing) — and `f` returns `: f64`, the result keeps the f64 type in the case 6.7.5 gave
 # it (the last argument an f64), and in no other. CHANGELOG [6.7.6]
+# 6.7.14 (D25 (a)): whatever its arguments, as the direct call `f()` is (`_icall_scalar`). CHANGELOG [6.7.14]
 var _lfa_fi = 0 - 1;    # the fn the last `&f` factor loaded ...
 var _lfa_end = 0 - 1;   # ... and the token after its name
 fn _lfa_load(S, fnaddr, fc, fni): i64 {
@@ -1007,18 +1008,32 @@ fn _icall_callee(S, cst): i64 {
     if (GTI(S) != a + 2 + (a - cst)) { return 0 - 1; }
     return _lfa_fi;
 }
-# The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word, or an
-# f64 under the rule above — or (6.7.11) a known callee's struct, recorded as a direct call's is
-# (`_sc_post`, `t` the temp `_icall_sret` gave it; `beg` the fncallN / callptr name).
+# The result of a call through fncallN / callptr to `cfi` (-1: not known): an untyped word — or (6.7.11) a
+# known callee's struct, recorded as a direct call's is (`_sc_post`, `t` the temp `_icall_sret` gave it;
+# `beg` the fncallN / callptr name), and (6.7.14) its `: f64` / `: *T` result typed as the direct call's.
 fn _icall_result(S, cfi, t, beg): i64 {
-    var lt = GESTYPE(S);   # what 6.7.5 typed the result as: the last argument's type
     _icall_untyped(S);
     if (_icall_sfn(S, cfi) == 1) { return _sc_post(S, cfi, _bx_fname(S, cfi), beg, t); }
     if (_pe_vret(S, cfi) == 1) { return _sc_post(S, cfi, _bx_fname(S, cfi), beg, t); }   # 6.7.12: its first word
-    if (lt != F64_TYID) { return 0; }
+    return _icall_scalar(S, cfi, beg);
+}
+# ⛔ 6.7.14 — A KNOWN CALLEE'S `: f64` AND `: *T` RESULTS ARE THE DIRECT CALL'S (the user's decisions D25 (a) and
+# D26 (a), 2026-10-16: "as the direct call", the reading 6.7.11's D31, 6.7.12's D28 and 6.7.13's D15 / D16 give a
+# known `&f`). `var a = fncall0(&f); a + 1.5` with `f: f64` added integers under a kind-1 warning (the f64 type was
+# kept only when the LAST ARGUMENT was an f64, 6.7.6's rule above), and `fncall0(&gp)` with `gp: *P2` was an untyped
+# word: `var w: *P2 = fncall0(&gp);` warned "assigning non-pointer to typed pointer" and `fncall0(&gp) + 1` stepped
+# one byte where `gp() + 1` steps one P2. Now the f64 is brought into rax and typed (`_call_ret_marks`' f64 half) and
+# a `*T` carries T's step (`_fn_ret_ps`), whatever the arguments; a callee held in a variable stays a word (D31).
+# An untyped `var a = fncall0(&f);` takes the f64 after its parse (`_var_rhs_if64`); the step is recorded against
+# the call's fncallN / callptr token `beg`, which the factor's scale fix (`_call_scale_fix`) keeps. CHANGELOG [6.7.14]
+var _icall_ps_beg = 0 - 1;
+var _icall_ps = 0;
+fn _icall_scalar(S, cfi, beg): i64 {
+    _icall_ps_beg = beg;
+    _icall_ps = _fn_ret_ps(cfi);
+    SPSC(S, _icall_ps);
     if (cfi < 0) { return 0; }
-    if (GFRS(S, cfi) != 0 - 9) { return 0; }
-    SESTYPE(S, F64_TYID);
+    if (GFRS(S, cfi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
     return 0;
 }
 # ⛔ 6.7.11 — A KNOWN CALLEE'S STRUCT RESULT. A call through a fn pointer must give a struct-returning
@@ -3165,7 +3180,8 @@ fn _gen_call_refd(S, noff): i64 {
 # `p: *i64` the value of `f(p) + 1` was f's result + 8, as was `load64(p) + 1`, `fncall1(&f, p) + 1`
 # and `callptr(cl, p) - p` (p scaled by 8 too). Silent wrong values. A call's result now scales
 # only by the callee's DECLARED return type: `fn f(): *T` steps sizeof(T) (`_fn_rps`), anything
-# else — every builtin, `callptr` / `fncallN`, an untyped or scalar return — is a plain value.
+# else — every builtin, `callptr` / `fncallN` (6.7.14: but a known `&f`'s `: *T`), an untyped or scalar return —
+# is a plain value.
 # `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
 # `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
 # The method arm sets its result's scale itself (`_mcall_ret`). CHANGELOG [6.6.17]
@@ -3188,6 +3204,7 @@ fn _call_scale_fix(S, ti): i64 {
         _lsc_free(S, ti, o, fi);   # 6.7.6: a struct result, for a left operand
         _gcall_ret_f64(S, ti, fi);  # 6.7.9: an inferred instance's f64
     }
+    if (ti == _icall_ps_beg) { ps = _icall_ps; }   # 6.7.14 (D26 (a)): a known `&f` callee's `: *T` (`_icall_scalar`)
     SPSC(S, ps);
     return 0;
 }

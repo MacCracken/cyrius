@@ -1152,7 +1152,8 @@ is an integer, never a pointer: `w - q` is `n - p`, `w + q` steps `q`'s `sizeof(
 of elements between them (`(q - p) / sizeof(T)`, a plain integer); two pointers with
 different element sizes (`*i64 - *u8`, `*Pt - &buf`) are a compile error — there is no
 honest unit — so subtract plain addresses for a byte count. A call's result is a pointer
-only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is. So is every other value
+only when the fn declares `: *T`; `f(p) + 1` adds 1 whatever `p` is — and through a fn pointer only
+when the callee is written `&f` (6.7.14: `fncall0(&gp) + 1` steps one `T`, as `gp() + 1`). So is every other value
 computed FROM a pointer a plain integer: a comparison, `&&` / `||`, `* / % << >> >>>`, `& | ^`,
 the saturating / checked `+| +? -| -?` (integer operators: `q +| 1` adds one byte, and the sum is
 no pointer), unary `-` / `~`, `p?`, `await f`, an operator fn's result (unless the operator fn declares `: *T`:
@@ -2250,13 +2251,16 @@ Str's 16-byte header and past it.
 
 The result of a name intrinsic — `mulh64(..)`, `fncall0`..`fncall8(..)`, `callptr(..)` — is an
 untyped word whatever its last argument was: `fncall1(&f, n) + 1` with `n` a struct adds 1. Before
-6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. The one case
-where that old typing was right is kept: when the callee is written `&f` and `f` returns `: f64`,
-and the last argument is an f64, the result is an f64 (`fncall1(&dbl, d) + 1.0` is an f64 add), as
-it was before 6.7.6. Through a variable or a closure, or with any other last argument, the result
-is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`. Since 6.7.11
-an `&f` callee that returns a struct by value makes the result that struct, as `f(..)`'s is (see
-*Returning a struct by value*).
+6.7.6 it kept the last argument's struct type and dispatched that struct's `_add`. When the callee
+is written `&f` — a KNOWN callee — the result is typed as the direct call `f(..)`'s: a struct by
+value makes it that struct (6.7.11; see *Returning a struct by value*), and (6.7.14; the user's
+decisions D25 and D26, 2026-10-16) a `: f64` makes it an f64 whatever the arguments
+(`var a = fncall0(&f); a + 1.5` and `fncall1(&dbl, 3) * 2.0` are f64 operations, and `var a =
+fncall0(&f);` binds an f64), a `: *T` makes it a `*T`: `fncall0(&gp) + 1` steps one `T`, as
+`gp() + 1` does, and `var w: *P2 = fncall0(&gp);` does not warn. Through 6.7.13 both were an untyped
+word (the f64 only when the last argument was an f64, 6.7.6's rule): `a + 1.5` added integers and
+`fncall0(&gp) + 1` moved one byte. Through a variable or a closure the callee is unknown and the
+result is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
 
 ## Strings
 

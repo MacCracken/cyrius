@@ -181,6 +181,7 @@ fn intrinsics(): i64 {
     assert_eq(a, 7, "I6: two intrinsic results added");
     # I8+ (FE): an `&f` callee returning `: f64` with an f64 last argument keeps the f64 type 6.7.5
     # gave it (the last argument's) — `+ 1.0` is an f64 add; any other call stays an untyped word.
+    # 6.7.14 (D25 (a)): an `&f` callee returning `: f64` is an f64 whatever its arguments, as `f(..)` is.
     var d: f64 = 3.0;
     var t: f64 = 7.0;
     var r: f64 = fncall1(&dblf, d) + 1.0;
@@ -193,10 +194,10 @@ fn intrinsics(): i64 {
     var w: f64 = 12.5;
     var r4: f64 = fncall1(&dblf, fncall1(&dblf, d)) + 0.5;
     assert_eq(r4 == w, 1, "I11: nested: fncall1(&dblf, fncall1(&dblf, d)) + 0.5");
-    # I12 / I13 add 1.0 to an untyped word: an integer add of its bits (an f64 add would give 1.0).
+    # I12 adds 1.0 to an untyped word: an integer add of its bits (an f64 add would give 1.0).
     assert_eq(fncall1(&intf, d) + 1.0, 0x3FF0000000000007, "I12: an integer callee with an f64 argument: an untyped word");
     var x = 5;
-    assert_eq(fncall1(&dblf, x) + 1.0, 0x3FF000000000000A, "I13: an f64 callee with an integer argument: untyped, as before 6.7.6");
+    assert_eq(fncall1(&dblf, x) + 1.0 == dblf(x) + 1.0, 1, "I13: an f64 callee with an integer argument: an f64, as dblf(x) (6.7.14 D25)");
     assert_eq(GI3 == t, 1, "I14: at top level");
     return 0;
 }
