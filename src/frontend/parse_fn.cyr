@@ -12191,6 +12191,15 @@ fn _gcr_add(noff, gnoff, slot): i64 {
     _gcr_n = _gcr_n + 1;
     return 0;
 }
+# 1 = `noff` is a struct carrier of the fn being scanned.
+fn _gcr_has(noff): i64 {
+    var e = 0;
+    while (e < _gcr_n) {
+        if (load64(_gcr + e * 24) == noff) { return 1; }
+        e = e + 1;
+    }
+    return 0;
+}
 # A carrier `name: [*]G<..>` (token ti on G's name): its entries, one per slot a type parameter of fi
 # takes whole.
 fn _gcr_note(S, fi, noff, ti): i64 {
@@ -12470,7 +12479,58 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
     var m = GFGM(S, cfi);
     if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 0) == 1) { return 1; }
-    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 0);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 0) == 1) { return 1; }
+    return _gs_fwd_carr(S, fi, cfi, i + 1, 0);   # 6.7.14: `gx(b)`, `gx(mk1(x))`
+}
+# ⛔ 6.7.14 — A FORWARD THROUGH A STRUCT CARRIER. Mode 1 followed a T-typed name only in a callee's DIRECT
+# carrying position, so a body passing its T inside a carrier into a stub `fn gx<T>(b: Box<T>)` — `gx(b)` with
+# `b: Box<T>`, or `gx(mk1(x))` — kept an i64 base, whose `gx(..)` binds T = i64 and was refused at the
+# definition, called or not. The callee's struct-carrier positions (GFGM bits 24 + 20w, low 8 bits = the
+# parameter's index + 1, `_gs_carrier`) are followed too, given a whole argument that carries fi's T
+# (`_gs_carries`). `mth` 1: a method call, whose list starts at parameter 1. CHANGELOG [6.7.14]
+fn _gs_fwd_carr(S, fi, cfi, open, mth): i64 {
+    var m = GFGM(S, cfi);
+    if (_gs_arg_carries(S, fi, cfi, open, (m >> 24) & 255, mth) == 1) { return 1; }
+    return _gs_arg_carries(S, fi, cfi, open, (m >> 44) & 255, mth);
+}
+fn _gs_arg_carries(S, fi, cfi, open, k, mth): i64 {
+    if (k <= mth) { return 0; }
+    var a = _call_arg_pk(S, cfi, open, k - 1, k - 1 - mth);
+    if (a < 0) { return 0; }
+    return _gs_carries(S, fi, a, 0);
+}
+# 1 iff the whole argument at token a carries fi's T: a struct carrier's name (`_gcr`), or a whole generic call
+# `g(..)` / `g<..>(..)` whose type-argument list names T or one of whose whole arguments is a T-typed name, a
+# carrier or such a call (8 deep).
+fn _gs_carries(S, fi, a, dep): i64 {
+    if (dep > 8) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 31 || nt == 11) {
+        if (_gcr_has(TOKVAL(S, a)) == 1) { return 1; }
+        if (dep == 0) { return 0; }
+        return _gsn_has(TOKVAL(S, a));
+    }
+    if (nt != 10 && nt != 19) { return 0; }
+    var g = FINDFN(S, TOKVAL(S, a));
+    if (g < 0) { return 0; }
+    if (GFTP(S, g) == 0) { return 0; }
+    var o = a + 1;
+    if (nt == 19) { o = _targs_end(S, a + 2) + 1; }
+    if (TOKTYP(S, o) != 10) { return 0; }
+    var ct = TOKTYP(S, _call_close(S, o) + 1);
+    if (ct != 31 && ct != 11) { return 0; }   # the call is the whole argument
+    if (nt == 19) { if (_gs_targs_fwd(S, fi, a + 2) == 1) { return 1; } }
+    var q = o + 1;
+    if (TOKTYP(S, q) == 11) { return 0; }
+    var n = GTCNT(S);
+    while (q < n) {
+        if (_gs_carries(S, fi, q, dep + 1) == 1) { return 1; }
+        q = _arg_next(S, q);
+        if (TOKTYP(S, q) != 31) { return 0; }
+        q = q + 1;
+    }
+    return 0;
 }
 # ⛔ 6.7.11 — mode 1 at a METHOD call `x.m(..)` (token i the method's name, x one name): a body that
 # forwards a T-typed name into a stub generic METHOD (`p.pick(t)`, `self.pick(w)`) has a stub base too,
@@ -12485,7 +12545,8 @@ fn _gs_mfwd(S, fi, i): i64 {
     if ((GFGM(S, cfi) & 3) == 0) { if (_bnd_base_bad(S, cfi) == 0) { return 0; } }
     var m = GFGM(S, cfi);
     if (_gs_arg_named(S, cfi, i + 1, (m >> 8) & 255, 1) == 1) { return 1; }
-    return _gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 1);
+    if (_gs_arg_named(S, cfi, i + 1, (m >> 16) & 255, 1) == 1) { return 1; }
+    return _gs_fwd_carr(S, fi, cfi, i + 1, 1);   # 6.7.14: `p.pick(b)`, `b: Box<T>`
 }
 # The fn a method call `x.m(` reaches, its name at token i, or -1. x is a single name, a field chain
 # `h.p` / `h.q.p` or a call result `mk()` / `h.gp()` (`_gs_recv_sid`): a forwarder `h.p.pick(t)` /
