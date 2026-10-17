@@ -3966,11 +3966,7 @@ fn _dst_struct(S, term, d): i64 {
     if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
     if (PEEKT(S) != 4) {
-        if (_hl_damp == 1) { return 0; }   # 6.7.13: `*(&s) OP= v` keeps 6.7.5's word op (not this fix's)
-        if (_asg_pair_at(S) == 1) {
-            _err_in_sync(S, "compound assignment to the struct ", nm,
-              " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
-        }
+        if (_asg_pair_at(S) == 1) { _dst_cop_err(S, nm); }
         return 0;
     }
     STI(S, GTI(S) + 1);   # `=`
@@ -3981,6 +3977,19 @@ fn _dst_struct(S, term, d): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
+# s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
+# first word, through 6.7.13. CHANGELOG [6.7.14]
+fn _dst_cop_err(S, nm): i64 {
+    if (_hl_damp == 1) {
+        _err_in_sync(S, "compound assignment to struct ", nm,
+          " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+        return 0;
+    }
+    _err_in_sync(S, "compound assignment to the struct ", nm,
+      " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
+    return 0;
 }
 # The statement's assignment arms (`_PARSE_STMT_IMPL`'s order) with the parked pointer `h` as their destination
 # `nm` (`_agc_ovr`). 1 = a copy (`term` consumed); 0 = the value is in rax, the cursor on `term`.

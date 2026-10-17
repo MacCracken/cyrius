@@ -535,7 +535,8 @@
 #                                                      checked.sh R26 / A12, struct_arg_type_refused.sh D15
 #   MD6  `_ret_lopd` without the `*&p` step          -> RED: R11 does not build (`return *&x + y` refused)
 #   MD7  `_dst_struct` refusing `*(&s) OP= v` too    -> RED: struct_copy_type_checked.sh A13 and
-#                                                      field_compound_values.tcyr Q4 (both refused)
+#                                                      field_compound_values.tcyr Q4 (both refused) — the rule
+#                                                      since 6.7.14 (D17 (a)): both are refusal rows there now
 #   EQUIVALENT: `_deref_small`'s `sz >= 8` as `sz == 8` (over 8 B an unparked `*(&p)` value is its first word
 #   either way; the frame temp is sized by `_agg_temp`) and `_hl_amp_sid` without its `_hl_cp` test (a `*T`
 #   local / parameter / capture / global is excluded by the inline / slot-content / span / GVPM tests too)

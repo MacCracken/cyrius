@@ -1000,7 +1000,7 @@ From the same start, `GP.n = GP.n + repoint();` reads `A.n` (10), moves `GP`, an
 Refused by name: a compound assignment to a **struct value** — a struct variable (`a += b`, a
 local of any size, a by-value parameter or a global) or a struct-typed field (`r.tl += 1`) — which
 used to operate on the struct's first word and never call an overloaded `P_add` (13 where
-`a = a + b` gives 33): write `a = a + b`. Likewise a `bool` (variable or field: its result is not a
+`a = a + b` gives 33): write `a = a + b`. So is the same variable through its address, `*(&a) += b` (6.7.14). Likewise a `bool` (variable or field: its result is not a
 bool — write `b = b && c`), a const or an enum constant, and a field of a call's result
 (`mk(3).n += 1`: the result is a temporary; a `: *T` call's `gp().n += 1` is a pointer's, 6.7.13). A handle keeps its pointer arithmetic: `p += 1` on a
 `*T` steps `sizeof(T)`, and a pointer-mode struct variable or a `Str` is an address.
@@ -2177,8 +2177,10 @@ name, as `x` itself is. Through 6.7.12 it was an untyped word load: over 8 bytes
 first field as the struct's address and `var d: S = *(&x);` was a handle holding it (a crash on every
 target), the assignments stored one word, `return *(&x)` was refused, and another struct's compiled. A
 handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` is still the untyped word the slot
-holds; `&x + n` is still a byte pointer, so `*(&x + 8)` is the word at that address; and `*(&x) OP= v`
-still operates on x's first word (6.7.5), where `*p OP= v` through a `*S` is refused.
+holds; `&x + n` is still a byte pointer, so `*(&x + 8)` is the word at that address. `*(&x) OP= v` is
+refused as `x OP= v` is (*compound assignment to struct 'x' is refused*; write `x = x + b`) — since 6.7.14,
+the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (6.7.5), so `*(&s) += 10`
+turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op.
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,

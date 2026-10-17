@@ -277,7 +277,8 @@ fn ashr(): i64 {
 }
 
 # `*p OP= v` (6.7.5): the address once, then a WORD load, op and store — `*p` reads and writes
-# 8 bytes whatever p's type, as `*p = v` always has.
+# 8 bytes whatever p's type, as `*p = v` always has. (Q4, `*(&h) += 10` on a struct h, is refused since
+# 6.7.14 — the user's D17 (a): tests/gates/frontend/struct_copy_type_checked.sh C7-C16.)
 fn derefs(): i64 {
     var v = 5;
     var p = &v;
@@ -292,9 +293,6 @@ fn derefs(): i64 {
     var q = bits(&a);
     *(q + 8) /= 4;
     assert_eq(a[1], 10, "Q3: *(expr) /=");
-    var h = H { 3, 4 };
-    *(&h) += 10;
-    assert_eq(h.n * 10 + h.m, 134, "Q4: through &h (its first word)");
     var w: i32[2];
     w[0] = 1;
     w[1] = 2;

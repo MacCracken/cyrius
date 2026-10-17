@@ -64,15 +64,26 @@
 #
 # 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF IS THE STRUCT IT NAMES (issues/2026-10-14-dereference-of-address-of-struct-
 # faults.md): `*(&l) = q` of another struct is refused by name (R26), `*(&l) = v` / `*&G = v` copy the whole struct
-# (A12; through 6.7.12 one word, l.z stale), and `*(&s) OP= v` keeps 6.7.5's first-word op (A13 — not this fix's).
+# (A12; through 6.7.12 one word, l.z stale), and `*(&s) OP= v` kept 6.7.5's first-word op (A13 — not that fix's; refused
+# since 6.7.14, below).
 # Mutations (2026-10-15, the same method): `_hl_dpsid` answering `_hl_psid` -> RED R26 A12; `_hl_dstep` ignoring the
-# `&x` arm's step -> RED R26 A12; `_dst_struct` refusing `*(&s) OP= v` too -> RED A13.
+# `&x` arm's step -> RED R26 A12; `_dst_struct` refusing `*(&s) OP= v` too -> RED A13 (6.7.14 made that the rule).
 #
 # 6.7.14 — `**pp` THROUGH A `**S` IS THE STRUCT VALUE `*p` IS (issues/2026-10-16-struct-double-pointer-dereference-is-
 # no-struct-value.md; 6.7.13's D9 (a) with 6.7.11's decision (a)): `var t: Q3 = **pp;` (R27) and `**pp = q` (R28) of
 # another struct are refused by name, as `var t: Q3 = *p;` / `*p = q` are; `**pp += 1` (C5) and a top-level `**GPP -= 1`
 # (C6) are refused as `*p OP= v` is; `**pp = u` copies the whole struct (A14: 56; through 6.7.13 one word, 54 — and
 # R27 / R28 / C5 / C6 compiled: a handle bound to the first field, one word stored, the first field added to).
+#
+# 6.7.14 — `*(&s) OP= v` ON A STRUCT IS REFUSED AS `s OP= v` IS (the user's D17 (a), 2026-10-16; issues/2026-10-15-
+# compound-assignment-through-address-of-struct-keeps-word-op.md): since 6.7.13 `*(&s)` is the struct value s at every
+# other consumer, and its `OP=` was the one spelling left operating on s's first word (the filed repro 134: s.x became
+# 13). A13 (the filed repro's statement) and C7-C16 — the filed repro verbatim, `*((&s)) -= 1`, `*&s *= 2`, top-level
+# `*(&G) += 1`, a global in a fn, an 8 B and a 16 B struct (field_compound_values.tcyr's Q4, moved here), a by-value
+# parameter, a for step, a closure capture — are ONE error each, "compound assignment to struct 's' is refused ...
+# (write `a = a + b`)"; a handle's / a scalar's `*(&h) += 8` stays the word op (A15, A16: `&h` is the slot).
+# Mutations (2026-10-17, CYCC=the mutant): the lane's compiler before it -> RED 11 (A13, C7-C16 compile: the word op);
+# the refusal in the `*p` wording ("the struct 's' points at", the 6.7.11 arm alone) -> RED 11 (the same rows).
 # Mutation (2026-10-17, the gate run as CYCC=<the lane's compiler before the fix>): RED 5 — R27 R28 C5 C6 not refused,
 # A14 exit 54.
 set -eu
@@ -321,6 +332,68 @@ var GPP: **P3 = &GP;
 **GPP -= 1;
 syscall(60, GT.x);
 '
+# A13, C7-C16 (6.7.14, D17 (a)) — `*(&s) OP= v` on a struct value s: refused as `s OP= v` is, ONE error, no binary.
+SMSG="is refused - a struct value is not an integer or a float (write \`a = a + b\`)"
+srefuse() {  # $1 label  $2 the name the refusal names  $3 source
+    printf '%s' "$3" > "$D/s.cyr"
+    nrefuse=$((nrefuse+1))
+    rc=0
+    cat "$D/s.cyr" | "$CC" > "$D/s.bin" 2>"$D/s.err" || rc=$?
+    n=$(grep -c '^error' "$D/s.err" || true)
+    if [ "$rc" -ne 0 ] && [ ! -s "$D/s.bin" ] && [ "$n" -eq 1 ] && grep -qF "compound assignment to struct '$2' $SMSG" "$D/s.err"; then
+        printf '  ok(refused): %-31s\n' "$1"; pass=$((pass+1))
+    else
+        printf '  FAIL: %-38s rc=%s, %s error line(s): %s\n' "$1" "$rc" "$n" "$(grep '^error' "$D/s.err" | head -2 | tr '\n' '|')"; fail=$((fail+1))
+    fi
+}
+srefuse "A13 *(&s) += 10" s "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; *(&s) += 10; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+'
+srefuse "C7 the filed repro verbatim" s 'struct P3 { x; y; z; }
+fn main(): i64 {
+    var s: P3 = P3 { 3, 4, 5 };
+    *(&s) += 10;
+    var t: P3 = P3 { 3, 4, 5 };
+    var p: *P3 = &t;
+    return s.x * 10 + s.y;
+}
+syscall(60, main());
+'
+srefuse "C8 *((&s)) -= 1" s "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; *((&s)) -= 1; return s.x; }
+var r = main(); syscall(60, r);
+'
+srefuse "C9 *&s *= 2" s "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; *&s *= 2; return s.x; }
+var r = main(); syscall(60, r);
+'
+srefuse "C10 *(&G) += 1  (top level)" G "$P3Q3"'var G: P3 = P3{3,4,5};
+*(&G) += 1;
+syscall(60, G.x);
+'
+srefuse "C11 *(&G) += 1  (a global, in a fn)" G "$P3Q3"'var G: P3 = P3{3,4,5};
+fn main(): i64 { *(&G) += 1; return G.x; }
+var r = main(); syscall(60, r);
+'
+srefuse "C12 *(&s) += 10  (8 B)" s 'struct S1 { v; }
+fn main(): i64 { var s: S1 = S1 { 3 }; *(&s) += 10; return s.v; }
+var r = main(); syscall(60, r);
+'
+srefuse "C13 *(&h) += 10  (16 B; was Q4)" h 'struct H { n; m; }
+fn main(): i64 { var h = H { 3, 4 }; *(&h) += 10; return h.n * 10 + h.m; }
+var r = main(); syscall(60, r);
+'
+srefuse "C14 *(&q) += 1  (a by-value param)" q "$P3Q3"'fn f(q: P3): i64 { *(&q) += 1; return q.x; }
+fn main(): i64 { var s: P3 = P3{3,4,5}; return f(s); }
+var r = main(); syscall(60, r);
+'
+srefuse "C15 *(&s) += 1  (a for step)" s "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; for (var i = 0; i < 1; *(&s) += 1) { i = 1; } return s.x; }
+var r = main(); syscall(60, r);
+'
+srefuse "C16 *(&s) += k  (a closure capture)" s 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P3 { x; y; z; }
+fn main(): i64 { var s: P3 = P3 { 3, 4, 5 }; var f = |k| { *(&s) += k; return s.x; }; return fncall1(f, 1); }
+var r = main(); syscall(60, r);
+'
 
 echo "acceptances — these must stay legal, with the right VALUE:"
 accept "A1 p = q  (same struct type)" 'struct P3{x;y;z;}
@@ -433,19 +506,13 @@ fn run(): i64 { var l: E; var p: *E = &G; return 0; }
 var rr = run();
 syscall(60, N1);
 '
-# A12 / A13 (6.7.13) — `*(&l) = v` / `*&G = v` copy the struct `l` / `G` names (through 6.7.12 one word: l.z
-# stale); `*(&s) OP= v` is not this fix's — it keeps 6.7.5's word op on the first word (the `OP=` of a
-# dereference of an address-of is not refused like `*p OP= v` through a `*S`; field_compound_values.tcyr Q4).
+# A12 (6.7.13) — `*(&l) = v` / `*&G = v` copy the struct `l` / `G` names (through 6.7.12 one word: l.z
+# stale). A13 (6.7.13 kept 6.7.5's first-word op for `*(&s) OP= v`) is refused since 6.7.14: with C7-C16, below.
 accept "A12 *(&l) = v, *&G = v copy the struct" "$P3Q3"'var G: P3 = P3{0,0,0};
 fn main(): i64 { var v: P3 = P3{1,2,3}; var l: P3 = P3{0,0,0}; *(&l) = v; *&G = v; v.z = 0; return l.z * 10 + G.z; }
 var r = main(); syscall(60, r);
 ' 33 "$P3Q3"'var G: P3 = P3{0,0,0};
 fn main(): i64 { var v: P3 = P3{1,2,3}; var l: P3 = P3{0,0,0}; l.z = v.z; G.z = v.z; return l.z * 10 + G.z; }
-var r = main(); syscall(60, r);
-'
-accept "A13 *(&s) += 10 keeps the first-word op" "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; *(&s) += 10; return s.x * 10 + s.y; }
-var r = main(); syscall(60, r);
-' 134 "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; s.x = s.x + 10; return s.x * 10 + s.y; }
 var r = main(); syscall(60, r);
 '
 # A14 (6.7.14) — `**pp = u` through a `**P2` copies the whole struct (56; through 6.7.13 one word: 54).
@@ -454,6 +521,24 @@ fn main(): i64 { var s = P2 { 3, 4 }; var p: *P2 = &s; var pp: **P2 = &p; var u 
 var r = main(); syscall(60, r);
 ' 56 'struct P2 { x; y; }
 fn main(): i64 { var s = P2 { 3, 4 }; var p: *P2 = &s; var u = P2 { 5, 6 }; p.x = u.x; p.y = u.y; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+'
+# A15 / A16 (6.7.14) — `*(&h) OP= v` with h a HANDLE (its `&h` is the slot holding the address) and with a scalar n
+# stays 6.7.5's word op: the handle's pointer moves by 8, n becomes 15.
+accept "A15 *(&h) += 8  (a handle: its slot)" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct P3 { x; y; z; }
+fn main(): i64 { alloc_init(); var h: P3 = alloc(24); var a = h; *(&h) += 8; return h - a; }
+var r = main(); syscall(60, r);
+' 8 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct P3 { x; y; z; }
+fn main(): i64 { alloc_init(); var h = alloc(24); var a = h; h = h + 8; return h - a; }
+var r = main(); syscall(60, r);
+'
+accept "A16 *(&n) += 10  (a scalar)" 'fn main(): i64 { var n = 5; *(&n) += 10; return n; }
+var r = main(); syscall(60, r);
+' 15 'fn main(): i64 { var n = 5; n = n + 10; return n; }
 var r = main(); syscall(60, r);
 '
 # A7 — a SCALAR source is a different rule (a warning, since before 6.6.6) and must not have
