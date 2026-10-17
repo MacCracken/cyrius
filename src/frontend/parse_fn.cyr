@@ -2116,10 +2116,10 @@ fn _cl_cap_vec(S, noff): i64 {
 # f32v8 into `v: f64v2` 3; 6.7.13 checked the 32-byte parameters only), a struct local's two words were read as the
 # lanes (42), and an identifier-led expression (`lanes(q + 1)`) pushed its VALUE as the address (5), where x86_64 /
 # aarch64 / cx refuse each by name. Parameter `argc` of `fi` declared a value-form vector (`_pvf_param`), the cursor
-# on its argument, before every struct arm: inside any parentheses wrapping all of it (`_spv_one`), a local name is
-# checked by the class rule in SysV's words (`_simd_arg_typecheck`: a non-vector local is refused by it too) and its
-# address pushed; a vector call is `_sarg_vec_call`'s (its refusal skips the argument, as `_sar_vcall`'s does);
-# anything else is refused by name
+# on its argument, before every struct arm: inside any parentheses wrapping all of it, the sources SysV takes
+# (`_spv_one`: a local or a captured vector, checked by the class rule in SysV's words — `_simd_arg_typecheck`, which
+# refuses a non-vector local too — and its address pushed; a `*V` dereference, its pointer; a vector call,
+# `_sarg_vec_call`'s, whose refusal skips the argument as `_sar_vcall`'s does); anything else is refused by name
 # (`_sar_err`), skipped to its `,` / `)` and 0 pushed — one line, no binary. 1 = pushed, -1 = no Win64 value-form
 # parameter. It folds 6.7.13's `_sarg_pe_v32` (the 32-byte check) and `_sarg_pe_vword` (D30's word refusal).
 # 6.7.14 (D33 A, the user's decision, 2026-10-16): an address-of `&w` is refused there too, with the other targets'
@@ -5819,8 +5819,9 @@ fn _sar_take(S, fi, cls, want, dst): i64 {
     _pw_close(S, c - ti);
     return r;
 }
-# The source at the cursor, unwrapped: a local of the parameter's class (checked by it, as ever), else a call declared
-# to return a vector (`_sar_vcall`; `_sar_lcl` is set after it: a nested call's argument sets it too).
+# The source at the cursor, unwrapped: a local of the parameter's class (checked by it, as ever), (6.7.14) a closure's
+# captured vector (`_sar_cap`), a `*V` dereference (`_sar_deref`), else a call declared to return a vector
+# (`_sar_vcall`; `_sar_lcl` is set after them: a nested call's argument sets it too).
 fn _sar_one(S, fi, cls, want, dst): i64 {
     var c = GTI(S);
     var li = _spv_local(S, c);
