@@ -401,6 +401,51 @@ fn main(): i64 { var r: S24; r.v = 1; r.w = 2; r.x = 3; return r.v * 100 + r.w *
 syscall(60, main());
 '
 
+# U (6.7.14, issues/archived/2026-10-16-unknown-annotation-type-cascades-into-d24-refusal.md) — an UNKNOWN annotation type
+# over a struct result is refused ONCE, "unknown type 'Foo'": D24's "cannot initialise 'x: Foo' from 'Q_mk', which
+# returns the struct 'Q'" followed it on the same line (the free call since 6.7.11, the `&f` call, a method and an
+# operator since 6.7.13, `*Foo` / `**Foo` under D14), and the zone's top-level line too. D24 does not judge an
+# annotation refused at its name (`_rcv_ann_refd`, parse_decl.cyr); the declaration parses on as a plain i64.
+#   the tree before (the `_rcv_ann_refd` test removed)  -> RED 11: U0-U10 (2 error lines each); U11 U12 green
+echo "6.7.14 — an unknown annotation type over a struct result is refused once (no D24 cascade):"
+MU="unknown type 'Foo'"
+UQ='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 4; return q; } }
+fn mkq(): Q { var q: Q; q.a = 333; q.b = 4; return q; }
+fn Q_add(a: Q, c: Q): Q { var q: Q; q.a = a.a + c.a; q.b = 7; return q; }
+struct P3 { a; b; c; }
+fn mk3(a): P3 { var r: P3 = P3 { a, a + 1, a + 2 }; return r; }
+'
+refuse "U0 var x: Foo = b.mk()  (the filed repro)" "$MU" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 4; return q; } }
+fn main(): i64 {
+    var b = Q { 1, 2 };
+    var x: Foo = b.mk();
+    return 0;
+}
+syscall(60, main());
+' one
+refuse "U1 var x: Foo = mkq()  (free call)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = mkq(); return 0; }'"$E" one
+refuse "U2 var x: Foo = mk3(5)  (24 B)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = mk3(5); return 0; }'"$E" one
+refuse "U3 var x: Str = a + c  (operator)" "unknown type 'Str'" "$UQ"'fn main(): i64 { var a = Q { 1, 2 }; var c = Q { 3, 4 }; var x: Str = a + c; return 0; }'"$E" one
+refuse "U4 var x: Foo = fncall0(&mkq)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = fncall0(&mkq); return 0; }'"$E" one
+refuse "U5 var x: *Foo = mkq()" "$MU" "$UQ"'fn main(): i64 { var x: *Foo = mkq(); return 0; }'"$E" one
+refuse "U6 var x: *Foo = b.mk()" "$MU" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: *Foo = b.mk(); return 0; }'"$E" one
+refuse "U7 var x: **Foo = mkq()" "$MU" "$UQ"'fn main(): i64 { var x: **Foo = mkq(); return 0; }'"$E" one
+refuse "U8 var x: Foo = (mkq())" "$MU" "$UQ"'fn main(): i64 { var x: Foo = (mkq()); var y = x + 1; return x; }'"$E" one
+refuse "U9 var x: Foo = mkq()  (top, zone)" "$MU" "$UQ"'var x: Foo = mkq();
+syscall(60, 0);
+' one
+refuse "U10 var x: Foo = b.mk()  (top, zone)" "$MU" "$UQ"'var b = Q { 1, 2 };
+var x: Foo = b.mk();
+syscall(60, 0);
+' one
+refuse "U11 var x: Foo = 5  (control)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return 0; }'"$E" one
+refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q_mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
+
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
 struct Box { v: Pt; n; }
