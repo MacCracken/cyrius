@@ -69,6 +69,7 @@ _prov_read a64 a64m a64n cx
 _wp_data_end a64 a64m a64n cx
 _wp_data_fix a64 a64m a64n cx
 _wp_dead_xfer a64 a64m a64n cx
+_wp_fnr_shift a64 a64m a64n cx
 _wp_inside a64 a64m a64n cx
 _wp_pad_to a64 a64m a64n cx
 _wp_removed_at a64 a64m a64n cx
