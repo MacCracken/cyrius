@@ -780,16 +780,25 @@ fn EJCC(S, cc): i64 {
     elif (cc == 0x8E) { CX_EMIT(S, 51, 0, 0, 1); }    # gt r0, r0, r1
     elif (cc == 0x8F) { CX_EMIT(S, 51, 0, 0, 1); }    # gt r0, r0, r1
     else { CX_EMIT(S, 48, 0, 0, 1); }                  # default: eq
-    # Now r0 = comparison result (1 or 0). Emit conditional jump.
-    var patch = GCP(S);
-    if (cc == 0x84) { CX_EMIT(S, 82, 0, 0, 0); }      # jnz (jump if equal)
-    elif (cc == 0x85) { CX_EMIT(S, 81, 0, 0, 0); }    # jz (jump if NOT equal → skip)
-    elif (cc == 0x8C) { CX_EMIT(S, 82, 0, 0, 0); }    # jnz (jump if less)
-    elif (cc == 0x8D) { CX_EMIT(S, 81, 0, 0, 0); }    # jz (jump if NOT less → skip)
-    elif (cc == 0x8E) { CX_EMIT(S, 81, 0, 0, 0); }    # jz (jump if NOT greater → skip)
-    elif (cc == 0x8F) { CX_EMIT(S, 82, 0, 0, 0); }    # jnz (jump if greater)
-    else { CX_EMIT(S, 81, 0, 0, 0); }
-    return patch;
+    # Now r0 = comparison result (1 or 0). Emit the conditional jump, LOWERED: the inverted short
+    # branch over an unconditional jmp (`jz r0,+2; jmp L` for a jnz, `jnz r0,+2; jmp L` for a jz).
+    # jz / jnz carry a 16-bit offset (+-128 KiB of bytecode) that EPATCH wrapped silently for a
+    # longer body; jmp carries 24 bits (+-32 MiB, past the whole 4 MiB code region). The patch is
+    # the jmp's, so EPATCH takes its 24-bit arm. No .cyx format or cxvm change: `+2` skips the jmp.
+    # CHANGELOG [6.7.14]
+    if (cc == 0x84) { return _cx_far_jcc(S, 81); }    # jnz (jump if equal)
+    elif (cc == 0x85) { return _cx_far_jcc(S, 82); }  # jz (jump if NOT equal → skip)
+    elif (cc == 0x8C) { return _cx_far_jcc(S, 81); }  # jnz (jump if less)
+    elif (cc == 0x8D) { return _cx_far_jcc(S, 82); }  # jz (jump if NOT less → skip)
+    elif (cc == 0x8E) { return _cx_far_jcc(S, 82); }  # jz (jump if NOT greater → skip)
+    elif (cc == 0x8F) { return _cx_far_jcc(S, 81); }  # jnz (jump if greater)
+    return _cx_far_jcc(S, 82);                         # jz
+}
+
+# `inv` r0, +2 (the inverted short branch: it skips the jmp), then `jmp +0`; returns the jmp's patch.
+fn _cx_far_jcc(S, inv): i64 {
+    CX_EMIT(S, inv, 0, 2, 0);
+    return EJMP0(S);
 }
 
 fn EJMP(S, target): i64 {
@@ -805,17 +814,30 @@ fn EJMP0(S): i64 {
     return patch;
 }
 
+# A jz / jnz offset past 16 bits (+-32768 instructions) is refused by name, never wrapped.
+fn _cx_far_branch_refuse(S): i64 {
+    syscall(SYS_WRITE, 2, "error: a conditional branch spans more than 128 KiB of cx bytecode in ", 70);
+    if (_cur_fn_ix >= 0) {
+        syscall(SYS_WRITE, 2, "fn '", 4);
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
+        syscall(SYS_WRITE, 2, "'\n", 2);
+    } else {
+        syscall(SYS_WRITE, 2, "top-level code\n", 15);
+    }
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 fn EPATCH(S, off): i64 {
     var cp = GCP(S);
     var rel = (cp - off) / 4;
     var opcode = load8(_cx_code_base + off);
     # For jz/jnz (0x51/0x52): offset is in bytes 2-3 (byte 1 = register)
     # For jmp/call (0x50/0x60): offset is in bytes 1-3
-    if (opcode == 0x51) {
-        store8(_cx_code_base + off + 2, rel & 0xFF);
-        store8(_cx_code_base + off + 3, (rel >> 8) & 0xFF);
-    }
-    elif (opcode == 0x52) {
+    # A patched jz / jnz is only a short fixed-size loop's (EJCC lowers every other conditional to
+    # a jmp); its 16-bit offset is range-checked so a silent wrap cannot come back. CHANGELOG [6.7.14]
+    if (opcode == 0x51 || opcode == 0x52) {
+        if (rel < 0 - 32768 || rel > 32767) { _cx_far_branch_refuse(S); }
         store8(_cx_code_base + off + 2, rel & 0xFF);
         store8(_cx_code_base + off + 3, (rel >> 8) & 0xFF);
     }
