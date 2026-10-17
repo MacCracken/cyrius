@@ -3661,6 +3661,7 @@ fn _stmt_dot_chain_call(S): i64 {
         if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
         STI(S, GTI(S) + 2);
         if (PEEKT(S) == 10) { return 1; }
+        if (_mchain_targs(S, GTI(S)) != GTI(S)) { return 1; }   # 6.7.14 (D7 (a)): `p.id<f64>(h);`
     }
     return 0;
 }

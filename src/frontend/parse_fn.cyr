@@ -6510,6 +6510,7 @@ fn _ret_expr_head(S): i64 {
     var nx = TOKTYP(S, GTI(S) + 1);
     if (nx == 41) {
         if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
+        if (_mchain_targs(S, GTI(S) + 3) != GTI(S) + 3) { return 1; }   # 6.7.14 (D7 (a)): `x.m<..>(`
         return _ret_lopd(S, GTI(S));   # 6.7.10: `w.s OP`
     }
     if (_is_op_dispatch_tok(nx) == 1) { return 1; }
@@ -12684,7 +12685,7 @@ fn _gs_use(S, fi, i, mode): i64 {
         return _gs_cfield(S, i);   # 6.7.11: `b.v.y` through a struct carrier
     }
     if (nx != 19 && nx != 10) { return 0; }
-    if (nx == 10) { if (_gs_mfwd(S, fi, i, mode) == 1) { return 1; } }   # 6.7.11: `p.pick(t)`
+    if (_gs_mfwd(S, fi, i, mode) == 1) { return 1; }   # 6.7.11: `p.pick(t)` (6.7.14: `p.pick<T>(t)`)
     var cfi = FINDFN(S, TOKVAL(S, i));
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
@@ -12766,7 +12767,9 @@ fn _gs_mfwd(S, fi, i, mode): i64 {
     if (cfi < 0 || cfi == fi) { return 0; }
     if (GFTP(S, cfi) == 0) { return 0; }
     if (mode == 1) { if ((GFGM(S, cfi) & 3) == 0) { return 0; } }   # 6.7.14: a stub only (`_gs_use`)
-    var f = _gs_fwd_any(S, fi, cfi, i + 1, 1);   # 6.7.14: and `p.pick(b)`, `b: Box<T>`
+    var f = 0;
+    if (TOKTYP(S, i + 1) == 19) { f = _gs_targs_fwd(S, fi, i + 2); }   # 6.7.14 (D7 (a)): `p.pick<T>(t)`
+    else { f = _gs_fwd_any(S, fi, cfi, i + 1, 1); }   # 6.7.14: and `p.pick(b)`, `b: Box<T>`
     if (mode == 2) { if (f == 1) { _bbf_push(cfi); } return 0; }
     return f;
 }

@@ -6403,7 +6403,14 @@ argument (`p.pick(q)` calls `P_pick$Q`, as `P_pick(p, q)` does), an `f64` one
 `mk().pick(q)` and `var w = p.pick(q);` included (6.7.11; before it every binding
 but `f64` called the i64 base — the dead stub when the body uses the parameter as a
 struct, so `p.pick(q)` returned 0, and a carrier was refused as a different struct
-type). A bound is then met at `f64`: `gb(h)` with
+type). It takes explicit type arguments as its free spelling does: `p.id<f64>(h)`
+calls the `f64` instance, as `P_id<f64>(&p, h)` does, and `var a = p.id<f64>(h);`
+declares an `f64` — on a chain (`w.v.id<f64>(h)`), a `*P` receiver, as a statement, a
+struct receive or a struct `return`, and `p.pick<T>(t)` forwards `T` inside a generic
+(6.7.14, the user's decision D7 (a), 2026-10-16; before it the `<` was read as
+less-than: "unknown field 'id'" and "undefined variable 'f64'"). The shape is
+`.m<..>(` where `m` is a generic method of the receiver's struct and **no field** of
+it: a field of that name still wins, so `p.n < k` is a comparison. A bound is then met at `f64`: `gb(h)` with
 `fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
 `gb<f64>(h)` is — and it needs no `impl Show for i64` (6.7.11: without one, `gb(h)`,
 `gb<f64>(h)` and `p.bm(h)` were refused naming `i64`, or ran the dead stub). Any other

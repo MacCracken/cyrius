@@ -835,6 +835,7 @@ fn _rlf_more(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 2) == 10) { return 0; }
+    if (_mtargs_at(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)`
     return 1;
 }
 fn _resolve_leaf_field(S, si, fi, off): i64 {
@@ -943,11 +944,22 @@ fn _var_rhs_mchain(S, ti, end): i64 {
         if (TOKTYP(S, k + 1) != 2) { return 0; }
         m = 0;
         k = k + 2;
+        k = _mchain_targs(S, k);   # 6.7.14 (D7 (a)): `.m<..>(`
         if (TOKTYP(S, k) == 10) { m = 1; k = _call_close(S, k) + 1; }
     }
     if (k != end) { return 0; }
     if (m == 0) { return 0; }
     return 0 - 9;
+}
+
+# 6.7.14 (D7 (a)): past a method name at token k, its explicit type-argument list when `(` follows (`p.id<f64>(h)`),
+# else k — a comparison `p.n < k` is no list (`_tok_targs_close` stops at its `;` / `(`).
+fn _mchain_targs(S, k): i64 {
+    if (TOKTYP(S, k) != 19) { return k; }
+    var e = _tok_targs_close(S, k + 1);
+    if (e < 0) { return k; }
+    if (TOKTYP(S, e + 1) != 10) { return k; }
+    return e + 1;
 }
 
 # ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
@@ -1818,7 +1830,7 @@ fn _ptr_park(S, psid): i64 {
 fn _fld_meth_inline(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 2) != 10) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_at(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
     if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return 1;
@@ -1850,6 +1862,93 @@ fn _load_bs_field(S, noff, beg, idx, sid, off): i64 {
     var mnoff = PEEKV(S);
     STI(S, GTI(S) + 1);                 # the method name
     return _field_load_on(S, noff, mnoff, beg, 0 - 2 - t, 0);
+}
+# ⛔ 6.7.14 (the user's D7 (a), 2026-10-16) — EXPLICIT TYPE ARGUMENTS ON A METHOD CALL, as on its free spelling:
+# `p.id<f64>(h)`, `w.v.id<f64>(h)`, `var a = p.id<f64>(h);` call `P_id$f64`, as `P_id<f64>(&p, h)` does. The `<`
+# was read as less-than, so the call was refused "unknown field 'id'" + "undefined variable 'f64'". The shape
+# is `.m<..>(` where m names no field of the receiver's struct and a GENERIC method of it (`_mtargs_at`), so a
+# field of that name still wins (`p.n < k`). CHANGELOG [6.7.14]
+var _mx_fi = 0 - 1;   # the method arm's callee, set by `_meth_targs` for the arm it enters (-1: none)
+var _mx_ti = 0 - 1;   # ... and the method's name token
+var _mx_qt = 0;       # ... 1 = a type argument was refused: the arm consumes the arguments, judging none
+# 1 = token nt is a method name `m` followed by `<..>(`, with m no field of struct `sid` and a generic method of it.
+fn _mtargs_at(S, sid, nt): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (TOKTYP(S, nt) != 2) { return 0; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0; }
+    if (FINDFIELD(S, sid - 1, TOKVAL(S, nt)) >= 0) { return 0; }
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    if (mf < 0) { return 0; }
+    if (GFTP(S, mf) == 0) { return 0; }
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    return 1;
+}
+# The method arm's name token: `_meth_targs`'s, taken once, else the token before the cursor's `(`.
+fn _mx_take(S): i64 {
+    if (_mx_ti < 0) { return GTI(S) - 1; }
+    var t = _mx_ti;
+    _mx_ti = 0 - 1;
+    return t;
+}
+# The method arm's callee: the instance `_meth_targs` named, else the one the arguments bind (`_mcall_gen`).
+fn _mcall_gen_x(S, fi, open, rsid): i64 {
+    if (_mx_fi < 0) { return _mcall_gen(S, fi, open, rsid, 1); }
+    var f = _mx_fi;
+    _mx_fi = 0 - 1;
+    return f;
+}
+# `.m<..>(..)` at the cursor (on the `<`, the method's name just consumed; receiver (idx, sid)): the list read as
+# an explicit generic call reads it (`_explicit_generic_call`), the callee resolved, and the method arm entered
+# on the `(`. 0 = not that shape (the field miss reports). An all-i64 list, or a stub's scalar one, calls the base
+# — refused as `p.m(5)` is when the base is the stub or bad for its bound; a refused type argument mints nothing
+# and the arguments are consumed, not judged (`_mx_qt`).
+fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    if (_mtargs_at(S, sid, nt) == 0) { return 0; }
+    var mf = _meth_fn_at(S, sid, fnoff, nt);
+    STI(S, GTI(S) + 1);                 # `<`
+    _ta_pending_gt = 0;
+    _ta_refd = 0;
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+    _consume_gt(S);
+    _mx_fi = _meth_xinst(S, mf, c0, c1);
+    _mx_ti = nt;
+    var p0 = _panic;
+    if (_mx_qt == 1) { _panic = 1; }
+    _field_load_on(S, noff, fnoff, beg, idx, sid);
+    if (_mx_qt == 1) { _panic = p0; _mx_qt = 0; }
+    _mx_fi = 0 - 1;
+    _mx_ti = 0 - 1;
+    return 1;
+}
+# The fn `p.m<c0, c1>(..)` reaches (generic method mf): its instance, else its base — refused where the free
+# spelling refuses it (`_explicit_generic_call` / `_gen_call_head`).
+fn _meth_xinst(S, mf, c0, c1): i64 {
+    _mx_qt = 0;
+    var mn = L64(_fnt_names + mf * 8);
+    if (_ta_refd == 1) { _ta_refd = 0; _mx_qt = 1; return mf; }
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    var base = 1;
+    if (c0 != 0 - 8) { base = 0; }
+    if (c1 != 0) { if (c1 != 0 - 8) { base = 0; } }
+    if (c0 < 0) { if (c1 <= 0) { if (_gen_stub(S, mf) != 0) { base = 1; } } }
+    if (base == 1) {
+        if (_bnd_base_bad(S, mf) == 1) { _refuse_bnd_base(S, mf, mn); return mf; }
+        if (_gen_stub(S, mf) != 0) { _refuse_gen_stub(S, mn); }
+        return mf;
+    }
+    var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    if (spec >= 0) { return spec; }
+    if (spec == 0 - 4) { _mx_qt = 1; return mf; }   # the bound's refusal, reported at the type it binds
+    _refuse_gen_inst(S, mn, spec);
+    return mf;
 }
 # ⚠ Six parameters at most: the leaf's type is read back from `_resolve_leaf_field` (`_rlf_si` /
 # `_rlf_fi`), because cybs — the bootstrap compiler seed-derive runs — rejects a 7-argument call
@@ -1988,7 +2087,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # `_bnd_sites`) calls the bound's trait's method for T's impl, by its defined name — so a
         # colliding `m` is the bound's, and a SCALAR T (`impl Show for i64`) has a callee at all.
         var m_bs = 0 - 1;
-        if (_bs_n > 0) { m_bs = _bs_find(S, GTI(S) - 1); }
+        var m_nt = _mx_take(S);   # 6.7.14 (D7 (a)): the method's name, before any `<..>`
+        if (_bs_n > 0) { m_bs = _bs_find(S, m_nt); }
         var m_bfi = 0 - 1;
         if (m_bs >= 0) {
             if (L64(_bs_tab + m_bs * 32 + 8) < 0) {   # refused at the definition: skip the call, no cascade
@@ -2048,7 +2148,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
             mfi = REGFN(S, mname);
         }
-        mfi = _mcall_gen(S, mfi, GTI(S), sid, 1);   # 6.7.11: the instance its arguments bind
+        mfi = _mcall_gen_x(S, mfi, GTI(S), sid);   # 6.7.11: the instance its arguments bind (6.7.14: or `<..>` names)
         mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
         # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
         # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
@@ -2092,7 +2192,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         STI(S, GTI(S) + 1);  # consume (
         var m_int_argc = _owncall_args_at(S, mfi, mname, 1 + m_n0, 1, m_line);
         _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
-        _callee_site_checks(S, mfi, mname, m_ti - 1);   # v6.6.4: `s.method()` is its own call path
+        _callee_site_checks(S, mfi, mname, m_nt);   # v6.6.4: `s.method()` is its own call path
         _pure_effect_warn(S, mfi, mname);               # 6.6.17: and #pure's #io / #alloc check
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
@@ -2116,6 +2216,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     }
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) {
+        if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.14 (D7 (a)): `p.id<f64>(h)`
         # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
         # silent and do not _panic (which would swallow the next real syntax error).
         if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
