@@ -27,7 +27,8 @@
 #   K  the input ends right after `fn` or `var` (`fn`, `var`, `fn ` with a trailing blank): exit 1, the class
 #      message at the keyword's line, nothing written. Pass 0 (shallow_fn / shallow_global) stepped over the
 #      name unchecked, past the EOF token, and every later EOF test read beyond the token array: SIGSEGV (139),
-#      nothing on stderr. 6.7.14, issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md
+#      nothing on stderr. 6.7.14, issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md — and `var x:`,
+#      whose type name shallow_global stepped over the same way (found in passing, 6.7.14)
 #   V  ANTI-VACUOUS: a valid program using every neighbour of the refused shapes (`0 - a`, `>>`,
 #      `while`, an if statement, a top-level var, a forward call) compiles and runs (exit 42)
 #
@@ -38,7 +39,8 @@
 #   find_var_undef back to `jmp sys_exit_err` after its message (no name, no line)      -> N RED
 #   parse_err's end-of-input step (`dec rbx`) dropped                                   -> E RED (an empty line)
 # 6.7.14:
-#   shallow_fn's and shallow_global's IDENT test dropped (the 6.7.13 cybs)              -> K RED (rc 139, all three)
+#   shallow_fn's and shallow_global's IDENT test dropped (the 6.7.13 cybs)              -> K RED (rc 139, all four)
+#   only shallow_g_col's type-name test dropped                                          -> K RED (`var x:`, rc 139)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_diagnostics_named: cannot cd to $ROOT"; exit 1; }
@@ -116,6 +118,8 @@ printf 'var' > "$D/kvar.cyr"
 says K kvar.cyr 'the input `var`' "${SYN}var"
 printf 'fn ' > "$D/kfnsp.cyr"
 says K kfnsp.cyr 'the input `fn ` (a trailing blank)' "${SYN}fn "
+printf 'var x:' > "$D/kvarcol.cyr"
+says K kvarcol.cyr 'the input `var x:`' "${SYN}var x:"
 
 # V — anti-vacuous
 cat > "$D/ok.cyr" <<'EOF'

@@ -2187,6 +2187,9 @@ shallow_g_brk:
     jmp shallow_g_reg
 shallow_g_col:
     inc r11              # consume :
+    call peek_tok_type
+    cmp rax, 2           # type IDENT (as the name: `var x:` at the end stepped past EOF)
+    jne parse_err
     inc r11              # consume type IDENT
     call peek_tok_type
     cmp rax, 28          # typed array [N]
