@@ -1384,15 +1384,11 @@ fn _hdr_is_ellipsis(b, s, e): i64 {
 
 # 1 iff the parameter list b[s, e) is only `...` (blanks around it) — a fully variadic fn,
 # whose C prototype is `(void)` (cmd_header). CHANGELOG [6.7.11]
+# Newlines are blanks too: a list may wrap. CHANGELOG [6.7.14]
 fn _hdr_only_ellipsis(b, s, e): i64 {
-    while (s < e) {
-        var c = load8(b + s);
-        if (c != 32 && c != 9) { break; }
-        s = s + 1;
-    }
+    s = _hdr_ws_nl(b, s, e);
     while (e > s) {
-        var c2 = load8(b + e - 1);
-        if (c2 != 32 && c2 != 9) { break; }
+        if (_hdr_blank(load8(b + e - 1)) == 0) { break; }
         e = e - 1;
     }
     return _hdr_is_ellipsis(b, s, e);
@@ -1444,11 +1440,16 @@ var _hdr_raw = 0;        # the file before _src_blank_noncode: its `#ifdef` line
 # First offset in [p, lim) that is not a space, tab, CR or newline.
 fn _hdr_ws_nl(b, p, lim): i64 {
     while (p < lim) {
-        var c = load8(b + p);
-        if (c != 32 && c != 9 && c != 10 && c != 13) { break; }
+        if (_hdr_blank(load8(b + p)) == 0) { break; }
         p = p + 1;
     }
     return p;
+}
+
+# 1 iff the byte c is a blank to the header scanner: a space, a tab, a newline or a CR.
+fn _hdr_blank(c): i64 {
+    if (c == 32 || c == 9 || c == 10 || c == 13) { return 1; }
+    return 0;
 }
 
 # 1 iff buf[p, p+n) is the word `w` (wn bytes).
@@ -2393,8 +2394,12 @@ fn cmd_header(arg): i64 {
 
         # Extract params between ( and its own ) — a default holds parentheses (`b = f(1, 2)`), a
         # tuple parameter's type nests one (`t: (i64, i64)`). CHANGELOG [6.7.7]
+        # The `)` is found in the whole buffer, not the declaration's line: a list that wraps
+        # (`fn f(a, b,` / `  c): i64 {`) was cut at the newline and its later parameters dropped,
+        # a vector parameter there unseen by _hdr_vparam. Newlines inside it are blanks below.
+        # CHANGELOG [6.7.14]
         var ps = ne + 1;
-        var pe = _hdr_close(hbuf, ps, le, 0);
+        var pe = _hdr_close(hbuf, ps, hn, 0);
 
         # 6.7.11 — the return type decides the prototype's (see _hdr_ret_class). CHANGELOG [6.7.11]
         var rk = _hdr_ret_of(hbuf, hn, ps);
@@ -2434,7 +2439,7 @@ fn cmd_header(arg): i64 {
         # `(...)`, and the callee reads no argument (a cyrius variadic tail is never read:
         # tests/tcyr/lang/varargs.tcyr), so C passing none is the whole contract. CHANGELOG [6.7.11]
         var allva = _hdr_only_ellipsis(hbuf, ps, pe);
-        if (pe == ps || allva == 1) {
+        if (_hdr_ws_nl(hbuf, ps, pe) == pe || allva == 1) {   # an empty list, blanks or newlines alone
             sys_write(STDOUT_FD, "void", 4);
         } else {
             # Count and emit params: the name, then its type and default skipped whole. A
@@ -2442,11 +2447,8 @@ fn cmd_header(arg): i64 {
             var pi = ps;
             var first = 1;
             while (pi < pe) {
-                # Skip whitespace
-                while (pi < pe) {
-                    if (load8(hbuf + pi) != 32) { break; }
-                    pi = pi + 1;
-                }
+                # Skip blanks — a wrapped list's newline and indentation too (6.7.14)
+                pi = _hdr_ws_nl(hbuf, pi, pe);
                 var pns = pi;
                 while (pi < pe) {
                     var pc = load8(hbuf + pi);
@@ -2454,9 +2456,9 @@ fn cmd_header(arg): i64 {
                     pi = pi + 1;
                 }
                 var pne = pi;
-                # Trim trailing space
+                # Trim trailing blanks (a newline before the `,` too)
                 while (pne > pns) {
-                    if (load8(hbuf + pne - 1) != 32) { break; }
+                    if (_hdr_blank(load8(hbuf + pne - 1)) == 0) { break; }
                     pne = pne - 1;
                 }
                 # Skip the type annotation and the default, to this parameter's own `,` — a tuple

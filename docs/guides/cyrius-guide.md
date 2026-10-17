@@ -5312,6 +5312,10 @@ private, or return its lanes another way, to generate a header for the rest of t
 parameter, which no C11 type carries``): cycc receives it in a vector register (xmm / v), where the
 printed `cyr_val v` had a C caller pass it in rdi / x0. A pointer to a vector (`v: *f64v2`) and a
 `: Result` / `: Option` / `: Tagged` parameter (one word, the tag) stay `cyr_val`.
+Since 6.7.14 a parameter list that wraps lines (`fn f(a, b,` / `  c): i64 {`) is read to its own
+`)`: the header printed the first line's parameters alone (`tls_native_hkdf_expand_label`, nine
+parameters over two lines, came out with four), rc 0, and a vector parameter on a continuation line
+was not refused.
 Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
 (and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
 x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden

@@ -100,6 +100,12 @@
 # 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
 # 6.7.13: `_hdr_vparam` answering 0 (a vector parameter `cyr_val`)     → H8 FAIL (7: the vector-parameter rows)
 #         a `*` pointer type read as its vector name                 → H8 FAIL (the stays-cyr_val row, the count)
+# 6.7.14 — H13, A WRAPPED PARAMETER LIST (issues/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md):
+#   the list's `)` looked for on the declaration's line (6.7.13)     → H13 FAIL (8: ml.cyr's b3 / a3, the nine, the shapes, cc)
+#   the parameter walk skips spaces alone (a newline is a name)     → H13 FAIL (7)
+#   the trailing trim drops spaces alone (a newline before `,`)     → H13 FAIL (the comments row)
+#   _hdr_only_ellipsis blind to newlines (a wrapped `...` alone)    → H13 FAIL (the variadic row, cc)
+#   an empty list only when `(` meets `)` (`fn e0(` / `)` → `e0()`) → H13 FAIL (the (void) row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -713,6 +719,48 @@ CEOF
     fi
 else
     echo "  SKIP (named): H12's guard rows and C caller — $CCX86_WHY"; skips=$((skips + 1))
+fi
+
+# ── H13: a parameter list that WRAPS (6.7.14; issues/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md).
+# The list's `)` was looked for on the declaration's line alone, so a list continued on the next
+# line lost every later parameter (the C caller passed garbage in the dropped registers) and a
+# vector parameter there escaped the 6.7.13 refusal — rc 0, nothing on stderr. The filed repro
+# verbatim, cyrius's own lib (tls_native_hkdf_expand_label: nine parameters over two lines), then
+# a default and a tuple type that wrap, tabs, CRLF, comments, an empty / variadic wrapped list.
+echo "H13 — a parameter list that wraps lines: every parameter, every refusal:"
+printf 'fn b3(x,\n      y): i64 { return 0; }\nfn a3(x,\n      v: u8v16): i64 { return 0; }\n' > ml.cyr
+rc13=0; "$CY" header ml.cyr > o13 2> e13 || rc13=$?
+check "the filed ml.cyr: b3 prints both parameters" 1 "$(has o13 'cyr_val b3(cyr_val x, cyr_val y);')"
+check "... a3 (v: u8v16 on the continuation line) refused by name, no prototype, exit 1" "1 0 1" \
+    "$(grep -cxF "error: cyrius header: 'a3' takes 'v: u8v16': a SIMD vector parameter, which no C11 type carries; no prototype written" e13 || true) $(grep -c 'a3(' o13 || true) $rc13"
+printf 'fn a1(x, v: u8v16): i64 { return 0; }\n' > one.cyr
+rc13o=0; "$CY" header one.cyr > /dev/null 2> e13o || rc13o=$?
+check "... as the one-line a1 is" "1 1" "$(grep -c "^error: cyrius header: 'a1' takes 'v: u8v16'" e13o || true) $rc13o"
+{ cat ml.cyr; printf 'var r = b3(1, 2);\nsyscall(60, r);\n'; } > ml1.cyr
+mrc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/ml1.cyr" > "$D/ml1" 2> /dev/null) || mrc=$?
+mx=$( { chmod +x ml1 && ./ml1; } > /dev/null 2>&1; echo $?)
+check "... and ml.cyr compiles with cycc, b3(1, 2) exits 0" "0 0" "$mrc $mx"
+"$CY" header "$ROOT/lib/tls_native_keysched.cyr" > o13t 2> /dev/null || :
+check "lib/tls_native_keysched.cyr: tls_native_hkdf_expand_label has its nine parameters" 1 \
+    "$(has o13t 'cyr_val tls_native_hkdf_expand_label(cyr_val sec, cyr_val secret_len, cyr_val label, cyr_val label_len, cyr_val ctx, cyr_val ctx_len, cyr_val hash_algo, cyr_val out, cyr_val out_len);')"
+printf 'include "lib/result.cyr"\nfn r2(x,\n      y): Result { return Ok(x); }\nfn wd(a,\n      t: (i64,\n          i64),\n      b = (1 +\n              2),\n      c = 3): i64 { return a; }\nfn tb(a,\n\tb): i64 { return a; }\nfn cr(a,\r\n      b): i64 { return a; }\nfn cm(a, # the first\n      b # the second\n      , c): i64 { return a; }\nfn e0(\n): i64 { return 0; }\nfn va(\n    ...\n): i64 { return 0; }\nfn tw(a,\n      ...): i64 { return a; }\n' > mw.cyr
+wrc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/mw.cyr" > /dev/null 2> /dev/null) || wrc=$?
+check "the wrapped shapes compile with cycc" 0 "$wrc"
+rc13w=0; "$CY" header mw.cyr > o13w 2> e13w || rc13w=$?
+check "the wrapped shapes: exit 0, nothing on stderr" "0 0" "$rc13w $(wc -c < e13w | tr -d ' ')"
+check "  a wrapped : Result keeps both parameters (cyr_val2)" 1 "$(has o13w 'cyr_val2 r2(cyr_val x, cyr_val y);   /* returns Result: the tag in w0, the payload in w1 */')"
+check "  a tuple type and a default that wrap" 1 "$(has o13w 'cyr_val wd(cyr_val a, cyr_val t, cyr_val b, cyr_val c);')"
+check "  a tab, a CRLF, comments before a wrapped comma" "1 1 1" \
+    "$(has o13w 'cyr_val tb(cyr_val a, cyr_val b);') $(has o13w 'cyr_val cr(cyr_val a, cyr_val b);') $(has o13w 'cyr_val cm(cyr_val a, cyr_val b, cyr_val c);')"
+check "  an empty wrapped list is (void); a wrapped ... alone is variadic (void); a wrapped tail is ..." "1 1 1" \
+    "$(has o13w 'cyr_val e0(void);') $(has o13w 'cyr_val va(void); /* variadic in cyrius: it reads no argument */') $(has o13w 'cyr_val tw(cyr_val a, ...);')"
+if command -v cc > /dev/null 2>&1; then
+    { cat o13w; echo 'void f13(void) { (void)tb(1, 2); (void)cr(1, 2); (void)cm(1, 2, 3); (void)wd(1, 2, 3, 4); (void)e0(); (void)va(); (void)tw(1, 2, 3); }'; } > o13c.c
+    { cat o13t; echo 'void f13t(void) { (void)tls_native_hkdf_expand_label(1, 2, 3, 4, 5, 6, 7, 8, 9); }'; } > o13tc.c
+    check "a C caller passes each wrapped fn its arity (cc -std=c11 -pedantic-errors)" "0 0 0" \
+        "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c o13c.c > /dev/null 2>&1; echo $?) $(cc -std=c11 -pedantic-errors -fsyntax-only -x c o13tc.c > /dev/null 2>&1; echo $?) $(cc -std=c11 -pedantic-errors -fsyntax-only -x c o13 > /dev/null 2>&1; echo $?)"
+else
+    echo "  SKIP (named): H13's C arity row — no C compiler (cc) on this host"; skips=$((skips + 1))
 fi
 cd "$ROOT" || exit 2
 echo ""
