@@ -13205,23 +13205,58 @@ fn _append_conc_name(S, wp, conc): i64 {
     return wp;
 }
 
+# ⛔ 6.7.14 (D1) — A TWO-PARAMETER NAME BRACKETS A FRAGMENT THAT IS ITSELF AN INSTANCE. A generic
+# struct instance's registered name already holds '$' (`P$R`, `R$i32`), so `g2<P<R>, i32>` and
+# `g2<P, R<i32>>` both minted `g2$P$R$i32` and the second call ran the first's body. The fragment
+# whose name holds '$' is written `<..>` — `g2$<P$R>$i32`, `g2$P$<R$i32>` — and nothing else: every
+# name that did not collide (`Two$i64$i32`, the single-parameter `Box$Pair$i32`) is unchanged.
+# '<' / '>' are no identifier bytes, and not the '$' that `_gen_is_inst` and the coverage CLI cut at.
+# CHANGELOG [6.7.14]
+fn _conc_name_nested(S, conc): i64 {
+    if (conc <= 0) { return 0; }
+    var p = S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8);
+    var j = 0;
+    while (load8(p + j) != 0) {
+        if (load8(p + j) == 36) { return 1; }
+        j = j + 1;
+    }
+    return 0;
+}
+fn _append_conc_frag2(S, wp, conc): i64 {
+    if (_conc_name_nested(S, conc) == 0) { return _append_conc_name(S, wp, conc); }
+    store8(S + 0xEC00000 + wp, 60); wp = wp + 1;   # '<'
+    wp = _append_conc_name(S, wp, conc);
+    store8(S + 0xEC00000 + wp, 62); wp = wp + 1;   # '>'
+    return wp;
+}
+# The most bytes `_append_conc_frag2` writes for `conc`: the name, its '.' mark and the brackets.
+fn _conc_frag_len(S, conc): i64 {
+    if (conc <= 0) { return 3; }
+    var p = S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8);
+    var j = 0;
+    while (load8(p + j) != 0) { j = j + 1; }
+    return j + 3;
+}
+
 # v6.3.33: mint `Base$<conc0>` (single param) or `Base$<conc0>$<conc1>` (two distinct
 # params, conc1 != 0). The two-fragment name keeps `Two<i64,i32>` and `Two<i64,i64>`
 # distinct in the FINDFN/FINDSTRUCT dedup index. Single-param (conc1 == 0) mints the
 # same name as before → byte-identical dedup for the existing single-param instances.
+# The guard is sized from the fragments' real lengths: a nested fragment has no fixed bound.
 fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
     var blen = 0;
     while (load8(S + 0xEC00000 + base_noff + blen) != 0) { blen = blen + 1; }
-    NPOS_GUARD(S, blen + 80);
+    NPOS_GUARD(S, blen + _conc_frag_len(S, conc) + _conc_frag_len(S, conc1) + 4);
     var wp = GNPOS(S);
     var noff = wp;
     var i = 0;
     while (i < blen) { store8(S + 0xEC00000 + wp, load8(S + 0xEC00000 + base_noff + i)); wp = wp + 1; i = i + 1; }
     store8(S + 0xEC00000 + wp, 36); wp = wp + 1;   # '$'
-    wp = _append_conc_name(S, wp, conc);
+    if (conc1 == 0) { wp = _append_conc_name(S, wp, conc); }
+    else { wp = _append_conc_frag2(S, wp, conc); }
     if (conc1 != 0) {
         store8(S + 0xEC00000 + wp, 36); wp = wp + 1;   # '$'
-        wp = _append_conc_name(S, wp, conc1);
+        wp = _append_conc_frag2(S, wp, conc1);
     }
     store8(S + 0xEC00000 + wp, 0); wp = wp + 1;
     SNPOS(S, wp);

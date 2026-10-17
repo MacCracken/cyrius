@@ -6450,10 +6450,12 @@ type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own na
 for a struct — and a struct named exactly like a scalar (`struct f64`, which
 `add<f64>` then binds) is marked `.f64`, so a scalar type argument never shares an
 instance with a struct one (6.7.11: `add<f64>` was `add$i`, the instance of a `struct i`
-too, and the second call ran the first's body). ⚠ Still open: a two-parameter generic
-whose type argument is itself a generic struct's instance — `g2<P<R>, i32>` and
-`g2<P, R<i32>>` both mint `g2$P$R$i32`, so the second call runs the first's body
-(`docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md`).
+too, and the second call ran the first's body). A two-parameter instance is
+`g2$i32$P`, and a type argument that is itself a generic struct's instance is
+bracketed: `g2<P<R>, i32>` is `g2$<P$R>$i32` and `g2<P, R<i32>>` is `g2$P$<R$i32>`
+(6.7.14: both were `g2$P$R$i32`, so the second call ran the first's body and
+`Two<P, R<i32>>` took `Two<P<R>, i32>`'s layout). A one-parameter name needs no
+bracket (`Box$P$R`). These names are what a diagnostic and a coverage dump show.
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`

@@ -10,6 +10,12 @@
 # (every leg). Filed: docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
 #   F  a fn instance at f64 and at `struct i`, both orders            B  `Box<f64>` / `Box<i>`
 #   T  two type parameters: <f64, i>, <i, f64>, <i, i>, <f64, f64>     I  `struct i32` binds `<i32>`
+# 6.7.14: a two-parameter name whose type argument is itself an instance. `P<R>` is registered `P$R`,
+# so `g2<P<R>, i16>` and `g2<P, R<i16>>` both minted `g2$P$R$i16` and the second call ran the first's
+# body. A fragment whose name holds '$' is bracketed (the user's decision D1, 2026-10-16):
+# `g2$<P$R>$i16`, `g2$P$<R$i16>`. Filed: docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md
+#   N  g2 / gq (non-inlinable) with a nested argument in either slot, both orders; `Two<..>`'s field
+#      layout; a two-parameter instance as the argument (`Two<P, R>` / `P<R<i16>>`)
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -17,6 +23,9 @@ include "lib/assert.cyr"
 struct i { a; b; c; }
 struct i32 { a; b; c; d; }
 struct Box<T> { v: T; n; }
+struct P<T> { v: T; }
+struct R<T> { v: T; w; }
+struct Two<A, B> { a: A; b: B; }
 
 fn gf<T>(x: *T): i64 { return sizeof(T); }
 fn gs<T>(x: *T): i64 { return sizeof(T); }
@@ -33,6 +42,12 @@ fn gl2<T>(x: *T): i64 {
     var t = 0;
     var k = 0;
     while (k < 2) { t = t + sizeof(T); k = k + 1; }
+    return t;
+}
+fn gq<A, B>(a: *A, b: *B): i64 {
+    var t = 0;
+    var k = 0;
+    while (k < 2) { t = t + sizeof(A) * 100 + sizeof(B); k = k + 1; }
     return t;
 }
 
@@ -58,6 +73,19 @@ fn run(): i64 {
     assert_eq(g2<f64, f64>(0, 0), 808, "T4: g2<f64, f64> (was 824)");
     assert_eq(gi<i32>(0), 32, "I1: gi<i32> binds the program's struct i32");
     assert_eq(sizeof(Box<i32>), 40, "I2: Box<i32> binds it too");
+    assert_eq(g2<P<R>, i16>(0, 0), 1602, "N1: g2<P<R>, i16> first (P<R> is 16 B)");
+    assert_eq(g2<P, R<i16>>(0, 0), 810, "N2: g2<P, R<i16>> after it (was 1602: both g2$P$R$i16)");
+    assert_eq(gq<P, R<i16>>(0, 0), 1620, "N3: non-inlinable gq<P, R<i16>> first");
+    assert_eq(gq<P<R>, i16>(0, 0), 3204, "N4: non-inlinable gq<P<R>, i16> after it (was 1620)");
+    var t1: Two<P<R>, i16>;
+    var t2: Two<P, R<i16>>;
+    t1.a.v.w = 9;
+    t2.b.w = 5;
+    t2.a.v = 7;
+    assert_eq(t2.b.w + t2.a.v, 12, "N5: Two<P, R<i16>> has its own layout after Two<P<R>, i16>");
+    assert_eq(t1.a.v.w, 9, "N6: Two<P<R>, i16>'s nested field");
+    assert_eq(g2<Two<P, R>, i16>(0, 0), 2402, "N7: a two-parameter instance as the argument, g2<Two<P, R>, i16>");
+    assert_eq(g2<Two, P<R<i16>>>(0, 0), 1610, "N8: g2<Two, P<R<i16>>> after it (was 2402: both g2$Two$P$R$i16)");
     return 0;
 }
 var r0 = run();

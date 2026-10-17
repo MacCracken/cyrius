@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/generic_instance_names_distinct.sh — 6.7.11
+# tests/gates/frontend/generic_instance_names_distinct.sh — 6.7.11, 6.7.14
 #
 # NO TWO TYPE ARGUMENTS SHARE A GENERIC INSTANCE. An instance is named `Base$<fragment>` and
 # FINDFN / FINDSTRUCT dedup by that name, so two type arguments with one fragment share one body:
@@ -12,6 +12,12 @@
 # (i8 / i16 / i32 / i64 / f64) is marked with a byte no identifier holds, `gen$.f64` — every other
 # instance keeps its name. 6.3.33 - 6.7.10, every target.
 # Filed: docs/development/issues/archived/2026-10-12-generic-f64-instance-name-collides-with-struct-i.md
+# 6.7.14: a TWO-parameter name split the same way at a type argument that is itself an instance. A
+# generic struct instance is registered `P$R`, so `g2<P<R>, i32>` (`P$R` + `i32`) and `g2<P, R<i32>>`
+# (`P` + `R$i32`) both minted `g2$P$R$i32` — the filed repro printed `1604 1604` — and `Two<P<R>, i32>`
+# gave `Two<P, R<i32>>` its layout. The user's decision D1 (2026-10-16): a fragment whose name holds '$'
+# is bracketed — `g2$<P$R>$i32`, `g2$P$<R$i32>` — and every other name is unchanged. 6.3.33 - 6.7.13,
+# every target. Filed: docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md
 #
 #   R1 the filed repro, verbatim: exit 96 (88 before), on x86_64, x86_64 CYRIUS_IR=3, aarch64
 #      (qemu), cx (cxvm) and PE (wine); R2 its swapped form: 96 (176 before)
@@ -19,8 +25,12 @@
 #   F  `struct f64 { a; b; c; }`: the scalar `gs(1.5)` and the struct `gs<f64>(p)` / `gp<f64>(&p)`
 #      run their own instances — 128 (F1), and 104 with the struct call first (F2), every leg
 #   I  `struct i32` + `gen<i32>` binds the struct, as before: 32, every leg
+#   P  the 6.7.14 filed repro, verbatim: prints `1604 812` (`1604 1604` before); its calls swapped:
+#      `812 1604` (`812 812` before); the struct form (`t2.b.w = 5` on a `Two<P, R<i32>>` declared after a
+#      `Two<P<R>, i32>`): exit 5 (refused before: `expected '=', got '.'`) — every leg
 #   N  x86_64, the names a coverage dump shows: `gen$f64` and `gen$i` (R1); `gs$f64`, `gs$.f64`,
-#      `gp$.f64` (F1); `gen$.i32` (I)
+#      `gp$.f64` (F1); `gen$.i32` (I); `g2$<P$R>$i32`, `g2$P$<R$i32>`, and the unchanged `g2$i32$P` (a
+#      two-parameter name with no nested argument) and `gen$P$R` (one parameter) (P)
 #   T  tests/tcyr/crossos/generic_instance_names.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -36,6 +46,11 @@
 #                                                     x86 / IR / aarch64, cx exit 1, PE exit 5: the scalar
 #                                                     call ran the struct's body); N F1 (`2 gs$f64`) and I;
 #                                                     R / S / T green (no struct named like a scalar)
+#   M2  (2026-10-16) the 6.7.14 bracket removed    -> RED P1 (`1604 1604`), P2 (`812 812`) and P3 (the
+#       (`_mint_generic_name` writes each fragment    struct form does not build) on every leg; N P (`2
+#       with `_append_conc_name`, as before)          <source>:3 g2$P$R$i32`); T: the file does not build on
+#                                                     any leg (`t2.b.w`: Two<P, R<i16>> got Two<P<R>, i16>'s
+#                                                     layout); R / S / F / I green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -67,7 +82,7 @@ TC=tests/tcyr/crossos/generic_instance_names.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=18
+FLOOR=26
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -164,6 +179,48 @@ var b = gen<i32>(0);
 syscall(60, b);
 EOF
 
+# The 6.7.14 filed repro, verbatim; its two calls swapped; the struct form, verbatim.
+cat > "$D/p1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+struct P<T> { v: T; }
+struct R<T> { v: T; w; }
+fn g2<A, B>(a: *A, b: *B): i64 { return sizeof(A) * 100 + sizeof(B); }
+fn main(): i64 {
+    var x = g2<P<R>, i32>(0, 0);
+    var y = g2<P, R<i32>>(0, 0);
+    fmt_int(x); syscall(1, 1, " ", 1); fmt_int(y); syscall(1, 1, "\n", 1);
+    return 0;
+}
+syscall(60, main());
+EOF
+sed -e 's/var x = g2<P<R>, i32>(0, 0);/var x = g2<P, R<i32>>(0, 0);/' \
+    -e 's/var y = g2<P, R<i32>>(0, 0);/var y = g2<P<R>, i32>(0, 0);/' "$D/p1.cyr" > "$D/p2.cyr"
+cat > "$D/p3.cyr" <<'EOF'
+struct P<T> { v: T; }
+struct R<T> { v: T; w; }
+struct Two<A, B> { a: A; b: B; }
+fn main(): i64 {
+    var t1: Two<P<R>, i32>;
+    var t2: Two<P, R<i32>>;
+    t2.b.w = 5;
+    return t2.b.w;
+}
+syscall(60, main());
+EOF
+cat > "$D/pn.cyr" <<'EOF'
+struct P<T> { v: T; }
+struct R<T> { v: T; w; }
+fn g2<A, B>(a: *A, b: *B): i64 { return sizeof(A) * 100 + sizeof(B); }
+fn gen<T>(x: *T): i64 { return sizeof(T); }
+var x = g2<P<R>, i32>(0, 0);
+var y = g2<P, R<i32>>(0, 0);
+var z = g2<i32, P>(0, 0);
+var w = gen<P<R>>(0);
+syscall(60, x - y - z - w);
+EOF
+
 # xrow <id> <src> <want> <what>: the exit on every leg
 xrow() {
     for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
@@ -185,6 +242,21 @@ xrow F2 "$D/f2.cyr" 104 "the scalar call ran the struct's instance"
 echo "I. struct i32: gen<i32> binds the program's struct, as before"
 xrow I "$D/i.cyr" 32 "gen<i32> did not bind struct i32"
 
+# orow <id> <src> <want-line> <what>: exit 0 and the last line of the output on every leg
+orow() {
+    for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+        n=$(printf '%s_%s' "$1" "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$2" "$D/o_$n"
+        if [ "$RC" -eq -1 ]; then bad "$1 $leg: did not build: $(grep -m1 'error' "$D/o_$n.err")"
+        elif [ "$RC" -eq 0 ] && [ "$LAST" = "$3" ]; then ok "$1 $leg: $3"
+        else bad "$1 $leg: exit $RC, '$LAST', want '$3' ($4)"; fi
+    done
+}
+echo "P. two parameters, a type argument that is itself an instance: g2<P<R>, i32> and g2<P, R<i32>> are two instances"
+orow P1 "$D/p1.cyr" "1604 812" "1604 1604: g2<P, R<i32>> ran g2<P<R>, i32>'s body, both g2\$P\$R\$i32"
+orow P2 "$D/p2.cyr" "812 1604" "812 812: g2<P<R>, i32> ran g2<P, R<i32>>'s body"
+xrow P3 "$D/p3.cyr" 5 "Two<P, R<i32>> took Two<P<R>, i32>'s layout"
+
 echo "N. x86_64: the instance names a coverage dump shows"
 # nrow <id> <src> <want-file>: the dump, exactly
 nrow() {
@@ -202,7 +274,9 @@ printf '%s\n1 <source>:4 main\n1 <source>:2 gs$f64\n1 <source>:2 gs$.f64\n1 <sou
 printf '%s\n1 <source>:2 gen$.i32\n' "$HDR" > "$D/i.want"
 nrow R1 "$D/r1.cyr" "$D/r1.want"
 nrow F1 "$D/f1.cyr" "$D/f1.want"
+printf '%s\n1 <source>:3 g2$<P$R>$i32\n1 <source>:3 g2$P$<R$i32>\n1 <source>:3 g2$i32$P\n1 <source>:4 gen$P$R\n' "$HDR" > "$D/pn.want"
 nrow I "$D/i.cyr" "$D/i.want"
+nrow P "$D/pn.cyr" "$D/pn.want"
 
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
@@ -215,4 +289,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a scalar type argument never shares a generic instance with a struct: f64 is \$f64 and a struct named like a scalar \$.<name> — the filed repro and its swap (R), Box (S), struct f64 (F), struct i32 (I) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — no two type arguments share a generic instance: f64 is \$f64, a struct named like a scalar \$.<name>, and a two-parameter fragment that is itself an instance <..> — the filed repros and their swaps (R, P), Box (S), struct f64 (F), struct i32 (I), Two (P3) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
