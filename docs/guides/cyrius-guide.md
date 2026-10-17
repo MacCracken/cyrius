@@ -6629,6 +6629,13 @@ describe<i32>(7);   # needs impl Show for i32
   trait — `v.x` on a bounded `T` resolves per instance, as on an unbounded one. An **unbounded** `T`
   keeps per-instance resolution: `fn f<T>(v: T) { return v.show(); }` compiles and works for any `T`
   that has a `show`.
+- **A struct carrier's `T` field calls the bound too**: with `b: Box<T>` (or `*Box<T>`, or a
+  `var c: Box<T>`) whose `Box` declares `v: T`, `b.v.show()` under `T: Show` is the bound's call — not
+  a struct use of `T` — so `gs(bi)` with `bi: Box<i64>` calls `impl Show for i64`'s method with the
+  field's value, as `t.show()` on a `t: T` does, and `gs(b)` with a `Box<Pt>` calls Pt's (6.7.14;
+  before it the base was the struct stub, and `gs(bi)` was refused "uses its type parameter as a
+  struct"). A method the bound does not declare on such a field, and a `*T` field, keep resolving per
+  instance.
 - **`T: A + B`** requires every impl. A bound names a declared trait (an undeclared one is refused),
   takes no type arguments, and goes on one of the first two type parameters (at most two are
   recorded); up to 8 per parameter.

@@ -8932,10 +8932,79 @@ fn _bnd_sites(S, fi, open): i64 {
                             if (r >= 0) { _bnd_site(S, tp, blk, i, r); }
                         }
                     } } }
+            if (TOKTYP(S, i + 3) == 41) { if (TOKTYP(S, i + 5) == 10) { _bnd_fsite(S, fi, blk, open, i); } }   # 6.7.14
         }
         i = i + 1;
     }
     return 0;
+}
+# ⛔ 6.7.14 — A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`) and
+# `T: Show`. Only a call on a name declared `T` / `*T` was a bounded site, so this one was not, and the stub
+# scan's carrier rule (6.7.11, `_gs_cfield`) counted `b.v.<anything>` a struct use: the base was the stub,
+# and `gs(bi)` with `bi: Box<i64>` was refused although `impl Show for i64` exists. `x.f.m(` at token i,
+# x a carrier (a parameter or `var` typed `[*]G<..T..>`, found by scope) whose G declares `f: T` in a slot the
+# carrier gives a bounded type parameter, and m a method of exactly one of that slot's traits: a bounded site at
+# m, which the scan reads as a trait use (`_gs_bfield`) and a scalar T's call takes the field's value as `self`
+# (`_load_bs_field`). A method no bound declares (or two do), and a `f: *T` field, record nothing — that call
+# keeps its 6.7.11 reading. CHANGELOG [6.7.14]
+fn _bnd_fsite(S, fi, blk, open, i): i64 {
+    if (TOKTYP(S, i - 1) == 41) { return 0; }
+    if (TOKTYP(S, i + 1) != 41) { return 0; }
+    if (TOKTYP(S, i + 2) != 2) { return 0; }
+    if (TOKTYP(S, i + 4) != 2) { return 0; }
+    var d = _tok_name_decl(S, open, i, TOKVAL(S, i));
+    if (d < 0) { return 0; }
+    var r = _bnd_fslot(S, fi, d, TOKVAL(S, i + 2));
+    if (r < 0) { return 0; }
+    var slot = r;
+    var m = TOKVAL(S, i + 4);
+    var n = L64(blk + slot * 9 * 8);
+    var hit = 0 - 1;
+    var k = 0;
+    while (k < n) {
+        var tx = L64(blk + (slot * 9 + 1 + k) * 8);
+        if (_trm_of(S, tx, m) >= 0) {
+            if (hit >= 0) { return 0; }   # two traits declare it: no site
+            hit = tx;
+        }
+        k = k + 1;
+    }
+    if (hit < 0) { return 0; }
+    _bs_add(S, i + 4, hit, ((GFTP(S, fi) >> (slot * 32)) & 0xFFFFFFFF) - 1, 0);
+    return 0;
+}
+# The declaration at token d (`name: [*]G<..>`): the slot (0 / 1) of fi's type parameter that G's field
+# `fnoff` holds whole (`f: T`), or -1 — a `f: *T` field is no receiver here (its call keeps 6.7.11's reading).
+fn _bnd_fslot(S, fi, d, fnoff): i64 {
+    if (TOKTYP(S, d + 1) != 49) { return 0 - 1; }
+    var ti = d + 2;
+    if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0 - 1; }
+    var tp = GFTP(S, fi);
+    var j = ti + 2;
+    var slot = 0;
+    var dp = 1;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return 0 - 1; }
+        if (dp == 1) { if (_gs_targ_whole(S, j) == 1) {
+                var a = _gs_gfield_at(S, TOKVAL(S, ti), slot, fnoff);
+                if (a >= 0) { if (TOKTYP(S, a) != 8) {
+                        if (TOKVAL(S, j) == (tp & 0xFFFFFFFF) - 1) { return 0; }
+                        if (TOKVAL(S, j) == ((tp >> 32) & 0xFFFFFFFF) - 1) { return 1; }
+                    } }
+            } }
+        if (t == 31) { if (dp == 1) { slot = slot + 1; } }
+        if (t == 19) { dp = dp + 1; }
+        if (t == 20) { dp = dp - 1; }
+        if (t == 39) { dp = dp - 2; }
+        if (t == 152) { dp = dp - 3; }
+        if (dp <= 0) { return 0 - 1; }
+        j = j + 1;
+    }
+    return 0 - 1;
 }
 # Record fi's bounds (the list `_capture_tparams` just read, packed names `tp`) and its sites — once.
 fn _bnd_fn_record(S, fi, tp, open): i64 {
@@ -12369,30 +12438,48 @@ fn _gs_cfield(S, i): i64 {
 # `slot`. G's definition is read from the tokens: pass 1 records a generic before a struct declared
 # below it is registered (`_gs_gdef`).
 fn _gs_gfield_tp(S, gnoff, slot, fnoff): i64 {
+    if (_gs_gfield_at(S, gnoff, slot, fnoff) >= 0) { return 1; }
+    return 0;
+}
+# ... the token of that field's type (its `*` for `fnoff: *P`), or -1 (6.7.14, `_bnd_fslot`).
+fn _gs_gfield_at(S, gnoff, slot, fnoff): i64 {
     var lt = _gs_gdef(S, gnoff);
-    if (lt < 0) { return 0; }
+    if (lt < 0) { return 0 - 1; }
     var tpn = _gs_gtp(S, lt, slot);
-    if (tpn < 0) { return 0; }
+    if (tpn < 0) { return 0 - 1; }
     var n = GTCNT(S);
     var j = lt;
     while (j < n) {
         var t0 = TOKTYP(S, j);
         if (t0 == 13) { break; }
-        if (t0 == 5 || t0 == 12) { return 0; }
+        if (t0 == 5 || t0 == 12) { return 0 - 1; }
         j = j + 1;
     }
     var d = 0;
     while (j < n) {
         var t = TOKTYP(S, j);
-        if (t == 12) { return 0; }
+        if (t == 12) { return 0 - 1; }
         if (t == 13) { d = d + 1; }
-        if (t == 14) { d = d - 1; if (d == 0) { return 0; } }
+        if (t == 14) { d = d - 1; if (d == 0) { return 0 - 1; } }
         if (d == 1) { if (t == 2) { if (TOKTYP(S, j + 1) == 49) { if (STREQ(S, TOKVAL(S, j), fnoff) == 1) {
-                        return _gs_tok_names(S, j + 2, tpn);
+                        if (_gs_tok_names(S, j + 2, tpn) == 1) { return j + 2; }
+                        return 0 - 1;
                     } } } }
         j = j + 1;
     }
-    return 0;
+    return 0 - 1;
+}
+# 6.7.14: mode 0 at `x.f.m(` (token i on x): 1 = a bounded site was recorded at m on a carrier's T field
+# (`_bnd_fsite`) — a trait use, as the name site `t.m(` is.
+fn _gs_bfield(S, i): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (TOKTYP(S, i + 3) != 41) { return 0; }
+    if (TOKTYP(S, i + 5) != 10) { return 0; }
+    var b = _bs_find(S, i + 4);
+    if (b < 0) { return 0; }
+    if (L64(_bs_tab + b * 32 + 8) < 0) { return 0; }
+    if (L64(_bs_tab + b * 32 + 24) != 0) { return 0; }
+    return 1;
 }
 # 1 = the type at token a (past a `*`) is the bare name tpn.
 fn _gs_tok_names(S, a, tpn): i64 {
@@ -12593,6 +12680,7 @@ fn _gs_use(S, fi, i, mode): i64 {
                 if (bsi >= 0) { if (L64(_bs_tab + bsi * 32 + 8) >= 0) { if (L64(_bs_tab + bsi * 32 + 24) == 0) { return 0; } } }
             } }
         if (_gsn_has(TOKVAL(S, i)) == 1) { return 1; }
+        if (_gs_bfield(S, i) == 1) { return 0; }   # 6.7.14: `b.v.show()`, a bounded site, is a trait use
         return _gs_cfield(S, i);   # 6.7.11: `b.v.y` through a struct carrier
     }
     if (nx != 19 && nx != 10) { return 0; }

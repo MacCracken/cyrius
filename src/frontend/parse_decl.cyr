@@ -1816,18 +1816,47 @@ fn _ptr_park(S, psid): i64 {
 # frame is handed to the callee, so the fn is marked as escaping one (`_fn_local_addr`, the v6.5.14
 # tail-call guard) whenever the base is an inline local. CHANGELOG [6.7.0]
 fn _fld_meth_inline(S, ft): i64 {
-    if (ft <= 0) { return 0; }
-    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 2) != 10) { return 0; }
+    if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return 1;
+}
+# 6.7.14: 1 = the `.m(` at the cursor is a bounded site recorded on a struct carrier's T field (`_bnd_fsite`,
+# parse_fn.cyr) — `b.v.show()` with `b: Box<T>`, T bound here to a scalar.
+fn _fld_bs_site(S): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (_bs_find(S, GTI(S) + 1) < 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.14 — A BOUNDED CALL ON A CARRIER'S T FIELD AT A SCALAR T: `b.v.show()` with `b: Box<T>`, T = i64. A
+# method on a scalar field leaf had no path at all ("expected ';', got '.'"); the bound's impl now takes the
+# field's VALUE as `self`, as `t.show()` on a scalar `t: T` takes t's (`_bs_scalar_self`): the field loaded at
+# its width (`_fld_leaf_load`), parked in an anonymous frame slot, and the method arm entered on that slot with
+# no struct. A struct T keeps `_load_inline_hop`'s address. CHANGELOG [6.7.14]
+fn _load_bs_field(S, noff, beg, idx, sid, off): i64 {
+    _resolve_field_base_addr(S, idx, sid);
+    if (off > 0) { EADDIMM_X1(S, off); }
+    _fld_leaf_load(S, beg, idx, sid);
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLTYPE(S, t, 0);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    EFLSTORE(S, t);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, 0 - 2 - t, 0);
 }
 # ⚠ Six parameters at most: the leaf's type is read back from `_resolve_leaf_field` (`_rlf_si` /
 # `_rlf_fi`), because cybs — the bootstrap compiler seed-derive runs — rejects a 7-argument call
 # with a bare "syntax error" (found by seed-derive, 6.7.0).
 fn _load_inline_hop(S, noff, beg, idx, sid, off): i64 {
     var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return _load_bs_field(S, noff, beg, idx, sid, off); }   # 6.7.14
     if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
     elif (idx < 0 - 1) {
         var li = 0 - idx - 2;

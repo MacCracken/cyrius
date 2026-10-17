@@ -14,6 +14,8 @@
 # 6.7.14: a generic FORWARDING its T to a bounded generic whose trait has no `impl .. for i64` (W1-W6): it was
 # a stub (its base refused at every scalar call, f64 included); now only its i64 base is bad, so `ofs(h)` calls
 # `ofs$f64` — free, explicit, two-level, `gfs<T>(x)` and a generic method alike.
+# 6.7.14: a bounded call on a struct carrier's T field, `b.v.show()` with `b: Bx<T>` (C1-C9): it was a struct use, so
+# the base was the stub and an i64 / i32 / f64 carrier was refused; a scalar T's call takes the field's value.
 # Mutation: `_bs_callee` answering -1 (the ordinary `T_m` lookup) -> C1/C2 refused as ambiguous,
 # B4/B5 "no struct type in scope".
 include "lib/syscalls.cyr"
@@ -79,6 +81,12 @@ fn ofsx<T>(x: T): i64 { return gfs<T>(x); }
 impl Q { fn gfm<T: Fs>(self, x: T): i64 { return self.v + x.fs(); } }
 fn ofm<T>(q: Q, x: T): i64 { return q.gfm(x); }
 
+struct Bx<T> { v: T; n; }
+fn cfs<T: Show>(b: Bx<T>): i64 { return b.v.show(); }
+fn cfp<T: Show>(b: *Bx<T>): i64 { return b.v.show() + b.n; }
+fn cfl<T: Show>(b: Bx<T>): i64 { var c: Bx<T> = b; var r = c.v.show(); return r + c.n; }
+fn cff<T: Fs>(b: Bx<T>): i64 { return b.v.fs(); }
+
 fn run(): i64 {
     var p: Pt; p.x = 40; p.y = 2;
     var p2: Pt; p2.x = 40; p2.y = 9;
@@ -117,6 +125,19 @@ fn run(): i64 {
     assert_eq(ofs2(h), 6, "W4: two levels of forwarding");
     assert_eq(ofsx(h), 5, "W5: an explicit forward gfs<T>(x)");
     assert_eq(ofm(q, h), 82, "W6: a forward to a bounded generic method");
+    var bp: Bx<Pt>; bp.v = p; bp.n = 1;
+    var bi: Bx<i64>; bi.v = 4; bi.n = 1;
+    var bw: Bx<i32>; bw.v = 7; bw.n = 1;
+    var bf: Bx<f64>; bf.v = 1.5; bf.n = 1;
+    assert_eq(cfs(bp), 402, "C1: b.v.show() on a carrier's struct T");
+    assert_eq(cfs(bi), 1004, "C2: b.v.show() at i64 (was refused: the base was the stub)");
+    assert_eq(cfs(bw), 2007, "C3: at i32");
+    assert_eq(cfs<i64>(bi), 1004, "C4: explicit cfs<i64>(bi)");
+    assert_eq(cfp(&bp), 403, "C5: a *Bx<T> carrier, struct T");
+    assert_eq(cfp(&bi), 1005, "C6: a *Bx<T> carrier at i64");
+    assert_eq(cfl(bi), 1005, "C7: a var c: Bx<T> carrier, var r = c.v.show();");
+    assert_eq(cff(bf), 5, "C8: at f64 (impl Fs for f64)");
+    assert_eq(cff(bp), 102, "C9: the same bound at a struct");
     return 0;
 }
 var r0 = run();
