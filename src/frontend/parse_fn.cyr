@@ -4152,19 +4152,50 @@ fn _pd_trait_refuse(S, tx, p, op): i64 {
 fn _pd_cl_refuse(S): i64 {
     var ti = GTI(S);
     _pd_say(S, ti, "a closure's parameters take no defaults");
-    var q = ti + 1;
+    STI(S, _cl_ptail_end(S, ti + 1, 0));
+    return 0;
+}
+# ⛔ 6.7.14 — A TYPED CLOSURE PARAMETER IS REFUSED BY THE RULE, ONCE (cursor on the `:`): a closure's parameters are
+# untyped (it is reached only through fncallN / callptr, whose arguments are words). `|m: i64|` was "expected '|',
+# got ':'", then the type parsed as the body ("undefined variable 'i64'"), and nested beside an enclosing `m` the
+# pre-scan took `m` for a capture ("needs lib/alloc.cyr"). Now named at the `:`, the type stepped over to the `,` /
+# `|` that ends it, as D18 steps over a default; the pre-scan reads `m: T` as the parser does (`_cl_lit_end`).
+# CHANGELOG [6.7.14]
+fn _cl_typed_refuse(S): i64 {
+    var ti = GTI(S);
+    _pd_say(S, ti, "a closure's parameters are untyped — drop `: T`");
+    STI(S, _cl_ptail_end(S, ti + 1, 1));
+    return 0;
+}
+# The closure parameter loop, cursor past a parameter's name: a default (D18) or a type (6.7.14) refused.
+fn _cl_param_tail(S): i64 {
+    if (PEEKT(S) == 4) { return _pd_cl_refuse(S); }
+    if (PEEKT(S) == 49) { return _cl_typed_refuse(S); }
+    return 0;
+}
+# From token `q`, a refused parameter tail's end: the `,` or `|` at depth 0, the end of file, or an unmatched closer.
+# `ang` 1 (a type) counts `<` / `>` (`>>`, `>>>`) as brackets too, so `Map<K, V>` is one type; a default's value
+# (`ang` 0) does not, where `<` compares.
+fn _cl_ptail_end(S, q, ang): i64 {
     var d = 0;
     var n = GTCNT(S);
     while (q < n) {
         var t = TOKTYP(S, q);
-        if (t == 12) { break; }
-        if (d == 0) { if (t == 31 || t == 35) { break; } }
+        if (t == 12) { return q; }
+        if (d == 0) { if (t == 31 || t == 35) { return q; } }
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         if (t == 11 || t == 29 || t == 14) { d = d - 1; }
-        if (d < 0) { break; }
+        if (ang == 1) { d = d + _cl_ang_step(t); }
+        if (d < 0) { return q; }
         q = q + 1;
     }
-    STI(S, q);
+    return q;
+}
+fn _cl_ang_step(t): i64 {
+    if (t == 19) { return 1; }
+    if (t == 20) { return 0 - 1; }
+    if (t == 39) { return 0 - 2; }
+    if (t == 152) { return 0 - 3; }
     return 0;
 }
 # Pass 2, a definition pass 1 did not record (`_PARSE_FN_DEF_IMPL`'s else-branch; `op` its `(`):

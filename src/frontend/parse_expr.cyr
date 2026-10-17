@@ -536,12 +536,14 @@ fn _cl_lit_pos(S, ti): i64 {
     return 0;
 }
 # The closing `|` of the parameter list the parser takes after the `|` at `ti` — `| |` or
-# `| IDENT (, IDENT)* |` (a closure's parameters are untyped) — or -1.
+# `| IDENT (, IDENT)* |` (a closure's parameters are untyped) — or -1. 6.7.14: a refused `IDENT : T` is read
+# whole, as the parser steps over it (`_cl_typed_refuse`), so its name is still the literal's own.
 fn _cl_lit_end(S, ti): i64 {
     var j = ti + 1;
     if (TOKTYP(S, j) == 35) { return j; }
     while (TOKTYP(S, j) == 2) {
         j = j + 1;
+        if (TOKTYP(S, j) == 49) { j = _cl_ptail_end(S, j + 1, 1); }
         if (TOKTYP(S, j) == 35) { return j; }
         if (TOKTYP(S, j) != 31) { return 0 - 1; }
         j = j + 1;
@@ -557,6 +559,8 @@ fn _cl_prescan_lit(S): i64 {
     var j = GTI(S) + 1;
     while (j < e) {
         if (TOKTYP(S, j) == 2) { _cl_shadow_add(S, TOKVAL(S, j)); }
+        j = j + 1;
+        if (TOKTYP(S, j) == 49) { j = _cl_ptail_end(S, j + 1, 1); }   # 6.7.14: the names, never a type's
         j = j + 1;
     }
     STI(S, e + 1);
@@ -6226,7 +6230,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var cpnoff = PEEKV(S);
                 _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
-                if (PEEKT(S) == 4) { _pd_cl_refuse(S); }   # 6.7.7 (B6): D18
+                _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse_fn.cyr)
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);
                 SLDEP(S, cpli, 0);

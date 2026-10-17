@@ -6166,6 +6166,13 @@ var g_dbl = |x| { var y = x * 2; return y; };     # … or as a top-level `var`
 
 The body may be a single expression or a `{ … }` block (with `return`).
 
+A closure's parameters are untyped words (it is called through `fncallN` / `callptr`): a
+type on one is refused at its `:`, once per parameter — `|m: i64| m + 1` is ``a closure's
+parameters are untyped — drop `: T` ``, as `|a, b = 1|` is `a closure's parameters take no
+defaults`. Through 6.7.13 a type there was `expected unknown, got ':'`, then the type parsed as
+the body (`undefined variable 'i64'`), and a nested literal beside an enclosing `m` was
+refused for a capture of it as well (6.7.14).
+
 A closure literal is also a legal top-level initializer, including the `{ block }`
 form. Call it with `fncallN` or `callptr`, inside a function or at top level: since
 6.6.16 an indirect call in top-level code brings its own small stack frame, so it
