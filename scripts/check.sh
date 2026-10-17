@@ -2723,6 +2723,11 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
 # `cyr_munmap(0x400000, …)` killed cxvm (139) and `fstat(1, 0x600100)` wrote over its globals once the
 # 8 MiB guest overlapped cxvm's link addresses. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/cx_guest_syscall_refusal.sh"
+# 6.7.14 — cx alloc() bumps over the guest break cxvm serves (brk in guest space, the stack trapping
+# at the break) instead of a 128 KB static buffer written into every allocating .cyx: 3 MiB round
+# trip, the named exhaustion, zeroed reuse of stack memory, audit_walk_fifo past alloc. Mutation
+# ledger in the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_heap_guest_brk.sh"
 # 6.7.8 (dyn D4) — `dyn` is reserved and `dyn Tr` is a type: each struct position takes it, every open
 # position is refused by name, uninitialised / value / address / word uses refused (decision 7). The
 # integration's AL / IX rows: the slice and declared-scalar slot stamps apart, and where dyn meets C2's

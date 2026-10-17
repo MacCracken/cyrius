@@ -441,10 +441,10 @@ if (cx_undef > 0) {
 
 # 6.6.9: the "large static data" advisory every native backend prints — the var data is
 # written into the .cyx after the bytecode (and lives in cxvm's 8 MiB guest region), so a
-# `var buf[200000]` costs MORE here, not less. lib/alloc_cx.cyr's `_cx_heap_buf` is left
-# out: it IS alloc()'s heap, so counting it would advise "consider alloc()" to every cx
-# program that allocates. CHANGELOG [6.6.9]
-_warn_large_static(totvar - _gvar_bytes_named(S, "_cx_heap_buf"), 0, 0);
+# `var buf[200000]` costs MORE here, not less. Every var counts: since 6.7.14 alloc()'s heap
+# is the guest break cxvm serves, not a static buffer this advisory had to leave out.
+# CHANGELOG [6.6.9] [6.7.14]
+_warn_large_static(totvar, 0, 0);
 
 # A compile that already reported an error emits no .cyx (see the write below), and its
 # fixup table may hold an entry this walk must not decode: ERR_MSG reports and CONTINUES,

@@ -43,6 +43,9 @@
 #   lib/*_win.cyr, *_windows.cyr, *_agnos.cyr, syscalls_x86_64_linux.cyr  included only under
 #                               their own target's #ifdef — never on Darwin (the Windows reroute
 #                               band 0xF0xx in lib/sync_windows.cyr is what an unscoped scan hits)
+#   lib/alloc_cx.cyr            the cx allocator peer, included only under lib/alloc.cyr's
+#                               #ifdef CYRIUS_TARGET_CX; its brk (12) is cxvm's guest break (6.7.14),
+#                               a number no Mac build issues
 #   lib/syscalls_macos.cyr / syscalls_aarch64_linux.cyr  scanned for the ONE Mac that resolves each
 #
 # Anti-vacuous: file / site / reached-site floors per backend, and every run first proves the
@@ -66,6 +69,7 @@
 #   * restore yukti's un-declined _yk_ppoll                                            → axis 2: x86 271, arm 1073
 #   * restore `_macho_reroute_argc`'s `tgt == 1` guard on 35 (6.6.10)                 → control: arm 35 argc 2
 #   * drop the `_macho_warn_short` call from _macho_warn_unrouted (6.6.10)             → control: x86 22, arm 59
+#   * drop the lib/alloc_cx.cyr exemption (6.7.14)                                    → axis 1: x86 12, arm 12
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -110,7 +114,7 @@ echo "  controls: both Mach-O compilers warn on 4001, syscall(228, id), syscall(
 
 # ── axis 1: literal sites ────────────────────────────────────────────────────────────
 files=$(find lib cbt programs tests/tcyr/crossos \( -name '*.cyr' -o -name '*.tcyr' \) \
-  | grep -v -E '^programs/checks/|_win\.cyr$|_windows\.cyr$|_agnos\.cyr$|^lib/syscalls_x86_64_linux\.cyr$' | sort)
+  | grep -v -E '^programs/checks/|_win\.cyr$|_windows\.cyr$|_agnos\.cyr$|^lib/syscalls_x86_64_linux\.cyr$|^lib/alloc_cx\.cyr$' | sort)
 nfiles=$(echo "$files" | wc -l)
 [ "$nfiles" -ge 250 ] || { echo "FAIL: darwin_syscall_literals_routed: scanned only $nfiles files (want >= 250)"; exit 1; }
 

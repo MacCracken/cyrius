@@ -12,9 +12,9 @@
 #   local   an over-budget fn-local array (static storage) → the warning on all seven
 #   small   800 B of globals             → silent everywhere (anti-vacuous: a gate that grepped
 #                                          for any "warning" would pass on an always-on emitter)
-#   cxheap  a cx program that allocates  → silent: lib/alloc_cx.cyr's 128 KB `_cx_heap_buf` IS
-#                                          alloc()'s heap, and advising "consider alloc()" about
-#                                          it would fire on every cx program that allocates
+#   cxheap  a cx program that allocates  → silent: alloc()'s heap is no static data — the guest
+#                                          break cxvm serves since 6.7.14 (until then a 128 KB
+#                                          `_cx_heap_buf` main_cx.cyr left out by name)
 #
 # Compilers are built FROM SOURCE, so a revert turns this RED rather than being masked by a
 # stale build/ binary. Mach-O output is produced on Linux (it is not run here).
