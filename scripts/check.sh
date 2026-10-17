@@ -1351,6 +1351,11 @@ _chk_gate "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
 # another type is refused by name. The two filed repros, the decision row, 10 refusals and 27 rows,
 # x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/simd_pointer_param.sh"
+# 6.7.14 — a pointer-to-pointer pin holds 16383 pointees (bit 62 + a 14-bit pin in the step word; 6.7.13's
+# per-struct pins hit "max 126" at 127 distinct `**S` structs): the filed generator at 127 and 1024 structs,
+# 2048 pins, a pin past 1500 typing its dereferences and keeping its struct, the cap refused once; x86 / IR=3 /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/double_pointer_pin_capacity.sh"
 
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
