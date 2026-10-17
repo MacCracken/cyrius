@@ -941,9 +941,9 @@ fn FIXUP(S): i64 {
                             # calls NOP-fill an "intentional tradeoff" because "code shifting
                             # would break cycc==cycc byte-identity" — disproved at v6.5.68.
                             # 6.6.18: the run is recorded whether or not the flag is set. Unset,
-                            # nothing consumes it (wp_compact runs only under CYRIUS_DCE=1), but the
-                            # 4,096-run cap is then known, so the unset hint cannot promise an
-                            # elimination the flag would decline (runtime.cyr _dce_hint_tail).
+                            # nothing consumes it (wp_compact runs only under CYRIUS_DCE=1), but a
+                            # registry that could not grow is then known, so the unset hint cannot
+                            # promise an elimination the flag would decline (runtime.cyr _dce_hint_tail).
                             _wpnr_add(S, dfoff, dfend - dfoff);
                             _bm_set(_rmb, dwi);
                         }
