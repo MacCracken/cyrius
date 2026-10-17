@@ -249,6 +249,13 @@ passes read ONE token after at most one `*`: `fn f(p: **i64)` was `expected ')',
 'i64'`, `cb: *fn(i64): i64` was `expected ')', got '('`, and `fn f(a: 5)` / `(a: +)` / `(a: "s")`
 compiled with the token skipped.
 
+**A `var`'s annotation is a type too (6.7.14).** A local, a declaration-zone global or a global after
+the first statement whose annotation is no type at all — a number, an operator, a string, a `,` — is
+refused by name at that token, once, as a parameter's is: `var b: 1 = 0;` is `expected a type for
+variable 'b', got number 1`, `var c: + = 2;` `... got '+'`, `var G: "s" = 4;` `... got string` (the
+user's decision D15 (a), 2026-10-16). The declaration reads on, so nothing cascades, and `cyrius lint`
+reports it. ⚠ Through 6.7.13 the token was dropped and the variable compiled as a plain `i64`.
+
 ### Arrays: byte vs slot sizing (v6.2.1)
 
 `var a: T[N]` declares a fixed array of **N elements of type T** — the

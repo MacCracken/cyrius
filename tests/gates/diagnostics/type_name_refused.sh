@@ -147,6 +147,39 @@ refused field_prefix  'struct S { a: i8x; }\nsyscall(60, 0);\n' "unknown type 'i
 refused arr_unknown   "${FN}    var a: Nonexist[3];\n    return 0;\n}\nsyscall(60, f());\n" "unknown array element type 'Nonexist'"
 refused dz_late_struct 'var g: Late = 0;\nstruct Late { a; b; }\nsyscall(60, 0);\n' "type 'Late' is declared after its use"
 refused loc_vec_hint  "${FN}    var a: Vecx = 0;\n    return a;\n}\nsyscall(60, f());\n" "note: 'Vecx' is not 'Vec' - a type name must match whole"
+# 6.7.14 (the user's decision D15 (a), 2026-10-16): a `var` annotation that is no type at all — a number, an operator,
+# a string — is refused by name at its token, once, in a fn, in the declaration zone and after the first statement,
+# as a parameter's is (6.7.11); the declaration reads on, so nothing cascades. It compiled as a plain i64, the
+# token dropped (issues/2026-10-14-var-annotation-non-type-token-compiles.md). A missing annotation (`var b: = 0;`)
+# keeps its one "expected '='". Mutations (scratch trees): `_tn_head_var` not reporting -> every va_ row but
+# va_missing / va_ok RED (they compile), the syntax-only row too; reporting a `=` too -> va_missing RED (2 errors).
+VA="expected a type for variable"
+refused va_loc_num  "${FN}    var b: 1 = 0;\n    return b;\n}\nsyscall(60, f());\n" "$VA 'b', got number 1"
+refused va_loc_op   "${FN}    var c: + = 2;\n    return c;\n}\nsyscall(60, f());\n" "$VA 'c', got '+'"
+refused va_loc_str  "${FN}    var d: \"s\" = 3;\n    return d;\n}\nsyscall(60, f());\n" "$VA 'd', got string"
+refused va_dz_num   'var G: 7 = 4;\nsyscall(60, G);\n' "$VA 'G', got number 7"
+refused va_dz_op    'var G: % = 4;\nsyscall(60, G);\n' "$VA 'G', got '%'"
+refused va_dz_str   'var G: "s" = 4;\nsyscall(60, G);\n' "$VA 'G', got string"
+refused va_pp_num   'syscall(39);\nvar H: 7 = 4;\nsyscall(60, H);\n' "$VA 'H', got number 7"
+refused va_pp_op    'syscall(39);\nvar H: + = 4;\nsyscall(60, H);\n' "$VA 'H', got '+'"
+refused va_pp_str   'syscall(39);\nvar H: "s" = 4;\nsyscall(60, H);\n' "$VA 'H', got string"
+refused va_comma    "${FN}    var b: , = 0;\n    return b;\n}\nsyscall(60, f());\n" "$VA 'b', got ','"
+refused va_for      "${FN}    for (var i: 3 = 0; i < 2; i = i + 1) { }\n    return 0;\n}\nsyscall(60, f());\n" "$VA 'i', got number 3"
+refused va_gen      'fn g<T>(a: T): i64 { var b: 1 = 0; return b + a; }\nsyscall(60, g(1) + g(2));\n' "$VA 'b', got number 1"
+refused va_missing  "${FN}    var b: = 0;\n    return b;\n}\nsyscall(60, f());\n" "expected '=', got number 0"
+# The filed repro verbatim: four annotations, four errors (the global first: pass 1 registers it).
+VR='fn f(): i64 {\n    var b: 1 = 0;\n    var c: + = 2;\n    var d: "s" = 3;\n    return b + c + d;\n}\nvar G: 7 = 4;\nsyscall(60, f() + G);\n'
+refused va_repro "$VR" "$VA 'G', got number 7" 4
+for frag in "$VA 'b', got number 1" "$VA 'c', got '+'" "$VA 'd', got string"; do
+    rows=$((rows + 1))
+    check "va_repro: names \"$frag\"" yes "$(grep -qF -- "$frag" "$T/va_repro.err" && echo yes || echo no)"
+done
+# A token that is no type is a syntax error, refused by --syntax-only too (as a parameter's is).
+rows=$((rows + 1))
+rc=0; "$CC" --syntax-only < "$T/va_loc_num.cyr" > /dev/null 2> "$T/va_so.err" || rc=$?
+check "va_loc_num under --syntax-only: refused" "1 yes" "$rc $(grep -qF "$VA 'b'" "$T/va_so.err" && echo yes || echo no)"
+# Every arm of the ladder still compiles: a name, `*T`, `[T]`, `u128`, a tuple, `slice<T>`, a generic, in all three places.
+runs va_ok "var A: i64 = 3;\nvar P: *i64 = 0;\nvar W: u128 = 2;\nvar Q: (i64, i64) = (1, 2);\nstruct Bx<T> { v: T; }\nvar B: Bx<i64> = 0;\n${FN}    var a: i64 = 3;\n    var p: *i64 = &a;\n    var s: [u8] = 0;\n    var w: u128 = 2;\n    var t: (i64, i64) = (1, 2);\n    var sl: slice<u8> = 0;\n    return a + w + A + W;\n}\nsyscall(39);\nvar L: i32 = 1;\nsyscall(60, f() + L);\n" 11
 # A known type that is no return type, WITH type arguments: one error — the `<i64>` is skipped
 # with the name, not parsed as the fn body.
 refused ret_vec_targs 'fn f(): Vec<i64> { return 3; }\nsyscall(60, f());\n' "type 'Vec' cannot be a fn return type"
@@ -260,7 +293,7 @@ refused vg_init_late    'include "lib/simd.cyr"\nvar k = 1;\nk = 2;\nvar g: f64v
 # ANTI-VACUOUS: the address, a folded 0 and the routed pointer form all compile and run.
 runs vg_addr_ok 'include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 = 0 + 0;\nvar n: i64 = 5;\nfn f(): i64 {\n    store64(&g + 8, 9);\n    var s: f64v2 = f64v2_add(&g, &g);\n    return n + (&n - &g);\n}\nsyscall(60, f());\n' 21
 
-if [ "$rows" -lt 81 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 81)"; exit 1; fi
+if [ "$rows" -lt 107 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 107)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0

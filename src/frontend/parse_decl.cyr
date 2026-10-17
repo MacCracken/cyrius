@@ -5093,9 +5093,9 @@ fn _vecg_refuse(S, vi): i64 {
 # 'slice'") and consumed to its last token, which the ladder steps past: the global is a plain word,
 # so its uses do not cascade. A top-level slice AFTER the first statement is PARSE_VAR's and keeps
 # compiling (used through slice_ptr(&GS) / slice_len(&GS)).
-fn _gvar_ann_head(S): i64 {
+fn _gvar_ann_head(S, noff): i64 {
     var ti = GTI(S);
-    if (_sl_ann_at(S, ti) == 0) { return _tn_head(S); }
+    if (_sl_ann_at(S, ti) == 0) { return _tn_head_var(S, noff); }   # 6.7.14 (D15 (a)): a non-type refused
     _sl_err(S, ti, "a slice cannot be declared in the declaration zone (6.7.8: slices are fn-locals)",
       " - declare it in a fn; a top-level slice after the first statement is used through slice_ptr / slice_len");
     _sl_ann_skip(S);
@@ -5184,7 +5184,7 @@ fn PARSE_GVAR_REG(S): i64 {
         if (PEEKT(S) == 8) { psc = _ptr_annot(S, noff, 0); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
-            if (_gvar_ann_head(S) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.8: a slice refused
+            if (_gvar_ann_head(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.8: a slice refused
                 # ⛔ 6.6.16 (C8): the one type-name resolver, as PARSE_VAR's ladder. This one
                 # matched PREFIXES before the struct lookup (`var g: i8x = 300` was an i8 global,
                 # `var g: u8pair;` a u8 scalar, `var g: f64v2` an f64) and read an unknown name as
@@ -8136,7 +8136,7 @@ fn PARSE_VAR(S): i64 {
             }
         } else {
             var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
-            if (_tn_head(S) == 1) {   # 6.7.7 (B4): or a tuple type's `(`
+            if (_tn_head_var(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.14: else refused by name
                 # ⛔ 6.6.16 (C8): the one type-name resolver (parse_types.cyr _tn_var_ann).
                 # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
                 # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a

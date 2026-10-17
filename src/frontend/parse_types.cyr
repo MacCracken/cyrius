@@ -308,6 +308,42 @@ fn _tn_head(S): i64 {
     if (t == 2 || t == 10) { return 1; }
     return 0;
 }
+# ⛔ 6.7.14 — A `var` ANNOTATION THAT IS NO TYPE IS REFUSED BY NAME (the user's decision D15 (a), 2026-10-16). The
+# declaration ladders (PARSE_VAR, PARSE_GVAR_REG's _gvar_ann_head), past their `*`, `[`, `u128` and slice arms, resolved
+# a type only at a name or a tuple's `(`, and stepped any other token silently: `var b: 1 = 0;`, `var c: + = 2;`,
+# `var G: 7 = 4;` compiled as plain i64s (issues/2026-10-14-var-annotation-non-type-token-compiles.md). Now "expected a
+# type for variable 'b', got number 1" once at the token — a parameter's words (`_pty_err`, 6.7.11) — and 0: the ladder
+# still steps the token, so the declaration reads on. `noff` = the variable's name. A `=` / `;` there is no annotation
+# at all (`var b: = 0;`): refused already by the declaration ("expected '='"), it is left to that one error.
+# CHANGELOG [6.7.14]
+fn _tn_head_var(S, noff): i64 {
+    if (_tn_head(S) == 1) { return 1; }
+    var t = PEEKT(S);
+    if (t != 4) { if (t != 5) { _tn_var_err(S, GTI(S), noff); } }
+    return 0;
+}
+fn _tn_var_err(S, ti, noff): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": expected a type for variable '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("', got ");
+    var t = TOKTYP(S, ti);
+    PRSTR(TOKNAME(t));
+    if (t == 1) {
+        PRSTR(" ");
+        PRNUM(TOKVAL(S, ti));
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
 
 # A slice element's first token (PARSE_VAR's `[T]` / `slice<T>` arms): a name, `u128`, or (6.7.7) a
 # tuple's `(`, which _tn_slice_w refuses by name. One call where the arms read two.
