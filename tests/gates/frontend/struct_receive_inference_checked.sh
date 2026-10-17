@@ -154,6 +154,10 @@
 #                                                           struct type in scope for 'h'), GH9 x4 (3 errors); GH3-GH5 green
 #                                                           (the untyped word held the same address: they pin that the
 #                                                           handle's uses stay right), GH0a GH0c GHK1-GHK4 green
+# A generic returning its own `: T` keeps the reset (`_gen_ret_tp`): at a scalar instance the struct-annotated local is
+# refused as through 6.7.13, not bound as a handle on the scalar (GHT1-GHT4; GHT5 the struct-instance control).
+#   N33 `_gen_decl_reset` without its `_gen_ret_tp` test (2026-10-17) -> RED 16: GHT1-GHT4 x4 legs (BUILT: a handle on
+#                                                           the scalar, SIGSEGV at run time); GHT5 and the rest green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -818,8 +822,25 @@ printf 'struct S3 { v; w; u; }\nfn mks<T>(x: T): S3 { var s = S3 { x, 7, 1 }; re
 runs GHK3 51 "control: a generic returning a 24 B struct by value"
 printf 'struct Box<T> { v: T; n; }\nstruct Pt { x; y; }\nfn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 3; return b; }\nfn f(): i64 { var p = Pt { 4, 5 }; var r: Box<Pt> = mk(p.x); return r.n; }\nsyscall(60, f());\n' > "$T/GHK4.cyr"
 refused GHK4 "fn return struct-id differs from declared var type" "control: the 6.6.11 mismatch \`var r: Box<Pt> = mk(p.x);\` (Box<i64>) is still refused"
+# a generic returning its own `: T` keeps the reset: its instance decides what it returns, and a SCALAR instance received
+# into a struct-annotated local is refused as through 6.7.13 (with the reset skipped it compiled as a handle on that
+# scalar and SIGSEGV'd)
+GHT='struct P3 { x; y; z; }
+struct W { n; v: P3; }
+fn gid<T>(x: T): T { return x; }'
+ght() { printf '%s\n%s\nsyscall(60, f());\n' "$GHT" "$2" > "$T/$1.cyr"; }
+ght GHT1 'fn f(): i64 { var a: P3 = gid(5); return a.z; }'
+refused GHT1 "no struct type in scope for 'a'" "\`var a: P3 = gid(5);\` (\`: T\` at i64) stays refused"
+ght GHT2 'fn f(): i64 { var a: P3 = gid<i32>(5); return a.z; }'
+refused GHT2 "no struct type in scope for 'a'" "\`var a: P3 = gid<i32>(5);\` (an explicit scalar instance) stays refused"
+ght GHT3 'fn f(): i64 { var h: f64 = 1.5; var a: P3 = gid(h); return a.z; }'
+refused GHT3 "no struct type in scope for 'a'" "\`var a: P3 = gid(h);\` (\`h: f64\`) stays refused"
+ght GHT4 'fn f(): i64 { var w: W; var a: P3 = gid(w.v); return a.z; }'
+refused GHT4 "no struct type in scope for 'a'" "\`var a: P3 = gid(w.v);\` (a field chain infers i64, the whole-argument rule) stays refused"
+ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
+runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 
-[ "$rows" -ge 154 ] || bad "only $rows rows ran (floor 154)"
+[ "$rows" -ge 159 ] || bad "only $rows rows ran (floor 159)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic `: *T` call into `var h: S` binds a handle (6.7.14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14)"

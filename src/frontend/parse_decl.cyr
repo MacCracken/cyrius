@@ -6134,12 +6134,14 @@ fn _gen_decl_check(S, pscale, fi): i64 {
 }
 
 # ⛔ 6.7.14 — 1 when PARSE_VAR's B-explicit reset drops the annotation of `var x: S = g..(..)` to re-derive the receive
-# from the callee: a GENERIC callee that returns a struct BY VALUE (GFRS > 0) the check above does not keep. A `: *T`
-# (GFRS -8) or scalar return is no struct receive: the annotated local stays `S`, a handle (the 6.7.10 handle line),
-# where the reset made `var h: S = gpg<S>();` an untyped word. CHANGELOG [6.7.14]
+# from the callee: a GENERIC callee that returns a struct BY VALUE (GFRS > 0) the check above does not keep, or one
+# returning its own `: T` (its instance decides what it returns: a scalar instance is no struct, and is refused as
+# through 6.7.13, not bound as a handle on that scalar). A `: *T` (GFRS -8) or untyped / scalar return is no struct
+# receive: the annotated local stays `S`, a handle (the 6.7.10 handle line), where the reset made
+# `var h: S = gpg<S>();` an untyped word. CHANGELOG [6.7.14]
 fn _gen_decl_reset(S, pscale, fi): i64 {
     if (GFTP(S, fi) == 0) { return 0; }
-    if (GFRS(S, fi) <= 0) { return 0; }
+    if (GFRS(S, fi) <= 0) { if (_gen_ret_tp(S, fi) < 0) { return 0; } }
     if (_gen_decl_check(S, pscale, fi) != 0) { return 0; }
     return 1;
 }
@@ -8347,7 +8349,7 @@ fn PARSE_VAR(S): i64 {
                     # i64 case re-derives to the same base sid (no behavior change). Default
                     # (flag-off) byte-identical.
                     if (_MONOMORPH_OK == 1) { if (pscale < 0) {
-                            if (_gen_decl_reset(S, pscale, _look_fi) == 1) { pscale = 0; }   # 6.7.14: by-value only
+                            if (_gen_decl_reset(S, pscale, _look_fi) == 1) { pscale = 0; }   # 6.7.14: by value or `: T` only
                         } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so

@@ -1472,7 +1472,9 @@ the call). Through 6.7.10 the instance recorded T's step but not its struct: the
 the dereferences faulted, and `gp<S>().v` was refused. `var h: S = gp<S>();` (or an inferred `gp(s)`) in a fn
 is a handle to that `S`, as from `fn gp(): *S` — and so is a generic call returning an untyped value; through
 6.7.13 a generic callee dropped the annotation, `h` was an untyped word and `h.v` was refused *no struct type
-in scope for 'h'* (6.7.14).
+in scope for 'h'* (6.7.14). A generic returning its own `: T` is not such a source: its instance decides what
+it returns, so `var a: P3 = gid(5);` (or `gid<i32>(5)`, `gid(w.v)` — i64 by the whole-argument rule) reaches a
+scalar instance and `a.z` stays refused, while `gid(p)` with `p: P3` receives the struct.
 A `*T` GLOBAL is a copy destination too (6.7.11, the user's decision of 2026-10-13): `GP = l` copies the
 struct value `l` — a variable, a by-value parameter, a call, a field `w.s`, `*p`, a method, an operator
 result — into the struct `GP` points at, as `q = l` does through a `*T` local or parameter, in a fn, at top
