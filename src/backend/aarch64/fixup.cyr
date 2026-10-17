@@ -147,7 +147,7 @@ fn FIXUP(S): i64 {
     # x86 (was x86-ELF-only). Shared _emit_sym_dump in runtime.cyr; base VA is the
     # aarch64 `entry` (ELF entry, or the Mach-O TEXT base via _entry_base's fmt
     # branch). Behind the CYRIUS_SYMS env guard → byte-identical when unset.
-    _emit_sym_dump(S, entry);
+    _emit_sym_dump(S, entry, 0);
     # Warning only — don't abort (partial includes are common in test files)
     var fcnt = GFCNT(S);
     var fi = 0;

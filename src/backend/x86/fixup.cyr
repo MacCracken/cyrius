@@ -113,6 +113,22 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 # of 16 so the m128 padding computed against `dbase` still holds. CHANGELOG [6.7.11]
 var _wx_dbase_frozen = 0;
 
+# A zeroed bitmap of n bits (0 when the alloc fails), and setting bit i of one (a no-op on 0) —
+# FIXUP's record of the dead fns it hands the compactor, for the symbol dump after it. 6.7.14
+fn _bm_new(n): i64 {
+    var nb = (n >> 3) + 8;
+    var b = alloc(nb);
+    if (b == 0) { return 0; }
+    var i = 0;
+    while (i < nb) { store8(b + i, 0); i = i + 1; }
+    return b;
+}
+fn _bm_set(b, i): i64 {
+    if (b == 0) { return 0; }
+    store8(b + (i >> 3), load8(b + (i >> 3)) | (1 << (i & 7)));
+    return 0;
+}
+
 fn FIXUP(S): i64 {
     # 6.6.10: `object;`/`shared;` on PE and all three modes on Mach-O have no emitter —
     # refused by name BEFORE the object early return below (runtime.cyr). CHANGELOG [6.6.10]
@@ -229,7 +245,8 @@ fn FIXUP(S): i64 {
     # ELF `entry` this block used to (wrongly) format for the PE crash reporter.
     var sym_base = entry;
     if (_TARGET_PE == 1) { sym_base = 0x140000000 + _pe_text_rva; }
-    _emit_sym_dump(S, sym_base);
+    # 6.7.14: CYRIUS_DCE=1 compaction moves the code after this, so it dumps again below.
+    _emit_sym_dump(S, sym_base, 0);
 
     # Walk fixup table
     var fcnt = GFCNT(S);
@@ -655,6 +672,9 @@ fn FIXUP(S): i64 {
     }
     var dce_bytes = 0;
     _dce_live_starts(S, &live, fnc);   # 6.7.14: for `_dce_holds_live` below (runtime.cyr)
+    # 6.7.14: the fns whose bodies go to the compactor, so the symbol dump after it skips them.
+    var _rmb = 0;
+    if (dce_enabled == 1) { _rmb = _bm_new(fnc); }
     var dwi = 0;
     while (dwi < fnc) {
         var dfoff = L64(_fnt_offsets + dwi * 8);
@@ -736,6 +756,7 @@ fn FIXUP(S): i64 {
                             # 4,096-run cap is then known, so the unset hint cannot promise an
                             # elimination the flag would decline (runtime.cyr _dce_hint_tail).
                             _wpnr_add(S, dfoff, dfend - dfoff);
+                            _bm_set(_rmb, dwi);
                         }
                     }
                 }
@@ -938,6 +959,9 @@ fn FIXUP(S): i64 {
             syscall(SYS_WRITE, 2, "note: ", 6);
             PRNUM(_wpd2);
             syscall(SYS_WRITE, 2, " bytes of dead code eliminated\n", 31);
+            # 6.7.14: the dump above holds pre-compaction addresses — rewrite it from the moved
+            # offsets, without the removed fns (a kept dead body stays, where it now is).
+            _emit_sym_dump(S, sym_base, _rmb);
         }
     }
 

@@ -207,7 +207,11 @@ include "src/backend/common/env.cyr"
 # shim. Flags 0x241 = O_WRONLY|O_CREAT|O_TRUNC, mode 0x1A4 = 0644. Entirely behind
 # the `sym_path != 0` guard → zero effect (byte-identical emitted programs) unless
 # CYRIUS_SYMS is set. cx never calls this (it has no symbol dump).
-fn _emit_sym_dump(S, base): i64 {
+# 6.7.14 — `skip`: 0, or a bitmap of fns to leave out. The x86 FIXUP dumps a second time after
+# CYRIUS_DCE=1 compaction, from the shifted offsets and with the fns it removed skipped: the
+# dump before it named a removed fn at a live fn's address and put every later fn too high.
+# CHANGELOG [6.7.14] — issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
+fn _emit_sym_dump(S, base, skip): i64 {
     var sym_path = _read_env("CYRIUS_SYMS");
     if (sym_path == 0) { return 0; }
     var symfd = 0;
@@ -223,6 +227,7 @@ fn _emit_sym_dump(S, base): i64 {
     var sfi = 0;
     while (sfi < sym_fnc) {
         var foff = L64(_fnt_offsets + sfi * 8);
+        if (skip != 0) { if ((load8(skip + (sfi >> 3)) & (1 << (sfi & 7))) != 0) { foff = 0 - 1; } }
         if (foff >= 0) {
             var vabuf[20];
             var va = base + foff;
