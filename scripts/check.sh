@@ -1199,6 +1199,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh
 # crossos/derive_accessor_widths.tcyr printed `1 failed` and exited 0 on x86, aarch64 and PE.
 # The other shape is `assert_summary();` then a literal `syscall(60, 0)` (platform/pwd_grp).
 _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
+# 6.7.14: five ws tests kept the sandhi_server_find_header / base64_encode stand-ins they wrote
+# before lib/ws_server.cyr included sandhi and bayan itself (6.6.19 R2): every compile warned
+# `duplicate fn`, and in sock_send_all_short_write the stub bound last. Gone; each compiles clean.
+_chk_gate "$ROOT/tests/gates/toolchain/ws_tests_no_duplicate_fn.sh"
 # 6.6.11 B01: the check driver's .tcyr reader requires the assert summary. It scored
 # `failed == 0 && ec == 0` off the FIRST " failed" substring of stdout, so a test that died
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
