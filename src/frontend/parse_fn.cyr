@@ -9146,7 +9146,9 @@ fn _bbs_targs(S, fi, tp, fs, j): i64 {
 # `<T>` (the stub scan's mode 2, `_gs_use`) — to a generic whose base `_bnd_base_bad` judges bad
 # (`_bbs_fwd` = that generic + 1; `_bbs_root` = + 1 of the one whose own bound or bounded struct fails).
 # A stub fi is the stub's (its base is skipped, every scalar call refused by `_refuse_gen_stub`). Each
-# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends.
+# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends. ⚠ The judgement reaches
+# 64 forwards deep (`_bbf_dep`): past it a chain is answered "not bad" and a valid deeper chain's i64 base is
+# refused at a definition — a known limit, filed (lifting it needs the judgement memoised, or it goes quadratic).
 fn _bbs_fwd_bad(S, fi): i64 {
     if ((GFGM(S, fi) & 3) != 0) { return 0; }
     if (_bbf_dep == 0) { _bbf_n = 0; }

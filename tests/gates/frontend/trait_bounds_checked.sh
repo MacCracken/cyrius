@@ -31,7 +31,8 @@
 #      lacks. F0 the filed repro verbatim (5); F1 o<f64>(h); F2 o(3) refused once, the forward and the note, not the
 #      stub text; F3 both impls (56); F4 / F4b two levels o2 -> o -> gb; F5 an explicit gb<T>(x) forward with a
 #      struct too; F6 / F6b a generic method forward; F7 / F7b a forward to a generic instantiating a bounded
-#      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone.
+#      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone;
+#      F12 a chain of 64 forwards (the judgement's reach: `_bbf_dep`'s cap, filed for a deeper chain).
 #      I7 (an unbounded generic forwarding to a bounded one, u(5)) now names the forward, not the stub text.
 #      Filed: docs/development/issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
@@ -40,7 +41,8 @@
 #      MF2 the stub scan's mode 1 counting a bound-bad callee again (6.7.1's test; = the compiler before) -> RED I7
 #      F0 F1 F2 F4 F4b F5 F6 F6b F7 F7b F8b F8c F9 F10 (refused, or with the struct-stub text and no note);
 #      MF3 `_bbf_push` never deduping (no visited list) -> RED F8d (the compile hangs: every level of the three-way
-#      cycle branches twice, to the depth cap)
+#      cycle branches twice, to the depth cap);
+#      MF4 (2026-10-17) the depth cap at 32 (`_bbf_dep > 32`) -> RED F12 (o33's base refused at its definition)
 #   BC (6.7.14) A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`), `T: Show`, was
 #      no bounded site (only a name declared `T` / `*T` was), so 6.7.11's carrier rule counted it a struct use: the
 #      base was the stub, and `gs(bi)` with `bi: Box<i64>` was refused although `impl Show for i64` exists. The call
@@ -274,6 +276,13 @@ fmk f10 'fn h(n): i64 { return o(n); }' 'return h(3);'
 fwdref f10 o gb "needs \`impl Show for i64\`" "F10: return o(n); (a tail call)"
 fmk f11 '' 'return 9;'
 exits f11 9 "F11: the definition alone, never called"
+# F12: the judgement follows a chain of 64 forwards (o63 -> .. -> o0 -> gb), its stated reach; a deeper chain is the
+# filed `_bbf_dep` cap (a 66-deep one is refused at a definition) — see the staged issue on the cap
+{ printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
+  printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\nfn o0<T>(x: T): i64 { return gb(x); }\n'
+  k=1; while [ "$k" -lt 64 ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
+  printf 'fn main(): i64 { var h: f64 = 1.5; return o63(h); }\nsyscall(60, main());\n'; } > "$T/f12.cyr"
+exits f12 5 "F12: a chain of 64 forwards to gb at f64, o63(h)"
 
 # BC — a bounded call on a struct carrier's T field (6.7.14)
 cat > "$T/bc0.cyr" <<'EOF'
