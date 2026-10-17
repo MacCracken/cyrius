@@ -6848,7 +6848,6 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         nslots = aligned / 8;
     }
     var named = _sci_slots(S, noff, pscale, nslots);
-    if (ci_dr == 0) { _istr_cpmark(S, named, pscale, TOKVAL(S, ci_ti)); }   # 6.7.13: a bare `Str`'s copy
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
@@ -6950,7 +6949,8 @@ fn _uci_cap(S, snoff): i64 {
 }
 # ⛔ 6.7.13 — AN INLINE `Str` IS ITS HEADER'S ADDRESS WHERE A `Str` VALUE IS TAKEN (the user's decision D7 (1),
 # 2026-10-15). A `Str` is a heap handle by name — its slot holds a 16 B header's address — but `var t: Str = Str {
-# p, 7 };` is an INLINE header whose slot is field 0, so `f(t)` into `s: Str`, `str_len(t)`, `var
+# p, 7 };` (or, since 6.7.14, a bare `var t: Str;` — D20 (a)) is an INLINE header whose slot is field 0, so `f(t)`
+# into `s: Str`, `str_len(t)`, `var
 # h: Str = t;`, `var h = t;` and `h = t;` into a handle took the `data` word as the header (str_len 0 where 7 is
 # right, on every target). Each takes the header's address now, with no allocation: `&t` for a local, the static
 # address for an inline global, and a closure's captured copy is already its environment words' address (6.6.5).
@@ -6978,7 +6978,6 @@ fn _istr_name(S, noff): i64 {
         if (li >= 0) {
             if (GLTYPE(S, li) != 0 - ss) { return 0; }
             if (GLAGG(S, li) == 0) { return 0; }
-            if (_istr_bare(S, li) == 1) { return 0; }
             _istr_ix = li;
             return 1;
         }
@@ -6998,46 +6997,7 @@ fn _istr_cap(S, noff, ss): i64 {
     if (_cl_snap_type(esl) != 0 - ss) { return 0; }
     if (_cl_snap_ptrp(esl) == 1) { return 0; }
     if (_cl_snap_span(esl) < 1) { return 0; }
-    if (_istr_bare_cap(esl) == 1) { return 0; }
     return 3;
-}
-# ⛔ `var t: Str;` with NO initialiser is outside D7 (1), which is worded for `var t: Str = Str { .. }`: `t = a`
-# with `a` a handle stores the handle into t's first word (6.6.16's pun), and `str_len(t)` / `f(t)` / `h = t` /
-# `var h: Str = t;` read a's string through that word, as through 6.7.12. Whether `t = a` copies the header (and
-# the bare declaration joins D7 (1)) is an open question. Its slot is marked 2 in the per-slot byte table
-# `_lfi_base` (util.cyr: cleared as SFLC hands the slot out, saved with a closure's snapshot), and the two rungs
-# above answer 0 for it. CHANGELOG [6.7.13]
-fn _istr_unset(S, li, sid): i64 {
-    if (sid != _STR_SID(S)) { return 0; }
-    SLFI(S, li, 2);
-    return 0;
-}
-# 1 = local slot `li` is such a `var t: Str;`.
-fn _istr_bare(S, li): i64 {
-    if (_lfi_base == 0) { return 0; }
-    if (li < 0) { return 0; }
-    if (li >= 16384) { return 0; }
-    if (load8(_lfi_base + li) == 2) { return 1; }
-    return 0;
-}
-# 1 = enclosing slot `esl` of the closure snapshot is one (the snapshot's byte segment, `_cl_save_locals`).
-fn _istr_bare_cap(esl): i64 {
-    if (_lfi_base == 0) { return 0; }
-    if (_cl_snap == 0) { return 0; }
-    if (esl < 0) { return 0; }
-    if (load8(_cl_snap + _cl_snap_n * 32 + esl) == 2) { return 1; }
-    return 0;
-}
-# `var h: Str = t;` / `var h = t;` copying such a `t` (a local, or a closure's capture of one) into the new
-# inline slot `named`: h is marked too, so `f(h)` takes h's first word as through 6.7.12.
-fn _istr_cpmark(S, named, pscale, noff): i64 {
-    if (0 - pscale != _STR_SID(S)) { return 0; }
-    var li = FINDLOCAL(S, noff);
-    var b = 0;
-    if (li >= 0) { b = _istr_bare(S, li); }
-    elif (_hl_capn(S, noff) == 1) { b = _istr_bare_cap(_cl_snap_find(S, noff)); }
-    if (b == 1) { SLFI(S, named, 2); }
-    return 0;
 }
 # rax = the header's address for `_istr_at`'s answer `k` (a capture's value already is). A frame's escapes into
 # a value as `&t` does (`_fn_local_addr`: a later tail call is an ordinary call — the `jmp` would free it).
@@ -7164,6 +7124,83 @@ fn _istr_dsto(S, d, ti): i64 {
           " through a pointer - its header lives in this frame and would dangle (store a handle: str_new(data, len))");
     }
     return _istr_ra(S, r);
+}
+# ⛔ 6.7.14 — AN INLINE `Str` TAKES A COPY OF A `Str` HANDLE'S HEADER (the user's decision D20 (a), 2026-10-16). `t = a`
+# with t an inline `Str` (a literal-declared or bare local, an inline global) and a a `Str` HANDLE stored a's address
+# into t.data and left t.len stale (6.6.16's pun): 6.6.16 C2 copies the struct a handle points at into an inline
+# struct, but excluded `Str` by name (`_agc_plain_big`) because a handle is rebound by every assignment — which an
+# inline `Str` cannot be. It copies the header a points at now, as `t = u` between inline `Str`s does: a handle local,
+# parameter or global (`_istr_hop`), a call declared `: Str` (`_istr_call`), a method's result or a `Str` field
+# (`_istr_hcp`). An untyped source keeps the one-word store, as for every inline struct. CHANGELOG [6.7.14]
+# `t = snoff;` (`_try_aggregate_copy_assign`, the source no operand) with `dt` an inline `Str` (`dh` 0): a `Str` handle
+# local or parameter (`_agc_pp` 2) or global (the deref band) is the source the copy goes through — its span; else 0.
+fn _istr_hop(S, dt, dh, snoff): i64 {
+    if (dh == 1) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (dt != 0 - ss) { return 0; }
+    var d = _istr_dst(S, snoff);
+    if (d == 0) { return 0; }
+    _agc_t = dt;
+    _agc_pp = 0;
+    _agc_li = 0 - 1;
+    _agc_gvi = 0 - 1;
+    if (d == 1) {
+        _agc_li = FINDLOCAL(S, snoff);
+        _agc_pp = 2;
+    } else { _agc_gvi = 0 - 1000 - _findvar_core(S, snoff); }
+    return AGG_NSLOTS(S, dt);
+}
+# 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override).
+fn _istr_inl_dst(S, n): i64 {
+    if (n < 2) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_agc_t != 0 - ss) { return 0; }
+    if (_agc_hdl() == 1) { return 0; }
+    if (_agc_pp != 0) { return 0; }
+    return 1;
+}
+# `t = f(..);` (`_try_struct_call_assign`, `_agc_operand` just ran on t, `n` its span), `fi` declared `: Str` (its
+# handle in rax): when t is an inline `Str`, the call parsed and its header copied into t (1, `term` consumed); else 0.
+fn _istr_call(S, fi, n, term): i64 {
+    if (_istr_inl_dst(S, n) == 0) { return 0; }
+    if (GFRS(S, fi) != _STR_SID(S)) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    PCMPE(S);
+    return _istr_rax_into(S, dli, dgv, term);
+}
+# `t = <src>` just parsed from `st` (`_pcmpe_struct_assign`, no other arm took it): a method's `: Str` result or a `Str`
+# field (`_istr_hsrc`) into an inline `Str` t — its header copied (1, `term` consumed); else 0.
+fn _istr_hcp(S, noff, st, term): i64 {
+    if (_istr_inl_dst(S, _agc_operand(S, noff)) == 0) { return 0; }
+    if (_istr_hsrc(S, st) == 0) { return 0; }
+    return _istr_rax_into(S, _agc_li, _agc_gvi, term);
+}
+# 1 = the source [st, cursor) is a whole `Str` field read (`_fls_whole`), or a chain of two or more tokens ending in a
+# call or method declared `: Str` (`_hl_pchain`: the struct value `Str`, no `*Str`). A name is `_istr_hop`'s.
+fn _istr_hsrc(S, st): i64 {
+    if (_fls_whole(S, st) == 1) { return 1; }
+    var a = _ie_unparen(S, st, GTI(S));
+    var e = _ie_pe;
+    if (e <= a + 1) { return 0; }
+    if (_hl_pchain(S, a, e) != _STR_SID(S)) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return 1;
+}
+# rax = a `Str` header's address: parked in a hidden temp (a frame slot; a hidden global at top level) and the header
+# copied through it into the inline `Str` `dli` / `dgv`. 1, `term` consumed.
+fn _istr_rax_into(S, dli, dgv, term): i64 {
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    var nb = STRUCTSZ(S, _STR_SID(S) - 1);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, nb); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), nb); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
 }
 # The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then
 # the named slot, SLTYPE = the declared type), after the duplicate-name check. Returns the named slot.
@@ -8474,7 +8511,6 @@ fn PARSE_VAR(S): i64 {
         SLAGG(S, sv_named, sv_nslots);   # 6.6.5: `var p: T;` is inline, at EVERY width and on every target
         SLTYPE(S, sv_named, 0 - sv_sid);
         SFLC(S, sv_named + 1);
-        _istr_unset(S, sv_named, sv_sid);   # 6.7.13: `var t: Str;` keeps its word (see `_istr_bare`)
         STI(S, GTI(S) + 1);   # consume ';'
         return 0;
     }

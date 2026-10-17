@@ -1293,6 +1293,8 @@ _chk_gate "$ROOT/tests/gates/frontend/small_struct_return_type_refused.sh"
 # from a fn returning `Str` and a store into a `Str` global, field or through a `*Str` are refused by
 # name (the header would dangle); a global's or a capture's is not. The filed repro and the crossos
 # values file on every leg, the refusals on four compilers, mutation-proven (ledger in header).
+# 6.7.14 (D20 (a), 2026-10-16): `t = a` into an inline `Str` from a `Str` handle (a name, a `: Str` call or
+# method, a `Str` field) copies the header (it stored the handle into t.data), and a bare `var t: Str;` is D7 (1)'s.
 _chk_gate "$ROOT/tests/gates/frontend/inline_str_value.sh"
 
 # 6.7.13 (the struct lane, the user's decision D8 (a), 2026-10-15): a field of a `: *T` call's result is an

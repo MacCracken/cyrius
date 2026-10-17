@@ -26,17 +26,23 @@
 #     cannot store the inline Str 't' into a global / into a field / through a pointer - ... (store a handle: ...)
 # A global's address is static and a capture is a copy in the closure's environment, so neither is refused
 # (a closure returned out of t's frame keeps its copy: K4); a `defer` runs in the frame. A position that takes
-# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6). A `var t: Str;` declared
-# with NO initialiser is outside the decision (worded for `var t: Str = Str { .. }`): its bare name stays its
-# first word, as through 6.7.12, so 6.6.16's pun `t = a; str_len(t)` reads a's string (U1, U2; the review fix,
-# 2026-10-16 — the lane had widened D7 (1) to it and the pun read t's unwritten length: 0 where 5 is right).
+# no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6).
+#
+# 6.7.14 (the user's decision D20 (a), 2026-10-16; issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md):
+# `t = a` with t an inline `Str` and a a `Str` HANDLE — a local, a parameter, a global, a call or method declared
+# `: Str`, a `Str` field — copies the 16-byte header a points at, as `t = u` between inline `Str`s does; through
+# 6.7.13 it stored a's address into t.data and left t.len stale (6.6.16's pun: `var t: Str; t = a; return t.len;`
+# read the frame's old bytes). So a bare `var t: Str;` (no initialiser) joins D7 (1): `f(t)` passes its header
+# and `return t;` from a fn returning `Str` is refused (X3, restored), where 6.7.13's review fix had kept it
+# outside the decision (its bare name its first word). An untyped source keeps the one-word store (K8).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
-# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X2 and X4-X13 refused (the message first, ONE
-# `^error`, no warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K7 controls that compile and
-# run on every leg; U1-U2 a bare `var t: Str;` keeps its word on every leg; AS1 an inline `Str` in an
-# `async fn` across awaits (x86_64, CYRIUS_ASYNC=1).
+# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
+# warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
+# leg; U1-U2 a bare `var t: Str;` assigned a handle reads its own header on every leg; D20a the filed repro
+# verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it unwritten), D20c the filed row 3
+# (5) on every leg; AS1 an inline `Str` in an `async fn` across awaits (x86_64, CYRIUS_ASYNC=1).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its
 # tcyr) with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that
@@ -61,6 +67,16 @@
 #   n11 `_istr_bare` / `_istr_bare_cap` answer 0   -> RED 15: R1 x7 (the five u_* rows), U1 x4, U2 x4 (t's unwritten
 #                                                     length: 224 / 24 / 0 / 0 and 1 / 0 / 0 / 1)
 #   n12 `_istr_cpmark` returns at once             -> RED 7: R1 x7 (u_copy 22, u_cap 22: the copy read its length)
+#   (n11 / n12 retired with the marks by 6.7.14's D20 (a): the bare declaration is D7 (1)'s.)
+#   2026-10-17 (6.7.14, D20 (a); the same scratch-copy method):
+#   d1 the lane before D20 (c778c9817)             -> RED 22: R1 x7 (17 rows: b_bare, u_copy, the h_* copies — 22 the
+#                                                     pun, t.len stale), X3 x4 (compiled), D20b x7 (0), D20c x4
+#                                                     (224 / 24 / 0 / 0)
+#   d2 `_istr_hop` answers 0 (no handle name)      -> RED 21: R1 x7 (8 rows: a local, parameter, global, `(a)`, a for
+#                                                     step, an inline global, top level), D20a x7 (0), D20b x7 (0)
+#   d3 `_istr_call` answers 0 (no `: Str` call)    -> RED 7: R1 x7 (h_gen 22: a generic call; a plain call is typed
+#                                                     by `_istr_hcp` too)
+#   d4 `_istr_hcp` answers 0 (no method / field)   -> RED 7: R1 x7 (h_meth, h_field, h_fieldp)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -183,7 +199,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=47
+FLOOR=65
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -217,6 +233,9 @@ refused X1 "$MR" "the filed table's \`return t;\` from \`fn mk(): Str\` (was 0)"
 row X2 'fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; return ((t)); }
 fn go(): i64 { return f(mk()); }'
 refused X2 "$MR" "\`return ((t));\`"
+row X3 'fn mk(): Str { var t: Str; t.data = "abc"; t.len = 3; return t; }
+fn go(): i64 { return f(mk()); }'
+refused X3 "$MR" "\`var t: Str;\` (inline, no literal) returned (D20 (a); 6.7.13 compiled it, the first word)"
 row X4 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = t; return f(G); }'
 refused X4 "$MG" "\`G = t;\` into a Str global"
 row X5 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = (t); return 0; }'
@@ -259,13 +278,35 @@ runs K6 3 "an untyped global keeps the word"
 row K7 'fn mk(): Str { var h = str_from("abcde"); return h; }
 fn go(): i64 { return f(mk()); }'
 runs K7 5 "a Str handle returned from a fn returning Str"
+row K8 'fn go(): i64 { var a = str_from("abcde"); var x = 0; x = a; var t: Str = Str { "zz", 2 }; t = x; return t.len * 10 + f(t); }'
+runs K8 22 "an untyped source into an inline Str keeps the one-word store (t.len stays 2)"
 
-# --- U: `var t: Str;` with no initialiser keeps its first word (outside D7 (1)), as through 6.7.12 ---
+# --- U: a bare `var t: Str;` assigned a Str handle reads its OWN header, the handle's copied (D20 (a)) ---
 row U1 'fn go(): i64 { var t: Str; t = str_from("hello"); return str_len(t); }'
-runs U1 5 "\`var t: Str; t = a; str_len(t)\` — the 6.6.16 pun reads a's string (the lane read t's unwritten length)"
+runs U1 5 "\`var t: Str; t = a; str_len(t)\` — t's own header, a's copied (6.7.13 read a's string through the pun)"
 row U2 'fn g(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t = str_from("de"); } return str_len(t); }
 fn go(): i64 { return g(1); }'
-runs U2 3 "\`var t: Str;\` assigned in one branch (the lane read t's unwritten length)"
+runs U2 3 "\`var t: Str;\` assigned in one branch"
+
+# --- D20: the filed repro (issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md), verbatim, and its rows ---
+cat > "$T/D20a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn main() {
+    alloc_init();
+    var a = str_from("abcde");
+    var t: Str;
+    t = a;
+    return str_len(t);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D20a 5 "the filed repro: \`var t: Str; t = a; str_len(t)\` (5 through t's own header)" "$XLEGS $OLEGS"
+sed 's/return str_len(t);/return t.len;/' "$T/D20a.cyr" > "$T/D20b.cyr"
+runs D20b 5 "the filed repro's \`return t.len;\` (the pun left t.len unwritten)" "$XLEGS $OLEGS"
+row D20c 'fn go(): i64 { var t: Str; t = str_from("hello"); var h: Str = Str { "zz", 2 }; h = t; return str_len(h); }'
+runs D20c 5 "the filed row 3: \`h = t\` copies t's header, a's copied into t (6.7.13: t's unwritten length)"
 
 # --- AS1: an inline Str in an async fn (the coroutine's heap frame), across awaits ---
 if [ -f lib/async.cyr ]; then
@@ -273,7 +314,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=24
+FLOOR_ROWS=29
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
