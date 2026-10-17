@@ -2,6 +2,17 @@
 
 **Status:** 🟡 **OPEN** — filed by a consumer; reproduced 2026-10-14 on Linux x86_64 under three toolchains.
 Not minimized and not investigated: the consumer only surfaces it.
+**Verdict (2026-10-17, the 6.7.14 infra lane — NOT A CYRIUS BUG; archived at the 6.7.14 close):** the filed repro
+reproduces on 6.7.9 – 6.7.13 and the 6.7.14 tree, and it is anuenue's own out-of-bounds write. `tests/anuenue.tcyr`
+(1.4.2) declares `var argv2[8];` — a bare `var a[N]` in a fn is N BYTES (cyrius-guide § *Arrays: byte vs slot sizing*)
+— then `store64(&argv2 + 8, "-V")` writes the slot above it, `fs2`'s home. While `main()` has at most 256 local slots
+the register allocator keeps `fs2` in a register and the clobbered stack copy is never read; the appended block adds 14
+slots (244 → 258), past the picker's cap, so `fs2` is read from its slot — the address of "-V" — and
+`cmdit_parse_argv` faults. The unmodified 1.4.2 suite dies the same way with `CYRIUS_REGALLOC_PICKER_CAP=0`; the same
+overrun is at `argv1[8]` and `argv5[32]`. With the three arrays sized as slots (`var argv2: i64[2]`, or `[16]` bytes)
+the reporter's block reaches its verdict (435 passed, 2 failed — its own new assertions). `cyrius lint` names all
+three lines since 6.7.11 (anuenue's 6.7.9 pin predates the rule). The fix is the consumer's: size the arrays and run
+lint from a ≥ 6.7.11 toolchain.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane, wave 1, unit I2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Source:** anuenue (`/home/macro/Repos/anuenue`), found while cutting its 1.4.3 (the escape-table word copy).
 **Discovered:** 2026-10-14, adding one unit-test group to `tests/anuenue.tcyr`.
