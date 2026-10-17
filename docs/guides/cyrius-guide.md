@@ -1113,7 +1113,15 @@ struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S
 `take(*ps)` passes `ps` — a `**S` local, parameter, field, global or capture, inside parentheses or written `*(*pps)`
 — and a `**Q` of another struct is refused by name (*cannot pass 'ppq' to a parameter of a different struct type*). ⚠
 Through 6.7.12 (and 6.7.13 before this) the word `**pps` read — S's first field — was passed as the address: 139 on
-x86_64 and aarch64, a cx guest fault, exit 5 on Windows.
+x86_64 and aarch64, a cx guest fault, exit 5 on Windows. **Since 6.7.14 `**pp` is the struct value `*p` is at every
+use** (6.7.10's decision 6): `var t: S = **pp;` copies, a by-value argument passes the struct (a 1..7-byte one read
+byte-exact), `**pp + a` dispatches `S_add`, `return **pp;`, an if-expression branch, `l = **pp` — through a `**S`
+local, parameter, field, global, capture, `: **S` call, `**(pp + n)` or `***ppp` of a `***S`; and `*pp` is the `*S`
+D9 (a) made it everywhere a typed pointer is read (`return *pp;` from a `: S` fn returns the struct it points at,
+`l = *pp + 0` copies). `**pp = u` copies the struct and `**pp OP= v` is refused, as through a `*S` (*A store through
+a `*S` copies the struct*). ⚠ Through 6.7.13 `var t: S = **pp;` bound a handle to S's first field (139 on x86_64 and
+aarch64, cx 0, Windows 5), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word and `**pp += 10` added to S's
+first field.
 Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
 (6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
@@ -2166,7 +2174,7 @@ still operates on x's first word (6.7.5), where `*p OP= v` through a `*S` is ref
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,
-`*gp()`, `*w.p` — copies exactly `sizeof(S)` bytes (none for a zero-size struct) from any `S` value
+`*gp()`, `*w.p`, `**pp` through a `**S` (6.7.14) — copies exactly `sizeof(S)` bytes (none for a zero-size struct) from any `S` value
 `G = v` takes: a local, a by-value parameter, a global, a field `w.s`, a call, a method or operator
 result, a handle or a `*S` (`*p = q` copies the struct `q` points at; `q` is not rebound), `*q` — in a
 fn, at top level and in a for step, so `*p = l`, `p = l` and `G = l` (with `p = &G`) agree. A struct of another type is refused by name

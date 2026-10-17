@@ -67,6 +67,14 @@
 # (A12; through 6.7.12 one word, l.z stale), and `*(&s) OP= v` keeps 6.7.5's first-word op (A13 — not this fix's).
 # Mutations (2026-10-15, the same method): `_hl_dpsid` answering `_hl_psid` -> RED R26 A12; `_hl_dstep` ignoring the
 # `&x` arm's step -> RED R26 A12; `_dst_struct` refusing `*(&s) OP= v` too -> RED A13.
+#
+# 6.7.14 — `**pp` THROUGH A `**S` IS THE STRUCT VALUE `*p` IS (issues/2026-10-16-struct-double-pointer-dereference-is-
+# no-struct-value.md; 6.7.13's D9 (a) with 6.7.11's decision (a)): `var t: Q3 = **pp;` (R27) and `**pp = q` (R28) of
+# another struct are refused by name, as `var t: Q3 = *p;` / `*p = q` are; `**pp += 1` (C5) and a top-level `**GPP -= 1`
+# (C6) are refused as `*p OP= v` is; `**pp = u` copies the whole struct (A14: 56; through 6.7.13 one word, 54 — and
+# R27 / R28 / C5 / C6 compiled: a handle bound to the first field, one word stored, the first field added to).
+# Mutation (2026-10-17, the gate run as CYCC=<the lane's compiler before the fix>): RED 5 — R27 R28 C5 C6 not refused,
+# A14 exit 54.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -265,6 +273,14 @@ var r = main(); syscall(60, r);
 refuse "R26 *(&l) = q  (another struct)" "$P3Q3"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var l: P3 = P3{0,0,0}; *(&l) = q; return l.x; }
 var r = main(); syscall(60, r);
 '
+# R27 / R28 (6.7.14) — `**pp` of a `**P3` is a P3 value: another struct is refused by name, into a declaration and
+# through `**pp = q`.
+refuse "R27 var t: Q3 = **pp  (a **P3)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; var t: Q3 = **pp; return t.a; }
+var r = main(); syscall(60, r);
+'
+refuse "R28 **pp = q  (another struct)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; var q: Q3 = Q3{7,8,9}; **pp = q; return s.x; }
+var r = main(); syscall(60, r);
+'
 # C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
 CMSG="compound assignment to the struct"
 crefuse() {  # $1 label  $2 source
@@ -294,6 +310,16 @@ syscall(60, GT.x);
 crefuse "C4 *p += 1  (a for step)" "$P3Q3"'var GT = P3{0,0,0};
 fn main(): i64 { var p: *P3 = &GT; for (var i = 0; i < 1; *p += 1) { i = 1; } return GT.x; }
 var r = main(); syscall(60, r);
+'
+# C5 / C6 (6.7.14) — `**pp OP= v` through a `**S`, as `*p OP= v` through a `*S` (6.7.11): in a fn and at top level.
+crefuse "C5 **pp += 1  (a **P3)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; **pp += 1; return s.x; }
+var r = main(); syscall(60, r);
+'
+crefuse "C6 **GPP -= 1  (top level)" "$P3Q3"'var GT = P3{5,0,0};
+var GP: *P3 = &GT;
+var GPP: **P3 = &GP;
+**GPP -= 1;
+syscall(60, GT.x);
 '
 
 echo "acceptances — these must stay legal, with the right VALUE:"
@@ -422,6 +448,14 @@ var r = main(); syscall(60, r);
 ' 134 "$P3Q3"'fn main(): i64 { var s: P3 = P3{3,4,5}; s.x = s.x + 10; return s.x * 10 + s.y; }
 var r = main(); syscall(60, r);
 '
+# A14 (6.7.14) — `**pp = u` through a `**P2` copies the whole struct (56; through 6.7.13 one word: 54).
+accept "A14 **pp = u copies the struct" 'struct P2 { x; y; }
+fn main(): i64 { var s = P2 { 3, 4 }; var p: *P2 = &s; var pp: **P2 = &p; var u = P2 { 5, 6 }; **pp = u; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+' 56 'struct P2 { x; y; }
+fn main(): i64 { var s = P2 { 3, 4 }; var p: *P2 = &s; var u = P2 { 5, 6 }; p.x = u.x; p.y = u.y; return s.x * 10 + s.y; }
+var r = main(); syscall(60, r);
+'
 # A7 — a SCALAR source is a different rule (a warning, since before 6.6.6) and must not have
 # been swept into the new error. Checked directly rather than through accept(): the point is
 # the absence of the refusal, and the value it stores is the pre-existing behaviour.
@@ -442,8 +476,8 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 30 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 30)"; fail=$((fail+1)); }
-[ "$naccept" -ge 13 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 13)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 34 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 34)"; fail=$((fail+1)); }
+[ "$naccept" -ge 14 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 14)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
 # and every refusal row would report "not refused", which is loud; this says why.

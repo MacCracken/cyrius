@@ -1,0 +1,142 @@
+# double_pointer_struct_value.tcyr — 6.7.14. `**pp` THROUGH A `pp: **S` IS THE STRUCT VALUE `*p` IS (6.7.10
+# decision 6), at every consumer: a declaration copy, a by-value argument, a `*S` argument, an operator's left
+# operand, a small struct's byte-exact read, an if-expression branch, a `return`, an assignment — and `**pp = u`
+# copies the struct (6.7.11's decision (a) composed with 6.7.13's D9 (a)).
+#
+# 6.7.13's D9 (a) made `*pp` of a `**S` a `*S` by its step word, but the dereference consumers type the operand of
+# `*` by its TOKENS (`_hl_psid`), which answered 0 for an operand starting with `*`: `var t: P = **pp;` bound a
+# handle to P's first field (SIGSEGV on x86_64 and aarch64, cx 0, PE 5 where 4 is right), a 3-byte `**ppc` read 8
+# bytes (10 where 11 is right), `**pp = u` stored one word (54 where 56 is right) and `**pp += 10` added to the
+# first field (now refused, as `*p OP= v` through a `*S` is: tests/gates/frontend/struct_copy_type_checked.sh C5).
+# `_hl_psid` now reads `*E` with E a `**S` — a local, a parameter, a closure capture, a global, a `**S` field, a
+# `: **S` call (a generic one too), `pp + n`, `*ppp` of a `***S` — as a `*S` (`_hl_dref_psid`, parse_decl.cyr).
+# With it every reader of the typed-pointer reader sees `*pp` as the `*S` D9 (a) made it: `return *pp;` from a
+# `: S` fn returns the struct it points at (6.7.11), `l = *pp + 0` copies it (ops-6).
+# Filed: docs/development/issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its three
+# repros verbatim are tests/gates/codegen/small_struct_handle_line.sh R16a-R16c, which runs this file on x86_64,
+# IR=1, IR=3, DCE, aarch64, cx and PE). CROSS-HOST: the release gate runs it on ecb / ach / cass / pi.
+include "lib/assert.cyr"
+
+struct P { x; y; }
+struct P8 { v; }
+struct C3 { a: u8; b: u8; c: u8; }
+struct W { pp: **P; n; }
+
+fn take(v: P): i64 { return v.y; }
+fn take8(v: P8): i64 { return v.v; }
+fn t3(v: C3): i64 { return v.a * 10000 + v.b * 100 + v.c; }
+fn tp(v: *P): i64 { return v.y; }
+fn P_add(l: P, r: P): P { var t: P; t.x = l.x + r.x; t.y = l.y + r.y; return t; }
+
+var GS = P { 3, 4 };
+var GSP: *P = &GS;
+var GPP: **P = &GSP;
+var G8 = P8 { 9 };
+var G8P: *P8 = &G8;
+var G8PP: **P8 = &G8P;
+var GC: u8[8];
+fn gpp(): **P { return &GSP; }
+fn gq<T>(x: T): **P { return &GSP; }
+
+# The filed repros (main renamed): take(**pp) into a by-value P, the declaration copy, the 3-byte read.
+fn f_take(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    return take(**pp);
+}
+fn f_decl(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var t: P = **pp;
+    return t.y;
+}
+fn f_c3(): i64 {
+    store64(&GC, 0x7766554433020100 + 0x0000000000010203 - 0x0000000000020100);
+    var pc: *C3 = &GC;
+    var ppc: **C3 = &pc;
+    var w = **ppc;
+    var v = *pc;
+    return (w == v) + 10 * (v == 0x010203);
+}
+fn f_c3_arg(): i64 { var pc: *C3 = &GC; var ppc: **C3 = &pc; return t3(**ppc) * 100000 + t3(*pc); }
+fn f_wrap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = (**pp); return t.y; }
+fn f_inner(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = *(*pp); return t.y; }
+fn f_copy(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = **pp; t.y = 9; return s.y * 10 + t.y; }
+fn f_op(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var a = P { 10, 20 }; var r: P = **pp + a; return r.y; }
+fn f_param(pp: **P): i64 { var t: P = **pp; return t.y + take(**pp); }
+fn f_param_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; return f_param(&p); }
+fn f_field(): i64 { var w: W; w.pp = &GSP; var t: P = **w.pp; return t.y + take(**w.pp); }
+fn f_call(): i64 { var t: P = **gpp(); return t.y + take(**gpp()); }
+fn f_gen(): i64 { var t: P = **gq<i64>(1); var u: P = **gq(2); return t.y * 10 + u.y + take(**gq<i64>(3)) * 0; }
+fn f_triple(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var ppp: ***P = &pp;
+    var t: P = ***ppp;
+    return t.y + take(***ppp);
+}
+fn f_arith(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = **(pp + 0); return t.y; }
+fn f_global(): i64 { var t: P = **GPP; return t.y + take(**GPP); }
+fn f_8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; return take8(**pp) + take8(**G8PP); }
+fn f_ret(pp: **P): P { return **pp; }
+fn f_ret_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var t: P = f_ret(&p); return t.y; }
+fn f_cap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var f = |d| take(**pp) + d; return callptr(f, 0); }
+fn f_ie(c): i64 {
+    var s = P8 { 3 };
+    var q = P8 { 5 };
+    var p: *P8 = &s;
+    var pp: **P8 = &p;
+    var v: P8 = if (c == 1) { **pp } else { q };
+    return v.v;
+}
+fn f_asg(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l: P; l = **pp; return l.x * 10 + l.y; }
+fn f_store(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var u = P { 5, 6 }; **pp = u; return s.x * 10 + s.y; }
+fn f_store_in(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var q = P { 1, 2 }; *(*pp) = q; return s.x * 10 + s.y; }
+fn f_store_g(): i64 { var u = P { 7, 8 }; **GPP = u; var r = GS.x * 10 + GS.y; GS.x = 3; GS.y = 4; return r; }
+fn f_store_8(): i64 { var s = P8 { 3 }; var p: *P8 = &s; var pp: **P8 = &p; var u = P8 { 5 }; **pp = u; return s.v; }
+fn f_ptr_arg(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; return tp(*pp); }
+fn f_ret_ptr8(pp: **P8): P8 { return *pp; }
+fn f_ret_ptr8_c(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var t: P8 = f_ret_ptr8(&p); return t.v; }
+fn f_ret_ptr(pp: **P): P { var x = 1; return *pp; }
+fn f_ret_ptr_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var t: P = f_ret_ptr(&p); return t.y; }
+fn f_arith_src(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l: P; l = *pp + 0; return l.x * 10 + l.y; }
+
+var TZ: P = **GPP;   # the declaration zone
+
+assert_eq(f_take(), 4, "take(**pp) into a by-value P (the filed repro 1)");
+assert_eq(f_decl(), 4, "var t: P = **pp (the filed repro 2)");
+assert_eq(f_c3(), 11, "a 3-byte **ppc reads 3 bytes, as *pc (the filed repro 3)");
+assert_eq(f_c3_arg(), 3020130201, "t3(**ppc) = t3(*pc): a 3-byte struct by value");
+assert_eq(f_wrap(), 4, "var t: P = (**pp)");
+assert_eq(f_inner(), 4, "var t: P = *(*pp)");
+assert_eq(f_copy(), 49, "the declaration copies: t.y = 9 leaves s");
+assert_eq(f_op(), 24, "**pp + a dispatches P_add");
+assert_eq(f_param_c(), 8, "a **P parameter: the declaration and take(**pp)");
+assert_eq(f_field(), 8, "**w.pp of a **P field");
+assert_eq(f_call(), 8, "**gpp() of a : **P call");
+assert_eq(f_gen(), 44, "**gq<i64>(1) and **gq(2) of a generic fn declared : **P");
+assert_eq(f_triple(), 8, "***ppp of a ***P");
+assert_eq(f_arith(), 4, "**(pp + 0)");
+assert_eq(f_global(), 8, "**GPP of a **P global");
+assert_eq(f_8(), 15, "8 B: take8(**pp), take8(**G8PP)");
+assert_eq(f_ret_c(), 4, "return **pp; from a fn returning P");
+assert_eq(f_cap(), 4, "take(**pp) of a capture in a closure body");
+assert_eq(f_ie(1) * 10 + f_ie(0), 35, "an if-expression branch **pp (8 B)");
+assert_eq(f_asg(), 34, "l = **pp copies");
+assert_eq(f_store(), 56, "**pp = u copies the struct");
+assert_eq(f_store_in(), 12, "*(*pp) = q copies the struct");
+assert_eq(f_store_g(), 78, "**GPP = u copies through a **P global");
+assert_eq(f_store_8(), 5, "8 B: **pp = u");
+assert_eq(f_ptr_arg(), 4, "tp(*pp) into a *P parameter (control)");
+assert_eq(f_ret_ptr8_c(), 6, "return *pp; from a fn returning P8 is the struct *pp points at");
+assert_eq(f_ret_ptr_c(), 4, "return *pp; from a fn returning P (16 B)");
+assert_eq(f_arith_src(), 34, "l = *pp + 0 copies the struct (pointer arithmetic on a *P)");
+assert_eq(TZ.y, 4, "top level, the declaration zone: var TZ: P = **GPP");
+var TA: P = **GPP;
+assert_eq(TA.x * 10 + TA.y, 34, "top level after a statement: var TA: P = **GPP");
+assert_eq(take(**GPP), 4, "top level: take(**GPP)");
+
+var r = assert_summary();

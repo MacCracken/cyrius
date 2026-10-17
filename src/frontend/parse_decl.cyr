@@ -10199,8 +10199,9 @@ fn _hl_dx_src(S): i64 {
 }
 # The struct a `*T`-typed expression [a, e) points at — a `*T` local, parameter, closure capture or global,
 # a call or a method declared `: *T`, a `*T` field, at the end of any chain of fields and methods, inside
-# balanced parentheses, or pointer arithmetic on one (`p + n`, `n + p`, `p - n`) — else 0: an untyped
-# value, a `*i64`, a struct value, `&x`, an index, a generic call, or a shape this reader does not type.
+# balanced parentheses, or pointer arithmetic on one (`p + n`, `n + p`, `p - n`), or (6.7.14) a dereference
+# `*E` of a `**S` (`_hl_dref_psid`) — else 0: an untyped value, a `*i64`, a struct value, `&x`, an index, a
+# generic call, or a shape this reader does not type.
 fn _hl_psid(S, a, e): i64 {
     a = _ie_unparen(S, a, e);
     e = _ie_pe;
@@ -10217,9 +10218,100 @@ fn _hl_psid(S, a, e): i64 {
         return _hl_psid(S, a, k);
     }
     if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    if (TOKTYP(S, a) == 8) { return _hl_dref_psid(S, a + 1, e); }   # 6.7.14: `*pp` of a `**S`
     var t = _hl_pchain(S, a, e);
     if (_hl_cp != 1) { return 0; }
     return t;
+}
+# ⛔ 6.7.14 — `*pp` OF A `**S` IS A `*S` TO THE TYPED-POINTER READER TOO, so `**pp` is the struct value `*p` is
+# (6.7.10 decision 6) at every dereference consumer. 6.7.13's D9 (a) typed `*pp` by its step word (the pointee's,
+# `_pp_inner`), but `_hl_psid` reads tokens and answered 0 for an operand starting with `*`: `var t: P = **pp;`
+# bound a handle to P's first field (SIGSEGV), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word and
+# `**pp += 10` added to it. The operand E [a, e) of the inner `*`: its step word by its tokens (`_hl_pw`), whose pin
+# names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
+fn _hl_dref_psid(S, a, e): i64 {
+    var sid = _pp_sid(_ps_pin(_hl_pw(S, a, e)));
+    _hl_cp = 0;
+    if (sid <= 0) { return 0; }
+    _hl_cp = 1;
+    return sid;
+}
+# The step word of the pointer expression [a, e) by its tokens: a name (a local or parameter, a closure capture, a
+# global — its slot / snapshot / global word), a whole call or method declared `: *T` / `: **T` (`_fn_rps`), a chain
+# ending in a `*T` / `**T` field (`_fld_ps_get`), inside balanced parentheses, pointer arithmetic on one (`pp + n`
+# keeps pp's word), or a dereference `*E` of a `***T` (its pin's pointee word, `_pp_inner`); a generic call's under
+# the binding it instantiates with (`_gen_call_word`). 0 = none.
+fn _hl_pw(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    if (a >= e) { return 0; }
+    var k = _hl_addop(S, a, e);
+    if (k > a) {
+        var r = _hl_pw(S, k + 1, e);
+        if (TOKTYP(S, k) == 6 || TOKTYP(S, k) == 113) {
+            var l = _hl_pw(S, a, k);
+            if (l > 0) { return l; }
+            return r;
+        }
+        if (r > 0) { return 0; }   # `pp - qq` is a distance
+        return _hl_pw(S, a, k);
+    }
+    if (_gz_split(S, a, e) != 0 - 1) { return 0; }
+    if (TOKTYP(S, a) == 8) { return _pp_inner(S, _hl_pw(S, a + 1, e)); }
+    return _hl_cw(S, a, e);
+}
+# ... of a name or a chain [b, e) (`_hl_pchain`'s shapes): its last step's declared word.
+fn _hl_cw(S, b, e): i64 {
+    if (TOKTYP(S, b) != 2) { return 0; }
+    var dot = _hl_lastdot(S, b, e);
+    if (dot < 0) {
+        var o = _gcall_open(S, b);
+        if (o < 0) {
+            if (e != b + 1) { return 0; }
+            return _hl_name_pw(S, TOKVAL(S, b));
+        }
+        if (_call_close(S, o) != e - 1) { return 0; }
+        var fi = FINDFN(S, TOKVAL(S, b));
+        if (fi < 0) { return 0; }
+        if (GFTP(S, fi) != 0) { return _gen_call_word(S, b, o, fi); }   # `g<..>(` / `g(` declared `: **T`
+        return _fn_ret_ps(fi);
+    }
+    var t = _hl_pchain(S, b, dot);
+    if (t <= 0) { return 0; }
+    if (TOKTYP(S, dot + 1) != 2) { return 0; }
+    if (TOKTYP(S, dot + 2) == 10) {
+        if (_call_close(S, dot + 2) != e - 1) { return 0; }
+        return _fn_ret_ps(_meth_fn_at(S, t, TOKVAL(S, dot + 1), dot + 1));
+    }
+    if (e != dot + 2) { return 0; }
+    var fi2 = FINDFIELD(S, t - 1, TOKVAL(S, dot + 1));
+    if (fi2 < 0) { return 0; }
+    return _fld_ps_get(S, t - 1, fi2);
+}
+# The last `.` of [b, e) outside every bracket, else -1.
+fn _hl_lastdot(S, b, e): i64 {
+    var d = 0;
+    var r = 0 - 1;
+    var i = b;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        elif (d == 0) { if (t == 41) { r = i; } }
+        i = i + 1;
+    }
+    return r;
+}
+# The step word name `noff` carries where the parser resolves it: a local or parameter, a closure capture, a global.
+fn _hl_name_pw(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _slot_ptr_word(S, li); }
+        if (_hl_capn(S, noff) == 1) { return _cl_snap_ptr_word(_cl_snap_find(S, noff)); }
+    }
+    var gvi = _findvar_core(S, noff);
+    if (gvi < 0) { return 0; }
+    return _gv_ptr_word(S, gvi);
 }
 # ⛔ 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF IS THE STRUCT IT NAMES: `*(&p)` / `*&p` is the struct value `p`
 # is (6.7.10 decision 6, with decision 7's reading of `&c` as a pointer to c). `_hl_psid` answers 0 for `&x`,
@@ -10389,25 +10481,47 @@ fn _gen_call_psid(S, b, o, fi): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     var ann = _gen_ret_ann(S, fi);
     if (ann < 0) { return 0; }
-    var c0 = 0 - 8;
-    var c1 = 0;
+    _gen_call_targs(S, b, o, fi);
+    return _gen_ann_bound(S, fi, ann, _gct_c0, _gct_c1);
+}
+# The binding the call at token `b` (its `(` at `o`, `fi` the base) instantiates with — its explicit type arguments,
+# or those its arguments infer — into `_gct_c0` / `_gct_c1`. Shared by the two readers of a generic call's `: *T`.
+var _gct_c0 = 0;
+var _gct_c1 = 0;
+fn _gen_call_targs(S, b, o, fi): i64 {
+    _gct_c0 = 0 - 8;
+    _gct_c1 = 0;
     if (o != b + 1) {
         var sv = GTI(S);
         var sv_gt = _ta_pending_gt;
         _ta_pending_gt = 0;
         STI(S, b + 2);
-        c0 = _parse_one_type_arg(S);
-        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        _gct_c0 = _parse_one_type_arg(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gct_c1 = _parse_one_type_arg(S); }
         _ta_pending_gt = sv_gt;
         STI(S, sv);
     } else {
         var sg = _gi_sc;
         _gi_sc = 0;
-        c0 = _gen_infer_tp(S, fi, o, 0);
-        c1 = _gen_infer_tp(S, fi, o, 1);
+        _gct_c0 = _gen_infer_tp(S, fi, o, 0);
+        _gct_c1 = _gen_infer_tp(S, fi, o, 1);
         _gi_sc = sg;
     }
-    return _gen_ann_bound(S, fi, ann, c0, c1);
+    return 0;
+}
+# 6.7.14 — the step word of that call's `: *T` / `: **T` return under the binding it instantiates with (`_pp_word_at`:
+# a `**T`'s pin names its pointee), as its instance records it; 0 for any other return. `_hl_cw`'s generic call, so
+# `**gq<P>()` of a `: **S` is the struct value too. CHANGELOG [6.7.14]
+fn _gen_call_word(S, b, o, fi): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var ann = _gen_ret_ann(S, fi);
+    if (ann < 0) { return 0; }
+    _gen_call_targs(S, b, o, fi);
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _bind_generic_call(S, fi, _gct_c0, _gct_c1);
+    var w = _pp_word_at(S, ann, 0 - 1, 0 - 1);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return w;
 }
 # The struct the `*T` annotation at `ann` names with fn `fi`'s type parameters bound to `c0` / `c1` (the
 # binding in force put back after).
