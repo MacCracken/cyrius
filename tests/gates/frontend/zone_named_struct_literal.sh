@@ -38,8 +38,9 @@ build() {
   if [ "${4:-}" = kernel ]; then CYRIUS_ELF64_KERNEL=1 "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || rc=$?
   else "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || rc=$?; fi
   [ "$rc" -eq 0 ] || { bad "$1: compile rc $rc: $(grep -m1 '^error' "$D/$1.err")"; return; }
-  nk=$(grep -c "^warning.*$KW" "$D/$1.err")
-  na=$(grep -cE '^(error|warning)' "$D/$1.err")
+  # `|| true`: a grep matching nothing exits 1, which `bash -eo pipefail` turns into the gate's exit (CI may run a gate either way)
+  nk=$(grep -c "^warning.*$KW" "$D/$1.err" || true)
+  na=$(grep -cE '^(error|warning)' "$D/$1.err" || true)
   [ "$nk" -eq "$3" ] && [ "$na" -eq "$3" ] || { bad "$1: $na diagnostic(s) ($nk late-initializer), expected $3: $(grep -E '^(error|warning)' "$D/$1.err" | tr '\n' '|')"; return; }
   [ -s "$D/$1" ] || { bad "$1: empty output"; return; }
   chmod +x "$D/$1"

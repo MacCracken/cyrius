@@ -37,7 +37,8 @@ row() {
   rc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || rc=$?
   [ "$rc" -eq 0 ] || { bad "$1: compile rc $rc: $(grep -E '^error' "$D/$1.err" | head -1)"; return; }
   [ -s "$D/$1" ] || { bad "$1: empty output"; return; }
-  got=$(grep -E '^(error|warning)' "$D/$1.err" | sed 's/^warning:<source>://' | tr '\n' '|')
+  # `|| true`: a grep matching nothing exits 1, which `bash -eo pipefail` turns into the gate's exit (CI may run a gate either way)
+  got=$(grep -E '^(error|warning)' "$D/$1.err" | sed 's/^warning:<source>://' | tr '\n' '|' || true)
   [ "$got" = "$3" ] || { bad "$1: warnings {$got}, want {$3}"; return; }
   chmod +x "$D/$1"
   x=0; "$D/$1" > /dev/null 2>&1 || x=$?

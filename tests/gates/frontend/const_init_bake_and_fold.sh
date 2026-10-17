@@ -63,7 +63,8 @@ same() {
   r1=0; env ${5:-X=1} "$CC" < "$W/$1.cyr" > "$W/$1" 2> "$W/$1.err" || r1=$?
   r2=0; env ${5:-X=1} "$CC" < "$W/$1.l.cyr" > "$W/$1.l" 2> "$W/$1.l.err" || r2=$?
   [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || { bad "$1: compile rc $r1 / $r2: $(grep -m1 '^error' "$W/$1.err" "$W/$1.l.err")"; return; }
-  n=$(cat "$W/$1.err" "$W/$1.l.err" | grep -cE '^(error|warning)')
+  # `|| true`: a grep matching nothing exits 1, which `bash -eo pipefail` turns into the gate's exit (CI may run a gate either way)
+  n=$(cat "$W/$1.err" "$W/$1.l.err" | grep -cE '^(error|warning)' || true)
   [ "$n" -eq 0 ] || { bad "$1: $n diagnostics: $(grep -hE '^(error|warning)' "$W/$1.err" "$W/$1.l.err" | head -2 | tr '\n' '|')"; return; }
   cmp -s "$W/$1" "$W/$1.l" || bad "$1: not byte-identical to the literal form ($(wc -c < "$W/$1") / $(wc -c < "$W/$1.l") B): the replay still emits code for it"
   chmod +x "$W/$1"; x=0; timeout 10 "$W/$1" > /dev/null 2>&1 || x=$?
@@ -186,7 +187,8 @@ rc=0; (cd "$W/v" && "$CC" < m.cyr > m.bin 2> m.err) || rc=$?
 rows=$((rows + 1))
 printf 'const C = 5;\nconst Z = 0;\nconst BC = 1;\nvar P: *i64 = C;\nvar Q: *i64 = Z;\nvar b: bool = BC;\nsyscall(60, 0);\n' > "$W/v2.cyr"
 rc=0; "$CC" < "$W/v2.cyr" > "$W/v2" 2> "$W/v2.err" || rc=$?
-nw=$(grep -c '^warning.*assigning non-pointer to typed pointer' "$W/v2.err")
+# `|| true`: a grep matching nothing exits 1, which `bash -eo pipefail` turns into the gate's exit (CI may run a gate either way)
+nw=$(grep -c '^warning.*assigning non-pointer to typed pointer' "$W/v2.err" || true)
 [ "$rc" -ne 0 ] && [ "$nw" -eq 2 ] && grep -q "^error.*cannot initialize bool 'b'" "$W/v2.err" \
   || bad "V2: want the two \`*T\` warnings (lines 4, 5) and the bool refusal: rc $rc, $(grep -E '^(error|warning)' "$W/v2.err" | tr '\n' '|')"
 
