@@ -2310,7 +2310,8 @@ consumed: a **parameter** (`fn f(s: [u8])` — pass `&s` and read `slice_ptr` / 
 pointer and the length), a **return type** (also as a multi-value element), a **struct or union
 field**, a **pointer to a slice** `*[T]` / `*slice<T>` (anywhere: pass `&s` as a plain pointer), a
 **global in the declaration zone** (before the first top-level statement), a **slice of slices**,
-a **type argument** (`g<[u8]>`) and a **tuple element**. Before 6.7.8 each was a generic parse error
+a **type argument** (`g<[u8]>`, and `g<slice<u8>>` since 6.7.14 — it ran the i64 base; a program's own
+`struct slice<T>` stays a type argument) and a **tuple element**. Before 6.7.8 each was a generic parse error
 (`expected ')', got identifier 'u8'`, `expected identifier, got '['`, `unknown type 'slice'`, ...).
 A top-level `var s: [T]` AFTER the first top-level statement is still a 16-byte global, used through
 the helper API — `slice_set(&s, ..)`, `slice_ptr(&s)` / `slice_len(&s)`, `slice_unchecked_get_W` —
@@ -6440,7 +6441,10 @@ parameter may be **forwarded** — `fn outer<T>(p: T) { return inner<T>(p); }` c
 type argument is a struct, `i8`/`i16`/`i32`/`i64`, `f64`, or a type parameter in
 scope — the same names a return type accepts; anything else (an undeclared name, a
 variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error naming
-it (v6.6.8; an enum's values are i64, so write `i64`). A token that is no name at all
+it (v6.6.8; an enum's values are i64, so write `i64`) — with type arguments of its own too:
+`g<Nonexist<u8>>(0)` is *unknown type 'Nonexist' as a type argument*, and a type parameter
+written with arguments (`h<T<u8>>`) is *a type parameter takes no type arguments* (6.7.14;
+both ran the i64 base). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses

@@ -73,6 +73,20 @@
 #      MNN1 `_parse_one_type_arg` without the non-name arm -> RED 9: NN0-NN8 (the garbage names, the cascade, a
 #      signature's twice); MNN2 `_targ_skip_arg` stepping one token -> RED 5: NN0 NN4-NN7 (the cascade); MNN3
 #      `_targ_skip_arg` reading a `>` inside `( .. )` as a close -> RED 1: NN5 ("expected '=', got ')'")
+#   UG (6.7.14, the user's D2 (a), 2026-10-16) `Name<..>` AS A TYPE ARGUMENT, Name no type: the `<` arm of
+#      `_parse_one_type_arg` skipped the list and read class 0, "unbound" — the i64 base: `g<Nonexist<u8>>(0)` ran the
+#      base and `var c: Box<Nonexist<u8>>;` declared the base Box (the filed repro exited 11), while `g<Nonexist>(0)`
+#      was refused; `h<T<u8>>` inside a generic reached h's base. `_targ_bad_gen` refuses each once, at the name —
+#      "unknown type 'Nonexist' as a type argument (...)", "a type parameter takes no type arguments: 'T'" — skips the
+#      list and reads i64. UG0 the filed repro verbatim; UG1-UG8 the positions (nested, a type parameter in a call /
+#      a field / a local, Two<..>'s either argument, sizeof, a field, a global, two calls, a generic body with three
+#      instances); a control (Vec<..>, a generic struct declared below, a forwarded Box<T>, Box<Box<Pt>>). The built-in
+#      slice's word form is slice_position_refused.sh's K3 (D3 (a)).
+#      Filed: docs/development/issues/2026-10-10-unknown-generic-name-accepted-as-type-argument.md
+#      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
+#      MUG1 `_parse_one_type_arg` without the `_targ_bad_gen` call -> RED 9: UG0-UG8 (each BUILT); MUG2
+#      `_targ_bad_gen` without its type-parameter arm -> RED 2: UG2 UG3 ("unknown type 'T'"); MUG3
+#      `_targ_bad_gen` reporting without `_tn_once` -> RED 1: UG8 (three lines, one per instance)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -405,5 +419,60 @@ errs nn8 1 "NN8: id<u128>(3), by its text, once (twice)" "$U1"
 printf '%s\nfn main(): i64 { var a: Box<i64>; a.n = 3; var b: Two<Pt, i32>; b.b = 4; return a.n + b.b + id<i32>(3) + sizeof(Box<i16>) - 20; }\nsyscall(60, main());\n' "$NNH" > "$T/nnk.cyr"
 exits nnk 0 "NN control: Box<i64>, Two<Pt, i32>, id<i32>(3), sizeof(Box<i16>) (10) unchanged"
 
+# ── 6.7.14: `Name<..>` as a type argument, Name no type (the user's D2 (a), 2026-10-16) ──────────
+UK="unknown type 'Nonexist' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+TPA="a type parameter takes no type arguments: 'T'"
+cp docs/development/issues/repros/2026-10-10-unknown-generic-name-accepted-as-type-argument.cyr "$T/ug0.cyr" 2> /dev/null \
+    || { bad "UG0: the filed repro is missing"; : > "$T/ug0.cyr"; }
+errs ug0 2 "UG0: the filed repro verbatim — both lines refused by name, once each, at the name (it ran the i64 base: exit 11)" \
+    "error:<source>:6:16: $UK" "error:<source>:8:14: $UK"
+UGH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }'
+ug() { printf '%s\n%s\nsyscall(60, 7);\n' "$UGH" "$2" > "$T/$1.cyr"; }
+ug ug1 'fn f(): i64 { var c: Box<Box<Nonexist<u8>>>; c.n = 3; return c.n; }'
+errs ug1 1 "UG1: nested, Box<Box<Nonexist<u8>>> (its >>> closes three lists)" "error:<source>:5:30: $UK"
+ug ug2 'fn h<T>(x): i64 { return sizeof(T); }
+fn g<T>(x): i64 { return h<T<u8>>(0); }
+fn f(): i64 { return g<Pt>(0) + g<i32>(0) + g(1); }'
+errs ug2 1 "UG2: h<T<u8>>(0) inside a generic, with three instances — once (g\$Pt reached h's base)" "error:<source>:6:28: $TPA"
+ug ug3 'struct W<T> { b: Box<T<u8>>; k; }
+fn g<T>(x): i64 { var q: Box<T<i32>>; return 0; }
+fn f(): i64 { var w: W<Pt>; return g<Pt>(0) + sizeof(W<Pt>); }'
+errs ug3 2 "UG3: a type parameter given arguments in a generic struct's field and a generic's local — once each" \
+    "error:<source>:5:22: $TPA" "error:<source>:6:30: $TPA"
+ug ug4 'fn f(): i64 { var t: Two<Nonexist<u8>, i32>; var u: Two<i32, Nonexist<Box<i64>>>; return sizeof(Box<Nonexist<u8>>); }'
+errs ug4 3 "UG4: either argument of Two<..>, a nested list inside the skipped one, sizeof(..)" \
+    "error:<source>:5:26: $UK" "error:<source>:5:62: $UK" "error:<source>:5:101: $UK"
+ug ug5 'struct H { b: Box<Nonexist<u8>>; n; }'
+errs ug5 1 "UG5: a struct field's Box<Nonexist<u8>>" "error:<source>:5:19: $UK"
+ug ug6 'fn f(): i64 { return 0; }
+var GB: Box<Nonexist<u8>> = 0;'
+errs ug6 1 "UG6: a global's Box<Nonexist<u8>>" "error:<source>:6:13: $UK"
+ug ug7 'fn g<T>(x): i64 { return sizeof(T); }
+fn f(): i64 { var a = g<Nonexist<u8>>(0); return a + g<Nonexist<i64>>(1); }'
+errs ug7 2 "UG7: two explicit calls in two statements — once each, no instance minted, no cascade" \
+    "error:<source>:6:25: $UK" "error:<source>:6:56: $UK"
+ug ug8 'fn g<T>(x): i64 { var c: Box<Nonexist<T>>; return sizeof(T); }
+fn f(): i64 { return g<Pt>(0) + g<i32>(0) + g(1); }'
+errs ug8 1 "UG8: a generic body's Box<Nonexist<T>> with three instances — once (the base and each instance re-read it)" "error:<source>:5:30: $UK"
+cat > "$T/ugk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }
+fn h<T>(x): i64 { return g<Box<T>>(0); }
+fn main(): i64 {
+    var b: Box<Box<Pt>>;
+    b.v.v.y = 2;
+    return g<Vec<i64>>(0) + g<Later<i32>>(0) * 10 + h<Pt>(0) * 100 + b.v.v.y * 1000 + sizeof(Box<Box<Pt>>) * 10000;
+}
+struct Later<T> { a: T; b: T; }
+syscall(60, (main() - 322168) / 100000);
+EOF
+exits ugk 0 "UG control: g<Vec<i64>>(0) 8, g<Later<i32>> (declared below) 16, h<Pt> forwarding g<Box<T>> 32, Box<Box<Pt>> 32 B, unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14)"
