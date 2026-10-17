@@ -68,6 +68,22 @@
 #      arm64 one accepts it as met (every image MH_PIE, flags 0x00200084). S4 the PE and x86_64 Mach-O
 #      CLIs carry a refusal, the arm64 Mach-O, Linux and aarch64 Linux ones none; S4b each its own
 #      text. (A Mach-O cannot run here: ach ran the refusal, ecb the accepted build — the CHANGELOG.)
+#   6.7.14 (issues/2026-10-15-macos-cli-win-writes-mach-o-named-exe.md): neither Mach-O compiler reads
+#      CYRIUS_TARGET_WIN, so `cyrius build --win` on macOS wrote a Mach-O named `.exe` (cf fa ed fe) at
+#      rc 0 (ecb, ach). `_cli_host_refuses_win` gains a CYRIUS_TARGET_MACOS arm: `error: --win is not
+#      available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or
+#      Windows)`. S6 the aarch64 Linux CLI and both Mach-O CLIs carry a `--win` refusal, the x86_64
+#      Linux and PE ones none; S6m each Mach-O CLI carries the macOS form (its prefix, the macOS text,
+#      the PE tail; never the aarch64 text). (A Mach-O cannot run here: ecb and ach ran the refusal —
+#      rc 1, the named error, no w.exe — see the CHANGELOG.)
+#   6.7.14 (issues/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md): the arch axis of a
+#      dep's `target` key read `_arch`, which stays ARCH_X86 on the aarch64 Linux CLI (its cycc emits
+#      aarch64 only), so a plain `cyrius deps` vendored the `target = "x86_64"` dep and skipped the
+#      `"aarch64"` one, rc 0 (qemu, pi). `_dep_target_matches` reads `_dep_arch_is_a64()` (cbt/deps.cyr).
+#      The filed two-dep manifest (da: aarch64, dx: x86_64): L4 the x86_64 Linux CLI (control) plain ->
+#      lib/dx.cyr, `--aarch64` -> lib/da.cyr; A11 the aarch64 Linux CLI plain -> lib/da.cyr only, A12
+#      `--aarch64` -> lib/da.cyr only. pi runs the same manifest with the native CLI (the CHANGELOG)
+#      and tests/tcyr/crossos/cli_dep_target_arch.tcyr answers the arch axis on every host.
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -88,6 +104,9 @@
 #           M13 run_binary_timed's qemu exec without its CYRIUS_ARCH_AARCH64 guard    RED: A10
 #   D43:    M14 `_cli_host_refuses_pie` without its CYRIUS_TARGET_MACOS arm           RED: S4, S4b
 #           M15 the macOS arm without its CYRIUS_ARCH_AARCH64 guard (D43 (a))         RED: S4
+#   6.7.14: M16 `_cli_host_refuses_win` without its CYRIUS_TARGET_MACOS arm           RED: S6, S6m
+#           M17 `_dep_target_matches` reading `_arch` again (6.7.13's arch axis)      RED: A11
+#           M18 `_dep_arch_is_a64` answering 1 on every host                          RED: L4
 set -u
 G=win_cli_refuses_foreign_targets
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -123,6 +142,39 @@ MACPIEWHY="error: --pie is not available from the macOS x86_64 CLI: its cycc wri
 # has FILE TEXT -> yes / no (a fixed-string search of the binary)
 has() { if grep -aqF "$2" "$1" 2> /dev/null; then echo yes; else echo no; fi; }
 magic() { if [ -f "$1" ]; then od -An -tx1 -N4 "$1" | tr -d ' \n'; else echo none; fi; }
+# 6.7.14 — the filed repro's tree (issues/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md):
+# two path deps, `da` for aarch64 and `dx` for x86_64, under DIR/proj.
+mkdeps() {
+    mkdir -p "$1/da/dist" "$1/dx/dist" "$1/proj" "$1/home"
+    printf 'fn da_f(): i64 { return 1; }\n' > "$1/da/dist/da.cyr"
+    printf 'fn dx_f(): i64 { return 2; }\n' > "$1/dx/dist/dx.cyr"
+    cat > "$1/proj/cyrius.cyml" <<'EOM'
+[package]
+name = "tg"
+version = "0.0.1"
+language = "cyrius"
+cyrius = "6.7.13"
+
+[deps.da]
+path = "../da"
+target = "aarch64"
+modules = ["dist/da.cyr"]
+
+[deps.dx]
+path = "../dx"
+target = "x86_64"
+modules = ["dist/dx.cyr"]
+EOM
+}
+# deps_run DIR RUNNER... -> "rc <the files vendored into lib/>" after a fresh resolve
+deps_run() {
+    _dd=$1; shift
+    rm -rf "$_dd/proj/lib" "$_dd/proj/cyrius.lock"
+    _rc=0
+    (cd "$_dd/proj" && HOME="$_dd/home" CYRIUS_HOME="$_dd/home/.cyrius" CYRIUS_RESOLVED=1 timeout 120 "$@") \
+        > "$_dd/out" 2>&1 || _rc=$?
+    echo "$_rc $(ls "$_dd/proj/lib" 2> /dev/null | tr '\n' ' ' | sed 's/ $//')"
+}
 
 # Every compiler and CLI below is built from THIS tree (never build/cyrius, the store or PATH), with
 # no inherited compile-mode switch.
@@ -164,9 +216,15 @@ check "S4b each its own text: the PE the Windows one, the x86_64 Mach-O the macO
 check "S5 only the aarch64 Linux CLI carries the aarch64 refusal" "yes yes no no no no" \
     "$(has "$T/a64/cyrius" "$A64WHY") $(has "$T/a64/cyrius" "$A64TAIL") $(has "$T/lin/cyrius" "$A64WHY") $(has "$T/cyrius.exe" "$A64WHY") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$A64WHY")"
 
-# 6.7.13: so is its `--win` refusal (cycc_aarch64's native fork has no PE emitter)
-check "S6 only the aarch64 Linux CLI carries the --win refusal" "yes no no no no" \
+# 6.7.13: so is its `--win` refusal (cycc_aarch64's native fork has no PE emitter); 6.7.14: and the
+# Mach-O CLIs' (neither Mach-O compiler reads CYRIUS_TARGET_WIN)
+check "S6 the aarch64 Linux and both Mach-O CLIs carry the --win refusal; the x86_64 Linux and PE ones none" "yes no no yes yes" \
     "$(has "$T/a64/cyrius" "$A64WINTAIL") $(has "$T/lin/cyrius" "$A64WINTAIL") $(has "$T/cyrius.exe" "$A64WINTAIL") $(has "$T/cyrius_macho_x86" "$A64WINTAIL") $(has "$T/cyrius_macho_arm" "$A64WINTAIL")"
+# the stderr line is `error: --win is not available from ` + `_cli_host_emits_only()` + the PE tail;
+# a Mach-O cannot run here, so the three pieces are read from each binary
+WINPFX="error: --win is not available from "
+check "S6m each Mach-O CLI carries the macOS --win refusal (prefix, macOS text, tail; no aarch64 text)" "yes yes yes no yes yes yes no" \
+    "$(has "$T/cyrius_macho_x86" "$WINPFX") $(has "$T/cyrius_macho_x86" "$MACWHY") $(has "$T/cyrius_macho_x86" "$A64WINTAIL") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$WINPFX") $(has "$T/cyrius_macho_arm" "$MACWHY") $(has "$T/cyrius_macho_arm" "$A64WINTAIL") $(has "$T/cyrius_macho_arm" "$A64WHY")"
 
 printf 'fn main(): i64 { return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/proj/hello.cyr"
 
@@ -190,6 +248,10 @@ rc=$(lrun --target=aarch64-bare-metal-elf hello.cyr l_bma.out)
 # e_machine (bytes 18-19): 0xb7 = EM_AARCH64
 check "L3 --target=aarch64-bare-metal-elf: rc, an aarch64 ELF" "0 7f454c46 b700" \
     "$rc $(magic "$T/proj/l_bma.out") $(od -An -tx1 -j18 -N2 "$T/proj/l_bma.out" 2> /dev/null | tr -d ' \n')"
+# 6.7.14 — the control for A11 / A12: x86_64 Linux resolves the x86_64 dep, --aarch64 the aarch64 one
+mkdeps "$T/ldeps"
+check "L4 deps, the filed two-dep manifest: plain -> dx.cyr only, --aarch64 -> da.cyr only" "0 dx.cyr | 0 da.cyr" \
+    "$(deps_run "$T/ldeps" "$T/lin/cyrius" deps) | $(deps_run "$T/ldeps" "$T/lin/cyrius" deps --aarch64)"
 
 echo "== A: the aarch64 Linux CLI, under qemu-aarch64 =="
 if ! command -v qemu-aarch64 > /dev/null 2>&1; then
@@ -244,6 +306,13 @@ else
         > "$T/a.out" 2>&1 || :
     check "A10 run --aarch64 execs the program directly (no qemu-aarch64 exec)" "0 1" \
         "$(grep -ac 'execve("/usr/bin/qemu-aarch64"' "$T/a.out" || :) $(grep -ac 'execve("[^"]*/cyrius-[0-9]*/run"' "$T/a.out" || :)"
+    # 6.7.14 — a dep's `target` arch axis on the aarch64 Linux CLI: its own arch, not `_arch`'s X86
+    # default (it vendored dx.cyr, the x86_64 dep, on a plain run)
+    mkdeps "$T/adeps"
+    check "A11 deps, the filed two-dep manifest: a plain run vendors the aarch64 dep only" "0 da.cyr" \
+        "$(deps_run "$T/adeps" qemu-aarch64 "$T/a64/cyrius" deps)"
+    check "A12 deps --aarch64: the aarch64 dep only" "0 da.cyr" \
+        "$(deps_run "$T/adeps" qemu-aarch64 "$T/a64/cyrius" deps --aarch64)"
 fi
 
 echo "== W: the Windows CLI, under wine =="

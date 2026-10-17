@@ -1,9 +1,10 @@
 # cli_host_win_refusal.tcyr — CROSS-HOST: which CLI refuses `--win` (cbt/cli_args.cyr
 # `_cli_host_refuses_win`), answered by each host's own compiler. The aarch64 Linux CLI refuses it
 # (pi: its cycc emits aarch64 only — through 6.7.12 `cyrius build --win` wrote an aarch64 ELF named
-# `.exe` at rc 0); x86_64 Linux (cycc emits PE) and Windows (native) accept it. macOS answers 0 here
-# too: its `--win` is filed separately (6.7.13 staging), not decided by this row. The refusal line
-# the answer prints on stderr is expected. CHANGELOG [6.7.13]
+# `.exe` at rc 0), and so do both macOS CLIs (ecb, ach: neither Mach-O compiler reads
+# CYRIUS_TARGET_WIN — through 6.7.13 it wrote a Mach-O named `.exe` at rc 0); x86_64 Linux (cycc
+# emits PE) and Windows (native) accept it. The refusal line the answer prints on stderr is
+# expected. CHANGELOG [6.7.13], [6.7.14]
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 #ifndef CYRIUS_TARGET_AGNOS
@@ -28,7 +29,10 @@ var want = 0;
 want = 1;
 #endif
 #endif
-assert_eq(_cli_host_refuses_win(), want, "--win refused on the aarch64 Linux CLI alone");
+#ifdef CYRIUS_TARGET_MACOS
+want = 1;
+#endif
+assert_eq(_cli_host_refuses_win(), want, "--win refused on the aarch64 Linux and macOS CLIs, accepted elsewhere");
 #endif
 #endif
 var r = assert_summary();

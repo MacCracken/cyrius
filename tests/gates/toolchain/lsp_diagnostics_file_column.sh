@@ -41,6 +41,13 @@
 #   R14 outside the working directory's subtree there is no marker — the same "cannot open" as
 #       `cyrius check <absolute path>` from there (the CLI writes none for an absolute entry)
 #   R15 the CLI half: `cyrius check ok/main.cyr` from that directory says ok
+#   R16 (6.7.14, D47 / D54 — the user, 2026-10-16) the filed repro: the server started in a project
+#       that pins an uninstalled cyrius (6.5.0); a file outside any project publishes an EMPTY list —
+#       not the pin's redirect error, and not cycc's drift warning about that same pin (the loose
+#       check runs with CYRIUS_RESOLVED=1 and CYRIUS_NO_WARN_PIN_DRIFT=1). R11 (cli) is TL-14's
+#       sibling-include row under the same environment: still empty.
+#   R17 the same, with CYRIUS_RESOLVED=0 and CYRIUS_NO_WARN_PIN_DRIFT=0 inherited by the server: empty
+#   R18 a file of that pinned project still reports the pin (the project route is unchanged)
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
 #
 # PROVEN RED (run when written, each mutant via LSP_BIN / CLI_BIN):
@@ -61,6 +68,11 @@
 #   the loose verdict not recognised (_lsp_last_unit)  R2 R12 R13 FAIL (cli: the verdict on main.cyr)
 #   (the feed without #@srcline turns nothing RED: cycc already discounts the `#@incdir` line,
 #   6.5.7 — the marker is there because the CLI's unit carries it)
+# 6.7.14 (measured):
+#   the 6.7.14-open server                             R16 R17 FAIL (the pin's error at line 0)
+#   CYRIUS_RESOLVED=1 alone                            R16 R17 FAIL (the drift warning at line 0)
+#   inherited entries kept (ours appended after them)  R17 FAIL
+#   the loose environment on the project route too     R18 FAIL
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lsp_diagnostics_file_column
@@ -101,8 +113,10 @@ stop() { msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'; msg '{"jsonrpc":"2.
 # (Each feeder ignores SIGPIPE and ends `true`: the server may exit on `shutdown` before the
 # `exit` notification is written, which is a SIGPIPE the pipeline's status must not read as a
 # failure under `bash -eo pipefail`.)
+# $SERVE_ENV: extra NAME=value words for the server's environment (R17).
 serve() {
-    ( cd "$1" && env -i HOME="$2" CYRIUS_HOME="$2/.cyrius" PATH=/usr/bin:/bin timeout 60 "$W/cyrius-lsp" 2>> "$W/lsp.log" ) \
+    # shellcheck disable=SC2086
+    ( cd "$1" && env -i HOME="$2" CYRIUS_HOME="$2/.cyrius" PATH=/usr/bin:/bin ${SERVE_ENV:-} timeout 60 "$W/cyrius-lsp" 2>> "$W/lsp.log" ) \
       | tr '\r' '\n' | grep -o '"uri":"[^"]*","diagnostics":.*' | sed -e "s|file://$W/||" -e 's/Content-Length: [0-9]*$//'
 }
 # the publish lines for <relative path>
@@ -240,6 +254,31 @@ if ( cd "$W/top" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:
    && grep -q '^ok: ok/main.cyr' "$W/r15"; then
     ok "R15 cyrius check ok/main.cyr from the same directory: ok"
 else fail "R15 cyrius check ok/main.cyr: $(head -2 "$W/r15" | tr '\n' ' ')"; fi
+
+# ── R16-R18 (6.7.14): the server's working directory pins an uninstalled cyrius ──────────────
+# issues/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md (D47 / D54, the
+# user 2026-10-16: removed). The pin belongs to the project that pins it; a file with no cyrius.cyml
+# at or above it is in no project, so its check reads no pin of the server's working directory.
+mkdir -p "$W/pin/proj/src" "$W/pin/loose"
+printf '[package]\nname = "proj"\nversion = "0.1.0"\ncyrius = "6.5.0"\n' > "$W/pin/proj/cyrius.cyml"
+printf 'var x = 1;\n' > "$W/pin/loose/main.cyr"
+printf 'var x = 1;\n' > "$W/pin/proj/src/x.cyr"
+{ trap '' PIPE; start; open_msg Open "$W/pin/loose/main.cyr"; stop; true; } 2> /dev/null | serve "$W/pin/proj" "$W/h" > "$W/r16"
+P=$(pub "$W/r16" pin/loose/main.cyr)
+if [ "$P" = '"uri":"pin/loose/main.cyr","diagnostics":[]}}' ]; then
+    ok "R16 the filed repro: a loose file, the server in a project pinning an uninstalled 6.5.0 — an empty list"
+else fail "R16 pin/loose/main.cyr: ${P:-none}"; fi
+{ trap '' PIPE; start; open_msg Open "$W/pin/loose/main.cyr"; stop; true; } 2> /dev/null \
+  | SERVE_ENV="CYRIUS_RESOLVED=0 CYRIUS_NO_WARN_PIN_DRIFT=0" serve "$W/pin/proj" "$W/h" > "$W/r17"
+P=$(pub "$W/r17" pin/loose/main.cyr)
+if [ "$P" = '"uri":"pin/loose/main.cyr","diagnostics":[]}}' ]; then
+    ok "R17 the same with CYRIUS_RESOLVED=0 and CYRIUS_NO_WARN_PIN_DRIFT=0 inherited: an empty list"
+else fail "R17 pin/loose/main.cyr: ${P:-none}"; fi
+{ trap '' PIPE; start; open_msg Open "$W/pin/proj/src/x.cyr"; stop; true; } 2> /dev/null | serve "$W/pin/proj" "$W/h" > "$W/r18"
+P=$(pub "$W/r18" pin/proj/src/x.cyr)
+if printf '%s' "$P" | grep -qF 'cyrius.cyml pins version 6.5.0 but cyrius binary is not installed'; then
+    ok "R18 a file of that pinned project still reports the pin (the project route keeps its redirect)"
+else fail "R18 pin/proj/src/x.cyr: ${P:-none}"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G"; exit 1; }
 echo "PASS: $G"

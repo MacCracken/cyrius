@@ -90,7 +90,13 @@ log. Inside a project, `cyrius` then runs the toolchain version the
 project's `cyrius.cyml` pins (`cyrius = "…"`, which must be installed), so
 diagnostics match what `cyrius build` sees; outside a project they come from
 `cyrius check` with the toolchain the CLI finds, or the `cycc` found above
-when there is no CLI.
+when there is no CLI. A file outside any project reads no pin (6.7.14): the
+server's working directory may itself be a project, but its `cyrius = "…"`
+belongs to that project, so the loose file's check runs with the CLI's version
+redirect off (`CYRIUS_RESOLVED=1`) and cycc's drift warning about that pin off
+(`CYRIUS_NO_WARN_PIN_DRIFT=1`). In 6.7.13 a server started inside a project
+that pins an uninstalled cyrius showed that project's `cyrius.cyml pins version
+… but cyrius binary is not installed` error on line 1 of every loose file.
 
 ## `.lsp.json` wiring
 

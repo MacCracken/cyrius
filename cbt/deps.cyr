@@ -22,6 +22,19 @@ var _dep_linkdest_reported = 0;
 # top of the vendoring commands only.
 var _dep_vendor_mode = 0;
 
+# 6.7.14 — A KILLED SCRATCH RESOLVE LEAVES NOTHING. `--locked` (into `<tmp>/locked-deps`) and the
+# pin-move dry pass (into `<tmp>/pin-move-deps`) resolve into a private scratch under the CLI's temp
+# dir, and a SIGTERM mid-resolve left all of it there (the handler's rmdir of the temp dir then
+# failed). While one runs, `_dep_copy_file` records each directory it is about to create at or under
+# the scratch root and each file — the destination and `_aw_open`'s sibling temp — before it can
+# exist, in two vecs registered through the kill handler's scratch-tree slot (cbt/sigclean.cyr
+# `_cbt_sig_tree_set`), so the handler unlinks them and removes the directories, rmdir only. The
+# slot is single: its other user, distlib's stdlib mirror, is made inside the verify, after the
+# startup resolve has ended, so the two never overlap in one process. CHANGELOG [6.7.14]
+var _dep_scr_root = 0;      # the scratch root (a cstr), 0 when no scratch resolve runs
+var _dep_scr_files = 0;     # vec of cstr: every file the scratch resolve can have created
+var _dep_scr_dirs = 0;      # vec of cstr: its directories, parents first
+
 # 6.7.6 (lane C) — the walk's state for the local-mode rule (see "LOCAL MODE" below). Declared up
 # here, above every use (a global declared below its use is not visible).
 var _dep_local_from = 0;    # what switched local mode on: "--local" or "CYRIUS_LOCAL"
@@ -275,6 +288,62 @@ fn _files_identical(a, b): i64 {
     return same;
 }
 
+# Start recording the scratch resolve into `root` for the kill handler (see `_dep_scr_root`).
+fn _dep_scr_begin(root): i64 {
+    _dep_scr_files = vec_new();
+    _dep_scr_dirs = vec_new();
+    _dep_scr_root = root;
+    _cbt_sig_tree_set(_dep_scr_files, _dep_scr_dirs);
+    return 0;
+}
+
+# Stop recording, once the scratch has been removed (a kill during the removal re-walks the vecs).
+fn _dep_scr_end(): i64 {
+    if (_dep_scr_root == 0) { return 0; }
+    _cbt_sig_tree_set(0, 0);
+    _dep_scr_root = 0;
+    _dep_scr_files = 0;
+    _dep_scr_dirs = 0;
+    return 0;
+}
+
+# Record directory `p` (a prefix the mkdir-p walk is about to create; a buffer it reuses, so a copy
+# is kept) when it is the scratch root or under it and not yet recorded — never one above the root
+# (the CLI's temp dir, $TMPDIR, …), which the handler must not remove.
+fn _dep_scr_dir(p): i64 {
+    if (_dep_scr_dirs == 0) { return 0; }
+    var rl = strlen(_dep_scr_root);
+    var pl = strlen(p);
+    if (pl < rl) { return 0; }
+    if (memeq(p, _dep_scr_root, rl) == 0) { return 0; }
+    if (pl > rl && load8(p + rl) != 47) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_scr_dirs)) {
+        if (_cstr_eq(vec_get(_dep_scr_dirs, i), p) == 1) { return 0; }
+        i = i + 1;
+    }
+    var c = alloc(pl + 1);
+    memcpy(c, p, pl);
+    store8(c + pl, 0);
+    vec_push(_dep_scr_dirs, c);
+    return 0;
+}
+
+# Record file `p` (a cstr that stays valid) before it can exist.
+fn _dep_scr_file(p): i64 {
+    if (_dep_scr_files != 0) { vec_push(_dep_scr_files, p); }
+    return 0;
+}
+
+# The sibling temp the next `_aw_open(dst)` creates (lib/io.cyr `_io_tmp_name`: pid + the next
+# counter value), named without spending the counter.
+fn _dep_scr_next_tmp(dst): i64 {
+    var c = _io_atomic_ctr;
+    var t = _io_tmp_name(dst);
+    _io_atomic_ctr = c;
+    return t;
+}
+
 fn _dep_copy_file(src, dst): i64 {
     # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
     # so any change that preserves file length was never vendored while `lib sync`
@@ -355,6 +424,7 @@ fn _dep_copy_file(src, dst): i64 {
         if (load8(dst + pi) == 47) {   # '/'
             memcpy(prefix_buf, dst, pi);
             store8(prefix_buf + pi, 0);
+            _dep_scr_dir(prefix_buf);   # 6.7.14: a scratch resolve records it before it exists
             sys_mkdir(prefix_buf, 0x1ED);
         }
         pi = pi + 1;
@@ -367,6 +437,14 @@ fn _dep_copy_file(src, dst): i64 {
         return 1;
     }
     # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
+    # A scratch resolve records the destination and the sibling temp before they exist; a temp
+    # name `_aw_open` had to skip (one was taken) is recorded once it is known. CHANGELOG [6.7.14]
+    var stmp = 0;
+    if (_dep_scr_files != 0) {
+        _dep_scr_file(dst);
+        stmp = _dep_scr_next_tmp(dst);
+        _dep_scr_file(stmp);
+    }
     var dh = _aw_open(dst);
     if (dh == 0) {
         sys_close(sfd);
@@ -374,6 +452,9 @@ fn _dep_copy_file(src, dst): i64 {
         _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
+    }
+    if (stmp != 0) {
+        if (_cstr_eq(load64(dh + 8), stmp) == 0) { _dep_scr_file(load64(dh + 8)); }
     }
     # Stream copy in 32KB chunks — handles files of any size
     var buf = alloc(32768);
@@ -1521,8 +1602,23 @@ fn _dep_feature_active(dep_name): i64 {
     return _dep_list_has(active, dep_name);
 }
 
+# 1 when the build this run makes is aarch64: `--aarch64` (or the arm64 macOS CLI's default) set
+# `_arch`, or the CLI is the aarch64 Linux one, whose cycc emits aarch64 only while `_arch` stays
+# ARCH_X86 (`current_cc()` / the run path read it; see `arch_name`). `_arch` alone answered x86_64
+# there, so a plain `cyrius deps` vendored `target = "x86_64"` deps and skipped `"aarch64"` ones.
+# CHANGELOG [6.7.14]
+fn _dep_arch_is_a64(): i64 {
+    if (_arch == ARCH_AARCH64) { return 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 1;
+    #endif
+    #endif
+    return 0;
+}
+
 # v6.3.1 lever 2: does a dep's `target = "<arch|os>"` key match the current build
-# target? Arch axis reads `_arch` (0=x86_64, 1=aarch64); OS axis reads the
+# target? Arch axis reads `_dep_arch_is_a64()` (6.7.14; `_arch` before); OS axis reads the
 # `_win_target` / `_agnos_target` / `_baremetal_target` flags the cyrius.cyr
 # pre-scan set before resolution. "linux" means a native userland build (not
 # windows/agnos/bare-metal) — note it also matches a native macOS host today
@@ -1531,10 +1627,11 @@ fn _dep_feature_active(dep_name): i64 {
 # everywhere). Callers only invoke this when dep_target != 0.
 fn _dep_target_matches(t): i64 {
     var tl = strlen(t);
-    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { if (_arch == 1) { return 1; } return 0; }
-    if (tl == 5 && memeq(t, "arm64", 5) == 1) { if (_arch == 1) { return 1; } return 0; }
-    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { if (_arch == 0) { return 1; } return 0; }
-    if (tl == 3 && memeq(t, "x86", 3) == 1) { if (_arch == 0) { return 1; } return 0; }
+    var a64 = _dep_arch_is_a64();
+    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { return a64; }
+    if (tl == 5 && memeq(t, "arm64", 5) == 1) { return a64; }
+    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { return 1 - a64; }
+    if (tl == 3 && memeq(t, "x86", 3) == 1) { return 1 - a64; }
     if (tl == 7 && memeq(t, "windows", 7) == 1) { if (_win_target == 1) { return 1; } return 0; }
     if (tl == 5 && memeq(t, "agnos", 5) == 1) { if (_agnos_target == 1) { return 1; } return 0; }
     if (tl == 10 && memeq(t, "bare-metal", 10) == 1) { if (_baremetal_target == 1) { return 1; } return 0; }
@@ -3269,7 +3366,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             _ew_shown(dep_git);
                             sys_write(STDERR_FD, "\n", 1);
                         }
-                        var gpid = sys_fork();
+                        # 6.7.14: tracked, the signal FORWARDED (fwd 1) — a SIGTERM'd resolve left
+                        # `git clone` running on to create the cache after the CLI died; sent the
+                        # signal, git removes its own partial clone directory. CHANGELOG [6.7.14]
+                        var gpid = _cbt_fork_tracked(1);
                         if (gpid == 0) {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
@@ -3285,6 +3385,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             if (sys_waitpid(gpid, &gsb, 0) > 0) {
                                 if ((load64(&gsb) & 0xFFFF) == 0) { gok = 1; }
                             }
+                            _cbt_child_untrack(gpid);
                         }
                         if (gok == 0) {
                             _ew("error: git clone failed for dep '");
@@ -4142,6 +4243,7 @@ fn cmd_deps(): i64 {
             _dep_rm_tree(locked_root);
             _dep_vroot = _cat2(locked_root, "/lib");
             _dep_vendor_mode = 0;        # a private scratch under this run's own temp dir
+            _dep_scr_begin(locked_root); # 6.7.14: a kill removes it (_deps_finish ends it)
         }
     } elif (_dep_local_on == 1) {
         _dep_local_active = _dep_local_prescan(buf, n, _consumer_dir, 0, 0, vec_new());
@@ -4289,6 +4391,7 @@ fn _deps_pin_move_dry(buf, n, cdir): i64 {
     _dep_rm_tree(root);
     _dep_vroot = _cat2(root, "/lib");
     _dep_vendor_mode = 0;            # a private scratch under this run's own temp dir
+    _dep_scr_begin(root);            # 6.7.14: a kill removes it
     _dep_dry_drop = vec_new();
     _dep_dry_fetched = vec_new();
     var po = _progress_open;
@@ -4306,6 +4409,7 @@ fn _deps_pin_move_dry(buf, n, cdir): i64 {
     }
     _dep_dry_drop = 0;
     _dep_rm_tree(root);
+    _dep_scr_end();
     _dep_vroot = "lib";
     _dep_vendor_mode = 1;
     _deps_pass_reset();
@@ -4407,6 +4511,7 @@ fn _deps_finish(errors, copied, locked_root): i64 {
         if (keep == 1) { _dep_overlay_env(_dep_vroot); }
         else {
             _dep_rm_tree(locked_root);
+            _dep_scr_end();          # 6.7.14: the private scratch's record, once it is gone
             _dep_vroot = "lib";
         }
         _dep_vendor_mode = 1;
@@ -5672,9 +5777,11 @@ fn _git_errfile(): i64 {
 }
 
 # Remove the capture file. Called on every path that is done with it, so the CLI's private
-# temp dir is left as it was found (there is no exit hook here to sweep it later).
+# temp dir is left as it was found (there is no exit hook here to sweep it later). A drop: each
+# `_git_run` registers the one path with the kill handler before its child can create it.
+# CHANGELOG [6.7.14]
 fn _git_err_clear(): i64 {
-    if (_git_err_path != 0) { sys_unlink(_git_err_path); }
+    if (_git_err_path != 0) { _cbt_scratch_drop(_git_err_path); }
     return 0;
 }
 
@@ -5731,12 +5838,19 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     var errf = _git_errfile();
     # The stdout capture is opened HERE, before the fork: a capture that cannot be created
     # returns -2 with the errno recorded, and git is not run. CHANGELOG [6.6.9]
+    # Both captures are registered with the kill handler before they can exist — `outf` is the
+    # caller's to drop, `git_err` is `_git_err_clear`'s (one slot for the process: the track
+    # de-duplicates) — and git is a child the handler sends the signal and waits for (fwd 1), so
+    # a SIGTERM'd resolve leaves neither, and git runs its own cleanup (its index.lock, a
+    # clone's partial directory). CHANGELOG [6.7.14]
     var cfd = 0 - 1;
     if (outf != 0) {
+        _cbt_scratch_track(outf);
         cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
-        if (cfd < 0) { _git_cap_errno = 0 - cfd; return 0 - 2; }
+        if (cfd < 0) { _cbt_scratch_untrack(outf); _git_cap_errno = 0 - cfd; return 0 - 2; }
     }
-    var pid = sys_fork();
+    _cbt_scratch_track(errf);
+    var pid = _cbt_fork_tracked(1);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a
@@ -5786,7 +5900,9 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     if (cfd >= 0) { sys_close(cfd); }
     var wst[8];
     store64(&wst, 0);
-    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
+    var wr = sys_waitpid(pid, &wst, 0);
+    _cbt_child_untrack(pid);
+    if (wr < 0) { return 0 - 1; }
     var st = load64(&wst);
     if ((st & 127) != 0) { return 0 - 1; }      # killed by a signal → distrust
     return (st >> 8) & 255;
@@ -5796,12 +5912,12 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
 fn _git_rev(clone_dir, rev): i64 {
     var tmpf = _cbt_tmpfile("git_rev_out");
     if (_git_run(clone_dir, 0, "rev-parse", "--verify", "-q", rev, tmpf, 0) != 0) {
-        sys_unlink(tmpf);
+        _cbt_scratch_drop(tmpf);
         return 0;
     }
     var buf = alloc(128);
     var nn = file_read_all(tmpf, buf, 127);
-    sys_unlink(tmpf);
+    _cbt_scratch_drop(tmpf);
     if (nn < 40) { return 0; }
     var hl = 0;
     while (hl < nn) {
@@ -5835,10 +5951,12 @@ fn _git_has_repo(clone_dir): i64 {
     return 1;
 }
 
-fn _git_verify_cleanup(idx, outf): i64 {
-    sys_unlink(idx);
-    sys_unlink(_cat2(idx, ".lock"));
-    sys_unlink(outf);
+# Remove the verify's temps (the private index, git's lock beside it, the stdout capture) and
+# forget them: `_git_cache_verify` registers all three with the kill handler. CHANGELOG [6.7.14]
+fn _git_verify_cleanup(idx, lck, outf): i64 {
+    _cbt_scratch_drop(idx);
+    _cbt_scratch_drop(lck);
+    _cbt_scratch_drop(outf);
     return 0;
 }
 
@@ -6096,11 +6214,11 @@ fn _git_cstr_copy(p, n): i64 {
 fn _git_conv_explains(clone_dir, idx, path, blobsha, rawsha, outf): i64 {
     var cf = _cbt_tmpfile("dep_verify_conv");
     if (_git_run(clone_dir, idx, "cat-file", "--filters", _cat2("--path=", path), blobsha, cf, 0) != 0) {
-        sys_unlink(cf);
+        _cbt_scratch_drop(cf);
         return 0;
     }
     var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", cf, 0, outf, 0);
-    sys_unlink(cf);
+    _cbt_scratch_drop(cf);
     if (hr != 0) { return 0; }
     var n = _file_size(outf);
     if (n <= 0) { return 0; }
@@ -6136,9 +6254,10 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
     var pl = _cbt_tmpfile("dep_verify_paths");
     var ps = str_builder_build(sb);
     var pn = str_len(ps);
+    _cbt_scratch_track(pl);                       # git's stdin; dropped below (CHANGELOG [6.7.14])
     var pw = file_write_all(pl, str_data(ps), pn);
     if (pw != pn) {
-        sys_unlink(pl);
+        _cbt_scratch_drop(pl);
         _git_cap_errno = 28;                      # a short write reads as ENOSPC
         if (pw < 0) { _git_cap_errno = 0 - pw; }
         return 3;
@@ -6146,7 +6265,7 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
     _git_in_path = pl;
     var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", "--stdin-paths", 0, outf, 0);
     _git_in_path = 0;
-    sys_unlink(pl);
+    _cbt_scratch_drop(pl);
     if (hr != 0) { return 3; }
     var hsz = _file_size(outf);
     if (hsz <= 0) { return 3; }
@@ -6199,15 +6318,21 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
 fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
     _git_cap_errno = 0;
     var idx = _cbt_tmpfile("dep_verify_index");
+    var lck = _cat2(idx, ".lock");
     var outf = _cbt_tmpfile("dep_verify_out");
-    _git_verify_cleanup(idx, outf);
+    _git_verify_cleanup(idx, lck, outf);
+    # git creates the index (and its lock) in the child, so they are registered before any git
+    # runs; `_git_run` registers `outf` again (one slot). CHANGELOG [6.7.14]
+    _cbt_scratch_track(idx);
+    _cbt_scratch_track(lck);
+    _cbt_scratch_track(outf);
     # The probe must be as big as what git was writing: the private index (and its
     # index.lock) is the size of the cache's own — a 400-file dep's is ~40 KB, and a probe
     # smaller than that passed while read-tree / update-index had failed. CHANGELOG [6.6.9]
     _git_cap_want = _git_index_size(clone_dir) + 4096;
     var r = _git_cap_judge(_git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf));
     _git_cap_want = 0;
-    _git_verify_cleanup(idx, outf);
+    _git_verify_cleanup(idx, lck, outf);
     return r;
 }
 

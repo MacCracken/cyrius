@@ -416,6 +416,15 @@ case "$HOST" in
       && (cd _envp && _erc=0; env -i PATH=/usr/bin:/bin HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 CYRIUS_STRICT_PIN=1 "$D/_envb/cyrius" build m.cyr o > "$D/_env.log" 2>&1 || _erc=$?; [ $_erc -ne 0 ]) \
       && grep -q "toolchain drift (CYRIUS_STRICT_PIN)" _env.log && test ! -s _envp/o' \
       || { echo "ENV_FAIL: ecb — a CLI child did not inherit the environment (the cycc child never saw CYRIUS_STRICT_PIN=1; ~/$RD/_env.log)"; exit 1; }
+    # 6.7.14 — `--win` from the macOS CLI is refused by name: neither Mach-O compiler reads
+    # CYRIUS_TARGET_WIN, so it wrote a Mach-O named `.exe` at rc 0 (rc 1 now, the named error, no
+    # output). win_cli_refuses_foreign_targets.sh S6 / S6m read the text from the binary; only this
+    # host runs it. CHANGELOG [6.7.14]
+    ssh $SSHO ecb "cd ~/$RD && "'D=$PWD && mkdir -p _winp && printf "var x = 7;\n" > _winp/hello.cyr \
+      && (cd _winp && _wrc=0; HOME="$D/_envh" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/_envb/cyrius" build --win hello.cyr w.exe > "$D/_win.log" 2>&1 || _wrc=$?; [ $_wrc -eq 1 ]) \
+      && grep -qxF "error: --win is not available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or Windows)" _win.log \
+      && test ! -e _winp/w.exe' \
+      || { echo "WIN_FAIL: ecb — cyrius build --win was not refused by name, or wrote w.exe (~/$RD/_win.log)"; exit 1; }
     # 6.6.20 — the macOS argv scan honours --syntax-only (_ARGV_FLAG_ONE bit 8). `cyrius lint`
     # passes it on every POSIX host; this driver never read it, so lint refused a file whose only
     # fault was a name defined in another file. Only this host can run the arm64 scan.
@@ -480,6 +489,15 @@ case "$HOST" in
       && (cd _envp && _erc=0; env -i PATH=/usr/bin:/bin HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 CYRIUS_STRICT_PIN=1 "$D/_envb/cyrius" build m.cyr o > "$D/_env.log" 2>&1 || _erc=$?; [ $_erc -ne 0 ]) \
       && grep -q "toolchain drift (CYRIUS_STRICT_PIN)" _env.log && test ! -s _envp/o' \
       || { echo "ENV_FAIL: ach — a CLI child did not inherit the environment (the cycc child never saw CYRIUS_STRICT_PIN=1; ~/$RD/_env.log)"; exit 1; }
+    # 6.7.14 — `--win` from the macOS CLI is refused by name: neither Mach-O compiler reads
+    # CYRIUS_TARGET_WIN, so it wrote a Mach-O named `.exe` at rc 0 (rc 1 now, the named error, no
+    # output). win_cli_refuses_foreign_targets.sh S6 / S6m read the text from the binary; only this
+    # host runs it. CHANGELOG [6.7.14]
+    ssh $SSHO ach "cd ~/$RD && "'D=$PWD && mkdir -p _winp && printf "var x = 7;\n" > _winp/hello.cyr \
+      && (cd _winp && _wrc=0; HOME="$D/_envh" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/_envb/cyrius" build --win hello.cyr w.exe > "$D/_win.log" 2>&1 || _wrc=$?; [ $_wrc -eq 1 ]) \
+      && grep -qxF "error: --win is not available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or Windows)" _win.log \
+      && test ! -e _winp/w.exe' \
+      || { echo "WIN_FAIL: ach — cyrius build --win was not refused by name, or wrote w.exe (~/$RD/_win.log)"; exit 1; }
     # 6.6.20 — --syntax-only through the x86-macOS argv scan, as on ecb.
     ssh $SSHO ach "cd ~/$RD && "'printf "fn f(): i64 { return not_declared_anywhere; }\nvar r = f();\n" > _so.cyr \
       && ./r1 --syntax-only < _so.cyr > /dev/null 2> _so.err \

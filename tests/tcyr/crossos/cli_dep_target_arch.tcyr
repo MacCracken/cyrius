@@ -1,0 +1,59 @@
+# cli_dep_target_arch.tcyr — CROSS-HOST: the arch axis of a dep's `target` key (cbt/deps.cyr
+# `_dep_target_matches`), answered by each host's own compiler. With the CLI's default arch
+# (cbt/cyrius.cyr's `set_arch(ARCH_X86)`, which only the arm64 macOS CLI overrides) a Linux host
+# matches its OWN machine: on aarch64 Linux (pi) `target = "aarch64"` / `"arm64"` resolve and
+# `"x86_64"` / `"x86"` are skipped — through 6.7.13 the aarch64 Linux CLI answered x86_64 there, so
+# a plain `cyrius deps` vendored the x86_64 dep and skipped the aarch64 one, rc 0. The machine is
+# read at run time (uname), not from the CLI's own #ifdef. Off Linux the default answers x86_64
+# (the arm64 macOS CLI sets ARCH_AARCH64 in main()). `--aarch64` (ARCH_AARCH64) matches aarch64 on
+# every host. CHANGELOG [6.7.14]
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+#ifdef CYRIUS_TARGET_LINUX
+include "lib/sys.cyr"
+#endif
+include "src/version_str.cyr"
+include "cbt/core.cyr"
+include "cbt/cli_args.cyr"
+include "cbt/manifest.cyr"
+include "cbt/sigclean.cyr"
+include "cbt/build.cyr"
+include "cbt/commands.cyr"
+include "cbt/project.cyr"
+include "cbt/quality.cyr"
+include "cbt/deps.cyr"
+include "cbt/pulsar.cyr"
+
+alloc_init();
+var host_a64 = 0;
+#ifdef CYRIUS_TARGET_LINUX
+var uts = alloc(UTS_SIZE);
+assert_eq(sys_uname(uts), 0, "uname answers");
+if (streq(uts + UTS_MACHINE, "aarch64") == 1) { host_a64 = 1; }
+#endif
+set_arch(ARCH_X86);   # the CLI's default (cbt/cyrius.cyr main)
+assert_eq(_dep_target_matches("aarch64"), host_a64, "default: aarch64 matches on aarch64 Linux only");
+assert_eq(_dep_target_matches("arm64"), host_a64, "default: arm64 matches on aarch64 Linux only");
+assert_eq(_dep_target_matches("x86_64"), 1 - host_a64, "default: x86_64 skipped on aarch64 Linux only");
+assert_eq(_dep_target_matches("x86"), 1 - host_a64, "default: x86 skipped on aarch64 Linux only");
+set_arch(ARCH_AARCH64);   # --aarch64
+assert_eq(_dep_target_matches("aarch64"), 1, "--aarch64: target aarch64 matches");
+assert_eq(_dep_target_matches("arm64"), 1, "--aarch64: target arm64 matches");
+assert_eq(_dep_target_matches("x86_64"), 0, "--aarch64: target x86_64 is skipped");
+assert_eq(_dep_target_matches("x86"), 0, "--aarch64: target x86 is skipped");
+#endif
+#endif
+var r = assert_summary();
+syscall(SYS_EXIT, r);

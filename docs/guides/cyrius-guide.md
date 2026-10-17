@@ -5202,6 +5202,14 @@ forks) and the git queries of a local-mode resolve or `cyrius update` (their `wt
 stopped and cleaned the same way (6.7.13; before, a kill left the capture and that child running),
 and a distlib verify's copy of the pinned stdlib in the project, `dist/.dlverify-<pid>/` (with the
 round's `entry.cyr`), is removed too (6.7.13; before, a kill left the ~114-file mirror there).
+`cyrius deps`'s own git — the cached checkout's verify (rev-parse, fsck, read-tree, …, with its
+`git_err`, `git_rev_out` and `dep_verify_*` captures and private index) and `git clone` — is sent
+the signal and waited for, so git runs its own cleanup: a killed clone removes its partial
+directory from the dep cache (6.7.14; before, a kill left the captures and git running, and a
+clone went on to create the cache after the CLI had died). The scratch resolve of `cyrius deps
+--locked` (`<tmp>/locked-deps/`) and of the dry pass a resolve at a moved pin runs first
+(`<tmp>/pin-move-deps/`) is removed too, a copy's half-written sibling temp included (6.7.14;
+before, a kill left the whole scratch, so the temp dir stayed).
 A signal that arrives while the CLI is starting one of these children is held until the child is
 tracked, then handled (6.7.13; before, a signal in that window left the child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
@@ -5379,6 +5387,10 @@ private, or return its lanes another way, to generate a header for the rest of t
 parameter, which no C11 type carries``): cycc receives it in a vector register (xmm / v), where the
 printed `cyr_val v` had a C caller pass it in rdi / x0. A pointer to a vector (`v: *f64v2`) and a
 `: Result` / `: Option` / `: Tagged` parameter (one word, the tag) stay `cyr_val`.
+Since 6.7.14 a parameter list that wraps lines (`fn f(a, b,` / `  c): i64 {`) is read to its own
+`)`: the header printed the first line's parameters alone (`tls_native_hkdf_expand_label`, nine
+parameters over two lines, came out with four), rc 0, and a vector parameter on a continuation line
+was not refused.
 Since 6.7.12 a `: stack` enum's return is the pair it is (D23): `: Result`, `: Option`, `: Tagged`
 (and a file's own `enum E: stack`) are `cyr_val2` with the tag in `w0` and the payload in `w1`, on
 x86_64 SysV only — cycc returns the pair in rax:rdx there and on Win64 (where C passes a hidden
@@ -5394,7 +5406,9 @@ that pair from the signature. Since 6.7.13 the same holds for a `?` on such a ca
 pair-returning): refused as ``… pair through 'parse(..)?' …``, followed to the same fixpoint.
 Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
 private. A closure's own `return` or `?` is not the fn's (a block or an expression body); a pair
-reached through another file's fn or a method is not seen.
+reached through another file's fn or a method is not seen — so cyrius's own lib declares its
+wrappers: lib/result.cyr's `ok_via` / `err_via` (6.7.13) and lib/net.cyr's `sock_send_a` /
+`sock_recv_a` (6.7.14, which return theirs) are `: Result`, `cyr_val2` in the header.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
 one is declared above it, else the 8-byte handle (as `Vec<T>` always is); one whose `struct Vec` is
 declared below it is refused by name, as cycc refuses it (6.7.13).
@@ -7479,16 +7493,16 @@ three. It is kept (6.7.13's D45). To read how much code an aarch64 build gained,
 
 ## Targeting Windows (PE) (v6.1.16+)
 
-Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from Linux or macOS via
-the `--win` cross-compilation flag. `cyrius build --win` sets `CYRIUS_TARGET_WIN=1` in the
-compiler's environment, routing platform-specific code paths
+Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from x86_64 Linux via the `--win`
+cross-compilation flag (on Windows `--win` is the native target). `cyrius build --win` sets
+`CYRIUS_TARGET_WIN=1` in the compiler's environment, routing platform-specific code paths
 through Windows syscall reroutes (kernel32 and shell32 imports) instead of POSIX
 syscalls.
 
 ### Cross-Building for Windows
 
 ```sh
-# Cross-compile a Windows PE32+ executable from Linux/macOS
+# Cross-compile a Windows PE32+ executable from x86_64 Linux
 cyrius build --win src/main.cyr build/myapp.exe
 
 # Or via the environment variable (useful in build scripts)
@@ -7496,12 +7510,14 @@ CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
 The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
-x86_64 instruction set. The aarch64 Linux CLI **refuses** `--win` by name, rc 1, before anything
-compiles — its cycc emits aarch64 only (6.7.13; through 6.7.12 it wrote an aarch64 ELF named
-`.exe` and said OK at rc 0):
+x86_64 instruction set. A CLI whose compiler has no PE emitter **refuses** `--win` by name, rc 1,
+before anything compiles or is written: the aarch64 Linux CLI (6.7.13; through 6.7.12 it wrote an
+aarch64 ELF named `.exe` and said OK at rc 0) and both macOS CLIs (6.7.14; through 6.7.13 they
+wrote a Mach-O named `.exe` at rc 0 — neither Mach-O compiler reads `CYRIUS_TARGET_WIN`):
 
 ```
 error: --win is not available from the aarch64 Linux CLI: its cycc emits aarch64 only (build PE images on x86_64 Linux or Windows)
+error: --win is not available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or Windows)
 ```
 
 ONE target selector per run: `--win`, `--agnos` (the agnos ring-3
