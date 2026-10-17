@@ -30,8 +30,14 @@
 #   H8  alloc_reset rewinds to the same base and hands back zeroed memory, alloc_used counts (native + cx)
 #   H9  an H1 .cyx on a cxvm that does not serve brk (this tree's cxvm with the brk arm cut out — what a
 #       pre-6.7.14 cxvm is, under D55) exits 1 naming it: `alloc: this cxvm does not serve brk (12)`
+#   H10 a guest that raised its own sp past the segment cannot move the break past it (cx): the probe
+#       asks brk for 9 MiB and 1 GiB and exits 40 when both are refused; run as built (the sp check
+#       refuses) and with its first instruction (`jmp +1`, asserted `50 01 00 00` so the patch site
+#       cannot go stale) overwritten by `movhi r254, 0x8000` (`fe fe 00 80`: sp 0x80800000) — sp is an
+#       ordinary guest register, and a break bounded by sp alone was granted past _CX_MEM_SIZE, cxvm
+#       then zeroing its own host heap past the segment (6.7.14 review)
 #
-# MUTATION LEDGER (6.7.14, measured; the real tree green 12/12):
+# MUTATION LEDGER (6.7.14, measured; the real tree green 13/13):
 #   MH1 lib/alloc_cx.cyr back to the static buffer (6.7.13) -> RED 8: H1 / H4 / H8 cx, H2 and H7 (each
 #       "alloc: cx static heap exhausted (128 KB)"), H3 (no break printed: the 6 MiB alloc stops),
 #       H6 (a 151,546 B .cyx), H9 (the static heap never asks for brk, so nothing names the old cxvm)
@@ -41,6 +47,8 @@
 #   MH4 _cx_guest_brk's sp check removed -> RED 2: H2 (the break passes the live sp: cxvm traps the next
 #       frame, `guest stack overflow, sp 8388544`, instead of the named exhaustion), H5 (exit 24: 8 MiB
 #       granted)
+#   MH5 _cx_guest_brk's segment cap removed (bounded by the live sp alone) -> RED 1: H10 (exit 139: the
+#       9 MiB break is granted and the 1 GiB one faults cxvm inside its zeroing loop, no `cxvm:` line)
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and — unless CYCC_CX is set — the cx
 # compiler from THIS tree's src/main_cx.cyr, and cxvm from programs/cxvm.cyr (CXVM overrides it).
@@ -281,8 +289,35 @@ else
     else bad "H9: the brk-less cxvm copy does not build"; fi
 fi
 
-WANT=12
+# H10 a raised sp does not move the break past the segment.
+cat > "$T/h10.cyr" <<'EOF'
+var b0 = syscall(12, 0);
+var r1 = syscall(12, 9437184);
+var r2 = syscall(12, 1073741824);
+var bad = 40;
+if (r1 != b0) { bad = bad | 1; }
+if (r2 != b0) { bad = bad | 2; }
+syscall(60, bad);
+EOF
+if "$CX" < "$T/h10.cyr" > "$T/h10.cyx" 2> "$T/h10.err" && [ -s "$T/h10.cyx" ]; then
+    i10=$(od -An -tx1 -j8 -N4 "$T/h10.cyx" | tr -d ' \n')
+    rc10=0; (cd "$T" && timeout 120 "$VM" < h10.cyx > h10.out 2>&1) || rc10=$?
+    if [ "$i10" != 50010000 ]; then
+        bad "H10 (cx): the probe's first instruction is '$i10', want 50010000 (jmp +1) — the patch site moved; update the row"
+    elif [ "$rc10" != 40 ] || grep -q '^cxvm:' "$T/h10.out"; then
+        bad "H10 (cx): the unpatched probe exits $rc10, want 40 (41: 9 MiB granted, 42: 1 GiB granted) $(grep -m1 '^cxvm:' "$T/h10.out")"
+    else
+        printf '\376\376\000\200' | dd of="$T/h10.cyx" bs=1 seek=8 conv=notrunc 2> /dev/null
+        p10=$(od -An -tx1 -j8 -N4 "$T/h10.cyx" | tr -d ' \n')
+        rc10=0; (cd "$T" && timeout 120 "$VM" < h10.cyx > h10.out 2>&1) || rc10=$?
+        if [ "$p10" = fefe0080 ] && [ "$rc10" = 40 ] && ! grep -q '^cxvm:' "$T/h10.out"; then
+            ok "H10 (cx): with sp raised to 0x80800000 brk still refuses 9 MiB and 1 GiB — the break stays inside the segment"
+        else bad "H10 (cx): patched '$p10' (want fefe0080), exit $rc10, want 40 (41: 9 MiB granted past the segment, 139: cxvm faulted zeroing past it) $(grep -m1 '^cxvm:' "$T/h10.out")"; fi
+    fi
+else bad "H10 (cx): the probe does not compile for cx: $(grep -m1 '^error' "$T/h10.err")"; fi
+
+WANT=13
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT rows: cx alloc() bumps over the guest break cxvm serves (3 MiB written and read back, the named exhaustion stating the size it reached, the stack trapping at the break, memory the stack used read back zero, brk's own contract, no 128 KB buffer in the .cyx, audit_walk_fifo past alloc, alloc_reset, a brk-less cxvm named)"
+echo "PASS: $G — $pass/$WANT rows: cx alloc() bumps over the guest break cxvm serves (3 MiB written and read back, the named exhaustion stating the size it reached, the stack trapping at the break, memory the stack used read back zero, brk's own contract, no 128 KB buffer in the .cyx, audit_walk_fifo past alloc, alloc_reset, a brk-less cxvm named, the break bounded by the segment under a raised sp)"
 exit 0

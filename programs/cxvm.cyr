@@ -9,9 +9,10 @@
 #
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
 #   translates read/write/open (0/1/2), serves getrandom/clock_gettime (318/228) through the
-#   host's stdlib and brk (12) in guest space (6.7.14), and passes a short list of SCALAR-ONLY calls (close, lseek, exit, getpid, kill,
-#   fsync … — _cx_sys_scalar) to the host kernel as they are, so running an untrusted .cyx ==
-#   running a native binary with cxvm's privileges over those calls. Every other number answers
+#   host's stdlib and brk (12) in guest space (6.7.14), and passes a short list of SCALAR-ONLY
+#   calls (close, lseek, exit, getpid, kill, fsync … — _cx_sys_scalar) to the host kernel as
+#   they are, so running an untrusted .cyx == running a native binary with cxvm's privileges
+#   over those calls. Every other number answers
 #   -ENOSYS (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
@@ -275,11 +276,14 @@ fn _cx_syspath(a, out): i64 {
 # brk(addr) for the guest, with Linux's contract: answer the break, moved to `addr` when the move is
 # allowed and left where it was when not. 0 (or anything below the first break) only asks. The
 # break may move down to its start, and up only while `addr` stays _CX_STACK_RESERVE below the live
-# guest sp. Memory a growth hands out reads zero, as Linux's does — the guest stack may have used
-# it earlier. CHANGELOG [6.7.14]
+# guest sp AND below the segment's top: sp (r254) is a register the guest can set past _CX_MEM_SIZE
+# (mov / add / movhi), and the zeroing below writes through _cx_mem unchecked — bounded by sp alone,
+# a raised sp had cxvm zero its own host heap past the segment. Memory a growth hands out reads
+# zero, as Linux's does — the guest stack may have used it earlier. CHANGELOG [6.7.14]
 fn _cx_guest_brk(addr): i64 {
     if (addr < _cx_brk_start) { return _cx_brk; }
     if (addr > cx_reg_get(254) - _CX_STACK_RESERVE) { return _cx_brk; }
+    if (addr > _CX_MEM_SIZE - _CX_STACK_RESERVE) { return _cx_brk; }
     var z = _cx_brk;
     while (z < addr && (z & 7) != 0) { store8(_cx_mem + z, 0); z = z + 1; }
     while (z + 8 <= addr) { store64(_cx_mem + z, 0); z = z + 8; }

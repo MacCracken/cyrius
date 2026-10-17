@@ -90,8 +90,10 @@ guarantee:
   `[buf, buf + count)`, or a path up to its NUL — and answer `-EFAULT` without reaching the host
   when it leaves the data segment (6.6.12); `getrandom` (318) / `clock_gettime` (228) are
   host-served with the same check. **`brk` (12) is served in guest space (6.7.14):** the break
-  starts at the image end rounded up to 16 and moves while it stays 1 MiB below the live guest sp
-  (otherwise brk answers the old break, as Linux does); memory a move grants reads zero.
+  starts at the image end rounded up to 16 and moves while it stays 1 MiB below both the live guest
+  sp and the segment's top — sp is a register the guest can raise past the segment, and the break
+  is bounded by the segment whatever sp says (otherwise brk answers the old break, as Linux does);
+  memory a move grants reads zero.
   `lib/alloc_cx.cyr`'s heap bumps over it — up to ~7 MiB less the image — where it was a static
   128 KB buffer written into every allocating `.cyx`; a `.cyx` built by the 6.7.14 `cycc_cx` that
   allocates needs a 6.7.14 cxvm (an older one answers brk -38 or with a host address, and
