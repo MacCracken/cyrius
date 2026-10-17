@@ -81,6 +81,8 @@
 #   the `?` route named as a `return` ('parse(..)')            → H12 FAIL (the filed repro and the 5 refusal rows)
 # 6.7.13 — D37 (issues/archived/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md item 2):
 #   lib/result.cyr's ok_via / err_via back to `: i64`          → H12 FAIL (the result.cyr rows: rc 1, both prototypes)
+# 6.7.14 — the same for lib/net.cyr (issues/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md):
+#   lib/net.cyr's sock_send_a / sock_recv_a back to `: i64`     → H12 FAIL (both cyr_val2 rows, the copy row)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
 #   a Str FIELD sized 16                                              → H8 FAIL (the shapes row)
@@ -546,6 +548,38 @@ vrc=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/via.tcyr" > "$D/via_new" 2> /dev/
 vro=0; (cd "$D/old" && "$ROOT/build/cycc" < "$D/via.tcyr" > "$D/via_old" 2> /dev/null) || vro=$?
 check "a caller (result_allocator_via.tcyr: ok_via, err_via, net.cyr's sock_*_a) compiles byte-identical to the : i64 spelling" \
     "0 0 same" "$vrc $vro $(cmp -s via_new via_old && echo same || echo differ)"
+# 6.7.14 — the same for lib/net.cyr's sock_send_a / sock_recv_a, which return ok_via / err_via's pair
+# (issues/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md; 6.7.13's D37
+# applied to cyrius's own lib): declared `: Result`, they are cyr_val2 and `cyrius header lib/net.cyr`
+# stays rc 0. Callers compile byte-identical to the 6.7.13 `: i64` spelling (x86_64 and PE), and a
+# copy whose sock_*_a returns `ok_via(a, n + 7)` differs — the copy's lib is the one compiled.
+# Mutation: the two signatures back to `: i64` → the cyr_val2 rows RED.
+rcn=0; "$CY" header "$ROOT/lib/net.cyr" > o12n 2> e12n || rcn=$?
+check "lib/net.cyr: exit 0, nothing on stderr" "0 0" "$rcn $(wc -c < e12n | tr -d ' ')"
+for fnp in 'sock_send_a(cyr_val a, cyr_val fd, cyr_val buf, cyr_val len)' 'sock_recv_a(cyr_val a, cyr_val fd, cyr_val buf, cyr_val len)'; do
+    check "lib/net.cyr: ${fnp%%(*} (: Result) is cyr_val2" 1 "$(has o12n "cyr_val2 $fnp;   /* returns Result: the tag in w0, the payload in w1 */")"
+done
+mkdir old14 old14p && cp -R "$ROOT/lib" old14/lib && cp -R "$ROOT/lib" old14p/lib
+sed -e 's/^fn sock_send_a(a, fd, buf, len): Result {$/fn sock_send_a(a, fd, buf, len): i64 {/' \
+    -e 's/^fn sock_recv_a(a, fd, buf, len): Result {$/fn sock_recv_a(a, fd, buf, len): i64 {/' "$ROOT/lib/net.cyr" > old14/lib/net.cyr
+sed -e 's/^    return ok_via(a, n);$/    return ok_via(a, n + 7);/' "$ROOT/lib/net.cyr" > old14p/lib/net.cyr
+check "the 6.7.13 copy differs from lib/net.cyr in the two signatures alone" "2 2" \
+    "$(diff "$ROOT/lib/net.cyr" old14/lib/net.cyr | grep -c '^> fn sock_[a-z]*_a(a, fd, buf, len): i64 {$' || true) $(diff "$ROOT/lib/net.cyr" old14/lib/net.cyr | grep -c '^>' || true)"
+cp "$ROOT/tests/tcyr/crossos/net_plain_write_peer_reset.tcyr" npr.tcyr
+nbad=""
+for src in via npr; do
+    for tw in x86:0 pe:1; do
+        t=${tw%%:*}; w=${tw#*:}
+        for side in new old14 old14p; do
+            dir="$ROOT"; [ "$side" = new ] || dir="$D/$side"
+            if [ "$w" = 1 ]; then (cd "$dir" && CYRIUS_TARGET_WIN=1 "$ROOT/build/cycc" < "$D/$src.tcyr" > "$D/$src.$t.$side" 2> /dev/null) || nbad="$nbad $src/$t/$side:rc"
+            else (cd "$dir" && "$ROOT/build/cycc" < "$D/$src.tcyr" > "$D/$src.$t.$side" 2> /dev/null) || nbad="$nbad $src/$t/$side:rc"; fi
+        done
+        cmp -s "$src.$t.new" "$src.$t.old14" || nbad="$nbad $src/$t:differs-from-i64"
+        cmp -s "$src.$t.new" "$src.$t.old14p" && nbad="$nbad $src/$t:probe-identical"
+    done
+done
+check "callers (result_allocator_via, net_plain_write_peer_reset; x86_64 and PE) compile byte-identical to the : i64 spelling; the n + 7 copy differs" "" "$nbad"
 cat > pr.cyr <<'EOF'
 include "lib/tagged.cyr"
 enum Sx: stack { Va(v); Vb(); }
@@ -693,7 +727,7 @@ if [ "$CCX86" = 1 ]; then
     else
         echo "  SKIP (named): H12's clang guard rows — no clang on this host"; skips=$((skips + 1))
     fi
-    for f in o12 o12b o12p o12q o12r; do
+    for f in o12 o12b o12p o12q o12r o12n; do
         check "$f: cc -std=c11 -pedantic-errors (and -D_WIN64)" "0 0" "$(cc -std=c11 -pedantic-errors -fsyntax-only -x c "$f" > /dev/null 2>&1; echo $?) $(cc -std=c11 -pedantic-errors -fsyntax-only -D_WIN64 -x c "$f" > /dev/null 2>&1; echo $?)"
     done
     # A C caller linked against the filed repro (`object;`): both words through the header.

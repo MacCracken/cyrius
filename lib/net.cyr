@@ -815,14 +815,17 @@ fn sock_recv(fd, buf, len) : Result {
 # payload-carrying enum in the language does this. Changing that representation touches 24 enum
 # declarations and 516 construction sites. See lib/result.cyr's `ok_via` header.
 # Send on a socket, boxing the Result through the caller's allocator. Returns Ok(n)/Err(errno).
-fn sock_send_a(a, fd, buf, len): i64 {
+# Both `_a` forms are declared `: Result`, what they return (lib/result.cyr's ok_via / err_via,
+# 6.7.13's D37): `cyrius header` printed `cyr_val` for the pair, and callers compile
+# byte-identical. CHANGELOG [6.7.14]
+fn sock_send_a(a, fd, buf, len): Result {
     var n = _net_os_send(fd, buf, len);
     if (n < 0) { return err_via(a, 0 - n); }
     return ok_via(a, n);
 }
 
 # Receive from a socket, boxing the Result through the caller's allocator. Ok(n)/Err(errno).
-fn sock_recv_a(a, fd, buf, len): i64 {
+fn sock_recv_a(a, fd, buf, len): Result {
     var n = _net_os_recv(fd, buf, len);
     if (n < 0) { return err_via(a, 0 - n); }
     return ok_via(a, n);

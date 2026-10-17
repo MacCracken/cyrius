@@ -5331,7 +5331,9 @@ that pair from the signature. Since 6.7.13 the same holds for a `?` on such a ca
 pair-returning): refused as ``… pair through 'parse(..)?' …``, followed to the same fixpoint.
 Declare such a fn `: Result`, `: Option` or `: Tagged`, or make it
 private. A closure's own `return` or `?` is not the fn's (a block or an expression body); a pair
-reached through another file's fn or a method is not seen.
+reached through another file's fn or a method is not seen — so cyrius's own lib declares its
+wrappers: lib/result.cyr's `ok_via` / `err_via` (6.7.13) and lib/net.cyr's `sock_send_a` /
+`sock_recv_a` (6.7.14, which return theirs) are `: Result`, `cyr_val2` in the header.
 Sizes are cycc's `sizeof`, field by field: a bare `Vec` field is the file's own `struct Vec` when
 one is declared above it, else the 8-byte handle (as `Vec<T>` always is); one whose `struct Vec` is
 declared below it is refused by name, as cycc refuses it (6.7.13).
