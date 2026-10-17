@@ -16,7 +16,7 @@
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/call_ptr_field_store.tcyr (its row count derived, floor
 # 17) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION,
 # not hardware), cx (cxvm) and PE (wine, a private prefix); X1-X6 refused (the message first, ONE `^error`, no
-# warning, no binary) on the x86_64, aarch64, cx and PE compilers; T0-T2 (6.7.14) a top-level by-value call's
+# warning, no binary) on the x86_64, aarch64, cx and PE compilers; T0-T5 (6.7.14) a top-level by-value call's
 # field assignment refused once, by the no-frame refusal; K1-K3 controls that compile and run on every leg.
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
@@ -33,6 +33,7 @@
 #   real tree                                       -> GREEN
 #   (6.7.14, 2026-10-17, the same procedure) `_stmt_call_field` without its `_tsc_n` skip -> RED 12: T0-T2 x4
 #                                                     (2 error lines: the no-frame refusal, then "the result is a temporary")
+#   the statement forms of the T0-T2 commit (54da1380: the skip on `=` / `OP=` only, no method arm) -> RED 12: T3-T5 x4
 # (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and a for
 # step's call chain is refused before any `*T` arm runs.)
 #
@@ -220,6 +221,21 @@ refused T1 "'mk' $NS" "top-level \`mk().n += 1;\`, one error"
 row T2 'fn go(): i64 { return 0; }
 mk8().a = 5;'
 refused T2 "'mk8' $NS" "top-level \`mk8().a = 5;\`, an 8 B result, one error"
+# T3-T5: the same statement's other spellings (found beside the filing): a subscript of the result's `*T` field (the
+# second error was a false "cannot subscript field 'p': it is not a *T field") and a method returning by value.
+row T3 'struct HP { n; p: *i64; }
+fn mkp(): HP { var h: HP; h.n = 1; h.p = &buf; return h; }
+fn go(): i64 { return 0; }
+mkp().p[0] = 5;'
+refused T3 "'mkp' $NS" "top-level \`mkp().p[0] = 5;\`, one error"
+row T4 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+o.mk().n = 5;'
+refused T4 "'O_mk' $NS" "top-level \`o.mk().n = 5;\`, a method, one error"
+row T5 'fn go(): i64 { return 0; }
+var o: O = O { 1 };
+o.mk().n += 1;'
+refused T5 "'O_mk' $NS" "top-level \`o.mk().n += 1;\`, one error"
 
 # --- K: controls ---
 row K1 'fn go(): i64 { gpb().n = 5; return load64(&buf); }
@@ -231,7 +247,7 @@ runs K2 6 "the store in a generic body, two instances"
 row K3 'fn go(): i64 { gp().n = fncall0(|| { gp().m = 2; return 3; }); return load64(&buf) * 10 + load64(&buf + 8); }'
 runs K3 32 "a closure in the value storing through its own call"
 
-FLOOR_ROWS=14
+FLOOR_ROWS=17
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

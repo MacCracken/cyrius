@@ -5011,12 +5011,14 @@ fn _stmt_method_call(S, noff): i64 {
     var st = GTI(S) - 1;
     _cpf_st = st;   # 6.7.13 (D8 (a)): `o.gp().n = v;` through a method's `*T` result (`_cpf_try`)
     _cpf_done = 0 - 1;
+    var tn = _tsc_n;
     PARSE_FIELD_LOAD(S, noff);
     _cpf_st = sv;
     if (_cpf_done == st) { return 0; }   # the store ended the statement
     # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
-    # `expected ';', got '='`). A chain ending in a call keeps that message.
-    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { _asg_temp_refused(S); return 0; } }
+    # `expected ';', got '='`). A chain ending in a call keeps that message. 6.7.14: at top level the
+    # by-value method refused itself (`_tsc_n` moved), the one error. CHANGELOG [6.7.14]
+    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
