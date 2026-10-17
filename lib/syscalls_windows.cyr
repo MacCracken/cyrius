@@ -278,7 +278,8 @@ fn _win_same_file(a, b): i64 {
 # O_DIRECTORY|O_NOFOLLOW (BACKUP_SEMANTICS + OPEN_REPARSE_POINT: never follows, never
 # truncates, never creates) and ask THAT handle: a name surrogate is -ELOOP (-40); a real
 # directory under write access / O_CREAT / O_TRUNC is -EISDIR (-21), as on Linux; anything else
-# keeps the original answer `err` — including the documented plain-directory divergence (-1).
+# keeps the original answer `err` — including the documented plain-directory divergence (-13,
+# -EACCES since 6.7.14 — it was -1). CHANGELOG [6.7.14]
 # The probe only CHOOSES AN ERRNO; nothing it opens is handed back. CHANGELOG [6.6.9]
 fn _win_nofollow_refusal(path, flags, err): i64 {
     var p = syscall(SYS_OPEN, path, 196608, 0);   # O_RDONLY | O_DIRECTORY | O_NOFOLLOW
