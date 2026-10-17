@@ -1957,6 +1957,9 @@ if (IR_ENABLED(S) == 1) {
     # CPs). Nothing between the two reads one, so this is the only correct place.
     var _wpd = wp_compact(S);
     if (_wpd > 0) {
+        # FIXUP rounds the code end up to 8 without writing, so zero the pad past the moved code:
+        # it held pre-compaction bytes (as the CYRIUS_DCE=1 pass's did). CHANGELOG [6.7.14]
+        _wp_pad_to(S, GCP(S), (GCP(S) + 7) & (0 - 8));
         syscall(SYS_WRITE, 2, "wp-compact: ", 12);
         PRNUM(_wpd);
         syscall(SYS_WRITE, 2, " bytes reclaimed (", 18);

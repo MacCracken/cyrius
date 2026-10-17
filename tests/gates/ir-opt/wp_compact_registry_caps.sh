@@ -31,6 +31,9 @@
 #      under CYRIUS_IR=3 (the TLS, sandhi and ws programs and the large-source tests). It pins
 #      a CLIFF: when the 4,096-run merge on the roadmap backlog lands, axis 5 compacts
 #      instead — re-measure it then.
+#   6  6.7.14: the seam's compaction leaves no stale bytes in .text's 8-byte pad (FIXUP rounds the
+#      moved code end up to 8 without writing). Mutation: the slot-open compiler -> RED (`50`
+#      after the exit syscall).
 #
 # THE THREE READERS. Growing the registry moved it off S+0x60000, so every loop that walks it
 # must go through _wpjs_base: wp_compact's stage 1 (axes 1, 2), its re-entrancy rebase (axis 4)
@@ -186,6 +189,34 @@ if CYRIUS_IR=3 "$CC" < "$D/many_runs.cyr" > "$D/a5" 2> "$D/a5.err"; then
     [ "$rc" = 224 ] && ok "axis 5: the binary exits 224" || bad "axis 5: the binary exits $rc, expected 224"
 else
     bad "axis 5: compile failed: $(head -3 "$D/a5.err")"
+fi
+
+# ── axis 6: 6.7.14 — the seam's compaction leaves nothing stale in .text's 8-byte pad ─────
+# wp_compact ends the code at the moved length and FIXUP rounds that up to 8 without writing,
+# so the pad held pre-compaction bytes (here a stray `50` past the exit syscall). The code is
+# zeroed past its last instruction: .text stripped of trailing zeros ends in that `0f 05`.
+awk 'BEGIN { print "fn h(r): i64 {"; for (k = 0; k < 5; k++) print "    r = r + 3 * 4;";
+             print "    return r;"; print "}"; print "var r = h(1);"; print "syscall(60, r);" }' > "$D/pad.cyr"
+if CYRIUS_IR=3 "$CC" < "$D/pad.cyr" > "$D/a6" 2> "$D/a6.err"; then
+    chmod +x "$D/a6"
+    grep -q '^wp-compact: [0-9]* bytes reclaimed' "$D/a6.err" || bad "axis 6: the probe no longer compacts under CYRIUS_IR=3, so it proves nothing: $(head -3 "$D/a6.err")"
+    set -- $(readelf -SW "$D/a6" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == ".text") { print $(i + 3), $(i + 4); exit } }')
+    if [ -n "${2:-}" ]; then
+        TB=$(od -An -tx1 -v -j $((0x$1)) -N $((0x$2)) "$D/a6" | tr -s ' ' '\n' | grep -v '^$' \
+            | awk '{ n++; b[n] = $1; if ($1 != "00") l = n } END { print n + 0, l + 0, b[l - 1] b[l] }')
+        set -- $TB
+        if [ "$3" = 0f05 ] && [ $(($1 - $2)) -lt 8 ]; then
+            ok "axis 6: the IR=3-compacted code ends at its exit syscall, the pad after it is zero"
+        else
+            bad "axis 6: .text is $1 B and its last nonzero bytes ($3) end at $2 — the pad holds stale pre-compaction code"
+        fi
+    else
+        bad "axis 6: no .text section in the IR=3 probe"
+    fi
+    rc=$(run_exit "$D/a6")
+    [ "$rc" = 61 ] && ok "axis 6: the binary exits 61" || bad "axis 6: the binary exits $rc, expected 61"
+else
+    bad "axis 6: compile failed: $(head -3 "$D/a6.err")"
 fi
 
 if [ "$fails" -gt 0 ]; then
