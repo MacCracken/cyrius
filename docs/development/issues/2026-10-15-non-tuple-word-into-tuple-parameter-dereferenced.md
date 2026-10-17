@@ -4,6 +4,7 @@
 review-fix step) and on the lane base b13d3598: identical, every case crashing on x86_64 / aarch64 (qemu) / cx
 (cxvm) / PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D44 — Refuse the integer literal and the several-value call.
 **Severity:** Medium — compiles clean and crashes at run time (x86_64 / aarch64 SIGSEGV 139, cx guest error 1, PE
 access violation 5), or reads memory through a small integer.
 **Kind:** language — a decision for the user: whether an untyped word may pass as a tuple's address. The source says

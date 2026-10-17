@@ -4,6 +4,7 @@
 paren-wrapped pair fix 5ede634e) and on the lane's base compiler (fe98679b): identical on both, x86_64, aarch64 (qemu),
 cx (cxvm) and PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R6; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D46 — Refuse it (the wrap is transparent to the first-call rule).
 **Severity:** Low — the payload (an `Err`'s code) is dropped in silence, but only in a spelling the documented operand
 rule already reads as the tag (`x = 3 + f();`); the question is which rule a redundant outer wrap selects.
 **Kind:** language — a decision for the user: is a parenthesised whole VALUE that starts with a pair call judged by

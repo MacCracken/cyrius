@@ -4,6 +4,7 @@
 paren-wrapped pair fix 5ede634e) and on the lane's base compiler (fe98679b): identical, x86_64, aarch64 (qemu), cx
 (cxvm) and PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R6; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D45 — Transparent.
 **Severity:** Low — refused loudly; the workaround is to drop the parentheses. No wrong value.
 **Kind:** language — a decision for the user. The guide states today's rule (§ Tuples: the right-hand side is "one
 whole call — `f(..)`, `g<T>(..)` or `x.m(..)` — and nothing around it"), while every other consumer of a whole call

@@ -4,6 +4,7 @@
 360a6d05, `build/cycc` its fixpoint) and the lane base (f59668ad's `build/cycc`): x86_64, aarch64 (qemu), cx (cxvm),
 PE (wine), identically on all four.
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D53 (item 6 of the 6.7.13 list) — Never warn for a string literal.
 **Severity:** Medium — a false warning on valid code that compiles and runs right (`*u8` from a string literal is
 the C-string idiom), which D18 (a) widened from one site to three; plus a second (warning) diagnostic beside a refusal.
 Nothing miscompiles. The census at the D18 bite (lib / cbt / programs / .tcyr) found no hit.

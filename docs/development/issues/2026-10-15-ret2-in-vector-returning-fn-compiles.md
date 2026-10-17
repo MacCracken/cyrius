@@ -3,6 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 multivalue lane (l6713-multivalue, unit M3, the slot-open
 compilers of a673123d and the lane tip 68d421a8 alike) on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
 **Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D43 — Refuse it by the vector-return text.
 **Severity:** Medium — a silent wrong value on code that compiles clean (the caller's vector holds whatever the vector
 return registers / the PE result pointer held); `ret2` in a vector fn is rare.
 **Discovered:** 2026-10-15, the 6.7.13 multivalue lane (M3), while refusing `ret2(a, b)` in a fn returning a named
