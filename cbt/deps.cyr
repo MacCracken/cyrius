@@ -1521,8 +1521,23 @@ fn _dep_feature_active(dep_name): i64 {
     return _dep_list_has(active, dep_name);
 }
 
+# 1 when the build this run makes is aarch64: `--aarch64` (or the arm64 macOS CLI's default) set
+# `_arch`, or the CLI is the aarch64 Linux one, whose cycc emits aarch64 only while `_arch` stays
+# ARCH_X86 (`current_cc()` / the run path read it; see `arch_name`). `_arch` alone answered x86_64
+# there, so a plain `cyrius deps` vendored `target = "x86_64"` deps and skipped `"aarch64"` ones.
+# CHANGELOG [6.7.14]
+fn _dep_arch_is_a64(): i64 {
+    if (_arch == ARCH_AARCH64) { return 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 1;
+    #endif
+    #endif
+    return 0;
+}
+
 # v6.3.1 lever 2: does a dep's `target = "<arch|os>"` key match the current build
-# target? Arch axis reads `_arch` (0=x86_64, 1=aarch64); OS axis reads the
+# target? Arch axis reads `_dep_arch_is_a64()` (6.7.14; `_arch` before); OS axis reads the
 # `_win_target` / `_agnos_target` / `_baremetal_target` flags the cyrius.cyr
 # pre-scan set before resolution. "linux" means a native userland build (not
 # windows/agnos/bare-metal) — note it also matches a native macOS host today
@@ -1531,10 +1546,11 @@ fn _dep_feature_active(dep_name): i64 {
 # everywhere). Callers only invoke this when dep_target != 0.
 fn _dep_target_matches(t): i64 {
     var tl = strlen(t);
-    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { if (_arch == 1) { return 1; } return 0; }
-    if (tl == 5 && memeq(t, "arm64", 5) == 1) { if (_arch == 1) { return 1; } return 0; }
-    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { if (_arch == 0) { return 1; } return 0; }
-    if (tl == 3 && memeq(t, "x86", 3) == 1) { if (_arch == 0) { return 1; } return 0; }
+    var a64 = _dep_arch_is_a64();
+    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { return a64; }
+    if (tl == 5 && memeq(t, "arm64", 5) == 1) { return a64; }
+    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { return 1 - a64; }
+    if (tl == 3 && memeq(t, "x86", 3) == 1) { return 1 - a64; }
     if (tl == 7 && memeq(t, "windows", 7) == 1) { if (_win_target == 1) { return 1; } return 0; }
     if (tl == 5 && memeq(t, "agnos", 5) == 1) { if (_agnos_target == 1) { return 1; } return 0; }
     if (tl == 10 && memeq(t, "bare-metal", 10) == 1) { if (_baremetal_target == 1) { return 1; } return 0; }
