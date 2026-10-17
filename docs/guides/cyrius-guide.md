@@ -6774,8 +6774,8 @@ stores at startup). Every other top-level `var` — a call
 string literal, a top-level destructure
 `var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
 startup, in declaration order. (`= 0` is deferred only
-because the static path reserves 0 for "no value"; the store is redundant and harmless.)
-An uninitialized top-level `var x;` is an error — write `var x = 0;`.
+because the static path reserves 0 for "no value"; since 6.7.14 it emits no startup code — see
+below.) An uninitialized top-level `var x;` is an error — write `var x = 0;`.
 
 **An initializer that names an enum constant is a constant too (6.6.16).** `var x = A;`,
 `var x = E.A;`, `var x = A + 1;`, `var x: u8 = A;` — any initializer that folds once enum
@@ -6786,9 +6786,23 @@ whose every field is a constant (`var p = Pt { A, 0x66 };`, nested struct fields
 float literal in a float field — in an `f32` field its binary32 bits since 6.7.10; through 6.7.9
 the image held its binary64 bits, which a `kernel;` build, whose replay runs after the program,
 read as 0.0); a field that is a call, a name, a string or a `Str` leaves
-the whole literal to the startup store. The startup store still runs (the code does not
-change), so the visible difference is the value before it: an initializer that runs earlier —
-`var y = g();` above `var x = A;`, `g` reading `x` — now sees it, as it already saw a literal.
+the whole literal to the startup store. An initializer that runs earlier — `var y = g();` above
+`var x = A;`, `g` reading `x` — sees the value, as it already saw a literal.
+
+**A constant initializer runs nothing at startup (6.7.14).** A scalar whose initializer folds to
+an integer — a const or enum name, an expression of them, `= 0` — is its value **from program
+start**, exactly as `var x = 42;` is: the startup code that stored it again is gone (on x86_64,
+`var X = C;` was `mov eax, 5; movabs rcx, X; mov [rcx], rax`), and the expression is never
+evaluated at run time, so `var R = INT_MIN % -1;` (folding to 0) and `var Q = (0 - E_MAX - 1) /
+(0 - 1);` (through an enum constant) start as 0 and INT_MIN on every target — through 6.7.13 they
+ran the division at startup and died with SIGFPE (exit 136) on x86_64 and cx while aarch64 ran (the
+user's decision D11 (b), 2026-10-16). Two consequences, both what a literal already did: a call in
+an **earlier** initializer that writes the global (`var r = setg();` above `var G = C;` or
+`var G = 0;`, `setg` storing 9) keeps its write — `G` is 9, where the startup store reset it to `C`
+/ 0; and a *redeclared* name's initializers keep their order — a computed initializer, or a
+constant of another value, before a constant still runs first (`var a = f(); var a = C;` ends at
+`C`). A `bool` global keeps its startup store (its value is judged there), and so does an
+initializer naming another file's `private` const (refused there).
 
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run

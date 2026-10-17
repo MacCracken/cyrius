@@ -11,7 +11,10 @@
 # `kernel; enum E { A = 0x1234567; } var X = A; asm { 0xF4 x4 }` put `b8 67 45 23 01 48 b9 .. 48 89
 # 01` AFTER the asm and left X's slot zero in the image. The fold now sits at the replay, where
 # names resolve exactly as the replayed store does, and the value is BAKED (parse_decl.cyr
-# _gvk_pre / _spc_try); the store stays, so the code does not change.
+# _gvk_pre / _spc_try); the store stayed, so the code did not change. 6.7.14 drops a baked SCALAR's
+# store where the image already holds its value (_gvk_quiet; issues/2026-10-08-const-init-redundant-
+# store-and-unfolded-const-operand.md): its `movabs rax, imm64` is gone from the code, the baked copy
+# stays in the data — the D rows count that copy apart from the code form.
 #
 # HOW IT IS MEASURED.
 #   R  RUN rows. A CYRIUS_ELF64_KERNEL=1 build (agnos's own build mode) is an ELF64 that also runs
@@ -49,6 +52,12 @@
 #                                                     half of its binary64 bits), the four KF patterns
 #   M1b. converted for every float field (`!= 0`)  -> RED, 2 checks: R check 21 and RF check 8 (an f64
 #                                                     field narrowed)
+# MUTATION LEDGER (6.7.14 — the baked scalar's store dropped):
+#   0. real tree                                   -> GREEN (15 rows)
+#   D1. _gvk_pre's record removed (`S64(_vgsi_base ..)` dropped in _gvk_one) -> RED, 10 checks: R row 2,
+#       three K deltas, every D row (no data copy; the stores come back) and E's data copy
+#   D2. _gvk_quiet returning 0 (the stores kept, as 6.6.16 - 6.7.13) -> RED, 6 checks: the three K
+#       scalar deltas, the two D code-form rows and E's KX1 delta
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -183,6 +192,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------
+# The DATA copies of $2 in file $1: its occurrences minus those that are a `movabs rax, imm64`'s
+# immediate (" 48 b8" + the pattern) — the code form a replayed store loads. 6.7.14
+dcount() { echo $(( $(count "$1" "$2") - $(count "$1" " 48 b8$2") )); }
 # I — image rows. row <id> <env> <test source> <control source> then pairs: <+N> <pattern>.
 row() {
     rows=$((rows + 1))
@@ -198,7 +210,7 @@ row() {
     fi
     while [ $# -ge 2 ]; do
         ct=$(count "$T/$id.bin" "$2"); cc=$(count "$T/$id.ctl" "$2")
-        [ "$ct" = $((cc + $1)) ] || bad "$id: '$2' occurs $ct times in the image, $cc in the control's; want +$1"
+        [ "$ct" = $((cc + $1)) ] || bad "$id: '$2' occurs $ct times in the image, $cc in the control's; want $1 more"
         shift 2
     done
 }
@@ -208,11 +220,28 @@ DECL='var KX1 = KA;\nvar KX2 = KE.KB;\nvar KX3 = KA + 0x100;\nvar KX4: u32 = KE.
 PRE='enum KE { KA = 0x5A17C0DE0BADF00D; KB = 0x2F3E4D5C6B7A8990; KC = 0x13579BD0; KD = 0x0102030405060708; KF = 0x1112131415161718; KG = 0x2122232425262728; KH = 0x3132333435363738; KI = 0x4142434445464748; KJ = 0x5152535455565758; KL = 0x6162636465666768; }\nstruct KP { a; b; }\nstruct KQ { x; p: KP; }\nfn kf(x): i64 { return x; }\n'
 ASM='asm { 0xF4; 0xF4; 0xF4; 0xF4; }\n'
 # KW (a call) and KT (a literal with a call leaf) are NOT baked: their constants occur equally often.
+# 6.7.14: a baked scalar's replayed store is dropped — KX1's and KX3's (`KA + 0x100` loads KA) take
+# KA's code form twice (-1 over the baked copy), KX2's (KB) and KR1's (KI) once (+0); the D rows below
+# count the data copies.
 row K '' "kernel;\n$PRE$DECL$ASM" "kernel;\n$PRE$ASM$DECL" \
-    1 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 90 89 7a 6b 5c 4d 3e 2f ' 1 ' 0d f1 ad 0b de c0 17 5a ' 1 ' d4 9b 57 13 ' \
+    -1 ' 0d f0 ad 0b de c0 17 5a ' 0 ' 90 89 7a 6b 5c 4d 3e 2f ' 1 ' 0d f1 ad 0b de c0 17 5a ' 1 ' d4 9b 57 13 ' \
     1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 ' 1 ' 28 27 26 25 24 23 22 21 ' \
-    1 ' 38 37 36 35 34 33 32 31 ' 1 ' 48 47 46 45 44 43 42 41 ' \
+    1 ' 38 37 36 35 34 33 32 31 ' 0 ' 48 47 46 45 44 43 42 41 ' \
     0 ' 58 57 56 55 54 53 52 51 ' 0 ' 68 67 66 65 64 63 62 61 '
+# D (6.7.14) — the baked scalars' DATA copy: one more than the control's (which computes them in its
+# code), and no store of them left in the test's code.
+rows=$((rows + 1))
+if [ -s "$T/K.bin" ] && [ -s "$T/K.ctl" ]; then
+    for p in ' 0d f0 ad 0b de c0 17 5a ' ' 90 89 7a 6b 5c 4d 3e 2f ' ' 48 47 46 45 44 43 42 41 '; do
+        dt=$(dcount "$T/K.bin" "$p"); dc=$(dcount "$T/K.ctl" "$p")
+        [ "$dt" = $((dc + 1)) ] || bad "D: '$p' has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
+    done
+    # KX2 / KR1 are stored by nothing now: their value's code form is the control's minus one each.
+    for p in ' 90 89 7a 6b 5c 4d 3e 2f ' ' 48 47 46 45 44 43 42 41 '; do
+        ct=$(count "$T/K.bin" " 48 b8$p"); cc=$(count "$T/K.ctl" " 48 b8$p")
+        [ "$ct" = $((cc - 1)) ] || bad "D: '$p' is loaded $ct times in the image's code, $cc in the control's; want -1 (no replayed store)"
+    done
+fi
 [ "$(od -An -tx1 -N5 "$T/K.bin" 2>/dev/null | tr -d ' ')" = 7f454c4601 ] || bad "K: the default kernel build is not the ELF32 multiboot image this row means"
 # The kmode redeclaration rows. `var X = 5; var X = A;` bakes A (K's KR1 / KI, +1 above).
 # `var X = A; var X = <constant>;`: the constant was baked by pass 1 already, and the superseded
@@ -247,9 +276,12 @@ row KU '' \
 row E 'CYRIUS_TARGET_EFI=1' \
     "kernel;\n$PRE""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\n$ASM""fn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
     "kernel;\n$PRE$ASM""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\nfn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
-    1 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 '
+    0 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 '
 if [ -s "$T/E.bin" ]; then
     [ "$(od -An -tx1 -N2 "$T/E.bin" | tr -d ' ')" = 4d5a ] || bad "E: the CYRIUS_TARGET_EFI=1 build is not an MZ/PE image"
+    # 6.7.14: KX1's store dropped (+0 above) — its baked copy is in the data.
+    dt=$(dcount "$T/E.bin" ' 0d f0 ad 0b de c0 17 5a '); dc=$(dcount "$T/E.ctl" ' 0d f0 ad 0b de c0 17 5a ')
+    [ "$dt" = $((dc + 1)) ] || bad "E: KX1 has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
 fi
 
 # ---------------------------------------------------------------------------------------------

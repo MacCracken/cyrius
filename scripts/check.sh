@@ -2592,6 +2592,10 @@ _chk_gate "$ROOT/tests/gates/frontend/zone_pointer_annotation.sh"
 # 6.7.14 — a named-field struct literal initialises a declaration-zone global (it was "undefined variable 'a'" before
 # the first statement, the guide's Structs example included), baked in a kernel build like a positional one.
 _chk_gate "$ROOT/tests/gates/frontend/zone_named_struct_literal.sh"
+# 6.7.14 — a declaration-zone global whose initializer folds to a constant runs nothing at startup (`var X = C;` was
+# baked AND stored; `var R = INT_MIN % -1;` / an enum-named INT_MIN / -1 re-ran the division and trapped on x86_64
+# and cx — the user's decision D11 (b)); the orderings keep their values on x86_64 / aarch64 / cx.
+_chk_gate "$ROOT/tests/gates/frontend/const_init_bake_and_fold.sh"
 # 6.7.13 (D3 (b)) — `&x.f`, the address of a struct field, is refused by name once (it failed to parse with no
 # word of why: "expected ')', got '.'"), its steps consumed so the parse stays in step; `&E.V`, `&o`, `&o + 8` stay.
 _chk_gate "$ROOT/tests/gates/frontend/address_of_field_refused.sh"

@@ -16,13 +16,15 @@
 # WHY A CROSS-HOST TEST: the crash is in the COMPILER and depends on the host it runs on — x86
 # (Linux, Intel-Mac, Windows) traps, arm64 `sdiv` does not. Each host's native cycc compiles this
 # file; on an x86 host without the fix the file does not compile at all.
+#
+# 6.7.14 (the user's decision D11 (b), 2026-10-16): a global whose constant initializer folds to ZERO
+# (`INT_MIN % -1`) or names an enum constant starts with its folded value on every target. Through
+# 6.7.13 the declaration-zone replay ran the division again at startup — SIGFPE (136) on x86_64 and
+# cx, the value on aarch64 — so the scalar `%` and the enum shapes below were kept out of this file.
+# (issues/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md)
 include "lib/assert.cyr"
 
-# The filed shapes: a scalar global and a hex-spelled INT_MIN. (The scalar `%` twin is NOT here:
-# it folds to 0, and a folded ZERO still takes the runtime-store path — BSS is already zero, see
-# PARSE_GVAR_REG — so the program would execute INT_MIN % -1 at startup, which traps on x86 like
-# any RUNTIME INT_MIN / -1. That is runtime division, not the folder; `%` is pinned through the
-# array initializers below, which bake their whole image.)
+# The filed shapes: a scalar global and a hex-spelled INT_MIN.
 var QMIN = (0 - 0x7FFFFFFFFFFFFFFF - 1) / (0 - 1);
 var QHEX = 0x8000000000000000 / (0 - 1);
 # A -1 divisor on ordinary dividends: the rewrite must give exactly what `/` and `%` give.
@@ -37,6 +39,11 @@ var ARR: i64[3] = { 1, (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1), (0 - 0x7FFFFFFFFF
 # Through an enum constant, in an array initializer (folded with enum names resolved).
 enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }
 var EARR: i64[2] = { (0 - CF_MAX - 1) / (0 - 1), (0 - CF_MAX - 1) % (0 - 1) };
+# 6.7.14 (D11 (b)) — the issue's repro A (a scalar folding to zero) and B (through an enum constant),
+# and B's `%` twin: their folded values, never a startup division.
+var RZERO = (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1);
+var QENUM = (0 - CF_MAX - 1) / (0 - 1);
+var RENUM = (0 - CF_MAX - 1) % (0 - 1);
 
 fn int_min(): i64 { return 0 - 0x7FFFFFFFFFFFFFFF - 1; }
 
@@ -53,5 +60,9 @@ assert_eq(ARR[1], 0, "array element INT_MIN % -1");
 assert_eq(ARR[2], int_min(), "array element INT_MIN / -1");
 assert_eq(EARR[0], int_min(), "enum-fold INT_MIN / -1");
 assert_eq(EARR[1], 0, "enum-fold INT_MIN % -1");
+assert_eq(RZERO + 5, 5, "A: a scalar INT_MIN % -1 folds to 0 (repro A exits 5)");
+assert_eq((QENUM >> 63) + 7, 8, "B: an enum-named INT_MIN / -1 is INT_MIN (repro B exits 8)");
+assert_eq(QENUM, int_min(), "B: the value");
+assert_eq(RENUM, 0, "B's % twin: an enum-named INT_MIN % -1 is 0");
 
 var r = assert_summary();
