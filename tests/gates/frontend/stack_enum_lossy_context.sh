@@ -1706,5 +1706,133 @@ fn main(): i64 {
 syscall(60, main());
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11)'
+# ── axis QF — 6.7.14: A FN WHOSE ONLY PAIR ROUTE IS `?`, USED ABOVE ITS DEFINITION ────────────────
+# ⛔ A fn becomes pair-returning three ways: `return Ctor(..)`, `return pairfn(..)` and a `?` on a pair
+# call. `_pair_body_scan` followed the two `return` routes only, so `fn qb(x) { var v = parse(x)?; .. }`
+# was flagged when pass 2 reached its body: every caller ABOVE it read `qb(x)` as one value — `qb(x)?`
+# took the BOXED lowering and dereferenced the tag (QF1, the issue's repro verbatim: 139 / 139 / 10 / 5 —
+# x86_64 / aarch64 / cx / PE) and `var v = qb(x);` kept the Err tag in silence (QF2: 1 on every leg),
+# where the same programs with qb above qa were refused "bind both". The scan now answers 1 for a `?`
+# whose call is a pair (`_tok_q_is_pair`, the mixed-return pass's own test), in the same rounds, so the
+# verdict no longer depends on the definition order (QF1-QF4); impl methods share the scan (QF7, QF8).
+# (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md)
+# LEGS: x86_64, aarch64 (cross, qemu-aarch64), cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, a private
+# prefix), the cross compilers built from this tree by $CC. A missing tool is a SKIP that names it.
+# Mutation (a scratch copy of the tree with the `?` arm dropped, CYCC= its compiler): RED at QF1 — it
+# BUILDS (the forward `?` chain). Run alone: QF2 QF5 QF7 QF8 red on every leg, QF3 QF4 QF6 green.
+QFR=docs/development/issues/repros/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
+QLEGS="x86_64 pe"
+qskips=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    "$CC" < src/main_aarch64.cyr > "$T/qf_a64" 2> /dev/null && [ -s "$T/qf_a64" ] \
+        || { echo "FAIL stack_enum_lossy_context axisQF: src/main_aarch64.cyr did not build"; exit 1; }
+    chmod +x "$T/qf_a64"; QLEGS="$QLEGS aarch64"
+else echo "  SKIP stack_enum_lossy_context axisQF: the aarch64 leg — qemu-aarch64 not installed"; qskips=$((qskips + 1)); fi
+"$CC" < src/main_cx.cyr > "$T/qf_cx" 2> /dev/null && [ -s "$T/qf_cx" ] && "$CC" < programs/cxvm.cyr > "$T/qf_vm" 2> /dev/null && [ -s "$T/qf_vm" ] \
+    || { echo "FAIL stack_enum_lossy_context axisQF: src/main_cx.cyr or programs/cxvm.cyr did not build"; exit 1; }
+chmod +x "$T/qf_cx" "$T/qf_vm"; QLEGS="$QLEGS cx"
+QWINE=0
+if command -v wine > /dev/null 2>&1; then QWINE=1
+else echo "  SKIP stack_enum_lossy_context axisQF: the PE run leg — wine not installed (the PE refusals still run)"; qskips=$((qskips + 1)); fi
+_qf_cc() {
+    case $1 in
+        x86_64)  "$CC" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        aarch64) "$T/qf_a64" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        cx)      "$T/qf_cx" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+        pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$T/q.cyr" > "$T/q.$1" 2> "$T/q.$1.err" ;;
+    esac
+}
+# qf_refuse <label> <axis> <line:col> — $T/q.cyr refused on every leg: ONE `bind both` error, at line:col
+qf_refuse() {
+    for leg in $QLEGS; do
+        if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context $2 ($leg): $1 COMPILED — the forward pair is read as one value."; exit 1; fi
+        _n=$(grep -c '^error' "$T/q.$leg.err")
+        if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$3: .*bind both" "$T/q.$leg.err"; then
+            echo "FAIL stack_enum_lossy_context $2 ($leg): $1 — want ONE 'bind both' error at $3, got $_n:"
+            grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+        fi
+    done
+}
+# qf_run <label> <axis> <exit> — $T/q.cyr compiles and exits <exit> on every leg
+qf_run() {
+    for leg in $QLEGS; do
+        _qf_cc "$leg" && [ -s "$T/q.$leg" ] || { echo "FAIL stack_enum_lossy_context $2 ($leg): $1 was REFUSED:"; grep -E '^error' "$T/q.$leg.err" | head -2 | sed 's/^/    /'; exit 1; }
+        chmod +x "$T/q.$leg"; got=0
+        case $leg in
+            x86_64)  timeout 30 "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            aarch64) timeout 60 qemu-aarch64 "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)      timeout 60 "$T/qf_vm" < "$T/q.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)      [ "$QWINE" -eq 1 ] || continue
+                     mkdir -p "$WHM"; cp "$T/q.$leg" "$T/q.exe"
+                     (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                         WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./q.exe > /dev/null 2>&1) || got=$? ;;
+        esac
+        [ "$got" -eq "$3" ] || { echo "FAIL stack_enum_lossy_context $2 ($leg): $1 ran but gave ${got}, expected $3"; exit 1; }
+    done
+}
+# The two filed repros verbatim (qb BELOW qa), then each with lines 3 and 4 swapped (qb ABOVE qa).
+cp "$QFR.cyr" "$T/q.cyr"
+qf_refuse "the issue's repro verbatim: qb(x)? above qb, var z = qa(5);" axisQF1 "5:7"
+cp "$QFR-single-bind.cyr" "$T/q.cyr"
+qf_refuse "the issue's single-bind repro verbatim: var v = qb(x); above qb" axisQF2 "3:18"
+awk 'NR == 3 { h = $0; next } NR == 4 { print; print h; next } { print }' "$QFR.cyr" > "$T/q.cyr"
+qf_refuse "the repro with qb above qa (unchanged)" axisQF3 "5:7"
+awk 'NR == 3 { h = $0; next } NR == 4 { print; print h; next } { print }' "$QFR-single-bind.cyr" > "$T/q.cyr"
+qf_refuse "the single bind with qb above qa (unchanged)" axisQF4 "4:18"
+# The Err path through the forward `?` chain: (1, 3) reaches main's destructure — it dereferenced the tag.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn qa(x) { var v = qb(x)?; return Ok(v); }
+fn qb(x) { var v = parse(x)?; return v; }
+fn main(): i64 { var t, v = qa(0 - 3); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "an Err propagated through qb(x)? above qb" axisQF5 13
+# ANTI-OVER-REACH: a `?` on a one-value (boxed) call flags nothing — qb below its single bind runs (11 + 3 * 2).
+cat > "$T/q.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+enum BR { BOk(v); BErr(e); }
+fn bp(x) { if (x > 0) { return BOk(x * 2); } return BErr(0 - x); }
+fn qa(x) { var r = qb(x); return load64(r + 8); }
+fn qb(x) { var v = bp(x)?; return BOk(v + 1); }
+fn main(): i64 { alloc_init(); return qa(5) + qa(0 - 3) * 2; }
+syscall(60, main());
+EOF
+qf_run "a ? on a boxed call below its single bind is one value" axisQF6 17
+# An impl method whose only pair route is `?`, used above its impl: `?` propagates, the single bind is refused.
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.qm()?; return Ok(v + 1); }
+impl Pt { fn qm(self) { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; var t, v = usem(p); return t * 10 + v; }
+syscall(60, main());
+EOF
+qf_run "p.qm()? above the impl whose qm's only pair route is ?" axisQF7 13
+cat > "$T/q.cyr" <<'EOF'
+include "lib/result.cyr"
+struct Pt { x; y; }
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn usem(p: Pt): i64 { var v = p.qm(); return v; }
+impl Pt { fn qm(self) { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = Pt { 0 - 3, 0 }; return usem(p); }
+syscall(60, main());
+EOF
+qf_refuse "var v = p.qm(); above the impl" axisQF8 "4:29"
+if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14)'
 exit 0

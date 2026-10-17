@@ -886,6 +886,9 @@ fn _tok_body_open(S, i): i64 {
 # flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
 # refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
 # method whose body pass 2 has not reached (`_dyn_slot_pair`, parse_types.cyr).
+# ⛔ 6.7.14 — A `?` ON A PAIR CALL IS A PAIR ROUTE TOO (`_tok_q_is_pair`): pass 2 flags the fn 256
+# at its `?`, so a fn whose only pair route was a `?` was a pair only BELOW its definition — a
+# caller above took `qb(x)?` as boxed (rc 139) and `var v = qb(x);` kept the tag. CHANGELOG [6.7.14]
 fn _pair_body_scan(S, a, j): i64 {
     var n = GTCNT(S);
     var bd = 0;
@@ -904,6 +907,9 @@ fn _pair_body_scan(S, a, j): i64 {
         elif (t == 33) {                  # `return`
             var rf = _tok_ret_callee(S, a, k + 1);   # `return f(`, `return g<..>(`, `return x.m(` (6.6.16)
             if (rf >= 0) { if ((GFLG(S, rf) & 256) != 0) { return 1; } }
+        }
+        elif (t == 124) {                 # `f(..)?` on a pair: pass 2's `?` flag, seen before the body
+            if (_tok_q_is_pair(S, a, k) == 1) { return 1; }   # CHANGELOG [6.7.14]
         }
         k = k + 1;
     }

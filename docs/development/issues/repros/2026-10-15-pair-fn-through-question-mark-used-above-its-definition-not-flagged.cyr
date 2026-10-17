@@ -1,0 +1,6 @@
+include "lib/result.cyr"
+fn parse(x): Result { if (x > 0) { return Ok(x * 2); } return Err(0 - x); }
+fn qa(x) { var v = qb(x)?; return v; }
+fn qb(x) { var v = parse(x)?; return v; }
+var z = qa(5);
+syscall(60, z);
