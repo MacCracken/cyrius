@@ -6870,7 +6870,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a
-  duplicate `fn` that disagrees about arity.
+  duplicate `fn` that disagrees about arity. `bool` is part of the type (6.7.14, the
+  user's decision D9 (a) of 2026-10-16): `var g = 5;` then `var g: bool = true;` (or
+  `= g`), and `var g: bool = true;` then `var g = 1;`, are refused the same way —
+  through 6.7.13 the bool mark was the last declaration's, so `var g = 5; var g: bool
+  = g;` built a bool holding 5. Two `bool` declarations of one global are fine.
 - A same-value redeclaration is silent; that is the usual way two files, or an
   `#ifdef` arm, end up declaring one global. A later constant that **differs**
   from the earlier constant warns, whatever that constant was — `var a = 0;` then

@@ -4505,6 +4505,12 @@ fn _gv_prior(S, noff, below, owner): i64 {
 # Same storage: width, type marker, layout mode, signedness — and the two side tables a
 # global's type also lives in: a `*T` global's T (`_gv_psid`; `*M` and `*Q` of one size share
 # GVTYPE) and the vector mark (SVVEC; f64v2 and u128 share GVTYPE 0 and width 16). CHANGELOG [6.6.20]
+# ⛔ 6.7.14 — AND `bool` (the user's decision D9 (a), 2026-10-16): bool-ness is part of a global's type. The mark was
+# the LAST declaration's, per slot, so `var G = 5; var G: bool = G;` read G under its own bool mark and built a bool
+# holding 5, and `var G = 5; var G: bool = true;` made the integer declaration's storage a bool (6.7.3 (B2): a bool
+# reads 0 or 1). A redeclaration that changes it is "redeclared with a different type or size", both ways
+# (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md). PARSE_GVAR_REG marks its registration before the
+# fold (_gv_fold_b); a destructure target and an array never carry the mark. CHANGELOG [6.7.14]
 fn _gv_same_shape(S, a, b): i64 {
     if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
     if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
@@ -4512,7 +4518,14 @@ fn _gv_same_shape(S, a, b): i64 {
     if (_gsgn_shape(GVSGN(S, a)) != _gsgn_shape(GVSGN(S, b))) { return 0; }   # 6.7.6: a bare array's 0x100 is no new shape
     if (_gv_ptr_sid(S, a) != _gv_ptr_sid(S, b)) { return 0; }
     if (GVVEC(S, a) != GVVEC(S, b)) { return 0; }
+    if (GVBOOL(S, a) != GVBOOL(S, b)) { return 0; }   # 6.7.14 (D9 (a))
     return 1;
+}
+# A scalar declaration's registration `vi` (count not bumped) folded as _gv_fold does, its bool mark `b` written
+# first so the fold compares it (_gv_same_shape). A fold clears it (_gv_clear); a new global keeps it.
+fn _gv_fold_b(S, vi, ti, b): i64 {
+    SVBOOL(S, vi, b);
+    return _gv_fold(S, vi, ti);
 }
 
 # Forget a written-but-uncounted registration so the next one at this index starts clean.
@@ -5360,7 +5373,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
     # ⚠ NOT every global: the array form returns from PARSE_GVAR_ARR above and the
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
-    var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
+    var gvi = _gv_fold_b(S, vcnt, sti, ann_bool);   # 6.6.6: a redeclaration reuses the global's slot; 6.7.14: + bool
     _gz_reg(S, gvi, is_struct, ssid, ann_sid, rhs_ti);   # 6.7.10 (B7-1g): judged at the end of pass 1
     _GVAR_VIS(S, gvi, sti);
     _gv_last_marks(S, gvi, ann_bool, ann_scalar, ann_ti);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer and u128 marks

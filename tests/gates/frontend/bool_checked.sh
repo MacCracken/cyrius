@@ -128,6 +128,27 @@ refused w56 "to bool parameter 'b' of 'P_add'" "W56: an operator's operand into 
 refused w57 "$RT" "W57: a tuple return (5, 1) from a single-value bool fn" 'fn g(): bool { return (5, 1); }\nfn main(): i64 { return g(); }\nsyscall(60, main());\n'
 refused w58 "undefined variable 'zz'" "W58: an undefined name in the value is reported once (no bool cascade)" "$M var b: bool = false; b = zz; return b; }$E"
 # W59 (a bool[N] element `1 < 2` refused as not a constant) is A16 since 6.7.4: a list element is a const context
+# D9 — 6.7.14 (the user's decision D9 (a), 2026-10-16): bool-ness is part of a global's type, so a redeclaration
+# that changes it is refused as a type change (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md). The
+# bool mark was the LAST declaration's, per slot: D91 (the filed repro) built a bool holding 5, D92 / D93 built.
+# Mutations (scratch trees): `_gv_same_shape`'s bool test dropped -> D91-D97 RED (D91-D94 D97 BUILD, D95 / D96 the
+# old "cannot initialize bool" only); `_gv_fold_b` not writing the mark before the fold -> D91-D93 D95 D98 D99 RED.
+TC="global 'G' redeclared with a different type or size"
+refused d91 "$TC" "D91: var G = 5; var G: bool = G (the filed repro)" 'var G = 5;\nvar G: bool = G;\nsyscall(60, G);\n'
+refused d92 "$TC" "D92: var G = 5; var G: bool = true" 'var G = 5;\nvar G: bool = true;\nsyscall(60, G);\n'
+refused d93 "$TC" "D93: var G = 5; var X: bool = G; var G: bool = true (shape 3)" 'var G = 5;\nvar X: bool = G;\nvar G: bool = true;\nsyscall(60, G);\n'
+refused d94 "$TC" "D94: var G: bool = true; var G = 1" 'var G: bool = true;\nvar G = 1;\nsyscall(60, G);\n'
+refused d95 "$TC" "D95: var G = 0; var G: bool = false" 'var G = 0;\nvar G: bool = false;\nsyscall(60, G);\n'
+# Shape 2 stays refused: the type change, then X's own refusal (a type-change refusal registers the second
+# declaration apart, so X reads it — as for any type change).
+printf 'var G: bool = true;\nvar X: bool = G;\nvar G = 5;\nsyscall(60, G);\n' > "$T/d96.cyr"
+build d96
+if [ "$rc" -eq 0 ]; then bad "D96: shape 2 BUILT"
+elif ! grep -qF "$TC" "$T/d96.err"; then bad "D96: shape 2 refused, but not as a type change: $(grep '^error' "$T/d96.err" | head -1)"
+else ok "D96: shape 2 refused as a type change"; fi
+refused d97 "$TC" "D97: a bool then a destructure target" 'fn f(): (i64, i64) { return (1, 2); }\nvar G: bool = true;\nvar G, H = f();\nsyscall(60, G);\n'
+exits d98 1 "D98: two bool declarations of one global" 'var G: bool = true;\nvar G: bool = 3 < 4;\nsyscall(60, G);\n'
+exits d99 0 "D99: a bool redeclared reading itself" 'var G: bool = false;\nvar G: bool = G;\nsyscall(60, G);\n'
 
 exits a1 255 "A1: every boolean producer into a local (true, false, <, !, &&, ||, parens, another bool, !!, f64_lt, a for step)" "$M var a = 3; var t: bool = true; var f: bool = false; var c: bool = a < 4; var d: bool = !a; var e: bool = (a > 1) && (a < 9); var g: bool = c || d; var h: bool = (c); var i: bool = ((a == 3)); var j: bool = c; var k: bool = !!a; var l: bool = f64_lt(1.0, 2.0); t = c; t = !t; t = a != 3; t = d && c; for (var q = 0; q < 2; t = q > 0) { q = q + 1; } return t + c * 2 + e * 4 + g * 8 + h * 16 + i * 32 + j * 64 + k * 128 + l * 256 + f; }\nsyscall(60, main() % 256);\n"
 exits a2 10 "A2: a bool reads as 0 / 1 (n + ok, ok * 4)" "$M var ok: bool = true; var n = 5 + ok; var m = ok * 4; return n + m; }$E"

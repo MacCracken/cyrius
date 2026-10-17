@@ -163,6 +163,13 @@ _row Q5 3 'struct M { x; y; }\nvar G: *M = 0;\nvar G: *M = 0;\nvar H = 0;\nvar H
           'struct M { x; y; }\nvar G: *M = 0;\nvar H = 3;\nsyscall(60, H);\n'
 _row Q6 4 'var W: f64v2 = 0;\nvar W: f64v2 = 0;\nvar H = 0;\nvar H = 4;\nsyscall(60, H);\n' \
           'var W: f64v2 = 0;\nvar H = 4;\nsyscall(60, H);\n'
+# Q7 (6.7.14) — two `bool` declarations fold into one global, and the index the second vacated is
+#     clean for the next global: its bool mark, written before the fold (_gv_fold_b), is cleared with
+#     it (_gv_clear) — a destructure target there (which writes no mark) is no bool, so `var H = 3;`
+#     folds into it. Mutations (scratch trees): _gv_clear keeping the bool mark -> Q7 RED; _gv_fold_b not
+#     writing it -> Q7 i3 WF11 WF12 RED; `_gv_same_shape`'s bool test dropped -> i3 i4 RED.
+_row Q7 6 'fn p() { return (1, 2); }\nvar B: bool = true;\nvar B: bool = true;\nvar H, I = p();\nvar H = 3;\nsyscall(60, H + B + I);\n' \
+          'fn p() { return (1, 2); }\nvar B: bool = true;\nvar H, I = p();\nvar H = 3;\nsyscall(60, H + B + I);\n'
 # R — a redeclaration that changes only what the side tables hold is a different type, refused
 #     by name: `*M` -> `*Q` of one size (GVTYPE is `0 - size` for both, so `G.x` read M's offset),
 #     and a 16-byte vector <-> u128 (both GVTYPE 0, width 16).
@@ -181,7 +188,11 @@ done
 NROWS=$((NROWS + 1))
 printf 'var a = 5;\nvar a: i32 = 7;\nsyscall(60, a);\n' > "$WORK/i1.cyr"
 printf 'var q[8];\nvar q[16];\nsyscall(60, 0);\n' > "$WORK/i2.cyr"
-for f in i1 i2; do
+# 6.7.14 (the user's decision D9 (a), 2026-10-16): `bool` is part of the type, both ways
+# (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md; the shapes are bool_checked.sh D91-D99).
+printf 'var a = 5;\nvar a: bool = a;\nsyscall(60, a);\n' > "$WORK/i3.cyr"
+printf 'var a: bool = true;\nvar a = 1;\nsyscall(60, a);\n' > "$WORK/i4.cyr"
+for f in i1 i2 i3 i4; do
     if "$CC" < "$WORK/$f.cyr" > "$WORK/$f.bin" 2> "$WORK/$f.err"; then
         bad "row I ($f): a type/size-changing redeclaration COMPILED"
     elif ! grep -q "redeclared with a different type or size" "$WORK/$f.err"; then
