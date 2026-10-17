@@ -63,8 +63,10 @@ cp -R "$ROOT/lib" "$P/lib"
 cli() { ( cd "$P" && env -u CYRIUS_DCE -u CYRIUS_DEFINES CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" "$@" ); }
 # mf <entry> <[embed] lines...> — a manifest with no [package] version
 mf() { e=$1; shift; { printf '[build]\nentry = "%s"\noutput = "build/main"\ndefines = ["FOO"]\n[embed]\n' "$e"; for l in "$@"; do printf '%s\n' "$l"; done; } > "$P/cyrius.cyml"; }
-# build, then run build/main with stdout to $W/got; rc of the run in $run
-br() { rm -rf "$P/build" "$W/got"; brc=0; cli build > "$W/b.out" 2>&1 || brc=$?; run=x; [ "$brc" = 0 ] && { run=0; "$P/build/main" > "$W/got" || run=$?; }; }
+# build, then run build/main with stdout to $W/got; rc of the run in $run. br / qb / rb end in
+# `return 0`: their last command is `[ built ] && { run; }`, which is 1 for a refused build, so under
+# `bash -eo pipefail` the gate stopped at axis 3 with rc 1 and no verdict (6.7.14, found in passing).
+br() { rm -rf "$P/build" "$W/got"; brc=0; cli build > "$W/b.out" 2>&1 || brc=$?; run=x; [ "$brc" = 0 ] && { run=0; "$P/build/main" > "$W/got" || run=$?; }; return 0; }
 
 # ── axis 1 / 2: text, binary, empty ──────────────────────────────────────────────────────
 x=$FAIL
@@ -194,7 +196,7 @@ printf 'hello-embed\n' > "$Q/data/h.txt"
 printf 'syscall(1, 1, BLOB(), BLOB_len());\nsyscall(60, 0);\n' > "$Q/main.cyr"
 printf '[build]\nentry = "main.cyr"\noutput = "build/main"\n[embed]\nBLOB = "data/h.txt"\n[deps.foo]\npath = "%s"\nmodules = ["dist/foo.cyr"]\n' "$D" > "$Q/cyrius.cyml"
 # qb: build Q, then run build/main into $W/got (rc of the run in $run, x when nothing was built)
-qb() { rm -rf "$Q/build" "$W/got"; brc=0; ( cd "$Q" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$Q/build/main" ] && { run=0; "$Q/build/main" > "$W/got" || run=$?; }; }
+qb() { rm -rf "$Q/build" "$W/got"; brc=0; ( cd "$Q" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$Q/build/main" ] && { run=0; "$Q/build/main" > "$W/got" || run=$?; }; return 0; }
 gotp() { tr -d '\000' < "$W/got" 2>/dev/null | head -c 80; }   # what the probe printed (NAME_len can over-read)
 # fresh <label> <dep module text> <expected text>: no lib/ — the FIRST build refuses by name
 fresh() {
@@ -230,7 +232,7 @@ printf 'syscall(1, 1, FOLD_BLOB(), FOLD_BLOB_len());\nsyscall(60, 0);\n' > "$R/m
 # rmf <[package] header + lines> <[embed] line>: a manifest pinned to $V ([package] cyrius picks
 # the snapshot); rb: build R, run it into $W/got
 rmf() { { printf '%s' "$1"; printf 'cyrius = "%s"\n[build]\nentry = "main.cyr"\noutput = "build/main"\n[embed]\n%s\n' "$V" "$2"; } > "$R/cyrius.cyml"; }
-rb() { rm -rf "$R/build" "$W/got"; brc=0; ( cd "$R" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$R/build/main" ] && { run=0; "$R/build/main" > "$W/got" || run=$?; }; }
+rb() { rm -rf "$R/build" "$W/got"; brc=0; ( cd "$R" && env -u CYRIUS_DCE -u CYRIUS_DEFINES HOME="$W/home" CYRIUS_HOME="$W/home" CYRIUS_RESOLVED=1 "$W/cyrius" build ) > "$W/b.out" 2>&1 || brc=$?; run=x; [ -x "$R/build/main" ] && { run=0; "$R/build/main" > "$W/got" || run=$?; }; return 0; }
 # rowned <label> <[package] lines> <[embed] line> <expected text>: refused by name, nothing built
 rowned() {
     rmf "$2" "$3"; rb
