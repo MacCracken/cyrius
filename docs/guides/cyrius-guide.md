@@ -1115,16 +1115,16 @@ struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S
 Through 6.7.12 (and 6.7.13 before this) the word `**pps` read — S's first field — was passed as the address: 139 on
 x86_64 and aarch64, a cx guest fault, exit 5 on Windows. **Since 6.7.14 `**pp` is the struct value `*p` is at every
 use** (6.7.10's decision 6): `var t: S = **pp;` copies, a by-value argument passes the struct (a 1..7-byte one read
-byte-exact), `**pp + a` dispatches `S_add`, `return **pp;`, an if-expression branch, `l = **pp` — through a `**S`
-local, parameter, field, global, capture, `: **S` call, `**(pp + n)` or `***ppp` of a `***S`; and `*pp` reads as the
-`*S` 6.7.13's D9 (a) made it as a returned value, an operator's operand and a by-value argument (`return *pp;` from a
-`: S` fn returns the struct it points at, `l = *pp + 0` copies it, `bs(*pp)` passes it). ⚠ Not yet as the whole
-source of a copy: `l = *pp`, `G = *pp` and `*q = *pp` store the pointer word into the first field where `l = p`
-copies, and `var t: S = *pp;` binds `t` to the struct as a handle where `var t: S = p;` copies (filed).
-`**pp = u` copies the struct and `**pp OP= v` is refused, as through a `*S` (*A store through
-a `*S` copies the struct*). ⚠ Through 6.7.13 `var t: S = **pp;` bound a handle to S's first field (139 on x86_64 and
-aarch64, cx 0, Windows 5), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word and `**pp += 10` added to S's
-first field.
+byte-exact), `**pp + a` dispatches `S_add`, `return **pp;`, an if-expression branch of 8 bytes or less (over 8 it
+is refused, as `{ *p }` is), `l = **pp` — through a `**S` local, parameter, field, global, capture, `: **S` call,
+`**(pp + n)` or `***ppp` of a `***S`; and `*pp` reads as the `*S` 6.7.13's D9 (a) made it as a returned value, an
+operator's operand and a by-value argument (`return *pp;` from a `: S` fn returns the struct it points at,
+`l = *pp + 0` copies it, `bs(*pp)` passes it). ⚠ Not yet as the whole source of a copy: `l = *pp`, `G = *pp` and
+`*q = *pp` store the pointer word into the first field where `l = p` copies, and `var t: S = *pp;` binds `t` to the
+struct as a handle where `var t: S = p;` copies (filed). `**pp = u` copies the struct and `**pp OP= v` is refused, as
+through a `*S` (*A store through a `*S` copies the struct*). ⚠ Through 6.7.13 `var t: S = **pp;` bound a handle to S's
+first field (139 on x86_64 and aarch64, cx 0, Windows 5), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word
+and `**pp += 10` added to S's first field.
 Through a pointer to a STRUCT (`p: *S`) `*p` is the struct value (6.7.10) and `*p = v` copies the struct
 (6.7.11 — see *A store through a `*S` copies the struct*).
 `n + p` on a `*u8` / `*i8` is that pointer, as `p + n` is (6.7.9): `*(1 + p)` is the element,
