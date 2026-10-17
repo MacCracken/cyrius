@@ -39,7 +39,9 @@ _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
 _fnhash_health a64 a64m a64n cx x86m
 _gvk_arm a64 a64m a64n cx win x86m
+_ir_arena_init a64 a64m a64n cx x86m
 _ir_bb_transfer a64 a64m a64n cx win x86m
+_ir_bbs_grow a64 a64m a64n cx x86m
 _ir_clobbers_rax a64 a64m a64n cx x86m
 _ir_compute_fold a64 a64m a64n cx win x86m
 _ir_def_rax_pure a64 a64m a64n cx win x86m

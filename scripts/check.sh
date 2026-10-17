@@ -1581,6 +1581,13 @@ _chk_gate "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 # which declined in silence (the CYRIUS_DCE=1 path has named it since 6.6.18).
 _chk_gate "$ROOT/tests/gates/ir-opt/wp_compact_registry_caps.sh"
 
+# 6.7.14 — the IR tables are one alloc()'d arena that grows (src/common/ir.cyr), not six fixed
+# S + 0x… bands with hard caps: CYRIUS_IR stopped ("IR node buffer full" / "IR block table full")
+# on programs the default build compiled. The filed 3.0 MB repro and a 150k-BB program build and
+# run under IR=1 / IR=3, the grown IR scales exactly with a never-grown build, cycc's own IR builds
+# are sound, and no retired band literal or heap-map row is left.
+_chk_gate "$ROOT/tests/gates/ir-opt/ir_arena_grows.sh"
+
 # ⛔ v6.6.1 — `f64_exp`/`f64_exp2` returned NaN for ±inf on BOTH the native x87 path and the
 # aarch64 polyfill: the range reduction subtracts a multiple of the argument from itself, so
 # ±inf becomes `inf - inf`. Filed from ganita's P(-1) audit, where sinh/cosh(±inf) came back NaN

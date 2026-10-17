@@ -3135,9 +3135,7 @@ var _fpk_name = 0;
 
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
-# IR state at S+0xF3A000..S+0xF3A028 (4 counters; relocated out of the
-# fixup_tbl-overlapping 0x174A0xx band @ v6.1.41) + global-var-init slots) to
-# zero, with two sentinel-value exceptions:
+# global-var-init slots) to zero, with two sentinel-value exceptions:
 #   - 0x18FCB0 = -1 (last_var: initial "no-var" sentinel)
 #   - 0x18FCB8 =  1 (cur_line: lexer line counter starts at 1)
 # All other slots zeroed.
@@ -3146,11 +3144,10 @@ var _fpk_name = 0;
 # main_aarch64_native.cyr, main_aarch64_macho.cyr, main_x86_macho.cyr,
 # main_cx.cyr, main_win.cyr). Pre-v5.8.63 each main inlined this
 # ~30-line block; extraction here
-# saves ~150 LOC of duplication. The aarch64 and cx mains over-zero
-# IR state (they include ir.cyr but don't actively use the IR
-# pipeline) — harmless because zero-init matches the post-brk
-# kernel-zeroed state, and every driver's arena runs to 0xF600000
-# (the heap map's brk-final line) so the writes land in mapped memory.
+# saves ~150 LOC of duplication. Every driver's arena runs to 0xF600000
+# (the heap map's brk-final line), so the writes land in mapped memory.
+# (The IR state is no longer here: it is four globals in ir.cyr, zero at
+# start — CHANGELOG [6.7.14].)
 fn _HEAP_INIT_SCRATCH(S): i64 {
     # Compiler-state scalars (BL, CP, VCNT, TCNT, TI, NPOS)
     S64(S + 0x18C100, 0);
@@ -3165,12 +3162,6 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x18DA00, 0);
     S64(S + 0x18DA08, 0);
     S64(S + 0x18DA10, 0);
-    # IR state (cycc — gated by CYRIUS_IR=1 env at runtime; init
-    # unconditionally so the gate read sees zero, not garbage)
-    S64(S + 0xF3A000, 0);    # ir_node_count
-    S64(S + 0xF3A008, 0);    # ir_block_count   (v6.1.41: was 0x174A008, inside fixup_tbl)
-    S64(S + 0xF3A010, 0);    # ir_cur_block     (v6.1.41: was 0x174A010)
-    S64(S + 0xF3A020, 0);    # ir_enabled       (v6.1.41: was 0x174A020; 0xF3A018, the edge count, is gone with the edge list — 6.6.20)
     # Struct state
     S64(S + 0x18F830, 0);
     # Condition patch state
