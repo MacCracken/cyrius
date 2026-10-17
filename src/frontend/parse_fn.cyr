@@ -7136,6 +7136,7 @@ fn _vis_check(S, fi, noff, ti): i64 {
     # violation in one run and emits no binary — the v6.4.62 multi-error contract.
     # A fail-fast exit here would make adopting `private` on a large file an
     # N-compile-cycles-to-find-N-callers exercise.
+    if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);
@@ -7143,6 +7144,27 @@ fn _vis_check(S, fi, noff, ti): i64 {
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
+}
+
+# 6.7.14 — ONE `private` error per call site, `_dep_seen`'s rule for the same reason: the body of an
+# `#inline` fn is parsed at its definition and again at every expansion, a generic's for its base and
+# again per instance, and each re-parse names the same (token, callee) pair — `w() + w()` on an
+# `#inline fn w` calling another file's private fn printed the identical error three times. A repeat
+# keeps the verdict (`_had_error`, the refusal the const evaluator reads) and prints nothing. Both
+# report paths record here, so a site the deferred sweep reported is not reported again by a later
+# replay. Lazy: a compile with no violation allocates nothing. CHANGELOG [6.7.14]
+var _vis_reported = 0;
+fn _vis_seen(ti, fi): i64 {
+    if (_vis_reported == 0) { _vis_reported = vec_new(); }
+    var n = vec_len(_vis_reported);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_vis_reported, i) == ti) { if (vec_get(_vis_reported, i + 1) == fi) { return 1; } }
+        i = i + 2;
+    }
+    vec_push(_vis_reported, ti);
+    vec_push(_vis_reported, fi);
+    return 0;
 }
 
 # 6.6.5 — record a reference whose callee had no owner yet: (fi, caller fid + 1, token).
@@ -7195,6 +7217,7 @@ fn _vis_report_late(S, fi, caller, ti): i64 {
     var callee = GFFI(S, fi);
     if (callee == 0) { return 0; }
     if (callee == caller) { return 0; }
+    if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": '", 3);

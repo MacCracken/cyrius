@@ -320,5 +320,39 @@ pfwd arr_name    1 _hid_arr 'fn main(): i64 { return load64(&_hid_arr); }'
 pfwd arr_pub     0 pub_arr  'fn main(): i64 { store64(&pub_arr, 5); return load64(&pub_arr); }'
 pfwd gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'
 
-[ "$fail" = 0 ] && echo "  PASS: visibility-private paths (&fn x3 + method + asv/asp/inferred + 4 PE-only) enforced once each in BOTH include orders; publics, same-file and public-generic instances accepted; private arrays refused"
+# ── 6.7.14: ONE report per call site, however often its body is parsed ───────────────────
+# (issues/2026-10-14-private-call-reported-once-per-body-replay.md) An `#inline` fn's body is
+# parsed at its definition and at every expansion, a generic's for its base and per instance:
+# `w() + w()` printed the identical `3:25: 'pk' is private` three times. `_vis_seen` keeps the
+# (token, callee) pair. Rows: the issue's table (one each, at the site), a body with TWO sites
+# (two), two sites in two fns (two), the include below the caller (one). Measured on the
+# slot-open compiler: rp_inline / rp_generic / rp_const 3 each, rp_body_two 6, rp_forward 3.
+mkdir -p "$T/rp"
+printf 'private\nconst fn pk(): i64 { return 3; }\n' > "$T/rp/priv.cyr"
+prp() {
+    _n=$1; _want=$2; _at=$3
+    ( cd "$T/rp" && "$CC" < "$_n.cyr" > "$_n.bin" 2> "$_n.err" ) || true
+    _got=$(grep -c "'pk' is private to its file" "$T/rp/$_n.err" || true)
+    if [ "$_got" != "$_want" ]; then
+        echo "  FAIL: visibility-private [replay:$_n]: expected $_want x \"'pk' is private\", got $_got"; head -3 "$T/rp/$_n.err" | sed 's/^/      /'; fail=1
+    fi
+    if ! grep -qF "error:<source>:$_at: 'pk' is private to its file" "$T/rp/$_n.err"; then
+        echo "  FAIL: visibility-private [replay:$_n]: no report at $_at"; fail=1
+    fi
+    if [ -s "$T/rp/$_n.bin" ]; then echo "  FAIL: visibility-private [replay:$_n]: a binary was still emitted"; fail=1; fi
+}
+printf 'include "priv.cyr"\n#inline\nfn w(): i64 { return pk(); }\nfn main(): i64 { return w() + w(); }\nsyscall(60, main());\n' > "$T/rp/rp_inline.cyr"
+printf 'include "priv.cyr"\nfn gg<T>(x: T): i64 { return pk(); }\nfn main(): i64 { var a: i32 = 2; return gg(1) + gg(a); }\nsyscall(60, main());\n' > "$T/rp/rp_generic.cyr"
+printf 'include "priv.cyr"\n#inline\nfn w(): i64 { const L = pk(); return L; }\nfn main(): i64 { return w() + w(); }\nsyscall(60, main());\n' > "$T/rp/rp_const.cyr"
+printf 'include "priv.cyr"\n#inline\nfn w(): i64 { return pk() + pk(); }\nfn main(): i64 { return w() + w(); }\nsyscall(60, main());\n' > "$T/rp/rp_body_two.cyr"
+printf 'include "priv.cyr"\nfn f(): i64 { return pk(); }\nfn g(): i64 { return pk(); }\nfn main(): i64 { return f() + g(); }\nsyscall(60, main());\n' > "$T/rp/rp_two_fns.cyr"
+printf '#inline\nfn w(): i64 { return pk(); }\nfn main(): i64 { return w() + w(); }\ninclude "priv.cyr"\nsyscall(60, main());\n' > "$T/rp/rp_forward.cyr"
+prp rp_inline   1 3:25
+prp rp_generic  1 2:33
+prp rp_const    1 3:25
+prp rp_body_two 2 3:32
+prp rp_two_fns  2 3:25
+prp rp_forward  1 2:25
+
+[ "$fail" = 0 ] && echo "  PASS: visibility-private paths (&fn x3 + method + asv/asp/inferred + 4 PE-only) enforced once each in BOTH include orders; publics, same-file and public-generic instances accepted; private arrays refused; one report per call site across #inline / generic replays"
 exit $fail
