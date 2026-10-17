@@ -5089,6 +5089,21 @@ fn _gvar_ann_head(S): i64 {
     STI(S, GTI(S) - 1);
     return 0;
 }
+# ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
+# (CHKDUPVAL: "redefined with conflicting value", a same value silent). Only the exact `= NUM ;` was, so `var a = 5;
+# var a = 2 + 1;` compiled silently while the prior side compared any folded constant
+# (issues/2026-10-15-redeclared-global-folded-later-value-not-compared.md). Not over an enum constant (CHK_ENUM_SHADOW's
+# hard error is the one report there) nor a top-level const (refused at the name), and `chk_has` stays 0: it also gates
+# CHK_ENUM_SHADOW. `has` / `v` = the declaration's fold. CHANGELOG [6.7.14]
+fn _gv_dup_folded(S, noff, has, v, is_struct): i64 {
+    if (has == 0) { return 0; }
+    if (is_struct != 0) { return 0; }
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVENUMID(S, pi) != 0) { return 0; }
+    if (_vcst_ix(S, pi) >= 0) { return 0; }
+    return CHKDUPVAL(S, noff, v);
+}
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -5287,6 +5302,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
     # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
     if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
+    if (chk_has == 0 && sit_shadow == 1) { _gv_dup_folded(S, noff, cf_has, cf_val, is_struct); }   # 6.7.14
     # v6.3.24: a NON-int-literal global (string / expr / struct / array init →
     # chk_has==0) that shadows an enum constant is the dangerous silent-miscompile
     # case — a pointer/expr can never be a benign same-value alias of an int enum

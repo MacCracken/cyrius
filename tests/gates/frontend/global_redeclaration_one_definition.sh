@@ -356,7 +356,49 @@ _xrow() {
 _xrow XF1 1 7 'include "a.cyr"\ninclude "b.cyr"\nvar r = a_set(7);\nsyscall(60, b_get());\n'
 _xrow XF2 1 7 'include "b.cyr"\ninclude "a.cyr"\nvar r = a_set(7);\nsyscall(60, b_get());\n'
 _xrow XF3 0 7 'include "a.cyr"\ninclude "c.cyr"\nvar r = a_set(7);\nsyscall(60, c_get());\n'
-[ "$NW" -ge 12 ] || bad "floor: $NW warning rows ran, want 12"
+# WF — 6.7.14: a LATER initializer that folds (`= 2 + 1`, `= -5`, `= (7)`) is compared as a literal is.
+#      Only the exact `= NUM ;` was (v6.2.11's `chk_lit`), while the prior side compared any folded
+#      constant (issues/2026-10-15-redeclared-global-folded-later-value-not-compared.md). A diagnostic
+#      only: the value is the last definition's, as before (the exit code). Over an enum constant the
+#      shadow error stays the one report (CHK_ENUM_SHADOW: `chk_has` stays 0), over a top-level const
+#      the name's refusal. `true` / `false` fold to 1 / 0, so a bool redeclared to the other value warns.
+#      MUTATION LEDGER (6.7.14, scratch trees): f1 PARSE_GVAR_REG's `_gv_dup_folded` call dropped -> RED
+#      WF1-WF3 WF7 WF9 WF11 (6; WF4's `0x7` is a literal, compared already); f2 the enum-constant test in
+#      `_gv_dup_folded` dropped -> RED WF6 (a warning before the shadow error); f3 its const test dropped ->
+#      RED WF10 (a warning after the refusal); the compiler before the fix (c0d6d1ba) -> RED as f1.
+# _frow <id> <want warnings> <want exit, or "E:<error text>"> <src>
+_frow() {
+    NW=$((NW + 1))
+    printf '%b' "$4" > "$WORK/f.cyr"
+    rc=0; "$CC" < "$WORK/f.cyr" > "$WORK/f.bin" 2> "$WORK/f.err" || rc=$?
+    n=$(grep -c "duplicate symbol '[A-Za-z_]*' redefined with conflicting value (last definition wins)" "$WORK/f.err" || true)
+    [ "$n" = "$2" ] || bad "row $1: $n conflicting-value warning(s), want $2"
+    case $3 in
+    E:*)
+        [ "$rc" != 0 ] || bad "row $1: compiled (rc 0), want the error '${3#E:}'"
+        grep -q "${3#E:}" "$WORK/f.err" || bad "row $1: no error '${3#E:}': $(grep -m1 '^error' "$WORK/f.err")"
+        [ "$(grep -c '^error' "$WORK/f.err")" = 1 ] || bad "row $1: $(grep -c '^error' "$WORK/f.err") errors, want 1" ;;
+    *)
+        if [ "$rc" != 0 ] || [ ! -s "$WORK/f.bin" ]; then bad "row $1: compile failed (a warning must not fail the build)"; return 0; fi
+        chmod +x "$WORK/f.bin"
+        set +e; "$WORK/f.bin" > /dev/null 2>&1; r=$?; set -e
+        [ "$r" = "$3" ] || bad "row $1: exited $r, want $3" ;;
+    esac
+}
+_frow WF1 1 3 'var a = 5;\nvar a = 2 + 1;\nsyscall(60, a);\n'
+_frow WF2 1 251 'var a = 5;\nvar a = -5;\nsyscall(60, a & 255);\n'
+_frow WF3 1 7 'var a = 5;\nvar a = (7);\nsyscall(60, a);\n'
+_frow WF4 1 7 'var a = 5;\nvar a = 0x7;\nsyscall(60, a);\n'
+_frow WF5 0 5 'var a = 5;\nvar a = 2 + 3;\nsyscall(60, a);\n'
+_frow WF6 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 5; }\nvar K = 2 + 1;\nsyscall(60, K);\n'
+_frow WF7 1 1 'var a = 0;\nvar a = 2 - 1;\nsyscall(60, a);\n'
+_frow WF8 0 3 'fn f(): i64 { return 2; }\nvar a = f();\nvar a = 2 + 1;\nsyscall(60, a);\n'
+_frow WF9 1 3 'var a = 5;\nvar a = 2 + 1;\nvar a = 3;\nsyscall(60, a);\n'
+_frow WF10 0 "E:'C' is already declared as a top-level const" 'const C = 5;\nvar C = 2 + 1;\nsyscall(60, C);\n'
+_frow WF11 1 1 'var B: bool = false;\nvar B: bool = true;\nsyscall(60, B);\n'
+_frow WF12 0 1 'var B: bool = true;\nvar B: bool = (true);\nsyscall(60, B);\n'
+_frow WF13 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 5; }\nvar K = 2 + 3;\nsyscall(60, K);\n'
+[ "$NW" -ge 25 ] || bad "floor: $NW warning rows ran, want 25"
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")

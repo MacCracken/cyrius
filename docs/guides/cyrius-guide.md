@@ -6872,12 +6872,15 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   one of the two would read the other's storage in the wrong shape. Same rule as a
   duplicate `fn` that disagrees about arity.
 - A same-value redeclaration is silent; that is the usual way two files, or an
-  `#ifdef` arm, end up declaring one global. A later integer literal that **differs**
+  `#ifdef` arm, end up declaring one global. A later constant that **differs**
   from the earlier constant warns, whatever that constant was — `var a = 0;` then
   `var a = 5;` included (6.7.12, the user's decision of 2026-10-15: through 6.7.11 an
   earlier constant zero read as "no value" and the pair compiled silently, so two
-  files' `var _shared = 0;` / `= 5;` became one cell unseen). An earlier *computed*
-  initializer has no value to compare, and stays silent.
+  files' `var _shared = 0;` / `= 5;` became one cell unseen). The later constant is
+  any initializer that folds — `= -5`, `= 2 + 1`, `= (7)`, `true` / `false` (1 / 0) —
+  as the earlier one is (6.7.14: through 6.7.13 only an exact `= NUM ;` was compared,
+  so `var a = 5; var a = 2 + 1;` was silent). An earlier *computed* initializer has no
+  value to compare, and stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
   gives `b == 7`, and every later `K` is the var.
