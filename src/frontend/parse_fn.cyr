@@ -12077,6 +12077,20 @@ fn _inl_param_why(S): i64 {
     }
     return 0;
 }
+
+# 6.7.14 — reason 8: `#inline` on an `async fn`. The body is compiled as `f$impl` and reached only
+# through its Future (`future_force`'s fn pointer); no call names `f$impl`, so the replay can never
+# run — v6.5.63's contract is that an ignored `#inline` says so. `noff` is the user's name `f`.
+# CHANGELOG [6.7.14]
+fn _inl_async_warn(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": #inline ignored: async fn '", 29);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' runs through its Future\n", 26);
+    _err_excerpt(S);
+    return 0;
+}
 # ⛔ 6.6.17 (a9) — an f64 / f32 parameter's slot tag, and the same tag for the INLINE replay. The
 # replay re-registers a parameter by name with the type GFIPT recorded, which carried vector
 # descriptors only, so an inlined `x: f64` was an untyped word: `#inline fn d(x: f64) { return x
@@ -18100,6 +18114,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         var can_inline = 1;
         var _inl_why = 0;
         if (pc > 2) { can_inline = 0; _inl_why = 1; }
+        if (_is_async == 1) { can_inline = 0; _inl_why = 8; }   # 6.7.14: first — never replayed
         if (_pd_row(fi) != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 7; } }   # 6.7.7 (B6): a call may fill
         # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
         # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
@@ -18171,6 +18186,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
                 if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
                 if (_inl_why == 7) { WARN(S, "#inline ignored: fn has parameter defaults", 42); }
+                if (_inl_why == 8) { _inl_async_warn(S, _async_noff_f); }
             }
         }
     }

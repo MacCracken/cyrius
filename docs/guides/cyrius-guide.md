@@ -6668,7 +6668,9 @@ The Future reuses the same heap construction as a closure env. Requires
 `include "lib/alloc.cyr"` (the Future is heap-allocated), `lib/fnptr.cyr` and
 `lib/async.cyr` (for `future_force`); `alloc_init()` must run before the first
 `async`-fn call. The constructor and `lib/async.cyr` ship in lockstep: a program
-built by one release needs that release's `lib/async.cyr`.
+built by one release needs that release's `lib/async.cyr`. No call names `f$impl`,
+so `#inline` on an `async fn` cannot take effect: it is warned
+`#inline ignored: async fn 'f' runs through its Future` (6.7.14; it was silent).
 
 **Force-once.** An `async fn` whose body has no `await` builds a plain Future
 `[ &f$impl, argc|256, args…, done, value ]`. `await fut` lowers to
