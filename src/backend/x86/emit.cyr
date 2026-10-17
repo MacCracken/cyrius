@@ -5694,33 +5694,38 @@ fn EFLSTORE(S, idx): i64 {
 # x86_64 INLINE ASM MNEMONICS
 # ================================================================
 
+# A mnemonic is matched on its WHOLE name: each test masks the name's first bytes THROUGH its NUL
+# (cli = "cli\0", 4 bytes), and a name the assembler does not have is refused by name (D16,
+# 2026-10-16). Until 6.7.14 the first bytes decided: `clix` assembled as cli, `inb al, dx` as
+# in al, dx, `nopx` as nop, `stix` as sti. `in` itself never arrives here: it lexes as the for-in
+# keyword (ASM_KW_IN). CHANGELOG [6.7.14]
 fn ASM_MNEMONIC(S): i64 {
+    var ti = GTI(S);
     var noff = PEEKV(S);
     var mnem = L64(S + 0xEC00000 + noff);
-    STI(S, GTI(S) + 1);
-    if (mnem & 0xFFFFFF == 0x696C63) { EB(S, 0xFA); }                          # cli
-    elif (mnem & 0xFFFFFF == 0x697473) { EB(S, 0xFB); }                        # sti
-    elif (mnem & 0xFFFFFF == 0x746C68) { EB(S, 0xF4); }                        # hlt
-    elif (mnem & 0xFFFFFF == 0x706F6E) { EB(S, 0x90); }                        # nop
-    elif (mnem & 0xFFFFFFFFFF == 0x7174657269) { EB(S, 0x48); EB(S, 0xCF); }   # iretq
-    elif (mnem & 0xFFFFFFFFFF == 0x72736D7277) { EB(S, 0x0F); EB(S, 0x30); }   # wrmsr
-    elif (mnem & 0xFFFFFFFFFF == 0x72736D6472) { EB(S, 0x0F); EB(S, 0x32); }   # rdmsr
-    elif (mnem & 0xFFFFFFFFFF == 0x6469757063) { EB(S, 0x0F); EB(S, 0xA2); }   # cpuid
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666D) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF0); }   # mfence (v6.3.3 #6 — full memory barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666C) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xE8); }   # lfence (v6.3.3 #6 — load barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }            # pushfq
-    elif (mnem & 0xFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }                # popfq
-    elif (mnem & 0xFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                    # lgdt
-    elif (mnem & 0xFFFFFFFF == 0x7464696C) { ASM_LIDT(S); }                    # lidt
-    elif (mnem & 0xFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                      # mov (cr)
-    elif (mnem & 0xFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }          # invlpg
-    elif (mnem & 0xFFFFFF == 0x746E69) { ASM_INT(S); }                          # int
-    elif (mnem & 0xFFFF == 0x6E69) { if (ASM_IN(S) == 1) { return 0; } }       # in
-    elif (mnem & 0xFFFFFF == 0x74756F) { if (ASM_OUT(S) == 1) { return 0; } }   # out
-    elif (mnem & 0xFFFFFF == 0x72746C) { ASM_LTR(S); }                          # ltr
-    elif (mnem == 0x6F6C5F6D61726170) { ASM_PARAM_LOAD(S, noff); }              # param_load(reg,idx)
-    else { ERR(S); }
+    STI(S, ti + 1);
+    if (mnem & 0xFFFFFFFF == 0x696C63) { EB(S, 0xFA); }                        # cli
+    elif (mnem & 0xFFFFFFFF == 0x697473) { EB(S, 0xFB); }                      # sti
+    elif (mnem & 0xFFFFFFFF == 0x746C68) { EB(S, 0xF4); }                      # hlt
+    elif (mnem & 0xFFFFFFFF == 0x706F6E) { EB(S, 0x90); }                      # nop
+    elif (mnem & 0xFFFFFFFFFFFF == 0x7174657269) { EB(S, 0x48); EB(S, 0xCF); } # iretq
+    elif (mnem & 0xFFFFFFFFFFFF == 0x72736D7277) { EB(S, 0x0F); EB(S, 0x30); } # wrmsr
+    elif (mnem & 0xFFFFFFFFFFFF == 0x72736D6472) { EB(S, 0x0F); EB(S, 0x32); } # rdmsr
+    elif (mnem & 0xFFFFFFFFFFFF == 0x6469757063) { EB(S, 0x0F); EB(S, 0xA2); } # cpuid
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E65666D) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF0); }   # mfence (v6.3.3 #6 — full memory barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E65666C) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xE8); }   # lfence (v6.3.3 #6 — load barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }          # pushfq
+    elif (mnem & 0xFFFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }              # popfq
+    elif (mnem & 0xFFFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                  # lgdt
+    elif (mnem & 0xFFFFFFFFFF == 0x7464696C) { ASM_LIDT(S); }                  # lidt
+    elif (mnem & 0xFFFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                    # mov (cr)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }        # invlpg
+    elif (mnem & 0xFFFFFFFF == 0x746E69) { ASM_INT(S); }                       # int
+    elif (mnem & 0xFFFFFFFF == 0x74756F) { if (ASM_OUT(S) == 1) { return 0; } }   # out
+    elif (mnem & 0xFFFFFFFF == 0x72746C) { ASM_LTR(S); }                       # ltr
+    elif (_asm_is_param_load(S, noff) == 1) { ASM_PARAM_LOAD(S, noff); }       # param_load(reg,idx)
+    else { _asm_refuse(S, ti, "unknown x86 asm mnemonic "); return 0; }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
 }
@@ -5795,11 +5800,9 @@ fn _asm_x86_reg(n): i64 {
 # sigil AES-NI / cyrius atomic.cyr coupling bug class). disp uses the SAME formula the
 # prologue spills params at: -(idx + 1 + _cur_fn_regalloc)*8. Byte-identical to the old
 # hand-rolled literals when _cur_fn_regalloc==0 (disp8 form, mod=01, rm=rbp). noff is
-# the mnemonic's name offset — verify the full "param_load" (first-8 matched in the
-# dispatch; check the trailing "ad"). See issue 2026-05-21-asm-block-global-symbol-pseudo.
+# the mnemonic's name offset. The dispatch matches the whole name (_asm_is_param_load, 6.7.14).
+# See issue 2026-05-21-asm-block-global-symbol-pseudo.
 fn ASM_PARAM_LOAD(S, noff): i64 {
-    if (load8(S + 0xEC00000 + noff + 8) != 97) { ERR(S); }    # 'a'
-    if (load8(S + 0xEC00000 + noff + 9) != 100) { ERR(S); }   # 'd'
     if (PEEKT(S) != 10) { ERR(S); }      # (
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR(S); }       # register identifier

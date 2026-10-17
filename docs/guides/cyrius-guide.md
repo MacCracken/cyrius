@@ -5460,6 +5460,11 @@ refused, naming it. aarch64 has no `in` / `out`, and cx no inline asm; both refu
 (6.7.14: `in` was `unexpected in`, because it lexes as the for-in keyword, and both instructions
 ignored their operands, so `out dx, eax` assembled as `out dx, al`.)
 
+A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
+it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
+`unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
+assembled as `cli`, `inb al, dx` as `in al, dx` and `nopx` as `nop`.)
+
 ## Kernel Mode
 
 ```

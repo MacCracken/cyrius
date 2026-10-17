@@ -22,11 +22,17 @@
 #   4  an operand in / out cannot take is refused by name, rc 1, nothing written: `in bl, dx` ('bl'),
 #      `in al, 0x60` ('0x60'), `in rax, dx` ('rax'), `out dx, ebx` ('ebx'), `out al, dx` ('al')
 #   5  aarch64 and cx refuse `in` by name (no port input; cx has no inline asm), rc 1, nothing written
+#   6  a mnemonic is matched on its whole name; one the assembler does not have is refused by name, rc 1,
+#      nothing written: x86 `clix`, `inb al, dx`, `nopx`, `stix`, `mfencex`, `outb dx, al`,
+#      `param_loadx(rax, 0)`; aarch64 `nopx`, `dmbx`, `retx`, `eretx`, `param_loadx(x0, 0)` — and the
+#      aarch64 names keep their words (dmb dsb isb nop wfi wfe svc ret eret)
 #
 # Mutations (6.7.14, each in a scratch copy of the tree, the compiler rebuilt):
 #   the asm arm's keyword-76 route dropped                     -> 1 RED (`unexpected in`), 2 RED, 5 RED
 #   ASM_IN / ASM_OUT emit EC / EE whatever the width (6.7.13)  -> 1 RED (66 ED, ED, 66 EF, EF)
 #   _asm_acc_width answers al for any operand                  -> 4 RED (in bl, in rax, out dx, ebx compile)
+#   x86 cli / nop / sti matched on 3 bytes again (6.7.13)      -> 6 RED (clix, nopx, stix compile)
+#   aarch64 nop matched on 3 bytes again (6.7.13)              -> 6 RED (aarch64 nopx compiles)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -136,5 +142,25 @@ else
   refused 5 "$D/cc_cx" 'in al, dx;' "inline asm not supported in cyrius-x: 'in'"
 fi
 
+# 6 — whole mnemonics
+for m in 'clix;' 'inb al, dx;' 'nopx;' 'stix;' 'mfencex;' 'outb dx, al;' 'param_loadx(rax, 0);'; do
+  n=$(printf '%s' "$m" | sed 's/[ (;].*//')
+  refused 6 "$CC" "$m" "unknown x86 asm mnemonic '$n'"
+done
+if [ -s "$D/cc_a64" ]; then
+  for m in 'nopx;' 'dmbx;' 'retx;' 'eretx;' 'param_loadx(x0, 0);'; do
+    n=$(printf '%s' "$m" | sed 's/[ (;].*//')
+    refused 6 "$D/cc_a64" "$m" "unknown aarch64 asm mnemonic '$n'"
+  done
+  # each marker block is padded to 4 bytes (F1 F1 F1 00), so the words stay aligned and the segment
+  # starts with that 00
+  printf 'fn f(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm { dmb; dsb; isb; nop; wfi; wfe; svc; ret; eret; }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\nsyscall(60, f());\n' > "$D/a64.cyr"
+  rc=0; "$D/cc_a64" < "$D/a64.cyr" > "$D/a64" 2> "$D/a64.err" || rc=$?
+  w='00 bf 30 03 d5 9f 30 03 d5 df 30 03 d5 1f 20 03 d5 7f 20 03 d5 20 10 03 d5 01 00 00 d4 c0 03 5f d6 e0 03 9f d6'
+  if [ "$rc" -ne 0 ]; then bad "6: aarch64 dmb .. eret were refused (rc $rc): $(grep -v '^note\|^warning' "$D/a64.err" | head -1)"
+  else g=$(bytes "$D/a64" | head -1)
+    [ "$g" = "$w" ] && echo "  ok   6: aarch64 dmb dsb isb nop wfi wfe svc ret eret keep their words" || bad "6: aarch64 dmb .. eret assembled to [$g], want [$w]"; fi
+fi
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: asm_mnemonics_whole — $fail row(s) red"; exit 1; fi
-echo "PASS: asm_mnemonics_whole — in / out encode the accumulator's width, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"
+echo "PASS: asm_mnemonics_whole — mnemonics match on their whole names and an unknown one is refused by name (x86, aarch64), in / out encode the accumulator's width, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"

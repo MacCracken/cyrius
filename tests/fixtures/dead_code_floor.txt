@@ -35,6 +35,7 @@ TS_PEEKLINE x86
 _EMIT_GVAR_STATIC_INITS cx
 _IR_REC a64 a64m a64n cx
 _IR_REC1 a64 a64m a64n cx
+_asm_is_param_load cx
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
 _fnhash_health a64 a64m a64n cx x86m
