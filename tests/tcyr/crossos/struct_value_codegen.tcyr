@@ -434,6 +434,26 @@ fn q_elems_mo(): i64 {
     var k = 3;
     var sc = HE { (k + 4), (4), ((9)), (k + 5) };
     assert_eq(he(&sc), 64, "Q48: wrapped scalar elements, each a leaf (unchanged)");
+    q_elems_name();
+    return 0;
+}
+# Q49+ (6.7.14, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) — a struct NAME in
+# parentheses as the element (`HE { 7, (q0), 8 }`, `((q0))`) was "unexpected '}'": a scalar for the nested struct's
+# first leaf, the next element its second. The wrap is stepped into and the name taken as unwrapped (`_spi_pname`).
+var GQE = QE { 4, 9 };
+var GHEN = HE { 7, (GQE), 8 };
+fn q_elems_name(): i64 {
+    var q0 = QE { 4, 9 };
+    var h = HE { 7, (q0), 8 };
+    assert_eq(he(&h), 64, "Q49: HE { 7, (q0), 8 }, a wrapped struct local (the filed repro: unexpected '}')");
+    var d = HE { 7, ((q0)), 8 };
+    assert_eq(he(&d), 64, "Q50: HE { 7, ((q0)), 8 }, double parentheses");
+    var g = HE { 7, (GQE), 8 };
+    assert_eq(he(&g) + he(&GHEN), 128, "Q51: (GQE), a global, in a fn and at top level");
+    var c = |n| { var hc = HE { 7, (q0), 8 }; return he(&hc) + n; };
+    var f = HEF { (q0), 8 };
+    var l = HEL { 7, ((q0)) };
+    assert_eq(fncall1(c, 0) + f.q.a * 10 + f.q.b + f.z + l.x + l.q.a * 10 + l.q.b, 177, "Q52: a capture, the FIRST and the LAST element");
     return 0;
 }
 

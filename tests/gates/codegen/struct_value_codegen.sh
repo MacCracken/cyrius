@@ -309,6 +309,12 @@
 #       and slice_signed_read Wb (each IR=3: `_arr_sub_load` no longer records its own signed load)
 #   M-IW3 the six EFLLOAD_* / EFLSTORE_*_PAIR records dropped -> RED 0: no row, and no IR=3 output in the 624-file
 #       .tcyr corpus changes (the pairs are not exposed today: see IW above)
+#   (6.7.14, the receives lane, unit R2, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md,
+#   the same procedure, 2026-10-17)
+#   M-PN1 `_spi_src` without its `_spi_pname` arm (= the tree before) -> RED 13: PN1 PN2 PN5 PN6 (unexpected '}'), PN3
+#       PN4 (refused, but as unexpected '}'), A1-A7 (the values file does not build: tcyr Q49-Q52); PN7 green
+#   M-PN2 `_spi_pname` without its `_pw_close` (the wrap left open)   -> RED 12: PN1 PN2 PN5 PN6 (unexpected ')'), PN3
+#       (3 error lines), A1-A7; PN4 PN7 green
 #
 #   C  (6.7.12) tests/tcyr/crossos/vector_call_result_discarded.tcyr — a vector-returning call whose result goes
 #      nowhere (the three filed repros, an argument, a method with `self` intact, an operator fn returning a
@@ -588,6 +594,20 @@ refused pm3 "'QE_dupe' returns a struct by value, and a struct result needs stor
 refused pm4 "'QE_add' returns a struct by value, and a struct result needs storage in a fn's frame" "PM4: at top level, 16 B operator, double-wrapped: refused by name once" "${PMH}var q0 = QE { 4, 9 };\nvar q1 = QE { 0, 0 };\nvar G = HE { 7, ((q0 + q1)), 8 };\nsyscall(60, G.x);\n"
 refused pm5 "'Q3_dupe3' returns a struct by value, and a struct result needs storage in a fn's frame" "PM5: at top level, 24 B method: refused once (+ unexpected '}' before)" "struct Q3 { a; b; c; }\nstruct H3 { x; q: Q3; z; }\nimpl Q3 { fn dupe3(self): Q3 { var q = Q3 { self.a, self.b, self.c }; return q; } }\nvar q3 = Q3 { 1, 4, 9 };\nvar G = H3 { 7, (q3.dupe3()), 8 };\nsyscall(60, G.x);\n"
 refused pm6 "cannot copy 'QO_dupe' into a struct field of a different struct type: 'q'" "PM6: (o.dupe()) of ANOTHER 16 B struct, refused by name (unexpected '}')" "${PMH}struct QO { a; b; }\nimpl QO { fn dupe(self): QO { var q = QO { self.a, self.b }; return q; } }\nfn main(): i64 { var o = QO { 4, 9 }; var m = HE { 7, (o.dupe()), 8 }; return m.x; }$E"
+# PN (6.7.14, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) a struct NAME in
+# parentheses as the element (`HE { 7, (q0), 8 }`) was "unexpected '}'" on every target: `_spi_src` took a named struct
+# only as `IDENT ,` / `IDENT }`, so the wrapped name was a scalar for the nested struct's first leaf. `_spi_pname` steps
+# the wrap and takes the name as `_spi_name` does; another struct is refused by name once, as the unwrapped name is.
+# PN1 the filed repro verbatim; the values file's Q49-Q52 run it on A1-A7.
+PNH='struct QE { a; b; }\nstruct RE { a; b; }\nstruct HE { x; q: QE; z; }\n'
+PNM="cannot copy 'r0' into a struct field of a different struct type: 'q'"
+exits_file pn1 64 "PN1: HE { 7, (q0), 8 } (the filed repro, verbatim: unexpected '}')" docs/development/issues/repros/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.cyr
+exits pn2 64 "PN2: HE { 7, ((q0)), 8 }, double parentheses (unexpected '}')" "${PNH}fn main(): i64 { var q0 = QE { 4, 9 }; var h = HE { 7, ((q0)), 8 }; return h.x + h.q.a * 10 + h.q.b + h.z; }$E"
+refused pn3 "$PNM" "PN3: (r0) of another struct, refused by name once, as r0 is (unexpected '}')" "${PNH}fn main(): i64 { var r0 = RE { 4, 9 }; var h = HE { 7, (r0), 8 }; return h.x; }$E"
+refused pn4 "cannot copy 'GR' into a struct field of a different struct type: 'q'" "PN4: at top level, ((GR)) of another struct, refused by name once" "${PNH}var GR = RE { 4, 9 };\nvar G = HE { 7, ((GR)), 8 };\nsyscall(60, G.x);\n"
+exits pn5 64 "PN5: at top level, HE { 7, (GQ), 8 } from a global (unexpected '}')" "${PNH}var GQ = QE { 4, 9 };\nvar G = HE { 7, (GQ), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
+exits pn6 64 "PN6: after a first statement, HE { 7, (GQ), 8 } (unexpected '}')" "${PNH}var GQ = QE { 4, 9 };\nsyscall(39);\nvar G = HE { 7, (GQ), 8 };\nsyscall(60, G.x + G.q.a * 10 + G.q.b + G.z);\n"
+refused pn7 "$PNM" "PN7: control, the unwrapped r0 is refused with the same words, once" "${PNH}fn main(): i64 { var r0 = RE { 4, 9 }; var h = HE { 7, r0, 8 }; return h.x; }$E"
 # N (6.7.6 E2) — lib/fnptr.cyr's address-taken fncall8 passes a cyrius callee args 7 / 8 in cyrius's order.
 exits n01 78 "N1: callptr(&fncall8, &s8, 1..8) % 100 (x86 SysV: 87, args 7 and 8 swapped)" "include \"lib/alloc.cyr\"\ninclude \"lib/fnptr.cyr\"\nfn s8(a, b, c, d, e, f, g, h) { return a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h; }\nfn main() { return callptr(&fncall8, &s8, 1, 2, 3, 4, 5, 6, 7, 8) % 100; }$E"
 
@@ -655,7 +675,7 @@ TCA=tests/tcyr/crossos/struct_value_codegen.tcyr
 # (A1-A6), NAW every row (A7, PE). Counts are derived: the struct lanes keep adding rows (raise FLOORA with them).
 NA=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/{s=1; next} /^[[:space:]]*#endif/{s=0; next} /^[[:space:]]*#/{next} !s && /assert_eq\(/{n++} END{print n+0}' "$TCA")
 NAW=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TCA")
-FLOORA=235
+FLOORA=239
 if [ "$NA" -lt "$FLOORA" ]; then bad "A: only $NA rows in $TCA (floor $FLOORA) — rows were lost"; fi
 TC=$TCA; TN=$NA
 tcyr "A1: the values file (x86_64)" "$CC" ""

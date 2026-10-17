@@ -2816,10 +2816,30 @@ fn _spi_src(S, ft): i64 {
         if (r != 0) { return r; }
     }
     if (PEEKT(S) == 10) {
+        if (_spi_pname(S) == 1) { return 1; }
         var rp = _spi_pcall(S);
         if (rp != 0) { return rp; }
     }
     return _spi_expr(S, ft);
+}
+# 6.7.14 — a named struct in parentheses that wrap the whole element (`HE { 7, (q0), 8 }`, `((q0))`) is the
+# element the unwrapped name is (guide § Parentheses; 6.7.11's D44). It was an expression whose word went into
+# the nested struct's first leaf and the next element into its second: "unexpected '}'". The wrap is stepped
+# into, `_spi_name` takes the name (a struct of another type then meets its refusal by name), and the wrap is
+# closed; 0 = not that shape (cursor untouched). CHANGELOG [6.7.14]
+fn _spi_pname(S): i64 {
+    var st = GTI(S);
+    var k = _spi_epk(S, st);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, st + k) != 2) { return 0; }
+    if (TOKTYP(S, st + k + 1) != 11) { return 0; }
+    STI(S, st + k);
+    if (_spi_name(S) == 0) {
+        STI(S, st);
+        return 0;
+    }
+    _pw_close(S, k);
+    return 1;
 }
 
 # `IDENT ,` / `IDENT }`: a named struct (recorded, consumed) or 0 (cursor untouched).
