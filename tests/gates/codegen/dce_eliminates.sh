@@ -243,5 +243,43 @@ CYRIUS_DCE=1 "$T/cc_cx" < "$T/g.cyr" > "$T/g.cyx" 2>/dev/null || { echo "FAIL dc
 got=0; timeout 20 "$T/cxvm" < "$T/g.cyx" || got=$?
 [ "$got" = 253 ] || { echo "FAIL dce_eliminates axis7a (cx): g.cyr under CYRIUS_DCE=1 exits $got, want 253"; exit 1; }
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx)"
+# ── axis 8 — 6.7.14: a redefined fn's LOSING body keeps nothing alive ───────────────────────
+# `_fn_redirect` turns the earlier definition's entry into a jump to the last one, so the losing
+# body lies in no fn's range, and the seed pass took every call in it as a root: `only_in_loser`,
+# called only from the losing `f`, was not dead in a.cyr (0 'dead:' lines) while it was in b.cyr
+# (1). The filed a.cyr / b.cyr verbatim, built as their manifest's `stdlib = ["syscalls"]` builds
+# them (lib/syscalls.cyr ahead of the source): both report it dead and exit 1 (the winner ran), on
+# x86 W^X, CYRIUS_WX=0 and aarch64. Mutation (6.7.14): `_dce_in_loser` returning 0 -> RED 8 (a.cyr
+# reports 0). issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+cat > "$T/a.cyr" <<'EOF'
+fn only_in_loser() { return 42; }
+fn f() { return only_in_loser(); }
+fn f() { return 1; }
+var r = f();
+syscall(SYS_EXIT, r);
+EOF
+cat > "$T/b.cyr" <<'EOF'
+fn only_in_loser() { return 42; }
+fn g() { return 1; }
+var r = g();
+syscall(SYS_EXIT, r);
+EOF
+loser8() {   # <leg> <compiler> <run: x86|a64> [ENV=V...]
+  l8="$1"; c8="$2"; r8="$3"; shift 3
+  for x in a b; do
+    { echo 'include "lib/syscalls.cyr"'; cat "$T/$x.cyr"; } > "$T/${x}8.cyr"
+    env CYRIUS_DCE=1 CYRIUS_DCE_VERBOSE=1 "$@" "$c8" < "$T/${x}8.cyr" > "$T/${x}8" 2> "$T/${x}8.err" || { echo "FAIL dce_eliminates axis8 ($l8): $x.cyr did not compile: $(grep -m1 error "$T/${x}8.err")"; exit 1; }
+    n8=$(grep -c 'dead: only_in_loser' "$T/${x}8.err" || true)
+    [ "$n8" = 1 ] || { echo "FAIL dce_eliminates axis8 ($l8): $x.cyr reports 'dead: only_in_loser' $n8 times, want 1 — a losing body's call kept it alive"; exit 1; }
+    chmod +x "$T/${x}8"; got=0
+    if [ "$r8" = a64 ]; then timeout 20 qemu-aarch64 "$T/${x}8" || got=$?; else "$T/${x}8" || got=$?; fi
+    [ "$got" = 1 ] || { echo "FAIL dce_eliminates axis8 ($l8): $x.cyr exits $got, want 1"; exit 1; }
+  done
+}
+loser8 "x86 W^X" "$T/stage1" x86
+loser8 "x86 CYRIUS_WX=0" "$T/stage1" x86 CYRIUS_WX=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then loser8 aarch64 "$T/cc_a64" a64
+else echo "  SKIP dce_eliminates axis8 aarch64 leg: qemu-aarch64 not installed"; fi
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing"
 exit 0

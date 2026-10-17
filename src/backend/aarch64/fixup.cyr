@@ -407,9 +407,11 @@ fn FIXUP(S): i64 {
                 # with the x86 backend (arch delta is only the BL/B scan above).
                 var fnhit = _dce_hash_lookup(S, tgt);
                 if (fnhit >= 0) {
-                    # Host = fn containing scn. If none → entry = ROOT.
+                    # Host = fn containing scn. If none → entry = ROOT — unless scn lies in a
+                    # redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser).
                     var host = _dce_host_fn(S, scn, fnc);
-                    if (host < 0) {
+                    if (host < 0) { host = 0 - 1 - _dce_in_loser(scn); }
+                    if (host == 0 - 1) {
                         store8(&live + (fnhit >> 3), load8(&live + (fnhit >> 3)) | (1 << (fnhit & 7)));
                     }
                 }

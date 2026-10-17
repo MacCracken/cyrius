@@ -489,6 +489,22 @@ fn _dce_host_fn(S, coff, fnc): i64 {
     return 0 - 1;
 }
 
+# 6.7.14 — 1 when code offset coff lies in a redefined fn's LOSING body, past its entry jump
+# (`_fnr_add`, util.cyr). The seed passes take a call there as no root: nothing reaches the body
+# but that jump, which stays a root (coff == old) and keeps the last definition live. The
+# reachable-undefined-call check keeps using `_dce_host_fn` alone, so a losing body that calls an
+# undefined fn is still refused. issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+fn _dce_in_loser(coff): i64 {
+    var i = 0;
+    while (i < _fnr_n) {
+        if (coff > load64(_fnr_base + i * 16)) {
+            if (coff < load64(_fnr_base + i * 16 + 8)) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # 6.7.14 — A DEAD FN'S RANGE CAN HOLD A LIVE FN. A generic instance is emitted inline, inside the
 # fn being compiled when it is first needed (`_instantiate_generic_fn`: a jump over it), so a
 # forwarder's instance nests the instance it forwards to — and an inline replay of the forwarder
