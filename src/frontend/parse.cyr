@@ -5988,8 +5988,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # about the same expression.
                 # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
                 # the literal 0 is a null reset, never warned (`_tp_warn`).
+                # 6.7.14: never a value-form vector local — its SLTYPE is a descriptor (<= -2048), negative but no
+                # `0 - sid`: `v = f64v2_splat(1.0);` with the fn undefined (the undefined-function path's since 6.7.13)
+                # and `v = mk4(..)` of another vector (refused) warned "assigning non-pointer to typed pointer".
                 if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
-                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_l(S, _asg_ti, idx); } }
+                    if (lt > 0 - 2048) { if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_l(S, _asg_ti, idx); } } }
                 }
             }
         }

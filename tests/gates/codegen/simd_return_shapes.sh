@@ -172,6 +172,13 @@
 # 41)))`), Q11 / Q12 the same 16-byte class of another type (an f64v2 callee into `f32v4`) and a 16-byte callee into an
 # f64v4 — "vector return type does not match the declared type" / ".. the assigned variable".
 #   M-Q1 `_vrcv_ibad` answering 0 (measured)     -> RED 32: Q5-Q12 on all four legs (the generic line, `got `callptr``)
+# 6.7.14 (issues/2026-10-16-vector-local-assignment-from-undefined-call-warns-typed-pointer.md) — THE ASSIGNMENT'S
+# TYPED-POINTER WARNING SKIPS A VALUE-FORM VECTOR LOCAL (its SLTYPE a descriptor, <= -2048, never `0 - sid`): `v =
+# f64v2_splat(1.0);` (the fn undefined) warned "assigning non-pointer to typed pointer" ahead of the undefined-function
+# lines, and `v = mk4(41)` of another vector beside its refusal. H9 (the filed repro verbatim) and every undef H row now
+# assert no such warning, Q13 the by-name mismatch, and every Q row; TP is the control: `p = 5;` into a `*Pt` local and
+# `q = 7;` into a `*i64` one still warn (twice), on all four legs.
+#   M-T1 the parse.cyr guard reverted (measured) -> RED 8: H9 Q13 on all four legs; TP green
 # Q3 runs on win64 too since D30 (simd_pointer_param.sh's VZ4: a word into Win64's value-form parameter is refused);
 # M-VC3 there (`_sarg_pe_vword` answering 0) -> RED win64 Q3 here; 6.7.14: M-PV1 / M-PV2 there (`_sarg_pe_vform`, which
 # folds it) -> RED win64 Q3 here.
@@ -643,9 +650,12 @@ syscall(60, run());
     Q12) printf '%s' "$CH"'fn run(): i64 { var u: f64v4 = mk4(1); u = fncall2(&mkv, 1, 2); return 1; }
 syscall(60, run());
 ' ;;
+    Q13) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = mkv(1, 2); v = mk4(41); return lanes(v); }
+syscall(60, run());
+' ;;
     esac
 }
-Q_ROWS="Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 Q11 Q12"
+Q_ROWS="Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 Q11 Q12 Q13"
 q_msg() {
     case "$1" in
     Q1) echo "vector return type does not match the declared type";;
@@ -653,7 +663,7 @@ q_msg() {
     Q3) echo "value-form SIMD arg must be a 16-byte vector";;
     Q4) echo "$MSG";;
     Q5|Q7|Q9|Q11) echo "vector return type does not match the declared type";;
-    Q6|Q8|Q10|Q12) echo "vector return type does not match the assigned variable";;
+    Q6|Q8|Q10|Q12|Q13) echo "vector return type does not match the assigned variable";;
     esac
 }
 # ---- 6.7.13 (D34 A): `*p` of a `*V` into a value-form vector local (rows P accepted, 161; K refused once) ----------------
@@ -1013,6 +1023,8 @@ refuse_q_all() {  # $1 leg label  $2 compiler
             bad "$1 $row: not refused as '$qm' (rc=$rc, first line: $(head -1 "$W/q.err" 2>/dev/null))"
         elif [ "$ne" != 1 ]; then
             bad "$1 $row: $ne error lines (want 1)"
+        elif grep -qF "$TPW" "$W/q.err"; then
+            bad "$1 $row: '$TPW' for a vector local (no typed pointer)"
         elif [ -s "$W/q.out" ]; then
             bad "$1 $row: reported but still emitted an artifact"
         else
@@ -1075,6 +1087,7 @@ refuse_h_all() {  # $1 leg label  $2 compiler
         elif [ "$hk" = undef ]; then
             if [ "$nv" != 0 ]; then bad "$1 $row: the receive refused a call naming no fn ($(grep -m1 "$MSGV" "$W/h.err" | cut -c1-120))"
             elif grep -qF "$MSG" "$W/h.err"; then bad "$1 $row: the return rule refused a call naming no fn"
+            elif grep -qF "$TPW" "$W/h.err"; then bad "$1 $row: '$TPW' for a vector local (no typed pointer)"
             elif ! grep -qF "undefined function 'f64v2_splat'" "$W/h.err"; then bad "$1 $row: no undefined-function warning"
             elif ! grep -qF "refusing to emit" "$W/h.err"; then bad "$1 $row: no refusing-to-emit line"
             else good "$1 $row: the undefined-function path alone"; fi
@@ -1092,6 +1105,23 @@ refuse_h_all() {  # $1 leg label  $2 compiler
             good "$1 $row refused once ($hk)"
         fi
     done
+}
+
+# 6.7.14: row TP, the control of the typed-pointer warning that skips a vector local: `p = 5;` into a `*Pt` local and
+# `q = 7;` into a `*i64` one still warn, twice, and compile.
+TPW="assigning non-pointer to typed pointer"
+tp_ctl_all() {  # $1 leg label  $2 compiler
+    printf '%s' 'struct Pt { x; y; }
+fn run(): i64 { var p: *Pt = 0; p = 5; var q: *i64 = 0; q = 7; var s = 0; s = 9; return 1; }
+syscall(60, run());
+' > "$W/tp.cyr"
+    rc=0
+    "$2" < "$W/tp.cyr" > "$W/tp.out" 2>"$W/tp.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    nt=$(grep -c "^warning.*$TPW" "$W/tp.err" 2>/dev/null || true)
+    if [ "$rc" != 0 ]; then bad "$1 TP: the control did not compile (rc=$rc: $(grep -m1 '^error' "$W/tp.err"))"
+    elif [ "$nt" != 2 ]; then bad "$1 TP: $nt typed-pointer warnings, want 2 (\`p = 5;\` into *Pt, \`q = 7;\` into *i64)"
+    else good "$1 TP: the typed-pointer warning still fires for *Pt and *i64 locals"; fi
 }
 
 # 6.7.14: row H16, the filed return repro verbatim — its fn is never called, so x86_64 / aarch64 / PE build it with the
@@ -1159,6 +1189,7 @@ accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
 refuse_h_all host "$CC"
 undef_ret_all host "$CC"
+tp_ctl_all host "$CC"
 refuse_t_all host "$CC"
 accept_u_all host "$CC" hostr
 
@@ -1179,6 +1210,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_k_all cx "$W/cycc_cx"
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
+tp_ctl_all cx "$W/cycc_cx"
     refuse_t_all cx "$W/cycc_cx"
     accept_u_all cx "$W/cycc_cx" cxr
 else
@@ -1202,6 +1234,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_k_all aarch64 "$W/cycc_a64"
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
+tp_ctl_all aarch64 "$W/cycc_a64"
         refuse_t_all aarch64 "$W/cycc_a64"
         accept_u_all aarch64 "$W/cycc_a64" a64r
     else
@@ -1230,6 +1263,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_k_all win64 "$W/cycc_win"
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
+tp_ctl_all win64 "$W/cycc_win"
         refuse_t_all win64 "$W/cycc_win"
         accept_u_all win64 "$W/cycc_win" wr_
     else
@@ -1243,7 +1277,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
