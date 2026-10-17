@@ -238,7 +238,7 @@ networking (sovereign native TLS 1.3, HTTP/2, WebSockets), crypto, Unicode
 (UAX #15 normalization), regex, GPU, and OS interop.
 
 The twelve folded sibling libraries, at the versions `lib/` carries
-(each file's `# Version:` header): sakshi 2.5.10 (tracing) · patra 1.16.3
+(each file's `# Version:` header): sakshi 2.5.10 (tracing) · patra 1.16.4
 (storage) · sigil 3.13.12 (security / crypto) · vani 1.2.10 (audio) ·
 yukti 2.3.17 (hardware) · sankoch 2.8.7 (compression) · sandhi 1.13.1
 (HTTP/2, JSON-RPC, TLS policy) · niyama 1.1.0 (regex) · mabda 4.2.0
