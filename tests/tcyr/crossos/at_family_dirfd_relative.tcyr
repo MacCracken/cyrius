@@ -90,21 +90,27 @@ fn _af_rows(): i64 {
 #endif
 
 alloc_init();
+var _armed = 0;
 #ifdef CYRIUS_TARGET_WIN
 println("SKIP: windows has no at-family wrappers (sys_mkdirat / sys_fchmodat)");
+_armed = 1;
 #endif
 #ifdef CYRIUS_TARGET_CX
 println("SKIP: cx serves no mkdirat / fchmodat - the dirfd rows are native");
+_armed = 1;
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
 println("SKIP: agnos has no at-family wrappers (sys_mkdirat / sys_fchmodat)");
+_armed = 1;
 #endif
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_CX
 #ifndef CYRIUS_TARGET_AGNOS
 _af_rows();
+_armed = 1;
 #endif
 #endif
 #endif
+assert_eq(_armed, 1, "a target arm ran: the dirfd rows, or a SKIP by name (0 = this test compiled into nothing)");
 
 var r = assert_summary();
