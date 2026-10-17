@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.14 — slot open 2026-10-16** (6.7.13 tagged at `19a7ae21` and pushed by the user, store slot refreshed from the tag). 6.7.13: Break 2 repair 3, struct values — 76 issues closed in six lanes over two waves, the folds patra 1.16.3 / bayan 1.9.0 / sandhi 1.13.1 (release gate GREEN on `29e4f0a9`). |
-| **cycc** | x86 **2,371,072 B** in flight (6.7.14, wave 1 merged, 2026-10-17), +71,928 B over 6.7.13's 2,299,144 B. `build/cycc-native-aarch64` **2,284,912 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,416,968 B** in flight (6.7.14, waves 1 and 2 merged, 2026-10-17), +117,824 B over 6.7.13's 2,299,144 B. `build/cycc-native-aarch64` **2,285,760 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
 | **Bootstrap / cross-OS** | 6.7.13: ecb · ach · pi `SELFHOST_OK` + `LIBTEST_OK` on the full corpus, cass on `tests/tcyr/crossos`, REAL hardware through `scripts/release-gate.sh` (on `29e4f0a9`). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.13 `release-gate.sh` GREEN (2026-10-16, on `29e4f0a9`): check.sh 527 / 527 shell gates, the driver 131 / 131, the 2 named agnos-parity SKIPs; ecb / ach / pi on the full corpus. self_compile 1,600 ms (A/B 6.7.12 1,524 → 6.7.13 1,603 ms; same input +1.1 %). |
 | **Corpus** | **624** `.tcyr` (**318** in `crossos/`) · **106** `lib/*.cyr` · **523** shell gates under `tests/gates/<bucket>/` · api-surface **5,888**. |
