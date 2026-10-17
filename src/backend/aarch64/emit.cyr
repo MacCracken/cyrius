@@ -781,52 +781,25 @@ fn _esx_arm(S, src, dst): i64 {
         syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
         syscall(SYS_EXIT, 1);
     }
-    return _esx_arm_shift(S, src, dst, 0);
-}
-
-# The same row PLUS an argument shift: `mov x0,x1; mov x1,x2; …` `nshift` times, for the
-# at-family whose Darwin equivalent takes one fewer argument (mkdirat 34 -> mkdir 136, fchmodat
-# 53 -> chmod 15; openat 56 -> open 5 was the third until 6.7.12, see _esx_arm_atfd). ⚠ THE
-# BRANCH DISPLACEMENT DEPENDS ON `nshift` — it has to clear the movs AND the movz — which is
-# exactly the arithmetic that is error-prone to write by hand three times, and why these three
-# rows were the ones left spelled out in raw hex when the other 90 were consolidated.
-#   mov xD, xS = 0xAA0003E0 | (S << 16) | D          (verified with aarch64-linux-gnu-as)
-#   b.ne +4*(nshift+2) = 0x54000000 | ((nshift + 2) << 5) | 1
-fn _esx_arm_shift(S, src, dst, nshift): i64 {
-    if (_esx_qon == 1) {
-        if (src == _esx_q) { _esx_hit = 1; }
-        return 0;
-    }
-    if (src > 4095) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
-        syscall(SYS_EXIT, 1);
-    }
-    if (dst > 65535) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
-        syscall(SYS_EXIT, 1);
-    }
     EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
-    EW(S, 0x54000000 | ((nshift + 2) << 5) | 1);            # b.ne past the movs + the movz
-    var _si = 0;
-    while (_si < nshift) {
-        EW(S, 0xAA0003E0 | ((_si + 1) << 16) | _si);        # mov x{_si}, x{_si+1}
-        _si = _si + 1;
-    }
+    EW(S, 0x54000041);                                      # b.ne past the movz
     EW(S, 0xD2800000 | (dst << 5) | 16);                    # movz x16, #dst
     return 0;
 }
 
 # 6.7.12 — an at-family row that KEEPS the dirfd: a pure renumber to the Darwin *at syscall, plus
-# Linux's AT_FDCWD (-100) translated to Darwin's (-2) in x0. The openat row (56 -> Darwin openat
-# 463) was `_esx_arm_shift(S, 56, 5, 3)` — BSD open(5) with the dirfd shifted out — so every
-# sys_openat(dirfd, rel, …) on arm64 macOS opened `rel` against the CWD, and cbt's [embed] open
-# could not walk a path from a root handle (it opened the whole path there, so a directory swapped
-# for a link after the per-prefix check was followed). The stdlib passes Darwin's -2 already
+# Linux's AT_FDCWD (-100) translated to Darwin's (-2) in x0. Darwin's openat 463, mkdirat 475 and
+# fchmodat 467 take the Linux argument order. Each row used to reach the BSD call with the dirfd
+# SHIFTED OUT (open 5 until 6.7.12; mkdir 136 and chmod 15 until 6.7.14), so a dirfd-relative
+# name landed against the CWD: sys_mkdirat(dirfd, "rel") made ./rel, sys_fchmodat changed ./rel,
+# and sys_openat(dirfd, rel, …) opened ./rel, so cbt's [embed] open could not walk a path from a
+# root handle (it opened the whole path there, so a directory swapped for a link after the
+# per-prefix check was followed). The stdlib passes Darwin's -2 already
 # (lib/syscalls_linux_common.cyr AT_FDCWD); a raw caller with Linux's -100 (sakshi's
 # `_sk_open`) worked only because the dirfd was dropped, so -100 is translated here.
 # Words (llvm-mc -triple=aarch64): cmn x0,#100 = 0xB101901F · b.ne +8 = 0x54000041 ·
 # movn x0,#1 (x0 = -2) = 0x92800020. The body is fold-safe (_esx_body_bad): the flag reader
-# follows its own setter and the branch lands inside the body. CHANGELOG [6.7.12]
+# follows its own setter and the branch lands inside the body. CHANGELOG [6.7.12] [6.7.14]
 fn _esx_arm_atfd(S, src, dst): i64 {
     if (_esx_qon == 1) {
         if (src == _esx_q) { _esx_hit = 1; }
@@ -978,8 +951,9 @@ fn ESYSXLAT(S): i64 {
         # the answer x86-macOS gives for its own dup3 (292, unrouted). CHANGELOG [6.6.12]
         _esx_arm(S, 260, 7);  # wait4 260→7
         _esx_arm(S, 220, 2);  # clone 220→fork 2 (x1-fixup post-svc)
-        # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
-        _esx_arm_shift(S, 34, 136, 2);
+        # mkdirat 34 → Darwin mkdirat 475, dirfd kept (AT_FDCWD -100 → -2). It was BSD mkdir 136
+        # with the dirfd shifted out, so sys_mkdirat(dirfd, rel) made ./rel. CHANGELOG [6.7.14]
+        _esx_arm_atfd(S, 34, 475);
         # v6.5.7: unlinkat 35 → Darwin unlinkat 472, a PURE RENUMBER. It used to map to
         # Darwin unlink(10) with an x1→x0 arg-shift that DROPPED the dirfd and the flag —
         # right for `unlink`, and fatal for `rmdir`, which is the same syscall with
@@ -997,8 +971,11 @@ fn ESYSXLAT(S): i64 {
         # sys_unlink/sys_rmdir on macOS-arm64 and (b) keep stealing raw x86 nanosleep, which
         # EMACHO_NANOSLEEP_ARM below now handles honestly. CHANGELOG [6.6.5]
         _esx_arm(S, 263, 472);  # unlinkat 263→472
-        # fchmodat 53 → chmod 15 (arg-shift x0=path,x1=mode; b.ne +16)
-        _esx_arm_shift(S, 53, 15, 2);
+        # fchmodat 53 → Darwin fchmodat 467, dirfd and flags kept (AT_FDCWD -100 → -2). It was
+        # BSD chmod 15 with the dirfd shifted out. The flags word reaches Darwin as given: the
+        # stdlib's AT_SYMLINK_NOFOLLOW is Darwin's 0x20 on macOS; a Linux 0x100 is EINVAL there,
+        # which fails closed. CHANGELOG [6.7.14]
+        _esx_arm_atfd(S, 53, 467);
         # ── v6.0.34: raw x86-number syscalls the cbt wrapper hardcodes
         # (syscall(39)/(82)/(4)/(79)/(88)) — same x86→BSD renumbers the
         # Linux-aarch64 ESYSXLAT does. Without these, the untranslated svc

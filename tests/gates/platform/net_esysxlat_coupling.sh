@@ -53,7 +53,7 @@ for n in $NUMS; do
     # SHAPES must be counted or this gate sees one arm and reports the exact "1 row, macho only"
     # state it was written to catch. Keyed on the comment either way, so it stays independent of
     # how the row is spelled.
-    hits=$(grep -cE "^\s*(EW\(S, 0x[0-9A-F]+\); EW\(S, 0x[0-9A-F]+\); EW\(S, 0x[0-9A-F]+\);|_esx_arm(_shift)?\(S, [0-9]+, [0-9]+(, [0-9]+)?\);)\s*#\s*[a-z0-9_]+\s+${n}→" "$EMIT" || true)
+    hits=$(grep -cE "^\s*(EW\(S, 0x[0-9A-F]+\); EW\(S, 0x[0-9A-F]+\); EW\(S, 0x[0-9A-F]+\);|_esx_arm(_atfd)?\(S, [0-9]+, [0-9]+\);)\s*#\s*[a-z0-9_]+\s+${n}→" "$EMIT" || true)
     check "x86 #$n renumbered in both arms" 2 "$hits"
 done
 

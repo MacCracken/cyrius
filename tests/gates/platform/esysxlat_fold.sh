@@ -242,7 +242,7 @@ echo "  axis 6: Mach-O 4 variable-number sites at 3 arities -> $NH6 class stubs"
 # cross compiler whose ESYSXLAT ends with two synthetic ELF rows, 4000 -> 4001 then 4001 -> 4002,
 # in the chain's own shape (cmp x8,#src / b.ne +8 / movz x8,#dst; cmp takes a 12-bit immediate).
 # The emitter copy is spliced into a copy of the driver in place of its include, and the build
-# runs from $ROOT, so every other file is the live tree's. Words: _esx_arm_shift's formulas with
+# runs from $ROOT, so every other file is the live tree's. Words: _esx_arm's formulas with
 # Rd = x8 for the movz, checked with llvm-mc (cmp x8,#4000 = F13E811F, movz x8,#4001 = D281F428,
 # movz x8,#4002 = D281F448).
 for s in 4000 4001 4002; do
