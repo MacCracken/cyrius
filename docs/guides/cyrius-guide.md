@@ -1609,6 +1609,18 @@ same (6.7.13; the user's decision D13, 2026-10-15): `var x: i64 = b.mk();` and `
 the operator fn returning a struct over 8 bytes are refused with the same words, naming that fn (a
 method by its compiler name, `Q_mk`). Through 6.7.12 they kept the struct's first word, narrowed
 (`y` held 77 of 333), and a `: bool` was refused as *not a bool*.
+An ASSIGNMENT is judged the same (6.7.14; the user's decision D27, 2026-10-16): `x = mk(9);`, `x = b.mk();`,
+`x = a + c;`, `x = fncall1(&mk, 9);` — in a classic `for` init or step too, in parentheses, in a fn or at top
+level — into a local, a parameter or a global declared `: i64`, `: u8`, `: f64`, `: cstring`, any annotation that
+names no struct, from a struct over 8 bytes, is refused with the declaration's words:
+
+```
+error: cannot assign 'x: i64' from 'mk', which returns the struct 'P3' - declare 'x: P3' or bind a field
+```
+
+Through 6.7.13 it stored the struct's first word, narrowed, silently. A struct of 8 bytes or less and a
+`Str` keep their word, as in the declaration; a `: bool` keeps its own refusal (*not a bool*); bind a
+field (`x = mk(9).z;`) or declare the struct.
 A pointer annotation names no struct value either (6.7.13; the user's decision D14, 2026-10-15):
 inside a fn, `var x: *P2 = mkp();` — or `*i64`, `*u8`, any `*T` — with `mkp` returning a struct over
 8 bytes is refused, directly, in parentheses, through a generic, a known `&f`, a method or an

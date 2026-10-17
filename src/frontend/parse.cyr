@@ -3442,6 +3442,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return _hl_call_into(S, fi, n, term); }   # 6.7.10 (B7-1): into a handle
+    if (_agc_t == 0) { if (_asa_call(S, noff, fi, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -4225,6 +4226,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
     if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
     if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
+    if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
@@ -4234,6 +4236,183 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
+}
+
+# ⛔ 6.7.14 — D24 AT AN ASSIGNMENT (the user's decision D27 (a), 2026-10-16). `x = mkp();` / `x = b.mk();` / `x = a + c;`
+# / `x = fncall0(&mkp);` (a classic-for step too) with the struct result over 8 B and `x` a SCALAR — a local, a
+# parameter or a global declared `: i64`, `: u8`, `: f64`, any annotation that names no struct — stored the
+# struct's first word, narrowed (the filed repros exited 77, 333 mod 256), silently, where `var x: i64 = mkp();` is
+# refused (6.7.11's D24, 6.7.13's D13). Refused with D24's words, "cannot assign 'x: i64' from 'mkp', which returns
+# the struct 'Q' - declare 'x: Q' or bind a field", at the call, the destination's annotation judged as the
+# declaration's is (`_rcv_ann_refuse`). A struct of 8 B or less and a `Str` keep their word; a `: bool` keeps its own
+# refusal (*not a bool*); an untyped destination has no annotation to judge; a top-level call over 16 B is refused
+# already (no frame), once. 1 = refused, the statement parsed to `term` and consumed. CHANGELOG [6.7.14]
+fn _asa_call(S, noff, fi, term): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (_scv_top_big(S, sid) == 1) { return 0; }
+    var ti = GTI(S);
+    if (_asa_refuse(S, noff, ti - 1, ti, TOKVAL(S, ti), sid) == 0) { return 0; }
+    PCMPE(S);
+    return _asa_term(S, term);
+}
+# ... a method / operator / known `&f` result the struct record spans (`_pcmpe_struct_assign`, `st` the source's
+# first token, the cursor on `term`).
+fn _asa_rec(S, noff, st, term): i64 {
+    if (_asa_refuse(S, noff, st - 1, _sc_beg, _sc_fn, _sc_sid) == 0) { return 0; }
+    return _asa_term(S, term);
+}
+fn _asa_term(S, term): i64 {
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
+# for back from token `from`: 1 = refused.
+fn _asa_refuse(S, noff, from, ti, fnoff, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    var a = _asa_ann(S, noff, from);
+    if (a <= 0) { return 0; }
+    if (_asa_scalar(S, a) == 0) { return 0; }
+    _rcv_asg_e = _asa_end(S, a);
+    var r = _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
+    _rcv_asg_e = 0 - 1;
+    return r;
+}
+# 1 = the annotation at token `a` names a scalar D24 judges: an integer, a float, an 8-byte handle (an enum,
+# `cstring`, `Result`, `Vec`, a type parameter) or `u128` — not `bool` (its own refusal), not an array element.
+fn _asa_scalar(S, a): i64 {
+    if (TOKTYP(S, a + 1) == 28) { return 0; }
+    if (TOKTYP(S, a) == 105) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var c = _tn_resolve_at(S, a);
+    var k = _tn_class(c);
+    if (k < 1) { return 0; }
+    if (k > 4) { return 0; }
+    if (k == 4) { if (_tn_val(c) == 1) { return 0; } }
+    return 1;
+}
+# The token the annotation starting at `q` ends at: its declaration's `=` / `;`, a parameter's `,` / `)`
+# (`Map<K, V>` one type: `<` / `>` count as brackets).
+fn _asa_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (d == 0) { if (t == 4 || t == 5 || t == 31) { return q; } }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d + _cl_ang_step(t);
+        if (d < 0) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The annotation's first token of the declaration that binds the assignment's destination `noff`, read from the
+# tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter)
+# or none found. A local's: the nearest binding of the name back from token `from` in a scope enclosing it (a closed
+# `{ }` / `( )` / `[ ]` is stepped over), else its fn's parameter; a global's: the same walk, else its first top-level
+# declaration.
+fn _asa_ann(S, noff, from): i64 {
+    var loc = 0;
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { loc = 1; } }
+    if (loc == 0) { if (FINDVAR(S, noff) < 0) { return 0; } }
+    var a = _asa_back(S, noff, from, loc);
+    if (a >= 0) { return a; }
+    if (loc == 1) { return 0; }
+    return _asa_top(S, noff);
+}
+# `lb` = 1 while the last `{` walked back over opened a scope enclosing `from` (a for-in body: its name is bound).
+# A local's walk ends at its fn's `fn` (the parameters) or at a closure body's `{` (an untyped parameter). -1 = none.
+fn _asa_back(S, noff, k, loc): i64 {
+    var d = 0;
+    var lb = 0;
+    while (k >= 1) {
+        var t = TOKTYP(S, k);
+        if (t == 14 || t == 11 || t == 29) { d = d + 1; }
+        elif (t == 13 || t == 10 || t == 28) {
+            if (d > 0) {
+                d = d - 1;
+                if (t == 13) { lb = 0; }
+            } elif (t == 13) {
+                lb = 1;
+                if (loc == 1) { if (_tok_is_closure_body(S, k) == 1) { return 0; } }
+            }
+        } elif (d == 0) {
+            if (t == 32) { if (loc == 1) { return _asa_prm(S, noff, k); } }
+            if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var r = _asa_bind(S, k, lb);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
+}
+# The name at token `k`, met on the walk: -2 when it binds nothing there; else the annotation (0 = none).
+fn _asa_bind(S, k, lb): i64 {
+    var p = TOKTYP(S, k - 1);
+    if (p == 3) {
+        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+        return 0;
+    }
+    if (p == 55) { if (TOKTYP(S, k + 1) == 76) { if (lb == 1) { return 0; } } }   # `for name in ..`
+    if (p == 31) { if (_asa_dlist(S, k) == 1) { return 0; } }                      # `var a, name = f();`
+    return 0 - 2;
+}
+fn _asa_dlist(S, k): i64 {
+    var j = k - 1;
+    while (j >= 2) {
+        if (TOKTYP(S, j) != 31) { return 0; }
+        if (TOKTYP(S, j - 1) != 2) { return 0; }
+        if (TOKTYP(S, j - 2) == 3) { return 1; }
+        j = j - 2;
+    }
+    return 0;
+}
+# The parameter `noff` of the fn whose `fn` is token `k`: its annotation (0 = untyped or not one).
+fn _asa_prm(S, noff, k): i64 {
+    var n = GTCNT(S);
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { break; }
+        if (t == 13) { return 0; }
+        k = k + 1;
+    }
+    var d = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (d == 0) { return 0; }
+        d = d + _cl_ang_step(t);
+        if (d == 1) { if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var p = TOKTYP(S, k - 1);
+                    if (p == 10 || p == 31) {
+                        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+                        return 0;
+                    }
+                } } }
+        k = k + 1;
+    }
+    return 0;
+}
+# A global's first top-level declaration (outside every `{ }` / `( )` / `[ ]`).
+fn _asa_top(S, noff): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var k = 1;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13 || t == 10 || t == 28) { d = d + 1; }
+        elif (t == 14 || t == 11 || t == 29) { d = d - 1; }
+        elif (d == 0) { if (t == 2) { if (TOKTYP(S, k - 1) == 3) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                        return _asa_bind(S, k, 0);
+                    } } } }
+        k = k + 1;
+    }
+    return 0;
 }
 
 # ⛔ 6.7.6 — `u = (j);`, `w = (z.k);`, `w = (mk(5));`, `w = (j.dup());` into a struct variable (and

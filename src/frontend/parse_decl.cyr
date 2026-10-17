@@ -7809,13 +7809,15 @@ fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     if (_rcv_ann_refd(S, ann) == 1) { return 1; }   # 6.7.14: the annotation itself was refused
     if (_tn_once(S, ti) == 0) { return 1; }
     var eq = GTI(S);
+    var ae = eq;
+    if (_rcv_asg_e >= 0) { ae = _rcv_asg_e; }
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
-    PRSTR(": cannot initialise '");
+    PRSTR(_rcv_head());
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(": ");
-    _rcv_ann_pr(S, ann, eq);
+    _rcv_ann_pr(S, ann, ae);
     PRSTR("' from '");
     PRSTR(S + 0xEC00000 + fnoff);
     PRSTR("', which returns the struct '");
@@ -7839,6 +7841,13 @@ fn _rcv_ann_refd(S, ann): i64 {
     var t = ann;
     while (TOKTYP(S, t) == 8) { t = t + 1; }
     return _tn_seen_at(S, t);
+}
+# 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse.cyr): "cannot assign", the
+# destination's annotation printed from its declaration, which ends at token `_rcv_asg_e`; -1 = a declaration's.
+var _rcv_asg_e = 0 - 1;
+fn _rcv_head(): i64 {
+    if (_rcv_asg_e >= 0) { return ": cannot assign '"; }
+    return ": cannot initialise '";
 }
 fn _rcv_ann_tail(S, pscale, noff): i64 {
     if (pscale <= 0) { PRSTR("' or bind a field\n"); return 0; }
