@@ -8463,6 +8463,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     _trs_name(S, i, tail, nm);
     i = i + 1;
     if (TOKTYP(S, i) != 19) { return i; }
+    _vec_ann_chk(S, i - 1, nm);   # 6.7.14 (D4): `v: Vec<T>` reads T, as in a fn definition
     var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
     while (i < q) {
         t = TOKTYP(S, i);
@@ -13549,6 +13550,7 @@ fn _consume_gt(S): i64 {
 fn _reject_special_type_arg(S, c): i64 {
     if (c <= 0 - 16) {
         _ta_refd = 1;   # 6.7.14
+        if (_ta_chk_ok(S) == 0) { return 0; }
         ERR_MSG(S, "generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported", 121);
     }
     return 0;
@@ -13566,7 +13568,9 @@ fn _type_arg_leaf(S, noff): i64 {
     if (_tp_c0 != 0) { _c0 = _tp_resolve(S, noff); }
     if (_c0 == 0) { _c0 = _classify_return_type(S, noff); }
     if (_c0 == 0) {
-        _refuse_type_arg_name(S, noff);
+        if (_ta_chk == 1) { if (_targ_is_tp(S, noff) == 1) { return 0 - 8; } }   # 6.7.14: read unbound
+        _ta_refd = 1;
+        if (_ta_chk_ok(S) == 1) { _refuse_type_arg_name(S, noff); }
         return 0 - 8;
     }
     _reject_special_type_arg(S, _c0);
@@ -13621,7 +13625,10 @@ fn _parse_one_type_arg(S): i64 {
     if (base_sid <= 0 || GSTP(S, base_sid - 1) == 0) {
         var _c1 = _classify_return_type(S, noff);    # `<` but not a generic struct
         _reject_special_type_arg(S, _c1);
-        if (_c1 == 0) { if (_vec_ann_at(S, GTI(S) - 1) == 0) { return _targ_bad_gen(S, noff); } }   # 6.7.14
+        if (_c1 == 0) {   # 6.7.14
+            if (_vec_ann_at(S, GTI(S) - 1) == 0) { return _targ_bad_gen(S, noff); }
+            _targ_vec(S, GTI(S) - 1);
+        }
         # 6.6.17: and its own `<..>` (`Box<Vec<i64>>`), which was left for the enclosing list.
         _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return _c1;
@@ -13631,6 +13638,7 @@ fn _parse_one_type_arg(S): i64 {
     var in1 = 0;
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
+    if (_ta_chk == 1) { return base_sid; }           # 6.7.14 (D5): read, not instantiated
     return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
 }
 
@@ -13656,10 +13664,47 @@ fn _targ_bad_gen(S, noff): i64 {
     _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
     return 0 - 8;
 }
-# 1 when `noff` names a type parameter here: bound now, or one of the current fn's.
+# ⛔ 6.7.14 (D4) — `Vec<..>` AS A TYPE ARGUMENT (`Box<Vec<nosuch>>`, `idv<Vec<1 + 2>>(c)`; cursor on its `<`, `vti` the
+# word): its element was skipped unread (`_skip_targ_list`). Read and checked as a `var v: Vec<T>` annotation's is
+# (6.7.11's D9), the cursor put back; a refusal is a refused type argument (`_ta_refd`). CHANGELOG [6.7.14]
+fn _targ_vec(S, vti): i64 {
+    var sv = GTI(S);
+    STI(S, vti + 1);
+    if (_vec_ann_list(S, 0 - 1) < 0) { _ta_refd = 1; }
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.14 (D5) — A TYPE-ARGUMENT LIST READ, NOT INSTANTIATED, from its `<` at token `lt`: a Vec element's own list
+# (`var w: Vec<Box<nosuch>>`, a field `more: Vec<Box<(i64, i64)>>`) was skipped unread. Each argument is read as
+# `_parse_one_type_arg` reads one — every refusal of a type argument, once per token — but no generic struct is
+# instantiated (`_ta_chk`: a struct definition's fields must stay contiguous in the field pool), and the cursor, the
+# owed closers and a panic latch the check set are put back, so the caller consumes the list as it did. CHANGELOG [6.7.14]
+fn _targ_chk(S, lt): i64 {
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    var sv_pn = _panic;
+    var sv_ck = _ta_chk;
+    _ta_chk = 1;
+    _ta_pending_gt = 0;
+    STI(S, lt + 1);
+    _parse_one_type_arg(S);
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+    _ta_chk = sv_ck;
+    _ta_pending_gt = sv_gt;
+    if (sv_pn == 0) { _panic = 0; }
+    STI(S, sv);
+    return 0;
+}
+# 0 = say nothing: under `_targ_chk` a name the cursor just passed was reported already (a generic body, both passes).
+fn _ta_chk_ok(S): i64 {
+    if (_ta_chk == 0) { return 1; }
+    return _tn_once(S, GTI(S) - 1);
+}
+# 1 when `noff` names a type parameter here: bound now, the current fn's, or the struct being defined's.
 fn _targ_is_tp(S, noff): i64 {
     if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, noff) == 1) { return 1; } }
+    if (_is_own_tparam(S, noff) == 1) { return 1; }
     return 0;
 }
 
@@ -14167,6 +14212,7 @@ fn _mret_elem(S, fi, quiet): i64 {
         t = 0 - 8;
     }
     if (t > 0) { t = _gtype_sid(S, fi, t); }
+    if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
     STI(S, GTI(S) + 1);                 # consume the type IDENT
     SKIP_GENERICS(S);
     return t;

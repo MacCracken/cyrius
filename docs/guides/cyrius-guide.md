@@ -226,15 +226,20 @@ this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn`
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
-`**Vec<T>`, a `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)`. `T` is a struct or union, an integer or
-float, `bool`, `cstring`, `Result` / `Option` / `Tagged`, an enum, `Vec` (a nested `Vec<..>` is read
-the same way) or a type parameter in scope; any other element's own `<..>` is not read
-(`Vec<Box<i64>>`). Everything else is refused by name, once: a tuple (`a tuple type cannot be a Vec
+`**Vec<T>`, a `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)` — and, since 6.7.14, every other position: a
+field's nested `items: Vec<Vec<T>>`, a trait member's signature, a multi-value element `(Vec<T>, i64)`, a
+generic struct's or an explicit call's type argument (`Box<Vec<T>>`, `idv<Vec<T>>(c)`). `T` is a struct or
+union, an integer or float, `bool`, `cstring`, `Result` / `Option` / `Tagged`, an enum, `Vec` (a nested
+`Vec<..>` is read the same way) or a type parameter in scope; a generic struct element's own `<..>` is read as
+that struct's annotation reads it, minting nothing (`Vec<Box<nosuch>>` is *unknown type 'nosuch' as a type
+argument*, `Vec<Box<(i64, i64)>>` *a tuple type cannot be a type argument*; 6.7.14), any other element's is
+not read. Everything else is refused by name, once: a tuple (`a tuple type cannot be a Vec
 element`), an unknown name (`unknown type 'Nope' as the Vec element of 'v'`), a vector type, a slice,
 `u128`, a token that is no type (`expected a Vec element type for 'v', got number 1`; a pointer element
 `Vec<*Pt>` too, as the field form refuses it) or a second argument (`Vec<i64, i64>`). The handle is unchanged: `Vec<T>` declares the 8-byte word it always did.
 Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i64)>`,
-`Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13).
+`Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13); through 6.7.13 the
+other positions and an element's own `<..>` did (the user's D4 (a) and D5 (a), 2026-10-16).
 
 **A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
 plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare

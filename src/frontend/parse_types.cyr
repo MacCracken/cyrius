@@ -4257,6 +4257,7 @@ fn _vec_field_elem(S, si, fnoff): i64 {
     STI(S, GTI(S) + 1);                     # consume the element type name
     var elemc = _vec_elem_code(S, si, fnoff, etoff);
     _ta_pending_gt = 0;
+    if (PEEKT(S) == 19) { _vec_el_args(S, GTI(S) - 1, fnoff); }   # 6.7.14 (D4 / D5)
     if (PEEKT(S) == 19) { _ta_pending_gt = _skip_targ_list(S); }
     if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return elemc; }
     if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
@@ -4324,7 +4325,10 @@ fn _vec_ann_list(S, vnoff): i64 {
     if (_vec_ann_at(S, ti) == 1) { p = _vec_ann_list(S, vnoff); }
     else {
         if (_vec_elem_ok(S, ti, vnoff) == 0) { return 0 - 1; }
-        if (PEEKT(S) == 19) { p = _skip_targ_list(S); }
+        if (PEEKT(S) == 19) {
+            _vec_el_args(S, ti, vnoff);   # 6.7.14 (D5): a generic element's own `<..>`
+            p = _skip_targ_list(S);
+        }
     }
     if (p < 0) { return p; }
     if (p > 0) { return p - 1; }
@@ -4335,6 +4339,20 @@ fn _vec_ann_list(S, vnoff): i64 {
     if (t == 152) { return 2; }
     _vec_tok_err(S, GTI(S) - 1, vnoff, "'>' after the Vec element type");
     return 0 - 1;
+}
+# ⛔ 6.7.14 (D4 / D5) — A Vec element's own `<..>` (the element name at token `ti`, its `<` after it; `vnoff` the
+# declared name or -1): read, not consumed. A nested `Vec<..>` is checked as the annotation is (a field's
+# `items: Vec<Vec<nosuch>>` was skipped unread); a generic struct's list is read as that struct's annotation reads
+# it, instantiating nothing (`_targ_chk`): `Vec<Box<nosuch>>`, `Vec<Box<(i64, i64)>>`. Any other element's list is
+# skipped as a non-generic `Pt<..>` annotation's is. CHANGELOG [6.7.14]
+fn _vec_el_args(S, ti, vnoff): i64 {
+    if (_vec_ann_at(S, ti) == 1) { _vec_ann_chk(S, ti, vnoff); return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var es = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (es <= 0) { return 0; }
+    if (GSTP(S, es - 1) == 0) { return 0; }
+    _targ_chk(S, ti + 1);
+    return 0;
 }
 # The element name at token `ti`: 1 when it is one (see above), else refused by name and 0.
 fn _vec_elem_ok(S, ti, vnoff): i64 {

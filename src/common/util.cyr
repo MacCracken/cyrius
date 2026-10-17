@@ -314,6 +314,8 @@ var _ta_pending_gt = 0;
 # 6.7.14: 1 once a type argument has been refused (by name, as a vector / special, a tuple, a slice, a token that is
 # no name) since the explicit-call list `_explicit_generic_call` last opened, which reads and clears it.
 var _ta_refd = 0;
+# 6.7.14 (D5): 1 while `_targ_chk` reads a type-argument list without instantiating it (a Vec element's own `<..>`).
+var _ta_chk = 0;
 # v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
 # cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
 # has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds

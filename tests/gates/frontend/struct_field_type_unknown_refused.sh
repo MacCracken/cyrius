@@ -46,6 +46,16 @@
 #      the dyn refusal alone, a program's own `struct Vec` is that struct; V6 CYRIUS_MONOMORPH=0 refuses as
 #      well; V7 the forks — the repro through the aarch64 and cx compilers built from this tree and the PE
 #      target: the same four errors
+#   VP (6.7.14) EVERY OTHER `Vec<..>` POSITION READS ITS T (the user's D4 (a), 2026-10-16), and VQ A VEC ELEMENT'S
+#      OWN `<..>` IS READ (D5 (a)) — issues/2026-10-14-vec-type-argument-unread-outside-annotations.md. A field's nested
+#      `Vec<Vec<..>>`, a trait member's parameter, a multi-value element, `Box<Vec<..>>` and `idv<Vec<..>>(c)` skipped
+#      the `<..>` unread, and so did a Vec element's own list (`Vec<Box<nosuch>>`, a field's `Vec<Box<(i64, i64)>>`):
+#      the filed repro compiled and exited 3. VP0 the filed repro VERBATIM: its seven positions, each refused once
+#      (and nothing else); VP V2 / V3 rows for each D4 position (also a union field, `sizeof(Box<Vec<..>>)`, a
+#      generic's local over three instances); VQ2-VQ4 an unknown name, `1 + 2` and a tuple as a generic element's
+#      argument in a local, a field, a parameter, `Vec<Vec<Box<..>>>`, `Vec<Box<Box<..>>>`, a generic's local over
+#      three instances (once), VQ5 a nested list's second argument; VPK what keeps compiling and runs (the fields'
+#      layout: the element's list is read, nothing is minted mid-definition); VP7 the forks (aarch64, cx, PE)
 #
 # Mutations: make `_refuse_field_type` return without reporting -> A-G RED (rc 0). Drop the
 # `_declared_later` arm -> C RED (refused as "unknown"). `_bare_vec_field` without its refusal (6.7.13) ->
@@ -64,6 +74,17 @@
 #   MV7 `_gen_ann_sid` without its check -> V1, V2 / V3 loc, gz, gp, nest, szof and gen, V4a, V4c-V4h, V6, V7
 #   MV8 `_vec_ann_vn` answering -1 (the message drops the name) -> V1, V2 / V3 loc, gz, gp, nest and gen, V4a,
 #       V4c, V4e, V4f, V4h, V6, V7
+# VP / VQ (6.7.14; each a one-edit copy of the tree, its 2-stage mutant cycc, this gate run from it with CYCC= it,
+# 2026-10-16; each measured):
+#   MVP1 `_targ_vec` returning at once -> VP0, V2 / V3 targ, call, tsz, tgen, VP7 PE
+#   MVP2 `_trs_type` without its check -> VP0, V2 / V3 trp, VP7 PE
+#   MVP3 `_mret_elem` without its check -> VP0, V2 / V3 mret, VP7 PE
+#   MVP4 `_vec_el_args` returning at once -> VP0, V2 / V3 fnest and unest, every VQ2-VQ4, VQ5, VP7 PE
+#   MVP6 `_ta_chk_ok` answering 1 (no per-token latch under the check) -> VQ2 gen (three lines)
+#   MVP7 `_type_arg_leaf` without the check's type-parameter arm -> VPK (`v: Vec<Box<T>>` refused "unknown type 'T'")
+#   MVP5 `_parse_one_type_arg` instantiating under the check -> GREEN: no shape measured shows the instance a read would
+#        mint (VPK's layouts and a minted `Box$Pt`'s are unchanged); the guard keeps the check read-only, as the
+#        field form's comment requires. (VP7 aarch64 / cx build their compilers from this tree, as V7 does.)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -330,5 +351,98 @@ if [ -f "$VR" ]; then
     repro4 v7_pe "V7 PE: the filed repro, CYRIUS_TARGET_WIN=1"
 fi
 
+# ── VP (6.7.14): every other `Vec<..>` position reads its T, and a Vec element's own `<..>` is read ─────────────
+# (the user's D4 (a) and D5 (a), 2026-10-16; issues/2026-10-14-vec-type-argument-unread-outside-annotations.md)
+cat > "$T/vp0.cyr" <<'VEOF'
+include "lib/vec.cyr"
+struct Box<T> { v: T; }
+struct H { items: Vec<Vec<nosuch1>>; more: Vec<Box<(i64, i64)>>; }
+trait Sh { fn a(self, v: Vec<nosuch2>): i64; }
+fn mv(): (Vec<nosuch3>, i64) { return (0, 1); }
+fn idv<T>(x: T): T { return x; }
+fn main(): i64 {
+    var b: Box<Vec<nosuch4>>;
+    var w: Vec<Box<nosuch5>> = 0;
+    var a, c = mv();
+    return idv<Vec<1 + 2>>(c) + 2;
+}
+syscall(60, main());
+VEOF
+UTA="as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+repro7() {   # <name> <what>: the filed repro's seven positions, once each, at their places, and nothing else
+    n=$(grep -c '^error' "$T/$1.err")
+    k=0
+    for l in "3:27: unknown type 'nosuch1' as the Vec element of 'items'" "3:52: a tuple type cannot be a type argument" \
+        "4:30: unknown type 'nosuch2' as the Vec element of 'v'" "5:15: unknown type 'nosuch3' as a Vec element" \
+        "8:20: unknown type 'nosuch4' as a Vec element" "9:27: unknown type 'nosuch5' $UTA" \
+        "11:20: expected a Vec element type, got number 1"; do
+        if grep -qF "error:<source>:$l" "$T/$1.err"; then k=$((k + 1)); fi
+    done
+    if [ "$rc" -ne 0 ] && [ "$n" -eq 7 ] && [ "$k" -eq 7 ]; then ok "$2: the seven positions refused, once each"
+    else bad "$2: rc $rc, $n error lines, $k of 7 at their places: $(grep '^error' "$T/$1.err" | head -7 | tr '\n' '|')"; fi
+}
+build vp0; repro7 vp0 "VP0: the filed repro verbatim (it compiled and exited 3)"
+# D4: the five positions, an unknown name (V2's message) and `1 + 2` (V3's) at each
+VPH='include "lib/vec.cyr"\nstruct Box<T> { v: T; n; }\nfn idv<T>(x: T): T { return x; }\n'
+vpos fnest items "a field's nested \`Vec<Vec<..>>\`" "${VPH}"'struct H { items: Vec<Vec<%s>>; k; }\nfn f(): i64 { var h: H; h.k = 3; return h.k; }\nsyscall(60, f());\n'
+vpos unest items "a union field's nested \`Vec<Vec<..>>\`" "${VPH}"'union U { items: Vec<Vec<%s>>; k; }\nsyscall(60, sizeof(U));\n'
+vpos trp v "a trait member's parameter" "${VPH}"'trait Sh { fn a(self, v: Vec<%s>): i64; }\nsyscall(60, 3);\n'
+vpos mret - "a multi-value return element" "${VPH}"'fn mv(): (Vec<%s>, i64) { return (0, 1); }\nfn f(): i64 { var a, c = mv(); return c; }\nsyscall(60, f());\n'
+vpos targ - "a generic struct's type argument \`Box<Vec<..>>\`" "${VPH}"'fn f(): i64 { var b: Box<Vec<%s>>; b.n = 3; return b.n; }\nsyscall(60, f());\n'
+vpos call - "an explicit call's type argument \`idv<Vec<..>>(c)\`" "${VPH}"'fn f(): i64 { var c = 1; return idv<Vec<%s>>(c) + 2; }\nsyscall(60, f());\n'
+vpos tsz - "\`sizeof(Box<Vec<..>>)\`" "${VPH}"'fn f(): i64 { return sizeof(Box<Vec<%s>>); }\nsyscall(60, f());\n'
+vpos tgen - "a generic fn's \`Box<Vec<..>>\` local, at i64, a struct and i64 again (once)" "${VPH}"'struct Pt { x; y; }\nfn g<T>(x: T): i64 { var b: Box<Vec<%s>>; return 1; }\nfn f(): i64 { var p: Pt; return g(1) + g(p) + g(2); }\nsyscall(60, f());\n'
+# D5: a generic element's own list, read as that struct's annotation reads it (the type-argument messages)
+vel() {   # <id> <what> <source, %s the argument>
+    printf "$3" "nosuch" > "$T/vq2_$1.cyr"
+    printf "$3" "1 + 2" > "$T/vq3_$1.cyr"
+    printf "$3" "(i64, i64)" > "$T/vq4_$1.cyr"
+    refused1 "vq2_$1" "unknown type 'nosuch' $UTA" "VQ2 $1: $2, an unknown name"
+    refused1 "vq3_$1" "a type argument is a type name, got number 1" "VQ3 $1: $2, \`1 + 2\`"
+    refused1 "vq4_$1" "a tuple type cannot be a type argument" "VQ4 $1: $2, a tuple"
+}
+vel loc "a local's \`Vec<Box<..>>\`" "${VPH}"'fn f(): i64 { var w: Vec<Box<%s>> = 0; return 3; }\nsyscall(60, f());\n'
+vel fld "a field's \`Vec<Box<..>>\`" "${VPH}"'struct H { more: Vec<Box<%s>>; k; }\nfn f(): i64 { var h: H; h.k = 3; return h.k; }\nsyscall(60, f());\n'
+vel par "a parameter's \`Vec<Box<..>>\`" "${VPH}"'fn g(v: Vec<Box<%s>>): i64 { return 1; }\nsyscall(60, g(0));\n'
+vel nest "\`Vec<Vec<Box<..>>>\`" "${VPH}"'fn f(): i64 { var w: Vec<Vec<Box<%s>>> = 0; return 3; }\nsyscall(60, f());\n'
+vel deep "a field's \`Vec<Box<Box<..>>>\`" "${VPH}"'struct H { more: Vec<Box<Box<%s>>>; k; }\nsyscall(60, sizeof(H));\n'
+vel gen "a generic fn's \`Vec<Box<..>>\` local, three instances (once)" "${VPH}"'struct Pt { x; y; }\nfn g<T>(x: T): i64 { var w: Vec<Box<%s>> = 0; return 1; }\nfn f(): i64 { var p: Pt; return g(1) + g(p) + g(2); }\nsyscall(60, f());\n'
+printf "${VPH}"'struct Two<A, B> { a: A; b: B; }\nstruct H { m: Vec<Two<i32, Box<nosuch>>>; }\nsyscall(60, sizeof(H));\n' > "$T/vq5.cyr"
+refused1 vq5 "unknown type 'nosuch' $UTA" "VQ5: a field's \`Vec<Two<i32, Box<nosuch>>>\` (a nested list's second argument)"
+# Kept: every accepted spelling compiles, and a field's Vec<Box<..>> element mints nothing mid-definition (H's layout)
+cat > "$T/vpk.cyr" <<'VEOF'
+include "lib/vec.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+struct H { a; c: Vec<Box<Pt>>; e: Vec<Vec<Box<i32>>>; m: Vec<Two<Pt, Box<i16>>>; d; }
+struct W<T> { v: Vec<Box<T>>; k: T; }
+trait Sh { fn a(self, v: Vec<Box<i64>>, u: Vec<Vec<i64>>): i64; }
+fn idv<T>(x: T): T { return x; }
+fn gv<T>(v: Vec<Box<T>>, x: T): i64 { var w: Vec<Box<T>> = v; return x; }
+fn mv(): (Box<Box<i32>>, i64, Vec<Box<i64>>) { return (0, 1, 2); }
+fn main(): i64 {
+    var h: H;
+    h.a = 1; h.d = 40;
+    var b: Box<Vec<i64>>;
+    b.n = 2;
+    var w: W<Pt>;
+    w.k.y = 7;
+    var x, y, z = mv();
+    return h.a + h.d + sizeof(H) + b.n + idv<Vec<i64>>(3) + idv<Vec<Box<Pt>>>(4) + gv<i32>(0, 5) + w.k.y + y + z + sizeof(Box<Vec<Pt>>) + sizeof(W<Pt>);
+}
+syscall(60, main());
+VEOF
+exits vpk 145 "VPK: kept — Vec<Box<i64>> / Vec<Vec<Box<..>>> / Vec<Two<..>> fields (H 40 B, d at its offset), Box<Vec<i64>>, idv<Vec<..>>(x), a generic's Vec<Box<T>>, a trait's Vec<Box<i64>>, (Box<Box<i32>>, i64, Vec<Box<i64>>)"
+# VP7: the forks — the filed repro through the aarch64 and cx compilers built from this tree, and the PE target
+for fk in aarch64 cx; do
+    if [ -s "$T/cc_$fk" ]; then
+        rc=0; ( cd "$ROOT" && "$T/cc_$fk" < "$T/vp0.cyr" > "$T/vp7_$fk.bin" 2> "$T/vp7_$fk.err" ) || rc=$?
+        repro7 "vp7_$fk" "VP7 $fk: the filed repro through the $fk compiler"
+    else bad "VP7 $fk: NOT RUN — no $fk compiler (V7 builds it)"; fi
+done
+rc=0; ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$T/vp0.cyr" > "$T/vp7_pe.bin" 2> "$T/vp7_pe.err" ) || rc=$?
+repro7 vp7_pe "VP7 PE: the filed repro, CYRIUS_TARGET_WIN=1"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: struct_field_type_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J), a different struct type into a struct field is refused (K), a \`Vec<T>\` annotation reads its T as the field form does (V)"
+echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J), a different struct type into a struct field is refused (K), a \`Vec<T>\` annotation reads its T as the field form does (V), in every other position too, and a Vec element's own \`<..>\` is read (VP / VQ, 6.7.14)"
