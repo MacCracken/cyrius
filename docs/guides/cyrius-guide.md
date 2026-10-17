@@ -7251,16 +7251,16 @@ qemu-system-x86_64 -kernel build/kernel -serial stdio -display none
 
 ## Targeting Windows (PE) (v6.1.16+)
 
-Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from Linux or macOS via
-the `--win` cross-compilation flag. `cyrius build --win` sets `CYRIUS_TARGET_WIN=1` in the
-compiler's environment, routing platform-specific code paths
+Cyrius compiles to Windows PE32+ (x86_64, win_amd64) from x86_64 Linux via the `--win`
+cross-compilation flag (on Windows `--win` is the native target). `cyrius build --win` sets
+`CYRIUS_TARGET_WIN=1` in the compiler's environment, routing platform-specific code paths
 through Windows syscall reroutes (kernel32 and shell32 imports) instead of POSIX
 syscalls.
 
 ### Cross-Building for Windows
 
 ```sh
-# Cross-compile a Windows PE32+ executable from Linux/macOS
+# Cross-compile a Windows PE32+ executable from x86_64 Linux
 cyrius build --win src/main.cyr build/myapp.exe
 
 # Or via the environment variable (useful in build scripts)
@@ -7268,12 +7268,14 @@ CYRIUS_TARGET_WIN=1 cycc < src/main.cyr > build/myapp.exe
 ```
 
 The output is a valid PE32+ executable that runs on Windows x86_64; `--win` implies the
-x86_64 instruction set. The aarch64 Linux CLI **refuses** `--win` by name, rc 1, before anything
-compiles — its cycc emits aarch64 only (6.7.13; through 6.7.12 it wrote an aarch64 ELF named
-`.exe` and said OK at rc 0):
+x86_64 instruction set. A CLI whose compiler has no PE emitter **refuses** `--win` by name, rc 1,
+before anything compiles or is written: the aarch64 Linux CLI (6.7.13; through 6.7.12 it wrote an
+aarch64 ELF named `.exe` and said OK at rc 0) and both macOS CLIs (6.7.14; through 6.7.13 they
+wrote a Mach-O named `.exe` at rc 0 — neither Mach-O compiler reads `CYRIUS_TARGET_WIN`):
 
 ```
 error: --win is not available from the aarch64 Linux CLI: its cycc emits aarch64 only (build PE images on x86_64 Linux or Windows)
+error: --win is not available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or Windows)
 ```
 
 ONE target selector per run: `--win`, `--agnos` (the agnos ring-3

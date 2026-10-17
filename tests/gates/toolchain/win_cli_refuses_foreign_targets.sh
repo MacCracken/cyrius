@@ -68,6 +68,14 @@
 #      arm64 one accepts it as met (every image MH_PIE, flags 0x00200084). S4 the PE and x86_64 Mach-O
 #      CLIs carry a refusal, the arm64 Mach-O, Linux and aarch64 Linux ones none; S4b each its own
 #      text. (A Mach-O cannot run here: ach ran the refusal, ecb the accepted build — the CHANGELOG.)
+#   6.7.14 (issues/2026-10-15-macos-cli-win-writes-mach-o-named-exe.md): neither Mach-O compiler reads
+#      CYRIUS_TARGET_WIN, so `cyrius build --win` on macOS wrote a Mach-O named `.exe` (cf fa ed fe) at
+#      rc 0 (ecb, ach). `_cli_host_refuses_win` gains a CYRIUS_TARGET_MACOS arm: `error: --win is not
+#      available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or
+#      Windows)`. S6 the aarch64 Linux CLI and both Mach-O CLIs carry a `--win` refusal, the x86_64
+#      Linux and PE ones none; S6m each Mach-O CLI carries the macOS form (its prefix, the macOS text,
+#      the PE tail; never the aarch64 text). (A Mach-O cannot run here: ecb and ach ran the refusal —
+#      rc 1, the named error, no w.exe — see the CHANGELOG.)
 #
 # MUTATION PROOF (scratch copies of the tree with cbt/ mutated, run through THIS gate; GREEN on the
 # real tree):
@@ -88,6 +96,7 @@
 #           M13 run_binary_timed's qemu exec without its CYRIUS_ARCH_AARCH64 guard    RED: A10
 #   D43:    M14 `_cli_host_refuses_pie` without its CYRIUS_TARGET_MACOS arm           RED: S4, S4b
 #           M15 the macOS arm without its CYRIUS_ARCH_AARCH64 guard (D43 (a))         RED: S4
+#   6.7.14: M16 `_cli_host_refuses_win` without its CYRIUS_TARGET_MACOS arm           RED: S6, S6m
 set -u
 G=win_cli_refuses_foreign_targets
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -164,9 +173,15 @@ check "S4b each its own text: the PE the Windows one, the x86_64 Mach-O the macO
 check "S5 only the aarch64 Linux CLI carries the aarch64 refusal" "yes yes no no no no" \
     "$(has "$T/a64/cyrius" "$A64WHY") $(has "$T/a64/cyrius" "$A64TAIL") $(has "$T/lin/cyrius" "$A64WHY") $(has "$T/cyrius.exe" "$A64WHY") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$A64WHY")"
 
-# 6.7.13: so is its `--win` refusal (cycc_aarch64's native fork has no PE emitter)
-check "S6 only the aarch64 Linux CLI carries the --win refusal" "yes no no no no" \
+# 6.7.13: so is its `--win` refusal (cycc_aarch64's native fork has no PE emitter); 6.7.14: and the
+# Mach-O CLIs' (neither Mach-O compiler reads CYRIUS_TARGET_WIN)
+check "S6 the aarch64 Linux and both Mach-O CLIs carry the --win refusal; the x86_64 Linux and PE ones none" "yes no no yes yes" \
     "$(has "$T/a64/cyrius" "$A64WINTAIL") $(has "$T/lin/cyrius" "$A64WINTAIL") $(has "$T/cyrius.exe" "$A64WINTAIL") $(has "$T/cyrius_macho_x86" "$A64WINTAIL") $(has "$T/cyrius_macho_arm" "$A64WINTAIL")"
+# the stderr line is `error: --win is not available from ` + `_cli_host_emits_only()` + the PE tail;
+# a Mach-O cannot run here, so the three pieces are read from each binary
+WINPFX="error: --win is not available from "
+check "S6m each Mach-O CLI carries the macOS --win refusal (prefix, macOS text, tail; no aarch64 text)" "yes yes yes no yes yes yes no" \
+    "$(has "$T/cyrius_macho_x86" "$WINPFX") $(has "$T/cyrius_macho_x86" "$MACWHY") $(has "$T/cyrius_macho_x86" "$A64WINTAIL") $(has "$T/cyrius_macho_x86" "$A64WHY") $(has "$T/cyrius_macho_arm" "$WINPFX") $(has "$T/cyrius_macho_arm" "$MACWHY") $(has "$T/cyrius_macho_arm" "$A64WINTAIL") $(has "$T/cyrius_macho_arm" "$A64WHY")"
 
 printf 'fn main(): i64 { return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/proj/hello.cyr"
 
