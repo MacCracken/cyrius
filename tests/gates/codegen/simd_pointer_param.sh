@@ -243,7 +243,7 @@ N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
 if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
 N3=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC3")
-FLOOR3=29
+FLOOR3=32   # 6.7.14: + the wrapped-argument rows (W1-W3)
 if [ "$N3" -lt "$FLOOR3" ]; then echo "FAIL: $G: only $N3 rows in $TC3 (floor $FLOOR3) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -804,6 +804,72 @@ if [ "$WINE" = 1 ]; then
     [ "$(grep -cF "$VZ3F" "$D/VZw3.pe.e")" -eq 3 ] || bad "VZw3 pe: not three D30 refusals"
 fi
 
+# ⛔ 6.7.14 — PARENTHESES WRAPPING A WHOLE VALUE-FORM VECTOR ARGUMENT ARE TRANSPARENT, as for every other aggregate
+# destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
+# IR=3 / aarch64 / cx ("got `(...)`") and passed on PE (`_sarg_paren`). `_sar_take` (the call's record and the inline
+# replay) and `_sarg_pe_vform` read the source inside `_pwrap_in`'s parentheses.
+# Filed: docs/development/issues/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md
+#   VP1 / VP2 the filed repro verbatim (`lanesn((v))`) and its call form (`lanesn((mkv(4, 2)))`): exit 42 on x86_64 /
+#      IR=3 / aarch64 / cx / PE
+#   VP3 `lanesn(((v)))`, an `#inline` fn's `li((v))` / `li(((mkv(4, 2))))`, a wrapped f64v4 local and call, two wrapped
+#      arguments between integers, `lanesn(((v))) + li(((v)))`: exit 7 (each row adds one) on the same legs
+#   VPY1-VPY4 refused once on x86_64 / aarch64 / cx, and on PE word for word as x86_64: `lanesn((e))` (an f64v4 local
+#      inside the parentheses), `li(((e)))` (the inline replay's), `lanesn((mk4(..)))` (a call of another vector type),
+#      `lanesn((v) + 1)` (a wrap that is not the whole argument: `(...)`, as before)
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; the change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VP1 `_sar_take` and `_sarg_pe_vform` reading no wrap (`c` = the argument's first token) -> RED 31: VP1 VP2 VP3 on
+#       every leg (refused, `got `(...)``), VPY1-VPY3 x86 / aarch64 / cx (the `(...)` words, not the class / A2 ones),
+#       T3 on every leg; VPY4 and VPY1-VPY4 pe green (PE's words still x86_64's)
+cat > "$D/vp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 { var v: f64v2 = f64v2_make(4, 2); return lanesn((v)); }
+var rc = main(); syscall(60, rc);
+EOF
+VPH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 8) * 100 + load64(&x + 16) * 10 + load64(&x + 24); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(a, x: f64v2, y: f64v2, b): i64 { if (a == 999) { return 0; } return a * 10000 + lanesn(x) * 100 + lanesn(y) + b; }'
+printf '%s\n' "$VPH" 'fn main(): i64 { return lanesn((mkv(4, 2))); }' 'var rc = main(); syscall(60, rc);' > "$D/vp2.cyr"
+printf '%s\n' "$VPH" 'fn main(): i64 {' '    var v: f64v2 = f64v2_make(4, 2);' '    var e: f64v4 = mk4(1, 2, 3, 4);' \
+  '    var ok = 0;' '    if (lanesn(((v))) == 42) { ok = ok + 1; }' '    if (li((v)) == 42) { ok = ok + 1; }' \
+  '    if (li(((mkv(4, 2)))) == 42) { ok = ok + 1; }' '    if (l4((e)) == 1234) { ok = ok + 1; }' \
+  '    if (l4((mk4(5, 6, 7, 8))) == 5678) { ok = ok + 1; }' '    if (two(1, (v), ((mkv(1, 3))), 5) == 14218) { ok = ok + 1; }' \
+  '    if (lanesn(((v))) + li(((v))) == 84) { ok = ok + 1; }' '    return ok;' '}' 'var rc = main(); syscall(60, rc);' > "$D/vp3.cyr"
+vpy() {
+    printf '%s\n' "$VPH" 'fn main(): i64 {' '    var v: f64v2 = f64v2_make(4, 2);' '    var e: f64v4 = mk4(1, 2, 3, 4);' \
+      "    return $1;" '}' 'var rc = main(); syscall(60, rc);' > "$D/$2.cyr"
+}
+vpy 'lanesn((e))' vpy1
+vpy 'li(((e)))' vpy2
+vpy 'lanesn((mk4(1, 2, 3, 4)))' vpy3
+vpy 'lanesn((v) + 1)' vpy4
+echo "VP. parentheses wrapping a whole value-form vector argument are transparent (6.7.14)"
+exit_rows VP1 "$D/vp1.cyr" 42 "the filed repro: lanesn((v))"
+exit_rows VP2 "$D/vp2.cyr" 42 "lanesn((mkv(4, 2)))"
+exit_rows VP3 "$D/vp3.cyr" 7 "seven wrapped shapes, one each"
+VPF16="value-form SIMD arg must be a 16-byte vector"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VPY1$lg" "VPY1 $lg: lanesn((e)), an f64v4 local in the parentheses" "$(cat "$D/vpy1.cyr")" "$lg" "$VPF16"
+    refused "VPY2$lg" "VPY2 $lg: li(((e))), the inline replay's" "$(cat "$D/vpy2.cyr")" "$lg" "$VPF16"
+    refused "VPY3$lg" "VPY3 $lg: lanesn((mk4(..))), a call of another vector type" "$(cat "$D/vpy3.cyr")" "$lg"
+    refused "VPY4$lg" "VPY4 $lg: lanesn((v) + 1), a wrap that is not the whole argument" "$(cat "$D/vpy4.cyr")" "$lg" "got \`(...)\`"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VPY1pe "VPY1 pe: lanesn((e))" "$D/vpy1.cyr" 1
+    pe_same VPY2pe "VPY2 pe: li(((e)))" "$D/vpy2.cyr" 1
+    pe_same VPY3pe "VPY3 pe: lanesn((mk4(..)))" "$D/vpy3.cyr" 1
+    pe_same VPY4pe "VPY4 pe: lanesn((v) + 1)" "$D/vpy4.cyr" 1
+fi
+
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
 printf '%b' "${H}fn rl(): i64 { var b: f64v2; var p: *f64v2 = &b; var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s2.cyr"
@@ -844,4 +910,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY)"

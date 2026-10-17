@@ -3857,7 +3857,9 @@ parameter.
 2026-10-15: A).** A value-form parameter (`x: f64v2`, `lib/simd.cyr`'s `f64v2_add(a, b)`) takes a
 vector local of its type, or a call declared to return such a vector — by name, an explicit
 instance, `fncallN(&f, ..)` / `callptr(&f, ..)`, a method: `lanes(mkv(4, 2))`, `f64v2_add(a, mkv(3,
-4))`, `lanes(s.mv())`, in a method's parameter and through an `#inline` fn too. SysV / AAPCS64 /
+4))`, `lanes(s.mv())`, in a method's parameter and through an `#inline` fn too, and inside
+parentheses wrapping the whole argument (6.7.14: `lanes((w))`, `lanes((mkv(4, 2)))` were refused
+on x86_64 / aarch64 / cx, `got `(...)``, and passed on Win64). SysV / AAPCS64 /
 cx receive the call into a frame temporary the vector registers are loaded from after the integer
 arguments; Win64 passes the temporary's address (the call's hidden result pointer). A call of a
 vector the local rule refuses (an f64v4 into `x: f64v2`) is refused with the words above (`cannot

@@ -63,29 +63,18 @@ fn _inl_simd_arg_copy(S, alli, dst_slot, w): i64 {
 
 # 6.7.13 (D30 A): a call declared to return the vector is received straight into the parameter's slots, and any
 # other source that is no local is refused by name once and skipped (`_sar_vcall` / `_sar_err`, the call path's).
+# 6.7.14: the call path's sources, through its `_sar_take` (inside any parentheses wrapping the whole argument), a
+# local checked by its class rule there (`_simd_arg_typecheck`: the words this replay's own checks printed).
+var _sar_lcl = 0;   # 1 = `_sar_take` took a local: its own slot, nothing copied
 fn _inl_simd_arg(S, dst_slot, w, want_t, fi): i64 {
     var ti = GTI(S);
-    var nx = TOKTYP(S, ti + 1);
-    var alli = 0 - 1;
-    if (TOKTYP(S, ti) == 2) { if (nx == 31 || nx == 11) { alli = FINDLOCAL(S, TOKVAL(S, ti)); } }
-    if (alli < 0) {
-        var cls = _vf_cls(S, want_t);
-        if (_sar_vcall(S, fi, cls, 0 - want_t, dst_slot) != 0 - 2) { return 0; }
+    var alli = _sar_take(S, fi, _vf_cls(S, want_t), 0 - want_t, dst_slot);
+    if (alli == 0 - 2) {
         _sar_err(S, ti, fi);
         STI(S, _arg_next(S, ti));
         return 0;
     }
-    STI(S, ti + 1);
-    var alt = GLTYPE(S, alli);
-    if (want_t == 0 - 2121) {
-        if (alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
-    } elif (want_t == 0 - 2125) {
-        if (alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
-    } elif (want_t == 0 - 2153) {   # 6.7.13: `v: f32v8`
-        if (alt != 0 - 2153) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v8)", 56); }
-    } else {
-        if (_is_simd128(S, alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
-    }
+    if (_sar_lcl == 0) { return 0; }   # received into the slot, or refused
     # v6.5.66 — bracket the copy so it can be NOP'd out later if nothing reads the slot.
     #
     # ⛔ x86 ONLY, AND BOTH HALVES OF THAT GATE MATTER. `_F64V_DISP` lives in
@@ -2127,9 +2116,10 @@ fn _cl_cap_vec(S, noff): i64 {
 # f32v8 into `v: f64v2` 3; 6.7.13 checked the 32-byte parameters only), a struct local's two words were read as the
 # lanes (42), and an identifier-led expression (`lanes(q + 1)`) pushed its VALUE as the address (5), where x86_64 /
 # aarch64 / cx refuse each by name. Parameter `argc` of `fi` declared a value-form vector (`_pvf_param`), the cursor
-# on its argument, before every struct arm: a whole local name is checked by the class rule in SysV's words
-# (`_simd_arg_typecheck`: a non-vector local is refused by it too) and its address pushed; a whole vector call is
-# `_sarg_vec_call`'s (its refusal skips the argument, as `_sar_vcall`'s does); anything else is refused by name
+# on its argument, before every struct arm: inside any parentheses wrapping all of it (`_spv_one`), a local name is
+# checked by the class rule in SysV's words (`_simd_arg_typecheck`: a non-vector local is refused by it too) and its
+# address pushed; a vector call is `_sarg_vec_call`'s (its refusal skips the argument, as `_sar_vcall`'s does);
+# anything else is refused by name
 # (`_sar_err`), skipped to its `,` / `)` and 0 pushed — one line, no binary. An address-of `&x` is the pointer form and
 # passes as before (6.7.13). 1 = pushed, 0 = `&x` (the value push), -1 = no Win64 value-form parameter. It folds
 # 6.7.13's `_sarg_pe_v32` (the 32-byte check) and `_sarg_pe_vword` (D30's word refusal). CHANGELOG [6.7.14]
@@ -2139,21 +2129,37 @@ fn _sarg_pe_vform(S, fi, argc, tail): i64 {
     if (vf == 0) { return 0 - 1; }
     var ti = GTI(S);
     if (TOKTYP(S, ti) == 27) { return 0; }   # `&x`: the pointer form
-    var li = _spv_local(S, ti);
+    var c = _pwrap_in(S, ti);   # 6.7.14: inside parentheses wrapping the whole argument, as `_sar_take` reads it
+    if (c >= 0) {
+        STI(S, c);
+        if (_spv_one(S, fi, argc, tail, vf) == 1) {
+            _pw_close(S, c - ti);
+            return 1;
+        }
+        STI(S, ti);
+    }
+    _sar_err(S, ti, fi);
+    return _spv_skip(S, ti);
+}
+# The source at the cursor, unwrapped, as `_sar_one` takes it: a local — checked by the class rule in SysV's words
+# (`_simd_arg_typecheck`, reported at its end as the SysV record does) and its address pushed; a vector call —
+# `_sarg_vec_call`'s (its refusal skips the source); 1 = pushed, 0 = no such source (nothing moved).
+fn _spv_one(S, fi, argc, tail, vf): i64 {
+    var c = GTI(S);
+    var li = _spv_local(S, c);
     if (li >= 0) {
-        STI(S, ti + 1);   # the class check reports at the argument's end, as the SysV record does
+        STI(S, c + 1);
         _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), GLTYPE(S, li), vf);
         _sarg_escapes(fi, argc, tail);
         EFLADDR(S, li);
         EPUSHR(S);
         return 1;
     }
-    if (_svc_rs(S, ti) != 0) {
+    if (_svc_rs(S, c) != 0) {
         if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }
-        return _spv_skip(S, ti);   # refused by `_sarg_vec_call`: another vector type, or at top level
+        return _spv_skip(S, c);   # refused by `_sarg_vec_call`: another vector type, or at top level
     }
-    _sar_err(S, ti, fi);
-    return _spv_skip(S, ti);
+    return 0;
 }
 # The local a whole argument at token `ti` names (`,` or `)` after it), as `_sar_src` reads one; else -1.
 fn _spv_local(S, ti): i64 {
@@ -5763,22 +5769,47 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc, want): i64 {
 # D40) — refused by name, once, and skipped to its `,` / `)`: -1. CHANGELOG [6.7.13]
 fn _sar_src(S, fi, cls, want): i64 {
     var ti = GTI(S);
-    if (TOKTYP(S, ti) == 2) {
-        var nx = TOKTYP(S, ti + 1);
-        if (nx == 31 || nx == 11) {
-            var li = FINDLOCAL(S, TOKVAL(S, ti));
-            if (li >= 0) {
-                STI(S, ti + 1);
-                _simd_arg_typecheck(S, cls, GLTYPE(S, li), want);
-                return li;
-            }
-        }
-    }
-    var r = _sar_vcall(S, fi, cls, want, 0 - 1);
+    var r = _sar_take(S, fi, cls, want, 0 - 1);
     if (r != 0 - 2) { return r; }
     _sar_err(S, ti, fi);
     STI(S, _arg_next(S, ti));
     return 0 - 1;
+}
+# ⛔ 6.7.14 — PARENTHESES WRAPPING A WHOLE VALUE-FORM VECTOR ARGUMENT ARE TRANSPARENT, as for every other aggregate
+# destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
+# aarch64 / cx ("got `(...)`") where Windows passed them (`_sarg_paren`). The whole argument at the cursor, inside any
+# parentheses wrapping all of it (`_pwrap_in`: `(v) + 1` and a tuple literal wrap nothing), into a value-form parameter
+# of class `cls` / `want` of `fi` (`_sar_one`), the wrap's `)`s consumed: its slot (`_sar_lcl` 1: a local's own,
+# nothing copied; else the slot `dst` it was received into, -1: anonymous slots of its type), or -1 (refused by its own
+# rule, skipped); -2 = no such source, nothing moved. Shared by the call's record (`_sar_src`) and the inline replay
+# (`_inl_simd_arg`); Win64's gate peels the same way (`_sarg_pe_vform`). CHANGELOG [6.7.14]
+fn _sar_take(S, fi, cls, want, dst): i64 {
+    var ti = GTI(S);
+    var c = _pwrap_in(S, ti);
+    if (c < 0) { return 0 - 2; }
+    STI(S, c);
+    var r = _sar_one(S, fi, cls, want, dst);
+    if (r == 0 - 2) {
+        STI(S, ti);
+        return r;
+    }
+    _pw_close(S, c - ti);
+    return r;
+}
+# The source at the cursor, unwrapped: a local of the parameter's class (checked by it, as ever), else a call declared
+# to return a vector (`_sar_vcall`; `_sar_lcl` is set after it: a nested call's argument sets it too).
+fn _sar_one(S, fi, cls, want, dst): i64 {
+    var c = GTI(S);
+    var li = _spv_local(S, c);
+    if (li >= 0) {
+        STI(S, c + 1);
+        _simd_arg_typecheck(S, cls, GLTYPE(S, li), want);
+        _sar_lcl = 1;
+        return li;
+    }
+    var r = _sar_vcall(S, fi, cls, want, dst);
+    _sar_lcl = 0;
+    return r;
 }
 # The whole argument at the cursor when it is a call declared to return a vector (`_svc_rs`), into a value-form
 # parameter of class `cls` / `want` of `fi`: received into slot `dst` (-1: anonymous slots of its type) — that slot; a

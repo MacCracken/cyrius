@@ -147,10 +147,23 @@ fn rows_positions() {
     return 0;
 }
 
+# 6.7.14 (issues/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md): parentheses wrapping the WHOLE
+# argument are transparent, as for every other aggregate destination — `l2((v))` / `l2((mkv(..)))` were refused on
+# x86_64 / aarch64 / cx ("got `(...)`") where Windows passed them.
+fn rows_wrapped() {
+    var v: f64v2 = mkv(6, 1);
+    assert_eq(l2((v)), 601, "W1: a wrapped local, l2((v))");
+    assert_eq(l2(((mkv(3, 9)))), 309, "W2: a wrapped call, l2(((mkv(3, 9))))");
+    var e: f64v4 = mk4(4, 3, 2, 1);
+    assert_eq(l4((e)), 4030201, "W3: a wrapped f64v4 local, l4((e))");
+    return 0;
+}
+
 fn rows() {
     rows_f64v2();
     rows_other_types();
     rows_positions();
+    rows_wrapped();
     return 0;
 }
 assert_eq(early(), 0x3333, "forward calls passing one f64v2");
