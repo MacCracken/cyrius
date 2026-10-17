@@ -335,8 +335,10 @@ for f in _git_run; do
     _fn_body cbt/deps.cyr "$f" > "$W/$f.body"
     [ -s "$W/$f.body" ] || { fail "axis 7: $f not found in cbt/deps.cyr"; x=1; continue; }
     ol=$(grep -n 'cfd = sys_open(' "$W/$f.body" | head -1 | cut -d: -f1)
-    fl=$(grep -n 'sys_fork()' "$W/$f.body" | head -1 | cut -d: -f1)
-    { [ -n "$ol" ] && [ -n "$fl" ] && [ "$ol" -lt "$fl" ]; } || { fail "axis 7: $f does not open its capture before sys_fork() (open line ${ol:-none}, fork line ${fl:-none})"; x=1; }
+    # the fork: `sys_fork()`, or since 6.7.14 `_cbt_fork_tracked(` (cbt/sigclean.cyr: a fork the kill
+    # handler tracks, which answers as sys_fork() does)
+    fl=$(grep -nE 'sys_fork\(\)|_cbt_fork_tracked\(' "$W/$f.body" | head -1 | cut -d: -f1)
+    { [ -n "$ol" ] && [ -n "$fl" ] && [ "$ol" -lt "$fl" ]; } || { fail "axis 7: $f does not open its capture before the fork (open line ${ol:-none}, fork line ${fl:-none})"; x=1; }
     n=$(grep -cE 'sys_open\((outf|tmpf),' "$W/$f.body"); n=${n:-0}
     [ "$n" -le 1 ] || { fail "axis 7: $f opens its capture $n times — the child opens it again"; x=1; }
 done

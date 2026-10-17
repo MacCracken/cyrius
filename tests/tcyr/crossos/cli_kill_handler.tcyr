@@ -376,6 +376,18 @@ fn main(): i64 {
     i = 0;
     while (i < 32) { if (load64(&_cbt_sig_names + i * 8) != 0) { seen = seen + 1; } i = i + 1; }
     assert_eq(seen, 0, "untracked names leave the table empty");
+    # 6.7.14: a pointer tracked again holds its one slot (deps.cyr's per-process `git_err`, which
+    # every `_git_run` re-registers), and one untrack forgets it.
+    _cbt_scratch_track(t1);
+    _cbt_scratch_track(t1);
+    _cbt_scratch_track(t1);
+    seen = 0;
+    i = 0;
+    while (i < 32) { if (load64(&_cbt_sig_names + i * 8) == t1) { seen = seen + 1; } i = i + 1; }
+    assert_eq(seen, 1, "a name tracked three times holds one slot (6.7.14)");
+    assert_eq(_cbt_scratch_tracked(t1), 1, "…and reads as tracked");
+    _cbt_scratch_untrack(t1);
+    assert_eq(_cbt_scratch_tracked(t1), 0, "…until one untrack forgets it");
     _cbt_child_track(4242, 1);
     _cbt_child_untrack(4242);
     seen = 0;

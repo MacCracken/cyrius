@@ -3285,7 +3285,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             _ew_shown(dep_git);
                             sys_write(STDERR_FD, "\n", 1);
                         }
-                        var gpid = sys_fork();
+                        # 6.7.14: tracked, the signal FORWARDED (fwd 1) — a SIGTERM'd resolve left
+                        # `git clone` running on to create the cache after the CLI died; sent the
+                        # signal, git removes its own partial clone directory. CHANGELOG [6.7.14]
+                        var gpid = _cbt_fork_tracked(1);
                         if (gpid == 0) {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
@@ -3301,6 +3304,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             if (sys_waitpid(gpid, &gsb, 0) > 0) {
                                 if ((load64(&gsb) & 0xFFFF) == 0) { gok = 1; }
                             }
+                            _cbt_child_untrack(gpid);
                         }
                         if (gok == 0) {
                             _ew("error: git clone failed for dep '");
@@ -5688,9 +5692,11 @@ fn _git_errfile(): i64 {
 }
 
 # Remove the capture file. Called on every path that is done with it, so the CLI's private
-# temp dir is left as it was found (there is no exit hook here to sweep it later).
+# temp dir is left as it was found (there is no exit hook here to sweep it later). A drop: each
+# `_git_run` registers the one path with the kill handler before its child can create it.
+# CHANGELOG [6.7.14]
 fn _git_err_clear(): i64 {
-    if (_git_err_path != 0) { sys_unlink(_git_err_path); }
+    if (_git_err_path != 0) { _cbt_scratch_drop(_git_err_path); }
     return 0;
 }
 
@@ -5747,12 +5753,19 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     var errf = _git_errfile();
     # The stdout capture is opened HERE, before the fork: a capture that cannot be created
     # returns -2 with the errno recorded, and git is not run. CHANGELOG [6.6.9]
+    # Both captures are registered with the kill handler before they can exist — `outf` is the
+    # caller's to drop, `git_err` is `_git_err_clear`'s (one slot for the process: the track
+    # de-duplicates) — and git is a child the handler sends the signal and waits for (fwd 1), so
+    # a SIGTERM'd resolve leaves neither, and git runs its own cleanup (its index.lock, a
+    # clone's partial directory). CHANGELOG [6.7.14]
     var cfd = 0 - 1;
     if (outf != 0) {
+        _cbt_scratch_track(outf);
         cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
-        if (cfd < 0) { _git_cap_errno = 0 - cfd; return 0 - 2; }
+        if (cfd < 0) { _cbt_scratch_untrack(outf); _git_cap_errno = 0 - cfd; return 0 - 2; }
     }
-    var pid = sys_fork();
+    _cbt_scratch_track(errf);
+    var pid = _cbt_fork_tracked(1);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a
@@ -5802,7 +5815,9 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     if (cfd >= 0) { sys_close(cfd); }
     var wst[8];
     store64(&wst, 0);
-    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
+    var wr = sys_waitpid(pid, &wst, 0);
+    _cbt_child_untrack(pid);
+    if (wr < 0) { return 0 - 1; }
     var st = load64(&wst);
     if ((st & 127) != 0) { return 0 - 1; }      # killed by a signal → distrust
     return (st >> 8) & 255;
@@ -5812,12 +5827,12 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
 fn _git_rev(clone_dir, rev): i64 {
     var tmpf = _cbt_tmpfile("git_rev_out");
     if (_git_run(clone_dir, 0, "rev-parse", "--verify", "-q", rev, tmpf, 0) != 0) {
-        sys_unlink(tmpf);
+        _cbt_scratch_drop(tmpf);
         return 0;
     }
     var buf = alloc(128);
     var nn = file_read_all(tmpf, buf, 127);
-    sys_unlink(tmpf);
+    _cbt_scratch_drop(tmpf);
     if (nn < 40) { return 0; }
     var hl = 0;
     while (hl < nn) {
@@ -5851,10 +5866,12 @@ fn _git_has_repo(clone_dir): i64 {
     return 1;
 }
 
-fn _git_verify_cleanup(idx, outf): i64 {
-    sys_unlink(idx);
-    sys_unlink(_cat2(idx, ".lock"));
-    sys_unlink(outf);
+# Remove the verify's temps (the private index, git's lock beside it, the stdout capture) and
+# forget them: `_git_cache_verify` registers all three with the kill handler. CHANGELOG [6.7.14]
+fn _git_verify_cleanup(idx, lck, outf): i64 {
+    _cbt_scratch_drop(idx);
+    _cbt_scratch_drop(lck);
+    _cbt_scratch_drop(outf);
     return 0;
 }
 
@@ -6112,11 +6129,11 @@ fn _git_cstr_copy(p, n): i64 {
 fn _git_conv_explains(clone_dir, idx, path, blobsha, rawsha, outf): i64 {
     var cf = _cbt_tmpfile("dep_verify_conv");
     if (_git_run(clone_dir, idx, "cat-file", "--filters", _cat2("--path=", path), blobsha, cf, 0) != 0) {
-        sys_unlink(cf);
+        _cbt_scratch_drop(cf);
         return 0;
     }
     var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", cf, 0, outf, 0);
-    sys_unlink(cf);
+    _cbt_scratch_drop(cf);
     if (hr != 0) { return 0; }
     var n = _file_size(outf);
     if (n <= 0) { return 0; }
@@ -6152,9 +6169,10 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
     var pl = _cbt_tmpfile("dep_verify_paths");
     var ps = str_builder_build(sb);
     var pn = str_len(ps);
+    _cbt_scratch_track(pl);                       # git's stdin; dropped below (CHANGELOG [6.7.14])
     var pw = file_write_all(pl, str_data(ps), pn);
     if (pw != pn) {
-        sys_unlink(pl);
+        _cbt_scratch_drop(pl);
         _git_cap_errno = 28;                      # a short write reads as ENOSPC
         if (pw < 0) { _git_cap_errno = 0 - pw; }
         return 3;
@@ -6162,7 +6180,7 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
     _git_in_path = pl;
     var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", "--stdin-paths", 0, outf, 0);
     _git_in_path = 0;
-    sys_unlink(pl);
+    _cbt_scratch_drop(pl);
     if (hr != 0) { return 3; }
     var hsz = _file_size(outf);
     if (hsz <= 0) { return 3; }
@@ -6215,15 +6233,21 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
 fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
     _git_cap_errno = 0;
     var idx = _cbt_tmpfile("dep_verify_index");
+    var lck = _cat2(idx, ".lock");
     var outf = _cbt_tmpfile("dep_verify_out");
-    _git_verify_cleanup(idx, outf);
+    _git_verify_cleanup(idx, lck, outf);
+    # git creates the index (and its lock) in the child, so they are registered before any git
+    # runs; `_git_run` registers `outf` again (one slot). CHANGELOG [6.7.14]
+    _cbt_scratch_track(idx);
+    _cbt_scratch_track(lck);
+    _cbt_scratch_track(outf);
     # The probe must be as big as what git was writing: the private index (and its
     # index.lock) is the size of the cache's own — a 400-file dep's is ~40 KB, and a probe
     # smaller than that passed while read-tree / update-index had failed. CHANGELOG [6.6.9]
     _git_cap_want = _git_index_size(clone_dir) + 4096;
     var r = _git_cap_judge(_git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf));
     _git_cap_want = 0;
-    _git_verify_cleanup(idx, outf);
+    _git_verify_cleanup(idx, lck, outf);
     return r;
 }
 

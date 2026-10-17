@@ -77,6 +77,12 @@
 #     read $? 0, build's k7out.tmp.<pid> left: the CLI kept the inherited ignore and compiled on);
 #     with it, GREEN under nohup and from a plain shell. k7hup without its `signal_default(1)` ->
 #     1 RED from a plain shell (the launcher row: rc 0, not 129) and 4 under nohup (that row + the 3).
+#   * (6.7.14, axis 7's deps git rows) the 6.7.14-open CLI -> 10 RED (the fsck / rev-parse rows' dirs,
+#     the stand-in git running, no TERM recorded; the clone stand-in running, no TERM; the real
+#     clone running and its partial cache dir left). `_git_run` forking with fwd 0 -> 3 RED (no
+#     TERM at fsck / rev-parse / ls-files); the clone with fwd 0 -> 2 RED (no TERM, the partial clone
+#     left); `_git_run`'s outf untracked -> 1 RED (rev-parse's git_rev_out); `git_err` untracked ->
+#     3 RED; the verify's index / lock / outf untracked -> 1 RED (ls-files' dep_verify_index).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -745,6 +751,144 @@ if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
     for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 else
     echo "  SKIP (named): axis 7 --local git kill row — git is not installed (axis 6's fixture did not run)"
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
+# A resolve's own git children (6.7.14): `_git_run` (cbt/deps.cyr — the cached checkout's verify:
+# rev-parse, config, fsck, read-tree, …) and the clone fork. Until 6.7.14 neither git nor its
+# captures (`git_err`, `git_rev_out`, `dep_verify_out`) were tracked: a SIGTERM'd `cyrius deps` left
+# the captures (and the dir) and git running, and a clone went on to create the dep cache after
+# the CLI died. git is now a child the handler sends the signal and waits for (fwd 1), so git runs
+# its own cleanup — a clone removes its partial directory. The stand-in `git` first on PATH records
+# its pid, sleeps on one subcommand ($G8_SUB) and records the signal it gets: TERM when forwarded,
+# nothing when SIGKILLed. Every other call runs the real git and records its pid in g8.pt.
+# (issues/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md)
+G8="$T/g8"
+if command -v git > /dev/null 2>&1; then
+    G8GIT=$(command -v git)
+    mkdir -p "$G8/o/sib/dist" "$G8/p" "$G8/bin" "$G8/home/deps"
+    printf '[user]\n\tname = gate\n\temail = gate@example.invalid\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' > "$G8/gitconfig"
+    # the real-git clone row: the origin's url is rewritten to an ext:: helper that never answers
+    cp "$G8/gitconfig" "$G8/gitconfig.ext"
+    printf '[url "ext::%s/bin/slowup"]\n\tinsteadOf = file://%s/o/sib\n' "$G8" "$G8" >> "$G8/gitconfig.ext"
+    printf '#!/bin/sh\necho $$ > "%s/g8.up"\nexec sleep 60\n' "$T" > "$G8/bin/slowup"
+    cat > "$G8/bin/git" <<G8STAND
+#!/bin/sh
+for a in "\$@"; do
+  if [ -n "\${G8_SUB:-}" ] && [ "\$a" = "\$G8_SUB" ]; then
+    echo \$\$ > "$T/g8.cc"
+    trap 'echo TERM > "$T/g8.sig"; kill \$s 2>/dev/null; exit 143' TERM
+    sleep 60 &
+    s=\$!
+    echo \$s > "$T/g8.sl"
+    wait \$s
+    exit 0
+  fi
+done
+echo \$\$ > "$T/g8.pt"
+exec "$G8GIT" "\$@"
+G8STAND
+    chmod +x "$G8/bin/git" "$G8/bin/slowup"
+    printf 'fn sib_v(): i64 { return 1; }\n' > "$G8/o/sib/dist/sib.cyr"
+    ( cd "$G8/o/sib" && export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$G8/gitconfig" && git init -q . && git add -A \
+        && git commit -qm v1 && git tag v1.0.0 ) > /dev/null 2>&1
+    printf '[package]\nname = "app"\nversion = "0.1.0"\n\n[deps.sib]\ngit = "file://%s/o/sib"\ntag = "v1.0.0"\nmodules = ["dist/sib.cyr"]\n' "$G8" > "$G8/p/cyrius.cyml"
+    # g8_cli <tag> <sub> <gitconfig> <allowed protocols> <verb...>: the CLI in the background on
+    # $G8/p; its pid in $T/p7-<tag>, its exit status in $T/k7-<tag>.rc once it ends.
+    g8_cli() {
+        _gt=$1; _gs=$2; _gc=$3; _ga=$4; shift 4
+        ( _kr=0; cd "$G8/p" && G8_SUB="$_gs" HOME="$G8/nohome" CYRIUS_HOME="$G8/home" CYRIUS_RESOLVED=1 \
+            GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$_gc" GIT_ALLOW_PROTOCOL="$_ga" PATH="$G8/bin:$PATH" TMPDIR="$TB/" \
+            sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" "$@" > "$T/o7-$_gt" 2>&1 || _kr=$?
+          echo "$_kr" > "$T/k7-$_gt.rc" ) 2>/dev/null &
+        _gb=$!
+    }
+    # g8_run <tag> <git subcommand to sleep on> <verb...>: SIGTERM once the stand-in sleeps; the live
+    # names in $T/k7-<tag>.live, "gone" / "running" for the stand-in in $T/k7-<tag>.cc, the signal it
+    # recorded ("none" when it got none it could see) in $T/k7-<tag>.sig.
+    g8_run() {
+        _g8t=$1; _g8s=$2; shift 2
+        rm -f "$T/g8.cc" "$T/g8.sig" "$T/g8.sl" "$T/p7-$_g8t" "$T/k7-$_g8t.rc" "$T/k7-$_g8t.live" "$T/k7-$_g8t.cc"
+        g8_cli "$_g8t" "$_g8s" "$G8/gitconfig" file "$@"
+        _gw=0
+        while [ ! -s "$T/g8.sl" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
+        _gp=$(cat "$T/p7-$_g8t" 2>/dev/null || true)
+        ls -A "$TB/cyrius-$_gp" > "$T/k7-$_g8t.live" 2>/dev/null || : > "$T/k7-$_g8t.live"
+        [ -n "$_gp" ] && kill -TERM "$_gp" 2>/dev/null || true
+        { wait "$_gb"; } 2>/dev/null || true
+        _gc=$(cat "$T/g8.cc" 2>/dev/null || true)
+        if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
+            echo running > "$T/k7-$_g8t.cc"; kill -KILL "$_gc" 2>/dev/null
+        else
+            echo gone > "$T/k7-$_g8t.cc"
+        fi
+        _gl=$(cat "$T/g8.sl" 2>/dev/null || true)
+        [ -n "$_gl" ] && kill -KILL "$_gl" 2>/dev/null
+        cat "$T/g8.sig" > "$T/k7-$_g8t.sig" 2>/dev/null || echo none > "$T/k7-$_g8t.sig"
+    }
+    # the dep cache, cloned and verified once by the real git (the fsck / rev-parse rows reuse it)
+    g8_cli g8w "" "$G8/gitconfig" file deps
+    { wait "$_gb"; } 2>/dev/null || true
+    check "a git dep resolves through the stand-in (the real git; anti-vacuous: rc 0, its cache cloned)" "0 yes" \
+        "$(cat "$T/k7-g8w.rc" 2>/dev/null || echo none) $([ -d "$G8/home/deps/sib/v1.0.0/.git" ] && echo yes || echo no)"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    g8_run g8f fsck deps
+    check "deps SIGTERM'd in the cached checkout's fsck — its captures are in flight (anti-vacuous: dep_verify_out, git_err)" yes \
+        "$(grep -qx dep_verify_out "$T/k7-g8f.live" 2>/dev/null && grep -qx git_err "$T/k7-g8f.live" && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8f.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no dep_verify_out / git_err left)" 0 "$(k7_dirs g8f "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-g8f.cc")"
+    check "  …by the SIGTERM forwarded to it (a SIGKILL leaves it none)" TERM "$(cat "$T/k7-g8f.sig")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    g8_run g8r rev-parse deps
+    check "deps SIGTERM'd in its rev-parse of the cached HEAD — the capture is in flight (anti-vacuous: git_rev_out, git_err)" yes \
+        "$(grep -qx git_rev_out "$T/k7-g8r.live" 2>/dev/null && grep -qx git_err "$T/k7-g8r.live" && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8r.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no git_rev_out / git_err left)" 0 "$(k7_dirs g8r "$TB")"
+    check "  …the git it was running is stopped" gone "$(cat "$T/k7-g8r.cc")"
+    check "  …by the SIGTERM forwarded to it" TERM "$(cat "$T/k7-g8r.sig")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    # later in the verify, git has written the private index (GIT_INDEX_FILE) the CLI named for it
+    g8_run g8l ls-files deps
+    check "deps SIGTERM'd in the verify's ls-files — the private index is in flight (anti-vacuous: dep_verify_index)" yes \
+        "$(grep -qx dep_verify_index "$T/k7-g8l.live" 2>/dev/null && grep -qx dep_verify_out "$T/k7-g8l.live" && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8l.rc" 2>/dev/null || echo none)"
+    check "  …its private dir is gone (no dep_verify_index left)" 0 "$(k7_dirs g8l "$TB")"
+    check "  …the git it was running is stopped, by the forwarded SIGTERM" "gone TERM" "$(cat "$T/k7-g8l.cc") $(cat "$T/k7-g8l.sig")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    rm -rf "$G8/home/deps/sib"
+    g8_run g8c clone deps
+    check "deps SIGTERM'd in its git clone — the clone ran (anti-vacuous: the stand-in slept on it)" yes \
+        "$([ -s "$T/g8.cc" ] && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8c.rc" 2>/dev/null || echo none)"
+    check "  …no private dir is left" 0 "$(k7_dirs g8c "$TB")"
+    check "  …the git clone is stopped" gone "$(cat "$T/k7-g8c.cc")"
+    check "  …by the SIGTERM forwarded to it (git clone's own cleanup runs on it)" TERM "$(cat "$T/k7-g8c.sig")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    # the REAL git clone: the origin rewritten to an ext:: helper that never answers, so git has
+    # created the cache's clone directory and waits; forwarded the SIGTERM, git removes it.
+    rm -rf "$G8/home/deps/sib"
+    rm -f "$T/g8.up" "$T/g8.pt" "$T/p7-g8x" "$T/k7-g8x.rc"
+    g8_cli g8x "" "$G8/gitconfig.ext" file:ext deps
+    w=0
+    while { [ ! -s "$T/g8.up" ] || [ ! -d "$G8/home/deps/sib/v1.0.0" ]; } && [ "$w" -lt 600 ]; do sleep 0.05; w=$((w + 1)); done
+    check "deps SIGTERM'd while the real git clone waits on its remote — the partial clone exists (anti-vacuous)" yes \
+        "$([ -s "$T/g8.up" ] && [ -d "$G8/home/deps/sib/v1.0.0" ] && echo yes || echo no)"
+    k7p=$(cat "$T/p7-g8x" 2>/dev/null || true)
+    [ -n "$k7p" ] && kill -TERM "$k7p" 2>/dev/null || true
+    { wait "$_gb"; } 2>/dev/null || true
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8x.rc" 2>/dev/null || echo none)"
+    k7c=$(cat "$T/g8.pt" 2>/dev/null || true)
+    w=0
+    while [ -n "$k7c" ] && kill -0 "$k7c" 2>/dev/null && [ "$w" -lt 100 ]; do sleep 0.05; w=$((w + 1)); done
+    check "  …the git clone is stopped" no "$([ -n "$k7c" ] && kill -0 "$k7c" 2>/dev/null && echo yes || echo no)"
+    check "  …and removed its partial clone from the dep cache (a SIGKILLed or orphaned clone leaves it)" no \
+        "$([ -e "$G8/home/deps/sib/v1.0.0" ] && echo yes || echo no)"
+    [ -n "$k7c" ] && kill -KILL "$k7c" 2>/dev/null
+    k7u=$(cat "$T/g8.up" 2>/dev/null || true)
+    [ -n "$k7u" ] && kill -KILL "$k7u" 2>/dev/null
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+else
+    echo "  SKIP (named): axis 7 deps git-children rows — git is not installed"
     K7_SKIPS=$((K7_SKIPS + 1))
 fi
 # rmdir, never a sweep (axis 4's contract, on the kill path): a file in the live dir that is not
