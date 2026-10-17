@@ -6222,7 +6222,9 @@ fn f(v): i64 {
   `case` label, an enum value. Anything else — a variable, an ordinary fn's call — is refused
   by name. A `const fn` call there is a call like any other (6.7.11): another file's `private`
   const fn is refused at the call (`'pk' is private to its file`), and a `#deprecated` one warns
-  once per call site — before 6.7.11 every const context ran both silently. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
+  once per call site — before 6.7.11 every const context ran both silently. That holds where the
+  evaluator never runs the call too (6.7.14): `1 || pk()`, `0 && pk()` and an if-expression's
+  untaken arm are refused (they built), as the run-time `var X = 1 || pk();` always was. ⚠ An enum value and a top-level array size are read in pass 1, in source order: a
   `const fn` they call must be declared above them (a top-level const need not be).
 - **A `const fn` runs at compile time only in a const context**; everywhere else it is an
   ordinary runtime call, so the disassembly shows the call you wrote (user decision,

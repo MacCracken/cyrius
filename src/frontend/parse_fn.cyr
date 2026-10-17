@@ -9591,9 +9591,14 @@ fn _ce_sizeof(S): i64 {
 # the definition check runs in SKIP mode. A refusal is the evaluator's own (`_ce_err`, and
 # `_panic` as `_ce_badn` sets it), so the statement's cascade is swallowed. 1 = refused.
 # CHANGELOG [6.7.11]
+# 6.7.14 — and in SKIP mode too: the right operand of a short-circuit `1 || pk()` / `0 && pk()` and
+# an if-expression's untaken arm name the call as surely as a taken one (the run-time path refuses
+# `var X = 1 || pk();`), so `private` covers them and `#deprecated` warns. A const fn's body stays
+# unchecked (above). `_ce_xpend_one` re-walks an arm whose first walk was not refused (a refusal
+# leaves the arm unclassed, never re-walked), so its calls are judged as before and the per-site
+# memories (`_vis_seen`, `_dep_seen`) print nothing new. CHANGELOG [6.7.14]
 fn _ce_site(S, fi, noff): i64 {
     if (_ce_infn != 0) { return 0; }
-    if (_ce_skip != 0) { return 0; }
     if (_callee_site_checks(S, fi, noff, _ce_ti) == 1) { _ce_err = 1; _panic = 1; return 1; }
     return 0;
 }

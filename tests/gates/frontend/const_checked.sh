@@ -27,7 +27,10 @@
 #      local const, a global and a local array size, an enum value, `#assert`, a case label, and the
 #      named-argument form — is refused once, at the call, as a run-time call is; a same-file call
 #      and a `public const fn` of a private file build; a `#deprecated` const fn warns once per call
-#      site in every const context (V2w). All of them built silently before
+#      site in every const context (V2w). All of them built silently before; (6.7.14) V3 the same call
+#      in an arm the evaluator SKIPS — `1 || pk()`, `0 && pk() == 3`, an untaken else / elif arm, a
+#      local const, an #inline body, an arm re-walked beside a forward const — refused once at the call,
+#      and a #deprecated one warns once (V3w), as the run-time `var X = 1 || pk();` (V3r) always was
 #   C  ANTI-VACUOUS: consts, a const fn, a local const and every const context build and run; three
 #      heavy consts each within its OWN step budget; (6.7.7) an uncalled const fn whose parameter type
 #      holds a comma inside `<..>` builds (the definition check's two parameter counts agree)
@@ -73,6 +76,7 @@
 # its latch save / restore -> S0-S5, S10 RED (`_pd_eval`'s own `pw` rule is gone); keeping the restore
 # but not clearing -> S3, S4 RED; `_tl_pass1` without its `_panic = 0` -> S8 RED; `_cst_semi_refuse`
 # latching -> S9 RED; `_ce_said` never deduping -> LC4, S12-S14 RED (each token printed twice).
+# `_ce_site` back to returning in skip mode -> V3a-V3g RED (built), V3w / V3w2 RED (no warning).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -164,6 +168,16 @@ vrefused v2e "2:14: 'pk" "V2e: an enum value" 'enum E { A = pk() }\nsyscall(60, 
 vrefused v2f "2:9: 'pk" "V2f: #assert" '#assert pk() == 3, "x";\nsyscall(60, 1);\n'
 vrefused v2g "2:34: 'pk" "V2g: a case label" 'fn f(x): i64 { switch (x) { case pk(): return 5; default: return 0; } return 1; }\nsyscall(60, f(3));\n'
 vrefused v2n "2:11: 'pk2" "V2n: the named-argument form" 'const X = pk2(a: 2);\nsyscall(60, X);\n'
+# V3 (6.7.14) — ... and in an arm the evaluator SKIPS: a short-circuit's right operand, an untaken
+# if-expression arm (issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md)
+vrefused v3a "2:16: 'pk" "V3a: const X = 1 || pk(); (built, exit 1)" 'const X = 1 || pk();\nsyscall(60, X);\n'
+vrefused v3b "2:16: 'pk" "V3b: const X = 0 && pk() == 3; (built, exit 0)" 'const X = 0 && pk() == 3;\nsyscall(60, X);\n'
+vrefused v3c "2:36: 'pk" "V3c: an untaken else arm (built, exit 3)" 'const X = if (1 == 1) { 3 } else { pk() };\nsyscall(60, X);\n'
+vrefused v3d "2:45: 'pk" "V3d: an untaken elif arm" 'const X = if (1 == 1) { 3 } elif (2 == 2) { pk() } else { 4 };\nsyscall(60, X);\n'
+vrefused v3e "2:33: 'pk" "V3e: a local const's short-circuit" 'fn main(): i64 { const L = 1 || pk(); return L; }\nsyscall(60, main());\n'
+vrefused v3f "3:30: 'pk" "V3f: in an #inline body, its definition and its replay" '#inline\nfn w(): i64 { const L = 1 || pk(); return L; }\nfn main(): i64 { return w(); }\nsyscall(60, main());\n'
+vrefused v3g "2:36: 'pk" "V3g: an untaken arm beside a forward const (re-walked once every const is known)" 'const X = if (1 == 1) { B } else { pk() };\nconst B = 4;\nsyscall(60, X);\n'
+vrefused v3r "2:17: 'pk" "V3r: (control) the run-time var X = 1 || pk();" 'var X = 1 || pk();\nsyscall(60, X);\n'
 printf 'include "priv.cyr"\nconst X = pp();\nsyscall(60, X);\n' > "$T/v2/v2p.cyr"
 rc=0; ( cd "$T/v2" && timeout 60 "$CC" < v2p.cyr > v2p.bin 2> v2p.err ) || rc=$?
 if [ "$rc" -ne 0 ]; then bad "V2p: a public const fn of a private file: rc $rc: $(grep '^error' "$T/v2/v2p.err" | head -1)"
@@ -178,6 +192,12 @@ w=$(grep -c "^warning:<source>:3:11: 'dk' is deprecated: old" "$T/v2w.err"); a=$
 exits v2w2 6 "V2w2: a #deprecated const fn in all seven const contexts" "${DK}const X = dk();\nvar g: i64[dk()];\nenum E { A = dk() }\n#assert dk() == 6, \"x\";\nfn f(v): i64 { const L = dk(); var a: i64[dk()]; switch (v) { case dk(): return L; default: return 0; } return 1; }\nsyscall(60, f(A) + X - 6);\n"
 w=$(grep -c "' is deprecated: old" "$T/v2w2.err"); u=$(grep "' is deprecated: old" "$T/v2w2.err" | sort | uniq -d | wc -l)
 [ "$w" -eq 7 ] && [ "$u" -eq 0 ] && ok "V2w2: ... seven warnings, one per call site" || bad "V2w2: $w deprecation warnings ($u repeated), want 7 distinct"
+exits v3w 1 "V3w: a #deprecated const fn in a short-circuit's skipped operand" "${DK}const X = 1 || dk();\nsyscall(60, X);\n"
+w=$(grep -c "^warning:<source>:3:16: 'dk' is deprecated: old" "$T/v3w.err"); a=$(grep -c "deprecated" "$T/v3w.err")
+[ "$w" -eq 1 ] && [ "$a" -eq 1 ] && ok "V3w: ... warned once, at the call (it was silent)" || bad "V3w: $a deprecation warnings, $w at 3:16 (want 1 / 1)"
+exits v3w2 3 "V3w2: ... in an untaken arm beside a forward const (no second warning from the re-walk)" "${DK}const X = if (1 == 1) { 3 } else { B + dk() };\nconst B = 4;\nsyscall(60, X);\n"
+w=$(grep -c "^warning:<source>:3:40: 'dk' is deprecated: old" "$T/v3w2.err"); a=$(grep -c "deprecated" "$T/v3w2.err")
+[ "$w" -eq 1 ] && [ "$a" -eq 1 ] && ok "V3w2: ... warned once" || bad "V3w2: $a deprecation warnings, $w at 3:40 (want 1 / 1)"
 # C2 — each top-level const has its OWN step budget: three of ~3.6 M steps each (10.8 M together, past the 10 M budget)
 exits c2 192 "C2: three heavy consts, each within its own budget" 'const fn burn(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i = i + 1; } return s; }\nconst B1 = burn(1200000);\nconst B2 = burn(1200000);\nconst B3 = burn(1200000);\nsyscall(60, (B1 + B2 + B3) & 255);\n'
 # C3 (6.7.7) — the definition check's two parameter counts agree, so an uncalled const fn whose
