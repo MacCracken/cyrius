@@ -5488,6 +5488,14 @@ inner one is called (6.7.14; until then it was removed with the outer one, on ev
 dead-fn count past which compaction gives up (6.7.14; until then more than 4,096 dead-code runs
 declined it, and the dead bytes stayed NOP-filled).
 
+What reaches a fn, on x86, is a `call` / `jmp rel32` that starts an instruction (6.7.14). Until then
+any `E8` / `E9` byte whose next four bytes pointed at a fn's start counted — an immediate or a
+displacement that happened to hold one kept a dead fn alive, in the `N unreachable fns` note and
+under `CYRIUS_DCE=1`, and adding an unrelated global could change which. Code the length decoder
+cannot walk exactly keeps the old byte scan, so nothing called is ever counted dead: a fn holding a
+raw `asm { 0x.. }` byte (and all top-level code once the top level has one), a fn holding a
+switch's jump table, and code holding an instruction the decoder does not know (VEX, `in` / `out`).
+
 ## Enums
 
 ```

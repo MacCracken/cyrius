@@ -770,6 +770,36 @@ fn _fnr_add(old, old_end): i64 {
     return 0;
 }
 
+# 6.7.14 — THE FNS WHOSE CODE HOLDS A RAW `asm` BYTE. The x86 dead-code call graph walks the code
+# with the length decoder and counts an E8 / E9 only where an instruction starts (fixup.cyr
+# `_dce_cand_build`). A raw `asm { 0x.. }` byte is anything — a boot shim's 32-bit code or its
+# data — which the decoder can misread and still land on a span's end, stepping over a real call.
+# So the range of a fn noted here, and every span outside all fns once the top level has one
+# (`_dce_raw_top`), keeps the byte scan. Noted per asm block, by `_cur_fn_ix` (the fn being
+# emitted). CHANGELOG [6.7.14]
+var _dce_raw_base = 0;   # fn indices: alloc'd on the first raw byte inside a fn, then doubling
+var _dce_raw_n = 0;
+var _dce_raw_cap = 0;
+var _dce_raw_top = 0;    # 1 once a raw asm byte is emitted at the top level
+var _dce_raw_ovf = 0;    # 1 when the list could not grow: the call graph keeps the byte scan
+fn _dce_raw_note(fi): i64 {
+    if (fi < 0) { _dce_raw_top = 1; return 0; }
+    if (_dce_raw_n > 0) { if (load64(_dce_raw_base + (_dce_raw_n - 1) * 8) == fi) { return 0; } }
+    if (_dce_raw_n >= _dce_raw_cap) {
+        var nc = _dce_raw_cap * 2;
+        if (nc == 0) { nc = 64; }
+        var nb = alloc(nc * 8);
+        if (nb == 0) { _dce_raw_ovf = 1; return 0; }
+        var i = 0;
+        while (i < _dce_raw_n) { store64(nb + i * 8, load64(_dce_raw_base + i * 8)); i = i + 1; }
+        _dce_raw_base = nb;
+        _dce_raw_cap = nc;
+    }
+    store64(_dce_raw_base + _dce_raw_n * 8, fi);
+    _dce_raw_n = _dce_raw_n + 1;
+    return 0;
+}
+
 var _codebuf_cap = 0;
 # v6.4.51: the final output image (ELF/Mach-O/PE) is emitted here — an off-heap,
 # lazy-mapped 1 GiB `alloc()` set per-driver, replacing the fixed 16 MiB in-heap

@@ -5449,7 +5449,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
             if (PEEKT(S) == 14) { ago = 0; }
             else {
                 if (PEEKT(S) == 1) {
-                    # Raw byte
+                    # Raw byte — the dead-code call graph keeps the byte scan over its fn
+                    # (util.cyr _dce_raw_note). CHANGELOG [6.7.14]
+                    _dce_raw_note(_cur_fn_ix);
                     EB(S, PEEKV(S) & 0xFF);
                     STI(S, GTI(S) + 1);
                     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }

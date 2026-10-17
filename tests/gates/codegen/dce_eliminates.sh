@@ -312,5 +312,91 @@ grep -q 'bytes of dead code eliminated' "$T/nk.err" || { echo "FAIL dce_eliminat
 chmod +x "$T/nk"; got=0; "$T/nk" || got=$?
 [ "$got" = 1 ] || { echo "FAIL dce_eliminates axis9: a #naked redefinition past 49,152 sources exits $got under CYRIUS_DCE=1, want 1 — its rel32 was repaired twice"; exit 1; }
 
-echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing, a #naked redirect past 49,152 sources repaired once"
+# ── axis 10 — 6.7.14: a call counts only where an instruction starts ───────────────────────────
+# The seed and propagate passes took every E8 / E9 BYTE whose rel32 decoded to a fn start as a
+# call, so an immediate that happened to hold one kept a dead fn live — and data addresses move
+# with every global added (two unused globals flipped `ir_emit1` in the cx fork: dead_code_floor.sh
+# RED). A call now marks a fn live only from an instruction start of a span the length decoder
+# walks exactly (fixup.cyr _dce_cand_build); a span with a raw asm byte or a switch's jump table
+# keeps the byte scan, so nothing live is ever dropped.
+# 10a: imm64 constants built to read `E8 rel32` onto two dead fns' starts — one in a live fn's body
+#      (the propagate pass), one in top-level code (the seed pass): both fns are listed dead and
+#      CYRIUS_DCE=1 removes them; the bytes are checked to hold the calls (the row is not vacuous).
+# 10b: raw asm `EB 02 81 78` jumps over two bytes the decoder reads as `cmp dword [rax+d8], imm32`,
+#      which swallows the real `call callee` after them and resyncs: in a fn and at the top level,
+#      the callee stays live and the CYRIUS_DCE=1 binary runs (43).
+# 10c: a switch's jump table read as code swallows the `call callee` that opens case 0 for some
+#      case-body sizes: six of them, the callee live and the CYRIUS_DCE=1 binary right.
+# Mutations (6.7.14), each RED: `_dce_mark` without its instruction-start test (10a: neither fn
+# dead); `_dce_raw_note` a no-op (10b: callee listed dead in the fn and at the top level, and the
+# DCE=1 binary exits 132); the top-level note dropped (10b top level, the same); `_dce_ijmp`
+# answering 0 (10c: callee dead for case 0 + 2, + 3 and + 5, those DCE=1 binaries 132).
+# issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
+_find8() {   # <file> <16 hex digits, the 8 bytes in file order> -> every offset holding them
+  od -An -tx1 -v "$1" | tr -s ' ' '\n' | grep -v '^$' | awk -v w="$2" '{ a[NR - 1] = $1 }
+    END { for (i = 0; i + 8 <= NR; i++) if (a[i] a[i+1] a[i+2] a[i+3] a[i+4] a[i+5] a[i+6] a[i+7] == w) print i }'
+}
+cat > "$T/a10.cyr" <<'EOF'
+fn dead_seed(): i64 { return 5; }
+fn dead_prop(): i64 { return 6; }
+fn live_fn(x): i64 { var c = 0x1122334455667788; return (x & 3) + (c & 1); }
+var r = live_fn(0x2233445566778899);
+syscall(60, r);
+EOF
+CYRIUS_SYMS="$T/a10.syms" "$T/stage1" < "$T/a10.cyr" > "$T/a10" 2> "$T/a10.err" || { echo "FAIL dce_eliminates axis10a: the probe did not compile: $(cat "$T/a10.err")"; exit 1; }
+PV=$(od -An -t u8 -j $(( $(od -An -t u8 -j 32 -N 8 "$T/a10" | tr -d ' ') + 16 )) -N 8 "$T/a10" | tr -d ' ')   # phdr 0 p_vaddr
+PO=$(od -An -t u8 -j $(( $(od -An -t u8 -j 32 -N 8 "$T/a10" | tr -d ' ') + 8 )) -N 8 "$T/a10" | tr -d ' ')    # phdr 0 p_offset
+M1=$(_find8 "$T/a10" 8877665544332211); M2=$(_find8 "$T/a10" 9988776655443322)
+DS=$(awk '$2 == "dead_seed" { print $1 }' "$T/a10.syms"); DP=$(awk '$2 == "dead_prop" { print $1 }' "$T/a10.syms")
+[ "$(echo "$M1" | wc -w)" = 1 ] && [ "$(echo "$M2" | wc -w)" = 1 ] && [ -n "$DS" ] && [ -n "$DP" ] || {
+  echo "FAIL dce_eliminates axis10a: the probe's two imm64 markers or two dead fns were not found once each (markers '$M1' '$M2', fns '$DS' '$DP')"; exit 1; }
+REL1=$(( (0x$DP - (PV - PO + M1 + 5)) & 0xFFFFFFFF ))   # the E8 at the fn-body imm's first byte -> dead_prop
+REL2=$(( (0x$DS - (PV - PO + M2 + 5)) & 0xFFFFFFFF ))   # the E8 at the top-level imm's first byte -> dead_seed
+V1=$(printf '0x112233%08XE8' "$REL1"); V2=$(printf '0x223344%08XE8' "$REL2")
+sed -e "s/0x1122334455667788/$V1/" -e "s/0x2233445566778899/$V2/" "$T/a10.cyr" > "$T/a10b.cyr"
+CYRIUS_DCE_VERBOSE=1 "$T/stage1" < "$T/a10b.cyr" > "$T/a10b" 2> "$T/a10b.err" || { echo "FAIL dce_eliminates axis10a: the built probe did not compile"; exit 1; }
+_le4() { printf '%02x%02x%02x%02x' $(( $1 & 255 )) $(( ($1 >> 8) & 255 )) $(( ($1 >> 16) & 255 )) $(( ($1 >> 24) & 255 )); }
+[ "$(_find8 "$T/a10b" "e8$(_le4 "$REL1")332211")" = "$M1" ] && [ "$(_find8 "$T/a10b" "e8$(_le4 "$REL2")443322")" = "$M2" ] || {
+  echo "FAIL dce_eliminates axis10a: the built probe's immediates do not hold the E8 rel32 calls at $M1 / $M2 — the row would prove nothing"; exit 1; }
+[ "$(grep -c '^  dead: dead_seed$' "$T/a10b.err")" = 1 ] && [ "$(grep -c '^  dead: dead_prop$' "$T/a10b.err")" = 1 ] || {
+  echo "FAIL dce_eliminates axis10a: an E8 byte inside an imm64 kept a dead fn live (dead: $(grep '^  dead:' "$T/a10b.err" | awk '{print $2}' | tr '\n' ' ')want dead_seed and dead_prop)"; exit 1; }
+chmod +x "$T/a10b"; got=0; "$T/a10b" || got=$?
+[ "$got" = 0 ] || { echo "FAIL dce_eliminates axis10a: the probe exits $got, want 0"; exit 1; }
+CYRIUS_DCE=1 "$T/stage1" < "$T/a10b.cyr" > "$T/a10d" 2> "$T/a10d.err" || { echo "FAIL dce_eliminates axis10a: the CYRIUS_DCE=1 build failed"; exit 1; }
+grep -q '96 bytes of dead code eliminated' "$T/a10d.err" || { echo "FAIL dce_eliminates axis10a: CYRIUS_DCE=1 did not remove both fns: $(cat "$T/a10d.err")"; exit 1; }
+chmod +x "$T/a10d"; got=0; "$T/a10d" || got=$?
+[ "$got" = 0 ] || { echo "FAIL dce_eliminates axis10a: the CYRIUS_DCE=1 probe exits $got, want 0"; exit 1; }
+live10() {   # <row> <src> <want exit>: no `dead: callee`, and the CYRIUS_DCE=1 binary exits <want>
+  CYRIUS_DCE_VERBOSE=1 "$T/stage1" < "$2" > "$T/l10" 2> "$T/l10.err" || { echo "FAIL dce_eliminates axis$1: did not compile: $(grep -m1 error "$T/l10.err")"; exit 1; }
+  if grep -q '^  dead: callee$' "$T/l10.err"; then echo "FAIL dce_eliminates axis$1: callee is listed dead, but the code calls it"; exit 1; fi
+  CYRIUS_DCE=1 "$T/stage1" < "$2" > "$T/l10d" 2> /dev/null || { echo "FAIL dce_eliminates axis$1: the CYRIUS_DCE=1 build failed"; exit 1; }
+  chmod +x "$T/l10d"; got=0; "$T/l10d" || got=$?
+  [ "$got" = "$3" ] || { echo "FAIL dce_eliminates axis$1: the CYRIUS_DCE=1 binary exits $got, want $3 — a live fn was removed"; exit 1; }
+}
+cat > "$T/b10f.cyr" <<'EOF'
+fn callee(): i64 { return 42; }
+fn host(): i64 { asm { 0xEB; 0x02; 0x81; 0x78; } var v = callee(); return v + 1; }
+var r = host();
+syscall(60, r);
+EOF
+cat > "$T/b10t.cyr" <<'EOF'
+fn callee(): i64 { return 42; }
+var r = 0;
+asm { 0xEB; 0x02; 0x81; 0x78; }
+r = callee() + 1;
+syscall(60, r);
+EOF
+live10 "10b (fn)" "$T/b10f.cyr" 43
+live10 "10b (top level)" "$T/b10t.cyr" 43
+a=0
+while [ $a -le 5 ]; do
+  { echo 'fn callee(): i64 { return 42; }'; echo 'fn host(x): i64 {'; echo '    var q = 0;'; echo '    switch (x) {'
+    printf '        case 0: q = callee() + 1;'; i=0; while [ $i -lt $a ]; do printf ' q = q + 7;'; i=$((i + 1)); done; echo
+    echo '        case 1: q = 2;'; echo '        case 2: q = 3;'; echo '        case 3: q = 4;'; echo '    }'; echo '    return q;'; echo '}'
+    echo 'var r = host(0);'; echo 'syscall(60, r & 255);'; } > "$T/c10.cyr"
+  live10 "10c (case 0 + $a)" "$T/c10.cyr" $((43 + 7 * a))
+  a=$((a + 1))
+done
+
+echo "PASS dce_eliminates: $SAVED B removed (not padded), eliminated cycc reproduces the normal build byte-identically, float path unaffected, default path inert, the pad after compacted code is zero, no 4,096-run cap, a live instance nested in a dead one kept (x86, WX=0, aarch64, cx), a losing body roots nothing, a #naked redirect past 49,152 sources repaired once, an E8 inside an immediate is no call (a raw asm block and a jump table keep the byte scan)"
 exit 0
