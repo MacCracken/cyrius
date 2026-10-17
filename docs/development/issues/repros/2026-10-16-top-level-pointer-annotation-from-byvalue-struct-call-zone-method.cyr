@@ -1,0 +1,6 @@
+include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 3; return q; } }
+var B = Q { 1, 2 };
+var X: *Q = B.mk();
+syscall(60, X.b);

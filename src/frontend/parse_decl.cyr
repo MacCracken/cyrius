@@ -6197,13 +6197,23 @@ fn _gvi_expr(S, gps): i64 {
 fn _gvi_scalar(S): i64 {
     var st = GTI(S);
     var he = _had_error;
-    _scv_top_ann(S, 0);   # 6.7.13: D24 in the declaration zone
+    var ps = _gvi_ptr_ann(S, st);
+    _scv_top_ann(S, ps);   # 6.7.13: D24 in the declaration zone; 6.7.14: D14 (D28 (a))
     _sc_beg = 0 - 1;
     PCMPE(S);
     _scv_err = 0;
     if (he == 0) { _scv_err = _had_error; }
-    _scv_rec_ann(S, 0, st);   # 6.7.13 (D13)
+    _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
     return 0;
+}
+# 6.7.14 (D28 (a)) — 1 = the zone declaration whose initialiser starts at `st` is annotated `*T` (`**T`, any number of
+# `*`): `_gvi_ann` gives a pointer `gps` 0, so the replay judged `var X: *P2 = mkp();` as a scalar (D24's remedy) and
+# left a method / operator result alone. The pointer scale is not needed: D14's refusal reads only its sign.
+fn _gvi_ptr_ann(S, st): i64 {
+    var ann = _scv_ann_at(S, st - 1);
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    return 1;
 }
 
 # ⛔ 6.7.13 — "ASSIGNING NON-POINTER TO TYPED POINTER" AT EVERY `*T` SITE, THE LITERAL 0 EXEMPT (the user's decision
@@ -6236,6 +6246,15 @@ fn _tp_warn_gv(S, slot, st): i64 {
     if (GPSC(S) != 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_tn_seen_at(S, st) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
+# warning, unless the line is refused — at its call (D14, `_ptr_refd_ti`) or inside its initialiser (`_scv_err`, as
+# the zone's `_tp_warn_gv` asks): `var X: *P3 = mk3();` after the first statement, a struct result over 16 B with no
+# frame, said "assigning non-pointer to typed pointer" beside its one refusal. CHANGELOG [6.7.14]
+fn _tp_warn_decl(S, ann, st): i64 {
+    if (_ptr_refd_ti == ann) { return 0; }
+    if (_scv_err == 1) { return 0; }
     return _tp_warn(S, st);
 }
 # A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
@@ -7907,9 +7926,9 @@ fn _rcv_ptr_ann(S, pscale, ann, noff): i64 {
 # same known callee (6.7.13, `_icall_fti`); a callee in a variable stays a word (D31). 1 = refused.
 # CHANGELOG [6.7.12]
 # 6.7.13: and at top level (6.7.12's D28 "D24 at every path"; `_scv_gcall_ann`). CHANGELOG [6.7.13]
+# 6.7.14: a `*T` at top level too (D28 (a): D14 at every path). CHANGELOG [6.7.14]
 fn _scv_icall_ann(S, pscale): i64 {
     if (pscale < 0) { return 0; }
-    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14 (6.7.13): a `*T` in a fn
     var st = GTI(S);
     if (TOKTYP(S, st - 1) != 4) { return 0; }
     var c = st;
@@ -7943,8 +7962,13 @@ fn _scv_icall_ann(S, pscale): i64 {
 # whose initialiser is one whole direct call, inside any parentheses up to its `;` (`_rcv_peel` /
 # `_rcv_iscall`), its callee the one the call reaches (`_gen_resolve_call`). The initialiser's first token is
 # marked reported, so a bool's own check does not refuse it a second time. 1 = refused. CHANGELOG [6.7.13]
+# 6.7.14 (D28 (a), the user, 2026-10-16) — and a POINTER annotation (`pscale` > 0: `var X: *P2 = mkp();`, `*i64`,
+# `*u8`, any `*T`) with D14's remedy ("declare 'X: P2' and take `&X`"), in the zone and after the first statement:
+# it stored the struct's first word as the pointer under the typed-pointer warning (`X.b` faulted), and the zone
+# replayed it as a scalar (D24's remedy). The refused line says no warning (`_ptr_refd_ti`, the zone's
+# `_tn_seen_at`). CHANGELOG [6.7.14]
 fn _scv_gcall_ann(S, pscale): i64 {
-    if (pscale != 0) { return 0; }
+    if (pscale < 0) { return 0; }
     if (GINFN(S) == 1) { return 0; }   # a fn's receive judges its own
     var st = GTI(S);
     if (TOKTYP(S, st - 1) != 4) { return 0; }
@@ -7958,9 +7982,10 @@ fn _scv_gcall_ann(S, pscale): i64 {
     var ann = _scv_ann_at(S, st - 1);
     if (ann <= 0) { return 0; }
     STI(S, st - 1);
-    var r = _rcv_scalar_ann(S, c, GFRS(S, fi), 0, ann, _scv_ann_nm);
+    var r = _rcv_ann_refuse(S, c, TOKVAL(S, c), GFRS(S, fi), pscale, ann, _scv_ann_nm);
     STI(S, st);
     if (r == 1) { _tn_once(S, st); }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
     return r;
 }
 # 1 = a struct result over 16 B at top level: refused already there (no frame, `_refuse_toplevel_struct_call`),
@@ -7989,17 +8014,16 @@ fn _scv_top_ann(S, pscale): i64 {
 # first token (the free / `&f` call) is not reported again; the first token is marked, so a bool's own check does not
 # refuse it a second time; and the declaration takes no struct (`_scv_refd`, read by `_sc_var_receive`): it parses on
 # as its annotation says, as after the free call's refusal. 1 = refused. CHANGELOG [6.7.13]
+# 6.7.14: a `*T` at top level too, the zone's replay passing its pointer (D28 (a)). CHANGELOG [6.7.14]
 var _scv_refd = 0 - 1;   # the initialiser's first token of the last declaration `_scv_rec_ann` refused
 fn _scv_rec_ann(S, pscale, start): i64 {
     if (pscale < 0) { return 0; }
-    if (pscale > 0) { if (GINFN(S) != 1) { return 0; } }   # D14: a `*T` in a fn
     if (_scv_err == 1) { return 0; }
     var t = _sc_whole(S, start);
     if (t == 0 - 2) { return 0; }
     if (t == 0 - 3) { return 0; }
     var ann = _scv_ann_at(S, start - 1);
     if (ann <= 0) { return 0; }
-    if (pscale == 0) { if (TOKTYP(S, ann) == 8) { return 0; } }   # the declaration zone's `*T` (its pscale is 0)
     if (_rcv_ann_hit(S, _sc_sid, ann) == 0) { return 0; }
     if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
     var eq = GTI(S);
@@ -9048,7 +9072,7 @@ fn PARSE_VAR(S): i64 {
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
-        if (expr_ps == 0) { if (_ptr_refd_ti != ann_ti) { _tp_warn(S, scv_start); } }   # 6.7.11; 6.7.13: not the literal 0
+        if (expr_ps == 0) { _tp_warn_decl(S, ann_ti, scv_start); }   # 6.7.11; 6.7.13: not the literal 0
     }
     # Check if inside function → local variable
     if (GINFN(S) == 1) {
