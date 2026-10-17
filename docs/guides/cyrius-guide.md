@@ -3862,14 +3862,19 @@ parentheses wrapping the whole argument (6.7.14: `lanes((w))`, `lanes((mkv(4, 2)
 on x86_64 / aarch64 / cx, `got `(...)``, and passed on Win64). A closure's captured vector is
 passed as the local is (6.7.14; the user's decision D31, 2026-10-16: A): `|k| lanes(b)` copies the
 capture (Win64: its address, which the callee copies in) — through 6.7.13 it was refused on every
-target (`got `b``); a capture of another class is refused with the local's words. SysV / AAPCS64 /
+target (`got `b``); a capture of another class is refused with the local's words. A dereference of
+a pointer to a vector copies that vector through the pointer (6.7.14; D32, 2026-10-16: A), as
+`var v: f64v2 = *p;` does: `lanes(*pb)`, `lanes((*pb))`, `lanes(**ppb)`, `lanes(*gp(pb))`,
+`lanes(*&b)` (Win64 passes the pointer itself, the address its callee copies from) — through 6.7.13
+refused on x86_64 / aarch64 / cx and a page fault on Win64 (lane 0 taken as the address); a `*q` of
+another class is refused with the local's words, of no vector (`*pi`, an untyped `*p`) by name. SysV / AAPCS64 /
 cx receive the call into a frame temporary the vector registers are loaded from after the integer
 arguments; Win64 passes the temporary's address (the call's hidden result pointer). A call of a
 vector the local rule refuses (an f64v4 into `x: f64v2`) is refused with the words above (`cannot
 pass 'mk4' to a parameter of a different vector type ..`); at top level there is no frame (`'mkv'
 returns a vector by value ..`). Any other source that is no local — `lanes(5)`, `lanes(load64(p))`,
-a global — is refused once, by name: `a value-form vector argument to 'lanes' is a local of its type
-or a call declared to return it (..) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
+a global — is refused once, by name: `a value-form vector argument to 'lanes' is a local of its type,
+a call declared to return it (..) or a dereference of a pointer to its type (`*p`) - got `5``; and on Win64 a word local (`var x = 5; lanes(x)`) is
 refused as on the other targets (`value-form SIMD arg must be a 16-byte vector`), a pointer word
 holding a vector's address too (`var pv: *f64v2 = &w; lanes(pv)`, `var p = &w; lanes(p)`) — pass
 the vector local, `lanes(w)`. Win64 takes exactly these sources (6.7.14): a vector local of another

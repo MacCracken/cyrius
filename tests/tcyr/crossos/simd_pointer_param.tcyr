@@ -207,6 +207,14 @@ fn sp_drows(): i64 {
     assert_eq(sp_hi(*&GDV), 32, "6.7.13: rd(*&G), G a vector global");
     sp_wr(*&b, 77);
     assert_eq(load64(&b), 77, "6.7.13: a write through rd(*&b) reaches b");
+    # 6.7.14 (D32 A, the user's decision, 2026-10-16): into a VALUE-form parameter `*pv` is the vector, copied through the
+    # pointer (refused on x86_64 / aarch64 / cx; PE faulted, exit 5).
+    # issues/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
+    assert_eq(sp_vl(*pb), 7722, "6.7.14 D32: lanes(*pb) into x: f64v2, both lanes");
+    assert_eq(sp_vl((**ppb)), 7722, "6.7.14 D32: lanes((**ppb)), wrapped, through a **f64v2");
+    var pw: *f64v4 = &w;
+    assert_eq(sp_vl4(*pw), 1044, "6.7.14 D32: an f64v4 *pw into x: f64v4");
+    assert_eq(sp_vbump(*pb) + load64(&b), 176, "6.7.14 D32: the callee's write stays in its copy (b keeps 77)");
     return 0;
 }
 
