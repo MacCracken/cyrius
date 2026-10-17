@@ -5596,7 +5596,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr). 6.7.14: only before an
         # `=` / `op =` (_asg_lvalue_at).
         if (_asg_lvalue_at(S, noff) == 1) {
-            _cst_skip_decl(S);   # the rest of the statement, to its `;`
+            _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
             return 0;
         }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=

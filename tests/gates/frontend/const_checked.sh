@@ -99,6 +99,8 @@
 # slot-open compiler the same); restoring without clearing -> S17 RED. PARSE_FNCALL's replay ending
 # with a bare `SSDEP` (no `_inl_scope_end`) -> R1, R2, R5-R7, R9 RED (refused, as on the slot-open
 # compiler; the aarch64 leg is built from the tree's src/, so a mutant there reddens R-a64 the same).
+# B12 / B13 (run 2026-10-16): the compiler before the repair (753a8e92) -> B12, B13 RED (3 of 5, 3 of 4: every
+# other statement lost); `_cst_skip_sync` without its `_pair_sync_ti` -> B12, B13 RED.
 # B (run 2026-10-16): the compiler before the bite (abeb7839) -> B0-B8 RED ("cannot assign to ..."; B6 too);
 # `_asg_lvalue_at` without its `_asg_pair_at` test (always the refusal) -> B0-B3, B5, B6 RED; `_asg_lvalue_at`
 # falling through to the statement's own `expected '='` (no report, no step-over) -> B6 RED (a second error,
@@ -412,6 +414,11 @@ refusedn b8 1 "B8: a for step Color.GREEN" "${BH}var i = 0; for (i = 0; i < 3; C
 refusedn b9 1 "B9: control — a variable, var x = 1; x;" "${BH}var x = 1; x;${BT}" "4:17: expected '=', got ';'"
 refusedn b10 1 "B10: control — Color.GREEN = 1 keeps the lvalue refusal" "${BH}Color.GREEN = 1;${BT}" "4:17: cannot assign to enum constant 'GREEN'"
 refusedn b11 1 "B11: control — a for step N += 1 keeps the lvalue refusal" "${BH}var i = 0; for (i = 0; i < 3; N += 1) { }${BT}" "4:37: cannot assign to const 'N'"
+# B12 / B13 (6.7.14, found beside the bare-const fix) — a statement refused at its first name ends in sync, so
+# the NEXT statement is parsed and reports its own error: `N = 1; GREEN = 2;` printed only N's (the resync
+# skipped every other statement in a row), in a fn and at top level.
+refusedn b12 5 "B12: five refused statements in a row, each reported" "${BH}N = 1;\n    GREEN = 2;\n    Color.RED = 3;\n    N;\n    GREEN;${BT}" "4:7: cannot assign to const 'N'" "5:11: cannot assign to enum constant 'GREEN'" "6:15: cannot assign to enum constant 'RED'" "7:6: expected '=', got ';'" "8:10: expected '=', got ';'"
+refusedn b13 4 "B13: the same at top level" 'const N = 5;\nenum Color { RED, GREEN }\nN;\nGREEN;\nColor.GREEN;\nvar x = 1;\nx;\nsyscall(60, 0);\n' "3:2: expected '=', got ';'" "4:6: expected '=', got ';'" "5:12: expected '=', got ';'" "7:2: expected '=', got ';'"
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi

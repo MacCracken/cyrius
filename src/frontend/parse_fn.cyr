@@ -10899,8 +10899,17 @@ fn _enum_qual_store_refused(S, bnoff, vn): i64 {
     if (vi < 0) { return 0; }
     if (_asg_pair_at(S) == 1) { _enum_lv_refuse(S, vi, vn, "cannot assign to enum constant "); }
     else { ERR_EXPECT(S, 4); }
-    _cst_skip_decl(S);   # the rest of the statement, to its `;`
+    _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
     return 1;
+}
+# 6.7.14 — a refusal at a statement's first name with the rest stepped over to its `;`: the statement ends in
+# sync, so the latch is cleared there (`_pair_sync_ti`, `_stmt_resync`) instead of resyncing over the NEXT
+# statement — `N = 1; GREEN = 2;` reported only `N`, every other refused statement in a row lost. A classic-for
+# step's overshoot is PARSE_FOR's to undo; the `for` statement then ends at its body's `}`. CHANGELOG [6.7.14]
+fn _cst_skip_sync(S): i64 {
+    _cst_skip_decl(S);
+    _pair_sync_ti = GTI(S) - 1;
+    return 0;
 }
 # Cursor on a top-level `const NAME = ...;` the pre-scan recorded: step over it (no code).
 fn _cst_skip_decl(S): i64 {
