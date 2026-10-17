@@ -38,7 +38,7 @@ WATCH="$ROOT/scripts/cyrius-watch.sh"
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: $NAME: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 WPID=""
 cleanup() {
-    if [ -n "$WPID" ]; then kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; fi
+    if [ -n "$WPID" ]; then kill "$WPID" 2>/dev/null || true; wait "$WPID" 2>/dev/null || true; fi
     rm -rf "$W"
 }
 trap cleanup EXIT
@@ -80,7 +80,8 @@ start_watch() {
         CYRIUS_WATCH_INTERVAL=1 sh "$WATCH" src/main.cyr out/app ) > "$1" 2>&1 &
     WPID=$!
 }
-stop_watch() { kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; WPID=""; }
+# A killed watcher's `wait` status is 143: `|| true`, so the gate also runs under `bash -e`.
+stop_watch() { kill "$WPID" 2>/dev/null || true; wait "$WPID" 2>/dev/null || true; WPID=""; }
 # wait_for <log> <pattern>: up to 60 s for <pattern> in <log>; non-zero on timeout.
 wait_for() {
     i=0
