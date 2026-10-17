@@ -6499,6 +6499,10 @@ returns the instance — `return mk(p);` and `return mk<Pt>(p);` included, in th
 register-pair (9-16 byte) and retptr classes alike (6.6.10; before that such a
 type was sized as the base `Box`, where `v: T` is an i64 — `r.v.x` failed to
 parse). As for a `var`, an all-`i64` argument list names the base struct itself.
+A pointer to one is a return type too: `fn mkp<T>(x: T): *Box<T>` returns a `*Box<Pt>` from
+its `Pt` instance (`mkp<Pt>(p).n`, `var q: *Box<Pt> = mkp(p);`, and a `*Box<T>` carrier
+infers from the call: `gp(mkp(p))`) and a `*Box` from its base (6.7.14; through 6.7.13
+the definition was refused, *unknown type 'T' as a type argument*, twice).
 A `: T` return in an instance whose `T` is a struct returns that struct by value,
 as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
 return the struct's address); `Str` keeps its heap-handle return.

@@ -3071,17 +3071,37 @@ var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_fi
 # reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
 # return type sits between them, so every instance recorded the unbound T's i64 step (8) and
 # `gr<i32>(..) + 1` stepped 8. The binding in force is put back after. CHANGELOG [6.6.20]
+# ⛔ 6.7.14 — and the BASE's under the base's: T -> i64, as PARSE_FN_DEF binds the base body. Read unbound, the
+# `T` of `fn mkp<T>(x: T): *Box<T>` was refused as a type argument ("unknown type 'T'"), in pass 1 and again in
+# pass 2, so the definition never compiled; a bare `*T` is the i64 step either way. CHANGELOG [6.7.14]
+fn _ret_ptr_base_bind(S, fi): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    _bind_generic_call(S, fi, 0 - 8, 0 - 8);
+    return 0;
+}
+# The struct a `: *T` return points at (cursor on the `*`), as `_ptr_ann_sid_tp`. ⛔ 6.7.14 — pass 1 (`quiet`) reads a
+# `*G<..>` only when its arguments resolve (`_targs_resolvable`, as `_ptr_step_peek` sizes it): read unresolved, the
+# type-argument refusal ran in pass 1 AND in pass 2, so `: *Box<Zork>` was reported twice. Pass 2 reads and refuses
+# it. CHANGELOG [6.7.14]
+fn _ret_ptr_sid(S, quiet): i64 {
+    var ti = GTI(S);
+    if (quiet == 1) { if (TOKTYP(S, ti + 2) == 19) { if (_targs_resolvable(S, ti + 3) == 0) { return 0; } } }
+    return _ptr_ann_sid_tp(S, ti);
+}
 fn _ret_ptr_annot(S, fi, quiet): i64 {
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
                 _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
             } } }
+    _ret_ptr_base_bind(S, fi);
     _ret_ptr_record(S, fi, quiet);
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return 0;
 }
 fn _ret_ptr_record(S, fi, quiet): i64 {
-    var psid = _ptr_ann_sid_tp(S, GTI(S));   # 6.7.11: T bound to a struct too
+    var psid = _ret_ptr_sid(S, quiet);       # 6.7.11: T bound to a struct too
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
         S64(_fn_rpsid + fi * 8, psid);

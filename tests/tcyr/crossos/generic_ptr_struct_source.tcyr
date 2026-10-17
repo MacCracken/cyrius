@@ -20,7 +20,8 @@
 # (`gpi(&G)` is not here: `&G` infers T = i64 for a `*T` parameter, so it runs the i64 base — no `*S`.)
 # 6.7.14: the same generics called inside fns that RETURN a struct by value (8 / 16 / 24 B), T a struct or a
 # scalar, a one-call body and a global body — a replayed `return` is the callee's (`rcall`, `rz16`, `rz24`). And
-# `var h: S = gpg<S>();` in a fn is a handle to the struct the call points at (`hb*`).
+# `var h: S = gpg<S>();` in a fn is a handle to the struct the call points at (`hb*`); a generic declared
+# `: *Box<T>` compiles and its call is a `*Box<..>` (`pb*`).
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R12 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -613,6 +614,20 @@ fn hbv(): i64 { var h: S24 = gpv(G24); h.v = 6; var k = G24.v * 100 + h.w * 10 +
 fn hbc(): i64 { var h: S16 = gpg<S16>(); var c: S16 = h; c.v = 7; var k = G16.v * 10 + h.w; unpoke(); return k; }
 fn hbt(): i64 { var h: S24 = gpg<S24>(); var g: S16 = gpv(G16); return take16(g) * 1000 + rd24(h); }
 
+# ── 6.7.14: a generic declared `: *Box<T>` — a pointer to a generic struct of its own T ──
+# `fn mkp<T>(x: T): *Box<T>` was refused at its definition, called or not ("unknown type 'T' as a type argument",
+# twice): the base's return was read with T unbound. The base reads it as `*Box` (T -> i64, as its body binds), and
+# each instance as its own `*Box$S16`, which a `*Box<T>` carrier (`gnb(mkp(..))`) infers from.
+# issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md
+struct Box<T> { v: T; n; }
+fn mkp<T>(x: T): *Box<T> { var b: *Box<T> = alloc(sizeof(T) + 8); b.v = x; b.n = 8; return b; }
+fn gnb<T>(b: *Box<T>): i64 { return b.n * 10 + sizeof(T); }
+fn pb1(): i64 { return gnb(mkp(G16)); }
+fn pb2(): i64 { return mkp<S16>(G16).n * 100 + mkp<S16>(G16).v.w; }
+fn pb3(): i64 { var q: *Box<S24> = mkp(G24); return q.n * 100 + q.v.w * 10 + q.v.x; }
+fn pb4(): i64 { return mkp(5).n * 10 + mkp(5).v; }
+fn pb5(): i64 { var q: *Box<S8> = mkp<S8>(G8); q.v.v = 9; return q.v.v * 10 + G8.v + gnb(q) * 100; }
+
 # ── top level: a declaration-zone `var Z: S = *gpg<S>();`, then statements ──
 var Z16: S16 = *gpg<S16>();
 var Z24: S24 = *gpg<S24>();
@@ -712,4 +727,9 @@ assert_eq(hbi(), 68, "6.7.14: var h: S16 = gpi(p) (inferred, p: *S16) is a handl
 assert_eq(hbv(), 683, "6.7.14: var h: S24 = gpv(G24) (inferred, by value) is a handle");
 assert_eq(hbc(), 78, "6.7.14: var c: S16 = h binds a second handle (c.v = 7 writes G16)");
 assert_eq(hbt(), 58583, "6.7.14: take16(g) / rd24(h) pass the struct the handle points at");
+assert_eq(pb1(), 96, "6.7.14: gnb(mkp(G16)) — a *Box<T> carrier given a *Box<T>-returning generic call (n 8, T = S16)");
+assert_eq(pb2(), 808, "6.7.14: mkp<S16>(G16).n, .v.w through the explicit instance's *Box<S16>");
+assert_eq(pb3(), 883, "6.7.14: var q: *Box<S24> = mkp(G24) reads its fields");
+assert_eq(pb4(), 85, "6.7.14: mkp(5).n, .v — the i64 base, *Box");
+assert_eq(pb5(), 8895, "6.7.14: *Box<S8> from mkp<S8>(G8): a copy of G8 in the box (G8 untouched), gnb(q) 88");
 var r = assert_summary();
