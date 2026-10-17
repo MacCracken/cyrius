@@ -1815,9 +1815,10 @@ through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (
 method call `s.mv(..)` on a single name, `impl S { fn mv(self, ..): f64v2 }` (on Windows each call
 then passes the local's address as its hidden result pointer, as `mkv(..)` does — a method's before
 `self`). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
-(6.7.13), as `var v = mkv(..);` is. A method declared to return another vector is refused as a
-by-name call is (`vector return type does not match the declared type` / `.. the assigned
-variable`). Every other source is refused by name (`a value-form vector local is initialised only
+(6.7.13), as `var v = mkv(..);` is. A method — and (6.7.14) `callptr(&f, ..)` / `fncallN(&f, ..)`,
+wrapped too — declared to return another vector is refused as a by-name call is (`vector return type
+does not match the declared type` / `.. the assigned variable`; through 6.7.13 the fncallN / callptr
+form got the generic refusal below, *… got `callptr`*). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local

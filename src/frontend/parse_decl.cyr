@@ -7684,6 +7684,29 @@ fn _vrcv_mbad(S, ti, ty, term, verb): i64 {
     if (mt == 0) { return 0; }
     if (mt == ty) { return 0; }
     if (TOKTYP(S, _call_close(S, ti + 3) + 1) != term) { return 0; }
+    return _vrcv_tyerr(S, ti, verb);
+}
+# ⛔ 6.7.14 — `callptr(&f, ..)` / `fncallN(&f, ..)` OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH.
+# `var v: f64v2 = callptr(&mk4, 41);` (`mk4` declared `: f64v4`) and `v = ..` were refused with the receive's generic
+# words ("a value-form vector local is initialised only from .. a call declared to return it (by name, a method, or
+# fncallN / callptr with the callee written `&f`) .. - got `callptr`"), whose own list names the shape written; by name
+# the same call is "vector return type does not match the declared type", a method as well (6.7.13's D29). The whole
+# call at token `ti` (ended by `term`), inside any parentheses, through fncallN / callptr with its callee written `&f`
+# (`_icall_rs_at`) declared to return a vector other than `ty`: refused in the by-name call's words, at the call, before
+# it is parsed — 1 (the panic latch keeps the generic line away); else 0. CHANGELOG [6.7.14]
+fn _vrcv_ibad(S, ti, ty, term, verb): i64 {
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var pe = _ie_pe;
+    var rs = _icall_rs_at(S, a);
+    if (rs > 0 - 2048) { return 0; }
+    if (rs == ty) { return 0; }
+    if (_call_close(S, a + 1) + 1 != pe) { return 0; }
+    return _vrcv_tyerr(S, a, verb);
+}
+# The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. 1.
+fn _vrcv_tyerr(S, ti, verb): i64 {
     var sv = GTI(S);
     STI(S, ti);
     if (verb == 0) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
@@ -7754,7 +7777,9 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
     if (k == 0) {
-        _vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0);   # 6.7.13 (D29): a method declared to return another vector
+        if (_vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0) == 0) {   # 6.7.13 (D29): a method declared to return another vector
+            _vrcv_ibad(S, GTI(S) + 1, pscale, 5, 0);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
+        }
         return 0;
     }
     if (_vrcv_k == 0) { if (k == 1) { if (_vrcv_g == 0) { return 0; } } }   # 6.7.13: `g<T>(..)` is ours
@@ -7798,7 +7823,9 @@ fn _vrcv_asg(S, noff, term): i64 {
     if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) {
-        _vrcv_mbad(S, GTI(S), lt, term, 1);   # 6.7.13 (D29): a method declared to return another vector
+        if (_vrcv_mbad(S, GTI(S), lt, term, 1) == 0) {   # 6.7.13 (D29): a method declared to return another vector
+            _vrcv_ibad(S, GTI(S), lt, term, 1);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
+        }
         return _vrcv_other(S, term);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)

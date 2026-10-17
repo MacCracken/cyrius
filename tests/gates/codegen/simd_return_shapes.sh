@@ -163,6 +163,15 @@
 #   MC3 `_simd_ret_call_ok` without `_ret_vicall` -> RED 10: C3 C5 on all five legs (refused)
 #   MC4 `_sc_pre` without its `_sc_vbeg` arm      -> RED 2: win64 C1 C4 = 0 (the method wrote a temp; the local never set)
 #   MC5 `_ret_vicall_pe` answering 0             -> RED 2: win64 C3 C5 = 0 (the generic path passes no hidden pointer)
+# 6.7.14 (issues/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md) — `callptr(&f, ..)` /
+# `fncallN(&f, ..)` with `f` declared to return ANOTHER vector, into a vector local, is refused in the by-name call's
+# words, as Q1 / Q2's method is (`_vrcv_ibad`): it was the receive's generic refusal ("a value-form vector local is
+# initialised only from .. (by name, a method, or fncallN / callptr with the callee written `&f`) .. - got `callptr`"),
+# whose own list names the shape written. Rows Q, once, on all four legs: Q5 the filed repro verbatim, Q6 its `v = ..`
+# twin, Q7 / Q8 `fncall1(&mk4, ..)` declared / assigned, Q9 / Q10 wrapped (`(callptr(&mk4, 41))`, `((fncall1((&mk4),
+# 41)))`), Q11 / Q12 the same 16-byte class of another type (an f64v2 callee into `f32v4`) and a 16-byte callee into an
+# f64v4 — "vector return type does not match the declared type" / ".. the assigned variable".
+#   M-Q1 `_vrcv_ibad` answering 0 (measured)     -> RED 32: Q5-Q12 on all four legs (the generic line, `got `callptr``)
 # Q3 runs on win64 too since D30 (simd_pointer_param.sh's VZ4: a word into Win64's value-form parameter is refused);
 # M-VC3 there (`_sarg_pe_vword` answering 0) -> RED win64 Q3 here; 6.7.14: M-PV1 / M-PV2 there (`_sarg_pe_vform`, which
 # folds it) -> RED win64 Q3 here.
@@ -607,15 +616,44 @@ syscall(60, run() % 256);
     Q4) printf '%s' "$CH"'fn fwd(a): f64v2 { return callptr(&mk4, a); }
 syscall(60, 1);
 ' ;;
+    Q5) printf '%s' 'include "lib/fnptr.cyr"
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 { var v: f64v2 = callptr(&mk4, 41); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q6) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = mkv(1, 2); v = callptr(&mk4, 41); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q7) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = fncall1(&mk4, 41); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q8) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = mkv(1, 2); v = fncall1(&mk4, 41); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q9) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = (callptr(&mk4, 41)); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q10) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = mkv(1, 2); v = ((fncall1((&mk4), 41))); return lanes(v); }
+syscall(60, run());
+' ;;
+    Q11) printf '%s' "$CH"'fn run(): i64 { var w: f32v4 = callptr(&mkv, 1, 2); return 1; }
+syscall(60, run());
+' ;;
+    Q12) printf '%s' "$CH"'fn run(): i64 { var u: f64v4 = mk4(1); u = fncall2(&mkv, 1, 2); return 1; }
+syscall(60, run());
+' ;;
     esac
 }
-Q_ROWS="Q1 Q2 Q3 Q4"
+Q_ROWS="Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 Q11 Q12"
 q_msg() {
     case "$1" in
     Q1) echo "vector return type does not match the declared type";;
     Q2) echo "vector return type does not match the assigned variable";;
     Q3) echo "value-form SIMD arg must be a 16-byte vector";;
     Q4) echo "$MSG";;
+    Q5|Q7|Q9|Q11) echo "vector return type does not match the declared type";;
+    Q6|Q8|Q10|Q12) echo "vector return type does not match the assigned variable";;
     esac
 }
 # ---- 6.7.13 (D34 A): `*p` of a `*V` into a value-form vector local (rows P accepted, 161; K refused once) ----------------
