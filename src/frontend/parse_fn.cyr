@@ -7690,7 +7690,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     STI(S, GFBS(S, fi));
                     _cov_body(S, fi, 0 - 1);   # 6.7.10 (P5-B): the replay bumps the callee's counter, then PARSE_PROG
                     _cur_fn_ret_scalar = _rs_saved;
-                    SSDEP(S, _sdep_saved);
+                    _inl_scope_end(S, _sdep_saved);   # 6.7.14: + the replay's local consts
                     _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
                     _mret_falloff_fi(S, fi);   # 6.7.13 (D28 C): a declared multi-value one's values 0
                     # Patch return jumps from inlined body to here
@@ -10651,6 +10651,16 @@ fn _lc_pop(S, dep): i64 {
         if (L64(_lc_tab + (_lc_n - 1) * 48 + 8) < dep) { return 0; }
         _lc_n = _lc_n - 1;
     }
+    return 0;
+}
+# 6.7.14 — the end of an `#inline` / generic body replay (PARSE_FNCALL), whose body ran one scope
+# deeper than the call (`dep` + 1) with no SCOPE_POP: its local consts end with it, as a block's do,
+# and the caller's depth is back. They outlived the replay, so a second call in the same scope met
+# the first one's `L` at the same (scope, inline) depth: "'L' is already declared in this scope".
+# A helper so PARSE_FNCALL (a cybs-ceiling fn) keeps its reference count. CHANGELOG [6.7.14]
+fn _inl_scope_end(S, dep): i64 {
+    _lc_pop(S, dep + 1);
+    SSDEP(S, dep);
     return 0;
 }
 # ── the parser's side ─────────────────────────────────────────────────────────────────────────────

@@ -46,6 +46,11 @@
 #      statement after it was, so its name read as a FALSE "undefined variable 'L'") — each prints its
 #      own error once; two consts not ending at `;`; the two controls that always reported both;
 #      a forward if-expression arm's mismatch re-checked at the sweep's end holds no latch either
+#   R  (6.7.14) a local const in an `#inline` / generic body ends with its replay: the issue's table —
+#      two calls in one expression / two statements, one instance twice, two instances, beside a
+#      caller const — builds with its value (each refused "'L' is already declared in this scope"
+#      before), a nested-block call and calls in two fns as before; the replay's const stays invisible
+#      after the call (R10); the nine values again on aarch64 under qemu (R-a64)
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -79,7 +84,9 @@
 # latching -> S9 RED; `_ce_said` never deduping -> LC4, S12-S14 RED (each token printed twice).
 # `_ce_site` back to returning in skip mode -> V3a-V3g RED (built), V3w / V3w2 RED (no warning).
 # `_ce_xpend_one` without its latch save / restore -> S15-S17 RED (the second error swallowed; the
-# slot-open compiler the same); restoring without clearing -> S17 RED.
+# slot-open compiler the same); restoring without clearing -> S17 RED. PARSE_FNCALL's replay ending
+# with a bare `SSDEP` (no `_inl_scope_end`) -> R1, R2, R5-R7, R9 RED (refused, as on the slot-open
+# compiler; the aarch64 leg is built from the tree's src/, so a mutant there reddens R-a64 the same).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -269,7 +276,46 @@ refusedn s17 2 "S17: a bad enum value, then a forward arm's mismatch" 'enum E { 
 refusedn s12 1 "S12: a global read in a const fn body a const runs" 'var g = 1;\nconst fn h(x) { return g; }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'g' is a variable"
 refusedn s13 1 "S13: a builtin in a const fn body a const runs" 'const fn cf(x) { return load64(x); }\nconst Z = cf(0);\nsyscall(60, Z);\n' "1:25: not a compile-time expression"
 refusedn s14 1 "S14: an ordinary fn's call in a const fn body a const runs (twice before 6.7.14)" 'fn hh(): i64 { return 1; }\nconst fn h(x) { return hh(); }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'hh' is not a \`const fn\`"
+# R (6.7.14) — a local const in an `#inline` / generic body ends with its replay: the second call in
+# one scope was refused "'L' is already declared in this scope"
+# (issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md's table)
+IW='#inline\nfn w(): i64 { const L = 3; return L; }\n'
+GG='fn gg<T>(x: T): i64 { const L = 3; return L; }\n'
+R1="${IW}fn main(): i64 { return w() + w(); }\nsyscall(60, main());\n"
+R2="${IW}fn main(): i64 { var a = w(); var b = w(); return a + b; }\nsyscall(60, main());\n"
+R3="${IW}fn main(): i64 { var a = w(); if (a == 3) { a = a + w(); } return a; }\nsyscall(60, main());\n"
+R4="${IW}fn main(): i64 { var a = w(); return a; }\nsyscall(60, main());\n"
+R5="${GG}fn main(): i64 { return gg(1) + gg(2); }\nsyscall(60, main());\n"
+R6="${GG}fn main(): i64 { var a: i32 = 2; return gg(1) + gg(a); }\nsyscall(60, main());\n"
+R7="${GG}fn main(): i64 { var a: i32 = 2; var r = gg(a); var s = gg(a); return r + s; }\nsyscall(60, main());\n"
+R8="${GG}fn f(): i64 { return gg(1); }\nfn main(): i64 { return f() + gg(2); }\nsyscall(60, main());\n"
+R9="${IW}fn main(): i64 { const L = 10; var a = w(); var b = w(); return a + b + L; }\nsyscall(60, main());\n"
+exits r1 6 "R1: #inline w() + w() (refused 2:21)" "$R1"
+exits r2 6 "R2: #inline, var a = w(); var b = w(); (refused 2:21)" "$R2"
+exits r3 6 "R3: #inline, the second call in a nested block" "$R3"
+exits r4 3 "R4: #inline, one call" "$R4"
+exits r5 6 "R5: gg(1) + gg(2), one instance twice (refused 1:29)" "$R5"
+exits r6 6 "R6: gg(1) + gg(a: i32), two instances (refused 1:29)" "$R6"
+exits r7 6 "R7: var r = gg(a); var s = gg(a); (refused 1:29)" "$R7"
+exits r8 6 "R8: the generic calls in two fns" "$R8"
+exits r9 16 "R9: beside a caller const L (refused 2:21)" "$R9"
+refused r10 "undefined variable 'L'" "R10: a replay's const stays invisible after the call (w(); return L;)" "${IW}fn main(): i64 { w(); return L; }\nsyscall(60, main());\n"
+# ... and the same rows on aarch64 (qemu): the replay is the frontend's, the values the backend's
+skips=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/xa64" 2> /dev/null && chmod +x "$T/xa64"; then
+        for row in "r1 6 $R1" "r2 6 $R2" "r3 6 $R3" "r4 3 $R4" "r5 6 $R5" "r6 6 $R6" "r7 6 $R7" "r8 6 $R8" "r9 16 $R9"; do
+            nm=${row%% *}; rest=${row#* }; want=${rest%% *}; src=${rest#* }
+            printf '%b' "$src" > "$T/${nm}a.cyr"
+            rc=0; timeout 60 "$T/xa64" < "$T/${nm}a.cyr" > "$T/${nm}a.bin" 2> "$T/${nm}a.err" || rc=$?
+            if [ "$rc" -ne 0 ]; then bad "R-a64 $nm: rc $rc: $(grep '^error' "$T/${nm}a.err" | head -1)"; continue; fi
+            chmod +x "$T/${nm}a.bin"; got=0; timeout 60 qemu-aarch64 "$T/${nm}a.bin" || got=$?
+            if [ "$got" -eq "$want" ]; then ok "R-a64 $nm: exit $got (qemu-aarch64)"; else bad "R-a64 $nm: exit $got, want $want"; fi
+        done
+    else bad "R-a64: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP R-a64: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), and a refused const holds no cascade latch (S)"
+if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), and an #inline / generic body's local const ends with its replay (R, x86 + aarch64)"
