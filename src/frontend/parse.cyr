@@ -4363,8 +4363,8 @@ fn _asa_end(S, q): i64 {
 # The annotation's first token of the declaration that binds the assignment's destination `noff`, read from the
 # tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter)
 # or none found. A local's: the nearest binding of the name back from token `from` in a scope enclosing it (a closed
-# `{ }` / `( )` / `[ ]` is stepped over), else its fn's parameter; a global's: the same walk, else its first top-level
-# declaration.
+# `{ }` / `( )` / `[ ]` is stepped over; an enclosing for body's header init is in scope, `_asa_for_hdr`), else its
+# fn's parameter; a global's: the same walk, else its first top-level declaration.
 fn _asa_ann(S, noff, from): i64 {
     var loc = 0;
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { loc = 1; } }
@@ -4389,6 +4389,8 @@ fn _asa_back(S, noff, k, loc): i64 {
             } elif (t == 13) {
                 lb = 1;
                 if (loc == 1) { if (_tok_is_closure_body(S, k) == 1) { return 0; } }
+                var h = _asa_for_hdr(S, noff, k);
+                if (h != 0 - 2) { return h; }
             }
         } elif (d == 0) {
             if (t == 32) { if (loc == 1) { return _asa_prm(S, noff, k); } }
@@ -4400,6 +4402,42 @@ fn _asa_back(S, noff, k, loc): i64 {
         k = k - 1;
     }
     return 0 - 1;
+}
+# A classic-for header's init declares into its body's scope, though the walk steps over the header as a closed
+# `( )`: when the enclosing `{` at token `k` is a `for (..)` body, the init's binding of `noff` (`for (var x: u8 = 0;
+# ..) { x = mkp(); }`) is the destination's declaration — its annotation, 0 = untyped (it shadows an outer `x: i64`).
+# -2 = not a for body, or its init binds no `noff`: the walk goes on. CHANGELOG [6.7.14]
+fn _asa_for_hdr(S, noff, k): i64 {
+    if (TOKTYP(S, k - 1) != 11) { return 0 - 2; }
+    var o = k - 2;
+    var d = 0;
+    while (o >= 1) {
+        var t = TOKTYP(S, o);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            if (d == 0) { break; }
+            d = d - 1;
+        }
+        o = o - 1;
+    }
+    if (o < 1) { return 0 - 2; }
+    if (TOKTYP(S, o - 1) != 55) { return 0 - 2; }
+    var j = o + 1;
+    d = 0;
+    while (j < k) {
+        var u = TOKTYP(S, j);
+        if (u == 10 || u == 13 || u == 28) { d = d + 1; }
+        elif (u == 11 || u == 14 || u == 29) { d = d - 1; }
+        elif (d == 0) {
+            if (u == 5) { return 0 - 2; }
+            if (u == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) {
+                    var r = _asa_bind(S, j, 0);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        j = j + 1;
+    }
+    return 0 - 2;
 }
 # The name at token `k`, met on the walk: -2 when it binds nothing there; else the annotation (0 = none).
 fn _asa_bind(S, k, lb): i64 {

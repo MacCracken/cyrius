@@ -461,6 +461,7 @@ refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q
 #   `_try_struct_call_assign` without its `_asa_call`    -> RED 12: AS0 AS1-AS4 AS12-AS14 AS16-AS19
 #   `_pcmpe_struct_assign` without its `_asa_rec`        -> RED 13: AS0m AS0o AS0oy AS0og AS5-AS11 AS15 AS22
 #   `_asa_back` not stepping over a closed `}` / `)`     -> RED 1: AS19 (named 'x: u8')
+#   `_asa_back` without its `_asa_for_hdr` (AF, below)   -> RED 8: AF1-AF4 AF6 (built), AF5 AFK1 AFK2 (the outer 'x: i64')
 echo "6.7.14 (D27) — a struct result over 8 B assigned to a scalar is refused by name:"
 AR=docs/development/issues/repros/2026-10-16-struct-call-result-assigned-to-scalar-keeps-first-word
 AM="cannot assign 'x: i64' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field"
@@ -531,6 +532,25 @@ syscall(60, main());
 '
 accept "AK3 x = mkp().a  (bind a field)" "$AQ"'fn main(): i64 { var x: i64 = 0; x = mkp().a; var b = Q { 1, 2 }; var y: u8 = 0; y = b.mk().b; return x - 300 + y; }'"$E" 37 \
     "$AQ"'fn main(): i64 { var x: i64 = 333; var y: u8 = 4; return x - 300 + y; }'"$E"
+# AF — a classic-for header's `var` is in its body's scope, though the walk steps over the header as a closed `( )`
+# (`_asa_for_hdr`, the 6.7.14 receives review): the header's `x: u8` is the destination (AF1-AF4 AF6 stored the word
+# silently, exit 77; AF5 was refused naming the outer 'x: i64'), and an untyped header `x` shadowing an outer `x: i64`
+# keeps the word as any untyped destination does (AFK1 AFK2: they were refused naming the outer 'x: i64').
+refuse "AF1 for (var x: u8 ..) { x = mkp(); }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" one
+refuse "AF2 for (var x: u8 ..) { x = b.mk(); }" "cannot assign 'x: u8' from 'Q_mk'" "$AQ"'fn main(): i64 { var r = 0; var b = Q { 1, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = b.mk(); r = x; } return r; }'"$E" one
+refuse "AF3 for (var x: u8 ..) { x = a + c; }" "cannot assign 'x: u8' from 'Q_add'" "$AQ"'fn main(): i64 { var r = 0; var a = Q { 300, 2 }; var c = Q { 33, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = a + c; r = x; } return r; }'"$E" one
+refuse "AF4 for (var x: u8 ..) { x = fncall0(&mkp); }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { x = fncall0(&mkp); r = x; } return r; }'"$E" one
+refuse "AF5 for (var x: u8 ..) { if (..) { x = mkp(); } }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { if (r == 0) { x = mkp(); } r = x; } return r; }'"$E" one
+refuse "AF6 for (var x: u8 ..) { x = mkp(); }  (top level)" "cannot assign 'x: u8' from 'mkp'" "$AQ"'var r = 0;
+for (var x: u8 = 0; x < 1; x = x + 1) { x = mkp(); r = x; }
+syscall(60, r);
+' one
+accept "AFK1 x: i64; for (var x = 0 ..) { x = mkp(); }" "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" 77 \
+    "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x = 0; x < 1; x = x + 1) { x = mkp().a; r = x; } return r; }'"$E"
+accept "AFK2 x: i64; for (var a, x = two() ..) { x = mkp(); }" "$AQ"'fn two(): (i64, i64) { return (1, 2); }
+fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp(); r = x; } return r; }'"$E" 77 \
+    "$AQ"'fn two(): (i64, i64) { return (1, 2); }
+fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp().a; r = x; } return r; }'"$E"
 
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
