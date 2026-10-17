@@ -4,7 +4,7 @@
 `42a0b63a` (before the lane's unit S2), x86_64: the generic row is refused; the non-generic `fn gp(): *S` row exits 68
 (a handle bound to `GS`, as the handle line says a `*T` call is); a top-level `var G: S = gpg<S>();` and a fn-local
 `var h: *S = gpg<S>();` both work (8).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S2), probing the positions of
 issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md. That issue (fixed in S2) made a generic `: *T`
 call a struct SOURCE (copies, dereferences, `gpg<S>().v`); the handle BINDING of an annotated fn-local is a different

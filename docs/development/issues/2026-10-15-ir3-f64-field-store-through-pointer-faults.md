@@ -5,8 +5,7 @@ tests/tcyr/crossos/call_ptr_field_store.tcyr's f64 row (`gp().f = 2.5;`) faults 
 through a `*H` local faults the same way with the lane's base compiler (44ab2052, before this unit's changes), so it is
 pre-existing. The gate (tests/gates/frontend/call_ptr_field_store.sh) leaves that row (marked `IR3-PRE`) out of its
 IR=3 leg. x86_64 only (IR=3 is an x86 pipeline).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
-issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, the same class unless the root cause says otherwise) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a SIGSEGV on valid code, but only under the opt-in `CYRIUS_IR=3` (no release build uses it).
 **Kind:** codegen (IR=3).
 

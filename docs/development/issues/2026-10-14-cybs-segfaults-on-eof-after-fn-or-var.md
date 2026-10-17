@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-14 on the 6.7.11 infra lane (cybs.cyr @ 4e5d1f90, seed-assembled, 22,320 B)
 and on the slot-open cybs (0f733aea's `bootstrap/cybs.cyr`, seed-assembled, 21,780 B): identical, so it predates
 6.7.11. Latent: cybs only ever compiles `src/` and `bootstrap/asm.cyr`.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane, wave 1, unit I4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 infra lane's review, probing end-of-input shapes for the cybs bare-syntax-error
 item (`issues/archived/2026-10-08-cybs-bare-syntax-error-no-location.md`, decision A). That item's table uses `fn bad( { }`,
 not a keyword at the very end of the input, so this shape is beyond its filed surface.

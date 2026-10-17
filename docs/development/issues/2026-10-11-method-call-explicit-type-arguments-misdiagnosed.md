@@ -6,8 +6,8 @@ spelling does not compile at all — `p.id<f64>(h)` and `w.v.id<f64>(h)`, in an 
 p.id<f64>(h);`, are each refused with two errors that name the wrong things; nothing is silently mistyped. The
 installed 6.7.0 and 6.7.8 compilers refuse it the same way. The inferred spelling `p.id(h)` is right since 6.7.9 (an
 f64 `V` binds, `_mcall_gen`), and no test, gate or guide line uses explicit type arguments on a method.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
-itself, is the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D7 — (a).
 **Discovered:** 2026-10-11 during 6.7.9's review of the generic f64 result fix.
 **Severity:** Low — a loud refusal; the messages call a method an unknown field and a type an undefined variable.
 **Affects:** cycc 6.7.0 – 6.7.9 (measured), every target (frontend).

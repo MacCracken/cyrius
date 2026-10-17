@@ -1,7 +1,7 @@
 # A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'") — OPEN
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: `N;`, `N + 1;`, `N == 5;`, a for-step `N`, `GREEN;` and `Color.GREEN;` all report "cannot assign to …". A plain variable in the same places reports `expected '=', got …`.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** before 2026-10-08 (carried in roadmap.md's backlog; the refusal it mis-fires is 6.7.2's const lvalue rule (B1), extended to enum constants in 6.7.3); filed 2026-10-08 from roadmap.md.
 **Severity:** Low — a misleading diagnostic on source that is invalid either way.
 **Affects:** cycc 6.7.2–6.7.6 (const); 6.7.3–6.7.6 (enum constant).

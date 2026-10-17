@@ -5,7 +5,7 @@
 and from its base (945e70c7, 6.7.12's behaviour): identical on both. Named "met in passing, not measured" by the
 6.7.13 triage of issues/archived/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md
 (its Risk line); that issue refuses `--win` on the aarch64 Linux CLI only, so the macOS CLIs are outside its surface.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** High — a dropped target selector that changes the artifact (the 6.6.5 one-argument rule's defect, the
 class 6.7.11 / D6 / 6.7.13 refused by name on the other hosts): the requested PE is not written, a Mach-O named
 `w.exe` is, and the CLI says OK at rc 0.

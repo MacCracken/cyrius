@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on branch l6712-stdlib with the 6.7.12 conformance bite applied (every
 probe below built by the tree's `build/cycc` and run; each line is TLS_OK = 0, i.e. accepted).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-15, while fixing issues/archived/2026-10-08-tls-native-conformance-bite.md (6.7.12 stdlib L4). That
 filing's surface was the 1.3 ServerHello / EncryptedExtensions extension walk (unoffered → unsupported_extension,
 offered-but-forbidden → illegal_parameter), the EE ALPN membership check, the 1.3 CertificateVerify curve and length,

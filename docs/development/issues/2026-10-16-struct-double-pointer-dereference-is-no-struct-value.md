@@ -5,7 +5,7 @@
 **Update (2026-10-16, the 6.7.13 integration):** repro 1 (`take(**pp)` into a by-value `P`) passes on main since the
 vectors lane's d9aa49ec (VC-11: a pin carries its pointee's struct) — 4 on x86_64, measured; repros 2 (`var t: P =
 **pp;`, 139) and 3 (the 3-byte read, 10) stay open.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean and faults on every target (by-value argument, declaration); a small struct's
 read takes bytes past the object. No diagnostic.
 **Discovered:** 2026-10-16, the 6.7.13 structs lane (S5), probing the struct side of D9 (a) (issues/2026-10-13-double-

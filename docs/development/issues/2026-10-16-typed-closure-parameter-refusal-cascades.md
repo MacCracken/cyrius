@@ -1,7 +1,7 @@
 # A typed closure parameter `|m: i64|` is refused "expected unknown, got ':'" plus cascade errors, never naming the rule — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 receives lane tree (`l6713-receives` @ `360a6d05`), x86_64.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16 by unit R4, writing the "typed parameter" control row the triage of
 `issues/archived/2026-10-14-nested-closure-parameter-taken-as-outer-capture.md` proposed (the triage assumed `|m: i64|` builds).
 **Severity:** Low — diagnostics only, on source that is refused either way.

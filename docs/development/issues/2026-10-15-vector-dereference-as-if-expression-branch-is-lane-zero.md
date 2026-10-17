@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 structs lane (`l6713-structs`, the struct-dereference
 branch fix in progress) and on its base (the lane's commit before it): identical, x86_64.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean with no diagnostic and silently drops the other lanes; the plain spelling
 `if (c) { a } else { b }` with vector names is refused by name. Not a security id (the developer's own source).
 **Discovered:** 2026-10-15, the 6.7.13 structs lane (unit S2), giving the if-expression a struct-dereference arm

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V2, after the D29 bite that makes a
 method declared `: f64v2` a source the vector local takes: `var v: f64v2 = s.mv();`, `v = s.mv();`).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D37 — A; D38 — A; D39 — A.
 **Severity:** Medium — (1) compiles clean and reads wrong lanes on every target, no diagnostic; (2) compiles and
 binds lane 0 / a word where the by-name call `var x: i64 = mkv(..)` is refused; (3) is refused loudly.
 **Affects:** every target (frontend), every value-form vector type.

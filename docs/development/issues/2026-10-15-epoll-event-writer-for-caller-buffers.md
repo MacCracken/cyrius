@@ -1,7 +1,7 @@
 # `lib/async.cyr` still hand-gates the epoll_event data offset at its three WRITE sites — the stdlib has no writer for a caller-owned (stack) buffer — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane (l6712-stdlib @ c667293d).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a stdlib surface gap, no live defect: the three sites write the right offset today.
 **Discovered:** 2026-10-15, the 6.7.12 stdlib lane (unit L1), fixing
 `issues/archived/2026-10-12-stdlib-epoll-event-has-a-writer-but-no-reader.md`. That filing asked for READERS

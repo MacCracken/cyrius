@@ -7,7 +7,7 @@ a private scratch the way `--locked` does (`_cbt_tmpfile(...)` + `/lib`, `_dep_v
 same gap. Not repaired in that bite: the scratch is written by the resolver's ordinary copy path
 (`_dep_copy_file`: mkdir -p, then an `_aw_open` sibling temp renamed into place), none of which is recorded BEFORE it
 exists, which is what the kill handler's one scratch-tree slot (`_cbt_sig_tree_set`, 6.7.13) needs.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a developer's own Ctrl-C / SIGTERM of `cyrius deps --locked` (or of a `deps` / `build` at a moved
 pin, during its dry pass) leaves the CLI's private `cyrius-<pid>/` temp dir holding the scratch `lib/` (16 files for
 a two-leaf project; a whole snapshot's worth for a larger closure). check.sh's reaper removes a dead pid's dir; an

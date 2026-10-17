@@ -4,7 +4,7 @@
 cass for issues/archived/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (suite built by the lane's tree,
 l6713-stdlib from f59668ad, against the vendored `lib/patra.cyr` = patra's `dist/patra.cyr` at 1.16.3). The same two
 rows fail with the 6.7.12 lib and with the 6.7.13 one; Linux passes them.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.13 stdlib lane, placed at the 6.7.13 integration, 2026-10-16; a fold patch: patra's own suite, `tests/tcyr/patra.tcyr` — not the shipped `dist/`) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L4; placed at the 6.7.14 open, 2026-10-16; a fold patch: patra 1.16.4, its own `tests/tcyr/patra.tcyr` — ⛔ the user tags it before the refold) — never 7.x.
 **Severity:** Low — a test-fixture portability defect of a folded stdlib's suite: no shipped code is wrong, but the
 suite cannot be read green on Windows, so a real Windows regression in the same run is easier to miss.
 

@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V3, after the D34 bite,
 issues/archived/2026-10-13-vector-dereference-into-vector-local-decision.md, which made `var v: f64v2 = *p;` / `v = *p;` copy the
 vector through the pointer). Both shapes behave as on the lane base (unchanged by D34).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D35 — A; D36 — A.
 **Severity:** Low — (1) is a refusal by name (no wrong value); (2) is silent: `v` is one untyped word, so a read of a
 second lane through `&v + 8` reads the next stack slot (the user's own out-of-bounds read of a word local), and
 `lanes(v)` into a value-form parameter is refused ("must be a 16-byte vector").

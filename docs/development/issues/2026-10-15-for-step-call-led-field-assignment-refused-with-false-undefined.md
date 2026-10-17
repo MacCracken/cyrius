@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 structs lane (unit S4) while landing D8 (a) (a field of a `: *T`
 call's result is an lvalue, issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md). Measured on the
 lane tree after that bite, x86_64 / aarch64 / cx / PE (the frontend's, all four equal).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — refused code, but with a false second error ("undefined variable 'gp'" for a fn that is defined),
 and 6.7.5's rule is that every assignment a statement takes is a for step.
 **Kind:** language (a position D8 (a) did not name) + diagnostics.

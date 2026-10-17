@@ -7,7 +7,8 @@ inline Str pun keeps the handle" red (got 16, expected 5). The lane's review (20
 (1)'s wording (`var t: Str = Str { .. }`); the review fix (structs lane, 2026-10-16) keeps the bare `var t: Str;` —
 and a copy of it — outside D7 (1) until this question is answered: the pinned row is green unedited again. Measured
 on the lane tree after the review fix, x86_64 (the cross values as noted).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D20 — (a).
 **Severity:** Medium — the answer decides what three shapes compute; one of them (row 3) reads a stale frame word
 silently on the lane.
 **Kind:** language (decision) — 6.6.16 C2 copies a struct a handle points at into an inline struct (`q = a`), with

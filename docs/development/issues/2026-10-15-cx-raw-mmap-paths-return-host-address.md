@@ -5,7 +5,7 @@ pass: D13's honest cx arms cover `cyr_mmap` and its callers (`mmap_anon`, `mmap_
 (lib/thread.cyr) returns a positive host address under cxvm, and `fl_alloc(64)` through lib/freelist.cyr's `_fl_mmap`
 dies "cxvm: guest address out of range: 139812091846656". The guest-contract issue's acceptance ("no wrapper reachable
 on cx returns a non-guest pointer as success") is met only for the four wrappers D13 named.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 release-docs pass, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — cx is a single-threaded test VM; the freelist path faults loudly.
 
 ## Fix

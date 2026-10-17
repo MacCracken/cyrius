@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 multivalue lane (l6713-multivalue, unit M2, after the
 paren-wrapped pair fix 5ede634e) and on the lane's base compiler (fe98679b): identical on both, x86_64, aarch64 (qemu),
 cx (cxvm) and PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (multivalue lane; filed from the 6.7.13 multivalue lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R6; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — the payload (an `Err`'s code) is dropped in silence, but only in a spelling the documented operand
 rule already reads as the tag (`x = 3 + f();`); the question is which rule a redundant outer wrap selects.
 **Kind:** language — a decision for the user: is a parenthesised whole VALUE that starts with a pair call judged by

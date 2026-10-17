@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 structs lane (`l6713-structs` after 74f3100e) and on its
 base (aa54fbec): identical — x86_64 78, aarch64 (qemu) 78, PE (wine) 78, cx (cxvm) 14 (another address); 77 is right.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean with no diagnostic; the callee reads the address arithmetic's bits as its
 fields. Not a security id (the developer's own source).
 **Discovered:** 2026-10-15, the 6.7.13 structs lane (unit S2). The deref-of-address-of brief listed

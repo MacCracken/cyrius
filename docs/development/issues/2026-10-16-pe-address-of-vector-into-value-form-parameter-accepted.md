@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (after the D30 bite and its review fix,
 `0fbeb6de`) and on the lane base (`f59668ad`, `build/cycc` 2,270,008 B). Pre-existing: the base PE compiler accepts it
 too; D30's `_sarg_pe_vword` keeps the exemption on purpose.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D33 — A.
 **Discovered:** 2026-10-16, the review of the 6.7.13 vectors lane (the D30 bite).
 **Severity:** Low — the program computes the right value on Windows (the by-address ABI copies the vector `&w`
 points at); the defect is a target divergence: the same source compiles on one target and is refused on the other three.

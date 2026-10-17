@@ -7,7 +7,7 @@ Re-run alone it passes on the lane tree four times in four (1099 / 581, 1118 / 5
 scratch copy of the SLOT-OPEN tree (`git archive 7f57e532`, its own `build/cycc`) failed it once in three at load ~6
 ("[embed] build took 1421 ms, the same bytes included last 593 ms"; the other two 1159 / 659 and 1069 / 594) — so the
 failure is the gate's sampling, not the lane (whose diff touches neither cbt/, lib/ nor the gate).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane, wave 1, unit I5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a false RED in check.sh / release-gate step 3 on a loaded box (the release gate runs the cross-OS
 legs beside check.sh); it costs a re-run, and a re-run that passes teaches readers to ignore the row.
 **Kind:** bug (gate).

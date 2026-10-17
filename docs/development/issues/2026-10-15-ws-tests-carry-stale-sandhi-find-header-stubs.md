@@ -1,7 +1,7 @@
 # Five ws tests still define a `sandhi_server_find_header` (and one a `base64_encode`) stand-in that `lib/ws_server.cyr`'s own includes made a duplicate — every compile warns, and in one the stub binds last — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane (l6712-stdlib @ c667293d), x86_64 Linux.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — test hygiene, no lib/ defect. Every listed test passes. But each compile prints a duplicate-fn
 warning that a real one can scroll past, and the tests' own comments describe a mechanism that no longer holds.
 **Discovered:** 2026-10-15, the 6.7.12 stdlib lane (unit L1), while checking that `lib/ws_server.cyr`'s new

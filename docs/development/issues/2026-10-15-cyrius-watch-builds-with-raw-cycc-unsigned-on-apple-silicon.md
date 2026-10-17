@@ -4,7 +4,8 @@
 27.0.0 arm64), ach (Darwin 22.6.0 x86_64) and this x86_64 Linux box. Filed from unit D3. That unit made both macOS
 tarballs ship `bin/cyrius-watch.sh` (issues/archived/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's
 decision D4, 2026-10-15). Running the newly shipped script on the hosts showed what it builds.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D60 — The same build as `cyrius build`.
 **Severity:** Low. The shipped watcher reports `built N bytes`, but on Apple Silicon the binary dies at its first
 exec. On every OS it reports `COMPILE ERROR` for a project `cyrius build` compiles. Workaround: `cyrius build`.
 **Affects:** `scripts/cyrius-watch.sh` (`[release] scripts`), lines 30 and 38:

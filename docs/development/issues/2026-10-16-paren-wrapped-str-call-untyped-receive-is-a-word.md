@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 receives lane (unit R1, after its 8 B wrapped-receive
 commit) with compilers built from that tree: x86_64, aarch64 (qemu), cx (cxvm), PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a silent wrong output on valid code (`println(s)` takes the integer / cstring overload and
 prints the Str header's bytes); the method form is refused loudly. Workaround: drop the parentheses, or annotate
 (`var s: Str = (mks());`).

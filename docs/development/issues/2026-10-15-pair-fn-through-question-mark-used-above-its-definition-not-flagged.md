@@ -5,7 +5,7 @@ route (issues/archived/2026-10-15-cyrius-header-misses-a-pair-propagated-by-ques
 refuses `qa` below, and cycc's own "bind both" oracle disagreed for exactly the fn whose pair callee is defined after
 it. Measured with the slot-open compiler (build/cycc at b13d3598) on x86_64 and with the tree's cycc_aarch64 under
 qemu-aarch64.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** High — valid `?` code compiles clean and crashes at run time with no diagnostic (rc 139 on x86_64 and
 aarch64), and the single bind keeps the tag in silence where the same program with the definitions swapped is refused
 "bind both". The same class as issues/archived/2026-10-14-pair-trait-default-method-used-above-its-trait-not-flagged.md (a trait

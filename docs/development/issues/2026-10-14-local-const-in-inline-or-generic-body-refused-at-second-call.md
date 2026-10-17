@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit F2: the lane's compiler
 before the unit, 2,189,840 B) and on the installed 6.7.2 and 6.7.9 compilers: identical everywhere.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit F2 (probing a private const fn called from a local const in an
 `#inline` body, for `issues/archived/2026-10-09-const-context-calls-private-const-fn.md`), outside that issue's scope.
 **Severity:** Medium — valid code is refused. A helper that names a local const cannot be called twice in one scope

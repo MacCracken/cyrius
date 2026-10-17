@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN — a decision for the user** (refusing it stops code compiling). Measured 2026-10-15 on the
 6.7.13 structs lane (`l6713-structs` after 74f3100e, the deref-of-address-of fix), x86_64 / aarch64 (qemu) / cx
 (cxvm) / PE (wine) alike.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D17 — (a).
 **Severity:** Low — a rule split, not a wrong value: the word op is what 6.7.5 specified and a crossos row pins it.
 Not a security id (the developer's own source).
 **Discovered:** 2026-10-15, the 6.7.13 structs lane (unit S2), fixing

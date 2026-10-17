@@ -5,7 +5,8 @@
 refused "SIMD vector has no named fields". The same for `f64v2` / `f64v4`, and since 6.7.13 for `f32v8` (the value-form
 f32v8 bite gave `f32v8` its parameter class, `_classify_param_type` 10, which reads the name before any struct lookup,
 as the other three do).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D41 — A.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane, checking what the f32v8 parameter class changes
 (`archived/2026-10-15-value-form-f32v8-parameter-receives-one-word.md`).
 **Severity:** Low — a name collision with the stdlib's own vector types, refused by a (misleading) message, never a wrong

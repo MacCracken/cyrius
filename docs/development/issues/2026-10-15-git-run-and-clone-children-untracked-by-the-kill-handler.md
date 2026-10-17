@@ -5,7 +5,7 @@
 archived/2026-10-15-capacity-killed-leaves-cap-err-and-its-compiler-running.md, which tracked `cmd_capacity`'s compiler and
 `_dep_wt_run`'s git child and captures (and, as a quick repair, `_dep_wt_run`'s stdout capture). The triage named
 these two sites "outside the filed surface, met in passing"; they are the same untracked-child class.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a developer's own Ctrl-C / SIGTERM of a resolve leaves capture files in the CLI's private temp
 dir (every name is in check.sh's reaper vocabulary, so the reaper removes the dead pid's dir) and an orphaned git
 that runs to completion; an orphaned `git clone` goes on to create the dep cache after the CLI died.

@@ -36,7 +36,7 @@ does or builds; never a per-repo worklist.*
 
 Break 2, repair 3 — struct values. Each block names its CHANGELOG [6.7.13] bite; the decisions are the user's (2026-10-15,
 D1–D45). The changes that went beyond a decision's text are filed for confirmation in 6.7.14
-(`docs/development/issues/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md`). Decision ids are 6.7.13's
+(`docs/development/issues/archived/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md`). Decision ids are 6.7.13's
 unless a block names another release ("6.7.12's D19").
 
 

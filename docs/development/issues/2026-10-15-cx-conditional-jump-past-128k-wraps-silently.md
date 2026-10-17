@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane (l6712-stdlib, after the cx code-region
 growth); the defect is older than the growth (6.6.x's 512 KiB region already held a fn this size).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a silent miscompile on the cx target: `cycc_cx` exits 0 and writes a `.cyx` whose branch lands
 at a wrapped offset. Here cxvm caught it (a negative pc traps since 6.6.12); a wrap that lands inside the code runs
 the wrong instructions with no diagnostic. 6.7.12's 4 MiB code region makes fns this large more reachable.

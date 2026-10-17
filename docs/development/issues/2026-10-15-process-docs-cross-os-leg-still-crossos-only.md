@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found by the 6.7.12 windows lane's review (2026-10-15). The lane could not edit either
 file (both are the user's rules / process files).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — documentation drift in the process files; the gate itself is right.
 **Affects:** `CLAUDE.md` (Release Gate, step 4), `docs/development/cycle-discipline.md` (closeout checklist item 4
 and the paragraph under it).

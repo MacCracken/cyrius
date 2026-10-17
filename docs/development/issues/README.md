@@ -252,7 +252,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.13 — Break 2, repair 3: struct values** (0)
 
 
-**6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (139)
+**6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (137)
 
 - [`asm { in al, dx; }` is refused: `in` lexes as keyword 76, so the `ASM_IN` emitter is unreachable by its documented spelling](2026-10-08-asm-in-mnemonic-unreachable.md)
 - [A bare const / enum-constant name as a statement is reported as an assignment (`N;` → "cannot assign to const 'N'")](2026-10-08-bare-const-statement-reported-as-assignment.md)
@@ -353,9 +353,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A vector dereference as an if-expression branch is an integer — lane 0's word — where a vector name branch is refused](2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md)
 - [`_win_widen` / `_win_widen_n` in lib/syscalls_windows.cyr have no caller left](2026-10-15-win-widen-helpers-have-no-caller.md)
 - [Windows disallowed CTL: its 48-byte entries are not applied (identifier form unknown)](2026-10-15-windows-disallowed-ctl-48-byte-entries.md)
-- [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [Five ws tests still define a `sandhi_server_find_header` (and one a `base64_encode`) stand-in that `lib/ws_server.cyr`'s own includes made a duplicate — every compile warns, and in one the stub binds last](2026-10-15-ws-tests-carry-stale-sandhi-find-header-stubs.md)
-- [The 6.7.13 changes beyond the decisions' text — confirm or restore each](2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md)
 - [`callptr(&gp, 5).b = 40;` — a field store through a known callee's result in statement position — is "expected ';', got '='", where `fncall1(&gp, 5).b = 40;` stores through](2026-10-16-callptr-statement-field-store-does-not-parse.md)
 - [A closure's captured vector passed to a VALUE-form vector parameter (`|k| lanes(b)`, `fn lanes(x: f64v2)`) is refused on every target — the local `lanes(b)` is passed; accept the capture as the local is?](2026-10-16-captured-vector-into-value-form-parameter-refused.md)
 - [In a closure, a write to a captured name with a same-named GLOBAL compiles silently and writes the global](2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.md)
@@ -394,8 +392,9 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`v = missing(..)` into a vector local warns "assigning non-pointer to typed pointer" — v is no typed pointer](2026-10-16-vector-local-assignment-from-undefined-call-warns-typed-pointer.md)
 - [A vector METHOD result in the destinations D29 did not name: an untyped `var v = s.mv();` binds one word (wrong lanes, silent), `var x: i64 = s.mv()` / `x = s.mv()` store a word, `return s.mv();` from a `: f64v2` fn is refused](2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md)
 
-**6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (0)
+**6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (1)
 
+- [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 
 **6.7.16 — the full security audit + the refactor / optimization review** (2)
 

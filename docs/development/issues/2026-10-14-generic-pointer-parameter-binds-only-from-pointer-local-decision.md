@@ -8,7 +8,8 @@ row also on `42a0b63a`), x86_64, `struct S { v; w; x; }` (24 B):
 - `fn gs<T>(x: T): i64 { return sizeof(T); }`: `gs(q)` with `var q: *S` gives 24 — the guide says a pointer argument
   infers i64 there ("… and so does a `pp: *Pt` pointer parameter (a pointer, like a `var q: *Pt` local)",
   docs/guides/cyrius-guide.md § generics); `gs(pp)` with `pp: *S` a parameter gives 8, as the guide says.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D8 — (a).
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S2). The brief for
 issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md asked for rows in an inferred `gpi(&GS)` form
 (`fn gpi<T>(x: *T): *T`); that call runs the i64 base — no instance with T = S exists — so its `: *T` result is a

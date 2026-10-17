@@ -4,7 +4,8 @@
 ELF-aarch64 cross compiler built from it, run under qemu-aarch64. Filed from unit D1, which shipped the warning for
 the filed shape (issues/archived/2026-10-08-aarch64-native-region-literal-translated-silently.md, D1 warn only): a raw
 literal inside a region opened in the call's OWN file. Two neighbouring shapes still renumber silently.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D61 — Yes: the region carries through include.
 **Severity:** Medium — the wrong syscall runs with no diagnostic (the same defect as the filed issue, in the two
 shapes its warning does not judge). Workaround: the `1000 + N` private alias (or the stdlib `SYS_*` name).
 **Affects:** ELF-aarch64 output; `src/backend/aarch64/emit.cyr` `_esx_native_warn` / `_esx_raw_lit_call` /

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 by the 6.7.11 genfe review on the lane tree (l6711-genfe). A pre-existing
 test blind spot from 6.7.8 (C2-6a, row K2); no compiler defect.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 genfe review, mutating the slice-word fix (3a7febfb).
 **Severity:** Low — a gate that reads green over a deleted guard. The guard is live (a program's own generic
 `struct slice<T>` in a parameter or pointer position depends on it), but no row exercises it, so a regression there

@@ -16,7 +16,8 @@ statement (`a = 2;`, `syscall(39);`, `if (1) { }` and `while (0) { }` all give t
 
 The two reports this filing merges were both partly right. `fn` compiles; `struct` and `trait` are refused, as the
 guide says.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F6; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D13 — (a) No, the guide's rule: one named error; D14 — (a) Yes, it is a function.
 **Discovered:** 2026-10-12, the 6.7.9 doc sweep (the guide's *Functions* and *Traits* passages re-verified: two
 sweep reports disagreed on which kinds compile after a statement).
 **Severity:** Low. Every refused shape fails at compile time and nothing is silent. But `impl` cascades into

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.13 receives fix step on the lane tree (l6713-receives at
 360a6d05) and the lane base (f59668ad's `build/cycc`): identical on x86_64, aarch64 (qemu), cx (cxvm), PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a cascade diagnostic beside the right one; the line is refused either way.
 **Discovered:** 2026-10-16, the receives lane's review of the D13 bite (6ab2a9c8, issues/
 archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). The free call's cascade predates the

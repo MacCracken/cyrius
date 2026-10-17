@@ -1,6 +1,8 @@
-# The 6.7.13 changes beyond the decisions' text — confirm or restore each — OPEN
+# The 6.7.13 changes beyond the decisions' text — confirm or restore each — RESOLVED
 
-**Status:** 🟡 **OPEN** — filed 2026-10-16 at the 6.7.13 integration from the release-docs pass (one drafter per lane,
+> ✅ **CLOSED BY DECISION at the 6.7.14 open** (the user, 2026-10-16, each item asked as its own keep-or-restore question, D48 – D54): items 1 – 5 are KEPT as 6.7.13 shipped them — the replayed `#inline` `return ret2(..)` in a 9 – 16 B struct fn compiles (D48), a `: i64` async fn forwarding a multi-value call is refused (D49), the replayed `?` caller's 2-name destructure is refused (D50), Windows refuses a pointer word / captured vector into a value-form vector parameter as the other targets do (D51), `var x = (mk1());` binds the struct (D52); item 6 — a string literal is exempt from the typed-pointer warning at every site (D53), fixed in 6.7.14 by [the string-literal / `&a[i]` warning issue](../2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md); item 7 — the lsp loose file publishes no pin error (D54 = D47), fixed in 6.7.14 by [the lsp pin-redirect issue](../2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md). CHANGELOG [6.7.14]
+
+**Status:** ✅ **CLOSED BY DECISION at the 6.7.14 open** (see the banner). Was: 🟡 **OPEN** — filed 2026-10-16 at the 6.7.13 integration from the release-docs pass (one drafter per lane,
 reading each lane's handoff, commits and issues against the decisions asked at the open, D1–D45). Each change below
 shipped in 6.7.13 and changes what an existing program does, or makes it stop compiling, in a way no decision's text
 names. Each is either a false refusal lifted or parity with a rule that already held elsewhere, so each lane took it;
@@ -35,11 +37,11 @@ ecosystem-migration § 6.7.13.
 6. **The typed-pointer warning's new sites (D18) also warn on a string literal into a `*u8`** — `t = "xyz";` and a
    declaration-zone `var p: *u8 = "abc";` (the in-fn declaration already warned) — RC-11 (fd3d5e61). D18 exempted the
    literal 0; a string literal is a pointer and the warning there is a false positive, filed for the fix:
-   [the warning's string-literal and `&a[i]` false positives](2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md)
+   [the warning's string-literal and `&a[i]` false positives](../2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md)
    (6.7.14). Listed here because it widens a warning on code that compiles.
 7. **The language server publishes a pin error on line 1 of a loose file** when the server's working directory has a
    `cyrius.cyml` pinning an uninstalled version (6.7.12 published nothing there) — TL-14 (67516853). Filed for the
-   decision: [lsp loose file reports the pin redirect of the server cwd's project](2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md)
+   decision: [lsp loose file reports the pin redirect of the server cwd's project](../2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md)
    (6.7.14). Listed here so the list is whole.
 
 ## Acceptance

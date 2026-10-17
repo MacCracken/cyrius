@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S3) while landing
 D4 (a) (`return &s;` of an inline struct is `return s;`, issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
 Measured on the lane tree after that bite, x86_64 / aarch64 (qemu) / cx / PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D19 — (a).
 **Severity:** Medium — silent at 8 B or less: the caller reads a stack address (the slot of a dead frame's handle or
 pointer) as the struct's field; over 8 B a refusal that names nothing.
 **Kind:** language (decision) — D4 (a) reads `&s` of an inline struct as the struct; the guide's handle line (6.7.10

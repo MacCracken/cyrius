@@ -1,7 +1,7 @@
 # Call-site diagnostics name a method by its mangled fn name (`in a call to 'S_ri'`, `'S_two' expects 2 arguments`) and a generic call by its instance (`'g$i'`) — D27 / A2's vector refusals among them — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (x86_64; frontend, every target alike). The D27 refusal (6.7.12) and A2's "different vector type" refusal (6.7.11) read `_fnt_names + fi * 8` directly; measured, so do the other call-site diagnostics tried (struct type, arity, named argument, undefined fn) — the review's note that "other diagnostics name the method as written" did not hold for these.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-15, the review of the 6.7.12 fixfirst lane.
 **Severity:** Low — a diagnostic names `S_ri` where the source says `s.ri(..)`; the position is right.
 **Kind:** bug (diagnostic).

@@ -1,7 +1,7 @@
 # simd_valueform_no_avx_transition.sh axis 2b reads 9 ms / 9 ms (100 %) under host load and fails a check.sh run — OPEN
 
 **Status:** open — seen once in the 6.7.13 stdlib lane's lane gate (the first of two full check.sh runs on the same tree).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra; filed from the 6.7.13 stdlib lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane, wave 1, unit I5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low (a gate flake: a full suite went red with no code change behind it; nothing a user meets).
 
 ## Repro

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — found by the 6.7.11 genfe lane (unit G1) while fixing the f64 / `struct i` instance-name
 collision; pre-existing, untouched by that fix.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D1 — (a).
 **Discovered:** 2026-10-14, 6.7.11 genfe G1 (a probe of the name class the f64 fix closes)
 **Severity:** High — a silent miscompile (the wrong instance's body runs, no diagnostic); the trigger is narrow (a
 two-parameter generic whose arguments include a generic struct's instance AND a generic struct used bare)

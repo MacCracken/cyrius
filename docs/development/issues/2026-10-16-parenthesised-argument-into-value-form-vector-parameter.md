@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V2, after the D30 bite that passes a
 vector call result to a value-form parameter) and, for the local, on the lane's base compiler (V1, `build/cycc`
 2,270,080 B) alike.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — refused loudly on three targets; PE computes the right value. A per-target difference in what
 compiles.
 **Affects:** x86_64 / aarch64 / cx (refused), PE (accepted); every value-form vector parameter.

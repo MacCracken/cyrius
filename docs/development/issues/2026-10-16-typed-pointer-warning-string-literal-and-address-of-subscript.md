@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.13 receives fix step on the lane tree (l6713-receives at
 360a6d05, `build/cycc` its fixpoint) and the lane base (f59668ad's `build/cycc`): x86_64, aarch64 (qemu), cx (cxvm),
 PE (wine), identically on all four.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a false warning on valid code that compiles and runs right (`*u8` from a string literal is
 the C-string idiom), which D18 (a) widened from one site to three; plus a second (warning) diagnostic beside a refusal.
 Nothing miscompiles. The census at the D18 bite (lib / cbt / programs / .tcyr) found no hit.

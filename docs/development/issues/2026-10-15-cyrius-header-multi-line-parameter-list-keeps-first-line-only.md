@@ -4,7 +4,7 @@
 issues/archived/2026-10-15-cyrius-header-vector-parameter-prints-cyr-val.md does not see a parameter on a continuation line).
 Re-measured by the tools lane's fix step with the lane's build/cyrius and build/cycc (l6713-tools @ 815cd500). It
 predates the lane: the base CLI at b13d3598 prints the same prototypes.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — the C header is silently wrong, rc 0, nothing on stderr. A C caller gets a prototype with
 fewer parameters than the fn takes, so the call passes garbage in the dropped argument registers. It also means the
 6.7.13 vector-parameter refusal can be bypassed by wrapping the line. cyrius's own lib hits it:

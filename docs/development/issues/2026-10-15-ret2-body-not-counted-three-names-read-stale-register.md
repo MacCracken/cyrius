@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 multivalue lane (l6713-multivalue, unit M4, the lane tip
 f980a663 and its parent 68d421a8 alike) on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (multivalue lane; filed from the 6.7.13 multivalue lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a silent wrong value on code that compiles clean: the third name reads whatever an earlier call
 left in the third return register (88 seeded, every target); the same symptom 6.7.11's pass-1 count closed for the
 `return (a, b);` spelling.

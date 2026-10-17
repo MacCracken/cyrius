@@ -7,9 +7,8 @@ user's decision (a), 2026-10-13: "a `Vec<T>` var / global / parameter / `*Vec<T>
 the way a struct field does") made a local, a global (either zone), a parameter, `*Vec<T>` / `**Vec<T>`, a
 `*fn(Vec<T>)` parameter and `sizeof(Vec<T>)` read T. The positions below were outside that issue's filed surface and
 still skip the `<..>` unread, exactly as every Vec annotation did through 6.7.10.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
-(junk between the brackets stops compiling), so whether the decision's "one rule for every `Vec<T>`" extends to them
-is the user's call.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D4 — (a); D5 — (a).
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G4 (probing the positions next to the filed ones).
 **Severity:** Low — nothing is miscompiled: a `Vec` is an 8-byte `vec_new()` handle whatever its `<..>` says; the text
 is just unchecked, and inconsistently so (`var v: Vec<nosuch>` is refused now, `Box<Vec<nosuch>>` is not).

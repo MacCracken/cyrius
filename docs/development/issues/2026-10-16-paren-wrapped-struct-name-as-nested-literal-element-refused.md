@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 receives lane (unit R1, after its wrapped
 method / operator element commit) and with the lane base (`f59668ad`): x86_64, aarch64 (qemu), cx (cxvm), PE (wine)
 refuse it alike (frontend).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — valid source refused loudly (the reason is wrong: an "unexpected '}'"); no wrong value. Workaround:
 drop the parentheses.
 **Discovered:** 2026-10-16, the receives lane, repairing

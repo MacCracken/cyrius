@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 struct lane (`l6711-struct` at 3fc1dbbb, before unit S3,
 x86_64) and on the installed 6.7.9 and 6.7.10 compilers: identical refusals.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-14, the 6.7.11 struct lane (unit S3), writing a `return gpg<P2>();` row for
 issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md.
 **Severity:** Medium — valid source refused (loud, no wrong code). The message names a struct the generic never

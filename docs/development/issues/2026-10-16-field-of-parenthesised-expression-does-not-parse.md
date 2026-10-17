@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 receives lane (unit R1) with compilers built from that
 tree (x86_64, aarch64, cx, PE: refused alike, frontend) and with the lane base (`f59668ad`).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D24 — (a).
 **Severity:** Low — valid-looking source refused loudly, with a diagnostic that does not name the construct; no wrong
 value. Workaround: drop the parentheses (`s.a`, `mk1().a`) or bind first.
 **Discovered:** 2026-10-16, the receives lane, probing the 8 B wrapped receive

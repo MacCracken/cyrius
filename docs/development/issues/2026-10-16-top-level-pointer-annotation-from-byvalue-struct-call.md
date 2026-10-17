@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 receives lane (unit R2, with D14 applied in a fn) with
 compilers built from that tree: x86_64, aarch64 (qemu), cx (cxvm), PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D28 — (a).
 **Severity:** Medium — the after-the-first-statement shapes compile with only a warning and crash (`*P2`) or hold a
 value as an address (`*i64`); the zone's method shape compiles with no diagnostic at all.
 **Discovered:** 2026-10-16, the receives lane, while repairing

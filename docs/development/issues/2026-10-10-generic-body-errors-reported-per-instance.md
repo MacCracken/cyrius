@@ -4,7 +4,7 @@
 lane's previous bite (bad7b32e) and on the installed 6.7.7 `cycc`: the same counts (the for-step rows below are
 errors only from 4d9eda56 on). A generic fn with a syntax error in its body, called at three distinct type arguments,
 prints the error three times, at the same file:line:col.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-2b (the for-step `)` check), outside its scope: a junk
 for-step inside a generic body instantiated twice printed its new "expected ')'" twice — as the existing statement
 `;` check and the 6.7.5 field-step check already did.

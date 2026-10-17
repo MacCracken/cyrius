@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-09 against 6.7.6 @ e44470b7 on x86_64, aarch64, cx and PE (all four
 compilers refuse it at the same token), and on every installed 6.6.0 – 6.7.6 compiler and `build/cc5` (5.11.69).
 The same literal compiles and runs (exit 2) inside a fn, and as a top-level `var` after the first statement.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-08 by the 6.7.7 B4 (tuples) planners (probes n1, g816); filed 2026-10-09 by the B4 lane
 (bite T0).
 **Severity:** Medium — a hard failure on documented syntax with a known workaround.

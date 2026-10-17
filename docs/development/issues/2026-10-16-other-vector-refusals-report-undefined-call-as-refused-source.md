@@ -5,7 +5,7 @@ refusal-hint fix). 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-
 no fn to the undefined-function path when it is the source of a value-form vector LOCAL (`var v: f64v2 =
 f64v2_splat(1.0);`, `v = f64v2_splat(1.0);`). Three neighbouring vector destinations still report such a call as a
 refused source of their own — ahead of the undefined-function warning, or (the argument) instead of it.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, implementing the refusal-hint issue (its filed surface is the unwrapped `IDENT (` of the
 local's declaration / assignment).
 **Severity:** Low — diagnostic text and order only: each shape is refused, no binary is written.

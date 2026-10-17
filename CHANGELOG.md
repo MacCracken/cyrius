@@ -35,7 +35,7 @@ sources 1,524 ms → 6.7.13 compiling its own 1,603 ms (+5.2 %); on the SAME inp
 recommended, the forks D23 B, D28 C, D39 die by the signal, D44 `cyrius package` left alone) or fixed to what the source
 says; the migration is [ecosystem-migration.md § 6.7.13](docs/development/ecosystem-migration.md). The changes that went
 beyond a decision's text are filed for confirmation:
-[the 6.7.13 changes beyond the decisions' text](docs/development/issues/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md).
+[the 6.7.13 changes beyond the decisions' text](docs/development/issues/archived/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md).
 - **Structs** — a small struct's padding is 0 in every copy; a zero-size struct moves nothing; a 3 / 5 / 6 / 7-byte field
   value is read byte-exact; `*(&p)` is the struct; `*p` over 8 B as an if-expression branch refused (D1); `(*ps, ..)`
   refused (D2); `&x.f` refused with a spelling (D3); `return &s;` in a `: S` fn returns the struct (D4); a struct into a
@@ -4402,7 +4402,7 @@ Comment-only; binaries unchanged.
 
 65 issues: 64 from the lanes and their reviews, placed at integration in 6.7.14 (the heavier release, the user 2026-10-16): 29 from wave 1 (structs, multi-value, tools), 35 from wave 2 (receives, vectors, stdlib); 1 from the release-docs pass (the beyond-the-decisions list).
 
-- [The 6.7.13 changes beyond the decisions' text — confirm or restore each (seven: the inline `ret2` replay, a declared async forward, the replayed `?` destructure, Windows value-form vector words, the wrapped 8 B receive's operators, the warning on a string literal, the lsp pin error)](docs/development/issues/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md) — 6.7.14
+- [The 6.7.13 changes beyond the decisions' text — confirm or restore each (seven: the inline `ret2` replay, a declared async forward, the replayed `?` destructure, Windows value-form vector words, the wrapped 8 B receive's operators, the warning on a string literal, the lsp pin error)](docs/development/issues/archived/2026-10-16-6713-behaviour-changes-beyond-the-decisions-text.md) — 6.7.14
 - [A non-tuple word passed to a tuple parameter — `take(5)`, `take(one(3))`, `take(g2(3))` with `g2` declared `: i64` — is dereferenced as the tuple's address (a crash, no diagnostic), where the same value into a tuple variable is refused](docs/development/issues/2026-10-15-non-tuple-word-into-tuple-parameter-dereferenced.md) — 6.7.14
 - [`var a, b = (f(7));` — a destructure whose call is parenthesised — is refused "multi-value destructure needs a call on the right-hand side", where `return (g(x));` and the struct / pair checks see through the same wrap](docs/development/issues/2026-10-15-paren-wrapped-call-destructure-refused.md) — 6.7.14
 - [A store whose whole value is parenthesised and STARTS with a `: stack` pair call — `var v = (f(7) + 1);`, `h.a = (f(7) + 1);`, `x = (f(7) * 2);` — keeps the tag silently, where the unwrapped spelling is refused "bind both"](docs/development/issues/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) — 6.7.14

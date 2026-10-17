@@ -5,7 +5,8 @@ unit D3. That unit made both macOS tarballs ship every `cyrius.cyml` `[release] 
 `scripts/release-scripts.sh` (issues/archived/2026-10-11-macos-tarballs-omit-cyrius-watch-decision.md, the user's decision
 D4, 2026-10-15: ship every [release] script). The same check over the other POSIX tarball builders shows one that
 still ships none.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (darwin lane; filed from the 6.7.12 darwin lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D59 — Ship every [release] bin, built for aarch64.
 **Severity:** Low. An aarch64 Linux binary install has no `cyrius-repl.sh`, `cyrius-watch.sh` or
 `cyrius-prompt-info`. `cyrius repl` resolves `~/.cyrius/bin/cyrius-repl.sh` (scripts/shims/README.md, *Lookup
 order*), so a binary-installed aarch64 Linux box has no `cyrius repl`.

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (after `d9aa49ec`, the deref-through bite) on
 x86_64: the repro below is refused; the lane base (`f59668ad`, `build/cycc` 2,270,008 B) compiles it (exit 0). 126
 structs compile on the lane.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, the review of the 6.7.13 vectors lane
 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md).
 **Severity:** Low — a loud compile error in a large unit with many distinct `**Struct` types, never a miscompile; a

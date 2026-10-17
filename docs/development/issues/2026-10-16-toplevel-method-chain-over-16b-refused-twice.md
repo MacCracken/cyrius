@@ -4,7 +4,7 @@
 issues/archived/2026-10-13-field-of-indirect-call-struct-result.md (D16 (a)), whose known-callee chain had the same shape and
 is refused once (its `_icall_chain` skips the second report). The method arm is unchanged by that fix. x86_64, the
 lane tree (`build/cycc` 2,278,280 B); the frontend's, so every target.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — refused code, one expression reported twice.
 **Kind:** diagnostics.
 

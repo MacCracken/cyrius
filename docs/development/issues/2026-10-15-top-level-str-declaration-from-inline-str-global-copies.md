@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — a question for the user. Found 2026-10-15 by the 6.7.13 structs lane (unit S4) while landing
 D7 (1) (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md), which makes `var h: Str = gt;` and
 `var h = gt;` IN A FN a handle bound to `gt`'s header (no copy). Measured on the lane tree after that bite, x86_64.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D21 — (a); D22 — (b).
 **Severity:** Low (annotated: a copy where a bind is the in-fn rule — values agree until one side is written) /
 Medium (untyped: `f(H)` reads the string's bytes as the header, silently).
 **Kind:** language (decision) — D7 (1) enumerates fn-local shapes; a top-level declaration from an inline `Str`

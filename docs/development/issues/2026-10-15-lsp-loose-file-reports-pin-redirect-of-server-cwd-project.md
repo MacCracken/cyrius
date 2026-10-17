@@ -4,7 +4,7 @@
 issues/archived/2026-10-15-lsp-loose-file-include-resolves-against-server-cwd.md). Re-measured by the tools lane's fix step
 with the lane's build/cyrius-lsp, build/cycc and build/cyrius (l6713-tools @ 815cd500), against a base server and CLI
 built from b13d3598.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a wrong line-1 error in the editor for a file outside any project, and only when the editor
 started the server inside a project that pins a cyrius version that is not installed. The diagnostic matches what
 `cyrius check <abs file>` prints from that directory, which is the reference the 6.7.13 fix chose. A project's own

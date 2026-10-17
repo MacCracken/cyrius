@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane (l6712-stdlib, after the cx code-region
 growth and D13's cx arms).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D55 — cxvm answers -38.
 **Severity:** Low — cxvm runs trusted bytecode and is documented as not a sandbox (docs/platform-status.md,
 cyrius-x guest contract); no attacker crosses a boundary (no ledger id). But an honest guest program can now corrupt
 or kill its own VM by accident where it used to get -EFAULT.

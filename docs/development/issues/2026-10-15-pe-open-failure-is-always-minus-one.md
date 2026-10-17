@@ -5,7 +5,7 @@
 (issues/archived/2026-10-12-cass-full-corpus-failures-untriaged.md, class (c): a real PE defect). Three of the four rows
 `tests/tcyr/stdlib/result_stdlib.tcyr` still fails on cass after the lane's fixture fixes are this one (the fourth
 is 2026-10-15-pe-read-failure-reads-as-eof.md).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — no wrong data, but a portable caller cannot tell "the file is not there" from "access denied" or
 any other failure on Windows: every Result-returning open answers `IoOther`, and errno-keyed code takes its generic
 branch.

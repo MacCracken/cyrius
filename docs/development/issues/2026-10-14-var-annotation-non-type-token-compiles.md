@@ -3,9 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-14 on the 6.7.11 genfe lane (l6711-genfe, unit G4, the compiler built from
 the unit's tree, 2,189,720 B) and on the lane's base build/cycc (0155abc7): the repro builds with no diagnostic and
 exits 9.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
-today, so it is the user's call; the precedent is 6.7.11's parameter rule (a parameter's `fn f(a: 5)` / `(a: +)` /
-`(a: "s")` are refused by name since the user's decision (b), 2026-10-13).
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D15 — (a) Refused by name.
 **Discovered:** 2026-10-14 by the 6.7.11 genfe lane, unit G4 (comparing how each type position refuses a token that is
 no type, for the `Vec<1 + 2>` message).
 **Severity:** Low — the variable is declared as a plain i64 and the token is dropped; nothing else is miscompiled, but

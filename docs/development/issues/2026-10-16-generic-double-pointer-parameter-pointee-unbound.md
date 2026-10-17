@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V3; the structs lane's D9 (a) — `*pp` of a
 `**T` is a `*T` — and the V3 deref-through bite, which types `**pps` of a `**S` as S through the pin, are in). Measured
 identically on the V3 base for the step (unchanged by V3).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D40 — A.
 **Severity:** Medium — the dereference compiles clean and faults on every target; the step is silently wrong.
 **Kind:** bug — D9 (a) (the user, 2026-10-15) decides `*pp` of a `**T` is a `*T`; a generic instance's parameter misses
 the binding.

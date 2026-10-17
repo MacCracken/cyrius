@@ -7,7 +7,7 @@ return it (by name, a method, or fncallN / callptr with the callee written `&f`)
 names the shape the user wrote. The same call by name is refused "vector return type does not match the declared type",
 a method as well (D29), and the same call as a value-form argument with A2's "cannot pass 'mk4' to a parameter of a
 different vector type".
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, implementing issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md (its probe h3).
 **Severity:** Low — message text; the refusal and its line are right, no binary is written.
 **Affects:** every target (frontend): `_vrcv_src` kind 2 (`_icall_rs_at(S, c) == ty`) falls to the generic refusal.

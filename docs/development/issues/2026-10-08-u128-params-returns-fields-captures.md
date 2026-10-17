@@ -4,7 +4,8 @@
 `v: u128` parameter compares as a SIGNED 64-bit word and `&v + 8` reads the neighbouring frame slot; `: u128` as a
 return type and as a struct field type are refused with a misleading "reserved keyword" error; a captured u128 reads
 as the address of its env copy.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F6; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D10 — (a) Refused by name.
 **Discovered:** the 6.7.6 D2 lane (u128 `+` / `-` / comparisons) and the 6.7.6 review (the capture, roadmap commit
 d2d5309b); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — silent wrong comparisons / values on a parameter or capture (workaround: pass `&b` and

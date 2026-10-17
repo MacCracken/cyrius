@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.13 structs lane (unit S4) while writing D8 (a)'s refusal rows
 (issues/archived/2026-10-08-field-store-through-pointer-returning-call-refused.md; the by-value result keeps its refusal). The
 same before and after that bite (x86_64; the frontend's, every target).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — refused code, one statement reported twice.
 **Kind:** diagnostics.
 

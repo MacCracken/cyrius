@@ -4,7 +4,7 @@
 (l6712-windows @ 163d1a85); found by the cass full-corpus triage
 (issues/archived/2026-10-12-cass-full-corpus-failures-untriaged.md, class (c): a real PE defect). It is the fourth row
 `tests/tcyr/stdlib/result_stdlib.tcyr` still fails on cass (the other three: 2026-10-15-pe-open-failure-is-always-minus-one.md).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a failed read is indistinguishable from end of file on Windows: a loop that reads to EOF stops
 early and reports a short, complete-looking result (the shape fs_win.cyr's FindNextFileW fix closed for listings in
 6.6.12), and `file_read_r` answers `Ok(0)` for a handle that is not open.

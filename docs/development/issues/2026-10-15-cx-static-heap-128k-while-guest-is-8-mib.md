@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane (l6712-stdlib, after D12 grew the cx code
 region to 4 MiB and cxvm's guest memory 1 MB → 8 MiB).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a cx program that allocates more than 128 KB stops with the loud, named
 `alloc: cx static heap exhausted (128 KB)` (exit 1), never a silent wrong answer; no file on a cx leg meets it today.
 **Discovered:** 2026-10-15, the review of the 6.7.12 stdlib lane (the D12 bite,

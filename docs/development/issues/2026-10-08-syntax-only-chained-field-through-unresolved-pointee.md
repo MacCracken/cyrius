@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with `build/cycc --syntax-only`: `a.f.g = 1;`
 and `a.f.g += 1;` → `expected '=', got '.'`; `var v = a.f.g;` and `a.f.g(1);` → `expected ';', got '.'`; exit 1 on
 each. The same files with `struct Foo { g; }` prepended pass (exit 0), as does the one-level `e.g = 1` with `e: *Foo`.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 6.7.5 review / lane finds (roadmap commit e95f295d, 2026-10-08); filed 2026-10-08 from roadmap.md.
 **Severity:** Medium — `cyrius lint`'s pre-pass refuses valid source with an invented syntax error (the v6.5.19
 false-accusation class); workaround below.

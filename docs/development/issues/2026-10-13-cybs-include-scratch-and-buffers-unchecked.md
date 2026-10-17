@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-13 on the 6.7.11 infra lane (cybs.cyr @ 421a0db7, seed-assembled). Latent
 for the inputs that matter: the largest file cybs includes for `src/main.cyr` is 300,447 B
 (`src/backend/x86/emit.cyr`), the include depth is 2, and the expanded stream is ~1.7 MB.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (infra lane, wave 1, unit I4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-13, checking that the token-position region 6.7.11 added at `r15 + 0xA000000` is free (it
 sits where include depth 8's scratch would start).
 **Severity:** Low — a silent bad input to the trust root's bootstrap compiler, latent (no shipped input is near any of

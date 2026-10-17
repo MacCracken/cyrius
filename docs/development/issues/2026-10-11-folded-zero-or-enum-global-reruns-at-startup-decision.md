@@ -5,9 +5,8 @@ re-evaluation), which made cx bake what the native targets bake and left these t
 6.6.20. Verified 2026-10-11 against the merged 6.7.9 tree (`build/cycc` @ 27220379, 2,057,736 B, its `cycc_aarch64`
 under qemu and its `cycc_cx` under cxvm): repro A exits 136 (SIGFPE) on x86_64 and cx and 5 on aarch64; repro B 136
 on x86_64 and cx and 8 on aarch64 (Q = INT_MIN); the non-zero literal control C exits 10 everywhere.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
-[the const-init redundant store](2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md), the same
-replay) (the user's call, asked at that release's open) — placed 2026-10-11 — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D11 — (b) Use the folded value.
 **Discovered:** 2026-10-11 during 6.7.9's
 [cx folded-global fix](archived/2026-10-09-cx-folded-global-reevaluated-int-min-div.md).
 **Severity:** Low — a program must spell a trapping division in a global initializer; but the same source crashes on

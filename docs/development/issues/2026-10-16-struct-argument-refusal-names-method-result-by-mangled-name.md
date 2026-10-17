@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (after D33's bite, `f2279be5`) and on the lane
 base (`f59668ad`): the struct-type refusal (6.7.3's arm) names the argument `s.dup()` as `'S2_dup'` on both; D33's new
 "pointer to a vector type" refusal inherits it. Frontend: every target alike.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Related:** docs/development/issues/2026-10-15-call-diagnostics-name-method-by-mangled-name.md (the CALLEE side,
 `in a call to 'S_ri'`; placed 6.7.14 repair 4). This is the ARGUMENT side of the same class — one helper (a fn index ->
 its source spelling) fixes both; integration may fold this file into that one.

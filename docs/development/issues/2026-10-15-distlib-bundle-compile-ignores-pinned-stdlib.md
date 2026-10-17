@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 stdlib lane's CLI and on the slot-open (7f57e532) CLI:
 pre-existing, independent of the lane's ws fix.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.12 stdlib lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane, wave 2, unit L4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — reached when the CLI runs with `CYRIUS_RESOLVED=1` (no re-exec into `versions/<pin>/bin/cyrius`)
 and the manifest's `cyrius =` pin differs from the CLI's VERSION: the hermetic gates' setup, or a store missing the
 pinned slot's binaries. It fails closed (rc 1) when the CLI's own slot is absent; when both slots exist, both checks

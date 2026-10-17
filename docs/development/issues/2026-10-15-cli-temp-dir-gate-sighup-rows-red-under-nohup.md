@@ -4,7 +4,7 @@
 tree (l6713-tools @ 63bbec3f, cbt-only changes that do not touch cbt/sigclean.cyr) reported `FAIL
 tests/gates/toolchain/cli_temp_dir_no_leak.sh` — 3 rows; the same gate run from a plain shell on the same tree a minute
 later: PASS.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a gate defect, not a CLI one: a release-gate or check.sh run started under `nohup` (or from any
 parent that ignores SIGHUP) goes RED with no defect behind it, and the row text points at the kill handler, which is
 where a diagnosis would go first.

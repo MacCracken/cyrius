@@ -4,7 +4,7 @@
 inline-`Str` issue never probed (issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md: "`Result` /
 `Option` / `Tagged` (the other by-name types) were not probed"). Measured on the lane tree after D7 (1) and on its
 base (44ab2052), x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean and faults (or reads through the first field) on every target; the names are
 plausible user struct names.
 **Kind:** language — the stdlib's `Result` / `Option` (lib/result.cyr, lib/tagged.cyr) are `: stack` ENUMS, not

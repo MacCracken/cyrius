@@ -4,7 +4,7 @@
 issues/archived/2026-10-15-aarch64-linux-cli-win-writes-aarch64-elf-and-aarch64-selectors-need-cross-compiler.md; measured
 under qemu-aarch64 with the aarch64 Linux CLI cross-built from the lane's tree (l6713-tools @ e892f018) and from its
 base (b13d3598): the same result on both.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane; filed from the 6.7.13 tools lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (tools lane, wave 1, unit T1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — the arch axis of a dep's `target` key answers for the WRONG arch on an aarch64 Linux host: a
 dependency declared for aarch64 is silently not vendored (its symbols then undefined at the build), and one declared
 for x86_64 is vendored and prepended into an aarch64 build. No error, rc 0.

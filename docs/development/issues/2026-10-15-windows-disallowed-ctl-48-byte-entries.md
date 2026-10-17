@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on cass (Windows 10, CTL sequence 01dc1e14133124bf, ThisUpdate
 2025-09-04) while fixing 2026-10-08-windows-trust-store-parity-gaps item 2 in the 6.7.12 windows lane (unit W3).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D57 — Apply now, marked unconfirmed.
 **Severity:** Low — Windows only; the native client trusts up to six certificates (or keys) Windows' chain engine
 distrusts. Fail-open in the "trusts more than Windows" direction, the same direction as before 6.7.12 for the whole
 CTL.

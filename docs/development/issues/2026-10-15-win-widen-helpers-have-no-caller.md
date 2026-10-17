@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — found by the 6.7.12 windows lane (W2, 1a7aa2ff) and its review (2026-10-15). Kept by the
 lane: removing a stdlib fn changes what compiles for anyone calling it, which is the user's call.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (windows lane; filed from the 6.7.12 windows lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D56 — Remove both.
 **Severity:** Low — dead code (input for the closeout's dead-code pass); no behaviour is wrong.
 **Affects:** `lib/syscalls_windows.cyr` `_win_widen_n` (:647) and `_win_widen` (:703), and the comment above them.
 

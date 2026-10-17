@@ -1,7 +1,7 @@
 # `g<f64v2>(b)` with `fn g<T>(p: *T)` reports a second error from D27's refusal (naming the instance `g$i`) after the type-argument refusal — a cascade — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.12 fixfirst lane (x86_64; frontend, every target alike): two error lines where the slot-open compiler (`7f57e532`) printed one. A diagnostic cascade D27 (`2026-10-13-vector-value-into-pointer-parameter-passes-lane-bits.md`) introduced.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-15, the review of the 6.7.12 fixfirst lane.
 **Severity:** Low — a second, misleading error on input already refused (no binary either way).
 **Kind:** bug (diagnostic).

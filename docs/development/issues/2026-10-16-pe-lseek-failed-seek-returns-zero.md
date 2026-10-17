@@ -4,7 +4,7 @@
 cass for issues/archived/2026-10-15-xflock-windows-relock-drops-the-lock-first.md (built against the lane's tree, l6713-stdlib
 from f59668ad): six patra rows fail on Windows only, with the 6.7.12 lib and with the fixed one alike. Measured with the
 probe below under wine and on cass (Windows 11, `C:\cyrius-tests`).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (stdlib lane; filed from the 6.7.13 stdlib lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (platform lane, wave 1, unit P1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — a seek that FAILED reads as a successful seek to offset 0. Every `xlseek(...) < 0` test on
 Windows is dead, and since a failed `SetFilePointerEx` leaves the file pointer where it was, the caller's next
 `write` lands at the OLD position: silent misplaced writes. patra's WAL replay of a record naming an unseekable page

@@ -6,9 +6,8 @@
 refused "unknown type 'Nonexist' as a type argument". Spelled `slice<u8>` (the built-in slice's word form) the same
 program also builds and exits 11, although 6.7.8 refuses the `[u8]` spelling there by name. The installed 6.6.20,
 6.7.0, 6.7.5 and 6.7.7 compilers build the repro and exit 11 too.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane; re-placed at the 6.7.12 open, 2026-10-15) — never 7.x.
-(roadmap.md § *The releases after 6.7.7*) — placed 2026-10-10 — never 7.x (the fix is the user's call, asked at
-that release's open: programs that compile today are refused).
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (generics lane, wave 1, unit G3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D2 — (a); D3 — (a).
 **Discovered:** 2026-10-10 by the 6.7.8 C2 lane, bite C2-6a (slices refused as type arguments; gate row K3 in
 `tests/gates/frontend/slice_position_refused.sh` pins `g<slice<u8>>(0)` compiling, "reported, unchanged").
 **Severity:** Medium — a misspelled or unknown type compiles silently and the code runs at the wrong type (8-byte

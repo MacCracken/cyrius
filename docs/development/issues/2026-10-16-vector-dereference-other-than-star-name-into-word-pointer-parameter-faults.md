@@ -5,7 +5,7 @@ structs lane's D9 (a) in): each repro below compiles with no diagnostic and faul
 139, aarch64 (qemu) 139, cx 253 (a guest fault), PE (wine) 5. The same arguments into an address-passed `p: *Pt` are
 refused by name on all five (`cannot pass '*ppb' to a parameter that is not a pointer to its vector type in a call to
 'rp'`), as is `ri(*pb)` itself.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V3; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean and faults on every target, no diagnostic.
 **Kind:** bug — D31 A (the user, 2026-10-15: every vector value into a pointer of another kind is refused by name)
 already decides it; the not-address-passed arm recognises only one spelling of the dereference.

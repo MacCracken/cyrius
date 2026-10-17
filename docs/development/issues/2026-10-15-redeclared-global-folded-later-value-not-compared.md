@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-15 by the 6.7.12 fixfirst lane (unit X2) while landing D30 (a prior `= 0` is
 compared), measured on the lane tree (01a77b61, x86_64; frontend, every target alike).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane; filed from the 6.7.12 fixfirst lane, placed at the 6.7.12 integration, 2026-10-15) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a diagnostic gap (the program's value is right: the last definition wins); it is the same class as
 the D30 gap (two files' same-name globals merging unseen) for a later constant spelled as an expression.
 **Kind:** bug (diagnostic).

@@ -4,7 +4,8 @@
 D7 (1) (an inline `Str` is its header's address wherever a `Str` value is taken,
 issues/archived/2026-10-12-inline-str-local-passed-to-str-param-wrong-value.md). Measured on the lane tree after that bite
 (x86_64; the positions are frontend shapes, the same on every target).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D18 — (c).
 **Severity:** Medium — silent: the callee reads the string's bytes as the header (`h.eq(t)` 0 where 1 is right).
 **Kind:** language (decision) — D7 (1) covers the positions that take a `Str` VALUE (a `Str` / `*Str` parameter, a
 `Str` declaration, an assignment into a `Str` handle; refusals for `return t;` from a `: Str` fn and stores into a

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — a decision (refuse, or document). Found 2026-10-16 by the 6.7.13 structs lane's review
 (unit i11, probe s20), re-measured by the lane's fix step on the lane tree after the review fixes (95516c2f).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D23 — (b).
 **Severity:** Medium — silent: a read through a dead frame, whose value depends on what the stack held (7 by luck on
 three targets here, 0 on aarch64).
 **Kind:** language (decision) — beyond D7 (1)'s filed surface (issues/2026-10-12-inline-str-local-passed-to-str-param-

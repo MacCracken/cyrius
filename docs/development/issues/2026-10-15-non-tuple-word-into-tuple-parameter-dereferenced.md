@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-15 on the 6.7.13 multivalue lane (l6713-multivalue at ade43caa, the
 review-fix step) and on the lane base b13d3598: identical, every case crashing on x86_64 / aarch64 (qemu) / cx
 (cxvm) / PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (multivalue lane; filed from the 6.7.13 multivalue lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean and crashes at run time (x86_64 / aarch64 SIGSEGV 139, cx guest error 1, PE
 access violation 5), or reads memory through a small integer.
 **Kind:** language — a decision for the user: whether an untyped word may pass as a tuple's address. The source says

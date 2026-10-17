@@ -4,7 +4,8 @@
 issues/archived/2026-10-15-struct-into-vector-pointer-parameter-accepted.md): the repro compiles with no diagnostic and exits 42
 on x86_64, x86_64 `CYRIUS_IR=3`, aarch64 (qemu), cx and PE (wine) — `rd` reads the field's struct bytes as an `f64v2`.
 The lane base (before D33) gives the same 42 on all five.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V4; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D34 — A.
 **Severity:** Low — no fault (the address is a real object's); a type mismatch D33 names for every other struct source.
 **Kind:** language — beyond D33's filed surface (a local, a call result, `*ps`, a global, a capture), so not absorbed:
 D33 A ("refuse by name") would cover it if the user reads a field as one of its sources.

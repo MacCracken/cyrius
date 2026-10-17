@@ -1,7 +1,7 @@
 # On PE a struct local passed to a value-form vector parameter (`lanes(p)`, `p: Pt`, `fn lanes(x: f64v2)`) is passed — the callee reads the struct's bytes as the vector — where x86_64 / aarch64 / cx refuse it — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V2) and on its base compiler (V1) alike.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — no fault (the address is a real object's); a type mismatch PE does not name where the other three
 refuse it by name.
 **Affects:** PE only; every value-form vector parameter.

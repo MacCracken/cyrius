@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.13 receives fix step on the lane tree (l6713-receives at
 360a6d05): identical on x86_64, aarch64 (qemu), cx (cxvm), PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives lane; filed from the 6.7.13 receives review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (receives + multi-value lane, wave 2, unit R2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Low — a valid statement is refused with a parse error that does not name the rule; no wrong code.
 **Discovered:** 2026-10-16, the receives lane's review of the D16 bite (5a73a702 + 389e715d, issues/
 archived/2026-10-13-field-of-indirect-call-struct-result.md). D16's filed surface is READING `.field` / `.method(..)` of a

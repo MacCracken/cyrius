@@ -5,7 +5,8 @@ on x86_64, x86_64 `CYRIUS_IR=3`, aarch64, cx and PE (`a value-form vector argume
 a call declared to return it (..) - got `b``). At the lane open (f59668ad) it was refused on the four SysV / AAPCS64 /
 cx legs ("value-form SIMD arg: IDENT not found as a local") and RAN on PE (42: the capture's address is what Win64's
 by-pointer parameter takes); the D30 bite (5a6bd79b, `_sarg_pe_vword`) made PE refuse it as the other four do.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D31 — A.
 **Severity:** Low — a refusal by name on every target, no wrong value; the workaround is to copy the capture into a
 local inside the closure (`var c = |k| { var w: f64v2 = b; return lanes(w) + k; }`).
 **Kind:** language (decision) — D32 A (the user, 2026-10-15) gave a captured vector the LOCAL's rules for pointer

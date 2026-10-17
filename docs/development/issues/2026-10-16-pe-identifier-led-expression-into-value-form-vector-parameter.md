@@ -4,7 +4,7 @@
 the lane base (`f59668ad`, `build/cycc` 2,270,008 B): refused on x86_64 / aarch64 / cx, compiles on PE (both
 compilers) and exits 5 under wine. Pre-existing; D30's `_sarg_pe_vword` (which refuses a word there since this
 release) never sees this shape.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors review, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V1; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.13 vectors lane's review-fix step (probing the PE one-line fix beside
 `lanes(nosuch)`).
 **Related:** /home/macro/.cache/c6/6713_staging/vectors/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md

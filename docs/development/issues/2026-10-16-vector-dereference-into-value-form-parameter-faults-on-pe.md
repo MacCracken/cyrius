@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.13 vectors lane (unit V2, after D30's bite) and on its base
 compiler (V1) alike.
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane; filed from the 6.7.13 vectors lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (vectors lane, wave 3, unit V2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Decision (user, 2026-10-16, at the 6.7.14 open):** D32 — A.
 **Severity:** Medium — PE compiles valid-looking source to a crash with no diagnostic; the other targets refuse it.
 **Affects:** PE (the crash); x86_64 / aarch64 / cx (refused); every value-form vector parameter.
 **Discovered:** 2026-10-16, the vectors lane (V2). D30's PE parity arm (`_sarg_pe_vword`, parse_fn.cyr) refuses a WORD

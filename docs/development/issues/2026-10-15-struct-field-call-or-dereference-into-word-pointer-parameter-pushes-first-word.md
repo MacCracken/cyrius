@@ -4,7 +4,7 @@
 (issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md: a struct NAME — an inline local, a
 by-value parameter, a value global, a capture — into a `*T` whose T is no struct is refused by name). Measured on the
 lane tree after that bite, x86_64 / aarch64 (qemu) / cx (cxvm) / PE (wine).
-**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane; filed from the 6.7.13 structs lane, placed at the 6.7.13 integration, 2026-10-16) — never 7.x.
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (structs lane, wave 2, unit S2; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
 **Severity:** Medium — compiles clean and faults (or reads through whatever the first field holds), no diagnostic.
 **Kind:** language — D5 (a)'s rule ("a struct value into a pointer of another kind is refused by name") stated for
 the name shapes the filing listed; whether it reaches the other struct VALUE shapes (a field, a call, a method /
