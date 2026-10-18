@@ -10,11 +10,13 @@
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
 #   translates read/write/open (0/1/2), serves getrandom/clock_gettime (318/228) through the
 #   host's stdlib and brk (12) in guest space (6.7.14), and serves a short list of SCALAR-ONLY
-#   calls (close, lseek, exit, getpid, kill, fork, fsync … — _cx_host_sys) through the host's
-#   own stdlib wrappers (6.7.15; until then they went to the host as the guest's raw number, which
-#   the aarch64 and Mach-O hosts renumbered into other calls), so running an untrusted .cyx ==
-#   running a native binary with cxvm's privileges over those calls. Every other number answers
-#   -ENOSYS (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
+#   calls (close, lseek, exit, getpid, kill, fork, fsync … — _cx_host_sys) and the PATH calls
+#   mkdir / rmdir / unlink / rename / symlink / readlink / stat (their paths and buffers
+#   translated like open's) through the host's own stdlib wrappers (6.7.15; until then the scalar
+#   calls went to the host as the guest's raw number, which the aarch64 and Mach-O hosts renumbered
+#   into other calls, and the path calls answered -38), so running an untrusted .cyx == running a
+#   native binary with cxvm's privileges over those calls. Every other number answers -ENOSYS
+#   (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
 #   width, the translated syscall buffers likewise (-EFAULT, as Linux answers), the data and
@@ -304,8 +306,8 @@ fn _cx_guest_brk(addr): i64 {
 # macOS kill ran lseek and getppid / dup / lseek / getuid / sched_yield / exit_group died of SIGSYS;
 # on both Macs open's Linux flag bits read as other Darwin flags. getrandom and clock_gettime have
 # been host-served for the same reason since 6.6.8.
-# Every argument of a call listed here is a scalar (an fd, pid, id, flag or length) or a buffer op
-# 0x70 has already checked and translated, so no guest address reaches the host. A call the host
+# Every argument of a call listed here is a scalar (an fd, pid, id, flag or length) or a path or
+# buffer op 0x70 has already checked and translated, so no guest address reaches the host. A call the host
 # has no route for answers -ENOSYS (-38), 6.7.14's D55 answer for every number nothing here names:
 # socket, listen, unshare, timerfd_create and epoll_create1 off Linux (their arguments are Linux's),
 # and on Windows every call whose PE peer is a stub (getppid, kill, dup, dup2, flock, fchmod, fchown,
@@ -327,7 +329,68 @@ fn _cx_host_sys(sn, a, b, c): i64 {
     if (sn == 75) { return sys_fdatasync(a); }
     if (sn == 77) { return sys_ftruncate(a, b); }
     if (sn == 72) { return _cx_host_fcntl(a, b, c); }
+    if (sn == 83) { return sys_mkdir(a, b); }
+    if (sn == 84) { return sys_rmdir(a); }
+    if (sn == 87) { return sys_unlink(a); }
+    if (sn == 82) { return sys_rename(a, b); }
+    if (sn == 88) { return sys_symlink(a, b); }
+    if (sn == 89) { return _cx_host_readlink(a, b, c); }
+    if (sn == 4) { return _cx_host_stat(a, b); }
     return _cx_host_posix(sn, a, b, c);
+}
+
+# readlink(path, buf, n): Windows has no readlink route (lib/io.cyr's xreadlink answers -1 there).
+fn _cx_host_readlink(path, buf, n): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 38;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return sys_readlink(path, buf, n);
+    #endif
+}
+
+# stat(path, buf) for the guest, whose struct stat is x86_64 Linux's (144 bytes: st_nlink @16 (8 B),
+# st_mode @24, st_uid @28, st_gid @32, st_size @48, st_mtime @88, its nsec @96). On an x86_64 Linux
+# host that IS the host's struct, filled by the kernel as it is. Every other host fills its own
+# (aarch64 Linux's generic layout puts st_mode @16; Darwin's st_mode is 16-bit, @8 on x86_64 and @4
+# on arm64), so it is read into a host buffer through the host peer's Stat names, and the fields
+# those name — mode, nlink, uid, gid, size, mtime and its nsec — are written at the x86 offsets,
+# every other byte 0. Windows has no stat route (lib/io.cyr's xstat answers -1 there).
+fn _cx_host_stat(path, gbuf): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 38;
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    return sys_stat(path, gbuf);
+    #endif
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    if (gbuf == 0) { return 0 - 14; }               # -EFAULT, as Linux answers a null buffer
+    var hs[256];
+    var r = sys_stat(path, &hs);
+    if (r < 0) { return r; }
+    var i = 0;
+    while (i < 144) { store64(gbuf + i, 0); i = i + 8; }
+    store64(gbuf + 16, _cx_hs_narrow(&hs + STAT_NLINK));
+    store32(gbuf + 24, _cx_hs_narrow(&hs + STAT_MODE));
+    store32(gbuf + 28, load32(&hs + STAT_UID));
+    store32(gbuf + 32, load32(&hs + STAT_GID));
+    store64(gbuf + 48, load64(&hs + STAT_SIZE));
+    store64(gbuf + 88, load64(&hs + STAT_MTIME));
+    store64(gbuf + 96, load64(&hs + STAT_MTIME_NSEC));
+    return 0;
+    #endif
+}
+
+# st_mode / st_nlink of the host's struct stat: 16-bit on Darwin, 32-bit on aarch64 Linux.
+fn _cx_hs_narrow(p): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return load16(p);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return load32(p);
+    #endif
 }
 
 # The listed calls a POSIX host serves and Windows does not.
@@ -692,6 +755,24 @@ fn cx_run(code, code_len): i64 {
             elif (sn == 2) { sfault = _cx_syspath(s2, &sx); s2 = load64(&sx); }
             elif (sn == 318) { sfault = _cx_sysbuf(s2, s3, &sx); s2 = load64(&sx); }
             elif (sn == 228) { sfault = _cx_sysbuf(s3, 16, &sx); s3 = load64(&sx); }
+            # 6.7.15: the path calls, served through the host's own wrappers like every listed
+            # call — mkdir(83) / rmdir(84) / unlink(87) = (path, …) → s2; rename(82) /
+            # symlink(88) = (path, path) → s2 and s3; readlink(89) = (path, buf, n) → s2 and the
+            # n-byte s3; stat(4) = (path, buf) → s2 and the 144-byte struct at s3, which
+            # _cx_host_stat fills in x86-Linux layout. Until 6.7.15 each answered -38 (6.7.14's
+            # D55; before it, the host's -EFAULT for a raw guest offset), so xmkdir / xsymlink /
+            # file_write_atomic failed on cx. CHANGELOG [6.7.15]
+            elif (sn == 83 || sn == 84 || sn == 87) { sfault = _cx_syspath(s2, &sx); s2 = load64(&sx); }
+            elif (sn == 82 || sn == 88) {
+                sfault = _cx_syspath(s2, &sx); s2 = load64(&sx);
+                if (sfault == 0) { sfault = _cx_syspath(s3, &sx); s3 = load64(&sx); }
+            }
+            elif (sn == 89 || sn == 4) {
+                var sn_n = s4;
+                if (sn == 4) { sn_n = 144; }
+                sfault = _cx_syspath(s2, &sx); s2 = load64(&sx);
+                if (sfault == 0) { sfault = _cx_sysbuf(s3, sn_n, &sx); s3 = load64(&sx); }
+            }
             # --- dispatch: getrandom and clock_gettime are served by the host's stdlib
             # (_cx_host_getrandom / _cx_host_clock_gettime, v6.6.8), brk in guest space
             # (6.7.14), and every other number by _cx_host_sys: the host's own wrapper for

@@ -19,9 +19,9 @@
 #   R1  the filed munmap repro verbatim: cx prints "after munmap" and exits 38 (it was 139)
 #   R2  `var r = syscall(5, 1, 6291712); syscall(60, 100 + r);` on cx: 62 (it was 100)
 #   R3  the same fstat at guest 0x700000: 62 (it was 86)
-#   R4  every pointer-taking call answers exactly -38 on cx, through the stdlib wrapper where there
-#       is one (a bitmask; 0 = all): cyr_munmap, cyr_mprotect, sys_stat, sys_statfs (the yukti
-#       crossos file's cx statfs arm is this answer), sys_nanosleep, sys_mkdir, a raw mmap(9), a raw
+#   R4  every untranslated pointer-taking call answers exactly -38 on cx, through the stdlib wrapper
+#       where there is one (a bitmask; 0 = all): cyr_munmap, cyr_mprotect, sys_lstat, sys_statfs (the
+#       yukti crossos file's cx statfs arm is this answer), sys_nanosleep, sys_chmod, a raw mmap(9), a raw
 #       uname(63), wait4(61) with a null status, futex(202), and fcntl(fd, F_GETLK, buf) — fcntl
 #       passes only its scalar commands
 #   R5  the scalar-only controls give the HOST's answer on both legs (a bitmask; 0 = all):
@@ -30,6 +30,12 @@
 #       uid_identity rows of cx_auto_call_main.sh)
 #   R6  the translated / served calls still work on both legs: open + write + lseek + read back a
 #       file in the cwd, close, getrandom(16) == 16, clock_gettime(REALTIME) == 0 with tv_sec > 0
+#   R7  (6.7.15; issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) the path
+#       calls are served on both legs: mkdir, stat (S_IFDIR / S_IFREG, st_size, st_mtime at the x86
+#       offsets), symlink, readlink, rename, unlink (raw and the stdlib's sys_unlink), rmdir
+#   R8  (6.7.15) on cx a path or buffer outside the guest answers -EFAULT without reaching the host:
+#       mkdir at the null page, stat's / readlink's buffer past the segment, rename's second path
+#   (R4 named stat and mkdir among the -38 calls until 6.7.15; lstat and chmod stand there now)
 # Anti-vacuous: R1-R3 are the filed values (each was something else before); R5 runs natively as its
 # oracle and fails if the dispatch refused a listed call; R4 bit 1024 fails if the fcntl command
 # check passed a lock command to the host (-9 from the bad fd, not -38).
@@ -42,6 +48,10 @@
 #       getppid, kill, dup, flock answered -38)
 #   MU3 `_cx_host_fcntl` passing every command (its closing -38 -> `sys_fcntl(fd, cmd, arg)`) -> RED 1:
 #       R4 cx (bit 1024: F_GETLK on a bad fd answered -9 from the host)
+# MUTATION LEDGER (6.7.15, the path calls; the real tree green 11/11):
+#   MP1 the cxvm before the path calls (every path call -38) -> RED 2: R7 cx (exit 255), R8 (exit 15:
+#       -38 where -14 is due)
+#   MP2 lib/syscalls_x86_64_linux.cyr's 6.7.12 cx arm in sys_unlink restored -> RED 1: R7 cx (exit 64)
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and — unless CYCC_CX is set — the cx
 # compiler from THIS tree's src/main_cx.cyr, and cxvm from programs/cxvm.cyr (CXVM overrides it).
@@ -136,10 +146,10 @@ store64(&ts + 8, 1000);
 var bad = 0;
 if (cyr_munmap(4194304, 65536) != 0 - 38) { bad = bad | 1; }
 if (cyr_mprotect(4194304, 4096, 1) != 0 - 38) { bad = bad | 2; }
-if (sys_stat(".", &buf) != 0 - 38) { bad = bad | 4; }
+if (sys_lstat(".", &buf) != 0 - 38) { bad = bad | 4; }
 if (sys_statfs(".", &buf) != 0 - 38) { bad = bad | 8; }
 if (sys_nanosleep(&ts, 0) != 0 - 38) { bad = bad | 16; }
-if (sys_mkdir("_cx_r4_never", 448) != 0 - 38) { bad = bad | 32; }
+if (sys_chmod("_cx_r4_never", 448) != 0 - 38) { bad = bad | 32; }
 if (syscall(9, 0, 4096, 3, 34, 0 - 1) != 0 - 38) { bad = bad | 64; }
 if (syscall(63, &buf) != 0 - 38) { bad = bad | 128; }
 if (syscall(61, 0 - 1, 0, 1, 0) != 0 - 38) { bad = bad | 256; }
@@ -152,9 +162,9 @@ echo 'syscall(60, bad & 255);' >> "$T/r4.cyr"
 echo 'syscall(60, bad >> 8);' >> "$T/r4h.cyr"
 build_run cx "$T/r4.cyr" "$T/r4.c.out"; lo=$RC
 build_run cx "$T/r4h.cyr" "$T/r4h.c.out"; hi=$RC
-if [ "$lo" = 0 ] && [ "$hi" = 0 ] && ! grep -q '^cxvm:' "$T/r4.c.out" "$T/r4h.c.out" && [ ! -e "$T/_cx_r4_never" ]; then
-    ok "R4 (cx): munmap, mprotect, stat, statfs, nanosleep, mkdir, mmap, uname, wait4, futex and fcntl(F_GETLK) each answer -38 (no directory made)"
-else bad "R4 (cx): low bits $lo, high bits $hi (1 munmap, 2 mprotect, 4 stat, 8 statfs, 16 nanosleep, 32 mkdir, 64 mmap, 128 uname; high: 1 wait4, 2 futex, 4 fcntl F_GETLK) $(grep -m1 '^cxvm:' "$T/r4.c.out" "$T/r4h.c.out")"; fi
+if [ "$lo" = 0 ] && [ "$hi" = 0 ] && ! grep -q '^cxvm:' "$T/r4.c.out" "$T/r4h.c.out"; then
+    ok "R4 (cx): munmap, mprotect, lstat, statfs, nanosleep, chmod, mmap, uname, wait4, futex and fcntl(F_GETLK) each answer -38"
+else bad "R4 (cx): low bits $lo, high bits $hi (1 munmap, 2 mprotect, 4 lstat, 8 statfs, 16 nanosleep, 32 chmod, 64 mmap, 128 uname; high: 1 wait4, 2 futex, 4 fcntl F_GETLK) $(grep -m1 '^cxvm:' "$T/r4.c.out" "$T/r4h.c.out")"; fi
 
 # R5 the scalar-only controls: the host's answer on both legs.
 cat > "$T/r5.cyr" <<'EOF'
@@ -192,7 +202,51 @@ syscall(60, bad);
 EOF
 rm -f "$T/_cx_r6.bin"; bothrow r6 0 "R6 open / write / lseek / read / close, getrandom and clock_gettime work"
 
-WANT=8
+# R7 the path calls are served (6.7.15): mkdir, stat (a directory, then a 7-byte file: S_IFDIR /
+# S_IFREG, st_size, st_mtime in the guest's x86-Linux struct), symlink, readlink, rename, unlink —
+# raw, and through the stdlib's sys_unlink, whose cx arm answered -38 from 6.7.12 — and rmdir.
+cat > "$T/r7.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+var bad = 0;
+syscall(87, "_cx_r7_l");
+syscall(87, "_cx_r7_f");
+syscall(87, "_cx_r7_g");
+syscall(84, "_cx_r7_d");
+if (syscall(83, "_cx_r7_d", 448) != 0) { bad = bad | 1; }
+var st[144];
+if (syscall(4, "_cx_r7_d", &st) != 0) { bad = bad | 2; }
+if ((load32(&st + 24) & 61440) != 16384) { bad = bad | 2; }
+var fd = syscall(2, "_cx_r7_f", 577, 420);
+syscall(1, fd, "cx-r7-x", 7);
+syscall(3, fd);
+if (syscall(4, "_cx_r7_f", &st) != 0) { bad = bad | 4; }
+if ((load32(&st + 24) & 61440) != 32768) { bad = bad | 4; }
+if (load64(&st + 48) != 7 || load64(&st + 88) <= 0) { bad = bad | 4; }
+if (syscall(88, "_cx_r7_f", "_cx_r7_l") != 0) { bad = bad | 8; }
+var lb[32];
+if (syscall(89, "_cx_r7_l", &lb, 32) != 8) { bad = bad | 16; }
+if (load8(&lb + 7) != 102) { bad = bad | 16; }
+if (syscall(82, "_cx_r7_f", "_cx_r7_g") != 0) { bad = bad | 32; }
+if (syscall(87, "_cx_r7_l") != 0 || sys_unlink("_cx_r7_g") != 0) { bad = bad | 64; }
+if (syscall(84, "_cx_r7_d") != 0) { bad = bad | 128; }
+syscall(60, bad);
+EOF
+bothrow r7 0 "R7 mkdir, stat (mode, size, mtime at the x86-Linux offsets), symlink, readlink, rename, unlink, rmdir work"
+
+# R8 a path call's path or buffer that leaves the guest segment answers -EFAULT without reaching
+# the host (a bitmask; 0 = all): mkdir at the null page, stat's 144-byte buffer and readlink's
+# buffer past the segment's end, rename's second path at the null page.
+cat > "$T/r8.cyr" <<'EOF'
+var bad = 0;
+if (syscall(83, 4, 448) != 0 - 14) { bad = bad | 1; }
+if (syscall(4, ".", 8388600) != 0 - 14) { bad = bad | 2; }
+if (syscall(89, ".", 8388600, 64) != 0 - 14) { bad = bad | 4; }
+if (syscall(82, "_cx_r8_never", 4) != 0 - 14) { bad = bad | 8; }
+syscall(60, bad);
+EOF
+cxrow r8 0 "" "R8 mkdir / stat / readlink / rename with a path or buffer outside the guest answer -14"
+
+WANT=11
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
 echo "PASS: $G — $pass/$WANT rows: cxvm answers a guest syscall it neither translates nor lists as scalar-only -38 without reaching the host (the filed munmap repro lives and exits 38, fstat into cxvm's data segment 62, every pointer-taking wrapper -38), the scalar-only calls and the translated ones keep the host's answer"

@@ -22,7 +22,11 @@
 # sees the child's pid and the child (which sees 0) writes its getpid() to a file the parent reads
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never
-# 0x20000), F_GETFD, F_DUPFD_CLOEXEC (FD_CLOEXEC set on the copy).
+# 0x20000), F_GETFD, F_DUPFD_CLOEXEC (FD_CLOEXEC set on the copy); the path calls (6.7.15,
+# issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
+# directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
+# fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
+# readlink -38, the rest served).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -44,6 +48,9 @@
 #   MU3 `_cx_host_fcntl`'s F_GETFL without `_cx_flags_back` -> RED 1: axis 3 (`lin=512`: arm64
 #       Linux reports its O_LARGEFILE 0x20000, which reads as x86's O_NOFOLLOW unmapped; Darwin's
 #       O_APPEND / O_NONBLOCK bits are held by the ecb / ach legs)
+#   MU4 `_cx_host_stat` without its st_mode store -> RED 1: axis 3 (`lin=1024`: the aarch64 host's
+#       struct is refilled at the x86 offsets, the x86 host's is the guest's own — Darwin's layouts
+#       are held by the ecb / ach legs)
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -184,5 +191,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags and fcntl's status flags give x86_64 Linux's answers on the x86 and aarch64 cxvm (Windows' on the PE one) — cxvm serves them through the host's own wrappers, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) give x86_64 Linux's answers on the x86 and aarch64 cxvm (Windows' on the PE one) — cxvm serves them through the host's own wrappers, not the guest's number"
 exit 0

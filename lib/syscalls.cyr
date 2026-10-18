@@ -84,11 +84,13 @@ include "lib/syscalls_x86_64_agnos.cyr"
 # write(1) / open(2) with pointer translation, getrandom(318) and clock_gettime(228) served
 # through the HOST's stdlib (6.6.8), brk(12) in guest space (6.7.14), and a short list of
 # scalar-only calls (close, lseek, exit, getpid, kill, fork, fcntl …) served through the
-# HOST's own wrappers with x86_64 Linux's answers (6.7.15). Every other number answers
-# -ENOSYS (-38) without reaching the host (6.7.14, D55), so a wrapper outside that set
-# compiles on cx and answers -38. docs/platform-status.md states the whole guest contract.
-# 6.7.12: sys_pipe / sys_fstat / sys_unlink refuse with -ENOSYS on cx and
-# lib/mmap.cyr's cyr_mmap with -1, rather than hand the host a guest offset. Before this arm
+# HOST's own wrappers with x86_64 Linux's answers (6.7.15), as are the path calls mkdir /
+# rmdir / unlink / rename / symlink / readlink / stat, their paths and buffers translated
+# (6.7.15). Every other number answers -ENOSYS (-38) without reaching the host (6.7.14, D55),
+# so a wrapper outside that set compiles on cx and answers -38. docs/platform-status.md states
+# the whole guest contract. 6.7.12: sys_pipe / sys_fstat refuse with -ENOSYS on cx (sys_unlink
+# too until 6.7.15) and lib/mmap.cyr's cyr_mmap with -1, rather than hand the host a guest
+# offset. Before this arm
 # the cx driver matched no target at all, so `sys_exit` (and every other
 # wrapper) was undefined and `lib/assert.cyr` could not compile for cx.
 #ifdef CYRIUS_TARGET_CX

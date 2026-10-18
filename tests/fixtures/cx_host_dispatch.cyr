@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise 1 + the lowest failing Linux row
-# (1..10). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
+# (1..11). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
 # and exit(3) follows it in case it returns.
 var lin = 0;
 var pe = 0;
@@ -114,6 +114,49 @@ fn _cxh_open(): i64 {
     return bad;
 }
 
+# The path calls (6.7.15; issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md):
+# mkdir, stat (the guest's struct stat is x86_64 Linux's, which cxvm fills from the host's: st_mode @24,
+# st_size @48, st_mtime @88), symlink, readlink, rename, unlink, rmdir. 0 the Linux answers, 1 the
+# Windows ones (stat and readlink -38: no PE route; the rest served), 2 neither.
+fn _cxh_paths(): i64 {
+    syscall(87, "cxh_l");
+    syscall(87, "cxh_p");
+    syscall(87, "cxh_g");
+    syscall(84, "cxh_d");
+    var mk = syscall(83, "cxh_d", 448);
+    var st[144];
+    var i = 0;
+    while (i < 144) { store64(&st + i, 0 - 1); i = i + 8; }
+    var sd = syscall(4, "cxh_d", &st);
+    var dmode = load32(&st + 24) & 61440;
+    var fd = syscall(2, "cxh_p", 577, 420);   # O_WRONLY | O_CREAT | O_TRUNC
+    syscall(1, fd, "cxh-pth", 7);
+    syscall(3, fd);
+    var sf = syscall(4, "cxh_p", &st);
+    var fmode = load32(&st + 24) & 61440;
+    var fsize = load64(&st + 48);
+    var fmt = load64(&st + 88);
+    var sl = syscall(88, "cxh_p", "cxh_l");
+    var lb[32];
+    var rl = syscall(89, "cxh_l", &lb, 32);
+    var rn = syscall(82, "cxh_p", "cxh_g");
+    var ul = syscall(87, "cxh_l");
+    var ug = syscall(87, "cxh_g");
+    var rd = syscall(84, "cxh_d");
+    var lin_ok = 1;
+    if (mk != 0 || sd != 0 || dmode != 16384) { lin_ok = 0; }        # S_IFDIR
+    if (sf != 0 || fmode != 32768 || fsize != 7) { lin_ok = 0; }     # S_IFREG, 7 bytes
+    if (fmt < 1000000000) { lin_ok = 0; }                            # a 2001+ mtime, in seconds
+    if (sl != 0 || rl != 5 || load8(&lb + 4) != 112) { lin_ok = 0; } # readlink: "cxh_p"
+    if (rn != 0 || ul != 0 || ug != 0 || rd != 0) { lin_ok = 0; }
+    if (lin_ok == 1) { return 0; }
+    var pe_ok = 1;
+    if (mk != 0 || sd != 0 - 38 || sf != 0 - 38 || rl != 0 - 38) { pe_ok = 0; }
+    if (sl != 0 || rn != 0 || ul != 0 || ug != 0 || rd != 0) { pe_ok = 0; }
+    if (pe_ok == 1) { return 1; }
+    return 2;
+}
+
 # fcntl's scalar commands, the status flags in Linux bits both ways: 0 the Linux answers, 1 every
 # command -38 (Windows has no fcntl), 2 neither.
 fn _cxh_fcntl(): i64 {
@@ -161,6 +204,8 @@ var op = _cxh_open();
 _cxh_row(256, op == 0, op == 0);
 var fc = _cxh_fcntl();
 _cxh_row(512, fc == 0, fc == 1);
+var ph = _cxh_paths();
+_cxh_row(1024, ph == 0, ph == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

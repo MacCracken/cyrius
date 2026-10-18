@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (66, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (74, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -105,6 +105,17 @@
 #       the refusal names the limit (4194304 B), the bytes emitted and the fn that reached it.
 #   R21 (6.7.12) a generated ~4.1 MB .cyx under the cap: native and cxvm each exit 241, and the .cyx
 #       must stay over 3 MiB (3 rows) — the region, cxvm's code cap and its guest memory all hold it.
+#   R22-R24 (6.7.15; issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md)
+#       tests/tcyr/crossos/pe_open_failure_errno.tcyr, open_flags_per_target.tcyr and
+#       atomic_write_temp_exclusive.tcyr — native and cxvm each print `<N> passed, 0 failed`, N
+#       derived per target from the source's #ifdef arms (n_tgt; floors 10 / 44 / 22 on each leg),
+#       each leg run from its own empty directory. On cx their xmkdir / xsymlink / is_symlink /
+#       file_write_atomic fixtures reached cxvm's -38 (6.7.14's D55; the host's -EFAULT before it):
+#       8 passed, 2 failed / 25 passed, 19 failed / 6 passed, 16 failed. cxvm translates the paths of
+#       mkdir / rmdir / unlink / rename / symlink / readlink / stat since 6.7.15.
+#   R25 (6.7.15, the same issue) the filed `file_write_atomic("wa_target.txt", "hello", 5)`, native and
+#       on cxvm, each from its own empty directory: it prints 0 and exits 0, wa_target.txt holds
+#       "hello", and no `.cyrtmp.` name is left (cx printed -38 and left wa_target.txt.cyrtmp.<pid>.1).
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -158,6 +169,11 @@
 #      exceeds cxvm's ... guest memory") and R21 cxvm (exit 1) RED, 64 green.
 #   l. the slot-open cycc_cx and cxvm (7f57e532's main_cx.cyr / cxvm.cyr) -> R19 cxvm, R20, R21 cxvm and
 #      R21's size row RED ("error: codebuf overflow" each), 62 green.
+#   m. (6.7.15, R22-R25; the real tree 74/74) the cxvm before the path calls (the host-dispatch commit's
+#      programs/cxvm.cyr: every path call -38) -> R22-R24 cxvm RED (8 / 25 / 6 passed) and R25 cxvm RED
+#      (-38, wa_target.txt.cyrtmp.<pid>.1 left), 70 green. lib/syscalls_x86_64_linux.cyr's cx arm in
+#      sys_unlink restored -> this gate stays 74/74 (no row here reads an unlink's answer, and R25's
+#      write succeeds before its cleanup unlink); cx_guest_syscall_refusal.sh R7 holds that arm.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -654,8 +670,61 @@ nb=$(wc -c < "$T/c.cyx" | tr -d ' ')
 if [ "$nb" -gt 3145728 ]; then ok "R21 the .cyx is $nb B (over 3 MiB: past the old region and cxvm's old caps)"
 else bad "R21 the .cyx is $nb B — the program no longer exercises the grown region (want > 3145728)"; fi
 
-WANT=66
+# ── R22-R25 — the path calls (6.7.15): the three crossos files whose fixtures need mkdir / symlink /
+# readlink / rename / unlink / stat, and the filed file_write_atomic. Each leg runs from its own empty
+# directory under $T (pe_open_failure_errno's fixtures are cwd-relative).
+# dirleg LEG BIN OUT — run BIN (native) or the .cyx BIN (cx) from a fresh $T/run; RC = its exit.
+dirleg() {
+    rm -rf "$T/run"; mkdir "$T/run"
+    RC=0
+    if [ "$1" = native ]; then (cd "$T/run" && timeout 120 "$2" > "$3" 2>&1) || RC=$?
+    else (cd "$T/run" && timeout 120 "$VM" < "$2" > "$3" 2>&1) || RC=$?; fi
+}
+n=21
+for f in pe_open_failure_errno:10 open_flags_per_target:44 atomic_write_temp_exclusive:22; do
+    n=$((n + 1)); src=tests/tcyr/crossos/${f%%:*}.tcyr; fl=${f##*:}
+    echo "R$n — $src (its fixtures need the path calls on cx; 6.7.15):"
+    w=$(n_tgt "$src" LINUX)
+    if [ "$w" -lt "$fl" ]; then bad "R$n native: only $w x86_64-Linux assertions in $src (floor $fl)"
+    elif "$CC" < "$src" > "$T/pn" 2> "$T/pne"; then
+        chmod +x "$T/pn"; dirleg native "$T/pn" "$T/pno"
+        summary "R$n $src native" "$T/pno" "$RC" "$w"
+    else bad "R$n native: does not compile: $(grep -m1 '^error' "$T/pne")"; fi
+    w=$(n_tgt "$src" CX)
+    if [ "$w" -lt "$fl" ]; then bad "R$n cxvm: only $w cx assertions in $src (floor $fl)"
+    elif "$CX" < "$src" > "$T/pc.cyx" 2> "$T/pce"; then
+        dirleg cx "$T/pc.cyx" "$T/pco"
+        summary "R$n $src cxvm" "$T/pco" "$RC" "$w"
+    else bad "R$n cxvm: cycc_cx does not compile it: $(grep -m1 '^error' "$T/pce")"; fi
+done
+echo "R25 — the filed file_write_atomic(\"wa_target.txt\", \"hello\", 5): 0, the bytes, no temp left (6.7.15):"
+cat > "$T/wa.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var r = file_write_atomic("wa_target.txt", "hello", 5);
+fmt_int(r);
+syscall(1, 1, "\n", 1);
+syscall(60, r);
+EOF
+for leg in native cx; do
+    if [ "$leg" = native ]; then "$CC" < "$T/wa.cyr" > "$T/wan" 2> "$T/wae"; chmod +x "$T/wan"; wb="$T/wan"
+    else "$CX" < "$T/wa.cyr" > "$T/wa.cyx" 2> "$T/wae"; wb="$T/wa.cyx"; fi
+    if [ ! -s "$wb" ]; then bad "R25 $leg: does not compile: $(grep -m1 '^error' "$T/wae")"; continue; fi
+    dirleg "$leg" "$wb" "$T/wao"
+    got=$(head -1 "$T/wao")
+    held=$(cat "$T/run/wa_target.txt" 2>/dev/null || true)
+    left=$(ls -A "$T/run" | grep -c '\.cyrtmp\.' || true)
+    if [ "$RC" = 0 ] && [ "$got" = 0 ] && [ "$held" = hello ] && [ "$left" = 0 ]; then
+        ok "R25 $leg: file_write_atomic answered 0, wa_target.txt holds 'hello', no .cyrtmp. name left"
+    else bad "R25 $leg: exit $RC, printed '$got', wa_target.txt holds '$held', $left .cyrtmp. name(s) left ($(ls -A "$T/run" | tr '\n' ' '))"; fi
+done
+
+WANT=74
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, and cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21), and the path-call files (pe_open_failure_errno, open_flags_per_target, atomic_write_temp_exclusive) and the filed file_write_atomic run on cxvm as natively (R22-R25)"
 exit 0
