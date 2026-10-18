@@ -311,14 +311,18 @@ fn _tok_hdr_end(S, a, k): i64 {
 # a declaration. A declaration is `var NAME`, or a param `(NAME` / `, NAME` in the header (before
 # the body `{` at token b). A `: T` annotation types it — for a param also `: *T`, whose `*` the
 # parameter loop skips (`_mark_ptr_param`); a `var p: *T` local is a plain pointer — and an untyped
-# `var` takes its initializer's struct (`_tok_init_sid`). `a` is the unit's first token.
+# `var` takes its initializer's struct (`_tok_init_sid`). `a` is the unit's first token. 6.7.15:
+# `_tds_ptr` 1 when the annotation is a pointer (`: *T`, a local's or a param's), for `_tok_ta_decl`.
+var _tds_ptr = 0;
 fn _tok_decl_sid(S, a, i, b): i64 {
+    _tds_ptr = 0;
     if (_tok_is_decl(S, i, b) == 0) { return 0 - 1; }
     var pt = TOKTYP(S, i - 1);
     var r = 0;
     var nt = TOKTYP(S, i + 1);
     if (nt == 49) {
         var at = i + 2;
+        if (TOKTYP(S, at) == 8) { _tds_ptr = 1; }
         if (pt != 3) { if (TOKTYP(S, at) == 8) { at = at + 1; } }
         if (TOKTYP(S, at) == 2) { r = FINDSTRUCT(S, TOKVAL(S, at)); }
     }
@@ -403,11 +407,112 @@ fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     if (pk == 0) { return _tok_gen_sc_sid(S, a, i, j, fi, (m >> (24 + w * 20)) & 0xFFFFF); }   # 6.7.8
     var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
-    if (TOKTYP(S, at) != 2) { return 0; }
+    return _tok_ta_arg(S, a, i, at, _ic_ptr_param(S, fi, pk - 1));
+}
+# ⛔ 6.7.15 — THE TOKEN BINDING FOLLOWS THE PARSER'S POINTER RULE (6.7.14's D8 (a), `_ic_arg`): the whole argument at
+# token at, through fi's carrying parameter — `p: *T` (`ptr` 1) or `x: T` — read as the parser binds it, from the
+# tokens. It read only a name or a whole call, the same through both shapes, so `var r = gd(&G); r.pick(t)` in a
+# generic was refused naming the stub method (the scan left `r` untyped: `gd(&G)` answered 0, so the forward of T into
+# `P_pick` was not seen and the generic's base was not a stub), as was a `var p: *P` local's `gd(p)`; and a
+# `pp: *S` PARAMETER answered S through `x: T`, where the parser binds no pointer. Through `p: *T`: `&name` of a struct
+# value (`_tok_ta_addr`), a name declared `*S` or a struct value, a field chain whose leaf is declared `*S`
+# (`_tok_ta_chain`), a call returning a struct or `*S` (`_tok_ta_call`); through `x: T`: a struct value, a whole
+# dereference `*p` of a name declared `*S` (6.7.15's D12 (a)), a call returning a struct; either, inside a whole-
+# argument wrap (D12). Anything else answers 0 — a missed flag, never a false one. CHANGELOG [6.7.15]
+fn _tok_ta_arg(S, a, i, at, ptr): i64 {
+    at = _pwrap_in(S, at);
+    if (at < 0) { return 0; }
+    var t = TOKTYP(S, at);
+    if (t == 27) { if (ptr == 1) { return _tok_ta_addr(S, a, i, at + 1); } return 0; }
+    if (t == 8) { if (ptr == 0) { return _tok_ta_deref(S, a, i, at + 1); } return 0; }
+    if (t != 2) { return 0; }
     var nt = TOKTYP(S, at + 1);
-    if (nt == 31 || nt == 11) { r = _tok_name_sid(S, a, i, TOKVAL(S, at)); }
-    elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_init_sid(S, a, i, at); } }
+    if (nt == 31 || nt == 11) { return _tok_ta_name(S, a, i, at, ptr); }
+    if (nt == 41) { if (ptr == 1) { return _tok_ta_chain(S, a, i, at); } return 0; }
+    if (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { return _tok_ta_call(S, a, i, at, ptr); } }
+    return 0;
+}
+# The struct the name `noff` is declared as, by scope from token i (`_tok_name_decl`): a local's or a parameter's
+# annotation (`: S`, `: *S` — a `var p: *S` local too) or an untyped `var`'s initializer (`_tok_decl_sid`), else a
+# global's (`_tok_ta_glob`); `_ttd_ptr` 1 when that is a pointer `*S`, 0 for a struct value. 0 = none.
+var _ttd_ptr = 0;
+fn _tok_ta_decl(S, a, i, noff): i64 {
+    _ttd_ptr = 0;
+    var d = _tok_name_decl(S, a, i, noff);
+    if (d < 0) { return _tok_ta_glob(S, noff); }
+    var r = _tok_decl_sid(S, a, d, _tok_hdr_end(S, a, i));
+    _ttd_ptr = _tds_ptr;
+    if (r == 0) { if (_tds_ptr == 1) { if (TOKTYP(S, d + 3) == 2) { r = FINDSTRUCT(S, TOKVAL(S, d + 3)); } } }
+    if (r < 0) { r = 0; }
     return r;
+}
+# A global's: a `*S` global's S (`_ttd_ptr` 1), else a struct value's (`_glob_name_sid`).
+fn _tok_ta_glob(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi >= 0) { if (_gv_ptr_sid(S, vi) > 0) {
+            _ttd_ptr = 1;
+            return _gv_ptr_sid(S, vi);
+        } }
+    return _glob_name_sid(S, noff);
+}
+# A name (the whole argument at token at): a struct value binds through either shape, a `*S` through `p: *T` only.
+fn _tok_ta_name(S, a, i, at, ptr): i64 {
+    var r = _tok_ta_decl(S, a, i, TOKVAL(S, at));
+    if (_ttd_ptr == 1) { if (ptr == 0) { return 0; } }
+    return r;
+}
+# `&name` (token at on the name, the whole operand) through `p: *T`: a struct VALUE's struct, as `_ic_addr` binds it —
+# a local or a by-value parameter, an inline global (GVPM 2); a pointer's `&p` is a `**`, and a `Str`, a tuple and a
+# dyn bind nothing (`_dx_plain`).
+fn _tok_ta_addr(S, a, i, at): i64 {
+    if (_gsc_name_end(S, at) == 0) { return 0; }
+    var r = _tok_ta_decl(S, a, i, TOKVAL(S, at));
+    if (r <= 0) { return 0; }
+    if (_ttd_ptr == 1) { return 0; }
+    if (_dx_plain(S, r) == 0) { return 0; }
+    if (_tok_name_decl(S, a, i, TOKVAL(S, at)) < 0) { if (GVPM(S, _findvar_core(S, TOKVAL(S, at))) != 2) { return 0; } }
+    return r;
+}
+# `*name` (token at on the name, the whole operand) through `x: T`: the struct a name declared `*S` points at.
+fn _tok_ta_deref(S, a, i, at): i64 {
+    if (_gsc_name_end(S, at) == 0) { return 0; }
+    var r = _tok_ta_decl(S, a, i, TOKVAL(S, at));
+    if (_ttd_ptr == 0) { return 0; }
+    return r;
+}
+# A whole field chain `x.f .. .p` at token at through `p: *T`: what its LEAF field declared `*S` points at, each hop
+# through an inline struct field or a `*T` field (`_gs_fld_sid`) from the head's struct, as `_gsc_chain` walks it.
+fn _tok_ta_chain(S, a, i, at): i64 {
+    var e = at + 1;
+    while (TOKTYP(S, e) == 41) {
+        if (TOKTYP(S, e + 1) != 2) { return 0; }
+        e = e + 2;
+    }
+    if (TOKTYP(S, e) != 31) { if (TOKTYP(S, e) != 11) { return 0; } }
+    var sid = _tok_ta_decl(S, a, i, TOKVAL(S, at));
+    var k = at + 2;
+    while (k < e - 1) {
+        if (sid <= 0) { return 0; }
+        sid = _gs_fld_sid(S, sid, TOKVAL(S, k));
+        k = k + 2;
+    }
+    if (sid <= 0) { return 0; }
+    var fx = FINDFIELD(S, sid - 1, TOKVAL(S, e - 1));
+    if (fx < 0) { return 0; }
+    return _fld_ptr_sid(S, sid - 1, fx);
+}
+# A whole call (token at): the struct it returns (`_tok_init_sid`: a generic's `: T` at this call), and through
+# `p: *T` what a `: *S` return points at (a fn that is not generic: a generic's binds at its instance, unread here).
+fn _tok_ta_call(S, a, i, at, ptr): i64 {
+    var r = _tok_init_sid(S, a, i, at);
+    if (r > 0) { return r; }
+    if (ptr == 0) { return 0; }
+    if (TOKTYP(S, at + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, at));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    return L64(_fn_rpsid + fi * 8);
 }
 # 1 = the call `name(..)` / `name<..>(..)` at token at is the whole argument (a `,` or `)` follows it).
 fn _tok_call_whole(S, at): i64 {

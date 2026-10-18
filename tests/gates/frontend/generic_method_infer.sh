@@ -48,6 +48,15 @@
 #      refusals, once each (x86_64): E5 `p.pick<i64>(9)` naming P_pick with the stub text, E6 `p.bm<i64>(3)` by
 #      the bound with one note naming `impl Show for i64`, E7 `p.id<Zork>(h)` "unknown type 'Zork' as a type
 #      argument". Filed: docs/development/issues/archived/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md
+#   P  (6.7.15) THE STUB SCAN'S TOKEN BINDING FOLLOWS THE PARSER'S POINTER RULE (6.7.14's D8 (a), and 6.7.15's D12 (a)
+#      spellings): `var r = gd(&GP0); return r.pick(t);` in a generic was refused naming the stub method P_pick (the
+#      scan answered 0 for `&GP0`, so `r` was untyped there and the forward of T into P_pick unseen). P0 the filed
+#      repro verbatim (docs/development/issues/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md) 44, P0c its
+#      control (o removed, o2 alone: the explicit spelling) 4, unchanged — every leg; P1 the `var pp: *P` local form 4 and, through `p: *T`, P2 a `*P` global,
+#      P3 `GW.p` / `w.p` / `wp.p` field chains, P4 a `: *P` call, P5 `(&GP0)` / `(pp)`, P6 `&l` of a struct local;
+#      through `x: T` P7 `gid(*pp)` and `gid((l))` — each 4 (each refused naming P_pick before) — x86_64; PX an
+#      `x: T` given a `pp: *P` PARAMETER binds no struct in the scan either: `o(5, &GP0)` meets the parser's own
+#      "no struct type in scope for 'r'" at `r.pick`, not a stub refusal naming o (the scan made o a stub) — x86_64
 #   T  tests/tcyr/crossos/generic_method_struct_arg.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -102,6 +111,14 @@
 #   ME6 `_ret_expr_head` without `x.m<..>(`         -> RED E2 (did not build: "a fn returning the 9-16 byte
 #                                                     struct `Pt` ..."), T (X8)
 #   ME7 `_stmt_dot_chain_call` without `.m<..>(`    -> RED E1 (the statements: "unknown field 'id'"), T (X13)
+# 6.7.15 (the P rows; 2026-10-18, CYCC= the mutant, so its x86_64 / IR / PE legs carry it):
+#   MT1 the fix reverted (the lane's previous compiler) -> RED P0 (refused naming P_pick), P1-P7 (each refused), PX
+#                                                         (the stub refusal naming o); P0c green
+#   MT2 `_tok_ta_arg` told `x: T` always (no shape)    -> RED P0, P1-P6 (refused); P7 / PX green
+#   MT3 `_tok_ta_name` binds a `*S` through `x: T`     -> RED PX (the stub refusal naming o)
+#   MT4 `_tok_ta_decl` without a `var p: *S` local      -> RED P1, P3c, P5b, P7a
+#   MT5 `_tok_ta_arg` without `_pwrap_in`              -> RED P5a, P5b, P7b
+#   MT6 `_tok_ta_arg` without its chain arm            -> RED P3a, P3b, P3c
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -526,6 +543,59 @@ if [ "$(grep -c 'needs `impl Show for i64`' "$D/E6.err")" -eq 1 ]; then ok "E6: 
 else bad "E6: not one note naming impl Show for i64: $(tr '\n' ' ' < "$D/E6.err")"; fi
 erow E7 'p.id<Zork>(h)' "unknown type 'Zork' as a type argument" "p.id<Zork>(h)"
 
+echo "P. the stub scan's token binding follows the parser's pointer rule (6.7.15)"
+# The filed repro, verbatim (the issue's text), and its control (o2 alone).
+cat > "$D/p0.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+fn gd<T>(x: *T): T { var t: T = *x; return t; }
+fn o<T>(t: T): i64 { var r = gd(&GP0); return r.pick(t); }
+fn o2<T>(t: T): i64 { var r = gd<P>(&GP0); return r.pick(t); }
+fn m(): i64 { var q = Q { 3, 4 }; return o(q) * 10 + o2(q); }
+syscall(60, m());
+X
+xr P0 "$D/p0.cyr" 44 "the filed repro, o(q) * 10 + o2(q)"
+sed -e 's/return o(q) \* 10 + o2(q);/return o2(q);/' -e '/^fn o<T>/d' "$D/p0.cyr" > "$D/p0c.cyr"
+xr P0c "$D/p0c.cyr" 4 "its control, o removed: o2(q) alone"
+PH='include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+struct W { p: *P; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+var GPP: *P = &GP0;
+var GW = W { &GP0 };
+fn mkp(): *P { return &GP0; }
+fn gd<T>(x: *T): T { var t: T = *x; return t; }
+fn gid<T>(x: T): T { return x; }'
+# prow <id> <body of the generic o<T>(t: T)> <what>: `o(q)` on a Q { 3, 4 } exits 4 (x86_64)
+prow() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { var q = Q { 3, 4 }; return o(q); }\nsyscall(60, m());\n' "$PH" "$2" > "$D/$1.cyr"
+    run_leg x86 "$D/$1.cyr" "$D/$1"
+    if [ "$RC" -eq -1 ]; then bad "$1: $3 did not build: $(grep -m1 'error' "$D/$1.err")"
+    elif [ "$RC" -eq 4 ]; then ok "$1: $3 exits 4"
+    else bad "$1: $3 exits $RC, want 4"; fi
+}
+prow P1 'var pp: *P = &GP0; var r = gd(pp); return r.pick(t);' "a \`var pp: *P\` local, gd(pp)"
+prow P2 'var r = gd(GPP); return r.pick(t);' "a \`*P\` global, gd(GPP)"
+prow P3a 'var r = gd(GW.p); return r.pick(t);' "gd(GW.p), a global's \`*P\` field"
+prow P3b 'var w = W { &GP0 }; var r = gd(w.p); return r.pick(t);' "gd(w.p), a local's \`*P\` field"
+prow P3c 'var wp: *W = &GW; var r = gd(wp.p); return r.pick(t);' "gd(wp.p) through a \`*W\`"
+prow P4 'var r = gd(mkp()); return r.pick(t);' "gd(mkp()), a \`: *P\` call"
+prow P5a 'var r = gd((&GP0)); return r.pick(t);' "gd((&GP0)), wrapped"
+prow P5b 'var pp: *P = &GP0; var r = gd((pp)); return r.pick(t);' "gd((pp)), wrapped"
+prow P6 'var l = P { 2 }; var r = gd(&l); return r.pick(t);' "gd(&l) of a struct local"
+prow P7a 'var pp: *P = &GP0; var r = gid(*pp); return r.pick(t);' "gid(*pp) through \`x: T\`"
+prow P7b 'var l = P { 2 }; var r = gid((l)); return r.pick(t);' "gid((l)) through \`x: T\`"
+printf '%s\nfn o<T>(t: T, pp: *P): i64 { var r = gid(pp); return r.pick(t); }\nfn m(): i64 { return o(5, &GP0); }\nsyscall(60, m());\n' "$PH" > "$D/px.cyr"
+erc=0; "$CC" < "$D/px.cyr" > "$D/px" 2> "$D/px.err" || erc=$?
+ne=$(grep -c '^error' "$D/px.err" || true)
+if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/px.err"; then ok "PX: gid(pp) with a \`pp: *P\` parameter binds no struct: the parser's own error at r.pick, once"
+else bad "PX: o(5, &GP0): rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/px.err" | tr '\n' ' ')"; fi
+
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -537,4 +607,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
