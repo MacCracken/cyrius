@@ -30,7 +30,9 @@
 #   S1/S2  --syntax-only (the `cyrius lint` pre-pass): a field of a call to a fn it cannot
 #          resolve is NOT a syntax error (S1), and the call's arguments are still parsed, so a
 #          grammar error inside them is still reported (S2).
-#   G1/G2  (R2) an EXPLICIT generic call as a bare statement at top level, struct-returning
+#   G1/G2  (R2) an EXPLICIT generic call as a bare statement at top level, struct-returning (6.7.15: G1 names
+#          the instance as the source spells it, `mkg<i32>` — it printed `mkg$i32`; C4 / C6-C8 the method `B.mk`,
+#          not `B_mk` — issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md)
 #          (`mkg<i32>(1);`, `mkg<i32>(1).a;`), is refused by name exactly as `mk3(1);` is — it was
 #          "expected '=', got '<'" plus two follow-on errors on 6.6.11.
 #   G3     (R2) `mu<i32>(3);` on a `#must_use` generic warns that the result is discarded, as the
@@ -154,7 +156,7 @@ var r = 0; syscall(60, r);
 " "" one
 
 echo "top level — an explicit generic call as a bare statement (R2):"
-refuse G1 "'mkg\$i32' $MT" "${T}var r = 0;
+refuse G1 "'mkg<i32>' $MT" "${T}var r = 0;
 mkg<i32>(1);
 syscall(60, r);
 " "" one
@@ -206,7 +208,7 @@ syscall(60, g + h);
 ' > "$D/c4.cyr"
 rc=0; cat "$D/c4.cyr" | "$CC" > "$D/c4.bin" 2>"$D/c4.err" || rc=$?
 n=$(grep -c '^error:' "$D/c4.err" || true)
-n6=$(grep -c "^error:<source>:6:[0-9]*: 'B_mk' $MT" "$D/c4.err" || true)
+n6=$(grep -c "^error:<source>:6:[0-9]*: 'B\\.mk' $MT" "$D/c4.err" || true)
 n7=$(grep -c "^error:<source>:7:[0-9]*: 'mk3' $MT" "$D/c4.err" || true)
 if [ "$rc" != 0 ] && [ ! -s "$D/c4.bin" ] && [ "$n" = 2 ] && [ "$n6" = 1 ] && [ "$n7" = 1 ]; then
     printf '  ok(refused): C4 (the filed repro: one error per line)
@@ -225,14 +227,14 @@ var d: dyn Mk = &b0;
 var g = d.mk().b;
 syscall(60, g);
 ' "" one
-refuse C6 "'B_mk' $MT" 'struct P2 { a; b; }
+refuse C6 "'B\\.mk' $MT" 'struct P2 { a; b; }
 struct B { k; }
 impl B { fn mk(self): P2 { var r: P2 = P2 { 1, 2 }; return r; } }
 var b0: B = B { 1 };
 var g = b0.mk().b;
 syscall(60, g);
 ' "" one
-refuse C7 "'B_mk' $MT" 'struct P3 { a; b; c; }
+refuse C7 "'B\\.mk' $MT" 'struct P3 { a; b; c; }
 struct B { k; }
 impl B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
 impl P3 { fn tot(self): i64 { return self.a + self.b + self.c; } }
@@ -240,7 +242,7 @@ var b0: B = B { 1 };
 var g = b0.mk().tot();
 syscall(60, g);
 ' "" one
-refuse C8 "'B_mk' $MT" 'struct P3 { a; b; c; }
+refuse C8 "'B\\.mk' $MT" 'struct P3 { a; b; c; }
 struct B { k; }
 impl B { fn mk(self): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; } }
 var b0: B = B { 1 };
