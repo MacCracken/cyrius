@@ -82,6 +82,11 @@
 #   (`_hl_amp_sid`)
 #   `_ret_slot_refuse` without `_tn_once`               -> RED 1: R39 (once per generic instance)
 #   real tree                                           -> GREEN (43 refusal rows — floor 43 — and 27 acceptance rows)
+# 6.7.15 (D58, measured 2026-10-18; R37 R38 on the four compilers, R38b-R38e; a one-edit scratch copy of the tree, its
+# 2-stage mutant, the gate run from it):
+#   `_ret_slot_refuse` advising "— return q" for every    -> RED 12: R37 R38 x4, R38b-R38e (the 6.7.14 words)
+#   struct again
+#   real tree                                           -> GREEN (47 refusal rows — floor 47 — and 27 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -375,8 +380,34 @@ impl S16 { fn cp(self: *S16): S16 { return &self; } }
 fn main(): i64 { var s: S16; s.v = 3; var c: S16 = s.cp(); return c.v; }
 syscall(60, main());
 '
-refuse "R37 return &pu; (pu: *U8, another struct) from : S8" "$MS — \`&pu\` $SLOT pu's slot, not a struct — return pu" "$T"'fn f(): S8 { var u: U8; var pu: *U8 = &u; return &pu; }'"$E"
-refuse "R38 return &GUH; (a handle global of U8) from : S8" "$MS — \`&GUH\` $SLOT GUH's slot, not a struct — return GUH" "$T"'fn f(): S8 { return &GUH; }'"$E"
+# ANOTHER struct's `*U` / handle (6.7.15, the user's D58, 2026-10-18): still refused, the advice reworded — the
+# message said "— return pu", and `return pu;` is itself refused (R12: "got `pu` (a `*U8`)"); it now names what pu is.
+# The full line is checked (`$` after the type): no "— return" tail.
+refuse4 "R37 return &pu; (pu: *U8, another struct) from : S8" "$MS — \`&pu\` $SLOT pu's slot, not a struct, and pu is a \`\*U8\`\$" "$T"'fn f(): S8 { var u: U8; var pu: *U8 = &u; return &pu; }'"$E"
+refuse4 "R38 return &GUH; (a handle global of U8) from : S8" "$MS — \`&GUH\` $SLOT GUH's slot, not a struct, and GUH is a \`U8\`\$" "$T"'fn f(): S8 { return &GUH; }'"$E"
+refuse "R38b return &pu; (pu: *U16, a parameter) from : S16" "$MS — \`&pu\` $SLOT pu's slot, not a struct, and pu is a \`\*U16\`\$" 'struct S16 { v; w; }
+struct U16 { a; b; }
+fn h(pu: *U16): S16 { return &pu; }
+fn main(): i64 { var u: U16; var c: S16 = h(&u); return c.v; }
+syscall(60, main());
+'
+refuse "R38c return &q; (a handle of U24) from : S24" "$MS — \`&q\` $SLOT q's slot, not a struct, and q is a \`U24\`\$" 'include "lib/alloc.cyr"
+struct S24 { v; w; x; }
+struct U24 { a; b; c; }
+fn h(): S24 { var q: U24 = alloc(24); return &q; }
+fn main(): i64 { alloc_init(); var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse "R38d return &self; (an untyped self of U8) from : S8" "$MS — \`&self\` $SLOT self's slot, not a struct, and self is a \`\*U8\`\$" "$T"'impl U8 { fn cv(self): S8 { return &self; } }
+fn f(): S8 { var u: U8; return u.cv(); }'"$E"
+refuse "R38e return &ps; (ps: *Str) from : S8" "$MS — \`&ps\` $SLOT ps's slot, not a struct, and ps is a \`\*Str\`\$" 'include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct S8 { v; }
+fn h(): S8 { var t = str_from("ab"); var ps: *Str = t; return &ps; }
+fn main(): i64 { alloc_init(); var c: S8 = h(); return c.v; }
+syscall(60, main());
+'
 # A generic fn's base and its three instances parse the same `return &q;`: reported once.
 refuse "R39 return &q; in a generic fn, three instances" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -508,7 +539,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 43 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 43) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 47 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 47) — rows were lost"; exit 1; }
 [ "$naccept" -ge 27 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 27) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -3538,14 +3538,18 @@ fn _ret_slot_amp(S, a, pe): i64 {
     var noff = TOKVAL(S, a + 1);
     var t = _hl_name_ty(S, noff);
     if (t <= 0) { return 0; }
-    if (_hl_cp == 0) {
+    var cp = _hl_cp;
+    if (cp == 0) {
         if (_dx_plain(S, t) == 0) { return 0; }   # a `Str` / tuple / dyn name: not this rule
         if (_hl_amp_sid(S, noff) > 0) { return 0; }   # an inline struct: D4 (a)'s struct
     }
-    _ret_slot_refuse(S, a, noff);
+    _ret_slot_refuse(S, a, noff, t, cp);
     return 1;
 }
-fn _ret_slot_refuse(S, ti, noff): i64 {
+# "`&q` is the address of q's slot, not a struct", then the advice by what q holds (`t`, `cp` 1 a `*T`): S, the fn's
+# own struct — "return q"; another struct — what q is, since `return q;` is refused too ("got `pu` (a `*U8`)"; the
+# user's D58, 2026-10-18: it said "return pu"). CHANGELOG [6.7.15]
+fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3556,8 +3560,19 @@ fn _ret_slot_refuse(S, ti, noff): i64 {
     PRSTR(S + 0xEC00000 + noff);
     PRSTR("` is the address of ");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("'s slot, not a struct — return ");
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("'s slot, not a struct");
+    if (t == _cur_fn_ret_sid) {
+        PRSTR(" — return ");
+        PRSTR(S + 0xEC00000 + noff);
+    }
+    else {
+        PRSTR(", and ");
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(" is a `");
+        if (cp != 0) { PRSTR("*"); }
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (t - 1) * 8));
+        PRSTR("`");
+    }
     PRSTR("\n");
     _had_error = 1;
     return 0;

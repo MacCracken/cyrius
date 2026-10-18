@@ -1814,7 +1814,9 @@ identifier …*). `&u` of another struct is refused by name at every size (*… 
 is not taken …*), at every size. A handle's or a `*T`'s `&h` is its slot — the address of the word that holds the pointer — not a struct,
 so `return &q;` with `q` a handle, a `*T` (a local, a parameter, a global) or an untyped `self` is refused by name at
 every size (*… — `&q` is the address of q's slot, not a struct — return q*; write `return q;`, which returns the
-struct it points at) — since 6.7.14, the user's D19 (a) of 2026-10-16. Through 6.7.13 a fn of 8 bytes or less
+struct it points at) — since 6.7.14, the user's D19 (a) of 2026-10-16. When q holds ANOTHER struct (a `*U`, a handle
+of U, a `*Str`), `return q;` is refused too, so the message names what q is instead of advising it (*… not a struct,
+and pu is a `*U8`*; 6.7.15, the user's D58 of 2026-10-18 — 6.7.14 said *— return pu*). Through 6.7.13 a fn of 8 bytes or less
 returned the slot's address as the struct's word (the caller read a dead frame's address as its field), and over 8
 bytes it was refused in other words (*… two registers … got `this expression`*, *return must be a bare local
 identifier …*).
