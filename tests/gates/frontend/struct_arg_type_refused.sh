@@ -207,6 +207,9 @@
 #   the tree before it (89fd5ad53)                     -> RED 15: DN1 DN1b DN2-DN13 (each printed `Pt_dup` ..), x4
 #   `_err_ident_fn` keying a free fn's report twice    -> RED 1: DNK1 (rc 1 and no error printed: the second key
 #     (no `nm == noff` test)                              was the first's, so the report swallowed itself)
+# DNW1-DNW3 (met in passing, its own commit): the refused record assignment `w = s.dup();` also printed "assigning
+# non-pointer to typed pointer" — it went on to the 8-byte store; it now ends its statement at the refusal.
+#   the commit before it (c9e95759d)                   -> RED 2: DNW1 DNW2 (the warning beside the refusal), x4
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -957,8 +960,8 @@ if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]
 else echo "  FAIL: src/main_aarch64.cyr did not build"; fail=$((fail+1)); fi
 if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; CXC="$D/cc_cx"
 else echo "  FAIL: src/main_cx.cyr did not build"; fail=$((fail+1)); fi
-# refuse4 <label> <grep pattern> <source> [<error lines>]: on every target, rc != 0, no binary, the pattern in the
-# errors, and exactly <error lines> `^error` lines (1 by default).
+# refuse4 <label> <grep pattern> <source> [<error lines>] [nowarn]: on every target, rc != 0, no binary, the pattern in
+# the errors, exactly <error lines> `^error` lines (1 by default), and with `nowarn` no `^warning` line.
 refuse4() {
     printf '%s' "$3" > "$D/r4.cyr"
     want=${4:-1}
@@ -975,6 +978,8 @@ refuse4() {
         n=$(grep -c '^error' "$D/r4.err" || true)
         if [ "$rc" = 0 ] || [ -s "$D/r4.bin" ] || [ "$n" != "$want" ] || ! grep -q "$2" "$D/r4.err"; then
             bad="$bad $leg(rc=$rc, $n error(s): $(grep '^error' "$D/r4.err" | head -1))"
+        elif [ "${5:-}" = nowarn ] && grep -q '^warning' "$D/r4.err"; then
+            bad="$bad $leg($(grep '^warning' "$D/r4.err" | head -1))"
         fi
     done
     if [ -z "$bad" ]; then printf '  ok(refused x4): %-37s\n' "$1"; pass=$((pass+1))
@@ -1032,7 +1037,15 @@ refuse4 "DN12 top level: (s.mq()).a" "'Pt\.mq' returns a struct by value, and a 
     "${DN}var s = Pt { 1, 2 }; var r = (s.mq()).a; syscall(60, r);"
 refuse4 "DN13 top level: var G2: Q = s.mq()" "'Pt\.mq' returns a struct by value, and a struct result needs storage" \
     "${DN}var s = Pt { 1, 2 }; var G2: Q = s.mq(); syscall(60, 0);"
-# A free fn whose name looks mangled keeps it: an operator fn `Pt_add`, and `Pt_p8` / `Pt_dup2` called by name.
+# DNW: the refused record assignment stores nothing — "assigning non-pointer to typed pointer" was printed beside the
+# refusal (the 8-byte store it fell to), plain and in parentheses; DNW3 the for step.
+refuse4 "DNW1 w = s.dup(): one error, no warning" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; w = s.dup(); return 0; } syscall(60, run());" 1 nowarn
+refuse4 "DNW2 w = (s.dup()): one error, no warning" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; w = (s.dup()); return 0; } syscall(60, run());" 1 nowarn
+refuse4 "DNW3 a for step w = s.dup(): one error" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; var i = 0; for (i = 0; i < 1; w = s.dup()) { i = 1; } return i; } syscall(60, run());" 1 nowarn
+# A free fn whose name looks mangled keeps it: an operator fn `Pt_add`, and `Pt_p9` / `Pt_dup2` / `Pt_dup` called by name.
 refuse4 "DNK1 w = a + b, the free operator fn Pt_add" "cannot copy 'Pt_add' into a variable of a different struct/vector type: 'w'" \
     "${DN}fn Pt_add(a: Pt, b: Pt): Pt { return a; } fn run(): i64 { var a: Pt; var b: Pt; var w: Q; w = a + b; return 0; } syscall(60, run());"
 refuse4 "DNK2 top level: rd1(Pt_p9(s)), a free fn" "'Pt_p9' returns a struct by value, and a struct result needs storage" \
@@ -1047,7 +1060,7 @@ fn Pt_dup(a: Pt): Pt { return a; }
 fn run(): i64 { var s: Pt; var h: H; h.q = Pt_dup(s); return 0; } syscall(60, run());"
 
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15.
-[ "$nrefuse" -ge 124 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 124)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 127 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 127)"; fail=$((fail+1)); }
 [ "$naccept" -ge 39 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 39)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

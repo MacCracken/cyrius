@@ -4497,7 +4497,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
-    if (_agg_sc_err(S, _agc_t, noff) == 1) { return 0; }   # 6.7.15: a method named `Pt.dup`
+    if (_agg_sc_err(S, _agc_t, noff) == 1) { return _asa_term(S, term); }   # 6.7.15: `Pt.dup`; no store, no warning
     if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
     if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
