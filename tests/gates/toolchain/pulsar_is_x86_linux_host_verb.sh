@@ -17,7 +17,7 @@
 # claim about what `cmd_pulsar` actually compiles, not about cbt in general, so the recipe
 # is re-derived every run: if pulsar ever becomes per-target (asking `_self_host_src()` for
 # its own stages), this turns RED rather than leaving a now-wrong refusal in place — the
-# same reason `emit_js_refused_off_x86_linux.sh` re-derives the include graph.
+# same reason `emit_js_per_host_fork.sh` re-derives the include graph.
 #
 # ⭐ AXIS 3's POSITIVE CONTROL IS LOAD-BEARING: refusing everywhere satisfies axes 1, 2 and
 # 4 and would break the only host that can run the verb at all.

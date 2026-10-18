@@ -8737,7 +8737,7 @@ through the CLI: `cyrius build --target=js <in.tsx> <out.js>`.
 cycc --emit-js app.tsx                  # JS → stdout
 
 # Via the build CLI
-cyrius build --target=js app.tsx app.js # x86-Linux-only; refused BY NAME elsewhere (v6.6.6)
+cyrius build --target=js app.tsx app.js # every POSIX host; refused BY NAME on Windows (6.7.15)
 ```
 
 ### Type Stripping
@@ -8903,22 +8903,31 @@ is out of range. The output is tested to round-trip through `node --check`
 
 ### Platform & Build Support
 
-`cycc --emit-js` and `cyrius build --target=js` are **x86-Linux-only**
-(the TS frontend is not compiled for aarch64, Windows PE, or macOS). The
-standalone `cycc_aarch64` and `cycc_win` cross-compilers do not include
-the TS frontend.
+`cycc --lex-ts`, `--parse-ts` and `--emit-js` run the TypeScript front end on **every
+compiler** — x86_64 and aarch64 Linux, both macOS compilers, Windows `cycc.exe`, and the
+`cycc_aarch64` / `cycc_win` cross compilers — with the same exit codes, diagnostics and JS
+bytes as x86_64 Linux (6.7.15). Each reads stdin, or the file named after the flag
+(`cycc --emit-js app.tsx`; on Windows a quoted path and a non-ASCII name work, the command
+line split as `CommandLineToArgvW` splits it). `ts_test_runner` therefore works on every
+POSIX install. The cx compiler (`cycc_cx`) has no TS front end.
 
-> On every other host `cyrius build --target=js` **refuses by name** (v6.6.6), naming the
-> fork that host's compiler is built from, and writes no output file. ⛔ Before v6.6.6 the
-> CLI ran the host's cycc with `--emit-js`, which that compiler ignored: it compiled its empty
-> stdin into a runnable binary, the CLI renamed that over the `.js` and printed `OK`. Pinned
-> by `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh`. See CHANGELOG [6.6.6].
+`cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
+`cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
+to a file — run `cycc.exe --emit-js app.tsx > app.js` directly.
+
+> ⛔ Before 6.7.15 every compiler but x86_64 Linux's IGNORED the three flags and compiled the
+> TypeScript as cyrius: `--parse-ts` on `let x: number = 1;` failed with a cyrius parse error,
+> on `var x = 42;` it wrote an ELF to stdout with exit 0, and `ts_test_runner` reported every
+> file as failed. Before v6.6.6 the CLI then renamed that binary over the `.js` and printed
+> `OK`; 6.6.6 refused `--target=js` by name off x86_64 Linux. Pinned by
+> `tests/gates/platform/ts_flags_every_driver.sh` and
+> `tests/gates/toolchain/emit_js_per_host_fork.sh`. See CHANGELOG [6.6.6], [6.7.15].
 
 ### Limitations
 
 - Single-file emission; no module bundling or tree-shaking
 - No JSX component props typing validation (TS type-checking is lost)
-- The TS parser is self-hosted (only in the `cycc` x86 binary)
+- The TS parser is self-hosted (in every compiler but `cycc_cx`, since 6.7.15)
 - No source maps
 
 ## Example Programs

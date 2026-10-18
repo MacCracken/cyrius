@@ -2943,6 +2943,15 @@ _chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
 # CHANGELOG. Whole-gate SKIP is exit 77.
 _chk_gate "$ROOT/tests/gates/platform/pe_lseek_std_fds.sh"
 
+# 6.7.15 (platform lane, P5; D38) — --lex-ts / --parse-ts / --emit-js run the TypeScript front end
+# on every compiler (they were skipped off x86_64 Linux and the TS compiled as cyrius). Axes: the
+# filed repro on the native aarch64 compiler (qemu); every runnable driver (the aarch64 and Windows
+# cross compilers, the aarch64 compilers under qemu, cycc.exe under wine) gives x86_64's exit codes,
+# stdout and stderr over the TS corpus from stdin and as `<flag> <file>`, and cycc.exe splits a
+# quoted / non-ASCII path; both Mach-O compilers built, the right arch, the TS modes in them;
+# ts_test_runner 1/1 in an aarch64 install layout. Hardware: the cross-OS legs. SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/ts_flags_every_driver.sh"
+
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
 # outside the project on Windows and on macOS arm64, where it used to open the whole path (the
 # name check then the open: a junction planted in between was followed). Axes: 0xF04E

@@ -67,7 +67,8 @@
 #          pinning the mechanism, which is the thing this gate deliberately does not do.
 #   M3. only `_progress_close()` neutered (the pre-flight checks kept)
 #       -> RED: axes 3 and 4, the errors raised INSIDE `compile()`, which no pre-flight
-#          check can cover. Axes 1 and 2 stay GREEN.
+#          check can cover, and (since 6.7.15) axis 1, whose error is raised inside
+#          `_emit_js`. Axis 2 stays GREEN.
 #   M4. a bare newline written after each header (the naive "always newline" fix)
 #       -> RED: the POSITIVE CONTROL alone. Every negative axis stays GREEN, which is
 #          exactly why axis 5 is in the same run.
@@ -110,8 +111,8 @@
 #   Q2. capture kept, relay call removed                -> RED: axis 12 (note lost)
 #   Real tree -> GREEN.
 #
-# ⚠ qemu-aarch64 is an EMULATOR, not hardware; it is only used to reach the aarch64
-# refusal, which is a CLI-side decision. Axes 2-5 are native.
+# ⚠ qemu-aarch64 is an EMULATOR, not hardware; it is only used to run the aarch64 CLI's
+# --target=js arm, a CLI-side path. Axes 2-5 are native.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || exit 1
@@ -179,7 +180,11 @@ check_unspliced_pad() {   # $1 = label, $2 = output file, $3 = the path in the h
   return 0
 }
 
-# ── axis 1 — the aarch64 --target=js refusal (bite 23b's five lines) ─────────────────
+# ── axis 1 — the aarch64 --target=js arm's named failure ─────────────────────────────
+# Until 6.7.15 this was bite 23b's refusal (the aarch64 compiler had no --emit-js). Every host
+# fork has it since 6.7.15 (D38), so the arm now runs, and its named failure is the compiler
+# it cannot find: a throwaway CYRIUS_HOME and a cwd outside the repo leave none, and
+# `_emit_js` names that with the header open. Never the user's ~/.cyrius.
 if command -v qemu-aarch64 >/dev/null 2>&1; then
   cat src/main_aarch64.cyr | "$CC" > "$D/cc_a64" 2>"$D/cc_a64.err"
   if [ ! -s "$D/cc_a64" ]; then
@@ -191,12 +196,12 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
       echo "FAIL axis1: could not build the aarch64 CLI"; sed 's/^/    /' "$D/cli_a64.err"; fail=1
     else
       chmod +x "$D/cli_a64"
-      ( cd "$W" || exit 1; ulimit -c 0; CYRIUS_RESOLVED=1 qemu-aarch64 "$D/cli_a64" build --target=js t.ts neg.js >"$D/a1.out" 2>&1 ) || true
+      ( cd "$W" || exit 1; ulimit -c 0; CYRIUS_RESOLVED=1 CYRIUS_HOME="$D/emptyhome" qemu-aarch64 "$D/cli_a64" build --target=js t.ts neg.js >"$D/a1.out" 2>&1 < /dev/null ) || true
       check_unspliced axis1 "$D/a1.out" || fail=1
     fi
   fi
 else
-  echo "  SKIP axis 1 — qemu-aarch64 not installed (the aarch64 --target=js refusal)."
+  echo "  SKIP axis 1 — qemu-aarch64 not installed (the aarch64 --target=js arm's named failure)."
   GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 

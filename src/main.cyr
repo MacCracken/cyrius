@@ -737,16 +737,8 @@ var _allow_undef = 0;
 # treats failed compiles as successes.
 # _had_error moved to common/util.cyr (v6.4.62) so every fork's EMITELF gate +
 # exit + the PEEKT watchdog can see it; the final exit below still returns it.
-var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
-var _ts_parse_only_mode = 0;     # P2.1: --parse-ts CLI flag
-var _ts_emit_js_mode = 0;        # v6.1.10: --emit-js CLI flag (Phase D)
-# v6.0.5: path arg for `--parse-ts <file>` / `--lex-ts <file>` so a
-# scripted invocation doesn't block reading stdin (yeo-cy-test papercut
-# #3, 2026-05-27). The next non-flag arg after a TS mode flag is the
-# input path; if 0, fall back to stdin (preserves all existing callers
-# that dup2 a fixture fd onto stdin).
-var _ts_input_path = 0;
-var _ts_expect_path = 0;
+# The TypeScript modes' flags + input path, shared by every driver. CHANGELOG [6.7.15]
+include "src/frontend/ts/driver_flags.cyr"
 var _vbuf[256];
 var _vfd = 0;
 var _vn = 0;
@@ -928,19 +920,7 @@ include "src/common/heap_regions.cyr"
 # v6.0.5: when `--parse-ts <file>` / `--lex-ts <file>` provides a path arg,
 # read from the named file instead of stdin so scripted CI invocations don't
 # block on a terminal-less stdin.
-var _input_fd = 0;
-if (_ts_input_path != 0) {
-    if (SYS_OPEN == 2) { _input_fd = syscall(SYS_OPEN, _ts_input_path, 0, 0); }
-    else { _input_fd = syscall(SYS_OPEN, 0 - 100, _ts_input_path, 0, 0); }
-    if (_input_fd < 0) {
-        syscall(SYS_WRITE, 2, "error: cannot open '", 20);
-        var _pl = 0;
-        while (load8(_ts_input_path + _pl) != 0) { _pl = _pl + 1; }
-        syscall(SYS_WRITE, 2, _ts_input_path, _pl);
-        syscall(SYS_WRITE, 2, "'\n", 2);
-        syscall(SYS_EXIT, 1);
-    }
-}
+include "src/frontend/ts/driver_input.cyr"
 var bl = 0;
 var done = 0;
 while (done == 0) {
@@ -964,135 +944,9 @@ while (done == 0) {
 if (_input_fd != 0) { syscall(SYS_CLOSE, _input_fd); }
 SBL(S, bl);
 
-# ─── TS frontend arena (v6.4.82) ──────────────────────────────────
-# The TS arena used to be the FIXED base `S + 0x298B000`, which overlapped
-# `tok_types` entirely plus 1.6 MB of `tok_values` — 10,027,008 bytes. It was
-# survivable only because all three TS modes SYS_EXIT before PREPROCESS and LEX,
-# so the token arrays are never populated in TS mode: a TEMPORAL invariant
-# guarding a spatial collision, held by nothing but call ordering, and invisible
-# to tests/gates/memory/heapmap.sh because the base was a code literal rather than a map entry.
-#
-# Origin: 0x298B000 - 0x207B000 = 9,502,720 = exactly the 9.06 MB the v5.11.68
-# reorg shrank the heap by. That reorg moved ~35 region bases and MISSED THIS ONE
-# literal. Which is the whole argument for alloc() over another fixed base — a
-# literal is what the next reorg misses too. ts/lex.cyr:20-22 already documented
-# `alloc()` as the contract test drivers use; the fixed base was the deviation.
-#
-# Allocated ONLY in a TS mode, so a normal compile pays nothing.
-var _ts_base = 0;
-if (_ts_lex_only_mode == 1 || _ts_parse_only_mode == 1 || _ts_emit_js_mode == 1) {
-    _ts_base = alloc(TS_HEAP_SIZE);
-    if (_ts_base == 0) {
-        syscall(SYS_WRITE, 2, "error: cannot allocate the TS frontend arena\n", 45);
-        syscall(SYS_EXIT, 1);
-    }
-}
-
-# ─── TS lex-only mode (P1.6b wire-in) ─────────────────────────────
-# When --lex-ts is set, run TS_LEX on the source bytes and exit with
-# 0 (clean lex) or 1 (lex error). No parser/typecheck/lower yet —
-# those are v5.7.2 P2-P5. This mode lets cbt/build.cyr's compile()
-# detect a .ts source and verify it lexes cleanly via cycc directly,
-# without forcing every consumer to go through a separate test driver.
-if (_ts_lex_only_mode == 1) {
-    var _ts_n = TS_LEX(_ts_base, S + _SRCB, bl);
-    if (_ts_n < 0) {
-        var _ts_err = TS_GETERR(_ts_base);
-        syscall(SYS_WRITE, 2, "ts lex error: code ", 19);
-        var _eb[3];
-        if (_ts_err >= 10) {
-            store8(&_eb, 48 + _ts_err / 10);
-            store8(&_eb + 1, 48 + _ts_err % 10);
-            store8(&_eb + 2, 10);
-            syscall(SYS_WRITE, 2, &_eb, 3);
-        } else {
-            store8(&_eb, 48 + _ts_err);
-            store8(&_eb + 1, 10);
-            syscall(SYS_WRITE, 2, &_eb, 2);
-        }
-        syscall(SYS_EXIT, 1);
-    }
-    syscall(SYS_EXIT, 0);
-}
-
-# ─── TS parse-only mode (P2.1 wire-in) ────────────────────────────
-
-# Emit a non-negative i64 as decimal to stderr (fd 2).
-fn _emit_decimal(n): i64 {
-    # i64::MIN — see lib/fmt.cyr:fmt_int. The sign is emitted eagerly here, so only the
-    # negation and the loop condition change. CHANGELOG [6.5.8]
-    if (n < 0) {
-        syscall(SYS_WRITE, 2, "-", 1);
-    }
-    if (n == 0) {
-        syscall(SYS_WRITE, 2, "0", 1);
-        return 0;
-    }
-    var buf[24];
-    var i = 0;
-    while (n != 0) {
-        var d = n % 10;
-        if (d < 0) { d = 0 - d; }
-        store8(&buf + i, 48 + d);
-        n = n / 10;
-        i = i + 1;
-    }
-    # Reverse in place + emit
-    var rev[24];
-    var j = 0;
-    while (j < i) {
-        store8(&rev + j, load8(&buf + (i - 1 - j)));
-        j = j + 1;
-    }
-    syscall(SYS_WRITE, 2, &rev, i);
-    return 0;
-}
-
-if (_ts_parse_only_mode == 1) {
-    var _tp_lex_n = TS_LEX(_ts_base, S + _SRCB, bl);
-    if (_tp_lex_n < 0) {
-        syscall(SYS_WRITE, 2, "ts lex error before parse\n", 26);
-        syscall(SYS_EXIT, 1);
-    }
-    var _tp_parse_n = TS_PARSE(_ts_base);
-    if (_tp_parse_n < 0) {
-        var _tp_err = TS_PARSE_GETERR(_ts_base);
-        var _tp_etok = TS_PARSE_GETERR_TOK(_ts_base);
-        # current parser TOK_IDX — most accurate since not all err
-        # sites set ERR_TOK_IDX. Emit both for triage.
-        var _tp_cur = load64(_ts_base + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
-        var _tp_line = load64(_ts_base + 0x100000 + _tp_cur * 8);
-        var _tp_type = load64(_ts_base + 0x000000 + _tp_cur * 8);
-        syscall(SYS_WRITE, 2, "ts parse error: code=", 21);
-        _emit_decimal(_tp_err);
-        syscall(SYS_WRITE, 2, " line=", 6);
-        _emit_decimal(_tp_line);
-        syscall(SYS_WRITE, 2, " tok=", 5);
-        _emit_decimal(_tp_type);
-        syscall(SYS_WRITE, 2, " cur_idx=", 9);
-        _emit_decimal(_tp_cur);
-        syscall(SYS_WRITE, 2, " err_idx=", 9);
-        _emit_decimal(_tp_etok);
-        syscall(SYS_WRITE, 2, "\n", 1);
-        syscall(SYS_EXIT, 1);
-    }
-    syscall(SYS_EXIT, 0);
-}
-
-if (_ts_emit_js_mode == 1) {
-    var _ej_lex_n = TS_LEX(_ts_base, S + _SRCB, bl);
-    if (_ej_lex_n < 0) {
-        syscall(SYS_WRITE, 2, "ts lex error before emit\n", 25);
-        syscall(SYS_EXIT, 1);
-    }
-    var _ej_parse_n = TS_PARSE(_ts_base);
-    if (_ej_parse_n < 0) {
-        syscall(SYS_WRITE, 2, "ts parse error before emit\n", 27);
-        syscall(SYS_EXIT, 1);
-    }
-    var _ej_rc = TS_JS_EMIT(_ts_base, S + _SRCB);
-    syscall(SYS_EXIT, _ej_rc);
-}
+# The TypeScript modes (--lex-ts / --parse-ts / --emit-js) — one copy, shared by every driver
+# (6.7.15's D38). CHANGELOG [6.7.15]
+include "src/frontend/ts/driver.cyr"
 
 # Init stdlib fallback path from HOME env
 _init_cyrius_lib();

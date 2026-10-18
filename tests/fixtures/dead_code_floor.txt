@@ -31,7 +31,7 @@ IR_SCURBB a64 a64m a64n cx x86m
 IR_SENABLE a64 a64m a64n cx x86m
 IR_SLIVEIN a64 a64m a64n cx win x86m
 IR_SLIVEOUT a64 a64m a64n cx win x86m
-TS_PEEKLINE x86
+TS_PEEKLINE a64 a64m a64n win x86 x86m
 _EMIT_GVAR_STATIC_INITS cx
 _IR_REC a64 a64m a64n cx
 _IR_REC1 a64 a64m a64n cx

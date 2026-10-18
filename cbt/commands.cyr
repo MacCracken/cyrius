@@ -99,6 +99,11 @@ fn cmd_build(source, output): i64 {
         # predicate `_emit_js` enforces with (it keeps its own copy: this one decides whether
         # to PRINT, that one decides whether to RUN, and any other caller still needs it).
         # CHANGELOG [6.6.6].
+        # Windows: cycc.exe has --emit-js since 6.7.15, but `_emit_js` has no PE spawn for it,
+        # so its refusal is asked here too, before the header. CHANGELOG [6.7.15]
+        #ifdef CYRIUS_TARGET_WIN
+        return _win_emit_js_refuse();
+        #endif
         if (_target_cc_has_js() == 0) { return _emit_js_refuse(); }
         if (_js_cc_is_host() == 0) { return _emit_js_not_host(); }   # 6.7.12, the same rule
         sys_write(STDOUT_FD, "emit-js ", 8);

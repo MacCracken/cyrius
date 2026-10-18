@@ -44,6 +44,11 @@ include "src/backend/x86/jump.cyr"
 include "src/backend/x86/decode.cyr"
 include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
+# The TypeScript front end and the JS emitter, as src/main.cyr includes them (6.7.15's D38:
+# --lex-ts / --parse-ts / --emit-js run them on every compiler). CHANGELOG [6.7.15]
+include "src/frontend/ts/lex.cyr"
+include "src/frontend/ts/parse.cyr"
+include "src/backend/js/emit.cyr"
 
 # alloc + vec for return-patch vec storage. Must precede parse.cyr so its
 # vec_push/vec_get/vec_len/vec_truncate call sites resolve at parse time.
@@ -73,6 +78,10 @@ include "src/backend/x86/fixup.cyr"
 # (src/common/util.cyr) reads the same parked base. CHANGELOG [6.6.6]
 # `--strict` is ACCEPTED and does nothing since 6.6.20 (see src/main.cyr).
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the default reachable-undef hard error
+# The TypeScript modes' flags and their argument scan (src/frontend/ts/driver_args.cyr).
+# CHANGELOG [6.7.15]
+include "src/frontend/ts/driver_flags.cyr"
+include "src/frontend/ts/driver_args.cyr"
 # #ifdef-guarded for the same reason as main_aarch64_macho.cyr: the helper is
 # compiled only into macOS builds, and a driver is sometimes compiled without
 # its target env as a "does it still build" smoke.
@@ -84,6 +93,7 @@ if ((_vflags & 1) == 1) {
 }
 if ((_vflags & 4) == 4) { _allow_undef = 1; }
 if ((_vflags & 8) == 8) { _syntax_only = 1; }   # --syntax-only (see _syntax_only, util.cyr). CHANGELOG [6.6.20]
+_ts_args_macho();   # --lex-ts / --parse-ts / --emit-js and the path after one. CHANGELOG [6.7.15]
 #endif
 
 # Allocate heap via mmap — macOS has no brk. Linux syscall number 9 is
@@ -106,17 +116,19 @@ rp_vec = vec_new();
 # The region bases + caps, shared by six drivers. CHANGELOG [6.6.20]
 include "src/common/heap_regions.cyr"
 
+# A TypeScript mode's `<file>` argument, else stdin. CHANGELOG [6.7.15]
+include "src/frontend/ts/driver_input.cyr"
 # Read input (1 MB input_buf)
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(SYS_READ, 0, S + _SRCB + bl, _SRC_CAP - bl);
+    var n = syscall(SYS_READ, _input_fd, S + _SRCB + bl, _SRC_CAP - bl);
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
         if (bl >= _SRC_CAP) {
             var probe[1];
-            var pn = syscall(SYS_READ, 0, &probe, 1);
+            var pn = syscall(SYS_READ, _input_fd, &probe, 1);
             if (pn > 0) {
                 syscall(SYS_WRITE, 2, "error: input exceeds the 24MB source buffer
 ", 44);
@@ -126,7 +138,10 @@ while (done == 0) {
         }
     }
 }
+if (_input_fd != 0) { syscall(SYS_CLOSE, _input_fd); }
 SBL(S, bl);
+# The TypeScript modes run here and exit; a cyrius compile passes through. CHANGELOG [6.7.15]
+include "src/frontend/ts/driver.cyr"
 
 # Preprocess includes
 _init_cyrius_lib();

@@ -436,14 +436,15 @@ else
 
     wrun build --target=js t.ts t.js
     check "wine: build --target=js FAILS" 1 "$RC"
-    # v6.6.6 bite 23b: the refusal is now SHARED with the four POSIX forks that also lack
-    # the TS front end, so the wording moved from "not available on Windows" to "not
-    # available on this target" plus the FORK this host's cycc is built from. The fork
-    # line is the stronger assertion and is checked here: a generic "unsupported" would
-    # satisfy the first row and tell a Windows user nothing about why.
+    # v6.6.6 bite 23b: "not available on this target" plus the FORK this host's cycc is
+    # built from. 6.7.15 (D38): cycc.exe HAS --emit-js now, so the reason moved from "no
+    # --emit-js in the PE fork" to the CLI's own gap — no Windows spawn that writes the
+    # child's stdout to the output file — and the refusal says what to run instead. A
+    # generic "unsupported" would satisfy the first row and tell a Windows user nothing.
     check "  …BY NAME, not silently" 1 "$(grep -c 'target=js is not available on this target' "$T/err" || true)"
     check "  …naming the PE fork it is built from" 1 "$(grep -c 'src/main_win.cyr' "$T/err" || true)"
-    check "  …and names the reason (no --emit-js in the PE fork)" 1 "$(grep -c 'no --emit-js' "$T/err" || true)"
+    check "  …and names the reason (no Windows spawn for the emit)" 1 "$(grep -c 'no Windows spawn' "$T/err" || true)"
+    check "  …and what to run instead" 1 "$(grep -c 'cycc.exe --emit-js <file.ts> > <out.js>' "$T/err" || true)"
 
     # ⭐ capacity WORKS on Windows as of 6.6.6, and this row was rewritten when it started
     # to. It asserted the refusal — "capacity FAILS rather than reporting numbers it does
