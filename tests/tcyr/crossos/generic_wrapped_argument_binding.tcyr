@@ -1,0 +1,104 @@
+# generic_wrapped_argument_binding.tcyr — 6.7.15 (the user's decision D12 (a), 2026-10-18) — through a generic's
+# plain `x: T` / `p: *T` parameter, a struct argument in parentheses, a whole dereference and a closure-captured
+# struct bind T as their plain spelling does, as through a struct carrier since 6.7.11: `gs((l))`, `gs(*p)` with
+# `p: *S`, a captured `gs(l)`, `gsz((p))` and `gsz((&GS))` call the S instance (`sizeof(T)` 24 for a 24-byte S), and
+# a captured struct passed to `p: *T` (`gsz(l)`) compiles and passes the capture's copy's address. Through 6.7.14 each
+# ran the i64 base (8; a body that uses T as a struct was refused as its stub) and the captured `gsz(l)` was refused
+# "cannot pass 'l' to a parameter that is not a pointer to its struct type"
+# (issues/2026-10-16-generic-plain-parameter-wrapped-deref-or-captured-struct-binds-nothing.md). The field reads
+# (`x.w`) prove the instance reads the right struct: by value, through the pointer, from the capture's env copy (a
+# store through `p: *T` lands in it). Unchanged: a pointer through `x: T` (`gs((p))`, `gs(*pp)` of a `**S`) is i64.
+# The filed rows verbatim and the tuple-literal refusal: tests/gates/frontend/generic_ptr_param_infer.sh WD.
+#
+# CROSS-HOST: frontend binding, but each instance's by-value copy (address-passed over 8 B, a register at 8 B), the
+# capture's env copy and its address are each backend's. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the
+# release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct WdS { v; w; x; }
+struct WdS1 { v; }
+struct WdO { n; }
+impl WdO { fn pick<V>(self, q: V): i64 { return q.w; } }
+var WD_GS = WdS { 5, 8, 3 };
+var WD_GS1 = WdS1 { 6 };
+fn wd_gs<T>(x: T): i64 { return sizeof(T); }
+fn wd_gsz<T>(x: *T): i64 { return sizeof(T); }
+fn wd_gv<T>(x: T): i64 { return x.w; }
+fn wd_gpv<T>(x: *T): i64 { return x.w; }
+fn wd_gset<T>(x: *T): i64 { x.w = 77; return x.w; }
+fn wd_gv1<T>(x: T): i64 { return x.v; }
+fn wd_gp1<T>(x: *T): i64 { return x.v; }
+fn wd_id<T>(x: T): T { return x; }
+
+# WD — each spelling, sizeof and a field read through the instance.
+fn wd_wrap(): i64 { var l = WdS { 1, 2, 3 }; return wd_gs((l)) * 100 + wd_gv((l)); }
+fn wd_wrap3(): i64 { var l = WdS { 1, 4, 3 }; return wd_gs(((l))) * 100 + wd_gv(((l))); }
+fn wd_wrapg(): i64 { return wd_gs((WD_GS)) * 100 + wd_gv((WD_GS)); }
+fn wd_deref(): i64 { var p: *WdS = &WD_GS; return wd_gs(*p) * 100 + wd_gv(*p); }
+fn wd_derefw(): i64 { var p: *WdS = &WD_GS; return wd_gs((*p)) * 100 + wd_gv(*(p)); }
+fn wd_derefpp(): i64 { var p: *WdS = &WD_GS; var pp: **WdS = &p; return wd_gs(**pp) * 100 + wd_gv(**pp); }
+fn wd_derefpar(q: *WdS): i64 { return wd_gs(*q) * 100 + wd_gv(*q); }
+fn wd_cap(): i64 {
+    var l = WdS { 1, 9, 3 };
+    var f = || wd_gs(l) * 100 + wd_gv(l);
+    return fncall0(f);
+}
+fn wd_capp(): i64 {
+    var l = WdS { 1, 9, 3 };
+    var f = || wd_gsz(l) * 100 + wd_gpv(l);
+    return fncall0(f);
+}
+fn wd_capset(): i64 {
+    var l = WdS { 1, 9, 3 };
+    var f = || wd_gset(l) * 100 + l.w;
+    return fncall0(f) * 10 + l.w;
+}
+fn wd_cappar(q: WdS): i64 {
+    var f = |k| wd_gs(q) * 100 + wd_gv(q) + k;
+    return fncall1(f, 1000);
+}
+fn wd_cap1(): i64 {
+    var l = WdS1 { 4 };
+    var f = || wd_gs(l) * 100 + wd_gv1(l) * 10 + wd_gp1(l);
+    return fncall0(f);
+}
+fn wd_ptrw(): i64 { var p: *WdS = &WD_GS; return wd_gsz((p)) * 100 + wd_gpv((p)); }
+fn wd_addrw(): i64 { return wd_gsz((&WD_GS)) * 100 + wd_gpv((&WD_GS)); }
+fn wd_addrw1(): i64 { return wd_gsz((&WD_GS1)) * 100 + wd_gp1(((&WD_GS1))); }
+fn wd_meth(): i64 {
+    var o = WdO { 1 }; var l = WdS { 1, 6, 3 }; var p: *WdS = &l;
+    return o.pick((l)) * 10 + o.pick(*p);
+}
+fn wd_res(): i64 {
+    var l = WdS { 1, 2, 3 }; var r = wd_id((l)); var p: *WdS = &l; var s = wd_id(*p);
+    return r.w * 10 + s.x;
+}
+fn wd_ret(): i64 { var l = WdS { 1, 7, 3 }; return wd_gv((l)); }
+# WK — unchanged: a pointer through `x: T` binds no struct (i64).
+fn wk_ptr(): i64 { var p: *WdS = &WD_GS; var pp: **WdS = &p; return wd_gs((p)) * 100 + wd_gs(*pp); }
+
+alloc_init();
+assert_eq(wd_wrap(), 2402, "WD: `gs((l))` binds S (was 8, the base)");
+assert_eq(wd_wrap3(), 2404, "WD: `gs(((l)))`, any depth");
+assert_eq(wd_wrapg(), 2408, "WD: `gs((G))` of a struct global");
+assert_eq(wd_deref(), 2408, "WD: `gs(*p)` with `p: *S` binds S (was 8)");
+assert_eq(wd_derefw(), 2408, "WD: `gs((*p))`, `gs(*(p))`");
+assert_eq(wd_derefpp(), 2408, "WD: `gs(**pp)` of a `**S`");
+assert_eq(wd_derefpar(&WD_GS), 2408, "WD: `gs(*q)` of a `q: *S` parameter");
+assert_eq(wd_cap(), 2409, "WD: a captured struct `gs(l)` binds S (was 8)");
+assert_eq(wd_capp(), 2409, "WD: a captured struct into `p: *T`, `gsz(l)` (was refused)");
+assert_eq(wd_capset(), 77779, "WD: a store through `p: *T` lands in the capture's copy");
+assert_eq(wd_cappar(WD_GS), 3408, "WD: a captured by-value struct parameter");
+assert_eq(wd_cap1(), 844, "WD: a captured 8-byte struct by value and into `p: *T`");
+assert_eq(wd_ptrw(), 2408, "WD: `gsz((p))` with `p: *S` (was 8)");
+assert_eq(wd_addrw(), 2408, "WD: `gsz((&GS))` (was 8)");
+assert_eq(wd_addrw1(), 806, "WD: `gsz((&G))` of an 8-byte struct, `((&G))`");
+assert_eq(wd_meth(), 66, "WD: a generic method's `q: V` given `(l)` and `*p`");
+assert_eq(wd_res(), 23, "WD: a `: T` result of `id((l))` / `id(*p)` is the struct");
+assert_eq(wd_ret(), 7, "WD: a tail call `return gv((l));`");
+assert_eq(wk_ptr(), 808, "WK: `gs((p))` and `gs(*pp)` of a `**S` are pointers through `x: T` (i64, unchanged)");
+var r = assert_summary();

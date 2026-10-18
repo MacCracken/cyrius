@@ -1,0 +1,144 @@
+# generic_method_explicit_lookaheads.tcyr — 6.7.15 — the explicit method spelling `x.m<..>(..)` (6.7.14's D7 (a)) is
+# a method call to every lookahead that recognises one, as `x.m(..)` is: a multi-value destructure and re-assignment, a
+# tuple capture, a struct of 9-16 B destructured, a `: stack` pair's `?` / destructure / forward, a method declared to
+# return a vector into a vector local / argument / return, a `*T`-returning method as a dyn source, a top-level zone.
+# Through 6.7.14 those lookaheads keyed a method call on the tokens `x . m (` only: `var a, b = p.mm<i64>(3);` was
+# "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?` and
+# SIGSEGV'd, a vector receive refused the call, a dyn could not be formed from it
+# (issues/2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md). The `<` form is taken only where the
+# receiver's struct has no field of that name and a generic method of it, so `p.n < k >> (j)` stays a comparison (MC).
+# The refusals the same spellings meet (a pair bound to one name, a multi-value call into a struct, ...) are
+# tests/gates/frontend/generic_method_infer.sh L.
+#
+# CROSS-HOST: frontend recognition, but the multi-value registers, the pair's `?` lowering, a vector's return pair (a
+# hidden result pointer on Win64) and a dyn's two words are each backend's. Run on ecb / ach (Mach-O), cass (PE) and pi
+# (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+enum MxRes: stack { MxOk(v); MxErr(e); }
+struct MxP { k; }
+struct MxQ16 { a; b; }
+struct MxSv { k; }
+struct MxN { n; }
+struct MxQ { id; }
+trait MxShow { fn show(self): i64; }
+struct MxD { a; b; }
+struct MxW { o: dyn MxShow; }
+impl MxShow for MxD { fn show(self): i64 { return self.a * 10 + self.b; } }
+impl MxD { fn me<V>(self, k: V): *MxD { self.b = self.b + k; return self; } }
+impl MxQ { fn id<V>(self, x: V): V { return x; } }
+impl MxP {
+    fn mm<V>(self, x: V): (V, i64) { return (x, 7); }
+    fn m3<V>(self, x: V): (V, i64, i64) { return (x, 7, 1); }
+    fn rs<V>(self, x: V): i64 { if (x == 0) { return MxErr(9); } return MxOk(x + self.k); }
+    fn q16<V>(self, x: V): MxQ16 { var q: MxQ16; q.a = x; q.b = 4; return q; }
+}
+impl MxSv { fn vv<V>(self, a: V, b): f64v2 { var v: f64v2; store64(&v, a + self.k); store64(&v + 8, b); return v; } }
+
+# MD: destructures and captures
+fn mx_dt(): i64 { var p: MxP = MxP { 1 }; var a, b = p.mm<i64>(3); return a + b; }
+fn mx_dt3(): i64 { var p: MxP = MxP { 1 }; var a, b, c = p.m3<i64>(3); return a * 100 + b * 10 + c; }
+fn mx_ra(): i64 { var p: MxP = MxP { 1 }; var a = 0; var b = 0; a, b = p.mm<i64>(4); return a * 10 + b; }
+fn mx_ptr(): i64 { var p: MxP = MxP { 1 }; var pp: *MxP = &p; var a, b = pp.mm<i64>(5); return a * 10 + b; }
+fn mx_wrap(): i64 { var p: MxP = MxP { 1 }; var a, b = (p.mm<i64>(6)); return a * 10 + b; }
+fn mx_tup(): i64 { var p: MxP = MxP { 1 }; var t: (i64, i64) = p.mm<i64>(2); return t.0 * 10 + t.1; }
+fn mx_fwd(p: MxP): (i64, i64) { return p.mm<i64>(8); }
+fn mx_fwdc(): i64 { var p: MxP = MxP { 1 }; var a, b = mx_fwd(p); return a * 10 + b; }
+fn mx_gen<T>(p: MxP, t: T): i64 { var a, b = p.mm<T>(t); return a * 10 + b; }
+fn mx_genc(): i64 { var p: MxP = MxP { 1 }; return mx_gen(p, 9); }
+fn mx_for(): i64 {
+    var p: MxP = MxP { 1 };
+    var a = 0;
+    var b = 0;
+    var i = 0;
+    for (i = 0; i < 2; a, b = p.mm<i64>(i)) { i = i + 1; }
+    return a * 10 + b;
+}
+fn mx_s16(): i64 { var p: MxP = MxP { 1 }; var a, b = p.q16<i64>(3); return a * 10 + b; }
+
+# MP: a `: stack` pair through `?`, a destructure, a forward
+fn mx_q(p: MxP): i64 { var v = p.rs<i64>(3)?; return MxOk(v + 10); }
+fn mx_qs(p: MxP): i64 { p.rs<i64>(0)?; return MxOk(5); }
+fn mx_qw(p: MxP): i64 { var v = (p.rs<i64>(3))?; return MxOk(v); }
+fn mx_qf(p: MxP): i64 { return p.rs<i64>(3); }
+fn mx_qfc(p: MxP): i64 { var v = mx_qf(p)?; return MxOk(v + 1); }
+fn mx_pair(which): i64 {
+    var p: MxP = MxP { 1 };
+    var t = 0;
+    var v = 0;
+    if (which == 0) { t, v = mx_q(p); }
+    if (which == 1) { t, v = mx_qs(p); }
+    if (which == 2) { t, v = mx_qw(p); }
+    if (which == 3) { t, v = mx_qfc(p); }
+    if (which == 4) { t, v = p.rs<i64>(5); }
+    return t * 100 + v;
+}
+
+# MV: a method declared to return a vector
+fn mx_lanes(v: f64v2): i64 { return load64(&v) * 10 + load64(&v + 8); }
+fn mx_v1(): i64 { var s: MxSv = MxSv { 1 }; var w: f64v2 = s.vv<i64>(4, 2); return mx_lanes(w); }
+fn mx_v2(): i64 { var s: MxSv = MxSv { 1 }; var w = s.vv<i64>(4, 3); return mx_lanes(w); }
+fn mx_v3(): i64 { var s: MxSv = MxSv { 1 }; var w: f64v2; w = s.vv<i64>(5, 2); return mx_lanes(w); }
+fn mx_v4(): i64 { var s: MxSv = MxSv { 1 }; return mx_lanes(s.vv<i64>(6, 2)); }
+fn mx_vr(s: MxSv): f64v2 { return s.vv<i64>(7, 2); }
+fn mx_v5(): i64 { var s: MxSv = MxSv { 1 }; var w: f64v2 = mx_vr(s); return mx_lanes(w); }
+fn mx_v6(): i64 { var s: MxSv = MxSv { 1 }; var w: f64v2 = (s.vv<i64>(8, 2)); return mx_lanes(w); }
+
+# MY: a `*T`-returning generic method as a dyn source
+fn mx_dk0(o: dyn MxShow): i64 { var w: MxW = MxW { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }
+fn mx_d1(): i64 { var d = MxD { 4, 2 }; var o: dyn MxShow = d.me<i64>(1); return mx_dk0(o); }
+fn mx_d2(): i64 { var d = MxD { 4, 2 }; var o: dyn MxShow = d.me<i64>(1); o = d.me<i64>(2); return mx_dk0(o); }
+fn mx_d3(): i64 { var d = MxD { 4, 2 }; return mx_dk0(d.me<i64>(3)); }
+fn mx_dr(d: *MxD): dyn MxShow { return d.me<i64>(4); }
+fn mx_d4(): i64 { var d = MxD { 4, 2 }; var o: dyn MxShow = mx_dr(&d); return mx_dk0(o); }
+
+# MC: a field compared, the `.m<..>(` token shape, stays a comparison
+fn mx_cmp(k, j): i64 {
+    var p: MxN = MxN { 1 };
+    var q: MxQ = MxQ { 3 };
+    var a = p.n < k >> (j);
+    var b = q.id < k >> (j);
+    var c = 0;
+    c = p.n < k >> (j);
+    if (q.id < k >> (j)) { c = c + 10; }
+    return a + b * 2 + c * 4;
+}
+
+# MZ: the top-level zone
+var MX_GP: MxP = MxP { 1 };
+var mx_ga, mx_gb = MX_GP.mm<i64>(3);
+var mx_gt: (i64, i64) = MX_GP.mm<i64>(4);
+
+assert_eq(mx_dt(), 10, "MD: the filed shape, var a, b = p.mm<i64>(3) (refused: needs a call)");
+assert_eq(mx_dt3(), 371, "MD: three names, p.m3<i64>(3)");
+assert_eq(mx_ra(), 47, "MD: a re-assignment a, b = p.mm<i64>(4)");
+assert_eq(mx_ptr(), 57, "MD: a *P receiver, pp.mm<i64>(5)");
+assert_eq(mx_wrap(), 67, "MD: in parentheses, (p.mm<i64>(6))");
+assert_eq(mx_tup(), 27, "MD: a tuple capture, var t: (i64, i64) = p.mm<i64>(2)");
+assert_eq(mx_fwdc(), 87, "MD: forwarded, return p.mm<i64>(8) from a (i64, i64) fn");
+assert_eq(mx_genc(), 97, "MD: inside a generic, p.mm<T>(t)");
+assert_eq(mx_for(), 27, "MD: a for step, a, b = p.mm<i64>(i)");
+assert_eq(mx_s16(), 34, "MD: a 16-byte struct result destructured, p.q16<i64>(3)");
+assert_eq(mx_pair(0), 14, "MP: var v = p.rs<i64>(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(mx_pair(1), 109, "MP: the statement p.rs<i64>(0)?; propagates the Err and its payload");
+assert_eq(mx_pair(2), 4, "MP: (p.rs<i64>(3))?");
+assert_eq(mx_pair(3), 5, "MP: return p.rs<i64>(3); forwards the pair");
+assert_eq(mx_pair(4), 6, "MP: t, v = p.rs<i64>(5)");
+assert_eq(mx_v1(), 52, "MV: var w: f64v2 = s.vv<i64>(4, 2)");
+assert_eq(mx_v2(), 53, "MV: var w = s.vv<i64>(4, 3), unannotated");
+assert_eq(mx_v3(), 62, "MV: w = s.vv<i64>(5, 2)");
+assert_eq(mx_v4(), 72, "MV: an argument, lanes(s.vv<i64>(6, 2))");
+assert_eq(mx_v5(), 82, "MV: return s.vv<i64>(7, 2) from a f64v2 fn");
+assert_eq(mx_v6(), 92, "MV: in parentheses, (s.vv<i64>(8, 2))");
+assert_eq(mx_d1(), 43, "MY: var o: dyn Show = d.me<i64>(1)");
+assert_eq(mx_d2(), 45, "MY: o = d.me<i64>(2)");
+assert_eq(mx_d3(), 45, "MY: an argument, dk0(d.me<i64>(3))");
+assert_eq(mx_d4(), 46, "MY: return d.me<i64>(4) from a dyn fn");
+assert_eq(mx_cmp(5, 0), 47, "MC: p.n < k >> (j) and q.id < k >> (j) (id a field AND a generic method) compare");
+assert_eq(mx_ga * 10 + mx_gb, 37, "MZ: a top-level var a, b = G.mm<i64>(3)");
+assert_eq(mx_gt.0 * 10 + mx_gt.1, 47, "MZ: a top-level tuple capture, G.mm<i64>(4)");
+var r = assert_summary();

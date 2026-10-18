@@ -75,6 +75,17 @@
 #      MFC1 no carrier positions (the bite reverted) -> RED 8: FC0-FC3b, FC5-FC7 (each refused naming 'gx');
 #      MFC2 `_gs_carries` without its call arm (carrier names only) -> RED 6: FC0 FC2 FC3 FC5 FC6 FC7; MFC3 `_gs_mfwd`
 #      without `_gs_fwd_carr` -> RED 1: FC5
+#   FC8-FC12 (6.7.15) the forwarder's T-typed VALUE itself, whole in the stub's carrier position (`gx(x)`, `x: T`):
+#      `_gs_carries` answered 0 for a bare T-typed name at depth 0, so the forwarder kept an i64 base whose `gx(x)`
+#      was refused at its definition naming 'gx'; it now carries T as it does nested. FC8 the filed repro verbatim
+#      (12); FC9 `outer(5)` refused naming 'outer'; FC10 a control into a non-stub carrier generic given a carrier
+#      (9, unchanged); FC11 a `p: *T` name, the method spelling, beside a second type parameter, a `var y: T` local,
+#      two levels (82); FC12 / FC12b into a BOUNDED carrier generic (its base bad for its bound; the bound judgement's
+#      forward scan reads the same position): `outer(b)` 12, `outer(5)` refused naming 'outer' at the call. The
+#      runtime rows on every target are generic_forward_tparam.tcyr FC9-FC14. Filed: docs/development/issues/
+#      2026-10-16-generic-passing-t-value-into-stub-carrier-position-refused.md
+#      Mutant (2026-10-18): the depth-0 `return 0` back (the lane's previous compiler) -> RED 5: FC8 FC9 FC11 FC12
+#      FC12b (refused at outer's definition naming 'gx' / 'gxb')
 #   NN (6.7.14) a type argument that is NO NAME — `Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`, `Box<"s">`, `id<*Pt>`,
 #      `Box<>`, `Box<true>`: its token's VALUE was read as a name-pool offset ("unknown type 'truct'" / "'struct'" /
 #      "'num'" / "'enum'", a string SIGSEGV'd the compiler), the caret one token late, the call's `+ 2>(3)` left to the
@@ -111,6 +122,42 @@
 #      Filed: docs/development/issues/archived/2026-10-09-undeclared-generic-type-arguments-accepted.md
 #      Mutant (2026-10-16, a one-edit scratch copy of the tree, its 2-stage cycc, this gate run from it): MSG1
 #      `_gtype_sid_def` without its `_targ_chk` call -> RED 8: SG0-SG7 (each BUILT, as on the compiler before it)
+#   NG (6.7.15, the user's D6 (a), 2026-10-18) `Name<..>` ON A NON-GENERIC STRUCT OR A SCALAR: the list was skipped
+#      unread — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`, `var b: Box<Pt<nosuch>>;`, `fn f(p: Pt<i64>)`, a
+#      `: Pt<i64>` return and `Vec<Pt<nosuch>>` compiled (the filed repro exited 31) and a name inside was never checked.
+#      `_ngt_refuse` refuses each once, at the name — "'Pt' is not a generic struct: it takes no type arguments", "'i64'
+#      takes no type arguments" — the list skipped and the name's own type read, so nothing cascades. NG0 the filed repro
+#      verbatim; NG1-NG8 the positions (a Vec element's in a local and a field; a parameter, a return, `*Pt<..>` both
+#      ways, a scalar parameter; local annotations; a literal head, `Box<i32<u8>>`, sizeof, `g<f64<u8>>`; globals; a
+#      generic body with three instances; `Box<Result<..>>` keeping its own refusal alone; a pointer return in source
+#      order, not pass 1's); a control (Box<Pt>, Box<Box<Pt>>, Vec<i64>, Vec<Box<Pt>>, Vec<Vec<i64>>, g<Box<Pt>>).
+#      Filed: docs/development/issues/2026-10-16-non-generic-type-given-type-arguments-compiles.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, this gate run with CYCC= it):
+#      MNG1 `_ngt_refuse` answering 0 (the bite off) -> RED 8: NG0-NG6, NG8 (each BUILT); MNG2 `_gen_ann_sid`'s
+#      non-generic arm without it -> RED 7: NG0 NG2-NG6 NG8; MNG3 its scalar arm without it -> RED 2: NG3 NG5; MNG4 the
+#      parameter site without it -> RED 1: NG2; MNG5 `_parse_one_type_arg`'s `<` arm without it -> RED 2: NG0 NG4; MNG6
+#      `_vec_el_args` without it -> RED 1: NG1; MNG7 `_ptr_step_peek`'s pass-1 early return gone -> RED 1: NG8 (pass 1
+#      reported first); MNG8 `_ptr_tok_sid`'s early return gone -> RED 1: NG8; MNG9 the struct-return site without it
+#      -> RED 1: NG2. Defensive, no killing row (named):
+#      `_ngt_refuse`'s `_tn_once` — `ERR_IDENT`'s own repeat check (`_err_dup`, 6.7.14) already prints a report at one
+#      token once; kept so the latch matches `_tn_refuse`'s.
+#   SR (6.7.15, the user's D7 (a), 2026-10-18) THREE MORE SIGNATURE POSITIONS READ A GENERIC STRUCT'S TYPE ARGUMENTS AT
+#      THE DEFINITION, as SG's parameter and return do: a multi-value return element `(Box<Zork>, i64)` (`_mret_elem`
+#      took `_gtype_sid`, which keeps the base), a trait member's `b: Box<nosuch>` (`_trs_type` skipped the list) and a
+#      `*fn(Box<Zork>): i64` parameter type (`_pty_name` skipped it) compiled as the base `Box` (the filed repro exited
+#      1). Each is read by `_targ_chk` — every refusal once at its token, nothing instantiated — the fn's and the trait
+#      member's own type parameters names. SR0 the filed repro verbatim (three lines); SR1 the element in a generic with
+#      two instances (once); SR2 a member's `*Box<Box<Zork>>` parameter and `(Box<Zork>, i64)` return; SR2b a member's
+#      walk ends at its first refusal (one report per member, as the reader's others); SR3 `*fn(Box<Zork>)` in a generic
+#      with three instances (once); SR4 `**Box<Zork>` (refused before too) still once; a control ((Box<Pt>, i64),
+#      `b: Box<i64>` / `Box<U>` / `*fn(Box<U>)` in a member, `*fn(Box<Pt>)`, a generic's own `*fn(Box<U>)`, Box<Later>
+#      with Later declared below, in each position).
+#      Filed: docs/development/issues/2026-10-16-generic-type-args-unread-in-mret-trait-and-fn-pointer-signatures.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, this gate run with CYCC= it):
+#      the lane's previous compiler (373ab3d29) -> RED 6: SR0-SR4 (each built; SR4's `**Box<Zork>` alone was refused); MSR1 `_mret_elem`
+#      on `_gtype_sid` again -> RED 2: SR0 SR1; MSR2 `_trs_targs` answering 0 -> RED 3: SR0 SR2 SR2b; MSR3 `_pty_targs`
+#      answering 0 -> RED 3: SR0 SR3 SR4; MSR4 `_targ_is_tp` without the member's `_trs_fn` arm -> RED 1: the SR control
+#      ("unknown type 'U'"); MSR5 `_trs_targs` not ending the walk -> RED 1: SR2b (two lines)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -437,6 +484,46 @@ exits fc6 137 "FC6: gx(mk1<T>(x)) 12 + gx(wrap(b)) 13 + a two-level o3 -> o1 112
 fcmk fc7 'fn outer<T>(x: T): i64 { return gx(mk1(x)); }' 'return 7;'
 exits fc7 7 "FC7: the definition alone, never called (it was refused there)"
 
+# ── 6.7.15: the forwarder's T-typed VALUE itself, whole in the stub's carrier position ──────────────
+cat > "$T/fc8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn gx<T>(b: Box<T>): i64 { return b.n + b.v.y; }
+fn outer<T>(x: T): i64 { return gx(x); }
+fn go(): i64 { var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8; return outer(b); }
+syscall(60, go());
+EOF
+exits fc8 12 "FC8: the filed repro, verbatim (outer(b), b: Box<Pt> -> gx(x): 8 + 4; refused at outer's definition before)"
+FCB='var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8;'
+fcmk fc9 'fn outer<T>(x: T): i64 { return gx(x); }' 'return outer(5);'
+stubref fc9 outer "FC9: outer(5) — the forwarder is a stub, refused naming it"
+fcmk fc10 'fn gn<T>(b: Box<T>): i64 { return b.n + 1; }
+fn outer<T>(x: T): i64 { return gn(x); }' "$FCB return outer(b);"
+exits fc10 9 "FC10: control — a forwarder into a NON-stub carrier generic, given a carrier, unchanged (8 + 1)"
+fcmk fc11 'struct P { a; }
+impl P { fn pick<T>(self, b: Box<T>): i64 { return self.a + b.v.y; } }
+fn op<T>(p: *T): i64 { return gx(p); }
+fn om<T>(q: P, x: T): i64 { return q.pick(x); }
+fn o2<T, U>(k: U, x: T): i64 { return gx(x) + k; }
+fn ol<T>(x: T): i64 { var y: T = x; return gx(y) + 100; }
+fn oo<T>(x: T): i64 { var q: P = P { 10 }; return op(&x) + om(q, x); }' "$FCB return op(&b) + o2(20, b) + ol(b) + oo(b) - 100;"
+exits fc11 82 "FC11: a *T name (12), the method spelling (14), beside a second type parameter (32), a T-typed local (112), two levels (26)"
+fcmk fc12 'trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+fn gxb<T: Show>(b: Box<T>): i64 { return b.n + b.v.show(); }
+fn outer<T>(x: T): i64 { return gxb(x); }' "$FCB return outer(b);"
+exits fc12 12 "FC12: into a BOUNDED carrier generic (its i64 base bad for its bound): outer(b) 12 (refused at outer's definition before)"
+fcmk fc12b 'trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+fn gxb<T: Show>(b: Box<T>): i64 { return b.n + b.v.show(); }
+fn outer<T>(x: T): i64 { return gxb(x); }' 'return outer(5);'
+build fc12b
+if [ "$rc" -eq 0 ]; then bad "FC12b: outer(5) into the bounded carrier generic: BUILT (rc 0)"
+elif ! grep -q "generic 'outer' has no i64 instance: it forwards its type parameter to 'gxb'" "$T/fc12b.err"; then
+    bad "FC12b: outer(5): refused, but not naming outer: $(grep '^error' "$T/fc12b.err" | head -1)"
+else ok "FC12b: outer(5) into the bounded carrier generic: refused naming 'outer' at the call"; fi
+
 # ── 6.7.14: a type argument that is no name ────────────────────────────────────────────────────
 # `errs <name> <n> <what> <line>...`: refused with exactly <n> `^error` lines, each <line> among them (grep -F).
 errs() {
@@ -602,5 +689,121 @@ syscall(60, main());
 EOF
 exits sgk 49 "SG control: a generic's own fn gm<K, V>(m: Mp<K, V>, b) (21), Box<Later> / *Box<Later> parameters and a : Box<Later> return with Later declared below the fns (12 + 7 + 9)"
 
+# ── 6.7.15: `Name<..>` on a non-generic struct or a scalar (the user's D6 (a), 2026-10-18) ──────────
+NGS="'Pt' is not a generic struct: it takes no type arguments"
+NGI="takes no type arguments"
+cat > "$T/ng0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }
+fn main(): i64 {
+    var c: Pt<i64>;
+    c.x = 3;
+    var b: Box<Pt<nosuch>>;
+    b.n = 4;
+    return c.x + b.n + g<Pt<i32>>(0) + g<i64<u8>>(0);
+}
+syscall(60, main());
+EOF
+errs ng0 4 "NG0: the filed repro verbatim — each shape refused once, at the name (it compiled: exit 31)" \
+    "error:<source>:6:12: $NGS" "error:<source>:8:16: $NGS" "error:<source>:10:26: $NGS" "error:<source>:10:42: 'i64' $NGI"
+NGH='include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }'
+ng() { printf '%s\n%s\nsyscall(60, 7);\n' "$NGH" "$2" > "$T/$1.cyr"; }
+ng ng1 'fn f(): i64 { var w: Vec<Pt<nosuch>> = 0; return 0; }
+struct H { items: Vec<Pt<i64>>; k; }'
+errs ng1 2 "NG1: a Vec element, a local's and a field's (Vec<Pt<nosuch>>, Vec<Pt<i64>>)" \
+    "error:<source>:6:26: $NGS" "error:<source>:7:23: $NGS"
+ng ng2 'fn f(p: Pt<i64>): i64 { return 7; }
+fn h(): Pt<i64> { var p: Pt; return p; }
+fn k(p: *Pt<i64>, q: i32<u8>): *Pt<i64> { return p; }'
+errs ng2 5 "NG2: a parameter, a return, a pointer parameter, a scalar parameter, a pointer return — at the definition, called or not" \
+    "error:<source>:6:9: $NGS" "error:<source>:7:9: $NGS" "error:<source>:8:10: $NGS" "error:<source>:8:22: 'i32' $NGI" "error:<source>:8:33: $NGS"
+ng ng3 'fn f(): i64 { var x: i64<u8> = 5; var y: f64<i32> = 1.5; var p: *Pt<i64> = 0; var q: Pt<i64> = Pt { 1, 2 }; return x; }'
+errs ng3 4 "NG3: local annotations — a scalar, f64, a pointer, a struct with its initialiser" \
+    "error:<source>:6:22: 'i64' $NGI" "error:<source>:6:42: 'f64' $NGI" "error:<source>:6:66: $NGS" "error:<source>:6:86: $NGS"
+ng ng4 'fn f(): i64 { var p = Pt<i64> { 1, 2 }; var b: Box<i32<u8>>; return sizeof(Pt<i64>) + g<f64<u8>>(0) + p.y; }'
+errs ng4 4 "NG4: a struct literal head, a scalar inside Box<..>, sizeof(..), an explicit f64<u8>" \
+    "error:<source>:6:23: $NGS" "error:<source>:6:52: 'i32' $NGI" "error:<source>:6:76: $NGS" "error:<source>:6:89: 'f64' $NGI"
+ng ng5 'var G: Pt<i64> = Pt { 1, 2 };
+var X: i64<u8> = 3;'
+errs ng5 2 "NG5: globals — a struct with its initialiser, a scalar" "error:<source>:6:8: $NGS" "error:<source>:7:8: 'i64' $NGI"
+ng ng6 'fn h<T>(x: T): i64 { var c: Pt<T>; c.x = 1; return c.x + sizeof(T); }
+fn f(): i64 { var b: Box<Pt>; return h(1) + h(b) + h<i32>(2); }'
+errs ng6 1 "NG6: a generic body's Pt<T> with three instances — once" "error:<source>:6:29: $NGS"
+ng ng7 'fn f(): i64 { var r: Box<Result<i64>>; return 0; }'
+errs ng7 1 "NG7: Box<Result<..>> keeps its own refusal, alone" "generic type-args must be a scalar (i8/i16/i32/i64) or a struct"
+# NG8: in source order — a fn's `*Pt<..>` return is refused where pass 2 reads the definition, not by pass 1's scan
+# (which ran ahead of every earlier fn's errors).
+ng ng8 'fn a(): i64 { var q: i64 = 1 2; return q; }
+fn k(): *Pt<i64> { return 0; }
+fn m(p: i64): *Pt<i64> { return 0; }'
+errs ng8 3 "NG8: a pointer return's refusal in source order" "error:<source>:7:10: $NGS" "error:<source>:8:16: $NGS"
+if [ "$(grep '^error' "$T/ng8.err" | head -1 | cut -d: -f2-3)" != "<source>:6" ]; then
+    bad "NG8: the first error is not line 6's (pass 1 reported ahead): $(grep '^error' "$T/ng8.err" | head -1)"
+else ok "NG8: line 6's error first (pass 2 reports the pointer returns)"; fi
+printf '%s\nfn main(): i64 { var b: Box<Pt>; b.n = 1; var c: Box<Box<Pt>>; c.n = 2; var w: Vec<i64> = 0; var v: Vec<Box<Pt>> = 0; var u: Vec<Vec<i64>> = 0; var p: Pt; p.y = 3; return b.n + c.n + p.y + g<Pt>(0) + g<Box<Pt>>(0) + g<Vec<i64>>(0) - 54; }\nsyscall(60, main());\n' "$NGH" > "$T/ngk.cyr"
+exits ngk 0 "NG control: Box<Pt>, Box<Box<Pt>>, Vec<i64>, Vec<Box<Pt>>, Vec<Vec<i64>>, g<Pt> 16, g<Box<Pt>> 24, g<Vec<i64>> 8, unchanged"
+
+# ── 6.7.15: a multi-value element, a trait member's signature and a `*fn(..)` parameter (the user's D7 (a)) ───────
+cat > "$T/sr0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn mv(): (Box<Zork>, i64) { return (0, 1); }
+trait Sh { fn a(self, b: Box<nosuch>): i64; }
+fn ap(cb: *fn(Box<Zork>): i64): i64 { return 0; }
+fn main(): i64 { var a, c = mv(); return c + ap(0); }
+syscall(60, main());
+EOF
+errs sr0 3 "SR0: the filed repro verbatim — each position refused once, at its argument (it compiled: exit 1)" \
+    "error:<source>:3:19: unknown type 'Zork' $TA" "error:<source>:4:36: unknown type 'nosuch' $TA" "error:<source>:5:23: unknown type 'Zork' $TA"
+SRH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct P { k; }'
+sr() { printf '%s\n%s\nsyscall(60, 7);\n' "$SRH" "$2" > "$T/$1.cyr"; }
+sr sr1 'fn mv<T>(x: T): (Box<Zork>, T) { return (0, x); }
+fn f(): i64 { var a, c = mv(1); var d, e = mv<i32>(2); return c + e; }'
+errs sr1 1 "SR1: a multi-value element in a generic with two instances — once" "error:<source>:5:26: unknown type 'Zork' $TA"
+sr sr2 'trait Sh { fn a(self, q: *Box<Box<Zork>>): i64; fn b(self): (Box<Zork2>, i64); }'
+errs sr2 2 "SR2: a member's *Box<Box<Zork>> parameter and (Box<Zork2>, i64) return" \
+    "error:<source>:5:39: unknown type 'Zork' $TA" "error:<source>:5:71: unknown type 'Zork2' $TA"
+sr sr2b 'trait Sh { fn a(self, b: Box<nosuch>, c: Nope): i64; }'
+errs sr2b 1 "SR2b: a member's walk ends at its first refusal (one report per member)" "error:<source>:5:36: unknown type 'nosuch' $TA"
+sr sr3 'fn gp<U>(cb: *fn(Box<Zork>, U): i64, u: U): i64 { return 2; }
+fn f(): i64 { var p: Pt; return gp(0, 1) + gp<i32>(0, 2) + gp(0, p); }'
+errs sr3 1 "SR3: *fn(Box<Zork>, U) in a generic with three instances — once" "error:<source>:5:26: unknown type 'Zork' $TA"
+sr sr4 'fn ap(p: **Box<Zork>): i64 { return 0; }
+fn aq(cb: *fn(i64): Box<Zork2>): i64 { return 0; }'
+errs sr4 2 "SR4: **Box<Zork> (refused before) and a *fn(..)'s Box<Zork2> return — once each" \
+    "error:<source>:5:20: unknown type 'Zork' $TA" "error:<source>:6:30: unknown type 'Zork2' $TA"
+cat > "$T/srk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct P { k; }
+fn mv(): (Box<Pt>, i64) { return (0, 1); }
+fn ml(): (Box<Later>, i64) { return (0, 2); }
+trait Sh { fn a(self, b: Box<i64>): i64; fn g<U>(self, b: Box<U>): U; fn g2<U>(self, c: *fn(Box<U>): i64): i64; fn h(self, l: *Box<Later>): (Box<Later>, i64); }
+impl Sh for P { fn a(self, b: Box<i64>): i64 { return 3; } fn g<U>(self, b: Box<U>): U { return 0; } fn g2<U>(self, c: *fn(Box<U>): i64): i64 { return 0; } fn h(self, l: *Box<Later>): (Box<Later>, i64) { return (0, 4); } }
+fn ap(cb: *fn(Box<Pt>): i64, cl: *fn(Box<Later>): i64): i64 { return 5; }
+fn gp<U>(cb: *fn(Box<U>): i64, u: U): i64 { return 6; }
+fn main(): i64 {
+    var a, c = mv();
+    var d, e = ml();
+    var p = P { 1 };
+    var b: Box<i64>;
+    var f, g = p.h(0);
+    return c + e + p.a(b) + g + ap(0, 0) + gp(0, 1) + gp<i32>(0, 2) - 27;
+}
+struct Later { z; }
+syscall(60, main());
+EOF
+exits srk 0 "SR control: (Box<Pt>, i64), a member's Box<i64> / own Box<U> / *fn(Box<U>), *fn(Box<Pt>), a generic's own *fn(Box<U>), Box<Later> (declared below) in each position, unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15)"

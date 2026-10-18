@@ -1135,7 +1135,9 @@ fn _icall_chain(S, cfi, t, beg): i64 {
 # Silent under `--syntax-only` (lint's pre-pass), where a callee from a sibling file is unknown too, as `_method_chain`
 # and `_call_field` stay silent there.
 fn _icall_fld_err(S, beg): i64 {
-    if (_panic + _syntax_only == 0) {
+    var say = 0;
+    if (_panic + _syntax_only == 0) { if (_derr_seen(GTI(S), "_icall_fld_err", beg, 1) == 0) { say = 1; } }   # 6.7.15
+    if (say == 1) {
         syscall(SYS_WRITE, 2, "error:", 6);
         _err_head(S);
         PRSTR(": cannot take a field of the result of '");
@@ -1357,6 +1359,54 @@ fn _macho_min_argc(tgt, n): i64 {
     return 0;
 }
 
+# The ELF-aarch64 raw-syscall-number warning (the comment at its call in _PARSE_FACTOR_IMPL), out of that
+# cybs-ceiling fn; once per site (`_warn_seen`: a generic body is parsed per instance, an #inline one per call).
+# CHANGELOG [6.7.15]
+fn _sysx_raw_warn(S, sc_num): i64 {
+    if (sc_num >= 0) {
+        var sxm = _sysx_meant_here(S, sc_num);   # 6.6.12: 0 inside a native aarch64 #ifdef
+        if (sxm != 0) {
+            if (_warn_seen(GTI(S), "_sysx_raw_warn", sc_num) == 1) { return 0; }   # 6.7.15: once per site
+            syscall(SYS_WRITE, 2, "warning:", 8);
+            _err_head(S);
+            syscall(SYS_WRITE, 2, ": raw syscall ", 14);
+            PRNUM(sc_num);
+            syscall(SYS_WRITE, 2, " is x86_64 `", 12);
+            PRSTR(sxm);
+            # ⛔ THIS SECOND CLAUSE WAS DEAD CODE FROM v6.5.51 TO v6.6.4 — measured, 43
+            # rows compiled, 43 taking the `sxa == 0` path and not one carrying the
+            # better text. It was structural, not luck: `_SYSX_ACTUALLY` was generated
+            # from the aarch64 stdlib PEER's declarations while `_row_wanted` emits a
+            # `_SYSX_MEANT` row only for x86 numbers that peer does NOT declare, so the
+            # two sets could not intersect. The single most useful half of the whole
+            # diagnostic — naming the call the number really invokes on ARM — therefore
+            # never printed once. v6.6.5 regenerates `_SYSX_ACTUALLY` from the committed
+            # KERNEL table instead (tests/data/syscalls/aarch64.tbl), restricted to the
+            # `_SYSX_MEANT` numbers, so 35 of the 43 now carry it and the rest are
+            # genuinely unassigned on aarch64. CHANGELOG [6.6.5]
+            var sxa = _SYSX_ACTUALLY(sc_num);
+            if (sxa != 0) {
+                syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is `", 34);
+                PRSTR(sxa);
+                syscall(SYS_WRITE, 2, "`. Use ", 7);
+            }
+            if (sxa == 0) {
+                # v6.6.5: the table is the KERNEL's generic aarch64 list now, so a 0 here
+                # means the number really is unassigned on aarch64 and the call returns
+                # -ENOSYS. (v6.6.4's text said "not one the aarch64 stdlib declares",
+                # correct while the table came from the peer; before that it claimed "not
+                # a syscall at all", which was simply false — 91 is capset there.)
+                syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is unassigned, so the call fails with -ENOSYS", 75);
+                syscall(SYS_WRITE, 2, ". Use ", 6);
+            }
+            PRSTR(_SYSX_USE(sc_num));
+            syscall(SYS_WRITE, 2, " from lib/syscalls.cyr instead of the raw number.
+", 50);
+        }
+    }
+    return 0;
+}
+
 # Warns and returns 1 when `sc_num` is below its Mach-O emulation's minimum arity. Its own fn so
 # _macho_warn_unrouted does not grow past cybs's per-function reference limit. CHANGELOG [6.6.10]
 fn _macho_warn_short(sc_num, argc): i64 {
@@ -1400,6 +1450,7 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
         ti = ti - 1;
     }
     if (ti > 0) { ti = ti - 1; }
+    if (_warn_seen(ti, "_pe_warn_unrouted", sc_num * 4096 + argc) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": syscall ", 10);
@@ -2991,6 +3042,7 @@ fn _call_fld_err(S, fi, noff): i64 {
 }
 fn _mret_fld_err(S, fi, noff): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_mret_fld_err", fi * 31 + noff, 1) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot take a field of the result of '");
@@ -3378,7 +3430,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # type-args instantiate → their instance sid; `>>` tail handled).
     var _ta_conc = _parse_one_type_arg(S);
     var _ta_conc1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
+    if (_ta_comma(S) == 1) { _ta_conc1 = _parse_one_type_arg(S); }  # `,`
     _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
     if (_ta_refd == 1) { return _gen_call_refd(S, noff); }   # 6.7.14
     # Call the base (the all-i64 instance) only when EVERY arg is i64.
@@ -3686,6 +3738,7 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
 # line, with its tail in two literals.
 fn _sub_err(S, noff, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_sub_err", ((noff * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot subscript '");
@@ -3930,6 +3983,7 @@ fn _sub_ret_sid(S): i64 {
 # name `n2` quoted (a C string; 0 none) — ERR_IDENT's line.
 fn _psub_err(S, hd, nt, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_psub_err", (((hd * 31 + nt) * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(hd);
@@ -5545,48 +5599,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # the aarch64 backend and a `return 0;` stub on x86/PE/cx, so this costs those
         # forks nothing. `_TARGET_MACHO == 0` keeps it off the Mach-O ARM arm, which has
         # its own routing diagnostic above.
-        if (_TARGET_MACHO == 0) {
-            if (sc_num >= 0) {
-                var sxm = _sysx_meant_here(S, sc_num);   # 6.6.12: 0 inside a native aarch64 #ifdef
-                if (sxm != 0) {
-                    syscall(SYS_WRITE, 2, "warning:", 8);
-                    _err_head(S);
-                    syscall(SYS_WRITE, 2, ": raw syscall ", 14);
-                    PRNUM(sc_num);
-                    syscall(SYS_WRITE, 2, " is x86_64 `", 12);
-                    PRSTR(sxm);
-                    # ⛔ THIS SECOND CLAUSE WAS DEAD CODE FROM v6.5.51 TO v6.6.4 — measured, 43
-                    # rows compiled, 43 taking the `sxa == 0` path and not one carrying the
-                    # better text. It was structural, not luck: `_SYSX_ACTUALLY` was generated
-                    # from the aarch64 stdlib PEER's declarations while `_row_wanted` emits a
-                    # `_SYSX_MEANT` row only for x86 numbers that peer does NOT declare, so the
-                    # two sets could not intersect. The single most useful half of the whole
-                    # diagnostic — naming the call the number really invokes on ARM — therefore
-                    # never printed once. v6.6.5 regenerates `_SYSX_ACTUALLY` from the committed
-                    # KERNEL table instead (tests/data/syscalls/aarch64.tbl), restricted to the
-                    # `_SYSX_MEANT` numbers, so 35 of the 43 now carry it and the rest are
-                    # genuinely unassigned on aarch64. CHANGELOG [6.6.5]
-                    var sxa = _SYSX_ACTUALLY(sc_num);
-                    if (sxa != 0) {
-                        syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is `", 34);
-                        PRSTR(sxa);
-                        syscall(SYS_WRITE, 2, "`. Use ", 7);
-                    }
-                    if (sxa == 0) {
-                        # v6.6.5: the table is the KERNEL's generic aarch64 list now, so a 0 here
-                        # means the number really is unassigned on aarch64 and the call returns
-                        # -ENOSYS. (v6.6.4's text said "not one the aarch64 stdlib declares",
-                        # correct while the table came from the peer; before that it claimed "not
-                        # a syscall at all", which was simply false — 91 is capset there.)
-                        syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is unassigned, so the call fails with -ENOSYS", 75);
-                        syscall(SYS_WRITE, 2, ". Use ", 6);
-                    }
-                    PRSTR(_SYSX_USE(sc_num));
-                    syscall(SYS_WRITE, 2, " from lib/syscalls.cyr instead of the raw number.
-", 50);
-                }
-            }
-        }
+        if (_TARGET_MACHO == 0) { _sysx_raw_warn(S, sc_num); }
         # PE32+ (Windows): reroute recognised Linux syscall numbers to
         # kernel32 IAT calls so the generic `ESCPOPS` path below
         # (which would emit the x86_64 `syscall` instruction, 0F 05,
@@ -8917,6 +8930,7 @@ fn _PEXPR_IMPL(S): i64 {
 # reinterpreted. Warn-only, the same ADR-002 posture as kind 1. CHANGELOG [6.6.11]
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if (_warn_seen(GTI(S), "_FLT_TYPE_WARN", kind) == 1) { return 0; }   # 6.7.15: once per token and kind
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);
     if (kind == 0) {

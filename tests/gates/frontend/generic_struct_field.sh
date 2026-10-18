@@ -52,12 +52,61 @@
 #   MG1 `_ret_ptr_base_bind` returns 0 (2026-10-16)  -> RED 5: PG0-PG4 (refused: unknown type 'T'; the tcyr
 #                                                       does not build)
 #   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
+#   PD (6.7.15, docs/development/issues/2026-10-16-double-pointer-generic-return-read-in-pass-one.md) a `: **G<..>`
+#      return's pin is not read by pass 1 while its arguments do not resolve (`_ret_ptr_unres`, shared with
+#      `_ret_ptr_sid`'s one-star test): PD1 the filed repro 2 verbatim (`fn mk(): **Box<Later>`, Later declared below:
+#      refused "unknown type 'Later'" before) exits 2, PD2 the filed repro 1 verbatim (`: **Box<Zork>`) one error,
+#      PD3 `**Box<Pt>` with Pt declared above keeps its pin — `**mk()`, `*mk()` and `take(**mk())` read (25), from a
+#      caller below mk and one ABOVE it (pass 1's record, unchanged), PD4 a caller above mk with Later below reads
+#      through a `**Box<Later>` local's pin (`**q`, `*q`: 2), PD5 a caller below mk reads `**mk()` through the call's
+#      pin (25). (`**mk()` itself in a caller ABOVE mk with Later below is the pre-existing pass-1 record gap that
+#      `*Later` / `**Later` / `*Box<Later>` returns share — filed, not this row.)
+#   MPD1 `_ret_ptr_record` reads the pin in pass 1 again (the fix reverted; 2026-10-18) -> RED 3: PD1 PD4 PD5 (refused
+#                                                       "unknown type 'Later'")
+#   MPD2 `_ret_ptr_unres` without its star skip (one `*` only) -> RED 3: PD1 PD4 PD5, as MPD1
+#
+#   PA (6.7.15, the user's D8 (a), 2026-10-18; docs/development/issues/2026-10-16-pointer-field-generic-type-args-read-only-
+#      at-use.md) a late `p: *G<..>` field's type arguments are checked AT THE FIELD, once, used or not (they were read
+#      only at a use, so an unused field compiled): PA1 the filed repro verbatim (`p: *Box<Zork>`, unused; exit 7
+#      before) refused once at 3:24, PA2 `p: *Box<1>` unused (exit 7 before), PA3 the used form one error line in all,
+#      PA4 a use in a fn ABOVE the struct one error, PA5 `*Later<Zork>` with the generic Later declared below, PA6
+#      `*Box<Box<Zork>>`, PA7 `struct W<T> { p: *Box<Zork>; }` at two instances, PA8 `*Box<E>` with the enum E declared
+#      below (its enum line, not "unknown type"), PA9 three bad fields of one struct each once (three lines); and what
+#      stays valid: PA10 two structs pointing at each other through `*Box<B>` / `*Box<A>`, B declared below (52), PA11
+#      `*Box<Later<Pt>>` with both declared below (5)
+#   MPA1 `_fld_targ_chk` returns at once (2026-10-18)   -> RED 6: PA1 PA2 PA5 PA6 PA7 PA9 compiled (PA3 PA4 PA8 green:
+#                                                       their use reports it, once)
+#   MPA2 `_ta_late` never set (no name declared below) -> RED 3: PA10 PA11 refused "unknown type 'B'" / 'Later'; PA8
+#                                                       "unknown type 'E'", then the use's enum line
+#   MPA3 `_is_enum_name` without its declared-below arm -> RED 1: PA8 (two lines, as MPA2)
+#
+#   HF (6.7.15, docs/development/issues/2026-10-16-generic-struct-pointer-field-does-not-hop.md) a generic struct's
+#      `p: *T` field hops in its instance as a `p: *Pt` field does (6.6.17): `b.p.y` with `b: Pb<Pt>` was "expected ';',
+#      got '.'". HF1 the filed repro verbatim (9), HF2 a store `b.p.y = 3` (3), HF3 a method `b.p.m()` (78), HF4 inside
+#      a generic `fn g<T>(b: Pb<T>) { return b.p.y; }` (9), HF5 `Pb<i32>`'s `b.p + 1` steps 4 (9, unchanged) — on
+#      x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine). More shapes on every leg (a compound
+#      store, `*Pb<Pt>`, a call's result, a struct's `Pb<Pt>` field, `Pb<Box<Pt>>`, two parameters, a global):
+#      tests/tcyr/crossos/generic_pointer_receivers.tcyr's PF rows (generic_ptr_param_infer.sh PT).
+#   MHF1 `_fld_ptr_late` without its type-parameter arm (2026-10-18; a scratch tree, its own legs) -> RED 20: HF1-HF4
+#                                                       on every leg ("expected ';', got '.'"); HF5 green (and
+#                                                       generic_ptr_param_infer.sh PT on every leg: does not build)
+#   MHF2 `_fld_ptr_sid` back on `_ptr_tok_sid` (T read unbound) -> RED 20: HF1-HF4 on every leg; HF5 green (PT as MHF1)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: generic_struct_field: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: generic_struct_field: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T (never ~/.wine), torn down with its server dir on exit (the HF legs).
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0
 ok()  { echo "  ok   $1"; }
@@ -213,5 +262,217 @@ syscall(60, main());
 EOF
 exits pg7 72 "PG7: fn mk(): *Box<Later> with Later declared below it (pass 1 refused it 'unknown type')"
 
+# PD — 6.7.15: pass 1 leaves a `: **G<..>` return's pin to pass 2 while its arguments do not resolve.
+cat > "$T/pd1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+fn main(): i64 { var q: **Box<Later> = mk(); var b: *Box<Later> = *q; return b.n; }
+syscall(60, main());
+EOF
+exits pd1 2 "PD1: the filed repro 2, fn mk(): **Box<Later> with Later declared below (refused before)"
+cat > "$T/pd2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn mkz(x): **Box<Zork> { return 0; }
+syscall(60, 3);
+EOF
+build pd2
+ne=$(grep -c '^error' "$T/pd2.err" || true)
+if [ "$rc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "error:<source>:3:22: unknown type 'Zork' as a type argument" "$T/pd2.err"; then
+    ok "PD2: the filed repro 1, fn mkz(x): **Box<Zork>, refused once at 3:22"
+else bad "PD2: rc $rc, $ne error lines (want 1, at 3:22): $(grep '^error' "$T/pd2.err" | tr '\n' ' ')"; fi
+PDM='fn mk(): **Box<Pt> { var b: *Box<Pt> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Pt> = alloc(8); store64(pp, b); return pp; }'
+PDU='fn main(): i64 { var t: Box<Pt> = **mk(); var p: *Box<Pt> = *mk(); return t.n * 10 + take(**mk()) + p.n * 100 - 200; }'
+PDH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn take(b: Box<Pt>): i64 { return b.v.y; }'
+printf '%s
+%s
+%s
+syscall(60, main());
+' "$PDH" "$PDM" "$PDU" > "$T/pd3a.cyr"
+exits pd3a 25 "PD3a: **Box<Pt> (Pt above): **mk(), *mk(), take(**mk()) below mk (unchanged)"
+printf '%s
+%s
+%s
+syscall(60, main());
+' "$PDH" "$PDU" "$PDM" > "$T/pd3b.cyr"
+exits pd3b 25 "PD3b: ... from a caller ABOVE mk, pass 1's pin (unchanged)"
+cat > "$T/pd4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn main(): i64 { var q: **Box<Later> = mk(); var t: Box<Later> = **q; var b: *Box<Later> = *q; return t.n * 10 + b.v.y; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+syscall(60, main());
+EOF
+exits pd4 25 "PD4: a caller ABOVE mk (Later below) reads **q / *q through its **Box<Later> local"
+cat > "$T/pd5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+fn take(b: Box<Later>): i64 { return b.v.y; }
+fn main(): i64 { var t: Box<Later> = **mk(); var p: *Box<Later> = *mk(); return t.n * 10 + take(**mk()) + p.n * 100 - 200; }
+syscall(60, main());
+EOF
+exits pd5 25 "PD5: a caller below mk reads **mk() through the call's pin (pass 2's)"
+
+# PA — 6.7.15 (D8 (a)): a late `p: *G<..>` field's type arguments are checked at the field, once, used or not.
+one_error() {   # <name> <message fragment> <what>: refused with exactly one error line, which contains the fragment
+    build "$1"
+    ne=$(grep -c '^error' "$T/$1.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ "$ne" -ne 1 ]; then bad "$3: $ne error lines, want 1: $(grep '^error' "$T/$1.err" | tr '\n' ' ')"
+    elif grep -qF "$2" "$T/$1.err"; then ok "$3: one error, $2"
+    else bad "$3: not '$2': $(grep '^error' "$T/$1.err")"; fi
+}
+UZ="unknown type 'Zork' as a type argument"
+# The filed repro, verbatim (the issue's text).
+cat > "$T/pa1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct H { p: *Box<Zork>; n; }
+fn main(): i64 { var h: H; h.n = 7; return h.n; }
+syscall(60, main());
+EOF
+one_error pa1 "error:<source>:3:24: $UZ" "PA1: the filed repro, p: *Box<Zork> unused, at the field"
+sed 's/\*Box<Zork>/*Box<1>/' "$T/pa1.cyr" > "$T/pa2.cyr"
+one_error pa2 "error:<source>:3:20: a type argument is a type name, got number 1" "PA2: p: *Box<1> unused"
+sed 's/h.n = 7; return h.n;/h.n = 7; h.p.n = 7; return h.p.n;/' "$T/pa1.cyr" > "$T/pa3.cyr"
+one_error pa3 "error:<source>:3:24: $UZ" "PA3: used, h.p.n = 7; return h.p.n;"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nfn f(h: *H): i64 { return h.p.n; }\nstruct H { p: *Box<Zork>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa4.cyr"
+one_error pa4 "error:<source>:4:24: $UZ" "PA4: used in a fn above the struct"
+printf 'include "lib/syscalls.cyr"\nstruct H { p: *Later<Zork>; n; }\nstruct Later<T> { v: T; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa5.cyr"
+one_error pa5 "$UZ" "PA5: *Later<Zork>, the generic Later declared below"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct H { p: *Box<Box<Zork>>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa6.cyr"
+one_error pa6 "$UZ" "PA6: *Box<Box<Zork>>"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct W<T> { p: *Box<Zork>; n; }\nfn main(): i64 { var w: W<i32>; var w2: W<i8>; w.n = 7; return w.n; }\nsyscall(60, main());\n' > "$T/pa7.cyr"
+one_error pa7 "$UZ" "PA7: W<T> { p: *Box<Zork>; } at two instances"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct H { p: *Box<E>; n; }\nenum E { A, B }\nfn main(): i64 { var h: H; h.n = 7; return h.p.n; }\nsyscall(60, main());\n' > "$T/pa8.cyr"
+one_error pa8 "'E' is an enum, not a type argument" "PA8: *Box<E>, the enum E declared below (used)"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct Two<A, B> { a: A; b: B; }\nstruct H { p: *Box<Zork>; q: *Two<i64, Nope>; r: *Box<1 + 2>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa9.cyr"
+build pa9
+ne=$(grep -c '^error' "$T/pa9.err" || true)
+if [ "$rc" -ne 0 ] && [ "$ne" -eq 3 ] && grep -qF "$UZ" "$T/pa9.err" && grep -qF "unknown type 'Nope' as a type argument" "$T/pa9.err" \
+   && grep -qF "got number 1" "$T/pa9.err"; then ok "PA9: three bad pointer fields, one line each"
+else bad "PA9: rc $rc, $ne error lines (want 3: Zork, Nope, number 1): $(grep '^error' "$T/pa9.err" | tr '\n' ' ')"; fi
+cat > "$T/pa10.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct A { pb: *Box<B>; k; }
+struct B { pa: *Box<A>; j; }
+fn main(): i64 { var a: A; var b: B; var bb: Box<B>; var ba: Box<A>; bb.v.j = 5; ba.v.k = 2; a.pb = &bb; b.pa = &ba; bb.v.pa = &ba; return a.pb.v.j * 10 + b.pa.v.k + a.pb.v.pa.v.k * 100; }
+syscall(60, main() - 200);
+EOF
+exits pa10 52 "PA10: A / B through *Box<B> / *Box<A>, B declared below (unchanged)"
+cat > "$T/pa11.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct H { p: *Box<Later<Pt>>; n; }
+struct Later<T> { v: T; n; }
+struct Pt { x; y; }
+fn main(): i64 { var b: Box<Later<Pt>>; b.v.n = 5; var h: H; h.p = &b; return h.p.v.n; }
+syscall(60, main());
+EOF
+exits pa11 5 "PA11: *Box<Later<Pt>>, both declared below (unchanged)"
+
+# HF — 6.7.15: a generic struct's `*T` field hops in its instance, on every leg this box can run.
+skips=0
+A64=""; CXCC=""; WINE=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then
+        chmod +x "$T/cc_a64"; A64="$T/cc_a64"
+    else bad "aarch64: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: HF aarch64 legs (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ] \
+   && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ]; then
+    chmod +x "$T/cc_cx" "$T/cxvm"; CXCC="$T/cc_cx"
+else bad "cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+if command -v wine > /dev/null 2>&1; then WINE=1
+else echo "  SKIP: HF PE legs (wine not installed)"; skips=$((skips + 1)); fi
+LEGS="x86 x86:CYRIUS_IR=3"
+[ -n "$A64" ] && LEGS="$LEGS a64"
+[ -n "$CXCC" ] && LEGS="$LEGS cx"
+[ "$WINE" = 1 ] && LEGS="$LEGS pe"
+# run_leg <leg> <src> <out>: compile for <leg> and run; RC = the exit (-1: did not build)
+run_leg() {
+    RC=-1
+    case "$1" in
+        x86)   "$CC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        x86:*) env "${1#x86:}" "$CC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        a64)   "$A64" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        cx)    "$CXCC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        pe)    CYRIUS_TARGET_WIN=1 "$CC" < "$2" > "$3.exe" 2> "$3.err" || return 0 ;;
+    esac
+    RC=0
+    case "$1" in
+        x86|x86:*) chmod +x "$3"; timeout 60 "$3" > /dev/null 2>&1 || RC=$? ;;
+        a64)  chmod +x "$3"; timeout 300 qemu-aarch64 "$3" > /dev/null 2>&1 || RC=$? ;;
+        cx)   timeout 300 "$T/cxvm" < "$3" > /dev/null 2>&1 || RC=$? ;;
+        pe)   (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$3.exe" > /dev/null 2>&1) || RC=$? ;;
+    esac
+}
+xr() {   # <id> <src> <want> <what>: the exit on every leg
+    for leg in $LEGS; do
+        n=$(printf '%s_%s' "$1" "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$2" "$T/x_$n"
+        if [ "$RC" -eq -1 ]; then bad "$1 $leg: $4 did not build: $(grep -m1 'error' "$T/x_$n.err")"
+        elif [ "$RC" -eq "$3" ]; then ok "$1 $leg: $4 exits $3"
+        else bad "$1 $leg: $4 exits $RC, want $3"; fi
+    done
+}
+# The filed repro, verbatim (the issue's text).
+cat > "$T/hf1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; return b.p.y; }
+syscall(60, go());
+EOF
+xr HF1 "$T/hf1.cyr" 9 "the filed repro, b.p.y through Pb<Pt>"
+cat > "$T/hf2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; b.p.y = 3; return q.y; }
+syscall(60, go());
+EOF
+xr HF2 "$T/hf2.cyr" 3 "a store, b.p.y = 3"
+cat > "$T/hf3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+impl Pt { fn m(self): i64 { return self.x * 10 + self.y; } }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 7; q.y = 8; var b: Pb<Pt>; b.p = &q; b.n = 1; return b.p.m(); }
+syscall(60, go());
+EOF
+xr HF3 "$T/hf3.cyr" 78 "a method, b.p.m()"
+cat > "$T/hf4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn g<T>(b: Pb<T>): i64 { return b.p.y; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; return g<Pt>(b); }
+syscall(60, go());
+EOF
+xr HF4 "$T/hf4.cyr" 9 "inside a generic, g<Pt>(b) reading b.p.y"
+cat > "$T/hf5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var a: i32[4]; var b: Pb<i32>; b.p = &a; b.n = 1; var e = b.p + 1; return e - b.p + 5; }
+syscall(60, go());
+EOF
+xr HF5 "$T/hf5.cyr" 9 "Pb<i32>'s b.p + 1 steps 4 (unchanged)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), and a generic declared : *Box<T> compiles (PG)"
+if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"

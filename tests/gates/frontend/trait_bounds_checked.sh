@@ -32,7 +32,7 @@
 #      stub text; F3 both impls (56); F4 / F4b two levels o2 -> o -> gb; F5 an explicit gb<T>(x) forward with a
 #      struct too; F6 / F6b a generic method forward; F7 / F7b a forward to a generic instantiating a bounded
 #      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone;
-#      F12 a chain of 64 forwards (the judgement's reach: `_bbf_dep`'s cap, filed for a deeper chain).
+#      F12 a chain of 64 forwards (6.7.14's reach: `_bbf_dep`'s cap, lifted by 6.7.15's F13-F15e).
 #      I7 (an unbounded generic forwarding to a bounded one, u(5)) now names the forward, not the stub text.
 #      Filed: docs/development/issues/archived/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
@@ -43,6 +43,21 @@
 #      MF3 `_bbf_push` never deduping (no visited list) -> RED F8d (the compile hangs: every level of the three-way
 #      cycle branches twice, to the depth cap);
 #      MF4 (2026-10-17) the depth cap at 32 (`_bbf_dep > 32`) -> RED F12 (o33's base refused at its definition)
+#   F13-F15e (6.7.15) THE JUDGEMENT HAS NO DEPTH CAP: it answered "not bad" past 64 forwards, so the 66th generic's base
+#      kept an i64 instance whose call into the chain was refused at its definition ("generic 'o64' has no i64 instance:
+#      it forwards its type parameter to 'o63'"). Each generic's verdict is memoised (`_bbm_get` / `_bbm_put`: a bad one
+#      always, a not-bad one only when the whole judgement found nothing) and the cap is gone. F13 the filed repro (70
+#      forwards, 5), F13b 66 (the old boundary), F13c 70 defined deepest first, F14 / F14b 120 either order, F14c
+#      o119(3) refused once naming its forward, F14d a 3000-deep chain whose one error is the instance-nesting refusal;
+#      F15 / F15b / F15c a 40-generic forwarding ring (one exit to gb: 10 at f64, r7(3, 1) refused; no exit: 8 at i64);
+#      F15d / F15e a cycle judged from its other end first (A(h, 2) 6; A(3, 2) refused naming X). The cost half is
+#      bound_forward_chain_scale.sh (serial). Filed: docs/development/issues/2026-10-17-bounded-forward-judgement-capped-
+#      at-64-deep.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler (b71f8853)
+#      -> RED 7: F13 F13b F13c F14 F14b F14c F14d; MMC1 the 64-deep cap back beside the memo -> RED 2: F13c F14b (a chain
+#      defined deepest first); MMC2 a not-bad verdict kept inside a judgement that ends bad -> RED 2: F15d F15e (A's base
+#      emitted, X(x) at i64 refused at A's definition); MMC3 no memo (no cap) -> green here, RED in
+#      bound_forward_chain_scale.sh (7-15x)
 #   BC (6.7.14) A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`), `T: Show`, was
 #      no bounded site (only a name declared `T` / `*T` was), so 6.7.11's carrier rule counted it a struct use: the
 #      base was the stub, and `gs(bi)` with `bi: Box<i64>` was refused although `impl Show for i64` exists. The call
@@ -50,19 +65,52 @@
 #      bound's impl takes the field's value as `self` (`_load_bs_field`; a method on a scalar field leaf had no path
 #      at all). BC0 the filed repro verbatim (65); BC1 gs(b) alone; BC2 a `*Box<T>` carrier; BC3 no i64 impl: gs(bi)
 #      refused naming `impl Show for i64`; BC4 f64 / i32 instances; BC5 a `var c: Box<T>` carrier, a `var r =`
-#      receive and a statement; BC6 gs<i64>(bi); BC7 control — a method no bound declares keeps its reading; BC8 a
-#      non-inlinable caller; BC9 the documented workaround unchanged; BC10 the definition alone (no i64 impl).
+#      receive and a statement; BC6 gs<i64>(bi); BC7 a method no bound declares (kept its reading through 6.7.14;
+#      refused since 6.7.15's D5, the BD rows); BC8 a non-inlinable caller; BC9 the documented workaround unchanged;
+#      BC10 the definition alone (no i64 impl).
 #      Filed: docs/development/issues/archived/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
 #      MBC1 `_bnd_sites` without the `_bnd_fsite` call (no site) -> RED BC0 BC2 BC4-BC6 BC8 (the stub refusal);
 #      MBC2 `_gs_bfield` answering 0 (the site recorded, the scan still a struct use) -> RED BC0 BC2 BC4-BC6 BC8;
 #      MBC3 `_fld_meth_inline` without its scalar arm (no `_load_bs_field`) -> RED BC0 BC2 BC4-BC6 BC8 ("expected
 #      ';', got '.'" at the definition, every BC row that builds the i64 base)
+#   BD (6.7.15, the user's D5 (a), 2026-10-18) THE CONTRACT HOLDS ON A CARRIER'S T FIELD: `b.v.other()` under
+#      `fn gs<T: Show>(b: Box<T>)`, a method no trait of the bound declares, compiled and called Pt's own `other` (the
+#      filed repro exited 77), where `v.other()` on a `v: T` is refused at the definition; `_bnd_fsite` recorded
+#      nothing. It now refuses through `_bnd_site`'s two refusals (`_bnd_site_refuse`; the note names the field chain):
+#      BD0 the filed repro verbatim (once, at 7:45, the note on 'b.v'); BD1 the definition alone; BD2 a `*Box<T>`
+#      carrier; BD3 a `var c: Box<T>` carrier; BD4 the bound on the second type parameter; BD5 `Two<i64, T>`'s field;
+#      BD6 a generic method; BD7 a method two bounds declare (ambiguous; refused only at an instance's call before, with
+#      a cascade, and compiled uncalled); BDK unchanged — an unbounded `Box<T>`, an unbounded slot beside a bounded
+#      one, a `f: *T` field, `b.v.show() + b.v.y`. BC7 moves from its 6.7.11 reading to the refusal.
+#      Filed: docs/development/issues/2026-10-16-bound-contract-unchecked-on-carrier-field-call.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
+#      (4c483d56) -> RED 10: BC7 BD0 (both rows) BD1-BD6 (built) BD7 (the instance's message); MBD1 `_bnd_fsite` without
+#      its unbounded-slot test -> RED 1: BDK; MBD2 the note without the field arm -> RED 1: BD0's note ('b'); MBD3 two
+#      declaring traits recording nothing again -> RED 1: BD7
 #   N  (6.7.14) a bound refusal the panic latch swallows prints nothing: after a stub generic's refusal in
 #      the same statement (`gs(5) + gb(3)`), `gb(3)`'s error was swallowed but its note was printed alone —
 #      "the bound on type parameter 'T' needs `impl Show for i64`" under gs's error. N1: one error line, no
 #      note. Mutant (the `_panic` test in `_bnd_check` removed, a one-edit scratch copy of the tree, its 2-stage
-#      cycc, this gate run from it) -> RED N1 (the orphan note).
+#      cycc, this gate run from it) -> RED N1 (the orphan note). N2 (6.7.15) the contract's own note (`_bnd_site_refuse`)
+#      is behind `_err_quiet` too: four refusals, the latch holding after the first, print one error and one note
+#      (four notes before). Mutant: the lane's previous compiler (da30dffe) -> RED N2.
+#   VB (6.7.15, the user's D10 (a), 2026-10-18) A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>>
+#      = 0;` with `struct Box<T: Show>` and no `impl Show for Pt` compiled (the filed repro exited 5) — the element's
+#      list was read for names only (6.7.14's D5), the bound judged only where an instance is minted. Judged at the
+#      element now, nothing minted (`_vec_el_targs`, `_tck_nest`, `_vbnd_judge`): VB0 the filed repro verbatim (once, at
+#      6:16, with the note); VB1 with the impl (5); VB2 a struct field; VB3 / VB3b `Vec<Box<i64>>` and a bare `Vec<Box>`
+#      (the i64 base's bound); VB4 nested (`Vec<Two<Box<Pt>, i64>>`, `Vec<Vec<Box<Pt>>>`), a parameter, a global; VB5 a
+#      generic's `Vec<Box<T>>` judged per instance, not in its base; VB6 a generic struct's field at `W<Pt>`; VB7 once
+#      per (struct, arguments); VB8 a refused argument alone; VB9 the list reads on after it; VBK the impl present (23).
+#      A signature's or a pointer field's `_targ_chk` judges no bound (off outside a Vec element).
+#      Filed: docs/development/issues/2026-10-16-vec-element-generic-struct-bound-unchecked.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
+#      (13fd8844) -> RED 13: VB0 (both rows) VB2 VB3 VB3b VB4-VB4d VB5 VB6 VB7 VB9 (each built); MVB1 `_vec_el_targs`
+#      without the element's judgement -> RED 10: VB0 (both) VB2 VB3 VB4b-VB4d VB5 VB6 VB7; MVB2 `_tck_nest` without its
+#      judgement -> RED 2: VB4 VB9; MVB3 `_vec_el_bare` answering 0 -> RED 1: VB3b; MVB4 `_vbnd_judge` keeping the panic
+#      latch -> RED 1: VB9 (one line); MVB5 `_type_arg_leaf`'s type-parameter arm not marking the list -> RED 1: VBK (a
+#      generic's base judged at i64)
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
 #
@@ -276,13 +324,70 @@ fmk f10 'fn h(n): i64 { return o(n); }' 'return h(3);'
 fwdref f10 o gb "needs \`impl Show for i64\`" "F10: return o(n); (a tail call)"
 fmk f11 '' 'return 9;'
 exits f11 9 "F11: the definition alone, never called"
-# F12: the judgement follows a chain of 64 forwards (o63 -> .. -> o0 -> gb), its stated reach; a deeper chain is the
-# filed `_bbf_dep` cap (a 66-deep one is refused at a definition) — see the staged issue on the cap
+# F12: the judgement follows a chain of 64 forwards (o63 -> .. -> o0 -> gb), 6.7.14's stated reach.
 { printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
   printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\nfn o0<T>(x: T): i64 { return gb(x); }\n'
   k=1; while [ "$k" -lt 64 ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
   printf 'fn main(): i64 { var h: f64 = 1.5; return o63(h); }\nsyscall(60, main());\n'; } > "$T/f12.cyr"
 exits f12 5 "F12: a chain of 64 forwards to gb at f64, o63(h)"
+# F13-F15 (6.7.15): the judgement has no depth cap — it is memoised per generic (`_bbm_get` / `_bbm_put`), so any
+# chain is judged once per generic. `fchain <name> <n> [rev] [call]`: o0 -> gb, oK -> oK-1 (o0..o<n-1>), in source
+# order or reversed (the deepest first, so its judgement walks the whole chain), main returning <call>.
+fchain() {
+    { printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
+      printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\n'
+      if [ "${3:-}" = rev ]; then
+          k=$(($2 - 1)); while [ "$k" -ge 1 ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k - 1)); done
+          printf 'fn o0<T>(x: T): i64 { return gb(x); }\n'
+      else
+          printf 'fn o0<T>(x: T): i64 { return gb(x); }\n'
+          k=1; while [ "$k" -lt "$2" ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
+      fi
+      printf 'fn main(): i64 { var h: f64 = 1.5; return %s; }\nsyscall(60, main());\n' "${4:-o$(($2 - 1))(h)}"; } > "$T/$1.cyr"
+}
+fchain f13 70
+exits f13 5 "F13: the filed repro, verbatim — a chain of 70 forwards, o69(h) (refused at o65's definition before: the 64-deep cap)"
+fchain f13b 66
+exits f13b 5 "F13b: 66 forwards, the old boundary"
+fchain f13c 70 rev
+exits f13c 5 "F13c: 70 forwards defined deepest first"
+fchain f14 120
+exits f14 5 "F14: a chain of 120 forwards, o119(h)"
+fchain f14b 120 rev 'o119(h) + o60(h) - 5'
+exits f14b 5 "F14b: 120 forwards defined deepest first, o119(h) + o60(h) - 5"
+fchain f14c 120 '' 'o119(3)'
+fwdref f14c o119 o118 "needs \`impl Show for i64\`" "F14c: o119(3) — refused once, naming the forward and the chain end's impl"
+fchain f14d 3000 '' 'o2999(h)'
+build f14d
+if [ "$rc" -eq 0 ]; then bad "F14d: a 3000-deep chain at f64: BUILT (the nesting refusal is its limit)"
+elif [ "$(grep -c '^error' "$T/f14d.err")" -ne 1 ] || ! grep -q "nesting too deep (over 256 levels" "$T/f14d.err"; then
+    bad "F14d: a 3000-deep chain at f64: not the nesting refusal alone: $(grep '^error' "$T/f14d.err" | head -2 | tr '\n' '|')"
+else ok "F14d: a 3000-deep chain at f64: the instance-nesting refusal alone (no definition refused); its time is bound_forward_chain_scale.sh"; fi
+# F15: cycles still end, and are judged right: a ring of 40 generics (rK -> rK+1, r39 -> r0) with one exit to gb (r20)
+{ printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
+  printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\n'
+  k=0; while [ "$k" -lt 40 ]; do
+      if [ "$k" -eq 20 ]; then printf 'fn r20<T>(x: T, n: i64): i64 { if (n <= 0) { return gb(x); } return r21(x, n - 1); }\n'
+      else printf 'fn r%d<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return r%d(x, n - 1); }\n' "$k" "$(( (k + 1) % 40 ))"; fi
+      k=$((k + 1)); done
+  printf 'fn main(): i64 { var h: f64 = 1.5; return r0(h, 20) + r30(h, 30); }\nsyscall(60, main());\n'; } > "$T/f15.cyr"
+exits f15 10 "F15: a 40-generic forwarding ring with one exit to gb, at f64 (r0 and r30 reach r20 with n = 0)"
+sed 's/return r0(h, 20) + r30(h, 30);/return r7(3, 1);/' "$T/f15.cyr" > "$T/f15b.cyr"
+fwdref f15b r7 r8 "needs \`impl Show for i64\`" "F15b: r7(3, 1) through the ring — refused once"
+sed 's/return gb(x); } return r21/return 4; } return r21/' "$T/f15.cyr" | sed 's/return r0(h, 20) + r30(h, 30);/var a = 2; return r0(a, 20) + r30(a, 30);/' > "$T/f15c.cyr"
+exits f15c 8 "F15c: the same ring with no exit to a bound — every member's i64 base runs"
+# F15d: a "not bad" answered inside a judgement that ends bad is not kept. X's base is judged first: X -> A -> X (in
+# progress, skipped) leaves A "not bad" for that judgement, then X -> C -> gb ends it bad. A reaches gb through X, so
+# A's own judgement must find it: its base skipped, A(h) at f64 runs (a kept "not bad" emitted A's base, whose X(x) at
+# i64 was refused at A's definition).
+fmk f15d 'fn X<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return A(x, n - 1) + C(x); }
+fn A<T>(x: T, n: i64): i64 { if (n <= 0) { return 1; } return X(x, n - 1); }
+fn C<T>(x: T): i64 { return gb(x); }' 'var h: f64 = 1.5; return A(h, 2);'
+exits f15d 6 "F15d: a cycle judged from its other end first — A(h, 2) at f64 (1 + 5)"
+fmk f15e 'fn X<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return A(x, n - 1) + C(x); }
+fn A<T>(x: T, n: i64): i64 { if (n <= 0) { return 1; } return X(x, n - 1); }
+fn C<T>(x: T): i64 { return gb(x); }' 'return A(3, 2);'
+fwdref f15e A X "needs \`impl Show for i64\`" "F15e: A(3, 2) — refused once at the call, naming its forward"
 
 # BC — a bounded call on a struct carrier's T field (6.7.14)
 cat > "$T/bc0.cyr" <<'EOF'
@@ -332,7 +437,7 @@ exits bc6 10 "BC6: gs<i64>(bi), explicit"
 bcmk bc7 "$BCI
 impl Pt { fn other(self): i64 { return 77; } }
 fn go2<T: Show>(b: Box<T>): i64 { return b.v.other(); }" 'return go2(b);'
-exits bc7 77 "BC7: control — b.v.other(), a method no bound declares, keeps its 6.7.11 reading (Pt's)"
+refused bc7 "method 'other' is not in the bound on type parameter 'T'" "BC7: b.v.other(), a method no bound declares — refused at the definition (6.7.15's D5; it kept its 6.7.11 reading, 77)"
 bcmk bc8 "$BCI
 fn gn<T: Show>(b: Box<T>): i64 { return b.v.show() + b.n; }" 'var s = 0; var i = 0; while (i < 3) { s = s + gn(bi); i = i + 1; } return s;'
 exits bc8 18 "BC8: in a loop, gn(bi) three times"
@@ -342,12 +447,67 @@ exits bc9 65 "BC9: the documented workaround (var t: T = b.v;) unchanged"
 bcmk bc10 "$BCG" 'return 4;'
 exits bc10 4 "BC10: the definition alone, no impl Show for i64"
 
+# BD — 6.7.15 (D5): the bound's contract holds on a carrier's T field, as on a T-typed name
+cat > "$T/bd0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+impl Pt { fn other(self): i64 { return 77; } }
+struct Box<T> { v: T; n; }
+fn gs<T: Show>(b: Box<T>): i64 { return b.v.other(); }
+fn go(): i64 { var b: Box<Pt>; b.v.x = 1; b.v.y = 6; b.n = 2; return gs(b); }
+syscall(60, go());
+EOF
+BDM="method 'other' is not in the bound on type parameter 'T'"
+refused bd0 "error:<source>:7:45: $BDM" "BD0: the filed repro, verbatim — b.v.other() under T: Show (exit 77 before)"
+grep -qF "call only its traits' methods on 'b.v'" "$T/bd0.err" && ok "BD0: the note names the field chain 'b.v'" || bad "BD0: no note naming 'b.v': $(grep '^  note' "$T/bd0.err" | head -1)"
+BDH="$BCH
+impl Pt { fn other(self): i64 { return 77; } }"
+bdmk() {   # <name> <decls> <go body>
+    printf 'include "lib/syscalls.cyr"\n%s\n%s\nfn go(): i64 { %s %s }\nsyscall(60, go());\n' "$BDH" "$2" "$BCB" "$3" > "$T/$1.cyr"
+}
+bdmk bd1 'fn gs<T: Show>(b: Box<T>): i64 { return b.v.other(); }' 'return 4;'
+refused bd1 "$BDM" "BD1: the definition alone, never called — refused there"
+bdmk bd2 'fn gp<T: Show>(b: *Box<T>): i64 { return b.v.other(); }' 'return gp(&b);'
+refused bd2 "$BDM" "BD2: a *Box<T> carrier"
+bdmk bd3 'fn gl<T: Show>(x: T): i64 { var c: Box<T>; c.v = x; var r = c.v.other(); return r; }' 'return 4;'
+refused bd3 "$BDM" "BD3: a var c: Box<T> carrier, var r = c.v.other();"
+bdmk bd4 'fn g2<U, T: Show>(k: U, b: Box<T>): i64 { return b.v.other() + k; }' 'return g2(1, b);'
+refused bd4 "$BDM" "BD4: the bound on the SECOND type parameter (fn g2<U, T: Show>)"
+bdmk bd5 'struct Two<A, B> { a: A; b: B; }
+fn gt<T: Show>(w: Two<i64, T>): i64 { return w.b.other(); }' 'return 4;'
+refused bd5 "$BDM" "BD5: Two<i64, T>'s second field, w.b.other()"
+bdmk bd6 'struct Q { k; }
+impl Q { fn m<T: Show>(self, b: Box<T>): i64 { return b.v.other(); } }' 'return 4;'
+refused bd6 "$BDM" "BD6: in a generic method"
+bdmk bd7 'trait Disp { fn show(self): i64; }
+impl Disp for Pt { fn show(self): i64 { return 50; } }
+fn ga<T: Show + Disp>(b: Box<T>): i64 { return b.v.show(); }' 'return ga(b);'
+refused bd7 "ambiguous method 'show': more than one trait in this type parameter's bound declares it, e.g. 'Disp'" "BD7: a method two bounds both declare — ambiguous, at the definition (refused at the instance's call before, with a cascade)"
+bdmk bdk 'fn gu<T>(b: Box<T>): i64 { return b.v.other(); }
+fn g3<T: Show, U>(t: T, b: Box<U>): i64 { return b.v.other(); }
+struct PB<T> { p: *T; n; }
+fn gq<T: Show>(b: PB<T>): i64 { return b.p.other(); }
+fn gx<T: Show>(b: Box<T>): i64 { return b.v.show() + b.v.y; }' 'var p: Pt; var pt: Pt; pt.y = 6; var q: PB<Pt>; q.p = &pt; q.n = 1; return gu(b) + g3(p, b) - gq(q) + gx(b) - 77;'
+exits bdk 12 "BDK: unchanged — an unbounded Box<T> (77), an unbounded slot beside a bounded one (77), a f: *T field (77), b.v.show() + b.v.y (12)"
+
 # N — a bound refusal swallowed by the panic latch (6.7.14)
 mk n1 'fn gb<T: Show>(x: T): i64 { var t = 0; var i = 0; while (i < 1) { t = t + x.show(); i = i + 1; } return t; }
 fn gs<T>(q: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + q.y; i = i + 1; } return s; }' 'var b = gs(5) + gb(3); return b;'
 refused n1 "generic 'gs' has no i64 (or other scalar) instance" "N1: gs(5) + gb(3) — the stub's refusal"
 if grep -q "^  note:" "$T/n1.err"; then bad "N1: an orphan note under the stub's error: $(grep '^  note:' "$T/n1.err" | head -1)"
 else ok "N1: no orphan note for the swallowed gb(3) refusal"; fi
+# N2 (6.7.15): a contract refusal the latch swallows (a second definition's `v.other()`, a second `b.v.other()` in one
+# body) printed its note alone under the first's.
+mk n2 'impl Pt { fn other(self): i64 { return 77; } }
+struct Box<T> { v: T; n; }
+fn g1<T: Show>(v: T): i64 { return v.other(); }
+fn g2<T: Show>(v: T): i64 { return v.other(); }
+fn gm<T: Show>(b: Box<T>): i64 { var r = b.v.other(); b.v.other(); return r; }' 'return 4;'
+refused n2 "method 'other' is not in the bound on type parameter 'T'" "N2: four contract refusals, the latch holding after the first"
+nn=$(grep -c '^  note:' "$T/n2.err")
+if [ "$nn" -eq 1 ]; then ok "N2: one note, the printed refusal's"; else bad "N2: $nn notes for one printed error (orphans)"; fi
 
 # C — anti-vacuous
 mk c1 'trait Eq2 { fn eq2(self, o: Pt): i64; }
@@ -362,5 +522,94 @@ exits c1 44 "C1: T: Show + Eq2, a colliding size picked by T: Size, i64's impl, 
 printf 'fn id<T>(v: T): i64 { return v + 1; }\nsyscall(60, id(41));\n' > "$T/c2.cyr"
 exits c2 42 "C2: a program with no bound"
 
+# VB — 6.7.15 (D10): a Vec element's generic struct is held to its bounds, nothing minted
+errs() {   # <name> <n> <what> <fragment>...: refused with exactly <n> `^error` lines, each fragment among them
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    k=$(grep -c '^error' "$T/$nm.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$k" -ne "$want" ]; then bad "$what: $k error lines (want $want): $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    for l in "$@"; do
+        if ! grep -qF -- "$l" "$T/$nm.err"; then bad "$what: no line '$l': $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    done
+    ok "$what: refused, $k error line(s) as wanted"
+}
+cat > "$T/vb0.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct Box<T: Show> { v: T; n; }
+fn main(): i64 {
+    var w: Vec<Box<Pt>> = 0;
+    return 5;
+}
+syscall(60, main());
+EOF
+VBE="generic 'Box': its type argument does not implement trait 'Show'"
+errs vb0 1 "VB0: the filed repro verbatim — the bound's error once, at the element (it built: exit 5)" "error:<source>:6:16: $VBE"
+grep -qF "needs \`impl Show for Pt\`" "$T/vb0.err" && ok "VB0: ... with its note" || bad "VB0: no note naming \`impl Show for Pt\`"
+sed 's/^struct Pt { x; y; }$/struct Pt { x; y; }\nimpl Show for Pt { fn show(self): i64 { return self.x; } }/' "$T/vb0.cyr" > "$T/vb1.cyr"
+exits vb1 5 "VB1: the repro with \`impl Show for Pt\` present"
+VBH='include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+impl Show for R { fn show(self): i64 { return self.r; } }'
+vb() { printf '%s\n%s\nsyscall(60, 7);\n' "$VBH" "$2" > "$T/$1.cyr"; }
+vb vb2 'struct H { items: Vec<Box<Pt>>; k; }'
+errs vb2 1 "VB2: a struct field items: Vec<Box<Pt>>" "error:<source>:8:23: $VBE"
+vb vb3 'fn f(): i64 { var w: Vec<Box<i64>> = 0; return 5; }'
+errs vb3 1 "VB3: Vec<Box<i64>> — the i64 base's bound, as var b: Box<i64>" "error:<source>:8:26: $VBE"
+vb vb3b 'fn g(): i64 { var u: Vec<Box> = 0; return 5; }'
+errs vb3b 1 "VB3b: a bare Vec<Box> — as var b: Box;" "error:<source>:8:26: $VBE"
+vb vb4 'fn f(): i64 { var w: Vec<Two<Box<Pt>, i64>> = 0; return 5; }'
+errs vb4 1 "VB4: nested, Vec<Two<Box<Pt>, i64>>" "error:<source>:8:30: $VBE"
+vb vb4b 'fn f(): i64 { var w: Vec<Vec<Box<Pt>>> = 0; return 5; }'
+errs vb4b 1 "VB4b: nested, Vec<Vec<Box<Pt>>>" "error:<source>:8:30: $VBE"
+vb vb4c 'fn f(m: Vec<Box<Pt>>): i64 { return 5; }'
+errs vb4c 1 "VB4c: a parameter m: Vec<Box<Pt>>, at the definition" "error:<source>:8:13: $VBE"
+vb vb4d 'var GW: Vec<Box<Pt>> = 0;'
+errs vb4d 1 "VB4d: a global" "error:<source>:8:13: $VBE"
+vb vb5 'fn g<T>(x: T): i64 { var w: Vec<Box<T>> = 0; return 5; }
+fn f(): i64 { var p: Pt; var r = R { 1 }; return g(p) + g(r) + g<Pt>(p) + g<R>(r); }'
+errs vb5 1 "VB5: a generic's Vec<Box<T>> — judged per instance (Pt once), not in its base" "error:<source>:8:33: $VBE"
+vb vb6 'struct W<T> { items: Vec<Box<T>>; k; }
+fn f(): i64 { var a: W<R>; var b: W<Pt>; return 5; }'
+errs vb6 1 "VB6: a generic struct's items: Vec<Box<T>>, W<Pt> at the field, W<R> fine" "error:<source>:8:26: $VBE"
+vb vb7 'fn f(): i64 { var w: Vec<Box<Pt>> = 0; var u: Vec<Box<Pt>> = 0; var b: Box<Pt>; return 5; }'
+errs vb7 1 "VB7: once per (struct, arguments), as every bound refusal" "error:<source>:8:26: $VBE"
+vb vb8 'fn f(): i64 { var w: Vec<Box<nosuch>> = 0; return 5; }'
+errs vb8 1 "VB8: a refused argument stands alone" "unknown type 'nosuch' as a type argument"
+vb vb9 'fn f(): i64 { var w: Vec<Two<Box<Pt>, nosuch>> = 0; return 5; }'
+errs vb9 2 "VB9: the list reads on after the bound's error" "error:<source>:8:30: $VBE" "unknown type 'nosuch' as a type argument"
+cat > "$T/vbk.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+impl Show for R { fn show(self): i64 { return self.r; } }
+struct H { items: Vec<Box<R>>; k; }
+struct W<T> { items: Vec<Box<T>>; k; }
+var GW: Vec<Box<R>> = 0;
+fn g<T>(x: T): i64 { var w: Vec<Box<T>> = 0; return 2; }
+fn pm(m: Vec<Box<R>>, n: Vec<Two<Pt, i64>>): i64 { return 3; }
+fn main(): i64 {
+    var a: Vec<Box<R>> = 0;
+    var b: Vec<Two<Box<R>, Pt>> = 0;
+    var c: Vec<Vec<Box<R>>> = 0;
+    var d: Vec<Pt> = 0;
+    var h: H;
+    var w: W<R>;
+    var r = R { 1 };
+    return g(r) + g<R>(r) + pm(0, 0) + sizeof(Box<R>);
+}
+syscall(60, main());
+EOF
+exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14); a refusal the panic latch swallows prints no orphan note (N, 6.7.14); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); well-formed bounded code runs (C)"

@@ -2341,6 +2341,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # below routes PE through struct_mask + a copy-in store rather than
                 # the SysV XMM path. See [[project_v6431_win64_valueform_simd]].
                 _param_type_step(S);   # consume type (6.7.8, C2-6a: a slice `[T]` refused, consumed whole)
+                _ngt_refuse(S, GTI(S) - 1);   # 6.7.15 (D6): `p: Pt<..>` / `p: i64<..>` refused at the name
                 SKIP_GENERICS(S);    # skip <T> if present
             }
             # v5.10.38 — branch: SIMD param (f64v2/f64v4) needs
@@ -2641,6 +2642,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (_rtc > 0) {
                 _cur_fn_ret_sid = _rtc;
                 STI(S, GTI(S) + 1);
+                _ngt_refuse(S, GTI(S) - 1);   # 6.7.15 (D6): `: Pt<..>` refused at the name
                 SKIP_GENERICS(S);
             } else {
                 _cur_fn_ret_scalar = _rtc;

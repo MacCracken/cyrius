@@ -16,7 +16,8 @@
 #        its count as written ("expects 2 arguments, got 3"); a method declaring no parameter keeps the receiver in
 #        its count (`g.zero()`: "expects 0 arguments, got 1")
 #   N4   a generic instance: `g<i32>`'s struct-type refusal, arity and named argument; two type arguments
-#        `g2<i32, i64>`; a struct instance argument `gx<Box<i64>>`; a generic method `P.id`
+#        `g2<i32, i64>`; a struct argument `gx<Box<i64>>` — `gx<Box>` since 6.7.15 (`Box<i64>` is the base `Box`, as
+#        its annotation is) — and a struct instance argument `gx<Box<Pt>>` (N4c2); a generic method `P.id`
 #   N5   the other call-site messages: #pure (`A.m`), #deprecated (`S.old`, `g<i32>`), #must_use (`S.mu`), a
 #        destructure (`S.one` returns 1 value), a bool parameter (`W.b`, `g<i32>`), a cstring parameter (`W.pr`)
 #   N6   `g<f64v2>(b)` (a refused type argument): no line names the minted `g$..`; a call line, if any, `g<f64v2>`
@@ -151,12 +152,23 @@ fn gx<T>(b: *T, p: *Pt): i64 { return 0; }
 fn main(): i64 { var q: Q; q.y = 1; var bx: Box<i64> = Box<i64> { 1 }; var r = g2<i32, i64>(1, 2, q); return r; }
 syscall(60, main());
 EOF
-diag N4c "error:5:97: cannot pass 'q' to a parameter of a different struct type in a call to 'gx<Box<i64>>'|" <<'EOF'
+# 6.7.15: `Box<i64>` written as a type argument is the base `Box`, as the annotation `var bx: Box<i64>` is (the call
+# reaches `gx$Box`, the instance the inferred `gx(&bx, q)` reaches), so the call is named `gx<Box>`;
+# a struct instance argument keeps its arguments (N4c2).
+diag N4c "error:5:97: cannot pass 'q' to a parameter of a different struct type in a call to 'gx<Box>'|" <<'EOF'
 struct Pt { x; }
 struct Q { y; }
 struct Box<T> { v: T; }
 fn gx<T>(b: *T, p: *Pt): i64 { return 0; }
 fn main(): i64 { var q: Q; q.y = 1; var bx: Box<i64> = Box<i64> { 1 }; return gx<Box<i64>>(&bx, q); }
+syscall(60, main());
+EOF
+diag N4c2 "error:5:78: cannot pass 'q' to a parameter of a different struct type in a call to 'gx<Box<Pt>>'|" <<'EOF'
+struct Pt { x; }
+struct Q { y; }
+struct Box<T> { v: T; }
+fn gx<T>(b: *T, p: *Pt): i64 { return 0; }
+fn main(): i64 { var q: Q; q.y = 1; var bx: Box<Pt>; return gx<Box<Pt>>(&bx, q) + gx(&bx, q); }
 syscall(60, main());
 EOF
 diag N4d "error:3: 'P.id' expects 1 argument, got 2|" <<'EOF'
@@ -234,7 +246,7 @@ else
   echo "  NOTE: call_site_callee_spelling N8 not run — no build/cycc_aarch64 (build it from src/main_aarch64.cyr)"
 fi
 
-[ "$rows" -ge 22 ] || bad "only $rows rows ran"
+[ "$rows" -ge 23 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL call_site_callee_spelling: $fail of $rows row(s) red"; exit 1; fi
 echo "PASS call_site_callee_spelling: $rows rows — call-site diagnostics name a method \`S.ri\` and a generic call \`g<i32>\`; a method form's arity counts as written"
 exit 0

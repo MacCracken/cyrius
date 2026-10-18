@@ -17,9 +17,14 @@
 #   M  a generic METHOD's `**T` (`s.gm(pps)`, `fn gm<T>(self, pp: **T)` in `impl P3`): 66 — every leg
 #   E  the explicit spelling is unchanged: `st<P3>(pps) * 100 + tg<P3>(pps)` 2442 (the decision's reference) — every
 #      leg
+#   S  (6.7.15, the user's decision D11 (a), 2026-10-18) a SCALAR pointee binds too: `st(ppi)` with `ppi: **i32` steps
+#      4 and `sz(ppi)` is 4, `gd(pph)` with `pph: **f64` is the f64 instance (its xmm result doubled: 5): 445 % 256 =
+#      189 (was 112: the i64 base stepped 8 and returned the double's bits) — every leg (more sources:
+#      tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr's PP rows, generic_ptr_param_infer.sh PS)
 #   T  tests/tcyr/crossos/double_pointer_deref_step.tcyr (its GI / GK rows: every `**S` source, a method, a `: T`
 #      result, two type parameters, a named argument, a forward call, a forwarder, and the controls — a direct or a
-#      struct carrier wins, a `*S`, a `**i32`, a `**Q2` that is no `**T`, `(pps)` and `pps + 0` bind nothing) on
+#      struct carrier wins, a `*S`, a `**Q2` that is no `**T`, `(pps)` and `pps + 0` bind nothing; 6.7.15 (D11 (a)):
+#      a `**i32` binds i32) on
 #      x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N
 #      derived from the file; the release gate's cross-OS leg runs it on ecb / ach / cass / pi
 #
@@ -36,6 +41,11 @@
 #   MD5 `_ic_pp_name` without its capture rung             -> RED T: 139 / PE 5, cx 1 failed (gi_cap)
 #   MD6 `_pp_is_tp` takes any `**X` (no T check)           -> RED T on every leg: 2 failed (gi_pair 2424 — B bound
 #                                                             from `pa: **A`; gi_ctl2 — `gi_nt(ppq)` bound GiQ2)
+# (2026-10-18, 6.7.15 — the S row and GK's `**i32`; CYCC= the mutant, so its x86_64 / IR / PE legs carry it:)
+#   MS1 the fix reverted (the lane's previous compiler)    -> RED S (112) and T (gi_ctl 80808)
+#   MS2 `_ic_pscalar` answers i64 (no scalar pointee)      -> RED S and T
+#   MS3 `_ic_pscalar` binds without marking `_gi_sc`       -> RED S and T
+#   MS4 `_ic_pp_sid` without its scalar arm                -> RED S and T
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -164,6 +174,21 @@ echo "E. the explicit spelling (unchanged)"
     'fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; return st<P3>(pps) * 100 + tg<P3>(pps); }' \
     'syscall(60, main() % 256);'; } > "$D/e.cyr"
 xr E "$D/e.cyr" 138 "st<P3>(pps) * 100 + tg<P3>(pps) (2442 % 256)"
+echo "S. a **i32 / **f64 binds its scalar (6.7.15, D11 (a))"
+cat > "$D/s.cyr" <<'X'
+include "lib/syscalls.cyr"
+fn st<T>(pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b; }
+fn sz<T>(pp: **T): i64 { return sizeof(T); }
+fn gd<T>(pp: **T): T { return **pp; }
+fn ms(): i64 {
+    var a: i32[4]; var pa: *i32 = &a; var ppi: **i32 = &pa;
+    var h: f64 = 2.5; var ph: *f64 = &h; var pph: **f64 = &ph;
+    var v = gd(pph) * 2.0;
+    return st(ppi) * 100 + sz(ppi) * 10 + f64_to(v);
+}
+syscall(60, ms() % 256);
+X
+xr S "$D/s.cyr" 189 "st(ppi) 4, sz(ppi) 4, gd(pph) * 2.0 at f64 5 (445 % 256)"
 
 echo "T. $TC ($N rows, $NGI GI / GK)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
@@ -176,4 +201,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

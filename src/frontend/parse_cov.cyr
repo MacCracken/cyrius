@@ -254,8 +254,12 @@ fn _cov_call_dump(S): i64 {
 # inside a `#naked` fn (it has no frame to call from), an exec, a signal.
 # `_PARSE_FACTOR_IMPL` calls this in place of `_macho_warn_unrouted` (a 1-for-1 swap: that fn is
 # at cybs's per-fn reference ceiling). CHANGELOG [6.7.10]
+# The Mach-O routing warnings print once per site (`_warn_seen`: a generic body is parsed per instance, an
+# #inline one per call); what they say is decided by the number and the arity alone. CHANGELOG [6.7.15]
 fn _sc_args_done(S, sc_num, argc): i64 {
-    _macho_warn_unrouted(sc_num, argc);
+    if (_TARGET_MACHO != 0) {
+        if (_warn_seen(GTI(S), "_macho_warn_unrouted", sc_num * 4096 + argc) == 0) { _macho_warn_unrouted(sc_num, argc); }
+    }
     if (_cov_mode == 0) { return 0; }
     if (_cur_fn_naked == 1) { return 0; }
     if (_cov_is_exit(sc_num) == 1) { _cov_call_dump(S); }

@@ -1,0 +1,149 @@
+# generic_scalar_pointee_binding.tcyr — 6.7.15 (the user's decision D11 (a), 2026-10-18) — a generic's `p: *T` /
+# `pp: **T` parameter binds T to a SCALAR its argument points at, as 6.7.14's D8 (a) binds a struct pointee: a `*i32`
+# binds i32, a `*f64` (or `&h` of an f64) f64, a `*i8` / `*i16` theirs, and the call runs that instance, exactly as the
+# explicit `second<i32>(pa)` does. Through 6.7.14 it ran the i64 base: `sizeof(T)` was 8, `*(p + 1)` stepped 8 bytes
+# and read 8 (over an i32 array, a[2] and a[3]'s word where a[1] is right), `gd(&h)` returned the double's bits as an
+# untyped word (issues/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md). Every `p: *T`
+# source: a `*T` local, parameter, closure capture or global, a `: *T` call, a field declared `*T` reached through a
+# chain, `&x` of a signed narrow or f64 local or global; a generic method, a forward, a `: T` result, a tail call and
+# a declaration-zone call. A `pp: **T` reads the pointee of its `**T` argument the same way: a `**i32` local, `&p` of
+# a `*i32`, a `: **i32` call, `&G` of a `*i32` global, a `**i32` field. The pointees that are no type argument —
+# `*u8`..`*u64`, `*f32`, `*bool` — and `*i64`, `&u` of a `u32`, a `***i32` through `**T`, an `x: T` parameter given
+# any pointer: i64, unchanged. The filed repro verbatim and the refusals:
+# tests/gates/frontend/generic_ptr_param_infer.sh.
+#
+# CROSS-HOST: frontend typing, but each instance's element loads (narrow, sign-extended), steps and f64 results
+# (an xmm return) are each backend's. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct SpH { n; p: *i32; }
+struct SpHH { pp: **i32; }
+struct SpO { n; }
+impl SpO { fn ms<V>(self, w: *V): i64 { return sizeof(V); } }
+fn sp_sz<T>(x: *T): i64 { return sizeof(T); }
+fn sp_second<T>(p: *T): i64 { return *(p + 1); }
+fn sp_gd<T>(p: *T): T { return *p; }
+fn sp_dbl<T>(p: *T): T { var v: T = *p; return v + v; }
+fn sp_fw<T>(x: *T): i64 { return sp_sz(x) * 100 + sp_second(x); }
+fn sp_tail<T>(p: *T): i64 { return sp_second(p); }
+fn sp_v<T>(x: T): i64 { return sizeof(T); }
+fn sp_ppz<T>(pp: **T): i64 { return sizeof(T); }
+fn sp_pst<T>(pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b; }
+fn sp_ppget<T>(pp: **T): T { return **pp; }
+
+var SP_GA: i32[4];
+var SP_GP: *i32 = &SP_GA;
+var SP_GI: i32 = 0 - 7;
+var SP_GH: f64 = 2.25;
+var SP_GPF: *f64 = &SP_GH;
+var SP_GU: u16 = 3;
+fn sp_mk(): *i32 { return SP_GP; }
+fn sp_mkpp(): **i32 { return &SP_GP; }
+fn sp_mkf(): *f64 { return SP_GPF; }
+fn sp_fill(a: *i32): i64 { a[0] = 0 - 5; a[1] = 9; a[2] = 11; a[3] = 13; return 0; }
+
+SP_GA[0] = 3; SP_GA[1] = 4; SP_GA[2] = 0 - 1; SP_GA[3] = 0 - 1;
+var SP_TZ = sp_sz(SP_GP) * 100 + sp_second(SP_GP);   # a top-level call: 404
+
+# PS — through `p: *T`, each source. `sz * 100 + second` reads sizeof(T) and the element after the first.
+fn ps_local(): i64 { var a: i32[4]; sp_fill(&a); var pa: *i32 = &a; return sp_sz(pa) * 100 + sp_second(pa); }
+fn ps_par(p: *i32): i64 { return sp_sz(p) * 100 + sp_second(p); }
+fn ps_param(): i64 { var a: i32[4]; sp_fill(&a); return ps_par(&a); }
+fn ps_i8(): i64 {
+    var a: i8[8]; a[0] = 7; a[1] = 0 - 9; a[2] = 1; var p: *i8 = &a;
+    return sp_sz(p) * 1000 + sp_second(p);
+}
+fn ps_i16(): i64 {
+    var a: i16[4]; a[0] = 7; a[1] = 0 - 9; a[2] = 1; var p: *i16 = &a;
+    return sp_sz(p) * 1000 + sp_second(p);
+}
+fn ps_glob(): i64 { return sp_sz(SP_GP) * 100 + sp_second(SP_GP); }
+fn ps_call(): i64 { return sp_sz(sp_mk()) * 100 + sp_second(sp_mk()); }
+fn ps_field(): i64 { var h: SpH; h.p = &SP_GA; var ph: *SpH = &h; return sp_sz(h.p) * 100 + sp_second(ph.p); }
+fn ps_cap(): i64 {
+    var a: i32[4]; sp_fill(&a); var pa: *i32 = &a;
+    var f = || sp_sz(pa) * 100 + sp_second(pa);
+    return fncall0(f);
+}
+fn ps_addr(): i64 { var i: i32 = 0 - 3; var j: i16 = 2; return sp_sz(&i) * 1000 + sp_sz(&j) * 100 + sp_gd(&i); }
+fn ps_gaddr(): i64 { return sp_sz(&SP_GI) * 100 + sp_gd(&SP_GI); }
+fn ps_f64(): i64 { var h: f64 = 1.5; var v = sp_gd(&h); var d = sp_dbl(&h); return f64_to(v * 2.0) * 10 + f64_to(d); }
+fn ps_f64p(): i64 {
+    var h: f64 = 1.25; var p: *f64 = &h; var w = sp_gd(p) * 4.0;
+    return f64_to(w) * 100 + f64_to(sp_gd(SP_GPF) * 4.0);
+}
+fn ps_f64c(): i64 { var w = sp_gd(sp_mkf()) * 8.0; return f64_to(w); }
+fn ps_res(): i64 { var a: i32[4]; sp_fill(&a); var pa: *i32 = &a; var v = sp_gd(pa); return v; }
+fn ps_meth(): i64 {
+    var o = SpO { 1 }; var a: i32[2]; var pa: *i32 = &a; var h: f64 = 0.5;
+    return o.ms(pa) * 10 + o.ms(&h);
+}
+fn ps_fw(): i64 { var a: i32[4]; sp_fill(&a); var pa: *i32 = &a; return sp_fw(pa); }
+fn ps_tail(): i64 { var a: i32[4]; sp_fill(&a); var pa: *i32 = &a; return sp_tail(pa); }
+fn ps_expl(): i64 { var a: i32[4]; sp_fill(&a); var pa: *i32 = &a; return sp_sz<i32>(pa) * 100 + sp_second<i32>(pa); }
+# PN — the pointees that are no type argument, and the other shape, stay i64 (sizeof 8).
+fn pn_u8(): i64 { var a: u8[8]; var p: *u8 = &a; return sp_sz(p); }
+fn pn_u32(): i64 { var a: u32[2]; var p: *u32 = &a; var u: u32 = 4; return sp_sz(p) * 10 + sp_sz(&u); }
+fn pn_f32(): i64 { var a: f32[2]; var p: *f32 = &a; return sp_sz(p); }
+fn pn_bool(): i64 { var b: bool = true; var p: *bool = &b; return sp_sz(p) * 10 + sp_sz(&b); }
+fn pn_i64(): i64 { var a: i64[2]; var p: *i64 = &a; var n = 5; return sp_sz(p) * 10 + sp_sz(&n); }
+fn pn_gu(): i64 { return sp_sz(&SP_GU); }
+fn pn_xt(): i64 {
+    var a: i32[2]; var pa: *i32 = &a; var h: f64 = 1.0; var ph: *f64 = &h;
+    return sp_v(pa) * 10 + sp_v(ph);
+}
+# PP — through `pp: **T`: the pointee of the `**T`.
+fn pp_local(): i64 { var a: i32[4]; var pa: *i32 = &a; var ppa: **i32 = &pa; return sp_ppz(ppa) * 10 + sp_pst(ppa); }
+fn pp_addr(): i64 { var a: i32[4]; var pa: *i32 = &a; return sp_ppz(&pa) * 10 + sp_pst(&pa); }
+fn pp_call(): i64 { return sp_ppz(sp_mkpp()) * 100 + sp_ppget(sp_mkpp()); }
+fn pp_glob(): i64 { return sp_ppz(&SP_GP); }
+fn pp_field(): i64 { var hh: SpHH; hh.pp = &SP_GP; return sp_ppz(hh.pp); }
+fn pp_f64(): i64 {
+    var h: f64 = 2.5; var ph: *f64 = &h; var pph: **f64 = &ph; var v = sp_ppget(pph);
+    return f64_to(v * 2.0);
+}
+fn pp_i16(): i64 { var a: i16[2]; var p: *i16 = &a; var pp: **i16 = &p; return sp_ppz(pp); }
+fn pp_triple(): i64 { var a: i32[2]; var p: *i32 = &a; var pp: **i32 = &p; var ppp: ***i32 = &pp; return sp_ppz(ppp); }
+fn pp_u8(): i64 { var a: u8[8]; var p: *u8 = &a; var pp: **u8 = &p; return sp_ppz(pp); }
+
+alloc_init();
+assert_eq(ps_local(), 409, "PS: a `*i32` local: sizeof 4, *(p + 1) a[1] (was 8, a[2] and a[3]'s word)");
+assert_eq(ps_param(), 409, "PS: a `p: *i32` parameter");
+assert_eq(ps_i8(), 1000 - 9, "PS: a `*i8` local: sizeof 1, the element sign-extended");
+assert_eq(ps_i16(), 2000 - 9, "PS: a `*i16` local: sizeof 2");
+assert_eq(ps_glob(), 404, "PS: a `*i32` global");
+assert_eq(ps_call(), 404, "PS: a `: *i32` call");
+assert_eq(ps_field(), 404, "PS: a field declared `*i32` (`h.p`, `ph.p`)");
+assert_eq(ps_cap(), 409, "PS: a closure-captured `*i32`");
+assert_eq(ps_addr(), 4200 - 3, "PS: `&i` of an i32 local (4), `&j` of an i16 (2), `sp_gd(&i)` the i32");
+assert_eq(ps_gaddr(), 400 - 7, "PS: `&G` of an i32 global");
+assert_eq(ps_f64(), 33, "PS: `&h` of an f64 calls the f64 instance: `sp_gd(&h) * 2.0` 3, `sp_dbl(&h)` 3.0");
+assert_eq(ps_f64p(), 509, "PS: a `*f64` local (5) and a `*f64` global (9)");
+assert_eq(ps_f64c(), 18, "PS: a `: *f64` call");
+assert_eq(ps_res(), 0 - 5, "PS: a `: T` result at i32 is the element, sign-extended");
+assert_eq(ps_meth(), 48, "PS: a generic method's `w: *V` (i32 4, f64 8)");
+assert_eq(ps_fw(), 409, "PS: a forward `sp_sz(x)` / `sp_second(x)` from `sp_fw$i32`");
+assert_eq(ps_tail(), 9, "PS: a tail call `return sp_second(p);` from `sp_tail$i32`");
+assert_eq(ps_expl(), 409, "PS: the explicit `<i32>` (unchanged)");
+assert_eq(SP_TZ, 404, "PS: a top-level call through a `*i32` global");
+assert_eq(pn_u8(), 8, "PN: a `*u8` stays i64");
+assert_eq(pn_u32(), 88, "PN: a `*u32` and `&u` of a u32 stay i64");
+assert_eq(pn_f32(), 8, "PN: a `*f32` stays i64 (no type argument)");
+assert_eq(pn_bool(), 88, "PN: a `*bool` and `&b` of a bool stay i64");
+assert_eq(pn_i64(), 88, "PN: a `*i64` and `&n` are i64");
+assert_eq(pn_gu(), 8, "PN: `&G` of a u16 global stays i64");
+assert_eq(pn_xt(), 88, "PN: an `x: T` parameter given a `*i32` / `*f64` binds no pointer (i64)");
+assert_eq(pp_local(), 44, "PP: a `**i32` local through `pp: **T`: sizeof 4, *pp + 1 steps 4 (was 8, 8)");
+assert_eq(pp_addr(), 44, "PP: `&p` of a `*i32`");
+assert_eq(pp_call(), 403, "PP: a `: **i32` call (and `**pp` at i32)");
+assert_eq(pp_glob(), 4, "PP: `&G` of a `*i32` global");
+assert_eq(pp_field(), 4, "PP: a field declared `**i32`");
+assert_eq(pp_f64(), 5, "PP: a `**f64` calls the f64 instance");
+assert_eq(pp_i16(), 2, "PP: a `**i16`");
+assert_eq(pp_triple(), 8, "PP: a `***i32` stays i64 (its pointee is a pointer)");
+assert_eq(pp_u8(), 8, "PP: a `**u8` stays i64");
+var r = assert_summary();

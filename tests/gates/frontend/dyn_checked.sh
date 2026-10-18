@@ -178,7 +178,9 @@
 #   M-F5  plain `T_m` for a slot (no `_tr_prefix`)                   -> A (§defaults: the collision row read
 #         the inherent `base`, 999)
 #   M-F6  a default member's slot left 0                             -> A (rc 139: slot 1, `twice`, through 0)
-#   M-F7  the pair check skipped (`_dyn_pair_chk` answers 1)         -> F7, F8a-f, F8h, F9 (BUILT)
+#   M-F7  the pair check skipped (`_dyn_pair_chk` answers 1)         -> F7, F8a, F8c-f, F8h, F9 (BUILT); F8b is
+#         the impl's own refusal since 6.7.15 (D4), formed or not
+#   M-F7b (6.7.15) the D4 hand-off gone (`_dyn_pair_chk` reports code 4 too) -> F8b (two lines: the site's and the impl's)
 #   M-F8  decision 2 skipped (`self: T` of 8 B or less accepted)     -> F7 (BUILT)
 #   M-F9  no visibility check at a forming site                      -> F10 (BUILT)
 #   M-F10 `_gci_inline`'s dyn arm gone (a zone dyn not inline)       -> F11a, F11b, K, PF, A (the backstop
@@ -311,6 +313,15 @@
 #                                                                         not as expected), PW5 (2 errors), CW, the A
 #                                                                         x86 / PE and IX3 dyn_objects legs
 #   M-PW2 `_spi_top_ref` without its `_tn_once` mark                   -> RED 2: PW4 PW5 (2 errors)
+#   T4f-T4k (6.7.15) a refused dyn type argument is read as i64 (`_type_arg_leaf`, and `_parse_one_type_arg`'s arm for a
+#       name followed by `<`), so no `Box$dyn Show` is minted to cascade
+#       (issues/2026-10-16-dyn-type-argument-refusal-cascades-into-instance-local.md): T4f the filed repro verbatim (a
+#       second error, "declare Box$dyn Show 'a' with its value", before), T4g `g<dyn Show>(o)` with an untyped `o`,
+#       T4h `Two<i64, dyn Show>` / T4i `Box<Box<dyn Show>>` locals, T4j a `: Box<dyn Show>` return ("returned in two
+#       registers ... `Box$dyn Show`" before), T4k `Box<dyn Show<i64>>` — each one error line. Mutants (2026-10-18, the
+#       KC procedure):
+#   M-T4f the `_dyn_is` arm removed from `_type_arg_leaf`              -> RED 4: T4f T4h T4i T4j (2 error lines)
+#   M-T4k the `_dyn_is` arm removed from `_parse_one_type_arg`'s `<` arm -> RED 1: T4k (2 error lines)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -402,6 +413,13 @@ refused t04b "$T4M" "T4b: \`Box<dyn Show>\`" "${SH}struct Box<T> { v: T; }\nfn f
 refused t04c "$T4M" "T4c: \`g<dyn Show>(o)\`" "${SH}fn g<T>(x: T): i64 { return 0; }\nfn f(o: dyn Show): i64 { return g<dyn Show>(o); }\nsyscall(60, 0);\n"
 refused t04d "$T4M" "T4d: \`Pr<i64, dyn Show>\` (the second argument)" "${SH}struct Pr<A, B> { a: A; b: B; }\nfn f(b: Pr<i64, dyn Show>): i64 { return 0; }\nsyscall(60, 0);\n"
 refused t04e "$T4M" "T4e: \`Box<Box<dyn Show>>\` (nested, \`>>\`)" "${SH}struct Box<T> { v: T; }\nfn f(b: Box<Box<dyn Show>>): i64 { return 0; }\nsyscall(60, 0);\n"
+# 6.7.15: the refused type argument mints nothing, so nothing cascades — each one error line.
+refused t04f "$T4M" "T4f: the filed repro, verbatim (\`var a: Box<dyn Show>;\` in a fn: no \"declare Box\$dyn Show\")" 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nstruct Box<T> { v: T; }\nfn main(): i64 {\n    var a: Box<dyn Show>;\n    return 0;\n}\nsyscall(60, main());\n'
+refused t04g "$T4M" "T4g: \`g<dyn Show>(o)\`, \`o\` untyped (no instance minted)" "${SH}fn g<T>(o): i64 { return sizeof(T); }\nfn f(): i64 { var o = 5; return g<dyn Show>(o); }\nsyscall(60, f());\n"
+refused t04h "$T4M" "T4h: a \`Two<i64, dyn Show>\` local" "${SH}struct Two<A, B> { a: A; b: B; }\nfn f(): i64 { var t: Two<i64, dyn Show>; return 0; }\nsyscall(60, f());\n"
+refused t04i "$T4M" "T4i: a \`Box<Box<dyn Show>>\` local" "${SH}struct Box<T> { v: T; }\nfn f(): i64 { var c: Box<Box<dyn Show>>; return 0; }\nsyscall(60, f());\n"
+refused t04j "$T4M" "T4j: a \`: Box<dyn Show>\` return" "${SH}struct Box<T> { v: T; }\nfn h(): Box<dyn Show> { var x: Box<i64>; return x; }\nsyscall(60, 0);\n"
+refused t04k "$T4M" "T4k: a \`Box<dyn Show<i64>>\` local (the dyn written with type arguments)" "${SH}struct Box<T> { v: T; }\nfn f(): i64 { var a: Box<dyn Show<i64>>; return 0; }\nsyscall(60, f());\n"
 T5M="a pointer to dyn Show is refused"
 refused t05a "$T5M" "T5a: \`*dyn Show\`" "${SH}fn f(o: *dyn Show): i64 { return 0; }\nsyscall(60, 0);\n"
 refused t05b "$T5M" "T5b: \`**dyn Show\`" "${SH}fn f(): i64 { var p: **dyn Show = 0; return 0; }\nsyscall(60, 0);\n"
@@ -553,13 +571,15 @@ refused f06b "no \`impl Show for Q\`" "F6b: a \`*Q\` with no \`impl Show for Q\`
 refused f07 "cannot form dyn T2 from Q - its method 'sh' takes \`self: Q\` by value, and a struct of 8 bytes or less arrives in a register" "F7: \`self: Q\`, Q of 8 B (decision 2), naming the method" "${SN}struct Q { a; }\ntrait T2 { fn sh(self): i64; }\nimpl T2 for Q { fn sh(self: Q): i64 { return self.a; } }\nfn f(q: *Q): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 F8M="cannot form dyn T2 from P - its method"
 refused f08a "${F8M} 'sh' does not match its declaration in trait T2: parameter 'n' has another type (an untyped parameter is i64)" "F8a: a parameter's type (\`n: u8\` for an untyped \`n\`)" "${SN}trait T2 { fn sh(self, n): i64; }\nimpl T2 for P { fn sh(self, n: u8): i64 { return n; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
-refused f08b "${F8M} 'sh' does not match its declaration in trait T2: the return type differs" "F8b: the return type (\`: i32\` for none)" "${SN}trait T2 { fn sh(self); }\nimpl T2 for P { fn sh(self): i32 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+# F8b — 6.7.15 (the user's D4 (a), 2026-10-18): a return type that differs is the IMPL's refusal, at the impl, whether
+# or not a dyn is formed; the forming site (above it here) adds nothing (`_tr_ret_differs`). It was this gate's F8 code 4.
+refused f08b "'P.sh' returns i32, trait 'T2' declares i64" "F8b: the return type (\`: i32\` for none) — refused at the impl, the forming site above it adds nothing" "${SN}trait T2 { fn sh(self); }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nimpl T2 for P { fn sh(self): i32 { return 1; } }\nsyscall(60, 0);\n"
 refused f08c "${F8M} 'pk' does not match its declaration in trait T2: one is generic, the other is not" "F8c: generic-ness" "${SN}trait T2 { fn pk<U>(self, u: U): i64; }\nimpl T2 for P { fn pk(self, u): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 refused f08d "${F8M} 'sh' does not match its declaration in trait T2: a variadic \`...\` differs" "F8d: a variadic \`...\`" "${SN}trait T2 { fn sh(self, ...): i64; }\nimpl T2 for P { fn sh(self, a): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 refused f08e "${F8M} 'sh' does not match its declaration in trait T2: its \`self\` is not P" "F8e: \`self: Q\` in an impl for P" "${SN}struct Q { a; }\ntrait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self: Q): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 refused f08f "cannot form dyn T2 from i64 - its method 'sh' does not match its declaration in trait T2: \`self: *T\` - the dyn of a scalar holds its value" "F8f: a scalar impl's \`self: *i64\`" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for i64 { fn sh(self: *i64): i64 { return 1; } }\nfn f(): i64 { var n: i64 = 5; var o: dyn T2 = n; return 0; }\nsyscall(60, 0);\n"
 refused f08g "${FN}'q' - a pointer to a scalar: the dyn of a scalar holds its value" "F8g: a \`q: *i64\` into a scalar impl" "${SN}fn f(q: *i64): i64 { var o: dyn Num = q; return 0; }\nsyscall(60, 0);\n"
-refused f08h "${F8M} 'z' does not match its declaration in trait T2: the return type differs" "F8h: one report per pair — three forming sites in two fns, one error at the first" "${SN}trait T2 { fn sh(self): i64; fn z(self): i64; }\nimpl T2 for P { fn sh(self): i64 { return 1; } fn z(self): i32 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; var o2: dyn T2 = q; return 0; }\nfn h(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+refused f08h "${F8M} 'z' does not match its declaration in trait T2: parameter 'n' has another type" "F8h: one report per pair — three forming sites in two fns, one error at the first (a parameter's type: a return type is the impl's own, F8b)" "${SN}trait T2 { fn sh(self): i64; fn z(self, n): i64; }\nimpl T2 for P { fn sh(self): i64 { return 1; } fn z(self, n: u8): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; var o2: dyn T2 = q; return 0; }\nfn h(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).

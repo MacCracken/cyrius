@@ -1841,6 +1841,8 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     # Deliberately does NOT set `_panic`: an arity mismatch is not a token-stream
     # desync, so the parse continues normally and ONE compile reports EVERY bad call
     # site (the v6.4.62 multi-error contract). `_had_error` alone withholds the binary.
+    # 6.7.15: once per call and text (`_derr_seen`, at the call's `(`) — a generic body is parsed per instance.
+    if (_derr_seen(_ar_site(S), "_CHECK_ARITY", ((fi * 31 + noff) * 1024 + argc) * 2 + _ar_self, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, line);
     syscall(SYS_WRITE, 2, ": '", 3);
@@ -1860,6 +1862,27 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, "\n", 1);
     _had_error = 1;
     return 0;
+}
+
+# The token an arity report is keyed on: the `(` of the call that just closed — the cursor is past its `)` (a call,
+# an inline replay) or its `)` and `;` (the tail arm), so every path that checks one call agrees — else the cursor
+# (an operator's dispatch). CHANGELOG [6.7.15]
+fn _ar_site(S): i64 {
+    var t = GTI(S) - 1;
+    if (t < 1) { return GTI(S); }
+    if (TOKTYP(S, t) == 5) { t = t - 1; }
+    if (TOKTYP(S, t) != 11) { return GTI(S); }
+    var d = 0;
+    while (t >= 0) {
+        var k = TOKTYP(S, t);
+        if (k == 11) { d = d + 1; }
+        if (k == 10) {
+            d = d - 1;
+            if (d == 0) { return t; }
+        }
+        t = t - 1;
+    }
+    return GTI(S);
 }
 
 # ⛔ 6.7.3 — A STRUCT ARGUMENT WAS NEVER TYPE-CHECKED AGAINST ITS PARAMETER, except a struct-typed
@@ -2262,6 +2285,7 @@ fn _vec_kind_err(S, noff, fi): i64 {
 # ... `kind` "vector" or "struct" (6.7.13 D5 (a), `_sarg_struct_other`).
 fn _agg_kind_err(S, noff, fi, kind): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_agg_kind_err", (noff * 31 + fi) * 31 + kind, 0) == 1) { return 0; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
@@ -2301,6 +2325,7 @@ fn _vk_param(S, fi, k): i64 {
 # argument). 0.
 fn _vec_val_err(S, star, noff, fi, kd): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_vec_val_err", ((noff * 31 + fi) * 31 + kd) * 2 + star, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
@@ -2463,6 +2488,7 @@ fn _sval_stars(S, st): i64 {
 # twin). No `_panic`: the parse is in step, so one compile reports every such argument. 0.
 fn _sval_kind_err(S, ti, star, noff, fi): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_sval_kind_err", (noff * 31 + fi) * 31 + star, 0) == 1) { return 0; }   # 6.7.15: once
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -2819,7 +2845,7 @@ fn _mv_span(S, a, b, sid, kind): i64 {
     a = _ie_unparen(S, a, b);
     b = _ie_pe;
     if (_mrc_beg == a) { if (_mrc_end == b) { if (_mv_callee(S, _mrc_fi) == 1) {
-                if (_tok_method_open(S, a) == 1) { return _mv_struct_err(S, a, sid, TOKVAL(S, a + 2), _mrc_fi, kind, 2); }
+                if (_mcall_open(S, a, 0 - 1) >= 0) { return _mv_struct_err(S, a, sid, TOKVAL(S, a + 2), _mrc_fi, kind, 2); }
                 return _mv_struct_err(S, a, sid, _mrc_fn, _mrc_fi, kind, 0);   # a longer chain: the method's fn
             } } }
     var o = _gcall_open(S, a);
@@ -2917,7 +2943,7 @@ fn _mv_fsc_call(S, ft, term): i64 {
     if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
     var fi = _dt_call_fn(S);
     if (_mv_callee(S, fi) == 0) { return 0; }
-    if (_tok_method_open(S, GTI(S)) == 1) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, GTI(S) + 2), fi, 1, 2); }
+    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, GTI(S) + 2), fi, 1, 2); }
     return _mv_struct_err(S, GTI(S), ft, PEEKV(S), fi, 1, 1);
 }
 
@@ -3667,6 +3693,7 @@ fn _ret_small_ptr(S, st): i64 {
 # token `ti`; the parse goes on (no cascade).
 fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
@@ -5744,6 +5771,7 @@ fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
     if (ssid <= 0) { return 0; }
     var k = _str_arg_kind(S, ssid);
     if (k == 0) { return 0; }
+    if (_warn_seen(GTI(S), "_check_str_cstring_arg", ((fi * 31 + argc) * 31 + noff) * 4 + k) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);
     if (k == 1) { syscall(SYS_WRITE, 2, ": passing Str-typed '", 21); }
@@ -5786,6 +5814,7 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
     if (PEEKT(S) != 1) { return 0; }
     if (PEEKV(S) == 0) { return 0; }
     if (_pm_cstr(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
+    if (_derr_seen(GTI(S), "_check_int_lit_cstring_arg", (fi * 31 + argc) * 31 + noff, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
@@ -6040,6 +6069,7 @@ fn _vf_cls(S, t): i64 {
 # Returns 0.
 fn _sar_err(S, ti, fi): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_sar_err", fi, 0) == 1) { return 0; }   # 6.7.15: once per site
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -7356,6 +7386,7 @@ fn _ret_vec_rule(S): i64 {
 }
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_simd_return", 0, 0) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
@@ -7387,6 +7418,7 @@ fn _refuse_struct_tuple_return(S): i64 {
     if (_cur_fn_ret_sid <= 0) { return 0; }
     if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_struct_tuple_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
@@ -7401,6 +7433,7 @@ fn _refuse_struct_tuple_return(S): i64 {
 fn _refuse_pair_return(S): i64 {
     if (_panic == 1) { return 0; }
     if (_slit_at(S, GTI(S)) == 1) { return 0; }   # 6.7.14 (D12 (a)): the factor refuses the literal, once
+    if (_derr_seen(GTI(S), "_refuse_pair_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);
@@ -7583,7 +7616,7 @@ fn _ret_mv_fwd(S, st): i64 {
 }
 # ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`).
 fn _ret_mv_small(S, ct, fi): i64 {
-    if (_tok_method_open(S, ct) == 1) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct + 2), fi, 4, 2); }
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct + 2), fi, 4, 2); }
     return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct), fi, 4, 1);
 }
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
@@ -9057,6 +9090,7 @@ fn _tr_check_impl(S, ii): i64 {
                 ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
                 return 0;
             } }
+        if (_tr_ret_chk(S, ii, tk, k) == 1) { return 0; }   # 6.7.15 (D4): and its return type
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);
@@ -9069,6 +9103,93 @@ fn _tr_check_impl(S, ii): i64 {
         k = k + 1;
     }
     return 0;
+}
+# ⛔ 6.7.15 (D4) — AN IMPL METHOD'S RETURN TYPE IS CHECKED AGAINST ITS TRAIT MEMBER'S, at the impl (`ii` the impl,
+# `tk` the member, `k` the method), beside the parameter count: `trait T { fn c(self): f64; }` implemented as
+# `fn c(self): i64` compiled, and a bounded generic caller declared `: f64` received the integer bits. Compared as
+# forming a dyn compares it (`_dyn_ret_at` / `_dyn_ty_eq`: a name by its resolved type, no annotation an i64), each
+# spelling read as the annotation reader reads it (`_ty_norm_eq`: `>>` two closes, `Box<i64>` the base `Box`) and
+# refused by name, "'P.c' returns i64, trait 'T' declares f64" (the user's D4 (a), 2026-10-18). A side whose return its
+# own reader refuses is that refusal alone (`_tr_rt_bad`). Parameter types are not compared (D4 leaves them out).
+# 1 = refused. CHANGELOG [6.7.15]
+var _trr_a = 0;    # the member's return type's tokens [_trr_a, _trr_ae); the method's [_trr_b, _trr_be)
+var _trr_ae = 0;
+var _trr_b = 0;
+var _trr_be = 0;
+fn _tr_ret_chk(S, ii, tk, k): i64 {
+    var fp = L64(_tim_tab + k * 24 + 8);
+    if (_tr_ret_differs(S, L64(_trm_ft + tk * 8), fp) == 0) { return 0; }
+    var at = _trr_b;
+    if (at == _trr_be) { at = fp + 1; }   # no annotation: at the method's name
+    return _tr_ret_err(S, ii, L64(_tim_tab + k * 24), at);
+}
+# 1 when the member at `fn` token `tp` and the method at `fp` return different types and neither return is one its own
+# reader refuses: the impl is refused for it (`_tr_ret_chk`), and forming a dyn from it adds nothing (`_dyn_pair_chk`).
+fn _tr_ret_differs(S, tp, fp): i64 {
+    var a = _tr_paren(S, tp);
+    var b = _tr_paren(S, fp);
+    if (a < 0 || b < 0) { return 0; }
+    _trr_a = _dyn_ret_at(S, a);
+    _trr_ae = _dps_te;
+    _trr_b = _dyn_ret_at(S, b);
+    _trr_be = _dps_te;
+    if (_ty_norm_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }   # `Box<i64>` is `Box`, `>>` is `> >`
+    if (_tr_rt_bad(S, _trr_a, _trr_ae, 0) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_b, _trr_be, 1) == 1) { return 0; }
+    return 1;
+}
+# 1 when the return type [a, ae) is refused by its own reader — the trait's for a member (`im` 0), PARSE_FN_DEF's for a
+# method (1): a slice, `u128` or `Vec` as the type, a name that is no type, and for a method a name a fn's return does
+# not take (`_tn_ret_report`'s: u8..u64, f32, an enum).
+fn _tr_rt_bad(S, a, ae, im): i64 {
+    if (a == ae) { return 0; }
+    if (_sl_ann_at(S, a) == 1) { return 1; }
+    if (TOKTYP(S, a) == 105) { return 1; }
+    if (_trs_ret_vec(S, a) == 1) { return 1; }
+    if (im == 1) { if (_tr_rt_nonret(S, a) == 1) { return 1; } }
+    var k = a;
+    while (k < ae) {
+        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _tr_rt_nonret(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_classify_return_type(S, noff) != 0) { return 0; }
+    if (_bx_is_bool_name(S, noff) == 1) { return 0; }
+    if (_tn_resolve_at(S, ti) == _tn_code(4, 7)) { return 0; }   # a type parameter
+    return 1;
+}
+# "'P.c' returns i64, trait 'T' declares f64" at token `at` (the method's return type, or its name), once; not a
+# panic — nothing is consumed. The two types as written (no annotation is i64).
+fn _tr_ret_err(S, ii, m, at): i64 {
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, at) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + L64(_ti_tab + ii * 64 + 8));
+    PRSTR(".");
+    PRSTR(S + 0xEC00000 + m);
+    PRSTR("' returns ");
+    _tr_rt_pr(S, _trr_b, _trr_be);
+    PRSTR(", trait '");
+    PRSTR(S + 0xEC00000 + L64(_ti_tab + ii * 64));
+    PRSTR("' declares ");
+    _tr_rt_pr(S, _trr_a, _trr_ae);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+fn _tr_rt_pr(S, a, ae): i64 {
+    if (a == ae) { PRSTR("i64"); return 0; }
+    return _rcv_ann_pr(S, a, ae);
 }
 # Pass 1: a `trait` declaration was recorded by the pre-scan — skip it.
 fn _tl_trait1(S): i64 {
@@ -9141,15 +9262,48 @@ var _trs_bad = 0;   # the member being walked has reported (or stopped)
 fn _tr_sig_check(S, tx, p, op, q): i64 {
     if (TOKTYP(S, q) == 13) { if (_tr_dflt_inh(S, tx, TOKVAL(S, p + 1)) == 1) { return 0; } }
     _trs_bad = 0;
+    _trs_fn = p + 1;   # 6.7.15 (D7)
     var i = _trs_params(S, op + 1, q);
     if (_trs_bad == 0) {
         if (TOKTYP(S, i) == 49) {
             if (TOKTYP(S, i + 1) == 10) { i = _trs_type(S, i + 1, q, " in a multi-value return type", 0 - 1); }
-            else { i = _trs_type(S, i + 1, q, " as a fn return type", 0 - 1); }
+            elif (_trs_ret_refused(S, i + 1) == 0) { i = _trs_type(S, i + 1, q, " as a fn return type", 0 - 1); }
         }
     }
     if (_trs_bad == 0) { if (i != q) { _trs_end(S, i); } }
+    _trs_fn = 0;
     return 0;
+}
+# ⛔ 6.7.15 (D9, D3) — A TRAIT MEMBER'S RETURN TYPE IS HELD TO A FN'S RETURN VOCABULARY FOR `Vec` AND `u128` (`ti` the
+# type's first token, past the `:`): `fn a(self): Vec<i64>;` and `fn n(self): u128;` compiled, though no impl can
+# define them — an impl's `fn a(self): Vec<i64>` / `fn n(self): u128` is refused, as any fn's is. Refused at the member,
+# once, with the fn's words: "type 'Vec' cannot be a fn return type" and its note (`_tn_ret_report`; a bare `: Vec`
+# too; silent under `--syntax-only`, as the fn's is), "`u128` is not supported as a fn return type yet" (`_u128_refuse`,
+# reported under `--syntax-only` too, as the fn's is). `: *Vec<T>`, `: *u128`, a `*fn( .. ): Vec<T>` / `*fn( .. ): u128`
+# type's own return and a parameter `v: Vec<T>` are unchanged (the user's D9 (a) and D3 (a), 2026-10-18). 1 = refused
+# (the member's walk ends). CHANGELOG [6.7.15]
+fn _trs_ret_refused(S, ti): i64 {
+    if (TOKTYP(S, ti) == 105) {
+        _trs_bad = 1;
+        _u128_refuse(S, ti, "a fn return type yet");
+        return 1;
+    }
+    if (_trs_ret_vec(S, ti) == 0) { return 0; }
+    _trs_bad = 1;
+    if (_syntax_only == 1) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _tn_ret_report(S, ti);
+    STI(S, sv);
+    return 1;
+}
+# 1 when token `ti` is the built-in `Vec` (no program struct of that name), with or without its `<..>`.
+fn _trs_ret_vec(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) != 0x00636556) { return 0; }   # "Vec\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
 }
 # 1 when an impl of trait `tx` does not define `m` — it inherits the default.
 fn _tr_dflt_inh(S, tx, m): i64 {
@@ -9222,6 +9376,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     i = i + 1;
     if (TOKTYP(S, i) != 19) { return i; }
     _vec_ann_chk(S, i - 1, nm);   # 6.7.14 (D4): `v: Vec<T>` reads T, as in a fn definition
+    _trs_targs(S, i - 1);         # 6.7.15 (D7): `b: Box<nosuch>` reads its list
     var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
     while (i < q) {
         t = TOKTYP(S, i);
@@ -9234,9 +9389,29 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     }
     return _trs_err(S, i, 20);
 }
+# ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS IN A TRAIT MEMBER'S SIGNATURE (`ti` the struct's name, its `<`
+# next) are read, as a fn definition's are since 6.7.14 (`_gtype_sid_def`): the list was skipped unread, so
+# `fn a(self, b: Box<nosuch>): i64;` compiled as the base `Box`. Every type-argument refusal once at its token
+# (`_targ_chk`, nothing instantiated); the member's own `<U>` stays a name (`_trs_fn`). A refusal ends the member's
+# walk, as the reader's others do (the user's D7 (a), 2026-10-18). CHANGELOG [6.7.15]
+var _trs_fn = 0;   # the walked member's `fn` token + 1 (0 = none): its own type parameters are names
+fn _trs_targs(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_trs_bad == 1) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    var sv_rf = _ta_refd;
+    _ta_refd = 0;
+    _targ_chk(S, ti + 1);
+    if (_ta_refd == 1) { _trs_bad = 1; }
+    _ta_refd = sv_rf;
+    return 0;
+}
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
-# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. A member's `: u128` return type is not a
-# parameter and compiled (no decision covers it): it reads on.
+# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. The member's own `: u128` return is refused
+# before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter (`nm < 0`) is a multi-value
+# element's or a `*fn( .. )` type's return, which reads on.
 var _trs_lvl = 0;
 fn _trs_u128(S, i, st, nm): i64 {
     if (nm < 0) { return i + 1; }
@@ -9531,7 +9706,8 @@ fn _bnd_check(S, g, c0, c1): i64 {
             # 6.7.14: a refusal the panic latch swallows prints nothing — its note alone, after an earlier
             # error in the statement (`gs(5) + gb(3)`), named a bound the reader was never shown. CHANGELOG [6.7.14]
             if (_panic == 1) { return 1; }
-            ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32));
+            if (g >= 0) { _gen_ident_err(S, g, gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32)); }
+            else { ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32)); }
             # 6.7.14: the same refusal at the same token in another instance of the enclosing generic
             # (`gb<T>(x)` in `o<i32>` and `o<i16>`) is printed as nothing by the error latch: so is its note.
             if (_err_quiet == 1) { return 1; }
@@ -9647,26 +9823,35 @@ fn _bnd_site(S, tp, blk, i, r): i64 {
     while (k < n) {
         var tx = L64(blk + (slot * 9 + 1 + k) * 8);
         if (_trm_of(S, tx, m) >= 0) {
-            if (hits == 1) {
-                _bnd_err_at(S, i + 2, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
-                _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
-                return 0;
-            }
+            if (hits == 1) { return _bnd_site_refuse(S, i, i + 2, tx, 0); }
             hit = tx;
             hits = 1;
         }
         k = k + 1;
     }
     var tpn = ((tp >> (slot * 32)) & 0xFFFFFFFF) - 1;
-    if (hit < 0) {
-        _bnd_err_at(S, i + 2, "method ", m, " is not in the bound on type parameter ", tpn);
-        syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
-        PRSTR(S + 0xEC00000 + TOKVAL(S, i));
-        syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
-        _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
-        return 0;
-    }
+    if (hit < 0) { return _bnd_site_refuse(S, i, i + 2, 0 - 1, tpn); }
     _bs_add(S, i + 2, hit, tpn, L64(_bnr_tab + r * 24 + 16));
+    return 0;
+}
+# The two refusals of a bounded call whose method (token mti) no trait of the bound declares (tx -1; tpn the
+# type parameter) or a second trait declares too (tx that trait) — at the method's name, the call recorded as a
+# refused site so the parser consumes it quietly. The receiver, for the note, is the name at ri, or the field
+# chain `ri.f` when mti is two names past it (`b.v.other()`, `_bnd_fsite`; CHANGELOG [6.7.15]).
+fn _bnd_site_refuse(S, ri, mti, tx, tpn): i64 {
+    var m = TOKVAL(S, mti);
+    if (tx >= 0) {
+        _bnd_err_at(S, mti, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
+    } else {
+        _bnd_err_at(S, mti, "method ", m, " is not in the bound on type parameter ", tpn);
+        if (_err_quiet == 0) {   # 6.7.15: a refusal the panic latch swallowed prints no orphan note
+            syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, ri));
+            if (mti == ri + 4) { syscall(SYS_WRITE, 2, ".", 1); PRSTR(S + 0xEC00000 + TOKVAL(S, ri + 2)); }
+            syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
+        }
+    }
+    _bs_add(S, mti, 0 - 1, 0, 0);   # refused: its call is consumed quietly
     return 0;
 }
 # Generic fi's parameter list (its `(` at `open`) and body: every bounded receiver, and every call of
@@ -9724,8 +9909,12 @@ fn _bnd_sites(S, fi, open): i64 {
 # x a carrier (a parameter or `var` typed `[*]G<..T..>`, found by scope) whose G declares `f: T` in a slot the
 # carrier gives a bounded type parameter, and m a method of exactly one of that slot's traits: a bounded site at
 # m, which the scan reads as a trait use (`_gs_bfield`) and a scalar T's call takes the field's value as `self`
-# (`_load_bs_field`). A method no bound declares (or two do), and a `f: *T` field, record nothing — that call
-# keeps its 6.7.11 reading. CHANGELOG [6.7.14]
+# (`_load_bs_field`). A `f: *T` field, and a field whose slot has no bound, record nothing — that call keeps its
+# 6.7.11 reading. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 (the user's D5 (a), 2026-10-18) — the field call is held to the whole contract, as the call on a
+# T-typed name is: a method no trait of the bound declares (`b.v.other()` under `T: Show`), or one two traits
+# declare, is refused at the definition by `_bnd_site`'s two refusals (`_bnd_site_refuse`), called or not; it
+# compiled and called the instance's own method. CHANGELOG [6.7.15]
 fn _bnd_fsite(S, fi, blk, open, i): i64 {
     if (TOKTYP(S, i - 1) == 41) { return 0; }
     if (TOKTYP(S, i + 1) != 41) { return 0; }
@@ -9738,18 +9927,20 @@ fn _bnd_fsite(S, fi, blk, open, i): i64 {
     var slot = r;
     var m = TOKVAL(S, i + 4);
     var n = L64(blk + slot * 9 * 8);
+    if (n == 0) { return 0; }   # an unbounded slot: no contract
+    var tpn = ((GFTP(S, fi) >> (slot * 32)) & 0xFFFFFFFF) - 1;
     var hit = 0 - 1;
     var k = 0;
     while (k < n) {
         var tx = L64(blk + (slot * 9 + 1 + k) * 8);
         if (_trm_of(S, tx, m) >= 0) {
-            if (hit >= 0) { return 0; }   # two traits declare it: no site
+            if (hit >= 0) { return _bnd_site_refuse(S, i, i + 4, tx, tpn); }
             hit = tx;
         }
         k = k + 1;
     }
-    if (hit < 0) { return 0; }
-    _bs_add(S, i + 4, hit, ((GFTP(S, fi) >> (slot * 32)) & 0xFFFFFFFF) - 1, 0);
+    if (hit < 0) { return _bnd_site_refuse(S, i, i + 4, 0 - 1, tpn); }
+    _bs_add(S, i + 4, hit, tpn, 0);
     return 0;
 }
 # The declaration at token d (`name: [*]G<..>`): the slot (0 / 1) of fi's type parameter that G's field
@@ -9837,8 +10028,8 @@ fn _meth_fn_at(S, sid, mnoff, mti): i64 {
 # stub, like a struct-using generic's — when i64 fails one of the generic's OWN bounds, or when it
 # instantiates a BOUNDED generic struct with its own type parameter (`Box<T>` with `Box<T: Show>`)
 # and i64 fails that struct's bound. Without the second half, `fn mk<T>(x: T): Box<T>` was refused
-# at its definition although only `mk(5)` is wrong. Not cached: struct bounds are known only once
-# pass 1 has registered every struct; and a program with no bound never gets past the first test.
+# at its definition although only `mk(5)` is wrong. Cached only in pass 2 (`_bbm_get`): struct bounds are
+# known once pass 1 has registered every struct; and a program with no bound never gets past the first test.
 # ⛔ 6.7.14 — AND WHEN IT FORWARDS ITS T TO A GENERIC WHOSE BASE IS NOT A VALID i64 INSTANCE
 # (`_bbs_fwd_bad`): `fn o<T>(x: T) { return gb(x); }` with `fn gb<T: Show>` and only `impl Show for f64`.
 # The stub scan counted that forward a struct use, so `o`'s base was the stub, which has no scalar
@@ -9853,14 +10044,71 @@ fn _bnd_base_bad(S, fi): i64 {
     var tp = GFTP(S, fi);
     if (tp == 0) { return 0; }
     if (_gen_is_inst(S, fi) == 1) { return 0; }
+    var mv = _bbm_get(fi);
+    if (mv >= 0) { return mv; }   # 6.7.15: its verdict, memoised
     var blk = GFBND(S, fi);
     if (blk != 0) {
         if (_bnd_fail(S, blk, 0, 0 - 8) >= 0) { return 1; }
         if (_bnd_fail(S, blk, 1, 0 - 8) >= 0) { return 1; }
     }
-    if (_st_bnd != 0) { if (_bbs_struct(S, fi, tp) == 1) { return 1; } }
+    if (_st_bnd != 0) { if (_bbs_struct(S, fi, tp) == 1) { _bbm_put(fi, 1); return 1; } }
     if (_bnd_has == 0) { if (_st_bnd == 0) { return 0; } }
     return _bbs_fwd_bad(S, fi);
+}
+# ⛔ 6.7.15 — THE VERDICT IS MEMOISED PER GENERIC, AND THE JUDGEMENT HAS NO DEPTH CAP. `_bbs_fwd_bad` judged a
+# generic's forwards afresh at every asking (each call site, each base), so a chain of N forwarders cost N^2 scans,
+# and a depth cap (64) kept that bounded by answering "not bad" past it — a valid 66-deep chain's base was then
+# refused at a definition (issues/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). Each generic's
+# verdict (with the diagnostics a refusal names: `_bbs_fwd`, `_bbs_root`, `_bbs_why`) is recorded once it is
+# known to hold: a "bad" one always (a bad base reached is a fact, wherever it was found); a "not bad" one only
+# when the whole judgement found nothing — inside a judgement that ends bad, a generic answered while one of its
+# forwards was still being judged (a cycle, `_bbf_vis`) may be wrong, so it is not kept. Only in pass 2 (every
+# impl and struct bound known) and while the stub flags are closed and unchanged (`_gm_gen`: a generic recorded
+# later changes what a forward to it means, so it drops every entry). CHANGELOG [6.7.15]
+var _bbm = 0;        # per generic fi: (tag, verdict, _bbs_fwd, _bbs_root, _bbs_why), 40 B; tag = `_gm_gen` + 1
+var _bbm_cap = 0;    # its entries
+var _bbf_ep = 0;     # the judgement's `_gm_gen` + 1 when it may record, else 0
+# 1 = a verdict may be read or recorded now.
+fn _bbm_ok(): i64 {
+    if (_dyn_p2 == 0) { return 0; }
+    if (_gm_closed != _gm_gen) { return 0; }
+    return 1;
+}
+# fi's memoised verdict (the diagnostics set from it), or -1.
+fn _bbm_get(fi): i64 {
+    if (fi >= _bbm_cap) { return 0 - 1; }
+    if (_bbm_ok() == 0) { return 0 - 1; }
+    var e = _bbm + fi * 40;
+    if (L64(e) != _gm_gen + 1) { return 0 - 1; }
+    _bbs_fwd = L64(e + 16);
+    _bbs_root = L64(e + 24);
+    _bbs_why = L64(e + 32);
+    return L64(e + 8);
+}
+# Record verdict v for fi, with the diagnostics as they stand.
+fn _bbm_put(fi, v): i64 {
+    if (_bbm_ok() == 0) { return 0; }
+    if (_bbf_dep > 0) { if (_bbf_ep != _gm_gen + 1) { return 0; } }   # inside a judgement: its epoch still holds
+    if (fi >= _bbm_cap) { _bbm_grow(fi); }
+    var e = _bbm + fi * 40;
+    S64(e, _gm_gen + 1);
+    S64(e + 8, v);
+    S64(e + 16, _bbs_fwd);
+    S64(e + 24, _bbs_root);
+    S64(e + 32, _bbs_why);
+    return 0;
+}
+fn _bbm_grow(fi): i64 {
+    var c = _bbm_cap * 2;
+    if (c < 1024) { c = 1024; }
+    while (c <= fi) { c = c * 2; }
+    var t = alloc(c * 40);
+    var w = 0;
+    while (w < c * 5) { S64(t + w * 8, 0); w = w + 1; }
+    if (_bbm != 0) { _tab_copy(t, _bbm, _bbm_cap * 5); }
+    _bbm = t;
+    _bbm_cap = c;
+    return 0;
 }
 # 1 iff generic fi's definition instantiates a bounded generic struct with its own type parameter and
 # i64 fails that struct's bound (`_bbs_why` = the struct).
@@ -9921,13 +10169,17 @@ fn _bbs_targs(S, fi, tp, fs, j): i64 {
 # `<T>` (the stub scan's mode 2, `_gs_use`) — to a generic whose base `_bnd_base_bad` judges bad
 # (`_bbs_fwd` = that generic + 1; `_bbs_root` = + 1 of the one whose own bound or bounded struct fails).
 # A stub fi is the stub's (its base is skipped, every scalar call refused by `_refuse_gen_stub`). Each
-# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends. ⚠ The judgement reaches
-# 64 forwards deep (`_bbf_dep`): past it a chain is answered "not bad" and a valid deeper chain's i64 base is
-# refused at a definition — a known limit, filed (lifting it needs the judgement memoised, or it goes quadratic).
+# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends; a verdict known to hold is
+# memoised (`_bbm_put`), so a chain of any depth is judged once per generic (6.7.15: it was capped at 64 deep).
 fn _bbs_fwd_bad(S, fi): i64 {
     if ((GFGM(S, fi) & 3) != 0) { return 0; }
-    if (_bbf_dep == 0) { _bbf_n = 0; }
-    if (_bbf_dep > 64) { return 0; }
+    var top = 0;
+    if (_bbf_dep == 0) {
+        _bbf_n = 0;
+        top = 1;
+        _bbf_ep = 0;
+        if (_bbm_ok() == 1) { _bbf_ep = _gm_gen + 1; }
+    }
     _bbf_push(fi);
     var lo = _bbf_n;
     _bbf_scan(S, fi);
@@ -9946,7 +10198,22 @@ fn _bbs_fwd_bad(S, fi): i64 {
         k = k + 1;
     }
     _bbf_dep = _bbf_dep - 1;
-    return r;
+    if (r == 1) { if (_bbf_ep == _gm_gen + 1) { _bbm_put(fi, 1); } return 1; }
+    if (top == 1) { _bbf_none(); }
+    return 0;
+}
+# The judgement found no bad base: none of the generics it visited reaches one — each is recorded "not bad".
+fn _bbf_none(): i64 {
+    if (_bbf_ep != _gm_gen + 1) { return 0; }
+    _bbs_fwd = 0;
+    _bbs_root = 0;
+    _bbs_why = 0;
+    var k = 0;
+    while (k < _bbf_n) {
+        _bbm_put(L64(_bbf_vis + k * 8), 0);
+        k = k + 1;
+    }
+    return 0;
 }
 # Add generic g to the judgement's visited list (once).
 fn _bbf_push(g): i64 {
@@ -9966,7 +10233,7 @@ fn _bbf_push(g): i64 {
 fn _refuse_bnd_fwd(S, fi, noff): i64 {
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_panic == 1) { return 0; }
-    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
+    _gen_ident_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
     var r = _bbs_root - 1;
     if (r < 0) { return 0; }
     if (_bbs_why > 0) {
@@ -9998,7 +10265,7 @@ fn _refuse_bnd_base(S, fi, noff): i64 {
     if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
-    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+    _gen_ident_err(S, fi, noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
     return 0;
 }
 
@@ -12645,6 +12912,7 @@ fn _capture_tparams(S): i64 {
 # double's bits. An f32 is not a type argument (nor a return type): it stays i64. CHANGELOG [6.7.9]
 # ⛔ 6.7.14 — `ptr` 1: the carrying parameter is `p: *T` (`_ic_arg`), where a pointer binds what it POINTS AT; 0:
 # `x: T`, where no pointer binds (see `_ic_arg`). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — and what it points at may be a SCALAR (the user's decision D11 (a), 2026-10-18): see `_ic_pscalar`.
 fn _infer_conc_at(S, ptr): i64 {
     if (PEEKT(S) == 61) { return _ic_flit(S); }
     if (PEEKT(S) == 27) { return _ic_addr(S, ptr); }   # 6.7.14: `&G` / `&l`
@@ -12663,51 +12931,105 @@ fn _infer_conc_at(S, ptr): i64 {
                 # 6.6.10: a vector local's SLTYPE is a descriptor sentinel (<= -2048), not a
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
-                if (GLPTRP(S, _ic_lli) == 1) { return _ic_ptr_slot(_ic_lt, ptr); }   # 6.7.14: a `*S` slot
+                if (GLPTRP(S, _ic_lli) == 1) { return _ic_ptr_slot(S, _ic_lli, _ic_lt, ptr); }   # 6.7.14: a `*S` slot
                 if (_load_lt(S, _ic_lli) == F64_TYID) { return 0 - 9; }   # 6.7.9
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
-            var _ic_cs = _ic_cap(S, _ic_noff, ptr);   # 6.7.14: a captured `*S`
-            if (_ic_cs > 0) { return _ic_cs; }
-            if (_ic_cs < 0) { return _infer_conc_global(S, _ic_noff, 0); }
+            if (_cl_cap_esl(S, _ic_noff) >= 0) { return _ic_cap(S, _ic_noff, ptr); }   # 6.7.14: a captured `*S`
             return _infer_conc_global(S, _ic_noff, ptr);
         }
     }
     return 0 - 8;
 }
-# A typed-pointer slot (a `*S` local, parameter or capture: SLTYPE `0 - sid` behind bit 56 since 6.6.17) binds S
-# through `p: *T` only; through `x: T` it is a pointer, which infers i64. CHANGELOG [6.7.14]
-fn _ic_ptr_slot(lt, ptr): i64 {
-    if (ptr == 1) { if (lt < 0) { return 0 - lt; } }
-    return 0 - 8;
+# A typed-pointer slot `li` (a `*S` local, parameter or capture: SLTYPE `0 - sid` behind bit 56 since 6.6.17) binds S
+# through `p: *T` only — 6.7.15 (D11 (a)): a scalar pointee its scalar (`_ic_pscalar`); through `x: T` it is a
+# pointer, which infers i64. CHANGELOG [6.7.14]
+fn _ic_ptr_slot(S, li, lt, ptr): i64 {
+    if (ptr == 0) { return 0 - 8; }
+    if (lt < 0) { return 0 - lt; }
+    return _ic_pscalar(_slot_ptr_word(S, li));
+}
+# ⛔ 6.7.15 — A `p: *T` / `pp: **T` PARAMETER BINDS A SCALAR POINTEE TOO (the user's decision D11 (a), 2026-10-18).
+# 6.7.14's D8 bound only a struct pointee: `second(pa)` with `pa: *i32` and `fn second<T>(p: *T)` ran the i64 base,
+# whose `p + 1` stepped 8 and `*p` read 8 (over an i32 array: a[2]'s word, where `second<i32>(pa)` reads a[1]), and
+# `gsz(&h)` with `h: f64` was the i64 instance. The binding a typed pointer's step word `w` names (its kind, bits 40-47,
+# `_ps_word`): i8 / i16 / i32 their width, f64 -9; i64 for every other pointee — `*i64`, `*u8`..`*u64`, `*f32`,
+# `*bool`, a pointer, a vector, an enum: no type argument but i64 (an f32 value binds none either). A non-i64 answer
+# marks `_gi_sc`, so the call instantiates as `second<i32>(pa)` does (`_gen_sc_inst`; a stub base keeps its refusal).
+# Every `p: *T` source reads its word here — a `*T` local, parameter, capture or global, a `: *T` call, a `*T` field
+# chain, `&x` of a scalar local or global (`_ic_ascalar`) — and a `pp: **T` source its pin's pointee word
+# (`_ic_pp_sid`, `_ic_pp_addr`). CHANGELOG [6.7.15]
+fn _ic_pscalar(w): i64 {
+    var r = 0 - 8;
+    if (w > 0) {
+        var ed = (w >> 40) & 0xFF;
+        if (ed == 0x41) { r = 0 - 1; }
+        elif (ed == 0x42) { r = 0 - 2; }
+        elif (ed == 0x44) { r = 0 - 4; }
+        elif (ed == 0x28) { r = 0 - 9; }
+    }
+    if (r != 0 - 8) { _gi_sc = 1; }
+    return r;
 }
 # A name a capturing closure's body reads as a capture (`_cl_cap_esl`), through `p: *T`: its struct when the
-# enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), -1 for any other capture (read as
-# before), 0 when it is no capture. CHANGELOG [6.7.14]
+# enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), 6.7.15 (D11) its scalar when it is
+# a scalar pointer; 6.7.15 (D12 (a)) a captured struct VALUE its struct through either shape, as a struct local
+# binds (through `p: *T` the call passes the capture's copy's address); any other capture reads as before (a global
+# of its name, else i64). CHANGELOG [6.7.14]
 fn _ic_cap(S, noff, ptr): i64 {
-    if (ptr == 0) { return 0; }
     var esl = _cl_cap_esl(S, noff);
-    if (esl < 0) { return 0; }
-    if (_cl_snap_ptrp(esl) == 0) { return 0 - 1; }
     var t = _cl_snap_type(esl);
-    if (t >= 0) { return 0 - 1; }
-    if (t <= 0 - 2048) { return 0 - 1; }
-    return 0 - t;
+    if (_cl_snap_ptrp(esl) == 0) { if (t < 0) { if (t > 0 - 2048) { return 0 - t; } } }
+    if (ptr == 0) { return _infer_conc_global(S, noff, 0); }
+    if (_cl_snap_ptrp(esl) == 0) { return _infer_conc_global(S, noff, 0); }
+    if (t <= 0 - 2048) { return _infer_conc_global(S, noff, 0); }
+    if (t < 0) { return 0 - t; }
+    return _ic_pscalar(_cl_snap_ptr_word(esl));
 }
 # `&name` at the cursor through `p: *T`: an inline struct local, a by-value struct parameter or an inline struct
 # global binds its struct (`_gsc_addr_of`, the struct carrier's reader); a pointer's `&p` is a `**`, and a tuple,
-# a dyn and a capture bind nothing. i64 through `x: T`. CHANGELOG [6.7.14]
+# a dyn and a capture bind nothing. 6.7.15 (D11): a scalar local or global its scalar (`_ic_ascalar`). i64 through
+# `x: T`. CHANGELOG [6.7.14]
 fn _ic_addr(S, ptr): i64 {
     if (ptr == 0) { return 0 - 8; }
     var i = GTI(S) + 1;
     if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
     if (_cl_cap_esl(S, TOKVAL(S, i)) >= 0) { return 0 - 8; }   # a capture's copy: not `&l` / `&G`
     var s = _gsc_addr_of(S, TOKVAL(S, i));
-    if (s <= 0) { return 0 - 8; }
+    if (s <= 0) { return _ic_ascalar(S, TOKVAL(S, i)); }
     if (_tup_is(S, s) == 1) { return 0 - 8; }
     if (_dyn_is(S, s) == 1) { return 0 - 8; }
     return s;
+}
+# `&noff` of a scalar (6.7.15, D11 (a)): an i8 / i16 / i32 local, parameter or global its width — a SIGNED narrow one,
+# as its load reads it (a local's negative slice-width mark, a global's GVSGN) — an f64 one f64 (marking `_gi_sc`, as
+# `_ic_pscalar`); i64 for anything else (an i64 or unsigned or `bool` / `f32` scalar, a pointer — `&p` is a `**` —
+# an array or other aggregate, no such name).
+fn _ic_ascalar(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 1) { return 0 - 8; }
+        if (GLAGG(S, li) == 1) { return 0 - 8; }
+        var lt = _load_lt(S, li);
+        if (lt == F64_TYID) { return _ic_sc_mark(0 - 9); }
+        if (lt == 1 || lt == 2 || lt == 4) { if (GSLICE_W(S, li) < 0) { return _ic_sc_mark(0 - lt); } }
+        return 0 - 8;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 8; }
+    if (GVSGN(S, vi) >= 0x100) { return 0 - 8; }   # an array
+    var gt = GVTYPE(S, vi);
+    if (gt == F64_TYID) { return _ic_sc_mark(0 - 9); }
+    if (GVPM(S, vi) != 0) { return 0 - 8; }
+    if (GVSGN(S, vi) != 1) { return 0 - 8; }
+    var gsz = L64(_vars_base + vi * 8);
+    if (gsz == 1 || gsz == 2 || gsz == 4) { return _ic_sc_mark(0 - gsz); }
+    return 0 - 8;
+}
+fn _ic_sc_mark(c): i64 {
+    _gi_sc = 1;
+    return c;
 }
 # 6.6.10 (bite 7 review): a `pp: *Pt` parameter. The parameter loop skips the `*`, so the slot is
 # typed `Pt` like a by-value one and `pp.x` works — but it is a POINTER, and a `var q: *Pt` local
@@ -13019,11 +13341,27 @@ fn _pty_list(S, i, loud): i64 {
 # set, `_tn_param_check`: a by-name handle or vector, a resolved type, the fn's own type parameter).
 fn _pty_name(S, i): i64 {
     _vec_ann_chk(S, i, _pty_pnoff(S));   # 6.7.11: `p: **Vec<T>`, a `*fn(Vec<T>)` parameter
+    _pty_targs(S, i);                    # 6.7.15 (D7): `cb: *fn(Box<Zork>): i64`
     var nm = TOKVAL(S, i);
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
     _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    return 0;
+}
+# ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the
+# name, `<` next) are read at the definition, as the parameter's own `m: Box<Zork>` is since 6.7.14: the list was
+# skipped (`_pty_gen_end`), so `cb: *fn(Box<Zork>): i64` compiled. `_targ_chk`: every refusal once at its token,
+# nothing instantiated; the fn's own type parameters stay names (the user's D7 (a), 2026-10-18). CHANGELOG [6.7.15]
+fn _pty_targs(S, i): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, i + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, i));
+    if (sid <= 0) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    var sv_rf = _ta_refd;
+    _targ_chk(S, i + 1);
+    _ta_refd = sv_rf;
     return 0;
 }
 # Token `i` past a name: past its `<..>` when one follows.
@@ -13157,18 +13495,22 @@ fn _ic_call_rs(S, fi, ptr): i64 {
     if (r < 0) { if (r != 0 - 8) { return r; } }   # a declared scalar / vector return: the instance's too
     var ifi = _gen_call_inst(S, GTI(S));
     if (ifi < 0) { return r; }
-    if (ptr == 1) { if (_ic_rps(S, ifi, 0, 1) > 0) { return _ic_rps(S, ifi, 0, 1); } }
+    if (ptr == 1) { if (_fn_ret_ps(ifi) > 0) { return _ic_rps(S, ifi, r, 1); } }   # 6.7.15: a scalar pointee too
     var ir = GFRS(S, ifi);
     if (ir == 0 - 9) { return ir; }
     if (ir > 0) { return ir; }
     return r;
 }
-# The struct fn fi's `: *S` return points at (`_fn_rpsid`) when `ptr` is 1, else `r` (fi's own return). CHANGELOG [6.7.14]
+# The struct fn fi's `: *S` return points at (`_fn_rpsid`) when `ptr` is 1 — 6.7.15 (D11): a `: *i32` / `: *f64`
+# return's scalar (`_ic_pscalar` of its step word) — else `r` (fi's own return). CHANGELOG [6.7.14]
 fn _ic_rps(S, fi, r, ptr): i64 {
     if (ptr == 0) { return r; }
-    if (_fn_rpsid == 0) { return r; }
-    var ps = L64(_fn_rpsid + fi * 8);
-    if (ps > 0) { return ps; }
+    if (_fn_rpsid != 0) {
+        var ps = L64(_fn_rpsid + fi * 8);
+        if (ps > 0) { return ps; }
+    }
+    var w = _fn_ret_ps(fi);
+    if (w > 0) { return _ic_pscalar(w); }
     return r;
 }
 # The fn the call at token ti (`name(` / `name<..>(`) reaches — a generic's instance (`_pair_gen_inst`,
@@ -13214,7 +13556,10 @@ fn _is_ptr_param(S, li): i64 {
 fn _infer_conc_global(S, noff, ptr): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
-    if (ptr == 1) { if (_gv_ptr_sid(S, vi) > 0) { return _gv_ptr_sid(S, vi); } }
+    if (ptr == 1) {
+        if (_gv_ptr_sid(S, vi) > 0) { return _gv_ptr_sid(S, vi); }
+        if (_gv_ptr_word(S, vi) > 0) { return _ic_pscalar(_gv_ptr_word(S, vi)); }   # 6.7.15 (D11): a `*i32` global
+    }
     if (GVTYPE(S, vi) == F64_TYID) { return 0 - 9; }   # 6.7.9: an f64 global binds f64
     if (GVPM(S, vi) == 0) { return 0 - 8; }
     var t = GVTYPE(S, vi);
@@ -13772,16 +14117,16 @@ fn _gs_arg_carries(S, fi, cfi, open, k, mth): i64 {
     if (a < 0) { return 0; }
     return _gs_carries(S, fi, a, 0);
 }
-# 1 iff the whole argument at token a carries fi's T: a struct carrier's name (`_gcr`), or a whole generic call
-# `g(..)` / `g<..>(..)` whose type-argument list names T or one of whose whole arguments is a T-typed name, a
-# carrier or such a call (8 deep).
+# 1 iff the whole argument at token a carries fi's T: a struct carrier's name (`_gcr`), a T-typed name, or a
+# whole generic call `g(..)` / `g<..>(..)` whose type-argument list names T or one of whose whole arguments is
+# such an argument (8 deep). A T-typed name whole in the carrier position (`gx(x)`, `x: T`) carries T when T is
+# itself a carrier instance (`outer(b)`, `b: Box<Pt>`), so the forwarder is a stub as `gx` is. CHANGELOG [6.7.15]
 fn _gs_carries(S, fi, a, dep): i64 {
     if (dep > 8) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
     if (nt == 31 || nt == 11) {
         if (_gcr_has(TOKVAL(S, a)) == 1) { return 1; }
-        if (dep == 0) { return 0; }
         return _gsn_has(TOKVAL(S, a));
     }
     if (nt != 10 && nt != 19) { return 0; }
@@ -14051,16 +14396,49 @@ fn _gen_stub(S, fi): i64 {
     _gen_close(S);
     return GFGM(S, fi) & 3;
 }
-# The refusal, by name, for a scalar call / type argument / address of a stub generic.
-fn _refuse_gen_stub(S, noff): i64 {
-    ERR_IDENT(S, "generic ", noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
+# ⛔ 6.7.15 — A GENERIC METHOD'S REFUSALS NAME IT AS THE CALL SPELLS IT. The refusals below printed the fn table's
+# name, so `p.pick(5)` of a stub generic method was "generic 'P_pick' has no i64 ... instance" and `p.bm(3)` of a
+# bounded one "generic 'P_bm': its type argument does not implement trait 'Show'", where every other call-site
+# diagnostic names `P.pick` (6.7.14, `_fn_src_name`). `_gen_msp` is set while a call spelled as a method
+# (`p.m(..)`, `p.m<..>(..)`) is judged — `_mcall_gen` / `_mcall_inst`, `_meth_xinst`, `_mcall_xquiet` — and
+# `_gen_ident_err` then names the method `P.pick`; any other spelling is named as written (`P_pick(p, 9)` keeps
+# `P_pick`, a free generic `g`). Cleared while an instance's body is parsed (`_instantiate_generic_fn`), whose own
+# calls are judged by their own spelling. CHANGELOG [6.7.15]
+var _gen_msp = 0;
+# ERR_IDENT's "generic 'noff'<tail>['noff2']" for generic fi, which the site names `noff` — the method spelling
+# while `_gen_msp` is set. Its identity is ERR_IDENT's on `noff`, never on the scratch the spelling is written at.
+fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
+    var msg = "generic ";
+    if (_gen_msp == 0) { return ERR_IDENT(S, msg, noff, tail, noff2); }
+    if (_fn_src_name(S, fi, noff) == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": generic '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
+    PRSTR("'");
+    if (tail != 0) { PRSTR(tail); }
+    if (noff2 >= 0) {
+        PRSTR("'");
+        PRSTR(S + 0xEC00000 + noff2);
+        PRSTR("'");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
+fn _refuse_gen_stub(S, fi, noff): i64 {
+    _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
     return 0;
 }
 # `&g`: the address is the base's, so a stub base is refused like a scalar call.
 fn _gen_addr_check(S, fi, noff): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return 0;
 }
 
@@ -14071,20 +14449,40 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # as a `*Box<T>` carrier does (6.7.8). Only a `*S` LOCAL bound, through either shape: 6.6.17 gave it SLTYPE
 # `0 - sid`, which read as a struct argument, so `gs(q)` with `var q: *S` bound S through `x: T` against the
 # guide, while `gsz(&GS)`, `gsz(GP)`, `gsz(w.p)` and a `*S` parameter ran the i64 base (sizeof(T) 8). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — THE TWO SPELLINGS A STRUCT CARRIER READS THROUGH (6.7.11, `_gsc_wrap` / `_gsc_deref`) BIND THROUGH A PLAIN
+# `x: T` / `p: *T` TOO (the user's decision D12 (a), 2026-10-18): parentheses around the WHOLE argument carry what they
+# wrap (`_pwrap_in`) — `gs((l))`, `gsz((p))`, `gsz((&GS))` — and through `x: T` a whole dereference of a `*S` is the
+# struct value S (`_ic_deref`) — `gs(*p)`. They ran the i64 base (`sizeof(T)` 8 for a 24-byte S), as did a closure's
+# captured struct (`_ic_cap`). A tuple literal binds nothing. CHANGELOG [6.7.15]
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0 - 8; }
     if (ptr == 1) {
-        if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) {
-                var cs = _gsc_chain(S, a);
-                if (cs > 0) { return cs; }
-            } }
+        if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) { return _ic_chain(S, a); } }
     }
+    if (ptr == 0) { if (TOKTYP(S, a) == 8) { return _ic_deref(S, a); } }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var sv = GTI(S);
     STI(S, a);
     var c = _infer_conc_at(S, ptr);
     STI(S, sv);
     return c;
+}
+# A whole dereference `*E` (its `*` at token a, the whole argument) through `x: T`: the struct E points at, as a
+# struct carrier reads it (`_gsc_deref`: a `*S` name, field, call, `p + n`, `*&l`); i64 otherwise. CHANGELOG [6.7.15]
+fn _ic_deref(S, a): i64 {
+    var s = _gsc_deref(S, a);
+    if (s > 0) { return s; }
+    return 0 - 8;
+}
+# A field chain `w.p` (the whole argument at token a) through `p: *T`: what its leaf field declared `*S` points at
+# (`_gsc_chain`) — 6.7.15 (D11): a leaf declared `*i32` / `*f64` its scalar (`_ic_pscalar` of the leaf's step word,
+# `_ic_pp_chain`); i64 otherwise (an inline field, no whole chain). CHANGELOG [6.7.14]
+fn _ic_chain(S, a): i64 {
+    var cs = _gsc_chain(S, a);
+    if (cs > 0) { return cs; }
+    return _ic_pscalar(_ic_pp_chain(S, a));
 }
 # 1 = parameter k (0-based) of generic fi is declared `*T` (`_pptr_param`), with `_dps_param`'s cursor put back.
 fn _ic_ptr_param(S, fi, k): i64 {
@@ -14348,7 +14746,7 @@ fn _gen_call_head(S, fi, noff): i64 {
         _gh_inf1 = c1;
     }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return fi;
 }
 # ⛔ 6.7.11 — A GENERIC METHOD CALL `p.m(..)` REACHES THE INSTANCE ITS ARGUMENTS BIND, as the free
@@ -14376,14 +14774,18 @@ fn _mcall_gen(S, fi, open, rsid, emit): i64 {
     if (c0 > 0 || c1 > 0 || sc == 1) { return _mcall_inst(S, fi, c0, c1, emit); }
     if (emit == 0) { return fi; }
     var noff = L64(_fnt_names + fi * 8);
-    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    _gen_msp = 1;   # 6.7.15: its refusals name the method `P.m`
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); }
+    elif (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
+    _gen_msp = 0;
     return fi;
 }
 fn _mcall_inst(S, fi, c0, c1, emit): i64 {
+    _gen_msp = 1;   # 6.7.15: its bound's refusal names the method `P.m` (a lookahead's too: it may report first)
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec < 0) { if (emit == 1) { _refuse_gen_inst(S, fi, L64(_fnt_names + fi * 8), spec); } }
+    _gen_msp = 0;
     if (spec >= 0) { return spec; }
-    if (emit == 1) { _refuse_gen_inst(S, L64(_fnt_names + fi * 8), spec); }
     return fi;
 }
 # `_gen_infer_tp` for a method call: type parameter `which`'s carrying parameter k is passed at
@@ -14403,12 +14805,12 @@ fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
     if (spec >= 0) { return spec; }
-    _refuse_gen_inst(S, noff, spec);
+    _refuse_gen_inst(S, fi, noff, spec);
     return fi;
 }
-fn _refuse_gen_inst(S, noff, spec): i64 {
+fn _refuse_gen_inst(S, fi, noff, spec): i64 {
     if (spec == 0 - 4) { return 0; }   # 6.7.1: a bound refusal, already reported
-    ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
+    _gen_ident_err(S, fi, noff, ": no definition to instantiate for a struct type argument", 0 - 1);
     return 0;
 }
 # 6.6.10 — THE FN A CALL AT TOKEN ti (`name(` / `name<..>(`) ACTUALLY REACHES: a generic's
@@ -14436,7 +14838,7 @@ fn _gen_resolve_call(S, ti): i64 {
         _ta_pending_gt = 0;
         STI(S, ti + 2);
         c0 = _parse_one_type_arg(S);
-        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
         _ta_pending_gt = sv_gt;
         STI(S, sv);
         if (c0 <= 0 && c1 <= 0) {
@@ -14526,11 +14928,11 @@ fn _gen_own_call_check(S, fi, noff): i64 {
     if (_grc_err < 0) { if (_grc_fi == fi) {
             var e = _grc_err;
             _grc_err = 0;
-            _refuse_gen_inst(S, noff, e);
+            _refuse_gen_inst(S, fi, noff, e);
             return 0;
         } }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return 0;
 }
 # The tail path (`return g(..);`) must take PARSE_FNCALL for a generic callee that the head would
@@ -14769,7 +15171,10 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_conc0 = conc0;
     _inst_conc1 = conc1;
     var attrs = _attr_park();         # 6.6.17: a pending attribute is the next definition's
+    var sv_msp = _gen_msp;            # 6.7.15: a method call's spelling names its own refusals, not the body's
+    _gen_msp = 0;
     PARSE_FN_DEF(S);
+    _gen_msp = sv_msp;
     _attr_unpark(attrs);
     _inst_name = 0;
     _inst_base_fi = 0 - 1;
@@ -14854,7 +15259,11 @@ fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     # v6.3.33: bind the SECOND type param to conc1 (was conc0 → collapsed distinct
     # params). Single-param structs have t1 == 0 → no bind → conc1 unused.
     if (t1 != 0) { _tp_bind(S, 1, t1 - 1, conc1); }
+    # 6.7.15: the re-parse's own type-argument reads reset the close the caller's list may owe (`P<P<R>>`'s `>>`,
+    # minted here) — put back, or the enclosing list read the next `,` as its own. CHANGELOG [6.7.15]
+    var sv_gt = _ta_pending_gt;
     PARSE_STRUCT_DEF(S);
+    _ta_pending_gt = sv_gt;
     _inst_name = 0;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
@@ -14874,6 +15283,16 @@ fn _consume_gt(S): i64 {
     if (t == 152) { STI(S, GTI(S) + 1); _ta_pending_gt = 2; return 0; }   # `>>>` owes two
     if (t == 39) { STI(S, GTI(S) + 1); _ta_pending_gt = 1; return 0; }   # `>>`
     return 0;
+}
+# ⛔ 6.7.15 — A `,` AFTER A TYPE ARGUMENT: the next argument of THIS list only while no close is owed. A nested argument
+# closed by `>>` / `>>>` closed this list too (`_ta_pending_gt`), so the `,` is the enclosing list's: `g2<P<P<R>>, i16>`
+# read `i16` as P's second argument and bound g2's B to i64, and `fn f(a: Box<Box<Pt>>, b: i64)` read `b` as a type.
+# Consumes the `,` and returns 1 when it starts this list's next argument, else 0. CHANGELOG [6.7.15]
+fn _ta_comma(S): i64 {
+    if (_ta_pending_gt != 0) { return 0; }
+    if (PEEKT(S) != 31) { return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 
 # v6.3.33 (generics tail — NESTED + multi-arg): consume ONE type argument at the
@@ -14913,11 +15332,18 @@ fn _type_arg_leaf(S, noff): i64 {
     if (_tp_c0 != 0) { _c0 = _tp_resolve(S, noff); }
     if (_c0 == 0) { _c0 = _classify_return_type(S, noff); }
     if (_c0 == 0) {
-        if (_ta_chk == 1) { if (_targ_is_tp(S, noff) == 1) { return 0 - 8; } }   # 6.7.14: read unbound
+        if (_ta_chk == 1) { if (_targ_is_tp(S, noff) == 1) { _tck_nj = 1; return 0 - 8; } }   # 6.7.14: read unbound
+        if (_ta_late == 1) { if (_declared_later(S, noff, 40, 101) == 1) {   # 6.7.15 (D8)
+                _tck_nj = 1;
+                return 0 - 8;
+            } }
         _ta_refd = 1;
         if (_ta_chk_ok(S) == 1) { _refuse_type_arg_name(S, noff); }
         return 0 - 8;
     }
+    # 6.7.15: a dyn, refused by the dyn pre-pass (`_dyn_targ`), is read as i64 — no `Box$dyn Show` minted to
+    # cascade into a second error, and an explicit call mints no instance. CHANGELOG [6.7.15]
+    if (_dyn_is(S, _c0) == 1) { _ta_refd = 1; return 0 - 8; }
     _reject_special_type_arg(S, _c0);
     return _c0;
 }
@@ -14937,6 +15363,7 @@ fn _refuse_type_arg_name(S, noff): i64 {
 }
 fn _is_enum_name(S, noff): i64 {
     if (_enum_id_of(S, noff) > 0) { return 1; }
+    if (_ta_late == 1) { if (_declared_later(S, noff, 60, 60) == 1) { return 1; } }   # 6.7.15 (D8): an enum below
     return 0;
 }
 
@@ -14967,23 +15394,60 @@ fn _parse_one_type_arg(S): i64 {
         return _c0;
     }
     var base_sid = FINDSTRUCT(S, noff);
+    if (_ta_late == 1) { if (base_sid <= 0) { if (_declared_later(S, noff, 40, 101) == 1) {
+                return _targ_later(S, noff);
+            } } }
     if (base_sid <= 0 || GSTP(S, base_sid - 1) == 0) {
         var _c1 = _classify_return_type(S, noff);    # `<` but not a generic struct
+        if (_dyn_is(S, _c1) == 1) { _ta_refd = 1; _c1 = 0 - 8; }   # 6.7.15: `dyn Show<..>`, as `_type_arg_leaf`
         _reject_special_type_arg(S, _c1);
         if (_c1 == 0) {   # 6.7.14
             if (_vec_ann_at(S, GTI(S) - 1) == 0) { return _targ_bad_gen(S, noff); }
             _targ_vec(S, GTI(S) - 1);
         }
+        if (_ngt_refuse(S, GTI(S) - 1) == 1) { _ta_refd = 1; }   # 6.7.15 (D6): `Pt<..>`, `i64<..>` (its type is read)
         # 6.6.17: and its own `<..>` (`Box<Vec<i64>>`), which was left for the enclosing list.
         _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return _c1;
     }
     STI(S, GTI(S) + 1);                              # consume the nested `<`
+    var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
+    var lv = _tck_open(S);                           # 6.7.15 (D10): under `_ta_chk`, this list's own judgement
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
     var in1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); in1 = _parse_one_type_arg(S); }   # `,`
+    if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
-    if (_ta_chk == 1) { return base_sid; }           # 6.7.14 (D5): read, not instantiated
+    if (_ta_chk == 1) { return _tck_nest(S, base_sid, in0, in1, lit, lv); }   # 6.7.14 (D5): read, not minted
+    return _targ_inst(S, base_sid, in0, in1, lit);
+}
+# 6.7.15 (D8) — `Later<..>` in a pointer field's list read at its declaration (`_ta_late`; cursor on the `<`), Later a
+# struct declared further down: a generic one's own arguments are read and checked as any list's; any other one's list
+# is skipped, left to the use, which reads it under the struct (D6's `Pt<..>`). Read as i64; nothing is sized.
+fn _targ_later(S, noff): i64 {
+    _tck_nj = 1;   # 6.7.15 (D10): a struct declared further down is no instance to judge here
+    if (_declared_later_gen(S, noff) == 0) {
+        _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
+        return 0 - 8;
+    }
+    STI(S, GTI(S) + 1);
+    _parse_one_type_arg(S);
+    if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+    _consume_gt(S);
+    return 0 - 8;
+}
+# ⛔ 6.7.15 — A NESTED `Box<i64>` IS THE BASE `Box`, as the annotation `var b: Box<i64>` declares it (the 6.6.10 rule of
+# `_gen_ann_sid` / `_ret_targ_parse`): an all-i64 (or unbound) list is the base struct, anything else the deduped
+# `Box$..` instance. The type argument minted `Box$i64` unconditionally, so `gx<Box<i64>>(bx)` with `bx: Box<i64>` (the
+# base) was refused "cannot pass 'bx' to a parameter of a different struct type", where `gx(bx)` ran. `lit`: the list
+# was written out, so the base answers for its bound (`_bnd_sbase`). CHANGELOG [6.7.15]
+fn _targ_inst(S, base_sid, in0, in1, lit): i64 {
+    var inst = 0;
+    if (in0 != 0 - 8) { if (in0 != 0) { inst = 1; } }
+    if (in1 != 0) { if (in1 != 0 - 8) { inst = 1; } }
+    if (inst == 0) {
+        if (lit == 1) { _bnd_sbase(S, base_sid); }
+        return base_sid;
+    }
     return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
 }
 
@@ -15032,10 +15496,66 @@ fn _targ_chk(S, lt): i64 {
     _ta_chk = 1;
     _ta_pending_gt = 0;
     STI(S, lt + 1);
-    _parse_one_type_arg(S);
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    _tck_c0 = c0;   # 6.7.15 (D10): what was read, for a Vec element's bound (`_vec_el_targs`)
+    _tck_c1 = c1;
     _ta_chk = sv_ck;
     _ta_pending_gt = sv_gt;
+    if (sv_pn == 0) { _panic = 0; }
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.15 (D10) — A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>> = 0;` with
+# `struct Box<T: Show>` and no `impl Show for Pt` compiled, where `var b: Box<Pt>;` is refused — the element's list is
+# read without minting (`_targ_chk`, 6.7.14's D5), and a bound is judged where an instance is minted. While a Vec
+# element's list is read (`_ta_vbnd`), the element and each generic struct nested in it is judged as `_targ_inst` would
+# judge it, nothing minted: its arguments against its bounds (`_bnd_check_struct`), an all-i64 list written out by its
+# base's (`_bnd_sbase`) — reported at the struct's name, once per (struct, arguments) as every bound refusal (the
+# user's D10 (a), 2026-10-18). Not judged: a list with a refused argument (its refusal stands alone), one naming a
+# type parameter not bound here (each instance judges its binding) or a struct declared further down, and one whose
+# argument is itself an instance (only minting it names it; that struct's own bound is judged in its turn). Off
+# outside a Vec element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+var _ta_vbnd = 0;   # 1 while a Vec element's list is read (`_vec_el_targs`)
+var _tck_c0 = 0;    # the arguments the last `_targ_chk` read
+var _tck_c1 = 0;
+var _tck_nj = 0;    # 1 when the list being read cannot be judged (above)
+# Under `_ta_chk`, cursor just past a nested `<`: the enclosing list's state, packed (its name token * 4, its refusal
+# flag * 2, its no-judge flag), both flags cleared for this list. 0 and nothing touched outside `_ta_chk`.
+fn _tck_open(S): i64 {
+    if (_ta_chk == 0) { return 0; }
+    var lv = (GTI(S) - 2) * 4 + _ta_refd * 2 + _tck_nj;
+    _ta_refd = 0;
+    _tck_nj = 0;
+    return lv;
+}
+# The nested generic struct `sid` read under `_ta_chk` (`lv` from `_tck_open`): judged inside a Vec element, the
+# enclosing list's flags put back (with this list's), and read as its base — an instance its enclosing list cannot
+# judge.
+fn _tck_nest(S, sid, in0, in1, lit, lv): i64 {
+    var nj = _tck_nj | _ta_refd;
+    _ta_refd = ((lv / 2) & 1) | _ta_refd;
+    _tck_nj = (lv & 1) | nj;
+    if (_ta_vbnd == 1) { if (nj == 0) { _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
+    if (_targ_is_inst(in0, in1) == 1) { _tck_nj = 1; }
+    return sid;
+}
+# 1 when a list read as (c0, c1) names an instance, not the all-i64 (or unbound) base (`_targ_inst`'s rule).
+fn _targ_is_inst(c0, c1): i64 {
+    if (c0 != 0 - 8) { if (c0 != 0) { return 1; } }
+    if (c1 != 0) { if (c1 != 0 - 8) { return 1; } }
+    return 0;
+}
+# Generic struct `sid` read as (c0, c1) (`lit`: the list written out) judged against its bounds at token `at`, minting
+# nothing; the panic latch a report sets is put back, so the list reads on.
+fn _vbnd_judge(S, sid, c0, c1, lit, at): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    var sv = GTI(S);
+    var sv_pn = _panic;
+    STI(S, at);
+    if (_targ_is_inst(c0, c1) == 1) { _bnd_check_struct(S, sid - 1, c0, c1); }
+    elif (lit == 1) { _bnd_sbase(S, sid); }
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
     return 0;
@@ -15050,6 +15570,7 @@ fn _targ_is_tp(S, noff): i64 {
     if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, noff) == 1) { return 1; } }
     if (_is_own_tparam(S, noff) == 1) { return 1; }
+    if (_trs_fn > 0) { if (_fn_tp_has(S, _trs_fn - 1, noff) == 1) { return 1; } }   # 6.7.15 (D7): a trait member's
     return 0;
 }
 
@@ -15579,7 +16100,10 @@ fn _mret_elem(S, fi, quiet): i64 {
         if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
         t = 0 - 8;
     }
-    if (t > 0) { t = _gtype_sid(S, fi, t); }
+    if (t > 0) {
+        if (quiet == 0) { t = _gtype_sid_def(S, fi, t); }   # 6.7.15 (D7): `(Box<Zork>, i64)` read at the definition
+        else { t = _gtype_sid(S, fi, t); }
+    }
     if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
     STI(S, GTI(S) + 1);                 # consume the type IDENT
     SKIP_GENERICS(S);
@@ -16894,7 +17418,7 @@ fn _ret_targ_parse(S, base): i64 {
     STI(S, GTI(S) + 2);                  # the name, `<`
     var c0 = _parse_one_type_arg(S);
     var c1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
     _consume_gt(S);
     _ta_pending_gt = sv_gt;
     var inst = 0;

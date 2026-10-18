@@ -15,8 +15,9 @@
 # `take(**pp)` into `*P3` faulted (issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md). Every
 # `**S` source (a local, a parameter, a global, a field chain, a call, a generic call, `&p` / `&G` of a `*S`, a
 # capture), a method, a `: T` result, two type parameters, a named argument, a forward call, a forwarder; GK: the
-# controls (a direct or a struct carrier wins; a `*S`, a `**i32`, a `**Q2` that is no `**T`, a wrapped or computed
-# argument bind nothing). The filed repros verbatim: tests/gates/frontend/generic_double_pointer_infer.sh.
+# controls (a direct or a struct carrier wins; a `*S`, a `**Q2` that is no `**T`, a wrapped or computed argument
+# bind nothing; 6.7.15, the user's decision D11 (a), 2026-10-18: a `**i32` binds i32 — it bound nothing, i64). The
+# filed repros verbatim: tests/gates/frontend/generic_double_pointer_infer.sh.
 #
 # CROSS-HOST: frontend typing, but the element reads and writes are each backend's narrow loads and stores. Run
 # on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
@@ -292,7 +293,7 @@ fn gi_misc(): i64 {
 fn gi_ctl(): i64 {
     var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
     var i: i32 = 5; var pi: *i32 = &i; var ppi: **i32 = &pi;
-    return gi_mix(pps, 7) * 10000 + gi_sz(ps) * 100 + gi_sz(ppi);   # 80808
+    return gi_mix(pps, 7) * 10000 + gi_sz(ps) * 100 + gi_sz(ppi);   # 80804
 }
 fn gi_ctl2(): i64 {
     var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
@@ -339,6 +340,6 @@ assert_eq(gi_result(), 42, "GI: a : T result binds the struct (var v = gd(pps); 
 assert_eq(gi_pair(), 2416, "GI: two type parameters, each from its own **");
 assert_eq(gi_misc(), 242424, "GI: sizeof(T), a named argument, a forwarder's instance");
 assert_eq(gi_uses(), 24, "GI: a call above the generic's definition");
-assert_eq(gi_ctl(), 80808, "GK: a direct x: T carrier wins; a *P3 and a **i32 bind nothing (i64)");
+assert_eq(gi_ctl(), 80804, "GK: a direct x: T carrier wins; a *P3 binds nothing; a **i32 binds i32 (D11 (a))");
 assert_eq(gi_ctl2(), 16080808, "GK: a struct carrier wins; a **Q2 that is no **T, (pps) and pps + 0 bind nothing");
 var r = assert_summary();

@@ -154,10 +154,15 @@
 #                                                           struct type in scope for 'h'), GH9 x4 (3 errors); GH3-GH5 green
 #                                                           (the untyped word held the same address: they pin that the
 #                                                           handle's uses stay right), GH0a GH0c GHK1-GHK4 green
-# A generic returning its own `: T` keeps the reset (`_gen_ret_tp`): at a scalar instance the struct-annotated local is
-# refused as through 6.7.13, not bound as a handle on the scalar (GHT1-GHT4; GHT5 the struct-instance control).
-#   N33 `_gen_decl_reset` without its `_gen_ret_tp` test (2026-10-17) -> RED 16: GHT1-GHT4 x4 legs (BUILT: a handle on
-#                                                           the scalar, SIGSEGV at run time); GHT5 and the rest green
+# A generic returning its own `: T` kept the reset (`_gen_ret_tp`) through 6.7.14: at a scalar instance the struct-
+# annotated local was refused at its field use. 6.7.15 — THE USER'S D13 (a), 2026-10-18: it is a handle, as the
+# non-generic word-returning call is (issues/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md;
+# tests/gates/frontend/generic_t_return_decl.sh carries the rows of that decision). GHT1-GHT4 now pin the handle: a field
+# use compiles, and the word the handle holds is the call's (GHT1 `gid(&GQ)` reads GQ.z through it); GHT5 the
+# struct-instance control.
+#   N33 (6.7.15) `_gen_decl_reset` with 6.7.14's `_gen_ret_tp` reset -> RED 8: GHT1-GHT4 on x86_64 / PE (refused: "no
+#                                                           struct type in scope for 'a'"; the aarch64 / cx legs build
+#                                                           from the tree); GHT5 and the rest green
 #
 # 6.7.14 — D28 (the user, 2026-10-16): D14 AT TOP LEVEL, every `*T` and every path. `var X: *P2 = mkp();` (`= B.mk();`,
 # `= A + C;`, `= callptr(&mkp);`, `*i64`, `*u8`) after the first statement compiled under the typed-pointer warning and
@@ -939,21 +944,21 @@ printf 'struct S3 { v; w; u; }\nfn mks<T>(x: T): S3 { var s = S3 { x, 7, 1 }; re
 runs GHK3 51 "control: a generic returning a 24 B struct by value"
 printf 'struct Box<T> { v: T; n; }\nstruct Pt { x; y; }\nfn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 3; return b; }\nfn f(): i64 { var p = Pt { 4, 5 }; var r: Box<Pt> = mk(p.x); return r.n; }\nsyscall(60, f());\n' > "$T/GHK4.cyr"
 refused GHK4 "fn return struct-id differs from declared var type" "control: the 6.6.11 mismatch \`var r: Box<Pt> = mk(p.x);\` (Box<i64>) is still refused"
-# a generic returning its own `: T` keeps the reset: its instance decides what it returns, and a SCALAR instance received
-# into a struct-annotated local is refused as through 6.7.13 (with the reset skipped it compiled as a handle on that
-# scalar and SIGSEGV'd)
+# a generic returning its own `: T` whose T binds no struct is a handle in a struct-annotated local (6.7.15's D13 (a)):
+# the field use compiles (it was refused "no struct type in scope for 'a'" through 6.7.14), the handle holds the word
 GHT='struct P3 { x; y; z; }
 struct W { n; v: P3; }
 fn gid<T>(x: T): T { return x; }'
 ght() { printf '%s\n%s\nsyscall(60, f());\n' "$GHT" "$2" > "$T/$1.cyr"; }
-ght GHT1 'fn f(): i64 { var a: P3 = gid(5); return a.z; }'
-refused GHT1 "no struct type in scope for 'a'" "\`var a: P3 = gid(5);\` (\`: T\` at i64) stays refused"
-ght GHT2 'fn f(): i64 { var a: P3 = gid<i32>(5); return a.z; }'
-refused GHT2 "no struct type in scope for 'a'" "\`var a: P3 = gid<i32>(5);\` (an explicit scalar instance) stays refused"
-ght GHT3 'fn f(): i64 { var h: f64 = 1.5; var a: P3 = gid(h); return a.z; }'
-refused GHT3 "no struct type in scope for 'a'" "\`var a: P3 = gid(h);\` (\`h: f64\`) stays refused"
-ght GHT4 'fn f(): i64 { var w: W; var a: P3 = gid(w.v); return a.z; }'
-refused GHT4 "no struct type in scope for 'a'" "\`var a: P3 = gid(w.v);\` (a field chain infers i64, the whole-argument rule) stays refused"
+ght GHT1 'var GQ = P3 { 0, 0, 0 };
+fn f(): i64 { GQ.z = 9; var a: P3 = gid(&GQ); return a.z; }'
+runs GHT1 9 "\`var a: P3 = gid(&GQ);\` (\`: T\` at i64): a handle, a.z reads GQ.z (6.7.15's D13 (a); refused before)"
+ght GHT2 'fn f(): i64 { var a: P3 = gid<i32>(5); var k: i64 = a; if (k == 0) { return a.z; } return k; }'
+runs GHT2 5 "\`var a: P3 = gid<i32>(5);\` (an explicit scalar instance): a handle holding 5, its field use compiles"
+ght GHT3 'fn f(): i64 { var h: f64 = 1.5; var a: P3 = gid(h); var k: i64 = a; if (k == 0) { return a.z; } return k >> 56; }'
+runs GHT3 63 "\`var a: P3 = gid(h);\` (\`h: f64\`): a handle holding its bits, its field use compiles"
+ght GHT4 'fn f(): i64 { var w: W; w.v.x = 7; var a: P3 = gid(w.v); var k: i64 = a; if (k == 0) { return a.z; } return k; }'
+runs GHT4 7 "\`var a: P3 = gid(w.v);\` (i64 by the whole-argument rule): a handle holding w.v's word, its field use compiles"
 ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
 runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 

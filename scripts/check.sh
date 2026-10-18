@@ -2655,6 +2655,7 @@ _chk_gate "$ROOT/tests/gates/frontend/impl_self_typed.sh"
 _chk_gate "$ROOT/tests/gates/frontend/traits_checked.sh"
 _chk_gate "$ROOT/tests/gates/frontend/generic_struct_field.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/trait_bounds_checked.sh"   # 6.7.1 (C3)
+_chk_gate "$ROOT/tests/gates/frontend/bound_forward_chain_scale.sh"   # 6.7.15 (the memoised bound judgement; serial)
 _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
@@ -2809,7 +2810,14 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # 2026-10-13). The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR /
 # DCE / aarch64 / cx / PE. Mutation ledger in the header. (A two-parameter generic's nested instance
 # names still collide: issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md.)
+# 6.7.15: an explicit `gx<Box<i64>>` is the base `Box`, as its annotation is (rows E, every leg).
 _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
+# 6.7.15 — a nested type argument closed by `>>` / `>>>` and followed by `,` leaves the `,` to the
+# enclosing list: `g2<P<P<R>>, i16>` bound B to i64 (exit 8 for 2), `Two<P<P<R>>, i16>` was 24 bytes, and
+# `fn f(a: Box<Box<Pt>>, b: i64)` read `b` as a type argument. Both halves (the owed close checked before a
+# `,`; kept across the inner instance's minting), the filed repro, sizes, parameters, a method, a receive,
+# and 16 rows, x86 / IR / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_nested_shift_close.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
@@ -2838,6 +2846,11 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_named_like_vector.sh"
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,
 # the block-scope note, instance-dependent messages and a per-token control. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_body_error_once.sh"
+# 6.7.15 — a `: T` generic whose T binds no struct at the call, received into a struct-annotated local, is a handle,
+# as the non-generic word-returning call is (the user's D13 (a), 2026-10-18): the filed repros, gid(alloc(24)) read
+# and written, each scalar binding as its non-generic twin, the struct bindings unchanged, a refused call's one
+# error, and tests/tcyr/crossos/generic_t_return_handle.tcyr, x86 / IR / aarch64 / cx / PE (Mach-O compiles).
+_chk_gate "$ROOT/tests/gates/frontend/generic_t_return_decl.sh"
 # 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
 # the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
 # return — x86 / PE ran on past it, aarch64 / cx hung at it. The issue's table, the blocks, and the
