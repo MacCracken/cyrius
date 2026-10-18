@@ -2708,6 +2708,12 @@ _chk_gate "$ROOT/tests/gates/memory/bounds_mode_corpus.sh"
 # an instrumented cycc reproduces cycc; planted no-record / exit / compile deltas and a malformed
 # dump are caught. `# check: serial` (its own workers, alone after the pool). Ledger in the header.
 _chk_gate "$ROOT/tests/gates/memory/coverage_mode_corpus.sh"
+# 6.7.15 — the corpus runs clean under CYRIUS_IR=3 + CYRIUS_DCE=1 together (the IR=3 seam compacts
+# code before FIXUP's dead-code pass reads parse-time positions; only the pair acts on a stale one):
+# every .tcyr compiles and exits 0 in the driver's .tcyr environment, a pinned expected-failure list
+# (empty) that can only shrink, the floor from tests/tcyr/CORPUS_FLOOR; a planted pair-only exit and
+# a stale pin are caught. `# check: serial` (its own workers, alone after the pool). Ledger in the header.
+_chk_gate "$ROOT/tests/gates/ir-opt/ir3_dce_corpus.sh"
 # 6.7.8 — an inherited CYRIUS_POISON never reaches a self-build (the compiler includes
 # lib/alloc.cyr, which reads it; seed-derive went RED under it): seed-derive, release-gate,
 # version-bump and bootstrap unset it; check.sh keeps it for its suite and scrubs only its own
