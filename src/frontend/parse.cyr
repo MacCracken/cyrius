@@ -3818,8 +3818,8 @@ fn _asg_dstar(S, noff, term): i64 {
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
-# 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle or a
-# `*S`: pointer <- pointer, the rebind (`_hl_psrc_copy`'s rule), never a copy. CHANGELOG [6.7.15]
+# 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle
+# or a `*S`: pointer <- pointer, the rebind (`_hl_psrc_copy`'s rule), never a copy. CHANGELOG [6.7.15]
 fn _asg_dpp_rebind(): i64 {
     if (_hl_dpp == 0) { return 0; }
     return _agc_hdl();
