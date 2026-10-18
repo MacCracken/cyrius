@@ -7058,7 +7058,10 @@ describe<i32>(7);   # needs impl Show for i32
   a struct use of `T` — so `gs(bi)` with `bi: Box<i64>` calls `impl Show for i64`'s method with the
   field's value, as `t.show()` on a `t: T` does, and `gs(b)` with a `Box<Pt>` calls Pt's (6.7.14;
   before it the base was the struct stub, and `gs(bi)` was refused "uses its type parameter as a
-  struct"). A method the bound does not declare on such a field, and a `*T` field, keep resolving per
+  struct"). The contract holds there as on a `T`-typed name: `b.v.other()` with a method no trait of
+  the bound declares, or one two bounds both declare, is a compile error at the generic's definition,
+  called or not (6.7.15, the user's D5; through 6.7.14 it compiled and called the instance's own
+  method). A `*T` field (`p: *T`), and a field whose type parameter has no bound, keep resolving per
   instance.
 - **`T: A + B`** requires every impl. A bound names a declared trait (an undeclared one is refused),
   takes no type arguments, and goes on one of the first two type parameters (at most two are

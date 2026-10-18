@@ -50,14 +50,29 @@
 #      bound's impl takes the field's value as `self` (`_load_bs_field`; a method on a scalar field leaf had no path
 #      at all). BC0 the filed repro verbatim (65); BC1 gs(b) alone; BC2 a `*Box<T>` carrier; BC3 no i64 impl: gs(bi)
 #      refused naming `impl Show for i64`; BC4 f64 / i32 instances; BC5 a `var c: Box<T>` carrier, a `var r =`
-#      receive and a statement; BC6 gs<i64>(bi); BC7 control — a method no bound declares keeps its reading; BC8 a
-#      non-inlinable caller; BC9 the documented workaround unchanged; BC10 the definition alone (no i64 impl).
+#      receive and a statement; BC6 gs<i64>(bi); BC7 a method no bound declares (kept its reading through 6.7.14;
+#      refused since 6.7.15's D5, the BD rows); BC8 a non-inlinable caller; BC9 the documented workaround unchanged;
+#      BC10 the definition alone (no i64 impl).
 #      Filed: docs/development/issues/archived/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
 #      MBC1 `_bnd_sites` without the `_bnd_fsite` call (no site) -> RED BC0 BC2 BC4-BC6 BC8 (the stub refusal);
 #      MBC2 `_gs_bfield` answering 0 (the site recorded, the scan still a struct use) -> RED BC0 BC2 BC4-BC6 BC8;
 #      MBC3 `_fld_meth_inline` without its scalar arm (no `_load_bs_field`) -> RED BC0 BC2 BC4-BC6 BC8 ("expected
 #      ';', got '.'" at the definition, every BC row that builds the i64 base)
+#   BD (6.7.15, the user's D5 (a), 2026-10-18) THE CONTRACT HOLDS ON A CARRIER'S T FIELD: `b.v.other()` under
+#      `fn gs<T: Show>(b: Box<T>)`, a method no trait of the bound declares, compiled and called Pt's own `other` (the
+#      filed repro exited 77), where `v.other()` on a `v: T` is refused at the definition; `_bnd_fsite` recorded
+#      nothing. It now refuses through `_bnd_site`'s two refusals (`_bnd_site_refuse`; the note names the field chain):
+#      BD0 the filed repro verbatim (once, at 7:45, the note on 'b.v'); BD1 the definition alone; BD2 a `*Box<T>`
+#      carrier; BD3 a `var c: Box<T>` carrier; BD4 the bound on the second type parameter; BD5 `Two<i64, T>`'s field;
+#      BD6 a generic method; BD7 a method two bounds declare (ambiguous; refused only at an instance's call before, with
+#      a cascade, and compiled uncalled); BDK unchanged — an unbounded `Box<T>`, an unbounded slot beside a bounded
+#      one, a `f: *T` field, `b.v.show() + b.v.y`. BC7 moves from its 6.7.11 reading to the refusal.
+#      Filed: docs/development/issues/2026-10-16-bound-contract-unchecked-on-carrier-field-call.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
+#      (4c483d56) -> RED 10: BC7 BD0 (both rows) BD1-BD6 (built) BD7 (the instance's message); MBD1 `_bnd_fsite` without
+#      its unbounded-slot test -> RED 1: BDK; MBD2 the note without the field arm -> RED 1: BD0's note ('b'); MBD3 two
+#      declaring traits recording nothing again -> RED 1: BD7
 #   N  (6.7.14) a bound refusal the panic latch swallows prints nothing: after a stub generic's refusal in
 #      the same statement (`gs(5) + gb(3)`), `gb(3)`'s error was swallowed but its note was printed alone —
 #      "the bound on type parameter 'T' needs `impl Show for i64`" under gs's error. N1: one error line, no
@@ -348,7 +363,7 @@ exits bc6 10 "BC6: gs<i64>(bi), explicit"
 bcmk bc7 "$BCI
 impl Pt { fn other(self): i64 { return 77; } }
 fn go2<T: Show>(b: Box<T>): i64 { return b.v.other(); }" 'return go2(b);'
-exits bc7 77 "BC7: control — b.v.other(), a method no bound declares, keeps its 6.7.11 reading (Pt's)"
+refused bc7 "method 'other' is not in the bound on type parameter 'T'" "BC7: b.v.other(), a method no bound declares — refused at the definition (6.7.15's D5; it kept its 6.7.11 reading, 77)"
 bcmk bc8 "$BCI
 fn gn<T: Show>(b: Box<T>): i64 { return b.v.show() + b.n; }" 'var s = 0; var i = 0; while (i < 3) { s = s + gn(bi); i = i + 1; } return s;'
 exits bc8 18 "BC8: in a loop, gn(bi) three times"
@@ -357,6 +372,51 @@ fn gw<T: Show>(b: Box<T>): i64 { var t: T = b.v; return t.show(); }" 'return gw(
 exits bc9 65 "BC9: the documented workaround (var t: T = b.v;) unchanged"
 bcmk bc10 "$BCG" 'return 4;'
 exits bc10 4 "BC10: the definition alone, no impl Show for i64"
+
+# BD — 6.7.15 (D5): the bound's contract holds on a carrier's T field, as on a T-typed name
+cat > "$T/bd0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+impl Pt { fn other(self): i64 { return 77; } }
+struct Box<T> { v: T; n; }
+fn gs<T: Show>(b: Box<T>): i64 { return b.v.other(); }
+fn go(): i64 { var b: Box<Pt>; b.v.x = 1; b.v.y = 6; b.n = 2; return gs(b); }
+syscall(60, go());
+EOF
+BDM="method 'other' is not in the bound on type parameter 'T'"
+refused bd0 "error:<source>:7:45: $BDM" "BD0: the filed repro, verbatim — b.v.other() under T: Show (exit 77 before)"
+grep -qF "call only its traits' methods on 'b.v'" "$T/bd0.err" && ok "BD0: the note names the field chain 'b.v'" || bad "BD0: no note naming 'b.v': $(grep '^  note' "$T/bd0.err" | head -1)"
+BDH="$BCH
+impl Pt { fn other(self): i64 { return 77; } }"
+bdmk() {   # <name> <decls> <go body>
+    printf 'include "lib/syscalls.cyr"\n%s\n%s\nfn go(): i64 { %s %s }\nsyscall(60, go());\n' "$BDH" "$2" "$BCB" "$3" > "$T/$1.cyr"
+}
+bdmk bd1 'fn gs<T: Show>(b: Box<T>): i64 { return b.v.other(); }' 'return 4;'
+refused bd1 "$BDM" "BD1: the definition alone, never called — refused there"
+bdmk bd2 'fn gp<T: Show>(b: *Box<T>): i64 { return b.v.other(); }' 'return gp(&b);'
+refused bd2 "$BDM" "BD2: a *Box<T> carrier"
+bdmk bd3 'fn gl<T: Show>(x: T): i64 { var c: Box<T>; c.v = x; var r = c.v.other(); return r; }' 'return 4;'
+refused bd3 "$BDM" "BD3: a var c: Box<T> carrier, var r = c.v.other();"
+bdmk bd4 'fn g2<U, T: Show>(k: U, b: Box<T>): i64 { return b.v.other() + k; }' 'return g2(1, b);'
+refused bd4 "$BDM" "BD4: the bound on the SECOND type parameter (fn g2<U, T: Show>)"
+bdmk bd5 'struct Two<A, B> { a: A; b: B; }
+fn gt<T: Show>(w: Two<i64, T>): i64 { return w.b.other(); }' 'return 4;'
+refused bd5 "$BDM" "BD5: Two<i64, T>'s second field, w.b.other()"
+bdmk bd6 'struct Q { k; }
+impl Q { fn m<T: Show>(self, b: Box<T>): i64 { return b.v.other(); } }' 'return 4;'
+refused bd6 "$BDM" "BD6: in a generic method"
+bdmk bd7 'trait Disp { fn show(self): i64; }
+impl Disp for Pt { fn show(self): i64 { return 50; } }
+fn ga<T: Show + Disp>(b: Box<T>): i64 { return b.v.show(); }' 'return ga(b);'
+refused bd7 "ambiguous method 'show': more than one trait in this type parameter's bound declares it, e.g. 'Disp'" "BD7: a method two bounds both declare — ambiguous, at the definition (refused at the instance's call before, with a cascade)"
+bdmk bdk 'fn gu<T>(b: Box<T>): i64 { return b.v.other(); }
+fn g3<T: Show, U>(t: T, b: Box<U>): i64 { return b.v.other(); }
+struct PB<T> { p: *T; n; }
+fn gq<T: Show>(b: PB<T>): i64 { return b.p.other(); }
+fn gx<T: Show>(b: Box<T>): i64 { return b.v.show() + b.v.y; }' 'var p: Pt; var pt: Pt; pt.y = 6; var q: PB<Pt>; q.p = &pt; q.n = 1; return gu(b) + g3(p, b) - gq(q) + gx(b) - 77;'
+exits bdk 12 "BDK: unchanged — an unbounded Box<T> (77), an unbounded slot beside a bounded one (77), a f: *T field (77), b.v.show() + b.v.y (12)"
 
 # N — a bound refusal swallowed by the panic latch (6.7.14)
 mk n1 'fn gb<T: Show>(x: T): i64 { var t = 0; var i = 0; while (i < 1) { t = t + x.show(); i = i + 1; } return t; }
@@ -468,4 +528,4 @@ EOF
 exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14); a refusal the panic latch swallows prints no orphan note (N, 6.7.14); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14); well-formed bounded code runs (C)"

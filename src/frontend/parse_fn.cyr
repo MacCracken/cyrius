@@ -9788,26 +9788,33 @@ fn _bnd_site(S, tp, blk, i, r): i64 {
     while (k < n) {
         var tx = L64(blk + (slot * 9 + 1 + k) * 8);
         if (_trm_of(S, tx, m) >= 0) {
-            if (hits == 1) {
-                _bnd_err_at(S, i + 2, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
-                _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
-                return 0;
-            }
+            if (hits == 1) { return _bnd_site_refuse(S, i, i + 2, tx, 0); }
             hit = tx;
             hits = 1;
         }
         k = k + 1;
     }
     var tpn = ((tp >> (slot * 32)) & 0xFFFFFFFF) - 1;
-    if (hit < 0) {
-        _bnd_err_at(S, i + 2, "method ", m, " is not in the bound on type parameter ", tpn);
-        syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
-        PRSTR(S + 0xEC00000 + TOKVAL(S, i));
-        syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
-        _bs_add(S, i + 2, 0 - 1, 0, 0);   # refused: its call is consumed quietly
-        return 0;
-    }
+    if (hit < 0) { return _bnd_site_refuse(S, i, i + 2, 0 - 1, tpn); }
     _bs_add(S, i + 2, hit, tpn, L64(_bnr_tab + r * 24 + 16));
+    return 0;
+}
+# The two refusals of a bounded call whose method (token mti) no trait of the bound declares (tx -1; tpn the
+# type parameter) or a second trait declares too (tx that trait) — at the method's name, the call recorded as a
+# refused site so the parser consumes it quietly. The receiver, for the note, is the name at ri, or the field
+# chain `ri.f` when mti is two names past it (`b.v.other()`, `_bnd_fsite`; CHANGELOG [6.7.15]).
+fn _bnd_site_refuse(S, ri, mti, tx, tpn): i64 {
+    var m = TOKVAL(S, mti);
+    if (tx >= 0) {
+        _bnd_err_at(S, mti, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
+    } else {
+        _bnd_err_at(S, mti, "method ", m, " is not in the bound on type parameter ", tpn);
+        syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ri));
+        if (mti == ri + 4) { syscall(SYS_WRITE, 2, ".", 1); PRSTR(S + 0xEC00000 + TOKVAL(S, ri + 2)); }
+        syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
+    }
+    _bs_add(S, mti, 0 - 1, 0, 0);   # refused: its call is consumed quietly
     return 0;
 }
 # Generic fi's parameter list (its `(` at `open`) and body: every bounded receiver, and every call of
@@ -9865,8 +9872,12 @@ fn _bnd_sites(S, fi, open): i64 {
 # x a carrier (a parameter or `var` typed `[*]G<..T..>`, found by scope) whose G declares `f: T` in a slot the
 # carrier gives a bounded type parameter, and m a method of exactly one of that slot's traits: a bounded site at
 # m, which the scan reads as a trait use (`_gs_bfield`) and a scalar T's call takes the field's value as `self`
-# (`_load_bs_field`). A method no bound declares (or two do), and a `f: *T` field, record nothing — that call
-# keeps its 6.7.11 reading. CHANGELOG [6.7.14]
+# (`_load_bs_field`). A `f: *T` field, and a field whose slot has no bound, record nothing — that call keeps its
+# 6.7.11 reading. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 (the user's D5 (a), 2026-10-18) — the field call is held to the whole contract, as the call on a
+# T-typed name is: a method no trait of the bound declares (`b.v.other()` under `T: Show`), or one two traits
+# declare, is refused at the definition by `_bnd_site`'s two refusals (`_bnd_site_refuse`), called or not; it
+# compiled and called the instance's own method. CHANGELOG [6.7.15]
 fn _bnd_fsite(S, fi, blk, open, i): i64 {
     if (TOKTYP(S, i - 1) == 41) { return 0; }
     if (TOKTYP(S, i + 1) != 41) { return 0; }
@@ -9879,18 +9890,20 @@ fn _bnd_fsite(S, fi, blk, open, i): i64 {
     var slot = r;
     var m = TOKVAL(S, i + 4);
     var n = L64(blk + slot * 9 * 8);
+    if (n == 0) { return 0; }   # an unbounded slot: no contract
+    var tpn = ((GFTP(S, fi) >> (slot * 32)) & 0xFFFFFFFF) - 1;
     var hit = 0 - 1;
     var k = 0;
     while (k < n) {
         var tx = L64(blk + (slot * 9 + 1 + k) * 8);
         if (_trm_of(S, tx, m) >= 0) {
-            if (hit >= 0) { return 0; }   # two traits declare it: no site
+            if (hit >= 0) { return _bnd_site_refuse(S, i, i + 4, tx, tpn); }
             hit = tx;
         }
         k = k + 1;
     }
-    if (hit < 0) { return 0; }
-    _bs_add(S, i + 4, hit, ((GFTP(S, fi) >> (slot * 32)) & 0xFFFFFFFF) - 1, 0);
+    if (hit < 0) { return _bnd_site_refuse(S, i, i + 4, 0 - 1, tpn); }
+    _bs_add(S, i + 4, hit, tpn, 0);
     return 0;
 }
 # The declaration at token d (`name: [*]G<..>`): the slot (0 / 1) of fi's type parameter that G's field
