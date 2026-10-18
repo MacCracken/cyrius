@@ -199,13 +199,12 @@ _compile() {
 # _status <target> <include-path> <workdir> — prints "OK", "UNDEF <names>" or "CERR <names>".
 _status() {
     printf 'include "%s";\nfn _ssm(): i64 { return 0; }\nvar _ssr = _ssm();\nsyscall(60, _ssr);\n' "$2" > "$3/ss.cyr"
-    _compile "$1" "$3/ss.cyr" "$3/ss.bin" "$3/ss.err"
-    rc=$?
+    rc=0; _compile "$1" "$3/ss.cyr" "$3/ss.bin" "$3/ss.err" || rc=$?
     u=$(grep '^warning: undefined function' "$3/ss.err" | grep -v "' (reachable call site)\$" \
-        | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ')
+        | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ' || true)
     if [ "$rc" -ne 0 ]; then
         # the cx backend reports its undefined calls in the error line itself
-        cxu=$(grep 'undefined function(s) called' "$3/ss.err" | sed 's/.*called (cx backend)://' | tr '\n' ' ')
+        cxu=$(grep 'undefined function(s) called' "$3/ss.err" | sed 's/.*called (cx backend)://' | tr '\n' ' ' || true)
         printf 'CERR %s%s\n' "$u" "$cxu"
     elif [ -n "$u" ]; then printf 'UNDEF %s\n' "$u"
     else printf 'OK\n'; fi
@@ -264,9 +263,9 @@ while read -r s; do
     [ "$cls" = peer ] && echo "$s peer $root" >> "$D/class" || echo "$s public -" >> "$D/class"
 done < "$D/stems"
 NTOT=$(wc -l < "$D/class" | tr -d ' ')
-NFOLD=$(grep -c ' fold ' "$D/class")
-NPEER=$(grep -c ' peer ' "$D/class")
-NPUB=$(grep -c ' public ' "$D/class")
+NFOLD=$(grep -c ' fold ' "$D/class" || true)
+NPEER=$(grep -c ' peer ' "$D/class" || true)
+NPUB=$(grep -c ' public ' "$D/class" || true)
 [ "$NTOT" -ge 105 ] || fail "classification: only $NTOT lib modules found (floor 105, lib/unicode included) — the scan read nothing"
 [ "$NFOLD" -ge 10 ] || fail "classification: only $NFOLD fold bundles recognised (12 at 6.6.9) — the distlib marker changed?"
 # The first-party tier may not SHRINK: a module that stops declaring its own Usage line (or
@@ -353,15 +352,20 @@ done
 # ── axis 5: ANTI-VACUOUS — the includes carry definitions, family by family ──
 # Each probe includes ONLY the modules named in its comment and calls THROUGH the includes
 # this bite added; the exit code is a bit per call that returned the right answer.
+# Every status in this gate is captured as `x=0; cmd || x=$?`, never `cmd; x=$?`: these probes
+# exit NON-ZERO on success (io must exit 42), as axis 7's out-of-scope compiles and cxvm runs do,
+# and under `bash -eo pipefail` (GitHub's `run:` shell) a bare non-zero command ended the gate
+# there with the probe's own rc and no verdict. tests/gates/toolchain/
+# gates_verdict_under_pipefail.sh runs this file that way. CHANGELOG [6.7.15]
 _run_probe() {   # <name> <expected-exit> <expected-stdout or -> ; source on stdin
     cat > "$D/p_$1.cyr"
-    "$CC" < "$D/p_$1.cyr" > "$D/p_$1" 2> "$D/p_$1.err"; brc=$?
+    brc=0; "$CC" < "$D/p_$1.cyr" > "$D/p_$1" 2> "$D/p_$1.err" || brc=$?
     if [ "$brc" -ne 0 ]; then fail "axis 5 [$1]: the probe does not build:"; tail -4 "$D/p_$1.err" | sed 's/^/      /'; return; fi
     if grep -q '^warning: undefined function' "$D/p_$1.err"; then
         fail "axis 5 [$1]: the probe compiled with undefined functions: $(grep '^warning: undefined function' "$D/p_$1.err" | tr '\n' ' ')"; return
     fi
     chmod +x "$D/p_$1" 2>/dev/null
-    ( cd "$D" && "./p_$1" > "p_$1.out" 2>&1 < /dev/null ); prc=$?
+    prc=0; ( cd "$D" && "./p_$1" > "p_$1.out" 2>&1 < /dev/null ) || prc=$?
     if [ "$prc" -ne "$2" ]; then
         fail "axis 5 [$1]: the probe exited $prc, expected $2 (one bit per call through a new include) — the includes are silencing warnings, not supplying definitions"; return
     fi
@@ -532,7 +536,7 @@ for f in tests/tcyr/derive/derive_str_deserialize.tcyr tests/tcyr/formats/ws_ser
     [ -f "$f" ] || { fail "axis 6: $f does not exist — renamed? update this list"; x=1; continue; }
     n6=$((n6 + 1))
     "$CC" < "$f" > "$D/c6.bin" 2> "$D/c6.err" || { fail "axis 6: $f does not compile"; x=1; continue; }
-    u=$(grep '^warning: undefined function' "$D/c6.err" | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ')
+    u=$(grep '^warning: undefined function' "$D/c6.err" | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ' || true)
     [ -z "$u" ] || { fail "axis 6: $f compiles with undefined function(s): $u — its hand-written include list is missing their definer (a bundle's sidecar leaf)"; x=1; }
 done
 [ "$x" = 0 ] && echo "  ok: axis 6: $n6 hand-written include lists compile with no undefined function"
@@ -543,7 +547,7 @@ for s in $CX_OUT_OF_SCOPE; do
     [ -f "lib/$s.cyr" ] || { fail "axis 7: CX_OUT_OF_SCOPE names lib/$s.cyr, which does not exist — drop it"; x=1; continue; }
     mkdir -p "$D/w7"
     printf 'include "lib/%s.cyr";\nvar _r7 = 0;\nsyscall(60, _r7);\n' "$s" > "$D/w7/p.cyr"
-    "$CXCC" < "$D/w7/p.cyr" > "$D/w7/p.cyx" 2> "$D/w7/p.err"; rc7=$?
+    rc7=0; "$CXCC" < "$D/w7/p.cyr" > "$D/w7/p.cyx" 2> "$D/w7/p.err" || rc7=$?
     if [ "$rc7" -eq 0 ] || ! grep -q "^error: lib/$s\.cyr is outside the cx target's scope" "$D/w7/p.err"; then
         fail "axis 7: including lib/$s.cyr on cx gave rc $rc7 without naming it (got: $(head -2 "$D/w7/p.err" | tr '\n' ' ')) — it must be refused BY NAME"; x=1
     fi
@@ -579,7 +583,7 @@ syscall(60, r);
 CYR
 if [ -x "$D/cxvm" ]; then
     if "$CXCC" < "$D/w7/thr.cyr" > "$D/w7/thr.cyx" 2> "$D/w7/thr.err"; then
-        "$D/cxvm" < "$D/w7/thr.cyx" > /dev/null 2>&1; trc=$?
+        trc=0; "$D/cxvm" < "$D/w7/thr.cyx" > /dev/null 2>&1 || trc=$?
         [ "$trc" = 255 ] || { fail "axis 7: lib/thread.cyr on cxvm exited $trc, expected 255 (one bit per check: mutex, thread_create fails, detached fails, THREADS_CONCURRENT 0, try_send, recv, close, gettid)"; x=1; }
     else
         fail "axis 7: lib/thread.cyr does not compile for cx: $(grep -v '^note' "$D/w7/thr.err" | head -3 | tr '\n' ' ')"; x=1
@@ -600,7 +604,7 @@ if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
         awk -v L="$NF_LINE" '$0 == L { print "            elif (sn == 202) { syscall(60, 140); }" } { print }' \
             programs/cxvm.cyr > "$D/cxvm_nf.cyr"
         if "$CC" < "$D/cxvm_nf.cyr" > "$D/cxvm_nf" 2> "$D/cxvm_nf.err" && chmod +x "$D/cxvm_nf"; then
-            "$D/cxvm_nf" < "$D/w7/thr.cyx" > /dev/null 2>&1; frc=$?
+            frc=0; "$D/cxvm_nf" < "$D/w7/thr.cyx" > /dev/null 2>&1 || frc=$?
             [ "$frc" = 255 ] || { fail "axis 7: lib/thread.cyr on cx issued SYS_FUTEX (instrumented cxvm exited $frc, expected 255; 140 = a futex: cxvm answers it -38 since 6.7.14, a Darwin host SIGSYS-killed cxvm before)"; x=1; }
             # The two WAIT sites: a blocking recv on an empty open channel and a blocking send
             # on a full one. With one guest thread both must SPIN (timeout 124); reaching the
@@ -610,9 +614,9 @@ if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
             # 124). CHANGELOG [6.6.12]
             printf 'include "lib/thread.cyr";\nfn main(): i64 { alloc_init(); var t = alloc(THREAD_SIZE); store64(t, 12345); store64(t + 8, 0); store64(t + 16, 0); if (thread_join(t) == 0 - 1) { return 7; } return 3; }\nvar r = main();\nsyscall(60, r);\n' > "$D/w7/join.cyr"
             if "$CXCC" < "$D/w7/join.cyr" > "$D/w7/join.cyx" 2> "$D/w7/join.err"; then
-                timeout 5 "$D/cxvm_nf" < "$D/w7/join.cyx" > /dev/null 2>&1; jrc=$?
+                jrc=0; timeout 5 "$D/cxvm_nf" < "$D/w7/join.cyx" > /dev/null 2>&1 || jrc=$?
                 [ "$jrc" = 7 ] || { fail "axis 7: thread_join(nonzero fake handle) on cx exited $jrc under the no-futex cxvm, expected 7 (-1 at once; 140 = FUTEX_WAIT issued, 124 = it spun)"; x=1; }
-                timeout 5 "$D/cxvm" < "$D/w7/join.cyx" > /dev/null 2>&1; jrc=$?
+                jrc=0; timeout 5 "$D/cxvm" < "$D/w7/join.cyx" > /dev/null 2>&1 || jrc=$?
                 [ "$jrc" = 7 ] || { fail "axis 7: thread_join(nonzero fake handle) on cx exited $jrc under the plain cxvm, expected 7 (124 = it spun on the host futex)"; x=1; }
             else
                 fail "axis 7: the thread_join probe does not compile for cx: $(grep -v '^note' "$D/w7/join.err" | head -3 | tr '\n' ' ')"; x=1
@@ -621,7 +625,7 @@ if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
                 if [ "$bw" = recv ]; then bb='chan_recv(ch);'; else bb='chan_try_send(ch, 1); chan_send(ch, 2);'; fi
                 printf 'include "lib/thread.cyr";\nfn main(): i64 { alloc_init(); var ch = chan_new(1); %s return 0; }\nvar r = main();\nsyscall(60, r);\n' "$bb" > "$D/w7/blk_$bw.cyr"
                 if "$CXCC" < "$D/w7/blk_$bw.cyr" > "$D/w7/blk_$bw.cyx" 2> "$D/w7/blk_$bw.err"; then
-                    timeout 2 "$D/cxvm_nf" < "$D/w7/blk_$bw.cyx" > /dev/null 2>&1; brc=$?
+                    brc=0; timeout 2 "$D/cxvm_nf" < "$D/w7/blk_$bw.cyx" > /dev/null 2>&1 || brc=$?
                     [ "$brc" = 124 ] || { fail "axis 7: a blocking chan_$bw on cx exited $brc under the no-futex cxvm, expected 124 (the single-thread spin; 140 = the FUTEX_WAIT was issued)"; x=1; }
                 else
                     fail "axis 7: the blocking chan_$bw probe does not compile for cx"; x=1

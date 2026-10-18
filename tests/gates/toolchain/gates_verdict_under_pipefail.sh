@@ -10,8 +10,13 @@
 #     on the PASSING case, so `-e` ended the gate on axis 2 (rc 1);
 #   * removed_symbol_census.sh — `git tag … | head -1`: head exits after one line, git dies of
 #     SIGPIPE, pipefail makes the assignment fail (rc 141); behind it, the census helper's
-#     `… | head -400` and its loop's last-file miss did the same to `HITS=$(…)` / `PROBE=$(…)`.
-# (issues/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md)
+#     `… | head -400` and its loop's last-file miss did the same to `HITS=$(…)` / `PROBE=$(…)`;
+#   * stdlib_modules_self_sufficient.sh — `( … ./p_io … ); prc=$?`: axis 5's probes exit
+#     NON-ZERO on success (io exits 42), so `-e` ended the gate on the first passing probe with
+#     its rc (42); behind it, axis 6's zero-warning `u=$(grep … | …)` and axis 7's out-of-scope
+#     compiles and cxvm runs, which all fail by design.
+# (issues/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
+#  issues/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md)
 #
 # WHAT IS PINNED
 #   axis 1  the checker tells a stop from a verdict: three fixture gates run the same way — a
@@ -20,9 +25,10 @@
 #   axis 2  each gate in GATES, run as `bash -eo pipefail <gate>`, exits 0 with a last line
 #           starting PASS (or 77 with a last line starting SKIP: a gate that could not run says
 #           so by name). check.sh runs each of them under `sh` as its own row.
-# Mutation (6.7.15): either gate's fix reverted (axis 2's `|| true` dropped, the census's
-# `for-each-ref` back to `git tag … | head -1`) -> RED here naming the gate, its rc and its last
-# lines. Add a gate to GATES when its pipefail stop is fixed.
+# Mutation (6.7.15): any gate's fix reverted (axis 2's `|| true` dropped, the census's
+# `for-each-ref` back to `git tag … | head -1`, axis 5's `prc=0; ( … ) || prc=$?` back to
+# `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines. Add a gate to GATES
+# when its pipefail stop is fixed.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -33,7 +39,8 @@ trap 'rm -rf "$D"' EXIT
 command -v bash > /dev/null 2>&1 || { echo "SKIP: $NAME (no bash on PATH — the shell under test)"; exit 77; }
 
 GATES="tests/gates/platform/syscall_xlat_generated.sh
-tests/gates/toolchain/removed_symbol_census.sh"
+tests/gates/toolchain/removed_symbol_census.sh
+tests/gates/toolchain/stdlib_modules_self_sufficient.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
@@ -62,12 +69,23 @@ done
 [ "$FAILS" = 0 ] && echo "  ok: axis 1: a zero-count grep -c and a SIGPIPE'd pipe read as STOPPED, the || true spelling as PASS"
 
 # ── axis 2: each listed gate reaches its verdict under bash -eo pipefail ────────────────
+# The gates run side by side (check.sh runs gates in parallel already); each one's rc lands in
+# its own file, and every PID is waited on.
+N=0; PIDS=""
+for g in $GATES; do
+    N=$((N + 1))
+    [ -f "$g" ] || continue
+    ( grc=0; bash -eo pipefail "$g" > "$D/gate$N.out" 2>&1 < /dev/null || grc=$?; echo "$grc" > "$D/gate$N.rc" ) &
+    PIDS="$PIDS $!"
+done
+for p in $PIDS; do wait "$p" || true; done
 N=0
 for g in $GATES; do
     N=$((N + 1))
     if [ ! -f "$g" ]; then _fail "axis 2: $g is listed but missing"; continue; fi
     o="$D/gate$N.out"
-    grc=0; bash -eo pipefail "$g" > "$o" 2>&1 < /dev/null || grc=$?
+    grc=$(cat "$D/gate$N.rc" 2>/dev/null || true)
+    [ -n "$grc" ] || grc="(no status)"
     got=$(_verdict "$grc" "$o")
     case "$got" in
         PASS) echo "  ok: axis 2: $g — PASS under bash -eo pipefail" ;;
@@ -79,7 +97,7 @@ for g in $GATES; do
             ;;
     esac
 done
-[ "$N" -ge 2 ] || _fail "axis 2: only $N gates listed (floor 2) — the list was emptied"
+[ "$N" -ge 3 ] || _fail "axis 2: only $N gates listed (floor 3) — the list was emptied"
 
 if [ "$FAILS" != 0 ]; then echo "FAIL: $NAME ($FAILS)"; exit 1; fi
 echo "PASS: $NAME ($N gates reach their verdict under bash -eo pipefail; the checker tells a stop from a verdict)"
