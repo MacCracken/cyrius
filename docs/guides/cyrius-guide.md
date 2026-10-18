@@ -4049,6 +4049,14 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+Includes are **include-once by spelling**: a second `include` of the same spelling is skipped, so a
+file's top-level statements run once and its fns are defined once. The key is the spelling as
+written, whole, at any length (`"./a.cyr"` and `"a.cyr"` are two spellings). A compilation unit
+holds at most 256 distinct includes; the 257th is refused (`include-once table full (256
+files)`). Until 6.7.15 only the first 127 bytes of a spelling were kept, so a spelling of 128+
+characters — easy to reach through directories — was included again at its second `include`,
+with no message.
+
 ### File-relative resolution — `#@incdir` (v6.5.7)
 
 cycc reads its source from **stdin**, so it never learns where that source lives, and an

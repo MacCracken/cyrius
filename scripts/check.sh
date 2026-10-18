@@ -1570,6 +1570,12 @@ _chk_gate "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 # optimistically at the top and BLANKED TO SPACES if unused, so the binary of a program that
 # never asked for the feature is unchanged (auto_deps_verb_gate axis 5) and no line moves.
 _chk_gate "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
+# 6.7.15 — include-once keys on the whole spelling: the table's 128 B entries kept 127 bytes and the lookup
+# compared all of them, so a 128+ character spelling was never "already included" and a second `include` of it
+# ran its top-level statements again (no message, since v4.8.4-alpha2). The table now holds a pointer per
+# entry to the alloc'd spelling. The filed repro (128 / 127), 308 and 766 characters, two spellings sharing
+# 250, the count's edge; x86 / aarch64 / cx / PE / cycc_win. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/include_once_long_spelling.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes

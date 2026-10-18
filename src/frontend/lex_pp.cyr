@@ -658,12 +658,14 @@ fn ISSRCLINE(S, pos, bl): i64 {
 # transitive autos) easily exceed 64; cyrius itself at ~30, kybernet
 # >40 already pushed against the wall.
 # S+0x197F00: include count (8 bytes — kept at original location)
-# S+0x1C0000: included filenames[256] (256 * 128 bytes = 32 KB)
+# S+0x1C0000: included filenames[256], a pointer each to the whole spelling, alloc'd by
+# PP_MARK_INCLUDED (2 KB of the 32 KB band). The 128 B entries cut a spelling at 127 bytes,
+# so a 128+ byte spelling never matched its own entry and was included twice. CHANGELOG [6.7.15]
 fn PP_ALREADY_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     var i = 0;
     while (i < cnt) {
-        var p = S + 0x1C0000 + i * 128;
+        var p = L64(S + 0x1C0000 + i * 8);
         var c = 0;
         var eq = 1;
         while (eq == 1) {
@@ -1183,14 +1185,16 @@ fn PP_MARK_INCLUDED(S, fname): i64 {
         syscall(SYS_WRITE, 2, "error: include-once table full (256 files) — split compilation unit\n", 70);
         syscall(SYS_EXIT, 1);
     }
-    var p = S + 0x1C0000 + cnt * 128;
+    var n = 0;
+    while (load8(fname + n) != 0) { n = n + 1; }
+    var p = alloc(n + 1);
     var c = 0;
-    while (load8(fname + c) != 0) {
+    while (c < n) {
         store8(p + c, load8(fname + c));
         c = c + 1;
-        if (c >= 127) { break; }
     }
-    store8(p + c, 0);
+    store8(p + n, 0);
+    S64(S + 0x1C0000 + cnt * 8, p);
     S64(S + 0x197F00, cnt + 1);
     return 0;
 }

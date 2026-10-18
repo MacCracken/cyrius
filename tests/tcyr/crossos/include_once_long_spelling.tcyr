@@ -1,0 +1,30 @@
+# include_once_long_spelling.tcyr — 6.7.15 — include-once keys on the whole spelling, at any length.
+#
+# The include-once table held 128 B entries: PP_MARK_INCLUDED kept 127 bytes of a spelling and
+# PP_ALREADY_INCLUDED compared the whole one, so a spelling of 128+ bytes never matched its own entry
+# and a second `include` of it ran the file's top-level statements again (no message, every target,
+# since v4.8.4-alpha2). The table now points at the whole spelling.
+#
+# A crossos row: the preprocessor is shared source, but each host compiles this file with its own
+# compiler (the Mach-O ones on ecb / ach, the PE one on cass, the native aarch64 one on pi).
+# Mutation (the 6.7.14 lex_pp.cyr): a and b each 2 (want 1). The full shape, five legs and mutations:
+# tests/gates/frontend/include_once_long_spelling.sh
+# (issues/2026-10-16-include-once-path-of-128-chars-included-twice.md)
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var _iol_a = 0;
+var _iol_b = 0;
+# 134 characters, included twice: the second is skipped
+include "tests/fixtures/include_once_long/a_directory_name_long_enough_to_take_an_include_spelling_past_the_old_127_byte_entry/counted_once.cyr"
+include "tests/fixtures/include_once_long/a_directory_name_long_enough_to_take_an_include_spelling_past_the_old_127_byte_entry/counted_once.cyr"
+# a distinct spelling sharing the first 130 characters, included twice: once, and not merged with the first
+include "tests/fixtures/include_once_long/a_directory_name_long_enough_to_take_an_include_spelling_past_the_old_127_byte_entry/counted_once_twin.cyr"
+include "tests/fixtures/include_once_long/a_directory_name_long_enough_to_take_an_include_spelling_past_the_old_127_byte_entry/counted_once_twin.cyr"
+
+test_group("include-once on a 128+ character spelling");
+assert_eq(_iol_a, 1, "a 134-character spelling included twice runs once");
+assert_eq(_iol_b, 1, "a distinct spelling sharing 130 characters runs once, apart from the first");
+
+var r = assert_summary();
