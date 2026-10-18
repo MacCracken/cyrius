@@ -6920,9 +6920,11 @@ struct type argument (6.6.10; before that each of these compiled and returned 0)
 The carrier rule looks one field deep: a field typed `Box<T>` inside another carrier
 (`o.inner.v.y` with `o: Out<T>`) is not followed — bind the value to a `T`-typed
 local first (`var t: T = o.inner.v; return t.y;`), which makes the base the stub.
-A generic method's scalar call is refused the same way, naming the method's fn:
-`p.pick(9)` and `p.pick(h)` (an `f64`) are refused as `P_pick(p, 9)` is (6.7.11;
-before it they compiled and returned 0), and a generic that forwards a `T`-typed
+A generic method's scalar call is refused the same way, naming the method as the call
+spells it: `p.pick(9)` and `p.pick(h)` (an `f64`) are refused *generic 'P.pick' has no
+i64 ... instance*, as `P_pick(p, 9)` is naming `P_pick` (6.7.11; before it they compiled
+and returned 0; through 6.7.14 the method spelling was named `P_pick` too, and so was a
+bound's refusal of `p.bm(3)`, now *generic 'P.bm'*), and a generic that forwards a `T`-typed
 name into such a method — `fn o<T>(p: P, t: T) { return p.pick(t); }`, or a
 generic method's `self.pick(w)` — is a stub too: `o(p, 5)` is refused, `o(p, q)`
 calls `o$Q`. The receiver may be a name, a field chain (`h.p.pick(t)`, `x.hp.p.pick(t)`

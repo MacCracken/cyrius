@@ -29,11 +29,11 @@
 #      F1 `oc(h, q) * 10 + ok(q)` 77 and F2 two uncalled forwarders 5, every leg; F3 `oc(h, 5)` /
 #      `ok(6)` refused naming oc / ok (two errors) — x86_64
 #   S  refusals, by name and once: `p.pick(9)` (S1) and `p.pick(h)` with `h: f64` (S2) refused naming
-#      P_pick with the stub text, as the free spelling `P_pick(p, 9)` is (S3); `var w = p.pick(9);` (S4)
+#      P.pick (6.7.15) with the stub text, as the free spelling `P_pick(p, 9)` is naming P_pick (S3); `var w = p.pick(9);` (S4)
 #      one error, at the call's `(` (the lookahead stays quiet); `p.bm(7)` with only `impl Show for
 #      f64` (S5) refused by the bound with one note naming `impl Show for i64`, as `P_bm(p, 7)` is (S6);
 #      a generic forwarding its T into a stub generic method is a stub too, so `o1(p, 5)` and `p.fwd(5)`
-#      are refused naming o1 and P_fwd (S8: two errors, one each) and their struct calls compile (the
+#      are refused naming o1 and P.fwd (S8: two errors, one each) and their struct calls compile (the
 #      tcyr's F rows); `p.bm(r)` with no `impl Show for R` is refused by the bound, its note naming R
 #      (S9; it ran the i64 base) — x86_64; S1 also through the aarch64 / cx / PE compilers (S7)
 #   E  (6.7.14, the user's D7 (a), 2026-10-16) EXPLICIT TYPE ARGUMENTS ON A METHOD CALL, as on its free spelling:
@@ -45,7 +45,7 @@
 #      verbatim (exit 0); E1 the chain `w.v.id<f64>(h)` and a statement; E2 struct type arguments of 8 / 16 /
 #      24 B (receive, annotation, assignment, argument, chain, return); E3 a bounded member `p.bm<f64>(h)`; E4 a
 #      field still wins: `p.n < k`, and `q.id < k` where `id` is a field AND a generic method — every leg;
-#      refusals, once each (x86_64): E5 `p.pick<i64>(9)` naming P_pick with the stub text, E6 `p.bm<i64>(3)` by
+#      refusals, once each (x86_64): E5 `p.pick<i64>(9)` naming P.pick (6.7.15) with the stub text, E6 `p.bm<i64>(3)` by
 #      the bound with one note naming `impl Show for i64`, E7 `p.id<Zork>(h)` "unknown type 'Zork' as a type
 #      argument". Filed: docs/development/issues/archived/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md
 #   P  (6.7.15) THE STUB SCAN'S TOKEN BINDING FOLLOWS THE PARSER'S POINTER RULE (6.7.14's D8 (a), and 6.7.15's D12 (a)
@@ -137,6 +137,19 @@
 #   ME6 `_ret_expr_head` without `x.m<..>(`         -> RED E2 (did not build: "a fn returning the 9-16 byte
 #                                                     struct `Pt` ..."), T (X8)
 #   ME7 `_stmt_dot_chain_call` without `.m<..>(`    -> RED E1 (the statements: "unknown field 'id'"), T (X13)
+# 6.7.15 — A GENERIC METHOD'S REFUSALS NAME IT AS THE CALL SPELLS IT (issues/2026-10-17-generic-refusals-name-a-
+#   generic-method-by-its-mangled-name.md): the stub, bound, forward, bounded-struct and no-definition refusals of a
+#   call spelled `p.m(..)` / `p.m<..>(..)` named the fn table's `P_pick` / `P_bm`; they name `P.pick` / `P.bm` now
+#   (`_gen_msp` while such a call is judged, `_gen_ident_err`), as every other call-site diagnostic has since 6.7.14.
+#   The free spelling `P_pick(p, 9)` keeps `P_pick` and a free generic `g` (S3, S6, N2). S1 S2 S4 S5 S7 S8 S9 E5 E6
+#   move to the method spelling; N1 the filed repro verbatim (6:51 `P.pick`, 6:71 `P.bm`), N3 a method forwarding T
+#   to a bounded generic (`_refuse_bnd_fwd`), N4 one instantiating a bounded struct with T (`_refuse_bnd_base`), N5
+#   the explicit spelling's struct argument (`_meth_xinst`), N6 a free spelling inside a method instance's body keeps
+#   its own (the flag is cleared while an instance's body is parsed), N7 a destructure whose lookahead
+#   (`_mcall_xquiet`) reports the bound first. Mutants (2026-10-18, CYCC= each): MN1 `_gen_ident_err` always
+#   ERR_IDENT -> RED S1 S2 S4 S5 S7_pe S8 S9 E5 E6 N1 N3 N4 N5 N7 (as the lane's previous compiler); MN2
+#   `_instantiate_generic_fn` without the clear -> RED N6; MN3 `_mcall_inst` without the set -> RED S9; MN4
+#   `_meth_xinst` without the set -> RED E5 E6; MN5 `_mcall_xquiet` without the set -> RED N5 N7.
 # 6.7.15 (the P rows; 2026-10-18, CYCC= the mutant, so its x86_64 / IR / PE legs carry it):
 #   MT1 the fix reverted (the lane's previous compiler) -> RED P0 (refused naming P_pick), P1-P7 (each refused), PX
 #                                                         (the stub refusal naming o); P0c green
@@ -331,19 +344,20 @@ XEOF
 sed 's/    var a: i64 = p.pick(9);/    var h: f64 = 1.5;\n    var a: i64 = p.pick(h);/' "$D/s1.cyr" > "$D/s2.cyr"
 sed 's/p\.pick(9)/P_pick(p, 9)/' "$D/s1.cyr" > "$D/s3.cyr"
 sed 's/    var a: i64 = p.pick(9);/    var a = p.pick(9);/' "$D/s1.cyr" > "$D/s4.cyr"
-# srow <id> <compiler> <src> <line:col> <what>: refused with exactly one error, at <line:col>, naming
-# 'P_pick' with the stub text
+# srow <id> <compiler> <src> <line:col> <what> [<name>]: refused with exactly one error, at <line:col>, naming
+# <name> (the method spelling 'P.pick' by default, 6.7.15) with the stub text
 srow() {
+    sn=${6:-P.pick}
     src=0; "$2" < "$3" > "$D/sr_$1" 2> "$D/sr_$1.err" || src=$?
     ne=$(grep -c '^error' "$D/sr_$1.err" || true)
     if [ "$src" -eq 0 ]; then bad "$1: $5 compiled (want it refused)"
     elif [ "$ne" -ne 1 ]; then bad "$1: $5: $ne errors, want 1: $(grep '^error' "$D/sr_$1.err" | tr '\n' ' ')"
-    elif grep -q "^error:<source>:$4: generic 'P_pick' $STUB" "$D/sr_$1.err"; then ok "$1: $5 is refused once, at $4, naming P_pick"
-    else bad "$1: $5: not the stub refusal naming P_pick at $4: $(grep '^error' "$D/sr_$1.err")"; fi
+    elif grep -qF "error:<source>:$4: generic '$sn' $STUB" "$D/sr_$1.err"; then ok "$1: $5 is refused once, at $4, naming $sn"
+    else bad "$1: $5: not the stub refusal naming $sn at $4: $(grep '^error' "$D/sr_$1.err")"; fi
 }
 srow S1 "$CC" "$D/s1.cyr" 7:24 "p.pick(9)"
 srow S2 "$CC" "$D/s2.cyr" 8:24 "p.pick(h), h: f64"
-srow S3 "$CC" "$D/s3.cyr" 7:25 "the free spelling P_pick(p, 9) (control)"
+srow S3 "$CC" "$D/s3.cyr" 7:25 "the free spelling P_pick(p, 9) (control)" P_pick
 srow S4 "$CC" "$D/s4.cyr" 7:19 "var a = p.pick(9); (the lookahead and the call)"
 cat > "$D/s5.cyr" <<'XEOF'
 include "lib/syscalls.cyr"
@@ -359,19 +373,21 @@ var rc = main();
 syscall(60, rc);
 XEOF
 sed 's/return p.bm(7);/return P_bm(p, 7);/' "$D/s5.cyr" > "$D/s6.cyr"
-# brow <id> <src> <what>: refused by the bound at line 8, one error and one note, naming impl Show for i64
+# brow <id> <src> <what> [<name>]: refused by the bound at line 8, naming <name> (the method spelling 'P.bm' by
+# default, 6.7.15), one error and one note, naming impl Show for i64
 brow() {
+    bn=$(printf '%s' "${4:-P.bm}" | sed 's/\./\\./g')   # a regex below: the dot escaped
     brc=0; "$CC" < "$2" > "$D/br_$1" 2> "$D/br_$1.err" || brc=$?
     ne=$(grep -c '^error' "$D/br_$1.err" || true)
     nn=$(grep -c 'note: the bound' "$D/br_$1.err" || true)
     if [ "$brc" -eq 0 ]; then bad "$1: $3 compiled (want it refused)"
     elif [ "$ne" -ne 1 ] || [ "$nn" -ne 1 ]; then bad "$1: $3: $ne errors and $nn notes, want 1 and 1: $(tr '\n' ' ' < "$D/br_$1.err")"
-    elif grep -q "^error:<source>:8:.*generic 'P_bm': its type argument does not implement trait 'Show'" "$D/br_$1.err" \
+    elif grep -q "^error:<source>:8:.*generic '$bn': its type argument does not implement trait 'Show'" "$D/br_$1.err" \
          && grep -q 'needs `impl Show for i64`' "$D/br_$1.err"; then ok "$1: $3 is refused by the bound, its note naming impl Show for i64"
     else bad "$1: $3: not the bound refusal naming i64: $(tr '\n' ' ' < "$D/br_$1.err")"; fi
 }
 brow S5 "$D/s5.cyr" "p.bm(7), only impl Show for f64"
-brow S6 "$D/s6.cyr" "the free spelling P_bm(p, 7) (control)"
+brow S6 "$D/s6.cyr" "the free spelling P_bm(p, 7) (control)" P_bm
 cat > "$D/s8.cyr" <<'XEOF'
 include "lib/syscalls.cyr"
 struct P { v; }
@@ -394,8 +410,8 @@ ne=$(grep -c '^error' "$D/s8.err" || true)
 if [ "$s8rc" -eq 0 ]; then bad "S8: the scalar calls of two forwarders compiled (want them refused)"
 elif [ "$ne" -ne 2 ]; then bad "S8: $ne errors, want 2: $(grep '^error' "$D/s8.err" | tr '\n' ' ')"
 elif grep -q "^error:<source>:10:16: generic 'o1' $STUB" "$D/s8.err" \
-     && grep -q "^error:<source>:11:18: generic 'P_fwd' $STUB" "$D/s8.err"; then ok "S8: o1(p, 5) and p.fwd(5) are refused, naming o1 and P_fwd (the forwarders are stubs)"
-else bad "S8: not the stub refusals naming o1 and P_fwd: $(grep '^error' "$D/s8.err" | tr '\n' ' ')"; fi
+     && grep -q "^error:<source>:11:18: generic 'P\.fwd' $STUB" "$D/s8.err"; then ok "S8: o1(p, 5) and p.fwd(5) are refused, naming o1 and P.fwd (the forwarders are stubs)"
+else bad "S8: not the stub refusals naming o1 and P.fwd: $(grep '^error' "$D/s8.err" | tr '\n' ' ')"; fi
 cat > "$D/s9.cyr" <<'XEOF'
 include "lib/syscalls.cyr"
 trait Show { fn show(self): i64; }
@@ -416,7 +432,7 @@ ne=$(grep -c '^error' "$D/s9.err" || true)
 nn=$(grep -c 'note: the bound' "$D/s9.err" || true)
 if [ "$s9rc" -eq 0 ]; then bad "S9: p.bm(r) with no impl Show for R compiled (want it refused)"
 elif [ "$ne" -ne 1 ] || [ "$nn" -ne 1 ]; then bad "S9: $ne errors and $nn notes, want 1 and 1: $(tr '\n' ' ' < "$D/s9.err")"
-elif grep -q "^error:<source>:10:.*generic 'P_bm': its type argument does not implement trait 'Show'" "$D/s9.err" \
+elif grep -q "^error:<source>:10:.*generic 'P\.bm': its type argument does not implement trait 'Show'" "$D/s9.err" \
      && grep -q 'needs `impl Show for R`' "$D/s9.err"; then ok "S9: p.bm(r) is refused by the bound, its note naming impl Show for R"
 else bad "S9: not the bound refusal naming R: $(tr '\n' ' ' < "$D/s9.err")"; fi
 for leg in $OTHER; do
@@ -563,8 +579,8 @@ erow() {
     elif grep -qF "$3" "$D/$1.err"; then ok "$1: $4 is refused once: $3"
     else bad "$1: $4: not refused as '$3': $(grep '^error' "$D/$1.err")"; fi
 }
-erow E5 'p.pick<i64>(9)' "generic 'P_pick' $STUB" "p.pick<i64>(9), a stub's scalar binding"
-erow E6 'p.bm<i64>(3)' "generic 'P_bm': its type argument does not implement trait 'Show'" "p.bm<i64>(3), only impl Show for f64"
+erow E5 'p.pick<i64>(9)' "generic 'P.pick' $STUB" "p.pick<i64>(9), a stub's scalar binding"
+erow E6 'p.bm<i64>(3)' "generic 'P.bm': its type argument does not implement trait 'Show'" "p.bm<i64>(3), only impl Show for f64"
 if [ "$(grep -c 'needs `impl Show for i64`' "$D/E6.err")" -eq 1 ]; then ok "E6: one note naming impl Show for i64"
 else bad "E6: not one note naming impl Show for i64: $(tr '\n' ' ' < "$D/E6.err")"; fi
 erow E7 'p.id<Zork>(h)' "unknown type 'Zork' as a type argument" "p.id<Zork>(h)"
@@ -739,6 +755,91 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$N passed, 0 failed ($N total)" ]; then ok "T $leg: $LAST"
     else bad "T $leg: exit $RC, '$LAST' (want '$N passed, 0 failed ($N total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
+
+echo "N. a generic METHOD's refusals name it as the call spells it (6.7.15)"
+cat > "$D/n1.cyr" <<'XEOF'
+struct A { x; }
+struct P { k; }
+impl P { fn pick<T>(self, t: T): i64 { return t.x; } }
+trait Show { fn show(self): i64; }
+impl P { fn bm<T: Show>(self, t: T): i64 { return 1; } }
+fn main(): i64 { var p: P; p.k = 1; var r = p.pick(5); return r + p.bm(3); }
+syscall(60, main());
+XEOF
+n1rc=0; "$CC" < "$D/n1.cyr" > "$D/n1" 2> "$D/n1.err" || n1rc=$?
+ne=$(grep -c '^error' "$D/n1.err" || true)
+nn=$(grep -c 'note: the bound on type parameter' "$D/n1.err" || true)
+if [ "$n1rc" -eq 0 ]; then bad "N1: the filed repro compiled (want it refused)"
+elif [ "$ne" -ne 2 ] || [ "$nn" -ne 1 ]; then bad "N1: $ne errors and $nn notes, want 2 and 1: $(tr '\n' ' ' < "$D/n1.err")"
+elif grep -qF "error:<source>:6:51: generic 'P.pick' $STUB" "$D/n1.err" \
+     && grep -qF "error:<source>:6:71: generic 'P.bm': its type argument does not implement trait 'Show'" "$D/n1.err"; then ok "N1: the filed repro, verbatim: 6:51 names P.pick, 6:71 P.bm (and the note once)"
+else bad "N1: not the refusals naming P.pick / P.bm: $(grep '^error' "$D/n1.err" | tr '\n' ' ')"; fi
+# nrow <id> <src> <fragment> <what>: refused with exactly one error line, holding <fragment>
+nrow() {
+    nrc=0; "$CC" < "$2" > "$D/$1" 2> "$D/$1.err" || nrc=$?
+    ne=$(grep -c '^error' "$D/$1.err" || true)
+    if [ "$nrc" -eq 0 ]; then bad "$1: $4 compiled (want it refused)"
+    elif [ "$ne" -ne 1 ]; then bad "$1: $4: $ne errors, want 1: $(grep '^error' "$D/$1.err" | tr '\n' ' ')"
+    elif grep '^error' "$D/$1.err" | grep -qF "$3"; then ok "$1: $4: $3"
+    else bad "$1: $4: not '$3': $(grep '^error' "$D/$1.err")"; fi
+}
+cat > "$D/n2.cyr" <<'XEOF'
+struct A { x; }
+fn g<T>(t: T): i64 { return t.x; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+XEOF
+nrow N2 "$D/n2.cyr" "generic 'g' $STUB" "a free generic keeps its name (control)"
+cat > "$D/n3.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+fn gb<T: Show>(x: T): i64 { return 1; }
+struct P { k; }
+impl P { fn fw<V>(self, v: V): i64 { return gb(v); } }
+fn main(): i64 { var p: P; p.k = 1; return p.fw(5); }
+syscall(60, main());
+XEOF
+nrow N3 "$D/n3.cyr" "generic 'P.fw' has no i64 instance: it forwards its type parameter to 'gb'" "p.fw(5), a method forwarding T to a bounded generic"
+cat > "$D/n4.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct Bx<T: Show> { v: T; }
+struct P { k; }
+impl P { fn bs<V>(self, v: V): i64 { var b: Bx<V>; return 1; } }
+fn main(): i64 { var p: P; p.k = 1; return p.bs(5); }
+syscall(60, main());
+XEOF
+nrow N4 "$D/n4.cyr" "generic 'P.bs' has no i64 instance: it instantiates a bounded generic struct with its type parameter" "p.bs(5), a method instantiating a bounded struct with T"
+cat > "$D/n5.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for i64 { fn show(self): i64 { return 5; } }
+struct R { x; }
+struct P { k; }
+impl P { fn bm<V: Show>(self, v: V): i64 { return v.show(); } }
+fn main(): i64 { var p: P; p.k = 1; var r = R { 1 }; return p.bm<R>(r); }
+syscall(60, main());
+XEOF
+nrow N5 "$D/n5.cyr" "generic 'P.bm': its type argument does not implement trait 'Show'" "p.bm<R>(r), the explicit spelling's struct argument"
+cat > "$D/n6.cyr" <<'XEOF'
+struct A { x; }
+struct Q { x; y; }
+struct P { k; }
+impl P { fn pick<T>(self, t: T): i64 { return t.x; } }
+fn main(): i64 { var p: P; p.k = 1; var q = Q { 1, 2 }; return p.outer(q); }
+impl P { fn outer<V>(self, v: V): i64 { return P_pick(self, 9); } }
+syscall(60, main());
+XEOF
+nrow N6 "$D/n6.cyr" "generic 'P_pick' $STUB" "P_pick(self, 9) in the body of p.outer(q)'s instance keeps its own spelling"
+cat > "$D/n7.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for i64 { fn show(self): i64 { return 5; } }
+struct R { x; }
+struct P { k; }
+impl P { fn bm<V: Show>(self, v: V): (i64, i64) { return (1, 2); } }
+fn main(): i64 { var p: P; p.k = 1; var r = R { 1 }; var a, b = p.bm<R>(r); return a; }
+syscall(60, main());
+XEOF
+nrow N7 "$D/n7.cyr" "6:65: generic 'P.bm': its type argument does not implement trait 'Show'" "var a, b = p.bm<R>(r) (the destructure's lookahead reports it first)"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

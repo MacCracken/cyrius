@@ -9705,7 +9705,8 @@ fn _bnd_check(S, g, c0, c1): i64 {
             # 6.7.14: a refusal the panic latch swallows prints nothing — its note alone, after an earlier
             # error in the statement (`gs(5) + gb(3)`), named a bound the reader was never shown. CHANGELOG [6.7.14]
             if (_panic == 1) { return 1; }
-            ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32));
+            if (g >= 0) { _gen_ident_err(S, g, gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32)); }
+            else { ERR_IDENT(S, "generic ", gnoff, ": its type argument does not implement trait ", L64(_tr_tab + tx * 32)); }
             # 6.7.14: the same refusal at the same token in another instance of the enclosing generic
             # (`gb<T>(x)` in `o<i32>` and `o<i16>`) is printed as nothing by the error latch: so is its note.
             if (_err_quiet == 1) { return 1; }
@@ -10231,7 +10232,7 @@ fn _bbf_push(g): i64 {
 fn _refuse_bnd_fwd(S, fi, noff): i64 {
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_panic == 1) { return 0; }
-    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
+    _gen_ident_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
     var r = _bbs_root - 1;
     if (r < 0) { return 0; }
     if (_bbs_why > 0) {
@@ -10263,7 +10264,7 @@ fn _refuse_bnd_base(S, fi, noff): i64 {
     if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
-    ERR_IDENT(S, "generic ", noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+    _gen_ident_err(S, fi, noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
     return 0;
 }
 
@@ -14390,16 +14391,49 @@ fn _gen_stub(S, fi): i64 {
     _gen_close(S);
     return GFGM(S, fi) & 3;
 }
-# The refusal, by name, for a scalar call / type argument / address of a stub generic.
-fn _refuse_gen_stub(S, noff): i64 {
-    ERR_IDENT(S, "generic ", noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
+# ⛔ 6.7.15 — A GENERIC METHOD'S REFUSALS NAME IT AS THE CALL SPELLS IT. The refusals below printed the fn table's
+# name, so `p.pick(5)` of a stub generic method was "generic 'P_pick' has no i64 ... instance" and `p.bm(3)` of a
+# bounded one "generic 'P_bm': its type argument does not implement trait 'Show'", where every other call-site
+# diagnostic names `P.pick` (6.7.14, `_fn_src_name`). `_gen_msp` is set while a call spelled as a method
+# (`p.m(..)`, `p.m<..>(..)`) is judged — `_mcall_gen` / `_mcall_inst`, `_meth_xinst`, `_mcall_xquiet` — and
+# `_gen_ident_err` then names the method `P.pick`; any other spelling is named as written (`P_pick(p, 9)` keeps
+# `P_pick`, a free generic `g`). Cleared while an instance's body is parsed (`_instantiate_generic_fn`), whose own
+# calls are judged by their own spelling. CHANGELOG [6.7.15]
+var _gen_msp = 0;
+# ERR_IDENT's "generic 'noff'<tail>['noff2']" for generic fi, which the site names `noff` — the method spelling
+# while `_gen_msp` is set. Its identity is ERR_IDENT's on `noff`, never on the scratch the spelling is written at.
+fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
+    var msg = "generic ";
+    if (_gen_msp == 0) { return ERR_IDENT(S, msg, noff, tail, noff2); }
+    if (_fn_src_name(S, fi, noff) == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": generic '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
+    PRSTR("'");
+    if (tail != 0) { PRSTR(tail); }
+    if (noff2 >= 0) {
+        PRSTR("'");
+        PRSTR(S + 0xEC00000 + noff2);
+        PRSTR("'");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
+fn _refuse_gen_stub(S, fi, noff): i64 {
+    _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
     return 0;
 }
 # `&g`: the address is the base's, so a stub base is refused like a scalar call.
 fn _gen_addr_check(S, fi, noff): i64 {
     if (_MONOMORPH_OK == 0) { return 0; }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return 0;
 }
 
@@ -14707,7 +14741,7 @@ fn _gen_call_head(S, fi, noff): i64 {
         _gh_inf1 = c1;
     }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return fi;
 }
 # ⛔ 6.7.11 — A GENERIC METHOD CALL `p.m(..)` REACHES THE INSTANCE ITS ARGUMENTS BIND, as the free
@@ -14735,14 +14769,18 @@ fn _mcall_gen(S, fi, open, rsid, emit): i64 {
     if (c0 > 0 || c1 > 0 || sc == 1) { return _mcall_inst(S, fi, c0, c1, emit); }
     if (emit == 0) { return fi; }
     var noff = L64(_fnt_names + fi * 8);
-    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    _gen_msp = 1;   # 6.7.15: its refusals name the method `P.m`
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); }
+    elif (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
+    _gen_msp = 0;
     return fi;
 }
 fn _mcall_inst(S, fi, c0, c1, emit): i64 {
+    _gen_msp = 1;   # 6.7.15: its bound's refusal names the method `P.m` (a lookahead's too: it may report first)
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec < 0) { if (emit == 1) { _refuse_gen_inst(S, fi, L64(_fnt_names + fi * 8), spec); } }
+    _gen_msp = 0;
     if (spec >= 0) { return spec; }
-    if (emit == 1) { _refuse_gen_inst(S, L64(_fnt_names + fi * 8), spec); }
     return fi;
 }
 # `_gen_infer_tp` for a method call: type parameter `which`'s carrying parameter k is passed at
@@ -14762,12 +14800,12 @@ fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
     if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
     var spec = _instantiate_generic_fn(S, fi, c0, c1);
     if (spec >= 0) { return spec; }
-    _refuse_gen_inst(S, noff, spec);
+    _refuse_gen_inst(S, fi, noff, spec);
     return fi;
 }
-fn _refuse_gen_inst(S, noff, spec): i64 {
+fn _refuse_gen_inst(S, fi, noff, spec): i64 {
     if (spec == 0 - 4) { return 0; }   # 6.7.1: a bound refusal, already reported
-    ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
+    _gen_ident_err(S, fi, noff, ": no definition to instantiate for a struct type argument", 0 - 1);
     return 0;
 }
 # 6.6.10 — THE FN A CALL AT TOKEN ti (`name(` / `name<..>(`) ACTUALLY REACHES: a generic's
@@ -14885,11 +14923,11 @@ fn _gen_own_call_check(S, fi, noff): i64 {
     if (_grc_err < 0) { if (_grc_fi == fi) {
             var e = _grc_err;
             _grc_err = 0;
-            _refuse_gen_inst(S, noff, e);
+            _refuse_gen_inst(S, fi, noff, e);
             return 0;
         } }
     if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return 0; }   # 6.7.1 (C3)
-    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return 0;
 }
 # The tail path (`return g(..);`) must take PARSE_FNCALL for a generic callee that the head would
@@ -15128,7 +15166,10 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_conc0 = conc0;
     _inst_conc1 = conc1;
     var attrs = _attr_park();         # 6.6.17: a pending attribute is the next definition's
+    var sv_msp = _gen_msp;            # 6.7.15: a method call's spelling names its own refusals, not the body's
+    _gen_msp = 0;
     PARSE_FN_DEF(S);
+    _gen_msp = sv_msp;
     _attr_unpark(attrs);
     _inst_name = 0;
     _inst_base_fi = 0 - 1;

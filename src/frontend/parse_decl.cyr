@@ -1988,15 +1988,18 @@ fn _meth_xinst(S, mf, c0, c1): i64 {
     if (c0 != 0 - 8) { base = 0; }
     if (c1 != 0) { if (c1 != 0 - 8) { base = 0; } }
     if (c0 < 0) { if (c1 <= 0) { if (_gen_stub(S, mf) != 0) { base = 1; } } }
+    _gen_msp = 1;   # 6.7.15: its refusals name the method `P.m`
     if (base == 1) {
-        if (_bnd_base_bad(S, mf) == 1) { _refuse_bnd_base(S, mf, mn); return mf; }
-        if (_gen_stub(S, mf) != 0) { _refuse_gen_stub(S, mn); }
+        if (_bnd_base_bad(S, mf) == 1) { _refuse_bnd_base(S, mf, mn); }
+        elif (_gen_stub(S, mf) != 0) { _refuse_gen_stub(S, mf, mn); }
+        _gen_msp = 0;
         return mf;
     }
     var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    if (spec < 0) { if (spec != 0 - 4) { _refuse_gen_inst(S, mf, mn, spec); } }
+    _gen_msp = 0;
     if (spec >= 0) { return spec; }
-    if (spec == 0 - 4) { _mx_qt = 1; return mf; }   # the bound's refusal, reported at the type it binds
-    _refuse_gen_inst(S, mn, spec);
+    if (spec == 0 - 4) { _mx_qt = 1; }   # the bound's refusal, reported at the type it binds
     return mf;
 }
 # 6.7.15: the fn the explicit `x.m<..>(` reaches, generic method mf with its list's `<` at token lt — for a
@@ -2026,7 +2029,9 @@ fn _mcall_xquiet(S, mf, lt): i64 {
         if (_gen_stub(S, mf) != 0) { return mf; }
         if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return mf; }
     }
+    _gen_msp = 1;   # 6.7.15: a bound refusal here (it may report first) names the method `P.m`
     var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    _gen_msp = 0;
     if (spec >= 0) { return spec; }
     return mf;
 }
