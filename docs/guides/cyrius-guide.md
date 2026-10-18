@@ -1874,7 +1874,9 @@ refused *… got `w`*). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&
 (through 6.7.13 one word: x86_64 / aarch64 1, cx 155, Windows 195 where 161 is right). A method — and (6.7.14)
 `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped too — declared to return another vector is refused as a by-name call is
 (`vector return type does not match the declared type` / `.. the assigned variable`; through 6.7.13 the fncallN /
-callptr form got the generic refusal below, *… got `callptr`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
+callptr form got the generic refusal below, *… got `callptr`*), and (6.7.15) so is a by-name call or a method of
+another vector inside parentheses, `var v: f64v2 = (mk4(41));` / `w = (s.mv());` (through 6.7.14 the generic refusal,
+*… got `(...)`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
 a method's vector into a scalar, struct or pointer local, `var x: i64 = s.mv();` / `x = s.mv();`, as `var x: i64 =
 mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its

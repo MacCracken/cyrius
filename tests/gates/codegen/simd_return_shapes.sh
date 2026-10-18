@@ -179,6 +179,17 @@
 # assert no such warning, Q13 the by-name mismatch, and every Q row; TP is the control: `p = 5;` into a `*Pt` local and
 # `q = 7;` into a `*i64` one still warn (twice), on all four legs.
 #   M-T1 the parse.cyr guard reverted (measured) -> RED 8: H9 Q13 on all four legs; TP green
+# 6.7.15 (issues/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md) — a
+# by-name call (an explicit instance too) or a method (a field chain's too) of ANOTHER vector INSIDE PARENTHESES, into a
+# vector local, is refused in the by-name call's words, as unwrapped: one mismatch check for every spelling (`_vrcv_bad`
+# over `_vcall_vt`, which folds 6.7.13's `_vrcv_mbad` and 6.7.14's `_vrcv_ibad`). It was the receive's generic line,
+# "got `(...)`", on all four legs. Rows Q14-Q17 the filed repro's four sources one at a time, Q18 a for step's double
+# wrap, Q19 a double-wrapped `mkg<i64>(..)`, Q20 a wrapped chained method; QF the filed repro verbatim (its four lines,
+# in order). Mutations (2026-10-18, measured):
+#   M-W1 `_vcall_vt` answering 0 for a wrapped by-name call / method -> RED 32: Q14-Q20 QF on all four legs; Q9 Q10
+#       (wrapped `callptr` / `fncallN`) green
+#   M-W2 `_vrcv_bad` never refusing                      -> RED 82: Q1 Q2 Q5-Q12 Q14-Q20 QF on all four legs, CRK3 CRK4
+#       on all five (the generic line)
 # Q3 runs on win64 too since D30 (simd_pointer_param.sh's VZ4: a word into Win64's value-form parameter is refused);
 # M-VC3 there (`_sarg_pe_vword` answering 0) -> RED win64 Q3 here; 6.7.14: M-PV1 / M-PV2 there (`_sarg_pe_vform`, which
 # folds it) -> RED win64 Q3 here.
@@ -651,6 +662,12 @@ syscall(60, run() % 256);
     esac
 }
 C_ROWS="C1 C2 C3 C4 C5"
+# 6.7.15 (issues/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md): the
+# filed repro's own definitions — an f64v4 by name and an f64v4 method, wrapped into f64v2 locals (Q14-Q20, QF).
+QW='fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); return v; }
+struct S { k; }
+impl S { fn mv(self): f64v4 { var v: f64v4; return v; } }
+'
 q_src() {  # $1 row id -> source on stdout
     case "$1" in
     Q1) printf '%s' "$CH"'fn run(): i64 { var s: S = S { 1 }; var v: f64v4 = s.mv(); return 1; }
@@ -695,17 +712,40 @@ syscall(60, run());
     Q13) printf '%s' "$CH"'fn run(): i64 { var v: f64v2 = mkv(1, 2); v = mk4(41); return lanes(v); }
 syscall(60, run());
 ' ;;
+    Q14) printf '%s' "$QW"'fn run(): i64 { var s: S = S { 1 }; var v: f64v2 = (mk4(41)); return 1; }
+syscall(60, run());
+' ;;
+    Q15) printf '%s' "$QW"'fn run(): i64 { var s: S = S { 1 }; var w: f64v2 = (s.mv()); return 1; }
+syscall(60, run());
+' ;;
+    Q16) printf '%s' "$QW"'fn run(): i64 { var s: S = S { 1 }; var v: f64v2; v = (mk4(41)); return 1; }
+syscall(60, run());
+' ;;
+    Q17) printf '%s' "$QW"'fn run(): i64 { var s: S = S { 1 }; var w: f64v2; w = (s.mv()); return 1; }
+syscall(60, run());
+' ;;
+    Q18) printf '%s' "$QW"'fn run(): i64 { var v: f64v2; var i = 0; for (i = 0; i < 1; v = ((mk4(i)))) { i = i + 1; } return 1; }
+syscall(60, run());
+' ;;
+    Q19) printf '%s' "$QW"'fn mkg<U>(a: U): f64v4 { var v: f64v4; store64(&v, a); return v; }
+fn run(): i64 { var v: f64v2 = ((mkg<i64>(41))); return 1; }
+syscall(60, run());
+' ;;
+    Q20) printf '%s' "$QW"'struct T { s: S; }
+fn run(): i64 { var t: T; var w: f64v2; w = (t.s.mv()); return 1; }
+syscall(60, run());
+' ;;
     esac
 }
-Q_ROWS="Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 Q11 Q12 Q13"
+Q_ROWS="Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q9 Q10 Q11 Q12 Q13 Q14 Q15 Q16 Q17 Q18 Q19 Q20"
 q_msg() {
     case "$1" in
     Q1) echo "vector return type does not match the declared type";;
     Q2) echo "vector return type does not match the assigned variable";;
     Q3) echo "value-form SIMD arg must be a 16-byte vector";;
     Q4) echo "$MSG";;
-    Q5|Q7|Q9|Q11) echo "vector return type does not match the declared type";;
-    Q6|Q8|Q10|Q12|Q13) echo "vector return type does not match the assigned variable";;
+    Q5|Q7|Q9|Q11|Q14|Q15|Q19) echo "vector return type does not match the declared type";;
+    Q6|Q8|Q10|Q12|Q13|Q16|Q17|Q18|Q20) echo "vector return type does not match the assigned variable";;
     esac
 }
 # ---- 6.7.13 (D34 A): `*p` of a `*V` into a value-form vector local (rows P accepted, 161; K refused once) ----------------
@@ -1399,6 +1439,25 @@ refuse_q_all() {  # $1 leg label  $2 compiler
     done
 }
 
+# 6.7.15: QF — the filed repro verbatim (issues/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-
+# local-generic-words.md): its four wrapped sources refused in the by-name call's words, one line each, in order, and
+# no generic receive line ("got `(...)`").
+qf_src() { printf '%s' "$QW"'fn run(): i64 { var s: S = S { 1 }; var v: f64v2 = (mk4(41)); var w: f64v2 = (s.mv()); return 1; }
+fn run2(): i64 { var s: S = S { 1 }; var v: f64v2; v = (mk4(41)); var w: f64v2; w = (s.mv()); return 1; }
+syscall(60, run() + run2());
+'; }
+refuse_qf_all() {  # $1 leg label  $2 compiler
+    qf_src > "$W/qf.cyr"
+    rc=0
+    "$2" < "$W/qf.cyr" > "$W/qf.out" 2>"$W/qf.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    got=$(grep '^error' "$W/qf.err" | sed 's/^error:<source>://' | tr '\n' '|')
+    want="4:53: vector return type does not match the declared type|4:79: vector return type does not match the declared type|5:57: vector return type does not match the assigned variable|5:86: vector return type does not match the assigned variable|"
+    if [ "$got" != "$want" ]; then bad "$1 QF: '$got' (rc=$rc), want '$want'"
+    elif [ -s "$W/qf.out" ]; then bad "$1 QF: reported but still emitted an artifact"
+    else good "$1 QF refused: the four lines, the mismatch's words"; fi
+}
+
 # 6.7.13 (D34): rows P built by the leg's compiler and run (161); rows K refused once, by their own words, no artifact.
 accept_p_all() {  # $1 leg label  $2 compiler  $3 runner fn name  [$4 VAR=value for the compiler]
     for row in $P_ROWS; do
@@ -1589,6 +1648,7 @@ refuse_z_all host "$CC"
 accept_c_all host "$CC" hostr
 accept_c_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_q_all host "$CC"
+refuse_qf_all host "$CC"
 accept_p_all host "$CC" hostr
 accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
@@ -1621,6 +1681,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_z_all cx "$W/cycc_cx"
     accept_c_all cx "$W/cycc_cx" cxr
     refuse_q_all cx "$W/cycc_cx"
+    refuse_qf_all cx "$W/cycc_cx"
     accept_p_all cx "$W/cycc_cx" cxr
     refuse_k_all cx "$W/cycc_cx"
     accept_tab_all cx "$W/cycc_cx" cxr d_src "$D_ROWS"
@@ -1651,6 +1712,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_z_all aarch64 "$W/cycc_a64"
         accept_c_all aarch64 "$W/cycc_a64" a64r
         refuse_q_all aarch64 "$W/cycc_a64"
+        refuse_qf_all aarch64 "$W/cycc_a64"
         accept_p_all aarch64 "$W/cycc_a64" a64r
         refuse_k_all aarch64 "$W/cycc_a64"
         accept_tab_all aarch64 "$W/cycc_a64" a64r d_src "$D_ROWS"
@@ -1686,6 +1748,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_z_all win64 "$W/cycc_win"
         accept_c_all win64 "$W/cycc_win" wr_
         refuse_q_all win64 "$W/cycc_win"
+        refuse_qf_all win64 "$W/cycc_win"
         accept_p_all win64 "$W/cycc_win" wr_
         refuse_k_all win64 "$W/cycc_win"
         accept_tab_all win64 "$W/cycc_win" wr_ d_src "$D_ROWS"
@@ -1710,7 +1773,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + CRK (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers

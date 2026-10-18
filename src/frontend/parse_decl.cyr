@@ -8251,34 +8251,48 @@ fn _vrcv_mty(S, ti): i64 {
     if (mf < 0) { return 0; }
     return GFRS(S, mf);
 }
-# A whole method call at token `ti` (ended by `term`) declared to return a vector other than `ty`, into a vector
-# local of type `ty`: refused by name, in the by-name call's words (`verb` "declared type" / "assigned variable") — 1;
-# else 0. CHANGELOG [6.7.13]
-fn _vrcv_mbad(S, ti, ty, term, verb): i64 {
-    var mt = _vrcv_mty(S, ti);
-    if (mt == 0) { return 0; }
-    if (mt == ty) { return 0; }
-    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != term) { return 0; }
-    return _vrcv_tyerr(S, ti, verb);
-}
-# ⛔ 6.7.14 — `callptr(&f, ..)` / `fncallN(&f, ..)` OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH.
-# `var v: f64v2 = callptr(&mk4, 41);` (`mk4` declared `: f64v4`) and `v = ..` were refused with the receive's generic
-# words ("a value-form vector local is initialised only from .. a call declared to return it (by name, a method, or
-# fncallN / callptr with the callee written `&f`) .. - got `callptr`"), whose own list names the shape written; by name
-# the same call is "vector return type does not match the declared type", a method as well (6.7.13's D29). The whole
-# call at token `ti` (ended by `term`), inside any parentheses, through fncallN / callptr with its callee written `&f`
-# (`_icall_rs_at`) declared to return a vector other than `ty`: refused in the by-name call's words, at the call, before
-# it is parsed — 1 (the panic latch keeps the generic line away); else 0. CHANGELOG [6.7.14]
-fn _vrcv_ibad(S, ti, ty, term, verb): i64 {
-    var e = _hl_dx_end(S, ti, term);
-    if (e < 0) { return 0; }
-    var a = _ie_unparen(S, ti, e);
-    var pe = _ie_pe;
-    var rs = _icall_rs_at(S, a);
+# ⛔ 6.7.14 — A CALL OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH, IN THE BY-NAME CALL'S WORDS, at every
+# spelling of the call: a method (6.7.13's D29), `callptr(&f, ..)` / `fncallN(&f, ..)` (6.7.14) and — 6.7.15 — inside
+# parentheses a by-name call or a method too (`var v: f64v2 = (mk4(41));`, `w = (s.mv());`), which got the receive's
+# generic refusal ("a value-form vector local is initialised only from .. - got `(...)`"), whose own list names the
+# shape written. The whole call at token `ti` (ended by `term`, inside any parentheses; `_vcall_vt`) declared to
+# return a vector other than `ty`: refused, `verb` 0 "declared type" / 1 "assigned variable", at the call, before it
+# is parsed — 1 (the panic latch keeps the generic line away, and prints the unwrapped by-name call's refusal once:
+# PARSE_VAR and `_try_vector_call_assign` refuse it too); else 0. CHANGELOG [6.7.14] [6.7.15]
+fn _vrcv_bad(S, ti, ty, term, verb): i64 {
+    var rs = _vcall_vt(S, ti, term, 0);
     if (rs > 0 - 2048) { return 0; }
     if (rs == ty) { return 0; }
-    if (_call_close(S, a + 1) + 1 != pe) { return 0; }
-    return _vrcv_tyerr(S, a, verb);
+    return _vrcv_tyerr(S, _vcv_a, verb);
+}
+# ⛔ 6.7.15 — THE VECTOR A CALL DECLARES, ONE ANSWER FOR THE RECEIVES. The vector (its descriptor, <= -2048) the call at
+# token `ti` is declared to return, else 0: by name or an explicit instance `g<T>(..)` (`_vcall_fi`), a method on a
+# single name or a field chain (`_vmc_fi`), `fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`
+# (`_icall_rs_at`) — inside any parentheses wrapping the whole source [ti, `term`) (`_hl_dx_end`, `_ie_unparen`).
+# `start` 0: the call is the whole source; 1: an unwrapped call may start it (`mk2(..) + 1`). `_vcv_a` the call's first
+# token. CHANGELOG [6.7.15]
+var _vcv_a = 0;
+fn _vcall_vt(S, ti, term, start): i64 {
+    var a = ti;
+    var pe = 0 - 1;
+    var e = _hl_dx_end(S, ti, term);
+    if (e >= 0) {
+        a = _ie_unparen(S, ti, e);
+        pe = _ie_pe;
+    }
+    _vcv_a = a;
+    var rs = _icall_rs_at(S, a);
+    var o = a + 1;
+    if (rs > 0 - 2048) {
+        var f = _vcall_fi(S, a);
+        if (f < 0) { f = _vmc_fi(S, a); }
+        if (f < 0) { return 0; }
+        rs = GFRS(S, f);
+        o = _vcall_o;
+    }
+    if (start == 1) { if (a == ti) { return rs; } }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    return rs;
 }
 # The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. 1.
 fn _vrcv_tyerr(S, ti, verb): i64 {
@@ -8352,9 +8366,7 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     if (_vrcv_vec(S, pscale) == 0) { return _vrcv_mscal(S, pscale, ann); }   # 6.7.14 (D38): `var x: i64 = s.mv();`
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
     if (k == 0) {
-        if (_vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0) == 0) {   # 6.7.13 (D29): a method declared to return another vector
-            _vrcv_ibad(S, GTI(S) + 1, pscale, 5, 0);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
-        }
+        _vrcv_bad(S, GTI(S) + 1, pscale, 5, 0);   # a call of another vector, wrapped or not
         return 0;
     }
     if (_vrcv_k == 0) { if (k == 1) { if (_vrcv_g == 0) { return 0; } } }   # 6.7.13: `g<T>(..)` is ours
@@ -8439,9 +8451,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) {
-        if (_vrcv_mbad(S, GTI(S), lt, term, 1) == 0) {   # 6.7.13 (D29): a method declared to return another vector
-            _vrcv_ibad(S, GTI(S), lt, term, 1);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
-        }
+        _vrcv_bad(S, GTI(S), lt, term, 1);   # a call of another vector, wrapped or not
         return _vrcv_other(S, term);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
