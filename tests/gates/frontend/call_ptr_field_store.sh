@@ -26,7 +26,7 @@
 # tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary");
 # T6-T15 (6.7.15) a top-level METHOD returning a struct by value, its `*T` field subscripted, one error (T6 the filed
 # repro; T13 its in-fn control, exit 5; T14 a genuine non-`*T` subscript in a fn keeps its refusal; T15 the next
-# statement still checked).
+# statement still checked); T16-T18 (6.7.15) the free call's value twin, `var x = mk().p[0];` at top level, one error.
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -88,6 +88,7 @@
 #   t1 `_method_chain`'s top-level arm stepping only its `.name` / `(..)` steps (= the tree before) -> RED 32: T6-T12,
 #                                                     T15 x4 (the second, false "cannot subscript field 'p': it is not
 #                                                     a *T field")
+#   t2 `_call_field`'s refusal arm without its `[..]` step (= the tree before) -> RED 12: T16-T18 x4
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -386,6 +387,29 @@ for leg in $(legs); do
     esac
 done
 
+# --- T16-T18 (6.7.15, found beside T6): the FREE call's value twin, `var x = mk().p[0];` at top level — the statement
+# `mkp().p[0] = 5;` was one error since 6.7.14 (T3), the value two (the false "cannot subscript field 'p'").
+trow T16 'fn mk(): H { var h: H; h.n = 1; h.p = &buf; return h; }
+var x = mk().p[0];'
+refused T16 "'mk' $NS" "top-level \`var x = mk().p[0];\`, a free call's value, one error"
+trow T17 'fn mk(): H { var h: H; h.n = 1; h.p = &buf; return h; }
+syscall(60, mk().p[0]);'
+refused T17 "'mk' $NS" "top-level \`syscall(60, mk().p[0]);\`, an argument, one error"
+trow T18 'fn mk(): H { var h: H; h.n = 1; h.p = &buf; return h; }
+var x = mk().p[0] + 1;
+var y = zz;'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" T18
+    e=$(grep '^error' "$T/T18.$leg.err" | tr '\n' '|')
+    n=$(grep -c '^error' "$T/T18.$leg.err" || true)
+    case $e in
+        *"'mk' $NS"*"undefined variable 'zz'"*)
+            if [ "$n" -eq 2 ]; then ok "T18 the next statement still checked ($leg)"; else bad "T18 ($leg): $n errors (want 2)"; fi ;;
+        *) bad "T18 the next statement still checked ($leg): $e" ;;
+    esac
+done
+
 # --- K: controls ---
 row K1 'fn go(): i64 { gpb().n = 5; return load64(&buf); }
 fn gpb(): *H { return &buf; }'
@@ -583,8 +607,8 @@ synonly S8 1 "$MT" "control: a by-value callee this file defines keeps the refus
 srow S9 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return 0; }'
 synonly S9 1 "$MT" "control: ... as a for step too"
 
-FLOOR_ROWS=69   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T15
+FLOOR_ROWS=72   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

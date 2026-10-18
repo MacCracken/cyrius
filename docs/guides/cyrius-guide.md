@@ -1390,7 +1390,7 @@ since 6.7.0, to a nested field of it (`mk(3).v.sum()` calls `Pt_sum` with the fi
 `b.v.sum()` does — see *Traits and impl blocks*). At top level there is no frame:
 `var G = mk(3).n;` is refused by name — call it inside a fn — and so is `mk(3).n = 5;` there (a method's
 `b.mk(4).n = 5;`, `mk(3).p[0] = 5;`), once (until 6.7.14 each was also reported a second time; a method's
-`b.mk(4).p[0] = 5;` and `var x = b.mk(4).p[0];` until 6.7.15). A field of a call to a fn that
+`b.mk(4).p[0] = 5;`, and the values `var x = mk(3).p[0];` / `var x = b.mk(4).p[0];`, until 6.7.15). A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
 (`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
 `expected ';', got '='` until 6.7.5): the result is a temporary. A field of a call to a fn defined nowhere

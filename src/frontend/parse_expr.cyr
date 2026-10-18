@@ -3478,6 +3478,9 @@ fn _call_field(S): i64 {
         _synonly_skip_chain(S);
         # a method on the refused result: its arguments too, or `(` is a second error
         if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+        # 6.7.15: and the top-level refusal's `[..]` with the chain past it, as a method's (`_method_chain`): `var x =
+        # mk().p[0];` added a false "cannot subscript field 'p'". --syntax-only parses the index. CHANGELOG [6.7.15]
+        if (_syntax_only == 0) { if (sid > 0) { STI(S, _pf_chain_end(S, GTI(S))); } }
         if (_syntax_only == 1) { if (_fn_nodef(S, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn
         _cfo = 0;
         return 1;
