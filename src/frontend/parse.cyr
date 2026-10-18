@@ -1752,6 +1752,7 @@ var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
 var _sc_sid = 0;        # the struct it returned
 var _scv_un = 0 - 1;    # 6.7.11: the token an untyped declaration's wrap stepped to (`_scv_un_peel`)
 var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
+var _sc_fi = 0 - 1;     # 6.7.14: its fn (-1: none), so an argument refusal names a method `S2.dup` (`_fn_src_name`)
 var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
 var _sc_vbeg = 0 - 1;   # 6.7.13 (D29): the receiver token of a method whose vector a receive takes (`_sc_vret`)
 var _sc_vdst = 0;       # ... and that receive's slot
@@ -1791,6 +1792,11 @@ var _dlo_h = 0;         # the hidden temp holding that pointer (`_HTEMP`)
 var _dlo_hit = 0;       # 1 = `_op_lst` matched it
 var _dro_want = 0 - 1;  # the `*` an address-passed argument / right operand asks `_dlo_park` to park (ops-5)
 var _dro_vt = 0 - 1;    # 6.7.12: ... the same `*` when that argument's parameter is a `*V` (`_dlo_vec`)
+var _dro_vo = 0 - 1;    # 6.7.14: the `*` starting an argument to a pointer of another kind or a small by-value struct
+var _dro_vod = 0;       # ... the vector its dereference read (`_dro_vnote`: its descriptor), 0 = none
+var _dro_vend = 0;      # ... the token after that dereference's operand
+var _dvi_want = 0 - 1;  # 6.7.14 (D36): the `*` of an untyped declaration's whole `*p` (`_dvi_arm`, parse_fn.cyr)
+var _dvi_got = 0 - 1;   # ... that `*` once its `*V` operand's pointer is parked (`_dvi_park`)
 var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
 var _fnc_lt = 0 - 1;    #   its temp,
 var _fnc_lcp = 0 - 1;   #   and the code pointer after it
@@ -5988,8 +5994,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # about the same expression.
                 # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
                 # the literal 0 is a null reset, never warned (`_tp_warn`).
+                # 6.7.14: never a value-form vector local — its SLTYPE is a descriptor (<= -2048), negative but no
+                # `0 - sid`: `v = f64v2_splat(1.0);` with the fn undefined (the undefined-function path's since 6.7.13)
+                # and `v = mk4(..)` of another vector (refused) warned "assigning non-pointer to typed pointer".
                 if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
-                    if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_l(S, _asg_ti, idx); } }
+                    if (lt > 0 - 2048) { if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_l(S, _asg_ti, idx); } } }
                 }
             }
         }

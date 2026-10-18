@@ -22,7 +22,8 @@
 # recorded struct (SFPSID — the instance's for a generic; a generic instance where the base is
 # declared, and the reverse, included) is refused by name, in the 6.6.12 field arm's words:
 #   cannot pass '<arg>' to a parameter of a different struct type in a call to '<fn>'
-# <arg> is the variable, the called fn, the method fn or the field. Covered: inline, pointer-mode
+# <arg> is the variable, the called fn, the method (as the source spells it, `Pt.dup` — 6.7.14; it printed the fn
+# name `Pt_dup`) or the field. Covered: inline, pointer-mode
 # and `*T` locals; a global (in a fn and at top level); a closure capture; a free call (a generic
 # instance included); a method or operator result (<= 8 B, 9-16 B and > 16 B); a whole field; the
 # three argument loops (a call, a method's arguments, a tail call); a callee defined after the
@@ -190,6 +191,12 @@
 #   `_sarg_sval_ptr` without its `_dx_plain` test      -> RED 1: VK3 (the `Str` field refused)
 #   `_sarg_sval_ptr` refusing any argument it parses   -> RED 4: PK1 VK1 VK2 VK3 (a handle, `&s`, a `*Pt` field, a `: *Pt` call
 #                                                         and method, an address, a `*i64` dereference, a scalar field refused)
+#
+# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — a method-result argument is
+# named as the source spells it: R9 R23 R24 R24b R28b `Pt.dup` / `Pt.t1` / `Pt.v2` / `Pt.mq` (they printed `Pt_dup` ..),
+# R9k a local named `Pt_dup` keeps its name. The multi-target rows are simd_pointer_param.sh SM. Mutations (measured):
+#   `_sarg_ident_err` ignoring the call's fn          -> RED 5: R9 R23 R24 R24b R28b
+#   `_expr_struct_sid` not recording it (`_ess_fi`)   -> RED 3: R23 R24 R24b
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -359,8 +366,10 @@ refuse "R7 a closure capture" "cannot pass 'p' $MA 'bq'" \
 ${T}fn go(): i64 { ${PQ} var f = || bq(p); return fncall0(f); } syscall(60, go());"
 refuse "R8 a free call returning Pt" "cannot pass 'mkp' $MA 'bq'" \
     "${T}fn go(): i64 { return bq(mkp()); } syscall(60, go());"
-refuse "R9 a method result (Pt_dup)" "cannot pass 'Pt_dup' $MA 'bq'" \
+refuse "R9 a method result (Pt.dup)" "cannot pass 'Pt\.dup' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} return bq(p.dup()); } syscall(60, go());"
+refuse "R9k a local named Pt_dup keeps its name (6.7.14)" "cannot pass 'Pt_dup' $MA 'bq'" \
+    "${T}fn go(): i64 { ${PQ} var a = p.dup(); var Pt_dup: Pt; return bq(Pt_dup); } syscall(60, go());"
 refuse "R10 a method's ARGUMENT, p.takeq(r)" "cannot pass 'r' $MA 'Pt.takeq'" \
     "${T}fn go(): i64 { ${PQ} var r: Pt; return p.takeq(r); } syscall(60, go());"
 refuse "R11 Q_cc(p), an untyped impl self" "cannot pass 'p' $MA 'Q.cc'" \
@@ -449,11 +458,11 @@ refuse "R21 bs1(t), a T1 local" "cannot pass 't' $MA 'bs1'" \
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(t); } syscall(60, go());"
 refuse "R22 bs1(mkt1())" "cannot pass 'mkt1' $MA 'bs1'" \
     "${T}fn go(): i64 { return bs1(mkt1()); } syscall(60, go());"
-refuse "R23 bs1(p.t1()), an 8 B method result" "cannot pass 'Pt_t1' $MA 'bs1'" \
+refuse "R23 bs1(p.t1()), an 8 B method result" "cannot pass 'Pt\.t1' $MA 'bs1'" \
     "${T}fn go(): i64 { ${PQ} return bs1(p.t1()); } syscall(60, go());"
-refuse "R24 bs1(p.v2()), a 16 B method result" "cannot pass 'Pt_v2' $MA 'bs1'" \
+refuse "R24 bs1(p.v2()), a 16 B method result" "cannot pass 'Pt\.v2' $MA 'bs1'" \
     "${T}fn go(): i64 { ${PQ} return bs1(p.v2()); } syscall(60, go());"
-refuse "R24b bs1(p.mq()), a 24 B method result" "cannot pass 'Pt_mq' $MA 'bs1'" \
+refuse "R24b bs1(p.mq()), a 24 B method result" "cannot pass 'Pt\.mq' $MA 'bs1'" \
     "${T}fn go(): i64 { ${PQ} return bs1(p.mq()); } syscall(60, go());"
 refuse "R25 bs1(h.t), an 8 B field" "cannot pass 't' $MA 'bs1'" \
     "${T}fn go(): i64 { var h: H; h.t.w = 9; return bs1(h.t); } syscall(60, go());"
@@ -469,7 +478,7 @@ refuse "R27 q + p with Q_add(a: Q, b: Q)" "cannot pass 'p' $MA 'Q_add'" \
     "${T}fn go(): i64 { ${PQ} return q + p; } syscall(60, go());"
 refuse "R28 q + mkp()" "cannot pass 'mkp' $MA 'Q_add'" \
     "${T}fn go(): i64 { ${PQ} return q + mkp(); } syscall(60, go());"
-refuse "R28b q + p.dup()" "cannot pass 'Pt_dup' $MA 'Q_add'" \
+refuse "R28b q + p.dup()" "cannot pass 'Pt\.dup' $MA 'Q_add'" \
     "${T}fn go(): i64 { ${PQ} return q + p.dup(); } syscall(60, go());"
 refuse "R29 q + (p)" "cannot pass 'p' $MA 'Q_add'" \
     "${T}fn go(): i64 { ${PQ} return q + (p); } syscall(60, go());"

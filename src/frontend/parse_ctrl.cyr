@@ -620,6 +620,7 @@ fn _ie_struct_result(S, st): i64 {
     _sc_tmp = 0 - 3;
     _sc_sid = sid;
     _sc_fn = L64(S + 0x1A6018 + (sid - 1) * 8);
+    _sc_fi = 0 - 1;
     return 0;
 }
 

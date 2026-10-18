@@ -6,9 +6,17 @@
 # read 8 bytes one BYTE past the pointee (the filed repro exited 1 on x86_64 and aarch64), `**pp` read 8 bytes
 # whatever T was, and `var q: *T = *pp;` warned "assigning non-pointer to typed pointer"
 # (issues/archived/2026-10-13-double-pointer-dereference-is-an-untyped-word.md). The pointee's step word now rides the
-# `**T`'s (its pin, bits 56-62): a local, a parameter, a closure capture, a global, a field, a `: **T` return, a
+# `**T`'s (its pin; 6.7.14: bit 62 and bits 48-61): a local, a parameter, a closure capture, a global, a field, a `: **T` return, a
 # generic instance's, `pp + n`, a `***T` (whose `*ppp` is a `**T`), a field `**S` of the struct being declared
 # (sized when it is dereferenced), a `**f64v2` (its `*ppv` a `*f64v2`: `rd(**ppv)` passes the pointer, D27).
+#
+# GI (6.7.14, the user's decision D40 A, 2026-10-16): a generic's `pp: **T` with no `<..>` binds T to the struct a
+# `**S` argument points through to, as `st<S>(pps)` does — `st(pps)` ran the i64 base, so `*pp + 1` stepped 8 and
+# `take(**pp)` into `*P3` faulted (issues/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md). Every
+# `**S` source (a local, a parameter, a global, a field chain, a call, a generic call, `&p` / `&G` of a `*S`, a
+# capture), a method, a `: T` result, two type parameters, a named argument, a forward call, a forwarder; GK: the
+# controls (a direct or a struct carrier wins; a `*S`, a `**i32`, a `**Q2` that is no `**T`, a wrapped or computed
+# argument bind nothing). The filed repros verbatim: tests/gates/frontend/generic_double_pointer_infer.sh.
 #
 # CROSS-HOST: frontend typing, but the element reads and writes are each backend's narrow loads and stores. Run
 # on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
@@ -21,6 +29,11 @@ include "lib/assert.cyr"
 
 struct Node { val; kids: **Node; n; }
 struct H { k; pp: **i64; p8: **u8; }
+struct GiP3 { a; b; c; }   # GI (below)
+struct GiQ2 { u; v; }
+struct GiW { x; pp: **GiP3; }
+struct GiH { k; w: GiW; }
+impl GiP3 { fn gm<T>(self, pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b + self.c; } }
 
 var GA: i64[3];
 var GP: *i64 = 0;
@@ -231,6 +244,63 @@ fn r_global(): i64 { var q: *i64 = *GPP; return *(*GPP + 1) * 10 + *(q + 2); }
 fn r_ret(): i64 { return *(*gpp() + 2); }
 fn r_gtriple(): i64 { return *(**GPPP + 1); }
 
+# GI — a `pp: **T` binds T from a `**S` argument (D40 A). Each was the i64 base: 8, or a fault for `take(**pp)`.
+fn gi_take(p: *GiP3): i64 { return p.c; }
+fn gi_uses(): i64 { var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; return gi_late(&ps); }   # above the generic
+fn gi_st<T>(pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b; }
+fn gi_tg<T>(pp: **T): i64 { return gi_take(**pp); }
+fn gi_sz<T>(pp: **T): i64 { return sizeof(T); }
+fn gi_late<T>(pp: **T): i64 { return sizeof(T); }
+fn gi_gd<T>(pp: **T): T { return **pp; }
+fn gi_two<A, B>(pa: **A, pb: **B): i64 { return sizeof(A) * 100 + sizeof(B); }
+fn gi_fw<T>(pp: **T): i64 { return gi_st(pp); }
+fn gi_gpp<T>(x: **T): **T { return x; }
+fn gi_viap(pps: **GiP3): i64 { return gi_st(pps) + gi_tg(pps); }
+fn gi_mix<T>(pp: **T, x: T): i64 { return sizeof(T); }
+fn gi_both<T>(b: *Bx<T>, pp: **T): i64 { return sizeof(T); }
+fn gi_nt<T>(pp: **GiQ2): i64 { return sizeof(T); }
+var GI_S = GiP3 { 7, 8, 42 };
+var GI_PS: *GiP3 = &GI_S;
+var GI_PPS: **GiP3 = &GI_PS;
+fn gi_mkpp(): **GiP3 { return GI_PPS; }
+fn gi_fields(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    var w: GiW; w.pp = pps; var h: GiH; h.w.pp = pps; var pw: *GiW = &w;
+    return gi_st(w.pp) * 10000 + gi_tg(h.w.pp) * 100 + gi_tg(pw.pp);   # 244242
+}
+fn gi_addr(): i64 { var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; return gi_st(&ps) * 100 + gi_tg(&GI_PS); }
+fn gi_cap(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    var f = |k| gi_tg(pps) * 100 + gi_st(pps) + k;
+    return fncall1(f, 1);   # 4225
+}
+fn gi_meth(): i64 { var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; return s.gm(pps); }
+fn gi_result(): i64 { var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var v = gi_gd(pps); return v.c; }
+fn gi_pair(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    var q: GiQ2; var pq: *GiQ2 = &q; var ppq: **GiQ2 = &pq;
+    return gi_two(pps, ppq);   # 2416
+}
+fn gi_local(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    return gi_st(pps) * 100 + gi_tg(pps);   # 2442
+}
+fn gi_misc(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    return gi_sz(pps) * 10000 + gi_sz(pp: pps) * 100 + gi_fw(pps);   # 242424
+}
+fn gi_ctl(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    var i: i32 = 5; var pi: *i32 = &i; var ppi: **i32 = &pi;
+    return gi_mix(pps, 7) * 10000 + gi_sz(ps) * 100 + gi_sz(ppi);   # 80808
+}
+fn gi_ctl2(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    var q: GiQ2; var pq: *GiQ2 = &q; var ppq: **GiQ2 = &pq;
+    var bq: Bx<GiQ2>;
+    return gi_both(&bq, pps) * 1000000 + gi_nt(ppq) * 10000 + gi_sz((pps)) * 100 + gi_sz(pps + 0);   # 16080808
+}
+
 assert_eq(dp_filed(), 0, "the filed repro: *(*pp + 1) and second(pp) read the second element (it exited 1)");
 assert_eq(r_local(), 4202, "a **i64 local: *pp + 1 / + 2 step elements, *pp + 2 - *pp is 2");
 assert_eq(r_bytes(), 8, "untyped copies of *pp + 1 and *pp are 8 bytes apart");
@@ -257,4 +327,18 @@ assert_eq(r_ifexpr(), 22, "an if-expression of two *pp branches is the *i64");
 assert_eq(r_box(), 8, "a **Bx<i32>: *pp + 1 steps the instance's size");
 assert_eq(r_f32(), 0x40600000, "**pp through a **f32 is the f32 element: **pp + one is an f32 add");
 assert_eq(r_vec(), 1611, "a **f64v2: *ppt + 1 steps 16, var q: *f64v2 = *ppb, sp_hi(**ppb) passes the pointer");
+assert_eq(gi_local(), 2442, "GI: st(pps) steps sizeof(P3) and tg(pps) passes the struct (the filed repros' shapes; were 8 / a fault)");
+assert_eq(gi_viap(GI_PPS), 66, "GI: a **P3 parameter as the argument");
+assert_eq(gi_st(GI_PPS) * 100 + gi_tg(GI_PPS), 2442, "GI: a **P3 global");
+assert_eq(gi_fields(), 244242, "GI: a **P3 field, a nested one, one through a *W");
+assert_eq(gi_st(gi_mkpp()) * 100 + gi_tg(gi_gpp(GI_PPS)), 2442, "GI: a : **P3 call and a generic call at its instance");
+assert_eq(gi_addr(), 2442, "GI: &ps of a *P3 local and &G of a *P3 global");
+assert_eq(gi_cap(), 4225, "GI: a captured **P3");
+assert_eq(gi_meth(), 66, "GI: a generic method's **T");
+assert_eq(gi_result(), 42, "GI: a : T result binds the struct (var v = gd(pps); v.c)");
+assert_eq(gi_pair(), 2416, "GI: two type parameters, each from its own **");
+assert_eq(gi_misc(), 242424, "GI: sizeof(T), a named argument, a forwarder's instance");
+assert_eq(gi_uses(), 24, "GI: a call above the generic's definition");
+assert_eq(gi_ctl(), 80808, "GK: a direct x: T carrier wins; a *P3 and a **i32 bind nothing (i64)");
+assert_eq(gi_ctl2(), 16080808, "GK: a struct carrier wins; a **Q2 that is no **T, (pps) and pps + 0 bind nothing");
 var r = assert_summary();

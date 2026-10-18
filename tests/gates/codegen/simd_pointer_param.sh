@@ -63,7 +63,7 @@
 # pushed lane 0's (`load32(&v + 8)` read 0 on x86_64 / IR=3 / aarch64 / cx / PE; 38 is right). Class 10 takes f64v4's
 # 32-byte routing in both scans (mask code 2; Win64's 32-byte copy-in); the mask has no fourth code, so the argument
 # check reads the parameter's own type from the definition (`_pv32_param`), on Win64's address push too
-# (`_sarg_pe_v32`).
+# (`_sarg_pe_v32`; 6.7.14: folded into `_sarg_pe_vform`, the Win64 value-form gate below).
 #   V8  the filed repro verbatim: exit 38 on x86_64 / IR=3 / aarch64 / cx / PE (0 before)
 #   VY1 / VY2 an f64v4 local into `v: f32v8`, an f32v8 local into `v: f64v4`: one error line, "value-form SIMD arg type
 #      mismatch (callee expects f32v8 / f64v4)"; VYw1 / VYw2 the same on PE (both compiled there: Win64 checked no
@@ -97,13 +97,15 @@
 # ⛔ 6.7.13 (D31 A, the user's decision, 2026-10-15; the same issue's rows 1-5) — EVERY VECTOR VALUE INTO A POINTER OF
 # ANOTHER KIND, OR INTO A BY-VALUE STRUCT PARAMETER, IS REFUSED BY NAME: a call result (`_svc_kind` for an address-passed
 # parameter, `_sarg_vec_other` otherwise) and a `*V` dereference (`_dro_vt_for` arms, `_dro_vcheck` refuses; `_svo_vderef`
-# by the local's step word otherwise) into `*Pt` / `*i64` with D27's words, a vector local into a by-value struct (`_sarg_vec_ptr`
-# / `_sarg_vec_other`) "a vector is not a struct" — on Win64 too, where row 5 ran by accident (42).
+# by the local's step word otherwise — 6.7.14: retired, `_sarg_vdo` once parsed, rows OKD) into `*Pt` / `*i64` with
+# D27's words, a vector local into a by-value struct (`_sarg_vec_ptr` / `_sarg_vec_other`) "a vector is not a struct" —
+# on Win64 too, where row 5 ran by accident (42).
 #   OK1-OK5 the filed rows 1-5 verbatim on x86_64 / aarch64 / cx / PE: one line each, naming `mkv` / `*pb` / `b`
 #   OKX 13 sources in one compile (a method, an explicit instance, callptr, wrapped, `*pb`, a by-value struct of 8 B or
 #      less and over, `**f64v2`, fncall2): 13 lines on x86_64 and PE
 #   M-K1 `_svc_kind` answering 0                             -> RED 6: OK1 on every leg (compiled), OKX x86 / PE (10 lines)
 #   M-K2 `_sarg_vec_other` back to the local only            -> RED 10: OK2 OK4 on every leg (compiled), OKX x86 / PE (6)
+#       (6.7.14: OK4 is `_sarg_vdo`'s now — M-OKD1)
 #   M-K3 `_dro_vt_for` arming for a `*V` only                -> RED 6: OK3 on every leg (compiled), OKX x86 / PE (12)
 #   M-K4 `_sarg_vec_ptr` without the by-value struct arm     -> RED 4: OK5 on every leg (compiled; PE 42 again)
 #
@@ -148,6 +150,18 @@
 #       (compiled); and struct_arg_type_refused.sh D17 D18, small_struct_handle_line.sh R10 on every leg
 #   M-DR3 `_pp_intern` keyed without the pointee's struct    -> RED 2: DRS1 DRSw (compiled: `**Q3` shares P3's pin)
 #
+# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — SM: a method-result argument
+# is named as the source spells it (`S2.dup`, not its fn name `S2_dup`) in the struct-type and `*V` refusals; SM1 the
+# filed repro verbatim (both lines, exact) on x86_64 / IR=3 / aarch64 / cx / PE; SMk a local named `Pt_dup` keeps it.
+# Mutations (2026-10-17, a scratch copy, the gate run with its 2-stage mutant; measured):
+#   M-SM  `_sarg_ident_err` ignoring the call's fn (ERR_IDENT) -> RED 17: SV6, SM1 on all five legs, SM2-SM6, SM2 / SM6
+#       on aarch64 / cx / PE; struct_arg_type_refused.sh R9 R23 R24 R24b R28b
+#   M-SMb `_expr_struct_sid` not recording it (`_ess_fi`)    -> RED 4: SM6 on x86_64 / aarch64 / cx / PE (the small
+#       by-value path); struct_arg_type_refused.sh R23 R24 R24b
+# 6.7.14 (D34 A) — SF: a struct-typed field into a `*V` parameter refused by name (`_fla_addr` -> `_sarg_svec_err`).
+#   M-SF  `_fla_addr` without the `*V` line                  -> RED 40: SF1-SF6 on all five legs, SF7-SF11 x86_64 / PE
+#       (each compiled: the field's bytes read as the vector); SFok green
+#
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
 # x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
@@ -155,7 +169,8 @@
 # the call into a frame temp the vector second pass loads (`_sar_src` / `_sar_vcall`); the inline replay receives it
 # into the parameter's slots (`_inl_simd_arg`); Win64 passes the temp's address (`_sarg_vec_call` for a value-form
 # parameter, `_pvf_param`). Any other source that is no local is refused once by name, the argument skipped (no
-# cascade), and on PE a word into a value-form parameter is refused as on the other three (`_sarg_pe_vword`, pw.cyr).
+# cascade), and on PE a word into a value-form parameter is refused as on the other three (`_sarg_pe_vword`, pw.cyr;
+# 6.7.14: folded into `_sarg_pe_vform`).
 #   VC1 / VC2 the filed repro verbatim (42) and `f64v2_add(a, mkv(3, 4))` (46) on x86_64 / IR=3 / aarch64 / cx / PE
 #   VZ1-VZ4 on x86_64 / aarch64 / cx / PE, each one line: a call of another vector type (A2's words), a top-level call
 #      (D40's words), `lanes(5)` (no 'expected ;'), pw.cyr's word local ("must be a 16-byte vector"; PE compiled it: 5)
@@ -235,14 +250,16 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=81   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
-           # (`sp_mrows`), the captured-vector rows (`sp_crows`, D32), the deref-through rows (`sp_drows`)
+FLOOR=95   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
+           # (`sp_mrows`), the captured-vector rows (`sp_crows`, D32), the deref-through rows (`sp_drows`); 6.7.14: + a
+           # capture into a value-form parameter (`sp_crows`, D31), a `*V` dereference into one (`sp_drows`, D32),
+           # either as an `#inline` fn's argument in a closure (`sp_irows`, the review)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
 if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
 N3=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC3")
-FLOOR3=29
+FLOOR3=32   # 6.7.14: + the wrapped-argument rows (W1-W3)
 if [ "$N3" -lt "$FLOOR3" ]; then echo "FAIL: $G: only $N3 rows in $TC3 (floor $FLOOR3) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -474,6 +491,142 @@ for lg in x86 pe; do
     else ok "OKX $lg: 13 vector sources into another pointer kind / a by-value struct, each refused once"; fi
 done
 
+# ⛔ 6.7.14 (issues/2026-10-16-vector-dereference-other-than-star-name-into-word-pointer-parameter-faults.md; 6.7.13's D31 A
+# already decides it) — A `*V` DEREFERENCE OTHER THAN `* NAME` INTO A PARAMETER THAT IS NOT ADDRESS-PASSED (`*i64`, `*u8`,
+# `**T`, a by-value struct of 8 B or less) IS REFUSED BY NAME, as `ri(*pb)` (OK4) and every such spelling into `*Pt` are:
+# `ri(**ppb)`, `ri(*gp(pb))`, `ri(*h.pv)`, `ri(*GPV)`, `ri(*(pb + 0))`, `ri(*&b)` compiled with no diagnostic and pushed
+# lane 0 as the address — x86_64 139, IR=3 139, aarch64 139, cx 253, PE 5. That arm judged the dereference by its tokens
+# (`_svo_vderef`: `* NAME` of a `*V` local, retired); `_sarg_vdo` watches the argument's `*` while it is parsed and
+# refuses it when its operand named a vector (`_dro_vnote`, from `_deref_read`: the step word, `_dop_vd`).
+#   OKD1 the filed repro verbatim (`ri(**ppb)`); OKD2-OKD6 the other five spellings into `ri(p: *i64)`; OKD7-OKD9
+#      `**ppb` into `*u8`, into `**i64`, into a by-value `P1` (8 B: "a vector is not a struct"); OKD10 wrapped
+#      `ri((**ppb))`; OKD11 a closure's `ri(**ppb)` and a captured `*pb`; OKD12 a method's `s.m(**ppb)`; OKD13 an
+#      `#inline` fn's; OKD14 top level `ri(*GPB)` / `ri(*&B)` — each refused once per call, naming what the
+#      address-passed arm names (`'*ppb'`, `'*pb'`, `'*pv'`, `'*GPV'`, `'*b'`), on x86_64 / IR=3 / aarch64 / cx / PE
+#   OKDX ten calls in one compile (every spelling, into `*i64` / `*u8` / `**i64` / `P1` / an `#inline` fn, and three
+#      nested: `ri(*h2(**ppb))` both, `ri(*hi(**ppb))` the inner alone — `hi` returns a `*i64` — `ri(*h2(*ppi))` the
+#      outer alone): each of the eleven vector dereferences refused on its own line (no `_panic`), on x86_64 and PE
+#   OKDK the controls, exit values unchanged on every leg: `ri(*ppi)` of a `**i64` (5), `ri(*pps)` of a `**Pt` (42 — a
+#      `*Pt` word), `rg(*ppb)` into a generic `*T` (42 — a `*f64v2` word); OKDK4 `ri(*ps)` of a struct stays refused with
+#      6.7.13's D5 (a) words, once
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V3; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-OKD1 `_dro_vnote` never noting                        -> RED 78: OKD1-OKD14 on every leg (compiled: the faulting
+#       push), OK4 on its four legs (`ri(*pb)`: the retired `_svo_vderef` was its arm), OKX and OKDX on x86_64 / PE
+#   M-OKD2 `_sarg_vdo` not restoring `_dro_vo` / `_dro_vod` / `_dro_vend` -> RED 2: OKDX x86_64 / PE (`ri(*h2(*ppi))`'s
+#       outer `*` unwatched, `ri(*hi(**ppb))`'s outer refused on the inner's note — the same total, so OKDX counts each
+#       refusal by its words)
+OKDH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+struct Hv { k; pv: *f64v2; }
+struct Pt { x; y; }
+struct P1 { x; }
+struct S3 { k; }
+impl S3 { fn m(self, p: *i64): i64 { return 0; } }
+var GPV: *f64v2 = 0;
+fn ri(p: *i64): i64 { return *p; }
+fn ru(p: *u8): i64 { return load8(p); }
+fn rpp(p: **i64): i64 { return 0; }
+fn bv1(p: P1): i64 { return p.x; }
+fn rg<T>(p: *T): i64 { return load64(p); }
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn h2(p: *i64): *f64v2 { return GPV; }
+fn hi(p: *i64): *i64 { return p; }
+#inline
+fn rii(p: *i64): i64 { return *p; }
+'
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Hv { k; pv: *f64v2; }' \
+  'var GPV: *f64v2 = 0;' 'fn ri(p: *i64): i64 { return *p; }' 'fn gp(p: *f64v2): *f64v2 { return p; }' \
+  'fn main(): i64 {' '    var b: f64v2 = f64v2_make(42, 7);' '    var pb: *f64v2 = &b;' '    var ppb: **f64v2 = &pb;' \
+  '    return ri(**ppb);          # and ri(*gp(pb)), ri(*h.pv), ri(*GPV), ri(*(pb + 0)), ri(*&b): each the same' \
+  '}' 'syscall(60, main());' > "$D/okd1.src"
+okd_src() {  # $1 out-file  $2 main's body (b, pb, ppb in scope)
+    printf '%sfn main(): i64 {\n    var b: f64v2 = f64v2_make(42, 7);\n    var pb: *f64v2 = &b;\n    var ppb: **f64v2 = &pb;\n    %s\n}\nsyscall(60, main());\n' "$OKDH" "$2" > "$1"
+}
+okd_src "$D/okd2.src" 'return ri(*gp(pb));'
+okd_src "$D/okd3.src" 'var h: Hv; h.pv = pb; return ri(*h.pv);'
+okd_src "$D/okd4.src" 'GPV = pb; return ri(*GPV);'
+okd_src "$D/okd5.src" 'return ri(*(pb + 0));'
+okd_src "$D/okd6.src" 'return ri(*&b);'
+okd_src "$D/okd7.src" 'return ru(**ppb);'
+okd_src "$D/okd8.src" 'return rpp(**ppb);'
+okd_src "$D/okd9.src" 'return bv1(**ppb);'
+okd_src "$D/okd10.src" 'return ri((**ppb));'
+okd_src "$D/okd11.src" 'var c = |k| ri(**ppb) + k; var e = |k| ri(*pb) + k; return fncall1(c, 0) + fncall1(e, 0);'
+okd_src "$D/okd12.src" 'var s: S3; return s.m(**ppb);'
+okd_src "$D/okd13.src" 'return rii(**ppb);'
+printf '%svar B: f64v2 = 0;\nvar GPB: *f64v2 = &B;\nvar R = ri(*GPB) + ri(*&B);\nsyscall(60, R);\n' "$OKDH" > "$D/okd14.src"
+okd_src "$D/okdx.cyr" 'GPV = pb; var h: Hv; h.pv = pb; var x = 5; var pi: *i64 = &x; var ppi: **i64 = &pi;
+    return ri(*h2(**ppb)) + ri(**ppb) + ri(*gp(pb)) + ri(*h.pv) + ru(*(pb + 0)) + rpp(*&b) + bv1(*GPV) + rii(**ppb)
+      + ri(*hi(**ppb)) + ri(*h2(*ppi));'
+okd_msg() {  # $1 row -> the line it must print (the call's name, the operand's last name)
+    case "$1" in
+        1|10|13) echo "cannot pass '*ppb' $KFRAG" ;;
+        2|5) echo "cannot pass '*pb' $KFRAG 'ri'" ;;
+        3) echo "cannot pass '*pv' $KFRAG 'ri'" ;;
+        4) echo "cannot pass '*GPV' $KFRAG 'ri'" ;;
+        6) echo "cannot pass '*b' $KFRAG 'ri'" ;;
+        7) echo "cannot pass '*ppb' $KFRAG 'ru'" ;;
+        8) echo "cannot pass '*ppb' $KFRAG 'rpp'" ;;
+        9) echo "cannot pass '*ppb' to a by-value struct parameter in a call to 'bv1' - a vector is not a struct" ;;
+        12) echo "cannot pass '*ppb' $KFRAG 'S3.m'" ;;
+        11|14) echo "$KFRAG 'ri'" ;;   # two calls: '*ppb' and '*pb' / '*GPB' and '*B'
+    esac
+}
+okd_n() { case "$1" in 11|14) echo 2;; *) echo 1;; esac; }
+echo "OKD. a *V dereference other than \`* NAME\` into *i64 / *u8 / **T / a small by-value struct: refused by name (D31 A)"
+for lg in x86 x86:CYRIUS_IR=3 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    tg=$(printf '%s' "$lg" | tr -c 'a-zA-Z0-9' '_')
+    for k in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+        fr=$(okd_msg "$k"); want=$(okd_n "$k")
+        f="$D/okd${k}_$tg"
+        rc=0
+        case "$lg" in
+            pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            a64) timeout 60 "$A64" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            cx)  timeout 60 "$CXCC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            x86:*) env "${lg#x86:}" timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            *)   timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+        esac
+        n=$(grep -c '^error' "$f.err" || true)
+        nm=$(grep '^error' "$f.err" | grep -cF -- "$fr" || true)
+        if [ "$rc" -eq 0 ]; then bad "OKD$k $lg: compiled (rc 0) — want \"$fr\""
+        elif [ "$n" -ne "$want" ] || [ "$nm" -ne "$want" ]; then bad "OKD$k $lg: $n error lines ($nm '$fr'), want $want: $(grep '^error' "$f.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$f.bin" ]; then bad "OKD$k $lg: refused, but a binary was written"
+        else ok "OKD$k $lg: refused once per call"; fi
+    done
+done
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    rc=0
+    if [ "$lg" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okdx.cyr" > "$D/okdx.bin" 2> "$D/okdx.err" || rc=$?
+    else timeout 60 "$CC" < "$D/okdx.cyr" > "$D/okdx.bin" 2> "$D/okdx.err" || rc=$?; fi
+    n=$(grep -c '^error' "$D/okdx.err" || true)
+    nk=$(grep '^error' "$D/okdx.err" | grep -c "$KFRAG\|to a by-value struct parameter in a call to" || true)
+    # each refusal by its own words, counted: a nested call's arm must neither hide the outer `*` nor lend it its note
+    miss=""
+    for e in "2:'*ppb' $KFRAG 'ri'" "1:'*ppb' $KFRAG 'h2'" "1:'*ppb' $KFRAG 'hi'" "1:'*ppi' $KFRAG 'ri'" \
+             "1:'*pb' $KFRAG 'ri'" "1:'*pv' $KFRAG 'ri'" "1:'*pb' $KFRAG 'ru'" "1:'*b' $KFRAG 'rpp'" \
+             "1:'*GPV' to a by-value struct parameter in a call to 'bv1'" "1:'*ppb' $KFRAG 'rii'"; do
+        c=$(grep '^error' "$D/okdx.err" | grep -cF -- "cannot pass ${e#*:}" || true)
+        [ "$c" = "${e%%:*}" ] || miss="$miss [${e#*:}: $c, want ${e%%:*}]"
+    done
+    if [ "$rc" -eq 0 ]; then bad "OKDX $lg: compiled - want 11 refusals"
+    elif [ "$n" -ne 11 ] || [ "$nk" -ne 11 ]; then bad "OKDX $lg: $n error lines ($nk by name), want 11: $(grep '^error' "$D/okdx.err" | head -3 | tr '\n' '|')"
+    elif [ -n "$miss" ]; then bad "OKDX $lg: the wrong refusals:$miss"
+    elif [ -s "$D/okdx.bin" ]; then bad "OKDX $lg: refused, but a binary was written"
+    else ok "OKDX $lg: 11 dereferences (three nested) into another pointer kind / a by-value struct, each refused once"; fi
+done
+okd_src "$D/okdk1.cyr" 'var x = 5; var pi: *i64 = &x; var ppi: **i64 = &pi; return ri(*ppi);'
+okd_src "$D/okdk2.cyr" 'var s: Pt; s.x = 42; var ps: *Pt = &s; var pps: **Pt = &ps; return ri(*pps);'
+okd_src "$D/okdk3.cyr" 'return rg(*ppb);'
+exit_rows OKDK1 "$D/okdk1.cyr" 5 "ri(*ppi) of a **i64 passes its word"
+exit_rows OKDK2 "$D/okdk2.cyr" 42 "ri(*pps) of a **Pt passes its *Pt word"
+exit_rows OKDK3 "$D/okdk3.cyr" 42 "rg(*ppb) into a generic *T passes its *f64v2 word"
+refused OKDK4 "OKDK4 ri(*ps) of a struct: 6.7.13's D5 (a) refusal, once (unchanged)" "${OKDH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return ri(*ps); }\nsyscall(60, main());\n" x86 "cannot pass '*ps' to a parameter that is not a pointer to its struct type in a call to 'ri' - a struct value is no address"
+
 # 6.7.13 (D32 A, the user's decision, 2026-10-15; issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-
 # capture-address.md) — a closure's CAPTURED vector meets the local's argument rules: the filed repro (`|k| ri(b)`, `p:
 # *i64`) and its `|k| rp(b)` twin (`p: *Pt`) passed the capture's address and ran (42 on x86_64 / IR=3 / aarch64 / cx /
@@ -554,7 +707,7 @@ refused SV2 "SV2 rd(mkp()), a struct call result" "${SVH}fn main(): i64 { return
 refused SV3 "SV3 rd(*ps), a *Pt dereference" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" x86 "cannot pass 'ps' $SVF"
 refused SV4 "SV4 rd(G), a struct global" "${SVH}fn main(): i64 { return rd(G); }\n${E}" x86 "cannot pass 'G' $SVF"
 refused SV5 "SV5 |k| rd(s), a captured struct" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" x86 "cannot pass 's' $SVF"
-refused SV6 "SV6 rd(s.dup()), a method result" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "$SVF"
+refused SV6 "SV6 rd(s.dup()), a method result (named as the source spells it, 6.7.14)" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' $SVF"
 refused SV7 "SV7 rd((s)), parenthesised" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd((s)); }\n${E}" x86 "cannot pass 's' $SVF"
 refused SV8 "SV8 a 24-byte struct into *f64v4" "${SVH}fn main(): i64 { var q: Q; q.a = 42; return rd4(q); }\n${E}" x86 "cannot pass 'q' to a parameter that is a pointer to a vector type in a call to 'rd4'"
 refused SV9 "SV9 an 8-byte struct into *f64v2" "${SVH}fn main(): i64 { var t: P1; t.x = 42; return rd(t); }\n${E}" x86 "cannot pass 't' $SVF"
@@ -569,6 +722,105 @@ printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt {
   'fn main(): i64 { var s: Pt; s.x = 42; s.y = 7; var ps: *Pt = &s; return rd(&s) + rd(ps) - 42; }' \
   'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
 exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
+
+# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — the struct-type (6.7.3) and
+# `*V` (D33) refusals named a method-result ARGUMENT by its fn name, `S2_dup` (the struct-call record's `_sc_fn`); the
+# record keeps its fn (`_sc_fi`) and both refusals print it as the source spells it (`_sarg_ident_err`: `S2.dup`, the
+# frontend lane's `_fn_src_name`). A local that happens to be named `S2_dup` keeps its name (SMk).
+echo "SM. a method result named as the source spells it in the struct-type and \`*V\` refusals (6.7.14)"
+cat > "$D/sm1.cyr" <<'EOF2'
+struct Pt { x; y; }
+struct Q { a; b; }
+struct S2 { k; }
+impl S2 { fn dup(self): Pt { var p: Pt; p.x = self.k; p.y = 2; return p; } }
+fn rq(p: *Q): i64 { return p.a; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn run(): i64 {
+    var s: S2; s.k = 40;
+    var a = rq(s.dup());
+    return rd(s.dup()) + a;
+}
+syscall(60, run());
+EOF2
+SM1="error:<source>:9:23: cannot pass 'S2.dup' to a parameter of a different struct type in a call to 'rq'"
+SM2="error:<source>:10:22: cannot pass 'S2.dup' to a parameter that is a pointer to a vector type in a call to 'rd'"
+for lg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'sm1_%s' "$lg" | tr -c 'a-zA-Z0-9' '_')
+    rc=0; build_leg "$lg" "$D/sm1.cyr" "$D/$n" || rc=$?
+    ne=$(grep -c '^error' "$D/$n.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "SM1 $lg: the filed repro compiled (rc 0)"
+    elif [ "$ne" -ne 2 ] || ! grep -qxF -- "$SM1" "$D/$n.err" || ! grep -qxF -- "$SM2" "$D/$n.err"; then
+        bad "SM1 $lg: want the two lines naming 'S2.dup', got $ne: $(grep '^error' "$D/$n.err" | head -2 | tr '\n' '|')"
+    elif grep -qF "S2_dup" "$D/$n.err"; then bad "SM1 $lg: a line still names 'S2_dup'"
+    elif [ -s "$D/$n" ]; then bad "SM1 $lg: refused, but a binary was written"
+    else ok "SM1 $lg: the filed repro verbatim names 'S2.dup' in both refusals"; fi
+done
+SMH="${SVH}struct Q2 { a; b; }\nimpl Pt { fn gd<T>(self, k: T): Pt { return self; } fn sm(self): P1 { var t: P1; return t; } }\nfn rq(p: *Q2): i64 { return p.a; }\nfn bq1(b: P1): i64 { return b.x; }\n"
+refused SM2 "SM2 rd((s.dup())), wrapped" "${SMH}fn main(): i64 { var s: Pt; return rd((s.dup())); }\n${E}" x86 "cannot pass 'Pt.dup' $SVF"
+refused SM3 "SM3 rd(s.gd<i64>(1)), a generic method" "${SMH}fn main(): i64 { var s: Pt; return rd(s.gd<i64>(1)); }\n${E}" x86 "cannot pass 'Pt.gd' $SVF"
+refused SM4 "SM4 rq(s.dup()) into *Q2" "${SMH}fn main(): i64 { var s: Pt; return rq(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'rq'"
+refused SM5 "SM5 rd(s.sm()), an 8-byte method result" "${SMH}fn main(): i64 { var s: Pt; return rd(s.sm()); }\n${E}" x86 "cannot pass 'Pt.sm' $SVF"
+refused SM6 "SM6 bq1(s.dup()), a by-value struct of 8 B (the small by-value path)" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
+refused SMk "SMk a local named Pt_dup keeps its name" "${SMH}fn main(): i64 { var s: Pt; var a = s.dup(); var Pt_dup: Pt; return rd(Pt_dup); }\n${E}" x86 "cannot pass 'Pt_dup' $SVF"
+for lg in a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "SM2$lg" "SM2 $lg" "${SMH}fn main(): i64 { var s: Pt; return rd((s.dup())); }\n${E}" "$lg" "cannot pass 'Pt.dup' $SVF"
+    refused "SM6$lg" "SM6 $lg" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" "$lg" "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
+done
+
+# 6.7.14 (D34 A, the user's decision, 2026-10-16; issues/2026-10-16-struct-field-into-vector-pointer-parameter-accepted.md)
+# — a struct-typed FIELD into a `*V` parameter is refused by name, as D33 refuses the struct from every other source:
+# `rd(w.s)` (`s: Pt`) passed the field's address (`_fla_addr`) and the callee read its bytes as the vector (42 on every
+# target, silently). SF1 the filed repro verbatim; SF2-SF6 wrapped, through a `*W`, a global's, a capture's, a nested
+# field's — each refused once, on x86_64 / IR=3 / aarch64 / cx / PE; SF7-SF11 a method's, a generic's, an `#inline`
+# fn's, an operator fn's `*V` parameter and top level (x86_64 / PE); SFok `rd(&w)`, `rd(&w + 0)`, `rq(w.s)` into `*Pt` (42 on every leg).
+echo "SF. a struct-typed field into a \`*V\` parameter: refused by name, once (D34 A)"
+# sf_legs <tag> <label> <src-file>: refused once with the field's words on x86_64 / IR=3 / aarch64 / cx / PE
+SFF="cannot pass 's' to a parameter that is a pointer to a vector type in a call to"
+sf_legs() {
+    for lg in x86 x86:CYRIUS_IR=3 $OTHER; do
+        n=$(printf '%s_%s' "$1" "$lg" | tr -c 'a-zA-Z0-9' '_')
+        rc=0; build_leg "$lg" "$3" "$D/$n" || rc=$?
+        ne=$(grep -c '^error' "$D/$n.err" || true)
+        if [ "$rc" -eq 0 ]; then bad "$1 $lg: $2 compiled (rc 0)"
+        elif [ "$ne" -ne 1 ] || ! grep '^error' "$D/$n.err" | grep -qF -- "$SFF"; then
+            bad "$1 $lg: $2: want one line \".. $SFF ..\", got $ne: $(grep '^error' "$D/$n.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$D/$n" ]; then bad "$1 $lg: $2 refused, but a binary was written"
+        else ok "$1 $lg: $2 refused once"; fi
+    done
+}
+cat > "$D/sf1.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Pt { x; y; }
+struct W { s: Pt; k; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var w: W;
+    w.s.x = 42; w.s.y = 7;
+    return rd(w.s);            # a struct FIELD into `*f64v2`: rd(s) on a local is refused (D33)
+}
+var rc = main();
+syscall(60, rc);
+EOF2
+sf_legs SF1 "the filed repro verbatim, rd(w.s)" "$D/sf1.cyr"
+SFH="${H}include \"lib/fnptr.cyr\"\nstruct Pt { x; y; }\nstruct W { s: Pt; k; }\nstruct HW { w: W; }\nstruct Q { a; }\nvar GW = W { 42, 7, 1 };\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rq(p: *Pt): i64 { return p.x; }\nfn rg<T>(p: *f64v2, x: T): i64 { return load64(p) + x; }\n#inline\nfn rdi(p: *f64v2): i64 { return load64(p); }\nimpl Q { fn rd(self, p: *f64v2): i64 { return load64(p); } }\nfn Pt_sub(a: *Pt, b: *f64v2): i64 { return a.x - load64(b); }\n"
+sf_src() { printf '%b' "${SFH}fn main(): i64 {\n    var w: W; w.s.x = 42; var pw: *W = &w; var h: HW; h.w.s.x = 42; var q: Q; var p: Pt;\n    $2\n}\n${E}" > "$D/$1.cyr"; }
+sf_src sf2 'return rd((w.s));'; sf_legs SF2 "rd((w.s)), wrapped" "$D/sf2.cyr"
+sf_src sf3 'return rd(pw.s);'; sf_legs SF3 "rd(pw.s) through a *W" "$D/sf3.cyr"
+sf_src sf4 'return rd(GW.s);'; sf_legs SF4 "rd(GW.s), a global's field" "$D/sf4.cyr"
+sf_src sf5 'var c = |k| rd(w.s) + k; return fncall1(c, 0);'; sf_legs SF5 "|k| rd(w.s), a capture's field" "$D/sf5.cyr"
+sf_src sf6 'return rd(h.w.s);'; sf_legs SF6 "rd(h.w.s), a nested field" "$D/sf6.cyr"
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    refused "SF7$lg" "SF7 $lg q.rd(w.s), a method's *V parameter" "${SFH}fn main(): i64 { var w: W; var q: Q; return q.rd(w.s); }\n${E}" "$lg" "$SFF 'Q.rd'"
+    refused "SF8$lg" "SF8 $lg rg(w.s, 1), a generic's" "${SFH}fn main(): i64 { var w: W; return rg(w.s, 1); }\n${E}" "$lg" "$SFF 'rg'"
+    refused "SF9$lg" "SF9 $lg rdi(w.s), an #inline fn's" "${SFH}fn main(): i64 { var w: W; return rdi(w.s); }\n${E}" "$lg" "$SFF 'rdi'"
+    refused "SF10$lg" "SF10 $lg p - w.s, an operator fn's (Pt_sub(a: *Pt, b: *f64v2))" "${SFH}fn main(): i64 { var w: W; var p: Pt; return p - w.s; }\n${E}" "$lg" "$SFF 'Pt_sub'"
+    refused "SF11$lg" "SF11 $lg rd(GW.s) at top level" "${SFH}var r0 = rd(GW.s);\nsyscall(60, r0);\n" "$lg" "$SFF 'rd'"
+done
+sf_src sfok 'w.s.y = 7; return rd(&w) + rd(&w + 0) + rq(w.s) - 84;'
+exit_rows SFok "$D/sfok.cyr" 42 "rd(&w), rd(&w + 0) and rq(w.s) into *Pt pass"
 
 # 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
 # dereference of an ADDRESS-OF a vector, or of a `**V` / `**S`, is the vector / the struct: the filed `rd(*&b)` /
@@ -679,7 +931,7 @@ VCH="${H}fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b);
 VZ1B="${VCH}fn main(): i64 { return lanes(mk4(1)); }\n${E}"
 VZ2B="${VCH}var r1 = lanes(mkv(4, 2));\nsyscall(60, r1);\n"
 VZ3B="${VCH}fn main(): i64 { return lanes(5); }\n${E}"
-VZ3F="a value-form vector argument to 'lanes' is a local of its type or a call declared to return it"
+VZ3F="a value-form vector argument to 'lanes' is a local of its type, a call declared to return it"   # 6.7.14 (D32): .. or a dereference (`*p`)
 VZ4B="fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }\nfn run(): i64 {\n    var x = 5;\n    return lanes(x);\n}\nsyscall(60, run());\n"
 VZ4F="value-form SIMD arg must be a 16-byte vector"
 for lg in x86 a64 cx pe; do
@@ -695,6 +947,539 @@ if [ "$WINE" = 1 ]; then
     refused VZw2 "VZw2 pe: lanes(nosuch), one line (skipped: no 'undefined variable' second line)" \
         "${VCH}fn main(): i64 { return lanes(nosuch); }\n${E}" pe "$VZ3F"
 fi
+
+# ⛔ 6.7.14 — ON WIN64 A VALUE-FORM VECTOR PARAMETER TAKES WHAT SYSV'S `_sar_src` TAKES (`_sarg_pe_vform`): the struct
+# arms took its argument there (Win64 passes it by address, under the struct mask), so a vector local of another type,
+# a struct local and an identifier-led expression compiled and the callee read garbage, where x86_64 / aarch64 / cx
+# refuse each by name. Filed: docs/development/issues/2026-10-16-pe-16-byte-value-form-vector-argument-unchecked.md,
+# 2026-10-16-pe-identifier-led-expression-into-value-form-vector-parameter.md,
+# 2026-10-16-pe-struct-local-into-value-form-vector-parameter.md
+#   VYw3-VYw5 the first issue's three probes on PE (an f64v4 / an f64v2 / an f32v8 local into v: f64v2 / v: f32v4 /
+#      v: f64v2: PE exited 2 / 0 / 3): exactly x86_64's one error line, word for word
+#   VYwk the control: an f64v2 local into v: f64v2 exits 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   VZw3 the second issue's repro verbatim (`lanes(q + 1) + lanes(z * 2) + lanes(w + 1)`; PE exited 5): exactly x86_64's
+#      three lines; VZw4 the literal-led control `lanes(5 + z)`: x86_64's one line
+#   VZw5 the third issue's repro verbatim (`lanesn(p)`, p: Pt; PE exited 42): x86_64's one line ("must be a 16-byte
+#      vector"); VZw6 `lanesn(mkp())` and `lanesn(*pp)` (PE exited 84): x86_64's two lines, the D30 words
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane; each change alone in a scratch copy of the tree, this gate run
+#   there with CYCC=<its 2-stage mutant>; measured):
+#   M-PV0 the fix reverted (6.7.13's `_sarg_pe_v32` / `_sarg_pe_vword`) -> RED 9: VYw3-VYw5 VZw3 VZw5 VZw6 (PE compiled),
+#       and the VZw3 / VZw5 / VZw6 word checks; VZw4 green (the literal reached `_sarg_pe_vword`)
+#   M-PV1 `_sarg_pe_vform` answering -1                         -> RED 16: as M-PV0, VZw4 too, and VYw1 VYw2 VZ3pe VZ4pe
+#       (compiled: the 32-byte check and D30's word refusal are folded into it), VZw1 VZw2 (the value parse's own
+#       line); and simd_return_shapes.sh win64 Q3
+#   M-PV2 its local arm without `_simd_arg_typecheck`           -> RED 8: VYw1 VYw2 VYw3-VYw5 VZ4pe VZw5 (compiled), the
+#       VZw5 word check; and simd_return_shapes.sh win64 Q3
+#   M-PV3 `_spv_skip` parsing the refused argument (no skip)    -> RED 2: VZw1 VZw2 (two error lines each); VZw3 green
+#       (`q + 1` parses clean)
+# pe_same <name> <what> <src-file> <lines>: x86_64 and PE both refuse <src-file>, PE's error lines are x86_64's word for
+# word (line:col included), there are <lines> of them, and PE writes no binary
+pe_same() {
+    rx=0; rp=0
+    timeout 60 "$CC" < "$3" > "$D/$1.x86" 2> "$D/$1.x86.err" || rx=$?
+    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$3" > "$D/$1.exe" 2> "$D/$1.pe.err" || rp=$?
+    grep '^error' "$D/$1.x86.err" > "$D/$1.x86.e" || true
+    grep '^error' "$D/$1.pe.err" > "$D/$1.pe.e" || true
+    nx=$(wc -l < "$D/$1.x86.e"); np=$(wc -l < "$D/$1.pe.e")
+    if [ "$rx" -eq 0 ] || [ "$nx" -ne "$4" ]; then bad "$2: x86_64 rc $rx, $nx error lines (want $4) — the reference moved"
+    elif [ "$rp" -eq 0 ]; then bad "$2: PE compiled (rc 0) — want x86_64's refusal: $(head -1 "$D/$1.x86.e")"
+    elif ! cmp -s "$D/$1.x86.e" "$D/$1.pe.e"; then bad "$2: PE's $np error lines differ from x86_64's $nx: $(head -2 "$D/$1.pe.e" | tr '\n' '|')"
+    elif [ -s "$D/$1.exe" ]; then bad "$2: PE refused, but a binary was written"
+    else ok "$2: $np line(s), x86_64's words"; fi
+}
+cat > "$D/vyw3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v + 8); }
+fn main(): i64 { var e: f64v4 = f64v4_make(1, 2, 3, 4); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vyw4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f32v4): i64 { if (load32(&v) == 9) { return 0; } return load32(&v + 4); }
+fn main(): i64 { var e: f64v2 = f64v2_make(5, 7); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vyw5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v + 8); }
+fn main(): i64 { var e: f32v8 = f32v8_make(1, 2, 3, 4, 5, 6, 7, 8); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vywk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn g(v: f64v2): i64 { if (load64(&v) == 9) { return 0; } return load64(&v) * 10 + load64(&v + 8); }
+fn main(): i64 { var e: f64v2; store64(&e, 4); store64(&e + 8, 2); return g(e); }
+syscall(60, main());
+EOF
+cat > "$D/vzw3.cyr" <<'EOF'
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(z): i64 {
+    var q = 3;
+    var w: f64v2 = mkv(4, 2);
+    return lanes(q + 1) + lanes(z * 2) + lanes(w + 1);
+}
+syscall(60, run(3));
+EOF
+printf '%s\n' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }' 'fn run(z): i64 {' \
+  '    return lanes(5 + z);' '}' 'syscall(60, run(3));' > "$D/vzw4.cyr"
+cat > "$D/vzw5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+struct Pt { x; y; }
+fn main(): i64 { var p: Pt; p.x = 4; p.y = 2; return lanesn(p); }
+var rc = main(); syscall(60, rc);
+EOF
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' \
+  'fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }' \
+  'struct Pt { x; y; }' 'fn mkp(): Pt { var p: Pt; p.x = 4; p.y = 2; return p; }' \
+  'fn main(): i64 { var p: Pt; p.x = 4; p.y = 2; var pp: *Pt = &p; return lanesn(mkp()) + lanesn(*pp); }' \
+  'var rc = main(); syscall(60, rc);' > "$D/vzw6.cyr"
+echo "VYw / VZw3-VZw6. Win64's value-form vector parameter takes what SysV's takes (6.7.14)"
+exit_rows VYwk "$D/vywk.cyr" 42 "an f64v2 local into v: f64v2"
+if [ "$WINE" = 1 ]; then
+    pe_same VYw3 "VYw3 pe: an f64v4 local into v: f64v2 (PE exited 2)" "$D/vyw3.cyr" 1
+    pe_same VYw4 "VYw4 pe: an f64v2 local into v: f32v4 (PE exited 0)" "$D/vyw4.cyr" 1
+    pe_same VYw5 "VYw5 pe: an f32v8 local into v: f64v2 (PE exited 3)" "$D/vyw5.cyr" 1
+    pe_same VZw3 "VZw3 pe: lanes(q + 1) + lanes(z * 2) + lanes(w + 1), the filed repro (PE exited 5)" "$D/vzw3.cyr" 3
+    pe_same VZw4 "VZw4 pe: lanes(5 + z), the literal-led control" "$D/vzw4.cyr" 1
+    pe_same VZw5 "VZw5 pe: lanesn(p), p: Pt, the filed repro (PE exited 42)" "$D/vzw5.cyr" 1
+    pe_same VZw6 "VZw6 pe: lanesn(mkp()) and lanesn(*pp) (PE exited 84)" "$D/vzw6.cyr" 2
+    grep -qF 'must be a 16-byte vector' "$D/VZw5.pe.e" || bad "VZw5 pe: not the 'must be a 16-byte vector' refusal"
+    [ "$(grep -cF "is a local of its type, a call declared to return it" "$D/VZw6.pe.e")" -eq 2 ] || bad "VZw6 pe: not two D30 refusals"
+    [ "$(grep -cF "$VZ3F" "$D/VZw3.pe.e")" -eq 3 ] || bad "VZw3 pe: not three D30 refusals"
+fi
+
+# ⛔ 6.7.14 — PARENTHESES WRAPPING A WHOLE VALUE-FORM VECTOR ARGUMENT ARE TRANSPARENT, as for every other aggregate
+# destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
+# IR=3 / aarch64 / cx ("got `(...)`") and passed on PE (`_sarg_paren`). `_sar_take` (the call's record and the inline
+# replay) and `_sarg_pe_vform` read the source inside `_pwrap_in`'s parentheses.
+# Filed: docs/development/issues/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md
+#   VP1 / VP2 the filed repro verbatim (`lanesn((v))`) and its call form (`lanesn((mkv(4, 2)))`): exit 42 on x86_64 /
+#      IR=3 / aarch64 / cx / PE
+#   VP3 `lanesn(((v)))`, an `#inline` fn's `li((v))` / `li(((mkv(4, 2))))`, a wrapped f64v4 local and call, two wrapped
+#      arguments between integers, `lanesn(((v))) + li(((v)))`: exit 7 (each row adds one) on the same legs
+#   VPY1-VPY4 refused once on x86_64 / aarch64 / cx, and on PE word for word as x86_64: `lanesn((e))` (an f64v4 local
+#      inside the parentheses), `li(((e)))` (the inline replay's), `lanesn((mk4(..)))` (a call of another vector type),
+#      `lanesn((v) + 1)` (a wrap that is not the whole argument: `(...)`, as before)
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; the change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VP1 `_sar_take` and `_sarg_pe_vform` reading no wrap (`c` = the argument's first token) -> RED 31: VP1 VP2 VP3 on
+#       every leg (refused, `got `(...)``), VPY1-VPY3 x86 / aarch64 / cx (the `(...)` words, not the class / A2 ones),
+#       T3 on every leg; VPY4 and VPY1-VPY4 pe green (PE's words still x86_64's)
+cat > "$D/vp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 { var v: f64v2 = f64v2_make(4, 2); return lanesn((v)); }
+var rc = main(); syscall(60, rc);
+EOF
+VPH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 8) * 100 + load64(&x + 16) * 10 + load64(&x + 24); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(a, x: f64v2, y: f64v2, b): i64 { if (a == 999) { return 0; } return a * 10000 + lanesn(x) * 100 + lanesn(y) + b; }'
+printf '%s\n' "$VPH" 'fn main(): i64 { return lanesn((mkv(4, 2))); }' 'var rc = main(); syscall(60, rc);' > "$D/vp2.cyr"
+printf '%s\n' "$VPH" 'fn main(): i64 {' '    var v: f64v2 = f64v2_make(4, 2);' '    var e: f64v4 = mk4(1, 2, 3, 4);' \
+  '    var ok = 0;' '    if (lanesn(((v))) == 42) { ok = ok + 1; }' '    if (li((v)) == 42) { ok = ok + 1; }' \
+  '    if (li(((mkv(4, 2)))) == 42) { ok = ok + 1; }' '    if (l4((e)) == 1234) { ok = ok + 1; }' \
+  '    if (l4((mk4(5, 6, 7, 8))) == 5678) { ok = ok + 1; }' '    if (two(1, (v), ((mkv(1, 3))), 5) == 14218) { ok = ok + 1; }' \
+  '    if (lanesn(((v))) + li(((v))) == 84) { ok = ok + 1; }' '    return ok;' '}' 'var rc = main(); syscall(60, rc);' > "$D/vp3.cyr"
+vpy() {
+    printf '%s\n' "$VPH" 'fn main(): i64 {' '    var v: f64v2 = f64v2_make(4, 2);' '    var e: f64v4 = mk4(1, 2, 3, 4);' \
+      "    return $1;" '}' 'var rc = main(); syscall(60, rc);' > "$D/$2.cyr"
+}
+vpy 'lanesn((e))' vpy1
+vpy 'li(((e)))' vpy2
+vpy 'lanesn((mk4(1, 2, 3, 4)))' vpy3
+vpy 'lanesn((v) + 1)' vpy4
+echo "VP. parentheses wrapping a whole value-form vector argument are transparent (6.7.14)"
+exit_rows VP1 "$D/vp1.cyr" 42 "the filed repro: lanesn((v))"
+exit_rows VP2 "$D/vp2.cyr" 42 "lanesn((mkv(4, 2)))"
+exit_rows VP3 "$D/vp3.cyr" 7 "seven wrapped shapes, one each"
+VPF16="value-form SIMD arg must be a 16-byte vector"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VPY1$lg" "VPY1 $lg: lanesn((e)), an f64v4 local in the parentheses" "$(cat "$D/vpy1.cyr")" "$lg" "$VPF16"
+    refused "VPY2$lg" "VPY2 $lg: li(((e))), the inline replay's" "$(cat "$D/vpy2.cyr")" "$lg" "$VPF16"
+    refused "VPY3$lg" "VPY3 $lg: lanesn((mk4(..))), a call of another vector type" "$(cat "$D/vpy3.cyr")" "$lg"
+    refused "VPY4$lg" "VPY4 $lg: lanesn((v) + 1), a wrap that is not the whole argument" "$(cat "$D/vpy4.cyr")" "$lg" "got \`(...)\`"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VPY1pe "VPY1 pe: lanesn((e))" "$D/vpy1.cyr" 1
+    pe_same VPY2pe "VPY2 pe: li(((e)))" "$D/vpy2.cyr" 1
+    pe_same VPY3pe "VPY3 pe: lanesn((mk4(..)))" "$D/vpy3.cyr" 1
+    pe_same VPY4pe "VPY4 pe: lanesn((v) + 1)" "$D/vpy4.cyr" 1
+fi
+
+# ⛔ 6.7.14 (D31 A, the user's decision, 2026-10-16) — A CLOSURE'S CAPTURED VECTOR INTO A VALUE-FORM PARAMETER IS
+# PASSED, AS THE LOCAL IS: `|k| lanes(b)` (b a captured f64v2, `fn lanes(x: f64v2)`) was refused on every target ("..
+# is a local of its type or a call declared to return it .. - got `b`"). SysV / AAPCS64 / cx copy the env words into a
+# frame temp the vector second pass loads (`_sar_cap`; the inline replay: the parameter's slots); Win64 pushes the
+# capture's address (`_spv_one`). The class rule a local of its type meets decides, in its words: an f32v4 capture into
+# `x: f64v2` passes as an f32v4 local does (the 16-byte class), an f64v2 into `v: f32v4` and an f64v4 into `x: f64v2`
+# are refused. Filed: docs/development/issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+#   VCc1 the filed repro verbatim: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   VCc2 an f64v4 capture into `v: f64v4`, an f32v4 capture into `x: f64v2` (as the local), wrapped `lanes((b))`, an
+#      `#inline` fn's, between integers, a callee writing its copy (the capture keeps 4), a later argument writing the
+#      capture (`two(b, setb(&b, 7))`: copied where the argument stands, on Win64 too): exit 7 on the same legs
+#   VCcY1 / VCcY2 an f64v2 capture into `v: f32v4` ("type mismatch (callee expects f32v4)") and an f64v4 capture into
+#      `x: f64v2` ("must be a 16-byte vector"): one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VCc1 `_sar_cap` answering -2 (no capture arm)            -> RED 22: VCc1 VCc2 x86 / IR=3 / aarch64 / cx (refused,
+#       `got `b``), VCcY1 VCcY2 x86 / aarch64 / cx and pe (the D30 words, not the class ones), T x86 / IR=1 / IR=3 /
+#       DCE / aarch64 / cx (`sp_crows`' D31 rows refused)
+#   M-VCc2 `_spv_one` without the capture arm (Win64)         -> RED 5: VCc1 VCc2 VCcY1 VCcY2 T pe
+#   M-VCc3 `_sarg_snap_ty` without `_snap_pvf_ty`              -> RED 1: VCc2 pe (6: the later argument's write reached
+#       the callee through the capture's address)
+cat > "$D/vcc1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(4, 2);
+    var c = |k| lanes(b) + k;
+    return fncall1(c, 0);
+}
+var rc = main();
+syscall(60, rc);
+EOF
+VCCH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn ln(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn lf(v: f32v4): i64 { if (load32(&v) == 999) { return 0; } return load32(&v) * 10 + load32(&v + 12); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn mix(a, x: f64v2, b): i64 { if (a == 999) { return 0; } return a * 1000 + ln(x) * 10 + b; }
+fn bump(x: f64v2): i64 { store64(&x, 9); return load64(&x); }
+fn setb(p: *f64v2, v): i64 { store64(p, v); return 0; }
+fn two(x: f64v2, k): i64 { if (k == 999) { return 0; } return ln(x) * 10 + k; }'
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' \
+  '    var f: f32v4; store32(&f, 3); store32(&f + 4, 0); store32(&f + 8, 1); store32(&f + 12, 0);' '    var ok = 0;' \
+  '    var c1 = |k| l4(w) + k;' '    if (fncall1(c1, 0) == 5007) { ok = ok + 1; }' \
+  '    var c2 = |k| ln(f) + k;' '    if (fncall1(c2, 0) == 31) { ok = ok + 1; }' \
+  '    var c3 = |k| ln((b)) + k;' '    if (fncall1(c3, 0) == 42) { ok = ok + 1; }' \
+  '    var c4 = |k| li(b) + k;' '    if (fncall1(c4, 0) == 42) { ok = ok + 1; }' \
+  '    var c5 = |k| mix(1, b, 3) + k;' '    if (fncall1(c5, 0) == 1423) { ok = ok + 1; }' \
+  '    var c6 = |k| bump(b) + load64(&b) + k;' '    if (fncall1(c6, 0) == 13) { ok = ok + 1; }' \
+  '    var c7 = |k| two(b, setb(&b, 7)) + k;' '    if (fncall1(c7, 0) == 420) { ok = ok + 1; }' \
+  '    return ok;' '}' 'var rc = main(); syscall(60, rc);' > "$D/vcc2.cyr"
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var c = |k| lf(b) + k;' \
+  '    return fncall1(c, 0);' '}' 'var rc = main(); syscall(60, rc);' > "$D/vccy1.cyr"
+printf '%s\n' "$VCCH" 'fn main(): i64 {' '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' '    var c = |k| ln(w) + k;' \
+  '    return fncall1(c, 0);' '}' 'var rc = main(); syscall(60, rc);' > "$D/vccy2.cyr"
+echo "VCc. a closure's captured vector into a value-form parameter: passed as the local is (D31 A)"
+exit_rows VCc1 "$D/vcc1.cyr" 42 "the filed repro: |k| lanes(b)"
+exit_rows VCc2 "$D/vcc2.cyr" 7 "seven captured shapes, one each"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VCcY1$lg" "VCcY1 $lg: an f64v2 capture into v: f32v4" "$(cat "$D/vccy1.cyr")" "$lg" "value-form SIMD arg type mismatch (callee expects f32v4)"
+    refused "VCcY2$lg" "VCcY2 $lg: an f64v4 capture into x: f64v2" "$(cat "$D/vccy2.cyr")" "$lg" "value-form SIMD arg must be a 16-byte vector"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VCcY1pe "VCcY1 pe: an f64v2 capture into v: f32v4" "$D/vccy1.cyr" 1
+    pe_same VCcY2pe "VCcY2 pe: an f64v4 capture into x: f64v2" "$D/vccy2.cyr" 1
+fi
+
+# ⛔ 6.7.14 (D32 A, the user's decision, 2026-10-16) — A `*V` DEREFERENCE INTO A VALUE-FORM PARAMETER COPIES THE VECTOR
+# THROUGH THE POINTER: `lanes(*pb)` (`pb: *f64v2`, `fn lanes(x: f64v2)`) was refused on x86_64 / IR=3 / aarch64 / cx ("..
+# got `*pb`") and compiled to a page fault on PE (exit 5: lane 0 taken as the address). SysV / AAPCS64 / cx copy the 16
+# / 32 bytes through the pointer into a frame temp the vector second pass loads (`_sar_deref`; the inline replay: the
+# parameter's slots); Win64 pushes the pointer, the address its callee copies from (`_spv_one`). The vector is read from
+# the operand's step word (`_dop_vd`, as D34's `var v: f64v2 = *p;`) and checked by the class rule a local of that type
+# meets, in its words; a `*q` naming no vector keeps the by-name refusal, which now names `*p` among the accepted sources.
+# Filed: docs/development/issues/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
+#   VZd1 the filed repro verbatim: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE (PE exited 5)
+#   VZd2 `lanes((*pb))`, `lanes(**ppb)`, `lanes(*gp(pb))`, `lanes(*&b)`, an f64v4 `*pw` into `x: f64v4`, an f32v4 `*pf`
+#      into `x: f64v2` (the 16-byte class, as the local), an `#inline` fn's `li(*pb)`, between integers, a capture's
+#      `*pb` in a closure, the callee writing its copy (b keeps 4), a later argument writing *pb (the earlier copy is
+#      taken where it stands): exit 11 on the same legs
+#   VZdY1 / VZdY2 / VZdY3 an f64v2 `*pb` into `v: f32v4` ("type mismatch (callee expects f32v4)"), an f64v4 `*pw` into
+#      `x: f64v2` ("must be a 16-byte vector"), an untyped `*p` / a `*i64` (the by-name refusal, naming `*p` among the
+#      accepted sources: "got `*pi`"): one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VZd1 `_sar_one` without `_sar_deref`                     -> RED 22: VZd1 VZd2 x86 / IR=3 / aarch64 / cx (refused,
+#       `got `*pb``), VZdY1 VZdY2 x86 / aarch64 / cx and pe (the by-name words, not the class ones), T x86 / IR=1 /
+#       IR=3 / DCE / aarch64 / cx (`sp_drows`' D32 rows refused)
+#   M-VZd2 `_spv_one` without the dereference arm (Win64)      -> RED 5: VZd1 VZd2 VZdY1 VZdY2 T pe (refused by name)
+#   M-VZd3 `_snap_pvf_ty` without the `*E` arm                  -> RED 1: VZd2 pe (10: `two(*pb, setb(pb, 7))` read 7)
+cat > "$D/vzd1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanes(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 { var b: f64v2 = f64v2_make(4, 2); var pb: *f64v2 = &b; return lanes(*pb); }
+var rc = main(); syscall(60, rc);
+EOF
+VZDH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn ln(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn lf(v: f32v4): i64 { if (load32(&v) == 999) { return 0; } return load32(&v) * 10 + load32(&v + 12); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn mix(a, x: f64v2, b): i64 { if (a == 999) { return 0; } return a * 1000 + ln(x) * 10 + b; }
+fn bump(x: f64v2): i64 { store64(&x, 9); return load64(&x); }
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn setb(p: *f64v2, v): i64 { store64(p, v); return 0; }
+fn two(x: f64v2, k): i64 { if (k == 999) { return 0; } return ln(x) * 10 + k; }'
+printf '%s\n' "$VZDH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var pb: *f64v2 = &b;' \
+  '    var ppb: **f64v2 = &pb;' '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' '    var pw: *f64v4 = &w;' \
+  '    var f: f32v4; store32(&f, 3); store32(&f + 4, 0); store32(&f + 8, 1); store32(&f + 12, 0);' \
+  '    var pf: *f32v4 = &f;' '    var ok = 0;' \
+  '    if (ln((*pb)) == 42) { ok = ok + 1; }' '    if (ln(**ppb) == 42) { ok = ok + 1; }' \
+  '    if (ln(*gp(pb)) == 42) { ok = ok + 1; }' '    if (ln(*&b) == 42) { ok = ok + 1; }' \
+  '    if (l4(*pw) == 5007) { ok = ok + 1; }' '    if (ln(*pf) == 31) { ok = ok + 1; }' \
+  '    if (li(*pb) == 42) { ok = ok + 1; }' '    if (mix(1, *pb, 3) == 1423) { ok = ok + 1; }' \
+  '    var c = |k| ln(*pb) + k;' '    if (fncall1(c, 0) == 42) { ok = ok + 1; }' \
+  '    if (bump(*pb) + load64(&b) == 13) { ok = ok + 1; }' \
+  '    if (two(*pb, setb(pb, 7)) == 420) { ok = ok + 1; }' \
+  '    return ok;' '}' 'var rc = main(); syscall(60, rc);' > "$D/vzd2.cyr"
+vzdy() {
+    printf '%s\n' "$VZDH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var pb: *f64v2 = &b;' \
+      '    var w: f64v4 = f64v4_make(5, 0, 0, 7);' '    var pw: *f64v4 = &w;' '    var x = 5;' '    var pi: *i64 = &x;' \
+      "    return $1;" '}' 'var rc = main(); syscall(60, rc);' > "$D/$2.cyr"
+}
+vzdy 'lf(*pb)' vzdy1
+vzdy 'ln(*pw)' vzdy2
+vzdy 'ln(*pi)' vzdy3
+echo "VZd. a *V dereference into a value-form parameter: the vector, copied through the pointer (D32 A)"
+exit_rows VZd1 "$D/vzd1.cyr" 42 "the filed repro: lanes(*pb)"
+exit_rows VZd2 "$D/vzd2.cyr" 11 "eleven dereference shapes, one each"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VZdY1$lg" "VZdY1 $lg: an f64v2 *pb into v: f32v4" "$(cat "$D/vzdy1.cyr")" "$lg" "value-form SIMD arg type mismatch (callee expects f32v4)"
+    refused "VZdY2$lg" "VZdY2 $lg: an f64v4 *pw into x: f64v2" "$(cat "$D/vzdy2.cyr")" "$lg" "value-form SIMD arg must be a 16-byte vector"
+    refused "VZdY3$lg" "VZdY3 $lg: *pi of a *i64, by name" "$(cat "$D/vzdy3.cyr")" "$lg" "or a dereference of a pointer to its type (\`*p\`) - got \`*pi\`"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VZdY1pe "VZdY1 pe: an f64v2 *pb into v: f32v4" "$D/vzdy1.cyr" 1
+    pe_same VZdY2pe "VZdY2 pe: an f64v4 *pw into x: f64v2" "$D/vzdy2.cyr" 1
+    pe_same VZdY3pe "VZdY3 pe: *pi of a *i64" "$D/vzdy3.cyr" 1
+fi
+
+# ⛔ 6.7.14 (the vectors lane's review) — D31 / D32'S VALUE-FORM CALL AS AN ARGUMENT OF AN `#inline` FN INSIDE A CLOSURE:
+# `|k| li(lanes(b), k)` (b a capture) and `|k| li(lanes(*pb), k)` compiled silently to a wrong value (x86_64 / IR=3 40
+# where 42 is right) or a fault (aarch64 139): the copy's frame temp is taken while the inline replay evaluates its
+# arguments and given back after, and a closure's frame was sized from GFLC alone, never the `_flc_hwm` high-water a
+# plain fn's frame takes, so the temp lay below rsp and the next push overwrote it. The frame is sized from both now
+# (`_cl_frame_bytes`, parse_expr.cyr). The same frame lost PE's snapshot temp (VCi3: 5) and a temp of integer-only
+# inline calls (VCi5: 26 where 57 is right).
+#   VCi1 / VCi2 `|k| li(lanes(b), k)`, `|k| li(lanes(*pb), k)`: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   VCi3 `|k| li(two(b, setb(pb, 7)), k)` + `|k| li(two(*pb, setb(pb, 7)), k)`: exit 114 on the same legs
+#   VCi4 `|k| li(lanes(mkv(4, 2)), k)` (PE a wrong value before: 82, 242): exit 42; VCi5 nested integer `#inline`
+#      calls: exit 57
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane's review fix; the change alone in a scratch copy of the tree,
+#   this gate run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VCi1 the closure's frame from GFLC alone (the fix reverted) -> RED 20: VCi1 VCi2 x86 / IR=3 / aarch64 (40 / 40 /
+#       139), VCi3 x86 / IR=3 / aarch64 / pe (64 / 192 / 139 / 5), VCi4 pe (82), VCi5 x86 / IR=3 / pe (26), T x86 /
+#       IR=1 / IR=3 / DCE / aarch64 / pe (`sp_irows`: 5 rows, or a fault)
+VCIH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(x: f64v2, n: i64): i64 { return load64(&x) * 10 + load64(&x + 8) + n; }
+fn setb(p: *f64v2, a: i64): i64 { store64(p, a); return 0; }
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+#inline
+fn li(a: i64, b: i64): i64 { return a + b; }'
+vci() {
+    printf '%s\n' "$VCIH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var pb: *f64v2 = &b;' \
+      "$2" '}' 'var rc = main(); syscall(60, rc % 256);' > "$D/$1.cyr"
+}
+vci vci1 '    var c = |k| li(lanes(b), k); return fncall1(c, 0);'
+vci vci2 '    var c = |k| li(lanes(*pb), k); return fncall1(c, 0);'
+vci vci3 '    var c = |k| li(two(b, setb(pb, 7)), k); var d = |k| li(two(*pb, setb(pb, 7)), k);
+    return fncall1(c, 0) + fncall1(d, 0);'
+vci vci4 '    var c = |k| li(lanes(mkv(4, 2)), k); return fncall1(c, 0);'
+vci vci5 '    var c = |k| li(k, 1) + li(k + 1, li(k, 2)) + li(li(k, 3), k); return fncall1(c, 10);'
+echo "VCi. a value-form vector call as an #inline fn's argument inside a closure: the closure's frame holds its temp"
+exit_rows VCi1 "$D/vci1.cyr" 42 "|k| li(lanes(b), k)"
+exit_rows VCi2 "$D/vci2.cyr" 42 "|k| li(lanes(*pb), k)"
+exit_rows VCi3 "$D/vci3.cyr" 114 "the copies taken before setb writes b, 57 + 57"
+exit_rows VCi4 "$D/vci4.cyr" 42 "|k| li(lanes(mkv(4, 2)), k)"
+exit_rows VCi5 "$D/vci5.cyr" 57 "11 + 23 + 23"
+
+# ⛔ 6.7.14 (D33 A, the user's decision, 2026-10-16) — `&w` INTO A VALUE-FORM VECTOR PARAMETER IS REFUSED ON WINDOWS TOO:
+# `lanes(&w)` compiled there (42: the by-address ABI copied the vector the address named) where x86_64 / aarch64 / cx
+# refuse it, and `var v: f64v2 = &w;` is refused on every target. `_sarg_pe_vform` takes `&x` no more; Win64's own-call
+# vector receives route `f64v2_add(&a, &b)` to `f64v2_add_ptr` as PARSE_FNCALL does (`_pe_venter`) — they called the
+# value form with the addresses, which refusing `&x` would have broken (6 corpus files at 6.7.13's D30 bite).
+# Filed: docs/development/issues/2026-10-16-pe-address-of-vector-into-value-form-parameter-accepted.md
+#   VZa1 the filed repro verbatim: one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64 (PE exited 42);
+#      VZa2 `lanes((&w))` the same
+#   VZa3 `f64v2_add(&a, &b)` / `f64v4_add(&p, &q)` into `var c: f64v2 =`, `d =`, a wrapped initialiser, a D30 call temp
+#      (`lanes(f64v2_add(&a, &b))`) and PARSE_RETURN's arm (`return f64v2_add(&a, &b);`, f64v4 too): exit 7 on x86_64 /
+#      IR=3 / aarch64 / cx / PE (the `_ptr` form everywhere)
+#   VZa4 `var c: f64v2 = vadd(&a, &b);` with no `vadd_ptr`: x86_64's two refusals, word for word, on PE
+#   VZa5 the six corpus files whose receives broke on PE when 6.7.13's D30 bite refused `&x` there (the regression set):
+#      each builds for PE and runs green under wine ("N passed, 0 failed")
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V2; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VZa1 `_pe_vroute` never routing                          -> RED 7: VZa3 pe and VZa5's six files (refused: `got
+#       `&a``, the receives calling the value form)
+#   M-VZa2 `_sarg_pe_vform` taking `&x` again (the 6.7.13 exemption) -> RED 2: VZa1 VZa4 pe (compiled); VZa2 green (the
+#       exemption read the first token: `(&w)` stays refused)
+cat > "$D/vza1.cyr" <<'EOF'
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn run(): i64 {
+    var w: f64v2 = mkv(4, 2);
+    return lanes(&w);
+}
+syscall(60, run());
+EOF
+sed 's/return lanes(&w);/return lanes((\&w));/' "$D/vza1.cyr" > "$D/vza2.cyr"
+cat > "$D/vza3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn lanes(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn addr(a: f64v2, b: f64v2): f64v2 { return f64v2_add(&a, &b); }
+fn add4(a: f64v4, b: f64v4): f64v4 { return f64v4_add(&a, &b); }
+fn main(): i64 {
+    var a: f64v2 = f64v2_make(1, 2);
+    var b: f64v2 = f64v2_make(3, 0);
+    var ok = 0;
+    var c: f64v2 = f64v2_add(&a, &b);
+    if (lanes(c) == 42) { ok = ok + 1; }
+    var d: f64v2;
+    d = f64v2_add(&a, &a);
+    if (lanes(d) == 24) { ok = ok + 1; }
+    var e: f64v2 = (f64v2_add(&b, &b));
+    if (lanes(e) == 60) { ok = ok + 1; }
+    if (lanes(f64v2_add(&a, &b)) == 42) { ok = ok + 1; }
+    if (lanes(addr(a, b)) == 42) { ok = ok + 1; }
+    var p: f64v4 = f64v4_make(1, 0, 0, 2);
+    var q: f64v4 = f64v4_make(3, 0, 0, 5);
+    var r: f64v4 = f64v4_add(&p, &q);
+    if (l4(r) == 4007) { ok = ok + 1; }
+    if (l4(add4(p, q)) == 4007) { ok = ok + 1; }
+    return ok;
+}
+var rc = main(); syscall(60, rc);
+EOF
+cat > "$D/vza4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn vadd(a: f64v2, b: f64v2): f64v2 { return f64v2_add(a, b); }
+fn main(): i64 {
+    var a: f64v2 = f64v2_make(1, 2);
+    var b: f64v2 = f64v2_make(3, 0);
+    var c: f64v2 = vadd(&a, &b);
+    return load64(&c);
+}
+var rc = main(); syscall(60, rc);
+EOF
+echo "VZa. &w into a value-form parameter: refused on every target; f(&a, ..) receives route to f_ptr on Win64 (D33 A)"
+for lg in x86 a64 cx; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    refused "VZa1$lg" "VZa1 $lg: lanes(&w), the filed repro" "$(cat "$D/vza1.cyr")" "$lg" "got \`&w\`"
+    refused "VZa2$lg" "VZa2 $lg: lanes((&w))" "$(cat "$D/vza2.cyr")" "$lg" "got \`(...)\`"
+done
+if [ "$WINE" = 1 ]; then
+    pe_same VZa1pe "VZa1 pe: lanes(&w), the filed repro (PE exited 42)" "$D/vza1.cyr" 1
+    pe_same VZa2pe "VZa2 pe: lanes((&w))" "$D/vza2.cyr" 1
+    pe_same VZa4pe "VZa4 pe: vadd(&a, &b) with no vadd_ptr, into a declaration" "$D/vza4.cyr" 2
+fi
+exit_rows VZa3 "$D/vza3.cyr" 7 "seven f(&a, ..) receives through f_ptr"
+if [ "$WINE" = 1 ]; then
+    for f in tests/tcyr/codegen/f64v4_byval_return.tcyr tests/tcyr/crossos/f64v4_ymm.tcyr \
+             tests/tcyr/crossos/vector_global_storage.tcyr tests/tcyr/simd/simd_f32v4.tcyr \
+             tests/tcyr/simd/simd_overload_dispatch.tcyr tests/tcyr/simd/simd_typed_wrappers.tcyr; do
+        n=$(printf '%s' "$f" | tr -c 'a-zA-Z0-9' '_')
+        if [ ! -f "$f" ]; then bad "VZa5 pe: $f is missing"; continue; fi
+        run_leg pe "$f" "$D/za5_$n"
+        if [ "$RC" -eq -1 ]; then bad "VZa5 pe: $f did not build: $(grep -h -m1 'error' "$D/za5_$n.exe.err" 2>/dev/null | head -1)"
+        elif [ "$RC" -eq 0 ] && printf '%s' "$LAST" | grep -q ' passed, 0 failed '; then ok "VZa5 pe: $f: $LAST"
+        else bad "VZa5 pe: $f: exit $RC, '$LAST'"; fi
+    done
+fi
+
+# ⛔ 6.7.14 — A CALL NAMING NO FN INTO A VALUE-FORM VECTOR PARAMETER IS THE UNDEFINED-FUNCTION PATH'S: `lanes(f64v2_splat(1.0))`
+# with lib/simd.cyr not included printed "a value-form vector argument to 'lanes' is .. - got `f64v2_splat`" and NO
+# undefined-function line at all (the argument was skipped unparsed, so the call never registered and the missing
+# include was never named), on x86_64 / aarch64 / cx / PE. `_sar_none` (and Win64's `_sarg_pe_vform`) leave such an
+# argument, inside any parentheses (`_vrcv_nofnw`), to the value parse: the undefined-function warning and the leg's
+# refusing line, no D30 line, no binary (under --allow-undef it builds and the call traps, as through 6.7.10).
+# Filed: docs/development/issues/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md (the return
+# and the wrapped local: simd_return_shapes.sh, rows H12-H16)
+#   VU1 the filed repro verbatim; VU2 wrapped `lanes((f64v2_splat(1.0)))`; VU3 an `#inline` fn's `li(f64v2_splat(1.0))`
+#      (the inline replay); VU4 between integers `l3(1, f64v2_splat(1.0), 2)`; VU5 an f64v4 parameter's
+#      `l4(f64v4_splat(1.0))` — each on x86_64 / aarch64 / cx / PE: no D30 line, the undefined-function warning, one
+#      `error` line (the refusing-to-emit line; cx's unresolved-call one), no binary
+#   VUK `lanes(5)` and `lanes((5))` stay refused by the D30 words, once each, on the same legs (the control)
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V3; the change alone in a scratch copy of the tree, this gate run
+#   there with CYCC=<its 2-stage mutant>; measured):
+#   M-VU1 `_vrcv_nofnw` answering 0                          -> RED 20: VU1-VU5 on all four legs (the D30 line, no
+#       undefined-function line); VUK green
+#   M-VU2 `_sarg_pe_vform` without its `_vrcv_nofnw` test     -> RED 5: VU1-VU5 pe
+VUH='fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn l3(a, x: f64v2, b): i64 { return load64(&x) * 10 + load64(&x + 8) + a + b; }
+fn l4(x: f64v4): i64 { return load64(&x); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x); }
+'
+printf '%s\n' 'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }' \
+  'fn run(): i64 { return lanes(f64v2_splat(1.0)); }' 'syscall(60, run());' > "$D/vu1.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'lanes((f64v2_splat(1.0)))' > "$D/vu2.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'li(f64v2_splat(1.0))' > "$D/vu3.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'l3(1, f64v2_splat(1.0), 2)' > "$D/vu4.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'l4(f64v4_splat(1.0))' > "$D/vu5.cyr"
+printf '%sfn run(): i64 { return %s; }\nsyscall(60, run());\n' "$VUH" 'lanes(5) + lanes((5))' > "$D/vuk.cyr"
+VUM="a value-form vector argument to"
+# undef_arg <name> <what> <src> <leg> <fn>: refused on <leg> by the undefined-function path alone
+undef_arg() {
+    rc=0
+    case "$4" in
+        pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        a64) timeout 60 "$A64" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        cx)  timeout 60 "$CXCC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+        *)   timeout 60 "$CC" < "$3" > "$D/$1.bin" 2> "$D/$1.err" || rc=$? ;;
+    esac
+    n=$(grep -c '^error' "$D/$1.err" || true)
+    if grep -qF "$VUM" "$D/$1.err"; then bad "$2: the D30 refusal: $(grep -m1 "$VUM" "$D/$1.err" | cut -c1-110)"
+    elif ! grep -qF "undefined function '$5'" "$D/$1.err"; then bad "$2: no undefined-function line for '$5' (rc $rc)"
+    elif [ "$rc" -eq 0 ]; then bad "$2: compiled (rc 0)"
+    elif [ "$n" -ne 1 ]; then bad "$2: $n error lines, want 1: $(grep '^error' "$D/$1.err" | head -2 | tr '\n' '|')"
+    elif [ -s "$D/$1.bin" ]; then bad "$2: refused, but a binary was written"
+    else ok "$2: the undefined-function path alone"; fi
+}
+echo "VU. a call naming no fn into a value-form parameter: the undefined-function path names it (6.7.14)"
+for lg in x86 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    undef_arg "VU1$lg" "VU1 $lg: lanes(f64v2_splat(1.0)), the filed repro" "$D/vu1.cyr" "$lg" f64v2_splat
+    undef_arg "VU2$lg" "VU2 $lg: lanes((f64v2_splat(1.0)))" "$D/vu2.cyr" "$lg" f64v2_splat
+    undef_arg "VU3$lg" "VU3 $lg: li(f64v2_splat(1.0)), an #inline fn" "$D/vu3.cyr" "$lg" f64v2_splat
+    undef_arg "VU4$lg" "VU4 $lg: l3(1, f64v2_splat(1.0), 2)" "$D/vu4.cyr" "$lg" f64v2_splat
+    undef_arg "VU5$lg" "VU5 $lg: l4(f64v4_splat(1.0)), an f64v4 parameter" "$D/vu5.cyr" "$lg" f64v4_splat
+    rc=0
+    case "$lg" in
+        pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        a64) timeout 60 "$A64" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        cx)  timeout 60 "$CXCC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+        *)   timeout 60 "$CC" < "$D/vuk.cyr" > "$D/vuk$lg.bin" 2> "$D/vuk$lg.err" || rc=$? ;;
+    esac
+    n=$(grep -c '^error' "$D/vuk$lg.err" || true)
+    nv=$(grep '^error' "$D/vuk$lg.err" | grep -cF "$VUM" || true)
+    if [ "$rc" -eq 0 ] || [ "$n" -ne 2 ] || [ "$nv" -ne 2 ] || [ -s "$D/vuk$lg.bin" ]; then
+        bad "VUK $lg: lanes(5) + lanes((5)): rc $rc, $n error lines ($nv D30), want 2 D30 lines and no binary"
+    else ok "VUK $lg: lanes(5) and lanes((5)) refused once each (the D30 words)"; fi
+done
 
 echo "S. \`p[1]\` on a \`*f64v2\` parameter is refused as on a \`*f64v2\` local (a vector element: load at p + i)"
 printf '%b' "${H}fn rd(p: *f64v2): i64 { var x = p[1]; return 0; }\nfn main(): i64 { return 0; }\n${E}" > "$D/s1.cyr"
@@ -736,4 +1521,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a \`*V\` dereference, copied through the pointer (VZd, D32), either as an \`#inline\` fn's argument inside a closure (VCi); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM); a struct field into a \`*V\` parameter refused (SF, D34)"

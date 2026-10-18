@@ -143,6 +143,11 @@ fn sp_mrows(): i64 {
     return 0;
 }
 
+# Value-form vector parameters (6.7.14: a capture and a `*V` dereference passed to them, D31 / D32).
+fn sp_vl(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 100 + load64(&x + 8); }
+fn sp_vl4(x: f64v4): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 1000 + load64(&x + 24); }
+fn sp_vbump(x: f64v2): i64 { store64(&x, 99); return load64(&x); }   # writes its own copy
+
 # ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — a closure's captured vector meets the local's argument rules: into a
 # `*V` of its type it passes the capture's address (both lanes are the captured copy's), and into a pointer of another kind
 # it is refused by name, as the local is (D27; the refusals are tests/gates/codegen/simd_pointer_param.sh CR rows).
@@ -166,6 +171,14 @@ fn sp_crows(): i64 {
     var c6 = |k| sp_wr(b, 77) + sp_lo(b) + k;
     assert_eq(fncall1(c6, 0), 77, "6.7.13 D32: a write through *V reaches the closure's captured copy");
     assert_eq(load64(&b), 11, "6.7.13 D32: ... not the enclosing local (captured by value)");
+    # 6.7.14 (D31 A, the user's decision, 2026-10-16): and into a VALUE-form parameter it passes the vector, as the local
+    # does (it was refused on every target). issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+    var c7 = |k| sp_vl(b) + k;
+    assert_eq(fncall1(c7, 0), 1122, "6.7.14 D31: a captured f64v2 into x: f64v2, both lanes");
+    var c8 = |k| sp_vl4(w) + k;
+    assert_eq(fncall1(c8, 0), 1044, "6.7.14 D31: a captured f64v4 into x: f64v4, lanes 0 and 3");
+    var c9 = |k| sp_vbump(b) + sp_lo(b) + k;
+    assert_eq(fncall1(c9, 0), 110, "6.7.14 D31: the callee's write stays in its copy (the capture keeps 11)");
     return 0;
 }
 
@@ -194,6 +207,42 @@ fn sp_drows(): i64 {
     assert_eq(sp_hi(*&GDV), 32, "6.7.13: rd(*&G), G a vector global");
     sp_wr(*&b, 77);
     assert_eq(load64(&b), 77, "6.7.13: a write through rd(*&b) reaches b");
+    # 6.7.14 (D32 A, the user's decision, 2026-10-16): into a VALUE-form parameter `*pv` is the vector, copied through the
+    # pointer (refused on x86_64 / aarch64 / cx; PE faulted, exit 5).
+    # issues/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
+    assert_eq(sp_vl(*pb), 7722, "6.7.14 D32: lanes(*pb) into x: f64v2, both lanes");
+    assert_eq(sp_vl((**ppb)), 7722, "6.7.14 D32: lanes((**ppb)), wrapped, through a **f64v2");
+    var pw: *f64v4 = &w;
+    assert_eq(sp_vl4(*pw), 1044, "6.7.14 D32: an f64v4 *pw into x: f64v4");
+    assert_eq(sp_vbump(*pb) + load64(&b), 176, "6.7.14 D32: the callee's write stays in its copy (b keeps 77)");
+    return 0;
+}
+
+# ⛔ 6.7.14 — D31 / D32's value-form call as an ARGUMENT of an `#inline` fn inside a closure: the copy's frame temp is
+# taken while the replay evaluates its arguments, then given back, and a closure's frame was sized from its local count
+# alone (never the high-water a plain fn's frame takes), so the temp lay below rsp and the next push overwrote it —
+# a wrong value on x86_64 / IR=3 / PE, a fault on aarch64. Integer-only inline calls in a closure met it too (26, 57).
+# issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md (the vectors lane's review)
+#inline
+fn sp_li(a: i64, b: i64): i64 { return a + b; }
+fn sp_vln(x: f64v2, n): i64 { if (n == 999) { return 0; } return load64(&x) * 100 + load64(&x + 8) + n; }
+fn sp_irows(): i64 {
+    var b: f64v2 = f64v2_make(11, 22);
+    var pb: *f64v2 = &b;
+    var c1 = |k| sp_li(sp_vl(b), k);
+    assert_eq(fncall1(c1, 1), 1123, "6.7.14: |k| li(lanes(b), k), a capture");
+    var c2 = |k| sp_li(sp_vl(*pb), k);
+    assert_eq(fncall1(c2, 1), 1123, "6.7.14: |k| li(lanes(*pb), k), a *V dereference");
+    var c3 = |k| sp_li(sp_vl(sp_mkv(4, 2)), k);
+    assert_eq(fncall1(c3, 1), 403, "6.7.14: |k| li(lanes(mkv(4, 2)), k), a call");
+    var c4 = |k| sp_li(sp_vln(b, sp_wr(pb, 7)), k);
+    assert_eq(fncall1(c4, 1), 1123, "6.7.14: a capture copied before a later argument writes b");
+    sp_wr(pb, 11);
+    var c5 = |k| sp_li(sp_vln(*pb, sp_wr(pb, 7)), k);
+    assert_eq(fncall1(c5, 1), 1123, "6.7.14: *pb copied where it stands, before a later argument writes it");
+    assert_eq(sp_lo(pb), 7, "6.7.14: ... and the write reached b");
+    var c6 = |k| sp_li(k, 1) + sp_li(k + 1, sp_li(k, 2)) + sp_li(sp_li(k, 3), k);
+    assert_eq(fncall1(c6, 10), 57, "6.7.14: integer #inline calls nested in a closure");
     return 0;
 }
 
@@ -255,4 +304,5 @@ sp_vrows();
 sp_mrows();
 sp_crows();
 sp_drows();
+sp_irows();
 var r = assert_summary();

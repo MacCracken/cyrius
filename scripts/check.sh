@@ -1351,6 +1351,11 @@ _chk_gate "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
 # another type is refused by name. The two filed repros, the decision row, 10 refusals and 27 rows,
 # x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/simd_pointer_param.sh"
+# 6.7.14 — a pointer-to-pointer pin holds 16383 pointees (bit 62 + a 14-bit pin in the step word; 6.7.13's
+# per-struct pins hit "max 126" at 127 distinct `**S` structs): the filed generator at 127 and 1024 structs,
+# 2048 pins, a pin past 1500 typing its dereferences and keeping its struct, the cap refused once; x86 / IR=3 /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/double_pointer_pin_capacity.sh"
 
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
@@ -2787,6 +2792,16 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # `: *S` call and a struct value, the refusals, and the tcyr's PB group, x86 / IR / aarch64 / cx / PE.
 # Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_ptr_param_infer.sh"
+# 6.7.14 — a `pp: **T` parameter binds T to the struct a `**S` argument points through to, as `st<S>(pps)` does (the
+# user's decision D40 A, 2026-10-16): `st(pps)` ran the i64 base (`*pp + 1` stepped 8; `take(**pp)` faulted). The
+# filed repros, a `**S` parameter, a generic method, the explicit spelling, and the tcyr's GI / GK rows, x86 / IR /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_double_pointer_infer.sh"
+# 6.7.14 — a program's own struct (or union) named like a vector type is that struct as a parameter type too (the
+# user's decision D41 A, 2026-10-16): `fn g(v: f32v4)` took the SIMD vector ("SIMD vector has no named fields"). The
+# filed repro, every vector name, a union, a struct declared below the fn (the two scans agree), beside lib/simd.cyr,
+# the vector controls and the crossos rows, x86 / IR / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/struct_named_like_vector.sh"
 # 6.7.14 — an error inside a generic body is printed once, not once per instance (and inline replay): the
 # util.cyr emitters and the shared undefined-name report record (token, identity) and print a repeat as
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,
