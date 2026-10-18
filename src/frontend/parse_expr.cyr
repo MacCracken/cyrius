@@ -4884,7 +4884,7 @@ fn _slit_stray(S, noff): i64 {
     var o = _slit_open(S, ti);
     if (o < 0) { return 0; }
     _slit_beg = ti;
-    _slit_err(S, ti, o);
+    if (_slit_open_wrap(S, ti, o) == 0) { _slit_err(S, ti, o); }   # 6.7.15: an unclosed wrap's `)` is its error
     STI(S, _slit_close(S, o) + 1);
     _slit_tail(S);
     _slit_end = GTI(S);
@@ -4893,6 +4893,46 @@ fn _slit_stray(S, noff): i64 {
     _cfo = 0;
     _asg_tup_refd = 1;   # and the statement's typed-pointer warning is not given about it
     return 1;
+}
+# 1 = the literal at name `ti` (its `{` the token `o`) is a `var` declaration's whole initializer in an UNCLOSED
+# wrap: `var t: P = (P { 5, 6 };` — only `(`s back to the declaration's `=` (`_slit_decl_eq`), fewer `)`s than
+# them after the `}`, then the `;`. The wrap's missing `)` ("expected ')', got ';'") is its one error: a balanced
+# wrap is the initializer (6.7.14's D12 (a), `_slit_wrap_k`), so the literal broke no rule. A literal that is an
+# operand (`var t = (P { 5 } + 1;`) or an assignment's (`t = (P { 5 };`) keeps the refusal. Reads tokens only.
+# CHANGELOG [6.7.15]
+fn _slit_open_wrap(S, ti, o): i64 {
+    var k = 0;
+    while (ti - k > 0) {
+        if (TOKTYP(S, ti - k - 1) != 10) { break; }
+        k = k + 1;
+    }
+    if (k == 0) { return 0; }
+    if (_slit_decl_eq(S, ti - k - 1) == 0) { return 0; }
+    var e = _slit_close(S, o) + 1;
+    var j = 0;
+    while (TOKTYP(S, e + j) == 11) { j = j + 1; }
+    if (j >= k) { return 0; }
+    if (TOKTYP(S, e + j) != 5) { return 0; }
+    return 1;
+}
+# 1 = token `e` is the `=` of a `var` declaration — `var NAME =`, or `var NAME : <type> =` (the `:` the first
+# met walking back, before any `;` / `{` / `}` / `=`). Reads tokens only. CHANGELOG [6.7.15]
+fn _slit_decl_eq(S, e): i64 {
+    if (e < 2) { return 0; }
+    if (TOKTYP(S, e) != 4) { return 0; }
+    if (TOKTYP(S, e - 1) == 2) { if (TOKTYP(S, e - 2) == 3) { return 1; } }
+    var k = e - 1;
+    while (k >= 2) {
+        var t = TOKTYP(S, k);
+        if (t == 49) {
+            if (TOKTYP(S, k - 1) != 2) { return 0; }
+            if (TOKTYP(S, k - 2) != 3) { return 0; }
+            return 1;
+        }
+        if (t == 4 || t == 5 || t == 13 || t == 14) { return 0; }
+        k = k - 1;
+    }
+    return 0;
 }
 # A selector run after the stepped literal (`.f`, `.m(..)`), stepped with it: `P { 5 }.a` is one refusal.
 fn _slit_tail(S): i64 {

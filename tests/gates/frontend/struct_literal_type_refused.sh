@@ -73,6 +73,11 @@
 #   `_slit_open` takes no `<..>` (`P {` only)       -> RED S20 S21 (the generic head: "undefined variable
 #                                                      'Box'" + four)
 #   `_slit_stmt` returns 0                          -> RED S21 ("expected '=', got '{'" + three)
+# (6.7.15, the unclosed wrap; each mutant built from the fixed tree with the one change, measured)
+#   `_slit_open_wrap` returns 0 (the 6.7.14 arm)    -> RED WU1-WU6b (the initializer rule first, then the
+#                                                      `)`); green: the controls WU7 WU8
+#   `_slit_open_wrap` without its `;` test          -> RED WU7 (the operand's literal refusal dropped)
+#   `_slit_decl_eq` always 1 (any `=`)              -> RED WU8 (the assignment's literal refusal dropped)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -467,6 +472,45 @@ var G: P = P { 5, 6 };
 fn kmain(): i64 { return G.a; }
 var r = kmain();
 '
+
+# WU (6.7.15) — an UNCLOSED wrap around a declaration's whole literal initializer (`var t: P = (P { 5, 6 };`) is ONE
+# error, the missing `)`: the literal is the initializer the wrap was meant to hold, so the initializer rule is not
+# reported first. It was "a struct literal is an initializer: ..." at the name, then "expected ')', got ';'"
+# (issues/2026-10-17-unclosed-wrap-around-struct-literal-initializer-names-the-literal-rule.md). Keyed on the
+# declaration's `= (` and the `;` after the literal: an operand (WU7) and an assignment (WU8) keep both errors.
+exact1 "WU1 filed repro: var t: P = (P { 5, 6 };" 'struct P { a; b; }
+fn run(): i64 { var t: P = (P { 5, 6 }; return t.a; }
+syscall(60, run());
+' "error:<source>:2:39: expected ')', got ';'"
+exact1 "WU2 the declaration zone" "$WH"'var G: P = (P { 5, 6 };
+syscall(60, G.a);
+' "error:<source>:3:23: expected ')', got ';'"
+exact1 "WU3 after a statement" "$WH"'var z = 1;
+z = 2;
+var G: P = (P { 5, 6 };
+syscall(60, G.b + z);
+' "error:<source>:5:23: expected ')', got ';'"
+exact1 "WU4 a double wrap, one ) short, unannotated" "$WH"'fn run(): i64 { var q = ((P { 5, 6 }); return q.b; }
+syscall(60, run());
+' "error:<source>:3:38: expected ')', got ';'"
+exact1 "WU5 a generic literal" "$WH"'fn run(): i64 { var h: Bx<i64> = (Bx<i64> { 1, 2 }; return h.w; }
+syscall(60, run());
+' "error:<source>:3:51: expected ')', got ';'"
+exact1 "WU6 a named literal, the zone" "$WH"'var G: P = (P { b: 6, a: 5 };
+syscall(60, G.a);
+' "error:<source>:3:29: expected ')', got ';'"
+exact1 "WU6b --syntax-only: the filed repro" 'struct P { a; b; }
+fn run(): i64 { var t: P = (P { 5, 6 }; return t.a; }
+syscall(60, run());
+' "error:<source>:2:39: expected ')', got ';'" --syntax-only
+exact1 "WU7 control: an operand (P { .. } + 1" "$WH"'fn run(): i64 { var t = (P { 5, 6 } + 1; return 0; }
+syscall(60, run());
+' "error:<source>:3:26: $MS
+error:<source>:3:40: expected ')', got ';'"
+exact1 "WU8 control: an assignment t = (P { .. };" "$WH"'fn run(): i64 { var t: P = P { 1, 2 }; t = (P { 5, 6 }; return t.a; }
+syscall(60, run());
+' "error:<source>:3:45: $MS
+error:<source>:3:55: expected ')', got ';'"
 
 # C — the shapes the guide teaches are unchanged: a positional run of a nested struct's leaves and a nested
 # struct VALUE element.
