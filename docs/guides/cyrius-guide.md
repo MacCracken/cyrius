@@ -2220,6 +2220,11 @@ the field or call the method exactly as without them, chains included, and `(s).
 was *expected ';', got '.'* (a statement *unexpected '('*). Parentheses around a value that is no struct
 (`(x + 1).a`) are refused by name, a store through them (`(s).a = v;`, `(s).a += v;`) is refused by name
 (write `s.a = v`), and at top level a struct result is refused once (no frame), as without them.
+A whole assignment DESTINATION in parentheses is not a statement either (6.7.15, the user's D19, 2026-10-18):
+`(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(s.a) = 3;`, `(*(&s)) -= 1;` are refused once, by name,
+quoting the statement without its parentheses (*an assignment's destination is not parenthesised - write
+`*p += 1`*) — they were *unexpected '('*. Parentheses around a value that is no place (`(n + 1) = 7;`) and a tuple
+literal keep *unexpected '('*.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they

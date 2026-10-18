@@ -3244,7 +3244,7 @@ fn _pf_err(S, e): i64 {
 # One call in PARSE_STMT (cybs's per-fn ceiling). 1 = the statement is consumed. CHANGELOG [6.7.14]
 fn _stmt_paren_field(S): i64 {
     var st = GTI(S);
-    if (_pf_wrap(S, st) == 0) { return 0; }
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st); }   # 6.7.15 (D19): `(*p) += 1;`
     var x = _pf_chain_end(S, _pf_e);
     if (_pf_asg_at(S, x) == 1) {
         if (_syntax_only == 0) { if (_tn_once(S, _pf_e) == 1) {
@@ -3262,6 +3262,91 @@ fn _stmt_paren_field(S): i64 {
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _expect_step(S, 5);
     return 1;
+}
+# ⛔ 6.7.15 — A STATEMENT WHOSE ASSIGNMENT DESTINATION IS PARENTHESISED STAYS REFUSED, BY NAME (the user's D19,
+# 2026-10-18): `(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(*(&s)) -= 1;` were "unexpected '('" (no statement
+# form starts with `(`; parentheses are transparent around a SOURCE, 6.7.6, and `(s).a = v;` is refused by name since
+# 6.7.14's D24 (a)); now "an assignment's destination is not parenthesised - write `*p += 1`", the statement quoted
+# without its wraps, once at the `(`, the statement stepped in sync (the latch as it was). The inside must be a place —
+# `* E`, or a name with `.f` / `[i]` steps — so a parenthesised value (`(n + 1) = 7;`, `(f()) = 3;`) or a tuple literal
+# keeps "unexpected '('". Cursor on the statement's `(`: 1 = consumed. CHANGELOG [6.7.15]
+fn _stmt_paren_dst(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    var e = _pw_end;
+    _pw_end = pe;
+    if (_pf_asg_at(S, e) == 0) { return 0; }
+    if (_pd_place(S, st + k, e - k) == 0) { return 0; }
+    var p0 = _panic;
+    _pd_err(S, st + k, e - k, e);
+    _panic = p0;
+    STI(S, st);
+    _cst_skip_sync(S);
+    return 1;
+}
+# 1 = tokens [a, ie) are a place: `* E`, or a name followed by `.name` / `[..]` steps only.
+fn _pd_place(S, a, ie): i64 {
+    if (a >= ie) { return 0; }
+    if (TOKTYP(S, a) == 8) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var i = a + 1;
+    while (i < ie) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0;
+        }
+    }
+    if (i == ie) { return 1; }
+    return 0;
+}
+# The refusal at the cursor (the statement's `(`): the place [a, ie), then the operator and value from `e` to the `;`.
+fn _pd_err(S, a, ie, e): i64 {
+    var m = ": an assignment's destination is not parenthesised - write `";
+    if (_err_once(S, (m * 31 + 61) * 8 + 4) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(m);
+    _pd_src(S, GTOFF(S, a), GTOFF(S, ie));
+    _pd_src(S, GTOFF(S, e - 1) + 1, GTOFF(S, _pd_semi(S, e)));   # from just past the last `)`, as written
+    PRSTR("`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The source text from offset b to offset c (trailing blanks dropped).
+fn _pd_src(S, b, c): i64 {
+    while (c > b) {
+        var ch = load8(S + 0x459D000 + c - 1);
+        if (ch != 32 && ch != 9 && ch != 10 && ch != 13) { break; }
+        c = c - 1;
+    }
+    if (c > b) { syscall(SYS_WRITE, 2, S + 0x459D000 + b, c - b); }
+    return 0;
+}
+# The statement's `;` at or after token i (depth 0), or the token that ends it first (`}`, EOF).
+fn _pd_semi(S, i): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return i; }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) {
+            d = d - 1;
+            if (d < 0) { return i; }
+        }
+        if (t == 5) { if (d == 0) { return i; } }
+        i = i + 1;
+    }
+    return n;
 }
 # The token after the `.name` / `.m(..)` / `.m<..>(..)` / `[..]` chain that starts at token `i`.
 fn _pf_chain_end(S, i): i64 {
