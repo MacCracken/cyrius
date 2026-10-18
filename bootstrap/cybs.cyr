@@ -2531,6 +2531,11 @@ parse_fn_patch_done:
     add rsi, 0x7600028
     xor rax, rax
     mov [rsi], rax
+# fn_local_count back to 0 with in_function: a top-level `zz[1] = 5;` after a fn whose local is zz
+# names zz (parse_assign_stmt's find_fn_local_index read the last fn's table). CHANGELOG [6.7.15]
+    mov rsi, r15
+    add rsi, 0x7600030
+    mov [rsi], rax
     pop rbx
     pop r9
     pop r8

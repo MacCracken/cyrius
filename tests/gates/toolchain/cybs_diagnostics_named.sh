@@ -35,6 +35,9 @@
 #      — keeps the class message, which lists `x[i]`. Before, every such statement was the class message,
 #      with no `x[i]` in its list. Any other token after the name keeps the class message (L and T: `loop`,
 #      `const`, `do` lex as names). 6.7.14, issues/archived/2026-10-14-cybs-indexed-store-undefined-name-not-named.md
+#      — and at the top level after a fn whose local has the name (parse_fn_def left the fn's local count
+#      standing, so the last fn's locals were found and the class message printed). 6.7.15,
+#      issues/2026-10-17-cybs-top-level-name-of-last-fns-local-taken-as-known.md
 #   P  the preprocessor's fixed buffers refuse what does not fit, naming the cap, rc 1, nothing written
 #      (6.7.14, issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md). Each was unchecked: an
 #      include over its 2 MB slot had its tail overwritten by the file it includes (the filing's big.cyr
@@ -70,6 +73,9 @@
 #   read_input back to `mov rdx, 0xF00000` (the 6.7.13 read)                              -> P4 RED (exit 0)
 #   pp_exp_linestart's check dropped                                                     -> P5 RED (130 MB: rc 139)
 #   preprocess's final expanded-length check dropped                                     -> P5 RED (16 MB + 1 compiles)
+# 6.7.15:
+#   parse_fn_def's fn_local_count reset dropped (the 6.7.14 cybs)                          -> X RED (ztl: the class
+#                                                                                         message, not zz)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_diagnostics_named: cannot cd to $ROOT"; exit 1; }
@@ -165,6 +171,9 @@ printf 'enum E { EA = 1; }\nfn main() {\n    EA[1] = 5;\n    return 0;\n}\nvar r
 says X ze.cyr '`EA[1] = 5;` with EA an enum member' "${SYN}    EA[1] = 5;"
 printf 'var a = 1;\nzz[1] = 5;\nsyscall(60, a);\n' > "$D/zt.cyr"
 says X zt.cyr '`zz[1] = 5;` at the top level, zz undefined' "${UND}zz, at: zz[1] = 5;"
+# the top-level store after a fn whose local is zz: the fn's local table is over (6.7.15)
+printf 'fn f() { var zz = 1; return zz; }\nzz[1] = 5;\n' > "$D/ztl.cyr"
+says X ztl.cyr '`zz[1] = 5;` at the top level after a fn whose local is zz' "${UND}zz, at: zz[1] = 5;"
 
 # P — the preprocessor's caps. pad <file> <bytes>: comment lines, exactly <bytes> bytes, ending in LF
 pad() { awk -v n="$2" 'BEGIN { l = "# padding padding padding padding padding padding padding padding padding padd\n"; L = length(l)
