@@ -17,7 +17,7 @@
 #          tls_native_connect over a socketpair, the server's records pre-written (the entropy hook
 #          makes the client's ClientHello the one the server answered). Linux / macOS; a named
 #          SKIP where socketpair is refused.
-# 6.7.14 (issues/2026-10-15-tls-native-hello-conformance-residue.md items 1-3, the EE half — the
+# 6.7.14 (issues/archived/2026-10-15-tls-native-hello-conformance-residue.md items 1-3, the EE half — the
 # filed probe's four EE lines verbatim):
 #   E5/E6  an extension type twice in the block (adjacent: the filed supported_groups twice; and
 #          apart) — _tn_find_ext took the first; now illegal_parameter (E7: two distinct types pass).

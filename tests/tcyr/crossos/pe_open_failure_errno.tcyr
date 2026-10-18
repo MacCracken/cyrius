@@ -1,7 +1,7 @@
 # pe_open_failure_errno.tcyr — 6.7.14: a FAILED open answers the errno that names the failure on
 # every target, Windows included, so `file_open_r` can say IoNotFound there.
 #
-# ⛔ THE DEFECT (issues/2026-10-15-pe-open-failure-is-always-minus-one.md). EOPEN_PE
+# ⛔ THE DEFECT (issues/archived/2026-10-15-pe-open-failure-is-always-minus-one.md). EOPEN_PE
 # (src/backend/x86/emit.cyr) returned CreateFileW's INVALID_HANDLE_VALUE, -1, for EVERY failure
 # and never read GetLastError, so a portable caller could not tell "not there" from "access
 # denied": `_io_errno_to_iorr(1)` is IoOther, and result_stdlib.tcyr's three IoNotFound rows

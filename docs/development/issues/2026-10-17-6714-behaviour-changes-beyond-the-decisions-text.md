@@ -71,6 +71,23 @@ ecosystem-migration § 6.7.14.
 23. **The asm issue's own surface, no decision:** `out dx, ax` / `out dx, eax` emit a 16 / 32-bit write (66 EF / EF;
     they emitted the one-byte EE), which changes what an already-compiled kernel's port writes do.
 
+## Vectors
+24. **D31 beyond (wider):** a captured vector of ANOTHER 16-byte vector type passes a value-form parameter by the
+    16-byte class rule (an `f32v4` capture into `x: f64v2` gives 42) — D31's text said another type is refused with the
+    local's words; only exact-type parameters (`f32v4`, the 32-byte types) refuse it.
+25. **D32 beyond (wider):** the same for a dereference — an `f32v4` `*pf` into `x: f64v2` is accepted.
+26. **D38 beyond:** the method-result refusal also covers struct, `f64` and pointer destinations and a for step
+    (`var x: Pt = s.mv();` faulted, `var x: f64 = s.mv();` compiled, `var x: *i64 = s.mv();` warned — all refused now);
+    the by-name `var x: f64 = mkv(..);` still compiles (filed for 6.7.15).
+27. **D41 beyond:** a `union` named like a vector type counts too; and a vector-named struct over 8 B, declared below a
+    fn that takes it by value and called above that fn's definition, moves from a refusal to a fault (the filed
+    forward-call parameter issue covers it).
+28. **No decision asked:** a vector fn that returns a call to a missing fn and is never called builds with the
+    undefined-function warning (it was refused), by 6.7.13's rule for the unwrapped local.
+29. **D51 vs D31:** D51 (2026-10-16) kept a captured vector into a value-form parameter refused on Windows; D31 A (the
+    same day) accepts it on every target — the lane applied D31 (same answer on every target), so D51's capture clause
+    is superseded.
+
 ## Acceptance
 
 Each item answered keep or restore at the 6.7.15 open; a restore is a bite in 6.7.15 with its row; a keep closes the

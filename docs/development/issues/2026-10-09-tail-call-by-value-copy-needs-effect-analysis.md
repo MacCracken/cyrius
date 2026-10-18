@@ -70,7 +70,7 @@ generic and method forms.
    - no indirect call (`fncallN`, `callptr`, a closure call);
    - calls only to fns already summarized as writing no memory.
 2. Make it visible to a call that precedes the callee's definition. The ordering problem is the one `#pure`'s check
-   has (`2026-10-08-pure-check-misses-later-defined-callee.md`). Either record the summary in pass 1, or treat a
+   has (`archived/2026-10-08-pure-check-misses-later-defined-callee.md`). Either record the summary in pass 1, or treat a
    not-yet-summarized callee as a writer (the conservative answer, which is today's).
 3. Gate: TU1 flips (`f6` has two `jmp`s and no call). A writer helper (`g` storing into `G`) keeps the copy, the
    `call` and the right value (`by_value_arg_evaluation_order.tcyr`'s rows stay green). The summary is mutation-

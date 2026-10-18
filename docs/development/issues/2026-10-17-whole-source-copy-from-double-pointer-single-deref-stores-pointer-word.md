@@ -1,7 +1,7 @@
 # `l = *pp` / `G = *pp` / `*q = *pp` (pp a `**S`) store the pointer word where `l = p` copies the struct, and `var t: S = *pp;` binds a handle where `var t: S = p;` copies — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane's review (unit S2,
-issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md, 7c96547f), measured on the lane's tree and
+issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md, 7c96547f), measured on the lane's tree and
 at the lane base f133fb2f (the same output on both): x86_64, aarch64 (qemu) and cx (cxvm) alike. Pre-existing.
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — silent: the destination's first field takes the pointer `*pp` holds, the rest is left stale; a

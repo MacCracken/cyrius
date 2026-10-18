@@ -132,7 +132,7 @@ head -c 2000000 /dev/urandom > "$P/data/big.bin"
 # the minimum is the build's own cost; the regression guarded (B0b's index reverted) is ~14x, so
 # min-of-N keeps full sensitivity. The bound is unchanged.
 # Mutation (6.7.14): `_lex_intern` always taking `_lex_intern_scan` (B0b reverted) -> RED.
-# issues/2026-10-15-embed-build-axis6-single-sample-timing-flakes-under-load.md
+# issues/archived/2026-10-15-embed-build-axis6-single-sample-timing-flakes-under-load.md
 N6=3
 base_ms=0; emb_ms=0; base_all=""; emb_all=""; i6=0
 while [ $i6 -lt $N6 ]; do

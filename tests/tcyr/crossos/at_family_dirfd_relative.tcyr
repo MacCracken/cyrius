@@ -2,7 +2,7 @@
 # RELATIVE TO THE DIRFD they are given, on every target that has them, and AT_FDCWD still means
 # the current directory.
 #
-# ⛔ THE DEFECT (issues/2026-10-15-arm64-macos-mkdirat-fchmodat-drop-the-dirfd.md). On arm64
+# ⛔ THE DEFECT (issues/archived/2026-10-15-arm64-macos-mkdirat-fchmodat-drop-the-dirfd.md). On arm64
 # macOS the ESYSXLAT rows (src/backend/aarch64/emit.cyr) reached BSD mkdir 136 / chmod 15 with
 # the dirfd shifted out, so `sys_mkdirat(dirfd, "sub", …)` made ./sub in the CURRENT directory
 # and returned 0, and `sys_fchmodat(dirfd, "f", …)` changed (or failed to find) ./f. Measured on

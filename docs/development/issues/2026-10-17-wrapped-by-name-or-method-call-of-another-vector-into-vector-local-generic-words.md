@@ -6,7 +6,7 @@ gives `(callptr(&mk4, 41))` the mismatch words) on x86_64, aarch64 (cross), cx a
 **Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — message text only: each shape is refused once, on the right line, and no binary is written.
 **Kind:** bug (diagnostic).
-**Discovered:** 2026-10-17, implementing issues/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md
+**Discovered:** 2026-10-17, implementing issues/archived/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md
 (its filed surface is `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped or not; the by-name call and the method, wrapped, are
 the same mismatch one shape over).
 

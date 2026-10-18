@@ -6,7 +6,7 @@ the same, rows 1, 3 and 4 on x86_64 / cx / PE); the method half (row 2) is the g
 **Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors review, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — compiles with no diagnostic; the global holds a word whose value differs per target.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probe m4), beyond D38's filed surface (`x = s.mv();`
-into a LOCAL, `issues/2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md`).
+into a LOCAL, `issues/archived/2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md`).
 
 ## Reproduction
 

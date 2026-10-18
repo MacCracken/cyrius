@@ -69,7 +69,7 @@
 # and at 6.7.11 (the note, issues/archived/2026-10-12-return-type-refusal-note-incomplete.md), measured:
 #   _tn_ret_report's 6.6.17 note string       -> RED the four ret_known note rows naming bool, a
 #                                                multi-value, dyn Trait and a type parameter (`*T` green)
-# and at 6.7.14 (axis 6, issues/2026-10-08-u128-params-returns-fields-captures.md), measured:
+# and at 6.7.14 (axis 6, issues/archived/2026-10-08-u128-params-returns-fields-captures.md), measured:
 #   the lane's previous compiler (45c06049)   -> RED every u128 refusal row (a parameter compiled; a return /
 #                                                field said "expected identifier, got reserved keyword"); the
 #                                                four runs rows green
@@ -166,7 +166,7 @@ refused loc_vec_hint  "${FN}    var a: Vecx = 0;\n    return a;\n}\nsyscall(60, 
 # 6.7.14 (the user's decision D15 (a), 2026-10-16): a `var` annotation that is no type at all — a number, an operator,
 # a string — is refused by name at its token, once, in a fn, in the declaration zone and after the first statement,
 # as a parameter's is (6.7.11); the declaration reads on, so nothing cascades. It compiled as a plain i64, the
-# token dropped (issues/2026-10-14-var-annotation-non-type-token-compiles.md). A missing annotation (`var b: = 0;`)
+# token dropped (issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md). A missing annotation (`var b: = 0;`)
 # keeps its one "expected '='". Mutations (scratch trees): `_tn_head_var` not reporting -> every va_ row but
 # va_missing / va_ok RED (they compile), the syntax-only row too; reporting a `=` too -> va_missing RED (2 errors).
 VA="expected a type for variable"
@@ -312,7 +312,7 @@ runs vg_addr_ok 'include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 =
 echo "axis 6 - (6.7.14) a u128 parameter, return or field type is refused by name, once:"
 # The user's decision D10 (a), 2026-10-16: until u128 is carried as a 16-byte value a `u128` parameter is refused
 # ("pass `*u128`"); a return or field type said "expected identifier, got reserved keyword 'u128' (cannot be used as
-# an identifier ...)", which named a non-problem. (issues/2026-10-08-u128-params-returns-fields-captures.md)
+# an identifier ...)", which named a non-problem. (issues/archived/2026-10-08-u128-params-returns-fields-captures.md)
 UP='`u128` is not supported as a parameter type yet - pass `*u128`'
 UR='`u128` is not supported as a fn return type yet'
 UF='`u128` is not supported as a field type yet'

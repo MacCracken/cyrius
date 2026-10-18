@@ -1,7 +1,7 @@
 # The mixed-return warning ("returns a `: stack` pair on another path but a SINGLE value here") never judges an impl method or an inherited trait default — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 receives lane (unit R5) while adding the `?` route to
-`_pair_body_scan` (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md): the
+`_pair_body_scan` (issues/archived/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md): the
 impl-method rows of that fix (stack_enum_lossy_context.sh axis QF7 / QF8) compiled with NO warning where the same
 body as a free fn warns. Measured with the lane tip (l6714-receives at 9245e108) on x86_64; the warning is shared
 frontend state, so every target.

@@ -490,7 +490,7 @@ check "ANTI-VACUOUS: the real compiler in the same home lints it (exit 0)" 0 "$r
 check "ANTI-VACUOUS: …and reports 0 warnings" 1 "$(grep -c '^0 warnings' "$T/o" || true)"
 
 # ── AXIS 13 (6.7.14) — ⭐ a CHAIN through a `*T` field whose T is declared in a SIBLING file
-# (issues/2026-10-08-syntax-only-chained-field-through-unresolved-pointee.md). `a.f.g` with `f: *Foo` and
+# (issues/archived/2026-10-08-syntax-only-chained-field-through-unresolved-pointee.md). `a.f.g` with `f: *Foo` and
 # `Foo` declared in another file: the hop through `f` needs Foo's struct id, finds none and stops, and
 # `--syntax-only` reported the leftover `.g` as a syntax error the file does not have — "expected '=', got
 # '.'" (a store, `OP=`), "expected ';', got '.'" (a read, a method call) — so lint refused valid source.

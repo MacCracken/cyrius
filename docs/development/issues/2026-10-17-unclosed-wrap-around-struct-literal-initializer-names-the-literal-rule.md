@@ -1,7 +1,7 @@
 # `var t: P = (P { 5, 6 };` (the wrap's `)` missing) is reported as a struct literal outside an initializer, then "expected ')'" — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 frontend lane (unit F6, commit 8d3f7caf, x86_64; the
-frontend, every target). Met beside issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md (the
+frontend, every target). Met beside issues/archived/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md (the
 user's decision D12 (a), 2026-10-16: a struct literal outside an initializer is one named error, and a whole-value
 wrap `var q: P = (P { 5, 6 });` IS the initializer). Its fix recognises the wrap only when it is balanced and ends at
 the declaration's `;` (`_slit_wrap_k`, src/frontend/parse_decl.cyr); an UNCLOSED wrap falls to the expression path,

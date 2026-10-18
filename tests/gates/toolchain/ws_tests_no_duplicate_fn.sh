@@ -8,7 +8,7 @@
 # `duplicate fn` — a warning a real one scrolls past — and sock_send_all_short_write.tcyr defined
 # its stand-in AFTER the include, so its stub bound last and that test's handshake group ran the
 # stand-in, not sandhi's fn. The stand-ins are gone; each test runs the fns its includes bring.
-# issues/2026-10-15-ws-tests-carry-stale-sandhi-find-header-stubs.md, CHANGELOG [6.7.14]
+# issues/archived/2026-10-15-ws-tests-carry-stale-sandhi-find-header-stubs.md, CHANGELOG [6.7.14]
 #
 # AXES
 #   1  each of the five compiles (rc 0, a non-empty binary) with ZERO `duplicate fn` lines on

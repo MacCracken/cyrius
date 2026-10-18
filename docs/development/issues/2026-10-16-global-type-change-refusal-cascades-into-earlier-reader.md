@@ -4,7 +4,7 @@
 the lane's base compiler (c0d6d1ba), x86_64 (the frontend: every target alike).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4, beside
-issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md (D9 (a) makes `var G: bool = true; var X: bool = G;
+issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md (D9 (a) makes `var G: bool = true; var X: bool = G;
 var G = 5;` a type change; the second error below appears for every type change, before and after it).
 **Severity:** Low — a diagnostic cascade (one mistake, two errors); the build is refused either way.
 **Kind:** bug (diagnostic).

@@ -587,7 +587,7 @@ refused r17u2 "a multi-value call 'B_mku' $R17" "R17u2: a method \`take(b.mku(3)
 refused r17u3 "a multi-value call 'mk3' is not a tuple argument - bind it first: \`var t: (i64, i64, i64) = mk3(..);\`" "R17u3: a counted 3-value callee into \`(i64, i64, i64)\`" 'fn mk3(a) { return (a, a + 1, a + 2); }\nfn take(t: (i64, i64, i64)): i64 { return t.0 * 100 + t.1 * 10 + t.2; }\nfn f(): i64 { return take(mk3(1)); }\nsyscall(60, f());\n'
 exits r17u4 45 "R17u4: a mixed-arity undeclared callee is not judged (its one-value path hands a tuple's address)" "var G: (i64, i64) = (4, 5);\nfn mkm(a) { if (a == 0) { return (1, 2); } return &G; }\n${TK}fn f(): i64 { return take(mkm(1)); }\nsyscall(60, f());\n"
 refused r17u5 "a multi-value call 'mk' $R17" "R17u5: the declared callee, the same text (control)" "${MK}${TK}fn f(): i64 { return take(mk(3)); }\nsyscall(60, f());\n"
-# R17v (6.7.14, D44, the user's decision of 2026-10-16; issues/2026-10-15-non-tuple-word-into-tuple-parameter-dereferenced.md)
+# R17v (6.7.14, D44, the user's decision of 2026-10-16; issues/archived/2026-10-15-non-tuple-word-into-tuple-parameter-dereferenced.md)
 # — what can never be a tuple's address is refused into a tuple parameter: an integer literal (`_tup_arg_lit`, its own
 # words) and a call returning several values from a fn declared ONE scalar, which pass 1 counted (6.7.13's D23 B
 # shape; `_mv_callee_any`), R17's words — each compiled and the callee read through the value (139 / 139 / 1 / 5 on
@@ -928,7 +928,7 @@ exits r16ac 32 "R16ac: \`var t: (i64, i64) = dm(17, 5);\` (the matching count) s
 # a stale rdx; the fn itself is refused now (a fn declared with its values returns them).
 refused r16ad "'f1' returns 2 values - return (a, b)" "R16ad: \`var u: (i64, i64) = f1();\`, \`f1\` declared \`: (i64, i64)\` returning \`2\`" "fn f1(): (i64, i64) { return 2; }\n${F5}    var u: (i64, i64) = f1();${E5}"
 # R16r2 (6.7.14, D42, the user's decision of 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
-# (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md): a 3-tuple capture of a fn left only
+# (issues/archived/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md): a 3-tuple capture of a fn left only
 # through `ret2(..);` / `return ret2(..);` is refused as R16y's `return (a, b);` fn is (`t.2` read the seeded 88 on
 # every target); the 2-tuple capture still runs. Mutations (scratch trees, run 2026-10-17): the tree before
 # (c4930b46) -> R16r2a-R16r2d BUILD on every leg; `_prescan_ret_arity`'s ret2 arm back to the bail, or `_ar_exits`
@@ -940,7 +940,7 @@ refused4 r16r2c "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R1
 refused4 r16r2d "${CAP}g2' into tuple (i64, i64, i64) - it returns 2 values" "R16r2d: \`t = g2(..);\` into an existing 3-tuple" "fn g2(x) { ret2(x, 1); }\n${F5}    var t: (i64, i64, i64);\n    t = g2(4);${E5}"
 exits4 r16r2e 41 "R16r2e: \`var t: (i64, i64) = g2(4);\` (the matching count) still captures" "fn g2(x) { ret2(x, 1); }\nfn main(): i64 { var t: (i64, i64) = g2(4); return t.0 * 10 + t.1; }\nsyscall(60, main());\n"
 # R16cp (6.7.14) — \`callptr(fp, ..)\` IS A CALL TO THE CAPTURE, as to the destructure since 6.7.13 (\`_dt_call_open_cp\`;
-# issues/2026-10-15-tuple-capture-of-callptr-refused.md): its callee is unknown, so its count is not judged — as for
+# issues/archived/2026-10-15-tuple-capture-of-callptr-refused.md): its callee is unknown, so its count is not judged — as for
 # \`fncallN\`, its lowering, which already captured. Each spelling was R12 "not a tuple" on every target (R16o until
 # 6.7.14). Mutations (scratch trees, the gate run from each, every leg; run 2026-10-17): the tree before (0d0a054d) ->
 # R16cpa-R16cpf refused, R16cpj R16cpk the R12 text, A1-A7 (TV_CP); \`_tup_cap_check\` back to \`_dt_call_open\` ->
@@ -961,7 +961,7 @@ refused4 r16cpj "${CAP}callptr' into tuple (bool, i64) - element 0 is a bool, an
 refused4 r16cpk "${CAP}callptr' into tuple (i64, i64, i64, i64) - a call returns at most 3 values" "R16cpk: 4 elements" "${CPT}fn main(): i64 {\n    var fp = &two;\n    var t: (i64, i64, i64, i64) = callptr(fp, 5);\n    return t.1;\n}\nsyscall(60, main());\n"
 # R16pw (6.7.14, D45, the user's decision of 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to the
 # capture, as to the destructure (destructure_one_value_refused.sh axis 8) and every other consumer of a whole call
-# (issues/2026-10-15-paren-wrapped-call-destructure-refused.md: \`var t: (i64, i64) = (two(3));\` was "not a tuple" on
+# (issues/archived/2026-10-15-paren-wrapped-call-destructure-refused.md: \`var t: (i64, i64) = (two(3));\` was "not a tuple" on
 # x86_64 / aarch64 / cx / PE). \`_tup_cap_check\` steps into k parentheses wrapping ONE call (\`_dt_wrap_k\`) and the
 # caller closes them after the call (\`_tcap_k\`), so the capture compiles as the unwrapped one does. Still refused
 # by their own texts: a wrapped one-value callee (R12), a class disagreement (at the call), a wrap holding more than

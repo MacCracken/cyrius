@@ -27,7 +27,7 @@
 #       `var q: P = (P { 5, 6 });` (any depth, a fn, either zone) IS the initializer, byte-identical to the
 #       unwrapped form; it was "undefined variable 'P'" + "expected ')'" (the run-time values are pinned by
 #       tests/tcyr/crossos/struct_literal_wrapped_initializer.tcyr on every target).
-#       (issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
+#       (issues/archived/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
 #
 # Refusal rows are checked on the MESSAGE (and that no binary was written), so a row cannot pass
 # on an unrelated syntax error. Acceptance rows are checked against the exit code AND a CONTROL

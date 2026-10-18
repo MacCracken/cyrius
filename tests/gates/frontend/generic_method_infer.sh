@@ -47,7 +47,7 @@
 #      field still wins: `p.n < k`, and `q.id < k` where `id` is a field AND a generic method — every leg;
 #      refusals, once each (x86_64): E5 `p.pick<i64>(9)` naming P_pick with the stub text, E6 `p.bm<i64>(3)` by
 #      the bound with one note naming `impl Show for i64`, E7 `p.id<Zork>(h)` "unknown type 'Zork' as a type
-#      argument". Filed: docs/development/issues/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md
+#      argument". Filed: docs/development/issues/archived/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md
 #   T  tests/tcyr/crossos/generic_method_struct_arg.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach

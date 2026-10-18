@@ -1,6 +1,6 @@
 #!/bin/sh
 # cx_guest_syscall_refusal.sh — 6.7.14 (D55, the user 2026-10-16: "cxvm answers -38";
-# issues/2026-10-15-cx-untranslated-pointer-wrappers-can-reach-cxvm-image.md). cxvm's syscall opcode
+# issues/archived/2026-10-15-cx-untranslated-pointer-wrappers-can-reach-cxvm-image.md). cxvm's syscall opcode
 # (0x70) translates read / write / open, serves getrandom / clock_gettime through the host's stdlib,
 # passes a short list of SCALAR-ONLY calls to the host as they are (programs/cxvm.cyr
 # `_cx_sys_scalar`), and answers every other number -ENOSYS (-38) without reaching the host.

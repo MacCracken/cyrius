@@ -201,7 +201,7 @@ vrefused v2f "2:9: 'pk" "V2f: #assert" '#assert pk() == 3, "x";\nsyscall(60, 1);
 vrefused v2g "2:34: 'pk" "V2g: a case label" 'fn f(x): i64 { switch (x) { case pk(): return 5; default: return 0; } return 1; }\nsyscall(60, f(3));\n'
 vrefused v2n "2:11: 'pk2" "V2n: the named-argument form" 'const X = pk2(a: 2);\nsyscall(60, X);\n'
 # V3 (6.7.14) — ... and in an arm the evaluator SKIPS: a short-circuit's right operand, an untaken
-# if-expression arm (issues/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md)
+# if-expression arm (issues/archived/2026-10-14-const-context-skipped-arm-calls-private-const-fn-unchecked.md)
 vrefused v3a "2:16: 'pk" "V3a: const X = 1 || pk(); (built, exit 1)" 'const X = 1 || pk();\nsyscall(60, X);\n'
 vrefused v3b "2:16: 'pk" "V3b: const X = 0 && pk() == 3; (built, exit 0)" 'const X = 0 && pk() == 3;\nsyscall(60, X);\n'
 vrefused v3c "2:36: 'pk" "V3c: an untaken else arm (built, exit 3)" 'const X = if (1 == 1) { 3 } else { pk() };\nsyscall(60, X);\n'
@@ -267,7 +267,7 @@ refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): 
 exits lc6 3 "LC6: the unannotated local const, unchanged" 'fn f(): i64 { const k = 3; return k; }\nsyscall(60, f());\n'
 exits lc6t 7 "LC6t: the unannotated top-level const read above and below, unchanged" 'fn f(): i64 { return K; }\nconst K = 3;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n'
 # S (6.7.14) — a refused const does not hold the cascade latch: each evaluation prints its own error,
-# and pass 2 starts unlatched (issues/2026-10-09-const-sweep-swallows-later-const-errors.md's table)
+# and pass 2 starts unlatched (issues/archived/2026-10-09-const-sweep-swallows-later-const-errors.md's table)
 cp "$ROOT/docs/development/issues/repros/2026-10-09-const-sweep-swallows-later-const-errors.cyr" "$T/s0.cyr"
 build s0
 n=$(grep -c '^error' "$T/s0.err")
@@ -300,7 +300,7 @@ refusedn s13 1 "S13: a builtin in a const fn body a const runs" 'const fn cf(x) 
 refusedn s14 1 "S14: an ordinary fn's call in a const fn body a const runs (twice before 6.7.14)" 'fn hh(): i64 { return 1; }\nconst fn h(x) { return hh(); }\nconst Z = h(1);\nsyscall(60, Z);\n' "2:24: 'hh' is not a \`const fn\`"
 # R (6.7.14) — a local const in an `#inline` / generic body ends with its replay: the second call in
 # one scope was refused "'L' is already declared in this scope"
-# (issues/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md's table)
+# (issues/archived/2026-10-14-local-const-in-inline-or-generic-body-refused-at-second-call.md's table)
 IW='#inline\nfn w(): i64 { const L = 3; return L; }\n'
 GG='fn gg<T>(x: T): i64 { const L = 3; return L; }\n'
 R1="${IW}fn main(): i64 { return w() + w(); }\nsyscall(60, main());\n"
@@ -337,7 +337,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     else bad "R-a64: src/main_aarch64.cyr did not build"; fi
 else echo "  SKIP R-a64: aarch64 leg — qemu-aarch64 not installed"; skips=$((skips + 1)); fi
 # F (6.7.14) — a field access in a const fn, or on a const, names its own refusal, once
-# (issues/2026-10-08-const-field-access-diagnostics-misname-refusal.md). The filed repros verbatim (F3, F8).
+# (issues/archived/2026-10-08-const-field-access-diagnostics-misname-refusal.md). The filed repros verbatim (F3, F8).
 refusedf() {   # <name> <want error lines> <what> <fragment>... : $T/<name>.cyr already written
     nm=$1; want=$2; what=$3; shift 3
     build "$nm"
@@ -389,7 +389,7 @@ exits f14 12 "F14: control — a local const L beside a global struct L: L.x sto
 exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
 # B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
 # syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
-# (issues/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
+# (issues/archived/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
 # L5 / L6 above keep the lvalue refusal for a real `N = ..` / `N += ..`; enum_const_not_lvalue.sh N1-N9 too.
 cat > "$T/b0.cyr" <<'EOF'
 const N = 5;

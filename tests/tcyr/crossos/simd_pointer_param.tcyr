@@ -172,7 +172,7 @@ fn sp_crows(): i64 {
     assert_eq(fncall1(c6, 0), 77, "6.7.13 D32: a write through *V reaches the closure's captured copy");
     assert_eq(load64(&b), 11, "6.7.13 D32: ... not the enclosing local (captured by value)");
     # 6.7.14 (D31 A, the user's decision, 2026-10-16): and into a VALUE-form parameter it passes the vector, as the local
-    # does (it was refused on every target). issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+    # does (it was refused on every target). issues/archived/2026-10-16-captured-vector-into-value-form-parameter-refused.md
     var c7 = |k| sp_vl(b) + k;
     assert_eq(fncall1(c7, 0), 1122, "6.7.14 D31: a captured f64v2 into x: f64v2, both lanes");
     var c8 = |k| sp_vl4(w) + k;
@@ -209,7 +209,7 @@ fn sp_drows(): i64 {
     assert_eq(load64(&b), 77, "6.7.13: a write through rd(*&b) reaches b");
     # 6.7.14 (D32 A, the user's decision, 2026-10-16): into a VALUE-form parameter `*pv` is the vector, copied through the
     # pointer (refused on x86_64 / aarch64 / cx; PE faulted, exit 5).
-    # issues/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
+    # issues/archived/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
     assert_eq(sp_vl(*pb), 7722, "6.7.14 D32: lanes(*pb) into x: f64v2, both lanes");
     assert_eq(sp_vl((**ppb)), 7722, "6.7.14 D32: lanes((**ppb)), wrapped, through a **f64v2");
     var pw: *f64v4 = &w;
@@ -222,7 +222,7 @@ fn sp_drows(): i64 {
 # taken while the replay evaluates its arguments, then given back, and a closure's frame was sized from its local count
 # alone (never the high-water a plain fn's frame takes), so the temp lay below rsp and the next push overwrote it —
 # a wrong value on x86_64 / IR=3 / PE, a fault on aarch64. Integer-only inline calls in a closure met it too (26, 57).
-# issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md (the vectors lane's review)
+# issues/archived/2026-10-16-captured-vector-into-value-form-parameter-refused.md (the vectors lane's review)
 #inline
 fn sp_li(a: i64, b: i64): i64 { return a + b; }
 fn sp_vln(x: f64v2, n): i64 { if (n == 999) { return 0; } return load64(&x) * 100 + load64(&x + 8) + n; }

@@ -19,7 +19,7 @@
 #      message_hash(254) || 00 00 || 48 || Hash(ClientHello1).
 #   S  (6.7.14) TLS_SHA256_CTX_LEN, a literal public var until 6.7.14 (it never got a const twin), sized the
 #      SHA-256 transcript ctx allocation and the clone copy
-#      (issues/2026-10-15-tls-sha256-ctx-len-literal-var-drives-transcript-clone.md).
+#      (issues/archived/2026-10-15-tls-sha256-ctx-len-literal-var-drives-transcript-clone.md).
 #      The filed repro: written 4096, tls_native_transcript_digest copied 4096 bytes into the
 #      208-byte clone (6.7.13: SIGSEGV, "returned" never printed); written 16, a transcript made after the write got a
 #      16-byte heap ctx that sigil's 144-byte SHA-256 ctx ran over. Now `var TLS_SHA256_CTX_LEN = _TLS_SHA256_CTX_LEN;`

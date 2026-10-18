@@ -7,7 +7,7 @@
 # `fncall0(&gp)` with `gp: *P2` had no pointer step: `fncall0(&gp) + 1` moved one byte where `gp() + 1` moves one P2,
 # and `var w: *P2 = fncall0(&gp);` warned "assigning non-pointer to typed pointer" (the warning half is
 # tests/gates/diagnostics/typed_pointer_warn_sign.sh axis 13). A callee held in a VARIABLE is unknown (6.7.11's D31):
-# its result stays a word — rows V (issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md). There is no
+# its result stays a word — rows V (issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md). There is no
 # f32 row: `: f32` is not a fn return type. In this directory so the release gate runs it on ecb / ach / cass / pi.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

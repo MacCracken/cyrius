@@ -37,7 +37,7 @@
 # D1-D8 BUILD, D10 does not build x5 (`{ *p } else { s }` refused); `_gz_bty` without kind 7 -> RED D10 x5 (the
 # declaration zone misreads `var G: S3 = if (K) { *GP } else { GQ };`); `_ie_deref_sid` without the
 # whole-dereference test (`_gz_split`) -> RED D11.
-# 6.7.14 (D9, D12-D23; issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md): a whole
+# 6.7.14 (D9, D12-D23; issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md): a whole
 # dereference of a `*V` branch is a vector value, refused as a vector name is (D9 the filed repro, on the aarch64 /
 # cx / PE compilers too); a `*i64` dereference and the pointer words stay integers (D22, D23). Mutation (2026-10-17,
 # CYCC=the lane's compiler before the fix): RED 12 — D9 D12-D21 BUILD (D12 refused once, at its name branch) and D9 pe
@@ -191,7 +191,7 @@ if [ "$rc" -eq 0 ]; then bad "D8: var v: S = if (k == 1) { *p } else { *q } (16 
 elif [ -s "$T/d08.bin" ]; then bad "D8: refused but still emitted a binary"
 elif [ "$(grep -c "$BIG: struct 'S'" "$T/d08.err")" -ne 2 ]; then bad "D8: want the over-8-bytes refusal once per branch: $(grep '^error' "$T/d08.err" | head -2 | tr '\n' '|')"
 else ok "D8: the filed { *p } else { *q } at 16 B is refused at each branch, no binary"; fi
-# 6.7.14 (issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md) — A VECTOR DEREFERENCE IS A
+# 6.7.14 (issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md) — A VECTOR DEREFERENCE IS A
 # VECTOR VALUE (6.7.13's D34), refused as a vector name branch is (R16): through 6.7.13 `{ *pa } else { *pb }`
 # compiled to lane 0's word (42), no diagnostic. D9 is the filed repro, refused at each branch as `{ a } else { b }`.
 VEC="an if expression branch cannot be a vector, u128 or slice value"

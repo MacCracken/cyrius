@@ -5,7 +5,7 @@ commit (`0807784c`), x86_64; the same before it (c778c981). Frontend: every targ
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — silent: t.data takes the pointer's (or the branch's) word and t.len is left stale (the
 6.6.16 pun the user's D20 (a) retired for a `Str` handle source). Not a security id (the developer's own source).
-**Kind:** language (decision) — 6.7.14's D20 (a) (issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md)
+**Kind:** language (decision) — 6.7.14's D20 (a) (issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md)
 copies the header a `Str` HANDLE points at into an inline `Str` (a handle local, parameter, global, a `: Str` call or
 method, a `Str` field). Its filed surface was the handle; a `*Str` pointer and an if-expression of handles are
 `Str`-typed sources outside it, so they keep the one-word store.

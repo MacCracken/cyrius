@@ -1,7 +1,7 @@
 # The error writers outside util.cyr's emitters still print once per generic instance: an arity error three times, a second subscript twice — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G5) on the lane's tree after the
-per-instance error latch (the `_err_once` / `_err_dup` commit for issues/2026-10-10-generic-body-errors-reported-per-instance.md),
+per-instance error latch (the `_err_once` / `_err_dup` commit for issues/archived/2026-10-10-generic-body-errors-reported-per-instance.md),
 x86_64; the same counts on the slot-open compiler.
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G5. That issue's fix latches the plain emitters (src/common/util.cyr ERR,
@@ -49,4 +49,4 @@ error:<source>:2:48: a subscript's result is an element, not an array - a second
 Route each direct writer's head through the 6.7.14 latch — `if (_err_once(S, <identity>) == 0) { return ..; }` for
 a writer that takes the panic latch, `_err_dup` (as ERR_UNDEF does) for one that does not, the identity being what
 its text names — and keep a note it prints after the error behind `_err_quiet`. The frontend lane's
-issues/2026-10-14-private-call-reported-once-per-body-replay.md is one of these writers.
+issues/archived/2026-10-14-private-call-reported-once-per-body-replay.md is one of these writers.

@@ -651,7 +651,7 @@ for spec in 'sub@var c = f() < 1.0; var n = 0 - c; return n + 2;@1@0' 'and@var k
 done
 
 # --- axis 19 (6.7.14, the user's decision D25 (a), 2026-10-16): a known `&f` callee's `: f64` is an f64 ---
-# issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md: `var a = fncall0(&f); var y = a + 1.5;` with `f: f64`
+# issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md: `var a = fncall0(&f); var y = a + 1.5;` with `f: f64`
 # bound an untyped word (the f64 was kept only when the last ARGUMENT was an f64, 6.7.6), so `a + 1.5` was an integer
 # add under kind 2, "integer arithmetic with an f64 right operand" (the repro exited 0). Now an f64 whatever the
 # arguments, as `f()` is; a callee held in a variable stays a word (D31) and keeps the warning.

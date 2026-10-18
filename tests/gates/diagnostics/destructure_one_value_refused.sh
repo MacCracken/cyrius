@@ -59,7 +59,7 @@
 #           is still refused. MUTATION: `_dt_rhs_check_t` without its `callptr` line -> cp_repro, cp_assign,
 #           cp_for, cp_zone, cp_top, cp_three refused.
 #   axis 7  6.7.14 (D42, the user's decision, 2026-10-16) — `ret2(a, b)` is two values to pass 1's count
-#           (issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md: every filed shape read the
+#           (issues/archived/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md: every filed shape read the
 #           seeded 88 on x86_64 / aarch64 / cx / PE). A `ret2(..);` statement and `return ret2(..);` are two-value
 #           exits, and a body may end in `ret2(..);` or in an if / elif / else whose every arm ends in an exit, so
 #           `var a, b, c = g2();` and a 3-tuple capture are refused by the existing text — the five filed shapes,
@@ -75,7 +75,7 @@
 #           `ret2(..);` tail -> the bail's 14 less r2_mid; without its if / else arm -> r2_mixed r2_elif
 #           r2_ifelse_ret; `_ret2_stmt` accepting any ret2 -> r2_expr refused.
 #   axis 8  6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
-#           the destructure (issues/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
+#           the destructure (issues/archived/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
 #           call on the right-hand side" twice on x86_64 / aarch64 / cx / PE; unwrapped it exits 41). `_dt_wrap_k` (k `(`,
 #           one call, k `)`, then the terminator): the issue's program verbatim (41), `((..))`, the assignment `c, d =
 #           (..);`, a for step, both top-level zones, `callptr`, a method and an explicit generic, f64 bindings typed

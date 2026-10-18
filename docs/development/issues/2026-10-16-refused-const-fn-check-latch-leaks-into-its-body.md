@@ -1,7 +1,7 @@
 # A refused const fn's definition check leaves the cascade latch on for its run-time body: a false "undefined variable" for a local const, and a later statement's error reported twice — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 frontend lane (unit F2) while fixing the const-fn double
-report (issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md, item 1). Measured on 87ef0dd9 (the lane
+report (issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md, item 1). Measured on 87ef0dd9 (the lane
 before F2) and on F2's tree: identical (F2 deliberately keeps the latch, see Root cause).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — every input is refused; one shape prints a FALSE error, the other a duplicate.

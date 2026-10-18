@@ -321,7 +321,7 @@ pfwd arr_pub     0 pub_arr  'fn main(): i64 { store64(&pub_arr, 5); return load6
 pfwd gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'
 
 # ── 6.7.14: ONE report per call site, however often its body is parsed ───────────────────
-# (issues/2026-10-14-private-call-reported-once-per-body-replay.md) An `#inline` fn's body is
+# (issues/archived/2026-10-14-private-call-reported-once-per-body-replay.md) An `#inline` fn's body is
 # parsed at its definition and at every expansion, a generic's for its base and per instance:
 # `w() + w()` printed the identical `3:25: 'pk' is private` three times. `_vis_seen` keeps the
 # (token, callee) pair. Rows: the issue's table (one each, at the site), a body with TWO sites

@@ -27,7 +27,7 @@
 #      the expansion buffer is 16 MB). cybs refuses each past its cap since 6.7.14
 #      (cybs_diagnostics_named.sh P), so this row is the early warning, before seed-derive stops. The
 #      walker (awk) is checked against cybs itself: a copy of cybs that writes its expanded stream and
-#      exits must give exactly the walker's length. issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md
+#      exits must give exactly the walker's length. issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md
 #   B  a 7- and a 9-argument call return the right values — as statements, inside an expression
 #      with a value pending (`k + f9(..)`), with a 7-argument call as an argument, and through
 #      lib/fnptr.cyr's fncall7 / fncall8 (their 7+ parameters stored, their stack arguments read by

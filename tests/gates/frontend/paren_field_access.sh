@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: a `.field` / `.m(..)` after PARENTHESES around a struct value reads it as unwrapped (6.7.14, the user's
-# decision D24 (a), 2026-10-16; issues/2026-10-16-field-of-parenthesised-expression-does-not-parse.md).
+# decision D24 (a), 2026-10-16; issues/archived/2026-10-16-field-of-parenthesised-expression-does-not-parse.md).
 #
 # THE DEFECT (measured on the 6.7.14 receives lane before the bite, x86_64 / aarch64 under qemu / cx under cxvm /
 # PE under wine — refused alike, frontend): `return (s).a;` was `error:<source>:3:47: expected ';', got '.'` — the

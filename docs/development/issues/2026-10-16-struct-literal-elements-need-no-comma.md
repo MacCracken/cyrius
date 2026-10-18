@@ -4,7 +4,7 @@
 same in a fn, after the first top-level statement and (since 6.7.14's named-literal fix) in the declaration zone.
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F3, comparing the zone's named literal with the fn-local
-one (`issues/2026-10-09-declaration-zone-named-struct-literal-refused.md`).
+one (`issues/archived/2026-10-09-declaration-zone-named-struct-literal-refused.md`).
 **Severity:** Low — accepted bad syntax; the values land where the comma-separated form puts them.
 **Kind:** language (what a struct literal's grammar is — whether to refuse it is the user's call).
 

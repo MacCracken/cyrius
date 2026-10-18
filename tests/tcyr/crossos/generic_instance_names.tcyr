@@ -13,7 +13,7 @@
 # 6.7.14: a two-parameter name whose type argument is itself an instance. `P<R>` is registered `P$R`,
 # so `g2<P<R>, i16>` and `g2<P, R<i16>>` both minted `g2$P$R$i16` and the second call ran the first's
 # body. A fragment whose name holds '$' is bracketed (the user's decision D1, 2026-10-16):
-# `g2$<P$R>$i16`, `g2$P$<R$i16>`. Filed: docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md
+# `g2$<P$R>$i16`, `g2$P$<R$i16>`. Filed: docs/development/issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md
 #   N  g2 / gq (non-inlinable) with a nested argument in either slot, both orders; `Two<..>`'s field
 #      layout; a two-parameter instance as the argument (`Two<P, R>` / `P<R<i16>>`)
 include "lib/syscalls.cyr"

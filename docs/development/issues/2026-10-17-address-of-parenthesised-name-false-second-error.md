@@ -1,7 +1,7 @@
 # `&(x)` reports "expected identifier, got '('" and then a false "undefined variable 'fn'" naming the program's first word — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane's review (unit S3, beside
-issues/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md), measured on the lane's tree and at the lane base
+issues/archived/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md), measured on the lane's tree and at the lane base
 f133fb2f (the same output on both), x86_64. Frontend: every target alike. Pre-existing.
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — diagnostics only: the statement is refused, at the right place; a second error follows that names a

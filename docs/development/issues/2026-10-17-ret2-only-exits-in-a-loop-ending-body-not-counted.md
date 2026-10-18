@@ -1,7 +1,7 @@
 # A body ending in an infinite loop whose only exits are `ret2(..);` statements is not counted: `var a, b, c = g2(1);` binds a stale register — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 receives lane (unit R5) while landing D42
-(issues/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md, commit b773a56a: `ret2(a, b)` is two
+(issues/archived/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md, commit b773a56a: `ret2(a, b)` is two
 values to pass 1's count). Measured with the lane tip (l6714-receives at 9245e108) on x86_64; the count is shared
 frontend state, so every target.
 **Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.

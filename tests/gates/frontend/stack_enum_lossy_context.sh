@@ -1715,7 +1715,7 @@ EOF
 # where the same programs with qb above qa were refused "bind both". The scan now answers 1 for a `?`
 # whose call is a pair (`_tok_q_is_pair`, the mixed-return pass's own test), in the same rounds, so the
 # verdict no longer depends on the definition order (QF1-QF4); impl methods share the scan (QF7, QF8).
-# (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md)
+# (issues/archived/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md)
 # LEGS: x86_64, aarch64 (cross, qemu-aarch64), cx (cxvm) and PE (CYRIUS_TARGET_WIN=1; wine, a private
 # prefix), the cross compilers built from this tree by $CC. A missing tool is a SKIP that names it.
 # QF9 an inherited trait default and QF10 a dyn formed above the impl share the scan too (QF10: it compiled).
@@ -1898,7 +1898,7 @@ qf_refuse "var v = qc(5); above qc, its own ? after a closure, a | and a ||" axi
 # the two refusal sites only (`_refuse_lossy_pair`, `_refuse_single_pair_bind`) — every store, both top-level
 # zones, a for step, a struct-literal element, an if-expression branch. `x = (32 + f(7));` keeps the tag (the
 # operand rule, unchanged), `(f(7)? + 1)` propagates (`?` scanned from the inside), `(f(7) + 1) * 2` is no whole
-# wrap. (issues/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) The legs are axis QF's.
+# wrap. (issues/archived/2026-10-15-paren-wrapped-pair-operand-store-keeps-tag.md) The legs are axis QF's.
 # Mutations (scratch trees, CYCC= the mutant, each row run alone on every leg, run 2026-10-17): the tree before
 # (0e9a612d) -> PV1 PV3-PV11 (each built; PV4's `((f(7)) + 1)` too, which 6.7.13's D19 does not peel); `_refuse_lossy_pair`
 # without `_pair_vwrap` -> PV1 PV7-PV11; `_refuse_single_pair_bind` without it -> PV1 PV3-PV6; `_pair_vwrap_q`

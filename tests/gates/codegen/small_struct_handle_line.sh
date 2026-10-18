@@ -102,7 +102,7 @@
 #   R4 the filed repro, VERBATIM: exit 111 on the same legs (0 = each callee read the pointer's bits)
 #   R4n (6.7.14) `bs(n + &X)` with a narrow `n` is the pointer `bs(&X + n)` is (6.7.11's `n + &x` rule, the
 #      user's decision 2026-10-13): the filed repro, VERBATIM — exit 77 on the same legs (78 = `n + &X` read as
-#      a value; issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md); R3's
+#      a value; issues/archived/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md); R3's
 #      `n_` rows carry every shape (i8 / i16 / i32 / u8 locals and parameters, `&s`, an operand, top level)
 #   PP (Linux x86_64 + aarch64) a `*S7` onto the last 7 bytes of a mapping passed by value — a `*T`
 #      local, a `: *S7` call, an operator's right operand, a `*S7` global, a closure, and at TOP LEVEL
@@ -258,7 +258,7 @@
 #      struct into a struct-typed FIELD (`o.s = GP`, `gp()`, `(GP)`, `mk()`, `5`, through a `*O`, at top level)
 #      stores no byte (through 6.7.12 a word over the neighbour), and a zero-size `*p` as a value reads none — its
 #      word 0, into a `*S` parameter the pointer, `*p + l` dispatches (through 6.7.12 the word at p)
-#   R16 (6.7.14, issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md) `**pp` through a `**S` is
+#   R16 (6.7.14, issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md) `**pp` through a `**S` is
 #      the struct value `*p` is: tests/tcyr/crossos/double_pointer_struct_value.tcyr on the same legs (floor 31) — a
 #      declaration copy (wrapped, `*(*pp)`), a by-value argument (3 / 8 / 16 B), an operator's left operand, a `**S`
 #      local, parameter, field, `: **S` call, global, capture, `***S`, `**(pp + 0)`, `return **pp`, an if-expression
@@ -785,7 +785,7 @@ for leg in $XLEGS $OTHER; do
 done
 
 # 6.7.14 — the filed narrow + address-of repro, verbatim
-# (issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md).
+# (issues/archived/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md).
 cat > "$D/repro_n.cyr" <<'EOF'
 struct B8 { v; }
 fn bs(b: B8): i64 { return b.v; }
@@ -1029,7 +1029,7 @@ for leg in $XLEGS $OTHER; do
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NPS passed, 0 failed ($NPS total)" ]; then ok "R16 $leg: $LAST"
     else bad "R16 $leg: exit $RC, '$LAST' (want '$NPS passed, 0 failed ($NPS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
 done
-# The three filed repros, verbatim (issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md).
+# The three filed repros, verbatim (issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md).
 cat > "$D/repro_pp1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct P { x; y; }

@@ -22,7 +22,7 @@
 # a named one, `*gp() + a`; over 8 B it pushed the first word as the address until the ops-4 fix). The
 # right-operand control (`a + w.s`) dispatched before.
 # The SIZE rows (1..8 B: u8 / u16 / u32 compositions — a SIGNED narrow field read through a `*S` is the
-# open CYRIUS_IR=3 defect, issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) run `w.s + a` (by
+# open CYRIUS_IR=3 defect, issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md) run `w.s + a` (by
 # value), `w.s - a` (through `*S` parameters) and `*p + a` on each size, a guard byte after the field kept.
 # Refusals (a missing operator fn, a parameter of another struct, a 9-16 B result at top level) and the
 # declaration zone's agreement: tests/gates/codegen/small_struct_handle_line.sh (rows F, GC8).

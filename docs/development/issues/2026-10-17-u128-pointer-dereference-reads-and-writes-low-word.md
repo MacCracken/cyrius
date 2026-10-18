@@ -1,7 +1,7 @@
 # `*pu` through a `*u128` reads and writes only the low 8 bytes, silently — a declaration, a comparison, an if-expression branch and a store — where `pu[0]` is refused by name — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane's review (unit S3, beside
-issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md, 896c2d32) as "a `*u128` dereference as an
+issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md, 896c2d32) as "a `*u128` dereference as an
 if-expression branch yields the low word where a `u128` name branch is refused"; the premise check the review asked for
 was run by the lane's fix step: `*pu` is the low word at EVERY use, not only as a branch. Measured on the lane's tree
 and at the lane base f133fb2f (the same output on both): x86_64, aarch64 (qemu) and cx (cxvm) alike. Pre-existing.

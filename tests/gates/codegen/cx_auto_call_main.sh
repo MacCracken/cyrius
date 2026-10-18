@@ -44,7 +44,7 @@
 #       refusal exactly: -38 three times, the pipe buffer untouched, cyr_mmap -1, mmap_anon 0 (W3).
 #       ⚠ The repro's open(2) is translated and creates `_cx_probe.bin`; unlink refuses on cx (D13), so
 #       the file stays — cxvm runs it in $T.
-#   M1-M2 (6.7.14, issues/2026-10-15-cx-raw-mmap-paths-return-host-address.md) the two raw mmap paths
+#   M1-M2 (6.7.14, issues/archived/2026-10-15-cx-raw-mmap-paths-return-host-address.md) the two raw mmap paths
 #       D13 missed: natively mmap_stack, fl_alloc(64), fl_alloc(8192) and _fl_mmap map writable memory
 #       (M1, exit 33); on cx mmap_stack and _fl_mmap answer exactly -1 and both fl_allocs 0, with no
 #       cxvm fault line (M2, exit 30). Before: cx mmap_stack > 0 (a host address) and fl_alloc(64)
@@ -285,7 +285,7 @@ build_run cx "$T/w3.cyr" "$T/w3.c.out"
 if [ "$RC" = 0 ]; then ok "W3 (cx): sys_pipe / sys_fstat / sys_unlink answer -38, the fd buffer untouched, cyr_mmap -1, mmap_anon 0"
 else bad "W3 (cx): exit $RC (a bitmask: 1 pipe, 2 its buffer, 4 fstat, 8 unlink, 16 cyr_mmap, 32 mmap_anon)"; fi
 
-# ── M1-M2 (6.7.14, issues/2026-10-15-cx-raw-mmap-paths-return-host-address.md): the two raw
+# ── M1-M2 (6.7.14, issues/archived/2026-10-15-cx-raw-mmap-paths-return-host-address.md): the two raw
 # `syscall(SYS_MMAP)` paths D13 missed — lib/thread.cyr mmap_stack and lib/freelist.cyr _fl_mmap —
 # take the same cx arm (-1). A bitmask: 1 mmap_stack mapped (and its first word writable), 2 it
 # answered exactly -1, 4 fl_alloc(64) == 0, 8 fl_alloc(8192) (the large path) == 0, 16 _fl_mmap

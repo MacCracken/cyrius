@@ -1,7 +1,7 @@
 # `var a: Box<dyn Show>;` reports a second error after the dyn type-argument refusal, naming the instance `Box$dyn Show` — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G2), probing the tokens a type argument
-can hold (issues/2026-10-14-type-argument-non-name-reported-with-garbage-name.md). Pre-existing: identical on the
+can hold (issues/archived/2026-10-14-type-argument-non-name-reported-with-garbage-name.md). Pre-existing: identical on the
 slot-open compiler (2600f67f's build/cycc) and on the lane tree (596d1a89).
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — a second, misleading error on input already refused (no binary either way); the second line

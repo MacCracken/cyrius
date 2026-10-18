@@ -34,7 +34,7 @@
 # 6.7.14 — ROW 10 IS THE BEHAVIOURAL ONE. The run registry grows (util.cyr _wpnr_grow), so 9,000
 # dead fns of ~244 B each (2.2 MB of code, data at 0x800000) compact to a few hundred bytes of
 # code whose re-derived data base would be 0x600000: the binary must keep its data at 0x800000
-# and run. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
+# and run. issues/archived/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 #
 # Mutation-proven: deleting either `_wx_dbase_frozen` guard reddens this gate, and restores
 # the sankhya segfault.

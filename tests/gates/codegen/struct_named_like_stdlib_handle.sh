@@ -2,7 +2,7 @@
 # tests/gates/codegen/struct_named_like_stdlib_handle.sh — 6.7.14
 #
 # A PROGRAM'S OWN `struct Result` / `struct Option` / `struct Tagged` IS A PLAIN STRUCT.
-# (issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md)
+# (issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md)
 #
 # The parameter classifier `_classify_param_type` (src/frontend/parse_fn.cyr) answered the stdlib's
 # handle classes 3 / 4 / 5 for the NAMES `Result` / `Option` / `Tagged`, whatever the program declared:

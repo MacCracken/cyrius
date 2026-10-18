@@ -1,7 +1,7 @@
 # lseek_failed_seek.tcyr — 6.7.14: a FAILED seek answers a negative errno on every target,
 # Windows included, and leaves the file position where it was.
 #
-# ⛔ THE DEFECT (issues/2026-10-16-pe-lseek-failed-seek-returns-zero.md). ELSEEK_PE
+# ⛔ THE DEFECT (issues/archived/2026-10-16-pe-lseek-failed-seek-returns-zero.md). ELSEEK_PE
 # (src/backend/x86/emit.cyr) zeroed SetFilePointerEx's output slot, made the call and returned
 # the slot without reading the BOOL, so on Windows a seek that FAILED answered 0 — a successful
 # seek to offset 0 — while the file pointer stayed put. Every `xlseek(...) < 0` test was dead, and

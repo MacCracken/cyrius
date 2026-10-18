@@ -186,7 +186,7 @@ fi
 # 98-103 %, so `< 100 %` caught that mutation in only four runs of eight — a coin flip. A tie is
 # not a win. The real win reads 52-55 % on a quiet box. Mutation (6.7.14): that routing -> RED,
 # eight runs of eight.
-# issues/2026-10-16-simd-valueform-axis2b-reads-100-percent-under-host-load.md
+# issues/archived/2026-10-16-simd-valueform-axis2b-reads-100-percent-under-host-load.md
 cat > "$T/hasavx.cyr" <<'EOF'
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"

@@ -5,7 +5,7 @@ after the review fix that restored PARSE_VAR's reset for a `: T` return (`_gen_d
 the same output on the slot-open compiler (2600f67f). Pre-existing.
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-17, the 6.7.14 generics lane review, beside
-issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md.
+issues/archived/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md.
 **Severity:** Low — the field form is refused (rc 1) but at the wrong place with the wrong reason; the no-field form
 compiles with the annotation silently dropped (the local holds the scalar).
 

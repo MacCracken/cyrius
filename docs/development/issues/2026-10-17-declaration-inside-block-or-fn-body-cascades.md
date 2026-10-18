@@ -1,7 +1,7 @@
 # A `struct` / `enum` / `union` / `trait` / `impl` declaration inside a block or a fn body is "unexpected struct" and a cascade — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 frontend lane (unit F6, commit 45c06049, x86_64; the
-frontend, every target). Met beside issues/2026-10-12-declarations-after-first-statement-decision.md, whose filed
+frontend, every target). Met beside issues/archived/2026-10-12-declarations-after-first-statement-decision.md, whose filed
 surface (and the user's decision D13 (a), 2026-10-16: one named error) is a declaration at MODULE scope after the
 first top-level statement; that is fixed (`_decl_late`, module scope only: `GINFN` 0, `_pp_depth` 1). The same
 keywords one level down — in a top-level block's body or a fn body — still reach `_PARSE_STMT_IMPL` and cascade.

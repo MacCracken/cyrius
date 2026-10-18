@@ -43,7 +43,7 @@ fi
 # build's — on W^X and CYRIUS_WX=0. Without CYRIUS_DCE the map is the plain build's, dead_a
 # included. Mutations (6.7.14): the second dump dropped -> RED (dead_a listed, every address 84 B
 # high); its skip bitmap dropped -> RED (dead_a listed at live_fn's address).
-# issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
+# issues/archived/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
 cat > "$TMP/sy.cyr" <<'EOF'
 fn dead_a(x): i64 { var q = x * 3; return q + 1; }
 fn live_fn(x): i64 { return x + 100; }

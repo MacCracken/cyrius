@@ -7,7 +7,7 @@
 # for an `f32` (the bits the store wrote: it rounds) — and the store is gone, as for an integer constant. So the
 # global is its value from program start on every target: a forward read sees it, and a call in an EARLIER
 # initializer that writes it keeps its write (through 6.7.13 the startup store reset it to the literal).
-# (issues/2026-10-08-kernel-float-global-init-not-baked.md)
+# (issues/archived/2026-10-08-kernel-float-global-init-not-baked.md)
 #
 # WHY A CROSS-HOST TEST: the image writer (and cx's startup prestore) is per backend — x86_64 ELF, Mach-O, PE,
 # aarch64, cx.

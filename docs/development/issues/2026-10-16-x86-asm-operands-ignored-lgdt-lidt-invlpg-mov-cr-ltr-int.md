@@ -4,7 +4,7 @@
 that match mnemonics whole and give `in` / `out` real operands; these five emitters were not in that item's filed
 surface).
 **Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
-**Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), implementing `issues/2026-10-08-asm-in-mnemonic-unreachable.md`
+**Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), implementing `issues/archived/2026-10-08-asm-in-mnemonic-unreachable.md`
 (decision D16, 2026-10-16: an asm block naming an instruction cyrius's assembler does not have — a misspelled mnemonic,
 or an operand the instruction cannot take — stops compiling, naming it). That item's surface was the `in` route, the
 in / out operands and whole-mnemonic matching; the same "operand read past, never looked at" shape is in five more

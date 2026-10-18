@@ -1,7 +1,7 @@
 # A struct field `p: *Box<Zork>` is never checked at its declaration — unused it compiles; each use reports the bad type argument again — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G2), surveying the positions of
-issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md (`: *Box<Zork>` in a return). Pre-existing:
+issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md (`: *Box<Zork>` in a return). Pre-existing:
 identical on the slot-open compiler (2600f67f's build/cycc) and on the lane tree (596d1a89).
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — an unknown or non-name type argument in a pointer field's annotation compiles silently while

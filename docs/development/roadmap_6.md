@@ -115,7 +115,7 @@ every name is the user's call at the arc's open, with a per-name collision surve
 
 u128 parameters, returns and struct fields carried as a 16-byte value — a call / return ABI change on five backends,
 after 6.7.7's aarch64 pair-register fix. 6.7.13 closes the bug half (the capture miscompile; the other shapes refused by
-name — [issue](issues/2026-10-08-u128-params-returns-fields-captures.md)); this is the carriage half.
+name — [issue](issues/archived/2026-10-08-u128-params-returns-fields-captures.md)); this is the carriage half.
 
 ### The syscall families still unnamed by the stdlib
 

@@ -45,7 +45,7 @@
 #      temp); Yw2 the Y10-Y12 refusals on PE
 #   Y13a / Y13c / Yw2d Y13 on aarch64, cx and PE (6.7.13, D40 — the user 2026-10-15: keep the top-level
 #      refusal; 6.7.11 compiled it to a fault, 139 on x86_64 and aarch64)
-#   Y14-Y22 (6.7.14, issues/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md) an explicit generic call
+#   Y14-Y22 (6.7.14, issues/archived/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md) an explicit generic call
 #      whose own type argument is refused is reported ONCE: Y14 the filed repro verbatim `g<f64v2>(b)` (+ D27 "in a
 #      call to 'g$i'" before) on x86_64 / aarch64 / cx / PE; Y15 `g<Zork>(b)` (once before too); Y16-Y22 a token that
 #      is no name, a slice, a tuple, a nested `Box<f64v2>`, the second argument, u128 with `*pb`, a vector call result
@@ -150,7 +150,7 @@
 #       (compiled); and struct_arg_type_refused.sh D17 D18, small_struct_handle_line.sh R10 on every leg
 #   M-DR3 `_pp_intern` keyed without the pointee's struct    -> RED 2: DRS1 DRSw (compiled: `**Q3` shares P3's pin)
 #
-# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — SM: a method-result argument
+# 6.7.14 (issues/archived/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — SM: a method-result argument
 # is named as the source spells it (`S2.dup`, not its fn name `S2_dup`) in the struct-type and `*V` refusals; SM1 the
 # filed repro verbatim (both lines, exact) on x86_64 / IR=3 / aarch64 / cx / PE; SMk a local named `Pt_dup` keeps it.
 # Mutations (2026-10-17, a scratch copy, the gate run with its 2-stage mutant; measured):
@@ -412,7 +412,7 @@ if [ "$WINE" = 1 ]; then
     refused Yw2c "Yw2 Y12 on PE" "${H}fn ri(p: *i64): i64 { return *p; }\nfn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return ri(b) + 1; }\n${E}" pe "$KFRAG"
     refused Yw2d "Yw2 Y13 on PE (D40)" "$Y13B" pe "$Y13F"
 fi
-# 6.7.14 (issues/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md): an explicit call whose own type
+# 6.7.14 (issues/archived/2026-10-15-generic-vector-type-arg-refusal-cascades-d27-refusal.md): an explicit call whose own type
 # argument is refused mints no instance and is reported once. The refused `f64v2` read as i64 minted `g$i`, whose parse
 # cleared the panic latch, so D27 judged `b` against its `p: *i64` too (a second line naming `g$i`); a refusal that sets
 # no latch (a tuple, a slice, a token that is no name, u128) met D27 / D31 on the base `g`. `_ta_refd` (set by every
@@ -491,7 +491,7 @@ for lg in x86 pe; do
     else ok "OKX $lg: 13 vector sources into another pointer kind / a by-value struct, each refused once"; fi
 done
 
-# ⛔ 6.7.14 (issues/2026-10-16-vector-dereference-other-than-star-name-into-word-pointer-parameter-faults.md; 6.7.13's D31 A
+# ⛔ 6.7.14 (issues/archived/2026-10-16-vector-dereference-other-than-star-name-into-word-pointer-parameter-faults.md; 6.7.13's D31 A
 # already decides it) — A `*V` DEREFERENCE OTHER THAN `* NAME` INTO A PARAMETER THAT IS NOT ADDRESS-PASSED (`*i64`, `*u8`,
 # `**T`, a by-value struct of 8 B or less) IS REFUSED BY NAME, as `ri(*pb)` (OK4) and every such spelling into `*Pt` are:
 # `ri(**ppb)`, `ri(*gp(pb))`, `ri(*h.pv)`, `ri(*GPV)`, `ri(*(pb + 0))`, `ri(*&b)` compiled with no diagnostic and pushed
@@ -723,7 +723,7 @@ printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt {
   'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
 exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
 
-# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — the struct-type (6.7.3) and
+# 6.7.14 (issues/archived/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — the struct-type (6.7.3) and
 # `*V` (D33) refusals named a method-result ARGUMENT by its fn name, `S2_dup` (the struct-call record's `_sc_fn`); the
 # record keeps its fn (`_sc_fi`) and both refusals print it as the source spells it (`_sarg_ident_err`: `S2.dup`, the
 # frontend lane's `_fn_src_name`). A local that happens to be named `S2_dup` keeps its name (SMk).
@@ -768,7 +768,7 @@ for lg in a64 cx pe; do
     refused "SM6$lg" "SM6 $lg" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" "$lg" "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
 done
 
-# 6.7.14 (D34 A, the user's decision, 2026-10-16; issues/2026-10-16-struct-field-into-vector-pointer-parameter-accepted.md)
+# 6.7.14 (D34 A, the user's decision, 2026-10-16; issues/archived/2026-10-16-struct-field-into-vector-pointer-parameter-accepted.md)
 # — a struct-typed FIELD into a `*V` parameter is refused by name, as D33 refuses the struct from every other source:
 # `rd(w.s)` (`s: Pt`) passed the field's address (`_fla_addr`) and the callee read its bytes as the vector (42 on every
 # target, silently). SF1 the filed repro verbatim; SF2-SF6 wrapped, through a `*W`, a global's, a capture's, a nested
@@ -951,7 +951,7 @@ fi
 # ⛔ 6.7.14 — ON WIN64 A VALUE-FORM VECTOR PARAMETER TAKES WHAT SYSV'S `_sar_src` TAKES (`_sarg_pe_vform`): the struct
 # arms took its argument there (Win64 passes it by address, under the struct mask), so a vector local of another type,
 # a struct local and an identifier-led expression compiled and the callee read garbage, where x86_64 / aarch64 / cx
-# refuse each by name. Filed: docs/development/issues/2026-10-16-pe-16-byte-value-form-vector-argument-unchecked.md,
+# refuse each by name. Filed: docs/development/issues/archived/2026-10-16-pe-16-byte-value-form-vector-argument-unchecked.md,
 # 2026-10-16-pe-identifier-led-expression-into-value-form-vector-parameter.md,
 # 2026-10-16-pe-struct-local-into-value-form-vector-parameter.md
 #   VYw3-VYw5 the first issue's three probes on PE (an f64v4 / an f64v2 / an f32v8 local into v: f64v2 / v: f32v4 /
@@ -1059,7 +1059,7 @@ fi
 # destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
 # IR=3 / aarch64 / cx ("got `(...)`") and passed on PE (`_sarg_paren`). `_sar_take` (the call's record and the inline
 # replay) and `_sarg_pe_vform` read the source inside `_pwrap_in`'s parentheses.
-# Filed: docs/development/issues/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md
+# Filed: docs/development/issues/archived/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md
 #   VP1 / VP2 the filed repro verbatim (`lanesn((v))`) and its call form (`lanesn((mkv(4, 2)))`): exit 42 on x86_64 /
 #      IR=3 / aarch64 / cx / PE
 #   VP3 `lanesn(((v)))`, an `#inline` fn's `li((v))` / `li(((mkv(4, 2))))`, a wrapped f64v4 local and call, two wrapped
@@ -1127,7 +1127,7 @@ fi
 # frame temp the vector second pass loads (`_sar_cap`; the inline replay: the parameter's slots); Win64 pushes the
 # capture's address (`_spv_one`). The class rule a local of its type meets decides, in its words: an f32v4 capture into
 # `x: f64v2` passes as an f32v4 local does (the 16-byte class), an f64v2 into `v: f32v4` and an f64v4 into `x: f64v2`
-# are refused. Filed: docs/development/issues/2026-10-16-captured-vector-into-value-form-parameter-refused.md
+# are refused. Filed: docs/development/issues/archived/2026-10-16-captured-vector-into-value-form-parameter-refused.md
 #   VCc1 the filed repro verbatim: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   VCc2 an f64v4 capture into `v: f64v4`, an f32v4 capture into `x: f64v2` (as the local), wrapped `lanes((b))`, an
 #      `#inline` fn's, between integers, a callee writing its copy (the capture keeps 4), a later argument writing the
@@ -1201,7 +1201,7 @@ fi
 # parameter's slots); Win64 pushes the pointer, the address its callee copies from (`_spv_one`). The vector is read from
 # the operand's step word (`_dop_vd`, as D34's `var v: f64v2 = *p;`) and checked by the class rule a local of that type
 # meets, in its words; a `*q` naming no vector keeps the by-name refusal, which now names `*p` among the accepted sources.
-# Filed: docs/development/issues/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
+# Filed: docs/development/issues/archived/2026-10-16-vector-dereference-into-value-form-parameter-faults-on-pe.md
 #   VZd1 the filed repro verbatim: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE (PE exited 5)
 #   VZd2 `lanes((*pb))`, `lanes(**ppb)`, `lanes(*gp(pb))`, `lanes(*&b)`, an f64v4 `*pw` into `x: f64v4`, an f32v4 `*pf`
 #      into `x: f64v2` (the 16-byte class, as the local), an `#inline` fn's `li(*pb)`, between integers, a capture's
@@ -1319,7 +1319,7 @@ exit_rows VCi5 "$D/vci5.cyr" 57 "11 + 23 + 23"
 # refuse it, and `var v: f64v2 = &w;` is refused on every target. `_sarg_pe_vform` takes `&x` no more; Win64's own-call
 # vector receives route `f64v2_add(&a, &b)` to `f64v2_add_ptr` as PARSE_FNCALL does (`_pe_venter`) — they called the
 # value form with the addresses, which refusing `&x` would have broken (6 corpus files at 6.7.13's D30 bite).
-# Filed: docs/development/issues/2026-10-16-pe-address-of-vector-into-value-form-parameter-accepted.md
+# Filed: docs/development/issues/archived/2026-10-16-pe-address-of-vector-into-value-form-parameter-accepted.md
 #   VZa1 the filed repro verbatim: one line on x86_64 / aarch64 / cx, and on PE word for word as x86_64 (PE exited 42);
 #      VZa2 `lanes((&w))` the same
 #   VZa3 `f64v2_add(&a, &b)` / `f64v4_add(&p, &q)` into `var c: f64v2 =`, `d =`, a wrapped initialiser, a D30 call temp
@@ -1416,7 +1416,7 @@ fi
 # include was never named), on x86_64 / aarch64 / cx / PE. `_sar_none` (and Win64's `_sarg_pe_vform`) leave such an
 # argument, inside any parentheses (`_vrcv_nofnw`), to the value parse: the undefined-function warning and the leg's
 # refusing line, no D30 line, no binary (under --allow-undef it builds and the call traps, as through 6.7.10).
-# Filed: docs/development/issues/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md (the return
+# Filed: docs/development/issues/archived/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md (the return
 # and the wrapped local: simd_return_shapes.sh, rows H12-H16)
 #   VU1 the filed repro verbatim; VU2 wrapped `lanes((f64v2_splat(1.0)))`; VU3 an `#inline` fn's `li(f64v2_splat(1.0))`
 #      (the inline replay); VU4 between integers `l3(1, f64v2_splat(1.0), 2)`; VU5 an f64v4 parameter's

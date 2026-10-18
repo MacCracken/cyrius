@@ -356,7 +356,7 @@ refuse "PU24e 24 B: var pu: *U24 = GU24; return (pu);" "$MU \`pu\` (a \`\\*U24\`
 # 6.7.11 `*S` copy never runs there (copied, it was a struct where the call's pointer belongs — SIGSEGV, rc 139),
 # and since 6.7.14 the caller's 9-16 B class does not judge it either (through 6.7.13 it was refused, "... two
 # registers ... got `GPT`"): the row compiles, and `return p;` copies the struct p points at — 55.
-# issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
+# issues/archived/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
 accept "RP16 a generic's replayed return GPT; in a : S16 fn" 'struct S16 { v; w; }
 var G16 = S16 { 4, 5 };
 var GPT: *S16 = 0;

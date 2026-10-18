@@ -1,7 +1,7 @@
 # PE `xlseek` / `sys_lseek` on fd 0 / 1 / 2 fails -9: ELSEEK_PE passes the std fds as raw HANDLE values (EWRITE_PE / EREAD_PE / EFLUSHFB_PE map them through GetStdHandle) — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 platform lane's tree (l6714-platform, after
-636129db0, the failed-seek fix for issues/2026-10-16-pe-lseek-failed-seek-returns-zero.md), PE built with the lane's
+636129db0, the failed-seek fix for issues/archived/2026-10-16-pe-lseek-failed-seek-returns-zero.md), PE built with the lane's
 `build/cycc_win_cross`, run under wine (a private WINEPREFIX) and on real cass (Windows 11, `C:\cyrius-tests`). Filed
 from the platform lane's review: the triage met it in passing, and the lane's handoff named it only in
 ecosystem-migration.

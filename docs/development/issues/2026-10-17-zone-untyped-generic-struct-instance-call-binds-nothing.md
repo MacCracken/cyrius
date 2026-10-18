@@ -6,7 +6,7 @@
 **Severity:** Low — a refusal of valid code (8 B), and a second error after the one refusal (16 B); nothing miscompiles.
 The same declaration after the first statement, or annotated (`var x: G1<i64> = mkg1(33);`), works.
 **Discovered:** 2026-10-17, the receives lane (unit R4), repairing
-`issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md` (D29 / D30), whose filed repros are a plain
+`issues/archived/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md` (D29 / D30), whose filed repros are a plain
 fn returning a plain struct.
 
 ## Reproduction

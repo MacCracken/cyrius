@@ -8,7 +8,7 @@
 # "too many pointer-to-pointer pointee types (max 126)" (rc 1) on x86_64, IR=3, aarch64, cx and PE, where the 6.7.12
 # base compiled it. A pinned word is now bit 62 plus a 14-bit pin in bits 48-61 (a `**T`'s word names no vector, so
 # bits 48-55 are free there), the tables grow by doubling, and a `**T` global keeps its pin in 16 bits.
-# Filed: docs/development/issues/2026-10-16-double-pointer-pins-interned-per-struct-cap.md
+# Filed: docs/development/issues/archived/2026-10-16-double-pointer-pins-interned-per-struct-cap.md
 #
 #   C1 the filed generator verbatim (127 structs): compiles and exits 0 on x86_64, x86_64 CYRIUS_IR=3, aarch64
 #      (qemu), cx (cxvm) and PE (wine)

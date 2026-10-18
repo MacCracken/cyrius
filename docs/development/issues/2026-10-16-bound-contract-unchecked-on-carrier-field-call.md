@@ -1,7 +1,7 @@
 # A method no bound declares, called on a struct carrier's `T` field (`b.v.other()`, `b: Box<T>`, `T: Show`), is not checked against the bound — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G4), on the slot-open compiler and after the
-bounded-carrier-field bite (issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md): identical.
+bounded-carrier-field bite (issues/archived/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md): identical.
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G4. That bite records `x.f.m(` on a carrier's T field as a bounded site
 only when `m` is a method of exactly one trait of the bound (a trait use; a scalar T takes the field's value). It

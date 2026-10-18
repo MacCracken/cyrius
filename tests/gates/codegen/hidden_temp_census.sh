@@ -161,7 +161,7 @@ fi
 # parse_decl.cyr — issues/archived/2026-10-13-vector-dereference-into-vector-local-decision.md).
 # 6.7.14 (D20 (a)): _istr_rax_into — `t = <a Str handle value>` into an inline `Str` (a `: Str` call, a method's result,
 # a `Str` field) parks the handle while its 16-byte header is copied through it into t (a frame slot in a fn, a dead
-# global at top level; parse_decl.cyr — issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md).
+# global at top level; parse_decl.cyr — issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md).
 # 6.7.14 (D35 A): `_vrcv_demit`'s park is `_vrcv_dparse`, shared with `return *p;` from a fn returning the vector
 # (`_ret_vderef`, parse_fn.cyr) — the same one slot per dereference; (D36 A) _dvi_park — an untyped `var v = *p;` with
 # `p: *V` parks p as `_dlo_vec` parks an argument's, and the declaration copies the vector through it (a frame slot: an

@@ -4,7 +4,7 @@
 aarch64 cross compiler (6.7.13's src): refused both times. The guide's example has never compiled.
 **Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), surveying every asm spelling in the guide, lib/ and the
-corpus for `issues/2026-10-08-asm-in-mnemonic-unreachable.md` (decision D16: an unknown mnemonic is refused by name).
+corpus for `issues/archived/2026-10-08-asm-in-mnemonic-unreachable.md` (decision D16: an unknown mnemonic is refused by name).
 **Severity:** Low — the guide teaches a spelling the compiler refuses; a doc / compiler mismatch, not a miscompile.
 **Affects:** `docs/guides/cyrius-guide.md` (the `#ifplat` paragraph, `asm { dmb ish }`), `src/backend/aarch64/emit.cyr`
 `ASM_MNEMONIC` (dmb / dsb / isb / svc take no operand).

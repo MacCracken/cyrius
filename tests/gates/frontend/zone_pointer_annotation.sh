@@ -5,7 +5,7 @@
 # rc 1, no binary), `***i64` on the third `*` (+ "undefined variable 'i64'"), `**B<i64>` on `B`, and a refused
 # `*( .. )` inside its parentheses (a second error after its refusal). The same declarations after a statement, or
 # as a fn local, compiled. `_gvi_ann` now steps every leading `*` (`_gvi_stars`, as pass 1's `_ptr_annot` does)
-# and a refused `*( .. )` to its `)` (issues/2026-10-14-declaration-zone-pointer-annotation-replay-reads-one-star.md).
+# and a refused `*( .. )` to its `)` (issues/archived/2026-10-14-declaration-zone-pointer-annotation-replay-reads-one-star.md).
 #
 #   Z1-Z3  the filed repros verbatim: `**i64` builds and exits 0; `*(i64, i64)` gives exactly its one refusal
 #   Z4-Z6  `***i64`, `**(i64, i64)`, `**[i64]` in the zone: built / one refusal each

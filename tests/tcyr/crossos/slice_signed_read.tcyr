@@ -127,7 +127,7 @@ fn controls(): i64 {
 
 # ---- M: the slice read equals the typed array, the `*T` and the field holding the same bytes ----
 # The field is a local struct's: a signed narrow field read THROUGH A POINTER is wrong under
-# CYRIUS_IR=3 (issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, open, placed 6.7.12), and the
+# CYRIUS_IR=3 (issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md, open, placed 6.7.12), and the
 # gate runs this file under IR=3.
 fn m_i8(): i64 {
     zero();

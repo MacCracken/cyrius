@@ -4,7 +4,7 @@
 base compiler (f793b013), x86_64 (the frontend: every target alike).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-17 by the 6.7.14 frontend lane, unit F5, while writing rows for
-issues/2026-10-15-call-diagnostics-name-method-by-mangled-name.md.
+issues/archived/2026-10-15-call-diagnostics-name-method-by-mangled-name.md.
 **Severity:** Medium — valid source is refused (rc 1, no binary); the inferred spelling `gx(bx)` builds.
 **Kind:** bug (generics).
 

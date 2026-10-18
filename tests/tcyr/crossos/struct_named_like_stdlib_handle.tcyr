@@ -9,7 +9,7 @@
 # always looked the struct up first, so `fn mk(): Result` was right. Now the three names are handles only
 # while no struct takes them (lib/result.cyr's and lib/tagged.cyr's are `: stack` enums, which never enter
 # the struct table, so the stdlib compiles byte-identical); `Str` stays a handle by name.
-# Filed: docs/development/issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
+# Filed: docs/development/issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
 # The 8 B twins are struct_named_like_stdlib_handle_8b.tcyr. Gate (filed repro verbatim, the byte-identity
 # rows, both files on x86_64 / IR / DCE / aarch64 / cx / PE, mutation ledger):
 # tests/gates/codegen/struct_named_like_stdlib_handle.sh. CROSS-HOST: the release gate runs it on ecb /

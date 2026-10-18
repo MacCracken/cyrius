@@ -17,7 +17,7 @@
 # (`P` + `R$i32`) both minted `g2$P$R$i32` — the filed repro printed `1604 1604` — and `Two<P<R>, i32>`
 # gave `Two<P, R<i32>>` its layout. The user's decision D1 (2026-10-16): a fragment whose name holds '$'
 # is bracketed — `g2$<P$R>$i32`, `g2$P$<R$i32>` — and every other name is unchanged. 6.3.33 - 6.7.13,
-# every target. Filed: docs/development/issues/2026-10-14-two-param-generic-nested-instance-names-collide.md
+# every target. Filed: docs/development/issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md
 #
 #   R1 the filed repro, verbatim: exit 96 (88 before), on x86_64, x86_64 CYRIUS_IR=3, aarch64
 #      (qemu), cx (cxvm) and PE (wine); R2 its swapped form: 96 (176 before)

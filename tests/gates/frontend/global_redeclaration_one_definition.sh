@@ -189,7 +189,7 @@ NROWS=$((NROWS + 1))
 printf 'var a = 5;\nvar a: i32 = 7;\nsyscall(60, a);\n' > "$WORK/i1.cyr"
 printf 'var q[8];\nvar q[16];\nsyscall(60, 0);\n' > "$WORK/i2.cyr"
 # 6.7.14 (the user's decision D9 (a), 2026-10-16): `bool` is part of the type, both ways
-# (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md; the shapes are bool_checked.sh D91-D99).
+# (issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md; the shapes are bool_checked.sh D91-D99).
 printf 'var a = 5;\nvar a: bool = a;\nsyscall(60, a);\n' > "$WORK/i3.cyr"
 printf 'var a: bool = true;\nvar a = 1;\nsyscall(60, a);\n' > "$WORK/i4.cyr"
 for f in i1 i2 i3 i4; do
@@ -369,7 +369,7 @@ _xrow XF2 1 7 'include "b.cyr"\ninclude "a.cyr"\nvar r = a_set(7);\nsyscall(60, 
 _xrow XF3 0 7 'include "a.cyr"\ninclude "c.cyr"\nvar r = a_set(7);\nsyscall(60, c_get());\n'
 # WF — 6.7.14: a LATER initializer that folds (`= 2 + 1`, `= -5`, `= (7)`) is compared as a literal is.
 #      Only the exact `= NUM ;` was (v6.2.11's `chk_lit`), while the prior side compared any folded
-#      constant (issues/2026-10-15-redeclared-global-folded-later-value-not-compared.md). A diagnostic
+#      constant (issues/archived/2026-10-15-redeclared-global-folded-later-value-not-compared.md). A diagnostic
 #      only: the value is the last definition's, as before (the exit code). Over an enum constant the
 #      shadow error stays the one report (CHK_ENUM_SHADOW: `chk_has` stays 0), over a top-level const
 #      the name's refusal. `true` / `false` fold to 1 / 0, so a bool redeclared to the other value warns.

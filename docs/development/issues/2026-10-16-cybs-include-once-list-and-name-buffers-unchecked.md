@@ -5,7 +5,7 @@
 distinct includes, its longest spelling ~40 characters.
 **Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), while adding the refusals of
-`issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md` (an include over its 2 MB slot, includes past 8
+`issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md` (an include over its 2 MB slot, includes past 8
 deep, stdin over 15 MB, an expansion over 16 MB — that item's filed surface). The include-once list and the include
 name buffers are two more fixed preprocessor buffers that item does not list.
 **Severity:** Low — a silent bad input to the trust root's bootstrap compiler, on the developer's own source, latent

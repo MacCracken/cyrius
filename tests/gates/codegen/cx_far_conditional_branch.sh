@@ -11,7 +11,7 @@
 # inverted short branch over a 24-bit jmp (`jnz r0,+2; jmp L`), which EPATCH's 24-bit arm patches;
 # no .cyx format or cxvm change. EPATCH's jz / jnz arm (left only for the fixed-size vector loops,
 # bodies under 100 B — no source reaches it with a far span) refuses past 16 bits by name.
-# issues/2026-10-15-cx-conditional-jump-past-128k-wraps-silently.md, CHANGELOG [6.7.14]
+# issues/archived/2026-10-15-cx-conditional-jump-past-128k-wraps-silently.md, CHANGELOG [6.7.14]
 #
 # Every far case is checked against TWO expectations: the literal exit code written next to it
 # and the same source through the x86 backend. Each far fixture's .cyx is checked to be past

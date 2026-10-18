@@ -1,11 +1,11 @@
 # A generic fn's `pp: **Box<T>` parameter (T its own type parameter) is refused "unknown type 'T' as a type argument", where `p: *Box<T>` compiles — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S2), probing the generic-call arm of the
-`**pp` struct-value fix (issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md). Pre-existing:
+`**pp` struct-value fix (issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md). Pre-existing:
 identical on f133fb2f's build/cycc (the 6.7.14 wave-2 base) and on the lane tree after S2 (9498bfb3).
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — a valid program is refused (no workaround but a one-star `*Box<T>` and a cast); no miscompile.
-**Kind:** bug — the generics' `**T` family (issues/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md: a
+**Kind:** bug — the generics' `**T` family (issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md: a
 `pp: **T` parameter's pin unbound; issues/2026-10-16-double-pointer-generic-return-read-in-pass-one.md: a `: **Box<..>`
 RETURN read in pass 1). Neither covers a `**G<T>` PARAMETER whose type argument is the fn's own T.
 

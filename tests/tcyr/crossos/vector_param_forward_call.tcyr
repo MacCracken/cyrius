@@ -147,7 +147,7 @@ fn rows_positions() {
     return 0;
 }
 
-# 6.7.14 (issues/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md): parentheses wrapping the WHOLE
+# 6.7.14 (issues/archived/2026-10-16-parenthesised-argument-into-value-form-vector-parameter.md): parentheses wrapping the WHOLE
 # argument are transparent, as for every other aggregate destination — `l2((v))` / `l2((mkv(..)))` were refused on
 # x86_64 / aarch64 / cx ("got `(...)`") where Windows passed them.
 fn rows_wrapped() {

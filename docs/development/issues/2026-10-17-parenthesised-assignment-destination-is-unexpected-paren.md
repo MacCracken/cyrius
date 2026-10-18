@@ -6,7 +6,7 @@ and on its S2 tip (9498bfb3): identical. Frontend: every target alike.
 **Severity:** Low — a compile error on a shape the guide never lists as a statement; the message names only the token.
 Not a security id (the developer's own source).
 **Kind:** language (a decision: whether a parenthesised destination is a statement) — or, if it stays out, a diagnostic.
-**Discovered:** 2026-10-17, landing D17 (a) (issues/2026-10-15-compound-assignment-through-address-of-struct-keeps-word-op.md):
+**Discovered:** 2026-10-17, landing D17 (a) (issues/archived/2026-10-15-compound-assignment-through-address-of-struct-keeps-word-op.md):
 that issue's triage listed a refusal row `(*(&s)) -= 1`, which never reaches the compound-assignment check — the
 statement parser refuses the `(` first. The lane's row is `*((&s)) -= 1` (the wrap inside the dereference) instead.
 

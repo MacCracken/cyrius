@@ -1,7 +1,7 @@
 # A declaration-zone struct literal of constants is baked into the image AND stored again at startup — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F3, after the scalar
-fix of `issues/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md` item 1), x86_64.
+fix of `issues/archived/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md` item 1), x86_64.
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F3: item 1's filed surface is the SCALAR `var X = C;`;
 the struct literal `_spc_try` bakes (6.6.16, `_gvk_bk` 2) keeps its replayed stores.

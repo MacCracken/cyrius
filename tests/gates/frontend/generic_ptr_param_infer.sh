@@ -9,7 +9,7 @@
 # knows the carrying parameter's shape (`_ic_arg` / `_ic_ptr_param`): through `p: *T` a `*S` local, parameter,
 # capture or global, a `*S` field chain, a `: *S` call and `&G` / `&l` bind S (`_infer_conc_at`'s rungs, `_ic_addr`,
 # `_ic_cap`, `_ic_rps`, `_gsc_chain`); through `x: T` a typed-pointer slot answers i64. 6.6.10 - 6.7.13, every target.
-# Filed: docs/development/issues/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md
+# Filed: docs/development/issues/archived/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md
 #
 #   R  the filed repro, verbatim (one program per row, `syscall(60, <row>());` appended): ma 24, mb 24, mc 24, md 24,
 #      mf 24, mg 24, mh 24, mi 8, mj 8 (before: 8 8 8 8 8 24 24 24 8) — and, appended the same way after the

@@ -16,7 +16,7 @@
 # `error:` line any row printed to carry a file name. Run through x86 and the tree's aarch64
 # cross compiler (the frontend is shared; this pins that it stays shared).
 # RED on the slot-open compiler (4a37046b, x86): P1, P3, E1, E2, E3, E4 and F; P2 is the control.
-#   E5 / E6 (6.7.14, issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md) — a missing
+#   E5 / E6 (6.7.14, issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md) — a missing
 #      `}` with two / three blocks open: the inner block's error stepped past the EOF token, and every
 #      outer block's "expected '}', got end of file" read the slot after it — `error:0:1:`, no file, no
 #      excerpt (`_err_head_at` / `_err_excerpt` clamp to the EOF token now). Each of the 2 / 3 errors is

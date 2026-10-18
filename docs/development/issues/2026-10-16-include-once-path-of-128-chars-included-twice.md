@@ -4,7 +4,7 @@
 gen2 of that src; the include-once code is unchanged since v4.8.4-alpha2).
 **Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), comparing cycc with cybs while probing cybs's include-once
-list for the cybs preprocessor-buffers item (`issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md`).
+list for the cybs preprocessor-buffers item (`issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md`).
 **Severity:** Low-Medium — a silent miscompile on the developer's own source: a second `include` of a file whose path
 spelling is 128+ characters is not skipped, so its top-level statements run twice and its fns are defined twice (the
 later definition binds, 6.6.20). No message. A bug, not a vulnerability.

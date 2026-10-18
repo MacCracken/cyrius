@@ -21,7 +21,7 @@
 # (`INT_MIN % -1`) or names an enum constant starts with its folded value on every target. Through
 # 6.7.13 the declaration-zone replay ran the division again at startup — SIGFPE (136) on x86_64 and
 # cx, the value on aarch64 — so the scalar `%` and the enum shapes below were kept out of this file.
-# (issues/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md)
+# (issues/archived/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md)
 include "lib/assert.cyr"
 
 # The filed shapes: a scalar global and a hex-spelled INT_MIN.

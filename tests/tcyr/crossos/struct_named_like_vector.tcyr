@@ -4,7 +4,7 @@
 # `struct f32v4 { a; b; c; }` was the struct as a local, a field, a return type and behind a `*`, but `fn g(v: f32v4)`
 # took the SIMD vector: `v.a` was refused "SIMD vector has no named fields", and `g(s)` "value-form SIMD arg type
 # mismatch (callee expects f32v4)" — the parameter classifier read the vector names before any struct
-# (issues/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md). Since 6.7.13 `struct f32v8`
+# (issues/archived/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md). Since 6.7.13 `struct f32v8`
 # too, which compiled through 6.7.12. Now a vector name is the vector only while no struct or union of that name is
 # declared, read from the tokens so pass 1's signature prescan and pass 2's definition agree. Each struct below is
 # passed by value at its size (8, 16, 24, 32 B: a word, a pair, an address — Win64 by address over 8 B), returned,

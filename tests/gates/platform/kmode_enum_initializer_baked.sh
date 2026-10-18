@@ -59,7 +59,7 @@
 #   D2. _gvk_quiet returning 0 (the stores kept, as 6.6.16 - 6.7.13) -> RED, 6 checks: the three K
 #       scalar deltas, the two D code-form rows and E's KX1 delta
 # MUTATION LEDGER (6.7.14 — a float scalar's float literal baked, RS / KS / W2;
-# issues/2026-10-08-kernel-float-global-init-not-baked.md):
+# issues/archived/2026-10-08-kernel-float-global-init-not-baked.md):
 #   0. real tree                                   -> GREEN (17 rows)
 #   F0. the compiler before the fix (c0d6d1ba)     -> RED, 7 checks: RS check 1 and its 9 warnings, KS's warning,
 #       image bytes and late store, W2's count and W4 named

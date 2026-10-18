@@ -1,7 +1,7 @@
 # patra's other harnesses still open `/tmp/...` paths: on Windows `patra_uninit.tcyr` fails 3 of 18 and `patra_raw_include.tcyr` 6 of 6 — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on real cass (C:\cyrius-tests), by the 6.7.14 stdlib lane (unit L4), after
-patra 1.16.4's suite patch (issues/2026-10-16-patra-suite-dev-null-fixture-fails-on-windows.md) routed every `/tmp/`
+patra 1.16.4's suite patch (issues/archived/2026-10-16-patra-suite-dev-null-fixture-fails-on-windows.md) routed every `/tmp/`
 path of `tests/tcyr/patra.tcyr` through a per-target helper (`_scr`: relative on Windows) — that suite now reads
 1,565 / 1,565 on cass.
 **Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x. A

@@ -12,7 +12,7 @@
 #
 # GI (6.7.14, the user's decision D40 A, 2026-10-16): a generic's `pp: **T` with no `<..>` binds T to the struct a
 # `**S` argument points through to, as `st<S>(pps)` does — `st(pps)` ran the i64 base, so `*pp + 1` stepped 8 and
-# `take(**pp)` into `*P3` faulted (issues/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md). Every
+# `take(**pp)` into `*P3` faulted (issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md). Every
 # `**S` source (a local, a parameter, a global, a field chain, a call, a generic call, `&p` / `&G` of a `*S`, a
 # capture), a method, a `: T` result, two type parameters, a named argument, a forward call, a forwarder; GK: the
 # controls (a direct or a struct carrier wins; a `*S`, a `**i32`, a `**Q2` that is no `**T`, a wrapped or computed

@@ -1,7 +1,7 @@
 # `--syntax-only`: `gp().n = 5;` with `gp` in a sibling module is a false "the result is a temporary" (a for step too) — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S1) while landing
-issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md. Pre-existing for the statement
+issues/archived/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md. Pre-existing for the statement
 (the lane's base compiler f133fb2f gives the same line); since this unit the for step `gp().n += 1` mirrors the
 statement (it was a false "expected '=', got '('" before — false either way). x86_64 measured; the frontend's, every
 target.

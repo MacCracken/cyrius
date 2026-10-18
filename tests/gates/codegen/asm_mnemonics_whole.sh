@@ -2,7 +2,7 @@
 # tests/gates/codegen/asm_mnemonics_whole.sh — 6.7.14
 #
 # An `asm { }` block assembles what its source says, or refuses it by name
-# (issues/2026-10-08-asm-in-mnemonic-unreachable.md; the user's decision D16, 2026-10-16: an asm block
+# (issues/archived/2026-10-08-asm-in-mnemonic-unreachable.md; the user's decision D16, 2026-10-16: an asm block
 # naming an instruction cyrius's assembler does not have — a misspelled mnemonic, or an operand the
 # instruction cannot take — stops compiling, naming the mnemonic or the operand).
 #

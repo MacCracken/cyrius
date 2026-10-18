@@ -6,7 +6,7 @@
 **Severity:** Low — a silent wrong step and a fault, but only through a three-star generic parameter with no other
 carrier of T; the explicit `t3<P3>(..)` is the workaround.
 **Kind:** language question — D40 (A, the user, 2026-10-16) decided `pp: **T` binds T from a `**S` argument
-(issues/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md); whether `***T` (and deeper) carries T the same
+(issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md); whether `***T` (and deeper) carries T the same
 way is beyond that filing's surface. The guide (§ Generic Functions, "Through a pointer-to-pointer parameter") says a
 `***S` binds nothing.
 

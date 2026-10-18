@@ -1,7 +1,7 @@
 # pe_read_write_failure_errno.tcyr — 6.7.14: a FAILED read or write answers a negative errno on
 # every target, Windows included, and a pipe drained to its end still reads 0.
 #
-# ⛔ THE DEFECT (issues/2026-10-15-pe-read-failure-reads-as-eof.md). EREAD_PE and EWRITE_PE
+# ⛔ THE DEFECT (issues/archived/2026-10-15-pe-read-failure-reads-as-eof.md). EREAD_PE and EWRITE_PE
 # (src/backend/x86/emit.cyr) returned ReadFile's / WriteFile's byte count without testing the
 # BOOL, and both APIs zero that count before they fail — so on Windows a failed read read as 0,
 # END OF FILE, and a failed write as 0 bytes written. `file_read(-999, ...)` was 0 where Linux

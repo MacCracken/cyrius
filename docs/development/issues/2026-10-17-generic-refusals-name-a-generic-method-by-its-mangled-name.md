@@ -4,7 +4,7 @@
 base compiler (f793b013), x86_64 (the frontend: every target alike).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-17 by the 6.7.14 frontend lane, unit F5, implementing
-issues/2026-10-15-call-diagnostics-name-method-by-mangled-name.md, which gave every other call-site diagnostic the
+issues/archived/2026-10-15-call-diagnostics-name-method-by-mangled-name.md, which gave every other call-site diagnostic the
 source spelling (`S.ri`, `g<i32>`) through one helper, `_fn_src_name(S, fi, noff)` (src/frontend/parse_fn.cyr).
 **Severity:** Low — the diagnostic names `P_pick` where the source says `p.pick(5)`; the position is right.
 **Kind:** bug (diagnostic).

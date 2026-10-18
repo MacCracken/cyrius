@@ -12,7 +12,7 @@
 # `: **S` call (a generic one too), `pp + n`, `*ppp` of a `***S` — as a `*S` (`_hl_dref_psid`, parse_decl.cyr).
 # With it every reader of the typed-pointer reader sees `*pp` as the `*S` D9 (a) made it: `return *pp;` from a
 # `: S` fn returns the struct it points at (6.7.11), `l = *pp + 0` copies it (ops-6).
-# Filed: docs/development/issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its three
+# Filed: docs/development/issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its three
 # repros verbatim are tests/gates/codegen/small_struct_handle_line.sh R16a-R16c, which runs this file on x86_64,
 # IR=1, IR=3, DCE, aarch64, cx and PE). CROSS-HOST: the release gate runs it on ecb / ach / cass / pi.
 include "lib/assert.cyr"

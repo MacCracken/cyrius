@@ -7,7 +7,7 @@
 # `_fn_src_name` (parse_fn.cyr) gives every such message `S.ri` / `g<i32>` (a method from its record, GFMETH: pass 1
 # records an impl's definitions, the method arm a name a call registered; an instance its base and `<..>` from its
 # type arguments, GFIC). A method form's arity message counts the arguments as written, without `self`
-# (`_check_arity_p0`). Diagnostics only: no binary changes (issues/2026-10-15-call-diagnostics-name-method-by-mangled-name.md).
+# (`_check_arity_p0`). Diagnostics only: no binary changes (issues/archived/2026-10-15-call-diagnostics-name-method-by-mangled-name.md).
 #
 #   N1   the filed repro verbatim: "... in a call to 'S.ri' - pass &b for its address", once
 #   N2   the issue's class, each by a method: A2 `s.rd(f)`, the struct type `s.ta(b)`, `s.two(1, 2)` ("expects 1

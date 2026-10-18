@@ -33,7 +33,7 @@
 #      saturated there and the seam declined ("more than 4096 NOP runs") — the case 48 of the 482
 #      tcyr files hit under CYRIUS_IR=3 at 6.6.20 (the TLS, sandhi and ws programs and the
 #      large-source tests), 59 of 624 at 6.7.14's open, 0 after. The registry grows now (_wpnr_grow): the seam reclaims EVERY byte LASE applied, and
-#      the binary is still correct. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
+#      the binary is still correct. issues/archived/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 #   6  6.7.14: the seam's compaction leaves no stale bytes in .text's 8-byte pad (FIXUP rounds the
 #      moved code end up to 8 without writing). Mutation: the slot-open compiler -> RED (`50`
 #      after the exit syscall).

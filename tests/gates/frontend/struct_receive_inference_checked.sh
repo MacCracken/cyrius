@@ -147,7 +147,7 @@
 # (`: *T` records GFRS -8). `h` was an untyped word, `h.v = 6` "no struct type in scope for 'h'" (the filed repro:
 # 68 / refused / 8). `_gen_decl_reset` (parse_decl.cyr) resets only for a generic returning a struct BY VALUE, so the
 # local keeps `S` and binds the handle, as the non-generic `fn gp(): *S` does (the 6.7.10 handle line)
-# (issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md). GH0a-GH0c the filed loop's three
+# (issues/archived/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md). GH0a-GH0c the filed loop's three
 # programs; GH1 GH2 inferred; GH3-GH5 uses that name no field; GH6 GH7 24 / 8 B; GH8 an untyped-value return; GH9 a
 # refused type argument reported once; GHK1-GHK4 a by-value generic receive and the 6.6.11 mismatch unchanged.
 #   N32 `_gen_decl_reset` without its GFRS test (2026-10-16) -> RED 28: GH0b GH1 GH2 GH6 GH7 GH8 x4 legs (refused: no
@@ -163,7 +163,7 @@
 # `= A + C;`, `= callptr(&mkp);`, `*i64`, `*u8`) after the first statement compiled under the typed-pointer warning and
 # stored the struct's first word as the pointer (the filed repro: 139 / 139 / 14 / 5); in the declaration zone the free
 # and `&f` calls were refused with D24's scalar remedy (the replay gives a pointer annotation `gps` 0) and a method /
-# operator result compiled under the warning (issues/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md).
+# operator result compiled under the warning (issues/archived/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md).
 # `_scv_gcall_ann` takes a pointer annotation with D14's remedy, `_scv_icall_ann` and `_scv_rec_ann` lose their in-a-fn
 # gates, the zone's `_gvi_scalar` passes the pointer (`_gvi_ptr_ann`), and PARSE_VAR's warning stays quiet on a line
 # refused inside its initialiser (`_tp_warn_decl`: a top-level 24 B call, whose one refusal is the no-frame one).
@@ -760,7 +760,7 @@ EOF
 runs PTK5 34 "control: a \`Str\` result into \`*Str\` keeps its handle (a \`Str\` is one word)"
 
 # --- D28 (6.7.14; the user, 2026-10-16: D14 at top level, every `*T` and every path) ---
-# (issues/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md) The three filed repros, verbatim: after the
+# (issues/archived/2026-10-16-top-level-pointer-annotation-from-byvalue-struct-call.md) The three filed repros, verbatim: after the
 # first statement `var X: *P2 = mkp();` compiled under the typed-pointer warning and exited 139 / 139 / 14 / 5; in the
 # declaration zone the free call was refused with D24's scalar remedy ("or bind a field") and the method compiled
 # (warned) and faulted. Now each is refused once in D14's words, with no warning.
@@ -886,7 +886,7 @@ printf '%s\nfn f(o: dyn Show): i64 { var y: i64 = pass(o); return y.show(); }\ns
 refused D3 "a dyn Show result $RV" "a dyn: after V4n, y is still the dyn (\`y.show()\` no second error)"
 
 # --- 6.7.14: a GENERIC call declared `: *T` into an annotated local is a handle (the 6.7.10 handle line) ---
-# issues/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md: the B-explicit reset dropped the
+# issues/archived/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md: the B-explicit reset dropped the
 # annotation of every generic receive the struct check did not keep — a `: *T` (GFRS -8) or scalar return included —
 # so `var h: S = gpg<S>();` declared an untyped word and `h.v = 6` was refused "no struct type in scope for 'h'".
 # `_gen_decl_reset` resets only for a generic returning a struct BY VALUE.
@@ -958,7 +958,7 @@ ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; 
 runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 
 
-# 6.7.14 — A WRAPPED `Str` CALL IS A Str (issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md). `var s =
+# 6.7.14 — A WRAPPED `Str` CALL IS A Str (issues/archived/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md). `var s =
 # (mks());` with `fn mks(): Str` bound an untyped word, where `var t = mks();` is a Str (v5.10.4): `println(s)` took the
 # cstring overload and printed the header's bytes (the filed repro: `P`, a backquote line, then `abcde`), and `s.len()`
 # was "no struct type in scope for 's'". `_var_rhs_wsid` types the wrapped Str as the unwrapped peek does. WS0 the filed
@@ -974,7 +974,7 @@ runs WS1 55 "the filed repro's \`return s.len() * 10 + t.len();\` form (refused 
 sed 's/var s = (mks());/var s = ((mks()));/' "$T/WS1.cyr" > "$T/WS2.cyr"
 runs WS2 55 "\`var s = ((mks()));\`, two wraps"
 
-# 6.7.14 — A WRAPPED `: f64` CALL BEFORE AN OPERATOR (issues/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.md).
+# 6.7.14 — A WRAPPED `: f64` CALL BEFORE AN OPERATOR (issues/archived/2026-10-16-paren-wrapped-f64-call-leading-operator-untyped.md).
 # `var a = (f()) * 2.0;` bound an untyped word holding the product's bits, where `var a = f() * 2.0;` and (6.7.13) `var a =
 # (f());` bind an f64: the filed repro's `a + 1.5` added integers under "integer arithmetic with an f64 right operand",
 # exit 0 on all four. `_var_rhs_wsid` gives the wrapped leading call's -9 whatever follows the wrap, and `_var_rhs_post`
@@ -989,7 +989,7 @@ runs WF0 6 "the filed repro verbatim: \`var a = (f()) * 2.0;\` is an f64 (exit 0
 quiet WF0 "the filed repro: no \"integer arithmetic with an f64 right operand\""
 
 # 6.7.14 — D29 (a) / D30 (a) (the user, 2026-10-16): AN UNTYPED TOP-LEVEL `var x = mk1(30);` BINDS THE STRUCT
-# (issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md). The initialiser one whole free call, wrapped
+# (issues/archived/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md). The initialiser one whole free call, wrapped
 # or not, in the declaration zone or after the first statement: of 8 B or less x is the struct (`x.a` was "no struct type
 # in scope for 'x'"); of 9-16 B it is refused as `var x: P2 = mk2(30);` is ("needs storage in a fn's frame"; it held the
 # first word silently: the filed repro exited 33); over 16 B the call's own refusal is the one error (the "no struct

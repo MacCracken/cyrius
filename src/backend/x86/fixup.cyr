@@ -146,7 +146,7 @@ fn _bm_set(b, i): i64 {
 # rax` is followed by its jump table: data) and lies in no fn holding a raw `asm` byte (util.cyr
 # _dce_raw_note; outside every fn, when the top level has one). So the call graph only gets more
 # precise, never unsound. Walking only where a call would mark a new fn keeps the cost to the
-# spans that decide something. issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
+# spans that decide something. issues/archived/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
 var _dce_cm = 0;      # instruction-start bitmap over [0, _dce_cm_n); 0 = no map (every byte counts)
 var _dce_cm_n = 0;
 var _dce_sp = 0;      # spans, 16 B each: start offset, state (0 not walked, 1 walked, 2 byte scan)

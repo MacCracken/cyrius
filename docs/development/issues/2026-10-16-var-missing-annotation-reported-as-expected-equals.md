@@ -4,7 +4,7 @@
 the lane's base compiler (c0d6d1ba), x86_64 (the frontend: every target alike).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4, beside
-issues/2026-10-14-var-annotation-non-type-token-compiles.md (D15 (a): a token that is no type is refused by name; a
+issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md (D15 (a): a token that is no type is refused by name; a
 `=` / `;` right after the `:` is no annotation at all and was left to the error below, so the shape is not reported
 twice).
 **Severity:** Low — the declaration is refused (rc 1, one error), but the message names the wrong problem and the

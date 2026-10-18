@@ -68,7 +68,7 @@
 #      arm64 one accepts it as met (every image MH_PIE, flags 0x00200084). S4 the PE and x86_64 Mach-O
 #      CLIs carry a refusal, the arm64 Mach-O, Linux and aarch64 Linux ones none; S4b each its own
 #      text. (A Mach-O cannot run here: ach ran the refusal, ecb the accepted build — the CHANGELOG.)
-#   6.7.14 (issues/2026-10-15-macos-cli-win-writes-mach-o-named-exe.md): neither Mach-O compiler reads
+#   6.7.14 (issues/archived/2026-10-15-macos-cli-win-writes-mach-o-named-exe.md): neither Mach-O compiler reads
 #      CYRIUS_TARGET_WIN, so `cyrius build --win` on macOS wrote a Mach-O named `.exe` (cf fa ed fe) at
 #      rc 0 (ecb, ach). `_cli_host_refuses_win` gains a CYRIUS_TARGET_MACOS arm: `error: --win is not
 #      available from the macOS CLI: cycc emits Mach-O only (build PE images on x86_64 Linux or
@@ -76,7 +76,7 @@
 #      Linux and PE ones none; S6m each Mach-O CLI carries the macOS form (its prefix, the macOS text,
 #      the PE tail; never the aarch64 text). (A Mach-O cannot run here: ecb and ach ran the refusal —
 #      rc 1, the named error, no w.exe — see the CHANGELOG.)
-#   6.7.14 (issues/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md): the arch axis of a
+#   6.7.14 (issues/archived/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md): the arch axis of a
 #      dep's `target` key read `_arch`, which stays ARCH_X86 on the aarch64 Linux CLI (its cycc emits
 #      aarch64 only), so a plain `cyrius deps` vendored the `target = "x86_64"` dep and skipped the
 #      `"aarch64"` one, rc 0 (qemu, pi). `_dep_target_matches` reads `_dep_arch_is_a64()` (cbt/deps.cyr).
@@ -142,7 +142,7 @@ MACPIEWHY="error: --pie is not available from the macOS x86_64 CLI: its cycc wri
 # has FILE TEXT -> yes / no (a fixed-string search of the binary)
 has() { if grep -aqF "$2" "$1" 2> /dev/null; then echo yes; else echo no; fi; }
 magic() { if [ -f "$1" ]; then od -An -tx1 -N4 "$1" | tr -d ' \n'; else echo none; fi; }
-# 6.7.14 — the filed repro's tree (issues/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md):
+# 6.7.14 — the filed repro's tree (issues/archived/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md):
 # two path deps, `da` for aarch64 and `dx` for x86_64, under DIR/proj.
 mkdeps() {
     mkdir -p "$1/da/dist" "$1/dx/dist" "$1/proj" "$1/home"

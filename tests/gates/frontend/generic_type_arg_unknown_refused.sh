@@ -60,7 +60,7 @@
 #      for 'z'". CF7 the filed repro (a parameter, 63 `var cN: Box<T>;`, then `z`): exit 44; CF7b 130
 #      carriers (two growths): 44; CF8 a parameter, 65 `var cN: T = b;`, then `z.y`: 44; CF8b 130: 44.
 #      The bounded receivers' table (`_bnr_tab`) is trait_bounds_checked.sh's B1.
-#      Filed: docs/development/issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
+#      Filed: docs/development/issues/archived/2026-10-14-generic-carrier-table-caps-at-64-silently.md
 #   FC (6.7.14) a generic forwarding its T INSIDE A STRUCT CARRIER into a stub generic is a stub too: the scan's
 #      forwarding mode followed a T-typed name only in the callee's direct carrying position, so `gx(mk1(x))` and
 #      `gx(b)` (`b: Box<T>`) into `fn gx<T>(b: Box<T>)` (whose `b.v.y` makes it a stub) left the forwarder an i64
@@ -96,7 +96,7 @@
 #      a field / a local, Two<..>'s either argument, sizeof, a field, a global, two calls, a generic body with three
 #      instances); a control (Vec<..>, a generic struct declared below, a forwarded Box<T>, Box<Box<Pt>>). The built-in
 #      slice's word form is slice_position_refused.sh's K3 (D3 (a)).
-#      Filed: docs/development/issues/2026-10-10-unknown-generic-name-accepted-as-type-argument.md
+#      Filed: docs/development/issues/archived/2026-10-10-unknown-generic-name-accepted-as-type-argument.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
 #      MUG1 `_parse_one_type_arg` without the `_targ_bad_gen` call -> RED 9: UG0-UG8 (each BUILT); MUG2
 #      `_targ_bad_gen` without its type-parameter arm -> RED 2: UG2 UG3 ("unknown type 'T'"); MUG3
@@ -108,7 +108,7 @@
 #      -> `_targ_chk`). SG0 the filed repro verbatim (once, naming 'K'); SG1-SG7 Mp<Nonexist, i64>, *Mp<K, V>, : Mp<K, V>,
 #      m: Box<Zork> called with a Box<i64>, nested and a method's, a generic's own signature with three instances (once),
 #      a fn called above its definition; a control (a generic's own K, V; a struct declared below the fns).
-#      Filed: docs/development/issues/2026-10-09-undeclared-generic-type-arguments-accepted.md
+#      Filed: docs/development/issues/archived/2026-10-09-undeclared-generic-type-arguments-accepted.md
 #      Mutant (2026-10-16, a one-edit scratch copy of the tree, its 2-stage cycc, this gate run from it): MSG1
 #      `_gtype_sid_def` without its `_targ_chk` call -> RED 8: SG0-SG7 (each BUILT, as on the compiler before it)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion

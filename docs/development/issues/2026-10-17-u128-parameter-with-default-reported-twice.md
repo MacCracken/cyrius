@@ -1,7 +1,7 @@
 # A `u128` parameter with a default gives two errors — "it takes no default" and the D10 (a) parameter refusal — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 frontend lane (l6714-frontend at 7b32fd5b, x86_64; the
-frontend, every target). Beside issues/2026-10-08-u128-params-returns-fields-captures.md (fixed in the lane by
+frontend, every target). Beside issues/archived/2026-10-08-u128-params-returns-fields-captures.md (fixed in the lane by
 8d3f7caf, the user's decision D10 (a), 2026-10-16: a `u128` parameter is one error by name, "`u128` is not supported
 as a parameter type yet - pass `*u128`"). The lane's row U6 (default_named_args_checked.sh) covers a default on a
 LATER parameter only; a default on the u128 parameter itself was not probed. Met by the 6.7.14 frontend review.

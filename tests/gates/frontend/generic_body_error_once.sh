@@ -10,7 +10,7 @@
 # from `_tn_once`'s byte map, and print a repeat as nothing — `_had_error` and the panic latch set as before, and
 # `_err_quiet` keeping the caller's note quiet with it (`_gv_note_blockscoped`, `_ie_no_else`). A different
 # message at the same token still prints, and so does the same message at another token.
-# Filed: docs/development/issues/2026-10-10-generic-body-errors-reported-per-instance.md
+# Filed: docs/development/issues/archived/2026-10-10-generic-body-errors-reported-per-instance.md
 #
 #   R   the filed repro, verbatim: rc 1, exactly one `error:<source>:3:40: expected ';', got number 2` (three before)
 #   T1-T9  the issue's table, each exactly one error line (before: 1 1 2 3 2 3 2 2 1): the junk step with no call,
@@ -125,7 +125,7 @@ body E4 'fn g<T>(v: T): i64 { zz = 1; return 0; }' 'var x = I { 1, 2 }; return g
 erows E4 "$D/E4.cyr" 1 "zz = 1; (the assignment, 3 before)" "undefined variable 'zz'"
 body E5 'fn g<T>(v: T): i64 { return zz.a; }' 'var x = I { 1, 2 }; return g(1) + g(x);'
 # E5 is one line since the 6.7.14 frontend lane's cascade fix: the `.field` base's "undefined variable" IS the error, and
-# the "no struct type in scope" line that followed it is gone (issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
+# the "no struct type in scope" line that followed it is gone (issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
 erows E5 "$D/E5.cyr" 1 "return zz.a; (the .field base, 6 before)" "undefined variable 'zz'"
 body E6 'fn g<T>(v: T): i64 { return &zz; }' 'var x = I { 1, 2 }; return g(1) + g(x);'
 erows E6 "$D/E6.cyr" 1 "return &zz; (3 before)" "undefined variable 'zz'"

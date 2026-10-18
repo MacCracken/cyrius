@@ -1,7 +1,7 @@
 # A SIGTERM'd `cyrius deps` waits without limit for a forwarded git (fwd 1) that does not die on the signal — OPEN
 
 **Status:** 🟡 **OPEN** — met 2026-10-16 by the 6.7.14 tools lane's review of 69cc8b31b (the fix for
-issues/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md) and reproduced by the lane's fix step
+issues/archived/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md) and reproduced by the lane's fix step
 (l6714-tools @ 69c72ca09, the CLI built from `cbt/cyrius.cyr` by the tree's `build/cycc`). The lane introduced it:
 the 2600f67f CLI does not wait for git at all (it leaves git running, the bug 69cc8b31b fixed).
 **Placement:** 6.7.15 — repair 5 (tools lane; filed from the 6.7.14 tools review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.

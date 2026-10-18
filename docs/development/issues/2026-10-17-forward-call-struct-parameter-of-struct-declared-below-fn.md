@@ -1,7 +1,7 @@
 # A call ABOVE a fn whose by-value / `*S` parameter names a struct declared BELOW that fn takes the pass-1 signature with no struct: the 16 / 24 B argument is pushed as its first word (SIGSEGV), a `*S` one is refused — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S2), probing the user-struct `Result`
-item (issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md) with the struct declared after
+item (issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md) with the struct declared after
 its use. Not that item's: any struct name does it. Pre-existing — identical on f133fb2f's build/cycc (the 6.7.14
 wave-2 base) and on the lane tree after S2 (9498bfb3).
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.

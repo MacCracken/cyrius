@@ -51,7 +51,7 @@
 #      sit beside epoll_event_new in both peers; axis B's probe names all three.
 #  11. (6.7.14) delete `fn epoll_event_set` from the x86-macOS peer -> FAIL axis A naming
 #      "fn epoll_event_set" AND axis B (the probe calls it). The writer for a caller-owned buffer
-#      (issues/2026-10-15-epoll-event-writer-for-caller-buffers.md) sits beside the readers in both
+#      (issues/archived/2026-10-15-epoll-event-writer-for-caller-buffers.md) sits beside the readers in both
 #      peers; axis B's probe calls it.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

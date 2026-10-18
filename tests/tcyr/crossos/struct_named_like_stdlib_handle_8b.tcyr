@@ -3,7 +3,7 @@
 # one word (as it already was), its method with an untyped `self` compiles (it was "no struct type in
 # scope for 'self'": the classifier read the name as the stdlib's handle). A separate file because the
 # names can be declared once per program.
-# Filed: docs/development/issues/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
+# Filed: docs/development/issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md
 # Gate: tests/gates/codegen/struct_named_like_stdlib_handle.sh. CROSS-HOST: the release gate runs it on
 # ecb / ach / cass / pi.
 include "lib/assert.cyr"

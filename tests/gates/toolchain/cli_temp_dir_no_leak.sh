@@ -495,7 +495,7 @@ K7_SKIPS=0
 # arguments (same pid, the environment kept). The disposition is SigIgn bit 0 of /proc/self/status
 # (an unreadable one takes the launcher, a no-op at SIG_DFL); a launcher that does not build SKIPs
 # the HUP rows by name. Its own rows below run on every invocation, nohup or not.
-# (issues/2026-10-15-cli-temp-dir-gate-sighup-rows-red-under-nohup.md)
+# (issues/archived/2026-10-15-cli-temp-dir-gate-sighup-rows-red-under-nohup.md)
 K7_HUPIGN=$(sed -n 's/^SigIgn:[[:space:]]*//p' /proc/self/status 2>/dev/null || true)
 case "$K7_HUPIGN" in
     "") K7_HUP=unknown ;;
@@ -766,7 +766,7 @@ fi
 # its own cleanup — a clone removes its partial directory. The stand-in `git` first on PATH records
 # its pid, sleeps on one subcommand ($G8_SUB) and records the signal it gets: TERM when forwarded,
 # nothing when SIGKILLed. Every other call runs the real git and records its pid in g8.pt.
-# (issues/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md)
+# (issues/archived/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md)
 G8="$T/g8"
 if command -v git > /dev/null 2>&1; then
     G8GIT=$(command -v git)
@@ -902,7 +902,7 @@ fi
 # file of the scratch before it exists (cbt/deps.cyr `_dep_scr_*`), in the handler's scratch-tree
 # slot. The stand-in git (no real git needed) records its pid and sleeps in the named dep's clone,
 # after Phase 1 has copied the stdlib leaves into the scratch.
-# (issues/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md)
+# (issues/archived/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md)
 G9="$T/g9"
 mkdir -p "$G9/bin" "$G9/p/lib" "$G9/home/versions/6.6.6" "$G9/home/versions/6.6.7"
 printf '#!/bin/sh\necho $$ > "%s/g9.cc"\nexec sleep 60\n' "$T" > "$G9/bin/git"

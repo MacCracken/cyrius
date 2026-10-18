@@ -52,7 +52,7 @@ RFAIL tests/tcyr/lang/ptr_param_small_struct.tcyr exit=2
 ```
 
 The two left are known IR=3 defects, filed: call_ptr_field_store's f64 row is
-issues/2026-10-15-ir3-f64-field-store-through-pointer-faults.md; derive_enum_inside_ifdef is the staged
+issues/archived/2026-10-15-ir3-f64-field-store-through-pointer-faults.md; derive_enum_inside_ifdef is the staged
 2026-10-16-ir3-const-fold-over-dead-store-nop-fills-its-immediate.md (both fail under `CYRIUS_IR=3` alone).
 
 ## Root cause

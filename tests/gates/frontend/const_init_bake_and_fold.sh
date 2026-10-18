@@ -1,7 +1,7 @@
 #!/bin/sh
 # const_init_bake_and_fold.sh — 6.7.14: a declaration-zone global whose initializer folds to a constant is its value
-# from program start, with no startup code (issues/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md
-# item 1; issues/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md, the user's decision D11 (b),
+# from program start, with no startup code (issues/archived/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md
+# item 1; issues/archived/2026-10-11-folded-zero-or-enum-global-reruns-at-startup-decision.md, the user's decision D11 (b),
 # 2026-10-16).
 #
 # Since 6.6.16 `var X = C;`, `= E.A`, `= A + 1` were baked into the image (_gvk_pre) AND replayed at startup — the

@@ -22,7 +22,7 @@
 #   B  (6.7.14) more than 64 bounded receivers in one generic: the receivers' table (`_bnr_tab`) held 64
 #      and dropped the rest, so a later `z.show()` was no bounded site and the i64 base (live: `impl Show
 #      for i64`) refused it — "no struct type in scope for 'z'". B1 a parameter, 65 `var cN: T = v;`, then
-#      `z.show()`: exit 5; B1b 130 (two growths). issues/2026-10-14-generic-carrier-table-caps-at-64-silently.md
+#      `z.show()`: exit 5; B1b 130 (two growths). issues/archived/2026-10-14-generic-carrier-table-caps-at-64-silently.md
 #   F  (6.7.14) A GENERIC FORWARDING ITS T TO A BOUNDED GENERIC: the stub scan counted the forward a struct use
 #      whenever the callee's base was bad for its bound, so `fn o<T>(x: T) { return gb(x); }` with only `impl Show
 #      for f64` had the stub base, which has no scalar instance — `o(h)` / `o<f64>(h)` were refused "uses its type
@@ -34,7 +34,7 @@
 #      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone;
 #      F12 a chain of 64 forwards (the judgement's reach: `_bbf_dep`'s cap, filed for a deeper chain).
 #      I7 (an unbounded generic forwarding to a bounded one, u(5)) now names the forward, not the stub text.
-#      Filed: docs/development/issues/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md
+#      Filed: docs/development/issues/archived/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
 #      MF1 `_bnd_base_bad` without its forwarding arm (`_bbs_fwd_bad` answering 0) -> RED I7 and every F row but F3
 #      (the forwarder's i64 base is emitted and refused at its definition naming gb, called or not — F11 too);
@@ -52,7 +52,7 @@
 #      refused naming `impl Show for i64`; BC4 f64 / i32 instances; BC5 a `var c: Box<T>` carrier, a `var r =`
 #      receive and a statement; BC6 gs<i64>(bi); BC7 control — a method no bound declares keeps its reading; BC8 a
 #      non-inlinable caller; BC9 the documented workaround unchanged; BC10 the definition alone (no i64 impl).
-#      Filed: docs/development/issues/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md
+#      Filed: docs/development/issues/archived/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
 #      MBC1 `_bnd_sites` without the `_bnd_fsite` call (no site) -> RED BC0 BC2 BC4-BC6 BC8 (the stub refusal);
 #      MBC2 `_gs_bfield` answering 0 (the site recorded, the scan still a struct use) -> RED BC0 BC2 BC4-BC6 BC8;

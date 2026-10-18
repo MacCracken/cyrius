@@ -8,7 +8,7 @@ word and refuses the annotated form the same way.
 per build; the annotated row refuses valid code.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probes m5 / m6), beyond D37 / D29's filed surface: a
 whole method call on a single-name receiver, `s.mv()`
-(`issues/2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md`).
+(`issues/archived/2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md`).
 
 ## Reproduction
 

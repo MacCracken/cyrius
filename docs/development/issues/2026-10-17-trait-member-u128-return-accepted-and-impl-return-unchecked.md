@@ -1,7 +1,7 @@
 # A trait member's `: u128` return is accepted while every body of it is refused; and an impl method's return type is never checked against its trait member's — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 frontend lane (l6714-frontend at 7b32fd5b, x86_64; the
-frontend, every target). Half 1 is beside issues/2026-10-08-u128-params-returns-fields-captures.md (fixed in the lane
+frontend, every target). Half 1 is beside issues/archived/2026-10-08-u128-params-returns-fields-captures.md (fixed in the lane
 by 8d3f7caf, the user's decision D10 (a): a `u128` return is "`u128` is not supported as a fn return type yet"), whose
 commit kept a trait member's `: u128` return compiling "as before (no decision covers it)". Same class as the
 generics lane's staged 2026-10-16-trait-member-vec-return-accepted.md (`_trs_type` has no return-type vocabulary

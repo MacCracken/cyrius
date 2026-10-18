@@ -202,7 +202,7 @@ fn _cl_snap_w128(esl): i64 {
     if (esl < 0) { return 0; }
     return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 60) & 1;
 }
-# ⛔ 6.7.14 — A CAPTURED u128 IS ITS VALUE (issues/2026-10-08-u128-params-returns-fields-captures.md). Its env copy is
+# ⛔ 6.7.14 — A CAPTURED u128 IS ITS VALUE (issues/archived/2026-10-08-u128-params-returns-fields-captures.md). Its env copy is
 # two words, so the read took the multi-word rule — the value is the ADDRESS, as an aggregate's is — and `c == 5`
 # compared the env address with 5, `c + 0` added it. With rax = `&env[woff]` (`_CL_CAP_WORDS_RA`), the two words are
 # copied into a 16-byte temporary and the read is that temporary's low word, stamped (k 3), so `==`, `<`, `+`, `-`, a
@@ -4647,7 +4647,7 @@ fn _dro_vnote(S, d, vd): i64 {
 }
 # ⛔ 6.7.14 — A VECTOR DEREFERENCE IS A VECTOR VALUE AS AN IF-EXPRESSION BRANCH (6.7.13's D34: `*pv` of a `*V` is the
 # vector), so `if (c) { *pa } else { *pb }` is refused as `{ a } else { b }` is — it compiled to lane 0's word, the
-# value `_deref_read` loads (issues/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md). The load
+# value `_deref_read` loads (issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md). The load
 # replaces the operand's step word, so the dereference at `d` whose operand names a vector (`_dop_vd`: its step word,
 # or `*&w`) notes its span and the code pointer after it; `_ie_struct_sid` matches a whole `* E` branch against it
 # (`_dvd_whole`: nothing emitted since). CHANGELOG [6.7.14]

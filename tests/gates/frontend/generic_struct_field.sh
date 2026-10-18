@@ -43,7 +43,7 @@
 #                                                       stays green; the tcyr does not build)
 #   MP4 `_hl_lastnm` without the type-argument skip -> RED 8: PR1-PR7 name 'U', PB names 'S'
 #
-#   PG (6.7.14, issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) a generic declared `: *Box<T>`:
+#   PG (6.7.14, issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) a generic declared `: *Box<T>`:
 #      the filed repro verbatim (exit 3; refused twice, "unknown type 'T' as a type argument"), `gp(mkp(p))` 8,
 #      `mkp<Pt>(p).n` 8, `var q: *Box<Pt> = mkp(p); q.v.y` 7, `mkp(5).n` 8; an unknown `: *Box<Zork>` refused once,
 #      generic or not (twice before); a struct declared below the fn as its type argument compiles (pass 1 refused it).
@@ -171,7 +171,7 @@ syscall(60, main());'
 printf 'struct S { v; w; }\nvar GS = S { 5, 8 };\nvar Z: S = *gpg<S>();\nfn gpg<T>(): *T { return &GS; }\nfn main(): i64 { return Z.v * 10 + Z.w; }\nsyscall(60, main());\n' > "$T/pb.cyr"
 refused_once pb "cannot copy-init 'Z' from a dereference of a global or fn declared below it (declare it first): 'gpg'" "PB: var Z: S = *gpg<S>() above gpg"
 
-# PG — 6.7.14: a generic declared `: *Box<T>` (issues/2026-10-14-generic-pointer-to-generic-struct-return-refused.md).
+# PG — 6.7.14: a generic declared `: *Box<T>` (issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md).
 # The filed repro, verbatim; its rows; an unknown type argument in a `: *G<..>` return refused once (pass 1 reads it
 # only when its arguments resolve, as it sizes it — it reported in pass 1 AND pass 2); and so a struct declared below
 # the fn, which pass 1 does not know yet, is no longer refused there (as `: *Later` never was).

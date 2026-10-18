@@ -6,7 +6,7 @@
 # `#deprecated` (`_tl_arm1` arms a pass-1-only pair where pass 1 steps the token — the top-level scan, an impl body,
 # the scan after the first statement, a top-level block; `_prescan_eff_take` ORs the bits onto the fn
 # `_prescan_fn_sig` registers; `_pre_attr_drop` where no fn takes them). Warnings only: no exit code changes
-# (issues/2026-10-08-pure-check-misses-later-defined-callee.md).
+# (issues/archived/2026-10-08-pure-check-misses-later-defined-callee.md).
 #
 #   P1  the filed repro verbatim: its four warnings, exactly (line:col and name), and the program still runs (5)
 #   P2  the callees-first control: the same four, none doubled

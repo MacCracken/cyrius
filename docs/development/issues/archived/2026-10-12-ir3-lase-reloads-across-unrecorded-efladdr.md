@@ -1,6 +1,6 @@
 # Under `CYRIUS_IR=3`, LASE drops the reload of a just-stored local across an unrecorded `EFLADDR` (`lea rax, [rbp+d]`): a method's argument, a by-value struct argument or a struct-returning call's argument receives the struct's ADDRESS — RESOLVED
 
-> ✅ **RESOLVED in v6.7.11** (ARG-9: x86's `EFLADDR` records `IR_RAW_EMIT` at its head, as `ELOAD_LOCAL_ADDR` does, so `CYRIUS_IR=3`'s LASE resets at the `lea` and keeps the reload. The four filed repros give 35 / 0 / 35 / 5 under `CYRIUS_IR=3` with '0 LASE' (they read the aggregate's address); `o.with2(x + 0)` and an operator returning a struct through a result buffer are right too; the default pipeline, IR=1 / 2, aarch64 and cx are byte-identical. PE was not affected, contrary to the filing: `main_win.cyr` runs `ir_lase` as analysis only and never applies it (PE binaries byte-identical). No decision needed. `EFLADDR_X1` and `EFIELD_LOAD_W` were NOT landed with it, as the proposed fix suggested: they stay with issues/2026-10-08-ir3-drops-unrecorded-field-emits.md (6.7.13), and the six files still failing under IR=3 are that class (pass-bisected: not EFLADDR). Rows: `struct_value_codegen.tcyr` E1–E5 (the gate's A3 leg), `struct_value_codegen.sh` EV1–EV4 (the filed repros verbatim under `CYRIUS_IR=3`), mutation M-EV1 RED on the IR=3 legs only. CHANGELOG [6.7.11])
+> ✅ **RESOLVED in v6.7.11** (ARG-9: x86's `EFLADDR` records `IR_RAW_EMIT` at its head, as `ELOAD_LOCAL_ADDR` does, so `CYRIUS_IR=3`'s LASE resets at the `lea` and keeps the reload. The four filed repros give 35 / 0 / 35 / 5 under `CYRIUS_IR=3` with '0 LASE' (they read the aggregate's address); `o.with2(x + 0)` and an operator returning a struct through a result buffer are right too; the default pipeline, IR=1 / 2, aarch64 and cx are byte-identical. PE was not affected, contrary to the filing: `main_win.cyr` runs `ir_lase` as analysis only and never applies it (PE binaries byte-identical). No decision needed. `EFLADDR_X1` and `EFIELD_LOAD_W` were NOT landed with it, as the proposed fix suggested: they stay with issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md (6.7.13), and the six files still failing under IR=3 are that class (pass-bisected: not EFLADDR). Rows: `struct_value_codegen.tcyr` E1–E5 (the gate's A3 leg), `struct_value_codegen.sh` EV1–EV4 (the filed repros verbatim under `CYRIUS_IR=3`), mutation M-EV1 RED on the IR=3 legs only. CHANGELOG [6.7.11])
 
 **Status:** ✅ **RESOLVED in v6.7.11** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-12 against the merged 6.7.10 tree (9c066967, `build/cycc` 2,106,040 B)
 on x86_64. `o.with2(x)` right after `var x = 5;` exits 35 with the default pipeline, `CYRIUS_IR=1` and `CYRIUS_IR=2`.
@@ -41,7 +41,7 @@ sequences have that shape:
 `IR_RAW_EMIT`.
 
 This is the class of
-[`2026-10-08-ir3-drops-unrecorded-field-emits.md`](../2026-10-08-ir3-drops-unrecorded-field-emits.md): bytes emitted
+[`2026-10-08-ir3-drops-unrecorded-field-emits.md`](2026-10-08-ir3-drops-unrecorded-field-emits.md): bytes emitted
 without an IR record, placed 6.7.13. That issue names `EFIELD_LOAD_W`'s negative widths and `EFLADDR_X1` (under the
 dead-store pass), and adds "audit the other x86 emitters". Its named fixes do not reach `EFLADDR`, and the pass here
 is LASE. This file records the measured shapes so they ship with a row each. The two fixes can land together.

@@ -6,7 +6,7 @@ fix, which made the 1.3 ServerHello and the EncryptedExtensions blocks fill thei
 **Severity:** Low — protocol conformance: a peer message with trailing bytes no structure names is accepted (RFC 8446 §4 /
 RFC 5246 §7.4.1: decode_error). Every message still has to pass the handshake's signatures and Finished; no forgery,
 no ledger id (no attacker crosses a boundary: the peer could send the same choices well formed).
-**Discovered:** 2026-10-17, implementing issues/2026-10-15-tls-native-hello-conformance-residue.md (6.7.14 stdlib L4),
+**Discovered:** 2026-10-17, implementing issues/archived/2026-10-15-tls-native-hello-conformance-residue.md (6.7.14 stdlib L4),
 whose filed surface was the 1.3 ServerHello and EncryptedExtensions blocks only (its triage noted the server-side
 ClientHello in passing as "outside this filing").
 

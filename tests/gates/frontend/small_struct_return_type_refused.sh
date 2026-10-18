@@ -313,7 +313,7 @@ echo "=== return &q (6.7.14, the user's decision D19 (a), 2026-10-16): a handle'
 # refused by name at every size, ONE error at the `&`. Through 6.7.13 the 8 B form returned the slot's address as the
 # struct's word (a dead frame's address read as c.v) and the 16 / 24 B forms were refused in other words ("... two
 # registers ... got `this expression`", "return must be a bare local identifier ..."). Each of the handle / `*S` local /
-# untyped `self` rows on the four compilers. docs/development/issues/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md
+# untyped `self` rows on the four compilers. docs/development/issues/archived/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md
 SLOT='is the address of'
 refuse4 "R24 the filed repro verbatim (a handle, 8 B)" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -399,7 +399,7 @@ echo "=== a replayed body's return inside a struct-returning fn (6.7.14): the ca
 # CALLER's struct-return class — `return GPA;` in `fn gpg<T>(): *T`, replayed in a `: P2` fn, was refused as
 # "a fn returning the 9-16 byte struct `P2` ... got `GPA`", and in a `: P3` fn "struct-return: identifier is
 # not a local"; a one-call body (`return gsel(sizeof(T));`) the same. The 8 B class was already exempt
-# (`_ret_small_cls`'s GIDEP test, A10). issues/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
+# (`_ret_small_cls`'s GIDEP test, A10). issues/archived/2026-10-14-generic-instance-return-takes-enclosing-fns-struct-return-class.md
 GR='struct P2 { x; y; }
 struct P3 { x; y; z; }
 struct B8 { v; }

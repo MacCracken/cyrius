@@ -4,7 +4,7 @@
 and on the lane's base compiler (f793b013), x86_64 (the frontend: every target alike).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-17 by the 6.7.14 frontend lane, unit F5, beside
-issues/2026-10-08-pure-check-misses-later-defined-callee.md (that issue's surface is a callee defined LATER; this one
+issues/archived/2026-10-08-pure-check-misses-later-defined-callee.md (that issue's surface is a callee defined LATER; this one
 is any order).
 **Severity:** Low — a missing warning; nothing miscompiles.
 **Kind:** bug (diagnostic).

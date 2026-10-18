@@ -1,7 +1,7 @@
 # The native-region renumber warning does not judge a constant declared at the top level of a per-arch file included from inside `#ifdef CYRIUS_ARCH_AARCH64` — the D61 include shape, spelled by name — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 platform lane's tree (l6714-platform, after ce65feca8,
-the fix for issues/2026-10-15-native-region-warning-misses-included-files-and-author-constants.md), with the
+the fix for issues/archived/2026-10-15-native-region-warning-misses-included-files-and-author-constants.md), with the
 ELF-aarch64 cross compiler built from it (`build/cycc_aarch64`), run under qemu-aarch64. Filed from the platform
 lane's review.
 **Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.

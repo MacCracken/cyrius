@@ -7,7 +7,7 @@
 # Structs example (`var q = Point { x: 10, y: 20 };`) failed as written. The replay now reads the literal
 # through _STRUCT_INIT_BODY, as PARSE_STRUCT_INIT does, and an all-constant named literal is baked into the
 # image like a positional one (_spc_nfields: a `kernel;` build's program sees it).
-# (issues/2026-10-09-declaration-zone-named-struct-literal-refused.md)
+# (issues/archived/2026-10-09-declaration-zone-named-struct-literal-refused.md)
 #
 # WHY A CROSS-HOST TEST: the replay's stores (and the baked image) are emitted per backend — x86_64 ELF,
 # Mach-O, PE, aarch64, cx. On a compiler without the fix this file does not compile.

@@ -83,7 +83,7 @@ The census regex above takes literal initialisers only, so it misses the 14 publ
 | `TLS_SHA256_CTX_LEN` | lib/tls_native_lowlevel.cyr | 144 |
 
 The 15th, `TLS_SHA256_CTX_LEN`, was a literal `var` (so in the literal census above) until 6.7.14 gave it the twin
-shape (issues/2026-10-15-tls-sha256-ctx-len-literal-var-drives-transcript-clone.md): it moves from that census to this one.
+shape (issues/archived/2026-10-15-tls-sha256-ctx-len-literal-var-drives-transcript-clone.md): it moves from that census to this one.
 
 The user's decision D16 (2026-10-15, issues/archived/2026-10-11-tls-public-bound-vars-api-decision.md): until this arc they stay
 writable vars, each commented as a read-only mirror of its `_X`, and since 6.7.12 nothing in lib/ reads any of them

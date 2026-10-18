@@ -352,7 +352,7 @@ fn _tn_head(S): i64 {
 # ⛔ 6.7.14 — A `var` ANNOTATION THAT IS NO TYPE IS REFUSED BY NAME (the user's decision D15 (a), 2026-10-16). The
 # declaration ladders (PARSE_VAR, PARSE_GVAR_REG's _gvar_ann_head), past their `*`, `[`, `u128` and slice arms, resolved
 # a type only at a name or a tuple's `(`, and stepped any other token silently: `var b: 1 = 0;`, `var c: + = 2;`,
-# `var G: 7 = 4;` compiled as plain i64s (issues/2026-10-14-var-annotation-non-type-token-compiles.md). Now "expected a
+# `var G: 7 = 4;` compiled as plain i64s (issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md). Now "expected a
 # type for variable 'b', got number 1" once at the token — a parameter's words (`_pty_err`, 6.7.11) — and 0: the ladder
 # still steps the token, so the declaration reads on. `noff` = the variable's name. A `=` / `;` there is no annotation
 # at all (`var b: = 0;`): refused already by the declaration ("expected '='"), it is left to that one error.

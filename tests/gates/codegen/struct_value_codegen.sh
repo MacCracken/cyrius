@@ -119,7 +119,7 @@
 #      ADDRESS as x (an ASLR-dependent exit). EFLADDR records IR_RAW_EMIT, as ELOAD_LOCAL_ADDR does. EV1-EV4
 #      are the filed repros verbatim, built under CYRIUS_IR=3; tcyr E1-E5 run them on every leg (A3 is the
 #      one that was wrong)
-#   IW (6.7.14, issues/2026-10-08-ir3-drops-unrecorded-field-emits.md) under CYRIUS_IR=3, two field-read emits
+#   IW (6.7.14, issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md) under CYRIUS_IR=3, two field-read emits
 #      recorded no IR node, so their bytes counted as the node before them and went with it: EFIELD_LOAD_W's
 #      signed widths (-1 / -2 / -4: `s.a + s.b` over i8 fields through `*S` added the field's ADDRESS, an
 #      ASLR-dependent exit where 37 is right) and EFLADDR_X1's `lea rcx` (after a dead store, `var u = 0;
@@ -130,7 +130,7 @@
 #      and a span of 16 B or more is never NOP-filled), and the 624-file corpus's IR=3 output is identical
 #      with and without them. IW1 / IW2 are the filed repros verbatim, built under CYRIUS_IR=3; tcyr W1-W8
 #      run the shapes on every leg (A3 is the one that was wrong)
-#   IF (6.7.14, issues/2026-10-15-ir3-f64-field-store-through-pointer-faults.md) under CYRIUS_IR=3, a float
+#   IF (6.7.14, issues/archived/2026-10-15-ir3-f64-field-store-through-pointer-faults.md) under CYRIUS_IR=3, a float
 #      literal's `movabs rax, imm64` (EMIT_FLOAT_LIT) recorded no IR node, so LASE kept the local loaded before
 #      it as rax and dropped the reload after it: `var q: *H = &buf; q.f = 2.5;` stored through 2.5's bits
 #      (SIGSEGV where 1 is right) and `g(2.5, a)` passed them as `a` (0 where 7 is right). The literal records
@@ -309,7 +309,7 @@
 #       A7 ("220 passed", want 221); the gate before this fix: all green
 #   M-AF3 the values file gutted (its includes and `var r = assert_summary();` only) -> RED 1: "only 0 rows (floor
 #       220)"; A1-A7 read the derived "0 passed, 0 failed (0 total)" (the gate before this fix: all green)
-#   (6.7.14, the infra lane, issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, the same procedure, 2026-10-16)
+#   (6.7.14, the infra lane, issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md, the same procedure, 2026-10-16)
 #   the fix reverted (the lane's previous build, c382545b)      -> RED 3: IW1 (an address), IW2 (8), A3 (W1-W6 wrong, W7
 #       SIGSEGV: exit 139)
 #   M-IW1 x86 EFLADDR_X1 without its `_IR_REC0(S, IR_RAW_EMIT)` -> RED 2: IW2 (exit 8), A3 (W5 8, W6 1, W7 SIGSEGV)
@@ -318,12 +318,12 @@
 #       and slice_signed_read Wb (each IR=3: `_arr_sub_load` no longer records its own signed load)
 #   M-IW3 the six EFLLOAD_* / EFLSTORE_*_PAIR records dropped -> RED 0: no row, and no IR=3 output in the 624-file
 #       .tcyr corpus changes (the pairs are not exposed today: see IW above)
-#   (6.7.14, the structs lane, issues/2026-10-15-ir3-f64-field-store-through-pointer-faults.md, 2026-10-17: this gate
+#   (6.7.14, the structs lane, issues/archived/2026-10-15-ir3-f64-field-store-through-pointer-faults.md, 2026-10-17: this gate
 #   run with CYCC= the lane's base compiler, f133fb2f — the fix reverted)
 #   EMIT_FLOAT_LIT without its `_IR_REC0(S, IR_RAW_EMIT)`      -> RED 3: IF1 (139), IF2 (0), A3 (V1 SIGSEGV: exit 139);
 #       and call_ptr_field_store.sh R1's IR=3 leg (139). The default pipeline's output is unchanged by the record (the
 #       635-file .tcyr corpus at IR=0 is byte-identical with and without it)
-#   (6.7.14, the receives lane, unit R2, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md,
+#   (6.7.14, the receives lane, unit R2, issues/archived/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md,
 #   the same procedure, 2026-10-17)
 #   M-PN1 `_spi_src` without its `_spi_pname` arm (= the tree before) -> RED 13: PN1 PN2 PN5 PN6 (unexpected '}'), PN3
 #       PN4 (refused, but as unexpected '}'), A1-A7 (the values file does not build: tcyr Q49-Q52); PN7 green
@@ -608,7 +608,7 @@ refused pm3 "'QE_dupe' returns a struct by value, and a struct result needs stor
 refused pm4 "'QE_add' returns a struct by value, and a struct result needs storage in a fn's frame" "PM4: at top level, 16 B operator, double-wrapped: refused by name once" "${PMH}var q0 = QE { 4, 9 };\nvar q1 = QE { 0, 0 };\nvar G = HE { 7, ((q0 + q1)), 8 };\nsyscall(60, G.x);\n"
 refused pm5 "'Q3_dupe3' returns a struct by value, and a struct result needs storage in a fn's frame" "PM5: at top level, 24 B method: refused once (+ unexpected '}' before)" "struct Q3 { a; b; c; }\nstruct H3 { x; q: Q3; z; }\nimpl Q3 { fn dupe3(self): Q3 { var q = Q3 { self.a, self.b, self.c }; return q; } }\nvar q3 = Q3 { 1, 4, 9 };\nvar G = H3 { 7, (q3.dupe3()), 8 };\nsyscall(60, G.x);\n"
 refused pm6 "cannot copy 'QO_dupe' into a struct field of a different struct type: 'q'" "PM6: (o.dupe()) of ANOTHER 16 B struct, refused by name (unexpected '}')" "${PMH}struct QO { a; b; }\nimpl QO { fn dupe(self): QO { var q = QO { self.a, self.b }; return q; } }\nfn main(): i64 { var o = QO { 4, 9 }; var m = HE { 7, (o.dupe()), 8 }; return m.x; }$E"
-# PN (6.7.14, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) a struct NAME in
+# PN (6.7.14, issues/archived/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) a struct NAME in
 # parentheses as the element (`HE { 7, (q0), 8 }`) was "unexpected '}'" on every target: `_spi_src` took a named struct
 # only as `IDENT ,` / `IDENT }`, so the wrapped name was a scalar for the nested struct's first leaf. `_spi_pname` steps
 # the wrap and takes the name as `_spi_name` does; another struct is refused by name once, as the unwrapped name is.

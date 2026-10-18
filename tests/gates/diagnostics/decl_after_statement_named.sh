@@ -11,7 +11,7 @@
 # that file ("lib/str.cyr:24:1: unexpected struct" + three). And `async fn` there — a function, which the guide says
 # may follow statements — was "expected identifier, got reserved keyword 'fn'": PARSE_PROG's relaxed-ordering arm
 # admitted it (`_IS_FN_KW`) but consumed only `const`'s prefix.
-# (issues/2026-10-12-declarations-after-first-statement-decision.md)
+# (issues/archived/2026-10-12-declarations-after-first-statement-decision.md)
 #
 # THE DECISIONS (the user, 2026-10-16): D13 (a) — the guide's rule, one named error: "a `struct` declaration must
 # come before the first top-level statement (line N)"; an include names its own line; no cascade, nothing that

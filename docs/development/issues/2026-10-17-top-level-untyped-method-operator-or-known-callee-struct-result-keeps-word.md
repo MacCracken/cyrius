@@ -7,7 +7,7 @@ D29 / D30 bite), x86_64 (`build/cycc` the lane's fixpoint); the frontend is shar
 operator or known `&f` result over 8 B holds the struct's first word with no diagnostic, where the free call of the
 same struct is refused (D30 (a)); the 8 B rows refuse valid code at its first `.field` (Low half).
 **Discovered:** 2026-10-17, the receives lane (unit R4), while repairing
-`issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md`. That issue's filed surface and its decisions
+`issues/archived/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md`. That issue's filed surface and its decisions
 (D29 / D30: "an untyped `var x = mk1(30);` (or `= (mk1(30));`)") are a whole FREE call; the other whole struct results
 at top level were left as found, here. Its gate pins one of them (struct_receive_inference_checked.sh SATK2: `var G2 =
 B.mk();`, 16 B, "keeps the word").

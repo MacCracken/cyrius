@@ -1,7 +1,7 @@
 # A `struct` / `enum` refused as a declaration after the first top-level statement (D13 (a)) still cascades at each use of it — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 frontend lane (l6714-frontend at 7b32fd5b, x86_64; the
-frontend, every target). Beyond the filed surface of issues/2026-10-12-declarations-after-first-statement-decision.md
+frontend, every target). Beyond the filed surface of issues/archived/2026-10-12-declarations-after-first-statement-decision.md
 (fixed in the lane by 45c06049, the user's decision D13 (a), 2026-10-16: the declaration itself is one error by name,
 and the fns it would have defined are quieted by `_dl_quiet`); a USE of the refused TYPE was not part of the filed
 repros. Distinct from the staged 2026-10-17-declaration-inside-block-or-fn-body-cascades.md (a declaration below

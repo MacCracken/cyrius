@@ -4,7 +4,7 @@
 # took the multi-word rule — the value is the ADDRESS of the copy, as a captured struct's is — and nothing marked it a
 # u128: `|q| { c == 5 }` was false for `c = 5`, `c + 0` added the env address, a truth test, `<` and `match` read the
 # address too. The read now copies the two words into a 16-byte temporary and stamps it (6.7.6's u128 stamp, k 3), so
-# every u128 path reads all 128 bits. (issues/2026-10-08-u128-params-returns-fields-captures.md, the capture half;
+# every u128 path reads all 128 bits. (issues/archived/2026-10-08-u128-params-returns-fields-captures.md, the capture half;
 # the parameter / return / field halves are refused by name, the user's decision D10 (a), 2026-10-16.)
 #
 # Each value below is set with store64 (lo, hi), the high word non-zero where it matters, and every expected answer is

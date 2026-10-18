@@ -1,7 +1,7 @@
 # A trait member's `: Vec<..>` return compiles, while a fn's `: Vec<..>` return is refused "type 'Vec' cannot be a fn return type" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G3), applying D4 (a) to the trait
-signature reader (issues/2026-10-14-vec-type-argument-unread-outside-annotations.md). Pre-existing: identical on the
+signature reader (issues/archived/2026-10-14-vec-type-argument-unread-outside-annotations.md). Pre-existing: identical on the
 slot-open compiler (2600f67f's build/cycc) and on the lane tree after G3 (fce26f17).
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — the trait accepts a signature no impl can define (an impl's `fn a(self): Vec<i64>` is refused).

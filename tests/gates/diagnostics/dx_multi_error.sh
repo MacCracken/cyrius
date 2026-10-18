@@ -91,7 +91,7 @@ rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
 n=$(grep -c '^error:' "$E" || true)
 [ "$n" -eq 1 ] || { echo "FAIL: struct error + bare #deprecated reported $n errors, want 1 (the latch was cleared):"; cat "$E"; exit 1; }
 
-# 2e) 6.7.14 — one mistake, one error (issues/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
+# 2e) 6.7.14 — one mistake, one error (issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
 #     Each case prints EXACTLY the errors listed — `cascade <label> <want error count> <file> <head>...`
 #     names every `error:` head it must print (after `error:<source>:`), and any other `error:`
 #     or `warning:` line is a cascade. Before 6.7.14:

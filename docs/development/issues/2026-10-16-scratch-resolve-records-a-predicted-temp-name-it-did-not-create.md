@@ -1,7 +1,7 @@
 # A scratch resolve keeps a predicted temp name that `_aw_open` skipped, so a kill unlinks a file the CLI did not create — OPEN
 
 **Status:** 🟡 **OPEN** — met 2026-10-16 by the 6.7.14 tools lane's review of 33e3b49c1 (the fix for
-issues/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md) and reproduced by the lane's fix step
+issues/archived/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md) and reproduced by the lane's fix step
 (l6714-tools @ 69c72ca09, the CLI built from `cbt/cyrius.cyr` by the tree's `build/cycc`). The lane introduced it:
 the 2600f67f CLI records nothing, so it unlinks nothing (it leaves the whole scratch, the bug 33e3b49c1 fixed). It
 also contradicts the lane's CHANGELOG claim that "a file it did not write survives".

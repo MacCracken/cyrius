@@ -192,7 +192,7 @@
 #   `_sarg_sval_ptr` refusing any argument it parses   -> RED 4: PK1 VK1 VK2 VK3 (a handle, `&s`, a `*Pt` field, a `: *Pt` call
 #                                                         and method, an address, a `*i64` dereference, a scalar field refused)
 #
-# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — a method-result argument is
+# 6.7.14 (issues/archived/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — a method-result argument is
 # named as the source spells it: R9 R23 R24 R24b R28b `Pt.dup` / `Pt.t1` / `Pt.v2` / `Pt.mq` (they printed `Pt_dup` ..),
 # R9k a local named `Pt_dup` keeps its name. The multi-target rows are simd_pointer_param.sh SM. Mutations (measured):
 #   `_sarg_ident_err` ignoring the call's fn          -> RED 5: R9 R23 R24 R24b R28b
@@ -847,7 +847,7 @@ compiles "PK2 a Str local into *i64 / *u8 is not refused" \
     "${T}${WP}fn go(): i64 { alloc_init(); var s = str_from(\"hello\"); return rl(s) + ru(s); } syscall(60, go());"
 
 echo "=== 6.7.14: every struct VALUE into a pointer of another kind — a field, a call, a method / operator result, a dereference ==="
-# issues/2026-10-15-struct-field-call-or-dereference-into-word-pointer-parameter-pushes-first-word.md: D5 (a) refused a struct
+# issues/archived/2026-10-15-struct-field-call-or-dereference-into-word-pointer-parameter-pushes-first-word.md: D5 (a) refused a struct
 # NAME; a struct-typed field, a by-value struct call, a method or operator result and a `*S` dereference into `p: *i64`
 # still pushed the value's first word as the address — x86_64 139, aarch64 139, cx 253, PE 5. The rule D5 (a) and 6.7.13's
 # D31 (the vector twin, "at every source") state: refused, ONE error each, the value named without the `&` hint.

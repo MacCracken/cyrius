@@ -1,0 +1,54 @@
+# `#pure`'s `#io` / `#alloc` check is silent for a callee defined later — RESOLVED
+
+> ✅ **RESOLVED in v6.7.14** (FE-21, `0190be81`: pass 1 records `#io` / `#alloc` as it records `#deprecated` — a pass-1-only `_pre_io_pending` / `_pre_alloc_pending` armed where pass 1 steps the token (the top-level scan, an impl body, after the first statement, a top-level block) and OR'd onto the fn `_prescan_fn_sig` registers (`_prescan_eff_take`); the pass-2 pair is untouched; no decision needed. The filed repro prints its four warnings — `7:26 'wr'`, `7:42 'grab'`, `9:25 'wr'` (the tail call) and `11:33 'A.m'` (the filed expectation reads `'A_m'`; FE-23 gives a method its source spelling) — and still exits 5; the callees-first order prints the same four, none doubled. Census (837 files, `lib/bayan.cyr` included): no change. Rows: new `frontend/pure_effect_later_callee.sh` P1 (the repro verbatim) – P6c; mutations RED. Filed beside (6.7.15): an explicit generic instance callee `h<i32>(1)` is never checked (`2026-10-17-pure-check-misses-explicit-generic-instance-callee.md`). CHANGELOG [6.7.14])
+
+**Status:** ✅ **RESOLVED in v6.7.14** (see the banner). Was: 🟡 **OPEN** — reproduced 2026-10-08 against 6.7.6 @ 2fb6ad8b with the tree's `build/cycc`: the repro below prints no warning. The same source with the callees moved above the `#pure` fns prints all four (a plain call, a second plain call, a tail call and a method call).
+**Placement:** 6.7.14 — repair 4: generics, the frontend, infra (frontend lane, wave 1, unit F5; placed at the 6.7.14 open, 2026-10-16) — never 7.x.
+**Discovered:** before 2026-10-08 (carried in roadmap.md's backlog); filed 2026-10-08 from roadmap.md.
+**Severity:** Low — a missing warning; nothing miscompiles.
+**Affects:** cycc ≤ 6.7.6 (the check exists since v5.8.20; the method arm since 6.6.17).
+
+## Summary
+
+A `#pure` fn that calls an `#io` or `#alloc` fn should warn `#pure fn calls #io fn '…'` at the call. The
+check reads the callee's `fn_flags` at the call site, but `#io` / `#alloc` are written into those flags
+only when the callee's definition is parsed in pass 2. A callee defined below the `#pure` caller therefore
+has no flags yet, and the call is silent. This affects every call path: a plain call, a tail call
+(`return wr();`) and a method call (`p.m()` with the `impl` later).
+
+`#deprecated` (6.6.16, `_prescan_dep_take`) and `const fn` (6.7.2, `SFCFN` in `_prescan_fn_sig`) already
+solved this ordering problem by recording the attribute in pass 1.
+
+## Reproduction
+
+`docs/development/issues/repros/2026-10-08-pure-check-misses-later-defined-callee.cyr`:
+
+```sh
+cat docs/development/issues/repros/2026-10-08-pure-check-misses-later-defined-callee.cyr | build/cycc > /tmp/p
+# actual:   no warning
+# expected: the four warnings the callees-first order prints:
+#   warning:<source>:…: #pure fn calls #io fn 'wr'
+#   warning:<source>:…: #pure fn calls #alloc fn 'grab'
+#   warning:<source>:…: #pure fn calls #io fn 'wr'      (the tail call)
+#   warning:<source>:…: #pure fn calls #io fn 'A_m'     (the method)
+```
+
+## Root cause
+
+- `src/frontend/parse_fn.cyr:11712-11729` (in `PARSE_FN_DEF`): `_io_pending` / `_alloc_pending` become
+  `fn_flags` bits 4 / 5 (16 / 32) only when the definition is parsed in pass 2. They are armed by
+  `_tl_arm` (`src/frontend/parse_fn.cyr:10270`).
+- `src/frontend/parse_fn.cyr:4064` `_pure_effect_warn` (plain and method calls) and the tail-call copy at
+  `src/frontend/parse_fn.cyr:966-981` read `GFLG(callee)` at the call, which is still 0 for a callee
+  defined later.
+- Pass 1 already records the analogous facts: `src/frontend/parse_fn.cyr:9969` `_prescan_dep_take`
+  (`#deprecated`, defined at 10108) and `:9971` `SFCFN` (`const fn`), both in `_prescan_fn_sig` (9933).
+
+## Proposed fix
+
+Record `#io` / `#alloc` in pass 1 the way `#deprecated` is recorded: arm a pass-1-only pending pair
+where pass 1 walks the attribute (never the pass-2 `_io_pending`, which is the `_pub_pending`
+cross-pass defect `_prescan_dep_take`'s comment warns about). Then OR bits 16 / 32 onto the fn
+`_prescan_fn_sig` registers, including impl methods. PARSE_FN_DEF ORs the same bits again. Optionally,
+fold the tail-call copy at 966–981 into a call to `_pure_effect_warn`. Add a gate with the repro, which
+must print all four warnings.

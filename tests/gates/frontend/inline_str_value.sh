@@ -28,7 +28,7 @@
 # (a closure returned out of t's frame keeps its copy: K4); a `defer` runs in the frame. A position that takes
 # no `Str` value (an untyped parameter, store or fn return) keeps the word (K5, K6).
 #
-# 6.7.14 (the user's decision D20 (a), 2026-10-16; issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md):
+# 6.7.14 (the user's decision D20 (a), 2026-10-16; issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md):
 # `t = a` with t an inline `Str` and a a `Str` HANDLE — a local, a parameter, a global, a call or method declared
 # `: Str`, a `Str` field — copies the 16-byte header a points at, as `t = u` between inline `Str`s does; through
 # 6.7.13 it stored a's address into t.data and left t.len stale (6.6.16's pun: `var t: Str; t = a; return t.len;`
@@ -86,7 +86,7 @@
 #                                                     R1 x7 (8-10 rows), K2 x4
 #   n10 `_istr_name` without the capture rung      -> RED 7: R1 x7 (c_bindcap: `var h: Str = t` copied the capture)
 #   (n0-n10 were measured with X3 — `var t: Str;` returned, refused — which the review fix moved out: the bare
-#   declaration's D7 question is open, issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md)
+#   declaration's D7 question is open, issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md)
 #   2026-10-16 (the review fix; the same scratch-copy method):
 #   n11 `_istr_bare` / `_istr_bare_cap` answer 0   -> RED 15: R1 x7 (the five u_* rows), U1 x4, U2 x4 (t's unwritten
 #                                                     length: 224 / 24 / 0 / 0 and 1 / 0 / 0 / 1)
@@ -372,7 +372,7 @@ row U2 'fn g(c): i64 { var t: Str; if (c == 1) { t = str_from("abc"); } else { t
 fn go(): i64 { return g(1); }'
 runs U2 3 "\`var t: Str;\` assigned in one branch"
 
-# --- D20: the filed repro (issues/2026-10-15-str-handle-into-inline-str-stores-one-word.md), verbatim, and its rows ---
+# --- D20: the filed repro (issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md), verbatim, and its rows ---
 cat > "$T/D20a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -392,7 +392,7 @@ runs D20b 5 "the filed repro's \`return t.len;\` (the pun left t.len unwritten)"
 row D20c 'fn go(): i64 { var t: Str; t = str_from("hello"); var h: Str = Str { "zz", 2 }; h = t; return str_len(h); }'
 runs D20c 5 "the filed row 3: \`h = t\` copies t's header, a's copied into t (6.7.13: t's unwritten length)"
 
-# --- D18: the filed repro (issues/2026-10-15-inline-str-into-untyped-or-other-pointer-position-passes-data-word.md), verbatim ---
+# --- D18: the filed repro (issues/archived/2026-10-15-inline-str-into-untyped-or-other-pointer-position-passes-data-word.md), verbatim ---
 cat > "$T/D18a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -422,7 +422,7 @@ for leg in $(legs); do
 done
 runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
 
-# --- D21 / D22: the filed repros 1 and 2 (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
+# --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"

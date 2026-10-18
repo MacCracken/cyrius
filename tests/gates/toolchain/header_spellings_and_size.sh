@@ -81,7 +81,7 @@
 #   the `?` route named as a `return` ('parse(..)')            → H12 FAIL (the filed repro and the 5 refusal rows)
 # 6.7.13 — D37 (issues/archived/2026-10-15-6712-behaviour-changes-beyond-the-decisions-text.md item 2):
 #   lib/result.cyr's ok_via / err_via back to `: i64`          → H12 FAIL (the result.cyr rows: rc 1, both prototypes)
-# 6.7.14 — the same for lib/net.cyr (issues/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md):
+# 6.7.14 — the same for lib/net.cyr (issues/archived/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md):
 #   lib/net.cyr's sock_send_a / sock_recv_a back to `: i64`     → H12 FAIL (both cyr_val2 rows, the copy row)
 # MUTATION LEDGER (6.7.11; build/cyrius rebuilt from each mutant in a scratch tree, gate re-run):
 #   _hdr_ret_of answers "a word" (the annotation ignored, as before)   → H7, H8, H9, H11 FAIL
@@ -102,7 +102,7 @@
 # 6.7.12 (D24): `_hdr_vec_name` → a word again (the 6.7.11 return)    → H8 FAIL (the 6 vector refusal rows)
 # 6.7.13: `_hdr_vparam` answering 0 (a vector parameter `cyr_val`)     → H8 FAIL (7: the vector-parameter rows)
 #         a `*` pointer type read as its vector name                 → H8 FAIL (the stays-cyr_val row, the count)
-# 6.7.14 — H13, A WRAPPED PARAMETER LIST (issues/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md):
+# 6.7.14 — H13, A WRAPPED PARAMETER LIST (issues/archived/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md):
 #   the list's `)` looked for on the declaration's line (6.7.13)     → H13 FAIL (8: ml.cyr's b3 / a3, the nine, the shapes, cc)
 #   the parameter walk skips spaces alone (a newline is a name)     → H13 FAIL (7)
 #   the trailing trim drops spaces alone (a newline before `,`)     → H13 FAIL (the comments row)
@@ -549,7 +549,7 @@ vro=0; (cd "$D/old" && "$ROOT/build/cycc" < "$D/via.tcyr" > "$D/via_old" 2> /dev
 check "a caller (result_allocator_via.tcyr: ok_via, err_via, net.cyr's sock_*_a) compiles byte-identical to the : i64 spelling" \
     "0 0 same" "$vrc $vro $(cmp -s via_new via_old && echo same || echo differ)"
 # 6.7.14 — the same for lib/net.cyr's sock_send_a / sock_recv_a, which return ok_via / err_via's pair
-# (issues/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md; 6.7.13's D37
+# (issues/archived/2026-10-15-cyrius-header-net-sock-a-wrappers-print-cyr-val-over-a-pair.md; 6.7.13's D37
 # applied to cyrius's own lib): declared `: Result`, they are cyr_val2 and `cyrius header lib/net.cyr`
 # stays rc 0. Callers compile byte-identical to the 6.7.13 `: i64` spelling (x86_64 and PE), and a
 # copy whose sock_*_a returns `ok_via(a, n + 7)` differs — the copy's lib is the one compiled.
@@ -755,7 +755,7 @@ else
     echo "  SKIP (named): H12's guard rows and C caller — $CCX86_WHY"; skips=$((skips + 1))
 fi
 
-# ── H13: a parameter list that WRAPS (6.7.14; issues/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md).
+# ── H13: a parameter list that WRAPS (6.7.14; issues/archived/2026-10-15-cyrius-header-multi-line-parameter-list-keeps-first-line-only.md).
 # The list's `)` was looked for on the declaration's line alone, so a list continued on the next
 # line lost every later parameter (the C caller passed garbage in the dropped registers) and a
 # vector parameter there escaped the 6.7.13 refusal — rc 0, nothing on stderr. The filed repro

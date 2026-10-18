@@ -442,7 +442,7 @@ fn q_elems_mo(): i64 {
     q_elems_name();
     return 0;
 }
-# Q49+ (6.7.14, issues/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) — a struct NAME in
+# Q49+ (6.7.14, issues/archived/2026-10-16-paren-wrapped-struct-name-as-nested-literal-element-refused.md) — a struct NAME in
 # parentheses as the element (`HE { 7, (q0), 8 }`, `((q0))`) was "unexpected '}'": a scalar for the nested struct's
 # first leaf, the next element its second. The wrap is stepped into and the name taken as unwrapped (`_spi_pname`).
 var GQE = QE { 4, 9 };

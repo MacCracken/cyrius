@@ -1,7 +1,7 @@
 # A call ABOVE a fn whose RETURN type names a struct declared BELOW that fn takes the pass-1 signature with no struct: `var t: Pq = mk(10);` faults (139) at 8, 16 and 24 B, an untyped `var t = mk(10);` is "no struct type in scope", and a struct named like a vector is refused "vector return type does not match" — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 vectors lane (unit V5), checking the D41 bite
-(issues/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md) with the struct declared after
+(issues/archived/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md) with the struct declared after
 its uses. Identical on the lane's base compiler (3478087aa's build/cycc) and on its tree after the D41 bite
 (609c18166). Not that item's: any struct name does it.
 **Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.

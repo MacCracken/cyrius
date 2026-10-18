@@ -253,7 +253,7 @@ fn chains() {
     assert_eq(GN, 111, "FC13: callptr(&mk3, 1).note(); the statement form");
     fncall1(&gp3, 5).b = 77;
     assert_eq(GK.b, 77, "FC14: fncall1(&gp3, 5).b = 77; stores through a *P3 result, as gp3(5).b = 77 (D8 a)");
-    # 6.7.14 (issues/2026-10-16-callptr-statement-field-store-does-not-parse.md): the `callptr` spelling of FC14 was
+    # 6.7.14 (issues/archived/2026-10-16-callptr-statement-field-store-does-not-parse.md): the `callptr` spelling of FC14 was
     # "expected ';', got '='" (`+=`: "unexpected '='") — a `callptr` statement never reached the call statement's arms.
     callptr(&gp3, 5).b = 40;
     assert_eq(GK.b * 100 + GK.a, 4005, "FC15: callptr(&gp3, 5).b = 40; stores through the *P3 result");

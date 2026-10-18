@@ -53,7 +53,7 @@ fn s_mchain(): i64 { reset(); gp().gi().a = 6; return load64(&ibuf); }
 fn s_closure(): i64 { reset(); var c = |v| { gp().n = v; return 0; }; fncall1(c, 8); return hp().n; }
 fn s_loop(): i64 { reset(); var i = 0; while (i < 4) { gpc().n += i; i = i + 1; } return hp().n * 10 + CNT; }
 
-# 6.7.14 (issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): each store above is
+# 6.7.14 (issues/archived/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): each store above is
 # a classic-for step too, ending at the step's `)` (every assignment a statement takes is a step) — it was
 # "expected '=', got '('" (a method's: "expected '=', got '.'"). The step runs once per iteration, after the body.
 struct HQ { n; q: *i64; }

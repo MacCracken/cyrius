@@ -27,16 +27,16 @@
 #   K  the input ends right after `fn` or `var` (`fn`, `var`, `fn ` with a trailing blank): exit 1, the class
 #      message at the keyword's line, nothing written. Pass 0 (shallow_fn / shallow_global) stepped over the
 #      name unchecked, past the EOF token, and every later EOF test read beyond the token array: SIGSEGV (139),
-#      nothing on stderr. 6.7.14, issues/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md — and `var x:`,
+#      nothing on stderr. 6.7.14, issues/archived/2026-10-14-cybs-segfaults-on-eof-after-fn-or-var.md — and `var x:`,
 #      whose type name shallow_global stepped over the same way (found in passing, 6.7.14)
 #   X  a statement that starts with a name and a `[` (`zz[1] = 5;` - cybs has no subscript) names an
 #      undefined name, as the read form `var a = zz[1];` does: rc 1, nothing written, the undefined-name
 #      message at its line. A known name — a global array (the filing's zd), a local, a fn, an enum member
 #      — keeps the class message, which lists `x[i]`. Before, every such statement was the class message,
 #      with no `x[i]` in its list. Any other token after the name keeps the class message (L and T: `loop`,
-#      `const`, `do` lex as names). 6.7.14, issues/2026-10-14-cybs-indexed-store-undefined-name-not-named.md
+#      `const`, `do` lex as names). 6.7.14, issues/archived/2026-10-14-cybs-indexed-store-undefined-name-not-named.md
 #   P  the preprocessor's fixed buffers refuse what does not fit, naming the cap, rc 1, nothing written
-#      (6.7.14, issues/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md). Each was unchecked: an
+#      (6.7.14, issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md). Each was unchecked: an
 #      include over its 2 MB slot had its tail overwritten by the file it includes (the filing's big.cyr
 #      printed a line the file does not contain), stdin past 15 MB was dropped with exit 0, includes past
 #      the 8 slots and an expansion past the 16 MB buffer ran on into other regions (130 MB: SIGSEGV).

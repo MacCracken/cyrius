@@ -129,7 +129,7 @@ refused w57 "$RT" "W57: a tuple return (5, 1) from a single-value bool fn" 'fn g
 refused w58 "undefined variable 'zz'" "W58: an undefined name in the value is reported once (no bool cascade)" "$M var b: bool = false; b = zz; return b; }$E"
 # W59 (a bool[N] element `1 < 2` refused as not a constant) is A16 since 6.7.4: a list element is a const context
 # D9 — 6.7.14 (the user's decision D9 (a), 2026-10-16): bool-ness is part of a global's type, so a redeclaration
-# that changes it is refused as a type change (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md). The
+# that changes it is refused as a type change (issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md). The
 # bool mark was the LAST declaration's, per slot: D91 (the filed repro) built a bool holding 5, D92 / D93 built.
 # Mutations (scratch trees): `_gv_same_shape`'s bool test dropped -> D91-D97 RED (D91-D94 D97 BUILD, D95 / D96 the
 # old "cannot initialize bool" only); `_gv_fold_b` not writing the mark before the fold -> D91-D93 D95 D98 D99 RED.

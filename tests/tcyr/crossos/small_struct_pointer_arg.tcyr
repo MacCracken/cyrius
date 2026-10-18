@@ -143,7 +143,7 @@ fn a_wrap_8() { var s: S8; s.v = 5; var sp: *S8 = &s; return take8((sp)) * 10 + 
 fn a_wrap_h() { var s: H; s.v = 5; s.w = 0; var sp: *H = &s; return takeh((sp)) * 10 + takeh(((&s))); }
 # (`sp` is not stored right before the call: under CYRIUS_IR=3 a method argument that reloads the slot
 # just stored reads the receiver's address — a pre-existing LASE defect of the unrecorded-emit class,
-# issues/2026-10-08-ir3-drops-unrecorded-field-emits.md, not this rule's.)
+# issues/archived/2026-10-08-ir3-drops-unrecorded-field-emits.md, not this rule's.)
 fn a_marg_8() { var s: S8; s.v = 5; var sp: *S8 = &s; var o: S8; o.v = 3; return o.with(sp) * 100 + o.with(&s); }
 fn a_marg_h() {
     var s: H; s.v = 5; s.w = 0;
@@ -348,7 +348,7 @@ fn e_left_8() {
     return take8(n + sp);
 }
 
-# ── 6.7.14: `n + &x` with a narrow `n` (issues/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md) ──
+# ── 6.7.14: `n + &x` with a narrow `n` (issues/archived/2026-10-15-narrow-plus-address-of-into-small-byvalue-param-passes-the-sum.md) ──
 # 6.7.11 (the user's decision, 2026-10-13, guide § Pointers): `n + &x` is the pointer `&x + n` is. The by-value
 # argument's right-carry (`_hl_rcarry`) asked only for a `*T` struct pointer right of the last `+`, so a narrow
 # left `n` (i8 / i16 / i32 / u8) made `take8(n + &x)` a value: the callee read the address's bits as its struct

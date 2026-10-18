@@ -4,7 +4,7 @@
 # can never run — but the classification at the fn's end admitted it and said nothing, while the same directive
 # on a plain fn it cannot inline is warned `#inline ignored: <reason>` (v6.5.63's contract). Reason 8, checked
 # first: "#inline ignored: async fn 'f' runs through its Future". A warning only: the binary and the exit code are
-# what they were (issues/2026-10-11-inline-on-async-fn-silently-ignored.md).
+# what they were (issues/archived/2026-10-11-inline-on-async-fn-silently-ignored.md).
 #
 #   A1  the filed repro verbatim (CYRIUS_ASYNC=1): `pl` and `co` warned by name, `sy` not; the run exits 15
 #   A2  the repro's binary equals the one built with the two async fns' `#inline` lines removed (no effect)

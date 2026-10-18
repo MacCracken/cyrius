@@ -1,5 +1,5 @@
 # pair_question_forward.tcyr — 6.7.14. A FN WHOSE ONLY `: stack` PAIR ROUTE IS `f(..)?` IS A PAIR ABOVE ITS
-# DEFINITION TOO (issues/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md).
+# DEFINITION TOO (issues/archived/2026-10-15-pair-fn-through-question-mark-used-above-its-definition-not-flagged.md).
 #
 # ⛔ THE DEFECT. Pass 1's pair scan (`_pair_body_scan`) followed `return f(..)` only, so a fn whose pair came
 # from `var v = parse(x)?;` alone was flagged when pass 2 reached its body: a caller ABOVE it took `qb(x)?` as the

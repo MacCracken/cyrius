@@ -1,5 +1,5 @@
 #!/bin/sh
-# cx_heap_guest_brk.sh — 6.7.14 (issues/2026-10-15-cx-static-heap-128k-while-guest-is-8-mib.md). cx's
+# cx_heap_guest_brk.sh — 6.7.14 (issues/archived/2026-10-15-cx-static-heap-128k-while-guest-is-8-mib.md). cx's
 # alloc() bumps over the guest break cxvm SERVES: brk (12) is answered in guest space (programs/cxvm.cyr
 # `_cx_guest_brk`) — the break starts at the image end, grows into the free guest memory below the stack
 # while it stays 1 MiB below the live sp, and the guest stack traps at the break.

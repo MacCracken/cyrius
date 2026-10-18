@@ -122,7 +122,7 @@ cmp -s "$T/r_new" "$T/r_ref" || { echo "FAIL dce_eliminates axis4: a DEFAULT-pat
 # syscall of the filed sy.cyr — a stray instruction past the program's end). The code's last
 # nonzero byte must sit exactly ELIM bytes below the plain build's, and .text must end at the
 # next 8-byte boundary (W^X; CYRIUS_WX=0 pads to 16 for its data and zeroed it since 6.7.11).
-# issues/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md
+# issues/archived/2026-10-13-wx-compaction-leaves-stale-bytes-in-text-pad.md
 _text_ends() {   # $1 = ELF -> "<offset past the last nonzero .text byte> <.text size>"
   set -- "$1" $(readelf -SW "$1" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == ".text") { print $(i + 3), $(i + 4); exit } }')
   [ -n "${3:-}" ] || return 0
@@ -168,7 +168,7 @@ chmod +x "$T/sy1"; got=0; "$T/sy1" || got=$?
 # (2,121 live bodies corrupted, refused); the merge scratch at a fixed 4,096 -> RED 6b (192 B
 # NOP-filled, not removed); the grow copying two of three words -> RED 6b. A grown table without
 # room for its scratch is NOT seen: the arena past it is unused, so the overrun lands in nothing.
-# issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
+# issues/archived/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 compacts6() {   # <row> <src> <want exit> <max bytes>
   CYRIUS_DCE=1 "$T/stage1" < "$2" > "$T/a6.bin" 2> "$T/a6.err" || { echo "FAIL dce_eliminates axis6 $1: the build failed: $(head -2 "$T/a6.err")"; exit 1; }
   if grep -q 'compaction declined' "$T/a6.err"; then echo "FAIL dce_eliminates axis6 $1: $(grep 'declined' "$T/a6.err")"; exit 1; fi
@@ -205,7 +205,7 @@ if grep -q 'wp-compact declined' "$T/ir3cc.err"; then echo "FAIL dce_eliminates 
 # met it, tests/tcyr/lang/generic_instance_inline_binding.tcyr, 18/18 under CYRIUS_DCE=1 on x86
 # and aarch64. Mutations (6.7.14): `_dce_holds_live` returning 0 -> RED 7a (x86 132); only the
 # aarch64 sweep's guard dropped -> RED 7a (aarch64 124, the hang).
-# issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
+# issues/archived/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
 cat > "$T/g.cyr" <<'EOF'
 fn sv<T>(x: T) { var y: T = 253; return y; }
 fn svh<T>(x: T) { return sv<T>(x); }
@@ -250,7 +250,7 @@ got=0; timeout 20 "$T/cxvm" < "$T/g.cyx" || got=$?
 # (1). The filed a.cyr / b.cyr verbatim, built as their manifest's `stdlib = ["syscalls"]` builds
 # them (lib/syscalls.cyr ahead of the source): both report it dead and exit 1 (the winner ran), on
 # x86 W^X, CYRIUS_WX=0 and aarch64. Mutation (6.7.14): `_dce_in_loser` returning 0 -> RED 8 (a.cyr
-# reports 0). issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+# reports 0). issues/archived/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
 # 8b (review fix): under CYRIUS_IR=3 the seam's wp_compact moves the code BEFORE FIXUP's seed pass
 # reads the recorded ranges, so they move with it (ir.cyr _wp_fnr_shift). Left pre-move, a range
 # lay over whatever moved into it: a.cyr's `only_in_loser` was not dead (0), and live code was —
@@ -360,7 +360,7 @@ chmod +x "$T/nk"; got=0; "$T/nk" || got=$?
 # dead); `_dce_raw_note` a no-op (10b: callee listed dead in the fn and at the top level, and the
 # DCE=1 binary exits 132); the top-level note dropped (10b top level, the same); `_dce_ijmp`
 # answering 0 (10c: callee dead for case 0 + 2, + 3 and + 5, those DCE=1 binaries 132).
-# issues/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
+# issues/archived/2026-10-14-dead-code-floor-trips-on-dce-byte-scan-false-live.md
 _find8() {   # <file> <16 hex digits, the 8 bytes in file order> -> every offset holding them
   od -An -tx1 -v "$1" | tr -s ' ' '\n' | grep -v '^$' | awk -v w="$2" '{ a[NR - 1] = $1 }
     END { for (i = 0; i + 8 <= NR; i++) if (a[i] a[i+1] a[i+2] a[i+3] a[i+4] a[i+5] a[i+6] a[i+7] == w) print i }'

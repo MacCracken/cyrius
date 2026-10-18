@@ -1,6 +1,6 @@
 #!/bin/sh
 # 6.7.14 — a FAILED ReadFile / WriteFile / SetFilePointerEx / CreateFileW answers a negative errno
-# on PE, through ONE GetLastError table (issues/2026-10-15-pe-read-failure-reads-as-eof.md,
+# on PE, through ONE GetLastError table (issues/archived/2026-10-15-pe-read-failure-reads-as-eof.md,
 # 2026-10-15-pe-open-failure-is-always-minus-one.md, 2026-10-16-pe-lseek-failed-seek-returns-zero.md).
 #
 # ⛔ WHY: the four kernel32 file reroutes (src/backend/x86/emit.cyr) returned their success answer

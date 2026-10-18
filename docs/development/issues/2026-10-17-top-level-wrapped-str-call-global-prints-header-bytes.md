@@ -7,7 +7,7 @@ base (4495a693) the same.
 **Severity:** Medium — a silent wrong output on valid code: the overload dispatcher takes the cstring base for the
 wrapped global and prints the `Str` header's bytes. Workaround: drop the parentheses, or annotate (`var s: Str = (mks());`).
 **Discovered:** 2026-10-17, the receives lane (unit R2), while repairing
-`issues/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md`, whose filed surface (its repro, its root cause
+`issues/archived/2026-10-16-paren-wrapped-str-call-untyped-receive-is-a-word.md`, whose filed surface (its repro, its root cause
 in PARSE_VAR's in-fn peek `_ti_inferred_sid`, its rows) is a declaration in a fn. That bite types the wrapped Str in a
 fn; at top level an untyped global is routed by a different record, untouched by it.
 
@@ -52,5 +52,5 @@ first token. A wrapped call `(mks());` records nothing, so `s` is an untyped wor
 Let `_gv_rhs_call_sid` look through a whole wrap (`_pwrap_name` up to the `;`, then the `f(..)` inside ending at the
 wrap's `)`), so the wrapped call records its callee as the unwrapped one does; both writers share it. Rows: the repro
 above (zone and after a first statement), `((mks()))`, a crossos row on four legs. (Whether the top-level untyped
-receive of a STRUCT binds it is 6.7.14's D29 / D30, `issues/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md`
+receive of a STRUCT binds it is 6.7.14's D29 / D30, `issues/archived/2026-10-16-top-level-untyped-struct-call-receive-infers-nothing.md`
 — a `Str` handle's routing here is the existing one-call record, not a new binding.)

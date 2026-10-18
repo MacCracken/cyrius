@@ -5,7 +5,7 @@ string-literal bite), x86_64; the warning is the shared frontend's, every target
 **Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — a false warning on valid code that runs right; nothing miscompiles.
 **Discovered:** 2026-10-17, the receives lane (unit R4), repairing
-`issues/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md`, whose filed fix is "a string
+`issues/archived/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md`, whose filed fix is "a string
 literal (token type of a string constant, alone up to the terminator)" — `_tp_exempt` (src/frontend/parse_decl.cyr).
 
 ## Reproduction

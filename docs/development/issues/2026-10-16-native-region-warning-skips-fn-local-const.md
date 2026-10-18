@@ -1,7 +1,7 @@
 # The native-region renumber warning does not judge a fn-local `const` declared inside a region — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 platform lane's tree (l6714-platform, unit P2, after the
-native-region fix for issues/2026-10-15-native-region-warning-misses-included-files-and-author-constants.md), with the
+native-region fix for issues/archived/2026-10-15-native-region-warning-misses-included-files-and-author-constants.md), with the
 ELF-aarch64 cross compiler built from it, run under qemu-aarch64.
 **Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — the wrong syscall runs with no diagnostic (the class the 6.7.12 / 6.7.14 warning exists for), in a

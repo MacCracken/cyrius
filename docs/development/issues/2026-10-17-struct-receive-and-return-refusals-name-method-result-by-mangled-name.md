@@ -6,9 +6,9 @@ destinations still print the struct-call record's fn name. Frontend: x86_64, aar
 **Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — a diagnostic names `Pt_dup` where the source says `s.dup()`; the position and the refusal are right.
 **Kind:** bug (diagnostic).
-**Related:** docs/development/issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md (the
+**Related:** docs/development/issues/archived/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md (the
 ARGUMENT side, fixed by a4d4e8b58: the struct-call record keeps its fn, `_sc_fi`, and `_sarg_ident_err` prints it
-through the frontend lane's `_fn_src_name`); docs/development/issues/2026-10-15-call-diagnostics-name-method-by-mangled-name.md
+through the frontend lane's `_fn_src_name`); docs/development/issues/archived/2026-10-15-call-diagnostics-name-method-by-mangled-name.md
 (the CALLEE side, fixed by the frontend lane, cb75b8b7).
 
 ## Reproduction

@@ -1,7 +1,7 @@
 # A nested type argument closed by `>>` (or `>>>`) and followed by `,` swallows the next argument: `g2<P<P<R>>, i16>` binds B to i64 — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G1), writing a deeper-nesting row for
-issues/2026-10-14-two-param-generic-nested-instance-names-collide.md. Pre-existing: identical on the slot-open
+issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md. Pre-existing: identical on the slot-open
 compiler (2600f67f's build/cycc) and on the lane tree after the nested-name fix.
 **Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** High — a silent miscompile: the second type argument is dropped and its parameter is bound to the i64

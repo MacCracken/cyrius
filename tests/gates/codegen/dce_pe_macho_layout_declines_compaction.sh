@@ -33,7 +33,7 @@
 #
 # 6.7.14 — THE CLIFF IS GONE (axes 5 and 9). The run registry grows (util.cyr _wpnr_grow), so 4,097
 # dead fns compact like 4,096 and the unset hint keeps its promise there; a run registry that
-# declines now means an alloc failed. issues/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
+# declines now means an alloc failed. issues/archived/2026-10-15-kybernet-dce-compaction-cap-agnos-init.md
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

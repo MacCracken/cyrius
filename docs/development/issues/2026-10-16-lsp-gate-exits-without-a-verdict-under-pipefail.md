@@ -1,7 +1,7 @@
 # lsp_diagnostics_file_column.sh exits rc 1 with no verdict under `bash -eo pipefail` (a feeder's write to a server that has exited) — OPEN
 
 **Status:** 🟡 **OPEN** — met 2026-10-16 by the 6.7.14 tools lane (unit T3) while adding R16-R18 for
-issues/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md. Pre-existing: the gate as it stands at
+issues/archived/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md. Pre-existing: the gate as it stands at
 2600f67f (the 6.7.14 plan commit) does the same.
 **Placement:** 6.7.15 — repair 5 (tools lane; filed from the 6.7.14 tools lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — a gate defect only. check.sh runs the gate with `sh` (no `-e`), where every row runs and the

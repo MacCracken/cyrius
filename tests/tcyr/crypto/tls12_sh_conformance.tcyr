@@ -1,6 +1,6 @@
 # tls12_sh_conformance.tcyr — 6.7.14: the TLS 1.2 client's ServerHello walks its extension block.
 #
-# issues/2026-10-15-tls-native-hello-conformance-residue.md item 4 (and items 1 and 3 on the 1.2
+# issues/archived/2026-10-15-tls-native-hello-conformance-residue.md item 4 (and items 1 and 3 on the 1.2
 # side). tls_native_client_parse_server_hello_12 looked up supported_versions, renegotiation_info,
 # extended_master_secret and ALPN and accepted the rest: an unsolicited 0x1234, an ALPN answer to a
 # client that offered none, an ALPN protocol the client did not offer and a 33-byte session id all

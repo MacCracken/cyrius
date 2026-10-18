@@ -47,7 +47,7 @@
 #      well; V7 the forks — the repro through the aarch64 and cx compilers built from this tree and the PE
 #      target: the same four errors
 #   VP (6.7.14) EVERY OTHER `Vec<..>` POSITION READS ITS T (the user's D4 (a), 2026-10-16), and VQ A VEC ELEMENT'S
-#      OWN `<..>` IS READ (D5 (a)) — issues/2026-10-14-vec-type-argument-unread-outside-annotations.md. A field's nested
+#      OWN `<..>` IS READ (D5 (a)) — issues/archived/2026-10-14-vec-type-argument-unread-outside-annotations.md. A field's nested
 #      `Vec<Vec<..>>`, a trait member's parameter, a multi-value element, `Box<Vec<..>>` and `idv<Vec<..>>(c)` skipped
 #      the `<..>` unread, and so did a Vec element's own list (`Vec<Box<nosuch>>`, a field's `Vec<Box<(i64, i64)>>`):
 #      the filed repro compiled and exited 3. VP0 the filed repro VERBATIM: its seven positions, each refused once
@@ -352,7 +352,7 @@ if [ -f "$VR" ]; then
 fi
 
 # ── VP (6.7.14): every other `Vec<..>` position reads its T, and a Vec element's own `<..>` is read ─────────────
-# (the user's D4 (a) and D5 (a), 2026-10-16; issues/2026-10-14-vec-type-argument-unread-outside-annotations.md)
+# (the user's D4 (a) and D5 (a), 2026-10-16; issues/archived/2026-10-14-vec-type-argument-unread-outside-annotations.md)
 cat > "$T/vp0.cyr" <<'VEOF'
 include "lib/vec.cyr"
 struct Box<T> { v: T; }

@@ -1,7 +1,7 @@
 # `**pp += 1` through a `**S` is refused as "compound assignment to the struct 'pp' points at" — pp points at a pointer, not the struct — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S2), landing
-issues/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its `**pp OP= v` is refused as `*p OP= v` is,
+issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its `**pp OP= v` is refused as `*p OP= v` is,
 6.7.11's decision (a) with 6.7.13's D9 (a)). The refusal is new with that fix (7c96547f); its wording is `_dst_struct`'s.
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Low — diagnostics only: the right statement is refused once, at the right place; its words name the

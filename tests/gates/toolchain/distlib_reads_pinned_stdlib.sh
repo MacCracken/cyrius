@@ -1,7 +1,7 @@
 #!/bin/sh
 # distlib_reads_pinned_stdlib.sh — 6.7.14: `cyrius distlib`'s sidecar verify AND its bundle
 # self-check read the stdlib the manifest PINS (`cyrius = "<pin>"`, versions/<pin>/lib), not the
-# CLI's own version slot (issues/2026-10-15-distlib-bundle-compile-ignores-pinned-stdlib.md).
+# CLI's own version slot (issues/archived/2026-10-15-distlib-bundle-compile-ignores-pinned-stdlib.md).
 #
 # THE DEFECT. cycc resolves `lib/<leaf>.cyr` against CYRIUS_LIB_OVERLAY, then the CWD, then ONE
 # store slot — CYRIUS_HOME/versions/<cycc's OWN version>/lib — and only then the entry's own

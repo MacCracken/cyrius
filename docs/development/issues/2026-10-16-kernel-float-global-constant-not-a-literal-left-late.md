@@ -1,7 +1,7 @@
 # In an x86 `kernel;` build a float global whose constant initializer is not a bare literal (`= CF`, `= (1.5)`, `= 1.5 + 1.0`) is still a dead store after the program — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F4, after 3f8bb9b6,
-which bakes a float scalar's float LITERAL, `-` optional — issues/2026-10-08-kernel-float-global-init-not-baked.md),
+which bakes a float scalar's float LITERAL, `-` optional — issues/archived/2026-10-08-kernel-float-global-init-not-baked.md),
 x86_64 (CYRIUS_ELF64_KERNEL=1, run as a Linux process).
 **Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4: the filed issue's surface (and its fix) is "a float

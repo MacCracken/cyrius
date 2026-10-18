@@ -324,7 +324,7 @@ tprow z_ref 0 "zone: var X: *P2 = mkp(); refused by D24, no warning beside the r
 tprow z_ref3 0 "zone: var X: *P3 = mk3(); refused (no frame), no warning beside the refusal" 'struct P3 { a; b; c; }\nfn mk3(): P3 { var r: P3 = P3 { 1, 2, 3 }; return r; }\nvar X: *P3 = mk3();\nsyscall(60, 0);\n'
 tprow z_8b 1 "zone: var X: *P1 = mk1(); an 8 B struct's word warns, as in a fn (D14)" 'struct P1 { a; }\nfn mk1(): P1 { var r: P1 = P1 { 1 }; return r; }\nvar X: *P1 = mk1();\nsyscall(60, 0);\n'
 
-# --- axis 13 (6.7.14, the user's decision D26 (a), 2026-10-16; issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md) ---
+# --- axis 13 (6.7.14, the user's decision D26 (a), 2026-10-16; issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md) ---
 # A known `&f` callee's `: *T` result carries the pointer type, as the direct call `gp()` does: `var w: *P2 = fncall0(&gp);`
 # warned "assigning non-pointer to typed pointer" (the result was an untyped word) where `var x: *P2 = gp();` is quiet.
 # A callee held in a variable stays a word and still warns (K4). The step half (`fncall0(&gp) + 1` steps one P2) is
@@ -339,7 +339,7 @@ tprow K3 0 "zone: var W: *P2 = fncall0(&gp); (1 before)" "include \"lib/fnptr.cy
 tprow K4 1 "fn: a callee held in a variable is a word (the control, D31)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var fp = &gp;\n    var w: *P2 = fncall0(fp);\n    return w.b;\n}\nsyscall(60, f());\n"
 tprow K5 0 "fn: var q: *i64 = fncall0(&gi); (1 before)" "include \"lib/fnptr.cyr\"\n${KP}fn f(): i64 {\n    var q: *i64 = fncall0(&gi);\n    return *q;\n}\nsyscall(60, f());\n"
 
-# --- axis 14 (6.7.14; issues/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md) ---
+# --- axis 14 (6.7.14; issues/archived/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md) ---
 # A STRING LITERAL alone into a BYTE pointer (`*u8` / `*i8`) is a pointer: `var s: *u8 = "abc";`, `t = "xyz";` and the
 # zone's `var p: *u8 = "abc";` warned (D18 (a) carried the warning to the assignment and the zone), on valid code that
 # runs right (the C-string idiom). And a `*T` destination whose value was refused as `&a[i]` warned beside the refusal.

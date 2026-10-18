@@ -5,7 +5,7 @@ commit (`c778c981`), x86_64; identical on the lane's tree before it (9498bfb3, t
 **Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — silent at 8 B or less: the caller reads a stack address (a dead frame's slot) as the struct's
 field; over 8 B a refusal that names nothing. Not a security id (the developer's own source).
-**Kind:** language (decision) — 6.7.14's D19 (a) (issues/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md)
+**Kind:** language (decision) — 6.7.14's D19 (a) (issues/archived/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md)
 refuses `return &q;` by name when q is a handle, a `*S` (any struct pointer) or an untyped `self`, and 6.7.13's D4 (a)
 reads `&s` of an inline struct as the struct. The triage of that issue put `&n` of a scalar out of its scope; what
 `&x` of a NON-struct name means in a `: S` fn's return is not decided.

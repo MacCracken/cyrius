@@ -42,7 +42,7 @@
 # (`_cpf_try`'s `beg != _cpf_st` is a guard no current path reaches: a closure's statements arm their own, and since
 # 6.7.14 a for step arms its own too, `_step_call_field`.)
 #
-# 6.7.14 (the receives lane, unit R2; issues/2026-10-16-callptr-statement-field-store-does-not-parse.md) — THE SAME STORE
+# 6.7.14 (the receives lane, unit R2; issues/archived/2026-10-16-callptr-statement-field-store-does-not-parse.md) — THE SAME STORE
 # THROUGH A KNOWN `&f` CALLEE SPELLED `callptr`. A statement starting with an IDENT `fncallN` reaches the call statement's
 # field arms (`_stmt_call_field` -> `_call_field` -> `_icall_stmt_chain`), so `fncall1(&gp, 5).b = 40;` stored through
 # (6.7.13's D16 (a) with D8 (a)); `callptr` is token 137, and PARSE_STMT's 136-137 band sent its statement to PCMPE,
@@ -229,7 +229,7 @@ refused X5 "no struct type in scope for 'p'" "an untyped \`var p = gp();\` is un
 row X6 'fn go(): i64 { gi().n = 5; return 0; }'
 refused X6 "cannot take a field of the result of 'gi': it does not return a struct" "a \`: *i64\` result is no struct"
 
-# --- T (6.7.14, issues/2026-10-15-toplevel-by-value-call-field-store-two-errors.md): at top level a by-value call's
+# --- T (6.7.14, issues/archived/2026-10-15-toplevel-by-value-call-field-store-two-errors.md): at top level a by-value call's
 # field assignment is ONE error, the no-frame refusal — it was that plus "the result is a temporary". In a fn the
 # temporary stays the one error (X1 X2). T0 is the filed repro verbatim.
 NS="returns a struct by value, and a struct result needs storage in a fn's frame"
@@ -263,7 +263,7 @@ var o: O = O { 1 };
 o.mk().n += 1;'
 refused T5 "'O_mk' $NS" "top-level \`o.mk().n += 1;\`, one error"
 
-# --- F (6.7.14, issues/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): a classic-for
+# --- F (6.7.14, issues/archived/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md): a classic-for
 # step is the statement's assignment — through a `: *T` result it stores (F0, the filed repro verbatim; the values
 # file's st_ rows), a by-value result is the statement's refusal, ONCE (it was "expected '=', got '('" — through
 # 6.7.13 also a false "undefined variable 'gp'"); a step with no `=` keeps "expected '='".

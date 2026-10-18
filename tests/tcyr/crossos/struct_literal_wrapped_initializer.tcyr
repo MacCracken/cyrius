@@ -7,7 +7,7 @@
 # 2026-10-16: the wrap is transparent (6.7.6's rule for a whole struct source, 6.7.13's D19), so it is the literal
 # initializer — byte-identical to the unwrapped form — in a fn, in the declaration zone and after the first
 # top-level statement, positional, named and generic, at any depth.
-# (issues/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
+# (issues/archived/2026-10-11-struct-literal-outside-var-initializer-misdiagnosed.md)
 #
 # WHY A CROSS-HOST TEST: the literal's stores (a frame object in a fn, the replay's stores or the baked image for a
 # global) are emitted per backend — x86_64 ELF, Mach-O, PE, aarch64, cx. On a compiler without the fix this file

@@ -8,7 +8,7 @@
 # the alert recorded for the driver to send. Row R is the filed repro verbatim (exit 0 = refused).
 # In-memory, no socket. On the lib before the fix: 12 of 14 rows fail (R, U1-U3, F1, D1 — TLS_OK,
 # no alert); C1 is the control.
-# 6.7.14 (issues/2026-10-15-tls-native-hello-conformance-residue.md items 1-2, the ServerHello
+# 6.7.14 (issues/archived/2026-10-15-tls-native-hello-conformance-residue.md items 1-2, the ServerHello
 # half): T1/T2 bytes after the extension block (the handshake length grown, the block's not —
 # `pos + ext_total > blen` let them through; `!=` now, decode_error) and P1 supported_versions
 # twice in the block (_tn_find_ext took the first; illegal_parameter) — all three TLS_OK before.

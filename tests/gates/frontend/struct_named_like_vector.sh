@@ -8,7 +8,7 @@
 # f32v4)"), on every target — since 6.7.13 for `struct f32v8` too, which compiled through 6.7.12 (exit 5). A vector
 # name is the vector now only while the program declares no struct or union of that name (`_cpt_vec`, `_cpt_vdecl`),
 # read from the TOKENS so pass 1's signature prescan of a fn above the declaration and pass 2's definition agree.
-# Filed: docs/development/issues/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md
+# Filed: docs/development/issues/archived/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md
 #
 #   R  the filed repro, verbatim: exit 5 — on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine)
 #   N  the same program with `struct f64v2` / `f64v4` / `f32v8` / `i32v4` in place of f32v4: 5 — every leg; and with

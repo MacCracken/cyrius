@@ -163,7 +163,7 @@
 #   MC3 `_simd_ret_call_ok` without `_ret_vicall` -> RED 10: C3 C5 on all five legs (refused)
 #   MC4 `_sc_pre` without its `_sc_vbeg` arm      -> RED 2: win64 C1 C4 = 0 (the method wrote a temp; the local never set)
 #   MC5 `_ret_vicall_pe` answering 0             -> RED 2: win64 C3 C5 = 0 (the generic path passes no hidden pointer)
-# 6.7.14 (issues/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md) — `callptr(&f, ..)` /
+# 6.7.14 (issues/archived/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md) — `callptr(&f, ..)` /
 # `fncallN(&f, ..)` with `f` declared to return ANOTHER vector, into a vector local, is refused in the by-name call's
 # words, as Q1 / Q2's method is (`_vrcv_ibad`): it was the receive's generic refusal ("a value-form vector local is
 # initialised only from .. (by name, a method, or fncallN / callptr with the callee written `&f`) .. - got `callptr`"),
@@ -172,7 +172,7 @@
 # 41)))`), Q11 / Q12 the same 16-byte class of another type (an f64v2 callee into `f32v4`) and a 16-byte callee into an
 # f64v4 — "vector return type does not match the declared type" / ".. the assigned variable".
 #   M-Q1 `_vrcv_ibad` answering 0 (measured)     -> RED 32: Q5-Q12 on all four legs (the generic line, `got `callptr``)
-# 6.7.14 (issues/2026-10-16-vector-local-assignment-from-undefined-call-warns-typed-pointer.md) — THE ASSIGNMENT'S
+# 6.7.14 (issues/archived/2026-10-16-vector-local-assignment-from-undefined-call-warns-typed-pointer.md) — THE ASSIGNMENT'S
 # TYPED-POINTER WARNING SKIPS A VALUE-FORM VECTOR LOCAL (its SLTYPE a descriptor, <= -2048, never `0 - sid`): `v =
 # f64v2_splat(1.0);` (the fn undefined) warned "assigning non-pointer to typed pointer" ahead of the undefined-function
 # lines, and `v = mk4(41)` of another vector beside its refusal. H9 (the filed repro verbatim) and every undef H row now
@@ -217,7 +217,7 @@
 #   M-H3 `_vrcv_fptr` without its `&f` test         -> RED 4: H8 on all four legs
 #   M-H4 `_vrcv_nofn` taking FINDFN < 0 only        -> RED 4: H5 on all four legs (the declaration asks after the
 #       parse, which registered the name: only the definition stamp `GFDS` tells it from a declared fn)
-# 6.7.14 (issues/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md) — A CALL NAMING NO FN IS THE
+# 6.7.14 (issues/archived/2026-10-16-other-vector-refusals-report-undefined-call-as-refused-source.md) — A CALL NAMING NO FN IS THE
 # UNDEFINED-FUNCTION PATH'S AT THE OTHER VECTOR DESTINATIONS TOO, inside parentheses as well (`_vrcv_nofnw`): the wrapped
 # local source `var v: f64v2 = (f64v2_splat(1.0));` printed "got `(...)`" and `return f64v2_splat(1.0);` from a vector fn
 # "got `f64v2_splat`" (the 6.6.6 rule), each ahead of the undefined-function warnings, on all four legs. Rows H (undef):
@@ -230,7 +230,7 @@
 #       back; H5 too: the declaration asks `_vrcv_nofnw` now)
 #   M-U2 `_ret_vec_rule` without its `_vrcv_nofnw` test (measured) -> RED 12: H14-H16 on all four legs
 #
-# ⛔ 6.7.14 (D43, the user's decision, 2026-10-16; issues/2026-10-15-ret2-in-vector-returning-fn-compiles.md) — `ret2(a, b)`
+# ⛔ 6.7.14 (D43, the user's decision, 2026-10-16; issues/archived/2026-10-15-ret2-in-vector-returning-fn-compiles.md) — `ret2(a, b)`
 # AS A STATEMENT IN A VECTOR-RETURNING FN IS REFUSED by the 6.6.6 rule's text, as `return (a, b);` (X10) and
 # `return ret2(..);` there are: it loaded rax:rdx where the caller reads the vector registers (Win64: the result
 # pointer), so the caller's vector held their leftovers — 0 on x86_64 / aarch64 / PE, 41 on cx, where {41, 7} is

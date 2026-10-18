@@ -5,7 +5,7 @@
 **Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
 **Severity:** Medium — the dereference is a silent wrong value (8 bytes read through a `*u8`); the subscript is
 refused loudly with a diagnostic that is now false (the callee does return a `*T`).
-**Discovered:** 2026-10-17, the receives lane, D26 (issues/2026-10-16-known-callee-pointer-or-f64-result-untyped.md).
+**Discovered:** 2026-10-17, the receives lane, D26 (issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md).
 D26 (a) (the user, 2026-10-16): "Does `fncall0(&gp)` with `gp` declared `: *P2` carry the pointer type, as `gp()`
 does? (a) yes, as the direct call: no warning, and `fncall0(&gp) + 1` steps one P2". The bite carries the STEP and the
 typed-pointer check; the element KIND the direct call's result also carries (`*bp()` reads one byte, `bp()[i]`

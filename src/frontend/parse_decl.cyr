@@ -4710,7 +4710,7 @@ fn _gv_prior(S, noff, below, owner): i64 {
 # the LAST declaration's, per slot, so `var G = 5; var G: bool = G;` read G under its own bool mark and built a bool
 # holding 5, and `var G = 5; var G: bool = true;` made the integer declaration's storage a bool (6.7.3 (B2): a bool
 # reads 0 or 1). A redeclaration that changes it is "redeclared with a different type or size", both ways
-# (issues/2026-10-08-redeclared-global-bool-reads-own-stamp.md). PARSE_GVAR_REG marks its registration before the
+# (issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md). PARSE_GVAR_REG marks its registration before the
 # fold (_gv_fold_b); a destructure target and an array never carry the mark. CHANGELOG [6.7.14]
 fn _gv_same_shape(S, a, b): i64 {
     if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
@@ -5362,7 +5362,7 @@ fn _gvar_ann_head(S, noff): i64 {
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
 # (CHKDUPVAL: "redefined with conflicting value", a same value silent). Only the exact `= NUM ;` was, so `var a = 5;
 # var a = 2 + 1;` compiled silently while the prior side compared any folded constant
-# (issues/2026-10-15-redeclared-global-folded-later-value-not-compared.md). Not over an enum constant (CHK_ENUM_SHADOW's
+# (issues/archived/2026-10-15-redeclared-global-folded-later-value-not-compared.md). Not over an enum constant (CHK_ENUM_SHADOW's
 # hard error is the one report there) nor a top-level const (refused at the name), and `chk_has` stays 0: it also gates
 # CHK_ENUM_SHADOW. `has` / `v` = the declaration's fold. CHANGELOG [6.7.14]
 fn _gv_dup_folded(S, noff, has, v, is_struct): i64 {

@@ -1,6 +1,6 @@
 # Diagnostic cascades after a 6.7.7 refusal: tuples, `: stack` pair stores, u128 compound ops and D19 — RESOLVED
 
-> ✅ **RESOLVED in v6.7.11** (RET-10, commit 4288c67f: diagnostics only — nothing that compiled changes. Each of the nine filed repros now gives one error at the place that is wrong (shape 3 its two refusals and no warning; shape 5 its two refusals plus line 8's `nosuch`, no longer swallowed): `t == u` reports the left tuple once; `t = u;` to a captured name is one error at `t`, before its value is parsed (worded *'t' is captured by value; a captured name is not assignable in a closure* since the struct lane's 85c648c3); no typed-pointer warning after a refused tuple store or about a refused `*( .. )`; a tuple literal refused for its shape still declares its name (a 257-element zone global at the 256 cap); a `: stack` pair refusal's latch ends with its own statement; a refused u128 `OP=` skips its right-hand side; D19 once, at the operator fn's first default with its column, nothing after the definition's own refusal; the zone tuple copied from a global declared below is `_gci_below`'s error alone; a parameter whose type is refused keeps its default. No decision needed. Rows: `tuple_checked.sh` CS1-CS8c, `stack_enum_lossy_context.sh` 18a-18i, `default_named_args_checked.sh` R19-R19g and R9s1-R9s5. Not pulled forward (the user's call): the const-sweep sibling, issues/2026-10-09-const-sweep-swallows-later-const-errors.md (6.7.13). CHANGELOG [6.7.11])
+> ✅ **RESOLVED in v6.7.11** (RET-10, commit 4288c67f: diagnostics only — nothing that compiled changes. Each of the nine filed repros now gives one error at the place that is wrong (shape 3 its two refusals and no warning; shape 5 its two refusals plus line 8's `nosuch`, no longer swallowed): `t == u` reports the left tuple once; `t = u;` to a captured name is one error at `t`, before its value is parsed (worded *'t' is captured by value; a captured name is not assignable in a closure* since the struct lane's 85c648c3); no typed-pointer warning after a refused tuple store or about a refused `*( .. )`; a tuple literal refused for its shape still declares its name (a 257-element zone global at the 256 cap); a `: stack` pair refusal's latch ends with its own statement; a refused u128 `OP=` skips its right-hand side; D19 once, at the operator fn's first default with its column, nothing after the definition's own refusal; the zone tuple copied from a global declared below is `_gci_below`'s error alone; a parameter whose type is refused keeps its default. No decision needed. Rows: `tuple_checked.sh` CS1-CS8c, `stack_enum_lossy_context.sh` 18a-18i, `default_named_args_checked.sh` R19-R19g and R9s1-R9s5. Not pulled forward (the user's call): the const-sweep sibling, issues/archived/2026-10-09-const-sweep-swallows-later-const-errors.md (6.7.13). CHANGELOG [6.7.11])
 
 **Status:** ✅ **RESOLVED in v6.7.11** (see the banner). Was: 🟡 **OPEN** — all eight shapes below reproduced 2026-10-09 against the merged 6.7.7 tip (`cycc_merged`,
 1,916,288 B; tree @ 06bd8981), each with `cycc_merged < f.cyr > /dev/null` from the tree root. Outputs are quoted
@@ -9,7 +9,7 @@ with the excerpt lines dropped. Shape 5's swallow also reproduces on 6.7.6's `bu
 **Placement:** 6.7.11 — Break 2, repair 1 (roadmap.md § *The releases after 6.7.7*) — placed 2026-10-09 — never 7.x.
 These are 6.7.7 follow-ons, in the code 6.7.11's lanes own: the tuple and pair refusals, the B6 marshaller, operator
 dispatch. The older generic cascades stay in
-[2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md](../2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md),
+[2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md](2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md),
 which is placed in 6.7.13.
 **Discovered:** the 6.7.7 B4 (tuples) and B6 (default + named arguments) lanes and their review rounds, reported out
 of scope; filed 2026-10-09.
@@ -212,7 +212,7 @@ that is never reported. One mistake should give one error, at the place that is 
    (`util.cyr:2683`) consumes the NEXT statement through its `;`. It stops early only at a statement keyword, which is
    why a following `var` / `return` line survives. The same left-set latch, reached from pass 1's const evaluation,
    is filed separately as
-   [2026-10-09-const-sweep-swallows-later-const-errors.md](../2026-10-09-const-sweep-swallows-later-const-errors.md).
+   [2026-10-09-const-sweep-swallows-later-const-errors.md](2026-10-09-const-sweep-swallows-later-const-errors.md).
    It is a different site with the same mechanism, so fix the two together.
 6. `_w128_cop` (`parse_expr.cyr:2067`) refuses a non-`+=` / `-=` operator through `_w128_refuse_at`, which does not set
    the latch, and returns 0. `_asg_compound_op` (`parse.cyr:3158`) then runs `_refuse_lossy_pair` on the same RHS.

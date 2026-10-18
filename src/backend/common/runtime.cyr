@@ -210,7 +210,7 @@ include "src/backend/common/env.cyr"
 # 6.7.14 — `skip`: 0, or a bitmap of fns to leave out. The x86 FIXUP dumps a second time after
 # CYRIUS_DCE=1 compaction, from the shifted offsets and with the fns it removed skipped: the
 # dump before it named a removed fn at a live fn's address and put every later fn too high.
-# CHANGELOG [6.7.14] — issues/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
+# CHANGELOG [6.7.14] — issues/archived/2026-10-13-cyrius-syms-pre-compaction-addresses-under-dce.md
 fn _emit_sym_dump(S, base, skip): i64 {
     var sym_path = _read_env("CYRIUS_SYMS");
     if (sym_path == 0) { return 0; }
@@ -498,7 +498,7 @@ fn _dce_host_fn(S, coff, fnc): i64 {
 # (`_fnr_add`, util.cyr). The seed passes take a call there as no root: nothing reaches the body
 # but that jump, which stays a root (coff == old) and keeps the last definition live. The
 # reachable-undefined-call check keeps using `_dce_host_fn` alone, so a losing body that calls an
-# undefined fn is still refused. issues/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
+# undefined fn is still refused. issues/archived/2026-10-12-dce-keeps-the-callees-of-a-redefined-fns-losing-body.md
 fn _dce_in_loser(coff): i64 {
     var i = 0;
     while (i < _fnr_n) {
@@ -518,7 +518,7 @@ fn _dce_in_loser(coff): i64 {
 # sentinel or SIGSEGV, aarch64 a hang). The sweeps now keep such a fn whole, as they keep a body
 # the decoder cannot size. `_dce_live_starts` builds the live fns' starts, sorted, once per FIXUP
 # after the reachability fixpoint; `_dce_holds_live` asks whether one lies in [dfoff, dfend).
-# CHANGELOG [6.7.14] — issues/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
+# CHANGELOG [6.7.14] — issues/archived/2026-10-13-dce-removes-live-generic-instance-nested-in-dead-one.md
 var _dce_ls_base = 0;   # sorted live starts, then as many slots of merge scratch; 0 = no index
 var _dce_ls_n = 0;
 fn _dce_live_starts(S, live, fnc): i64 {

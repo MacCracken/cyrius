@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: the IR tables live in one alloc()'d arena that GROWS — an IR build compiles what the
-# default build compiles (6.7.14, docs/development/issues/2026-10-08-ir-heap-bands-fixed-offsets-and-caps.md).
+# default build compiles (6.7.14, docs/development/issues/archived/2026-10-08-ir-heap-bands-fixed-offsets-and-caps.md).
 #
 # THE DEFECT. The IR family was six fixed S + 0x… bands of the compiler arena with hard caps:
 # ir_nodes (1,048,576 nodes), ir_cp, ir_blocks (131,072 BBs), ir_live_in / ir_live_out and

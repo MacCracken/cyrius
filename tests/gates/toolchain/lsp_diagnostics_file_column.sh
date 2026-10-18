@@ -256,7 +256,7 @@ if ( cd "$W/top" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:
 else fail "R15 cyrius check ok/main.cyr: $(head -2 "$W/r15" | tr '\n' ' ')"; fi
 
 # ── R16-R18 (6.7.14): the server's working directory pins an uninstalled cyrius ──────────────
-# issues/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md (D47 / D54, the
+# issues/archived/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md (D47 / D54, the
 # user 2026-10-16: removed). The pin belongs to the project that pins it; a file with no cyrius.cyml
 # at or above it is in no project, so its check reads no pin of the server's working directory.
 mkdir -p "$W/pin/proj/src" "$W/pin/loose"

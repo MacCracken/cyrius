@@ -9,7 +9,7 @@
 # first parameter declared exactly `**T` (`_gen_infer_ind`, `_pp_tparam`): the struct its whole argument's pin names
 # (`_ic_pp_arg`) — a `**S` local, parameter, capture or global, a field chain, a `: **S` call, `&p` / `&G` of a `*S`.
 # Free calls and generic methods alike. 6.7.13 (and every release before), every target.
-# Filed: docs/development/issues/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md
+# Filed: docs/development/issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md
 #
 #   R  the two filed repros, verbatim: 120 (56 before) and 42 (139 / cx fault / PE 5 before) — on x86_64,
 #      x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine)

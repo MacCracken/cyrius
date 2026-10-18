@@ -40,7 +40,7 @@
 #       tests/tcyr/crossos/user_struct_named_slice.tcyr runs the shapes on every fork
 #       K2h (6.7.14) a program's own GENERIC `struct slice<T>` as a `*slice<i64>` and a by-value `slice<i64>`
 #       parameter: exit 5 — the one row that reaches `_sl_ann_at`'s FINDSTRUCT test (K2's bare `slice` has no
-#       `<`, so `_sl_ann_at` answers 0 before it; issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
+#       `<`, so `_sl_ann_at` answers 0 before it; issues/archived/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
 #   X   --syntax-only (cyrius lint's pre-pass) reports a slice parameter, once (a grammar refusal)
 #   R12 a captured slice subscripted in a closure (read, store); R13 a struct / u128 element store;
 #       R13b `OP=` on an f64 / f32 / bool element (the slice read is an untyped word); R10 a non-bool
@@ -249,12 +249,12 @@ exits k2g 14 "K2g: ... respelled \`var s: [u8] = 0;\` it is the built-in slice (
     "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: [u8] = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
 # K2h (6.7.14): a program's own GENERIC `struct slice<T>` as a pointer parameter and a by-value parameter —
 # the shape that reaches `_sl_ann_at`'s FINDSTRUCT test (K2's bare `slice` is answered before it: no `<`).
-# (issues/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
+# (issues/archived/2026-10-14-slice-position-k2-misses-sl-ann-at-findstruct.md)
 exits k2h 5 "K2h: a generic \`struct slice<T>\` as a \`*slice<i64>\` and a by-value \`slice<i64>\` parameter" \
     'struct slice<T> { a: T; n; }\nfn f(p: *slice<i64>): i64 { return p.a; }\nfn g(s: slice<i64>): i64 { return s.n; }\nvar B: i64[2];\nstore64(&B, 5);\nstore64(&B + 8, 2);\nsyscall(60, f(&B));\n'
 # K3 (6.7.14, the user's D3 (a), 2026-10-16): the built-in slice's word form as a type argument is refused as
 # `[u8]` is (S6e / S6f) — it ran the i64 base (8). A program's own generic `struct slice<T>` stays a type
-# argument (K3c). (issues/2026-10-10-unknown-generic-name-accepted-as-type-argument.md)
+# argument (K3c). (issues/archived/2026-10-10-unknown-generic-name-accepted-as-type-argument.md)
 refused k3 "$STA" "K3: \`g<slice<u8>>(0)\` refused as \`g<[u8]>(0)\` is (it ran the i64 base: 8)" \
     "${SL}fn g<T>(x: T): i64 { return sizeof(T); }\nfn f(): i64 { return g<slice<u8>>(0); }\nsyscall(60, f());\n"
 refused k3b "$STA" "K3b: \`var b: Box<slice<u8>>;\` refused as \`Box<[u8]>\` is (it declared the base Box)" \

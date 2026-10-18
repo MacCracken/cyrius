@@ -5,7 +5,7 @@
 # literal in a fn or after a statement compiled; the guide's Structs example failed as written. The replay reads the
 # literal through _STRUCT_INIT_BODY (`_gvi_struct_body`), and an all-constant named literal is baked like a
 # positional one (`_spc_nfields`), so an x86 kernel build's program sees it
-# (issues/2026-10-09-declaration-zone-named-struct-literal-refused.md). The values on every target are
+# (issues/archived/2026-10-09-declaration-zone-named-struct-literal-refused.md). The values on every target are
 # tests/tcyr/crossos/zone_named_struct_literal.tcyr.
 #
 #   N1-N3  the filed repros verbatim: n1 exits 2, the annotated form 2, g816 (the guide example) 50

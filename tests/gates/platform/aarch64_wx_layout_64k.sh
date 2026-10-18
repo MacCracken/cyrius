@@ -9,7 +9,7 @@
 # 64 KB steps. That is the price of exact W^X on 4, 16 and 64 KB-page arm64 kernels: the loader
 # maps whole pages, and only a 64 KB-aligned data offset keeps the code's last page and the
 # data's first apart on all three. D45 (the user, 2026-10-15): keep it and document the cost.
-# issues/2026-10-15-aarch64-wx-layout-pads-every-binary-to-64k.md
+# issues/archived/2026-10-15-aarch64-wx-layout-pads-every-binary-to-64k.md
 #
 # Axis 1  the one-line program, W^X: exactly two PT_LOADs — code R E at file offset 0, data RW
 #         at file offset 0x10000 and vaddr 0x600000, both p_align 0x10000, p_vaddr ≡ p_offset

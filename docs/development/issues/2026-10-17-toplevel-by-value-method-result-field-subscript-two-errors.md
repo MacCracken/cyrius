@@ -1,7 +1,7 @@
 # A top-level `o.mk().p[0] = 5;` (a method returning a struct by value) is reported twice, the second a false "cannot subscript field 'p': it is not a *T field" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S1) beside
-issues/2026-10-15-toplevel-by-value-call-field-store-two-errors.md, whose fix (`_tsc_n`: the statement forms step over
+issues/archived/2026-10-15-toplevel-by-value-call-field-store-two-errors.md, whose fix (`_tsc_n`: the statement forms step over
 the rest once the call refused itself) covers `mk().n = 5;`, `mk().n += 1;`, `mkp().p[0] = 5;` and the method's
 `o.mk().n = 5;` / `+= 1` at top level (call_ptr_field_store.sh T0-T5). The method form with a subscript of the result's
 `*T` field is not covered: its second error is written inside PARSE_FIELD_LOAD's chain, before `_stmt_method_call`
