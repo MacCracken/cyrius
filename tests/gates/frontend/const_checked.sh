@@ -63,6 +63,12 @@
 #      'L'"), and `C.x` in a const context (a const's value, a const fn body, an array size, a local
 #      const's value). The two filed repros verbatim (F3, F8). Controls: a local const named like a global
 #      struct leaves `L.x` the global's field (F14), a struct local beside a const (F15)
+#   X  (6.7.15) a refused const fn's definition check holds no latch into its run-time body: the body's first
+#      statement was parsed latched (its errors swallowed) and its resync skipped the next statement when that
+#      opened with no keyword — a `const k` after it unbound, a FALSE "undefined variable 'k'" (LC4b, X6, X8);
+#      the body's repeat of the check's refusal stands down — at the token the check refused (X5: "unexpected
+#      ';'" after "not a compile-time expression") and an assignment to the const it named (X3); each error once
+#      (SX1, SX2, X4, X9); a later statement's own error is still reported (X7)
 #   K  (6.7.15) a method call or a subscript in a const fn, and a method call on a const, name their rule once:
 #      `a.m(..)` / `a[i]` on a const fn's local, parameter or body const ("a method call is not in a const fn: it
 #      calls only const fns" / "a subscript is not in a const fn: ...", at the `.` / `[`; each said "expected ';'"
@@ -119,8 +125,13 @@
 # `_pair_sync_ti` -> F8 RED (the statement after `var v = C.x;` skipped: "undefined variable 'L'").
 # K (run 2026-10-18): the compiler before the bite (e5a003c6f) -> CM1-CM8, SC2-SC6 RED (KM1 / KM2 green);
 # `_ce_fld_refused` leaving `.m(` to `_ce_expect` -> CM1, CM3, CM4, CM6-CM8 RED; `_ce_sub_refused` answering 0
-# -> CM2, CM5 RED; `_meth_sid0_said` without its `_ce_fld_said` -> CM1 RED; without its `_cst_fld_at` -> SC2,
-# SC5 RED; `_cst_fld_st` answering 0 -> SC3, SC4, SC6 RED; `_sub_refuse` without its stand-down -> CM2-CM5 RED.
+# -> CM2, CM5 RED; `_meth_sid0_said` without its `_ce_fld_said` -> CM1 RED (CM1, CM3, CM4 since X); without its
+# `_cst_fld_at` -> SC2, SC5 RED; `_cst_fld_st` answering 0 -> SC3, SC4, SC6 RED; `_sub_refuse` without its
+# stand-down -> CM2-CM5 RED.
+# X (run 2026-10-18): the compiler before the bite (b02930ac0) -> LC4b, X5, X6, X8 RED; `_ce_check_fn` keeping its
+# own latch (the 6.7.14 `if (_panic == 0)`) -> LC4b, X6, X8 RED; `_ce_err_dup` without its token test -> X4, X5,
+# X7 RED; `_ce_bad` not recording `_ce_rti` -> X4, X5, X7 RED; `_cst_lvalue_check` without its `_ce_name_said`
+# -> X3 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -455,6 +466,36 @@ refusedn sc5 1 "SC5: var x = C.m(); in the declaration zone" 'const C = 3;\nvar 
 refusedn sc6 1 "SC6: var v = L.m(1, 2); — the const Q after it is still declared (no \"undefined variable 'Q'\")" 'fn main(): i64 { const L = 5; var v = L.m(1, 2); const Q = 4; return Q; }\nsyscall(60, main());\n' "1:40: const 'L' has no methods - $FS"
 exits km1 5 "KM1: control — a method call on a struct local in an ordinary fn" 'struct P { x; }\nimpl P { fn m(self) { return self.x + 1; } }\nfn main(): i64 { var p = P { 4 }; return p.m(); }\nsyscall(60, main());\n'
 exits km2 9 "KM2: control — a typed array local subscripted in an ordinary fn beside a const fn" 'const fn tw(n) { return n * 2; }\nfn main(): i64 { var a: i64[3]; a[1] = 4; return a[1] + tw(2) + 1; }\nsyscall(60, main());\n'
+# X (6.7.15) — a refused const fn's definition check holds no latch into its run-time body, whose repeat of the
+# check's refusal stands down (issues/2026-10-16-refused-const-fn-check-latch-leaks-into-its-body.md; LC4b and
+# SX1 the filed repros verbatim)
+cat > "$T/lc4b.cyr" <<'EOF'
+# lc4b — the check refuses the local const's annotation; the run-time body then never binds k
+const fn cf(): i64 { var a = 1; const k: i64 = 3; return k; }
+const Z = cf();
+fn g(): i64 { return cf(); }
+syscall(60, g() + Z);
+EOF
+refusedf lc4b 1 "LC4b: the filed repro, the annotation after a var (was + a FALSE \"undefined variable 'k'\")" "2:40: $AN"
+cat > "$T/sx1.cyr" <<'EOF'
+# sx1 — a syntax error in the body's second statement
+const fn f(n) {
+    var a = 1;
+    var b = (2;
+    return b;
+}
+fn main() { return 0; }
+var r = main();
+EOF
+refusedf sx1 1 "SX1: the filed repro, a syntax error in the second statement, once" "4:15: expected ')', got ';'"
+refusedn sx2 1 "SX2: the same in the first statement, once (unchanged)" "const fn f(n) {\n    var b = (2;\n    return b;\n}\n$FM" "2:15: expected ')', got ';'"
+refusedn x3 1 "X3: const k = 1; k = 2; as the first statement (no run-time \"... - a const has no storage\")" "const fn f(n) {\n    const k = 1; k = 2;\n    return k;\n}\n$FM" "2:18: cannot assign to const 'k'"
+refusedn x4 1 "X4: var y = n +; as the first statement" "const fn f(n) {\n    var y = n +;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression"
+refusedn x5 1 "X5: the same after a var (was + \"unexpected ';'\" at the same token)" "const fn f(n) {\n    var q = 1;\n    var y = n +;\n    return q;\n}\n$FM" "3:16: not a compile-time expression"
+refusedn x6 1 "X6: a const after a refused first statement is bound (was a FALSE \"undefined variable 'k'\")" "const fn f(n) {\n    var y = load64(n);\n    const k = 3;\n    return k;\n}\nfn main() { return f(0); }\nvar r = main();\n" "2:13: not a compile-time expression"
+refusedn x7 2 "X7: control — a later statement's own error, which the check never reached, is reported" "const fn f(n) {\n    var y = n +;\n    var z = nope2;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression" "3:18: undefined variable 'nope2'"
+refusedn x8 2 "X8: a local const after the check's refusal reports its own value's error (was a FALSE \"undefined variable 'L'\")" "const fn f(n) {\n    var y = zz;\n    const L = ww;\n    return L;\n}\n$FM" "2:13: $CU 'zz'" "3:15: $CU 'ww'"
+refusedn x9 1 "X9: const k: i64; with no value, once" 'const fn cf(): i64 { const k: i64; return 1; }\nfn main() { return cf(); }\nvar r = main();\n' "1:29: $AN"
 # B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
 # syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
 # (issues/archived/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
@@ -491,4 +532,4 @@ exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a ca
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), and a bare const statement is expected '=' (B)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), and a bare const statement is expected '=' (B)"

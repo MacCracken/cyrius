@@ -1192,8 +1192,10 @@ fn PARSE_FN_DEF(S): i64 {
     _lc_floor = _lc_n;
     var _rn_sv = _ce_fn_rname;   # 6.7.14: a const fn's refused name / check is its own body's (`_ce_name_said`, `_ce_fld_said`)
     var _rf_sv = _ce_fn_refd;
+    var _rt_sv = _ce_fn_rtok;   # 6.7.15 (`_ce_err_dup`)
     _ce_fn_rname = 0 - 1;
     _ce_fn_refd = 0;
+    _ce_fn_rtok = 0 - 1;
     # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
     # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
     # caller, not to firmware", which is true of a RETURN but not of an EXIT —
@@ -1206,6 +1208,7 @@ fn PARSE_FN_DEF(S): i64 {
     _lc_floor = _lc_sv_f;
     _ce_fn_rname = _rn_sv;
     _ce_fn_refd = _rf_sv;
+    _ce_fn_rtok = _rt_sv;
     _rd_exit();
     _xd_check(S, 0, "fn body");
     _xdepth = _xd_outer;
