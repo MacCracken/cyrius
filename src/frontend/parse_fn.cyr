@@ -12844,12 +12844,15 @@ fn _ic_pscalar(w): i64 {
 }
 # A name a capturing closure's body reads as a capture (`_cl_cap_esl`), through `p: *T`: its struct when the
 # enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), 6.7.15 (D11) its scalar when it is
-# a scalar pointer; any other capture reads as before (a global of its name, else i64). CHANGELOG [6.7.14]
+# a scalar pointer; 6.7.15 (D12 (a)) a captured struct VALUE its struct through either shape, as a struct local
+# binds (through `p: *T` the call passes the capture's copy's address); any other capture reads as before (a global
+# of its name, else i64). CHANGELOG [6.7.14]
 fn _ic_cap(S, noff, ptr): i64 {
     var esl = _cl_cap_esl(S, noff);
+    var t = _cl_snap_type(esl);
+    if (_cl_snap_ptrp(esl) == 0) { if (t < 0) { if (t > 0 - 2048) { return 0 - t; } } }
     if (ptr == 0) { return _infer_conc_global(S, noff, 0); }
     if (_cl_snap_ptrp(esl) == 0) { return _infer_conc_global(S, noff, 0); }
-    var t = _cl_snap_type(esl);
     if (t <= 0 - 2048) { return _infer_conc_global(S, noff, 0); }
     if (t < 0) { return 0 - t; }
     return _ic_pscalar(_cl_snap_ptr_word(esl));
@@ -14283,17 +14286,32 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # as a `*Box<T>` carrier does (6.7.8). Only a `*S` LOCAL bound, through either shape: 6.6.17 gave it SLTYPE
 # `0 - sid`, which read as a struct argument, so `gs(q)` with `var q: *S` bound S through `x: T` against the
 # guide, while `gsz(&GS)`, `gsz(GP)`, `gsz(w.p)` and a `*S` parameter ran the i64 base (sizeof(T) 8). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — THE TWO SPELLINGS A STRUCT CARRIER READS THROUGH (6.7.11, `_gsc_wrap` / `_gsc_deref`) BIND THROUGH A PLAIN
+# `x: T` / `p: *T` TOO (the user's decision D12 (a), 2026-10-18): parentheses around the WHOLE argument carry what they
+# wrap (`_pwrap_in`) — `gs((l))`, `gsz((p))`, `gsz((&GS))` — and through `x: T` a whole dereference of a `*S` is the
+# struct value S (`_ic_deref`) — `gs(*p)`. They ran the i64 base (`sizeof(T)` 8 for a 24-byte S), as did a closure's
+# captured struct (`_ic_cap`). A tuple literal binds nothing. CHANGELOG [6.7.15]
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0 - 8; }
     if (ptr == 1) {
         if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) { return _ic_chain(S, a); } }
     }
+    if (ptr == 0) { if (TOKTYP(S, a) == 8) { return _ic_deref(S, a); } }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var sv = GTI(S);
     STI(S, a);
     var c = _infer_conc_at(S, ptr);
     STI(S, sv);
     return c;
+}
+# A whole dereference `*E` (its `*` at token a, the whole argument) through `x: T`: the struct E points at, as a
+# struct carrier reads it (`_gsc_deref`: a `*S` name, field, call, `p + n`, `*&l`); i64 otherwise. CHANGELOG [6.7.15]
+fn _ic_deref(S, a): i64 {
+    var s = _gsc_deref(S, a);
+    if (s > 0) { return s; }
+    return 0 - 8;
 }
 # A field chain `w.p` (the whole argument at token a) through `p: *T`: what its leaf field declared `*S` points at
 # (`_gsc_chain`) — 6.7.15 (D11): a leaf declared `*i32` / `*f64` its scalar (`_ic_pscalar` of the leaf's step word,

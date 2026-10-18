@@ -35,6 +35,14 @@
 #   PS (6.7.15) tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr (every `p: *T` / `pp: **T` source of a scalar
 #      pointee, the f64 instance's xmm result, a method, a forward, a tail call; `*u8` / `*f32` / `*bool` / `*i64` /
 #      `***i32` and an `x: T` stay i64) on every leg: "N passed, 0 failed (N total)"
+#   WD (6.7.15, the user's decision D12 (a), 2026-10-18) the spellings a struct carrier reads through bind through a
+#      plain `x: T` / `p: *T` too: the filed table verbatim (docs/development/issues/2026-10-16-generic-plain-parameter-
+#      wrapped-deref-or-captured-struct-binds-nothing.md), each row's `m()` exit — `gs(l)` 24 (the control), `gs((l))`
+#      24, `gs(*p)` 24, a captured `gs(l)` 24, a captured `gsz(l)` 24 (was refused), `gsz((p))` 24, `gsz((&GS))` 24
+#      (each was 8) — on every leg; WDT (x86_64) a tuple literal `gs((l, 3))` still binds nothing (its one refusal)
+#   WDV (6.7.15) tests/tcyr/crossos/generic_wrapped_argument_binding.tcyr (each spelling's field read through the
+#      instance, a capture's copy written through `p: *T`, a captured parameter, an 8-byte struct, a method, a `: T`
+#      result; a pointer through `x: T` stays i64) on every leg: "N passed, 0 failed (N total)"
 #   T  tests/tcyr/crossos/generic_struct_inference.tcyr (its PB group: every source above, a capture, `wp.p` / `G.p`,
 #      a generic `: *T` call, a generic method, a forward, an 8 B struct's stub through `&t` / `&G`, an untyped impl
 #      `self`, a `: T` result) on x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine):
@@ -66,6 +74,11 @@
 #   MS3 `_ic_pscalar` binds without marking `_gi_sc`     -> RED S1, S2, PS (15 of 35: the call reaches the i64 base)
 #   MS4 `_ic_pp_sid` without its scalar arm              -> RED PS (5 failed: the `**i32` / `**f64` / `**i16` rows)
 #   MS5 `_ic_addr` without `_ic_ascalar` (`&x`)          -> RED PS (3 failed: `&i` / `&G` of an i32, `&h` of an f64)
+# (2026-10-18, 6.7.15 — the WD / WDV rows, the same way:)
+#   MW1 the fix reverted (the D11 commit's compiler)     -> RED WD1-WD6 (8; WD4 refused), WDV (does not build)
+#   MW2 `_ic_arg` without `_pwrap_in`                     -> RED WD1 WD5 WD6 (8), WDV (does not build)
+#   MW3 `_ic_arg` without its deref arm (`_ic_deref`)     -> RED WD2 (8), WDV (does not build)
+#   MW4 `_ic_cap` without its struct-value arm            -> RED WD3 (8), WD4 (refused), WDV (does not build)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -104,6 +117,10 @@ TR=tests/tcyr/crossos/generic_pointer_receivers.tcyr
 [ -f "$TR" ] || { echo "FAIL: $G: $TR is missing"; exit 1; }
 NR=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TR")
 if [ "$NR" -lt 26 ]; then echo "FAIL: $G: only $NR rows in $TR (floor 26) — rows were lost"; exit 1; fi
+TW=tests/tcyr/crossos/generic_wrapped_argument_binding.tcyr
+[ -f "$TW" ] || { echo "FAIL: $G: $TW is missing"; exit 1; }
+NW=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TW")
+if [ "$NW" -lt 19 ]; then echo "FAIL: $G: only $NW rows in $TW (floor 19) — rows were lost"; exit 1; fi
 TS=tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr
 [ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
 NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
@@ -314,6 +331,37 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "PS $leg: exit $RC, '$LAST' (want '$NS passed, 0 failed ($NS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "WD. a wrapped, dereferenced or captured struct binds through a plain \`x: T\` / \`p: *T\` (6.7.15, D12 (a))"
+# The filed table, verbatim: the issue's program with each <row> as m()'s body.
+wdrow() {
+    { printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/alloc.cyr"' 'struct S { v; w; x; }' 'var GS = S { 5, 8, 3 };' \
+        'fn gsz<T>(x: *T): i64 { return sizeof(T); }' 'fn gs<T>(x: T): i64 { return sizeof(T); }'
+      printf 'fn m(): i64 { %s }\n' "$2"; printf '%s\n' 'alloc_init();' 'syscall(60, m());'; } > "$D/$1.cyr"
+    xr "$1" "$D/$1.cyr" "$3" "$4"
+}
+wdrow WD0 'var l = S { 1, 2, 3 }; return gs(l);' 24 "the control gs(l)"
+wdrow WD1 'var l = S { 1, 2, 3 }; return gs((l));' 24 "gs((l))"
+wdrow WD2 'var p: *S = &GS; return gs(*p);' 24 "gs(*p)"
+wdrow WD3 'var l = S { 1, 2, 3 }; var f = || gs(l); return fncall0(f);' 24 "a captured gs(l)"
+wdrow WD4 'var l = S { 1, 2, 3 }; var f = || gsz(l); return fncall0(f);' 24 "a captured gsz(l)"
+wdrow WD5 'var p: *S = &GS; return gsz((p));' 24 "gsz((p))"
+wdrow WD6 'return gsz((&GS));' 24 "gsz((&GS))"
+{ printf '%s\n' 'include "lib/syscalls.cyr"' 'struct S { v; w; x; }' 'fn gs<T>(x: T): i64 { return sizeof(T); }' \
+    'fn m(): i64 { var l = S { 1, 2, 3 }; return gs((l, 3)); }' 'syscall(60, m());'; } > "$D/wdt.cyr"
+erc=0; "$CC" < "$D/wdt.cyr" > "$D/wdt" 2> "$D/wdt.err" || erc=$?
+ne=$(grep -c '^error' "$D/wdt.err" || true)
+if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF 'a tuple `( .. )` is a value only as' "$D/wdt.err"; then ok "WDT: gs((l, 3)), a tuple literal, binds nothing (its one refusal)"
+else bad "WDT: gs((l, 3)): rc $erc, $ne errors: $(grep '^error' "$D/wdt.err" | tr '\n' ' ')"; fi
+
+echo "WDV. $TW ($NW rows)"
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TW" "$D/wd_$n"
+    if [ "$RC" -eq -1 ]; then bad "WDV $leg: the values file did not build: $(grep -m1 'error' "$D/wd_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NW passed, 0 failed ($NW total)" ]; then ok "WDV $leg: $LAST"
+    else bad "WDV $leg: exit $RC, '$LAST' (want '$NW passed, 0 failed ($NW total)') $(grep -m3 'FAIL' "$D/wd_$n.out" | tr '\n' ' ')"; fi
+done
+
 echo "T. $TC ($N rows; cx $NCX)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -336,4 +384,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), a \`var t: *T\` local's receiver (PL, and $NR rows PT) on every leg, a scalar pointee (D11 (a): S, and $NS rows PS) on every leg, and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), a \`var t: *T\` local's receiver (PL, and $NR rows PT) on every leg, a scalar pointee (D11 (a): S, and $NS rows PS) on every leg, a wrapped / dereferenced / captured struct (D12 (a): WD, and $NW rows WDV) on every leg, and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

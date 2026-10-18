@@ -6730,7 +6730,14 @@ every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
 `g(p.x + p.y)` and `g(p + 1)` infer `i64`, and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
 field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
-this rule). An **f64** argument — an `f64`
+this rule). Parentheses around the WHOLE argument carry what they wrap, and through an
+`x: T` a whole dereference of a `*Pt` is the struct value `Pt` — `g((p))`, `g(*q)`,
+`g((*q))` and, through a `p: *T`, `gsz((q))` / `gsz((&G))` call the `Pt` instance as the
+plain spelling does — and a closure's captured struct binds as the struct local it
+captures: `|| g(p)`, and `|| gsz(p)` through a `p: *T` (which passes the address of the
+capture's copy). The user's decision D12 (a), 2026-10-18: through 6.7.14 each ran the i64
+base (`sizeof(T)` 8) and the captured `gsz(p)` was refused as not a pointer. A tuple literal
+(`g((p, 3))`) binds nothing. An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
 generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
 exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
