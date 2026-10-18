@@ -798,7 +798,8 @@ elif [ -x "$T/st/lsp" ]; then
     sclsp doc
     sclsp shp
     pl() { grep "^$2:.*=6\$" "$T/st/sc/$1.tok" | sed "s/^$2://; s/=6\$//" | tr '\n' ' '; }
-    ni=$(grep -c '^[0-9]*:i64=6$' "$T/st/sc/doc.tok" "$T/st/sc/shp.tok" | awk -F: '{ s += $2 } END { print s + 0 }')
+    # `|| true`: at a zero count (a passing run) `grep -c` exits 1, which `bash -eo pipefail` turns into the gate's exit
+    ni=$(grep -c '^[0-9]*:i64=6$' "$T/st/sc/doc.tok" "$T/st/sc/shp.tok" | awk -F: '{ s += $2 } END { print s + 0 }' || true)
     ntok=$(cat "$T/st/sc/doc.tok" | grep -c . || true)
     if [ "$ntok" -gt 20 ] && [ "$ni" -eq 0 ] && [ "$(pl doc 6)" = "p b b " ] && [ "$(pl doc 7)" = "m b b " ] \
        && [ "$(pl shp 1)" = "v b b " ] && [ "$(pl shp 2)" = "v b b " ] && [ "$(pl shp 3)" = "a c d a c d " ] && [ "$(pl shp 7)" = "u1 u2 u3 u1 u2 u3 " ]; then
