@@ -4241,7 +4241,7 @@ fn _dst_struct(S, term, d): i64 {
     if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
     if (PEEKT(S) != 4) {
-        if (_asg_pair_at(S) == 1) { _dst_cop_err(S, nm); }
+        if (_asg_pair_at(S) == 1) { _dst_cop_err(S, nm, _sval_stars(S, d + 1)); }   # 6.7.15: `**pp` names '*pp'
         return 0;
     }
     STI(S, GTI(S) + 1);   # `=`
@@ -4256,14 +4256,45 @@ fn _dst_struct(S, term, d): i64 {
 # `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
 # s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
 # first word, through 6.7.13. CHANGELOG [6.7.14]
-fn _dst_cop_err(S, nm): i64 {
+# `star`: the `*`s the operand of the outer `*` opens with (`_sval_stars`) — 1 for `**pp`, whose operand is `*pp`.
+fn _dst_cop_err(S, nm, star): i64 {
     if (_hl_damp == 1) {
         _err_in_sync(S, "compound assignment to struct ", nm,
           " is refused - a struct value is not an integer or a float (write `a = a + b`)");
         return 0;
     }
+    if (star > 0) { return _dst_cop_pp(S, nm, star); }
     _err_in_sync(S, "compound assignment to the struct ", nm,
       " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
+    return 0;
+}
+# ⛔ 6.7.15 — `**pp OP= v` THROUGH A `**S` NAMES ITS OPERAND AS WRITTEN: the outer `*`'s operand is `*pp` (`star` `*`s
+# before the name `nm`), so the struct '*pp' points at, and the hint in that spelling (`**pp = **pp + b`). It named
+# 'pp', which points at a pointer (and `*p = *p + b`). `_err_in_sync`'s rules: once at the token (a generic's
+# instances parse it again), the panic latch left as it was. CHANGELOG [6.7.15]
+fn _dst_cop_pp(S, nm, star): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": compound assignment to the struct '");
+    _dst_spell(S, nm, star);
+    PRSTR("' points at is refused - a struct value is not an integer or a float (write `*");
+    _dst_spell(S, nm, star);
+    PRSTR(" = *");
+    _dst_spell(S, nm, star);
+    PRSTR(" + b`)\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# `star` `*`s, then the name `nm`, on stderr.
+fn _dst_spell(S, nm, star): i64 {
+    while (star > 0) {
+        PRSTR("*");
+        star = star - 1;
+    }
+    PRSTR(S + 0xEC00000 + nm);
     return 0;
 }
 # The statement's assignment arms (`_PARSE_STMT_IMPL`'s order) with the parked pointer `h` as their destination

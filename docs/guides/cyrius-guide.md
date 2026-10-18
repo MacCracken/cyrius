@@ -2328,7 +2328,8 @@ turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar ke
 result, a handle or a `*S` (`*p = q` copies the struct `q` points at; `q` is not rebound), `*q` — in a
 fn, at top level and in a for step, so `*p = l`, `p = l` and `G = l` (with `p = &G`) agree. A struct of another type is refused by name
 (*cannot copy 'u' into a variable of a different struct/vector type: 'p'*), and `*p OP= v` as `l += a`
-is (*compound assignment to the struct 'p' points at is refused*; write `*p = *p + b`). Any other value
+is (*compound assignment to the struct 'p' points at is refused*; write `*p = *p + b` — through a `**S` the operand
+is named as written since 6.7.15, *the struct '\*pp' points at*, write `**pp = **pp + b`; it named 'pp'). Any other value
 — an untyped one, an integer — is stored as the struct's word at `sizeof(S)` bytes, at most 8, never
 past the object (`*p = 0` clears a 3-byte struct's 3 bytes, a 16-byte struct's first 8). At top level a
 call, method or operator result over 8 bytes has no frame to land in and is refused, as into a struct

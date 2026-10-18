@@ -93,6 +93,13 @@
 # R29 `l = *qq`, R30 `var t: P3 = *qq`, R31 `*p = *qq`, R32 top level `GT = *GQQ` (each compiled through 6.7.14 — one
 # word stored, or a handle bound). The copies themselves are tests/tcyr/crossos/double_pointer_struct_value.tcyr.
 # Mutation (2026-10-18, CYCC=the lane's compiler before the fix): RED 4 — R29-R32 compile.
+#
+# 6.7.15 — `**pp OP= v` NAMES ITS OPERAND AS WRITTEN (issues/2026-10-17-double-pointer-compound-refusal-names-the-
+# pointer-as-the-struct.md): the outer `*`'s operand is `*pp`, so the refusal reads "the struct '*pp' points at" with
+# the hint `**pp = **pp + b` — it named 'pp' (a pointer to a pointer) with `*p = *p + b`. W1 the filed repro verbatim,
+# W2 C6's top-level `**GPP -= 1`, W3 `*(*pp) += 1`, W4 `***ppp *= 2` ('**ppp'), W5 a for step, W6 a generic called at
+# two types (once); W7 / W8 `*p += 1` and `*(&s) -= 1` keep their wording — each ONE error, the full text grepped.
+# Mutation (2026-10-18, CYCC=the lane's compiler before the fix): RED 6 — W1-W6 name 'pp' / 'GPP' / 'ppp'.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -357,6 +364,49 @@ var GPP: **P3 = &GP;
 **GPP -= 1;
 syscall(60, GT.x);
 '
+# W1-W8 (6.7.15) — the refusal's full text: ONE error, no binary.
+WTAIL="is refused - a struct value is not an integer or a float"
+wrefuse() {  # $1 label  $2 the full refusal text after "error:<source>:L:C: "  $3 source
+    printf '%s' "$3" > "$D/w.cyr"
+    nrefuse=$((nrefuse+1))
+    rc=0
+    cat "$D/w.cyr" | "$CC" > "$D/w.bin" 2>"$D/w.err" || rc=$?
+    n=$(grep -c '^error' "$D/w.err" || true)
+    if [ "$rc" -ne 0 ] && [ ! -s "$D/w.bin" ] && [ "$n" -eq 1 ] && grep -qF ": $2" "$D/w.err"; then
+        printf '  ok(refused): %-31s\n' "$1"; pass=$((pass+1))
+    else
+        printf '  FAIL: %-38s rc=%s, %s error line(s): %s\n' "$1" "$rc" "$n" "$(grep '^error' "$D/w.err" | head -2 | tr '\n' '|')"; fail=$((fail+1))
+    fi
+}
+wrefuse "W1 **pp += 1  (the filed repro)" "compound assignment to the struct '*pp' points at $WTAIL (write \`**pp = **pp + b\`)" 'struct P3{x;y;z;}
+fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; **pp += 1; return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W2 **GPP -= 1  (top level)" "compound assignment to the struct '*GPP' points at $WTAIL (write \`**GPP = **GPP + b\`)" "$P3Q3"'var GT = P3{5,0,0};
+var GP: *P3 = &GT;
+var GPP: **P3 = &GP;
+**GPP -= 1;
+syscall(60, GT.x);
+'
+wrefuse "W3 *(*pp) += 1" "compound assignment to the struct '*pp' points at $WTAIL (write \`**pp = **pp + b\`)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; *(*pp) += 1; return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W4 ***ppp *= 2" "compound assignment to the struct '**ppp' points at $WTAIL (write \`***ppp = ***ppp + b\`)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; var ppp: ***P3 = &pp; ***ppp *= 2; return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W5 **pp += 1  (a for step)" "compound assignment to the struct '*pp' points at $WTAIL (write \`**pp = **pp + b\`)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; for (var i = 0; i < 1; **pp += 1) { i = 1; } return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W6 **pp += 1  (a generic, two types)" "compound assignment to the struct '*pp' points at $WTAIL (write \`**pp = **pp + b\`)" "$P3Q3"'fn g<T>(pp: **P3, t: T): i64 { **pp += 1; return 0; }
+fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; g(pp, 1); g(pp, 1.5); return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W7 *p += 1  (one star: unchanged)" "compound assignment to the struct 'p' points at $WTAIL (write \`*p = *p + b\`)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; *p += 1; return s.x; }
+var r = main(); syscall(60, r);
+'
+wrefuse "W8 *(&s) -= 1  (unchanged)" "compound assignment to struct 's' $WTAIL (write \`a = a + b\`)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; *(&s) -= 1; return s.x; }
+var r = main(); syscall(60, r);
+'
 # A13, C7-C16 (6.7.14, D17 (a)) — `*(&s) OP= v` on a struct value s: refused as `s OP= v` is, ONE error, no binary.
 SMSG="is refused - a struct value is not an integer or a float (write \`a = a + b\`)"
 srefuse() {  # $1 label  $2 the name the refusal names  $3 source
@@ -586,7 +636,7 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 49 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 49)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32
+[ "$nrefuse" -ge 57 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 57)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
