@@ -2746,6 +2746,13 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
 # `cyr_munmap(0x400000, …)` killed cxvm (139) and `fstat(1, 0x600100)` wrote over its globals once the
 # 8 MiB guest overlapped cxvm's link addresses. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/cx_guest_syscall_refusal.sh"
+# 6.7.15 — cxvm serves the calls it lists through the HOST's own stdlib wrappers, not the guest's
+# x86-Linux number, which the aarch64 / Mach-O compilers renumbered into other calls (on aarch64 a
+# guest lseek ran getxattr and fork ran close; on arm64 macOS kill ran lseek): one fixture
+# (tests/fixtures/cx_host_dispatch.cyr) natively, on the x86 cxvm, an aarch64 cxvm under qemu and a
+# PE cxvm under wine; cxvm builds for both Mach-O targets with no unrouted number. Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_host_dispatch.sh"
 # 6.7.14 — cx alloc() bumps over the guest break cxvm serves (brk in guest space, the stack trapping
 # at the break) instead of a 128 KB static buffer written into every allocating .cyx: 3 MiB round
 # trip, the named exhaustion, zeroed reuse of stack memory, audit_walk_fifo past alloc. Mutation

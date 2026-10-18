@@ -2,8 +2,10 @@
 # cx_guest_syscall_refusal.sh — 6.7.14 (D55, the user 2026-10-16: "cxvm answers -38";
 # issues/archived/2026-10-15-cx-untranslated-pointer-wrappers-can-reach-cxvm-image.md). cxvm's syscall opcode
 # (0x70) translates read / write / open, serves getrandom / clock_gettime through the host's stdlib,
-# passes a short list of SCALAR-ONLY calls to the host as they are (programs/cxvm.cyr
-# `_cx_sys_scalar`), and answers every other number -ENOSYS (-38) without reaching the host.
+# serves a short list of SCALAR-ONLY calls through the host's own wrappers (programs/cxvm.cyr
+# `_cx_host_sys`; until 6.7.15 they went to the host as the guest's raw number — that renumbering
+# defect is tests/gates/codegen/cx_host_dispatch.sh's), and answers every other number -ENOSYS (-38)
+# without reaching the host.
 #
 # THE DEFECT. Every other number went to the host kernel with the guest's raw register values. Until
 # 6.7.12 a guest address was below 1 MiB, which a static Linux cxvm never maps, so a pointer-taking
@@ -32,14 +34,14 @@
 # oracle and fails if the dispatch refused a listed call; R4 bit 1024 fails if the fcntl command
 # check passed a lock command to the host (-9 from the bad fd, not -38).
 #
-# MUTATION LEDGER (6.7.14, measured; the real tree green 8/8):
-#   MU1 `_cx_sys_scalar` returns 1 for every number (the 6.7.13 pass-through)
-#       -> RED 4: R1 cx (exit 139, no "after munmap"), R2 (100), R3 (86), R4 (139 twice: its first
-#          call unmaps cxvm's own text, as the filed repro does)
-#   MU2 `_cx_sys_scalar` returns 0 for every number -> RED 1: R5 cx (exit 251: every listed call but
-#       close, which op 0x70 dispatches itself, answered -38)
-#   MU3 the fcntl command check removed (every fcntl passes) -> RED 1: R4 cx (bit 1024: F_GETLK on a
-#       bad fd answered -9 from the host)
+# MUTATION LEDGER (6.7.14, re-measured on the 6.7.15 dispatch; the real tree green 8/8):
+#   MU1 `_cx_host_linux`'s closing -38 back to the guest's number (`return syscall(sn, a, b, c)`, the
+#       6.7.13 pass-through) -> RED 4: R1 cx (exit 139, no "after munmap"), R2 (100), R3 (86), R4
+#       (139 twice: its first call unmaps cxvm's own text, as the filed repro does)
+#   MU2 `_cx_host_posix` answering -38 for every number (as on Windows) -> RED 1: R5 cx (exit 154:
+#       getppid, kill, dup, flock answered -38)
+#   MU3 `_cx_host_fcntl` passing every command (its closing -38 -> `sys_fcntl(fd, cmd, arg)`) -> RED 1:
+#       R4 cx (bit 1024: F_GETLK on a bad fd answered -9 from the host)
 #
 # COMPILERS. CC=${CYCC:-build/cycc} builds the native legs and — unless CYCC_CX is set — the cx
 # compiler from THIS tree's src/main_cx.cyr, and cxvm from programs/cxvm.cyr (CXVM overrides it).

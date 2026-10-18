@@ -601,12 +601,13 @@ fi
 # so the run above stays 255 either way (until 6.7.14 the futex went to the host: Linux answered
 # the guest-offset futex with EFAULT, a Darwin host killed cxvm with SIGSYS). This harness copy of
 # cxvm (in $D only; programs/cxvm.cyr is not changed) exits 140 on guest syscall 202, inserted just
-# before the -38 refusal (202 is not scalar-only, so it reaches that arm). The real-hardware twin
-# of this hold is the cx thread fixture in scripts/cross-os-selfhost.sh.
-NF_LINE='            else { result = 0 - 38; }'
+# before the host dispatch arm (202 is not a call `_cx_host_sys` lists, so it reaches that arm and
+# answers -38; until 6.7.15 the arm was the bare -38 refusal). The real-hardware twin of this hold
+# is the cx thread fixture in scripts/cross-os-selfhost.sh.
+NF_LINE='            else { result = _cx_host_sys(sn, s2, s3, s4); }'
 if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
     if [ "$(grep -cxF "$NF_LINE" programs/cxvm.cyr)" != 1 ]; then
-        fail "axis 7: programs/cxvm.cyr's -ENOSYS refusal line moved — update NF_LINE so the no-futex hold still instruments it"; x=1
+        fail "axis 7: programs/cxvm.cyr's host-dispatch line moved — update NF_LINE so the no-futex hold still instruments it"; x=1
     else
         awk -v L="$NF_LINE" '$0 == L { print "            elif (sn == 202) { syscall(60, 140); }" } { print }' \
             programs/cxvm.cyr > "$D/cxvm_nf.cyr"
