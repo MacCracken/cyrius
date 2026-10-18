@@ -41,11 +41,21 @@
 # replay itself — e.g. revert `_inl_simd_arg` to `PCMPE` + store, or the SFINL named-slot
 # packing — not swap the compiler.
 #
+# ── axis 5 (6.7.15): A REFUSED ARGUMENT'S PANIC LATCH SURVIVES THE REPLAY ──
+# A refusal latches (`_panic`) and the next statement is skipped, so a refused call prints one error. The replay
+# re-parses the callee's body as statements, whose ends cleared the latch, so on x86_64 / aarch64 / cx an `#inline`
+# vector fn's refused call went on to print the next statement's refusal too, where Win64 (a real call: its vector
+# arm) and a non-inline callee print one (`_inl_replay_body`). L1 the filed repro, verbatim: exactly 1 error
+# (10:16) on x86_64 / aarch64 / cx / PE; L2 its non-inline control (`lanesn`): exactly 1. Compile-only, so no
+# runner is needed; the aarch64 / cx compilers are built from this tree.
+# MUTATION (2026-10-18, measured: `_inl_replay_body` without its `_panic` restore, two-stage mutant, CYCC=<it>):
+#   M-L1 -> RED 3: L1 on x86_64 / aarch64 / cx (2 errors: 10:16 and 11:12); L1 PE and L2 green (the controls).
+#
 # ⚠ NO `set -e`: exit codes are DATA.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: simd_param_inline: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
-CC="$ROOT/build/cycc"
+CC="${CYCC:-$ROOT/build/cycc}"
 FAIL=0
 
 # ── axis 1: two SIMD params keep DISTINCT values (defects 1, 2, 4) ────────────────
@@ -145,5 +155,50 @@ else
     else echo "  ok: a 2-link value chain emits $N callq (was 5 before the arc)"; fi
 fi
 
+# ── axis 5: a refused argument's latch survives the replay (L1 / L2, header) ──
+cat > "$D/l1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn lanesn(x: f64v2): i64 { if (load64(&x) == 999) { return 0; } return load64(&x) * 10 + load64(&x + 8); }
+#inline
+fn li(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn main(): i64 {
+    var v: f64v2 = f64v2_make(4, 2);
+    var e: f64v4 = mk4(1, 2, 3, 4);
+    var r = li(mk4(1,2,3,4));
+    r = li(v + 1);
+    return r;
+}
+var rc = main(); syscall(60, rc);
+EOF
+sed 's/var r = li(mk4/var r = lanesn(mk4/; s/r = li(v + 1)/r = lanesn(v + 1)/' "$D/l1.cyr" > "$D/l2.cyr"
+A64=""; CXC=""
+if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; A64="$D/cc_a64"
+else echo "FAIL: axis 5: src/main_aarch64.cyr did not build"; FAIL=1; fi
+if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; CXC="$D/cc_cx"
+else echo "FAIL: axis 5: src/main_cx.cyr did not build"; FAIL=1; fi
+# latch_row <row> <src> <line:col>: rc 1 and exactly one error, at <line:col>, on every target
+latch_row() {
+    for leg in x86 a64 cx pe; do
+        case $leg in
+            x86) "$CC" < "$2" > "$D/$1.$leg" 2> "$D/$1.$leg.err"; rc=$? ;;
+            a64) [ -n "$A64" ] || continue; "$A64" < "$2" > "$D/$1.$leg" 2> "$D/$1.$leg.err"; rc=$? ;;
+            cx)  [ -n "$CXC" ] || continue; "$CXC" < "$2" > "$D/$1.$leg" 2> "$D/$1.$leg.err"; rc=$? ;;
+            pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$2" > "$D/$1.$leg" 2> "$D/$1.$leg.err"; rc=$? ;;
+        esac
+        n=$(grep -c '^error' "$D/$1.$leg.err")
+        if [ "$rc" = 1 ] && [ "$n" = 1 ] && grep -q "^error:<source>:$3:" "$D/$1.$leg.err"; then
+            echo "  ok: axis 5 $1 $leg: exactly one refusal ($3)"
+        else
+            echo "FAIL: axis 5 $1 $leg: rc $rc, $n error(s), want rc 1 and one at $3:"
+            grep '^error' "$D/$1.$leg.err" | sed 's/^/        /'
+            FAIL=1
+        fi
+    done
+}
+latch_row L1 "$D/l1.cyr" 10:16
+latch_row L2 "$D/l2.cyr" 10:20
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: simd_param_inline"; exit 1; fi
-echo "PASS simd_param_inline (SIMD wrappers inline; params keep distinct values; scoping holds)"
+echo "PASS simd_param_inline (SIMD wrappers inline; params keep distinct values; scoping holds; a refused argument's latch survives the replay)"

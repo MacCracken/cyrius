@@ -8183,14 +8183,19 @@ fn _fnc_pe_vec(S, fi, noff): i64 {
 # pair 0, the state an i64 caller already replays under — and restored after it. The caller's frame
 # layout (`_cur_fn_ret_stash`) is untouched. The body's own locals keep a nested replay safe. One call
 # in PARSE_FNCALL, as `_cov_body` was (cybs's per-fn reference ceiling). CHANGELOG [6.7.14]
+# A panic latch the caller set (a refused argument) survives the replay: the body's statement ends clear
+# it (`_stmt_resync`), so x86_64 / aarch64 / cx went on to print the next statement's refusal, which a real
+# call (Win64's vector arm, a non-inline fn) leaves latched and skipped. CHANGELOG [6.7.15]
 fn _inl_replay_body(S, fi): i64 {
     var sid = _cur_fn_ret_sid;
     var pair = _cur_fn_ret_pair;
+    var pn = _panic;
     _cur_fn_ret_sid = 0;
     _cur_fn_ret_pair = 0;
     _cov_body(S, fi, 0 - 1);
     _cur_fn_ret_sid = sid;
     _cur_fn_ret_pair = pair;
+    if (pn == 1) { _panic = 1; }
     return 0;
 }
 
