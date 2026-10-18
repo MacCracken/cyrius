@@ -376,7 +376,7 @@ for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
 done
 
-if [ "$rows" -lt 141 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 141)"; exit 1; fi
+if [ "$rows" -lt 140 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 140)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0

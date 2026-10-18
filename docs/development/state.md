@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.15 — slot open 2026-10-17** (6.7.14 tagged at `f1d6eb0a` and pushed by the user, store slot refreshed from the tag; the CLAUDE.md cross-OS lines 4c9bc5da followed it). 6.7.14: Break 2 repair 4, generics · the frontend · infra — 137 issues closed in nine lanes over three waves, the IR arena, the fold patra 1.16.4 (release gate GREEN on `1b0f84d4`, all four hosts on the full corpus). |
-| **cycc** | x86 **2,433,512 B** (`.text` **2,210,192**) at 6.7.14, +134,368 B over 6.7.13's 2,299,144 B. `build/cycc-native-aarch64` **2,351,456 B**. Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,496,552 B** (`.text` **2,271,944**) in flight at 6.7.15 (wave 1 merged), +63,040 B over 6.7.14's 2,433,512 B. `build/cycc-native-aarch64` **2,689,368 B** (the TypeScript front end on every compiler, D38). Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
 | **Bootstrap / cross-OS** | 6.7.14: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on the FULL corpus (cass joined `CO_FULL_HOSTS` this release), REAL hardware through `scripts/release-gate.sh` (on `1b0f84d4`). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.14 `release-gate.sh` GREEN (2026-10-17, on `1b0f84d4`): check.sh 554 / 554 shell gates, the driver 131 / 131, the 2 named agnos-parity SKIPs; all four hosts on the full corpus. self_compile 1,770 ms (A/B 6.7.13 1,585 → 6.7.14 1,772 ms, +11.8 %; same input +2.0 %). |
 | **Corpus** | **642** `.tcyr` (**335** in `crossos/`) · **106** `lib/*.cyr` · **550** shell gates under `tests/gates/<bucket>/` · api-surface **5,891**. |
