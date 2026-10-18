@@ -1,0 +1,100 @@
+# generic_t_return_handle.tcyr — 6.7.15. A `: T` GENERIC WHOSE T BINDS NO STRUCT AT THE CALL, RECEIVED INTO A
+# STRUCT-ANNOTATED LOCAL, IS A HANDLE, as the non-generic word-returning call is (the user's decision D13 (a),
+# 2026-10-18).
+#
+# ⛔ THROUGH 6.7.14 PARSE_VAR's reset (`_gen_decl_reset`, src/frontend/parse_decl.cyr) dropped the annotation of
+# `var a: P3 = gid(..)` for `fn gid<T>(x: T): T` whenever the call reached a scalar instance — gid's i64 base for
+# `gid(5)`, `gid(alloc(24))` and `gid(w.v)` (i64 by the whole-argument rule), `gid$i32` for `gid<i32>(5)`, the f64
+# instance for an f64 — so `a` was an untyped word: `a.z = 4` and `a.z` were refused "no struct type in scope for
+# 'a'", and with no field use the annotation was dropped in silence. `var b: P3 = wid(alloc(24));` with
+# `fn wid(x): i64` has been a handle since 6.7.10 (the guide's handle line). Now the generic form is the same handle:
+# `a` holds the word, its fields read and write the record it points at
+# (issues/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md). A call whose T binds a
+# struct (`gid(p3)`, `gid<P3>(p3)`) still receives the struct by value: a copy.
+#
+# CROSS-HOST: tests/gates/frontend/generic_t_return_decl.sh runs this file on x86_64 (plain, CYRIUS_IR=3), aarch64
+# (qemu), cx (cxvm) and PE (wine); the release gate's cross-OS leg on ecb / ach / cass / pi. The filed repros
+# verbatim, the refusal and the run-time fault of `gid(5)`'s field are that gate's rows.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P3 { x; y; z; }
+struct Pt { a; b; }
+fn gid<T>(x: T): T { return x; }
+fn wid(x): i64 { return x; }
+
+fn h_alloc(): i64 {
+    var a: P3 = gid(alloc(24));
+    a.x = 1;
+    a.y = 2;
+    a.z = 4;
+    return a.x + a.y * 10 + a.z * 100;
+}
+fn h_explicit(): i64 {
+    var a: P3 = gid<i64>(alloc(24));
+    a.z = 7;
+    return a.z;
+}
+fn h_word(): i64 {
+    var a: P3 = gid(5);
+    var k: i64 = a;
+    return k;
+}
+fn h_shared(): i64 {
+    var m = alloc(24);
+    var a: P3 = gid(m);
+    a.y = 9;
+    var b: P3 = wid(m);
+    return b.y * 10 + (a == b);
+}
+fn h_through(): i64 {
+    var m = alloc(24);
+    var a: P3 = gid(m);
+    a.z = 3;
+    return load64(m + 16);
+}
+fn h_rebind(): i64 {
+    var m1 = alloc(24);
+    var m2 = alloc(24);
+    var a: P3 = gid(m1);
+    a.x = 5;
+    var c: P3 = gid(m2);
+    c.x = 6;
+    return load64(m1) * 10 + load64(m2);
+}
+fn h_copy(): i64 {
+    var p3: P3;
+    p3.z = 9;
+    var a: P3 = gid(p3);
+    p3.z = 1;
+    return a.z;
+}
+fn h_copy_explicit(): i64 {
+    var p3: P3;
+    p3.y = 8;
+    var a: P3 = gid<P3>(p3);
+    p3.y = 2;
+    return a.y;
+}
+fn h_inner<T>(v: T): i64 {
+    var a: P3 = gid(v);
+    a.z = 11;
+    return a.z;
+}
+
+fn run(): i64 {
+    alloc_init();
+    assert_eq(h_alloc(), 421, "H1: var a: P3 = gid(alloc(24)) is a handle: a.x / a.y / a.z write and read the record");
+    assert_eq(h_explicit(), 7, "H2: gid<i64>(alloc(24)), the explicit i64 instance: a handle");
+    assert_eq(h_word(), 5, "H3: var a: P3 = gid(5) holds the word 5, as wid(5) does");
+    assert_eq(h_shared(), 91, "H4: gid(m) and wid(m) are two handles to one record");
+    assert_eq(h_through(), 3, "H5: a write through the handle lands in the record: its third word");
+    assert_eq(h_rebind(), 56, "H6: two handles from two calls point at two records");
+    assert_eq(h_copy(), 9, "K1: gid(p3) with p3: P3 receives the struct: a copy (unchanged)");
+    assert_eq(h_copy_explicit(), 8, "K2: gid<P3>(p3): a copy (unchanged)");
+    assert_eq(h_inner(alloc(24)), 11, "H7: inside a generic's i64 instance, gid(v) of its T-typed word: a handle");
+    return 0;
+}
+run();
+var r = assert_summary();

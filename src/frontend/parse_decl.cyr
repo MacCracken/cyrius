@@ -6613,14 +6613,21 @@ fn _gen_decl_check(S, pscale, fi): i64 {
 }
 
 # ⛔ 6.7.14 — 1 when PARSE_VAR's B-explicit reset drops the annotation of `var x: S = g..(..)` to re-derive the receive
-# from the callee: a GENERIC callee that returns a struct BY VALUE (GFRS > 0) the check above does not keep, or one
-# returning its own `: T` (its instance decides what it returns: a scalar instance is no struct, and is refused as
-# through 6.7.13, not bound as a handle on that scalar). A `: *T` (GFRS -8) or untyped / scalar return is no struct
+# from the callee: a GENERIC callee that returns a struct BY VALUE (GFRS > 0 — a `: T` instance whose T is a struct
+# among them) the check above does not keep. A `: *T` (GFRS -8) or untyped / scalar return is no struct
 # receive: the annotated local stays `S`, a handle (the 6.7.10 handle line), where the reset made
 # `var h: S = gpg<S>();` an untyped word. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — A `: T` GENERIC WHOSE T BINDS NO STRUCT AT THE CALL IS A HANDLE TOO (the user's decision D13 (a),
+# 2026-10-18): `var a: P3 = gid(5);` with `fn gid<T>(x: T): T` reaches gid's i64 base, which returns a word, so `a`
+# is a handle holding it, as `var b: P3 = wid(5);` with `fn wid(x): i64` is — `gid(alloc(24))` reads and writes the
+# record, `a.z` of `gid(5)` reads address 5 + 16 at run time. The reset dropped the annotation of every `: T` callee:
+# `a` was an untyped word and `a.z` was refused "no struct type in scope for 'a'" (the same for `gid<i32>(5)`,
+# `gid(h)` with h: f64, `gid(w.v)` — i64 by the whole-argument rule), as was a refused call's (a stub's scalar
+# binding), whose one refusal then cascaded at the field use. A T bound to a struct returns it by value (GFRS > 0),
+# so the reached fn's own return says which: a struct is received, a word is a handle. CHANGELOG [6.7.15]
 fn _gen_decl_reset(S, pscale, fi): i64 {
     if (GFTP(S, fi) == 0) { return 0; }
-    if (GFRS(S, fi) <= 0) { if (_gen_ret_tp(S, fi) < 0) { return 0; } }
+    if (GFRS(S, fi) <= 0) { return 0; }
     if (_gen_decl_check(S, pscale, fi) != 0) { return 0; }
     return 1;
 }

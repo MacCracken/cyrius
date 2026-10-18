@@ -2815,6 +2815,11 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_named_like_vector.sh"
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,
 # the block-scope note, instance-dependent messages and a per-token control. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_body_error_once.sh"
+# 6.7.15 — a `: T` generic whose T binds no struct at the call, received into a struct-annotated local, is a handle,
+# as the non-generic word-returning call is (the user's D13 (a), 2026-10-18): the filed repros, gid(alloc(24)) read
+# and written, each scalar binding as its non-generic twin, the struct bindings unchanged, a refused call's one
+# error, and tests/tcyr/crossos/generic_t_return_handle.tcyr, x86 / IR / aarch64 / cx / PE (Mach-O compiles).
+_chk_gate "$ROOT/tests/gates/frontend/generic_t_return_decl.sh"
 # 6.7.11 — a `return` outside a fn body (top level, a top-level block) is refused by name, once, while
 # the parse goes on (the user's decision (a), 2026-10-13): it compiled with no diagnostic and did not
 # return — x86 / PE ran on past it, aarch64 / cx hung at it. The issue's table, the blocks, and the
