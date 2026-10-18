@@ -6920,7 +6920,10 @@ with `b: Box<T>`) or a generic call carrying `T` (`gx(mk1(x))`, `gx(mk1<T>(x))`,
 `gx(wrap(b))`) passed to a stub `fn gx<T>(b: Box<T>)` — or to a stub generic method — makes the
 forwarder a stub: `outer(p)` and `outer<Pt>(p)` call `outer$Pt`, `outer(5)` is refused naming
 `outer` (6.7.14; through 6.7.13 the forwarder's definition was refused, called or not,
-naming `gx`).
+naming `gx`). So does the forwarder's `T`-typed value itself, whole in the carrier position
+(`fn outer<T>(x: T) { return gx(x); }`, or a `p: *T` / `var y: T` name): `outer(b)` with
+`b: Box<Pt>` calls outer's `Box<Pt>` instance, whose `gx(x)` binds gx's `T` to `Pt`, and `outer(5)` is refused
+naming `outer` (6.7.15; through 6.7.14 the definition was refused naming `gx`).
 
 ```
 struct Pt { x; y; }

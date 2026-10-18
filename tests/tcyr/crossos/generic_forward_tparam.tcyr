@@ -16,6 +16,8 @@
 # 6.7.14: forwarding T INSIDE A STRUCT CARRIER into a stub generic (`gx(mk1(x))`, `gx(b)` with `b: Box<T>`,
 # `gx(mk1<T>(x))`, a nested `gx(wrap(b))`, a method `q.pick(b)`) makes the forwarder a stub too; through
 # 6.7.13 its i64 base was emitted and its definition refused, naming gx, called or not.
+# 6.7.15: so does the forwarder's T-typed VALUE itself, whole in the carrier position (`gx(x)`, `x: T`, T a
+# carrier instance; FC9-FC14); through 6.7.14 the definition was refused naming gx.
 #
 # ⚠ CROSS-HOST because the instance is a by-value struct-param fn emitted inline (jumped over) in
 # the enclosing body by each backend; the fix is in the front end, the code it selects is not.
@@ -68,6 +70,13 @@ fn cf_nest<T>(x: T): i64 { var b: Box<T> = cmk(x); return cgx(cwrap(b)); }
 fn cf_two<T>(x: T): i64 { return cf_call(x) + 100; }
 fn cf_meth<T>(q: Pk, x: T): i64 { var b: Box<T> = cmk(x); return q.pick(b) + q.pick(cmk(x)); }
 fn cf_plain<T>(x: T): i64 { return cgn(cmk(x)); }
+# 6.7.15: the forwarder's T-typed VALUE itself, whole in the stub's carrier position (`cgx(x)`, T a carrier
+# instance); through 6.7.14 its definition was refused naming cgx.
+fn cw_whole<T>(x: T): i64 { return cgx(x); }
+fn cw_ptr<T>(p: *T): i64 { return cgx(p); }
+fn cw_meth<T>(q: Pk, x: T): i64 { return q.pick(x); }
+fn cw_two<T>(x: T): i64 { return cw_whole(x) + 100; }
+fn cw_plain<T>(x: T): i64 { return cgn(x); }
 
 fn run_carriers(): i64 {
     var p: Pt; p.x = 3; p.y = 4;
@@ -80,6 +89,13 @@ fn run_carriers(): i64 {
     assert_eq(cf_two(p), 112, "FC6: two levels of forwarding");
     assert_eq(cf_meth(q, p), 28, "FC7: the method spelling, q.pick(b) / q.pick(mk1(x))");
     assert_eq(cf_plain(p) * 10 + cf_plain(5), 99, "FC8: control - into a non-stub carrier generic, the i64 base runs");
+    var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8;
+    assert_eq(cw_whole(b), 12, "FC9: gx(x) with x the carrier itself (its definition was refused)");
+    assert_eq(cw_whole<Box<Pt>>(b), 12, "FC10: the same, explicit outer<Box<Pt>>(b)");
+    assert_eq(cw_ptr(&b), 12, "FC11: a *T name, gx(p)");
+    assert_eq(cw_meth(q, b), 14, "FC12: the method spelling, q.pick(x)");
+    assert_eq(cw_two(b), 112, "FC13: two levels of forwarding");
+    assert_eq(cw_plain(b), 9, "FC14: control - a non-stub carrier generic given the carrier, unchanged");
     return 0;
 }
 

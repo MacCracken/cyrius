@@ -75,6 +75,17 @@
 #      MFC1 no carrier positions (the bite reverted) -> RED 8: FC0-FC3b, FC5-FC7 (each refused naming 'gx');
 #      MFC2 `_gs_carries` without its call arm (carrier names only) -> RED 6: FC0 FC2 FC3 FC5 FC6 FC7; MFC3 `_gs_mfwd`
 #      without `_gs_fwd_carr` -> RED 1: FC5
+#   FC8-FC12 (6.7.15) the forwarder's T-typed VALUE itself, whole in the stub's carrier position (`gx(x)`, `x: T`):
+#      `_gs_carries` answered 0 for a bare T-typed name at depth 0, so the forwarder kept an i64 base whose `gx(x)`
+#      was refused at its definition naming 'gx'; it now carries T as it does nested. FC8 the filed repro verbatim
+#      (12); FC9 `outer(5)` refused naming 'outer'; FC10 a control into a non-stub carrier generic given a carrier
+#      (9, unchanged); FC11 a `p: *T` name, the method spelling, beside a second type parameter, a `var y: T` local,
+#      two levels (82); FC12 / FC12b into a BOUNDED carrier generic (its base bad for its bound; the bound judgement's
+#      forward scan reads the same position): `outer(b)` 12, `outer(5)` refused naming 'outer' at the call. The
+#      runtime rows on every target are generic_forward_tparam.tcyr FC9-FC14. Filed: docs/development/issues/
+#      2026-10-16-generic-passing-t-value-into-stub-carrier-position-refused.md
+#      Mutant (2026-10-18): the depth-0 `return 0` back (the lane's previous compiler) -> RED 5: FC8 FC9 FC11 FC12
+#      FC12b (refused at outer's definition naming 'gx' / 'gxb')
 #   NN (6.7.14) a type argument that is NO NAME — `Box<1 + 2>`, `Box<u128>`, `id<1 + 2>(3)`, `Box<"s">`, `id<*Pt>`,
 #      `Box<>`, `Box<true>`: its token's VALUE was read as a name-pool offset ("unknown type 'truct'" / "'struct'" /
 #      "'num'" / "'enum'", a string SIGSEGV'd the compiler), the caret one token late, the call's `+ 2>(3)` left to the
@@ -473,6 +484,46 @@ exits fc6 137 "FC6: gx(mk1<T>(x)) 12 + gx(wrap(b)) 13 + a two-level o3 -> o1 112
 fcmk fc7 'fn outer<T>(x: T): i64 { return gx(mk1(x)); }' 'return 7;'
 exits fc7 7 "FC7: the definition alone, never called (it was refused there)"
 
+# ── 6.7.15: the forwarder's T-typed VALUE itself, whole in the stub's carrier position ──────────────
+cat > "$T/fc8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn gx<T>(b: Box<T>): i64 { return b.n + b.v.y; }
+fn outer<T>(x: T): i64 { return gx(x); }
+fn go(): i64 { var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8; return outer(b); }
+syscall(60, go());
+EOF
+exits fc8 12 "FC8: the filed repro, verbatim (outer(b), b: Box<Pt> -> gx(x): 8 + 4; refused at outer's definition before)"
+FCB='var b: Box<Pt>; b.v.x = 3; b.v.y = 4; b.n = 8;'
+fcmk fc9 'fn outer<T>(x: T): i64 { return gx(x); }' 'return outer(5);'
+stubref fc9 outer "FC9: outer(5) — the forwarder is a stub, refused naming it"
+fcmk fc10 'fn gn<T>(b: Box<T>): i64 { return b.n + 1; }
+fn outer<T>(x: T): i64 { return gn(x); }' "$FCB return outer(b);"
+exits fc10 9 "FC10: control — a forwarder into a NON-stub carrier generic, given a carrier, unchanged (8 + 1)"
+fcmk fc11 'struct P { a; }
+impl P { fn pick<T>(self, b: Box<T>): i64 { return self.a + b.v.y; } }
+fn op<T>(p: *T): i64 { return gx(p); }
+fn om<T>(q: P, x: T): i64 { return q.pick(x); }
+fn o2<T, U>(k: U, x: T): i64 { return gx(x) + k; }
+fn ol<T>(x: T): i64 { var y: T = x; return gx(y) + 100; }
+fn oo<T>(x: T): i64 { var q: P = P { 10 }; return op(&x) + om(q, x); }' "$FCB return op(&b) + o2(20, b) + ol(b) + oo(b) - 100;"
+exits fc11 82 "FC11: a *T name (12), the method spelling (14), beside a second type parameter (32), a T-typed local (112), two levels (26)"
+fcmk fc12 'trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+fn gxb<T: Show>(b: Box<T>): i64 { return b.n + b.v.show(); }
+fn outer<T>(x: T): i64 { return gxb(x); }' "$FCB return outer(b);"
+exits fc12 12 "FC12: into a BOUNDED carrier generic (its i64 base bad for its bound): outer(b) 12 (refused at outer's definition before)"
+fcmk fc12b 'trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+fn gxb<T: Show>(b: Box<T>): i64 { return b.n + b.v.show(); }
+fn outer<T>(x: T): i64 { return gxb(x); }' 'return outer(5);'
+build fc12b
+if [ "$rc" -eq 0 ]; then bad "FC12b: outer(5) into the bounded carrier generic: BUILT (rc 0)"
+elif ! grep -q "generic 'outer' has no i64 instance: it forwards its type parameter to 'gxb'" "$T/fc12b.err"; then
+    bad "FC12b: outer(5): refused, but not naming outer: $(grep '^error' "$T/fc12b.err" | head -1)"
+else ok "FC12b: outer(5) into the bounded carrier generic: refused naming 'outer' at the call"; fi
+
 # ── 6.7.14: a type argument that is no name ────────────────────────────────────────────────────
 # `errs <name> <n> <what> <line>...`: refused with exactly <n> `^error` lines, each <line> among them (grep -F).
 errs() {
@@ -755,4 +806,4 @@ EOF
 exits srk 0 "SR control: (Box<Pt>, i64), a member's Box<i64> / own Box<U> / *fn(Box<U>), *fn(Box<Pt>), a generic's own *fn(Box<U>), Box<Later> (declared below) in each position, unchanged"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15)"

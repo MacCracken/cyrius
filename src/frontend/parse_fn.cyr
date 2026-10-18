@@ -13987,16 +13987,16 @@ fn _gs_arg_carries(S, fi, cfi, open, k, mth): i64 {
     if (a < 0) { return 0; }
     return _gs_carries(S, fi, a, 0);
 }
-# 1 iff the whole argument at token a carries fi's T: a struct carrier's name (`_gcr`), or a whole generic call
-# `g(..)` / `g<..>(..)` whose type-argument list names T or one of whose whole arguments is a T-typed name, a
-# carrier or such a call (8 deep).
+# 1 iff the whole argument at token a carries fi's T: a struct carrier's name (`_gcr`), a T-typed name, or a
+# whole generic call `g(..)` / `g<..>(..)` whose type-argument list names T or one of whose whole arguments is
+# such an argument (8 deep). A T-typed name whole in the carrier position (`gx(x)`, `x: T`) carries T when T is
+# itself a carrier instance (`outer(b)`, `b: Box<Pt>`), so the forwarder is a stub as `gx` is. CHANGELOG [6.7.15]
 fn _gs_carries(S, fi, a, dep): i64 {
     if (dep > 8) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
     if (nt == 31 || nt == 11) {
         if (_gcr_has(TOKVAL(S, a)) == 1) { return 1; }
-        if (dep == 0) { return 0; }
         return _gsn_has(TOKVAL(S, a));
     }
     if (nt != 10 && nt != 19) { return 0; }
