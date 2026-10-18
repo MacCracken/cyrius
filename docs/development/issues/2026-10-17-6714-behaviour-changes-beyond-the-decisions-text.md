@@ -5,7 +5,8 @@ reading each lane's handoff, commits and issues against the decisions asked at t
 shipped in 6.7.14 and changes what an existing program does, compiles or prints in a way no decision's text names (or
 narrower than its text). Each was taken by its lane as a false refusal lifted, a parity rule, or the consequence of a
 decided binding; the user confirms or restores each one at the 6.7.15 open (the 6.7.11 – 6.7.13 precedent).
-**Placement:** 6.7.15 — repair 5 (decisions at its open; filed at the 6.7.14 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (decided at the 6.7.15 open, 2026-10-18: item 17's reworded advice and item 19 ride the structs lane, wave 2, unit S5; item 18 the receives lane, wave 3, unit R2; the kept items close as CHANGELOG [6.7.15] lines) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D41–D70, all as recommended — items 1–16 and 20–29 kept (item 3 as 3a / 3b, D43 / D44); item 17 kept, its advice reworded for another struct (D58); item 18: 6.7.14's D53 applied as worded — no string literal warns into any `*T` (D59); item 19: `(s).a;` refused as `s.a;` is (D60).
 **Severity:** Low — decisions to confirm, not defects; each change is in CHANGELOG [6.7.14] and
 ecosystem-migration § 6.7.14.
 

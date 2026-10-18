@@ -7,7 +7,9 @@ commit kept a trait member's `: u128` return compiling "as before (no decision c
 generics lane's staged 2026-10-16-trait-member-vec-return-accepted.md (`_trs_type` has no return-type vocabulary
 check) — one fix can carry both. Half 2 is pre-existing (the slot-open compiler, 2600f67f's build/cycc, gives the
 same). Met by the 6.7.14 frontend review.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D3 — (a) Refused by name, as a fn's u128 return is.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D4 — (a) Refused by name at the impl.
 **Severity:** Low — half 1: the trait declares a signature no impl can define, refused at the impl; half 2: an impl
 whose return disagrees with its trait compiles silently, and a dyn / generic caller that trusts the trait's type reads
 the wrong register class (an `f64` member implemented as `i64`).

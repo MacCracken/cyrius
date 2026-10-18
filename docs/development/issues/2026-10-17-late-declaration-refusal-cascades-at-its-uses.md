@@ -6,7 +6,7 @@ frontend, every target). Beyond the filed surface of issues/archived/2026-10-12-
 and the fns it would have defined are quieted by `_dl_quiet`); a USE of the refused TYPE was not part of the filed
 repros. Distinct from the staged 2026-10-17-declaration-inside-block-or-fn-body-cascades.md (a declaration below
 module scope). Met by the 6.7.14 frontend review.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — every shape is refused; the first error is the right one. One to three invented errors follow.
 **Kind:** bug (diagnostic).
 

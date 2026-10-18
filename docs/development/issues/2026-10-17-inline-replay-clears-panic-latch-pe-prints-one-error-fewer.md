@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (V2's base, `build/cycc` 2,416,992 B — the
 lane after V1 — and with V2's wrapped-argument bite alike), x86_64 / aarch64 / cx / PE (`CYRIUS_TARGET_WIN=1`).
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — diagnostics only, in a compile that already fails: Windows prints one refusal fewer than the
 other targets; no binary is written on any target.
 **Affects:** PE vs x86_64 / aarch64 / cx; a latched refusal (ERR_IDENT / ERR_MSG) in a call to an inline candidate

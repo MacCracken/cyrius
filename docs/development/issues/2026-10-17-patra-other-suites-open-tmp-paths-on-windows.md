@@ -4,8 +4,8 @@
 patra 1.16.4's suite patch (issues/archived/2026-10-16-patra-suite-dev-null-fixture-fails-on-windows.md) routed every `/tmp/`
 path of `tests/tcyr/patra.tcyr` through a per-target helper (`_scr`: relative on Windows) — that suite now reads
 1,565 / 1,565 on cass.
-**Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x. A
-fold patch (patra), like 1.16.4.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P6; placed at the 6.7.15 open, 2026-10-18) — never 7.x. A
+fold patch, patra 1.16.5 (the user tags it before the refold), like 1.16.4.
 **Severity:** Low — test-fixture portability of a folded stdlib's harnesses: no shipped code is wrong, but these
 harnesses cannot be read green on Windows.
 

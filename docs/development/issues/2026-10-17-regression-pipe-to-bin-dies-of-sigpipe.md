@@ -6,7 +6,7 @@ lane tree (ede6b7e1) ended "FAILED (exit 141): programs/checks (the cyrius check
 (programs/checks/platform_efi.cyr), whose `_pipe_file_to_bin(bin, src)` pipes the 847-byte fixture into a binary that
 exits 42 without reading stdin. Nothing in this lane touched programs/checks/ or lib/regression.cyr; the fixture
 compiles and exits 42 with the lane's compiler. Pre-existing (the helper has no SIGPIPE handling at f133fb2f either).
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (on main, wave 0, before the lanes fork; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a stdlib helper (lib/regression.cyr, cyrius's own lib) kills the process that calls it; in the
 check driver it ends every driver row after it with no verdict (the shell gates still run), and under parallel load
 the small-input case is a race, so the check is FLAKY rather than red.

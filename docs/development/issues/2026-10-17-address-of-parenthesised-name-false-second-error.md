@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane's review (unit S3, beside
 issues/archived/2026-10-15-return-address-of-handle-or-pointer-in-struct-fn.md), measured on the lane's tree and at the lane base
 f133fb2f (the same output on both), x86_64. Frontend: every target alike. Pre-existing.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — diagnostics only: the statement is refused, at the right place; a second error follows that names a
 token which is not in the statement.
 **Kind:** bug (diagnostic cascade). `&(x)` is not valid syntax (the `&` factor takes a name); this filing does not ask

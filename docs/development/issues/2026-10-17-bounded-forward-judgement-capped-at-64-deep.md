@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 generics lane's review fix step on the lane tree (after
 95b7f735, issues/archived/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md), x86_64.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-17, the 6.7.14 generics lane review. 95b7f735 makes a generic that forwards its `T` to a bounded
 generic whose i64 base is refused have no i64 instance, judged by `_bbs_fwd_bad` (src/frontend/parse_fn.cyr). The
 judgement recurses through the forwards with a depth cap, `if (_bbf_dep > 64) { return 0; }`, which answers "not bad"

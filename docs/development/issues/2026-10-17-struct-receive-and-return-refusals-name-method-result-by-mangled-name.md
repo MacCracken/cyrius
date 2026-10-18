@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (unit V4, after a4d4e8b58, which names a
 method-result ARGUMENT as the source spells it in the struct-type and `*V` argument refusals): two neighbouring
 destinations still print the struct-call record's fn name. Frontend: x86_64, aarch64, cx and PE alike.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a diagnostic names `Pt_dup` where the source says `s.dup()`; the position and the refusal are right.
 **Kind:** bug (diagnostic).
 **Related:** docs/development/issues/archived/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md (the

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-16 on the 6.7.14 infra lane's tree (l6714-infra) and on the slot-open
 aarch64 cross compiler (6.7.13's src): refused both times. The guide's example has never compiled.
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D37 — Accept the option.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), surveying every asm spelling in the guide, lib/ and the
 corpus for `issues/archived/2026-10-08-asm-in-mnemonic-unreachable.md` (decision D16: an unknown mnemonic is refused by name).
 **Severity:** Low — the guide teaches a spelling the compiler refuses; a doc / compiler mismatch, not a miscompile.

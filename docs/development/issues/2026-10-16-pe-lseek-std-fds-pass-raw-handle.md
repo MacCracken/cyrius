@@ -5,7 +5,7 @@
 `build/cycc_win_cross`, run under wine (a private WINEPREFIX) and on real cass (Windows 11, `C:\cyrius-tests`). Filed
 from the platform lane's review: the triage met it in passing, and the lane's handoff named it only in
 ecosystem-migration.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a seek on a redirected stdin / stdout / stderr, which works on Linux and macOS, fails on Windows
 with -EBADF. There is no in-tree caller (lib/, cbt/, programs/, src/ grep). Until 6.7.14 the same seek answered 0 —
 the failure was there, invisible (the BOOL was not read); 636129db0 made it visible, it did not cause it.

@@ -4,7 +4,7 @@
 issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md, whose one-star shape (`: *Box<Zork>` twice,
 `: *Box<Later>` refused by pass 1) 6.7.14 fixed (`_ret_ptr_sid`, 4a74fe60). Pre-existing: identical on the slot-open
 compiler (2600f67f's build/cycc) and on the lane tree (596d1a89).
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a duplicated diagnostic, and a valid program refused (a pointer-to-pointer return naming a
 struct declared after the fn as its type argument); workaround: declare the struct above the fn.
 **Kind:** bug.

@@ -5,7 +5,7 @@ frontend, every target). Beside issues/archived/2026-10-08-u128-params-returns-f
 8d3f7caf, the user's decision D10 (a), 2026-10-16: a `u128` parameter is one error by name, "`u128` is not supported
 as a parameter type yet - pass `*u128`"). The lane's row U6 (default_named_args_checked.sh) covers a default on a
 LATER parameter only; a default on the u128 parameter itself was not probed. Met by the 6.7.14 frontend review.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — refused either way; the first error printed is not the decided one, and a second follows.
 **Kind:** bug (diagnostic).
 

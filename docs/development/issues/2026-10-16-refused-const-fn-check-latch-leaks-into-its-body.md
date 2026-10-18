@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 frontend lane (unit F2) while fixing the const-fn double
 report (issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md, item 1). Measured on 87ef0dd9 (the lane
 before F2) and on F2's tree: identical (F2 deliberately keeps the latch, see Root cause).
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — every input is refused; one shape prints a FALSE error, the other a duplicate.
 **Kind:** diagnostics.
 

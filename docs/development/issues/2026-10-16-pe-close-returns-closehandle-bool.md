@@ -5,7 +5,7 @@
 read / write / open / seek reroutes). Met in passing while fixing EREAD_PE / EWRITE_PE / EOPEN_PE / ELSEEK_PE — the
 same class (a kernel32 reroute that does not turn its failure into the POSIX answer), outside their filed surface, so
 filed, not fixed.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a close on Windows can only fail for a handle that is not open (or a protected one), so no data is
 lost by the close itself; but the answer inverts the documented contract: lib/syscalls_windows.cyr `sys_close` says
 "Returns 0 on success, -1 on failure", and the reroute answers 1 on success and 0 on failure. Every `sys_close(...) < 0`

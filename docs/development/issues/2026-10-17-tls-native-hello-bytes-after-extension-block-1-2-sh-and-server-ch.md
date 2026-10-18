@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on branch l6714-stdlib (unit L4, after the hello-conformance-residue
 fix, which made the 1.3 ServerHello and the EncryptedExtensions blocks fill their message).
-**Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D40 — Refuse with decode_error.
 **Severity:** Low — protocol conformance: a peer message with trailing bytes no structure names is accepted (RFC 8446 §4 /
 RFC 5246 §7.4.1: decode_error). Every message still has to pass the handshake's signatures and Finished; no forgery,
 no ledger id (no attacker crosses a boundary: the peer could send the same choices well formed).

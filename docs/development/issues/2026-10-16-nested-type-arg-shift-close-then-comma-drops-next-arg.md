@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G1), writing a deeper-nesting row for
 issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md. Pre-existing: identical on the slot-open
 compiler (2600f67f's build/cycc) and on the lane tree after the nested-name fix.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** High — a silent miscompile: the second type argument is dropped and its parameter is bound to the i64
 base, no diagnostic. The trigger is a nested generic type argument whose closing `>`s lex as one `>>` / `>>>` token and
 that is NOT the last argument of its list.

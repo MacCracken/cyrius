@@ -7,7 +7,7 @@ Not one of the gates already staged for the same idiom (the platform lane's
 2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md: syscall_xlat_generated.sh, removed_symbol_census.sh;
 the tools lane's 2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md: lsp_diagnostics_file_column.sh).
 Met by the 6.7.14 frontend review.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a gate defect only. check.sh runs the gate with `sh` (no pipefail), where every row runs and the
 verdict is right. Under `bash -eo pipefail` — GitHub's `run:` semantics, and what CLAUDE.md asks every shell gate to
 be tested under — it ends after SC-dpz with rc 1 and prints neither PASS nor FAIL; the SC-lsp, SC-ta and later rows

@@ -3,8 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on real ecb (macOS arm64) and ach (Intel macOS) by the 6.7.14 stdlib lane
 (unit L4), with patra 1.16.3's suite and with the 1.16.4 suite (identical result: the 1.16.4 patch changes nothing on
 macOS).
-**Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x. A
-fold patch (patra).
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P6; placed at the 6.7.15 open, 2026-10-18) — never 7.x. A
+fold patch, patra 1.16.5 (the user tags it before the refold).
 **Severity:** Low — test-fixture portability of a folded stdlib's suite: one row fails on macOS for a premise that is
 Linux's, so the macOS run cannot be read green. (patra's roadmap lists macOS as "not run".)
 

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — filed 2026-10-17 from the 6.7.14 infra lane's review. The IR=3 seam's stale losing-body ranges
 (fixed in the lane's review fix, `_wp_fnr_shift`) killed tests/tcyr/crossos/fn_redefinition_last_wins.tcyr with SIGILL under
 `CYRIUS_IR=3 CYRIUS_DCE=1`, yet passed every gate and the lane's full check.sh: nothing builds the corpus with both flags.
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low (test coverage). Each mode has corpus coverage of its own; the combination, where the IR=3 seam's
 compaction runs before FIXUP's dead-code pass reads positions recorded at parse time, has none.
 **Affects:** the gates, not src/: scripts/differential.sh (default and `CYRIUS_DCE=1` torture modes),

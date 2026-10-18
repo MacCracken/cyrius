@@ -4,7 +4,7 @@
 lane, and on the wave-2 base c3af6501), x86_64: the by-name declaration compiles (exit 3; reading the word back gives
 41), while the by-name assignment `x = mkv(..)` into an f64 is refused, and since the vectors lane's VC-14 (D38) the
 method `var x: f64 = s.mv();` is refused too.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 release-docs pass, placed at the 6.7.14 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a silent wrong value: an `f64` declared from a vector-returning call holds the vector's first
 lane's bits as a word.
 

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G5) on the lane's tree after the D8 (a)
 commit (`4e039c6e`), x86_64. On the slot-open compiler the inferred row was refused too, differently ("no struct type
 in scope for 'r'", twice: `gd(&GP0)` ran the i64 base).
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G5, implementing D8 (a)
 (issues/archived/2026-10-14-generic-pointer-parameter-binds-only-from-pointer-local-decision.md): the parser now binds
 `gd(&GP0)`'s T to P, but the scans that type a declaration from its tokens still bind a pointer argument as before.

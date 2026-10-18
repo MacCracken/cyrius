@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (its review-fix tree), x86_64 / x86_64
 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine). The by-name half is pre-existing (the lane base c3af6501 gives
 the same, rows 1, 3 and 4 on x86_64 / cx / PE); the method half (row 2) is the global spelling of the local D38 now refuses.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors review, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — compiles with no diagnostic; the global holds a word whose value differs per target.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probe m4), beyond D38's filed surface (`x = s.mv();`
 into a LOCAL, `issues/archived/2026-10-16-vector-method-result-untyped-scalar-and-return-destinations.md`).

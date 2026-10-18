@@ -4,7 +4,7 @@
 copy of its base f133fb2f3 alike. Pre-existing: the stdlib lane's only edit to the gate is axis 7's `NF_LINE` and
 comments (D55, 3335e1165); the stop is in axis 5 and reproduces on the base unchanged. Filed from the 6.7.14 stdlib
 review.
-**Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a gate defect only. The check driver (programs/checks/main.cyr `_gate(…,
 "tests/gates/toolchain/stdlib_modules_self_sufficient.sh")`) runs it with `sh` (no `-e`), where all 7 axes run and the
 verdict is right. Under `bash -eo pipefail` — GitHub's `run:` semantics, and what CLAUDE.md asks every shell gate to be

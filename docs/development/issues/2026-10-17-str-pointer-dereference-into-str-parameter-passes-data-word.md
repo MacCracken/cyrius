@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane's review (unit S4), measured on the lane's tree
 and at the lane base f133fb2f (the same output on both): x86_64, aarch64 (qemu) and cx (cxvm) alike. Pre-existing.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — silent: the callee reads the string's bytes as a `Str` header (`str_len` 0 here; a longer
 string's bytes give a wild length and data pointer). Not a security id (the developer's own source).
 **Kind:** bug — `*p` of a `p: *Str` is the header value (6.7.10's decision 6: through a pointer to a struct `*p` is the

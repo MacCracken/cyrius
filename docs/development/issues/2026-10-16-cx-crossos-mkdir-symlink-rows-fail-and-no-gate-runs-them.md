@@ -5,7 +5,7 @@ with the lane's `build/cycc_cx` and run through the lane's `build/cxvm` (bytecod
 older files fail the same way at the lane base (2600f67f, its own cycc_cx / cxvm): open_flags_per_target 25 / 44,
 atomic_write_temp_exclusive 6 / 18 — the lane adds new failing rows (pe_open_failure_errno's 2; atomic's 4 new rows,
 6 / 22), it did not cause the class. Filed from the platform lane's review.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 ⚠ Integration: first confirm whether the stdlib lane's unit L3 (issues/archived/2026-10-15-cx-untranslated-pointer-wrappers-can-reach-cxvm-image.md,
 D55 — cxvm answers -38) covers these wrappers; D55 changes the answer from -14 to -38, it does not make the rows pass,
 so the rows still need named cx arms (or cxvm translates the path) either way.

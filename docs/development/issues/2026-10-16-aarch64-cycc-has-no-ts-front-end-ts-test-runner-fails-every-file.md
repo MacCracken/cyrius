@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 platform lane (unit P3), running the aarch64-linux tarball's
 install smoke on pi after D59 made that tarball ship every `[release] bins` entry built for aarch64.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D38 — Run the TypeScript front end, as on x86_64 Linux.
 **Severity:** Low — one tool (`ts_test_runner`) cannot do its job on aarch64 Linux; a TS walk reports every file as a
 failure. No cyrius program is miscompiled.
 **Affects:** `src/main_aarch64.cyr` (the aarch64-linux compiler the aarch64 tarball ships as `bin/cycc`; the native

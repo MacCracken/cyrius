@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-17 by the 6.7.14 structs lane (unit S2), landing
 issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its `**pp OP= v` is refused as `*p OP= v` is,
 6.7.11's decision (a) with 6.7.13's D9 (a)). The refusal is new with that fix (7c96547f); its wording is `_dst_struct`'s.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — diagnostics only: the right statement is refused once, at the right place; its words name the
 wrong operand.
 **Kind:** bug (diagnostic wording).

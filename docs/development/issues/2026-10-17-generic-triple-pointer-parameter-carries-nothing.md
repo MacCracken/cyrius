@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 vectors lane (unit V5) on its tree after the D40 bite
 (3a122cb2b) and on the lane's base compiler (3478087aa's build/cycc): identical.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D24 — A: yes, at any depth of 2 or more.
 **Severity:** Low — a silent wrong step and a fault, but only through a three-star generic parameter with no other
 carrier of T; the explicit `t3<P3>(..)` is the workaround.
 **Kind:** language question — D40 (A, the user, 2026-10-16) decided `pp: **T` binds T from a `**S` argument

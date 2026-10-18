@@ -4,7 +4,7 @@
 item (issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md) with the struct declared after
 its use. Not that item's: any struct name does it. Pre-existing — identical on f133fb2f's build/cycc (the 6.7.14
 wave-2 base) and on the lane tree after S2 (9498bfb3).
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — compiles clean and faults on every target measured (x86_64, aarch64 qemu, cx); the `*S` shape
 is a false refusal of a valid program.
 **Kind:** bug — CO-01 (6.3.5) made a forward call read the callee's pass-1 signature; 6.6.20's address-pass for

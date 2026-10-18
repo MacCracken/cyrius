@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G2), surveying the positions of
 issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md (`: *Box<Zork>` in a return). Pre-existing:
 identical on the slot-open compiler (2600f67f's build/cycc) and on the lane tree (596d1a89).
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D8 — (a) Refuse it at the field, once, used or not.
 **Severity:** Low — an unknown or non-name type argument in a pointer field's annotation compiles silently while
 the field is unused; a use is refused (once per use, at the declaration's token). The sibling positions refuse it at
 the declaration: a by-value field `b: Box<Zork>`, a pointer field `p: *Zork`, a local, a global, a return.

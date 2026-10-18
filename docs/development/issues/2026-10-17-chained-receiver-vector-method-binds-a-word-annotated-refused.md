@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (its review-fix tree) and on the lane base
 c3af6501, x86_64 / x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine). Pre-existing: the lane base binds a
 word and refuses the annotated form the same way.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors review, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — the untyped row compiles with no diagnostic and reads stack garbage that differs per target and
 per build; the annotated row refuses valid code.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probes m5 / m6), beyond D37 / D29's filed surface: a

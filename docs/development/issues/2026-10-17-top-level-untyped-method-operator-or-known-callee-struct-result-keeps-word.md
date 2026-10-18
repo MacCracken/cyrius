@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives at ed1e01b1, unit R4, after the
 D29 / D30 bite), x86_64 (`build/cycc` the lane's fixpoint); the frontend is shared, so every target is the same.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D34 — (a) yes, it binds the struct.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D35 — (a) refused by name, once.
 **Severity:** Medium — the 9-16 B rows are silent: an untyped top-level global initialised from a whole method,
 operator or known `&f` result over 8 B holds the struct's first word with no diagnostic, where the free call of the
 same struct is refused (D30 (a)); the 8 B rows refuse valid code at its first `.field` (Low half).

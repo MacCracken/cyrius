@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives at ed1e01b1, unit R4), x86_64
 (`build/cycc` the lane's fixpoint); a shared-frontend shape, every target the same.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a refusal of valid code (8 B), and a second error after the one refusal (16 B); nothing miscompiles.
 The same declaration after the first statement, or annotated (`var x: G1<i64> = mkg1(33);`), works.
 **Discovered:** 2026-10-17, the receives lane (unit R4), repairing

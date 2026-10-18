@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives at c913d186, unit R6) and on
 the lane's R5 tip compiler (0d0a054d): identical, two error lines on x86_64, aarch64 (cross), cx and PE
 (CYRIUS_TARGET_WIN=1).
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — refused loudly either way; one mistake reports two errors (the "one mistake, one error" rule,
 tuple_checked.sh's CS rows). No program compiles differently.
 **Kind:** diagnostics cascade.

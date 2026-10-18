@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (unit R3, after the D25 / D26 bite) with
 `build/cycc` built from that tree (x86_64); the lane base gives the same for both rows.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D31 — (a) yes, the element too.
 **Severity:** Medium — the dereference is a silent wrong value (8 bytes read through a `*u8`); the subscript is
 refused loudly with a diagnostic that is now false (the callee does return a `*T`).
 **Discovered:** 2026-10-17, the receives lane, D26 (issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md).

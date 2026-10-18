@@ -4,7 +4,7 @@
 (issues/archived/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md) with the struct declared after
 its uses. Identical on the lane's base compiler (3478087aa's build/cycc) and on its tree after the D41 bite
 (609c18166). Not that item's: any struct name does it.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — compiles clean and faults on every target (x86_64, IR=3, aarch64, cx, PE); the untyped and the
 vector-named shapes are false refusals of valid programs.
 **Kind:** bug — the RETURN-side twin of issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md

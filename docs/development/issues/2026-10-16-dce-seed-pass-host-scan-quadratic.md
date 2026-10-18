@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 infra lane (unit I3), while building the 4,096-run-cap
 rows. Pre-existing: the per-hit host scan dates from v5.10.41 / v6.1.5 (`_dce_host_fn`).
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — no wrong output; compile time. Every x86 and aarch64 build runs the pass (the DCE note and its
 run registry are computed with `CYRIUS_DCE` unset too), so it is not an opt-in cost.
 **Affects:** src/backend/x86/fixup.cyr and src/backend/aarch64/fixup.cyr, the seed pass ("Pass A") of FIXUP's

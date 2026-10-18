@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (unit V1, after `71aa9a503`, the bite that
 widened the pin to 14 bits) on x86_64.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-17, the 6.7.14 vectors lane, unit V1 (issues/archived/2026-10-16-double-pointer-pins-interned-per-struct-cap.md):
 the new gate's cap row (K1, 16384 pins) takes ~5 s on x86_64.
 **Severity:** Low — compile time only (no wrong output, no refusal); reachable only by a unit with thousands of distinct

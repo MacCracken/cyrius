@@ -5,7 +5,7 @@ frontend, every target). Met beside issues/archived/2026-10-12-declarations-afte
 surface (and the user's decision D13 (a), 2026-10-16: one named error) is a declaration at MODULE scope after the
 first top-level statement; that is fixed (`_decl_late`, module scope only: `GINFN` 0, `_pp_depth` 1). The same
 keywords one level down — in a top-level block's body or a fn body — still reach `_PARSE_STMT_IMPL` and cascade.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — every shape is refused at compile time; nothing is silent. But the first error names a token
 (`unexpected struct`), not the rule, and two to four invented errors follow.
 **Discovered:** 2026-10-17, writing the D13 rows (the in-block shape was probed as a control of the module-scope fix).

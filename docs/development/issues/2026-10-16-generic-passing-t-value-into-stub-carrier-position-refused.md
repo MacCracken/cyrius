@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G4) on its tree after the
 forwarding-carrier bite (issues/archived/2026-10-14-generic-forwarding-carrier-into-stub-generic-refused.md) and on the slot-open
 compiler: identical.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G4, at the edge of the forwarding-carrier bite. That bite's filed scope (and
 its brief) follows a struct carrier's NAME (`gx(b)`, `b: Box<T>`) or a generic CALL carrying T (`gx(mk1(x))`) in a
 carrier position; a bare `T`-typed name in that position was not in it.

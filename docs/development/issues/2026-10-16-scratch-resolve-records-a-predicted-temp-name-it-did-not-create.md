@@ -5,7 +5,7 @@ issues/archived/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md) and
 (l6714-tools @ 69c72ca09, the CLI built from `cbt/cyrius.cyr` by the tree's `build/cycc`). The lane introduced it:
 the 2600f67f CLI records nothing, so it unlinks nothing (it leaves the whole scratch, the bug 33e3b49c1 fixed). It
 also contradicts the lane's CHANGELOG claim that "a file it did not write survives".
-**Placement:** 6.7.15 — repair 5 (tools lane; filed from the 6.7.14 tools review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — only a same-user process can reach it, by planting `<dst>.cyrtmp.<pid>.<n>` inside the CLI's own
 0700 `cyrius-<pid>/…/lib/` while the resolve runs. The file lost is that process's own, in the CLI's private
 directory. This is not a security finding: it needs no boundary crossing (CLAUDE.md § Security Audit Process).

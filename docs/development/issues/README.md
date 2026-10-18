@@ -255,9 +255,8 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.14 — Break 2, repair 4: generics, the frontend, infra (added at the 6.7.12 open, 2026-10-15)** (0)
 
 
-**6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (112)
+**6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (111)
 
-- [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [The aarch64 compiler has no TypeScript front end: `--parse-ts` / `--lex-ts` are ignored, so the aarch64 tarball's `ts_test_runner` fails every file](2026-10-16-aarch64-cycc-has-no-ts-front-end-ts-test-runner-fails-every-file.md)
 - [A method no bound declares, called on a struct carrier's `T` field (`b.v.other()`, `b: Box<T>`, `T: Show`), is not checked against the bound](2026-10-16-bound-contract-unchecked-on-carrier-field-call.md)
 - [A subscript or a method call in a const fn, and a method call on a const, name the wrong refusal (and two report twice)](2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md)
@@ -370,10 +369,11 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A wrapped vector call — by name or a method — into an untyped or a scalar declaration binds a word, and a method's `s.mv() + 1` into `: i64` is not refused](2026-10-17-wrapped-vector-call-into-untyped-or-scalar-declaration-binds-a-word.md)
 - [A declaration-zone untyped `var x = mkg1(33);` whose generic callee returns a generic struct instance (`: G1<T>`) binds nothing — `x.v` is "no struct type in scope for 'x'" (16 B: the D30 refusal and then that error) — where the same line after the first statement binds the instance (D29 (a))](2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md)
 
-**6.7.16 — the full security audit + the refactor / optimization review** (2)
+**6.7.16 — the full security audit + the refactor / optimization review** (3)
 
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
+- [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 
 **Open by design — placed arcs, not bugs** (5)
 

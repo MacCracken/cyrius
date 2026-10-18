@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F4, f793b013) and on
 the lane's base compiler (c0d6d1ba), x86_64 (the frontend: every target alike).
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4, beside
 issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md (D15 (a): a token that is no type is refused by name; a
 `=` / `;` right after the `:` is no annotation at all and was left to the error below, so the shape is not reported

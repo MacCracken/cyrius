@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — recorded 2026-10-16 by the 6.7.14 infra lane (unit I4, the cybs indexed-store naming bite,
 b26ae2418) as a known limit in its handoff and not filed; filed 2026-10-17 by the 6.7.14 release-docs pass (a deferral
 is real only when filed).
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 release-docs pass, placed at the 6.7.14 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a diagnostic of cybs (the bootstrap compiler, which builds only src/ and bootstrap/asm.cyr): the
 named "undefined variable" the 6.7.14 bite added is not given for this shape; the class message prints instead, as
 before 6.7.14.

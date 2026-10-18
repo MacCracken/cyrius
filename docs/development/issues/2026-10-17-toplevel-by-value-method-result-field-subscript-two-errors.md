@@ -6,7 +6,7 @@ the rest once the call refused itself) covers `mk().n = 5;`, `mk().n += 1;`, `mk
 `o.mk().n = 5;` / `+= 1` at top level (call_ptr_field_store.sh T0-T5). The method form with a subscript of the result's
 `*T` field is not covered: its second error is written inside PARSE_FIELD_LOAD's chain, before `_stmt_method_call`
 regains control. Measured on the lane tree after 54da13808 (x86_64; the frontend's, every target).
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — refused code, one statement reported twice, the second error false (`p` IS a `*i64` field).
 **Kind:** diagnostics.
 

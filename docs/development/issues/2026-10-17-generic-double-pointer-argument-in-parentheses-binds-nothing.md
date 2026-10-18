@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 release-docs pass on main (after the vectors lane's VC-15,
 which implemented 6.7.14's D40 A: a `**S` argument binds T in `fn st<T>(pp: **T)`), x86_64.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 release-docs pass, placed at the 6.7.14 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D22 — A: parentheses are transparent.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D23 — A: yes, it is still that pointer.
 **Severity:** Medium — `tg((pps))` faults (139) where `tg(pps)` gives 42 (measured on main, x86_64); parentheses around a whole argument are
 transparent everywhere else (6.7.13's D19 family, this release's VC-3 for value-form vector arguments).
 

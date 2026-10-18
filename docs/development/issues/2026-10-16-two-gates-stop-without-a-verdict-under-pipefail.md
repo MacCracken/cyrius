@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 platform lane's tree (l6714-platform). Pre-existing: the
 lane touched neither file (`git log 2600f67f..HEAD` over both is empty). Filed from the platform lane's review.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a gate defect only. check.sh runs both with `sh` (no pipefail; syscall_xlat_generated.sh has no
 `set -e` at all), where every axis runs and the verdict is right; no workflow runs either directly. Under
 `bash -eo pipefail` — GitHub's `run:` semantics, and what CLAUDE.md asks every shell gate to be tested under — each

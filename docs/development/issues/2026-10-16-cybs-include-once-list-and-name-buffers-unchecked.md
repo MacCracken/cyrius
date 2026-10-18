@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-16 on the 6.7.14 infra lane's tree (l6714-infra @ 61e09667,
 `bootstrap/cybs.cyr` seed-assembled, 23,010 B). Latent for the inputs that matter: `src/main.cyr`'s closure is 31
 distinct includes, its longest spelling ~40 characters.
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), while adding the refusals of
 `issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md` (an include over its 2 MB slot, includes past 8
 deep, stdin over 15 MB, an expansion over 16 MB — that item's filed surface). The include-once list and the include

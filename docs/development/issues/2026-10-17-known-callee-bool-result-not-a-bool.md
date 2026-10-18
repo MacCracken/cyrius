@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (unit R3, after the D25 / D26 bite) with
 `build/cycc` built from that tree (x86_64); the lane base refuses it the same.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D30 — (a) yes, as the direct call.
 **Severity:** Low — valid-looking source refused loudly, by name; no wrong value. Workaround: `fncall0(&isb) != 0`.
 **Discovered:** 2026-10-17, the receives lane, D25 / D26 (issues/2026-10-16-known-callee-pointer-or-f64-result-
 untyped.md): those decisions type a known `&f` callee's `: f64` and `: *T` results as the direct call's (6.7.11's D31

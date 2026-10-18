@@ -4,7 +4,7 @@
 shared frontend, so every target). Identical on the lane base (f133fb2f's `build/cycc`). Met by unit R1 while fixing
 issues/archived/2026-10-16-unknown-annotation-type-cascades-into-d24-refusal.md (the D24 cascade on the declaration's OWN line,
 fixed there); a later USE of the variable was not part of that filing.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — every shape is refused; the first error is the right one. One invented error follows per use.
 **Kind:** bug (diagnostic cascade).
 

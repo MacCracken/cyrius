@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 infra lane (unit I2) while running the `.tcyr` corpus under
 `CYRIUS_IR=3`: tests/tcyr/derive/derive_enum_inside_ifdef.tcyr dies with SIGSEGV there (4 / 4 by default), in its
 `nested()` helper. Reproduced on the installed 6.6.20, 6.7.0 and 6.7.13 compilers and on this lane's tree.
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a SIGSEGV (or a silently wrong constant, when the corrupted bytes still decode) on valid code
 as small as three statements, but only under the opt-in `CYRIUS_IR=3` (no release build uses it).
 **Kind:** codegen (IR=3), src/common/ir.cyr.

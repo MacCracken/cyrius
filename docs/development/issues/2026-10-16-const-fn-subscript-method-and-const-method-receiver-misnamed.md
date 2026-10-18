@@ -4,7 +4,7 @@
 issues/archived/2026-10-08-const-field-access-diagnostics-misname-refusal.md, which covers the FIELD forms only (a field store /
 read in a const fn, a field store / read on a top-level or local const). Measured on the lane tree at 87ef0dd9 (before
 F2) and after F2's const-field bite: the four shapes below are unchanged by it.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — every input is refused; the message names the wrong rule, and two shapes print a second, false error.
 **Kind:** diagnostics.
 

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-10-16 on the 6.7.14 infra lane's tree (l6714-infra @ 61e09667, build/cycc =
 gen2 of that src; the include-once code is unchanged since v4.8.4-alpha2).
-**Placement:** 6.7.15 — repair 5 (infra lane; filed from the 6.7.14 infra lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, the 6.7.14 infra lane (unit I4), comparing cycc with cybs while probing cybs's include-once
 list for the cybs preprocessor-buffers item (`issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md`).
 **Severity:** Low-Medium — a silent miscompile on the developer's own source: a second `include` of a file whose path

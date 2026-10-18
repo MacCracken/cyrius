@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (unit V4, while writing the D35 / D36 rows:
 `return *p;` and an untyped `var v = *p;` with `p: *V`). Pre-existing: the lane base (c3af6501) gives the same refusals
 and the same one-word untyped binding. Frontend: x86_64, x86_64 IR=3, aarch64, cx and PE alike.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D21 — A: `*(&p)` is p, type kept.
 **Severity:** Low — every typed vector destination refuses it by name (no wrong value there); the untyped declaration
 binds one word, as it does for any dereference of an untyped word.
 **Kind:** language (a typing gap) — `&x` of a pointer local carries no step word (6.7.11's D15: `&x + n` steps bytes), so

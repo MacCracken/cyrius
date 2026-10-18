@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G4) on its tree, after the explicit-
 method-type-arguments bite (issues/archived/2026-10-11-method-call-explicit-type-arguments-misdiagnosed.md, the user's D7 (a)).
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G4. D7 (a) made `p.id<f64>(h)` call the f64 instance. The bite covered
 the method arm, a chain's leaf (`_rlf_more` / `_fld_meth_inline`), the statement router (`_stmt_dot_chain_call`),
 the untyped declaration's f64 (`_var_rhs_mchain`), the struct `return` (`_ret_expr_head`), and the stub / bound scan

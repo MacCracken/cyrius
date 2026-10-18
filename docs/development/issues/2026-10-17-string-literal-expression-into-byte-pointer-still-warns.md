@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives at 63aa1cb8, unit R4, after the
 string-literal bite), x86_64; the warning is the shared frontend's, every target the same.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a false warning on valid code that runs right; nothing miscompiles.
 **Discovered:** 2026-10-17, the receives lane (unit R4), repairing
 `issues/archived/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript.md`, whose filed fix is "a string

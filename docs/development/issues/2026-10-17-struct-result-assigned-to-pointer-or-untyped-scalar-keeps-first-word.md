@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (unit R3, after the D27 bite) with
 `build/cycc` built from that tree (x86_64); the frontend shapes are target-independent.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D32 — (a) refused by name.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D33 — (a) refused by name.
 **Severity:** Medium — the `*T` row is a silent wrong pointer (SIGSEGV at its first dereference, no warning); the
 untyped row a silent first word, as D27's typed rows were.
 **Discovered:** 2026-10-17, the receives lane, D27 (issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-

@@ -4,7 +4,7 @@
 the same on the 6.7.14 slot-open compiler. Found by the 6.7.14 release-docs pass reading the generics lane: its G2
 handoff took the warning half as already filed under issues/archived/2026-10-10-generic-body-errors-reported-per-instance.md,
 whose fix (GN-18, 3bf60734: `_err_once` / `_err_dup` in util.cyr) latches the ERROR emitters only — WARN_AT is untouched.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 release-docs pass, placed at the 6.7.14 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — diagnostics only: the same warning at the same token is printed once per parse of the body (the
 base and each struct instance), so a program with N struct instances of a generic sees N + 1 copies.
 

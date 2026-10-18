@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (unit V3, after the indirect-call bite that
 gives `(callptr(&mk4, 41))` the mismatch words) on x86_64, aarch64 (cross), cx and PE (cross); the lane base
 (c3af65019) prints the same four lines.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — message text only: each shape is refused once, on the right line, and no binary is written.
 **Kind:** bug (diagnostic).
 **Discovered:** 2026-10-17, implementing issues/archived/2026-10-16-indirect-call-of-another-vector-into-vector-local-generic-words.md

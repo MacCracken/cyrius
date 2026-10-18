@@ -4,7 +4,9 @@
 untyped `var v = s.mv();` the vector and refuses `var x: i64 = s.mv();` / `x = s.mv();`, each a WHOLE method call as
 filed). The neighbouring shapes below are pre-existing — the by-name rows behave the same on the lane base — and were
 not in the filing. Frontend: every target.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D28 — A: transparent.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D29 — A: refused.
 **Severity:** Medium — rows 4 and 5 compile clean and read the wrong lanes, silently, on every target; rows 1-3 store a
 word whose value differs per target, where the unwrapped by-name call is refused.
 **Kind:** language (decision) — the guide's § Parentheses (6.7.6) makes parentheses around a whole struct source

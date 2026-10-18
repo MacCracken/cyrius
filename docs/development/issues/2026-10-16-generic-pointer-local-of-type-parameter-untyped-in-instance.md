@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G4) on the slot-open compiler (2600f67f's
 build/cycc) and on the lane's tree: identical.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G4, probing a carrier's `*T` field (`var t: *T = b.p; t.show()`).
 **Severity:** Low — a loud refusal of valid source; workaround: use the `*T` parameter itself, or a by-value `var t: T`.
 **Affects:** ≤ 6.7.13 through the 6.7.14 lane tree; every target (frontend).

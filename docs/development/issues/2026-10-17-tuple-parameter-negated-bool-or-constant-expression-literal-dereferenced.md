@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives, after D44's 5c4f1472 and
 the review-fix step) with `build/cycc`, `cycc_aarch64`, `cycc_cx` and `cycc_win_cross` built from that tree.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D36 — (a) refused by name.
 **Severity:** Low — compiles clean and crashes at run time (x86_64 / aarch64 SIGSEGV 139, cx guest error 1, PE
 access violation 5); none of these values can be an address, and the spellings are unusual.
 **Discovered:** 2026-10-17, the 6.7.14 receives lane's review of D44 (issues/2026-10-15-non-tuple-word-into-tuple-

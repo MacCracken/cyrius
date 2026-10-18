@@ -4,7 +4,7 @@
 frontend's text, so every target. Pre-existing for the address-passed arm (`rp(..)` into `*Pt`: 6.7.12's D27
 `_dro_check` naming, the lane base c3af6501 prints the same); the lane's a3829d63d (`ri(..)` into `*i64`, 6.7.13's D31
 A) matches it deliberately.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors review, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — the refusal is right and lands at the right column; the quoted argument is not the source's.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probes i12, c12).
 

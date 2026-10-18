@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 stdlib lane (l6714-stdlib, unit L3), on pi, ecb, ach and
 cass, with cxvm built from the lane's tree at HEAD (before D55) and after D55 (identical answers for every call below:
 this is the pass-through path D55 keeps, not something D55 changed).
-**Placement:** 6.7.15 — repair 5 (stdlib lane; filed from the 6.7.14 stdlib lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a silent wrong call: on an aarch64 Linux host the guest's `lseek` (one of cxvm's own TRANSLATED
 calls, dispatched explicitly in op 0x70) runs a different kernel syscall and answers -EFAULT, `kill(pid, 0)` runs
 `lseek`, `exit_group(77)` exits 0; on arm64 macOS `kill` runs `lseek`. No diagnostic. cxvm runs trusted bytecode (no

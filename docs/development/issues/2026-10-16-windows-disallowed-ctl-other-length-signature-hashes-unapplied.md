@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — filed 2026-10-16 by the 6.7.14 platform lane (unit P4), while applying the CTL's
 48-byte entries (issues/archived/2026-10-15-windows-disallowed-ctl-48-byte-entries.md, D57).
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — Windows only, and latent: today's CTL (cass and the public `disallowedcert.stl` of
 2025-09-04, sequence 01dc1e14133124bf) holds no entry of these lengths. The day Microsoft lists a certificate
 signed with SHA-1, SHA-256 or SHA-512 by its signature hash, the native client keeps trusting it while

@@ -4,7 +4,8 @@
 the fix for issues/archived/2026-10-15-native-region-warning-misses-included-files-and-author-constants.md), with the
 ELF-aarch64 cross compiler built from it (`build/cycc_aarch64`), run under qemu-aarch64. Filed from the platform
 lane's review.
-**Placement:** 6.7.15 — repair 5 (platform lane; filed from the 6.7.14 platform review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (platform lane, wave 1, unit P3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D39 — Yes, for files outside lib/.
 **Severity:** Low — the wrong syscall runs with no diagnostic (the class the 6.7.12 / 6.7.14 warning exists for).
 Warn-only territory (6.7.12's D1): no program's behaviour is at stake, only the missing warning. Workaround: the
 `1000 + N` private alias, or declare the constant inside a `#ifdef CYRIUS_ARCH_AARCH64` region of its own file

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F4, after 3f8bb9b6,
 which bakes a float scalar's float LITERAL, `-` optional — issues/archived/2026-10-08-kernel-float-global-init-not-baked.md),
 x86_64 (CYRIUS_ELF64_KERNEL=1, run as a Linux process).
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4: the filed issue's surface (and its fix) is "a float
 literal, optionally negated"; the warning's own advice ("use a constant") does not hold for an f64 const.
 **Severity:** Low — a `kernel;` build's program reads 0 for such a global and the compiler warns by name; the bare

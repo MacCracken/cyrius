@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — met 2026-10-16 by the 6.7.14 tools lane (unit T3) while adding R16-R18 for
 issues/archived/2026-10-15-lsp-loose-file-reports-pin-redirect-of-server-cwd-project.md. Pre-existing: the gate as it stands at
 2600f67f (the 6.7.14 plan commit) does the same.
-**Placement:** 6.7.15 — repair 5 (tools lane; filed from the 6.7.14 tools lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (infratools lane, wave 1, unit I5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a gate defect only. check.sh runs the gate with `sh` (no `-e`), where every row runs and the
 verdict is right; under `bash -eo pipefail` (GitHub's `run:` semantics, and what the gate's own comment says its
 feeders are written for) it stops after R13 with rc 1 and prints neither PASS nor FAIL.

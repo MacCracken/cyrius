@@ -5,7 +5,8 @@ same values on the slot-open compiler, 2600f67f's build/cycc, except the one row
 compiler gives every row below but one; the lane now pins two of them (tests/gates/frontend/const_init_bake_and_fold.sh
 O4 = 57 and O6 = 24, on x86_64, aarch64 and cx). Met by the 6.7.14 frontend review of 735fb3c7
 (issues/archived/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md item 1, the user's decision D11 (b)).
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D2 — (a) Every constant redeclaration is the value from program start.
 **Severity:** Medium — a read between two declarations of one global sees a different value depending on how the
 earlier constant is SPELLED (`3` or `D`), silently; the guide documents the literal reading as the rule.
 **Kind:** language — which reading is cyrius is the user's call; more rows should not pin either before it is made.

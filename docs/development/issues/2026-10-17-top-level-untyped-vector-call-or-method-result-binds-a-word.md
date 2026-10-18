@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 vectors lane (its review-fix tree; the lane base c3af6501
 behaves the same on every row), x86_64 / x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine).
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors review, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D26 — A: refused by name.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D27 — A: refused.
 **Severity:** Medium — compiles with no diagnostic and reads garbage lanes: an untyped top-level global initialised from
 a whole vector call (by name or a method) holds one word, and its value differs per target.
 **Discovered:** 2026-10-17, the review of the 6.7.14 vectors lane (probes m1 / m2), beyond D37's in-fn surface (an

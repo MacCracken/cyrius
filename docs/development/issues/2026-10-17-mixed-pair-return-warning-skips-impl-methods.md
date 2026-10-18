@@ -5,7 +5,7 @@
 impl-method rows of that fix (stack_enum_lossy_context.sh axis QF7 / QF8) compiled with NO warning where the same
 body as a free fn warns. Measured with the lane tip (l6714-receives at 9245e108) on x86_64; the warning is shared
 frontend state, so every target.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a silent wrong value on code that compiles clean: a method that returns a `: stack` pair on
 one path and a plain value on another hands its caller that value AS THE TAG and a stale payload, the exact
 dropped-tag class the v6.6.0 warning exists for (19 real defects in one stdlib, CHANGELOG [6.6.12]); for a free fn

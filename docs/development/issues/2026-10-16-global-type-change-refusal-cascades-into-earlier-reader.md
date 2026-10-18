@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F4, b86fdb8a) and on
 the lane's base compiler (c0d6d1ba), x86_64 (the frontend: every target alike).
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F4, beside
 issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md (D9 (a) makes `var G: bool = true; var X: bool = G;
 var G = 5;` a type change; the second error below appears for every type change, before and after it).

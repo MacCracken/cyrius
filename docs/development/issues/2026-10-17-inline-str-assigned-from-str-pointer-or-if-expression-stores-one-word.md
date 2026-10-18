@@ -2,7 +2,9 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 structs lane (unit S4) on the lane's tree after the D20 (a)
 commit (`0807784c`), x86_64; the same before it (c778c981). Frontend: every target alike.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D14 — A copy of the header p points at.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D15 — Keep the one-word store, documented.
 **Severity:** Medium — silent: t.data takes the pointer's (or the branch's) word and t.len is left stale (the
 6.6.16 pun the user's D20 (a) retired for a `Str` handle source). Not a security id (the developer's own source).
 **Kind:** language (decision) — 6.7.14's D20 (a) (issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md)

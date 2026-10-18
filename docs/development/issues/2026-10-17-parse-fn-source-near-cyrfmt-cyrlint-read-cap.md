@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — met 2026-10-17 by the 6.7.14 vectors lane (unit V5): its first cut of the D40 bite put
 src/frontend/parse_fn.cyr at 1,054,367 bytes, and both tools refused it. The lane moved its new helpers to
 src/frontend/parse_types.cyr instead; at the lane's tip (609c18166) parse_fn.cyr is 1,049,325 bytes.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (on main, wave 0, before the lanes fork; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D25 — A: split parse_fn.cyr.
 **Severity:** Low today, a RED gate the day it bites — every compiler lane adds to parse_fn.cyr, and a merge of two
 lanes can cross the cap where neither lane alone does.
 **Kind:** tooling limit (6.2.20's `_MAX_FILE`, the user's choice of 1028 KB "to be safe", issues/archived/

@@ -4,7 +4,7 @@
 `sh scripts/check.sh`, CYRIUS_CHECK_JOBS=4). Red in every lane check run since the lane's first codegen change
 (735fb3c7, F3), green before it; the lane rule is that build/ is never committed (integration rebuilds build/cycc once),
 so the gate is red in any lane whose compiler emits different code. Met by the 6.7.14 frontend lane gate.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend review, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a gate defect only: at a release (build/cycc committed, == the tree's fixpoint) the two compilers
 are the same and the row is right. In a lane, or for anyone testing a rebuilt but uncommitted compiler, the row is a
 false red that has to be explained away each time.

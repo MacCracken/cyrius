@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G5) on the lane's tree after the
 per-instance error latch (the `_err_once` / `_err_dup` commit for issues/archived/2026-10-10-generic-body-errors-reported-per-instance.md),
 x86_64; the same counts on the slot-open compiler.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16, 6.7.14 generics G5. That issue's fix latches the plain emitters (src/common/util.cyr ERR,
 ERR_EXPECT, ERR_IDENT, ERR_MSG, ERRDUPVAR) and the five undefined-name writers (now ERR_UNDEF); the frontend's other
 direct writers (`syscall(SYS_WRITE, 2, "error:", 6)` followed by their own text — 61 on the lane tree: parse_fn.cyr

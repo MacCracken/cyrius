@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 structs lane (unit S4) on the lane's tree after the D21 (a)
 commit (`6774a66e`), x86_64 / aarch64 / cx / PE compilers alike (tests/gates/frontend/inline_str_value.sh D21c pins it).
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D17 — Yes: it binds H to gt's header.
 **Severity:** Low — a refusal (nothing miscompiles), whose reason no longer applies and whose words ("copy-init")
 name the wrong operation. Not a security id (the developer's own source).
 **Kind:** language (decision) — 6.7.14's D21 (a) (issues/2026-10-15-top-level-str-declaration-from-inline-str-global-

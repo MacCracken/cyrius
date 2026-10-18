@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-17 on the 6.7.14 receives lane (l6714-receives at 7db743ba, after the in-fn
 wrapped-Str bite) with compilers built from that tree: x86_64, aarch64 (qemu), cx (cxvm), PE (wine) alike; the lane
 base (4495a693) the same.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Medium — a silent wrong output on valid code: the overload dispatcher takes the cstring base for the
 wrapped global and prints the `Str` header's bytes. Workaround: drop the parentheses, or annotate (`var s: Str = (mks());`).
 **Discovered:** 2026-10-17, the receives lane (unit R2), while repairing

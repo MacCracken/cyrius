@@ -4,7 +4,7 @@
 (issues/archived/2026-10-15-ret2-body-not-counted-three-names-read-stale-register.md, commit b773a56a: `ret2(a, b)` is two
 values to pass 1's count). Measured with the lane tip (l6714-receives at 9245e108) on x86_64; the count is shared
 frontend state, so every target.
-**Placement:** 6.7.15 — repair 5 (receives lane; filed from the 6.7.14 receives lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (receives lane, wave 3, unit R1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a silent wrong value on code that compiles clean (the third name reads whatever an earlier call
 left in the third return register: 88 seeded), on a rare shape: a `ret2` exit inside a `loop { }` / `while (1) { }`
 / `do { } while (1);` that ends the body.

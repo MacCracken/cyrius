@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 structs lane (unit S4) on the lane's tree after the D18 (c)
 commit (`11dc74b4`), x86_64; the same on c778c981 (before the unit). Frontend: every target alike.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S3; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D16 — Take the header's address.
 **Severity:** Medium — silent: `str_len(p)` reads the string's bytes as a header (0 here). Not a security id (the
 developer's own source).
 **Kind:** language (decision) — 6.7.14's D18 (c) (issues/2026-10-15-inline-str-into-untyped-or-other-pointer-position-

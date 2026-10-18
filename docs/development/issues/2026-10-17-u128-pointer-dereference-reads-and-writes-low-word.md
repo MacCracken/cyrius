@@ -5,7 +5,8 @@ issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-ze
 if-expression branch yields the low word where a `u128` name branch is refused"; the premise check the review asked for
 was run by the lane's fix step: `*pu` is the low word at EVERY use, not only as a branch. Measured on the lane's tree
 and at the lane base f133fb2f (the same output on both): x86_64, aarch64 (qemu) and cx (cxvm) alike. Pre-existing.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs review, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D20 — Refused by name, as `pu[0]` is.
 **Severity:** Medium — silent: `var x: u128 = *pu;` drops the high 64 bits, `*pu = b` writes half the value and leaves
 the old high word. (The review rated the branch alone Low.) Not a security id (the developer's own source).
 **Kind:** language (decision) — one question: is `*pu` of a `pu: *u128` the 16-byte `u128` (as `*p` of a narrow `*T` is

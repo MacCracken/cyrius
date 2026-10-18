@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 structs lane (unit S4), x86_64, on the lane's tree and on
 c778c981 (before the unit) alike: pre-existing. Frontend: every target alike.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S4; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — a refusal with a misleading message (valid-looking source does not compile; nothing
 miscompiles). Not a security id (the developer's own source).
 **Kind:** frontend (parse).

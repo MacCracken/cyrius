@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F3), x86_64; the
 same in a fn, after the first top-level statement and (since 6.7.14's named-literal fix) in the declaration zone.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D1 — (a) Refused by name.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F3, comparing the zone's named literal with the fn-local
 one (`issues/archived/2026-10-09-declaration-zone-named-struct-literal-refused.md`).
 **Severity:** Low — accepted bad syntax; the values land where the comma-separated form puts them.

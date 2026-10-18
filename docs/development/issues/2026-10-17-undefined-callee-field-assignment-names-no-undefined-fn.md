@@ -4,7 +4,7 @@
 issues/archived/2026-10-15-for-step-call-led-field-assignment-refused-with-false-undefined.md (a for step `gp().n += 1` stores
 through a `: *T` result since this unit). Pre-existing: the lane's base compiler (f133fb2f) gives the same lines.
 x86_64 measured; the frontend's, every target.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S6; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — refused code (nothing compiles wrong), but the first error points at the field tail, not at the
 undefined name.
 **Kind:** diagnostics.

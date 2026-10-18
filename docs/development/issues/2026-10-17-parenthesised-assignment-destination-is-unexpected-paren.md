@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-17 by the 6.7.14 structs lane (unit S3), x86_64, on the lane's tree (`c778c981`)
 and on its S2 tip (9498bfb3): identical. Frontend: every target alike.
-**Placement:** 6.7.15 — repair 5 (structs lane; filed from the 6.7.14 structs lane, placed at the 6.7.14 wave-2 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (structs lane, wave 2, unit S5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D19 — No: one error that names the rule.
 **Severity:** Low — a compile error on a shape the guide never lists as a statement; the message names only the token.
 Not a security id (the developer's own source).
 **Kind:** language (a decision: whether a parenthesised destination is a statement) — or, if it stays out, a diagnostic.

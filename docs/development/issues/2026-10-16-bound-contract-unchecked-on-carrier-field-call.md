@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-16 by the 6.7.14 generics lane (unit G4), on the slot-open compiler and after the
 bounded-carrier-field bite (issues/archived/2026-10-14-bounded-method-call-on-carrier-field-is-a-struct-use.md): identical.
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G5; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D5 — (a) Refuse it at the definition.
 **Discovered:** 2026-10-16, 6.7.14 generics G4. That bite records `x.f.m(` on a carrier's T field as a bounded site
 only when `m` is a method of exactly one trait of the bound (a trait use; a scalar T takes the field's value). It
 records NOTHING otherwise, so a method the bound does not declare keeps its 6.7.11 reading — whether the contract

@@ -7,7 +7,7 @@ wrap `var q: P = (P { 5, 6 });` IS the initializer). Its fix recognises the wrap
 the declaration's `;` (`_slit_wrap_k`, src/frontend/parse_decl.cyr); an UNCLOSED wrap falls to the expression path,
 whose factor arm (`_slit_stray`, src/frontend/parse_expr.cyr) reports the literal as being outside an initializer —
 a rule the user did not break — before the real mistake.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F2; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** Low — malformed source, refused either way (through 6.7.13: four errors starting "undefined variable
 'P'"; now two). The first of the two names the wrong problem.
 **Discovered:** 2026-10-17, probing the wrap transparency of D12 (a).

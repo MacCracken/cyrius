@@ -8,7 +8,7 @@ sources as an `#inline` fn's argument inside a closure miscompiled through it (r
 crossos/simd_pointer_param.tcyr `sp_irows`). Half (1) is what remains OPEN: both repros below still give the numbers
 shown, re-measured on the review-fix tree (x86_64 / IR=3 / aarch64 / cx / PE: 84 / 84 / 84 / 83 / 84, and in the
 closure 43 / 43 / 84 / 83 / 43) — the u128 temp is lost by the inline path's `SFLC`, which (2) cannot cover.
-**Placement:** 6.7.15 — repair 5 (vectors lane; filed from the 6.7.14 vectors lane, placed at the 6.7.14 wave-3 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (vectors lane, wave 2, unit V1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Severity:** High — a silent wrong value (no diagnostic) on x86_64, aarch64 and Windows from ordinary source: a u128
 expression passed to an `#inline` fn whose result is an operand of a larger expression.
 **Affects:** every frame-slot temporary taken while an inline candidate's arguments are evaluated that does not

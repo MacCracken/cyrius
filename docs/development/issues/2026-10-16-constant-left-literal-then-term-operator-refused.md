@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-16 on the 6.7.14 frontend lane (l6714-frontend, unit F3, after the
 const-init item-2 fold rewrite, which kept this reading unchanged on purpose) and on every installed compiler from
 6.6.0 through 6.7.14 and `build/cc5` (5.11.69): all refuse the repro.
-**Placement:** 6.7.15 — repair 5 (frontend lane; filed from the 6.7.14 frontend lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (frontend lane, wave 1, unit F1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
 **Discovered:** 2026-10-16 by the 6.7.14 frontend lane, unit F3, reading the run-time fold arms for
 `issues/archived/2026-10-08-const-init-redundant-store-and-unfolded-const-operand.md` item 2.
 **Severity:** Medium — valid code does not compile (a codegen bug: the compiler fails valid cyrius); no wrong value is

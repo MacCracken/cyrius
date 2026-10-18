@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — found 2026-10-16 by the 6.7.14 generics lane (unit G3), applying D2 (a) to
 issues/archived/2026-10-10-unknown-generic-name-accepted-as-type-argument.md. Pre-existing: identical on the slot-open compiler
 (2600f67f's build/cycc) and on the lane tree after G3 (fce26f17).
-**Placement:** 6.7.15 — repair 5 (generics lane; filed from the 6.7.14 generics lane, placed at the 6.7.14 wave-1 integration, 2026-10-17) — never 7.x.
+**Placement:** 6.7.15 — repair 5 (generics lane, wave 1, unit G1; placed at the 6.7.15 open, 2026-10-18) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 open):** D6 — (a) Refuse it once, at the name.
 **Severity:** Low — nothing is miscompiled at the written name (the struct or scalar is used, the `<..>` is dropped),
 but the `<..>` is read by no one: `Box<Pt<nosuch>>` compiles with an unknown name inside it.
 **Kind:** language — whether `Name<..>` on a non-generic type is refused (and with what words) is the user's call.
