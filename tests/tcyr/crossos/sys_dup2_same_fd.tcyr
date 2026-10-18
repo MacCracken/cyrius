@@ -6,7 +6,7 @@
 # `sys_dup2(1, 1)` answered -22 on aarch64 Linux (qemu and real pi) where x86_64 Linux and both Macs
 # answer 1, so a portable `if (sys_dup2(a, b) < 0)` read a failure on one target only — and a cx
 # guest's dup2(1, 1), which cxvm serves through the host's sys_dup2, answered -22 on an aarch64 cxvm.
-# The peer now asks fcntl(F_GETFD) for the self-dup, as glibc's aarch64 dup2 does.
+# The peer now asks fcntl(F_GETFD) for the self-dup, as musl's dup2 does (glibc asks F_GETFL).
 # (issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md; CHANGELOG [6.7.15])
 #
 # WINDOWS is pinned at what its peer answers today, not POSIX's answer: Win32 has no dup2, and the

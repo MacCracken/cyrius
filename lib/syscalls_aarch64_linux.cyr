@@ -698,7 +698,8 @@ fn sys_stat(path, buf): i64 {
 # The self-dup is the one case dup3 is not dup2: dup3(fd, fd, 0) refuses with -EINVAL by design,
 # where dup2(fd, fd) answers fd when it is open and -EBADF when it is not — x86_64 Linux's and
 # macOS's answer. So `oldfd == newfd` asks fcntl(F_GETFD) whether the fd is open instead, as
-# glibc's aarch64 dup2 does. CHANGELOG [6.7.15]
+# musl's dup2 does where there is no dup2 syscall (glibc asks F_GETFL; both fail only with
+# EBADF). CHANGELOG [6.7.15]
 # ⚠ On arm64-macOS it issues the x86 dup2 number 33 (ESYSXLAT routes 33 → BSD dup2 90):
 # Darwin has no dup3, and the Mach-O arm deliberately has no 24 row — the one it had
 # (24 → 90) silently dropped dup3's flags, so dup3(…, O_CLOEXEC) left FD_CLOEXEC clear.
