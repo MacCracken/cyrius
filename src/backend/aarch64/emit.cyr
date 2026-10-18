@@ -2070,11 +2070,13 @@ fn _esx_body_x16(cb, bs, be): i64 {
 #     shared syscall files sit inside lib/syscalls.cyr's aarch64 region and spell their
 #     deliberate x86 numbers through `SYS_*` names (guide rules 1-2), so they stay silent;
 #   · an enum constant or a top-level const (bare, or `Enum.NAME`) DECLARED inside a region
-#     opened in its declaring file (6.7.14): the author's own native number, e.g. `NR_UMOUNT2 =
-#     39` under the guard. The stdlib peers' x86-numbered `SYS_*` (SYS_FSYNC = 74 → 82) sit at
+#     (6.7.14): the author's own native number, e.g. `NR_UMOUNT2 = 39` under the guard. In a
+#     file outside lib/ the region carries through include (6.7.15, D39: a per-arch file
+#     included under the guard); in a file under lib/ only a region opened in that file counts
+#     (`_esx_rg_decl`) — the stdlib peers' x86-numbered `SYS_*` (SYS_FSYNC = 74 → 82) sit at
 #     their file's top level, so their renumbering by design stays silent. A fn-local const is
 #     not judged. Numbers >= 1000 are the band itself.
-# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14]
+# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14] [6.7.15]
 fn _esx_native_warn(S, p, en, lit): i64 {
     if (lit >= 1000) { return 0; }
     var cb = _codebuf_base;
@@ -2194,11 +2196,13 @@ fn _esx_region_at(S, off): i64 {
 }
 
 # 1 iff var slot vi's declaration (`_vdecl_base`, recorded at registration) sits inside a
-# native-aarch64 region opened in the SAME file as the declaration — the frame rule
-# tests/gates/platform/raw_syscall_literals_routed.sh applies, so a constant a peer declares at
-# its file's top level is not judged by lib/syscalls.cyr's region. Every slot up to vi is
-# judged once, in slot order (= declaration order), by a second scanner, and cached: one
-# forward pass however the call sites order their constants.
+# native-aarch64 region by `_esx_rg_decl`'s rule: a declaration in a file outside lib/ is judged
+# by the region it is in, carried through include; one in a file under lib/ only by a region
+# opened in its own file — the frame rule tests/gates/platform/raw_syscall_literals_routed.sh
+# applies, so a constant a stdlib peer declares at its file's top level is not judged by
+# lib/syscalls.cyr's region. Every slot up to vi is judged once, in slot order (= declaration
+# order), by a second scanner, and cached: one forward pass however the call sites order their
+# constants.
 var _esx_rgd = 0;
 var _esx_dv = 0;        # alloc()'d per-slot verdict: 0 not yet judged, 1 outside, 2 inside
 var _esx_dv_next = 0;
@@ -2217,7 +2221,7 @@ fn _esx_decl_in_region(S, vi): i64 {
         var o = load32(_vdecl_base + _esx_dv_next * 4);
         if (o > 0) {
             _esx_rg_scan(S, _esx_rgd, o - 1);
-            store8(_esx_dv + _esx_dv_next, 1 + _esx_rg_local(_esx_rgd));
+            store8(_esx_dv + _esx_dv_next, 1 + _esx_rg_decl(S, _esx_rgd));
         }
         _esx_dv_next = _esx_dv_next + 1;
     }
@@ -2279,6 +2283,40 @@ fn _esx_rg_local(rb): i64 {
     var d0 = 0;
     if (sp > 0) { d0 = load64(load64(rb + 48) + (sp - 1) * 24 + 16); }
     if (load64(rb + 24) > d0) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.15 (D39, the user, 2026-10-18: "Yes, for files outside lib/") — 1 iff a constant DECLARED
+# where the scanner stands is judged inside a native-aarch64 region. In a file outside lib/ the
+# region carries through include, as it does for a raw literal (6.7.14's D61): an author's per-arch
+# file included under the guard declares native numbers (`enum ArchNr { NR_UMOUNT2 = 39; }` ran
+# getpid silently). A file under lib/ — the stdlib, a project's vendored deps — keeps the
+# file-local rule (`_esx_rg_local`): the peers' x86-numbered SYS_* sit at the top level of a file
+# included from inside lib/syscalls.cyr's region and renumber by design. An overflowed include
+# stack names no file: silent. CHANGELOG [6.7.15]
+fn _esx_rg_decl(S, rb): i64 {
+    if (load64(rb + 40) == 1) { return 0; }
+    if (_esx_rg_in_lib(S, rb) == 1) { return _esx_rg_local(rb); }
+    if (load64(rb + 24) > 0) { return 1; }
+    return 0;
+}
+# 1 iff the scanner's current file (its include-stack top, the name its `#@file` marker spells —
+# the include string as written, whichever store slot or overlay it was read from) is under lib/:
+# the name starts `lib/` or has a `/lib/` component.
+fn _esx_rg_in_lib(S, rb): i64 {
+    var sp = load64(rb + 32);
+    if (sp == 0) { return 0; }
+    var e = load64(rb + 48) + (sp - 1) * 24;
+    var nm = S + 0x459D000 + load64(e);
+    var l = load64(e + 8);
+    var j = 0;
+    while (j + 4 <= l) {
+        if (j == 0 || load8(nm + j - 1) == 47) {   # a component starts here: `lib/`?
+            if (load8(nm + j) == 108 && load8(nm + j + 1) == 105) {
+                if (load8(nm + j + 2) == 98 && load8(nm + j + 3) == 47) { return 1; }
+            }
+        }
+        j = j + 1;
+    }
     return 0;
 }
 # A `#@file "<name>"` marker whose name starts at `base + ns`: re-anchor, resume or entry.

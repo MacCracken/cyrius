@@ -8439,13 +8439,18 @@ The rules, in order:
      `SYS_POLL` 7, `SYS_EPOLL_WAIT` 232), never raw — a program that includes the stdlib
      prints none of these warnings;
    - **an `enum` constant or a top-level `const`** (bare, or `Enum.NAME`) **DECLARED inside a
-     region opened in its own file** (since 6.7.14): it is the author's native number, as much
-     as a literal is — `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64
-     region, is renumbered → 172 (getpid); write 1039 for native umount2`. A constant is judged
-     where it is DECLARED, not where it is used: one declared at a file's top level is not
-     judged — the stdlib peers' `SYS_*` renumber by design (`SYS_FSYNC = 74` → 82), and the
-     peers are included from inside `lib/syscalls.cyr`'s region. A fn-local `const` is not
-     judged.
+     region** (since 6.7.14): it is the author's native number, as much as a literal is —
+     `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64 region, is renumbered
+     → 172 (getpid); write 1039 for native umount2`. A constant is judged where it is
+     DECLARED, not where it is used. **In a file outside `lib/` the region carries through
+     `include`** (since 6.7.15, the user's decision, 2026-10-18), as it does for a literal: an
+     `enum ArchNr { NR_UMOUNT2 = 39; }` at the top of your own `src/arch_aarch64.cyr`, included
+     from inside `#ifdef CYRIUS_ARCH_AARCH64`, is warned at each `syscall(NR_UMOUNT2, …)`. **In
+     a file under `lib/`** (an include name starting `lib/` or with a `/lib/` component — the
+     stdlib and a project's vendored deps) only a region opened in that file itself counts:
+     the stdlib peers' `SYS_*` sit at their file's top level, renumber by design (`SYS_FSYNC
+     = 74` → 82) and are included from inside `lib/syscalls.cyr`'s region, so a program that
+     includes the stdlib stays silent. A fn-local `const` is not judged.
 
    ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
