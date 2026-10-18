@@ -175,7 +175,18 @@ fn main(): i64 {
     # by argv, because argv(2) is already axis 1b's second binary.
     var src = getenv("HARNESS_PIPE_SRC");
     if (src != 0) {
+        # Axis 2e: HARNESS_PIPE_PREIGN ignores SIGPIPE first (a caller's own choice);
+        # HARNESS_PIPE_DISP answers 60 + SIGPIPE's handler after the call (60 SIG_DFL, 61
+        # SIG_IGN) once the child's own 7 came back. x86_64 Linux rt_sigaction (#13).
+        if (getenv("HARNESS_PIPE_PREIGN") != 0) { signal_ignore(SIGPIPE); }
         var prc = regression_pipe_to_bin_capture(bin, src, 0, &HARNESS_ENVP);
+        if (getenv("HARNESS_PIPE_DISP") != 0) {
+            if (prc != 7) { return 154; }
+            var old[32];
+            store64(&old, 99);
+            if (syscall(13, 13, 0, &old, 8) != 0) { return 155; }
+            return 60 + load64(&old);
+        }
         if (prc == 0 - 2) { return 150; }
         if (prc == 0 - 1) { return 151; }
         if (prc < 0) { return 152; }
@@ -488,6 +499,29 @@ if [ "$rc" = 124 ]; then
     echo "        is blocked in sys_write with the pipe full. regression_pipe_write_all's poll"
     echo "        is what bounds it — the wait deadline is never reached from there."
 fi
+
+# ── AXIS 2e — a child that EXITS WITHOUT READING its stdin. The parent's next write then
+# raises SIGPIPE, whose default action killed the CALLER: the check driver died with 141 in
+# `_monomorph_substrate_gate` (an 847-byte fixture piped into a binary that exits 42 unread),
+# and every driver row after it went without a verdict. `fine` never reads stdin; the ~1 MB
+# source makes the race deterministic (the 847-byte one lost it only under load). The write
+# runs with SIGPIPE ignored only when it was SIG_DFL, and puts it back after.
+# MUTATION (6.7.15, made and reverted): `regression_pipe_write_all` calling the write loop
+# without `_regression_sigpipe_hold` -> rows 1 and 2 RED (141, 141); the release dropped ->
+# row 2 RED (61); the hold ignoring a caller's own SIG_IGN check -> row 3 RED (60).
+echo "axis 2e — ⭐ a child that exits without reading does not kill the runner (SIGPIPE):"
+rc=0
+HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 60 "$T/harness" "$T/fine" \
+    > "$T/w2.out" 2>&1 || rc=$?
+check "the child's own exit code comes back, not the runner's SIGPIPE death (141)" 7 "$rc"
+rc=0
+HARNESS_PIPE_DISP=1 HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 60 "$T/harness" "$T/fine" \
+    > "$T/w3.out" 2>&1 || rc=$?
+check "and the caller's SIGPIPE is SIG_DFL again after the call (60)" 60 "$rc"
+rc=0
+HARNESS_PIPE_PREIGN=1 HARNESS_PIPE_DISP=1 HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 60 \
+    "$T/harness" "$T/fine" > "$T/w4.out" 2>&1 || rc=$?
+check "a caller that ignored SIGPIPE itself keeps its ignore (61)" 61 "$rc"
 
 # ── AXIS 3 — THE CENSUS UNDER IT. The behavioural axes above exercise THREE verbs; the
 # defect was a HABIT shared by every fork site the driver can reach. So: no blocking

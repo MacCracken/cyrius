@@ -790,7 +790,58 @@ fn _regression_poll_fd(fd, events, timeout_ms): i64 {
 # the same ready poll blocks on byte 65537. Axis 2d of
 # tests/gates/toolchain/check_driver_bounded.sh caught exactly that and is the reason the
 # axis exists. The unbounded path (`timeout_ms <= 0`) keeps writing in one go, as before.
+#
+# A child that exits WITHOUT reading its stdin closes the pipe's read end, and the next
+# write(2) raises SIGPIPE, whose default action kills the CALLER — the check driver died with
+# 141 mid-run, every driver row after it left without a verdict. So the write runs with
+# SIGPIPE ignored, where the same write answers EPIPE (a short count, as above). CHANGELOG [6.7.15]
 fn regression_pipe_write_all(fd, buf, n, timeout_ms): i64 {
+    var held = _regression_sigpipe_hold();
+    var written = _regression_pipe_write_loop(fd, buf, n, timeout_ms);
+    _regression_sigpipe_release(held);
+    return written;
+}
+
+# Ignore SIGPIPE for the length of a write, but only when its disposition is SIG_DFL — a
+# caller that installed its own ignore or handler keeps it. A child forked before the write
+# has already inherited the caller's disposition, so the ignore never reaches an exec'd child.
+# Returns 1 when it switched SIG_DFL to SIG_IGN (`_regression_sigpipe_release` puts it back).
+# The query is sigaction with act = 0: Linux rt_sigaction (x86 #13 / aarch64 #134, the
+# 32-byte kernel struct), macOS the 3-arg BSD sigaction (ESYSXLAT renumbers 13 / 134 to 46;
+# the handler is the struct's first 8 bytes there too). Other targets have no SIGPIPE.
+fn _regression_sigpipe_hold(): i64 {
+    var old[32];
+    var i = 0;
+    while (i < 32) { store8(&old + i, 0); i += 1; }
+    var rc = 0 - 1;
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    rc = syscall(13, SIGPIPE, 0, &old, 8);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    rc = syscall(134, SIGPIPE, 0, &old, 8);
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_X86
+    rc = syscall(13, SIGPIPE, 0, &old);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    rc = syscall(134, SIGPIPE, 0, &old);
+    #endif
+    #endif
+    if (rc != 0) { return 0; }
+    if (load64(&old) != 0) { return 0; }   # not SIG_DFL: the caller's own choice stands
+    if (signal_ignore(SIGPIPE) != 0) { return 0; }
+    return 1;
+}
+
+fn _regression_sigpipe_release(held): i64 {
+    if (held == 1) { signal_default(SIGPIPE); }
+    return 0;
+}
+
+fn _regression_pipe_write_loop(fd, buf, n, timeout_ms): i64 {
     var written = 0;
     var chunk_cap = n;
     if (timeout_ms > 0) { chunk_cap = 4096; }   # PIPE_BUF — what POLLOUT actually promises
