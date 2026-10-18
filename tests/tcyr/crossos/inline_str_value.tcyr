@@ -18,6 +18,10 @@
 # between two inline `Str`s does: through 6.7.13 it stored a's address into t.data and left t.len stale (6.6.16's
 # pun, which `str_len(t)` read back through t.data for a bare t). An untyped source keeps the one-word store
 # (tests/gates/frontend/inline_str_value.sh K8).
+# Since 6.7.15 a `*Str` joins in (the user's decisions of 2026-10-18): `t = p` / `t = *p` copy the header p points at
+# into an inline `Str` (D14, the ps_* rows; an if-expression of handles keeps the word, D15); `p = t` / `GP = gt` into a
+# `*Str` take the header's address as the declaration does (D16, the pa_* rows); a `*Str` dereference into a `Str`
+# parameter passes p (`str_len(*p)`, the sd_* rows); a zone `var HB: Str = gb;` with gb declared below binds (D17).
 #
 # CROSS-HOST: the address is EFLADDR / EVADDR on each backend, the tail-call rows check that a frame address
 # laundered through a handle diverts the `jmp` (`_fn_local_addr`). Run on ecb / ach (Mach-O), cass (PE) and pi

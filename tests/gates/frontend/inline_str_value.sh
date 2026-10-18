@@ -79,8 +79,8 @@
 # every inline struct — D15, pinned: 22 with today's warning).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
-# floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
-# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
+# floor 120) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
+# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X14 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
 # leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
 # every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
