@@ -22,6 +22,25 @@
 #          a const, a list then a scalar, a same-valued redeclaration, and the program-start rule — a call in an
 #          EARLIER initializer that writes the global keeps its write over `= C` / `= 0` (as it did over `= 5`),
 #          and over `= C` redeclaring a literal (O13: `var G = 3; var r = setg(); var G = C;` ends at 9)
+#          ⛔ 6.7.15 (the user's decision D2 (a), 2026-10-18): EVERY constant redeclaration is the value from program
+#          start — a const- / enum-named or folded-only-at-the-replay one too, which stored in declaration order
+#          after the slot's earlier writers (issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-
+#          literal.md). O3 35 -> 55 (an earlier computed initializer runs into a sink), O4 57 -> 77, O6 24 -> 44,
+#          O8 37 -> 77 (a list before it is not laid down), as their literal forms (O2, B in
+#          global_redeclaration_one_definition.sh, a list then `var B = 7;` 77)
+#   O14    a superseded constant is not the "last var" (the no-main exit value): `var z = g(); var a = C; var a = 5;`
+#          exits g()'s 9, as through 6.7.14 (its sink was not one either)
+#   N1-N11 the issue's table, by value on every leg: the guide's literal example, a literal then a const, a const
+#          pair (the filed repro), an enum pair, `= 0` then a literal / a const, and a call between the two that
+#          writes the global (`setg`) keeping its write over `= 5` / `= C` after `= 3`, `= D`, `= 0`; N12 an earlier
+#          computed initializer still runs (its count) with its result discarded; N13 a bool global keeps its
+#          startup store (its replay judges the value, after setg)
+#   T1-T4  tests/tcyr/crossos/global_constant_redeclaration_order.tcyr (the table and the controls in one zone) on
+#          x86_64, aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix) — the release gate runs it on the hosts
+#   S8-S11 an earlier constant declaration leaves no startup store: `var a = D; var a = C;`, `var a = 0; var a = C;`,
+#          an enum pair, and `var a = C; var a = 5;` are each BYTE-IDENTICAL to the one literal (through 6.7.14 the
+#          earlier store ran — into the slot, or into an 8-byte sink after a literal)
+#   V4-V5  a superseded entry's replay still reports: another file's private const, a bool global's refusal
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -50,6 +69,12 @@
 # the three legs (the `* / << >>` arms F1, F4-F9, F14 still fold their factor).
 # MUTATION (measured, 6.7.15, a mutated scratch copy of the tree): _cf_excl without 119 / 120 / 121 / 152 -> 69 red:
 # F22-F41 and F43-F45 on x86_64, aarch64 and cx, each "compile failed: expected ';'" (F42, the control, stays green).
+# MUTATION (measured, 6.7.15, mutated scratch copies of the tree, every leg built from each): the tree before the
+# fix (79f6ca16d's src) -> 38 red: O3 O4 O6 O8 N3 N4 N6 N9 N10 N12 on all three legs, S8-S11, T1-T4; `_gvk_link`
+# superseding nothing -> 37 red: the same but S11; `_gvk_quiet` not dropping a superseded constant -> S8-S10 (its
+# store runs into a sink); `_gvi_slot` always making the sink -> S8-S11; `_gvk_one` not folding a superseded entry
+# (6.7.14's early return) -> S11 (`var a = C; var a = 5;`: C's sink store, as through 6.7.14); `_gvi_baked` making
+# a superseded constant the last var -> O14 on all three legs.
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -61,7 +86,18 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 case $CC in /*) ;; *) CC="$ROOT/$CC" ;; esac
 [ -x "$CC" ] || { echo "FAIL: const_init_bake_and_fold: no compiler at $CC"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: const_init_bake_and_fold: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$W"' EXIT
+# A PRIVATE wine prefix under $W (never ~/.wine), torn down with its server dir on exit — the
+# defer_every_return_path.sh helper (T4).
+WP="$W/wine"
+WHM="$W/whome"
+_wine_down() {
+  [ -d "$WP" ] || return 0
+  _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+  WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+  WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+  rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$W"' EXIT
 fail=0; rows=0; skips=0
 bad() { echo "  FAIL: const_init_bake_and_fold $1"; fail=$((fail + 1)); }
 
@@ -104,21 +140,52 @@ if "$CC" < "$W/S7.cyr" > "$W/S7" 2> "$W/S7.err"; then
 else bad "S7: compile failed: $(grep -m1 '^error' "$W/S7.err")"; fi
 same K1 7 'kernel;\nconst C = 5;\nenum E { A = 2; }\nvar X = C;\nvar Y = E.A;\nsyscall(60, X + Y);\n' \
           'kernel;\nconst C = 5;\nenum E { A = 2; }\nvar X = 5;\nvar Y = 2;\nsyscall(60, X + Y);\n' CYRIUS_ELF64_KERNEL=1
+# S8-S11 — 6.7.15 (D2 (a)): an earlier constant declaration of the slot leaves no startup store, and no sink. S8-S10
+# are pairs of two values (whether they warn is global_redeclaration_one_definition.sh's question: `same_w` compares
+# the bytes and the exit only); S11, one value twice, is silent as well (`same`).
+same_w() {
+  rows=$((rows + 1))
+  printf '%b' "$3" > "$W/$1.cyr"; printf '%b' "$4" > "$W/$1.l.cyr"
+  r1=0; "$CC" < "$W/$1.cyr" > "$W/$1" 2> "$W/$1.err" || r1=$?
+  r2=0; "$CC" < "$W/$1.l.cyr" > "$W/$1.l" 2> "$W/$1.l.err" || r2=$?
+  [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || { bad "$1: compile rc $r1 / $r2: $(grep -m1 '^error' "$W/$1.err" "$W/$1.l.err")"; return; }
+  cmp -s "$W/$1" "$W/$1.l" || bad "$1: not byte-identical to the literal form ($(wc -c < "$W/$1") / $(wc -c < "$W/$1.l") B): the earlier constant left code or a sink"
+  chmod +x "$W/$1"; x=0; timeout 10 "$W/$1" > /dev/null 2>&1 || x=$?
+  [ "$x" -eq "$2" ] || bad "$1: exit $x, expected $2"
+}
+same_w S8 5 'const C = 5;\nconst D = 3;\nvar a = D;\nvar a = C;\nsyscall(60, a);\n' 'const C = 5;\nconst D = 3;\nvar a = 5;\nsyscall(60, a);\n'
+same_w S9 5 'const C = 5;\nvar a = 0;\nvar a = C;\nsyscall(60, a);\n' 'const C = 5;\nvar a = 5;\nsyscall(60, a);\n'
+same_w S10 4 'enum E { A = 2; B = 4; }\nvar a = E.A;\nvar a = E.B;\nsyscall(60, a);\n' 'enum E { A = 2; B = 4; }\nvar a = 4;\nsyscall(60, a);\n'
+same S11 5 'const C = 5;\nvar a = C;\nvar a = 5;\nsyscall(60, a);\n' 'const C = 5;\nvar a = 5;\nsyscall(60, a);\n'
 
 # The ordering / value rows: ID|WANT|SOURCE, run on every leg.
 ROWS="O1|53|${F}var a = 5;\nvar b = a;\nvar a = f();\nsyscall(60, b * 10 + a);\n
 O2|55|${F}var a = f();\nvar b = a;\nvar a = 5;\nsyscall(60, b * 10 + a);\n
-O3|35|const C = 5;\n${F}var a = f();\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + a);\n
-O4|57|const C = 5;\nconst D = 7;\nvar a = C;\nvar b = a;\nvar a = D;\nsyscall(60, b * 10 + a);\n
+O3|55|const C = 5;\n${F}var a = f();\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + a);\n
+O4|77|const C = 5;\nconst D = 7;\nvar a = C;\nvar b = a;\nvar a = D;\nsyscall(60, b * 10 + a);\n
 O5|53|const C = 5;\n${F}var a = C;\nvar b = a;\nvar a = f();\nsyscall(60, b * 10 + a);\n
-O6|24|enum E { A = 2; B = 4; }\nvar a = E.A;\nvar b = a;\nvar a = E.B;\nsyscall(60, b * 10 + a);\n
+O6|44|enum E { A = 2; B = 4; }\nvar a = E.A;\nvar b = a;\nvar a = E.B;\nsyscall(60, b * 10 + a);\n
 O7|55|const C = 5;\nvar a = 9;\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + a);\n
-O8|37|enum E { A = 7; }\nvar B[1] = { 3 };\nvar c = load8(&B);\nvar B = A;\nsyscall(60, c * 10 + B);\n
+O8|77|enum E { A = 7; }\nvar B[1] = { 3 };\nvar c = load8(&B);\nvar B = A;\nsyscall(60, c * 10 + B);\n
 O9|55|const C = 5;\nvar a = C;\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + a);\n
 O10|9|fn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 5;\nsyscall(60, G);\n
 O11|9|const C = 5;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
 O12|9|fn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 0;\nsyscall(60, G);\n
 O13|9|const C = 5;\nvar G = 3;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
+O14|9|const C = 5;\nfn g(): i64 { return 9; }\nvar z = g();\nvar a = C;\nvar a = 5;\n
+N1|7|var a = 5;\nvar b = a;\nvar a = 7;\nsyscall(60, b);\n
+N2|5|const C = 5;\nvar G = 3;\nvar b = G;\nvar G = C;\nsyscall(60, b);\n
+N3|5|const C = 5;\nconst D = 3;\nvar a = D;\nvar b = a;\nvar a = C;\nsyscall(60, b);\n
+N4|44|enum E { A = 2; B = 4; }\nvar a = E.A;\nvar b = a;\nvar a = E.B;\nsyscall(60, b * 10 + a);\n
+N5|5|var G = 0;\nvar b = G;\nvar G = 5;\nsyscall(60, b);\n
+N6|5|const C = 5;\nvar G = 0;\nvar b = G;\nvar G = C;\nsyscall(60, b);\n
+N7|9|var G = 3;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 5;\nsyscall(60, G);\n
+N8|9|const C = 5;\nvar G = 3;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
+N9|9|const C = 5;\nconst D = 3;\nvar G = D;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
+N10|9|const C = 5;\nvar G = 0;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
+N11|9|var G = 0;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 5;\nsyscall(60, G);\n
+N12|51|const C = 5;\nvar n = 0;\nfn f(): i64 { n = n + 1; return 3; }\nvar a = f();\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + n);\n
+N13|11|const T = true;\nvar G: bool = T;\nfn setg(): i64 { G = false; return 1; }\nvar r = setg();\nvar G: bool = T;\nsyscall(60, G + 10);\n
 D1|5|var R = (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1);\nsyscall(60, R + 5);\n
 D2|8|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar Q = (0 - CF_MAX - 1) / (0 - 1);\nsyscall(60, (Q >> 63) + 7);\n
 D3|3|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar R = (0 - CF_MAX - 1) % (0 - 1);\nsyscall(60, R + 3);\n
@@ -225,8 +292,40 @@ rc=0; "$CC" < "$W/v2.cyr" > "$W/v2" 2> "$W/v2.err" || rc=$?
 nw=$(grep -c '^warning.*assigning non-pointer to typed pointer' "$W/v2.err" || true)
 [ "$rc" -ne 0 ] && [ "$nw" -eq 2 ] && grep -q "^error.*cannot initialize bool 'b'" "$W/v2.err" \
   || bad "V2: want the two \`*T\` warnings (lines 4, 5) and the bool refusal: rc $rc, $(grep -E '^(error|warning)' "$W/v2.err" | tr '\n' '|')"
+# V4 / V5 — 6.7.15: an entry a later constant superseded still has its replay's reports (it runs into its sink, never
+# stepped): another file's private const before a literal, a bool global's non-bool value before a bool constant.
+rows=$((rows + 1))
+printf 'include "lib/sec.cyr"\nvar X = PC;\nvar X = 5;\nsyscall(60, X);\n' > "$W/v/m4.cyr"
+rc=0; (cd "$W/v" && "$CC" < m4.cyr > m4.bin 2> m4.err) || rc=$?
+[ "$rc" -ne 0 ] && grep -q "'PC' is private to its file" "$W/v/m4.err" || bad "V4: a superseded \`var X = PC;\` was not refused (rc $rc): $(grep -m1 -E '^(error|warning)' "$W/v/m4.err")"
+rows=$((rows + 1))
+printf 'const BC = 1;\nconst T = true;\nvar b: bool = BC;\nvar b: bool = T;\nsyscall(60, 0);\n' > "$W/v5.cyr"
+rc=0; "$CC" < "$W/v5.cyr" > "$W/v5" 2> "$W/v5.err" || rc=$?
+[ "$rc" -ne 0 ] && grep -q "^error.*cannot initialize bool 'b'" "$W/v5.err" || bad "V5: a superseded \`var b: bool = BC;\` was not refused (rc $rc): $(grep -m1 -E '^(error|warning)' "$W/v5.err")"
+
+# T1-T4 — 6.7.15: tests/tcyr/crossos/global_constant_redeclaration_order.tcyr, every assertion, on x86_64, aarch64
+# (qemu), cx (cxvm) and PE (wine, the private prefix above).
+TC="$ROOT/tests/tcyr/crossos/global_constant_redeclaration_order.tcyr"
+NT=$(grep -c '^assert_eq' "$TC")
+# tl ID BIN [RUNNER...] — BIN (the compiled file) runs to exit 0 with every assertion passed
+tl() {
+  rows=$((rows + 1)); id=$1; b=$2; shift 2
+  [ -s "$b" ] || { bad "$id: the crossos file did not compile"; return; }
+  chmod +x "$b"; x=0
+  if [ "$id" = T3 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
+  else timeout 180 "$@" "$b" > "$b.out" 2> /dev/null || x=$?; fi
+  [ "$x" -eq 0 ] && grep -q "$NT passed, 0 failed" "$b.out" || bad "$id: exit $x: $(grep -m3 FAIL "$b.out" | tr '\n' '|')$(tail -1 "$b.out")"
+}
+"$CC" < "$TC" > "$W/t1" 2> /dev/null; tl T1 "$W/t1" env
+if [ -x "$W/cycc_a64" ]; then "$W/cycc_a64" < "$TC" > "$W/t2" 2> /dev/null; tl T2 "$W/t2" qemu-aarch64; fi
+if [ -x "$W/cycc_cx" ]; then "$W/cycc_cx" < "$TC" > "$W/t3" 2> /dev/null; tl T3 "$W/t3"; fi
+if command -v wine > /dev/null 2>&1; then
+  CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$W/t4.exe" 2> /dev/null
+  tl T4 "$W/t4.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
+else echo "  SKIP: const_init_bake_and_fold T4 (PE) — wine not installed"; skips=$((skips + 1)); fi
 
 [ "$rows" -ge 50 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL const_init_bake_and_fold: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS const_init_bake_and_fold: $rows rows — a folded constant global has no startup code (byte-identical to its literal), the orderings keep their values on x86_64 / aarch64 / cx, D11's repros give 5 / 8 / 3, the replay's reports are kept"
+echo "PASS const_init_bake_and_fold: $rows rows — a folded constant global has no startup code (byte-identical to its literal), every constant redeclaration is the value from program start (6.7.15) on x86_64 / aarch64 / cx / PE, D11's repros give 5 / 8 / 3, the replay's reports are kept"
 exit 0

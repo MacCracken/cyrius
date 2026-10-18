@@ -7233,15 +7233,18 @@ ran the division at startup and trapped on x86_64 and cx (SIGFPE, exit 136; on P
 exception) while aarch64 ran (the user's decision D11 (b), 2026-10-16). One consequence, what a
 literal already did: a call in an **earlier** initializer that writes the global (`var r = setg();`
 above `var G = C;` or `var G = 0;`, `setg` storing 9) keeps its write — `G` is 9, where the startup
-store reset it to `C` / 0. A *redeclared* name keeps its order when an earlier declaration of it is
-computed, `= 0`, or a const- / enum-named constant of another value: `var a = f(); var a = C;` and
-`var a = D; var b = a; var a = C;` end at `C`, `b` reading `D`. Over an earlier nonzero integer
-literal (`= 3`, or a literal expression such as `= -3` or `= 2 + 1`) the later constant is the
-value from program start, as between two literals: `var a = 3; var b = a; var a = C;` gives
-`b == C`, and an initializer between them that writes `a` keeps its write —
-`var G = 3; var r = setg(); var G = C;` ends at 9. A `bool` global keeps its startup store (its
-value is judged there), and so does an initializer naming another file's `private` const (refused
-there).
+store reset it to `C` / 0. A *redeclared* name follows the same rule however its earlier
+declaration is spelled (6.7.15, the user's decision D2 (a), 2026-10-18): a constant redeclaration
+— a literal, `= 0`, a const or enum name — is the global's value from program start, and an
+earlier constant declaration of it leaves no startup store. So `var a = D; var b = a; var a = C;`
+gives `b == C`, `var G = 0; var b = G; var G = C;` gives `b == C`, `var a = E.A; var b = a;
+var a = E.B;` gives `b == E.B`, and `var G = D; var r = setg(); var G = C;` ends at 9; an earlier
+computed initializer still runs, its result discarded (`var a = f(); var b = a; var a = C;` gives
+`b == C`). Through 6.7.14 an earlier `= 0` or const- / enum-named declaration (or a computed one,
+before a named constant) kept its startup store, in order — `b` read `D`, 0, `E.A`, `f()`, and
+the `setg` rows ended at `C` — while an earlier nonzero literal did not. A `bool` global keeps its
+startup store (its value is judged there), and so does an initializer naming another file's
+`private` const (refused there).
 
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
 optionally negated — `var G: f64 = 1.5;`, `var F: f32 = 2.5;`, an untyped `var K = -1.5;` — is
@@ -7290,10 +7293,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 ```
 
 - A redeclaration whose initializer is a compile-time **constant** (an integer
-  literal or a foldable integer expression, zero included) is the global's value
-  **from program start**. An earlier *computed* initializer of the same name
-  (`var a = f();`) still runs — its side effects happen — but its result is
-  discarded.
+  literal or a foldable integer expression, zero included, or a const or enum name —
+  6.7.15, see *Global Initializers*) is the global's value **from program start**,
+  and an earlier constant declaration of it leaves no startup store. An earlier
+  *computed* initializer of the same name (`var a = f();`) still runs — its side
+  effects happen — but its result is discarded.
 - A **computed** redeclaration runs in declaration order like any deferred
   initializer: `var a = 5; var b = a; var a = f();` gives `b == 5` and `a == f()`.
 - Two `= { .. }` lists for one array both apply, in order: the later list's

@@ -5811,8 +5811,10 @@ fn PARSE_GVAR_REG(S): i64 {
 #   * _gvk_warn: what an x86 kernel build still leaves to its late replay is named, once per entry.
 # CHANGELOG [6.6.16]
 var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cyr; see _gvk_arm)
+# _gvk_bk 4 (6.7.15): a superseded entry's constant, folded and not baked.
 var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal, 3 = 1 not replayed
-var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked (bk 1 / 3)
+var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked or folded (bk 1 / 3 / 4)
+var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (it supersedes; 6.7.15)
 var _spc_ti = 0;     # the struct walker's token
 var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
 var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
@@ -5857,26 +5859,28 @@ fn _gvk_rhs(S, sti): i64 {
 }
 
 # Before the replay (names resolve as there: all registered, a kernel build's program globals
-# hidden). An entry a later constant declaration superseded is that declaration's value: skipped.
+# hidden). An entry a later constant declaration superseded is that declaration's value: not baked.
 fn _gvk_pre(S): i64 {
     var gc = L64(S + 0x19A000);
     _gvk_bk = alloc(gc + 8);
     _gvk_v = alloc(gc * 8 + 8);
+    _gvk_ik = alloc(gc + 8);
     var gi = 0;
     while (gi < gc) {
         store8(_gvk_bk + gi, _gvk_one(S, gi));
         gi = gi + 1;
     }
+    _gvk_chain(S, gc);   # 6.7.15: a baked constant supersedes the slot's earlier writers
     gi = 0;
     while (gi < gc) {
-        if (load8(_gvk_bk + gi) == 1) { if (_gvk_quiet(S, gi) == 1) { store8(_gvk_bk + gi, 3); } }
+        var k = load8(_gvk_bk + gi);
+        if (k == 1 || k == 4) { if (_gvk_quiet(S, gi) == 1) { store8(_gvk_bk + gi, 3); } }
         gi = gi + 1;
     }
     return 0;
 }
 fn _gvk_one(S, gi): i64 {
     var graw = L64(_gvt(S) + gi * 8);
-    if ((_gv_sup(graw) & 1) != 0) { return 0; }
     var ti = _gvk_rhs(S, _gv_tok(graw));
     if (ti == 0) { return 0; }
     if (gi >= _gv_ent_cap) { return 0; }
@@ -5888,10 +5892,54 @@ fn _gvk_one(S, gi): i64 {
         v = _CF_TRY(S, ti, 5);
         _cf_enum = 0;
         if (_cf_ok == 0) { return 0; }
+        store8(_gvk_ik + gi, 1);
     }
-    S64(_vgsi_base + vi * 8, v);
     store64(_gvk_v + gi * 8, v);
+    if ((_gv_sup(graw) & 1) != 0) { return 4; }   # 6.7.15: the later constant's value is the slot's
+    S64(_vgsi_base + vi * 8, v);
     return 1;
+}
+
+# ⛔ 6.7.15 — EVERY CONSTANT REDECLARATION IS THE VALUE FROM PROGRAM START (the user's decision D2 (a), 2026-10-18;
+# issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md). A redeclaration pass 1 folds (`= 7`,
+# `= 0`, `= 2 + 1`) supersedes every earlier writer of the slot (_gv_supersede); one only the replay folds (`= C`,
+# `= E.B`, `= A + 1`) did not, so its earlier writers stored in order: `var a = D; var b = a; var a = C;` gave b D,
+# `var G = 0; var b = G; var G = C;` b 0, `var a = f(); var b = a; var a = C;` b f(), and `var G = D;` / `= 0` then
+# `var r = setg(); var G = C;` reset setg's write to C. Now an entry whose integer fold _gvk_one baked (bk 1)
+# supersedes the earlier writers of its slot the same way — a computed one runs into a sink, a constant runs nothing
+# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. A float literal
+# (`_gvk_flt`) keeps its order (not a constant this decision named).
+fn _gvk_chain(S, gc): i64 {
+    var gi = 0;
+    while (gi < gc) {
+        if (load8(_gvk_ik + gi) == 1) { _gvk_link(S, gi); }
+        gi = gi + 1;
+    }
+    return 0;
+}
+# Entry `gi`, an integer fold of its slot: baked (not superseded), it supersedes.
+fn _gvk_link(S, gi): i64 {
+    if (load8(_gvk_bk + gi) != 1) { return 0; }
+    var sti = _gv_tok(L64(_gvt(S) + gi * 8));
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    return _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1));
+}
+# Every target of an entry before `gi` that writes slot `vi` (named `noff`) is superseded, as _gv_supersede marks.
+fn _gvk_sup(S, gi, vi, noff): i64 {
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        if ((r >> 2) < gi) { _gvk_sup1(S, r >> 2, r & 3, vi); }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return 0;
+}
+fn _gvk_sup1(S, g, k, vi): i64 {
+    var w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF;
+    if (w - 1 != vi) { return 0; }
+    var a = _gvt(S) + g * 8;
+    S64(a, L64(a) | ((1 << k) << 40));
+    return 0;
 }
 # A float scalar's float literal, optionally negated, then `;` (`_gai_ok` 1): the bits the replayed store writes —
 # binary64 for an `f64` global or an untyped `var K = 1.5;`, binary32 zero-extended for an `f32` (_f32_init_round
@@ -5919,15 +5967,15 @@ fn _gvk_flt(S, sti, vi, ti): i64 {
 # instructions, 18 bytes on x86_64), and the replay re-ran the expression — so `var R = INT_MIN % -1;` (folding to
 # zero) and `var Q = (0 - CF_MAX - 1) / (0 - 1);` (through an enum constant) trapped at startup on x86_64 and cx
 # (SIGFPE, 136) while aarch64 ran: a constant initializer is the global's value from program start (the guide's
-# § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (baked, bk 1) is stepped over by the replay: the
-# slot's image value is its value and the nearest earlier replayed writer of the slot, if any, is a baked entry of
-# that value — so a computed initializer, `= 0` or a const- / enum-named constant of another value before it keeps
-# the store, in order (`var a = f(); var a = C;` still ends at C; `var a = C; var b = a; var a = D;` still reads C
-# into b). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer: the later constant
-# is the value from program start, as between two literals. Not dropped:
-# a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3), and an
-# initializer naming another file's private const (the replay reports it). cx stores the image value first
-# (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14]
+# § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (bk 1, or 4: folded but superseded) is stepped
+# over by the replay. A superseded constant runs nothing: a later constant is the slot's value (6.7.15, D2 (a): a
+# baked integer fold supersedes like a literal, _gvk_chain). Otherwise the slot's image value is its value and the
+# nearest earlier replayed writer of the slot, if any, is a baked entry of that value — after _gvk_chain that is a
+# float literal's (`_gvk_flt` entries keep their order: a computed initializer or a float of another value before
+# it keeps the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
+# dropped: a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3),
+# and an initializer naming another file's private const (the replay reports it) — superseded, each still runs into
+# its sink. cx stores the image value first (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14] [6.7.15]
 fn _gvk_quiet(S, gi): i64 {
     if (gi >= _gv_ent_cap) { return 0; }
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
@@ -5936,6 +5984,7 @@ fn _gvk_quiet(S, gi): i64 {
     if (GVBOOL(S, vi) != 0) { return 0; }
     var sti = _gv_tok(L64(_gvt(S) + gi * 8));
     if (_gvk_names_ok(S, _gvk_rhs(S, sti)) == 0) { return 0; }
+    if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) != 0) { return 1; }   # 6.7.15
     var v = load64(_gvk_v + gi * 8);
     var p = _gvk_prev(S, gi, vi, TOKVAL(S, sti + 1));
     if (p == 0 - 2) { return 0; }
@@ -6189,8 +6238,17 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
     }
     if (idx < 0) { return 1; }
     if (GVTYPE(S, idx) < 0) { _tp_warn_g(S, st, idx); }
-    _gv_slvar(S, idx);
+    if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) == 0) { _gv_slvar(S, idx); }   # 6.7.15: superseded, it was a sink's
     return 1;
+}
+# The slot entry `gi`'s scalar initializer is replayed into: _gv_target's — or, for a constant the replay steps (bk 3,
+# _gvi_baked) that a later constant superseded, its own slot, which it does not write and does not make the "last
+# var" (as its sink did not): the sink, an 8-byte global, would be the one trace of a declaration that leaves no
+# startup store (6.7.15, D2 (a)). CHANGELOG [6.7.15]
+fn _gvi_slot(S, gi, gsup, gps, noff): i64 {
+    var vi = _gv_ent_slot(S, gi, 0, noff);
+    if (gps == 0) { if (vi >= 0) { if (load8(_gvk_bk + gi) == 3) { if (GVGAI(S, vi) == 0) { return vi; } } } }
+    return _gv_target(S, vi, gsup, 0);
 }
 # A declaration-zone struct literal's fields, named or positional, as PARSE_STRUCT_INIT reads them (into the
 # global: no frame slot). The replay called the positional walk itself, so the named form the guide teaches,
@@ -6534,7 +6592,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # the struct-named ident to commit to struct-init; otherwise fall
         # through to scalar expr (e.g. `var x = MASK & 0xF;` where MASK
         # is also a struct name).
-        var idx = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
+        var idx = _gvi_slot(S, gi, gsup, gps, noff);   # 6.7.15: a stepped constant makes no sink
         var did_struct = 0;
         did_struct = _gvi_tuple(S, gi, idx, gps, sti, noff);   # 6.7.7 (B4): a tuple literal; (T5) a capture
         if (did_struct == 0 && _lit_head_tok(S) == 1) {

@@ -307,13 +307,19 @@ fi
 [ "$(od -An -tx1 -N5 "$T/K.bin" 2>/dev/null | tr -d ' ')" = 7f454c4601 ] || bad "K: the default kernel build is not the ELF32 multiboot image this row means"
 # The kmode redeclaration rows. `var X = 5; var X = A;` bakes A (K's KR1 / KI, +1 above).
 # `var X = A; var X = <constant>;`: the constant was baked by pass 1 already, and the superseded
-# first entry (its store runs into a sink) must record NOTHING — A is not baked over it (R's row 24
-# reads the constant in the program).
+# first entry must record NOTHING — A is not baked over it (R's row 24 reads the constant in the
+# program): A's data copies are the control's. ⛔ 6.7.15 (the user's decision D2 (a), 2026-10-18): an
+# earlier constant declaration leaves no startup store, so the entry's store into a sink (A's code form,
+# the control's one store) is gone too: -1 (through 6.7.14 +0).
 row KR '' \
     "kernel;\n$PRE""var KR2 = KA;\nvar KR2 = 0x7172737475767778;\n$ASM" \
     "kernel;\n$PRE$ASM""var KR2 = KA;\nvar KR2 = 0x7172737475767778;\n" \
-    0 ' 0d f0 ad 0b de c0 17 5a '
+    -1 ' 0d f0 ad 0b de c0 17 5a '
 [ -s "$T/KR.bin" ] && { [ "$(count "$T/KR.bin" ' 78 77 76 75 74 73 72 71 ')" -ge 1 ] || bad "KR: the constant redeclaration is not in the image"; }
+if [ -s "$T/KR.bin" ] && [ -s "$T/KR.ctl" ]; then
+    dt=$(dcount "$T/KR.bin" ' 0d f0 ad 0b de c0 17 5a '); dc=$(dcount "$T/KR.ctl" ' 0d f0 ad 0b de c0 17 5a ')
+    [ "$dt" = "$dc" ] || bad "KR: A has $dt data copies in the image, $dc in the control's: the superseded entry was baked"
+fi
 # Array lists with enum elements — a bare byte list and a typed list (C1's bake, the enum arm of the
 # replay's folder). A post-statement list is baked too (C1), so the control declares the arrays with
 # NO initializer: the same code, the lists' bytes only in the test.
