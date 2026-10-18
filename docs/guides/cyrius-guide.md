@@ -7854,7 +7854,9 @@ a full disk -28, a name too long -36; a code with no POSIX peer is -1. A read th
 end is 0, and so is a read from a pipe whose writer closed (`ERROR_BROKEN_PIPE`), which is how a
 piped stdin ends. Before 6.7.14 a failed read answered 0 — end of file — a failed write 0 bytes
 written, a failed seek 0 (a seek to the start, while the file pointer did not move), and every
-failed open -1.
+failed open -1. A close (`CloseHandle`) answers 0, or -errno through the same table (6.7.15);
+before 6.7.15 it answered CloseHandle's BOOL — 1 closed, 0 failed — so a `sys_close(..) < 0` test
+never fired and `file_close_r` was never `Err`.
 
 | Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
 |---|---|---|---|
@@ -7862,6 +7864,7 @@ failed open -1.
 | `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
+| `sys_close(-999)` | -9 | 0 (a good close: 1) | -9 since 6.7.15 (a good close: 0) |
 
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`

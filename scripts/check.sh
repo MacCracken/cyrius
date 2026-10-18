@@ -2922,6 +2922,9 @@ _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 # codes and ReadFile's keeps 109 / 38 as 0; lib/io.cyr classifies Windows' -13 over a directory;
 # the filed repros and the .tcyr under wine. Hardware: the same .tcyr on cass. Whole-gate SKIP is
 # exit 77.
+# 6.7.15 (platform lane, P2) — CloseHandle joins it: a close answers 0, or -errno through the same
+# stub (it answered the BOOL, 1 / 0); close_answer.tcyr natively and under wine, the CloseHandle
+# sites' shape, the filed close repro (exit 91).
 _chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
 
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads

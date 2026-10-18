@@ -1840,8 +1840,8 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
 # driver, beside EMACHO_SYSX_STUBS), the way the x86 Mach-O translation stubs are (6.7.12, XLAT-2):
 # a site is a `call .` placeholder kept in the whole-program disp32 registry, because the per-fn
 # NOP compaction moves code after it is emitted, and FIXUP asserts every placeholder was patched
-# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek, open) and ReadFile's (class
-# 1), which calls the table and then applies its end-of-file codes (`_pe_w32_read_rows`).
+# (`_pew_stubs_drained`). Two stubs: the table (class 0: write, seek, open; close since 6.7.15) and
+# ReadFile's (class 1), which calls the table and then applies its end-of-file codes (`_pe_w32_read_rows`).
 # The table is straight-line `cmp ecx, code; cmove eax, edx` rows: edx holds an errno ahead of its
 # codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
 # the answer before 6.7.14. A stub clobbers rcx and rdx (volatile across the Win32 call the
@@ -2091,16 +2091,32 @@ fn EWRITE_PE(S): i64 {
 # ================================================================
 
 # emit Win64 close: `syscall(3, fd)` → CloseHandle(fd).
-# Stack on entry (top→bottom): [fd] [sc_nr=3]. Return in rax is
-# the BOOL from CloseHandle (1 = success, 0 = failure) — callers
-# coding to `sys_close` semantics should treat non-zero as success.
-# v6.4.44: routed through the rbx-anchored dynamic-align helper (was a fixed `sub rsp,0x28`
-# that only aligned the call when the caller's rsp landed on the right parity). CloseHandle
-# faults on an aligned SSE access inside kernel32 when the stack is 8-misaligned — the async
-# subprocess resume (deep call stack) hit exactly that. See CHANGELOG [6.4.44].
+# Stack on entry (top→bottom): [fd] [sc_nr=3]. Answers 0 when CloseHandle returns TRUE and, when
+# it returns FALSE, -errno through the shared GetLastError stub (`_pe_w32_errno_site`: a handle
+# that is not open is ERROR_INVALID_HANDLE, -9 as Linux's EBADF), so `sys_close(..) < 0` reads a
+# failed close on Windows too; the BOOL itself (1 / 0) read a failure as success. The stub is
+# called inside the aligned frame, where rsp is as it was for the CloseHandle call.
+# CHANGELOG [6.7.15]
+# The frame is rbx-anchored (v6.4.44: a fixed `sub rsp,0x28` aligned the call only on the right
+# caller parity, and CloseHandle faults on an aligned SSE access inside kernel32 when the stack
+# is 8-misaligned — the async subprocess resume hit exactly that). CHANGELOG [6.4.44]
 fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
-    return _pe_srw_call_1arg(S, _pe_closeh_get());
+    var ch_idx = _pe_closeh_get();
+    EB(S, 0x58);                                        # pop rax (fd)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (hObject)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CloseHandle]
+    _pe_iat_fixup_add(S, GCP(S), ch_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x74); EB(S, 0x04);                           # jz +4 → .fail
+    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax (TRUE: 0)
+    EB(S, 0xEB); EB(S, 0x05);                           # jmp +5 → .done
+    _pe_w32_errno_site(S, 0);                           # .fail: call <stub>: rax = -errno
+    _pe_align_unframe(S);                               # .done: mov rsp, rbx; pop rbx
+    return 0;
 }
 
 # v6.0.51: Windows process-creation reroutes (the ai-hwaccel spawn arc).

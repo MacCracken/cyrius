@@ -371,7 +371,9 @@ fn _win_truncate_verified(h, path): i64 {
 }
 
 # Close the descriptor `fd`. Rerouted to kernel32!CloseHandle.
-# Returns 0 on success, -1 on failure.
+# Returns 0 on success, or a negative errno when the close fails: -9
+# for a handle that is not open, as on Linux. Until 6.7.15 it answered
+# CloseHandle's BOOL (1 closed, 0 failed). CHANGELOG [6.7.15]
 fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
 }
