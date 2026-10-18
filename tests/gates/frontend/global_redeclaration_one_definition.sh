@@ -199,6 +199,37 @@ for f in i1 i2 i3 i4; do
         bad "row I ($f): refused without the redeclaration diagnostic: $(head -c 200 "$WORK/$f.err")"
     fi
 done
+# IC — 6.7.15: a refused type change is ONE error (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-
+#      reader.md). The refused declaration keeps its own registration, and the replay runs after pass 1, so an
+#      initializer BETWEEN the two declarations resolved the name to the refused one (FINDVAR, last match) and was
+#      refused again for reading it — and a value conflict was warned on the refused pair. Now the replay hides a refused
+#      registration from the entries declared before it (_gvr_hide), and pass 1 compares no value across a refused
+#      shape (PARSE_GVAR_REG asks _gv_fold_peek first). IC1-IC3 the filed repros (bool -> i32, a struct -> scalar with `G.b` between, bool ->
+#      untyped, 6.7.14's D9 (a)): one error, no warning (each was two errors, IC1 / IC3 also a warning); IC4 code AFTER
+#      the refused declaration reads it as before (`G + 1` on the scalar G — reading the first, the struct, would be
+#      an operator cascade); IC5 two refused declarations, two errors, the reader between them reads the first
+#      refused one (it read the second, no error either way).
+#      MUTATION LEDGER (6.7.15, scratch trees): the replay hiding dropped (`_gvr_hide` a no-op) -> RED IC1-IC5 (each
+#      reader between); a refused registration hidden from every reader (dead) -> RED IC4 (undefined `P_add` /
+#      `P_mul`, the binary refused); pass 1's compare not standing down for a refused shape (`gpi == -2`) -> RED IC1
+#      IC3 IC5 (the warning).
+# _crow <id> <want errors> <want "L:C" of each, space-separated> <src>: refused, exactly those errors, no warning
+_crow() {
+    NROWS=$((NROWS + 1))
+    printf '%b' "$4" > "$WORK/ic.cyr"
+    rc=0; "$CC" < "$WORK/ic.cyr" > "$WORK/ic.bin" 2> "$WORK/ic.err" || rc=$?
+    [ "$rc" != 0 ] || { bad "row $1: compiled (rc 0), want the type-change error"; return 0; }
+    ne=$(grep -c '^error' "$WORK/ic.err" || true)
+    nw=$(grep -c '^warning' "$WORK/ic.err" || true)
+    pos=$( (grep "redeclared with a different type or size" "$WORK/ic.err" || true) | sed 's/^error:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ' | sed 's/ $//')
+    [ "$ne" = "$2" ] && [ "$nw" = 0 ] && [ "$pos" = "$3" ] \
+        || bad "row $1: $ne error(s) / $nw warning(s), type change at '$pos'; want $2 / 0 at '$3': $(grep -E '^(error|warning)' "$WORK/ic.err" | tr '\n' '|')"
+}
+_crow IC1 1 3:12 'var G: bool = true;\nvar X: bool = G;\nvar G: i32 = 5;\nsyscall(60, G);\n'
+_crow IC2 1 4:7 'struct P { a; b; }\nvar G = P { 1, 2 };\nvar X = G.b;\nvar G = 5;\nsyscall(60, G);\n'
+_crow IC3 1 3:7 'var G: bool = true;\nvar X: bool = G;\nvar G = 5;\nsyscall(60, G);\n'
+_crow IC4 1 4:7 'struct P { a; b; }\nvar G = P { 1, 2 };\nvar X = G.b;\nvar G = 5;\nfn f(): i64 { return G + 1; }\nvar y = G * 2;\nsyscall(60, f() + y);\n'
+_crow IC5 2 '3:12 5:12' 'var G: bool = true;\nvar X: bool = G;\nvar G: i32 = 5;\nvar Y: i32 = G;\nvar G: i64 = 6;\nsyscall(60, G);\n'
 # J — after the first top-level statement a redeclaration is a NEW variable (fresh buffer of
 #     the new size) — the pattern tests/tcyr/crypto/tls12_handshake_msgs.tcyr relies on
 _row J 1 'var z = 0;\nz = 1;\nvar buf[8];\nstore8(&buf, 9);\nvar buf[48];\nsyscall(60, load8(&buf) + 1);\n' \
@@ -413,7 +444,7 @@ _frow WF13 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 5; }\nvar K
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
-DECL=$((DECL + 6))   # rows I, K, K2, K3, P and R are hand-rolled
+DECL=$((DECL + $(grep -c '^_crow ' "$0") + 6))   # rows I, K, K2, K3, P and R are hand-rolled; IC by _crow
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
 [ "$NCX" -eq 8 ] || bad "floor: $NCX cx rows ran, want 8"
 
@@ -423,5 +454,5 @@ if [ "$NFAIL" -ne 0 ]; then
 fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: global_redeclaration_one_definition — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6); a conflicting value warns, a prior zero included ($NW rows, 6.7.12)"
+echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6); a refused type change is one error (6.7.15); a conflicting value warns, a prior zero included ($NW rows, 6.7.12)"
 exit 0

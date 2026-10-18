@@ -4807,8 +4807,54 @@ fn _gv_fold(S, vi, ti): i64 {
     var noff = L64(_varn_base + vi * 8);
     var pi = _gv_prior(S, noff, vi, _gv_owner(S, ti));
     if (pi < 0) { return vi; }
-    if (_gv_same_shape(S, pi, vi) == 0) { _gv_shape_err(S, noff); return vi; }
+    if (_gv_same_shape(S, pi, vi) == 0) {
+        _gv_shape_err(S, noff);
+        _gvr_add(vi, ti);   # 6.7.15
+        return vi;
+    }
     _gv_clear(S, vi);
+    return pi;
+}
+# ⛔ 6.7.15 — A REFUSED TYPE CHANGE IS ONE ERROR (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-
+# reader.md). The refused declaration keeps its own registration (its replay stores there), a second global of the
+# name, and the replay runs after pass 1 — so an initializer BETWEEN the two declarations resolved the name (FINDVAR,
+# last match) to the refused one, in its other shape: `var G: bool = true; var X: bool = G; var G: i32 = 5;` added
+# "cannot initialize bool 'X'", a struct G's `var X = G.b;` "no struct type in scope for 'G'". The replay now hides
+# each refused registration while an entry declared before it runs (_gvr_hide), so a reader sees what the source
+# says at its place: the first declaration before the refused one, the refused one after it (as through 6.7.14 —
+# code after it is written for either shape, and reading the first there would cascade the other way).
+var _gvr_rec = 0;   # pairs: the refused slot, its declaration's `var` token
+var _gvr_n = 0;
+var _gvr_cap = 0;   # in words
+fn _gvr_add(vi, ti): i64 {
+    if (_gvr_n * 2 + 2 > _gvr_cap) {
+        if (_gvr_cap == 0) { _gvr_rec = alloc(64 * 8); _gvr_cap = 64; }
+        else { _gvr_rec = _grow_one(_gvr_rec, _gvr_cap); _gvr_cap = _gvr_cap * 2; }
+    }
+    store64(_gvr_rec + _gvr_n * 16, vi);
+    store64(_gvr_rec + _gvr_n * 16 + 8, ti);
+    _gvr_n = _gvr_n + 1;
+    return 0;
+}
+# Before replaying the entry at token `sti`: a refused registration declared after it is hidden (dead), the rest
+# visible. EMIT_GVAR_INITS ends with every one visible again.
+fn _gvr_hide(S, sti): i64 {
+    var i = 0;
+    while (i < _gvr_n) {
+        var d = 0;
+        if (load64(_gvr_rec + i * 16 + 8) > sti) { d = 1; }
+        SVDEAD(S, load64(_gvr_rec + i * 16), d);
+        i = i + 1;
+    }
+    return 0;
+}
+# The prior that scalar registration `vi` (written, uncounted; bool mark `b`, as _gv_fold_b writes it) folds into:
+# its slot, -1 none, -2 a shape the fold refuses. Asked before the fold, so the value compare can stand down.
+fn _gv_fold_peek(S, vi, ti, b): i64 {
+    SVBOOL(S, vi, b);
+    var pi = _gv_prior(S, L64(_varn_base + vi * 8), vi, _gv_owner(S, ti));
+    if (pi < 0) { return 0 - 1; }
+    if (_gv_same_shape(S, pi, vi) == 0) { return 0 - 2; }
     return pi;
 }
 
@@ -5616,13 +5662,6 @@ fn PARSE_GVAR_REG(S): i64 {
         }
     }
     STI(S, save_peek);  # restore
-    # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
-    # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
-    # registered so the lookup sees only prior defs. Mirrors the enum-member site in
-    # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
-    # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
-    if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
-    if (chk_has == 0 && sit_shadow == 1) { _gv_dup_folded(S, noff, cf_has, cf_val, is_struct); }   # 6.7.14
     # v6.3.24: a NON-int-literal global (string / expr / struct / array init →
     # chk_has==0) that shadows an enum constant is the dangerous silent-miscompile
     # case — a pointer/expr can never be a benign same-value alias of an int enum
@@ -5680,6 +5719,18 @@ fn PARSE_GVAR_REG(S): i64 {
     # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
     # ⚠ NOT every global: the array form returns from PARSE_GVAR_ARR above and the
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
+    # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
+    # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
+    # counted so the lookup sees only prior defs. Mirrors the enum-member site in
+    # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
+    # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
+    # 6.7.15: asked once the registration is written, so a refused shape stands it down — the type change is the one
+    # report, not also "conflicting value". The cursor is still the declaration's `=`.
+    var gpi = _gv_fold_peek(S, vcnt, sti, ann_bool);
+    if (gpi != 0 - 2) {
+        if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
+        if (chk_has == 0 && sit_shadow == 1) { _gv_dup_folded(S, noff, cf_has, cf_val, is_struct); }   # 6.7.14
+    }
     var gvi = _gv_fold_b(S, vcnt, sti, ann_bool);   # 6.6.6: a redeclaration reuses the global's slot; 6.7.14: + bool
     _gz_reg(S, gvi, is_struct, ssid, ann_sid, rhs_ti);   # 6.7.10 (B7-1g): judged at the end of pass 1
     _gu_reg(S, gvi, ann_ti + is_struct, rhs_ti);         # 6.7.14 (D29 / D30): an untyped whole call, typed there
@@ -6416,6 +6467,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         var graw = L64(_gvt(S) + gi * 8);
         var gsup = _gv_sup(graw);
         var sti = _gv_tok(graw);
+        if (_gvr_n > 0) { _gvr_hide(S, sti); }   # 6.7.15: a refused type change, as the source reads here
         STI(S, sti);
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
@@ -6522,6 +6574,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         gi = gi + 1;
     }
+    if (_gvr_n > 0) { _gvr_hide(S, GTCNT(S)); }
     _gv_hide_program(S, 0);
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
     # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
