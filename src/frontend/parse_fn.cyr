@@ -5744,6 +5744,7 @@ fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
     if (ssid <= 0) { return 0; }
     var k = _str_arg_kind(S, ssid);
     if (k == 0) { return 0; }
+    if (_warn_seen(GTI(S), "_check_str_cstring_arg", ((fi * 31 + argc) * 31 + noff) * 4 + k) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);
     if (k == 1) { syscall(SYS_WRITE, 2, ": passing Str-typed '", 21); }

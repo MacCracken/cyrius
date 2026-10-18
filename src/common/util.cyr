@@ -3097,6 +3097,7 @@ fn ERRDUPVAR(S): i64 {
 }
 
 fn WARN(S, msg, len): i64 {
+    if (_warn_seen(GTI(S), msg, len) == 1) { return 0; }   # 6.7.15: once per token and message
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": ", 2);
@@ -3341,7 +3342,9 @@ fn _err_once(S, id): i64 {
     return 1;
 }
 # 1 = a report of identity `id` was printed at the cursor's token already; else it is recorded: 0.
-fn _err_dup(S, id): i64 {
+fn _err_dup(S, id): i64 { return _err_dup_at(GTI(S), id); }
+# ... at token `ti`. CHANGELOG [6.7.15]
+fn _err_dup_at(ti, id): i64 {
     if (_edup == 0) {
         _edup_cap = 256;
         _edup = alloc(_edup_cap * 16);
@@ -3349,8 +3352,17 @@ fn _err_dup(S, id): i64 {
         if (_edup == 0) { return 0; }
     }
     if (_edup_n * 2 >= _edup_cap) { _edup_grow(); }
-    return _edup_put(GTI(S) + 1, id);
+    return _edup_put(ti + 1, id);
 }
+# ⛔ 6.7.15 — A WARNING IS PRINTED ONCE PER TOKEN AND MESSAGE TOO. The 6.7.14 latch above covered the error
+# emitters only, so a warning (WARN, and the writers that print their own `warning:` line) printed once per parse
+# of a generic body or an inline replay: `var p: *i64 = q;` in a generic called at three types printed "assigning
+# non-pointer to typed pointer" three times. Each asks `_warn_seen` before it prints, keyed on the token it reports
+# and an identity of its own — WARN's message, or `tag` naming the writer (a string literal: its address is the
+# identity) and `a`, what its text names — so a different warning at one token, or the same warning at another
+# token, still prints. 1 = printed at `ti` already (print nothing), else it is recorded: 0. A warning's identities
+# are negative, apart from every error's. CHANGELOG [6.7.15]
+fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 + 7)); }
 # 1 when the pair (k, id) is in the table, else it is added: 0.
 fn _edup_put(k, id): i64 {
     var m = _edup_cap - 1;

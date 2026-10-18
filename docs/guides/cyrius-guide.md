@@ -6897,7 +6897,11 @@ and every instance parse the same body, but an error in it is reported once, at 
 with its notes once (6.7.14; through 6.7.13 it was printed once per instance — `i += 1 2;` in a
 generic called at three types printed its *expected ';'* three times — and a note after it with
 each). A generic struct's fields are parsed again per instance the same way: `b: nosuch` in
-`struct W<T>` used at three types is one error and one note.
+`struct W<T>` used at three types is one error and one note. A warning is printed once per token
+and message too (6.7.15; through 6.7.14 `var p: *i64 = q;` in a generic called at three types
+printed *assigning non-pointer to typed pointer* three times, and a warning in an `#inline` fn's
+body once more per call); a different warning at the same token — `x.m()` discarding `P.m`'s
+`#must_use` result in one instance and `Q.m`'s in another — still prints each.
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`

@@ -3190,11 +3190,7 @@ fn PARSE_MATCH(S): i64 {
                                 di = di + 1;
                             }
                             if (dupe == 1) {
-                                syscall(SYS_WRITE, 2, "warning:", 8);
-                                _err_head(S);
-                                syscall(SYS_WRITE, 2, ": duplicate match arm '", 23);
-                                PRSTR(S + 0xEC00000 + arm_noff);
-                                syscall(SYS_WRITE, 2, "'\n", 2);
+                                _match_dup_warn(S, arm_noff);
                             } else {
                                 if (seen_count < 256) {
                                     store64(&seen_vcnt + seen_count * 8, arm_vi);
@@ -3240,26 +3236,44 @@ fn PARSE_MATCH(S): i64 {
     # to lint --strict in a follow-up slot.
     if (match_eid != 0) {
         if (match_mixed == 1) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, match_line);
-            syscall(SYS_WRITE, 2, ": match arms span multiple enums (exhaustive-coverage check skipped)\n", 69);
+            _match_cov_warn(S, match_line, 0, 0);
         } else {
             if (had_default == 0) {
                 var match_total = GENUMVCNT(S, match_eid - 1);
-                if (match_covered < match_total) {
-                    syscall(SYS_WRITE, 2, "warning:", 8);
-                    FM_LOOKUP(S, match_line);
-                    syscall(SYS_WRITE, 2, ": non-exhaustive match over enum '", 34);
-                    PRSTR(S + 0xEC00000 + GENUMNM(S, match_eid - 1));
-                    syscall(SYS_WRITE, 2, "' — covers ", 13);
-                    PRNUM(match_covered);
-                    syscall(SYS_WRITE, 2, " of ", 4);
-                    PRNUM(match_total);
-                    syscall(SYS_WRITE, 2, " variants; add `_ =>` to opt out\n", 33);
-                }
+                if (match_covered < match_total) { _match_cov_warn(S, match_line, match_eid, match_covered); }
             }
         }
     }
+    return 0;
+}
+
+# PARSE_MATCH's warnings, once per token and message (`_warn_seen`: a generic body is parsed again per instance —
+# each printed once per parse). A duplicate arm `noff` at the cursor; at the match's end (`line` its line), arms
+# over more than one enum (`eid` 0) or `cov` of enum `eid`'s variants covered. CHANGELOG [6.7.15]
+fn _match_dup_warn(S, noff): i64 {
+    if (_warn_seen(GTI(S), "_match_dup_warn", noff) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": duplicate match arm '", 23);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "'\n", 2);
+    return 0;
+}
+fn _match_cov_warn(S, line, eid, cov): i64 {
+    if (_warn_seen(GTI(S), "_match_cov_warn", eid * 65536 + cov) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    FM_LOOKUP(S, line);
+    if (eid == 0) {
+        syscall(SYS_WRITE, 2, ": match arms span multiple enums (exhaustive-coverage check skipped)\n", 69);
+        return 0;
+    }
+    syscall(SYS_WRITE, 2, ": non-exhaustive match over enum '", 34);
+    PRSTR(S + 0xEC00000 + GENUMNM(S, eid - 1));
+    syscall(SYS_WRITE, 2, "' — covers ", 13);
+    PRNUM(cov);
+    syscall(SYS_WRITE, 2, " of ", 4);
+    PRNUM(GENUMVCNT(S, eid - 1));
+    syscall(SYS_WRITE, 2, " variants; add `_ =>` to opt out\n", 33);
     return 0;
 }
 
@@ -5089,6 +5103,7 @@ fn _must_use_warn(S, noff): i64 {
     if (_mu_fi >= 0) {
         var _mu_flags = GFLG(S, _mu_fi);
         if (_mu_flags & 1 != 0) {
+            if (_warn_seen(GTI(S), "_must_use_warn", _mu_fi * 31 + noff) == 1) { return 0; }   # 6.7.15: once
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
@@ -5628,6 +5643,15 @@ fn _PARSE_STMT_NESTED(S): i64 {
     return 0;
 }
 
+# The nested `@unsafe` warning, at the cursor, once (`_warn_seen`: a generic body is parsed per instance).
+# CHANGELOG [6.7.15]
+fn _unsafe_nest_warn(S): i64 {
+    if (_warn_seen(GTI(S), "_unsafe_nest_warn", 0) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": nested @unsafe block\n", 23);
+    return 0;
+}
 fn _PARSE_STMT_IMPL(S): i64 {
     var typ = PEEKT(S);
     # v5.6.3: @unsafe { ... } block. Body parses as a plain block
@@ -5641,11 +5665,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
         STI(S, GTI(S) + 1);
         _unsafe_depth = _unsafe_depth + 1;
-        if (_unsafe_depth > 1) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": nested @unsafe block\n", 23);
-        }
+        if (_unsafe_depth > 1) { _unsafe_nest_warn(S); }
         while (PEEKT(S) != 14) {
             if (PEEKT(S) == 12) { break; }
             _PARSE_STMT_NESTED(S);
