@@ -28,7 +28,9 @@
 # issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
 # fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
-# readlink -38, the rest served).
+# readlink -38, the rest served); dup2's self-dup (6.7.15,
+# issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
+# fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -53,6 +55,9 @@
 #   MU4 `_cx_host_stat` without its st_mode store -> RED 1: axis 3 (`lin=1024`: the aarch64 host's
 #       struct is refilled at the x86 offsets, the x86 host's is the guest's own — Darwin's layouts
 #       are held by the ecb / ach legs)
+#   MU5 (issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) the aarch64 peer's sys_dup2
+#       without its self-dup arm (dup3 for every pair, the pre-6.7.15 body) -> RED 1: axis 3 (exit 12,
+#       `lin=2048`: dup2(1, 1) and the closed fd both -22, dup3's EINVAL)
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -193,5 +198,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) and dup2's self-dup give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0

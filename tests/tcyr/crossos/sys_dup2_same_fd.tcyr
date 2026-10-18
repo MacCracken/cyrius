@@ -1,0 +1,56 @@
+# sys_dup2_same_fd.tcyr — CROSS-HOST (6.7.15): `sys_dup2(fd, fd)`, the self-dup, answers as POSIX
+# dup2 does on every target — `fd` when it is open, -EBADF (-9) when it is not — and changes nothing.
+#
+# THE DEFECT. aarch64 Linux has no dup2 syscall, so the aarch64 peer issues dup3(old, new, 0), and
+# dup3 refuses old == new with -EINVAL by design: the one case where dup3 is not dup2 with flags.
+# `sys_dup2(1, 1)` answered -22 on aarch64 Linux (qemu and real pi) where x86_64 Linux and both Macs
+# answer 1, so a portable `if (sys_dup2(a, b) < 0)` read a failure on one target only — and a cx
+# guest's dup2(1, 1), which cxvm serves through the host's sys_dup2, answered -22 on an aarch64 cxvm.
+# The peer now asks fcntl(F_GETFD) for the self-dup, as glibc's aarch64 dup2 does.
+# (issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md; CHANGELOG [6.7.15])
+#
+# WINDOWS is pinned at what its peer answers today, not POSIX's answer: Win32 has no dup2, and the
+# PE peer's sys_dup2 is a stub that returns `newfd` whatever `oldfd` is, so the closed fd answers 99
+# (filed: issues/2026-10-18-pe-sys-dup2-stub-answers-newfd-for-a-closed-fd.md).
+# agnos defines no sys_dup2 (a child's fds are redirected at spawn), so the file asserts nothing there.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_TARGET_AGNOS
+var _agnos_skip = "  SKIP (agnos): the agnos peer defines no sys_dup2\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("sys_dup2 on Windows: the PE stub answers newfd (pinned, not POSIX's answer)");
+assert_eq(sys_dup2(1, 1), 1, "sys_dup2(1, 1) == 1");
+assert_eq(sys_dup2(99, 99), 99, "sys_dup2(99, 99) == 99 (the stub's newfd; POSIX targets answer -9)");
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+test_group("sys_dup2's self-dup: the fd when it is open, -EBADF when it is not");
+sys_close(99);
+assert_eq(sys_dup2(1, 1), 1, "sys_dup2(1, 1) == 1 (was -22, dup3's EINVAL, on aarch64 Linux)");
+assert_eq(sys_dup2(99, 99), 0 - 9, "sys_dup2(99, 99) on a closed fd == -9 (EBADF)");
+assert(sys_fcntl(99, F_GETFD, 0) < 0, "and fd 99 is still closed");
+assert_eq(sys_dup2(0 - 1, 0 - 1), 0 - 9, "sys_dup2(-1, -1) == -9 (EBADF)");
+
+test_group("the self-dup changes nothing; distinct fds still duplicate");
+sys_close(97);
+sys_close(98);
+assert_eq(sys_dup2(1, 97), 97, "sys_dup2(1, 97) == 97 (distinct fds: dup3 / dup2 as before)");
+assert_eq(sys_fcntl(97, F_GETFD, 0), 0, "the new fd has FD_CLOEXEC clear, as dup2 promises");
+assert_eq(sys_fcntl(97, F_SETFD, FD_CLOEXEC), 0, "F_SETFD FD_CLOEXEC on fd 97");
+assert_eq(sys_dup2(97, 97), 97, "sys_dup2(97, 97) == 97");
+assert_eq(sys_fcntl(97, F_GETFD, 0), FD_CLOEXEC, "fd 97 keeps FD_CLOEXEC across its self-dup");
+assert_eq(sys_dup2(97, 98), 98, "sys_dup2(97, 98) == 98");
+assert_eq(sys_fcntl(98, F_GETFD, 0), 0, "and fd 98 has FD_CLOEXEC clear");
+sys_close(97);
+sys_close(98);
+assert_eq(sys_dup2(97, 97), 0 - 9, "sys_dup2(97, 97) once it is closed == -9");
+#endif
+#endif
+
+var r = assert_summary();

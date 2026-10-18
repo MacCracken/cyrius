@@ -249,7 +249,8 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # tests/gates/codegen/cx_host_dispatch.sh runs locally): raw x86-Linux getpid / getppid / close /
 # kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the
 # path calls (mkdir / stat — the struct cxvm refills at the x86-Linux offsets from Darwin's — /
-# symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15). Each
+# symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15) and dup2's
+# self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3). Each
 # host's own cxvm must exit 77 — every row with x86_64 Linux's answer — and cass's 78, the PE routes'
 # answers (-38 where the PE peer has only a stub). Until 6.7.15 cxvm handed the guest's number to the
 # host compiler's renumbering: on pi a guest lseek ran getxattr and fork ran close (the parent took

@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise 1 + the lowest failing Linux row
-# (1..11). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
+# (1..12). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
 # and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
@@ -190,6 +190,22 @@ fn _cxh_fcntl(): i64 {
     return 2;
 }
 
+# dup2's self-dup (6.7.15; issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md): dup2(1, 1)
+# answers 1 and dup2 of an fd just closed answers -EBADF — on an aarch64 Linux host the host's
+# sys_dup2 issued dup3, which refuses old == new (-22 for both). 0 the Linux answers, 1 both -38
+# (the PE peer's dup2 is a stub), 2 neither. The closed fd is one this fixture opened and closed,
+# never a fixed number: on Windows a guest fd is a HANDLE, and closing a guessed one is not safe.
+fn _cxh_dup2(): i64 {
+    var one = syscall(33, 1, 1);
+    var fd = syscall(2, "cxh_f", 0, 0);
+    if (fd < 0) { return 2; }
+    syscall(3, fd);
+    var cl = syscall(33, fd, fd);
+    if (one == 1 && cl == 0 - 9) { return 0; }
+    if (one == 0 - 38 && cl == 0 - 38) { return 1; }
+    return 2;
+}
+
 var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
@@ -212,6 +228,8 @@ var fc = _cxh_fcntl();
 _cxh_row(512, fc == 0, fc == 1);
 var ph = _cxh_paths();
 _cxh_row(1024, ph == 0, ph == 1);
+var d2 = _cxh_dup2();
+_cxh_row(2048, d2 == 0, d2 == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="
