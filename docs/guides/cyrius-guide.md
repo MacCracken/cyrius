@@ -1866,7 +1866,10 @@ through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (
 `callptr((&mkv), ..)`, 6.7.13), or (6.7.13) a
 method call `s.mv(..)` on a single name, `impl S { fn mv(self, ..): f64v2 }` (on Windows each call
 then passes the local's address as its hidden result pointer, as `mkv(..)` does — a method's before
-`self`). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
+`self`) — and (6.7.15) on a field chain, `w.s.mv(..)`, `pw.s.mv(..)`, `h.w.s.mv(..)`, `n.ps.mv(..)`
+through a `*S` field, at every destination below a single name's method meets (through 6.7.14 the
+untyped `var v = w.s.mv();` held one word, stack garbage per target, and the other destinations were
+refused *… got `w`*). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
 (6.7.13), as `var v = mkv(..);` is — and (6.7.14, the user's decision D37, 2026-10-16: A) so is `var v = s.mv(..);`
 (through 6.7.13 one word: x86_64 / aarch64 1, cx 155, Windows 195 where 161 is right). A method — and (6.7.14)
 `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped too — declared to return another vector is refused as a by-name call is

@@ -2565,7 +2565,7 @@ fn _svc_rs(S, ti): i64 {
             vf = _vmc_fi(S, ti);
             if (vf < 0) { return 0; }
             _svc_k = 3;
-            _svc_nm = TOKVAL(S, ti + 2);
+            _svc_nm = TOKVAL(S, _vmc_mt);   # 6.7.15: a field chain's method too
         }
         rs = GFRS(S, vf);
         o = _vcall_o;
