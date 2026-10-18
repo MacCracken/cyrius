@@ -3257,11 +3257,72 @@ fn _stmt_paren_field(S): i64 {
         _cst_skip_sync(S);
         return 1;
     }
+    if (_pf_read_stmt(S, st, x) == 1) { return 1; }   # 6.7.15 (D60): `(s).a;` refused as `s.a;` is
     _mcall_last = 0 - 1;
     PARSE_FACTOR(S);
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _expect_step(S, 5);
     return 1;
+}
+# ⛔ 6.7.15 — `(s).a;` ALONE IS REFUSED AS `s.a;` IS (the user's D60, 2026-10-18; 6.7.14's item 19): since 6.7.14's
+# D24 (a) a statement `( .. ).a;` compiled as a discarded read, while the unwrapped `s.a;` is refused ("expected '='")
+# and 6.7.13 refused it too ("unexpected '('"). A statement that is a field read through parentheses with NO call in it
+# (`(s).a;`, `(p).a;`, `(*p).a;`, `(w).p.a;`, `((s)).a;`) is now "the field read 'a' is discarded - a statement is an
+# assignment or a call", once at the field, the statement ended in sync (the latch as it was). A call anywhere keeps
+# it a statement, as unwrapped: `(mk1()).a;` as `mk1().a;`, `(s).m();` as `s.m();`, `(s).me().a;` as `s.me().a;`, and a
+# struct operator's result (`(x + y).b;`, its stamp `_lsc_beg` inside the statement). It is judged after the parse, so
+# a read that stops short (`(s).a.b;` of a scalar a, `(s).zz;`, `(zz).a;`) or latches its own refusal (`(x + 1).a;`)
+# keeps that one error. `x` = the token after the chain. 1 = the statement is consumed. CHANGELOG [6.7.15]
+fn _pf_read_stmt(S, st, x): i64 {
+    if (TOKTYP(S, x) != 5) { return 0; }
+    if (_pf_has_call(S, st + 1, x) == 1) { return 0; }
+    var p0 = _panic;
+    _lsc_beg = 0 - 1;
+    PARSE_FACTOR(S);
+    var ok = 1;
+    if (GTI(S) != x) { ok = 0; }
+    if (_lsc_beg >= st) { if (_lsc_beg < x) { ok = 0; } }   # a struct operator's call
+    if (_panic != p0) { ok = 0; }   # its own refusal latched (`(x + 1).a;`): left latched, not restored below
+    var f = _pf_last_field(S, _pf_e, x);
+    if (ok == 1) { if (f >= 0) {
+            STI(S, f);
+            var tl = " is discarded - a statement is an assignment or a call";
+            ERR_IDENT(S, "the field read ", TOKVAL(S, f), tl, 0 - 1);
+            _panic = p0;
+            STI(S, x);
+        } }
+    _expect_step(S, 5);
+    return 1;
+}
+# 1 = a call opens in tokens [i, e): a `(` after a name, a type-argument list's `>` or a builtin (`f(`, `.m(`,
+# `g<T>(`, `load64(`) — a grouping `(` follows `(`, an operator or `*` / `&`.
+fn _pf_has_call(S, i, e): i64 {
+    while (i < e) {
+        if (TOKTYP(S, i) == 10) {
+            var pt = TOKTYP(S, i - 1);
+            if (pt == 2 || pt == 20 || pt == 39 || pt == 152) { return 1; }
+            if (IS_KEYWORD_TOK(pt) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# The last `.name` of the field chain [i, e) (`.name` / `[..]` steps): that name's token, or -1.
+fn _pf_last_field(S, i, e): i64 {
+    var f = 0 - 1;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0 - 1; }
+            f = i + 1;
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0 - 1;
+        }
+    }
+    return f;
 }
 # ⛔ 6.7.15 — A STATEMENT WHOSE ASSIGNMENT DESTINATION IS PARENTHESISED STAYS REFUSED, BY NAME (the user's D19,
 # 2026-10-18): `(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(*(&s)) -= 1;` were "unexpected '('" (no statement
