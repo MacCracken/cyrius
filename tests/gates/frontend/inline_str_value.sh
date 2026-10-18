@@ -74,7 +74,9 @@
 # 6.7.15 (the user's decision D14, 2026-10-18; issues/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-
 # stores-one-word.md): `t = p` and `t = *p` with t an inline `Str` and p a `*Str` copy the header p points at, as `t = a`
 # from a handle does (D20 (a)) and `var t: Str = *p;` does (D14a, the filed repro verbatim: 55, was 22 — t.data = p,
-# t.len stale); `t = *p` is not warned "assigning non-pointer to typed pointer" (D14b; it was).
+# t.len stale); `t = *p` is not warned "assigning non-pointer to typed pointer" (D14b; it was). An if-expression of
+# `Str` handles keeps the one-word store, documented (the user's decision D15, 2026-10-18: its value is untyped, as for
+# every inline struct — D15, pinned: 22 with today's warning).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
@@ -86,7 +88,7 @@
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
 # statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
-# D14a / D14b the copy from a `*Str` (D14); CMP a handle into the retyped methods builds
+# D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -539,6 +541,17 @@ for leg in $(legs); do
     else ok "D14b \`t = *p;\` ($leg): no warning"; fi
 done
 runs D14b 55 "the filed table's \`t = *p;\` copies the header (was 22)" "$XLEGS $OLEGS"
+# D15: the filed table's if-expression of Str handles keeps the one-word store — t.data = the chosen handle, t.len stale
+# (22) — with today's warning (the user's decision D15, 2026-10-18: documented, unchanged).
+sed 's/^    t = p;$/    var c = 1;\n    t = if (c == 1) { a } else { a };/' "$T/D14a.cyr" > "$T/D15.cyr"
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D15
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D15.$leg" ]; then bad "D15 ($leg): did not build (rc $crc)"
+    elif ! grep -q '^warning.*assigning non-pointer to typed pointer' "$T/D15.$leg.err"; then bad "D15 ($leg): today's warning is gone: $(grep -E '^(warning|error)' "$T/D15.$leg.err" | head -1 || true)"
+    else ok "D15 \`t = if (c == 1) { a } else { a };\` ($leg): compiles with today's warning"; fi
+done
+runs D15 22 "an if-expression of Str handles keeps the one-word store (D15: documented, 22 as before)" "$XLEGS $OLEGS"
 
 # --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'

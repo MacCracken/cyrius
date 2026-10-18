@@ -3190,7 +3190,11 @@ between two inline `Str`s does and as an inline struct takes a copy through any 
 `a.len = 2` leaves `t.len`. Since 6.7.15 a `*Str` source copies too — `t = p` and `t = *p` with `p: *Str` (a
 local, parameter or global; `*p` of any `*Str`-typed expression: `**pp`, `*w.p`, `*gp()`) copy the header p points at
 (the user's decision D14, 2026-10-18; through 6.7.14 `t.data` took p, or the header's data word, and `t.len` stayed
-stale). An untyped source keeps the one-word store into `t.data`. Through 6.7.13 the
+stale). An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
+are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
+(with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
+inline struct (the user's decision D15, 2026-10-18) — assign in each branch instead (`if (c) { t = a; } else { t = b;
+}`). Through 6.7.13 the
 handle's address was stored into `t.data` and `t.len` left stale, and a bare `var t: Str;` stayed outside
 D7 (1) — its bare name its first word, so `str_len(t)` read the handle's string through that pun and `return
 t;` from a fn returning `Str` compiled.
