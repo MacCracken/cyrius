@@ -1410,36 +1410,41 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
         }
     }
     # Detect the client's extended_master_secret offer (RFC 7627). Walk past
-    # cipher_suites + compression_methods to the extensions block. All reads
-    # bounds-checked vs blen (untrusted CH); lenient — a malformed/absent ext
-    # block leaves EMS=0 and never fails the handshake. (The cipher loop used
-    # pos+j indexing and did not mutate pos, so pos is still at cipher_suites.)
+    # cipher_suites + compression_methods to the extensions block; all reads are
+    # bounds-checked vs blen (untrusted CH). (The cipher loop used pos+j indexing
+    # and did not mutate pos, so pos is still at cipher_suites.) A ClientHello that
+    # ends after compression_methods has no block: EMS stays 0, no ALPN, our first
+    # group. A block, when present, fills the rest of the message: bytes after it,
+    # or a block that overruns it, are decode_error — the answer the 1.3 server and
+    # both clients give (6.7.15's D40, the user, 2026-10-18). Until then this parse
+    # was lenient and read an overrunning block as no extensions, which quietly
+    # dropped the extended master secret. CHANGELOG [6.7.15]
     pos = pos + cs_len;
     var group = 0;
     if (pos + 1 <= blen) {
         var cm_len = load8(body + pos) & 0xFF;
         pos = pos + 1 + cm_len;
-        if (pos + 2 <= blen) {
+        if (pos < blen) {
+            if (pos + 2 > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
             var ext_total = _tn_be16_r(body + pos);
             pos = pos + 2;
-            if (pos + ext_total <= blen) {
-                var ep = 0;
-                var el = 0;
-                var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
-                if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
-                # ALPN (RFC 7301): negotiate against the server's configured
-                # list; _tn_build_server_hello_12 emits the result. Lenient.
-                _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
-                var sgp = 0;
-                var sgl = 0;
-                if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
-                    group = _tn_pick_group(ctx, sgp, sgl);
-                    if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-                    if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
-                    var kc = _tn_12_key_curve(ctx);
-                    if (kc != 0) {
-                        if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
-                    }
+            if (pos + ext_total != blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+            var ep = 0;
+            var el = 0;
+            var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
+            if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
+            # ALPN (RFC 7301): negotiate against the server's configured
+            # list; _tn_build_server_hello_12 emits the result. Lenient.
+            _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
+            var sgp = 0;
+            var sgl = 0;
+            if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
+                group = _tn_pick_group(ctx, sgp, sgl);
+                if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+                if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+                var kc = _tn_12_key_curve(ctx);
+                if (kc != 0) {
+                    if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
                 }
             }
         }

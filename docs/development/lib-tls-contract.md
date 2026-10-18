@@ -229,7 +229,12 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   byte after it is decode_error (6.7.15; until then it was ignored).
 - **TLS 1.2 server.** It picks the first of its groups the client's supported_groups lists, its
   own first group when the client sends none (RFC 8422 §4), and refuses a client listing none of
-  them with handshake_failure. A ClientKeyExchange point sigil refuses, or whose length byte is not
+  them with handshake_failure. A ClientHello's extension block, when present, fills the rest of the
+  message: bytes after it, or a block that overruns it, are decode_error (`TLS_ERR_BAD_HANDSHAKE`;
+  6.7.15, the user's D40 — until then the parse was lenient, ignored the bytes and read an
+  overrunning block as no extensions: no extended master secret, no ALPN, its own first group). A
+  ClientHello that ends after its compression methods carries no extensions and negotiates
+  without them. A ClientKeyExchange point sigil refuses, or whose length byte is not
   the group's point length, is illegal_parameter; one of another size or handshake type is
   decode_error. The group never depends on the certificate: a P-384 certificate signs a secp256r1
   exchange when the client lists both. But in TLS 1.2 the client's list also bounds an ECDSA
