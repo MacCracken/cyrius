@@ -1690,6 +1690,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 # ⚠ SKIPs loudly when there are no sibling checkouts (CI) rather than passing quietly.
 _chk_gate "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 
+# 6.7.15 — the gates filed for stopping WITHOUT A VERDICT under `bash -eo pipefail` (GitHub's
+# `run:` shell) reach their verdict there: each runs as `bash -eo pipefail <gate>` and must end on
+# its PASS (or a named SKIP) line; the rows above run them under `sh`.
+_chk_gate "$ROOT/tests/gates/toolchain/gates_verdict_under_pipefail.sh"
+
 # ⛔ v6.6.2 — THE GUIDE TAUGHT AN API THE COMPILER NO LONGER HAD. Its Result worked example was
 # the PRE-FLIP one — five compile errors, two lines under the table announcing the arity change —
 # and a second instance sat in the #derive(Serialize) section. Nothing in the tree could see it.

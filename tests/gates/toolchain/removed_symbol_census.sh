@@ -51,7 +51,11 @@ cd "$ROOT"
 # answers "what changed since the last commit", which is never the question. The question is
 # "what does THIS RELEASE remove from the surface consumers are pinned to", and only a release
 # tag answers it. Falls back to HEAD when no tag is reachable (a fresh clone / shallow CI).
-BASE_TAG=$(git -C "$ROOT" tag --list '[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null | head -1)
+# The newest tag comes from `for-each-ref --count=1`, not `git tag … | head -1`: head exits after
+# one line, git dies of SIGPIPE on its next write, and under `bash -eo pipefail` (GitHub's `run:`
+# shell) that 141 ended the gate here with no verdict. tests/gates/toolchain/
+# gates_verdict_under_pipefail.sh runs this file that way. CHANGELOG [6.7.15]
+BASE_TAG=$(git -C "$ROOT" for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
 if [ -n "$BASE_TAG" ] && git -C "$ROOT" show "$BASE_TAG:docs/api-surface.snapshot" > "$WORK/head.snap" 2>/dev/null; then
     :
 elif git -C "$ROOT" show HEAD:docs/api-surface.snapshot > "$WORK/head.snap" 2>/dev/null; then
@@ -70,6 +74,9 @@ sed 's/#.*//' "$ALLOW" | awk -F'|' 'NF>=3 {gsub(/ /,"",$1); if ($1!="") print $1
 [ -s "$WORK/allowed.txt" ] || fail "the allowlist parsed to ZERO rows — the format changed and this gate is now vacuous"
 
 # ── 3. census helper: comment-stripped, definitions excluded ────────────────────────────
+# `|| true`: `head -400` closing the pipe kills the loop with SIGPIPE past 400 files, and the
+# loop's own status is its last file's miss — under `bash -eo pipefail` either one made the
+# caller's `HITS=$(…)` / `PROBE=$(…)` end the gate with no verdict. CHANGELOG [6.7.15]
 _census() {
     _sym=$1
     find "$SIBLINGS" -maxdepth 3 \( -name '*.cyr' -o -name '*.tcyr' \) \
@@ -78,7 +85,7 @@ _census() {
         sed 's/#.*//' "$f" 2>/dev/null \
         | grep -vE "^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+${_sym}[[:space:]]*\(" \
         | grep -qE "(^|[^_a-zA-Z0-9.])${_sym}[[:space:]]*\(" && echo "$f"
-      done | head -400
+      done | head -400 || true
 }
 
 # ── 4. every removal must be accounted for ──────────────────────────────────────────────
@@ -90,7 +97,7 @@ while IFS= read -r sym; do
     HITS=$(_census "$sym" | wc -l | tr -d ' ')
     if [ "${HITS:-0}" -gt 0 ]; then
         echo "  ⛔ '$sym' was REMOVED from the public surface and is still called in $HITS file(s):"
-        _census "$sym" | sed "s|$SIBLINGS/||" | head -12 | sed 's/^/       /'
+        _census "$sym" | sed "s|$SIBLINGS/||" | head -12 | sed 's/^/       /' || true
         UNACCOUNTED="$UNACCOUNTED $sym"
     fi
 done < "$WORK/removed.txt"

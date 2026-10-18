@@ -32,7 +32,13 @@
 # this repo already learned when the Mach-O routing warning fired 470 times and got scrolled
 # past (v6.5.43).
 #
-# ⚠ NO `set -e`: compiles exit non-zero as DATA.
+# ⚠ NO `set -e`: compiles exit non-zero as DATA. The gate still reaches its verdict under
+# `bash -eo pipefail` (GitHub's `run:` shell): every compile's status is captured (`|| rc=$?`)
+# or read from its output (`|| true`); a `grep -c` that may count 0 sits inside `[ … ]` or
+# carries `|| true` — it prints 0 AND exits 1, so `fp=$(grep -c …)` ended the gate on axis 2's
+# PASSING case; and a failure path's `… | head` carries `|| true`, since head closing the pipe
+# kills its writer with SIGPIPE, which pipefail makes the line's status.
+# tests/gates/toolchain/gates_verdict_under_pipefail.sh runs this file that way. CHANGELOG [6.7.15]
 #
 # ⛔ v6.6.6 — THIS GATE NEVER WRITES THE TREE. Axis 1 used to copy the committed table to
 # mktemp, regenerate it IN PLACE, and copy the backup back on a diff. When /tmp was full
@@ -70,13 +76,13 @@ _ran() {
 # A hand-edited or stale table is the self-drifting shape this repo keeps finding; the only
 # way to keep it honest is to re-derive and diff. The regenerated copy goes to $D/regen.cyr;
 # a generator that cannot write it exits non-zero, which is a gate FAILURE, not "stale".
-./build/cyrius build programs/gen_syscall_xlat.cyr "$D/gen" > /dev/null 2>&1
+./build/cyrius build programs/gen_syscall_xlat.cyr "$D/gen" > /dev/null 2>&1 || true
 if [ ! -x "$D/gen" ]; then
     echo "FAIL: axis 1: the generator does not build"
     FAIL=1
 elif ! "$D/gen" "$D/regen.cyr" > "$D/gen.out" 2>&1 || [ ! -s "$D/regen.cyr" ]; then
     echo "FAIL: axis 1: the generator could not write its output under $D:"
-    sed 's/^/      /' "$D/gen.out" 2>/dev/null | head -3
+    sed 's/^/      /' "$D/gen.out" 2>/dev/null | head -3 || true
     FAIL=1
 elif ! cmp -s "$D/regen.cyr" src/common/syscall_xlat.cyr; then
     echo "FAIL: axis 1: src/common/syscall_xlat.cyr is STALE — regenerating it changes it."
@@ -99,20 +105,20 @@ if [ -x "$D/gen" ]; then
         echo "  ok: axis 1b: \`gen_syscall_xlat --help\` and a second operand are refused (rc 2, by name), nothing written"
     else
         echo "FAIL: axis 1b: a flag or a second operand was not refused (rc $r1 / $r2; cwd holds: $(ls -A "$D/cwd1b" | paste -sd' ' -))"
-        sed 's/^/      /' "$D/g1b.out" | head -4
+        sed 's/^/      /' "$D/g1b.out" | head -4 || true
         FAIL=1
     fi
 fi
 
 # ── axis 2: ZERO false positives on the compiler's own aarch64 source ─────────────
-./build/cycc < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null
+./build/cycc < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null || true
 chmod +x "$D/cc_a64"
 if [ ! -s "$D/cc_a64" ]; then
     echo "FAIL: axis 2: could not build the aarch64 emitter"
     FAIL=1
 else
     rc2=0; "$D/cc_a64" < src/main_aarch64.cyr > "$D/self.bin" 2>"$D/self.err" || rc2=$?
-    fp=$(grep -c 'raw syscall' "$D/self.err")
+    fp=$(grep -c 'raw syscall' "$D/self.err" || true)
     if ! _ran "axis 2" "cycc's own aarch64 source" "$rc2" "$D/self.bin" src/main_aarch64.cyr; then
         :
     elif [ "$fp" != 0 ]; then
@@ -130,7 +136,7 @@ else
     # the aarch64 peer declares. ⚠ This axis used to say 5 "is not an aarch64 syscall at
     # all"; it is setxattr. The diagnostic's own text carried the same error.
     printf 'fn main(): i64 { return syscall(91, 0, 0); }\nvar r = main();\n' > "$D/bad.cyr"
-    "$D/cc_a64" < "$D/bad.cyr" > /dev/null 2>"$D/bad.err"
+    "$D/cc_a64" < "$D/bad.cyr" > /dev/null 2>"$D/bad.err" || true
     if [ "$(grep -c 'raw syscall 91 is x86_64 `fchmod`' "$D/bad.err")" != 1 ]; then
         echo "FAIL: axis 3: a raw x86_64 fchmod(91) on ELF-aarch64 produced no diagnostic"
         FAIL=1
@@ -194,7 +200,7 @@ if [ -x "$D/cc_a64" ]; then
         echo "FAIL: axis 7: the stdlib hello did not build for aarch64 (rc=$rc7)"; FAIL=1
     elif [ "$(grep -c 'raw syscall' "$D/hello.err")" != 0 ]; then
         echo "FAIL: axis 7: a stdlib hello (syscalls+alloc+io) warns on aarch64 — a false positive on correct lib code:"
-        grep 'raw syscall' "$D/hello.err" | head -3 | sed 's/^/      /'; FAIL=1
+        grep 'raw syscall' "$D/hello.err" | head -3 | sed 's/^/      /' || true; FAIL=1
     else
         echo "  ok: a stdlib hello builds for aarch64 with 0 raw-syscall warnings (io.cyr's flock is SYS_FLOCK now)"
     fi
@@ -203,7 +209,7 @@ if [ -x "$D/cc_a64" ]; then
         echo "FAIL: axis 8: cbt/cyrius.cyr did not build for aarch64 (rc=$rc8)"; FAIL=1
     elif [ "$(grep -c 'raw syscall' "$D/cli.err")" != 0 ]; then
         echo "FAIL: axis 8: the CLI warns on aarch64 — a raw x86 number reached cbt/ again:"
-        grep 'raw syscall' "$D/cli.err" | head -3 | sed 's/^/      /'; FAIL=1
+        grep 'raw syscall' "$D/cli.err" | head -3 | sed 's/^/      /' || true; FAIL=1
     else
         echo "  ok: the CLI builds for aarch64 with 0 raw-syscall warnings (cbt/build.cyr's 110 is SYS_GETPPID now)"
     fi
@@ -265,7 +271,7 @@ if [ -x "$D/cc_a64" ] && [ -f tests/data/syscalls/x86_64.tbl ]; then
         echo "FAIL: axis 9: $unknown routed source number(s) are not x86_64 syscalls per tests/data/syscalls/x86_64.tbl"; FAIL=1
     elif [ "$(grep -c 'raw syscall' "$D/allrouted.err")" != 0 ]; then
         echo "FAIL: axis 9: a number ESYSXLAT ROUTES still warns — writing it raw is the supported convention:"
-        grep 'raw syscall' "$D/allrouted.err" | head -5 | sed 's/^/      /'; FAIL=1
+        grep 'raw syscall' "$D/allrouted.err" | head -5 | sed 's/^/      /' || true; FAIL=1
     else
         echo "  ok: all $nr routed source numbers compile silent on the aarch64 fork (derived from the emitter)"
     fi
@@ -289,12 +295,12 @@ if [ -x "$D/cc_a64" ] && [ -f tests/data/syscalls/x86_64.tbl ]; then
     # defect shape one level up. CHANGELOG [6.6.5]
     want294=$(awk '$1 == 294 { print $2 }' tests/data/syscalls/x86_64.tbl)
     printf 'fn main(): i64 { return syscall(294, 0); }\nvar r = main();\n' > "$D/ino.cyr"
-    "$D/cc_a64" < "$D/ino.cyr" > /dev/null 2>"$D/ino.err"
+    "$D/cc_a64" < "$D/ino.cyr" > /dev/null 2>"$D/ino.err" || true
     if [ -z "$want294" ]; then
         echo "FAIL: axis 10: tests/data/syscalls/x86_64.tbl has no entry for 294"; FAIL=1
     elif [ "$(grep -c "raw syscall 294 is x86_64 \`$want294\`" "$D/ino.err")" != 1 ]; then
         echo "FAIL: axis 10: raw 294 is not diagnosed as x86_64 \`$want294\` (aarch64 294 is kexec_file_load)"
-        grep -m2 'raw syscall' "$D/ino.err" | sed 's/^/      /'; FAIL=1
+        grep -m2 'raw syscall' "$D/ino.err" | sed 's/^/      /' || true; FAIL=1
     else
         echo "  ok: raw 294 is diagnosed as x86_64 \`$want294\` (the v6.6.5 peer-asymmetry fix)"
     fi
