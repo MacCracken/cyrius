@@ -1101,8 +1101,11 @@ fn _fsc_copy(S, idx, sid, off, nb): i64 {
     return 0;
 }
 
-fn _fsc_type_err(S, snoff, fnoff): i64 {
-    ERR_IDENT(S, "cannot copy ", snoff, " into a struct field of a different struct type: ", fnoff);
+fn _fsc_type_err(S, snoff, fnoff): i64 { return _fsc_type_errf(S, snoff, 0 - 1, fnoff); }
+# ... `snoff` the result of a call to fn `sfi` (a struct-call record's `_sc_fi`; -1: a name), named as the source spells
+# it: a method `Pt.dup` (`_err_ident_fn`). CHANGELOG [6.7.15]
+fn _fsc_type_errf(S, snoff, sfi, fnoff): i64 {
+    _err_ident_fn(S, "cannot copy ", snoff, sfi, " into a struct field of a different struct type: ", fnoff);
     return 0;
 }
 
@@ -1278,7 +1281,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
     # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
-    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); } return 2; }
+    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); } return 2; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
@@ -1289,7 +1292,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
 }
 fn _fsc_from_call(S, t, ft, fnoff): i64 {
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 2; }
-    if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); return 2; }
+    if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); return 2; }
     _fsc_reset();
     _fsc_li = t;
     return 1;
@@ -2787,6 +2790,7 @@ fn _slit_sep(S): i64 {
 var _spi_pk = 0;
 var _spi_ps = 0;
 var _spi_pn = 0;
+var _spi_pfi = 0 - 1;   # 6.7.15: ... the fn `_spi_pn` is the result of (a method's record, `Pt.dup`), else -1
 
 # R5 (v6.4.15): positional struct-literal init, extracted from the two formerly-parallel
 # copies in PARSE_STRUCT_INIT and EMIT_GVAR_INITS (the .44 Str-field fix had to be applied to
@@ -2851,6 +2855,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     var est = 0 - 1;   # the element's first token, when it starts here
     if (_spi_pk == 0) {
         est = GTI(S);
+        _spi_pfi = 0 - 1;
         _spi_pk = _spi_src(S, ft);
     }
     if (_spi_pk == 4) { return _spi_took(S); }
@@ -2861,7 +2866,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
             return _spi_took(S);
         }
         if (_spi_chain_has(S, ft, _spi_ps) == 0) {
-            _fsc_type_err(S, _spi_pn, GETFNAME(S, si, fi));
+            _fsc_type_errf(S, _spi_pn, _spi_pfi, GETFNAME(S, si, fi));
             return _spi_took(S);
         }
     }
@@ -3060,10 +3065,11 @@ fn _spi_expr(S, ft): i64 {
         _fsc_li = t;
         _spi_ps = _sc_sid;
         _spi_pn = _sc_fn;
+        _spi_pfi = _sc_fi;
         return 1;
     }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); return 4; }
-    if (t == 0 - 3) { _spi_ps = _sc_sid; _spi_pn = _sc_fn; return 3; }
+    if (t == 0 - 3) { _spi_ps = _sc_sid; _spi_pn = _sc_fn; _spi_pfi = _sc_fi; return 3; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         _spi_ps = _fla_ft;
@@ -8741,7 +8747,7 @@ fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     PRSTR(": ");
     _rcv_ann_pr(S, ann, ae);
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + fnoff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
     PRSTR("', which returns the struct '");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     PRSTR("' - declare '");
@@ -8767,6 +8773,9 @@ fn _rcv_ann_refd(S, ann): i64 {
 # 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse.cyr): "cannot assign", the
 # destination's annotation printed from its declaration, which ends at token `_rcv_asg_e`; -1 = a declaration's.
 var _rcv_asg_e = 0 - 1;
+# 6.7.15 — the fn whose result `_rcv_ann_refuse` names (a struct-call record's `_sc_fi`: a method `Pt.mq` as the source
+# spells it, `_fn_src_name`); -1: the name as written.
+var _rcv_fi = 0 - 1;
 fn _rcv_head(): i64 {
     if (_rcv_asg_e >= 0) { return ": cannot assign '"; }
     return ": cannot initialise '";
@@ -8915,7 +8924,9 @@ fn _scv_rec_ann(S, pscale, start): i64 {
     if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
     var eq = GTI(S);
     STI(S, start - 1);
+    _rcv_fi = _sc_fi;   # 6.7.15: named `Pt.mq`
     var r = _rcv_ann_refuse(S, _sc_beg, _sc_fn, _sc_sid, pscale, ann, _scv_ann_nm);
+    _rcv_fi = 0 - 1;
     STI(S, eq);
     if (r == 1) { _tn_once(S, start); }
     if (r == 1) { _scv_refd = start; }

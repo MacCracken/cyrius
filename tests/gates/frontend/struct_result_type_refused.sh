@@ -278,20 +278,20 @@ var Q1: Q = Q { 1, 2 };
 var E0: E = E { 4 };
 '
 echo "the declaration zone — a 9-16 B struct result of the SAME struct has no frame (6.7.9):"
-refuse "Z1 the filed repro  (zone method)" "'Q_mk' $MT" 'include "lib/syscalls.cyr"
+refuse "Z1 the filed repro  (zone method)" "'Q\.mk' $MT" 'include "lib/syscalls.cyr"
 struct Q { a; b; }
 impl Q { fn mk(self): Q { var q = Q { self.a + 1, self.b + 2 }; return q; } }
 var Q0: Q = Q { 4, 5 };
 var G2: Q = Q0.mk();                     # compiles; the binary SIGSEGVs (rc 139); want exit 57
 syscall(60, G2.a * 10 + G2.b);
 ' one
-refuse "Z2 = Q0.mk().mk()  (zone chain)" "'Q_mk' $MT" "$ZQ"'var G2: Q = Q0.mk().mk();
+refuse "Z2 = Q0.mk().mk()  (zone chain)" "'Q\.mk' $MT" "$ZQ"'var G2: Q = Q0.mk().mk();
 syscall(60, G2.a * 10 + G2.b);
 ' one
-refuse "Z3 = Q0.gmk(1)  (zone generic method)" "'Q_gmk' $MT" "$ZQ"'var G2: Q = Q0.gmk(1);
+refuse "Z3 = Q0.gmk(1)  (zone generic method)" "'Q\.gmk' $MT" "$ZQ"'var G2: Q = Q0.gmk(1);
 syscall(60, G2.a * 10 + G2.b);
 ' one
-refuse "Z4 = (Q0.mk())  (zone, wrapped)" "'Q_mk' $MT" "$ZQ"'var G2: Q = (Q0.mk());
+refuse "Z4 = (Q0.mk())  (zone, wrapped)" "'Q\.mk' $MT" "$ZQ"'var G2: Q = (Q0.mk());
 syscall(60, G2.a * 10 + G2.b);
 ' one
 refuse "Z5 = Q0 + Q1  (zone operator)" "'Q_add' $MT" "$ZQ"'var G2: Q = Q0 + Q1;
@@ -300,10 +300,10 @@ syscall(60, G2.a * 10 + G2.b);
 refuse "Z6 = mkf()  (zone free call, as ever)" "'mkf' $MT" "$ZQ"'var G3: Q = mkf();
 syscall(60, G3.a * 10 + G3.b);
 ' one
-refuse "Z7 = Q0.big()  (zone 24 B, as ever)" "'Q_big' $MT" "$ZQ"'var G4: Q3 = Q0.big();
+refuse "Z7 = Q0.big()  (zone 24 B, as ever)" "'Q\.big' $MT" "$ZQ"'var G4: Q3 = Q0.big();
 syscall(60, G4.c);
 ' one
-refuse "Z8 = Q0.mk()  (after a statement)" "'Q_mk' $MT" "$ZQ"'syscall(1, 1, "", 0);
+refuse "Z8 = Q0.mk()  (after a statement)" "'Q\.mk' $MT" "$ZQ"'syscall(1, 1, "", 0);
 var G2: Q = Q0.mk();
 syscall(60, G2.a * 10 + G2.b);
 ' one
@@ -446,7 +446,7 @@ var x: Foo = b.mk();
 syscall(60, 0);
 ' one
 refuse "U11 var x: Foo = 5  (control)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return 0; }'"$E" one
-refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q_mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
+refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q\.mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
 
 # AS (6.7.14, the user's decision D27 (a), 2026-10-16; issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-
 # first-word.md) — a struct result over 8 B ASSIGNED to a scalar (a local, a parameter or a global declared `: i64`,
@@ -480,7 +480,7 @@ var G: i64 = 0;
 var GU: u8 = 0;
 '
 refuse "AS0 x = mkp()  (the filed repro)" "$AM" "$(cat $AR.cyr)" one
-refuse "AS0m x = b.mk()  (the filed repro)" "cannot assign 'x: i64' from 'Q_mk', which returns the struct 'Q'" "$(cat $AR-method.cyr)" one
+refuse "AS0m x = b.mk()  (the filed repro)" "cannot assign 'x: i64' from 'Q\.mk', which returns the struct 'Q'" "$(cat $AR-method.cyr)" one
 refuse "AS0o x = a + c  (the filed repro)" "cannot assign 'x: i64' from 'Q_add', which returns the struct 'Q'" "$(cat $AR-operator.cyr)" 3
 refuse "AS0oy y = a + c  (u8, same)" "cannot assign 'y: u8' from 'Q_add'" "$(cat $AR-operator.cyr)" 3
 refuse "AS0og G = a + c  (global, same)" "cannot assign 'G: i64' from 'Q_add'" "$(cat $AR-operator.cyr)" 3
@@ -490,9 +490,9 @@ refuse "AS3 G = mkp()  (global, in a fn)" "cannot assign 'G: i64' from 'mkp'" "$
 refuse "AS4 G = mkp()  (global, top level)" "cannot assign 'G: i64' from 'mkp'" "$AQ"'G = mkp();
 syscall(60, G);
 ' one
-refuse "AS5 x = b.mk()  (u8 local)" "cannot assign 'x: u8' from 'Q_mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: u8 = 0; x = b.mk(); return x; }'"$E" one
-refuse "AS6 x = b.mk()  (f64 local)" "cannot assign 'x: f64' from 'Q_mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: f64 = 0.0; x = b.mk(); return 7; }'"$E" one
-refuse "AS7 G = B.mk()  (top level)" "cannot assign 'G: i64' from 'Q_mk'" "$AQ"'var B = Q { 1, 2 };
+refuse "AS5 x = b.mk()  (u8 local)" "cannot assign 'x: u8' from 'Q\.mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: u8 = 0; x = b.mk(); return x; }'"$E" one
+refuse "AS6 x = b.mk()  (f64 local)" "cannot assign 'x: f64' from 'Q\.mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: f64 = 0.0; x = b.mk(); return 7; }'"$E" one
+refuse "AS7 G = B.mk()  (top level)" "cannot assign 'G: i64' from 'Q\.mk'" "$AQ"'var B = Q { 1, 2 };
 G = B.mk();
 syscall(60, G);
 ' one
@@ -505,7 +505,7 @@ syscall(60, GU);
 refuse "AS12 for (..; ..; x = mkp())  (a step)" "$AM" "$AQ"'fn main(): i64 { var x: i64 = 0; var i = 0; for (i = 0; i < 1; x = mkp()) { i = i + 1; } return x; }'"$E" one
 refuse "AS13 for (x = mkp(); ..)  (an init)" "$AM" "$AQ"'fn main(): i64 { var x: i64 = 0; for (x = mkp(); x < 0; x = x + 1) { } return x; }'"$E" one
 refuse "AS14 x = mk3()  (24 B)" "cannot assign 'x: i64' from 'mk3', which returns the struct 'Q3'" "$AQ"'fn main(): i64 { var x: i64 = 0; x = mk3(); return x; }'"$E" one
-refuse "AS15 x = b.mk()  (24 B method)" "cannot assign 'x: i64' from 'Q3_mk'" "$AQ"'fn main(): i64 { var b = Q3 { 1, 2, 3 }; var x: i64 = 0; x = b.mk(); return x; }'"$E" one
+refuse "AS15 x = b.mk()  (24 B method)" "cannot assign 'x: i64' from 'Q3\.mk'" "$AQ"'fn main(): i64 { var b = Q3 { 1, 2, 3 }; var x: i64 = 0; x = b.mk(); return x; }'"$E" one
 refuse "AS16 x = mkp()  (an i64 parameter)" "$AM" "$AQ"'fn f(x: i64): i64 { x = mkp(); return x; }
 fn main(): i64 { return f(1); }'"$E" one
 refuse "AS17 x = (mkp())  (in parentheses)" "$AM" "$AQ"'fn main(): i64 { var x: i64 = 0; x = (mkp()); return x; }'"$E" one
@@ -515,7 +515,7 @@ refuse "AS20 G = mk3()  (top level, 24 B: no frame)" "$MT" "$AQ"'G = mk3();
 syscall(60, G);
 ' one
 refuse "AS21 x = mkp()  (a bool keeps its refusal)" "cannot assign a value that is not a bool to bool 'x'" "$AQ"'fn main(): i64 { var x: bool = false; x = mkp(); return 5; }'"$E" one
-refuse "AS22 x = (b.mk())  (in parentheses)" "cannot assign 'x: i64' from 'Q_mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = 0; x = (b.mk()); return x; }'"$E" one
+refuse "AS22 x = (b.mk())  (in parentheses)" "cannot assign 'x: i64' from 'Q\.mk'" "$AQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = 0; x = (b.mk()); return x; }'"$E" one
 accept "AK1 x = mk1()  (8 B: the word)" "$AQ"'fn main(): i64 { var x: i64 = 0; x = mk1(); var y: u8 = 0; y = mk1(); return x - 300 + y; }'"$E" 110 \
     "$AQ"'fn main(): i64 { var x: i64 = 333; var y: u8 = 77; return x - 300 + y; }'"$E"
 accept "AK2 x = mks()  (a Str: the handle)" 'include "lib/syscalls.cyr"
@@ -537,7 +537,7 @@ accept "AK3 x = mkp().a  (bind a field)" "$AQ"'fn main(): i64 { var x: i64 = 0; 
 # silently, exit 77; AF5 was refused naming the outer 'x: i64'), and an untyped header `x` shadowing an outer `x: i64`
 # keeps the word as any untyped destination does (AFK1 AFK2: they were refused naming the outer 'x: i64').
 refuse "AF1 for (var x: u8 ..) { x = mkp(); }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" one
-refuse "AF2 for (var x: u8 ..) { x = b.mk(); }" "cannot assign 'x: u8' from 'Q_mk'" "$AQ"'fn main(): i64 { var r = 0; var b = Q { 1, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = b.mk(); r = x; } return r; }'"$E" one
+refuse "AF2 for (var x: u8 ..) { x = b.mk(); }" "cannot assign 'x: u8' from 'Q\.mk'" "$AQ"'fn main(): i64 { var r = 0; var b = Q { 1, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = b.mk(); r = x; } return r; }'"$E" one
 refuse "AF3 for (var x: u8 ..) { x = a + c; }" "cannot assign 'x: u8' from 'Q_add'" "$AQ"'fn main(): i64 { var r = 0; var a = Q { 300, 2 }; var c = Q { 33, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = a + c; r = x; } return r; }'"$E" one
 refuse "AF4 for (var x: u8 ..) { x = fncall0(&mkp); }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { x = fncall0(&mkp); r = x; } return r; }'"$E" one
 refuse "AF5 for (var x: u8 ..) { if (..) { x = mkp(); } }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { if (r == 0) { x = mkp(); } r = x; } return r; }'"$E" one

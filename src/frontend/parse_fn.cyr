@@ -3468,7 +3468,7 @@ fn _ret_ptr_src(S): i64 {
     var ds = _hl_dstar_t(S, st, _ret_term);
     if (ds > 0) {
         if (_dx_plain(S, ds) == 0) { return 0 - 1; }
-        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_dnm, ds, 2); }
+        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_dnm, 0 - 1, ds, 2); }
         return _ret_ptr_copy(S, _hl_dx_src(S));
     }
     var e = _hl_dx_end(S, st, _ret_term);
@@ -3483,7 +3483,7 @@ fn _ret_ptr_src(S): i64 {
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
-    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
@@ -3641,7 +3641,7 @@ fn _ret_small_val(S, st): i64 {
     if (asid > 0) {
         if (asid >= 2048) { return 0; }
         if (_dyn_is(S, asid) == 1) { return 0; }   # refused at its own site (6.7.8 V4), once
-        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, asid, kind); }
+        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, _ess_fi, asid, kind); }
         return 0;
     }
     return _ret_small_ptr(S, st);
@@ -3666,6 +3666,7 @@ fn _ret_expr_sid(S, st): i64 {
     _fpk_want = fk;
     var asid = 0;
     var nm = 0;
+    _ess_fi = 0 - 1;
     if (TOKTYP(S, ist) == 2) {
         nm = TOKVAL(S, ist);
         var ie = GTI(S) - k;
@@ -3674,7 +3675,7 @@ fn _ret_expr_sid(S, st): i64 {
         elif (o > ist) { if (_call_close(S, o) + 1 == ie) { asid = _sarg_call_rs(S, ist); } }
     }
     if (asid == 0) {
-        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; _ess_fi = _sc_fi; }   # 6.7.15: `Pt.dup`
         elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }
     }
@@ -3694,14 +3695,15 @@ fn _ret_small_ptr(S, st): i64 {
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
     _hl_pval_ra(S, ps);
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
 # `*U8`)), 2 a dereference (`*pu` (a `U8`)), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
-# token `ti`; the parse goes on (no cascade).
-fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
+# token `ti`; the parse goes on (no cascade). `nm` the result of a call to fn `fi` is named as the source spells it
+# (`Pt.dup`, `_fn_src_name`; -1: a name as written). CHANGELOG [6.7.15]
+fn _ret_sid_refuse(S, ti, nm, fi, usid, kind): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3711,7 +3713,7 @@ fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
     if (kind == 3) { PRSTR("&"); }
-    PRSTR(S + 0xEC00000 + nm);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, nm));
     PRSTR("` (a `");
     if (kind == 1 || kind == 3) { PRSTR("*"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
@@ -7656,17 +7658,27 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
 # call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
 # "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
+# 6.7.15: the callee `noff` named as the source spells it — a method `Pt.dup`, not its fn `Pt_dup` (`_fn_src_name`).
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # 6.7.15: a method `Pt.dup`, not `Pt_dup`
     syscall(SYS_WRITE, 2, "' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
     _had_error = 1;
     _tsc_n = _tsc_n + 1;
     return 0;
+}
+# ERR_IDENT whose first name `noff` is the result of a call to fn `fi` (a struct-call record's `_sc_fi`; -1: a name as
+# written), printed as the source spells it (`_fn_src_name`: `Pt.dup`). Reported once per token and record — keyed on
+# `noff`, the record's own name, not the scratch the spelling is written at. CHANGELOG [6.7.15]
+fn _err_ident_fn(S, msg, noff, fi, tail, noff2): i64 {
+    var nm = _fn_src_name(S, fi, noff);
+    if (nm == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }   # a free fn: its own name, keyed so
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    return ERR_IDENT(S, msg, nm, tail, noff2);
 }
 
 # v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
