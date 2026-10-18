@@ -5359,6 +5359,18 @@ fn _gvar_ann_head(S, noff): i64 {
     STI(S, GTI(S) - 1);
     return 0;
 }
+# A declaration with no `=` where its initializer belongs (the cursor there; PARSE_VAR, EMIT_GVAR_INITS): a bare
+# `var X;` is "uninitialized variable not allowed", any other token "expected '='". A `;` the annotation reported
+# already (`var b: ;`, `_tn_head_var`) is that one error: the statement is latched quietly, as the refusal latches it.
+# CHANGELOG [6.7.15]
+fn _decl_eq_err(S): i64 {
+    if (PEEKT(S) == 5) {
+        if (_tn_seen_at(S, GTI(S)) == 1) { _panic = 1; return 0; }
+        ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
+    }
+    ERR_EXPECT(S, 4);
+    return 0;
+}
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
 # (CHKDUPVAL: "redefined with conflicting value", a same value silent). Only the exact `= NUM ;` was, so `var a = 5;
 # var a = 2 + 1;` compiled silently while the prior side compared any folded constant
@@ -6041,6 +6053,8 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
 # no generic global's initialiser was checked. CHANGELOG [6.6.11]
 fn _gvi_ann(S, slot): i64 {
     STI(S, GTI(S) + 1);   # consume :
+    # `var G: = 4;` / `var G: ;`: no type, refused by pass 1 (`_tn_head_var`), which steps no token. CHANGELOG [6.7.15]
+    if (PEEKT(S) == 4 || PEEKT(S) == 5) { return 0; }
     if (PEEKT(S) == 10) {   # 6.7.7 (B4): a tuple, interned by pass 1 — looked up, quietly
         var tsid = _tup_type(S, 1);
         STI(S, GTI(S) + 1);   # consume ')'
@@ -6423,12 +6437,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # v5.8.42: same bare-decl `var X;` improvement as PARSE_VAR.
         # Top-level vars hit this path; mirror the diagnostic so the
         # error text doesn't depend on where the bare-decl appears.
-        if (PEEKT(S) != 4) {
-            if (PEEKT(S) == 5) {
-                ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
-            }
-            ERR_EXPECT(S, 4);
-        }
+        if (PEEKT(S) != 4) { _decl_eq_err(S); }
         STI(S, GTI(S) + 1);  # consume =
         # Check for struct init: StructName { ... }
         # v5.9.33: same lookahead guard as PARSE_VAR — require `{` after
@@ -9293,12 +9302,7 @@ fn PARSE_VAR(S): i64 {
     # generic message. Now: a clear "uninitialized variable not
     # allowed; use `var X = 0;` or initial value" pointing at
     # the specific fix.
-    if (PEEKT(S) != 4) {
-        if (PEEKT(S) == 5) {
-            ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
-        }
-        ERR_EXPECT(S, 4);
-    }
+    if (PEEKT(S) != 4) { _decl_eq_err(S); }
     STI(S, GTI(S) + 1);
     # Check for struct init: var p = StructName { expr, expr, ... };
     # v5.9.33 (agnosys 1.1.12 follow-up): require the next-next token to be

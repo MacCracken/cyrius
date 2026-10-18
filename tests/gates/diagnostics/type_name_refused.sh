@@ -166,9 +166,8 @@ refused loc_vec_hint  "${FN}    var a: Vecx = 0;\n    return a;\n}\nsyscall(60, 
 # 6.7.14 (the user's decision D15 (a), 2026-10-16): a `var` annotation that is no type at all — a number, an operator,
 # a string — is refused by name at its token, once, in a fn, in the declaration zone and after the first statement,
 # as a parameter's is (6.7.11); the declaration reads on, so nothing cascades. It compiled as a plain i64, the
-# token dropped (issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md). A missing annotation (`var b: = 0;`)
-# keeps its one "expected '='". Mutations (scratch trees): `_tn_head_var` not reporting -> every va_ row but
-# va_missing / va_ok RED (they compile), the syntax-only row too; reporting a `=` too -> va_missing RED (2 errors).
+# token dropped (issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md). Mutations (scratch trees):
+# `_tn_head_var` not reporting -> every va_ row but va_missing / va_ok RED (they compile), the syntax-only row too.
 VA="expected a type for variable"
 refused va_loc_num  "${FN}    var b: 1 = 0;\n    return b;\n}\nsyscall(60, f());\n" "$VA 'b', got number 1"
 refused va_loc_op   "${FN}    var c: + = 2;\n    return c;\n}\nsyscall(60, f());\n" "$VA 'c', got '+'"
@@ -182,7 +181,34 @@ refused va_pp_str   'syscall(39);\nvar H: "s" = 4;\nsyscall(60, H);\n' "$VA 'H',
 refused va_comma    "${FN}    var b: , = 0;\n    return b;\n}\nsyscall(60, f());\n" "$VA 'b', got ','"
 refused va_for      "${FN}    for (var i: 3 = 0; i < 2; i = i + 1) { }\n    return 0;\n}\nsyscall(60, f());\n" "$VA 'i', got number 3"
 refused va_gen      'fn g<T>(a: T): i64 { var b: 1 = 0; return b + a; }\nsyscall(60, g(1) + g(2));\n' "$VA 'b', got number 1"
-refused va_missing  "${FN}    var b: = 0;\n    return b;\n}\nsyscall(60, f());\n" "expected '=', got number 0"
+# 6.7.15: a `:` with NO type — a `=` or `;` right after it — is refused the same way, once, AT that token, in a fn, in
+# the declaration zone and after the first statement; the declaration reads its initializer from the `=`, and a `;` is
+# not also "uninitialized variable not allowed". It was "expected '=', got number 0" at the initializer (the `=` stepped
+# as the type), and `var c: ; var d = 2;` in the zone compiled, c = 2 (va_miss_next)
+# (issues/2026-10-16-var-missing-annotation-reported-as-expected-equals.md). Mutations (measured; scratch trees): the
+# 6.7.15 slot-open compiler (`_tn_head_var` not reporting a `=` / `;`) -> every va_miss / va_missing row RED (the old
+# "expected '='" at the wrong token; va_miss_next compiles); `_tn_head_var` without its step back -> RED the fn and
+# after-the-first-statement rows and the --syntax-only row (2-3 errors: "expected '='" too) — the zone rows are the
+# replay's; `_decl_eq_err` without its stand-down -> RED va_miss_lsemi / _ppsemi / _dzsemi / _next ("uninitialized
+# variable" too); `_gvi_ann` stepping the `=` / `;` -> RED va_miss_dzcall / _dzsemi / _next (a replayed entry reads its
+# initializer where its `=` belongs; a constant one, va_miss_dzeq, is baked, not replayed).
+refused va_missing  "${FN}    var b: = 0;\n    return b;\n}\nsyscall(60, f());\n" "2:12: $VA 'b', got '='"
+refused va_miss_lsemi  "${FN}    var b: ;\n    return 3;\n}\nsyscall(60, f());\n" "2:12: $VA 'b', got ';'"
+refused va_miss_dzeq   'var G: = 4;\nsyscall(60, G);\n' "1:8: $VA 'G', got '='"
+refused va_miss_dzcall 'fn k(): i64 { return 4; }\nvar G: = k();\nsyscall(60, G);\n' "2:8: $VA 'G', got '='"
+refused va_miss_dzsemi 'var G: ;\nsyscall(60, 0);\n' "1:8: $VA 'G', got ';'"
+refused va_miss_ppeq   'syscall(39);\nvar H: = 4;\nsyscall(60, H);\n' "2:8: $VA 'H', got '='"
+refused va_miss_ppsemi 'syscall(39);\nvar H: ;\nsyscall(60, 0);\n' "2:8: $VA 'H', got ';'"
+refused va_miss_next   'var c: ;\nvar d = 2;\nsyscall(60, c);\n' "1:8: $VA 'c', got ';'"
+refused va_miss_gen    'fn g<T>(a: T): i64 { var b: = 0; return b + a; }\nsyscall(60, g(1) + g(2));\n' "1:29: $VA 'b', got '='"
+refused va_miss_for    "${FN}    for (var i: = 0; i < 2; i = i + 1) { }\n    return 0;\n}\nsyscall(60, f());\n" "2:17: $VA 'i', got '='"
+# The filed repro verbatim: two declarations, two errors (the global first: pass 1 registers it).
+refused va_miss_repro 'fn f(): i64 {\n    var b: = 0;\n    return b;\n}\nvar G: = 4;\nsyscall(60, f() + G);\n' "5:8: $VA 'G', got '='" 2
+rows=$((rows + 1))
+check "va_miss_repro: names 2:12 'b'" yes "$(grep -qF -- "2:12: $VA 'b', got '='" "$T/va_miss_repro.err" && echo yes || echo no)"
+rows=$((rows + 1))
+rc=0; "$CC" --syntax-only < "$T/va_missing.cyr" > /dev/null 2> "$T/va_mso.err" || rc=$?
+check "va_missing under --syntax-only: refused" "1 yes 1" "$rc $(grep -qF "$VA 'b', got '='" "$T/va_mso.err" && echo yes || echo no) $(grep -c '^error' "$T/va_mso.err")"
 # The filed repro verbatim: four annotations, four errors (the global first: pass 1 registers it).
 VR='fn f(): i64 {\n    var b: 1 = 0;\n    var c: + = 2;\n    var d: "s" = 3;\n    return b + c + d;\n}\nvar G: 7 = 4;\nsyscall(60, f() + G);\n'
 refused va_repro "$VR" "$VA 'G', got number 7" 4
@@ -340,7 +366,7 @@ for sx in u128_ret u128_field u128_param; do
     check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
 done
 
-if [ "$rows" -lt 107 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 107)"; exit 1; fi
+if [ "$rows" -lt 120 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 120)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0
