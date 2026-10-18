@@ -5181,19 +5181,20 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # The token after a struct annotation's name: `<...>` on a GENERIC struct is parsed and the
 # instance `Box$ty` instantiated (deduped), and its sid returned; the base `sid` when every arg
 # is i64 or unresolved (the base IS the all-i64 instance), or when there is no `<`, or when the
-# struct is not generic (SKIP_GENERICS). `sid` <= 0 skips the args and returns it.
+# struct is not generic (SKIP_GENERICS). `sid` <= 0 skips the args and returns it. A `<..>` on a
+# non-generic struct or a scalar is refused at the name first (6.7.15 D6, `_ngt_refuse`).
 # v6.3.10 in PARSE_VAR; ⛔ 6.6.11 PARSE_GVAR_REG and the EMIT_GVAR_INITS replay share it — the
 # declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
     if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
     if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
-    if (sid <= 0) { SKIP_GENERICS(S); return sid; }
+    if (sid <= 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `i64<..>`
     if (PEEKT(S) != 19) {
         if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base
         return sid;
     }
-    if (GSTP(S, sid - 1) == 0) { SKIP_GENERICS(S); return sid; }
+    if (GSTP(S, sid - 1) == 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `Pt<..>`
     var lit = 1;
     if (_bnd_quiet == 0) { lit = _targs_literal(S, GTI(S) + 1); }   # 6.7.1 (C3): `Box<i64>` written out
     STI(S, GTI(S) + 1);                 # consume `<`

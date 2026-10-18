@@ -111,6 +111,25 @@
 #      Filed: docs/development/issues/archived/2026-10-09-undeclared-generic-type-arguments-accepted.md
 #      Mutant (2026-10-16, a one-edit scratch copy of the tree, its 2-stage cycc, this gate run from it): MSG1
 #      `_gtype_sid_def` without its `_targ_chk` call -> RED 8: SG0-SG7 (each BUILT, as on the compiler before it)
+#   NG (6.7.15, the user's D6 (a), 2026-10-18) `Name<..>` ON A NON-GENERIC STRUCT OR A SCALAR: the list was skipped
+#      unread — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`, `var b: Box<Pt<nosuch>>;`, `fn f(p: Pt<i64>)`, a
+#      `: Pt<i64>` return and `Vec<Pt<nosuch>>` compiled (the filed repro exited 31) and a name inside was never checked.
+#      `_ngt_refuse` refuses each once, at the name — "'Pt' is not a generic struct: it takes no type arguments", "'i64'
+#      takes no type arguments" — the list skipped and the name's own type read, so nothing cascades. NG0 the filed repro
+#      verbatim; NG1-NG8 the positions (a Vec element's in a local and a field; a parameter, a return, `*Pt<..>` both
+#      ways, a scalar parameter; local annotations; a literal head, `Box<i32<u8>>`, sizeof, `g<f64<u8>>`; globals; a
+#      generic body with three instances; `Box<Result<..>>` keeping its own refusal alone; a pointer return in source
+#      order, not pass 1's); a control (Box<Pt>, Box<Box<Pt>>, Vec<i64>, Vec<Box<Pt>>, Vec<Vec<i64>>, g<Box<Pt>>).
+#      Filed: docs/development/issues/2026-10-16-non-generic-type-given-type-arguments-compiles.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, this gate run with CYCC= it):
+#      MNG1 `_ngt_refuse` answering 0 (the bite off) -> RED 8: NG0-NG6, NG8 (each BUILT); MNG2 `_gen_ann_sid`'s
+#      non-generic arm without it -> RED 7: NG0 NG2-NG6 NG8; MNG3 its scalar arm without it -> RED 2: NG3 NG5; MNG4 the
+#      parameter site without it -> RED 1: NG2; MNG5 `_parse_one_type_arg`'s `<` arm without it -> RED 2: NG0 NG4; MNG6
+#      `_vec_el_args` without it -> RED 1: NG1; MNG7 `_ptr_step_peek`'s pass-1 early return gone -> RED 1: NG8 (pass 1
+#      reported first); MNG8 `_ptr_tok_sid`'s early return gone -> RED 1: NG8; MNG9 the struct-return site without it
+#      -> RED 1: NG2. Defensive, no killing row (named):
+#      `_ngt_refuse`'s `_tn_once` — `ERR_IDENT`'s own repeat check (`_err_dup`, 6.7.14) already prints a report at one
+#      token once; kept so the latch matches `_tn_refuse`'s.
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -602,5 +621,65 @@ syscall(60, main());
 EOF
 exits sgk 49 "SG control: a generic's own fn gm<K, V>(m: Mp<K, V>, b) (21), Box<Later> / *Box<Later> parameters and a : Box<Later> return with Later declared below the fns (12 + 7 + 9)"
 
+# ── 6.7.15: `Name<..>` on a non-generic struct or a scalar (the user's D6 (a), 2026-10-18) ──────────
+NGS="'Pt' is not a generic struct: it takes no type arguments"
+NGI="takes no type arguments"
+cat > "$T/ng0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }
+fn main(): i64 {
+    var c: Pt<i64>;
+    c.x = 3;
+    var b: Box<Pt<nosuch>>;
+    b.n = 4;
+    return c.x + b.n + g<Pt<i32>>(0) + g<i64<u8>>(0);
+}
+syscall(60, main());
+EOF
+errs ng0 4 "NG0: the filed repro verbatim — each shape refused once, at the name (it compiled: exit 31)" \
+    "error:<source>:6:12: $NGS" "error:<source>:8:16: $NGS" "error:<source>:10:26: $NGS" "error:<source>:10:42: 'i64' $NGI"
+NGH='include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn g<T>(x): i64 { return sizeof(T); }'
+ng() { printf '%s\n%s\nsyscall(60, 7);\n' "$NGH" "$2" > "$T/$1.cyr"; }
+ng ng1 'fn f(): i64 { var w: Vec<Pt<nosuch>> = 0; return 0; }
+struct H { items: Vec<Pt<i64>>; k; }'
+errs ng1 2 "NG1: a Vec element, a local's and a field's (Vec<Pt<nosuch>>, Vec<Pt<i64>>)" \
+    "error:<source>:6:26: $NGS" "error:<source>:7:23: $NGS"
+ng ng2 'fn f(p: Pt<i64>): i64 { return 7; }
+fn h(): Pt<i64> { var p: Pt; return p; }
+fn k(p: *Pt<i64>, q: i32<u8>): *Pt<i64> { return p; }'
+errs ng2 5 "NG2: a parameter, a return, a pointer parameter, a scalar parameter, a pointer return — at the definition, called or not" \
+    "error:<source>:6:9: $NGS" "error:<source>:7:9: $NGS" "error:<source>:8:10: $NGS" "error:<source>:8:22: 'i32' $NGI" "error:<source>:8:33: $NGS"
+ng ng3 'fn f(): i64 { var x: i64<u8> = 5; var y: f64<i32> = 1.5; var p: *Pt<i64> = 0; var q: Pt<i64> = Pt { 1, 2 }; return x; }'
+errs ng3 4 "NG3: local annotations — a scalar, f64, a pointer, a struct with its initialiser" \
+    "error:<source>:6:22: 'i64' $NGI" "error:<source>:6:42: 'f64' $NGI" "error:<source>:6:66: $NGS" "error:<source>:6:86: $NGS"
+ng ng4 'fn f(): i64 { var p = Pt<i64> { 1, 2 }; var b: Box<i32<u8>>; return sizeof(Pt<i64>) + g<f64<u8>>(0) + p.y; }'
+errs ng4 4 "NG4: a struct literal head, a scalar inside Box<..>, sizeof(..), an explicit f64<u8>" \
+    "error:<source>:6:23: $NGS" "error:<source>:6:52: 'i32' $NGI" "error:<source>:6:76: $NGS" "error:<source>:6:89: 'f64' $NGI"
+ng ng5 'var G: Pt<i64> = Pt { 1, 2 };
+var X: i64<u8> = 3;'
+errs ng5 2 "NG5: globals — a struct with its initialiser, a scalar" "error:<source>:6:8: $NGS" "error:<source>:7:8: 'i64' $NGI"
+ng ng6 'fn h<T>(x: T): i64 { var c: Pt<T>; c.x = 1; return c.x + sizeof(T); }
+fn f(): i64 { var b: Box<Pt>; return h(1) + h(b) + h<i32>(2); }'
+errs ng6 1 "NG6: a generic body's Pt<T> with three instances — once" "error:<source>:6:29: $NGS"
+ng ng7 'fn f(): i64 { var r: Box<Result<i64>>; return 0; }'
+errs ng7 1 "NG7: Box<Result<..>> keeps its own refusal, alone" "generic type-args must be a scalar (i8/i16/i32/i64) or a struct"
+# NG8: in source order — a fn's `*Pt<..>` return is refused where pass 2 reads the definition, not by pass 1's scan
+# (which ran ahead of every earlier fn's errors).
+ng ng8 'fn a(): i64 { var q: i64 = 1 2; return q; }
+fn k(): *Pt<i64> { return 0; }
+fn m(p: i64): *Pt<i64> { return 0; }'
+errs ng8 3 "NG8: a pointer return's refusal in source order" "error:<source>:7:10: $NGS" "error:<source>:8:16: $NGS"
+if [ "$(grep '^error' "$T/ng8.err" | head -1 | cut -d: -f2-3)" != "<source>:6" ]; then
+    bad "NG8: the first error is not line 6's (pass 1 reported ahead): $(grep '^error' "$T/ng8.err" | head -1)"
+else ok "NG8: line 6's error first (pass 2 reports the pointer returns)"; fi
+printf '%s\nfn main(): i64 { var b: Box<Pt>; b.n = 1; var c: Box<Box<Pt>>; c.n = 2; var w: Vec<i64> = 0; var v: Vec<Box<Pt>> = 0; var u: Vec<Vec<i64>> = 0; var p: Pt; p.y = 3; return b.n + c.n + p.y + g<Pt>(0) + g<Box<Pt>>(0) + g<Vec<i64>>(0) - 54; }\nsyscall(60, main());\n' "$NGH" > "$T/ngk.cyr"
+exits ngk 0 "NG control: Box<Pt>, Box<Box<Pt>>, Vec<i64>, Vec<Box<Pt>>, Vec<Vec<i64>>, g<Pt> 16, g<Box<Pt>> 24, g<Vec<i64>> 8, unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15)"

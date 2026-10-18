@@ -6815,7 +6815,12 @@ variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error na
 it (v6.6.8; an enum's values are i64, so write `i64`) — with type arguments of its own too:
 `g<Nonexist<u8>>(0)` is *unknown type 'Nonexist' as a type argument*, and a type parameter
 written with arguments (`h<T<u8>>`) is *a type parameter takes no type arguments* (6.7.14;
-both ran the i64 base). A token that is no name at all
+both ran the i64 base). Only a generic struct takes type arguments: a non-generic struct or
+a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`,
+`Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
+once, at the name: *'Pt' is not a generic struct: it takes no type arguments* (*'i64' takes
+no type arguments*) (6.7.15, the user's D6; through 6.7.14 the list was skipped unread, so a
+name inside it was never checked). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses

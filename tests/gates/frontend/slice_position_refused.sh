@@ -36,7 +36,8 @@
 #       a generic `struct slice<T>`'s locals `slice<i64>` / `slice<Pt>` are its instances; K2e (kept: it compiled
 #       before) a field and both global zones of the type, with a `[u8]` local in the same file still the built-in;
 #       K2f (review) the flip side: a fn-local `slice<u8>` there is the struct, so the built-in's `.len` on it is
-#       refused (it compiled through 6.7.10); K2g the `[u8]` respelling runs (14);
+#       refused (it compiled through 6.7.10) — and, since 6.7.15 (D6), the non-generic struct's `<u8>` at the name;
+#       K2g the `[u8]` respelling runs (14);
 #       tests/tcyr/crossos/user_struct_named_slice.tcyr runs the shapes on every fork
 #       K2h (6.7.14) a program's own GENERIC `struct slice<T>` as a `*slice<i64>` and a by-value `slice<i64>`
 #       parameter: exit 5 — the one row that reaches `_sl_ann_at`'s FINDSTRUCT test (K2's bare `slice` has no
@@ -242,9 +243,16 @@ exits k2e 65 "K2e: a field and both global zones of the program's slice type; a 
     "${SL}struct slice { a; b; c; }\nstruct H { s: slice; k; }\nvar GZ: slice = slice { 0, 0, 0 };\nfn noop(): i64 { return 0; }\nfn main(): i64 {\n    var h: H;\n    h.s.b = 7;\n    h.k = 1;\n    GZ.c = 20;\n    var bk: u8[4];\n    store8(&bk + 2, 3);\n    var u: [u8] = 0;\n    slice_set(&u, &bk, 4);\n    return h.s.b + h.k + GZ.c + u[2] + slice_len(&u) + sizeof(slice);\n}\nnoop();\nvar GP: slice = slice { 0, 0, 0 };\nGP.a = 6;\nsyscall(60, main() + GP.a);\n"
 # K2f / K2g (6.7.11 review): the flip side of decision (b) — with the program's own `struct slice`
 # declared, a fn-local `slice<u8>` is that struct, so the built-in's `.len` on it stops compiling
-# (base 5fb211da: 14); the built-in respelled `[u8]` gives the 14.
-refused k2f "unknown field 'len' on struct 'slice'" "K2f: \`struct slice\` declared: a fn-local \`slice<u8>\`'s \`.len\` is refused (the built-in is \`[u8]\` there)" \
-    "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: slice<u8> = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
+# (base 5fb211da: 14); the built-in respelled `[u8]` gives the 14. 6.7.15 (the user's D6 (a), 2026-10-18): that
+# struct is not generic, so its `<u8>` is refused at the name too — two error lines, the `.len` one still there.
+printf '%b' "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: slice<u8> = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n" > "$T/k2f.cyr"
+rc=0; timeout 60 "$CC" < "$T/k2f.cyr" > "$T/k2f.bin" 2> "$T/k2f.err" || rc=$?
+K2FW="K2f: \`struct slice\` declared: a fn-local \`slice<u8>\` is that struct — its \`<u8>\` refused at the name (6.7.15 D6) and its \`.len\` refused (the built-in is \`[u8]\` there)"
+if [ "$rc" -eq 0 ]; then bad "$K2FW: compiled (rc 0)"
+elif [ "$(grep -c '^error' "$T/k2f.err")" -ne 2 ]; then bad "$K2FW: $(grep -c '^error' "$T/k2f.err") error lines, want 2: $(grep '^error' "$T/k2f.err" | head -3 | tr '\n' '|')"
+elif ! grep -qF "error:<source>:5:12: 'slice' is not a generic struct: it takes no type arguments" "$T/k2f.err"; then bad "$K2FW: no D6 line at 5:12: $(grep '^error' "$T/k2f.err" | head -2 | tr '\n' '|')"
+elif ! grep '^error' "$T/k2f.err" | grep -qF "unknown field 'len' on struct 'slice'"; then bad "$K2FW: no \`.len\` line: $(grep '^error' "$T/k2f.err" | head -2 | tr '\n' '|')"
+else ok "$K2FW"; fi
 exits k2g 14 "K2g: ... respelled \`var s: [u8] = 0;\` it is the built-in slice (7 + 7)" \
     "${SL}struct slice { a; b; c; }\nfn f(): i64 {\n    var buf[16];\n    var s: [u8] = 0;\n    slice_of(&s, &buf, 7);\n    return slice_len(&s) + s.len;\n}\nsyscall(60, f());\n"
 # K2h (6.7.14): a program's own GENERIC `struct slice<T>` as a pointer parameter and a by-value parameter —

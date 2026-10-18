@@ -14988,6 +14988,7 @@ fn _parse_one_type_arg(S): i64 {
             if (_vec_ann_at(S, GTI(S) - 1) == 0) { return _targ_bad_gen(S, noff); }
             _targ_vec(S, GTI(S) - 1);
         }
+        if (_ngt_refuse(S, GTI(S) - 1) == 1) { _ta_refd = 1; }   # 6.7.15 (D6): `Pt<..>`, `i64<..>` (its type is read)
         # 6.6.17: and its own `<..>` (`Box<Vec<i64>>`), which was left for the enclosing list.
         _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return _c1;

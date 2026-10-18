@@ -317,6 +317,43 @@ fn _tn_seen_at(S, ti): i64 {
     return 0;
 }
 
+# ⛔ 6.7.15 (D6) — `Name<..>` WHERE NAME IS A NON-GENERIC STRUCT OR A SCALAR (token `nti` the name, its `<` next): the
+# list was skipped unread, so `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`, `var b: Box<Pt<nosuch>>;`,
+# `fn f(p: Pt<i64>)` and `Vec<Pt<nosuch>>` compiled and a name inside the list was never checked. Refused once, at the
+# name (the user's D6 (a), 2026-10-18), as `_tn_refuse` refuses an annotation: the caller skips the list as before and
+# reads the name's own type, so nothing cascades. A dyn (`dyn Show<..>`) is the dyn pre-pass's; a generic struct, `Vec`,
+# Result / Option / Tagged, cstring, an enum and a type parameter are not this shape. 1 = the shape. CHANGELOG [6.7.15]
+fn _ngt_refuse(S, nti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }   # CYRIUS_MONOMORPH=0: no struct is recorded as generic
+    if (TOKTYP(S, nti) != 2) { return 0; }
+    if (TOKTYP(S, nti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, nti);
+    var sid = FINDSTRUCT(S, noff);
+    var tail = " takes no type arguments";
+    if (sid > 0) {
+        if (GSTP(S, sid - 1) != 0) { return 0; }
+        if (_dyn_is(S, sid) == 1) { return 0; }
+        tail = " is not a generic struct: it takes no type arguments";
+    } elif (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
+    if (_syntax_only == 1) { return 1; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, nti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, nti);
+    ERR_IDENT(S, "", noff, tail, 0 - 1);
+    STI(S, sv);
+    _panic = 0;
+    return 1;
+}
+# 1 when the name (its first 8 bytes `n`) is a builtin scalar: i8..i64, u8..u64, f32, f64, bool.
+fn _ngt_scalar(n): i64 {
+    var c = _tn_scalar(n);
+    var k = _tn_class(c);
+    if (k >= 1) { if (k <= 3) { return 1; } }
+    if (k == 4) { if (_tn_val(c) == 1) { return 1; } }
+    return 0;
+}
+
 # A type annotation at token `ti` (a local or a global; `vnoff` the variable): its code, or 0
 # after the refusal. The caller takes the width / sign / float / sid / vector through the
 # accessors; a refused name leaves all of them 0, i.e. a plain i64. An ARRAY element (`T[N]`,
@@ -2574,6 +2611,7 @@ fn _ptr_tok_sid(S, ti): i64 {
     var sid = FINDSTRUCT(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0; }
     if (TOKTYP(S, ti + 1) != 19) { return sid; }
+    if (GSTP(S, sid - 1) == 0) { return sid; }   # 6.7.15 (D6): `*Pt<..>` is refused where its annotation is read
     var sv = GTI(S);
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
@@ -3191,6 +3229,7 @@ fn _ptr_step_peek(S, vnoff, quiet): i64 {
     var sid = FINDSTRUCT(S, TOKVAL(S, ti));
     if (sid <= 0) { return ps; }
     if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
+    if (quiet == 1) { if (GSTP(S, sid - 1) == 0) { return ps; } }   # 6.7.15 (D6): pass 2 refuses `*Pt<..>`
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
     STI(S, ti);
@@ -4586,9 +4625,10 @@ fn _vec_ann_list(S, vnoff): i64 {
 # declared name or -1): read, not consumed. A nested `Vec<..>` is checked as the annotation is (a field's
 # `items: Vec<Vec<nosuch>>` was skipped unread); a generic struct's list is read as that struct's annotation reads
 # it, instantiating nothing (`_targ_chk`): `Vec<Box<nosuch>>`, `Vec<Box<(i64, i64)>>`. Any other element's list is
-# skipped as a non-generic `Pt<..>` annotation's is. CHANGELOG [6.7.14]
+# skipped as a non-generic `Pt<..>` annotation's is, refused at the name (6.7.15 D6). CHANGELOG [6.7.14]
 fn _vec_el_args(S, ti, vnoff): i64 {
     if (_vec_ann_at(S, ti) == 1) { _vec_ann_chk(S, ti, vnoff); return 0; }
+    if (_ngt_refuse(S, ti) == 1) { return 0; }   # 6.7.15 (D6): `Vec<Pt<..>>`, `Vec<i64<..>>`
     if (TOKTYP(S, ti) != 2) { return 0; }
     var es = FINDSTRUCT(S, TOKVAL(S, ti));
     if (es <= 0) { return 0; }
