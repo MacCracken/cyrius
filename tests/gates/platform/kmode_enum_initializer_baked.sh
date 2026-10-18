@@ -71,6 +71,15 @@
 #   0. real tree                                   -> GREEN (18 rows)
 #   Z0. the compiler before the fix (50b9a8817)    -> RED, 11 checks: K's four struct deltas, the S row's four code
 #       forms, KF's binary64 1.5, E's two KS deltas
+# MUTATION LEDGER (6.7.15 — a float scalar's constant f64 expression baked, RC / KC / RS check 9;
+# issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md):
+#   0. real tree                                   -> GREEN (20 rows)
+#   C0. the compiler before the fix (8981d679b)    -> RED, 20 checks: RS check 9, its two warnings (2, CA named),
+#       RC check 1, its 16 warnings and the 12 shapes named, KC's warning, image bytes and late store
+#   C1. _gvk_fscan taking an integer literal       -> RED, 4 checks: RC check 13 (CM baked), 3 warnings, CM unnamed,
+#       the mix not warned (its replay dropped)
+#   C2. _gvk_fx evaluating loudly (_ce_top_expr)   -> RED, 1 check: RC does not build (CN's NaN refusal is an error)
+#   C3. _gvk_fx's f32 narrowing dropped            -> RED, 1 check: RC check 4 (an f32 read as binary64 bits)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -207,7 +216,8 @@ fi
 # untyped `var K = 1.5;` as their binary64 bits, an `f32` global as its binary32 bits zero-extended (what
 # the replayed store writes: it rounds). The integer folder refused the literal, so the store was left
 # to the late replay and the kernel's program read 0 (issues/2026-10-08-kernel-float-global-init-not-
-# baked.md). A float initializer that is not a literal (a call, arithmetic) stays late and is named.
+# baked.md). A float initializer that is not a constant (a call) stays late and is named. 6.7.15: f64
+# constant arithmetic is baked too (RC below): CA (`1.5 + 1.0`) reads its bits and is named no more.
 cat > "$T/rs.cyr" <<'EOF'
 kernel;
 var G: f64 = 1.5;
@@ -230,7 +240,7 @@ ck(load64(&KN), 0xC004000000000000, 5);
 ck(load64(&M), 0x3DCCCCCD, 6);
 ck(load64(&Z), 0x80000000, 7);
 ck(load64(&CX), 0, 8);
-ck(load64(&CA), 0, 9);
+ck(load64(&CA), 0x4004000000000000, 9);
 ck(H, 7, 10);
 syscall(60, 100);
 EOF
@@ -239,12 +249,83 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rs.cyr" > "$T/rs.bin" 2> "$T/rs.err" && [ -
     chmod +x "$T/rs.bin"
     rc=0
     "$T/rs.bin" > /dev/null 2>&1 || rc=$?
-    [ "$rc" = 100 ] || bad "RS: the kernel program read a wrong float scalar at check $rc (1 f64, 2 f32 binary32, 3 f64 negated, 4-5 untyped, 6 f32 rounded, 7 f32 -0.0; 8-9 the computed ones read 0, 10 the literal control)"
-    [ "$(nwarn "$T/rs.err")" = 2 ] || bad "RS: $(nwarn "$T/rs.err") late-initializer warnings, want 2 (CX a call, CA arithmetic)"
+    [ "$rc" = 100 ] || bad "RS: the kernel program read a wrong float scalar at check $rc (1 f64, 2 f32 binary32, 3 f64 negated, 4-5 untyped, 6 f32 rounded, 7 f32 -0.0; 8 the call reads 0, 9 f64 arithmetic (6.7.15), 10 the literal control)"
+    [ "$(nwarn "$T/rs.err")" = 1 ] || bad "RS: $(nwarn "$T/rs.err") late-initializer warnings, want 1 (CX a call)"
     grep "$WMSG 'CX'" "$T/rs.err" > /dev/null || bad "RS: no warning names CX (a call is left to the late replay)"
-    grep "$WMSG 'CA'" "$T/rs.err" > /dev/null || bad "RS: no warning names CA (float arithmetic is left to the late replay)"
+    grep "$WMSG 'CA'" "$T/rs.err" > /dev/null && bad "RS: CA (f64 constant arithmetic) is named: it is baked since 6.7.15"
 else
     bad "RS: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rs.err")"
+fi
+# RC (6.7.15) — a float scalar's constant f64 expression is baked: an f64 const, a parenthesized literal, f64
+# arithmetic of them — `= CF`, `= (1.5)`, `= 1.5 + 1.0` (the filed repro, checks 1-3), an `f32` global's binary32
+# rounding (4, 8), a negation, an untyped global, a quotient that rounds, an infinity, a zero
+# (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md). Each was left to the late replay,
+# warned "use a constant", and read 0. Still late and named, once each: a call (CX), a NaN (CN: its bits are the
+# target's, refused by the evaluator, quietly), an integer or enum operand in f64 arithmetic (CM, CE: the replay
+# warns about the mix, so it runs). tests/tcyr/crossos/zone_float_constant_initializer.tcyr checks the host values
+# on x86_64, aarch64, cx and PE (const_init_bake_and_fold.sh T9-T12).
+cat > "$T/rc.cyr" <<'EOF'
+kernel;
+const CF = 1.5;
+const CG = 0.1;
+enum CK { KA = 3; }
+var G: f64 = CF;
+var P: f64 = (1.5);
+var A: f64 = 1.5 + 1.0;
+var F: f32 = CF;
+var N: f64 = -CF;
+var M: f64 = CF * 2.0 - (0.5 / 2.0);
+var K = CF;
+var H: f32 = CG * 3.0;
+var D: f64 = 1.0 / 3.0;
+var I: f64 = 1.0 / 0.0;
+var Z: f64 = 0.0 - 0.0;
+var Q: f64 = -(CG + CG);
+fn fk(): f64 { return 1.5; }
+var CX: f64 = fk() + 1.0;
+var CN: f64 = 0.0 / 0.0;
+var CM: f64 = 1.5 + 1;
+var CE: f64 = 1.5 * KA;
+fn ck(got, want, k): i64 { if (got != want) { syscall(60, k); } return 0; }
+ck(load64(&G), 0x3FF8000000000000, 1);
+ck(load64(&P), 0x3FF8000000000000, 2);
+ck(load64(&A), 0x4004000000000000, 3);
+ck(load64(&F), 0x3FC00000, 4);
+ck(load64(&N), 0xBFF8000000000000, 5);
+ck(load64(&M), 0x4006000000000000, 6);
+ck(load64(&K), 0x3FF8000000000000, 7);
+ck(load64(&H), 0x3E99999A, 8);
+ck(load64(&D), 0x3FD5555555555555, 9);
+ck(load64(&I), 0x7FF0000000000000, 10);
+ck(load64(&Z), 0, 11);
+ck(load64(&Q), 0xBFC999999999999A, 12);
+ck(load64(&CX) + load64(&CN) + load64(&CM) + load64(&CE), 0, 13);
+syscall(60, 100);
+EOF
+rows=$((rows + 1))
+if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rc.cyr" > "$T/rc.bin" 2> "$T/rc.err" && [ -s "$T/rc.bin" ]; then
+    chmod +x "$T/rc.bin"
+    rc=0
+    "$T/rc.bin" > /dev/null 2>&1 || rc=$?
+    [ "$rc" = 100 ] || bad "RC: the kernel program read a wrong float scalar at check $rc (1-3 the filed repro: = CF, = (1.5), = 1.5 + 1.0; 4 f32 = CF; 5 -CF; 6 arithmetic; 7 untyped; 8 f32 rounded; 9 1/3; 10 inf; 11 0.0 - 0.0; 12 -(CG + CG); 13 the late ones read 0)"
+    [ "$(nwarn "$T/rc.err")" = 4 ] || bad "RC: $(nwarn "$T/rc.err") late-initializer warnings, want 4 (CX, CN, CM, CE)"
+    for n in CX CN CM CE; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null || bad "RC: no warning names $n (left to the late replay)"; done
+    for n in G P A F N M K H D I Z Q; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null && bad "RC: $n is named (a constant f64 expression is baked since 6.7.15)"; done
+    [ "$(grep -c 'f64 arithmetic with a non-f64 right operand' "$T/rc.err")" = 2 ] || bad "RC: the mixed operands of CM / CE are not warned (the replay runs them)"
+    [ "$(grep -c '^error' "$T/rc.err")" = 0 ] || bad "RC: an error: $(grep -m1 '^error' "$T/rc.err") (the evaluator's NaN refusal must be quiet)"
+else
+    bad "RC: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rc.err")"
+fi
+# KC (6.7.15) — the filed shape in a default `kernel;` build (the ELF32 multiboot image): no warning, G's image
+# bytes are CF's binary64 bits with H's 7 after them, and no `movabs rax, 1.5` (the late store) in the code.
+rows=$((rows + 1))
+printf 'kernel;\nconst CF = 1.5;\nvar G: f64 = CF;\nvar H = 7;\nfn kmain(): i64 { return load64(&G) + H; }\nkmain();\n' > "$T/kc.cyr"
+if "$CC" < "$T/kc.cyr" > "$T/kc.bin" 2> "$T/kc.err" && [ -s "$T/kc.bin" ]; then
+    [ "$(nwarn "$T/kc.err")" = 0 ] || bad "KC: \`var G: f64 = CF;\` warned ($(nwarn "$T/kc.err") late-initializer warnings, want 0)"
+    [ "$(count "$T/kc.bin" ' 00 00 00 00 00 00 f8 3f 07 00 00 00 00 00 00 00 ')" = 1 ] || bad "KC: the image does not hold G = CF (00 .. f8 3f) followed by H = 7"
+    [ "$(count "$T/kc.bin" ' 48 b8 00 00 00 00 00 00 f8 3f ')" = 0 ] || bad "KC: a late store of CF (movabs rax) is still in the code"
+else
+    bad "KC: the kernel build of the filed shape failed: $(grep -m1 '^error' "$T/kc.err")"
 fi
 # KS (6.7.14) — the filed repro, a default `kernel;` build (the ELF32 multiboot image): no warning, G's
 # image bytes are 1.5's binary64 bits with H's 7 after them, and no `movabs rax, 1.5` (the late store)
@@ -442,7 +523,7 @@ else
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
-[ "$rows" -ge 16 ] || bad "only $rows rows ran (floor 16)"
+[ "$rows" -ge 20 ] || bad "only $rows rows ran (floor 20)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: kmode_enum_initializer_baked ($fail checks failed over $rows rows)"
     exit 1

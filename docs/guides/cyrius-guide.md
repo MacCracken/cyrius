@@ -7264,8 +7264,15 @@ baked the same way: the image holds the literal's binary64 bits (an `f32` global
 bits, rounded to nearest, in the low 4 bytes — what the startup store wrote) and nothing runs at
 startup, so the global is its value from program start, as above. Through 6.7.13 it was a startup
 store: an x86 `kernel;` build's program read 0 and was warned, and an earlier initializer's read
-saw 0. A float initializer that is not a literal (`(1.5)`, `1.5 + 1.0`, a call) is still a
-deferred initializer.
+saw 0. So is a **constant f64 expression** (6.7.15): an f64 const, a parenthesized literal and
+f64 arithmetic of them — `var G: f64 = CF;` (`const CF = 1.5;`), `= (1.5)`, `= 1.5 + 1.0`,
+`= -CF`, `= CF * 2.0`, an `f32` global's `= CF` (its binary32 rounding) — computed by the const
+evaluator, IEEE 754 binary64 as the target computes it. Through 6.7.14 those stayed startup
+stores: an x86 `kernel;` build's program read 0 (warned "use a constant", which an f64 const did
+not satisfy), an earlier initializer's read saw 0, and a call in an earlier initializer that
+wrote the global was reset by the store (its write is now kept, as over a literal). Still a
+deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`),
+and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned).
 
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run

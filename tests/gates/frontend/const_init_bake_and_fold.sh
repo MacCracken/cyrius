@@ -54,6 +54,11 @@
 #   V6-V8  the dropped literal's walk still reports: an integer into an f64 field (warned, at 2:14), a bool field's
 #          non-bool value, another file's private const
 #   T5-T8  tests/tcyr/crossos/zone_struct_literal_value.tcyr on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
+#   T9-T12 6.7.15: tests/tcyr/crossos/zone_float_constant_initializer.tcyr on the same four legs — a float global's
+#          constant f64 expression (`= CF`, `= (1.5)`, `= 1.5 + 1.0`, an f32's rounding) is baked as its literal is,
+#          its bits IEEE's on every target; an earlier read sees it (was 0), an earlier call's write is kept
+#          (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
+#          kmode_enum_initializer_baked.sh RC / KC)
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -88,6 +93,9 @@
 # store runs into a sink); `_gvi_slot` always making the sink -> S8-S11; `_gvk_one` not folding a superseded entry
 # (6.7.14's early return) -> S11 (`var a = C; var a = 5;`: C's sink store, as through 6.7.14); `_gvi_baked` making
 # a superseded constant the last var -> O14 on all three legs.
+# MUTATION (measured, 6.7.15 — the float constant expression): the tree before the fix (8981d679b's src) -> 4 red, T9-T12
+# (9: an earlier read 0, 10: the startup store reset the call's write); `_gvk_fx`'s f32 narrowing dropped -> T9-T12
+# (4, 8: binary64 bits in an f32).
 # MUTATION (measured, 6.7.15, mutated scratch copies of the tree, every leg built from each — the struct literal): the
 # tree before the fix (50b9a8817's src) -> 24 red: S12-S24, V6, Z10 / Z11 on all three legs, T5-T8; `_gvs_quiet`
 # returning 0 -> the same 24; `_gvs_later` returning 0 (a later literal not considered) -> 7 red: Z8 on all three legs
@@ -400,7 +408,7 @@ tl() {
   rows=$((rows + 1)); id=$1; b=$2; shift 2
   [ -s "$b" ] || { bad "$id: the crossos file did not compile"; return; }
   chmod +x "$b"; x=0
-  if [ "$id" = T3 ] || [ "$id" = T7 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
+  if [ "$id" = T3 ] || [ "$id" = T7 ] || [ "$id" = T11 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
   else timeout 180 "$@" "$b" > "$b.out" 2> /dev/null || x=$?; fi
   [ "$x" -eq 0 ] && grep -q "$NT passed, 0 failed" "$b.out" || bad "$id: exit $x: $(grep -m3 FAIL "$b.out" | tr '\n' '|')$(tail -1 "$b.out")"
 }
@@ -424,6 +432,18 @@ if command -v wine > /dev/null 2>&1; then
   tl T8 "$W/t8.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
     WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
 else echo "  SKIP: const_init_bake_and_fold T8 (PE) — wine not installed"; skips=$((skips + 1)); fi
+# T9-T12 — 6.7.15: tests/tcyr/crossos/zone_float_constant_initializer.tcyr (a float global's constant f64 expression
+# baked as its literal is: the bits on each target, an earlier read, an earlier call's write) on the same four legs.
+TC="$ROOT/tests/tcyr/crossos/zone_float_constant_initializer.tcyr"
+NT=$(grep -c '^assert_eq' "$TC")
+"$CC" < "$TC" > "$W/t9" 2> /dev/null; tl T9 "$W/t9" env
+if [ -x "$W/cycc_a64" ]; then "$W/cycc_a64" < "$TC" > "$W/t10" 2> /dev/null; tl T10 "$W/t10" qemu-aarch64; fi
+if [ -x "$W/cycc_cx" ]; then "$W/cycc_cx" < "$TC" > "$W/t11" 2> /dev/null; tl T11 "$W/t11"; fi
+if command -v wine > /dev/null 2>&1; then
+  CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$W/t12.exe" 2> /dev/null
+  tl T12 "$W/t12.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
+else echo "  SKIP: const_init_bake_and_fold T12 (PE) — wine not installed"; skips=$((skips + 1)); fi
 
 [ "$rows" -ge 50 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL const_init_bake_and_fold: $fail of $rows row(s) red"; exit 1; fi

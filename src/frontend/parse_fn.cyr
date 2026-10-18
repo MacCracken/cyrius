@@ -10100,6 +10100,7 @@ fn _ce_said(S): i64 {
 fn _ce_bad(S, msg, len): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
     _ce_rti = _ce_ti;   # 6.7.15 (`_ce_err_dup`)
     if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
@@ -10111,6 +10112,7 @@ fn _ce_bad(S, msg, len): i64 {
 fn _ce_badn(S, msg, noff, tail): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
     _ce_rti = _ce_ti;   # 6.7.15
     _ce_bn = noff;   # 6.7.14: the subject, for `_ce_check_fn` (see `_ce_name_said`)
     if (_ce_said(S) == 1) { return 0; }   # 6.7.14
@@ -10171,6 +10173,7 @@ fn _ce_expect(S, t): i64 {
     if (TOKTYP(S, _ce_ti) == t) { _ce_ti = _ce_ti + 1; return 1; }
     if (_ce_err == 0) {
         _ce_err = 1;
+        if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
         _ce_rti = _ce_ti;   # 6.7.15
         if (_ce_said(S) == 1) { return 0; }   # 6.7.14
         var sv = GTI(S);
@@ -11610,6 +11613,18 @@ fn _ce_top_expr(S, ti, out): i64 {
     _ce_ti = sv_ti; _ce_top = sv_top; _ce_infn = sv_in; _ce_err = sv_err; _ce_skip = sv_skip; _ce_fb = sv_fb;
     _ce_steps = sv_steps; _ce_asrt = sv_as;
     _panic = sv_pn;
+    return v;
+}
+# 6.7.15 — the same, QUIET: a refusal sets `out`[1] and prints nothing, counts no error and latches nothing — the
+# declaration zone's probe of a float global's initializer (parse_decl.cyr _gvk_fx), which the replay compiles as
+# run-time code when the evaluator refuses it. Its tokens are pre-scanned (_gvk_fscan): only consts already
+# evaluated are read, so no const's own evaluation runs under it. CHANGELOG [6.7.15]
+var _ce_quiet = 0;
+fn _ce_top_quiet(S, ti, out): i64 {
+    var sq = _ce_quiet;
+    _ce_quiet = 1;
+    var v = _ce_top_expr(S, ti, out);
+    _ce_quiet = sq;
     return v;
 }
 # Run const ci's initializer at the TOP context (no locals of whatever fn forced it).

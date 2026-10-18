@@ -6041,15 +6041,61 @@ fn _gvk_flt(S, sti, vi, ti): i64 {
     _gai_ok = 0;
     var t = GVTYPE(S, vi);
     if (t != F64_TYID) { if (t != F32_TYID) { if (TOKTYP(S, sti + 2) != 4) { return 0; } } }
+    var lt = ti;
     var neg = 0;
-    if (TOKTYP(S, ti) == 7) { neg = 1; ti = ti + 1; }
-    if (TOKTYP(S, ti) != 61) { return 0; }
-    if (TOKTYP(S, ti + 1) != 5) { return 0; }
+    if (TOKTYP(S, lt) == 7) { neg = 1; lt = lt + 1; }
+    if (TOKTYP(S, lt) != 61 || TOKTYP(S, lt + 1) != 5) { return _gvk_fx(S, t, ti); }   # 6.7.15
     _gai_ok = 1;
-    var bits = FLIT_NUM(TOKVAL(S, ti));
+    var bits = FLIT_NUM(TOKVAL(S, lt));
     if (neg == 1) { bits = bits ^ (1 << 63); }
     if (t == F32_TYID) { return _gai_f32(bits); }
     return bits;
+}
+# ⛔ 6.7.15 — AND A CONSTANT F64 EXPRESSION (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-
+# late.md): an f64 const (`var G: f64 = CF;`), a parenthesized literal (`= (1.5)`) and f64 arithmetic of them
+# (`= 1.5 + 1.0`, `= -CF`, `= CF * 2.0`) are constants 6.7.2's const evaluator computes as binary64 bits, but only
+# the bare literal was baked: the rest stayed a replayed store, which an x86 `kernel;` build runs after its program
+# (it read 0, warned "use a constant"). The initializer is evaluated at the TOP context, quietly (_ce_top_quiet),
+# when its tokens to the `;` are only float literals, f64 consts (the names the replay reads as those consts, none
+# another file's private one), `( )`, `+ - * /` and unary `-` (_gvk_fscan) — so a call, a variable, an integer or
+# an enum operand (whose mix the replay warns about) never reach the evaluator. A NaN result (its bits are the
+# target's) is refused by the evaluator, quietly, and left to the replay. Baked as the literal is: binary64, or an
+# `f32` global's binary32 rounding (_gai_f32), and dropped from the replay by _gvk_quiet. CHANGELOG [6.7.15]
+fn _gvk_fx(S, t, ti): i64 {
+    if (_gvk_fscan(S, ti) == 0) { return 0; }
+    var o: i64[3];
+    var v = _ce_top_quiet(S, ti, &o);
+    if (load64(&o + 8) != 0) { return 0; }
+    if (load64(&o) != 1) { return 0; }
+    if (TOKTYP(S, load64(&o + 16)) != 5) { return 0; }
+    _gai_ok = 1;
+    if (t == F32_TYID) { return _gai_f32(v); }
+    return v;
+}
+fn _gvk_fscan(S, ti): i64 {
+    var k = ti;
+    var n = 0;
+    while (TOKTYP(S, k) != 5) {
+        if (k >= GTCNT(S)) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 2) {
+            if (_gvk_fname(S, k) == 0) { return 0; }
+            n = n + 1;
+        } elif (t == 61) { n = n + 1; }
+        elif (t < 6 || t > 11) { return 0; }   # + - * / ( )
+        k = k + 1;
+    }
+    return n;
+}
+# The name at token `k`: an f64 const the replay reads as that const, and not another file's private one.
+fn _gvk_fname(S, k): i64 {
+    var nt = TOKTYP(S, k + 1);
+    if (nt == 41 || nt == 10) { return 0; }   # `a.b`, a call
+    var ci = _cst_find(S, TOKVAL(S, k));
+    if (ci < 0) { return 0; }
+    if (_cst_kind_peek(S, ci) != 1) { return 0; }
+    if (_findvar_core(S, TOKVAL(S, k)) != L64(_cst_tab + ci * 64 + 24)) { return 0; }
+    return _gvk_name_ok(S, k);
 }
 
 # ⛔ 6.7.14 — A BAKED SCALAR IS NOT REPLAYED WHERE ITS STORE WROTE WHAT THE SLOT ALREADY HOLDS (issues/2026-10-08-const-
