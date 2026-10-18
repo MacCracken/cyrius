@@ -250,9 +250,10 @@ R5=docs/development/issues/repros/2026-10-13-vector-value-into-pointer-parameter
 for f in "$TC" "$TC2" "$TC3" "$R1" "$R2" "$R4" "$R5"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=88   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
+FLOOR=95   # 6.7.13: + the parenthesised-callee rows (the receives lane), the method / explicit-instance rows
            # (`sp_mrows`), the captured-vector rows (`sp_crows`, D32), the deref-through rows (`sp_drows`); 6.7.14: + a
-           # capture into a value-form parameter (`sp_crows`, D31), a `*V` dereference into one (`sp_drows`, D32)
+           # capture into a value-form parameter (`sp_crows`, D31), a `*V` dereference into one (`sp_drows`, D32),
+           # either as an `#inline` fn's argument in a closure (`sp_irows`, the review)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
 FLOOR2=25
@@ -1271,6 +1272,48 @@ if [ "$WINE" = 1 ]; then
     pe_same VZdY3pe "VZdY3 pe: *pi of a *i64" "$D/vzdy3.cyr" 1
 fi
 
+# ⛔ 6.7.14 (the vectors lane's review) — D31 / D32'S VALUE-FORM CALL AS AN ARGUMENT OF AN `#inline` FN INSIDE A CLOSURE:
+# `|k| li(lanes(b), k)` (b a capture) and `|k| li(lanes(*pb), k)` compiled silently to a wrong value (x86_64 / IR=3 40
+# where 42 is right) or a fault (aarch64 139): the copy's frame temp is taken while the inline replay evaluates its
+# arguments and given back after, and a closure's frame was sized from GFLC alone, never the `_flc_hwm` high-water a
+# plain fn's frame takes, so the temp lay below rsp and the next push overwrote it. The frame is sized from both now
+# (`_cl_frame_bytes`, parse_expr.cyr). The same frame lost PE's snapshot temp (VCi3: 5) and a temp of integer-only
+# inline calls (VCi5: 26 where 57 is right).
+#   VCi1 / VCi2 `|k| li(lanes(b), k)`, `|k| li(lanes(*pb), k)`: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
+#   VCi3 `|k| li(two(b, setb(pb, 7)), k)` + `|k| li(two(*pb, setb(pb, 7)), k)`: exit 114 on the same legs
+#   VCi4 `|k| li(lanes(mkv(4, 2)), k)` (PE a wrong value before: 82, 242): exit 42; VCi5 nested integer `#inline`
+#      calls: exit 57
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane's review fix; the change alone in a scratch copy of the tree,
+#   this gate run there with CYCC=<its 2-stage mutant>; measured):
+#   M-VCi1 the closure's frame from GFLC alone (the fix reverted) -> RED 20: VCi1 VCi2 x86 / IR=3 / aarch64 (40 / 40 /
+#       139), VCi3 x86 / IR=3 / aarch64 / pe (64 / 192 / 139 / 5), VCi4 pe (82), VCi5 x86 / IR=3 / pe (26), T x86 /
+#       IR=1 / IR=3 / DCE / aarch64 / pe (`sp_irows`: 5 rows, or a fault)
+VCIH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(x: f64v2, n: i64): i64 { return load64(&x) * 10 + load64(&x + 8) + n; }
+fn setb(p: *f64v2, a: i64): i64 { store64(p, a); return 0; }
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+#inline
+fn li(a: i64, b: i64): i64 { return a + b; }'
+vci() {
+    printf '%s\n' "$VCIH" 'fn main(): i64 {' '    var b: f64v2 = f64v2_make(4, 2);' '    var pb: *f64v2 = &b;' \
+      "$2" '}' 'var rc = main(); syscall(60, rc % 256);' > "$D/$1.cyr"
+}
+vci vci1 '    var c = |k| li(lanes(b), k); return fncall1(c, 0);'
+vci vci2 '    var c = |k| li(lanes(*pb), k); return fncall1(c, 0);'
+vci vci3 '    var c = |k| li(two(b, setb(pb, 7)), k); var d = |k| li(two(*pb, setb(pb, 7)), k);
+    return fncall1(c, 0) + fncall1(d, 0);'
+vci vci4 '    var c = |k| li(lanes(mkv(4, 2)), k); return fncall1(c, 0);'
+vci vci5 '    var c = |k| li(k, 1) + li(k + 1, li(k, 2)) + li(li(k, 3), k); return fncall1(c, 10);'
+echo "VCi. a value-form vector call as an #inline fn's argument inside a closure: the closure's frame holds its temp"
+exit_rows VCi1 "$D/vci1.cyr" 42 "|k| li(lanes(b), k)"
+exit_rows VCi2 "$D/vci2.cyr" 42 "|k| li(lanes(*pb), k)"
+exit_rows VCi3 "$D/vci3.cyr" 114 "the copies taken before setb writes b, 57 + 57"
+exit_rows VCi4 "$D/vci4.cyr" 42 "|k| li(lanes(mkv(4, 2)), k)"
+exit_rows VCi5 "$D/vci5.cyr" 57 "11 + 23 + 23"
+
 # ⛔ 6.7.14 (D33 A, the user's decision, 2026-10-16) — `&w` INTO A VALUE-FORM VECTOR PARAMETER IS REFUSED ON WINDOWS TOO:
 # `lanes(&w)` compiled there (42: the by-address ABI copied the vector the address named) where x86_64 / aarch64 / cx
 # refuse it, and `var v: f64v2 = &w;` is refused on every target. `_sarg_pe_vform` takes `&x` no more; Win64's own-call
@@ -1478,4 +1521,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM); a struct field into a \`*V\` parameter refused (SF, D34)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32), either as an \`#inline\` fn's argument inside a closure (VCi); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM); a struct field into a \`*V\` parameter refused (SF, D34)"

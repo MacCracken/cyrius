@@ -123,6 +123,17 @@ fn _cl_restore_locals(S, buf, n): i64 {
     _dsc_unsnap(L64(buf + _cl_snap_ps_off(n) + 8), n);
     return 0;
 }
+# A closure's frame bytes: the larger of its final GFLC and the `_flc_hwm` high-water, rounded to
+# 16 — PARSE_FN_DEF's formula (a closure takes no `#regalloc` / struct-return stash). Hidden temps
+# and the #inline replay give their slots back, so GFLC alone left a slot taken in an inline call's
+# arguments (a value-form vector's copy) below rsp, where the next push overwrote it. `_fnst_save`
+# zeroed the high-water at the closure's entry and `_fnst_restore` brings back the enclosing fn's.
+# A helper because `_PARSE_FACTOR_IMPL` sits at cybs's per-fn reference ceiling. CHANGELOG [6.7.14]
+fn _cl_frame_bytes(S): i64 {
+    var n = GFLC(S);
+    if (_flc_hwm > n) { n = _flc_hwm; }
+    return (n * 8 + 15) & (0 - 16);
+}
 fn _cl_lfi_copy(dst, src, n): i64 {
     if (_lfi_base == 0) { return 0; }
     var i = 0;
@@ -6717,9 +6728,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _defer_emit_walk(S);
         EFNEPI(S);
         # v6.3.7 — patch the closure frame size now that GFLC is final (param +
-        # body local count). Closures take no `#regalloc`/struct-ret stash, so the
-        # size is just the slot count rounded to 16 — same formula as PARSE_FN_DEF.
-        var cl_fsz = (GFLC(S) * 8 + 15) & (0 - 16);
+        # body local count) and the high-water is known: `_cl_frame_bytes`.
+        var cl_fsz = _cl_frame_bytes(S);
         EPATCHFRAME(S, cl_frame_patch, cl_fsz);
         EPATCH(S, cl_jmp);
         # Restore state
