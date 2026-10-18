@@ -82,6 +82,43 @@ else
     fi
 fi
 
+# ── AXIS 4: a fold whose span holds a dead-store-eliminated node (CHANGELOG [6.7.15]).
+# `r = 0`'s STORE_LOCAL sits between LOAD_IMM(0) and the PUSH of `r + 10`; dead-store
+# elimination kills it and the fold skips it. The fold rewrites the span as `mov eax, 10`
+# (b8 0a 00 00 00) and must consume the eliminated node with it — left IR_ELIMINATED,
+# `ir_apply_lase` NOP-filled its old range, bytes 2-4 of the new mov, the compaction deleted
+# them and the next instruction's bytes became the immediate (`b8 0a 50 b8 64` -> SIGSEGV).
+# Mutation: drop the `_ir_fold_consume_span` call in ir_const_fold -> 139, the mov RED,
+# derive_enum_inside_ifdef 139.
+cat > "$D/dse.cyr" <<'EOF'
+fn nested(): i64 {
+    var r = 0;
+    r = r + 10;
+    r = r + 100;
+    return r;
+}
+syscall(60, nested());
+EOF
+rund() { cat "$D/dse.cyr" | env $1 "$CC" > "$D/d.bin" 2>/dev/null; chmod +x "$D/d.bin" 2>/dev/null; "$D/d.bin" >/dev/null 2>&1; echo $?; }
+echo "axis 4 — a fold over a dead-store-eliminated node keeps its immediate (110 = correct):"
+check "default mode"  110 "$(rund CYRIUS_X=0)"
+check "CYRIUS_IR=3"   110 "$(rund CYRIUS_IR=3)"
+cat "$D/dse.cyr" | CYRIUS_IR=3 "$CC" > "$D/d.bin" 2>/dev/null
+mov_ok=no
+if [ -s "$D/d.bin" ] && od -An -tx1 -v "$D/d.bin" | tr '\n' ' ' | tr -s ' ' | grep -q ' b8 0a 00 00 00 '; then mov_ok=yes; fi
+check "CYRIUS_IR=3: the folded mov eax, 10 is intact (b8 0a 00 00 00)" yes "$mov_ok"
+src=$(find tests/tcyr -name "derive_enum_inside_ifdef.tcyr" | head -1)
+if [ -z "$src" ]; then check "derive_enum_inside_ifdef (source found)" "yes" "no"
+else
+    cat "$src" | CYRIUS_IR=3 "$CC" > "$D/dei" 2>/dev/null
+    if [ ! -s "$D/dei" ]; then check "derive_enum_inside_ifdef compiles under CYRIUS_IR=3" yes no
+    else
+        chmod +x "$D/dei"
+        dx=0; timeout 40 "$D/dei" >/dev/null 2>&1 || dx=$?
+        check "derive_enum_inside_ifdef under CYRIUS_IR=3" 0 "$dx"
+    fi
+fi
+
 # ── RESIDUAL: NONE. This block used to name eight surviving default-vs-IR=3 mismatches.
 # All eight are closed: switch_dispatch at v6.5.5; float / math_inverse_trig /
 # math_pack_integration fell out of the band-B block-cap raise and were confirmed passing at

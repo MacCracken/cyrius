@@ -1,0 +1,2 @@
+# tests/tcyr/crossos/include_once_long_spelling.tcyr: this spelling shares its first 130 characters with counted_once.cyr.
+_iol_b = _iol_b + 1;

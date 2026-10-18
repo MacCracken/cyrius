@@ -4049,6 +4049,14 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+Includes are **include-once by spelling**: a second `include` of the same spelling is skipped, so a
+file's top-level statements run once and its fns are defined once. The key is the spelling as
+written, whole, at any length (`"./a.cyr"` and `"a.cyr"` are two spellings). A compilation unit
+holds at most 256 distinct includes; the 257th is refused (`include-once table full (256
+files)`). Until 6.7.15 only the first 127 bytes of a spelling were kept, so a spelling of 128+
+characters — easy to reach through directories — was included again at its second `include`,
+with no message.
+
 ### File-relative resolution — `#@incdir` (v6.5.7)
 
 cycc reads its source from **stdin**, so it never learns where that source lives, and an
@@ -5404,12 +5412,17 @@ project, `dist/.dlverify-<pid>/` (with the round's `entry.cyr`), is removed too 
 kill left the ~114-file mirror there).
 `cyrius deps`'s own git — the cached checkout's verify (rev-parse, fsck, read-tree, …, with its
 `git_err`, `git_rev_out` and `dep_verify_*` captures and private index) and `git clone` — is sent
-the signal and waited for, so git runs its own cleanup: a killed clone removes its partial
-directory from the dep cache (6.7.14; before, a kill left the captures and git running, and a
-clone went on to create the cache after the CLI had died). The scratch resolve of `cyrius deps
+the signal and given 2 s to exit on it, so git runs its own cleanup: a killed clone removes its
+partial directory from the dep cache (6.7.14; before, a kill left the captures and git running,
+and a clone went on to create the cache after the CLI had died). A git still running when the 2 s
+are up — a wrapper first on `PATH` that ignores the signal; real git exits on it — is SIGKILLed
+(6.7.15; 6.7.14 waited for as long as it ran, and a second Ctrl-C was held until then). The scratch resolve of `cyrius deps
 --locked` (`<tmp>/locked-deps/`) and of the dry pass a resolve at a moved pin runs first
 (`<tmp>/pin-move-deps/`) is removed too, a copy's half-written sibling temp included (6.7.14;
-before, a kill left the whole scratch, so the temp dir stayed).
+before, a kill left the whole scratch, so the temp dir stayed). The temp removed is the one the
+copy created: a file another process put at a temp name the copy then skipped stays, with the
+directory holding it (6.7.15; 6.7.14 recorded the name it predicted, and the kill unlinked that
+file).
 A signal that arrives while the CLI is starting one of these children is held until the child is
 tracked, then handled (6.7.13; before, a signal in that window left the child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive
@@ -5739,10 +5752,43 @@ refused, naming it. aarch64 has no `in` / `out`, and cx no inline asm; both refu
 (6.7.14: `in` was `unexpected in`, because it lexes as the for-in keyword, and both instructions
 ignored their operands, so `out dx, eax` assembled as `out dx, al`.)
 
+`lgdt`, `lidt` and `invlpg` take one 64-bit register in brackets (`[rax]` to `[r15]`); `mov` moves
+between a control register (`cr0`, `cr2`, `cr3`, `cr4`, `cr8`) and a 64-bit register, either way
+round; `ltr` takes a 16-bit register (`ax` to `di`, `r8w` to `r15w`); `int` takes a vector from 0 to
+255. Each encodes the operand it names: `lgdt [rbx]` is 0F 01 13, `lgdt [r12]` 41 0F 01 14 24,
+`mov cr8, rax` 44 0F 22 C0, `mov rbx, cr3` 0F 20 DB, `ltr bx` 0F 00 DB. Any other operand is
+refused, naming it: `mov cr9, rax` names `cr9`, `int 256` names `256`, `ltr eax` names `eax`.
+(6.7.15: each encoded `rax` or `ax` whatever the source named, so `lgdt [rbx]` loaded the GDT from
+`[rax]` and `mov cr8, rax` wrote CR0, and `int` kept the vector's low 8 bits, so `int 256` was
+`int 0`.)
+
 A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
 it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
 `unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
 assembled as `cli`, `inb al, dx` as `in al, dx` and `nopx` as `nop`.)
+
+On aarch64 the mnemonics are `svc` (`svc #0`: a `#` starts a comment, so the immediate cannot be
+written), `wfi`, `wfe`, `nop`, `ret`, `eret`, `param_load(reg, idx)` and the barriers `dmb`, `dsb`
+and `isb`. A barrier takes its option after it: `dmb` and `dsb` take `sy`, `st`, `ld`, `ish`,
+`ishst`, `ishld`, `nsh`, `nshst`, `nshld`, `osh`, `oshst` and `oshld`, and `isb` takes `sy`. A bare
+barrier is the full-system one, `sy`.
+
+```
+#ifplat aarch64
+asm { dmb ish; }                 # D5033BBF  inner-shareable data memory barrier
+asm { dsb sy; }                  # D5033F9F  full-system data synchronization barrier
+asm { isb; }                     # D5033FDF  the same as isb sy
+asm { dmb; }                     # D5033FBF  the same as dmb sy
+#endif
+```
+
+The next instruction is never read as an option, so `dmb`, `dsb` and `isb` on three lines are three
+barriers. A word the barrier has no option for is refused, naming it: `dmb foo` names `foo`, and
+`isb ish` names `ish`. `wfe` is D503205F. (6.7.15: a barrier took no option, so the `#ifplat` example's
+`dmb ish` was `unknown aarch64 asm mnemonic 'ish'`; and the bare words were wrong: `dmb` and `isb`
+encoded the reserved option `#0`, which runs as `sy`, `dsb` was SSBB, a speculative-store-bypass
+barrier rather than a data synchronization barrier, and `wfe` was an MSR to a system register,
+UNDEFINED at EL0.)
 
 ## Kernel Mode
 

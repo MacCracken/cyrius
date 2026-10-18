@@ -52,6 +52,7 @@ _ir_emovi_size a64 a64m a64n cx win x86m
 _ir_find_bb_for_cp_at a64 a64m a64n cx x86m
 _ir_find_bb_for_patch_at a64 a64m a64n cx x86m
 _ir_find_spill_intervals a64 a64m a64n cx win x86m
+_ir_fold_consume_span a64 a64m a64n cx win x86m
 _ir_is_foldable_binop a64 a64m a64n cx win x86m
 _ir_liveness_bail a64 a64m a64n cx win x86m
 _ir_op_opaque_stack a64 a64m a64n cx win x86m

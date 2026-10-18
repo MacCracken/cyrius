@@ -1527,6 +1527,13 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 # prose had let them sit.
 _chk_gate "$ROOT/tests/gates/codegen/dead_code_floor.sh"
 
+# 6.7.15: the dead-code seed pass asked which fn holds each call site with a scan of the whole fn
+# table, so every x86 / aarch64 build paid O(call sites x fns) in FIXUP (16,000 fns: 9.9 s, x88 for
+# 8x the fns; cycc's self-compile 1.3 s). The merged-range index answers the same question by
+# binary search. Serial ratio rows (8x the fns under 10x) on x86 and aarch64, and an exactness row:
+# a call after a generic instance nested in a dead fn is still inside it.
+_chk_gate "$ROOT/tests/gates/codegen/dce_seed_pass_linear.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
@@ -1570,6 +1577,12 @@ _chk_gate "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 # optimistically at the top and BLANKED TO SPACES if unused, so the binary of a program that
 # never asked for the feature is unchanged (auto_deps_verb_gate axis 5) and no line moves.
 _chk_gate "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
+# 6.7.15 — include-once keys on the whole spelling: the table's 128 B entries kept 127 bytes and the lookup
+# compared all of them, so a 128+ character spelling was never "already included" and a second `include` of it
+# ran its top-level statements again (no message, since v4.8.4-alpha2). The table now holds a pointer per
+# entry to the alloc'd spelling. The filed repro (128 / 127), 308 and 766 characters, two spellings sharing
+# 250, the count's edge; x86 / aarch64 / cx / PE / cycc_win. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/include_once_long_spelling.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
@@ -2708,6 +2721,12 @@ _chk_gate "$ROOT/tests/gates/memory/bounds_mode_corpus.sh"
 # an instrumented cycc reproduces cycc; planted no-record / exit / compile deltas and a malformed
 # dump are caught. `# check: serial` (its own workers, alone after the pool). Ledger in the header.
 _chk_gate "$ROOT/tests/gates/memory/coverage_mode_corpus.sh"
+# 6.7.15 — the corpus runs clean under CYRIUS_IR=3 + CYRIUS_DCE=1 together (the IR=3 seam compacts
+# code before FIXUP's dead-code pass reads parse-time positions; only the pair acts on a stale one):
+# every .tcyr compiles and exits 0 in the driver's .tcyr environment, a pinned expected-failure list
+# (empty) that can only shrink, the floor from tests/tcyr/CORPUS_FLOOR; a planted pair-only exit and
+# a stale pin are caught. `# check: serial` (its own workers, alone after the pool). Ledger in the header.
+_chk_gate "$ROOT/tests/gates/ir-opt/ir3_dce_corpus.sh"
 # 6.7.8 — an inherited CYRIUS_POISON never reaches a self-build (the compiler includes
 # lib/alloc.cyr, which reads it; seed-derive went RED under it): seed-derive, release-gate,
 # version-bump and bootstrap unset it; check.sh keeps it for its suite and scrubs only its own

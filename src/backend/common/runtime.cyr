@@ -480,7 +480,8 @@ fn _dead_static_stash(S, live, fnc): i64 {
 # check). Linear scan over the fn_start table at S+0x9CA000 (ends via
 # GFNE); returns the FIRST match in index order. Byte-identical to the
 # four inline host-scan loops it replaces — the old `host = fj; fj = fnc`
-# early-exit (guarded so it didn't re-increment) becomes a direct return.
+# early-exit (guarded so it didn't re-increment) becomes a direct return. The seed passes ask
+# `_dce_in_any_fn` instead, which falls back to this when it has no index (6.7.15, below).
 fn _dce_host_fn(S, coff, fnc): i64 {
     var fj = 0;
     while (fj < fnc) {
@@ -583,5 +584,75 @@ fn _dce_holds_live(dfoff, dfend): i64 {
         else { hi = mid; }
     }
     if (lo < _dce_ls_n) { if (L64(_dce_ls_base + lo * 8) < dfend) { return 1; } }
+    return 0;
+}
+
+# 6.7.15 — the seed passes only ask whether a call site lies inside ANY fn (outside every fn it is
+# a root). `_dce_host_fn` scans the whole fn table for that, once per call to a fn start, so the
+# pass was O(call sites x fns): a 16,000-fn program spent seconds in it. `_dce_cover_build` packs
+# every range `_dce_host_fn` tests (start >= 0, end > start) as start << 32 | end once per FIXUP,
+# sorts them and merges overlapping or touching ones, so `_dce_in_any_fn` is a binary search over
+# disjoint ranges whose union is the same set: the same answer. CHANGELOG [6.7.15]
+var _dce_cv_base = 0;   # merged ranges, start << 32 | end, by start; 0 = no index (the linear scan)
+var _dce_cv_n = 0;
+fn _dce_cover_build(S, fnc): i64 {
+    _dce_cv_n = 0;
+    _dce_cv_base = alloc(fnc * 16 + 16);
+    if (_dce_cv_base == 0) { return 0; }
+    var n = 0;
+    var fi = 0;
+    while (fi < fnc) {
+        var fs = L64(_fnt_offsets + fi * 8);
+        if (fs >= 0) {
+            var fe = GFNE(S, fi);
+            if (fe > fs) {
+                if (fe >= 0x80000000) { _dce_cv_base = 0; return 0; }   # too wide to pack
+                S64(_dce_cv_base + n * 8, (fs << 32) | fe);
+                n = n + 1;
+            }
+        }
+        fi = fi + 1;
+    }
+    _dce_ls_sort(_dce_cv_base, n);
+    _dce_cv_n = _dce_cover_merge(_dce_cv_base, n);
+    return 0;
+}
+# Merges n sorted packed ranges at b in place into disjoint ones; returns their count.
+fn _dce_cover_merge(b, n): i64 {
+    var k = 0;
+    var cs = 0;
+    var ce = 0;
+    var i = 0;
+    while (i < n) {
+        var v = L64(b + i * 8);
+        var s = v >> 32;
+        var e = v & 0xFFFFFFFF;
+        if (k > 0 && s <= ce) {
+            if (e > ce) { ce = e; S64(b + (k - 1) * 8, (cs << 32) | ce); }
+        } else {
+            cs = s;
+            ce = e;
+            S64(b + k * 8, v);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return k;
+}
+# 1 when code offset coff lies in some fn's [start, end) — `_dce_host_fn(S, coff, fnc) >= 0`.
+fn _dce_in_any_fn(S, coff, fnc): i64 {
+    if (_dce_cv_base == 0) {
+        if (_dce_host_fn(S, coff, fnc) >= 0) { return 1; }
+        return 0;
+    }
+    var lo = 0;
+    var hi = _dce_cv_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if ((L64(_dce_cv_base + mid * 8) >> 32) <= coff) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo == 0) { return 0; }
+    if (coff < (L64(_dce_cv_base + (lo - 1) * 8) & 0xFFFFFFFF)) { return 1; }
     return 0;
 }

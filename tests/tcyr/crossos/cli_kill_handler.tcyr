@@ -18,7 +18,8 @@
 # exit 91. 64 + a code is a CHILD-side failure. SIGINT is not used: the cross-OS runner starts
 # each test as a `&` job, which ignores it, and the CLI keeps an inherited ignore (scenario C is
 # that contract, on SIGHUP). CHANGELOG [6.7.12]; scenarios E (the fork-to-track window), F (a
-# registered scratch tree), G (SIGHUP) and the signal death (D39) CHANGELOG [6.7.13]
+# registered scratch tree), G (SIGHUP) and the signal death (D39) CHANGELOG [6.7.13]; scenario H
+# (an exec'd program sent the signal, fwd 2: a grace, then SIGKILL) CHANGELOG [6.7.15]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -33,6 +34,7 @@ include "cbt/sigclean.cyr"
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_AGNOS
 #ifndef CYRIUS_TARGET_CX
+include "lib/chrono.cyr"
 var _ckh_parent = 0;
 
 # "/tmp/" "ckh<tag>.<parent pid><suffix>" — a fresh arena string, per process (the parent's pid).
@@ -335,6 +337,62 @@ fn _ckh_child_f(): i64 {
     return 0;
 }
 
+# Scenario H's grandchildren: exec `/bin/sleep 30` (`ign` 1: with SIGTERM ignored, which the exec
+# keeps — a git wrapper that ignores the signal), after recording its pid in `pidf`.
+fn _ckh_exec_sleep(ign, pidf): i64 {
+    if (ign == 1) { signal_ignore(15); }
+    _ckh_put(pidf, sys_getpid());
+    var av[24];
+    store64(&av, "/bin/sleep");
+    store64(&av + 8, "30");
+    store64(&av + 16, 0);
+    var ev[8];
+    store64(&ev, 0);
+    sys_execve("/bin/sleep", &av, &ev);
+    sys_exit(127);
+    return 0;
+}
+
+# Scenario H's cooperating grandchild: SIGTERM caught, `H.term` created, then exit — so the test
+# sees the signal it was SENT (a SIGKILL leaves no file). Never returns (a Darwin handler is its
+# own trampoline).
+var _ckh_h_term = 0;
+fn _ckh_h_on_term(): i64 {
+    _ckh_touch(_ckh_h_term);
+    sys_exit(0);
+    return 0;
+}
+
+# Scenario H (CHILD): two programs tracked as git is (fwd 2, 6.7.15) — `H.ign` ignores SIGTERM,
+# `H.coop` exits on it — then SIGTERM to itself. The handler sends each the signal; the one that
+# exits on it is reaped at once, the one that ignores it is SIGKILLed when `_cbt_sig_grace_ms`
+# (2 s) is up, and then the CHILD dies by SIGTERM. Until 6.7.15 git was tracked fwd 1, which
+# waited for as long as the program ran.
+fn _ckh_child_h(): i64 {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    var ci = _cbt_fork_tracked(2);
+    if (ci == 0) { _ckh_exec_sleep(1, _ckh_path("H", ".ign")); }
+    if (ci < 0) { sys_exit(64 + 2); }
+    var cc = _cbt_fork_tracked(2);
+    if (cc == 0) {
+        if (_cbt_sig_on(15, &_ckh_h_on_term) != 0) { sys_exit(1); }
+        _ckh_put(_ckh_path("H", ".coop"), sys_getpid());
+        var k = 0;
+        while (k < 600) { _ckh_nap(50); k = k + 1; }
+        sys_exit(2);
+    }
+    if (cc < 0) { sys_exit(64 + 2); }
+    var i = 0;
+    while (i < 300 && (_ckh_get(_ckh_path("H", ".ign")) == 0 || _ckh_get(_ckh_path("H", ".coop")) == 0)) {
+        _ckh_nap(10);
+        i = i + 1;
+    }
+    _ckh_nap(50);   # the ignoring one past its execve (the ignore is set before its pid is)
+    sys_kill(sys_getpid(), 15);
+    sys_exit(91);
+    return 0;
+}
+
 # Run scenario `which` in a forked child; answer its status (see _ckh_wait).
 fn _ckh_run(which): i64 {
     var c = sys_fork();
@@ -346,6 +404,7 @@ fn _ckh_run(which): i64 {
         if (which == 5) { _ckh_child_e(); }
         if (which == 6) { _ckh_child_f(); }
         if (which == 7) { _ckh_child_g(); }
+        if (which == 8) { _ckh_child_h(); }
         sys_exit(90);
     }
     return _ckh_wait(c);
@@ -497,6 +556,24 @@ fn main(): i64 {
     assert_eq(file_exists(_ckh_path("G", "")), 0, "G: the private dir is removed");
     sys_unlink(_ckh_path("G", "/cc_err"));
     xrmdir(_ckh_path("G", ""));
+    # H: exec'd programs sent the signal (fwd 2) — one exits on it, one ignores it
+    _ckh_h_term = _ckh_path("H", ".term");
+    var h0 = clock_now_ms();
+    var rh = _ckh_run(8);
+    var hms = clock_now_ms() - h0;
+    var hi = _ckh_get(_ckh_path("H", ".ign"));
+    var hc = _ckh_get(_ckh_path("H", ".coop"));
+    assert_eq(rh, 1015, "H: SIGTERM -> its fwd-2 children stopped, then death by SIGTERM (64+N: a setup failure)");
+    assert(hi > 0, "H: the program ignoring SIGTERM ran (anti-vacuous)");
+    assert(hc > 0, "H: the program exiting on SIGTERM ran (anti-vacuous)");
+    assert_eq(file_exists(_ckh_h_term), 1, "H: the cooperating program was SENT SIGTERM (no file: SIGKILLed at once)");
+    assert(hms >= _cbt_sig_grace_ms - 500, "H: the ignoring program had its grace before the SIGKILL (~2 s at least)");
+    assert(hms < _cbt_sig_grace_ms + 8000, "H: …and no more: no wait for as long as it ran (its sleep 30)");
+    assert_eq(_ckh_gone(hi), 1, "H: the program ignoring SIGTERM is gone — SIGKILLed after the grace and reaped");
+    assert_eq(_ckh_gone(hc), 1, "H: the cooperating program is gone");
+    sys_unlink(_ckh_path("H", ".ign"));
+    sys_unlink(_ckh_path("H", ".coop"));
+    sys_unlink(_ckh_h_term);
     #endif
     #endif
     #endif

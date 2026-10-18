@@ -31,6 +31,10 @@
 # one, or axis 4 compiles them.
 #
 # Plus axis 2, a pure text check for the `f32_from(<int>)` shape, because that one COMPILES.
+#
+# And axis 5 (6.7.15): every block with an `#ifplat aarch64` line, compiled by the aarch64 cross compiler —
+# the axes above use the x86 compiler, which skips that arm, so the `#ifplat` example's `asm { dmb ish }` was
+# refused on aarch64 for as long as the guide showed it.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -149,4 +153,35 @@ done
 [ "$FOK" -ge 30 ] || fail "axis 4: only ${FOK} of $((NFRAG - NDEMO)) include-less blocks compile clean behind the prelude (floor 30) — the prelude is not resolving"
 [ -z "$FBAD" ] || fail "axis 4: an include-less guide example teaches a stale API or a reserved-word identifier (blocks at:$FBAD)"
 
-echo "PASS: guide_examples_compile (${NBLK} self-declaring examples, ${OK} compile clean, 0 stale-API / reserved-word, f32_from contract held; axis 4: ${NFRAG} include-less blocks, ${NDEMO} error demos skipped, ${FOK} compile clean behind the prelude, 0 stale-API / reserved-word)"
+# ── axis 5: the guide's aarch64 blocks, compiled with the aarch64 cross compiler ────────
+# Every axis above compiles with the x86 compiler, which skips an `#ifplat aarch64` arm, so the `#ifplat`
+# example's `asm { dmb ish }` was refused on aarch64 (`unknown aarch64 asm mnemonic 'ish'`) for as long as the
+# guide showed it (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; 6.7.15's D37,
+# 2026-10-18: a barrier takes its option). Each block holding an `#ifplat aarch64` line is compiled, behind the
+# axis-4 prelude, by the aarch64 cross compiler built from this tree, and must compile clean; the `#ifplat`
+# example's binary must hold `dmb ish` (D5033BBF). Mutation: the aarch64 assembler without barrier options
+# (6.7.14) -> RED, naming 'ish'.
+"$CYCC" < "$ROOT/src/main_aarch64.cyr" > "$WORK/cc_a64" 2>/dev/null || true
+chmod +x "$WORK/cc_a64" 2>/dev/null || true
+[ -s "$WORK/cc_a64" ] || fail "axis 5: cannot build the aarch64 cross compiler (src/main_aarch64.cyr) with $CYCC"
+NA64=0; A64BAD=""
+for f in "$WORK"/blk_*.cyr "$WORK"/frag/blk_*.cyr; do
+    [ -e "$f" ] || continue
+    grep -q '^#ifplat aarch64' "$f" || continue
+    NA64=$((NA64 + 1))
+    FENCE=$(basename "$f" .cyr | sed 's/blk_//')
+    cat "$PRELUDE" "$f" > "$f.a64"
+    if "$WORK/cc_a64" < "$f.a64" > "$f.a64.bin" 2> "$f.a64.err" && [ -s "$f.a64.bin" ]; then :
+    else
+        echo "  ⛔ guide block at line $FENCE (aarch64): $(grep -v '^note\|^warning' "$f.a64.err" | head -1 | cut -c1-110)"
+        A64BAD="$A64BAD $FENCE"; continue
+    fi
+    if grep -q 'asm { dmb ish }' "$f"; then
+        od -An -tx1 -v "$f.a64.bin" | tr -d '\n' | tr -s ' ' | grep -q 'bf 3b 03 d5' \
+          || { echo "  ⛔ guide block at line $FENCE (aarch64): \`asm { dmb ish }\` is not D5033BBF in the binary"; A64BAD="$A64BAD $FENCE"; }
+    fi
+done
+[ "$NA64" -ge 1 ] || fail "axis 5 found no guide block with an \`#ifplat aarch64\` line — the #ifplat example moved or the extractor broke"
+[ -z "$A64BAD" ] || fail "axis 5: a guide block's aarch64 arm does not compile with the aarch64 compiler (blocks at:$A64BAD)"
+
+echo "PASS: guide_examples_compile (${NBLK} self-declaring examples, ${OK} compile clean, 0 stale-API / reserved-word, f32_from contract held; axis 4: ${NFRAG} include-less blocks, ${NDEMO} error demos skipped, ${FOK} compile clean behind the prelude, 0 stale-API / reserved-word; axis 5: ${NA64} #ifplat aarch64 block(s) compile with the aarch64 compiler)"

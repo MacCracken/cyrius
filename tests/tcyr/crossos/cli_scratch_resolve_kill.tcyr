@@ -1,12 +1,16 @@
 # cli_scratch_resolve_kill.tcyr — CROSS-HOST: a killed scratch resolve leaves nothing (6.7.14).
 # `cyrius deps --locked` and the pin-move dry pass resolve into a private scratch under the CLI's
 # temp dir; while one runs, cbt/deps.cyr's `_dep_copy_file` records each directory it is about to
-# create at or under the scratch root (never one above it) and each file — the destination and
-# `_aw_open`'s sibling temp, named before it exists (`_dep_scr_next_tmp`) — in the kill handler's
-# scratch-tree slot. Every host: the directory filter and the slot (pure logic). POSIX (ecb, ach,
-# pi, x86_64 Linux): the records a real copy leaves, the temp-name prediction against `_aw_open`,
-# and a forked CHILD that resolves two files into a scratch and SIGTERMs itself — it dies by
-# SIGTERM with the scratch removed and its parent directory kept. CHANGELOG [6.7.14]
+# create at or under the scratch root (never one above it) and each file — the destination before
+# it exists, and the sibling temp `_aw_open` created, recorded with HUP / INT / TERM held across
+# the exclusive create (6.7.15; 6.7.14 recorded the name it PREDICTED, so a file planted there,
+# which `_aw_open` skipped, was unlinked by a kill) — in the kill handler's scratch-tree slot. Every
+# host: the directory filter and the slot (pure logic). POSIX (ecb, ach, pi, x86_64 Linux): the
+# records a real copy leaves, a copy beside planted temp names (recorded: only the temp it made;
+# the signals held only across the create), and a forked CHILD that resolves two files into a
+# scratch, one beside a planted temp name, and SIGTERMs itself — it dies by SIGTERM with its own
+# files removed, the planted file kept with the directories holding it, and the scratch's parent
+# directory kept. CHANGELOG [6.7.14], [6.7.15]
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 #ifndef CYRIUS_TARGET_AGNOS
@@ -100,17 +104,51 @@ file_write_all(src, "fn csk(): i64 { return 1; }\n", 28);
 var par = _csk_path("");
 xmkdir(par, 448);
 
-# The temp `_aw_open` creates is the one named before it (and naming it spends no counter).
-var pf = _csk_path("/pred.cyr");
-var t1 = _dep_scr_next_tmp(pf);
-var t2 = _dep_scr_next_tmp(pf);
-var ah = _aw_open(pf);
-assert_streq(t1, t2, "naming the next temp twice gives one name (the counter is put back)");
-assert(ah != 0, "_aw_open opened its temp");
-if (ah != 0) {
-    assert_streq(load64(ah + 8), t1, "_aw_open's temp is the one _dep_scr_next_tmp named");
-    _aw_abort(ah);
+# The temp name `_aw_open(dst)` tries `k` names from now (lib/io.cyr `_io_tmp_name`: pid + the
+# counter), named without spending the counter — where another process could plant a file.
+fn _csk_next_tmp(dst, k): i64 {
+    var c = _io_atomic_ctr;
+    _io_atomic_ctr = c + k - 1;
+    var t = _io_tmp_name(dst);
+    _io_atomic_ctr = c;
+    return t;
 }
+
+# The HUP / INT / TERM bits (0x4003) of this thread's signal mask.
+fn _csk_mask_bits(): i64 {
+    var none[8];
+    var cur[8];
+    store64(&none, 0);
+    store64(&cur, 0);
+    sys_sigprocmask(SIG_BLOCK, &none, &cur);
+    return load64(&cur) & 0x4003;
+}
+
+# A recorded copy beside files planted at the next two temp names it will try (6.7.15): the
+# exclusive create skips both, and the temp recorded is the third name, the one it created.
+var root0 = _csk_path("/scr0");
+xmkdir(root0, 448);
+xmkdir(_cat2(root0, "/lib"), 448);
+var pf = _cat2(root0, "/lib/pred.cyr");
+var p1 = _csk_next_tmp(pf, 1);
+var p2 = _csk_next_tmp(pf, 2);
+var p3 = _csk_next_tmp(pf, 3);
+file_write_all(p1, "mine\n", 5);
+file_write_all(p2, "mine\n", 5);
+var m0 = _csk_mask_bits();
+_dep_scr_begin(root0);
+var cr0 = _dep_copy_file(src, pf);
+assert_eq(cr0, 0, "a recorded copy beside two planted temp names succeeded");
+assert_eq(_csk_has(_dep_scr_files, p1), 0, "the planted name it tried first is not recorded (6.7.14 recorded it)");
+assert_eq(_csk_has(_dep_scr_files, p2), 0, "…nor the second");
+assert_eq(_csk_has(_dep_scr_files, p3), 1, "the temp it created, the first free name, is recorded");
+assert_eq(file_exists(p3), 0, "…and is gone once renamed into place");
+assert_eq(file_exists(p1) + file_exists(p2), 2, "the planted files are untouched");
+assert_eq(_csk_mask_bits(), m0, "HUP / INT / TERM are held only across the create: the mask is back after the copy");
+_dep_scr_end();
+sys_unlink(p1);
+sys_unlink(p2);
+_dep_rm_tree(root0);
 
 # A real copy into a scratch under `par`: the records, parents first, nothing above the root.
 var root = _csk_path("/scr");
@@ -151,6 +189,38 @@ assert_eq(file_exists(_cat2(root2, "/lib/fam/b.cyr")), 0, "its scratch's files a
 assert_eq(file_exists(root2), 0, "…and its directories removed, the root included");
 assert_eq(file_exists(par), 1, "the directory holding the root stays");
 _dep_rm_tree(root2);
+
+# The kill beside a planted temp name (6.7.15): the CHILD plants a file at the name its copy of
+# b.cyr tries first (its own pid: another same-user process could), copies, then SIGTERMs itself.
+# The planted file survives, and so do the directories holding it; the CHILD's own files go.
+var root3 = _csk_path("/scr3");
+var bplant = _csk_path("/b.plant");
+var c3 = sys_fork();
+if (c3 == 0) {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    _dep_scr_begin(root3);
+    if (_dep_copy_file(src, _cat2(root3, "/lib/a.cyr")) != 0) { sys_exit(64 + 2); }
+    var bd = _cat2(root3, "/lib/b.cyr");
+    var bp = _csk_next_tmp(bd, 1);
+    if (file_write_all(bp, "mine\n", 5) != 5) { sys_exit(64 + 3); }
+    file_write_all(bplant, bp, strlen(bp));   # tell the parent its name
+    if (_dep_copy_file(src, bd) != 0) { sys_exit(64 + 2); }
+    sys_kill(sys_getpid(), 15);
+    sys_exit(91);
+}
+var rc3 = _csk_wait(c3);
+var bpn = alloc(256);
+var bpl = file_read_all(bplant, bpn, 255);
+if (bpl < 0) { bpl = 0; }
+store8(bpn + bpl, 0);
+assert_eq(rc3, 1015, "beside a planted temp name: the CHILD dies by SIGTERM after its handler ran (64+N: setup)");
+assert(bpl > 0, "…the CHILD planted a file at its copy's first temp name (anti-vacuous)");
+assert_eq(file_exists(bpn), 1, "…the planted file survives the kill (6.7.14 recorded that name and unlinked it)");
+var own3 = file_exists(_cat2(root3, "/lib/b.cyr")) + file_exists(_cat2(root3, "/lib/a.cyr"));
+assert_eq(own3, 0, "…the CHILD's own files are unlinked");
+assert_eq(file_exists(_cat2(root3, "/lib")), 1, "…and the directory holding the planted file stays");
+_dep_rm_tree(root3);
+sys_unlink(bplant);
 _dep_rm_tree(par);
 sys_unlink(src);
 #endif

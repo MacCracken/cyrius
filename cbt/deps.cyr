@@ -335,15 +335,6 @@ fn _dep_scr_file(p): i64 {
     return 0;
 }
 
-# The sibling temp the next `_aw_open(dst)` creates (lib/io.cyr `_io_tmp_name`: pid + the next
-# counter value), named without spending the counter.
-fn _dep_scr_next_tmp(dst): i64 {
-    var c = _io_atomic_ctr;
-    var t = _io_tmp_name(dst);
-    _io_atomic_ctr = c;
-    return t;
-}
-
 fn _dep_copy_file(src, dst): i64 {
     # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
     # so any change that preserves file length was never vendored while `lib sync`
@@ -437,24 +428,27 @@ fn _dep_copy_file(src, dst): i64 {
         return 1;
     }
     # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
-    # A scratch resolve records the destination and the sibling temp before they exist; a temp
-    # name `_aw_open` had to skip (one was taken) is recorded once it is known. CHANGELOG [6.7.14]
-    var stmp = 0;
+    # A scratch resolve records the destination before it exists (CHANGELOG [6.7.14]) and the
+    # sibling temp `_aw_open` CREATED: HUP / INT / TERM are held from before its exclusive create
+    # until the temp is recorded, so no kill lands between the two and the temp recorded is the
+    # one this CLI made, never a name it skipped. (The temp used to be predicted — the next
+    # counter value's name — and recorded before the open; when `_aw_open` had to skip that name
+    # because a file sat there, a kill unlinked the file. CHANGELOG [6.7.15])
+    var shold[8];
+    var shr = 0 - 1;
     if (_dep_scr_files != 0) {
         _dep_scr_file(dst);
-        stmp = _dep_scr_next_tmp(dst);
-        _dep_scr_file(stmp);
+        shr = _cbt_sig_hold(&shold);
     }
     var dh = _aw_open(dst);
+    if (dh != 0) { _dep_scr_file(load64(dh + 8)); }
+    if (shr == 0) { _cbt_sig_release(&shold); }
     if (dh == 0) {
         sys_close(sfd);
         sys_write(STDERR_FD, "  error: cannot write ", 22);
         _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
-    }
-    if (stmp != 0) {
-        if (_cstr_eq(load64(dh + 8), stmp) == 0) { _dep_scr_file(load64(dh + 8)); }
     }
     # Stream copy in 32KB chunks — handles files of any size
     var buf = alloc(32768);
@@ -3366,10 +3360,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             _ew_shown(dep_git);
                             sys_write(STDERR_FD, "\n", 1);
                         }
-                        # 6.7.14: tracked, the signal FORWARDED (fwd 1) — a SIGTERM'd resolve left
-                        # `git clone` running on to create the cache after the CLI died; sent the
-                        # signal, git removes its own partial clone directory. CHANGELOG [6.7.14]
-                        var gpid = _cbt_fork_tracked(1);
+                        # 6.7.14: tracked, the signal FORWARDED — a SIGTERM'd resolve left `git clone`
+                        # running on to create the cache after the CLI died; sent the signal, git
+                        # removes its own partial clone directory. fwd 2: a git that does not exit on
+                        # it within the grace is SIGKILLed (`_cbt_child_track`). CHANGELOG [6.7.15]
+                        var gpid = _cbt_fork_tracked(2);
                         if (gpid == 0) {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
@@ -5840,9 +5835,10 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     # returns -2 with the errno recorded, and git is not run. CHANGELOG [6.6.9]
     # Both captures are registered with the kill handler before they can exist — `outf` is the
     # caller's to drop, `git_err` is `_git_err_clear`'s (one slot for the process: the track
-    # de-duplicates) — and git is a child the handler sends the signal and waits for (fwd 1), so
-    # a SIGTERM'd resolve leaves neither, and git runs its own cleanup (its index.lock, a
-    # clone's partial directory). CHANGELOG [6.7.14]
+    # de-duplicates) — and git is a child the handler sends the signal and gives a grace to exit
+    # on it (fwd 2; SIGKILLed after it, CHANGELOG [6.7.15]), so a SIGTERM'd resolve leaves
+    # neither, and git runs its own cleanup (its index.lock, a clone's partial directory).
+    # CHANGELOG [6.7.14]
     var cfd = 0 - 1;
     if (outf != 0) {
         _cbt_scratch_track(outf);
@@ -5850,7 +5846,7 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         if (cfd < 0) { _cbt_scratch_untrack(outf); _git_cap_errno = 0 - cfd; return 0 - 2; }
     }
     _cbt_scratch_track(errf);
-    var pid = _cbt_fork_tracked(1);
+    var pid = _cbt_fork_tracked(2);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a

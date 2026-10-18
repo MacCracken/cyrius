@@ -199,7 +199,9 @@
 #            Reclaims the slot ir_nodes vacated at v6.3.28.)
 #
 # --- Reclaimable / scratch ---
-#   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
+#   0x1C0000  include_fnames[32768]       256 include-once filename pointers × 8 B (alloc'd
+#                                        spellings; 128 B entries until 6.7.15 — the
+#                                        rest of the band is free)
 #   0x1C8000  (FREED v6.4.75 — was fn_var_bytes; now _fnvb_base, alloc'd max-sized)
 #                                        accumulator (sum of all
 #                                        `var foo[N]` aligned sizes

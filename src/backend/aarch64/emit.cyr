@@ -3809,19 +3809,94 @@ fn ASM_MNEMONIC(S): i64 {
     var noff = PEEKV(S);
     var mnem = L64(S + 0xEC00000 + noff);
     STI(S, ti + 1);
-    if (mnem & 0xFFFFFFFF == 0x637673) { EW(S, 0xD4000001); }                  # svc
-    elif (mnem & 0xFFFFFFFF == 0x696677) { EW(S, 0xD503207F); }                # wfi
-    elif (mnem & 0xFFFFFFFF == 0x656677) { EW(S, 0xD5031020); }                # wfe
-    elif (mnem & 0xFFFFFFFF == 0x626D64) { EW(S, 0xD50330BF); }                # dmb
-    elif (mnem & 0xFFFFFFFF == 0x627364) { EW(S, 0xD503309F); }                # dsb
-    elif (mnem & 0xFFFFFFFF == 0x627369) { EW(S, 0xD50330DF); }                # isb
-    elif (mnem & 0xFFFFFFFF == 0x706F6E) { EW(S, 0xD503201F); }                # nop
-    elif (mnem & 0xFFFFFFFF == 0x746572) { EW(S, 0xD65F03C0); }                # ret
-    elif (mnem & 0xFFFFFFFFFF == 0x74657265) { EW(S, 0xD69F03E0); }            # eret (v6.2.28 — exception return for aarch64 #naked ISR handlers; mirrors x86 iretq)
+    var w = _asm_a64_word(mnem);
+    var b = _asm_a64_barrier_word(mnem);
+    if (w != 0) { EW(S, w); }
+    elif (b != 0) { if (_asm_a64_barrier(S, b) == 1) { return 0; } }
     elif (_asm_is_param_load(S, noff) == 1) { ASM_PARAM_LOAD(S, noff); }       # param_load(reg,idx)
     else { _asm_refuse(S, ti, "unknown aarch64 asm mnemonic "); return 0; }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
+}
+
+# The word of a mnemonic that takes no operand, matched whole; 0 when it is not one. wfe is hint #2 (until
+# 6.7.15 D5031020, `msr S0_3_C1_C0_1, x0`). CHANGELOG [6.7.15]
+fn _asm_a64_word(mnem): i64 {
+    var m = mnem & 0xFFFFFFFF;
+    if (m == 0x637673) { return 0xD4000001; }                   # svc (#0)
+    if (m == 0x696677) { return 0xD503207F; }                   # wfi
+    if (m == 0x656677) { return 0xD503205F; }                   # wfe (hint #2)
+    if (m == 0x706F6E) { return 0xD503201F; }                   # nop
+    if (m == 0x746572) { return 0xD65F03C0; }                   # ret
+    # eret (v6.2.28 — exception return for aarch64 #naked ISR handlers; mirrors x86 iretq)
+    if ((mnem & 0xFFFFFFFFFF) == 0x74657265) { return 0xD69F03E0; }
+    return 0;
+}
+
+# A barrier's word with its option field (CRm, bits 8-11) zero, matched whole: dmb D50330BF, dsb D503309F,
+# isb D50330DF; 0 when the mnemonic is not a barrier. Until 6.7.15 a bare barrier WAS that word: dmb and isb
+# the reserved option #0, dsb SSBB (a speculative-store-bypass barrier); it is now sy. CHANGELOG [6.7.15]
+fn _asm_a64_barrier_word(mnem): i64 {
+    var m = mnem & 0xFFFFFFFF;
+    if (m == 0x626D64) { return 0xD50330BF; }    # dmb
+    if (m == 0x627364) { return 0xD503309F; }    # dsb
+    if (m == 0x627369) { return 0xD50330DF; }    # isb
+    return 0;
+}
+
+# A barrier takes its option (D37, 2026-10-18): `dmb ish`, `dsb sy`, `isb sy` put the option in CRm; a bare
+# barrier is the full-system one, sy (CRm 15). The option is the next token when that is an identifier and not
+# one of this assembler's mnemonics, so `dmb` / `dsb` / `isb` on three lines stay three barriers; a word the
+# barrier has no option for is refused, naming it. Until 6.7.15 a barrier took no option, so the guide's own
+# `asm { dmb ish }` was `unknown aarch64 asm mnemonic 'ish'`. Returns 1 when refused. CHANGELOG [6.7.15]
+fn _asm_a64_barrier(S, base): i64 {
+    var crm = 15;
+    if (PEEKT(S) == 2) {
+        if (_asm_a64_is_mnem(S, PEEKV(S)) == 0) {
+            crm = _asm_a64_barrier_opt(L64(S + 0xEC00000 + PEEKV(S)));
+            if (base == 0xD50330DF) {
+                if (crm != 15) { return _asm_refuse(S, GTI(S), "isb takes sy, not "); }
+            }
+            if (crm < 0) {
+                var msg = "dsb takes sy, st, ld, ish, ishst, ishld, nsh, nshst, nshld, osh, oshst or oshld, not ";
+                if (base == 0xD50330BF) {
+                    msg = "dmb takes sy, st, ld, ish, ishst, ishld, nsh, nshst, nshld, osh, oshst or oshld, not ";
+                }
+                return _asm_refuse(S, GTI(S), msg);
+            }
+            STI(S, GTI(S) + 1);
+        }
+    }
+    EW(S, base | (crm << 8));
+    return 0;
+}
+
+# The identifier at name offset noff is one of this assembler's mnemonics (whole names).
+fn _asm_a64_is_mnem(S, noff): i64 {
+    var n = L64(S + 0xEC00000 + noff);
+    if (_asm_a64_word(n) != 0) { return 1; }
+    if (_asm_a64_barrier_word(n) != 0) { return 1; }
+    return _asm_is_param_load(S, noff);
+}
+
+# A dmb / dsb option named whole -> its CRm (the Arm ARM's DMB / DSB option table); -1 for any other name.
+fn _asm_a64_barrier_opt(n): i64 {
+    var m3 = n & 0xFFFFFF;
+    if (m3 == 0x7973) { return 15; }              # sy
+    if (m3 == 0x7473) { return 14; }              # st
+    if (m3 == 0x646C) { return 13; }              # ld
+    var m4 = n & 0xFFFFFFFF;
+    if (m4 == 0x687369) { return 11; }            # ish
+    if (m4 == 0x68736E) { return 7; }             # nsh
+    if (m4 == 0x68736F) { return 3; }             # osh
+    var m6 = n & 0xFFFFFFFFFFFF;
+    if (m6 == 0x7473687369) { return 10; }        # ishst
+    if (m6 == 0x646C687369) { return 9; }         # ishld
+    if (m6 == 0x747368736E) { return 6; }         # nshst
+    if (m6 == 0x646C68736E) { return 5; }         # nshld
+    if (m6 == 0x747368736F) { return 2; }         # oshst
+    if (m6 == 0x646C68736F) { return 1; }         # oshld
+    return 0 - 1;
 }
 
 # `in` lexes as the for-in keyword (76), so the asm block hands it here: aarch64 has no port input,
