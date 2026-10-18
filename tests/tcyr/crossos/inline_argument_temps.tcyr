@@ -1,0 +1,81 @@
+# inline_argument_temps.tcyr — 6.7.15: a frame temporary taken while an `#inline` fn's arguments are evaluated stays
+# inside the caller's frame, on every target.
+#
+# The inline replay reserves the parameter slots, evaluates the arguments, then gives the local count back to just past
+# the parameters. An argument may take frame temporaries above them (a u128 operation's 16-byte temp, the hidden temp
+# that parks a `*S` dereference before a struct operator) that record nothing in the frame's high-water, so the frame
+# could end below them, where the pushed left operand of `id(..) + id(..)` lives: the temp overwrote it. The filed
+# repro `id(a) + id(a + 1) + 2` (a u128) read 84 for 83 on x86_64, aarch64 and Windows, and its closure twin 43
+# (`_inl_flc_release`, src/frontend/parse_fn.cyr). Whether a caller shows it depends on its frame's padding, so each
+# row is its own fn with no local beyond the ones it needs; the `z` twins add one local to flip that padding. cx was
+# right throughout (a control). In this directory so the release gate runs it on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+#inline
+fn id(x): i64 { return x; }
+#inline
+fn id2(y, x): i64 { return x * 100 + y; }
+
+struct P { a; b; }
+fn P_add(x: P, y: P): i64 { return x.a * 10 + y.b; }
+var GP = P { 4, 2 };
+var GQ = P { 3, 5 };
+fn gp(): *P { return &GP; }
+
+# u128 temps: the filed repro, verbatim in a fn, and its closure twin
+fn u1(): i64 { var a: u128 = 40; return id(a) + id(a + 1) + 2; }
+fn u2(): i64 { var a: u128 = 40; var z = 0; return id(a) + id(a + 1) + 2 + z; }
+fn u3(): i64 { var a: u128 = 40; return id2(1, a) + id2(2, a + 1); }
+fn u4(): i64 { var a: u128 = 40; var z = 0; return id2(1, a) + id2(2, a + 1) + z; }
+fn u5(): i64 { var a: u128 = 40; return id2(1, a + 1) + id2(2, a + 2); }
+fn u6(): i64 { var a: u128 = 40; return id(a) + id2(2, a - 1) + 3; }
+fn c1(): i64 { var a: u128 = 40; var c = |k| id(a) + id(a + 1) + k; return fncall1(c, 2); }
+fn c2(): i64 { var a: u128 = 40; var c = |k| id2(1, a) + id2(2, a + 1) + k; return fncall1(c, 0); }
+fn c3(): i64 {
+    var a: u128 = 40;
+    var c = |k| { var z = 0; return id2(1, a) + id2(2, a + 1) + k + z; };
+    return fncall1(c, 0);
+}
+
+# a `*S` dereference parked for a struct operator (`*p + GQ` dispatches P_add) in an #inline argument
+fn d1(): i64 { return id(*gp() + GQ) + id(*gp() + GQ) + 1; }
+fn d2(): i64 { var z = 0; return id(*gp() + GQ) + id(*gp() + GQ) + 1 + z; }
+fn d3(): i64 { var p: *P = gp(); return id(*p + GQ) + id(*p + GQ) + 1; }
+fn d4(): i64 { var p: *P = gp(); var z = 0; return id(*p + GQ) + id(*p + GQ) + 1 + z; }
+fn e1(): i64 { var c = |k| id(*gp() + GQ) + id(*gp() + GQ) + k; return fncall1(c, 1); }
+fn e2(): i64 {
+    var c = |k| { var z = 0; return id(*gp() + GQ) + id(*gp() + GQ) + k + z; };
+    return fncall1(c, 1);
+}
+fn e3(): i64 { var p: *P = gp(); var c = |k| id(*p + GQ) + id(*p + GQ) + k; return fncall1(c, 1); }
+fn e4(): i64 {
+    var p: *P = gp();
+    var c = |k| { var z = 0; return id(*p + GQ) + id(*p + GQ) + k + z; };
+    return fncall1(c, 1);
+}
+
+fn rows(): i64 {
+    assert_eq(u1(), 83, "id(a) + id(a + 1) + 2, a u128 (the filed repro)");
+    assert_eq(u2(), 83, "the same with one more local");
+    assert_eq(u3(), 8103, "the u128 temp in argument 2: id2(1, a) + id2(2, a + 1)");
+    assert_eq(u4(), 8103, "the same with one more local");
+    assert_eq(u5(), 8303, "a temp in both calls' argument 2");
+    assert_eq(u6(), 3945, "a subtraction's temp in argument 2");
+    assert_eq(c1(), 83, "the filed closure repro: |k| id(a) + id(a + 1) + k");
+    assert_eq(c2(), 8103, "argument 2 in a closure");
+    assert_eq(c3(), 8103, "argument 2 in a closure block with a local");
+    assert_eq(d1(), 91, "id(*gp() + GQ) twice");
+    assert_eq(d2(), 91, "the same with one more local");
+    assert_eq(d3(), 91, "id(*p + GQ) twice, p: *P");
+    assert_eq(d4(), 91, "the same with one more local");
+    assert_eq(e1(), 91, "id(*gp() + GQ) twice in a closure");
+    assert_eq(e2(), 91, "the same in a closure block with a local");
+    assert_eq(e3(), 91, "id(*p + GQ) twice in a closure, p captured");
+    assert_eq(e4(), 91, "the same in a closure block with a local");
+    return 0;
+}
+
+rows();
+var r = assert_summary();

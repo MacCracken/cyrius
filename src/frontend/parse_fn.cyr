@@ -8194,6 +8194,20 @@ fn _inl_replay_body(S, fi): i64 {
     return 0;
 }
 
+# PARSE_FNCALL's inline path, after the arguments: the local count goes back to just past the parameter slots,
+# and `_flc_hwm` keeps the higher of that and the count the arguments reached. An argument may take frame
+# temporaries at GFLC and above (a u128 operation's `_w128_tmp`, `_HTEMP`'s hidden temps) and give nothing to
+# `_flc_hwm`; the frame was sized from the parameter slots alone, so `id(a) + id(a + 1)` (a u128) put `a + 1`'s
+# temp past the frame, over the pushed left operand (84 for 83). As 6.7.13's INT-1 `_icall_slot` records its
+# slot. The v6.3.37 (A3) parameter-slot record is the second bump. A helper: PARSE_FNCALL sits at cybs's per-fn
+# reference ceiling. CHANGELOG [6.7.15]
+fn _inl_flc_release(S, top): i64 {
+    if (GFLC(S) > _flc_hwm) { _flc_hwm = GFLC(S); }
+    SFLC(S, top);
+    if (top > _flc_hwm) { _flc_hwm = top; }
+    return 0;
+}
+
 # PARSE_FNCALL's overload routing on the FIRST argument (cursor on it, just past `(`): the routed
 # callee, or -1 when the call is not routed (the caller then keeps its own `noff`, so a `use`
 # alias keeps its name). Out of PARSE_FNCALL's body, which sits at cybs's per-fn reference
@@ -8438,12 +8452,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                     # normal path — the normal-path check alone would miss it.
                     # 6.7.14: an unclosed list leaves its `;` (`_expect_step`) and has no count.
                     if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0); }
-                    # Set local count past the param slots
-                    SFLC(S, saved_flc + _ptot);
-                    # v6.3.37 (A3) — record the transient inline param-slot high-water so
-                    # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
-                    # param slot aliases a live runtime `push rax` and clobbers an operand.
-                    if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                    # Set local count past the param slots, keeping the argument temps' peak (see the helper)
+                    _inl_flc_release(S, saved_flc + _ptot);
                     # Register callee param names as temporary locals (packed in fn_inline)
                     var inl_packed = GFINL(S, fi);
                     var pn0 = inl_packed & 0xFFFFFFFF;
