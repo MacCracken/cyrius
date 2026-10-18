@@ -7849,6 +7849,8 @@ fn _istr_gsrc(S, sid): i64 {
 }
 # The zone replay, cursor on the RHS (`gps` the annotation's; a `*Str` reads 0, so its tokens are asked): such a
 # `Str` / `*Str` declaration stores the global's static address into `dgv` (1, the cursor left on the `;`); else 0.
+# A gt declared BELOW H binds too (the user's D17, 2026-10-18): its address is static, so the bind needs no layout pass
+# 1 could not see — the reason `_gci_below` refuses a COPY from below. CHANGELOG [6.7.15]
 fn _istr_gz(S, dgv, gps): i64 {
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
@@ -7858,7 +7860,6 @@ fn _istr_gz(S, dgv, gps): i64 {
         if (_istr_pann(S, GTI(S) - 3) == 0) { return 0; }
     }
     if (_istr_gsrc(S, ss) == 0) { return 0; }
-    if (gps != 0) { if (dgv >= 0) { if (_istr_ix > dgv) { return 0; } } }   # declared below H: `_gci_below` refuses it
     var pk = _sci_pname(S, GTI(S));
     _istr_ra(S, 2);
     if (dgv >= 0) { _gvi_store(S, dgv); }

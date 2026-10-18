@@ -3194,7 +3194,8 @@ At top level, `var H: Str = gt;` with `gt` an inline `Str` global binds a handle
 header, as the same line in a fn does — in the declaration zone and after the first statement alike (the
 user's decision D21 (a), 2026-10-16): `H.len = 3` writes `gt.len`, `H = str_from("xy")` rebinds H and leaves
 gt. Through 6.7.13 H was a 16-byte copy of gt. `var P: *Str = gt;` takes the same address. A `gt` declared
-below H is still refused (*cannot copy-init 'H' from a global declared below it*). The untyped `var H = gt;`
+below H binds too, in the declaration zone — its address is static (the user's decision D17, 2026-10-18; through
+6.7.14 it was refused *cannot copy-init 'H' from a global declared below it*). The untyped `var H = gt;`
 keeps gt's first word at top level, as every untyped top-level global keeps a struct's (the user's decision
 D22 (b), 2026-10-16, with 6.7.13's D6 (b)) — so `f(H)` reads the string's bytes as a header; annotate it
 `var H: Str = gt;`. In a fn, `var h = gt;` is the handle.

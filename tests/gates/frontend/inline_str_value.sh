@@ -52,8 +52,13 @@
 # inline-str-global-copies.md): a top-level `var H: Str = gt;` (gt an inline `Str` global) binds a handle global to
 # gt's static header, as the same line in a fn does — in the declaration zone (D21a, the filed repro: 33, was 37)
 # and after the first statement (D21b: 33, was 37); a `var P: *Str = gt;` in the zone takes the same address (the
-# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below"). The untyped `var H =
-# gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned; D22b `H == load64(&gt)`).
+# crossos z_* rows). The untyped `var H = gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned;
+# D22b `H == load64(&gt)`).
+#
+# 6.7.15 (the user's decision D17, 2026-10-18; issues/2026-10-17-toplevel-str-handle-from-inline-str-global-declared-
+# below-refused-as-copy-init.md): a zone `var H: Str = gt;` with gt declared BELOW H binds too (D21c, the filed repro
+# verbatim: 33 on every leg — refused "cannot copy-init 'H' from a global declared below it" through 6.7.14): gt's
+# address is static, so the bind needs no layout pass 1 could not see.
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
@@ -63,7 +68,7 @@
 # every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
 # unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
-# statement (33), D21c a source declared below stays refused, D22a / D22b the untyped top-level declaration's word
+# statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
 # (0; 1); CMP a handle into the retyped methods builds byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -117,11 +122,14 @@
 #                                                     H a handle, the replay's copy path refuses it)
 #   f3 `_istr_gsrc` answers 0 (pass 1 inline)      -> RED 14: R1 x7 (z_bind, z_wrap), D21a x7 (37: copied)
 #   f4 `_istr_src` after the top-level arm again   -> RED 14: R1 x7 (R_TOP5: a copy), D21b x7 (37)
-#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built)
+#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built) — retired by 6.7.15's D17 (below)
 #   2026-10-17 (6.7.14, D22 (b), the pins):
 #   g1 `_uci_ps` answers at top level (D22's (a))  -> RED 7: R1 x7 (R_TOP6: `var UL = gz;` after a statement became
 #                                                     gz's handle); the zone's D22a / D22b pin the replay's untyped
 #                                                     path, which offers no handle to mutate to
+#   2026-10-18 (6.7.15, D17; the same scratch-copy method):
+#   h1 the declared-below guard restored in        -> RED 14: R1 x7 (the zone line HB refused), D21c x7
+#      `_istr_gz` (the lane before D17)               (refused "cannot copy-init 'H' ...")
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -244,7 +252,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=83
+FLOOR=84
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -436,17 +444,19 @@ EOF
 runs D21a 33 "the filed repro 1: a zone \`var H: Str = gt;\` binds gt's header (was 37, a copy)" "$XLEGS $OLEGS"
 sed 's/^var H: Str = gt;$/alloc_init();\nvar H: Str = gt;/' "$T/D21a.cyr" > "$T/D21b.cyr"
 runs D21b 33 "the same after a first top-level statement (was 37)" "$XLEGS $OLEGS"
+# D21c: the D17 filed repro (issues/2026-10-17-toplevel-str-handle-from-inline-str-global-declared-below-refused-as-copy-
+# init.md), verbatim — gt declared BELOW H binds as above (6.7.15, D17; refused "cannot copy-init" through 6.7.14).
 cat > "$T/D21c.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
 fn f(s: Str) { return str_len(s); }
 var H: Str = gt;
 var gt: Str = Str { "abcdefg", 7 };
-fn main() { return f(H); }
+fn main() { H.len = 3; return f(H) * 10 + gt.len; }
 var r = main();
 syscall(SYS_EXIT, r);
 EOF
-refused D21c "cannot copy-init 'H' from a global declared below it (declare the source first): 'gt'" "gt declared below H stays refused"
+runs D21c 33 "the D17 filed repro: a zone \`var H: Str = gt;\` with gt declared below binds gt's header (was refused)" "$XLEGS $OLEGS"
 cat > "$T/D22a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
