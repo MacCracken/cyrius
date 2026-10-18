@@ -2792,6 +2792,11 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # `: *S` call and a struct value, the refusals, and the tcyr's PB group, x86 / IR / aarch64 / cx / PE.
 # Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_ptr_param_infer.sh"
+# 6.7.14 — a `pp: **T` parameter binds T to the struct a `**S` argument points through to, as `st<S>(pps)` does (the
+# user's decision D40 A, 2026-10-16): `st(pps)` ran the i64 base (`*pp + 1` stepped 8; `take(**pp)` faulted). The
+# filed repros, a `**S` parameter, a generic method, the explicit spelling, and the tcyr's GI / GK rows, x86 / IR /
+# aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_double_pointer_infer.sh"
 # 6.7.14 — an error inside a generic body is printed once, not once per instance (and inline replay): the
 # util.cyr emitters and the shared undefined-name report record (token, identity) and print a repeat as
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,

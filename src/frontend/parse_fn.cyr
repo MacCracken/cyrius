@@ -14096,7 +14096,7 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
     var m = GFGM(S, fi);
     var k = which + 1;
     if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
-    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF, 0); }   # 6.7.8
+    if (k == 0) { return _gen_infer_ind(S, fi, open, which, 0); }   # 6.7.8: a struct carrier; 6.7.14: a `**T`
     var a = _call_arg_for(S, fi, open, k - 1);   # 6.7.7: or the argument naming it
     if (a < 0) { return 0 - 8; }
     var c = _ic_arg(S, fi, a, k);
@@ -14186,30 +14186,12 @@ fn _gsc_deref(S, a): i64 {
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
 # i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
-# field keeps the base's own refusal). CHANGELOG [6.7.8]
+# field keeps the base's own refusal). The walk is `_chain_leaf` (parse_types.cyr). CHANGELOG [6.7.8]
 fn _gsc_chain(S, a): i64 {
-    var i = a + 1;
-    while (TOKTYP(S, i) == 41) {
-        if (TOKTYP(S, i + 1) != 2) { return 0; }
-        i = i + 2;
-    }
-    var nt = TOKTYP(S, i);
-    if (nt != 31 && nt != 11) { return 0; }
-    var sid = _dyn_base_sid(S, TOKVAL(S, a));
-    var k = a + 2;
-    while (k < i) {
-        if (sid <= 0) { return 0; }
-        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
-        if (fi < 0) { return 0; }
-        var ps = _fld_ptr_sid(S, sid - 1, fi);
-        if (k + 1 == i) {
-            if (ps > 0) { return ps; }
-            return 0;
-        }
-        if (ps > 0) { sid = ps; }
-        else { sid = GETFTYPE(S, sid - 1, fi); }
-        k = k + 2;
-    }
+    var l = _chain_leaf(S, a);
+    if (l == 0) { return 0; }
+    var ps = _fld_ptr_sid(S, (l >> 32) - 1, l & 0xFFFFFFFF);
+    if (ps > 0) { return ps; }
     return 0;
 }
 fn _gsc_name_end(S, a): i64 {
@@ -14405,7 +14387,7 @@ fn _mcall_inst(S, fi, c0, c1, emit): i64 {
 fn _mcall_infer(S, fi, open, which, rsid): i64 {
     var m = GFGM(S, fi);
     var k = (m >> (8 + which * 8)) & 255;
-    if (k == 0) { return _gen_infer_sc(S, fi, open, (m >> (24 + which * 20)) & 0xFFFFF, 1); }
+    if (k == 0) { return _gen_infer_ind(S, fi, open, which, 1); }
     if (k == 1) { if (rsid > 0) { return rsid; } return 0 - 8; }
     var a = _call_arg_pk(S, fi, open, k - 1, k - 2);
     if (a < 0) { return 0 - 8; }

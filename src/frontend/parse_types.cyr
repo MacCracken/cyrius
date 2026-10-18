@@ -2889,6 +2889,135 @@ fn _slot_ptr_word(S, li): i64 {
     return 8;
 }
 fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
+# ⛔ 6.7.14 — A `pp: **T` PARAMETER BINDS THE STRUCT ITS `**S` ARGUMENT POINTS THROUGH TO (the user's decision D40 A,
+# 2026-10-16). `**T` carried nothing (`_gs_param` reads one `*`), so `st(pps)` with `pps: **P3` ran the i64 base,
+# whose `*pp + 1` stepped 8 and whose `take(**pp)` into `*P3` passed the first field as the address (139) — where
+# `st<P3>(pps)` steps 24. A `T` that no `x: T` / `p: *T` parameter and no generic struct carries (`_gen_infer_sc`) is
+# carried by the first parameter declared exactly `**T`: the struct its whole argument's pin names (`_ic_pp_arg`).
+# `mth` 1: a method call, whose list starts at parameter 1 (as `_gen_infer_sc`). CHANGELOG [6.7.14]
+fn _gen_infer_ind(S, fi, open, which, mth): i64 {
+    var f = (GFGM(S, fi) >> (24 + which * 20)) & 0xFFFFF;
+    if (f != 0) { return _gen_infer_sc(S, fi, open, f, mth); }
+    var k = _pp_tparam(S, fi, which);
+    if (k <= mth) { return 0 - 8; }
+    var a = _call_arg_pk(S, fi, open, k - 1, k - 1 - mth);
+    if (a < 0) { return 0 - 8; }
+    return _ic_pp_arg(S, a);
+}
+# The 1-based index of fi's first parameter declared exactly `**T`, T its type parameter `which`, read from the
+# definition's tokens with `_dps_param`'s cursor put back (as `_ic_ptr_param`); 0 = none.
+fn _pp_tparam(S, fi, which): i64 {
+    var tn = (GFTP(S, fi) >> (which * 32)) & 0xFFFFFFFF;
+    if (tn == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    var s0 = _dps_ts; var s1 = _dps_te; var s2 = _dps_va; var s3 = _dps_nm;
+    var r = 0;
+    var k = 0;
+    while (r == 0) {
+        if (_dps_param(S, o, k) == 0) { r = 0 - 1; }
+        elif (_pp_is_tp(S, tn - 1) == 1) { r = k + 1; }
+        k = k + 1;
+    }
+    _dps_ts = s0; _dps_te = s1; _dps_va = s2; _dps_nm = s3;
+    if (r < 0) { return 0; }
+    return r;
+}
+# 1 = the parameter `_dps_param` just read is typed `* * T` (three tokens), T the name at `tn`.
+fn _pp_is_tp(S, tn): i64 {
+    var i = _dps_ts;
+    if (_dps_te != i + 3) { return 0; }
+    if (TOKTYP(S, i) != 8) { return 0; }
+    if (TOKTYP(S, i + 1) != 8) { return 0; }
+    if (TOKTYP(S, i + 2) != 2) { return 0; }
+    if (TOKVAL(S, i + 2) != tn) { return 0; }
+    return 1;
+}
+# The struct a WHOLE argument at token a reaches through two pointers, as `T` of a `pp: **T` it is passed to: the pin of
+# its step word (`_pp_sid`) — a `**S` local, parameter, capture or global, a field declared `**S` reached through a
+# chain, a call returning `**S` (a generic one at the instance it reaches) — or `&p` of a `*S` local, parameter or
+# global (`_ic_pp_addr`). Anything else (a `***S`, a `**i32`, an expression) infers i64.
+fn _ic_pp_arg(S, a): i64 {
+    var t = TOKTYP(S, a);
+    if (t == 27) { return _ic_pp_addr(S, a + 1); }
+    if (t != 2) { return 0 - 8; }
+    if (TOKTYP(S, a + 1) == 41) { return _ic_pp_sid(S, _ic_pp_chain(S, a)); }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 10 || nt == 19) { return _ic_pp_sid(S, _fn_ret_ps(_gen_call_inst(S, a))); }
+    return _ic_pp_sid(S, _ic_pp_name(S, TOKVAL(S, a)));
+}
+# The struct step word `w`'s pin names (its pointee `*S`'s S), else i64.
+fn _ic_pp_sid(S, w): i64 {
+    var s = _pp_sid(_ps_pin(w));
+    return _ic_pp_ok(S, s);
+}
+# A struct `s` as a binding (a tuple or a dyn binds nothing, as `_ic_addr`), else i64.
+fn _ic_pp_ok(S, s): i64 {
+    if (s <= 0) { return 0 - 8; }
+    if (_tup_is(S, s) == 1) { return 0 - 8; }
+    if (_dyn_is(S, s) == 1) { return 0 - 8; }
+    return s;
+}
+# The step word of the name at `noff`: a local or parameter, a capture, a global; 0 for none.
+fn _ic_pp_name(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) { return _slot_ptr_word(S, li); }
+    var esl = _cl_cap_esl(S, noff);
+    if (esl >= 0) { return _cl_snap_ptr_word(esl); }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    return _gv_ptr_word(S, vi);
+}
+# The step word of the leaf field of the whole chain at token a (`_chain_leaf`); 0 for none.
+fn _ic_pp_chain(S, a): i64 {
+    var l = _chain_leaf(S, a);
+    if (l == 0) { return 0; }
+    return _fld_ps_get(S, (l >> 32) - 1, l & 0xFFFFFFFF);
+}
+# `&p` with p (token i, the whole argument) a `*S` local, parameter or global: S. A capture's `&c` is its env copy's
+# address and binds nothing (as `_ic_addr`).
+fn _ic_pp_addr(S, i): i64 {
+    if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
+    var noff = TOKVAL(S, i);
+    if (_cl_cap_esl(S, noff) >= 0) { return 0 - 8; }
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 0) { return 0 - 8; }
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return 0 - 8; }
+        if (lt <= 0 - 2048) { return 0 - 8; }
+        return _ic_pp_ok(S, 0 - lt);
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 8; }
+    return _ic_pp_ok(S, _gv_ptr_sid(S, vi));
+}
+# The LEAF field of the whole-argument chain at token a (`_gsc_chain`'s walk): its struct's sid in the high word and
+# its field index in the low, 0 when the argument is no such chain. `_ic_pp_chain` reads the leaf's step word.
+# CHANGELOG [6.7.14]
+fn _chain_leaf(S, a): i64 {
+    var i = a + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { return 0; }
+        i = i + 2;
+    }
+    var nt = TOKTYP(S, i);
+    if (nt != 31 && nt != 11) { return 0; }
+    var sid = _dyn_base_sid(S, TOKVAL(S, a));
+    var k = a + 2;
+    while (k < i) {
+        if (sid <= 0) { return 0; }
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
+        if (fi < 0) { return 0; }
+        if (k + 1 == i) { return (sid << 32) | fi; }
+        var ps = _fld_ptr_sid(S, sid - 1, fi);
+        if (ps > 0) { sid = ps; }
+        else { sid = GETFTYPE(S, sid - 1, fi); }
+        k = k + 2;
+    }
+    return 0;
+}
 # A `var p: *T` local's kind, written into the mark `_sl_marks` just wrote (`ann` the annotation's
 # `*`). `_sl_marks` sits at cybs's 6-parameter cap, so `_sl_last_marks` calls this.
 fn _sl_ptr_ed(S, li, ann): i64 {
