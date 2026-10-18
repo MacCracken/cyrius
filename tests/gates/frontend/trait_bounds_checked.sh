@@ -77,7 +77,9 @@
 #      the same statement (`gs(5) + gb(3)`), `gb(3)`'s error was swallowed but its note was printed alone —
 #      "the bound on type parameter 'T' needs `impl Show for i64`" under gs's error. N1: one error line, no
 #      note. Mutant (the `_panic` test in `_bnd_check` removed, a one-edit scratch copy of the tree, its 2-stage
-#      cycc, this gate run from it) -> RED N1 (the orphan note).
+#      cycc, this gate run from it) -> RED N1 (the orphan note). N2 (6.7.15) the contract's own note (`_bnd_site_refuse`)
+#      is behind `_err_quiet` too: four refusals, the latch holding after the first, print one error and one note
+#      (four notes before). Mutant: the lane's previous compiler (da30dffe) -> RED N2.
 #   VB (6.7.15, the user's D10 (a), 2026-10-18) A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>>
 #      = 0;` with `struct Box<T: Show>` and no `impl Show for Pt` compiled (the filed repro exited 5) — the element's
 #      list was read for names only (6.7.14's D5), the bound judged only where an instance is minted. Judged at the
@@ -424,6 +426,16 @@ fn gs<T>(q: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + q.y; i = i +
 refused n1 "generic 'gs' has no i64 (or other scalar) instance" "N1: gs(5) + gb(3) — the stub's refusal"
 if grep -q "^  note:" "$T/n1.err"; then bad "N1: an orphan note under the stub's error: $(grep '^  note:' "$T/n1.err" | head -1)"
 else ok "N1: no orphan note for the swallowed gb(3) refusal"; fi
+# N2 (6.7.15): a contract refusal the latch swallows (a second definition's `v.other()`, a second `b.v.other()` in one
+# body) printed its note alone under the first's.
+mk n2 'impl Pt { fn other(self): i64 { return 77; } }
+struct Box<T> { v: T; n; }
+fn g1<T: Show>(v: T): i64 { return v.other(); }
+fn g2<T: Show>(v: T): i64 { return v.other(); }
+fn gm<T: Show>(b: Box<T>): i64 { var r = b.v.other(); b.v.other(); return r; }' 'return 4;'
+refused n2 "method 'other' is not in the bound on type parameter 'T'" "N2: four contract refusals, the latch holding after the first"
+nn=$(grep -c '^  note:' "$T/n2.err")
+if [ "$nn" -eq 1 ]; then ok "N2: one note, the printed refusal's"; else bad "N2: $nn notes for one printed error (orphans)"; fi
 
 # C — anti-vacuous
 mk c1 'trait Eq2 { fn eq2(self, o: Pt): i64; }
@@ -528,4 +540,4 @@ EOF
 exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); well-formed bounded code runs (C)"
