@@ -1588,6 +1588,8 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
         if (im >= 0) {
             fp = L64(_tim_tab + im * 24 + 8);
             var d = _dyn_sig_eq(S, L64(_trm_ft + k * 8), fp);
+            # 6.7.15 (D4): a return type that differs is the impl's own refusal (`_tr_ret_chk`), not the site's.
+            if (d == 4) { if (_tr_ret_differs(S, L64(_trm_ft + k * 8), fp) == 1) { d = 0; } }
             if (d != 0) { return _dyn_f8(S, ti, ii, m, d); }
         }
         if (_dyn_slot_ok(S, k) == 1) {

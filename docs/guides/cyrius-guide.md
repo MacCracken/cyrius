@@ -2801,7 +2801,11 @@ fn demo(): i64 {
 ```
 
 - **`impl X for T` is checked.** An undeclared trait, a method `X` does not declare, a different
-  parameter count, and a required method left out are compile errors naming the trait. A trait may
+  parameter count, a different return type, and a required method left out are compile errors naming
+  the trait. The return type is compared as forming a dyn compares it — a name by the type it resolves to,
+  no annotation an `i64` — and refused at the impl: `fn c(self): i64` implementing `fn c(self): f64;` is
+  *'P.c' returns i64, trait 'T' declares f64* (6.7.15, the user's D4; through 6.7.14 it compiled, and a
+  bounded generic caller declared `: f64` received the integer bits). Parameter types are not compared. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
   statements. One after it is one error by name (6.7.14; see *Functions*).
@@ -2811,7 +2815,7 @@ fn demo(): i64 {
   name that names nothing, or a stray token before the `;` is an error — in a required member and in
   a default every impl overrides alike (a default an impl inherits is parsed as that impl's method).
   ⚠ Before 6.7.8 only the parameter count was read; the rest compiled unread. The impl's own check
-  is unchanged: its parameter count must match. A member's return is held to a fn's return set: `fn a(self):
+  compares its parameter count and its return type (above). A member's return is held to a fn's return set: `fn a(self):
   Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
   not supported as a fn return type yet*, at the member, once — no impl could define either (6.7.15, the user's D9
   and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). `: *Vec<i64>`,
@@ -2940,7 +2944,8 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 
 **The check, once per pair.** The first forming of a (trait, type) pair checks `impl Tr for T`
 against the trait in full: each parameter after `self` and the return by its resolved type (an
-untyped parameter, or an omitted return, is `i64`), generic-ness and `...`; the value class — a
+untyped parameter, or an omitted return, is `i64`; since 6.7.15 a return that differs is the impl's own
+error, formed or not — see *Traits*), generic-ness and `...`; the value class — a
 method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
 that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
 feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by

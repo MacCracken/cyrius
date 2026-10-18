@@ -9057,6 +9057,7 @@ fn _tr_check_impl(S, ii): i64 {
                 ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
                 return 0;
             } }
+        if (_tr_ret_chk(S, ii, tk, k) == 1) { return 0; }   # 6.7.15 (D4): and its return type
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);
@@ -9069,6 +9070,92 @@ fn _tr_check_impl(S, ii): i64 {
         k = k + 1;
     }
     return 0;
+}
+# ⛔ 6.7.15 (D4) — AN IMPL METHOD'S RETURN TYPE IS CHECKED AGAINST ITS TRAIT MEMBER'S, at the impl (`ii` the impl,
+# `tk` the member, `k` the method), beside the parameter count: `trait T { fn c(self): f64; }` implemented as
+# `fn c(self): i64` compiled, and a bounded generic caller declared `: f64` received the integer bits. Compared as
+# forming a dyn compares it (`_dyn_ret_at` / `_dyn_ty_eq`: a name by its resolved type, no annotation an i64) and
+# refused by name, "'P.c' returns i64, trait 'T' declares f64" (the user's D4 (a), 2026-10-18). A side whose return its
+# own reader refuses is that refusal alone (`_tr_rt_bad`). Parameter types are not compared (D4 leaves them out).
+# 1 = refused. CHANGELOG [6.7.15]
+var _trr_a = 0;    # the member's return type's tokens [_trr_a, _trr_ae); the method's [_trr_b, _trr_be)
+var _trr_ae = 0;
+var _trr_b = 0;
+var _trr_be = 0;
+fn _tr_ret_chk(S, ii, tk, k): i64 {
+    var fp = L64(_tim_tab + k * 24 + 8);
+    if (_tr_ret_differs(S, L64(_trm_ft + tk * 8), fp) == 0) { return 0; }
+    var at = _trr_b;
+    if (at == _trr_be) { at = fp + 1; }   # no annotation: at the method's name
+    return _tr_ret_err(S, ii, L64(_tim_tab + k * 24), at);
+}
+# 1 when the member at `fn` token `tp` and the method at `fp` return different types and neither return is one its own
+# reader refuses: the impl is refused for it (`_tr_ret_chk`), and forming a dyn from it adds nothing (`_dyn_pair_chk`).
+fn _tr_ret_differs(S, tp, fp): i64 {
+    var a = _tr_paren(S, tp);
+    var b = _tr_paren(S, fp);
+    if (a < 0 || b < 0) { return 0; }
+    _trr_a = _dyn_ret_at(S, a);
+    _trr_ae = _dps_te;
+    _trr_b = _dyn_ret_at(S, b);
+    _trr_be = _dps_te;
+    if (_dyn_ty_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_a, _trr_ae, 0) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_b, _trr_be, 1) == 1) { return 0; }
+    return 1;
+}
+# 1 when the return type [a, ae) is refused by its own reader — the trait's for a member (`im` 0), PARSE_FN_DEF's for a
+# method (1): a slice, `u128` or `Vec` as the type, a name that is no type, and for a method a name a fn's return does
+# not take (`_tn_ret_report`'s: u8..u64, f32, an enum).
+fn _tr_rt_bad(S, a, ae, im): i64 {
+    if (a == ae) { return 0; }
+    if (_sl_ann_at(S, a) == 1) { return 1; }
+    if (TOKTYP(S, a) == 105) { return 1; }
+    if (_trs_ret_vec(S, a) == 1) { return 1; }
+    if (im == 1) { if (_tr_rt_nonret(S, a) == 1) { return 1; } }
+    var k = a;
+    while (k < ae) {
+        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _tr_rt_nonret(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_classify_return_type(S, noff) != 0) { return 0; }
+    if (_bx_is_bool_name(S, noff) == 1) { return 0; }
+    if (_tn_resolve_at(S, ti) == _tn_code(4, 7)) { return 0; }   # a type parameter
+    return 1;
+}
+# "'P.c' returns i64, trait 'T' declares f64" at token `at` (the method's return type, or its name), once; not a
+# panic — nothing is consumed. The two types as written (no annotation is i64).
+fn _tr_ret_err(S, ii, m, at): i64 {
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, at) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + L64(_ti_tab + ii * 64 + 8));
+    PRSTR(".");
+    PRSTR(S + 0xEC00000 + m);
+    PRSTR("' returns ");
+    _tr_rt_pr(S, _trr_b, _trr_be);
+    PRSTR(", trait '");
+    PRSTR(S + 0xEC00000 + L64(_ti_tab + ii * 64));
+    PRSTR("' declares ");
+    _tr_rt_pr(S, _trr_a, _trr_ae);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+fn _tr_rt_pr(S, a, ae): i64 {
+    if (a == ae) { PRSTR("i64"); return 0; }
+    return _rcv_ann_pr(S, a, ae);
 }
 # Pass 1: a `trait` declaration was recorded by the pre-scan — skip it.
 fn _tl_trait1(S): i64 {
