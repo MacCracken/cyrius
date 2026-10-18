@@ -1,8 +1,10 @@
 #!/bin/sh
 # cx_host_dispatch.sh — 6.7.15 (issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md).
 # A cx guest's syscall carries the guest's x86-LINUX number; cxvm serves the calls it lists through the
-# HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each answers as x86_64 Linux does on
-# every host — or, on Windows, as the PE routes answer, -38 where the PE peer has only a stub.
+# HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
+# every host — on Windows through the PE routes, -38 where the PE peer has only a stub. What still differs
+# from x86_64 Linux (on macOS a failure's errno and a signal number are Darwin's; off x86_64 Linux and
+# Windows F_GETFL reports only the nine mapped bits) is filed; the fixture's rows do not reach it.
 #
 # THE DEFECT. Until 6.7.15 cxvm issued the listed calls as `syscall(sn, …)`, a RUNTIME number, and each
 # host's compiler renumbers a runtime number through a chain built for that host's own stdlib numbers.
@@ -191,5 +193,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) give x86_64 Linux's answers on the x86 and aarch64 cxvm (Windows' on the PE one) — cxvm serves them through the host's own wrappers, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0

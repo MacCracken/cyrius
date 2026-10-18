@@ -99,7 +99,9 @@ guarantee:
   allocates needs a 6.7.14 cxvm (an older one answers brk -38 or with a host address, and
   `alloc_init` names it). A short list of **scalar-only** calls — every argument and
   the result an fd, pid, id, flag or length — is served through the HOST's own stdlib wrappers,
-  each giving x86_64 Linux's answer (6.7.15): `close`, `lseek`, `exit` / `exit_group`, `dup` /
+  each running the call the guest names on every host (6.7.15); on macOS a failure's errno and a
+  signal number are still Darwin's (filed), and off x86_64 Linux and Windows `F_GETFL` reports only
+  the nine mapped bits (below): `close`, `lseek`, `exit` / `exit_group`, `dup` /
   `dup2`, `getpid` / `getppid`, the four uid / gid getters, `kill`, `fork`, `sched_yield`, `fsync` /
   `fdatasync`, `flock`, `ftruncate`, `fchmod` / `fchown`, `socket`, `listen`, `unshare`,
   `timerfd_create`, `epoll_create1`, and `fcntl` for its scalar commands (`F_DUPFD`, `F_GETFD` /
