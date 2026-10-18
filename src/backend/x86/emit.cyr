@@ -3164,25 +3164,35 @@ fn ETLSSET_PE(S): i64 {
 # emit Win64 seek: `syscall(8, fd, offset, whence)` →
 # SetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointer, dwMoveMethod).
 # Stack on entry (top→bottom): [whence] [offset] [fd] [sc_nr=8].
-# Frame is 0x30: shadow (32 B) + new-position output slot at
-# [rsp+0x28] + 8 B align pad. Returns the new file position, or -errno when SetFilePointerEx
+# Frame is 0x40: shadow (32 B), the unused 5th-arg slot, the new-position output slot at
+# [rsp+0x28], and offset / whence parked at [rsp+0x30] / [rsp+0x38] across the GetStdHandle call.
+# Returns the new file position, or -errno when SetFilePointerEx
 # returns FALSE (`_pe_w32_errno_site`: a seek before offset 0 is ERROR_NEGATIVE_SEEK, -22 as on
 # Linux; a bad handle -9). Until 6.7.14 the BOOL was not read and a failed seek answered the
 # pre-zeroed slot — a seek to 0 — while the file pointer stayed where it was. CHANGELOG [6.7.14]
+# fd 0 / 1 / 2 map to the std handles through `_pe_fd_to_handle_rcx`, as EWRITE_PE / EREAD_PE /
+# EFLUSHFB_PE do: they reached SetFilePointerEx as the HANDLE values 0 / 1 / 2, so a seek on a
+# redirected stdin / stdout / stderr failed -9. CHANGELOG [6.7.15]
 fn ELSEEK_PE(S): i64 {
-    var _xfr = _pe_fixed_frame(0x30, 4);   # 6.6.5: 0x30 + depth parity (see _pe_fixed_frame)
+    var _xfr = _pe_fixed_frame(0x40, 4);   # 6.6.5: 0x40 + depth parity (see _pe_fixed_frame)
     _pe_ensure_seekfp(S);
+    _pe_ensure_stdio(S);
     var spe_idx = _pe_seekfp_get();
+    var gsh_idx = _pe_stdio_getstd_get();
 
     EB(S, 0x58);                                   # pop rax (whence)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC1);         # mov r9, rax (dwMoveMethod)
     EB(S, 0x58);                                   # pop rax (offset)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);         # mov rdx, rax (liDistanceToMove)
     EB(S, 0x58);                                   # pop rax (fd)
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (hFile)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x30 (+ parity pad)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x40 (+ parity pad)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (offset)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r9 (whence)
+    _pe_fd_to_handle_rcx(S, gsh_idx);              # rcx = HANDLE (std or direct)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov r9, [rsp+0x38]
     # Zero the lpNewFilePointer output slot at [rsp+0x28].
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -3198,7 +3208,7 @@ fn ELSEEK_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28] (flags kept)
     EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the new offset)
     _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x30 (+ parity pad)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
 

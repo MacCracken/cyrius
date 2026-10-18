@@ -384,6 +384,9 @@ fn sys_close(fd) {
 # for a position before 0 (ERROR_NEGATIVE_SEEK) or a bad `whence`, -9
 # for a bad handle, as on Linux. The position is unchanged then. Until
 # 6.7.14 a failed seek answered 0. CHANGELOG [6.7.14]
+# fd 0 / 1 / 2 seek the std handles (GetStdHandle), so a seek on a
+# redirected stdin / stdout / stderr reaches its file, as on Linux; until
+# 6.7.15 they failed -9. CHANGELOG [6.7.15]
 fn sys_lseek(fd, offset, whence) {
     return syscall(SYS_LSEEK, fd, offset, whence);
 }

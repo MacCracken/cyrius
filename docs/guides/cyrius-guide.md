@@ -7866,6 +7866,12 @@ never fired and `file_close_r` was never `Err`.
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | -9 since 6.7.15 (a good close: 0) |
 
+A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
+do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
+stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. ⚠ On
+a PIPE or a console std handle Windows lets the seek succeed (it answers the asked offset and the
+stream does not move) where Linux and macOS answer -29 (`ESPIPE`).
+
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
 were read, so `O_TRUNC` silently did not truncate and `O_APPEND` silently

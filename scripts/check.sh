@@ -2927,6 +2927,15 @@ _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 # sites' shape, the filed close repro (exit 91).
 _chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
 
+# 6.7.15 (platform lane, P2) — a seek on fd 0 / 1 / 2 reaches the std stream on PE: ELSEEK_PE maps
+# them through GetStdHandle (`_pe_fd_to_handle_rcx`), as the read / write / flush reroutes do; they
+# reached SetFilePointerEx as the handle values 0 / 1 / 2 and failed -9. Axes: the filed repro
+# natively (`3 0 0 1 100`; a piped stdin -29); every SetFilePointerEx site goes through the map with
+# offset / whence parked across it; the repro under wine (`3 0 0 1 100`; a piped stdin wine's
+# `-1 0 0 1 97`). Hardware: the repro on cass (`3 0 0 1 100`; piped `3 0 0 1 97`) is in the
+# CHANGELOG. Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_lseek_std_fds.sh"
+
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
 # outside the project on Windows and on macOS arm64, where it used to open the whole path (the
 # name check then the open: a junction planted in between was followed). Axes: 0xF04E
