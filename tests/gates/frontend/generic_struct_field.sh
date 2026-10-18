@@ -183,7 +183,9 @@ printf '%s\nstruct WP { n; p: *S; }\nvar GW = WP { 0, &GS };\nfn gpw<T>(): *T { 
 exits pf2 85 "PF2: gpw<WP>().p.w, a chain through the instance's *T"
 printf '%s\nfn gpi<T>(x: *T): *T { return x; }\nfn main(): i64 { var p: *S = &GS; return gpi(p).w * 10 + gpi(p).v; }\nsyscall(60, main());\n' "$PH" > "$T/pf3.cyr"
 exits pf3 85 "PF3: gpi(p).w, inferred (p: *S)"
-# a `*U` instance of another struct, refused by name — naming the CALL, not its type argument
+# a `*U` instance of another struct, refused by name — naming the CALL, not its type argument (6.7.15: a dereference
+# ARGUMENT, PR5 / PR6, is named as the source spells it, '*gug<U>()' — issues/2026-10-17-vector-dereference-refusal-
+# names-operand-last-name.md; the declaration / assignment rows keep the last name, staged with that fix)
 PU="$PH"'
 struct U { a; b; }
 struct O { k; s: S; }
@@ -206,10 +208,10 @@ syscall(60, main());'
 prefuse pr4 "cannot copy 'gug' into a struct field of a different struct type: 's'" "PR4: o.s = gug<U>()" \
   'fn main(): i64 { var o: O; o.s = gug<U>(); return 0; }
 syscall(60, main());'
-prefuse pr5 "cannot pass 'gug' to a parameter of a different struct type in a call to 'take'" "PR5: take(*gug<U>())" \
+prefuse pr5 "cannot pass '*gug<U>()' to a parameter of a different struct type in a call to 'take'" "PR5: take(*gug<U>())" \
   'fn main(): i64 { return take(*gug<U>()); }
 syscall(60, main());'
-prefuse pr6 "cannot pass 'gug' to a parameter of a different struct type in a call to 'S_sub'" "PR6: a - *gug<U>()" \
+prefuse pr6 "cannot pass '*gug<U>()' to a parameter of a different struct type in a call to 'S_sub'" "PR6: a - *gug<U>()" \
   'fn main(): i64 { var a = S { 1, 2 }; var c: S = a - *gug<U>(); return c.v; }
 syscall(60, main());'
 prefuse pr7 "cannot copy 'gug' $MV: 'Z'" "PR7: a declaration-zone var Z: S = *gug<U>()" \

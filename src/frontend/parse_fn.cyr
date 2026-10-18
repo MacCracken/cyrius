@@ -1780,6 +1780,63 @@ fn _fsn_num(S, wp, n, lim): i64 {
     store8(S + 0xEC00000 + wp, 48 + n % 10);
     return wp + 1;
 }
+# ⛔ 6.7.15 — AN ARGUMENT IS NAMED AS THE SOURCE SPELLS IT. A refused dereference argument was quoted as `*` and its
+# operand's LAST name — `ri(*gp(pb))` as '*pb', `ri(*&b)` '*b', `ri(*h.pv)` '*pv', `ri(**ppb)` '*ppb' (`_hl_lastnm`).
+# The tokens [a, e) — the operand `gp(pb)`, `&b`, `h.pv`, `*ppb`, `(pb)` — written from the source at GNPOS + 1024,
+# uncommitted, past `_fn_src_name`'s scratch so one message may print both: each token's own bytes, one space where
+# the source has any between two (a comment or a line break is one space too). `dflt` when the tokens have no source
+# spelling in order (a token the parser made). CHANGELOG [6.7.15]
+fn _src_span_nm(S, a, e, dflt): i64 {
+    if (e <= a) { return dflt; }
+    NPOS_GUARD(S, 2048);
+    var b = GNPOS(S) + 1024;
+    var lim = b + 960;
+    var wp = b;
+    var pend = 0;
+    var i = a;
+    while (i < e) {
+        var o = GTOFF(S, i);
+        var nx = GTOFF(S, i + 1);
+        if (o <= 0) { return dflt; }
+        if (nx <= o) { return dflt; }
+        if (nx > GBL(S)) { return dflt; }
+        var q = _ssn_tok_end(S, i, o, nx);
+        if (i > a) { if (o > pend) { wp = _fsn_lit(S, wp, " ", lim); } }
+        while (o < q) {
+            if (wp >= lim) { o = q; }
+            else {
+                store8(S + 0xEC00000 + wp, load8(S + 0x459D000 + o));
+                wp = wp + 1;
+                o = o + 1;
+            }
+        }
+        pend = q;
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# The end of token `i`'s text, which starts at source offset `o` (the next token at `nx`): the first space, line break
+# or `#` comment before `nx`; a string literal runs to its closing quote.
+fn _ssn_tok_end(S, i, o, nx): i64 {
+    var q = o;
+    if (TOKTYP(S, i) == 30) {
+        q = o + 1;
+        while (q < nx) {
+            var cs = load8(S + 0x459D000 + q);
+            if (cs == 34) { return q + 1; }
+            if (cs == 92) { q = q + 1; }
+            q = q + 1;
+        }
+        return nx;
+    }
+    while (q < nx) {
+        var c = load8(S + 0x459D000 + q);
+        if (c == 32 || c == 9 || c == 10 || c == 13 || c == 35) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
 # The method record for fn `fi` just registered at a definition inside an impl (pass 1: `_impl_tnoff` is the
 # impl's type, token `nti` the method's own name), or at a call `x.m(..)` of type name `tn` (`_mcall_note`).
 fn _fn_meth_note(S, fi, tn, mn): i64 {
@@ -2391,9 +2448,10 @@ fn _svo_inner(S): i64 {
 # (`_vk_param`), the whole argument (inside any parentheses, `_svo_inner`) starting with `*`: that `*` is watched
 # (`_dro_vo`) while `_sarg_byval_small` parses and pushes the argument as before; when its operand named a vector (the
 # step word or an `&x` of one, `_dop_vd`) and ended the argument (`_dro_vnote`), the argument is refused by name —
-# `cannot pass '*ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the operand's last
-# name as the address-passed arm names it — once, without `_panic`. A `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their
-# word as before. Returns as `_sarg_byval_small` does. CHANGELOG [6.7.14]
+# `cannot pass '**ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the argument as the
+# source spells it (6.7.15, `_src_span_nm`; it was the operand's last name, '*ppb') — once, without `_panic`. A
+# `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their word as before. Returns as `_sarg_byval_small` does.
+# CHANGELOG [6.7.14]
 fn _sarg_vdo(S, fi, argc): i64 {
     var c = _svo_inner(S);
     if (TOKTYP(S, c) != 8) { return _sarg_byval_small(S, fi, argc); }
@@ -2405,7 +2463,7 @@ fn _sarg_vdo(S, fi, argc): i64 {
     _dro_vo = c;
     _dro_vod = 0;
     var r = _sarg_byval_small(S, fi, argc);
-    if (_dro_vod != 0) { _svo_err(S, c, 1, _hl_lastnm(S, c + 1, _dro_vend, 0), fi, kd); }
+    if (_dro_vod != 0) { _svo_err(S, c, 1, _svo_nm(S, c + 1, _dro_vend), fi, kd); }
     _dro_vo = vo;
     _dro_vod = vd;
     _dro_vend = ve;
@@ -2644,19 +2702,24 @@ fn _dro_take(S, b): i64 {
     if (_dlo_cp != GCP(S)) { return 0; }
     return _opd_span(S, _dlo_beg, _dlo_end, b);
 }
-# The taken dereference as parameter `k` of fn `fi`: its struct checked (named by the operand's last name,
-# `*gp()` -> `gp`). The caller then reloads the pointer from `_dlo_h` (`_HTLOAD`; the right operand's
-# through `_opd_operand`).
+# The taken dereference as parameter `k` of fn `fi`: its struct checked, the argument named as the source spells it
+# (6.7.15, `_src_span_nm`: `*gq(pq)`; it named the operand's last name, `pq`). The caller then reloads the pointer from
+# `_dlo_h` (`_HTLOAD`; the right operand's through `_opd_operand`).
 fn _dro_check(S, fi, k): i64 {
-    var nm = _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0);   # 6.7.11: `*gu<U>()` names `gu`
-    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k, nm); }   # 6.7.12: a vector's (`_dlo_vec`)
-    return _sarg_type_err(S, fi, k, _dlo_sid, nm);
+    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k); }   # 6.7.12: a vector's (`_dlo_vec`)
+    return _sarg_type_err(S, fi, k, _dlo_sid, _dro_nm(S, _dlo_beg));
 }
-fn _dro_vcheck(S, fi, k, nm): i64 {
+# The taken dereference's tokens from `a` (its `*`, or past it) to its end, as the source spells them; else (6.7.11) the
+# operand's last name: `*gu<U>()` names `gu`.
+fn _dro_nm(S, a): i64 { return _src_span_nm(S, a, _dlo_end, _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0)); }
+# The tokens [a, e) as the source spells them, else (6.7.14) their last name.
+fn _svo_nm(S, a, e): i64 { return _src_span_nm(S, a, e, _hl_lastnm(S, a, e, 0)); }
+fn _dro_vcheck(S, fi, k): i64 {
     var pv = _pvec_param(S, fi, k);
     if (pv == _dlo_sid) { return 0; }
-    if (pv == 0) { return _svo_err(S, _dlo_beg, 1, nm, fi, _vk_param(S, fi, k)); }   # 6.7.13 (D31)
-    ERR_IDENT(S, "cannot pass ", nm, " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    var kd = _vk_param(S, fi, k);
+    if (pv == 0) { return _svo_err(S, _dlo_beg, 1, _dro_nm(S, _dlo_beg + 1), fi, kd); }   # 6.7.13 (D31)
+    ERR_IDENT(S, "cannot pass ", _dro_nm(S, _dlo_beg), " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     return 1;
 }
 

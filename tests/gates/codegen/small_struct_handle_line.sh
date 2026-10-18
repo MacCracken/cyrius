@@ -1265,13 +1265,13 @@ crow "F4 its field twin, takeh(GW.s + A)" "refuse:'H_add' returns a struct by va
   'struct H { v; w; }\nstruct W { n; s: H; }\nfn H_add(a: H, b: H): H { var r: H; r.v = a.v + b.v; r.w = 0; return r; }\nfn takeh(s: H): i64 { return s.v; }\nvar GW = W { 1, 5, 0 };\nvar A = H { 4, 0 };\nvar k = 0;\nk = 1;\nvar R = takeh(GW.s + A);\nsyscall(60, R);\n'
 
 echo "D. a whole dereference as an address-passed argument or right operand: another struct refused by name (x86)"
-crow "D1 takeh(*pu) (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'takeh'" \
+crow "D1 takeh(*pu) (pu: *UH) refused" "refuse:cannot pass '\\*pu' to a parameter of a different struct type in a call to 'takeh'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var y = UH { 5, 0 }; var pu: *UH = &y; return takeh(*pu); }\nsyscall(60, f());\n'
-crow "D1 rd8(*pu) into a *S8 parameter (pu: *U8) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'rd8'" \
+crow "D1 rd8(*pu) into a *S8 parameter (pu: *U8) refused" "refuse:cannot pass '\\*pu' to a parameter of a different struct type in a call to 'rd8'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn rd8(p: *S8): i64 { return p.v; }\nfn f() { var y = U8 { 5 }; var pu: *U8 = &y; return rd8(*pu); }\nsyscall(60, f());\n'
-crow "D2 a - *pu (pu: *UH) refused" "refuse:cannot pass 'pu' to a parameter of a different struct type in a call to 'H_sub'" \
+crow "D2 a - *pu (pu: *UH) refused" "refuse:cannot pass '\\*pu' to a parameter of a different struct type in a call to 'H_sub'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; var y = UH { 5, 0 }; var pu: *UH = &y; return a - *pu; }\nsyscall(60, f());\n'
-crow "D2 a - *gu() (a : *UH fn) refused" "refuse:cannot pass 'gu' to a parameter of a different struct type in a call to 'H_sub'" \
+crow "D2 a - *gu() (a : *UH fn) refused" "refuse:cannot pass '\\*gu()' to a parameter of a different struct type in a call to 'H_sub'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GY = UH { 5, 0 };\nfn gu(): *UH { return &GY; }\nfn H_sub(a: H, b: H): i64 { return a.v - b.v; }\nfn f() { var a = H { 9, 0 }; return a - *gu(); }\nsyscall(60, f());\n'
 crow "D3 takeh(*y) with y untyped keeps the word it reads (the struct's address here)" 5 \
   'struct H { v; w; }\nfn takeh(s: H): i64 { return s.v; }\nfn f() { var x = H { 5, 0 }; var cell = &x; var y = &cell; return takeh(*y); }\nsyscall(60, f());\n'

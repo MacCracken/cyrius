@@ -560,17 +560,18 @@ printf '%svar B: f64v2 = 0;\nvar GPB: *f64v2 = &B;\nvar R = ri(*GPB) + ri(*&B);\
 okd_src "$D/okdx.cyr" 'GPV = pb; var h: Hv; h.pv = pb; var x = 5; var pi: *i64 = &x; var ppi: **i64 = &pi;
     return ri(*h2(**ppb)) + ri(**ppb) + ri(*gp(pb)) + ri(*h.pv) + ru(*(pb + 0)) + rpp(*&b) + bv1(*GPV) + rii(**ppb)
       + ri(*hi(**ppb)) + ri(*h2(*ppi));'
-okd_msg() {  # $1 row -> the line it must print (the call's name, the operand's last name)
+okd_msg() {  # $1 row -> the line it must print (the call's name, the argument as written — 6.7.15)
     case "$1" in
-        1|10|13) echo "cannot pass '*ppb' $KFRAG" ;;
-        2|5) echo "cannot pass '*pb' $KFRAG 'ri'" ;;
-        3) echo "cannot pass '*pv' $KFRAG 'ri'" ;;
+        1|10|13) echo "cannot pass '**ppb' $KFRAG" ;;
+        2) echo "cannot pass '*gp(pb)' $KFRAG 'ri'" ;;
+        5) echo "cannot pass '*(pb + 0)' $KFRAG 'ri'" ;;
+        3) echo "cannot pass '*h.pv' $KFRAG 'ri'" ;;
         4) echo "cannot pass '*GPV' $KFRAG 'ri'" ;;
-        6) echo "cannot pass '*b' $KFRAG 'ri'" ;;
-        7) echo "cannot pass '*ppb' $KFRAG 'ru'" ;;
-        8) echo "cannot pass '*ppb' $KFRAG 'rpp'" ;;
-        9) echo "cannot pass '*ppb' to a by-value struct parameter in a call to 'bv1' - a vector is not a struct" ;;
-        12) echo "cannot pass '*ppb' $KFRAG 'S3.m'" ;;
+        6) echo "cannot pass '*&b' $KFRAG 'ri'" ;;
+        7) echo "cannot pass '**ppb' $KFRAG 'ru'" ;;
+        8) echo "cannot pass '**ppb' $KFRAG 'rpp'" ;;
+        9) echo "cannot pass '**ppb' to a by-value struct parameter in a call to 'bv1' - a vector is not a struct" ;;
+        12) echo "cannot pass '**ppb' $KFRAG 'S3.m'" ;;
         11|14) echo "$KFRAG 'ri'" ;;   # two calls: '*ppb' and '*pb' / '*GPB' and '*B'
     esac
 }
@@ -607,9 +608,9 @@ for lg in x86 pe; do
     nk=$(grep '^error' "$D/okdx.err" | grep -c "$KFRAG\|to a by-value struct parameter in a call to" || true)
     # each refusal by its own words, counted: a nested call's arm must neither hide the outer `*` nor lend it its note
     miss=""
-    for e in "2:'*ppb' $KFRAG 'ri'" "1:'*ppb' $KFRAG 'h2'" "1:'*ppb' $KFRAG 'hi'" "1:'*ppi' $KFRAG 'ri'" \
-             "1:'*pb' $KFRAG 'ri'" "1:'*pv' $KFRAG 'ri'" "1:'*pb' $KFRAG 'ru'" "1:'*b' $KFRAG 'rpp'" \
-             "1:'*GPV' to a by-value struct parameter in a call to 'bv1'" "1:'*ppb' $KFRAG 'rii'"; do
+    for e in "1:'*h2(**ppb)' $KFRAG 'ri'" "1:'**ppb' $KFRAG 'ri'" "1:'**ppb' $KFRAG 'h2'" "1:'**ppb' $KFRAG 'hi'" \
+             "1:'*h2(*ppi)' $KFRAG 'ri'" "1:'*gp(pb)' $KFRAG 'ri'" "1:'*h.pv' $KFRAG 'ri'" "1:'*(pb + 0)' $KFRAG 'ru'" \
+             "1:'*&b' $KFRAG 'rpp'" "1:'*GPV' to a by-value struct parameter in a call to 'bv1'" "1:'**ppb' $KFRAG 'rii'"; do
         c=$(grep '^error' "$D/okdx.err" | grep -cF -- "cannot pass ${e#*:}" || true)
         [ "$c" = "${e%%:*}" ] || miss="$miss [${e#*:}: $c, want ${e%%:*}]"
     done
@@ -626,6 +627,101 @@ exit_rows OKDK1 "$D/okdk1.cyr" 5 "ri(*ppi) of a **i64 passes its word"
 exit_rows OKDK2 "$D/okdk2.cyr" 42 "ri(*pps) of a **Pt passes its *Pt word"
 exit_rows OKDK3 "$D/okdk3.cyr" 42 "rg(*ppb) into a generic *T passes its *f64v2 word"
 refused OKDK4 "OKDK4 ri(*ps) of a struct: 6.7.13's D5 (a) refusal, once (unchanged)" "${OKDH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return ri(*ps); }\nsyscall(60, main());\n" x86 "cannot pass '*ps' to a parameter that is not a pointer to its struct type in a call to 'ri' - a struct value is no address"
+
+# ⛔ 6.7.15 (issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md) — A REFUSED DEREFERENCE ARGUMENT IS
+# NAMED AS THE SOURCE SPELLS IT: `_sarg_vdo` (a `*V` into another pointer kind) and `_dro_check` (the address-passed
+# arm: a `*V` into `*Pt`, a vector of another type, a `*S` / `**S` of another struct) quoted `*` and the operand's LAST
+# name — `ri(*gp(pb))` '*pb', `ri(*&b)` '*b', `ri(*h.pv)` '*pv', `ri(**ppb)` '*ppb' (one `*` short), `rp(*gq(pq))`
+# 'pq' (no `*`) — and now the argument's own tokens (`_src_span_nm`: the source's bytes, one space per gap). OKD / OKDX
+# / SV3 / DRY / DRS / DRK above move with it; OKN1 the filed repro verbatim (its five lines in order), OKN2-OKN8 the
+# other spellings, on x86_64 / IR=3 / aarch64 / cx / PE: `ri(*(pb))`, `ri(*GPV)` (unchanged), `rp(*gq(pq))` (a struct
+# dereference), `rd(*g4(pb4))` (another vector type), `t.take(*gq(pq))` (a method callee: both names printed),
+# `rp(*gu<Q>(pq))` (an explicit instance), an operand over two lines with a comment (one space).
+# Mutations (2026-10-18, the gate run with each compiler):
+#   the tree before it (112c75d1f)                     -> RED: OKN1 OKN2 OKN4-OKN8 on every leg (the last name), and
+#                                                         the moved OKD / OKDX / SV3 / DRY / DRS / DRK rows
+#   `_src_span_nm` writing at GNPOS (`_fn_src_name`'s  -> RED: OKN6 on every leg (the callee's spelling `Tk.take`
+#     scratch)                                            overwrote the argument's)
+echo "OKN. a refused dereference argument is named as the source spells it (6.7.15)"
+OKNH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Hv { k; pv: *f64v2; }
+struct Pt { x; y; }
+struct Q { a; b; c; }
+struct Tk { k; }
+impl Tk { fn take(self, p: *Pt): i64 { return p.x; } }
+var GPV: *f64v2 = 0;
+fn ri(p: *i64): i64 { return *p; }
+fn rp(p: *Pt): i64 { return p.x; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn gq(p: *Q): *Q { return p; }
+fn g4(p: *f64v4): *f64v4 { return p; }
+fn gu<T>(p: *T): *T { return p; }
+'
+cat > "$D/okn1.src" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Hv { k; pv: *f64v2; }
+struct Pt { x; y; }
+fn ri(p: *i64): i64 { return *p; }
+fn rp(p: *Pt): i64 { return p.x; }
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn main(): i64 {
+    var b: f64v2 = f64v2_make(42, 7);
+    var pb: *f64v2 = &b;
+    var h: Hv; h.pv = pb;
+    return ri(*gp(pb)) + ri(*&b) + ri(*h.pv) + rp(*gp(pb)) + rp(*&b);
+}
+syscall(60, main());
+EOF
+okn_src() {  # $1 out-file  $2 main's body (b, pb, b4, pb4, q, pq in scope)
+    printf '%sfn main(): i64 {\n    var b: f64v2 = f64v2_make(42, 7);\n    var pb: *f64v2 = &b;\n    var b4: f64v4;\n    var pb4: *f64v4 = &b4;\n    var q: Q;\n    var pq: *Q = &q;\n    %s\n}\nsyscall(60, main());\n' "$OKNH" "$2" > "$1"
+}
+okn_src "$D/okn2.src" 'return ri(*(pb));'
+okn_src "$D/okn3.src" 'GPV = pb; return ri(*GPV);'
+okn_src "$D/okn4.src" 'return rp(*gq(pq));'
+okn_src "$D/okn5.src" 'return rd(*g4(pb4));'
+okn_src "$D/okn6.src" 'var t: Tk; return t.take(*gq(pq));'
+okn_src "$D/okn7.src" 'return rp(*gu<Q>(pq));'
+okn_src "$D/okn8.src" 'return ri(*gp(   # the operand goes on
+        pb));'
+okn_lines() {  # $1 row -> its refusals, one per line, in order
+    case "$1" in
+        1) printf '%s\n' "12:15: cannot pass '*gp(pb)' $KFRAG 'ri'" "12:29: cannot pass '*&b' $KFRAG 'ri'" \
+             "12:39: cannot pass '*h.pv' $KFRAG 'ri'" "12:51: cannot pass '*gp(pb)' $KFRAG 'rp'" \
+             "12:65: cannot pass '*&b' $KFRAG 'rp'" ;;
+        2) echo "cannot pass '*(pb)' $KFRAG 'ri'" ;;
+        3) echo "cannot pass '*GPV' $KFRAG 'ri'" ;;
+        4) echo "cannot pass '*gq(pq)' to a parameter of a different struct type in a call to 'rp'" ;;
+        5) echo "cannot pass '*g4(pb4)' $FRAG 'rd'" ;;
+        6) echo "cannot pass '*gq(pq)' to a parameter of a different struct type in a call to 'Tk.take'" ;;
+        7) echo "cannot pass '*gu<Q>(pq)' to a parameter of a different struct type in a call to 'rp'" ;;
+        8) echo "cannot pass '*gp( pb)' $KFRAG 'ri'" ;;
+    esac
+}
+for lg in x86 x86:CYRIUS_IR=3 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; esac
+    tg=$(printf '%s' "$lg" | tr -c 'a-zA-Z0-9' '_')
+    for k in 1 2 3 4 5 6 7 8; do
+        f="$D/okn${k}_$tg"
+        rc=0
+        case "$lg" in
+            pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okn$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            a64) timeout 60 "$A64" < "$D/okn$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            cx)  timeout 60 "$CXCC" < "$D/okn$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            x86:*) env "${lg#x86:}" timeout 60 "$CC" < "$D/okn$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            *)   timeout 60 "$CC" < "$D/okn$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+        esac
+        okn_lines "$k" > "$f.want"
+        grep '^error' "$f.err" | sed 's/^error:<source>://' > "$f.got" || true
+        if [ "$k" != 1 ]; then sed -i 's/^[0-9]*:[0-9]*: //' "$f.got"; fi
+        if [ "$rc" -eq 0 ]; then bad "OKN$k $lg: compiled (rc 0) — want \"$(head -1 "$f.want")\""
+        elif ! cmp -s "$f.want" "$f.got"; then bad "OKN$k $lg: the refusals [$(tr '\n' '|' < "$f.got")], want [$(tr '\n' '|' < "$f.want")]"
+        elif [ -s "$f.bin" ]; then bad "OKN$k $lg: refused, but a binary was written"
+        else ok "OKN$k $lg: named as written"; fi
+    done
+done
 
 # 6.7.13 (D32 A, the user's decision, 2026-10-15; issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-
 # capture-address.md) — a closure's CAPTURED vector meets the local's argument rules: the filed repro (`|k| ri(b)`, `p:
@@ -704,7 +800,7 @@ for lg in x86 a64 cx pe; do
 done
 SVH="${H}include \"lib/fnptr.cyr\"\nstruct Pt { x; y; }\nstruct Q { a; b; c; }\nstruct P1 { x; }\nvar G = Pt { 42, 7 };\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rd4(p: *f64v4): i64 { return load64(p); }\nfn mkp(): Pt { var s: Pt; s.x = 42; s.y = 7; return s; }\nimpl Pt { fn dup(self): Pt { return self; } }\n"
 refused SV2 "SV2 rd(mkp()), a struct call result" "${SVH}fn main(): i64 { return rd(mkp()); }\n${E}" x86 "cannot pass 'mkp' $SVF"
-refused SV3 "SV3 rd(*ps), a *Pt dereference" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" x86 "cannot pass 'ps' $SVF"
+refused SV3 "SV3 rd(*ps), a *Pt dereference" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" x86 "cannot pass '*ps' $SVF"
 refused SV4 "SV4 rd(G), a struct global" "${SVH}fn main(): i64 { return rd(G); }\n${E}" x86 "cannot pass 'G' $SVF"
 refused SV5 "SV5 |k| rd(s), a captured struct" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" x86 "cannot pass 's' $SVF"
 refused SV6 "SV6 rd(s.dup()), a method result (named as the source spells it, 6.7.14)" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' $SVF"
@@ -713,7 +809,7 @@ refused SV8 "SV8 a 24-byte struct into *f64v4" "${SVH}fn main(): i64 { var q: Q;
 refused SV9 "SV9 an 8-byte struct into *f64v2" "${SVH}fn main(): i64 { var t: P1; t.x = 42; return rd(t); }\n${E}" x86 "cannot pass 't' $SVF"
 if [ "$WINE" = 1 ]; then
     refused SVw2 "SVw SV2 on PE" "${SVH}fn main(): i64 { return rd(mkp()); }\n${E}" pe "cannot pass 'mkp' $SVF"
-    refused SVw3 "SVw SV3 on PE" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" pe "cannot pass 'ps' $SVF"
+    refused SVw3 "SVw SV3 on PE" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" pe "cannot pass '*ps' $SVF"
     refused SVw4 "SVw SV4 on PE" "${SVH}fn main(): i64 { return rd(G); }\n${E}" pe "cannot pass 'G' $SVF"
     refused SVw5 "SVw SV5 on PE" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" pe "cannot pass 's' $SVF"
 fi
@@ -873,13 +969,13 @@ exit_rows DR3 "$D/dr3.cyr" 42 "take(*&s): the struct analogue, &s passed"
 exit_rows DR4 "$D/dr4.cyr" 42 "take(**pps): the struct analogue, *pps passed"
 exit_rows DR5 "$D/dr5.cyr" 42 "rd(*(&b))"
 DRH="${H}struct Pt { x; y; }\nstruct P3 { a; b; c; }\nstruct Q3 { x; y; z; }\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rp(p: *Pt): i64 { return p.x; }\nfn take(p: *P3): i64 { return p.c; }\n"
-refused DRY1 "DRY1 rd(*&f), f an f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" x86 "cannot pass 'f' $FRAG 'rd'"
-refused DRY2 "DRY2 rd(**ppf), ppf a **f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pf: *f32v4 = &f; var ppf: **f32v4 = &pf; return rd(**ppf) + 1; }\n${E}" x86 "cannot pass 'ppf' $FRAG 'rd'"
-refused DRS1 "DRS1 take(**ppq), ppq a **Q3 (another 24-byte struct, its pin declared after P3's)" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" x86 "cannot pass 'ppq' to a parameter of a different struct type in a call to 'take'"
-refused DRK "DRK rp(*&b) into *Pt: a vector dereference into another pointer kind (D31)" "${DRH}fn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return rp(*&b) + 1; }\n${E}" x86 "cannot pass '*b' $KFRAG 'rp'"
+refused DRY1 "DRY1 rd(*&f), f an f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" x86 "cannot pass '*&f' $FRAG 'rd'"
+refused DRY2 "DRY2 rd(**ppf), ppf a **f32v4 (A2)" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); var pf: *f32v4 = &f; var ppf: **f32v4 = &pf; return rd(**ppf) + 1; }\n${E}" x86 "cannot pass '**ppf' $FRAG 'rd'"
+refused DRS1 "DRS1 take(**ppq), ppq a **Q3 (another 24-byte struct, its pin declared after P3's)" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" x86 "cannot pass '**ppq' to a parameter of a different struct type in a call to 'take'"
+refused DRK "DRK rp(*&b) into *Pt: a vector dereference into another pointer kind (D31)" "${DRH}fn main(): i64 { var b: f64v2 = f64v2_make(42, 7); return rp(*&b) + 1; }\n${E}" x86 "cannot pass '*&b' $KFRAG 'rp'"
 if [ "$WINE" = 1 ]; then
-    refused DRYw1 "DRYw DRY1 on PE" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" pe "cannot pass 'f' $FRAG 'rd'"
-    refused DRSw1 "DRSw DRS1 on PE" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" pe "cannot pass 'ppq' to a parameter of a different struct type in a call to 'take'"
+    refused DRYw1 "DRYw DRY1 on PE" "${DRH}fn main(): i64 { var f: f32v4 = f32v4_make(1, 2, 3, 4); return rd(*&f) + 1; }\n${E}" pe "cannot pass '*&f' $FRAG 'rd'"
+    refused DRSw1 "DRSw DRS1 on PE" "${DRH}fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var q: Q3; var pq: *Q3 = &q; var ppq: **Q3 = &pq; return take(**ppq) + take(**pps); }\n${E}" pe "cannot pass '**ppq' to a parameter of a different struct type in a call to 'take'"
 fi
 
 echo "V8. the filed repro, verbatim: a value-form \`v: f32v8\` parameter is its 32 bytes (exit 38; 0 before)"

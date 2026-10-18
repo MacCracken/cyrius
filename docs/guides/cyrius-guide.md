@@ -3942,8 +3942,10 @@ A):** a call result (`rp(mkv(42, 7))`, `ri(s.mv(..))`, `ri(callptr(&mkv, ..))`) 
 dereference (`rp(*pb)`, `ri(*pb)`) into a pointer of another kind are refused with the same words,
 naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a pointer to its vector
 type in a call to 'ri'`) — every dereference whose operand is a `*V`, however written: `**ppb`,
-`*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named by its
-operand's last name, `'*ppb'`; ⚠ through 6.7.13 every spelling but `* NAME` of a local into `*i64`, `*u8`,
+`*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named as the source
+spells it, `'**ppb'`, `'*gp(pb)'` — 6.7.15; through 6.7.14 by its operand's last name, `'*ppb'`, `'*pb'`, as a
+`*S` dereference of another struct into `*T` was, `'pq'` for `rp(*gq(pq))`; ⚠ through 6.7.13 every spelling but
+`* NAME` of a local into `*i64`, `*u8`,
 `**T` or a by-value struct of 8 B or less compiled and passed lane 0 as the address — 139 on x86_64 and
 aarch64, a cx guest fault, exit 5 on Windows); and a vector local, call result or `*pb` passed to a **by-value struct**
 parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-value

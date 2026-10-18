@@ -211,6 +211,10 @@
 # non-pointer to typed pointer" — it went on to the 8-byte store; it now ends its statement at the refusal.
 #   the commit before it (c9e95759d)                   -> RED 2: DNW1 DNW2 (the warning beside the refusal), x4
 #
+# 6.7.15 (issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md): D15 / D18, a dereference taken by
+# the address-passed arm (`_dro_check`), name the argument as written — '*(&p)', '**ppp' (they named 'p', 'ppp'); the
+# multi-target rows are simd_pointer_param.sh OKN.
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -734,7 +738,7 @@ refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass 't' $MA 'bs1'" \
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(*(&t)); } syscall(60, go());"
 refuse "D14 bs1(*&t) at top level" "cannot pass 'GT1' $MA 'bs1'" \
     "${T}var GT1 = T1 { 9 }; var r = bs1(*&GT1); syscall(60, r);"
-refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass 'p' $MA 'bq'" \
+refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass '\\*(&p)' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} return bq(*(&p)); } syscall(60, go());"
 accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) does" \
     "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(*(&w)) * 10 + gw(*&w); } syscall(60, go());" \
@@ -749,7 +753,7 @@ accept "D17 bqp(**ppq), ppq: **Q into b: *Q passes *ppq" \
     "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; var ppq: **Q = &pq; return bqp(**ppq) * 10 + bqp((**ppq)); } syscall(60, go());" \
     77 \
     "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; return bqp(pq) * 10 + bqp(pq); } syscall(60, go());"
-refuse "D18 bqp(**ppp), ppp: **Pt into b: *Q" "cannot pass 'ppp' $MA 'bqp'" \
+refuse "D18 bqp(**ppp), ppp: **Pt into b: *Q" "cannot pass '\\*\\*ppp' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} var pp: *Pt = &p; var ppp: **Pt = &pp; return bqp(**ppp); } syscall(60, go());"
 
 echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
