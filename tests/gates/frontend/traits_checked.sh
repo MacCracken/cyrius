@@ -27,6 +27,16 @@
 #      the impl); TS4 a stray token before the `;`; TS5/TS6 an unknown parameter / return type;
 #      TS7 a parameter that is not a name; TS8 junk in an overridden default; TS9 `--syntax-only`
 #      (lint) still reports the grammar rows and stays silent on the type-name rows
+#   TV (6.7.15, the user's D9 (a), 2026-10-18) a member's `: Vec<..>` return is refused at the trait, once, with a fn's
+#      words ("type 'Vec' cannot be a fn return type" and its note): it compiled, though no impl can define it (an
+#      impl's `fn a(self): Vec<i64>` is refused, as any fn's is). TV1 the filed repro verbatim; TV2 a bare `: Vec` and
+#      `: Vec<nosuch>` (the element not read after the refusal) — one line each; TV3 a default every impl overrides
+#      (checked at the trait), its override `: i64` — the trait's line alone; TV4 `--syntax-only` silent, as a fn's
+#      `: Vec<..>` return is; TVK `: i64`, `: *Vec<i64>`, a parameter `v: Vec<i64>` and `(Vec<i64>, i64)` build and run.
+#      Filed: docs/development/issues/2026-10-16-trait-member-vec-return-accepted.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, CYCC= it): the lane's previous
+#      compiler (bd8ad547) -> RED 5: TV1 (both rows), TV2, TV2b (its element's line), TV3 (each built but TV2b); MTV1
+#      `_trs_ret_refused` answering 0 -> RED 5: the same; MTV2 `_trs_ret_refused` reporting under --syntax-only -> RED 1: TV4
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -199,8 +209,31 @@ printf "$S"'trait Show { fn show(self): i64; }\nimpl Show for P { fn show(self):
 exits v2 42 "V2: a generic member's own <U>, and a bounded <V: Show>"
 printf "$S"'trait Sh { fn sh(self, t: (i64, f64), k): i64; fn two(self): (i64, f64); }\nimpl Sh for P { fn sh(self, t: (i64, f64), k): i64 { return self.v + t.0 + k; } fn two(self): (i64, f64) { return (1, 2.0); } }\nfn main(): i64 { var p = P { 5 }; var t: (i64, f64) = (2, 1.5); var a, b = p.two(); return p.sh(t, 1) * 10 + a; }\nsyscall(60, main());\n' > "$T/v3.cyr"
 exits v3 81 "V3: a tuple parameter and a multi-value return"
-printf "$S"'struct Box<T> { v: T; }\ntrait Sh { fn sh(self, n): i64; fn a(self, v: Vec<i64>, q: *P, w: *u128, cb: *fn(i64, *P): i64, pp: **i64): Vec<i64>; fn b(self): *P; fn c(self): u128; fn d(self): *fn(i64): i64; fn e(self, m: Box<Vec<Box<i64>>>): (i64, f64); fn f(self, s: Str, c: cstring, ...): Result; fn g(self, e: f64v2, h: bool, i: u8, j: Option, k: Tagged): f64; }\nimpl Sh for P { fn sh(self, n): i64 { return self.v + n; } fn a(self, v, q, w, cb, pp): i64 { return 0; } fn b(self): i64 { return 0; } fn c(self): i64 { return 0; } fn d(self): i64 { return 0; } fn e(self, m): i64 { return 0; } fn f(self, s, c, ...): i64 { return 0; } fn g(self, e, h, i, j, k): i64 { return 0; } }\n'"$TM" > "$T/v4.cyr"
+printf "$S"'struct Box<T> { v: T; }\ntrait Sh { fn sh(self, n): i64; fn a(self, v: Vec<i64>, q: *P, w: *u128, cb: *fn(i64, *P): i64, pp: **i64): *Vec<i64>; fn b(self): *P; fn c(self): u128; fn d(self): *fn(i64): i64; fn e(self, m: Box<Vec<Box<i64>>>): (i64, f64); fn f(self, s: Str, c: cstring, ...): Result; fn g(self, e: f64v2, h: bool, i: u8, j: Option, k: Tagged): f64; }\nimpl Sh for P { fn sh(self, n): i64 { return self.v + n; } fn a(self, v, q, w, cb, pp): i64 { return 0; } fn b(self): i64 { return 0; } fn c(self): i64 { return 0; } fn d(self): i64 { return 0; } fn e(self, m): i64 { return 0; } fn f(self, s, c, ...): i64 { return 0; } fn g(self, e, h, i, j, k): i64 { return 0; } }\n'"$TM" > "$T/v4.cyr"
 exits v4 7 "V4: Vec<T> / *T / **T / *u128 / *fn(..) / a nested generic / ... / a by-name Str (no lib/str.cyr)"
 
+# ── TV (6.7.15, D9) — a member's `: Vec<..>` return is refused at the trait, with a fn's words ──
+VR="type 'Vec' cannot be a fn return type"
+cat > "$T/tv1.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Sh { fn a(self): Vec<i64>; }
+fn main(): i64 { return 4; }
+syscall(60, main());
+EOF
+refused_at tv1 "$VR" 2:24 "TV1: the filed repro verbatim (it built: exit 4)"
+if grep -qF "note: a return type is a struct" "$T/tv1.err"; then ok "TV1: ... with a fn's note"; else bad "TV1: no return-type note: $(cat "$T/tv1.err" | tr '\n' '|')"; fi
+V='include "lib/vec.cyr"\nstruct P { v; }\n'
+printf "$V"'trait Sh { fn a(self): Vec; }\nsyscall(60, 4);\n' > "$T/tv2.cyr"
+refused_at tv2 "$VR" 3:24 "TV2: a bare : Vec"
+printf "$V"'trait Sh { fn b(self): Vec<nosuch>; }\nsyscall(60, 4);\n' > "$T/tv2b.cyr"
+refused_at tv2b "$VR" 3:24 "TV2b: : Vec<nosuch> — the element is not read after the refusal"
+printf "$V"'trait Sh { fn a(self): Vec<i64> { return 0; } }\nimpl Sh for P { fn a(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 1 }; return p.a(); }\nsyscall(60, main());\n' > "$T/tv3.cyr"
+refused_at tv3 "$VR" 3:24 "TV3: a default every impl overrides is checked at the trait — its line alone"
+rc=0; "$CC" --syntax-only < "$T/tv1.cyr" > "$T/tv4.bin" 2> "$T/tv4.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/tv4.err"; then ok "TV4: --syntax-only is silent, as for a fn's : Vec<..> return"
+else bad "TV4: --syntax-only rc $rc: $(grep '^error' "$T/tv4.err" | head -1)"; fi
+printf "$V"'trait Sh { fn a(self): i64; fn b(self): *Vec<i64>; fn c(self, v: Vec<i64>): i64; fn e(self): (Vec<i64>, i64); }\nimpl Sh for P { fn a(self): i64 { return 1; } fn b(self): *Vec<i64> { return 0; } fn c(self, v: Vec<i64>): i64 { return 2; } fn e(self): (Vec<i64>, i64) { return (0, 4); } }\nfn main(): i64 { var p = P { 1 }; var w, k = p.e(); return p.a() + p.c(0) + k; }\nsyscall(60, main());\n' > "$T/tvk.cyr"
+exits tvk 7 "TVK: : i64, : *Vec<i64>, a parameter v: Vec<i64> and (Vec<i64>, i64) unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15)"
