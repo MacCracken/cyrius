@@ -7429,7 +7429,7 @@ fn _cf_tail(t): i64 {
     return 1;
 }
 # The right operand of `+ - & | ^` (cursor on it, `_cfo` armed): 1 = foldable, `_cf_v` its value, `_cf_e` the token
-# after. A literal not followed by `* / % << >>` is read as before; a literal followed by one, or a name, is the
+# after. A literal not followed by a term operator is read as before; a literal followed by one, or a name, is the
 # term `_cf_term_at` folds.
 fn _cf_can(S): i64 {
     if (_cfo != 1) { return 0; }
@@ -7444,9 +7444,13 @@ fn _cf_can(S): i64 {
     } elif (t != 2) { return 0; }
     return _cf_term_at(S, ti);
 }
+# 1 = `nt` is one of PARSE_TERM's operators (`* / % << >> *% *| *? >>>`): the literal before it is not the whole
+# term. A missing one let the arm fold the literal and stop at the operator, "expected ';'" (CHANGELOG [6.7.15]).
 fn _cf_excl(nt): i64 {
     if (nt == 8 || nt == 9 || nt == 34) { return 1; }
     if (nt == 38 || nt == 39) { return 1; }
+    if (nt == 119 || nt == 120 || nt == 121) { return 1; }
+    if (nt == 152) { return 1; }
     return 0;
 }
 # A term at `ti` that PARSE_TERM folds to one value: its first factor armed (0 .. 0xFFFF, as the factor arms it)

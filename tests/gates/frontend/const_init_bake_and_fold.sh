@@ -39,10 +39,17 @@
 #   F16-F21 values on every leg, the folded and the not folded: a negative const, a local var hiding the const,
 #          `>>>` (never folded), `*%` in a name's term, a result under zero, `2 * (C)`; V3 another file's private
 #          const on the right is still refused
+#   F22-F45 6.7.15: a literal left operand, then `+ - & | ^` and a literal followed by `*%`, `*|`, `*?` or `>>>`
+#          (`9 + 3 *% 4`, `57 & 48 >>> 2`, ...) compiles, by value on every leg — through 6.7.14 each was refused
+#          "expected ';'": the arm folded `9 + 3` and stopped at the term operator `_cf_excl` did not list
+#          (issues/2026-10-16-constant-left-literal-then-term-operator-refused.md); F42 `2 - 3 *% 4` (a result under
+#          zero, compiled before) is the control, F43-F45 the filed repros
 #
 # MUTATION (item 2, measured): _cf_fac_at reading a literal only (its name arms gone) -> 42 red: F1-F14 on x86_64,
 # aarch64 and cx (F15, the literal term, still folds); _cf_can's term arm gone -> 21 red: F2, F3, F10-F13, F15 on
 # the three legs (the `* / << >>` arms F1, F4-F9, F14 still fold their factor).
+# MUTATION (measured, 6.7.15, a mutated scratch copy of the tree): _cf_excl without 119 / 120 / 121 / 152 -> 69 red:
+# F22-F41 and F43-F45 on x86_64, aarch64 and cx, each "compile failed: expected ';'" (F42, the control, stays green).
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -120,7 +127,31 @@ F17|14|const C = 5;\nfn f(): i64 { var C = 7; return 2 * C; }\nsyscall(60, f());
 F18|4|const C = 5;\nfn f(): i64 { return 2 + C >>> 1; }\nsyscall(60, f());\n
 F19|22|const C = 5;\nfn f(): i64 { return 2 + C *% 4; }\nsyscall(60, f());\n
 F20|206|const C = 5;\nfn f(): i64 { return 100 - C * 30; }\nsyscall(60, f() & 255);\n
-F21|10|const C = 5;\nfn f(): i64 { return 2 * (C); }\nsyscall(60, f());\n"
+F21|10|const C = 5;\nfn f(): i64 { return 2 * (C); }\nsyscall(60, f());\n
+F22|21|fn f(): i64 { return 9 + 3 *% 4; }\nsyscall(60, f() & 255);\n
+F23|21|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 + 3 *| 4; }\nsyscall(60, f() & 255);\n
+F24|21|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 + 3 *? 4; }\nsyscall(60, f() & 255);\n
+F25|21|fn f(): i64 { return 9 + 48 >>> 2; }\nsyscall(60, f() & 255);\n
+F26|253|fn f(): i64 { return 9 - 3 *% 4; }\nsyscall(60, f() & 255);\n
+F27|253|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 - 3 *| 4; }\nsyscall(60, f() & 255);\n
+F28|253|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 - 3 *? 4; }\nsyscall(60, f() & 255);\n
+F29|45|fn f(): i64 { return 57 - 48 >>> 2; }\nsyscall(60, f() & 255);\n
+F30|8|fn f(): i64 { return 9 & 3 *% 4; }\nsyscall(60, f() & 255);\n
+F31|8|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 & 3 *| 4; }\nsyscall(60, f() & 255);\n
+F32|8|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 & 3 *? 4; }\nsyscall(60, f() & 255);\n
+F33|8|fn f(): i64 { return 57 & 48 >>> 2; }\nsyscall(60, f() & 255);\n
+F34|13|fn f(): i64 { return 9 | 3 *% 4; }\nsyscall(60, f() & 255);\n
+F35|13|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 | 3 *| 4; }\nsyscall(60, f() & 255);\n
+F36|13|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 | 3 *? 4; }\nsyscall(60, f() & 255);\n
+F37|13|fn f(): i64 { return 9 | 48 >>> 2; }\nsyscall(60, f() & 255);\n
+F38|5|fn f(): i64 { return 9 ^ 3 *% 4; }\nsyscall(60, f() & 255);\n
+F39|5|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 ^ 3 *| 4; }\nsyscall(60, f() & 255);\n
+F40|5|include \"lib/overflow.cyr\"\nfn f(): i64 { return 9 ^ 3 *? 4; }\nsyscall(60, f() & 255);\n
+F41|5|fn f(): i64 { return 9 ^ 48 >>> 2; }\nsyscall(60, f() & 255);\n
+F42|246|fn f(): i64 { return 2 - 3 *% 4; }\nsyscall(60, f() & 255);\n
+F43|14|fn f(): i64 { return 2 + 3 *% 4; }\nsyscall(60, f());\n
+F44|6|fn f(): i64 { return 2 + 16 >>> 2; }\nsyscall(60, f());\n
+F45|9|fn g(): i64 { return 1 | 2 *% 4; }\nsyscall(60, g());\n"
 
 # leg NAME COMPILER RUNNER... — every row compiled by COMPILER and run (RUNNER prefix; "cx" runs the .cyx on cxvm).
 leg() {
