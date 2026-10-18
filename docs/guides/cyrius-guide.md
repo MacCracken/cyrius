@@ -1134,7 +1134,8 @@ steps `n` elements of `T` and `*pp += n` steps them too, `*pp - *qq` is an eleme
 any two pointers, when the element sizes differ), `var q: *T = *pp;` / `q = *pp;` are silent, and `**pp`
 through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written at its width. A
 `***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. A generic's `pp: **T` called
-with no `<..>` takes `T` from a `**S` argument (6.7.14, D40 — *Generic Functions*). Through 6.7.12 `*pp` was the
+with no `<..>` takes `T` from a `**S` argument (6.7.14, D40 — *Generic Functions*), and a `ppp: ***T` from a `***S`
+(6.7.15, D24). Through 6.7.12 `*pp` was the
 untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
 declaration warned *assigning non-pointer to typed pointer*. A program may name at most 16383 distinct
 pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types (max 16383)*; 126 in 6.7.13). **`**pps` of a `pps: **S` is the
@@ -6925,8 +6926,8 @@ that pointer (6.7.15, the user's decision D23 A, 2026-10-18): through `p: *T`, `
 `ps - qs` or a bitwise result (`ps + 1 & 3`).
 
 **Through a pointer-to-pointer parameter** (6.7.14). A `T` that no `x: T` / `p: *T`
-parameter and no generic struct carries is carried by the first parameter declared exactly
-`pp: **T`: a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
+parameter and no generic struct carries is carried by the first parameter declared
+`pp: **T` (or deeper, below): a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
 local, parameter, closure capture or global, a field declared `**S` reached through a chain
 (`w.pp`, `pw.pp`, `h.w.pp`), a call returning `**S` (a generic one at the instance it
 reaches), and `&p` / `&G` of a `*S` local, parameter or global. With
@@ -6941,9 +6942,13 @@ scalar pointee binds as through `p: *T` (6.7.15, D11 (a)): a `**i32` — the sam
 whole argument are transparent and a `**S` plus or minus `n` is still that `**S` (6.7.15, the
 user's decisions D22 A / D23 A, 2026-10-18): `tg((pps))`, `tg((&ps))`, `tg(pps + 0)`,
 `tg(0 + pps)` hand `take` the struct, as `tg(pps)` does — through 6.7.14 they ran the i64 base
-and faulted; `&ps + n` is a byte pointer and binds nothing. A `*S` (one star), a `***S`, a
-`**u8` bind nothing (`i64`), and a direct or struct carrier wins over `**T`:
-`fn mix<T>(pp: **T, x: T)` binds from `x`.
+and faulted; `&ps + n` is a byte pointer and binds nothing. A `ppp: ***T` — and any deeper
+`*..*T` — binds `T` the same way, one pointee down per star (6.7.15, the user's decision D24 A,
+2026-10-18): `fn s3<T>(ppp: ***T)` called `s3(ppps)` with `ppps: ***P3` steps `**ppp + 1` 24
+and `t3(ppps)` hands `take(***ppp)` the struct, exactly as `s3<P3>(ppps)` / `t3<P3>(ppps)` do,
+from every source above and from `&pps` of a `**P3` (through 6.7.14 the i64 base: 8, and a
+fault). A `*S` (one star) into `**T`, a `**S` into `***T`, a `**u8` bind nothing (`i64`), and a
+direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from `x`.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
