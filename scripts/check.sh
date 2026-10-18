@@ -2202,6 +2202,10 @@ _chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
 # < 2.0x) + semantic rows (sharing unchanged, B0a's repro, a #deprecated message wound back).
 _chk_gate "$ROOT/tests/gates/frontend/string_intern_scale_linear.sh"
 
+# 6.7.15 — the pointer-to-pointer pin intern is LINEAR in the distinct `**T` pointees: `_pp_intern` scanned every pin
+# (6.7.14 raised the cap to 16383; 15360 pins 4.5 s). A ratio row (4096 vs 15360 pins < 6.0x; the scan read ~10x).
+_chk_gate "$ROOT/tests/gates/frontend/double_pointer_pin_scale_linear.sh"
+
 # 6.6.10 (bite 2) — a TOP-LEVEL destructure grows the var table before storing its names:
 # gi1+1/gi1+2 were written before SVCNT, past the 8192 band (aliasing var_sizes[0]/var_types[0]:
 # a lost name, or g0 silently read 0) and at the grown 16384 cap into the next table. 8 rows,

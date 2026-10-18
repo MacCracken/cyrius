@@ -2974,28 +2974,58 @@ fn _ps_pin(w): i64 {
 # 6.7.13: a pin also carries its pointee `*S`'s struct (`sid`, 0 for none) — the step word says only sizeof(S), so
 # `**pps` of a `**S` names S through it (`_ppd_note`, parse_expr.cyr): two structs of one size get two pins.
 var _pp_sids = 0;   # a word per pin: the pointee's struct
+# 6.7.15 — THE PIN INTERN IS HASHED. `_pp_intern` found an existing pin by scanning every pin so far, and 6.7.14
+# raised the cap from 126 to 16383, so a unit with thousands of distinct `**T` pointees compiled in quadratic time
+# (1024 structs each at 15 pointer depths, 15360 pins: 4.5 s). `_pp_hix` is an open-addressing index over (step word,
+# field entry, struct): a pin per slot (0 empty), twice `_pp_cap` slots (a power of two, so at most half full),
+# alloc()'d and rebuilt by `_pp_grow`. Pins keep their first-come numbers (a step word carries its pin).
+# CHANGELOG [6.7.15]
+var _pp_hix = 0;
+var _pp_hmask = 0;  # the index's slots - 1
 fn _pp_intern(S, v, ent, sid): i64 {
     if (v == 0) { return 0; }
     if (_pp_tab == 0) { _pp_grow(128); }
-    var i = 1;
-    while (i <= _pp_n) {
-        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) {
-                if (L64(_pp_sids + i * 8) == sid) { return i; }
-            } }
-        i = i + 1;
-    }
+    var j = _pp_hslot(v, ent, sid);
+    var i = L64(_pp_hix + j * 8);
+    if (i != 0) { return i; }
     if (_pp_n >= 16383) {
         ERR_MSG(S, "too many pointer-to-pointer pointee types (max 16383)", 53);
         return 0;
     }
-    if (_pp_n + 1 >= _pp_cap) { _pp_grow(_pp_cap * 2); }
+    if (_pp_n + 1 >= _pp_cap) {
+        _pp_grow(_pp_cap * 2);
+        j = _pp_hslot(v, ent, sid);
+    }
     _pp_n = _pp_n + 1;
     S64(_pp_tab + _pp_n * 16, v);
     S64(_pp_tab + _pp_n * 16 + 8, ent);
     S64(_pp_sids + _pp_n * 8, sid);
+    S64(_pp_hix + j * 8, _pp_n);
     return _pp_n;
 }
-# The pin tables at `n` entries, the pins so far copied over. CHANGELOG [6.7.14]
+# The index slot of the pin (v, ent, sid): the one holding it, else the empty slot its probe ends at. CHANGELOG [6.7.15]
+fn _pp_hslot(v, ent, sid): i64 {
+    var j = _pp_hash(v, ent, sid) & _pp_hmask;
+    var i = L64(_pp_hix + j * 8);
+    while (i != 0) {
+        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) {
+                if (L64(_pp_sids + i * 8) == sid) { return j; }
+            } }
+        j = (j + 1) & _pp_hmask;
+        i = L64(_pp_hix + j * 8);
+    }
+    return j;
+}
+# A pin key's hash. A step word's pin and kind sit in its high bits, so each step folds the high half down before the
+# multiply (which carries only upward). CHANGELOG [6.7.15]
+fn _pp_hash(v, ent, sid): i64 {
+    var h = (v ^ (v >> 32)) * 0x9E3779B97F4A7C15;
+    h = ((h ^ (h >> 29)) ^ ent) * 0x9E3779B97F4A7C15;
+    h = ((h ^ (h >> 29)) ^ sid) * 0x9E3779B97F4A7C15;
+    return h ^ (h >> 32);
+}
+# The pin tables at `n` entries, the pins so far copied over, and (6.7.15) the index at 2n slots, rebuilt.
+# CHANGELOG [6.7.14]
 fn _pp_grow(n): i64 {
     var t = alloc(n * 16);
     var d = alloc(n * 8);
@@ -3009,6 +3039,22 @@ fn _pp_grow(n): i64 {
     _pp_tab = t;
     _pp_sids = d;
     _pp_cap = n;
+    _pp_hreindex(n * 2);
+    return 0;
+}
+# The index at `m` slots (a power of two), zeroed, every pin re-inserted. CHANGELOG [6.7.15]
+fn _pp_hreindex(m): i64 {
+    _pp_hix = alloc(m * 8);
+    _pp_hmask = m - 1;
+    var j = 0;
+    while (j < m) { S64(_pp_hix + j * 8, 0); j = j + 1; }
+    var i = 1;
+    while (i <= _pp_n) {
+        j = _pp_hash(L64(_pp_tab + i * 16), L64(_pp_tab + i * 16 + 8), L64(_pp_sids + i * 8)) & _pp_hmask;
+        while (L64(_pp_hix + j * 8) != 0) { j = (j + 1) & _pp_hmask; }
+        S64(_pp_hix + j * 8, i);
+        i = i + 1;
+    }
     return 0;
 }
 # The pin of the pointer annotation whose first `*` is token `ann`: its pointee interned when that pointee is
