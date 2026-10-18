@@ -5918,6 +5918,7 @@ fn _gvk_pre(S): i64 {
     _gvk_bk = alloc(gc + 8);
     _gvk_v = alloc(gc * 8 + 8);
     _gvk_ik = alloc(gc + 8);
+    _gvs_b = alloc(gc * 8 + 8);   # 6.7.15: each baked literal's bytes (_spc_try)
     var gi = 0;
     while (gi < gc) {
         store8(_gvk_bk + gi, _gvk_one(S, gi));
@@ -6076,7 +6077,7 @@ fn _gvk_quiet(S, gi): i64 {
     if (_gvk_names_ok(S, _gvk_rhs(S, sti)) == 0) { return 0; }
     if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) != 0) { return 1; }   # 6.7.15
     var v = load64(_gvk_v + gi * 8);
-    var p = _gvk_prev(S, gi, vi, TOKVAL(S, sti + 1));
+    var p = _gvk_prev(S, gi, vi, TOKVAL(S, sti + 1), 1);
     if (p == 0 - 2) { return 0; }
     if (p == 0 - 1) {
         if (L64(_vgsi_base + vi * 8) == v) { return 1; }
@@ -6086,9 +6087,10 @@ fn _gvk_quiet(S, gi): i64 {
     return 0;
 }
 # The nearest entry before `gi` whose live target writes slot `vi` (named `noff`): -1 none; its index when it is a
-# baked scalar (bk 1 / 3); -2 any other writer (a computed initializer, a destructure target, an unrecorded slot).
-# Walks the name's list of deferred targets (_gvx_note), newest first.
-fn _gvk_prev(S, gi, vi, noff): i64 {
+# baked scalar (bk 1 / 3; `want` 1) or a baked literal (bk 2; `want` 2, 6.7.15); -2 any other writer (a computed
+# initializer, a destructure target, an unrecorded slot). Walks the name's list of deferred targets (_gvx_note),
+# newest first.
+fn _gvk_prev(S, gi, vi, noff, want): i64 {
     if (_gvx_m == 0) { return 0 - 1; }
     var e = _nm_get(S, _gvx_m, noff);
     while (e != 0) {
@@ -6099,15 +6101,21 @@ fn _gvk_prev(S, gi, vi, noff): i64 {
             var w = 0;
             if (g < _gv_ent_cap) { w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF; }
             if (w == 0) { return 0 - 2; }
-            if (w - 1 == vi) { if (((_gv_sup(L64(_gvt(S) + g * 8)) >> k) & 1) == 0) { return _gvk_prev_kind(g, k); } }
+            if (w - 1 == vi) {
+                if (((_gv_sup(L64(_gvt(S) + g * 8)) >> k) & 1) == 0) { return _gvk_prev_kind(g, k, want); }
+            }
         }
         e = load64(_gvx_nxt + (e - 1) * 8);
     }
     return 0 - 1;
 }
-fn _gvk_prev_kind(g, k): i64 {
+fn _gvk_prev_kind(g, k, want): i64 {
     if (k != 0) { return 0 - 2; }
     var b = load8(_gvk_bk + g);
+    if (want == 2) {
+        if (b == 2) { return g; }
+        return 0 - 2;
+    }
     if (b == 1 || b == 3) { return g; }
     return 0 - 2;
 }
@@ -6179,6 +6187,7 @@ fn _spc_try(S, gi, idx, sid): i64 {
     var b = _gai_blob(S, idx, 8, 6);
     _spc_walk(S, sid, b + 16);
     store8(_gvk_bk + gi, 2);
+    store64(_gvs_b + gi * 8, _gvs_snap(b));   # 6.7.15: its bytes, for a later literal's compare (_gvs_quiet)
     return 0;
 }
 # One walk (`d` = 0: check only); 1 = every leaf folded and the list ends at its `}`.
@@ -6270,6 +6279,141 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
     if (d != 0) { _gai_put(d + off, FIELDSZ(S, ft), v); }
     if (TOKTYP(S, ti) == 31) { ti = ti + 1; }
     _spc_ti = ti;
+    return 0;
+}
+
+# ⛔ 6.7.15 — A BAKED STRUCT LITERAL IS NOT STORED AGAIN AT STARTUP (issues/2026-10-16-zone-struct-literal-baked-and-
+# stored.md). `var p = P { 1, 2 };`, its named form and a tuple literal `(1, 2)` put their bytes in the image
+# (_spc_try, bk 2) AND replayed every element's store — per field on x86_64 `mov eax, imm; push rax; movabs rcx, p;
+# [add rcx, off;] pop rax; mov [rcx], rax`. 6.7.14's scalar rule (_gvk_quiet; 6.7.14's D11 (b): a constant
+# initializer is the global's value from program start) now covers the baked literal: its stores are dropped when no
+# earlier live writer of the slot exists and no later entry can bake other bytes over it (a later literal: `var p =
+# P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` keeps both literals' stores, so b reads 1), or when the nearest
+# earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
+# bool field's refusal, an integer into a float field) — and the code it emitted is taken back (_gvs_mark /
+# _gvs_undo). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write.
+# cx bakes the literal into its var data too (main_cx.cyr, _gai_bake). CHANGELOG [6.7.15]
+var _gvs_b = 0;   # per deferred entry: a copy of the bytes _spc_try baked (bk 2), [size][bytes]
+var _gvs_m = 0;   # the emit state _gvs_mark saved (one walk at a time: a baked literal holds no nested literal)
+fn _gvs_snap(b): i64 {
+    var n = load64(b);
+    var c = alloc(n + 8);
+    store64(c, n);
+    var i = 0;
+    while (i < n) { store8(c + 8 + i, load8(b + 16 + i)); i = i + 1; }
+    return c;
+}
+# 1 = entry `gi`'s literal (into slot `idx`) is baked and its stores are dropped: the walk runs under _gvs_mark.
+fn _gvs_quiet(S, gi, idx): i64 {
+    if (load8(_gvk_bk + gi) != 2) { return 0; }
+    if (gi >= _gv_ent_cap) { return 0; }
+    if ((load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1 != idx) { return 0; }   # its own slot, not a sink
+    var noff = TOKVAL(S, _gv_tok(L64(_gvt(S) + gi * 8)) + 1);
+    var p = _gvk_prev(S, gi, idx, noff, 2);
+    if (p == 0 - 2) { return 0; }
+    if (p == 0 - 1) { return 1 - _gvs_later(S, gi, idx, noff); }
+    return _gvs_same(load64(_gvs_b + p * 8), load64(_gvs_b + gi * 8));
+}
+fn _gvs_same(a, b): i64 {
+    if (a == 0 || b == 0) { return 0; }
+    var n = load64(a);
+    if (load64(b) != n) { return 0; }
+    var i = 0;
+    while (i < n) {
+        if (load8(a + 8 + i) != load8(b + 8 + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# 1 = an entry after `gi` writes slot `vi` (named `noff`) and may bake its own literal over the image's bytes.
+fn _gvs_later(S, gi, vi, noff): i64 {
+    if (_gvx_m == 0) { return 0; }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        if ((r >> 2) > gi) { if (_gvs_lw(S, r >> 2, r & 3, vi) == 1) { return 1; } }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return 0;
+}
+fn _gvs_lw(S, g, k, vi): i64 {
+    var w = 0;
+    if (g < _gv_ent_cap) { w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF; }
+    if (w == 0) { return 1; }   # unrecorded: it may be this slot
+    if (w - 1 != vi) { return 0; }
+    if (k != 0) { return 1; }
+    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + g * 8)));
+    if (rt == 0) { return 1; }   # a list, a destructure
+    var t = TOKTYP(S, rt);
+    if (t == 10) { return 1; }   # a tuple literal, a wrap
+    if (t != 2) { return 0; }
+    t = TOKTYP(S, rt + 1);
+    if (t == 13 || t == 19) { return 1; }   # `Name {`, `Name<..> {`
+    return 0;
+}
+# The emit state before the walk of a literal whose stores are dropped, and its undo: the code position, the
+# fixups and IR nodes it recorded, the jump sources (CYRIUS_IR / CYRIUS_DCE), the peephole trackers, the constant
+# folder's arming and the push depth go back to what they were, so the binary is the one the literal's absence
+# would give. A walk that made an IR basic block, a global or a string keeps its code (0).
+fn _gvs_mark(S): i64 {
+    if (_gvs_m == 0) { _gvs_m = alloc(160); }
+    var m = _gvs_m;
+    store64(m, GCP(S));
+    store64(m + 8, GFCNT(S));
+    store64(m + 16, IR_NCNT(S));
+    store64(m + 24, IR_BCNT(S));
+    store64(m + 32, IR_CURBB(S));
+    store64(m + 40, _gvs_bbn(S));
+    store64(m + 48, _last_push_cp);
+    store64(m + 56, _last_emovca_cp);
+    store64(m + 64, _last_movca_popr_cp);
+    store64(m + 72, _flags_cp);
+    store64(m + 80, _flags_reflect_rax);
+    store64(m + 88, _xdepth);
+    store64(m + 96, _cfo);
+    store64(m + 104, _cfp);
+    store64(m + 112, _cfv);
+    store64(m + 120, _wpjs_n);
+    store64(m + 128, _wpsw_n);
+    store64(m + 136, GVCNT(S));
+    store64(m + 144, L64(S + 0x18FCC8));
+    return 0;
+}
+fn _gvs_undo(S): i64 {
+    var m = _gvs_m;
+    if (IR_BCNT(S) != load64(m + 24)) { return 0; }
+    if (IR_CURBB(S) != load64(m + 32)) { return 0; }
+    if (GVCNT(S) != load64(m + 136)) { return 0; }
+    if (L64(S + 0x18FCC8) != load64(m + 144)) { return 0; }
+    SCP(S, load64(m));
+    SFCNT(S, load64(m + 8));
+    IR_SNCNT(S, load64(m + 16));
+    _gvs_bbn_set(S, load64(m + 40));
+    _last_push_cp = load64(m + 48);
+    _last_emovca_cp = load64(m + 56);
+    _last_movca_popr_cp = load64(m + 64);
+    _flags_cp = load64(m + 72);
+    _flags_reflect_rax = load64(m + 80);
+    _xdepth = load64(m + 88);
+    _cfo = load64(m + 96);
+    _cfp = load64(m + 104);
+    _cfv = load64(m + 112);
+    _wpjs_n = load64(m + 120);
+    _wpsw_n = load64(m + 128);
+    return 1;
+}
+# The current IR basic block's node count (ir_emit counts each node there), when IR is recording.
+fn _gvs_bbn(S): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    var bi = IR_CURBB(S);
+    if (bi < 0 || bi >= _ir_bcap) { return 0; }
+    return load64(_ir_bb_base + bi * 32 + 16);
+}
+fn _gvs_bbn_set(S, v): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    var bi = IR_CURBB(S);
+    if (bi < 0 || bi >= _ir_bcap) { return 0; }
+    store64(_ir_bb_base + bi * 32 + 16, v);
     return 0;
 }
 
@@ -6380,8 +6524,9 @@ fn _gvi_cap_tok(S): i64 {
 }
 # 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
 # global inline, `_tup_gci`): its constant elements baked into the image (`_spc_try`, the struct
-# literal's walker, closing at `)`), then every element stored, as a struct literal is. 1 = done
-# (`;` consumed), 0 = not a whole literal (the replay goes on).
+# literal's walker, closing at `)`), then every element stored, as a struct literal is (6.7.15: not
+# when it is baked and the image's bytes are its own, _gvs_quiet). 1 = done (`;` consumed), 0 = not a
+# whole literal (the replay goes on).
 fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     if (_gvi_dyn(S, gi, idx, gps, sti) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in place
     if (_gvi_cap_tok(S) == 1) {   # 6.7.7 (T5): a capture
@@ -6411,7 +6556,10 @@ fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     _spc_try(S, gi, idx, sid);
     _spc_cl = 14;
     STI(S, lp);
+    var dq = _gvs_quiet(S, gi, idx);   # 6.7.15: baked, not stored again
+    if (dq == 1) { _gvs_mark(S); }
     _tup_elems(S, sid, idx, 0 - 1, infer);
+    if (dq == 1) { _gvs_undo(S); }
     _pw_close(S, lp - st);
     _gv_slvar(S, idx);
     _gvk_left(S, gi, sti, idx);
@@ -6698,7 +6846,10 @@ fn EMIT_GVAR_INITS(S): i64 {
                 # (R5, v6.4.15) — this global-init REPLAY was the parallel copy
                 # that had to take the fix separately.
                 _spc_try(S, gi, idx, sid);   # 6.6.16 (C6): an all-constant literal is baked
+                var dq = _gvs_quiet(S, gi, idx);   # 6.7.15: and then not stored again
+                if (dq == 1) { _gvs_mark(S); }
                 _gvi_struct_body(S, idx, sid);   # 6.7.14: named or positional
+                if (dq == 1) { _gvs_undo(S); }
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
                 _slit_unwrap(S);   # 6.7.14: a wrap's `)`s

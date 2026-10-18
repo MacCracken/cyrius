@@ -14,7 +14,8 @@
 # _gvk_pre / _spc_try); the store stayed, so the code did not change. 6.7.14 drops a baked SCALAR's
 # store where the image already holds its value (_gvk_quiet; issues/2026-10-08-const-init-redundant-
 # store-and-unfolded-const-operand.md): its `movabs rax, imm64` is gone from the code, the baked copy
-# stays in the data — the D rows count that copy apart from the code form.
+# stays in the data — the D rows count that copy apart from the code form. 6.7.15 drops a baked
+# STRUCT literal's stores the same way (_gvs_quiet) — the S rows.
 #
 # HOW IT IS MEASURED.
 #   R  RUN rows. A CYRIUS_ELF64_KERNEL=1 build (agnos's own build mode) is an ELF64 that also runs
@@ -65,6 +66,11 @@
 #       image bytes and late store, W2's count and W4 named
 #   F1. _gvk_flt's f32 narrowing dropped           -> RED, 1 check: RS check 2 (an f32 read as binary64 bits)
 #   F2. _gvk_flt's untyped arm dropped             -> RED, 2 checks: RS check 4 and its warning count (4)
+# MUTATION LEDGER (6.7.15 — a baked struct literal's stores dropped; issues/2026-10-16-zone-struct-literal-baked-and-
+# stored.md; each compiler built from a mutated scratch copy of src/, run with CYCC=):
+#   0. real tree                                   -> GREEN (18 rows)
+#   Z0. the compiler before the fix (50b9a8817)    -> RED, 11 checks: K's four struct deltas, the S row's four code
+#       forms, KF's binary64 1.5, E's two KS deltas
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -285,10 +291,13 @@ ASM='asm { 0xF4; 0xF4; 0xF4; 0xF4; }\n'
 # 6.7.14: a baked scalar's replayed store is dropped — KX1's and KX3's (`KA + 0x100` loads KA) take
 # KA's code form twice (-1 over the baked copy), KX2's (KB) and KR1's (KI) once (+0); the D rows below
 # count the data copies.
+# 6.7.15: a baked struct literal's stores are dropped too (issues/2026-10-16-zone-struct-literal-baked-and-stored.md) —
+# KS's (KD, KF) and KN's (KG, KH) leaves keep their data copy and lose their code form: +0 (through 6.7.14 +1, the
+# stores' `movabs rax, imm64` beside the bake); the S rows below count the two forms apart.
 row K '' "kernel;\n$PRE$DECL$ASM" "kernel;\n$PRE$ASM$DECL" \
     -1 ' 0d f0 ad 0b de c0 17 5a ' 0 ' 90 89 7a 6b 5c 4d 3e 2f ' 1 ' 0d f1 ad 0b de c0 17 5a ' 1 ' d4 9b 57 13 ' \
-    1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 ' 1 ' 28 27 26 25 24 23 22 21 ' \
-    1 ' 38 37 36 35 34 33 32 31 ' 0 ' 48 47 46 45 44 43 42 41 ' \
+    0 ' 08 07 06 05 04 03 02 01 ' 0 ' 18 17 16 15 14 13 12 11 ' 0 ' 28 27 26 25 24 23 22 21 ' \
+    0 ' 38 37 36 35 34 33 32 31 ' 0 ' 48 47 46 45 44 43 42 41 ' \
     0 ' 58 57 56 55 54 53 52 51 ' 0 ' 68 67 66 65 64 63 62 61 '
 # D (6.7.14) — the baked scalars' DATA copy: one more than the control's (which computes them in its
 # code), and no store of them left in the test's code.
@@ -302,6 +311,17 @@ if [ -s "$T/K.bin" ] && [ -s "$T/K.ctl" ]; then
     for p in ' 90 89 7a 6b 5c 4d 3e 2f ' ' 48 47 46 45 44 43 42 41 '; do
         ct=$(count "$T/K.bin" " 48 b8$p"); cc=$(count "$T/K.ctl" " 48 b8$p")
         [ "$ct" = $((cc - 1)) ] || bad "D: '$p' is loaded $ct times in the image's code, $cc in the control's; want -1 (no replayed store)"
+    done
+fi
+# S (6.7.15) — the baked struct literals KS / KN: each leaf's DATA copy is one more than the control's, and its code
+# form (the replayed store's `movabs rax, imm64`) one less: no store of the literal is left in the test's code.
+rows=$((rows + 1))
+if [ -s "$T/K.bin" ] && [ -s "$T/K.ctl" ]; then
+    for p in ' 08 07 06 05 04 03 02 01 ' ' 18 17 16 15 14 13 12 11 ' ' 28 27 26 25 24 23 22 21 ' ' 38 37 36 35 34 33 32 31 '; do
+        dt=$(dcount "$T/K.bin" "$p"); dc=$(dcount "$T/K.ctl" "$p")
+        [ "$dt" = $((dc + 1)) ] || bad "S: '$p' has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
+        ct=$(count "$T/K.bin" " 48 b8$p"); cc=$(count "$T/K.ctl" " 48 b8$p")
+        [ "$ct" = $((cc - 1)) ] || bad "S: '$p' is loaded $ct times in the image's code, $cc in the control's; want -1 (no replayed store)"
     done
 fi
 [ "$(od -An -tx1 -N5 "$T/K.bin" 2>/dev/null | tr -d ' ')" = 7f454c4601 ] || bad "K: the default kernel build is not the ELF32 multiboot image this row means"
@@ -329,11 +349,13 @@ row KL '' \
     1 ' 77 66 d0 00 00 00 00 00 ' 1 ' d0 9b 57 13 77 00 17 5a '
 # KF (6.7.10, B7-0): the ELF32 image holds an f32 field's binary32 bits (1.5 = 3fc00000, -2.25 =
 # c0100000), once more than the control; the literals' binary64 bits (the replayed store's
-# immediates) occur equally often — they are not baked.
+# immediates) are not baked. 6.7.15: the test's stores are dropped, so 1.5's binary64 bits (the
+# control's `movabs rax`) occur once less (-1; through 6.7.14 equally often); -2.25's never occur
+# (the control loads 2.25 and negates it).
 row KF '' \
     "kernel;\n$PRE""struct KG { g: f32; n; }\nvar KF1 = KG { 1.5, KE.KL };\nvar KF2 = KG { -2.25, KE.KJ };\n$ASM" \
     "kernel;\n$PRE""struct KG { g: f32; n; }\n$ASM""var KF1 = KG { 1.5, KE.KL };\nvar KF2 = KG { -2.25, KE.KJ };\n" \
-    1 ' 00 00 c0 3f ' 1 ' 00 00 10 c0 ' 0 ' 00 00 00 00 00 00 f8 3f ' 0 ' 00 00 00 00 00 00 02 c0 '
+    1 ' 00 00 c0 3f ' 1 ' 00 00 10 c0 ' -1 ' 00 00 00 00 00 00 f8 3f ' 0 ' 00 00 00 00 00 00 02 c0 '
 # KU (6.7.10, B7-2): a packed { f32; u8; u16 } bakes as its 7 contiguous bytes — 1.5's binary32 bits,
 # the u8, the u16 — once more than the control (through 6.7.9 each field took an 8-byte slot).
 row KU '' \
@@ -344,12 +366,14 @@ row KU '' \
 row E 'CYRIUS_TARGET_EFI=1' \
     "kernel;\n$PRE""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\n$ASM""fn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
     "kernel;\n$PRE$ASM""var KX1 = KA;\nvar KS = KP { KE.KD, KF };\nfn efi_main(handle, st): i64 { return KX1 + KS.b; }\n" \
-    0 ' 0d f0 ad 0b de c0 17 5a ' 1 ' 08 07 06 05 04 03 02 01 ' 1 ' 18 17 16 15 14 13 12 11 '
+    0 ' 0d f0 ad 0b de c0 17 5a ' 0 ' 08 07 06 05 04 03 02 01 ' 0 ' 18 17 16 15 14 13 12 11 '
 if [ -s "$T/E.bin" ]; then
     [ "$(od -An -tx1 -N2 "$T/E.bin" | tr -d ' ')" = 4d5a ] || bad "E: the CYRIUS_TARGET_EFI=1 build is not an MZ/PE image"
-    # 6.7.14: KX1's store dropped (+0 above) — its baked copy is in the data.
-    dt=$(dcount "$T/E.bin" ' 0d f0 ad 0b de c0 17 5a '); dc=$(dcount "$T/E.ctl" ' 0d f0 ad 0b de c0 17 5a ')
-    [ "$dt" = $((dc + 1)) ] || bad "E: KX1 has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
+    # 6.7.14: KX1's store dropped (+0 above) — its baked copy is in the data. 6.7.15: KS's stores too.
+    for p in ' 0d f0 ad 0b de c0 17 5a ' ' 08 07 06 05 04 03 02 01 ' ' 18 17 16 15 14 13 12 11 '; do
+        dt=$(dcount "$T/E.bin" "$p"); dc=$(dcount "$T/E.ctl" "$p")
+        [ "$dt" = $((dc + 1)) ] || bad "E: '$p' has $dt data copies in the image, $dc in the control's; want +1 (the bake)"
+    done
 fi
 
 # ---------------------------------------------------------------------------------------------

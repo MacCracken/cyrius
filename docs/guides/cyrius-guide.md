@@ -7246,6 +7246,18 @@ the `setg` rows ended at `C` — while an earlier nonzero literal did not. A `bo
 startup store (its value is judged there), and so does an initializer naming another file's
 `private` const (refused there).
 
+**So does a struct or tuple literal of constants (6.7.15).** `var p = P { 1, 2 };`, its named form
+`P { b: 2, a: 1 }` and a tuple literal `var t = (1, 2);` — every element a constant, as above — were
+baked into the image and stored again at startup, element by element (on x86_64 `mov eax, 1; push rax;
+movabs rcx, p; pop rax; mov [rcx], rax` per field). The stores are gone, by the same rule: the global
+holds the literal from program start, so a call in an earlier initializer that writes it keeps its
+write (`var r = setp(); var p = P { 1, 2 };`, `setp` storing 9 into `p.a`, ends with `p.a == 9`;
+through 6.7.14 the startup store reset it to 1). A *redeclared* literal keeps its place in declaration
+order — `var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 1`, and a write from a
+call between the two is overwritten by the later literal — unless it repeats the earlier literal's
+bytes, which the global then already holds (a call's write between the two is kept). Every
+diagnostic the literal's elements get is still given (an integer into a float field, a `bool` field).
+
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
 optionally negated — `var G: f64 = 1.5;`, `var F: f32 = 2.5;`, an untyped `var K = -1.5;` — is
 baked the same way: the image holds the literal's binary64 bits (an `f32` global: its binary32
