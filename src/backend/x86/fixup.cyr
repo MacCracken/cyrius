@@ -628,9 +628,7 @@ fn FIXUP(S): i64 {
     # we walk the whole code buffer looking for `E8 rel32` bytes and
     # decoding their targets.
     #
-    # Build a reverse map: fn_start_offset → fn_idx. fn starts are rare
-    # (~315 of them across ~300KB of code), so linear lookup per match is
-    # acceptable. For larger binaries a sorted array + bsearch would help.
+    # The reverse map fn_start_offset → fn_idx is the hash below (v5.10.41).
     #
     # Source of call (host fn): identified by scanning the emitted bytes
     # looking for E8 at known-instruction positions. We approximate
@@ -642,10 +640,10 @@ fn FIXUP(S): i64 {
     # live fn).
     #
     # Pass A: seed the live set.
-    #   For each E8 candidate, find host fn (fn whose [start, end) contains
-    #   the E8 offset). If host is "none" (call sits in entry/top-level
-    #   code), the target is a ROOT. Also: type-3 fixups add conservative
-    #   roots for address-taken fns.
+    #   For each E8 candidate, ask whether any fn's [start, end) holds the
+    #   E8 offset (6.7.15: the merged ranges of _dce_cover_build, runtime.cyr).
+    #   If none does (the call sits in entry/top-level code), the target is a
+    #   ROOT. Also: type-3 fixups add conservative roots for address-taken fns.
     # Pass B (propagate): worklist until fixpoint.
     #   For each E8 call with a live host, mark the target live.
     var b_base = _codebuf_base;
@@ -709,6 +707,7 @@ fn FIXUP(S): i64 {
     # arbitrary offsets and won't match.
     # 6.7.14: a call marks a fn live only from an instruction start (_dce_cand_build, above FIXUP).
     _dce_cand_build(S, _dce_code_end, cp, fnc);
+    _dce_cover_build(S, fnc);   # 6.7.15: "inside any fn" by binary search (runtime.cyr)
     if (dce_dbg == 1) {
         syscall(SYS_WRITE, 2, "[dce] x86 seed begin fnc=", 25);
         PRNUM(fnc);
@@ -727,14 +726,14 @@ fn FIXUP(S): i64 {
                 if (tgt >= 0 && tgt < acp) {
                     # v5.10.41: hash lookup fn_start → fi via 0x114000.
                     # Replaces an O(fnc) linear scan that ran per E8/E9 match.
-                    # v6.1.5: probe + host-scan hoisted to common/runtime.cyr
-                    # (_dce_hash_lookup / _dce_host_fn) — byte-identical.
+                    # v6.1.5: probe hoisted to common/runtime.cyr (_dce_hash_lookup).
                     var fnhit = _dce_hash_lookup(S, tgt);
                     if (fnhit >= 0) {
-                        # Host = fn containing scn. If none, entry = ROOT — unless scn lies in a
-                        # redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser).
-                        var host = _dce_host_fn(S, scn, fnc);
-                        if (host < 0) { host = 0 - 1 - _dce_in_loser(scn); }
+                        # Inside some fn: no root. Outside every fn, entry = ROOT — unless scn lies
+                        # in a redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser). Which
+                        # fn holds it does not matter: `_dce_in_any_fn` (6.7.15, runtime.cyr).
+                        var host = 0;
+                        if (_dce_in_any_fn(S, scn, fnc) == 0) { host = 0 - 1 - _dce_in_loser(scn); }
                         # 6.7.14: only from an instruction start (_dce_mark, above FIXUP).
                         if (host == 0 - 1) { _dce_mark(&live, fnhit, scn); }
                     }

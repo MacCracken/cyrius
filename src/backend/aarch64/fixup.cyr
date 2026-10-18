@@ -382,6 +382,7 @@ fn FIXUP(S): i64 {
     # (intra-fn B jumps that happen to target a fn_start are kept
     # alive — safe for DCE).
     var b_base = _codebuf_base;
+    _dce_cover_build(S, fnc);   # 6.7.15: "inside any fn" by binary search (runtime.cyr)
     if (dce_dbg == 1) {
         syscall(SYS_WRITE, 2, "[dce] aarch64 seed begin fnc=", 29);
         PRNUM(fnc);
@@ -402,15 +403,15 @@ fn FIXUP(S): i64 {
             if (imm26 >= 0x2000000) { imm26 = imm26 - 0x4000000; }
             var tgt = scn + imm26 * 4;
             if (tgt >= 0 && tgt < acp) {
-                # v6.1.5: probe + host-scan hoisted to common/runtime.cyr
-                # (_dce_hash_lookup / _dce_host_fn) — byte-identical, shared
+                # v6.1.5: probe hoisted to common/runtime.cyr (_dce_hash_lookup), shared
                 # with the x86 backend (arch delta is only the BL/B scan above).
                 var fnhit = _dce_hash_lookup(S, tgt);
                 if (fnhit >= 0) {
-                    # Host = fn containing scn. If none → entry = ROOT — unless scn lies in a
-                    # redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser).
-                    var host = _dce_host_fn(S, scn, fnc);
-                    if (host < 0) { host = 0 - 1 - _dce_in_loser(scn); }
+                    # Inside some fn: no root. Outside every fn → entry = ROOT — unless scn lies
+                    # in a redefined fn's losing body (6.7.14, runtime.cyr _dce_in_loser). Which
+                    # fn holds it does not matter: `_dce_in_any_fn` (6.7.15, runtime.cyr).
+                    var host = 0;
+                    if (_dce_in_any_fn(S, scn, fnc) == 0) { host = 0 - 1 - _dce_in_loser(scn); }
                     if (host == 0 - 1) {
                         store8(&live + (fnhit >> 3), load8(&live + (fnhit >> 3)) | (1 << (fnhit & 7)));
                     }

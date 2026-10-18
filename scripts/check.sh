@@ -1527,6 +1527,13 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 # prose had let them sit.
 _chk_gate "$ROOT/tests/gates/codegen/dead_code_floor.sh"
 
+# 6.7.15: the dead-code seed pass asked which fn holds each call site with a scan of the whole fn
+# table, so every x86 / aarch64 build paid O(call sites x fns) in FIXUP (16,000 fns: 9.9 s, x88 for
+# 8x the fns; cycc's self-compile 1.3 s). The merged-range index answers the same question by
+# binary search. Serial ratio rows (8x the fns under 10x) on x86 and aarch64, and an exactness row:
+# a call after a generic instance nested in a dead fn is still inside it.
+_chk_gate "$ROOT/tests/gates/codegen/dce_seed_pass_linear.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
