@@ -1395,7 +1395,10 @@ does not return a struct is refused too, and so is an assignment to a result's f
 `expected ';', got '='` until 6.7.5): the result is a temporary. A field of a call to a fn defined nowhere
 (`undefd().n += 1;`, `var x = undefd().n;`, the `for` step `undefd().n += 1`) is *undefined function 'undefd'*,
 once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15; it was `expected ';', got '.'`, the
-step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). A call declared `: *Struct` returns
+step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). Under `cyrius lint`'s
+`--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
+still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
+struct by value earns). A call declared `: *Struct` returns
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`

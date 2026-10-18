@@ -21,7 +21,9 @@
 # repro, runs; F1-F4 refused once; F5 F6 no assignment, "expected '='"); K1-K3 controls that compile and run on every leg;
 # U1-U15 (6.7.15) a `.field` of an UNDEFINED fn's result named "undefined function 'undefd'" once (U1 / U2 the filed
 # repros, their positions; U11 a later statement's error still reported; U12 --allow-undef still refuses it; U13-U15
-# controls: a plain `undefd();` and an intrinsic keep their own paths).
+# controls: a plain `undefd();` and an intrinsic keep their own paths); S1-S9 (6.7.15) --syntax-only, a field assignment
+# on a call whose callee this file does not define parses silently (S1 the filed repro; S5-S7 a grammar error in its
+# tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary").
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -73,6 +75,12 @@
 #   u2 `_call_undef` without its `_tsc_n` move    -> RED 32: the statement / step rows (U1 U2 U4 U6 U8-U11 x4: "the
 #                                                     result is a temporary" or "expected ';'" after the named error)
 #   u3 `_call_undef` without its intrinsic guard  -> RED 4: U14 x4 ("undefined function 'mulh64'")
+# (6.7.15, unit S6; issues/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md; the same procedure)
+#   s1 neither `_cf_unres` arm (= the tree before) -> RED 21: S1-S7 x3 (the false "the result is a temporary"; S5-S7
+#                                                     its error in place of the tail's own)
+#   s2 `_fn_nodef` answering 1 only for an unregistered callee -> RED 6: S1 S3 x3 (the callee registered by the line's
+#                                                     earlier call)
+#   s3 `_step_cf_tail` without its arm             -> RED 9: S1 S2 S6 x3
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -449,8 +457,63 @@ done
 row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'
 refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an intrinsic, is no undefined fn"
 
-FLOOR_ROWS=50   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15
+# --- S (6.7.15, issues/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md): --syntax-only (lint's
+# pre-pass), a field assignment on a call whose callee this file does not define — a sibling module's — parses its
+# tail silently: it was "cannot assign to a field of a call result: the result is a temporary", true only of a callee
+# KNOWN to return a struct by value. S1 is the filed repro verbatim (the statement registers gp, so the step's callee
+# is a call-registered fn with no definition). On the x86_64, aarch64 and PE compilers; the cx compiler refuses every
+# call to an undefined fn even under --syntax-only (its backend's own refusal, staged), so it has no S leg.
+# synonly <name> <want-rc> <fragment|-> <what>: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
+# "warning: undefined function 'gp'"; else ONE `^error` line holding <fragment>.
+synonly() {
+    rows=$((rows + 1))
+    for leg in x86_64 aarch64 pe; do
+        [ "$leg" = aarch64 ] && [ "$QEMU" -eq 0 ] && continue
+        crc=0
+        case $leg in
+            x86_64)  timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            aarch64) timeout 60 "$A64" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+        esac
+        n=$(grep -c '^error' "$T/$1.$leg.err" || true)
+        if [ "$crc" -ne "$2" ]; then bad "$1 $4 ($leg): rc $crc (want $2): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
+        elif [ "$3" = - ]; then
+            if [ "$n" -ne 0 ]; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
+            elif ! grep -q "^warning: undefined function 'gp'" "$T/$1.$leg.err"; then bad "$1 $4 ($leg): no undefined-function warning"
+            else ok "$1 $4 ($leg): accepted"; fi
+        elif [ "$n" -ne 1 ]; then bad "$1 $4 ($leg): $n error lines (want 1)"
+        elif ! grep '^error' "$T/$1.$leg.err" | grep -qF "$3"; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        else ok "$1 $4 ($leg): one error"; fi
+    done
+}
+cat > "$T/S1.cyr" <<'EOF2'
+struct H { n; m; }
+fn go(): i64 { gp().n = 5; var i = 0; for (i = 0; i < 3; gp().n += 1) { i = i + 1; } return 0; }
+EOF2
+synonly S1 0 - "the filed repro: \`gp().n = 5;\` and the for step \`gp().n += 1\`, gp a sibling's"
+SH='struct H { n; m; p: *i64; }
+fn mk(): H { var h: H; h.n = 1; return h; }'
+srow() { printf '%s\n%s\n' "$SH" "$2" > "$T/$1.cyr"; }
+srow S2 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n = i) { i = i + 1; } return 0; }'
+synonly S2 0 - "the step alone (gp unregistered)"
+srow S3 'fn go(): i64 { gp().p[0] = 5; gp().m(); gp().n += gp().m; gp().n <<= 1; return 0; }'
+synonly S3 0 - "a subscript, a method, \`+=\` reading the sibling's call, \`<<=\`"
+srow S4 'fn g<T>(v: T): i64 { gp().n = v; return 0; }
+fn go(): i64 { g<i64>(1); g<i32>(2); return 0; }'
+synonly S4 0 - "in a generic body, two instances"
+srow S5 'fn go(): i64 { gp().n = 5 +; return 0; }'
+synonly S5 1 "3:28: unexpected ';'" "a grammar error in the value is still reported (it was the temporary)"
+srow S6 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n += ) { i = i + 1; } return 0; }'
+synonly S6 1 "unexpected ')'" "a step with no value is still reported"
+srow S7 'fn go(): i64 { gp().n = 5 return 0; }'
+synonly S7 1 "expected ';', got return" "a missing \`;\` is still reported"
+srow S8 'fn go(): i64 { mk().n = 5; return 0; }'
+synonly S8 1 "$MT" "control: a by-value callee this file defines keeps the refusal"
+srow S9 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return 0; }'
+synonly S9 1 "$MT" "control: ... as a for step too"
+
+FLOOR_ROWS=59   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
