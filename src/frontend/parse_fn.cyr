@@ -10469,14 +10469,29 @@ fn _ce_fcmpb(S, t, a, b): i64 {
 # ⛔ 6.7.14 — `.field` after a name the evaluator holds as a value (`_ce_ti` on the name): a const fn's local
 # (`isc` 0) is refused by the pure subset's rule, a const (`isc` 1: a top-level or local const, or a `const` in a
 # const fn body) by its own — at the `.`. Both said "expected ';', got '.'" (an array size "expected ']'", a const's
-# value "expected ';' after a const's value"). A method call `.m(` is not a field (not this refusal). 1 = refused.
-# CHANGELOG [6.7.14]
+# value "expected ';' after a const's value"). 1 = refused. CHANGELOG [6.7.14]
+# 6.7.15 — and a method call `.m(`, which said "expected ';', got '.'" too: on a const fn's local "a method
+# call is not in a const fn" (it calls only const fns), on a const "const 'C' has no methods". CHANGELOG [6.7.15]
 fn _ce_fld_refused(S, noff, isc): i64 {
     if (_mchain_at(S, _ce_ti + 1) == 0) { return 0; }
-    if (TOKTYP(S, _ce_ti + 3) == 10) { return 0; }
     _ce_ti = _ce_ti + 1;
+    if (TOKTYP(S, _ce_ti + 2) == 10) { return _ce_meth_refused(S, noff, isc); }
     if (isc == 1) { _ce_badn(S, "const ", noff, " has no fields - a const has no storage"); return 1; }
     _ce_bad(S, "a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 83);
+    return 1;
+}
+fn _ce_meth_refused(S, noff, isc): i64 {
+    if (isc == 1) { _ce_badn(S, "const ", noff, " has no methods - a const has no storage"); return 1; }
+    _ce_bad(S, "a method call is not in a const fn: it calls only const fns", 59);
+    return 1;
+}
+# 6.7.15 — `a[i]` on a const fn's local (a frame entry, `_ce_ti` on its name): "a subscript is not in a const
+# fn", at the `[` — it said "expected ';', got '['", and the run-time body added "cannot subscript 'a'"
+# (cm2). 1 = refused. CHANGELOG [6.7.15]
+fn _ce_sub_refused(S): i64 {
+    if (TOKTYP(S, _ce_ti + 1) != 28) { return 0; }
+    _ce_ti = _ce_ti + 1;
+    _ce_bad(S, "a subscript is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 87);
     return 1;
 }
 # An identifier: a frame local, a local const, a top-level const, an enum constant, sizeof, or a
@@ -10490,6 +10505,7 @@ fn _ce_name(S): i64 {
             var fi = _ce_fr_find(S, noff);
             if (fi >= 0) {
                 if (_ce_fld_refused(S, noff, load64(_ce_st + fi * 40 + 32)) == 1) { return 0; }   # 6.7.14
+                if (_ce_sub_refused(S) == 1) { return 0; }   # 6.7.15
                 _ce_ti = _ce_ti + 1;
                 var fe = _ce_st + fi * 40;
                 _ce_k = load64(fe + 16);
@@ -11762,6 +11778,10 @@ fn _cst_named(S, noff): i64 {
 # end — so the latch is that statement's alone (`_pair_sync_ti`, `_stmt_resync`): the statement after
 # `var v = C.x;` was skipped, and a `const L` declared there read as "undefined variable 'L'". 1 = refused
 # (or stood down in a refused const fn's body). CHANGELOG [6.7.14]
+# 6.7.15 — `st` 2: a method call `C.m(..)` / `L.m(..)` (the cursor on its `(`), "const 'C' has no methods":
+# a top-level const said "no struct type in scope for 'C'; a method call needs its struct declaration
+# (missing include?)", a local const "undefined variable 'L'". Not in sync (the arguments are not parsed):
+# the statement resyncs, as the method arm's own refusal does. CHANGELOG [6.7.15]
 fn _cst_fld_at(S, noff, st, dti): i64 {
     if (_syntax_only == 1) { return 0; }
     if (_cst_named(S, noff) == 0) { return 0; }
@@ -11770,6 +11790,7 @@ fn _cst_fld_at(S, noff, st, dti): i64 {
     var sv = GTI(S);
     STI(S, dti);
     if (st == 1) { ERR_IDENT(S, "cannot assign to a field of const ", noff, " - a const has no storage", 0 - 1); }
+    elif (st == 2) { ERR_IDENT(S, "const ", noff, " has no methods - a const has no storage", 0 - 1); }
     else { ERR_IDENT(S, "const ", noff, " has no fields - a const has no storage", 0 - 1); }
     STI(S, sv);
     return 1;

@@ -1729,7 +1729,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # diagnostic, keeping the stream in sync. See _syntax_only.
             if (_syntax_only == 1) { sid = 0; }
             else {
-                if (PEEKT(S) != 10) { if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; } }   # 6.7.14: a local const
+                if (_cst_fld_at(S, noff, _cst_fld_st(S), pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a local const
                 # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
@@ -1757,6 +1757,23 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
 # The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
 # what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
 var _mcall_last = 0 - 1;
+# 6.7.15 — the `.name` read past a base that resolved to nothing (PARSE_FIELD_LOAD's undefined arm, the cursor
+# after the name): 2 when `(` follows — a method call, which `_cst_fld_at` names "has no methods" on a const —
+# else 0, a field read. CHANGELOG [6.7.15]
+fn _cst_fld_st(S): i64 {
+    if (PEEKT(S) == 10) { return 2; }
+    return 0;
+}
+# 6.7.15 — the method arm's `sid == 0` refusal ("no struct type in scope for 'a'"), out of `_field_load_on`
+# (a cybs-ceiling fn): a const receiver is "const 'C' has no methods" (`_cst_fld_at`), and in the run-time body
+# of a const fn whose definition check refused (`_ce_fld_said`) it stands down — a method call is never in a
+# const fn, and the check named it ("a method call is not in a const fn") or stopped earlier. 1 = said.
+# CHANGELOG [6.7.15]
+fn _meth_sid0_said(S, noff, pfl_beg): i64 {
+    if (_cst_fld_at(S, noff, 2, pfl_beg + 1) == 1) { return 1; }
+    if (_ce_fld_said(S) == 1) { return 1; }
+    return 0;
+}
 fn _mchain_at(S, k): i64 {
     if (TOKTYP(S, k) != 41) { return 0; }
     if (TOKTYP(S, k + 1) != 2) { return 0; }
@@ -2180,6 +2197,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
                 STI(S, GTI(S) + 1);            # consume )
                 return 0;
             }
+            if (_meth_sid0_said(S, noff, pfl_beg) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
             ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
             return 0;
         }

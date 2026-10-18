@@ -63,6 +63,14 @@
 #      'L'"), and `C.x` in a const context (a const's value, a const fn body, an array size, a local
 #      const's value). The two filed repros verbatim (F3, F8). Controls: a local const named like a global
 #      struct leaves `L.x` the global's field (F14), a struct local beside a const (F15)
+#   K  (6.7.15) a method call or a subscript in a const fn, and a method call on a const, name their rule once:
+#      `a.m(..)` / `a[i]` on a const fn's local, parameter or body const ("a method call is not in a const fn: it
+#      calls only const fns" / "a subscript is not in a const fn: ...", at the `.` / `[`; each said "expected ';'"
+#      and the run-time compile of the refused body added "no struct type in scope for 'a'" / "cannot subscript
+#      'a'"), `C.m(..)` on a top-level or local const, in code, in the declaration zone and in a const context
+#      ("const 'C' has no methods - a const has no storage"; it blamed a missing include, said "undefined
+#      variable 'L'", or "expected ';'"). The four filed repros verbatim (CM1, CM2, SC2, SC3); the statement after
+#      a refused `L.m(..)` still parses (SC4, SC6); controls KM1 / KM2
 #   A  (6.7.13) a refused annotation `const k: i64 = 3;` is ONE error: the const is still bound (its
 #      value after the `=`), so no read of it adds "undefined variable 'k'" — a local const (LC1, the
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
@@ -109,6 +117,10 @@
 # answering 0 -> F1-F3, F9-F13 RED; `_cst_fld_at` answering 0 -> F4-F8 RED; `_ce_fld_said` never standing down
 # -> F2, F3 RED (the run-time body's "no struct type in scope for 'a'"); the read refused without
 # `_pair_sync_ti` -> F8 RED (the statement after `var v = C.x;` skipped: "undefined variable 'L'").
+# K (run 2026-10-18): the compiler before the bite (e5a003c6f) -> CM1-CM8, SC2-SC6 RED (KM1 / KM2 green);
+# `_ce_fld_refused` leaving `.m(` to `_ce_expect` -> CM1, CM3, CM4, CM6-CM8 RED; `_ce_sub_refused` answering 0
+# -> CM2, CM5 RED; `_meth_sid0_said` without its `_ce_fld_said` -> CM1 RED; without its `_cst_fld_at` -> SC2,
+# SC5 RED; `_cst_fld_st` answering 0 -> SC3, SC4, SC6 RED; `_sub_refuse` without its stand-down -> CM2-CM5 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -387,6 +399,62 @@ refusedn f12 1 "F12: a const fn's parameter, p.x" "const fn f(p) {\n    return p
 refusedn f13 1 "F13: a local const in a local const's value, const M = L.x;" "fn main() {\n    const L = 5;\n    const M = L.x;\n    return M;\n}\nvar r = main();\n" "3:16: const 'L' has no fields - $FS"
 exits f14 12 "F14: control — a local const L beside a global struct L: L.x stores and reads the global's field, as before" 'struct P { x; y; }\nvar L = P { 0, 0 };\nfn main() {\n    const L = 5;\n    L.x = 7;\n    return L.x + L;\n}\nsyscall(60, main());\n'
 exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
+# K (6.7.15) — a method call or a subscript in a const fn, and a method call on a const, name their rule once
+# (issues/2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md; the four filed repros verbatim)
+KM="a method call is not in a const fn: it calls only const fns"
+KS="a subscript is not in a const fn: its body takes no memory (fields, arrays, load64, &x)"
+cat > "$T/cm1.cyr" <<'EOF'
+# cm1 — a method call on a const fn's local
+struct P { x; }
+impl P { fn m(self) { return 1; } }
+const fn f(n) {
+    var a = n;
+    return a.m();
+}
+fn main() { return 0; }
+var r = main();
+EOF
+refusedf cm1 1 "CM1: the filed repro, a.m() on a const fn's local (was \"expected ';', got '.'\" + \"no struct type in scope for 'a'\")" "6:13: $KM"
+cat > "$T/cm2.cyr" <<'EOF'
+# cm2 — a subscript of a const fn's local
+const fn f(n) {
+    var a = n;
+    return a[0];
+}
+fn main() { return 0; }
+var r = main();
+EOF
+refusedf cm2 1 "CM2: the filed repro, a[0] on a const fn's local (was \"expected ';', got '['\" + \"cannot subscript 'a'\")" "4:13: $KS"
+cat > "$T/sc2.cyr" <<'EOF'
+# sc2 — a method call on a top-level const
+const NAME = "abc";
+fn main() {
+    return NAME.m();
+}
+syscall(60, main());
+EOF
+refusedf sc2 1 "SC2: the filed repro, NAME.m() on a top-level const (was \"no struct type in scope for 'NAME'\")" "4:16: const 'NAME' has no methods - $FS"
+cat > "$T/sc3.cyr" <<'EOF'
+# sc3 — a method call on a local const
+struct P { x; }
+fn main() {
+    const L = 5;
+    return L.m();
+}
+syscall(60, main());
+EOF
+refusedf sc3 1 "SC3: the filed repro, L.m() on a local const (was \"undefined variable 'L'\")" "5:13: const 'L' has no methods - $FS"
+refusedn cm3 1 "CM3: a method call and a subscript on a parameter" "const fn f(p) {\n    var b = p.m(1);\n    var c = p[2];\n    return b + c;\n}\n$FM" "2:14: $KM"
+refusedn cm4 1 "CM4: a statement a.m(); and a store a[0] = 1;" "const fn f(n) {\n    var a = n;\n    a.m();\n    a[0] = 1;\n    return 1;\n}\n$FM" "3:6: $KM"
+refusedn cm5 1 "CM5: a[0] in a const fn a const runs and run time calls" "const fn f(n) {\n    var a = n;\n    return a[0];\n}\nconst Z = f(1);\nfn main() { return f(2) + Z; }\nvar r = main();\n" "3:13: $KS"
+refusedn cm6 1 "CM6: a const fn body's own const, k.m() (was a second \"undefined variable 'k'\")" "const fn f(n) {\n    const k = 3;\n    return k.m();\n}\n$FM" "3:13: const 'k' has no methods - $FS"
+refusedn cm7 1 "CM7: a const context, const K = C.m(); (was \"expected ';' after a const's value\")" "const C = 5;\nconst K = C.m();\nsyscall(60, K);\n" "2:12: const 'C' has no methods - $FS"
+refusedn cm8 1 "CM8: an array size, i64[C.m()] (was \"expected ']', got '.'\")" "const C = 5;\nfn main(): i64 {\n    var a: i64[C.m()];\n    return 0;\n}\nsyscall(60, main());\n" "3:17: const 'C' has no methods - $FS"
+refusedn sc4 2 "SC4: L.m(); as a statement — the next statement reports its own error" "fn main(): i64 {\n    const L = 5;\n    L.m();\n    var y = nope;\n    return 0;\n}\nsyscall(60, main());\n" "3:6: const 'L' has no methods - $FS" "4:17: undefined variable 'nope'"
+refusedn sc5 1 "SC5: var x = C.m(); in the declaration zone" 'const C = 3;\nvar x = C.m();\nsyscall(60, 0);\n' "2:10: const 'C' has no methods - $FS"
+refusedn sc6 1 "SC6: var v = L.m(1, 2); — the const Q after it is still declared (no \"undefined variable 'Q'\")" 'fn main(): i64 { const L = 5; var v = L.m(1, 2); const Q = 4; return Q; }\nsyscall(60, main());\n' "1:40: const 'L' has no methods - $FS"
+exits km1 5 "KM1: control — a method call on a struct local in an ordinary fn" 'struct P { x; }\nimpl P { fn m(self) { return self.x + 1; } }\nfn main(): i64 { var p = P { 4 }; return p.m(); }\nsyscall(60, main());\n'
+exits km2 9 "KM2: control — a typed array local subscripted in an ordinary fn beside a const fn" 'const fn tw(n) { return n * 2; }\nfn main(): i64 { var a: i64[3]; a[1] = 4; return a[1] + tw(2) + 1; }\nsyscall(60, main());\n'
 # B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
 # syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
 # (issues/archived/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
@@ -423,4 +491,4 @@ exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a ca
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), and a bare const statement is expected '=' (B)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), and a bare const statement is expected '=' (B)"

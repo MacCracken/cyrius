@@ -6548,7 +6548,8 @@ fn f(v): i64 {
   run-time multiply / add where `N * 2` folded; the values never differed), an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
   (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
-  const context alike (6.7.14: it was blamed on a missing struct declaration). A statement that
+  const context alike (6.7.14: it was blamed on a missing struct declaration), and a method call
+  on it, `N.m(..)` ("const 'N' has no methods", 6.7.15). A statement that
   only names it (`N;`, `N + 1;`, a `for` step `N`) assigns nothing: it is the syntax error any
   name gets there, `expected '='` (6.7.14; it said "cannot assign to const 'N'").
   It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
@@ -6578,8 +6579,9 @@ fn f(v): i64 {
   (`f64_add`..`f64_div`, `f64_from`,
   `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
   `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields — `a.x` is refused
-  naming the rule, 6.7.14), syscalls, globals, an ordinary fn's call, a transcendental builtin, a
-  generic const fn.
+  naming the rule, 6.7.14, and a subscript `a[i]` too, 6.7.15), syscalls, globals, an ordinary
+  fn's call or a method call (`a.m(..)`, refused naming the rule, 6.7.15), a transcendental
+  builtin, a generic const fn.
 - **The same answer as run time.** Typing is the runtime's: an operator takes its f64 form when
   its LEFT operand is f64, and an integer right operand contributes its bits. f64 is computed
   by an integer-only IEEE-754 implementation (the bootstrap compiler has no float), bit-exact
