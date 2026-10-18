@@ -521,7 +521,11 @@ var r = add(20, 22);   # r = 42
 
   (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
   four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
-  the recovery.
+  the recovery. Either way, a use of what the refused declaration names adds no error of its own
+  (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
+  `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
+  6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
+  scope for 'q'", ...). A name declared nowhere is still reported.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /

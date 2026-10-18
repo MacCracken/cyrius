@@ -512,6 +512,7 @@ fn _decl_late(S): i64 {
     _dl_report(S, ti, f1, f0, n0);
     _dl_skip(S);
     _dl_derived(S);
+    _dl_names(S, ti, GTI(S));   # 6.7.15
     _dl_quiet(S, ti, GTI(S));
     return 1;
 }
@@ -520,8 +521,9 @@ fn _decl_late(S): i64 {
 # down). PARSE_PROG is also the block and fn-body parser, so it reached PARSE_STMT: "unexpected struct" (`union`:
 # "expected ';', got union") and up to four invented errors, the resync re-entering the declaration's braces and
 # the fn body's own `}` consumed ("return outside a fn body"). Now one error by name at the keyword, the
-# declaration stepped as at module scope (`_dl_skip_in`: never the `}` that closes the enclosing body), and the
-# fns it would define entered as reported (`_dl_quiet`), so the body parses on in sync. CHANGELOG [6.7.15]
+# declaration stepped as at module scope (`_dl_skip_in`: never the `}` that closes the enclosing body), and what it
+# names and the fns it would define entered as reported (`_dl_names`, `_dl_quiet`), so the body parses on in sync.
+# CHANGELOG [6.7.15]
 fn _decl_inner(S): i64 {
     if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
     var t = PEEKT(S);
@@ -530,6 +532,7 @@ fn _decl_inner(S): i64 {
     _dl_in_report(S, ti);
     _dl_skip_in(S);
     _dl_derived(S);
+    _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
     return 1;
 }
@@ -639,6 +642,7 @@ fn _dl_incl_at(S, l1, e, f0, n0): i64 {
         if (GTLINE(S, GTI(S)) >= st) { break; }
         STI(S, GTI(S) + 1);
     }
+    _dl_names(S, ti, GTI(S));   # 6.7.15
     _dl_quiet(S, ti, GTI(S));
     return 1;
 }
@@ -686,6 +690,126 @@ fn _dl_fn_quiet(S, noff, kw, meth): i64 {
     S64(_fnt_offsets + fi * 8, 0 - 2);
     if (GFFI(S, fi) == 0) { SFFI(S, fi, FM_FILEID(S, GTLINE(S, kw)) + 1); }
     if (meth != 0) { if (GFMETH(S, fi) == 0) { SFMETH(S, fi, meth); } }   # named `T.m`, as a call would
+    return 0;
+}
+# ⛔ 6.7.15 — AND WHAT IT NAMES: a refused declaration's struct, union and enum names and an enum's members are
+# entered as reported too (`_dl_names`, over the tokens the refusal stepped: a late declaration, a refused
+# inclusion, one in a fn body or a block), so a USE of one is not a second error after the declaration's —
+# `var q = Q { 5 };` was "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable",
+# `fn f(q: *Q)` "unknown type 'Q' for parameter 'q'" and its `q.y` "no struct type in scope for 'q'". The
+# reporters ask `_dl_refd_at` (the name: `_undef_var_report`, `_tn_refuse`, the stray literal's `_slit_refd`) and
+# `_ann_refd_said` (a variable whose annotation named one: the `.field`, method and field-store `sid == 0` arms)
+# and stand down, counted (`_had_error`), not printed. Exact names only: a name that resolves never reaches a
+# reporter, and one declared nowhere is still reported. A payload member's constructor is a fn: `_dl_fn_quiet`.
+# CHANGELOG [6.7.15]
+var _dlr = 0;   # the refused names (name offsets), a vec made at the first
+var _dlv = 0;   # (scope, name) pairs: the variables `_ann_refd_mark` marked, a vec made at the first
+fn _dl_names(S, a, e): i64 {
+    var d = 0;
+    var i = a;
+    while (i < e) {
+        var k = TOKTYP(S, i);
+        if (d == 0) { _dl_name_at(S, i, k, e); }
+        if (k == 13) { d = d + 1; }
+        if (k == 14) { d = d - 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# A `struct` / `union` / `enum` keyword at token `i` (`k`), at depth 0 of the stepped range: its name, an enum's
+# members.
+fn _dl_name_at(S, i, k, e): i64 {
+    if (k != 40 && k != 101 && k != 60) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    _dl_refd_add(S, TOKVAL(S, i + 1));
+    if (k == 60) { _dl_members(S, i + 2, e); }
+    return 0;
+}
+# The members of the enum whose header runs from token `j` (past its name: a `<..>`, a `: stack`, its `{`): each
+# name that opens a member — after the `{`, a `,` or a `;`, outside a payload's `( .. )` — to the enum's `}`.
+fn _dl_members(S, j, e): i64 {
+    while (j < e) {
+        if (TOKTYP(S, j) == 13) { break; }
+        j = j + 1;
+    }
+    var p = 0;
+    var i = j + 1;
+    while (i < e) {
+        var k = TOKTYP(S, i);
+        if (k == 14) { if (p == 0) { return 0; } }
+        if (k == 10) { p = p + 1; }
+        if (k == 11) { p = p - 1; }
+        if (k == 2) { if (p == 0) { _dl_member_at(S, i); } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dl_member_at(S, i): i64 {
+    var b = TOKTYP(S, i - 1);
+    if (b != 13 && b != 31 && b != 5) { return 0; }
+    _dl_refd_add(S, TOKVAL(S, i));
+    if (TOKTYP(S, i + 1) == 10) { _dl_fn_quiet(S, TOKVAL(S, i), i, 0); }   # `Ok2(v)`: its constructor
+    return 0;
+}
+fn _dl_refd_add(S, noff): i64 {
+    if (_dlr == 0) { _dlr = vec_new(); }
+    vec_push(_dlr, noff);
+    return 0;
+}
+# 1 = `noff` names what a refused declaration declared (`_dl_names`): the use stands down, counted.
+fn _dl_refd_at(S, noff): i64 {
+    if (_dlr == 0) { return 0; }
+    if (noff < 0) { return 0; }
+    var n = vec_len(_dlr);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# `_tn_refuse`'s stand-down: the type name at token `ti` is a refused declaration's, so the annotation is not
+# reported again, and the variable it annotates (`vnoff`, -1 for none) is marked (`_ann_refd_mark`). 1 = stood down.
+fn _dl_refd_ann(S, ti, vnoff): i64 {
+    if (_dl_refd_at(S, TOKVAL(S, ti)) == 0) { return 0; }
+    _ann_refd_mark(S, vnoff);
+    return 1;
+}
+# The stand-down helper the "no struct type in scope" reporters share: variable `vnoff`, declared here — a local
+# or a parameter of the fn being compiled (its `_cur_fn_ix`), at top level a global — took an annotation that was
+# refused (or, `_slit_stray`, a refused struct's literal), so its uses are counted, not reported (`_ann_refd_said`).
+fn _ann_refd_mark(S, vnoff): i64 {
+    if (vnoff < 0) { return 0; }
+    if (_dlv == 0) { _dlv = vec_new(); }
+    var sc = 0 - 2;
+    if (GINFN(S) == 1) { sc = _cur_fn_ix; }
+    vec_push(_dlv, sc);
+    vec_push(_dlv, vnoff);
+    return 0;
+}
+# 1 = variable `noff`, resolved to `idx` (a global >= 0, a local < -1), was marked by `_ann_refd_mark` in its
+# scope: counted as ERR_IDENT would count the report (`_had_error`, the panic latch: the statement resyncs), not
+# printed. A closure capture is not looked up.
+fn _ann_refd_said(S, noff, idx): i64 {
+    if (_dlv == 0) { return 0; }
+    var sc = 0 - 2;
+    if (idx < 0) {
+        if (idx > 0 - 2) { return 0; }
+        if (idx <= 0 - 1000000) { return 0; }
+        sc = _cur_fn_ix;
+    }
+    var n = vec_len(_dlv);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_dlv, i) == sc) {
+            if (STREQ(S, vec_get(_dlv, i + 1), noff) == 1) {
+                _had_error = 1;
+                _panic = 1;
+                return 1;
+            }
+        }
+        i = i + 2;
+    }
     return 0;
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes

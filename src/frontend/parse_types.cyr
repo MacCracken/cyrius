@@ -262,6 +262,7 @@ fn _tn_bytes(S, c): i64 {
 # or -1). A struct or union declared BELOW a site that needs it above keeps its own message.
 fn _tn_refuse(S, ti, tail, noff2): i64 {
     if (_syntax_only == 1) { return 0; }
+    if (_dl_refd_ann(S, ti, noff2) == 1) { return 0; }   # 6.7.15: a type a refused declaration declared
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }
     var noff = TOKVAL(S, ti);

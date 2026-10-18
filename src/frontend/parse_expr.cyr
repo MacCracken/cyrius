@@ -4883,9 +4883,12 @@ fn _slit_stray(S, noff): i64 {
     var ti = GTI(S) - 1;
     if (TOKVAL(S, ti) != noff) { return 0; }
     var o = _slit_open(S, ti);
+    var rf = 0;
+    if (o < 0) { o = _slit_refd(S, ti); rf = 1; }   # 6.7.15: a refused declaration's struct, stepped silently
     if (o < 0) { return 0; }
     _slit_beg = ti;
-    if (_slit_open_wrap(S, ti, o) == 0) { _slit_err(S, ti, o); }   # 6.7.15: an unclosed wrap's `)` is its error
+    if (rf == 0) { if (_slit_open_wrap(S, ti, o) == 0) { _slit_err(S, ti, o); } }   # 6.7.15: an unclosed wrap's `)`
+    if (rf == 1) { _ann_refd_mark(S, _slit_decl_name(S, ti - 1)); }   # 6.7.15: `var q = Q { .. };` — q's uses too
     STI(S, _slit_close(S, o) + 1);
     _slit_tail(S);
     _slit_end = GTI(S);
@@ -4935,6 +4938,14 @@ fn _slit_decl_eq(S, e): i64 {
     }
     return 0;
 }
+# The variable whose declaration's `=` is token `e` (`_slit_decl_eq`): its name, or -1. CHANGELOG [6.7.15]
+fn _slit_decl_name(S, e): i64 {
+    if (_slit_decl_eq(S, e) == 0) { return 0 - 1; }
+    if (TOKTYP(S, e - 1) == 2) { if (TOKTYP(S, e - 2) == 3) { return TOKVAL(S, e - 1); } }
+    var k = e - 1;
+    while (TOKTYP(S, k) != 49) { k = k - 1; }
+    return TOKVAL(S, k - 1);
+}
 # A selector run after the stepped literal (`.f`, `.m(..)`), stepped with it: `P { 5 }.a` is one refusal.
 fn _slit_tail(S): i64 {
     while (PEEKT(S) == 41) {
@@ -4958,7 +4969,7 @@ fn _slit_ret(S): i64 {
 # caller steps the rest in sync (`_asg_lvalue_at`'s). 1 = refused.
 fn _slit_stmt(S, noff): i64 {
     if (PEEKT(S) != 13) { if (PEEKT(S) != 19) { return 0; } }   # every assignment asks: `{` / `<` first
-    if (_slit_open(S, GTI(S) - 1) < 0) { return 0; }
+    if (_slit_open(S, GTI(S) - 1) < 0) { return _slit_refd_stmt(S, noff); }
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
     if (_findvar_core(S, noff) >= 0) { return 0; }
     _slit_err(S, GTI(S) - 1, _slit_open(S, GTI(S) - 1));
@@ -4977,10 +4988,31 @@ fn _slit_at(S, ti): i64 {
     if (_slit_open(S, ti) < 0) { return 0; }
     return 1;
 }
+# ⛔ 6.7.15 — `Q { .. }` where Q is a struct a refused declaration declared (`_dl_refd_at`): no struct answers
+# the name, so it was "undefined variable 'Q'" and the `{` "expected ';'"; the literal is stepped as a refused one
+# is, silently (the declaration's error is the one). The `{` (`_slit_brace`), or -1. CHANGELOG [6.7.15]
+fn _slit_refd(S, ti): i64 {
+    var o = _slit_brace(S, ti);
+    if (o < 0) { return 0 - 1; }
+    if (_dl_refd_at(S, TOKVAL(S, ti)) == 0) { return 0 - 1; }
+    return o;
+}
+# ... and as a statement (`Q { 5 };`, the caller steps it): 1 = stood down, counted.
+fn _slit_refd_stmt(S, noff): i64 {
+    if (_slit_brace(S, GTI(S) - 1) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    return _dl_refd_at(S, noff);
+}
 # The `{` of the struct literal whose name is token `ti` — `P {` or `P<..> {`, P a declared struct — or -1.
 fn _slit_open(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0 - 1; }
     if (FINDSTRUCT(S, TOKVAL(S, ti)) <= 0) { return 0 - 1; }
+    return _slit_brace(S, ti);
+}
+# ... its shape alone, the name token `ti` an identifier: `NAME {` or `NAME<..> {`.
+fn _slit_brace(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
     var o = ti + 1;
     if (TOKTYP(S, o) == 19) {
         o = _tok_targs_close(S, o + 1);
@@ -5038,6 +5070,7 @@ fn _slit_ptype(S, ti, o): i64 {
 }
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
+    if (_dl_refd_at(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr)
     ERR_UNDEF(S, noff, tail);   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
     return 0;

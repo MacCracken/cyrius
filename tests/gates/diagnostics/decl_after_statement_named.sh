@@ -1,6 +1,7 @@
 #!/bin/sh
 # decl_after_statement_named.sh — a declaration after the first top-level statement is ONE error by name; an
-# `async fn` there is a function (6.7.14); a declaration inside a fn body or a block is one error too (6.7.15).
+# `async fn` there is a function (6.7.14); a declaration inside a fn body or a block is one error too, and a use
+# of what a refused declaration names adds none (6.7.15).
 #
 # THE DEFECT (measured 6.7.10 - 6.7.13, x86_64; the frontend, every target). The guide's rule (§ Functions, § Traits)
 # keeps `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `use` and `pub` / `public` declarations before the first
@@ -52,6 +53,25 @@
 #       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
 #   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
 #
+# ITS USES (6.7.15; issues/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
+# was stepped, so what it names was never registered, and each use was a second error: `var q = Q { 5 };`
+# "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable", `fn f(q: *Q)` "unknown
+# type 'Q' for parameter 'q'" + its `q.y` "no struct type in scope for 'q'". Now the struct, union and enum names
+# and an enum's members are entered as reported (`_dl_names`, over the stepped tokens of each refusal: late, an
+# inclusion, inner), a payload member's constructor as a reported fn; the reporters stand down for exactly those
+# names (`_dl_refd_at`: `_undef_var_report`, `_tn_refuse`, the stray literal `_slit_refd` / `_slit_refd_stmt`),
+# and for a variable whose annotation or literal initializer named one (`_ann_refd_mark` / `_ann_refd_said`: the
+# `.field`, method and field-store `sid == 0` arms).
+#
+#   U   the filed repros verbatim (struct literal, `E.B`, bare `B`, `*Q` parameter + `.y`): one error each
+#   UX  more uses: the literal's variable's `.y`, a parameter's field store and method, `var e: E = E.A`, an enum
+#       parameter / return, sizeof, a `*Q` return, a union parameter, a generic literal, a payload constructor,
+#       a `Q { 5 };` statement, in a fn body (the inner arm), a refused inclusion's struct / enum / fn; and
+#       --syntax-only: one error per refused declaration
+#   UE  exact names only: a name declared nowhere, an unknown type beside a refused one and an untyped `q.y` in
+#       another fn are still reported (beside the refused names' uses, which are not)
+#   UC  control: the same program with the declarations before the statement compiles and runs
+#
 # MUTATION LEDGER (each mutant built from the fixed tree with the one change):
 #   base: the lane before it (5048df2e)             -> RED 49 of 54: every K / R1 / R4 / R5 / I1-I4 / Q / A row and
 #                                                      C2 (the old "unexpected struct" + its cascade, "expected
@@ -74,6 +94,16 @@
 #                                                      emit binary")
 #   `_dl_in_report` without its `_ce_err_dup`       -> RED NS9 (the error once per generic instance), NC (the
 #                                                      const fn check's token reported again by the body)
+#   (6.7.15, measured) `_dl_names` returns at once  -> RED U1-U4, UX1-UX8, UE1, UE2 (every refused name used)
+#   `_undef_var_report` without its stand-down      -> RED U2 U3 UX3 UX6 UX7 UE1 ("undefined variable 'E'" / 'B')
+#   `_tn_refuse` without its stand-down             -> RED U4 UX1-UX4 UX7 UE2 ("unknown type 'Q' for ...")
+#   `_slit_refd` returns -1                          -> RED U1 UX1 UX2 UX4 UX6 UX7 UX8 ("expected ';', got '{'")
+#   `_ann_refd_said` returns 0                       -> RED U4 UX1-UX4 UX6 UX7 UE2 ("no struct type in scope")
+#   `_ann_refd_said` ignoring the scope              -> RED UE2 (another fn's untyped `q.y` silenced)
+#   `_dl_refd_at` matching any name                  -> RED NS4 NS5 UE1 (a name declared nowhere silenced)
+#   `_dl_member_at` without `_dl_fn_quiet`           -> RED UX4 ("undefined function 'Ok2'" + "refusing to emit")
+#   `_slit_refd_stmt` returns 0                      -> RED UX5 (the statement's cascade)
+#   `_slit_stray` without its `_ann_refd_mark`       -> RED UX1 UX2 UX6 UX7 (the literal's variable's `.y`)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -413,6 +443,102 @@ one "NS14 --syntax-only: the same one error" "$(printf 'fn f(): i64 { struct Q {
 one "NC a const fn's body: the check's one refusal" 'const fn f(): i64 { struct Q { y; } return 1; }
 syscall(60, f());
 ' "error:<source>:1:21: not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while / return / break / continue and calls of const fns"
+
+# ── U: a use of what a refused declaration names (6.7.15) ───────────────────────────────────────────────────
+L='must come before the first top-level statement (line 2)'
+one "U1 filed: struct literal of a refused struct" "$(printf 'var a = 1;\na = 2;\nstruct Q { y; }\nvar q = Q { 5 };\nsyscall(60, 0);\n')
+" "error:<source>:3:1: a \`struct\` declaration $L"
+one "U2 filed: E.B of a refused enum" "$(printf 'var a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, E.B);\n')
+" "error:<source>:3:1: an \`enum\` declaration $L"
+one "U3 filed: bare B of a refused enum" "$(printf 'var a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, B);\n')
+" "error:<source>:3:1: an \`enum\` declaration $L"
+one "U4 filed: a *Q parameter and its .y" "$(printf 'var a = 1;\na = 2;\nstruct Q { y; }\nfn f(q: *Q): i64 { return q.y; }\nsyscall(60, 0);\n')
+" "error:<source>:3:1: a \`struct\` declaration $L"
+UH='var a = 1;
+a = 2;
+'
+one "UX1 the literal's variable, its .y" "${UH}struct Q { y; }
+var q = Q { 5 };
+var r: Q = Q { 6 };
+syscall(60, q.y + r.y);
+" "error:<source>:3:1: a \`struct\` declaration $L"
+one "UX2 a parameter's field store and method" "${UH}struct Q { y; }
+impl Q { fn m(self): i64 { return 1; } }
+fn f(q: *Q): i64 { q.y = 1; return q.m(); }
+fn g(): i64 { var q = Q { 5 }; q.y = 3; return q.y + q.m(); }
+syscall(60, f(0) + g());
+" "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:4:1: an \`impl\` declaration $L"
+one "UX3 enum annotations, sizeof, a *Q return, a union" "${UH}enum E { A, B }
+struct Q { y; }
+union U { x; y: i32; }
+var e: E = E.A;
+fn g(x: E): E { return x; }
+fn h(): *Q { return 0; }
+fn k(u: *U): i64 { return u.x; }
+var s = sizeof(Q);
+syscall(60, g(E.B) + e + s);
+" "error:<source>:3:1: an \`enum\` declaration $L
+error:<source>:4:1: a \`struct\` declaration $L
+error:<source>:5:1: a \`union\` declaration $L"
+one "UX4 a generic literal, a payload constructor" "${UH}struct G<T> { y: T; }
+enum R: stack { Ok2(v); Err2(e); }
+var q: G<i64> = G<i64> { 5 };
+var t, v = Ok2(5);
+syscall(60, q.y + v);
+" "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:4:1: an \`enum\` declaration $L"
+one "UX5 a literal as a statement" "${UH}struct Q { y; }
+fn g(): i64 { Q { 5 }; return 1; }
+syscall(60, g());
+" "error:<source>:3:1: a \`struct\` declaration $L"
+one "UX6 in a fn body: its literal, members, variable" 'fn f(): i64 {
+    struct Q { y; }
+    enum E { A, B }
+    var q = Q { 5 };
+    return q.y + E.B + A;
+}
+syscall(60, f());
+' "error:<source>:2:5: a \`struct\` declaration $IR a fn body
+error:<source>:3:5: an \`enum\` declaration $IR a fn body"
+printf 'struct Zq { y; }\nenum Ze { ZA, ZB }\nfn zf(): i64 { return 1; }\n' > "$D/inc_z.cyr"
+printf 'syscall(39);\ninclude "%s"\nfn f(s: *Zq): i64 { return s.y; }\nvar z = Zq { 5 };\nsyscall(60, z.y + ZB + Ze.ZA + zf());\n' "$D/inc_z.cyr" > "$D/u7.cyr"
+CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1; export CYRIUS_ALLOW_ABSOLUTE_INCLUDES
+one "UX7 a refused inclusion's struct, enum and fn" "$(cat "$D/u7.cyr")
+" "error:<source>:2:1: an include of a file that declares a \`struct\` ($D/inc_z.cyr:1) must come before the first top-level statement (line 1)"
+unset CYRIUS_ALLOW_ABSOLUTE_INCLUDES
+for u in 1 2 4; do
+    case $u in
+        1) us="$(printf 'var a = 1;\na = 2;\nstruct Q { y; }\nvar q = Q { 5 };\nsyscall(60, q.y);\n')"; uw='a `struct`';;
+        2) us="$(printf 'var a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, E.B + B);\n')"; uw='an `enum`';;
+        4) us="$(printf 'var a = 1;\na = 2;\nstruct Q { y; }\nfn f(q: *Q): i64 { return q.y; }\nsyscall(60, 0);\n')"; uw='a `struct`';;
+    esac
+    one "UX8 --syntax-only: U$u's shape, one error" "$us
+" "error:<source>:3:1: $uw declaration $L" --syntax-only
+done
+one "UE1 exact: a name declared nowhere, an unknown type" "${UH}struct Q { y; }
+var r: R = 0;
+enum E { A, B }
+syscall(60, C + B + zz);
+" "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:4:8: unknown type 'R' for variable 'r'
+error:<source>:5:1: an \`enum\` declaration $L
+error:<source>:6:15: undefined variable 'C' (missing include or enum?)
+error:<source>:6:23: undefined variable 'zz' (missing include or enum?)"
+one "UE2 exact: an untyped q.y in another fn" "${UH}struct Q { y; }
+fn f(q: *Q): i64 { return q.y; }
+fn g(q): i64 { return q.y; }
+syscall(60, 0);
+" "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:5:26: no struct type in scope for 'q'; a '.field' access needs its struct declaration (missing include?)"
+runs "UC control: the declarations before the statement" 'struct Q { y; }
+enum E { A, B }
+var a = 1;
+a = 2;
+var q = Q { 5 };
+fn f(p: *Q): i64 { return p.y; }
+syscall(60, q.y + f(&q) + E.B + B);
+' 12
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
