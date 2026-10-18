@@ -1213,7 +1213,12 @@ warning. A field may point at the struct being declared or at one declared below
 (`struct Node { val; next: *Node; }`, two structs pointing at each other); it steps the
 complete struct's size. A pointer to a generic instance (`*Box<i32>`) steps the instance's
 size, `sizeof(Box<i32>)`. Before 6.6.17 both positions were the parse error
-`expected identifier, got '*'`.
+`expected identifier, got '*'`. Such a field's type arguments are checked AT THE FIELD, once,
+whether or not the field is used, as a `b: Box<Zork>` field's are: `p: *Box<Zork>` is "unknown type
+'Zork' as a type argument" and `p: *Box<1>` "a type argument is a type name, got number 1" — a
+struct declared further down is a name there, so `*Box<B>` / `*Box<A>` still point
+two structs at each other (6.7.15, the user's decision D8 (a), 2026-10-18; through 6.7.14 the list was
+read only at a use, so an unused field compiled).
 
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds

@@ -53,6 +53,21 @@
 #                                                       does not build)
 #   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
 #
+#   PA (6.7.15, the user's D8 (a), 2026-10-18; docs/development/issues/2026-10-16-pointer-field-generic-type-args-read-only-
+#      at-use.md) a late `p: *G<..>` field's type arguments are checked AT THE FIELD, once, used or not (they were read
+#      only at a use, so an unused field compiled): PA1 the filed repro verbatim (`p: *Box<Zork>`, unused; exit 7
+#      before) refused once at 3:24, PA2 `p: *Box<1>` unused (exit 7 before), PA3 the used form one error line in all,
+#      PA4 a use in a fn ABOVE the struct one error, PA5 `*Later<Zork>` with the generic Later declared below, PA6
+#      `*Box<Box<Zork>>`, PA7 `struct W<T> { p: *Box<Zork>; }` at two instances, PA8 `*Box<E>` with the enum E declared
+#      below (its enum line, not "unknown type"), PA9 three bad fields of one struct each once (three lines); and what
+#      stays valid: PA10 two structs pointing at each other through `*Box<B>` / `*Box<A>`, B declared below (52), PA11
+#      `*Box<Later<Pt>>` with both declared below (5)
+#   MPA1 `_fld_targ_chk` returns at once (2026-10-18)   -> RED 6: PA1 PA2 PA5 PA6 PA7 PA9 compiled (PA3 PA4 PA8 green:
+#                                                       their use reports it, once)
+#   MPA2 `_ta_late` never set (no name declared below) -> RED 3: PA10 PA11 refused "unknown type 'B'" / 'Later'; PA8
+#                                                       "unknown type 'E'", then the use's enum line
+#   MPA3 `_is_enum_name` without its declared-below arm -> RED 1: PA8 (two lines, as MPA2)
+#
 #   HF (6.7.15, docs/development/issues/2026-10-16-generic-struct-pointer-field-does-not-hop.md) a generic struct's
 #      `p: *T` field hops in its instance as a `p: *Pt` field does (6.6.17): `b.p.y` with `b: Pb<Pt>` was "expected ';',
 #      got '.'". HF1 the filed repro verbatim (9), HF2 a store `b.p.y = 3` (3), HF3 a method `b.p.m()` (78), HF4 inside
@@ -235,6 +250,65 @@ syscall(60, main());
 EOF
 exits pg7 72 "PG7: fn mk(): *Box<Later> with Later declared below it (pass 1 refused it 'unknown type')"
 
+# PA — 6.7.15 (D8 (a)): a late `p: *G<..>` field's type arguments are checked at the field, once, used or not.
+one_error() {   # <name> <message fragment> <what>: refused with exactly one error line, which contains the fragment
+    build "$1"
+    ne=$(grep -c '^error' "$T/$1.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ "$ne" -ne 1 ]; then bad "$3: $ne error lines, want 1: $(grep '^error' "$T/$1.err" | tr '\n' ' ')"
+    elif grep -qF "$2" "$T/$1.err"; then ok "$3: one error, $2"
+    else bad "$3: not '$2': $(grep '^error' "$T/$1.err")"; fi
+}
+UZ="unknown type 'Zork' as a type argument"
+# The filed repro, verbatim (the issue's text).
+cat > "$T/pa1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct H { p: *Box<Zork>; n; }
+fn main(): i64 { var h: H; h.n = 7; return h.n; }
+syscall(60, main());
+EOF
+one_error pa1 "error:<source>:3:24: $UZ" "PA1: the filed repro, p: *Box<Zork> unused, at the field"
+sed 's/\*Box<Zork>/*Box<1>/' "$T/pa1.cyr" > "$T/pa2.cyr"
+one_error pa2 "error:<source>:3:20: a type argument is a type name, got number 1" "PA2: p: *Box<1> unused"
+sed 's/h.n = 7; return h.n;/h.n = 7; h.p.n = 7; return h.p.n;/' "$T/pa1.cyr" > "$T/pa3.cyr"
+one_error pa3 "error:<source>:3:24: $UZ" "PA3: used, h.p.n = 7; return h.p.n;"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nfn f(h: *H): i64 { return h.p.n; }\nstruct H { p: *Box<Zork>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa4.cyr"
+one_error pa4 "error:<source>:4:24: $UZ" "PA4: used in a fn above the struct"
+printf 'include "lib/syscalls.cyr"\nstruct H { p: *Later<Zork>; n; }\nstruct Later<T> { v: T; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa5.cyr"
+one_error pa5 "$UZ" "PA5: *Later<Zork>, the generic Later declared below"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct H { p: *Box<Box<Zork>>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa6.cyr"
+one_error pa6 "$UZ" "PA6: *Box<Box<Zork>>"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct W<T> { p: *Box<Zork>; n; }\nfn main(): i64 { var w: W<i32>; var w2: W<i8>; w.n = 7; return w.n; }\nsyscall(60, main());\n' > "$T/pa7.cyr"
+one_error pa7 "$UZ" "PA7: W<T> { p: *Box<Zork>; } at two instances"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct H { p: *Box<E>; n; }\nenum E { A, B }\nfn main(): i64 { var h: H; h.n = 7; return h.p.n; }\nsyscall(60, main());\n' > "$T/pa8.cyr"
+one_error pa8 "'E' is an enum, not a type argument" "PA8: *Box<E>, the enum E declared below (used)"
+printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct Two<A, B> { a: A; b: B; }\nstruct H { p: *Box<Zork>; q: *Two<i64, Nope>; r: *Box<1 + 2>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa9.cyr"
+build pa9
+ne=$(grep -c '^error' "$T/pa9.err" || true)
+if [ "$rc" -ne 0 ] && [ "$ne" -eq 3 ] && grep -qF "$UZ" "$T/pa9.err" && grep -qF "unknown type 'Nope' as a type argument" "$T/pa9.err" \
+   && grep -qF "got number 1" "$T/pa9.err"; then ok "PA9: three bad pointer fields, one line each"
+else bad "PA9: rc $rc, $ne error lines (want 3: Zork, Nope, number 1): $(grep '^error' "$T/pa9.err" | tr '\n' ' ')"; fi
+cat > "$T/pa10.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct A { pb: *Box<B>; k; }
+struct B { pa: *Box<A>; j; }
+fn main(): i64 { var a: A; var b: B; var bb: Box<B>; var ba: Box<A>; bb.v.j = 5; ba.v.k = 2; a.pb = &bb; b.pa = &ba; bb.v.pa = &ba; return a.pb.v.j * 10 + b.pa.v.k + a.pb.v.pa.v.k * 100; }
+syscall(60, main() - 200);
+EOF
+exits pa10 52 "PA10: A / B through *Box<B> / *Box<A>, B declared below (unchanged)"
+cat > "$T/pa11.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct H { p: *Box<Later<Pt>>; n; }
+struct Later<T> { v: T; n; }
+struct Pt { x; y; }
+fn main(): i64 { var b: Box<Later<Pt>>; b.v.n = 5; var h: H; h.p = &b; return h.p.v.n; }
+syscall(60, main());
+EOF
+exits pa11 5 "PA11: *Box<Later<Pt>>, both declared below (unchanged)"
+
 # HF — 6.7.15: a generic struct's `*T` field hops in its instance, on every leg this box can run.
 skips=0
 A64=""; CXCC=""; WINE=0
@@ -326,4 +400,4 @@ xr HF5 "$T/hf5.cyr" 9 "Pb<i32>'s b.p + 1 steps 4 (unchanged)"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), a pointer field's type arguments are checked at the field once (PA), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
