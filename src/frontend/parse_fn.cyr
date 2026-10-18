@@ -1963,7 +1963,7 @@ fn _sarg_gv_sid(S, gvi): i64 {
 # their mask bit clear → value-passed (fixes the str_split/toml/vec_push_a regression).
 fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (fi < 0) { return 0; }
-    if (_pm_struct(fi, argc) == 0) { return _sarg_byval_small(S, fi, argc); }   # 6.6.17 (a10); 6.7.3
+    if (_pm_struct(fi, argc) == 0) { return _sarg_vdo(S, fi, argc); }   # 6.6.17 (a10); 6.7.3 (6.7.14: `_sarg_vdo`)
     var pvf = _sarg_pe_vform(S, fi, argc, tail);   # 6.7.14: Win64's value-form vector parameter, `_sar_src`'s sources
     if (pvf >= 0) { return pvf; }
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
@@ -2291,8 +2291,8 @@ fn _vec_val_err(S, star, noff, fi, kd): i64 {
 # The same for a whole vector argument to parameter `argc` of `fi` that is not address-passed — a `*i64`, `*u8`,
 # `**T` (D27, a LOCAL), or (6.7.13, D31) a by-value struct of 8 B or less — by its tokens: a vector local or (6.7.13,
 # D32) a closure's captured vector (inside any parentheses wrapping the whole argument), or a call declared to return
-# a vector (`_svc_rs`) or a dereference `*p` of a `*V` local / parameter (its step word's vector, `_ps_vdesc`), inside
-# any such parentheses too. The cursor on the argument (`_sarg_byval_small`); nothing is consumed. 1 = refused.
+# a vector (`_svc_rs`), inside any such parentheses too; a dereference is judged once parsed (6.7.14, `_sarg_vdo`).
+# The cursor on the argument (`_sarg_byval_small`); nothing is consumed. 1 = refused.
 fn _sarg_vec_other(S, fi, argc): i64 {
     var kd = _vk_param(S, fi, argc);
     if (kd == 0) { return 0; }
@@ -2309,8 +2309,7 @@ fn _sarg_vec_other(S, fi, argc): i64 {
     }
     var c = _svo_inner(S);
     if (_svc_rs(S, c) != 0) { return _svo_err(S, c, 0, _svc_nm, fi, kd); }
-    if (_svo_vderef(S, c) == 1) { return _svo_err(S, c, 1, TOKVAL(S, c + 1), fi, kd); }
-    return 0;
+    return 0;   # (6.7.14: a dereference is `_sarg_vdo`'s, once it is parsed)
 }
 # Report at token `ti`: `how` 2 = D27's local words (`_vec_kind_err`, with its `&` hint), 1 = a dereference, 0 = a name
 # or call (`_vec_val_err`). 1.
@@ -2331,18 +2330,34 @@ fn _svo_inner(S): i64 {
     if (e != 31) { if (e != 11) { return ti; } }
     return ti + k;
 }
-# 1 = token `c` starts `* NAME` alone (`,` / `)` after it), NAME a typed-pointer local or parameter whose step word
-# names a vector (`_slot_ptr_word`, `_ps_vdesc`): a `*V` dereference — a vector value.
-fn _svo_vderef(S, c): i64 {
-    if (GINFN(S) != 1) { return 0; }
-    if (TOKTYP(S, c) != 8) { return 0; }
-    if (TOKTYP(S, c + 1) != 2) { return 0; }
-    var nx = TOKTYP(S, c + 2);
-    if (nx != 31) { if (nx != 11) { return 0; } }
-    var li = FINDLOCAL(S, TOKVAL(S, c + 1));
-    if (li < 0) { return 0; }
-    if (_ps_vdesc(_slot_ptr_word(S, li)) == 0) { return 0; }
-    return 1;
+# ⛔ 6.7.14 — EVERY `*V` DEREFERENCE INTO A POINTER OF ANOTHER KIND OR A SMALL BY-VALUE STRUCT IS REFUSED BY NAME
+# (6.7.13's D31 A: every vector value there is). `ri(**ppb)`, `ri(*gp(pb))`, `ri(*h.pv)`, `ri(*GPV)`, `ri(*(pb + 0))`,
+# `ri(*&b)` into `p: *i64` (`*u8`, `**T`, a by-value struct of 8 B or less) pushed lane 0 as the address — 139 on x86_64
+# / aarch64, a cx guest fault, PE 5, no diagnostic — where `rp(**ppb)` into `*Pt` and `ri(*pb)` were refused: this arm
+# judged a dereference by its tokens (`* NAME` of a `*V` local, the retired `_svo_vderef`), the address-passed one by
+# its operand's type once parsed (`_dlo_vec`). Parameter `argc` of `fi` not address-passed, of such a kind
+# (`_vk_param`), the whole argument (inside any parentheses, `_svo_inner`) starting with `*`: that `*` is watched
+# (`_dro_vo`) while `_sarg_byval_small` parses and pushes the argument as before; when its operand named a vector (the
+# step word or an `&x` of one, `_dop_vd`) and ended the argument (`_dro_vnote`), the argument is refused by name —
+# `cannot pass '*ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the operand's last
+# name as the address-passed arm names it — once, without `_panic`. A `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their
+# word as before. Returns as `_sarg_byval_small` does. CHANGELOG [6.7.14]
+fn _sarg_vdo(S, fi, argc): i64 {
+    var c = _svo_inner(S);
+    if (TOKTYP(S, c) != 8) { return _sarg_byval_small(S, fi, argc); }
+    var kd = _vk_param(S, fi, argc);
+    if (kd == 0) { return _sarg_byval_small(S, fi, argc); }
+    var vo = _dro_vo;
+    var vd = _dro_vod;
+    var ve = _dro_vend;
+    _dro_vo = c;
+    _dro_vod = 0;
+    var r = _sarg_byval_small(S, fi, argc);
+    if (_dro_vod != 0) { _svo_err(S, c, 1, _hl_lastnm(S, c + 1, _dro_vend, 0), fi, kd); }
+    _dro_vo = vo;
+    _dro_vod = vd;
+    _dro_vend = ve;
+    return r;
 }
 # The name token of a whole argument at the cursor that is one name, inside any parentheses that wrap all of
 # it, ending at `,` / `)`; -1 for any other shape.

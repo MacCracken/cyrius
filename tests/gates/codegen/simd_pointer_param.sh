@@ -97,13 +97,15 @@
 # ⛔ 6.7.13 (D31 A, the user's decision, 2026-10-15; the same issue's rows 1-5) — EVERY VECTOR VALUE INTO A POINTER OF
 # ANOTHER KIND, OR INTO A BY-VALUE STRUCT PARAMETER, IS REFUSED BY NAME: a call result (`_svc_kind` for an address-passed
 # parameter, `_sarg_vec_other` otherwise) and a `*V` dereference (`_dro_vt_for` arms, `_dro_vcheck` refuses; `_svo_vderef`
-# by the local's step word otherwise) into `*Pt` / `*i64` with D27's words, a vector local into a by-value struct (`_sarg_vec_ptr`
-# / `_sarg_vec_other`) "a vector is not a struct" — on Win64 too, where row 5 ran by accident (42).
+# by the local's step word otherwise — 6.7.14: retired, `_sarg_vdo` once parsed, rows OKD) into `*Pt` / `*i64` with
+# D27's words, a vector local into a by-value struct (`_sarg_vec_ptr` / `_sarg_vec_other`) "a vector is not a struct" —
+# on Win64 too, where row 5 ran by accident (42).
 #   OK1-OK5 the filed rows 1-5 verbatim on x86_64 / aarch64 / cx / PE: one line each, naming `mkv` / `*pb` / `b`
 #   OKX 13 sources in one compile (a method, an explicit instance, callptr, wrapped, `*pb`, a by-value struct of 8 B or
 #      less and over, `**f64v2`, fncall2): 13 lines on x86_64 and PE
 #   M-K1 `_svc_kind` answering 0                             -> RED 6: OK1 on every leg (compiled), OKX x86 / PE (10 lines)
 #   M-K2 `_sarg_vec_other` back to the local only            -> RED 10: OK2 OK4 on every leg (compiled), OKX x86 / PE (6)
+#       (6.7.14: OK4 is `_sarg_vdo`'s now — M-OKD1)
 #   M-K3 `_dro_vt_for` arming for a `*V` only                -> RED 6: OK3 on every leg (compiled), OKX x86 / PE (12)
 #   M-K4 `_sarg_vec_ptr` without the by-value struct arm     -> RED 4: OK5 on every leg (compiled; PE 42 again)
 #
@@ -475,6 +477,142 @@ for lg in x86 pe; do
     elif [ -s "$D/okx.bin" ]; then bad "OKX $lg: refused, but a binary was written"
     else ok "OKX $lg: 13 vector sources into another pointer kind / a by-value struct, each refused once"; fi
 done
+
+# ⛔ 6.7.14 (issues/2026-10-16-vector-dereference-other-than-star-name-into-word-pointer-parameter-faults.md; 6.7.13's D31 A
+# already decides it) — A `*V` DEREFERENCE OTHER THAN `* NAME` INTO A PARAMETER THAT IS NOT ADDRESS-PASSED (`*i64`, `*u8`,
+# `**T`, a by-value struct of 8 B or less) IS REFUSED BY NAME, as `ri(*pb)` (OK4) and every such spelling into `*Pt` are:
+# `ri(**ppb)`, `ri(*gp(pb))`, `ri(*h.pv)`, `ri(*GPV)`, `ri(*(pb + 0))`, `ri(*&b)` compiled with no diagnostic and pushed
+# lane 0 as the address — x86_64 139, IR=3 139, aarch64 139, cx 253, PE 5. That arm judged the dereference by its tokens
+# (`_svo_vderef`: `* NAME` of a `*V` local, retired); `_sarg_vdo` watches the argument's `*` while it is parsed and
+# refuses it when its operand named a vector (`_dro_vnote`, from `_deref_read`: the step word, `_dop_vd`).
+#   OKD1 the filed repro verbatim (`ri(**ppb)`); OKD2-OKD6 the other five spellings into `ri(p: *i64)`; OKD7-OKD9
+#      `**ppb` into `*u8`, into `**i64`, into a by-value `P1` (8 B: "a vector is not a struct"); OKD10 wrapped
+#      `ri((**ppb))`; OKD11 a closure's `ri(**ppb)` and a captured `*pb`; OKD12 a method's `s.m(**ppb)`; OKD13 an
+#      `#inline` fn's; OKD14 top level `ri(*GPB)` / `ri(*&B)` — each refused once per call, naming what the
+#      address-passed arm names (`'*ppb'`, `'*pb'`, `'*pv'`, `'*GPV'`, `'*b'`), on x86_64 / IR=3 / aarch64 / cx / PE
+#   OKDX ten calls in one compile (every spelling, into `*i64` / `*u8` / `**i64` / `P1` / an `#inline` fn, and three
+#      nested: `ri(*h2(**ppb))` both, `ri(*hi(**ppb))` the inner alone — `hi` returns a `*i64` — `ri(*h2(*ppi))` the
+#      outer alone): each of the eleven vector dereferences refused on its own line (no `_panic`), on x86_64 and PE
+#   OKDK the controls, exit values unchanged on every leg: `ri(*ppi)` of a `**i64` (5), `ri(*pps)` of a `**Pt` (42 — a
+#      `*Pt` word), `rg(*ppb)` into a generic `*T` (42 — a `*f64v2` word); OKDK4 `ri(*ps)` of a struct stays refused with
+#      6.7.13's D5 (a) words, once
+#   MUTATION LEDGER (2026-10-17, 6.7.14, the vectors lane V3; each change alone in a scratch copy of the tree, this gate
+#   run there with CYCC=<its 2-stage mutant>; measured):
+#   M-OKD1 `_dro_vnote` never noting                        -> RED 78: OKD1-OKD14 on every leg (compiled: the faulting
+#       push), OK4 on its four legs (`ri(*pb)`: the retired `_svo_vderef` was its arm), OKX and OKDX on x86_64 / PE
+#   M-OKD2 `_sarg_vdo` not restoring `_dro_vo` / `_dro_vod` / `_dro_vend` -> RED 2: OKDX x86_64 / PE (`ri(*h2(*ppi))`'s
+#       outer `*` unwatched, `ri(*hi(**ppb))`'s outer refused on the inner's note — the same total, so OKDX counts each
+#       refusal by its words)
+OKDH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
+struct Hv { k; pv: *f64v2; }
+struct Pt { x; y; }
+struct P1 { x; }
+struct S3 { k; }
+impl S3 { fn m(self, p: *i64): i64 { return 0; } }
+var GPV: *f64v2 = 0;
+fn ri(p: *i64): i64 { return *p; }
+fn ru(p: *u8): i64 { return load8(p); }
+fn rpp(p: **i64): i64 { return 0; }
+fn bv1(p: P1): i64 { return p.x; }
+fn rg<T>(p: *T): i64 { return load64(p); }
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn h2(p: *i64): *f64v2 { return GPV; }
+fn hi(p: *i64): *i64 { return p; }
+#inline
+fn rii(p: *i64): i64 { return *p; }
+'
+printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Hv { k; pv: *f64v2; }' \
+  'var GPV: *f64v2 = 0;' 'fn ri(p: *i64): i64 { return *p; }' 'fn gp(p: *f64v2): *f64v2 { return p; }' \
+  'fn main(): i64 {' '    var b: f64v2 = f64v2_make(42, 7);' '    var pb: *f64v2 = &b;' '    var ppb: **f64v2 = &pb;' \
+  '    return ri(**ppb);          # and ri(*gp(pb)), ri(*h.pv), ri(*GPV), ri(*(pb + 0)), ri(*&b): each the same' \
+  '}' 'syscall(60, main());' > "$D/okd1.src"
+okd_src() {  # $1 out-file  $2 main's body (b, pb, ppb in scope)
+    printf '%sfn main(): i64 {\n    var b: f64v2 = f64v2_make(42, 7);\n    var pb: *f64v2 = &b;\n    var ppb: **f64v2 = &pb;\n    %s\n}\nsyscall(60, main());\n' "$OKDH" "$2" > "$1"
+}
+okd_src "$D/okd2.src" 'return ri(*gp(pb));'
+okd_src "$D/okd3.src" 'var h: Hv; h.pv = pb; return ri(*h.pv);'
+okd_src "$D/okd4.src" 'GPV = pb; return ri(*GPV);'
+okd_src "$D/okd5.src" 'return ri(*(pb + 0));'
+okd_src "$D/okd6.src" 'return ri(*&b);'
+okd_src "$D/okd7.src" 'return ru(**ppb);'
+okd_src "$D/okd8.src" 'return rpp(**ppb);'
+okd_src "$D/okd9.src" 'return bv1(**ppb);'
+okd_src "$D/okd10.src" 'return ri((**ppb));'
+okd_src "$D/okd11.src" 'var c = |k| ri(**ppb) + k; var e = |k| ri(*pb) + k; return fncall1(c, 0) + fncall1(e, 0);'
+okd_src "$D/okd12.src" 'var s: S3; return s.m(**ppb);'
+okd_src "$D/okd13.src" 'return rii(**ppb);'
+printf '%svar B: f64v2 = 0;\nvar GPB: *f64v2 = &B;\nvar R = ri(*GPB) + ri(*&B);\nsyscall(60, R);\n' "$OKDH" > "$D/okd14.src"
+okd_src "$D/okdx.cyr" 'GPV = pb; var h: Hv; h.pv = pb; var x = 5; var pi: *i64 = &x; var ppi: **i64 = &pi;
+    return ri(*h2(**ppb)) + ri(**ppb) + ri(*gp(pb)) + ri(*h.pv) + ru(*(pb + 0)) + rpp(*&b) + bv1(*GPV) + rii(**ppb)
+      + ri(*hi(**ppb)) + ri(*h2(*ppi));'
+okd_msg() {  # $1 row -> the line it must print (the call's name, the operand's last name)
+    case "$1" in
+        1|10|13) echo "cannot pass '*ppb' $KFRAG" ;;
+        2|5) echo "cannot pass '*pb' $KFRAG 'ri'" ;;
+        3) echo "cannot pass '*pv' $KFRAG 'ri'" ;;
+        4) echo "cannot pass '*GPV' $KFRAG 'ri'" ;;
+        6) echo "cannot pass '*b' $KFRAG 'ri'" ;;
+        7) echo "cannot pass '*ppb' $KFRAG 'ru'" ;;
+        8) echo "cannot pass '*ppb' $KFRAG 'rpp'" ;;
+        9) echo "cannot pass '*ppb' to a by-value struct parameter in a call to 'bv1' - a vector is not a struct" ;;
+        12) echo "cannot pass '*ppb' $KFRAG 'S3.m'" ;;
+        11|14) echo "$KFRAG 'ri'" ;;   # two calls: '*ppb' and '*pb' / '*GPB' and '*B'
+    esac
+}
+okd_n() { case "$1" in 11|14) echo 2;; *) echo 1;; esac; }
+echo "OKD. a *V dereference other than \`* NAME\` into *i64 / *u8 / **T / a small by-value struct: refused by name (D31 A)"
+for lg in x86 x86:CYRIUS_IR=3 a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    tg=$(printf '%s' "$lg" | tr -c 'a-zA-Z0-9' '_')
+    for k in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+        fr=$(okd_msg "$k"); want=$(okd_n "$k")
+        f="$D/okd${k}_$tg"
+        rc=0
+        case "$lg" in
+            pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            a64) timeout 60 "$A64" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            cx)  timeout 60 "$CXCC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            x86:*) env "${lg#x86:}" timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+            *)   timeout 60 "$CC" < "$D/okd$k.src" > "$f.bin" 2> "$f.err" || rc=$? ;;
+        esac
+        n=$(grep -c '^error' "$f.err" || true)
+        nm=$(grep '^error' "$f.err" | grep -cF -- "$fr" || true)
+        if [ "$rc" -eq 0 ]; then bad "OKD$k $lg: compiled (rc 0) — want \"$fr\""
+        elif [ "$n" -ne "$want" ] || [ "$nm" -ne "$want" ]; then bad "OKD$k $lg: $n error lines ($nm '$fr'), want $want: $(grep '^error' "$f.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$f.bin" ]; then bad "OKD$k $lg: refused, but a binary was written"
+        else ok "OKD$k $lg: refused once per call"; fi
+    done
+done
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    rc=0
+    if [ "$lg" = pe ]; then CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/okdx.cyr" > "$D/okdx.bin" 2> "$D/okdx.err" || rc=$?
+    else timeout 60 "$CC" < "$D/okdx.cyr" > "$D/okdx.bin" 2> "$D/okdx.err" || rc=$?; fi
+    n=$(grep -c '^error' "$D/okdx.err" || true)
+    nk=$(grep '^error' "$D/okdx.err" | grep -c "$KFRAG\|to a by-value struct parameter in a call to" || true)
+    # each refusal by its own words, counted: a nested call's arm must neither hide the outer `*` nor lend it its note
+    miss=""
+    for e in "2:'*ppb' $KFRAG 'ri'" "1:'*ppb' $KFRAG 'h2'" "1:'*ppb' $KFRAG 'hi'" "1:'*ppi' $KFRAG 'ri'" \
+             "1:'*pb' $KFRAG 'ri'" "1:'*pv' $KFRAG 'ri'" "1:'*pb' $KFRAG 'ru'" "1:'*b' $KFRAG 'rpp'" \
+             "1:'*GPV' to a by-value struct parameter in a call to 'bv1'" "1:'*ppb' $KFRAG 'rii'"; do
+        c=$(grep '^error' "$D/okdx.err" | grep -cF -- "cannot pass ${e#*:}" || true)
+        [ "$c" = "${e%%:*}" ] || miss="$miss [${e#*:}: $c, want ${e%%:*}]"
+    done
+    if [ "$rc" -eq 0 ]; then bad "OKDX $lg: compiled - want 11 refusals"
+    elif [ "$n" -ne 11 ] || [ "$nk" -ne 11 ]; then bad "OKDX $lg: $n error lines ($nk by name), want 11: $(grep '^error' "$D/okdx.err" | head -3 | tr '\n' '|')"
+    elif [ -n "$miss" ]; then bad "OKDX $lg: the wrong refusals:$miss"
+    elif [ -s "$D/okdx.bin" ]; then bad "OKDX $lg: refused, but a binary was written"
+    else ok "OKDX $lg: 11 dereferences (three nested) into another pointer kind / a by-value struct, each refused once"; fi
+done
+okd_src "$D/okdk1.cyr" 'var x = 5; var pi: *i64 = &x; var ppi: **i64 = &pi; return ri(*ppi);'
+okd_src "$D/okdk2.cyr" 'var s: Pt; s.x = 42; var ps: *Pt = &s; var pps: **Pt = &ps; return ri(*pps);'
+okd_src "$D/okdk3.cyr" 'return rg(*ppb);'
+exit_rows OKDK1 "$D/okdk1.cyr" 5 "ri(*ppi) of a **i64 passes its word"
+exit_rows OKDK2 "$D/okdk2.cyr" 42 "ri(*pps) of a **Pt passes its *Pt word"
+exit_rows OKDK3 "$D/okdk3.cyr" 42 "rg(*ppb) into a generic *T passes its *f64v2 word"
+refused OKDK4 "OKDK4 ri(*ps) of a struct: 6.7.13's D5 (a) refusal, once (unchanged)" "${OKDH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return ri(*ps); }\nsyscall(60, main());\n" x86 "cannot pass '*ps' to a parameter that is not a pointer to its struct type in a call to 'ri' - a struct value is no address"
 
 # 6.7.13 (D32 A, the user's decision, 2026-10-15; issues/2026-10-15-captured-vector-into-other-pointer-kind-passes-
 # capture-address.md) — a closure's CAPTURED vector meets the local's argument rules: the filed repro (`|k| ri(b)`, `p:
@@ -1229,4 +1367,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD)"

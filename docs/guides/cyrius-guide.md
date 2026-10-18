@@ -3833,7 +3833,11 @@ Win64, where `rp(b)` into `p: *Pt` happened to pass `&b` and ran; it now stops c
 A):** a call result (`rp(mkv(42, 7))`, `ri(s.mv(..))`, `ri(callptr(&mkv, ..))`) and a `*V`
 dereference (`rp(*pb)`, `ri(*pb)`) into a pointer of another kind are refused with the same words,
 naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a pointer to its vector
-type in a call to 'ri'`); and a vector local, call result or `*pb` passed to a **by-value struct**
+type in a call to 'ri'`) — every dereference whose operand is a `*V`, however written: `**ppb`,
+`*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named by its
+operand's last name, `'*ppb'`; ⚠ through 6.7.13 every spelling but `* NAME` of a local into `*i64`, `*u8`,
+`**T` or a by-value struct of 8 B or less compiled and passed lane 0 as the address — 139 on x86_64 and
+aarch64, a cx guest fault, exit 5 on Windows); and a vector local, call result or `*pb` passed to a **by-value struct**
 parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-value
 struct parameter in a call to 'bv' - a vector is not a struct`. ⚠ Through 6.7.12 each of these
 compiled and passed lane 0's bits as the address or the struct (139 on x86_64 and aarch64, a cx

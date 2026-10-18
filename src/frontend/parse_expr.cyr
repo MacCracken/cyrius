@@ -4615,8 +4615,22 @@ fn _deref_read(S): i64 {
         _PK_MARK(S, iw);   # the pointee's word is this value's own (`_pk_word`)
         _ppd_note(S, d, ow);   # 6.7.13: and its struct, for `**pps`
     }
-    if (vd != 0) { _dvd_note(S, d); }
+    if (vd != 0) {
+        _dvd_note(S, d);
+        _dro_vnote(S, d, vd);   # 6.7.14: into a pointer of another kind (`_sarg_vdo`)
+    }
     if (pk == 1) { _dlo_note(S, d); }
+    return 0;
+}
+# 6.7.14 — the dereference at `d` (its operand just parsed) that `_sarg_vdo` watches (`_dro_vo`), its operand naming
+# the vector `vd` (`_dop_vd`: what `_dlo_vec` reads for a `*V` parameter) and ending the argument (`,` / `)` next — no
+# operator: `*pb + 1` is an operator's operand): noted (`_dro_vod`, `_dro_vend`) for the refusal; nothing is emitted.
+fn _dro_vnote(S, d, vd): i64 {
+    if (d != _dro_vo) { return 0; }
+    var t = TOKTYP(S, GTI(S));
+    if (t != 31) { if (t != 11) { return 0; } }
+    _dro_vod = vd;
+    _dro_vend = GTI(S);
     return 0;
 }
 # ⛔ 6.7.14 — A VECTOR DEREFERENCE IS A VECTOR VALUE AS AN IF-EXPRESSION BRANCH (6.7.13's D34: `*pv` of a `*V` is the
