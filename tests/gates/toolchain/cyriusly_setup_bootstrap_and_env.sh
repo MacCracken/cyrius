@@ -33,7 +33,8 @@
 #   B  STATIC: `_cmd_setup` carries no cross_bins loop (no `cc5_`, no `$CROSS`).
 #   C  build/cycc present, CYRIUS_BOUNDS=1 inherited: rc 0, and the installed bin/cyrfmt is
 #      byte-identical to the default build of programs/cyrfmt.cyr (anti-vacuous: the
-#      CYRIUS_BOUNDS=1 build differs).
+#      CYRIUS_BOUNDS=1 build differs). Both references are built in the checkout copy by its own
+#      build/cycc (6.7.15): the row holds whatever compiler this tree or CYCC holds.
 #
 # MUTATION PROOF (each a scratch copy of the tree with programs/cyriusly.cyr mutated, run through
 # THIS gate; GREEN 10/10 on the real tree):
@@ -105,11 +106,14 @@ check "B1 _cmd_setup names no cc5_ and no \$CROSS loop" 0 \
     "$(awk -v s="$S0" -v e="${E0:-999999}" 'NR >= s && NR <= e && !/^[[:space:]]*#/ && /cc5_|\$CROSS/' programs/cyriusly.cyr | wc -l | tr -d ' ')"
 
 echo "== C: CYRIUS_BOUNDS=1 inherited — the default build is installed =="
-"$CC" < programs/cyrfmt.cyr > "$T/cyrfmt.plain" 2> /dev/null
-CYRIUS_BOUNDS=1 "$CC" < programs/cyrfmt.cyr > "$T/cyrfmt.bounds" 2> /dev/null
+# The references are built in the checkout copy with ITS compiler and sources — what `cyriusly setup` builds
+# with — so C2 compares like with like when this tree's build/cycc (or CYCC) is not the committed one: built
+# with "$CC" it was a false RED in any tree whose compiler emits other code (CHANGELOG [6.7.15]).
+co "$T/c"
+(cd "$T/c" && ./build/cycc < programs/cyrfmt.cyr > "$T/cyrfmt.plain" 2> /dev/null)
+(cd "$T/c" && CYRIUS_BOUNDS=1 ./build/cycc < programs/cyrfmt.cyr > "$T/cyrfmt.bounds" 2> /dev/null)
 check "C0 anti-vacuous: the CYRIUS_BOUNDS=1 build of cyrfmt differs from the default" differs \
     "$(cmp -s "$T/cyrfmt.plain" "$T/cyrfmt.bounds" && echo same || echo differs)"
-co "$T/c"
 setup_in "$T/c" "$T/hc" "$T/chc" "$T/c.log" CYRIUS_BOUNDS=1
 check "C1 setup exits 0" 0 "$RC"
 check "C2 the installed bin/cyrfmt is the default build, byte for byte" identical \
