@@ -33,6 +33,16 @@
 #       same input, interleaved, best of 5: the front ends are the same code, and with L1 green
 #       the x86 time is linear. Under 3x (measured 0.8x; 6.7.14's aarch64 seed pass 5-7x). The
 #       same note; the 16,000 binary exits 128 under qemu-aarch64 when it is installed.
+#   P0  the shell (review fix, 6.7.15): the timing and symbol helpers end with status 0 under
+#       `bash -eo pipefail` (GitHub's `run:` shell) when a best-of-5's last run is no new minimum
+#       and when a symbol is absent. A `[ a -lt b ] && x=a` closing wall_pair's loop left the fn
+#       with status 1 then, and the bare `wall_pair` call ended the gate after L1 with rc 1 and
+#       no verdict — whenever the timings fell that way (3 of 3 runs when found); sym's
+#       `[ -n "$a" ] && echo` did the same to erow's `so=$(sym …)` when a symbol is missing, the
+#       very case row E reports. The row makes the order certain: the gate re-runs itself in a
+#       `bash -eo pipefail` child (DCE_SEED_GATE_P0=<dir>) that runs the helpers alone against
+#       stub compilers whose first run is the fastest (fixup=1 then 9; no wait, then 0.2 s) and
+#       asks sym for a symbol an empty table lacks; the child must print its line and exit 0.
 #   E   exactness, x86 and aarch64: a call after a generic instance emitted INSIDE a dead fn
 #       (`_instantiate_generic_fn` nests the instance's range in its host's; CYRIUS_SYMS shows
 #       gid$i8 starting inside outer(), or the row proves nothing) lies inside the host, so its
@@ -44,7 +54,52 @@
 # both backends equally slow — L1 is the x86 row); only the 6.7.14 aarch64 fixup -> L2 RED alone
 # (6,106 vs 720 ms, 8.4x); `_dce_cover_merge` taking each later range's end even when it is the
 # shorter one (a nested instance cut its host's range short) -> E RED on x86 and aarch64 (`only_y`
-# and `gid$i8` not dead).
+# and `gid$i8` not dead). The P0 row (a scratch copy of this gate): wall_pair's minimum update as
+# `[ "$e" -lt "$WX" ] && WX=$e` -> P0 RED (the child stops at wall_pair, rc 1); sym's as
+# `[ -n "$a" ] && echo …` -> P0 RED (the child stops at `s=$(sym …)`); fixup_best's `&&` form is
+# harmless (its `echo` follows the loop) and takes the `if` form for symmetry.
+SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+
+# ── the helpers (the P0 child runs them alone, so they come before any build) ──────────────
+# Each minimum update and sym's answer is an `if`, never a closing `[ … ] && x=…`: under
+# `bash -eo pipefail` a false test there is the fn's status, and a bare call or a `v=$(…)` of it
+# ends the gate with no verdict (row P0). CHANGELOG [6.7.15]
+fixup_best() {  # best-of-5 FIXUP ms (CYRIUS_PROF) compiling $1 to $1.x86; -1 when a compile fails or prints no fixup=
+  b=99999999
+  for _ in 1 2 3 4 5; do
+    CYRIUS_PROF=1 "$D/stage1" < "$1" > "$1.x86" 2> "$1.x86.err" || { echo -1; return; }
+    f=$(sed -n 's/.*[( ]fixup=\([0-9]*\).*/\1/p' "$1.x86.err" | head -1)
+    [ -n "$f" ] || { echo -1; return; }
+    if [ "$f" -lt "$b" ]; then b=$f; fi
+  done
+  echo "$b"
+}
+ms_since() { echo $(( ($(date +%s%N) - $1) / 1000000 )); }
+wall_pair() {  # best-of-5 wall ms of the aarch64 cross and of the x86 compiler on $1, interleaved:
+  #              sets WA / WX (-1 when a compile fails); the outputs are $1.a64 and $1.x86w
+  WA=99999999; WX=99999999
+  for _ in 1 2 3 4 5; do
+    s=$(date +%s%N)
+    "$D/cc_a64" < "$1" > "$1.a64" 2> "$1.a64.err" || { WA=-1; return; }
+    e=$(ms_since "$s"); if [ "$e" -lt "$WA" ]; then WA=$e; fi
+    s=$(date +%s%N)
+    "$D/stage1" < "$1" > "$1.x86w" 2> /dev/null || { WX=-1; return; }
+    e=$(ms_since "$s"); if [ "$e" -lt "$WX" ]; then WX=$e; fi
+  done
+}
+sym() {  # <symfile> <name>: the fn's start, as a decimal number (nothing when absent)
+  a=$(awk -v n="$2" '$2 == n { print $1 }' "$1" | head -1)
+  if [ -n "$a" ]; then echo $((0x$a)); fi
+}
+if [ -n "${DCE_SEED_GATE_P0:-}" ]; then  # the P0 child: the helpers against the stubs in that dir
+  D=$DCE_SEED_GATE_P0
+  F=$(fixup_best "$D/in")
+  wall_pair "$D/in"
+  s=$(sym "$D/in" outer)
+  echo "went-on F=$F WA=$WA WX=$WX sym=[$s]"
+  exit 0
+fi
+
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dce_seed_pass_linear: cannot cd to $ROOT"; exit 1; }
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -70,32 +125,33 @@ gen 16000 > "$D/q2.cyr"
 NFAIL=0
 fail() { echo "  FAIL: $*"; NFAIL=$((NFAIL + 1)); }
 
-fixup_best() {  # best-of-5 FIXUP ms (CYRIUS_PROF) compiling $1 to $1.x86; -1 when a compile fails or prints no fixup=
-  b=99999999
-  for _ in 1 2 3 4 5; do
-    CYRIUS_PROF=1 "$D/stage1" < "$1" > "$1.x86" 2> "$1.x86.err" || { echo -1; return; }
-    f=$(sed -n 's/.*[( ]fixup=\([0-9]*\).*/\1/p' "$1.x86.err" | head -1)
-    [ -n "$f" ] || { echo -1; return; }
-    [ "$f" -lt "$b" ] && b=$f
-  done
-  echo "$b"
-}
-ms_since() { echo $(( ($(date +%s%N) - $1) / 1000000 )); }
-wall_pair() {  # best-of-5 wall ms of the aarch64 cross and of the x86 compiler on $1, interleaved:
-  #              sets WA / WX (-1 when a compile fails); the outputs are $1.a64 and $1.x86w
-  WA=99999999; WX=99999999
-  for _ in 1 2 3 4 5; do
-    s=$(date +%s%N)
-    "$D/cc_a64" < "$1" > "$1.a64" 2> "$1.a64.err" || { WA=-1; return; }
-    e=$(ms_since "$s"); [ "$e" -lt "$WA" ] && WA=$e
-    s=$(date +%s%N)
-    "$D/stage1" < "$1" > "$1.x86w" 2> /dev/null || { WX=-1; return; }
-    e=$(ms_since "$s"); [ "$e" -lt "$WX" ] && WX=$e
-  done
-}
 note_is() {  # <errfile> <n>: the note counts exactly n unreachable fns
   grep -q "^note: $2 unreachable fns " "$1"
 }
+
+# ── P0: the helpers give the gate its verdict under `bash -eo pipefail` ────────────────────
+if command -v bash > /dev/null 2>&1; then
+  mkdir "$D/p0"
+  cat > "$D/p0/stage1" <<'STUB'
+#!/bin/sh
+cat > /dev/null
+if [ -n "${CYRIUS_PROF:-}" ]; then c=$0.prof; else c=$0.wall; fi
+n=$(cat "$c" 2> /dev/null || echo 0); echo $((n + 1)) > "$c"
+if [ -n "${CYRIUS_PROF:-}" ]; then
+  if [ "$n" = 0 ]; then echo "prof: compile 1 ms (fixup=1 emit=0 ms)" >&2; else echo "prof: compile 9 ms (fixup=9 emit=0 ms)" >&2; fi
+elif [ "$n" != 0 ]; then sleep 0.2; fi
+exit 0
+STUB
+  chmod +x "$D/p0/stage1"; cp "$D/p0/stage1" "$D/p0/cc_a64"; : > "$D/p0/in"
+  p0=0; DCE_SEED_GATE_P0="$D/p0" bash -eo pipefail "$SELF" > "$D/p0.out" 2>&1 || p0=$?
+  if [ "$p0" = 0 ] && grep -qx 'went-on F=1 WA=[0-9]* WX=[0-9]* sym=\[\]' "$D/p0.out"; then
+    echo "  ok: P0 under bash -eo pipefail the helpers return 0 when the last run is no new minimum and a symbol is absent ($(cat "$D/p0.out"))"
+  else
+    fail "P0 under bash -eo pipefail a helper ended the run: rc $p0, $(tr '\n' ' ' < "$D/p0.out") — a closing \`[ … ] && x=…\` again"
+  fi
+else
+  echo "  SKIP: P0 — no bash on PATH (the \`bash -eo pipefail\` child cannot run)"
+fi
 
 # ── L1: x86 ──────────────────────────────────────────────────────────────────────────────
 F1=$(fixup_best "$D/q1.cyr")
@@ -145,10 +201,6 @@ fn main(): i64 { return 42; }
 var r = main();
 syscall(60, r);
 EOF
-sym() {  # <symfile> <name>: the fn's start, as a decimal number
-  a=$(awk -v n="$2" '$2 == n { print $1 }' "$1" | head -1)
-  [ -n "$a" ] && echo $((0x$a))
-}
 erow() {  # <leg> <compiler> <runner...>
   leg=$1; cc=$2; shift 2
   CYRIUS_SYMS="$D/nest.$leg.syms" CYRIUS_DCE_VERBOSE=1 "$cc" < "$D/nest.cyr" > "$D/nest.$leg" 2> "$D/nest.$leg.err" || {
