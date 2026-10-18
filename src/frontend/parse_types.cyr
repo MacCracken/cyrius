@@ -2486,11 +2486,13 @@ fn _dyn_mfn(S, sid, mnoff): i64 {
 # `p.next.val`, `p.m()`; it was "no struct type in scope"): its SLTYPE is `0 - sid` with no
 # inline mark (`_sl_marks` clears one), so field access reads THROUGH the slot, while a value read
 # stays a plain pointer word (`_load_lt`, behind the slot's bit 56) and `p = p.next` rebinds it.
-# `ann` is the annotation's first token.
+# `ann` is the annotation's first token. A generic instance's `var t: *T` reads T under the instance's
+# binding (`_ptr_ann_sid_tp`), so T bound to a struct is that struct's receiver, as `p: *T` is; a scalar
+# T stays a plain pointer with T's step. CHANGELOG [6.7.15]
 fn _sl_ptr_type(S, li, ps, ann): i64 {
     if (ps < 0) { _tup_ptr_refuse(S, 0 - ps, ann, L64(S + 0x5D9D000 + li * 8)); }   # 6.7.7: never a pointer-mode tuple
     if (ps > 0) {
-        var sid = _ptr_ann_sid(S, ann);
+        var sid = _ptr_ann_sid_tp(S, ann);
         if (sid > 0) { SLTYPE(S, li, 0 - sid); return 0; }
         if (ps != 8) { SLTYPE(S, li, 0); return 0; }
     }
@@ -2595,7 +2597,8 @@ fn _ptr_ann_sid(S, ann): i64 {
 # ⛔ 6.7.11 — ... and a type parameter T bound to a struct (`_tp_resolve`): a generic instance's `: *T` return
 # is read under the instance's binding (`_ret_ptr_annot`), where `FINDSTRUCT('T')` finds nothing — so the
 # instance recorded T's step but not its struct, and `gpg<S>()` was no `*S` (issues/2026-10-13-generic-
-# pointer-returning-call-as-struct-source.md). A scalar binding is no struct. Only the return reads it.
+# pointer-returning-call-as-struct-source.md). A scalar binding is no struct. The return and a `*T` local
+# (`_sl_ptr_type`, 6.7.15) read it.
 fn _ptr_ann_sid_tp(S, ann): i64 {
     if (ann <= 0) { return 0; }
     if (TOKTYP(S, ann) != 8) { return 0; }

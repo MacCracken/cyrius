@@ -1221,7 +1221,9 @@ the pointer (it never copies the struct). So does the result of a fn declared `:
 (`first(h).next.val`, `first(h).m(..)`), and since 6.7.11 that of a METHOD declared `: *Struct`
 (`h.get().b`, `h.get().m(..)`, through a `dyn` too). Before 6.6.17 only a parameter did; a `*Node`
 local or global was "no struct type in scope", and such a call's result "does not return a struct"
-(a method's until 6.7.11).
+(a method's until 6.7.11). In a generic instance a `var t: *T` local is a `*S` wherever T is bound to
+the struct `S`, as the `p: *T` parameter is: `t.y`, `t.y = 4` and `t.m()` reach the pointee (6.7.15;
+it was "no struct type in scope for 't'"). At a scalar T it stays a plain pointer stepping `sizeof(T)`.
 A struct VALUE assigned to a `*Struct` local or parameter copies INTO the pointee (`p = l`,
 `p = mk(..)`), and `l = p` copies the pointee into the struct value `l`, at every size (6.7.10 —
 see [Where a struct lives](#where-a-struct-lives-v665)).

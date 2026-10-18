@@ -19,6 +19,14 @@
 #      `*S` local is a pointer now, so the call reaches the stub base and is refused once naming gst (it compiled:
 #      the `*S` local bound S); `ga(&p)` with `p: *T1` — `&p` of a pointer is a `**` and binds nothing (refused
 #      once naming ga, unchanged); `gst<S>(q)`, the explicit spelling, compiles (the migration's fix)
+#   PL (6.7.15) a `var t: *T` LOCAL in an instance is T's binding's receiver, as the `p: *T` parameter is (it was "no
+#      struct type in scope for 't'"): PL1 the filed repro verbatim (docs/development/issues/2026-10-16-generic-pointer-
+#      local-of-type-parameter-untyped-in-instance.md) `var t: *T = p; return t.y;` twice 18, PL2 a store `t.y = 4` 4, PL3 a
+#      method `t.m()` 20, PL4 the inferred `g(&q)` 12, PL5 a scalar T keeps a plain pointer with T's step (`t + 1`
+#      at T = i32 / i64: 4 + 80 = 84, unchanged) and a struct T its sizeof (16, unchanged), PL6 two parameters
+#      `*T` / `*U` 39, PL7 a `*T` local walked through its `*Nd` field 7 — on every leg
+#   PT (6.7.15) tests/tcyr/crossos/generic_pointer_receivers.tcyr (a `*T` in an instance as a receiver: the PL shapes,
+#      a compound store, T bound to a generic instance, a rebind) on every leg: "N passed, 0 failed (N total)"
 #   T  tests/tcyr/crossos/generic_struct_inference.tcyr (its PB group: every source above, a capture, `wp.p` / `G.p`,
 #      a generic `: *T` call, a generic method, a forward, an 8 B struct's stub through `&t` / `&G`, an untyped impl
 #      `self`, a `: T` result) on x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine):
@@ -38,6 +46,11 @@
 #   MP6 `_infer_conc_global` without the `*S` rung   -> RED R mb (8); T (rc 139: `var q: Pt = pb_gd(pb_gpp)`)
 #   MP7 `_ic_call_rs` without `_ic_rps`              -> RED R mk (8); T (2 failed: a `: *S` call, a `: *T` generic)
 #   MP8 `_ic_cap` answers 0 (no capture rung)        -> RED T (2 failed: the two captures, 8)
+# (2026-10-18, 6.7.15 — the PL rows; the gate run with CYCC= the mutant's 2-stage cycc, its aarch64 / cx / PE legs built
+# from the mutant's own src:)
+#   MPL1 `_sl_ptr_type` back on `_ptr_ann_sid` (T read  -> RED 35: PL1 PL2 PL3 PL4 PL6 PL7 on every leg ("no struct
+#        unbound: the fix reverted)                        type in scope for 't'"), PT on every leg (does not build);
+#                                                          PL5 green (a scalar T's step is the slot's mark)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -72,6 +85,10 @@ FLOOR=261
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 NPB=$(grep -c 'assert_eq(.*"PB: ' "$TC")
 if [ "$NPB" -lt 21 ]; then echo "FAIL: $G: only $NPB PB rows in $TC (floor 21) — rows were lost"; exit 1; fi
+TR=tests/tcyr/crossos/generic_pointer_receivers.tcyr
+[ -f "$TR" ] || { echo "FAIL: $G: $TR is missing"; exit 1; }
+NR=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TR")
+if [ "$NR" -lt 13 ]; then echo "FAIL: $G: only $NR rows in $TR (floor 13) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -182,6 +199,67 @@ run_leg x86 "$D/n3.cyr" "$D/n3"
 if [ "$RC" -eq 5 ]; then ok "N3: gst<S>(q), the explicit spelling, exits 5"
 else bad "N3: gst<S>(q) exits $RC, want 5 $(grep -m1 error "$D/n3.err")"; fi
 
+echo "PL. a \`var t: *T\` local in an instance is T's binding's receiver (6.7.15)"
+# The filed repro, verbatim (the issue's text).
+cat > "$D/pl1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn g<T>(p: *T): i64 { var t: *T = p; return t.y; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; return g<Pt>(&q) + g<Pt>(&q); }
+syscall(60, go());
+X
+xr PL1 "$D/pl1.cyr" 18 "the filed repro, g<Pt> \`var t: *T = p; t.y\` twice"
+cat > "$D/pl2.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn g<T>(p: *T): i64 { var t: *T = p; t.y = 4; return 0; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; g<Pt>(&q); return q.y; }
+syscall(60, go());
+X
+xr PL2 "$D/pl2.cyr" 4 "a store through it, \`t.y = 4\`"
+cat > "$D/pl3.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+impl Pt { fn m(self): i64 { return self.x + self.y; } }
+fn g<T>(p: *T): i64 { var t: *T = p; return t.m(); }
+fn go(): i64 { var q: Pt; q.x = 11; q.y = 9; return g<Pt>(&q); }
+syscall(60, go());
+X
+xr PL3 "$D/pl3.cyr" 20 "a method through it, \`t.m()\`"
+cat > "$D/pl4.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn g<T>(p: *T): i64 { var t: *T = p; return t.y; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; return g(&q) + 3; }
+syscall(60, go());
+X
+xr PL4 "$D/pl4.cyr" 12 "the inferred \`g(&q)\`"
+cat > "$D/pl5.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn g<T>(p: *T): i64 { var t: *T = p; var u = t + 1; return u - p; }
+fn go(): i64 { var a: i32 = 5; var q: Pt; q.x = 1; q.y = 2; return g<i32>(&a) + g<i64>(&a) * 10 + g<Pt>(&q) * 100; }
+syscall(60, go() - 1600);
+X
+xr PL5 "$D/pl5.cyr" 84 "a scalar T steps T (i32 4, i64 8) and a struct T its sizeof (16)"
+cat > "$D/pl6.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Q { a; b; c; }
+fn g<T, U>(p: *T, q: *U): i64 { var t: *T = p; var u: *U = q; return t.y + u.c; }
+fn go(): i64 { var a: Pt; a.x = 1; a.y = 9; var b: Q; b.a = 1; b.b = 2; b.c = 30; return g<Pt, Q>(&a, &b); }
+syscall(60, go());
+X
+xr PL6 "$D/pl6.cyr" 39 "two parameters, \`var t: *T\` and \`var u: *U\`"
+cat > "$D/pl7.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Nd { v; next: *Nd; }
+fn g<T>(p: *T): i64 { var t: *T = p; var s = 0; while (t != 0) { s = s + t.v; t = t.next; } return s; }
+fn go(): i64 { var a: Nd; var b: Nd; a.v = 3; b.v = 4; a.next = &b; b.next = 0; return g<Nd>(&a); }
+syscall(60, go());
+X
+xr PL7 "$D/pl7.cyr" 7 "a \`*T\` local walked through its \`next: *Nd\` field"
+
 echo "T. $TC ($N rows; cx $NCX)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -193,6 +271,15 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "T $leg: exit $RC, '$LAST' (want '$want passed, 0 failed ($want total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "PT. $TR ($NR rows)"
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TR" "$D/pt_$n"
+    if [ "$RC" -eq -1 ]; then bad "PT $leg: the values file did not build: $(grep -m1 'error' "$D/pt_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NR passed, 0 failed ($NR total)" ]; then ok "PT $leg: $LAST"
+    else bad "PT $leg: exit $RC, '$LAST' (want '$NR passed, 0 failed ($NR total)') $(grep -m3 'FAIL' "$D/pt_$n.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), a \`var t: *T\` local's receiver (PL, and $NR rows PT) on every leg, and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

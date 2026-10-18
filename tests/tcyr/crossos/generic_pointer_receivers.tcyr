@@ -1,0 +1,55 @@
+# generic_pointer_receivers.tcyr — 6.7.15. A `*T` IN A GENERIC INSTANCE IS A `*S` RECEIVER WHERE T IS BOUND TO
+# THE STRUCT S, as the `p: *T` parameter always was.
+#
+# ⛔ THROUGH 6.7.14 a `var t: *T` LOCAL in an instance read its annotation with T unbound (`_sl_ptr_type` ->
+# `_ptr_ann_sid`, `FINDSTRUCT('T')`), so `t` was a plain pointer: `t.y`, `t.y = 4` and `t.m()` were refused "no
+# struct type in scope for 't'" while the parameter `p: *T` and a non-generic `var t: *Pt` worked
+# (issues/2026-10-16-generic-pointer-local-of-type-parameter-untyped-in-instance.md). A scalar T keeps a plain
+# pointer stepping sizeof(T).
+#
+# CROSS-HOST: tests/gates/frontend/generic_ptr_param_infer.sh runs this file on x86_64 (plain, CYRIUS_IR=3),
+# aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's cross-OS leg on ecb / ach / cass / pi. The filed
+# repro verbatim is that gate's PL1.
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Q3 { a; b; c; }
+struct Nd { v; next: *Nd; }
+struct Box<T> { v: T; n; }
+impl Pt { fn m(self): i64 { return self.x * 10 + self.y; } }
+
+fn pl_get<T>(p: *T): i64 { var t: *T = p; return t.y; }
+fn pl_set<T>(p: *T, v): i64 { var t: *T = p; t.y = v; return 0; }
+fn pl_add<T>(p: *T, v): i64 { var t: *T = p; t.y += v; return t.y; }
+fn pl_meth<T>(p: *T): i64 { var t: *T = p; return t.m(); }
+fn pl_step<T>(p: *T): i64 { var t: *T = p; var u = t + 1; return u - p; }
+fn pl_two<T, U>(p: *T, q: *U): i64 { var t: *T = p; var u: *U = q; return t.y * 100 + u.c; }
+fn pl_walk<T>(p: *T): i64 { var t: *T = p; var s = 0; while (t != 0) { s = s + t.v; t = t.next; } return s; }
+fn pl_box<T>(p: *T): i64 { var t: *T = p; return t.n; }
+fn pl_rebind<T>(p: *T, q: *T): i64 { var t: *T = p; var a = t.y; t = q; return a * 10 + t.y; }
+
+fn run(): i64 {
+    var q: Pt; q.x = 1; q.y = 9;
+    assert_eq(pl_get<Pt>(&q) + pl_get<Pt>(&q), 18, "PL: the filed repro, `var t: *T = p; t.y` twice (was refused)");
+    assert_eq(pl_get(&q), 9, "PL: the inferred `g(&q)` (was refused)");
+    pl_set<Pt>(&q, 4);
+    assert_eq(q.y, 4, "PL: a store through it, `t.y = v` (was refused)");
+    assert_eq(pl_add<Pt>(&q, 3), 7, "PL: a compound store, `t.y += v`");
+    assert_eq(pl_meth<Pt>(&q), 17, "PL: a method through it, `t.m()` (was refused)");
+    var a: i32 = 5;
+    assert_eq(pl_step<i32>(&a), 4, "PL: a scalar T stays a plain pointer stepping sizeof(T) (i32, unchanged)");
+    assert_eq(pl_step<i64>(&a), 8, "PL: ... (i64, unchanged)");
+    assert_eq(pl_step<Pt>(&q), 16, "PL: a struct T steps its sizeof (unchanged)");
+    var r: Q3; r.a = 1; r.b = 2; r.c = 30;
+    assert_eq(pl_two<Pt, Q3>(&q, &r), 730, "PL: two parameters, `var t: *T` / `var u: *U`");
+    var n1: Nd; var n2: Nd; n1.v = 3; n2.v = 4; n1.next = &n2; n2.next = 0;
+    assert_eq(pl_walk<Nd>(&n1), 7, "PL: walked through its `next: *Nd` field, `t = t.next`");
+    var b: Box<i32>; b.v = 1; b.n = 6;
+    assert_eq(pl_box<Box<i32>>(&b), 6, "PL: T bound to a generic instance, `t.n`");
+    var q2: Pt; q2.x = 0; q2.y = 5;
+    assert_eq(pl_rebind<Pt>(&q, &q2), 75, "PL: `t = q` rebinds the pointer (no copy)");
+    assert_eq(q.y * 10 + q2.y, 75, "PL: ... both pointees unchanged");
+    return 0;
+}
+run();
+var r = assert_summary();
