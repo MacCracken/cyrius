@@ -3022,7 +3022,8 @@ fn _pp_is_tp(S, tn): i64 {
 # The struct a WHOLE argument at token a reaches through two pointers, as `T` of a `pp: **T` it is passed to: the pin of
 # its step word (`_pp_sid`) — a `**S` local, parameter, capture or global, a field declared `**S` reached through a
 # chain, a call returning `**S` (a generic one at the instance it reaches) — or `&p` of a `*S` local, parameter or
-# global (`_ic_pp_addr`). Anything else (a `***S`, a `**i32`, an expression) infers i64.
+# global (`_ic_pp_addr`). 6.7.15 (D11 (a)): the same sources of a `**i32` / `**f64` bind that scalar
+# (`_ic_pscalar`). Anything else (a `***S`, a `**u8`, an expression) infers i64.
 fn _ic_pp_arg(S, a): i64 {
     var t = TOKTYP(S, a);
     if (t == 27) { return _ic_pp_addr(S, a + 1); }
@@ -3033,9 +3034,11 @@ fn _ic_pp_arg(S, a): i64 {
     if (nt == 10 || nt == 19) { return _ic_pp_sid(S, _fn_ret_ps(_gen_call_inst(S, a))); }
     return _ic_pp_sid(S, _ic_pp_name(S, TOKVAL(S, a)));
 }
-# The struct step word `w`'s pin names (its pointee `*S`'s S), else i64.
+# The struct step word `w`'s pin names (its pointee `*S`'s S), 6.7.15 (D11) else its pointee word's scalar
+# (`_pp_inner`: a `**i32`'s `*i32`), else i64.
 fn _ic_pp_sid(S, w): i64 {
     var s = _pp_sid(_ps_pin(w));
+    if (s <= 0) { return _ic_pscalar(_pp_inner(S, w)); }
     return _ic_pp_ok(S, s);
 }
 # A struct `s` as a binding (a tuple or a dyn binds nothing, as `_ic_addr`), else i64.
@@ -3061,8 +3064,8 @@ fn _ic_pp_chain(S, a): i64 {
     if (l == 0) { return 0; }
     return _fld_ps_get(S, (l >> 32) - 1, l & 0xFFFFFFFF);
 }
-# `&p` with p (token i, the whole argument) a `*S` local, parameter or global: S. A capture's `&c` is its env copy's
-# address and binds nothing (as `_ic_addr`).
+# `&p` with p (token i, the whole argument) a `*S` local, parameter or global: S — 6.7.15 (D11): a `*i32` / `*f64` one
+# its scalar (`_ic_pscalar`). A capture's `&c` is its env copy's address and binds nothing (as `_ic_addr`).
 fn _ic_pp_addr(S, i): i64 {
     if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
     var noff = TOKVAL(S, i);
@@ -3071,12 +3074,13 @@ fn _ic_pp_addr(S, i): i64 {
     if (li >= 0) {
         if (GLPTRP(S, li) == 0) { return 0 - 8; }
         var lt = GLTYPE(S, li);
-        if (lt >= 0) { return 0 - 8; }
+        if (lt >= 0) { return _ic_pscalar(_slot_ptr_word(S, li)); }
         if (lt <= 0 - 2048) { return 0 - 8; }
         return _ic_pp_ok(S, 0 - lt);
     }
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
+    if (_gv_ptr_sid(S, vi) <= 0) { return _ic_pscalar(_gv_ptr_word(S, vi)); }
     return _ic_pp_ok(S, _gv_ptr_sid(S, vi));
 }
 # The LEAF field of the whole-argument chain at token a (`_gsc_chain`'s walk): its struct's sid in the high word and

@@ -12782,6 +12782,7 @@ fn _capture_tparams(S): i64 {
 # double's bits. An f32 is not a type argument (nor a return type): it stays i64. CHANGELOG [6.7.9]
 # ⛔ 6.7.14 — `ptr` 1: the carrying parameter is `p: *T` (`_ic_arg`), where a pointer binds what it POINTS AT; 0:
 # `x: T`, where no pointer binds (see `_ic_arg`). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — and what it points at may be a SCALAR (the user's decision D11 (a), 2026-10-18): see `_ic_pscalar`.
 fn _infer_conc_at(S, ptr): i64 {
     if (PEEKT(S) == 61) { return _ic_flit(S); }
     if (PEEKT(S) == 27) { return _ic_addr(S, ptr); }   # 6.7.14: `&G` / `&l`
@@ -12800,51 +12801,102 @@ fn _infer_conc_at(S, ptr): i64 {
                 # 6.6.10: a vector local's SLTYPE is a descriptor sentinel (<= -2048), not a
                 # struct id — it read as "struct 2093". Vectors are not type arguments.
                 if (_ic_lt <= 0 - 2048) { return 0 - 8; }
-                if (GLPTRP(S, _ic_lli) == 1) { return _ic_ptr_slot(_ic_lt, ptr); }   # 6.7.14: a `*S` slot
+                if (GLPTRP(S, _ic_lli) == 1) { return _ic_ptr_slot(S, _ic_lli, _ic_lt, ptr); }   # 6.7.14: a `*S` slot
                 if (_load_lt(S, _ic_lli) == F64_TYID) { return 0 - 9; }   # 6.7.9
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
                 return 0 - 8;
             }
-            var _ic_cs = _ic_cap(S, _ic_noff, ptr);   # 6.7.14: a captured `*S`
-            if (_ic_cs > 0) { return _ic_cs; }
-            if (_ic_cs < 0) { return _infer_conc_global(S, _ic_noff, 0); }
+            if (_cl_cap_esl(S, _ic_noff) >= 0) { return _ic_cap(S, _ic_noff, ptr); }   # 6.7.14: a captured `*S`
             return _infer_conc_global(S, _ic_noff, ptr);
         }
     }
     return 0 - 8;
 }
-# A typed-pointer slot (a `*S` local, parameter or capture: SLTYPE `0 - sid` behind bit 56 since 6.6.17) binds S
-# through `p: *T` only; through `x: T` it is a pointer, which infers i64. CHANGELOG [6.7.14]
-fn _ic_ptr_slot(lt, ptr): i64 {
-    if (ptr == 1) { if (lt < 0) { return 0 - lt; } }
-    return 0 - 8;
+# A typed-pointer slot `li` (a `*S` local, parameter or capture: SLTYPE `0 - sid` behind bit 56 since 6.6.17) binds S
+# through `p: *T` only — 6.7.15 (D11 (a)): a scalar pointee its scalar (`_ic_pscalar`); through `x: T` it is a
+# pointer, which infers i64. CHANGELOG [6.7.14]
+fn _ic_ptr_slot(S, li, lt, ptr): i64 {
+    if (ptr == 0) { return 0 - 8; }
+    if (lt < 0) { return 0 - lt; }
+    return _ic_pscalar(_slot_ptr_word(S, li));
+}
+# ⛔ 6.7.15 — A `p: *T` / `pp: **T` PARAMETER BINDS A SCALAR POINTEE TOO (the user's decision D11 (a), 2026-10-18).
+# 6.7.14's D8 bound only a struct pointee: `second(pa)` with `pa: *i32` and `fn second<T>(p: *T)` ran the i64 base,
+# whose `p + 1` stepped 8 and `*p` read 8 (over an i32 array: a[2]'s word, where `second<i32>(pa)` reads a[1]), and
+# `gsz(&h)` with `h: f64` was the i64 instance. The binding a typed pointer's step word `w` names (its kind, bits 40-47,
+# `_ps_word`): i8 / i16 / i32 their width, f64 -9; i64 for every other pointee — `*i64`, `*u8`..`*u64`, `*f32`,
+# `*bool`, a pointer, a vector, an enum: no type argument but i64 (an f32 value binds none either). A non-i64 answer
+# marks `_gi_sc`, so the call instantiates as `second<i32>(pa)` does (`_gen_sc_inst`; a stub base keeps its refusal).
+# Every `p: *T` source reads its word here — a `*T` local, parameter, capture or global, a `: *T` call, a `*T` field
+# chain, `&x` of a scalar local or global (`_ic_ascalar`) — and a `pp: **T` source its pin's pointee word
+# (`_ic_pp_sid`, `_ic_pp_addr`). CHANGELOG [6.7.15]
+fn _ic_pscalar(w): i64 {
+    var r = 0 - 8;
+    if (w > 0) {
+        var ed = (w >> 40) & 0xFF;
+        if (ed == 0x41) { r = 0 - 1; }
+        elif (ed == 0x42) { r = 0 - 2; }
+        elif (ed == 0x44) { r = 0 - 4; }
+        elif (ed == 0x28) { r = 0 - 9; }
+    }
+    if (r != 0 - 8) { _gi_sc = 1; }
+    return r;
 }
 # A name a capturing closure's body reads as a capture (`_cl_cap_esl`), through `p: *T`: its struct when the
-# enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), -1 for any other capture (read as
-# before), 0 when it is no capture. CHANGELOG [6.7.14]
+# enclosing slot is a `*S` (its pointer mark rides the snapshot, `_cl_snap_ptrp`), 6.7.15 (D11) its scalar when it is
+# a scalar pointer; any other capture reads as before (a global of its name, else i64). CHANGELOG [6.7.14]
 fn _ic_cap(S, noff, ptr): i64 {
-    if (ptr == 0) { return 0; }
     var esl = _cl_cap_esl(S, noff);
-    if (esl < 0) { return 0; }
-    if (_cl_snap_ptrp(esl) == 0) { return 0 - 1; }
+    if (ptr == 0) { return _infer_conc_global(S, noff, 0); }
+    if (_cl_snap_ptrp(esl) == 0) { return _infer_conc_global(S, noff, 0); }
     var t = _cl_snap_type(esl);
-    if (t >= 0) { return 0 - 1; }
-    if (t <= 0 - 2048) { return 0 - 1; }
-    return 0 - t;
+    if (t <= 0 - 2048) { return _infer_conc_global(S, noff, 0); }
+    if (t < 0) { return 0 - t; }
+    return _ic_pscalar(_cl_snap_ptr_word(esl));
 }
 # `&name` at the cursor through `p: *T`: an inline struct local, a by-value struct parameter or an inline struct
 # global binds its struct (`_gsc_addr_of`, the struct carrier's reader); a pointer's `&p` is a `**`, and a tuple,
-# a dyn and a capture bind nothing. i64 through `x: T`. CHANGELOG [6.7.14]
+# a dyn and a capture bind nothing. 6.7.15 (D11): a scalar local or global its scalar (`_ic_ascalar`). i64 through
+# `x: T`. CHANGELOG [6.7.14]
 fn _ic_addr(S, ptr): i64 {
     if (ptr == 0) { return 0 - 8; }
     var i = GTI(S) + 1;
     if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
     if (_cl_cap_esl(S, TOKVAL(S, i)) >= 0) { return 0 - 8; }   # a capture's copy: not `&l` / `&G`
     var s = _gsc_addr_of(S, TOKVAL(S, i));
-    if (s <= 0) { return 0 - 8; }
+    if (s <= 0) { return _ic_ascalar(S, TOKVAL(S, i)); }
     if (_tup_is(S, s) == 1) { return 0 - 8; }
     if (_dyn_is(S, s) == 1) { return 0 - 8; }
     return s;
+}
+# `&noff` of a scalar (6.7.15, D11 (a)): an i8 / i16 / i32 local, parameter or global its width — a SIGNED narrow one,
+# as its load reads it (a local's negative slice-width mark, a global's GVSGN) — an f64 one f64 (marking `_gi_sc`, as
+# `_ic_pscalar`); i64 for anything else (an i64 or unsigned or `bool` / `f32` scalar, a pointer — `&p` is a `**` —
+# an array or other aggregate, no such name).
+fn _ic_ascalar(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 1) { return 0 - 8; }
+        if (GLAGG(S, li) == 1) { return 0 - 8; }
+        var lt = _load_lt(S, li);
+        if (lt == F64_TYID) { return _ic_sc_mark(0 - 9); }
+        if (lt == 1 || lt == 2 || lt == 4) { if (GSLICE_W(S, li) < 0) { return _ic_sc_mark(0 - lt); } }
+        return 0 - 8;
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 8; }
+    if (GVSGN(S, vi) >= 0x100) { return 0 - 8; }   # an array
+    var gt = GVTYPE(S, vi);
+    if (gt == F64_TYID) { return _ic_sc_mark(0 - 9); }
+    if (GVPM(S, vi) != 0) { return 0 - 8; }
+    if (GVSGN(S, vi) != 1) { return 0 - 8; }
+    var gsz = L64(_vars_base + vi * 8);
+    if (gsz == 1 || gsz == 2 || gsz == 4) { return _ic_sc_mark(0 - gsz); }
+    return 0 - 8;
+}
+fn _ic_sc_mark(c): i64 {
+    _gi_sc = 1;
+    return c;
 }
 # 6.6.10 (bite 7 review): a `pp: *Pt` parameter. The parameter loop skips the `*`, so the slot is
 # typed `Pt` like a by-value one and `pp.x` works — but it is a POINTER, and a `var q: *Pt` local
@@ -13310,18 +13362,22 @@ fn _ic_call_rs(S, fi, ptr): i64 {
     if (r < 0) { if (r != 0 - 8) { return r; } }   # a declared scalar / vector return: the instance's too
     var ifi = _gen_call_inst(S, GTI(S));
     if (ifi < 0) { return r; }
-    if (ptr == 1) { if (_ic_rps(S, ifi, 0, 1) > 0) { return _ic_rps(S, ifi, 0, 1); } }
+    if (ptr == 1) { if (_fn_ret_ps(ifi) > 0) { return _ic_rps(S, ifi, r, 1); } }   # 6.7.15: a scalar pointee too
     var ir = GFRS(S, ifi);
     if (ir == 0 - 9) { return ir; }
     if (ir > 0) { return ir; }
     return r;
 }
-# The struct fn fi's `: *S` return points at (`_fn_rpsid`) when `ptr` is 1, else `r` (fi's own return). CHANGELOG [6.7.14]
+# The struct fn fi's `: *S` return points at (`_fn_rpsid`) when `ptr` is 1 — 6.7.15 (D11): a `: *i32` / `: *f64`
+# return's scalar (`_ic_pscalar` of its step word) — else `r` (fi's own return). CHANGELOG [6.7.14]
 fn _ic_rps(S, fi, r, ptr): i64 {
     if (ptr == 0) { return r; }
-    if (_fn_rpsid == 0) { return r; }
-    var ps = L64(_fn_rpsid + fi * 8);
-    if (ps > 0) { return ps; }
+    if (_fn_rpsid != 0) {
+        var ps = L64(_fn_rpsid + fi * 8);
+        if (ps > 0) { return ps; }
+    }
+    var w = _fn_ret_ps(fi);
+    if (w > 0) { return _ic_pscalar(w); }
     return r;
 }
 # The fn the call at token ti (`name(` / `name<..>(`) reaches — a generic's instance (`_pair_gen_inst`,
@@ -13367,7 +13423,10 @@ fn _is_ptr_param(S, li): i64 {
 fn _infer_conc_global(S, noff, ptr): i64 {
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 8; }
-    if (ptr == 1) { if (_gv_ptr_sid(S, vi) > 0) { return _gv_ptr_sid(S, vi); } }
+    if (ptr == 1) {
+        if (_gv_ptr_sid(S, vi) > 0) { return _gv_ptr_sid(S, vi); }
+        if (_gv_ptr_word(S, vi) > 0) { return _ic_pscalar(_gv_ptr_word(S, vi)); }   # 6.7.15 (D11): a `*i32` global
+    }
     if (GVTYPE(S, vi) == F64_TYID) { return 0 - 9; }   # 6.7.9: an f64 global binds f64
     if (GVPM(S, vi) == 0) { return 0 - 8; }
     var t = GVTYPE(S, vi);
@@ -14227,10 +14286,7 @@ fn _gen_addr_check(S, fi, noff): i64 {
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
     if (ptr == 1) {
-        if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) {
-                var cs = _gsc_chain(S, a);
-                if (cs > 0) { return cs; }
-            } }
+        if (TOKTYP(S, a) == 2) { if (TOKTYP(S, a + 1) == 41) { return _ic_chain(S, a); } }
     }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var sv = GTI(S);
@@ -14238,6 +14294,14 @@ fn _ic_arg(S, fi, a, k): i64 {
     var c = _infer_conc_at(S, ptr);
     STI(S, sv);
     return c;
+}
+# A field chain `w.p` (the whole argument at token a) through `p: *T`: what its leaf field declared `*S` points at
+# (`_gsc_chain`) — 6.7.15 (D11): a leaf declared `*i32` / `*f64` its scalar (`_ic_pscalar` of the leaf's step word,
+# `_ic_pp_chain`); i64 otherwise (an inline field, no whole chain). CHANGELOG [6.7.14]
+fn _ic_chain(S, a): i64 {
+    var cs = _gsc_chain(S, a);
+    if (cs > 0) { return cs; }
+    return _ic_pscalar(_ic_pp_chain(S, a));
 }
 # 1 = parameter k (0-based) of generic fi is declared `*T` (`_pptr_param`), with `_dps_param`'s cursor put back.
 fn _ic_ptr_param(S, fi, k): i64 {

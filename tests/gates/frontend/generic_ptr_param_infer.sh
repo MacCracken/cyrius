@@ -28,6 +28,13 @@
 #   PT (6.7.15) tests/tcyr/crossos/generic_pointer_receivers.tcyr (a `*T` in an instance as a receiver: the PL shapes,
 #      a compound store, T bound to a generic instance, a rebind; and its PF rows, a generic struct's `p: *T` field
 #      hopping in its instance — generic_struct_field.sh HF) on every leg: "N passed, 0 failed (N total)"
+#   S  (6.7.15, the user's decision D11 (a), 2026-10-18) a SCALAR pointee binds too: S1 the filed repro verbatim
+#      (docs/development/issues/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md), m() 25 (was
+#      89: gsz(pa) 4, gsz(&h) the f64 instance), S2 its m2() `second(pa)` 9 (was 11: the base stepped 8) — on every
+#      leg; S3 (x86_64) a stub generic given a `*i32` is refused once naming it, as before (a scalar binding of a stub)
+#   PS (6.7.15) tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr (every `p: *T` / `pp: **T` source of a scalar
+#      pointee, the f64 instance's xmm result, a method, a forward, a tail call; `*u8` / `*f32` / `*bool` / `*i64` /
+#      `***i32` and an `x: T` stay i64) on every leg: "N passed, 0 failed (N total)"
 #   T  tests/tcyr/crossos/generic_struct_inference.tcyr (its PB group: every source above, a capture, `wp.p` / `G.p`,
 #      a generic `: *T` call, a generic method, a forward, an 8 B struct's stub through `&t` / `&G`, an untyped impl
 #      `self`, a `: T` result) on x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine):
@@ -53,6 +60,12 @@
 #        unbound: the fix reverted)                        type in scope for 't'"), PT on every leg (does not build);
 #                                                          PL5 green (a scalar T's step is the slot's mark)
 #   (the PF rows' mutants are generic_struct_field.sh's MHF1 / MHF2: PT RED on every leg)
+# (2026-10-18, 6.7.15 — the S / PS rows; CYCC= the mutant, so its x86_64 / IR / PE legs carry it:)
+#   MS1 the fix reverted (the lane's previous compiler)  -> RED S1 (89), S2 (11), PS (10 of 35 pass)
+#   MS2 `_ic_pscalar` answers i64 (no scalar pointee)    -> RED S1, S2, PS (13 of 35 pass)
+#   MS3 `_ic_pscalar` binds without marking `_gi_sc`     -> RED S1, S2, PS (15 of 35: the call reaches the i64 base)
+#   MS4 `_ic_pp_sid` without its scalar arm              -> RED PS (5 failed: the `**i32` / `**f64` / `**i16` rows)
+#   MS5 `_ic_addr` without `_ic_ascalar` (`&x`)          -> RED PS (3 failed: `&i` / `&G` of an i32, `&h` of an f64)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -91,6 +104,10 @@ TR=tests/tcyr/crossos/generic_pointer_receivers.tcyr
 [ -f "$TR" ] || { echo "FAIL: $G: $TR is missing"; exit 1; }
 NR=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TR")
 if [ "$NR" -lt 26 ]; then echo "FAIL: $G: only $NR rows in $TR (floor 26) — rows were lost"; exit 1; fi
+TS=tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr
+[ -f "$TS" ] || { echo "FAIL: $G: $TS is missing"; exit 1; }
+NS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TS")
+if [ "$NS" -lt 35 ]; then echo "FAIL: $G: only $NS rows in $TS (floor 35) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -262,6 +279,41 @@ syscall(60, go());
 X
 xr PL7 "$D/pl7.cyr" 7 "a \`*T\` local walked through its \`next: *Nd\` field"
 
+echo "S. a scalar pointee binds through \`p: *T\` (6.7.15, D11 (a))"
+# The filed repro, verbatim (the issue's text); S2 is its m2() appended in place of m()'s exit.
+cat > "$D/s1.cyr" <<'X'
+include "lib/syscalls.cyr"
+fn gsz<T>(x: *T): i64 { return sizeof(T); }
+fn second<T>(p: *T): i64 { var q = p + 1; return *q; }
+fn m(): i64 {
+    var a: i32[4];
+    a[0] = 7; a[1] = 9; a[2] = 11; a[3] = 13;
+    var pa: *i32 = &a;
+    var h: f64 = 1.5;
+    return gsz(pa) * 10000 + gsz(&h) * 1000 + gsz<i32>(pa) * 100 + second(pa) * 0 + second<i32>(pa);
+}
+fn m2(): i64 { var a: i32[4]; a[0] = 7; a[1] = 9; a[2] = 11; a[3] = 13; var pa: *i32 = &a; return second(pa); }
+syscall(60, m() % 256);
+X
+xr S1 "$D/s1.cyr" 25 "the filed repro's m(): gsz(pa) 4, gsz(&h) 8 at f64"
+sed 's/^syscall(60, m() % 256);$/syscall(60, m2());/' "$D/s1.cyr" > "$D/s2.cyr"
+xr S2 "$D/s2.cyr" 9 "the filed repro's m2(): second(pa) steps 4 to a[1]"
+{ printf 'include "lib/syscalls.cyr"\nstruct T1 { a; }\nfn stub<T>(x: *T): i64 { return x.a; }\n'
+  printf 'fn m(): i64 { var a: i32[2]; var pa: *i32 = &a; return stub(pa); }\nsyscall(60, m());\n'; } > "$D/s3.cyr"
+erc=0; "$CC" < "$D/s3.cyr" > "$D/s3" 2> "$D/s3.err" || erc=$?
+ne=$(grep -c '^error' "$D/s3.err" || true)
+if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "generic 'stub' $STUB" "$D/s3.err"; then ok "S3: stub(pa) with a \`*i32\` is refused once naming stub (a scalar binding of a stub)"
+else bad "S3: stub(pa): rc $erc, $ne errors: $(grep '^error' "$D/s3.err" | tr '\n' ' ')"; fi
+
+echo "PS. $TS ($NS rows)"
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TS" "$D/ps_$n"
+    if [ "$RC" -eq -1 ]; then bad "PS $leg: the values file did not build: $(grep -m1 'error' "$D/ps_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NS passed, 0 failed ($NS total)" ]; then ok "PS $leg: $LAST"
+    else bad "PS $leg: exit $RC, '$LAST' (want '$NS passed, 0 failed ($NS total)') $(grep -m3 'FAIL' "$D/ps_$n.out" | tr '\n' ' ')"; fi
+done
+
 echo "T. $TC ($N rows; cx $NCX)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -284,4 +336,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), a \`var t: *T\` local's receiver (PL, and $NR rows PT) on every leg, and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`p: *T\` parameter binds what its pointer argument points at and an \`x: T\` one binds no pointer (D8 (a)): the filed repro's nine rows and gsz(mkp()) / gsz(GS) (R) on x86_64 / IR / aarch64 / cx / PE, the refusals (N), a \`var t: *T\` local's receiver (PL, and $NR rows PT) on every leg, a scalar pointee (D11 (a): S, and $NS rows PS) on every leg, and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
