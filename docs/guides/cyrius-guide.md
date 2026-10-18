@@ -464,7 +464,7 @@ Refused, by name (`cannot subscript 'a': ...`):
   as the scalar its name starts with (`i8v16` as `i8`), so `g[i]` compiled there;
 - an **untyped name or a scalar** — it is not a typed array, a `*T` or a slice local;
 - a `u128` element, which does not fit one register (use `load64`/`store64`
-  on its two halves);
+  on its two halves) — and `*pu` through a `*u128` is refused alike (6.7.15, *Pointers*);
 - a **field that is no `*T`** (`cannot subscript field 'n': it is not a *T field`) and a **call
   whose callee is not declared `: *T`** (`cannot subscript the result of 'f': ...`) — a builtin
   (`load64(..)`), `callptr` and `fncallN` included; a parenthesised expression or a literal
@@ -1137,6 +1137,12 @@ address, read and written 8 bytes as before**: an untyped name (`var w = p;` is 
 word through a typed pointer), a `*i64` / `*u64` / `*f64` / `*bool` (`*p` through a `*f64` is the
 untyped word — `p[0]` is the typed spelling), and a value that is no longer that pointer: a
 bitwise or comparison result (`*(m & p)`), a negation, a call result's untyped field (`*mk(p).n`).
+**Through a `*u128`, `*pu` is refused by name** (6.7.15, the user's decision D20, 2026-10-18), as `pu[0]` is — a
+`u128` element does not fit one register: read or stored (`var x: u128 = *pu;`, `*pu == a`, an if-expression branch,
+`*pu = b`, `*pu += 1`), through any operand the compiler knows is a `*u128` (the list above, `**pp` of a `**u128`
+too) it is *cannot dereference 'pu': a u128 element does not fit one register - use load64/store64 on its two
+halves*. Through 6.7.14 it read and wrote the low 8 bytes, silently (the high word dropped, or left as it was). An
+untyped pointer (`var p = &b;`) is a word address as above, and `*pp` of a `**u128` is the `*u128`.
 **`*pp` of a `pp: **T` is a `*T`** (6.7.13, the user's decision D9 (a), 2026-10-15) — through a `**T`
 local, parameter, global, closure capture, field, `: **T` call, generic instance or `pp + n`: `*pp + n`
 steps `n` elements of `T` and `*pp += n` steps them too, `*pp - *qq` is an element count (refused, as for

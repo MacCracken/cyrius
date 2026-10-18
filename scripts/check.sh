@@ -2850,6 +2850,11 @@ _chk_gate "$ROOT/tests/gates/frontend/forward_call_struct_declared_below.sh"
 # the header, as `self` (`_load_str_hop`): the filed repros verbatim, the controls and the crossos rows, x86 / IR /
 # DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/str_field_method.sh"
+# 6.7.15 — `*pu` through a typed `*u128` is refused by name, as `pu[0]` is (the user's D20, 2026-10-18): read or
+# stored, every operand shape, at the `*` (`_deref_u128`) — the filed programs verbatim, one error per shape on the
+# x86 / aarch64 / cx / PE compilers, and the untyped / `*pp` / halves controls run on every leg. Mutation ledger in the
+# header.
+_chk_gate "$ROOT/tests/gates/frontend/u128_deref_refused.sh"
 # 6.7.14 — an error inside a generic body is printed once, not once per instance (and inline replay): the
 # util.cyr emitters and the shared undefined-name report record (token, identity) and print a repeat as
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,

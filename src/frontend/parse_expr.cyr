@@ -4661,6 +4661,46 @@ fn _deref_ed(S): i64 {
     if (_ek_w(ed) != st) { return 0; }
     return ed;
 }
+# ⛔ 6.7.15 — `*pu` THROUGH A TYPED `*u128` IS REFUSED BY NAME, as `pu[0]` is (the user's D20, 2026-10-18;
+# issues/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md): its element does not fit one register, and
+# the dereference read and wrote the low 8 bytes, silently — `var x: u128 = *pa;` dropped the high word, `*pa == a`
+# compared the low word, an if-expression branch was the low word, `*pa = b` left the old high word. The operand of
+# the `*` at `d` just parsed, its step word a `*u128`'s (step 16, element width 16 — the kind `_pk_word` vouches for: a
+# name, a `*u128` field, a call or method declared `: *u128`, `p + n`, `**pp` of a `**u128`): refused at the `*`, rax
+# 0 — 1, for the reader (`_deref_read`) and the store (`_deref_store`) alike. An untyped pointer (`var p = &b;` steps
+# 1) and a `**u128`'s `*pp` (a pointer) are not one. CHANGELOG [6.7.15]
+fn _deref_u128(S, d): i64 {
+    var w = _pk_word(S);
+    if (_ps_step(w) != 16) { return 0; }
+    if (_ek_w((w >> 40) & 0xFF) != 16) { return 0; }
+    _deref_u128_err(S, d);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    return 1;
+}
+# "cannot dereference 'pu': ..." at the `*` (token `d`), the operand named by its last name (`*w.pu` 'pu', `*gpu()`
+# 'gpu') behind the `*`s it opens with (`**pp` '*pp', as 6.7.15's `**pp OP= v` refusal spells it) — `_psub_ed`'s u128
+# words. Once at the token (a generic's instances parse it again); the panic latch set, as the subscript's is.
+fn _deref_u128_err(S, d): i64 {
+    if (_panic == 1) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    var star = _sval_stars(S, d + 1);
+    if (_derr_seen(d, "_deref_u128_err", nm * 31 + star, 1) == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, d);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot dereference '");
+    _dst_spell(S, nm, star);
+    PRSTR("': a u128 element does not fit one register - use load64/store64 on its two halves\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
 # `*expr` — the dereference: the operand's element at its width when it is a narrow `*T`
 # (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), a struct under 8 B byte-exact
 # (`_deref_small`, 6.7.11), else load64 — an untyped word. 6.7.8 (C2-5): before, every `*p` read 8
@@ -4669,6 +4709,7 @@ fn _deref_read(S): i64 {
     var d = GTI(S);
     STI(S, GTI(S) + 1);
     PARSE_FACTOR(S);
+    if (_deref_u128(S, d) == 1) { return 0; }   # 6.7.15 (D20): refused by name, as `pu[0]` is
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
     var ow = _pk_word(S);
