@@ -26,7 +26,8 @@
 #      at T = i32 / i64: 4 + 80 = 84, unchanged) and a struct T its sizeof (16, unchanged), PL6 two parameters
 #      `*T` / `*U` 39, PL7 a `*T` local walked through its `*Nd` field 7 — on every leg
 #   PT (6.7.15) tests/tcyr/crossos/generic_pointer_receivers.tcyr (a `*T` in an instance as a receiver: the PL shapes,
-#      a compound store, T bound to a generic instance, a rebind) on every leg: "N passed, 0 failed (N total)"
+#      a compound store, T bound to a generic instance, a rebind; and its PF rows, a generic struct's `p: *T` field
+#      hopping in its instance — generic_struct_field.sh HF) on every leg: "N passed, 0 failed (N total)"
 #   T  tests/tcyr/crossos/generic_struct_inference.tcyr (its PB group: every source above, a capture, `wp.p` / `G.p`,
 #      a generic `: *T` call, a generic method, a forward, an 8 B struct's stub through `&t` / `&G`, an untyped impl
 #      `self`, a `: T` result) on x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine):
@@ -51,6 +52,7 @@
 #   MPL1 `_sl_ptr_type` back on `_ptr_ann_sid` (T read  -> RED 35: PL1 PL2 PL3 PL4 PL6 PL7 on every leg ("no struct
 #        unbound: the fix reverted)                        type in scope for 't'"), PT on every leg (does not build);
 #                                                          PL5 green (a scalar T's step is the slot's mark)
+#   (the PF rows' mutants are generic_struct_field.sh's MHF1 / MHF2: PT RED on every leg)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -88,7 +90,7 @@ if [ "$NPB" -lt 21 ]; then echo "FAIL: $G: only $NPB PB rows in $TC (floor 21) �
 TR=tests/tcyr/crossos/generic_pointer_receivers.tcyr
 [ -f "$TR" ] || { echo "FAIL: $G: $TR is missing"; exit 1; }
 NR=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TR")
-if [ "$NR" -lt 13 ]; then echo "FAIL: $G: only $NR rows in $TR (floor 13) — rows were lost"; exit 1; fi
+if [ "$NR" -lt 26 ]; then echo "FAIL: $G: only $NR rows in $TR (floor 26) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0

@@ -1230,7 +1230,10 @@ see [Where a struct lives](#where-a-struct-lives-v665)).
 
 A field chain goes **through** a pointer field to a struct the way `p.val` does: `a.next.val`, `a.next.next.val = 3`, `a.next.twice()`, from a local, a global, a
 parameter, a closure capture, a call result (`mk().first.next.val`) or a longer chain, in a fn
-and at top level. (Before 6.6.17 it was `expected ';', got '.'`.)
+and at top level. (Before 6.6.17 it was `expected ';', got '.'`.) A generic struct's `p: *T` field
+does too wherever its instance binds T to a struct: `b.p.y`, `b.p.y = 3` and `b.p.m()` with
+`b: Pb<Pt>` (`struct Pb<T> { p: *T; n; }`), and `b.p.y` inside `fn g<T>(b: Pb<T>)` at `g<Pt>` (6.7.15;
+the chain stopped at `b.p`: `expected ';', got '.'`).
 
 ```
 struct Node { val; next: *Node; }

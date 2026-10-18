@@ -3302,15 +3302,29 @@ fn _fld_pb_bind(S, ent): i64 {
 }
 # Cursor on the `*` of a field's `*T`: when T (one `*`) names a struct — this one, one declared
 # above, or one declared below — consume the annotation and return `0 - (ti + 1)` (T's token);
-# else 0, cursor untouched.
+# else 0, cursor untouched. ⛔ 6.7.15 — and a generic struct's type parameter bound to a struct
+# (`struct Pb<T> { p: *T; }` in its instance `Pb<Pt>`): recorded late, its binding noted per entry
+# (`_fld_pb_note`), so `b.p.y` hops through it as through a `p: *Pt` field (it stopped at `b.p`:
+# "expected ';', got '.'"). A scalar binding keeps the step it had. CHANGELOG [6.7.15]
 fn _fld_ptr_late(S): i64 {
     var ti = GTI(S) + 1;
     if (TOKTYP(S, ti) != 2) { return 0; }
     var noff = TOKVAL(S, ti);
+    if (_fld_tp_struct(S, ti) == 1) {
+        STI(S, ti + 1);
+        return 0 - (ti + 1);
+    }
     if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
     STI(S, ti + 1);
     SKIP_GENERICS(S);
     return 0 - (ti + 1);
+}
+# 1 when token `ti` is a type parameter bound to a struct right now, with no `<` after it.
+fn _fld_tp_struct(S, ti): i64 {
+    if (_tp_c0 == 0) { return 0; }
+    if (TOKTYP(S, ti + 1) == 19) { return 0; }
+    if (_tp_resolve(S, TOKVAL(S, ti)) > 0) { return 1; }
+    return 0;
 }
 # The pointee struct of a `name: *T` field — T a struct, or a generic instance — else 0. 6.6.17
 fn _fld_ptr_sid(S, si, fi): i64 {
@@ -3321,7 +3335,7 @@ fn _fld_ptr_sid(S, si, fi): i64 {
     if (v >= 0) { return 0; }
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     _fld_pb_bind(S, ent);
-    var sid = _ptr_tok_sid(S, 0 - v - 1);
+    var sid = _ptr_ann_sid_tp(S, 0 - v - 2);   # 6.7.15: on the `*`, so a bound T is its struct
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     return sid;
 }

@@ -52,12 +52,34 @@
 #   MG1 `_ret_ptr_base_bind` returns 0 (2026-10-16)  -> RED 5: PG0-PG4 (refused: unknown type 'T'; the tcyr
 #                                                       does not build)
 #   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
+#
+#   HF (6.7.15, docs/development/issues/2026-10-16-generic-struct-pointer-field-does-not-hop.md) a generic struct's
+#      `p: *T` field hops in its instance as a `p: *Pt` field does (6.6.17): `b.p.y` with `b: Pb<Pt>` was "expected ';',
+#      got '.'". HF1 the filed repro verbatim (9), HF2 a store `b.p.y = 3` (3), HF3 a method `b.p.m()` (78), HF4 inside
+#      a generic `fn g<T>(b: Pb<T>) { return b.p.y; }` (9), HF5 `Pb<i32>`'s `b.p + 1` steps 4 (9, unchanged) — on
+#      x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine). More shapes on every leg (a compound
+#      store, `*Pb<Pt>`, a call's result, a struct's `Pb<Pt>` field, `Pb<Box<Pt>>`, two parameters, a global):
+#      tests/tcyr/crossos/generic_pointer_receivers.tcyr's PF rows (generic_ptr_param_infer.sh PT).
+#   MHF1 `_fld_ptr_late` without its type-parameter arm (2026-10-18; a scratch tree, its own legs) -> RED 20: HF1-HF4
+#                                                       on every leg ("expected ';', got '.'"); HF5 green (and
+#                                                       generic_ptr_param_infer.sh PT on every leg: does not build)
+#   MHF2 `_fld_ptr_sid` back on `_ptr_tok_sid` (T read unbound) -> RED 20: HF1-HF4 on every leg; HF5 green (PT as MHF1)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: generic_struct_field: no compiler at $CC"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: generic_struct_field: mktemp -d failed"; exit 1; }
-trap 'rm -rf "$T"' EXIT
+# A PRIVATE wine prefix under $T (never ~/.wine), torn down with its server dir on exit (the HF legs).
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0
 ok()  { echo "  ok   $1"; }
@@ -213,5 +235,95 @@ syscall(60, main());
 EOF
 exits pg7 72 "PG7: fn mk(): *Box<Later> with Later declared below it (pass 1 refused it 'unknown type')"
 
+# HF — 6.7.15: a generic struct's `*T` field hops in its instance, on every leg this box can run.
+skips=0
+A64=""; CXCC=""; WINE=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then
+        chmod +x "$T/cc_a64"; A64="$T/cc_a64"
+    else bad "aarch64: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: HF aarch64 legs (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ] \
+   && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ]; then
+    chmod +x "$T/cc_cx" "$T/cxvm"; CXCC="$T/cc_cx"
+else bad "cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+if command -v wine > /dev/null 2>&1; then WINE=1
+else echo "  SKIP: HF PE legs (wine not installed)"; skips=$((skips + 1)); fi
+LEGS="x86 x86:CYRIUS_IR=3"
+[ -n "$A64" ] && LEGS="$LEGS a64"
+[ -n "$CXCC" ] && LEGS="$LEGS cx"
+[ "$WINE" = 1 ] && LEGS="$LEGS pe"
+# run_leg <leg> <src> <out>: compile for <leg> and run; RC = the exit (-1: did not build)
+run_leg() {
+    RC=-1
+    case "$1" in
+        x86)   "$CC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        x86:*) env "${1#x86:}" "$CC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        a64)   "$A64" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        cx)    "$CXCC" < "$2" > "$3" 2> "$3.err" || return 0 ;;
+        pe)    CYRIUS_TARGET_WIN=1 "$CC" < "$2" > "$3.exe" 2> "$3.err" || return 0 ;;
+    esac
+    RC=0
+    case "$1" in
+        x86|x86:*) chmod +x "$3"; timeout 60 "$3" > /dev/null 2>&1 || RC=$? ;;
+        a64)  chmod +x "$3"; timeout 300 qemu-aarch64 "$3" > /dev/null 2>&1 || RC=$? ;;
+        cx)   timeout 300 "$T/cxvm" < "$3" > /dev/null 2>&1 || RC=$? ;;
+        pe)   (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$3.exe" > /dev/null 2>&1) || RC=$? ;;
+    esac
+}
+xr() {   # <id> <src> <want> <what>: the exit on every leg
+    for leg in $LEGS; do
+        n=$(printf '%s_%s' "$1" "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$2" "$T/x_$n"
+        if [ "$RC" -eq -1 ]; then bad "$1 $leg: $4 did not build: $(grep -m1 'error' "$T/x_$n.err")"
+        elif [ "$RC" -eq "$3" ]; then ok "$1 $leg: $4 exits $3"
+        else bad "$1 $leg: $4 exits $RC, want $3"; fi
+    done
+}
+# The filed repro, verbatim (the issue's text).
+cat > "$T/hf1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; return b.p.y; }
+syscall(60, go());
+EOF
+xr HF1 "$T/hf1.cyr" 9 "the filed repro, b.p.y through Pb<Pt>"
+cat > "$T/hf2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; b.p.y = 3; return q.y; }
+syscall(60, go());
+EOF
+xr HF2 "$T/hf2.cyr" 3 "a store, b.p.y = 3"
+cat > "$T/hf3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+impl Pt { fn m(self): i64 { return self.x * 10 + self.y; } }
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var q: Pt; q.x = 7; q.y = 8; var b: Pb<Pt>; b.p = &q; b.n = 1; return b.p.m(); }
+syscall(60, go());
+EOF
+xr HF3 "$T/hf3.cyr" 78 "a method, b.p.m()"
+cat > "$T/hf4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Pb<T> { p: *T; n; }
+fn g<T>(b: Pb<T>): i64 { return b.p.y; }
+fn go(): i64 { var q: Pt; q.x = 1; q.y = 9; var b: Pb<Pt>; b.p = &q; b.n = 1; return g<Pt>(b); }
+syscall(60, go());
+EOF
+xr HF4 "$T/hf4.cyr" 9 "inside a generic, g<Pt>(b) reading b.p.y"
+cat > "$T/hf5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pb<T> { p: *T; n; }
+fn go(): i64 { var a: i32[4]; var b: Pb<i32>; b.p = &a; b.n = 1; var e = b.p + 1; return e - b.p + 5; }
+syscall(60, go());
+EOF
+xr HF5 "$T/hf5.cyr" 9 "Pb<i32>'s b.p + 1 steps 4 (unchanged)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), and a generic declared : *Box<T> compiles (PG)"
+if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
