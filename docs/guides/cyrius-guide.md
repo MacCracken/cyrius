@@ -3165,10 +3165,12 @@ So do `h = t` into a `Str` handle (a rebind), a method's or a generic's `Str` pa
 `lib/str.cyr` types `Str` since 6.7.14 (so a string literal there is passed as a `Str`: `h.eq("abc")` is 1;
 through 6.7.13 the untyped operand read an inline `Str`'s data word, or a literal's bytes, as the header) — a
 `p: *Str` parameter (`&t`, as `fp(&t)` passes) and, since 6.7.14, a
-`var p: *Str = t;` declaration, and an inline `Str` global (its static address) anywhere. ⛔ A
+`var p: *Str = t;` declaration — since 6.7.15 an assignment into a `*Str` too (`p = t`, `GP = gt`, a for step;
+the user's decision D16, 2026-10-18 — through 6.7.14 it stored the data word) — and an inline `Str` global (its
+static address) anywhere. ⛔ A
 frame's inline `Str` cannot outlive the frame, so these are refused by name: `return t;` from a fn returning `Str` (*cannot return the inline Str 't' from a fn
 returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))*),
-and a store into a `Str` global, a `Str` field (a struct literal's too) or through a `*Str` (*cannot store
+and a store into a `Str` or `*Str` global, a `Str` field (a struct literal's too) or through a `*Str` (*cannot store
 the inline Str 't' into a global* / *into a field* / *through a pointer*). The refusals are by NAME: a
 handle bound to the frame's `t` (`var h: Str = t;`, `var h = t;`, `h = t`, `var p: *Str = t;`) holds t's
 header address — `&t` — and dangles when the frame dies exactly as `var p = &t; return p;` does, so `return

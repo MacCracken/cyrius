@@ -60,6 +60,7 @@ var GA: Str = 0;                       # a Str handle global (set at top level)
 var gi: Str = Str { "zz", 2 };         # an inline Str global the h_ginl row copies into
 var gi2: Str = Str { "zz", 2 };        # ... and the top-level rows
 var gi3: Str = Str { "zz", 2 };
+var GPS: *Str = 0;                     # a `*Str` global the pa_* rows assign (6.7.15, D16)
 # ── top level: `var H: Str = gz;` is a handle to gz's header in the declaration zone and after the first statement
 #    (6.7.14, D21 (a)); `var P: *Str = gz;` takes the same address; an untyped `var U = gz;` keeps the word (D22 (b))
 var gz: Str = Str { "abcdefg", 7 };
@@ -145,6 +146,15 @@ fn q_pglob(): i64 { var p: *Str = gt; var q: *Str = (gt); return str_len(p) * 10
 fn q_pbare(): i64 { var t: Str; t = str_from("abcde"); var p: *Str = (t); p.len = 2; return t.len; }
 fn q_pcap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = t; return str_len(p); }; return callptr(c); }
 
+# ── an inline `Str` ASSIGNED into a `*Str` takes its header's address, as the declaration does (6.7.15, D16) ──────
+fn pa_local(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = t; p.len = 3; return t.len * 10 + str_len(p); }
+fn pa_gt(): i64 { var p: *Str = 0; p = gt; return str_len(p); }
+fn pa_gp(): i64 { GPS = gt; var r = str_len(GPS); GPS = 0; return r; }
+fn pa_param(p: *Str): i64 { var t: Str = Str { "abcde", 5 }; p = t; return str_len(p); }
+fn pa_wrap(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = (t); var q: *Str = 0; q = ((gt)); return str_len(p) * 10 + str_len(q); }
+fn pa_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; var i = 0; for (i = 0; i < 1; p = t) { i = i + 1; } return str_len(p); }
+fn pa_cap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = 0; p = t; GPS = t; return str_len(p) * 10 + str_len(GPS); }; return callptr(c); }
+
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
 fn z_word(): i64 { if (UZ == load64(&gz)) { return 1; } return 0; }
@@ -222,6 +232,9 @@ gz.len = 7;
 var UL = gz;                 # an untyped top-level declaration keeps gz's first word (D22 (b))
 var R_TOP6 = 0;
 if (UL == load64(&gz)) { R_TOP6 = 1; }
+GPS = gt;                    # top level: an inline Str global assigned into a `*Str` global (D16)
+var R_TOP7 = str_len(GPS);
+GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
 assert_eq(t_paren(), 7, "f((t))");
@@ -276,6 +289,13 @@ assert_eq(q_ptr(), 33, "var p: *Str = t; takes t's header: p.len = 3 writes t.le
 assert_eq(q_pglob(), 77, "var p: *Str = gt; / = (gt);");
 assert_eq(q_pbare(), 2, "var p: *Str = (t); of a bare t binds its header");
 assert_eq(q_pcap(), 7, "var p: *Str = t; inside a closure: the environment's copy");
+assert_eq(pa_local(), 33, "p = t into a *Str local takes t's header: p.len = 3 writes t.len (D16; the data word before)");
+assert_eq(pa_gt(), 7, "p = gt into a *Str local");
+assert_eq(pa_gp(), 7, "GP = gt into a *Str global");
+assert_eq(pa_param(0), 5, "p = t into a `p: *Str` parameter");
+assert_eq(pa_wrap(), 77, "p = (t); q = ((gt));");
+assert_eq(pa_step(), 7, "a for step p = t");
+assert_eq(pa_cap(), 77, "a closure: p = t and GP = t of the captured copy");
 assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
 assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
 assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");
@@ -302,6 +322,7 @@ assert_eq(R_TOP3, 33, "top level: an inline Str global <- a `: Str` call");
 assert_eq(R_TOP4, 7, "top level: var P: *Str = gt; (after the first statement)");
 assert_eq(R_TOP5, 4, "top level after a statement: var HL: Str = gz; HL.len = 4 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(R_TOP6, 1, "top level after a statement: an untyped var UL = gz; keeps gz's first word (D22 (b))");
+assert_eq(R_TOP7, 7, "top level: GP = gt into a *Str global (D16)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");
