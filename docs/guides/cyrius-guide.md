@@ -664,7 +664,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
 
   A float default on an untyped parameter is refused: untyped, a float is only its bits
   (ADR-002), so declare the parameter `: f64` or `: f32`. A `Str` takes none because its
-  literal is wrapped (a heap allocation) at every call, which is not a constant.
+  literal is wrapped (a heap allocation) at every call, which is not a constant. A bare `u128`
+  is not a parameter type yet (6.7.14): `fn f(b: u128 = 3)` reports that one refusal, at the
+  `u128` token, and nothing about its default (6.7.15).
 - **A short call fills from the right.** A direct call passes anywhere from the required
   parameters to all of them (`'tag' expects 1 to 3 arguments, got 4`). The missing trailing ones
   are pushed after the written arguments, in parameter order, each exactly as its literal would

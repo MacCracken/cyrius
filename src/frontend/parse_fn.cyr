@@ -4725,6 +4725,9 @@ fn _pd_fits(c, v): i64 {
 fn _pd_kind_ok(S, fi, en, k, v): i64 {
     var c = _pd_pclass(S, fi, L64(en + 8), L64(_pd_row(fi) + 16));
     if (c == 0 - 12) { return _pd_type_refused(S, L64(en + 8)); }   # 6.7.11
+    # A bare `u128` (class -6): `_pty_u128` refuses the TYPE by name (6.7.14's D10 (a)), the one error; its default
+    # is kept unjudged, as `_pd_type_refused`'s. D9 here printed a second error first (CHANGELOG [6.7.15]).
+    if (c == 0 - 6) { return 1; }
     if (c < 0) { return _pd_d9(S, fi, en, c); }
     if (c == 0) {
         if (k != 1) { return 1; }

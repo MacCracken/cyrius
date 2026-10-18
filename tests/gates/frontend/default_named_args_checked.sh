@@ -29,7 +29,8 @@
 #      that is not a name); R24d a forward call to such a fn keeps its `: f64` / struct return;
 #      U1-U5 a default after such a parameter: filled, named, D1, D3. (6.7.14, D10 (a): a bare
 #      `u128` parameter is refused by name, so those rows take `*u128`; R24e / U6 keep the bare
-#      form — the one refusal, no arity or default error after it.)
+#      form — the one refusal, no arity or default error after it.) U7a-U7c (6.7.15): a default on
+#      the bare `u128` parameter itself is that one refusal too (U7d the control, U7e `*u128 = 0`).
 #   T  objdump: T1 a full-arity self tail call to a defaulted fn keeps its `jmp`; T2 a `return f(1)`
 #      that fills is a `call` (the tail arm never fills)
 #   E  E1 a default is a top-level constant (a caller's local const of the same name never reaches
@@ -201,6 +202,9 @@
 #       alloc(128) / alloc(256) again                      trailing redzone overwritten)
 #   MS9 the 6.7.10 type-audit                             -> S-ta (4/5), SC-ta (2 of 7)
 #   MS10 the 6.7.10 cyrdoc                                -> SC-doc, SC-dpz (exit 86)
+#   (6.7.15, the u128 default issue)
+#   MU7 `_pd_kind_ok`'s class -6 stand-down dropped       -> U7a-U7c (2 error lines: D9's "is a 128-bit
+#                                                          integer: it takes no default" printed first)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -420,6 +424,13 @@ exits u3t 79 "U3b: ... after a *u128 parameter, filled in tail position" 'fn g(a
 refused u4 "parameter 'c' of 'g' needs a default: it follows one that has a default (defaults are trailing)" "U4: D1 after a *u128 parameter" "fn g(a: *u128, b = 1, c): i64 { return c; }$E" "1:23"
 refused u6 "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U6 (6.7.14, D10 (a)): a default after a refused u128 parameter: one error" "fn g(a: u128, b = 7): i64 { return b; }\nfn main(): i64 { var r = g(5); return r; }\nsyscall(60, main());\n" "1:9"
 refused u5 "unknown name 'nope' in a const context" "U5: D3 after a *fn parameter" "fn g(a: *fn, b = 1 + nope): i64 { return b; }$E" "1:22"
+# U7 (6.7.15): a default ON the bare u128 parameter — the type's refusal (D10 (a)) is the one error, at the
+# `u128` token; the default sweep's "is a 128-bit integer: it takes no default" printed first, then that one.
+refused u7a "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U7a (6.7.15): fn f(a: i64, b: u128 = 3): one error, at the u128 token" "fn f(a: i64, b: u128 = 3): i64 { return 0; }\nsyscall(60, 0);\n" "1:17"
+refused u7b "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U7b (6.7.15): fn f(b: u128 = 3): one error, at the u128 token" "fn f(b: u128 = 3): i64 { return 0; }\nsyscall(60, 0);\n" "1:9"
+refused u7c "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U7c (6.7.15): ... called short, f(): one error (the default kept: no arity error)" "fn f(b: u128 = 3): i64 { return 0; }\nsyscall(60, f());\n" "1:9"
+refused u7d "\`u128\` is not supported as a parameter type yet - pass \`*u128\`" "U7d: the control, fn f(b: u128) with no default: one error" "fn f(b: u128): i64 { return 0; }\nsyscall(60, 0);\n" "1:9"
+exits u7e 0 "U7e: fn f(b: *u128 = 0), a pointer default, builds" 'fn f(b: *u128 = 0): i64 { return 0; }\nsyscall(60, f());\n'
 
 # ── E: scope, generics, routing ──────────────────────────────────────────────────────────────
 exits e1 29 "E1: a default is a top-level constant (main's local const K = 9 never reaches f's b = K)" 'const K = 2;\nfn f(a, b = K): i64 { return b; }\nfn main(): i64 { const K = 9; var x = f(1); return x * 10 + K; }\nsyscall(60, main());\n'
