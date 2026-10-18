@@ -1,0 +1,109 @@
+# forward_call_struct_declared_below.tcyr — 6.7.15 — a call ABOVE a fn whose signature names a struct declared
+# BELOW that fn gets the signature the definition has, on every target.
+#
+# ⛔ THE DEFECT (measured on 8b4d44602's build/cycc, x86_64; the same on aarch64 / cx / PE per the filings). Pass 1
+# records each fn's ABI facts as it meets the fn (`_prescan_fn_sig`, CO-01), and a struct declared below the fn was
+# not registered yet, so the record named no struct. A call parsed before the definition read that record: a 16 / 24
+# B by-value argument was pushed as its first word (SIGSEGV, 139), `h(t)` into `x: *R2` was refused ("cannot pass 't'
+# ... pass &t"), a `: Pq` return took no hidden result pointer (139; untyped, "no struct type in scope for 't'"), and
+# a struct named like a vector was the vector ("vector return type does not match the declared type"). The fix reads
+# such a signature again once every struct is registered (`_psig_reread`, src/frontend/parse_fn_def.cyr).
+#
+# Every row compares a call made ABOVE its callee against a value computed another way (the literal fields, or the
+# same callee called from BELOW its definition). The structs named B* / Q* / f32v4 / Low are declared at the END of
+# the declaration section, below every fn that names them; A16 is declared first (the control).
+# (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md,
+#  issues/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md)
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+struct A16 { a; b; }
+struct One<T> { v: T; }
+struct H { k; }
+
+# ── the callers: each parsed before the callee it names ──────────────────────────────────
+fn c_p8(): i64 { var t: B8 = B8 { 7 }; return fp8(t); }
+fn c_p16(): i64 { var t: B16 = B16 { 5, 7 }; return fp16(t); }
+fn c_p24(): i64 { var t: B24 = B24 { 5, 7, 9 }; return fp24(t); }
+fn c_pp(): i64 { var t: B16 = B16 { 5, 7 }; return pp(&t) * 10 + pp(t); }
+fn c_pw(): i64 { var t: B16 = B16 { 5, 7 }; pw(t); return t.a; }
+fn c_meth(): i64 { var h: H = H { 1 }; var t: B24 = B24 { 5, 7, 9 }; return h.take(t); }
+fn c_methname(): i64 { var h: H = H { 2 }; var t: B24 = B24 { 5, 7, 9 }; return H_take(h, t); }
+fn c_gen(): i64 { var b: One<B16>; b.v.a = 4; b.v.b = 6; return g1(b); }
+fn c_genlow(): i64 { var b: Low<B24>; b.v.a = 2; b.v.c = 8; b.n = 3; return gl(b); }
+fn c_vecname(): i64 { var t: f32v4 = f32v4 { 1, 2, 3, 4 }; return vp(t); }
+fn c_wide(): i64 {
+    var t: f32v4 = f32v4 { 1, 2, 3, 4 };
+    return widev(
+      0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0,
+      1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, t);
+}
+fn c_r8(): i64 { var t: Q8 = mk8(10); return t.a; }
+fn c_r16(): i64 { var t: Q16 = mk16(10); return t.a + t.b; }
+fn c_r24(): i64 { var t: Q24 = mk24(10); return t.a + t.c; }
+fn c_runtyped(): i64 { var t = mk24(10); return t.a + t.b; }
+fn c_rmeth(): i64 { var h: H = H { 1 }; var t: Q24 = h.mkq(10); return t.a + t.c + h.k; }
+fn c_rgen(): i64 { var b: One<Q24> = mkone(4); return b.v.a + b.v.c; }
+fn c_rvecname(): i64 { var t: f32v4 = mkv(10); return t.a + t.d; }
+fn c_above(): i64 { var t: A16 = A16 { 5, 7 }; return fa(t); }
+
+# ── the callees ─────────────────────────────────────────────────────────────────────────
+fn fp8(x: B8): i64 { return x.a; }
+fn fp16(x: B16): i64 { return x.a * 10 + x.b; }
+fn fp24(x: B24): i64 { return x.a * 100 + x.b * 10 + x.c; }
+fn pp(x: *B16): i64 { return x.b; }
+fn pw(x: *B16): i64 { x.a = 99; return 0; }
+impl H { fn take(self, x: B24): i64 { return x.c * 10 + self.k; } }
+fn g1(b: One<B16>): i64 { return b.v.a * 10 + b.v.b; }
+fn gl(b: Low<B24>): i64 { return b.v.a * 100 + b.v.c * 10 + b.n; }
+fn vp(x: f32v4): i64 { return x.a * 1000 + x.b * 100 + x.c * 10 + x.d; }
+# Ordinal 62: past the per-fn masks (the overflow rows), where pass 1's first reading left the vector's kind.
+fn widev(
+  a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+  a24, a25, a26, a27, a28, a29, a30, a31, a32, a33, a34, a35, a36, a37, a38, a39, a40, a41, a42, a43, a44, a45,
+  a46, a47, a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, x: f32v4): i64 {
+    return x.a * 1000 + x.b * 100 + x.c * 10 + x.d + a61;
+}
+fn mk8(n): Q8 { var s: Q8; s.a = n; return s; }
+fn mk16(n): Q16 { var s: Q16; s.a = n; s.b = 2; return s; }
+fn mk24(n): Q24 { var s: Q24; s.a = n; s.b = 2; s.c = 3; return s; }
+impl H { fn mkq(self, n): Q24 { var s: Q24; s.a = n; s.b = 2; s.c = 3; return s; } }
+fn mkone(n): One<Q24> { var b: One<Q24>; b.v.a = n; b.v.b = 5; b.v.c = 6; return b; }
+fn mkv(n): f32v4 { var s: f32v4; s.a = n; s.b = 2; s.c = 3; s.d = 4; return s; }
+fn fa(x: A16): i64 { return x.a * 10 + x.b; }
+
+# ── the same callees called from below their definitions (the controls) ─────────────────
+fn k_p24(): i64 { var t: B24 = B24 { 5, 7, 9 }; return fp24(t); }
+fn k_r24(): i64 { var t: Q24 = mk24(10); return t.a + t.c; }
+
+struct B8 { a; }
+struct B16 { a; b; }
+struct B24 { a; b; c; }
+struct Low<T> { v: T; n; }
+struct f32v4 { a; b; c; d; }
+struct Q8 { a; }
+struct Q16 { a; b; }
+struct Q24 { a; b; c; }
+
+assert_eq(c_p8(), 7, "8 B by value");
+assert_eq(c_p16(), 57, "16 B by value");
+assert_eq(c_p24(), 579, "24 B by value");
+assert_eq(c_p24(), k_p24(), "24 B by value: the call below the definition agrees");
+assert_eq(c_pp(), 77, "*S: g(&t) and h(t) pass t's address");
+assert_eq(c_pw(), 99, "*S: the callee writes through t's address");
+assert_eq(c_meth(), 91, "a method's by-value parameter");
+assert_eq(c_methname(), 92, "the same method called by its name, H_take(h, t): h passes its address");
+assert_eq(c_gen(), 46, "a generic instance One<B16>");
+assert_eq(c_genlow(), 283, "a generic instance Low<B24>, Low declared below too");
+assert_eq(c_vecname(), 1234, "a struct named like a vector (6.7.14's D41 / D68)");
+assert_eq(c_wide(), 1239, "the same at parameter 62 (the overflow rows)");
+assert_eq(c_r8(), 10, ": Q8 return");
+assert_eq(c_r16(), 12, ": Q16 return");
+assert_eq(c_r24(), 13, ": Q24 return");
+assert_eq(c_r24(), k_r24(), ": Q24 return: the call below the definition agrees");
+assert_eq(c_runtyped(), 12, "an untyped receive of a : Q24 return");
+assert_eq(c_rmeth(), 14, "a method's : Q24 return");
+assert_eq(c_rgen(), 10, "a : One<Q24> return");
+assert_eq(c_rvecname(), 14, "a : f32v4 return, the program's struct");
+assert_eq(c_above(), 57, "control: the struct declared above");
+var r = assert_summary();

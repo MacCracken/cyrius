@@ -497,7 +497,16 @@ var r = add(20, 22);   # r = 42
   values and from 252 cxvm trapped "guest stack overflow" — and a value-form vector argument
   (`f64v2`, `f64v4`, `f32v4`, `i32v4`) beside 14 or more integer arguments overwrote the 14th
   one there, because cx's vector registers were integer argument registers from that point.
-- Forward calls work (functions can call functions defined later)
+- Forward calls work (functions can call functions defined later). The call reads the callee's whole
+  signature wherever the structs it names are declared (6.7.15): a struct parameter (by value or `*S`)
+  or a struct return (`: S`, `: *S`, `: Box<S>`) whose struct is declared BELOW the fn — directly, or
+  through include order (a library whose fns name `Str` included before `lib/str.cyr`) — is the
+  struct a call written after the definition sees, and the argument is type-checked against it (a
+  struct of another type is refused by name, as with the struct declared above). ⚠ Through 6.7.14 a
+  call parsed above such a fn read a signature with no struct: a 16 / 24 B argument was pushed as its
+  first word (SIGSEGV), `h(t)` into `x: *S` was refused (`pass &t for its address`), a `: S` return
+  faulted (an untyped `var t = mk();` was `no struct type in scope`), and a struct named like a
+  vector was taken for the vector.
 - Relaxed ordering: functions can appear after top-level statements — a `fn` of any kind, `async fn`
   included (6.7.14; it was `expected identifier, got reserved keyword 'fn'`) — and so can `const` and
   `var`. A `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `use` or `pub` / `public` declaration

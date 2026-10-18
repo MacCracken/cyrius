@@ -198,6 +198,18 @@
 #   `_sarg_ident_err` ignoring the call's fn          -> RED 5: R9 R23 R24 R24b R28b
 #   `_expr_struct_sid` not recording it (`_ess_fi`)   -> RED 3: R23 R24 R24b
 #
+# 6.7.15 (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) — A CALL ABOVE A FN WHOSE
+# PARAMETER NAMES A STRUCT DECLARED BELOW THAT FN reads the signature the definition reads (`_psig_reread`,
+# src/frontend/parse_fn_def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
+# pass 't' ... pass &t" before); FB2, another struct into such a `x: R2`, is refused as it is with R2 declared above
+# (compiled clean before: pass 1 recorded no struct, so nothing was checked); FB3, a redefined callee whose FIRST
+# definition names a struct below it, checks against its LAST definition's record (7). The run-time rows (8 / 16 / 24
+# B, `*S`, a method, generic instances, a vector-named struct, ordinal 62, every return shape) are
+# tests/tcyr/crossos/forward_call_struct_declared_below.tcyr. Mutations (each a one-change copy of the fixed src built
+# by the fixed compiler; measured 2026-10-18):
+#   `_psig_reread` returning at once                   -> RED 2: FB1 (refused) FB2 (compiled)
+#   `_psig_one` without its last-definition test       -> RED 1: FB3 (refused: a different struct type)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -936,8 +948,54 @@ compiles "VK3 a Str field into *u8 is not refused" \
     "${T}${WP}struct HS { t: Str; }
 fn go(): i64 { alloc_init(); var h: HS; h.t = str_from(\"hi\"); return ru(h.t) * 0; } syscall(60, go());"
 
-# Floors (6.7.14): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.14.
-[ "$nrefuse" -ge 105 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 105)"; fail=$((fail+1)); }
-[ "$naccept" -ge 39 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 39)"; fail=$((fail+1)); }
+echo "=== 6.7.15: a callee whose parameter names a struct declared below it (FB) ==="
+accept "FB1 the filed repro: h(t) into x: *R2, R2 below h" \
+    'include "lib/syscalls.cyr"
+fn main() { var t: R2 = R2 { 5, 7 }; return g(&t) * 10 + h(t); }
+fn g(x: *R2): i64 { return x.b; }
+fn h(x: *R2): i64 { return x.b; }
+struct R2 { a; b; }
+var r = main();
+syscall(SYS_EXIT, r);
+' \
+    77 \
+    'include "lib/syscalls.cyr"
+struct R2 { a; b; }
+fn main() { var t: R2 = R2 { 5, 7 }; return g(&t) * 10 + h(t); }
+fn g(x: *R2): i64 { return x.b; }
+fn h(x: *R2): i64 { return x.b; }
+var r = main();
+syscall(SYS_EXIT, r);
+'
+refuse "FB2 a Pt into x: R2, R2 below the callee" "cannot pass 'p' $MA 'g'" \
+    'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+fn main() { var p: Pt = Pt { 5, 7 }; return g(p); }
+fn g(x: R2): i64 { return x.b; }
+struct R2 { a; b; c; }
+var r = main();
+syscall(SYS_EXIT, r);
+'
+# A redefined callee: every call binds the LAST definition, so the record a forward call checks against is the last
+# one's, never the first one's re-read (its `S8a` declared below it).
+accept "FB3 a redefined callee whose first definition names a struct below" \
+    'include "lib/syscalls.cyr"
+struct S8b { v; }
+fn c_rd(): i64 { var b: S8b = S8b { 5 }; return rd(b); }
+fn rd(x: S8a): i64 { return x.u + 1; }
+fn rd(x: S8b): i64 { return x.v + 2; }
+struct S8a { u; }
+syscall(60, c_rd());
+' \
+    7 \
+    'include "lib/syscalls.cyr"
+fn c_rd(): i64 { return 5 + 2; }
+syscall(60, c_rd());
+'
+
+# Floors (6.7.14): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.14
+# (6.7.15: FB1-FB3).
+[ "$nrefuse" -ge 107 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 107)"; fail=$((fail+1)); }
+[ "$naccept" -ge 41 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 41)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

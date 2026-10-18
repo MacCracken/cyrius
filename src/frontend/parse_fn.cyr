@@ -17041,15 +17041,23 @@ fn _prescan_fn_sig(S): i64 {
         SFFI(S, fi, _pfid + 1);
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
         else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }   # never leave a stale private bit
-        _prescan_params(S, fi);
-        if (_pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
-        if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
-        _prescan_ret_type(S, fi);
+        _psig_note(S, fi, start_ti, _pasync);   # 6.7.15: for the re-read (`_psig_reread`)
+        _prescan_sig_facts(S, fi, start_ti, _pasync);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
         _prescan_ret_arity(S, fi);    # 6.7.11
     } else { _pre_attr_drop(); }        # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+# Pass 1, the cursor on the `(` of fn `fi`'s parameter list (`start_ti` its `fn` token, `pasync` 1 for an `async
+# fn`): the signature's ABI facts — the parameter masks and records, the prologue copies, the return. The prescan's
+# and, once every struct is registered, its re-read's (`_psig_reread`, 6.7.15).
+fn _prescan_sig_facts(S, fi, start_ti, pasync): i64 {
+    _prescan_params(S, fi);
+    if (pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
+    if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
+    _prescan_ret_type(S, fi);
     return 0;
 }
 
