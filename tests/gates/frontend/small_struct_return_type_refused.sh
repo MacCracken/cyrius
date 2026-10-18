@@ -87,6 +87,17 @@
 #   `_ret_slot_refuse` advising "— return q" for every    -> RED 12: R37 R38 x4, R38b-R38e (the 6.7.14 words)
 #   struct again
 #   real tree                                           -> GREEN (47 refusal rows — floor 47 — and 27 acceptance rows)
+# 6.7.15 (D18, measured 2026-10-18; R40-R46 on the four compilers, R47-R58, A15; the same scratch-tree mutants):
+#   the lane before it (the D58 commit)                 -> RED 37: R40-R44 x4 (compiled, no diagnostic: the slot's
+#                                                          address as c.v), R45 R46 x4 (the classes' own refusals),
+#                                                          R47-R55
+#   `_ret_slot_amp` without `_ret_amp_bare`             -> RED 31: R40-R42 R44-R52 R55 (R43, a `Str` handle, is the
+#                                                          slot arm's)
+#   `_ret_slot_amp` without the inline `Str` / tuple    -> RED 2: R53 (compiled), R54 (the retptr class's words)
+#   kind-3 arm (0, as before)
+#   `_ret_gen_base` answering 0 (the base refused)      -> RED 2: A15 (a generic used only at <S8> refused at its
+#                                                          base), R56 (the base's error, then the instance's)
+#   real tree                                           -> GREEN (66 refusal rows — floor 66 — and 28 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -408,6 +419,80 @@ fn h(): S8 { var t = str_from("ab"); var ps: *Str = t; return &ps; }
 fn main(): i64 { alloc_init(); var c: S8 = h(); return c.v; }
 syscall(60, main());
 '
+echo "=== return &n (6.7.15, the user's decision D18, 2026-10-18): &n of a name holding no struct is its slot ==="
+# `&n` of an integer, a `*i64` / `*V`, a `**S`, a `Str` handle, an array, a vector — a local, a parameter, a global — is
+# the address of n's slot, no struct: refused by name at every size, ONE error at the `&`, with no "— return n" advice
+# (the line ends at "not a struct"). Through 6.7.14 the 8 B form compiled with no diagnostic and the caller read the
+# slot's address as c.v (a different byte each run: the filed table's 48 / 0, 248 / 56, 0 / 16, 96 / 144, 128 / 192),
+# and over 8 B the classes refused it naming nothing ("... two registers ... got `this expression`", "return must be a
+# bare local identifier ..."). An inline `Str` / tuple is the address of that aggregate: refused as `&u` of another
+# struct (kind 3). docs/development/issues/2026-10-17-return-address-of-scalar-or-non-struct-pointer-slot-in-struct-fn.md
+NS="not a struct\$"
+refuse4 "R40 the filed repro verbatim (&n, an integer, 8 B)" "$MS — \`&n\` $SLOT n's slot, $NS" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S { v; }
+fn h(): S { var n = 5; return &n; }
+fn main(): i64 { alloc_init(); var c = h(); return c.v; }
+syscall(60, main());
+'
+NT='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/simd.cyr"
+struct S { v; }
+struct S16 { v; w; }
+struct S24 { v; w; x; }
+struct S3 { a: i8; b: i8; c: i8; }
+var GN = 5;
+'
+NE='
+fn main(): i64 { alloc_init(); var c: S = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R41 return &pi; (pi: *i64) from : S (8 B)" "$MS — \`&pi\` $SLOT pi's slot, $NS" "$NT"'fn h(): S { var n = 5; var pi: *i64 = &n; return &pi; }'"$NE"
+refuse4 "R42 return &pp; (pp: **S) from : S (8 B)" "$MS — \`&pp\` $SLOT pp's slot, $NS" "$NT"'fn h(): S { var s: S; var p: *S = &s; var pp: **S = &p; return &pp; }'"$NE"
+refuse4 "R43 return &t; (a Str handle) from : S (8 B)" "$MS — \`&t\` $SLOT t's slot, not a struct, and t is a \`Str\`\$" "$NT"'fn h(): S { var t = str_from("ab"); return &t; }'"$NE"
+refuse4 "R44 return &pv; (pv: *f64v2) from : S (8 B)" "$MS — \`&pv\` $SLOT pv's slot, $NS" "$NT"'fn h(): S { var a: f64v2 = f64v2_make(1, 2); var pv: *f64v2 = &a; return &pv; }'"$NE"
+refuse4 "R45 return &n; (an integer) from : S16" "$MS — \`&n\` $SLOT n's slot, $NS" "$NT"'fn h(): S16 { var n = 5; return &n; }
+fn main(): i64 { var c: S16 = h(); return c.v; }
+syscall(60, main());
+'
+refuse4 "R46 return &n; (an integer) from : S24" "$MS — \`&n\` $SLOT n's slot, $NS" "$NT"'fn h(): S24 { var n = 5; return &n; }
+fn main(): i64 { var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse "R47 return &pn; (an untyped parameter) from : S" "$MS — \`&pn\` $SLOT pn's slot, $NS" "$NT"'fn h2(pn): S { return &pn; }
+fn h(): S { return h2(5); }'"$NE"
+refuse "R48 return &GN; (an integer global) from : S" "$MS — \`&GN\` $SLOT GN's slot, $NS" "$NT"'fn h(): S { return &GN; }'"$NE"
+refuse "R49 return &buf; (an array) from : S" "$MS — \`&buf\` $SLOT buf's slot, $NS" "$NT"'fn h(): S { var buf[8]; return &buf; }'"$NE"
+refuse "R50 return ((&n)); (wrapped) from : S16" "$MS — \`&n\` $SLOT n's slot, $NS" "$NT"'fn h(): S16 { var n = 5; return ((&n)); }
+fn main(): i64 { var c: S16 = h(); return c.v; }
+syscall(60, main());
+'
+refuse "R51 return &a; (an inline f64v2) from : S" "$MS — \`&a\` $SLOT a's slot, $NS" "$NT"'fn h(): S { var a: f64v2 = f64v2_make(1, 2); return &a; }'"$NE"
+refuse "R52 return &f; (an f64) from : S3" "$MS — \`&f\` $SLOT f's slot, $NS" "$NT"'fn h(): S3 { var f: f64 = 1.5; return &f; }
+fn main(): i64 { var c: S3 = h(); return c.a; }
+syscall(60, main());
+'
+refuse "R53 return &t; (an inline Str) from : S: another struct" "$MS — got \`&t\` (a \`\*Str\`)" "$NT"'fn h(): S { var t: Str; t.data = 0; t.len = 0; return &t; }'"$NE"
+refuse "R54 return &tu; (a tuple) from : S24: another aggregate" "$MS — got \`&tu\` (a \`\*(i64, i64)\`)" "$NT"'fn h(): S24 { var tu = (1, 2); return &tu; }
+fn main(): i64 { var c: S24 = h(); return c.v; }
+syscall(60, main());
+'
+refuse "R55 return &n; (n: T) in a generic, instances i32 / i16 / i64" "$MS — \`&n\` $SLOT n's slot, $NS" "$NT"'fn hg<T>(x: T): S { var n: T = x; return &n; }
+fn h(): S { var c: S = hg<i32>(4); var d: S = hg<i16>(5); return hg(3); }'"$NE"
+refuse "R56 return &n; (n: T) at <U8>: another struct" "$MS — got \`&n\` (a \`\*U8\`)" "$NT"'struct U8 { u; }
+fn hg<T>(x: T): S { var n: T = x; return &n; }
+fn h(): S { var u: U8; return hg<U8>(u); }'"$NE"
+# What stays: a const's and an enum constant's `&` keep the factor's own refusal (one error).
+refuse "R57 return &N; (a const) keeps its own refusal" "cannot take the address of const 'N'" "$NT"'const N = 3;
+fn h(): S { return &N; }'"$NE"
+refuse "R58 return &RED; (an enum constant) keeps its own refusal" "cannot take the address of enum constant 'RED'" "$NT"'enum Color { RED, GREEN }
+fn h(): S { return &RED; }'"$NE"
+# A generic's base is its i64 reading: `var n: T = x; return &n;` used only at `<S>` is D4 (a)'s struct, not refused.
+accept "A15 return &n; (n: T) used only at <S8> is the struct" "$T"'fn hg<T>(x: T): S8 { var n: T = x; return &n; }
+fn f(): S8 { var s: S8; s.v = 26; return hg<S8>(s); }'"$E" 26 "$T"'fn f(): S8 { var u: S8; u.v = 26; return u; }'"$E"
 # A generic fn's base and its three instances parse the same `return &q;`: reported once.
 refuse "R39 return &q; in a generic fn, three instances" "$MS — \`&q\` $SLOT q's slot, not a struct — return q" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -539,7 +624,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 47 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 47) — rows were lost"; exit 1; }
-[ "$naccept" -ge 27 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 27) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 66 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 66) — rows were lost"; exit 1; }
+[ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

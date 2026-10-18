@@ -1819,7 +1819,14 @@ of U, a `*Str`), `return q;` is refused too, so the message names what q is inst
 and pu is a `*U8`*; 6.7.15, the user's D58 of 2026-10-18 — 6.7.14 said *— return pu*). Through 6.7.13 a fn of 8 bytes or less
 returned the slot's address as the struct's word (the caller read a dead frame's address as its field), and over 8
 bytes it was refused in other words (*… two registers … got `this expression`*, *return must be a bare local
-identifier …*).
+identifier …*). The same holds for `&n` of a name holding NO struct — an integer, a `*i64` or vector pointer, a `**S`,
+an array, a vector, an `f64`, a `Str` handle; a local, a parameter or a global: `&n` is n's slot, refused by name at
+every size (*… — `&n` is the address of n's slot, not a struct*; a `Str` handle adds *, and t is a `Str`*) — since
+6.7.15, the user's D18 of 2026-10-18; through 6.7.14 the 8-byte form returned the slot's address as the struct's word
+(a different byte each run) and over 8 bytes the classes' refusals named nothing. `&t` of an inline `Str` or a tuple is
+the address of that value, refused as `&u` of another struct is (*… got `&t` (a `*Str`)*). In a generic fn,
+`var n: T = x; return &n;` is judged per instance — at `<S>` it is the struct, at `<i32>` the slot refusal; the base,
+which is also the `T = i64` instance, is not judged (`h(3)` alone still returns the slot's address).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,

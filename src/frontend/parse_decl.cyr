@@ -11432,6 +11432,12 @@ fn _hl_amp_sid(S, noff): i64 {
     if (t <= 0) { return 0; }
     if (_hl_cp != 0) { return 0; }
     if (_dx_plain(S, t) == 0) { return 0; }
+    return _hl_amp_in(S, noff, t);
+}
+# t (the struct `_hl_name_ty` answered for `noff`, no `*T`) when `&noff` is the address of that struct itself —
+# inline (a local, an address-passed by-value parameter, a captured copy, a global) — else 0: a handle, whose `&`
+# is the slot holding the address. A `Str` / tuple / dyn too, for the caller to judge. CHANGELOG [6.7.15]
+fn _hl_amp_in(S, noff, t): i64 {
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {

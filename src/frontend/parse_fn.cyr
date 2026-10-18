@@ -3531,24 +3531,57 @@ fn _ret_park_copy(S): i64 {
 # naming nothing. The value [a, pe), inside any parentheses, exactly `& IDENT` with IDENT a struct-typed local,
 # parameter, capture or global whose `&` is its slot — a `*T` (an untyped `self` is one), or a handle of a plain
 # struct: refused at the `&`, once (`_ret_slot_refuse`), before the classes' refusals. 1 = refused. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AND `&n` OF A NAME HOLDING NO STRUCT (the user's D18, 2026-10-18): an integer, a `*i64` / `*V`, a `**S`,
+# an array, a vector, a `Str` handle — a local, parameter, capture or global — is the address of n's slot too, so it is
+# refused by name at every size (8 B returned the slot's address as the struct's word, a different byte each run; over
+# 8 B the classes' refusals named nothing). An inline `Str` / tuple / dyn is the address of that aggregate: refused as
+# `&u` of another struct is (kind 3). A const, an enum constant and a fn are the factor's (`&f` is no slot).
 fn _ret_slot_amp(S, a, pe): i64 {
     if (pe != a + 2) { return 0; }
     if (TOKTYP(S, a) != 27) { return 0; }
     if (TOKTYP(S, a + 1) != 2) { return 0; }
     var noff = TOKVAL(S, a + 1);
     var t = _hl_name_ty(S, noff);
-    if (t <= 0) { return 0; }
+    if (t <= 0) { return _ret_amp_bare(S, a, noff); }
     var cp = _hl_cp;
     if (cp == 0) {
-        if (_dx_plain(S, t) == 0) { return 0; }   # a `Str` / tuple / dyn name: not this rule
-        if (_hl_amp_sid(S, noff) > 0) { return 0; }   # an inline struct: D4 (a)'s struct
+        if (_hl_amp_in(S, noff, t) > 0) {
+            if (_dx_plain(S, t) == 1) { return 0; }   # an inline struct: D4 (a)'s struct (or its kind-3 refusal)
+            _ret_sid_refuse(S, a, noff, t, 3);   # an inline `Str` / tuple / dyn: `&t` (a `*Str`)
+            return 1;
+        }
     }
     _ret_slot_refuse(S, a, noff, t, cp);
     return 1;
 }
+# `& IDENT` of a name typed with no struct: refused as a slot when IDENT is a local, a parameter, a capture or a
+# global here (the `&` factor's ladder); 0 for anything else, left to the factor. 1 = refused. A generic's BASE body
+# (T bound to i64) leaves its locals, parameters and captures to its instances: `var n: T = x; return &n;` is the
+# struct at `<S8>` (D4 (a)), so the i64 reading must not refuse the definition. CHANGELOG [6.7.15]
+fn _ret_amp_bare(S, a, noff): i64 {
+    if (_asg_lvalue_is(S, noff) == 1) { return 0; }   # a const / an enum constant: the factor's refusal
+    var k = 0;
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) >= 0) { k = 1; }
+        if (_hl_capn(S, noff) == 1) { k = 1; }
+    }
+    if (k == 1) { if (_ret_gen_base(S) == 1) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { k = 1; }
+    if (k == 0) { return 0; }
+    _ret_slot_refuse(S, a, noff, 0, 0);
+    return 1;
+}
+# 1 while a generic fn's base body is parsed (its type parameters bound to i64), not an instance's.
+fn _ret_gen_base(S): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
+    return 1;
+}
 # "`&q` is the address of q's slot, not a struct", then the advice by what q holds (`t`, `cp` 1 a `*T`): S, the fn's
 # own struct — "return q"; another struct — what q is, since `return q;` is refused too ("got `pu` (a `*U8`)"; the
-# user's D58, 2026-10-18: it said "return pu"). CHANGELOG [6.7.15]
+# user's D58, 2026-10-18: it said "return pu"); no struct (`t` 0) — nothing more (D18). CHANGELOG [6.7.15]
 fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
@@ -3565,7 +3598,7 @@ fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
         PRSTR(" — return ");
         PRSTR(S + 0xEC00000 + noff);
     }
-    else {
+    elif (t > 0) {
         PRSTR(", and ");
         PRSTR(S + 0xEC00000 + noff);
         PRSTR(" is a `");
