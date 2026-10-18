@@ -1878,7 +1878,11 @@ callptr form got the generic refusal below, *… got `callptr`*), and (6.7.15) s
 another vector inside parentheses, `var v: f64v2 = (mk4(41));` / `w = (s.mv());` (through 6.7.14 the generic refusal,
 *… got `(...)`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
 a method's vector into a scalar, struct or pointer local, `var x: i64 = s.mv();` / `x = s.mv();`, as `var x: i64 =
-mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows) — and (6.7.15) a by-name
+mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows) — and (6.7.15) any call
+declared to return a vector assigned to a global that is no vector, `G = mkv(41, 7);`, `G = s.mv();`, `G =
+fncall2(&mkv, 41, 7);`, and `fncallN(&f, ..)` / `callptr(&f, ..)` into a scalar local or declaration, `x =
+fncall2(&mkv, ..);` / `var y: i64 = callptr(&mkv, ..);` (through 6.7.14 each stored a word: 0 on x86_64 / aarch64, 41
+on cx / Windows; a vector global keeps its own refusal, below) — and (6.7.15) a by-name
 call into a declaration annotated with a type of no integer width, `var x: f64 = mkv(41, 7);` (`f32`, `bool`,
 `cstring`, an enum), as the method is: through 6.7.14 it compiled, `x` silently a two-slot vector local.
 Parentheses around the whole call are transparent at these destinations too (6.7.15, the user's decision D28,
