@@ -114,7 +114,8 @@ The single consolidated pre-tag check, so no gate is run à la carte and skipped
    input and label caps (gate row S of `cybs_call_arity_named.sh` guards `bootstrap/cybs.cyr`'s headroom). gen1 (cybs's
    output) differing in SIZE from `build/cycc` is normal — only `gen2 == build/cycc` matters.
 3. **check.sh** — every gate green.
-4. **Cross-OS self-host** — ecb · ach · cass · pi on REAL hardware (`SELFHOST_OK` + the `tests/tcyr/crossos/` suite).
+4. **Cross-OS self-host** — ecb · ach · cass · pi on REAL hardware (`SELFHOST_OK` + `LIBTEST_OK` on the whole `tests/tcyr`
+   corpus — every host in `scripts/cross-os-selfhost.sh`'s `CO_FULL_HOSTS`, all four since 6.7.14).
 5. **Bench** — self_compile + cycc size into the CHANGELOG (non-blocking).
 
 `version-bump.sh` also runs the seed-derive gate after its rebuild (`CYRIUS_SKIP_SEED_GATE=1` only for a known doc /
@@ -234,7 +235,8 @@ src/             main.cyr + the per-target forks (main_aarch64{,_macho,_native}.
 lib/             the standard library, incl. the folded stdlibs (docs/ecosystem.md)
 programs/        tools, demos, port probes; checks/ (the check.sh driver); cyrius-init-templates/
 cbt/             the `cyrius` CLI
-tests/tcyr/<bucket>/   .tcyr in topical buckets; ⭐ crossos/ is the set the release gate runs on ecb/ach/cass/pi
+tests/tcyr/<bucket>/   .tcyr in topical buckets; the release gate runs ALL of them on ecb/ach/cass/pi; ⭐ crossos/ is
+                       the cross-host bucket (the subset CYRIUS_CROSS_OS_FULL=0 runs)
 tests/gates/<bucket>/  the shell gates (some registered in programs/checks/main.cyr, the rest driven from check.sh)
 tests/               fixtures/, data/, scyr/, smcyr/, win/
 benches/  fuzz/  docs/
@@ -285,7 +287,9 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
 - **Never edit the tree while check.sh or release-gate runs** — gates rebuild from the tree. **Wait on a PID**
   (`kill -0 $PID` loops), never `pgrep -f` / `pkill -f` a pattern (it matches the waiting shell itself).
 - CI shell-loop gates (SKIP / XFAIL) must be tested under `bash -eo pipefail` — `var=$(failing_cmd)` trips `set -e`.
-- The cross-OS leg runs only `tests/tcyr/crossos/`; reproduce aarch64 failures locally with `qemu-aarch64`.
+- The cross-OS leg runs the whole `tests/tcyr` corpus on every host in `cross-os-selfhost.sh`'s `CO_FULL_HOSTS` (all
+  four; `CYRIUS_CROSS_OS_FULL=0` forces the `tests/tcyr/crossos/` subset); reproduce aarch64 failures locally with
+  `qemu-aarch64`.
   `cross-os-selfhost.sh` is safe to run concurrently; the release gate runs the four legs beside check.sh
   (`CYRIUS_GATE_SERIAL=1` for the old walk); check.sh runs in parallel (`CYRIUS_CHECK_JOBS`; `# check: serial` marks a
   timing gate that runs alone).
@@ -379,7 +383,8 @@ reintroduce one; derive counts (`find tests/gates -name '*.sh' | wc -l`), never 
   are cyrius-private, spelled `1000 + the native number` (see the comment above `SYS_FCHOWNAT` in
   `lib/syscalls_aarch64_linux.cyr`). ⚠ The aarch64-Linux arm stays LAST in its ESYSXLAT chain.
 - **A wrapper that compiles on five targets is not a wrapper that runs.** Every new syscall wrapper needs a companion
-  test in `tests/tcyr/crossos/` — the directory is the selector the cross-OS leg runs.
+  test in `tests/tcyr/crossos/` — the cross-host bucket; every cross-OS leg runs it (the whole corpus runs on all four
+  hosts, and `CYRIUS_CROSS_OS_FULL=0` runs only this directory).
 - Restoring a config, restore only what was there — no unrequested "sensible defaults".
 
 ## DO NOT

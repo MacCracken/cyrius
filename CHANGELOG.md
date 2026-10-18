@@ -3963,7 +3963,8 @@ Every other bite needed no decision. Its fix follows what the source or the wrap
   - No gate reads these lines. heap_audit's doc-size scan reads `platform-status.md` for cycc sizes only.
 - **⚠ The CLAUDE.md half is the user's edit; no agent edits CLAUDE.md.** Its four lines still describe the crossos
   subset: Release Gate step 4 (:117), Project Structure (:237), Verification habits (:288), and Language & test
-  conventions (:382). The replacement lines, in the same terms (CLAUDE.md line numbers at 6.7.14):
+  conventions (:382). The replacement lines, in the same terms (CLAUDE.md line numbers at 6.7.14) — applied at the
+  close with the user's leave for this one edit (2026-10-17, "fix the claude file, you can replace it in this instance"):
   - **:117** (Release Gate, step 4)
     - now: `4. **Cross-OS self-host** — ecb · ach · cass · pi on REAL hardware (`SELFHOST_OK` + the `tests/tcyr/crossos/` suite).`
     - becomes: `4. **Cross-OS self-host** — ecb · ach · cass · pi on REAL hardware (`SELFHOST_OK` + `LIBTEST_OK` on the whole `tests/tcyr` corpus — every host in `scripts/cross-os-selfhost.sh`'s `CO_FULL_HOSTS`, all four since 6.7.14).`
