@@ -1785,7 +1785,10 @@ result is a temporary*), whichever spelling: through 6.7.13 the `callptr(&gp, 5)
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the
 whole `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (on Windows it writes into
-a temporary that is copied into the fn's own result pointer). Anything else — an
+a temporary that is copied into the fn's own result pointer) — or (6.7.14, the user's decision D35, 2026-10-16: A)
+a dereference `*p` of a pointer to it (`(*p)`, `**pp`, `*gp(p)`, `*h.pv`, `*&w` too): its 16 / 32 bytes are copied
+through the pointer into the return; a `*q` of another vector, or of no vector (`*pi` of a `*i64`), is refused by
+this rule's words (*… got `this expression`*), as `return *p;` itself was through 6.7.13. Anything else — an
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
 multi-value `return (a, b);`, a `callptr(fp, ..)` through a fn pointer held in a variable, a **global** of the
 right vector type, or a call returning a scalar or a different-width vector — is a compile error
@@ -1843,7 +1846,11 @@ struct — `p` a local, a parameter, a capture, a field, a global, a `: *V` call
 vector type is refused as a local of that type is — `cannot copy 'q' into a variable of a different
 struct/vector type: 'v'`, the same-size ones too (`*i32v4` into `f64v2`). ⚠ Refused since 6.7.11 (*… got
 `*p`*); through 6.7.10 it stored one word, the high lanes stale (x86_64 210, aarch64 74, cx 98, Windows 146 where
-161 is right).
+161 is right). An unannotated `var v = *p;` (6.7.14, the user's decision D36, 2026-10-16: A) is a `V` local copied
+through `p`, as `var v = mkv(..);` is the vector — `(*p)`, `**pp`, `*gp(p)` too — so `v` meets the vector rules
+(`lanes(v)` passes it, `&v + 8` is its second lane); a `*pi` of no vector binds one word as ever. ⚠ Through 6.7.13 the
+unannotated declaration bound one word, lane 0, silently (x86_64 114, aarch64 26, cx 98, Windows 146 where 161 is
+right), and `return *p;` was refused.
 
 **An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
 `mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as

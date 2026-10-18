@@ -1795,6 +1795,8 @@ var _dro_vt = 0 - 1;    # 6.7.12: ... the same `*` when that argument's paramete
 var _dro_vo = 0 - 1;    # 6.7.14: the `*` starting an argument to a pointer of another kind or a small by-value struct
 var _dro_vod = 0;       # ... the vector its dereference read (`_dro_vnote`: its descriptor), 0 = none
 var _dro_vend = 0;      # ... the token after that dereference's operand
+var _dvi_want = 0 - 1;  # 6.7.14 (D36): the `*` of an untyped declaration's whole `*p` (`_dvi_arm`, parse_fn.cyr)
+var _dvi_got = 0 - 1;   # ... that `*` once its `*V` operand's pointer is parked (`_dvi_park`)
 var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
 var _fnc_lt = 0 - 1;    #   its temp,
 var _fnc_lcp = 0 - 1;   #   and the code pointer after it

@@ -78,6 +78,17 @@ fn dpf_get(p: *f64v2): *f64v2 { return p; }
 fn dpf_par(p: *f64v2): i64 { var v: f64v2 = *p; return load64(&v) * 1000 + load64(&v + 8); }
 fn dpf_par4(p: *f64v4): i64 { var v: f64v4 = mk4(); v = *p; return load64(&v + 16) * 1000 + load64(&v + 24); }
 
+# --- G (6.7.14, D35 A / D36 A — the user's decisions, 2026-10-16; issues/2026-10-16-vector-dereference-return-and-untyped-
+#     destinations.md): `return *p;` from a fn declared `: V` with `p: *V` copies the vector through the pointer (refused
+#     "got `this expression`" through 6.7.13), and an untyped `var v = *p;` declares a V local copied through p (one
+#     word, lane 0, through 6.7.13: x86_64 114, IR=3 226, aarch64 26, cx 98, PE 146 where 161 is right). ---
+fn drt2(p: *f64v2): f64v2 { return *p; }
+fn drt2w(p: *f64v2): f64v2 { return (*p); }
+fn drt2pp(pp: **f64v2): f64v2 { return **pp; }
+fn drt4(p: *f64v4): f64v4 { return *p; }
+fn drtf(p: *f32v4): f32v4 { return *p; }
+fn dvlanes(x: f64v2): i64 { return load64(&x) * 1000 + load64(&x + 8); }
+
 fn main(): i64 {
     var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
     var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
@@ -256,6 +267,55 @@ fn main(): i64 {
     assert_eq(load64(&da) * 100 + load64(&da + 8), 4108, "declared from *&w: the dereference of an address-of a vector");
     d2 = *(&w2);
     assert_eq(load64(&d2) * 100 + load64(&d2 + 8), 4108, "assigned from *(&w)");
+
+    # --- G: `return *p;` and an untyped `var v = *p;` (D35, D36) ---
+    test_group("G return *p and an untyped var v = *p");
+    var gw: f64v2 = ge2<i64>(61, 62);
+    var gp2: *f64v2 = &gw;
+    var gr: f64v2 = drt2(gp2);
+    assert_eq(load64(&gr), 61, "return *p lane0");
+    assert_eq(load64(&gr + 8), 62, "return *p lane1");
+    var grw: f64v2 = drt2w(gp2);
+    assert_eq(load64(&grw) * 100 + load64(&grw + 8), 6162, "return (*p), both lanes");
+    var grp: f64v2 = drt2pp(&gp2);
+    assert_eq(load64(&grp) * 100 + load64(&grp + 8), 6162, "return **pp of a **f64v2, both lanes");
+    store64(&gr, 5);
+    assert_eq(load64(&gw), 61, "the returned vector is a copy");
+    var gw4: f64v4 = ge4<i64>(1, 2);
+    var gr4: f64v4 = drt4(&gw4);
+    assert_eq(load64(&gr4), 1, "return *p of a *f64v4 lane0");
+    assert_eq(load64(&gr4 + 8), 2, "return *p of a *f64v4 lane1");
+    assert_eq(load64(&gr4 + 16), 101, "return *p of a *f64v4 lane2");
+    assert_eq(load64(&gr4 + 24), 102, "return *p of a *f64v4 lane3");
+    var gwf: f32v4 = gef<i32>(3, 4);
+    var grf: f32v4 = drtf(&gwf);
+    assert_eq(load32(&grf), 3, "return *p of a *f32v4 lane0");
+    assert_eq(load32(&grf + 4), 4, "return *p of a *f32v4 lane1");
+    assert_eq(load32(&grf + 8), 103, "return *p of a *f32v4 lane2");
+    assert_eq(load32(&grf + 12), 104, "return *p of a *f32v4 lane3");
+    var gu = *gp2;
+    assert_eq(load64(&gu), 61, "untyped var v = *p lane0");
+    assert_eq(load64(&gu + 8), 62, "untyped var v = *p lane1");
+    assert_eq(dvlanes(gu), 61062, "untyped var v = *p is the vector: a value-form argument");
+    store64(&gu + 8, 9);
+    assert_eq(load64(&gw + 8), 62, "untyped var v = *p is a copy");
+    var guw = (*gp2);
+    assert_eq(load64(&guw) * 100 + load64(&guw + 8), 6162, "untyped var v = (*p), both lanes");
+    var gpp2: **f64v2 = &gp2;
+    var gupp = **gpp2;
+    assert_eq(load64(&gupp) * 100 + load64(&gupp + 8), 6162, "untyped var v = **pp, both lanes");
+    var gp4: *f64v4 = &gw4;
+    var gu4 = *gp4;
+    assert_eq(load64(&gu4), 1, "untyped f64v4 from *p lane0");
+    assert_eq(load64(&gu4 + 24), 102, "untyped f64v4 from *p lane3");
+    var gpf: *f32v4 = &gwf;
+    var guf = *gpf;
+    assert_eq(load32(&guf), 3, "untyped f32v4 from *p lane0");
+    assert_eq(load32(&guf + 12), 104, "untyped f32v4 from *p lane3");
+    var gx = 77;
+    var gpi: *i64 = &gx;
+    var gxi = *gpi;
+    assert_eq(gxi + 1, 78, "untyped var x = *pi of a *i64 stays a word");
 
     var r = assert_summary();
     return r;

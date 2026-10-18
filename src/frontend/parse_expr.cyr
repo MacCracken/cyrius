@@ -4609,6 +4609,7 @@ fn _deref_read(S): i64 {
     var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
     var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.14: a `*V`'s vector, for an if-expression branch
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
+    if (pk == 0) { pk = _dvi_park(S, d, vd); }   # 6.7.14 (D36): an untyped declaration's `*p` of a `*V`
     if (_deref_small(S, d) == 0) { ELOAD64(S); }
     SPSC(S, iw);
     if (iw > 0) {
@@ -4700,6 +4701,21 @@ fn _dlo_park(S, d): i64 {
     if (_dyn_is(S, sid) == 1) { return 0; }
     if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }   # 6.7.13: zero-size steps 8, `&x` 1
     _dlo_sid = sid;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in parse_fn.cyr),
+# its operand naming a value-form vector `vd` (`_dop_vd`) and ending the initialiser (`;`, or the `)` of the wrap the
+# declaration stepped into): the pointer parked as `_dlo_vec` parks an argument's, for `_dvi_take`. 1 = parked.
+fn _dvi_park(S, d, vd): i64 {
+    if (d != _dvi_want) { return 0; }
+    if (vd == 0) { return 0; }
+    if (_vrcv_vec(S, 0 - vd) == 0) { return 0; }
+    var t = TOKTYP(S, GTI(S));
+    if (t != 5) { if (t != 11) { return 0; } }
+    _dvi_got = d;
+    _dlo_sid = vd;
     _dlo_h = _HTEMP(S);
     _HTSTORE(S, _dlo_h);
     return 1;

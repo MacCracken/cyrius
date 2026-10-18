@@ -7638,20 +7638,31 @@ fn _vrcv_dsrc(S, ti, term): i64 {
 # untyped word): the receive refusal, `verb` its verb. The wrap's `)`s consumed, the cursor on the terminator. 0.
 fn _vrcv_demit(S, dst, ty, verb, noff): i64 {
     var ti = GTI(S);
+    var a = ti + _vrcv_k + 1;
+    var vd = _vrcv_dparse(S);
+    if (vd == 0) { return _vrcv_err(S, ti, verb, 0); }
+    if (0 - vd != ty) { return _vrcv_dbad(S, ti, ty, vd, noff, _hl_lastnm(S, a, _vrcv_dpe, TOKVAL(S, a))); }
+    _vec_desc(S, ty);
+    _agc_copy_bytes(S, dst, 0 - 1, _AGC_DREF(_vrcv_dh), 0 - 1, GVEC_NSLOTS(S) * 8);
+    return 0;
+}
+# The kind-4 dereference at the cursor (`_vrcv_k` parentheses, then `*`): E parsed (rax = the pointer) and kept in a
+# hidden temp (`_vrcv_dh`), `_vrcv_dpe` the token after E, the wrap's `)`s consumed; E's vector (`_dop_vd`: its step
+# word, or `&x` of a vector), else 0. The receive's (`_vrcv_demit`) and (6.7.14, D35) the vector return's
+# (`_ret_vderef`).
+var _vrcv_dh = 0;
+var _vrcv_dpe = 0;
+fn _vrcv_dparse(S): i64 {
     var k = _vrcv_k;
-    var a = ti + k + 1;
+    var a = GTI(S) + k + 1;
     STI(S, a);
     PARSE_FACTOR(S);
     var vd = _dop_vd(S, a, GTI(S));   # its step word's vector, or `&x` of a vector
-    var h = _HTEMP(S);
-    _HTSTORE(S, h);
-    var pe = GTI(S);
+    _vrcv_dh = _HTEMP(S);
+    _HTSTORE(S, _vrcv_dh);
+    _vrcv_dpe = GTI(S);
     _pw_close(S, k);
-    if (vd == 0) { return _vrcv_err(S, ti, verb, 0); }
-    if (0 - vd != ty) { return _vrcv_dbad(S, ti, ty, vd, noff, _hl_lastnm(S, a, pe, TOKVAL(S, a))); }
-    _vec_desc(S, ty);
-    _agc_copy_bytes(S, dst, 0 - 1, _AGC_DREF(h), 0 - 1, GVEC_NSLOTS(S) * 8);
-    return 0;
+    return vd;
 }
 # A dereference of another vector (`vd`) into the vector `noff` of type `ty`, reported at token `ti` in the words a
 # local of another type meets (`_AGG_ASSIGN_TYPE_ERR`), naming the operand's last name `snoff`. 0.

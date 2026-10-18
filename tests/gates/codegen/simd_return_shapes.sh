@@ -243,6 +243,20 @@
 #   M-R2 `_ret2_in_vector` without its GIDEP guard     -> RED 4: U2 on all four legs (refused)
 #   M-R3 `_ret2_in_vector` without its `return` test    -> RED 4: T7 on all four legs (two error lines)
 #   M-R4 `_ret2_in_vector` without its `_tn_once`       -> RED 4: T5 on all four legs (two error lines)
+#
+# 6.7.14 (D35 A / D36 A, the user's decisions, 2026-10-16; issues/2026-10-16-vector-dereference-return-and-untyped-
+# destinations.md) — `return *p;` from a `: V` fn with `p: *V` copies the vector through the pointer (`_ret_vderef`:
+# refused "got `this expression`" on every leg before), and an untyped `var v = *p;` declares a V local copied through
+# it (`_dvi_arm` / `_dvi_park` / `_dvi_take`: one word before — x86_64 114, IR=3 226, aarch64 26, cx 98, PE 146 where
+# 161 is right). Rows D (run, 161, on host / host IR=3 / cx / aarch64 / win64): D1 / D2 the filed repros verbatim,
+# D3-D6 the return wrapped, `**pp`, `*gp(p)`, `*h.pv`, `*&w`, f64v4, f32v4, D7 / D8 the untyped declaration wrapped,
+# through `**pp`, `*gp(p)`, `*h.pv`, f64v4, f32v4, a copy, D9 it is the vector (a value-form argument), D10 a `*i64`'s
+# `*pi` stays a word. Rows DK (refused once, the 6.6.6 words, no artifact, four legs): a `*f32v4` / `*f64v4` into an
+# f64v2 fn's return, a `*i64`'s, wrapped. Mutations (2026-10-17, a scratch copy, its 2-stage mutant; measured):
+#   M-D1 `_simd_ret_call_ok` without its `* E` arm      -> RED 40: D1 D3-D6 on all five legs (refused), DK1-DK4 on
+#       four (two error lines)
+#   M-D2 `_dvi_park` never parking                     -> RED 20: D2 D7 D8 D9 on all five legs (one word)
+#   M-D3 `_ret_vderef` without its type check          -> RED 16: DK1-DK4 on all four legs (compiled)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -732,6 +746,106 @@ k_msg() {
     K4) echo "a value-form vector local is assigned only from";;
     esac
 }
+# ---- 6.7.14 (D35 A / D36 A): `return *p;` and an untyped `var v = *p;` with `p: *V` (rows D run, 161; rows DK refused once) --
+# D1 / D2 the filed repros verbatim; D3-D6 the return through `(*p)`, `((*p))`, `**pp`, `*gp(p)`, `*h.pv`, `*&w`, f64v4,
+# f32v4; D7 / D8 the untyped declaration wrapped, through `**pp`, `*gp(p)`, `*h.pv`, of f64v4 / f32v4, and a copy;
+# D9 it meets the vector rules (a value-form argument, its lanes by address); D10 a `*i64`'s `*pi` stays a word.
+DH='include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn l4(x: f64v4): i64 { return load64(&x) * 1000 + load64(&x + 8) * 100 + load64(&x + 16) * 10 + load64(&x + 24); }
+fn lf(x: f32v4): i64 { return load32(&x) * 1000 + load32(&x + 4) * 100 + load32(&x + 8) * 10 + load32(&x + 12); }
+struct HV { pv: *f64v2; }
+fn gp(p: *f64v2): *f64v2 { return p; }
+'
+d_src() {  # $1 row id -> source on stdout; each exits 161 when right
+    case "$1" in
+    D1) printf '%s' 'include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn dr(p: *f64v2): f64v2 { return *p; }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var v: f64v2 = dr(&w); return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    D2) printf '%s' 'include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var v = *p; return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    D3) printf '%s' "$DH"'fn r1(p: *f64v2): f64v2 { return (*p); }
+fn r2(p: *f64v2): f64v2 { return ((*p)); }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var a: f64v2 = r1(&w); var b: f64v2 = r2(&w);
+  if (lanes(a) != 417) { return 1; } if (lanes(b) != 417) { return 2; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D4) printf '%s' "$DH"'fn r1(pp: **f64v2): f64v2 { return **pp; }
+fn r2(p: *f64v2): f64v2 { return *gp(p); }
+fn r3(h: *HV): f64v2 { return *h.pv; }
+fn r4(): f64v2 { var w: f64v2 = mkv(4, 5); return *&w; }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var h: HV; h.pv = &w;
+  var a: f64v2 = r1(&p); var b: f64v2 = r2(p); var c: f64v2 = r3(&h); var d: f64v2 = r4();
+  if (lanes(a) != 417) { return 1; } if (lanes(b) != 417) { return 2; } if (lanes(c) != 417) { return 3; }
+  if (lanes(d) != 45) { return 4; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D5) printf '%s' "$DH"'fn r4(p: *f64v4): f64v4 { return *p; }
+fn run(): i64 { var w: f64v4; store64(&w, 1); store64(&w + 8, 2); store64(&w + 16, 3); store64(&w + 24, 4);
+  var v: f64v4 = r4(&w); if (l4(v) != 1234) { return 1; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D6) printf '%s' "$DH"'fn rf(p: *f32v4): f32v4 { return *p; }
+fn run(): i64 { var w: f32v4; store32(&w, 5); store32(&w + 4, 6); store32(&w + 8, 7); store32(&w + 12, 8);
+  var v: f32v4 = rf(&w); if (lf(v) != 5678) { return 1; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D7) printf '%s' "$DH"'fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var pp: **f64v2 = &p; var h: HV; h.pv = &w;
+  var a = (*p); var b = **pp; var c = *gp(p); var d = *h.pv; var e = ((*p));
+  if (lanes(a) != 417) { return 1; } if (lanes(b) != 417) { return 2; } if (lanes(c) != 417) { return 3; }
+  if (lanes(d) != 417) { return 4; } if (lanes(e) != 417) { return 5; }
+  store64(&a, 9); if (load64(&w) != 41) { return 6; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D8) printf '%s' "$DH"'fn run(): i64 { var w: f64v4; store64(&w, 1); store64(&w + 8, 2); store64(&w + 16, 3); store64(&w + 24, 4);
+  var f: f32v4; store32(&f, 5); store32(&f + 4, 6); store32(&f + 8, 7); store32(&f + 12, 8);
+  var p4: *f64v4 = &w; var pf: *f32v4 = &f; var a = *p4; var b = *pf;
+  if (l4(a) != 1234) { return 1; } if (lf(b) != 5678) { return 2; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D9) printf '%s' "$DH"'fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var v = *p;
+  if (load64(&v + 8) != 7) { return 1; } return lanes(v) - 256; }
+syscall(60, run() % 256);
+' ;;
+    D10) printf '%s' "$DH"'fn run(): i64 { var x = 150; var pi: *i64 = &x; var u = *pi; var t = (*pi); return u + t - 139; }
+syscall(60, run() % 256);
+' ;;
+    esac
+}
+D_ROWS="D1 D2 D3 D4 D5 D6 D7 D8 D9 D10"
+dk_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    DK1) printf '%s' "$DH"'fn bad(q: *f32v4): f64v2 { return *q; }
+fn run(): i64 { var w: f32v4; var v: f64v2 = bad(&w); return lanes(v); }
+syscall(60, run());
+' ;;
+    DK2) printf '%s' "$DH"'fn bad(q: *f64v4): f64v2 { return *q; }
+fn run(): i64 { var w: f64v4; var v: f64v2 = bad(&w); return lanes(v); }
+syscall(60, run());
+' ;;
+    DK3) printf '%s' "$DH"'fn bad(pi: *i64): f64v2 { return *pi; }
+fn run(): i64 { var x = 5; var v: f64v2 = bad(&x); return lanes(v); }
+syscall(60, run());
+' ;;
+    DK4) printf '%s' "$DH"'fn bad(q: *f32v4): f64v2 { return (*q); }
+fn run(): i64 { var w: f32v4; var v: f64v2 = bad(&w); return lanes(v); }
+syscall(60, run());
+' ;;
+    esac
+}
+DK_ROWS="DK1 DK2 DK3 DK4"
+dk_got() { case "$1" in DK4) echo '(...)';; *) echo 'this expression';; esac; }
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -1068,6 +1182,44 @@ refuse_k_all() {  # $1 leg label  $2 compiler
     done
 }
 
+# 6.7.14 (D35, D36; D37-D39): a table's rows built by the leg's compiler (`$6` an env assignment, or none) and run (161).
+accept_tab_all() {  # $1 leg label  $2 compiler  $3 runner fn name  $4 source fn  $5 rows  [$6 VAR=value]
+    for row in $5; do
+        "$4" "$row" > "$W/d.cyr"
+        rc=0
+        if [ -n "${6:-}" ]; then env "$6" "$2" < "$W/d.cyr" > "$W/d.out" 2>"$W/d.err" || rc=$?
+        else "$2" < "$W/d.cyr" > "$W/d.out" 2>"$W/d.err" || rc=$?; fi
+        naccept=$((naccept+1))
+        if ! [ -s "$W/d.out" ]; then bad "$1 $row: produced no artifact (rc=$rc: $(grep -m1 '^error' "$W/d.err" 2>/dev/null))"; continue; fi
+        if grep -q '^error' "$W/d.err"; then bad "$1 $row: an error line: $(grep -m1 '^error' "$W/d.err")"; continue; fi
+        chmod +x "$W/d.out"
+        got=0
+        ( ulimit -c 0; "$3" "$W/d.out" ) >/dev/null 2>&1 || got=$?
+        if [ "$got" = 161 ]; then good "$1 $row = 161"; else bad "$1 $row = $got, want 161"; fi
+    done
+}
+# ... and a table's rows refused once, an error line holding `$5 <row>`'s words, no artifact.
+refuse_tab_all() {  # $1 leg label  $2 compiler  $3 source fn  $4 rows  $5 message fn
+    for row in $4; do
+        "$3" "$row" > "$W/dk.cyr"
+        rc=0
+        "$2" < "$W/dk.cyr" > "$W/dk.out" 2>"$W/dk.err" || rc=$?
+        nrefuse=$((nrefuse+1))
+        km=$("$5" "$row")
+        ne=$(grep -c '^error' "$W/dk.err" 2>/dev/null || true)
+        if ! grep '^error' "$W/dk.err" | grep -qF -- "$km"; then
+            bad "$1 $row: not refused as '$km' (rc=$rc, first line: $(grep -m1 '^error' "$W/dk.err" 2>/dev/null))"
+        elif [ "$ne" != 1 ]; then
+            bad "$1 $row: $ne error lines (want 1)"
+        elif [ -s "$W/dk.out" ]; then
+            bad "$1 $row: reported but still emitted an artifact"
+        else
+            good "$1 $row refused once"
+        fi
+    done
+}
+dk_msg() { echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`$(dk_got "$1")\`"; }
+
 # 6.7.13: rows H — the refusal's words, or (H5 H9) the undefined-function path alone; one `error` line, no artifact.
 refuse_h_all() {  # $1 leg label  $2 compiler
     for row in $H_ROWS; do
@@ -1187,6 +1339,9 @@ refuse_q_all host "$CC"
 accept_p_all host "$CC" hostr
 accept_p_all host-ir3 "$CC" hostr CYRIUS_IR=3
 refuse_k_all host "$CC"
+accept_tab_all host "$CC" hostr d_src "$D_ROWS"
+accept_tab_all host-ir3 "$CC" hostr d_src "$D_ROWS" CYRIUS_IR=3
+refuse_tab_all host "$CC" dk_src "$DK_ROWS" dk_msg
 refuse_h_all host "$CC"
 undef_ret_all host "$CC"
 tp_ctl_all host "$CC"
@@ -1208,6 +1363,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_q_all cx "$W/cycc_cx"
     accept_p_all cx "$W/cycc_cx" cxr
     refuse_k_all cx "$W/cycc_cx"
+    accept_tab_all cx "$W/cycc_cx" cxr d_src "$D_ROWS"
+    refuse_tab_all cx "$W/cycc_cx" dk_src "$DK_ROWS" dk_msg
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
 tp_ctl_all cx "$W/cycc_cx"
@@ -1232,6 +1389,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_q_all aarch64 "$W/cycc_a64"
         accept_p_all aarch64 "$W/cycc_a64" a64r
         refuse_k_all aarch64 "$W/cycc_a64"
+        accept_tab_all aarch64 "$W/cycc_a64" a64r d_src "$D_ROWS"
+        refuse_tab_all aarch64 "$W/cycc_a64" dk_src "$DK_ROWS" dk_msg
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
 tp_ctl_all aarch64 "$W/cycc_a64"
@@ -1261,6 +1420,8 @@ if command -v wine > /dev/null 2>&1; then
         refuse_q_all win64 "$W/cycc_win"
         accept_p_all win64 "$W/cycc_win" wr_
         refuse_k_all win64 "$W/cycc_win"
+        accept_tab_all win64 "$W/cycc_win" wr_ d_src "$D_ROWS"
+        refuse_tab_all win64 "$W/cycc_win" dk_src "$DK_ROWS" dk_msg
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
 tp_ctl_all win64 "$W/cycc_win"
@@ -1277,7 +1438,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -1293,11 +1454,12 @@ na_floor=$((na_floor + $(set -- $E_ROWS; echo $#) * 3))   # 6.7.13: every E row 
 na_floor=$((na_floor + $(set -- $C_ROWS; echo $#) * 3))   # 6.7.13 (D29): every C row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $P_ROWS; echo $#) * 3))   # 6.7.13 (D34): every P row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $U_ROWS; echo $#) * 2))   # 6.7.14 (D43): every U row on host + cx
+na_floor=$((na_floor + $(set -- $D_ROWS; echo $#) * 3))   # 6.7.14 (D35, D36): every D row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

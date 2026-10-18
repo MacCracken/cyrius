@@ -1490,7 +1490,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
     # fourth check here, enumerate the early returns above it again — they are the paths this
     # one cannot see. See `_refuse_simd_return`. CHANGELOG [6.6.6]
     _ret_vec_rule(S);
-    if (_ret_vicall_pe(S) == 1) { return 0; }   # 6.7.13 (D29): `return callptr(&f, ..);` on Win64
+    if (_ret_vec_take(S) == 1) { return 0; }   # 6.7.13 (D29): `return callptr(&f, ..);` on Win64; 6.7.14 (D35): `*p`
     # v6.4.31: `return <simd_call>(args);` on Win64 PE — a SIMD-returning fn
     # whose return expression is itself a SIMD-returning call (e.g.
     # `f32v4_splat` → `return f32v4_make(x,x,x,x);`). The callee writes its
@@ -6575,6 +6575,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _fla_want);
     vec_push(_scv_vec, _had_error);
     vec_push(_scv_vec, _scv_un);
+    vec_push(_scv_vec, _dvi_want);   # 6.7.14 (D36)
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -6583,6 +6584,7 @@ fn _scv_restore(d): i64 {
     _sc_fcw = vec_get(_scv_vec, d + 2);
     _fla_want = vec_get(_scv_vec, d + 3);
     _scv_un = vec_get(_scv_vec, d + 5);
+    _dvi_want = vec_get(_scv_vec, d + 6);
     vec_truncate(_scv_vec, d);
     return 0;
 }
@@ -6603,7 +6605,11 @@ fn _scv_arm(S, pscale, ext): i64 {
             if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
         } }
     _scv_un = 0 - 1;
-    if (pscale == 0) { if (ext == 0) { if (GINFN(S) == 1) { _scv_un_peel(S); } } }
+    _dvi_want = 0 - 1;
+    if (pscale == 0) { if (ext == 0) { if (GINFN(S) == 1) {
+                _scv_un_peel(S);
+                _dvi_arm(S);   # 6.7.14 (D36): `var v = *p;`
+            } } }
     var w = _sc_arm(S);
     return (w + 1) | (d << 32);
 }
@@ -6703,6 +6709,7 @@ fn _sc_pwrap(S, start): i64 {
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     if (_scv_refd == start) { return 0; }   # 6.7.13 (D13): refused by `_scv_rec_ann`; the annotation stands
+    if (_dvi_take(S, noff, pscale, ext, start) == 1) { return 1; }   # 6.7.14 (D36): `var v = *p;`, p a `*V`
     if (_scv_dyn_chk(S, pscale, ext, start) == 1) { return 0; }   # 6.7.8
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field
@@ -6721,6 +6728,40 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     return 1;
 }
 
+# ⛔ 6.7.14 (D36 A, the user's decision, 2026-10-16) — AN UNTYPED `var v = *p;` WITH `p: *V` DECLARES A `V` LOCAL COPIED
+# THROUGH p, as `var v = mkv(..)` binds the vector (v6.5.61), `var v = callptr(&f, ..)` too (6.7.13's D29), and `var v:
+# V = *p;` copies (6.7.13's D34). It bound ONE word, lane 0 (the filed repro: x86_64 114, IR=3 226, aarch64 26, cx 98,
+# PE 146 where 161 is right), silently. E's type is known only once it is parsed, so the declaration's scalar path runs
+# as ever: when the whole initialiser, inside any parentheses (`_scv_un_peel` stepped in), is one dereference `* E`
+# (`_vrcv_dsrc`), its `*` is watched (`_dvi_arm`); E naming a value-form vector, `_deref_read` parks the pointer
+# (`_dvi_park`, parse_expr.cyr) and the declaration takes it here (`_dvi_take`): the local is that vector, its 16 / 32
+# bytes copied through the pointer. A `*p` of no vector binds the word as before — nothing parks, its code unchanged.
+# CHANGELOG [6.7.14]
+fn _dvi_arm(S): i64 {
+    if (PEEKT(S) != 8) { return 0; }
+    if (_vrcv_dsrc(S, GTI(S), _scv_term) != 4) { return 0; }
+    if (_vrcv_k != 0) { return 0; }
+    _dvi_want = GTI(S);
+    return 0;
+}
+# After the untyped initialiser [start, cursor): 1 = it was the watched `*E` whose pointer `_dvi_park` parked, nothing
+# emitted since (`_dlo_cp`) — `noff` declared that vector, copied through it.
+fn _dvi_take(S, noff, pscale, ext, start): i64 {
+    if (pscale != 0) { return 0; }
+    if (ext != 0) { return 0; }
+    var d = _dvi_got;
+    if (d < start) { return 0; }
+    if (_dlo_beg != d) { return 0; }
+    if (_dlo_cp != GCP(S)) { return 0; }
+    if (_dlo_end + d - start != GTI(S)) { return 0; }
+    _dvi_got = 0 - 1;
+    var ty = 0 - _dlo_sid;
+    _vec_desc(S, ty);
+    var n = GVEC_NSLOTS(S);
+    var named = _sci_slots(S, noff, ty, n);
+    _agc_copy_bytes(S, named, 0 - 1, _AGC_DREF(_dlo_h), 0 - 1, n * 8);
+    return 1;
+}
 # 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse_expr.cyr): in a fn an
 # untyped one infers the dyn (a copy) and a struct annotation is `_sc_decl_mismatch`'s; any other
 # annotation (`: i64`, `: *Sq`, `: f64`, a vector — `ext` a scalar / float / slice / bool one) is
@@ -7185,8 +7226,11 @@ fn _pair_ret_offender(S): i64 {
 # ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15): and the whole `return callptr(&f, ..);` / `fncallN(&f, ..)`
 # with `f` declared to return this vector (`_ret_vicall`) — refused "got `this expression`" though its callee is
 # known; through a variable it stays refused (no declared type: X13).
+# 6.7.14 (D35 A): and a whole dereference `* E` (`_vrcv_dsrc`, by its tokens) — E's vector is known once it is parsed,
+# which `_ret_vderef` does (another vector, or none, refused there in this rule's words). CHANGELOG [6.7.14]
 fn _simd_ret_call_ok(S): i64 {
     if (_ret_vicall(S) == 1) { return 1; }
+    if (_vrcv_dsrc(S, GTI(S), 5) == 4) { return 1; }
     var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
@@ -7214,14 +7258,57 @@ fn _ret_vicall_pe(S): i64 {
     _icall_vbeg = GTI(S);
     _icall_vdst = t;
     PCMPE(S);
+    return _ret_vt_done(S, t, n);
+}
+# The vector a return left in frame temporary `t` (`n` slots), the cursor on the `;`: consumed; Win64 copies it into
+# this fn's own result pointer (its stash, `return IDENT;`'s copy), SysV / AAPCS64 / cx load the vector return registers
+# from it (`return IDENT;`'s pair load); then the jump to the epilogue. 1. CHANGELOG [6.7.14]
+fn _ret_vt_done(S, t, n): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
-    var src = 0 - ((t + 1) * 8);
-    if (_cur_fn_regalloc > 0) { src = src - _cur_fn_regalloc * 8; }
-    src = src - _cur_fn_ret_stash;
-    ESTRUCT_BYVAL_COPY(S, src, 0 - (_cur_fn_regalloc * 8 + 8), n * 8);
+    if (_cur_fn_ret_stash > 0) {
+        var src = 0 - ((t + 1) * 8);
+        if (_cur_fn_regalloc > 0) { src = src - _cur_fn_regalloc * 8; }
+        src = src - _cur_fn_ret_stash;
+        ESTRUCT_BYVAL_COPY(S, src, 0 - (_cur_fn_regalloc * 8 + 8), n * 8);
+    } elif (n == 4) { EFLLOAD_F64V4_PAIR(S, t); }
+    else { EFLLOAD_F64V2_PAIR(S, t); }
     vec_push(rp_vec, EJMP0(S));
     return 1;
+}
+# PARSE_RETURN's vector sources that emit their own return (one call there: cybs's per-fn ceiling): `callptr(&f, ..)` on
+# Win64 (6.7.13's D29) and (6.7.14, D35) a dereference `*p`. 1 = emitted. CHANGELOG [6.7.14]
+fn _ret_vec_take(S): i64 {
+    if (_ret_vicall_pe(S) == 1) { return 1; }
+    return _ret_vderef(S);
+}
+# ⛔ 6.7.14 (D35 A, the user's decision, 2026-10-16) — `return *p;` FROM A FN DECLARED TO RETURN THE VECTOR `p` POINTS AT
+# COPIES IT THROUGH THE POINTER, as `var v: V = *p;` does (6.7.13's D34: `*pv` is the vector at every destination) and
+# as a struct fn's `return *p;` copies (6.7.10 decision 6). It was refused "got `this expression`" on every target. The
+# whole return value at the cursor, inside any parentheses, is one dereference `* E` (`_vrcv_dsrc`, by its tokens; the
+# 6.6.6 rule let it past, `_simd_ret_call_ok`): E is parsed and its vector read (`_vrcv_dparse`) — this fn's: its 16 /
+# 32 bytes copied into a frame temporary the return takes (`_ret_vt_done`); another vector, or none (`*pi` of a `*i64`):
+# refused in the 6.6.6 rule's words at the value's first token, as before. 1 = taken. CHANGELOG [6.7.14]
+fn _ret_vderef(S): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    var ti = GTI(S);
+    if (_vrcv_dsrc(S, ti, 5) != 4) { return 0; }
+    var ty = _cur_fn_ret_scalar;
+    _vec_desc(S, ty);
+    var n = GVEC_NSLOTS(S);
+    var t = _agg_temp_t(S, n, ty);
+    var vd = _vrcv_dparse(S);
+    if (0 - vd == ty) { _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(_vrcv_dh), 0 - 1, n * 8); }
+    else { _ret_vrefuse(S, ti); }
+    return _ret_vt_done(S, t, n);
+}
+# The 6.6.6 rule's refusal at token `ti` (the value's first), the cursor kept. 0.
+fn _ret_vrefuse(S, ti): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _refuse_simd_return(S);
+    STI(S, sv);
+    return 0;
 }
 fn _cur_fn_returns_vector(S): i64 {
     if (_is_simd128(S, _cur_fn_ret_scalar) == 1) { return 1; }
