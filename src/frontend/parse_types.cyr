@@ -3403,9 +3403,21 @@ fn _ret_ptr_base_bind(S, fi): i64 {
 # type-argument refusal ran in pass 1 AND in pass 2, so `: *Box<Zork>` was reported twice. Pass 2 reads and refuses
 # it. CHANGELOG [6.7.14]
 fn _ret_ptr_sid(S, quiet): i64 {
-    var ti = GTI(S);
-    if (quiet == 1) { if (TOKTYP(S, ti + 2) == 19) { if (_targs_resolvable(S, ti + 3) == 0) { return 0; } } }
-    return _ptr_ann_sid_tp(S, ti);
+    if (_ret_ptr_unres(S, quiet) == 1) { return 0; }
+    return _ptr_ann_sid_tp(S, GTI(S));
+}
+# 1 in pass 1 (`quiet`) when the return's pointee past its stars (cursor on the first `*`) is `G<..>` whose arguments
+# do not resolve yet — a struct declared below the fn, or no type: neither its struct (`_ret_ptr_sid`) nor a `**`'s
+# pin (`_ret_ptr_record`) is read there. ⛔ 6.7.15 — the pin was: `: **Box<Later>` was refused "unknown type 'Later'"
+# by pass 1 and `: **Box<Zork>` reported twice. Pass 2 reads both at the definition. CHANGELOG [6.7.15]
+fn _ret_ptr_unres(S, quiet): i64 {
+    if (quiet != 1) { return 0; }
+    var k = GTI(S);
+    while (TOKTYP(S, k) == 8) { k = k + 1; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    if (_targs_resolvable(S, k + 2) == 1) { return 0; }
+    return 1;
 }
 fn _ret_ptr_annot(S, fi, quiet): i64 {
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
@@ -3425,7 +3437,8 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
     }
     var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
     var vd = _ek_vd(S, GTI(S));           # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
-    var pn = _ek_pin(S, GTI(S));          # 6.7.13: a `**T`'s pointee
+    var pn = 0;                           # 6.7.13: a `**T`'s pointee (6.7.15: pass 2's, when unresolved in pass 1)
+    if (_ret_ptr_unres(S, quiet) == 0) { pn = _ek_pin(S, GTI(S)); }
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
     if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }

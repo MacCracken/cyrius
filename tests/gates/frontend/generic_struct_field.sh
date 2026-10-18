@@ -52,6 +52,18 @@
 #   MG1 `_ret_ptr_base_bind` returns 0 (2026-10-16)  -> RED 5: PG0-PG4 (refused: unknown type 'T'; the tcyr
 #                                                       does not build)
 #   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
+#   PD (6.7.15, docs/development/issues/2026-10-16-double-pointer-generic-return-read-in-pass-one.md) a `: **G<..>`
+#      return's pin is not read by pass 1 while its arguments do not resolve (`_ret_ptr_unres`, shared with
+#      `_ret_ptr_sid`'s one-star test): PD1 the filed repro 2 verbatim (`fn mk(): **Box<Later>`, Later declared below:
+#      refused "unknown type 'Later'" before) exits 2, PD2 the filed repro 1 verbatim (`: **Box<Zork>`) one error,
+#      PD3 `**Box<Pt>` with Pt declared above keeps its pin — `**mk()`, `*mk()` and `take(**mk())` read (25), from a
+#      caller below mk and one ABOVE it (pass 1's record, unchanged), PD4 a caller above mk with Later below reads
+#      through a `**Box<Later>` local's pin (`**q`, `*q`: 2), PD5 a caller below mk reads `**mk()` through the call's
+#      pin (25). (`**mk()` itself in a caller ABOVE mk with Later below is the pre-existing pass-1 record gap that
+#      `*Later` / `**Later` / `*Box<Later>` returns share — filed, not this row.)
+#   MPD1 `_ret_ptr_record` reads the pin in pass 1 again (the fix reverted; 2026-10-18) -> RED 3: PD1 PD4 PD5 (refused
+#                                                       "unknown type 'Later'")
+#   MPD2 `_ret_ptr_unres` without its star skip (one `*` only) -> RED 3: PD1 PD4 PD5, as MPD1
 #
 #   PA (6.7.15, the user's D8 (a), 2026-10-18; docs/development/issues/2026-10-16-pointer-field-generic-type-args-read-only-
 #      at-use.md) a late `p: *G<..>` field's type arguments are checked AT THE FIELD, once, used or not (they were read
@@ -250,6 +262,69 @@ syscall(60, main());
 EOF
 exits pg7 72 "PG7: fn mk(): *Box<Later> with Later declared below it (pass 1 refused it 'unknown type')"
 
+# PD — 6.7.15: pass 1 leaves a `: **G<..>` return's pin to pass 2 while its arguments do not resolve.
+cat > "$T/pd1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+fn main(): i64 { var q: **Box<Later> = mk(); var b: *Box<Later> = *q; return b.n; }
+syscall(60, main());
+EOF
+exits pd1 2 "PD1: the filed repro 2, fn mk(): **Box<Later> with Later declared below (refused before)"
+cat > "$T/pd2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn mkz(x): **Box<Zork> { return 0; }
+syscall(60, 3);
+EOF
+build pd2
+ne=$(grep -c '^error' "$T/pd2.err" || true)
+if [ "$rc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "error:<source>:3:22: unknown type 'Zork' as a type argument" "$T/pd2.err"; then
+    ok "PD2: the filed repro 1, fn mkz(x): **Box<Zork>, refused once at 3:22"
+else bad "PD2: rc $rc, $ne error lines (want 1, at 3:22): $(grep '^error' "$T/pd2.err" | tr '\n' ' ')"; fi
+PDM='fn mk(): **Box<Pt> { var b: *Box<Pt> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Pt> = alloc(8); store64(pp, b); return pp; }'
+PDU='fn main(): i64 { var t: Box<Pt> = **mk(); var p: *Box<Pt> = *mk(); return t.n * 10 + take(**mk()) + p.n * 100 - 200; }'
+PDH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn take(b: Box<Pt>): i64 { return b.v.y; }'
+printf '%s
+%s
+%s
+syscall(60, main());
+' "$PDH" "$PDM" "$PDU" > "$T/pd3a.cyr"
+exits pd3a 25 "PD3a: **Box<Pt> (Pt above): **mk(), *mk(), take(**mk()) below mk (unchanged)"
+printf '%s
+%s
+%s
+syscall(60, main());
+' "$PDH" "$PDU" "$PDM" > "$T/pd3b.cyr"
+exits pd3b 25 "PD3b: ... from a caller ABOVE mk, pass 1's pin (unchanged)"
+cat > "$T/pd4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn main(): i64 { var q: **Box<Later> = mk(); var t: Box<Later> = **q; var b: *Box<Later> = *q; return t.n * 10 + b.v.y; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+syscall(60, main());
+EOF
+exits pd4 25 "PD4: a caller ABOVE mk (Later below) reads **q / *q through its **Box<Later> local"
+cat > "$T/pd5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Box<T> { v: T; n; }
+fn mk(): **Box<Later> { var b: *Box<Later> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Later> = alloc(8); store64(pp, b); return pp; }
+struct Later { x; y; }
+fn take(b: Box<Later>): i64 { return b.v.y; }
+fn main(): i64 { var t: Box<Later> = **mk(); var p: *Box<Later> = *mk(); return t.n * 10 + take(**mk()) + p.n * 100 - 200; }
+syscall(60, main());
+EOF
+exits pd5 25 "PD5: a caller below mk reads **mk() through the call's pin (pass 2's)"
+
 # PA — 6.7.15 (D8 (a)): a late `p: *G<..>` field's type arguments are checked at the field, once, used or not.
 one_error() {   # <name> <message fragment> <what>: refused with exactly one error line, which contains the fragment
     build "$1"
@@ -400,4 +475,4 @@ xr HF5 "$T/hf5.cyr" 9 "Pb<i32>'s b.p + 1 steps 4 (unchanged)"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), a pointer field's type arguments are checked at the field once (PA), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
