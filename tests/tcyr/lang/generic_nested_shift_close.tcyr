@@ -1,0 +1,56 @@
+# generic_nested_shift_close.tcyr — 6.7.15 — a nested type argument closed by `>>` / `>>>` and followed by
+# `,` closes its own list AND the one around it, so the `,` starts the ENCLOSING list's next argument.
+#
+# ⛔ THE DEFECT, 6.3.33 through 6.7.14: `_parse_one_type_arg` tested for a second argument (`,`) before
+# paying the close a nested `>>` had already made, so `g2<P<P<R>>, i16>` read `i16` as P's second
+# argument and bound g2's B to i64 (no diagnostic), `Two<P<P<R>>, i16>` was 24 bytes, not 18, and
+# `fn f(a: Box<Box<Pt>>, b: i64)` was refused "unknown type 'b' as a type argument". When the inner
+# instance was minted at that read, its re-parse also dropped the owed close. Every target.
+# Gate: tests/gates/frontend/generic_nested_shift_close.sh (every leg, the mutants).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P<T> { v: T; }
+struct R<T> { v: T; w; }
+struct Pt { x; y; }
+struct Box<T> { v: T; }
+struct Two<A, B> { a: A; b: B; }
+struct O { k; }
+impl O { fn m<A, B>(self, x): i64 { return sizeof(A) * 100 + sizeof(B); } }
+
+fn g2<A, B>(a: *A, b: *B): i64 { return sizeof(A) * 100 + sizeof(B); }
+fn bb(a: Box<Box<Pt>>, b: i64): i64 { return a.v.v.y + b; }
+fn call_bb(): i64 { var x: Box<Box<Pt>>; x.v.v.y = 40; return bb(x, 5); }
+fn pb(a: *Box<P<R>>, b: i64): i64 { return b; }
+fn vb(w: Vec<Box<Box<Pt>>>, b: i64): i64 { return b; }
+fn lay(): i64 {
+    var t: Two<P<P<R>>, i16>;
+    t.b = 65539;
+    t.a.v.v.w = 9;
+    var r = t.a.v.v.w;
+    if (t.b == 3) { r = r + 100; }
+    return r;
+}
+fn sz_in_fn(): i64 { var t: Two<P<P<R>>, i16>; return sizeof(Two<P<P<R>>, i16>); }
+fn mk<A, B>(x): Two<A, B> { var t: Two<A, B>; t.b = x; return t; }
+fn recv(): i64 { var t: Two<P<P<R>>, i16> = mk<P<P<R>>, i16>(3); return sizeof(Two<P<P<R>>, i16>) * 10 + t.b; }
+fn meth(): i64 { var o = O { 1 }; return o.m<P<P<R>>, i16>(0); }
+
+assert_eq(sizeof(Two<P<P<R>>, i16>), 18, "sizeof(Two<P<P<R>>, i16>) at top level: 16 + 2");
+assert_eq(lay(), 109, "Two<P<P<R>>, i16>'s b is an i16 (65539 keeps 3), a.v.v.w its own field");
+assert_eq(sz_in_fn(), 18, "sizeof(Two<P<P<R>>, i16>) in a fn, after a local of it");
+assert_eq(g2<P<P<R>>, i16>(0, 0), 1602, "g2<P<P<R>>, i16>: B is i16 (the filed repro)");
+assert_eq(g2<P<P<R>>, i16>(0, 0), 1602, "the same call again (its instance found, not minted)");
+assert_eq(g2<P<P<P<R>>>, i16>(0, 0), 1602, "g2<P<P<P<R>>>, i16>: a `>>>` close");
+assert_eq(g2<P<Vec<i64>>, i16>(0, 0), 802, "g2<P<Vec<i64>>, i16>: a Vec's `>>`");
+assert_eq(sizeof(Two<Two<P<P<R>>, i16>, i32>), 22, "Two<Two<P<P<R>>, i16>, i32>: 18 + 4");
+assert_eq(sizeof(Two<i16, Two<P<P<R>>, i16>>), 20, "Two<i16, Two<P<P<R>>, i16>>: 2 + 18");
+assert_eq(call_bb(), 45, "fn bb(a: Box<Box<Pt>>, b: i64): b is a parameter");
+assert_eq(pb(0, 6), 6, "fn pb(a: *Box<P<R>>, b: i64): b is a parameter");
+assert_eq(vb(0, 7), 7, "fn vb(w: Vec<Box<Box<Pt>>>, b: i64): b is a parameter");
+assert_eq(recv(), 183, "var t: Two<P<P<R>>, i16> = mk<P<P<R>>, i16>(3): 18 * 10 + 3");
+assert_eq(meth(), 1602, "o.m<P<P<R>>, i16>(0): B is i16");
+assert_eq(g2<P<P<R> >, i16>(0, 0), 1602, "control: the closes spaced apart");
+assert_eq(g2<i16, P<P<R>>>(0, 0), 216, "control: the nested argument last");
+var r = assert_summary();

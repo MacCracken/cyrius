@@ -14432,7 +14432,7 @@ fn _gen_resolve_call(S, ti): i64 {
         _ta_pending_gt = 0;
         STI(S, ti + 2);
         c0 = _parse_one_type_arg(S);
-        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
         _ta_pending_gt = sv_gt;
         STI(S, sv);
         if (c0 <= 0 && c1 <= 0) {
@@ -14850,7 +14850,11 @@ fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     # v6.3.33: bind the SECOND type param to conc1 (was conc0 → collapsed distinct
     # params). Single-param structs have t1 == 0 → no bind → conc1 unused.
     if (t1 != 0) { _tp_bind(S, 1, t1 - 1, conc1); }
+    # 6.7.15: the re-parse's own type-argument reads reset the close the caller's list may owe (`P<P<R>>`'s `>>`,
+    # minted here) — put back, or the enclosing list read the next `,` as its own. CHANGELOG [6.7.15]
+    var sv_gt = _ta_pending_gt;
     PARSE_STRUCT_DEF(S);
+    _ta_pending_gt = sv_gt;
     _inst_name = 0;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
@@ -14870,6 +14874,16 @@ fn _consume_gt(S): i64 {
     if (t == 152) { STI(S, GTI(S) + 1); _ta_pending_gt = 2; return 0; }   # `>>>` owes two
     if (t == 39) { STI(S, GTI(S) + 1); _ta_pending_gt = 1; return 0; }   # `>>`
     return 0;
+}
+# ⛔ 6.7.15 — A `,` AFTER A TYPE ARGUMENT: the next argument of THIS list only while no close is owed. A nested argument
+# closed by `>>` / `>>>` closed this list too (`_ta_pending_gt`), so the `,` is the enclosing list's: `g2<P<P<R>>, i16>`
+# read `i16` as P's second argument and bound g2's B to i64, and `fn f(a: Box<Box<Pt>>, b: i64)` read `b` as a type.
+# Consumes the `,` and returns 1 when it starts this list's next argument, else 0. CHANGELOG [6.7.15]
+fn _ta_comma(S): i64 {
+    if (_ta_pending_gt != 0) { return 0; }
+    if (PEEKT(S) != 31) { return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 
 # v6.3.33 (generics tail — NESTED + multi-arg): consume ONE type argument at the
@@ -14977,7 +14991,7 @@ fn _parse_one_type_arg(S): i64 {
     STI(S, GTI(S) + 1);                              # consume the nested `<`
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
     var in1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); in1 = _parse_one_type_arg(S); }   # `,`
+    if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
     if (_ta_chk == 1) { return base_sid; }           # 6.7.14 (D5): read, not instantiated
     return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
@@ -15029,7 +15043,7 @@ fn _targ_chk(S, lt): i64 {
     _ta_pending_gt = 0;
     STI(S, lt + 1);
     _parse_one_type_arg(S);
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+    if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
     _ta_chk = sv_ck;
     _ta_pending_gt = sv_gt;
     if (sv_pn == 0) { _panic = 0; }
@@ -16890,7 +16904,7 @@ fn _ret_targ_parse(S, base): i64 {
     STI(S, GTI(S) + 2);                  # the name, `<`
     var c0 = _parse_one_type_arg(S);
     var c1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
     _consume_gt(S);
     _ta_pending_gt = sv_gt;
     var inst = 0;

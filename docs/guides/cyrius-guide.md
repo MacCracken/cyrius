@@ -6802,7 +6802,10 @@ type. An `x: T` parameter wins over a struct one; `T` nested deeper (`Box<Pair<T
 is not inferred — write `gx<Pt>(..)`.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
-**explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
+**explicitly** (`add<i64>(x)`, `add<i32>(x)`). A nested argument's closes may run
+together: in `g2<P<P<R>>, i16>` the `>>` closes both `P` lists, and `, i16` is `g2`'s
+second argument (6.7.15; through 6.7.14 it was read as `P`'s, binding `B` to i64 with no
+diagnostic, and `fn f(a: Box<Box<Pt>>, b: i64)` was refused naming `b`). Inside a generic body a type
 parameter may be **forwarded** — `fn outer<T>(p: T) { return inner<T>(p); }` calls
 `inner`'s instance for whatever `T` is bound to (v6.6.8; before that `T` read as
 "no type" and the call silently hit the i64 base, returning 0 for a struct `T`). A

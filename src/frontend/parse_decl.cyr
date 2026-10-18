@@ -1964,7 +1964,7 @@ fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
     _ta_refd = 0;
     var c0 = _parse_one_type_arg(S);
     var c1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
     _consume_gt(S);
     _mx_fi = _meth_xinst(S, mf, c0, c1);
     _mx_ti = nt;
@@ -5202,7 +5202,7 @@ fn _gen_ann_sid(S, sid): i64 {
     # instantiated → its instance sid).
     var c0 = _parse_one_type_arg(S);
     var c1 = 0;
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }  # `,`
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }  # `,`
     _consume_gt(S);                       # the closing `>` (or `>>` tail)
     # v6.3.37 (B1 half-A): c0 == 0 is an UNRESOLVED type parameter (`var p: Pair<T>` in a
     # generic body) = the base all-i64 instance, as the return-type classification treats it,
@@ -9175,7 +9175,7 @@ fn PARSE_VAR(S): i64 {
                 STI(S, GTI(S) + 1);   # consume `<`
                 _ta_pending_gt = 0;
                 _parse_one_type_arg(S);
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+                if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
                 _consume_gt(S);
             } }
         if (PEEKT(S) != 10) {
@@ -9250,7 +9250,7 @@ fn PARSE_VAR(S): i64 {
                 STI(S, GTI(S) + 1);   # consume `<`
                 _ta_pending_gt = 0;
                 _parse_one_type_arg(S);
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+                if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
                 _consume_gt(S);
             } }
         if (PEEKT(S) != 10) {
@@ -11007,7 +11007,7 @@ fn _gen_call_targs(S, b, o, fi): i64 {
         _ta_pending_gt = 0;
         STI(S, b + 2);
         _gct_c0 = _parse_one_type_arg(S);
-        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gct_c1 = _parse_one_type_arg(S); }
+        if (_ta_comma(S) == 1) { _gct_c1 = _parse_one_type_arg(S); }
         _ta_pending_gt = sv_gt;
         STI(S, sv);
     } else {

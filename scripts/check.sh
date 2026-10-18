@@ -2779,6 +2779,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # DCE / aarch64 / cx / PE. Mutation ledger in the header. (A two-parameter generic's nested instance
 # names still collide: issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md.)
 _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
+# 6.7.15 — a nested type argument closed by `>>` / `>>>` and followed by `,` leaves the `,` to the
+# enclosing list: `g2<P<P<R>>, i16>` bound B to i64 (exit 8 for 2), `Two<P<P<R>>, i16>` was 24 bytes, and
+# `fn f(a: Box<Box<Pt>>, b: i64)` read `b` as a type argument. Both halves (the owed close checked before a
+# `,`; kept across the inner instance's minting), the filed repro, sizes, parameters, a method, a receive,
+# and 16 rows, x86 / IR / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_nested_shift_close.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
