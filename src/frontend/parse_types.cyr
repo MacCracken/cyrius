@@ -1741,6 +1741,89 @@ fn _dyn_name_eq(S, a, b): i64 {
     if (_tn_resolve_at(S, b) != 0) { return 0; }
     return STREQ(S, TOKVAL(S, a), TOKVAL(S, b));
 }
+# ⛔ 6.7.15 (D4) — TWO TYPES THE SAME, HOWEVER SPELLED: `_dyn_ty_eq` after reading both spellings the way the
+# annotation reader does — a `>>` / `>>>` as two / three closing `>`, and a generic struct's list holding only `i64`s
+# as its base struct (`Box<i64>` IS `Box`, 6.6.10's rule; `Box<Box<i64> >` is `Box<Box>`). The impl's return check
+# compared tokens, so `Box<Box<i64>>` against `Box<Box<i64> >`, and `Box<i64>` against `Box`, were "returns .., trait
+# declares ..", where both compiled and ran. Nothing is minted. 1 = the same type. CHANGELOG [6.7.15]
+var _tyn_buf = 0;   # four areas of 256 entries (a token's kind, then its index): each side's expanded, then folded
+fn _ty_norm_eq(S, a, ae, b, be): i64 {
+    if (_dyn_ty_eq(S, a, ae, b, be) == 1) { return 1; }
+    if (a == ae || b == be) { return 0; }
+    if (_tyn_buf == 0) { _tyn_buf = alloc(4 * 256 * 16); }
+    var ox = _tyn_buf + 256 * 16;
+    var oy = _tyn_buf + 3 * 256 * 16;
+    var n = _tyn_expand(S, a, ae, _tyn_buf);
+    if (n < 0) { return 0; }
+    n = _tyn_fold(S, _tyn_buf, n, ox);
+    var m = _tyn_expand(S, b, be, _tyn_buf + 2 * 256 * 16);
+    if (m < 0) { return 0; }
+    m = _tyn_fold(S, _tyn_buf + 2 * 256 * 16, m, oy);
+    if (n != m) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var t = L64(ox + i * 16);
+        if (t != L64(oy + i * 16)) { return 0; }
+        var ka = L64(ox + i * 16 + 8);
+        var kb = L64(oy + i * 16 + 8);
+        if (t == 2) { if (_dyn_name_eq(S, ka, kb) == 0) { return 0; } }
+        if (t == 1) { if (TOKVAL(S, ka) != TOKVAL(S, kb)) { return 0; } }
+        i = i + 1;
+    }
+    return 1;
+}
+# The tokens [a, ae) as entries at `x`, a `>>` two `>` (20) and a `>>>` three: their count, -1 past 256.
+fn _tyn_expand(S, a, ae, x): i64 {
+    var n = 0;
+    while (a < ae) {
+        var t = TOKTYP(S, a);
+        var r = 1;
+        if (t == 39) { r = 2; t = 20; }
+        if (t == 152) { r = 3; t = 20; }
+        while (r > 0) {
+            if (n >= 256) { return 0 - 1; }
+            S64(x + n * 16, t);
+            S64(x + n * 16 + 8, a);
+            n = n + 1;
+            r = r - 1;
+        }
+        a = a + 1;
+    }
+    return n;
+}
+# The `n` entries at `x` copied to `o` with each all-`i64` list of a generic struct dropped: the count copied.
+fn _tyn_fold(S, x, n, o): i64 {
+    var i = 0;
+    var m = 0;
+    while (i < n) {
+        S64(o + m * 16, L64(x + i * 16));
+        S64(o + m * 16 + 8, L64(x + i * 16 + 8));
+        m = m + 1;
+        var e = _tyn_i64_list(S, x, n, i);
+        if (e > 0) { i = e; }
+        else { i = i + 1; }
+    }
+    return m;
+}
+# Entry `i` a generic struct's name whose `<..>` (entry i + 1) holds only `i64`s: the entry after its `>`, else 0.
+fn _tyn_i64_list(S, x, n, i): i64 {
+    if (L64(x + i * 16) != 2) { return 0; }
+    if (i + 1 >= n) { return 0; }
+    if (L64(x + (i + 1) * 16) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, L64(x + i * 16 + 8)));
+    if (sid <= 0) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    var j = i + 2;
+    while (j + 1 < n) {
+        if (L64(x + j * 16) != 2) { return 0; }
+        if (_tn_resolve_at(S, L64(x + j * 16 + 8)) != _tn_code(1, 8)) { return 0; }
+        var t = L64(x + (j + 1) * 16);
+        if (t == 20) { return j + 2; }
+        if (t != 31) { return 0; }
+        j = j + 2;
+    }
+    return 0;
+}
 # The `self` a slot method (`fn` token `fp`) of impl `ii` declares: 0 = one a dyn's data word
 # feeds (untyped; for a struct T `self: *T` or a `self: T` over 8 B — address-passed; for a scalar
 # T `self: T`); 1 = decision 2 (`self: T`, T a struct of 8 B or less); 8 `self: Q`, Q not T; 9 a

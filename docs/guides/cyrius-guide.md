@@ -2808,7 +2808,9 @@ fn demo(): i64 {
 - **`impl X for T` is checked.** An undeclared trait, a method `X` does not declare, a different
   parameter count, a different return type, and a required method left out are compile errors naming
   the trait. The return type is compared as forming a dyn compares it — a name by the type it resolves to,
-  no annotation an `i64` — and refused at the impl: `fn c(self): i64` implementing `fn c(self): f64;` is
+  no annotation an `i64` — with each side read as an annotation is (a `>>` closes two lists, and a generic
+  struct's all-`i64` list is its base struct, so `Box<i64>` and `Box`, or `Box<Box<i64>>` and
+  `Box<Box<i64> >`, are one type) — and refused at the impl: `fn c(self): i64` implementing `fn c(self): f64;` is
   *'P.c' returns i64, trait 'T' declares f64* (6.7.15, the user's D4; through 6.7.14 it compiled, and a
   bounded generic caller declared `: f64` received the integer bits). Parameter types are not compared. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the

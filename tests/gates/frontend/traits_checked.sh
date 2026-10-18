@@ -51,6 +51,17 @@
 #      `_tr_ret_chk` answering 0 -> the same; MTR2 `_tr_rt_bad` answering 0 -> RED 5: TS4 TS6 TV3 TR8 TR8b (a second
 #      line), and type_name_refused.sh u128_trait_ret / u128_trait_ret2; MTR3 the dyn hand-off gone -> RED 1: TR7 (two
 #      lines), and dyn_checked.sh F8b; MTR4 `_tr_rt_nonret` answering 0 -> RED 1: TR8b
+#   TRS (6.7.15, the D4 review fix) one type spelled two ways is ONE type to that check: each return is read as the
+#      annotation reader reads it (`_ty_norm_eq`) — a `>>` / `>>>` as two / three closing `>`, a generic struct's
+#      all-`i64` list as its base struct (`Box<i64>` IS `Box`, 6.6.10's rule). The first cut compared tokens and
+#      refused programs that compiled and ran (exit 4 on the slot-open compiler b2e1f4c4): TRS1 `Box<Box<i64>>` against
+#      `Box<Box<i64> >` (the review's shape), TRS2 `Box<i64>` against `Box`, TRS3 `*Box<i64>` against `*Box`,
+#      TRS4 a `>>>` close, a nested `Box<Box<i64>>` against `Box<Box>` and an all-i64 list inside a multi-value — each 4;
+#      TRS5 / TRS6 a different argument stays refused (`Box<i32>`, `Box<Box<i32> >`), TRS7 a struct that is not the
+#      member's. Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
+#      (0ca74300) -> RED 4: TRS1-TRS4 (refused); MTRS1 `_tr_ret_differs` back on `_dyn_ty_eq` (normalisation off) -> the
+#      same; MTRS2 `_tyn_expand` keeping `>>` one token -> RED 2: TRS1 TRS4; MTRS3 `_tyn_i64_list` answering 0 (no
+#      all-i64 fold) -> RED 3: TRS2 TRS3 TRS4
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -272,6 +283,23 @@ printf "$R"'trait T { fn c(self): Nope; }\nimpl T for P { fn c(self): i64 { retu
 refused_at tr8 "unknown type 'Nope' as a fn return type" 3:23 "TR8: a member's return its reader refuses — that refusal alone"
 printf "$R"'trait T { fn c(self): i64; }\nimpl T for P { fn c(self): u8 { return 4; } }\nsyscall(60, 0);\n' > "$T/tr8b.cyr"
 refused_at tr8b "type 'u8' cannot be a fn return type" 4:28 "TR8b: an impl's return a fn's reader refuses (: u8) — that refusal alone"
+# ── TRS (6.7.15, the D4 review fix) — one type spelled two ways is one type ──
+BX='struct Box<T> { n: i64; v: T; }\nstruct Pt { x: i64; y: i64; }\n'
+printf "$BX"'trait T { fn c(self): Box<Box<i64>>; }\nimpl T for Pt { fn c(self): Box<Box<i64> > { var b: Box<Box<i64> >; b.n = 4; return b; } }\nfn main(): i64 { var p: Pt; var r: Box<Box<i64> > = p.c(); return r.n; }\n' > "$T/trs1.cyr"
+exits trs1 4 "TRS1: Box<Box<i64>> against Box<Box<i64> > (the review's shape; it was refused)"
+printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box { var b: Box; b.n = 4; return b; } }\nfn main(): i64 { var p: Pt; var r: Box = p.c(); return r.n; }\n' > "$T/trs2.cyr"
+exits trs2 4 "TRS2: Box<i64> against Box (the base struct)"
+printf 'include "lib/alloc.cyr"\n'"$BX"'trait T { fn c(self): *Box<i64>; }\nimpl T for Pt { fn c(self): *Box { var q: *Box = alloc(16); q.n = 4; return q; } }\nfn main(): i64 { var p: Pt; var r: *Box = p.c(); return r.n; }\n' > "$T/trs3.cyr"
+exits trs3 4 "TRS3: *Box<i64> against *Box"
+printf "$BX"'trait T { fn c(self): Box<Box<Box<i64>>>; fn d(self): (Box<i64>, i64); fn e(self): Box<Box<i64>>; }\nimpl T for Pt {\n  fn c(self): Box<Box<Box> > { var b: Box<Box<Box<i64> > >; b.n = 1; return b; }\n  fn d(self): (Box, i64) { var b: Box; b.n = 1; return (b, 2); }\n  fn e(self): Box<Box> { var b: Box<Box>; b.n = 1; return b; }\n}\nfn main(): i64 { var p: Pt; var r: Box<Box<Box>> = p.c(); var w, k = p.d(); var e: Box<Box> = p.e(); return r.n + k + e.n; }\n' > "$T/trs4.cyr"
+exits trs4 4 "TRS4: a >>> close, an all-i64 list in a multi-value, a nested Box<Box<i64>> against Box<Box>"
+printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box<i32> { var b: Box<i32>; b.n = 4; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs5.cyr"
+refused_at trs5 "'Pt.c' returns Box<i32>, trait 'T' declares Box<i64>" 4:29 "TRS5: Box<i32> against Box<i64> stays refused"
+printf "$BX"'trait T { fn c(self): Box<Box<i64>>; }\nimpl T for Pt { fn c(self): Box<Box<i32> > { var b: Box<Box<i32> >; b.n = 4; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs6.cyr"
+refused_at trs6 "'Pt.c' returns Box<Box<i32> >, trait 'T' declares Box<Box<i64>>" 4:29 "TRS6: Box<Box<i32> > against Box<Box<i64>> stays refused"
+printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Pt { var b: Pt; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs7.cyr"
+refused_at trs7 "'Pt.c' returns Pt, trait 'T' declares Box<i64>" 4:29 "TRS7: a struct that is not the member's stays refused"
+
 cat > "$T/trk.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct Pt { x; y; }
@@ -330,4 +358,4 @@ EOF
 exits trk 131 "TRK: member and impl agree — i64 and none both ways, f64, *u128, (i64, f64), Pt, a generic's U (renamed V), Box<Pt>, bool; two impls"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's (TR, 6.7.15)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15)"

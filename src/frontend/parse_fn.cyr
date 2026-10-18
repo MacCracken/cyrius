@@ -9107,7 +9107,8 @@ fn _tr_check_impl(S, ii): i64 {
 # ⛔ 6.7.15 (D4) — AN IMPL METHOD'S RETURN TYPE IS CHECKED AGAINST ITS TRAIT MEMBER'S, at the impl (`ii` the impl,
 # `tk` the member, `k` the method), beside the parameter count: `trait T { fn c(self): f64; }` implemented as
 # `fn c(self): i64` compiled, and a bounded generic caller declared `: f64` received the integer bits. Compared as
-# forming a dyn compares it (`_dyn_ret_at` / `_dyn_ty_eq`: a name by its resolved type, no annotation an i64) and
+# forming a dyn compares it (`_dyn_ret_at` / `_dyn_ty_eq`: a name by its resolved type, no annotation an i64), each
+# spelling read as the annotation reader reads it (`_ty_norm_eq`: `>>` two closes, `Box<i64>` the base `Box`) and
 # refused by name, "'P.c' returns i64, trait 'T' declares f64" (the user's D4 (a), 2026-10-18). A side whose return its
 # own reader refuses is that refusal alone (`_tr_rt_bad`). Parameter types are not compared (D4 leaves them out).
 # 1 = refused. CHANGELOG [6.7.15]
@@ -9132,7 +9133,7 @@ fn _tr_ret_differs(S, tp, fp): i64 {
     _trr_ae = _dps_te;
     _trr_b = _dyn_ret_at(S, b);
     _trr_be = _dps_te;
-    if (_dyn_ty_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }
+    if (_ty_norm_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }   # `Box<i64>` is `Box`, `>>` is `> >`
     if (_tr_rt_bad(S, _trr_a, _trr_ae, 0) == 1) { return 0; }
     if (_tr_rt_bad(S, _trr_b, _trr_be, 1) == 1) { return 0; }
     return 1;
