@@ -48,7 +48,17 @@
 #       sibling-include row under the same environment: still empty.
 #   R17 the same, with CYRIUS_RESOLVED=0 and CYRIUS_NO_WARN_PIN_DRIFT=0 inherited by the server: empty
 #   R18 a file of that pinned project still reports the pin (the project route is unchanged)
+#   R0  (6.7.15) a feeder whose server has already gone ends its pipeline with status 0 under
+#       `bash -eo pipefail`, and the run goes on (the stop-point race below, made deterministic)
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
+#
+# THE SHELL (6.7.15, issues/2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md): the gate
+# re-runs itself under `bash -eo pipefail` (GitHub's `run:` semantics) when bash is on PATH, so the
+# run check.sh's supervisor starts with /bin/sh is the one its feeders are written for.
+# `CY_LSP_GATE_INNER=1` keeps the shell that started it (the plain `sh` run). Before 6.7.15 it
+# stopped under `bash -eo pipefail` after R13 (or R14, or R18: the point is a race) with rc 1 and
+# no verdict: a feeder's write to a server that had already exited on `shutdown` failed with EPIPE
+# and `-e` ended the brace group, then the pipeline, then the gate.
 #
 # PROVEN RED (run when written, each mutant via LSP_BIN / CLI_BIN):
 #   the 6.7.11 server and CLI                         R1 R2 R3 R4 R5 R6 R8 R9 R10 FAIL (R7: it showed the verdict too)
@@ -73,6 +83,15 @@
 #   CYRIUS_RESOLVED=1 alone                            R16 R17 FAIL (the drift warning at line 0)
 #   inherited entries kept (ours appended after them)  R17 FAIL
 #   the loose environment on the project route too     R18 FAIL
+# 6.7.15 (measured, every run under the re-exec's `bash -eo pipefail`):
+#   msg's write without `|| true` (6.7.14's feeders)  R0 FAIL in 5 of 5 runs; 3 of them then stop
+#                                                      after R13 with no verdict (the filed defect)
+#   a server that exits at once (LSP_BIN a stub)      every row FAIL but R0 R9 R10 R15, the verdict
+#                                                      printed
+#   that stub, pub / serve without `|| true`          rc 1, no row and no verdict
+if [ -z "${CY_LSP_GATE_INNER:-}" ] && command -v bash > /dev/null 2>&1; then
+    CY_LSP_GATE_INNER=1 exec bash -eo pipefail "$0" "$@"
+fi
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=lsp_diagnostics_file_column
@@ -105,22 +124,42 @@ printf '[package]\nname = "lp"\nversion = "0.1.0"\n' > "$W/proj/cyrius.cyml"
 cp "$W/loose/col.cyr" "$W/loose/inc.cyr" "$W/proj/src/"
 printf 'include "src/inc.cyr"\nsyscall(60, 0);\n' > "$W/proj/src/main.cyr"
 
-msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"; }
+# One framed message to the server. Each feeder ignores SIGPIPE: the server may exit on `shutdown`
+# before the `exit` notification is written (a broken one, earlier), and that write must fail with
+# EPIPE rather than kill the feeder (141, which pipefail would read as the pipeline's status). Under
+# `-e` the failed printf would itself end the brace group with status 1 before its closing `true`,
+# so the write takes its own failure: a write to a server that has gone is never the gate's
+# verdict — the rows read what the server published. CHANGELOG [6.7.15]
+msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1" || true; }
 open_msg() { msg "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/did$1\",\"params\":{\"textDocument\":{\"uri\":\"file://$2\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}"; }
 start() { msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'; }
 stop() { msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'; msg '{"jsonrpc":"2.0","method":"exit"}'; }
 # serve <cwd> <home> — the framed requests on stdin; the publishDiagnostics params, one per line.
-# (Each feeder ignores SIGPIPE and ends `true`: the server may exit on `shutdown` before the
-# `exit` notification is written, which is a SIGPIPE the pipeline's status must not read as a
-# failure under `bash -eo pipefail`.)
+# Its status is no verdict either: a server that published nothing, or ran out its 60 s, leaves
+# the rows to FAIL by name (under pipefail grep's 1 or timeout's 124 would end the gate first).
 # $SERVE_ENV: extra NAME=value words for the server's environment (R17).
 serve() {
     # shellcheck disable=SC2086
     ( cd "$1" && env -i HOME="$2" CYRIUS_HOME="$2/.cyrius" PATH=/usr/bin:/bin ${SERVE_ENV:-} timeout 60 "$W/cyrius-lsp" 2>> "$W/lsp.log" ) \
-      | tr '\r' '\n' | grep -o '"uri":"[^"]*","diagnostics":.*' | sed -e "s|file://$W/||" -e 's/Content-Length: [0-9]*$//'
+      | tr '\r' '\n' | grep -o '"uri":"[^"]*","diagnostics":.*' | sed -e "s|file://$W/||" -e 's/Content-Length: [0-9]*$//' || true
 }
-# the publish lines for <relative path>
-pub() { grep "^\"uri\":\"$2\"," "$1"; }
+# the publish lines for <relative path> (none is the row's FAIL, not a `P=$(…)` that ends the run under -e)
+pub() { grep "^\"uri\":\"$2\"," "$1" || true; }
+
+# ── R0 (6.7.15): a feeder outlives a server that has already gone ───────────────────────────
+# Which feeder meets the late write is a race, so the row makes it certain: the reader is gone
+# (`| true`, then a 0.3 s wait) before the feeder writes, in a `bash -eo pipefail` of its own —
+# inside this script `-e` is off wherever a status is tested, so only a child shell can show it
+# (the feeder's own fns handed over with `declare -f`: bash only).
+if [ -n "${BASH_VERSION:-}" ]; then
+    r0=0
+    bash -eo pipefail -c "$(declare -f msg start stop)
+{ trap '' PIPE; sleep 0.3; start; stop; true; } 2> /dev/null | true
+echo went-on" > "$W/r0" 2>&1 || r0=$?
+    if [ "$r0" = 0 ] && [ "$(cat "$W/r0")" = went-on ]; then
+        ok "R0 under bash -eo pipefail a feeder writing to a server that has gone ends with status 0; the run goes on"
+    else fail "R0 under bash -eo pipefail a feeder's write to a gone server ended the run: rc $r0, $(tr '\n' ' ' < "$W/r0")"; fi
+else echo "  note: R0 not run: this shell is not bash (no bash on PATH, or CY_LSP_GATE_INNER=1 under another sh)"; fi
 
 # ── R1 / R2 / R3: outside a project (raw cycc) ──────────────────────────────────────────────
 { trap '' PIPE; start; open_msg Open "$W/loose/col.cyr"; open_msg Open "$W/loose/main.cyr"; open_msg Open "$W/loose/t.tcyr"
