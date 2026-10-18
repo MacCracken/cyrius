@@ -9153,13 +9153,20 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
     _trs_fn = 0;
     return 0;
 }
-# ⛔ 6.7.15 (D9) — A TRAIT MEMBER'S RETURN TYPE IS HELD TO A FN'S RETURN VOCABULARY FOR `Vec` (`ti` the type's first
-# token, past the `:`): `fn a(self): Vec<i64>;` compiled, though no impl can define it — an impl's `fn a(self):
-# Vec<i64>` is refused, as any fn's `: Vec<..>` return is. Refused at the member, once, with the fn's words and note
-# (`_tn_ret_report`: "type 'Vec' cannot be a fn return type"); a bare `: Vec` too; silent under `--syntax-only`, as the
-# fn's is. `: *Vec<T>`, a `*fn( .. ): Vec<T>` type's own return and a parameter `v: Vec<T>` are unchanged (the user's D9
-# (a), 2026-10-18). 1 = refused (the member's walk ends). CHANGELOG [6.7.15]
+# ⛔ 6.7.15 (D9, D3) — A TRAIT MEMBER'S RETURN TYPE IS HELD TO A FN'S RETURN VOCABULARY FOR `Vec` AND `u128` (`ti` the
+# type's first token, past the `:`): `fn a(self): Vec<i64>;` and `fn n(self): u128;` compiled, though no impl can
+# define them — an impl's `fn a(self): Vec<i64>` / `fn n(self): u128` is refused, as any fn's is. Refused at the member,
+# once, with the fn's words: "type 'Vec' cannot be a fn return type" and its note (`_tn_ret_report`; a bare `: Vec`
+# too; silent under `--syntax-only`, as the fn's is), "`u128` is not supported as a fn return type yet" (`_u128_refuse`,
+# reported under `--syntax-only` too, as the fn's is). `: *Vec<T>`, `: *u128`, a `*fn( .. ): Vec<T>` / `*fn( .. ): u128`
+# type's own return and a parameter `v: Vec<T>` are unchanged (the user's D9 (a) and D3 (a), 2026-10-18). 1 = refused
+# (the member's walk ends). CHANGELOG [6.7.15]
 fn _trs_ret_refused(S, ti): i64 {
+    if (TOKTYP(S, ti) == 105) {
+        _trs_bad = 1;
+        _u128_refuse(S, ti, "a fn return type yet");
+        return 1;
+    }
     if (_trs_ret_vec(S, ti) == 0) { return 0; }
     _trs_bad = 1;
     if (_syntax_only == 1) { return 1; }
@@ -9281,8 +9288,9 @@ fn _trs_targs(S, ti): i64 {
     return 0;
 }
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
-# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. A member's `: u128` return type is not a
-# parameter and compiled (no decision covers it): it reads on.
+# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. The member's own `: u128` return is refused
+# before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter (`nm < 0`) is a multi-value
+# element's or a `*fn( .. )` type's return, which reads on.
 var _trs_lvl = 0;
 fn _trs_u128(S, i, st, nm): i64 {
     if (nm < 0) { return i + 1; }

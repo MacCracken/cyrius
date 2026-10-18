@@ -927,7 +927,8 @@ the subject zero-extended, as `n == b` does: `match 0 { b => .. }` does not take
 `return b` — is its low word, as it always was. A `u128` captured by a closure is its value, as the
 local is (6.7.14; the capture read was the ADDRESS of its env copy, so `c == 5` and `c + 0` were
 wrong). A `u128` is not yet a parameter, return or field type: `fn f(v: u128)`, `fn f(): u128` and
-`struct S { w: u128; }` are each one error by name (6.7.14, the user's decision D10 (a), 2026-10-16),
+`struct S { w: u128; }` are each one error by name (6.7.14, the user's decision D10 (a), 2026-10-16; a trait
+member's `fn n(self): u128;` too since 6.7.15, the user's D3),
 `` `u128` is not supported as a parameter type yet - pass `*u128` `` (`... as a fn return type yet`,
 `... as a field type yet`); pass `*u128` (or the two halves as i64s). Through 6.7.13 a `u128`
 parameter compiled as an 8-byte slot holding the low word that compared as a SIGNED 64-bit integer
@@ -2811,9 +2812,10 @@ fn demo(): i64 {
   a default every impl overrides alike (a default an impl inherits is parsed as that impl's method).
   ⚠ Before 6.7.8 only the parameter count was read; the rest compiled unread. The impl's own check
   is unchanged: its parameter count must match. A member's return is held to a fn's return set: `fn a(self):
-  Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type*, at the member, once — no impl could
-  define it (6.7.15, the user's D9; through 6.7.14 it compiled). `: *Vec<i64>` and a parameter `v: Vec<i64>` are
-  unchanged.
+  Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
+  not supported as a fn return type yet*, at the member, once — no impl could define either (6.7.15, the user's D9
+  and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). `: *Vec<i64>`,
+  `: *u128` and a parameter `v: Vec<i64>` are unchanged.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*

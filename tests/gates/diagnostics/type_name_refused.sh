@@ -39,9 +39,15 @@
 #   axis 6  (6.7.14, the user's decision D10 (a), 2026-10-16) a `u128` parameter (a fn, a trait member, a
 #           default after it, a generic's and an #inline fn's, once), return type and struct / union field
 #           type are each one error by name; the filed repro verbatim gives its two parameter refusals.
-#           Anti-vacuous: `*u128`, a `*fn(u128)`'s own list, a trait member's `: u128` return and a u128
-#           local still compile and run; --syntax-only refuses the three shapes too. The capture half runs in
-#           tests/tcyr/crossos/u128_closure_capture.tcyr.
+#           Anti-vacuous: `*u128`, a `*fn(u128)`'s own list and a u128 local still compile and run; --syntax-only
+#           refuses the three shapes too. The capture half runs in tests/tcyr/crossos/u128_closure_capture.tcyr.
+#           6.7.15 (the user's D3 (a), 2026-10-18): a trait member's `: u128` return is refused as a fn's is, once, at
+#           the member (u128_trait_ret1 alone; u128_trait_ret, the pinned row, with an impl spelled `: i64` — it ran,
+#           exit 4; u128_trait_ret2 a default every impl overrides, two impls, the trait below them) and under
+#           --syntax-only; `: *u128` and a `*fn( .. ): u128` type's own return still compile (u128_trait_ptr).
+#           Mutant (2026-10-18, a scratch copy of src/, CYCC= it): `_trs_ret_refused` without its u128 arm -> RED
+#           u128_trait_ret1 / u128_trait_ret / u128_trait_ret2 (each built) and its --syntax-only row; the lane's
+#           previous compiler (64c2fc8e) the same.
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -326,21 +332,25 @@ refused u128_trait    'struct P { x; }\ntrait T { fn m(self, v: u128): i64; }\ni
 refused u128_generic  'fn g<T>(a: T, v: u128): i64 { return 1; }\nfn f(): i64 { var x: i32 = 1; return g(x, 2) + g<f64>(1.0, 3) + g(5, 3); }\nsyscall(60, f());\n' "$UP"
 refused u128_tr_dflt  'struct P { x; }\nstruct Q { y; }\ntrait T { fn m(self, v: u128): i64 { return 1; } }\nimpl T for P { }\nimpl T for Q { }\nsyscall(60, 0);\n' "$UP"
 refused u128_inline   '#inline\nfn g(v: u128): i64 { return 1; }\nfn f(): i64 { return g(2) + g(3); }\nsyscall(60, f());\n' "$UP"
-# ANTI-VACUOUS: `*u128` (behind a `*`) and a `*fn( .. )`'s own u128 are read as before; a trait member's
-# `: u128` return type is not a parameter (no decision covers it) and still compiles; a u128 local is untouched.
+# 6.7.15 (D3 (a)): a trait member's `: u128` return is refused as a fn's is, at the member, once.
+refused u128_trait_ret1 'struct P { x; }\ntrait T { fn n(self): u128; }\nsyscall(60, 4);\n' "$UR"
+refused u128_trait_ret2 'struct P { x; }\nstruct Q { y; }\nimpl T for P { fn c(self): i64 { return 4; } }\nimpl T for Q { fn c(self): i64 { return 5; } }\ntrait T { fn c(self): u128 { return 4; } }\nsyscall(60, 4);\n' "$UR"
+# ANTI-VACUOUS: `*u128` (behind a `*`) and a `*fn( .. )`'s own u128 are read as before; a member's `: *u128` return and
+# a `*fn( .. ): u128` type's own return (a member no impl implements) still compile; a u128 local is untouched.
 runs u128_ptr_param   'fn lo(v: *u128): i64 { return load64(v); }\nfn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); return lo(&b); }\nsyscall(60, f());\n' 5
 runs u128_fnptr_inner 'include "lib/fnptr.cyr"\nfn k(x): i64 { return 3; }\nfn ap(cb: *fn(u128): i64): i64 { return fncall1(cb, 0); }\nsyscall(60, ap(&k));\n' 3
-runs u128_trait_ret   'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' 4
+refused u128_trait_ret 'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' "$UR"
+runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self): *fn(i64): u128; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
 runs u128_local       'fn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); if (b > 0xFFFFFFFFFFFFFFFF) { return 9; } return 1; }\nsyscall(60, f());\n' 9
 # --syntax-only (what `cyrius lint` runs) refuses them too: the return / field forms were its syntax error.
-for sx in u128_ret u128_field u128_param; do
+for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     rows=$((rows + 1))
     rc=0; "$CC" --syntax-only < "$T/$sx.cyr" > /dev/null 2> "$T/$sx.sx" || rc=$?
     check "$sx: --syntax-only exits 1" 1 "$rc"
     check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
 done
 
-if [ "$rows" -lt 107 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 107)"; exit 1; fi
+if [ "$rows" -lt 128 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 128)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"
 exit 0
