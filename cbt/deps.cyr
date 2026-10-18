@@ -3366,10 +3366,11 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             _ew_shown(dep_git);
                             sys_write(STDERR_FD, "\n", 1);
                         }
-                        # 6.7.14: tracked, the signal FORWARDED (fwd 1) — a SIGTERM'd resolve left
-                        # `git clone` running on to create the cache after the CLI died; sent the
-                        # signal, git removes its own partial clone directory. CHANGELOG [6.7.14]
-                        var gpid = _cbt_fork_tracked(1);
+                        # 6.7.14: tracked, the signal FORWARDED — a SIGTERM'd resolve left `git clone`
+                        # running on to create the cache after the CLI died; sent the signal, git
+                        # removes its own partial clone directory. fwd 2: a git that does not exit on
+                        # it within the grace is SIGKILLed (`_cbt_child_track`). CHANGELOG [6.7.15]
+                        var gpid = _cbt_fork_tracked(2);
                         if (gpid == 0) {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
@@ -5840,9 +5841,10 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     # returns -2 with the errno recorded, and git is not run. CHANGELOG [6.6.9]
     # Both captures are registered with the kill handler before they can exist — `outf` is the
     # caller's to drop, `git_err` is `_git_err_clear`'s (one slot for the process: the track
-    # de-duplicates) — and git is a child the handler sends the signal and waits for (fwd 1), so
-    # a SIGTERM'd resolve leaves neither, and git runs its own cleanup (its index.lock, a
-    # clone's partial directory). CHANGELOG [6.7.14]
+    # de-duplicates) — and git is a child the handler sends the signal and gives a grace to exit
+    # on it (fwd 2; SIGKILLed after it, CHANGELOG [6.7.15]), so a SIGTERM'd resolve leaves
+    # neither, and git runs its own cleanup (its index.lock, a clone's partial directory).
+    # CHANGELOG [6.7.14]
     var cfd = 0 - 1;
     if (outf != 0) {
         _cbt_scratch_track(outf);
@@ -5850,7 +5852,7 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         if (cfd < 0) { _cbt_scratch_untrack(outf); _git_cap_errno = 0 - cfd; return 0 - 2; }
     }
     _cbt_scratch_track(errf);
-    var pid = _cbt_fork_tracked(1);
+    var pid = _cbt_fork_tracked(2);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a

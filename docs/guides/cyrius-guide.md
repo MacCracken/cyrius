@@ -5412,9 +5412,11 @@ project, `dist/.dlverify-<pid>/` (with the round's `entry.cyr`), is removed too 
 kill left the ~114-file mirror there).
 `cyrius deps`'s own git — the cached checkout's verify (rev-parse, fsck, read-tree, …, with its
 `git_err`, `git_rev_out` and `dep_verify_*` captures and private index) and `git clone` — is sent
-the signal and waited for, so git runs its own cleanup: a killed clone removes its partial
-directory from the dep cache (6.7.14; before, a kill left the captures and git running, and a
-clone went on to create the cache after the CLI had died). The scratch resolve of `cyrius deps
+the signal and given 2 s to exit on it, so git runs its own cleanup: a killed clone removes its
+partial directory from the dep cache (6.7.14; before, a kill left the captures and git running,
+and a clone went on to create the cache after the CLI had died). A git still running when the 2 s
+are up — a wrapper first on `PATH` that ignores the signal; real git exits on it — is SIGKILLed
+(6.7.15; 6.7.14 waited for as long as it ran, and a second Ctrl-C was held until then). The scratch resolve of `cyrius deps
 --locked` (`<tmp>/locked-deps/`) and of the dry pass a resolve at a moved pin runs first
 (`<tmp>/pin-move-deps/`) is removed too, a copy's half-written sibling temp included (6.7.14;
 before, a kill left the whole scratch, so the temp dir stayed).

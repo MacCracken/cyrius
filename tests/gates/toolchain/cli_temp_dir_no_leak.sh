@@ -88,6 +88,12 @@
 #     not named before `_aw_open` -> 1 RED (the mid-copy row's .cyrtmp); the dry pass not recorded
 #     -> 1 RED; every mkdir-p prefix recorded, not only the root and below -> the temp base itself
 #     removed (RED, and every later run then fails to start under it).
+#   * (6.7.15, axis 7's TERM-ignoring git row; each mutant replaces build/cyrius) the 6.7.14 CLI
+#     (git tracked fwd 1: a wait without limit) -> 1 RED (the CLI exits 59,952 ms after the SIGTERM,
+#     when the stand-in's sleep 60 ends); fwd 2 SIGKILLed at once (no signal sent) -> 6 RED (no TERM
+#     recorded at fsck / rev-parse / ls-files / clone, the ignoring stand-in "given" 14 ms, the real
+#     clone's partial directory left); the grace without its WNOHANG poll (always the whole 2 s) ->
+#     1 RED (the cooperating clone row: 2,025 ms).
 #
 # AXIS 7 (6.7.11) — every compile FAILURE with the CLI alive leaves nothing (a compile error and
 # an undefined fn under `cyrius check`, a build renamed onto a directory, a distlib verify refused
@@ -762,11 +768,15 @@ fi
 # rev-parse, config, fsck, read-tree, …) and the clone fork. Until 6.7.14 neither git nor its
 # captures (`git_err`, `git_rev_out`, `dep_verify_out`) were tracked: a SIGTERM'd `cyrius deps` left
 # the captures (and the dir) and git running, and a clone went on to create the dep cache after
-# the CLI died. git is now a child the handler sends the signal and waits for (fwd 1), so git runs
-# its own cleanup — a clone removes its partial directory. The stand-in `git` first on PATH records
-# its pid, sleeps on one subcommand ($G8_SUB) and records the signal it gets: TERM when forwarded,
-# nothing when SIGKILLed. Every other call runs the real git and records its pid in g8.pt.
-# (issues/archived/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md)
+# the CLI died. git is now a child the handler sends the signal, so git runs its own cleanup — a
+# clone removes its partial directory — and gives a grace to exit on it (fwd 2, 6.7.15): one still
+# running after `_cbt_sig_grace_ms` (2 s) is SIGKILLed, where 6.7.14 (fwd 1) waited for as long as
+# a git that ignores the signal ran. The stand-in `git` first on PATH records its pid, sleeps on
+# one subcommand ($G8_SUB) and records the signal it gets: TERM when forwarded, nothing when
+# SIGKILLed; with $G8_IGN set it ignores SIGTERM. Every other call runs the real git and records
+# its pid in g8.pt.
+# (issues/archived/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md,
+# issues/2026-10-16-kill-handler-waits-unbounded-for-a-forwarded-git.md)
 G8="$T/g8"
 if command -v git > /dev/null 2>&1; then
     G8GIT=$(command -v git)
@@ -781,7 +791,8 @@ if command -v git > /dev/null 2>&1; then
 for a in "\$@"; do
   if [ -n "\${G8_SUB:-}" ] && [ "\$a" = "\$G8_SUB" ]; then
     echo \$\$ > "$T/g8.cc"
-    trap 'echo TERM > "$T/g8.sig"; kill \$s 2>/dev/null; exit 143' TERM
+    if [ -n "\${G8_IGN:-}" ]; then trap '' TERM
+    else trap 'echo TERM > "$T/g8.sig"; kill \$s 2>/dev/null; exit 143' TERM; fi
     sleep 60 &
     s=\$!
     echo \$s > "$T/g8.sl"
@@ -801,7 +812,7 @@ G8STAND
     # $G8/p; its pid in $T/p7-<tag>, its exit status in $T/k7-<tag>.rc once it ends.
     g8_cli() {
         _gt=$1; _gs=$2; _gc=$3; _ga=$4; shift 4
-        ( _kr=0; cd "$G8/p" && G8_SUB="$_gs" HOME="$G8/nohome" CYRIUS_HOME="$G8/home" CYRIUS_RESOLVED=1 \
+        ( _kr=0; cd "$G8/p" && G8_SUB="$_gs" G8_IGN="${G8_IGN:-}" HOME="$G8/nohome" CYRIUS_HOME="$G8/home" CYRIUS_RESOLVED=1 \
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$_gc" GIT_ALLOW_PROTOCOL="$_ga" PATH="$G8/bin:$PATH" TMPDIR="$TB/" \
             sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-$_gt" "$CYRIUS" "$@" > "$T/o7-$_gt" 2>&1 || _kr=$?
           echo "$_kr" > "$T/k7-$_gt.rc" ) 2>/dev/null &
@@ -809,7 +820,8 @@ G8STAND
     }
     # g8_run <tag> <git subcommand to sleep on> <verb...>: SIGTERM once the stand-in sleeps; the live
     # names in $T/k7-<tag>.live, "gone" / "running" for the stand-in in $T/k7-<tag>.cc, the signal it
-    # recorded ("none" when it got none it could see) in $T/k7-<tag>.sig.
+    # recorded ("none" when it got none it could see) in $T/k7-<tag>.sig, the ms from the SIGTERM to
+    # the CLI's exit in $T/k7-<tag>.ms.
     g8_run() {
         _g8t=$1; _g8s=$2; shift 2
         rm -f "$T/g8.cc" "$T/g8.sig" "$T/g8.sl" "$T/p7-$_g8t" "$T/k7-$_g8t.rc" "$T/k7-$_g8t.live" "$T/k7-$_g8t.cc"
@@ -818,8 +830,11 @@ G8STAND
         while [ ! -s "$T/g8.sl" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
         _gp=$(cat "$T/p7-$_g8t" 2>/dev/null || true)
         ls -A "$TB/cyrius-$_gp" > "$T/k7-$_g8t.live" 2>/dev/null || : > "$T/k7-$_g8t.live"
+        _gt0=$(date +%s%N)
         [ -n "$_gp" ] && kill -TERM "$_gp" 2>/dev/null || true
         { wait "$_gb"; } 2>/dev/null || true
+        _gt1=$(date +%s%N)
+        ( echo $(( (_gt1 - _gt0) / 1000000 )) ) > "$T/k7-$_g8t.ms" 2>/dev/null || echo none > "$T/k7-$_g8t.ms"
         _gc=$(cat "$T/g8.cc" 2>/dev/null || true)
         if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
             echo running > "$T/k7-$_g8t.cc"; kill -KILL "$_gc" 2>/dev/null
@@ -868,6 +883,25 @@ G8STAND
     check "  …no private dir is left" 0 "$(k7_dirs g8c "$TB")"
     check "  …the git clone is stopped" gone "$(cat "$T/k7-g8c.cc")"
     check "  …by the SIGTERM forwarded to it (git clone's own cleanup runs on it)" TERM "$(cat "$T/k7-g8c.sig")"
+    check "  …which it exits on: the CLI ends without waiting out the grace (under 1.5 s)" yes \
+        "$(k7m=$(cat "$T/k7-g8c.ms" 2>/dev/null); [ "${k7m:-x}" -eq "${k7m:-x}" ] 2>/dev/null && [ "$k7m" -lt 1500 ] && echo yes || echo "no (${k7m:-none} ms)")"
+    for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+    # 6.7.15: a git that IGNORES the forwarded SIGTERM (a wrapper first on PATH; real git dies on it)
+    # is SIGKILLed once the grace is up; 6.7.14 waited for as long as it ran (its sleep 60).
+    rm -rf "$G8/home/deps/sib"
+    G8_IGN=1
+    g8_run g8i clone deps
+    G8_IGN=
+    check "deps SIGTERM'd in a git clone that IGNORES SIGTERM — the clone ran (anti-vacuous: the stand-in slept on it)" yes \
+        "$([ -s "$T/g8.cc" ] && echo yes || echo no)"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g8i.rc" 2>/dev/null || echo none)"
+    k7m=$(cat "$T/k7-g8i.ms" 2>/dev/null || echo none)
+    check "  …the stand-in did ignore it: the CLI gave it the grace first (at least 1.5 s)" yes \
+        "$([ "$k7m" -eq "$k7m" ] 2>/dev/null && [ "$k7m" -ge 1500 ] && echo yes || echo "no ($k7m ms)")"
+    check "  …and then no longer: the CLI exits under 4 s after the SIGTERM" yes \
+        "$([ "$k7m" -eq "$k7m" ] 2>/dev/null && [ "$k7m" -lt 4000 ] && echo yes || echo "no ($k7m ms)")"
+    check "  …the git stand-in is gone (SIGKILLed after the grace)" gone "$(cat "$T/k7-g8i.cc")"
+    check "  …no private dir is left" 0 "$(k7_dirs g8i "$TB")"
     for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
     # the REAL git clone: the origin rewritten to an ext:: helper that never answers, so git has
     # created the cache's clone directory and waits; forwarded the SIGTERM, git removes it.
