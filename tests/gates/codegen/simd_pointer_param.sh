@@ -158,6 +158,9 @@
 #       on aarch64 / cx / PE; struct_arg_type_refused.sh R9 R23 R24 R24b R28b
 #   M-SMb `_expr_struct_sid` not recording it (`_ess_fi`)    -> RED 4: SM6 on x86_64 / aarch64 / cx / PE (the small
 #       by-value path); struct_arg_type_refused.sh R23 R24 R24b
+# 6.7.14 (D34 A) — SF: a struct-typed field into a `*V` parameter refused by name (`_fla_addr` -> `_sarg_svec_err`).
+#   M-SF  `_fla_addr` without the `*V` line                  -> RED 40: SF1-SF6 on all five legs, SF7-SF11 x86_64 / PE
+#       (each compiled: the field's bytes read as the vector); SFok green
 #
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
@@ -763,6 +766,60 @@ for lg in a64 cx pe; do
     refused "SM2$lg" "SM2 $lg" "${SMH}fn main(): i64 { var s: Pt; return rd((s.dup())); }\n${E}" "$lg" "cannot pass 'Pt.dup' $SVF"
     refused "SM6$lg" "SM6 $lg" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" "$lg" "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
 done
+
+# 6.7.14 (D34 A, the user's decision, 2026-10-16; issues/2026-10-16-struct-field-into-vector-pointer-parameter-accepted.md)
+# — a struct-typed FIELD into a `*V` parameter is refused by name, as D33 refuses the struct from every other source:
+# `rd(w.s)` (`s: Pt`) passed the field's address (`_fla_addr`) and the callee read its bytes as the vector (42 on every
+# target, silently). SF1 the filed repro verbatim; SF2-SF6 wrapped, through a `*W`, a global's, a capture's, a nested
+# field's — each refused once, on x86_64 / IR=3 / aarch64 / cx / PE; SF7-SF11 a method's, a generic's, an `#inline`
+# fn's, an operator fn's `*V` parameter and top level (x86_64 / PE); SFok `rd(&w)`, `rd(&w + 0)`, `rq(w.s)` into `*Pt` (42 on every leg).
+echo "SF. a struct-typed field into a \`*V\` parameter: refused by name, once (D34 A)"
+# sf_legs <tag> <label> <src-file>: refused once with the field's words on x86_64 / IR=3 / aarch64 / cx / PE
+SFF="cannot pass 's' to a parameter that is a pointer to a vector type in a call to"
+sf_legs() {
+    for lg in x86 x86:CYRIUS_IR=3 $OTHER; do
+        n=$(printf '%s_%s' "$1" "$lg" | tr -c 'a-zA-Z0-9' '_')
+        rc=0; build_leg "$lg" "$3" "$D/$n" || rc=$?
+        ne=$(grep -c '^error' "$D/$n.err" || true)
+        if [ "$rc" -eq 0 ]; then bad "$1 $lg: $2 compiled (rc 0)"
+        elif [ "$ne" -ne 1 ] || ! grep '^error' "$D/$n.err" | grep -qF -- "$SFF"; then
+            bad "$1 $lg: $2: want one line \".. $SFF ..\", got $ne: $(grep '^error' "$D/$n.err" | head -2 | tr '\n' '|')"
+        elif [ -s "$D/$n" ]; then bad "$1 $lg: $2 refused, but a binary was written"
+        else ok "$1 $lg: $2 refused once"; fi
+    done
+}
+cat > "$D/sf1.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+struct Pt { x; y; }
+struct W { s: Pt; k; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn main(): i64 {
+    var w: W;
+    w.s.x = 42; w.s.y = 7;
+    return rd(w.s);            # a struct FIELD into `*f64v2`: rd(s) on a local is refused (D33)
+}
+var rc = main();
+syscall(60, rc);
+EOF2
+sf_legs SF1 "the filed repro verbatim, rd(w.s)" "$D/sf1.cyr"
+SFH="${H}include \"lib/fnptr.cyr\"\nstruct Pt { x; y; }\nstruct W { s: Pt; k; }\nstruct HW { w: W; }\nstruct Q { a; }\nvar GW = W { 42, 7, 1 };\nfn rd(p: *f64v2): i64 { return load64(p); }\nfn rq(p: *Pt): i64 { return p.x; }\nfn rg<T>(p: *f64v2, x: T): i64 { return load64(p) + x; }\n#inline\nfn rdi(p: *f64v2): i64 { return load64(p); }\nimpl Q { fn rd(self, p: *f64v2): i64 { return load64(p); } }\nfn Pt_sub(a: *Pt, b: *f64v2): i64 { return a.x - load64(b); }\n"
+sf_src() { printf '%b' "${SFH}fn main(): i64 {\n    var w: W; w.s.x = 42; var pw: *W = &w; var h: HW; h.w.s.x = 42; var q: Q; var p: Pt;\n    $2\n}\n${E}" > "$D/$1.cyr"; }
+sf_src sf2 'return rd((w.s));'; sf_legs SF2 "rd((w.s)), wrapped" "$D/sf2.cyr"
+sf_src sf3 'return rd(pw.s);'; sf_legs SF3 "rd(pw.s) through a *W" "$D/sf3.cyr"
+sf_src sf4 'return rd(GW.s);'; sf_legs SF4 "rd(GW.s), a global's field" "$D/sf4.cyr"
+sf_src sf5 'var c = |k| rd(w.s) + k; return fncall1(c, 0);'; sf_legs SF5 "|k| rd(w.s), a capture's field" "$D/sf5.cyr"
+sf_src sf6 'return rd(h.w.s);'; sf_legs SF6 "rd(h.w.s), a nested field" "$D/sf6.cyr"
+for lg in x86 pe; do
+    [ "$lg" = pe ] && [ "$WINE" != 1 ] && continue
+    refused "SF7$lg" "SF7 $lg q.rd(w.s), a method's *V parameter" "${SFH}fn main(): i64 { var w: W; var q: Q; return q.rd(w.s); }\n${E}" "$lg" "$SFF 'Q.rd'"
+    refused "SF8$lg" "SF8 $lg rg(w.s, 1), a generic's" "${SFH}fn main(): i64 { var w: W; return rg(w.s, 1); }\n${E}" "$lg" "$SFF 'rg'"
+    refused "SF9$lg" "SF9 $lg rdi(w.s), an #inline fn's" "${SFH}fn main(): i64 { var w: W; return rdi(w.s); }\n${E}" "$lg" "$SFF 'rdi'"
+    refused "SF10$lg" "SF10 $lg p - w.s, an operator fn's (Pt_sub(a: *Pt, b: *f64v2))" "${SFH}fn main(): i64 { var w: W; var p: Pt; return p - w.s; }\n${E}" "$lg" "$SFF 'Pt_sub'"
+    refused "SF11$lg" "SF11 $lg rd(GW.s) at top level" "${SFH}var r0 = rd(GW.s);\nsyscall(60, r0);\n" "$lg" "$SFF 'rd'"
+done
+sf_src sfok 'w.s.y = 7; return rd(&w) + rd(&w + 0) + rq(w.s) - 84;'
+exit_rows SFok "$D/sfok.cyr" 42 "rd(&w), rd(&w + 0) and rq(w.s) into *Pt pass"
 
 # 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
 # dereference of an ADDRESS-OF a vector, or of a `**V` / `**S`, is the vector / the struct: the filed `rd(*&b)` /
@@ -1421,4 +1478,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM); a struct field into a \`*V\` parameter refused (SF, D34)"

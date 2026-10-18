@@ -6856,6 +6856,10 @@ fn _fla_push_arg(S, fi, argc, tail): i64 {
 # rax = the recorded field's address, as by-value / `*S` argument `argc` of `fi` (refused by name
 # when the parameter's struct differs). Shared with an operator's right operand (`_op_rhs`, `tail`
 # 0). A field of an inline aggregate in this frame is an address in it (`_sarg_escapes`).
+# ⛔ 6.7.14 (D34 A, the user's decision, 2026-10-16) — a struct-typed FIELD into a `*V` parameter is refused by name, as
+# 6.7.13's D33 refuses the struct from a local, a call, `*ps`, a global or a capture: `rd(w.s)` (`s: Pt`, `p: *f64v2`)
+# passed the field's address and the callee read its bytes as the vector (42 on every target). A `*V` records no struct
+# (GFPSID), so the check above compared nothing; `_sarg_svec_err` answers 0 for any other parameter. CHANGELOG [6.7.14]
 fn _fla_addr(S, fi, argc, tail): i64 {
     _fla_hit = 0;
     var ps = GFPSID(S, fi, argc);
@@ -6863,6 +6867,7 @@ fn _fla_addr(S, fi, argc, tail): i64 {
             ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
             return 0;
         } }
+    elif (_sarg_svec_err(S, fi, argc, _fla_name, 0 - 1) == 1) { return 0; }
     if (_fsc_src_in_frame(S) == 1) { _sarg_escapes(fi, argc, tail); }   # 6.6.20
     _fsc_src_x1(S, 0);
     EMOVI(S, 0);

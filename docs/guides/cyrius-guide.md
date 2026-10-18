@@ -3804,10 +3804,12 @@ dereferenced lane 0's bits). A fn with a `*V` parameter that C calls, or that is
 `fncallN`, now takes it in an integer register (the C ABI's pointer), where it took vector
 registers (SysV / aarch64 / cx) or a by-pointer copy (Win64). **A struct value passed to a `*V` parameter is refused by
 name (6.7.13; the user's decision D33, 2026-10-15: A)** — a local, a call or method result, `*ps`, a global, a
-closure's captured copy, parenthesised or not: `cannot pass 's' to a parameter that is a pointer to a vector type in a
-call to 'rd'`, the mirror of a struct of another type into `*S` and a vector of another type into `*V`. `rd(&s)` and a
-typed `*Pt` pointer still convert freely. ⚠ Through 6.7.12 the struct's address was passed and its bytes read as the
-vector, silently.
+closure's captured copy, and (6.7.14, D34 A) a struct-typed field `rd(w.s)` — of a local, a `*W`, a global or a
+capture, in a method's or a generic's or an operator fn's `*V` parameter, at top level — parenthesised or not: `cannot
+pass 's' to a parameter that is a pointer to a vector type in a call to 'rd'`, the mirror of a struct of another type
+into `*S` and a vector of another type into `*V`. `rd(&s)`, `rd(&w)` and a typed `*Pt` pointer still convert freely.
+⚠ Through 6.7.12 the struct's address was passed and its bytes read as the vector, silently (a field's through
+6.7.13).
 
 **A vector value that is not a named local passes an address too (6.7.12; the user's decision
 D27, 2026-10-15: B).** A call declared to return the vector — `rd(mkv(42, 7))`, `rd((mkv(..)))`,
