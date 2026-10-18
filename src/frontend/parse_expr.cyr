@@ -5163,6 +5163,19 @@ fn _slit_ptype(S, ti, o): i64 {
     syscall(SYS_WRITE, 2, S + 0x459D000 + a, b - a);
     return 0;
 }
+# `&` takes a name. Anything else (`&(x)`, `&5`, `&*p`) is "expected identifier" once, at that token, and the
+# factor ends there: the `&` arm read on with the token's VALUE as a name offset (a `(`'s 0 is the source's first
+# word) and reported a second, false "undefined variable 'fn'". A `( .. )` is stepped whole, so the parse stays in
+# step; any other token is stepped as the arm stepped it. CHANGELOG [6.7.15]
+fn _amp_not_name(S): i64 {
+    ERR_EXPECT(S, 2);
+    var c = 0 - 1;
+    if (PEEKT(S) == 10) { c = _tok_close_paren(S, GTI(S)); }
+    if (c < 0) { c = GTI(S); }
+    STI(S, c + 1);
+    EMOVI(S, 0);
+    return 0;
+}
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
     if (_dl_refd_at(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr)
@@ -5539,7 +5552,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     if (typ == 27) {
         # &var or &fn — address of variable or function
         STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        if (PEEKT(S) != 2) { _amp_not_name(S); return 0; }   # 6.7.15: one error, the factor ends there
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
         # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse_fn.cyr).
