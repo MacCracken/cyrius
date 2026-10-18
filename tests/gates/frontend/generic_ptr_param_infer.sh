@@ -39,7 +39,10 @@
 #      plain `x: T` / `p: *T` too: the filed table verbatim (docs/development/issues/2026-10-16-generic-plain-parameter-
 #      wrapped-deref-or-captured-struct-binds-nothing.md), each row's `m()` exit — `gs(l)` 24 (the control), `gs((l))`
 #      24, `gs(*p)` 24, a captured `gs(l)` 24, a captured `gsz(l)` 24 (was refused), `gsz((p))` 24, `gsz((&GS))` 24
-#      (each was 8) — on every leg; WDT (x86_64) a tuple literal `gs((l, 3))` still binds nothing (its one refusal)
+#      (each was 8) — on every leg; WDT (x86_64) a tuple literal `gs((l, 3))` still binds nothing (its one refusal);
+#      WDS (the D12 review) the same step reads a parenthesised SCALAR as its plain spelling: WDS1 the review's program
+#      verbatim, `g((h))` with `h: f64` the f64 instance as `g(h)` is (3; on the slot-open compiler b2e1f4c4 the i64
+#      base on the double's bits: 7), WDS2 `gp((px))` with `px: *i32` through `p: *T` binds i32 as `gp(px)` does (44)
 #   WDV (6.7.15) tests/tcyr/crossos/generic_wrapped_argument_binding.tcyr (each spelling's field read through the
 #      instance, a capture's copy written through `p: *T`, a captured parameter, an 8-byte struct, a method, a `: T`
 #      result; a pointer through `x: T` stays i64) on every leg: "N passed, 0 failed (N total)"
@@ -79,6 +82,8 @@
 #   MW2 `_ic_arg` without `_pwrap_in`                     -> RED WD1 WD5 WD6 (8), WDV (does not build)
 #   MW3 `_ic_arg` without its deref arm (`_ic_deref`)     -> RED WD2 (8), WDV (does not build)
 #   MW4 `_ic_cap` without its struct-value arm            -> RED WD3 (8), WD4 (refused), WDV (does not build)
+#   (the D12 review's WDS rows, 2026-10-18:) the slot-open compiler (b2e1f4c4) -> RED WDS1 (7), WDS2 (88); MW2
+#   `_ic_arg` without `_pwrap_in` -> RED WDS1 (7), WDS2 (48: `gp((px))` the i64 base)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -352,6 +357,14 @@ erc=0; "$CC" < "$D/wdt.cyr" > "$D/wdt" 2> "$D/wdt.err" || erc=$?
 ne=$(grep -c '^error' "$D/wdt.err" || true)
 if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF 'a tuple `( .. )` is a value only as' "$D/wdt.err"; then ok "WDT: gs((l, 3)), a tuple literal, binds nothing (its one refusal)"
 else bad "WDT: gs((l, 3)): rc $erc, $ne errors: $(grep '^error' "$D/wdt.err" | tr '\n' ' ')"; fi
+# WDS — a parenthesised scalar: the review's program, verbatim; then a `*i32` through `p: *T`.
+cat > "$D/wds1.cyr" <<'X'
+fn g<T>(x: T): T { return x + x; } fn main(): i64 { var h: f64 = 1.5; var r: f64 = g((h)); var q: f64 = g(h); if (r == q) { return 3; } return 7; }
+X
+xr WDS1 "$D/wds1.cyr" 3 "g((h)) with h: f64, the f64 instance as g(h) (it ran the i64 base: 7)"
+printf '%s\n' 'fn gp<T>(p: *T): i64 { return sizeof(T); }' \
+    'fn main(): i64 { var z: i32 = 5; var px: *i32 = &z; return gp((px)) + 10 * gp(px); }' > "$D/wds2.cyr"
+xr WDS2 "$D/wds2.cyr" 44 "gp((px)) with px: *i32 binds i32, as gp(px)"
 
 echo "WDV. $TW ($NW rows)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
