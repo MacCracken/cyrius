@@ -6760,9 +6760,15 @@ calls the `f64` instance, as `P_id<f64>(&p, h)` does, and `var a = p.id<f64>(h);
 declares an `f64` — on a chain (`w.v.id<f64>(h)`), a `*P` receiver, as a statement, a
 struct receive or a struct `return`, and `p.pick<T>(t)` forwards `T` inside a generic
 (6.7.14, the user's decision D7 (a), 2026-10-16; before it the `<` was read as
-less-than: "unknown field 'id'" and "undefined variable 'f64'"). The shape is
-`.m<..>(` where `m` is a generic method of the receiver's struct and **no field** of
-it: a field of that name still wins, so `p.n < k` is a comparison. A bound is then met at `f64`: `gb(h)` with
+less-than: "unknown field 'id'" and "undefined variable 'f64'"). Wherever `x.m(..)` is
+a call, so is `x.m<..>(..)` (6.7.15): a multi-value destructure or re-assignment
+(`var a, b = p.mm<i64>(3);`), a tuple capture, a `: stack` pair's `?`, destructure and
+forward, the refusals of a pair bound to one name and of a multi-value call stored as a
+struct, a method declared to return a vector, a `*T` result forming a `dyn`, a top-level
+zone — through 6.7.14 those read the explicit spelling as no call ("multi-value
+destructure needs a call on the right-hand side"; `var v = p.rs<i64>(3)?;` crashed). The
+shape is `.m<..>(` where `m` is a generic method of the receiver's struct and **no field** of
+it: a field of that name still wins, so `p.n < k` (and `p.n < k >> (j)`) is a comparison. A bound is then met at `f64`: `gb(h)` with
 `fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
 `gb<f64>(h)` is — and it needs no `impl Show for i64` (6.7.11: without one, `gb(h)`,
 `gb<f64>(h)` and `p.bm(h)` were refused naming `i64`, or ran the dead stub). Any other

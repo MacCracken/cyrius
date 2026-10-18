@@ -225,9 +225,16 @@ fn _pair_unwrap(S, ti): i64 {
     while (TOKTYP(S, a) == 10) { a = a + 1; }
     if (TOKTYP(S, a) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, a);
-    if (o < 0) { if (_tok_method_open(S, a) == 1) { o = a + 3; } }
+    if (o < 0) { o = _pair_mopen(S, a); }
     if (o < 0) { return 0 - 1; }
     return _pair_unwrap_k(S, _call_close(S, o) + 1, a - ti, a);
+}
+# The `(` of a method call at token a by its shape — `x.m(`, or `x.m<..>(` (6.7.15) — its callee the asker's to
+# resolve (a comparison `p.n < a > (b)` resolves to none), else -1.
+fn _pair_mopen(S, a): i64 {
+    if (_tok_method_open(S, a) == 1) { return a + 3; }
+    if (_tok_mx_shape(S, a) == 0) { return 0 - 1; }
+    return _tok_targs_close(S, a + 4) + 1;
 }
 # `a` when the k tokens from e are each `)` (inside the token stream), else -1.
 fn _pair_unwrap_k(S, e, k, a): i64 {
@@ -816,7 +823,7 @@ fn _tok_ret_callee(S, a, t): i64 {
         if (o > t + 1) { if (fi >= 0) { if (GFTP(S, fi) == 0) { fi = 0 - 1; } } }   # `<` on a generic only
         return fi;
     }
-    if (_tok_method_open(S, t) == 0) { return 0 - 1; }
+    if (_mcall_open(S, t, a) < 0) { return 0 - 1; }   # 6.7.15: `x.m<..>(` too, its template's flags
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m(`: not a single name
     var sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
     if (sid == 0) { sid = _tok_iself(S, a, t); }   # 6.7.11
@@ -1097,7 +1104,8 @@ fn _ret_is_variant(S, a, t): i64 {
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
     if (rf < 0) {
-        if (_tok_method_open(S, t) == 1) { return 0; }
+        if (_tok_method_open(S, t) == 1) { return 0; }   # 6.7.15: an explicit `x.m<..>(` is resolved above once
+        # its receiver is typed (`_mcall_open`); unconfirmed, its shape may be a comparison (`p.n < k >> (j)`)
         rf = FINDFN(S, TOKVAL(S, t));
         nt = TOKTYP(S, t + 1);
     }
@@ -1340,10 +1348,12 @@ fn _pair_callee_at(S, ti): i64 {
         var fi = _pair_gen_inst(S, ti);
         return fi;
     }
-    if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    if (o < 0) { return 0 - 1; }
     var sid = _recv_sid(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0 - 1; }
     var mf = _meth_fn_at(S, sid, TOKVAL(S, ti + 2), ti + 2);
+    if (o != ti + 3) { mf = _mcall_xquiet(S, mf, ti + 3); }
     return mf;
 }
 # The fn the call at token ti reaches (`_gen_resolve_call`: a generic's instance, instantiating it if
@@ -1363,6 +1373,38 @@ fn _tok_method_open(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 41) { return 0; }
     if (TOKTYP(S, ti + 2) != 2) { return 0; }
     if (TOKTYP(S, ti + 3) != 10) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.15 — THE EXPLICIT METHOD SPELLING IN THE `x.m(` LOOKAHEADS. 6.7.14's D7 (a) made `p.m<f64>(h)` call the f64
+# instance, but every lookahead that keys a method call on the tokens `x . m (` (`_tok_method_open`, the `(` at
+# ti + 3) missed it: `var a, b = p.mm<i64>(3);` was "multi-value destructure needs a call on the right-hand side",
+# `var v = p.rs<i64>(3)?;` took the boxed `?` and SIGSEGV'd, `var v = p.rs<i64>(3);` kept a pair's tag in silence.
+# The `(` of a method call on the single name at token t: `x.m(` (t + 3), or `x.m<..>(` when x's struct has no field
+# m and a generic method m (`_mtargs_at`, the method arm's own test), so `p.n < a > (b)` stays a comparison. x is
+# typed as its asker types it: by the parser's scope (`a` < 0, `_recv_sid`), or from the tokens of the unit
+# starting at token a (`_tok_name_sid`; an impl's untyped `self`, `_tok_iself`). -1 otherwise. CHANGELOG [6.7.15]
+fn _mcall_open(S, t, a): i64 {
+    if (_tok_method_open(S, t) == 1) { return t + 3; }
+    if (_tok_mx_shape(S, t) == 0) { return 0 - 1; }
+    if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m<..>(`: not a single name
+    var sid = 0;
+    if (a < 0) { sid = _recv_sid(S, TOKVAL(S, t)); }
+    else {
+        sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
+        if (sid == 0) { sid = _tok_iself(S, a, t); }
+    }
+    if (_mtargs_at(S, sid, t + 2) == 0) { return 0 - 1; }
+    return _tok_targs_close(S, t + 4) + 1;
+}
+# 1 = the tokens at t are `x . m < .. > (` — a method call's explicit spelling, or a comparison: by its shape alone.
+fn _tok_mx_shape(S, t): i64 {
+    if (TOKTYP(S, t) != 2) { return 0; }
+    if (TOKTYP(S, t + 1) != 41) { return 0; }
+    if (TOKTYP(S, t + 2) != 2) { return 0; }
+    if (TOKTYP(S, t + 3) != 19) { return 0; }
+    var e = _tok_targs_close(S, t + 4);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
     return 1;
 }
 # The struct id of a method call's single-name receiver, resolved in PARSE_FIELD_LOAD's order: a
@@ -1458,7 +1500,7 @@ fn _pair_vwrap(S, st): i64 {
     while (TOKTYP(S, a) == 10) { a = a + 1; }
     if (TOKTYP(S, a) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, a);
-    if (o < 0) { if (_tok_method_open(S, a) == 1) { o = a + 3; } }
+    if (o < 0) { o = _pair_mopen(S, a); }
     if (o < 0) { return 0 - 1; }
     var e = _call_close(S, o) + 1;
     var m = a - st;

@@ -57,6 +57,32 @@
 #      through `x: T` P7 `gid(*pp)` and `gid((l))` — each 4 (each refused naming P_pick before) — x86_64; PX an
 #      `x: T` given a `pp: *P` PARAMETER binds no struct in the scan either: `o(5, &GP0)` meets the parser's own
 #      "no struct type in scope for 'r'" at `r.pick`, not a stub refusal naming o (the scan made o a stub) — x86_64
+#   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
+#      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
+#      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
+#      (SIGSEGV), `var v = p.rs<i64>(3);` kept a pair's tag in silence, a vector receive or a dyn refused the call, a
+#      multi-value call stored as a struct compiled. `_mcall_open` answers either spelling's `(`, the `<` one only
+#      where the receiver's struct has no field m and a generic method m (`_mtargs_at`), at all 17 sites; the callee
+#      is resolved at the explicit instance (`_mcall_xquiet`). L0 the filed repro verbatim (10) and LV
+#      tests/tcyr/crossos/generic_method_explicit_lookaheads.tcyr (28 rows: destructures, a re-assignment, a `*P`
+#      receiver, parentheses, a tuple capture, a forward, inside a generic, a for step, a 16 B struct; a pair's `?`,
+#      statement `?`, wrapped `?`, forward, destructure; a vector method into an annotated / unannotated local, an
+#      assignment, an argument, a return, parentheses; a `*T` result as a dyn source in four positions; a top-level
+#      zone; MC the comparisons) — every leg; LR1-LR19 (x86_64) each refusal on the explicit spelling, once, in the
+#      inferred spelling's words (a pair bound one-wide in six positions, a multi-value call into a tuple / struct
+#      field, a struct assignment / declaration / small-struct return, a tuple capture's count, a destructure's count /
+#      over-16 B / one-value struct, a vector into an i64 declaration / assignment, an async fn, a tuple argument);
+#      LC `p.n < k >> (j)` / `q.id < k >> (j)` (id a field AND a generic method) compare on every leg, and a
+#      pair-returning fn's comparison return keeps its dropped-tag warning. Filed: docs/development/issues/
+#      2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= it — the aarch64 / cx legs build from the tree):
+#      ML1 the lane's previous compiler (3ad93752) -> RED 24: L0 LV (x86 / IR / PE), LR1-LR18; ML2 `_mcall_open`
+#      without its `<` arm -> RED 24, as ML1; ML3 `_mcall_open` by shape (no `_mtargs_at`) -> GREEN: the parser's
+#      field still wins and a field's comparison resolves no method (as 6.7.14's ME2; the corpus differential guards
+#      it); ML4 `_vrcv_src` kind 3 at ti + 3 -> RED 3: LV (x86 / IR / PE: the wrapped vector receive refused); ML5
+#      `_pair_callee_at` at the template (no `_mcall_xquiet`) -> GREEN: the template's flags and return agree with the
+#      instance's on these shapes (the free spelling's `_pair_gen_inst` twin, kept for the instance the call reaches);
+#      ML6 `_pair_mopen` without its `<` arm -> RED 4: LV (x86 / IR SIGSEGV, PE: the wrapped `?`), LR6
 #   T  tests/tcyr/crossos/generic_method_struct_arg.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -596,6 +622,115 @@ ne=$(grep -c '^error' "$D/px.err" || true)
 if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/px.err"; then ok "PX: gid(pp) with a \`pp: *P\` parameter binds no struct: the parser's own error at r.pick, once"
 else bad "PX: o(5, &GP0): rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/px.err" | tr '\n' ' ')"; fi
 
+echo "L. the explicit spelling x.m<..>(..) in the method-call lookaheads (6.7.15)"
+# The filed repro, verbatim (the issue's text).
+cat > "$D/l0.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P { k; }
+impl P {
+    fn id<V>(self, x: V): V { return x; }
+    fn mm<V>(self, x: V): (V, i64) { return (x, 7); }
+}
+fn main(): i64 { var p: P = P { 1 }; var a, b = p.mm<i64>(3); return a + b; }
+syscall(60, main());
+X
+xr L0 "$D/l0.cyr" 10 "the filed repro, var a, b = p.mm<i64>(3); return a + b;"
+TL=tests/tcyr/crossos/generic_method_explicit_lookaheads.tcyr
+[ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
+NL=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
+if [ "$NL" -lt 28 ]; then echo "FAIL: $G: only $NL rows in $TL (floor 28) — rows were lost"; exit 1; fi
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'lv_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TL" "$D/$n"
+    if [ "$RC" -eq -1 ]; then bad "LV $leg: the values file did not build: $(grep -m1 'error' "$D/$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NL passed, 0 failed ($NL total)" ]; then ok "LV $leg: $LAST"
+    else bad "LV $leg: exit $RC, '$LAST' (want '$NL passed, 0 failed ($NL total)') $(grep -m3 'FAIL' "$D/$n.out" | tr '\n' ' ')"; fi
+done
+# lrow <id> <decls> <main body> <fragment> <what>: the explicit spelling (`.m<i64>(`) is refused once, containing
+# <fragment>, and its error text (past the position) is the inferred spelling's (`.m(`) — x86_64.
+LH='include "lib/syscalls.cyr"
+enum SRes: stack { SOk(v); SErr(e); }
+struct P { k; }
+struct Q8 { a; }
+struct Q16 { a; b; }
+struct Q24 { a; b; c; }
+struct H2 { a; b; }
+struct Sv { k; }
+impl P {
+    fn mm<V>(self, x: V): (V, i64) { return (x, 7); }
+    fn m3<V>(self, x: V): (V, i64, i64) { return (x, 7, 1); }
+    fn rs<V>(self, x: V): i64 { if (x == 0) { return SErr(9); } return SOk(x); }
+    fn q8<V>(self, x: V): Q8 { var q: Q8; q.a = x; return q; }
+    fn q24<V>(self, x: V): Q24 { var q: Q24; q.a = x; q.b = 4; q.c = 5; return q; }
+}
+impl Sv { fn vv<V>(self, a: V, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; } }'
+lrow() {
+    printf '%s\n%s\nfn main(): i64 { var p: P = P { 1 }; var s: Sv = Sv { 1 }; %s return 0; }\nsyscall(60, main());\n' "$LH" "$2" "$3" > "$D/$1_x.cyr"
+    sed 's/\.\(mm\|m3\|rs\|q8\|q24\|vv\)<i64>(/.\1(/g' "$D/$1_x.cyr" > "$D/$1_i.cyr"
+    for v in x i; do lrc=0; env $LENV "$CC" < "$D/$1_$v.cyr" > "$D/$1_$v" 2> "$D/$1_$v.err" || lrc=$?; eval "lrc_$v=$lrc"; done
+    nx=$(grep -c '^error' "$D/$1_x.err" || true)
+    tx=$(grep '^error' "$D/$1_x.err" | sed 's/^error:<source>:[0-9]*:[0-9]*: //')
+    ti=$(grep '^error' "$D/$1_i.err" | sed 's/^error:<source>:[0-9]*:[0-9]*: //')
+    if [ "$lrc_x" -eq 0 ]; then bad "$1: $5 compiled (want it refused)"
+    elif [ "$nx" -ne 1 ]; then bad "$1: $5: $nx errors, want 1: $(grep '^error' "$D/$1_x.err" | tr '\n' ' ')"
+    elif ! grep -qF -- "$4" "$D/$1_x.err"; then bad "$1: $5: not refused as '$4': $(grep '^error' "$D/$1_x.err")"
+    elif [ "$tx" != "$ti" ]; then bad "$1: $5: the explicit spelling says '$tx', the inferred '$ti'"
+    else ok "$1: $5 is refused once, as the inferred spelling is: $4"; fi
+}
+LENV=
+PB='a `: stack` enum returns two values — bind both'
+lrow LR1 '' 'var v = p.rs<i64>(3);' "$PB" "var v = p.rs<i64>(3); (kept the tag in silence)"
+lrow LR2 '' 'var x = 0; x = p.rs<i64>(3);' "$PB" "x = p.rs<i64>(3);"
+lrow LR3 '' 'var x = 0; store64(&x, p.rs<i64>(3));' "$PB" "store64(&x, p.rs<i64>(3))"
+lrow LR4 '' 'var h: H2; h.a = p.rs<i64>(3);' "$PB" "h.a = p.rs<i64>(3);"
+lrow LR5 '' 'var h = H2 { p.rs<i64>(3), 2 };' "$PB" "H2 { p.rs<i64>(3), 2 }"
+lrow LR6 '' 'var x = (p.rs<i64>(3) + 1);' "$PB" "var x = (p.rs<i64>(3) + 1);"
+lrow LR7 'struct HT { t: (i64, i64); n; }' 'var h: HT; h.t = p.mm<i64>(3);' "a multi-value call 'P.mm' is not stored into a tuple field" "h.t = p.mm<i64>(3); into a tuple field"
+lrow LR8 'struct HS { s: Q16; n; }' 'var h: HS; h.s = p.mm<i64>(3);' "a multi-value call 'mm' is not stored into a struct 'Q16' field - bind it first: \`var a, b = p.mm(..);\`" "h.s = p.mm<i64>(3); into a struct field (compiled)"
+lrow LR9 '' 'var q: Q16; q = p.mm<i64>(3);' "a multi-value call 'mm' is not assigned to struct 'Q16' - bind it first: \`var a, b = p.mm(..);\`" "q = p.mm<i64>(3); (named 'P_mm', no hint)"
+lrow LR10 '' 'var q: Q16 = p.mm<i64>(3);' "a multi-value call 'mm' does not initialize struct 'Q16' - bind it first: \`var a, b = p.mm(..);\`" "var q: Q16 = p.mm<i64>(3); (named 'P_mm', no hint)"
+lrow LR11 'fn g(p: P): Q8 { return p.mm<i64>(3); }' '' "a multi-value call 'mm' is not returned as struct 'Q8' - bind it first: \`var a, b = p.mm(..);\`" "return p.mm<i64>(3); from a : Q8 fn (compiled)"
+lrow LR12 '' 'var t: (i64, i64) = p.m3<i64>(3);' "cannot capture 'm3' into tuple (i64, i64) - it returns 3 values" "var t: (i64, i64) = p.m3<i64>(3); (not a tuple)"
+lrow LR13 '' 'var a, b, c = p.mm<i64>(3);' "multi-value destructure count does not match the fn's declared return arity" "var a, b, c = p.mm<i64>(3); (needs a call)"
+lrow LR14 '' 'var a, b = p.q24<i64>(3);' "cannot destructure 'q24' - it returns struct 'Q24', which is not in registers" "var a, b = p.q24<i64>(3); (needs a call)"
+lrow LR15 '' 'var a, b = p.q8<i64>(3);' "multi-value destructure binds 2 names, but 'P.q8' returns 1 value" "var a, b = p.q8<i64>(3); (needs a call)"
+lrow LR16 '' 'var x: i64 = s.vv<i64>(4, 2);' "vector return type does not match the declared type" "var x: i64 = s.vv<i64>(4, 2); (compiled)"
+lrow LR17 '' 'var x = 0; x = s.vv<i64>(4, 2);' "vector return type does not match the assigned variable" "x = s.vv<i64>(4, 2); (compiled)"
+LENV=CYRIUS_ASYNC=1
+lrow LR18 'async fn af(p: P): i64 { return p.mm<i64>(3); }' '' "\`async fn af\` returns 2 values, and a Future carries one i64" "async fn af returning p.mm<i64>(3) (compiled: the second value lost)"
+LENV=
+lrow LR19 'fn tk(t: (i64, i64)): i64 { return t.0; }' 'tk(p.mm<i64>(3));' "a multi-value call 'P_mm' is not a tuple argument" "tk(p.mm<i64>(3)) (unchanged)"
+# LC: a field compared with the `.m<..>(` token shape is a comparison, and a pair-returning fn's comparison return keeps
+# its dropped-tag warning (the shape alone is no method call).
+cat > "$D/lc.cyr" <<'X'
+include "lib/syscalls.cyr"
+enum SRes: stack { SOk(v); SErr(e); }
+struct P { n; k; }
+struct Q { id; }
+impl Q { fn id<V>(self, x: V): V { return x; } }
+fn w(p: P, k, j): i64 { if (k == 0) { return SErr(1); } return SOk(p.n < k >> (j)); }
+fn w2(p: P, k, j): i64 { if (k == 0) { return SErr(1); } return p.n < k >> (j); }
+fn w3(p: P, k, j): i64 { if (k == 0) { return SErr(1); } return (p.n < k >> (j)); }
+fn main(): i64 {
+    var p: P; p.n = 1; p.k = 2;
+    var q: Q; q.id = 3;
+    var k = 5; var j = 0;
+    var a = p.n < k >> (j);
+    var b = q.id < k >> (j);
+    var c = 0;
+    c = p.n < k >> (j);
+    var t, v = w(p, k, j);
+    var d = (p.n < k >> (j));
+    if (p.n < k >> (j)) { c = c + 10; }
+    return a + b * 2 + c + v * 100 + d * 1000;
+}
+syscall(60, main());
+X
+xr LC "$D/lc.cyr" 90 "p.n < k >> (j) / q.id < k >> (j) compare (id a field AND a generic method)"
+lcw=$(grep -c 'returns a `: stack` pair on another path but a SINGLE value here' "$D/x_LC_x86.err" || true)
+if [ "$lcw" -eq 2 ]; then ok "LC: return p.n < k >> (j); and its wrapped form keep the dropped-tag warning (2)"
+else bad "LC: $lcw dropped-tag warnings, want 2 (w2, w3): $(grep '^warning' "$D/x_LC_x86.err" | tr '\n' ' ')"; fi
+
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -607,4 +742,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

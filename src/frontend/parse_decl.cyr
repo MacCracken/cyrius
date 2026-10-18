@@ -910,11 +910,12 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # its arguments reach (`_mcall_gen`: `var w = p.id(h);`; 6.7.11 a struct's, `var w = p.pick(q);`, and a
 # lookahead never reports). CHANGELOG [6.7.9]
 fn _var_rhs_msid(S, ti): i64 {
-    if (_tok_method_open(S, ti) == 0) { return 0; }
-    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != 5) { return 0; }
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too (`_pair_callee_at` resolves its instance)
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
-    mf = _mcall_gen(S, mf, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0);
+    if (o == ti + 3) { mf = _mcall_gen(S, mf, o, _recv_sid(S, TOKVAL(S, ti)), 0); }
     var rs = GFRS(S, mf);
     if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
@@ -1348,7 +1349,7 @@ fn _tup_fsc_call(S, ft, term): i64 {
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
     _tamv_fld = 1;
-    if (_tok_method_open(S, GTI(S)) == 1) { _tup_arg_mv_err(S, GTI(S), ft, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), 0); }
+    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { _tup_arg_mv_err(S, GTI(S), ft, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), 0); }
     else { _tup_arg_mv_err(S, GTI(S), ft, PEEKV(S), "(..)"); }
     _tamv_fld = 0;
     return 1;
@@ -1996,6 +1997,37 @@ fn _meth_xinst(S, mf, c0, c1): i64 {
     if (spec >= 0) { return spec; }
     if (spec == 0 - 4) { _mx_qt = 1; return mf; }   # the bound's refusal, reported at the type it binds
     _refuse_gen_inst(S, mn, spec);
+    return mf;
+}
+# 6.7.15: the fn the explicit `x.m<..>(` reaches, generic method mf with its list's `<` at token lt — for a
+# lookahead, quietly: its instance, else mf (`_gen_resolve_call`'s explicit arm; a list naming anything but a
+# declared struct / plain scalar / bound type parameter, or a base the call refuses, is the call's own to report).
+fn _mcall_xquiet(S, mf, lt): i64 {
+    if (mf < 0) { return mf; }
+    if (_MONOMORPH_OK == 0) { return mf; }
+    if (GFTP(S, mf) == 0) { return mf; }
+    if (_targs_resolvable(S, lt + 1) == 0) { return mf; }
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    var sv_rf = _ta_refd;
+    _ta_pending_gt = 0;
+    _ta_refd = 0;
+    STI(S, lt + 1);
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var rf = _ta_refd;
+    _ta_pending_gt = sv_gt;
+    _ta_refd = sv_rf;
+    STI(S, sv);
+    if (rf == 1) { return mf; }   # a refused type argument mints nothing (the call reports it)
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    if (c0 <= 0 && c1 <= 0) {
+        if (_gen_stub(S, mf) != 0) { return mf; }
+        if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return mf; }
+    }
+    var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    if (spec >= 0) { return spec; }
     return mf;
 }
 # ⚠ Six parameters at most: the leaf's type is read back from `_resolve_leaf_field` (`_rlf_si` /
@@ -3722,7 +3754,7 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     var st = GTI(S);
     if (_tn_once(S, st) == 0) { return 2; }
     var ct = st;
-    if (_tok_method_open(S, st) == 1) { ct = st + 2; }
+    if (_mcall_open(S, st, 0 - 1) >= 0) { ct = st + 2; }   # 6.7.15: `x.m<..>(` names m too
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     var w = "a tuple";
@@ -7528,13 +7560,14 @@ fn _vcall_fi(S, ti): i64 {
 # `_vcall_o` its `(`. Its call is the method arm's (`_field_load_on`), which on Win64 passes a receive's own
 # destination as the hidden result pointer (`_sc_vbeg`, parse_fn.cyr). CHANGELOG [6.7.13]
 fn _vmc_fi(S, ti): i64 {
-    if (_tok_method_open(S, ti) == 0) { return 0 - 1; }
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    if (o < 0) { return 0 - 1; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0 - 1; }
-    mf = _mcall_gen(S, mf, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0);
+    if (o == ti + 3) { mf = _mcall_gen(S, mf, o, _recv_sid(S, TOKVAL(S, ti)), 0); }
     if (mf < 0) { return 0 - 1; }
     if (GFRS(S, mf) > 0 - 2048) { return 0 - 1; }
-    _vcall_o = ti + 3;
+    _vcall_o = o;
     return mf;
 }
 # The cursor on the call `fi` (`_vcall_fi`'s): its checks — and an explicit instance's own (`_gen_own_call_check`) —
@@ -7605,7 +7638,7 @@ fn _vrcv_src(S, ti, ty, term): i64 {
         o = _vcall_o;   # 6.7.13: past `<..>`
     } elif (_vrcv_mty(S, c) == ty) {
         r = 3;
-        o = c + 3;
+        o = _vcall_o;   # 6.7.15: past `<..>`
     }
     if (r == 0) { return _vrcv_dsrc(S, ti, term); }   # 6.7.13 (D34): a whole `*E`
     var x = _call_close(S, o) + 1;   # the token after the call
@@ -7695,7 +7728,7 @@ fn _vrcv_mbad(S, ti, ty, term, verb): i64 {
     var mt = _vrcv_mty(S, ti);
     if (mt == 0) { return 0; }
     if (mt == ty) { return 0; }
-    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != term) { return 0; }
+    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != term) { return 0; }
     return _vrcv_tyerr(S, ti, verb);
 }
 # ⛔ 6.7.14 — `callptr(&f, ..)` / `fncallN(&f, ..)` OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH.
@@ -7821,11 +7854,12 @@ fn _vrcv_ity(S, ti): i64 {
 # a method its fn (the base, for a generic) declares no vector is not resolved (`_mcall_gen` would instantiate it
 # early). CHANGELOG [6.7.14]
 fn _vmc_whole(S, ti, term): i64 {
-    if (_tok_method_open(S, ti) == 0) { return 0; }
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too
+    if (o < 0) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
     if (GFRS(S, mf) > 0 - 2048) { return 0; }
-    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != term) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
     return _vrcv_mty(S, ti);
 }
 # ⛔ 6.7.14 (D38 A, the user's decision, 2026-10-16) — A METHOD DECLARED TO RETURN A VECTOR INTO A DESTINATION OF
@@ -8457,7 +8491,7 @@ fn _dt_struct_check(S, fi, n): i64 {
 fn _dt_struct_err(S, fi, w): i64 {
     if (_panic == 1) { return 0; }
     var ct = GTI(S);
-    if (_tok_method_open(S, ct) == 1) { ct = ct + 2; }
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }   # 6.7.15: `x.m<..>(` names m too
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot destructure '");
@@ -8496,8 +8530,7 @@ fn _dt_call_open(S): i64 {
     var ti = GTI(S);
     var o = _tup_gopen(S, ti);   # 6.7.7 (B4 review): `_gcall_open`, but by its tokens in the zone's pass 1
     if (o >= 0) { return o; }
-    if (_tok_method_open(S, ti) == 1) { return ti + 3; }
-    return 0 - 1;
+    return _mcall_open(S, ti, 0 - 1);   # `x.m(`, by shape; 6.7.15: `x.m<..>(` when m is x's generic method
 }
 # ... or `callptr(fp, ..)`, the multi-value call the destructure and the tuple capture take (the guide's
 # Multi-Return list names it; `fncallN`, its lowering, already captured): a call whose callee is unknown

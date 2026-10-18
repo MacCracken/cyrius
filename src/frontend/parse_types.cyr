@@ -800,8 +800,9 @@ fn _dyn_src_call(S, st, sid): i64 {
     return 1;
 }
 fn _dyn_src_mcall(S, st, sid): i64 {
-    if (_tok_method_open(S, st) == 0) { return 0; }
-    if (TOKTYP(S, _call_close(S, st + 3) + 1) != 5) { return 0; }
+    var o = _mcall_open(S, st, 0 - 1);   # 6.7.15: `x.m<..>(` too
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
     var fi = _pair_callee_at(S, st);
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != sid) { return 0; }
@@ -1295,12 +1296,14 @@ fn _dyn_scall(S, a, b): i64 {
         if (fi < 0) { return 0; }   # the call reports what it cannot resolve
         return _dyn_sfn(S, fi, a);
     }
-    if (_tok_method_open(S, a) == 0) { return 0 - 1; }
-    if (_call_close(S, a + 3) != b - 1) { return 0 - 1; }
+    var o2 = _mcall_open(S, a, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    if (o2 < 0) { return 0 - 1; }
+    if (_call_close(S, o2) != b - 1) { return 0 - 1; }
     var rs = _recv_sid(S, TOKVAL(S, a));
     if (rs <= 0) { return _dyn_f5(S, a); }
     var mf = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);   # 6.7.8 (D6): through a dyn, its prototype
     if (mf < 0) { return 0; }   # the method reports itself
+    if (o2 != a + 3) { mf = _mcall_xquiet(S, mf, a + 3); }
     return _dyn_sfn(S, mf, a);
 }
 # ⛔ 6.7.13 — A KNOWN `&f` CALLEE IS A DYN SOURCE AS THE DIRECT CALL IS (D15, the user, 2026-10-15). `var a: dyn Shape =
