@@ -19,7 +19,6 @@ IR_BB_COUNT a64 a64m a64n cx x86m
 IR_BB_FIRST a64 a64m a64n cx x86m
 IR_BB_SUCC0 a64 a64m a64n cx win x86m
 IR_BB_SUCC1 a64 a64m a64n cx win x86m
-IR_BCNT a64 a64m a64n cx x86m
 IR_LIVEIN a64 a64m a64n cx win x86m
 IR_LIVEOUT a64 a64m a64n cx win x86m
 IR_NODE_A1 a64 a64m a64n cx x86m

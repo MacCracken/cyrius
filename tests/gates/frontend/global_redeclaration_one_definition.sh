@@ -199,6 +199,37 @@ for f in i1 i2 i3 i4; do
         bad "row I ($f): refused without the redeclaration diagnostic: $(head -c 200 "$WORK/$f.err")"
     fi
 done
+# IC — 6.7.15: a refused type change is ONE error (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-
+#      reader.md). The refused declaration keeps its own registration, and the replay runs after pass 1, so an
+#      initializer BETWEEN the two declarations resolved the name to the refused one (FINDVAR, last match) and was
+#      refused again for reading it, and a value conflict was warned on the refused pair. Now the replay hides a
+#      refused registration from the entries declared before it (_gvr_hide), and pass 1 compares no value across a
+#      refused shape (PARSE_GVAR_REG asks _gv_fold_peek first; _gv_dup_later). IC1-IC3 the filed repros (bool -> i32,
+#      a struct -> scalar with `G.b` between, bool -> untyped, 6.7.14's D9 (a)): one error, no warning (each was two
+#      errors, IC1 / IC3 also a warning); IC4 code AFTER the refused declaration reads it as before (`G + 1` on the
+#      scalar G — reading the first, the struct, would be an operator cascade); IC5 two refused declarations, two
+#      errors, the reader between them reads the first refused one (it read the second, no error either way).
+#      MUTATION LEDGER (6.7.15, scratch trees): the replay hiding dropped (`_gvr_hide` a no-op) -> RED IC1-IC5 (each
+#      reader between); a refused registration hidden from every reader (dead) -> RED IC4 (undefined `P_add` /
+#      `P_mul`, the binary refused); pass 1's compare not standing down for a refused shape (`gpi == -2`) -> RED IC1
+#      IC3 IC5 (the warning).
+# _crow <id> <want errors> <want "L:C" of each, space-separated> <src>: refused, exactly those errors, no warning
+_crow() {
+    NROWS=$((NROWS + 1))
+    printf '%b' "$4" > "$WORK/ic.cyr"
+    rc=0; "$CC" < "$WORK/ic.cyr" > "$WORK/ic.bin" 2> "$WORK/ic.err" || rc=$?
+    [ "$rc" != 0 ] || { bad "row $1: compiled (rc 0), want the type-change error"; return 0; }
+    ne=$(grep -c '^error' "$WORK/ic.err" || true)
+    nw=$(grep -c '^warning' "$WORK/ic.err" || true)
+    pos=$( (grep "redeclared with a different type or size" "$WORK/ic.err" || true) | sed 's/^error:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ' | sed 's/ $//')
+    [ "$ne" = "$2" ] && [ "$nw" = 0 ] && [ "$pos" = "$3" ] \
+        || bad "row $1: $ne error(s) / $nw warning(s), type change at '$pos'; want $2 / 0 at '$3': $(grep -E '^(error|warning)' "$WORK/ic.err" | tr '\n' '|')"
+}
+_crow IC1 1 3:12 'var G: bool = true;\nvar X: bool = G;\nvar G: i32 = 5;\nsyscall(60, G);\n'
+_crow IC2 1 4:7 'struct P { a; b; }\nvar G = P { 1, 2 };\nvar X = G.b;\nvar G = 5;\nsyscall(60, G);\n'
+_crow IC3 1 3:7 'var G: bool = true;\nvar X: bool = G;\nvar G = 5;\nsyscall(60, G);\n'
+_crow IC4 1 4:7 'struct P { a; b; }\nvar G = P { 1, 2 };\nvar X = G.b;\nvar G = 5;\nfn f(): i64 { return G + 1; }\nvar y = G * 2;\nsyscall(60, f() + y);\n'
+_crow IC5 2 '3:12 5:12' 'var G: bool = true;\nvar X: bool = G;\nvar G: i32 = 5;\nvar Y: i32 = G;\nvar G: i64 = 6;\nsyscall(60, G);\n'
 # J — after the first top-level statement a redeclaration is a NEW variable (fresh buffer of
 #     the new size) — the pattern tests/tcyr/crypto/tls12_handshake_msgs.tcyr relies on
 _row J 1 'var z = 0;\nz = 1;\nvar buf[8];\nstore8(&buf, 9);\nvar buf[48];\nsyscall(60, load8(&buf) + 1);\n' \
@@ -409,11 +440,50 @@ _frow WF10 0 "E:'C' is already declared as a top-level const" 'const C = 5;\nvar
 _frow WF11 1 1 'var B: bool = false;\nvar B: bool = true;\nsyscall(60, B);\n'
 _frow WF12 0 1 'var B: bool = true;\nvar B: bool = (true);\nsyscall(60, B);\n'
 _frow WF13 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 5; }\nvar K = 2 + 3;\nsyscall(60, K);\n'
-[ "$NW" -ge 25 ] || bad "floor: $NW warning rows ran, want 25"
+# WN — 6.7.15: a const- / enum-NAMED constant on either side of a redeclaration is compared, as a literal is
+#      (issues/2026-10-17-redeclared-global-named-constant-value-never-compared.md): pass 1 folds no name, so neither
+#      side was ever compared. A pair whose either side only the replay folds is compared there (_gvk_chain), in
+#      declaration order, at the later declaration's `=`, once. WN1-WN4 the filed repros (`3` then `C`, `C` then `3`,
+#      `3` then `E.B`, `D` then `C`: 3:7, 3:7, 3:7, 4:7; each was silent); WN5 / WN6 same-value pairs silent (`5` then
+#      `C`, `C` then `C`); WN7 an earlier computed initializer silent; WN8 the enum-shadow error unchanged (one error, no
+#      warning); WN9 `= 0` then `C` (was silent); WN10 a chain `3`, `C`, `5` warns once, at the pair that differs (3:7;
+#      pass 1 compared the two literals, 4:7); WN11 `3`, `C`, `4` twice; WN12 `3`, `f()`, `5` still once (4:7: a
+#      computed initializer between two constants, compared now at the replay); WN13 a bool pair by name.
+#      MUTATION LEDGER (6.7.15, scratch trees): `_gvc_cmp` never warning -> RED WN1-WN4 WN9-WN13; `_gv_dup_later` not
+#      deferring (pass 1 compares across an initializer it did not fold) -> RED WN2 WN10 WN11 (no compare, or pass
+#      1's pair); no kind-0 record (`_gvc_unfolded` recording nothing) -> RED WN1 WN3 WN10-WN12 (no constant before
+#      the one the replay folds); the previous compilers (79f6ca16d, c31338f42) -> RED WN1-WN4 WN9-WN11 WN13.
+# _nrow <id> <want warnings> <want exit> <want "L:C" of each warning, space-separated> <src>
+_nrow() {
+    NW=$((NW + 1))
+    printf '%b' "$5" > "$WORK/n.cyr"
+    rc=0; "$CC" < "$WORK/n.cyr" > "$WORK/n.bin" 2> "$WORK/n.err" || rc=$?
+    n=$(grep -c "duplicate symbol '[A-Za-z_]*' redefined with conflicting value (last definition wins)" "$WORK/n.err" || true)
+    pos=$( (grep "redefined with conflicting value" "$WORK/n.err" || true) | sed 's/^warning:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ' | sed 's/ $//')
+    [ "$n" = "$2" ] && [ "$pos" = "$4" ] || bad "row $1: $n conflicting-value warning(s) at '$pos', want $2 at '$4'"
+    if [ "$rc" != 0 ] || [ ! -s "$WORK/n.bin" ]; then bad "row $1: compile failed: $(grep -m1 '^error' "$WORK/n.err")"; return 0; fi
+    chmod +x "$WORK/n.bin"
+    set +e; "$WORK/n.bin" > /dev/null 2>&1; r=$?; set -e
+    [ "$r" = "$3" ] || bad "row $1: exited $r, want $3"
+}
+_nrow WN1 1 5 3:7 'const C = 5;\nvar a = 3;\nvar a = C;\nsyscall(60, a);\n'
+_nrow WN2 1 3 3:7 'const C = 5;\nvar a = C;\nvar a = 3;\nsyscall(60, a);\n'
+_nrow WN3 1 5 3:7 'enum E { A = 3; B = 5; }\nvar a = 3;\nvar a = E.B;\nsyscall(60, a);\n'
+_nrow WN4 1 5 4:7 'const C = 5;\nconst D = 3;\nvar a = D;\nvar a = C;\nsyscall(60, a);\n'
+_nrow WN5 0 5 '' 'const C = 5;\nvar a = 5;\nvar a = C;\nsyscall(60, a);\n'
+_nrow WN6 0 5 '' 'const C = 5;\nvar a = C;\nvar a = C;\nsyscall(60, a);\n'
+_nrow WN7 0 5 '' 'const C = 5;\nfn f(): i64 { return 2; }\nvar a = f();\nvar a = C;\nsyscall(60, a);\n'
+_frow WN8 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 3; }\nconst C = 5;\nvar K = C;\nsyscall(60, K);\n'
+_nrow WN9 1 5 3:7 'const C = 5;\nvar a = 0;\nvar a = C;\nsyscall(60, a);\n'
+_nrow WN10 1 5 3:7 'const C = 5;\nvar a = 3;\nvar a = C;\nvar a = 5;\nsyscall(60, a);\n'
+_nrow WN11 2 4 '3:7 4:7' 'const C = 5;\nvar a = 3;\nvar a = C;\nvar a = 4;\nsyscall(60, a);\n'
+_nrow WN12 1 5 4:7 'fn f(): i64 { return 2; }\nvar a = 3;\nvar a = f();\nvar a = 5;\nsyscall(60, a);\n'
+_nrow WN13 1 1 4:13 'const RT = true;\nconst RF = false;\nvar G: bool = RF;\nvar G: bool = RT;\nsyscall(60, G);\n'
+[ "$NW" -ge 38 ] || bad "floor: $NW warning rows ran, want 38"
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
-DECL=$((DECL + 6))   # rows I, K, K2, K3, P and R are hand-rolled
+DECL=$((DECL + $(grep -c '^_crow ' "$0") + 6))   # rows I, K, K2, K3, P and R are hand-rolled; IC by _crow
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
 [ "$NCX" -eq 8 ] || bad "floor: $NCX cx rows ran, want 8"
 
@@ -423,5 +493,5 @@ if [ "$NFAIL" -ne 0 ]; then
 fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: global_redeclaration_one_definition — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6); a conflicting value warns, a prior zero included ($NW rows, 6.7.12)"
+echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6); a refused type change is one error (6.7.15); a conflicting value warns, a prior zero included (6.7.12), a const- / enum-named one too (6.7.15) ($NW rows)"
 exit 0

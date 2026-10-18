@@ -1,0 +1,102 @@
+# global_constant_redeclaration_order.tcyr — 6.7.15: in the declaration zone EVERY constant redeclaration is the
+# global's value from program start, however the earlier constant is spelled — a literal, `0`, or a const / enum
+# name (the user's decision D2 (a), 2026-10-18; issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-
+# literal.md).
+#
+# THE DEFECT (measured on 6.7.14, x86_64; aarch64 and cx alike). Pass 1 folds no name, so a redeclaration whose
+# initializer is a const- / enum-named constant was a deferred store that the replay ran IN ORDER, after the
+# earlier declarations' stores: a read between the two saw the earlier constant when IT was named or `0`, and the
+# later one when it was a nonzero literal — `var a = D; var b = a; var a = C;` gave b == D (3), `var G = 0; var b =
+# G; var G = C;` b == 0, `var a = E.A; var b = a; var a = E.B;` 24, and `var G = D;` / `var G = 0;` then `var r =
+# setg(); var G = C;` reset setg's 9 to C. The guide's rule (§ Declaring a global twice) is the literal reading:
+# `var a = 5; var b = a; var a = 7;` gives b == 7. THE FIX: a redeclaration the replay folds supersedes the slot's
+# earlier writers as a literal one does in pass 1 — a computed one still runs, into a discarded sink; an earlier
+# constant leaves no startup store.
+#
+# WHY A CROSS-HOST TEST: the value is the file image's on five targets and cx's startup prestore on the sixth; this
+# file runs every row on each host's own compiler. Each row has its own names, all in ONE declaration zone (every
+# `var` and `fn` below comes before the first statement, the first assert_eq). The conflicting pairs warn
+# ("redefined with conflicting value") by design.
+include "lib/assert.cyr"
+
+const RC = 5;
+const RD = 3;
+const RT = true;
+enum RE { RA = 2; RB = 4; }
+var r_n = 0;
+fn r_f(): i64 { r_n = r_n + 1; return 3; }
+
+# 1 — the guide's example (literals; unchanged)
+var a1 = 5;
+var b1 = a1;
+var a1 = 7;
+# 2 — a literal, then a const name (unchanged)
+var g2 = 3;
+var b2 = g2;
+var g2 = RC;
+# 3 — the filed repro: a const name, then another
+var a3 = RD;
+var b3 = a3;
+var a3 = RC;
+# 4 — an enum pair
+var a4 = RE.RA;
+var b4 = a4;
+var a4 = RE.RB;
+# 5 — `= 0`, then a literal (unchanged)
+var g5 = 0;
+var b5 = g5;
+var g5 = 5;
+# 6 — `= 0`, then a const name
+var g6 = 0;
+var b6 = g6;
+var g6 = RC;
+# 7 - 11 — a call between the two that writes the global keeps its write
+var g7 = 3;
+fn setg7(): i64 { g7 = 9; return 1; }
+var r7 = setg7();
+var g7 = 5;
+var g8 = 3;
+fn setg8(): i64 { g8 = 9; return 1; }
+var r8 = setg8();
+var g8 = RC;
+var g9 = RD;
+fn setg9(): i64 { g9 = 9; return 1; }
+var r9 = setg9();
+var g9 = RC;
+var g10 = 0;
+fn setg10(): i64 { g10 = 9; return 1; }
+var r10 = setg10();
+var g10 = RC;
+var g11 = 0;
+fn setg11(): i64 { g11 = 9; return 1; }
+var r11 = setg11();
+var g11 = 5;
+# 12 — an earlier COMPUTED initializer still runs (r_n), its result discarded
+var a12 = r_f();
+var b12 = a12;
+var a12 = RC;
+# 13 — a bool global keeps its startup store (its value is judged there): setg13's false is overwritten
+var g13: bool = RT;
+fn setg13(): i64 { g13 = false; return 1; }
+var r13 = setg13();
+var g13: bool = RT;
+# 14 — an array list, then an enum-named scalar: the scalar wins whole, from program start
+var l14[1] = { 3 };
+var c14 = load8(&l14);
+var l14 = RE.RB;
+
+assert_eq(b1, 7, "1: var a = 5; b = a; var a = 7 -> b 7");
+assert_eq(b2, 5, "2: var G = 3; b = G; var G = C -> b C");
+assert_eq(b3 * 10 + a3, 55, "3: var a = D; b = a; var a = C -> b C (was D)");
+assert_eq(b4 * 10 + a4, 44, "4: var a = E.A; b = a; var a = E.B -> b E.B (was E.A)");
+assert_eq(b5, 5, "5: var G = 0; b = G; var G = 5 -> b 5");
+assert_eq(b6, 5, "6: var G = 0; b = G; var G = C -> b C (was 0)");
+assert_eq(g7, 9, "7: var G = 3; setg; var G = 5 -> setg's 9");
+assert_eq(g8, 9, "8: var G = 3; setg; var G = C -> setg's 9");
+assert_eq(g9, 9, "9: var G = D; setg; var G = C -> setg's 9 (was C)");
+assert_eq(g10, 9, "10: var G = 0; setg; var G = C -> setg's 9 (was C)");
+assert_eq(g11, 9, "11: var G = 0; setg; var G = 5 -> setg's 9");
+assert_eq(b12 * 10 + r_n, 51, "12: an earlier computed initializer runs once, its result discarded (was 31)");
+assert_eq(g13, 1, "13: a bool global's constant redeclaration keeps its startup store");
+assert_eq(c14 * 10 + l14, 44, "14: a list, then var B = E.B -> E.B from program start (was 34)");
+var r = assert_summary();

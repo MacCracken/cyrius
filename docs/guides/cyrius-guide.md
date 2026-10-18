@@ -267,7 +267,12 @@ the first statement whose annotation is no type at all — a number, an operator
 refused by name at that token, once, as a parameter's is: `var b: 1 = 0;` is `expected a type for
 variable 'b', got number 1`, `var c: + = 2;` `... got '+'`, `var G: "s" = 4;` `... got string` (the
 user's decision D15 (a), 2026-10-16). The declaration reads on, so nothing cascades, and `cyrius lint`
-reports it. ⚠ Through 6.7.13 the token was dropped and the variable compiled as a plain `i64`.
+reports it. ⚠ Through 6.7.13 the token was dropped and the variable compiled as a plain `i64`. A `:`
+with no type at all — the `=` or `;` right after it — is the same error at that token (6.7.15):
+`var b: = 0;` is `expected a type for variable 'b', got '='` and reads `= 0` as its initializer;
+`var G: ;` is `... got ';'`, and only that. ⚠ Through 6.7.14 the `=` was read as the type, so the
+error was `expected '=', got number 0` at the initializer, and in the declaration zone `var c: ;
+var d = 2;` compiled with `c` = 2.
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -507,7 +512,21 @@ var r = add(20, 22);   # r = 42
   An `include` of a file that declares one is reported at the include's own line (`an include of a
   file that declares a `struct` (lib/str.cyr:24) must come before ...`). Through 6.7.13 each was
   `unexpected struct` (`union`: `expected ';', got union`) followed by up to three invented errors, and
-  the include's failed inside the included file.
+  the include's failed inside the included file. The same holds one level down: a `struct`, `enum`,
+  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and the
+  body parses on after it:
+
+  ```text
+  error:<source>:1:15: a `struct` declaration belongs to the declaration section at top level, not inside a fn body
+  ```
+
+  (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
+  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
+  the recovery. Either way, a use of what the refused declaration names adds no error of its own
+  (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
+  `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
+  6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
+  scope for 'q'", ...). A name declared nowhere is still reported.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
@@ -665,7 +684,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
 
   A float default on an untyped parameter is refused: untyped, a float is only its bits
   (ADR-002), so declare the parameter `: f64` or `: f32`. A `Str` takes none because its
-  literal is wrapped (a heap allocation) at every call, which is not a constant.
+  literal is wrapped (a heap allocation) at every call, which is not a constant. A bare `u128`
+  is not a parameter type yet (6.7.14): `fn f(b: u128 = 3)` reports that one refusal, at the
+  `u128` token, and nothing about its default (6.7.15).
 - **A short call fills from the right.** A direct call passes anywhere from the required
   parameters to all of them (`'tag' expects 1 to 3 arguments, got 4`). The missing trailing ones
   are pushed after the written arguments, in parameter order, each exactly as its literal would
@@ -1275,6 +1296,12 @@ Both forms initialise a global anywhere at top level and a local in a fn. Before
 form was refused in the declaration section (top level, before the first top-level statement):
 `undefined variable 'x'`.
 
+The elements are separated by commas; a trailing comma is allowed (`Point { 10, 20, }`). A missing
+comma is one error at the second element, in either form and every position (6.7.15, the user's
+decision D1 (a), 2026-10-18): `var q = Point { 10 20 };` and `var q = Point { y: 20 x: 10 };` are
+`expected ',' between struct literal elements`. ⚠ Through 6.7.14 both compiled, the values landing
+where the commas would have put them.
+
 **A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
 level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a
@@ -1288,7 +1315,8 @@ error:<source>:3:21: a struct literal is an initializer: declare `var t: P = P {
 Declare the local and assign, pass or return it (`var t: P = P { 5 }; G = t;`). Parentheses around
 the whole initializer are transparent: `var q: P = (P { 5, 6 });` is the literal initializer, in a fn
 and at top level. Through 6.7.13 every one of these, the wrapped initializer too, was `undefined
-variable 'P'` followed by two to five invented errors.
+variable 'P'` followed by two to five invented errors. A wrap left unclosed (`var q: P = (P { 5, 6 };`)
+is the one error `expected ')', got ';'` (6.7.15; 6.7.14 reported the initializer rule at `P` first).
 
 A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
 section says about a struct value holds for it. See [Tuples](#tuples).
@@ -4444,7 +4472,8 @@ impl Acct {
 `#pure`'s check holds wherever the callee is defined: an `#io` / `#alloc` fn BELOW its `#pure`
 caller — a plain call, `return wr();`, a method of an `impl` further down — warns as one above
 it does (6.7.14; through 6.7.13 only `#deprecated` was recorded ahead of its definition, so a
-later callee was silent).
+later callee was silent) — and through a generic instance: `h<i32>(1)` on an `#io fn h<T>` warns
+`#pure fn calls #io fn 'h<i32>'`, as `h(1)` warns for `h` (6.7.15; the instance was silent).
 
 `#assert EXPR, "message";` checks a compile-time fact and stops the build
 with `#assert failed: message` when it does not hold. EXPR is any const expression
@@ -6606,7 +6635,8 @@ fn f(v): i64 {
   run-time multiply / add where `N * 2` folded; the values never differed), an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
   (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
-  const context alike (6.7.14: it was blamed on a missing struct declaration). A statement that
+  const context alike (6.7.14: it was blamed on a missing struct declaration), and a method call
+  on it, `N.m(..)` ("const 'N' has no methods", 6.7.15). A statement that
   only names it (`N;`, `N + 1;`, a `for` step `N`) assigns nothing: it is the syntax error any
   name gets there, `expected '='` (6.7.14; it said "cannot assign to const 'N'").
   It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
@@ -6636,8 +6666,9 @@ fn f(v): i64 {
   (`f64_add`..`f64_div`, `f64_from`,
   `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
   `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields — `a.x` is refused
-  naming the rule, 6.7.14), syscalls, globals, an ordinary fn's call, a transcendental builtin, a
-  generic const fn.
+  naming the rule, 6.7.14, and a subscript `a[i]` too, 6.7.15), syscalls, globals, an ordinary
+  fn's call or a method call (`a.m(..)`, refused naming the rule, 6.7.15), a transcendental
+  builtin, a generic const fn.
 - **The same answer as run time.** Typing is the runtime's: an operator takes its f64 form when
   its LEFT operand is f64, and an integer right operand contributes its bits. f64 is computed
   by an integer-only IEEE-754 implementation (the bootstrap compiler has no float), bit-exact
@@ -7349,15 +7380,30 @@ ran the division at startup and trapped on x86_64 and cx (SIGFPE, exit 136; on P
 exception) while aarch64 ran (the user's decision D11 (b), 2026-10-16). One consequence, what a
 literal already did: a call in an **earlier** initializer that writes the global (`var r = setg();`
 above `var G = C;` or `var G = 0;`, `setg` storing 9) keeps its write — `G` is 9, where the startup
-store reset it to `C` / 0. A *redeclared* name keeps its order when an earlier declaration of it is
-computed, `= 0`, or a const- / enum-named constant of another value: `var a = f(); var a = C;` and
-`var a = D; var b = a; var a = C;` end at `C`, `b` reading `D`. Over an earlier nonzero integer
-literal (`= 3`, or a literal expression such as `= -3` or `= 2 + 1`) the later constant is the
-value from program start, as between two literals: `var a = 3; var b = a; var a = C;` gives
-`b == C`, and an initializer between them that writes `a` keeps its write —
-`var G = 3; var r = setg(); var G = C;` ends at 9. A `bool` global keeps its startup store (its
-value is judged there), and so does an initializer naming another file's `private` const (refused
-there).
+store reset it to `C` / 0. A *redeclared* name follows the same rule however its earlier
+declaration is spelled (6.7.15, the user's decision D2 (a), 2026-10-18): a constant redeclaration
+— a literal, `= 0`, a const or enum name — is the global's value from program start, and an
+earlier constant declaration of it leaves no startup store. So `var a = D; var b = a; var a = C;`
+gives `b == C`, `var G = 0; var b = G; var G = C;` gives `b == C`, `var a = E.A; var b = a;
+var a = E.B;` gives `b == E.B`, and `var G = D; var r = setg(); var G = C;` ends at 9; an earlier
+computed initializer still runs, its result discarded (`var a = f(); var b = a; var a = C;` gives
+`b == C`). Through 6.7.14 an earlier `= 0` or const- / enum-named declaration (or a computed one,
+before a named constant) kept its startup store, in order — `b` read `D`, 0, `E.A`, `f()`, and
+the `setg` rows ended at `C` — while an earlier nonzero literal did not. A `bool` global keeps its
+startup store (its value is judged there), and so does an initializer naming another file's
+`private` const (refused there).
+
+**So does a struct or tuple literal of constants (6.7.15).** `var p = P { 1, 2 };`, its named form
+`P { b: 2, a: 1 }` and a tuple literal `var t = (1, 2);` — every element a constant, as above — were
+baked into the image and stored again at startup, element by element (on x86_64 `mov eax, 1; push rax;
+movabs rcx, p; pop rax; mov [rcx], rax` per field). The stores are gone, by the same rule: the global
+holds the literal from program start, so a call in an earlier initializer that writes it keeps its
+write (`var r = setp(); var p = P { 1, 2 };`, `setp` storing 9 into `p.a`, ends with `p.a == 9`;
+through 6.7.14 the startup store reset it to 1). A *redeclared* literal keeps its place in declaration
+order — `var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 1`, and a write from a
+call between the two is overwritten by the later literal — unless it repeats the earlier literal's
+bytes, which the global then already holds (a call's write between the two is kept). Every
+diagnostic the literal's elements get is still given (an integer into a float field, a `bool` field).
 
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
 optionally negated — `var G: f64 = 1.5;`, `var F: f32 = 2.5;`, an untyped `var K = -1.5;` — is
@@ -7365,8 +7411,15 @@ baked the same way: the image holds the literal's binary64 bits (an `f32` global
 bits, rounded to nearest, in the low 4 bytes — what the startup store wrote) and nothing runs at
 startup, so the global is its value from program start, as above. Through 6.7.13 it was a startup
 store: an x86 `kernel;` build's program read 0 and was warned, and an earlier initializer's read
-saw 0. A float initializer that is not a literal (`(1.5)`, `1.5 + 1.0`, a call) is still a
-deferred initializer.
+saw 0. So is a **constant f64 expression** (6.7.15): an f64 const, a parenthesized literal and
+f64 arithmetic of them — `var G: f64 = CF;` (`const CF = 1.5;`), `= (1.5)`, `= 1.5 + 1.0`,
+`= -CF`, `= CF * 2.0`, an `f32` global's `= CF` (its binary32 rounding) — computed by the const
+evaluator, IEEE 754 binary64 as the target computes it. Through 6.7.14 those stayed startup
+stores: an x86 `kernel;` build's program read 0 (warned "use a constant", which an f64 const did
+not satisfy), an earlier initializer's read saw 0, and a call in an earlier initializer that
+wrote the global was reset by the store (its write is now kept, as over a literal). Still a
+deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`),
+and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned).
 
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
@@ -7406,10 +7459,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 ```
 
 - A redeclaration whose initializer is a compile-time **constant** (an integer
-  literal or a foldable integer expression, zero included) is the global's value
-  **from program start**. An earlier *computed* initializer of the same name
-  (`var a = f();`) still runs — its side effects happen — but its result is
-  discarded.
+  literal or a foldable integer expression, zero included, or a const or enum name —
+  6.7.15, see *Global Initializers*) is the global's value **from program start**,
+  and an earlier constant declaration of it leaves no startup store. An earlier
+  *computed* initializer of the same name (`var a = f();`) still runs — its side
+  effects happen — but its result is discarded.
 - A **computed** redeclaration runs in declaration order like any deferred
   initializer: `var a = 5; var b = a; var a = f();` gives `b == 5` and `a == f()`.
 - Two `= { .. }` lists for one array both apply, in order: the later list's
@@ -7424,7 +7478,10 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a
-  duplicate `fn` that disagrees about arity. `bool` is part of the type (6.7.14, the
+  duplicate `fn` that disagrees about arity. It is the one error: an initializer
+  between the two declarations reads the first (6.7.15 — it was refused again for
+  reading the refused one, `var X: bool = G;` "cannot initialize bool 'X'"), and the
+  code after the refused declaration reads it, as before. `bool` is part of the type (6.7.14, the
   user's decision D9 (a) of 2026-10-16): `var g = 5;` then `var g: bool = true;` (or
   `= g`), and `var g: bool = true;` then `var g = 1;`, are refused the same way —
   through 6.7.13 the bool mark was the last declaration's, so `var g = 5; var g: bool
@@ -7437,8 +7494,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   files' `var _shared = 0;` / `= 5;` became one cell unseen). The later constant is
   any initializer that folds — `= -5`, `= 2 + 1`, `= (7)`, `true` / `false` (1 / 0) —
   as the earlier one is (6.7.14: through 6.7.13 only an exact `= NUM ;` was compared,
-  so `var a = 5; var a = 2 + 1;` was silent). An earlier *computed* initializer has no
-  value to compare, and stays silent.
+  so `var a = 5; var a = 2 + 1;` was silent), and a const or enum name, on either side
+  (6.7.15: `var a = 3; var a = C;`, `var a = C; var a = 3;`, `= E.B` and `var a = D;
+  var a = C;` were silent). Each later constant is compared with the last constant
+  declared before it. An earlier *computed* initializer has no value to compare, and
+  stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
   gives `b == 7`, and every later `K` is the var.

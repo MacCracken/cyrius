@@ -1,0 +1,55 @@
+# zone_float_constant_initializer.tcyr — 6.7.15: a declaration-zone float global whose initializer is a constant f64
+# expression — an f64 const, a parenthesized literal, f64 arithmetic of them — is baked into the image like a float
+# literal (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md).
+#
+# THE DEFECT (measured on 6.7.14, x86_64). 6.7.14 baked a float global's bare literal (`var G: f64 = 1.5;`, `-`
+# optional); `= CF`, `= (1.5)`, `= 1.5 + 1.0` stayed replayed stores, which an x86 `kernel;` build runs after its
+# program (the program read 0 and was warned "use a constant"). In this host build the replay runs before the
+# program, so the values were right — except where an earlier initializer reads the global (9: it read 0) or a call
+# writes it before its declaration (10: the startup store reset it). THE FIX: the const evaluator computes the bits
+# (binary64; an `f32` global's binary32 rounding) and the image holds them from program start, as a literal's.
+#
+# WHY A CROSS-HOST TEST: the bits come from the compiler's const evaluator on every target, where the replayed store
+# computed them with the target's own float unit; this file checks each against IEEE 754 on each host. All
+# declarations are in ONE declaration zone (every `var` and `fn` below comes before the first statement).
+include "lib/assert.cyr"
+
+const FCF = 1.5;
+const FCG = 0.1;
+# 1-8 — the shapes
+var fg1: f64 = FCF;
+var fp2: f64 = (1.5);
+var fa3: f64 = 1.5 + 1.0;
+var ff4: f32 = FCF;
+var fn5: f64 = -FCF;
+var fm6: f64 = FCF * 2.0 - (0.5 / 2.0);
+var fk7 = FCF;
+var fh8: f32 = FCG * 3.0;
+var fd8: f64 = 1.0 / 3.0;
+var fq8: f64 = -(FCG + FCG);
+# 9 — an earlier initializer reads the global through a fn: the value from program start (was 0)
+fn frd9(): i64 { return load64(&fg9); }
+var fr9 = frd9();
+var fg9: f64 = FCF * 2.0;
+# 10 — a call in an earlier initializer that writes the global keeps its write (the startup store reset it)
+fn fset10(): i64 { fg10 = 9.0; return 1; }
+var fr10 = fset10();
+var fg10: f64 = FCF;
+# 11 — a call stays a startup store
+fn fk11(): f64 { return 1.5; }
+var fc11: f64 = fk11() + 1.0;
+
+assert_eq(load64(&fg1), 0x3FF8000000000000, "1: = FCF");
+assert_eq(load64(&fp2), 0x3FF8000000000000, "2: = (1.5)");
+assert_eq(load64(&fa3), 0x4004000000000000, "3: = 1.5 + 1.0");
+assert_eq(load64(&ff4), 0x3FC00000, "4: f32 = FCF, binary32");
+assert_eq(load64(&fn5), 0xBFF8000000000000, "5: = -FCF");
+assert_eq(load64(&fm6), 0x4006000000000000, "6: = FCF * 2.0 - (0.5 / 2.0)");
+assert_eq(load64(&fk7), 0x3FF8000000000000, "7: untyped = FCF");
+assert_eq(load64(&fh8), 0x3E99999A, "8: f32 = FCG * 3.0, rounded to binary32");
+assert_eq(load64(&fd8), 0x3FD5555555555555, "8: = 1.0 / 3.0");
+assert_eq(load64(&fq8), 0xBFC999999999999A, "8: = -(FCG + FCG)");
+assert_eq(fr9, 0x4008000000000000, "9: an earlier read sees the value (was 0)");
+assert_eq(load64(&fg10), 0x4022000000000000, "10: an earlier call's write is kept (was FCF)");
+assert_eq(load64(&fc11), 0x4004000000000000, "11: a call's value, stored at startup");
+var r = assert_summary();

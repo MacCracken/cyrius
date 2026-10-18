@@ -4752,6 +4752,9 @@ fn _pd_fits(c, v): i64 {
 fn _pd_kind_ok(S, fi, en, k, v): i64 {
     var c = _pd_pclass(S, fi, L64(en + 8), L64(_pd_row(fi) + 16));
     if (c == 0 - 12) { return _pd_type_refused(S, L64(en + 8)); }   # 6.7.11
+    # A bare `u128` (class -6): `_pty_u128` refuses the TYPE by name (6.7.14's D10 (a)), the one error; its default
+    # is kept unjudged, as `_pd_type_refused`'s. D9 here printed a second error first (CHANGELOG [6.7.15]).
+    if (c == 0 - 6) { return 1; }
     if (c < 0) { return _pd_d9(S, fi, en, c); }
     if (c == 0) {
         if (k != 1) { return 1; }
@@ -7775,13 +7778,15 @@ fn _dep_seen(ti, fi): i64 {
 # 6.6.17 — what an instance must know of itself that the base's pass-1 record holds: its type
 # arguments (a3, `_bind_inl_generic`) and the base's "returns one value" bit 1024 (a5,
 # `_prescan_ret_single` — the instance's body IS the base's tokens); 6.7.11, its value count
-# (`_prescan_ret_arity`).
+# (`_prescan_ret_arity`). 6.7.15: the base's `#io` / `#alloc` (bits 16 / 32) — `#pure`'s check reads the callee's
+# bits, and a call through an instance (`h<i32>(1)`) was silent (CHANGELOG [6.7.15]).
 fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
     if (spec < 0) { return 0; }
     SFIC(S, spec, c0, c1);
     if (GFMETH(S, base_fi) != 0) { SFMETH(S, spec, GFMETH(S, base_fi)); }   # 6.7.14: `P.id<f64>`
     if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
     SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 196608));   # 6.7.11: its arity record
+    SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 48));       # 6.7.15: `#io` / `#alloc`
     return 0;
 }
 fn _gen_inherit_dep(S, spec, base_fi): i64 {
@@ -10362,6 +10367,8 @@ fn _ce_said(S): i64 {
 fn _ce_bad(S, msg, len): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
+    _ce_rti = _ce_ti;   # 6.7.15 (`_ce_err_dup`)
     if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
     STI(S, _ce_ti);
@@ -10372,6 +10379,8 @@ fn _ce_bad(S, msg, len): i64 {
 fn _ce_badn(S, msg, noff, tail): i64 {
     if (_ce_err == 1) { return 0; }
     _ce_err = 1;
+    if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
+    _ce_rti = _ce_ti;   # 6.7.15
     _ce_bn = noff;   # 6.7.14: the subject, for `_ce_check_fn` (see `_ce_name_said`)
     if (_ce_said(S) == 1) { return 0; }   # 6.7.14
     var sv = GTI(S);
@@ -10390,6 +10399,20 @@ fn _ce_badn(S, msg, noff, tail): i64 {
 var _ce_bn = 0 - 1;
 var _ce_fn_rname = 0 - 1;
 var _ce_fn_refd = 0;
+# ⛔ 6.7.15 — AND THE TOKEN IT REFUSED (`_ce_rti`, set by `_ce_bad` / `_ce_badn` / `_ce_expect`; kept for that
+# body as `_ce_fn_rtok`, scoped by PARSE_FN_DEF): the body's own report of a mistake there is the same mistake
+# in the parser's words — "not a compile-time expression" then "unexpected ';'" at one `;` (`var y = n +;`).
+# The run-time body began under the check's latch until 6.7.15, which hid that in its first statement only.
+# `_err_once`'s repeat test: 1 = printed already, or that token in that body (counted and latched, not
+# printed). CHANGELOG [6.7.15]
+var _ce_rti = 0 - 1;
+var _ce_fn_rtok = 0 - 1;
+fn _ce_err_dup(S, id): i64 {
+    if (_err_dup(S, id) == 1) { return 1; }
+    if (_ce_fn_rtok < 0) { return 0; }
+    if (GTI(S) != _ce_fn_rtok) { return 0; }
+    return 1;
+}
 fn _ce_name_said(S, noff): i64 {
     if (_ce_fn_rname < 0) { return 0; }
     if (STREQ(S, _ce_fn_rname, noff) == 0) { return 0; }
@@ -10417,6 +10440,8 @@ fn _ce_expect(S, t): i64 {
     if (TOKTYP(S, _ce_ti) == t) { _ce_ti = _ce_ti + 1; return 1; }
     if (_ce_err == 0) {
         _ce_err = 1;
+        if (_ce_quiet == 1) { return 0; }   # 6.7.15: _ce_top_quiet
+        _ce_rti = _ce_ti;   # 6.7.15
         if (_ce_said(S) == 1) { return 0; }   # 6.7.14
         var sv = GTI(S);
         STI(S, _ce_ti);
@@ -10731,14 +10756,29 @@ fn _ce_fcmpb(S, t, a, b): i64 {
 # ⛔ 6.7.14 — `.field` after a name the evaluator holds as a value (`_ce_ti` on the name): a const fn's local
 # (`isc` 0) is refused by the pure subset's rule, a const (`isc` 1: a top-level or local const, or a `const` in a
 # const fn body) by its own — at the `.`. Both said "expected ';', got '.'" (an array size "expected ']'", a const's
-# value "expected ';' after a const's value"). A method call `.m(` is not a field (not this refusal). 1 = refused.
-# CHANGELOG [6.7.14]
+# value "expected ';' after a const's value"). 1 = refused. CHANGELOG [6.7.14]
+# 6.7.15 — and a method call `.m(`, which said "expected ';', got '.'" too: on a const fn's local "a method
+# call is not in a const fn" (it calls only const fns), on a const "const 'C' has no methods". CHANGELOG [6.7.15]
 fn _ce_fld_refused(S, noff, isc): i64 {
     if (_mchain_at(S, _ce_ti + 1) == 0) { return 0; }
-    if (TOKTYP(S, _ce_ti + 3) == 10) { return 0; }
     _ce_ti = _ce_ti + 1;
+    if (TOKTYP(S, _ce_ti + 2) == 10) { return _ce_meth_refused(S, noff, isc); }
     if (isc == 1) { _ce_badn(S, "const ", noff, " has no fields - a const has no storage"); return 1; }
     _ce_bad(S, "a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 83);
+    return 1;
+}
+fn _ce_meth_refused(S, noff, isc): i64 {
+    if (isc == 1) { _ce_badn(S, "const ", noff, " has no methods - a const has no storage"); return 1; }
+    _ce_bad(S, "a method call is not in a const fn: it calls only const fns", 59);
+    return 1;
+}
+# 6.7.15 — `a[i]` on a const fn's local (a frame entry, `_ce_ti` on its name): "a subscript is not in a const
+# fn", at the `[` — it said "expected ';', got '['", and the run-time body added "cannot subscript 'a'"
+# (cm2). 1 = refused. CHANGELOG [6.7.15]
+fn _ce_sub_refused(S): i64 {
+    if (TOKTYP(S, _ce_ti + 1) != 28) { return 0; }
+    _ce_ti = _ce_ti + 1;
+    _ce_bad(S, "a subscript is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 87);
     return 1;
 }
 # An identifier: a frame local, a local const, a top-level const, an enum constant, sizeof, or a
@@ -10752,6 +10792,7 @@ fn _ce_name(S): i64 {
             var fi = _ce_fr_find(S, noff);
             if (fi >= 0) {
                 if (_ce_fld_refused(S, noff, load64(_ce_st + fi * 40 + 32)) == 1) { return 0; }   # 6.7.14
+                if (_ce_sub_refused(S) == 1) { return 0; }   # 6.7.15
                 _ce_ti = _ce_ti + 1;
                 var fe = _ce_st + fi * 40;
                 _ce_k = load64(fe + 16);
@@ -11624,11 +11665,15 @@ fn _ce_check_fn(S, fi): i64 {
     var sv_ti = _ce_ti; var sv_fb = _ce_fb; var sv_sp = _ce_sp; var sv_in = _ce_infn; var sv_err = _ce_err;
     # 6.7.14: the body's own tokens, walked by `_ce_ti` — never the cursor's statement — so no latch in:
     # a refusal is printed (or was, by the sweep), which the run-time body's stand-down relies on
-    # (`_ce_name_said`). Out, the check's own latch is kept (`_ce_said` counts a repeat "exactly as
-    # ERR_* would"), else the caller's is put back.
+    # (`_ce_name_said`). 6.7.15: and none out — the caller's latch is put back, as `_ce_top_expr` does. The
+    # check's own latch began the run-time body latched: its first statement's errors were swallowed and its
+    # resync skipped the next statement when that opened with no keyword (`const k = 3;` unbound: a false
+    # "undefined variable 'k'"). The body's repeat of the check's refusal stands down (`_ce_err_dup`, the
+    # 6.7.14 stand-downs). CHANGELOG [6.7.15]
     var pw = _panic;
     _panic = 0;
     _ce_bn = 0 - 1;
+    _ce_rti = 0 - 1;
     _ce_err = 0;
     _ce_fb = _ce_sp;
     _ce_infn = 1;
@@ -11644,8 +11689,8 @@ fn _ce_check_fn(S, fi): i64 {
     }
     _ce_skip = _ce_skip - 1;
     _ce_ret = 0;
-    if (_ce_err == 1) { _ce_fn_rname = _ce_bn; _ce_fn_refd = 1; }   # 6.7.14: the run-time body's (`_ce_name_said`, `_ce_fld_said`)
-    if (_panic == 0) { _panic = pw; }
+    if (_ce_err == 1) { _ce_fn_rname = _ce_bn; _ce_fn_refd = 1; _ce_fn_rtok = _ce_rti; }   # 6.7.14 / 6.7.15: the body's
+    _panic = pw;
     _ce_ti = sv_ti; _ce_fb = sv_fb; _ce_sp = sv_sp; _ce_infn = sv_in; _ce_err = sv_err;
     return 0;
 }
@@ -11837,6 +11882,18 @@ fn _ce_top_expr(S, ti, out): i64 {
     _panic = sv_pn;
     return v;
 }
+# 6.7.15 — the same, QUIET: a refusal sets `out`[1] and prints nothing, counts no error and latches nothing — the
+# declaration zone's probe of a float global's initializer (parse_decl.cyr _gvk_fx), which the replay compiles as
+# run-time code when the evaluator refuses it. Its tokens are pre-scanned (_gvk_fscan): only consts already
+# evaluated are read, so no const's own evaluation runs under it. CHANGELOG [6.7.15]
+var _ce_quiet = 0;
+fn _ce_top_quiet(S, ti, out): i64 {
+    var sq = _ce_quiet;
+    _ce_quiet = 1;
+    var v = _ce_top_expr(S, ti, out);
+    _ce_quiet = sq;
+    return v;
+}
 # Run const ci's initializer at the TOP context (no locals of whatever fn forced it).
 fn _cst_eval(S, ci): i64 {
     var e = _cst_tab + ci * 64;
@@ -12024,6 +12081,10 @@ fn _cst_named(S, noff): i64 {
 # end — so the latch is that statement's alone (`_pair_sync_ti`, `_stmt_resync`): the statement after
 # `var v = C.x;` was skipped, and a `const L` declared there read as "undefined variable 'L'". 1 = refused
 # (or stood down in a refused const fn's body). CHANGELOG [6.7.14]
+# 6.7.15 — `st` 2: a method call `C.m(..)` / `L.m(..)` (the cursor on its `(`), "const 'C' has no methods":
+# a top-level const said "no struct type in scope for 'C'; a method call needs its struct declaration
+# (missing include?)", a local const "undefined variable 'L'". Not in sync (the arguments are not parsed):
+# the statement resyncs, as the method arm's own refusal does. CHANGELOG [6.7.15]
 fn _cst_fld_at(S, noff, st, dti): i64 {
     if (_syntax_only == 1) { return 0; }
     if (_cst_named(S, noff) == 0) { return 0; }
@@ -12032,6 +12093,7 @@ fn _cst_fld_at(S, noff, st, dti): i64 {
     var sv = GTI(S);
     STI(S, dti);
     if (st == 1) { ERR_IDENT(S, "cannot assign to a field of const ", noff, " - a const has no storage", 0 - 1); }
+    elif (st == 2) { ERR_IDENT(S, "const ", noff, " has no methods - a const has no storage", 0 - 1); }
     else { ERR_IDENT(S, "const ", noff, " has no fields - a const has no storage", 0 - 1); }
     STI(S, sv);
     return 1;
@@ -12039,6 +12101,7 @@ fn _cst_fld_at(S, noff, st, dti): i64 {
 # A const on the left of `=` / `OP=`, or under `&`: refused by name (it has no storage).
 fn _cst_lvalue_check(S, noff, what): i64 {
     if (_cst_named(S, noff) == 0) { return 0; }
+    if (_ce_name_said(S, noff) == 1) { _panic = 1; return 1; }   # 6.7.15: a refused const fn's check named it
     ERR_IDENT(S, what, noff, " - a const has no storage (declare it `var` to change it)", 0 - 1);
     return 1;
 }
@@ -12267,8 +12330,10 @@ fn _cst_ctx_val(S, stop, what): i64 {
         if (load64(e + 16) < 0) { _case_ok = 0; }
         return load64(e + 8);
     }
+    var pw = _ce_ctx_open(stop);   # 6.7.15: an enum value's
     var v = _ce_eval_int(S, what);
-    if (_ce_err == 1) { _case_ok = 0; _cst_ctx_skip(S, stop, ti); }
+    if (_ce_err == 1) { _case_ok = 0; }
+    _cst_ctx_skip(S, stop, ti, pw);
     var end = GTI(S);
     _clm_add(ti, v, end);
     return v;
@@ -12278,11 +12343,36 @@ fn _cst_ctx_val(S, stop, what): i64 {
 # ("undefined function 'h'", "refusing to emit binary"). Past the whole expression instead, by
 # the evaluator's own grammar — when that ends where a member does (`,` `;` `}`); a malformed one
 # (`(1 + }`) stays where it stopped. A case label resyncs at its `:` already. CHANGELOG [6.7.11]
-fn _cst_ctx_skip(S, stop, ti): i64 {
+# 6.7.15: through `_ce_ctx_close`, which also puts the caller's latch back when the value ends in sync.
+fn _cst_ctx_skip(S, stop, ti, pw): i64 {
     if (stop >= 0) { return 0; }
+    _ce_ctx_close(S, ti, pw, 31, 5, 14);
+    return 0;
+}
+# ⛔ 6.7.15 — A CONST CONTEXT EVALUATED IN PLACE IN PASS 1 (an enum value, a global array size) HOLDS NO LATCH
+# WHEN ITS REFUSAL ENDS IN SYNC. It is evaluated with `_panic` clear (`_ce_ctx_open`), as `_ce_top_expr` has been
+# since 6.7.14; a refusal whose expression ends where its context does — by the evaluator's grammar
+# (`_ce_extent`), else where the evaluator stopped (`[(1 + ]`), at one of `a` / `b` / `c` (an enum member's `,` /
+# `;` / `}`, an array size's `]`) — leaves the cursor there and puts the caller's latch back (`_ce_ctx_close`), so
+# the next declaration reports its own error; one that ends elsewhere (`[yy zz]`) keeps the latch. Pass 1 never
+# resyncs: two refused enum values or global array sizes printed only the first (`#assert`: `_assert_open`,
+# parse.cyr). CHANGELOG [6.7.15]
+fn _ce_ctx_open(stop): i64 {
+    var pw = _panic;
+    if (stop < 0) { _panic = 0; }   # a case label (`stop` the `:`) keeps its statement's latch
+    return pw;
+}
+fn _ce_ctx_close(S, ti, pw, a, b, c): i64 {
+    if (_panic == 0) { _panic = pw; return 1; }
     var x = _ce_extent(S, ti);
-    var t = TOKTYP(S, x);
-    if (t == 31 || t == 5 || t == 14) { STI(S, x); }
+    if (_ce_ctx_end(TOKTYP(S, x), a, b, c) == 0) { x = GTI(S); }   # an unclosed `(`: where the evaluator stopped
+    if (_ce_ctx_end(TOKTYP(S, x), a, b, c) == 0) { return 0; }
+    STI(S, x);
+    _panic = pw;
+    return 1;
+}
+fn _ce_ctx_end(t, a, b, c): i64 {
+    if (t == a || t == b || t == c) { return 1; }
     return 0;
 }
 fn _case_val(S): i64 { return _cst_ctx_val(S, 49, "a case label must be an integer"); }

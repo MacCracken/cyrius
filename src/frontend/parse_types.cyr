@@ -264,6 +264,7 @@ fn _tn_bytes(S, c): i64 {
 # or -1). A struct or union declared BELOW a site that needs it above keeps its own message.
 fn _tn_refuse(S, ti, tail, noff2): i64 {
     if (_syntax_only == 1) { return 0; }
+    if (_dl_refd_ann(S, ti, noff2) == 1) { return 0; }   # 6.7.15: a type a refused declaration declared
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }
     var noff = TOKVAL(S, ti);
@@ -393,13 +394,17 @@ fn _tn_head(S): i64 {
 # a type only at a name or a tuple's `(`, and stepped any other token silently: `var b: 1 = 0;`, `var c: + = 2;`,
 # `var G: 7 = 4;` compiled as plain i64s (issues/archived/2026-10-14-var-annotation-non-type-token-compiles.md). Now "expected a
 # type for variable 'b', got number 1" once at the token — a parameter's words (`_pty_err`, 6.7.11) — and 0: the ladder
-# still steps the token, so the declaration reads on. `noff` = the variable's name. A `=` / `;` there is no annotation
-# at all (`var b: = 0;`): refused already by the declaration ("expected '='"), it is left to that one error.
-# CHANGELOG [6.7.14]
+# still steps the token, so the declaration reads on. `noff` = the variable's name. CHANGELOG [6.7.14]
+# A `=` / `;` right after the `:` (`var b: = 0;`, `var G: ;`) — no type at all — is reported the same way, at that
+# token, and the cursor is put back one so the ladder's step leaves it ON the `=` / `;`: the declaration reads its
+# initializer (or ends) there, and the bare-declaration refusal stands down for a `;` reported here (`_tn_seen_at`).
+# It was "expected '=', got number 0" at the initializer — the `=` stepped as the type (`var c: ; var d = 2;` gave c
+# d's 2). CHANGELOG [6.7.15]
 fn _tn_head_var(S, noff): i64 {
     if (_tn_head(S) == 1) { return 1; }
+    _tn_var_err(S, GTI(S), noff);
     var t = PEEKT(S);
-    if (t != 4) { if (t != 5) { _tn_var_err(S, GTI(S), noff); } }
+    if (t == 4 || t == 5) { STI(S, GTI(S) - 1); }
     return 0;
 }
 fn _tn_var_err(S, ti, noff): i64 {
@@ -2820,7 +2825,23 @@ fn _gv_lit_get(vi): i64 {
     if (_gv_lit == 0) { return 0; }
     if (vi < 0) { return 0; }
     if (vi >= 1048576) { return 0; }
-    return load8(_gv_lit + vi);
+    return load8(_gv_lit + vi) & 1;
+}
+# 6.7.15 — bit 1 of the same byte: since global `vi`'s last constant, pass 1 registered an initializer it could not
+# fold (a computed one, or a const- / enum-named constant only the replay folds), so a later constant's compare
+# waits for the replay (_gv_dup_later, parse_decl.cyr). The next constant's `_gv_lit_set` clears it. CHANGELOG [6.7.15]
+fn _gv_pend_set(vi): i64 {
+    if (_gv_lit == 0) { _gv_lit = alloc(1048576); }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    store8(_gv_lit + vi, load8(_gv_lit + vi) | 2);
+    return 0;
+}
+fn _gv_pend_get(vi): i64 {
+    if (_gv_lit == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return (load8(_gv_lit + vi) >> 1) & 1;
 }
 # 1 = prior global `pi` has a recorded constant (a non-zero value, or the byte above for a zero).
 fn _gv_has_lit(pi): i64 {
@@ -5621,37 +5642,39 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     } else {
         if (_gv_has_lit(pi) == 1) { pval = L64(_vgsi_base + pi * 8); phas = 1; }   # 6.7.12 (D30): a zero too
     }
-    if (phas == 1) {
-        if (pval != newval) {
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
-            # v6.5.50 — a `SYS_*` redefinition is not a cosmetic name collision, and the
-            # generic wording above hides that. The stdlib's syscall numbers are ARCH-AWARE
-            # (lib/syscalls.cyr -> syscalls_x86_64_linux.cyr / syscalls_aarch64_linux.cyr);
-            # a consumer's own `var SYS_FOO = <x86_64 number>` agrees on x86 and WINS
-            # everywhere else, so the emitted svc issues a different, valid syscall and the
-            # build succeeds. MEASURED under qemu on the two live instances found at v6.5.37:
-            # `sys_umount2` was issuing getpid(2) on every ELF-aarch64 build. Filed from
-            # darshana, where the only diagnostic read as lint.
-            # ⚠ Deliberately NOT gated on the target. The general "is this number right for
-            # this arch" question needs an x86_64->aarch64 CORRESPONDENCE TABLE the compiler
-            # does not have, but THIS case needs no table: a conflicting SYS_* redefinition is
-            # wrong on every target whose numbers differ, and the author of a cross-compiled
-            # source cannot know which targets that will be.
-            if (load8(S + 0xEC00000 + noff) == 83) {
-                if (load8(S + 0xEC00000 + noff + 1) == 89) {
-                    if (load8(S + 0xEC00000 + noff + 2) == 83) {
-                        if (load8(S + 0xEC00000 + noff + 3) == 95) {
-                            syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
-                            syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
-                            syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
-                            syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
-                        } } } }
-        }
-    }
+    if (phas == 1) { if (pval != newval) { _dupval_warn(S, noff); } }
+    return 0;
+}
+# CHKDUPVAL's warning at the cursor, shared by the declaration zone's replay compare (_gvk_link, parse_decl.cyr),
+# which reports a pair whose earlier or later constant only the replay folds. CHANGELOG [6.7.15]
+fn _dupval_warn(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
+    # v6.5.50 — a `SYS_*` redefinition is not a cosmetic name collision, and the
+    # generic wording above hides that. The stdlib's syscall numbers are ARCH-AWARE
+    # (lib/syscalls.cyr -> syscalls_x86_64_linux.cyr / syscalls_aarch64_linux.cyr);
+    # a consumer's own `var SYS_FOO = <x86_64 number>` agrees on x86 and WINS
+    # everywhere else, so the emitted svc issues a different, valid syscall and the
+    # build succeeds. MEASURED under qemu on the two live instances found at v6.5.37:
+    # `sys_umount2` was issuing getpid(2) on every ELF-aarch64 build. Filed from
+    # darshana, where the only diagnostic read as lint.
+    # ⚠ Deliberately NOT gated on the target. The general "is this number right for
+    # this arch" question needs an x86_64->aarch64 CORRESPONDENCE TABLE the compiler
+    # does not have, but THIS case needs no table: a conflicting SYS_* redefinition is
+    # wrong on every target whose numbers differ, and the author of a cross-compiled
+    # source cannot know which targets that will be.
+    if (load8(S + 0xEC00000 + noff) == 83) {
+        if (load8(S + 0xEC00000 + noff + 1) == 89) {
+            if (load8(S + 0xEC00000 + noff + 2) == 83) {
+                if (load8(S + 0xEC00000 + noff + 3) == 95) {
+                    syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
+                    syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
+                    syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
+                    syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
+                } } } }
     return 0;
 }
 
