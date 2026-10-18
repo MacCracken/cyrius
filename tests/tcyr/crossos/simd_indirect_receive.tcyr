@@ -153,6 +153,15 @@ impl Mv {
     fn md(self, a, b, c, d, e): f64v4 { return mkd6(a, b, c, d, e, self.k); }
     fn mg<T>(self, a: T): f64v2 { return mk2(a, self.j); }
 }
+# ⛔ 6.7.14 (D37 A / D39 A, the user's decisions, 2026-10-16; docs/development/issues/2026-10-16-vector-method-result-
+# untyped-scalar-and-return-destinations.md) — the method at the destinations D29 did not name: an unannotated `var v =
+# s.m2(..);` bound one word (x86_64 / aarch64 1, cx 155, PE 195 where the vector is right) and `return s.m2(..);` from a
+# `: f64v2` fn was refused "got `s`". Each is the vector now (rows M12-M20); on Win64 the return passes a temporary as
+# the method's hidden result pointer, before `self`.
+fn mr2(s: *Mv, a): f64v2 { return s.m2(a); }
+fn mrf(s: *Mv): f32v4 { return s.mf(); }
+fn mrd(s: *Mv): f64v4 { return s.md(1, 2, 3, 4, 5); }
+fn mrg(s: *Mv): f64v2 { return s.mg(60); }
 fn rows_method() {
     var s: Mv = Mv { 1, 2 };
     var v: f64v2 = s.m2(40);
@@ -178,6 +187,23 @@ fn rows_method() {
     for (n = 0; n < 1; v = s.m2(70)) { n = n + 1; }
     assert_eq(l2(v), 7107, "M10: a for step, v = s.m2(70)");
     assert_eq(s.k * 10 + s.j, 12, "M11: s untouched after every method receive (PE)");
+    var u = s.m2(30);
+    assert_eq(l2(u), 3107, "M12: var v = s.m2(30), untyped, is an f64v2 local (6.7.13: one word)");
+    var uf = s.mf();
+    assert_eq(lf(uf), 5060701, "M13: var v = s.mf(), an untyped f32v4 local");
+    var ud = s.md(6, 5, 4, 3, 2);
+    assert_eq(ld(ud), 65043201, "M14: var v = s.md(6..2), an untyped f64v4 local");
+    var ug = s.mg(80);
+    assert_eq(l2(ug), 8002, "M15: var v = s.mg(80), untyped, a generic method's instance");
+    var r2v: f64v2 = mr2(&s, 60);
+    assert_eq(l2(r2v), 6107, "M16: return s.m2(a) from a : f64v2 fn (6.7.13: refused 'got `s`')");
+    var rfv: f32v4 = mrf(&s);
+    assert_eq(lf(rfv), 5060701, "M17: return s.mf() from a : f32v4 fn");
+    var rdv: f64v4 = mrd(&s);
+    assert_eq(ld(rdv), 12034501, "M18: return s.md(1..5) from a : f64v4 fn: both hidden result pointers, self, stack args");
+    var rgv: f64v2 = mrg(&s);
+    assert_eq(l2(rgv), 6002, "M19: return s.mg(60), a generic method's instance");
+    assert_eq(s.k * 10 + s.j, 12, "M20: s untouched after every untyped receive and return (PE)");
     return 0;
 }
 fn rows_untyped() {

@@ -257,6 +257,22 @@
 #       four (two error lines)
 #   M-D2 `_dvi_park` never parking                     -> RED 20: D2 D7 D8 D9 on all five legs (one word)
 #   M-D3 `_ret_vderef` without its type check          -> RED 16: DK1-DK4 on all four legs (compiled)
+#
+# 6.7.14 (D37 A / D38 A / D39 A, the user's decisions, 2026-10-16; issues/2026-10-16-vector-method-result-untyped-scalar-
+# and-return-destinations.md) — a method declared `: V` is the vector where a by-name call declared `: V` is: an untyped
+# `var v = s.mv();` is a V local (`_vrcv_ity` -> `_vmc_whole`; one word before: x86_64 / IR=3 / aarch64 1, cx 155, PE
+# 195), `var x: i64 = s.mv();` / `x = s.mv();` are refused in the by-name call's words (`_vrcv_mscal`, `_vasg_mscal`;
+# they stored 0 / 41), and `return s.mv();` from a `: V` fn is taken (`_ret_vmc`; Win64 `_ret_vmc_pe` through the
+# method arm's hidden-pointer hook; refused "got `s`" before). Rows M (run, 161, host / host IR=3 / cx / aarch64 /
+# win64): M1 / M2 the filed repros 1 and 3 verbatim, M3 untyped f32v4 / f64v4 / generic / `*Mv` receiver (self intact),
+# M4 the return from f64v2 / f32v4 / f64v4 fns, a generic method's, a local receiver's, M5 a scalar method unchanged.
+# Rows MK (refused once, four legs): MK1 the filed repro 2 verbatim, MK2 `x = s.m2(1)`, MK3 a for step, MK4 a struct
+# annotation, MK5 `: f64`, MK6 / MK7 a method of another vector returned ("got `s`"). Mutations (2026-10-17, measured):
+#   M-M1 `_vrcv_ity` without its method arm            -> RED 10: M1 M3 on all five legs (one word / refused as a word)
+#   M-M2 `_vrcv_mscal` never refusing                  -> RED 12: MK1 MK4 MK5 on four legs (compiled)
+#   M-M3 `_vasg_mscal` never refusing                  -> RED 8: MK2 MK3 on four legs (compiled)
+#   M-M4 `_simd_ret_call_ok` without `_ret_vmc`        -> RED 10: M2 M4 on all five legs (refused)
+#   M-M5 `_ret_vmc_pe` never taking it (Win64)         -> RED 2: M2 M4 win64 (0 / 1: the scalar path's word)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -846,6 +862,106 @@ syscall(60, run());
 }
 DK_ROWS="DK1 DK2 DK3 DK4"
 dk_got() { case "$1" in DK4) echo '(...)';; *) echo 'this expression';; esac; }
+# ---- 6.7.14 (D37 A / D38 A / D39 A): a method declared `: V` at the destinations 6.7.13's D29 did not name (rows M run,
+# 161; rows MK refused once) --------------------------------------------------------------------------------------------
+# M1 / M2 the filed repros 1 and 3 verbatim; M3 the untyped declaration of f32v4 / f64v4 / a generic method / a `*Mv`
+# receiver's (the receiver untouched by Win64's hidden result pointer); M4 `return s.m(..)` from f64v2 / f32v4 / f64v4
+# fns, a generic method's, a local receiver's; M5 a scalar method into `: i64`, assigned and untyped, unchanged.
+MH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkf(a, b, c, d): f32v4 { var v: f32v4; store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d); return v; }
+fn mkd(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn l2(x: f64v2): i64 { return load64(&x) * 100 + load64(&x + 8); }
+fn lf(x: f32v4): i64 { return load32(&x) * 1000 + load32(&x + 4) * 100 + load32(&x + 8) * 10 + load32(&x + 12); }
+fn ld(x: f64v4): i64 { return load64(&x) * 1000 + load64(&x + 8) * 100 + load64(&x + 16) * 10 + load64(&x + 24); }
+struct Mv { k; j; }
+impl Mv {
+    fn m2(self, a): f64v2 { return mk2(a + self.k, 7); }
+    fn mf(self): f32v4 { return mkf(5, 6, 7, self.k); }
+    fn md(self, a, b, c, d, e): f64v4 { return mkd(a, b, c, self.k); }
+    fn mg<T>(self, a: T): f64v2 { return mk2(a, self.j); }
+    fn m4(self): f64v4 { return mkd(1, 2, 3, 4); }
+    fn sc(self): i64 { return self.k + 100; }
+}
+'
+m_src() {  # $1 row id -> source on stdout; each exits 161 when right
+    case "$1" in
+    M1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+fn run(): i64 { var s: S = S { 1 }; var v = s.mv(); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    M2) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+fn fwd(s: *S): f64v2 { return s.mv(); }
+fn run(): i64 { var s: S = S { 1 }; var v: f64v2 = fwd(&s); return lanes(v); }
+syscall(60, run() % 256);
+' ;;
+    M3) printf '%s' "$MH"'fn run(): i64 { var s: Mv = Mv { 1, 2 }; var p: *Mv = &s;
+  var a = s.m2(40); var b = s.mf(); var c = s.md(1, 2, 3, 4, 5); var d = s.mg(30); var e = p.m2(50);
+  if (l2(a) != 4107) { return 1; } if (lf(b) != 5671) { return 2; } if (ld(c) != 1231) { return 3; }
+  if (l2(d) != 3002) { return 4; } if (l2(e) != 5107) { return 5; } if (s.k * 10 + s.j != 12) { return 6; }
+  store64(&a + 8, 9); if (l2(a) != 4109) { return 7; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    M4) printf '%s' "$MH"'fn f2(s: *Mv, a): f64v2 { return s.m2(a); }
+fn ff(s: *Mv): f32v4 { return s.mf(); }
+fn fd(s: *Mv): f64v4 { return s.md(1, 2, 3, 4, 5); }
+fn fg(s: *Mv): f64v2 { return s.mg(30); }
+fn fl(): f64v2 { var s: Mv = Mv { 3, 4 }; return s.m2(10); }
+fn run(): i64 { var s: Mv = Mv { 1, 2 };
+  var a: f64v2 = f2(&s, 20); var b: f32v4 = ff(&s); var c: f64v4 = fd(&s); var d: f64v2 = fg(&s); var e: f64v2 = fl();
+  if (l2(a) != 2107) { return 1; } if (lf(b) != 5671) { return 2; } if (ld(c) != 1231) { return 3; }
+  if (l2(d) != 3002) { return 4; } if (l2(e) != 1307) { return 5; } if (s.k * 10 + s.j != 12) { return 6; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    M5) printf '%s' "$MH"'fn run(): i64 { var s: Mv = Mv { 30, 2 }; var x: i64 = s.sc(); var y = s.sc(); y = s.sc() + 1; return x + y - 100; }
+syscall(60, run() % 256);
+' ;;
+    esac
+}
+M_ROWS="M1 M2 M3 M4 M5"
+mk_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    MK1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+fn run(): i64 { var s: S = S { 1 }; var x: i64 = s.mv(); return x; }
+syscall(60, run() % 256);
+' ;;
+    MK2) printf '%s' "$MH"'fn run(): i64 { var s: Mv = Mv { 1, 2 }; var x = 0; x = s.m2(1); return x; }
+syscall(60, run());
+' ;;
+    MK3) printf '%s' "$MH"'fn run(): i64 { var s: Mv = Mv { 1, 2 }; var x = 0; var i = 0; for (i = 0; i < 1; x = s.m2(1)) { i = i + 1; } return x; }
+syscall(60, run());
+' ;;
+    MK4) printf '%s' "$MH"'struct Pt { x; y; }
+fn run(): i64 { var s: Mv = Mv { 1, 2 }; var x: Pt = s.m2(1); return x.y; }
+syscall(60, run());
+' ;;
+    MK5) printf '%s' "$MH"'fn run(): i64 { var s: Mv = Mv { 1, 2 }; var x: f64 = s.mf(); return 1; }
+syscall(60, run());
+' ;;
+    MK6) printf '%s' "$MH"'fn bad(s: *Mv): f64v2 { return s.m4(); }
+fn run(): i64 { var s: Mv = Mv { 1, 2 }; var v: f64v2 = bad(&s); return l2(v); }
+syscall(60, run());
+' ;;
+    MK7) printf '%s' "$MH"'fn bad(s: *Mv): f32v4 { return s.m2(1); }
+fn run(): i64 { var s: Mv = Mv { 1, 2 }; var v: f32v4 = bad(&s); return lf(v); }
+syscall(60, run());
+' ;;
+    esac
+}
+MK_ROWS="MK1 MK2 MK3 MK4 MK5 MK6 MK7"
+mk_msg() {
+    case "$1" in
+    MK1|MK4|MK5) echo "vector return type does not match the declared type";;
+    MK2|MK3) echo "vector return type does not match the assigned variable";;
+    MK6|MK7) echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`s\`";;
+    esac
+}
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -1342,6 +1458,9 @@ refuse_k_all host "$CC"
 accept_tab_all host "$CC" hostr d_src "$D_ROWS"
 accept_tab_all host-ir3 "$CC" hostr d_src "$D_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" dk_src "$DK_ROWS" dk_msg
+accept_tab_all host "$CC" hostr m_src "$M_ROWS"
+accept_tab_all host-ir3 "$CC" hostr m_src "$M_ROWS" CYRIUS_IR=3
+refuse_tab_all host "$CC" mk_src "$MK_ROWS" mk_msg
 refuse_h_all host "$CC"
 undef_ret_all host "$CC"
 tp_ctl_all host "$CC"
@@ -1365,6 +1484,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_k_all cx "$W/cycc_cx"
     accept_tab_all cx "$W/cycc_cx" cxr d_src "$D_ROWS"
     refuse_tab_all cx "$W/cycc_cx" dk_src "$DK_ROWS" dk_msg
+    accept_tab_all cx "$W/cycc_cx" cxr m_src "$M_ROWS"
+    refuse_tab_all cx "$W/cycc_cx" mk_src "$MK_ROWS" mk_msg
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
 tp_ctl_all cx "$W/cycc_cx"
@@ -1391,6 +1512,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_k_all aarch64 "$W/cycc_a64"
         accept_tab_all aarch64 "$W/cycc_a64" a64r d_src "$D_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" dk_src "$DK_ROWS" dk_msg
+        accept_tab_all aarch64 "$W/cycc_a64" a64r m_src "$M_ROWS"
+        refuse_tab_all aarch64 "$W/cycc_a64" mk_src "$MK_ROWS" mk_msg
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
 tp_ctl_all aarch64 "$W/cycc_a64"
@@ -1422,6 +1545,8 @@ if command -v wine > /dev/null 2>&1; then
         refuse_k_all win64 "$W/cycc_win"
         accept_tab_all win64 "$W/cycc_win" wr_ d_src "$D_ROWS"
         refuse_tab_all win64 "$W/cycc_win" dk_src "$DK_ROWS" dk_msg
+        accept_tab_all win64 "$W/cycc_win" wr_ m_src "$M_ROWS"
+        refuse_tab_all win64 "$W/cycc_win" mk_src "$MK_ROWS" mk_msg
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
 tp_ctl_all win64 "$W/cycc_win"
@@ -1438,7 +1563,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -1455,11 +1580,12 @@ na_floor=$((na_floor + $(set -- $C_ROWS; echo $#) * 3))   # 6.7.13 (D29): every 
 na_floor=$((na_floor + $(set -- $P_ROWS; echo $#) * 3))   # 6.7.13 (D34): every P row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $U_ROWS; echo $#) * 2))   # 6.7.14 (D43): every U row on host + cx
 na_floor=$((na_floor + $(set -- $D_ROWS; echo $#) * 3))   # 6.7.14 (D35, D36): every D row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $M_ROWS; echo $#) * 3))   # 6.7.14 (D37-D39): every M row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

@@ -7454,7 +7454,7 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (GINFN(S) != 1) { return 0; }
     var vo = _vrcv_asg(S, noff, term);   # 6.7.11
     if (vo >= 0) { return vo; }
-    if (_gcall_open(S, GTI(S)) < 0) { return 0; }
+    if (_gcall_open(S, GTI(S)) < 0) { return _vasg_mscal(S, noff, term); }   # 6.7.14 (D38): `x = s.mv();`
     var dst_li = FINDLOCAL(S, noff);
     if (dst_li < 0) { return 0; }
     var vfi = _vcall_fi(S, GTI(S));   # 6.7.13: `g<T>(..)` too
@@ -7785,7 +7785,7 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     if (pscale == 0) { if (ann == 0) { pscale = _vrcv_ity(S, GTI(S) + 1); } }
-    if (_vrcv_vec(S, pscale) == 0) { return 0; }
+    if (_vrcv_vec(S, pscale) == 0) { return _vrcv_mscal(S, pscale, ann); }   # 6.7.14 (D38): `var x: i64 = s.mv();`
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
     if (k == 0) {
         if (_vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0) == 0) {   # 6.7.13 (D29): a method declared to return another vector
@@ -7805,11 +7805,51 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
 }
 # The vector a whole initialiser `fncallN(&f, ..)` / `callptr(&f, ..)` at token `ti` (`;` after it) returns, `f`
 # declared to return one (`_icall_rs_at`), else 0.
+# ⛔ 6.7.14 (D37 A, the user's decision, 2026-10-16) — AND A WHOLE METHOD CALL `s.mv(..)` DECLARED TO RETURN A VECTOR:
+# an unannotated `var v = s.mv();` is that vector's local, as `var v = mkv(..)` is (v6.5.61) and `var v = callptr(&mkv,
+# ..)` (6.7.13's D29) — it bound one word, whatever the scalar path stored (the filed repro: x86_64 / IR=3 / aarch64 1,
+# cx 155, PE 195 where 161 is right). The receive then takes it as the annotated form does (`_vrcv_src` kind 3; on Win64
+# the method's hidden result pointer is the local's address). CHANGELOG [6.7.14]
 fn _vrcv_ity(S, ti): i64 {
     var rs = _icall_rs_at(S, ti);
-    if (rs > 0 - 2048) { return 0; }
+    if (rs > 0 - 2048) { return _vmc_whole(S, ti, 5); }
     if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
     return rs;
+}
+# The vector a whole method call `x.m(..)` at token `ti` (`term` after it) is declared to return (`_vrcv_mty`), else 0 —
+# a method its fn (the base, for a generic) declares no vector is not resolved (`_mcall_gen` would instantiate it
+# early). CHANGELOG [6.7.14]
+fn _vmc_whole(S, ti, term): i64 {
+    if (_tok_method_open(S, ti) == 0) { return 0; }
+    var mf = _pair_callee_at(S, ti);
+    if (mf < 0) { return 0; }
+    if (GFRS(S, mf) > 0 - 2048) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti + 3) + 1) != term) { return 0; }
+    return _vrcv_mty(S, ti);
+}
+# ⛔ 6.7.14 (D38 A, the user's decision, 2026-10-16) — A METHOD DECLARED TO RETURN A VECTOR INTO A DESTINATION OF
+# ANOTHER TYPE IS REFUSED BY NAME, as the by-name call is (PARSE_VAR's check, `_try_vector_call_assign`; since 6.7.11):
+# `var x: i64 = s.mv();` and `x = s.mv();` compiled, storing a word (x86_64 / aarch64 0, cx / PE 41). The whole method
+# call at the cursor (`term` after it) into the declaration annotated `pscale` (`ann` its token; none: the untyped
+# declaration's, D37) / the local `noff` — neither a 16 / 32-byte vector, whose receives refuse another vector
+# themselves — of another type: "vector return type does not match the declared type" / ".. the assigned variable". 0.
+# CHANGELOG [6.7.14]
+fn _vrcv_mscal(S, pscale, ann): i64 {
+    if (ann == 0) { return 0; }
+    var mt = _vmc_whole(S, GTI(S) + 1, 5);
+    if (mt == 0) { return 0; }
+    if (mt == pscale) { return 0; }
+    ERR_MSG(S, "vector return type does not match the declared type", 51);
+    return 0;
+}
+fn _vasg_mscal(S, noff, term): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li < 0) { return 0; }
+    var mt = _vmc_whole(S, GTI(S), term);
+    if (mt == 0) { return 0; }
+    if (mt == GLTYPE(S, li)) { return 0; }
+    ERR_MSG(S, "vector return type does not match the assigned variable", 55);
+    return 0;
 }
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
 # scalar path, so not a source the receives take: refused by name, once — not after the initialiser
