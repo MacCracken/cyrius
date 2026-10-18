@@ -725,6 +725,21 @@ fn _ir_write_emovi_at(S, off, v, span): i64 {
     return span - sz;
 }
 
+# A fold rewrites the bytes of its whole node span [lo, hi], so every node inside it is consumed
+# with it — the IR_ELIMINATED ones the matcher skipped included. Left IR_ELIMINATED, such a node
+# (a dead store between the LHS LOAD_IMM and its PUSH) has `ir_apply_lase` NOP-fill its old byte
+# range, which now lies inside the fold's new `mov eax, imm32`. CHANGELOG [6.7.15]
+fn _ir_fold_consume_span(S, lo, hi): i64 {
+    var k = lo + 1;
+    while (k < hi) {
+        if (IR_NODE_OP(S, k) == IR_ELIMINATED) {
+            _ir_set_node(S, k, _ir_pack_op(IR_NOP, 0), 0, 0);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
 # Constant-fold pass. Returns (folds_count << 32) | bytes_saved.
 fn ir_const_fold(S): i64 {
     var ncnt = IR_NCNT(S);
@@ -830,6 +845,7 @@ fn ir_const_fold(S): i64 {
                     }
                     _ir_set_node(S, ni_po, _ir_pack_op(IR_NOP, 0), 0, 0);
                     _ir_set_node(S, ni, _ir_pack_op(IR_NOP, 0), 0, 0);
+                    _ir_fold_consume_span(S, ni_a, ni);
                     folds = folds + 1;
                     bytes = bytes + saved;
                 }
@@ -1592,9 +1608,10 @@ fn _wp_sort_prefix(S): i64 {
         }
         w = w + w;
     }
-    # Coalesce overlapping and abutting runs into maximal disjoint ones. The two producers
-    # CAN register the same bytes — `ir_apply_lase` fills a node's span, and a node inside a
-    # span `ir_const_fold` already filled may itself be IR_ELIMINATED — and an overlapping
+    # Coalesce overlapping and abutting runs into maximal disjoint ones. The two producers are
+    # meant to register disjoint bytes — `ir_apply_lase` fills an IR_ELIMINATED node's span, and
+    # `ir_const_fold` consumes the eliminated nodes inside the span it fills
+    # (`_ir_fold_consume_span`, CHANGELOG [6.7.15]) — but an overlapping
     # pair would both double-count in the prefix sum AND defeat the move loop's
     # `rp == run.cp` test for the contained run, so fewer bytes would be removed than
     # `_wp_shift` claims and every position above would be repaired wrongly.
