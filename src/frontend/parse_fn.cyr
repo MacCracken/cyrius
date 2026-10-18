@@ -7722,6 +7722,7 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
 # call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
 # "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
+# 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse_expr.cyr) moves it too. CHANGELOG [6.7.15]
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }

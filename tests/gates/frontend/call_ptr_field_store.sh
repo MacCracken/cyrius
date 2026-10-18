@@ -18,7 +18,10 @@
 # not hardware), cx (cxvm) and PE (wine, a private prefix); X1-X6 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; T0-T5 (6.7.14) a top-level by-value call's
 # field assignment refused once, by the no-frame refusal; F0-F6 (6.7.14) the same as a classic-for step (F0 the filed
-# repro, runs; F1-F4 refused once; F5 F6 no assignment, "expected '='"); K1-K3 controls that compile and run on every leg.
+# repro, runs; F1-F4 refused once; F5 F6 no assignment, "expected '='"); K1-K3 controls that compile and run on every leg;
+# U1-U15 (6.7.15) a `.field` of an UNDEFINED fn's result named "undefined function 'undefd'" once (U1 / U2 the filed
+# repros, their positions; U11 a later statement's error still reported; U12 --allow-undef still refuses it; U13-U15
+# controls: a plain `undefd();` and an intrinsic keep their own paths).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -62,6 +65,14 @@
 #                                                     cursor restored, the statement back on PCMPE)
 #   c2 `_icall_stmt_chain` reading the fncallN digit for 137 -> RED 44: CP1-CP10 x4 (the arity check: "fncallN
 #                                                     argument count does not match the N in its name")
+# (6.7.15, the structs lane, unit S6; issues/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md; the
+# same procedure, 2026-10-18)
+#   u1 `_call_field` returning 0 for an unresolved callee (= the tree before) -> RED 47: U1-U11 x4 ("expected ';', got
+#                                                     '.'" / "expected '=', got '('", then the end-of-compile refusal),
+#                                                     U12 x3 (refused as before, but not naming the fn)
+#   u2 `_call_undef` without its `_tsc_n` move    -> RED 32: the statement / step rows (U1 U2 U4 U6 U8-U11 x4: "the
+#                                                     result is a temporary" or "expected ';'" after the named error)
+#   u3 `_call_undef` without its intrinsic guard  -> RED 4: U14 x4 ("undefined function 'mulh64'")
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -352,7 +363,94 @@ cprow CP10 'fn main(): i64 { callptr(&gp, 5).b; return G.a; }
 syscall(60, main());'
 runs CP10 5 "control: \`callptr(&gp, 5).b;\`, a read statement"
 
-FLOOR_ROWS=35   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11)
+# --- U (6.7.15, issues/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md): a `.field` of an
+# UNDEFINED fn's result is "undefined function 'undefd'" at the name, ONE error — no warning, no end-of-compile
+# refusal (the call is never registered), no binary. It was "expected ';', got '.'" (the step "expected '=', got '('")
+# then the end-of-compile refusal. U1 / U2 are the filed repros verbatim, with their positions.
+UF="undefined function 'undefd'"
+cat > "$T/U1.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+fn go(): i64 { undefd().n += 1; return 0; }
+syscall(60, go());
+EOF2
+refused U1 "<source>:3:16: $UF" "the filed repro: \`undefd().n += 1;\`, the fn named at its name"
+cat > "$T/U2.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+fn go(): i64 { var i = 0; for (i = 0; i < 3; undefd().n += 1) { i = i + 1; } return i; }
+syscall(60, go());
+EOF2
+refused U2 "<source>:3:46: $UF" "the filed repro: the for step \`undefd().n += 1\`"
+row U3 'fn go(): i64 { var x = undefd().n; return x; }'
+refused U3 "$UF" "a factor, \`var x = undefd().n;\`"
+row U4 'fn go(): i64 { undefd().n = 5; return 0; }'
+refused U4 "$UF" "\`undefd().n = 5;\`"
+row U5 'fn go(): i64 { undefd(1, 2).m(3); return 0; }'
+refused U5 "$UF" "a method on the result, \`undefd(1, 2).m(3);\`"
+row U6 'fn go(): i64 { undefd().p[0] = 5; return 0; }'
+refused U6 "$UF" "a subscript of its field, \`undefd().p[0] = 5;\`"
+row U7 'fn go(): i64 { var x = 1 + undefd().p[0] * 2; return x; }'
+refused U7 "$UF" "inside an expression, \`1 + undefd().p[0] * 2\`"
+row U8 'fn go(): i64 { return 0; }
+undefd().n = 5;'
+refused U8 "$UF" "at top level"
+row U9 'fn g<T>(v: T): i64 { undefd().n = v; return 0; }
+fn go(): i64 { g<i64>(1); g<i32>(2); return 0; }'
+refused U9 "$UF" "in a generic used at two types, once"
+row U10 'fn go(): i64 { var f = || { undefd().n += 1; return 0; }; return fncall0(f); }'
+refused U10 "$UF" "in a closure"
+# U11: the latch is left as it was — the next statement's own error is still reported (two errors in all)
+row U11 'fn go(): i64 { undefd().n += 1; return zz; }'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" U11
+    e=$(grep '^error' "$T/U11.$leg.err" | tr '\n' '|')
+    case $e in
+        *"$UF"*"undefined variable 'zz'"*) n=$(grep -c '^error' "$T/U11.$leg.err" || true)
+            if [ "$n" -eq 2 ] && [ "$crc" -ne 0 ]; then ok "U11 a later error still reported ($leg)"; else bad "U11 ($leg): $n errors, rc $crc"; fi ;;
+        *) bad "U11 a later error still reported ($leg): $e" ;;
+    esac
+done
+# U12: --allow-undef does not compile it — it is an error, not the downgradable undefined-function refusal (cx has no
+# --allow-undef: its undefined fns are always an error)
+rows=$((rows + 1))
+for leg in $(legs); do
+    crc=0
+    case $leg in
+        x86_64)  timeout 60 "$CC" --allow-undef < "$T/U1.cyr" > "$T/U12.$leg" 2> "$T/U12.$leg.err" || crc=$? ;;
+        aarch64) timeout 60 "$A64" --allow-undef < "$T/U1.cyr" > "$T/U12.$leg" 2> "$T/U12.$leg.err" || crc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" --allow-undef < "$T/U1.cyr" > "$T/U12.$leg" 2> "$T/U12.$leg.err" || crc=$? ;;
+        *) continue ;;
+    esac
+    if [ "$crc" -ne 0 ] && [ ! -s "$T/U12.$leg" ] && grep -q "^error.*$UF" "$T/U12.$leg.err"; then ok "U12 --allow-undef still refuses U1 ($leg)"
+    else bad "U12 --allow-undef ($leg): rc $crc, $(grep '^error' "$T/U12.$leg.err" | head -1 || true)"; fi
+done
+# U13 (control): a plain call statement to an undefined fn keeps its warning and the end-of-compile refusal, no
+# error at the call
+row U13 'fn go(): i64 { undefd(); return 0; }'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" U13
+    if [ "$crc" -ne 0 ] && grep -q "^warning: $UF" "$T/U13.$leg.err" && ! grep -q '^error:<source>' "$T/U13.$leg.err"; then
+        ok "U13 control: \`undefd();\` keeps the warning and the end-of-compile refusal ($leg)"
+    else bad "U13 control ($leg): rc $crc, $(grep '^error' "$T/U13.$leg.err" | head -1 || true)"; fi
+done
+# U14 / U15 (controls): an intrinsic lowered by name is no undefined fn — `mulh64(2, 3).n = 5;` (a statement, which
+# reaches the call statement's field arm) and `var x = mulh64(2, 3).n;` keep "expected ';', got '.'"
+row U14 'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" U14
+    if [ "$crc" -ne 0 ] && grep '^error' "$T/U14.$leg.err" | head -1 | grep -qF "expected ';', got '.'" \
+       && ! grep -q "^error.*undefined function 'mulh64'" "$T/U14.$leg.err"; then ok "U14 control: \`mulh64(2, 3).n = 5;\` is no undefined fn ($leg)"
+    else bad "U14 control ($leg): rc $crc, $(grep '^error' "$T/U14.$leg.err" | head -1 || true)"; fi
+done
+row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'
+refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an intrinsic, is no undefined fn"
+
+FLOOR_ROWS=50   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

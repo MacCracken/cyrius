@@ -1392,7 +1392,10 @@ since 6.7.0, to a nested field of it (`mk(3).v.sum()` calls `Pt_sum` with the fi
 `b.mk(4).n = 5;`, `mk(3).p[0] = 5;`), once (until 6.7.14 each was also reported a second time). A field of a call to a fn that
 does not return a struct is refused too, and so is an assignment to a result's field
 (`mk(3).n = 5;`, `mk(3).n += 1;`, and a method's, `b.mk(4).n = 5;` — which was
-`expected ';', got '='` until 6.7.5): the result is a temporary. A call declared `: *Struct` returns
+`expected ';', got '='` until 6.7.5): the result is a temporary. A field of a call to a fn defined nowhere
+(`undefd().n += 1;`, `var x = undefd().n;`, the `for` step `undefd().n += 1`) is *undefined function 'undefd'*,
+once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15; it was `expected ';', got '.'`, the
+step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). A call declared `: *Struct` returns
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`

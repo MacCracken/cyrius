@@ -3462,7 +3462,7 @@ fn _call_field(S): i64 {
     if (_call_dotted(S, ti) == 0) { return 0; }
     if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
-    if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
+    if (fi < 0) { if (_syntax_only == 0) { return _call_undef(S, ti); } }   # 6.7.15: named, its chain stepped over
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) { if (_call_ptr_field(S, ti, fi) == 1) { return 1; } }   # 6.6.17: `: *T`
@@ -3492,6 +3492,28 @@ fn _call_field(S): i64 {
     _field_load_on(S, TOKVAL(S, ti), fnoff, ti, 0 - 2 - t, sid);
     # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
     # then folded to 4 by rewriting the code from that literal — the call and the load with it.
+    _cfo = 0;
+    return 1;
+}
+# ⛔ 6.7.15 — A `.field` OF AN UNDEFINED FN'S RESULT (`undefd().n += 1;`, `var x = undefd().n;`, the classic-for step
+# `undefd().n += 1`) never named the fn: `_call_field` left the call to PARSE_FNCALL, which stopped at the `.`
+# ("expected ';', got '.'"; the step fell to `_for_step_assign`, "expected '=', got '('"), and the fn surfaced only in
+# the end-of-compile refusal. Callee token `ti` resolving to no fn (pass 1 registered every definition) is "undefined
+# function 'undefd'" at its name — an ERROR, so --allow-undef cannot compile the line — once, the latch as it was;
+# the call and its `.f` / `.m(..)` / `[..]` chain are stepped over unparsed (the call is never registered, so the
+# end-of-compile refusal adds nothing), rax 0, and `_tsc_n` moves, so the statement and the step step over their
+# tails with no second error. `sizeof` / `mulh64`, lowered by name, keep their path; --syntax-only never gets here (a
+# sibling module's fn, `_cf_unres`). 1 = consumed, 0 = not this shape. CHANGELOG [6.7.15]
+fn _call_undef(S, ti): i64 {
+    var noff = TOKVAL(S, ti);
+    if (_is_ident_intrinsic(S, noff) == 1) { return 0; }
+    STI(S, ti);
+    _err_in_sync(S, "undefined function ", noff, 0);
+    STI(S, _pf_chain_end(S, _call_close(S, _gcall_open(S, ti)) + 1));
+    _tsc_n = _tsc_n + 1;
+    _addr_field_val(S);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
     _cfo = 0;
     return 1;
 }
