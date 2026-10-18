@@ -1904,8 +1904,22 @@ fn _fld_meth_inline(S, ft): i64 {
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_at(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
     if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
-    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
-    return 1;
+    return 1;   # 6.7.15: a `Str` field too — `_load_inline_hop` passes its value (`_load_str_hop`)
+}
+# ⛔ 6.7.15 — A METHOD ON A `Str` FIELD: `w.s.len()`, `w.s.clone()`, `w.s.eq(x)`, `p.s.len()` through a `*W`,
+# `mk().s.len()`, `w.s.print();` as a statement (issues/2026-10-17-method-call-on-str-field-does-not-parse.md). A
+# `Str` field is one pointer slot holding the header's address (6.6.17), so the walk stopped before the `.m(` and
+# nothing took it: "expected ';', got '.'". The receiver is the field's VALUE — the header, as `h.len()` passes a
+# handle's value and `str_len(w.s)` passes the field — loaded and parked as a `*Str` receiver (`_ptr_hop`), as a
+# `*T` field's method continues (`_load_hop`); never the field's address, which the inline arm passes. CHANGELOG
+# [6.7.15]
+fn _load_str_hop(S, noff, beg, idx, sid, off): i64 {
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    var h = _ptr_hop(S, idx, sid, off, ft);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, h, ft);
 }
 # 6.7.14: 1 = the `.m(` at the cursor is a bounded site recorded on a struct carrier's T field (`_bnd_fsite`,
 # parse_fn.cyr) — `b.v.show()` with `b: Box<T>`, T bound here to a scalar.
@@ -2064,6 +2078,7 @@ fn _mcall_xquiet(S, mf, lt): i64 {
 fn _load_inline_hop(S, noff, beg, idx, sid, off): i64 {
     var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
     if (ft <= 0) { return _load_bs_field(S, noff, beg, idx, sid, off); }   # 6.7.14
+    if (IS_STR_FIELD(S, ft) == 1) { return _load_str_hop(S, noff, beg, idx, sid, off); }   # 6.7.15
     if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
     elif (idx < 0 - 1) {
         var li = 0 - idx - 2;

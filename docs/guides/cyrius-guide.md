@@ -2895,7 +2895,11 @@ fn demo(): i64 {
 - **`var q: T = p;` with `p: *T` copies `*p`** at every size; write `var q: *T = p;` to alias.
 - **Methods on nested fields and chains**: `b.v.sum()`, `p.v.sum()` through a pointer,
   `mk(3).v.sum()` on a call result, `c.w.v.scale(2);` as a statement — the field's address is the
-  method's `self`, so a write through it lands in the outer struct.
+  method's `self`, so a write through it lands in the outer struct. A `: Str` field is a handle (one
+  pointer slot), so its method takes the field's VALUE, the header, as `h.len()` takes a handle's and
+  `str_len(w.s)` takes the field: `w.s.len()`, `w.s.clone()`, `w.s.eq(x)`, `p.s.len()` through a `*W`,
+  `mk().s.len()`, `w.s.print();` as a statement — a write through `self` lands in the string `w.s`
+  names (6.7.15; through 6.7.14 each was `expected ';', got '.'`).
 - **Trait objects** — run-time dispatch through a vtable the compiler builds and checks — are
   `dyn Tr` (6.7.8), the next section. `lib/trait.cyr` stays as an unchecked library pattern.
 
