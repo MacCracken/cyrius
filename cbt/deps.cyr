@@ -335,15 +335,6 @@ fn _dep_scr_file(p): i64 {
     return 0;
 }
 
-# The sibling temp the next `_aw_open(dst)` creates (lib/io.cyr `_io_tmp_name`: pid + the next
-# counter value), named without spending the counter.
-fn _dep_scr_next_tmp(dst): i64 {
-    var c = _io_atomic_ctr;
-    var t = _io_tmp_name(dst);
-    _io_atomic_ctr = c;
-    return t;
-}
-
 fn _dep_copy_file(src, dst): i64 {
     # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
     # so any change that preserves file length was never vendored while `lib sync`
@@ -437,24 +428,27 @@ fn _dep_copy_file(src, dst): i64 {
         return 1;
     }
     # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
-    # A scratch resolve records the destination and the sibling temp before they exist; a temp
-    # name `_aw_open` had to skip (one was taken) is recorded once it is known. CHANGELOG [6.7.14]
-    var stmp = 0;
+    # A scratch resolve records the destination before it exists (CHANGELOG [6.7.14]) and the
+    # sibling temp `_aw_open` CREATED: HUP / INT / TERM are held from before its exclusive create
+    # until the temp is recorded, so no kill lands between the two and the temp recorded is the
+    # one this CLI made, never a name it skipped. (The temp used to be predicted — the next
+    # counter value's name — and recorded before the open; when `_aw_open` had to skip that name
+    # because a file sat there, a kill unlinked the file. CHANGELOG [6.7.15])
+    var shold[8];
+    var shr = 0 - 1;
     if (_dep_scr_files != 0) {
         _dep_scr_file(dst);
-        stmp = _dep_scr_next_tmp(dst);
-        _dep_scr_file(stmp);
+        shr = _cbt_sig_hold(&shold);
     }
     var dh = _aw_open(dst);
+    if (dh != 0) { _dep_scr_file(load64(dh + 8)); }
+    if (shr == 0) { _cbt_sig_release(&shold); }
     if (dh == 0) {
         sys_close(sfd);
         sys_write(STDERR_FD, "  error: cannot write ", 22);
         _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);
         return 1;
-    }
-    if (stmp != 0) {
-        if (_cstr_eq(load64(dh + 8), stmp) == 0) { _dep_scr_file(load64(dh + 8)); }
     }
     # Stream copy in 32KB chunks — handles files of any size
     var buf = alloc(32768);

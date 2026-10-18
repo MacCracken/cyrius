@@ -5419,7 +5419,10 @@ are up — a wrapper first on `PATH` that ignores the signal; real git exits on 
 (6.7.15; 6.7.14 waited for as long as it ran, and a second Ctrl-C was held until then). The scratch resolve of `cyrius deps
 --locked` (`<tmp>/locked-deps/`) and of the dry pass a resolve at a moved pin runs first
 (`<tmp>/pin-move-deps/`) is removed too, a copy's half-written sibling temp included (6.7.14;
-before, a kill left the whole scratch, so the temp dir stayed).
+before, a kill left the whole scratch, so the temp dir stayed). The temp removed is the one the
+copy created: a file another process put at a temp name the copy then skipped stays, with the
+directory holding it (6.7.15; 6.7.14 recorded the name it predicted, and the kill unlinked that
+file).
 A signal that arrives while the CLI is starting one of these children is held until the child is
 tracked, then handled (6.7.13; before, a signal in that window left the child running).
 A signal that was IGNORED when the CLI started (`nohup`, a background job of a non-interactive

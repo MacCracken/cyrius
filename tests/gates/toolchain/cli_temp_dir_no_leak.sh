@@ -88,6 +88,8 @@
 #     not named before `_aw_open` -> 1 RED (the mid-copy row's .cyrtmp); the dry pass not recorded
 #     -> 1 RED; every mkdir-p prefix recorded, not only the root and below -> the temp base itself
 #     removed (RED, and every later run then fails to start under it).
+#   * (6.7.15, axis 7's planted-temp row) the CLI before the held record (6.7.14's predicted name)
+#     -> 1 RED (19 of the 20 planted files left: the kill unlinked the predicted one).
 #   * (6.7.15, axis 7's TERM-ignoring git row; each mutant replaces build/cyrius) the 6.7.14 CLI
 #     (git tracked fwd 1: a wait without limit) -> 1 RED (the CLI exits 59,952 ms after the SIGTERM,
 #     when the stand-in's sleep 60 ends); fwd 2 SIGKILLed at once (no signal sent) -> 6 RED (no TERM
@@ -1021,6 +1023,57 @@ else
     K7_SKIPS=$((K7_SKIPS + 1))
 fi
 mv "$S9.real" "$S9"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A file planted at a temp name a copy will try is skipped by `_aw_open`'s exclusive create, and
+# since 6.7.15 never recorded, so the kill leaves it: 6.7.14 recorded the PREDICTED next name before
+# the open, and when a planted file sat there the kill unlinked it
+# (issues/2026-10-16-scratch-resolve-records-a-predicted-temp-name-it-did-not-create.md). The
+# snapshot's syscalls.cyr is a FIFO the copy blocks in; with its temp in flight the gate plants
+# twenty `string.cyr.cyrtmp.<pid>.<n>` past that temp's counter, releases the FIFO (the real
+# content, then EOF) and SIGTERMs the CLI once the stand-in git sleeps in the clone.
+SY9="$G9/home/versions/6.6.6/lib/syscalls.cyr"
+mv "$SY9" "$SY9.real"
+if mkfifo "$SY9" 2>/dev/null; then
+    ( exec 7<> "$SY9"; exec sleep 60 ) 2>/dev/null &
+    k9h=$!
+    printf '[package]\nname = "r"\nversion = "0.0.1"\ncyrius = "6.6.6"\n\n[deps]\nstdlib = ["syscalls", "string"]\n\n[deps.foo]\ngit = "https://example.invalid/foo"\ntag = "1.0.0"\nmodules = ["dist/foo.cyr"]\n' > "$G9/p/cyrius.cyml"
+    printf 'x\n' > "$G9/p/cyrius.lock"
+    rm -f "$T/g9.cc" "$T/p7-g9p" "$T/k7-g9p.rc"
+    ( _kr=0; cd "$G9/p" && PATH="$G9/bin:$PATH" HOME="$G9/nohome" CYRIUS_HOME="$G9/home" CYRIUS_RESOLVED=1 \
+        CYRIUS_NO_WARN_PIN_DRIFT=1 TMPDIR="$TB/" sh -c 'echo $$ > "$0"; exec "$@"' "$T/p7-g9p" "$CYRIUS" deps --locked > "$T/o7-g9p" 2>&1 || _kr=$?
+      echo "$_kr" > "$T/k7-g9p.rc" ) 2>/dev/null &
+    _g9b=$!
+    _gw=0; k9p=; k9l=; k9k=
+    while [ "$_gw" -lt 600 ]; do
+        k9p=$(cat "$T/p7-g9p" 2>/dev/null || true); k9l="$TB/cyrius-$k9p/locked-deps/lib"
+        k9k=$(ls "$k9l" 2>/dev/null | sed -n 's/^syscalls\.cyr\.cyrtmp\.[0-9]*\.\([0-9]*\)$/\1/p' | head -1)
+        [ -n "$k9p" ] && [ -n "$k9k" ] && break
+        sleep 0.05; _gw=$((_gw + 1))
+    done
+    j=1
+    while [ -n "$k9k" ] && [ "$j" -le 20 ]; do echo mine > "$k9l/string.cyr.cyrtmp.$k9p.$((k9k + j))"; j=$((j + 1)); done
+    k9n0=$(ls "$k9l" 2>/dev/null | grep -c '^string\.cyr\.cyrtmp\.' || true)
+    exec 8> "$SY9"; rm -f "$SY9"; mv "$SY9.real" "$SY9"; cat "$SY9" >&8; exec 8>&-
+    kill "$k9h" 2>/dev/null; { wait "$k9h"; } 2>/dev/null
+    _gw=0
+    while [ ! -s "$T/g9.cc" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
+    k9s=$([ -f "$k9l/string.cyr" ] && echo yes || echo no)
+    [ -n "$k9p" ] && kill -TERM "$k9p" 2>/dev/null || true
+    { wait "$_g9b"; } 2>/dev/null || true
+    _g9c=$(cat "$T/g9.cc" 2>/dev/null || true); [ -n "$_g9c" ] && kill -KILL "$_g9c" 2>/dev/null
+    check "deps --locked with twenty files planted at string.cyr's next temp names — the copy beside them ran (anti-vacuous: syscalls.cyr's temp in flight, the plants, string.cyr copied)" "20 yes" \
+        "${k9n0:-0} $k9s"
+    check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9p.rc" 2>/dev/null || echo none)"
+    check "  …all twenty planted files survive the kill (6.7.14 unlinked the one it had predicted)" 20 \
+        "$(ls "$k9l" 2>/dev/null | grep -c '^string\.cyr\.cyrtmp\.' || true)"
+    check "  …and nothing of the resolve's own is left beside them under locked-deps/lib/" 0 \
+        "$(ls "$k9l" 2>/dev/null | grep -vc '^string\.cyr\.cyrtmp\.' || true)"
+else
+    echo "  SKIP (named): axis 7 deps --locked planted-temp row — mkfifo failed on this host"
+    K7_SKIPS=$((K7_SKIPS + 1))
+fi
+[ -p "$SY9" ] && rm -f "$SY9"
+[ -e "$SY9.real" ] && mv "$SY9.real" "$SY9"
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # rmdir only (axis 4's contract): a foreign file in the scratch's lib/ survives, with its directories,
 # and is the only file left.
