@@ -2502,6 +2502,8 @@ include "src/frontend/parse_decl.cyr"
 
 # v5.5.38: fn decls + calls + returns + impls + PARSE_FN_DEF extracted.
 include "src/frontend/parse_fn.cyr"
+# 6.7.15: the top-level scans and PARSE_FN_DEF, split from parse_fn.cyr (its fmt / lint read cap).
+include "src/frontend/parse_fn_def.cyr"
 
 
 # ASM_MNEMONIC, ASM_KW_IN and helpers are in arch-specific emit files:

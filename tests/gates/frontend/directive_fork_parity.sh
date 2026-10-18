@@ -37,9 +37,9 @@
 # #pure / #io / #alloc before the first top-level statement and ARMED NOTHING — every one of those
 # warnings silent on aarch64, both Mach-O targets, PE and cx, for every library attribute — it
 # passed. The fix removed the fifteen copies of the dispatch (7 forks x 2 passes + PARSE_PROG)
-# in favour of ONE fn, `_tl_directive` (src/frontend/parse_fn.cyr), and this gate now checks:
+# in favour of ONE fn, `_tl_directive` (src/frontend/parse_fn_def.cyr), and this gate now checks:
 #   axis 1   STRUCTURE — no fork and no PARSE_PROG dispatches a directive token itself; each
-#            fork runs the shared scans (6.6.17: _tl_pass1 / _tl_pass2, src/frontend/parse_fn.cyr),
+#            fork runs the shared scans (6.6.17: _tl_pass1 / _tl_pass2, src/frontend/parse_fn_def.cyr),
 #            which call _tl_directive once per pass. (A fork that re-grows its own branch for a
 #            token is exactly how the drift started.)
 #   axis 2   #inline non-inert + the #inline→#derive survival shape (unchanged, v6.6.3).
@@ -88,8 +88,8 @@ done
 # 1c' — the shared pass-1 scan consumes (arm=0) and the shared pass-2 scan arms (arm=1), once each
 for pr in "_tl_scan1 0" "_tl_scan2 1"; do
   set -- $pr
-  nb=$(awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' src/frontend/parse_fn.cyr | grep -c "_tl_directive(S, $2) == 1")
-  [ "$nb" -eq 1 ] || bad="$bad\n    src/frontend/parse_fn.cyr: $1 calls _tl_directive(S, $2) x$nb (expected 1)"
+  nb=$(awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' src/frontend/parse_fn_def.cyr | grep -c "_tl_directive(S, $2) == 1")
+  [ "$nb" -eq 1 ] || bad="$bad\n    src/frontend/parse_fn_def.cyr: $1 calls _tl_directive(S, $2) x$nb (expected 1)"
 done
 # 1d — PARSE_PROG (the post-first-statement path) goes through the same fn
 pp=$(awk '/^fn PARSE_PROG\(S\)/{on=1} on{print} on&&/^}/{exit}' src/frontend/parse.cyr)

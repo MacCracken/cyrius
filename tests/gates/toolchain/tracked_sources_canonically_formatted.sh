@@ -192,6 +192,38 @@ if [ -s "$D/rverdict" ] 2>/dev/null; then
   fail=1
 fi
 
+# ── headroom — 6.7.15. cyrfmt and cyrlint read at most _MAX_FILE bytes of a file (1028 KB, set
+# at 6.2.20); a file past it cannot be checked at all, and parse_fn.cyr had reached its last 3 KB
+# (split at 6.7.15, D25 A, the user, 2026-10-18). Every file this sweep checks stays 64 KB under
+# the cap, so the next one to approach it is caught a release early, not at the cap. The cap is
+# read from both tools, which must agree. lib/ is outside the row: its large files are the
+# vendored folds (sigil, mabda, sankoch are already past the cap — the `lib/` ratchet above), and a
+# fold's layout is its source repo's.
+# MUTATION (6.7.15): the limit set to the cap minus 300 KB -> RED, naming parse_fn.cyr.
+capf=$(sed -n 's/^var _MAX_FILE: i64 = \([0-9]*\);.*/\1/p' programs/cyrfmt.cyr | head -1)
+capl=$(sed -n 's/^var _MAX_FILE = \([0-9]*\);.*/\1/p' programs/cyrlint.cyr | head -1)
+if [ -z "$capf" ] || [ "$capf" != "$capl" ]; then
+  echo "FAIL headroom: cyrfmt's _MAX_FILE (${capf:-unreadable}) and cyrlint's (${capl:-unreadable}) are not one number"
+  fail=1
+else
+  lim=$((capf - 65536))
+  nbig=0
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    case "$f" in lib/*) continue ;; esac
+    sz=$(wc -c < "$f" | tr -d ' ')
+    if [ "$sz" -gt "$lim" ]; then
+      echo "FAIL headroom: $f is $sz B, within 64 KB of the fmt / lint read cap ($capf B) — split it"
+      nbig=$((nbig + 1))
+    fi
+  done < "$D/checked"
+  if [ "$nbig" -eq 0 ]; then
+    echo "  ok: every swept .cyr outside lib/ is at least 64 KB under the fmt / lint read cap ($capf B)"
+  else
+    fail=1
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL tracked_sources_canonically_formatted"
   exit 1

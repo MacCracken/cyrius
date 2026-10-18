@@ -153,7 +153,7 @@
 #   6.6.11: F4 scored against the compiler too (it used a literal list while DCE never
 #   reported the fn after an async fn), F4b anti-vacuous; F6 on a root host is a SKIP
 #   (the gate exits 77 unless an axis failed), no longer a pass.
-#   M18 the EJMP0/EPATCH pair restored in _async_emit_constructor (parse_fn.cyr)
+#   M18 the EJMP0/EPATCH pair restored in _async_emit_constructor (parse_fn_def.cyr)
 #       → 2 FAIL: F4, F4b (the compiler's list loses f_after)
 #   6.7.3 (F8/F8b; real tree → 51/51):
 #   M19 the 6.7.2 tool (_asf_body_close walks with _asf_lexst: every `#` a comment)

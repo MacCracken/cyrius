@@ -125,7 +125,7 @@ for f in $forks; do
   [ "$cp1" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b calls the shared pass-1 scan $cp1 x, want exactly 1"; fail=1; }
   [ "$cs" = "0" ] || { echo "  FAIL: private_forward_reference axis1 — $b still carries the inline pass-1 impl brace-skip ('var idep = 0')"; fail=1; }
 done
-_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn.cyr"; }
+_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn_def.cyr"; }
 ci=$(_pfbody _tl_scan1_mode | grep -c '_prescan_impl(S)' || true)
 ct=$(_pfbody _tl_pass1 | grep -c '_prescan_tail(S)' || true)
 [ "$ci" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — the shared pass-1 scan has $ci x _prescan_impl(S), want exactly 1"; fail=1; }

@@ -196,7 +196,7 @@ var jmp_patch = EJMP0(S);
 _TARGET_MACHO = 2;
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
 
 
 # v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).

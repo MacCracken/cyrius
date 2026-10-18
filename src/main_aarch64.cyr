@@ -286,7 +286,7 @@ if (_macho_arm_env != 0) {
 }
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
 
 
 # v6.3.5 AR-01 — monomorphization opt-in is now read BEFORE pass-1 (see above,

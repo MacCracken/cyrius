@@ -16,7 +16,7 @@
 # backlog bullet guessed the trigger was "specific to that build" (a stub defined after
 # `include "lib/ws_server.cyr"` got no calls from ws_server_handshake); it is every build.
 #
-# ⭐ THE FIX (src/frontend/parse_fn.cyr `_fn_redirect`, the per-backend EFNREDIRECT): when a
+# ⭐ THE FIX (src/frontend/parse_fn_def.cyr `_fn_redirect`, the per-backend EFNREDIRECT): when a
 # redefinition's body starts, the EARLIER entry becomes a jump to it — `jmp rel32` (x86_64 ELF /
 # Mach-O / PE), `b imm26` (aarch64 ELF / Mach-O), opcode 80 (cx) — so every reference already
 # compiled against it follows, whatever its shape; a third definition chains. An `async fn`'s
@@ -254,7 +254,7 @@ _want x86_naked_ir3 "$T/ir3cc" "" "$T/naked_ir3.cyr" 1 "#naked redefinition unde
 # ── row 1b: a redefinition that disagrees about HOW it is called is refused ──────────────────
 # Every call now reaches the last body, so a call compiled against an earlier definition arrives
 # with that one's calling convention. The arity half has been an error since 6.5.37; the rest of
-# the signature is refused the same way (src/frontend/parse_fn.cyr `_dsg_check`).
+# the signature is refused the same way (src/frontend/parse_fn_def.cyr `_dsg_check`).
 _refused() {  # <label> <want-text> <source-text> [compiler, default the x86 one]
     printf '%s\n' "$3" > "$T/$1.cyr"
     _rc=0; ${4:-"$T/x86"} < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || _rc=$?

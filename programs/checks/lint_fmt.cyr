@@ -210,8 +210,8 @@ fn _parse_drift_scan(path): i64 {
 
 fn _parse_emit_drift_gate(): i64 {
     var fail = 0;
-    # Scope: all 7 parse files. v5.11.38 covered the 5 audited
-    # leaves; v5.11.39 added `ESWITCH_DISPATCH_PRE` +
+    # Scope: all 8 parse files (6.7.15: parse_fn_def.cyr, split from parse_fn.cyr).
+    # v5.11.38 covered the 5 audited leaves; v5.11.39 added `ESWITCH_DISPATCH_PRE` +
     # `ESWITCH_DISPATCH_TABLE` named ops that closed parse.cyr's
     # switch-jump-table direct emits. parse.cyr now joins the gate.
     # 6.7.10: parse_cov.cyr (the execution-coverage mode) joins it too.
@@ -221,13 +221,14 @@ fn _parse_emit_drift_gate(): i64 {
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_decl.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_expr.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_fn.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_fn_def.cyr"));   # 6.7.15: split from parse_fn.cyr
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse_types.cyr"));
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": no direct emits in all 7 parse_*.cyr files, each read whole through its last fn");
+        _p(": no direct emits in all 8 parse_*.cyr files, each read whole through its last fn");
         _p(" (path-A baseline at v5.11.39)\n");
     }
     _check("path-A drift gate: parse_*.cyr direct-emit zero baseline (v5.11.39)", fail);

@@ -6,7 +6,7 @@
 # brace was silently dropped — the build said OK, `main` was never compiled (its callees reported
 # dead), the program exited 0. In a multi-file build the lost definitions surfaced as "undefined"
 # errors in OTHER files, pointing everywhere but at the brace (agnos's report: 62 of them, a bisect).
-# Pass 1's tail loop (`_prescan_tail_loop`, parse_fn.cyr) meets the same `}` at module depth — every
+# Pass 1's tail loop (`_prescan_tail_loop`, parse_fn_def.cyr) meets the same `}` at module depth — every
 # declaration and statement before it was consumed with its braces balanced — and now reports
 # "unmatched '}' at module scope" there (`_tl_stray_brace`) and stops the build before any body is
 # parsed: one positioned error, no cascade. (issues/2026-10-11-stray-top-level-brace-silently-ends-the-unit.md;

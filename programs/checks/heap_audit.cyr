@@ -54,10 +54,11 @@ fn _cve05_guard_gate(): i64 {
     store64(&files + 56, _root_path("src/main_aarch64_native.cyr"));
     store64(&files + 64, _root_path("src/main_cx.cyr"));
     store64(&files + 72, _root_path("src/main_win.cyr"));
+    store64(&files + 80, _root_path("src/frontend/parse_fn_def.cyr"));   # 6.7.15: split from parse_fn.cyr
 
     var fail = 0;
     var fi = 0;
-    while (fi < 10) {
+    while (fi < 11) {
         var path = load64(&files + fi * 8);
         if (file_exists(path) == 1) {
             if (_file_contains_substr(path, "NPOS_GUARD(S, 256)") == 1) {

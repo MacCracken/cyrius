@@ -9545,7 +9545,7 @@ fn PARSE_VAR(S): i64 {
                 # Pre-4.8.0-alpha3 this hardcoded 8, truncating u128 vars
                 # declared in the PARSE_PROG path (e.g. after a top-level
                 # expression statement like `alloc_init();` that stops
-                # pass 1 — see _tl_scan1's termination, parse_fn.cyr).
+                # pass 1 — see _tl_scan1's termination, parse_fn_def.cyr).
                 S64(_vars_base + vcnt * 8, scalar_type);
                 _w16_global_init(S, vcnt, scalar_type, ann_ti);   # 6.7.6 (D2): a u128 whole
             }

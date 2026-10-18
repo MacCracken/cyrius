@@ -760,7 +760,7 @@ fn _wpsw_add(S, table_cp, nent): i64 {
     return 0;
 }
 
-# 6.7.14 — THE LOSING BODIES OF REDEFINED FNS. `_fn_redirect` (parse_fn.cyr) turns a redefined
+# 6.7.14 — THE LOSING BODIES OF REDEFINED FNS. `_fn_redirect` (parse_fn_def.cyr) turns a redefined
 # fn's earlier entry into a jump to the last definition and moves the fn table past it, so the
 # earlier body [old, old_end) lies in no fn's range — and the dead-code seed pass took every call
 # in it as a ROOT, keeping alive whatever only the losing body called. The ranges are recorded

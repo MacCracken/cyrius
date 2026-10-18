@@ -1,6 +1,6 @@
 #!/bin/sh
 # toplevel_scan_shared.sh — 6.6.17. The top-level declaration scans live ONCE, in
-# src/frontend/parse_fn.cyr — `_tl_pass1` (register), `_tl_pass2` (define) and
+# src/frontend/parse_fn_def.cyr — `_tl_pass1` (register), `_tl_pass2` (define) and
 # `_tl_enum_inits` — and every src/main*.cyr fork calls them.
 #
 # WHY. Each of the seven forks used to carry its own copy of all three loops (21 copies), so a
@@ -26,7 +26,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: toplevel_scan_shared: cannot cd to $ROOT"; exit 1; }
-PF=src/frontend/parse_fn.cyr
+PF=src/frontend/parse_fn_def.cyr   # 6.7.15: the scans split from parse_fn.cyr
 [ -f "$PF" ] || { echo "FAIL: toplevel_scan_shared: $PF missing"; exit 1; }
 fail=0
 bad() { echo "  FAIL: toplevel_scan_shared $1"; fail=$((fail + 1)); }
@@ -74,7 +74,7 @@ need _tl_scan2_def 'PARSE_FN_DEF(S);' '_skip_gvar_decl(S);' 'PARSE_IMPL(S);'
 need _tl_enum_inits 'PARSE_ENUM_DEF(S, 1);'
 
 if [ "$fail" -ne 0 ]; then
-  echo "FAIL toplevel_scan_shared: $fail row(s) red — a top-level form goes in ONE place (src/frontend/parse_fn.cyr _tl_scan1 / _tl_scan2)"
+  echo "FAIL toplevel_scan_shared: $fail row(s) red — a top-level form goes in ONE place (src/frontend/parse_fn_def.cyr _tl_scan1 / _tl_scan2)"
   exit 1
 fi
 echo "PASS toplevel_scan_shared: $nf forks each call _tl_pass1 / _tl_pass2 / _tl_enum_inits once with one objok, none reads the token stream or dispatches an arm itself, and the shared scans carry every arm"

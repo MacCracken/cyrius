@@ -449,7 +449,7 @@ fn _dce_hash_lookup(S, tgt): i64 {
 }
 
 # 6.6.10 — the dead-static attribution behind the "large static data" hint
-# (_warn_large_static, parse_fn.cyr): bytes of array statics declared inside UNREACHABLE fns,
+# (_warn_large_static, parse_fn_def.cyr): bytes of array statics declared inside UNREACHABLE fns,
 # and how many such fns hold them, stashed in the DCE-warning cells 0x18FCD8 / 0x18FCE0 for
 # the emitters. `live` is the caller's reachability bitmap. Shared by the x86 and aarch64
 # FIXUPs. Two defects it replaces: the x86 loop (inline in FIXUP) counted EVERY dead fn, so

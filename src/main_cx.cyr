@@ -318,7 +318,7 @@ LEX(S);
 var jmp_patch = EJMP0(S);
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
 # body skip it fed. See src/main.cyr for the full note.

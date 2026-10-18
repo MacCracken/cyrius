@@ -613,7 +613,7 @@ fi
 # knobs are read in src/main.cyr, which the cx driver does not include, so a runtime leg would
 # still observe nothing.
 # What is observable is the source shape, so that is what stays pinned.
-GF="src/frontend/parse_fn.cyr"
+GF="src/frontend/parse_fn_def.cyr"   # 6.7.15: _PARSE_FN_DEF_IMPL split from parse_fn.cyr
 NBP=$(grep -c 'bp_x86 == 1' "$GF" || true)
 [ "$NBP" -eq 4 ] || fail "axis G: $NBP byte-pattern passes in $GF are gated on \`bp_x86\`, expected 4 (DSE, the integer LASE loop, the SIMD SLASE loop, the NOP-compaction block that also carries _ra_frame_trim) — a pass has lost its cx gate and is scanning cx bytecode again"
 grep -q 'if (_AARCH64_BACKEND == 0 && _TARGET_CX == 0) { bp_x86 = 1; }' "$GF" \

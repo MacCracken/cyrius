@@ -1472,7 +1472,7 @@ if (_efi_env != 0) {
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn.cyr)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
 # is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).

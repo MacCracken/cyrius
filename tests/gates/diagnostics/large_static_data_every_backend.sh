@@ -5,7 +5,7 @@
 # ⛔ WHY. The warning lived inline in x86 EMITELF_USER, so `var buf[20000]` (160 KB of statics)
 # warned on x86_64 Linux and said nothing on PE, x86 Mach-O, aarch64 ELF, arm64 Mach-O and cx —
 # the same program, the same 160 KB, five silent targets. It is now one shared emitter
-# (`_warn_large_static`, src/frontend/parse_fn.cyr) called from each backend's emit path.
+# (`_warn_large_static`, src/frontend/parse_fn_def.cyr) called from each backend's emit path.
 #
 # Rows:
 #   big     160 KB of globals            → the warning on all seven output shapes

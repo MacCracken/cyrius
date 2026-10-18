@@ -1430,7 +1430,7 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_kernel_compaction_boots.sh"
 # #deprecated and cx #naked rows.
 _chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 
-# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse_fn.cyr
+# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse_fn_def.cyr
 # and every src/main*.cyr fork calls them; a fork that re-grows its own copy (reads PEEKT, calls
 # a scan arm) is refused. Static — the byte-identical proof of the DRY is in CHANGELOG [6.6.17].
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_scan_shared.sh"

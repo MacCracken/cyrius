@@ -154,7 +154,7 @@ for fk in "$ROOT"/src/main*.cyr; do
     if grep -q 'while (vsk == 1)' "$fk"; then bad "row S: $(basename "$fk") still carries the first-';' pass-2 skip"; fi
 done
 [ "$NFORK" -ge 7 ] || bad "row S: found $NFORK src/main*.cyr forks, want at least 7"
-n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn.cyr" | grep -c '_skip_gvar_decl(S);' || true)
+n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn_def.cyr" | grep -c '_skip_gvar_decl(S);' || true)
 [ "$n" = "1" ] || bad "row S: the shared pass-2 scan calls _skip_gvar_decl $n times, want 1"
 
 # ---- cx leg: the tree's own cx compiler + cxvm ----

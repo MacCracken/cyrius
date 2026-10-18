@@ -41,11 +41,11 @@
 #   * parse.cyr _rsv_in_fnptr: `return 0;` first          -> axis 3/4 RED (lib/fnptr.cyr refused).
 #   * parse.cyr _rsv_in_fnptr: `return 1;` first          -> axis 1 + 3 RED (fc*_fn, myptr, notfnptr,
 #     user_beside_lib and fnptr_entry all compile; 52 RED).
-#   * parse_fn.cyr: the fn-name call AFTER `_mod_name_intern` moved BEFORE it -> axis 4 RED (impl
+#   * parse_fn_def.cyr: the fn-name call AFTER `_mod_name_intern` moved BEFORE it -> axis 4 RED (impl
 #     method `sizeof` refused).
 #   * parse.cyr _RSV_INTRINSIC_DECL: the `TOKTYP(S, ti) != 2` guard dropped -> the three
 #     number-as-a-name rows RED (rc 139: the number was read as a name-pool offset).
-#   * parse_fn.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
+#   * parse_fn_def.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
 #     assertions (use_mh / use_mh_top compile and run 2, use_fc compiles and SIGSEGVs, use_sz is
 #     only the bare `expected identifier` parse error).
 #   * parse_types.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
