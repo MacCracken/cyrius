@@ -5764,10 +5764,26 @@ assembled as `cli`, `inb al, dx` as `in al, dx` and `nopx` as `nop`.)
 
 On aarch64 the mnemonics are `svc` (`svc #0`: a `#` starts a comment, so the immediate cannot be
 written), `wfi`, `wfe`, `nop`, `ret`, `eret`, `param_load(reg, idx)` and the barriers `dmb`, `dsb`
-and `isb`. A bare barrier is the full-system one, `sy`: `dmb` is D5033FBF, `dsb` D5033F9F, `isb`
-D5033FDF; `wfe` is D503205F. (6.7.15: `dmb` and `isb` encoded the reserved option `#0`, which runs
-as `sy`; `dsb` was SSBB, a speculative-store-bypass barrier, not a data synchronization barrier;
-and `wfe` was an MSR to a system register, UNDEFINED at EL0.)
+and `isb`. A barrier takes its option after it: `dmb` and `dsb` take `sy`, `st`, `ld`, `ish`,
+`ishst`, `ishld`, `nsh`, `nshst`, `nshld`, `osh`, `oshst` and `oshld`, and `isb` takes `sy`. A bare
+barrier is the full-system one, `sy`.
+
+```
+#ifplat aarch64
+asm { dmb ish; }                 # D5033BBF  inner-shareable data memory barrier
+asm { dsb sy; }                  # D5033F9F  full-system data synchronization barrier
+asm { isb; }                     # D5033FDF  the same as isb sy
+asm { dmb; }                     # D5033FBF  the same as dmb sy
+#endif
+```
+
+The next instruction is never read as an option, so `dmb`, `dsb` and `isb` on three lines are three
+barriers. A word the barrier has no option for is refused, naming it: `dmb foo` names `foo`, and
+`isb ish` names `ish`. `wfe` is D503205F. (6.7.15: a barrier took no option, so the `#ifplat` example's
+`dmb ish` was `unknown aarch64 asm mnemonic 'ish'`; and the bare words were wrong: `dmb` and `isb`
+encoded the reserved option `#0`, which runs as `sy`, `dsb` was SSBB, a speculative-store-bypass
+barrier rather than a data synchronization barrier, and `wfe` was an MSR to a system register,
+UNDEFINED at EL0.)
 
 ## Kernel Mode
 

@@ -40,6 +40,13 @@
 #   8  an operand those cannot take is refused by name, rc 1, nothing written (6.7.14's D16): `mov cr9, rax`
 #      ('cr9'; it was mov cr1, rax), `int 256` ('256'; it was int 0), `int 0x1FF` ('0x1FF'; it was int 0xff),
 #      `ltr eax` ('eax'), and a name only a register's first letters match (`lgdt [raxx]`, `ltr r8d`)
+#   9  (6.7.15, the same guide item; the user's decision D37, 2026-10-18: a barrier accepts its option) an
+#      aarch64 barrier takes its option: `dmb ish` bf 3b 03 d5, `dsb sy` 9f 3f 03 d5, `isb sy` df 3f 03 d5 and
+#      each other dmb / dsb option to llvm-mc's word; a bare barrier is sy; the next mnemonic is not an option
+#      (`dmb dsb isb`, and the three on three lines as inline_asm_fences.tcyr writes them, stay three barriers);
+#      a word the barrier has no option for is refused by name, rc 1, nothing written: `dmb foo` ('foo'),
+#      `dsb isht` ('isht'), `isb ish` ('ish' — isb has sy only). Until 6.7.15 `dmb ish` was `unknown aarch64
+#      asm mnemonic 'ish'`. On hardware, tests/tcyr/crossos/asm_barrier_options.tcyr executes every option
 #
 # Mutations (6.7.14, each in a scratch copy of the tree, the compiler rebuilt):
 #   the asm arm's keyword-76 route dropped                     -> 1 RED (`unexpected in`), 2 RED, 5 RED
@@ -51,6 +58,10 @@
 # (6.7.15) the 6.7.14 x86 emitters (lgdt .. int)               -> 7 RED (every register but rax / ax), 8 RED
 #   _asm_x86_gpr reading the first letters only (no NUL test)  -> 8 RED (lgdt [raxx] compiles)
 #   the 6.7.14 aarch64 dmb / dsb / isb / wfe words              -> 6 RED (the word row)
+#   the aarch64 barrier option dropped (no lookahead, 6.7.14)   -> 9 RED (every option form refused; foo /
+#                                                                 isht / ish named as unknown mnemonics)
+#   the option read without the mnemonic test                  -> 9 RED (the forms no longer compile:
+#                                                                 `dmb dsb isb` refuses 'dsb' as an option)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -242,5 +253,57 @@ refused 8 "$CC" 'lgdt [raxx];' "lgdt takes one 64-bit register in brackets, [rax
 refused 8 "$CC" 'lidt rax;' "lidt takes one 64-bit register in brackets, [rax] to [r15], not 'rax'"
 refused 8 "$CC" 'invlpg [rax + 8];' "invlpg takes one 64-bit register in brackets, [rax] to [r15], not '+'"
 
+# 9 — aarch64 barrier options (D37, 2026-10-18): each option's word (llvm-mc's), a bare barrier is sy, the next
+# mnemonic is not an option, and a word the barrier has no option for is refused by name
+if [ -s "$D/cc_a64" ]; then
+  cat > "$D/a9.txt" <<'A9'
+dmb ish|bf 3b 03 d5
+dmb sy|bf 3f 03 d5
+dmb st|bf 3e 03 d5
+dmb ld|bf 3d 03 d5
+dmb ishst|bf 3a 03 d5
+dmb ishld|bf 39 03 d5
+dmb nsh|bf 37 03 d5
+dmb nshst|bf 36 03 d5
+dmb nshld|bf 35 03 d5
+dmb osh|bf 33 03 d5
+dmb oshst|bf 32 03 d5
+dmb oshld|bf 31 03 d5
+dsb sy|9f 3f 03 d5
+dsb ish|9f 3b 03 d5
+dsb ishst|9f 3a 03 d5
+dsb oshld|9f 31 03 d5
+isb sy|df 3f 03 d5
+dmb|bf 3f 03 d5
+dmb ish; dsb sy; isb sy;|bf 3b 03 d5 9f 3f 03 d5 df 3f 03 d5
+dmb dsb isb|bf 3f 03 d5 9f 3f 03 d5 df 3f 03 d5
+dmb ish nop|bf 3b 03 d5 1f 20 03 d5
+A9
+  n9=$(wc -l < "$D/a9.txt" | tr -d ' ')
+  { k=0
+    while IFS='|' read -r x w; do k=$((k + 1))
+      printf 'fn b%s(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm { %s }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\n' $k "$x"; done < "$D/a9.txt"
+    printf 'syscall(60, 0);\n'; } > "$D/a9.cyr"
+  # the newline-separated trio, as tests/tcyr/codegen/inline_asm_fences.tcyr writes it
+  printf 'fn bt(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm {\n        dmb\n        dsb\n        isb\n    }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\n' >> "$D/a9.cyr"
+  rc=0; "$D/cc_a64" < "$D/a9.cyr" > "$D/a9" 2> "$D/a9.err" || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$D/a9" ]; then bad "9: the aarch64 barrier options do not compile (rc $rc): $(grep -v '^note\|^warning' "$D/a9.err" | head -1)"
+  else
+    # each marker block is padded to 4 bytes (F1 F1 F1 00): drop the leading 00
+    bytes "$D/a9" | sed 's/^00 //' > "$D/a9.hex"
+    k=0; okn=0
+    while IFS='|' read -r x w; do k=$((k + 1))
+      g=$(sed -n "${k}p" "$D/a9.hex")
+      if [ "$g" = "$w" ]; then okn=$((okn + 1)); else bad "9: aarch64 \`asm { $x }\` assembled to [$g], want [$w]"; fi
+    done < "$D/a9.txt"
+    [ "$okn" -eq "$n9" ] && echo "  ok   9: aarch64 barriers take their options, all $n9 forms to llvm-mc's words"
+    g=$(sed -n "$((n9 + 1))p" "$D/a9.hex"); w='bf 3f 03 d5 9f 3f 03 d5 df 3f 03 d5'
+    [ "$g" = "$w" ] && echo "  ok   9: dmb / dsb / isb on three lines stay three barriers" || bad "9: the newline-separated dmb / dsb / isb assembled to [$g], want [$w]"
+  fi
+  refused 9 "$D/cc_a64" 'dmb foo;' "dmb takes sy, st, ld, ish, ishst, ishld, nsh, nshst, nshld, osh, oshst or oshld, not 'foo'"
+  refused 9 "$D/cc_a64" 'dsb isht;' "dsb takes sy, st, ld, ish, ishst, ishld, nsh, nshst, nshld, osh, oshst or oshld, not 'isht'"
+  refused 9 "$D/cc_a64" 'isb ish;' "isb takes sy, not 'ish'"
+fi
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: asm_mnemonics_whole — $fail row(s) red"; exit 1; fi
-echo "PASS: asm_mnemonics_whole — mnemonics match on their whole names and an unknown one is refused by name (x86, aarch64), in / out encode the accumulator's width, lgdt / lidt / invlpg / mov crN / ltr / int encode the operand they name (program, kernel, PE, Mach-O) and refuse one they cannot take by name, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"
+echo "PASS: asm_mnemonics_whole — mnemonics match on their whole names and an unknown one is refused by name (x86, aarch64), in / out encode the accumulator's width, lgdt / lidt / invlpg / mov crN / ltr / int encode the operand they name (program, kernel, PE, Mach-O) and refuse one they cannot take by name, aarch64 barriers take their options (dmb ish) and refuse one they lack by name, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"

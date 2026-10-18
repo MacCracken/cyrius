@@ -1,0 +1,61 @@
+# asm_barrier_options.tcyr — 6.7.15 (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; the
+# user's decision D37, 2026-10-18: an aarch64 barrier accepts its option).
+#
+# Every barrier option the aarch64 assembler takes is EXECUTED here, on each host's own compiler: `dmb` / `dsb`
+# with each of their twelve options, `isb sy`, and the bare trio (the full-system barrier). A barrier is
+# unprivileged, so a wrong word faults (SIGILL) instead of passing; asm_mnemonics_whole.sh checks the words
+# themselves (axes 6 and 9, the cross compiler). Until 6.7.15 an option was refused (`unknown aarch64 asm
+# mnemonic 'ish'`) and the bare `dsb` was SSBB. On an x86 host the block is not compiled and the row checks only
+# that the fn returns past it (x86's fences run in tests/tcyr/codegen/inline_asm_fences.tcyr).
+
+include "lib/assert.cyr"
+
+fn _barrier_options(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        dmb sy
+        dmb st
+        dmb ld
+        dmb ish
+        dmb ishst
+        dmb ishld
+        dmb nsh
+        dmb nshst
+        dmb nshld
+        dmb osh
+        dmb oshst
+        dmb oshld
+        dsb sy
+        dsb st
+        dsb ld
+        dsb ish
+        dsb ishst
+        dsb ishld
+        dsb nsh
+        dsb nshst
+        dsb nshld
+        dsb osh
+        dsb oshst
+        dsb oshld
+        isb sy
+    }
+    #endif
+    return 7;
+}
+
+# Newline-separated barriers stay three instructions: the next mnemonic is not taken as an option.
+fn _barrier_trio(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        dmb
+        dsb
+        isb
+    }
+    asm { dmb ish; dsb ish; isb; }
+    #endif
+    return 9;
+}
+
+assert_eq(_barrier_options(), 7, "every dmb / dsb option and isb sy execute and return past the block");
+assert_eq(_barrier_trio(), 9, "the bare dmb / dsb / isb trio and `dmb ish; dsb ish; isb` execute");
+var r = assert_summary();
