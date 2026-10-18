@@ -1111,8 +1111,8 @@ any two pointers, when the element sizes differ), `var q: *T = *pp;` / `q = *pp;
 through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written at its width. A
 `***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. Through 6.7.12 `*pp` was the
 untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
-declaration warned *assigning non-pointer to typed pointer*. A program may name at most 126 distinct
-pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types*). **`**pps` of a `pps: **S` is the
+declaration warned *assigning non-pointer to typed pointer*. A program may name at most 16383 distinct
+pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types (max 16383)*; 126 in 6.7.13). **`**pps` of a `pps: **S` is the
 struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S` over 8 B) passes `*pps`, as
 `take(*ps)` passes `ps` — a `**S` local, parameter, field, global or capture, inside parentheses or written `*(*pps)`
 — and a `**Q` of another struct is refused by name (*cannot pass 'ppq' to a parameter of a different struct type*). ⚠

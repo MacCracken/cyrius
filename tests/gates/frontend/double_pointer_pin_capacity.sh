@@ -21,6 +21,7 @@
 #   P2 the DRS1 shape past pin 1500: `take(**ppq)`, ppq a `**Q3` (another 24-byte struct), refused once by name on
 #      x86_64, aarch64, cx and PE
 #   K1 the cap: the 16384th pin (1024 structs through `**S` .. 17 stars) is refused once, "max 16383" (x86_64)
+#   K2 the guide states that cap (docs/guides/cyrius-guide.md, the `**T` paragraph)
 #   The 6.7.13 rows stay in tests/gates/codegen/simd_pointer_param.sh (DRS1 / DRSw) and
 #   tests/tcyr/crossos/double_pointer_deref_step.tcyr.
 #
@@ -193,6 +194,9 @@ awk 'BEGIN{for(i=0;i<1024;i++){printf "struct S%d { a; b; }\n",i; st="*"; for(d=
      print "fn main(): i64 { return 0; }"; print "syscall(60, main());"}' > "$D/k1.cyr"
 refused K1 "K1 1024 structs through \`**S\` .. 17 stars (16384 pins): 'max 16383' once" "$D/k1.cyr" x86 \
     "too many pointer-to-pointer pointee types (max 16383)"
+# K2 — the guide states the cap the compiler prints (its "at most 126" outlived the change by a unit).
+if grep -qF "at most 16383 distinct" docs/guides/cyrius-guide.md; then ok "K2 the guide names the cap, 16383"
+else bad "K2 docs/guides/cyrius-guide.md does not say 'at most 16383 distinct' pointees of a pointer to a pointer"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
