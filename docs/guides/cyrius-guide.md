@@ -5762,6 +5762,13 @@ it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { 
 `unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
 assembled as `cli`, `inb al, dx` as `in al, dx` and `nopx` as `nop`.)
 
+On aarch64 the mnemonics are `svc` (`svc #0`: a `#` starts a comment, so the immediate cannot be
+written), `wfi`, `wfe`, `nop`, `ret`, `eret`, `param_load(reg, idx)` and the barriers `dmb`, `dsb`
+and `isb`. A bare barrier is the full-system one, `sy`: `dmb` is D5033FBF, `dsb` D5033F9F, `isb`
+D5033FDF; `wfe` is D503205F. (6.7.15: `dmb` and `isb` encoded the reserved option `#0`, which runs
+as `sy`; `dsb` was SSBB, a speculative-store-bypass barrier, not a data synchronization barrier;
+and `wfe` was an MSR to a system register, UNDEFINED at EL0.)
+
 ## Kernel Mode
 
 ```

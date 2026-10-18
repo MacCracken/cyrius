@@ -27,7 +27,11 @@
 #   6  a mnemonic is matched on its whole name; one the assembler does not have is refused by name, rc 1,
 #      nothing written: x86 `clix`, `inb al, dx`, `nopx`, `stix`, `mfencex`, `outb dx, al`,
 #      `param_loadx(rax, 0)`; aarch64 `nopx`, `dmbx`, `retx`, `eretx`, `param_loadx(x0, 0)` — and the
-#      aarch64 names keep their words (dmb dsb isb nop wfi wfe svc ret eret)
+#      aarch64 names keep their words (dmb dsb isb nop wfi wfe svc ret eret). 6.7.15
+#      (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md): a bare dmb / dsb / isb is the
+#      full-system barrier, sy (D5033FBF / D5033F9F / D5033FDF), and wfe is hint #2 (D503205F) — llvm-mc's
+#      words; until 6.7.15 dmb and isb encoded the reserved option #0, dsb was SSBB (a speculative-store-
+#      bypass barrier) and wfe `msr S0_3_C1_C0_1, x0`
 #   7  (6.7.15, issues/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md) x86 lgdt /
 #      lidt / invlpg / mov crN / ltr encode the register the source names — until 6.7.15 each encoded rax / ax
 #      whatever it named (`lgdt [rbx]` 0f 01 10, `mov cr8, rax` 0f 22 c0 = mov cr0, rax): each form's bytes
@@ -46,6 +50,7 @@
 #   cx ASM_MNEMONIC back to its 6.7.13 ERR_MSG                 -> 5 RED (no name; recovery aborted)
 # (6.7.15) the 6.7.14 x86 emitters (lgdt .. int)               -> 7 RED (every register but rax / ax), 8 RED
 #   _asm_x86_gpr reading the first letters only (no NUL test)  -> 8 RED (lgdt [raxx] compiles)
+#   the 6.7.14 aarch64 dmb / dsb / isb / wfe words              -> 6 RED (the word row)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -172,7 +177,7 @@ if [ -s "$D/cc_a64" ]; then
   # starts with that 00
   printf 'fn f(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm { dmb; dsb; isb; nop; wfi; wfe; svc; ret; eret; }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\nsyscall(60, f());\n' > "$D/a64.cyr"
   rc=0; "$D/cc_a64" < "$D/a64.cyr" > "$D/a64" 2> "$D/a64.err" || rc=$?
-  w='00 bf 30 03 d5 9f 30 03 d5 df 30 03 d5 1f 20 03 d5 7f 20 03 d5 20 10 03 d5 01 00 00 d4 c0 03 5f d6 e0 03 9f d6'
+  w='00 bf 3f 03 d5 9f 3f 03 d5 df 3f 03 d5 1f 20 03 d5 7f 20 03 d5 5f 20 03 d5 01 00 00 d4 c0 03 5f d6 e0 03 9f d6'
   if [ "$rc" -ne 0 ]; then bad "6: aarch64 dmb .. eret were refused (rc $rc): $(grep -v '^note\|^warning' "$D/a64.err" | head -1)"
   else g=$(bytes "$D/a64" | head -1)
     [ "$g" = "$w" ] && echo "  ok   6: aarch64 dmb dsb isb nop wfi wfe svc ret eret keep their words" || bad "6: aarch64 dmb .. eret assembled to [$g], want [$w]"; fi

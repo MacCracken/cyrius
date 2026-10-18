@@ -3804,6 +3804,9 @@ fn EPATCHFRAME(S, patch, size): i64 {
 # assembler does not have is refused by name (D16, 2026-10-16). Until 6.7.14 the first bytes
 # decided: `nopx` assembled as nop, `dmbx` as dmb, `retx` as ret; the refusal named no mnemonic.
 # CHANGELOG [6.7.14]
+# A bare barrier is the full-system one (sy) and wfe is hint #2 — llvm-mc's words. Until 6.7.15 dmb and
+# isb encoded the reserved option #0, dsb was SSBB (D503309F, a speculative-store-bypass barrier) and wfe
+# D5031020, `msr S0_3_C1_C0_1, x0`. CHANGELOG [6.7.15]
 fn ASM_MNEMONIC(S): i64 {
     var ti = GTI(S);
     var noff = PEEKV(S);
@@ -3811,10 +3814,10 @@ fn ASM_MNEMONIC(S): i64 {
     STI(S, ti + 1);
     if (mnem & 0xFFFFFFFF == 0x637673) { EW(S, 0xD4000001); }                  # svc
     elif (mnem & 0xFFFFFFFF == 0x696677) { EW(S, 0xD503207F); }                # wfi
-    elif (mnem & 0xFFFFFFFF == 0x656677) { EW(S, 0xD5031020); }                # wfe
-    elif (mnem & 0xFFFFFFFF == 0x626D64) { EW(S, 0xD50330BF); }                # dmb
-    elif (mnem & 0xFFFFFFFF == 0x627364) { EW(S, 0xD503309F); }                # dsb
-    elif (mnem & 0xFFFFFFFF == 0x627369) { EW(S, 0xD50330DF); }                # isb
+    elif (mnem & 0xFFFFFFFF == 0x656677) { EW(S, 0xD503205F); }                # wfe (hint #2)
+    elif (mnem & 0xFFFFFFFF == 0x626D64) { EW(S, 0xD5033FBF); }                # dmb sy
+    elif (mnem & 0xFFFFFFFF == 0x627364) { EW(S, 0xD5033F9F); }                # dsb sy
+    elif (mnem & 0xFFFFFFFF == 0x627369) { EW(S, 0xD5033FDF); }                # isb (sy)
     elif (mnem & 0xFFFFFFFF == 0x706F6E) { EW(S, 0xD503201F); }                # nop
     elif (mnem & 0xFFFFFFFF == 0x746572) { EW(S, 0xD65F03C0); }                # ret
     elif (mnem & 0xFFFFFFFFFF == 0x74657265) { EW(S, 0xD69F03E0); }            # eret (v6.2.28 — exception return for aarch64 #naked ISR handlers; mirrors x86 iretq)
