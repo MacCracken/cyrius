@@ -14644,8 +14644,15 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # wrap (`_pwrap_in`) — `gs((l))`, `gsz((p))`, `gsz((&GS))` — and through `x: T` a whole dereference of a `*S` is the
 # struct value S (`_ic_deref`) — `gs(*p)`. They ran the i64 base (`sizeof(T)` 8 for a 24-byte S), as did a closure's
 # captured struct (`_ic_cap`). A tuple literal binds nothing. CHANGELOG [6.7.15]
+# ⛔ 6.7.15 — THROUGH `p: *T` A TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (the user's decision D23 A,
+# 2026-10-18): `g(ps + 1)`, `g(1 + ps)`, `g((ps) - 1)` bind what ps points at (`_ic_parith`) — they ran the i64 base
+# (`p + 1` stepped 8 for a 24-byte S). Through `x: T` no pointer binds, so the arithmetic is read through `p: *T` only.
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
+    if (ptr == 1) {
+        var e = _ic_arith_end(S, a);
+        if (e > 0) { return _ic_parith(S, a, e); }
+    }
     a = _pwrap_in(S, a);
     if (a < 0) { return 0 - 8; }
     if (ptr == 1) {

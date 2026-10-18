@@ -6845,7 +6845,8 @@ on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
 every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
-`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and through an `x: T` parameter so does
+`g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
+minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
 field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
 this rule). Parentheses around the WHOLE argument carry what they wrap — a scalar's type too:
@@ -6916,7 +6917,12 @@ its own type, so `second(pa)` with `fn second<T>(p: *T): i64 { return *(p + 1); 
 instance (an `f64` result), exactly as `second<i32>(pa)` / `gd<f64>(&h)` do. Through 6.7.14
 they ran the i64 base: `sizeof(T)` 8, `p + 1` stepping 8 bytes and `*p` reading 8. A pointee
 that is no type argument — `*u8` .. `*u64`, `*f32`, `*bool` — and `*i64` bind `i64`, as an
-`f32` value does; through `x: T` no pointer binds.
+`f32` value does; through `x: T` no pointer binds. A typed pointer plus or minus `n` is still
+that pointer (6.7.15, the user's decision D23 A, 2026-10-18): through `p: *T`, `g(ps + 1)`,
+`g(1 + ps)`, `g((ps) - 1)`, `g(w.p + 1)` bind what `ps` / `w.p` point at, and a `*i32`'s
+`pa + 1` binds `i32` — through 6.7.14 each ran the i64 base (`p + 1` stepping 8 for a 24-byte
+`S`). `&s + n` is a byte pointer (6.7.11's D15) and binds nothing, nor does a distance
+`ps - qs` or a bitwise result (`ps + 1 & 3`).
 
 **Through a pointer-to-pointer parameter** (6.7.14). A `T` that no `x: T` / `p: *T`
 parameter and no generic struct carries is carried by the first parameter declared exactly
@@ -6931,10 +6937,13 @@ call and a generic method alike, so a `: T` result is the struct (`var v = gd(pp
 user's decision D40 (A), 2026-10-16: through 6.7.13 every such call ran the i64 base —
 `*pp + 1` stepped 8 and `take(**pp)` passed the first field as the address (a fault). A
 scalar pointee binds as through `p: *T` (6.7.15, D11 (a)): a `**i32` — the same sources, and
-`&p` of a `*i32` — binds `i32` (`*pp + 1` steps 4), a `**f64` `f64`. A `*S` (one star), a
-`***S`, a `**u8`, a parenthesised or computed argument (`(pps)`, `pps + 0`) bind nothing
-(`i64`), and a direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds
-from `x`.
+`&p` of a `*i32` — binds `i32` (`*pp + 1` steps 4), a `**f64` `f64`. Parentheses around the
+whole argument are transparent and a `**S` plus or minus `n` is still that `**S` (6.7.15, the
+user's decisions D22 A / D23 A, 2026-10-18): `tg((pps))`, `tg((&ps))`, `tg(pps + 0)`,
+`tg(0 + pps)` hand `take` the struct, as `tg(pps)` does — through 6.7.14 they ran the i64 base
+and faulted; `&ps + n` is a byte pointer and binds nothing. A `*S` (one star), a `***S`, a
+`**u8` bind nothing (`i64`), and a direct or struct carrier wins over `**T`:
+`fn mix<T>(pp: **T, x: T)` binds from `x`.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole

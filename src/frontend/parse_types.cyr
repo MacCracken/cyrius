@@ -3176,8 +3176,17 @@ fn _pp_is_tp(S, tn): i64 {
 # its step word (`_pp_sid`) — a `**S` local, parameter, capture or global, a field declared `**S` reached through a
 # chain, a call returning `**S` (a generic one at the instance it reaches) — or `&p` of a `*S` local, parameter or
 # global (`_ic_pp_addr`). 6.7.15 (D11 (a)): the same sources of a `**i32` / `**f64` bind that scalar
-# (`_ic_pscalar`). Anything else (a `***S`, a `**u8`, an expression) infers i64.
+# (`_ic_pscalar`). Anything else (a `***S`, a `**u8`, any other expression) infers i64.
+# ⛔ 6.7.15 — PARENTHESES AROUND THE WHOLE ARGUMENT ARE TRANSPARENT (the user's decision D22 A, 2026-10-18) and A
+# TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (D23 A): `tg((pps))`, `tg((&ps))` and `tg(pps + 0)` bind T as
+# `tg(pps)` does — they ran the i64 base (`take(**pp)` faulted: 139, cx 254, PE 5). The arithmetic is read by its
+# typed-pointer operand's step word (`_hl_pw`: `pps + n`, `n + pps`, `(pps) - n`); `&ps + n` is a byte pointer
+# (6.7.11's D15) and binds nothing. CHANGELOG [6.7.15]
 fn _ic_pp_arg(S, a): i64 {
+    var e = _ic_arith_end(S, a);
+    if (e > 0) { return _ic_pp_sid(S, _hl_pw(S, a, e)); }
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0 - 8; }
     var t = TOKTYP(S, a);
     if (t == 27) { return _ic_pp_addr(S, a + 1); }
     if (t != 2) { return 0 - 8; }
@@ -3186,6 +3195,26 @@ fn _ic_pp_arg(S, a): i64 {
     var nt = TOKTYP(S, a + 1);
     if (nt == 10 || nt == 19) { return _ic_pp_sid(S, _fn_ret_ps(_gen_call_inst(S, a))); }
     return _ic_pp_sid(S, _ic_pp_name(S, TOKVAL(S, a)));
+}
+# ⛔ 6.7.15 (D23 A) — the end (its `,` / `)`) of the whole argument at token `a` when it is pointer arithmetic, inside
+# any parentheses: its loosest operator a `+` / `-` (`_gz_split`, the one applied last), else 0 — a name, a call, a
+# tuple literal, a comparison or a bitwise result (`p + 1 & 3` is no pointer) is none. CHANGELOG [6.7.15]
+fn _ic_arith_end(S, a): i64 {
+    var e = _arg_next(S, a);
+    var b = _ie_unparen(S, a, e);
+    var k = _gz_split(S, b, _ie_pe);
+    if (k < 0) { return 0; }
+    var t = TOKTYP(S, k);
+    if (t == 6 || t == 7 || t == 113 || t == 116) { return e; }
+    return 0;
+}
+# ... through a `p: *T` (D23 A): what the arithmetic [a, e)'s typed-pointer operand points at — a struct
+# (`_hl_psid`: a `*S` name, field, call, wrapped), else its scalar pointee's binding (`_ic_pscalar`, D11 (a)); i64 for
+# no typed pointer. CHANGELOG [6.7.15]
+fn _ic_parith(S, a, e): i64 {
+    var s = _hl_psid(S, a, e);
+    if (s > 0) { return s; }
+    return _ic_pscalar(_hl_pw(S, a, e));
 }
 # The struct step word `w`'s pin names (its pointee `*S`'s S), 6.7.15 (D11) else its pointee word's scalar
 # (`_pp_inner`: a `**i32`'s `*i32`), else i64.

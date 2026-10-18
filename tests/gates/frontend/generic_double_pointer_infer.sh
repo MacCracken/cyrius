@@ -21,10 +21,18 @@
 #      4 and `sz(ppi)` is 4, `gd(pph)` with `pph: **f64` is the f64 instance (its xmm result doubled: 5): 445 % 256 =
 #      189 (was 112: the i64 base stepped 8 and returned the double's bits) — every leg (more sources:
 #      tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr's PP rows, generic_ptr_param_infer.sh PS)
-#   T  tests/tcyr/crossos/double_pointer_deref_step.tcyr (its GI / GK rows: every `**S` source, a method, a `: T`
-#      result, two type parameters, a named argument, a forward call, a forwarder, and the controls — a direct or a
-#      struct carrier wins, a `*S`, a `**Q2` that is no `**T`, `(pps)` and `pps + 0` bind nothing; 6.7.15 (D11 (a)):
-#      a `**i32` binds i32) on
+#   W  (6.7.15, the user's decisions D22 A / D23 A, 2026-10-18) parentheses around the whole argument are transparent
+#      and a typed pointer plus or minus n is still that pointer: W1 the filed repro verbatim, `tg((pps))` 42 (139,
+#      cx 254, PE 5 before), W2 its table's `tg(pps + 0)` 42 (the same fault), W3 `tg((&ps))` 42 (the same fault),
+#      W4 the single-star sibling through `p: *T` — `g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1)`, each
+#      step 24: 120 (72 before: the last three stepped 8); WK the controls — `g(ps + 1 & 3)` (a bitwise result),
+#      `g(ps - ps)` (a distance), `g(&s + 0)` (a byte pointer, 6.7.11's D15) bind nothing (8 each), with the
+#      explicit `tg<P3>((pps))` 42: 66 — every leg
+#   T  tests/tcyr/crossos/double_pointer_deref_step.tcyr (its GI / GK / GW rows: every `**S` source, a method, a
+#      `: T` result, two type parameters, a named argument, a forward call, a forwarder, and the controls — a direct or
+#      a struct carrier wins, a `*S`, a `**Q2` that is no `**T`, `&ps + 0` bind nothing; 6.7.15 (D11 (a)): a `**i32`
+#      binds i32; 6.7.15 (D22 A / D23 A): wrapped and computed arguments, a field / global / call + 0, a method, the
+#      single-star `p: *T`, a generic forwarding the result into a method (the stub scan)) on
 #      x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N
 #      derived from the file; the release gate's cross-OS leg runs it on ecb / ach / cass / pi
 #
@@ -46,6 +54,15 @@
 #   MS2 `_ic_pscalar` answers i64 (no scalar pointee)      -> RED S and T
 #   MS3 `_ic_pscalar` binds without marking `_gi_sc`       -> RED S and T
 #   MS4 `_ic_pp_sid` without its scalar arm                -> RED S and T
+# (2026-10-18, 6.7.15 — the W rows and GW; a scratch copy with the one change, its 2-stage cycc, CYCC= it:)
+#   MW1 the fix reverted (the lane's previous compiler)    -> RED 25: W1-W3 (139, cx 254, PE 5), W4 (72) and T (the
+#                                                             file does not build) on every leg; WK green
+#   MW2 `_ic_pp_arg` without the `_pwrap_in` peel          -> RED W1, W3 (139 / cx 254 / PE 5) and T (x86_64 / IR /
+#                                                             aarch64 139, PE 5, cx 2 failed)
+#   MW3 `_ic_pp_arg` without its arithmetic arm            -> RED W2 and T (139 / PE 5, cx 3 failed)
+#   MW4 `_ic_arg` without its arithmetic arm               -> RED W4 (72) and T (the file does not build: the stub row's
+#                                                             r.pick, as the parser bound nothing)
+#   MW5 `_ic_arith_end` taking any loosest operator        -> RED WK (82: `g(ps + 1 & 3)` bound P3)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -75,10 +92,10 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/double_pointer_deref_step.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=40
+FLOOR=46
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
-NGI=$(grep -cE 'assert_eq\(.*"G[IK]: ' "$TC")
-if [ "$NGI" -lt 14 ]; then echo "FAIL: $G: only $NGI GI / GK rows in $TC (floor 14) — rows were lost"; exit 1; fi
+NGI=$(grep -cE 'assert_eq\(.*"G[IKW]: ' "$TC")
+if [ "$NGI" -lt 20 ]; then echo "FAIL: $G: only $NGI GI / GK / GW rows in $TC (floor 20) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -190,7 +207,41 @@ syscall(60, ms() % 256);
 X
 xr S "$D/s.cyr" 189 "st(ppi) 4, sz(ppi) 4, gd(pph) * 2.0 at f64 5 (445 % 256)"
 
-echo "T. $TC ($N rows, $NGI GI / GK)"
+echo "W. a wrapped or computed pointer argument binds as the pointer (6.7.15, D22 A / D23 A)"
+# W1 the filed repro, verbatim (issues/2026-10-17-generic-double-pointer-argument-in-parentheses-binds-nothing.md).
+cat > "$D/w1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn tg<T>(pp: **T): i64 { return take(**pp); }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; return tg((pps)); }
+syscall(60, main());
+X
+xr W1 "$D/w1.cyr" 42 "the filed repro: tg((pps))"
+sed -e 's/return tg((pps));/return tg(pps + 0);/' "$D/w1.cyr" > "$D/w2.cyr"
+xr W2 "$D/w2.cyr" 42 "its table's tg(pps + 0)"
+sed -e 's/return tg((pps));/return tg((\&ps));/' "$D/w1.cyr" > "$D/w3.cyr"
+xr W3 "$D/w3.cyr" 42 "tg((&ps))"
+cat > "$D/w4.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn g<T>(p: *T): i64 { var a = p + 1; var b = p; return a - b; }
+fn main(): i64 { var s: P3; var ps: *P3 = &s; return g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1); }
+syscall(60, main());
+X
+xr W4 "$D/w4.cyr" 120 "through p: *T, g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1) (24 each)"
+cat > "$D/wk.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn tg<T>(pp: **T): i64 { return take(**pp); }
+fn g<T>(p: *T): i64 { var a = p + 1; var b = p; return a - b; }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; return g(ps + 1 & 3) + g(ps - ps) + g(&s + 0) + tg<P3>((pps)); }
+syscall(60, main());
+X
+xr WK "$D/wk.cyr" 66 "controls: g(ps + 1 & 3), g(ps - ps), g(&s + 0) bind nothing (8 each), tg<P3>((pps)) 42"
+
+echo "T. $TC ($N rows, $NGI GI / GK / GW)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
     run_leg "$leg" "$TC" "$D/t_$n"
@@ -201,4 +252,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a wrapped or computed argument (W, D22 A / D23 A) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

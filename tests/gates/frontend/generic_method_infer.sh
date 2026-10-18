@@ -56,7 +56,13 @@
 #      P3 `GW.p` / `w.p` / `wp.p` field chains, P4 a `: *P` call, P5 `(&GP0)` / `(pp)`, P6 `&l` of a struct local;
 #      through `x: T` P7 `gid(*pp)` and `gid((l))` — each 4 (each refused naming P_pick before) — x86_64; PX an
 #      `x: T` given a `pp: *P` PARAMETER binds no struct in the scan either: `o(5, &GP0)` meets the parser's own
-#      "no struct type in scope for 'r'" at `r.pick`, not a stub refusal naming o (the scan made o a stub) — x86_64
+#      "no struct type in scope for 'r'" at `r.pick`, not a stub refusal naming o (the scan made o a stub) — x86_64;
+#      P8 (6.7.15, the user's decision D23 A, 2026-10-18: a typed pointer plus or minus n is still that pointer, so
+#      the parser binds `gd(pp + 0)` as `gd(pp)`) the scan reads the arithmetic too (`_tok_ta_arith`): P8a `pp + 0`,
+#      P8b `(pp) + 0`, P8c `0 + pp`, P8d `(pp - 0)`, P8e a `*P` global + 0, P8f `w.p + 0` / `GW.p - 0` / `wp.p + 0`
+#      field chains, P8g a `: *P` call + 0 — each 4 (refused naming P.pick: the parser bound P, the scan nothing);
+#      P8K `gd(pp - pp)` (a distance) and `gd(&GP0 + 0)` (a byte pointer) bind nothing in either: `o(5)` meets the
+#      parser's own "no struct type in scope for 'r'", once, not a stub refusal naming o — x86_64
 #   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
 #      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
 #      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
@@ -158,6 +164,13 @@
 #   MT4 `_tok_ta_decl` without a `var p: *S` local      -> RED P1, P3c, P5b, P7a
 #   MT5 `_tok_ta_arg` without `_pwrap_in`              -> RED P5a, P5b, P7b
 #   MT6 `_tok_ta_arg` without its chain arm            -> RED P3a, P3b, P3c
+# 6.7.15 (the P8 rows; 2026-10-18, CYCC= the mutant):
+#   MP0 the fix reverted (the lane's previous compiler) -> RED P8a-P8g (the parser bound nothing: "no struct type in
+#                                                         scope for 'r'"); P8K green
+#   MP1 `_tok_ta_arg` without its arithmetic arm        -> RED P8a-P8g (refused naming P.pick); P8K green
+#   MP2 `_tok_ta_arith` without its chain operand       -> RED P8f1-P8f3
+#   MP3 `_tok_ta_arith` reading a `-`'s right side      -> RED P8K1 (`pp - pp` bound P in the scan: o a stub, refused
+#                                                         naming o)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -632,6 +645,26 @@ prow P5b 'var pp: *P = &GP0; var r = gd((pp)); return r.pick(t);' "gd((pp)), wra
 prow P6 'var l = P { 2 }; var r = gd(&l); return r.pick(t);' "gd(&l) of a struct local"
 prow P7a 'var pp: *P = &GP0; var r = gid(*pp); return r.pick(t);' "gid(*pp) through \`x: T\`"
 prow P7b 'var l = P { 2 }; var r = gid((l)); return r.pick(t);' "gid((l)) through \`x: T\`"
+prow P8a 'var pp: *P = &GP0; var r = gd(pp + 0); return r.pick(t);' "gd(pp + 0) (D23 A)"
+prow P8b 'var pp: *P = &GP0; var r = gd((pp) + 0); return r.pick(t);' "gd((pp) + 0)"
+prow P8c 'var pp: *P = &GP0; var r = gd(0 + pp); return r.pick(t);' "gd(0 + pp)"
+prow P8d 'var pp: *P = &GP0; var r = gd((pp - 0)); return r.pick(t);' "gd((pp - 0)), wrapped"
+prow P8e 'var r = gd(GPP + 0); return r.pick(t);' "gd(GPP + 0), a \`*P\` global"
+prow P8f1 'var w = W { &GP0 }; var r = gd(w.p + 0); return r.pick(t);' "gd(w.p + 0)"
+prow P8f2 'var r = gd(GW.p - 0); return r.pick(t);' "gd(GW.p - 0)"
+prow P8f3 'var wp: *W = &GW; var r = gd(wp.p + 0); return r.pick(t);' "gd(wp.p + 0) through a \`*W\`"
+prow P8g 'var r = gd(mkp() + 0); return r.pick(t);' "gd(mkp() + 0), a \`: *P\` call"
+# P8K <id> <body> <what>: binds nothing in the parser and the scan alike — `o(5)` meets the parser's own error at
+# r.pick, once, not a stub refusal naming o (a scan that bound P there would make o a stub, as PX).
+p8k() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { return o(5); }\nsyscall(60, m());\n' "$PH" "$2" > "$D/$1.cyr"
+    erc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || erc=$?
+    ne=$(grep -c '^error' "$D/$1.err" || true)
+    if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/$1.err"; then ok "$1: $3 binds nothing: the parser's own error at r.pick, once"
+    else bad "$1: $3: rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+p8k P8K1 'var pp: *P = &GP0; var r = gd(pp - pp); return r.pick(t);' "gd(pp - pp), a distance"
+p8k P8K2 'var r = gd(&GP0 + 0); return r.pick(t);' "gd(&GP0 + 0), a byte pointer"
 printf '%s\nfn o<T>(t: T, pp: *P): i64 { var r = gid(pp); return r.pick(t); }\nfn m(): i64 { return o(5, &GP0); }\nsyscall(60, m());\n' "$PH" > "$D/px.cyr"
 erc=0; "$CC" < "$D/px.cyr" > "$D/px" 2> "$D/px.err" || erc=$?
 ne=$(grep -c '^error' "$D/px.err" || true)
