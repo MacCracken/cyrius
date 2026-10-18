@@ -14,8 +14,17 @@
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/address_of_pointer_param.sh
 # (which also holds the `#naked` rows), on the four hardware hosts by the release gate's cross-OS leg.
 # Each row builds its own structs, so a wrong `&q` cannot spill into the next row.
+#
+# 6.7.15 (D21 A, the user's decision, 2026-10-18; issues/2026-10-17-dereference-of-address-of-typed-pointer-local-loses-
+# its-pointee.md) — `*(&q)` of a typed pointer q is q, its type kept: `(*(&q)).y` reads q's field (refused "a field is
+# read only from a struct value"), `**(&p)` of a `p: *f64v2` is the vector (refused at every vector destination; the
+# untyped declaration bound one word and a stack word), `**(&pb)` through a `*u8` reads one byte (a word), and
+# `*(&pi) + 1` steps as `pi + 1` does. `&q` itself, and `*(&pb + 0)`, are unchanged (`&pb + 0` a byte pointer to the
+# slot, its dereference the slot's word).
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/fnptr.cyr"
 
 struct Ao16 { x; y; }        # 16 B: the size the defect needed
 struct Ao8 { x; }            # 8 B
@@ -74,6 +83,63 @@ fn row_bv_ne(): i64 { var p = Ao16 { 4, 2 }; return ao16_bv_ne(p, &p); }
 var AO_G: *Ao16 = 0;
 fn row_global(): i64 { var p = Ao16 { 4, 2 }; AO_G = &p; if (load64(&AO_G) == &p) { return 1; } return 0; }
 
+# --- 6.7.15 (D21 A): `*(&q)` of a typed pointer is q -------------------------------------------------------------
+fn ad_mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn ad_lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn ad_rd(p: *f64v2): i64 { var a: i64 = p; return load64(a) * 10 + load64(a + 8); }
+fn ad_dr(p: *f64v2): f64v2 { return **(&p); }
+fn ad_drw(p: *f64v2): f64v2 { return (**(&p)); }
+fn ad_fy(q: *Ao16): i64 { return (*(&q)).y; }
+fn ad_fx(q: *Ao16): i64 { return ao16_bv_first(**(&q)); }
+var AD_GP: *Ao16 = 0;
+fn row_ad_param_field(): i64 { var p = Ao16 { 4, 2 }; return ad_fy(&p) * 10 + ad_fx(&p); }
+fn row_ad_local_field(): i64 { var p = Ao16 { 4, 2 }; var q: *Ao16 = &p; return (*(&q)).y * 10 + (*((&q))).x; }
+fn row_ad_global_field(): i64 { var p = Ao16 { 4, 2 }; AD_GP = &p; return (*(&AD_GP)).y * 10 + (*(&AD_GP)).x; }
+fn row_ad_capture_field(): i64 { var p = Ao16 { 4, 2 }; var q: *Ao16 = &p; var f = |k| (*(&q)).y + k; return fncall1(f, 40); }
+fn row_ad_lanes(): i64 { var w: f64v2 = ad_mkv(41, 7); var p: *f64v2 = &w; return ad_lanes(**(&p)); }
+fn row_ad_return(): i64 { var w: f64v2 = ad_mkv(41, 7); var a: f64v2 = ad_dr(&w); var b: f64v2 = ad_drw(&w); return ad_lanes(a) * 1000 + ad_lanes(b); }
+fn row_ad_decl(): i64 {
+    var w: f64v2 = ad_mkv(41, 7);
+    var p: *f64v2 = &w;
+    var v: f64v2 = **(&p);
+    var u = **(&p);
+    store64(&u, 9);   # the untyped one is a copy: w is untouched
+    return ad_lanes(v) * 1000 + ad_lanes(u) + load64(&w) * 1000000;
+}
+fn row_ad_ptr_arg(): i64 { var w: f64v2 = ad_mkv(41, 7); var p: *f64v2 = &w; return ad_rd(*(&p)) * 1000 + ad_rd(**(&p)); }
+fn row_ad_narrow(): i64 {
+    var b: u8[8];
+    store64(&b, 0x0102030405060708);
+    var pb: *u8 = &b;
+    var r = 0;
+    if (**(&pb) == *pb) { r = r + 1; }          # one byte, as `*pb` reads it (it read a word)
+    if (*(&pb + 0) == load64(&pb)) { r = r + 10; }  # `&pb + 0` is still a byte pointer to pb's slot: its word
+    var c: u8[16];
+    store64(&c, 0);
+    store64(&c + 8, 0);
+    var pc: *u8 = &c;
+    **(&pc) = 0x1FF;                                 # a store writes one byte, as `*pc = ..` does (it wrote a word)
+    if (load64(&c) == 0xFF) { r = r + 100; }
+    return r;
+}
+fn row_ad_step(): i64 {
+    var a: i64[4];
+    var pi: *i64 = &a;
+    if (*(&pi) + 1 != pi + 1) { return 0; }       # `*(&pi)` is pi: `+ 1` steps one i64
+    if ((*(&pi) + 2) - pi != 2) { return 0; }
+    return 1;
+}
+
+assert_eq(row_ad_param_field(), 24, "D21: (*(&q)).y and **(&q) of a *Ao16 parameter: its field, its struct");
+assert_eq(row_ad_local_field(), 24, "D21: (*(&q)).y / (*((&q))).x of a *Ao16 local");
+assert_eq(row_ad_global_field(), 24, "D21: (*(&G)).y of a *Ao16 global");
+assert_eq(row_ad_capture_field(), 42, "D21: (*(&q)).y of a captured *Ao16");
+assert_eq(row_ad_lanes(), 417, "D21: lanes(**(&p)), p: *f64v2, a value-form argument");
+assert_eq(row_ad_return(), 417417, "D21: return **(&p); and return (**(&p)); from a f64v2 fn");
+assert_eq(row_ad_decl(), 41417097, "D21: var v: f64v2 = **(&p); and the untyped var u = **(&p); (a copy)");
+assert_eq(row_ad_ptr_arg(), 417417, "D21: rd(*(&p)) and rd(**(&p)) into *f64v2 pass p");
+assert_eq(row_ad_narrow(), 111, "D21: **(&pb) of a *u8 reads and writes one byte; *(&pb + 0) unchanged");
+assert_eq(row_ad_step(), 1, "D21: *(&pi) + 1 steps as pi + 1 (an i64)");
 assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
 assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
 assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");

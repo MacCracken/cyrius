@@ -2317,8 +2317,16 @@ value global, a closure's captured copy of one — is the struct value `x` is, w
 name, as `x` itself is. Through 6.7.12 it was an untyped word load: over 8 bytes `take(*(&x))` passed x's
 first field as the struct's address and `var d: S = *(&x);` was a handle holding it (a crash on every
 target), the assignments stored one word, `return *(&x)` was refused, and another struct's compiled. A
-handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` is still the untyped word the slot
-holds; `&x + n` is still a byte pointer, so `*(&x + 8)` is the word at that address. `*(&x) OP= v` is
+handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` of a handle is still the untyped word the
+slot holds. **`*(&p)` of a typed pointer is `p`, its type kept** (6.7.15, the user's decision D21, 2026-10-18:
+A): with `p: *f64v2`, `**(&p)` is the vector `*p` is (`lanes(**(&p))`, `return **(&p);`, `var v = **(&p);`);
+with `ps: *S`, `(*(&ps)).y` reads the field and `**(&ps)` is the struct; through a `pb: *u8`, `**(&pb)` reads
+and writes one byte, as `*pb` does; and `*(&p) + 1` steps as `p + 1` does — a local, a parameter, a closure's
+capture or a global, inside any parentheses. ⚠ Through 6.7.14 it was the untyped word: `**(&p)` was refused at
+every vector destination and an unannotated `var v = **(&p);` bound one word and a stack word (x86_64 178,
+aarch64 42, cx 98, Windows 146 where 161 is right), `(*(&ps)).y` was refused, and through a `*u8` `**(&pb)` read
+and wrote a whole word. `&x + n` is still a byte pointer, so `*(&x + 8)` (and `*(&p + 0)`) is the word at that
+address. `*(&x) OP= v` is
 refused as `x OP= v` is (*compound assignment to struct 'x' is refused*; write `x = x + b`) — since 6.7.14,
 the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (6.7.5), so `*(&s) += 10`
 turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op.

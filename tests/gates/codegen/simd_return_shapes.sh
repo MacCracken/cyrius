@@ -867,6 +867,19 @@ k_msg() {
 # D1 / D2 the filed repros verbatim; D3-D6 the return through `(*p)`, `((*p))`, `**pp`, `*gp(p)`, `*h.pv`, `*&w`, f64v4,
 # f32v4; D7 / D8 the untyped declaration wrapped, through `**pp`, `*gp(p)`, `*h.pv`, of f64v4 / f32v4, and a copy;
 # D9 it meets the vector rules (a value-form argument, its lanes by address); D10 a `*i64`'s `*pi` stays a word.
+# 6.7.15 (D21 A, the user's decision, 2026-10-18; issues/2026-10-17-dereference-of-address-of-typed-pointer-local-
+# loses-its-pointee.md) — `*(&p)` of a typed pointer is p, its type kept: D11 `return **(&p);` (wrapped, f64v4), D12
+# `lanes(**(&p))`, D13 the annotated, untyped and wrapped declarations (the untyped one a copy), D14 `*(&p)` / `**(&p)`
+# into a `*f64v2` parameter pass p, `***(&pp)` of a `**f64v2`, D15 `(*(&ps)).y`, `**(&pb)` of a `*u8` one byte, `*(&pb
+# + 0)` unchanged, `*(&pi) + 1` steps an i64; DV the filed repro verbatim compiles (its `rd` steps `p + 8` by the
+# f64v2, so its own value is no row). They were refused ("got `this
+# expression`", "got `*...`", "initialised only from .."), or bound one word (x86_64 178 / IR=3 82 / aarch64 42 / cx 98
+# / PE 146 for the untyped `**(&p)`, 161 right). Mutations (2026-10-18, the gate run with each compiler):
+#   the tree before it (3033ec7ab)                      -> RED 30: D11-D15 and DV on host / IR=3 / cx / aarch64 / win64
+#                                                          (each refused, "got `this expression`" / "got `*...`" / ..)
+#   `_deref_read` without `_amp_pw` (the token readers kept) -> RED 30: D11-D14 and DV refused, D15 exit 2 (`**(&pb)`
+#                                                          a word), on every leg
+#   `_hl_dref_psid` / `_hl_pw` without the `& NAME` arm  -> RED 5: D15 (`(*(&ps)).y` refused) on every leg
 DH='include "lib/syscalls.cyr"
 include "lib/simd.cyr"
 fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
@@ -938,9 +951,68 @@ syscall(60, run() % 256);
     D10) printf '%s' "$DH"'fn run(): i64 { var x = 150; var pi: *i64 = &x; var u = *pi; var t = (*pi); return u + t - 139; }
 syscall(60, run() % 256);
 ' ;;
+    D11) printf '%s' "$DH"'fn dr(p: *f64v2): f64v2 { return **(&p); }
+fn dr2(p: *f64v2): f64v2 { return ((**((&p)))); }
+fn d4(p: *f64v4): f64v4 { return **(&p); }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var a: f64v2 = dr(&w); var b: f64v2 = dr2(&w);
+  var x: f64v4; store64(&x, 1); store64(&x + 8, 2); store64(&x + 16, 3); store64(&x + 24, 4); var c: f64v4 = d4(&x);
+  if (lanes(a) != 417) { return 1; } if (lanes(b) != 417) { return 2; } if (l4(c) != 1234) { return 3; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D12) printf '%s' "$DH"'fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var h: HV; h.pv = p;
+  if (lanes(**(&p)) != 417) { return 1; } if (lanes((**(&p))) != 417) { return 2; }
+  return lanes(**(&p)) - 256; }
+syscall(60, run() % 256);
+' ;;
+    D13) printf '%s' "$DH"'fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w;
+  var v: f64v2 = **(&p); var u = **(&p); var t = (**(&p));
+  if (lanes(v) != 417) { return 1; } if (lanes(u) != 417) { return 2; } if (lanes(t) != 417) { return 3; }
+  store64(&u, 9); if (load64(&w) != 41) { return 4; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    D14) printf '%s' "$DH"'fn rp2(p: *f64v2): i64 { var a: i64 = p; return load64(a) * 10 + load64(a + 8); }
+fn run(): i64 { var w: f64v2 = mkv(41, 7); var p: *f64v2 = &w; var pp: **f64v2 = &p;
+  if (rp2(*(&p)) != 417) { return 1; } if (rp2(**(&p)) != 417) { return 2; } if (lanes(***(&pp)) != 417) { return 3; }
+  return 161; }
+syscall(60, run() % 256);
+' ;;
+    D15) printf '%s' "$DH"'struct Ps { x; y; }
+fn run(): i64 { var s: Ps; s.x = 3; s.y = 44; var ps: *Ps = &s; var b: u8[8]; store64(&b, 0x0102030405060708);
+  var pb: *u8 = &b; var x = 5; var pi: *i64 = &x;
+  if ((*(&ps)).y != 44) { return 1; } if (**(&pb) != 8) { return 2; } if (*(&pb + 0) != load64(&pb)) { return 3; }
+  if (*(&pi) + 1 != pi + 1) { return 4; } return 161; }
+syscall(60, run() % 256);
+' ;;
     esac
 }
-D_ROWS="D1 D2 D3 D4 D5 D6 D7 D8 D9 D10"
+D_ROWS="D1 D2 D3 D4 D5 D6 D7 D8 D9 D10 D11 D12 D13 D14 D15"
+# DV: the D21 filed repro, verbatim, compiles with no error on every leg (`dv_compile`; its `rd` reads `p + 8` stepped by
+# the f64v2, past w, so its exit value is no row).
+dv_compile() {  # $1 leg label  $2 compiler  [$3 VAR=value]
+    cat > "$W/dv.cyr" <<'DVEOF'
+include "lib/syscalls.cyr"
+include "lib/simd.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn rd(p: *f64v2): i64 { return load64(p) * 10 + load64(p + 8); }
+fn dr(p: *f64v2): f64v2 { return **(&p); }
+fn run(): i64 {
+    var w: f64v2 = mkv(41, 7);
+    var p: *f64v2 = &w;
+    var a = rd(*(&p));
+    var b = lanes(**(&p));
+    return a + b;
+}
+syscall(60, run() % 256);
+DVEOF
+    rc=0
+    if [ -n "${3:-}" ]; then env "$3" "$2" < "$W/dv.cyr" > "$W/dv.out" 2>"$W/dv.err" || rc=$?
+    else "$2" < "$W/dv.cyr" > "$W/dv.out" 2>"$W/dv.err" || rc=$?; fi
+    naccept=$((naccept+1))
+    if [ "$rc" != 0 ] || [ ! -s "$W/dv.out" ] || grep -q '^error' "$W/dv.err"; then
+        bad "$1 DV: the filed repro does not compile (rc=$rc: $(grep -m1 '^error' "$W/dv.err" 2>/dev/null))"
+    else good "$1 DV: the filed repro compiles"; fi
+}
 dk_src() {  # $1 row id -> source on stdout
     case "$1" in
     DK1) printf '%s' "$DH"'fn bad(q: *f32v4): f64v2 { return *q; }
@@ -2058,6 +2130,8 @@ refuse_k_all host "$CC"
 accept_tab_all host "$CC" hostr d_src "$D_ROWS"
 accept_tab_all host-ir3 "$CC" hostr d_src "$D_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" dk_src "$DK_ROWS" dk_msg
+dv_compile host "$CC"
+dv_compile host-ir3 "$CC" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr m_src "$M_ROWS"
 accept_tab_all host-ir3 "$CC" hostr m_src "$M_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" mk_src "$MK_ROWS" mk_msg
@@ -2104,6 +2178,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_k_all cx "$W/cycc_cx"
     accept_tab_all cx "$W/cycc_cx" cxr d_src "$D_ROWS"
     refuse_tab_all cx "$W/cycc_cx" dk_src "$DK_ROWS" dk_msg
+    dv_compile cx "$W/cycc_cx"
     accept_tab_all cx "$W/cycc_cx" cxr m_src "$M_ROWS"
     refuse_tab_all cx "$W/cycc_cx" mk_src "$MK_ROWS" mk_msg
     accept_tab_all cx "$W/cycc_cx" cxr cr_src "$CR_ROWS"
@@ -2143,6 +2218,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_k_all aarch64 "$W/cycc_a64"
         accept_tab_all aarch64 "$W/cycc_a64" a64r d_src "$D_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" dk_src "$DK_ROWS" dk_msg
+        dv_compile aarch64 "$W/cycc_a64"
         accept_tab_all aarch64 "$W/cycc_a64" a64r m_src "$M_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" mk_src "$MK_ROWS" mk_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r cr_src "$CR_ROWS"
@@ -2187,6 +2263,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_k_all win64 "$W/cycc_win"
         accept_tab_all win64 "$W/cycc_win" wr_ d_src "$D_ROWS"
         refuse_tab_all win64 "$W/cycc_win" dk_src "$DK_ROWS" dk_msg
+        dv_compile win64 "$W/cycc_win"
         accept_tab_all win64 "$W/cycc_win" wr_ m_src "$M_ROWS"
         refuse_tab_all win64 "$W/cycc_win" mk_src "$MK_ROWS" mk_msg
         accept_tab_all win64 "$W/cycc_win" wr_ cr_src "$CR_ROWS"

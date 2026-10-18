@@ -11400,11 +11400,19 @@ fn _hl_psid(S, a, e): i64 {
 # `**pp += 10` added to it. The operand E [a, e) of the inner `*`: its step word by its tokens (`_hl_pw`), whose pin
 # names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
 fn _hl_dref_psid(S, a, e): i64 {
-    var sid = _pp_sid(_ps_pin(_hl_pw(S, a, e)));
+    var sid = _hl_amp_psid(S, a, e);   # 6.7.15 (D21 A): `*(&ps)` is ps
+    if (sid <= 0) { sid = _pp_sid(_ps_pin(_hl_pw(S, a, e))); }
     _hl_cp = 0;
     if (sid <= 0) { return 0; }
     _hl_cp = 1;
     return sid;
+}
+# 6.7.15 (D21 A) — the operand [a, e) of a dereference that is exactly `& NAME` inside any balanced parentheses, NAME
+# a typed pointer to a struct (`_amp_pw`): the struct (`*(&ps)` is ps, a `*Ps`), else 0.
+fn _hl_amp_psid(S, a, e): i64 {
+    if (_amp_pw(S, a, e) == 0) { return 0; }
+    var b = _ie_unparen(S, a, e);
+    return _hl_psid(S, b + 1, b + 2);
 }
 # The step word of the pointer expression [a, e) by its tokens: a name (a local or parameter, a closure capture, a
 # global — its slot / snapshot / global word), a whole call or method declared `: *T` / `: **T` (`_fn_rps`), a chain
@@ -11427,7 +11435,11 @@ fn _hl_pw(S, a, e): i64 {
         return _hl_pw(S, a, k);
     }
     if (_gz_split(S, a, e) != 0 - 1) { return 0; }
-    if (TOKTYP(S, a) == 8) { return _pp_inner(S, _hl_pw(S, a + 1, e)); }
+    if (TOKTYP(S, a) == 8) {
+        var aw = _amp_pw(S, a + 1, e);   # 6.7.15 (D21 A): `*(&p)` is p
+        if (aw != 0) { return aw; }
+        return _pp_inner(S, _hl_pw(S, a + 1, e));
+    }
     return _hl_cw(S, a, e);
 }
 # ... of a name or a chain [b, e) (`_hl_pchain`'s shapes): its last step's declared word.
