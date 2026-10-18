@@ -18,6 +18,12 @@
 # answer, 78 when every row has the Windows one, and otherwise 1 + the lowest failing Linux row
 # (1..11). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
 # and exit(3) follows it in case it returns.
+#
+# The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
+# a NATIVE aarch64 build would renumber into other calls (the defect above, one level down), so it is
+# built for cx and x86_64 only — and tests/gates/platform/raw_syscall_literals_routed.sh reads this
+# guard as "never reaches aarch64-Linux". cx predefines only CYRIUS_TARGET_CX, so the guard keeps it.
+#ifndef CYRIUS_ARCH_AARCH64
 var lin = 0;
 var pe = 0;
 
@@ -227,3 +233,4 @@ else {
 }
 syscall(231, code);
 syscall(60, 3);
+#endif
