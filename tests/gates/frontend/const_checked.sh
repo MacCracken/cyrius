@@ -69,6 +69,14 @@
 #      the body's repeat of the check's refusal stands down — at the token the check refused (X5: "unexpected
 #      ';'" after "not a compile-time expression") and an assignment to the const it named (X3); each error once
 #      (SX1, SX2, X4, X9); a later statement's own error is still reported (X7)
+#   P  (6.7.15) a refused const context evaluated in place — an enum value, a global array size (pass 1), an
+#      `#assert` (the declaration zone, or a fn) — holds no cascade latch when it ends in sync (its expression, by
+#      the evaluator's grammar, ends at the member's `,` / `;` / `}`, the size's `]`, the assertion's `;`): two in a
+#      row printed only the first (P1-P6, P8-P12), and a struct field's error after one was swallowed too (P13,
+#      P14); one that ends elsewhere keeps the latch (P7, P15); each is evaluated with the latch clear, so an
+#      earlier declaration's latched error no longer swallows it (P18: an #assert said "#assert failed" in place of
+#      its refusal; P20); P5 the control that always printed both, P17 the contexts that hold, P19 6.6.10's
+#      "#assert failed" kept
 #   K  (6.7.15) a method call or a subscript in a const fn, and a method call on a const, name their rule once:
 #      `a.m(..)` / `a[i]` on a const fn's local, parameter or body const ("a method call is not in a const fn: it
 #      calls only const fns" / "a subscript is not in a const fn: ...", at the `.` / `[`; each said "expected ';'"
@@ -132,6 +140,11 @@
 # own latch (the 6.7.14 `if (_panic == 0)`) -> LC4b, X6, X8 RED; `_ce_err_dup` without its token test -> X4, X5,
 # X7 RED; `_ce_bad` not recording `_ce_rti` -> X4, X5, X7 RED; `_cst_lvalue_check` without its `_ce_name_said`
 # -> X3 RED.
+# P (run 2026-10-18): the compiler before the bite (918cf39bb) -> P1-P4, P6, P8, P10-P14, P16, P18, P20 RED (P5, P7,
+# P9, P15, P17, P19 green); `_ce_ctx_open` not clearing -> P20 RED; `_ce_ctx_close` restoring out of sync -> P15
+# RED; never restoring -> P2, P13, P14, P16 RED (and 6.7.11's I5 / V2e: no step past the value); without its
+# stopped-at fallback -> P14 RED; PARSE_GVAR_ARR without its close -> P2, P14 RED; `_assert_open` not clearing ->
+# P18, P19 RED; `_assert_end` never restoring -> P4, P8, P12 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -496,6 +509,29 @@ refusedn x6 1 "X6: a const after a refused first statement is bound (was a FALSE
 refusedn x7 2 "X7: control — a later statement's own error, which the check never reached, is reported" "const fn f(n) {\n    var y = n +;\n    var z = nope2;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression" "3:18: undefined variable 'nope2'"
 refusedn x8 2 "X8: a local const after the check's refusal reports its own value's error (was a FALSE \"undefined variable 'L'\")" "const fn f(n) {\n    var y = zz;\n    const L = ww;\n    return L;\n}\n$FM" "2:13: $CU 'zz'" "3:15: $CU 'ww'"
 refusedn x9 1 "X9: const k: i64; with no value, once" 'const fn cf(): i64 { const k: i64; return 1; }\nfn main() { return cf(); }\nvar r = main();\n' "1:29: $AN"
+# P (6.7.15) — a refused const context evaluated in place (an enum value, a global array size, `#assert`) holds no
+# latch when it ends in sync: the next one, and the next declaration, report their own errors
+# (issues/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md; P1-P5 its table, P6 / P7 its other rows)
+refusedn p1 2 "P1: two enums, each a bad value (was yy only)" 'enum E { Q = yy }\nenum F { R = ww }\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:14: $CU 'ww'"
+refusedn p2 2 "P2: two global array sizes (was yy only)" 'var g: i64[yy];\nvar h: i64[ww];\nsyscall(60, 0);\n' "1:12: $CU 'yy'" "2:12: $CU 'ww'"
+refusedn p3 2 "P3: an enum value, a const, a global array size (was yy only)" 'enum E { Q = yy }\nconst A = 2;\nvar g: i64[ww];\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "3:12: $CU 'ww'"
+refusedn p4 2 "P4: two top-level #asserts (was yy only)" '#assert yy == 1, "a";\n#assert ww == 1, "b";\nsyscall(60, 0);\n' "1:9: $CU 'yy'" "2:9: $CU 'ww'"
+refusedn p5 2 "P5: (control) a global array size, then an enum value" 'var g: i64[yy];\nenum E { Q = ww }\nsyscall(60, 0);\n' "1:12: $CU 'yy'" "2:14: $CU 'ww'"
+refusedn p6 2 "P6: one enum, two bad members (was yy only)" 'enum E { Q = yy, R = ww }\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "1:22: $CU 'ww'"
+refusedn p7 1 "P7: a malformed value, enum E { Q = (1 + }, still one error" 'enum E { Q = (1 + }\nsyscall(60, 0);\n' "1:19: not a compile-time expression"
+refusedn p8 2 "P8: two #asserts in a fn (the resync skipped the second)" 'fn main(): i64 {\n    #assert yy == 1, "a";\n    #assert ww == 1, "b";\n    return 0;\n}\nsyscall(60, main());\n' "2:13: $CU 'yy'" "3:13: $CU 'ww'"
+refusedn p9 2 "P9: a refused #assert over two lines, then another" '#assert yy\n    == 1, "a";\n#assert ww == 1, "b";\nsyscall(60, 0);\n' "1:9: $CU 'yy'" "3:9: $CU 'ww'"
+refusedn p10 2 "P10: a negative global array size, then a bad one" 'var g: i64[0 - 1];\nvar h: i64[ww];\nsyscall(60, 0);\n' "1:17: array size must not be negative" "2:12: $CU 'ww'"
+refusedn p11 2 "P11: a non-integer global array size, then a bad one" 'var g: i64[1.5];\nvar h: i64[ww];\nsyscall(60, 0);\n' "1:12: an array size must be an integer" "2:12: $CU 'ww'"
+refusedn p12 2 "P12: an #assert with a trailing token, then a bad one" '#assert 4 == 4 junk;\n#assert ww == 1, "b";\nsyscall(60, 0);\n' "1:16: #assert: expected" "2:9: $CU 'ww'"
+refusedn p13 3 "P13: a bad enum value, a bad struct field type, a bad array size — each its own" 'enum E { Q = yy }\nstruct S { a: Nope; }\nvar g: i64[ww];\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:19: unknown type 'Nope'" "3:12: $CU 'ww'"
+refusedn p14 2 "P14: an unclosed ( in a global array size ends at its ]: the next declaration reports" 'var g: i64[(1 + ];\nstruct S { a: Nope; }\nsyscall(60, 0);\n' "1:17: not a compile-time expression" "2:19: unknown type 'Nope'"
+refusedn p15 1 "P15: a size that does not end at its ] (yy zz) keeps the latch: no cascade" 'var g: i64[yy zz];\nstruct S { a: Nope; }\nsyscall(60, 0);\n' "1:12: $CU 'yy'"
+refusedn p16 2 "P16: a refused value inside a const fn call's arguments, then the next member" 'const fn h2(a, b) { return a; }\nenum E { Q = h2(1 + , 2), R = ww }\nsyscall(60, 0);\n' "2:21: not a compile-time expression" "2:31: $CU 'ww'"
+exits p17 9 "P17: control — enum values, array sizes and #asserts that hold build and run" 'const N = 2;\nenum E { Q = N + 1, R = Q * 2 }\nvar g: i64[N];\n#assert R == 6, "r";\nfn main(): i64 { g[1] = 3; #assert Q == 3, "q"; return g[1] + R; }\nsyscall(60, main());\n'
+refusedn p18 2 "P18: an #assert after another declaration's latched error: its refusal (was \"#assert failed\")" 'enum E { Q = 1 2 }\n#assert yy == 1, "a";\nsyscall(60, 0);\n' "1:16: expected identifier, got number 2" "2:9: $CU 'yy'"
+refusedn p19 2 "P19: (control) a failing #assert after a latched error still says so (6.6.10)" 'enum E { Q = 1 2 }\n#assert 1 == 2, "f";\nsyscall(60, 0);\n' "1:16: expected identifier, got number 2" "2:17: #assert failed: f"
+refusedn p20 2 "P20: a global array size after a struct's latched syntax error" 'struct S { a: i64 = 3; }\nvar g: i64[yy];\nsyscall(60, 0);\n' "1:19: expected identifier, got '='" "2:12: $CU 'yy'"
 # B (6.7.14) — a statement or a for step that names a const or an enum constant WITHOUT assigning is the
 # syntax error a variable gets there, "expected '='", once — not "cannot assign to const 'N'"
 # (issues/archived/2026-10-08-bare-const-statement-reported-as-assignment.md; the filed repro verbatim, B0). L1 / L2 /
@@ -532,4 +568,4 @@ exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a ca
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), and a bare const statement is expected '=' (B)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), and a bare const statement is expected '=' (B)"

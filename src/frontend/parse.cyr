@@ -3133,6 +3133,24 @@ var _assert_rep_ti = 0 - 1;
 # ate that whole line — `#assert 1 == 1<LF> return 42;` dropped the return, silently. A
 # string AT the cursor is this assert's message wherever it sits (`#assert X,<LF> "msg";`),
 # which is also what the failure printer reads. CHANGELOG [6.6.11]
+# ⛔ 6.7.15 — `#assert`'s const context is evaluated in place with the latch clear (`_assert_open`: the `#assert`
+# stepped, `_ce_asrt` armed), and a refused assertion that ends at its own `;` puts the caller's latch back
+# (`_assert_end`). Two refused `#assert`s printed only the first — the declaration zone never resyncs, and in a fn
+# the resync skipped the next statement — and one after another declaration's latched error printed "#assert
+# failed" in place of its refusal. CHANGELOG [6.7.15]
+fn _assert_open(S): i64 {
+    var pw = _panic;
+    STI(S, GTI(S) + 1);
+    _panic = 0;
+    _ce_asrt = 1;
+    return pw;
+}
+fn _assert_end(S, pw): i64 {
+    _assert_tail(S);
+    if (_panic == 1) { if (TOKTYP(S, GTI(S) - 1) != 5) { return 0; } }
+    _panic = pw;
+    return 0;
+}
 fn _assert_tail(S): i64 {
     var ln = GTLINE(S, GTI(S) - 1);
     if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
@@ -5509,11 +5527,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
     }
     # #assert EXPR OP EXPR, "msg" — compile-time check
     if (typ == 107) {
-        var as_p0 = _panic;
-        STI(S, GTI(S) + 1);
         # 6.7.2 (C1): a CONST CONTEXT — any const expression (consts, enum constants, sizeof,
         # const fn calls, arithmetic, `&&` / `||`); it used to be one atom, or two compared.
-        _ce_asrt = 1;
+        # 6.7.15: with the latch clear, refused in sync (`_assert_open` / `_assert_end`).
+        var as_p0 = _assert_open(S);
         var lhs = _ce_eval_here(S);
         _ce_asrt = 0;
         if (_ce_err == 0) { if (_ce_k == 2) { ERR_MSG(S, "#assert of a string: an assertion is an integer or f64 condition", 64); } }
@@ -5522,9 +5539,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
         # 6.6.10: an operand (or a trailing token) that THIS assert reported has latched
         # _panic; a "#assert failed" after it was a second error for the same mistake. Only
-        # this assert's own latch counts — an earlier, unresynced error must not swallow an
-        # independent failing #assert. CHANGELOG [6.6.10]
-        if (as_p0 == 0) { if (_panic == 1) { lhs = 1; } }
+        # this assert's own latch counts (6.7.15: it began clear) — an earlier, unresynced error
+        # must not swallow an independent failing #assert. CHANGELOG [6.6.10]
+        if (_panic == 1) { lhs = 1; }
         if (lhs == 0) { if (GTI(S) > _assert_rep_ti) {
                 _assert_rep_ti = GTI(S);
                 syscall(SYS_WRITE, 2, "error:", 6);
@@ -5544,7 +5561,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # assert). Every fork's EMITELF refuses on _had_error and main exits with it.
                 _had_error = 1;
             } }
-        _assert_tail(S);
+        _assert_end(S, as_p0);
         return 0;
     }
     # #pe_import("kernel32.dll", "WriteFile"); — declare a PE32+ IAT

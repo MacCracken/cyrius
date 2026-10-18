@@ -3930,6 +3930,8 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     # fix, `enum Sz { N = 16; } var buf[N];` at top level still
     # errored even after the in-fn fix landed.
     var sz_raw = 0;
+    var gs_ti = GTI(S);                  # 6.7.15: the size, refused in sync (`_ce_ctx_close` below)
+    var gs_pw = _ce_ctx_open(0 - 1);
     if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 29) {
         sz_raw = PEEKV(S);
         STI(S, GTI(S) + 1);
@@ -3952,6 +3954,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     # the prefix ladder read as its leading scalar (`i8v16` as i8) has none, so `g[i]` is refused.
     if (eb != ew) { ew = 0; sgn = 0; }
     sz_raw = _arr_size_ok(S, sz_raw, ar_ew);
+    _ce_ctx_close(S, gs_ti, gs_pw, 29, 29, 29);
     var sz = sz_raw * ar_ew;
     if (sz < 8) { sz = 8; }
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
