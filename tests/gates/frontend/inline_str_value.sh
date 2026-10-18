@@ -66,6 +66,11 @@
 # (D16a, the filed repro verbatim: 7, was 0 — the data word); `GP = gt` is not warned "assigning non-pointer to typed
 # pointer" (D16b; it was); a frame's `GP = t` is refused by name with the words `G = t` into a `Str` global has (X14).
 #
+# 6.7.15 (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md): a `*Str` dereference into
+# a `Str` parameter — `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`, `h.eq(*p)` — passes the header p points at (its
+# address, p), as `str_len(p)` does; it passed the header's first word, the data pointer, as the header (SD1, the filed
+# repro verbatim: 5555, was 5500).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
@@ -75,7 +80,7 @@
 # unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
 # statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
-# (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); CMP a handle into the retyped methods builds
+# (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter; CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -141,6 +146,9 @@
 #   i1 `_istr_dst` without its `*Str` answers 3 / 4 -> RED 26: R1 x7 (9 rows: the pa_* rows, R_TOP7 — the data
 #      (the lane before D16)                          word), X14 x4 (built), D16a x7 (0), D16b x4 (warned) + x4 (0)
 #   i2 `_istr_asg` without its SPSC                -> RED 4: D16b x4 (warned "assigning non-pointer to typed pointer")
+#   2026-10-18 (6.7.15, the `*Str` dereference argument):
+#   j1 `_sarg_istr_dx` never called (the lane     -> RED 14: R1 x7 (str_len(*p) read the string as a header: SIGSEGV x5,
+#      before)                                        a cx guest fault, PE 5), SD1 x7 (5500)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -263,7 +271,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=92
+FLOOR=107
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -467,6 +475,32 @@ for leg in $(legs); do
     else ok "D16b \`GP = gt; p = gt;\` ($leg): no warning"; fi
 done
 runs D16b 77 "\`GP = gt; p = gt;\` take gt's static address (was 0)"
+
+# --- SD1: the filed repro (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md), verbatim ---
+cat > "$T/SD1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+fn main(): i64 {
+    alloc_init();
+    var h = str_from("abcde");
+    var p: *Str = h;
+    var pp: **Str = &p;
+    var s1: Str = *p;
+    var s2: Str = **pp;
+    fmt_int(str_len(s1)); fmt_int(str_len(s2)); fmt_int(str_len(*p)); fmt_int(str_len(**pp));
+    return 0;
+}
+syscall(60, main());
+EOF
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" SD1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/SD1.$leg" ]; then bad "SD1 ($leg): did not build (rc $crc): $(grep '^error' "$T/SD1.$leg.err" | head -1 || true)"; continue; fi
+    execute "$leg" SD1
+    if [ "$got" -eq 0 ] && [ "$last" = "5555" ]; then ok "SD1 the filed repro: str_len(*p) / str_len(**pp) pass the header ($leg): $last"
+    else bad "SD1 ($leg): exit $got, prints '$last' (want 5555; 5500 = the data word passed as the header)"; fi
+done
 
 # --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'

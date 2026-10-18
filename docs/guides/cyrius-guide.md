@@ -3192,6 +3192,12 @@ handle's address was stored into `t.data` and `t.len` left stale, and a bare `va
 D7 (1) — its bare name its first word, so `str_len(t)` read the handle's string through that pun and `return
 t;` from a fn returning `Str` compiled.
 
+Through a `p: *Str`, `*p` is the header p points at (a dereference of a struct pointer is the struct, 6.7.10), so a
+`Str` parameter given a whole dereference of a `*Str` — `str_len(*p)`, `f(**pp)` with `pp: **Str`, `str_len(*w.p)`,
+`h.eq(*p)`, `f(*gp())` — is passed p, the header's address, as `str_len(p)` passes it (since 6.7.15; through 6.7.14 the
+dereference read the header's first word, the data pointer, and passed that as the header: `str_len(*p)` was 0). A
+`p: *Str` parameter given `*pp` takes the `*Str` `*pp` reads, and an untyped parameter the word `*p` reads, as before.
+
 At top level, `var H: Str = gt;` with `gt` an inline `Str` global binds a handle global to gt's static
 header, as the same line in a fn does — in the declaration zone and after the first statement alike (the
 user's decision D21 (a), 2026-10-16): `H.len = 3` writes `gt.len`, `H = str_from("xy")` rebinds H and leaves

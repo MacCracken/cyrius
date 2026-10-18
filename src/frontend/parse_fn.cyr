@@ -3025,6 +3025,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
         }
     }
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
+    if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # 6.7.15: `str_len(*p)` passes the header p points at
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
     var ps = GPSC(S);
@@ -3033,6 +3034,33 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     _sarg_type_errf(S, fi, argc, asid, _ess_nm, _ess_fi);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
+    EPUSHR(S);
+    return 1;
+}
+# ⛔ 6.7.15 — A `*Str` DEREFERENCE INTO A `Str` PARAMETER PASSES THE HEADER, NOT ITS FIRST WORD. A `Str` parameter
+# takes a header's address; `*p` of a `p: *Str` is the header (6.7.10's decision 6: through a pointer `*p` is the
+# struct), whose address is p — but the dereference parsed as a word read, so `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`
+# and `h.eq(*p)` passed the string's data pointer as the header (`str_len` 0, or a wild length), silently, on every
+# target, where `var s: Str = *p;` copies the header. The whole argument at the cursor (to its `,` / `)`) is ONE
+# dereference `* E` inside any balanced parentheses, E typed `*Str` (`_hl_psid`: a name, field, call or method, `*pp`
+# of a `**Str`, `p + n`), to a `Str` parameter `argc` of `fi` (not a `p: *Str` one): only E is parsed — rax = the
+# header's address, as `str_len(p)` passes it — the wrap closed, pushed. 1 = pushed; 0 = not that shape, nothing
+# moved. CHANGELOG [6.7.15]
+fn _sarg_istr_dx(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    if (_pptr_param(S, fi, argc) == 1) { return 0; }
+    var st = GTI(S);
+    var a = _ie_unparen(S, st, _arg_next(S, st));
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    if (_hl_psid(S, a + 1, pe) != ss) { return 0; }
+    STI(S, a + 1);   # past the wrap's `(`s and the `*`
+    PARSE_FACTOR(S);
+    _pw_close(S, a - st);
     EPUSHR(S);
     return 1;
 }
