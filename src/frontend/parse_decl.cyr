@@ -8270,8 +8270,10 @@ fn _vrcv_bad(S, ti, ty, term, verb): i64 {
 # single name or a field chain (`_vmc_fi`), `fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`
 # (`_icall_rs_at`) — inside any parentheses wrapping the whole source [ti, `term`) (`_hl_dx_end`, `_ie_unparen`).
 # `start` 0: the call is the whole source; 1: an unwrapped call may start it (`mk2(..) + 1`). `_vcv_a` the call's first
-# token. CHANGELOG [6.7.15]
+# token, `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base)
+# declares no vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
 var _vcv_a = 0;
+var _vcv_nt = 0;
 fn _vcall_vt(S, ti, term, start): i64 {
     var a = ti;
     var pe = 0 - 1;
@@ -8281,18 +8283,29 @@ fn _vcall_vt(S, ti, term, start): i64 {
         pe = _ie_pe;
     }
     _vcv_a = a;
+    _vcv_nt = a;
     var rs = _icall_rs_at(S, a);
     var o = a + 1;
     if (rs > 0 - 2048) {
         var f = _vcall_fi(S, a);
-        if (f < 0) { f = _vmc_fi(S, a); }
+        if (f < 0) {
+            f = _vmc_vfi(S, a);
+            _vcv_nt = _vmc_mt;
+        }
         if (f < 0) { return 0; }
         rs = GFRS(S, f);
         o = _vcall_o;
-    }
+    } else { _vcv_nt = _icall_fti(S, a); }
     if (start == 1) { if (a == ti) { return rs; } }
     if (_call_close(S, o) + 1 != pe) { return 0; }
     return rs;
+}
+# The method call at token `ti` (`_vmc_fi`) when its fn — a generic's base — is declared to return a vector, else -1.
+fn _vmc_vfi(S, ti): i64 {
+    if (_vmc_open(S, ti) < 0) { return 0 - 1; }
+    if (_vmc_mf < 0) { return 0 - 1; }
+    if (GFRS(S, _vmc_mf) > 0 - 2048) { return 0 - 1; }
+    return _vmc_fi(S, ti);
 }
 # The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. 1.
 fn _vrcv_tyerr(S, ti, verb): i64 {
@@ -8386,11 +8399,12 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
 # ..)` (6.7.13's D29) — it bound one word, whatever the scalar path stored (the filed repro: x86_64 / IR=3 / aarch64 1,
 # cx 155, PE 195 where 161 is right). The receive then takes it as the annotated form does (`_vrcv_src` kind 3; on Win64
 # the method's hidden result pointer is the local's address). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 (D28 A, the user's decision, 2026-10-18) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT (the guide's §
+# Parentheses): `var x = (mk2(41, 7));` / `= (s.m2());` / `= (callptr(&mk2, ..));` are the vector's local, as
+# unwrapped — they bound one word (x86_64 / aarch64 0 or 1, cx 154 / 155, PE 195 where 161 is right). Every spelling of
+# the whole call, wrapped or not (`_vcall_vt`). CHANGELOG [6.7.15]
 fn _vrcv_ity(S, ti): i64 {
-    var rs = _icall_rs_at(S, ti);
-    if (rs > 0 - 2048) { return _vmc_whole(S, ti, 5); }
-    if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
-    return rs;
+    return _vcall_vt(S, ti, 5, 0);
 }
 # The vector a whole method call `x.m(..)` at token `ti` (`term` after it) is declared to return (`_vrcv_mty`), else 0 —
 # a method its fn (the base, for a generic) declares no vector is not resolved (`_mcall_gen` would instantiate it
@@ -8411,9 +8425,13 @@ fn _vmc_whole(S, ti, term): i64 {
 # declaration's, D37) / the local `noff` — neither a 16 / 32-byte vector, whose receives refuse another vector
 # themselves — of another type: "vector return type does not match the declared type" / ".. the assigned variable". 0.
 # CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — every spelling of the call (`_vcall_vt`): inside parentheses (D28 A, the user's decision, 2026-10-18: `var
+# x: i64 = (mk2(41, 7));`, `x = (s.m2());` stored a word), `fncallN(&f, ..)` / `callptr(&f, ..)`, and into the
+# declaration a method or an indirect call that STARTS the initialiser (D29 A, 2026-10-18: `var x: i64 = s.m2() + 1;`
+# gave 1, cx / PE 42), as the by-name call has since 6.7.11. CHANGELOG [6.7.15]
 fn _vrcv_mscal(S, pscale, ann): i64 {
     if (ann == 0) { return 0; }
-    var mt = _vmc_whole(S, GTI(S) + 1, 5);
+    var mt = _vcall_vt(S, GTI(S) + 1, 5, 1);
     if (mt == 0) { return 0; }
     if (mt == pscale) { return 0; }
     ERR_MSG(S, "vector return type does not match the declared type", 51);
@@ -8422,10 +8440,10 @@ fn _vrcv_mscal(S, pscale, ann): i64 {
 fn _vasg_mscal(S, noff, term): i64 {
     var li = FINDLOCAL(S, noff);
     if (li < 0) { return 0; }
-    var mt = _vmc_whole(S, GTI(S), term);
+    var mt = _vcall_vt(S, GTI(S), term, 0);
     if (mt == 0) { return 0; }
     if (mt == GLTYPE(S, li)) { return 0; }
-    ERR_MSG(S, "vector return type does not match the assigned variable", 55);
+    _vrcv_tyerr(S, _vcv_a, 1);
     return 0;
 }
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the

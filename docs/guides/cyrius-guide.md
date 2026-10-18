@@ -1880,7 +1880,13 @@ another vector inside parentheses, `var v: f64v2 = (mk4(41));` / `w = (s.mv());`
 a method's vector into a scalar, struct or pointer local, `var x: i64 = s.mv();` / `x = s.mv();`, as `var x: i64 =
 mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows) — and (6.7.15) a by-name
 call into a declaration annotated with a type of no integer width, `var x: f64 = mkv(41, 7);` (`f32`, `bool`,
-`cstring`, an enum), as the method is: through 6.7.14 it compiled, `x` silently a two-slot vector local. Every other source is refused by name (`a value-form vector local is initialised only
+`cstring`, an enum), as the method is: through 6.7.14 it compiled, `x` silently a two-slot vector local.
+Parentheses around the whole call are transparent at these destinations too (6.7.15, the user's decision D28,
+2026-10-18: A): an untyped `var v = (mkv(41, 7));`, `var v = (s.mv());` or `var v = (callptr(&mkv, ..));` is the
+`f64v2` local, and `var x: i64 = (mkv(41, 7));` / `x = (s.mv());` are refused (through 6.7.14 each held one word: 0
+or 1 on x86_64 / aarch64, 154 / 155 on cx, 195 on Windows, and the integer destinations the result's word); and a
+method — or `callptr(&f, ..)` — that STARTS an integer initialiser, `var x: i64 = s.mv() + 1;`, is refused as `mkv(41,
+7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local
