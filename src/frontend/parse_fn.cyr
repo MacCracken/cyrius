@@ -11914,12 +11914,16 @@ fn _cst_stmt(S): i64 {
     if (_ce_err == 1) { v = 0; k = 0; }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     else { STI(S, GTI(S) + 1); }
-    _lc_push(S, name, k, v);
+    _lc_push(S, name, k, v, ti + 1);
     return 0;
 }
-fn _lc_push(S, name, k, v): i64 {
-    if (_lc_tab == 0) { _lc_tab = alloc(65536 * 48); }
+# `nti` is the name token: its offset is where the const was DECLARED (`_lc_decl`) — an `#inline`
+# replay re-parses the body's own tokens, so it stays the declaration's, never the call site's. The
+# aarch64 native-region warning judges a local const by it. CHANGELOG [6.7.15]
+fn _lc_push(S, name, k, v, nti): i64 {
+    if (_lc_tab == 0) { _lc_tab = alloc(65536 * 48); _lc_decl = alloc(65536 * 4); }
     if (_lc_n >= 65536) { ERR_MSG(S, "too many local consts (max 65536)", 33); return 0; }
+    store32(_lc_decl + _lc_n * 4, GTOFF(S, nti) + 1);
     var e = _lc_tab + _lc_n * 48;
     S64(e, name);
     S64(e + 8, GSDEP(S));

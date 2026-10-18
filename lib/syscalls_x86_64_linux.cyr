@@ -460,12 +460,11 @@ fn sys_rmdir(path): i64 {
 }
 
 # Delete a file.
-# cx (this peer is the .cyx guest's table): -ENOSYS. cxvm passes unlink's path to the host
-# untranslated — a guest offset — so it answered -EFAULT and left the file. CHANGELOG [6.7.12]
+# cx (this peer is the .cyx guest's table): cxvm translates unlink's path and serves it through
+# the host's own wrapper since 6.7.15. It answered -ENOSYS here from 6.7.12, when cxvm passed the
+# path to the host untranslated (-EFAULT, the file left), and so file_write_atomic's failure
+# cleanup left its temp on cx. CHANGELOG [6.7.12] [6.7.15]
 fn sys_unlink(path): i64 {
-    #ifdef CYRIUS_TARGET_CX
-    return 0 - 38;
-    #endif
     return syscall(SYS_UNLINK, path);
 }
 

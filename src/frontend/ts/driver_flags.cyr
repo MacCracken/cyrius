@@ -1,0 +1,18 @@
+# ================================================================
+# src/frontend/ts/driver_flags.cyr — the TypeScript modes' driver state
+# ================================================================
+# Set by each driver's argument scan (src/main.cyr inline; every other fork through
+# src/frontend/ts/driver_args.cyr), read by driver_input.cyr and driver.cyr. One of four
+# driver files every compiler includes, so `--lex-ts` / `--parse-ts` / `--emit-js` do the
+# same thing on each (6.7.15's D38). They are split at src/main.cyr's own token positions
+# so that cycc builds byte-identical with them. CHANGELOG [6.7.15]
+var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
+var _ts_parse_only_mode = 0;     # P2.1: --parse-ts CLI flag
+var _ts_emit_js_mode = 0;        # v6.1.10: --emit-js CLI flag (Phase D)
+# v6.0.5: path arg for `--parse-ts <file>` / `--lex-ts <file>` so a
+# scripted invocation doesn't block reading stdin (yeo-cy-test papercut
+# #3, 2026-05-27). The next non-flag arg after a TS mode flag is the
+# input path; if 0, fall back to stdin (preserves all existing callers
+# that dup2 a fixture fd onto stdin).
+var _ts_input_path = 0;
+var _ts_expect_path = 0;

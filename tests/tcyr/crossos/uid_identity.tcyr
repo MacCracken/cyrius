@@ -76,13 +76,14 @@ fn main(): i64 {
     # itself is routed to the variant matching the peer's layout. On macOS-arm64 it was
     # not: SYS_FSTAT=80 was unrouted until this release.)
 #ifdef CYRIUS_TARGET_CX
-    # 6.7.12 (D13): cxvm translates neither fstat's buffer nor unlink's path, so both wrappers
-    # refuse with -ENOSYS on cx — and no probe file is made (it was, and an -EFAULT unlink left it
-    # in the cwd). CHANGELOG [6.7.12]
-    println("SKIP: cx - sys_fstat / sys_unlink refuse with -ENOSYS; the ownership rows are native");
+    # 6.7.12 (D13): cxvm does not translate fstat's buffer, so sys_fstat refuses with -ENOSYS on cx
+    # — and no probe file is made (it was, and an -EFAULT unlink left it in the cwd). unlink's path
+    # is translated since 6.7.15, so sys_unlink reaches the host: -ENOENT for a name never made
+    # (it refused with -ENOSYS from 6.7.12). CHANGELOG [6.7.12] [6.7.15]
+    println("SKIP: cx - sys_fstat refuses with -ENOSYS; the ownership rows are native");
     var cst[160];
     assert_eq(sys_fstat(1, &cst), 0 - 38, "cx: sys_fstat refuses with -ENOSYS");
-    assert_eq(sys_unlink("_uid_identity_cx_never_made"), 0 - 38, "cx: sys_unlink refuses with -ENOSYS");
+    assert_eq(sys_unlink("_uid_identity_cx_never_made"), 0 - 2, "cx: sys_unlink reaches the host (-ENOENT)");
 #endif
 #ifndef CYRIUS_TARGET_CX
     # v6.6.6: PID-suffixed (test_scratch) — the name was fixed and the check driver's cwd is

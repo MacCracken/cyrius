@@ -1,0 +1,172 @@
+# tls12_ch_conformance.tcyr — 6.7.15: the native TLS 1.2 server's ClientHello extension block fills the
+# message, or the handshake is refused with decode_error.
+#
+# issues/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, the 1.2
+# server's arm; the user's decision 6.7.15 D40 (2026-10-18): "Refuse with decode_error". The parse
+# (_tn_12_parse_client_hello) read the block only `if (pos + ext_total <= blen)`, documented lenient:
+# bytes after the block were ignored, and a block that overran the message was read as no
+# extensions at all — no extended master secret, no ALPN, the server's first group — and the
+# handshake went on. Now a block, when present, fills the rest of the message; anything else fails
+# with TLS_ERR_BAD_HANDSHAKE and records decode_error, which tls_native_accept_12 sends. A
+# ClientHello that ends after compression_methods (no block) is still a ClientHello without
+# extensions.
+#   S1-S4  2 / 1 bytes after the block, a block claiming 2 bytes more than the message holds, one
+#          byte where the block's length goes: each refused, decode_error.
+#   C1-C3  controls: the client's own ClientHello as built, the same with no block at all, and an
+#          empty block — each negotiates a suite with no alert.
+#   W1     tls_native_accept_12 over a socketpair, the ClientHello of S1 pre-written: the client end
+#          receives a fatal decode_error, in the clear. A named SKIP where socketpair is refused.
+#   W2     the same through tls_native_accept: its version sniffer (_tn_ch_is_tls13, which only
+#          routes) hands the 1.2 hello to the 1.2 server, which refuses it the same way.
+# On the lib before the fix: S1-S4, W1 and W2 fail.
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+var CERT23 = "3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729";
+var KEY23 = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275";
+
+fn _h(s): i64 { return hex_decode(s, strlen(s)); }
+fn _hn(s): i64 { return strlen(s) / 2; }
+
+var G_SRV = 0;   # the server of the last row
+var G_CH = 0;    # a fresh client's 1.2 ClientHello, 4-byte header first, in a 1024-byte buffer
+var G_CHN = 0;   # its length, header included
+
+fn _new_srv(): i64 {
+    var srv = tls_native_new_server(_h(CERT23), _hn(CERT23), _h(KEY23), _hn(KEY23));
+    tls_native_server_load_creds(srv);
+    return srv;
+}
+
+# A fresh client's own 1.2 ClientHello into G_CH / G_CHN.
+fn _ch12(): i64 {
+    var cl = tls_native_new_client("localhost", 9);
+    G_CH = alloc(1024);
+    memset(G_CH, 0, 1024);
+    G_CHN = tls_native_12_build_client_hello(cl, G_CH, 1024);
+    return G_CHN;
+}
+
+# The offset, in a ClientHello body, of the extension block's 2-byte length.
+fn _ext_off(body): i64 {
+    var pos = 2 + 32;
+    pos = pos + 1 + (load8(body + pos) & 0xFF);       # session id
+    pos = pos + 2 + _tn_be16_r(body + pos);           # cipher suites
+    pos = pos + 1 + (load8(body + pos) & 0xFF);       # compression methods
+    return pos;
+}
+
+# The 1.2 server's parse of the first `blen` bytes of G_CH's body (G_CH's header rewritten to
+# match); the server in G_SRV. Returns the chosen wire suite or the negative TLS_ERR_*.
+fn _parse(blen): i64 {
+    tls_native_handshake_write_header(G_CH, TLS_HS_CLIENT_HELLO, blen);
+    G_SRV = _new_srv();
+    return _tn_12_parse_client_hello(G_SRV, G_CH + 4, blen);
+}
+
+fn _alert(): i64 { return load64(G_SRV + TLS_CTX_OFF_HS_ALERT); }
+
+# Read exactly `n` bytes of `fd` into `buf`; the count read (short at EOF / error).
+fn _read_n(fd, buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var r = sys_read(fd, buf + got, n - got);
+        if (r <= 0) { return got; }
+        got = got + r;
+    }
+    return got;
+}
+
+# W1 / W2: tls_native_accept_12 (`via` 12) or tls_native_accept (`via` 0) over a socketpair, a
+# ClientHello with 2 bytes after its block written to the client end first (one plaintext handshake
+# record). Returns accept's result; the alert record the server sent in G_W1 ((level << 8) |
+# description, read in the clear), or -999 when socketpair is refused.
+var G_W1 = 0;
+fn _w1(via): i64 {
+    G_W1 = 0 - 1;
+    var fds: i64[1];
+    if (sys_socketpair(1, 1, 0, &fds) < 0) { return 0 - 999; }
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    _ch12();
+    var blen = G_CHN - 4 + 2;
+    tls_native_handshake_write_header(G_CH, TLS_HS_CLIENT_HELLO, blen);
+    var rec = alloc(1100);
+    tls_native_record_write_header(rec, TLS_CT_HANDSHAKE, 0x0303, 4 + blen);
+    memcpy(rec + 5, G_CH, 4 + blen);
+    sys_write(cfd, rec, 5 + 4 + blen);
+    var srv = _new_srv();
+    tls_native_set_deadline(srv, clock_now_ns() + 10000000000);
+    var rc = 0;
+    if (via == 12) { rc = tls_native_accept_12(srv, sfd); } else { rc = tls_native_accept(srv, sfd); }
+    sys_close(sfd);
+    var arec = alloc(16);
+    if (_read_n(cfd, arec, 7) != 7) { sys_close(cfd); G_W1 = 0 - 2; return rc; }
+    sys_close(cfd);
+    if ((load8(arec) & 0xFF) != TLS_CT_ALERT) { G_W1 = 0 - 3; return rc; }
+    if ((((load8(arec + 3) & 0xFF) << 8) | (load8(arec + 4) & 0xFF)) != 2) { G_W1 = 0 - 4; return rc; }
+    G_W1 = ((load8(arec + 5) & 0xFF) << 8) | (load8(arec + 6) & 0xFF);
+    return rc;
+}
+
+alloc_init();
+
+test_group("S: a ClientHello whose extension block does not fill the message is refused (D40)");
+_ch12();
+var eo = _ext_off(G_CH + 4);
+var b0 = G_CHN - 4;
+assert_eq(eo + 2 + _tn_be16_r(G_CH + 4 + eo), b0, "setup: the built ClientHello's block fills it");
+assert_eq(_parse(b0 + 2), TLS_ERR_BAD_HANDSHAKE, "S1: 2 bytes after the block refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "S1: decode_error");
+_ch12();
+assert_eq(_parse(b0 + 1), TLS_ERR_BAD_HANDSHAKE, "S2: 1 byte after the block refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "S2: decode_error");
+_ch12();
+_tn_be16_w(G_CH + 4 + eo, _tn_be16_r(G_CH + 4 + eo) + 2);
+assert_eq(_parse(b0), TLS_ERR_BAD_HANDSHAKE, "S3: a block claiming 2 bytes more than the message holds refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "S3: decode_error");
+assert_eq(load64(G_SRV + TLS_CTX_OFF_USE_EMS), 0, "S3: no extended master secret taken from it");
+_ch12();
+assert_eq(_parse(eo + 1), TLS_ERR_BAD_HANDSHAKE, "S4: one byte where the block's length goes refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "S4: decode_error");
+
+test_group("C: controls");
+_ch12();
+assert_eq(_parse(b0) > 0, 1, "C1: the client's own ClientHello negotiates a suite");
+assert_eq(_alert(), 0, "C1: no alert recorded");
+assert_eq(load64(G_SRV + TLS_CTX_OFF_USE_EMS), 1, "C1: its extended_master_secret offer is taken");
+_ch12();
+assert_eq(_parse(eo) > 0, 1, "C2: the same ClientHello ending after compression_methods (no block) negotiates");
+assert_eq(_alert(), 0, "C2: no alert recorded");
+assert_eq(load64(G_SRV + TLS_CTX_OFF_USE_EMS), 0, "C2: no extended master secret");
+assert_eq(load64(G_SRV + TLS_CTX_OFF_GROUP), _tn_groups(G_SRV) & 0xFFFF, "C2: the server's first group");
+_ch12();
+_tn_be16_w(G_CH + 4 + eo, 0);
+assert_eq(_parse(eo + 2) > 0, 1, "C3: an empty block negotiates");
+assert_eq(_alert(), 0, "C3: no alert recorded");
+
+test_group("W: the refusal's alert reaches the wire");
+var w = _w1(12);
+if (w == 0 - 999) {
+    assert_eq(1, 1, "W1: SKIP — socketpair refused on this target");
+} else {
+    assert_eq(w, TLS_ERR_BAD_HANDSHAKE, "W1: tls_native_accept_12 refuses the ClientHello");
+    assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
+      "W1: the server sent a fatal decode_error, in the clear");
+}
+w = _w1(0);
+if (w == 0 - 999) {
+    assert_eq(1, 1, "W2: SKIP — socketpair refused on this target");
+} else {
+    assert_eq(w, TLS_ERR_BAD_HANDSHAKE,
+      "W2: tls_native_accept routes the 1.2 hello to the 1.2 server, which refuses it");
+    assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
+      "W2: the server sent a fatal decode_error, in the clear");
+}
+
+var r = assert_summary();

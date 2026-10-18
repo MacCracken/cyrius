@@ -1,0 +1,23 @@
+# ================================================================
+# src/frontend/ts/driver_input.cyr — where a driver reads its source from
+# ================================================================
+# `--parse-ts <file>` / `--lex-ts <file>` / `--emit-js <file>` name the input; otherwise
+# it is stdin (fd 0). Every driver's source read loop reads `_input_fd` and closes it when
+# it is not 0. Included before that loop; see driver_flags.cyr. CHANGELOG [6.7.15]
+var _input_fd = 0;
+if (_ts_input_path != 0) {
+    if (SYS_OPEN == 2) { _input_fd = syscall(SYS_OPEN, _ts_input_path, 0, 0); }
+    # The openat arm is dead in a PE compiler (SYS_OPEN = 2) and a 4-argument open is no PE
+    # route — compiled out there, as lex.cyr's are (no "not routed" warning). CHANGELOG [6.7.15]
+    #ifndef CYRIUS_TARGET_WIN
+    else { _input_fd = syscall(SYS_OPEN, 0 - 100, _ts_input_path, 0, 0); }
+    #endif
+    if (_input_fd < 0) {
+        syscall(SYS_WRITE, 2, "error: cannot open '", 20);
+        var _pl = 0;
+        while (load8(_ts_input_path + _pl) != 0) { _pl = _pl + 1; }
+        syscall(SYS_WRITE, 2, _ts_input_path, _pl);
+        syscall(SYS_WRITE, 2, "'\n", 2);
+        syscall(SYS_EXIT, 1);
+    }
+}

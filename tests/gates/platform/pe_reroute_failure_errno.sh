@@ -13,23 +13,27 @@
 # and ERROR_MORE_DATA (234) as the count.
 #
 # THE AXES
-#   axis 1  POSIX ORACLE (always): the three crossos .tcyr — pe_read_write_failure_errno,
-#           pe_open_failure_errno, lseek_failed_seek — run natively at 0 failed over their floors.
+#   axis 1  POSIX ORACLE (always): the four crossos .tcyr — pe_read_write_failure_errno,
+#           pe_open_failure_errno, lseek_failed_seek, close_answer (6.7.15) — run natively at 0
+#           failed over their floors.
 #           Their expected values are Linux's, not a table this gate and the emitter made up.
-#   axis 2  EMITTER SHAPE (objdump): a probe with a literal read / write / open / seek and a
-#           var-held syscall number (EPE_SYSCALL_DYNAMIC's argc-4 switch, which emits all four
-#           again) builds for PE. EVERY call through the ReadFile / WriteFile / SetFilePointerEx IAT
-#           slot is followed by `test %eax,%eax; mov <answer>; jne +5; call <stub>`, every
-#           CreateFileW call by `cmp $-1,%rax; jne +5; call <stub>`; ReadFile's go to the read
-#           stub, the other three to the table; at least 2 sites of each (anti-vacuous).
+#   axis 2  EMITTER SHAPE (objdump): a probe with a literal read / write / open / seek / close
+#           and a var-held syscall number (EPE_SYSCALL_DYNAMIC's argc-4 switch, which emits all four
+#           again, and its argc-2 one, which emits the close) builds for PE. EVERY call through the
+#           ReadFile / WriteFile / SetFilePointerEx IAT slot is followed by `test %eax,%eax; mov
+#           <answer>; jne +5; call <stub>`, every CreateFileW call by `cmp $-1,%rax; jne +5; call
+#           <stub>`, every CloseHandle call by `test %eax,%eax; je; xor %eax,%eax; jmp; call
+#           <stub>`; ReadFile's go to the read stub, the other four to the table; at least 2 sites
+#           of each (anti-vacuous).
 #   axis 3  THE TABLE (objdump, the same build): the table stub aligns (`sub $0x28,%rsp`), calls
 #           through GetLastError's IAT slot, and its `mov $errno,%edx` / `cmp $code,%ecx; cmove`
 #           rows map EXACTLY the documented Win32 codes (TABLE below), then `neg %rax; ret`; the
 #           read stub calls the table and then maps 109 and 38 to 0 and 234 to the count it parked.
 #           CI has no wine: this axis is what pins the mapping there.
 #   axis 4  BEHAVIOUR under wine (skipped without wine — NOT hardware; the cass cross-OS leg runs
-#           the same .tcyr): the three filed repros, verbatim (exit 91; exit 2; `-22 4 -22 4`), and
-#           the three .tcyr's PE builds at 0 failed over their floors.
+#           the same .tcyr): the four filed repros, verbatim (exit 91; exit 2; `-22 4 -22 4`; the
+#           close's exit 91, 6.7.15), and
+#           the four .tcyr's PE builds at 0 failed over their floors.
 #   axis 5  STATIC, lib/io.cyr: Windows' CREATE_NEW over an existing DIRECTORY answers
 #           ERROR_ACCESS_DENIED (-13) on real Windows — wine says ERROR_FILE_EXISTS, so no wine run
 #           can see it — and file_create_exclusive's and _io_tmp_taken's CYRIUS_TARGET_WIN arms must
@@ -49,7 +53,18 @@
 #   main.cyr's EPE_ERRNO_STUBS call dropped                 axes 2, 4 FAIL (every PE build stops:
 #                                                           FIXUP's drained assert names the driver)
 #   lib/io.cyr's Windows arms back to `== 0 - 1`            axis 5 FAIL (axis 4 PASSES: wine)
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14]
+# 6.7.15 — CloseHandle joins the class (issues/2026-10-16-pe-close-returns-closehandle-bool.md):
+# ECLOSE_PE handed back CloseHandle's BOOL, so a good close answered 1 and a failed one 0 (the
+# filed repro exited 110, Linux 91; file_close_r was never Err). It answers 0, or -errno through
+# the same table stub. Axis 1 and axis 4 run tests/tcyr/crossos/close_answer.tcyr; axis 2's probe
+# has a literal and a var-held close, and every CloseHandle IAT call must be followed by
+# `test %eax,%eax; je; xor %eax,%eax; jmp; call <the table stub>`.
+#   mutant (2026-10-18, 6.7.15 platform lane, P2)             result
+#   the pre-fix compiler (b2e1f4c48: _pe_srw_call_1arg)     axis 2 FAIL (the CloseHandle sites have no
+#                                                           failure check); axis 4 FAIL (the close repro
+#                                                           exits 110, close_answer 4 passed 9 failed)
+#   ECLOSE_PE's `xor eax,eax` dropped (TRUE answers the BOOL 1)  axis 2 FAIL; axis 4 FAIL
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_reroute_failure_errno: build/cycc missing"; exit 77; }
@@ -57,11 +72,12 @@ IO="$ROOT/lib/io.cyr"
 T1="$ROOT/tests/tcyr/crossos/pe_read_write_failure_errno.tcyr"
 T2="$ROOT/tests/tcyr/crossos/pe_open_failure_errno.tcyr"
 T3="$ROOT/tests/tcyr/crossos/lseek_failed_seek.tcyr"
-for f in "$IO" "$T1" "$T2" "$T3"; do
+T4="$ROOT/tests/tcyr/crossos/close_answer.tcyr"
+for f in "$IO" "$T1" "$T2" "$T3" "$T4"; do
     [ -f "$f" ] || { echo "FAIL: pe_reroute_failure_errno: $f is missing"; exit 1; }
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts).
-F1=10; F2=10; F3=13
+F1=10; F2=10; F3=13; F4=13
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -88,7 +104,7 @@ summary() { tr -d '\r' < "$1" | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*
 
 # axis 1: the POSIX oracle.
 mkdir -p "$D/n"
-for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3"; do
+for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4"; do
     t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
     ( cd "$ROOT" && "$CC" < "$t" > "$D/n/$b" 2> "$D/n/$b.err" ) || true
     if [ ! -s "$D/n/$b" ]; then
@@ -108,12 +124,15 @@ done
 cat > "$D/shape.cyr" <<'EOF'
 var buf[16];
 fn by_number(nr, a, b, c): i64 { return syscall(nr, a, b, c); }
+fn by_number1(nr, a): i64 { return syscall(nr, a); }
 fn main(): i64 {
     var r = syscall(0, 0 - 999, &buf, 16);
     r = r + syscall(1, 0 - 999, &buf, 16);
     r = r + syscall(2, "no_such_shape_x", 0, 0);
     r = r + syscall(8, 0 - 999, 0, 0);
+    r = r + syscall(3, 0 - 999);
     r = r + by_number(0, 0 - 999, &buf, 16);
+    r = r + by_number1(3, 0 - 999);
     return r;
 }
 var r = main();
@@ -128,13 +147,14 @@ else
     objdump -dw "$D/shape.exe" > "$D/dis" 2>/dev/null
     va() { s=$(awk -v n="$1" '$NF == n {print $1; exit}' "$D/imp"); [ -n "$s" ] && printf '0x%x' $((0x140000000 + 0x$s)); }
     RF=$(va ReadFile); WF=$(va WriteFile); SF=$(va SetFilePointerEx); CF=$(va CreateFileW); GL=$(va GetLastError)
-    if [ -z "$RF" ] || [ -z "$WF" ] || [ -z "$SF" ] || [ -z "$CF" ]; then
-        bad "axis 2: the probe does not import ReadFile / WriteFile / SetFilePointerEx / CreateFileW ('$RF' '$WF' '$SF' '$CF')"
+    CH=$(va CloseHandle)
+    if [ -z "$RF" ] || [ -z "$WF" ] || [ -z "$SF" ] || [ -z "$CF" ] || [ -z "$CH" ]; then
+        bad "axis 2: the probe does not import ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle ('$RF' '$WF' '$SF' '$CF' '$CH')"
     elif [ -z "$GL" ]; then
         bad "axis 2: the probe does not import GetLastError — no failure reads it"
     else
         # Per IAT call site: "<api> <ok|BAD:why> <stub target>". Instruction text only (after the 2nd tab).
-        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" '
+        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" -v ch="$CH" '
             NF >= 3 { n++; t[n] = $3 }
             END {
                 for (i = 1; i <= n; i++) {
@@ -143,8 +163,24 @@ else
                     api = ""
                     if (k == rf) api = "ReadFile"; else if (k == wf) api = "WriteFile"
                     else if (k == sf) api = "SetFilePointerEx"; else if (k == cf) api = "CreateFileW"
+                    else if (k == ch) api = "CloseHandle"
                     if (api == "") continue
                     why = "ok"; j = i + 1
+                    if (api == "CloseHandle") {
+                        # test; je .fail; xor eax,eax (TRUE: 0); jmp .done; .fail: call <stub>
+                        if (t[j] !~ /^test +%eax,%eax/) why = "BAD:no-test-eax"
+                        j++
+                        if (t[j] !~ /^je /) why = "BAD:no-je"
+                        j++
+                        if (t[j] !~ /^xor +%eax,%eax/) why = "BAD:no-xor-eax"
+                        j++
+                        if (t[j] !~ /^jmp /) why = "BAD:no-jmp"
+                        j++
+                        s = t[j]
+                        if (s !~ /^call +0x[0-9a-f]+/) { why = "BAD:no-stub-call"; s = "-" } else { sub(/^call +/, "", s); sub(/ .*/, "", s) }
+                        print api, why, s
+                        continue
+                    }
                     if (api == "CreateFileW") {
                         if (t[j] !~ /^cmp +\$0xffffffffffffffff,%rax/) why = "BAD:no-cmp-rax-minus-1"
                         j++
@@ -161,7 +197,7 @@ else
                     print api, why, s
                 }
             }' "$D/dis" > "$D/sites"
-        for api in ReadFile WriteFile SetFilePointerEx CreateFileW; do
+        for api in ReadFile WriteFile SetFilePointerEx CreateFileW CloseHandle; do
             c=$(awk -v a="$api" '$1 == a' "$D/sites" | wc -l | tr -d ' ')
             b=$(awk -v a="$api" '$1 == a && $2 != "ok" {print $2; exit}' "$D/sites")
             if [ "$c" -lt 2 ]; then bad "axis 2: only $c $api site(s) in the probe (floor 2: the literal and the var-held route)"
@@ -171,7 +207,7 @@ else
         TS=$(awk '$1 != "ReadFile" {print $3}' "$D/sites" | sort -u)
         RS=$(awk '$1 == "ReadFile" {print $3}' "$D/sites" | sort -u)
         if [ "$(printf '%s\n' "$TS" | wc -l | tr -d ' ')" != 1 ] || [ "$(printf '%s\n' "$RS" | wc -l | tr -d ' ')" != 1 ] || [ "$TS" = "$RS" ]; then
-            bad "axis 2: the write / seek / open sites must share ONE table stub and ReadFile's ONE read stub (table: $(echo $TS), read: $(echo $RS))"
+            bad "axis 2: the write / seek / open / close sites must share ONE table stub and ReadFile's ONE read stub (table: $(echo $TS), read: $(echo $RS))"
         else
             ok
             # axis 3: the table stub, from its first instruction to its ret.
@@ -234,7 +270,7 @@ else
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$1" > "$2" 2>&1 )
     }
-    # The three filed repros, verbatim.
+    # The four filed repros, verbatim.
     cat > "$D/rd.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -273,7 +309,20 @@ fmt_int(r4); println("");
 file_close(fd);
 xunlink("lseek_neg.tmp");
 EOF
-    for p in rd op sk; do
+    # 6.7.15: the close repro (issues/2026-10-16-pe-close-returns-closehandle-bool.md), verbatim.
+    cat > "$D/cl.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+alloc_init();
+var fd = file_open("cl_probe.tmp", O_WRONLY | O_CREAT | O_TRUNC, 420);
+var ok = sys_close(fd);                      # a real descriptor: 0 on Linux
+var bad = sys_close(0 - 999);                # not a descriptor / handle: -9 on Linux
+xunlink("cl_probe.tmp");
+syscall(SYS_EXIT, 100 + ok * 10 + bad);      # Linux 91; Windows 110 (TRUE 1, FALSE 0)
+EOF
+    for p in rd op sk cl; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.err" ) || true
     done
     if [ ! -s "$D/w/rd.exe" ]; then bad "axis 4: the PE build of the read repro produced no binary"
@@ -289,7 +338,11 @@ EOF
         sk=$(tr -d '\r' < "$D/sk.out" | tr '\n' ' ' | sed 's/ *$//')
         if [ "$sk" = "-22 4 -22 4" ]; then ok; else bad "axis 4: the seek probe prints '$sk' under wine (want '-22 4 -22 4'; '0 4 0 4' is the old answer)"; fi
     fi
-    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3"; do
+    if [ ! -s "$D/w/cl.exe" ]; then bad "axis 4: the PE build of the close repro produced no binary"
+    else xrc=0; _wine cl.exe "$D/cl.out" || xrc=$?
+        if [ "$xrc" = 91 ]; then ok; else bad "axis 4: the close repro exits $xrc under wine (want 91: a good close 0, close(-999) -9; 110 is the old BOOL answer)"; fi
+    fi
+    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$t" > "$D/w/$b.exe" 2> "$D/$b.werr" ) || true
         if [ ! -s "$D/w/$b.exe" ]; then
@@ -307,6 +360,6 @@ EOF
 fi
 
 echo "$pass passed, $fail failed"
-[ "$pass" -ge 8 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 8)"; exit 1; }
+[ "$pass" -ge 9 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 9)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW answers -errno through one GetLastError table; a drained pipe still reads 0"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0"

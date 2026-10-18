@@ -20,6 +20,10 @@
 #          pre-written: the client sends the fatal alert its refused ServerHello recorded, in the
 #          clear. A named SKIP where socketpair is refused (Windows, agnos).
 # On the lib before the fix: R1-R4, D1, D2, A1-A4, V1-V7's alert rows and W1 fail.
+#   T0-T2  6.7.15 (issues/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md):
+#          the block fills the ServerHello — the filed repro's `_sh12_trail` verbatim, 0 bytes after
+#          the block TLS_OK, 2 (and 1) refused with decode_error; `pos + ext_total > blen` let them
+#          through. On the 6.7.14 lib T1 and T2 fail.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -84,6 +88,26 @@ fn _sh12x(ht, ver, suite, comp, exts_hex): i64 {
 }
 
 fn _alert(): i64 { return load64(G_CL + TLS_CTX_OFF_HS_ALERT); }
+
+# The 6.7.15 filed repro's helper, verbatim.
+fn _sh12_trail(n): i64 {          # a 1.2 ServerHello whose handshake length runs n bytes past its block
+    var cl = tls_native_new_client("localhost", 9);
+    var ch = alloc(1024);
+    tls_native_12_build_client_hello(cl, ch, 1024);
+    var m = alloc(512);
+    var b = m + 4;
+    _tn_be16_w(b, 0x0303);
+    memset(b + 2, 0x11, 32);
+    store8(b + 34, 0);
+    _tn_be16_w(b + 35, 0xC02C);
+    store8(b + 37, 0);
+    _tn_be16_w(b + 38, 5);
+    memcpy(b + 40, _h("ff01000100"), 5);
+    memset(b + 45, 0, n);
+    tls_native_handshake_write_header(m, 2, 45 + n);
+    G_CL = cl;
+    return tls_native_client_parse_server_hello_12(cl, m, 4 + 45 + n);
+}
 var G_SEL = 0;   # the last _sel()'s protocol bytes
 fn _sel(): i64 {
     G_SEL = alloc(16);
@@ -242,6 +266,15 @@ assert_eq(_sh12(0, "", 0), TLS_OK, "C5: an empty extension block -> TLS_OK");
 assert_eq(_sh12(0, "00000000ff01000100", 0), TLS_OK,
   "C6: an empty server_name (offered: a DNS host) and renegotiation_info, two types once each -> TLS_OK");
 assert_eq(_alert(), 0, "C6: no alert recorded");
+
+test_group("T: the extension block fills the ServerHello (6.7.15)");
+assert_eq(_sh12_trail(0), TLS_OK, "T0: 0 bytes after the block -> TLS_OK");
+assert_eq(_alert(), 0, "T0: no alert recorded");
+assert_eq(_sh12_trail(2), TLS_ERR_BAD_HANDSHAKE, "T1: 2 bytes after the block refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "T1: decode_error");
+assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "T1: the ctx failed");
+assert_eq(_sh12_trail(1), TLS_ERR_BAD_HANDSHAKE, "T2: 1 byte after the block refused");
+assert_eq(_alert(), TLS_AD_DECODE_ERROR, "T2: decode_error");
 
 test_group("W1: the refusal's alert reaches the wire (tls_native_connect_12)");
 var w = _w1();

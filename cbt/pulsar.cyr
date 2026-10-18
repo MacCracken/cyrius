@@ -132,9 +132,9 @@ fn _pulsar_install_bin(src, dst): i64 {
 # with `cycc compile failed`, a message about the compiler for a problem that is about the
 # verb. Derived from `_self_host_src()` (cbt/build.cyr, bite 23a) rather than a fresh
 # `#ifdef` ladder, for the reason bite 23b gives: the mapping's ARM ORDER decides the
-# answer and a second copy drifts. ⚠ Deliberately NOT `_target_cc_has_js()`, which today
-# computes the same comparison — that predicate answers "does this host's cycc have a TS
-# front end", a different question whose answer merely coincides. CHANGELOG [6.6.6].
+# answer and a second copy drifts. ⚠ Deliberately NOT `_target_cc_has_js()` — that predicate
+# answers "does this host's cycc have a TS front end", a different question (every host fork
+# has one since 6.7.15). CHANGELOG [6.6.6].
 fn _pulsar_host_is_x86_linux(): i64 {
     if (streq(_self_host_src(), "src/main.cyr") == 1) { return 1; }
     return 0;

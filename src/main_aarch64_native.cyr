@@ -38,6 +38,11 @@ include "src/backend/aarch64/jump.cyr"
 # pre-v5.6.32 self-host parse failure on the Pi.
 include "src/common/ir.cyr"
 include "src/frontend/lex.cyr"
+# The TypeScript front end and the JS emitter, as src/main.cyr includes them (6.7.15's D38:
+# --lex-ts / --parse-ts / --emit-js run them on every compiler). CHANGELOG [6.7.15]
+include "src/frontend/ts/lex.cyr"
+include "src/frontend/ts/parse.cyr"
+include "src/backend/js/emit.cyr"
 
 # v6.0.7 — alloc + vec for return-patch vec storage. Native aarch64
 # runs on the Pi; alloc.cyr's CYRIUS_TARGET_LINUX branch fires (same
@@ -70,6 +75,10 @@ fn EMITMACHO_ARM64(S): i64 { return 0; }
 # to openat(56) so the AT_FDCWD = -100 branch fires. `--strict` is ACCEPTED and
 # does nothing (see src/main.cyr). CHANGELOG [6.6.20]
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
+# The TypeScript modes' flags and their argument scan (src/frontend/ts/driver_args.cyr).
+# CHANGELOG [6.7.15]
+include "src/frontend/ts/driver_flags.cyr"
+include "src/frontend/ts/driver_args.cyr"
 var _vbuf[256];
 var _vfd = 0;
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
@@ -80,6 +89,8 @@ if (_vn > 0) {
     var _vi = 0;
     while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
     while (_vi < _vn) {
+        # The TypeScript flags and the path after one (src/frontend/ts/driver_args.cyr). CHANGELOG [6.7.15]
+        _ts_arg(&_vbuf + _vi, _vn - _vi);
         # "--ve" (--version) — print + exit. v6.6.6: MISSING here, which is the
         # shipped ARM-Linux compiler (`cyrius pulsar` installs this fork as
         # `cycc`), so on a Raspberry Pi / aarch64 box `cycc --version` compiled
@@ -150,17 +161,19 @@ rp_vec = vec_new();
 # The region bases + caps, shared by six drivers. CHANGELOG [6.6.20]
 include "src/common/heap_regions.cyr"
 
+# A TypeScript mode's `<file>` argument, else stdin. CHANGELOG [6.7.15]
+include "src/frontend/ts/driver_input.cyr"
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(SYS_READ, 0, S + _SRCB + bl, _SRC_CAP - bl);
+    var n = syscall(SYS_READ, _input_fd, S + _SRCB + bl, _SRC_CAP - bl);
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
         if (bl >= _SRC_CAP) {
             var probe[1];
-            var pn = syscall(SYS_READ, 0, &probe, 1);
+            var pn = syscall(SYS_READ, _input_fd, &probe, 1);
             if (pn > 0) {
                 syscall(SYS_WRITE, 2, "error: input exceeds the 24MB source buffer
 ", 44);
@@ -170,7 +183,10 @@ while (done == 0) {
         }
     }
 }
+if (_input_fd != 0) { syscall(SYS_CLOSE, _input_fd); }
 SBL(S, bl);
+# The TypeScript modes run here and exit; a cyrius compile passes through. CHANGELOG [6.7.15]
+include "src/frontend/ts/driver.cyr"
 
 # Preprocess includes
 _init_cyrius_lib();

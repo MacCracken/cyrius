@@ -37,6 +37,7 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/tls.cyr"
+include "lib/sha1.cyr"     # the test's own SHA-1 (the library has its own, _tn_sha1)
 
 var _ts_p256 = 0;          # DER, 385 bytes — the planted root (CN=localhost, 2026-06-01 .. 2036-05-29)
 var _ts_p256_len = 385;
@@ -305,9 +306,10 @@ fn _tp_deny_keys(a, b): i64 {
     return _tn_pol_new(n, keys, 0, 0, 0, 0);
 }
 
-# The SHA-384 of the tbsCertificate TLV of the DER certificate `der`, whatever its signature algorithm
-# — the test's own reading (the outer SEQUENCE's header, then its first element's whole TLV).
-fn _tp_tbs384(der): i64 {
+# The tbsCertificate TLV of the DER certificate `der` hashed with the `len`-byte digest (20 SHA-1 by
+# lib/sha1.cyr, 32 SHA-256, 48 SHA-384, 64 SHA-512), whatever its signature algorithm — the test's own
+# reading (the outer SEQUENCE's header, then its first element's whole TLV).
+fn _tp_tbs(der, len): i64 {
     var p = 2;
     var b1 = load8(der + 1) & 0xFF;
     if (b1 > 0x80) { p = 2 + (b1 & 0x7F); }
@@ -322,9 +324,17 @@ fn _tp_tbs384(der): i64 {
         n = ((load8(der + p + 2) & 0xFF) << 8) | (load8(der + p + 3) & 0xFF);
         hl = 4;
     }
-    var h = alloc(48);
-    sha384(der + p, hl + n, h);
+    var h = alloc(64);
+    if (len == 20) { sha1(der + p, hl + n, h); }
+    if (len == 32) { sha256(der + p, hl + n, h); }
+    if (len == 48) { sha384(der + p, hl + n, h); }
+    if (len == 64) { sha512(der + p, hl + n, h); }
     return h;
+}
+
+# The SHA-384 of the tbsCertificate TLV of `der` (_tp_tbs).
+fn _tp_tbs384(der): i64 {
+    return _tp_tbs(der, 48);
 }
 
 # A policy that distrusts the TBS SHA-384s of the certificates `a` and `b` (parsed; 0 = none) — the
@@ -340,7 +350,13 @@ fn _tp_deny_tbs(a, b): i64 {
         memcpy(hs + n * 48, _tp_tbs384(load64(b)), 48);
         n = n + 1;
     }
-    return _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), n, hs);
+    return _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 48, n, hs);
+}
+
+# A policy that distrusts the `len`-byte TBS hash of the certificate `a` (parsed) — the disallowed CTL's
+# 20 / 32 / 48 / 64-byte form (6.7.15).
+fn _tp_deny_sig(len, a): i64 {
+    return _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), len, 1, _tp_tbs(load64(a), len));
 }
 
 # A policy that distrusts the certificate `c` (parsed) byte for byte.
@@ -429,8 +445,16 @@ fn test_policy_deny_rows(): i64 {
     assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, 0)), TLS_OK, "an unrelated TBS SHA-384 denied: verifies");
     if (anchor != 0) {
         assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(anchor, 0)), TLS_OK,
-          "the SHA-256-signed anchor's TBS SHA-384 listed: verifies (only a SHA-384-signed certificate is judged)");
+          "the SHA-256-signed anchor's TBS SHA-384 listed: verifies (only SHA-384-signed ones are judged by it)");
+        # 6.7.15: every digest's list — the anchor is sha256WithRSA, so its 32-byte signature hash binds it.
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, anchor)), TLS_ERR_CERT_INVALID,
+          "the SHA-256-signed anchor's TBS SHA-256 denied (6.7.15): refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(20, anchor)), TLS_OK,
+          "  its TBS SHA-1 listed: verifies (not its signature hash)");
     }
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, other)), TLS_OK, "an unrelated TBS SHA-256 denied: verifies");
+    assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(64, ica)), TLS_OK,
+      "the SHA-384-signed intermediate's TBS SHA-512 listed: verifies (not its signature hash)");
     # A caller's own bundle carries no system policy: installing one clears it.
     var c = tls_native_new_client("www.microsoft.com", 17);
     store64(c + TLS_CTX_OFF_CA_POLICY, _tp_deny_keys(ica, 0));
@@ -479,19 +503,22 @@ fn test_ctl_tbs_row(): i64 {
     # The CTL's six 48-byte entries, in its order (cass and the public disallowedcert.stl of 2025-09-04).
     var six = hex_decode("6e5ba5a2e61bd0d3831c2caa33ae7ce5c95e92abf0592ff8038ccdbc6b4be61d3718d1308fe489209d2b283ce4bf8e25e0204e0f7ba06e1f75608be1bd6267c5e0b61364cc3b4e871f6210547d0bb836da996da1d5496b14b19b4b695eaf6a57dc820ca48d97355f2802fd38413783c01d3c3b8d02aad00709e66d5b5bee7db02184e6ba2571941f9525f8ab68e93c6da1a13d594d27718794367ff3db7100403971f686857d11b811d0be96ba0cc0756a2d3e64aecfe6af08584488b6f96f34e205022402a5a94315cb9d573bcea9d112f159a55f0c9d26ea79e087b4aa27513e6048b0088eec5e0fe60ac52dc532604fc605c322f76f4d655179db89629f3928c36d92b63f609bdd58294387986e121482541b3fc246ab9bfdc1d6e4fef7a3", 576);
     var h = alloc(48);
-    assert_eq(_tn_tbs_sha384(_ts_dm, _ts_dm_len, h), 1, "DarkMatter Secure CA is SHA-384-signed: its TBS is hashed");
+    assert_eq(_tn_tbs_sighash(_ts_dm, _ts_dm_len, h), 48,
+      "DarkMatter Secure CA is SHA-384-signed: its signature hash is 48 bytes");
     assert_eq(memeq(h, six, 48), 1, "  its TBS SHA-384 is the CTL's first entry, 6e5ba5a2 e61bd0d3 ... e4bf8e25");
     assert_eq(memeq(h, _tp_tbs384(_ts_dm), 48), 1, "  and the test's own reading of the TBS agrees");
-    var pol = _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), 6, six);
+    var pol = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 48, 6, six);
     assert_eq(_tn_pol_der_denied(pol, _ts_dm, _ts_dm_len), 1,
       "a policy holding the CTL's six 48-byte entries denies it");
     assert_eq(_tn_pol_der_denied(pol, _ts_mi, _ts_mi_len), 0,
       "  and not another SHA-384-signed CA (Microsoft TLS G2 RSA CA OCSP 04)");
     assert_eq(_tn_pol_der_denied(pol, _ts_p256, _ts_p256_len), 0, "  nor an unrelated certificate");
-    # Only a SHA-384-signed certificate has that hash: the P-256 fixture (ecdsa-with-SHA256) is not
-    # judged even when the SHA-384 of its TBS is listed ...
-    assert_eq(_tn_tbs_sha384(_ts_p256, _ts_p256_len, h), 0, "an ecdsa-with-SHA256 certificate has no SHA-384 TBS hash");
-    var p2 = _tn_pol_set_tbs384(_tn_pol_new(0, 0, 0, 0, 0, 0), 1, _tp_tbs384(_ts_p256));
+    # Only a SHA-384-signed certificate is judged by the 48-byte list: the P-256 fixture
+    # (ecdsa-with-SHA256; its signature hash is the 32-byte SHA-256) is not even when the SHA-384 of its
+    # TBS is listed ...
+    assert_eq(_tn_tbs_sighash(_ts_p256, _ts_p256_len, h), 32,
+      "an ecdsa-with-SHA256 certificate's signature hash is 32 bytes (6.7.15)");
+    var p2 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 48, 1, _tp_tbs384(_ts_p256));
     assert_eq(_tn_pol_der_denied(p2, _ts_p256, _ts_p256_len), 0, "  the SHA-384 of its TBS listed: not denied");
     # ... and the same bytes labelled ecdsa-with-SHA384 (the outer signatureAlgorithm's last OID byte,
     # 02 -> 03; nothing here verifies the signature) are.
@@ -499,13 +526,76 @@ fn test_ctl_tbs_row(): i64 {
     memcpy(e, _ts_p256, _ts_p256_len);
     assert_eq(load8(e + 310) & 0xFF, 2, "the fixture's outer signatureAlgorithm ends ecdsa-with-SHA256's 02");
     store8(e + 310, 3);
-    assert_eq(_tn_tbs_sha384(e, _ts_p256_len, h), 1, "relabelled ecdsa-with-SHA384: its TBS is hashed");
+    assert_eq(_tn_tbs_sighash(e, _ts_p256_len, h), 48, "relabelled ecdsa-with-SHA384: its TBS SHA-384");
     assert_eq(_tn_pol_der_denied(p2, e, _ts_p256_len), 1, "  and the listed hash denies it");
     # A certificate whose shape cannot be read while TBS hashes are listed is not judged, so not trusted.
-    assert_eq(_tn_tbs_sha384(_ts_dm, 40, h), 0 - 1, "a truncated certificate: no shape (-1)");
+    assert_eq(_tn_tbs_sighash(_ts_dm, 40, h), 0 - 1, "a truncated certificate: no shape (-1)");
     assert_eq(_tn_pol_der_denied(pol, _ts_dm, 40), 2, "  with TBS hashes listed: cannot be judged (2)");
     assert_eq(_tn_pol_der_denied(_tn_pol_new(0, 0, 0, 0, 0, 0), _ts_dm, 40), 0,
       "  with none listed it is never hashed: 0");
+    return 0;
+}
+
+# Every target (6.7.15): the CTL's 20, 32 and 64-byte identifiers are the signature hashes of a SHA-1,
+# SHA-256 and SHA-512-signed certificate, as its 48-byte ones are of a SHA-384-signed one (crypt32's
+# prop 15 has exactly those lengths on cass's ROOT store: 22 SHA-1-signed roots 20 B, 16 SHA-256 32 B,
+# 15 SHA-384 48 B). DigiNotar Root CA is sha1WithRSA: crypt32 gives it prop 15 00bbba38 ... 26879511
+# (measured on cass, 2026-10-16). A list judges only certificates signed with its own digest.
+fn test_ctl_sighash_row(): i64 {
+    test_group("the disallowed CTL's 20 / 32 / 64-byte identifiers: SHA-1 / 256 / 512 signature hashes (6.7.15)");
+    var h = alloc(64);
+    var dn20 = hex_decode("00bbba38b51af4d816e03a4eb309140626879511", 40);
+    assert_eq(_tn_tbs_sighash(_ts_dn, _ts_dn_len, h), 20,
+      "DigiNotar Root CA is sha1WithRSA: its signature hash is 20 bytes");
+    assert_eq(memeq(h, dn20, 20), 1, "  crypt32's prop 15 for it, 00bbba38 b51af4d8 ... 26879511");
+    assert_eq(memeq(h, _tp_tbs(_ts_dn, 20), 20), 1, "  and lib/sha1.cyr over the test's own reading of its TBS");
+    var p20 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 20, 1, dn20);
+    assert_eq(_tn_pol_der_denied(p20, _ts_dn, _ts_dn_len), 1, "a policy holding that 20-byte entry denies it");
+    assert_eq(_tn_pol_der_denied(p20, _ts_p256, _ts_p256_len), 0, "  and not an unrelated certificate");
+    # SHA-256: the P-256 fixture is ecdsa-with-SHA256.
+    assert_eq(_tn_tbs_sighash(_ts_p256, _ts_p256_len, h), 32,
+      "the ecdsa-with-SHA256 fixture's signature hash is 32 bytes");
+    assert_eq(memeq(h, _tp_tbs(_ts_p256, 32), 32), 1, "  the SHA-256 of its TBS");
+    var p32 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 32, 1, _tp_tbs(_ts_p256, 32));
+    assert_eq(_tn_pol_der_denied(p32, _ts_p256, _ts_p256_len), 1, "its TBS SHA-256 listed: denied");
+    var q32 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 32, 1, _tp_tbs(_ts_mr, 32));
+    assert_eq(_tn_pol_der_denied(q32, _ts_p256, _ts_p256_len), 0, "  another TBS SHA-256 listed: not denied");
+    var d32 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 32, 1, _tp_tbs(_ts_dm, 32));
+    assert_eq(_tn_pol_der_denied(d32, _ts_dm, _ts_dm_len), 0,
+      "a SHA-384-signed certificate with the SHA-256 of its TBS listed: not denied (judged by its own digest)");
+    # SHA-512: the fixture relabelled ecdsa-with-SHA512 (its outer OID's last byte 02 -> 04) and DigiNotar
+    # relabelled sha512WithRSA (05 -> 0d); nothing here verifies a signature.
+    var e = alloc(_ts_p256_len);
+    memcpy(e, _ts_p256, _ts_p256_len);
+    store8(e + 310, 4);
+    assert_eq(_tn_tbs_sighash(e, _ts_p256_len, h), 64, "relabelled ecdsa-with-SHA512: 64 bytes");
+    assert_eq(memeq(h, _tp_tbs(e, 64), 64), 1, "  the SHA-512 of its TBS");
+    var p64 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 64, 1, _tp_tbs(e, 64));
+    assert_eq(_tn_pol_der_denied(p64, e, _ts_p256_len), 1, "  its TBS SHA-512 listed: denied");
+    assert_eq(_tn_pol_der_denied(p64, _ts_p256, _ts_p256_len), 0,
+      "  the same TBS signed ecdsa-with-SHA256: not judged by the 64-byte list");
+    var g = alloc(_ts_dn_len);
+    memcpy(g, _ts_dn, _ts_dn_len);
+    assert_eq(load8(g + 902) & 0xFF, 5, "DigiNotar's outer signatureAlgorithm ends sha1WithRSA's 05");
+    store8(g + 902, 13);
+    assert_eq(_tn_tbs_sighash(g, _ts_dn_len, h), 64, "relabelled sha512WithRSA: 64 bytes");
+    var g64 = _tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 64, 1, _tp_tbs(g, 64));
+    assert_eq(_tn_pol_der_denied(g64, g, _ts_dn_len), 1, "  its TBS SHA-512 listed: denied");
+    assert_eq(_tn_pol_der_denied(p20, g, _ts_dn_len), 0, "  its TBS SHA-1 listed: not denied");
+    # RSASSA-PSS (1.2.840.113549.1.1.10: 05 -> 0a) is not judged — crypt32's prop 15 for it is not
+    # measured (no PSS-signed root on cass) — however its TBS hashes are listed.
+    store8(g + 902, 10);
+    assert_eq(_tn_tbs_sighash(g, _ts_dn_len, h), 0, "relabelled RSASSA-PSS: not judged (0)");
+    var all = _tn_pol_new(0, 0, 0, 0, 0, 0);
+    _tn_pol_set_sighash(all, 20, 1, _tp_tbs(g, 20));
+    _tn_pol_set_sighash(all, 32, 1, _tp_tbs(g, 32));
+    _tn_pol_set_sighash(all, 48, 1, _tp_tbs(g, 48));
+    _tn_pol_set_sighash(all, 64, 1, _tp_tbs(g, 64));
+    assert_eq(_tn_pol_der_denied(all, g, _ts_dn_len), 0, "  its TBS SHA-1 / 256 / 384 / 512 all listed: not denied");
+    assert_eq(_tn_pol_der_denied(all, _ts_dn, _ts_dn_len), 1,
+      "  the real DigiNotar (the same TBS, labelled sha1WithRSA) with those lists: denied — the label decides");
+    assert_eq(_tn_pol_set_sighash(_tn_pol_new(0, 0, 0, 0, 0, 0), 16, 1, dn20), 0,
+      "a 16-byte signature-hash list: no such list (0)");
     return 0;
 }
 
@@ -687,6 +777,11 @@ var _ts_ctl_n16 = 0;                # those of 16 bytes (the public-key MD5s),
 var _ts_ctl_keys = 0;               # copied (16 B each)
 var _ts_ctl_n48 = 0;                # those of 48 bytes (a SHA-384-signed certificate's TBS SHA-384, 6.7.14),
 var _ts_ctl_tbs = 0;                # copied (48 B each),
+var _ts_ctl_n20 = 0;                # those of 20, 32 and 64 bytes (the signature hash of a SHA-1, SHA-256
+var _ts_ctl_n32 = 0;                # or SHA-512-signed certificate, 6.7.15),
+var _ts_ctl_n64 = 0;
+var _ts_ctl_sig = 0;                # copied ([len][64 B] slots),
+var _ts_ctl_nsig = 0;
 var _ts_ctl_nx = 0;                 # and those of any other length (not applied)
 
 # Read the CTL through advapi32 + crypt32 directly, into the _ts_ctl_* cells. 1, or 0 when it is
@@ -716,6 +811,7 @@ fn _ts_ctl_read(): i64 {
     var ents = load64(info + 104);
     _ts_ctl_keys = alloc(_ts_ctl_n * 16 + 16);
     _ts_ctl_tbs = alloc(_ts_ctl_n * 48 + 48);
+    _ts_ctl_sig = alloc(_ts_ctl_n * 72 + 72);
     var i = 0;
     while (i < _ts_ctl_n) {
         var l = load32(ents + i * 32);
@@ -727,21 +823,49 @@ fn _ts_ctl_read(): i64 {
             memcpy(_ts_ctl_tbs + _ts_ctl_n48 * 48, load64(ents + i * 32 + 8), 48);
             _ts_ctl_n48 = _ts_ctl_n48 + 1;
         }
+        if (_ts_sig_len(l) == 1) {
+            store64(_ts_ctl_sig + _ts_ctl_nsig * 72, l);
+            memcpy(_ts_ctl_sig + _ts_ctl_nsig * 72 + 8, load64(ents + i * 32 + 8), l);
+            _ts_ctl_nsig = _ts_ctl_nsig + 1;
+            if (l == 20) { _ts_ctl_n20 = _ts_ctl_n20 + 1; }
+            if (l == 32) { _ts_ctl_n32 = _ts_ctl_n32 + 1; }
+            if (l == 64) { _ts_ctl_n64 = _ts_ctl_n64 + 1; }
+        }
         if (l != 16) {
-            if (l != 48) { _ts_ctl_nx = _ts_ctl_nx + 1; }
+            if (_ts_sig_len(l) == 0) { _ts_ctl_nx = _ts_ctl_nx + 1; }
         }
         i = i + 1;
     }
     return 1;
 }
 
-# 1 when the 48 bytes at h are one of the CTL's TBS SHA-384 entries.
-fn _ts_ctl_lists_tbs(h): i64 {
+# 1 when `l` is a signature-hash length the policy keeps (20, 32, 48, 64).
+fn _ts_sig_len(l): i64 {
+    if (l == 20) { return 1; }
+    if (l == 32) { return 1; }
+    if (l == 48) { return 1; }
+    if (l == 64) { return 1; }
+    return 0;
+}
+
+# 1 when the `l` bytes at h are one of the CTL's `l`-byte signature-hash entries (any of the four lengths).
+fn _ts_ctl_lists_sig(l, h): i64 {
     var i = 0;
-    while (i < _ts_ctl_n48) {
-        if (memeq(_ts_ctl_tbs + i * 48, h, 48) == 1) { return 1; }
+    while (i < _ts_ctl_nsig) {
+        if (load64(_ts_ctl_sig + i * 72) == l) {
+            if (memeq(_ts_ctl_sig + i * 72 + 8, h, l) == 1) { return 1; }
+        }
         i = i + 1;
     }
+    return 0;
+}
+
+# The CTL's entry count of length `l` (the test's own reading).
+fn _ts_ctl_count(l): i64 {
+    if (l == 20) { return _ts_ctl_n20; }
+    if (l == 32) { return _ts_ctl_n32; }
+    if (l == 48) { return _ts_ctl_n48; }
+    if (l == 64) { return _ts_ctl_n64; }
     return 0;
 }
 
@@ -822,7 +946,11 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
     var ctl_out = 0;                    # roots the CTL's public-key entries keep out
     var keydiff = 0;                    # roots whose key MD5 the library computes differently from crypt32
     var n384 = 0;                       # roots crypt32 gives a 48-byte signature hash (prop 15): SHA-384-signed
-    var sigdiff = 0;                    # roots whose TBS SHA-384 the library judges differently from crypt32
+    var n20 = 0;                        # ... 20 bytes (SHA-1), 32 (SHA-256), 64 (SHA-512) — 6.7.15
+    var n32 = 0;
+    var n64 = 0;
+    var nunj = 0;                       # roots whose prop 15 has another length (md2 / md5WithRSA: 16 B), not judged
+    var sigdiff = 0;                    # roots whose signature hash the library judges differently from crypt32
     var sigunread = 0;                  # roots whose prop 15 crypt32 could not give
     var h = alloc(64);
     var kid = alloc(64);                # crypt32's key MD5 (prop 25) of the current root
@@ -846,22 +974,30 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
                 if (memeq(h, kid, 16) != 1) { keydiff = keydiff + 1; }
             }
         }
-        # 6.7.14: the CTL's other identifier, the signature hash (CERT_SIGNATURE_HASH_PROP_ID, 15) — the
-        # TBS hashed with the certificate's own signature digest. The library hashes exactly the
-        # SHA-384-signed ones, and must agree with crypt32 on every one.
+        # 6.7.14 / 6.7.15: the CTL's other identifier, the signature hash (CERT_SIGNATURE_HASH_PROP_ID,
+        # 15) — the TBS hashed with the certificate's own signature digest. The library computes it for
+        # every SHA-1 / SHA-256 / SHA-384 / SHA-512-signed root, and must agree with crypt32 on every one:
+        # the same length and the same bytes; a root whose prop 15 has another length (md2 / md5WithRSA,
+        # 16 B) it does not judge.
         var sn = _ts_prop(&fns, c, 15);
-        if (sn == 48) { memcpy(sig, _ts_pbuf, 48); }
-        var tr = _tn_tbs_sha384(der, dlen, th);
-        if (sn < 0) { sigunread = sigunread + 1; }
-        if (sn == 48) {
-            n384 = n384 + 1;
-            if (tr != 1) { sigdiff = sigdiff + 1; }
-            if (tr == 1) {
-                if (memeq(th, sig, 48) != 1) { sigdiff = sigdiff + 1; }
-            }
+        if (sn > 0) {
+            if (sn <= 64) { memcpy(sig, _ts_pbuf, sn); }
         }
+        var tr = _tn_tbs_sighash(der, dlen, th);
+        if (sn < 0) { sigunread = sigunread + 1; }
         if (sn >= 0) {
-            if (sn != 48) {
+            if (_ts_sig_len(sn) == 1) {
+                if (sn == 20) { n20 = n20 + 1; }
+                if (sn == 32) { n32 = n32 + 1; }
+                if (sn == 48) { n384 = n384 + 1; }
+                if (sn == 64) { n64 = n64 + 1; }
+                if (tr != sn) { sigdiff = sigdiff + 1; }
+                if (tr == sn) {
+                    if (memeq(th, sig, sn) != 1) { sigdiff = sigdiff + 1; }
+                }
+            }
+            if (_ts_sig_len(sn) == 0) {
+                nunj = nunj + 1;
                 if (tr != 0) { sigdiff = sigdiff + 1; }
             }
         }
@@ -879,8 +1015,8 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
             }
         }
         if (x != 0) {
-            if (sn == 48) {
-                if (_ts_ctl_lists_tbs(sig) == 1) {
+            if (_ts_sig_len(sn) == 1) {
+                if (_ts_ctl_lists_sig(sn, sig) == 1) {
                     x = 0;
                     ctl_out = ctl_out + 1;
                 }
@@ -930,22 +1066,37 @@ fn _ts_store_policy(pu, bundle, blen, refused, pol): i64 {
     syscall(1, 1, " kept out by the CTL; ", 22);
     fmt_int(nb_tls);
     syscall(1, 1, " taken with a NotBefore bound; ", 31);
+    fmt_int(n20);
+    syscall(1, 1, " / ", 3);
+    fmt_int(n32);
+    syscall(1, 1, " / ", 3);
     fmt_int(n384);
-    syscall(1, 1, " SHA-384-signed (prop 15 of 48 bytes, ", 38);
+    syscall(1, 1, " / ", 3);
+    fmt_int(n64);
+    syscall(1, 1, " SHA-1 / 256 / 384 / 512-signed (prop 15 of 20 / 32 / 48 / 64 bytes), ", 70);
+    fmt_int(nunj);
+    syscall(1, 1, " not judged (another length), ", 30);
     fmt_int(sigunread);
-    syscall(1, 1, " with no prop 15)\n", 18);
+    syscall(1, 1, " with no prop 15\n", 17);
     assert_gt(total, 0, "the ROOT store has certificates");
     assert_gt(want_in, 0, "some are TLS roots");
     assert_eq(keydiff, 0, "the library's key MD5 equals crypt32's (prop 25) for every ROOT certificate");
     assert_eq(sigdiff, 0,
-      "the library's TBS SHA-384 is crypt32's prop 15 for each SHA-384-signed ROOT certificate, and hashes no other");
+      "the library's signature hash is crypt32's prop 15 (length, bytes) for every ROOT certificate it judges");
+    assert_gt(n20 + n32 + n384 + n64, 0, "  and the store has such roots (cass: 22 / 16 / 15 / 0)");
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
     assert_eq(_ts_blocks(bundle, blen), want_in, "the bundle holds exactly those");
     assert_eq(nb_ok, nb_tls, "every root whose NotBefore distrust covers TLS is in it WITH its bound (D9)");
     assert_eq(load64(pol + 32), nb_tls, "  and the policy carries exactly those bounds");
     assert_eq(refused, want_ref, "the roots the policy refuses are the refused count");
     assert_eq(load64(pol), _ts_ctl_n16, "the policy carries the CTL's public-key entries, every one");
-    assert_eq(load64(pol + 48), _ts_ctl_n48, "  and its SHA-384 TBS entries, every one (6.7.14)");
+    var k = 0;
+    while (k < 4) {
+        var sl = _tn_sig_len_at(k);
+        assert_eq(load64(pol + _tn_pol_sig_off(sl)), _ts_ctl_count(sl),
+          "  and its signature-hash entries of each length, every one (6.7.14, 6.7.15)");
+        k = k + 1;
+    }
     assert_eq(load64(pol + 16), nd, "  and the Disallowed store's certificates");
     return 0;
 }
@@ -959,8 +1110,14 @@ fn test_store_policy(): i64 {
     syscall(1, 1, " entries, ", 10);
     fmt_int(_ts_ctl_n16);
     syscall(1, 1, " public-key MD5s + ", 19);
+    fmt_int(_ts_ctl_n20);
+    syscall(1, 1, " / ", 3);
+    fmt_int(_ts_ctl_n32);
+    syscall(1, 1, " / ", 3);
     fmt_int(_ts_ctl_n48);
-    syscall(1, 1, " SHA-384 TBS hashes applied, ", 29);
+    syscall(1, 1, " / ", 3);
+    fmt_int(_ts_ctl_n64);
+    syscall(1, 1, " 20 / 32 / 48 / 64-byte signature hashes applied, ", 50);
     fmt_int(_ts_ctl_nx);
     syscall(1, 1, " of other lengths not applied\n", 30);
     assert_neq(_tn_ca_sys_pol, 0, "the system set was published with a trust policy");
@@ -968,12 +1125,16 @@ fn test_store_policy(): i64 {
     if (_ts_ctl_present == 1) {
         assert_gt(_ts_ctl_n16, 0, "present: it lists public keys (cass: 82 of 88)");
         assert_gt(load64(_tn_ca_sys_pol), 0, "  and the system set's policy carries them");
-        assert_eq(load64(_tn_ca_sys_pol + 48), _ts_ctl_n48,
+        assert_eq(load64(_tn_ca_sys_pol + _tn_pol_sig_off(48)), _ts_ctl_n48,
           "  and every 48-byte entry, as a SHA-384 TBS hash (cass: 6 of 88; 6.7.14)");
+        assert_eq(load64(_tn_ca_sys_pol + _tn_pol_sig_off(20)) + load64(_tn_ca_sys_pol + _tn_pol_sig_off(32))
+          + load64(_tn_ca_sys_pol + _tn_pol_sig_off(64)), _ts_ctl_n20 + _ts_ctl_n32 + _ts_ctl_n64,
+          "  and every 20 / 32 / 64-byte entry (cass: none; 6.7.15)");
     }
     if (_ts_ctl_present == 0) {
         assert_eq(load64(_tn_ca_sys_pol), 0, "absent: the policy lists no key, and the store still loads");
-        assert_eq(load64(_tn_ca_sys_pol + 48), 0, "  and no TBS hash");
+        assert_eq(load64(_tn_ca_sys_pol + 48) + load64(_tn_ca_sys_pol + 64) + load64(_tn_ca_sys_pol + 80)
+          + load64(_tn_ca_sys_pol + 96), 0, "  and no signature hash");
     }
     test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
     _ts_store_policy(_TN_PURPOSE_SERVER, _tn_ca_buf, _tn_ca_len, _tn_ca_sys_refused, _tn_ca_sys_pol);
@@ -1010,8 +1171,9 @@ var _tm_nkeys = 0;      # the row's trust-policy deny keys (16 B each) and deny 
 var _tm_keys = 0;       # what the disallowed CTL and the Disallowed store hand the export (6.7.12)
 var _tm_ncerts = 0;
 var _tm_certs = 0;
-var _tm_ntbs = 0;       # and its deny TBS SHA-384s (48 B each; the CTL's other form, 6.7.14)
-var _tm_tbs = 0;
+var _tm_ntbs = 0;       # and its deny signature hashes (the CTL's other form): _tm_ntbs of _tm_siglen
+var _tm_tbs = 0;        # bytes each — SHA-384s (48, 6.7.14) unless a row says 20 / 32 / 64 (6.7.15)
+var _tm_siglen = 48;
 var _tm_bound = 0;      # the issuance bound the last export recorded for the row's certificate (got 3)
 
 var _TM_SA = "300a06082b06010505070301";                            # [serverAuth]
@@ -1030,6 +1192,7 @@ fn _tm_reset(): i64 {
     _tm_nkeys = 0;
     _tm_ncerts = 0;
     _tm_ntbs = 0;
+    _tm_siglen = 48;
     return 0;
 }
 
@@ -1113,7 +1276,8 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         var buf = alloc(cap);
         var nref[8];
         store64(&nref, 0 - 1);
-        var pol = _tn_pol_set_tbs384(_tn_pol_new(_tm_nkeys, _tm_keys, _tm_ncerts, _tm_certs, 0, 0), _tm_ntbs, _tm_tbs);
+        var pol = _tn_pol_new(_tm_nkeys, _tm_keys, _tm_ncerts, _tm_certs, 0, 0);
+        _tn_pol_set_sighash(pol, _tm_siglen, _tm_ntbs, _tm_tbs);
         var total = _tn_w_export(fns, root, dis, buf, cap, &nref, _tm_pu, pol);
         var r = load64(&nref);
         var nb = load64(pol + 32);
@@ -1148,6 +1312,90 @@ fn _tm_run(fns, dis_holds, cap): i64 {
     callptr(load64(fns + 16), root, 0);
     _tm_reset();
     return got;
+}
+
+# A CTL built in memory as crypt32 lays one out — CTL_CONTEXT.pCtlInfo at +24; CTL_INFO's
+# SubjectAlgorithm.pszObjId at +72, cCTLEntry at +96, rgCTLEntry at +104; CTL_ENTRY 32 B, its
+# SubjectIdentifier {cbData DWORD, pbData} first — with `ne` entries whose lengths are lens[0..ne) (8 B
+# each) and whose bytes are the entry's index, repeated; `oid` its SubjectAlgorithm.
+fn _tc_ctl(ne, lens, oid): i64 {
+    var ctl = alloc(64);
+    var info = alloc(128);
+    var ents = alloc(ne * 32 + 32);
+    memset(ctl, 0, 64);
+    memset(info, 0, 128);
+    memset(ents, 0, ne * 32 + 32);
+    store64(ctl + 24, info);
+    store64(info + 72, oid);
+    store32(info + 96, ne);
+    store64(info + 104, ents);
+    var i = 0;
+    while (i < ne) {
+        var l = load64(lens + i * 8);
+        var b = alloc(l + 8);
+        memset(b, 0xA0 + i, l);
+        store32(ents + i * 32, l);
+        store64(ents + i * 32 + 8, b);
+        i = i + 1;
+    }
+    return ctl;
+}
+
+# 1 when the {count, ptr} pair at `slot` holds exactly one `l`-byte entry, the bytes of entry `idx`.
+fn _tc_one(slot, l, idx): i64 {
+    if (load64(slot) != 1) { return 0; }
+    var p = load64(slot + 8);
+    if (p == 0) { return 0; }
+    var i = 0;
+    while (i < l) {
+        if ((load8(p + i) & 0xFF) != 0xA0 + idx) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Windows (6.7.15): _tn_w_ctl_copy keeps the CTL's 20, 32, 48 and 64-byte entries — one list a length,
+# the policy's table — beside its 16-byte keys; the filed probe's CTL (one 32-byte and one 20-byte
+# entry) lost both: `keys 0, sha-384 tbs 0, rc 0`.
+fn test_ctl_copy_row(): i64 {
+    test_group("Windows: the disallowed CTL's copy keeps an entry of each signature-hash length (6.7.15)");
+    var oid = "1.3.6.1.4.1.311.10.11.15";
+    var lens = alloc(64);
+    var sig = alloc(64);
+    var pn = alloc(8);
+    store64(lens, 32);
+    store64(lens + 8, 20);
+    var r = _tn_w_ctl_copy(_tc_ctl(2, lens, oid), pn, sig);
+    assert_eq(r, 0, "the filed CTL (one 32-byte, one 20-byte entry): no 16-byte key list (0)");
+    assert_eq(load64(pn), 0, "  no key");
+    assert_eq(_tc_one(sig, 20, 1), 1, "  its 20-byte entry kept, byte for byte");
+    assert_eq(_tc_one(sig + 16, 32, 0), 1, "  its 32-byte entry kept, byte for byte");
+    assert_eq(load64(sig + 32) + load64(sig + 48), 0, "  no 48 or 64-byte entry");
+    store64(lens, 16);
+    store64(lens + 8, 20);
+    store64(lens + 16, 32);
+    store64(lens + 24, 48);
+    store64(lens + 32, 64);
+    store64(lens + 40, 24);
+    r = _tn_w_ctl_copy(_tc_ctl(6, lens, oid), pn, sig);
+    assert_neq(r, 0, "a CTL with one entry of each length: the key list is returned");
+    assert_eq(load64(pn), 1, "  one 16-byte key");
+    assert_eq(_tc_one(sig, 20, 1), 1, "  one 20-byte signature hash");
+    assert_eq(_tc_one(sig + 16, 32, 2), 1, "  one 32-byte");
+    assert_eq(_tc_one(sig + 32, 48, 3), 1, "  one 48-byte");
+    assert_eq(_tc_one(sig + 48, 64, 4), 1, "  one 64-byte");
+    var pol = _tn_pol_new(load64(pn), r, 0, 0, 0, 0);
+    var k = 0;
+    while (k < 4) {
+        _tn_pol_set_sighash(pol, _tn_sig_len_at(k), load64(sig + k * 16), load64(sig + k * 16 + 8));
+        k = k + 1;
+    }
+    assert_eq(load64(pol + _tn_pol_sig_off(20)) + load64(pol + _tn_pol_sig_off(32)) + load64(pol + _tn_pol_sig_off(48))
+      + load64(pol + _tn_pol_sig_off(64)), 4,
+      "  and a policy given that table holds the four (the 24-byte entry is not applied)");
+    r = _tn_w_ctl_copy(_tc_ctl(6, lens, "1.3.6.1.4.1.311.10.11.14"), pn, sig);
+    assert_eq(r, 0 - 1, "another SubjectAlgorithm: not a disallowed list (-1)");
+    return 0;
 }
 
 # Windows: each policy rule, one memory store per row.
@@ -1218,6 +1466,34 @@ fn test_policy_rows(): i64 {
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs384(_ts_p256);
     assert_eq(_tm_run(&fns, 0, cap), 1, "the ecdsa-with-SHA256 fixture with the SHA-384 of its TBS listed: exported");
+    # 6.7.15: the CTL's 32 and 20-byte entries keep a SHA-256 / SHA-1-signed root out the same way.
+    _tm_siglen = 32;
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs(_ts_p256, 32);
+    assert_eq(_tm_run(&fns, 0, cap), 0,
+      "  its TBS SHA-256 (its signature hash) listed: excluded, not counted (6.7.15)");
+    _tm_siglen = 32;
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs(_ts_mr, 32);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-256 listed: exported");
+    _tm_cert = _ts_dn;
+    _tm_cert_len = _ts_dn_len;
+    _tm_pem = alloc(4096);
+    _tm_pem_len = _ts_pem(_tm_pem, _ts_dn, _ts_dn_len);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "DigiNotar Root CA (sha1WithRSA) in ROOT, no property: exported");
+    _tm_siglen = 20;
+    _tm_ntbs = 1;
+    _tm_tbs = hex_decode("00bbba38b51af4d816e03a4eb309140626879511", 40);
+    assert_eq(_tm_run(&fns, 0, cap), 0,
+      "  its 20-byte signature hash (crypt32's prop 15) listed: excluded, not counted");
+    _tm_siglen = 20;
+    _tm_ntbs = 1;
+    _tm_tbs = _tp_tbs(_ts_p256, 20);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT 20-byte hash listed: exported");
+    _tm_cert = _ts_p256;
+    _tm_cert_len = _ts_p256_len;
+    _tm_pem = pem0;
+    _tm_pem_len = pem0_len;
     # The purposes allow-list (prop 9).
     _tm_with(9, _TM_CS);
     assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
@@ -1561,9 +1837,11 @@ fn main(): i64 {
     test_policy_deny_rows();
     test_ctl_identifier_row();
     test_ctl_tbs_row();
+    test_ctl_sighash_row();
     test_policy_bound_rows();
     #ifdef CYRIUS_TARGET_WIN
     test_store_policy();
+    test_ctl_copy_row();
     test_policy_rows();
     test_policy_rows_client();
     test_policy_client_chain();

@@ -199,7 +199,8 @@ cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
 cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
 cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
 programs/ark.cyr|path|_ark_append — the whole-record append: every write checked, a short one rolled back with ftruncate
-programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule'
+programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule
+programs/cxvm.cyr|?|_cx_open_flags / _cx_flags_back (6.7.15): a cx GUEST'"'"'s open and fcntl flag bits mapped to the host'"'"'s O_TRUNC / O_APPEND and back — no open on the line, and cxvm writes nothing of its own: the guest'"'"'s own open passed through as it was until 6.7.15'
 cat > "$D/trunc.awk" <<'AWK'
 # prints "<FILE>|<first arg>" for each truncating write on a non-comment line
 {

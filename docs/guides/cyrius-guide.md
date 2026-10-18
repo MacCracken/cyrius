@@ -7900,7 +7900,9 @@ a full disk -28, a name too long -36; a code with no POSIX peer is -1. A read th
 end is 0, and so is a read from a pipe whose writer closed (`ERROR_BROKEN_PIPE`), which is how a
 piped stdin ends. Before 6.7.14 a failed read answered 0 — end of file — a failed write 0 bytes
 written, a failed seek 0 (a seek to the start, while the file pointer did not move), and every
-failed open -1.
+failed open -1. A close (`CloseHandle`) answers 0, or -errno through the same table (6.7.15);
+before 6.7.15 it answered CloseHandle's BOOL — 1 closed, 0 failed — so a `sys_close(..) < 0` test
+never fired and `file_close_r` was never `Err`.
 
 | Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
 |---|---|---|---|
@@ -7908,6 +7910,13 @@ failed open -1.
 | `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
+| `sys_close(-999)` | -9 | 0 (a good close: 1) | -9 since 6.7.15 (a good close: 0) |
+
+A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
+do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
+stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. ⚠ On
+a PIPE or a console std handle Windows lets the seek succeed (it answers the asked offset and the
+stream does not move) where Linux and macOS answer -29 (`ESPIPE`).
 
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
@@ -8476,13 +8485,23 @@ The rules, in order:
      `SYS_POLL` 7, `SYS_EPOLL_WAIT` 232), never raw — a program that includes the stdlib
      prints none of these warnings;
    - **an `enum` constant or a top-level `const`** (bare, or `Enum.NAME`) **DECLARED inside a
-     region opened in its own file** (since 6.7.14): it is the author's native number, as much
-     as a literal is — `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64
-     region, is renumbered → 172 (getpid); write 1039 for native umount2`. A constant is judged
-     where it is DECLARED, not where it is used: one declared at a file's top level is not
-     judged — the stdlib peers' `SYS_*` renumber by design (`SYS_FSYNC = 74` → 82), and the
-     peers are included from inside `lib/syscalls.cyr`'s region. A fn-local `const` is not
-     judged.
+     region** (since 6.7.14): it is the author's native number, as much as a literal is —
+     `syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64 region, is renumbered
+     → 172 (getpid); write 1039 for native umount2`. A constant is judged where it is
+     DECLARED, not where it is used. **In a file outside `lib/` the region carries through
+     `include`** (since 6.7.15, the user's decision, 2026-10-18), as it does for a literal: an
+     `enum ArchNr { NR_UMOUNT2 = 39; }` at the top of your own `src/arch_aarch64.cyr`, included
+     from inside `#ifdef CYRIUS_ARCH_AARCH64`, is warned at each `syscall(NR_UMOUNT2, …)`. **In
+     a file under `lib/`** (an include name starting `lib/` or with a `/lib/` component — the
+     stdlib and a project's vendored deps) only a region opened in that file itself counts:
+     the stdlib peers' `SYS_*` sit at their file's top level, renumber by design (`SYS_FSYNC
+     = 74` → 82) and are included from inside `lib/syscalls.cyr`'s region, so a program that
+     includes the stdlib stays silent;
+   - **a fn-local `const` declared inside a region** (since 6.7.15), by the same rule —
+     `const NR_UMOUNT2 = 39;` under the guard in a fn body is warned at each
+     `syscall(NR_UMOUNT2, …)`, and one declared outside a region and used inside one is not. An
+     `#inline` fn's local const is judged by its declaration in the inline body, never by the
+     call site it is expanded at.
 
    ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
@@ -8764,7 +8783,7 @@ through the CLI: `cyrius build --target=js <in.tsx> <out.js>`.
 cycc --emit-js app.tsx                  # JS → stdout
 
 # Via the build CLI
-cyrius build --target=js app.tsx app.js # x86-Linux-only; refused BY NAME elsewhere (v6.6.6)
+cyrius build --target=js app.tsx app.js # every POSIX host; refused BY NAME on Windows (6.7.15)
 ```
 
 ### Type Stripping
@@ -8930,22 +8949,31 @@ is out of range. The output is tested to round-trip through `node --check`
 
 ### Platform & Build Support
 
-`cycc --emit-js` and `cyrius build --target=js` are **x86-Linux-only**
-(the TS frontend is not compiled for aarch64, Windows PE, or macOS). The
-standalone `cycc_aarch64` and `cycc_win` cross-compilers do not include
-the TS frontend.
+`cycc --lex-ts`, `--parse-ts` and `--emit-js` run the TypeScript front end on **every
+compiler** — x86_64 and aarch64 Linux, both macOS compilers, Windows `cycc.exe`, and the
+`cycc_aarch64` / `cycc_win` cross compilers — with the same exit codes, diagnostics and JS
+bytes as x86_64 Linux (6.7.15). Each reads stdin, or the file named after the flag
+(`cycc --emit-js app.tsx`; on Windows a quoted path and a non-ASCII name work, the command
+line split as `CommandLineToArgvW` splits it). `ts_test_runner` therefore works on every
+POSIX install. The cx compiler (`cycc_cx`) has no TS front end.
 
-> On every other host `cyrius build --target=js` **refuses by name** (v6.6.6), naming the
-> fork that host's compiler is built from, and writes no output file. ⛔ Before v6.6.6 the
-> CLI ran the host's cycc with `--emit-js`, which that compiler ignored: it compiled its empty
-> stdin into a runnable binary, the CLI renamed that over the `.js` and printed `OK`. Pinned
-> by `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh`. See CHANGELOG [6.6.6].
+`cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
+`cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
+to a file — run `cycc.exe --emit-js app.tsx > app.js` directly.
+
+> ⛔ Before 6.7.15 every compiler but x86_64 Linux's IGNORED the three flags and compiled the
+> TypeScript as cyrius: `--parse-ts` on `let x: number = 1;` failed with a cyrius parse error,
+> on `var x = 42;` it wrote an ELF to stdout with exit 0, and `ts_test_runner` reported every
+> file as failed. Before v6.6.6 the CLI then renamed that binary over the `.js` and printed
+> `OK`; 6.6.6 refused `--target=js` by name off x86_64 Linux. Pinned by
+> `tests/gates/platform/ts_flags_every_driver.sh` and
+> `tests/gates/toolchain/emit_js_per_host_fork.sh`. See CHANGELOG [6.6.6], [6.7.15].
 
 ### Limitations
 
 - Single-file emission; no module bundling or tree-shaking
 - No JSX component props typing validation (TS type-checking is lost)
-- The TS parser is self-hosted (only in the `cycc` x86 binary)
+- The TS parser is self-hosted (in every compiler but `cycc_cx`, since 6.7.15)
 - No source maps
 
 ## Example Programs

@@ -1744,7 +1744,9 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     if (pos + 2 > body_len) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var ext_total = _tn_be16_r(body + pos);
     pos = pos + 2;
-    if (pos + ext_total > body_len) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    # The block fills the rest of the ClientHello: a byte after it is decode_error, as in the 1.3
+    # client's ServerHello since 6.7.14 (`>` let it through). CHANGELOG [6.7.15]
+    if (pos + ext_total != body_len) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var ext_ptr = body + pos;
     # ALPN (RFC 7301): negotiate now, before the key_share early-returns below —
     # this is the only point we hold the client's full extension block. Stores

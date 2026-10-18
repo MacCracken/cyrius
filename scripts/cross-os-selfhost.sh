@@ -245,6 +245,17 @@ var r = main();
 syscall(60, r);
 CXT
 cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
+# 6.7.15 — the cx HOST-DISPATCH fixture (tests/fixtures/cx_host_dispatch.cyr, which
+# tests/gates/codegen/cx_host_dispatch.sh runs locally): raw x86-Linux getpid / getppid / close /
+# kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the
+# path calls (mkdir / stat — the struct cxvm refills at the x86-Linux offsets from Darwin's — /
+# symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15). Each
+# host's own cxvm must exit 77 — every row with x86_64 Linux's answer — and cass's 78, the PE routes'
+# answers (-38 where the PE peer has only a stub). Until 6.7.15 cxvm handed the guest's number to the
+# host compiler's renumbering: on pi a guest lseek ran getxattr and fork ran close (the parent took
+# the child branch), on ecb kill ran lseek and getppid / dup / lseek / exit_group died of SIGSYS.
+# CHANGELOG [6.7.15]
+cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 #
@@ -382,7 +393,7 @@ case "$HOST" in
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
     _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "ecb:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
     # main() is never called and the program exits with argc). Then cx C:
@@ -400,6 +411,7 @@ case "$HOST" in
       && cat programs/cxvm.cyr | CYRIUS_MACHO_ARM=1 ./r1r > cxvm && chmod +x cxvm && codesign -s - -f cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
+      && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
       && cat src/main_cx.cyr | ./r1r > cycc_cx && chmod +x cycc_cx && codesign -s - -f cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
@@ -437,6 +449,14 @@ case "$HOST" in
       && CYRIUS_MACHO_ARM=1 ./r1r --syntax-only < _so.cyr > /dev/null 2> _so.err \
       && ! CYRIUS_MACHO_ARM=1 ./r1r < _so.cyr > /dev/null 2>> _so.err' \
       || { echo "SYNTAX_FAIL: ecb — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
+    # 6.7.15 (D38) — the TypeScript front end on this host's compiler: --parse-ts exits 0 on a clean
+    # .ts and 1 on a bad one, and `--emit-js <file>` writes x86_64 Linux's bytes. Until 6.7.15 every
+    # compiler but x86_64 Linux's skipped the flags and compiled the TypeScript as cyrius.
+    ssh $SSHO ecb "cd ~/$RD && "'printf "let x: number = 1;\n" > _ts.ts && printf "let x: number = ;\n" > _tsb.ts && printf "let x = 1;\n" > _ts.want \
+      && CYRIUS_MACHO_ARM=1 ./r1r --parse-ts < _ts.ts > /dev/null 2> _ts.err \
+      && (_t=0; CYRIUS_MACHO_ARM=1 ./r1r --parse-ts < _tsb.ts > /dev/null 2>> _ts.err || _t=$?; [ $_t -eq 1 ]) \
+      && CYRIUS_MACHO_ARM=1 ./r1r --emit-js _ts.ts > _ts.js 2>> _ts.err && cmp -s _ts.js _ts.want' \
+      || { echo "TS_FAIL: ecb — cycc --parse-ts / --emit-js did not run the TypeScript front end (~/$RD/_ts.err, _ts.js)"; exit 1; }
     # 6.6.20 — the macOS arm of _read_env REFUSES a value over 255 bytes by name (it cut it to 255
     # and handed it back, so a long CYRIUS_SYMS path wrote the symbol dump over its prefix).
     ssh $SSHO ecb "cd ~/$RD && "'L="$PWD/$(printf %0270d 0 | tr 0 s)" && P=$(printf %s "$L" | cut -c1-255) && echo keep > "$P" \
@@ -456,7 +476,7 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
     _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "ach:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
@@ -477,6 +497,7 @@ case "$HOST" in
       && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
+      && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
@@ -509,6 +530,14 @@ case "$HOST" in
       && ./r1 --syntax-only < _so.cyr > /dev/null 2> _so.err \
       && ! ./r1 < _so.cyr > /dev/null 2>> _so.err' \
       || { echo "SYNTAX_FAIL: ach — cycc --syntax-only refused a file whose only fault is an unresolved name, or plain cycc accepted it (~/$RD/_so.err)"; exit 1; }
+    # 6.7.15 (D38) — the TypeScript front end on this host's compiler: --parse-ts exits 0 on a clean
+    # .ts and 1 on a bad one, and `--emit-js <file>` writes x86_64 Linux's bytes. Until 6.7.15 every
+    # compiler but x86_64 Linux's skipped the flags and compiled the TypeScript as cyrius.
+    ssh $SSHO ach "cd ~/$RD && "'printf "let x: number = 1;\n" > _ts.ts && printf "let x: number = ;\n" > _tsb.ts && printf "let x = 1;\n" > _ts.want \
+      && ./r1 --parse-ts < _ts.ts > /dev/null 2> _ts.err \
+      && (_t=0; ./r1 --parse-ts < _tsb.ts > /dev/null 2>> _ts.err || _t=$?; [ $_t -eq 1 ]) \
+      && ./r1 --emit-js _ts.ts > _ts.js 2>> _ts.err && cmp -s _ts.js _ts.want' \
+      || { echo "TS_FAIL: ach — cycc --parse-ts / --emit-js did not run the TypeScript front end (~/$RD/_ts.err, _ts.js)"; exit 1; }
     ssh $SSHO ach "cd ~/$RD && "'L="$PWD/$(printf %0270d 0 | tr 0 s)" && P=$(printf %s "$L" | cut -c1-255) && echo keep > "$P" \
       && CYRIUS_SYMS="$L" ./r1 < _ec.cyr > /dev/null 2> _el.err \
       && grep -q "ignoring CYRIUS_SYMS: its value is longer than 255 bytes" _el.err && [ "$(cat "$P")" = keep ] && [ ! -e "$L" ]' \
@@ -536,7 +565,7 @@ case "$HOST" in
     cat src/main_aarch64.cyr | "$CO_TMP"/_co_x  > "$CO_TMP"/_co_a64 && chmod +x "$CO_TMP"/_co_a64
     _co_reap_stale pi
     ssh $SSHO pi "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "pi:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "pi:~/$RD/"
     # Self-host twice + cmp, then cx C: build a NATIVE aarch64 cxvm with r1 and
     # run the portable .cyx I/O fixture — proves ESYSXLAT translates the guest's
     # runtime syscall number (incl. open→openat AT_FDCWD shift). Must exit 42.
@@ -550,6 +579,7 @@ case "$HOST" in
       && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
+      && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ]) \
@@ -583,6 +613,18 @@ case "$HOST" in
       && printf "var x = 1;\n" > _k.cyr && CYRIUS_KERNEL=1 ./n1 < _k.cyr > _k1 && CYRIUS_KERNEL=1 ./r1 < _k.cyr > _k2 \
       && cmp -s _k1 _k2 && [ "$(od -An -j24 -N8 -tx8 _k1 | tr -d " \n")" = 0000000040000078 ]' \
       || { echo "FLAG_FAIL: pi — the native compiler mishandled --syntax-only / --pie / CYRIUS_PIE / CYRIUS_MACHO_ARM / CYRIUS_KERNEL (~/$RD/_so.err, _pie1, _pie2, _mo.err, _k1)"; exit 1; }
+    # 6.7.15 (D38) — the TypeScript front end on both ARM compilers (n1, the native fork; r1,
+    # main_aarch64.cyr): --parse-ts exits 0 on a clean .ts and 1 on a bad one, and `--emit-js
+    # <file>` writes x86_64 Linux's bytes. Until 6.7.15 every compiler but x86_64 Linux's skipped
+    # the flags and compiled the TypeScript as cyrius (the aarch64 tarball's ts_test_runner
+    # reported every file failed).
+    ssh $SSHO pi "cd ~/$RD && "'printf "let x: number = 1;\n" > _ts.ts && printf "let x: number = ;\n" > _tsb.ts && printf "let x = 1;\n" > _ts.want \
+      && ./n1 --parse-ts < _ts.ts > /dev/null 2> _ts.err && ./r1 --parse-ts < _ts.ts > /dev/null 2>> _ts.err \
+      && (_t=0; ./n1 --parse-ts < _tsb.ts > /dev/null 2>> _ts.err || _t=$?; [ $_t -eq 1 ]) \
+      && (_t=0; ./r1 --parse-ts < _tsb.ts > /dev/null 2>> _ts.err || _t=$?; [ $_t -eq 1 ]) \
+      && ./n1 --emit-js _ts.ts > _ts.js 2>> _ts.err && cmp -s _ts.js _ts.want \
+      && ./r1 --emit-js _ts.ts > _ts2.js 2>> _ts.err && cmp -s _ts2.js _ts.want' \
+      || { echo "TS_FAIL: pi — cycc --parse-ts / --emit-js did not run the TypeScript front end (~/$RD/_ts.err, _ts.js, _ts2.js)"; exit 1; }
     # 6.7.10 (P5-B) — execution coverage on real ARM: the native CLI with n1 (main_aarch64_native, the
     # fork ARM users install) as cycc. X2 runs programs/*_test.cyr, so asm_test.cyr's aarch64-Linux
     # exit_group must be named as leaving no record (see _co_cov_stage).
@@ -617,6 +659,7 @@ case "$HOST" in
     scp -q $SSHO "$CO_TMP"/_co_cx.cyx "cass:$WRDS"/_co_cx.cyx
     scp -q $SSHO "$CO_TMP"/_co_cx.cyr "cass:$WRDS"/_co_cx.cyr
     scp -q $SSHO "$CO_TMP"/_co_cxt.cyx "cass:$WRDS"/_co_cxt.cyx
+    scp -q $SSHO "$CO_TMP"/_co_cxh.cyx "cass:$WRDS"/_co_cxh.cyx
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
@@ -646,10 +689,28 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\async_iocp_pe.cyr > aip.exe && aip.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && cxvm.exe < _co_cxt.cyx > nul & if !errorlevel! NEQ 255 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && cxvm.exe < _co_cxh.cyx > nul & if !errorlevel! NEQ 78 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < src\main_cx.cyr > cycc_cx.exe && cycc_cx.exe < _co_cx.cyr > nat.cyx && cxvm.exe < nat.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
-      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + the 6.6.11 cx thread fixture + v6.4.22 native cycc_cx compile→run round-trip)
+      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + the 6.6.11 cx thread fixture + the 6.7.15 cx host-dispatch fixture + v6.4.22 native cycc_cx compile→run round-trip)
     else
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
+      exit 1
+    fi
+    # 6.7.15 (D38) — the TypeScript front end on cycc.exe (c2.exe): --parse-ts exits 0 on a clean
+    # .ts and 1 on a bad one, and `--emit-js <file>` writes x86_64 Linux's bytes. Until 6.7.15 every
+    # compiler but x86_64 Linux's skipped the flags and compiled the TypeScript as cyrius.
+    printf 'let x: number = 1;\n' > "$CO_TMP"/_co_ts.ts
+    printf 'let x: number = ;\n' > "$CO_TMP"/_co_tsb.ts
+    printf 'let x = 1;\n' > "$CO_TMP"/_co_ts.want
+    scp -q $SSHO "$CO_TMP"/_co_ts.ts "cass:$WRDS"/_ts.ts
+    scp -q $SSHO "$CO_TMP"/_co_tsb.ts "cass:$WRDS"/_tsb.ts
+    scp -q $SSHO "$CO_TMP"/_co_ts.want "cass:$WRDS"/_ts.want
+    if ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe --parse-ts < _ts.ts > nul 2> _ts.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe --parse-ts < _tsb.ts > nul 2>> _ts.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe --emit-js _ts.ts > _ts.js 2>> _ts.err && fc /b _ts.js _ts.want > nul"'; then
+      :
+    else
+      echo "TS_FAIL: cass — cycc.exe --parse-ts / --emit-js did not run the TypeScript front end (C:\cyrius-tests\$RD\_ts.err, _ts.js)"
       exit 1
     fi
     # v6.6.5 (bite 8, round-3 review) — THE WINDOWS CLI SPAWN, ON THE HARDWARE. Until

@@ -1,0 +1,52 @@
+# close_answer.tcyr — 6.7.15: a close answers 0, or a negative errno when it fails, on every
+# target, Windows included.
+#
+# ⛔ THE DEFECT (issues/2026-10-16-pe-close-returns-closehandle-bool.md). ECLOSE_PE
+# (src/backend/x86/emit.cyr) handed back CloseHandle's BOOL unchanged: 1 for a good close, 0 for a
+# failed one. Every `sys_close(..) < 0` / `file_close(..) < 0` test was dead on Windows, and
+# `file_close_r` answered Ok(1) for a good close and Ok(0) for a failed one — never Err. Measured
+# on real cass and under wine: the filed repro exited 110 (Linux 91).
+#
+# THE FIX. On a TRUE BOOL the reroute answers 0; on FALSE it calls the shared GetLastError stub
+# (`_pe_w32_errno_site`, the table the read / write / open / seek reroutes use), and a handle that
+# is not open (ERROR_INVALID_HANDLE) is -EBADF, -9, as on Linux and macOS. The first group is the
+# filed repro, its file named per process (test_scratch). CHANGELOG [6.7.15]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tagged.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("a good close is 0, a close of a non-descriptor -EBADF (the filed repro)");
+var p = test_scratch("cl_probe.tmp");
+var fd = file_open(p, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_eq(fd >= 0, 1, "the fixture opens");
+var ok = sys_close(fd);                      # a real descriptor: 0 on Linux
+var bad = sys_close(0 - 999);                # not a descriptor / handle: -9 on Linux
+assert_eq(ok, 0, "sys_close of an open descriptor is 0 (Windows answered 1)");
+assert_eq(bad, 0 - 9, "sys_close(-999) is -9 (Windows answered 0)");
+assert_eq(100 + ok * 10 + bad, 91, "the repro's exit code is 91 (Windows 110)");
+
+test_group("file_close answers the same");
+var fd2 = file_open(p, O_RDONLY, 0);
+assert_eq(fd2 >= 0, 1, "the fixture reopens");
+assert_eq(file_close(fd2), 0, "file_close of an open descriptor is 0");
+assert_eq(file_close(0 - 999), 0 - 9, "file_close(-999) is -9");
+assert_eq(file_close(0 - 999) < 0, 1, "a `file_close(..) < 0` test sees the failure");
+
+test_group("file_close_r: Ok(0) for a good close, Err(IoBadFd) for a failed one");
+var fd3 = file_open(p, O_RDONLY, 0);
+assert_eq(fd3 >= 0, 1, "the fixture reopens");
+var gt, gv = file_close_r(fd3);
+assert_eq(is_ok(gt), 1, "file_close_r of an open descriptor is Ok");
+assert_eq(gv, 0, "...and its payload is 0 (Windows said Ok(1))");
+var bt, bv = file_close_r(0 - 999);
+assert_eq(is_err_result(bt), 1, "file_close_r(-999) is Err (Windows said Ok(0))");
+assert_eq(bv, IoBadFd, "...and its payload is IoBadFd");
+
+xunlink(p);
+
+var r = assert_summary();

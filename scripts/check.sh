@@ -1703,6 +1703,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 # ⚠ SKIPs loudly when there are no sibling checkouts (CI) rather than passing quietly.
 _chk_gate "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 
+# 6.7.15 — the gates filed for stopping WITHOUT A VERDICT under `bash -eo pipefail` (GitHub's
+# `run:` shell) reach their verdict there: each runs as `bash -eo pipefail <gate>` and must end on
+# its PASS (or a named SKIP) line; the rows above run them under `sh`.
+_chk_gate "$ROOT/tests/gates/toolchain/gates_verdict_under_pipefail.sh"
+
 # ⛔ v6.6.2 — THE GUIDE TAUGHT AN API THE COMPILER NO LONGER HAD. Its Result worked example was
 # the PRE-FLIP one — five compile errors, two lines under the table announcing the arity change —
 # and a second instance sat in the #derive(Serialize) section. Nothing in the tree could see it.
@@ -2760,6 +2765,13 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_auto_call_main.sh"
 # `cyr_munmap(0x400000, …)` killed cxvm (139) and `fstat(1, 0x600100)` wrote over its globals once the
 # 8 MiB guest overlapped cxvm's link addresses. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/codegen/cx_guest_syscall_refusal.sh"
+# 6.7.15 — cxvm serves the calls it lists through the HOST's own stdlib wrappers, not the guest's
+# x86-Linux number, which the aarch64 / Mach-O compilers renumbered into other calls (on aarch64 a
+# guest lseek ran getxattr and fork ran close; on arm64 macOS kill ran lseek): one fixture
+# (tests/fixtures/cx_host_dispatch.cyr) natively, on the x86 cxvm, an aarch64 cxvm under qemu and a
+# PE cxvm under wine; cxvm builds for both Mach-O targets with no unrouted number. Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/codegen/cx_host_dispatch.sh"
 # 6.7.14 — cx alloc() bumps over the guest break cxvm serves (brk in guest space, the stack trapping
 # at the break) instead of a 128 KB static buffer written into every allocating .cyx: 3 MiB round
 # trip, the named exhaustion, zeroed reuse of stack memory, audit_walk_fifo past alloc. Mutation
@@ -2936,7 +2948,28 @@ _chk_gate "$ROOT/tests/gates/platform/pe_lockfileex_reroute.sh"
 # codes and ReadFile's keeps 109 / 38 as 0; lib/io.cyr classifies Windows' -13 over a directory;
 # the filed repros and the .tcyr under wine. Hardware: the same .tcyr on cass. Whole-gate SKIP is
 # exit 77.
+# 6.7.15 (platform lane, P2) — CloseHandle joins it: a close answers 0, or -errno through the same
+# stub (it answered the BOOL, 1 / 0); close_answer.tcyr natively and under wine, the CloseHandle
+# sites' shape, the filed close repro (exit 91).
 _chk_gate "$ROOT/tests/gates/platform/pe_reroute_failure_errno.sh"
+
+# 6.7.15 (platform lane, P2) — a seek on fd 0 / 1 / 2 reaches the std stream on PE: ELSEEK_PE maps
+# them through GetStdHandle (`_pe_fd_to_handle_rcx`), as the read / write / flush reroutes do; they
+# reached SetFilePointerEx as the handle values 0 / 1 / 2 and failed -9. Axes: the filed repro
+# natively (`3 0 0 1 100`; a piped stdin -29); every SetFilePointerEx site goes through the map with
+# offset / whence parked across it; the repro under wine (`3 0 0 1 100`; a piped stdin wine's
+# `-1 0 0 1 97`). Hardware: the repro on cass (`3 0 0 1 100`; piped `3 0 0 1 97`) is in the
+# CHANGELOG. Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_lseek_std_fds.sh"
+
+# 6.7.15 (platform lane, P5; D38) — --lex-ts / --parse-ts / --emit-js run the TypeScript front end
+# on every compiler (they were skipped off x86_64 Linux and the TS compiled as cyrius). Axes: the
+# filed repro on the native aarch64 compiler (qemu); every runnable driver (the aarch64 and Windows
+# cross compilers, the aarch64 compilers under qemu, cycc.exe under wine) gives x86_64's exit codes,
+# stdout and stderr over the TS corpus from stdin and as `<flag> <file>`, and cycc.exe splits a
+# quoted / non-ASCII path; both Mach-O compilers built, the right arch, the TS modes in them;
+# ts_test_runner 1/1 in an aarch64 install layout. Hardware: the cross-OS legs. SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/ts_flags_every_driver.sh"
 
 # 6.7.12 (windows lane, W2) — cbt's [embed] / ${file:} open refuses a file a directory link leads
 # outside the project on Windows and on macOS arm64, where it used to open the whole path (the

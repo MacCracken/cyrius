@@ -33,17 +33,20 @@
 #       contract once it ran: mmap_anon_flag (T4, was X1), uid_identity (T5, was X2),
 #       mmap_include_order, sys_pipe_every_target, concurrency/async_relay_once_no_deadlock,
 #       crossos/signal_errno_peer_values, concurrency/integration_closures_threads. cyr_mmap answers -1
-#       on cx (mmap_anon 0), sys_pipe / sys_fstat / sys_unlink -38; each file's cx arm asserts that
+#       on cx (mmap_anon 0), sys_pipe / sys_fstat -38 (sys_unlink too until 6.7.15, when cxvm began
+#       translating its path: -ENOENT now for uid_identity's never-made name); each file's cx arm asserts that
 #       refusal and names its SKIP. Native and cxvm each print `<N> passed, 0 failed`, N derived per
 #       leg (n_tgt per target; n_span for an early-return skip block), floors today's counts; the cx
 #       leg must print its SKIP line (not signal_errno, whose cx arm asserts the x86_64-Linux values
 #       a .cyx carries). T5 also: no probe file is left in the cx leg's cwd.
 #   W1-W3 (6.7.12) the issue's wrapper repro verbatim: native exit 0 (the probe file unlinked); cx
 #       traps the store at guest 0 — mmap_anon answered 0 — never at a host address (W1). Its own
-#       variant (the store replaced by `syscall(60, bad)`): native 0, cx 15 (it was 7) (W2). Each
-#       refusal exactly: -38 three times, the pipe buffer untouched, cyr_mmap -1, mmap_anon 0 (W3).
-#       ⚠ The repro's open(2) is translated and creates `_cx_probe.bin`; unlink refuses on cx (D13), so
-#       the file stays — cxvm runs it in $T.
+#       variant (the store replaced by `syscall(60, bad)`): native 0, cx 11 — pipe, fstat and mmap
+#       refused (it was 7; 15 from 6.7.12 until 6.7.15, while sys_unlink refused too) (W2). Each refusal
+#       exactly: pipe and fstat -38, the pipe buffer untouched, cyr_mmap -1, mmap_anon 0; and since
+#       6.7.15 sys_unlink of a never-made name reaches the host, -ENOENT (W3).
+#       ⚠ The repro's open(2) is translated and creates `_cx_probe.bin`; since 6.7.15 its unlink is
+#       translated too and removes it (from 6.7.12 the file stayed) — cxvm runs it in $T.
 #   M1-M2 (6.7.14, issues/archived/2026-10-15-cx-raw-mmap-paths-return-host-address.md) the two raw mmap paths
 #       D13 missed: natively mmap_stack, fl_alloc(64), fl_alloc(8192) and _fl_mmap map writable memory
 #       (M1, exit 33); on cx mmap_stack and _fl_mmap answer exactly -1 and both fl_allocs 0, with no
@@ -266,24 +269,26 @@ rm -f "$T/_cx_probe.bin"; build_run cx "$T/w1.cyr" "$T/w1.c.out"
 if [ "$RC" = 1 ] && grep -qx 'before store' "$T/w1.c.out" && grep -qE '^cxvm: guest address out of range: 0 at pc [0-9]+$' "$T/w1.c.out"; then
     ok "W1 the filed repro (cx): mmap_anon answered 0 — the store traps at guest 0, not at a host address"
 else bad "W1 the filed repro (cx): exit $RC, want 1 and 'guest address out of range: 0': $(grep -m1 '^cxvm:' "$T/w1.c.out")"; fi
-# W2 the issue's own variant (`store64(p, 7);` replaced by `syscall(60, bad);`): cx exits bad = 15,
-# all four refusals (it exited 7: pipe / fstat / unlink failed with -EFAULT, mmap_anon "succeeded").
+# W2 the issue's own variant (`store64(p, 7);` replaced by `syscall(60, bad);`): cx exits bad = 11,
+# the three refusals (it exited 7: pipe / fstat / unlink failed with -EFAULT, mmap_anon "succeeded";
+# 15 from 6.7.12 until 6.7.15, while sys_unlink refused — cxvm translates its path since 6.7.15).
 sed 's/^store64(p, 7);$/syscall(60, bad);/' "$T/w1.cyr" > "$T/w2.cyr"
 rm -f "$T/_cx_probe.bin"; build_run native "$T/w2.cyr" "$T/w2.n.out"
 if [ "$RC" = 0 ]; then ok "W2 the variant (native): exit 0"; else bad "W2 the variant (native): exit $RC, want 0"; fi
 rm -f "$T/_cx_probe.bin"; build_run cx "$T/w2.cyr" "$T/w2.c.out"
-if [ "$RC" = 15 ]; then ok "W2 the variant (cx): exit 15 — pipe, fstat and unlink refused, mmap_anon 0"
-else bad "W2 the variant (cx): exit $RC, want 15 (it was 7: mmap_anon handed back a host address)"; fi
-# W3 the exact answers: each refusal is -ENOSYS (-38), never -EFAULT, and pipe leaves the buffer alone.
+if [ "$RC" = 11 ] && [ ! -e "$T/_cx_probe.bin" ]; then ok "W2 the variant (cx): exit 11 — pipe and fstat refused, mmap_anon 0, the probe file unlinked"
+else bad "W2 the variant (cx): exit $RC, want 11 and no _cx_probe.bin left (it was 7: mmap_anon handed back a host address; 15: sys_unlink refused)"; fi
+# W3 the exact answers: each refusal is -ENOSYS (-38), never -EFAULT, and pipe leaves the buffer alone;
+# sys_unlink reaches the host (-ENOENT for a name never made; -38 from 6.7.12 until 6.7.15).
 printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/mmap.cyr"' 'var fds[16];' 'store64(&fds, 0 - 1);' \
     'var st[160];' 'var bad = 0;' \
     'if (sys_pipe(&fds) != 0 - 38) { bad = bad | 1; }' 'if (load64(&fds) != 0 - 1) { bad = bad | 2; }' \
-    'if (sys_fstat(1, &st) != 0 - 38) { bad = bad | 4; }' 'if (sys_unlink("_cx_w3_never") != 0 - 38) { bad = bad | 8; }' \
+    'if (sys_fstat(1, &st) != 0 - 38) { bad = bad | 4; }' 'if (sys_unlink("_cx_w3_never") != 0 - 2) { bad = bad | 8; }' \
     'if (cyr_mmap(0, 4096, 3, 34, 0 - 1, 0) != 0 - 1) { bad = bad | 16; }' 'if (mmap_anon(4096) != 0) { bad = bad | 32; }' \
     'syscall(60, bad);' > "$T/w3.cyr"
 build_run cx "$T/w3.cyr" "$T/w3.c.out"
-if [ "$RC" = 0 ]; then ok "W3 (cx): sys_pipe / sys_fstat / sys_unlink answer -38, the fd buffer untouched, cyr_mmap -1, mmap_anon 0"
-else bad "W3 (cx): exit $RC (a bitmask: 1 pipe, 2 its buffer, 4 fstat, 8 unlink, 16 cyr_mmap, 32 mmap_anon)"; fi
+if [ "$RC" = 0 ]; then ok "W3 (cx): sys_pipe / sys_fstat answer -38, the fd buffer untouched, sys_unlink reaches the host (-2), cyr_mmap -1, mmap_anon 0"
+else bad "W3 (cx): exit $RC (a bitmask: 1 pipe, 2 its buffer, 4 fstat, 8 unlink not -ENOENT, 16 cyr_mmap, 32 mmap_anon)"; fi
 
 # ── M1-M2 (6.7.14, issues/archived/2026-10-15-cx-raw-mmap-paths-return-host-address.md): the two raw
 # `syscall(SYS_MMAP)` paths D13 missed — lib/thread.cyr mmap_stack and lib/freelist.cyr _fl_mmap —
@@ -317,5 +322,5 @@ else bad "M2 (cx): exit $RC, want 30 (1: mmap_stack handed back a host address; 
 WANT=42
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, and the seven that met the cx guest contract pass there with honest refusals (cyr_mmap -1, sys_pipe / sys_fstat / sys_unlink -38) and named SKIPs; the wrapper repro traps at guest 0, never a host address; mmap_stack and _fl_mmap answer -1 on cx (fl_alloc 0), natively they map"
+echo "PASS: $G — $pass/$WANT rows: cx calls the fn main a program defines from the entry epilogue, as natively (the filed repro, main alone, twice when also called, once before an explicit exit, after the top level, the exact name, its output); three .tcyr that leave main to it pass under cxvm, and the seven that met the cx guest contract pass there with honest refusals (cyr_mmap -1, sys_pipe / sys_fstat -38; sys_unlink served since 6.7.15) and named SKIPs; the wrapper repro traps at guest 0, never a host address; mmap_stack and _fl_mmap answer -1 on cx (fl_alloc 0), natively they map"
 exit 0
