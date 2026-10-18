@@ -76,17 +76,33 @@ sed 's/#.*//' "$ALLOW" | awk -F'|' 'NF>=3 {gsub(/ /,"",$1); if ($1!="") print $1
 # ── 3. census helper: comment-stripped, definitions excluded ────────────────────────────
 # `|| true`: `head -400` closing the pipe kills the loop with SIGPIPE past 400 files, and the
 # loop's own status is its last file's miss — under `bash -eo pipefail` either one made the
-# caller's `HITS=$(…)` / `PROBE=$(…)` end the gate with no verdict. CHANGELOG [6.7.15]
+# caller's `HITS=$(…)` / `PROBE=$(…)` end the gate with no verdict. Each file's calls are
+# COUNTED (`grep -c`, which reads to the end), not `grep -q`'d: -q exits on its first hit, the
+# `sed | grep -v` feeding it die of SIGPIPE on a file past the 64 KB pipe buffer, and pipefail
+# made that the line's status — so under `bash -eo pipefail` a large file calling the symbol
+# early was silently NOT counted (the anti-vacuous probe read 297 files there, 380 under sh).
+# 3b below pins it. CHANGELOG [6.7.15]
 _census() {
     _sym=$1
     find "$SIBLINGS" -maxdepth 3 \( -name '*.cyr' -o -name '*.tcyr' \) \
          -not -path '*/build/*' -not -path '*/.git/*' 2>/dev/null \
     | while IFS= read -r f; do
-        sed 's/#.*//' "$f" 2>/dev/null \
-        | grep -vE "^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+${_sym}[[:space:]]*\(" \
-        | grep -qE "(^|[^_a-zA-Z0-9.])${_sym}[[:space:]]*\(" && echo "$f"
+        _n=$(sed 's/#.*//' "$f" 2>/dev/null \
+             | grep -vE "^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+${_sym}[[:space:]]*\(" \
+             | grep -cE "(^|[^_a-zA-Z0-9.])${_sym}[[:space:]]*\(" || true)
+        if [ "${_n:-0}" -gt 0 ]; then echo "$f"; fi
       done | head -400 || true
 }
+
+# ── 3b. the census reads a file to its end, under either shell ──────────────────────────
+# A ~200 KB file whose only `alloc(` call is on its FIRST line, in a scratch sibling root
+# (relative, so no `*/build/*` in TMPDIR's own path can hide it), must be found once.
+mkdir -p "$WORK/sib/r"
+{ echo 'fn f() { return alloc(8); }'; _i=0
+  while [ "$_i" -lt 3000 ]; do echo "var pad$_i = $_i;   # padding past the 64 KB pipe buffer ........"; _i=$((_i + 1)); done
+} > "$WORK/sib/r/big.cyr"
+BIG=$( (cd "$WORK" && SIBLINGS=sib && _census "alloc") | wc -l | tr -d ' ')
+[ "$BIG" = 1 ] || fail "self-test: the census found ${BIG} files calling 'alloc' in a scratch root holding one $(wc -c < "$WORK/sib/r/big.cyr")-byte file that calls it on line 1 (want 1) — a large caller is invisible to it"
 
 # ── 4. every removal must be accounted for ──────────────────────────────────────────────
 UNACCOUNTED=""
