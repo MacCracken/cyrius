@@ -3887,6 +3887,14 @@ through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes 
 `f64v2_add_ptr`). A value-form read or write of it (`g = f(..)`, `var v: f64v2 = g;`,
 `g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
 local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
+A call declared to return a vector — by name, `g<T>(..)`, a method, `callptr(&f, ..)` / `fncallN(&f, ..)`, inside
+parentheses too — into any other top-level declaration is refused (6.7.15, the user's decisions D26 and D27,
+2026-10-18: A): an untyped `var w = mkv(41, 7);` / `var v = s.mv();` by name, *'mkv' returns a vector by value, and a
+vector result needs storage in a fn's frame - call it inside a fn* (as such a call into a `*V` parameter is there), and
+`var x: i64 = mkv(41, 7);` (any annotation that is not the vector, a call or method starting the initialiser too) with
+*vector return type does not match the declared type*, as the line is in a fn. Through 6.7.14 each held one word, in
+the declaration zone and after the first statement: 0 on x86_64 / aarch64, 154 on cx, 195 on Windows, and the result's
+word under `: i64`. Make the call in a fn: store its lanes through `&g`, or read them into a scalar there.
 
 **A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
 `p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and

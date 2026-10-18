@@ -331,6 +331,20 @@
 #   M-GA3 `_vasg_vt` without the by-name start      -> RED 5: GA11 on all five legs
 #   M-GA4 `_vasg_gnv` judging a vector global too   -> RED 5: GV1 on all five legs (the mismatch's words, not the vector
 #       global's)
+# 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18; issues/2026-10-17-top-level-untyped-vector-call-or-method-
+# result-binds-a-word.md) — a call declared to return a vector into a TOP-LEVEL declaration is refused: untyped (whole,
+# any spelling, any wrap) "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it
+# inside a fn" (the words of a top-level vector call into a `*V` parameter), annotated with no vector "vector return type
+# does not match the declared type", as the line is in a fn; a vector annotation keeps the vector global's own refusal.
+# PARSE_VAR's global arm (`_vin_decl` -> `_vin_top`) after the first statement, the replay (`_bx_gvi_expr` ->
+# `_vin_zone`) in the declaration zone, one judgment (`_vtop_ref` over `_vcall_vt`). Before: one word (x86_64 / IR=3 /
+# aarch64 0, cx 154, PE 195 in the zone / 154 after the first statement; `: i64` 0 / cx / PE 41). Rows TL (refused once)
+# on host / host IR=3 / cx / aarch64 / win64; the controls in tests/tcyr/crossos/vector_global_storage.tcyr. Mutations
+# (2026-10-18, measured):
+#   M-TL1 `_vin_decl` without the top-level arm      -> RED 30: TL4-TL6 TL8 TL14 TL16 (after the first statement) on five
+#   M-TL2 the replay without `_vin_zone`             -> RED 50: TL1-TL3 TL7 TL9-TL13 TL15 (the zone) on five legs
+#   M-TL3 `_vtop_ref` asking a whole call when annotated -> RED 5: TL12 on five legs
+#   M-TL4 no vector-global guard (zone, late)         -> RED 10: TLV1 TLV2 on five legs (a second error)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -1441,6 +1455,92 @@ refuse_gaf_all() {  # $1 leg label  $2 compiler
     elif [ -s "$W/gaf.out" ]; then bad "$1 GAF: reported but still emitted an artifact"
     else good "$1 GAF refused: both statements, the mismatch's words"; fi
 }
+# ---- 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18; issues/2026-10-17-top-level-untyped-vector-call-or-method-
+# result-binds-a-word.md): a call declared to return a vector into a TOP-LEVEL declaration (rows TL refused once) ---------
+# TL1-TL3 the filed rows verbatim in the declaration zone (by name, a method, `: i64`), TL4-TL6 the same after the first
+# statement; TL7 / TL8 `callptr(&mkv, ..)` in both zones; TL9 wrapped; TL10 an explicit instance; TL11 a field chain's
+# method through a `*W` global; TL12 a method starting a `: i64` initialiser; TL13 `fncall2(&mkv, ..)` into `: u8`; TL14
+# a wrapped call into `: f64` after the first statement; TL15 a callee declared below the zone global; TL16 a struct
+# annotation after the first statement; TLV1 / TLV2 a vector annotation keeps the vector global's own refusal, once.
+TLH='fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+var s: S = S { 1 };
+'
+TLX='include "lib/fnptr.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct S { k; }
+struct W { s: S; j; }
+struct P1 { a; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+var s: S = S { 1 };
+var pw: *W = 0;
+'
+TLR='syscall(60, (load64(&w) * 10 + load64(&w + 8)) % 256);
+'
+tl_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    TL1) printf '%s' "$TLH"'var w = mkv(41, 7);
+'"$TLR" ;;
+    TL2) printf '%s' "$TLH"'var v = s.mv();
+syscall(60, (load64(&v) * 10 + load64(&v + 8)) % 256);
+' ;;
+    TL3) printf '%s' "$TLH"'var x: i64 = mkv(41, 7); syscall(60, x % 256);
+' ;;
+    TL4) printf '%s' "$TLH"'var q = 0; q = 1;
+var w = mkv(41, 7);
+'"$TLR" ;;
+    TL5) printf '%s' "$TLH"'var q = 0; q = 1;
+var v = s.mv();
+syscall(60, (load64(&v) * 10 + load64(&v + 8)) % 256);
+' ;;
+    TL6) printf '%s' "$TLH"'var q = 0; q = 1;
+var x: i64 = mkv(41, 7); syscall(60, x % 256);
+' ;;
+    TL7) printf '%s' "$TLX"'var w = callptr(&mkv, 41, 7);
+'"$TLR" ;;
+    TL8) printf '%s' "$TLX"'var q = 0; q = 1;
+var w = callptr(&mkv, 41, 7);
+'"$TLR" ;;
+    TL9) printf '%s' "$TLX"'var w = ((mkv(41, 7)));
+'"$TLR" ;;
+    TL10) printf '%s' "$TLX"'var w = mkg<i64>(41, 7);
+'"$TLR" ;;
+    TL11) printf '%s' "$TLX"'var w = pw.s.mv();
+'"$TLR" ;;
+    TL12) printf '%s' "$TLX"'var x: i64 = s.mv() + 1; syscall(60, x % 256);
+' ;;
+    TL13) printf '%s' "$TLX"'var x: u8 = fncall2(&mkv, 41, 7); syscall(60, x % 256);
+' ;;
+    TL14) printf '%s' "$TLX"'var q = 0; q = 1;
+var x: f64 = (mkv(41, 7)); syscall(60, 0);
+' ;;
+    TL15) printf '%s' 'var w = mkv(41, 7);
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+'"$TLR" ;;
+    TL16) printf '%s' "$TLX"'var q = 0; q = 1;
+var t: P1 = mkv(41, 7); syscall(60, 0);
+' ;;
+    TLV1) printf '%s' "$TLX"'var w: f64v4 = s.mv();
+syscall(60, 0);
+' ;;
+    TLV2) printf '%s' "$TLX"'var q = 0; q = 1;
+var w: f64v2 = (mkv(41, 7));
+syscall(60, 0);
+' ;;
+    esac
+}
+TL_ROWS="TL1 TL2 TL3 TL4 TL5 TL6 TL7 TL8 TL9 TL10 TL11 TL12 TL13 TL14 TL15 TL16 TLV1 TLV2"
+tl_msg() {
+    case "$1" in
+    TL2|TL5|TL11) echo "'mv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    TL10) echo "'mkg' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    TLV1|TLV2) echo "vector global 'w' takes no initializer but 0";;
+    TL1|TL4|TL7|TL8|TL9|TL15) echo "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    *) echo "vector return type does not match the declared type";;
+    esac
+}
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -1976,6 +2076,8 @@ refuse_tab_all host-ir3 "$CC" wrk_src "$WRK_ROWS" wrk_msg CYRIUS_IR=3
 refuse_tab_all host "$CC" ga_src "$GA_ROWS" ga_msg
 refuse_tab_all host-ir3 "$CC" ga_src "$GA_ROWS" ga_msg CYRIUS_IR=3
 refuse_gaf_all host "$CC"
+refuse_tab_all host "$CC" tl_src "$TL_ROWS" tl_msg
+refuse_tab_all host-ir3 "$CC" tl_src "$TL_ROWS" tl_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr gc_src "$GC_ROWS" CYRIUS_IR=3
 refuse_h_all host "$CC"
@@ -2012,6 +2114,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_tab_all cx "$W/cycc_cx" wrk_src "$WRK_ROWS" wrk_msg
     refuse_tab_all cx "$W/cycc_cx" ga_src "$GA_ROWS" ga_msg
     refuse_gaf_all cx "$W/cycc_cx"
+    refuse_tab_all cx "$W/cycc_cx" tl_src "$TL_ROWS" tl_msg
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
@@ -2050,6 +2153,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_tab_all aarch64 "$W/cycc_a64" wrk_src "$WRK_ROWS" wrk_msg
         refuse_tab_all aarch64 "$W/cycc_a64" ga_src "$GA_ROWS" ga_msg
         refuse_gaf_all aarch64 "$W/cycc_a64"
+        refuse_tab_all aarch64 "$W/cycc_a64" tl_src "$TL_ROWS" tl_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
@@ -2093,6 +2197,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_tab_all win64 "$W/cycc_win" wrk_src "$WRK_ROWS" wrk_msg
         refuse_tab_all win64 "$W/cycc_win" ga_src "$GA_ROWS" ga_msg
         refuse_gaf_all win64 "$W/cycc_win"
+        refuse_tab_all win64 "$W/cycc_win" tl_src "$TL_ROWS" tl_msg
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
@@ -2110,7 +2215,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -2135,8 +2240,8 @@ na_floor=$((na_floor + $(set -- $GC_ROWS; echo $#) * 3))   # 6.7.15: every GC ro
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

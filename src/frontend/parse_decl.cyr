@@ -6833,6 +6833,7 @@ fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
 }
 fn _bx_gvi_expr(S, gps, gi, noff): i64 {
     var ti = GTI(S);
+    _vin_zone(S, gi, noff);   # 6.7.15 (D26 / D27): a vector call has no storage here
     _gvi_expr(S, gps);
     _tp_warn_gv(S, _gv_ent_slot(S, gi, 0, noff), ti);   # 6.7.13 (D18 (a)): a declaration-zone `*T`
     _gz_agree(S, gps, _gv_ent_slot(S, gi, 0, noff), ti, noff);   # 6.7.10 (B7-1g)
@@ -9171,6 +9172,63 @@ fn _dt_call_fn(S): i64 {
 }
 
 # Parse: var IDENT = expr ;
+# PARSE_VAR, cursor on its `=` (or the token after the name): the declaration's `pscale` after the by-name vector call
+# that starts its initialiser (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too). In a fn, no annotation of its
+# own takes the callee's vector (6.7.15: an annotation of no integer width — `: f64`, `: f32`, `: bool`, `: cstring`, an
+# enum — is one, so it meets the refusal below), and an annotation that DISAGREES with the callee is a type error: it
+# used to be silent in the same way the missing one was — the receive paths below require `GFRS == pscale`, so a
+# mismatch simply fell out of them into the scalar init (`var r: f64v4 = f64v2_add(a, b);` and `var r: i64 =
+# f64v2_add(a, b);` both read back as zero, exit 0). At top level: `_vin_top`. CHANGELOG [6.7.15]
+fn _vin_decl(S, pscale, sty, ann): i64 {
+    if (PEEKT(S) != 4) { return pscale; }
+    if (GINFN(S) != 1) {
+        _vin_top(S, pscale, ann);
+        return pscale;
+    }
+    var fi = _vcall_fi(S, GTI(S) + 1);
+    if (fi < 0) { return pscale; }
+    var rs = GFRS(S, fi);
+    if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
+    if (pscale != rs) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
+    return pscale;
+}
+# ⛔ 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18) — A CALL DECLARED TO RETURN A VECTOR INTO A TOP-LEVEL
+# DECLARATION IS REFUSED, as the annotated vector global and the `*V` argument are there (a vector result needs a fn's
+# frame; a vector global takes no initializer but 0) and as the scalar annotation is in a fn (6.7.10's decision 5: one
+# rule for locals and globals). An untyped `var w = mkv(41, 7);` / `var v = s.mv();` / `(..)` / `callptr(&mkv, ..)`
+# held one word (x86_64 / aarch64 0, cx 154, PE 195 where 161 is right) and `var x: i64 = mkv(41, 7);` the result's
+# word (0; cx / PE 41). Cursor on the `=`: a vector annotation is the vector global's own refusal (`_vecg_init_ok`);
+# else `_vtop_ref`. In the declaration zone the replay asks (`_vin_zone`). CHANGELOG [6.7.15]
+fn _vin_top(S, pscale, ann): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    return _vtop_ref(S, GTI(S) + 1, ann);
+}
+# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a whole call declared to return
+# a vector (any spelling, any wrap; annotated, an unwrapped one may start it, `_vcall_vt`) refused — untyped, at the
+# call in the words of a top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method,
+# `&f`); annotated, at the `=`, "vector return type does not match the declared type". 1 = refused.
+fn _vtop_ref(S, st, ann): i64 {
+    var start = 0;
+    if (ann != 0) { start = 1; }
+    var rs = _vcall_vt(S, st, 5, start);
+    if (rs == 0) { return 0; }
+    if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
+    var sv = GTI(S);
+    STI(S, st - 1);
+    ERR_MSG(S, "vector return type does not match the declared type", 51);
+    STI(S, sv);
+    return 1;
+}
+# The declaration zone's replay, cursor on the initialiser of global `gi` (`noff`): `_vtop_ref`, unless the global is
+# a vector (pass 1 refused its initializer: `_vecg_init_ok`).
+fn _vin_zone(S, gi, noff): i64 {
+    var slot = _gv_ent_slot(S, gi, 0, noff);
+    if (slot >= 0) { if (GVVEC(S, slot) != 0) { return 0; } }
+    var st = GTI(S);
+    var ann = 1;
+    if (_gu_untyped(S, st) == 1) { ann = 0; }
+    return _vtop_ref(S, st, ann);
+}
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
     # expect IDENT
@@ -9417,29 +9475,7 @@ fn PARSE_VAR(S): i64 {
     # 6.7.7 (B4): `_tup_var` runs it — first taking a tuple literal initializer, which declares the
     # whole tuple here (1: done).
     if (_tup_var(S, noff, pscale, ann_ti) == 1) { return 0; }
-    if (GINFN(S) == 1) {
-        if (PEEKT(S) == 4) {
-            # 6.7.13: an explicit instance `g<T>(..)` too (`_vcall_fi`, the vector-returning by-name call)
-            var _vin_fi = _vcall_fi(S, GTI(S) + 1);
-            if (_vin_fi >= 0) {
-                var _vin_rs = GFRS(S, _vin_fi);
-                if (pscale == 0) {
-                    # No annotation of its own: take the callee's. 6.7.15: an annotation of no integer width (`: f64`,
-                    # `: f32`, `: bool`, `: cstring`, an enum) is one, so it meets the refusal below. CHANGELOG [6.7.15]
-                    if (scalar_type == 0) { if (ann_ti == 0) { pscale = _vin_rs; } }
-                }
-                # An annotation that DISAGREES with the callee is a type error, and
-                # it used to be silent in the same way the missing one was: the
-                # receive paths below require `GFRS == pscale`, so a mismatch simply
-                # fell out of them into the scalar init. `var r: f64v4 =
-                # f64v2_add(a, b);` and `var r: i64 = f64v2_add(a, b);` both read
-                # back as zero, exit 0. Refuse them instead of truncating.
-                if (pscale != _vin_rs) {
-                    ERR_MSG(S, "vector return type does not match the declared type", 51);
-                }
-            }
-        }
-    }
+    pscale = _vin_decl(S, pscale, scalar_type, ann_ti);   # 6.7.15: out of PARSE_VAR (cybs), + the top-level arm
 
     # v5.5.36 Phase 2: `var p: StructName;` — stack-local struct
     # with no initializer. `pscale < 0` means the type annotation

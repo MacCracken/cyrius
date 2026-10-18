@@ -2595,6 +2595,16 @@ fn _svc_toplevel_err(S): i64 {
     _had_error = 1;
     return 0;
 }
+# ... at token `ti`, naming token `nt`'s name; the cursor kept. 1. 6.7.15 (D26): a top-level declaration's
+# (`_vtop_ref`).
+fn _svc_toplevel_at(S, ti, nt): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _svc_nm = TOKVAL(S, nt);
+    _svc_toplevel_err(S);
+    STI(S, sv);
+    return 1;
+}
 
 # ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
 # decision 6: `*p` is a struct value at every size). `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into
