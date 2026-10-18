@@ -4411,7 +4411,8 @@ impl Acct {
 `#pure`'s check holds wherever the callee is defined: an `#io` / `#alloc` fn BELOW its `#pure`
 caller — a plain call, `return wr();`, a method of an `impl` further down — warns as one above
 it does (6.7.14; through 6.7.13 only `#deprecated` was recorded ahead of its definition, so a
-later callee was silent).
+later callee was silent) — and through a generic instance: `h<i32>(1)` on an `#io fn h<T>` warns
+`#pure fn calls #io fn 'h<i32>'`, as `h(1)` warns for `h` (6.7.15; the instance was silent).
 
 `#assert EXPR, "message";` checks a compile-time fact and stops the build
 with `#assert failed: message` when it does not hold. EXPR is any const expression

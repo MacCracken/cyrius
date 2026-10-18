@@ -7745,13 +7745,15 @@ fn _dep_seen(ti, fi): i64 {
 # 6.6.17 — what an instance must know of itself that the base's pass-1 record holds: its type
 # arguments (a3, `_bind_inl_generic`) and the base's "returns one value" bit 1024 (a5,
 # `_prescan_ret_single` — the instance's body IS the base's tokens); 6.7.11, its value count
-# (`_prescan_ret_arity`).
+# (`_prescan_ret_arity`). 6.7.15: the base's `#io` / `#alloc` (bits 16 / 32) — `#pure`'s check reads the callee's
+# bits, and a call through an instance (`h<i32>(1)`) was silent (CHANGELOG [6.7.15]).
 fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
     if (spec < 0) { return 0; }
     SFIC(S, spec, c0, c1);
     if (GFMETH(S, base_fi) != 0) { SFMETH(S, spec, GFMETH(S, base_fi)); }   # 6.7.14: `P.id<f64>`
     if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
     SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 196608));   # 6.7.11: its arity record
+    SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 48));       # 6.7.15: `#io` / `#alloc`
     return 0;
 }
 fn _gen_inherit_dep(S, spec, base_fi): i64 {
