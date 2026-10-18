@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.15] — 2026-10-17
+
 ## [6.7.14] — 2026-10-17
 
 **Break 2, repair 4 — generics, the frontend, infra; the heavier release: 137 issues in nine lanes over three
