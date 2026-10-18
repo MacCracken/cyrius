@@ -7113,7 +7113,9 @@ describe<i32>(7);   # needs impl Show for i32
   it forwards its type parameter to 'describe'* with a note naming the impl the chain's end needs
   (6.7.14; through 6.7.13 such a forwarder was a struct stub, refused at every scalar call, `f64`
   included, "uses its type parameter as a struct"; 6.7.14 judged a chain only 64 forwards deep, so a
-  65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth).
+  65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth). The
+  call that instantiates such a chain at another type is still held to the parser's nesting bound: about 120
+  forwards, past which it is *nesting too deep (over 256 levels)*, a chain without a bound alike.
 
 Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct
 was refused as "a struct beside a second type argument", and no bound was checked. Dispatch is
