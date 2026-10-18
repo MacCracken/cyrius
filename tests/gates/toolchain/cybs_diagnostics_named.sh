@@ -48,6 +48,14 @@
 #      statement past it is refused (the 6.7.13 cybs dropped it: exit 0); P5 an expansion of exactly
 #      16 MB compiles, one byte more is refused (the final check), and 65 spellings of one 2 MB include
 #      (130 MB) are refused at the first line past 16 MB, before the buffer runs past the brk end
+#      — and the include-once list (6.7.15, issues/2026-10-16-cybs-include-once-list-and-name-buffers-unchecked.md:
+#      256 entries of 256 B, ending at the include name buffers; neither the count nor the width was checked):
+#      P6 the filed 257-include program verbatim (its 257th was skipped as seen: exit 0, r 0 where the source
+#      says 42) is refused; 256 distinct includes compile, and a re-include at 256 is still skipped;
+#      P7 the filed 308-character path verbatim (its entry ran into the next, so the re-include was not
+#      skipped: 42) is refused, and so is a 256-character path; a 255-character one compiles with its
+#      re-include skipped (41 + 1), and so does one that is the 256th distinct include (pp_mark's qword
+#      stores ran 7 bytes past the last entry, zeroing that include's own name: skipped, 41)
 #   V  ANTI-VACUOUS: a valid program using every neighbour of the refused shapes (`0 - a`, `>>`,
 #      `while`, an if statement, a top-level var, a forward call) compiles and runs (exit 42)
 #
@@ -74,6 +82,14 @@
 #   pp_exp_linestart's check dropped                                                     -> P5 RED (130 MB: rc 139)
 #   preprocess's final expanded-length check dropped                                     -> P5 RED (16 MB + 1 compiles)
 # 6.7.15:
+#   pp_do_include's once-count check dropped                                             -> P6 RED (the 257th skipped:
+#                                                                                         rc 0)
+#   pp_doinc_fld's width check dropped                                                   -> P7 RED (308 and 256
+#                                                                                         characters compile)
+#   pp_mark's byte stores back to qword stores                                           -> P7 RED (the 256th at 255
+#                                                                                         characters: 41)
+#   (pp_doinc_fl's 256-character bound only keeps the 4 KB name buffer from being overrun; the width check
+#   refuses right after, so no row can see it dropped)
 #   parse_fn_def's fn_local_count reset dropped (the 6.7.14 cybs)                          -> X RED (ztl: the class
 #                                                                                         message, not zz)
 set -u
@@ -231,6 +247,35 @@ says P5 ex16p.cyr 'an expansion of 16 MB + 1' "$CAP_EXP"
 { k=1; while [ $k -le 65 ]; do printf 'include "%sp2m.cyr"\n' "$(sp $k)"; k=$((k + 1)); done; printf 'syscall(60, 42);\n'; } > "$D/ex130.cyr"
 says P5 ex130.cyr '65 spellings of one 2 MB include (130 MB expanded)' "$CAP_EXP"
 rm -f "$D"/*.out "$D/p2m.cyr" "$D/e16.cyr" "$D/e16p.cyr"
+CAP_ONCE="cybs: more than 256 distinct includes, the size of the preprocessor's include-once list"
+CAP_PATH="cybs: an include path of 256 or more characters, the width of an include-once entry"
+# P6 — the filing's (1), verbatim: 255 + x.cyr + y.cyr distinct includes
+i=1; while [ $i -le 255 ]; do printf '# f%s\n' $i > "$D/f$i.cyr"; i=$((i+1)); done
+printf '# x\n' > "$D/x.cyr"; printf 'r = 42;\n' > "$D/y.cyr"
+{ printf 'var r = 0;\n'; i=1; while [ $i -le 255 ]; do printf 'include "f%s.cyr"\n' $i; i=$((i+1)); done
+  printf 'include "x.cyr"\ninclude "y.cyr"\nsyscall(60, r);\n'; } > "$D/m.cyr"
+says P6 m.cyr 'the filed 257 distinct includes' "$CAP_ONCE"
+printf 'r = r + 21;\n' > "$D/w.cyr"
+{ printf 'var r = 21;\n'; i=1; while [ $i -le 255 ]; do printf 'include "f%s.cyr"\n' $i; i=$((i+1)); done
+  printf 'include "w.cyr"\ninclude "w.cyr"\ninclude "f1.cyr"\nsyscall(60, r);\n'; } > "$D/m256.cyr"
+runs P6 m256.cyr '256 distinct includes, then re-includes of the 256th and the 1st (skipped)'
+# P7 — the filing's (2), verbatim (a 308-character path through directories), then the width's edge
+rp() { awk -v c="$1" -v n="$2" 'BEGIN { for (i = 0; i < n; i++) printf "%s", c }'; }
+d=$(rp d 100); p="$d/$d/$d/l.cyr"; mkdir -p "$D/$d/$d/$d"
+printf 'r = r + 1;\n' > "$D/$p"; printf '# z\n' > "$D/z.cyr"
+printf 'var r = 40;\ninclude "%s"\ninclude "z.cyr"\ninclude "%s"\nsyscall(60, r);\n' "$p" "$p" > "$D/lp.cyr"
+says P7 lp.cyr 'the filed 308-character path' "$CAP_PATH"
+p5="$d/$d/$(rp l 49).cyr"; p6="$d/$d/$(rp l 50).cyr"
+printf 'r = r + 1;\n' > "$D/$p5"; printf 'r = r + 1;\n' > "$D/$p6"
+[ ${#p5} -eq 255 ] && [ ${#p6} -eq 256 ] || bad "P7: the probe paths are ${#p5} and ${#p6} characters, want 255 and 256"
+printf 'var r = 41;\ninclude "%s"\nsyscall(60, r);\n' "$p6" > "$D/l256.cyr"
+says P7 l256.cyr 'a 256-character path' "$CAP_PATH"
+printf 'var r = 40;\ninclude "%s"\ninclude "z.cyr"\ninclude "%s"\nsyscall(60, r + 1);\n' "$p5" "$p5" > "$D/l255.cyr"
+runs P7 l255.cyr 'a 255-character path, included twice (the second skipped)'
+{ printf 'var r = 41;\n'; i=1; while [ $i -le 255 ]; do printf 'include "f%s.cyr"\n' $i; i=$((i+1)); done
+  printf 'include "%s"\nsyscall(60, r);\n' "$p5"; } > "$D/l255last.cyr"
+runs P7 l255last.cyr 'a 255-character path as the 256th distinct include (the list'"'"'s last entry)'
+rm -rf "$D/$d" "$D"/f*.cyr "$D"/*.out
 unset LC_ALL
 
 # V — anti-vacuous
@@ -259,4 +304,4 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: cybs_diagnostics_named — $fail row(s) red"; exit 1; fi
-echo "PASS: cybs_diagnostics_named — every refusal in the filing's table names what cybs lacks and prints its own line of the expanded stream; an undefined name is named (a subscript's too); an input ending at fn / var is refused, not a crash; the preprocessor refuses what does not fit its buffers, naming the cap; a valid program still compiles (closure intact)"
+echo "PASS: cybs_diagnostics_named — every refusal in the filing's table names what cybs lacks and prints its own line of the expanded stream; an undefined name is named (a subscript's too); an input ending at fn / var is refused, not a crash; the preprocessor refuses what does not fit its buffers (the include-once list's count and width too), naming the cap; a valid program still compiles (closure intact)"

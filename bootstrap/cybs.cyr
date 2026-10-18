@@ -5290,14 +5290,14 @@ pp_mark_loop:
     je pp_mark_done
     mov r8, rsi
     add r8, rdx
-    mov [r8], rax
-    add rdx, 1
+    movb [r8], rax       # byte stores: a qword ran 7 bytes past the NUL, out of the last entry
+    add rdx, 1           # into depth 0's name buffer (CHANGELOG [6.7.15])
     jmp pp_mark_loop
 pp_mark_done:
     mov r8, rsi
     add r8, rdx
     xor rax, rax
-    mov [r8], rax        # NUL
+    movb [r8], rax       # NUL
     add rcx, 1
     mov rsi, r15
     add rsi, 0x7700008
@@ -5354,7 +5354,9 @@ pp_rf_fail:
 # * 0x200000), 8 slots, expand_buf 16 MB (0x8000000, ending where slot 0 begins). Past any of them a
 # file was overwritten or cut short and cybs compiled what the source does not say; each check sends
 # rsi = its line of err_cap and rdi = the line's length here. Nothing has been written to stdout.
-# CHANGELOG [6.7.14]
+# CHANGELOG [6.7.14] — and the include-once list (r15 + 0x7710000, 256 entries of 256 B, ending at
+# the include name buffers): a 257th distinct include was skipped as seen, and a 256+ character path
+# ran into the next entry, so its re-include was not skipped. CHANGELOG [6.7.15]
 pp_cap_err:
     mov rdx, rdi
     mov rax, 1
@@ -5386,6 +5388,8 @@ pp_do_include:
     add rdx, 1           # first fname char
     xor rcx, rcx         # fi
 pp_doinc_fl:
+    cmp rcx, 256         # past an include-once entry's width: refused below (the buffer is 4 KB)
+    jge pp_doinc_fld
     cmp rdx, r9
     jge pp_doinc_fld
     mov rsi, r8
@@ -5405,9 +5409,24 @@ pp_doinc_fld:
     add rsi, rcx
     xor rax, rax
     mov [rsi], rax       # NUL-term name
+    push rdi
+    mov rsi, err_cap
+    add rsi, 395
+    mov rdi, 84
+    cmp rcx, 256         # an entry is 256 B with its NUL
+    jge pp_cap_err
+    pop rdi
     call pp_seen         # rdi=name
     cmp rax, 1
     je pp_doinc_ret
+    mov rsi, r15
+    add rsi, 0x7700008
+    mov rax, [rsi]       # once_count (a re-include was skipped above, so it is still skipped at 256)
+    mov rsi, err_cap
+    add rsi, 307
+    mov rdi, 88
+    cmp rax, 256         # the list holds 256 entries: entry 256 is depth 0's name buffer
+    jge pp_cap_err
     mov rdi, r15
     add rdi, 0x7720000
     mov rax, rbx
@@ -5689,7 +5708,7 @@ err_bang:
 err_char:
     db "cybs: the bootstrap compiler cannot lex this byte outside a string or comment: "
 err_cap:
-    db "cybs: an included file is over 2 MB, the size of the preprocessor's include slot\ncybs: includes nest more than 8 deep, the preprocessor's 8 include slots\ncybs: the input is over 15 MB, the size of the input buffer\ncybs: the input with its includes spliced in is over 16 MB, the size of the expansion buffer\n"
+    db "cybs: an included file is over 2 MB, the size of the preprocessor's include slot\ncybs: includes nest more than 8 deep, the preprocessor's 8 include slots\ncybs: the input is over 15 MB, the size of the input buffer\ncybs: the input with its includes spliced in is over 16 MB, the size of the expansion buffer\ncybs: more than 256 distinct includes, the size of the preprocessor's include-once list\ncybs: an include path of 256 or more characters, the width of an include-once entry\n"
 pp_pat_include:
     db "include "
 pp_pat_ifdef:
