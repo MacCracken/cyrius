@@ -9993,8 +9993,8 @@ fn _meth_fn_at(S, sid, mnoff, mti): i64 {
 # stub, like a struct-using generic's — when i64 fails one of the generic's OWN bounds, or when it
 # instantiates a BOUNDED generic struct with its own type parameter (`Box<T>` with `Box<T: Show>`)
 # and i64 fails that struct's bound. Without the second half, `fn mk<T>(x: T): Box<T>` was refused
-# at its definition although only `mk(5)` is wrong. Not cached: struct bounds are known only once
-# pass 1 has registered every struct; and a program with no bound never gets past the first test.
+# at its definition although only `mk(5)` is wrong. Cached only in pass 2 (`_bbm_get`): struct bounds are
+# known once pass 1 has registered every struct; and a program with no bound never gets past the first test.
 # ⛔ 6.7.14 — AND WHEN IT FORWARDS ITS T TO A GENERIC WHOSE BASE IS NOT A VALID i64 INSTANCE
 # (`_bbs_fwd_bad`): `fn o<T>(x: T) { return gb(x); }` with `fn gb<T: Show>` and only `impl Show for f64`.
 # The stub scan counted that forward a struct use, so `o`'s base was the stub, which has no scalar
@@ -10009,14 +10009,71 @@ fn _bnd_base_bad(S, fi): i64 {
     var tp = GFTP(S, fi);
     if (tp == 0) { return 0; }
     if (_gen_is_inst(S, fi) == 1) { return 0; }
+    var mv = _bbm_get(fi);
+    if (mv >= 0) { return mv; }   # 6.7.15: its verdict, memoised
     var blk = GFBND(S, fi);
     if (blk != 0) {
         if (_bnd_fail(S, blk, 0, 0 - 8) >= 0) { return 1; }
         if (_bnd_fail(S, blk, 1, 0 - 8) >= 0) { return 1; }
     }
-    if (_st_bnd != 0) { if (_bbs_struct(S, fi, tp) == 1) { return 1; } }
+    if (_st_bnd != 0) { if (_bbs_struct(S, fi, tp) == 1) { _bbm_put(fi, 1); return 1; } }
     if (_bnd_has == 0) { if (_st_bnd == 0) { return 0; } }
     return _bbs_fwd_bad(S, fi);
+}
+# ⛔ 6.7.15 — THE VERDICT IS MEMOISED PER GENERIC, AND THE JUDGEMENT HAS NO DEPTH CAP. `_bbs_fwd_bad` judged a
+# generic's forwards afresh at every asking (each call site, each base), so a chain of N forwarders cost N^2 scans,
+# and a depth cap (64) kept that bounded by answering "not bad" past it — a valid 66-deep chain's base was then
+# refused at a definition (issues/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). Each generic's
+# verdict (with the diagnostics a refusal names: `_bbs_fwd`, `_bbs_root`, `_bbs_why`) is recorded once it is
+# known to hold: a "bad" one always (a bad base reached is a fact, wherever it was found); a "not bad" one only
+# when the whole judgement found nothing — inside a judgement that ends bad, a generic answered while one of its
+# forwards was still being judged (a cycle, `_bbf_vis`) may be wrong, so it is not kept. Only in pass 2 (every
+# impl and struct bound known) and while the stub flags are closed and unchanged (`_gm_gen`: a generic recorded
+# later changes what a forward to it means, so it drops every entry). CHANGELOG [6.7.15]
+var _bbm = 0;        # per generic fi: (tag, verdict, _bbs_fwd, _bbs_root, _bbs_why), 40 B; tag = `_gm_gen` + 1
+var _bbm_cap = 0;    # its entries
+var _bbf_ep = 0;     # the judgement's `_gm_gen` + 1 when it may record, else 0
+# 1 = a verdict may be read or recorded now.
+fn _bbm_ok(): i64 {
+    if (_dyn_p2 == 0) { return 0; }
+    if (_gm_closed != _gm_gen) { return 0; }
+    return 1;
+}
+# fi's memoised verdict (the diagnostics set from it), or -1.
+fn _bbm_get(fi): i64 {
+    if (fi >= _bbm_cap) { return 0 - 1; }
+    if (_bbm_ok() == 0) { return 0 - 1; }
+    var e = _bbm + fi * 40;
+    if (L64(e) != _gm_gen + 1) { return 0 - 1; }
+    _bbs_fwd = L64(e + 16);
+    _bbs_root = L64(e + 24);
+    _bbs_why = L64(e + 32);
+    return L64(e + 8);
+}
+# Record verdict v for fi, with the diagnostics as they stand.
+fn _bbm_put(fi, v): i64 {
+    if (_bbm_ok() == 0) { return 0; }
+    if (_bbf_dep > 0) { if (_bbf_ep != _gm_gen + 1) { return 0; } }   # inside a judgement: its epoch still holds
+    if (fi >= _bbm_cap) { _bbm_grow(fi); }
+    var e = _bbm + fi * 40;
+    S64(e, _gm_gen + 1);
+    S64(e + 8, v);
+    S64(e + 16, _bbs_fwd);
+    S64(e + 24, _bbs_root);
+    S64(e + 32, _bbs_why);
+    return 0;
+}
+fn _bbm_grow(fi): i64 {
+    var c = _bbm_cap * 2;
+    if (c < 1024) { c = 1024; }
+    while (c <= fi) { c = c * 2; }
+    var t = alloc(c * 40);
+    var w = 0;
+    while (w < c * 5) { S64(t + w * 8, 0); w = w + 1; }
+    if (_bbm != 0) { _tab_copy(t, _bbm, _bbm_cap * 5); }
+    _bbm = t;
+    _bbm_cap = c;
+    return 0;
 }
 # 1 iff generic fi's definition instantiates a bounded generic struct with its own type parameter and
 # i64 fails that struct's bound (`_bbs_why` = the struct).
@@ -10077,13 +10134,17 @@ fn _bbs_targs(S, fi, tp, fs, j): i64 {
 # `<T>` (the stub scan's mode 2, `_gs_use`) — to a generic whose base `_bnd_base_bad` judges bad
 # (`_bbs_fwd` = that generic + 1; `_bbs_root` = + 1 of the one whose own bound or bounded struct fails).
 # A stub fi is the stub's (its base is skipped, every scalar call refused by `_refuse_gen_stub`). Each
-# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends. ⚠ The judgement reaches
-# 64 forwards deep (`_bbf_dep`): past it a chain is answered "not bad" and a valid deeper chain's i64 base is
-# refused at a definition — a known limit, filed (lifting it needs the judgement memoised, or it goes quadratic).
+# generic is scanned once per judgement (`_bbf_vis`), so a cycle of forwards ends; a verdict known to hold is
+# memoised (`_bbm_put`), so a chain of any depth is judged once per generic (6.7.15: it was capped at 64 deep).
 fn _bbs_fwd_bad(S, fi): i64 {
     if ((GFGM(S, fi) & 3) != 0) { return 0; }
-    if (_bbf_dep == 0) { _bbf_n = 0; }
-    if (_bbf_dep > 64) { return 0; }
+    var top = 0;
+    if (_bbf_dep == 0) {
+        _bbf_n = 0;
+        top = 1;
+        _bbf_ep = 0;
+        if (_bbm_ok() == 1) { _bbf_ep = _gm_gen + 1; }
+    }
     _bbf_push(fi);
     var lo = _bbf_n;
     _bbf_scan(S, fi);
@@ -10102,7 +10163,22 @@ fn _bbs_fwd_bad(S, fi): i64 {
         k = k + 1;
     }
     _bbf_dep = _bbf_dep - 1;
-    return r;
+    if (r == 1) { if (_bbf_ep == _gm_gen + 1) { _bbm_put(fi, 1); } return 1; }
+    if (top == 1) { _bbf_none(); }
+    return 0;
+}
+# The judgement found no bad base: none of the generics it visited reaches one — each is recorded "not bad".
+fn _bbf_none(): i64 {
+    if (_bbf_ep != _gm_gen + 1) { return 0; }
+    _bbs_fwd = 0;
+    _bbs_root = 0;
+    _bbs_why = 0;
+    var k = 0;
+    while (k < _bbf_n) {
+        _bbm_put(L64(_bbf_vis + k * 8), 0);
+        k = k + 1;
+    }
+    return 0;
 }
 # Add generic g to the judgement's visited list (once).
 fn _bbf_push(g): i64 {

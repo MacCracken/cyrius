@@ -32,7 +32,7 @@
 #      stub text; F3 both impls (56); F4 / F4b two levels o2 -> o -> gb; F5 an explicit gb<T>(x) forward with a
 #      struct too; F6 / F6b a generic method forward; F7 / F7b a forward to a generic instantiating a bounded
 #      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone;
-#      F12 a chain of 64 forwards (the judgement's reach: `_bbf_dep`'s cap, filed for a deeper chain).
+#      F12 a chain of 64 forwards (6.7.14's reach: `_bbf_dep`'s cap, lifted by 6.7.15's F13-F15e).
 #      I7 (an unbounded generic forwarding to a bounded one, u(5)) now names the forward, not the stub text.
 #      Filed: docs/development/issues/archived/2026-10-14-generic-forwarding-to-bounded-generic-refused-at-f64.md
 #      Mutants (2026-10-16, a one-edit scratch copy of the tree each, its 2-stage cycc, this gate run from it):
@@ -43,6 +43,21 @@
 #      MF3 `_bbf_push` never deduping (no visited list) -> RED F8d (the compile hangs: every level of the three-way
 #      cycle branches twice, to the depth cap);
 #      MF4 (2026-10-17) the depth cap at 32 (`_bbf_dep > 32`) -> RED F12 (o33's base refused at its definition)
+#   F13-F15e (6.7.15) THE JUDGEMENT HAS NO DEPTH CAP: it answered "not bad" past 64 forwards, so the 66th generic's base
+#      kept an i64 instance whose call into the chain was refused at its definition ("generic 'o64' has no i64 instance:
+#      it forwards its type parameter to 'o63'"). Each generic's verdict is memoised (`_bbm_get` / `_bbm_put`: a bad one
+#      always, a not-bad one only when the whole judgement found nothing) and the cap is gone. F13 the filed repro (70
+#      forwards, 5), F13b 66 (the old boundary), F13c 70 defined deepest first, F14 / F14b 120 either order, F14c
+#      o119(3) refused once naming its forward, F14d a 3000-deep chain whose one error is the instance-nesting refusal;
+#      F15 / F15b / F15c a 40-generic forwarding ring (one exit to gb: 10 at f64, r7(3, 1) refused; no exit: 8 at i64);
+#      F15d / F15e a cycle judged from its other end first (A(h, 2) 6; A(3, 2) refused naming X). The cost half is
+#      bound_forward_chain_scale.sh (serial). Filed: docs/development/issues/2026-10-17-bounded-forward-judgement-capped-
+#      at-64-deep.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler (b71f8853)
+#      -> RED 7: F13 F13b F13c F14 F14b F14c F14d; MMC1 the 64-deep cap back beside the memo -> RED 2: F13c F14b (a chain
+#      defined deepest first); MMC2 a not-bad verdict kept inside a judgement that ends bad -> RED 2: F15d F15e (A's base
+#      emitted, X(x) at i64 refused at A's definition); MMC3 no memo (no cap) -> green here, RED in
+#      bound_forward_chain_scale.sh (7-15x)
 #   BC (6.7.14) A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`), `T: Show`, was
 #      no bounded site (only a name declared `T` / `*T` was), so 6.7.11's carrier rule counted it a struct use: the
 #      base was the stub, and `gs(bi)` with `bi: Box<i64>` was refused although `impl Show for i64` exists. The call
@@ -309,13 +324,70 @@ fmk f10 'fn h(n): i64 { return o(n); }' 'return h(3);'
 fwdref f10 o gb "needs \`impl Show for i64\`" "F10: return o(n); (a tail call)"
 fmk f11 '' 'return 9;'
 exits f11 9 "F11: the definition alone, never called"
-# F12: the judgement follows a chain of 64 forwards (o63 -> .. -> o0 -> gb), its stated reach; a deeper chain is the
-# filed `_bbf_dep` cap (a 66-deep one is refused at a definition) — see the staged issue on the cap
+# F12: the judgement follows a chain of 64 forwards (o63 -> .. -> o0 -> gb), 6.7.14's stated reach.
 { printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
   printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\nfn o0<T>(x: T): i64 { return gb(x); }\n'
   k=1; while [ "$k" -lt 64 ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
   printf 'fn main(): i64 { var h: f64 = 1.5; return o63(h); }\nsyscall(60, main());\n'; } > "$T/f12.cyr"
 exits f12 5 "F12: a chain of 64 forwards to gb at f64, o63(h)"
+# F13-F15 (6.7.15): the judgement has no depth cap — it is memoised per generic (`_bbm_get` / `_bbm_put`), so any
+# chain is judged once per generic. `fchain <name> <n> [rev] [call]`: o0 -> gb, oK -> oK-1 (o0..o<n-1>), in source
+# order or reversed (the deepest first, so its judgement walks the whole chain), main returning <call>.
+fchain() {
+    { printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
+      printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\n'
+      if [ "${3:-}" = rev ]; then
+          k=$(($2 - 1)); while [ "$k" -ge 1 ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k - 1)); done
+          printf 'fn o0<T>(x: T): i64 { return gb(x); }\n'
+      else
+          printf 'fn o0<T>(x: T): i64 { return gb(x); }\n'
+          k=1; while [ "$k" -lt "$2" ]; do printf 'fn o%d<T>(x: T): i64 { return o%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
+      fi
+      printf 'fn main(): i64 { var h: f64 = 1.5; return %s; }\nsyscall(60, main());\n' "${4:-o$(($2 - 1))(h)}"; } > "$T/$1.cyr"
+}
+fchain f13 70
+exits f13 5 "F13: the filed repro, verbatim — a chain of 70 forwards, o69(h) (refused at o65's definition before: the 64-deep cap)"
+fchain f13b 66
+exits f13b 5 "F13b: 66 forwards, the old boundary"
+fchain f13c 70 rev
+exits f13c 5 "F13c: 70 forwards defined deepest first"
+fchain f14 120
+exits f14 5 "F14: a chain of 120 forwards, o119(h)"
+fchain f14b 120 rev 'o119(h) + o60(h) - 5'
+exits f14b 5 "F14b: 120 forwards defined deepest first, o119(h) + o60(h) - 5"
+fchain f14c 120 '' 'o119(3)'
+fwdref f14c o119 o118 "needs \`impl Show for i64\`" "F14c: o119(3) — refused once, naming the forward and the chain end's impl"
+fchain f14d 3000 '' 'o2999(h)'
+build f14d
+if [ "$rc" -eq 0 ]; then bad "F14d: a 3000-deep chain at f64: BUILT (the nesting refusal is its limit)"
+elif [ "$(grep -c '^error' "$T/f14d.err")" -ne 1 ] || ! grep -q "nesting too deep (over 256 levels" "$T/f14d.err"; then
+    bad "F14d: a 3000-deep chain at f64: not the nesting refusal alone: $(grep '^error' "$T/f14d.err" | head -2 | tr '\n' '|')"
+else ok "F14d: a 3000-deep chain at f64: the instance-nesting refusal alone (no definition refused); its time is bound_forward_chain_scale.sh"; fi
+# F15: cycles still end, and are judged right: a ring of 40 generics (rK -> rK+1, r39 -> r0) with one exit to gb (r20)
+{ printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
+  printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\n'
+  k=0; while [ "$k" -lt 40 ]; do
+      if [ "$k" -eq 20 ]; then printf 'fn r20<T>(x: T, n: i64): i64 { if (n <= 0) { return gb(x); } return r21(x, n - 1); }\n'
+      else printf 'fn r%d<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return r%d(x, n - 1); }\n' "$k" "$(( (k + 1) % 40 ))"; fi
+      k=$((k + 1)); done
+  printf 'fn main(): i64 { var h: f64 = 1.5; return r0(h, 20) + r30(h, 30); }\nsyscall(60, main());\n'; } > "$T/f15.cyr"
+exits f15 10 "F15: a 40-generic forwarding ring with one exit to gb, at f64 (r0 and r30 reach r20 with n = 0)"
+sed 's/return r0(h, 20) + r30(h, 30);/return r7(3, 1);/' "$T/f15.cyr" > "$T/f15b.cyr"
+fwdref f15b r7 r8 "needs \`impl Show for i64\`" "F15b: r7(3, 1) through the ring — refused once"
+sed 's/return gb(x); } return r21/return 4; } return r21/' "$T/f15.cyr" | sed 's/return r0(h, 20) + r30(h, 30);/var a = 2; return r0(a, 20) + r30(a, 30);/' > "$T/f15c.cyr"
+exits f15c 8 "F15c: the same ring with no exit to a bound — every member's i64 base runs"
+# F15d: a "not bad" answered inside a judgement that ends bad is not kept. X's base is judged first: X -> A -> X (in
+# progress, skipped) leaves A "not bad" for that judgement, then X -> C -> gb ends it bad. A reaches gb through X, so
+# A's own judgement must find it: its base skipped, A(h) at f64 runs (a kept "not bad" emitted A's base, whose X(x) at
+# i64 was refused at A's definition).
+fmk f15d 'fn X<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return A(x, n - 1) + C(x); }
+fn A<T>(x: T, n: i64): i64 { if (n <= 0) { return 1; } return X(x, n - 1); }
+fn C<T>(x: T): i64 { return gb(x); }' 'var h: f64 = 1.5; return A(h, 2);'
+exits f15d 6 "F15d: a cycle judged from its other end first — A(h, 2) at f64 (1 + 5)"
+fmk f15e 'fn X<T>(x: T, n: i64): i64 { if (n <= 0) { return 0; } return A(x, n - 1) + C(x); }
+fn A<T>(x: T, n: i64): i64 { if (n <= 0) { return 1; } return X(x, n - 1); }
+fn C<T>(x: T): i64 { return gb(x); }' 'return A(3, 2);'
+fwdref f15e A X "needs \`impl Show for i64\`" "F15e: A(3, 2) — refused once at the call, naming its forward"
 
 # BC — a bounded call on a struct carrier's T field (6.7.14)
 cat > "$T/bc0.cyr" <<'EOF'
@@ -540,4 +612,4 @@ EOF
 exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); well-formed bounded code runs (C)"

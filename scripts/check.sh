@@ -2637,6 +2637,7 @@ _chk_gate "$ROOT/tests/gates/frontend/impl_self_typed.sh"
 _chk_gate "$ROOT/tests/gates/frontend/traits_checked.sh"
 _chk_gate "$ROOT/tests/gates/frontend/generic_struct_field.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/trait_bounds_checked.sh"   # 6.7.1 (C3)
+_chk_gate "$ROOT/tests/gates/frontend/bound_forward_chain_scale.sh"   # 6.7.15 (the memoised bound judgement; serial)
 _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)

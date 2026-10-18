@@ -7085,12 +7085,13 @@ describe<i32>(7);   # needs impl Show for i32
   `struct W<T> { s: Shown<T>; }`) is fine for every `T` that satisfies the struct's bound; its i64
   base is refused where it is used (`mk(5)`, a bare `W`) when i64 does not — not at its definition.
 - **A generic that forwards its `T` to one whose i64 base is refused** — `fn o<T>(x: T) { return
-  describe(x); }` with no `impl Show for i64`, through up to 64 forwards (`describe<T>(x)`, a
+  describe(x); }` with no `impl Show for i64`, through any number of forwards (`describe<T>(x)`, a
   generic method, a struct carrier) — has no i64 instance either, and only that: `o(h)` with
   `h: f64` calls `o`'s f64 instance, and `o(5)` / `&o` are refused *generic 'o' has no i64 instance:
   it forwards its type parameter to 'describe'* with a note naming the impl the chain's end needs
   (6.7.14; through 6.7.13 such a forwarder was a struct stub, refused at every scalar call, `f64`
-  included, "uses its type parameter as a struct").
+  included, "uses its type parameter as a struct"; 6.7.14 judged a chain only 64 forwards deep, so a
+  65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth).
 
 Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct
 was refused as "a struct beside a second type argument", and no bound was checked. Dispatch is
