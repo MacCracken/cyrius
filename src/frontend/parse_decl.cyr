@@ -9128,7 +9128,7 @@ fn PARSE_VAR(S): i64 {
                     # i64 case re-derives to the same base sid (no behavior change). Default
                     # (flag-off) byte-identical.
                     if (_MONOMORPH_OK == 1) { if (pscale < 0) {
-                            if (_gen_decl_reset(S, pscale, _look_fi) == 1) { pscale = 0; }   # 6.7.14: by value or `: T` only
+                            if (_gen_decl_reset(S, pscale, _look_fi) == 1) { pscale = 0; }   # a struct returned by value only (6.7.15's D13)
                         } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so
