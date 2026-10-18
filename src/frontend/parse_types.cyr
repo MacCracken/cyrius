@@ -123,6 +123,47 @@ fn _tn_resolve(S, noff): i64 {
     return 0;
 }
 
+# ⛔ 6.7.14 — A PROGRAM'S OWN `struct f32v4 { .. }` IS ITS STRUCT AS A PARAMETER TYPE TOO (the user's decision D41 A,
+# 2026-10-16), as it was already as a local, a field, a return type and behind a `*`: `_classify_param_type`
+# (parse_fn.cyr) read the vector names before any struct, so `fn g(v: f32v4)` took the SIMD vector and `v.a` was
+# refused "SIMD vector has no named fields" (and since 6.7.13 `struct f32v8` too, which compiled through 6.7.12). A
+# vector name `c` is the vector only while the program declares no struct or union of that name (`_cpt_vdecl`) — read
+# from the TOKENS, not the struct table, so pass 1's prescan of a fn above the declaration and pass 2's definition
+# classify the parameter alike (a vector parameter takes two or four slots, a struct one: the two scans must agree).
+# CHANGELOG [6.7.14]
+fn _cpt_vec(S, c): i64 {
+    if (_cpt_vdecl(S, c) == 1) { return 0; }
+    return c;
+}
+var _cpt_vm = 0;       # a bit per vector name (`_cpt_vbit`) the program declares a struct or union of
+var _cpt_vn = 0 - 1;   # GTCNT when `_cpt_vm` was read (-1: not yet; the token stream is final before the parse)
+fn _cpt_vdecl(S, c): i64 {
+    if (_cpt_vn != GTCNT(S)) { _cpt_vscan(S); }
+    return (_cpt_vm >> _cpt_vbit(c)) & 1;
+}
+# Every `struct NAME` / `union NAME` in the token stream whose NAME is a vector's, as `_cpt_vm` bits.
+fn _cpt_vscan(S): i64 {
+    var m = 0;
+    var n = GTCNT(S);
+    var k = 0;
+    while (k + 1 < n) {
+        var t = TOKTYP(S, k);
+        if (t == 40 || t == 101) { if (TOKTYP(S, k + 1) == 2) {
+                var c = _cpt_vname(S, TOKVAL(S, k + 1));
+                if (c != 0) { m = m | (1 << _cpt_vbit(c)); }
+            } }
+        k = k + 1;
+    }
+    _cpt_vm = m;
+    _cpt_vn = n;
+    return 0;
+}
+# A vector class's bit: 6 / 7 / 8 / 10 for the float ones, 16 + its descriptor mod 32 for an integer one (16-30).
+fn _cpt_vbit(c): i64 {
+    if (c > 0) { return c; }
+    return 16 + ((0 - c - 2048) & 31);
+}
+
 # The name at token `ti`, in scope: _tn_resolve, else a type parameter in scope there (8 bytes,
 # the i64 base): a bound one, the declaring struct's own, the enclosing generic fn's (its body or
 # its signature — CYRIUS_MONOMORPH=0 binds and captures nothing, so these read the tokens).

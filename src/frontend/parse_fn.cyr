@@ -15421,7 +15421,7 @@ fn _cpt_byname(S, tnoff, c): i64 {
 #   5 = Tagged    6 = f64v2     7 = f64v4     8 = f32v4     10 = f32v8
 #   (9 is `_param_class`'s `*V`; an integer 128-bit vector is its negative descriptor, below)
 # Byte-compares over the name pool plus one FINDSTRUCT for the three by-name handles
-# (`_cpt_byname`, 6.7.14); zero global-var refs → cybs-safe.
+# (`_cpt_byname`, 6.7.14) and the program's own struct declarations for a vector name (`_cpt_vec`, 6.7.14).
 # Extracted verbatim from the PARSE_FN_DEF param loop so the pass-1 signature
 # prescan (_prescan_fn_sig) and the pass-2 definition agree byte-for-byte.
 fn _classify_param_type(S, tnoff): i64 {
@@ -15455,6 +15455,20 @@ fn _classify_param_type(S, tnoff): i64 {
                     if (b4 == 101) { if (b5 == 100) { if (b6 == 0) {
                                 return _cpt_byname(S, tnoff, 5);
                             } } } } } } }
+    var v = _cpt_vname(S, tnoff);
+    if (v == 0) { return 0; }
+    return _cpt_vec(S, v);
+}
+
+# The vector class of the name at `tnoff` as `_classify_param_type` answers it (f64v2 6, f64v4 7, f32v4 8, f32v8 10, an
+# integer 128-bit vector its negative descriptor), by its bytes alone; 0 for any other name.
+fn _cpt_vname(S, tnoff): i64 {
+    var b0 = load8(S + 0xEC00000 + tnoff);
+    var b1 = load8(S + 0xEC00000 + tnoff + 1);
+    var b2 = load8(S + 0xEC00000 + tnoff + 2);
+    var b3 = load8(S + 0xEC00000 + tnoff + 3);
+    var b4 = load8(S + 0xEC00000 + tnoff + 4);
+    var b5 = load8(S + 0xEC00000 + tnoff + 5);
     # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
     if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
                     if (b4 == 50) { if (b5 == 0) { return 6; } }
@@ -15484,7 +15498,6 @@ fn _classify_param_type(S, tnoff): i64 {
     if (b0 == 117) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) { if (b4 == 50) { if (b5 == 0) { return 0 - 2092; } } } } } }  # u64v2
     return 0;
 }
-
 # v6.3.5 CO-01 — single source of truth for return-type classification.
 # Returns the fn_ret_sid encoding for a return-type name at `rt_noff`:
 #   > 0  : struct sid (FINDSTRUCT)

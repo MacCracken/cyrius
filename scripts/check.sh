@@ -2797,6 +2797,11 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_ptr_param_infer.sh"
 # filed repros, a `**S` parameter, a generic method, the explicit spelling, and the tcyr's GI / GK rows, x86 / IR /
 # aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_double_pointer_infer.sh"
+# 6.7.14 — a program's own struct (or union) named like a vector type is that struct as a parameter type too (the
+# user's decision D41 A, 2026-10-16): `fn g(v: f32v4)` took the SIMD vector ("SIMD vector has no named fields"). The
+# filed repro, every vector name, a union, a struct declared below the fn (the two scans agree), beside lib/simd.cyr,
+# the vector controls and the crossos rows, x86 / IR / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/struct_named_like_vector.sh"
 # 6.7.14 — an error inside a generic body is printed once, not once per instance (and inline replay): the
 # util.cyr emitters and the shared undefined-name report record (token, identity) and print a repeat as
 # nothing, its note with it. The filed repro, the issue's table, two different errors, the other emitters,

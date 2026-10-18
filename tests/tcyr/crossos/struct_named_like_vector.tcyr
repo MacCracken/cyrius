@@ -1,0 +1,65 @@
+# struct_named_like_vector.tcyr — 6.7.14 (the user's decision D41 A, 2026-10-16) — a program's own struct (or union)
+# named like a vector type is that struct EVERYWHERE, a by-value parameter included.
+#
+# `struct f32v4 { a; b; c; }` was the struct as a local, a field, a return type and behind a `*`, but `fn g(v: f32v4)`
+# took the SIMD vector: `v.a` was refused "SIMD vector has no named fields", and `g(s)` "value-form SIMD arg type
+# mismatch (callee expects f32v4)" — the parameter classifier read the vector names before any struct
+# (issues/2026-10-16-struct-named-like-a-float-vector-is-a-vector-only-as-a-parameter.md). Since 6.7.13 `struct f32v8`
+# too, which compiled through 6.7.12. Now a vector name is the vector only while no struct or union of that name is
+# declared, read from the tokens so pass 1's signature prescan and pass 2's definition agree. Each struct below is
+# passed by value at its size (8, 16, 24, 32 B: a word, a pair, an address — Win64 by address over 8 B), returned,
+# reached through a pointer, held in a field; a vector name no struct takes (i64v2, from lib/simd.cyr) stays the
+# vector. The filed repro verbatim and the refusal rows: tests/gates/frontend/struct_named_like_vector.sh.
+#
+# CROSS-HOST: the by-value struct parameter is each backend's struct ABI (SysV / AAPCS64 / Win64 / cx), where the
+# vector class was its SIMD one. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/simd.cyr"
+include "lib/assert.cyr"
+
+struct f32v4 { a; b; c; }            # 24 B: address-passed
+struct f64v2 { a; b; }               # 16 B: a pair
+struct f64v4 { a; b; c; d; }         # 32 B
+struct f32v8 { a; }                  # 8 B: one word
+struct i32v4 { a; b: i32; c; }       # 24 B, a narrow field
+union u8v16 { w; h: i32; }           # a union
+struct VnW { k; v: f64v2; p: *f32v4; }
+
+fn vn_g4(v: f32v4): i64 { return v.a + v.c; }
+fn vn_g2(v: f64v2): i64 { return v.a * 10 + v.b; }
+fn vn_gd(v: f64v4): i64 { return v.a + v.b + v.c + v.d; }
+fn vn_g8(v: f32v8): i64 { return v.a; }
+fn vn_gi(v: i32v4): i64 { return v.b; }
+fn vn_gu(v: u8v16): i64 { return v.w; }
+fn vn_two(x: f64v2, y: f32v4, k): i64 { return x.b * 100 + y.c * 10 + k; }   # a scalar after two of them
+fn vn_mk4(n): f32v4 { var s = f32v4 { n, 2, 3 }; return s; }
+fn vn_rd(p: *f32v4): i64 { return p.a + p.c; }
+fn vn_set(v: f64v2): f64v2 { v.a = 9; return v; }   # the callee's copy
+fn vn_vec(v: i64v2): i64 { return load64(&v + 8); }   # no struct named i64v2: the vector
+
+fn vn_byval(): i64 {
+    var s4 = f32v4 { 5, 0, 7 };
+    var s2 = f64v2 { 4, 2 };
+    var sd = f64v4 { 1, 2, 3, 4 };
+    var s8 = f32v8 { 6 };
+    var si: i32v4; si.b = 0 - 3;
+    var su: u8v16; su.w = 11;
+    return vn_g4(s4) * 100000 + vn_g2(s2) * 1000 + vn_gd(sd) * 10 + vn_g8(s8) + vn_gi(si) + vn_gu(su);   # 1242114
+}
+fn vn_shapes(): i64 {
+    var s = vn_mk4(5);
+    var w: VnW; w.v.a = 1; w.v.b = 8; w.p = &s;
+    return vn_rd(&s) * 1000 + vn_g2(w.v) * 10 + vn_g4(*w.p) - sizeof(f32v4);   # 8000 + 180 + 8 - 24
+}
+fn vn_copy(): i64 { var s = f64v2 { 1, 2 }; var t = vn_set(s); return s.a * 10 + t.a; }   # 19: s untouched
+fn vn_after(): i64 { var x = f64v2 { 0, 7 }; var y = f32v4 { 0, 0, 5 }; return vn_two(x, y, 3); }   # 753
+fn vn_vec_ok(): i64 { var b: i64v2 = i64v2_make(3, 42); return vn_vec(b); }
+
+assert_eq(vn_byval(), 1242114, "by value: struct f32v4 (24 B), f64v2 (16 B), f64v4 (32 B), f32v8 (8 B), i32v4, union u8v16");
+assert_eq(vn_shapes(), 8164, "a struct f32v4 return, *f32v4 parameter, an f64v2 field and *w.p by value, sizeof(f32v4) 24");
+assert_eq(vn_copy(), 19, "a struct f64v2 parameter is the callee's copy: its write does not reach the caller");
+assert_eq(vn_after(), 753, "a scalar parameter after two struct parameters named like vectors arrives intact");
+assert_eq(vn_vec_ok(), 42, "i64v2, which no struct takes, is still the vector parameter");
+var r = assert_summary();

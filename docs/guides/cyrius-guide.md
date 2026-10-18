@@ -220,7 +220,8 @@ and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `size
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
 by name, without their `include`. A program's own `struct Result` / `Option` / `Tagged` is a plain
 struct, passed by value as any other (6.7.14: as a parameter it was read as the stdlib's one-word
-handle, so the caller pushed its first field and the callee faulted); `Str` stays a handle by name. A return type is a struct, `i8`..`i64`, `f64`, `bool`
+handle, so the caller pushed its first field and the callee faulted), and so is a struct named like a vector
+type (6.7.14, D41 — see [SIMD Vectors](#simd-vectors)); `Str` stays a handle by name. A return type is a struct, `i8`..`i64`, `f64`, `bool`
 (6.7.3), a vector type, `Result`, `Option`, `Tagged`, `cstring`, a pointer `*T` (6.6.17), a
 multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dyn Tr` (6.7.8) or
 a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
@@ -3799,6 +3800,15 @@ the raw builtins.
 The integer vectors are signed by default; the unsigned variants
 (`u8v16`, `u16v8`, `u32v4`, `u64v2`) share the same lane layout and select
 unsigned packed ops where the width distinguishes them.
+
+**A vector type's name is not reserved (6.7.14).** A program may declare its own struct or union named
+like any vector type above — `struct f32v4 { a; b; c; }` — and then that name is the program's struct
+everywhere: a local, a by-value parameter (`fn g(v: f32v4)` takes the struct, passed as any struct of its
+size), a return type, a field, a pointer target, `sizeof`, as a program's own `struct slice` is; the
+`lib/simd.cyr` functions of that name see the struct too. Each name is decided alone: the vector names no
+struct takes stay vectors. The user's decision D41 (A), 2026-10-16: through 6.7.13 the parameter alone
+still took the vector (`v.a` was refused "SIMD vector has no named fields"), and `struct f32v8` as a
+parameter, which compiled through 6.7.12, was refused in 6.7.13.
 
 A vector-typed **global** (`var g: f64v2 = 0;`) owns its 16 / 32 bytes and is used
 through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes to
