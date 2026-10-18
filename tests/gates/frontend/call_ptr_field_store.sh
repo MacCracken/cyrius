@@ -23,7 +23,10 @@
 # repros, their positions; U11 a later statement's error still reported; U12 --allow-undef still refuses it; U13-U15
 # controls: a plain `undefd();` and an intrinsic keep their own paths); S1-S9 (6.7.15) --syntax-only, a field assignment
 # on a call whose callee this file does not define parses silently (S1 the filed repro; S5-S7 a grammar error in its
-# tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary").
+# tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary");
+# T6-T15 (6.7.15) a top-level METHOD returning a struct by value, its `*T` field subscripted, one error (T6 the filed
+# repro; T13 its in-fn control, exit 5; T14 a genuine non-`*T` subscript in a fn keeps its refusal; T15 the next
+# statement still checked).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -81,6 +84,10 @@
 #   s2 `_fn_nodef` answering 1 only for an unregistered callee -> RED 6: S1 S3 x3 (the callee registered by the line's
 #                                                     earlier call)
 #   s3 `_step_cf_tail` without its arm             -> RED 9: S1 S2 S6 x3
+# (6.7.15, unit S6; issues/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md; the same procedure)
+#   t1 `_method_chain`'s top-level arm stepping only its `.name` / `(..)` steps (= the tree before) -> RED 32: T6-T12,
+#                                                     T15 x4 (the second, false "cannot subscript field 'p': it is not
+#                                                     a *T field")
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -315,6 +322,70 @@ refused F5 "expected '=', got '('" "for step \`f()\`, a call, keeps its refusal"
 row F6 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n) { i = i + 1; } return i; }'
 refused F6 "expected '=', got '('" "for step \`gp().n\`, no assignment, keeps its refusal"
 
+# --- T6-T13 (6.7.15, issues/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md): a top-level
+# METHOD returning a struct by value, its `*T` field subscripted — one error, the no-frame refusal. The chain's walk
+# stopped before the `[`, and the subscript was then judged against a field never typed: a second, false "cannot
+# subscript field 'p': it is not a *T field". T6 is the filed repro verbatim; T13 the filed in-fn control (exit 5).
+cat > "$T/T6.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; p: *i64; }
+struct O { a; }
+var buf[16];
+impl O { fn mk(self: *O): H { var h: H; h.n = 1; h.p = &buf; return h; } }
+var o: O = O { 0 };
+o.mk().p[0] = 5;
+syscall(60, 0);
+EOF2
+refused T6 "7:7: 'O_mk' $NS" "the filed repro: top-level \`o.mk().p[0] = 5;\`, one error"
+TH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct H { n; p: *i64; }
+struct H3 { n; p: *i64; q; }
+struct O { a; }
+var buf[16];
+impl O { fn mk(self: *O): H { var h: H; h.n = 1; h.p = &buf; return h; }
+         fn mk3(self: *O): H3 { var h: H3; h.n = 1; h.p = &buf; h.q = 0; return h; } }
+var o: O = O { 0 };'
+trow() { printf '%s\n%s\nsyscall(60, 0);\n' "$TH" "$2" > "$T/$1.cyr"; }
+trow T7 'o.mk().p[0] += 5;'
+refused T7 "'O_mk' $NS" "top-level \`o.mk().p[0] += 5;\`"
+trow T8 'o.mk().p[0];'
+refused T8 "'O_mk' $NS" "top-level \`o.mk().p[0];\`, no assignment"
+trow T9 'var x = o.mk().p[0];'
+refused T9 "'O_mk' $NS" "top-level \`var x = o.mk().p[0];\`, a value"
+trow T10 'o.mk3().p[0] = 5;'
+refused T10 "'O_mk3' $NS" "a 24 B result (refused by its own call)"
+trow T11 'var x = fncall1(&O_mk, &o).p[0];'
+refused T11 "'O_mk' $NS" "through \`fncall1(&O_mk, &o)\`"
+trow T12 'o.mk().p[0][1] = 5;'
+refused T12 "'O_mk' $NS" "a second \`[..]\` stepped over with the chain"
+cat > "$T/T13.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; p: *i64; }
+struct O { a; }
+var buf[16];
+impl O { fn mk(self: *O): H { var h: H; h.n = 1; h.p = &buf; return h; } }
+fn go(): i64 { var o: O = O { 0 }; o.mk().p[0] = 5; return load64(&buf); }
+syscall(60, go());
+EOF2
+runs T13 5 "the filed control: in a fn \`o.mk().p[0] = 5;\` stores through the field"
+# T14: a genuine non-`*T` subscript in a fn keeps its refusal; T15: at top level the next statement is still checked
+trow T14 'fn go(): i64 { var q: O = O { 0 }; q.mk().n[0] = 5; return 0; }'
+refused T14 "cannot subscript field 'n': it is not a *T field" "control: in a fn, \`q.mk().n[0]\` (n no *T field) keeps its refusal"
+trow T15 'var x = o.mk().p[0] + 1;
+var y = zz;'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" T15
+    e=$(grep '^error' "$T/T15.$leg.err" | tr '\n' '|')
+    n=$(grep -c '^error' "$T/T15.$leg.err" || true)
+    case $e in
+        *"'O_mk' $NS"*"undefined variable 'zz'"*)
+            if [ "$n" -eq 2 ]; then ok "T15 the next statement still checked ($leg)"; else bad "T15 ($leg): $n errors (want 2)"; fi ;;
+        *) bad "T15 the next statement still checked ($leg): $e" ;;
+    esac
+done
+
 # --- K: controls ---
 row K1 'fn go(): i64 { gpb().n = 5; return load64(&buf); }
 fn gpb(): *H { return &buf; }'
@@ -512,8 +583,8 @@ synonly S8 1 "$MT" "control: a by-value callee this file defines keeps the refus
 srow S9 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return 0; }'
 synonly S9 1 "$MT" "control: ... as a for step too"
 
-FLOOR_ROWS=59   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9
+FLOOR_ROWS=69   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T15
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

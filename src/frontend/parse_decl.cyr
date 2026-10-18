@@ -1816,6 +1816,9 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
         # method arm, `_dyn_call_in`, `_icall_sret`) — a top-level `b.mk().b` said it twice. CHANGELOG [6.7.14]
         if (_syntax_only == 0) { if (_ret_agg_class(S, fi) != 2) { _refuse_toplevel_struct_call(S, noff); } }
         _mchain_skip(S);
+        # 6.7.15: and a `[..]` on its last field with the chain past it (`o.mk().p[0] = 5;` added a false "cannot
+        # subscript field 'p': it is not a *T field": the field was never typed). --syntax-only parses the index.
+        if (_syntax_only == 0) { STI(S, _pf_chain_end(S, GTI(S))); }
         return 1;
     }
     if (t < 0) { t = _mchain_temp(S, sid); }
