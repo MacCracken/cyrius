@@ -1936,7 +1936,8 @@ type differs from the parameter's is refused by name, as the same copy into a va
 (`var q: Q = p;`): `bq(p)` with `p: Pt` and `fn bq(b: Q)` reports `cannot pass 'p' to a parameter of
 a different struct type in a call to 'bq'`. It covers every argument that HAS a struct type — a
 named local (inline, pointer-mode `var p: Pt = alloc(16)`, or `u: *Pt`), a global, a closure
-capture, a field, a call or method / operator result (named by the fn: `'mkp'`, `'Pt_dup'`) —
+capture, a field, a call or method / operator result (named by the fn as the source spells it: `'mkp'`,
+`'Pt.dup'` — 6.7.14; through 6.7.13 a method result was named by its fn name, `'Pt_dup'`) —
 into a by-value parameter of any size, a `p: *T` parameter or a `s: Str` handle, through a call, a
 method's arguments, a tail call and an operator's two operands (parameters 0 and 1 of `Q_add`), and
 a method's `self` (`impl Pt { fn m(self: Q) }` with `p.m()`). A generic INSTANCE is its own struct:
@@ -2800,7 +2801,8 @@ fn demo(): i64 {
   trait-qualified one too) and a generic call `g<i32>` (6.7.14; through 6.7.13 they printed the
   mangled `T_m` / `g$i32`): `'Point.norm1' expects 0 arguments, got 1` for `p.norm1(5)` — a method
   call's count is the arguments in its parentheses, without `self`; `Point_norm1(&p, 5)` counts the
-  `&p` it writes ("expects 1 argument, got 2").
+  `&p` it writes ("expects 1 argument, got 2"). A method's RESULT passed as an argument is named the
+  same way (6.7.14): `cannot pass 'Point.dup' to a parameter of a different struct type in a call to 'f'`.
 - **`self`.** Untyped, it is a `*T`: fields read and write through it (`self.x = 1` changes the
   receiver). Arithmetic on it is refused, because a `*T` steps `sizeof(T)` and `load64(self + 8)`
   would otherwise silently mean something new — write `self.field`, or declare `self: *T` when you

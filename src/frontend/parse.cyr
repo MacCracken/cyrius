@@ -1752,6 +1752,7 @@ var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
 var _sc_sid = 0;        # the struct it returned
 var _scv_un = 0 - 1;    # 6.7.11: the token an untyped declaration's wrap stepped to (`_scv_un_peel`)
 var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
+var _sc_fi = 0 - 1;     # 6.7.14: its fn (-1: none), so an argument refusal names a method `S2.dup` (`_fn_src_name`)
 var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
 var _sc_vbeg = 0 - 1;   # 6.7.13 (D29): the receiver token of a method whose vector a receive takes (`_sc_vret`)
 var _sc_vdst = 0;       # ... and that receive's slot

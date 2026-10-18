@@ -1874,15 +1874,42 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
 # the field arm's words. The argument is still pushed, so the parse stays in step and the one
 # compile reports every bad site; `_had_error` withholds the binary. Returns 1 after reporting.
 # CHANGELOG [6.7.3]
-fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
+fn _sarg_type_err(S, fi, argc, asid, anoff): i64 { return _sarg_type_errf(S, fi, argc, asid, anoff, 0 - 1); }
+# ... `anoff` the result of a call to fn `afi` (a struct-call record's `_sc_fi`; -1: a name as written), which the
+# refusal names as the source spells it — a method `S2.dup`, not its fn name `S2_dup` (`_sarg_ident_err`).
+# CHANGELOG [6.7.14]
+fn _sarg_type_errf(S, fi, argc, asid, anoff, afi): i64 {
     if (fi < 0) { return 0; }
     if (asid <= 0) { return 0; }
     if (asid >= 2048) { return 0; }    # a vector descriptor: not this rule
     var ps = GFPSID(S, fi, argc);
-    if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff); }   # 6.7.13 (D33): a `*V` records no struct
+    if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff, afi); }   # 6.7.13 (D33): a `*V` records no struct
     if (ps == asid) { return 0; }
-    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter of a different struct type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    _sarg_ident_err(S, "cannot pass ", anoff, afi, " to a parameter of a different struct type in a call to ", fi);
     return 1;
+}
+# ERR_IDENT for an argument refusal: the argument `anoff` — the result of a call to fn `afi`, or (-1) a name — and the
+# callee `fi`, each as the source spells it (`_fn_src_name`). The helper writes at one scratch, so the two names are
+# printed one after the other, not passed as ERR_IDENT's two offsets. CHANGELOG [6.7.14]
+fn _sarg_ident_err(S, msg, anoff, afi, tail, fi): i64 {
+    var cn = L64(_fnt_names + fi * 8);
+    if (afi < 0) { return ERR_IDENT(S, msg, anoff, tail, _fn_src_name(S, fi, cn)); }
+    if (_err_once(S, (((msg * 31 + anoff) * 31 + tail) * 31 + cn) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": ");
+    PRSTR(msg);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, anoff));
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, cn));
+    PRSTR("'\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
 }
 # ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15) — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME. `rd(s)`
 # with `p: *f64v2` and `s: Pt` — a local, a call result, `*ps`, a global, a closure's capture — passed the struct's
@@ -1891,10 +1918,10 @@ fn _sarg_type_err(S, fi, argc, asid, anoff): i64 {
 # (another vector into `*V`) and D27 (a vector into another pointer kind); `rd(&s)` stays the explicit conversion
 # (a plain pointer converts freely). The struct argument `anoff` (every struct arm's `_sarg_type_err`) to parameter
 # `argc` of `fi` that records no struct: 1 = refused (the push follows, no binary), 0 = not a `*V`. CHANGELOG [6.7.13]
-fn _sarg_svec_err(S, fi, argc, anoff): i64 {
+# 6.7.14: `afi` as `_sarg_type_errf`'s — a method result is named `S2.dup`. CHANGELOG [6.7.14]
+fn _sarg_svec_err(S, fi, argc, anoff, afi): i64 {
     if (_pvec_param(S, fi, argc) == 0) { return 0; }
-    ERR_IDENT(S, "cannot pass ", anoff, " to a parameter that is a pointer to a vector type in a call to ",
-      _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    _sarg_ident_err(S, "cannot pass ", anoff, afi, " to a parameter that is a pointer to a vector type in a call to ", fi);
     return 1;
 }
 # The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,
@@ -2977,7 +3004,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     var ps = GPSC(S);
     if (asid == 0) { asid = _ess_deref(S, st); }   # 6.7.11: `take8(*pu)`
     _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
-    _sarg_type_err(S, fi, argc, asid, _ess_nm);
+    _sarg_type_errf(S, fi, argc, asid, _ess_nm, _ess_fi);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
     EPUSHR(S);
@@ -2994,6 +3021,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
 # they wrap — they compiled with another struct's word, where `bs1(t)` was refused by name (the user's
 # decision, 2026-10-13: refuse by name). The parse and its emission are unchanged. CHANGELOG [6.7.11]
 var _ess_nm = 0;
+var _ess_fi = 0 - 1;   # 6.7.14: ... the fn whose result it names (a method's record), else -1
 fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
@@ -3016,9 +3044,10 @@ fn _expr_struct_sid(S, st): i64 {
     _sc_beg = 0 - 1;                   # only this argument's own record may match
     PCMPE(S);
     _fpk_want = fk;
+    _ess_fi = 0 - 1;
     if (call == 1) { asid = _ess_call(S, ist, k); }
     if (asid == 0) {
-        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; _ess_fi = _sc_fi; }
         elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
     }
@@ -6476,6 +6505,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     _sc_tmp = t;
     _sc_sid = GFRS(S, fi);
     _sc_fn = noff;
+    _sc_fi = fi;
     _lsc_note(S, fi, beg, t);   # 6.7.6: for a left operand
     return 0;
 }
@@ -6498,6 +6528,7 @@ fn _sc_post_small(S, fi, noff, beg): i64 {
     _sc_tmp = 0 - 3;
     _sc_sid = sid;
     _sc_fn = noff;
+    _sc_fi = fi;
     _lsc_note(S, fi, beg, 0 - 1);   # 6.7.6: for a left operand
     return 0;
 }
@@ -6786,7 +6817,7 @@ fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
     _tup_arg_mrc(S, fi, argc, st);   # 6.7.7 (B4): `g(x.f())`, f multi-value
     _mv_arg_mrc(S, fi, argc, st);    # 6.7.11: ... into a named struct
     var t = _sc_whole(S, st);
-    if (t >= 0 || t == 0 - 3) { _sarg_type_err(S, fi, argc, _sc_sid, _sc_fn); }   # 6.7.3
+    if (t >= 0 || t == 0 - 3) { _sarg_type_errf(S, fi, argc, _sc_sid, _sc_fn, _sc_fi); }   # 6.7.3; 6.7.14: `S2.dup`
     if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6
     if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
     if (t >= 0) { _sarg_escapes(fi, argc, tail); EFLADDR(S, t); }   # 6.6.20: a temp in this frame
@@ -6962,6 +6993,7 @@ fn _op_arg_check(S, fi, rb): i64 {
     var e = GTI(S);
     var asid = 0;
     var nm = 0;
+    var afi = 0 - 1;
     if (_op_bare(S, rb, e) == 1) {
         var nt = rb;
         if (e == rb + 3) { nt = rb + 1; }
@@ -6970,6 +7002,7 @@ fn _op_arg_check(S, fi, rb): i64 {
     } elif (_sc_whole(S, rb) != 0 - 2) {
         asid = _sc_sid;
         nm = _sc_fn;
+        afi = _sc_fi;   # 6.7.14: named `S2.dup`
     } elif (_fls_whole(S, rb) == 1) {   # 6.7.6: a `Str` field
         asid = _fls_sid;
         nm = _fls_name;
@@ -6980,7 +7013,7 @@ fn _op_arg_check(S, fi, rb): i64 {
                 nm = TOKVAL(S, rb);
             } }
     }
-    return _sarg_type_err(S, fi, 1, asid, nm);
+    return _sarg_type_errf(S, fi, 1, asid, nm, afi);
 }
 # The token after a whole free call `name(..)` / `name<..>(..)` at the cursor that returns a struct
 # of 8 B or less (`_arg_call_class` 3), or -1.
@@ -7962,6 +7995,7 @@ fn _fnc_agg(S, fi, noff): i64 {
         _sc_tmp = t;
         _sc_sid = GFRS(S, fi);
         _sc_fn = noff;
+        _sc_fi = fi;
     }
     _fnc_lo = o;   # 6.7.6: the temp, for a left operand (`_lsc_free`)
     _fnc_lt = t;

@@ -150,6 +150,15 @@
 #       (compiled); and struct_arg_type_refused.sh D17 D18, small_struct_handle_line.sh R10 on every leg
 #   M-DR3 `_pp_intern` keyed without the pointee's struct    -> RED 2: DRS1 DRSw (compiled: `**Q3` shares P3's pin)
 #
+# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — SM: a method-result argument
+# is named as the source spells it (`S2.dup`, not its fn name `S2_dup`) in the struct-type and `*V` refusals; SM1 the
+# filed repro verbatim (both lines, exact) on x86_64 / IR=3 / aarch64 / cx / PE; SMk a local named `Pt_dup` keeps it.
+# Mutations (2026-10-17, a scratch copy, the gate run with its 2-stage mutant; measured):
+#   M-SM  `_sarg_ident_err` ignoring the call's fn (ERR_IDENT) -> RED 17: SV6, SM1 on all five legs, SM2-SM6, SM2 / SM6
+#       on aarch64 / cx / PE; struct_arg_type_refused.sh R9 R23 R24 R24b R28b
+#   M-SMb `_expr_struct_sid` not recording it (`_ess_fi`)    -> RED 4: SM6 on x86_64 / aarch64 / cx / PE (the small
+#       by-value path); struct_arg_type_refused.sh R23 R24 R24b
+#
 # ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15; issues/2026-10-15-vector-call-result-into-value-form-vector-
 # parameter.md) — A VECTOR CALL RESULT INTO A VALUE-FORM VECTOR PARAMETER IS PASSED. `lanes(mkv(4, 2))` was refused on
 # x86_64 / IR=3 / aarch64 / cx ("value-form SIMD arg: IDENT not found as a local" + "expected ';', got number 4") and
@@ -694,7 +703,7 @@ refused SV2 "SV2 rd(mkp()), a struct call result" "${SVH}fn main(): i64 { return
 refused SV3 "SV3 rd(*ps), a *Pt dereference" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return rd(*ps); }\n${E}" x86 "cannot pass 'ps' $SVF"
 refused SV4 "SV4 rd(G), a struct global" "${SVH}fn main(): i64 { return rd(G); }\n${E}" x86 "cannot pass 'G' $SVF"
 refused SV5 "SV5 |k| rd(s), a captured struct" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; var c = |k| rd(s) + k; return fncall1(c, 0); }\n${E}" x86 "cannot pass 's' $SVF"
-refused SV6 "SV6 rd(s.dup()), a method result" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "$SVF"
+refused SV6 "SV6 rd(s.dup()), a method result (named as the source spells it, 6.7.14)" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' $SVF"
 refused SV7 "SV7 rd((s)), parenthesised" "${SVH}fn main(): i64 { var s: Pt; s.x = 42; return rd((s)); }\n${E}" x86 "cannot pass 's' $SVF"
 refused SV8 "SV8 a 24-byte struct into *f64v4" "${SVH}fn main(): i64 { var q: Q; q.a = 42; return rd4(q); }\n${E}" x86 "cannot pass 'q' to a parameter that is a pointer to a vector type in a call to 'rd4'"
 refused SV9 "SV9 an 8-byte struct into *f64v2" "${SVH}fn main(): i64 { var t: P1; t.x = 42; return rd(t); }\n${E}" x86 "cannot pass 't' $SVF"
@@ -709,6 +718,51 @@ printf '%s\n' 'include "lib/syscalls.cyr"' 'include "lib/simd.cyr"' 'struct Pt {
   'fn main(): i64 { var s: Pt; s.x = 42; s.y = 7; var ps: *Pt = &s; return rd(&s) + rd(ps) - 42; }' \
   'var rc = main();' 'syscall(60, rc);' > "$D/svok.cyr"
 exit_rows SVok "$D/svok.cyr" 42 "rd(&s) and rd(ps) convert freely"
+
+# 6.7.14 (issues/2026-10-16-struct-argument-refusal-names-method-result-by-mangled-name.md) — the struct-type (6.7.3) and
+# `*V` (D33) refusals named a method-result ARGUMENT by its fn name, `S2_dup` (the struct-call record's `_sc_fn`); the
+# record keeps its fn (`_sc_fi`) and both refusals print it as the source spells it (`_sarg_ident_err`: `S2.dup`, the
+# frontend lane's `_fn_src_name`). A local that happens to be named `S2_dup` keeps its name (SMk).
+echo "SM. a method result named as the source spells it in the struct-type and \`*V\` refusals (6.7.14)"
+cat > "$D/sm1.cyr" <<'EOF2'
+struct Pt { x; y; }
+struct Q { a; b; }
+struct S2 { k; }
+impl S2 { fn dup(self): Pt { var p: Pt; p.x = self.k; p.y = 2; return p; } }
+fn rq(p: *Q): i64 { return p.a; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn run(): i64 {
+    var s: S2; s.k = 40;
+    var a = rq(s.dup());
+    return rd(s.dup()) + a;
+}
+syscall(60, run());
+EOF2
+SM1="error:<source>:9:23: cannot pass 'S2.dup' to a parameter of a different struct type in a call to 'rq'"
+SM2="error:<source>:10:22: cannot pass 'S2.dup' to a parameter that is a pointer to a vector type in a call to 'rd'"
+for lg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'sm1_%s' "$lg" | tr -c 'a-zA-Z0-9' '_')
+    rc=0; build_leg "$lg" "$D/sm1.cyr" "$D/$n" || rc=$?
+    ne=$(grep -c '^error' "$D/$n.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "SM1 $lg: the filed repro compiled (rc 0)"
+    elif [ "$ne" -ne 2 ] || ! grep -qxF -- "$SM1" "$D/$n.err" || ! grep -qxF -- "$SM2" "$D/$n.err"; then
+        bad "SM1 $lg: want the two lines naming 'S2.dup', got $ne: $(grep '^error' "$D/$n.err" | head -2 | tr '\n' '|')"
+    elif grep -qF "S2_dup" "$D/$n.err"; then bad "SM1 $lg: a line still names 'S2_dup'"
+    elif [ -s "$D/$n" ]; then bad "SM1 $lg: refused, but a binary was written"
+    else ok "SM1 $lg: the filed repro verbatim names 'S2.dup' in both refusals"; fi
+done
+SMH="${SVH}struct Q2 { a; b; }\nimpl Pt { fn gd<T>(self, k: T): Pt { return self; } fn sm(self): P1 { var t: P1; return t; } }\nfn rq(p: *Q2): i64 { return p.a; }\nfn bq1(b: P1): i64 { return b.x; }\n"
+refused SM2 "SM2 rd((s.dup())), wrapped" "${SMH}fn main(): i64 { var s: Pt; return rd((s.dup())); }\n${E}" x86 "cannot pass 'Pt.dup' $SVF"
+refused SM3 "SM3 rd(s.gd<i64>(1)), a generic method" "${SMH}fn main(): i64 { var s: Pt; return rd(s.gd<i64>(1)); }\n${E}" x86 "cannot pass 'Pt.gd' $SVF"
+refused SM4 "SM4 rq(s.dup()) into *Q2" "${SMH}fn main(): i64 { var s: Pt; return rq(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'rq'"
+refused SM5 "SM5 rd(s.sm()), an 8-byte method result" "${SMH}fn main(): i64 { var s: Pt; return rd(s.sm()); }\n${E}" x86 "cannot pass 'Pt.sm' $SVF"
+refused SM6 "SM6 bq1(s.dup()), a by-value struct of 8 B (the small by-value path)" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" x86 "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
+refused SMk "SMk a local named Pt_dup keeps its name" "${SMH}fn main(): i64 { var s: Pt; var a = s.dup(); var Pt_dup: Pt; return rd(Pt_dup); }\n${E}" x86 "cannot pass 'Pt_dup' $SVF"
+for lg in a64 cx pe; do
+    case "$lg" in a64) [ -n "$A64" ] || continue;; cx) [ -n "$CXCC" ] || continue;; pe) [ "$WINE" = 1 ] || continue;; esac
+    refused "SM2$lg" "SM2 $lg" "${SMH}fn main(): i64 { var s: Pt; return rd((s.dup())); }\n${E}" "$lg" "cannot pass 'Pt.dup' $SVF"
+    refused "SM6$lg" "SM6 $lg" "${SMH}fn main(): i64 { var s: Pt; return bq1(s.dup()); }\n${E}" "$lg" "cannot pass 'Pt.dup' to a parameter of a different struct type in a call to 'bq1'"
+done
 
 # 6.7.13 (issues/archived/2026-10-15-vector-deref-through-address-of-or-double-pointer-into-vector-pointer-param.md) — a
 # dereference of an ADDRESS-OF a vector, or of a `**V` / `**S`, is the vector / the struct: the filed `rd(*&b)` /
@@ -1367,4 +1421,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD)"
+echo "PASS: $G — a \`*V\` parameter is a pointer: the filed repros (R1 R2 R4 R5) and the decisions (R3, D27) on x86_64 / IR / aarch64 / cx / PE, the refusals each once (Y), the subscript (S), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE; a value-form f32v8 parameter (V8, VY, $N2 rows T2); a vector call result into a value-form parameter (VC, VZ, $N3 rows T3); an explicit generic call with a refused type argument reported once (Y14-Y22); Win64's value-form parameter takes what SysV's takes (VYw3-VYw5, VZw3-VZw6); parentheses wrapping a whole value-form argument are transparent (VP, VPY); a closure's captured vector passes one (VCc, D31), and a `*V` dereference, copied through the pointer (VZd, D32); \`&w\` refused on Windows too, its receives routed to \`_ptr\` (VZa, D33); a call naming no fn left to the undefined-function path (VU); every \`*V\` dereference into another pointer kind refused (OKD); a method-result argument named as the source spells it (SM)"
