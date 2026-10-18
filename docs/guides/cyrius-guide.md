@@ -511,7 +511,17 @@ var r = add(20, 22);   # r = 42
   An `include` of a file that declares one is reported at the include's own line (`an include of a
   file that declares a `struct` (lib/str.cyr:24) must come before ...`). Through 6.7.13 each was
   `unexpected struct` (`union`: `expected ';', got union`) followed by up to three invented errors, and
-  the include's failed inside the included file.
+  the include's failed inside the included file. The same holds one level down: a `struct`, `enum`,
+  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and the
+  body parses on after it:
+
+  ```text
+  error:<source>:1:15: a `struct` declaration belongs to the declaration section at top level, not inside a fn body
+  ```
+
+  (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
+  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
+  the recovery.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /

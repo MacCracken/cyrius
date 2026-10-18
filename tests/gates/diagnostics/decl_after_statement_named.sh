@@ -1,6 +1,6 @@
 #!/bin/sh
 # decl_after_statement_named.sh — a declaration after the first top-level statement is ONE error by name; an
-# `async fn` there is a function (6.7.14).
+# `async fn` there is a function (6.7.14); a declaration inside a fn body or a block is one error too (6.7.15).
 #
 # THE DEFECT (measured 6.7.10 - 6.7.13, x86_64; the frontend, every target). The guide's rule (§ Functions, § Traits)
 # keeps `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `use` and `pub` / `public` declarations before the first
@@ -36,6 +36,22 @@
 #   A   `async fn` after each statement kind runs through future_force (CYRIUS_ASYNC=1); `const fn` / `fn` still do
 #   C   controls: every kind before the first statement compiles and runs; --syntax-only gives the same one error
 #
+# ONE LEVEL DOWN (6.7.15; issues/2026-10-17-declaration-inside-block-or-fn-body-cascades.md). A `struct`, `enum`,
+# `union`, `trait` or `impl` inside a fn body or a block reached PARSE_STMT the same way: "unexpected struct"
+# (`union`: "expected ';', got union") and up to four invented errors — "expected '=', got '{'", "undefined variable
+# 'y'", "undefined variable 'Q'", and "return outside a fn body" once the resync took the fn body's own `}`. Now
+# `_decl_inner` (GINFN 1, or `_pp_depth` past module scope): one error at the keyword, "a `struct` declaration
+# belongs to the declaration section at top level, not inside a fn body" (or "... not inside a block"), the
+# declaration stepped (`_dl_skip_in`, which leaves a `}` closing the enclosing body), the fns it would define
+# entered as reported (`_dl_quiet`).
+#
+#   N   each kind inside a top-level `if` block, a top-level `while` block and a fn body: exactly one error
+#   NS  the body parses on: a second, independent mistake after it is reported (and no "return outside a fn
+#       body"); a closure, an impl method, a nested block, a `switch` case, `@unsafe`, `else`, a `for` body,
+#       a generic fn at two instances, several in one body, a derived struct, an impl's method called, a
+#       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
+#   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
+#
 # MUTATION LEDGER (each mutant built from the fixed tree with the one change):
 #   base: the lane before it (5048df2e)             -> RED 49 of 54: every K / R1 / R4 / R5 / I1-I4 / Q / A row and
 #                                                      C2 (the old "unexpected struct" + its cascade, "expected
@@ -50,6 +66,14 @@
 #                                                      `public` codec refused too)
 #   `_dl_skip` steps one token                      -> RED the K rows but pub-fn / public-var (the body cascades),
 #                                                      R1 Q1 Q3-Q5 C2
+#   (6.7.15, measured) `_decl_inner` returns 0      -> RED all 36 N / NS / NC rows (the old "unexpected struct"
+#                                                      and its cascade); the 54 rows before them green
+#   `_dl_skip_in` steps a closing `}` (inner 0)     -> RED NS13 ("expected '}', got end of file": the block's `}`
+#                                                      taken)
+#   `_decl_inner` without `_dl_quiet`               -> RED NS12 ("undefined function 'P.g'" twice + "refusing to
+#                                                      emit binary")
+#   `_dl_in_report` without its `_ce_err_dup`       -> RED NS9 (the error once per generic instance), NC (the
+#                                                      const fn check's token reported again by the body)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -281,6 +305,114 @@ syscall(60, p.get() + p.m() + a + pf() + pv + f() + EB);
 ' 19
 one "C2 --syntax-only: the same one error" "$(printf 'struct P { x; }\nvar a = 1;\na = 2;\nimpl P { fn get(self): i64 { return self.x; } }\nsyscall(60, a);\n')
 " "error:<source>:4:1: an \`impl\` declaration $R (line 3)" --syntax-only
+
+# ── N: one level down — a declaration in a block or a fn body (6.7.15) ──────────────────────────────────────
+IR='belongs to the declaration section at top level, not inside'
+NKINDS='struct|struct Q { y; }|a `struct`
+enum|enum E { EA; EB; }|an `enum`
+enum-stack|enum E2: stack { Ok2(v); Err2(e); }|an `enum`
+union|union U { x; y: i32; }|a `union`
+trait|trait Tr2 { fn m(self): i64; }|a `trait`
+impl|impl P { fn get(self): i64 { return self.x; } }|an `impl`
+impl-for|impl Tr for P { fn m(self): i64 { return self.x; } }|an `impl`'
+NHEAD='struct P { x; }
+trait Tr { fn m(self): i64; }
+var a = 1;
+'
+printf '%s\n' "$NKINDS" | while IFS='|' read -r k decl art; do
+    [ -n "$k" ] || continue
+    one "N $k in a top-level if block" "${NHEAD}if (a == 1) { $decl }
+syscall(60, a);
+" "error:<source>:4:15: $art declaration $IR a block"
+    one "N $k in a top-level while block" "${NHEAD}while (a == 1) { $decl a = 2; }
+syscall(60, a);
+" "error:<source>:4:18: $art declaration $IR a block"
+    one "N $k in a fn body" "${NHEAD}fn f(): i64 { $decl return 1; }
+syscall(60, f() + a);
+" "error:<source>:4:15: $art declaration $IR a fn body"
+done > "$D/n.out"
+cat "$D/n.out"
+pass=$((pass + $(grep -c '^  ok' "$D/n.out" || true))); fail=$((fail + $(grep -c '^  FAIL' "$D/n.out" || true)))
+
+one "NS1 filed: struct in a top-level if block" "$(printf 'var a = 1;\nif (a == 1) { struct Q { y; } }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a block"
+one "NS2 filed: struct in a fn body" "$(printf 'fn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body"
+one "NS3 filed: impl in a fn body" "$(printf 'fn f(): i64 { impl P { fn g(self): i64 { return 1; } } return 1; }\nstruct P { x; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: an \`impl\` declaration $IR a fn body"
+one "NS4 the body parses on: its return's mistake" 'fn f(): i64 { struct Q { y; } return zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`struct\` declaration $IR a fn body
+error:<source>:1:40: undefined variable 'zz' (missing include or enum?)"
+one "NS5 the block parses on, and the program" 'var a = 1;
+if (a == 1) { struct Q { y; } a = zz; }
+syscall(60, yy);
+' "error:<source>:2:15: a \`struct\` declaration $IR a block
+error:<source>:2:37: undefined variable 'zz' (missing include or enum?)
+error:<source>:3:15: undefined variable 'yy' (missing include or enum?)"
+one "NS6 an impl method, a closure (the zone's, replayed last), a nested block" 'struct P { x; }
+impl P { fn m(self): i64 { union U { x; } return 1; } }
+var g = |x| { enum E { A, B } return x; };
+fn f(): i64 { if (1 == 1) { struct Q { y; } } return 1; }
+syscall(60, f());
+' "error:<source>:2:28: a \`union\` declaration $IR a fn body
+error:<source>:4:29: a \`struct\` declaration $IR a fn body
+error:<source>:3:15: an \`enum\` declaration $IR a fn body"
+one "NS7 a switch case, @unsafe in a fn" 'fn f(x): i64 { switch (x) { case 1: struct Q { y; } return 2; } return 1; }
+fn g(): i64 { @unsafe { trait T { fn m(self): i64; } } return 1; }
+syscall(60, f(1) + g());
+' "error:<source>:1:37: a \`struct\` declaration $IR a fn body
+error:<source>:2:25: a \`trait\` declaration $IR a fn body"
+one "NS8 else, for, @unsafe at top level" 'var a = 1;
+if (a == 2) { a = 3; } else { struct Q { y; } }
+for (var i = 0; i < 1; i = i + 1) { enum E { A, B } }
+@unsafe { union U { x; } }
+syscall(60, a);
+' "error:<source>:2:31: a \`struct\` declaration $IR a block
+error:<source>:3:37: an \`enum\` declaration $IR a block
+error:<source>:4:11: a \`union\` declaration $IR a block"
+one "NS9 a generic fn at two instances: once" 'fn f<T>(x: T): T { enum E { A; } return x; }
+syscall(60, f<i64>(1) + f<i32>(2));
+' "error:<source>:1:20: an \`enum\` declaration $IR a fn body"
+one "NS10 every kind in one body: one error each" 'struct P { x; }
+fn f(): i64 {
+    struct Q { y; }
+    enum E { A, B }
+    union U { x; }
+    trait T { fn m(self): i64; }
+    impl T for P { fn m(self): i64 { return 1; } }
+    return 3;
+}
+syscall(60, f());
+' "error:<source>:3:5: a \`struct\` declaration $IR a fn body
+error:<source>:4:5: an \`enum\` declaration $IR a fn body
+error:<source>:5:5: a \`union\` declaration $IR a fn body
+error:<source>:6:5: a \`trait\` declaration $IR a fn body
+error:<source>:7:5: an \`impl\` declaration $IR a fn body"
+one "NS11 a derived struct in a fn body" 'include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+fn f(): i64 {
+#derive(accessors)
+struct Q { y; }
+return 7;
+}
+syscall(60, f());
+' "error:<source>:7:1: a \`struct\` declaration $IR a fn body"
+one "NS12 an impl in a fn body, its method called" 'struct P { x; }
+fn f(): i64 { impl P { fn g(self): i64 { return 1; } } var p = P { 1 }; return p.g(); }
+syscall(60, f());
+' "error:<source>:2:15: an \`impl\` declaration $IR a fn body"
+one "NS13 no body: the block's own } is left" 'var a = 1;
+if (a == 1) { struct Q }
+syscall(60, a);
+' "error:<source>:2:15: a \`struct\` declaration $IR a block"
+one "NS14 --syntax-only: the same one error" "$(printf 'fn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body" --syntax-only
+one "NC a const fn's body: the check's one refusal" 'const fn f(): i64 { struct Q { y; } return 1; }
+syscall(60, f());
+' "error:<source>:1:21: not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while / return / break / continue and calls of const fns"
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

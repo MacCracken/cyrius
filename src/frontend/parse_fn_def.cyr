@@ -495,9 +495,10 @@ fn _tl_pass1(S, objok): i64 {
 # inside that file ("lib/str.cyr:24:1: unexpected struct" + three). Now one error naming the rule and the first
 # statement's line, and the declaration stepped (`_dl_skip`); one inside a file whose `include` follows the statement
 # is reported at that include line, the rest of the inclusion stepped (its fns would use what it declares). Module
-# scope only (`_pp_depth` 1): a block's or a fn body's statement keeps its own errors. CHANGELOG [6.7.14]
+# scope only (`_pp_depth` 1); a block's or a fn body's declaration is `_decl_inner`'s (6.7.15). CHANGELOG [6.7.14]
 var _tl_stmt1 = 0 - 1;   # the first top-level statement's first token (`_tl_pass1`), -1 before pass 1
 fn _decl_late(S): i64 {
+    if (_decl_inner(S) == 1) { return 1; }   # 6.7.15: in a fn body or a block
     if (GINFN(S) != 0) { return 0; }
     if (_pp_depth != 1) { return 0; }
     if (_dl_kind(PEEKT(S)) == 0) { return 0; }
@@ -513,6 +514,41 @@ fn _decl_late(S): i64 {
     _dl_derived(S);
     _dl_quiet(S, ti, GTI(S));
     return 1;
+}
+# ⛔ 6.7.15 — ONE LEVEL DOWN: a `struct`, `enum`, `union`, `trait` or `impl` in a fn body or a block (GINFN 1, or
+# `_pp_depth` past module scope) belongs to the declaration section too (the guide's rule, D13 (a)'s one level
+# down). PARSE_PROG is also the block and fn-body parser, so it reached PARSE_STMT: "unexpected struct" (`union`:
+# "expected ';', got union") and up to four invented errors, the resync re-entering the declaration's braces and
+# the fn body's own `}` consumed ("return outside a fn body"). Now one error by name at the keyword, the
+# declaration stepped as at module scope (`_dl_skip_in`: never the `}` that closes the enclosing body), and the
+# fns it would define entered as reported (`_dl_quiet`), so the body parses on in sync. CHANGELOG [6.7.15]
+fn _decl_inner(S): i64 {
+    if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
+    var t = PEEKT(S);
+    if (t != 40 && t != 60 && t != 101 && t != 167 && t != 77) { return 0; }   # struct enum union trait impl
+    var ti = GTI(S);
+    _dl_in_report(S, ti);
+    _dl_skip_in(S);
+    _dl_derived(S);
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# "a `struct` declaration belongs to the declaration section at top level, not inside a fn body" (or "... not
+# inside a block"), at the keyword `ti`; once per token (a generic's instances, an inline replay) and not over a
+# refused const fn's check of the same token (`_ce_err_dup`). No panic latch: the body's next statement is its own.
+fn _dl_in_report(S, ti): i64 {
+    _had_error = 1;
+    if (_panic == 1) { return 0; }
+    var id = "declaration section";
+    if (_ce_err_dup(S, (id * 31 + 19) * 8 + 4) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": ");
+    _dl_art_kw(S, ti);
+    PRSTR(" declaration belongs to the declaration section at top level, not inside ");
+    if (GINFN(S) == 1) { PRSTR("a fn body\n"); } else { PRSTR("a block\n"); }
+    _err_excerpt(S);
+    return 0;
 }
 # A `#derive`d struct / enum: the preprocessor writes its generated fns onto the expanded line of the closing `}`
 # (v6.5.20, PP_DERIVE_SERIALIZE). They are the refused type's, so a `fn` / `public fn` the declaration's line still
@@ -654,7 +690,10 @@ fn _dl_fn_quiet(S, noff, kw, meth): i64 {
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
 # first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
-fn _dl_skip(S): i64 {
+fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
+# Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
+fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
+fn _dl_skip_at(S, inner): i64 {
     var semi = 0;
     var t = PEEKT(S);
     if (t == 72 || t == 74) { semi = 1; }
@@ -665,6 +704,7 @@ fn _dl_skip(S): i64 {
     var d = 0;
     while (PEEKT(S) != 12) {
         var k = PEEKT(S);
+        if (inner == 1) { if (k == 14) { if (d == 0) { return 0; } } }
         STI(S, GTI(S) + 1);
         if (k == 10 || k == 28 || k == 13) { d = d + 1; }
         if (k == 11 || k == 29 || k == 14) { d = d - 1; }
