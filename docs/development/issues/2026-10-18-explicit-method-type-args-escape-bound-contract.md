@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G5) on the lane's tree at b71f8853a
 (after D5 (a)), x86_64; the name form the same on the slot-open compiler.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G5, implementing D5 (a) (the contract on a carrier's T field). The
 contract's site scan keys a call by the exact tokens `name . name (` (and `name . f . name (` for the field form);
 6.7.14's D7 (a) explicit spelling `x.m<..>(..)` puts `<..>` between the name and its `(`, so the scan never sees it.

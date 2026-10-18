@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G4) on the lane's tree at 5bf321ca5
 (after the token-scans fix, issues/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md), x86_64; the same before.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G4, implementing the token-scans fix (`_tok_ta_arg`, src/frontend/parse.cyr):
 its filed surface is D8's `p: *T` / `x: T`; two bindings the parser makes are still unread by the scan.
 **Severity:** Low — a loud refusal of valid source; workaround: spell the type argument (`gd2<P>(&GPP)`,

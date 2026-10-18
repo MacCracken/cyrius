@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G3), writing D3's control rows (a
 member's `: u128` return refused, a `*fn( .. ): u128` type's own return unchanged). Pre-existing: identical on the
 lane's compiler before G3 (373ab3d29), since 6.7.14's D10 (a) refused a member's `u128` parameter.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a valid trait member is refused; the same parameter on a fn compiles (no wrong code).
 **Kind:** bug (a valid signature refused; 6.7.14's D10 (a) leaves "a `*fn(u128)`'s own list" unchanged, and a fn
 pointer's own return is the same position).

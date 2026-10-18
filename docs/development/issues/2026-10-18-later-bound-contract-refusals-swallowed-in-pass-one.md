@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G5) on the lane's tree at b71f8853a, x86_64;
 the same on the slot-open compiler (whose later refusals printed their notes alone — the orphan notes were removed by
 b71f8853a, `_bnd_site_refuse` behind `_err_quiet`).
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G5, implementing D5 (a) (a carrier field's call held to the bound): the
 contract is checked in pass 1 (`_bnd_sites`, src/frontend/parse_fn.cyr), whose refusals go through ERR_IDENT, which
 sets the panic latch; nothing in pass 1 resyncs it, so every later contract refusal of the compile is swallowed

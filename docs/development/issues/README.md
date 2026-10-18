@@ -371,25 +371,9 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [aarch64 Linux `sys_dup2(fd, fd)` answers -22 (EINVAL) where x86_64 answers fd: the aarch64 peer issues dup3(old, new, 0), which refuses old == new](2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md)
 - [patra `fuzz/fuzz_bytes.fcyr` plants its chain corruption at a heap address used as a page number — it has tested nothing since patra 1.12.8, and on Windows hardware it writes a ~50 GB non-sparse file](2026-10-18-patra-fuzz-bytes-plants-corruption-at-a-heap-address.md)
 
-**6.7.16 — the full security audit + the refactor / optimization review** (3)
+**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (52)
 
-- [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
-- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
 - [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
-
-**Open by design — placed arcs, not bugs** (5)
-
-- [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
-- [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](2026-10-08-lib-public-constants-const-migration.md)
-- [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
-- [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
-- [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
-
-**Unplaced** (54)
-
-- [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
-- [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
-- [cybs names neither the construct it refused nor the file and line](2026-10-13-cybs-per-construct-refusal-and-file-line.md)
 - [asm_barrier_options.tcyr's header says a wrong barrier word faults (SIGILL), but a wrong option CRm runs as the full-system barrier](2026-10-18-asm-barrier-options-tcyr-header-claims-a-wrong-word-faults.md)
 - [An asm `param_load(reg, idx)` reads its register by the first letters: `param_load(raxx, 0)` is rax, `param_load(r8d, 0)` a 64-bit r8 load](2026-10-18-asm-param-load-register-read-by-first-letters.md)
 - [A bare `var c;` (and `var c: ;`) in a fn or after the first statement reads the NEXT statement as its initializer — "undefined variable" follows](2026-10-18-bare-declaration-refusal-reads-next-statement-as-initializer.md)
@@ -441,6 +425,25 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A Vec element whose generic struct takes another generic struct's instance (`Vec<Box<Box<R>>>`) is not judged against the outer struct's bound](2026-10-18-vec-element-nested-instance-argument-bound-unjudged.md)
 - [Windows disallowed CTL: a 16-byte entry is read only as a public-key MD5, never as an MD2 / MD5-signed certificate's signature hash](2026-10-18-windows-ctl-16-byte-entry-as-md5-signature-hash.md)
 - [The declaration zone's replay reports only the FIRST latched error: every later zone declaration's error is silent](2026-10-18-zone-replay-reports-only-first-latched-error.md)
+
+**6.7.17 — the full security audit + the refactor / optimization review** (2)
+
+- [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
+- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
+
+**Open by design — placed arcs, not bugs** (5)
+
+- [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
+- [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](2026-10-08-lib-public-constants-const-migration.md)
+- [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
+- [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
+- [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
+
+**Unplaced** (3)
+
+- [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
+- [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
+- [cybs names neither the construct it refused nor the file and line](2026-10-13-cybs-per-construct-refusal-and-file-line.md)
 
 ## Recommended security floor
 

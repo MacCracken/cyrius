@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G5) on the lane's tree at 3ad937529,
 x86_64, best of 1 each (the shape is stable to ~5 %); the same scaling on the lane's earlier compilers.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G5, building bound_forward_chain_scale.sh: the bounded chain's own
 judgement is linear after the memo, but the same chain with NO bound (no judgement at all) doubled from 721 to 2,392 ms
 (1500 -> 3000), so that gate measures a ratio against it instead of a doubling.

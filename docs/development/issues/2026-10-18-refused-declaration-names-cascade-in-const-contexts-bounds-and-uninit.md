@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend, unit F6, x86_64; the
 frontend, every target); each shape below prints the same on the slot-open compiler (b2e1f4c48's build/cycc), except
 where noted.
-**Placement:** unplaced — filed from the 6.7.15 frontend lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — every shape is refused; the first error is the right one. One or two invented errors follow.
 **Kind:** bug (diagnostic cascade).
 **Discovered:** unit F6, fixing issues/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md. That issue's

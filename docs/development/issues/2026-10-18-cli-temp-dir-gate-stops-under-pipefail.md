@@ -4,7 +4,7 @@
 Linux) and on the lane base b2e1f4c48, a scratch `git archive` with its build/cyrius rebuilt from its own cbt/. Both
 stop at the same row. The defect predates 6.7.15. The lane's g9p block (73249ddb5) adds two more lines of the same
 shape. Filed from the 6.7.15 infratools lane's review.
-**Placement:** unplaced — filed from the 6.7.15 infratools review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 infratools review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low. This is a gate defect only. check.sh runs the gate with `sh`, which has no `-e`; the gate sets only
 `set -u`. Under `sh` every axis runs and the verdict is right (PASS, 166 ok on the lane tree). Under
 `bash -eo pipefail` the gate ends early with rc 1 and prints neither PASS nor FAIL. That is GitHub's `run:` semantics,

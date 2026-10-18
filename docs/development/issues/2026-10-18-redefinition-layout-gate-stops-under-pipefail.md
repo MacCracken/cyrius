@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend at 6593fbf1d). Pre-existing:
 the lane did not touch the gate (`git log b2e1f4c48..HEAD` over it is empty), and with the slot-open compiler
 (`CYCC=<b2e1f4c48's build/cycc>`) it stops the same way.
-**Placement:** unplaced — filed from the 6.7.15 frontend review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a gate defect only. check.sh runs it with `sh`, where all 29 rows run and the verdict is right.
 Under `bash -eo pipefail` (GitHub's `run:` semantics, which CLAUDE.md asks every shell gate to be tested under) it
 ends with rc 1 and prints neither PASS nor FAIL.

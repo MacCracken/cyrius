@@ -1,7 +1,7 @@
 # The guide's Windows failure table puts the 6.7.15 close answer in its `Windows 6.7.14` column — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 in the 6.7.15 platform lane's review (branch l6715-platform).
-**Placement:** unplaced — filed from the 6.7.15 platform review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — documentation: a reader on 6.7.14 is told `sys_close(-999)` answers -9 there, which it does not
 (6.7.14 still answered CloseHandle's BOOL).
 **Found:** the review of the lane's 53ab05eef (a PE close answers 0 or a negative errno,

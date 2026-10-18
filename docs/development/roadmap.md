@@ -34,11 +34,12 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
    the arc is the user's call.
 2. **Catch-up breaks clear the backlog.** Break 1 was 6.7.6. **6.7.9 is a repair batch before the next feature** (user,
    2026-10-11): two lanes — the quick fixes and the critical / high issues — to take weight off the queue; B7 + P5-B
-   moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.15 (user, 2026-10-09; the fourth
-   repair release added at the 6.7.12 open, user 2026-10-15; the fifth at the 6.7.13 integration, user 2026-10-16): the
-   open queue repaired to 0 bugs, so fuller audits can follow. 6.7.16 is the full security audit + the refactor /
-   optimization review (user, 2026-10-09; renumbered 2026-10-15 and 2026-10-16). The closeout's number is OPEN (user,
-   2026-10-09): what the 6.7.16 reviews produce ships first, in as
+   moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.16 (user, 2026-10-09; the fourth
+   repair release added at the 6.7.12 open, user 2026-10-15; the fifth at the 6.7.13 integration, user 2026-10-16; the
+   sixth at the 6.7.15 wave-1 integration, user 2026-10-18 — what 6.7.15 files): the open queue repaired to 0 bugs, so
+   fuller audits can follow. 6.7.17 is the full security audit + the refactor / optimization review (user, 2026-10-09;
+   renumbered 2026-10-15, 2026-10-16 and 2026-10-18). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.17
+   reviews produce ships first, in as
    many releases as it takes, and the closeout follows.
 3. **Every language decision is the user's** — asked at the arc's start, recorded with its date, never a lane's
    "default" (CLAUDE.md *Execution integrity*).
@@ -51,11 +52,12 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 |---|---|
 | 6.7.0 – 6.7.14 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) |
 | 6.7.15 | Break 2, repair 5 (added 2026-10-16): **what 6.7.14 filed** — 111 in seven lanes over four waves (wave 0 on main: the check driver's SIGPIPE, the `parse_fn.cyr` split), 70 decisions answered at its open (the 6.7.14 changes beyond the decisions' text closed by them) |
-| 6.7.16 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
-| 6.7.17 → | what the 6.7.16 reviews produce — the number of releases is open, set at 6.7.16's close (user, 2026-10-09) |
+| 6.7.16 | Break 2, repair 6 (added 2026-10-18): **what 6.7.15 files**, re-balanced at its open (51 placed at the wave-1 integration; waves 2–3 to come) and the ProtectedRoots measurement |
+| 6.7.17 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.18 → | what the 6.7.17 reviews produce — the number of releases is open, set at 6.7.17's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
-**Break 2 is 6.7.11 – 6.7.15** (user, 2026-10-09; 6.7.14 added 2026-10-15, 6.7.15 added 2026-10-16): repair the open queue to 0, so fuller audits can follow. Each repair
+**Break 2 is 6.7.11 – 6.7.16** (user, 2026-10-09; 6.7.14 added 2026-10-15, 6.7.15 added 2026-10-16, 6.7.16 added 2026-10-18): repair the open queue to 0, so fuller audits can follow. Each repair
 release runs its lanes in waves, at most two `src/` lanes at a time. Each lane owns its files, and a cross-lane hunk
 travels as a named hand-off patch. The binary is rebuilt once on the merged tree. There is one review round, and the
 decisions are asked in one round at the open. The `2026-10-09-*` links resolve when 6.7.7 merges; they are on the
@@ -77,7 +79,7 @@ Every feature of the v6.7.x plan has shipped (its spec and the user's decisions 
 C3 bounds, `const` / `const fn`, `bool`, the if-expression, `loop` / `do`, `OP=` on every lvalue, B4 tuples and B6
 default / named arguments (6.7.7), checked `dyn` and the C2 bounds-checked mode (6.7.8), B7 packed narrow fields with
 the handle line and size-independent struct copies, and P5-B execution coverage (6.7.10). What remains is repair
-(6.7.11 – 6.7.15), the audit and review (6.7.16) and the closeout.
+(6.7.11 – 6.7.16), the audit and review (6.7.17) and the closeout.
 
 ⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`).
 
@@ -145,7 +147,18 @@ are closed by D41 – D70: 27 items kept, 6.7.14's D53 applied as worded (item 1
 decision is on its issue's **Decision** line; the questions and options: `~/.cache/c6/6715_decisions.md`.
 **For the user** — ⛔ tag patra 1.16.5 when its suite patch is ready (before the refold).
 
-### 6.7.16 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, and from 6.7.15 at the 6.7.13 integration)
+### 6.7.16 — repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18)
+
+The user (2026-10-18), asked where the issues 6.7.15 files go: a new repair release, 6.7.16 — the audit and the
+refactor review move to 6.7.17, keeping Break 2's goal (the queue at 0 before the audit). Re-balanced at its open
+against everything placed here; its decision questions (the language questions among the filed issues) asked there.
+
+**Placed so far:** the 51 issues filed by 6.7.15's wave 1 and their reviews (placed at its integration — generics 19,
+frontend 15, platform 13, infra / tools 4; Medium 5) — [issues/README.md](issues/README.md) § *Open queue* lists them;
+[the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
+(the user's two steps at cass's desktop). What waves 2 and 3 file joins it at their integration.
+
+### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.17 at the 6.7.15 wave-1 integration, 2026-10-18)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
@@ -165,7 +178,7 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.16's open):** folders with direct
+  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.17's open):** folders with direct
     names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
     `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
     `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
@@ -184,7 +197,7 @@ cannot pack filed.
     4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
        (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
        one-line include of the new home) and is the user's call per module.
-    5. **At 6.7.16, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
+    5. **At 6.7.17, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
        today's `file:line`.
 - **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
   language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
@@ -196,24 +209,24 @@ cannot pack filed.
   - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](issues/2026-10-13-self-compile-prints-large-static-advisory.md);
 
 
-### 6.7.17 → — what the reviews produce, then the closeout (number open)
+### 6.7.18 → — what the reviews produce, then the closeout (number open)
 
-The 6.7.16 reviews' findings that did not pack into 6.7.16 ship next, in as many releases as they take — sized and
-placed at 6.7.16's close, never squeezed into the closeout. Then the closeout:
+The 6.7.17 reviews' findings that did not pack into 6.7.17 ship next, in as many releases as they take — sized and
+placed at 6.7.17's close, never squeezed into the closeout. Then the closeout:
 
 
 The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger:
 - **Mechanical:** `release-gate.sh` (record check.sh's count) and the bench.
 - **Judgment:** heap map (the retired IR bands), the dead-code floor, the 2–3 consolidations the minor earned, code
   review, cleanup.
-- **Compliance:** the security re-scan (the full audit ran in 6.7.16); folds byte-identical to their tags (yantra,
+- **Compliance:** the security re-scan (the full audit ran in 6.7.17); folds byte-identical to their tags (yantra,
   bayan); `verify-store.sh`.
 - **Docs:** CHANGELOG / roadmap / state; vidya (tuples, defaults, `dyn`, the bounds mode, packed fields, coverage);
   the backlog re-triaged to 0 open.
 
 ### Proposals — later in the 6.7.x line (the user, 2026-10-15: "keep proposals for later in 6.7.x line")
 
-After Break 2 and the 6.7.16 audit; their release is set when the review follow-ups are:
+After Break 2 and the 6.7.17 audit; their release is set when the review follow-ups are:
 [adjacent string-literal concatenation](proposals/2026-10-13-adjacent-string-literal-concatenation.md) ·
 [`memmove`](proposals/2026-10-14-memmove.md).
 

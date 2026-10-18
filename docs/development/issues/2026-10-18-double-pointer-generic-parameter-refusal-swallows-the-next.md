@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G3), writing the `**Box<Zork>` row of
 D7's gate. Pre-existing: identical on the lane's compiler before G3 (373ab3d29).
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a second error in the same signature is not reported (the build still fails; one fix-and-rebuild
 round more).
 **Kind:** bug (diagnostics).

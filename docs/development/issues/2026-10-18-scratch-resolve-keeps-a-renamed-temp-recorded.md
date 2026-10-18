@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 infratools lane (l6715-infratools @ 73249ddb5, unit I5, the CLI
 built from `cbt/cyrius.cyr` by the lane's build/cycc, x86_64 Linux); the same on the CLI before that unit (5c0a2b34b's,
 which still recorded the predicted temp), so it predates 6.7.15.
-**Placement:** unplaced — filed from the 6.7.15 infratools lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 infratools lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — the same reach as issues/2026-10-16-scratch-resolve-records-a-predicted-temp-name-it-did-not-create.md:
 only a same-user process can put a file inside the CLI's own 0700 `cyrius-<pid>/…/lib/` while the resolve runs, and the
 file lost is that process's own, in the CLI's private directory. Not a security finding (no boundary is crossed).

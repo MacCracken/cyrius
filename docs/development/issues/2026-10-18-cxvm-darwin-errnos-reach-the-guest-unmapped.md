@@ -5,7 +5,7 @@ built from the lane's tree (the host-dispatch fix, issues/2026-10-17-cxvm-forwar
 and the path calls, issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) for each host:
 x86_64 Linux (`build/cycc`), pi (`cycc_aarch64`), ecb (`CYRIUS_MACHO_ARM=1 cycc_aarch64` + `codesign -s -`), ach
 (`CYRIUS_MACHO=1 cycc`).
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a portable cx program that compares an errno against its Linux value reads a different answer on a
 Mac's cxvm. No boundary is crossed (cxvm runs trusted bytecode; no ledger id).
 **Found:** in passing, running the three crossos files the path-call fix makes pass on cx

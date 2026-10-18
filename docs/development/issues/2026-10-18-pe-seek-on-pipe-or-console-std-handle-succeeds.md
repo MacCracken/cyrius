@@ -4,7 +4,7 @@
 carries the fix for issues/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through
 GetStdHandle). PE built with `CYRIUS_TARGET_WIN=1 build/cycc`; run on real cass (Windows 11, `C:\cyrius-tests`) and
 under wine 11.19 (a private WINEPREFIX).
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — no in-tree caller seeks a pipe or a console (lib/, cbt/, programs/, src/ grep for `xlseek` /
 `sys_lseek` / `syscall(SYS_LSEEK` / `syscall(8,`). A portable program that detects "stdin is a pipe" by a failed seek
 (the POSIX idiom: `lseek(0, 0, SEEK_CUR) < 0` → not seekable, read it to the end) misreads a pipe or console as a

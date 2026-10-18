@@ -5,7 +5,7 @@ judgement-capped-at-64-deep.md, which removed the 64-deep cap on the bounded-for
 instantiates the chain is still held to the parser's recursion bound: each forwarder's instance is parsed nested inside
 its caller's call. Pre-existing for an unbounded chain (the slot-open compiler b2e1f4c48 refuses it at the same depth);
 for a bounded chain the slot-open compiler refused from 65 forwards (the judgement cap), the lane from 122.
-**Placement:** unplaced — filed from the 6.7.15 generics review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a valid program is refused at compile time (no miscompile); a real chain of 120+ forwarders is rare.
 The lane's guide sentence ("through any number of forwards", § Trait bounds) was corrected in the review fix commit to
 name this cap.

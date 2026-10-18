@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform, unit P4), the file
 compiled once with `cycc_cx` and run on cxvm built from the lane's tree on x86_64 Linux, aarch64 (qemu and real pi),
 ecb and ach.
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a crossos row that "passes on every target" fails on cx unseen (the same class as
 issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md, which covers three other files). cxvm
 runs trusted bytecode; no boundary.

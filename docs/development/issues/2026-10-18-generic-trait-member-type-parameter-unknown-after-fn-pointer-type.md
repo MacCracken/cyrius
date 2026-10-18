@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G3), writing the control rows of the
 trait-signature type-argument check (D7). Pre-existing: identical on the lane's compiler before G3 (373ab3d29) —
 the reader has had this since 6.7.8 parsed a member's signature.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a valid generic trait member is refused (no wrong code); the same signature on a plain generic
 fn compiles.
 **Kind:** bug (a valid signature refused; no language question).

@@ -4,7 +4,7 @@
 issues/2026-10-16-nested-type-arg-shift-close-then-comma-drops-next-arg.md, turned
 `sizeof(Three<P<P<R>>, i16, i32>)` from a silent wrong 28 into the parse error every three-argument use already
 gave). Pre-existing: the lane tree and the slot-open compiler b2e1f4c48 give identical results below.
-**Placement:** unplaced — filed from the 6.7.15 generics review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low (the review's grading) — but the inferred form computes a wrong value in silence: `sizeof(C)` is 8 for
 a 24-byte struct argument, so integration may raise it.
 **Kind:** bug / language (the guide says "At most two type parameters are recorded", but nothing refuses a third by

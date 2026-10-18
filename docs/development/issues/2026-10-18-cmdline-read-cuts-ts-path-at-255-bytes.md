@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 platform lane (unit P5), while giving every driver the TS
 flags (6.7.15's D38).
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a TS mode's input path that, with argv[0] and the flag, makes the command line longer than 255
 bytes is truncated silently and the truncated name is opened: a "cannot open '<prefix>'" for a file that exists, or,
 when the prefix names another file, that file's TypeScript is lexed / parsed / emitted instead. `cyrius build

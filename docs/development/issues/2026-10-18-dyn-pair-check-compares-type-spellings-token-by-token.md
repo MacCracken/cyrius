@@ -4,7 +4,7 @@
 lane's review fix (`_ty_norm_eq`, src/frontend/parse_types.cyr) made the IMPL's return check read both spellings as an
 annotation is read; the dyn pair check (`_dyn_sig_eq`) still compares tokens, as it has since 6.7.8. Measured on the
 lane tree (l6715-generics after the review fix) and on the slot-open compiler b2e1f4c48: identical output.
-**Placement:** unplaced — filed from the 6.7.15 generics review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a valid program is refused at compile time (nothing miscompiles): an impl whose method spells a
 type differently from its trait member cannot be formed into a dyn, though the impl itself is accepted and its
 direct calls run.

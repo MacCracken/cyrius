@@ -1,7 +1,7 @@
 # docs/doc-health.md still names the renamed gate toolchain/emit_js_refused_off_x86_linux.sh as a live pin — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 in the 6.7.15 platform lane's review (branch l6715-platform).
-**Placement:** unplaced — filed from the 6.7.15 platform review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a doc-currency ledger cites a gate file that no longer exists; no script or workflow reads the
 path (checked: `grep -rn emit_js_refused_off_x86_linux scripts .github tests programs` on the lane tree finds only
 the history notes "was emit_js_refused_off_x86_linux.sh" in the new gate's header and its check-driver row).

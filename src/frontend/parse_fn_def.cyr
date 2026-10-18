@@ -6,7 +6,7 @@
 # Split out of src/frontend/parse_fn.cyr in 6.7.15 (D25 A, the user, 2026-10-18): that file had
 # reached its last 3 KB under cyrfmt's / cyrlint's 1028 KB read cap. parse.cyr includes this file
 # right after parse_fn.cyr, so the token stream — and cycc — are unchanged (self-host
-# byte-identical). The 6.7.16 layout review gives the frontend its folders. CHANGELOG [6.7.15]
+# byte-identical). The 6.7.17 layout review gives the frontend its folders. CHANGELOG [6.7.15]
 
 # 6.6.5 — the pre-PARSE_PROG "registered but never defined" warning, extracted from the
 # three forks (main, main_win, main_cx) that each carried a copy of it inline.

@@ -4,7 +4,7 @@
 issues/2026-10-16-non-generic-type-given-type-arguments-compiles.md. Measured on the lane tree after that bite (the
 D6 refusal is in `_parse_one_type_arg`, `_gen_ann_sid`, the fn definition's parameter and struct-return sites and
 `_vec_el_args`).
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — nothing is miscompiled at the written name (the struct or scalar is used, the `<..>` dropped),
 but a name inside the list is never checked, and four positions refuse the shape with a parse error instead of D6's
 words (one of them with a cascade).

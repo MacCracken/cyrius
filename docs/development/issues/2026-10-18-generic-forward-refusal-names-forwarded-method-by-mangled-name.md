@@ -5,7 +5,7 @@
 issues/2026-10-17-generic-refusals-name-a-generic-method-by-its-mangled-name.md, whose fix names the CALLED generic as
 the call spells it (`generic 'P.fw' has no i64 instance ...` for `p.fw(5)`); the second name of the forward refusal —
 the generic the refused one forwards its T to — and the note under it were outside that issue's filed surface.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — diagnostics only: the program is refused, at the right place; the text names `P_bk` where the
 source says `p.bk(t)`.
 **Kind:** bug (diagnostic).

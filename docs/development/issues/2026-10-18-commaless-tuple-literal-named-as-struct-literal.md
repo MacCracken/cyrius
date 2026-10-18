@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend at 6593fbf1d, x86_64; the
 frontend, every target). Introduced by the lane's e5a003c6f (D1 (a), the struct literal's required comma); the
 slot-open compiler (b2e1f4c48) refused the same sources with "expected ')', got number 3".
-**Placement:** unplaced — filed from the 6.7.15 frontend review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — refused before and after (rc 1, one error at the same token); only the wording changed, and it now
 names the wrong construct for a tuple.
 **Kind:** bug (diagnostic wording).

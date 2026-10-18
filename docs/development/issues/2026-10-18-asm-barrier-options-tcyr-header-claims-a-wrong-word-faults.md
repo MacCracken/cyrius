@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — read 2026-10-18 on the 6.7.15 infratools lane (l6715-infratools, e3133d664 / 1e298f122).
 Filed from the lane's review.
-**Placement:** unplaced — filed from the 6.7.15 infratools review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 infratools review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Cosmetic. The defect is the accuracy of one comment. Nothing compiles or runs differently, and the gate
 that does pin the words (asm_mnemonics_whole.sh axes 6 and 9) is green.
 **Affects:** tests/tcyr/crossos/asm_barrier_options.tcyr, lines 5-7 of its header.

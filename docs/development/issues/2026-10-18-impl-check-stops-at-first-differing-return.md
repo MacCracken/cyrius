@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 generics lane (D4, 6.7.15's: an impl method's
 return type is checked against its trait member's, commit 13fd8844d). Measured on the lane tree after the review fix.
-**Placement:** unplaced — filed from the 6.7.15 generics review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — diagnostics only: the compile already fails, and the next compile reports the next problem.
 **Kind:** bug (diagnostics).
 

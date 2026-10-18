@@ -8,7 +8,7 @@ outside that surface and unchanged by it. Measured on the lane tree after F3's f
 latch fix); the same refusals print on the lane's compiler before F3 (e5a003c6f), q3's and r3's false errors
 included. (A const fn's own body const subscripted, `const k = 3; return k[0];`, printed "expected ';', got '['" and
 a false "undefined variable 'k'" there; F3 refuses it once, as a subscript in a const fn.)
-**Placement:** unplaced — filed from the 6.7.15 frontend lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — every input is refused; the message names the wrong rule, and two shapes print a FALSE error.
 **Kind:** diagnostics.
 

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 infratools lane (l6715-infratools, unit I3, x86_64 Linux,
 the lane's build/cycc), identical on the slot-open compiler (b2e1f4c48's build/cycc).
-**Placement:** unplaced — filed from the 6.7.15 infratools lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 infratools lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — accepted bad syntax in an asm block on the developer's own source; the bytes are a valid load of
 the register the name STARTS with. A bug, not a vulnerability.
 **Kind:** language (refusing a spelling that compiles today is 6.7.14's D16 class — "an operand the instruction cannot

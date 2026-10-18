@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found by the 6.7.12 windows lane's review (2026-10-15) of unit W3
 (issues/archived/2026-10-08-windows-trust-store-parity-gaps.md, item 1). Nothing is known to be wrong; one shape of the filed
 repro has never been executed.
-**Placement:** 6.7.16 — the full security audit + the refactor / optimization review (re-placed at the 6.7.15 open, 2026-10-18: the user cannot take the two cass desktop steps during 6.7.15; the item moves unchanged) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (re-placed at the 6.7.15 open, 2026-10-18: the user cannot take the two cass desktop steps during 6.7.15; the item moves unchanged — 6.7.16 became repair 6 at the wave-1 integration, the audit 6.7.17) — never 7.x.
 **Decision (user, 2026-10-16, at the 6.7.14 open):** D58 — measure flag 1 end to end (the filed acceptance), when the user can add the test root at cass's desktop: "can't update cass right now".
 **Decision (user, 2026-10-18, at the 6.7.15 open):** not this release — the desktop steps are not available during 6.7.15.
 **Severity:** Low — Windows only, a verification gap: if crypt32 did NOT apply flag 1 at `CertOpenStore`, the native

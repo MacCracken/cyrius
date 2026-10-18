@@ -5,7 +5,7 @@ issues/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md, whose filed
 in-place const contexts (enum values, global array sizes, `#assert`). A `case` label is the fifth in-place const
 context and is outside it: F3 leaves case labels as they were (`_ce_ctx_open` keeps a case label's latch). Measured
 the same on the slot-open compiler (b2e1f4c48's build/cycc), the lane before F3 (e5a003c6f) and after F3.
-**Placement:** unplaced — filed from the 6.7.15 frontend lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — the input is refused; the second label's error names the wrong rule (a syntax error the source
 does not have).
 **Kind:** diagnostics.

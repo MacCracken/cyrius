@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 platform lane (unit P5), measuring crypt32's signature
 hash (prop 15) on cass's ROOT store while applying the CTL's 20 / 32 / 64-byte entries.
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — Windows only and latent (unmeasured whether crypt32 matches a 16-byte CTL entry against prop 15
 at all). If it does, a certificate Microsoft lists by its MD5 (or MD2) signature hash — the TBS hashed with the
 certificate's own md5WithRSA / md2WithRSA digest — is distrusted by Windows' chain engine and still trusted by the

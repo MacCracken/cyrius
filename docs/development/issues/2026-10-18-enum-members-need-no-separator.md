@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend, unit F2, x86_64; the
 frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/cycc).
-**Placement:** unplaced — filed from the 6.7.15 frontend lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — accepted bad syntax; the members get the values the separated form gives.
 **Kind:** language (whether a missing separator is refused is the user's call — the struct-literal twin was decided
 as 6.7.15's D1 (a), 2026-10-18).

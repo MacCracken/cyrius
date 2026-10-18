@@ -5,7 +5,7 @@ issues/2026-10-16-double-pointer-generic-return-read-in-pass-one.md (which makes
 below compile, so its forward callers now meet this gap too, as the `*Later`, `**Later` and 6.7.14's `*Box<Later>` ones
 already did). Identical on the slot-open compiler (b2e1f4c48's build/cycc) for fc1 / fc2 / fc3 / fc5, and on the lane
 tree after G2.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x. (The pointer-RETURN
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x. (The pointer-RETURN
 twin of issues/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md, placed 6.7.15 structs lane wave 2
 unit S1, whose fix direction — register every struct before the pass-1 signature prescan — would cover these too; that
 filing enumerates by-value returns only.)

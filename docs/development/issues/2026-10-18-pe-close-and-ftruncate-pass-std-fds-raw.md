@@ -4,7 +4,7 @@
 carries the fixes for issues/2026-10-16-pe-close-returns-closehandle-bool.md (a close answers 0 or -errno) and
 issues/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through GetStdHandle). PE built
 with `CYRIUS_TARGET_WIN=1 build/cycc`; run on real cass (Windows 11, `C:\cyrius-tests`) and under wine 11.19.
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — no in-tree caller closes or truncates fd 0 / 1 / 2 (lib/, cbt/, programs/, src/ grep for
 `sys_close` / `file_close` / `sys_ftruncate` / `syscall(3, …)` on 0, 1, 2 or a STD* name: none). A portable program that closes stderr (or stdout) to silence it, or truncates a
 redirected stdout, gets a different answer and effect on Windows. Not a security issue (the program's own handles).

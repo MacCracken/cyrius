@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane's tree (l6715-platform, unit P3, after the
 fn-local const native-region fix), with the ELF-aarch64 cross compiler built from it (`src/main_aarch64.cyr`).
 Filed from the platform lane (met while adding native_region_literal_warns.sh axis 12).
-**Placement:** unplaced — filed from the 6.7.15 platform lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — cosmetic: the same `file:line:col` warning is printed N + 1 times for an `#inline` fn called N
 times. No program changes behaviour; the diagnostics are correct, only repeated, and a long list of identical lines
 hides the other warnings around it.

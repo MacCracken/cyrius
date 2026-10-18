@@ -5,7 +5,7 @@ loss"). Measured 2026-10-09 on the 6.7.7 call-arguments lane (8d13c88f + the rul
 exits 139 (SIGSEGV, the stack exhausted); the merged 6.7.7 compiler before the fix (l677-int @ 03455af0) exits 193.
 `by_value_arg_copy.sh` row TU1 pins the current shape (the copying call is a `call`, a later self tail call keeps
 its `jmp`); it flips when this lands.
-**Placement:** 6.7.16 — the full security audit + the refactor / optimization review (renumbered from 6.7.14 at the 6.7.12 open and from 6.7.15 at the 6.7.13 integration) — never 7.x.
+**Placement:** 6.7.17 — the full security audit + the refactor / optimization review (renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18) — never 7.x.
 2026-10-09 — never 7.x.
 **Discovered:** 2026-10-09 in the review of the 6.7.7 call-arguments lane (the reviewer's `tco2` repro).
 **Severity:** Medium — no wrong value. A deep self tail recursion whose by-value struct argument is copied ran in

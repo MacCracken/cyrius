@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform, after 0771db778),
 cxvm built from the lane's tree for each host: x86_64 Linux (`build/cycc`), ecb (`CYRIUS_MACHO_ARM=1 cycc_aarch64`
 + `codesign -s -`), ach (`CYRIUS_MACHO=1 cycc`).
-**Placement:** unplaced — filed from the 6.7.15 platform review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Medium — a portable cx program's `kill(pid, SIGCHLD)` STOPS the target on a Mac's cxvm and
 `kill(pid, SIGSTOP)` continues it; `kill(pid, SIGUSR1)` delivers SIGBUS. No boundary is crossed (cxvm runs trusted
 bytecode, and a guest can already signal anything cxvm's user can; no ledger id).

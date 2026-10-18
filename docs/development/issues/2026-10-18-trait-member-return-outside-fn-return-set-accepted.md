@@ -4,7 +4,7 @@
 (issues/2026-10-16-trait-member-vec-return-accepted.md: a member's `: Vec<..>` return is refused at the trait with a
 fn's words) and D3 (a) (`: u128`). Those two decisions name `Vec` and `u128`; the rest of a fn's return set was not
 asked, so it is filed, not extended. Pre-existing since 6.7.8 parsed a member's signature.
-**Placement:** unplaced — filed from the 6.7.15 generics lane (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — the trait declares a method no impl can define (every impl spelled as the member says is
 refused); no wrong code.
 **Kind:** language (a newly refused shape: the user's call — D9's question was asked for `Vec` only).

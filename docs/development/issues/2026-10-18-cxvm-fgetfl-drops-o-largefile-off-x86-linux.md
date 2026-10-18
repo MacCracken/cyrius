@@ -4,7 +4,7 @@
 cxvm built from the lane's tree: x86_64 Linux (`build/cycc`), aarch64 Linux under qemu-aarch64 (`cycc_aarch64`),
 ecb (`CYRIUS_MACHO_ARM=1 cycc_aarch64` + `codesign -s -`), ach (`CYRIUS_MACHO=1 cycc`); the lane measured pi at 1
 too (unit P4).
-**Placement:** unplaced — filed from the 6.7.15 platform review (wave 1; filed at its integration, 2026-10-18); the user places what 6.7.15 files — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — the .cyx ABI is x86_64 Linux's, and one guest program reads a different F_GETFL on different
 hosts for the same open. No in-tree cx program tests the bit; no boundary is crossed (no ledger id).
 **Found:** the 6.7.15 platform lane's review of the host-dispatch fix
