@@ -7360,6 +7360,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (PEEKT(S) != 4) { return 0; }
     if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
+    if (_sci_dpp(S, pscale) == 1) { return _sci_dexpr(S, noff, pscale); }   # 6.7.15: `*pp` of a `**S`
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
     var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
     if (ci_pk < 0) {
@@ -7898,9 +7899,11 @@ fn _sci_slots(S, noff, pscale, nslots): i64 {
 # too. E is evaluated once into a hidden temp and the struct is copied through it byte-exact into an
 # inline q, as `* IDENT` copies. A `*U` of another struct is refused by name, as `*pu` is; an untyped
 # operand (`*x`) is no struct value (decision 1: a handle). 1 = declared (`;` consumed). CHANGELOG [6.7.10]
+# 6.7.15: and `*pp` / `(*pp)` of a `**S` (`_hl_dstar_x`'s twin), copied through the `*S` it reads, as `var t: S = p;`
+# copies — it bound t to the struct as a handle. CHANGELOG [6.7.15]
 fn _sci_dexpr(S, noff, pscale): i64 {
     if (pscale <= 0 - 2048) { return 0; }
-    var ps = _hl_dstar(S, GTI(S) + 1);
+    var ps = _hl_dstar_x(S, GTI(S) + 1, 5, 1);
     if (ps <= 0) { return 0; }
     if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
     STI(S, GTI(S) + 1);   # consume '='
@@ -7911,6 +7914,13 @@ fn _sci_dexpr(S, noff, pscale): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
+}
+# 1 = the initialiser after the `=` at the cursor is `*pp` of a `**S` (`_hl_dstar_x`'s twin), for
+# `_sci_dexpr` — `* IDENT ;` would take the `*p` name arm, whose `**S` IDENT is no `*T`. CHANGELOG [6.7.15]
+fn _sci_dpp(S, pscale): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    if (_hl_dstar_x(S, GTI(S) + 1, 5, 1) <= 0) { return 0; }
+    return _hl_dpp;
 }
 # ⛔ 6.7.6 — the name source of `var v: K = <src>;` at token `ti`: 0 for `IDENT ;`, `k` for the
 # name inside `k` parentheses that wrap it up to the `;` (`_pwrap_k`), -1 for anything else.
@@ -11133,8 +11143,17 @@ var _hl_dnm = 0;
 fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
 # ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
 # step or of the parentheses wrapping it, `_hl_dx_end`).
-fn _hl_dstar_t(S, ti, term): i64 {
+fn _hl_dstar_t(S, ti, term): i64 { return _hl_dstar_x(S, ti, term, 0); }
+# ⛔ 6.7.15 — `*pp` OF A `**S` IS A `*S` AS A WHOLE COPY SOURCE TOO: with `pp` 1 this also answers a dereference whose
+# operand is a `**S` (`*pp` the `*S` 6.7.13's D9 (a) made it, `_hl_dref_psid`), `_hl_dpp` 1 — its copy goes through
+# the struct `*pp` points at, as the `*S`-name twin's (`l = p`, `var t: S = p;`) does. Asked by the assignment
+# (`_asg_dstar`) and a declaration in a fn (`_sci_dexpr`): `l = *pp`, `G = *pp`, `*q = *pp` stored the pointer word
+# into the first field, and `var t: S = *pp;` bound t to the struct as a handle. `*p` of a `*S` keeps its own arm
+# (`_hl_dpsid` first). CHANGELOG [6.7.15]
+var _hl_dpp = 0;
+fn _hl_dstar_x(S, ti, term, pp): i64 {
     _hl_dk = 0;
+    _hl_dpp = 0;
     var e = _hl_dx_end(S, ti, term);
     if (e < 0) { return 0; }
     var a = _ie_unparen(S, ti, e);
@@ -11143,9 +11162,20 @@ fn _hl_dstar_t(S, ti, term): i64 {
     if (TOKTYP(S, a) != 8) { return 0; }
     if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
     var ps = _hl_dpsid(S, a + 1, pe);
+    if (ps <= 0) { ps = _hl_dpp_sid(S, a + 1, pe, pp); }
     if (ps <= 0) { return 0; }
     _hl_dk = a - ti;
     _hl_dnm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));
+    return ps;
+}
+# The struct the `*S` a dereference's operand [a, e) reads points at — the operand a `**S`, S a plain struct (not a
+# `Str` / tuple / dyn: their own paths) — when `pp` asks, `_hl_dpp` 1; else 0.
+fn _hl_dpp_sid(S, a, e, pp): i64 {
+    if (pp == 0) { return 0; }
+    var ps = _hl_dref_psid(S, a, e);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    _hl_dpp = 1;
     return ps;
 }
 # The last name in [a, e) — the one a refusal quotes (`*w.pu` -> `pu`, `*gu()` -> `gu`) — `dflt` when there is
@@ -11192,9 +11222,11 @@ fn _hl_dx_end(S, ti, term): i64 {
 # The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
 # the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
 # hidden global at top level), the wrap closed, the cursor left on the `;`. Returns the temp (`_HTEMP`).
+# 6.7.15: for `*pp` of a `**S` (`_hl_dpp`) the whole `*pp` is parsed — rax = the `*S` it reads.
 fn _hl_dx_src(S): i64 {
     var k = _hl_dk;
-    STI(S, GTI(S) + k + 1);   # the wrap's `(`s and the `*`
+    STI(S, GTI(S) + k + 1 - _hl_dpp);   # the wrap's `(`s and the `*` (kept for `*pp`)
+    _hl_dpp = 0;
     PARSE_FACTOR(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);

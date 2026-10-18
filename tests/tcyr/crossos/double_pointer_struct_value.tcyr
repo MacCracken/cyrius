@@ -15,6 +15,15 @@
 # Filed: docs/development/issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its three
 # repros verbatim are tests/gates/codegen/small_struct_handle_line.sh R16a-R16c, which runs this file on x86_64,
 # IR=1, IR=3, DCE, aarch64, cx and PE). CROSS-HOST: the release gate runs it on ecb / ach / cass / pi.
+#
+# 6.7.15 — `*pp` of a `**S` as the WHOLE source of a copy is the `*S` it reads, copied through as `l = p` is: `l = *pp`,
+# `G = *pp`, `*q = *pp`, `**qq = *pp` stored the pointer word into the first field (the rest stale) and `var t: P =
+# *pp;` / `(*pp)` bound t to the struct as a handle (it read 9 after `s.y = 9`), where `l = p` / `var t: P = p;` copy.
+# Rows w_*: 16 / 8 / 3 B, a local, a global, the pointee of a `*P`, a declaration (wrapped), a for step, a by-value
+# parameter, `*GPP`, `*w.pp`, `*gpp()`, `**ppp`, `*(pp + 0)`, a capture, top level; `q = *pp` into a `*P` stays the
+# rebind `q = p` is. Filed: docs/development/issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-
+# stores-pointer-word.md (its two repros verbatim are small_struct_handle_line.sh R16d / R16e; the refusals of another
+# struct are struct_copy_type_checked.sh R29-R32).
 include "lib/assert.cyr"
 
 struct P { x; y; }
@@ -104,6 +113,32 @@ fn f_ret_ptr(pp: **P): P { var x = 1; return *pp; }
 fn f_ret_ptr_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var t: P = f_ret_ptr(&p); return t.y; }
 fn f_arith_src(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l: P; l = *pp + 0; return l.x * 10 + l.y; }
 
+# 6.7.15 — `*pp` as the whole source of a copy (see the header).
+var GD = P { 0, 0 };
+var GD8 = P8 { 0 };
+fn w_local(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l = P { 0, 0 }; l = *pp; s.y = 9; return l.x * 10 + l.y; }
+fn w_local8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; var l = P8 { 0 }; l = *pp; s.v = 9; return l.v; }
+fn w_global(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; GD = *pp; s.y = 9; return GD.x * 10 + GD.y; }
+fn w_global8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; GD8 = *pp; s.v = 9; return GD8.v; }
+fn w_store(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 0, 0 }; var q: *P = &d; *q = *pp; s.y = 9; return d.x * 10 + d.y; }
+fn w_store8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; var d = P8 { 0 }; var q: *P8 = &d; *q = *pp; s.v = 9; return d.v; }
+fn w_decl(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = *pp; s.y = 9; return t.x * 10 + t.y; }
+fn w_decl_w(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var t: P = (*pp); s.y = 9; return t.x * 10 + t.y; }
+fn w_decl8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; var t: P8 = *pp; var u: P8 = (*pp); s.v = 9; return t.v * 10 + u.v; }
+fn w_for(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l = P { 0, 0 }; for (var i = 0; i < 1; l = *pp) { i = 1; } s.y = 9; return l.x * 10 + l.y; }
+fn w_rebind(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 1, 2 }; var q: *P = &d; q = *pp; s.y = 9; return q.y; }
+fn w_paren(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l = P { 0, 0 }; l = (*pp); var m = P { 0, 0 }; m = *(pp); s.y = 9; return l.y * 10 + m.y; }
+fn w_gpp(): i64 { var l = P { 0, 0 }; l = *GPP; var t: P = *GPP; var u: P8 = *G8PP; return l.y * 100 + t.y * 10 + u.v; }
+fn w_field(): i64 { var w: W; w.pp = &GSP; w.n = 0; var l = P { 0, 0 }; l = *w.pp; var t: P = *w.pp; return l.y * 10 + t.y; }
+fn w_call(): i64 { var l = P { 0, 0 }; l = *gpp(); var t: P = *gpp(); return l.y * 10 + t.y; }
+fn w_triple(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var ppp: ***P = &pp; var l = P { 0, 0 }; l = **ppp; var t: P = **ppp; s.y = 9; return l.y * 10 + t.y; }
+fn w_arith(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var l = P { 0, 0 }; l = *(pp + 0); s.y = 9; return l.y; }
+fn w_param(v: P, pp: **P): i64 { v = *pp; return v.x * 10 + v.y; }
+fn w_param_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var o = P { 1, 2 }; var r = w_param(o, &p); return r * 100 + o.x * 10 + o.y; }
+fn w_cap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var f = |d| { var l = P { 0, 0 }; l = *pp; var t: P = *pp; return l.y * 10 + t.y + d; }; return callptr(f, 0); }
+fn w_dd(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 0, 0 }; var q: *P = &d; var qq: **P = &q; **qq = *pp; s.y = 9; return d.x * 10 + d.y; }
+fn w_c3(): i64 { var s: C3; s.a = 1; s.b = 2; s.c = 3; var p: *C3 = &s; var pp: **C3 = &p; var l: C3; l = *pp; var t: C3 = *pp; s.b = 9; return l.a * 100 + l.b * 10 + l.c + t.b * 1000; }
+
 var TZ: P = **GPP;   # the declaration zone
 
 assert_eq(f_take(), 4, "take(**pp) into a by-value P (the filed repro 1)");
@@ -138,5 +173,40 @@ assert_eq(TZ.y, 4, "top level, the declaration zone: var TZ: P = **GPP");
 var TA: P = **GPP;
 assert_eq(TA.x * 10 + TA.y, 34, "top level after a statement: var TA: P = **GPP");
 assert_eq(take(**GPP), 4, "top level: take(**GPP)");
+assert_eq(w_local(), 34, "l = *pp copies (16 B; s.y = 9 after)");
+assert_eq(w_local8(), 6, "l = *pp copies (8 B)");
+assert_eq(w_global(), 34, "G = *pp copies into a P global, in a fn");
+assert_eq(w_global8(), 6, "G = *pp copies (8 B)");
+assert_eq(w_store(), 34, "*q = *pp copies into the struct q points at");
+assert_eq(w_store8(), 6, "*q = *pp (8 B)");
+assert_eq(w_decl(), 34, "var t: P = *pp copies (no handle on s)");
+assert_eq(w_decl_w(), 34, "var t: P = (*pp) copies");
+assert_eq(w_decl8(), 66, "var t: P8 = *pp / (*pp) copy (8 B)");
+assert_eq(w_for(), 34, "a for step l = *pp copies");
+assert_eq(w_rebind(), 9, "q = *pp into a *P rebinds, as q = p does");
+assert_eq(w_paren(), 44, "l = (*pp), l = *(pp)");
+assert_eq(w_gpp(), 449, "l = *GPP, var t: P = *GPP, var u: P8 = *G8PP through **P globals");
+assert_eq(w_field(), 44, "*w.pp of a **P field");
+assert_eq(w_call(), 44, "*gpp() of a : **P call");
+assert_eq(w_triple(), 44, "**ppp of a ***P is a *P: copied");
+assert_eq(w_arith(), 4, "l = *(pp + 0)");
+assert_eq(w_param_c(), 3412, "v = *pp into a by-value P parameter copies (the caller's o untouched)");
+assert_eq(w_cap(), 44, "l = *pp and var t: P = *pp of a captured **P in a closure");
+assert_eq(w_dd(), 34, "**qq = *pp copies");
+assert_eq(w_c3(), 2123, "a 3-byte C3: l = *pp, var t: C3 = *pp copy byte-exact");
+var TS = P { 3, 4 };
+var TSP: *P = &TS;
+var TPP: **P = &TSP;
+var TL = P { 0, 0 };
+TL = *TPP;
+var TL8 = P8 { 0 };
+TL8 = *G8PP;
+var TF = P { 0, 0 };
+var ti = 0;
+for (ti = 0; ti < 1; TF = *TPP) { ti = 1; }
+TS.y = 9;
+assert_eq(TL.x * 10 + TL.y, 34, "top level: TL = *TPP copies");
+assert_eq(TL8.v, 9, "top level: TL8 = *G8PP copies (8 B)");
+assert_eq(TF.y, 4, "top level: a for step TF = *TPP copies");
 
 var r = assert_summary();

@@ -86,6 +86,13 @@
 # the refusal in the `*p` wording ("the struct 's' points at", the 6.7.11 arm alone) -> RED 11 (the same rows).
 # Mutation (2026-10-17, the gate run as CYCC=<the lane's compiler before the fix>): RED 5 — R27 R28 C5 C6 not refused,
 # A14 exit 54.
+#
+# 6.7.15 — `*pp` OF A `**S` AS THE WHOLE SOURCE OF A COPY IS THE `*S` IT READS (issues/2026-10-17-whole-source-copy-from-
+# double-pointer-single-deref-stores-pointer-word.md): `l = *pp`, `G = *pp`, `*q = *pp` and `var t: S = *pp;` copy the
+# struct it points at, as `l = p` does, so a `**Q3`'s `*qq` into a P3 is refused by name ('qq', as `*pu` names 'pu'):
+# R29 `l = *qq`, R30 `var t: P3 = *qq`, R31 `*p = *qq`, R32 top level `GT = *GQQ` (each compiled through 6.7.14 — one
+# word stored, or a handle bound). The copies themselves are tests/tcyr/crossos/double_pointer_struct_value.tcyr.
+# Mutation (2026-10-18, CYCC=the lane's compiler before the fix): RED 4 — R29-R32 compile.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -291,6 +298,24 @@ var r = main(); syscall(60, r);
 '
 refuse "R28 **pp = q  (another struct)" "$P3Q3"'fn main(): i64 { var s: P3 = P3{1,2,3}; var p: *P3 = &s; var pp: **P3 = &p; var q: Q3 = Q3{7,8,9}; **pp = q; return s.x; }
 var r = main(); syscall(60, r);
+'
+# R29-R32 (6.7.15) — `*qq` of a `**Q3` is the `*Q3` it reads: copied as `l = pq` is, so into a P3 refused by name.
+refuse "R29 l = *qq  (a **Q3)" "$P3Q3"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pq: *Q3 = &q; var qq: **Q3 = &pq; var l: P3 = P3{0,0,0}; l = *qq; return l.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R30 var t: P3 = *qq" "$P3Q3"'fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pq: *Q3 = &q; var qq: **Q3 = &pq; var t: P3 = *qq; return t.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R31 *p = *qq" "$P3Q3"'var GT = P3{0,0,0};
+fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pq: *Q3 = &q; var qq: **Q3 = &pq; var p: *P3 = &GT; *p = *qq; return GT.z; }
+var r = main(); syscall(60, r);
+'
+refuse "R32 GT = *GQQ  (top level)" "$P3Q3"'var GT = P3{0,0,0};
+var GQ = Q3{7,8,9};
+var GPQ: *Q3 = &GQ;
+var GQQ: **Q3 = &GPQ;
+GT = *GQQ;
+syscall(60, GT.z);
 '
 # C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
 CMSG="compound assignment to the struct"
@@ -561,7 +586,7 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 45 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 45)"; fail=$((fail+1)); }   # 6.7.14: + the D17 rows
+[ "$nrefuse" -ge 49 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 49)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing

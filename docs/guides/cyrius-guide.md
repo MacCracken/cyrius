@@ -1157,9 +1157,14 @@ byte-exact), `**pp + a` dispatches `S_add`, `return **pp;`, an if-expression bra
 is refused, as `{ *p }` is), `l = **pp` — through a `**S` local, parameter, field, global, capture, `: **S` call,
 `**(pp + n)` or `***ppp` of a `***S`; and `*pp` reads as the `*S` 6.7.13's D9 (a) made it as a returned value, an
 operator's operand and a by-value argument (`return *pp;` from a `: S` fn returns the struct it points at,
-`l = *pp + 0` copies it, `bs(*pp)` passes it). ⚠ Not yet as the whole source of a copy: `l = *pp`, `G = *pp` and
-`*q = *pp` store the pointer word into the first field where `l = p` copies, and `var t: S = *pp;` binds `t` to the
-struct as a handle where `var t: S = p;` copies (filed). `**pp = u` copies the struct and `**pp OP= v` is refused, as
+`l = *pp + 0` copies it, `bs(*pp)` passes it). **Since 6.7.15 `*pp` is that `*S` as the whole source of a copy
+too**, copied through as `l = p` is: `l = *pp`, `G = *pp` (in a fn and at top level), `*q = *pp`, `**qq = *pp`, a for
+step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at (a top-level `var G: S = *GPP;` keeps
+the handle every top-level declaration from a `*S` source gets — see *the handle line*); into a `*S` or a handle
+`q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy 'qq' into a
+variable of a different struct/vector type*). A struct-typed FIELD destination (`o.s = *pp`) still stores the word
+(filed). ⚠ Through 6.7.14 the first four stored the pointer word into the first field (the rest stale)
+and the declaration bound `t` to the struct as a handle. `**pp = u` copies the struct and `**pp OP= v` is refused, as
 through a `*S` (*A store through a `*S` copies the struct*). ⚠ Through 6.7.13 `var t: S = **pp;` bound a handle to S's
 first field (139 on x86_64 and aarch64, cx 0, Windows 5), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word
 and `**pp += 10` added to S's first field.
@@ -1506,7 +1511,8 @@ writes. A struct value is a literal; another inline struct of the type — a loc
 parameter, a global, a closure's captured copy of one, parenthesised or not; a struct-typed field
 (`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
 `*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
-pointer), and since 6.7.13 `*(&x)` / `*&x` of an inline `x`; and a call, method, operator or if-expression that returns the struct (a generic or a
+pointer), and since 6.7.13 `*(&x)` / `*&x` of an inline `x`; since 6.7.15, in a fn, `*pp` / `(*pp)` of a `**T`
+(the `*T` it reads, copied through as a `*T` name is — it was a handle); and a call, method, operator or if-expression that returns the struct (a generic or a
 parenthesised call too, and since 6.7.11 a call through `fncallN(&f, ..)` / `callptr(&f, ..)` whose
 callee `f` returns it). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
 dereference of one, `*x`, included), a call returning a `*T` or an untyped value (a call through a
