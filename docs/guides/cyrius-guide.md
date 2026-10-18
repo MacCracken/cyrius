@@ -7328,8 +7328,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   files' `var _shared = 0;` / `= 5;` became one cell unseen). The later constant is
   any initializer that folds — `= -5`, `= 2 + 1`, `= (7)`, `true` / `false` (1 / 0) —
   as the earlier one is (6.7.14: through 6.7.13 only an exact `= NUM ;` was compared,
-  so `var a = 5; var a = 2 + 1;` was silent). An earlier *computed* initializer has no
-  value to compare, and stays silent.
+  so `var a = 5; var a = 2 + 1;` was silent), and a const or enum name, on either side
+  (6.7.15: `var a = 3; var a = C;`, `var a = C; var a = 3;`, `= E.B` and `var a = D;
+  var a = C;` were silent). Each later constant is compared with the last constant
+  declared before it. An earlier *computed* initializer has no value to compare, and
+  stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
   gives `b == 7`, and every later `K` is the var.
