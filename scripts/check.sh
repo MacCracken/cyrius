@@ -2778,6 +2778,7 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_f64_result.sh"
 # 2026-10-13). The filed repro, Box, struct f64, struct i32, the dumped names, and 18 rows, x86 / IR /
 # DCE / aarch64 / cx / PE. Mutation ledger in the header. (A two-parameter generic's nested instance
 # names still collide: issues/archived/2026-10-14-two-param-generic-nested-instance-names-collide.md.)
+# 6.7.15: an explicit `gx<Box<i64>>` is the base `Box`, as its annotation is (rows E, every leg).
 _chk_gate "$ROOT/tests/gates/frontend/generic_instance_names_distinct.sh"
 # 6.7.15 — a nested type argument closed by `>>` / `>>>` and followed by `,` leaves the `,` to the
 # enclosing list: `g2<P<P<R>>, i16>` bound B to i64 (exit 8 for 2), `Two<P<P<R>>, i16>` was 24 bytes, and

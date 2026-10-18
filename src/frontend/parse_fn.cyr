@@ -14994,11 +14994,27 @@ fn _parse_one_type_arg(S): i64 {
         return _c1;
     }
     STI(S, GTI(S) + 1);                              # consume the nested `<`
+    var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
     var in1 = 0;
     if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
     if (_ta_chk == 1) { return base_sid; }           # 6.7.14 (D5): read, not instantiated
+    return _targ_inst(S, base_sid, in0, in1, lit);
+}
+# ⛔ 6.7.15 — A NESTED `Box<i64>` IS THE BASE `Box`, as the annotation `var b: Box<i64>` declares it (the 6.6.10 rule of
+# `_gen_ann_sid` / `_ret_targ_parse`): an all-i64 (or unbound) list is the base struct, anything else the deduped
+# `Box$..` instance. The type argument minted `Box$i64` unconditionally, so `gx<Box<i64>>(bx)` with `bx: Box<i64>` (the
+# base) was refused "cannot pass 'bx' to a parameter of a different struct type", where `gx(bx)` ran. `lit`: the list
+# was written out, so the base answers for its bound (`_bnd_sbase`). CHANGELOG [6.7.15]
+fn _targ_inst(S, base_sid, in0, in1, lit): i64 {
+    var inst = 0;
+    if (in0 != 0 - 8) { if (in0 != 0) { inst = 1; } }
+    if (in1 != 0) { if (in1 != 0 - 8) { inst = 1; } }
+    if (inst == 0) {
+        if (lit == 1) { _bnd_sbase(S, base_sid); }
+        return base_sid;
+    }
     return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
 }
 

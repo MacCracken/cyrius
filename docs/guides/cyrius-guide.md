@@ -6935,7 +6935,10 @@ A **literal** of a generic struct names its type arguments the same way — `Box
 after the first top-level statement (6.6.12; before it every one was
 `undefined variable 'Box'`). It is the same instance an annotation names, so
 `var b: Box<Point> = Box<i64> { 1, 2 };` is a compile error, and `Box { .. }` with no
-arguments is the base (all-i64) struct.
+arguments is the base (all-i64) struct. So is `Box<i64>` written out, as an annotation and as a
+type argument alike: `gx<Box<i64>>(bx)` with `bx: Box<i64>` calls the instance `gx(bx)` calls
+(6.7.15; the type argument minted a second `Box$i64`, and the call was refused as a different
+struct type).
 
 A **global** takes the instance too, wherever it is declared: `var G: W1<Pt> =
 alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and passes

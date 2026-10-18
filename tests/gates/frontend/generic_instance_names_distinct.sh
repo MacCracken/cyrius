@@ -28,6 +28,14 @@
 #   P  the 6.7.14 filed repro, verbatim: prints `1604 812` (`1604 1604` before); its calls swapped:
 #      `812 1604` (`812 812` before); the struct form (`t2.b.w = 5` on a `Two<P, R<i32>>` declared after a
 #      `Two<P<R>, i32>`): exit 5 (refused before: `expected '=', got '.'`) — every leg
+#   E  (6.7.15) an explicit all-i64 struct type argument is the BASE struct, as its annotation is: `gx<Box<i64>>(bx)`
+#      with `bx: Box<i64>` (the base `Box`, 6.6.10) minted `Box$i64` and was refused "cannot pass 'bx' to a parameter
+#      of a different struct type" (the inferred `gx(bx)` ran). E1 the filed repro verbatim (7), E2 `gy<Box<i64>>(1,
+#      bx)` (8), E3 the closes spaced (7), E4 `var bx = Box<i64> { 1 }` (7), E5 explicit and inferred calls with
+#      `Box<i64>` and `Box<Pt>` (7) — every leg; E6 (x86) `gx<BB<i64>>` with i64 short of BB's bound is still that
+#      bound's one refusal; E7 with `impl Show for i64` it runs (7), every leg. N E: one `gx$Box` (both spellings)
+#      and one `gx$Box$Pt` (unchanged). Filed: docs/development/issues/2026-10-17-explicit-all-i64-struct-instance-
+#      type-argument-mints-a-second-struct.md
 #   N  x86_64, the names a coverage dump shows: `gen$f64` and `gen$i` (R1); `gs$f64`, `gs$.f64`,
 #      `gp$.f64` (F1); `gen$.i32` (I); `g2$<P$R>$i32`, `g2$P$<R$i32>`, and the unchanged `g2$i32$P` (a
 #      two-parameter name with no nested argument) and `gen$P$R` (one parameter) (P)
@@ -51,6 +59,9 @@
 #       with `_append_conc_name`, as before)          <source>:3 g2$P$R$i32`); T: the file does not build on
 #                                                     any leg (`t2.b.w`: Two<P, R<i16>> got Two<P<R>, i16>'s
 #                                                     layout); R / S / F / I green
+#   M3  (2026-10-18) `_targ_inst` always mints       -> RED E1-E5 on every leg (refused "a different struct type")
+#       (the 6.7.15 fix reverted)                     and N E (26 rows); call_site_callee_spelling.sh N4c
+#   M4  (2026-10-18) `_targ_inst` without `_bnd_sbase` -> RED E6 (BUILT: the base's bound unchecked)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -221,6 +232,36 @@ var w = gen<P<R>>(0);
 syscall(60, x - y - z - w);
 EOF
 
+# 6.7.15: an explicit all-i64 struct type argument (`gx<Box<i64>>`) is the base `Box`, as the annotation is — the
+# filed repro (refused "a different struct type"), its two-parameter / spaced / unannotated forms.
+cat > "$D/e1.cyr" <<'EOF'
+struct Pt { x; }
+struct Box<T> { v: T; }
+fn gx<T>(b: T): i64 { return 7; }
+fn gy<T>(a, b: T): i64 { return 8; }
+fn main(): i64 { var bx: Box<i64> = Box<i64> { 1 }; return gx<Box<i64>>(bx); }
+syscall(60, main());
+EOF
+sed 's/return gx<Box<i64>>(bx);/return gy<Box<i64>>(1, bx);/' "$D/e1.cyr" > "$D/e2.cyr"
+sed 's/return gx<Box<i64>>(bx);/return gx<Box<i64> >(bx);/' "$D/e1.cyr" > "$D/e3.cyr"
+sed 's/var bx: Box<i64> = Box<i64> { 1 };/var bx = Box<i64> { 1 };/' "$D/e1.cyr" > "$D/e4.cyr"
+cat > "$D/en.cyr" <<'EOF'
+struct Pt { x; }
+struct Box<T> { v: T; }
+fn gx<T>(b: T): i64 { return 7; }
+fn main(): i64 { var p = Pt { 1 }; var bx: Box<i64> = Box<i64> { 1 }; var bp: Box<Pt> = Box<Pt> { p }; return gx<Box<i64>>(bx) + gx(bx) + gx<Box<Pt>>(bp) + gx(bp) - 21; }
+syscall(60, main());
+EOF
+
+cat > "$D/e6.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+struct BB<T: Show> { v: T; }
+fn gx<T>(b: *T): i64 { return 7; }
+fn main(): i64 { return gx<BB<i64>>(0); }
+syscall(60, main());
+EOF
+sed 's/^struct BB/impl Show for i64 { fn show(self): i64 { return self; } }\nstruct BB/' "$D/e6.cyr" > "$D/e7.cyr"
+
 # xrow <id> <src> <want> <what>: the exit on every leg
 xrow() {
     for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
@@ -257,6 +298,19 @@ orow P1 "$D/p1.cyr" "1604 812" "1604 1604: g2<P, R<i32>> ran g2<P<R>, i32>'s bod
 orow P2 "$D/p2.cyr" "812 1604" "812 812: g2<P<R>, i32> ran g2<P, R<i32>>'s body"
 xrow P3 "$D/p3.cyr" 5 "Two<P, R<i32>> took Two<P<R>, i32>'s layout"
 
+echo "E. an explicit Box<i64> type argument is the base Box, as its annotation is (6.7.15)"
+xrow E1 "$D/e1.cyr" 7 "refused: gx<Box<i64>> minted Box\$i64, bx is the base Box"
+xrow E2 "$D/e2.cyr" 8 "refused: gy<Box<i64>>(1, bx)"
+xrow E3 "$D/e3.cyr" 7 "refused: the closes spaced"
+xrow E4 "$D/e4.cyr" 7 "refused: var bx = Box<i64> { 1 }"
+xrow E5 "$D/en.cyr" 7 "refused: the explicit Box<i64> call"
+# E6: the base answers for its bound when the list is written out (`_bnd_sbase`), as the minted instance did
+if "$CC" < "$D/e6.cyr" > "$D/e6" 2> "$D/e6.err"; then bad "E6 x86: gx<BB<i64>> with no impl Show for i64 BUILT"
+elif [ "$(grep -c '^error' "$D/e6.err")" -eq 1 ] && grep -qF "error:<source>:4:36: generic 'BB': its type argument does not implement trait 'Show'" "$D/e6.err"; then
+    ok "E6 x86: gx<BB<i64>>, i64 short of BB's bound: refused once, at the type argument"
+else bad "E6 x86: not the bound's one refusal: $(grep '^error' "$D/e6.err" | head -2 | tr '\n' '|')"; fi
+xrow E7 "$D/e7.cyr" 7 "with impl Show for i64 the bound is met"
+
 echo "N. x86_64: the instance names a coverage dump shows"
 # nrow <id> <src> <want-file>: the dump, exactly
 nrow() {
@@ -277,6 +331,8 @@ nrow F1 "$D/f1.cyr" "$D/f1.want"
 printf '%s\n1 <source>:3 g2$<P$R>$i32\n1 <source>:3 g2$P$<R$i32>\n1 <source>:3 g2$i32$P\n1 <source>:4 gen$P$R\n' "$HDR" > "$D/pn.want"
 nrow I "$D/i.cyr" "$D/i.want"
 nrow P "$D/pn.cyr" "$D/pn.want"
+printf '%s\n1 <source>:4 main\n2 <source>:3 gx$Box\n2 <source>:3 gx$Box$Pt\n' "$HDR" > "$D/en.want"
+nrow E "$D/en.cyr" "$D/en.want"
 
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
@@ -289,4 +345,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — no two type arguments share a generic instance: f64 is \$f64, a struct named like a scalar \$.<name>, and a two-parameter fragment that is itself an instance <..> — the filed repros and their swaps (R, P), Box (S), struct f64 (F), struct i32 (I), Two (P3) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — no two type arguments share a generic instance: f64 is \$f64, a struct named like a scalar \$.<name>, and a two-parameter fragment that is itself an instance <..> — the filed repros and their swaps (R, P), Box (S), struct f64 (F), struct i32 (I), Two (P3), an explicit Box<i64> the base Box (E) on x86_64 / IR / aarch64 / cx / PE, the names (N) on x86_64, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
