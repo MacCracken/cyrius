@@ -311,6 +311,15 @@
 #                                                                         not as expected), PW5 (2 errors), CW, the A
 #                                                                         x86 / PE and IX3 dyn_objects legs
 #   M-PW2 `_spi_top_ref` without its `_tn_once` mark                   -> RED 2: PW4 PW5 (2 errors)
+#   T4f-T4k (6.7.15) a refused dyn type argument is read as i64 (`_type_arg_leaf`, and `_parse_one_type_arg`'s arm for a
+#       name followed by `<`), so no `Box$dyn Show` is minted to cascade
+#       (issues/2026-10-16-dyn-type-argument-refusal-cascades-into-instance-local.md): T4f the filed repro verbatim (a
+#       second error, "declare Box$dyn Show 'a' with its value", before), T4g `g<dyn Show>(o)` with an untyped `o`,
+#       T4h `Two<i64, dyn Show>` / T4i `Box<Box<dyn Show>>` locals, T4j a `: Box<dyn Show>` return ("returned in two
+#       registers ... `Box$dyn Show`" before), T4k `Box<dyn Show<i64>>` — each one error line. Mutants (2026-10-18, the
+#       KC procedure):
+#   M-T4f the `_dyn_is` arm removed from `_type_arg_leaf`              -> RED 4: T4f T4h T4i T4j (2 error lines)
+#   M-T4k the `_dyn_is` arm removed from `_parse_one_type_arg`'s `<` arm -> RED 1: T4k (2 error lines)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -402,6 +411,13 @@ refused t04b "$T4M" "T4b: \`Box<dyn Show>\`" "${SH}struct Box<T> { v: T; }\nfn f
 refused t04c "$T4M" "T4c: \`g<dyn Show>(o)\`" "${SH}fn g<T>(x: T): i64 { return 0; }\nfn f(o: dyn Show): i64 { return g<dyn Show>(o); }\nsyscall(60, 0);\n"
 refused t04d "$T4M" "T4d: \`Pr<i64, dyn Show>\` (the second argument)" "${SH}struct Pr<A, B> { a: A; b: B; }\nfn f(b: Pr<i64, dyn Show>): i64 { return 0; }\nsyscall(60, 0);\n"
 refused t04e "$T4M" "T4e: \`Box<Box<dyn Show>>\` (nested, \`>>\`)" "${SH}struct Box<T> { v: T; }\nfn f(b: Box<Box<dyn Show>>): i64 { return 0; }\nsyscall(60, 0);\n"
+# 6.7.15: the refused type argument mints nothing, so nothing cascades — each one error line.
+refused t04f "$T4M" "T4f: the filed repro, verbatim (\`var a: Box<dyn Show>;\` in a fn: no \"declare Box\$dyn Show\")" 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nstruct Box<T> { v: T; }\nfn main(): i64 {\n    var a: Box<dyn Show>;\n    return 0;\n}\nsyscall(60, main());\n'
+refused t04g "$T4M" "T4g: \`g<dyn Show>(o)\`, \`o\` untyped (no instance minted)" "${SH}fn g<T>(o): i64 { return sizeof(T); }\nfn f(): i64 { var o = 5; return g<dyn Show>(o); }\nsyscall(60, f());\n"
+refused t04h "$T4M" "T4h: a \`Two<i64, dyn Show>\` local" "${SH}struct Two<A, B> { a: A; b: B; }\nfn f(): i64 { var t: Two<i64, dyn Show>; return 0; }\nsyscall(60, f());\n"
+refused t04i "$T4M" "T4i: a \`Box<Box<dyn Show>>\` local" "${SH}struct Box<T> { v: T; }\nfn f(): i64 { var c: Box<Box<dyn Show>>; return 0; }\nsyscall(60, f());\n"
+refused t04j "$T4M" "T4j: a \`: Box<dyn Show>\` return" "${SH}struct Box<T> { v: T; }\nfn h(): Box<dyn Show> { var x: Box<i64>; return x; }\nsyscall(60, 0);\n"
+refused t04k "$T4M" "T4k: a \`Box<dyn Show<i64>>\` local (the dyn written with type arguments)" "${SH}struct Box<T> { v: T; }\nfn f(): i64 { var a: Box<dyn Show<i64>>; return 0; }\nsyscall(60, f());\n"
 T5M="a pointer to dyn Show is refused"
 refused t05a "$T5M" "T5a: \`*dyn Show\`" "${SH}fn f(o: *dyn Show): i64 { return 0; }\nsyscall(60, 0);\n"
 refused t05b "$T5M" "T5b: \`**dyn Show\`" "${SH}fn f(): i64 { var p: **dyn Show = 0; return 0; }\nsyscall(60, 0);\n"
