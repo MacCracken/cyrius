@@ -28,6 +28,14 @@
 #      nothing written: x86 `clix`, `inb al, dx`, `nopx`, `stix`, `mfencex`, `outb dx, al`,
 #      `param_loadx(rax, 0)`; aarch64 `nopx`, `dmbx`, `retx`, `eretx`, `param_loadx(x0, 0)` — and the
 #      aarch64 names keep their words (dmb dsb isb nop wfi wfe svc ret eret)
+#   7  (6.7.15, issues/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md) x86 lgdt /
+#      lidt / invlpg / mov crN / ltr encode the register the source names — until 6.7.15 each encoded rax / ax
+#      whatever it named (`lgdt [rbx]` 0f 01 10, `mov cr8, rax` 0f 22 c0 = mov cr0, rax): each form's bytes
+#      (llvm-mc's encodings: REX.B for r8-r15, a SIB for rsp / r12, disp8 0 for rbp / r13, REX.R for cr8),
+#      in a program, a `kernel;` build, PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1)
+#   8  an operand those cannot take is refused by name, rc 1, nothing written (6.7.14's D16): `mov cr9, rax`
+#      ('cr9'; it was mov cr1, rax), `int 256` ('256'; it was int 0), `int 0x1FF` ('0x1FF'; it was int 0xff),
+#      `ltr eax` ('eax'), and a name only a register's first letters match (`lgdt [raxx]`, `ltr r8d`)
 #
 # Mutations (6.7.14, each in a scratch copy of the tree, the compiler rebuilt):
 #   the asm arm's keyword-76 route dropped                     -> 1 RED (`unexpected in`), 2 RED, 5 RED
@@ -36,6 +44,8 @@
 #   x86 cli / nop / sti matched on 3 bytes again (6.7.13)      -> 6 RED (clix, nopx, stix compile)
 #   aarch64 nop matched on 3 bytes again (6.7.13)              -> 6 RED (aarch64 nopx compiles)
 #   cx ASM_MNEMONIC back to its 6.7.13 ERR_MSG                 -> 5 RED (no name; recovery aborted)
+# (6.7.15) the 6.7.14 x86 emitters (lgdt .. int)               -> 7 RED (every register but rax / ax), 8 RED
+#   _asm_x86_gpr reading the first letters only (no NUL test)  -> 8 RED (lgdt [raxx] compiles)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -168,5 +178,64 @@ if [ -s "$D/cc_a64" ]; then
     [ "$g" = "$w" ] && echo "  ok   6: aarch64 dmb dsb isb nop wfi wfe svc ret eret keep their words" || bad "6: aarch64 dmb .. eret assembled to [$g], want [$w]"; fi
 fi
 
+# 7 — x86 lgdt / lidt / invlpg / mov crN / ltr encode the named register: one fn per form, every
+# form's bytes in each output mode (the emitter is shared; the container is what differs)
+cat > "$D/x7.txt" <<'X7'
+lgdt [rbx];|0f 01 13
+lgdt [r12];|41 0f 01 14 24
+lgdt [rbp];|0f 01 55 00
+lgdt [rsp];|0f 01 14 24
+lgdt [r8];|41 0f 01 10
+lidt [rcx];|0f 01 19
+lidt [r13];|41 0f 01 5d 00
+invlpg [rdi];|0f 01 3f
+invlpg [r13];|41 0f 01 7d 00
+mov cr3, rbx;|0f 22 db
+mov rbx, cr3;|0f 20 db
+mov cr8, rax;|44 0f 22 c0
+mov cr0, r8;|41 0f 22 c0
+mov r9, cr8;|45 0f 20 c1
+mov cr2, r15;|41 0f 22 d7
+mov r12, cr4;|41 0f 20 e4
+ltr bx;|0f 00 db
+ltr sp;|0f 00 dc
+ltr r8w;|41 0f 00 d8
+ltr r15w;|41 0f 00 df
+int 255;|cd ff
+X7
+n7=$(wc -l < "$D/x7.txt" | tr -d ' ')
+for mode in program kernel pe macho; do
+  { [ "$mode" = kernel ] && printf 'kernel;\n'; k=0
+    while IFS='|' read -r x w; do k=$((k + 1))
+      printf 'fn h%s(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm { %s }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\n' $k "$x"; done < "$D/x7.txt"
+    printf 'syscall(60, 0);\n'; } > "$D/x7_$mode.cyr"
+  rc=0
+  case $mode in
+    pe) CYRIUS_TARGET_WIN=1 "$CC" < "$D/x7_$mode.cyr" > "$D/x7_$mode" 2> "$D/x7_$mode.err" || rc=$? ;;
+    macho) CYRIUS_MACHO=1 "$CC" < "$D/x7_$mode.cyr" > "$D/x7_$mode" 2> "$D/x7_$mode.err" || rc=$? ;;
+    *) "$CC" < "$D/x7_$mode.cyr" > "$D/x7_$mode" 2> "$D/x7_$mode.err" || rc=$? ;;
+  esac
+  if [ "$rc" -ne 0 ] || [ ! -s "$D/x7_$mode" ]; then bad "7: the operand forms do not compile in a $mode build (rc $rc): $(grep -v '^note\|^warning' "$D/x7_$mode.err" | head -1)"; continue; fi
+  bytes "$D/x7_$mode" > "$D/x7_$mode.hex"
+  k=0; okn=0
+  while IFS='|' read -r x w; do k=$((k + 1))
+    g=$(sed -n "${k}p" "$D/x7_$mode.hex")
+    if [ "$g" = "$w" ]; then okn=$((okn + 1)); else bad "7 ($mode): \`asm { $x }\` assembled to [$g], want [$w]"; fi
+  done < "$D/x7.txt"
+  [ "$okn" -eq "$n7" ] && echo "  ok   7: lgdt / lidt / invlpg / mov crN / ltr / int encode the named operand in a $mode build, all $n7 forms"
+done
+
+# 8 — operands those cannot take, refused by name
+refused 8 "$CC" 'mov cr9, rax;' "mov takes a control register (cr0, cr2, cr3, cr4 or cr8) and a 64-bit register, not 'cr9'"
+refused 8 "$CC" 'mov cr3, eax;' "mov takes a control register (cr0, cr2, cr3, cr4 or cr8) and a 64-bit register, not 'eax'"
+refused 8 "$CC" 'mov rax, rbx;' "mov takes a control register (cr0, cr2, cr3, cr4 or cr8) and a 64-bit register, not 'rbx'"
+refused 8 "$CC" 'int 256;' "int takes a vector from 0 to 255, not '256'"
+refused 8 "$CC" 'int 0x1FF;' "int takes a vector from 0 to 255, not '0x1FF'"
+refused 8 "$CC" 'ltr eax;' "ltr takes a 16-bit register, ax to di or r8w to r15w, not 'eax'"
+refused 8 "$CC" 'ltr r8d;' "ltr takes a 16-bit register, ax to di or r8w to r15w, not 'r8d'"
+refused 8 "$CC" 'lgdt [raxx];' "lgdt takes one 64-bit register in brackets, [rax] to [r15], not 'raxx'"
+refused 8 "$CC" 'lidt rax;' "lidt takes one 64-bit register in brackets, [rax] to [r15], not 'rax'"
+refused 8 "$CC" 'invlpg [rax + 8];' "invlpg takes one 64-bit register in brackets, [rax] to [r15], not '+'"
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: asm_mnemonics_whole — $fail row(s) red"; exit 1; fi
-echo "PASS: asm_mnemonics_whole — mnemonics match on their whole names and an unknown one is refused by name (x86, aarch64), in / out encode the accumulator's width, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"
+echo "PASS: asm_mnemonics_whole — mnemonics match on their whole names and an unknown one is refused by name (x86, aarch64), in / out encode the accumulator's width, lgdt / lidt / invlpg / mov crN / ltr / int encode the operand they name (program, kernel, PE, Mach-O) and refuse one they cannot take by name, the guide's Inline Assembly block and the corpus's spellings keep their bytes (kernel and program), an operand in / out cannot take is refused by name, and aarch64 / cx refuse in by name"

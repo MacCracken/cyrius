@@ -5747,6 +5747,16 @@ refused, naming it. aarch64 has no `in` / `out`, and cx no inline asm; both refu
 (6.7.14: `in` was `unexpected in`, because it lexes as the for-in keyword, and both instructions
 ignored their operands, so `out dx, eax` assembled as `out dx, al`.)
 
+`lgdt`, `lidt` and `invlpg` take one 64-bit register in brackets (`[rax]` to `[r15]`); `mov` moves
+between a control register (`cr0`, `cr2`, `cr3`, `cr4`, `cr8`) and a 64-bit register, either way
+round; `ltr` takes a 16-bit register (`ax` to `di`, `r8w` to `r15w`); `int` takes a vector from 0 to
+255. Each encodes the operand it names: `lgdt [rbx]` is 0F 01 13, `lgdt [r12]` 41 0F 01 14 24,
+`mov cr8, rax` 44 0F 22 C0, `mov rbx, cr3` 0F 20 DB, `ltr bx` 0F 00 DB. Any other operand is
+refused, naming it: `mov cr9, rax` names `cr9`, `int 256` names `256`, `ltr eax` names `eax`.
+(6.7.15: each encoded `rax` or `ax` whatever the source named, so `lgdt [rbx]` loaded the GDT from
+`[rax]` and `mov cr8, rax` wrote CR0, and `int` kept the vector's low 8 bits, so `int 256` was
+`int 0`.)
+
 A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
 it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
 `unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`

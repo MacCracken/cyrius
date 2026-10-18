@@ -5952,58 +5952,127 @@ fn ASM_MNEMONIC(S): i64 {
     elif (mnem & 0xFFFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
     elif (mnem & 0xFFFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }          # pushfq
     elif (mnem & 0xFFFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }              # popfq
-    elif (mnem & 0xFFFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                  # lgdt
-    elif (mnem & 0xFFFFFFFFFF == 0x7464696C) { ASM_LIDT(S); }                  # lidt
-    elif (mnem & 0xFFFFFFFF == 0x766F6D) { ASM_MOV_CR(S); }                    # mov (cr)
-    elif (mnem & 0xFFFFFFFFFFFFFF == 0x67706C766E69) { ASM_INVLPG(S); }        # invlpg
-    elif (mnem & 0xFFFFFFFF == 0x746E69) { ASM_INT(S); }                       # int
+    elif (mnem & 0xFFFFFFFFFF == 0x7464676C) { if (ASM_LGDT(S) == 1) { return 0; } }       # lgdt
+    elif (mnem & 0xFFFFFFFFFF == 0x7464696C) { if (ASM_LIDT(S) == 1) { return 0; } }       # lidt
+    elif (mnem & 0xFFFFFFFF == 0x766F6D) { if (ASM_MOV_CR(S) == 1) { return 0; } }         # mov (cr)
+    elif (mnem & 0xFFFFFFFFFFFFFF == 0x67706C766E69) { if (ASM_INVLPG(S) == 1) { return 0; } }   # invlpg
+    elif (mnem & 0xFFFFFFFF == 0x746E69) { if (ASM_INT(S) == 1) { return 0; } }            # int
     elif (mnem & 0xFFFFFFFF == 0x74756F) { if (ASM_OUT(S) == 1) { return 0; } }   # out
-    elif (mnem & 0xFFFFFFFF == 0x72746C) { ASM_LTR(S); }                       # ltr
+    elif (mnem & 0xFFFFFFFF == 0x72746C) { if (ASM_LTR(S) == 1) { return 0; } }            # ltr
     elif (_asm_is_param_load(S, noff) == 1) { ASM_PARAM_LOAD(S, noff); }       # param_load(reg,idx)
     else { _asm_refuse(S, ti, "unknown x86 asm mnemonic "); return 0; }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
 }
 
+# lgdt / lidt / invlpg take one 64-bit register in brackets and encode IT; mov moves between a control
+# register and a 64-bit register, both encoded; ltr takes a 16-bit register; int a vector 0-255. Any
+# other operand is refused, naming it (6.7.14's D16). Until 6.7.15 each encoded rax / ax whatever the
+# source named (`lgdt [rbx]` was lgdt [rax], `mov cr8, rax` mov cr0, rax) and int masked its vector to
+# 8 bits. Each returns 1 when refused (the statement is skipped). CHANGELOG [6.7.15]
 fn ASM_LGDT(S): i64 {
-    if (PEEKT(S) != 28) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 29) { ERR(S); }
-    STI(S, GTI(S) + 1);
-    EB(S, 0x0F); EB(S, 0x01); EB(S, 0x10);
-    return 0;
+    return _asm_0f01_mem(S, 2, "lgdt takes one 64-bit register in brackets, [rax] to [r15], not ");
 }
 
 fn ASM_LIDT(S): i64 {
-    if (PEEKT(S) != 28) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 29) { ERR(S); }
-    STI(S, GTI(S) + 1);
-    EB(S, 0x0F); EB(S, 0x01); EB(S, 0x18);
+    return _asm_0f01_mem(S, 3, "lidt takes one 64-bit register in brackets, [rax] to [r15], not ");
+}
+
+fn ASM_INVLPG(S): i64 {
+    return _asm_0f01_mem(S, 7, "invlpg takes one 64-bit register in brackets, [rax] to [r15], not ");
+}
+
+# 0F 01 /digit [reg]: REX.B (41) for r8-r15; rm 100 (rsp, r12) means a SIB byte follows, so [rsp] is
+# rm 100 + SIB 24; mod 00 rm 101 (rbp, r13) means rip-relative, so [rbp] is mod 01 + disp8 0.
+fn _asm_0f01_mem(S, digit, msg): i64 {
+    var reg = _asm_mem_base(S, msg);
+    if (reg < 0) { return 1; }
+    if (reg >= 8) { EB(S, 0x41); }
+    EB(S, 0x0F); EB(S, 0x01);
+    var rl = reg & 7;
+    if (rl == 5) { EB(S, 0x45 | (digit << 3)); EB(S, 0); return 0; }
+    EB(S, (digit << 3) | rl);
+    if (rl == 4) { EB(S, 0x24); }
     return 0;
 }
 
-fn ASM_CR_MODRM(packed): i64 {
-    var crn = ((packed >> 16) & 0xFF) - 48;
-    return 0xC0 | (crn << 3);
+# `[reg]` at the cursor, reg a 64-bit register named whole: its number 0-15 with the cursor past the
+# `]`, or -1 once refused (naming the token at fault).
+fn _asm_mem_base(S, msg): i64 {
+    if (PEEKT(S) != 28) { _asm_refuse(S, GTI(S), msg); return 0 - 1; }
+    STI(S, GTI(S) + 1);
+    var reg = _asm_x86_gpr(_asm_x86_name(S));
+    if (reg < 0) { _asm_refuse(S, GTI(S), msg); return 0 - 1; }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 29) { _asm_refuse(S, GTI(S), msg); return 0 - 1; }
+    STI(S, GTI(S) + 1);
+    return reg;
 }
 
+# The cursor's identifier as an L64 of its first bytes; 0 for any other token (no register reads it).
+fn _asm_x86_name(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    return L64(S + 0xEC00000 + PEEKV(S));
+}
+
+# A 64-bit register named whole, the NUL right after its name: 0-15, else -1 (`raxx`, `r8d`, `eax`).
+# _asm_x86_reg reads the first bytes only.
+fn _asm_x86_gpr(n): i64 {
+    var r = _asm_x86_reg(n);
+    if (r < 0) { return r; }
+    var w = 24;
+    if (r == 8) { w = 16; }
+    if (r == 9) { w = 16; }
+    if (((n >> w) & 0xFF) != 0) { return 0 - 1; }
+    return r;
+}
+
+# A control register named whole: cr0, cr2, cr3, cr4, cr8 -> its number; any other -> -1 (cr1, cr5-cr7
+# and cr9-cr15 do not exist; mov to one is #UD).
+fn _asm_x86_cr(n): i64 {
+    var m = n & 0xFFFFFFFF;
+    if (m == 0x307263) { return 0; }
+    if (m == 0x327263) { return 2; }
+    if (m == 0x337263) { return 3; }
+    if (m == 0x347263) { return 4; }
+    if (m == 0x387263) { return 8; }
+    return 0 - 1;
+}
+
+# `mov crN, reg` 0F 22 / `mov reg, crN` 0F 20, ModR/M mod 11 reg = crN rm = reg; REX.R (44) for cr8,
+# REX.B (41) for r8-r15. The first operand spelled cr... picks the direction.
 fn ASM_MOV_CR(S): i64 {
-    var o1 = L64(S + 0xEC00000 + PEEKV(S));
+    var msg = "mov takes a control register (cr0, cr2, cr3, cr4 or cr8) and a 64-bit register, not ";
+    var n1 = _asm_x86_name(S);
+    var to_cr = 0;
+    if ((n1 & 0xFFFF) == 0x7263) { to_cr = 1; }
+    var cr = 0 - 1;
+    var gpr = 0 - 1;
+    if (to_cr == 1) { cr = _asm_x86_cr(n1); if (cr < 0) { return _asm_refuse(S, GTI(S), msg); } }
+    else { gpr = _asm_x86_gpr(n1); if (gpr < 0) { return _asm_refuse(S, GTI(S), msg); } }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 31) { ERR(S); }
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); _asm_skip_stmt(S); return 1; }
     STI(S, GTI(S) + 1);
-    var o2 = L64(S + 0xEC00000 + PEEKV(S));
+    if (to_cr == 1) { gpr = _asm_x86_gpr(_asm_x86_name(S)); } else { cr = _asm_x86_cr(_asm_x86_name(S)); }
+    if (gpr < 0) { return _asm_refuse(S, GTI(S), msg); }
+    if (cr < 0) { return _asm_refuse(S, GTI(S), msg); }
     STI(S, GTI(S) + 1);
-    if (o1 & 0xFFFF == 0x7263) { EB(S, 0x0F); EB(S, 0x22); EB(S, ASM_CR_MODRM(o1)); }
-    elif (o2 & 0xFFFF == 0x7263) { EB(S, 0x0F); EB(S, 0x20); EB(S, ASM_CR_MODRM(o2)); }
-    else { ERR(S); }
+    var rex = 0x40;
+    if (cr >= 8) { rex = rex | 4; }
+    if (gpr >= 8) { rex = rex | 1; }
+    if (rex != 0x40) { EB(S, rex); }
+    EB(S, 0x0F);
+    if (to_cr == 1) { EB(S, 0x22); } else { EB(S, 0x20); }
+    EB(S, 0xC0 | ((cr & 7) << 3) | (gpr & 7));
     return 0;
 }
 
 fn ASM_INT(S): i64 {
-    if (PEEKT(S) != 1) { ERR(S); }
-    EB(S, 0xCD); EB(S, PEEKV(S) & 0xFF);
+    var v = 0 - 1;
+    if (PEEKT(S) == 1) { v = PEEKV(S); }
+    if (v > 255) { v = 0 - 1; }
+    if (v < 0) { return _asm_refuse(S, GTI(S), "int takes a vector from 0 to 255, not "); }
+    EB(S, 0xCD); EB(S, v);
     STI(S, GTI(S) + 1);
     return 0;
 }
@@ -6121,17 +6190,31 @@ fn ASM_OUT(S): i64 {
     return 0;
 }
 
+# ltr r16: 0F 00 /3, REX.B (41) for r8w-r15w.
 fn ASM_LTR(S): i64 {
+    var reg = _asm_x86_reg16(_asm_x86_name(S));
+    if (reg < 0) { return _asm_refuse(S, GTI(S), "ltr takes a 16-bit register, ax to di or r8w to r15w, not "); }
     STI(S, GTI(S) + 1);
-    EB(S, 0x0F); EB(S, 0x00); EB(S, 0xD8);
+    if (reg >= 8) { EB(S, 0x41); }
+    EB(S, 0x0F); EB(S, 0x00); EB(S, 0xD8 | (reg & 7));
     return 0;
 }
 
-fn ASM_INVLPG(S): i64 {
-    if (PEEKT(S) != 28) { ERR(S); }
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 29) { ERR(S); }
-    STI(S, GTI(S) + 1);
-    EB(S, 0x0F); EB(S, 0x01); EB(S, 0x38);
-    return 0;
+# A 16-bit register named whole: ax cx dx bx sp bp si di 0-7, r8w-r15w 8-15; else -1.
+fn _asm_x86_reg16(n): i64 {
+    var m = n & 0xFFFFFF;
+    if (m == 0x7861) { return 0; }    # ax
+    if (m == 0x7863) { return 1; }    # cx
+    if (m == 0x7864) { return 2; }    # dx
+    if (m == 0x7862) { return 3; }    # bx
+    if (m == 0x7073) { return 4; }    # sp
+    if (m == 0x7062) { return 5; }    # bp
+    if (m == 0x6973) { return 6; }    # si
+    if (m == 0x6964) { return 7; }    # di
+    var r = _asm_x86_reg(n);
+    if (r < 8) { return 0 - 1; }
+    var w = 24;
+    if (r < 10) { w = 16; }
+    if (((n >> w) & 0xFFFF) != 0x77) { return 0 - 1; }    # the `w`, then the NUL
+    return r;
 }
