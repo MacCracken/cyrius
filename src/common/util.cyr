@@ -3363,6 +3363,22 @@ fn _err_dup_at(ti, id): i64 {
 # token, still prints. 1 = printed at `ti` already (print nothing), else it is recorded: 0. A warning's identities
 # are negative, apart from every error's. CHANGELOG [6.7.15]
 fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 + 7)); }
+# ... and an ERROR printed by a writer of its own (`syscall(SYS_WRITE, 2, "error:", 6)` and its text, outside the
+# emitters above: an arity mismatch, a second subscript, an argument or a return of the wrong shape): `h(1, 2)` in a
+# generic called at two types printed "'h' expects 1 argument, got 2" three times. Its head, keyed as a warning's
+# (`tag` its name, `a` what its text names): 1 = printed at `ti` already — print nothing: `_had_error` (and, `latch`
+# 1, the panic latch) set as the print would have, `_err_quiet` 1 (a note the caller prints after it stays quiet).
+# Else it is recorded, `_err_quiet` 0: 0. A writer keeps its own `_panic` test. CHANGELOG [6.7.15]
+fn _derr_seen(ti, tag, a, latch): i64 {
+    if (_err_dup_at(ti, (tag * 31 + a) * 8 + 7) == 1) {
+        _had_error = 1;
+        if (latch == 1) { _panic = 1; }
+        _err_quiet = 1;
+        return 1;
+    }
+    _err_quiet = 0;
+    return 0;
+}
 # 1 when the pair (k, id) is in the table, else it is added: 0.
 fn _edup_put(k, id): i64 {
     var m = _edup_cap - 1;

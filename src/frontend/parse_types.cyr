@@ -5447,6 +5447,7 @@ fn _vis_check_var(S, vi, noff): i64 {
     if (vi == _vcv_last_vi) { if (_vcv_line == _vcv_last_line) { return 1; } }
     _vcv_last_vi = vi;
     _vcv_last_line = _vcv_line;
+    if (_derr_seen(GTI(S), "_vis_check_var", vi, 0) == 1) { return 1; }   # 6.7.15: once per site (an instance)
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);

@@ -1841,6 +1841,8 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     # Deliberately does NOT set `_panic`: an arity mismatch is not a token-stream
     # desync, so the parse continues normally and ONE compile reports EVERY bad call
     # site (the v6.4.62 multi-error contract). `_had_error` alone withholds the binary.
+    # 6.7.15: once per call and text (`_derr_seen`, at the call's `(`) — a generic body is parsed per instance.
+    if (_derr_seen(_ar_site(S), "_CHECK_ARITY", ((fi * 31 + noff) * 1024 + argc) * 2 + _ar_self, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, line);
     syscall(SYS_WRITE, 2, ": '", 3);
@@ -1860,6 +1862,27 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, "\n", 1);
     _had_error = 1;
     return 0;
+}
+
+# The token an arity report is keyed on: the `(` of the call that just closed — the cursor is past its `)` (a call,
+# an inline replay) or its `)` and `;` (the tail arm), so every path that checks one call agrees — else the cursor
+# (an operator's dispatch). CHANGELOG [6.7.15]
+fn _ar_site(S): i64 {
+    var t = GTI(S) - 1;
+    if (t < 1) { return GTI(S); }
+    if (TOKTYP(S, t) == 5) { t = t - 1; }
+    if (TOKTYP(S, t) != 11) { return GTI(S); }
+    var d = 0;
+    while (t >= 0) {
+        var k = TOKTYP(S, t);
+        if (k == 11) { d = d + 1; }
+        if (k == 10) {
+            d = d - 1;
+            if (d == 0) { return t; }
+        }
+        t = t - 1;
+    }
+    return GTI(S);
 }
 
 # ⛔ 6.7.3 — A STRUCT ARGUMENT WAS NEVER TYPE-CHECKED AGAINST ITS PARAMETER, except a struct-typed
@@ -2262,6 +2285,7 @@ fn _vec_kind_err(S, noff, fi): i64 {
 # ... `kind` "vector" or "struct" (6.7.13 D5 (a), `_sarg_struct_other`).
 fn _agg_kind_err(S, noff, fi, kind): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_agg_kind_err", (noff * 31 + fi) * 31 + kind, 0) == 1) { return 0; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
@@ -2301,6 +2325,7 @@ fn _vk_param(S, fi, k): i64 {
 # argument). 0.
 fn _vec_val_err(S, star, noff, fi, kd): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_vec_val_err", ((noff * 31 + fi) * 31 + kd) * 2 + star, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
@@ -2463,6 +2488,7 @@ fn _sval_stars(S, st): i64 {
 # twin). No `_panic`: the parse is in step, so one compile reports every such argument. 0.
 fn _sval_kind_err(S, ti, star, noff, fi): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_sval_kind_err", (noff * 31 + fi) * 31 + star, 0) == 1) { return 0; }   # 6.7.15: once
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3667,6 +3693,7 @@ fn _ret_small_ptr(S, st): i64 {
 # token `ti`; the parse goes on (no cascade).
 fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
@@ -5787,6 +5814,7 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
     if (PEEKT(S) != 1) { return 0; }
     if (PEEKV(S) == 0) { return 0; }
     if (_pm_cstr(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
+    if (_derr_seen(GTI(S), "_check_int_lit_cstring_arg", (fi * 31 + argc) * 31 + noff, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
@@ -6041,6 +6069,7 @@ fn _vf_cls(S, t): i64 {
 # Returns 0.
 fn _sar_err(S, ti, fi): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_sar_err", fi, 0) == 1) { return 0; }   # 6.7.15: once per site
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -7357,6 +7386,7 @@ fn _ret_vec_rule(S): i64 {
 }
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_simd_return", 0, 0) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
@@ -7388,6 +7418,7 @@ fn _refuse_struct_tuple_return(S): i64 {
     if (_cur_fn_ret_sid <= 0) { return 0; }
     if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_struct_tuple_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
@@ -7402,6 +7433,7 @@ fn _refuse_struct_tuple_return(S): i64 {
 fn _refuse_pair_return(S): i64 {
     if (_panic == 1) { return 0; }
     if (_slit_at(S, GTI(S)) == 1) { return 0; }   # 6.7.14 (D12 (a)): the factor refuses the literal, once
+    if (_derr_seen(GTI(S), "_refuse_pair_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);

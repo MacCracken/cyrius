@@ -6901,7 +6901,10 @@ each). A generic struct's fields are parsed again per instance the same way: `b:
 and message too (6.7.15; through 6.7.14 `var p: *i64 = q;` in a generic called at three types
 printed *assigning non-pointer to typed pointer* three times, and a warning in an `#inline` fn's
 body once more per call); a different warning at the same token — `x.m()` discarding `P.m`'s
-`#must_use` result in one instance and `Q.m`'s in another — still prints each.
+`#must_use` result in one instance and `Q.m`'s in another — still prints each. So are the errors
+the parser's own checks print beside the emitters (6.7.15): `h(1, 2)` to a one-parameter `h` in a
+generic called at two types printed *'h' expects 1 argument, got 2* three times, a second
+subscript `a[0][1]` twice, and an argument or a return of the wrong shape once per instance.
 
 **A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
 value — a parameter or a `var q: T` local, or a struct carrier's `T` field (`b.v.y`

@@ -7950,6 +7950,7 @@ fn _vrcv_other(S, term): i64 {
 # pointer held in a variable (the out-pointer hint). 0.
 fn _vrcv_err(S, ti, verb, fp): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_vrcv_err", verb * 2 + fp, 0) == 1) { return 0; }   # 6.7.15: once per site
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -8490,6 +8491,7 @@ fn _dt_struct_check(S, fi, n): i64 {
 # retptr), 2 = its 2 words are, and 3 names were bound.
 fn _dt_struct_err(S, fi, w): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_dt_struct_err", fi * 4 + w, 1) == 1) { return 0; }   # 6.7.15: once per site
     var ct = GTI(S);
     if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }   # 6.7.15: `x.m<..>(` names m too
     syscall(SYS_WRITE, 2, "error:", 6);

@@ -2695,6 +2695,7 @@ include "src/frontend/parse_fn_def.cyr"
 # this fn precisely so it can be raised in one place.
 fn _ends_guard(S, ec): i64 {
     if (ec >= 256) {
+        if (_derr_seen(GTI(S), "_ends_guard", 0, 0) == 1) { return 1; }   # 6.7.15: once per site
         syscall(SYS_WRITE, 2, "error:", 6); _err_head(S);
         syscall(SYS_WRITE, 2, ": too many case/arm bodies in one switch/match (max 256)\n", 57);
         _had_error = 1;
@@ -4102,6 +4103,7 @@ fn _asg_undef_report(S, noff): i64 {
 # capture named `y`, a self-initialisation that names the local as the capture. CHANGELOG [6.7.13]
 fn _asg_cap_name(S, noff): i64 {
     if (_cl_snap_find(S, noff) < 0) { return 0; }
+    if (_derr_seen(GTI(S), "_asg_cap_name", noff, 0) == 1) { _bx_undef_ti = GTI(S); return 1; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": '");
@@ -5346,6 +5348,7 @@ fn _masg_not_plain(S, what): i64 {
 # Reported at the cursor, in sync (the panic latch untouched: the statement is parsed to its end).
 fn _masg_err(S, msg, tail): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_masg_err", msg * 31 + tail, 0) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": ");

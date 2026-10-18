@@ -50,6 +50,25 @@
 #       not re-run them), a declaration's (enum / global redefinitions, a struct redefinition, a kernel global's
 #       init), the mixed-pair-return prescan, `_DEPRECATED_WARN` (its own `_dep_seen`), the index check
 #       (`_tn_once`), and #pure's (an instance is not #pure)
+#   A   (6.7.15) AN ERROR A WRITER PRINTS ITSELF (`syscall(SYS_WRITE, 2, "error:", 6)` and its own text, outside the
+#       emitters) asks `_derr_seen` (util.cyr) — keyed on the token it reports and an identity of its own (the
+#       writer's name and what its text names), the panic latch set on a repeat when the writer sets it.
+#       A1 the filed arity repro verbatim (issues/2026-10-16-direct-error-writers-print-once-per-generic-instance.md:
+#       3 lines before; the tail arm, a call and an inline replay check one call at three cursors, so `_CHECK_ARITY`
+#       keys on the call's `(`, `_ar_site`), A1b an arity error in a declaration's call (3), A2 the filed
+#       second-subscript repro verbatim (2); A3 a plain fn's two different bad calls both print; A4 two different
+#       arity texts at one token (`x.m(1, 2, 3)` at P and Q) both print
+#   DW  each converted writer, in a generic body at three types (3 lines before, DW11 4): `_ends_guard` (a switch
+#       over 256 case bodies), `_asg_cap_name`, `_masg_err`, `_agg_kind_err` (a struct, a vector), `_vec_val_err`,
+#       `_sval_kind_err`, `_ret_sid_refuse`, `_refuse_pair_return`, `_refuse_struct_tuple_return`,
+#       `_refuse_simd_return`, `_check_int_lit_cstring_arg` (and its hint once), `_sar_err`, `_icall_fld_err`,
+#       `_mret_fld_err`, `_sub_err`, `_vrcv_err`, `_dt_struct_err`, `_vis_check_var` (two private globals, each
+#       once). Left as they were, the writers that cannot repeat: those already once per token or site (`_tn_once`,
+#       `_ie_once`, `_vis_seen`, `_nested_fn_seen`, `_assert_rep_ti`, `_err_once`), a reserved intrinsic name
+#       (`_inst_name` — the base parse only), the definition's and top-level ones (an async fn's — an async generic
+#       is refused, a duplicate fn, `_dl_report`, `_fn_redirect`, `_dsg_report`, `private` per item, a bare-metal
+#       include, a global's redeclaration, an array initializer — module scope only, a top-level struct / vector /
+#       operator call), the internal `_pd_line_err`, and the fatal exits
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run with
 # CYCC= it):
@@ -66,6 +85,10 @@
 #   MW2 (2026-10-18) WARN without its head         -> RED W1, W3 (the WARN rows); the direct writers green
 #   MW3 (2026-10-18) `_must_use_warn`'s identity without what it names -> RED W2 (Q.m's line swallowed)
 #   The lane's previous compiler (CYCC) -> RED W1, W3, W4, WD1-WD8; its aarch64 compiler (CYCC_A64) -> RED WD9
+#   MD1 (2026-10-18) `_derr_seen` never a repeat   -> RED A1, A1b, A2, DW1-DW19 (DW12's hint too): the counts of before
+#   MD2 (2026-10-18) `_CHECK_ARITY` keyed on the cursor, not `_ar_site` -> RED A1 (2 lines: the tail arm's cursor)
+#   MD3 (2026-10-18) `_CHECK_ARITY`'s identity without what it names -> RED A4 (Q.m's line swallowed)
+#   The warning bite's compiler (CYCC) -> RED A1, A1b, A2, DW1-DW19
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -295,5 +318,105 @@ if [ -s "$D/cc_a64" ]; then
     WCC="$D/cc_a64" wrows WD9 "$D/WD8.cyr" 1 "a raw x86_64 syscall number on ELF-aarch64 (4 before)" "raw syscall 91 is x86_64 \`fchmod\`; on ELF-aarch64 that number is \`capset\`"
 else bad "WD9: src/main_aarch64.cyr did not build"; fi
 
+echo "A. an error a writer prints itself (outside the emitters): once (6.7.15)"
+cat > "$D/a1.cyr" <<'XEOF'
+struct I { a; b; }
+fn h(a): i64 { return a; }
+fn g<T>(v: T): i64 { return h(1, 2); }
+fn main(): i64 { var x = I { 1, 2 }; return g(1) + g(x); }
+syscall(60, main());
+XEOF
+erows A1 "$D/a1.cyr" 1 "the filed arity repro, verbatim (3 before)" "error:<source>:3: 'h' expects 1 argument, got 2"
+cat > "$D/a2.cyr" <<'XEOF'
+struct I { a; b; }
+fn g<T>(v: T): i64 { var a: i64[2]; return a[0][1]; }
+fn main(): i64 { var x = I { 1, 2 }; return g(1) + g(x); }
+syscall(60, main());
+XEOF
+wbody A1b 'fn h(a): i64 { return a; }' 'var r = h(1, 2); return r;'
+erows A1b "$D/A1b.cyr" 1 "an arity error in a declaration's call, three instances (3 before)" "'h' expects 1 argument, got 2"
+erows A2 "$D/a2.cyr" 1 "the filed second-subscript repro, verbatim (2 before)" "error:<source>:2:48: a subscript's result is an element, not an array - a second [..] is not supported"
+cat > "$D/a3.cyr" <<'XEOF'
+fn h(a): i64 { return a; }
+fn k(a, b): i64 { return a + b; }
+fn f(): i64 {
+    var r = h(1, 2);
+    return r + k(1, 2, 3);
+}
+syscall(60, f());
+XEOF
+erows A3 "$D/a3.cyr" 2 "control: two different bad calls in a plain fn both print" "4: 'h' expects 1 argument, got 2" "5: 'k' expects 2 arguments, got 3"
+cat > "$D/a4.cyr" <<'XEOF'
+struct P { a; b; }
+struct Q { c; d; e; }
+impl P { fn m(self, k): i64 { return k; } }
+impl Q { fn m(self, k, j): i64 { return k + j; } }
+fn g<T>(x: T): i64 { return x.m(1, 2, 3); }
+fn run(): i64 { var u = P { 1, 2 }; var w = Q { 1, 2, 3 }; return g(u) + g(w) + g(u); }
+syscall(60, run());
+XEOF
+erows A4 "$D/a4.cyr" 2 "two different arity errors at one token (x.m at P and Q) both print" "'P.m' expects 1 argument, got 3" "'Q.m' expects 2 arguments, got 3"
+echo "DW. each writer that prints its own error line, in a generic body at three types: once"
+wbody DW1 '' "var k = 0; switch (k) { $(i=0; while [ $i -lt 257 ]; do printf 'case %d: { k = 1; } ' $i; i=$((i+1)); done) } return k;"
+erows DW1 "$D/DW1.cyr" 1 "a switch over 256 case bodies (3 before)" "too many case/arm bodies in one switch/match (max 256)"
+wbody DW2 '' 'var n = 1; var f = |y| { n = 2; return y; }; return 0;'
+erows DW2 "$D/DW2.cyr" 1 "a captured name assigned in a closure (3 before)" "'n' is captured by value; a captured name is not assignable in a closure"
+wbody DW3 'fn two(): (i64, i64) { return (1, 2); }' 'var a = 0; var b = 0; a, a = two(); return a + b;'
+erows DW3 "$D/DW3.cyr" 1 "a multi-value assignment naming one variable twice (3 before)" "a multi-value assignment re-assigns each variable once - this one is named twice"
+wbody DW4 'struct Pt { x; y; }
+fn ri(p: *i64): i64 { return 0; }' 'var s: Pt; s.x = 1; return ri(s);'
+erows DW4 "$D/DW4.cyr" 1 "a struct local into a word pointer (3 before)" "cannot pass 's' to a parameter that is not a pointer to its struct type in a call to 'ri' - pass &s for its address"
+wbody DW5 'fn rv(p: *i64): i64 { return 0; }' 'var v: f64v2; return rv(v);'
+erows DW5 "$D/DW5.cyr" 1 "a vector local into a word pointer (3 before)" "cannot pass 'v' to a parameter that is not a pointer to its vector type in a call to 'rv' - pass &v for its address"
+wbody DW6 'struct Pt { x; y; }
+fn bv(p: Pt): i64 { return 0; }' 'var b: f64v2; return bv(b);'
+erows DW6 "$D/DW6.cyr" 1 "a vector into a by-value struct (3 before)" "cannot pass 'b' to a by-value struct parameter in a call to 'bv' - a vector is not a struct"
+wbody DW7 'struct Pt { x; y; }
+struct W { s: Pt; }
+fn ri(p: *i64): i64 { return 0; }' 'var w2: W; return ri(w2.s);'
+erows DW7 "$D/DW7.cyr" 1 "a struct field's value into a word pointer (3 before)" "a struct value is no address"
+# gbody <id> <defs> <main's body>: the definitions (a generic gr<T> among them) and a run() calling it
+gbody() {
+    printf 'include "lib/syscalls.cyr"\nstruct P { a; b; }\nstruct Q { c; d; e; }\n%s\nfn run(): i64 { var u = P { 1, 2 }; var w = Q { 1, 2, 3 }; %s }\nsyscall(60, run());\n' "$2" "$3" > "$D/$1.cyr"
+}
+gbody DW8 'struct Pt { x; y; z; }
+struct Pu { x; y; z; }
+fn gr<T>(x: T): Pt { var q: Pu; var pq: *Pu = &q; return *pq; }' 'return gr(1).x + gr(u).x + gr(w).x;'
+erows DW8 "$D/DW8.cyr" 1 "a struct return of another struct's pointer (3 before)" "a fn returning the struct \`Pt\` takes a value of that struct, or a pointer to one — got \`*pq\` (a \`Pu\`)"
+gbody DW9 'struct S9 { a; b; }
+fn gr<T>(x: T): S9 { return 5; }' 'return gr(1).a + gr(u).a + gr(w).a;'
+erows DW9 "$D/DW9.cyr" 1 "a 9-16 byte struct return of a number (3 before)" "a fn returning the 9-16 byte struct \`S9\` is returned in two registers"
+gbody DW10 'struct Big { a; b; c; }
+fn gr<T>(x: T): Big { return (1, 2); }' 'return gr(1).a + gr(u).a + gr(w).a;'
+erows DW10 "$D/DW10.cyr" 1 "a struct return of a tuple (3 before)" "a fn returning the struct \`Big\` returns that struct — \`(a, b)\` is a tuple, another type"
+gbody DW11 'fn gr<T>(x: T): f64v2 { return 5; }' 'var a = gr(1); var b = gr(u); var c = gr(w); return 0;'
+erows DW11 "$D/DW11.cyr" 1 "a vector return of a number (4 before)" "a vector-returning fn carries its result in a fixed register pair"
+wbody DW12 'fn cs(s: cstring): i64 { return 0; }' 'var r = cs(5); return r;'
+erows DW12 "$D/DW12.cyr" 1 "an integer literal into a cstring parameter (3 before)" "passing integer literal 5 to 'cs' which expects a cstring"
+nh=$(grep -c 'hint: the value is a NUMBER' "$D/DW12.err" || true)
+if [ "$nh" -eq 1 ]; then ok "DW12: its hint once"; else bad "DW12: its hint $nh times, want 1"; fi
+wbody DW13 'fn vv(v: f64v2): i64 { return 0; }' 'var r = vv(5); return r;'
+erows DW13 "$D/DW13.cyr" 1 "a number into a value-form vector parameter (3 before)" "a value-form vector argument to 'vv' is a local of its type"
+wbody DW14 'struct R { v; }' 'var fp = 0; return fncall0(fp).v;'
+erows DW14 "$D/DW14.cyr" 1 "a field of fncall0 through a value (3 before)" "cannot take a field of the result of 'fncall0': its callee is a value"
+wbody DW15 'fn two(): (i64, i64) { return (1, 2); }' 'var r = two().a; return r;'
+erows DW15 "$D/DW15.cyr" 1 "a field of a multi-value call (3 before)" "cannot take a field of the result of 'two': it returns 2 values"
+wbody DW16 '' 'var n = 5; return n[1];'
+erows DW16 "$D/DW16.cyr" 1 "a subscript of a plain local (3 before)" "cannot subscript 'n': it is not a typed array"
+wbody DW17 '' 'var v: f64v2 = 5; return 0;'
+erows DW17 "$D/DW17.cyr" 1 "a number into a value-form vector local (3 before)" "a value-form vector local is initialised only from a local of its type"
+wbody DW18 'struct Big { a; b; c; }
+fn mkb(): Big { var r: Big; r.a = 1; return r; }' 'var a, b = mkb(); return a;'
+erows DW18 "$D/DW18.cyr" 1 "a destructure of a struct return (3 before)" "cannot destructure 'mkb' - it returns struct 'Big', which is not in registers"
+mkdir -p "$D/vis"
+printf 'private\nvar pg = 5;\nvar pg2 = 6;\n' > "$D/vis/privmod.cyr"
+printf 'include "privmod.cyr"\nstruct P { a; b; }\nstruct Q { c; d; e; }\nfn g<T>(x: T): i64 {\n    var a = pg;\n    var b = pg2;\n    return a + b;\n}\nfn run(): i64 { var u = P { 1, 2 }; var w = Q { 1, 2, 3 }; return g(1) + g(u) + g(w); }\nsyscall(60, run());\n' > "$D/vis/main.cyr"
+vrc=0; ( cd "$D/vis" && "$CC" < main.cyr > main.bin 2> main.err ) || vrc=$?
+nv1=$(grep -c "^error.*'pg' is private to its file" "$D/vis/main.err" || true)
+nv2=$(grep -c "^error.*'pg2' is private to its file" "$D/vis/main.err" || true)
+if [ "$vrc" -eq 0 ]; then bad "DW19: a private global read in a generic body compiled (want it refused)"
+elif [ "$nv1" -eq 1 ] && [ "$nv2" -eq 1 ]; then ok "DW19: two private globals read in a generic body at three types: each once (3 each before)"
+else bad "DW19: 'pg' $nv1 and 'pg2' $nv2 lines, want 1 and 1"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C); a warning once (W, WD)"
+echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C); a warning once (W, WD); an error a writer prints itself once (A, DW)"

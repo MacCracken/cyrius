@@ -1135,7 +1135,9 @@ fn _icall_chain(S, cfi, t, beg): i64 {
 # Silent under `--syntax-only` (lint's pre-pass), where a callee from a sibling file is unknown too, as `_method_chain`
 # and `_call_field` stay silent there.
 fn _icall_fld_err(S, beg): i64 {
-    if (_panic + _syntax_only == 0) {
+    var say = 0;
+    if (_panic + _syntax_only == 0) { if (_derr_seen(GTI(S), "_icall_fld_err", beg, 1) == 0) { say = 1; } }   # 6.7.15
+    if (say == 1) {
         syscall(SYS_WRITE, 2, "error:", 6);
         _err_head(S);
         PRSTR(": cannot take a field of the result of '");
@@ -3040,6 +3042,7 @@ fn _call_fld_err(S, fi, noff): i64 {
 }
 fn _mret_fld_err(S, fi, noff): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_mret_fld_err", fi * 31 + noff, 1) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot take a field of the result of '");
@@ -3735,6 +3738,7 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
 # line, with its tail in two literals.
 fn _sub_err(S, noff, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_sub_err", ((noff * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot subscript '");
@@ -3979,6 +3983,7 @@ fn _sub_ret_sid(S): i64 {
 # name `n2` quoted (a C string; 0 none) — ERR_IDENT's line.
 fn _psub_err(S, hd, nt, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_psub_err", (((hd * 31 + nt) * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(hd);
