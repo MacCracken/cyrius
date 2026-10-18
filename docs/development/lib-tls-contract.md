@@ -209,7 +209,8 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   (x25519's is not validated as a point, so its length is the check), a point sigil refuses
   (illegal_parameter), a supported_groups list that is odd-length, empty or not its extension's
   length, a client_shares list that is not its extension's length, an empty key_exchange, a
-  legacy_session_id over 32 bytes (decode_error), no cipher suite in common and no shared group
+  legacy_session_id over 32 bytes or a byte after the ClientHello's extension block (decode_error;
+  until 6.7.15 bytes after the block were ignored), no cipher suite in common and no shared group
   (handshake_failure). A second ClientHello that no longer offers TLS 1.3 is illegal_parameter.
   **Which version a ClientHello asks for is its supported_versions' alone** (RFC 8446 §4.2.1): one
   listing 0x0304 is TLS 1.3; one without it, or without the extension, is TLS 1.2 — a key_share
@@ -224,7 +225,8 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   client certificate — and does ECDHE on whichever the server's ServerKeyExchange names, which must
   be one of them. A ServerKeyExchange signed with an ECDSA scheme is read as TLS 1.2 defines it —
   the scheme names the hash, the key names the curve — so a P-384 server certificate that signs
-  SHA-256 verifies.
+  SHA-256 verifies. A ServerHello extension block, when present, fills the rest of the message: a
+  byte after it is decode_error (6.7.15; until then it was ignored).
 - **TLS 1.2 server.** It picks the first of its groups the client's supported_groups lists, its
   own first group when the client sends none (RFC 8422 §4), and refuses a client listing none of
   them with handshake_failure. A ClientKeyExchange point sigil refuses, or whose length byte is not

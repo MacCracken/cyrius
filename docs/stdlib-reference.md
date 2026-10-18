@@ -1769,14 +1769,14 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_client_finish` | `tls_native_client_finish(ctx, out, out_max) → len/err` | Build + encrypt Finished message, transition to CONNECTED |
 | `tls_native_client_verify_chain` | `tls_native_client_verify_chain(ctx, now_unix) → TLS_OK/err` | Verify peer certificate chain against trust store |
 | `tls_native_client_verify_hostname` | `tls_native_client_verify_hostname(ctx) → TLS_OK/err` | Verify SNI host against server cert SubjectAltName |
-| `tls_native_client_parse_server_hello_12` | `tls_native_client_parse_server_hello_12(ctx, sh, sh_len) → TLS_OK/err` | Parse the TLS 1.2 ServerHello answering the ctx's own 1.2 ClientHello (`tls_native_12_build_client_hello` first): every extension walked against it (one not offered: unsupported_extension; a type twice: illegal_parameter), the ALPN answer exactly one offered name, a session id of at most 32 bytes; every refusal records its alert, which `tls_native_connect_12` sends (6.7.14) |
+| `tls_native_client_parse_server_hello_12` | `tls_native_client_parse_server_hello_12(ctx, sh, sh_len) → TLS_OK/err` | Parse the TLS 1.2 ServerHello answering the ctx's own 1.2 ClientHello (`tls_native_12_build_client_hello` first): every extension walked against it (one not offered: unsupported_extension; a type twice: illegal_parameter), the ALPN answer exactly one offered name, a session id of at most 32 bytes; every refusal records its alert, which `tls_native_connect_12` sends (6.7.14); the extension block, when present, fills the rest of the message — a byte after it is decode_error (6.7.15) |
 
 **Handshake (server side — TLS 1.3):**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `tls_native_server_load_creds` | `tls_native_server_load_creds(ctx) → TLS_OK/err` | Validate certificate chain + private key before accepting |
-| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or ONE HelloRetryRequest; call again with the second ClientHello) in response to ClientHello — x25519 / secp256r1 / secp384r1 (6.6.15) |
+| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or ONE HelloRetryRequest; call again with the second ClientHello) in response to ClientHello — x25519 / secp256r1 / secp384r1 (6.6.15); the ClientHello's extension block fills the rest of the message, a byte after it is decode_error (6.7.15) |
 | `tls_native_server_sent_hrr` | `tls_native_server_sent_hrr(ctx) → 0/1` | Check if last respond_hello was HelloRetryRequest (vs ServerHello) |
 | `tls_native_server_derive_handshake` | `tls_native_server_derive_handshake(ctx) → TLS_OK/err` | Derive handshake secrets from ECDHE + CH..SH transcript |
 | `tls_native_server_build_flight` | `tls_native_server_build_flight(ctx, out, out_max) → len/err` | Build server flight (EncryptedExtensions + Certificate + Finished) |
