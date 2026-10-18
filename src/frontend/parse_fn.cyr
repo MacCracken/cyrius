@@ -13140,8 +13140,21 @@ fn _mark_ptr_param(S): i64 {
         ed = _ek_at(S, GTI(S));
     }
     var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _ek_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _param_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
     return 0;
+}
+# ⛔ 6.7.15 — A GENERIC'S `pp: **Box<T>` PARAMETER READS ITS PIN UNDER THE BINDING ITS BODY HAS: the base's T -> i64
+# (`_ret_ptr_base_bind`, as a `: *T` / `: **Box<T>` return is read), an instance's own (the parameter loop bound it).
+# Read unbound, the pointee `Box<T>`'s T was refused "unknown type 'T' as a type argument", so the definition never
+# compiled, where `p: *Box<T>` does. A fn that is no generic is read as before. The pin of the annotation whose first
+# `*` is token `ann` (`_ek_pin`); the binding in force is put back. CHANGELOG [6.7.15]
+fn _param_pin(S, ann): i64 {
+    if (_cur_fn_ix < 0) { return _ek_pin(S, ann); }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _ret_ptr_base_bind(S, _cur_fn_ix);
+    var pn = _ek_pin(S, ann);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return pn;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
 # was "no struct type in scope for 'self'" (every body read `load64(self)`), and the direct call

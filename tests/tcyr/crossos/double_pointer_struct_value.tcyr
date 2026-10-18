@@ -24,6 +24,13 @@
 # rebind `q = p` is. Filed: docs/development/issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-
 # stores-pointer-word.md (its two repros verbatim are small_struct_handle_line.sh R16d / R16e; the refusals of another
 # struct are struct_copy_type_checked.sh R29-R32).
+#
+# 6.7.15 — a GENERIC's `pp: **GBox<T>` parameter (T its own type parameter) compiles, its pin read under the binding
+# its body has — the base's T -> i64, an instance's own: it was refused "unknown type 'T' as a type argument" at the
+# definition, where `p: *GBox<T>` compiles. Rows gb_*: inferred and explicit `<i64>`, `**pp` as the struct value
+# (a declaration copy, a by-value argument), the explicit `<GPt>` instance (its pin names GBox<GPt>: n at 16), a
+# concrete `**GBox<GPt>` parameter unchanged. Filed: docs/development/issues/2026-10-17-generic-double-pointer-to-
+# generic-struct-parameter-refused.md (its repro verbatim is tests/gates/frontend/generic_double_pointer_infer.sh B1).
 include "lib/assert.cyr"
 
 struct P { x; y; }
@@ -137,6 +144,17 @@ fn w_param(v: P, pp: **P): i64 { v = *pp; return v.x * 10 + v.y; }
 fn w_param_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var o = P { 1, 2 }; var r = w_param(o, &p); return r * 100 + o.x * 10 + o.y; }
 fn w_cap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var f = |d| { var l = P { 0, 0 }; l = *pp; var t: P = *pp; return l.y * 10 + t.y + d; }; return callptr(f, 0); }
 fn w_dd(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 0, 0 }; var q: *P = &d; var qq: **P = &q; **qq = *pp; s.y = 9; return d.x * 10 + d.y; }
+struct GPt { x; y; }
+struct GBox<T> { v: T; n; }
+fn gb_nb<T>(pp: **GBox<T>): i64 { var b: *GBox<T> = *pp; return b.n; }
+fn gb_nv<T>(pp: **GBox<T>): i64 { var b: GBox<T> = **pp; b.n = 1; return (**pp).n * 10 + b.n; }
+fn gb_tk(b: GBox<i64>): i64 { return b.n; }
+fn gb_nt<T>(pp: **GBox<T>): i64 { return gb_tk(**pp); }
+fn gb_nc(pp: **GBox<GPt>): i64 { var b: *GBox<GPt> = *pp; return b.n + b.v.y; }
+fn gb_i64(): i64 { var x: GBox<i64>; x.v = 1; x.n = 7; var p: *GBox<i64> = &x; return gb_nb(&p) * 10 + gb_nb<i64>(&p); }
+fn gb_val(): i64 { var x: GBox<i64>; x.v = 1; x.n = 7; var p: *GBox<i64> = &x; return gb_nv(&p) * 100 + gb_nt(&p); }
+fn gb_inst(): i64 { var y: GBox<GPt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *GBox<GPt> = &y; return gb_nb<GPt>(&q) * 100 + gb_nv<GPt>(&q); }
+fn gb_conc(): i64 { var y: GBox<GPt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *GBox<GPt> = &y; return gb_nc(&q); }
 fn w_c3(): i64 { var s: C3; s.a = 1; s.b = 2; s.c = 3; var p: *C3 = &s; var pp: **C3 = &p; var l: C3; l = *pp; var t: C3 = *pp; s.b = 9; return l.a * 100 + l.b * 10 + l.c + t.b * 1000; }
 
 var TZ: P = **GPP;   # the declaration zone
@@ -194,6 +212,10 @@ assert_eq(w_param_c(), 3412, "v = *pp into a by-value P parameter copies (the ca
 assert_eq(w_cap(), 44, "l = *pp and var t: P = *pp of a captured **P in a closure");
 assert_eq(w_dd(), 34, "**qq = *pp copies");
 assert_eq(w_c3(), 2123, "a 3-byte C3: l = *pp, var t: C3 = *pp copy byte-exact");
+assert_eq(gb_i64(), 77, "gb: a generic's pp: **GBox<T> compiles: gb_nb(&p), gb_nb<i64>(&p)");
+assert_eq(gb_val(), 7107, "gb: **pp through **GBox<T> is the struct value: a declaration copy, a by-value argument");
+assert_eq(gb_inst(), 991, "gb: the explicit GBox<GPt> instance pins its own struct (n at 16)");
+assert_eq(gb_conc(), 11, "gb: a concrete pp: **GBox<GPt> parameter (unchanged)");
 var TS = P { 3, 4 };
 var TSP: *P = &TS;
 var TPP: **P = &TSP;

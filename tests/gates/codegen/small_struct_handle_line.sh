@@ -267,10 +267,12 @@
 #      139 / 139 / cx 0 / PE 5 through 6.7.13), 11 (a 3-byte `**ppc` byte-exact: 10 through 6.7.13); the refusals
 #      (another struct, `**pp OP= v`) are struct_copy_type_checked.sh's R27 / R28 / C5 / C6.
 #      6.7.15 (issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md): `*pp` as the
-#      WHOLE source of a copy is the `*S` it reads, copied through (the file's w_* rows, floor 55); R16d / R16e that
+#      WHOLE source of a copy is the `*S` it reads, copied through (the file's w_* rows); R16d / R16e that
 #      filing's two repros VERBATIM: print 444 (`G = *pp; *q = *pp;` — 004 through 6.7.14 / the 6.7.15 slot open: the
 #      pointer word in the first field) and 4444 (`l2 = *pp;`, `var t3: P = (*pp);` — 4094: l2.y stale, t3 a handle
-#      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32)
+#      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32). The file's gb_* rows (floor 59):
+#      a generic's `pp: **GBox<T>` parameter compiles (issues/2026-10-17-generic-double-pointer-to-generic-struct-
+#      parameter-refused.md; its repro is generic_double_pointer_infer.sh B1)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -1024,7 +1026,7 @@ done
 TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
 [ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
 NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
-PSFLOOR=55
+PSFLOOR=59
 if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
 echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
 for leg in $XLEGS $OTHER; do

@@ -27,6 +27,13 @@
 #      a `**i32` binds i32) on
 #      x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N
 #      derived from the file; the release gate's cross-OS leg runs it on ecb / ach / cass / pi
+#   B  (6.7.15, issues/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md) a generic's
+#      `pp: **Box<T>` parameter, T its own type parameter, COMPILES — its pin is read under the binding its body has
+#      (`_param_pin`: the base's T -> i64, an instance's own); it was refused "unknown type 'T' as a type argument" at
+#      the definition (one error, every target). B1 the filed repro verbatim (7), B2 the explicit `nb<i64>(&p)` and
+#      `**pp` as the struct value (a declaration copy, a by-value argument: 77), B3 the `<Pt>` instances, `**pp` read
+#      through the instance's own pin (n at 16: 99), B4 a concrete `**Box<Pt>` parameter (11, unchanged) — every leg; more rows are
+#      tests/tcyr/crossos/double_pointer_struct_value.tcyr's gb_* (small_struct_handle_line.sh R16)
 #
 # MUTATION LEDGER (2026-10-17; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run FROM
 # that copy with CYCC= it, so every leg's compiler carries the mutant):
@@ -46,6 +53,10 @@
 #   MS2 `_ic_pscalar` answers i64 (no scalar pointee)      -> RED S and T
 #   MS3 `_ic_pscalar` binds without marking `_gi_sc`       -> RED S and T
 #   MS4 `_ic_pp_sid` without its scalar arm                -> RED S and T
+# (2026-10-18, 6.7.15 — the B rows; a scratch copy, its compiler, this gate run from it:)
+#   MB1 `_param_pin` reading the pin unbound (`_ek_pin`)  -> RED B1-B4 on every leg (refused at the definition: B4's
+#                                                             program holds the B2 / B3 generics too); the lane's
+#                                                             previous compiler (x86 / IR / PE legs) the same
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -190,6 +201,38 @@ syscall(60, ms() % 256);
 X
 xr S "$D/s.cyr" 189 "st(ppi) 4, sz(ppi) 4, gd(pph) * 2.0 at f64 5 (445 % 256)"
 
+echo "B. a generic's pp: **Box<T> parameter compiles (6.7.15)"
+cat > "$D/b1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn nb<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; }
+fn main(): i64 { var x: Box<i64>; x.n = 7; var p: *Box<i64> = &x; return nb(&p); }
+syscall(60, main());
+X
+xr B1 "$D/b1.cyr" 7 "the filed repro: nb(&p)"
+cat > "$D/bh.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn nb<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; }
+fn nv<T>(pp: **Box<T>): i64 { var b: Box<T> = **pp; return b.n; }
+fn tk(b: Box<i64>): i64 { return b.n; }
+fn nt<T>(pp: **Box<T>): i64 { return tk(**pp); }
+fn nc(pp: **Box<Pt>): i64 { var b: *Box<Pt> = *pp; return b.n + b.v.y; }
+X
+{ cat "$D/bh.cyr"; printf '%s\n' \
+    'fn main(): i64 { var x: Box<i64>; x.n = 7; var p: *Box<i64> = &x; return nb<i64>(&p) + nv(&p) * 10 + nt(&p) - 7; }' \
+    'syscall(60, main());'; } > "$D/b2.cyr"
+xr B2 "$D/b2.cyr" 77 "nb<i64>(&p) + nv(&p) * 10 + nt(&p) - 7"
+{ cat "$D/bh.cyr"; printf '%s\n' \
+    'fn main(): i64 { var y: Box<Pt>; y.v.y = 2; y.n = 9; var q: *Box<Pt> = &y; return nb<Pt>(&q) * 10 + nv<Pt>(&q); }' \
+    'syscall(60, main());'; } > "$D/b3.cyr"
+xr B3 "$D/b3.cyr" 99 "nb<Pt>(&q) * 10 + nv<Pt>(&q): the instance's pin (**pp a Box<Pt>)"
+{ cat "$D/bh.cyr"; printf '%s\n' \
+    'fn main(): i64 { var y: Box<Pt>; y.v.y = 2; y.n = 9; var q: *Box<Pt> = &y; return nc(&q); }' \
+    'syscall(60, main());'; } > "$D/b4.cyr"
+xr B4 "$D/b4.cyr" 11 "nc(&q) through a concrete **Box<Pt>"
+
 echo "T. $TC ($N rows, $NGI GI / GK)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -201,4 +244,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a \`pp: **Box<T>\` parameter (B, 6.7.15) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

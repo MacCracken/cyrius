@@ -6915,7 +6915,11 @@ scalar pointee binds as through `p: *T` (6.7.15, D11 (a)): a `**i32` — the sam
 `&p` of a `*i32` — binds `i32` (`*pp + 1` steps 4), a `**f64` `f64`. A `*S` (one star), a
 `***S`, a `**u8`, a parenthesised or computed argument (`(pps)`, `pps + 0`) bind nothing
 (`i64`), and a direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds
-from `x`.
+from `x`. A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
+as the body reads `Box<T>` — at the base `Box<i64>`, in an instance its own `Box<..>`, so `**pp`
+is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with `q: *Box<Pt>`
+(through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). ⚠ It
+infers nothing yet: `nb(&q)` runs the `i64` base (filed) — write `nb<Pt>(&q)`.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
