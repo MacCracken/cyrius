@@ -237,7 +237,8 @@ generic struct's or an explicit call's type argument (`Box<Vec<T>>`, `idv<Vec<T>
 union, an integer or float, `bool`, `cstring`, `Result` / `Option` / `Tagged`, an enum, `Vec` (a nested
 `Vec<..>` is read the same way) or a type parameter in scope; a generic struct element's own `<..>` is read as
 that struct's annotation reads it, minting nothing (`Vec<Box<nosuch>>` is *unknown type 'nosuch' as a type
-argument*, `Vec<Box<(i64, i64)>>` *a tuple type cannot be a type argument*; 6.7.14), any other element's is
+argument*, `Vec<Box<(i64, i64)>>` *a tuple type cannot be a type argument*; 6.7.14), and held to the struct's bounds
+(6.7.15; see *Trait bounds*), any other element's is
 not read. Everything else is refused by name, once: a tuple (`a tuple type cannot be a Vec
 element`), an unknown name (`unknown type 'Nope' as the Vec element of 'v'`), a vector type, a slice,
 `u128`, a token that is no type (`expected a Vec element type for 'v', got number 1`; a pointer element
@@ -7046,7 +7047,10 @@ describe<i32>(7);   # needs impl Show for i32
   reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is not emitted and
   every path to it — a call, a tail call, `&describe`, a generic method's `p.bm(7)` (6.7.11: it
   returned 0) — is refused), and a generic struct's instance,
-  its i64 base included (a bare `Shown`, a written `Shown<i64>`). An instance is judged at its own type
+  its i64 base included (a bare `Shown`, a written `Shown<i64>`) — a `Vec<..>` element too, though no instance is
+  minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
+  Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked).
+  An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
   instance's one note names the type the call binds (6.7.11).
 - **Any type satisfies a bound through its impl**, a scalar too: `impl Show for i64` defines

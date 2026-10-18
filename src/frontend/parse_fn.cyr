@@ -15080,8 +15080,11 @@ fn _type_arg_leaf(S, noff): i64 {
     if (_tp_c0 != 0) { _c0 = _tp_resolve(S, noff); }
     if (_c0 == 0) { _c0 = _classify_return_type(S, noff); }
     if (_c0 == 0) {
-        if (_ta_chk == 1) { if (_targ_is_tp(S, noff) == 1) { return 0 - 8; } }   # 6.7.14: read unbound
-        if (_ta_late == 1) { if (_declared_later(S, noff, 40, 101) == 1) { return 0 - 8; } }   # 6.7.15 (D8)
+        if (_ta_chk == 1) { if (_targ_is_tp(S, noff) == 1) { _tck_nj = 1; return 0 - 8; } }   # 6.7.14: read unbound
+        if (_ta_late == 1) { if (_declared_later(S, noff, 40, 101) == 1) {   # 6.7.15 (D8)
+                _tck_nj = 1;
+                return 0 - 8;
+            } }
         _ta_refd = 1;
         if (_ta_chk_ok(S) == 1) { _refuse_type_arg_name(S, noff); }
         return 0 - 8;
@@ -15157,17 +15160,19 @@ fn _parse_one_type_arg(S): i64 {
     }
     STI(S, GTI(S) + 1);                              # consume the nested `<`
     var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
+    var lv = _tck_open(S);                           # 6.7.15 (D10): under `_ta_chk`, this list's own judgement
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
     var in1 = 0;
     if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
-    if (_ta_chk == 1) { return base_sid; }           # 6.7.14 (D5): read, not instantiated
+    if (_ta_chk == 1) { return _tck_nest(S, base_sid, in0, in1, lit, lv); }   # 6.7.14 (D5): read, not minted
     return _targ_inst(S, base_sid, in0, in1, lit);
 }
 # 6.7.15 (D8) — `Later<..>` in a pointer field's list read at its declaration (`_ta_late`; cursor on the `<`), Later a
 # struct declared further down: a generic one's own arguments are read and checked as any list's; any other one's list
 # is skipped, left to the use, which reads it under the struct (D6's `Pt<..>`). Read as i64; nothing is sized.
 fn _targ_later(S, noff): i64 {
+    _tck_nj = 1;   # 6.7.15 (D10): a struct declared further down is no instance to judge here
     if (_declared_later_gen(S, noff) == 0) {
         _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return 0 - 8;
@@ -15239,10 +15244,66 @@ fn _targ_chk(S, lt): i64 {
     _ta_chk = 1;
     _ta_pending_gt = 0;
     STI(S, lt + 1);
-    _parse_one_type_arg(S);
-    if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    _tck_c0 = c0;   # 6.7.15 (D10): what was read, for a Vec element's bound (`_vec_el_targs`)
+    _tck_c1 = c1;
     _ta_chk = sv_ck;
     _ta_pending_gt = sv_gt;
+    if (sv_pn == 0) { _panic = 0; }
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.15 (D10) — A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>> = 0;` with
+# `struct Box<T: Show>` and no `impl Show for Pt` compiled, where `var b: Box<Pt>;` is refused — the element's list is
+# read without minting (`_targ_chk`, 6.7.14's D5), and a bound is judged where an instance is minted. While a Vec
+# element's list is read (`_ta_vbnd`), the element and each generic struct nested in it is judged as `_targ_inst` would
+# judge it, nothing minted: its arguments against its bounds (`_bnd_check_struct`), an all-i64 list written out by its
+# base's (`_bnd_sbase`) — reported at the struct's name, once per (struct, arguments) as every bound refusal (the
+# user's D10 (a), 2026-10-18). Not judged: a list with a refused argument (its refusal stands alone), one naming a
+# type parameter not bound here (each instance judges its binding) or a struct declared further down, and one whose
+# argument is itself an instance (only minting it names it; that struct's own bound is judged in its turn). Off
+# outside a Vec element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+var _ta_vbnd = 0;   # 1 while a Vec element's list is read (`_vec_el_targs`)
+var _tck_c0 = 0;    # the arguments the last `_targ_chk` read
+var _tck_c1 = 0;
+var _tck_nj = 0;    # 1 when the list being read cannot be judged (above)
+# Under `_ta_chk`, cursor just past a nested `<`: the enclosing list's state, packed (its name token * 4, its refusal
+# flag * 2, its no-judge flag), both flags cleared for this list. 0 and nothing touched outside `_ta_chk`.
+fn _tck_open(S): i64 {
+    if (_ta_chk == 0) { return 0; }
+    var lv = (GTI(S) - 2) * 4 + _ta_refd * 2 + _tck_nj;
+    _ta_refd = 0;
+    _tck_nj = 0;
+    return lv;
+}
+# The nested generic struct `sid` read under `_ta_chk` (`lv` from `_tck_open`): judged inside a Vec element, the
+# enclosing list's flags put back (with this list's), and read as its base — an instance its enclosing list cannot
+# judge.
+fn _tck_nest(S, sid, in0, in1, lit, lv): i64 {
+    var nj = _tck_nj | _ta_refd;
+    _ta_refd = ((lv / 2) & 1) | _ta_refd;
+    _tck_nj = (lv & 1) | nj;
+    if (_ta_vbnd == 1) { if (nj == 0) { _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
+    if (_targ_is_inst(in0, in1) == 1) { _tck_nj = 1; }
+    return sid;
+}
+# 1 when a list read as (c0, c1) names an instance, not the all-i64 (or unbound) base (`_targ_inst`'s rule).
+fn _targ_is_inst(c0, c1): i64 {
+    if (c0 != 0 - 8) { if (c0 != 0) { return 1; } }
+    if (c1 != 0) { if (c1 != 0 - 8) { return 1; } }
+    return 0;
+}
+# Generic struct `sid` read as (c0, c1) (`lit`: the list written out) judged against its bounds at token `at`, minting
+# nothing; the panic latch a report sets is put back, so the list reads on.
+fn _vbnd_judge(S, sid, c0, c1, lit, at): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    var sv = GTI(S);
+    var sv_pn = _panic;
+    STI(S, at);
+    if (_targ_is_inst(c0, c1) == 1) { _bnd_check_struct(S, sid - 1, c0, c1); }
+    elif (lit == 1) { _bnd_sbase(S, sid); }
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
     return 0;

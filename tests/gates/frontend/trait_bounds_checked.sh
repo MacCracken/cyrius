@@ -63,6 +63,22 @@
 #      "the bound on type parameter 'T' needs `impl Show for i64`" under gs's error. N1: one error line, no
 #      note. Mutant (the `_panic` test in `_bnd_check` removed, a one-edit scratch copy of the tree, its 2-stage
 #      cycc, this gate run from it) -> RED N1 (the orphan note).
+#   VB (6.7.15, the user's D10 (a), 2026-10-18) A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>>
+#      = 0;` with `struct Box<T: Show>` and no `impl Show for Pt` compiled (the filed repro exited 5) — the element's
+#      list was read for names only (6.7.14's D5), the bound judged only where an instance is minted. Judged at the
+#      element now, nothing minted (`_vec_el_targs`, `_tck_nest`, `_vbnd_judge`): VB0 the filed repro verbatim (once, at
+#      6:16, with the note); VB1 with the impl (5); VB2 a struct field; VB3 / VB3b `Vec<Box<i64>>` and a bare `Vec<Box>`
+#      (the i64 base's bound); VB4 nested (`Vec<Two<Box<Pt>, i64>>`, `Vec<Vec<Box<Pt>>>`), a parameter, a global; VB5 a
+#      generic's `Vec<Box<T>>` judged per instance, not in its base; VB6 a generic struct's field at `W<Pt>`; VB7 once
+#      per (struct, arguments); VB8 a refused argument alone; VB9 the list reads on after it; VBK the impl present (23).
+#      A signature's or a pointer field's `_targ_chk` judges no bound (off outside a Vec element).
+#      Filed: docs/development/issues/2026-10-16-vec-element-generic-struct-bound-unchecked.md
+#      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
+#      (13fd8844) -> RED 13: VB0 (both rows) VB2 VB3 VB3b VB4-VB4d VB5 VB6 VB7 VB9 (each built); MVB1 `_vec_el_targs`
+#      without the element's judgement -> RED 10: VB0 (both) VB2 VB3 VB4b-VB4d VB5 VB6 VB7; MVB2 `_tck_nest` without its
+#      judgement -> RED 2: VB4 VB9; MVB3 `_vec_el_bare` answering 0 -> RED 1: VB3b; MVB4 `_vbnd_judge` keeping the panic
+#      latch -> RED 1: VB9 (one line); MVB5 `_type_arg_leaf`'s type-parameter arm not marking the list -> RED 1: VBK (a
+#      generic's base judged at i64)
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
 #
@@ -361,6 +377,95 @@ fn u<T>(v: T): i64 { return v.show(); }' 'var b: Box<Pt>; b.n = 0; return f(p, p
 exits c1 44 "C1: T: Show + Eq2, a colliding size picked by T: Size, i64's impl, Box<Pt>, an unbounded T"
 printf 'fn id<T>(v: T): i64 { return v + 1; }\nsyscall(60, id(41));\n' > "$T/c2.cyr"
 exits c2 42 "C2: a program with no bound"
+
+# VB — 6.7.15 (D10): a Vec element's generic struct is held to its bounds, nothing minted
+errs() {   # <name> <n> <what> <fragment>...: refused with exactly <n> `^error` lines, each fragment among them
+    nm=$1; want=$2; what=$3; shift 3
+    build "$nm"
+    k=$(grep -c '^error' "$T/$nm.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    if [ "$k" -ne "$want" ]; then bad "$what: $k error lines (want $want): $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    for l in "$@"; do
+        if ! grep -qF -- "$l" "$T/$nm.err"; then bad "$what: no line '$l': $(grep '^error' "$T/$nm.err" | head -3 | tr '\n' ' ')"; return; fi
+    done
+    ok "$what: refused, $k error line(s) as wanted"
+}
+cat > "$T/vb0.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct Box<T: Show> { v: T; n; }
+fn main(): i64 {
+    var w: Vec<Box<Pt>> = 0;
+    return 5;
+}
+syscall(60, main());
+EOF
+VBE="generic 'Box': its type argument does not implement trait 'Show'"
+errs vb0 1 "VB0: the filed repro verbatim — the bound's error once, at the element (it built: exit 5)" "error:<source>:6:16: $VBE"
+grep -qF "needs \`impl Show for Pt\`" "$T/vb0.err" && ok "VB0: ... with its note" || bad "VB0: no note naming \`impl Show for Pt\`"
+sed 's/^struct Pt { x; y; }$/struct Pt { x; y; }\nimpl Show for Pt { fn show(self): i64 { return self.x; } }/' "$T/vb0.cyr" > "$T/vb1.cyr"
+exits vb1 5 "VB1: the repro with \`impl Show for Pt\` present"
+VBH='include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+impl Show for R { fn show(self): i64 { return self.r; } }'
+vb() { printf '%s\n%s\nsyscall(60, 7);\n' "$VBH" "$2" > "$T/$1.cyr"; }
+vb vb2 'struct H { items: Vec<Box<Pt>>; k; }'
+errs vb2 1 "VB2: a struct field items: Vec<Box<Pt>>" "error:<source>:8:23: $VBE"
+vb vb3 'fn f(): i64 { var w: Vec<Box<i64>> = 0; return 5; }'
+errs vb3 1 "VB3: Vec<Box<i64>> — the i64 base's bound, as var b: Box<i64>" "error:<source>:8:26: $VBE"
+vb vb3b 'fn g(): i64 { var u: Vec<Box> = 0; return 5; }'
+errs vb3b 1 "VB3b: a bare Vec<Box> — as var b: Box;" "error:<source>:8:26: $VBE"
+vb vb4 'fn f(): i64 { var w: Vec<Two<Box<Pt>, i64>> = 0; return 5; }'
+errs vb4 1 "VB4: nested, Vec<Two<Box<Pt>, i64>>" "error:<source>:8:30: $VBE"
+vb vb4b 'fn f(): i64 { var w: Vec<Vec<Box<Pt>>> = 0; return 5; }'
+errs vb4b 1 "VB4b: nested, Vec<Vec<Box<Pt>>>" "error:<source>:8:30: $VBE"
+vb vb4c 'fn f(m: Vec<Box<Pt>>): i64 { return 5; }'
+errs vb4c 1 "VB4c: a parameter m: Vec<Box<Pt>>, at the definition" "error:<source>:8:13: $VBE"
+vb vb4d 'var GW: Vec<Box<Pt>> = 0;'
+errs vb4d 1 "VB4d: a global" "error:<source>:8:13: $VBE"
+vb vb5 'fn g<T>(x: T): i64 { var w: Vec<Box<T>> = 0; return 5; }
+fn f(): i64 { var p: Pt; var r = R { 1 }; return g(p) + g(r) + g<Pt>(p) + g<R>(r); }'
+errs vb5 1 "VB5: a generic's Vec<Box<T>> — judged per instance (Pt once), not in its base" "error:<source>:8:33: $VBE"
+vb vb6 'struct W<T> { items: Vec<Box<T>>; k; }
+fn f(): i64 { var a: W<R>; var b: W<Pt>; return 5; }'
+errs vb6 1 "VB6: a generic struct's items: Vec<Box<T>>, W<Pt> at the field, W<R> fine" "error:<source>:8:26: $VBE"
+vb vb7 'fn f(): i64 { var w: Vec<Box<Pt>> = 0; var u: Vec<Box<Pt>> = 0; var b: Box<Pt>; return 5; }'
+errs vb7 1 "VB7: once per (struct, arguments), as every bound refusal" "error:<source>:8:26: $VBE"
+vb vb8 'fn f(): i64 { var w: Vec<Box<nosuch>> = 0; return 5; }'
+errs vb8 1 "VB8: a refused argument stands alone" "unknown type 'nosuch' as a type argument"
+vb vb9 'fn f(): i64 { var w: Vec<Two<Box<Pt>, nosuch>> = 0; return 5; }'
+errs vb9 2 "VB9: the list reads on after the bound's error" "error:<source>:8:30: $VBE" "unknown type 'nosuch' as a type argument"
+cat > "$T/vbk.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+struct Two<A, B> { a: A; b: B; }
+impl Show for R { fn show(self): i64 { return self.r; } }
+struct H { items: Vec<Box<R>>; k; }
+struct W<T> { items: Vec<Box<T>>; k; }
+var GW: Vec<Box<R>> = 0;
+fn g<T>(x: T): i64 { var w: Vec<Box<T>> = 0; return 2; }
+fn pm(m: Vec<Box<R>>, n: Vec<Two<Pt, i64>>): i64 { return 3; }
+fn main(): i64 {
+    var a: Vec<Box<R>> = 0;
+    var b: Vec<Two<Box<R>, Pt>> = 0;
+    var c: Vec<Vec<Box<R>>> = 0;
+    var d: Vec<Pt> = 0;
+    var h: H;
+    var w: W<R>;
+    var r = R { 1 };
+    return g(r) + g<R>(r) + pm(0, 0) + sizeof(Box<R>);
+}
+syscall(60, main());
+EOF
+exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14); a refusal the panic latch swallows prints no orphan note (N, 6.7.14); well-formed bounded code runs (C)"
