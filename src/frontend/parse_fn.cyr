@@ -9141,6 +9141,7 @@ var _trs_bad = 0;   # the member being walked has reported (or stopped)
 fn _tr_sig_check(S, tx, p, op, q): i64 {
     if (TOKTYP(S, q) == 13) { if (_tr_dflt_inh(S, tx, TOKVAL(S, p + 1)) == 1) { return 0; } }
     _trs_bad = 0;
+    _trs_fn = p + 1;   # 6.7.15 (D7)
     var i = _trs_params(S, op + 1, q);
     if (_trs_bad == 0) {
         if (TOKTYP(S, i) == 49) {
@@ -9149,6 +9150,7 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
         }
     }
     if (_trs_bad == 0) { if (i != q) { _trs_end(S, i); } }
+    _trs_fn = 0;
     return 0;
 }
 # 1 when an impl of trait `tx` does not define `m` — it inherits the default.
@@ -9222,6 +9224,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     i = i + 1;
     if (TOKTYP(S, i) != 19) { return i; }
     _vec_ann_chk(S, i - 1, nm);   # 6.7.14 (D4): `v: Vec<T>` reads T, as in a fn definition
+    _trs_targs(S, i - 1);         # 6.7.15 (D7): `b: Box<nosuch>` reads its list
     var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
     while (i < q) {
         t = TOKTYP(S, i);
@@ -9233,6 +9236,25 @@ fn _trs_type(S, i, q, tail, nm): i64 {
         if (d <= 0) { return i; }
     }
     return _trs_err(S, i, 20);
+}
+# ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS IN A TRAIT MEMBER'S SIGNATURE (`ti` the struct's name, its `<`
+# next) are read, as a fn definition's are since 6.7.14 (`_gtype_sid_def`): the list was skipped unread, so
+# `fn a(self, b: Box<nosuch>): i64;` compiled as the base `Box`. Every type-argument refusal once at its token
+# (`_targ_chk`, nothing instantiated); the member's own `<U>` stays a name (`_trs_fn`). A refusal ends the member's
+# walk, as the reader's others do (the user's D7 (a), 2026-10-18). CHANGELOG [6.7.15]
+var _trs_fn = 0;   # the walked member's `fn` token + 1 (0 = none): its own type parameters are names
+fn _trs_targs(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_trs_bad == 1) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    var sv_rf = _ta_refd;
+    _ta_refd = 0;
+    _targ_chk(S, ti + 1);
+    if (_ta_refd == 1) { _trs_bad = 1; }
+    _ta_refd = sv_rf;
+    return 0;
 }
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
 # `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. A member's `: u128` return type is not a
@@ -13015,11 +13037,27 @@ fn _pty_list(S, i, loud): i64 {
 # set, `_tn_param_check`: a by-name handle or vector, a resolved type, the fn's own type parameter).
 fn _pty_name(S, i): i64 {
     _vec_ann_chk(S, i, _pty_pnoff(S));   # 6.7.11: `p: **Vec<T>`, a `*fn(Vec<T>)` parameter
+    _pty_targs(S, i);                    # 6.7.15 (D7): `cb: *fn(Box<Zork>): i64`
     var nm = TOKVAL(S, i);
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
     _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    return 0;
+}
+# ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the
+# name, `<` next) are read at the definition, as the parameter's own `m: Box<Zork>` is since 6.7.14: the list was
+# skipped (`_pty_gen_end`), so `cb: *fn(Box<Zork>): i64` compiled. `_targ_chk`: every refusal once at its token,
+# nothing instantiated; the fn's own type parameters stay names (the user's D7 (a), 2026-10-18). CHANGELOG [6.7.15]
+fn _pty_targs(S, i): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, i + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, i));
+    if (sid <= 0) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    var sv_rf = _ta_refd;
+    _targ_chk(S, i + 1);
+    _ta_refd = sv_rf;
     return 0;
 }
 # Token `i` past a name: past its `<..>` when one follows.
@@ -15100,6 +15138,7 @@ fn _targ_is_tp(S, noff): i64 {
     if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, noff) == 1) { return 1; } }
     if (_is_own_tparam(S, noff) == 1) { return 1; }
+    if (_trs_fn > 0) { if (_fn_tp_has(S, _trs_fn - 1, noff) == 1) { return 1; } }   # 6.7.15 (D7): a trait member's
     return 0;
 }
 
@@ -15629,7 +15668,10 @@ fn _mret_elem(S, fi, quiet): i64 {
         if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
         t = 0 - 8;
     }
-    if (t > 0) { t = _gtype_sid(S, fi, t); }
+    if (t > 0) {
+        if (quiet == 0) { t = _gtype_sid_def(S, fi, t); }   # 6.7.15 (D7): `(Box<Zork>, i64)` read at the definition
+        else { t = _gtype_sid(S, fi, t); }
+    }
     if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
     STI(S, GTI(S) + 1);                 # consume the type IDENT
     SKIP_GENERICS(S);

@@ -6916,8 +6916,11 @@ the definition was refused, *unknown type 'T' as a type argument*, twice).
 A signature's type arguments are read at the definition as a `var`'s are, whether or not the fn is
 called: `fn gm(m: Mp<K, V>, b)` with `K` / `V` neither types nor the fn's own type parameters is
 *unknown type 'K' as a type argument*, and so are `m: *Mp<K, V>`, `: Mp<K, V>` and `m: Box<Zork>`
-(6.7.14; each compiled as the base struct, and `m: Box<Zork>` took a `Box<i64>`). A generic's own
-`fn gm<K, V>(m: Mp<K, V>)` and a struct declared below the fn are type arguments as before.
+(6.7.14; each compiled as the base struct, and `m: Box<Zork>` took a `Box<i64>`). So, since 6.7.15, are a
+multi-value return element `fn mv(): (Box<Zork>, i64)`, a trait member's `fn a(self, b: Box<nosuch>): i64;` and a
+fn-pointer parameter's `cb: *fn(Box<Zork>): i64` — each refused once, used or not (the user's D7 (a), 2026-10-18;
+through 6.7.14 they compiled as the base `Box`). A generic's own `fn gm<K, V>(m: Mp<K, V>)`, a trait member's own
+`fn g<U>(self, b: Box<U>): U;` and a struct declared below the fn are type arguments as before.
 A `: T` return in an instance whose `T` is a struct returns that struct by value,
 as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
 return the struct's address); `Str` keeps its heap-handle return.
