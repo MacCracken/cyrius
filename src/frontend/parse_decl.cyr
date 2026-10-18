@@ -9383,8 +9383,9 @@ fn PARSE_VAR(S): i64 {
             if (_vin_fi >= 0) {
                 var _vin_rs = GFRS(S, _vin_fi);
                 if (pscale == 0) {
-                    # No annotation of its own: take the callee's.
-                    if (scalar_type == 0) { pscale = _vin_rs; }
+                    # No annotation of its own: take the callee's. 6.7.15: an annotation of no integer width (`: f64`,
+                    # `: f32`, `: bool`, `: cstring`, an enum) is one, so it meets the refusal below. CHANGELOG [6.7.15]
+                    if (scalar_type == 0) { if (ann_ti == 0) { pscale = _vin_rs; } }
                 }
                 # An annotation that DISAGREES with the callee is a type error, and
                 # it used to be silent in the same way the missing one was: the

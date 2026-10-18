@@ -296,6 +296,14 @@
 #   M-CR1 `_vmc_open` without its chain arm            -> RED 60: CR1-CR7 and CRK1-CRK5 on all five legs; CRK6 green (the
 #       return rule names `w` either way)
 #   M-CR2 `_svc_rs` naming token ti + 2                 -> RED 5: CRK5 on all five legs ("cannot pass 's'")
+# 6.7.15 (issues/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md) — a by-name call declared `: V` into
+# a declaration annotated with a type of no integer width (`: f64`, `: f32`, `: bool`, `: cstring`, an enum) is refused
+# "vector return type does not match the declared type", as the method is since 6.7.14's D38: PARSE_VAR inferred the
+# callee's vector whenever the annotation had no width, so `x` was a two-slot vector local labelled f64 (the filed repro
+# exit 3, `load64(&x + 8)` 7, on all five legs). It infers only when there is no annotation. Rows NK (refused once,
+# host / host IR=3 / cx / aarch64 / win64), N1 the control (161). Mutation (2026-10-18, measured):
+#   M-N1 the inference on any width-0 annotation (the tree before) -> RED 30: NK1-NK6 on all five legs; NK7-NK11 (the
+#       method) and N1 green
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -1014,6 +1022,67 @@ mk_msg() {
     MK6|MK7) echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`s\`";;
     esac
 }
+# ---- 6.7.15 (issues/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md): a by-name call declared `: V`
+# into a declaration annotated with a type of no integer width (rows NK refused once; row N1 the control, 161) ----------
+# NK1 the filed repro verbatim (`var x: f64 = mkv(41, 7);`), NK2-NK5 `: f32` / `: bool` / `: cstring` / an enum, NK6
+# an explicit instance into `: f64`, NK7-NK11 the method into the same five (refused since 6.7.14's D38, the parity
+# row); N1 `var x: f64v2 = mkv(..)` and the untyped `var y = mkv(..)` stay the vector.
+NH='fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+struct S { k; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+enum E { EA, EB }
+'
+nk_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    NK1) printf '%s' 'include "lib/syscalls.cyr"
+fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn main(): i64 { var x: f64 = mkv(41, 7); return 3; }
+syscall(60, main());
+' ;;
+    NK2) printf '%s' "$NH"'fn run(): i64 { var x: f32 = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK3) printf '%s' "$NH"'fn run(): i64 { var x: bool = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK4) printf '%s' "$NH"'fn run(): i64 { var x: cstring = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK5) printf '%s' "$NH"'fn run(): i64 { var x: E = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK6) printf '%s' "$NH"'fn run(): i64 { var x: f64 = mkg<i64>(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK7) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: f64 = s.mv(); return 3; }
+syscall(60, run());
+' ;;
+    NK8) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: f32 = s.mv(); return 3; }
+syscall(60, run());
+' ;;
+    NK9) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: bool = s.mv(); return 3; }
+syscall(60, run());
+' ;;
+    NK10) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: cstring = s.mv(); return 3; }
+syscall(60, run());
+' ;;
+    NK11) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: E = s.mv(); return 3; }
+syscall(60, run());
+' ;;
+    esac
+}
+NK_ROWS="NK1 NK2 NK3 NK4 NK5 NK6 NK7 NK8 NK9 NK10 NK11"
+nk_msg() { echo "vector return type does not match the declared type"; }
+n_src() {  # $1 row id -> source on stdout; exits 161 when right
+    case "$1" in
+    N1) printf '%s' "$NH"'fn run(): i64 { var x: f64v2 = mkv(41, 7); var y = mkv(41, 7); if (lanes(y) != 417) { return 1; } return lanes(x); }
+syscall(60, run() % 256);
+' ;;
+    esac
+}
+N_ROWS="N1"
 # ---- 6.7.15 (issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared `: V`
 # on a FIELD-CHAIN receiver (rows CR run, 161; rows CRK refused once) -----------------------------------------------------
 # CR1 the filed repro verbatim (the untyped declaration); CR2-CR5 `w.s.mv()`, `pw.s.mv()` (a pointer head), `h.w.s.mv()`
@@ -1659,6 +1728,10 @@ accept_tab_all host "$CC" hostr m_src "$M_ROWS"
 accept_tab_all host-ir3 "$CC" hostr m_src "$M_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" mk_src "$MK_ROWS" mk_msg
 accept_tab_all host "$CC" hostr cr_src "$CR_ROWS"
+accept_tab_all host "$CC" hostr n_src "$N_ROWS"
+accept_tab_all host-ir3 "$CC" hostr n_src "$N_ROWS" CYRIUS_IR=3
+refuse_tab_all host "$CC" nk_src "$NK_ROWS" nk_msg
+refuse_tab_all host-ir3 "$CC" nk_src "$NK_ROWS" nk_msg CYRIUS_IR=3
 accept_tab_all host-ir3 "$CC" hostr cr_src "$CR_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" crk_src "$CRK_ROWS" crk_msg
 refuse_tab_all host-ir3 "$CC" crk_src "$CRK_ROWS" crk_msg CYRIUS_IR=3
@@ -1689,6 +1762,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_tab_all cx "$W/cycc_cx" cxr m_src "$M_ROWS"
     refuse_tab_all cx "$W/cycc_cx" mk_src "$MK_ROWS" mk_msg
     accept_tab_all cx "$W/cycc_cx" cxr cr_src "$CR_ROWS"
+    accept_tab_all cx "$W/cycc_cx" cxr n_src "$N_ROWS"
+    refuse_tab_all cx "$W/cycc_cx" nk_src "$NK_ROWS" nk_msg
     refuse_tab_all cx "$W/cycc_cx" crk_src "$CRK_ROWS" crk_msg
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
@@ -1720,6 +1795,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_tab_all aarch64 "$W/cycc_a64" a64r m_src "$M_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" mk_src "$MK_ROWS" mk_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r cr_src "$CR_ROWS"
+        accept_tab_all aarch64 "$W/cycc_a64" a64r n_src "$N_ROWS"
+        refuse_tab_all aarch64 "$W/cycc_a64" nk_src "$NK_ROWS" nk_msg
         refuse_tab_all aarch64 "$W/cycc_a64" crk_src "$CRK_ROWS" crk_msg
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
@@ -1756,6 +1833,8 @@ if command -v wine > /dev/null 2>&1; then
         accept_tab_all win64 "$W/cycc_win" wr_ m_src "$M_ROWS"
         refuse_tab_all win64 "$W/cycc_win" mk_src "$MK_ROWS" mk_msg
         accept_tab_all win64 "$W/cycc_win" wr_ cr_src "$CR_ROWS"
+        accept_tab_all win64 "$W/cycc_win" wr_ n_src "$N_ROWS"
+        refuse_tab_all win64 "$W/cycc_win" nk_src "$NK_ROWS" nk_msg
         refuse_tab_all win64 "$W/cycc_win" crk_src "$CRK_ROWS" crk_msg
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
@@ -1773,7 +1852,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -1792,11 +1871,12 @@ na_floor=$((na_floor + $(set -- $U_ROWS; echo $#) * 2))   # 6.7.14 (D43): every 
 na_floor=$((na_floor + $(set -- $D_ROWS; echo $#) * 3))   # 6.7.14 (D35, D36): every D row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $M_ROWS; echo $#) * 3))   # 6.7.14 (D37-D39): every M row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $CR_ROWS; echo $#) * 3))   # 6.7.15: every CR row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $N_ROWS; echo $#) * 3))   # 6.7.15: every N row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

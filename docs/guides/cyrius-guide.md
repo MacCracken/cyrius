@@ -1878,7 +1878,9 @@ callptr form got the generic refusal below, *… got `callptr`*), and (6.7.15) s
 another vector inside parentheses, `var v: f64v2 = (mk4(41));` / `w = (s.mv());` (through 6.7.14 the generic refusal,
 *… got `(...)`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
 a method's vector into a scalar, struct or pointer local, `var x: i64 = s.mv();` / `x = s.mv();`, as `var x: i64 =
-mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows). Every other source is refused by name (`a value-form vector local is initialised only
+mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows) — and (6.7.15) a by-name
+call into a declaration annotated with a type of no integer width, `var x: f64 = mkv(41, 7);` (`f32`, `bool`,
+`cstring`, an enum), as the method is: through 6.7.14 it compiled, `x` silently a two-slot vector local. Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local
