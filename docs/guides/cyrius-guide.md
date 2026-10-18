@@ -3187,7 +3187,10 @@ An inline `Str` cannot be rebound, so `t = a` with `a` a `Str` HANDLE — a hand
 global, a call or method declared `: Str` (`t = str_from("abc");`, `t = h.clone();`), a `Str` field —
 copies the 16-byte header `a` points at into `t` (the user's decision D20 (a), 2026-10-16), as `t = u`
 between two inline `Str`s does and as an inline struct takes a copy through any handle (6.6.16): a later
-`a.len = 2` leaves `t.len`. An untyped source keeps the one-word store into `t.data`. Through 6.7.13 the
+`a.len = 2` leaves `t.len`. Since 6.7.15 a `*Str` source copies too — `t = p` and `t = *p` with `p: *Str` (a
+local, parameter or global; `*p` of any `*Str`-typed expression: `**pp`, `*w.p`, `*gp()`) copy the header p points at
+(the user's decision D14, 2026-10-18; through 6.7.14 `t.data` took p, or the header's data word, and `t.len` stayed
+stale). An untyped source keeps the one-word store into `t.data`. Through 6.7.13 the
 handle's address was stored into `t.data` and `t.len` left stale, and a bare `var t: Str;` stayed outside
 D7 (1) — its bare name its first word, so `str_len(t)` read the handle's string through that pun and `return
 t;` from a fn returning `Str` compiled.

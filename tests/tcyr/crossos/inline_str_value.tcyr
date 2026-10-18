@@ -146,6 +146,20 @@ fn q_pglob(): i64 { var p: *Str = gt; var q: *Str = (gt); return str_len(p) * 10
 fn q_pbare(): i64 { var t: Str; t = str_from("abcde"); var p: *Str = (t); p.len = 2; return t.len; }
 fn q_pcap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = t; return str_len(p); }; return callptr(c); }
 
+# ── `t = p` / `t = *p` with p a `*Str` copy the header p points at into an inline `Str` (6.7.15, D14) ───────────────
+var gi4: Str = Str { "zz", 2 };        # an inline Str global the ps_* rows copy into
+fn ps_name(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str = Str { "zz", 2 }; t = p; a.len = 1; return t.len * 10 + f(t); }
+fn ps_deref(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str = Str { "zz", 2 }; t = *p; a.len = 1; return t.len * 10 + f(t); }
+fn ps_bare(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str; t = p; var u: Str; u = *p; return t.len * 10 + f(u); }
+fn ps_global(): i64 { var a = str_from("abcde"); var p: *Str = a; gi4 = p; var r = gi4.len * 10; gi4.len = 2; gi4 = *p; r = r + f(gi4); gi4.len = 2; return r; }
+fn ps_param(p: *Str): i64 { var t: Str = Str { "zz", 2 }; t = p; var u: Str; u = *p; return t.len * 10 + f(u); }
+fn ps_gsrc(): i64 { var a = str_from("abcde"); GPS = a; var t: Str; t = GPS; var u: Str; u = *GPS; GPS = 0; return t.len * 10 + f(u); }
+fn ps_step(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str; var u: Str; var i = 0; for (i = 0; i < 1; t = p) { i = i + 1; } for (i = 0; i < 1; u = *p) { i = i + 1; } return t.len * 10 + f(u); }
+fn ps_wrap(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str; t = (p); var u: Str; u = (*p); var v: Str; v = *(p + 0); return t.len * 100 + u.len * 10 + v.len; }
+fn ps_chain(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var w: WP = WP { a, 1 }; GPS = a; var t: Str; t = **pp; var u: Str; u = *w.p; var v: Str; v = *gsp(); GPS = 0; return t.len * 100 + u.len * 10 + v.len; }
+fn ps_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var c = || { var t: Str = Str { "zz", 2 }; t = p; var u: Str; u = *p; return t.len * 10 + f(u); }; return callptr(c); }
+fn ps_inl(): i64 { var t: Str = Str { "zz", 2 }; var p: *Str = t; var u: Str; u = *p; t.len = 1; return u.len; }
+
 # ── an inline `Str` ASSIGNED into a `*Str` takes its header's address, as the declaration does (6.7.15, D16) ──────
 fn pa_local(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = t; p.len = 3; return t.len * 10 + str_len(p); }
 fn pa_gt(): i64 { var p: *Str = 0; p = gt; return str_len(p); }
@@ -254,6 +268,12 @@ if (UL == load64(&gz)) { R_TOP6 = 1; }
 GPS = gt;                    # top level: an inline Str global assigned into a `*Str` global (D16)
 var R_TOP7 = str_len(GPS);
 var R_TOP8 = str_len(*GPS);  # top level: a `*Str` dereference into a `Str` parameter (6.7.15)
+gi4 = GPS;                   # top level: an inline Str global <- a `*Str` global (D14)
+var R_TOP9 = gi4.len;
+gi4.len = 2;
+gi4 = *GPS;
+var R_TOP10 = f(gi4);
+gi4.len = 2;
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -309,6 +329,17 @@ assert_eq(q_ptr(), 33, "var p: *Str = t; takes t's header: p.len = 3 writes t.le
 assert_eq(q_pglob(), 77, "var p: *Str = gt; / = (gt);");
 assert_eq(q_pbare(), 2, "var p: *Str = (t); of a bare t binds its header");
 assert_eq(q_pcap(), 7, "var p: *Str = t; inside a closure: the environment's copy");
+assert_eq(ps_name(), 55, "t = p (p a *Str) copies the header into an inline Str (the filed repro: 22, t.len stale)");
+assert_eq(ps_deref(), 55, "t = *p copies it (22 and a false warning before)");
+assert_eq(ps_bare(), 55, "a bare var t: Str; <- p / *p");
+assert_eq(ps_global(), 55, "an inline Str global <- p / *p");
+assert_eq(ps_param(str_from("abcde")), 55, "<- a `p: *Str` parameter");
+assert_eq(ps_gsrc(), 55, "<- a *Str global, GP and *GP");
+assert_eq(ps_step(), 55, "for steps t = p / u = *p");
+assert_eq(ps_wrap(), 555, "t = (p); u = (*p); v = *(p + 0)");
+assert_eq(ps_chain(), 555, "t = **pp, u = *w.p, v = *gsp()");
+assert_eq(ps_cap(), 55, "a closure's own inline Str <- a captured *Str, p and *p");
+assert_eq(ps_inl(), 2, "u = *p with p bound to an inline Str: a copy (t.len = 1 after leaves u)");
 assert_eq(pa_local(), 33, "p = t into a *Str local takes t's header: p.len = 3 writes t.len (D16; the data word before)");
 assert_eq(pa_gt(), 7, "p = gt into a *Str local");
 assert_eq(pa_gp(), 7, "GP = gt into a *Str global");
@@ -358,6 +389,8 @@ assert_eq(R_TOP5, 4, "top level after a statement: var HL: Str = gz; HL.len = 4 
 assert_eq(R_TOP6, 1, "top level after a statement: an untyped var UL = gz; keeps gz's first word (D22 (b))");
 assert_eq(R_TOP7, 7, "top level: GP = gt into a *Str global (D16)");
 assert_eq(R_TOP8, 7, "top level: str_len(*GP) passes the header GP points at");
+assert_eq(R_TOP9, 7, "top level: gi = GP copies the header (D14)");
+assert_eq(R_TOP10, 7, "top level: gi = *GP copies the header (D14)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

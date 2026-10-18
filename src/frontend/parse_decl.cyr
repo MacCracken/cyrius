@@ -7778,8 +7778,15 @@ fn _istr_dsto(S, d, ti): i64 {
 # inline `Str` cannot be. It copies the header a points at now, as `t = u` between inline `Str`s does: a handle local,
 # parameter or global (`_istr_hop`), a call declared `: Str` (`_istr_call`), a method's result or a `Str` field
 # (`_istr_hcp`). An untyped source keeps the one-word store, as for every inline struct. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AND A `*Str` SOURCE: `t = p` / `t = *p` (p a `*Str`) COPY THE HEADER p POINTS AT (the user's D14,
+# 2026-10-18). They stored p (or the header's data word) into t.data and left t.len stale (the filed repro 22, want 55),
+# where `var t: Str = *p;` copies and 6.7.10's decision 6 copies the struct a `*S` points at into every other struct
+# destination. A `*Str` local, parameter or global name (`_istr_dst` 3 / 4) is a copy source here as a handle is; `t =
+# *p` with E typed `*Str` is `_asg_dstar`'s (`_istr_dxa`). An if-expression of handles keeps the one-word store (the
+# user's D15: an untyped source, as for every inline struct). CHANGELOG [6.7.15]
 # `t = snoff;` (`_try_aggregate_copy_assign`, the source no operand) with `dt` an inline `Str` (`dh` 0): a `Str` handle
-# local or parameter (`_agc_pp` 2) or global (the deref band) is the source the copy goes through — its span; else 0.
+# or `*Str` local or parameter (`_agc_pp` 2) or global (the deref band) is the source the copy goes through — its span;
+# else 0.
 fn _istr_hop(S, dt, dh, snoff): i64 {
     if (dh == 1) { return 0; }
     var ss = _STR_SID(S);
@@ -7787,16 +7794,32 @@ fn _istr_hop(S, dt, dh, snoff): i64 {
     if (dt != 0 - ss) { return 0; }
     var d = _istr_dst(S, snoff);
     if (d == 0) { return 0; }
-    if (d > 2) { return 0; }   # a `*Str` source (6.7.15's 3 / 4)
     _agc_t = dt;
     _agc_pp = 0;
     _agc_li = 0 - 1;
     _agc_gvi = 0 - 1;
-    if (d == 1) {
+    if (d == 1 || d == 3) {
         _agc_li = FINDLOCAL(S, snoff);
         _agc_pp = 2;
     } else { _agc_gvi = 0 - 1000 - _findvar_core(S, snoff); }
     return AGG_NSLOTS(S, dt);
+}
+# `t = *p` (`_asg_dstar`; `ps` the struct `_hl_dstar_x` typed the dereference's operand to point at): with ps `Str`
+# and t an inline `Str`, E is parsed into `_hl_dx_src`'s temp — the header's address — and the header copied through
+# it into t (1, `term` consumed; D14, above); else 0, nothing moved.
+fn _istr_dxa(S, noff, ps, term): i64 {
+    if (ps != _STR_SID(S)) { return 0; }
+    if (_istr_inl_dst(S, _agc_operand(S, noff)) == 0) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    var h = _hl_dx_src(S);
+    var nb = STRUCTSZ(S, ps - 1);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, nb); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), nb); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
 }
 # 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override).
 fn _istr_inl_dst(S, n): i64 {
