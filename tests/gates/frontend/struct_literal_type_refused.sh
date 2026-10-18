@@ -78,6 +78,13 @@
 #                                                      `)`); green: the controls WU7 WU8
 #   `_slit_open_wrap` without its `;` test          -> RED WU7 (the operand's literal refusal dropped)
 #   `_slit_decl_eq` always 1 (any `=`)              -> RED WU8 (the assignment's literal refusal dropped)
+# (6.7.15, D1 (a): the commas; each mutant built from the fixed tree with the one change, measured)
+#   the lane's previous compiler (d1777d5f3)        -> RED CM1-CM12 (each compiled, CM8b "unexpected '}'"); CT1-CT4 green
+#   `_slit_sep` without its error (the comma        -> RED CM1-CM12
+#     optional again)
+#   `_slit_sep` without its `;` exception           -> RED CT4 (an unclosed literal named a missing `,`)
+#   `_slit_sep` without its `)` exception           -> this gate green; tests/gates/frontend/tuple_checked.sh RED (a tuple
+#                                                      literal shares the element store: its last element's `)`)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -511,6 +518,111 @@ exact1 "WU8 control: an assignment t = (P { .. };" "$WH"'fn run(): i64 { var t: 
 syscall(60, run());
 ' "error:<source>:3:45: $MS
 error:<source>:3:55: expected ')', got ';'"
+
+# CM (6.7.15, the user's decision D1 (a), 2026-10-18) — a struct literal's elements are separated by commas: a missing
+# one is ONE error at the second element, "expected ',' between struct literal elements", positional and named, in a
+# fn, after the first statement, in the declaration zone (the bake declines it, so the replay's store reports it; a
+# kernel build too), a nested struct's leaves and a nested whole value, a generic literal, a generic fn's body (once),
+# --syntax-only. Each compiled, the values where the commas put them (the filed repro exited 6)
+# (issues/2026-10-16-struct-literal-elements-need-no-comma.md). Controls: commas, and a trailing comma `P { 1, 2, }` /
+# `P { a: 1, b: 2, }`, build byte-identical to the plain form (CT1-CT3); W1-W7 above unchanged.
+MC="expected ',' between struct literal elements"
+CH='struct P { a; b; }
+struct Pt { x; y; }
+struct R { o: Pt; w; }
+struct Box<T> { v: T; w; }
+'
+exact1 "CM1 filed repro: P { b: 1 a: 2 }, P { 3 4 }" 'struct P { a; b; }
+fn f(): i64 {
+    var p = P { b: 1 a: 2 };
+    var q = P { 3 4 };
+    return p.a + q.b;
+}
+syscall(60, f());
+' "error:<source>:3:22: $MC
+error:<source>:4:19: $MC"
+exact1 "CM2 fn: positional" "$CH"'fn run(): i64 { var q = P { 3 4 }; return q.b; }
+syscall(60, run());
+' "error:<source>:5:31: $MC"
+exact1 "CM3 fn: named" "$CH"'fn run(): i64 { var q = P { b: 1 a: 2 }; return q.b; }
+syscall(60, run());
+' "error:<source>:5:34: $MC"
+exact1 "CM4 after a statement: positional" "$CH"'var z = 1;
+z = 2;
+var G = P { 3 4 };
+syscall(60, G.b + z);
+' "error:<source>:7:15: $MC"
+exact1 "CM5 after a statement: named" "$CH"'var z = 1;
+z = 2;
+var G = P { b: 1 a: 2 };
+syscall(60, G.b + z);
+' "error:<source>:7:18: $MC"
+exact1 "CM6 the zone: positional" "$CH"'var G = P { 3 4 };
+syscall(60, G.b);
+' "error:<source>:5:15: $MC"
+exact1 "CM7 the zone: named" "$CH"'var G = P { b: 1 a: 2 };
+syscall(60, G.b);
+' "error:<source>:5:18: $MC"
+exact1 "CM8 nested leaves: R { 1 2, 3 }" "$CH"'fn run(): i64 { var r = R { 1 2, 3 }; return r.w; }
+syscall(60, run());
+' "error:<source>:5:31: $MC"
+exact1 "CM8b a struct value, then no comma: R { a 3 }" "$CH"'fn run(): i64 { var a = Pt { 1, 2 }; var r = R { a 3 }; return r.w; }
+syscall(60, run());
+' "error:<source>:5:52: $MC"
+exact1 "CM8c the zone, nested: R { 1, 2 3 }" "$CH"'var G = R { 1, 2 3 };
+syscall(60, G.w);
+' "error:<source>:5:18: $MC"
+exact1 "CM9 a generic literal: Box<i64> { 1 2 }" "$CH"'fn run(): i64 { var b = Box<i64> { 1 2 }; return b.w; }
+syscall(60, run());
+' "error:<source>:5:38: $MC"
+exact1 "CM9b the zone: Box<i64> { 1 2 }" "$CH"'var G = Box<i64> { 1 2 };
+syscall(60, G.w);
+' "error:<source>:5:22: $MC"
+exact1 "CM10 a kernel build (the bake)" "$CH"'kernel;
+var G = P { 5 6 };
+fn kmain(): i64 { return G.a; }
+var r = kmain();
+' "error:<source>:6:15: $MC"
+exact1 "CM11 --syntax-only: the filed repro" 'struct P { a; b; }
+fn f(): i64 {
+    var p = P { b: 1 a: 2 };
+    var q = P { 3 4 };
+    return p.a + q.b;
+}
+syscall(60, f());
+' "error:<source>:3:22: $MC
+error:<source>:4:19: $MC" --syntax-only
+exact1 "CM12 a generic fn's body: once" "$CH"'fn g<T>(x: T): i64 { var p = P { 1 2 }; return p.b + x; }
+syscall(60, g(1) + g(2));
+' "error:<source>:5:36: $MC"
+same "CT1 fn: a trailing comma" "$CH"'fn run(): i64 { var p = P { 1, 2, }; var q = P { b: 4, a: 3, }; var r = R { 1, 2, 3, }; return p.b + q.a + r.w; }
+syscall(60, run());
+' "$CH"'fn run(): i64 { var p = P { 1, 2 }; var q = P { b: 4, a: 3 }; var r = R { 1, 2, 3 }; return p.b + q.a + r.w; }
+syscall(60, run());
+'
+same "CT2 the zone: a trailing comma" "$CH"'var G = P { 1, 2, };
+var H = P { b: 4, a: 3, };
+var B = Box<i64> { 5, 6, };
+syscall(60, G.b + H.a + B.w);
+' "$CH"'var G = P { 1, 2 };
+var H = P { b: 4, a: 3 };
+var B = Box<i64> { 5, 6 };
+syscall(60, G.b + H.a + B.w);
+'
+exact1 "CT4 control: an unclosed literal P { 1, 2;" "$CH"'fn run(): i64 { var p = P { 1, 2; return p.b; }
+syscall(60, run());
+' "error:<source>:5:33: expected '}', got ';'"
+accept "CT3 commas: the filed repro with them" 'struct P { a; b; }
+fn f(): i64 {
+    var p = P { b: 1, a: 2 };
+    var q = P { 3, 4 };
+    return p.a + q.b;
+}
+syscall(60, f());
+' 6 'struct P { a; b; }
+fn f(): i64 { var p: P; p.b = 1; p.a = 2; var q: P; q.a = 3; q.b = 4; return p.a + q.b; }
+syscall(60, f());
+'
 
 # C — the shapes the guide teaches are unchanged: a positional run of a nested struct's leaves and a nested
 # struct VALUE element.

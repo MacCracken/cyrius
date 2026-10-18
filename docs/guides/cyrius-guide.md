@@ -1270,6 +1270,12 @@ Both forms initialise a global anywhere at top level and a local in a fn. Before
 form was refused in the declaration section (top level, before the first top-level statement):
 `undefined variable 'x'`.
 
+The elements are separated by commas; a trailing comma is allowed (`Point { 10, 20, }`). A missing
+comma is one error at the second element, in either form and every position (6.7.15, the user's
+decision D1 (a), 2026-10-18): `var q = Point { 10 20 };` and `var q = Point { y: 20 x: 10 };` are
+`expected ',' between struct literal elements`. ⚠ Through 6.7.14 both compiled, the values landing
+where the commas would have put them.
+
 **A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
 level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a

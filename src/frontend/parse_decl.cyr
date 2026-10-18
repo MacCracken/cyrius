@@ -2696,7 +2696,24 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     elif (width == 2) { ESTORE16(S); }
     elif (width == 4) { ESTORE32(S); }
     else { ESTOC(S); }
-    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    _slit_sep(S);   # 6.7.15 (D1 (a)): the `,` after the element is required
+    return 0;
+}
+# ⛔ 6.7.15 — A STRUCT LITERAL'S ELEMENTS ARE SEPARATED BY COMMAS (the user's decision D1 (a), 2026-10-18). After an
+# element (cursor past it): a `,` is stepped; the literal's `}` (a tuple literal's `)`, which shares the store) is
+# left, so a trailing comma stays valid; a token that can open another element is "expected ',' between struct
+# literal elements", at it, once (the statement latched), and the walk reads that element from there. Every element's
+# store steps here (positional, named, a nested struct's leaves, generic, in a fn and in both zones; a whole nested
+# value is taken only when a `,` / `}` follows it, `_spi_follow`). The declaration zone's bake folds a leaf only when
+# its `,` / `}` follows (`_CF_TRY`, `_gai_flit`), so a commaless literal is left to the replay's store, which reports
+# it — a kernel build's too. `P { 3 4 }` and `P { b: 1 a: 2 }` compiled, the values landing where the commas put them
+# (issues/2026-10-16-struct-literal-elements-need-no-comma.md). A `;` / `)` / `]` / end of file after an element is
+# an unclosed literal, left to its own "expected '}'". CHANGELOG [6.7.15]
+fn _slit_sep(S): i64 {
+    var t = PEEKT(S);
+    if (t == 31) { STI(S, GTI(S) + 1); return 0; }
+    if (t == 14 || t == 11 || t == 5 || t == 12 || t == 29) { return 0; }
+    ERR_MSG(S, "expected ',' between struct literal elements", 44);
     return 0;
 }
 
