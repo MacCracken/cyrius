@@ -2,7 +2,8 @@
 # native_region_literal_warns.sh — 6.7.12: a raw syscall literal inside a native-aarch64 region
 # that an ESYSXLAT x86-compat row RENUMBERS is warned at compile time, and still translated.
 # 6.7.14: the region carries through `include`, and a constant DECLARED inside one is judged too.
-# 6.7.15 (D39): a constant declared in a file outside lib/ is judged by the region carried into it.
+# 6.7.15 (D39): a constant declared in a file outside lib/ is judged by the region carried into it;
+# a fn-local const is judged too.
 #
 # THE DEFECT (filed 2026-10-08, docs/development/issues/2026-10-08-aarch64-native-region-literal-
 # translated-silently.md). In a region compiled only for aarch64 (`#ifdef CYRIUS_ARCH_AARCH64`,
@@ -35,7 +36,10 @@
 #     `/lib/` component — the stdlib, a project's vendored deps) only a region opened in that
 #     file counts: the stdlib's own constants renumber BY DESIGN (SYS_FSYNC = 74 → 82) and sit at
 #     their peer file's top level. A constant declared OUTSIDE a region and used inside one is
-#     not judged. A fn-local const is not judged.
+#     not judged;
+#   · ⛔ 6.7.15 — a fn-local const, by the same rule, judged where its name token sits
+#     (issues/2026-10-16-native-region-warning-skips-fn-local-const.md): an `#inline` fn's const
+#     by the inline body's declaration, never the call site.
 #
 #   axis 1  the 6.7.12 filed repro VERBATIM: one warning naming 9 → 222 (mmap) and 1009 for native
 #           lgetxattr; under qemu-aarch64 it still exits 22 (mmap ran: warn only)
@@ -61,6 +65,13 @@
 #           enum constant declared in the region): two warnings, 9 → 222 in the included file and
 #           NR_UMOUNT2 = 39 → 172; its binary is byte-identical to the region-free twin's and
 #           under qemu it still exits 1 (warn only)
+#   axis 12 the 6.7.15 fn-local const repro VERBATIM: one warning naming NR_UMOUNT2 = 39 → 172
+#           on line 5, the binary byte-identical to the region-free twin's, still exits 1 under
+#           qemu; a local const declared outside a region and used inside stays silent; an
+#           `#inline` fn's local const declared in a region of its file warns there (inc/inl.cyr)
+#           as often as its literal twin (the definition and each replay, called from outside
+#           any region) and emits what the twin does; one declared outside, called from inside a
+#           region, stays silent; D39's rule: a per-arch file outside lib/ warns, under lib/ not
 #   axis 13 the 6.7.15 filed repro VERBATIM (D39: an enum constant at the top level of
 #           src/arch_aarch64.cyr, included under the guard): one warning naming NR_UMOUNT2 = 39
 #           → 172 at the per-arch file's line 2, the binary byte-identical to the region-free
@@ -93,6 +104,19 @@
 #                                                                      silent)
 #   (f3) 6.7.15: only a LEADING `lib/` (no `/lib/` component)       -> axis 13 FAILS (vendor/lib/
 #                                                                      warned)
+#   (i) 6.7.15: a fn-local const never judged (`_esx_const_slot`
+#       answers -1 without leaving `_esx_rl_lc`)                    -> axis 12 FAILS (the repro
+#                                                                      silent)
+#   (j) 6.7.15: a fn-local const judged at the call site
+#       (`_esx_lc_in_region` asks `_esx_region_at`)                 -> axis 12 FAILS (declared
+#                                                                      outside, used inside: warned)
+#   (k) 6.7.15: a replay records no declaration (`_lc_push`
+#       stores 0 while GIDEP > 0)                                   -> axis 12 FAILS (the #inline
+#                                                                      fn's const: 1 warning, its
+#                                                                      literal twin 3)
+#   (l) 6.7.15: a fn-local const judged file-locally
+#       (`_esx_lc_in_region` answers `_esx_rg_local`)               -> axis 12 FAILS (the per-arch
+#                                                                      file's const silent)
 #   (g) 6.7.14: the frontend record dropped (no SVDECL in
 #       PARSE_ENUM_DEF)                                             -> axis 7 FAILS (the enum
 #                                                                      declared inside silent)
@@ -278,6 +302,81 @@ else
     echo "  axis 11: the 6.7.14 filed repro warns twice and emits what its region-free twin does — its qemu run SKIPPED: qemu-aarch64 absent"
 fi
 
+# ── axis 12: a fn-local const (6.7.15), the filed repro verbatim ────────────────────
+# A local const is judged where its name token sits (`_lc_decl`), by the top-level constants'
+# rule: an `#inline` fn's const by the inline body's declaration, never the call site.
+_c12() {   # _c12 <name>: compile $T/a12/<name>.cyr from $T/a12
+    rc=0; (cd "$T/a12" && "$T/cca" < "$1.cyr" > "$1.bin" 2> "$1.err") || rc=$?
+    [ "$rc" = 0 ] && [ -s "$T/a12/$1.bin" ] || fail "axis 12: $1 did not compile (rc $rc): $(head -3 "$T/a12/$1.err")"
+    chmod +x "$T/a12/$1.bin"
+}
+_n12() { grep -c 'inside a native-aarch64 region' "$T/a12/$1.err" || true; }
+_q12() { r=0; (cd "$T/a12" && timeout 30 qemu-aarch64 "./$1.bin" > /dev/null 2>&1) || r=$?; echo "$r"; }
+mkdir -p "$T/a12/inc" "$T/a12/lib"
+cat > "$T/a12/lc.cyr" <<'REPRO12'
+fn f(): i64 {
+    var r = 0;
+#ifdef CYRIUS_ARCH_AARCH64
+    const NR_UMOUNT2 = 39;
+    r = syscall(NR_UMOUNT2, "/nonexistent", 0);
+#endif
+    if (r == 0 - 2) { return 0; }   # native umount2: -ENOENT
+    return 1;                       # 39 ran getpid: a PID
+}
+syscall(60, f());
+REPRO12
+sed 's/^#ifdef CYRIUS_ARCH_AARCH64$//; s/^#endif$//' "$T/a12/lc.cyr" > "$T/a12/lcflat.cyr"
+_c12 lc
+_c12 lcflat
+[ "$(_n12 lc)" = 1 ] || fail "axis 12: the fn-local const repro printed $(_n12 lc) native-region warnings, want 1: $(cat "$T/a12/lc.err")"
+grep -q '^warning:<source>:5:.*syscall constant NR_UMOUNT2 = 39, declared inside a native-aarch64 region, is renumbered → 172 (getpid); write 1039 for native umount2' "$T/a12/lc.err" \
+  || fail "axis 12: the fn-local const declared in the region is not warned at its use (line 5): $(cat "$T/a12/lc.err")"
+[ "$(_n12 lcflat)" = 0 ] || fail "axis 12: the region-free twin warned: $(cat "$T/a12/lcflat.err")"
+cmp -s "$T/a12/lc.bin" "$T/a12/lcflat.bin" || fail "axis 12: the repro's binary differs from its region-free twin — the warning changed what is emitted"
+# Declared OUTSIDE a region, used inside one: silent (judged by its declaration).
+printf '%s\n' 'fn f(): i64 {' '    var r = 0;' '    const NR_X = 39;' '#ifdef CYRIUS_ARCH_AARCH64' '    r = syscall(NR_X, "/nonexistent", 0);' '#endif' '    return r;' '}' 'var x = f();' 'syscall(60, 0);' > "$T/a12/out.cyr"
+_c12 out
+[ "$(_n12 out)" = 0 ] || fail "axis 12: a fn-local const declared OUTSIDE a region warned where it is used inside one: $(cat "$T/a12/out.err")"
+# An `#inline` fn's const declared in a region of its own file, the fn called from outside any
+# region: warned in the inline body's file, exactly as often as the literal twin (the definition
+# and each replay), and the binaries are identical.
+printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '    const NR_IU = 39;' '    return syscall(NR_IU, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inl.cyr"
+printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '' '    return syscall(39, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inllit.cyr"
+printf '%s\n' 'include "inc/inl.cyr"' 'fn g(): i64 {' '    var a = inl_umount("/nonexistent");' '    var b = inl_umount("/nonexistent");' '    if (a == 0 - 2 && b == 0 - 2) { return 0; }' '    return 1;' '}' 'syscall(60, g());' > "$T/a12/inl.cyr"
+sed 's#^include "inc/inl.cyr"$#include "inc/inllit.cyr"#' "$T/a12/inl.cyr" > "$T/a12/inllit.cyr"
+_c12 inl
+_c12 inllit
+nlit=$(_n12 inllit)
+[ "$nlit" -ge 2 ] || fail "axis 12: the #inline literal twin printed $nlit warnings, want one per replay at least (2): $(cat "$T/a12/inllit.err")"
+[ "$(_n12 inl)" = "$nlit" ] || fail "axis 12: the #inline fn's local const printed $(_n12 inl) warnings, its literal twin $nlit — every replay is judged by the declaration: $(cat "$T/a12/inl.err")"
+[ "$(grep -c '^warning:inc/inl.cyr:5:.*syscall constant NR_IU = 39, declared inside ' "$T/a12/inl.err" || true)" = "$nlit" ] \
+  || fail "axis 12: the #inline fn's warnings do not all name inc/inl.cyr:5 and NR_IU: $(cat "$T/a12/inl.err")"
+cmp -s "$T/a12/inl.bin" "$T/a12/inllit.bin" || fail "axis 12: the #inline probe's binary differs from its literal twin's"
+# An `#inline` fn's const declared outside any region, called from INSIDE one: silent.
+printf '%s\n' '#inline' 'fn inl_x(p): i64 {' '    const NR_IX = 39;' '    return syscall(NR_IX, p, 0);' '}' > "$T/a12/inc/inl2.cyr"
+printf '%s\n' 'include "inc/inl2.cyr"' 'fn g(): i64 {' '    var a = 0;' '#ifdef CYRIUS_ARCH_AARCH64' '    a = inl_x("/nonexistent");' '#endif' '    return a;' '}' 'var x = g();' 'syscall(60, 0);' > "$T/a12/inl2.cyr"
+_c12 inl2
+[ "$(_n12 inl2)" = 0 ] || fail "axis 12: an #inline fn's const declared outside a region warned at a call inside one — judged by the call site: $(cat "$T/a12/inl2.err")"
+# D39's rule for a local const: in a file outside lib/ included under the guard it is judged by
+# the carried region; the same file under lib/ stays silent.
+printf '%s\n' 'fn lc_umount(p): i64 {' '    const NR_LU = 39;' '    return syscall(NR_LU, p, 0);' '}' > "$T/a12/inc/lcarch.cyr"
+cp "$T/a12/inc/lcarch.cyr" "$T/a12/lib/lcarch.cyr"
+printf '%s\n' '#ifdef CYRIUS_ARCH_AARCH64' 'include "inc/lcarch.cyr"' '#endif' 'var r = lc_umount("/nonexistent");' 'if (r == 0 - 2) { syscall(60, 0); }' 'syscall(60, 2);' > "$T/a12/lca.cyr"
+sed 's#^include "inc/lcarch.cyr"$#include "lib/lcarch.cyr"#' "$T/a12/lca.cyr" > "$T/a12/lcl.cyr"
+_c12 lca
+_c12 lcl
+[ "$(_n12 lca)" = 1 ] && grep -q '^warning:inc/lcarch.cyr:3:.*syscall constant NR_LU = 39, declared inside ' "$T/a12/lca.err" \
+  || fail "axis 12: a fn-local const in a file outside lib/ included under the guard is not warned (D39's carried region): $(cat "$T/a12/lca.err")"
+[ "$(_n12 lcl)" = 0 ] || fail "axis 12: the same fn-local const under lib/ warned: $(cat "$T/a12/lcl.err")"
+if [ "$QEMU" = 1 ]; then
+    q12=$(_q12 lc); q12i=$(_q12 inl); q12a=$(_q12 lca)
+    [ "$q12" = 1 ] && [ "$q12i" = 1 ] && [ "$q12a" = 2 ] \
+      || fail "axis 12: under qemu the repro exits $q12 (want 1), the #inline probe $q12i (want 1), the per-arch probe $q12a (want 2) — warn only: 39 still runs getpid"
+    echo "  axis 12: the fn-local const repro warns once (NR_UMOUNT2 = 39 → 172), emits what its region-free twin does and still exits 1 under qemu; declared outside a region: silent; an #inline fn's const is judged by its declaration ($nlit warnings in inc/inl.cyr, as its literal twin; silent when declared outside and called inside); D39's carried region for a per-arch file outside lib/"
+else
+    echo "  axis 12: the fn-local const repro warns once and emits what its region-free twin does; declared outside: silent; #inline judged by its declaration; D39's carried region — its qemu runs SKIPPED: qemu-aarch64 absent"
+fi
+
 # ── axis 13: the 6.7.15 filed repro (D39), verbatim ─────────────────────────────────
 # A constant declared at the top level of the author's own per-arch file, included from inside
 # `#ifdef CYRIUS_ARCH_AARCH64`: in a file outside lib/ the region carries (6.7.15's D39, the user,
@@ -351,4 +450,4 @@ else
     echo "  axis 13: the 6.7.15 filed repro warns once and emits what its region-free twin does; under lib/, vendor/lib/ and the store slot it stays silent — its qemu runs SKIPPED: qemu-aarch64 absent"
 fi
 
-echo "PASS native_region_literal_warns (a raw region literal a compat row renumbers is warned — a region carrying through include — and so is a constant declared in one, with its 1000+N spelling or none; still translated; constants declared outside, peer-shaped constants and the whole stdlib stay silent)"
+echo "PASS native_region_literal_warns (a raw region literal a compat row renumbers is warned — a region carrying through include — and so is a constant declared in one, with its 1000+N spelling or none; still translated; constants declared outside, peer-shaped constants and the whole stdlib stay silent; a fn-local const is judged by its declaration)"

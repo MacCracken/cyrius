@@ -2074,8 +2074,10 @@ fn _esx_body_x16(cb, bs, be): i64 {
 #     file outside lib/ the region carries through include (6.7.15, D39: a per-arch file
 #     included under the guard); in a file under lib/ only a region opened in that file counts
 #     (`_esx_rg_decl`) — the stdlib peers' x86-numbered `SYS_*` (SYS_FSYNC = 74 → 82) sit at
-#     their file's top level, so their renumbering by design stays silent. A fn-local const is
-#     not judged. Numbers >= 1000 are the band itself.
+#     their file's top level, so their renumbering by design stays silent;
+#   · a fn-local const declared inside a region, by the same rule (6.7.15): judged where its
+#     name token sits (`_lc_decl`), which for an `#inline` fn's const is the inline body's
+#     declaration, never the call site. Numbers >= 1000 are the band itself.
 # Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14] [6.7.15]
 fn _esx_native_warn(S, p, en, lit): i64 {
     if (lit >= 1000) { return 0; }
@@ -2084,17 +2086,19 @@ fn _esx_native_warn(S, p, en, lit): i64 {
     if (cur == lit) { return 0; }
     var kw = _esx_raw_lit_call(S);
     if (kw < 0) { return 0; }
-    if (_esx_rl_vi >= 0) {
-        if (_esx_decl_in_region(S, _esx_rl_vi) == 0) { return 0; }
-    } else {
-        if (_esx_region_at(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
-    }
+    if (_esx_rl_lc >= 0) {
+        if (_esx_lc_in_region(S, _esx_rl_lc) == 0) { return 0; }
+    } else { if (_esx_rl_vi >= 0) {
+            if (_esx_decl_in_region(S, _esx_rl_vi) == 0) { return 0; }
+        } else {
+            if (_esx_region_at(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
+        } }
     var al = 1000 + lit;
     var hasal = 0;
     if (_esx_walk(cb, p, en, al, 0 - 1) == lit) { hasal = 1; }
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head_at(S, kw);
-    if (_esx_rl_vi >= 0) {
+    if (_esx_rl_vi >= 0 || _esx_rl_lc >= 0) {
         PRSTR(": syscall constant ");
         PRSTR(S + 0xEC00000 + _esx_rl_noff);
         PRSTR(" = ");
@@ -2118,13 +2122,16 @@ fn _esx_native_warn(S, p, en, lit): i64 {
 }
 
 # The token index of `syscall` when the call that just closed (the cursor is one past its `)`)
-# passes its number as ONE token — an integer literal (_esx_rl_vi = -1), or a name that folded
-# from an enum constant / a top-level const (_esx_rl_vi = its var slot, _esx_rl_noff = its name;
-# `Enum.NAME` too) — else -1.
+# passes its number as ONE token — an integer literal (_esx_rl_vi = _esx_rl_lc = -1), or a name
+# that folded from an enum constant / a top-level const (_esx_rl_vi = its var slot; `Enum.NAME`
+# too) or from a fn-local const (_esx_rl_lc = its `_lc_tab` index, 6.7.15), _esx_rl_noff = its
+# name — else -1.
 var _esx_rl_vi = 0 - 1;
+var _esx_rl_lc = 0 - 1;
 var _esx_rl_noff = 0;
 fn _esx_raw_lit_call(S): i64 {
     _esx_rl_vi = 0 - 1;
+    _esx_rl_lc = 0 - 1;
     var ti = GTI(S) - 1;
     if (ti < 2) { return 0 - 1; }
     if (TOKTYP(S, ti) != 11) { return 0 - 1; }
@@ -2159,7 +2166,10 @@ fn _esx_raw_lit_call(S): i64 {
             }
         }
     }
-    if (vi < 0) { return 0 - 1; }
+    if (vi < 0) {
+        if (_esx_rl_lc >= 0) { return ti - 1; }      # a fn-local const
+        return 0 - 1;
+    }
     _esx_rl_vi = vi;
     return ti - 1;
 }
@@ -2170,9 +2180,13 @@ fn _esx_arg_end(t): i64 {
     return 0;
 }
 # The var slot a bare name `noff` folded from — a top-level const or an enum constant — or -1
-# when it named a fn-local const or a local (the factor's own order: those come first).
+# when it named a fn-local const (its `_lc_tab` index left in _esx_rl_lc) or a local (the
+# factor's own order: those come first).
 fn _esx_const_slot(S, noff): i64 {
-    if (_lc_n > 0) { if (_lc_find(S, noff) >= 0) { return 0 - 1; } }
+    if (_lc_n > 0) {
+        var lc = _lc_find(S, noff);
+        if (lc >= 0) { _esx_rl_lc = lc; return 0 - 1; }
+    }
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0 - 1; } }
     var vi = _findvar_core(S, noff);
     if (vi < 0) { return 0 - 1; }
@@ -2227,6 +2241,25 @@ fn _esx_decl_in_region(S, vi): i64 {
     }
     if (load8(_esx_dv + vi) == 2) { return 1; }
     return 0;
+}
+
+# 1 iff fn-local const `lc`'s declaration (`_lc_decl`, its name token) sits inside a
+# native-aarch64 region by `_esx_rg_decl`'s rule — the top-level constants' rule. A third
+# scanner: a local const is live only while its fn is parsed, so there is no per-entry cache, and
+# an `#inline` body's const declared above the last one judged restarts it from 0 (a backward
+# offset) — only a renumbered literal spelled by a local const's name reaches here.
+# CHANGELOG [6.7.15]
+var _esx_rgl = 0;
+fn _esx_lc_in_region(S, lc): i64 {
+    if (_lc_decl == 0) { return 0; }
+    var o = load32(_lc_decl + lc * 4);
+    if (o == 0) { return 0; }
+    if (_esx_rgl == 0) {
+        _esx_rgl = _esx_rg_new();
+        if (_esx_rgl == 0) { return 0; }
+    }
+    _esx_rg_scan(S, _esx_rgl, o - 1);
+    return _esx_rg_decl(S, _esx_rgl);
 }
 
 # A region scanner (alloc()'d, 56 B): +0 the offset reached, +8 the lexer state, +16 at a line

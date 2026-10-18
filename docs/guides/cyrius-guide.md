@@ -8450,7 +8450,12 @@ The rules, in order:
      stdlib and a project's vendored deps) only a region opened in that file itself counts:
      the stdlib peers' `SYS_*` sit at their file's top level, renumber by design (`SYS_FSYNC
      = 74` → 82) and are included from inside `lib/syscalls.cyr`'s region, so a program that
-     includes the stdlib stays silent. A fn-local `const` is not judged.
+     includes the stdlib stays silent;
+   - **a fn-local `const` declared inside a region** (since 6.7.15), by the same rule —
+     `const NR_UMOUNT2 = 39;` under the guard in a fn body is warned at each
+     `syscall(NR_UMOUNT2, …)`, and one declared outside a region and used inside one is not. An
+     `#inline` fn's local const is judged by its declaration in the inline body, never by the
+     call site it is expanded at.
 
    ⚠ This applies to a **variable** syscall number too — the chain
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
