@@ -508,8 +508,11 @@ var WNOHANG = 1;
 fn sys_kill(pid, sig): i64 { return 0 - 1; }
 # chmod has no Windows equivalent (ACL model differs); no-op success.
 fn sys_chmod(path, mode): i64 { return 0; }
-# Best-effort dup2 stub: returns the requested newfd (handle dup is rerouted).
-fn sys_dup2(oldfd, newfd): i64 { return newfd; }
+# dup2 — Win32 has no dup2, and the PE backend has no route for it (no DuplicateHandle /
+# SetStdHandle reroute), so it fails closed with -ENOSYS (-38) for every call, as sys_fcntl does:
+# answering `newfd` read as a redirect that never happened, and a portable
+# `if (sys_dup2(a, b) < 0)` never saw the failure. CHANGELOG [6.7.15]
+fn sys_dup2(oldfd, newfd): i64 { return 0 - 38; }
 # pipe — Windows has no anonymous-pipe syscall on the reroute table. Fail closed with -1 so a
 # caller's `< 0` path runs (lib/regression.cyr, lib/pam.cyr's Linux-only body); before this the
 # name was UNDEFINED on PE and every call site compiled to a ud2 trap. CHANGELOG [6.6.9] bite 7.
