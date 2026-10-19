@@ -1692,15 +1692,15 @@ _chk_gate "$ROOT/tests/gates/codegen/object_hides_libc_names.sh"
 
 _chk_gate "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 
-# ⛔ v6.6.2 — THE PROCESS FIX. A public stdlib symbol cannot disappear without an ecosystem census
-# being taken and WRITTEN DOWN. v6.6.0 deleted `tagged_new`/`payload` on a survey of the 12
-# fold-table stdlibs, then recorded the result as "nothing in the ecosystem" — and the class that
-# used the primitive (DOMAIN libraries) was structurally invisible to that survey.
-# This cannot PROVE a survey from inside the repo; it FORCES one. When a name vanishes from
-# docs/api-surface.snapshot relative to the last RELEASE TAG, it censuses every sibling checkout
-# — first-party AND vendored lib/ + dist/, since 55-68 repos gitignore their stdlib — and reds
-# unless docs/retired-symbols.allow accounts for it with a migration reference.
-# ⚠ SKIPs loudly when there are no sibling checkouts (CI) rather than passing quietly.
+# ⛔ v6.6.2 — THE PROCESS FIX. A public stdlib symbol cannot disappear without its accounting
+# being WRITTEN DOWN. v6.6.0 deleted `tagged_new`/`payload` on a survey of the 12 fold-table
+# stdlibs, then recorded the result as "nothing in the ecosystem" — and the class that used the
+# primitive (DOMAIN libraries) was structurally invisible to that survey.
+# When a name vanishes from docs/api-surface.snapshot relative to the last RELEASE TAG, the gate
+# reds unless docs/retired-symbols.allow accounts for it with a migration reference, naming any
+# file in this checkout that still calls it. 6.7.16: it censuses THIS checkout only (lib/ vendors
+# the folds) and requires the row for every removal — it no longer walks the consumer repos beside
+# the checkout (a language does not gate on other projects), so it never SKIPs.
 _chk_gate "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 
 # 6.7.15 — the gates filed for stopping WITHOUT A VERDICT under `bash -eo pipefail` (GitHub's

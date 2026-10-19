@@ -1,5 +1,5 @@
 #!/bin/sh
-# Gate: a public stdlib symbol cannot DISAPPEAR without an ecosystem census being taken.
+# Gate: a public stdlib symbol cannot DISAPPEAR without its accounting record (6.7.16: in-tree only).
 #
 # ⛔ THE INCIDENT THIS EXISTS FOR (v6.6.0). `tagged_new` and `payload` were deleted from
 # lib/tagged.cyr, justified in the source header and restated in seven other places as
@@ -14,26 +14,30 @@
 # users are DOMAIN libraries, a class the stdlib survey could not see. agnostik calls it 19 times
 # and agnova 9. A primitive was removed on a survey that structurally could not find its consumer.
 #
-# ⭐ WHAT THIS GATE CAN AND CANNOT DO. It cannot PROVE an ecosystem survey from inside this repo —
-# ~/Repos may be absent, partial, or stale. It can FORCE one: when a public symbol vanishes from
-# docs/api-surface.snapshot, this censuses every repo it can see and goes RED unless the symbol is
-# accounted for in docs/retired-symbols.allow with a migration reference. Forcing the census, and
-# forcing the answer to be WRITTEN DOWN, is the whole fix. It is `find` + `grep`, not a build.
+# ⭐ WHAT IT DOES (6.7.16 — re-scoped to THIS checkout). When a public symbol vanishes from
+# docs/api-surface.snapshot (vs the last release tag), the gate is RED unless the symbol has a row
+# in docs/retired-symbols.allow — the ACCOUNTING record, with its migration reference — and it
+# names every file in this checkout that still calls the symbol. Forcing the answer to be WRITTEN
+# DOWN is the whole fix. It is `find` + `grep`, not a build.
 #
-# ⚠ IT CENSUSES VENDORED lib/ AND dist/ TOO, and that is deliberate: 55-68 sibling repos gitignore
-# their vendored stdlib, so `git status` is structurally blind to it, and the vendored copies are
-# where the damage actually lands on the next `cyrius deps`. Excluding them understated the v6.6.0
-# radius by an order of magnitude.
+# ⛔ 6.7.16: IT NO LONGER CENSUSES OTHER REPOS. It used to walk every repo beside this checkout
+# (CYRIUS_SIBLING_ROOT, default the checkout's parent: ~146 consumer repos) and to require a row
+# only when one of them still called the symbol — a consumer survey inside a gate, and a language
+# does not gate on other projects (the user, 2026-10-19;
+# docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). The census reads the
+# source roots of THIS checkout (lib/ src/ cbt/ programs/ tests/ benches/ fuzz/ bootstrap/), and
+# lib/ vendors the 12 folded stdlibs, so the folds are covered as vendored. Since a tree that
+# compiles rarely still calls a removed name, EVERY removed public name now needs its row — the
+# accounting is forced for each removal, not only for one some consumer happened to call. A
+# consumer meets a removal at its pin bump, through the ledger and ecosystem-migration.md.
 #
-# ⚠ SKIPS CLEANLY when ~/Repos is absent (CI has no sibling checkouts). A gate that cannot run
-# must say so out loud rather than passing quietly — that is the macOS-rot lesson.
+# It never SKIPs: everything it reads is in this checkout. (It SKIPped without sibling checkouts,
+# and without build/cyrius_api_surface, which it never ran.)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-SIBLINGS=${CYRIUS_SIBLING_ROOT:-"$(dirname "$ROOT")"}
 SNAPSHOT="$ROOT/docs/api-surface.snapshot"
 ALLOW="$ROOT/docs/retired-symbols.allow"
-TOOL="$ROOT/build/cyrius_api_surface"
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: removed_symbol_census: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: removed_symbol_census: $1"; exit 1; }
@@ -41,8 +45,6 @@ cd "$ROOT"
 
 [ -f "$SNAPSHOT" ] || fail "docs/api-surface.snapshot missing"
 [ -f "$ALLOW" ]    || fail "docs/retired-symbols.allow missing — the accounting ledger IS the fix"
-[ -x "$TOOL" ]     || { echo "SKIP: removed_symbol_census (build/cyrius_api_surface not built)"; exit 77; }
-[ -d "$SIBLINGS" ] || { echo "SKIP: removed_symbol_census (no sibling checkouts at $SIBLINGS)"; exit 77; }
 
 # ── 1. what disappeared since the last RELEASED tag? ────────────────────────────────────
 # ⚠ THE BASELINE IS THE LAST RELEASE TAG, NOT HEAD, AND THAT IS LOAD-BEARING. The first cut of
@@ -74,65 +76,82 @@ sed 's/#.*//' "$ALLOW" | awk -F'|' 'NF>=3 {gsub(/ /,"",$1); if ($1!="") print $1
 [ -s "$WORK/allowed.txt" ] || fail "the allowlist parsed to ZERO rows — the format changed and this gate is now vacuous"
 
 # ── 3. census helper: comment-stripped, definitions excluded ────────────────────────────
+# The census root is the CURRENT directory (the checkout, or 3b's scratch root) and the walk is
+# RELATIVE (`./lib/…`), so a `/build/` in the checkout's own absolute path cannot prune it.
 # `|| true`: `head -400` closing the pipe kills the loop with SIGPIPE past 400 files, and the
 # loop's own status is its last file's miss — under `bash -eo pipefail` either one made the
-# caller's `HITS=$(…)` / `PROBE=$(…)` end the gate with no verdict. Each file's calls are
-# COUNTED (`grep -c`, which reads to the end), not `grep -q`'d: -q exits on its first hit, the
-# `sed | grep -v` feeding it die of SIGPIPE on a file past the 64 KB pipe buffer, and pipefail
-# made that the line's status — so under `bash -eo pipefail` a large file calling the symbol
-# early was silently NOT counted (the anti-vacuous probe read 297 files there, 380 under sh).
+# caller's `HITS=$(…)` end the gate with no verdict. Each file's calls are COUNTED (`grep -c`,
+# which reads to the end), not `grep -q`'d: -q exits on its first hit, the `sed | grep -v` feeding
+# it die of SIGPIPE on a file past the 64 KB pipe buffer, and pipefail made that the line's status
+# — so under `bash -eo pipefail` a large file calling the symbol early was silently NOT counted.
 # 3b below pins it. CHANGELOG [6.7.15]
-_census() {
+CENSUS_DIRS="lib src cbt programs tests benches fuzz bootstrap"
+_census_all() {
     _sym=$1
-    find "$SIBLINGS" -maxdepth 3 \( -name '*.cyr' -o -name '*.tcyr' \) \
-         -not -path '*/build/*' -not -path '*/.git/*' 2>/dev/null \
-    | while IFS= read -r f; do
+    for _d in $CENSUS_DIRS; do
+        [ -d "$_d" ] || continue
+        find "./$_d" \( -name '*.cyr' -o -name '*.tcyr' -o -name '*.bcyr' -o -name '*.fcyr' \) \
+             -not -path './build/*' -not -path '*/.git/*' 2>/dev/null || true
+    done | while IFS= read -r f; do
         _n=$(sed 's/#.*//' "$f" 2>/dev/null \
              | grep -vE "^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+${_sym}[[:space:]]*\(" \
              | grep -cE "(^|[^_a-zA-Z0-9.])${_sym}[[:space:]]*\(" || true)
         if [ "${_n:-0}" -gt 0 ]; then echo "$f"; fi
-      done | head -400 || true
+      done || true
 }
+_census() { _census_all "$1" | head -400 || true; }
 
 # ── 3b. the census reads a file to its end, under either shell ──────────────────────────
-# A ~200 KB file whose only `alloc(` call is on its FIRST line, in a scratch sibling root
-# (relative, so no `*/build/*` in TMPDIR's own path can hide it), must be found once.
-mkdir -p "$WORK/sib/r"
+# A ~200 KB file whose only `alloc(` call is on its FIRST line, in a scratch census root (walked
+# relatively, so no `*/build/*` in TMPDIR's own path can hide it), must be found once.
+mkdir -p "$WORK/scr/lib"
 { echo 'fn f() { return alloc(8); }'; _i=0
   while [ "$_i" -lt 3000 ]; do echo "var pad$_i = $_i;   # padding past the 64 KB pipe buffer ........"; _i=$((_i + 1)); done
-} > "$WORK/sib/r/big.cyr"
-BIG=$( (cd "$WORK" && SIBLINGS=sib && _census "alloc") | wc -l | tr -d ' ')
-[ "$BIG" = 1 ] || fail "self-test: the census found ${BIG} files calling 'alloc' in a scratch root holding one $(wc -c < "$WORK/sib/r/big.cyr")-byte file that calls it on line 1 (want 1) — a large caller is invisible to it"
+} > "$WORK/scr/lib/big.cyr"
+BIG=$( (cd "$WORK/scr" && _census "alloc") | wc -l | tr -d ' ')
+[ "$BIG" = 1 ] || fail "self-test: the census found ${BIG} files calling 'alloc' in a scratch root holding one $(wc -c < "$WORK/scr/lib/big.cyr")-byte file that calls it on line 1 (want 1) — a large caller is invisible to it"
 
 # ── 4. every removal must be accounted for ──────────────────────────────────────────────
+# Every removed public name needs its row (6.7.16 — see the header); the in-tree callers, if
+# any, are named with it.
 UNACCOUNTED=""
 while IFS= read -r sym; do
     [ -n "$sym" ] || continue
     case "$sym" in _*) continue ;; esac          # private names were never ecosystem surface
     if grep -qx "$sym" "$WORK/allowed.txt"; then continue; fi
     HITS=$(_census "$sym" | wc -l | tr -d ' ')
+    echo "  ⛔ '$sym' was REMOVED from the public surface with no row in docs/retired-symbols.allow"
     if [ "${HITS:-0}" -gt 0 ]; then
-        echo "  ⛔ '$sym' was REMOVED from the public surface and is still called in $HITS file(s):"
-        _census "$sym" | sed "s|$SIBLINGS/||" | head -12 | sed 's/^/       /' || true
-        UNACCOUNTED="$UNACCOUNTED $sym"
+        echo "     and this checkout still calls it in $HITS file(s):"
+        _census "$sym" | sed 's|^\./||' | head -12 | sed 's/^/       /' || true
     fi
+    UNACCOUNTED="$UNACCOUNTED $sym"
 done < "$WORK/removed.txt"
 
 if [ -n "$UNACCOUNTED" ]; then
     echo ""
-    echo "  A public stdlib symbol disappeared while consumers still call it."
-    echo "  This is the v6.6.0 shape: a survey that could not see the callers."
-    echo "  Either restore it, or add a row to docs/retired-symbols.allow naming who calls it"
-    echo "  and where the migration is tracked. A row is an ACCOUNTING RECORD, not a mute button."
+    echo "  A public stdlib symbol disappeared without its accounting record (the v6.6.0 shape)."
+    echo "  Removing one is the user's call: either restore it, or add a row to"
+    echo "  docs/retired-symbols.allow naming the migration doc and what a consumer meets at its pin"
+    echo "  bump. A row is an ACCOUNTING RECORD, not a mute button."
     fail "unaccounted removed symbols:$UNACCOUNTED"
 fi
 
 # ── 5. ANTI-VACUOUS: the census must actually be able to FIND things ────────────────────
-# Without this the gate passes in an empty/unreadable sibling tree, on a broken find, or if the
-# comment-stripping regex ever stops matching — reporting "all clear" while looking at nothing.
-# `alloc` is in every vendored stdlib and is not going anywhere.
-PROBE=$(_census "alloc" | wc -l | tr -d ' ')
-[ "${PROBE:-0}" -ge 5 ] || fail "anti-vacuous: the census found only ${PROBE} files calling 'alloc' across $SIBLINGS — it is not actually searching, so a clean result proves nothing"
+# Without this the gate passes on a broken find, an unreadable root, or a comment-stripping regex
+# that stopped matching — reporting "all clear" while looking at nothing. `alloc` is called
+# throughout the tree and is not going anywhere. The floors are DERIVED from the 6.7.16 tree (the
+# probe found 356 files: lib 63, src 21, cbt 9, programs 37, tests 218, benches 5, fuzz 3): the
+# total must reach about half of that (175), so a regex or walk that broke reads ~0, and every
+# root that calls it then (lib src cbt programs tests) must still show at least one, so a walk
+# that lost a whole root fails by name. Raise them as the tree grows; never lower them to pass.
+_census_all "alloc" > "$WORK/probe.txt"
+PROBE=$(wc -l < "$WORK/probe.txt" | tr -d ' ')
+[ "${PROBE:-0}" -ge 175 ] || fail "anti-vacuous: the census found only ${PROBE} files calling 'alloc' in this checkout (floor 175) — it is not actually searching, so a clean result proves nothing"
+for _d in lib src cbt programs tests; do
+    _pn=$(grep -c "^\./$_d/" "$WORK/probe.txt" || true)
+    [ "${_pn:-0}" -ge 1 ] || fail "anti-vacuous: the census found no file calling 'alloc' under $_d/ — the walk lost that root"
+done
 
 # ── 6. every allowlist row must still be JUSTIFIED ──────────────────────────────────────
 # A row whose symbol is back on the public surface is stale, and a stale row silences a future
@@ -146,4 +165,4 @@ done < "$WORK/allowed.txt"
 
 NREM=$(wc -l < "$WORK/removed.txt" | tr -d ' ')
 NALLOW=$(wc -l < "$WORK/allowed.txt" | tr -d ' ')
-echo "PASS: removed_symbol_census (${NREM} removed vs ${BASE_TAG}, ${NALLOW} accounted in the ledger, census probe ${PROBE} files)"
+echo "PASS: removed_symbol_census (${NREM} removed vs ${BASE_TAG}, ${NALLOW} accounted in the ledger, census probe ${PROBE} files in this checkout)"
