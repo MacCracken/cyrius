@@ -1210,8 +1210,10 @@ fn _fsc_call(S, ft, fnoff, term): i64 {
 # from-struct-dereference-copies-one-word.md). The source up to `term` is ONE dereference whose operand
 # `_hl_dstar_t` types `*S`: its pointer is parked in a hidden temp and recorded as the copy's source (1); a
 # `*U` of another struct is refused by name (0, as `_fsc_name` refuses a U); anything else is 0 (untouched).
+# 6.7.16: and `*pp` of a `**S` (`_hl_dstar_x`'s twin, mode 1) — the `*S` it reads, copied through as `o.s = p` is; it
+# stored the pointer word into the field's first word, the rest stale. CHANGELOG [6.7.16]
 fn _fsc_dstar(S, ft, fnoff, term): i64 {
-    var ps = _hl_dstar_t(S, GTI(S), term);
+    var ps = _hl_dstar_x(S, GTI(S), term, 1);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
     if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }

@@ -273,6 +273,10 @@
 #      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32). The file's gb_* rows (floor 59):
 #      a generic's `pp: **GBox<T>` parameter compiles (issues/2026-10-17-generic-double-pointer-to-generic-struct-
 #      parameter-refused.md; its repro is generic_double_pointer_infer.sh B1)
+#      6.7.16 (issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md): `o.s =
+#      *pp` into a struct-typed FIELD copies too (the file's wf_* rows, floor 76); R16f that filing's repro VERBATIM:
+#      prints 444 (004 through 6.7.15: the pointer word in the field's first word); another struct is refused by name
+#      (struct_copy_type_checked.sh R33 / R34)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -379,6 +383,9 @@
 #   MP2 `_hl_pw` without its `*E` (`_pp_inner`) arm -> RED 7: R16 x7 (`***ppp`: SIGSEGV, cxvm the word)
 #   MP3 `_hl_cw` without its field arm               -> RED 7: R16 x7 (`**w.pp`: SIGSEGV, cxvm the word)
 #   MP4 `_hl_cw` without its generic arm (`_gen_call_word`) -> RED 7: R16 x7 (`**gq<i64>(1)`: SIGSEGV, cxvm the word)
+# 6.7.16 FIELD `*pp` MUTATION LEDGER (2026-10-19, the same method; R16 / R16f):
+#   MF1 `_fsc_dstar` asking `_hl_dstar_x(.., 0)` (the fix reverted) -> RED 14: R16 x7 (16 wf_* rows: the pointer word
+#                                                      in the field), R16f x7 (004)
 # B7-1c MUTATION LEDGER (2026-10-12, the same method):
 #   the B7-1b tree (d046368e, no *T operand)          -> RED 14: R5 x7 (`l = p` held the pointer, then
 #                                                      `q = r` rebound q: SIGSEGV x86 x4 / aarch64, cxvm out of
@@ -1026,7 +1033,7 @@ done
 TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
 [ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
 NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
-PSFLOOR=59
+PSFLOOR=76   # 6.7.16: + the wf_* rows
 if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
 echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
 for leg in $XLEGS $OTHER; do
@@ -1130,7 +1137,29 @@ fn main(): i64 {
 }
 syscall(60, main());
 EOF
-for rw in d:1:444 e:2:4444; do
+# 6.7.16 — R16f: the repro of issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-
+# word.md, verbatim: `o.s = *pp;` / `GW.s = *pp;` into a struct-typed field copy (004 through 6.7.15: the pointer word).
+cat > "$D/repro_pw3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct P { x; y; }
+struct W { a; s: P; }
+var GW = W { 0, 0, 0 };
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var o = W { 0, 0, 0 };
+    var c = W { 0, 0, 0 };
+    o.s = *pp;
+    GW.s = *pp;
+    c.s = p;
+    fmt_int(o.s.y); fmt_int(GW.s.y); fmt_int(c.s.y);
+    return 0;
+}
+syscall(60, main());
+EOF
+for rw in d:1:444 e:2:4444 f:3:444; do
     rs=${rw%%:*}; rn=${rw#*:}; rw=${rn#*:}; rn=${rn%%:*}
     echo "R16$rs. the filed whole-source *pp repro $rn, verbatim (prints $rw)"
     for leg in $XLEGS $OTHER; do

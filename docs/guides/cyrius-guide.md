@@ -1175,8 +1175,11 @@ too**, copied through as `l = p` is: `l = *pp`, `G = *pp` (in a fn and at top le
 step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at (a top-level `var G: S = *GPP;` keeps
 the handle every top-level declaration from a `*S` source gets — see *the handle line*); into a `*S` or a handle
 `q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy 'qq' into a
-variable of a different struct/vector type*). A struct-typed FIELD destination (`o.s = *pp`) still stores the word
-(filed). ⚠ Through 6.7.14 the first four stored the pointer word into the first field (the rest stale)
+variable of a different struct/vector type*). **Since 6.7.16 a struct-typed FIELD destination copies too:** `o.s =
+*pp`, `G.s = *pp`, `w.s = *pp` through a `*W`, `o.s = (*pp)`, a for step and a top-level `G.s = *GPP` copy the struct
+`*pp` points at, as `o.s = p` does; a `**Q`'s `*qq` into an `S` field is refused by name (*cannot copy 'qq' into a
+struct field of a different struct type: 's'*), and a `*S` field (`o.ps = *pp`) takes the pointer. ⚠ Through 6.7.14
+the first four stored the pointer word into the first field (the rest stale), the field destination through 6.7.15,
 and the declaration bound `t` to the struct as a handle. `**pp = u` copies the struct and `**pp OP= v` is refused, as
 through a `*S` (*A store through a `*S` copies the struct*). ⚠ Through 6.7.13 `var t: S = **pp;` bound a handle to S's
 first field (139 on x86_64 and aarch64, cx 0, Windows 5), a 3-byte `**ppc` read 8 bytes, `**pp = u` stored one word
