@@ -258,7 +258,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (0)
 
 
-**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (101)
+**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (102)
 
 - [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [asm_barrier_options.tcyr's header says a wrong barrier word faults (SIGILL), but a wrong option CRm runs as the full-system barrier](2026-10-18-asm-barrier-options-tcyr-header-claims-a-wrong-word-faults.md)
@@ -359,6 +359,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A declaration-zone untyped generic call returning a generic struct's instance binds nothing when its type argument comes from an expression, a struct carrier or a bounded struct: `var x = mkg1(30 + 3);`, `mkc(BX)` (`b: Box<T>`), `mkb(P)` (`struct G1<T: Show>`) — `x.v` is "no struct type in scope for 'x'", where after the first statement each binds](2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md)
 - [A declaration-zone untyped `var y = b.mkg(P);` / `b.mkg<i32>(33)` — a GENERIC method returning a generic struct's instance (`fn mkg<T>(self, v: T): G1<T>`) — binds nothing (`y.v.a` is "no struct type in scope for 'y'"), where after the first statement it binds the instance](2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md)
 - [The 6.7.15 changes beyond the decisions' text — confirm or restore each](2026-10-19-6715-behaviour-changes-beyond-the-decisions-text.md)
+- [Gates and check rows read other projects' checkouts — agnos, mirshi, sit, agnoshi, secureyeoman, every repo under `~/Repos` — a language does not gate on other projects](2026-10-19-gates-read-other-projects-checkouts.md)
 - [A capture verb killed mid-capture leaves its `<base>/audit_x[ca]_<pid>[.N]` file behind for ever: nothing reaps it, and since CYRIUS-2026-0036's O_EXCL a later process with the same pid skips the name instead of reusing it](2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md)
 - [`regression_ssh_remote_exec_capture`'s output-fd lift (6.7.15) is pinned by no row and no static axis: removing it leaves every row and gate green](2026-10-19-ssh-remote-exec-capture-fd-lift-unpinned.md)
 
@@ -367,13 +368,14 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
 
-**Open by design — placed arcs, not bugs** (5)
+**Open by design — placed arcs, not bugs** (6)
 
 - [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
 - [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](2026-10-08-lib-public-constants-const-migration.md)
 - [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
 - [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
 - [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
+- [The TypeScript front end is measured against one project's files (secureyeoman's corpus), not the language — it needs true, in-tree language support](2026-10-19-typescript-support-measured-against-one-projects-files.md)
 
 **Unplaced** (3)
 

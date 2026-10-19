@@ -98,7 +98,10 @@ each integration — less the forward-call pointer-return twin, resolved by 6.7.
 [the 6.7.15 changes beyond the decisions' text](issues/2026-10-19-6715-behaviour-changes-beyond-the-decisions-text.md)
 (32 items, keep or restore each at its open) and
 [the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
-(the user's two steps at cass's desktop).
+(the user's two steps at cass's desktop), and — placed 2026-10-19 by the user, best landed first —
+[the gates that read other projects' checkouts](issues/2026-10-19-gates-read-other-projects-checkouts.md) ripped out
+("LANGUAGES DO NOT GATE ON OTHER PROJECTS": agnos, mirshi, sit, agnoshi, secureyeoman, the `~/Repos` census; a gate
+refusing any read outside the cyrius tree).
 
 ### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 
@@ -185,6 +188,10 @@ After Break 2 and the 6.7.17 audit; their release is set when the review follow-
 - [Poison guard pages](issues/2026-10-08-poison-guard-pages-unbuilt.md) → roadmap-future: P6's unbuilt step, which
   needs a PE `VirtualProtect` reroute.
 - u128 carriage → roadmap_6, after 6.7.7's register fix. The file itself closes in 6.7.14.
+- [TypeScript language support](issues/2026-10-19-typescript-support-measured-against-one-projects-files.md) — its own
+  arc AFTER the 6.7.17 audit (the user, 2026-10-19), sized at its open: an in-tree conformance corpus organized by the
+  language with byte-checked JS emit as the gate, a supported / refused matrix, the gaps fixed; it replaces the
+  secureyeoman corpus measure, which leaves the gate in 6.7.16.
 
 ## Folded-stdlib follow-ups (cyrius's own work)
 
