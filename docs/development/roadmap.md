@@ -154,7 +154,8 @@ refactor review move to 6.7.17, keeping Break 2's goal (the queue at 0 before th
 against everything placed here; its decision questions (the language questions among the filed issues) asked there.
 
 **Placed so far:** the 51 issues filed by 6.7.15's wave 1 and their reviews (placed at its integration — generics 19,
-frontend 15, platform 13, infra / tools 4; Medium 5) — [issues/README.md](issues/README.md) § *Open queue* lists them;
+frontend 15, platform 13, infra / tools 4; Medium 5) and the 26 of wave 2 (structs 19, vectors 7; Medium 11) —
+[issues/README.md](issues/README.md) § *Open queue* lists them;
 [the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 (the user's two steps at cass's desktop). What waves 2 and 3 file joins it at their integration.
 
