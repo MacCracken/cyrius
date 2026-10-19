@@ -143,6 +143,13 @@ var TU1 = mk1();
 var TU2 = (mk1());
 var TU3 = ((mk8()));
 fn tu_read(): i64 { return TU1.a + d1(TU2); }
+# --- 6.7.15: a wrapped `: Str` call at top level (issues/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md) ---
+# `var s = (mks());` at top level was an untyped word to the overload dispatcher (the one-call record wanted `IDENT (`
+# first), so `println(s)` printed the header's bytes and `who(s)` took the cstring base (1), where `var t = mks();`
+# routes to `who_str` (2). The whole wrap is transparent there too: the zone here, after a statement (TS3 / TS4) below.
+var TS1 = (mks());
+var TS2 = ((mks()));
+fn ts_read(): i64 { return who(TS1) * 10 + who(TS2); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -220,5 +227,16 @@ var TA1 = mk1();
 var TA2 = (mk8());
 assert_eq(TA1.a + d1(TA1), 66, "after a statement: var TA1 = mk1(); TA1.a, d1(TA1)");
 assert_eq(TA2.a + TA2.b, 33, "after a statement: var TA2 = (mk8());");
+
+test_group("6.7.15: a wrapped : Str call at top level routes as a Str");
+assert_eq(who(TS1) * 10 + who(TS2), 22, "the zone: (mks()) / ((mks())) route to who_str (11 before)");
+assert_eq(strlen(TS1) * 10 + strlen(TS2), 55, "the zone: strlen(TS1) / strlen(TS2) take strlen_str");
+assert_eq(ts_read(), 22, "a fn body reads the zone's wrapped Str globals");
+var TS3 = (mks());
+var TS4 = ((mks()));
+var TS5 = mks();
+assert_eq(who(TS3) * 10 + who(TS4), 22, "after a statement: (mks()) / ((mks())) route to who_str (11 before)");
+assert_eq(strlen(TS3) * 10 + strlen(TS4), 55, "after a statement: strlen takes strlen_str");
+assert_eq(who(TS5), 2, "control: var TS5 = mks(); (unwrapped)");
 
 var r = assert_summary();

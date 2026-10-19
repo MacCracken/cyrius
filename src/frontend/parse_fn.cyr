@@ -5631,14 +5631,22 @@ fn _gv_init_call_sid(S, sti): i64 {
 }
 # The same record from the initializer's first token `ri`: `f(..);` gives f's name offset + 1,
 # anything else 0. PARSE_VAR's global arm (a `var` after the first top-level statement, which
-# never reaches PARSE_GVAR_REG) writes it from here.
+# never reaches PARSE_GVAR_REG) writes it from here. Parentheses around the whole call are
+# transparent (guide § Parentheses): `(f(..));` / `((f(..)));` record f as `f(..);` does — the k
+# `(` before the name match the k `)` right after the call's close (`_pair_unwrap_k`), then the
+# `;`. A wrapped `: Str` call was an untyped word to the overload dispatcher, so `println(s)`
+# printed the header's bytes. CHANGELOG [6.7.15]
 fn _gv_rhs_call_sid(S, ri): i64 {
-    if (TOKTYP(S, ri) != 2) { return 0; }
-    if (TOKTYP(S, ri + 1) != 10) { return 0; }
-    var e = _tok_close_paren(S, ri + 1);
+    var k = 0;
+    while (TOKTYP(S, ri + k) == 10) { k = k + 1; }
+    var a = ri + k;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var e = _tok_close_paren(S, a + 1);
     if (e < 0) { return 0; }
-    if (TOKTYP(S, e + 1) != 5) { return 0; }
-    return TOKVAL(S, ri) + 1;
+    if (_pair_unwrap_k(S, e + 1, k, a) < 0) { return 0; }
+    if (TOKTYP(S, e + k + 1) != 5) { return 0; }
+    return TOKVAL(S, a) + 1;
 }
 
 # The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`

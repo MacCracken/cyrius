@@ -1686,7 +1686,10 @@ mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that str
 scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
 through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. A
-method or operator result, a `Str` and a name keep the word at top level. An annotation that names no struct is never replaced by the callee's struct:
+method or operator result, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
+untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
+`println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
+bytes). An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 

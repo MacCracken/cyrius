@@ -434,6 +434,71 @@ if grep -q "passing a Str's data pointer 'gs.data' to 'println'" "$T/row.cyr.err
     _ok "axis 4 not routed: println(gs.data) is still reported as a Str's data pointer"
 else _bad "axis 4 not routed: println(gs.data) is not reported as a data pointer"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
 
+# ---- axis 5 (6.7.15): a WRAPPED one-call initialiser records its callee as the unwrapped one does ----
+# issues/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md: GVDSID was written only when the
+# initialiser's first token was `IDENT (`, so `var s = (mks());` at top level was an untyped word to the overload
+# dispatcher and `println(s)` printed the Str header's bytes ("`" twice before 'abcde' on x86_64), where `var t =
+# mks();` beside it printed the string. `_gv_rhs_call_sid` looks through a whole wrap; both writers (the zone's
+# `_gv_diag_sid`, PARSE_VAR's global arm after a first statement) share it. Each row prints 'abcde' per println.
+# (x86_64 here; tests/tcyr/crossos/struct_receive_paren_call.tcyr's TS rows carry it to every leg and host.)
+wrun() {
+    build "$T/w5.cyr" 1
+    if [ "$(cat "$T/w5.cyr.rc")" != 0 ]; then _bad "axis 5 $1: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; return; fi
+    chmod +x "$T/w5.cyr.bin"
+    out=$("$T/w5.cyr.bin" | tr '\n' ' ' || true)
+    if "$T/w5.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
+    if [ "$out" = "$2" ] && [ "$rc" = 0 ]; then _ok "axis 5 $1: prints '$out'"
+    else _bad "axis 5 $1: printed '$out', exit $rc (want '$2', exit 0)"; fi
+}
+W5H='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+fn mks(): Str { return str_from("abcde"); }'
+# the filed repro, verbatim
+printf '%s\n%s\n' "$W5H" 'var s = (mks());
+var t = mks();
+println(s);
+println(t);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "the filed repro (the declaration zone): var s = (mks()); println(s)" 'abcde abcde '
+printf '%s\n%s\n' "$W5H" 'alloc_init();
+var s = (mks());
+var t = mks();
+println(s);
+println(t);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "the filed repro after a first statement (PARSE_VAR's global arm)" 'abcde abcde '
+printf '%s\n%s\n' "$W5H" 'var s = ((mks()));
+println(s);
+alloc_init();
+var u = ((mks()));
+println(u);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "((mks())) in the zone and after a first statement" 'abcde abcde '
+printf '%s\n%s\n' "$W5H" 'var s = (mks());
+fn rd(): i64 { println(s); return 0; }
+rd();
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "a fn body reading the wrapped zone global" 'abcde '
+# Not a whole wrap: the call is part of the inside, or a tuple — no record, as for the unwrapped `mks() + 0`.
+printf '%s\n%s\n' "$W5H" 'fn who(s: cstring): i64 { return 1; }
+fn who_str(s: Str): i64 { return 2; }
+var a = (mks()) + 0;
+var b = (mks() + 0);
+var c = mks() + 0;
+var d = (mks());
+syscall(60, who(a) * 1000 + who(b) * 100 + who(c) * 10 + who(d));' > "$T/w5.cyr"
+build "$T/w5.cyr" 1
+if [ "$(cat "$T/w5.cyr.rc")" = 0 ]; then
+    chmod +x "$T/w5.cyr.bin"
+    if "$T/w5.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
+    # 1112 = a, b, c the cstring base; d routed to who_str. As an exit code: 1112 % 256 = 88.
+    if [ "$rc" = 88 ]; then _ok "axis 5 controls: (mks()) + 0, (mks() + 0), mks() + 0 stay unrouted; (mks()) routes (88)"
+    else _bad "axis 5 controls: exit $rc, want 88 (1112: only the whole wrap routed)"; fi
+else _bad "axis 5 controls: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; fi
+
 echo "str_cstring_arg_shapes: $pass ok, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 echo "PASS: str-cstring-arg-shapes"
