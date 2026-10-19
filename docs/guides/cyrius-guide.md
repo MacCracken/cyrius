@@ -8694,9 +8694,12 @@ The rules, in order:
 4. **One routed call is not an exact synonym: `dup2`.** Raw x86 `33` is renumbered to
    aarch64 `dup3(oldfd, newfd, 0)` because aarch64-Linux dropped `dup2`. Every case agrees
    except the self-dup idiom: `dup2(fd, fd)` returns `fd`, while `dup3(fd, fd, 0)` returns
-   `-EINVAL`. If your fd-shuffling loop leans on the self-dup, branch on `old == new`. It is
-   still far better than the alternative — untranslated, aarch64 33 is `mknodat`, which would
-   read your fds as `(path, mode)`.
+   `-EINVAL`. If your fd-shuffling loop leans on the self-dup, branch on `old == new` — or call
+   the wrapper `sys_dup2`, which does: since 6.7.15 the aarch64 peer answers `sys_dup2(fd, fd)`
+   as dup2 does, `fd` when it is open and -EBADF (-9) when it is not (it asks
+   `fcntl(F_GETFD)`), where through 6.7.14 it issued the same dup3 and answered -22. The raw
+   `33` still reaches dup3. It is still far better than the alternative — untranslated,
+   aarch64 33 is `mknodat`, which would read your fds as `(path, mode)`.
 5. **Routing the number is only half of portability — the STRUCT the call fills is the other
    half, and it differs in WIDTH as well as offset.** Read every field through the peer's own
    offset enum (`STAT_*`, `STATFS_*`), never a number you counted on x86. Two live examples:
