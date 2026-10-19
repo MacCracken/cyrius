@@ -48,11 +48,9 @@ alloc/vec overflow guards. v5.1.0+ adds macOS Mach-O.
 
 | Version | Supported |
 |---------|-----------|
-| 6.4.x | Yes (current) |
-| 6.3.x | Yes |
-| 6.2.x | Best-effort |
-| 6.1.x | Best-effort |
-| 6.0.x | Best-effort |
+| 6.7.x | Yes (current) |
+| 6.6.x | Yes |
+| 6.0.x – 6.5.x | Best-effort |
 | 5.x.x (5.0.0+) | Best-effort |
 | < 5.0.0 | No |
 
