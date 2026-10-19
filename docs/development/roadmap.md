@@ -101,7 +101,9 @@ each integration — less the forward-call pointer-return twin, resolved by 6.7.
 (the user's two steps at cass's desktop), and — placed 2026-10-19 by the user, best landed first —
 [the gates that read other projects' checkouts](issues/2026-10-19-gates-read-other-projects-checkouts.md) ripped out
 ("LANGUAGES DO NOT GATE ON OTHER PROJECTS": agnos, mirshi, sit, agnoshi, secureyeoman, the `~/Repos` census; a gate
-refusing any read outside the cyrius tree).
+refusing any read outside the cyrius tree), and the language server's two —
+[an include fragment compiled through its entry](issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md)
+(with the user's `[lsp] skip` manifest key) and [`cyrius-lsp` on macOS](issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md).
 
 ### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 

@@ -258,7 +258,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (0)
 
 
-**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (103)
+**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (104)
 
 - [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [asm_barrier_options.tcyr's header says a wrong barrier word faults (SIGILL), but a wrong option CRm runs as the full-system barrier](2026-10-18-asm-barrier-options-tcyr-header-claims-a-wrong-word-faults.md)
@@ -360,6 +360,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A declaration-zone untyped `var y = b.mkg(P);` / `b.mkg<i32>(33)` — a GENERIC method returning a generic struct's instance (`fn mkg<T>(self, v: T): G1<T>`) — binds nothing (`y.v.a` is "no struct type in scope for 'y'"), where after the first statement it binds the instance](2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md)
 - [The 6.7.15 changes beyond the decisions' text — confirm or restore each](2026-10-19-6715-behaviour-changes-beyond-the-decisions-text.md)
 - [`cyrius-lsp` does not reach macOS: neither macOS tarball builds it, and the server reads its environment and its own path from `/proc`, which macOS has no](2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md)
+- [`cyrius-lsp` compiles an include fragment ALONE — every name from an earlier include reads "undefined", so diagnostics in any multi-file project (cyrius's own `src/` included) are false](2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md)
 - [Gates and check rows read other projects' checkouts — agnos, mirshi, sit, agnoshi, secureyeoman, every repo under `~/Repos` — a language does not gate on other projects](2026-10-19-gates-read-other-projects-checkouts.md)
 - [A capture verb killed mid-capture leaves its `<base>/audit_x[ca]_<pid>[.N]` file behind for ever: nothing reaps it, and since CYRIUS-2026-0036's O_EXCL a later process with the same pid skips the name instead of reusing it](2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md)
 - [`regression_ssh_remote_exec_capture`'s output-fd lift (6.7.15) is pinned by no row and no static axis: removing it leaves every row and gate green](2026-10-19-ssh-remote-exec-capture-fd-lift-unpinned.md)
