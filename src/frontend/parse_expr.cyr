@@ -3244,7 +3244,7 @@ fn _pf_err(S, e): i64 {
 # One call in PARSE_STMT (cybs's per-fn ceiling). 1 = the statement is consumed. CHANGELOG [6.7.14]
 fn _stmt_paren_field(S): i64 {
     var st = GTI(S);
-    if (_pf_wrap(S, st) == 0) { return 0; }
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st); }   # 6.7.15 (D19): `(*p) += 1;`
     var x = _pf_chain_end(S, _pf_e);
     if (_pf_asg_at(S, x) == 1) {
         if (_syntax_only == 0) { if (_tn_once(S, _pf_e) == 1) {
@@ -3257,11 +3257,157 @@ fn _stmt_paren_field(S): i64 {
         _cst_skip_sync(S);
         return 1;
     }
+    if (_pf_read_stmt(S, st, x) == 1) { return 1; }   # 6.7.15 (D60): `(s).a;` refused as `s.a;` is
     _mcall_last = 0 - 1;
     PARSE_FACTOR(S);
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _expect_step(S, 5);
     return 1;
+}
+# ⛔ 6.7.15 — `(s).a;` ALONE IS REFUSED AS `s.a;` IS (the user's D60, 2026-10-18; 6.7.14's item 19): since 6.7.14's
+# D24 (a) a statement `( .. ).a;` compiled as a discarded read, while the unwrapped `s.a;` is refused ("expected '='")
+# and 6.7.13 refused it too ("unexpected '('"). A statement that is a field read through parentheses with NO call in it
+# (`(s).a;`, `(p).a;`, `(*p).a;`, `(w).p.a;`, `((s)).a;`) is now "the field read 'a' is discarded - a statement is an
+# assignment or a call", once at the field, the statement ended in sync (the latch as it was). A call anywhere keeps
+# it a statement, as unwrapped: `(mk1()).a;` as `mk1().a;`, `(s).m();` as `s.m();`, `(s).me().a;` as `s.me().a;`, and a
+# struct operator's result (`(x + y).b;`, its stamp `_lsc_beg` inside the statement). It is judged after the parse, so
+# a read that stops short (`(s).a.b;` of a scalar a, `(s).zz;`, `(zz).a;`) or latches its own refusal (`(x + 1).a;`)
+# keeps that one error. `x` = the token after the chain. 1 = the statement is consumed. CHANGELOG [6.7.15]
+fn _pf_read_stmt(S, st, x): i64 {
+    if (TOKTYP(S, x) != 5) { return 0; }
+    if (_pf_has_call(S, st + 1, x) == 1) { return 0; }
+    var p0 = _panic;
+    _lsc_beg = 0 - 1;
+    PARSE_FACTOR(S);
+    var ok = 1;
+    if (GTI(S) != x) { ok = 0; }
+    if (_lsc_beg >= st) { if (_lsc_beg < x) { ok = 0; } }   # a struct operator's call
+    if (_panic != p0) { ok = 0; }   # its own refusal latched (`(x + 1).a;`): left latched, not restored below
+    var f = _pf_last_field(S, _pf_e, x);
+    if (ok == 1) { if (f >= 0) {
+            STI(S, f);
+            var tl = " is discarded - a statement is an assignment or a call";
+            ERR_IDENT(S, "the field read ", TOKVAL(S, f), tl, 0 - 1);
+            _panic = p0;
+            STI(S, x);
+        } }
+    _expect_step(S, 5);
+    return 1;
+}
+# 1 = a call opens in tokens [i, e): a `(` after a name, a type-argument list's `>` or a builtin (`f(`, `.m(`,
+# `g<T>(`, `load64(`) — a grouping `(` follows `(`, an operator or `*` / `&`.
+fn _pf_has_call(S, i, e): i64 {
+    while (i < e) {
+        if (TOKTYP(S, i) == 10) {
+            var pt = TOKTYP(S, i - 1);
+            if (pt == 2 || pt == 20 || pt == 39 || pt == 152) { return 1; }
+            if (IS_KEYWORD_TOK(pt) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# The last `.name` of the field chain [i, e) (`.name` / `[..]` steps): that name's token, or -1.
+fn _pf_last_field(S, i, e): i64 {
+    var f = 0 - 1;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0 - 1; }
+            f = i + 1;
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0 - 1;
+        }
+    }
+    return f;
+}
+# ⛔ 6.7.15 — A STATEMENT WHOSE ASSIGNMENT DESTINATION IS PARENTHESISED STAYS REFUSED, BY NAME (the user's D19,
+# 2026-10-18): `(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(*(&s)) -= 1;` were "unexpected '('" (no statement
+# form starts with `(`; parentheses are transparent around a SOURCE, 6.7.6, and `(s).a = v;` is refused by name since
+# 6.7.14's D24 (a)); now "an assignment's destination is not parenthesised - write `*p += 1`", the statement quoted
+# without its wraps, once at the `(`, the statement stepped in sync (the latch as it was). The inside must be a place —
+# `* E`, or a name with `.f` / `[i]` steps — so a parenthesised value (`(n + 1) = 7;`, `(f()) = 3;`) or a tuple literal
+# keeps "unexpected '('". Cursor on the statement's `(`: 1 = consumed. CHANGELOG [6.7.15]
+fn _stmt_paren_dst(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    var e = _pw_end;
+    _pw_end = pe;
+    if (_pf_asg_at(S, e) == 0) { return 0; }
+    if (_pd_place(S, st + k, e - k) == 0) { return 0; }
+    var p0 = _panic;
+    _pd_err(S, st + k, e - k, e);
+    _panic = p0;
+    STI(S, st);
+    _cst_skip_sync(S);
+    return 1;
+}
+# 1 = tokens [a, ie) are a place: `* E`, or a name followed by `.name` / `[..]` steps only.
+fn _pd_place(S, a, ie): i64 {
+    if (a >= ie) { return 0; }
+    if (TOKTYP(S, a) == 8) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var i = a + 1;
+    while (i < ie) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0;
+        }
+    }
+    if (i == ie) { return 1; }
+    return 0;
+}
+# The refusal at the cursor (the statement's `(`): the place [a, ie), then the operator and value from `e` to the `;`.
+fn _pd_err(S, a, ie, e): i64 {
+    var m = ": an assignment's destination is not parenthesised - write `";
+    if (_err_once(S, (m * 31 + 61) * 8 + 4) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(m);
+    _pd_src(S, GTOFF(S, a), GTOFF(S, ie));
+    _pd_src(S, GTOFF(S, e - 1) + 1, GTOFF(S, _pd_semi(S, e)));   # from just past the last `)`, as written
+    PRSTR("`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The source text from offset b to offset c (trailing blanks dropped).
+fn _pd_src(S, b, c): i64 {
+    while (c > b) {
+        var ch = load8(S + 0x459D000 + c - 1);
+        if (ch != 32 && ch != 9 && ch != 10 && ch != 13) { break; }
+        c = c - 1;
+    }
+    if (c > b) { syscall(SYS_WRITE, 2, S + 0x459D000 + b, c - b); }
+    return 0;
+}
+# The statement's `;` at or after token i (depth 0), or the token that ends it first (`}`, EOF).
+fn _pd_semi(S, i): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return i; }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) {
+            d = d - 1;
+            if (d < 0) { return i; }
+        }
+        if (t == 5) { if (d == 0) { return i; } }
+        i = i + 1;
+    }
+    return n;
 }
 # The token after the `.name` / `.m(..)` / `.m<..>(..)` / `[..]` chain that starts at token `i`.
 fn _pf_chain_end(S, i): i64 {
@@ -3316,7 +3462,7 @@ fn _call_field(S): i64 {
     if (_call_dotted(S, ti) == 0) { return 0; }
     if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
-    if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
+    if (fi < 0) { if (_syntax_only == 0) { return _call_undef(S, ti); } }   # 6.7.15: named, its chain stepped over
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) { if (_call_ptr_field(S, ti, fi) == 1) { return 1; } }   # 6.6.17: `: *T`
@@ -3332,6 +3478,10 @@ fn _call_field(S): i64 {
         _synonly_skip_chain(S);
         # a method on the refused result: its arguments too, or `(` is a second error
         if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+        # 6.7.15: and the top-level refusal's `[..]` with the chain past it, as a method's (`_method_chain`): `var x =
+        # mk().p[0];` added a false "cannot subscript field 'p'". --syntax-only parses the index. CHANGELOG [6.7.15]
+        if (_syntax_only == 0) { if (sid > 0) { STI(S, _pf_chain_end(S, GTI(S))); } }
+        if (_syntax_only == 1) { if (_fn_nodef(S, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn
         _cfo = 0;
         return 1;
     }
@@ -3347,6 +3497,46 @@ fn _call_field(S): i64 {
     # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
     # then folded to 4 by rewriting the code from that literal — the call and the load with it.
     _cfo = 0;
+    return 1;
+}
+# ⛔ 6.7.15 — A `.field` OF AN UNDEFINED FN'S RESULT (`undefd().n += 1;`, `var x = undefd().n;`, the classic-for step
+# `undefd().n += 1`) never named the fn: `_call_field` left the call to PARSE_FNCALL, which stopped at the `.`
+# ("expected ';', got '.'"; the step fell to `_for_step_assign`, "expected '=', got '('"), and the fn surfaced only in
+# the end-of-compile refusal. Callee token `ti` resolving to no fn (pass 1 registered every definition) is "undefined
+# function 'undefd'" at its name — an ERROR, so --allow-undef cannot compile the line — once, the latch as it was;
+# the call and its `.f` / `.m(..)` / `[..]` chain are stepped over unparsed (the call is never registered, so the
+# end-of-compile refusal adds nothing), rax 0, and `_tsc_n` moves, so the statement and the step step over their
+# tails with no second error. `sizeof` / `mulh64`, lowered by name, keep their path; --syntax-only never gets here (a
+# sibling module's fn, `_cf_unres`). 1 = consumed, 0 = not this shape. CHANGELOG [6.7.15]
+fn _call_undef(S, ti): i64 {
+    var noff = TOKVAL(S, ti);
+    if (_is_ident_intrinsic(S, noff) == 1) { return 0; }
+    STI(S, ti);
+    _err_in_sync(S, "undefined function ", noff, 0);
+    STI(S, _pf_chain_end(S, _call_close(S, _gcall_open(S, ti)) + 1));
+    _tsc_n = _tsc_n + 1;
+    _addr_field_val(S);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    _cfo = 0;
+    return 1;
+}
+
+# ⛔ 6.7.15 — --syntax-only, A FIELD ASSIGNMENT ON A SIBLING MODULE'S CALL (`gp().n = 5;`, the for step `gp().n += 1`,
+# with `fn gp(): *H` in another file) was "cannot assign to a field of a call result: the result is a temporary": the
+# callee resolved to nothing, `_call_field` stepped over the call and its chain silently, and the statement then judged
+# the `=` as if the result were known to be a struct by value. Only a KNOWN callee's result is known to be a
+# temporary: `_cf_unres` is the callee token of the last call `_call_field` stepped over under --syntax-only with no
+# definition in this file (`_fn_nodef`: unregistered, or registered only by an earlier call), and the statement /
+# step whose callee it is parses its assignment silently (`_synonly_fld_tail`), as a field store parses one through
+# a struct this file cannot see. CHANGELOG [6.7.15]
+var _cf_unres = 0 - 1;
+# 1 = fn `fi` (-1: none) has no definition this file shows: unregistered, or registered only by a call — pass 1
+# recorded no owner for it (`_warn_undefined_prepass`'s test).
+fn _fn_nodef(S, fi): i64 {
+    if (fi < 0) { return 1; }
+    if (L64(_fnt_offsets + fi * 8) >= 0) { return 0; }
+    if (GFFI(S, fi) != 0) { return 0; }
     return 1;
 }
 
@@ -3371,7 +3561,10 @@ fn _stmt_call_field(S): i64 {
     # follows (`= v`, `OP= v`, `.p[i] = v`). CHANGELOG [6.7.14]
     if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
     if (PEEKT(S) == 28) { _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `mk(4).p[i] = v;`
-    elif (_asg_pair_at(S) == 1) { return _asg_temp_refused(S); }
+    elif (_asg_pair_at(S) == 1) {
+        if (_cf_unres == st) { _synonly_fld_tail(S, 5); return 1; }   # 6.7.15: a sibling's call, not known
+        return _asg_temp_refused(S);
+    }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;
@@ -4183,7 +4376,10 @@ fn _step_cf_tail(S, st, tn, dot): i64 {
     if (_cpf_done == st) { return 1; }   # the store ended the step at its `)`
     if (_tsc_n != tn) { return 1; }      # the call refused itself (top level): the one error
     if (dot == 0) { if (PEEKT(S) == 28) { _stmt_call_sub(S); } }   # `mk(4).p[i] = v`, as the statement
-    if (_asg_pair_at(S) == 1) { if (_mcall_last < 0 || dot == 0) { _asg_temp_refused(S); return 1; } }
+    if (_asg_pair_at(S) == 1) {
+        if (_cf_unres == st) { _synonly_fld_tail(S, 11); return 1; }   # 6.7.15: --syntax-only, a sibling's call
+        if (_mcall_last < 0 || dot == 0) { _asg_temp_refused(S); return 1; }
+    }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     return 1;
 }
@@ -4661,6 +4857,46 @@ fn _deref_ed(S): i64 {
     if (_ek_w(ed) != st) { return 0; }
     return ed;
 }
+# ⛔ 6.7.15 — `*pu` THROUGH A TYPED `*u128` IS REFUSED BY NAME, as `pu[0]` is (the user's D20, 2026-10-18;
+# issues/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md): its element does not fit one register, and
+# the dereference read and wrote the low 8 bytes, silently — `var x: u128 = *pa;` dropped the high word, `*pa == a`
+# compared the low word, an if-expression branch was the low word, `*pa = b` left the old high word. The operand of
+# the `*` at `d` just parsed, its step word a `*u128`'s (step 16, element width 16 — the kind `_pk_word` vouches for: a
+# name, a `*u128` field, a call or method declared `: *u128`, `p + n`, `**pp` of a `**u128`): refused at the `*`, rax
+# 0 — 1, for the reader (`_deref_read`) and the store (`_deref_store`) alike. An untyped pointer (`var p = &b;` steps
+# 1) and a `**u128`'s `*pp` (a pointer) are not one. CHANGELOG [6.7.15]
+fn _deref_u128(S, d): i64 {
+    var w = _pk_word(S);
+    if (_ps_step(w) != 16) { return 0; }
+    if (_ek_w((w >> 40) & 0xFF) != 16) { return 0; }
+    _deref_u128_err(S, d);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    return 1;
+}
+# "cannot dereference 'pu': ..." at the `*` (token `d`), the operand named by its last name (`*w.pu` 'pu', `*gpu()`
+# 'gpu') behind the `*`s it opens with (`**pp` '*pp', as 6.7.15's `**pp OP= v` refusal spells it) — `_psub_ed`'s u128
+# words. Once at the token (a generic's instances parse it again); the panic latch set, as the subscript's is.
+fn _deref_u128_err(S, d): i64 {
+    if (_panic == 1) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    var star = _sval_stars(S, d + 1);
+    if (_derr_seen(d, "_deref_u128_err", nm * 31 + star, 1) == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, d);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot dereference '");
+    _dst_spell(S, nm, star);
+    PRSTR("': a u128 element does not fit one register - use load64/store64 on its two halves\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
 # `*expr` — the dereference: the operand's element at its width when it is a narrow `*T`
 # (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), a struct under 8 B byte-exact
 # (`_deref_small`, 6.7.11), else load64 — an untyped word. 6.7.8 (C2-5): before, every `*p` read 8
@@ -4669,6 +4905,7 @@ fn _deref_read(S): i64 {
     var d = GTI(S);
     STI(S, GTI(S) + 1);
     PARSE_FACTOR(S);
+    if (_deref_u128(S, d) == 1) { return 0; }   # 6.7.15 (D20): refused by name, as `pu[0]` is
     var ed = _deref_ed(S);
     if (ed != 0) { return _esub_load(S, ed); }
     var ow = _pk_word(S);
@@ -5122,6 +5359,19 @@ fn _slit_ptype(S, ti, o): i64 {
     syscall(SYS_WRITE, 2, S + 0x459D000 + a, b - a);
     return 0;
 }
+# `&` takes a name. Anything else (`&(x)`, `&5`, `&*p`) is "expected identifier" once, at that token, and the
+# factor ends there: the `&` arm read on with the token's VALUE as a name offset (a `(`'s 0 is the source's first
+# word) and reported a second, false "undefined variable 'fn'". A `( .. )` is stepped whole, so the parse stays in
+# step; any other token is stepped as the arm stepped it. CHANGELOG [6.7.15]
+fn _amp_not_name(S): i64 {
+    ERR_EXPECT(S, 2);
+    var c = 0 - 1;
+    if (PEEKT(S) == 10) { c = _tok_close_paren(S, GTI(S)); }
+    if (c < 0) { c = GTI(S); }
+    STI(S, c + 1);
+    EMOVI(S, 0);
+    return 0;
+}
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
     if (_dl_refd_at(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr)
@@ -5498,7 +5748,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     if (typ == 27) {
         # &var or &fn — address of variable or function
         STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        if (PEEKT(S) != 2) { _amp_not_name(S); return 0; }   # 6.7.15: one error, the factor ends there
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
         # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse_fn.cyr).

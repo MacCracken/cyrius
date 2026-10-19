@@ -29,6 +29,22 @@
 #   `_pfl_beg` ignoring the wrap's `(` (GTI - 1 always)     -> RED 2: V11 (`var x: P2 = (b).mk();` took no temp), A1
 #   `_pf_lsc` answering 0 (no struct-result stamp)          -> RED 5: V7 V8 V10 (a method / operator / known callee
 #                                                             refused "not a struct"), N5 (two errors), A1
+# 6.7.15 (D19, measured 2026-10-18; a scratch tree with the one edit, its 2-stage compiler, the gate run from it, so
+# every leg is the mutant's):
+#   `_stmt_paren_field` answering 0 when no `.` follows      -> RED 37: P1-P9 on every leg ("unexpected '('"), P9's
+#   (no `_stmt_paren_dst`, as before)                          second refusal
+#   `_pd_place` answering 1 for every inside                -> RED 4: P10 on every leg (`(n + 1) = 7;` named as a
+#                                                             destination: "write `n + 1 = 7`")
+# 6.7.15 (D60, measured 2026-10-18; the same scratch-tree mutants):
+#   the lane before it (the D19 commit)                     -> RED 29: Q1-Q7 on every leg (compiled, rc 0), Q9
+#   `_pf_read_stmt` taking a struct operator's result as    -> RED 4: V13 on every leg run (`(x + y).b;` refused)
+#   no call (no `_lsc_beg` test)
+#   `_pf_read_stmt` without its GTI test (a read that did   -> RED 4: Q10 on every leg ("the field read 'b' ...")
+#   not parse whole is judged)
+#   ... without its panic test                              -> GREEN: Q13's inner refusal latches the panic, and the
+#                                                             refusal's own ERR_IDENT honours the latch (the test keeps
+#                                                             the restore from clearing that latch); Q11-Q13 pin the
+#                                                             one-error outcome
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -206,7 +222,105 @@ src N7 'fn main(): i64 { return (mk0()).a; }
 syscall(60, main());'
 refused N7 "cannot take a field of the result of 'mk0': it does not return a struct" "(mk0()).a, as mk0().a"
 
-FLOOR=21
+# 6.7.15 (the user's D19, 2026-10-18): a statement whose assignment DESTINATION is parenthesised stays refused, by
+# name — "an assignment's destination is not parenthesised - write `*pn += 1`" (the statement quoted without its wraps),
+# once at the `(`, the statement stepped in sync; it was "unexpected '('". A parenthesised value that is no place
+# keeps "unexpected '('" (P10 P11). issues/2026-10-17-parenthesised-assignment-destination-is-unexpected-paren.md
+PD="an assignment's destination is not parenthesised - write"
+printf '%s\n' 'fn main(): i64 { var n = 5; var pn: *i64 = &n; (*pn) += 1; return n; }' 'syscall(60, main());' > "$T/P1.cyr"
+refused P1 "<source>:1:48: $PD \`*pn += 1\`" "the filed repro verbatim: (*pn) += 1;"
+src P2 'fn main(): i64 { var n = 5; var pn: *i64 = &n; (*pn) = 1; return n; }
+syscall(60, main());'
+refused P2 "$PD \`*pn = 1\`" "(*pn) = 1;"
+src P3 'fn main(): i64 { var n = 5; (n) = 7; return n; }
+syscall(60, main());'
+refused P3 "$PD \`n = 7\`" "(n) = 7;"
+src P4 'fn main(): i64 { var n = 5; ((n)) = 7; return n; }
+syscall(60, main());'
+refused P4 "$PD \`n = 7\`" "((n)) = 7;"
+src P5 'fn main(): i64 { var s = P2 { 3, 4 }; (*(&s)) -= 1; return s.a; }
+syscall(60, main());'
+refused P5 "$PD \`*(&s) -= 1\`" "(*(&s)) -= 1; on a struct"
+src P6 'var Q = 5;
+(Q) += 2;
+syscall(60, Q);'
+refused P6 "$PD \`Q += 2\`" "top level: (Q) += 2;"
+src P7 'fn main(): i64 { var s = P2 { 3, 4 }; (s.a)=9; return s.a; }
+syscall(60, main());'
+refused P7 "$PD \`s.a=9\`" "(s.a)=9; a field, as written"
+src P8 'fn g<T>(x: T): i64 { var n: T = x; (n) = 7; return n; }
+fn main(): i64 { return g(1) + g<i32>(2) + g<i16>(3); }
+syscall(60, main());'
+refused P8 "$PD \`n = 7\`" "a generic at three types: once"
+src P9 'fn main(): i64 { var n = 5; (n) = 7; (n) <<= 1; return n; }
+syscall(60, main());'
+refused P9 "$PD \`n = 7\`" "two in a row: each once, the second \`n <<= 1\`" 2
+if ! grep -qF "$PD \`n <<= 1\`" "$T/P9.x86_64.err"; then bad "P9 the second statement's refusal is missing"; fi
+src P10 'fn main(): i64 { var n = 5; (n + 1) = 7; return n; }
+syscall(60, main());'
+refused P10 "unexpected '('" "(n + 1) = 7; no place: unchanged"
+src P11 'fn main(): i64 { var a = 1; var b = 2; (a, b) = (3, 4); return a; }
+syscall(60, main());'
+refused P11 "unexpected '('" "(a, b) = (3, 4); a tuple literal: unchanged"
+
+# 6.7.15 (the user's D60, 2026-10-18; 6.7.14's item 19): a STATEMENT that is a field read through parentheses with no
+# call in it is refused as the unwrapped `s.a;` is — "the field read 'a' is discarded - a statement is an assignment or
+# a call", once at the field; since 6.7.14's D24 (a) it compiled and did nothing. A call anywhere keeps it a statement,
+# as unwrapped (V9, V13). A read that does not parse keeps its own one error (Q8).
+# issues/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md (item 19)
+QD="is discarded - a statement is an assignment or a call"
+src Q1 'fn main(): i64 { var s = P1 { 33 }; (s).a; return s.a; }
+syscall(60, main());'
+refused Q1 "<source>:16:41: the field read 'a' $QD" "(s).a; alone (it compiled since 6.7.14)"
+src Q2 'fn main(): i64 { var s = P1 { 33 }; var p: *P1 = &s; (p).a; return s.a; }
+syscall(60, main());'
+refused Q2 "the field read 'a' $QD" "(p).a; p a *P1"
+src Q3 'fn main(): i64 { var s = P1 { 33 }; var p: *P1 = &s; (*p).a; return s.a; }
+syscall(60, main());'
+refused Q3 "the field read 'a' $QD" "(*p).a;"
+src Q4 'fn main(): i64 { var h: HQ; h.q.a = 7; ((h)).q.b; return h.q.a; }
+syscall(60, main());'
+refused Q4 "the field read 'b' $QD" "((h)).q.b; two wraps, a chain: names its last field"
+src Q5 '(GS).a;
+syscall(60, GS.b);'
+refused Q5 "the field read 'a' $QD" "top level: (GS).a;"
+src Q6 'fn main(): i64 { var s = P1 { 33 }; var p: *P1 = &s; (s).a; (p + 0).a; return s.a; }
+syscall(60, main());'
+refused Q6 "the field read 'a' $QD" "(s).a; (p + 0).a; two in a row: each once" 2
+src Q7 'fn g<T>(x: T): i64 { var s = P1 { 33 }; (s).a; return x; }
+fn main(): i64 { return g(1) + g<i32>(2) + g<i16>(3); }
+syscall(60, main());'
+refused Q7 "the field read 'a' $QD" "a generic at three types: once"
+src Q8 'fn main(): i64 { var s = P1 { 33 }; (s).zz; return s.a; }
+syscall(60, main());'
+refused Q8 "unknown field 'zz' on struct 'P1'" "(s).zz; a read that does not resolve keeps its own error"
+src Q10 'struct P9 { a; b; }
+fn main(): i64 { var s = P9 { 1, 2 }; (s).a.b; return s.a; }
+syscall(60, main());'
+refused Q10 "expected ';', got '.'" "(s).a.b; a chain that does not parse (a is no struct) keeps its own error"
+src Q11 'fn h(): i64 { return undefined_q; }
+fn main(): i64 { var s = P1 { 33 }; (s).zz; return s.a + h(); }
+syscall(60, main());'
+refused Q11 "undefined variable 'undefined_q'" "an earlier error, then (s).zz;: its own error only" 2
+if ! grep -qF "unknown field 'zz' on struct 'P1'" "$T/Q11.x86_64.err" || grep -qF "$QD" "$T/Q11.x86_64.err"; then bad "Q11 the second error is not (s).zz;'s own"; fi
+src Q12 'fn main(): i64 { (zz).a; return 0; }
+syscall(60, main());'
+refused Q12 "undefined variable 'zz'" "(zz).a; an undefined name keeps its own one error"
+src Q13 'fn h(): i64 { return undefined_q; }
+fn main(): i64 { var x = 5; (x + 1).a; return h(); }
+syscall(60, main());'
+refused Q13 "undefined variable 'undefined_q'" "an earlier error, then (x + 1).a;: its own refusal only" 2
+if ! grep -qF "a field is read only from a struct value" "$T/Q13.x86_64.err" || grep -qF "$QD" "$T/Q13.x86_64.err"; then bad "Q13 the second error is not (x + 1).a;'s own"; fi
+src V13 'fn main(): i64 { var x = P2 { 3, 4 }; var y = P2 { 10, 20 }; (x + y).b; (x).mk().a; (x.mk()).a; (gp()).a; (mk3(1)).c; return (x).a * 10 + (gp()).a; }
+syscall(60, main());'
+runs V13 35 "(x + y).b; (x).mk().a; (x.mk()).a; (gp()).a; (mk3(1)).c; a call keeps each a statement"
+printf '%s\n' 'struct P1 { a; }' 'fn main(): i64 { var s = P1 { 33 }; (s).a; return s.a; }' 'syscall(60, main());' > "$T/Q9.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/Q9.cyr" > /dev/null 2> "$T/Q9.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/Q9.err")" -eq 1 ] && grep -qF "the field read 'a' $QD" "$T/Q9.err"; then ok "Q9 --syntax-only refuses (s).a; as it refuses s.a;"
+else bad "Q9 --syntax-only: rc $crc: $(grep '^error' "$T/Q9.err" | head -2 | tr '\n' '|')"; fi
+
+FLOOR=46
 [ "$rows" -ge "$FLOOR" ] || bad "only $rows rows ran (floor $FLOOR)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails failed ($rows rows, $skips legs skipped)"; exit 1; fi
-echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name ($skips legs skipped)"
+echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60) ($skips legs skipped)"

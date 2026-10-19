@@ -52,19 +52,44 @@
 # inline-str-global-copies.md): a top-level `var H: Str = gt;` (gt an inline `Str` global) binds a handle global to
 # gt's static header, as the same line in a fn does — in the declaration zone (D21a, the filed repro: 33, was 37)
 # and after the first statement (D21b: 33, was 37); a `var P: *Str = gt;` in the zone takes the same address (the
-# crossos z_* rows); gt declared BELOW H stays refused (D21c, the zone's "declared below"). The untyped `var H =
-# gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned; D22b `H == load64(&gt)`).
+# crossos z_* rows). The untyped `var H = gt;` keeps gt's first word at top level (D22a, the filed repro: 0, pinned;
+# D22b `H == load64(&gt)`).
+#
+# 6.7.15 (the user's decision D17, 2026-10-18; issues/2026-10-17-toplevel-str-handle-from-inline-str-global-declared-
+# below-refused-as-copy-init.md): a zone `var H: Str = gt;` with gt declared BELOW H binds too (D21c, the filed repro
+# verbatim: 33 on every leg — refused "cannot copy-init 'H' from a global declared below it" through 6.7.14): gt's
+# address is static, so the bind needs no layout pass 1 could not see.
+#
+# 6.7.15 (the user's decision D16, 2026-10-18; issues/2026-10-17-inline-str-assigned-into-str-pointer-keeps-data-
+# word.md): an inline `Str` ASSIGNED into a `*Str` — `p = t`, `p = gt` (a `*Str` local or parameter), `GP = gt` (a
+# `*Str` global), a for step — takes the header's address, as the declaration `var p: *Str = t;` does since 6.7.14
+# (D16a, the filed repro verbatim: 7, was 0 — the data word); `GP = gt` is not warned "assigning non-pointer to typed
+# pointer" (D16b; it was); a frame's `GP = t` is refused by name with the words `G = t` into a `Str` global has (X14).
+#
+# 6.7.15 (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md): a `*Str` dereference into
+# a `Str` parameter — `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`, `h.eq(*p)` — passes the header p points at (its
+# address, p), as `str_len(p)` does; it passed the header's first word, the data pointer, as the header (SD1, the filed
+# repro verbatim: 5555, was 5500).
+#
+# 6.7.15 (the user's decision D14, 2026-10-18; issues/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-
+# stores-one-word.md): `t = p` and `t = *p` with t an inline `Str` and p a `*Str` copy the header p points at, as `t = a`
+# from a handle does (D20 (a)) and `var t: Str = *p;` does (D14a, the filed repro verbatim: 55, was 22 — t.data = p,
+# t.len stale); `t = *p` is not warned "assigning non-pointer to typed pointer" (D14b; it was). An if-expression of
+# `Str` handles keeps the one-word store, documented (the user's decision D15, 2026-10-18: its value is untyped, as for
+# every inline struct — D15, pinned: 22 with today's warning).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
-# floor 47) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
-# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X13 refused (the message first, ONE `^error`, no
+# floor 120) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
+# hardware), cx (cxvm) and PE (wine, a private prefix); X1-X14 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
 # leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
 # every leg; D20a the filed repro verbatim (5 — the pun read 5 too), D20b its `return t.len;` (5; the pun left it
 # unwritten), D20c the filed row 3 (5) on every leg; D18a the D18 filed repro verbatim (1), D18b `var p: *Str = t;`
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
-# statement (33), D21c a source declared below stays refused, D22a / D22b the untyped top-level declaration's word
-# (0; 1); CMP a handle into the retyped methods builds byte-identical to the
+# statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
+# (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
+# D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); CMP a handle into the retyped methods builds
+# byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
 #
@@ -117,11 +142,25 @@
 #                                                     H a handle, the replay's copy path refuses it)
 #   f3 `_istr_gsrc` answers 0 (pass 1 inline)      -> RED 14: R1 x7 (z_bind, z_wrap), D21a x7 (37: copied)
 #   f4 `_istr_src` after the top-level arm again   -> RED 14: R1 x7 (R_TOP5: a copy), D21b x7 (37)
-#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built)
+#   f5 the replay without its declared-below guard -> RED 4: D21c x4 (built) — retired by 6.7.15's D17 (below)
 #   2026-10-17 (6.7.14, D22 (b), the pins):
 #   g1 `_uci_ps` answers at top level (D22's (a))  -> RED 7: R1 x7 (R_TOP6: `var UL = gz;` after a statement became
 #                                                     gz's handle); the zone's D22a / D22b pin the replay's untyped
 #                                                     path, which offers no handle to mutate to
+#   2026-10-18 (6.7.15, D17; the same scratch-copy method):
+#   h1 the declared-below guard restored in        -> RED 14: R1 x7 (the zone line HB refused), D21c x7
+#      `_istr_gz` (the lane before D17)               (refused "cannot copy-init 'H' ...")
+#   2026-10-18 (6.7.15, D16):
+#   i1 `_istr_dst` without its `*Str` answers 3 / 4 -> RED 26: R1 x7 (9 rows: the pa_* rows, R_TOP7 — the data
+#      (the lane before D16)                          word), X14 x4 (built), D16a x7 (0), D16b x4 (warned) + x4 (0)
+#   i2 `_istr_asg` without its SPSC                -> RED 4: D16b x4 (warned "assigning non-pointer to typed pointer")
+#   2026-10-18 (6.7.15, the `*Str` dereference argument):
+#   j1 `_sarg_istr_dx` never called (the lane     -> RED 14: R1 x7 (str_len(*p) read the string as a header: SIGSEGV x5,
+#      before)                                        a cx guest fault, PE 5), SD1 x7 (5500)
+#   2026-10-18 (6.7.15, D14):
+#   k1 `_istr_hop` without the `*Str` names        -> RED 14: R1 x7 (6 rows, `t = p`: 22), D14a x7 (22)
+#   k2 `_asg_dstar` without `_istr_dxa`            -> RED 18: R1 x7 (11 rows, `t = *p`: 22 + the warning), D14b x4
+#                                                     (warned) + x7 (22)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -244,7 +283,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=83
+FLOOR=120
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -303,6 +342,9 @@ refused X12 "$MR" "a method returning Str"
 row X13 'fn mk(c): Str { if (c == 1) { var t: Str = Str { "abc", 3 }; return t; } return 0; }
 fn go(): i64 { return f(mk(1)); }'
 refused X13 "$MR" "\`return t;\` inside a block"
+row X14 'var GP: *Str = 0;
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; GP = t; return str_len(GP); }'
+refused X14 "$MG" "\`GP = t;\` into a \`*Str\` global (D16: the header's address would dangle; the data word through 6.7.14)"
 
 # --- K: controls (a global's or a capture's header does not dangle; untyped positions keep the word) ---
 row K1 'fn mk(): Str { return gt; }
@@ -422,6 +464,95 @@ for leg in $(legs); do
 done
 runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
 
+# --- D16: the filed repro (issues/2026-10-17-inline-str-assigned-into-str-pointer-keeps-data-word.md), verbatim ---
+cat > "$T/D16a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+var GP: *Str = 0;
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = t; return str_len(p); }
+fn main(): i64 { alloc_init(); return go(); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D16a 7 "the filed repro: \`p = t;\` into a \`*Str\` takes t's header (was 0, the data word)" "$XLEGS $OLEGS"
+# D16b: the filed table's `GP = gt;` (and `p = gt;`) is the header's address, typed as the pointer: no warning.
+row D16b 'var GP: *Str = 0;
+fn go(): i64 { GP = gt; var p: *Str = 0; p = gt; return str_len(GP) * 10 + str_len(p); }'
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D16b
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D16b.$leg" ]; then bad "D16b ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/D16b.$leg.err"; then bad "D16b ($leg): warned: $(grep '^warning' "$T/D16b.$leg.err" | head -1)"
+    else ok "D16b \`GP = gt; p = gt;\` ($leg): no warning"; fi
+done
+runs D16b 77 "\`GP = gt; p = gt;\` take gt's static address (was 0)"
+
+# --- SD1: the filed repro (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md), verbatim ---
+cat > "$T/SD1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+fn main(): i64 {
+    alloc_init();
+    var h = str_from("abcde");
+    var p: *Str = h;
+    var pp: **Str = &p;
+    var s1: Str = *p;
+    var s2: Str = **pp;
+    fmt_int(str_len(s1)); fmt_int(str_len(s2)); fmt_int(str_len(*p)); fmt_int(str_len(**pp));
+    return 0;
+}
+syscall(60, main());
+EOF
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" SD1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/SD1.$leg" ]; then bad "SD1 ($leg): did not build (rc $crc): $(grep '^error' "$T/SD1.$leg.err" | head -1 || true)"; continue; fi
+    execute "$leg" SD1
+    if [ "$got" -eq 0 ] && [ "$last" = "5555" ]; then ok "SD1 the filed repro: str_len(*p) / str_len(**pp) pass the header ($leg): $last"
+    else bad "SD1 ($leg): exit $got, prints '$last' (want 5555; 5500 = the data word passed as the header)"; fi
+done
+
+# --- D14: the filed repro (issues/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-stores-one-word.md), verbatim ---
+cat > "$T/D14a.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var t: Str = Str { "zz", 2 };
+    t = p;
+    return t.len * 10 + f(t);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs D14a 55 "the filed repro: \`t = p;\` (p a \`*Str\`) copies the header into an inline Str (was 22: t.data = p, t.len stale)" "$XLEGS $OLEGS"
+# D14b: the filed table's `t = *p;` copies too, with no "assigning non-pointer to typed pointer" (it warned).
+sed 's/^    t = p;$/    t = *p;/' "$T/D14a.cyr" > "$T/D14b.cyr"
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D14b
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D14b.$leg" ]; then bad "D14b ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/D14b.$leg.err"; then bad "D14b ($leg): warned: $(grep '^warning' "$T/D14b.$leg.err" | head -1)"
+    else ok "D14b \`t = *p;\` ($leg): no warning"; fi
+done
+runs D14b 55 "the filed table's \`t = *p;\` copies the header (was 22)" "$XLEGS $OLEGS"
+# D15: the filed table's if-expression of Str handles keeps the one-word store — t.data = the chosen handle, t.len stale
+# (22) — with today's warning (the user's decision D15, 2026-10-18: documented, unchanged).
+sed 's/^    t = p;$/    var c = 1;\n    t = if (c == 1) { a } else { a };/' "$T/D14a.cyr" > "$T/D15.cyr"
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" D15
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/D15.$leg" ]; then bad "D15 ($leg): did not build (rc $crc)"
+    elif ! grep -q '^warning.*assigning non-pointer to typed pointer' "$T/D15.$leg.err"; then bad "D15 ($leg): today's warning is gone: $(grep -E '^(warning|error)' "$T/D15.$leg.err" | head -1 || true)"
+    else ok "D15 \`t = if (c == 1) { a } else { a };\` ($leg): compiles with today's warning"; fi
+done
+runs D15 22 "an if-expression of Str handles keeps the one-word store (D15: documented, 22 as before)" "$XLEGS $OLEGS"
+
 # --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -436,17 +567,19 @@ EOF
 runs D21a 33 "the filed repro 1: a zone \`var H: Str = gt;\` binds gt's header (was 37, a copy)" "$XLEGS $OLEGS"
 sed 's/^var H: Str = gt;$/alloc_init();\nvar H: Str = gt;/' "$T/D21a.cyr" > "$T/D21b.cyr"
 runs D21b 33 "the same after a first top-level statement (was 37)" "$XLEGS $OLEGS"
+# D21c: the D17 filed repro (issues/2026-10-17-toplevel-str-handle-from-inline-str-global-declared-below-refused-as-copy-
+# init.md), verbatim — gt declared BELOW H binds as above (6.7.15, D17; refused "cannot copy-init" through 6.7.14).
 cat > "$T/D21c.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
 fn f(s: Str) { return str_len(s); }
 var H: Str = gt;
 var gt: Str = Str { "abcdefg", 7 };
-fn main() { return f(H); }
+fn main() { H.len = 3; return f(H) * 10 + gt.len; }
 var r = main();
 syscall(SYS_EXIT, r);
 EOF
-refused D21c "cannot copy-init 'H' from a global declared below it (declare the source first): 'gt'" "gt declared below H stays refused"
+runs D21c 33 "the D17 filed repro: a zone \`var H: Str = gt;\` with gt declared below binds gt's header (was refused)" "$XLEGS $OLEGS"
 cat > "$T/D22a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"

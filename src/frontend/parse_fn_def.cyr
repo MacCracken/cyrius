@@ -472,6 +472,7 @@ fn _tl_pass1(S, objok): i64 {
     var go = 1;
     while (go == 1) { go = _tl_scan1(S, objok); }
     _tl_stmt1 = GTI(S);   # 6.7.14: the first top-level statement (`_decl_late` names its line)
+    _psig_reread(S);      # 6.7.15: a signature naming a struct declared below its fn, read again
     # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
     _prescan_tail(S);
     SMOD(S, 0);
@@ -484,6 +485,96 @@ fn _tl_pass1(S, objok): i64 {
     _bnd_target_check(S);   # 6.7.8 (C2-7): the bounds-checked mode vs kernel / EFI / shared / object
     _cov_pass1(S);    # 6.7.10 (P5B-1): the execution-coverage mode, likewise (parse_cov.cyr)
     _dyn_p2 = 1;      # 6.7.8: every struct is registered — a trait-object call's prototype may be made
+    return 0;
+}
+
+# ⛔ 6.7.15 — A CALL ABOVE A FN READS THE SIGNATURE THE DEFINITION READS, WHEREVER ITS STRUCTS ARE DECLARED. The
+# prescan (`_prescan_fn_sig`, CO-01) records a fn's ABI facts as pass 1 meets it, and a struct declared below the
+# fn was not registered yet: `x: R2` was a plain word (its 16 / 24 B argument pushed as its first word, SIGSEGV),
+# `x: *R2` recorded no struct ("cannot pass 't' ... pass &t"), a `: Pq` / `: *Later` return no struct (no hidden
+# result pointer, 139; "no struct type in scope"), and a struct named like a vector, `Result` or `bool` the
+# built-in. A call parsed before the definition reads that record. So each definition is noted (`_psig_note`: the
+# fn, its `fn` and `(` tokens, how many structs were registered, its impl context), and once the scan has
+# registered every struct, a definition whose signature names one registered after it (`_psig_late`) is read
+# again by the same reader (`_prescan_sig_facts`) — the one-time parts (the slot, visibility, `#deprecated` /
+# effect / method notes, generic records) are not re-run. A signature naming no such struct is never re-read, so
+# a program whose structs precede their fns compiles byte-identically.
+# (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md, the return twin.) CHANGELOG [6.7.15]
+var _psig_tab = 0;   # 9 words per prescanned definition (`_psig_note`), a vec made at the first
+fn _psig_note(S, fi, ti, pasync): i64 {
+    if (_psig_tab == 0) { _psig_tab = vec_new(); }
+    vec_push(_psig_tab, fi);
+    vec_push(_psig_tab, ti);
+    vec_push(_psig_tab, GTI(S));
+    vec_push(_psig_tab, GSTC(S));
+    vec_push(_psig_tab, pasync);
+    vec_push(_psig_tab, GMOD(S));
+    vec_push(_psig_tab, _impl_tnoff);
+    vec_push(_psig_tab, _impl_trait);
+    vec_push(_psig_tab, _cur_ii);
+    return 0;
+}
+# The end of pass 1's scan: each noted definition that a struct registered after it may change, read again. The
+# cursor, the module and the impl context are put back.
+fn _psig_reread(S): i64 {
+    if (_psig_tab == 0) { return 0; }
+    var sv = GTI(S);
+    var svm = GMOD(S);
+    var sit = _impl_tnoff;
+    var sitr = _impl_trait;
+    var sii = _cur_ii;
+    var n = vec_len(_psig_tab);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_psig_tab, i + 3) < GSTC(S)) { _psig_one(S, i); }
+        i = i + 9;
+    }
+    _impl_tnoff = sit;
+    _impl_trait = sitr;
+    _cur_ii = sii;
+    SMOD(S, svm);
+    STI(S, sv);
+    return 0;
+}
+# Entry `i`: re-read when it is still its fn's record (a later definition of the same fn is the one calls reach) and
+# its signature names a late struct. The kind row past ordinal 61 is rebuilt whole, as the definition rebuilds it.
+fn _psig_one(S, i): i64 {
+    var fi = vec_get(_psig_tab, i);
+    var ti = vec_get(_psig_tab, i + 1);
+    if (GFDS(S, fi) != ti + 1) { return 0; }
+    if (_psig_late(S, ti, vec_get(_psig_tab, i + 3)) == 0) { return 0; }
+    SMOD(S, vec_get(_psig_tab, i + 5));
+    _impl_tnoff = vec_get(_psig_tab, i + 6);
+    _impl_trait = vec_get(_psig_tab, i + 7);
+    _cur_ii = vec_get(_psig_tab, i + 8);
+    STI(S, vec_get(_psig_tab, i + 2));
+    _pm_row_reset(fi);
+    _prescan_sig_facts(S, fi, ti, vec_get(_psig_tab, i + 4));
+    return 0;
+}
+# 1 = the signature of the definition whose `fn` is token `ti` — its name to the body's `{` (or a `;`) — holds a name
+# that resolves to a struct registered after the first `sc0` (`FINDSTRUCT` answered otherwise when it was read).
+fn _psig_late(S, ti, sc0): i64 {
+    var n = GTCNT(S);
+    var k = ti + 1;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13 || t == 5 || t == 12) { return 0; }
+        if (t == 2) { if (_psig_late_name(S, TOKVAL(S, k), sc0) == 1) { return 1; } }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _psig_late_name(S, noff, sc0): i64 {
+    var sc = GSTC(S);
+    var j = sc0;
+    while (j < sc) {
+        if (STREQ(S, L64(S + 0x1A6018 + j * 8), noff) == 1) {
+            if (FINDSTRUCT(S, noff) > sc0) { return 1; }
+            return 0;
+        }
+        j = j + 1;
+    }
     return 0;
 }
 

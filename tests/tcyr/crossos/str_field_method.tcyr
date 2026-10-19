@@ -1,0 +1,144 @@
+# str_field_method.tcyr — 6.7.15. A method on a `Str` FIELD
+# (issues/2026-10-17-method-call-on-str-field-does-not-parse.md).
+#
+# `w.s.len()`, `w.s.clone()` and `w.s.eq(x)` with `s: Str` a field were "expected ';', got '.'": a `Str` field is
+# one pointer slot holding the header's address (6.6.17), so the field walk stopped before the `.m(` and nothing
+# continued from there, while a method on a nested INLINE field (6.7.0 A5, method_on_nested_field.tcyr) and on a
+# `Str` local (`h.len()`) parsed. The method's `self` is the field's VALUE — the header, as `h.len()` passes a
+# handle's value and `str_len(w.s)` passes the field — so a write through `self` lands in the string w.s names.
+# Every shape the field walk reaches: a local, a `*W` parameter or local, a field two levels down, through a `*T`
+# field, a call's by-value and `: *W` result, a method's result, `self.s` in an impl, a global, a capture, wrapped
+# receivers, a statement, a method chain on the result, and at top level. Run on ecb / ach / cass / pi by the release
+# gate's cross-OS leg; tests/gates/frontend/str_field_method.sh runs it on x86_64 / IR / aarch64 / cx / PE.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct W { s: Str; n; }
+struct W1 { s: Str; }
+struct O { a; w: W; pw: *W; }
+
+# A user method on Str: writes the header's len word through `self`.
+fn Str_setl(self, n): i64 { store64(self + 8, n); return n; }
+
+fn sf_mk(): W { var t: W = W { str_from("xyz"), 9 }; return t; }
+fn sf_mkp(q: *W): *W { return q; }
+fn sf_viap(p: *W): i64 { return p.s.len(); }
+
+impl W {
+    fn sl(self): i64 { return self.s.len(); }
+    fn set2(self): i64 { self.s.setl(2); return self.s.len(); }
+    fn me(self): *W { return self; }
+}
+
+var GW: W = W { 0, 0 };
+
+fn sf_local(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    return w.s.len();
+}
+fn sf_clone(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var k = w.s.clone();
+    var t: Str = w.s.clone();
+    w.s.setl(1);
+    return str_len(k) * 10 + t.len();
+}
+fn sf_eq(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var o: W = W { str_from("abcde"), 2 };
+    var x: W = W { str_from("abx"), 3 };
+    return w.s.eq(w.s) * 100 + w.s.eq(o.s) * 10 + w.s.eq(x.s);
+}
+fn sf_ptr(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var p: *W = &w;
+    return p.s.len() * 10 + sf_viap(&w);
+}
+fn sf_stmt(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var p: *W = &w;
+    w.s.setl(4);
+    var a = w.s.len;
+    p.s.setl(3);
+    return a * 10 + str_len(w.s);
+}
+fn sf_nested(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var iw: W = W { str_from("abcd"), 2 };
+    var o: O = O { 7, iw, &w };
+    var a = o.w.s.len() * 10 + o.pw.s.len();
+    o.pw.s.setl(1);
+    return a * 10 + w.s.len();
+}
+fn sf_call(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var a = sf_mk().s.len() * 10 + sf_mkp(&w).s.len();
+    sf_mkp(&w).s.setl(2);
+    return a * 10 + w.s.len();
+}
+fn sf_method(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var a = w.sl() * 10 + w.me().s.len();
+    w.me().s.setl(4);
+    return a * 100 + w.s.len() * 10 + w.set2();
+}
+fn sf_chain(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var u: Str = w.s.clone().cat(w.s);
+    return w.s.clone().len() * 100 + u.len();
+}
+fn sf_args(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    return w.s.contains(str_from("cd")) * 10 + w.s.starts_with(str_from("abd"));
+}
+fn sf_small(): i64 {
+    var w1: W1 = W1 { str_from("ab") };
+    w1.s.setl(1);
+    return w1.s.len();
+}
+fn sf_wrap(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var p: *W = &w;
+    var q: **W = &p;
+    return (w).s.len() * 100 + (*p).s.len() * 10 + (*q).s.len();
+}
+fn sf_global(): i64 {
+    GW.s = str_from("abcdef");
+    var a = GW.s.len();
+    GW.s.setl(2);
+    return a * 10 + str_len(GW.s);
+}
+fn sf_cap(): i64 {
+    var w: W = W { str_from("abcde"), 1 };
+    var f = || { return w.s.len(); };
+    return fncall0(f);
+}
+
+alloc_init();
+var GT: W = W { 0, 4 };
+GT.s = str_from("hello");
+var R_TOP1 = GT.s.len();
+var GTP: *W = &GT;
+GTP.s.setl(3);
+var R_TOP2 = GT.s.len() * 10 + GTP.s.len();
+
+assert_eq(sf_local(), 5, "w.s.len() on a Str field of a local (refused before)");
+assert_eq(sf_clone(), 55, "var k = w.s.clone(); var t: Str = w.s.clone(); each a copy");
+assert_eq(sf_eq(), 110, "w.s.eq(w.s), w.s.eq(o.s), w.s.eq(x.s)");
+assert_eq(sf_ptr(), 55, "p.s.len() through a *W local and a *W parameter");
+assert_eq(sf_stmt(), 43, "w.s.setl(4); p.s.setl(3); as statements write the string w.s names");
+assert_eq(sf_nested(), 451, "o.w.s.len() two levels down, o.pw.s.len() through a *W field, o.pw.s.setl(1);");
+assert_eq(sf_call(), 352, "sf_mk().s.len() on a by-value result, sf_mkp(&w).s.len() on a *W result, and its statement");
+assert_eq(sf_method(), 5542, "self.s.len() in an impl, w.me().s.len(), w.me().s.setl(4);, self.s.setl(2);");
+assert_eq(sf_chain(), 510, "w.s.clone().len(), w.s.clone().cat(w.s)");
+assert_eq(sf_args(), 10, "w.s.contains(..), w.s.starts_with(..): a Str argument");
+assert_eq(sf_small(), 1, "an 8 B struct W1 { s: Str; }: w1.s.setl(1); w1.s.len()");
+assert_eq(sf_wrap(), 555, "(w).s.len(), (*p).s.len(), (*q).s.len()");
+assert_eq(sf_global(), 62, "GW.s.len() and GW.s.setl(2); on a global in a fn");
+assert_eq(sf_cap(), 5, "a closure's captured w: w.s.len()");
+assert_eq(R_TOP1, 5, "top level: GT.s.len() on a global");
+assert_eq(R_TOP2, 33, "top level: GTP.s.setl(3); through a *W global, then GT.s.len() and GTP.s.len()");
+var r = assert_summary();

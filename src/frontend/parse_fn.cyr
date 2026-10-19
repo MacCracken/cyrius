@@ -3025,6 +3025,7 @@ fn _sarg_byval_small(S, fi, argc): i64 {
         }
     }
     if (GFPSID(S, fi, argc) <= 0) { return 0; }
+    if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # 6.7.15: `str_len(*p)` passes the header p points at
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
     var ps = GPSC(S);
@@ -3033,6 +3034,33 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     _sarg_type_errf(S, fi, argc, asid, _ess_nm, _ess_fi);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
+    EPUSHR(S);
+    return 1;
+}
+# ⛔ 6.7.15 — A `*Str` DEREFERENCE INTO A `Str` PARAMETER PASSES THE HEADER, NOT ITS FIRST WORD. A `Str` parameter
+# takes a header's address; `*p` of a `p: *Str` is the header (6.7.10's decision 6: through a pointer `*p` is the
+# struct), whose address is p — but the dereference parsed as a word read, so `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`
+# and `h.eq(*p)` passed the string's data pointer as the header (`str_len` 0, or a wild length), silently, on every
+# target, where `var s: Str = *p;` copies the header. The whole argument at the cursor (to its `,` / `)`) is ONE
+# dereference `* E` inside any balanced parentheses, E typed `*Str` (`_hl_psid`: a name, field, call or method, `*pp`
+# of a `**Str`, `p + n`), to a `Str` parameter `argc` of `fi` (not a `p: *Str` one): only E is parsed — rax = the
+# header's address, as `str_len(p)` passes it — the wrap closed, pushed. 1 = pushed; 0 = not that shape, nothing
+# moved. CHANGELOG [6.7.15]
+fn _sarg_istr_dx(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    if (_pptr_param(S, fi, argc) == 1) { return 0; }
+    var st = GTI(S);
+    var a = _ie_unparen(S, st, _arg_next(S, st));
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    if (_hl_psid(S, a + 1, pe) != ss) { return 0; }
+    STI(S, a + 1);   # past the wrap's `(`s and the `*`
+    PARSE_FACTOR(S);
+    _pw_close(S, a - st);
     EPUSHR(S);
     return 1;
 }
@@ -3503,21 +3531,58 @@ fn _ret_park_copy(S): i64 {
 # naming nothing. The value [a, pe), inside any parentheses, exactly `& IDENT` with IDENT a struct-typed local,
 # parameter, capture or global whose `&` is its slot — a `*T` (an untyped `self` is one), or a handle of a plain
 # struct: refused at the `&`, once (`_ret_slot_refuse`), before the classes' refusals. 1 = refused. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AND `&n` OF A NAME HOLDING NO STRUCT (the user's D18, 2026-10-18): an integer, a `*i64` / `*V`, a `**S`,
+# an array, a vector, a `Str` handle — a local, parameter, capture or global — is the address of n's slot too, so it is
+# refused by name at every size (8 B returned the slot's address as the struct's word, a different byte each run; over
+# 8 B the classes' refusals named nothing). An inline `Str` / tuple / dyn is the address of that aggregate: refused as
+# `&u` of another struct is (kind 3). A const, an enum constant and a fn are the factor's (`&f` is no slot).
 fn _ret_slot_amp(S, a, pe): i64 {
     if (pe != a + 2) { return 0; }
     if (TOKTYP(S, a) != 27) { return 0; }
     if (TOKTYP(S, a + 1) != 2) { return 0; }
     var noff = TOKVAL(S, a + 1);
     var t = _hl_name_ty(S, noff);
-    if (t <= 0) { return 0; }
-    if (_hl_cp == 0) {
-        if (_dx_plain(S, t) == 0) { return 0; }   # a `Str` / tuple / dyn name: not this rule
-        if (_hl_amp_sid(S, noff) > 0) { return 0; }   # an inline struct: D4 (a)'s struct
+    if (t <= 0) { return _ret_amp_bare(S, a, noff); }
+    var cp = _hl_cp;
+    if (cp == 0) {
+        if (_hl_amp_in(S, noff, t) > 0) {
+            if (_dx_plain(S, t) == 1) { return 0; }   # an inline struct: D4 (a)'s struct (or its kind-3 refusal)
+            _ret_sid_refuse(S, a, noff, t, 3);   # an inline `Str` / tuple / dyn: `&t` (a `*Str`)
+            return 1;
+        }
     }
-    _ret_slot_refuse(S, a, noff);
+    _ret_slot_refuse(S, a, noff, t, cp);
     return 1;
 }
-fn _ret_slot_refuse(S, ti, noff): i64 {
+# `& IDENT` of a name typed with no struct: refused as a slot when IDENT is a local, a parameter, a capture or a
+# global here (the `&` factor's ladder); 0 for anything else, left to the factor. 1 = refused. A generic's BASE body
+# (T bound to i64) leaves its locals, parameters and captures to its instances: `var n: T = x; return &n;` is the
+# struct at `<S8>` (D4 (a)), so the i64 reading must not refuse the definition. CHANGELOG [6.7.15]
+fn _ret_amp_bare(S, a, noff): i64 {
+    if (_asg_lvalue_is(S, noff) == 1) { return 0; }   # a const / an enum constant: the factor's refusal
+    var k = 0;
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) >= 0) { k = 1; }
+        if (_hl_capn(S, noff) == 1) { k = 1; }
+    }
+    if (k == 1) { if (_ret_gen_base(S) == 1) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { k = 1; }
+    if (k == 0) { return 0; }
+    _ret_slot_refuse(S, a, noff, 0, 0);
+    return 1;
+}
+# 1 while a generic fn's base body is parsed (its type parameters bound to i64), not an instance's.
+fn _ret_gen_base(S): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
+    return 1;
+}
+# "`&q` is the address of q's slot, not a struct", then the advice by what q holds (`t`, `cp` 1 a `*T`): S, the fn's
+# own struct — "return q"; another struct — what q is, since `return q;` is refused too ("got `pu` (a `*U8`)"; the
+# user's D58, 2026-10-18: it said "return pu"); no struct (`t` 0) — nothing more (D18). CHANGELOG [6.7.15]
+fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3528,8 +3593,19 @@ fn _ret_slot_refuse(S, ti, noff): i64 {
     PRSTR(S + 0xEC00000 + noff);
     PRSTR("` is the address of ");
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR("'s slot, not a struct — return ");
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("'s slot, not a struct");
+    if (t == _cur_fn_ret_sid) {
+        PRSTR(" — return ");
+        PRSTR(S + 0xEC00000 + noff);
+    }
+    elif (t > 0) {
+        PRSTR(", and ");
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(" is a `");
+        if (cp != 0) { PRSTR("*"); }
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (t - 1) * 8));
+        PRSTR("`");
+    }
     PRSTR("\n");
     _had_error = 1;
     return 0;
@@ -7646,6 +7722,7 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
 # call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
 # "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
+# 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse_expr.cyr) moves it too. CHANGELOG [6.7.15]
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }
@@ -13140,8 +13217,21 @@ fn _mark_ptr_param(S): i64 {
         ed = _ek_at(S, GTI(S));
     }
     var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _ek_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _param_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
     return 0;
+}
+# ⛔ 6.7.15 — A GENERIC'S `pp: **Box<T>` PARAMETER READS ITS PIN UNDER THE BINDING ITS BODY HAS: the base's T -> i64
+# (`_ret_ptr_base_bind`, as a `: *T` / `: **Box<T>` return is read), an instance's own (the parameter loop bound it).
+# Read unbound, the pointee `Box<T>`'s T was refused "unknown type 'T' as a type argument", so the definition never
+# compiled, where `p: *Box<T>` does. A fn that is no generic is read as before. The pin of the annotation whose first
+# `*` is token `ann` (`_ek_pin`); the binding in force is put back. CHANGELOG [6.7.15]
+fn _param_pin(S, ann): i64 {
+    if (_cur_fn_ix < 0) { return _ek_pin(S, ann); }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _ret_ptr_base_bind(S, _cur_fn_ix);
+    var pn = _ek_pin(S, ann);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return pn;
 }
 # ⛔ 6.7.0 (A4) — AN UNTYPED `self` IN AN `impl … for T` IS A `*T`. It was a bare address: `self.x`
 # was "no struct type in scope for 'self'" (every body read `load64(self)`), and the direct call
@@ -17041,15 +17131,23 @@ fn _prescan_fn_sig(S): i64 {
         SFFI(S, fi, _pfid + 1);
         if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
         else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }   # never leave a stale private bit
-        _prescan_params(S, fi);
-        if (_pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
-        if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
-        _prescan_ret_type(S, fi);
+        _psig_note(S, fi, start_ti, _pasync);   # 6.7.15: for the re-read (`_psig_reread`)
+        _prescan_sig_facts(S, fi, start_ti, _pasync);
         _prescan_ret_single(S, fi);   # 6.6.17 (a5)
         _prescan_ret_arity(S, fi);    # 6.7.11
     } else { _pre_attr_drop(); }        # an unnamed `fn`: pass 2 refuses it; never carry past it
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+# Pass 1, the cursor on the `(` of fn `fi`'s parameter list (`start_ti` its `fn` token, `pasync` 1 for an `async
+# fn`): the signature's ABI facts — the parameter masks and records, the prologue copies, the return. The prescan's
+# and, once every struct is registered, its re-read's (`_psig_reread`, 6.7.15).
+fn _prescan_sig_facts(S, fi, start_ti, pasync): i64 {
+    _prescan_params(S, fi);
+    if (pasync == 1) { _bvcp_none(fi); }   # 6.6.20: see `_pm_copies`
+    if (_prescan_maybe_naked(S, start_ti) == 1) { _bvcp_none(fi); }
+    _prescan_ret_type(S, fi);
     return 0;
 }
 

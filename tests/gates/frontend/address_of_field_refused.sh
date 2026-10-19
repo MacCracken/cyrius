@@ -18,6 +18,16 @@
 # Mutation (2026-10-15, a scratch tree with the one change, its compiler built by the fixed one, this gate run
 # with CYCC=that compiler): `_addr_field_post` answering 0 (no refusal) -> RED F1-F10 ("expected ')', got '.'"
 # and the like, refused not as expected) and K4 (the parse out of step: a cascade).
+#
+#   N   6.7.15: `&` of something that is not a name (`&(x)`, `&((x))`, `&5`, `&*q`, `&;`) is "expected identifier"
+#       ONCE (issues/2026-10-17-address-of-parenthesised-name-false-second-error.md). The `&` arm went on with the
+#       token's VALUE as a name offset — a `(`'s 0, the source's first word — and printed a second, false
+#       "undefined variable 'fn'" ('struct' when the source opens with a struct); `_amp_not_name`
+#       (src/frontend/parse_expr.cyr) ends the factor there and steps a `( .. )` whole. The two filed repros
+#       verbatim on the x86_64, aarch64, cx and PE compilers, at their positions; the parse stays in step (N9).
+#       Mutation (2026-10-18, a scratch tree whose `&` arm calls ERR_EXPECT and reads on, as before, its 2-stage
+#       compiler, the gate run from it): RED 15 — N1 N2 on all four legs, N3-N8 (two error lines each, the second
+#       "undefined variable 'fn'" / 'struct' / 'in'), N9 (three errors).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -28,7 +38,15 @@ cd "$ROOT"
 fails=0
 ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
-build() { rc=0; timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?; }
+build() {   # <name> — on the compiler of leg $LEG (x86_64 when unset)
+    rc=0
+    case ${LEG:-x86_64} in
+        x86_64)  timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$T/cc_a64" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$? ;;
+        cx)      timeout 60 "$T/cc_cx" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$? ;;
+    esac
+}
 refused() {   # <name> <message fragment> <what> <source>
     printf '%b' "$4" > "$T/$1.cyr"
     build "$1"
@@ -76,5 +94,33 @@ elif [ "$(grep -c '^error' "$T/k04.err")" -ne 2 ]; then bad "K4: want 2 errors (
 elif ! grep -qF "$AF" "$T/k04.err" || ! grep -q "undefined variable 'undefined_name_x'" "$T/k04.err"; then bad "K4: not the two expected errors: $(grep '^error' "$T/k04.err" | head -2 | tr '\n' '|')"
 else ok "K4: the parse stays in step — a later error is still reported, nothing between"; fi
 
+echo "N. \`&\` of something that is not a name: \"expected identifier\" once (6.7.15)"
+EI="expected identifier, got '('"
+if timeout 120 "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ] \
+    && timeout 120 "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ]; then
+    chmod +x "$T/cc_a64" "$T/cc_cx"
+    for LEG in x86_64 aarch64 cx pe; do
+        # The filed repros, verbatim (each printed a second "undefined variable 'fn'" / 'struct').
+        refused n1$LEG "<source>:1:38: $EI" "N1 ($LEG): the filed repro, verbatim: var p = &(x);" "fn main(): i64 { var x = 5; var p = &(x); return load64(p); }\nsyscall(60, main());\n"
+        refused n2$LEG "<source>:2:27: $EI" "N2 ($LEG): the filed repro, verbatim: return &(q); in a fn returning Q" "struct Q { v; }\nfn mk(q: *Q): Q { return &(q); }\nfn main(): i64 { var s = Q { 1 }; var r = mk(&s); return r.v; }\nsyscall(60, main());\n"
+    done
+    LEG=x86_64
+else
+    bad "N1 N2: the aarch64 / cx compilers did not build from src/main_aarch64.cyr / src/main_cx.cyr"
+fi
+refused n3 "$EI" "N3: &((x)), two wraps" "fn main(): i64 { var x = 5; var p = &((x)); return 0; }\nsyscall(60, main());\n"
+refused n4 "$EI" "N4: f(&(x), 1), an argument" "fn f(a, b): i64 { return a + b; }\nfn main(): i64 { var x = 5; return f(&(x), 1); }\nsyscall(60, main());\n"
+refused n5 "$EI" "N5: &(x) + 1, an operand" "fn main(): i64 { var x = 5; var p = &(x) + 1; return 0; }\nsyscall(60, main());\n"
+refused n6 "expected identifier, got number 5" "N6: &5" "fn main(): i64 { var p = &5; return 0; }\nsyscall(60, main());\n"
+refused n7 "expected identifier, got '*'" "N7: &*q" "fn main(): i64 { var x = 5; var q = &x; var p = &*q; return 0; }\nsyscall(60, main());\n"
+refused n8 "expected identifier, got ';'" "N8: & alone" "fn main(): i64 { var p = &; return 0; }\nsyscall(60, main());\n"
+# The parse stays in step: a later, unrelated error is still reported, and nothing between.
+printf '%b' "fn f(): i64 { var x = 5; var p = &(x); return 0; }\nfn h(): i64 { return undefined_name_x; }\nsyscall(60, f() + h());\n" > "$T/n9.cyr"
+build n9
+if [ "$rc" -eq 0 ]; then bad "N9: BUILT"
+elif [ "$(grep -c '^error' "$T/n9.err")" -ne 2 ]; then bad "N9: want 2 errors (the &, then the undefined name): $(grep '^error' "$T/n9.err" | head -3 | tr '\n' '|')"
+elif ! grep -qF "$EI" "$T/n9.err" || ! grep -q "undefined variable 'undefined_name_x'" "$T/n9.err"; then bad "N9: not the two expected errors: $(grep '^error' "$T/n9.err" | head -2 | tr '\n' '|')"
+else ok "N9: the parse stays in step — a later error is still reported, nothing between"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: address_of_field_refused — $fails row(s) red"; exit 1; fi
-echo "PASS: address_of_field_refused — \`&x.f\` is refused by name once (a local, a global in both zones, a *E parameter, a nested field, a narrow field, a top-level argument, a tuple element, a method, a field then an index: F1-F10); &E.V, &o, &o + 8 and p.g through a *E stay, and the parse stays in step (K1-K4)"
+echo "PASS: address_of_field_refused — \`&x.f\` is refused by name once (a local, a global in both zones, a *E parameter, a nested field, a narrow field, a top-level argument, a tuple element, a method, a field then an index: F1-F10); &E.V, &o, &o + 8 and p.g through a *E stay, and the parse stays in step (K1-K4); \`&\` of a non-name is \"expected identifier\" once (N1 N2 the filed repros on the x86_64 / aarch64 / cx / PE compilers, N3-N8), the parse in step (N9)"

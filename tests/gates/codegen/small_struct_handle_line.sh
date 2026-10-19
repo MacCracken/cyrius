@@ -265,7 +265,14 @@
 #      branch, `l = **pp`, `**pp = u` copies, top level; `*pp` as the `*S` D9 (a) made it (`return *pp`, `l = *pp + 0`);
 #      R16a-R16c the filed repros VERBATIM: exit 4 (take(**pp), green since 6.7.13's VC-11), 4 (`var t: P = **pp;`:
 #      139 / 139 / cx 0 / PE 5 through 6.7.13), 11 (a 3-byte `**ppc` byte-exact: 10 through 6.7.13); the refusals
-#      (another struct, `**pp OP= v`) are struct_copy_type_checked.sh's R27 / R28 / C5 / C6
+#      (another struct, `**pp OP= v`) are struct_copy_type_checked.sh's R27 / R28 / C5 / C6.
+#      6.7.15 (issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md): `*pp` as the
+#      WHOLE source of a copy is the `*S` it reads, copied through (the file's w_* rows); R16d / R16e that
+#      filing's two repros VERBATIM: print 444 (`G = *pp; *q = *pp;` — 004 through 6.7.14 / the 6.7.15 slot open: the
+#      pointer word in the first field) and 4444 (`l2 = *pp;`, `var t3: P = (*pp);` — 4094: l2.y stale, t3 a handle
+#      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32). The file's gb_* rows (floor 59):
+#      a generic's `pp: **GBox<T>` parameter compiles (issues/2026-10-17-generic-double-pointer-to-generic-struct-
+#      parameter-refused.md; its repro is generic_double_pointer_infer.sh B1)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -1019,7 +1026,7 @@ done
 TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
 [ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
 NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
-PSFLOOR=31
+PSFLOOR=59
 if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
 echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
 for leg in $XLEGS $OTHER; do
@@ -1077,6 +1084,61 @@ for rw in a:1:4 b:2:4 c:3:11; do
         if [ "$RC" -eq -1 ]; then bad "R16$rs $leg: did not build: $(grep '^error' "$D/rpp${rn}_$n.err" | head -1)"
         elif [ "$RC" -eq "$rw" ]; then ok "R16$rs $leg: exit $rw"
         else bad "R16$rs $leg: exit $RC, want $rw"; fi
+    done
+done
+
+# The two repros of issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md,
+# verbatim (6.7.15): their printed digits.
+cat > "$D/repro_pw1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct P { x; y; }
+var G = P { 0, 0 };
+fn bs(v: P): i64 { return v.y; }
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var d = P { 0, 0 };
+    var q: *P = &d;
+    G = *pp;
+    *q = *pp;
+    var a = bs(*pp);
+    fmt_int(G.y); fmt_int(d.y); fmt_int(a);
+    return 0;
+}
+syscall(60, main());
+EOF
+cat > "$D/repro_pw2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct P { x; y; }
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var l1 = P { 0, 0 };
+    var l2 = P { 0, 0 };
+    l1 = p;
+    l2 = *pp;
+    var t3: P = (*pp);
+    var q: *P = *pp;
+    var t4: P = q;
+    s.y = 9;
+    fmt_int(l1.y); fmt_int(l2.y); fmt_int(t3.y); fmt_int(t4.y);
+    return 0;
+}
+syscall(60, main());
+EOF
+for rw in d:1:444 e:2:4444; do
+    rs=${rw%%:*}; rn=${rw#*:}; rw=${rn#*:}; rn=${rn%%:*}
+    echo "R16$rs. the filed whole-source *pp repro $rn, verbatim (prints $rw)"
+    for leg in $XLEGS $OTHER; do
+        n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$D/repro_pw$rn.cyr" "$D/rpw${rn}_$n"
+        if [ "$RC" -eq -1 ]; then bad "R16$rs $leg: did not build: $(grep '^error' "$D/rpw${rn}_$n.err" | head -1)"
+        elif [ "$RC" -eq 0 ] && [ "$LAST" = "$rw" ]; then ok "R16$rs $leg: $rw"
+        else bad "R16$rs $leg: exit $RC, printed '$LAST', want $rw"; fi
     done
 done
 
