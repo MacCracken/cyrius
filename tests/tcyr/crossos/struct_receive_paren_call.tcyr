@@ -239,4 +239,15 @@ assert_eq(who(TS3) * 10 + who(TS4), 22, "after a statement: (mks()) / ((mks())) 
 assert_eq(strlen(TS3) * 10 + strlen(TS4), 55, "after a statement: strlen takes strlen_str");
 assert_eq(who(TS5), 2, "control: var TS5 = mks(); (unwrapped)");
 
+test_group("6.7.15 (D32): what a struct-result assignment into a pointer keeps");
+# The user's decision D32 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind is refused by
+# name (tests/gates/frontend/struct_result_type_refused.sh AP). These are the shapes it keeps: a `*Q` destination
+# copies through the pointer, 8 B or less keeps its word.
+fn ka_ptr(): i64 { var q: Q; q.a = 0; q.b = 0; var p: *Q = &q; p = mk(); return q.a * 10 + q.b; }
+fn ka_ptr3(): i64 { var q: Q3; var p: *Q3 = &q; p = mk3(); return dq3(q); }
+fn ka_wp(): i64 { var p: *i64 = 0; p = mk1(); var w = p; return w; }
+assert_eq(ka_ptr(), 34, "p = mk() into a *Q copies through p");
+assert_eq(ka_ptr3(), 34, "p = mk3() into a *Q3 copies through p (24 B)");
+assert_eq(ka_wp(), 33, "p = mk1() into a *i64 keeps the 8 B struct's word");
+
 var r = assert_summary();

@@ -4725,16 +4725,38 @@ fn _asa_term(S, term): i64 {
 }
 # Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
 # for back from token `from`: 1 = refused.
+# 6.7.15 (the user's decision D32 (a), 2026-10-18): also a `*T` destination whose pointee is not `sid` itself, with
+# D14's remedy (`_asa_ptr`). CHANGELOG [6.7.15]
 fn _asa_refuse(S, noff, from, ti, fnoff, sid): i64 {
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     var a = _asa_ann(S, noff, from);
     if (a <= 0) { return 0; }
-    if (_asa_scalar(S, a) == 0) { return 0; }
     _rcv_asg_e = _asa_end(S, a);
-    var r = _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
+    var r = _asa_judge(S, ti, fnoff, sid, a, noff);
     _rcv_asg_e = 0 - 1;
     return r;
+}
+fn _asa_judge(S, ti, fnoff, sid, a, noff): i64 {
+    if (_asa_ptr(S, a, sid) == 1) { return _rcv_ann_refuse(S, ti, fnoff, sid, 1, a, noff); }
+    if (_asa_scalar(S, a) == 0) { return 0; }
+    return _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
+}
+# ⛔ 6.7.15 — D14 AT AN ASSIGNMENT (the user's decision D32 (a), 2026-10-18). `p = mkp();` with `p` a `*i64` / `*u8` /
+# any `*T` local, parameter or global and the struct result over 8 B stored the struct's first word as the pointer
+# — silently (the filed repro faulted at `*p`, 139) — where `var p: *i64 = mkp();` is refused (6.7.13's D14). 1 =
+# the annotation at `a` is a `*T` D14 refuses at the assignment: not `*S` of the result's struct `sid` itself (6.7.10
+# B7-1c: the struct is copied through it), nor a generic base's `*T` (each instance judges its own). CHANGELOG [6.7.15]
+fn _asa_ptr(S, a, sid): i64 {
+    if (TOKTYP(S, a) != 8) { return 0; }
+    var t = a + 1;
+    while (TOKTYP(S, t) == 8) { t = t + 1; }
+    if (_rcv_tp_base(S, t) == 1) { return 0; }
+    if (t != a + 1) { return 1; }
+    if (TOKTYP(S, t) != 2) { return 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, t)) == sid) { return 0; }
+    if (TOKTYP(S, t + 1) == 19) { if (FINDSTRUCT(S, TOKVAL(S, t)) > 0) { return 0; } }   # `*G<..>`: the handle's
+    return 1;
 }
 # 1 = the annotation at token `a` names a scalar D24 judges: an integer, a float, an 8-byte handle (an enum,
 # `cstring`, `Result`, `Vec`, a type parameter) or `u128` — not `bool` (its own refusal), not an array element.

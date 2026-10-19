@@ -1749,7 +1749,11 @@ error: cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - de
 Through 6.7.12 it compiled with only *assigning non-pointer to typed pointer* and stored the struct's
 first word as the pointer (`x.b` faulted; a `*i64` held 333). A struct of 8 bytes or less still
 stores its one word, with that warning, as a scalar keeps it; `x = mkp();` into a `*P2` local copies
-through it, unchanged. A global declaration is judged the same (6.7.14; the user's decision D28,
+through it, unchanged. Into any other `*T` an ASSIGNMENT is refused with the same words (6.7.15; the user's
+decision D32, 2026-10-18): `p = mkp();` into a `*i64` / `*u8` / `**P2` local, parameter or global — the free
+call, a method, an operator, a known `&f`, a `for` step, in parentheses, in a fn or at top level — is *cannot
+assign 'p: \*i64' from 'mkp', which returns the struct 'P2' - declare 'p: P2' and take `&p`* (through 6.7.14 it
+stored the struct's first word as the pointer, and `*p` faulted). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was

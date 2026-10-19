@@ -609,6 +609,56 @@ fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a 
     "$AQ"'fn two(): (i64, i64) { return (1, 2); }
 fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp().a; r = x; } return r; }'"$E"
 
+# AP (6.7.15, the user's decision D32 (a), 2026-10-18; issues/2026-10-17-struct-result-assigned-to-pointer-or-untyped-
+# scalar-keeps-first-word.md) — a struct result over 8 B ASSIGNED to a `*T` (a local, a parameter or a global declared
+# `*i64`, `*u8`, `**Q`, any `*T` but `*S` of the result's own struct) is refused with D14's words, "cannot assign
+# 'p: *i64' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take `&p`", once: the free call, a method, an
+# operator, a known `&f` callee, a for step, in parentheses, in a fn and at top level. Through 6.7.14 each stored the
+# struct's first word as the pointer (the filed repro faulted at `*p`, 139), with no diagnostic or only the
+# typed-pointer warning. A `*Q` destination of the same struct copies through the pointer, as since 6.7.10 (APK1); a
+# struct of 8 B or less keeps its word (APK2).
+#   the tree before (6.7.15 receives R3, D31's commit)   -> RED 14: AP0-AP13 (compiled)
+#   `_asa_judge` without its `_asa_ptr` arm               -> RED 14: AP0-AP13 (compiled)
+# `_asa_ptr`'s own-struct test is a guard no row reaches: a `*Q` destination of the result's struct is a handle,
+# copied before `_asa_refuse` (APK1 builds and copies with the test removed — measured).
+echo "6.7.15 (D32) — a struct result over 8 B assigned to a *T is refused by name:"
+PM="cannot assign 'p: \*i64' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take \`&p\`"
+PQ="$AQ"'var GP: *i64 = 0;
+'
+refuse "AP0 p = mkp() into *i64  (the filed repro)" "$PM" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn main(): i64 {
+    var p: *i64 = 0;
+    p = mkp();
+    return *p;
+}
+syscall(60, main());
+' one
+refuse "AP1 p = mkp()  (a *u8 local)" "cannot assign 'p: \*u8' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take" "$PQ"'fn main(): i64 { var p: *u8 = 0; p = mkp(); return 1; }'"$E" one
+refuse "AP2 p = mkp()  (a *i64 parameter)" "$PM" "$PQ"'fn f(p: *i64): i64 { p = mkp(); return 1; }
+fn main(): i64 { return f(0); }'"$E" one
+refuse "AP3 GP = mkp()  (a *i64 global, in a fn)" "cannot assign 'GP: \*i64' from 'mkp'.* take \`&GP\`" "$PQ"'fn main(): i64 { GP = mkp(); return 1; }'"$E" one
+refuse "AP4 GP = mkp()  (top level)" "cannot assign 'GP: \*i64' from 'mkp'" "$PQ"'GP = mkp();
+syscall(60, 1);
+' one
+refuse "AP5 p = b.mk()  (a method)" "cannot assign 'p: \*i64' from 'Q\.mk', which returns the struct 'Q'" "$PQ"'fn main(): i64 { var b = Q { 1, 2 }; var p: *i64 = 0; p = b.mk(); return 1; }'"$E" one
+refuse "AP6 p = a + c  (an operator)" "cannot assign 'p: \*i64' from 'Q_add'" "$PQ"'fn main(): i64 { var a = Q { 1, 2 }; var c = Q { 3, 4 }; var p: *i64 = 0; p = a + c; return 1; }'"$E" one
+refuse "AP7 p = fncall0(&mkp)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = fncall0(&mkp); return 1; }'"$E" one
+refuse "AP8 p = callptr(&mkp)  (*u8)" "cannot assign 'p: \*u8' from 'mkp'" "$PQ"'fn main(): i64 { var p: *u8 = 0; p = callptr(&mkp); return 1; }'"$E" one
+refuse "AP9 for (..; ..; p = mkp())  (a step)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; for (var i = 0; i < 1; p = mkp()) { i = i + 1; } return 1; }'"$E" one
+refuse "AP10 p = mk3()  (24 B)" "cannot assign 'p: \*i64' from 'mk3', which returns the struct 'Q3' - declare 'p: Q3'" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = mk3(); return 1; }'"$E" one
+refuse "AP11 p = (mkp())  (in parentheses)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = (mkp()); return 1; }'"$E" one
+refuse "AP12 GP = B.mk()  (top level, a method)" "cannot assign 'GP: \*i64' from 'Q\.mk'" "$PQ"'var B = Q { 1, 2 };
+GP = B.mk();
+syscall(60, 1);
+' one
+refuse "AP13 p = mkp()  (a **Q local)" "cannot assign 'p: \*\*Q' from 'mkp'" "$PQ"'fn main(): i64 { var q: Q; var pq: *Q = &q; var p: **Q = &pq; p = mkp(); return 1; }'"$E" one
+accept "APK1 p = mkp() into *Q  (copies through p)" "$PQ"'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; var p: *Q = &q; p = mkp(); return q.b - 400; }'"$E" 44 \
+    "$PQ"'fn main(): i64 { var q: Q; q.a = 333; q.b = 444; return q.b - 400; }'"$E"
+accept "APK2 p = mk1() into *i64  (8 B: the word)" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = mk1(); var w = p; return w - 300; }'"$E" 33 \
+    "$PQ"'fn main(): i64 { var p = 333; return p - 300; }'"$E"
+
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
 struct Box { v: Pt; n; }
