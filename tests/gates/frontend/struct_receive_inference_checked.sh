@@ -1239,7 +1239,7 @@ refused DM9after "undefined variable 'nope'" "after an earlier error: 24 B adds 
 # deduped by name with the one pass 2's call makes) (`_gu_gen` / `_gu_tp` / `_gu_inst`). GZ0 the filed repro verbatim;
 # GZ1 `mkg1<i64>(33)`; GZ2 a fn body reads `x.v`; GZ3 16 B: the D30 refusal alone; GZ4 / GZ5 after a first statement
 # (unchanged); GZ6 `mkg1<i32>(30)` is `G1<i32>` (a `g: G1<i32>` parameter and a local of it agree); GZ7 a struct T; GZ8
-# a global's T; GZ9 two type parameters (i8, i32), the return's list swapped.
+# a global's T; GZ9 two type parameters (i8, i32), the return's list swapped; GZ10 `x + 1` with no operator fn refused.
 #   (Each mutant: a scratch copy of the tree with the one change, its 2-stage compiler, this gate run from the copy.)
 #   N56 the tree before it (720c3492f)                    -> RED 9 rows: GZ0 GZ1 GZ2 GZ6 GZ7 GZ8 GZ9 x4 legs (refused:
 #                                                           no struct type in scope), GZ3 x4 (2 errors), A2 x4 (the
@@ -1248,6 +1248,9 @@ refused DM9after "undefined variable 'nope'" "after an earlier error: 24 B adds 
 #   N58 `_gu_tp` without its global-name arm               -> RED 1: GZ8 x4
 #   N59 `_gu_inst` answering the generic base              -> RED 4: GZ6 GZ7 GZ9 A2 x4 ("cannot pass 'X' to a parameter
 #                                                           of a different struct type": the base is not the instance)
+#   N60 the 4862a462e compiler as CYCC                    -> GZ10zone RED on x86_64 and pe (rc 0: it built and exited 34;
+#                                                           the cross legs, built by it from this tree, carry the rule);
+#                                                           GZ10after green
 GZH='include "lib/syscalls.cyr"
 struct Pt { a; }
 struct G1<T> { v: T; }
@@ -1294,8 +1297,22 @@ var z = mkg1(N);' 'z.v'
 runs GZ8 33 "the zone: \`var z = mkg1(N);\` with N an untyped global binds G1 (T = i64)"
 rowg GZ9 zone 'var Q = mkgp<i8, i32>(3, 30);' 'Q.v + Q.w'
 runs GZ9 33 "the zone: \`mkgp<i8, i32>(3, 30)\` returning \`GP<U, T>\` is \`GP<i32, i8>\` (8 B)"
+# GZ10 — THE BEHAVIOUR CHANGE (the review of 14cc28034): x is the struct, so `x + 1` dispatches the struct's operator
+# and, with no `G1_add`, is refused, as after the first statement (and 6.7.14's D29 free call, TU9). 4862a462e built
+# the zone line and exited 34 (the word plus one). Every leg's compiler (cx lists the fn: "  - G1_add").
+for zw in zone after; do
+    rowg "GZ10$zw" $zw 'var x = mkg1(33);
+var y = x + 1;' 'y'
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        compile "$leg" "GZ10$zw"
+        if [ "$crc" -ne 0 ] && grep -qE "undefined function 'G1_add'|^  - G1_add\$" "$T/GZ10$zw.$leg.err" && [ ! -s "$T/GZ10$zw.$leg" ]; then
+            ok "GZ10$zw the $zw: \`var x = mkg1(33); x + 1\` with no \`G1_add\` is refused ($leg)"
+        else bad "GZ10$zw the $zw: \`x + 1\` was not refused for want of \`G1_add\` ($leg, rc $crc)"; fi
+    done
+done
 
-[ "$rows" -ge 310 ] || bad "only $rows rows ran (floor 310)"
+[ "$rows" -ge 312 ] || bad "only $rows rows ran (floor 312)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15)"
