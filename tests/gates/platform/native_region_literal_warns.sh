@@ -3,7 +3,7 @@
 # that an ESYSXLAT x86-compat row RENUMBERS is warned at compile time, and still translated.
 # 6.7.14: the region carries through `include`, and a constant DECLARED inside one is judged too.
 # 6.7.15 (D39): a constant declared in a file outside lib/ is judged by the region carried into it;
-# a fn-local const is judged too.
+# a fn-local const is judged too. 6.7.16: printed once per site, not once per #inline replay.
 #
 # THE DEFECT (filed 2026-10-08, docs/development/issues/2026-10-08-aarch64-native-region-literal-
 # translated-silently.md). In a region compiled only for aarch64 (`#ifdef CYRIUS_ARCH_AARCH64`,
@@ -69,9 +69,12 @@
 #           on line 5, the binary byte-identical to the region-free twin's, still exits 1 under
 #           qemu; a local const declared outside a region and used inside stays silent; an
 #           `#inline` fn's local const declared in a region of its file warns there (inc/inl.cyr)
-#           as often as its literal twin (the definition and each replay, called from outside
-#           any region) and emits what the twin does; one declared outside, called from inside a
-#           region, stays silent; D39's rule: a per-arch file outside lib/ warns, under lib/ not
+#           ONCE, as its literal twin does (6.7.16: the definition and two calls, called from
+#           outside any region, print one warning per site, not one per replay) and emits what
+#           the twin does; the 6.7.16 filed d1.cyr (a raw 91 in an #inline fn, called twice)
+#           prints its "raw syscall 91 is x86_64" warning once; one declared outside, called
+#           from inside a region, stays silent; D39's rule: a per-arch file outside lib/ warns,
+#           under lib/ not
 #   axis 13 the 6.7.15 filed repro VERBATIM (D39: an enum constant at the top level of
 #           src/arch_aarch64.cyr, included under the guard): one warning naming NR_UMOUNT2 = 39
 #           → 172 at the per-arch file's line 2, the binary byte-identical to the region-free
@@ -111,9 +114,17 @@
 #       (`_esx_lc_in_region` asks `_esx_region_at`)                 -> axis 12 FAILS (declared
 #                                                                      outside, used inside: warned)
 #   (k) 6.7.15: a replay records no declaration (`_lc_push`
-#       stores 0 while GIDEP > 0)                                   -> axis 12 FAILS (the #inline
-#                                                                      fn's const: 1 warning, its
-#                                                                      literal twin 3)
+#       stores 0 while GIDEP > 0)                                   -> 6.7.15: axis 12 FAILED (the
+#                                                                      #inline fn's const: 1
+#                                                                      warning, its literal twin 3);
+#                                                                      since 6.7.16 GREEN, measured:
+#                                                                      the definition's warning is
+#                                                                      the one printed and every
+#                                                                      replay's is deduplicated, so
+#                                                                      (k) changes no output
+#   (m) 6.7.16: no once-per-site (`_esx_native_warn`'s
+#       `_warn_seen` line dropped)                                  -> axis 12 FAILS (the #inline
+#                                                                      literal twin: 3 warnings)
 #   (l) 6.7.15: a fn-local const judged file-locally
 #       (`_esx_lc_in_region` answers `_esx_rg_local`)               -> axis 12 FAILS (the per-arch
 #                                                                      file's const silent)
@@ -338,8 +349,10 @@ printf '%s\n' 'fn f(): i64 {' '    var r = 0;' '    const NR_X = 39;' '#ifdef CY
 _c12 out
 [ "$(_n12 out)" = 0 ] || fail "axis 12: a fn-local const declared OUTSIDE a region warned where it is used inside one: $(cat "$T/a12/out.err")"
 # An `#inline` fn's const declared in a region of its own file, the fn called from outside any
-# region: warned in the inline body's file, exactly as often as the literal twin (the definition
-# and each replay), and the binaries are identical.
+# region: warned in the inline body's file, once, as its literal twin is — the body is emitted for
+# the definition and again at each call, and since 6.7.16 the warning is printed once per site
+# (issues/2026-10-18-syscall-warnings-repeat-once-per-inline-replay.md) — and the binaries are
+# identical.
 printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '    const NR_IU = 39;' '    return syscall(NR_IU, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inl.cyr"
 printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '' '    return syscall(39, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inllit.cyr"
 printf '%s\n' 'include "inc/inl.cyr"' 'fn g(): i64 {' '    var a = inl_umount("/nonexistent");' '    var b = inl_umount("/nonexistent");' '    if (a == 0 - 2 && b == 0 - 2) { return 0; }' '    return 1;' '}' 'syscall(60, g());' > "$T/a12/inl.cyr"
@@ -347,11 +360,17 @@ sed 's#^include "inc/inl.cyr"$#include "inc/inllit.cyr"#' "$T/a12/inl.cyr" > "$T
 _c12 inl
 _c12 inllit
 nlit=$(_n12 inllit)
-[ "$nlit" -ge 2 ] || fail "axis 12: the #inline literal twin printed $nlit warnings, want one per replay at least (2): $(cat "$T/a12/inllit.err")"
-[ "$(_n12 inl)" = "$nlit" ] || fail "axis 12: the #inline fn's local const printed $(_n12 inl) warnings, its literal twin $nlit — every replay is judged by the declaration: $(cat "$T/a12/inl.err")"
+[ "$nlit" = 1 ] || fail "axis 12: the #inline literal twin (the definition and two calls) printed $nlit native-region warnings, want 1 — once per site: $(cat "$T/a12/inllit.err")"
+[ "$(_n12 inl)" = "$nlit" ] || fail "axis 12: the #inline fn's local const printed $(_n12 inl) warnings, its literal twin $nlit — every replay is judged by the declaration, once per site: $(cat "$T/a12/inl.err")"
 [ "$(grep -c '^warning:inc/inl.cyr:5:.*syscall constant NR_IU = 39, declared inside ' "$T/a12/inl.err" || true)" = "$nlit" ] \
   || fail "axis 12: the #inline fn's warnings do not all name inc/inl.cyr:5 and NR_IU: $(cat "$T/a12/inl.err")"
 cmp -s "$T/a12/inl.bin" "$T/a12/inllit.bin" || fail "axis 12: the #inline probe's binary differs from its literal twin's"
+# The filed d1.cyr VERBATIM (the frontend's "raw syscall N is x86_64" report, 6.7.15's
+# `_sysx_raw_warn` dedupe): an #inline fn's raw 91 outside any region, called twice — once.
+printf '%s\n' '#inline' 'fn inl_c(p): i64 { return syscall(91, p, 0); }' 'fn g(): i64 { var a = inl_c("/x"); var b = inl_c("/y"); return a + b; }' 'var x = g();' 'syscall(60, 0);' > "$T/a12/d1.cyr"
+_c12 d1
+[ "$(grep -c '^warning:<source>:2:44: raw syscall 91 is x86_64 `fchmod`; on ELF-aarch64 that number is `capset`' "$T/a12/d1.err" || true)" = 1 ] \
+  || fail "axis 12: the filed d1.cyr (raw 91 in an #inline fn called twice) did not print its x86_64 warning exactly once: $(cat "$T/a12/d1.err")"
 # An `#inline` fn's const declared outside any region, called from INSIDE one: silent.
 printf '%s\n' '#inline' 'fn inl_x(p): i64 {' '    const NR_IX = 39;' '    return syscall(NR_IX, p, 0);' '}' > "$T/a12/inc/inl2.cyr"
 printf '%s\n' 'include "inc/inl2.cyr"' 'fn g(): i64 {' '    var a = 0;' '#ifdef CYRIUS_ARCH_AARCH64' '    a = inl_x("/nonexistent");' '#endif' '    return a;' '}' 'var x = g();' 'syscall(60, 0);' > "$T/a12/inl2.cyr"
@@ -372,7 +391,7 @@ if [ "$QEMU" = 1 ]; then
     q12=$(_q12 lc); q12i=$(_q12 inl); q12a=$(_q12 lca)
     [ "$q12" = 1 ] && [ "$q12i" = 1 ] && [ "$q12a" = 2 ] \
       || fail "axis 12: under qemu the repro exits $q12 (want 1), the #inline probe $q12i (want 1), the per-arch probe $q12a (want 2) — warn only: 39 still runs getpid"
-    echo "  axis 12: the fn-local const repro warns once (NR_UMOUNT2 = 39 → 172), emits what its region-free twin does and still exits 1 under qemu; declared outside a region: silent; an #inline fn's const is judged by its declaration ($nlit warnings in inc/inl.cyr, as its literal twin; silent when declared outside and called inside); D39's carried region for a per-arch file outside lib/"
+    echo "  axis 12: the fn-local const repro warns once (NR_UMOUNT2 = 39 → 172), emits what its region-free twin does and still exits 1 under qemu; declared outside a region: silent; an #inline fn's const is judged by its declaration ($nlit warning in inc/inl.cyr for the definition and two calls, once per site as its literal twin; silent when declared outside and called inside); the filed d1.cyr warns once; D39's carried region for a per-arch file outside lib/"
 else
     echo "  axis 12: the fn-local const repro warns once and emits what its region-free twin does; declared outside: silent; #inline judged by its declaration; D39's carried region — its qemu runs SKIPPED: qemu-aarch64 absent"
 fi

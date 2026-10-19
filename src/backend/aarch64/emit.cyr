@@ -2078,7 +2078,9 @@ fn _esx_body_x16(cb, bs, be): i64 {
 #   · a fn-local const declared inside a region, by the same rule (6.7.15): judged where its
 #     name token sits (`_lc_decl`), which for an `#inline` fn's const is the inline body's
 #     declaration, never the call site. Numbers >= 1000 are the band itself.
-# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14] [6.7.15]
+# Printed once per site (`_warn_seen` on the `syscall` token): an #inline body is emitted for its
+# definition and again at every call, from the same tokens.
+# Gated by tests/gates/platform/native_region_literal_warns.sh. CHANGELOG [6.7.12] [6.7.14] [6.7.15] [6.7.16]
 fn _esx_native_warn(S, p, en, lit): i64 {
     if (lit >= 1000) { return 0; }
     var cb = _codebuf_base;
@@ -2093,6 +2095,7 @@ fn _esx_native_warn(S, p, en, lit): i64 {
         } else {
             if (_esx_region_at(S, GTOFF(S, GTI(S) - 1)) == 0) { return 0; }
         } }
+    if (_warn_seen(kw, "_esx_native_warn", lit) == 1) { return 0; }   # once per site, CHANGELOG [6.7.16]
     var al = 1000 + lit;
     var hasal = 0;
     if (_esx_walk(cb, p, en, al, 0 - 1) == lit) { hasal = 1; }
