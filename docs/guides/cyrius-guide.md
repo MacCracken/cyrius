@@ -1885,7 +1885,8 @@ fncall2(&mkv, 41, 7);`, and `fncallN(&f, ..)` / `callptr(&f, ..)` into a scalar 
 fncall2(&mkv, ..);` / `var y: i64 = callptr(&mkv, ..);` (through 6.7.14 each stored a word: 0 on x86_64 / aarch64, 41
 on cx / Windows; a vector global keeps its own refusal, below) — and (6.7.15) a by-name
 call into a declaration annotated with a type of no integer width, `var x: f64 = mkv(41, 7);` (`f32`, `bool`,
-`cstring`, an enum), as the method is: through 6.7.14 it compiled, `x` silently a two-slot vector local.
+`cstring`, an enum, `Vec`, `Result`, `Option`), as the method is: through 6.7.14 it compiled, `x` silently a two-slot
+vector local.
 Parentheses around the whole call are transparent at these destinations too (6.7.15, the user's decision D28,
 2026-10-18: A): an untyped `var v = (mkv(41, 7));`, `var v = (s.mv());` or `var v = (callptr(&mkv, ..));` is the
 `f64v2` local, and `var x: i64 = (mkv(41, 7));` / `x = (s.mv());` are refused (through 6.7.14 each held one word: 0

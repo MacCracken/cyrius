@@ -297,13 +297,14 @@
 #       return rule names `w` either way)
 #   M-CR2 `_svc_rs` naming token ti + 2                 -> RED 5: CRK5 on all five legs ("cannot pass 's'")
 # 6.7.15 (issues/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md) — a by-name call declared `: V` into
-# a declaration annotated with a type of no integer width (`: f64`, `: f32`, `: bool`, `: cstring`, an enum) is refused
-# "vector return type does not match the declared type", as the method is since 6.7.14's D38: PARSE_VAR inferred the
-# callee's vector whenever the annotation had no width, so `x` was a two-slot vector local labelled f64 (the filed repro
-# exit 3, `load64(&x + 8)` 7, on all five legs). It infers only when there is no annotation. Rows NK (refused once,
-# host / host IR=3 / cx / aarch64 / win64), N1 the control (161). Mutation (2026-10-18, measured):
-#   M-N1 the inference on any width-0 annotation (the tree before) -> RED 30: NK1-NK6 on all five legs; NK7-NK11 (the
-#       method) and N1 green
+# a declaration annotated with a type of no integer width (`: f64`, `: f32`, `: bool`, `: cstring`, an enum, `: Vec`,
+# `: Result`, `: Option`) is refused "vector return type does not match the declared type", as the method is since
+# 6.7.14's D38: PARSE_VAR inferred the callee's vector whenever the annotation had no width, so `x` was a two-slot
+# vector local labelled f64 (the filed repro exit 3, `load64(&x + 8)` 7, on all five legs). It infers only when there
+# is no annotation. Rows NK (refused once, host / host IR=3 / cx / aarch64 / win64), N1 the control (161). Mutation
+# (2026-10-18, measured):
+#   M-N1 the inference on any width-0 annotation (the tree before) -> RED 45: NK1-NK6 and NK12-NK14 on all five legs;
+#       NK7-NK11 (the method) and N1 green (re-measured with NK12-NK14 at the review fix)
 # 6.7.15 (D28 A / D29 A, the user's decisions, 2026-10-18; issues/2026-10-17-wrapped-vector-call-into-untyped-or-scalar-
 # declaration-binds-a-word.md) — parentheses around a WHOLE vector call are transparent at an untyped declaration and at
 # an integer destination, and a method (an indirect `callptr(&f, ..)` too) that STARTS an integer initialiser is refused,
@@ -1139,7 +1140,8 @@ mk_msg() {
 # into a declaration annotated with a type of no integer width (rows NK refused once; row N1 the control, 161) ----------
 # NK1 the filed repro verbatim (`var x: f64 = mkv(41, 7);`), NK2-NK5 `: f32` / `: bool` / `: cstring` / an enum, NK6
 # an explicit instance into `: f64`, NK7-NK11 the method into the same five (refused since 6.7.14's D38, the parity
-# row); N1 `var x: f64v2 = mkv(..)` and the untyped `var y = mkv(..)` stay the vector.
+# row), NK12-NK14 `: Vec` / `: Result` / `: Option` (newly refused too: the base compiled them, exit 3); N1 `var x:
+# f64v2 = mkv(..)` and the untyped `var y = mkv(..)` stay the vector.
 NH='fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
@@ -1184,9 +1186,18 @@ syscall(60, run());
     NK11) printf '%s' "$NH"'fn run(): i64 { var s: S = S { 1 }; var x: E = s.mv(); return 3; }
 syscall(60, run());
 ' ;;
+    NK12) printf '%s' "$NH"'fn run(): i64 { var x: Vec = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK13) printf '%s' "$NH"'fn run(): i64 { var x: Result = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
+    NK14) printf '%s' "$NH"'fn run(): i64 { var x: Option = mkv(41, 7); return 3; }
+syscall(60, run());
+' ;;
     esac
 }
-NK_ROWS="NK1 NK2 NK3 NK4 NK5 NK6 NK7 NK8 NK9 NK10 NK11"
+NK_ROWS="NK1 NK2 NK3 NK4 NK5 NK6 NK7 NK8 NK9 NK10 NK11 NK12 NK13 NK14"
 nk_msg() { echo "vector return type does not match the declared type"; }
 n_src() {  # $1 row id -> source on stdout; exits 161 when right
     case "$1" in
