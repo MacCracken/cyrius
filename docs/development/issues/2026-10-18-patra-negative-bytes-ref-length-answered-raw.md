@@ -9,6 +9,7 @@ its fix step (BYTES and TEXT).
 fix is a patra patch (fix the source repo, then re-vendor).
 **Decision (user, 2026-10-19, at the 6.7.16 open):** D34 — Refused with a parameter error.
 **Decision (user, 2026-10-19, at the 6.7.16 open):** D35 — Length -1, read refused.
+**Decision (user, 2026-10-19, at the fold wave):** D34 extended to `patra_bind_text` in 1.16.6 — a negative length is refused with PATRA_ERR_PARAM and nothing is stored (the fold review found the prepared INSERT / UPDATE / WHERE path storing it: "Yes: extend D34 to patra_bind_text in 1.16.6 before I tag").
 **Severity:** Low — reachable through patra's PUBLIC write API, not only a malformed file: `patra_insert_row` (and
 `patra_insert_row_or_ignore`, the same impl) takes a negative `blens[i]` for a BYTES / TEXT column, answers `PATRA_OK`
 and stores the negative length; a crafted or corrupted `.patra` file reaches the same cell. The cell's length getter
