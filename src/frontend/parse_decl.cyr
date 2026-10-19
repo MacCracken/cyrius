@@ -8821,12 +8821,17 @@ fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
 # dyn (`_dyn_var_ann`'s), and not a generic base's `T` (`_rcv_tp_base`).
 fn _rcv_ann_hit(S, sid, ann): i64 {
     if (ann <= 0) { return 0; }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    if (_rcv_tp_base(S, ann) == 1) { return 0; }
+    return 1;
+}
+# 1 = struct `sid` is a value D24 refuses into no struct: over 8 B, not a `Str` handle, not a dyn.
+fn _rcv_big(S, sid): i64 {
     if (sid <= 0) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
     var sz = STRUCTSZ(S, sid - 1);
     if (sz <= 8) { return 0; }
     if (sz <= 16) { if (sid == _STR_SID(S)) { return 0; } }
-    if (_rcv_tp_base(S, ann) == 1) { return 0; }
     return 1;
 }
 # ⛔ 6.7.13 — D24's one refusal, shared by every path that reaches it: the free call (`_rcv_scalar_ann`), the known
@@ -8836,9 +8841,23 @@ fn _rcv_ann_hit(S, sid, ann): i64 {
 # declaration's `=`. CHANGELOG [6.7.13]
 fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     if (_rcv_ann_hit(S, sid, ann) == 0) { return 0; }
+    return _rcv_say(S, ti, fnoff, sid, pscale, ann, noff);
+}
+# ⛔ 6.7.15 — D27 AT AN UNTYPED ASSIGNMENT DESTINATION (the user's decision D33 (a), 2026-10-18): `x = mkp();` with
+# `x` an untyped `var x = 0;`, an untyped parameter or global, or a destructure name kept the struct's first word (333
+# — the filed repro exited 77), silently, where `x: i64` is refused (6.7.14's D27) and 6.7.10's decision 12 never gives
+# an untyped receive a struct's first word. Refused with D27's words minus the annotation (`_asa_refuse`, parse.cyr):
+# "cannot assign 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field". A struct of 8 B or
+# less, a `Str` and a dyn keep their word, as D27 keeps them. 1 = refused. CHANGELOG [6.7.15]
+fn _rcv_unt_refuse(S, ti, fnoff, sid, noff): i64 {
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    return _rcv_say(S, ti, fnoff, sid, 0, 0, noff);
+}
+# The report itself, once at token `ti`; `ann` 0 = the destination has no annotation (D33). 1 = refused.
+fn _rcv_say(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     if (_syntax_only == 1) { return 0; }
     if (_panic == 1) { return 1; }
-    if (_rcv_ann_refd(S, ann) == 1) { return 1; }   # 6.7.14: the annotation itself was refused
+    if (ann > 0) { if (_rcv_ann_refd(S, ann) == 1) { return 1; } }   # 6.7.14: the annotation itself was refused
     if (_tn_once(S, ti) == 0) { return 1; }
     var eq = GTI(S);
     var ae = eq;
@@ -8848,8 +8867,10 @@ fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     _err_head(S);
     PRSTR(_rcv_head());
     PRSTR(S + 0xEC00000 + noff);
-    PRSTR(": ");
-    _rcv_ann_pr(S, ann, ae);
+    if (ann > 0) {
+        PRSTR(": ");
+        _rcv_ann_pr(S, ann, ae);
+    }
     PRSTR("' from '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
     PRSTR("', which returns the struct '");

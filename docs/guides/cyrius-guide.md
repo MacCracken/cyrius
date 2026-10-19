@@ -1734,9 +1734,17 @@ error: cannot assign 'x: i64' from 'mk', which returns the struct 'P3' - declare
 ```
 
 Through 6.7.13 it stored the struct's first word, narrowed, silently. A struct of 8 bytes or less and a
-`Str` keep their word, as in the declaration; a `: bool` keeps its own refusal (*not a bool*); an untyped
-destination (`var x = 0;`, a `for (var x = 0; ..)` shadowing an outer `x: i64`) has no annotation to judge and keeps
-the word; bind a field (`x = mk(9).z;`) or declare the struct.
+`Str` keep their word, as in the declaration; a `: bool` keeps its own refusal (*not a bool*); bind a field
+(`x = mk(9).z;`) or declare the struct. An UNTYPED destination is refused too (6.7.15; the user's decision D33,
+2026-10-18) — `var x = 0;`, an untyped parameter or global, a destructure's name, a `for (var x = 0; ..)` or
+`for x in ..` name, a closure's parameter — with the same words minus the annotation:
+
+```
+error: cannot assign 'x' from 'mk', which returns the struct 'P3' - declare 'x: P3' or bind a field
+```
+
+Through 6.7.14 it kept the struct's first word, silently. A variable declared from the struct (`var x = mk(9);`)
+is that struct, so `x = mk(9);` copies; 8 bytes or less and a `Str` keep their word here too.
 A pointer annotation names no struct value either (6.7.13; the user's decision D14, 2026-10-15):
 inside a fn, `var x: *P2 = mkp();` — or `*i64`, `*u8`, any `*T` — with `mkp` returning a struct over
 8 bytes is refused, directly, in parentheses, through a generic, a known `&f`, a method or an

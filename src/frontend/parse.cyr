@@ -4725,19 +4725,22 @@ fn _asa_term(S, term): i64 {
 }
 # Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
 # for back from token `from`: 1 = refused.
-# 6.7.15 (the user's decision D32 (a), 2026-10-18): also a `*T` destination whose pointee is not `sid` itself, with
-# D14's remedy (`_asa_ptr`). CHANGELOG [6.7.15]
+# 6.7.15 (the user's decisions D32 (a) and D33 (a), 2026-10-18): also a `*T` destination whose pointee is not `sid`
+# itself, with D14's remedy (`_asa_ptr`), and an UNTYPED one, with D27's words minus the annotation
+# (`_rcv_unt_refuse`). CHANGELOG [6.7.15]
 fn _asa_refuse(S, noff, from, ti, fnoff, sid): i64 {
     if (sid <= 0) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     var a = _asa_ann(S, noff, from);
-    if (a <= 0) { return 0; }
-    _rcv_asg_e = _asa_end(S, a);
+    if (a < 0) { return 0; }   # no declaration found: not judged
+    _rcv_asg_e = ti;
+    if (a > 0) { _rcv_asg_e = _asa_end(S, a); }
     var r = _asa_judge(S, ti, fnoff, sid, a, noff);
     _rcv_asg_e = 0 - 1;
     return r;
 }
 fn _asa_judge(S, ti, fnoff, sid, a, noff): i64 {
+    if (a == 0) { return _rcv_unt_refuse(S, ti, fnoff, sid, noff); }
     if (_asa_ptr(S, a, sid) == 1) { return _rcv_ann_refuse(S, ti, fnoff, sid, 1, a, noff); }
     if (_asa_scalar(S, a) == 0) { return 0; }
     return _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
@@ -4788,17 +4791,18 @@ fn _asa_end(S, q): i64 {
     return q;
 }
 # The annotation's first token of the declaration that binds the assignment's destination `noff`, read from the
-# tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter)
-# or none found. A local's: the nearest binding of the name back from token `from` in a scope enclosing it (a closed
-# `{ }` / `( )` / `[ ]` is stepped over; an enclosing for body's header init is in scope, `_asa_for_hdr`), else its
-# fn's parameter; a global's: the same walk, else its first top-level declaration.
+# tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter);
+# -1 for no variable of that name, or a local the walk does not find (6.7.15: D33 refuses a 0). A local's: the
+# nearest binding of the name back from token `from` in a scope enclosing it (a closed `{ }` / `( )` / `[ ]` is stepped
+# over; an enclosing for body's header init is in scope, `_asa_for_hdr`), else its fn's parameter; a global's: the
+# same walk, else its first top-level declaration.
 fn _asa_ann(S, noff, from): i64 {
     var loc = 0;
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { loc = 1; } }
-    if (loc == 0) { if (FINDVAR(S, noff) < 0) { return 0; } }
+    if (loc == 0) { if (FINDVAR(S, noff) < 0) { return 0 - 1; } }
     var a = _asa_back(S, noff, from, loc);
     if (a >= 0) { return a; }
-    if (loc == 1) { return 0; }
+    if (loc == 1) { return 0 - 1; }
     return _asa_top(S, noff);
 }
 # `lb` = 1 while the last `{` walked back over opened a scope enclosing `from` (a for-in body: its name is bound).
@@ -4928,7 +4932,7 @@ fn _asa_top(S, noff): i64 {
                     } } } }
         k = k + 1;
     }
-    return 0;
+    return 0;   # none by `var NAME`: a destructure's name (untyped)
 }
 
 # ⛔ 6.7.6 — `u = (j);`, `w = (z.k);`, `w = (mk(5));`, `w = (j.dup());` into a struct variable (and
