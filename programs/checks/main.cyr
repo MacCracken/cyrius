@@ -886,14 +886,9 @@ fn _run_regression_gates(): i64 {
     _ts_lex_gate();
     println("");
 
-    _section("TS parser (SY acceptance)");
-    _ts_corpus_gate("cycc --parse-ts vs SY .ts corpus ≥98%% baseline (v5.7.3 P3.1)", ".ts", 2053);
-    println("");
-
-    _section("TS parser .tsx (JSX)");
-    _ts_corpus_gate("cycc --parse-ts vs SY .tsx corpus ≥98%% baseline (v5.7.3 P3.3)", ".tsx", 435);
-    println("");
-
+    # 6.7.16: the two corpus rows that parsed another project's .ts / .tsx files left the gate (a
+    # language does not gate on other projects); the in-tree TypeScript corpus that replaces them is
+    # docs/development/issues/2026-10-19-typescript-support-measured-against-one-projects-files.md.
     _section("TS AST walk (v6.1.10 children-list allocator)");
     _ts_walk_gate();
     println("");
