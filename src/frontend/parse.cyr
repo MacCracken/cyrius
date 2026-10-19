@@ -3927,8 +3927,9 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
 # ⛔ 6.7.15 — and `*pp` of a `**S` (`_hl_dstar_x`'s twin, `_hl_dpp`): the `*S` it reads, copied through as `l = p`
 # copies — into a value, or the pointee of `*q = *pp` (`_dst_arms`); into a handle or a `*S` it stays the one-word
 # store, a rebind, as `q = p` is (`_asg_dpp_rebind`). CHANGELOG [6.7.15]
+# 6.7.16: mode 2 — and `*pp` of a `**Str` into an inline `Str` (`_hl_dpp_str`, `_istr_dxa`). CHANGELOG [6.7.16]
 fn _asg_dstar(S, noff, term): i64 {
-    var ps = _hl_dstar_x(S, GTI(S), term, 1);
+    var ps = _hl_dstar_x(S, GTI(S), term, 2);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return _istr_dxa(S, noff, ps, term); }   # 6.7.15 (D14): `t = *p` of a `*Str`
     if (_agc_operand(S, noff) == 0) { return 0; }

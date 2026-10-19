@@ -78,8 +78,14 @@
 # `Str` handles keeps the one-word store, documented (the user's decision D15, 2026-10-18: its value is untyped, as for
 # every inline struct — D15, pinned: 22 with today's warning).
 #
+# 6.7.16 (issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md): `t = *pp` with pp a
+# `**Str` (so `*pp` is the `*Str` 6.7.13's D9 (a) made it) copies the header that `*Str` points at, as `t = p` does
+# (D14, above): it stored the header's address into t.data and left t.len stale (PP1, the filed repro verbatim: 55, was
+# 22; no warning before or after). Into a `*Str` or a handle `q = *pp` stays the rebind `q = p` is (the tcyr's pps_*
+# controls).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
-# floor 120) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
+# floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X14 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
 # leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
@@ -88,7 +94,8 @@
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
 # statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
-# D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); CMP a handle into the retyped methods builds
+# D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
+# `**Str` (6.7.16); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -161,6 +168,9 @@
 #   k1 `_istr_hop` without the `*Str` names        -> RED 14: R1 x7 (6 rows, `t = p`: 22), D14a x7 (22)
 #   k2 `_asg_dstar` without `_istr_dxa`            -> RED 18: R1 x7 (11 rows, `t = *p`: 22 + the warning), D14b x4
 #                                                     (warned) + x7 (22)
+#   2026-10-19 (6.7.16, `t = *pp` of a `**Str`; the same scratch-copy method):
+#   l1 `_asg_dstar` asking `_hl_dstar_x(.., 1)`    -> RED 14: R1 x7 (10 rows: the pps_* copies and R_TOP11 — t.data the
+#      (the fix reverted)                             header's address, t.len stale), PP1 x7 (22)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -283,7 +293,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=120
+FLOOR=132   # 6.7.16: + the pps_* rows, R_TOP11
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -553,6 +563,33 @@ for leg in $(legs); do
 done
 runs D15 22 "an if-expression of Str handles keeps the one-word store (D15: documented, 22 as before)" "$XLEGS $OLEGS"
 
+# --- PP1: the filed repro (issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md), verbatim:
+# `t = *pp` (pp a `**Str`) copies the header the `*Str` *pp reads points at (6.7.16; 22 through 6.7.15), no warning ---
+cat > "$T/PP1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var pp: **Str = &p;
+    var t: Str = Str { "zz", 2 };
+    t = *pp;
+    return t.len * 10 + f(t);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" PP1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/PP1.$leg" ]; then bad "PP1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/PP1.$leg.err"; then bad "PP1 ($leg): warned: $(grep '^warning' "$T/PP1.$leg.err" | head -1)"
+    else ok "PP1 \`t = *pp;\` ($leg): no warning"; fi
+done
+runs PP1 55 "the filed repro: \`t = *pp;\` (pp a \`**Str\`) copies the header into an inline Str (was 22: t.data = *pp, t.len stale)" "$XLEGS $OLEGS"
+
 # --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -651,7 +688,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=42
+FLOOR_ROWS=54   # 6.7.16: + PP1 (2 rows); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
