@@ -7,10 +7,13 @@
 # which `_aw_open` skipped, was unlinked by a kill) — in the kill handler's scratch-tree slot. Every
 # host: the directory filter and the slot (pure logic). POSIX (ecb, ach, pi, x86_64 Linux): the
 # records a real copy leaves, a copy beside planted temp names (recorded: only the temp it made;
-# the signals held only across the create), and a forked CHILD that resolves two files into a
-# scratch, one beside a planted temp name, and SIGTERMs itself — it dies by SIGTERM with its own
-# files removed, the planted file kept with the directories holding it, and the scratch's parent
-# directory kept. CHANGELOG [6.7.14], [6.7.15]
+# the signals held only across the create and the commit), and a forked CHILD that resolves two
+# files into a scratch, one beside a planted temp name, and SIGTERMs itself — it dies by SIGTERM
+# with its own files removed, the planted file kept with the directories holding it, and the
+# scratch's parent directory kept. Since 6.7.16 a temp's record is cleared once it is renamed into
+# place (6.7.15 kept it, so a kill unlinked a file put later at a temp name a copy had used): a
+# CHILD plants at the name its own copy used and SIGTERMs itself, and the planted file survives.
+# CHANGELOG [6.7.14], [6.7.15], [6.7.16]
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 #ifndef CYRIUS_TARGET_AGNOS
@@ -39,11 +42,12 @@ include "cbt/pulsar.cyr"
 
 alloc_init();
 
-# 1 when cstr `s` is in vec `v`, else 0.
+# 1 when cstr `s` is in vec `v`, else 0 (a cleared slot, 0, is skipped).
 fn _csk_has(v, s): i64 {
     var i = 0;
     while (i < vec_len(v)) {
-        if (_cstr_eq(vec_get(v, i), s) == 1) { return 1; }
+        var e = vec_get(v, i);
+        if (e != 0 && _cstr_eq(e, s) == 1) { return 1; }
         i = i + 1;
     }
     return 0;
@@ -125,7 +129,8 @@ fn _csk_mask_bits(): i64 {
 }
 
 # A recorded copy beside files planted at the next two temp names it will try (6.7.15): the
-# exclusive create skips both, and the temp recorded is the third name, the one it created.
+# exclusive create skips both, and the temp it creates is the third name, recorded while it
+# exists and cleared (0) once renamed into place (6.7.16).
 var root0 = _csk_path("/scr0");
 xmkdir(root0, 448);
 xmkdir(_cat2(root0, "/lib"), 448);
@@ -136,15 +141,18 @@ var p3 = _csk_next_tmp(pf, 3);
 file_write_all(p1, "mine\n", 5);
 file_write_all(p2, "mine\n", 5);
 var m0 = _csk_mask_bits();
+var ctr0 = _io_atomic_ctr;
 _dep_scr_begin(root0);
 var cr0 = _dep_copy_file(src, pf);
 assert_eq(cr0, 0, "a recorded copy beside two planted temp names succeeded");
 assert_eq(_csk_has(_dep_scr_files, p1), 0, "the planted name it tried first is not recorded (6.7.14 recorded it)");
 assert_eq(_csk_has(_dep_scr_files, p2), 0, "…nor the second");
-assert_eq(_csk_has(_dep_scr_files, p3), 1, "the temp it created, the first free name, is recorded");
-assert_eq(file_exists(p3), 0, "…and is gone once renamed into place");
+assert_eq(_io_atomic_ctr, ctr0 + 3, "the copy tried three names: the temp it created is the first free one");
+assert_eq(vec_len(_dep_scr_files), 2, "two records: the destination and the temp it created");
+assert_eq(vec_get(_dep_scr_files, 1), 0, "the temp's record is cleared once it is renamed into place (6.7.15 kept it)");
+assert_eq(file_exists(p3), 0, "…and the temp is gone");
 assert_eq(file_exists(p1) + file_exists(p2), 2, "the planted files are untouched");
-assert_eq(_csk_mask_bits(), m0, "HUP / INT / TERM are held only across the create: the mask is back after the copy");
+assert_eq(_csk_mask_bits(), m0, "HUP / INT / TERM are held only across the create and the commit: the mask is back after the copy");
 _dep_scr_end();
 sys_unlink(p1);
 sys_unlink(p2);
@@ -160,14 +168,18 @@ assert_eq(vec_len(_dep_scr_dirs), 3, "its directories are recorded: root, lib, l
 assert_eq(_csk_has(_dep_scr_dirs, par), 0, "the directory holding the root is not recorded");
 assert_eq(_csk_has(_dep_scr_files, dst), 1, "the destination is recorded");
 var tmp_rec = 0;
+var tmp_clr = 0;
 var fi = 0;
 while (fi < vec_len(_dep_scr_files)) {
     var fp = vec_get(_dep_scr_files, fi);
-    if (strlen(fp) > strlen(dst) && memeq(fp, dst, strlen(dst)) == 1) { tmp_rec = fp; }
+    if (fp == 0) { tmp_clr = tmp_clr + 1; }
+    else {
+        if (strlen(fp) > strlen(dst) && memeq(fp, dst, strlen(dst)) == 1) { tmp_rec = fp; }
+    }
     fi = fi + 1;
 }
-assert(tmp_rec != 0, "the sibling temp is recorded");
-if (tmp_rec != 0) { assert_eq(file_exists(tmp_rec), 0, "…and is gone once renamed into place"); }
+assert_eq(tmp_rec, 0, "no sibling temp is left recorded once renamed into place (6.7.15 kept it)");
+assert_eq(tmp_clr, 1, "…its slot is cleared (0), the destination's kept");
 assert_eq(file_exists(dst), 1, "the destination exists");
 _dep_rm_tree(root);
 _dep_scr_end();
@@ -221,6 +233,40 @@ assert_eq(own3, 0, "…the CHILD's own files are unlinked");
 assert_eq(file_exists(_cat2(root3, "/lib")), 1, "…and the directory holding the planted file stays");
 _dep_rm_tree(root3);
 sys_unlink(bplant);
+
+# The kill after a planted file at a temp name the copy USED (6.7.16): the CHILD copies b.cyr, which
+# creates and renames its first temp name; then another same-user process could put a file at that
+# free name — the CHILD plants it itself and SIGTERMs itself. The planted file survives (6.7.15 kept
+# the renamed temp's record, and the kill unlinked it); the CHILD's own files go.
+var root4 = _csk_path("/scr4");
+var uplant = _csk_path("/u.plant");
+var c4 = sys_fork();
+if (c4 == 0) {
+    if (_cbt_sig_install() != 0) { sys_exit(64 + 1); }
+    _dep_scr_begin(root4);
+    if (_dep_copy_file(src, _cat2(root4, "/lib/a.cyr")) != 0) { sys_exit(64 + 2); }
+    var ud = _cat2(root4, "/lib/b.cyr");
+    var up = _csk_next_tmp(ud, 1);
+    var uc = _io_atomic_ctr;
+    if (_dep_copy_file(src, ud) != 0) { sys_exit(64 + 2); }
+    if (_io_atomic_ctr != uc + 1 || file_exists(up) != 0) { sys_exit(64 + 4); }   # it used that name
+    if (file_write_all(up, "mine\n", 5) != 5) { sys_exit(64 + 3); }
+    file_write_all(uplant, up, strlen(up));   # tell the parent its name
+    sys_kill(sys_getpid(), 15);
+    sys_exit(91);
+}
+var rc4 = _csk_wait(c4);
+var upn = alloc(256);
+var upl = file_read_all(uplant, upn, 255);
+if (upl < 0) { upl = 0; }
+store8(upn + upl, 0);
+assert_eq(rc4, 1015, "at a temp name the copy used: the CHILD dies by SIGTERM after its handler ran (64+N: setup)");
+assert(upl > 0, "…the CHILD planted a file at the name its copy of b.cyr created and renamed (anti-vacuous)");
+assert_eq(file_exists(upn), 1, "…the planted file survives the kill (6.7.15 kept that name recorded and unlinked it)");
+var own4 = file_exists(_cat2(root4, "/lib/b.cyr")) + file_exists(_cat2(root4, "/lib/a.cyr"));
+assert_eq(own4, 0, "…the CHILD's own files are unlinked");
+_dep_rm_tree(root4);
+sys_unlink(uplant);
 _dep_rm_tree(par);
 sys_unlink(src);
 #endif

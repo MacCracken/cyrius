@@ -335,6 +335,23 @@ fn _dep_scr_file(p): i64 {
     return 0;
 }
 
+# Commit `dh` (`abort` 1: give it up) and forget its temp's record at slot `ts` of the scratch
+# record (-1: none). The renamed (or unlinked) temp's name is free, so a kill must not unlink what
+# another process puts there later: HUP / INT / TERM are held across the commit and the clear, so
+# no kill lands between the rename and the 0 the handler skips. The hold spans the fsync, close and
+# rename. Answers `_aw_commit`'s result. CHANGELOG [6.7.16]
+fn _dep_aw_finish(dh, ts, abort): i64 {
+    var hold[8];
+    var hr = 0 - 1;
+    if (ts >= 0) { hr = _cbt_sig_hold(&hold); }
+    var r = 0;
+    if (abort == 1) { r = _aw_abort(dh); }
+    else { r = _aw_commit(dh); }
+    if (ts >= 0 && _dep_scr_files != 0) { vec_set(_dep_scr_files, ts, 0); }
+    if (hr == 0) { _cbt_sig_release(&hold); }
+    return r;
+}
+
 fn _dep_copy_file(src, dst): i64 {
     # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
     # so any change that preserves file length was never vendored while `lib sync`
@@ -433,15 +450,20 @@ fn _dep_copy_file(src, dst): i64 {
     # until the temp is recorded, so no kill lands between the two and the temp recorded is the
     # one this CLI made, never a name it skipped. (The temp used to be predicted — the next
     # counter value's name — and recorded before the open; when `_aw_open` had to skip that name
-    # because a file sat there, a kill unlinked the file. CHANGELOG [6.7.15])
+    # because a file sat there, a kill unlinked the file. CHANGELOG [6.7.15]) Its slot is kept and
+    # cleared once the temp is renamed or removed (`_dep_aw_finish`). CHANGELOG [6.7.16]
     var shold[8];
     var shr = 0 - 1;
+    var tslot = 0 - 1;
     if (_dep_scr_files != 0) {
         _dep_scr_file(dst);
         shr = _cbt_sig_hold(&shold);
     }
     var dh = _aw_open(dst);
-    if (dh != 0) { _dep_scr_file(load64(dh + 8)); }
+    if (dh != 0 && _dep_scr_files != 0) {
+        _dep_scr_file(load64(dh + 8));
+        tslot = vec_len(_dep_scr_files) - 1;
+    }
     if (shr == 0) { _cbt_sig_release(&shold); }
     if (dh == 0) {
         sys_close(sfd);
@@ -462,8 +484,8 @@ fn _dep_copy_file(src, dst): i64 {
         else { _aw_write(dh, buf, n); total = total + n; }
     }
     sys_close(sfd);
-    if (total == 0 || rerr != 0) { _aw_abort(dh); return 1; }
-    if (_aw_commit(dh) != 0) {
+    if (total == 0 || rerr != 0) { _dep_aw_finish(dh, tslot, 1); return 1; }
+    if (_dep_aw_finish(dh, tslot, 0) != 0) {
         sys_write(STDERR_FD, "  error: write failed: ", 23);
         _ew_shown(dst);
         sys_write(STDERR_FD, "\n", 1);

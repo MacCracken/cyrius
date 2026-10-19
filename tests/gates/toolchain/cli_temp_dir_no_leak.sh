@@ -90,6 +90,8 @@
 #     removed (RED, and every later run then fails to start under it).
 #   * (6.7.15, axis 7's planted-temp row) the CLI before the held record (6.7.14's predicted name)
 #     -> 1 RED (19 of the 20 planted files left: the kill unlinked the predicted one).
+#   * (6.7.16, axis 7's renamed-temp row) the clear dropped from `_dep_aw_finish` (6.7.15's kept
+#     record) -> 1 RED (624 of 640 planted files left: one per copy, at the temp name it renamed).
 #   * (6.7.15, axis 7's TERM-ignoring git row; each mutant replaces build/cyrius) the 6.7.14 CLI
 #     (git tracked fwd 1: a wait without limit) -> 1 RED (the CLI exits 59,952 ms after the SIGTERM,
 #     when the stand-in's sleep 60 ends); fwd 2 SIGKILLed at once (no signal sent) -> 6 RED (no TERM
@@ -978,6 +980,7 @@ g9_run() {
     _g9q=$(cat "$T/p7-$_g9t" 2>/dev/null || true)
     ( cd "$TB/cyrius-$_g9q" 2>/dev/null && find . -mindepth 1 ) > "$T/k7-$_g9t.live" 2>/dev/null || : > "$T/k7-$_g9t.live"
     if [ "${G9_PLANT:-0}" = 1 ] && [ -d "$TB/cyrius-$_g9q/locked-deps/lib" ]; then : > "$TB/cyrius-$_g9q/locked-deps/lib/gate_keepme"; fi
+    if [ "${G9_PLANT:-0}" = 40 ] && [ -d "$TB/cyrius-$_g9q/locked-deps/lib" ]; then g9_plant40 "$TB/cyrius-$_g9q/locked-deps/lib" "$_g9q"; fi
     [ -n "$_g9q" ] && kill -TERM "$_g9q" 2>/dev/null || true
     { wait "$_g9b"; } 2>/dev/null || true
     _g9c=$(cat "$T/g9.cc" 2>/dev/null || true)
@@ -986,6 +989,21 @@ g9_run() {
     else
         echo gone > "$T/k7-$_g9t.cc"
     fi
+}
+# g9_plant40 <scratch lib/> <cli pid>: another same-user process puts a file at
+# `<file>.cyrtmp.<pid>.<n>`, n = 1..40, beside each renamed copy (the filed shape); the copies, the
+# temps in flight and the planted names land in $T/g9p40.{copies,temps,names}.
+g9_plant40() {
+    ls "$1" 2>/dev/null | grep -vc 'cyrtmp' > "$T/g9p40.copies" || true
+    ls "$1" 2>/dev/null | grep -c 'cyrtmp' > "$T/g9p40.temps" || true
+    : > "$T/g9p40.names"
+    for _pf in $(ls "$1" 2>/dev/null); do
+        _pn=1
+        while [ "$_pn" -le 40 ]; do
+            echo mine > "$1/$_pf.cyrtmp.$2.$_pn"; echo "$_pf.cyrtmp.$2.$_pn" >> "$T/g9p40.names"; _pn=$((_pn + 1))
+        done
+    done
+    :
 }
 # the project's own lib/ and cyrius.lock, as the run found them
 g9_same() { cmp -s "$ROOT/lib/string.cyr" "$G9/p/lib/string.cyr" && cmp -s "$T/g9.lock0" "$G9/p/cyrius.lock" && echo yes || echo no; }
@@ -1080,6 +1098,27 @@ else
 fi
 [ -p "$SY9" ] && rm -f "$SY9"
 [ -e "$SY9.real" ] && mv "$SY9.real" "$SY9"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A copy's temp name is free once it is renamed into place, so a kill must not unlink what another
+# same-user process puts there later: since 6.7.16 `_dep_copy_file` clears the temp's record when
+# `_aw_commit` / `_aw_abort` returns, under the same HUP / INT / TERM hold (cbt/deps.cyr
+# `_dep_aw_finish`); 6.7.15 kept the record, and the kill unlinked one planted file per copy
+# (issues/2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md). Once the stand-in git sleeps
+# in the clone, the gate plants forty `<file>.cyrtmp.<pid>.<n>` beside each copy and SIGTERMs.
+G9_PLANT=40
+g9_run g9r 6.6.6 "" clone deps --locked
+G9_PLANT=0
+K9R="$TB/cyrius-$(cat "$T/p7-g9r" 2>/dev/null || echo none)/locked-deps/lib"
+k9rc=$(cat "$T/g9p40.copies" 2>/dev/null || echo 0)
+k9rn=$(wc -l < "$T/g9p40.names" 2>/dev/null | tr -d ' ' || true)
+check "deps --locked SIGTERM'd with forty files planted at the temp names beside each renamed copy (anti-vacuous: the copies, no temp in flight, 40 planted per copy)" "yes 0 yes" \
+    "$([ "${k9rc:-0}" -ge 5 ] && echo yes || echo no) $(cat "$T/g9p40.temps" 2>/dev/null || echo none) $([ "${k9rn:-0}" -eq $((${k9rc:-0} * 40)) ] && echo yes || echo no)"
+check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9r.rc" 2>/dev/null || echo none)"
+k9rk=0
+while read -r f; do [ -f "$K9R/$f" ] && k9rk=$((k9rk + 1)); done < "$T/g9p40.names"
+check "  …every planted file survives the kill (6.7.15 unlinked the one at each copy's own temp name)" "${k9rn:-none}" "$k9rk"
+check "  …and nothing of the resolve's own is left beside them under locked-deps/lib/" 0 \
+    "$(ls "$K9R" 2>/dev/null | grep -vc 'cyrtmp' || true)"
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # rmdir only (axis 4's contract): a foreign file in the scratch's lib/ survives, with its directories,
 # and is the only file left.
