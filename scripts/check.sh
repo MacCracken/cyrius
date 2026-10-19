@@ -2641,6 +2641,13 @@ _chk_gate "$ROOT/tests/gates/toolchain/gates_read_only_the_tree.sh"
 # mutant self-test; the runtime rows are tests/tcyr/platform/regression_wait_unobserved.tcyr.
 _chk_gate "$ROOT/tests/gates/toolchain/regression_wait_status_checked.sh"
 
+# 6.7.16 — lib/regression.cyr's fd shapes hold on every target: every open's flag argument is 0,
+# 1 or the per-target O_* constants (577, Linux's O_WRONLY|O_CREAT|O_TRUNC, is
+# O_WRONLY|O_ASYNC|O_CREAT on Darwin: a caller's out_path kept its old tail). Static, with a
+# fixture + per-shape mutant self-test and the live file's three opens mutated back to 577; the
+# runtime rows are tests/tcyr/crossos/regression_out_path_truncated.tcyr.
+_chk_gate "$ROOT/tests/gates/toolchain/regression_child_fd_shapes.sh"
+
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
 # return -1 before any fork. Mutation ledger in the header.
