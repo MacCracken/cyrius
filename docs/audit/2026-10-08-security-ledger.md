@@ -12,7 +12,7 @@ ids only CVE Numbering Authorities assign. cyrius is not one and requests none. 
 own finds and repairs**, kept in good form; nothing here was reported through a public forum, so nothing needs a
 public write-up. The detail of each entry lives in the audit file named below (`docs/audit/`), under its new id.
 
-**Next id: `CYRIUS-2026-0036`.**
+**Next id: `CYRIUS-2026-0037`.**
 
 ## The 2026-10-08 withdrawal and renumbering
 
@@ -65,6 +65,7 @@ sources take the same mapping in the W2 wave.
 | `CYRIUS-2026-0033` | CVE-90 | aarch64 frame displacements past 64 KiB were truncated, so a local aliased a buffer | anyone supplying input to an affected aarch64 program (e.g. programs/tail.cyr reading stdin) | A miscompile of VALID source into a memory-unsafe binary driven by attacker input: 65,528+ input bytes overwrite `total`, which steers the next read's destination. Narrow (aarch64 only, frames over 64 KiB). |
 | `CYRIUS-2026-0034` | CVE-100 | file_write_atomic / `_aw_open` predictable temp followed a planted symlink | another local user who can create files in the destination's shared (sticky) directory | The textbook predictable-temp symlink redirect (CWE-59) in a stdlib primitive. In a sticky directory, planting the temp does NOT give write access to the destination, which is why CVE-37's withdrawal was wrong. Conditional: no shipped caller writes into a shared directory, and Linux protected_symlinks blocks it in /tmp. |
 | `CYRIUS-2026-0035` | CVE-101 | A stripped signature installed while a trusted verifier was present | the release / download channel | Signature verification failed open, and install.ps1 trusted the version named by the download itself. |
+| `CYRIUS-2026-0036` | — | lib/regression.cyr's capture verbs wrote the child's stdout to a pid-predictable `/tmp/audit_x?_<pid>` with O_CREAT\|O_TRUNC, no O_EXCL / O_NOFOLLOW | another local user who can create files in the shared, world-writable `/tmp` | The CYRIUS-2026-0034 class (CWE-59) in another stdlib primitive: a symlink planted at the next pid's name makes the victim's capture truncate and overwrite a file the victim can write, and a pre-created file makes the victim read back a capture the attacker controls. Linux's `protected_symlinks` / `protected_regular` block both in `/tmp`; macOS has no such protection. Recorded 2026-10-18 (cyrius 6.7.15), fixed in 6.7.15; detail: `2026-09-03-security-audit.md` § CYRIUS-2026-0036. |
 
 **Assigned and withdrawn before release (2026-10-08):** `CYRIUS-2026-0036` was given to 6.7.6 lane H's
 `tls_native_record_seal` stack-scratch overrun (16,385–16,623 content bytes into a 16,385-byte buffer) and withdrawn the

@@ -2443,3 +2443,32 @@ governs it (lane H) — `ptbuf[16385]` was guarded only by the CIPHERTEXT cap.*
 - **Fix (6.7.6):** > 2^14 returns `TLS_ERR_RECORD_OVERFLOW`, a negative length `TLS_ERR_INVALID_PARAM`; the scratch is
   sized by `TLS_RECORD_MAX_PLAINTEXT`. Gate rows: `tests/tcyr/crossos/tls_native_scratch_bounds.tcyr` (x86, aarch64, PE).
 - **Severity:** P2 (needs an application that forwards a peer length to the low-level API).
+
+
+## CYRIUS-2026-0036 — lib/regression.cyr's capture verbs wrote the child's stdout to a pid-predictable `/tmp` name opened O_CREAT|O_TRUNC, so a planted symlink truncated and overwrote the file it named
+
+*Appended 2026-10-18 (cyrius 6.7.15). Found by: the 6.7.15 libfix3 lane (unit L4), in passing, reading the capture
+verbs while fixing their child redirects; filed as
+[issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md](../development/issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md)
+and judged against the ledger rule at the wave-3 integration. The 2026-09-03 sweep fixed this shape in `scripts/`
+and `cbt/` (`_cbt_tmpdir()` / `_cbt_tmpfile()`); `lib/regression.cyr` was in neither.*
+
+| | |
+|---|---|
+| **Severity** | P2 |
+| **Attacker / boundary** | another local user on the same machine / the shared, world-writable `/tmp` |
+| **Files** | `lib/regression.cyr` — `_regression_tmp_path` and the capture verbs (`regression_exec_capture[_status]`, `regression_exec_with_arg_capture[_status]`, `regression_exec_with_arg_capture_both[_status]`) |
+| **Fixed** | 6.7.15 |
+
+**Vector and impact.** `_regression_tmp_path(prefix)` built `"/tmp/" + prefix + getpid()` (`/tmp/audit_xc_<pid>`,
+`/tmp/audit_xa_<pid>`) and the verbs opened it `O_WRONLY|O_CREAT|O_TRUNC` (577) — no `O_EXCL`, no `O_NOFOLLOW`, and
+`/tmp` whatever `TMPDIR` says. Another local user who plants a symlink at an upcoming pid's name makes a victim's
+capture (the check driver runs every `.tcyr` through `regression_exec_capture_status`; downstream test runners use the
+same verbs) truncate and overwrite any file the victim can write, and a pre-created regular file makes the victim read
+back a "capture" the attacker controls. Measured same-user (the open follows the link: a 9-byte victim file left
+0 bytes); cross-user it is the kernel's documented behaviour: Linux's `fs.protected_symlinks` / `fs.protected_regular`
+(1 on the dev box and pi) refuse both in a sticky `/tmp`, macOS (`/private/tmp`, no such sysctl) does not.
+
+**Fix.** The capture file is created exclusively in a private place (the fix's commit and rows are in CHANGELOG
+[6.7.15]; the lane: libfix4, unit L6).
+
