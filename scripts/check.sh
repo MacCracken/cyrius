@@ -556,6 +556,42 @@ _chk_reap_dead_cli_tmpdirs() {
 }
 _chk_reap_dead_cli_tmpdirs
 
+# ── 6.7.16: a capture verb's file, left by a process killed mid-capture ──
+# lib/regression.cyr's capture verbs create `<base>/audit_xc_<pid>` / `audit_xa_<pid>` (then
+# `.1` … `.63` past a taken name) and, since 6.7.16, unlink it right after the create. Until then
+# the name was unlinked only after the read-back, so a process SIGKILLed mid-capture (the check
+# driver at a deadline, check_driver_bounded.sh's runner, the user) left it for ever — since
+# CYRIUS-2026-0036's O_EXCL a later process with that pid skips the name instead of reusing it.
+# The same rule as the CLI dirs above: by AGE and by the pid in the NAME being dead, only names of
+# exactly `audit_x[ca]_<digits>[.<digits>]`, only REGULAR files THIS user owns — never a symlink
+# (rm takes the link, never its target, and a planted one is not ours) or another user's name.
+# The base is the verb's own: $TMPDIR when absolute, else /tmp. Gate:
+# tests/gates/toolchain/check_stale_home_reaper.sh axes 17-22. CHANGELOG [6.7.16]
+_chk_reap_dead_capture_files() {
+    case "${TMPDIR:-}" in /*) _rtmp=$TMPDIR ;; *) _rtmp=/tmp ;; esac
+    [ -d "$_rtmp" ] || return 0
+    _reaped=0
+    for _f in "$_rtmp"/audit_x[ca]_[0-9]*; do
+        [ -f "$_f" ] && [ ! -L "$_f" ] && [ -O "$_f" ] || continue
+        _r=${_f##*/}
+        _r=${_r#audit_x?_}
+        case "$_r" in ''|*[!0-9.]*|.*|*.|*.*.*) continue ;; esac   # <digits>[.<digits>] only
+        _pid=${_r%%.*}
+        if [ "$_CHK_REAP_MINS" -gt 0 ]; then
+            [ -n "$(find "$_f" -maxdepth 0 -type f -mmin +"$_CHK_REAP_MINS" 2>/dev/null)" ] || continue
+        fi
+        _chk_pid_alive "$_pid" && continue
+        rm -f "$_f" 2>/dev/null || true
+        [ -e "$_f" ] || [ -L "$_f" ] || _reaped=$((_reaped + 1))
+    done
+    if [ "$_reaped" -gt 0 ]; then
+        printf "check: reaped %s capture file(s) audit_x[ca]_<pid> in %s (their process is gone, older than %s min)\n" \
+            "$_reaped" "$_rtmp" "$_CHK_REAP_MINS"
+    fi
+    return 0
+}
+_chk_reap_dead_capture_files
+
 # ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
 #
 # Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib
