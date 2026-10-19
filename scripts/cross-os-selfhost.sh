@@ -49,7 +49,7 @@ cd "$ROOT"
 # on the POSIX targets and a fixed _cyaud under C:\cyrius-tests on cass. Two runs at once
 # therefore overwrote each other's cross-compilers and each other's remote checkouts, and the
 # pre-run `rm -rf ~/_cyaud` could delete a LIVE run's tree mid-compile. That is the whole
-# reason CLAUDE.md says "run cross-os-selfhost.sh ONE host at a time" — a documented
+# reason CLAUDE.md once said "run cross-os-selfhost.sh ONE host at a time" — a documented
 # workaround standing in for a fix. The names below are private to this run on BOTH
 # sides, so a second run (another worktree, a CI matrix on one runner, the four hosts in
 # parallel) cannot collide. CHANGELOG [6.6.6]

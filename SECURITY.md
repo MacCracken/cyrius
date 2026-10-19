@@ -42,7 +42,7 @@ Cyrius is a systems language compiler. Security-relevant areas:
 ## Supported Versions
 
 Cyrius releases follow semver. Security fixes land on the latest minor and
-the prior minor; older lines are best-effort. Per CLAUDE.md, **v5.0.0+ is
+the prior minor; older lines are best-effort. **v5.0.0+ is
 the recommended minimum** (cycc IR + cyrius.cyml manifest). v5.0.1+ adds
 alloc/vec overflow guards. v5.1.0+ adds macOS Mach-O.
 

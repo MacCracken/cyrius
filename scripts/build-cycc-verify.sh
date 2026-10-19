@@ -4,8 +4,7 @@
 # This formalizes the canonical cycc-fixpoint verifier that's lived as
 # ad-hoc one-liners in chat / commit messages. Pinned at v5.11.7
 # close (2026-05-11), shipped v5.11.67 as part of the v6.0-runway
-# triple-pull bundle. Renames to `scripts/build-cyc.sh` at the v6.0.0
-# `cycc` → `cyc` rename per CLAUDE.md "Key Principles" #7.
+# triple-pull bundle. (`cycc` is the compiler's name for good — CLAUDE.md § Key Principles.)
 #
 # The three byte-identity invariants:
 #

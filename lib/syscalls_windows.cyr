@@ -562,7 +562,7 @@ fn sys_getppid(): i64 { return 0 - 1; }
 # including it) failed to COMPILE, with `array size identifier must be an enum constant`
 # followed by a run of undefined-variable errors. A build failure, not a runtime one.
 #
-# ⚠ THE HALF-FIX TRAP THIS AVOIDS, which CLAUDE.md records from v6.5.7: adding `STAT_SIZE`
+# ⚠ THE HALF-FIX TRAP THIS AVOIDS (met at v6.5.7): adding `STAT_SIZE`
 # alone, or only the names in the first error message, leaves the next consumer hitting the
 # next missing member. The full set the peers publish is defined here in one go.
 #
