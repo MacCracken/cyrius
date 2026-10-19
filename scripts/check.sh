@@ -2342,6 +2342,10 @@ _chk_gate "$ROOT/tests/gates/diagnostics/tokname_every_emitted_token.sh"
 # top-level statement is ONE error naming the rule and the statement's line (D13 (a)), an include of a file declaring
 # one at the include's line; an `async fn` there is a function (D14 (a)). Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
+# 6.7.16 — a refusal made in sync (a subscript or `*p` refusal whose statement parses on to its `;`) clears only its
+# latch: the NEXT statement is parsed and its own error reported (`y = pa[0]; y = zz9;` lost zz9's). x86_64,
+# aarch64, cx, PE and Mach-O. Mutation in the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/in_sync_refusal_next_statement.sh"
 
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB

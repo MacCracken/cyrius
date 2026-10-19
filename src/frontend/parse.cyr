@@ -1662,9 +1662,17 @@ fn _pair_refuse_in_sync(S): i64 {
     ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
     return 1;
 }
+# The same mark for any other refusal made in sync, called just before it latches (a repeat at the
+# token latches silently, so it marks too): the subscript and `*p` refusals that parse their brackets or
+# operand on (`_arr_sub_addr`, `_sub_err`, `_psub_err`, `_deref_u128_err`) — `y = pa[0]; y = zz9;` lost
+# `zz9`'s error. CHANGELOG [6.7.16]
+fn _refuse_in_sync(S): i64 {
+    if (_panic == 0) { _pair_sync_ti = GTI(S); }
+    return 0;
+}
 # PARSE_STMT's end with the latch set (the statement's first token `before`): skipped to the next
-# recovery point — unless the latch is an in-sync pair refusal made inside this statement, which
-# ended at its own `;` / `}`: then only the latch is cleared.
+# recovery point — unless the latch is an in-sync refusal (`_pair_refuse_in_sync`, `_refuse_in_sync`)
+# made inside this statement, which ended at its own `;` / `}`: then only the latch is cleared.
 fn _stmt_resync(S, before): i64 {
     if (_pair_sync_ti >= before) { if (_pair_sync_ti < GTI(S)) {
             var t = TOKTYP(S, GTI(S) - 1);
