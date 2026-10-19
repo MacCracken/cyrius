@@ -50,3 +50,29 @@ certutil -user -delstore Root <serial>
 Flag 1 measured end to end on real Windows (refused under the policy, accepted without it), and either an opt-in
 row in `tests/tcyr/crossos/tls_system_trust_store.tcyr` that pins it, or the measurement recorded in
 `docs/development/lib-tls-contract.md`'s Trust store row beside the flag-8 figures.
+
+## Measured (6.7.16, D27, 2026-10-19)
+
+The user added the test root on cass's desktop. It went into `cassiopeia\administrator`'s CurrentUser\Root through
+`runas … certutil -user -addstore`, because the ssh session runs as the built-in Administrator. The root is a P-256
+test root, `CN=cyrius-pr6716-test-root`, serial `67160d27f1a90001`, SHA-1 `d8b18fdb…aa36`, and it issues a serverAuth
+leaf for `pr6716.cyrius.test`.
+
+Over ssh, a PE probe called `tls_native_new_client`, then `tls_native_set_ca_system`, then
+`tls_native_client_verify_chain` and the hostname check, offline, in a fresh process per step:
+
+| Step | Policy | CurrentUser\ROOT | Exported (serverAuth) | Verdict |
+|---|---|---|---|---|
+| A | none | 60 | 48 | **ACCEPTED** |
+| B | `Flags = 1` | 59 (root dropped) | 47 | **REFUSED** `TLS_ERR_CERT_INVALID` |
+| C | removed | 60 | 48 | **ACCEPTED** |
+
+- **Control:** in every step, the leaf against `t.cer` as the only root (`tls_native_set_ca_bundle`) was ACCEPTED.
+- **Baseline:** before the desktop step the store held 59 certificates and the verdict was REFUSED.
+- **Windows' user engine:** in state A, `certutil -user -verify leaf.pem` builds the chain, with only revocation
+  unknown.
+- **The policy:** the ProtectedRoots key was absent before and is absent after.
+
+The figures are recorded in `docs/development/lib-tls-contract.md`'s Trust store row, beside the flag-8 ones. That is
+the acceptance's second option: no non-interactive session can add a CurrentUser root, so no opt-in row can set up
+this case.
