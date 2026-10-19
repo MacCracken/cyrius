@@ -712,6 +712,17 @@ fn _exec3(cmd, arg1, arg2): i64 {
     sys_exit(127);
 }
 
+# Point `target` (0 / 1 / 2) at `fd` and drop `fd` — unless `fd` already IS `target`. A parent
+# that started with a std fd closed hands that number to the next pipe or open (fds 0 and 1
+# closed: the capture pipe is (0, 1); fd 2 closed: the child's /dev/null opens at 2), and
+# `dup2(fd, fd)` is a no-op: closing `fd` then closed the redirect it had just made, so the
+# exec'd program started with that std fd closed and a capture read 0 bytes. CHANGELOG [6.7.15]
+fn _proc_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
 # Run a command and wait for it. Returns Result(exit_code).
 fn run(cmd, arg1, arg2): Result {
     var _pg_ppid = sys_getpid();
@@ -747,10 +758,9 @@ fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
     if (pid == 0) {
         _proc_child_guard(_pg_ppid);
         sys_close(read_fd);
-        sys_dup2(write_fd, 1);
-        sys_close(write_fd);
+        _proc_redirect(write_fd, 1);
         var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (Linux/macOS native; PE backend reroutes)
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _proc_redirect(devnull, 2); }
         _exec3(cmd, arg1, arg2);
     }
     sys_close(write_fd);
@@ -937,10 +947,9 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     if (pid == 0) {
         _proc_child_guard(_pg_ppid);
         sys_close(rfd);
-        sys_dup2(wfd, 1);
-        sys_close(wfd);
+        _proc_redirect(wfd, 1);
         var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _proc_redirect(devnull, 2); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -1002,7 +1011,7 @@ fn exec_env(args, env): i64 {
     if (pid == 0) {
         _proc_child_guard(_pg_ppid);
         var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _proc_redirect(devnull, 2); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -1095,10 +1104,9 @@ fn exec_capture_str(args, buf, buflen): i64 {
     if (pid == 0) {
         _proc_child_guard(_pg_ppid);
         sys_close(rfd);
-        sys_dup2(wfd, 1);
-        sys_close(wfd);
+        _proc_redirect(wfd, 1);
         var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _proc_redirect(devnull, 2); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }
@@ -1141,7 +1149,7 @@ fn exec_env_str(args, env): i64 {
     if (pid == 0) {
         _proc_child_guard(_pg_ppid);
         var devnull = sys_open("/dev/null", 1, 0);   # 1 = O_WRONLY (mirrors run_capture)
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _proc_redirect(devnull, 2); }
         sys_execve(cmd, argv, envp);
         sys_exit(127);
     }

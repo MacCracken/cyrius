@@ -311,10 +311,11 @@ fn _cx_guest_brk(addr): i64 {
 # has no route for answers -ENOSYS (-38), 6.7.14's D55 answer for every number nothing here names:
 # socket, listen, unshare, timerfd_create and epoll_create1 off Linux (their arguments are Linux's),
 # and on Windows every call whose PE peer is a stub (getppid, kill, dup, dup2, flock, fchmod, fchown,
-# the uid / gid getters, sched_yield, fork, fcntl — fork and kill answer -1 there, dup2 the fd it
-# was asked for). fcntl serves its scalar commands only (F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL,
-# F_DUPFD_CLOEXEC — the lock commands take a struct pointer), the status flags in Linux bits both
-# ways. Add a call only when no argument is a pointer, or translate the pointer in op 0x70 first.
+# the uid / gid getters, sched_yield, fork, fcntl — fork and kill answer -1 there; dup2 answered the
+# fd it was asked for until 6.7.15 and declines -38 itself now). fcntl serves its scalar commands
+# only (F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD_CLOEXEC — the lock commands take a
+# struct pointer), the status flags in Linux bits both ways. Add a call only when no argument is a
+# pointer, or translate the pointer in op 0x70 first.
 # CHANGELOG [6.7.14] [6.7.15]
 fn _cx_host_sys(sn, a, b, c): i64 {
     if (sn == 0) { return sys_read(a, b, c); }

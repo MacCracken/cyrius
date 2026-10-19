@@ -9,9 +9,11 @@
 # The peer now asks fcntl(F_GETFD) for the self-dup, as musl's dup2 does (glibc asks F_GETFL).
 # (issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md; CHANGELOG [6.7.15])
 #
-# WINDOWS is pinned at what its peer answers today, not POSIX's answer: Win32 has no dup2, and the
-# PE peer's sys_dup2 is a stub that returns `newfd` whatever `oldfd` is, so the closed fd answers 99
-# (filed: issues/2026-10-18-pe-sys-dup2-stub-answers-newfd-for-a-closed-fd.md).
+# WINDOWS answers -ENOSYS (-38) for every call: Win32 has no dup2 and the PE backend no route for
+# it, so the PE peer's sys_dup2 fails closed, as its sys_fcntl does. Through 6.7.14 it was a stub
+# that answered `newfd` whatever `oldfd` was — the closed fd's self-dup answered 99 and
+# `sys_dup2(1, 50)` answered 50 with no fd 50 behind it, so a failed redirect read as a success
+# (6.7.15's decision; issues/2026-10-18-pe-sys-dup2-stub-answers-newfd-for-a-closed-fd.md).
 # agnos defines no sys_dup2 (a child's fds are redirected at spawn), so the file asserts nothing there.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -23,9 +25,12 @@ sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #endif
 
 #ifdef CYRIUS_TARGET_WIN
-test_group("sys_dup2 on Windows: the PE stub answers newfd (pinned, not POSIX's answer)");
-assert_eq(sys_dup2(1, 1), 1, "sys_dup2(1, 1) == 1");
-assert_eq(sys_dup2(99, 99), 99, "sys_dup2(99, 99) == 99 (the stub's newfd; POSIX targets answer -9)");
+test_group("sys_dup2 on Windows: -ENOSYS (-38) for every call, open fd or not");
+assert_eq(sys_dup2(1, 1), 0 - 38, "sys_dup2(1, 1) == -38 (was 1, the stub's newfd)");
+assert_eq(sys_dup2(99, 99), 0 - 38, "sys_dup2(99, 99) on a closed fd == -38 (was 99, the stub's newfd)");
+assert_eq(sys_dup2(1, 50), 0 - 38, "sys_dup2(1, 50) == -38: the redirect that never happened fails (was 50)");
+assert_eq(sys_dup2(0 - 1, 0 - 1), 0 - 38, "sys_dup2(-1, -1) == -38 (was -1, the stub's newfd)");
+assert(sys_dup2(2, 1) < 0, "a portable `sys_dup2(a, b) < 0` check sees the failure");
 #endif
 
 #ifndef CYRIUS_TARGET_WIN

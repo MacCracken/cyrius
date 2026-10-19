@@ -8822,7 +8822,10 @@ The rules, in order:
    as dup2 does, `fd` when it is open and -EBADF (-9) when it is not (it asks
    `fcntl(F_GETFD)`), where through 6.7.14 it issued the same dup3 and answered -22. The raw
    `33` still reaches dup3. It is still far better than the alternative — untranslated,
-   aarch64 33 is `mknodat`, which would read your fds as `(path, mode)`.
+   aarch64 33 is `mknodat`, which would read your fds as `(path, mode)`. On **Windows**
+   `sys_dup2` answers -ENOSYS (-38) for every call since 6.7.15: Win32 has no dup2 and the PE
+   backend no route for it, so it fails closed like `sys_fcntl`; through 6.7.14 it answered
+   `newfd` without redirecting anything, so a failed redirect read as a success.
 5. **Routing the number is only half of portability — the STRUCT the call fills is the other
    half, and it differs in WIDTH as well as offset.** Read every field through the peer's own
    offset enum (`STAT_*`, `STATFS_*`), never a number you counted on x86. Two live examples:
