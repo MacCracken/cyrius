@@ -422,9 +422,8 @@ fn sys_sched_kicks(): i64 {
     # Sized by the same constant as the length passed below: the kernel writes that many. (6.6.7
     # spelled it as the literal 208 because an enum constant past var index 1024 did not fold,
     # and a program with the folded stdlibs in scope reaches that index before this line — fixed
-    # at 6.6.8, so the constant is back.) SYSINFO_SIZE_FULL above defines FULL as 208 — cyrius's
-    # in-tree rows define the target; checking agnos's kernel against them is agnos's own job
-    # since 6.7.16. CHANGELOG [6.6.8]
+    # at 6.6.8, so the constant is back.) SYSINFO_SIZE_FULL above is 208; the cross-repo parity
+    # check against agnos's kernel is agnos's own CI's job since 6.7.16. CHANGELOG [6.6.8]
     var buf[SYSINFO_SIZE_FULL];
     store64(&buf + SI_SCHED_KICKS, 0 - 1);
     var r = sys_sysinfo_n(&buf, SYSINFO_SIZE_FULL);
