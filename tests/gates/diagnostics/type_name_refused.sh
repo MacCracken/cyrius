@@ -212,6 +212,33 @@ refused va_miss_for    "${FN}    for (var i: = 0; i < 2; i = i + 1) { }\n    ret
 refused va_miss_repro 'fn f(): i64 {\n    var b: = 0;\n    return b;\n}\nvar G: = 4;\nsyscall(60, f() + G);\n' "5:8: $VA 'G', got '='" 2
 rows=$((rows + 1))
 check "va_miss_repro: names 2:12 'b'" yes "$(grep -qF -- "2:12: $VA 'b', got '='" "$T/va_miss_repro.err" && echo yes || echo no)"
+# 6.7.16: a bare `var c;` / `var c: ;` in a fn or after the first statement ENDS AT ITS `;` and registers `c` — the
+# declaration stepped the `;` and read the next statement as its initializer, so `var d = 9;` was dropped ("undefined
+# variable 'd'") and `c = 4;` said "undefined variable 'c'" (issues/2026-10-18-bare-declaration-refusal-reads-next-
+# statement-as-initializer.md). The _next rows: the statement after it is no keyword statement, so it is parsed only
+# because the refusal is in sync (the resync would skip it, its error with it). MUTATION LEDGER (measured
+# (scratch trees, CYCC= the copy's compiler): the slot-open compiler and `_var_eq_step` stepping the `;` (6.7.15's
+# behaviour) -> RED bare_repro / _late / _ann / _gen / _ptr (two errors), _reg (three), the three _next rows ("undefined
+# variable 'c'", not 'zz'), bare_ptr's warning; `_decl_eq_err` not marking in sync (either arm) -> RED the three _next
+# rows (one error: the resync skipped `c = zz;`) — its `uninitialized` arm alone bare_next / _late_next, its
+# annotation arm alone bare_ann_next; `_var_value` without its `_tp_refd_at` -> RED bare_ptr (a warning at the `;`);
+# `_var_value` running PCMPE on the `;` -> RED bare_ptr only (the factor leaves a latched `;` where it is; the branch
+# is the warning's stand-down and a defined 0). The zone's `var c;` (EMIT_GVAR_INITS) was one error already: bare_zone.
+UV="uninitialized variable not allowed"
+refused bare_repro    'fn f(): i64 {\n    var c;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:10: $UV"
+refused bare_late     'syscall(39);\nvar c;\nvar d = 9;\nsyscall(60, d);\n' "2:6: $UV"
+refused bare_ann      'fn f(): i64 {\n    var c: ;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:12: $VA 'c', got ';'"
+refused bare_reg      'fn f(): i64 {\n    var c;\n    c = 4;\n    return zz;\n}\nsyscall(60, f());\n' "4:14: undefined variable 'zz'" 2
+rows=$((rows + 1))
+check "bare_reg: names 2:10" yes "$(grep -qF -- "2:10: $UV" "$T/bare_reg.err" && echo yes || echo no)"
+refused bare_next     'fn f(): i64 {\n    var c;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
+refused bare_late_next 'syscall(39);\nvar c;\nc = zz;\nsyscall(60, c);\n' "3:7: undefined variable 'zz'" 2
+refused bare_ann_next 'fn f(): i64 {\n    var c: ;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
+refused bare_gen      'fn g<T>(a: T): i64 {\n    var c;\n    var d = 9;\n    return d + a + c;\n}\nsyscall(60, g(1) + g(2));\n' "2:10: $UV"
+refused bare_ptr      'fn f(): i64 {\n    var c: *i64;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:16: $UV"
+rows=$((rows + 1))
+check "bare_ptr: no warning beside it" 0 "$(grep -c '^warning' "$T/bare_ptr.err")"
+refused bare_zone     'var c;\nvar d = 9;\nsyscall(60, d);\n' "1:6: $UV"
 rows=$((rows + 1))
 rc=0; "$CC" --syntax-only < "$T/va_missing.cyr" > /dev/null 2> "$T/va_mso.err" || rc=$?
 check "va_missing under --syntax-only: refused" "1 yes 1" "$rc $(grep -qF "$VA 'b', got '='" "$T/va_mso.err" && echo yes || echo no) $(grep -c '^error' "$T/va_mso.err")"

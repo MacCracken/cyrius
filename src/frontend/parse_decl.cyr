@@ -5524,12 +5524,42 @@ fn _gvar_ann_head(S, noff): i64 {
 # `var X;` is "uninitialized variable not allowed", any other token "expected '='". A `;` the annotation reported
 # already (`var b: ;`, `_tn_head_var`) is that one error: the statement is latched quietly, as the refusal latches it.
 # CHANGELOG [6.7.15]
+# 6.7.16: at a `;` the refusal is in sync — PARSE_VAR ends the declaration at that `;` (`_var_eq_step`) — so it marks
+# where (`_pair_sync_ti`, read by `_stmt_resync`); the annotation's own report at the `;` latched already, so that arm
+# marks unconditionally. CHANGELOG [6.7.16]
 fn _decl_eq_err(S): i64 {
     if (PEEKT(S) == 5) {
-        if (_tn_seen_at(S, GTI(S)) == 1) { _panic = 1; return 0; }
+        if (_tn_seen_at(S, GTI(S)) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        _refuse_in_sync(S);
         ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
     }
     ERR_EXPECT(S, 4);
+    return 0;
+}
+# ⛔ 6.7.16 — A BARE `var c;` / `var c: ;` ENDS AT ITS OWN `;`. PARSE_VAR's `=` step (the cursor where the `=` belongs)
+# stepped the `;` after the refusal and read the NEXT statement as the initializer; the resync then dropped that
+# statement, so `var c; var d = 9; return d;` added "undefined variable 'd'" and `c = 4;` "undefined variable 'c'".
+# Now the `;` is left for the declaration's own end, the value is a 0 (`_var_value`: no struct-literal, inference or
+# expression read — each needs a token the `;` is not) and the name is registered. Out of PARSE_VAR (a cybs-ceiling
+# fn). Any other token is "expected '='" and stepped, as before. CHANGELOG [6.7.16]
+var _var_bare_at = 0 - 1;
+fn _var_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    _decl_eq_err(S);
+    if (PEEKT(S) == 5) { _var_bare_at = GTI(S); return 1; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
+# declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
+fn _var_value(S): i64 {
+    if (_var_bare_at != GTI(S)) { PCMPE(S); return 0; }
+    _var_bare_at = 0 - 1;
+    _tp_refd_at = GTI(S);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
     return 0;
 }
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
@@ -10083,8 +10113,7 @@ fn PARSE_VAR(S): i64 {
     # generic message. Now: a clear "uninitialized variable not
     # allowed; use `var X = 0;` or initial value" pointing at
     # the specific fix.
-    if (PEEKT(S) != 4) { _decl_eq_err(S); }
-    STI(S, GTI(S) + 1);
+    _var_eq_step(S);   # 6.7.16: a bare declaration is left on its `;`, its value a 0 (`_var_value`)
     # Check for struct init: var p = StructName { expr, expr, ... };
     # v5.9.33 (agnosys 1.1.12 follow-up): require the next-next token to be
     # `{` before committing to the struct-init path. A bare ident reference
@@ -10153,7 +10182,7 @@ fn PARSE_VAR(S): i64 {
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
     var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
-    PCMPE(S);
+    _var_value(S);   # PCMPE; 6.7.16: a bare declaration's 0
     _scv_disarm(S, scv_prev);
     _scv_rec_ann(S, pscale, scv_start);   # 6.7.13 (D13): a method / operator struct result into `: i64`
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
