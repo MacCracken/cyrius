@@ -220,6 +220,78 @@ fx pw_cl_q      "$P2
 fn f(x) { var g = |y| { var v = (gd<i32>(y))?; return v; }; return Ok(x); }"
 fx pw_cl_pair   "$P2
 fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; return Ok(x); }"
+# 6.7.15 (issues/2026-10-17-mixed-pair-return-warning-skips-impl-methods.md): an impl METHOD and an inherited trait
+# DEFAULT are judged as a fn is — the walk took depth-0 `fn` tokens only, so the filed method (im_repro: exit 50, `t = 5`
+# the plain return read as the tag) built silent where its free-fn twin (im_free) warns. `_warn_mixed_impls`
+# (parse.cyr): each impl's methods (`_impl_method_entry`, read only) and each default it inherits, an untyped `self`
+# typed as the impl's struct (`_pbs_iself`), named as the source spells it (`Pt.qm`); a default inherited by two impls
+# warns once (im_default2), an override is judged as its own method (im_override, im_override_ok). Mutations (a scratch
+# copy of the tree, the gate run from it, both compilers built from the mutated src; 2026-10-18):
+#   the tree before (`_warn_mixed_impls` never called)       -> RED 18: im_repro im_q im_default2 im_override
+#                                                               im_override_ok im_generic im_iself im_annot (x86, aarch64),
+#                                                               the im_repro / im_default2 position checks
+#   `_warn_mixed_default` without its `_wmd_seen` test       -> RED 2: im_default2 (2 warnings, x86, aarch64)
+#   `_warn_mixed_method` without `_pbs_iself`                -> RED 2: im_iself (0 — `self.div` unresolved, x86, aarch64)
+#   `_warn_mixed_impls` without `_warn_mixed_defaults`       -> RED 7: im_default2 im_override im_override_ok (x86, aarch64),
+#                                                               the im_default2 position check
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+impl Pt { fn qm(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }
+fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.qm(); return t * 10 + v; }
+syscall(60, main());' > "$T/im_repro.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+fn qm(x) { if (x > 0) { return Ok(x); } return 5; }
+fn main(): i64 { var t, v = qm(3); return t * 10 + v; }
+syscall(60, main());' > "$T/im_free.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+fn parse(x) { if (x > 0) { return Ok(x); } return Err(1); }
+struct Pt { x; y; }
+impl Pt { fn qm(self) { var v = parse(self.x)?; return v; } }
+fn main(): i64 { var p = Pt { 1, 0 }; var t, v = p.qm(); return t * 10 + v; }
+syscall(60, main());' > "$T/im_q.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+impl Pt { fn qv(self) { if (self.x > 0) { return Ok(self.x); } return Err(5); } }
+fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.qv(); return t * 10 + v; }
+syscall(60, main());' > "$T/im_variant.cyr"
+IMD='include "lib/result.cyr"
+trait Dv { fn qd(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }
+struct Pt { x; y; }
+struct Qt { x; z; }
+impl Dv for Pt { }'
+printf '%s\n%s\n' "$IMD" 'impl Dv for Qt { }
+fn main(): i64 { var p = Pt { 0, 0 }; var q = Qt { 0, 0 }; var t, v = p.qd(); var u, w = q.qd(); return t * 10 + u; }
+syscall(60, main());' > "$T/im_default2.cyr"
+printf '%s\n%s\n' "$IMD" 'impl Dv for Qt { fn qd(self) { if (self.x > 0) { return Ok(1); } return 7; } }
+fn main(): i64 { var p = Pt { 0, 0 }; var q = Qt { 0, 0 }; var t, v = p.qd(); var u, w = q.qd(); return t * 10 + u; }
+syscall(60, main());' > "$T/im_override.cyr"
+printf '%s\n%s\n' "$IMD" 'impl Dv for Qt { fn qd(self) { if (self.x > 0) { return Ok(1); } return Err(7); } }
+fn main(): i64 { var p = Pt { 0, 0 }; var q = Qt { 0, 0 }; var t, v = p.qd(); var u, w = q.qd(); return t * 10 + u; }
+syscall(60, main());' > "$T/im_override_ok.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+impl Pt { fn gq<T>(self, d: T) { if (d == 0) { return Err(9); } return 7; } }
+fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.gq(3); return t * 10 + v; }
+syscall(60, main());' > "$T/im_generic.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+struct Qt { x; y; }
+impl Pt { fn div(self, d) { if (d == 0) { return Err(9); } return Ok(self.x / d); } }
+impl Qt { fn div(self, d): i64 { return self.x; } }
+impl Qt { fn w(self, d) { if (d > 5) { return Ok(5); } return self.div(d); } }
+impl Pt { fn w(self, d) { if (d > 5) { return Ok(5); } return self.div(d); } }
+fn main(): i64 { var p = Pt { 6, 0 }; var t, v = p.w(2); return t * 10 + v; }
+syscall(60, main());' > "$T/im_iself.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+impl Pt { fn qa(self: Pt) { if (self.x > 0) { return Ok(self.x); } return 5; } fn qb(self) { if (self.x > 0) { return Ok(self.x); } return self.y; } }
+fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.qa(); var u, w = p.qb(); return t * 10 + u; }
+syscall(60, main());' > "$T/im_annot.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+struct Pt { x; y; }
+impl Pt { fn qc(self) { var f = |k| { if (k > 0) { return Ok(k); } return 3; }; if (self.x > 0) { return Ok(1); } return Err(2); } }
+fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.qc(); return t; }
+syscall(60, main());' > "$T/im_closure.cyr"
 # warns <compiler> <fixture> <expected count>
 warns() {
   "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
@@ -273,7 +345,28 @@ for c in x86 aarch64; do
   warns "$c" pw_cl_mixed 1
   warns "$c" pw_cl_q 1
   warns "$c" pw_cl_pair 0
+  warns "$c" im_repro 1
+  warns "$c" im_free 1
+  warns "$c" im_q 1
+  warns "$c" im_variant 0
+  warns "$c" im_default2 1
+  warns "$c" im_override 2
+  warns "$c" im_override_ok 1
+  warns "$c" im_generic 1
+  warns "$c" im_iself 1
+  warns "$c" im_annot 2
+  warns "$c" im_closure 1
 done
+# 6.7.15: the method's warning is at its plain return, named as the source spells it (`Pt.qm`, never `Pt_qm`), and
+# the default's once at the trait's; the program still computes what it did (a warning only: exit 50).
+"$T/x86" < "$T/im_repro.cyr" > "$T/imr" 2>"$T/e"
+if grep -q '^warning:<source>:3:64: `Pt.qm` returns a `: stack` pair on another path but a SINGLE value here' "$T/e"; then pass=$((pass + 1))
+else _bad "im_repro: the warning is not at 3:64 naming \`Pt.qm\`: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
+chmod +x "$T/imr"; "$T/imr"; rc=$?
+if [ "$rc" -eq 50 ]; then pass=$((pass + 1)); else _bad "im_repro: exit $rc, want 50 (the warning changes no code)"; fi
+"$T/x86" < "$T/im_default2.cyr" > /dev/null 2>"$T/e"
+if grep -q '^warning:<source>:2:65: `Pt.qd` returns' "$T/e"; then pass=$((pass + 1))
+else _bad "im_default2: the one warning is not the default's at 2:65: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)
 "$T/x86" < "$T/raw_zero.cyr" > "$T/o" 2>"$T/e"
@@ -286,5 +379,5 @@ out=$("$T/kyb" | tr '\n' ' ')
 if [ "$out" = "pick(4) is_some=1 pick(4) payload=40 pick(0) is_some=0 " ]; then pass=$((pass + 1)); else _bad "kyb repro printed '$out'"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL stack_enum_mixed_return_warning: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, generic and method forwards silent and their single values warned, method receivers typed by scope, inference and capture, a whole-call wrap judged as its call, on x86 and aarch64"
+echo "PASS stack_enum_mixed_return_warning: $pass rows — nullary variants silent, dropped tags warned, generic and method forwards silent and their single values warned, method receivers typed by scope, inference and capture, a whole-call wrap judged as its call, an impl method and an inherited trait default judged as a fn is (6.7.15), on x86 and aarch64"
 exit 0

@@ -1312,62 +1312,138 @@ fn _warn_mixed_pair_returns(S): i64 {
                 if (TOKTYP(S, i + 1) == 2) {
                     encl = TOKVAL(S, i + 1);
                     ea = i;
-                    var wfi = FINDFN(S, TOKVAL(S, i + 1));
-                    if (wfi >= 0) {
-                        if ((GFLG(S, wfi) & 256) != 0) {
-                            var j = i + 2;
-                            var lim = i + 512;
-                            while (j < n) {
-                                if (TOKTYP(S, j) == 13) { break; }
-                                if (TOKTYP(S, j) == 5) { break; }
-                                if (j > lim) { break; }
-                                j = j + 1;
-                            }
-                            if (j < n) {
-                                if (TOKTYP(S, j) == 13) {
-                                    var bd = 0;
-                                    var k = j;
-                                    var go = 1;
-                                    while (go == 1) {
-                                        if (k >= n) { go = 0; }
-                                        else {
-                                            var t = TOKTYP(S, k);
-                                            if (t == 13) {
-                                                # a closure body — its own unit, judged by the outer walk
-                                                var sk = _skip_nested_body(S, k);
-                                                if (sk >= 0) { k = sk; } else { bd = bd + 1; }
-                                            }
-                                            elif (t == 14) {
-                                                bd = bd - 1;
-                                                if (bd == 0) { go = 0; }
-                                            }
-                                            elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (see `_pair_prescan`)
-                                            elif (t == 33) {
-                                                var plain = 1;
-                                                if (TOKTYP(S, k + 1) == 5) { plain = 0; }
-                                                else { plain = _ret_is_variant(S, i, k + 1); }
-                                                if (plain == 1) {
-                                                    syscall(SYS_WRITE, 2, "warning:", 8);
-                                                    _err_head_at(S, k);
-                                                    syscall(SYS_WRITE, 2, ": `", 3);
-                                                    PRSTR(S + 0xEC00000 + TOKVAL(S, i + 1));
-                                                    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 229);
-                                                    go = 0;
-                                                }
-                                            }
-                                            if (go == 1) { k = k + 1; }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    _warn_mixed_fn(S, i, n);
                 }
             }
         }
         i = i + 1;
     }
+    _warn_mixed_impls(S);   # 6.7.15: the impl methods and the trait defaults they inherit
     return 0;
+}
+# The top-level fn whose `fn` token is i (its name next): judged when it is flagged 256.
+fn _warn_mixed_fn(S, i, n): i64 {
+    var wfi = FINDFN(S, TOKVAL(S, i + 1));
+    if (wfi < 0) { return 0; }
+    if ((GFLG(S, wfi) & 256) == 0) { return 0; }
+    var j = i + 2;
+    var lim = i + 512;
+    while (j < n) {
+        if (TOKTYP(S, j) == 13) { break; }
+        if (TOKTYP(S, j) == 5) { break; }
+        if (j > lim) { break; }
+        j = j + 1;
+    }
+    if (j >= n) { return 0; }
+    if (TOKTYP(S, j) != 13) { return 0; }
+    return _warn_mixed_body(S, i, j, TOKVAL(S, i + 1), 0 - 1);
+}
+# ONE pair-returning fn's body, the `{` at token j, of the unit whose `fn` token is a (names resolve there): the warning
+# at its first plain `return`, naming the fn — `nm` (a pool offset), or for an impl method its source name (`fi` >= 0,
+# `_fn_src_name`: `Pt.qm`, never the mangled `Pt_qm`; written at print time, after the token resolvers' scratch). A
+# closure body is its own unit, judged by the outer walk; a refused nested fn is skipped. 1 = warned.
+fn _warn_mixed_body(S, a, j, nm, fi): i64 {
+    var n = GTCNT(S);
+    var bd = 0;
+    var k = j;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13) {
+            # a closure body — its own unit, judged by the outer walk
+            var sk = _skip_nested_body(S, k);
+            if (sk >= 0) { k = sk; } else { bd = bd + 1; }
+        }
+        elif (t == 14) {
+            bd = bd - 1;
+            if (bd == 0) { return 0; }
+        }
+        elif (t == 32) { k = _skip_nested_body(S, k); }   # a refused nested fn (see `_pair_prescan`)
+        elif (t == 33) {
+            if (TOKTYP(S, k + 1) != 5) {
+                if (_ret_is_variant(S, a, k + 1) == 1) { _warn_mixed_at(S, k, nm, fi); return 1; }
+            }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _warn_mixed_at(S, k, nm, fi): i64 {
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, k);
+    syscall(SYS_WRITE, 2, ": `", 3);
+    if (fi >= 0) { nm = _fn_src_name(S, fi, L64(_fnt_names + fi * 8)); }
+    PRSTR(S + 0xEC00000 + nm);
+    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 229);
+    return 0;
+}
+# ⛔ 6.7.15 — AN impl METHOD AND AN INHERITED TRAIT DEFAULT ARE JUDGED TOO. The walk above takes depth-0 `fn` tokens only,
+# so `impl Pt { fn qm(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }` — flagged 256 by
+# `_pair_prescan_impls` — built silent and `var t, v = p.qm();` read 5 as the TAG (50), where the same body as a free fn
+# warns; a default inherited from `trait Dv { fn qd(self) { .. } }` the same. Each impl's methods (`_impl_method_entry`,
+# read only — never REGFN, the axis-13 rule) and each default it inherits are judged as a top-level fn is, an untyped
+# `self` typed as the impl's struct (`_pbs_iself`, as `_pair_scan_method` does). A default inherited by several impls
+# warns once (its `fn` token, `_wmd_seen`). CHANGELOG [6.7.15]
+var _wmd_seen = 0;   # the trait defaults' `fn` tokens already warned about, a vec made at the first
+fn _warn_mixed_impls(S): i64 {
+    var ii = 0;
+    while (ii < _ti_n) {
+        var k = L64(_ti_tab + ii * 64 + 16);
+        var e = k + L64(_ti_tab + ii * 64 + 24);
+        while (k < e) {
+            _warn_mixed_method(S, ii, L64(_tim_tab + k * 24), L64(_tim_tab + k * 24 + 8));
+            k = k + 1;
+        }
+        _warn_mixed_defaults(S, ii);
+        ii = ii + 1;
+    }
+    return 0;
+}
+# The trait defaults impl `ii` inherits (those it does not override), as `_pair_scan_defaults` walks them.
+fn _warn_mixed_defaults(S, ii): i64 {
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    if (tx < 0) { return 0; }
+    var k = L64(_tr_tab + tx * 32 + 8);
+    var e = k + L64(_tr_tab + tx * 32 + 16);
+    while (k < e) {
+        var dt = L64(_trm_tab + k * 32 + 16);   # the default's `fn` token + 1 (0 = required)
+        if (dt != 0) { _warn_mixed_default(S, ii, L64(_trm_tab + k * 32), dt - 1); }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _warn_mixed_default(S, ii, m, p): i64 {
+    if (_tim_of(S, ii, m) >= 0) { return 0; }   # overridden: the impl's own method, judged above
+    if (_wmd_seen_at(p) == 1) { return 0; }
+    if (_warn_mixed_method(S, ii, m, p) == 0) { return 0; }
+    if (_wmd_seen == 0) { _wmd_seen = vec_new(); }
+    vec_push(_wmd_seen, p);
+    return 0;
+}
+fn _wmd_seen_at(p): i64 {
+    if (_wmd_seen == 0) { return 0; }
+    var n = vec_len(_wmd_seen);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_wmd_seen, i) == p) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# Impl `ii`'s method `m`, defined at `fn` token p: judged when its entry is flagged 256. 1 = warned.
+fn _warn_mixed_method(S, ii, m, p): i64 {
+    var fi = _impl_method_entry(S, ii, m, p);
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 256) == 0) { return 0; }
+    var o = _tr_paren(S, p);
+    if (o < 0) { return 0; }
+    var j = _tok_body_open(S, _call_close(S, o) + 1);
+    if (j < 0) { return 0; }
+    _pbs_iself = 0;
+    var isf = GFISELF(S, fi);
+    if (isf > 0) { _pbs_iself = FINDSTRUCT(S, isf - 1); }
+    var r = _warn_mixed_body(S, p, j, 0, fi);
+    _pbs_iself = 0;
+    return r;
 }
 
 # Run the propagation once, on first demand. Cheap on every call after the first.

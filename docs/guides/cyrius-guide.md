@@ -6151,7 +6151,10 @@ before the first top-level statement or after it — kept the tag and dropped th
 caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on
 another path but a SINGLE value here"*, v6.6.0). Any constructor of the enum is a whole value,
 including a **nullary** one: `return None();` (or `return None;`) beside `return Some(v);` is
-correct and silent (v6.6.9; it used to warn and suggest `Err`). A fn that returns a raw status on
+correct and silent (v6.6.9; it used to warn and suggest `Err`). An `impl` method and a trait default it inherits are
+judged as a fn is (6.7.15), named as written (*"`Pt.qm` returns ..."*; a default inherited by several impls warns
+once): through 6.7.14 only a top-level fn or a closure was, so `impl Pt { fn qm(self) { if (..) { return Ok(self.x); }
+return 5; } }` built silent and `var t, v = p.qm();` read 5 as the tag. A fn that returns a raw status on
 one path still sees the warning even when its callers only sign-test that path, and it is still a
 defect: vani's `vani_drain` / `vani_state` were kept that way through vani 1.2.7, and a two-value
 bind read a device in state SETUP as `Err` (fixed in vani 1.2.8). Read the callers before acting
