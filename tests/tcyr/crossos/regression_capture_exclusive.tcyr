@@ -215,7 +215,10 @@ fn _cr_planted(v, n, kind): i64 {
     if (r == 0) { if (regression_buf_eq(buf, want, got) == 0) { r = 1; } }
     if (r == 0) { if (_cr_victim_intact(victim) == 0) { r = 2; } }
     if (r == 0) { if (_cr_intact(v, n, kind) != n) { r = 3; } }
-    if (r == 0) { if (load64(st) != 0 && load64(st) != 0 - 9) { r = 5; } }
+    # A _status verb stores the child's exit (0); the others never touch `st`, which keeps -9.
+    var want_st = 0 - 9;
+    if ((v & 1) == 1) { want_st = 0; }
+    if (r == 0) { if (load64(st) != want_st) { r = 5; } }
     _cr_unplant(v, n);
     xunlink(victim);
     return r;
@@ -237,7 +240,9 @@ fn _cr_all_taken(v): i64 {
         var got = _cr_run(v, "out", buf, 64, st);
         var r = 0;
         if (got != 0) { r = 1; }
-        if (r == 0) { if (load64(st) != 0 - 1 && load64(st) != 0 - 9) { r = 5; } }
+        # Only the _status verbs come here, and each must store -1 on refusal: the -9 _cr_run
+        # leaves would mean the refusal arm wrote no status (the check driver reads it).
+        if (r == 0) { if (load64(st) != 0 - 1) { r = 5; } }
         if (r == 0) { if (_cr_intact(v, 64, 1) != 64) { r = 3; } }
         _cr_unplant(v, 64);
         sys_exit(r);
