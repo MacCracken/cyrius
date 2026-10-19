@@ -427,7 +427,7 @@ Also closed: 1 issue filing (commandress papercut → archived) from the .60-.63
 | `completed-phases.md` | 2026-10-08 | ✅ Fresh | v6.7.x section (6.7.0–6.7.6); the v6.5.x close corrected to .73; v6.6.x / v6.7.x rows in the per-minor table. |
 | `cycle-discipline.md` | 2026-10-08 | ✅ Fresh | The closeout checklist + ledger. |
 | `ecosystem-migration.md` | 2026-10-08 | ✅ Fresh — new | The consolidated consumer migration guide (pin-move procedure + per-release changes 6.6.0 → 6.7.6); replaces the three per-release notes. |
-| `dev-tools-linux.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Tools and commands checked to exist and run; the CI runner list and the cass staging path corrected. |
+| `dev-tools-linux.md` | 2026-10-19 | ✅ Fresh (6.7.16) | Tools and commands checked to exist and run; the CI runner list and the cass staging path corrected (6.7.9). 6.7.16: every package the gates need, measured over the gate-run files (gcc, clang, parted, mtools, edk2-ovmf, cpio, diffutils, git, tar, gzip added; Arch's `xxd` is `tinyxxd` or `vim`), `RG_SKIP_ALLOW` empty, no consumer checkout needed. |
 | `benchmark-regimes.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Matches the bench scripts; one figure's arithmetic corrected. Extend it when a measurement regime changes (a gate requires the file). |
 | `lib-tls-contract.md` | 2026-10-12 | ✅ Fresh (re-verified 6.7.9) | Against `lib/tls*.cyr` and the 6.7.x CHANGELOG TLS entries. |
 | `threat-model.md` | 2026-10-12 | ✅ Facts re-checked 6.7.9 | Stale facts corrected only — not a security review. Its framing (compiled source as untrusted input, `cyrius audit` before every commit) differs from CLAUDE.md's security rule; reported to the user, neither file changed. |
