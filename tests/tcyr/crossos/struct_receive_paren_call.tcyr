@@ -167,6 +167,12 @@ var TM3 = fncall0(&mkpm);
 var TM4 = callptr(&mkpm);
 var TM5 = TM1 + TM1;
 fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
+# --- 6.7.15: a zone generic call returning a generic struct's instance (`mkg1<T>(v: T): G1<T>`) binds it ---
+# `var x = mkg1(33);` in the zone was "no struct type in scope for 'x'" at `x.v`, where after the first statement it
+# binds (issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). TG2 is the `G1<i32>` instance.
+var TG1 = mkg1(33);
+var TG2 = mkg1<i32>(30);
+fn tg_read(): i64 { return TG1.v + TG2.v; }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -270,6 +276,11 @@ var TL5 = TL1 + TL2;
 assert_eq(TL1.a + dpm(TL2), 49, "after a statement: a method and an operator");
 assert_eq(TL3.a + TL4.a, 60, "after a statement: (fncall0(&mkpm)) / callptr(&mkpm)");
 assert_eq(TL5.a, 49, "after a statement: TL1 + TL2 dispatches PM_add");
+
+test_group("6.7.15: a zone generic call's generic struct instance");
+assert_eq(TG1.v, 33, "the zone: var TG1 = mkg1(33); TG1.v (refused before)");
+assert_eq(TG2.v + 3, 33, "the zone: var TG2 = mkg1<i32>(30); a G1<i32>");
+assert_eq(tg_read(), 63, "a fn body reads TG1.v / TG2.v before the replay");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

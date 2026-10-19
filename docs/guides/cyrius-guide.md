@@ -1692,7 +1692,9 @@ that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());`
 was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's decisions D29 (a) and D30 (a),
 2026-10-16): at top level — in the declaration zone or after the first statement, wrapped or not — `var x =
 mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
-scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none), and one of 9-16 bytes is refused as
+scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none; a generic call's instance too — in the
+declaration zone since 6.7.15, `var x = mkg1(33);` with `fn mkg1<T>(v: T): G1<T>` is `G1`, `mkg1<i32>(33)` is
+`G1<i32>`), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
 through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. So does a
 whole method, operator or known `&f` result (6.7.15; the user's decisions D34 (a) and D35 (a), 2026-10-18): `var G =

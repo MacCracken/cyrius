@@ -1229,7 +1229,73 @@ rowd DM9after after 'var E = nope;
 var G = B3.mk3();' 'G.c'
 refused DM9after "undefined variable 'nope'" "after an earlier error: 24 B adds its one refusal, no 'no struct type in scope'" 2
 
-[ "$rows" -ge 300 ] || bad "only $rows rows ran (floor 300)"
+# 6.7.15 — A DECLARATION-ZONE UNTYPED GENERIC CALL RETURNING A GENERIC STRUCT'S INSTANCE BINDS IT
+# (issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). `var x = mkg1(33);` with `fn mkg1<T>(v:
+# T): G1<T>` bound nothing in the declaration zone (`x.v` was "no struct type in scope for 'x'"; `mkg1<i64>(33)` the same;
+# a 16 B `G2<T>` gave the D30 refusal AND that error), where the line after the first statement binds the instance
+# (D29). The end of pass 1 reads the type arguments from the tokens — an explicit list as the call parses it, else each
+# type parameter's carrying argument (a struct by the pair scans' reader, a lone integer literal i64, a lone global its
+# binding) — and takes the base struct for an all-i64 binding, else the instance the return names (`_gtype_sid`,
+# deduped by name with the one pass 2's call makes) (`_gu_gen` / `_gu_tp` / `_gu_inst`). GZ0 the filed repro verbatim;
+# GZ1 `mkg1<i64>(33)`; GZ2 a fn body reads `x.v`; GZ3 16 B: the D30 refusal alone; GZ4 / GZ5 after a first statement
+# (unchanged); GZ6 `mkg1<i32>(30)` is `G1<i32>` (a `g: G1<i32>` parameter and a local of it agree); GZ7 a struct T; GZ8
+# a global's T; GZ9 two type parameters (i8, i32), the return's list swapped.
+#   (Each mutant: a scratch copy of the tree with the one change, its 2-stage compiler, this gate run from the copy.)
+#   N56 the tree before it (720c3492f)                    -> RED 9 rows: GZ0 GZ1 GZ2 GZ6 GZ7 GZ8 GZ9 x4 legs (refused:
+#                                                           no struct type in scope), GZ3 x4 (2 errors), A2 x4 (the
+#                                                           tcyr's TG* rows); GZ4 GZ5 green
+#   N57 `_gu_tp` without its integer-literal arm           -> RED 4: GZ0 GZ2 GZ3 A2 x4
+#   N58 `_gu_tp` without its global-name arm               -> RED 1: GZ8 x4
+#   N59 `_gu_inst` answering the generic base              -> RED 4: GZ6 GZ7 GZ9 A2 x4 ("cannot pass 'X' to a parameter
+#                                                           of a different struct type": the base is not the instance)
+GZH='include "lib/syscalls.cyr"
+struct Pt { a; }
+struct G1<T> { v: T; }
+struct G2<T> { v: T; w: T; }
+struct GP<T, U> { v: T; w: U; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn mkg2<T>(v: T): G2<T> { var g: G2<T>; g.v = v; g.w = v; return g; }
+fn mkgp<T, U>(v: T, w: U): GP<U, T> { var g: GP<U, T>; g.v = w; g.w = v; return g; }
+fn take(g: G1<i32>): i64 { return g.v; }
+fn takep(g: G1<Pt>): i64 { return g.v.a; }'
+# rowg <name> <zone|after> <declarations> <exit expression>
+rowg() {
+    if [ "$2" = zone ]; then printf '%s\n%s\nsyscall(60, %s);\n' "$GZH" "$3" "$4" > "$T/$1.cyr"
+    else printf '%s\n%s\n%s\nsyscall(60, %s);\n' "$GZH" "$TS" "$3" "$4" > "$T/$1.cyr"; fi
+}
+cat > "$T/GZ0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var x = mkg1(33);
+syscall(60, x.v);
+EOF
+runs GZ0 33 "the filed repro verbatim: a zone \`var x = mkg1(33); syscall(60, x.v);\` (refused before: no struct type in scope for 'x')"
+rowg GZ1 zone 'var x = mkg1<i64>(33);' 'x.v'
+runs GZ1 33 "the zone: \`var x = mkg1<i64>(33);\`"
+rowg GZ2 zone 'var x = mkg1(30);
+fn f(): i64 { return x.v + 3; }' 'f()'
+runs GZ2 33 "the zone: a fn body reads \`x.v\` before the replay"
+rowg GZ3 zone 'var x = mkg2(33);' 'x.v'
+refused GZ3 "'mkg2' $MNF" "the zone: 16 B \`var x = mkg2(33);\` is D30's one refusal (\`x.v\` added a second before)"
+rowg GZ4 after 'var x = mkg1(33);' 'x.v'
+runs GZ4 33 "control: after a first statement \`var x = mkg1(33);\` binds G1"
+rowg GZ5 after 'var x = mkg2(33);' 'x.w'
+refused GZ5 "'mkg2' $MNF" "control: after a first statement 16 B is D30's one refusal"
+rowg GZ6 zone 'var X = mkg1<i32>(30);
+fn f(): i64 { var q: G1<i32> = mkg1<i32>(3); return q.v + take(X) + X.v - 30; }' 'f()'
+runs GZ6 33 "the zone: \`mkg1<i32>(30)\` is the \`G1<i32>\` a parameter and a local name (one instance)"
+rowg GZ7 zone 'var P = Pt { 11 };
+var Y = mkg1(P);
+fn f(): i64 { return takep(Y) + Y.v.a; }' 'f() + 11'
+runs GZ7 33 "the zone: \`var Y = mkg1(P);\` with \`P: Pt\` is \`G1<Pt>\`"
+rowg GZ8 zone 'var N = 33;
+var z = mkg1(N);' 'z.v'
+runs GZ8 33 "the zone: \`var z = mkg1(N);\` with N an untyped global binds G1 (T = i64)"
+rowg GZ9 zone 'var Q = mkgp<i8, i32>(3, 30);' 'Q.v + Q.w'
+runs GZ9 33 "the zone: \`mkgp<i8, i32>(3, 30)\` returning \`GP<U, T>\` is \`GP<i32, i8>\` (8 B)"
+
+[ "$rows" -ge 310 ] || bad "only $rows rows ran (floor 310)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15)"

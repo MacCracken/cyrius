@@ -11232,7 +11232,10 @@ fn _gz_late(S, sid, start): i64 {
 # is refused by name (6.7.9). Now the same rule as the free call: after the first statement from the parse's own
 # record (`_gu_rec`: `_sc_whole`, or the span of a call over 16 B that refused itself), in the zone from the tokens
 # (`_gu_wsid`: `_gz_ty`'s call result) with the replay's refusal from the record and `_gz_agree` checking the 8 B
-# verdict as an annotated global's. An if-expression's struct is not this rule (it keeps the word). CHANGELOG [6.7.15]
+# verdict as an annotated global's. An if-expression's struct is not this rule (it keeps the word). And a zone generic
+# call returning a generic struct's instance (`fn mkg1<T>(v: T): G1<T>`, `var x = mkg1(33);`, `mkg1<i32>(33)`) takes
+# that instance, as it does after the first statement (`_gu_gen`; `x.v` was "no struct type in scope for 'x'").
+# CHANGELOG [6.7.15]
 var _gu_c = 0;    # the call's name token (`_gu_sid`), where the refusal reports
 var _gu_v = 0;    # the declaration zone's untyped globals the sweep may type: (slot, initialiser token, struct) triples
 # The struct a top-level untyped declaration's initialiser at `start` binds (0 for none), resolved as the receive
@@ -11369,13 +11372,13 @@ fn _gu_sweep(S): i64 {
     return 0;
 }
 # The struct the zone initialiser at token `ti` binds, from its tokens: a whole free call's return (`_gz_call_rs`: a
-# generic's fixed or bound `: T` return; a generic struct's instance is not typed here), else a whole method / operator
-# / known `&f` result (`_gu_wsid`). 0 none.
+# generic's fixed or bound `: T` return; 6.7.15, a generic struct's instance through `_gu_gen`), else a whole method /
+# operator / known `&f` result (`_gu_wsid`). 0 none.
 fn _gu_zsid(S, ti): i64 {
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_ok(S, _gz_call_rs(S, c));
-            if (_gz_gb > 0) { sid = 0; }   # a generic struct's instance, not made before pass 2
+            if (_gz_gb > 0) { sid = _gu_ok(S, _gu_gen(S, c)); }   # 6.7.15: `: G<T>`, the instance the call makes
             return sid;
         } }
     return _gu_wsid(S, ti);
@@ -11407,6 +11410,100 @@ fn _gu_wfree(S, a, e): i64 {
     var o = _gcall_open(S, a);
     if (o < 0) { return 0; }
     if (_call_close(S, o) == e - 1) { return 1; }
+    return 0;
+}
+# 6.7.15 — the struct a whole generic call at token `c` returning `: G<..>` makes (`_gz_gb` the generic struct G), as
+# pass 2's `_gen_resolve_call` reaches it, nothing but the struct made here: its type arguments read from the tokens
+# — an explicit list as that call parses it, else each type parameter's carrying argument (`_gu_tp`) — then G itself
+# for an all-i64 binding (the base fn: the base struct), else the instance the return names under that binding
+# (`_gu_inst`). 0 when the tokens bind no type argument: the global stays untyped, as before.
+fn _gu_gen(S, c): i64 {
+    var fi = FINDFN(S, TOKVAL(S, c));
+    if (fi < 0) { return 0; }
+    var c0 = 0 - 8;
+    var c1 = 0;
+    if (TOKTYP(S, c + 1) == 19) {
+        if (_targs_resolvable(S, c + 2) == 0) { return 0; }
+        var sv = GTI(S);
+        var sv_gt = _ta_pending_gt;
+        _ta_pending_gt = 0;
+        STI(S, c + 2);
+        c0 = _parse_one_type_arg(S);
+        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+        _ta_pending_gt = sv_gt;
+        STI(S, sv);
+    } else {
+        c0 = _gu_tp(S, c, fi, 0);
+        if (c0 == 0) { return 0; }
+        if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) {
+            c1 = _gu_tp(S, c, fi, 1);
+            if (c1 == 0) { return 0; }
+        }
+    }
+    if (c0 <= 0 && c1 <= 0) {
+        if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return _gz_gb; }
+        if (_gen_stub(S, fi) != 0) { return 0; }
+    }
+    return _gu_inst(S, fi, c0, c1);
+}
+# The binding of type parameter `w` of generic `fi` at the call whose name is token `c`, read from the tokens: a struct
+# by the pair scans' reader (`_tok_gen_tp_sid`); else, as the parser's `_gen_infer_tp` binds it, i64 for a lone integer
+# literal or no carrying argument, and a lone global's name its global's binding (`_infer_conc_global`; no local is in
+# scope at top level). 0 = not read here (a struct carrier, any other argument).
+fn _gu_tp(S, c, fi, w): i64 {
+    var s = _tok_gen_tp_sid(S, c - 1, c - 1, c, fi, w);
+    if (s > 0) { return s; }
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return 0; }
+    var a = _call_arg_for(S, fi, c + 1, pk - 1);
+    if (a < 0) { return 0 - 8; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31) { if (nt != 11) { return 0; } }
+    var t = TOKTYP(S, a);
+    if (t == 1) { return 0 - 8; }
+    if (t != 2) { return 0; }
+    if (_findvar_core(S, TOKVAL(S, a)) < 0) { return 0; }
+    var sc = _gi_sc;
+    var r = _infer_conc_global(S, TOKVAL(S, a), _ic_ptr_param(S, fi, pk - 1));
+    _gi_sc = sc;
+    return r;
+}
+# The struct generic `fi`'s return `: G<..>` (`_gz_gb` G) names under the binding (c0, c1), read by `_gtype_sid` as
+# PARSE_FN_DEF reads an instance's return — `G$..` minted and deduped by name, so the instance the replay's call makes
+# returns this same struct. Only a list of plain names, and a G with no bounds (its judgement is the call's). 0 = none.
+fn _gu_inst(S, fi, c0, c1): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    var rc = _tok_close_paren(S, o);
+    if (rc < 0) { return 0; }
+    if (TOKTYP(S, rc + 1) != 49) { return 0; }
+    var n = rc + 2;
+    if (TOKTYP(S, n) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, n)) != _gz_gb) { return 0; }
+    if (GSBND(S, _gz_gb - 1) != 0) { return 0; }
+    if (_gu_plain(S, n + 1) == 0) { return 0; }
+    var sv = GTI(S);
+    var s0 = _inst_conc0;
+    var s1 = _inst_conc1;
+    _inst_conc0 = c0;
+    _inst_conc1 = c1;
+    STI(S, n);
+    var r = _gtype_sid(S, fi, _gz_gb);
+    _inst_conc0 = s0;
+    _inst_conc1 = s1;
+    STI(S, sv);
+    return r;
+}
+# 1 = the tokens from `i` are `< NAME >` or `< NAME , NAME >`.
+fn _gu_plain(S, i): i64 {
+    if (TOKTYP(S, i) != 19) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (TOKTYP(S, i + 2) == 20) { return 1; }
+    if (TOKTYP(S, i + 2) != 31) { return 0; }
+    if (TOKTYP(S, i + 3) != 2) { return 0; }
+    if (TOKTYP(S, i + 4) == 20) { return 1; }
     return 0;
 }
 fn _gu_type(S, gvi, sid): i64 {
