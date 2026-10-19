@@ -34,7 +34,10 @@
 # BUILT binary from another project's checkout). A language does not gate on other projects
 # (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md): running
 # cyrius-built agnos programs is agnos's own CI's check now. Axes 1-4 are static — the source
-# scan and the emitted code — and need nothing outside this checkout, so the gate never SKIPs.
+# scan and the emitted code — and need nothing outside this checkout but llvm-objdump (a package
+# docs/development/dev-tools-linux.md lists). Without it axes 2-4 cannot read the emitted code,
+# and the gate is a named SKIP (77) — never a PASS on axis 1 alone; release-gate.sh refuses that
+# SKIP (RG_SKIP_ALLOW is empty since 6.7.16), which is right: the anti-vacuous axis did not run.
 # v6.6.5 (review): SHELL-AGNOSTIC. Every `llvm-objdump ... | grep -q ...` here false-RED'd
 # under `bash -eo pipefail` — grep -q closes the pipe on its first hit, objdump takes
 # SIGPIPE, and pipefail makes the pipeline 141, so the gate printed axis 3's FAIL text on a
@@ -45,6 +48,7 @@
 # (tests/gates/toolchain/bench_timer_floor_measured.sh) had the same defect repaired in the
 # same release and it was not carried across — hence this note. CHANGELOG [6.6.5].
 set -u
+GATE_SKIPS=0   # axes that could not run (llvm-objdump absent): a SKIP, never a PASS
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_monotonic_clock_rdtsc: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
@@ -159,7 +163,7 @@ if command -v llvm-objdump > /dev/null 2>&1; then
     echo "FAIL agnos_monotonic_clock_rdtsc axis2: the AGNOS build emits no syscall 40 (0x28) —"
     echo "  clock_now_ns has lost its #40 fallback, so a refused-calibration boot has no clock."; exit 1; }
 else
-  echo "  (llvm-objdump absent — axis 2 emission check skipped)"
+  echo "  (llvm-objdump absent — axis 2 emission check NOT run)"; GATE_SKIPS=$((GATE_SKIPS + 1))
 fi
 
 # ── axis 3 — ANTI-VACUOUS: the non-AGNOS path still uses clock_gettime (228 = 0xe4) ──────────
@@ -170,6 +174,8 @@ if command -v llvm-objdump > /dev/null 2>&1; then
   [ "$(grep -c '0xe4' "$T/l.dis" || true)" -ge 1 ] || {
     echo "FAIL agnos_monotonic_clock_rdtsc axis3: the Linux build no longer references"
     echo "  clock_gettime (228/0xe4) — the AGNOS change leaked into the portable path."; exit 1; }
+else
+  echo "  (llvm-objdump absent — axis 3, the anti-vacuous Linux check, NOT run)"; GATE_SKIPS=$((GATE_SKIPS + 1))
 fi
 
 # ── axis 4 — v6.6.5: lib/bench.cyr's now_ns has the SAME AGNOS arm ───────────────────────────
@@ -231,7 +237,15 @@ if command -v llvm-objdump > /dev/null 2>&1; then
     echo "FAIL agnos_monotonic_clock_rdtsc axis4: the Linux bench build no longer emits"
     echo "  clock_gettime (228/0xe4) — the AGNOS arm leaked into the portable path."; exit 1; }
 else
-  echo "  (llvm-objdump absent — axis 4 emission checks skipped)"
+  echo "  (llvm-objdump absent — axis 4 emission checks NOT run)"; GATE_SKIPS=$((GATE_SKIPS + 1))
+fi
+
+# 6.6.11 (K1), restored 6.7.16: an axis that could not run makes the gate a SKIP (77), never a
+# PASS — the mirshi axis that fed this left in 6.7.16, and the llvm-objdump-absent branches above
+# used to print a note and PASS on axis 1 alone. CHANGELOG [6.7.16]
+if [ "$GATE_SKIPS" -gt 0 ]; then
+  echo "SKIP: agnos_monotonic_clock_rdtsc — llvm-objdump absent: $GATE_SKIPS of axes 2-4 not run; axis 1 passed (exit 77: a SKIP, not a PASS)"
+  exit 77
 fi
 
 echo "PASS agnos_monotonic_clock_rdtsc: $NR1 #95 readers in lib/ all test the -1 sentinel, #40 only as the fallback, clock_now_ns + bench now_ns latched · both AGNOS builds emit syscall 95 + 40 and no raw 228 · the Linux path still uses clock_gettime"
