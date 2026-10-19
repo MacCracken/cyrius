@@ -2082,7 +2082,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
     # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
     if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
-    if (PEEKT(S) == 1) { _tup_arg_lit(S, fi, argc); }   # 6.7.14 (D44): `take(5)`, refused; pushed as before
+    _tup_arg_lit(S, fi, argc);   # 6.7.14's D44 `take(5)`, 6.7.15's D36 `take(-5)`: refused, pushed as before
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -2749,15 +2749,22 @@ fn _tup_arg_call(S, fi, argc): i64 {
 # the literal — a whole argument, inside any parentheses (`_sarg_paren` peels them) — in sync: the caller pushes
 # it as before and `_had_error` withholds the binary. Any other untyped word (`&t`, a name, a one-value call) is
 # still the address, as for a struct parameter: a tuple has no `*T` spelling. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AN ARGUMENT MADE ONLY OF LITERALS AND OPERATORS IS NO TUPLE EITHER (D36, the user's decision,
+# 2026-10-18): `take(-5)`, `take((-5))`, `take(true)` and `take(5 + 0)` compiled and the callee read through the
+# value (139 / 139 / 1 / 5), because only a lone integer literal reached the check. The whole argument is scanned
+# (`_tal_scan`): integer / char literals, `true` / `false`, operators and parentheses only — refused as "an
+# integer", or "a bool" when its every literal is `true` / `false`. A name (a const too), a call, `&` / `*` in front
+# of an operand, a string or a float exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
 fn _tup_arg_lit(S, fi, argc): i64 {
-    var nt = TOKTYP(S, GTI(S) + 1);
-    if (nt != 31 && nt != 11) { return 0; }
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
+    var lk = _tal_scan(S, GTI(S));
+    if (lk == 0) { return 0; }
     var o = _gen_def_open(S, fi);
     if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
     if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
-    PRSTR("cannot pass an integer to tuple parameter ");
+    if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
+    else { PRSTR("cannot pass an integer to tuple parameter "); }
     var pn = _bx_pname(S, fi, argc);
     if (pn >= 0) {
         _dyn_pq(S, pn);
@@ -2769,6 +2776,53 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     PRSTR(" - it takes a tuple");
     _dyn_eend(S);
     return 1;
+}
+# 6.7.15 (D36) — the argument from token k to its depth-0 `,` / `)`: 1 = made only of integer / char literals,
+# `true` / `false`, operators and parentheses, with an integer or char literal among them; 2 = the same with every
+# literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
+# between two (in front of one they read or take an address).
+fn _tal_scan(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var ints = 0;
+    var bools = 0;
+    var opnd = 0;   # 1 = the token before ends an operand: a literal or a `)`
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 31 || t == 11) {
+            if (d == 0) { return _tal_end(ints, bools, opnd); }
+            if (t == 31) { return 0; }
+            d = d - 1;
+        } elif (opnd == 1) {
+            if (_tal_binop(t) == 0) { return 0; }
+            opnd = 0;
+        } elif (t == 1) {
+            ints = 1;
+            opnd = 1;
+        } elif (t == 169 || t == 170) {
+            bools = 1;
+            opnd = 1;
+        } elif (t == 10) { d = d + 1; }
+        elif (t != 7 && t != 37 && t != 171) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _tal_end(ints, bools, opnd): i64 {
+    if (opnd == 0) { return 0; }
+    if (ints == 1) { return 1; }
+    if (bools == 1) { return 2; }
+    return 0;
+}
+# A binary operator `_tal_scan` takes: + - * / == != < > <= >= & % | ^ << >> && || >>> and the wrapping /
+# saturating / checked +% +| +? -% -| -? *% *| *?.
+fn _tal_binop(t): i64 {
+    if (t >= 6 && t <= 9) { return 1; }
+    if (t >= 17 && t <= 22) { return 1; }
+    if (t == 27 || t == 34 || t == 35 || t == 36 || t == 38 || t == 39) { return 1; }
+    if (t == 53 || t == 54 || t == 152) { return 1; }
+    if (t >= 113 && t <= 121) { return 1; }
+    return 0;
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
 # stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
@@ -3032,7 +3086,10 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
     if (_tup_sarg_lit(S, fi, argc, tail) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     var k = _pwrap_k(S, st);
     var e = TOKTYP(S, _pw_end);
-    if (e != 31) { if (e != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
+    if (e != 31) { if (e != 11) {
+            _tup_arg_lit(S, fi, argc);   # 6.7.15 (D36): `take((1) + 2)`, a `(`-led literal expression
+            return _push_struct_expr_arg(S, fi, argc, tail);
+        } }
     STI(S, st + k);
     if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) {
         STI(S, st);   # not a struct source: the caller pushes the whole argument's value
@@ -5574,14 +5631,22 @@ fn _gv_init_call_sid(S, sti): i64 {
 }
 # The same record from the initializer's first token `ri`: `f(..);` gives f's name offset + 1,
 # anything else 0. PARSE_VAR's global arm (a `var` after the first top-level statement, which
-# never reaches PARSE_GVAR_REG) writes it from here.
+# never reaches PARSE_GVAR_REG) writes it from here. Parentheses around the whole call are
+# transparent (guide § Parentheses): `(f(..));` / `((f(..)));` record f as `f(..);` does — the k
+# `(` before the name match the k `)` right after the call's close (`_pair_unwrap_k`), then the
+# `;`. A wrapped `: Str` call was an untyped word to the overload dispatcher, so `println(s)`
+# printed the header's bytes. CHANGELOG [6.7.15]
 fn _gv_rhs_call_sid(S, ri): i64 {
-    if (TOKTYP(S, ri) != 2) { return 0; }
-    if (TOKTYP(S, ri + 1) != 10) { return 0; }
-    var e = _tok_close_paren(S, ri + 1);
+    var k = 0;
+    while (TOKTYP(S, ri + k) == 10) { k = k + 1; }
+    var a = ri + k;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var e = _tok_close_paren(S, a + 1);
     if (e < 0) { return 0; }
-    if (TOKTYP(S, e + 1) != 5) { return 0; }
-    return TOKVAL(S, ri) + 1;
+    if (_pair_unwrap_k(S, e + 1, k, a) < 0) { return 0; }
+    if (TOKTYP(S, e + k + 1) != 5) { return 0; }
+    return TOKVAL(S, a) + 1;
 }
 
 # The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`
@@ -6681,6 +6746,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
         elif (cls == 2) {                  # top level: `_sc_pre` already refused it
             _sc_rbeg = beg;
             _sc_rend = GTI(S);
+            _sc_rsid = GFRS(S, fi);
             return 0;
         }
     }
@@ -6957,8 +7023,9 @@ fn _scv_dyn_chk(S, pscale, ext, start): i64 {
 }
 
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
-# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word — 6.7.8: never a
-# dyn's, which is refused whatever the annotation (a dyn global's own is `_dyn_var`'s).
+# (a >16 B one already was, in `_sc_pre`). An untyped `var g = ..` is judged by PARSE_VAR's `_gu_late` (6.7.15's
+# D34 / D35: it binds the struct, a 9-16 B one refused as here) — 6.7.8: never a dyn's, which is refused whatever the
+# annotation (a dyn global's own is `_dyn_var`'s).
 fn _sc_global_receive(S, pscale, start): i64 {
     if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
@@ -13626,7 +13693,7 @@ fn _pty_name(S, i): i64 {
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
-    _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    _tn_refuse_var(S, i, " for parameter ", _pty_pnoff(S));
     return 0;
 }
 # ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the
@@ -17525,6 +17592,9 @@ fn _cond_is_one(S, k): i64 {
 # `break` in a nested while / for / loop / do / switch / match leaves THAT construct (guide, Control
 # Flow), and one in a closure body or nested fn is its own unit: their bodies are stepped over for
 # the break test (`_brk_inner_end`). Returns anywhere but a closure / nested fn count.
+# A `ret2(..);` statement (`_ret2_stmt`) is an exit too: a loop left only through them ends a body
+# in its two values as one of `return (a, b);` does (6.7.14's D42 reach). `_prescan_ret_single`
+# bails on any `ret2` before it asks, so only the arity count meets it. CHANGELOG [6.7.15]
 fn _loop_exits_by_return(S, o, c): i64 {
     var rets = 0;
     var j = o + 1;
@@ -17532,6 +17602,7 @@ fn _loop_exits_by_return(S, o, c): i64 {
         var t = TOKTYP(S, j);
         if (t == 51) { return 0; }
         if (t == 33) { rets = 1; }
+        if (t == 97) { if (_ret2_stmt(S, j) == 1) { rets = 1; } }
         var sk = _brk_inner_end(S, j);
         if (sk > j) {
             if (t != 13 && t != 32) { if (_has_return_tok(S, j, sk) == 1) { rets = 1; } }
@@ -17566,12 +17637,14 @@ fn _brk_inner_end(S, j): i64 {
     }
     return 0 - 1;
 }
-# 1 = a `return` of THIS fn lies in tokens (j, e]: one outside any closure body / nested fn.
+# 1 = a `return` of THIS fn lies in tokens (j, e]: one outside any closure body / nested fn — or a
+# `ret2(..);` statement, an exit of this fn too (`_ret2_stmt`; CHANGELOG [6.7.15]).
 fn _has_return_tok(S, j, e): i64 {
     var k = j + 1;
     while (k <= e) {
         var t = TOKTYP(S, k);
         if (t == 33) { return 1; }
+        if (t == 97) { if (_ret2_stmt(S, k) == 1) { return 1; } }
         if (t == 13 || t == 32) {
             var sk = _skip_nested_body(S, k);
             if (sk > k) { k = sk; }

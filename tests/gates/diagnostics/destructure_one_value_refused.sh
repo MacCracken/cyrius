@@ -74,6 +74,12 @@
 #           r2_ret and r2_ifelse_ret (14); `_ret_stmt_arity` without its ret2 arm -> r2_ret; `_ar_exits` without its
 #           `ret2(..);` tail -> the bail's 14 less r2_mid; without its if / else arm -> r2_mixed r2_elif
 #           r2_ifelse_ret; `_ret2_stmt` accepting any ret2 -> r2_expr refused.
+#           (6.7.15) A body ending in an infinite loop whose only exits are `ret2(..);` statements is counted
+#           (issues/2026-10-17-ret2-only-exits-in-a-loop-ending-body-not-counted.md: the repro read the seeded 88):
+#           the r2_loop_ rows. MUTATIONS (scratch trees, run 2026-10-18, every leg): the tree before (4862a462)
+#           -> every r2_loop_ refusal builds (9); `_loop_exits_by_return` without its `ret2` arm -> the same less
+#           r2_loop_nested r2_loop_switch (7); `_has_return_tok` without its `ret2` arm -> r2_loop_nested
+#           r2_loop_switch build.
 #   axis 8  6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
 #           the destructure (issues/archived/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
 #           call on the right-hand side" twice on x86_64 / aarch64 / cx / PE; unwrapped it exits 41). `_dt_wrap_k` (k `(`,
@@ -411,6 +417,24 @@ runs7 r2_two "fn divmod_old(a, b) { ret2(a / b, a % b); }\nfn main(): i64 { var 
 runs7 r2_expr "fn g2() { var z = ret2(1, 2); }\nfn main(): i64 { var a, b, c = g2(); return a * 10 + b; }\nsyscall(60, main());\n" 12
 runs7 r2_noelse "fn g2(x) { if (x > 0) { ret2(x, 1); } }\nfn main(): i64 { var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
 runs7 r2_fwd2 "fn g2(x) { ret2(x, 1); }\nfn f(x): (i64, i64) { return g2(x); }\nfn main(): i64 { var a, b = f(4); return a * 10 + b; }\nsyscall(60, main());\n" 41
+# 6.7.15 — a body ENDING IN AN INFINITE LOOP whose only exits are `ret2(..);` statements is counted as one whose
+# exits are `return (a, b);` (issues/2026-10-17-ret2-only-exits-in-a-loop-ending-body-not-counted.md: the repro
+# read the seeded 88): the repro verbatim, the `while (1)` / `while (true)` / `do { } while (1);` / `do { } while
+# (true);` spellings, the 3-tuple capture, a `ret2` inside a nested while and inside a switch's case block, and the
+# declaration zone. A loop a `break` leaves stays uncounted (the body falls off its end: it compiles), and the
+# two-name bind of the repro's fn runs (1, 2).
+LP7='fn g2(x) { loop { if (x > 0) { ret2(1, 2); } x = x + 1; } }\n'
+refused7 r2_loop_repro "${H88}${LP7}fn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_while1 "${H88}fn g2(x) { while (1) { if (x > 0) { ret2(1, 2); } x = x + 1; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_while_true "${H88}fn g2(x) { while (true) { if (x > 0) { ret2(1, 2); } x = x + 1; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_dowhile1 "${H88}fn g2(x) { do { if (x > 0) { ret2(1, 2); } x = x + 1; } while (1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_dowhile_true "${H88}fn g2(x) { do { if (x > 0) { ret2(1, 2); } x = x + 1; } while (true); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_tup3 "${H88}${LP7}fn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(1); return t.2; }\nsyscall(60, main());\n" "3:62: cannot capture 'g2' into tuple (i64, i64, i64) - it returns 2 values"
+refused7 r2_loop_nested "${H88}fn g2(x) { loop { while (x < 5) { if (x > 0) { ret2(1, 2); } x = x + 1; } x = 0; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_switch "${H88}fn g2(x) { loop { switch (x) { case 1: { ret2(1, 2); } default: { x = 1; } } } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_loop_top "${LP7}var a, b, c = g2(5);\nsyscall(60, a);\n" "2:15: $G32"
+runs7 r2_loop_brk "${H88}fn g2(x) { loop { if (x > 0) { ret2(x, 1); } break; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
+runs7 r2_loop_two "${H88}${LP7}fn main(): i64 { var x, y, w = h(); var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
 
 echo "axis 8 - parentheses around the whole call are transparent to the destructure (D45), on every target:"
 TWO8='fn two(x): (i64, i64) { return (x, x + 1); }\n'

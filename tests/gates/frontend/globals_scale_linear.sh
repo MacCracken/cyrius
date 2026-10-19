@@ -36,6 +36,13 @@
 # 4096 — the program still exits 14) -> RED on the redecl row only (10k 3,431 ms -> 20k
 # 13,828 ms, 4.0x; the tree reads 111 -> 212 ms); the 6.6.8 compiler -> RED on all five (the
 # deferred and redecl rows refuse past 4096).
+#
+# STRUCTCALL (6.7.15): N untyped declaration-zone `var gN = mk1(N);` globals, mk1 returning an 8 B
+# struct (6.7.14's D29: each global is that struct, inline). The replay checks each one's sweep
+# verdict (`_gz_agree` -> `_gu_agps`), which first looked its note up with a scan of every
+# noted global — quadratic in their count: 10k 395 ms -> 20k 1,244 ms (3.1x; 16k 815 ms where
+# 6.7.14 took 137). `_gu_find` bisects the token-ordered notes: 121 -> 237 ms. Mutation: the
+# compiler before the fix (the scan) -> RED on this row only.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: globals_scale_linear: $CC missing"; exit 1; }
@@ -56,6 +63,9 @@ gen() {  # gen shape n > file
                  for(i=0;i<n;i++) printf "var g%d = f(%d);\n", i, i
                  for(i=0;i<n;i++) printf "var g%d = 7;\n", i
                  printf "syscall(60, (g0 + g%d) & 255);\n", n-1}' ;;
+      structcall) awk -v n="$2" 'BEGIN{print "struct P1 { a; }"; print "fn mk1(v: i64): P1 { var r = P1 { v }; return r; }"
+                 for(i=0;i<n;i++) printf "var g%d = mk1(%d);\n", i, i+1
+                 printf "syscall(60, g%d.a & 255);\n", n-1}' ;;
     esac
 }
 want() {  # the exit code each program must produce at size $2
@@ -77,7 +87,7 @@ best() {  # best-of-3 wall ms for compiling $1 (-1 if any compile fails)
 }
 
 NFAIL=0
-for shape in const enum defer ref redecl; do
+for shape in const enum defer ref redecl structcall; do
     gen "$shape" "$N" > "$D/$shape.1.cyr"
     gen "$shape" $((N * 2)) > "$D/$shape.2.cyr"
     T1=$(best "$D/$shape.1.cyr")
@@ -107,5 +117,5 @@ if [ "$NFAIL" -gt 0 ]; then
     echo "FAIL: globals_scale_linear: $NFAIL rows"
     exit 1
 fi
-echo "PASS globals_scale_linear (const / enum / deferred / reference / redeclaration compile time linear in the global count)"
+echo "PASS globals_scale_linear (const / enum / deferred / reference / redeclaration / struct-call compile time linear in the global count)"
 exit 0

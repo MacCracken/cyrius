@@ -937,10 +937,25 @@ refused r6f "cannot subscript the result of 'm'$R6" "R6f: h.m()[1] read (a metho
 refused r6i "cannot subscript the result of 'm'$R6" "R6i: h.m()[0] = 1 as a statement" "${HH}impl H { fn m(self): i64 { return 0; } }\nfn g(): i64 { var h: H; h.m()[0] = 1; return 0; }\nsyscall(60, g());\n"
 refused r6g "cannot subscript the result of 'f'$R6" "R6g: the for step f()[i] = 1" "${HH}fn f(): i64 { return 5; }\nfn g(): i64 { for (var i = 0; i < 2; f()[i] = 1) { i = i + 1; } return 0; }\nsyscall(60, g());\n"
 refused r6h "cannot subscript the result of 'gv'$R6" "R6h: gv<i32>()[0] (a generic returning T)" "${HH}fn gv<T>(): T { return 0; }\nfn g(): i64 { return gv<i32>()[0]; }\nsyscall(60, g());\n"
+# B31 / R6j-R6k / R1l-R1m — 6.7.15 (the user's decision D31 (a), 2026-10-18): a known `&f` callee's narrow `*T`
+# result carries its element, as the direct call's: `fncall0(&bp)[1]` (the filed repro 2) compiles and exits 7 — it
+# was "cannot subscript the result of 'fncall0': it does not return a *T" (the run-time rows, `*fncall0(&bp)` at the
+# element's width included, are tests/tcyr/crossos/fncall_scalar_result.tcyr E). A callee held in a variable is still
+# a word, refused as before (R6j / R6k). A `*Pt` callee's refusal names its struct (R1l / R1m — `fncall0(&gq)[1]` said
+# "it does not return a *T", `callptr(&gq)[1]` "its element is a pointer, string, enum or vector"; `_sub_ret_sid`).
+# Mutations (each a 2-stage cycc of the tree with the one change reverted): `_sub_word` without its `_icall_ps_beg`
+# arm -> B31 and R1l RED (the old refusal; the tcyr refused); `_sub_ret_sid` without its arm -> R1l / R1m RED (the old
+# element words); `_pk_icall` answering 0 -> the tcyr's E2 / E4 / E8 RED (`*callptr(&bp)` reads the word).
+FP='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\n'
+exits b31 7 "B31: fncall0(&bp)[1] with bp: *u8 (the filed repro 2)" "${FP}var B: i64 = 0x0102030405060708;\nfn bp(): *u8 { return &B; }\nfn main(): i64 {\n    var h = bp()[1];\n    var g = fncall0(&bp)[1];\n    return g;\n}\nsyscall(60, main());\n"
+refused r6j "cannot subscript the result of 'fncall0'$R6" "R6j: var f = &bp; fncall0(f)[1] (a callee in a variable)" "${FP}${HH}fn bp(): *u8 { return &B; }\nfn g(): i64 { var f = &bp; return fncall0(f)[1]; }\nsyscall(60, g());\n"
+refused r6k "cannot subscript the result of 'callptr'$R6" "R6k: var f = &bp; callptr(f)[1]" "${FP}${HH}fn bp(): *u8 { return &B; }\nfn g(): i64 { var f = &bp; return callptr(f)[1]; }\nsyscall(60, g());\n"
 EL2="a subscript takes an integer, f64, f32 or bool element"
 refused r1i "cannot subscript field 'q': $EL2 - its element is struct 'Pt'" "R1i: h.q[1] on a \`q: *Pt\` field" "${HH}fn f(): i64 { var h: H; return h.q[1]; }\nsyscall(60, f());\n"
 refused r1j "cannot subscript the result of 'gq': $EL2 - its element is struct 'Pt'" "R1j: gq()[1] = 2 on a \`*Pt\` return" "${HH}fn gq(): *Pt { return &B; }\nfn f(): i64 { gq()[1] = 2; return 0; }\nsyscall(60, f());\n"
 refused r1k "cannot subscript the result of 'mq': $EL2 - its element is struct 'Pt'" "R1k: h.mq()[0] on a method returning \`*Pt\`" "${HH}impl H { fn mq(self): *Pt { return &B; } }\nfn f(): i64 { var h: H; return h.mq()[0]; }\nsyscall(60, f());\n"
+refused r1l "cannot subscript the result of 'fncall0': $EL2 - its element is struct 'Pt'" "R1l: fncall0(&gq)[1] on a \`*Pt\` callee" "${FP}${HH}fn gq(): *Pt { return &B; }\nfn f(): i64 { return fncall0(&gq)[1]; }\nsyscall(60, f());\n"
+refused r1m "cannot subscript the result of 'callptr': $EL2 - its element is struct 'Pt'" "R1m: callptr(&gq)[1] on a \`*Pt\` callee" "${FP}${HH}fn gq(): *Pt { return &B; }\nfn f(): i64 { return callptr(&gq)[1]; }\nsyscall(60, f());\n"
 refused r2f "cannot subscript field 'pp': $EL2 - its element is a pointer, string, enum or vector" "R2f: h.pp[1] on a \`**i64\` field" "${HH}fn f(): i64 { var h: H; return h.pp[1]; }\nsyscall(60, f());\n"
 refused r2g "cannot subscript the result of 'gu': a u128 element does not fit one register" "R2g: gu()[1] on a \`*u128\` return" "${HH}fn gu(): *u128 { return &B; }\nfn f(): i64 { return gu()[1]; }\nsyscall(60, f());\n"
 

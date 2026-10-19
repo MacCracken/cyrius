@@ -448,6 +448,65 @@ syscall(60, 0);
 refuse "U11 var x: Foo = 5  (control)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return 0; }'"$E" one
 refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q\.mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
 
+# U13-U28 (6.7.15, issues/2026-10-17-refused-annotation-type-cascades-at-field-uses.md) — a USE of a variable or parameter
+# whose annotation was refused says nothing more: each `.field` read, field store and `.m()` on it printed "no struct type
+# in scope for 'x'; a '.field' access needs its struct declaration" after the "unknown type 'Foo'" line (the declaration
+# parses on as a plain i64). `_tn_refuse_var` (parse_types.cyr) marks it with the late-declaration refusal's stand-down
+# (`_ann_refd_mark` / `_ann_refd_said`, parse_fn_def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
+# level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
+# parameter of a fn — each still "no struct type in scope". NOT covered (the review of b7932c673): a top-level `var P:
+# *Foo` global takes a garbage struct type, so `P.a` still adds "unknown field 'a' on struct '<some name>'" (pre-existing,
+# issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md; no row pins it).
+#   the tree before (`_tn_refuse_var` = `_tn_refuse`, no mark)  -> RED 12: U13-U24 (2-4 error lines each); U25-U28 green
+echo "6.7.15 — a use of a variable whose annotation was refused is not a second error:"
+MS="no struct type in scope for"
+refuse "U13 var x: Foo = 5; return x.a;  (the filed repro)" "$MU" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 4; return q; } }
+fn mkq(): Q { var q: Q; q.a = 333; q.b = 4; return q; }
+fn main(): i64 {
+    var x: Foo = 5;
+    return x.a;
+}
+syscall(60, main());
+' one
+refuse "U14 var x: Foo = b.mk(); x.a = 1;  (store)" "$MU" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: Foo = b.mk(); x.a = 1; return 0; }'"$E" one
+refuse "U15 fn f(q: *Foo) { return q.a; }  (param)" "unknown type 'Foo' for parameter 'q'" "$UQ"'fn f(q: *Foo): i64 { return q.a; }
+fn main(): i64 { return 0; }'"$E" one
+refuse "U16 var x: Foo = 5; return x.m();" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return x.m(); }'"$E" one
+refuse "U17 var X: Foo = 5; X.a  (top, zone)" "$MU" "$UQ"'var X: Foo = 5;
+syscall(60, X.a);
+' one
+refuse "U18 var X: Foo = 5; X.a  (after a stmt)" "$MU" "$UQ"'var a = 1;
+a = 2;
+var X: Foo = 5;
+X.a = 3;
+syscall(60, X.a);
+' one
+refuse "U19 fn reads a refused zone global X.a" "$MU" "$UQ"'var X: Foo = 5;
+fn g(): i64 { X.b = 1; return X.a + X.m(); }
+syscall(60, g());
+' one
+refuse "U20 var p: *Foo = 0; return p.a;" "unknown type 'Foo' as the target of pointer 'p'" "$UQ"'fn main(): i64 { var p: *Foo = 0; return p.a; }'"$E" one
+refuse "U21 fn f(q: Foo) { return q.a; }  (by value)" "unknown type 'Foo' for parameter 'q'" "$UQ"'fn f(q: Foo): i64 { return q.a; }
+fn main(): i64 { return 0; }'"$E" one
+refuse "U22 a generic's two instances" "$MU" "$UQ"'fn g<T>(v: T): i64 { var y: Foo = 5; return y.a; }
+fn main(): i64 { return g(1) + g(2); }'"$E" one
+refuse "U23 in a closure body" "$MU" "$UQ"'fn main(): i64 { var f = |k| { var x: Foo = 5; return x.a + k; }; return fncall1(f, 0); }'"$E" one
+refuse "U24 each use: x.a = 3; x.b += 1; x.a + x.m()" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; x.a = 3; x.b += 1; return x.a + x.m(); }'"$E" one
+refuse "U25 control: var y = 5; return y.a;" "$MS 'y'" "$UQ"'fn main(): i64 { var y = 5; return y.a; }'"$E" one
+refuse "U26 control: another fn's untyped x" "$MS 'x'" "$UQ"'fn f(): i64 { var x: Foo = 5; return 0; }
+fn g(): i64 { var x = 5; return x.a; }
+fn main(): i64 { return f() + g(); }'"$E" 2
+refuse "U27 control: a global named like a refused param" "$MS 'q'" "$UQ"'fn f(q: *Foo): i64 { return 0; }
+var q = 5;
+syscall(60, q.a);
+' 2
+refuse "U28 control: a local named like a refused global" "$MS 'X'" "$UQ"'var X: Foo = 5;
+fn g(): i64 { var X = 5; return X.a; }
+syscall(60, g());
+' 2
+
 # AS (6.7.14, the user's decision D27 (a), 2026-10-16; issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-
 # first-word.md) — a struct result over 8 B ASSIGNED to a scalar (a local, a parameter or a global declared `: i64`,
 # `: u8`, `: f64`, `: cstring`, any annotation naming no struct) is refused with D24's words, "cannot assign 'x: i64'
@@ -535,7 +594,8 @@ accept "AK3 x = mkp().a  (bind a field)" "$AQ"'fn main(): i64 { var x: i64 = 0; 
 # AF — a classic-for header's `var` is in its body's scope, though the walk steps over the header as a closed `( )`
 # (`_asa_for_hdr`, the 6.7.14 receives review): the header's `x: u8` is the destination (AF1-AF4 AF6 stored the word
 # silently, exit 77; AF5 was refused naming the outer 'x: i64'), and an untyped header `x` shadowing an outer `x: i64`
-# keeps the word as any untyped destination does (AFK1 AFK2: they were refused naming the outer 'x: i64').
+# is that untyped `x` (AFK1 AFK2: through 6.7.14's review they were refused naming the outer 'x: i64'; through 6.7.14
+# they kept the word, exit 77; since 6.7.15's D33 an untyped destination is refused, naming the header's 'x').
 refuse "AF1 for (var x: u8 ..) { x = mkp(); }" "cannot assign 'x: u8' from 'mkp'" "$AQ"'fn main(): i64 { var r = 0; for (var x: u8 = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" one
 refuse "AF2 for (var x: u8 ..) { x = b.mk(); }" "cannot assign 'x: u8' from 'Q\.mk'" "$AQ"'fn main(): i64 { var r = 0; var b = Q { 1, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = b.mk(); r = x; } return r; }'"$E" one
 refuse "AF3 for (var x: u8 ..) { x = a + c; }" "cannot assign 'x: u8' from 'Q_add'" "$AQ"'fn main(): i64 { var r = 0; var a = Q { 300, 2 }; var c = Q { 33, 2 }; for (var x: u8 = 0; x < 1; x = x + 1) { x = a + c; r = x; } return r; }'"$E" one
@@ -545,12 +605,118 @@ refuse "AF6 for (var x: u8 ..) { x = mkp(); }  (top level)" "cannot assign 'x: u
 for (var x: u8 = 0; x < 1; x = x + 1) { x = mkp(); r = x; }
 syscall(60, r);
 ' one
-accept "AFK1 x: i64; for (var x = 0 ..) { x = mkp(); }" "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" 77 \
-    "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x = 0; x < 1; x = x + 1) { x = mkp().a; r = x; } return r; }'"$E"
-accept "AFK2 x: i64; for (var a, x = two() ..) { x = mkp(); }" "$AQ"'fn two(): (i64, i64) { return (1, 2); }
-fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp(); r = x; } return r; }'"$E" 77 \
-    "$AQ"'fn two(): (i64, i64) { return (1, 2); }
-fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp().a; r = x; } return r; }'"$E"
+UM="cannot assign 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field"
+refuse "AFK1 x: i64; for (var x = 0 ..) { x = mkp(); }" "$UM" "$AQ"'fn main(): i64 { var x: i64 = 0; var r = 0; for (var x = 0; x < 1; x = x + 1) { x = mkp(); r = x; } return r; }'"$E" one
+refuse "AFK2 x: i64; for (var a, x = two() ..) { x = mkp(); }" "$UM" "$AQ"'fn two(): (i64, i64) { return (1, 2); }
+fn main(): i64 { var x: i64 = 0; var r = 0; for (var a, x = two(); a < 2; a = a + 1) { x = mkp(); r = x; } return r; }'"$E" one
+
+# AP (6.7.15, the user's decision D32 (a), 2026-10-18; issues/2026-10-17-struct-result-assigned-to-pointer-or-untyped-
+# scalar-keeps-first-word.md) — a struct result over 8 B ASSIGNED to a `*T` (a local, a parameter or a global declared
+# `*i64`, `*u8`, `**Q`, any `*T` but `*S` of the result's own struct) is refused with D14's words, "cannot assign
+# 'p: *i64' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take `&p`", once: the free call, a method, an
+# operator, a known `&f` callee, a for step, in parentheses, in a fn and at top level. Through 6.7.14 each stored the
+# struct's first word as the pointer (the filed repro faulted at `*p`, 139), with no diagnostic or only the
+# typed-pointer warning. A `*Q` destination of the same struct copies through the pointer, as since 6.7.10 (APK1); a
+# struct of 8 B or less keeps its word (APK2).
+# AU (the user's decision D33 (a)) — the same into an UNTYPED destination (`var x = 0;`, an untyped parameter or
+# global, a destructure name, a for-in name, a closure's parameter): D27's words without an annotation, "cannot assign
+# 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field". Through 6.7.14 each kept the first
+# word (the filed repro exited 77). 8 B or less and a `Str` keep their word (AUK1 AUK3); a variable declared from the
+# struct copies (AUK2); a closure's capture keeps its own one refusal (AUK4).
+#   the tree before (6.7.15 receives R3, D31's commit)   -> RED 31: AP0-AP13, AU0-AU14, AFK1 AFK2 (compiled)
+#   the tree before D33 (D32's commit)                   -> RED 17: AU0-AU14 AFK1 AFK2 (compiled)
+#   `_asa_judge` without its `_asa_ptr` arm               -> RED 14: AP0-AP13 (compiled)
+#   `_asa_judge` without its untyped (`a == 0`) arm       -> RED 17: AU0-AU14 AFK1 AFK2 (compiled)
+#   `_asa_ann` answering 0 for a name that is no variable -> RED 1: AUK5 (two errors)
+# `_asa_ptr`'s own-struct test is a guard no row reaches: a `*Q` destination of the result's struct is a handle,
+# copied before `_asa_refuse` (APK1 builds and copies with the test removed — measured).
+echo "6.7.15 (D32 / D33) — a struct result over 8 B assigned to a *T or an untyped variable is refused by name:"
+PM="cannot assign 'p: \*i64' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take \`&p\`"
+PQ="$AQ"'var GP: *i64 = 0;
+var GW = 0;
+fn two(): (f64, f64) { return (1.5, 2.5); }
+'
+refuse "AP0 p = mkp() into *i64  (the filed repro)" "$PM" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn main(): i64 {
+    var p: *i64 = 0;
+    p = mkp();
+    return *p;
+}
+syscall(60, main());
+' one
+refuse "AP1 p = mkp()  (a *u8 local)" "cannot assign 'p: \*u8' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take" "$PQ"'fn main(): i64 { var p: *u8 = 0; p = mkp(); return 1; }'"$E" one
+refuse "AP2 p = mkp()  (a *i64 parameter)" "$PM" "$PQ"'fn f(p: *i64): i64 { p = mkp(); return 1; }
+fn main(): i64 { return f(0); }'"$E" one
+refuse "AP3 GP = mkp()  (a *i64 global, in a fn)" "cannot assign 'GP: \*i64' from 'mkp'.* take \`&GP\`" "$PQ"'fn main(): i64 { GP = mkp(); return 1; }'"$E" one
+refuse "AP4 GP = mkp()  (top level)" "cannot assign 'GP: \*i64' from 'mkp'" "$PQ"'GP = mkp();
+syscall(60, 1);
+' one
+refuse "AP5 p = b.mk()  (a method)" "cannot assign 'p: \*i64' from 'Q\.mk', which returns the struct 'Q'" "$PQ"'fn main(): i64 { var b = Q { 1, 2 }; var p: *i64 = 0; p = b.mk(); return 1; }'"$E" one
+refuse "AP6 p = a + c  (an operator)" "cannot assign 'p: \*i64' from 'Q_add'" "$PQ"'fn main(): i64 { var a = Q { 1, 2 }; var c = Q { 3, 4 }; var p: *i64 = 0; p = a + c; return 1; }'"$E" one
+refuse "AP7 p = fncall0(&mkp)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = fncall0(&mkp); return 1; }'"$E" one
+refuse "AP8 p = callptr(&mkp)  (*u8)" "cannot assign 'p: \*u8' from 'mkp'" "$PQ"'fn main(): i64 { var p: *u8 = 0; p = callptr(&mkp); return 1; }'"$E" one
+refuse "AP9 for (..; ..; p = mkp())  (a step)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; for (var i = 0; i < 1; p = mkp()) { i = i + 1; } return 1; }'"$E" one
+refuse "AP10 p = mk3()  (24 B)" "cannot assign 'p: \*i64' from 'mk3', which returns the struct 'Q3' - declare 'p: Q3'" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = mk3(); return 1; }'"$E" one
+refuse "AP11 p = (mkp())  (in parentheses)" "$PM" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = (mkp()); return 1; }'"$E" one
+refuse "AP12 GP = B.mk()  (top level, a method)" "cannot assign 'GP: \*i64' from 'Q\.mk'" "$PQ"'var B = Q { 1, 2 };
+GP = B.mk();
+syscall(60, 1);
+' one
+refuse "AP13 p = mkp()  (a **Q local)" "cannot assign 'p: \*\*Q' from 'mkp'" "$PQ"'fn main(): i64 { var q: Q; var pq: *Q = &q; var p: **Q = &pq; p = mkp(); return 1; }'"$E" one
+accept "APK1 p = mkp() into *Q  (copies through p)" "$PQ"'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; var p: *Q = &q; p = mkp(); return q.b - 400; }'"$E" 44 \
+    "$PQ"'fn main(): i64 { var q: Q; q.a = 333; q.b = 444; return q.b - 400; }'"$E"
+accept "APK2 p = mk1() into *i64  (8 B: the word)" "$PQ"'fn main(): i64 { var p: *i64 = 0; p = mk1(); var w = p; return w - 300; }'"$E" 33 \
+    "$PQ"'fn main(): i64 { var p = 333; return p - 300; }'"$E"
+refuse "AU0 x = mkp() into var x = 0  (the filed repro)" "$UM" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn main(): i64 {
+    var x = 0;
+    x = mkp();
+    return x;
+}
+syscall(60, main());
+' one
+refuse "AU1 x = mkp()  (an untyped parameter)" "$UM" "$PQ"'fn f(x): i64 { x = mkp(); return x; }
+fn main(): i64 { return f(0); }'"$E" one
+refuse "AU2 GW = mkp()  (an untyped global, in a fn)" "cannot assign 'GW' from 'mkp', which returns the struct 'Q' - declare 'GW: Q' or bind a field" "$PQ"'fn main(): i64 { GW = mkp(); return GW; }'"$E" one
+refuse "AU3 GW = mkp()  (top level)" "cannot assign 'GW' from 'mkp'" "$PQ"'GW = mkp();
+syscall(60, GW);
+' one
+refuse "AU4 a = mkp()  (a destructure name)" "cannot assign 'a' from 'mkp'" "$PQ"'fn main(): i64 { var q, a = two(); a = mkp(); return 1; }'"$E" one
+refuse "AU5 x = b.mk()  (a method)" "cannot assign 'x' from 'Q\.mk', which returns the struct 'Q'" "$PQ"'fn main(): i64 { var b = Q { 1, 2 }; var x = 0; x = b.mk(); return x; }'"$E" one
+refuse "AU6 x = a + c  (an operator)" "cannot assign 'x' from 'Q_add'" "$PQ"'fn main(): i64 { var a = Q { 1, 2 }; var c = Q { 3, 4 }; var x = 0; x = a + c; return x; }'"$E" one
+refuse "AU7 x = fncall0(&mkp)" "$UM" "$PQ"'fn main(): i64 { var x = 0; x = fncall0(&mkp); return x; }'"$E" one
+refuse "AU8 x = callptr(&mkp)" "$UM" "$PQ"'fn main(): i64 { var x = 0; x = callptr(&mkp); return x; }'"$E" one
+refuse "AU9 for (..; ..; x = mkp())  (a step)" "$UM" "$PQ"'fn main(): i64 { var x = 0; for (var i = 0; i < 1; x = mkp()) { i = i + 1; } return x; }'"$E" one
+refuse "AU10 x = mk3()  (24 B)" "cannot assign 'x' from 'mk3', which returns the struct 'Q3'" "$PQ"'fn main(): i64 { var x = 0; x = mk3(); return x; }'"$E" one
+refuse "AU11 x = (mkp())  (in parentheses)" "$UM" "$PQ"'fn main(): i64 { var x = 0; x = (mkp()); return x; }'"$E" one
+# AU12's leading `var t`: the closure's parameter off slot 0, which Q_add's `x: *Q` left typed (a closure parameter
+# keeps an earlier fn's slot type — filed from this lane, 2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type).
+refuse "AU12 |x| { x = mkp(); }  (a closure's parameter)" "$UM" "$PQ"'fn main(): i64 { var t = 1; var k = |x| { x = mkp(); return x; }; return callptr(k, t); }'"$E" one
+refuse "AU13 for x in 0..3 { x = mkp(); }  (a for-in name)" "$UM" "$PQ"'fn main(): i64 { for x in 0..3 { x = mkp(); } return 1; }'"$E" one
+accept "AUK1 x = mk1() into var x = 0  (8 B: the word)" "$PQ"'fn main(): i64 { var x = 0; x = mk1(); return x - 300; }'"$E" 33 \
+    "$PQ"'fn main(): i64 { var x = 333; return x - 300; }'"$E"
+accept "AUK2 var x = mkp(); x = mkp();  (copies)" "$PQ"'fn main(): i64 { var x = mkp(); x.b = 1; x = mkp(); return x.b - 400; }'"$E" 44 \
+    "$PQ"'fn main(): i64 { var x: Q; x.a = 333; x.b = 444; return x.b - 400; }'"$E"
+accept "AUK3 x = mks() into var x = 0  (a Str: the handle)" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn mks(): Str { return str_from("abcde"); }
+fn main(): i64 { alloc_init(); var x = 0; x = mks(); var s: Str = x; return s.len(); }
+syscall(60, main());
+' 5 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn main(): i64 { alloc_init(); var s: Str = str_from("abcde"); return s.len(); }
+syscall(60, main());
+'
+refuse "AU14 GW2 = mkp()  (a global destructure name declared below)" "cannot assign 'GW2' from 'mkp'" "$PQ"'fn main(): i64 { GW2 = mkp(); return 1; }
+var GW1, GW2 = two();'"$E" one
+refuse "AUK5 undefx = mkp()  (an undefined name: its own error)" "undefined variable 'undefx'" "$PQ"'fn main(): i64 { undefx = mkp(); return 1; }'"$E" one
+refuse "AUK4 t = mkp() on a capture  (its own refusal)" "'t' is captured by value; a captured name is not assignable in a closure" "$PQ"'fn main(): i64 { var t = 0; var k = |y| { t = mkp(); return t + y; }; return callptr(k, 0); }'"$E" one
 
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
@@ -607,11 +773,12 @@ syscall(60, GE.a);
 GE.a = 7;
 syscall(60, GE.a);
 '
-accept "ZK2 var G2 = Q0.mk()  (untyped: word 1)" "$ZQ"'var G2 = Q0.mk();
+# 6.7.15 (the user's D35 (a), 2026-10-18): an untyped global from a 9-16 B method is refused as the annotated one is —
+# this row pinned it holding the first word (exit 50) through 6.7.14
+# (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md)
+refuse "ZK2 var G2 = Q0.mk()  (untyped 16 B: refused)" "'Q.mk' returns a struct by value, and a struct result needs storage in a fn's frame" "$ZQ"'var G2 = Q0.mk();
 syscall(60, G2 * 10);
-' 50 "$ZQ"'var G2 = 5;
-syscall(60, G2 * 10);
-'
+' one
 accept "ZK3 G2 = Q0.mk() in a fn  (the fix-it)" "$ZQ"'var G2: Q = Q { 0, 0 };
 fn init(): i64 { G2 = Q0.mk(); return 0; }
 init();
