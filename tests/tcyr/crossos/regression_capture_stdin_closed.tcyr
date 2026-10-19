@@ -2,9 +2,11 @@
 # CALLER's output file (regression_exec_in_dir3[_env], regression_pipe_to_bin_capture) capture the
 # child's real stdout when the caller started with std fd 0 closed — alone or with fd 1 / fd 2 —
 # and the child starts with stdin, stdout and stderr all open. regression_ssh_remote_exec_capture
-# takes the same change and has no row here: it cannot run without a host. Runs on ecb (macOS
-# arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg; Windows has no
-# fork and agnos no execve or dup2, so there the file only reports its summary.
+# runs `ssh -GF/dev/null <name>` (6.7.16): -G prints the resolved configuration to stdout and
+# exits 0 without connecting, -F /dev/null reads no configuration file, so its rows need no host;
+# a named SKIP when neither /usr/bin/ssh nor /bin/ssh exists. Runs on ecb (macOS arm64), ach
+# (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg; Windows has no fork and
+# agnos no execve or dup2, so there the file only reports its summary.
 #
 # ⛔ WHY (6.7.15). Each verb opens its output file in the PARENT, at the lowest free fd — 0 when
 # the caller closed stdin — and the child redirected stdin FIRST: /dev/null (or the pipe's read
@@ -142,6 +144,25 @@ fn _hi(o): i64 {
     return n;
 }
 
+# The ssh rows' host name: no configuration names it (and -F /dev/null reads none).
+var _SSH_NAME = "cyrius-stdin-closed-lift.invalid";
+
+# The ssh -G capture in `o` (removed once read): 0 when the verb answered 0 and the capture names
+# `_SSH_NAME` ("hostname <name>"), 99 when it does not (0 bytes: the child's stdout was not the
+# file), 98 when the verb's answer `rc` is not 0.
+fn _ssh_g(o, rc): i64 {
+    var cap = 65536;
+    var buf = alloc(cap);
+    if (buf == 0) { return 97; }
+    var n = file_read_all(o, buf, cap);
+    xunlink(o);
+    if (rc != 0) { return 98; }
+    if (n <= 0) { return 99; }
+    var want = _sc_cat3("hostname ", _SSH_NAME, "\n");
+    if (regression_count_substr(buf, n, want) != 1) { return 99; }
+    return 0;
+}
+
 # The "fds" child's bits from the capture in `o` (removed once read) — 99 when the capture is not
 # "S0b\n" (0 bytes: the child's stdout was not the file), 98 when the verb's answer `rc` is not
 # the child's own exit (64 + bits).
@@ -187,6 +208,9 @@ fn _row(row): i64 {
         regression_exec_in_dir3_env("/", "/bin/echo", "hi", 0, 0, ex, o, 0);
         return _hi(o);
     }
+    # The ssh verb's output-fd lift: without it a closed fd 0 put out_fd AT 0, the stdin redirect
+    # overwrote it, and the capture came back EMPTY. CHANGELOG [6.7.16]
+    if (row == 13) { return _ssh_g(o, regression_ssh_remote_exec_capture("-GF/dev/null", _SSH_NAME, o, 0)); }
     if (row == 20) { return _bits(o, regression_exec_in_dir3(".", _me, "fds", 0, 0, o, 0)); }
     if (row == 21) {
         file_write_all(s, "x\n", 2);
@@ -252,6 +276,13 @@ test_group("the capture is the child's \"hi\\n\" whichever std fds the caller cl
 _every_mask(10, 3, "regression_exec_in_dir3 echo hi");
 _every_mask(11, 3, "regression_pipe_to_bin_capture cat");
 _every_mask(12, 3, "regression_exec_in_dir3_env echo hi");
+
+test_group("regression_ssh_remote_exec_capture (ssh -G, no host): ssh's stdout whichever std fds are closed");
+if (file_exists("/usr/bin/ssh") == 0 && file_exists("/bin/ssh") == 0) {
+    println("    SKIP: the ssh rows: neither /usr/bin/ssh nor /bin/ssh exists");
+} else {
+    _every_mask(13, 0, "regression_ssh_remote_exec_capture ssh -GF/dev/null");
+}
 
 test_group("the child starts with fds 0, 1 and 2 open, its stdout the file (the probe's bits: 0)");
 _every_mask(20, 0, "regression_exec_in_dir3, the probe's capture");
