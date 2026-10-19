@@ -87,19 +87,19 @@ else
     echo "  FAIL axis 3 (anti-vacuous): rc=$rc, a real [deps.X] header was not collected: [$row]"; fail=1
 fi
 
-# axis 4 (BEHAVIOURAL) — a real consumer's sidecar must still be complete.
-# patra declares its stdlib leaves and is the tree the defect was filed from.
-P="$HOME/Repos/patra"
-if [ -f "$P/dist/patra.deps" ]; then
-    n=$(grep -cv '^#' "$P/dist/patra.deps" || true)
-    if [ "$n" -ge 12 ]; then
-        echo "  ok axis 4: patra's sidecar carries $n leaves (>= 12)"
-    else
-        echo "  FAIL axis 4: patra's sidecar carries only $n leaves — a leaf is being excluded again"
-        fail=1
-    fi
+# axis 4 (BEHAVIOURAL) — the PLAIN `cyrius distlib` sidecar, the artifact the defect was filed
+# against (patra's dist/patra.deps: 11 leaves against 12 declared). On the same manifest it must
+# list exactly the four leaves no real header claims — string, fmt, math (commented at column 0)
+# and alloc (an indented comment) — and leave out str and vec (real headers). 6.7.16: this
+# replaces reading another checkout's sidecar ($HOME/Repos/patra/dist/patra.deps), a file this
+# tree's CLI never wrote; a language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md).
+rc4=0; ( cd "$P" && "$W/cyrius" distlib > "$W/out4" 2>&1 ) || rc4=$?
+leaves=$(grep -v '^#' "$P/dist/q.deps" 2>/dev/null | grep . | sort | tr '\n' ' ' || true)
+if [ "$rc4" -eq 0 ] && [ "$leaves" = "alloc fmt math string " ]; then
+    echo "  ok axis 4: the plain sidecar dist/q.deps lists exactly alloc fmt math string (str, vec excluded)"
 else
-    echo "  note axis 4: ~/Repos/patra/dist/patra.deps absent — skipped"
+    echo "  FAIL axis 4: rc=$rc4, dist/q.deps lists [${leaves% }], want [alloc fmt math string]: $(head -3 "$W/out4")"; fail=1
 fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: distlib-named-deps-anchored"; exit 1; }
