@@ -1,0 +1,253 @@
+#!/bin/sh
+# tests/gates/toolchain/gates_read_only_the_tree.sh — 6.7.16
+#
+# A GATE READS THIS CHECKOUT — ITS build/, ITS THROWAWAY CYRIUS_HOME AND TMPDIR — AND NEVER
+# ANOTHER PROJECT'S CHECKOUT.
+#
+# WHY. Moving cyrius development to a new machine (2026-10-19) needed four consumer projects
+# cloned AND BUILT before `release-gate.sh` could go GREEN: gates read agnos's ABI document and
+# kernel source, ran mirshi's and sit's built binaries, cross-built agnoshi, parsed
+# secureyeoman's .ts files and surveyed every repo beside the checkout — and SKIPped without
+# them, which the release gate refuses. The user, 2026-10-19: "we need to rip out all those
+# gates longer term, LANGUAGES DO NOT GATE ON OTHER PROJECTS." 6.7.16 removed every such read
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md); this gate keeps
+# them out. Its allowlist has ZERO entries: a read it refuses is removed, never excused.
+#
+# WHAT IT SCANS — every NON-COMMENT line (a comment line is optional whitespace then `#`, in
+# shell and cyrius alike; prose about the old reads lives in comments and is not a read):
+#   * tests/gates/**/*.sh and the top-level scripts/*.sh (check.sh, release-gate.sh and the
+#     gate scripts beside them). Refused:
+#       S1  $HOME/Repos, ${HOME}/Repos, "$HOME"/Repos, ~/Repos
+#       S2  a literal /home/<user>/ path (not `$T/home/bin` — a scratch dir's own home/)
+#       S3  CYRIUS_SIBLING_ROOT
+#       S4  <root>/.. — `$ROOT/../x`, `"$ROOT"/../x`, `${R}/..` — for every variable the file
+#           sets to its checkout root. DERIVED per file, not listed: an assignment whose value is
+#           `dirname "$0"` followed by exactly as many `/..` as the file sits below the root (3
+#           in tests/gates/<bucket>/, 1 in scripts/), or a plain copy of such a variable — ROOT
+#           and R across the gates today, REPO and REPO_ROOT in two scripts
+#       S5  `dirname "<root>"` — the checkout's parent — for those same variables
+#       S6  `dirname "$0"` followed by MORE `/..` than the file's depth: climbing out inline
+#   * programs/checks/*.cyr (the check driver). Refused:
+#       C1  a string literal that BEGINS with ~/Repos, /Repos, Repos/, $HOME/Repos or
+#           /home/<user>/ — `_cat2(home, "/Repos/sit")`, `"/home/macro/Repos/secureyeoman"`.
+#           Only the START of a literal: a `_gate` row's description is one long literal whose
+#           prose may mention a past census "under ~/Repos", and prose is not a path
+#       C2  `_root_path("../x")` / `_root_path("..")`, and ROOT_PATH joined to a literal "/../x"
+#       C3  CYRIUS_SIBLING_ROOT
+# NOT A READ, AND NOT FLAGGED: a fixture that WRITES `path = "../x"` or `include "../x.cyr"`
+# into a scratch manifest or source — relative to its scratch dir, not to the checkout. The
+# patterns above were measured on the 6.7.16 tree: zero hits, with no allowlist.
+#
+# WHAT IT DOES NOT SCAN, AND WHY: scripts/dev, scripts/release and scripts/folds. They hold the
+# development helpers moved into the tree on 2026-10-19 (scratch from CYRIUS_SCRATCH, a fold's
+# CI run in an isolated copy, release bookkeeping) — tools a developer runs by hand, which may
+# legitimately name a sibling checkout (a fold's CI runs in the FOLD's repo). No gate runs them,
+# and axis 4 keeps it that way.
+#
+# AXES
+#   1  the tree is clean: every hit is named file:line: rule: the line
+#   2  MUTATION: a scratch copy of a real gate (this one) with `X="$HOME/Repos/agnos/x"` planted,
+#      one with `cat "$ROOT/../sit/VERSION"` planted, and a programs/checks file with a
+#      "/home/macro/Repos/x" literal planted are each RED, by rule; one planted read for each
+#      other rule (S2 S3 S5 S6, C1's "/Repos/sit", both C2 shapes) is RED; and eight clean spellings
+#      stay clean (a commented ~/Repos read, a fixture's `path = "../x"`, `$T/home/bin`, the
+#      root derivation itself, a gate-dir `$D/../../..`, a long `_gate` literal mentioning
+#      ~/Repos, a manifest literal holding `path = \"../C\"`, `ROOT_PATH` with "/tests")
+#   3  ANTI-VACUOUS: the scan read every file of each of its three roots — every file an
+#      independent reader (git ls-files, else find) lists was scanned — and each count clears a
+#      floor derived from the 6.7.16 tree (tests/gates 560, programs/checks 15, scripts/*.sh 28: half of each, rounded
+#      down — 280, 7, 14), and the root-variable derivation found a root variable in at least
+#      half of the shell files (it finds one in all but a handful)
+#   4  no scanned file invokes anything under scripts/dev, scripts/release or scripts/folds
+set -u
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || { echo "FAIL: gates_read_only_the_tree: cannot cd to $ROOT"; exit 1; }
+NAME=gates_read_only_the_tree
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: $NAME: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$T"' EXIT
+FAILS=0
+_fail() { echo "  FAIL: $NAME: $1"; FAILS=$((FAILS + 1)); }
+
+# ── the scanners ─────────────────────────────────────────────────────────────────────────
+# Each prints `S <file>` per file it read, `V <file> <var>` per root variable it derived, and
+# `H <file>:<line>: <rule> <why>: <text>` per refused read. Paths are relative to the scan root
+# (the cwd), so a file's depth below the root is its count of `/`.
+SH_AWK='
+function ups_after(s,    n) { n = 0; while (substr(s, 1, 3) == "/..") { n++; s = substr(s, 4) } return n }
+# the longest run of `/..` right after any `dirname "$0")` on the line; -1 when there is none
+function dn0_ups(line,    s, best, u) {
+    best = -1; s = line
+    while (match(s, /dirname[ \t]+(--[ \t]+)?"?\$\{?0\}?"?\)/)) {
+        s = substr(s, RSTART + RLENGTH)
+        u = ups_after(s)
+        if (u > best) best = u
+    }
+    return best
+}
+function hit(rule, why) { printf "H %s:%d: %s %s: %s\n", FILENAME, FNR, rule, why, $0 }
+FNR == 1 {
+    print "S " FILENAME
+    depth = gsub(/\//, "/", FILENAME)
+    split("", RV)
+    while ((getline l < FILENAME) > 0) {
+        if (l ~ /^[ \t]*#/) continue
+        if (l !~ /^[ \t]*(export[ \t]+|readonly[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/) continue
+        v = l; sub(/^[ \t]*(export[ \t]+|readonly[ \t]+)?/, "", v); sub(/=.*/, "", v)
+        val = l; sub(/^[^=]*=/, "", val)
+        isroot = (dn0_ups(l) == depth)
+        for (r in RV) if (val ~ ("^\"?\\$\\{?" r "\\}?\"?[ \t]*(;|$)")) isroot = 1
+        if (isroot && !(v in RV)) { RV[v] = 1; print "V " FILENAME " " v }
+    }
+    close(FILENAME)
+}
+/^[ \t]*#/ { next }
+{
+    if ($0 ~ /(\$\{?HOME\}?"?|~)\/Re[p]os([^A-Za-z0-9_]|$)/) hit("S1", "reads a Re" "pos dir under HOME")
+    if ($0 ~ /(^|[^A-Za-z0-9_}$.\/-])\/ho[m]e\/[A-Za-z0-9._-]+\//) hit("S2", "names a literal home-directory path")
+    if ($0 ~ /CYRIUS_SIBLING_[R]OOT/) hit("S3", "reads the sibling-root variable")
+    for (r in RV) {
+        if ($0 ~ ("\\$\\{?" r "\\}?\"?/\\.\\.([/\"'"'"' \t);|&]|$)")) hit("S4", "reads above the checkout root ($" r "/..)")
+        if ($0 ~ ("dirname[ \t]+(--[ \t]+)?\"?\\$\\{?" r "\\}?\"?([^A-Za-z0-9_]|$)")) hit("S5", "takes the checkout root'"'"'s parent (dirname $" r ")")
+    }
+    if (dn0_ups($0) > depth) hit("S6", "climbs above the checkout from dirname \"$0\"")
+}'
+CYR_AWK='
+function hit(rule, why) { printf "H %s:%d: %s %s: %s\n", FILENAME, FNR, rule, why, $0 }
+FNR == 1 { print "S " FILENAME }
+/^[ \t]*#/ { next }
+{
+    s = $0
+    while (match(s, /"([^"\\]|\\.)*"/)) {
+        lit = substr(s, RSTART + 1, RLENGTH - 2)
+        s = substr(s, RSTART + RLENGTH)
+        if (lit ~ /^(~\/Re[p]os|\/Re[p]os|Re[p]os\/|\$HOME\/Re[p]os|\$\{HOME\}\/Re[p]os)/ || lit ~ /^\/ho[m]e\/[A-Za-z0-9._-]+\//) {
+            hit("C1", "a literal path into another checkout (\"" lit "\")")
+        }
+    }
+    if ($0 ~ /_root_path\([ \t]*"\.\.(\/|")/) hit("C2", "_root_path above the checkout root")
+    if ($0 ~ /ROOT_PATH[ \t]*,[ \t]*"\/\.\.(\/|")/) hit("C2", "ROOT_PATH joined above the checkout root")
+    if ($0 ~ /CYRIUS_SIBLING_[R]OOT/) hit("C3", "reads the sibling-root variable")
+}'
+# _scan <root> <out>: scans the three roots under <root>; the records land in <out>.
+_scan() {
+    ( cd "$1" || exit 1
+      _sh=$( { find tests/gates -name '*.sh' -type f 2>/dev/null; for _f in scripts/*.sh; do [ -f "$_f" ] && echo "$_f"; done; } | LC_ALL=C sort)
+      _cy=$(find programs/checks -name '*.cyr' -type f 2>/dev/null | LC_ALL=C sort)
+      # shellcheck disable=SC2086
+      [ -z "$_sh" ] || awk "$SH_AWK" $_sh
+      # shellcheck disable=SC2086
+      [ -z "$_cy" ] || awk "$CYR_AWK" $_cy
+    ) > "$2" 2> "$2.err"
+}
+
+# ── axis 1: the tree is clean ─────────────────────────────────────────────────────────────
+_scan "$ROOT" "$T/tree" || _fail "axis 1: the scan itself failed: $(head -3 "$T/tree.err")"
+[ -s "$T/tree.err" ] && _fail "axis 1: the scanner wrote errors: $(head -3 "$T/tree.err")"
+NH=$(grep -c '^H ' "$T/tree" || true)
+if [ "$NH" -gt 0 ]; then
+    _fail "axis 1: $NH read(s) of another checkout (allowlist: none — remove the read):"
+    grep '^H ' "$T/tree" | sed 's/^H /      /' | cut -c1-240
+else
+    echo "  ok: axis 1: no gate, check.sh row, release-gate.sh step or driver row reads outside the checkout"
+fi
+
+# ── axis 2: MUTATION — each planted read is RED; the clean spellings are not ───────────────
+# The planted lines are assembled from parts (RP, HM, UP, SR) so that THIS file's own lines
+# carry none of the shapes it refuses — the allowlist has zero entries, this gate included.
+RP=Re; RP=${RP}pos            # the Repos dir name
+HM=ho; HM=${HM}me             # the home-directory root
+UP=..                         # one parent step
+SR=CYRIUS_SIBLING_; SR=${SR}ROOT
+M="$T/mut"
+_mk() { rm -rf "$M"; mkdir -p "$M/tests/gates/toolchain" "$M/programs/checks" "$M/scripts"; }
+_hits() { _scan "$M" "$T/m.out"; grep '^H ' "$T/m.out" || true; }
+G0='#!/bin/sh
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || exit 1'
+# m1 / m2 are a COPY of a real gate (this one — axis 1 proves it clean) with one line planted
+# at its end, so the root variable the plant uses is the one the derivation finds in a real file.
+SELF="$ROOT/tests/gates/toolchain/$NAME.sh"
+NSELF=$(wc -l < "$SELF" | tr -d ' ')
+_mk; { cat "$SELF"; printf 'X="$HOME/%s/agnos/x"\n' "$RP"; } > "$M/tests/gates/toolchain/m1.sh"
+case "$(_hits)" in *"m1.sh:$((NSELF + 1)): S1 "*) echo "  ok: axis 2: a copied gate with X=\"<HOME>/$RP/agnos/x\" planted is RED (S1)" ;;
+    *) _fail "axis 2: a planted HOME/$RP read was NOT caught: $(_hits)" ;; esac
+_mk; { cat "$SELF"; printf 'cat "$ROOT/%s/sit/VERSION"\n' "$UP"; } > "$M/tests/gates/toolchain/m2.sh"
+case "$(_hits)" in *"m2.sh:$((NSELF + 1)): S4 "*) echo "  ok: axis 2: a copied gate with \"<ROOT>/$UP/sit\" planted is RED (S4)" ;;
+    *) _fail "axis 2: a planted <ROOT>/$UP/sit read was NOT caught: $(_hits)" ;; esac
+_mk; printf 'fn _m3(): i64 {\n    var d = "/%s/macro/%s/x";\n    return 0;\n}\n' "$HM" "$RP" > "$M/programs/checks/m3.cyr"
+case "$(_hits)" in *"m3.cyr:2: C1 "*) echo "  ok: axis 2: a planted programs/checks \"/$HM/macro/$RP/x\" literal is RED (C1)" ;;
+    *) _fail "axis 2: a planted /$HM/<user>/ literal in programs/checks was NOT caught: $(_hits)" ;; esac
+# the remaining rules, one planted read each (a rule nothing exercises can rot unseen)
+_mk; { printf '%s\n' "$G0"; printf 'R=$(cd "$(dirname "$0")/../../.." && pwd)\n'
+       printf 'P=$(dirname "$R")\n'
+       printf 'S=${%s:-x}\n' "$SR"
+       printf 'Y=$(cd "$(dirname "$0")/%s/%s/%s/%s/agnos" && pwd)\n' "$UP" "$UP" "$UP" "$UP"
+       printf 'Z=/%s/someone/%s/x\n' "$HM" "$RP"; } > "$M/tests/gates/toolchain/m4.sh"
+printf 'fn _m5(): i64 { var s = _root_path("%s/sit"); var t = _cat2(ROOT_PATH, "/%s/x"); var h = _cat2(home, "/%s/sit"); return 0; }\n' "$UP" "$UP" "$RP" > "$M/programs/checks/m5.cyr"
+H5=$(_hits)
+for want in "m4.sh:5: S5 " "m4.sh:6: S3 " "m4.sh:7: S6 " "m4.sh:8: S2 " "m5.cyr:1: C1 " "m5.cyr:1: C2 "; do
+    case "$H5" in *"$want"*) ;; *) _fail "axis 2: the planted read for rule ${want##*: } was NOT caught (want '$want'): $H5" ;; esac
+done
+[ "$(printf '%s\n' "$H5" | grep -c 'm5.cyr:1: C2 ' || true)" = 2 ] || _fail "axis 2: _root_path(\"$UP/sit\") and ROOT_PATH + \"/$UP/x\" are not BOTH caught: $H5"
+case "$H5" in *"m4.sh:5: S5 "*"m4.sh:6: S3 "*"m4.sh:7: S6 "*"m4.sh:8: S2 "*"m5.cyr:1: C1 "*) echo "  ok: axis 2: S2, S3, S5, S6, C1 (\"/$RP/sit\") and both C2 shapes are each RED on a planted read" ;; esac
+# clean spellings: none may trip
+_mk; { printf '%s\n' "$G0"
+       printf '# a comment: X="$HOME/%s/agnos/x" and cat "$ROOT/%s/sit/VERSION"\n' "$RP" "$UP"
+       printf '    # an indented comment: ~/%s\n' "$RP"
+       printf 'printf '"'"'[deps.a]\\npath = "../x"\\n'"'"' > "$T/p/cyrius.cyml"\n'
+       printf 'mkdir -p "$T/%s/bin"; cp x "$T/%s/bin/cycc"\n' "$HM" "$HM"
+       printf 'D=$(dirname "$0"); cat "$D/../../../VERSION"\n'
+       printf 'include_line='"'"'include "../x.cyr"'"'"'\n'; } > "$M/tests/gates/toolchain/c1.sh"
+{ printf 'fn _c2(): i64 {\n'
+  printf '    _gate("a census of every repo under ~/%s found none", "tests/gates/x.sh");\n' "$RP"
+  printf '    str_builder_add_cstr(sb, "[package]\\nname = \\"B\\"\\npath = \\"../C\\"\\n");\n'
+  printf '    # var d = "/%s/macro/%s/x";\n' "$HM" "$RP"
+  printf '    var p = _cat2(ROOT_PATH, "/tests/gates");\n'
+  printf '    return 0;\n}\n'; } > "$M/programs/checks/c2.cyr"
+HC=$(_hits)
+[ -z "$HC" ] && echo "  ok: axis 2: the eight clean spellings (comments, fixture ../ paths, \$T/$HM, the root derivation, \$D/../../.., _gate prose, an escaped manifest literal, ROOT_PATH + /tests) stay clean" \
+    || _fail "axis 2: a clean spelling was flagged (a false positive): $HC"
+# the planted files really hold the shapes (a printf that lost its argument plants nothing)
+grep -q "/$RP/agnos" "$M/tests/gates/toolchain/c1.sh" && grep -q "~/$RP found" "$M/programs/checks/c2.cyr" \
+    || _fail "axis 2: the clean-spelling fixtures were not written as intended"
+
+# ── axis 3: ANTI-VACUOUS — every file of each root was scanned, and the derivation works ───
+# The independent reader is `git ls-files` (find when this is not a git checkout): every file
+# it lists must appear among the files the scanners read. An untracked file the scan also read
+# is fine; a tracked one it did not read is a blind spot.
+grep '^S ' "$T/tree" | sed 's/^S //' | LC_ALL=C sort -u > "$T/scanned"
+if git -C "$ROOT" rev-parse --git-dir > /dev/null 2>&1; then
+    { git -C "$ROOT" ls-files -- 'tests/gates/*.sh' 'programs/checks/*.cyr'
+      git -C "$ROOT" ls-files -- 'scripts/*.sh' | grep -v '^scripts/.*/' || true; } | LC_ALL=C sort -u > "$T/listed"
+else
+    { find tests/gates -name '*.sh' -type f; find programs/checks -name '*.cyr' -type f
+      find scripts -maxdepth 1 -name '*.sh' -type f; } | LC_ALL=C sort -u > "$T/listed"
+fi
+MISS=$(LC_ALL=C comm -23 "$T/listed" "$T/scanned")
+[ -z "$MISS" ] || _fail "axis 3: listed but NOT scanned: $(printf '%s\n' "$MISS" | head -5 | tr '\n' ' ')"
+NG=$(grep -c '^tests/gates/' "$T/scanned" || true)
+NP=$(grep -c '^programs/checks/' "$T/scanned" || true)
+NS=$(grep -c '^scripts/' "$T/scanned" || true)
+NL=$(grep -c . "$T/listed" || true)
+[ "$NL" -ge 300 ] || _fail "axis 3: the independent reader listed only $NL files (floor 300) — it is not reading the tree"
+[ "$NG" -ge 280 ] || _fail "axis 3: only $NG tests/gates files scanned (floor 280) — the scan read too little"
+[ "$NP" -ge 7 ] || _fail "axis 3: only $NP programs/checks files scanned (floor 7)"
+[ "$NS" -ge 14 ] || _fail "axis 3: only $NS scripts/*.sh files scanned (floor 14)"
+NV=$(grep '^V ' "$T/tree" | awk '{print $2}' | LC_ALL=C sort -u | grep -c . || true)
+[ "$NV" -ge $(((NG + NS) / 2)) ] || _fail "axis 3: a root variable was derived in only $NV of $((NG + NS)) shell files — the derivation went blind, so S4 / S5 check nothing"
+grep -q '^V tests/gates/toolchain/gates_read_only_the_tree.sh ROOT$' "$T/tree" || _fail "axis 3: this gate's own ROOT was not derived as a root variable"
+[ "$FAILS" = 0 ] && echo "  ok: axis 3: scanned all $NL listed files ($NG tests/gates + $NP programs/checks + $NS scripts; floors 280 / 7 / 14); root variables derived in $NV shell files"
+
+# ── axis 4: nothing scanned invokes the development helpers ───────────────────────────────
+HD=$( { find tests/gates -name '*.sh' -type f; for _f in scripts/*.sh; do [ -f "$_f" ] && echo "$_f"; done
+        find programs/checks -name '*.cyr' -type f; } | LC_ALL=C sort \
+      | while IFS= read -r _f; do awk -v F="$_f" '/^[ \t]*#/ { next } /scripts\/(dev|release|folds)\// { print F ":" FNR ": " $0 }' "$_f"; done || true)
+if [ -n "$HD" ]; then
+    _fail "axis 4: a gate, check.sh, release-gate.sh or the driver invokes a development helper (scripts/dev|release|folds are not gates):"
+    printf '%s\n' "$HD" | sed 's/^/      /' | cut -c1-240
+else
+    echo "  ok: axis 4: no scanned file invokes anything under scripts/dev, scripts/release or scripts/folds"
+fi
+
+if [ "$FAILS" != 0 ]; then echo "FAIL: $NAME ($FAILS)"; exit 1; fi
+echo "PASS: $NAME — no gate, check row or release-gate step reads another checkout ($NG + $NP + $NS files, allowlist of zero; 3 planted reads + 7 more rules RED, 8 clean spellings clean)"

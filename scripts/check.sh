@@ -1816,9 +1816,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 # gate failed for an ENVIRONMENTAL reason (agnoshi pins 6.5.36, which the 2026-09-07 toolchain
 # wipe removed), and not one of the new gates executed — a green summary over unrun gates, which
 # is the exact shape of the macOS rot this tree keeps re-learning.
-# ⭐ THE RULE: a gate that depends on a SIBLING CHECKOUT or another machine belongs at the END,
-# after everything that depends only on this repo. Anything else lets an absent neighbour hide a
-# real in-repo regression.
+# ⭐ THE RULE: a gate that depends on another MACHINE (an ssh host) belongs at the END, after
+# everything that depends only on this repo — anything else lets an absent host hide a real
+# in-repo regression. No gate depends on a sibling checkout since 6.7.16: a language does not gate
+# on other projects (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md;
+# tests/gates/toolchain/gates_read_only_the_tree.sh refuses such a read).
 
 # ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
 # This gate compiles nine in-tree CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55,
@@ -2624,6 +2626,14 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_builds_its_tools.sh"
 # starts a gate and refuses a relative script path, so a gate that does not cd to the root it
 # derives from $0 is red on every run instead of green because check.sh ran from the root.
 _chk_gate "$ROOT/tests/gates/toolchain/gates_run_from_foreign_cwd.sh"
+
+# 6.7.16 — a gate reads THIS checkout (its build/, its throwaway CYRIUS_HOME, TMPDIR) and never
+# another project's: no $HOME/Repos, /home/<user>/, CYRIUS_SIBLING_ROOT, $ROOT/.. or dirname
+# "$ROOT" in a non-comment line of tests/gates, programs/checks or scripts/*.sh (the root
+# variables derived per file), allowlist of zero; planted reads RED by rule, clean fixture
+# spellings clean, every tracked file of the three roots scanned. The user, 2026-10-19:
+# "LANGUAGES DO NOT GATE ON OTHER PROJECTS."
+_chk_gate "$ROOT/tests/gates/toolchain/gates_read_only_the_tree.sh"
 
 # 6.6.20 (RLM-01) — every `_regression_wait_deadline` in lib/regression.cyr and the check driver
 # consumes its result before the status buffer is decoded: a deadline (0) or an unobserved child

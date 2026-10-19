@@ -16,7 +16,8 @@
 #     its rc (42); behind it, axis 6's zero-warning `u=$(grep … | …)` and axis 7's out-of-scope
 #     compiles and cxvm runs, which all fail by design;
 #   * io_rdwr_agnos.sh (6.7.16) — `"$TMP/rw_lin" …; el=$?`: the probe exits 42 when it passes,
-#     so `-e` ended the gate on the first passing probe with rc 42.
+#     so `-e` ended the gate on the first passing probe with rc 42;
+#   * gates_read_only_the_tree.sh (6.7.16) — new, written pipefail-safe, and listed so it stays so.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md)
 #
@@ -43,7 +44,8 @@ command -v bash > /dev/null 2>&1 || { echo "SKIP: $NAME (no bash on PATH — the
 GATES="tests/gates/platform/syscall_xlat_generated.sh
 tests/gates/toolchain/removed_symbol_census.sh
 tests/gates/toolchain/stdlib_modules_self_sufficient.sh
-tests/gates/platform/io_rdwr_agnos.sh"
+tests/gates/platform/io_rdwr_agnos.sh
+tests/gates/toolchain/gates_read_only_the_tree.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
