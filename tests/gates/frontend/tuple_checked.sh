@@ -49,7 +49,7 @@
 #         `f()?` and a call that is not the whole value are R12 ("not a tuple"); R16cp (6.7.14) `callptr(fp, ..)`
 #         captured in every spelling, its callee unknown; R16pw (6.7.14, D45) parentheses around the whole call
 #         are transparent (R16l, R16q and R19d were refusals until then)
-#      R17i-l a multi-value call stored into a tuple FIELD: bind it first
+#      R17i-l a multi-value call stored into a tuple FIELD: bind it first; R17m-r (6.7.15) wrapped, R17 alone
 #      R18 `a, b = f()` targets that are no plain variable, > 3, a duplicate, a const / enum constant, a struct /
 #         tuple / vector / array / u128 / slice / f32 target, a bool target from a non-bool value, an undefined
 #         or captured name; R19 a right-hand side that is not one whole call (the destructure's texts);
@@ -1016,6 +1016,19 @@ refused r17i "a multi-value call 'mk' $R17F" "R17i: \`h.p = mk(3);\`" "${TH5}${M
 refused r17j "a multi-value call 'B.mk' $R17F" "R17j: a method" "${TH5}struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a); } }\n${F5}    var h: H;\n    var b: B;\n    h.p = b.mk(3);${E5}"
 refused r17k "a multi-value call 'mk' $R17F" "R17k: a global's field, at top level" "${TH5}${MK}var GH = H { 1, 2, 3 };\nGH.p = mk(3);\nsyscall(60, 0);\n"
 refused r17l "a multi-value call 'mk' $R17F" "R17l: a classic-for step's field" "${TH5}${MK}${F5}    var h: H;\n    for (var i = 0; i < 2; h.p = mk(i)) { i = i + 1; }${E5}"
+# R17m-r (6.7.15, issues/2026-10-17-wrapped-multi-value-call-into-tuple-field-reports-twice.md) — a WRAPPED multi-value
+# call into a tuple field is R17 alone: the issue's program verbatim gave R17 at the call (3:32) and then R12 at the
+# wrap's \`(\` (3:31). \`_tup_fsc_call\` notes its report (\`_tfc_rep\`) and \`_fsc_paren\` marks the wrap's \`(\` reported,
+# so the store's R12 stays quiet, as it does unwrapped (one token). A wrapped ONE-value call keeps its single R12
+# line at the wrap. Every leg (the cross compilers built from this tree). Mutation (run 2026-10-18): \`_fsc_paren\`
+# without its \`_tn_once(S, st)\` -> R17m, R17n, R17q, R17r two error lines on every leg.
+TWO17='struct H { a; p: (i64, i64); }\nfn two(x): (i64, i64) { return (x, x + 1); }\n'
+refused4 r17m "3:32: a multi-value call 'two' $R17F" "R17m: \`h.p = (two(3));\`, the issue's program verbatim" "${TWO17}fn t(): i64 { var h: H; h.p = (two(3)); return h.p.0 * 10 + h.p.1; }\nsyscall(60, t());\n"
+refused4 r17n "3:33: a multi-value call 'two' $R17F" "R17n: \`h.p = ((two(3)));\`" "${TWO17}fn t(): i64 { var h: H; h.p = ((two(3))); return h.p.0 * 10 + h.p.1; }\nsyscall(60, t());\n"
+refused4 r17o "3:31: a multi-value call 'two' $R17F" "R17o: unwrapped \`h.p = two(3);\` (unchanged)" "${TWO17}fn t(): i64 { var h: H; h.p = two(3); return h.p.0 * 10 + h.p.1; }\nsyscall(60, t());\n"
+refused4 r17p "4:31: cannot store a value that is not a tuple into tuple field 'p'" "R17p: a wrapped one-value call \`h.p = (one(3));\` keeps its one R12 line" "${TWO17}fn one(x) { return x; }\nfn t(): i64 { var h: H; h.p = (one(3)); return h.p.0 * 10 + h.p.1; }\nsyscall(60, t());\n"
+refused4 r17q "a multi-value call 'B.mk' $R17F" "R17q: a wrapped method \`h.p = (b.mk(3));\`" "${TH5}struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a); } }\n${F5}    var h: H;\n    var b: B;\n    h.p = (b.mk(3));${E5}"
+refused4 r17r "a multi-value call 'mk' $R17F" "R17r: a wrapped classic-for step's field" "${TH5}${MK}${F5}    var h: H;\n    for (var i = 0; i < 2; h.p = (mk(i))) { i = i + 1; }${E5}"
 # R18 — `a, b = f();` re-assigns plain variables: every other target refused by name (each was "expected '='").
 NP="a multi-value assignment \`a, b = f();\` re-assigns plain variables"
 TGT=" from a multi-value call - its targets are i64, f64 or bool variables"

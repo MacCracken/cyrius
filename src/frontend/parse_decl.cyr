@@ -1343,6 +1343,9 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
 # the call). A capture lands in a tuple VARIABLE; a field is stored from one — refused by name, as a
 # multi-value call is as a tuple argument (`_tup_arg_call`): bind it first. The value parse goes on
 # (its "not a tuple" refusal at the same token stays quiet). Cursor on the source; 1 = refused.
+# `_tfc_rep` = 1 once it reported, so a wrap around the call (`h.p = (two(3));`) marks its own `(`
+# reported too (`_fsc_paren`): R12 points at the wrap, one token before R17. CHANGELOG [6.7.15]
+var _tfc_rep = 0;
 fn _tup_fsc_call(S, ft, term): i64 {
     if (_tup_is(S, ft) == 0) { return 0; }
     var o = _dt_call_open(S);
@@ -1355,6 +1358,7 @@ fn _tup_fsc_call(S, ft, term): i64 {
     if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { _tup_arg_mv_err(S, GTI(S), ft, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), 0); }
     else { _tup_arg_mv_err(S, GTI(S), ft, PEEKV(S), "(..)"); }
     _tamv_fld = 0;
+    _tfc_rep = 1;
     return 1;
 }
 
@@ -1370,7 +1374,12 @@ fn _fsc_paren(S, ft, fnoff, term): i64 {
     var k = _pwrap_k(S, st);
     if (TOKTYP(S, _pw_end) != term) { return _fsc_expr(S, ft, fnoff, term); }
     STI(S, st + k);
+    _tfc_rep = 0;
     var r = _fsc_src(S, ft, fnoff, 11);
+    if (_tfc_rep == 1) {   # 6.7.15: R17 named the wrapped call — its `(` is reported (one mistake, one error)
+        _tn_once(S, st);
+        _tfc_rep = 0;
+    }
     if (r == 0) {
         STI(S, st);   # not a struct source: the caller parses the whole value
         return 0;

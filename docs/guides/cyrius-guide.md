@@ -3613,7 +3613,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
 | `take(5)` into a tuple parameter (an integer literal; 6.7.14) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
-| `h.p = f();` | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
+| `h.p = f();` (wrapped, `h.p = (f());`, too: this one error, 6.7.15) | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
 | `return 5;`, `return p;` (a struct), `return one(x);` from a fn declared `: (i64, i64)` (6.7.11) | `'f' returns 2 values - return (a, b)` |
