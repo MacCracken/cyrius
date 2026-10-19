@@ -28,8 +28,7 @@
 #     RED four times ("the shared LEAVES preamble includes the fold …") and on the
 #     anti-vacuous row: with patra always in scope, yukti-without-patra borrows invisibly.
 #   * yukti dropped from vani's FOLD_DEPS row -> RED, "vani uses 'YUKTI_AUDIO_CAPTURE' from
-#     yukti, which vani does not declare" (and, locally, the row disagrees with vani's own
-#     cyrius.cyml).
+#     yukti, which vani does not declare" (and, until 6.7.16, the sibling-manifest axis).
 # MUTATION PROOF (6.6.19 R3, measured):
 #   * `include "lib/random.cyr"` removed from lib/sigil.cyr's requires block -> RED, "sigil
 #     leaves 'random_bytes' undefined" (the pre-R3 gate stayed GREEN: its LEAVES preamble
@@ -65,10 +64,12 @@ FOLDS=$(grep -oE '^\| `lib/[a-z0-9_]+\.cyr` \|' "$ROOT/docs/ecosystem.md" \
     | sed -E 's/^\| `lib\/([a-z0-9_]+)\.cyr`.*/\1/' | tr '\n' ' ')
 NFOLDS=$(echo $FOLDS | wc -w)
 
-# Each fold's DECLARED fold dependencies — the fold names in its sibling repo's `cyrius.cyml`
+# Each fold's DECLARED fold dependencies — the fold names in its own repo's `cyrius.cyml`
 # (`stdlib = [...]` and `[deps.*]`) at the folded version. A fold missing from this table is a
-# FAIL (say what it depends on); the table is checked against the sibling manifests below
-# whenever the checkout is at the folded version.
+# FAIL (say what it depends on). 6.7.16: the table is no longer compared with the fold repos'
+# manifests (that axis read $HOME/Repos/<fold>, another checkout — a language does not gate on
+# other projects: docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md);
+# in-tree, the borrow and include-walk checks below fail a row that UNDER-declares.
 fold_deps() {
     case "$1" in
         sigil)  echo "bayan sakshi" ;;
@@ -211,22 +212,6 @@ for d in $FOLDS; do
         echo "  FAIL: fold '$d' (docs/ecosystem.md) has no FOLD_DEPS row — declare its fold dependencies in this gate"
         fails=$((fails + 1))
         continue
-    fi
-    # Where the sibling checkout is AT the folded version, its manifest must agree with the
-    # table. (Not reachable in CI, and a checkout ahead of the fold is not the fold — both are
-    # said, never silently skipped.)
-    sib="$HOME/Repos/$d"
-    folded=$(sed -nE "s/^\| \`lib\/${d}\.cyr\` \|[^|]*\| ${d} ([0-9][0-9.]*) \|.*/\1/p" "$ROOT/docs/ecosystem.md" | head -1)
-    if [ -f "$sib/cyrius.cyml" ] && [ -f "$sib/VERSION" ] && [ "$(tr -d '[:space:]' < "$sib/VERSION")" = "$folded" ]; then
-        man=$( { awk '/^stdlib[[:space:]]*=[[:space:]]*\[/{on=1} on{print} on && /\]/{exit}' "$sib/cyrius.cyml" \
-                   | sed 's/#.*//' | tr -d '[]",=' | tr ' ' '\n'
-                 grep -oE '^\[deps\.[a-z_]+\]' "$sib/cyrius.cyml" | sed -E 's/^\[deps\.([a-z_]+)\]/\1/'; } \
-               | grep -xE "$(echo $FOLDS | tr ' ' '|')" | grep -vx "$d" | sort -u | tr '\n' ' ')
-        tab=$(echo $dd | tr ' ' '\n' | grep . | sort -u | tr '\n' ' ')
-        if [ "$man" != "$tab" ]; then
-            echo "  FAIL: $d's FOLD_DEPS row [${tab% }] disagrees with ~/Repos/$d/cyrius.cyml at $folded [${man% }]"
-            fails=$((fails + 1))
-        fi
     fi
     rc=0
     probe "$d" "$(closure_of "$d")" || rc=$?
