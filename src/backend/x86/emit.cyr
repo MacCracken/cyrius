@@ -1846,12 +1846,15 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
 # codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
 # the answer before 6.7.14. A stub clobbers rcx and rdx (volatile across the Win32 call the
 # reroute just made) and nothing in the caller's frame. CHANGELOG [6.7.14]
+# One more stub rides the same registry, emitted only when a site asks for it: the std-close
+# (class 2, ECLOSE_PE's fd 0 / 1 / 2 arm, `_pew_stub_close`). CHANGELOG [6.7.16]
 var _pew_sl = 0;     # alloc()'d list of {registry index, class} pairs, 16 B each
 var _pew_ns = 0;
 var _pew_scap = 0;
 
 # At a reroute's failure point, rsp as it was for the failed call (16-aligned): `call <stub>`,
-# class 0 (the table) or 1 (ReadFile's, entered with the byte count in eax).
+# class 0 (the table) or 1 (ReadFile's, entered with the byte count in eax); 2 (the std-close,
+# entered with the fd in rax) at the same aligned rsp, before its Win32 call.
 fn _pe_w32_errno_site(S, cls): i64 {
     _pe_ensure_getlasterr(S);
     if (_pew_ns >= _pew_scap) { _pew_grow(); }
@@ -1887,18 +1890,113 @@ fn EPE_ERRNO_STUBS(S): i64 {
     if (_pew_ns == 0) { return 0; }
     var t = _pew_stub_table(S);
     var r = 0 - 1;
+    var c = 0 - 1;
     var i = 0;
     while (i < _pew_ns) {
+        var cls = load64(_pew_sl + i * 16 + 8);
         var stub = t;
-        if (load64(_pew_sl + i * 16 + 8) == 1) {
+        if (cls == 1) {
             if (r < 0) { r = _pew_stub_read(S, t); }
             stub = r;
+        }
+        if (cls == 2) {
+            if (c < 0) { c = _pew_stub_close(S, t); }
+            stub = c;
         }
         _pew_patch(S, load64(_pew_sl + i * 16), stub);
         i = i + 1;
     }
     _pew_ns = 0;
     return 0;
+}
+
+# A forward rel8 jump: emits `op disp8` with disp 0 and returns where the disp byte is, for
+# `_pew_land8` to aim at the label once it is emitted.
+fn _pew_j8(S, op): i64 {
+    EB(S, op);
+    var at = GCP(S);
+    EB(S, 0);
+    return at;
+}
+fn _pew_land8(S, at): i64 {
+    var rel = GCP(S) - at - 1;
+    if (rel > 127) { PRSTR("error: internal: a PE stub's rel8 jump is out of range\n"); syscall(SYS_EXIT, 1); }
+    store8(_codebuf_base + at, rel);
+    return 0;
+}
+# call [rip+IAT slot idx]
+fn _pew_iat_call(S, idx): i64 {
+    EB(S, 0xFF); EB(S, 0x15);
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    return 0;
+}
+
+# 6.7.16 — THE STD-CLOSE (class 2): `sys_close(0 / 1 / 2)` closes the program's real stdin / stdout
+# / stderr, as on Linux (6.7.16's D30, user, 2026-10-19). The fd went to CloseHandle as the HANDLE
+# value 0 / 1 / 2, which is no handle: the close answered -9 and the stream stayed open. Entered
+# with rax = the fd (0..2), rsp 8 mod 16; answers rax = 0, or -errno.
+#   - GetStdHandle(-10 - fd) is 0 (no such stream) or INVALID_HANDLE_VALUE (closed already): -9,
+#     Linux's EBADF for a descriptor that is not open. CloseHandle(INVALID_HANDLE_VALUE) would
+#     answer TRUE — it is the current-process pseudo-handle (measured on cass and wine).
+#   - SetStdHandle(-10 - fd, INVALID_HANDLE_VALUE) first, so GetStdHandle stops answering the
+#     closed HANDLE (a later CreateFileW can be given the same value, and a write to fd 2 would land
+#     in that file). A later write / read / seek on the fd then fails ERROR_INVALID_HANDLE, -9.
+#   - CloseHandle only when no other std slot holds the same HANDLE: lib/process_win.cyr starts a
+#     child with ONE handle as its stdout and stderr, and closing it for fd 2 would close fd 1 too
+#     (Linux closes only the descriptor; the open file stays open while another fd refers to it).
+#   - A CloseHandle failure answers -errno through the table, as the fd > 2 arm does.
+# rbx / rsi / rdi are saved here and are callee-saved across the Win32 calls. CHANGELOG [6.7.16]
+fn _pew_stub_close(S, t): i64 {
+    var at = GCP(S);
+    EB(S, 0x53); EB(S, 0x56); EB(S, 0x57);              # push rbx; push rsi; push rdi (rsp 0 mod 16)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC3);              # mov rbx, rax (the fd)
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xDB);              # neg rbx
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEB); EB(S, 0x0A); # sub rbx, 10 (rbx = nStdHandle)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xD9);              # mov rcx, rbx
+    _pew_iat_call(S, _pe_stdio_getstd_get());           # rax = the std HANDLE
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC6);              # mov rsi, rax (h)
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x40); EB(S, 0x01); # lea rax, [rax+1]
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01); # cmp rax, 1
+    var j_open = _pew_j8(S, 0x77);                      # ja .open (h is neither -1 nor 0)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 9); # mov rax, -9 (EBADF: not open)
+    var j_ret = _pew_j8(S, 0xEB);                       # jmp .ret
+    _pew_land8(S, j_open);
+    return _pew_stub_close_open(S, t, at, j_ret);
+}
+
+# .open: clear the slot, look for the HANDLE in the other std slots, close it when none holds it.
+fn _pew_stub_close_open(S, t, at, j_ret): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xD9);              # mov rcx, rbx
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC2); EDISP32(S, 0 - 1); # mov rdx, -1 (INVALID_HANDLE_VALUE)
+    _pew_iat_call(S, _pe_setstd_get());                 # SetStdHandle(n, INVALID_HANDLE_VALUE)
+    EB(S, 0xBF); EDISP32(S, 0 - 10);                    # mov edi, -10 (STD_INPUT_HANDLE)
+    var lp = GCP(S);                                    # .loop (this slot now answers -1, never h)
+    EB(S, 0x89); EB(S, 0xF9);                           # mov ecx, edi
+    _pew_iat_call(S, _pe_stdio_getstd_get());
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xF0);              # cmp rax, rsi
+    var j_sh = _pew_j8(S, 0x74);                        # je .shared
+    EB(S, 0xFF); EB(S, 0xCF);                           # dec edi
+    EB(S, 0x83); EB(S, 0xFF); EB(S, 0xF3);              # cmp edi, -13
+    EB(S, 0x75); EB(S, (lp - GCP(S) - 1) & 0xFF);       # jne .loop
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF1);              # mov rcx, rsi
+    _pew_iat_call(S, _pe_closeh_get());                 # CloseHandle(h)
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
+    EB(S, 0x74); EB(S, 0x04);                           # je +4 → .fail
+    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax (TRUE: 0)
+    var j_ok = _pew_j8(S, 0xEB);                        # jmp .ret
+    EB(S, 0xE8);                                        # .fail: call the table (rax = -errno)
+    _wpjs_add_raw(S, GCP(S));
+    EDISP32(S, t - GCP(S) - 4);
+    var j_fl = _pew_j8(S, 0xEB);                        # jmp .ret
+    _pew_land8(S, j_sh);
+    EB(S, 0x31); EB(S, 0xC0);                           # .shared: xor eax, eax (0: the slot is closed)
+    _pew_land8(S, j_ret); _pew_land8(S, j_ok); _pew_land8(S, j_fl);
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x20); # .ret: add rsp, 0x20
+    EB(S, 0x5F); EB(S, 0x5E); EB(S, 0x5B);              # pop rdi; pop rsi; pop rbx
+    EB(S, 0xC3);                                        # ret
+    return at;
 }
 
 # The table. Entered by `call` from a 16-aligned rsp, so rsp is 8 mod 16 here: `sub rsp, 0x28`
@@ -2100,13 +2198,24 @@ fn EWRITE_PE(S): i64 {
 # The frame is rbx-anchored (v6.4.44: a fixed `sub rsp,0x28` aligned the call only on the right
 # caller parity, and CloseHandle faults on an aligned SSE access inside kernel32 when the stack
 # is 8-misaligned — the async subprocess resume hit exactly that). CHANGELOG [6.4.44]
+# fd 0 / 1 / 2 close the std streams, as on Linux (6.7.16's D30): they went to CloseHandle as the
+# HANDLE values 0 / 1 / 2, so `sys_close(2)` answered -9 and stderr stayed open. They take the
+# shared std-close stub (`_pew_stub_close`: GetStdHandle, SetStdHandle(INVALID_HANDLE_VALUE), and
+# CloseHandle unless another std slot holds the same HANDLE); any other fd IS the handle, as in
+# `_pe_fd_to_handle_rcx`. CHANGELOG [6.7.16]
 fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
+    _pe_ensure_stdio(S);
+    _pe_ensure_setstd(S);
     var ch_idx = _pe_closeh_get();
     EB(S, 0x58);                                        # pop rax (fd)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (hObject)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
+    EB(S, 0x77); EB(S, 0x07);                           # ja +7 → .direct (the fd IS the handle)
+    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno
+    EB(S, 0xEB); EB(S, 0x16);                           # jmp +22 → .done
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (hObject)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CloseHandle]
     _pe_iat_fixup_add(S, GCP(S), ch_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -2965,9 +3074,22 @@ fn EGETFINFO_PE(S): i64 {
     EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
     return 0;
 }
+# fd 0 / 1 / 2 map to the std handles through `_pe_fd_to_handle_rcx`, the EFLUSHFB_PE shape: they
+# reached SetEndOfFile as the HANDLE values 0 / 1 / 2, so `sys_ftruncate(1, n)` of a redirected
+# stdout failed -1 while its two seeks reached the file (6.7.15). CHANGELOG [6.7.16]
 fn ESETEOF_PE(S): i64 {
     _pe_ensure_seteof(S);
-    _pe_srw_call_1arg(S, _pe_seteof_get());
+    _pe_ensure_stdio(S);
+    var gsh_idx = _pe_stdio_getstd_get();
+    var se_idx = _pe_seteof_get();
+    EB(S, 0x58);                                        # pop rax (fd)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
+    _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+SetEndOfFile]
+    _pe_iat_fixup_add(S, GCP(S), se_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
     return 0;
 }

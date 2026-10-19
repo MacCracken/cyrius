@@ -8229,6 +8229,17 @@ never fired and `file_close_r` was never `Err`.
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
 
+A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
+std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later
+`file_write(2, ..)` answers -9 and a second `sys_close(2)` -9 — nothing written to fd 2 can land
+in a file opened after the close. When another std slot holds the same handle (`run_capture` /
+`exec_capture` start a child with ONE pipe as its stdout and stderr), the handle stays open for
+that slot, as Linux keeps a file open while another descriptor refers to it: the child's
+`sys_close(2)` leaves its stdout writing. Before 6.7.16 the fd went to `CloseHandle` as the handle
+value 0 / 1 / 2: the close answered -9 (0 before 6.7.15) and the stream stayed open.
+`sys_ftruncate(1, n)` of a redirected stdout truncates its file since the same release (it
+answered -1).
+
 A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
 do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
 stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. ⚠ On
