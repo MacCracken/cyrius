@@ -25,10 +25,15 @@
 #     FAIL` Linux-band check would have read a real hit as GREEN. Every disassembly is now written
 #     to a file and grepped there.
 #   * redefinition_layout_and_enum_over_var.sh (6.7.16) — `n=$(grep -c "$3" "$T/e")`: the same
-#     zero-count grep -c, on the gate's first silent row (sp_same), so `-e` ended it with rc 1.
+#     zero-count grep -c, on the gate's first silent row (sp_same), so `-e` ended it with rc 1;
+#   * cli_temp_dir_no_leak.sh (6.7.16) — a cleanup `kill -KILL` of a git stand-in the CLI had
+#     already stopped (ESRCH, rc 1 after 107 of 166 rows), and behind it the same kill at axis 7's
+#     real-clone row, a killed FIFO holder's `wait` (143) and `k9k=$(ls <dir not made yet> | … |
+#     head -1)` (rc 2): each now `|| true`.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
-#  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md)
+#  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
+#  issues/archived/2026-10-18-cli-temp-dir-gate-stops-under-pipefail.md)
 #
 # WHAT IS PINNED
 #   axis 1  the checker tells a stop from a verdict: three fixture gates run the same way — a
@@ -57,7 +62,8 @@ tests/gates/toolchain/stdlib_modules_self_sufficient.sh
 tests/gates/platform/io_rdwr_agnos.sh
 tests/gates/toolchain/gates_read_only_the_tree.sh
 scripts/agnos-crossbuild-gate.sh
-tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
+tests/gates/frontend/redefinition_layout_and_enum_over_var.sh
+tests/gates/toolchain/cli_temp_dir_no_leak.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
