@@ -5,6 +5,7 @@ issues/2026-10-18-patra-fuzz-bytes-plants-corruption-at-a-heap-address.md), on p
 unit's two read-path fixes) and on the 1.16.5 release commit `e36f202` alike, built by the libfix lane tree's
 `build/cycc` with its `lib/`.
 **Placement:** 6.7.15 — repair 5 (libfix lane, wave 3, unit L5; placed at the wave-2 integration, 2026-10-18: a fold defect is always fixed; folded into the untagged patra 1.16.5) — never 7.x. A fold defect: the fix
+**Decision (user, 2026-10-18, at the 6.7.15 wave-2 integration):** `patra_result_get_bytes_len` answers -1 for such a cell (no valid length) and `patra_result_read_bytes` answers PATRA_ERR_PAGE, as a malformed chain's read does since 1.16.5.
 is a patra patch (fix the source repo, then re-vendor).
 **Severity:** Low — a malformed (crafted or corrupted) `.patra` file: one cell's value is answered as empty instead of
 as an error. No memory-safety impact (the length is clamped before any allocation). Not a security issue (no boundary

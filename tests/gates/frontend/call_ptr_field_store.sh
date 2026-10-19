@@ -327,6 +327,10 @@ refused F6 "expected '=', got '('" "for step \`gp().n\`, no assignment, keeps it
 # METHOD returning a struct by value, its `*T` field subscripted — one error, the no-frame refusal. The chain's walk
 # stopped before the `[`, and the subscript was then judged against a field never typed: a second, false "cannot
 # subscript field 'p': it is not a *T field". T6 is the filed repro verbatim; T13 the filed in-fn control (exit 5).
+# 6.7.15 (the wave-2 merge): T6-T15 call a real `impl O { fn mk }` method, so the refusal names it `O.mk` — the
+# vectors lane's source spelling for the top-level refusal (`_refuse_toplevel_struct_call` through `_fn_src_name`,
+# issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md); T4 / T5 / F4 call a FREE
+# fn named `O_mk`, which keeps its own name. T11's `&O_mk` names the method's own record, so it prints `O.mk` too.
 cat > "$T/T6.cyr" <<'EOF2'
 include "lib/syscalls.cyr"
 struct H { n; p: *i64; }
@@ -337,7 +341,7 @@ var o: O = O { 0 };
 o.mk().p[0] = 5;
 syscall(60, 0);
 EOF2
-refused T6 "7:7: 'O_mk' $NS" "the filed repro: top-level \`o.mk().p[0] = 5;\`, one error"
+refused T6 "7:7: 'O.mk' $NS" "the filed repro: top-level \`o.mk().p[0] = 5;\`, one error"
 TH='include "lib/syscalls.cyr"
 include "lib/fnptr.cyr"
 struct H { n; p: *i64; }
@@ -349,17 +353,17 @@ impl O { fn mk(self: *O): H { var h: H; h.n = 1; h.p = &buf; return h; }
 var o: O = O { 0 };'
 trow() { printf '%s\n%s\nsyscall(60, 0);\n' "$TH" "$2" > "$T/$1.cyr"; }
 trow T7 'o.mk().p[0] += 5;'
-refused T7 "'O_mk' $NS" "top-level \`o.mk().p[0] += 5;\`"
+refused T7 "'O.mk' $NS" "top-level \`o.mk().p[0] += 5;\`"
 trow T8 'o.mk().p[0];'
-refused T8 "'O_mk' $NS" "top-level \`o.mk().p[0];\`, no assignment"
+refused T8 "'O.mk' $NS" "top-level \`o.mk().p[0];\`, no assignment"
 trow T9 'var x = o.mk().p[0];'
-refused T9 "'O_mk' $NS" "top-level \`var x = o.mk().p[0];\`, a value"
+refused T9 "'O.mk' $NS" "top-level \`var x = o.mk().p[0];\`, a value"
 trow T10 'o.mk3().p[0] = 5;'
-refused T10 "'O_mk3' $NS" "a 24 B result (refused by its own call)"
+refused T10 "'O.mk3' $NS" "a 24 B result (refused by its own call)"
 trow T11 'var x = fncall1(&O_mk, &o).p[0];'
-refused T11 "'O_mk' $NS" "through \`fncall1(&O_mk, &o)\`"
+refused T11 "'O.mk' $NS" "through \`fncall1(&O_mk, &o)\`"
 trow T12 'o.mk().p[0][1] = 5;'
-refused T12 "'O_mk' $NS" "a second \`[..]\` stepped over with the chain"
+refused T12 "'O.mk' $NS" "a second \`[..]\` stepped over with the chain"
 cat > "$T/T13.cyr" <<'EOF2'
 include "lib/syscalls.cyr"
 struct H { n; p: *i64; }
@@ -381,7 +385,7 @@ for leg in $(legs); do
     e=$(grep '^error' "$T/T15.$leg.err" | tr '\n' '|')
     n=$(grep -c '^error' "$T/T15.$leg.err" || true)
     case $e in
-        *"'O_mk' $NS"*"undefined variable 'zz'"*)
+        *"'O.mk' $NS"*"undefined variable 'zz'"*)
             if [ "$n" -eq 2 ]; then ok "T15 the next statement still checked ($leg)"; else bad "T15 ($leg): $n errors (want 2)"; fi ;;
         *) bad "T15 the next statement still checked ($leg): $e" ;;
     esac

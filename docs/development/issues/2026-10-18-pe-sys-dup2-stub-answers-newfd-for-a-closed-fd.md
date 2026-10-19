@@ -3,6 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 libfix lane (branch l6715-libfix, unit L1) with the lane's
 `build/cycc_win_cross`, under wine and on real cass (Windows 11, `C:\cyrius-tests`).
 **Placement:** 6.7.15 — repair 5 (libfix lane, wave 3, unit L3; placed at the wave-2 integration, 2026-10-18: a lib/ defect is always fixed) — never 7.x.
+**Decision (user, 2026-10-18, at the 6.7.15 wave-2 integration):** -38 every call — the PE `sys_dup2` fails closed (ENOSYS), as `sys_fcntl` and cxvm's dup2 on a Windows host do; no redirect ever happened, so nothing that works today stops working.
 **Severity:** Low — a defect in lib/ (the stdlib answers differently per target for the same call, and a failed
 redirect reads as a success). A portable `if (sys_dup2(a, b) < 0)` never sees the failure on Windows. In-tree callers
 that redirect (lib/process.cyr, lib/regression.cyr, lib/pam.cyr) sit on POSIX-only paths or are already guarded
