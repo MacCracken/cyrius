@@ -70,7 +70,8 @@ file_close(fd2);
 # (lib/io.cyr:80): it used to fold O_RDWR (2) → AO_WRONLY (0x1), so a reopened O_RDWR
 # fd was write-only on agnos and every read failed (patra "cannot read header" under
 # sit/mirshi). The access-mode bits are 1:1 Linux↔agnos (0/1/2), so they pass through.
-# Runs everywhere; the agnos branch is separately mirshi-verified in io_rdwr_agnos.sh.
+# Runs everywhere; the agnos branch's build + source integrity are io_rdwr_agnos.sh's (running it
+# under an agnos supervisor is agnos's own CI's job since 6.7.16).
 # See 2026-07-08-io-file-open-agnos-rdwr-downgraded-to-wronly.md.
 test_group("O_RDWR read-after-write round-trip (agnos AO_RDWR flag-map, v6.4.27)");
 var rwp = _scratch("cyrius_io_rdwr_test", "");

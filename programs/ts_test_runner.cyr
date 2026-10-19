@@ -1,9 +1,10 @@
 # ts_test_runner.cyr — standalone TS frontend harness.
 #
 # Walks a directory of .ts / .tsx files, runs `cycc --parse-ts`
-# (or `--lex-ts`) on each, reports pass/fail. The CLI version of
-# `_ts_corpus_gate` from programs/checks/ts.cyr — useful for ad-hoc
-# walks without invoking the full check.sh suite.
+# (or `--lex-ts`) on each, reports pass/fail — an ad-hoc local walk,
+# never a gate (the check driver's corpus rows left in 6.7.16: cyrius
+# gates on no other project's files; the TypeScript arc's issue,
+# 2026-10-19-typescript-support-measured-against-one-projects-files.md).
 #
 # Pinned at v5.10.20 P(-1) sweep (option E from v5.7.37), landed
 # v5.11.11 once the secureyeoman corpus surfaced a real use case
@@ -196,7 +197,7 @@ fn main(): i64 {
         return 1;
     }
 
-    # Default prune set (mirrors check.cyr _ts_corpus_gate).
+    # Default prune set (node_modules, dist, build, .next, coverage).
     var prunes = vec_new();
     vec_push(prunes, str_from("node_modules"));
     vec_push(prunes, str_from("dist"));
