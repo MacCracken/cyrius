@@ -407,6 +407,18 @@ fn _regression_fork(): i64 {
     return sys_fork();
 }
 
+# In the CHILD: point `target` (0 / 1 / 2) at `fd` and drop `fd` — unless `fd` already IS
+# `target`. A parent that started with a std fd closed hands that number to the next open or
+# pipe (fd 1 closed: the capture file opens at 1; fd 0 closed: the stdin /dev/null opens at 0),
+# and `dup2(fd, fd)` is a no-op: closing `fd` then closed the redirect it had just made, so the
+# exec'd program started with that std fd closed and a capture read 0 bytes. lib/process.cyr's
+# `_proc_redirect` twin. CHANGELOG [6.7.15]
+fn _regression_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
 # Decimal `v` (>= 0) at `p`; returns the byte after it.
 fn _regression_put_dec(p, v): i64 {
     var tmp[24];
@@ -914,12 +926,10 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         sys_close(wfd);
-        sys_dup2(rfd, 0);
-        sys_close(rfd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(out_fd, 1);
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[24];   # N BYTES (CLAUDE.md buffer contract): cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
@@ -976,11 +986,11 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[24];   # N BYTES (CLAUDE.md buffer contract): cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
@@ -1028,12 +1038,11 @@ fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 
     }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        _regression_redirect(out_fd, 1);
         var dn_r = sys_open("/dev/null", 0, 0);
-        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        if (dn_r >= 0) { _regression_redirect(dn_r, 0); }
         var dn_e = sys_open("/dev/null", 1, 0);
-        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        if (dn_e >= 0) { _regression_redirect(dn_e, 2); }
         var argv[24];   # N BYTES (CLAUDE.md buffer contract): cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
@@ -1067,11 +1076,11 @@ fn regression_exec_run(bin_path, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[24];   # N BYTES (CLAUDE.md buffer contract): cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
@@ -1117,12 +1126,11 @@ fn regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, envp, sta
     if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        _regression_redirect(out_fd, 1);
         var dn_r = sys_open("/dev/null", 0, 0);
-        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        if (dn_r >= 0) { _regression_redirect(dn_r, 0); }
         var dn_e = sys_open("/dev/null", 1, 0);
-        if (dn_e >= 0) { sys_dup2(dn_e, 2); sys_close(dn_e); }
+        if (dn_e >= 0) { _regression_redirect(dn_e, 2); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): cmd + arg + NUL = 24 B
         store64(&argv,     bin_path);
         store64(&argv + 8, arg);
@@ -1169,9 +1177,9 @@ fn regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp
         _regression_child_guard(_rg_ppid);
         sys_dup2(out_fd, 1);
         sys_dup2(out_fd, 2);
-        sys_close(out_fd);
+        if (out_fd != 1 && out_fd != 2) { sys_close(out_fd); }   # it may BE one of them (`_regression_redirect`)
         var dn_r = sys_open("/dev/null", 0, 0);
-        if (dn_r >= 0) { sys_dup2(dn_r, 0); sys_close(dn_r); }
+        if (dn_r >= 0) { _regression_redirect(dn_r, 0); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): cmd + arg + NUL = 24 B
         store64(&argv,     bin_path);
         store64(&argv + 8, arg);
@@ -1259,11 +1267,11 @@ fn regression_ssh_skip_check(target): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[72];   # N BYTES (CLAUDE.md buffer contract): 8 ptrs + NUL = 72 B.
         store64(&argv,      "ssh");      # was argv[8]/envp[1] = 8 B each: the 8
         store64(&argv + 8,  "-o");       # arg writes overran by 56 B and envp[0]
@@ -1302,7 +1310,7 @@ fn regression_scp_to(target, local_path, remote_path, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn = sys_open("/dev/null", 1, 0);
-        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        if (dn >= 0) { _regression_redirect(dn, 1); }
         var argv[48];   # N BYTES (CLAUDE.md buffer contract): 5 ptrs = 40 B
         store64(&argv,      "scp");
         store64(&argv + 8,  "-q");
@@ -1334,11 +1342,11 @@ fn regression_ssh_remote_exit(target, command, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs = 32 B
         store64(&argv,      "ssh");
         store64(&argv + 8,  target);
@@ -1371,11 +1379,10 @@ fn regression_ssh_remote_exec_capture(target, command, out_path, envp): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
+        _regression_redirect(out_fd, 1);
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs = 32 B
         store64(&argv,      "ssh");
         store64(&argv + 8,  target);
@@ -1440,11 +1447,10 @@ fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp)
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
+        _regression_redirect(out_fd, 1);
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         sys_chdir(work_dir);
         var argv[48];   # N BYTES (CLAUDE.md buffer contract): cmd + 3 args + NUL = 40 B
         var ai = 0;

@@ -1,0 +1,241 @@
+# process_capture_closed_std_fds.tcyr — CROSS-HOST: a process started with std fd 0, 1 or 2
+# CLOSED still gets a child's real output from every capture verb, and the child still starts
+# with stdout and stderr open. lib/process.cyr (run_capture, exec_capture_status / exec_capture,
+# exec_env, exec_capture_str, exec_env_str) and lib/regression.cyr (every verb that redirects a
+# std fd; the ssh / scp ones take the same helper). lib/pam.cyr's stdin redirect has the same
+# guard and no row here: its one observable difference needs a real password. Runs on ecb
+# (macOS arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg;
+# Windows has no fork and agnos no execve or dup2, so there the file only reports its summary.
+#
+# ⛔ WHY (6.7.15). Each child redirect ran `sys_dup2(fd, N); sys_close(fd)`. A parent with a std
+# fd closed hands that number to its next pipe or open — fds 0 and 1 closed: the capture pipe
+# is (0, 1); fd 2 closed: the child's /dev/null opens at 2 — and `dup2(fd, fd)` is a no-op, so
+# the close then closed the redirect it had just made: the exec'd program started with stdout
+# (or stderr) closed and the capture read 0 bytes. The filed repros
+# (issues/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) are rows 1-3 below,
+# verbatim on Linux: they answered 0, 0 and 7 ("closed\n") where the control answers 3, 3, 5.
+#
+# THE MECHANISM. Each row runs in a FORKED copy of this test that closes the named fds first
+# and answers its result as its exit code, so the test's own stdout stays open. The extra rows
+# spawn this test ITSELF as the "fds" child (argument "fds", or CYRIUS_STDFD_PROBE in the
+# environment for the verbs that take no argument), which answers which of fds 0 / 1 / 2 it
+# started with closed: exit 64 + bits, and "S0b\n" on stdout for the capturing verbs ("fdq":
+# the exit only).
+# CHANGELOG [6.7.15]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/net.cyr"
+include "lib/process.cyr"
+include "lib/regression.cyr"
+
+alloc_init();
+args_init();
+
+# The "fds" child: bit 0 / 1 / 2 set when fd 0 / 1 / 2 is CLOSED (F_GETFD = 1 on Linux and
+# Darwin). Answers 64 + bits and, unless `quiet` ("fdq": for the verbs that leave stdout on the
+# test's own), writes "S0b\n" to fd 1 (a closed stdout drops it).
+fn _fds_child(quiet): i64 {
+    var b = 0;
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (sys_fcntl(0, 1, 0) < 0) { b = b | 1; }
+    if (sys_fcntl(1, 1, 0) < 0) { b = b | 2; }
+    if (sys_fcntl(2, 1, 0) < 0) { b = b | 4; }
+    var t[8];
+    store8(&t, 83);              # 'S'
+    store8(&t + 1, 48);
+    store8(&t + 2, 48 + b);
+    store8(&t + 3, 10);
+    if (quiet == 0) { sys_write(1, &t, 4); }
+    #endif
+    #endif
+    return 64 + b;
+}
+
+if (argc() > 1) {
+    if (streq(argv(1), "fds") == 1) { sys_exit(_fds_child(0)); }
+    if (streq(argv(1), "fdq") == 1) { sys_exit(_fds_child(1)); }
+}
+if (getenv("CYRIUS_STDFD_PROBE") != 0) { sys_exit(_fds_child(0)); }
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# The "fds" child's bits from a capture ("S0b\n"), or 99 when the capture is not that (0 bytes:
+# the child's stdout was closed).
+fn _cap_bits(buf, n): i64 {
+    if (n != 4) { return 99; }
+    if (load8(buf) != 83) { return 99; }
+    return load8(buf + 2) - 48;
+}
+
+# The capture's bits when the status verb also reported the child's own exit (64 + bits); 98
+# when the two disagree.
+fn _cap_status(buf, n, st): i64 {
+    var b = _cap_bits(buf, n);
+    if (b == 99) { return 99; }
+    if (load64(st) != 64 + b) { return 98; }
+    return b;
+}
+
+# Linux's /proc names the shell's own fds (the filed repro's spelling); Darwin has /dev/fd.
+fn _fd2_line(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return "if [ -e /dev/fd/2 ]; then echo open; else echo closed; fi";
+    #endif
+    return "if [ -e /proc/self/fd/2 ]; then echo open; else echo closed; fi";
+}
+
+fn _av(a0, a1): i64 {
+    var av = vec_new();
+    vec_push(av, a0);
+    if (a1 != 0) { vec_push(av, a1); }
+    return av;
+}
+
+fn _avs(a0, a1): i64 {
+    var av = vec_new();
+    vec_push(av, str_from(a0));
+    if (a1 != 0) { vec_push(av, str_from(a1)); }
+    return av;
+}
+
+fn _probe_envp(): i64 {
+    var e = alloc(16);
+    store64(e, "CYRIUS_STDFD_PROBE=1");
+    store64(e + 8, 0);
+    return e;
+}
+
+# Row `row`, run in the forked copy after its fds are closed; the answer is its exit code.
+fn _row(row): i64 {
+    var buf = alloc(64);
+    var st = alloc(16);
+    store64(st, 0 - 1);
+    var me = argv(0);
+    var envp = _probe_envp();
+    if (row == 1) {   # the filed repro 1, verbatim
+        var t, n = run_capture("/bin/echo", "hi", 0, buf, 64);
+        if (t == Err) { return 100; }
+        return n;
+    }
+    if (row == 2) {   # the filed repro 2, verbatim
+        return exec_capture(_av("/bin/echo", "hi"), buf, 64);
+    }
+    if (row == 3) {   # the filed repro 3 (verbatim on Linux)
+        var t3, n3 = run_capture("/bin/sh", "-c", _fd2_line(), buf, 64);
+        if (t3 == Err) { return 100; }
+        return n3;
+    }
+    if (row == 10) {
+        var t10, n10 = run_capture(me, "fds", 0, buf, 64);
+        return _cap_bits(buf, result_unwrap_or(t10, n10, 0));
+    }
+    if (row == 11) { return _cap_status(buf, exec_capture_status(_av(me, "fds"), buf, 64, st), st); }
+    if (row == 12) { return _cap_bits(buf, exec_capture_str(_avs(me, "fds"), buf, 64)); }
+    if (row == 13) { return exec_env(_av(me, "fdq"), vec_new()); }
+    if (row == 14) { return exec_env_str(_avs(me, "fdq"), vec_new()); }
+    if (row == 20) {
+        var n20 = regression_exec_with_arg_capture_status(me, "fds", buf, 64, 0, st);
+        return _cap_status(buf, n20, st);
+    }
+    if (row == 21) {
+        var n21 = regression_exec_with_arg_capture_both_status(me, "fds", buf, 64, 0, st);
+        return _cap_status(buf, n21, st);
+    }
+    if (row == 22) { return _cap_status(buf, regression_exec_capture_status(me, buf, 64, envp, st), st); }
+    if (row == 23) { return regression_exec_run(me, envp); }
+    if (row == 24) { return regression_run_with_timeout(me, 30000, envp); }
+    # Not with fd 0 closed: the /dev/null output then opens at 0 and the stdin redirect
+    # overwrites it before it is used — a different shape, filed from the 6.7.15 libfix3 lane.
+    if (row == 25) { return regression_pipe_to_bin_capture(me, "/dev/null", 0, envp); }
+    return 97;
+}
+
+# Fork a copy of this test, close the fds in `mask` (bit 0 / 1 / 2 = fd 0 / 1 / 2) there, run
+# `row`, and answer its exit code (-1 when no copy ran).
+fn _closed(mask, row): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        if ((mask & 1) != 0) { sys_close(0); }
+        if ((mask & 2) != 0) { sys_close(1); }
+        if ((mask & 4) != 0) { sys_close(2); }
+        sys_exit(_row(row));
+    }
+    var wt, wv = wait_pid(pid);
+    return result_unwrap_or(wt, wv, 0 - 1);
+}
+
+test_group("the filed repros: a capture with std fds closed answers the control's value");
+assert_eq(_closed(0, 1), 3, "run_capture echo, control: 3 bytes");
+assert_eq(_closed(3, 1), 3, "run_capture echo, fds 0 + 1 closed: 3 bytes (0 before 6.7.15)");
+assert_eq(_closed(2, 1), 3, "run_capture echo, fd 1 closed: 3 bytes");
+assert_eq(_closed(0, 2), 3, "exec_capture echo, control: 3 bytes");
+assert_eq(_closed(3, 2), 3, "exec_capture echo, fds 0 + 1 closed: 3 bytes (0 before 6.7.15)");
+assert_eq(_closed(0, 3), 5, "run_capture sh -c, control: \"open\\n\"");
+assert_eq(_closed(4, 3), 5, "run_capture sh -c, fd 2 closed: \"open\\n\" (\"closed\\n\" before 6.7.15)");
+
+test_group("lib/process.cyr: every redirect site, the child's own fd state");
+# fds 0 + 1 closed: the child keeps the caller's closed stdin (bit 0) — no verb here
+# redirects stdin — and gets its stdout and stderr.
+assert_eq(_closed(0, 10), 0, "run_capture, control");
+assert_eq(_closed(3, 10), 1, "run_capture, fds 0 + 1 closed: stdout open");
+assert_eq(_closed(4, 10), 0, "run_capture, fd 2 closed: stderr open (/dev/null)");
+assert_eq(_closed(0, 11), 0, "exec_capture_status, control");
+assert_eq(_closed(3, 11), 1, "exec_capture_status, fds 0 + 1 closed: stdout open");
+assert_eq(_closed(4, 11), 0, "exec_capture_status, fd 2 closed: stderr open");
+assert_eq(_closed(0, 12), 0, "exec_capture_str, control");
+assert_eq(_closed(3, 12), 1, "exec_capture_str, fds 0 + 1 closed: stdout open");
+assert_eq(_closed(4, 12), 0, "exec_capture_str, fd 2 closed: stderr open");
+assert_eq(_closed(0, 13), 64, "exec_env, control");
+assert_eq(_closed(4, 13), 64, "exec_env, fd 2 closed: stderr open (/dev/null)");
+assert_eq(_closed(0, 14), 64, "exec_env_str, control");
+assert_eq(_closed(4, 14), 64, "exec_env_str, fd 2 closed: stderr open");
+
+test_group("lib/regression.cyr: every std fd open in the child, whichever the caller closed");
+# The capturing verbs answer the child's bits (0: all open), the others its exit (64 + bits).
+assert_eq(_closed(0, 20), 0, "regression_exec_with_arg_capture_status, control");
+assert_eq(_closed(1, 20), 0, "regression_exec_with_arg_capture_status, fd 0 closed: stdin open");
+assert_eq(_closed(2, 20), 0, "regression_exec_with_arg_capture_status, fd 1 closed: stdout open");
+assert_eq(_closed(4, 20), 0, "regression_exec_with_arg_capture_status, fd 2 closed: stderr open");
+assert_eq(_closed(0, 21), 0, "regression_exec_with_arg_capture_both_status, control");
+assert_eq(_closed(1, 21), 0, "regression_exec_with_arg_capture_both_status, fd 0 closed: stdin open");
+assert_eq(_closed(2, 21), 0, "regression_exec_with_arg_capture_both_status, fd 1 closed: stdout open");
+assert_eq(_closed(4, 21), 0, "regression_exec_with_arg_capture_both_status, fd 2 closed: stderr open");
+assert_eq(_closed(0, 22), 0, "regression_exec_capture_status, control");
+assert_eq(_closed(1, 22), 0, "regression_exec_capture_status, fd 0 closed: stdin open");
+assert_eq(_closed(2, 22), 0, "regression_exec_capture_status, fd 1 closed: stdout open");
+assert_eq(_closed(4, 22), 0, "regression_exec_capture_status, fd 2 closed: stderr open");
+assert_eq(_closed(0, 23), 64, "regression_exec_run, control");
+assert_eq(_closed(1, 23), 64, "regression_exec_run, fd 0 closed: stdin open");
+assert_eq(_closed(2, 23), 64, "regression_exec_run, fd 1 closed: stdout open");
+assert_eq(_closed(4, 23), 64, "regression_exec_run, fd 2 closed: stderr open");
+assert_eq(_closed(0, 24), 64, "regression_run_with_timeout, control");
+assert_eq(_closed(1, 24), 64, "regression_run_with_timeout, fd 0 closed: stdin open");
+assert_eq(_closed(2, 24), 64, "regression_run_with_timeout, fd 1 closed: stdout open");
+assert_eq(_closed(4, 24), 64, "regression_run_with_timeout, fd 2 closed: stderr open");
+assert_eq(_closed(0, 25), 64, "regression_pipe_to_bin_capture, control");
+assert_eq(_closed(2, 25), 64, "regression_pipe_to_bin_capture, fd 1 closed: stdout open");
+assert_eq(_closed(4, 25), 64, "regression_pipe_to_bin_capture, fd 2 closed: stderr open");
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: no fork, no dup2 (process_win.cyr redirects through CreateProcessW)");
+assert_eq(sys_fork(), 0 - 1, "sys_fork is the documented -1");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: no execve or dup2 (process_agnos.cyr)");
+assert_eq(1, 1, "summary only");
+#endif
+
+var r = assert_summary();
