@@ -1,7 +1,7 @@
 # A `ret2(..);` right after a `case N:` / `default:` label is not counted as a two-value exit: `var a, b, c = g2(1);` binds a stale register — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R1) while landing
-issues/2026-10-17-ret2-only-exits-in-a-loop-ending-body-not-counted.md (a body ending in an infinite loop whose
+issues/archived/2026-10-17-ret2-only-exits-in-a-loop-ending-body-not-counted.md (a body ending in an infinite loop whose
 exits are `ret2(..);` statements). That fix counts a `ret2(..);` statement inside the loop, a nested while and a
 switch's case BLOCK (`case 1: { ret2(1, 2); }`); a `ret2(..);` written directly after the label is outside its filed
 surface and was filed rather than widened. Measured with the slot-open compiler (4862a462e's build/cycc) and the

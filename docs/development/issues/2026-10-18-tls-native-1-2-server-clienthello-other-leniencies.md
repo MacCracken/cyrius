@@ -7,7 +7,7 @@ already carries 6.7.15's D40 fix (the 1.2 server's extension block must fill the
 (`_tn_12_parse_client_hello`, lib/tls_native_hs12.cyr). Every handshake still has to pass the ServerKeyExchange
 signature and both Finished messages; no attacker crosses a boundary (the peer could send the same choices well
 formed), so no ledger id. Found in passing while implementing
-issues/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, whose filed surface (and the
+issues/archived/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, whose filed surface (and the
 user's D40) is the extension block filling the message only.
 **Needs a decision:** yes, as D40 did — refusing these changes what the 1.2 server accepts from a peer.
 

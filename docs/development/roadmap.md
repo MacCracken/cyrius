@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.15** (2026-10-17) — Break 2 repair 4, generics · the frontend · infra (the heavier release): 137 issues closed in nine lanes over three waves, the IR arena (a heap-layout change), the fold patra 1.16.4 · cycc **2,433,512 B** · `cycc-native-aarch64` **2,351,456 B** · **642** `.tcyr`, **335** in `crossos/` · **106** `lib/*.cyr` · **550** shell gates under `tests/gates/<bucket>/` · api-surface **5,891** · **122** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0036**
+**Current head: v6.7.15** (2026-10-19) — Break 2 repair 5, what 6.7.14 filed: 119 issues closed in seven lanes over four waves (wave 0 on main: the check driver's SIGPIPE, the `parse_fn.cyr` split), CYRIUS-2026-0036 fixed, the fold patra 1.16.5 · cycc **2,542,240 B** · `cycc-native-aarch64` **2,755,520 B** · **663** `.tcyr`, **353** in `crossos/` · **106** `lib/*.cyr` · **565** shell gates under `tests/gates/<bucket>/` · api-surface **5,891** · **111** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0037**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -50,9 +50,8 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.14 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) |
-| 6.7.15 | Break 2, repair 5 (added 2026-10-16): **what 6.7.14 filed** — 111 in seven lanes over four waves (wave 0 on main: the check driver's SIGPIPE, the `parse_fn.cyr` split), 70 decisions answered at its open (the 6.7.14 changes beyond the decisions' text closed by them) |
-| 6.7.16 | Break 2, repair 6 (added 2026-10-18): **what 6.7.15 files**, re-balanced at its open (51 placed at the wave-1 integration; waves 2–3 to come) and the ProtectedRoots measurement |
+| 6.7.0 – 6.7.15 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) |
+| 6.7.16 | Break 2, repair 6 (added 2026-10-18): **what 6.7.15 filed** (101 placed), re-balanced at its open; the 6.7.15 changes beyond the decisions' text asked there, and the ProtectedRoots measurement |
 | 6.7.17 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
 | 6.7.18 → | what the 6.7.17 reviews produce — the number of releases is open, set at 6.7.17's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
@@ -87,80 +86,21 @@ the handle line and size-independent struct copies, and P5-B execution coverage 
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09; sizes and the full lane maps: `~/.cache/c6/plan678_712.json`). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
 
-### 6.7.15 — repair 5 (added at the 6.7.13 integration, 2026-10-16)
-
-The user (2026-10-16): "we can add another release of repairs as 6.7.15, make 6.7.14 heavier as I'm sure we will have
-another bunch of bugs from .14 that will make .15 balance out considering how many we have hit during repairs." 6.7.14
-keeps every issue placed there (the heavier release); 6.7.15 takes what 6.7.14 files, and is re-balanced at its open.
-
-**Filed by 6.7.14** (112 placed here at its integration, 2026-10-17 — from the nine lanes, their reviews and the
-release-docs pass). Two Highs, both pre-existing: a nested type argument closed by `>>` then `,` drops the next argument
-(generics, G1); a frame temporary taken while an `#inline` fn's arguments are evaluated lies past the frame — the inline
-path's SFLC half (vectors, V1).
-
-**Re-triaged at the open** (2026-10-17, eight read-only agents on the slot-open compiler 04b1013e;
-`~/.cache/c6/6715_triage.json`): 112 issues — 109 open, 3 partial; S / M / L = 67 / 42 / 3; no heap-layout change, so
-no two-step bootstrap. Re-placed at the open: [the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
-→ 6.7.16 (the user cannot take the two cass desktop steps during 6.7.15).
-
-**Content** (111, by lane; each issue's **Placement** line names its wave and unit):
-- **Wave 0, on main before the lanes fork** (2): [the check driver dies of SIGPIPE](issues/2026-10-17-regression-pipe-to-bin-dies-of-sigpipe.md)
-  (a 141 under parallel load voids every later driver row) · [`parse_fn.cyr` near the fmt / lint read cap](issues/2026-10-17-parse-fn-source-near-cyrfmt-cyrlint-read-cap.md)
-  (D25 A: split, byte-identical, plus a headroom row).
-- **Generics** (23, wave 1) — the `>>` High first; type-argument lists (a non-generic type given arguments, the dyn
-  cascade, the explicit all-i64 instance); pointer fields and locals of T; the unread signature positions (multi-value
-  elements, trait members — `Vec` and `u128` returns, the impl's return checked against its member — `*fn` types);
-  `Vec<..>` element bounds; pointer-parameter binding (a scalar pointee, wrapped / dereferenced / captured arguments, the
-  token scans); the bound contract on a carrier field; the 64-deep forward judgement; method type arguments in the
-  lookaheads; diagnostics once per generic (warnings, direct error writers, mangled method names); a `: T` return into
-  a struct local (D13: a handle).
-- **Frontend** (18, wave 1) — constant folding (a literal then a term operator), the const evaluator's latches and
-  stand-downs, declaration-zone globals (a named constant's redeclaration order and compare, struct literals baked in
-  the zone, the kernel float constant), late and inner declarations, struct-literal grammar (commas required, D1), the
-  `var` annotation and `u128` default diagnostics, the pure check through an explicit instance, two gate fixes.
-- **Infra / tools** (11, wave 1) — IR=3's const fold over a dead store and an IR3 + DCE corpus gate; cybs (a last fn's
-  local at top level, the include-once buffers) and cycc's 128-character include-once path; x86 asm operands (`lgdt`,
-  `lidt`, `invlpg`, `mov crN`, `ltr`, `int`) and the aarch64 barrier options (D37); the quadratic DCE seed pass; the
-  kill handler's bounded wait, the scratch resolve's temp record, the lsp gate under pipefail.
-- **Platform** (13, wave 1) — three gates under pipefail; the TLS hello's extension-block length (D40); PE close and
-  the std-fd seek; the native-region warning (an included per-arch constant, D39; a fn-local const); cxvm's
-  renumbering and the cx path rows; the Windows CTL's other-length hashes; the TypeScript front end on every compiler
-  (D38); the patra 1.16.5 suite patch (⛔ the user tags it before the refold).
-- **Structs** (17, wave 2) — the forward call of a struct declared below (parameter AND return, one bite); `*pp`
-  copies and wording, a generic `**Box<T>` parameter; inline `Str` from / into `*Str`, an if-expression, a global
-  declared below (D14 – D17); a method on a `Str` field; the `u128` dereference (D20); `&(x)`, `return &n` of a slot
-  (D18), a parenthesised destination (D19); call-result field statements. Plus beyond-items 17 (the advice) and 19
-  (`(s).a;`).
-- **Vectors** (14, wave 2) — the inline-replay High and the panic latch; the `**S` pin intern; vector calls into a
-  non-vector or untyped destination (by name, chained, wrapped, scalar global, top level — D26 – D29); `*(&p)` keeps p's
-  type (D21); the generic `**T` / `***T` argument shapes (D22 – D24); two refusal namings.
-- **Receives** (12, wave 3) — known `&f` callees' bool and narrow-pointer results (D30, D31); struct results into `*T`
-  and untyped variables (D32, D33); top-level untyped method / operator / known-callee results (D34, D35); tuple-parameter
-  literal expressions (D36); `ret2` in a loop; the wrapped tuple-field double report; a wrapped `Str` call global; the
-  refused-annotation cascade; the string-literal exemption (with beyond-item 18); the mixed-pair warning on impl methods.
-
-**Lanes** — wave 0 on main; wave 1 generics · frontend · infra / tools · platform; wave 2 structs · vectors; wave 3
-receives (at most two parser lanes at a time).
-**Decisions at the open** (the user, 2026-10-18 — 70 asked once: all as recommended, D13 (a) and D38 asked on their own
-and answered as recommended). [The 6.7.14 changes beyond the decisions' text](issues/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md)
-are closed by D41 – D70: 27 items kept, 6.7.14's D53 applied as worded (item 18), `(s).a;` refused (item 19). Each
-decision is on its issue's **Decision** line; the questions and options: `~/.cache/c6/6715_decisions.md`.
-**For the user** — ⛔ tag patra 1.16.5 when its suite patch is ready (before the refold).
-
 ### 6.7.16 — repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18)
 
 The user (2026-10-18), asked where the issues 6.7.15 files go: a new repair release, 6.7.16 — the audit and the
 refactor review move to 6.7.17, keeping Break 2's goal (the queue at 0 before the audit). Re-balanced at its open
 against everything placed here; its decision questions (the language questions among the filed issues) asked there.
 
-**Placed so far:** the 51 issues filed by 6.7.15's wave 1 and their reviews (placed at its integration — generics 19,
-frontend 15, platform 13, infra / tools 4; Medium 5) the 26 of wave 2 (structs 19, vectors 7; Medium 11) and the 20 of wave 3 (receives 16, libfix3 4 — among
-them two fold defects, patra and sigil, whose fold patches open 6.7.16) —
-[issues/README.md](issues/README.md) § *Open queue* lists them;
+**Placed:** the 99 issues 6.7.15 filed and left open (wave 1 51, wave 2 26, wave 3 20, its libfix4 lane 3, placed at
+each integration — less the forward-call pointer-return twin, resolved by 6.7.15's ST-1; [issues/README.md](issues/README.md)
+§ *Open queue* lists them; among them the fold patches it opens with — patra 1.16.6, sigil),
+[the 6.7.15 changes beyond the decisions' text](issues/2026-10-19-6715-behaviour-changes-beyond-the-decisions-text.md)
+(32 items, keep or restore each at its open) and
 [the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
-(the user's two steps at cass's desktop). What waves 2 and 3 file joins it at their integration.
+(the user's two steps at cass's desktop).
 
-### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.17 at the 6.7.15 wave-1 integration, 2026-10-18)
+### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what

@@ -266,7 +266,7 @@
 #      R16a-R16c the filed repros VERBATIM: exit 4 (take(**pp), green since 6.7.13's VC-11), 4 (`var t: P = **pp;`:
 #      139 / 139 / cx 0 / PE 5 through 6.7.13), 11 (a 3-byte `**ppc` byte-exact: 10 through 6.7.13); the refusals
 #      (another struct, `**pp OP= v`) are struct_copy_type_checked.sh's R27 / R28 / C5 / C6.
-#      6.7.15 (issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md): `*pp` as the
+#      6.7.15 (issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md): `*pp` as the
 #      WHOLE source of a copy is the `*S` it reads, copied through (the file's w_* rows); R16d / R16e that
 #      filing's two repros VERBATIM: print 444 (`G = *pp; *q = *pp;` — 004 through 6.7.14 / the 6.7.15 slot open: the
 #      pointer word in the first field) and 4444 (`l2 = *pp;`, `var t3: P = (*pp);` — 4094: l2.y stale, t3 a handle
@@ -1087,7 +1087,7 @@ for rw in a:1:4 b:2:4 c:3:11; do
     done
 done
 
-# The two repros of issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md,
+# The two repros of issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md,
 # verbatim (6.7.15): their printed digits.
 cat > "$D/repro_pw1.cyr" <<'EOF'
 include "lib/syscalls.cyr"

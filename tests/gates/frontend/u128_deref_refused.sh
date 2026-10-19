@@ -9,7 +9,7 @@
 # of a `**u128` — is now "cannot dereference 'pu': a u128 element does not fit one register - use load64/store64 on
 # its two halves", at the `*`, read or stored (`_deref_u128`, src/frontend/parse_expr.cyr). An untyped pointer
 # (`var p = &b;`, silent_values_checked.sh U34) and a `**u128`'s `*pp` (a pointer) are unchanged.
-# Filed: docs/development/issues/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md
+# Filed: docs/development/issues/archived/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md
 #
 #   F  the filing's programs, verbatim: F1 its four `*pa` lines (a declaration, `==`, an if-expression branch, a
 #      branch into a u128) — exactly four errors, one per line, at the `*`; F2 its store `*pa = b;` — one error

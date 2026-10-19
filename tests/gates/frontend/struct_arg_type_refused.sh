@@ -198,7 +198,7 @@
 #   `_sarg_ident_err` ignoring the call's fn          -> RED 5: R9 R23 R24 R24b R28b
 #   `_expr_struct_sid` not recording it (`_ess_fi`)   -> RED 3: R23 R24 R24b
 #
-# 6.7.15 (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) — A CALL ABOVE A FN WHOSE
+# 6.7.15 (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) — A CALL ABOVE A FN WHOSE
 # PARAMETER NAMES A STRUCT DECLARED BELOW THAT FN reads the signature the definition reads (`_psig_reread`,
 # src/frontend/parse_fn_def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
 # pass 't' ... pass &t" before); FB2, another struct into such a `x: R2`, is refused as it is with R2 declared above
@@ -209,7 +209,7 @@
 # by the fixed compiler; measured 2026-10-18):
 #   `_psig_reread` returning at once                   -> RED 2: FB1 (refused) FB2 (compiled)
 #   `_psig_one` without its last-definition test       -> RED 1: FB3 (refused: a different struct type)
-# 6.7.15 (issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md) — a DESTINATION's
+# 6.7.15 (issues/archived/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md) — a DESTINATION's
 # refusal names a method result as the source spells it too: the struct assignment (`w = s.dup()`), the small-struct
 # return, a field, a `*T` / scalar declaration (D14 / D24) and assignment (D27), a struct literal's element and the
 # top-level refusal print `Pt.dup` / `Pt.t1` / `Pt.mq` (they printed `Pt_dup` ..). DN1 the filed repro verbatim (its
@@ -222,7 +222,7 @@
 # non-pointer to typed pointer" — it went on to the 8-byte store; it now ends its statement at the refusal.
 #   the commit before it (c9e95759d)                   -> RED 2: DNW1 DNW2 (the warning beside the refusal), x4
 #
-# 6.7.15 (issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md): D15 / D18, a dereference taken by
+# 6.7.15 (issues/archived/2026-10-17-vector-dereference-refusal-names-operand-last-name.md): D15 / D18, a dereference taken by
 # the address-passed arm (`_dro_check`), name the argument as written — '*(&p)', '**ppp' (they named 'p', 'ppp'); the
 # multi-target rows are simd_pointer_param.sh OKN.
 #
@@ -1010,7 +1010,7 @@ syscall(60, c_rd());
 '
 
 echo "=== 6.7.15: a DESTINATION's refusal names a method result as the source spells it (x86_64, aarch64, cx, PE) ==="
-# issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md: the struct assignment, the
+# issues/archived/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md: the struct assignment, the
 # small-struct return, a field destination, a `*T` / scalar declaration or assignment (D24 / D27), a struct literal's
 # element and the top-level refusal printed the struct-call record's fn — `Pt_dup` — where 6.7.14's argument and callee
 # refusals print `Pt.dup`. The frontend's text: each row is compiled by the host compiler, the aarch64 and cx compilers

@@ -8,7 +8,7 @@ too (unit P4).
 **Severity:** Low — the .cyx ABI is x86_64 Linux's, and one guest program reads a different F_GETFL on different
 hosts for the same open. No in-tree cx program tests the bit; no boundary is crossed (no ledger id).
 **Found:** the 6.7.15 platform lane's review of the host-dispatch fix
-(issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md). docs/platform-status.md now says
+(issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md). docs/platform-status.md now says
 "off x86_64 Linux and Windows `F_GETFL` reports only the nine mapped bits" (the review fix 0771db778); this issue is
 whether that is the contract or a gap.
 

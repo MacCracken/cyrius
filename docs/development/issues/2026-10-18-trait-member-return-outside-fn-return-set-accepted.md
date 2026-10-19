@@ -1,7 +1,7 @@
 # A trait member's return type a fn's return refuses (`u8`..`u64`, `f32`, an enum, `*fn(..)`) still compiles at the trait — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G3), implementing D9 (a)
-(issues/2026-10-16-trait-member-vec-return-accepted.md: a member's `: Vec<..>` return is refused at the trait with a
+(issues/archived/2026-10-16-trait-member-vec-return-accepted.md: a member's `: Vec<..>` return is refused at the trait with a
 fn's words) and D3 (a) (`: u128`). Those two decisions name `Vec` and `u128`; the rest of a fn's return set was not
 asked, so it is filed, not extended. Pre-existing since 6.7.8 parsed a member's signature.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

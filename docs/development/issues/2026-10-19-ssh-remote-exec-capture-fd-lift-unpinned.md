@@ -5,7 +5,7 @@ x86_64 Linux.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix4 review; placed at its integration, 2026-10-19 — the user: what 6.7.15 files goes to repair 6; a lib/ defect: with 6.7.16's first items) — never 7.x.
 **Severity:** Low — a coverage gap, not a live defect: the lift is in the code today; nothing stops it being lost.
 **Found:** by the 6.7.15 libfix4 review of the fix for
-`issues/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md`.
+`issues/archived/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md`.
 
 ## Reproduction
 

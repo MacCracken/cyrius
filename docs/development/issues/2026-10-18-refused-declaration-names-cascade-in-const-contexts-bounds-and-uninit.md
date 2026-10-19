@@ -6,7 +6,7 @@ where noted.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — every shape is refused; the first error is the right one. One or two invented errors follow.
 **Kind:** bug (diagnostic cascade).
-**Discovered:** unit F6, fixing issues/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md. That issue's
+**Discovered:** unit F6, fixing issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md. That issue's
 four repros (a struct literal, `E.B`, a bare member, a `*Q` parameter and its `.y`) are now one error each:
 `_dl_names` (src/frontend/parse_fn_def.cyr) enters a refused declaration's struct / union / enum names and enum
 members as reported, and the undefined-variable, unknown-type (`_tn_refuse`), stray-literal and `sid == 0`

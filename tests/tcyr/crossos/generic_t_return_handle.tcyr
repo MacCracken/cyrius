@@ -9,7 +9,7 @@
 # 'a'", and with no field use the annotation was dropped in silence. `var b: P3 = wid(alloc(24));` with
 # `fn wid(x): i64` has been a handle since 6.7.10 (the guide's handle line). Now the generic form is the same handle:
 # `a` holds the word, its fields read and write the record it points at
-# (issues/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md). A call whose T binds a
+# (issues/archived/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md). A call whose T binds a
 # struct (`gid(p3)`, `gid<P3>(p3)`) still receives the struct by value: a copy.
 #
 # CROSS-HOST: tests/gates/frontend/generic_t_return_decl.sh runs this file on x86_64 (plain, CYRIUS_IR=3), aarch64

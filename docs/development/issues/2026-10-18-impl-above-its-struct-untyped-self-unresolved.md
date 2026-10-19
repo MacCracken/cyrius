@@ -1,7 +1,7 @@
 # An `impl T { fn m(self) .. }` written ABOVE `struct T` leaves the untyped `self` with no struct: `self.b` is refused "no struct type in scope for 'self'" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S1), probing the forward-call signature
-re-read (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) with a method. Not that
+re-read (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) with a method. Not that
 item's: the refusal does not depend on where the CALL is (the impl below `main` is refused too), and the unit's fix
 does not change it (identical on 8b4d44602's build/cycc and on the lane tree after S1).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

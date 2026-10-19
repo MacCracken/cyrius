@@ -11,7 +11,7 @@
 # f32 row: `: f32` is not a fn return type. In this directory so the release gate runs it on ecb / ach / cass / pi.
 # 6.7.15 (the user's decision D30 (a), 2026-10-18): a `: bool` callee's result is a boolean value, as `isb()`'s is —
 # rows B; `var b: bool = fncall0(&isb);` was refused "not a bool" (the refusal side is
-# tests/gates/frontend/bool_checked.sh K; issues/2026-10-17-known-callee-bool-result-not-a-bool.md).
+# tests/gates/frontend/bool_checked.sh K; issues/archived/2026-10-17-known-callee-bool-result-not-a-bool.md).
 # 6.7.15 (the user's decision D31 (a), 2026-10-18): a narrow `*T` callee's element kind is the value's own, as
 # `bp()`'s is — rows E: `*fncall0(&bp)` with `bp: *u8` read the whole word (the filed repro exited 80; 81 is right)
 # and `fncall0(&bp)[1]` was "cannot subscript ... it does not return a *T" (the refusal side is

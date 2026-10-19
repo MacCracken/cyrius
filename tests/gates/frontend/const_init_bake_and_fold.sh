@@ -57,7 +57,7 @@
 #   T9-T12 6.7.15: tests/tcyr/crossos/zone_float_constant_initializer.tcyr on the same four legs — a float global's
 #          constant f64 expression (`= CF`, `= (1.5)`, `= 1.5 + 1.0`, an f32's rounding) is baked as its literal is,
 #          its bits IEEE's on every target; an earlier read sees it (was 0), an earlier call's write is kept
-#          (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
+#          (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
 #          kmode_enum_initializer_baked.sh RC / KC)
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
@@ -79,7 +79,7 @@
 #   F22-F45 6.7.15: a literal left operand, then `+ - & | ^` and a literal followed by `*%`, `*|`, `*?` or `>>>`
 #          (`9 + 3 *% 4`, `57 & 48 >>> 2`, ...) compiles, by value on every leg — through 6.7.14 each was refused
 #          "expected ';'": the arm folded `9 + 3` and stopped at the term operator `_cf_excl` did not list
-#          (issues/2026-10-16-constant-left-literal-then-term-operator-refused.md); F42 `2 - 3 *% 4` (a result under
+#          (issues/archived/2026-10-16-constant-left-literal-then-term-operator-refused.md); F42 `2 - 3 *% 4` (a result under
 #          zero, compiled before) is the control, F43-F45 the filed repros
 #
 # MUTATION (item 2, measured): _cf_fac_at reading a literal only (its name arms gone) -> 42 red: F1-F14 on x86_64,

@@ -7,7 +7,7 @@ the lane's build/cycc), identical on the slot-open compiler (b2e1f4c48's build/c
 the register the name STARTS with. A bug, not a vulnerability.
 **Kind:** language (refusing a spelling that compiles today is 6.7.14's D16 class — "an operand the instruction cannot
 take stops compiling, naming it" — but it is a newly refused shape, so the call is the user's).
-**Discovered:** unit I3 (issues/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md), which gave
+**Discovered:** unit I3 (issues/archived/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md), which gave
 lgdt / lidt / invlpg / mov crN a whole-name register reader (`_asm_x86_gpr`) over the same table; param_load was
 outside that filing's surface.
 

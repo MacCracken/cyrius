@@ -12,7 +12,7 @@
 # is (0, 1); fd 2 closed: the child's /dev/null opens at 2 — and `dup2(fd, fd)` is a no-op, so
 # the close then closed the redirect it had just made: the exec'd program started with stdout
 # (or stderr) closed and the capture read 0 bytes. The filed repros
-# (issues/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) are rows 1-3 below,
+# (issues/archived/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) are rows 1-3 below,
 # verbatim on Linux: they answered 0, 0 and 7 ("closed\n") where the control answers 3, 3, 5.
 #
 # THE MECHANISM. Each row runs in a FORKED copy of this test that closes the named fds first

@@ -5,7 +5,7 @@
 **Severity:** Low — documentation: a reader on 6.7.14 is told `sys_close(-999)` answers -9 there, which it does not
 (6.7.14 still answered CloseHandle's BOOL).
 **Found:** the review of the lane's 53ab05eef (a PE close answers 0 or a negative errno,
-issues/2026-10-16-pe-close-returns-closehandle-bool.md), which added the 6.7.15 answer to an existing per-version
+issues/archived/2026-10-16-pe-close-returns-closehandle-bool.md), which added the 6.7.15 answer to an existing per-version
 table.
 
 ## Reproduction

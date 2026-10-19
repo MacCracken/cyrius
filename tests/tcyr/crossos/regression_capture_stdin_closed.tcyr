@@ -10,7 +10,7 @@
 # the caller closed stdin — and the child redirected stdin FIRST: /dev/null (or the pipe's read
 # end) was dup2'd over fd 0, which WAS the output file, and the output redirect then pointed
 # stdout at /dev/null (or the pipe). The capture came back empty. The filed repros
-# (issues/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md) are the first rows,
+# (issues/archived/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md) are the first rows,
 # verbatim: they answered 0 where the control answers 3. The child now lifts the output fd above
 # 2 before any redirect (`_regression_lift_fd`).
 #

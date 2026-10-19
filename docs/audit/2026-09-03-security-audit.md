@@ -2242,7 +2242,7 @@ allowed → D9f red; tag printed raw → D9f red.
 
 **Verified.** `tests/gates/toolchain/cyriusly_version_operand_refused.sh` (new, registered in check.sh): both peers against a throwaway store holding an active and an inactive version, with a fake `curl` on PATH — six uninstall operands (five path-shaped and `6..6`, which only the `..` ban refuses), three shell-shaped install operands, `use ../versions` and `use 6..6` (local and `--global`), controls (a real uninstall, an install on the TAG's installer, a switch; the active version still guarded), a static check that install / uninstall / cmdtools run no shell line, cmdtools injection rows, and a static PE build of the file. The 6.6.19 tree is RED (the store deleted, the injected command ran, install.sh fetched from `main`); mutants of the operand rule and of the `main` URL are each RED. The aarch64 build smoked under qemu.
 
-**Not covered.** The compiled `cyriusly cmdtools` still finds the shell twin relative to the CURRENT directory, so inside a repository that ships `scripts/cyriusly` it runs that repository's script. The x86_64 store ships no copy of the twin, so "resolve it from the install" has nothing to resolve — filed as `docs/development/issues/2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md` (needs a packaging decision, a CVE id and a slot). → Fixed at 6.7.3 as **the cyriusly cmdtools CWD-script bug** (below).
+**Not covered.** The compiled `cyriusly cmdtools` still finds the shell twin relative to the CURRENT directory, so inside a repository that ships `scripts/cyriusly` it runs that repository's script. The x86_64 store ships no copy of the twin, so "resolve it from the install" has nothing to resolve — filed as `docs/development/issues/archived/2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md` (needs a packaging decision, a CVE id and a slot). → Fixed at 6.7.3 as **the cyriusly cmdtools CWD-script bug** (below).
 
 ## Withdrawn 2026-10-08 (was CVE-95; a bug, not a security vulnerability) — manifest strings reached the terminal raw (escape-sequence injection from any manifest in the dep graph), and `[package] name` injected a live line into a distlib bundle
 
@@ -2388,7 +2388,7 @@ allowed → D9f red; tag printed raw → D9f red.
 
 ## Withdrawn 2026-10-08 (was CVE-103; a bug, not a security vulnerability) — the compiled `cyriusly cmdtools` ran whatever `scripts/cyriusly` the CURRENT directory held
 
-*Appended 2026-10-07 (cyrius 6.7.3, repair lane `cyriusly`). Found by: the 6.6.20 lane c-pin review (round 1, the RS-04 sibling), recorded as the cyriusly operand bugs' "Not covered" remainder and filed as `docs/development/issues/2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md`. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.7.3 spends the cyriusly cmdtools CWD-script bug.*
+*Appended 2026-10-07 (cyrius 6.7.3, repair lane `cyriusly`). Found by: the 6.6.20 lane c-pin review (round 1, the RS-04 sibling), recorded as the cyriusly operand bugs' "Not covered" remainder and filed as `docs/development/issues/archived/2026-10-06-cyriusly-cmdtools-runs-the-cwd-script.md`. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.7.3 spends the cyriusly cmdtools CWD-script bug.*
 
 | | |
 |---|---|
@@ -2449,7 +2449,7 @@ governs it (lane H) — `ptbuf[16385]` was guarded only by the CIPHERTEXT cap.*
 
 *Appended 2026-10-18 (cyrius 6.7.15). Found by: the 6.7.15 libfix3 lane (unit L4), in passing, reading the capture
 verbs while fixing their child redirects; filed as
-[issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md](../development/issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md)
+[issues/archived/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md](../development/issues/archived/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md)
 and judged against the ledger rule at the wave-3 integration. The 2026-09-03 sweep fixed this shape in `scripts/`
 and `cbt/` (`_cbt_tmpdir()` / `_cbt_tmpfile()`); `lib/regression.cyr` was in neither.*
 
@@ -2467,7 +2467,7 @@ capture (the check driver runs every `.tcyr` through `regression_exec_capture_st
 same verbs) truncate and overwrite any file the victim can write, and a pre-created regular file makes the victim read
 back a "capture" the attacker controls. Measured same-user (the open follows the link: a 9-byte victim file left
 0 bytes); cross-user it is the kernel's documented behaviour: Linux's `fs.protected_symlinks` / `fs.protected_regular`
-(1 on the dev box and pi) refuse both in a sticky `/tmp`, macOS (`/private/tmp`, no such sysctl) does not.
+(1 / 1 on the dev box, 1 / 2 on pi) refuse both in a sticky `/tmp`, macOS (`/private/tmp`, no such sysctl) does not.
 
 **Fix (6.7.15, commit 7757c8e8f — lane libfix4, unit L6).** `_regression_capture_open` creates each candidate
 `<base>/<prefix><pid>`, then `….1` … `.63`, `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW` mode 0600 with each target's own

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 generics lane (l6715-generics at d76d2e5cb, unit G6), x86_64
 (the frontend: every target alike); the same on the lane's base compiler. Found while landing
-issues/2026-10-16-direct-error-writers-print-once-per-generic-instance.md (the per-instance latch for the parser's own
+issues/archived/2026-10-16-direct-error-writers-print-once-per-generic-instance.md (the per-instance latch for the parser's own
 writers): this refusal goes through ERR_IDENT, whose 6.7.14 latch keys on the names it prints — and each instance
 prints its own mangled name, so no two lines are one report.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

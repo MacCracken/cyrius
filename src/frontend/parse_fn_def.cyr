@@ -499,7 +499,7 @@ fn _tl_pass1(S, objok): i64 {
 # again by the same reader (`_prescan_sig_facts`) — the one-time parts (the slot, visibility, `#deprecated` /
 # effect / method notes, generic records) are not re-run. A signature naming no such struct is never re-read, so
 # a program whose structs precede their fns compiles byte-identically.
-# (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md, the return twin.) CHANGELOG [6.7.15]
+# (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md, the return twin.) CHANGELOG [6.7.15]
 var _psig_tab = 0;   # 9 words per prescanned definition (`_psig_note`), a vec made at the first
 fn _psig_note(S, fi, ti, pasync): i64 {
     if (_psig_tab == 0) { _psig_tab = vec_new(); }

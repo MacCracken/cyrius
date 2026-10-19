@@ -34,7 +34,7 @@
 #   W   (6.7.15) A WARNING TOO: WARN (and WARN_AT through it) and the writers that print their own `warning:` line
 #       ask `_warn_seen` (src/common/util.cyr) — the same table, keyed on the token and a negative identity of their
 #       own (WARN's message; a writer's name and what its text names) — so a repeated parse of a body warns once.
-#       W1 the filed repro verbatim (issues/2026-10-17-generic-body-warning-printed-once-per-instance.md: 3 lines
+#       W1 the filed repro verbatim (issues/archived/2026-10-17-generic-body-warning-printed-once-per-instance.md: 3 lines
 #       before); W2 two different warnings at one token both print (`x.m()` discarding P.m's and Q.m's #must_use);
 #       W3 the same warning at two tokens, each once (6 before); W4 an #inline fn's warning, called three times (4)
 #   WD  each writer that prints its own warning line, in a generic body at three types: a duplicate match arm, arms
@@ -53,7 +53,7 @@
 #   A   (6.7.15) AN ERROR A WRITER PRINTS ITSELF (`syscall(SYS_WRITE, 2, "error:", 6)` and its own text, outside the
 #       emitters) asks `_derr_seen` (util.cyr) — keyed on the token it reports and an identity of its own (the
 #       writer's name and what its text names), the panic latch set on a repeat when the writer sets it.
-#       A1 the filed arity repro verbatim (issues/2026-10-16-direct-error-writers-print-once-per-generic-instance.md:
+#       A1 the filed arity repro verbatim (issues/archived/2026-10-16-direct-error-writers-print-once-per-generic-instance.md:
 #       3 lines before; the tail arm, a call and an inline replay check one call at three cursors, so `_CHECK_ARITY`
 #       keys on the call's `(`, `_ar_site`), A1b an arity error in a declaration's call (3), A2 the filed
 #       second-subscript repro verbatim (2); A3 a plain fn's two different bad calls both print; A4 two different

@@ -435,7 +435,7 @@ if grep -q "passing a Str's data pointer 'gs.data' to 'println'" "$T/row.cyr.err
 else _bad "axis 4 not routed: println(gs.data) is not reported as a data pointer"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
 
 # ---- axis 5 (6.7.15): a WRAPPED one-call initialiser records its callee as the unwrapped one does ----
-# issues/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md: GVDSID was written only when the
+# issues/archived/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md: GVDSID was written only when the
 # initialiser's first token was `IDENT (`, so `var s = (mks());` at top level was an untyped word to the overload
 # dispatcher and `println(s)` printed the Str header's bytes ("`" twice before 'abcde' on x86_64), where `var t =
 # mks();` beside it printed the string. `_gv_rhs_call_sid` looks through a whole wrap; both writers (the zone's

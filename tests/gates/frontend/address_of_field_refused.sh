@@ -20,7 +20,7 @@
 # and the like, refused not as expected) and K4 (the parse out of step: a cascade).
 #
 #   N   6.7.15: `&` of something that is not a name (`&(x)`, `&((x))`, `&5`, `&*q`, `&;`) is "expected identifier"
-#       ONCE (issues/2026-10-17-address-of-parenthesised-name-false-second-error.md). The `&` arm went on with the
+#       ONCE (issues/archived/2026-10-17-address-of-parenthesised-name-false-second-error.md). The `&` arm went on with the
 #       token's VALUE as a name offset — a `(`'s 0, the source's first word — and printed a second, false
 #       "undefined variable 'fn'" ('struct' when the source opens with a struct); `_amp_not_name`
 #       (src/frontend/parse_expr.cyr) ends the factor there and steps a `( .. )` whole. The two filed repros

@@ -8,8 +8,8 @@ the lane did not touch the gate (`git log b2e1f4c48..HEAD` over it is empty), an
 Under `bash -eo pipefail` (GitHub's `run:` semantics, which CLAUDE.md asks every shell gate to be tested under) it
 ends with rc 1 and prints neither PASS nor FAIL.
 **Affects:** tests/gates/frontend/redefinition_layout_and_enum_over_var.sh, `expect()` (line 88).
-**Same class as:** issues/2026-10-17-default-named-args-gate-stops-under-pipefail.md (fixed in this lane, 51cf4b58a)
-and issues/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md (platform lane) — different gate.
+**Same class as:** issues/archived/2026-10-17-default-named-args-gate-stops-under-pipefail.md (fixed in this lane, 51cf4b58a)
+and issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md (platform lane) — different gate.
 
 ## Reproduction
 

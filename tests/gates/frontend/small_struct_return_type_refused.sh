@@ -426,7 +426,7 @@ echo "=== return &n (6.7.15, the user's decision D18, 2026-10-18): &n of a name 
 # slot's address as c.v (a different byte each run: the filed table's 48 / 0, 248 / 56, 0 / 16, 96 / 144, 128 / 192),
 # and over 8 B the classes refused it naming nothing ("... two registers ... got `this expression`", "return must be a
 # bare local identifier ..."). An inline `Str` / tuple is the address of that aggregate: refused as `&u` of another
-# struct (kind 3). docs/development/issues/2026-10-17-return-address-of-scalar-or-non-struct-pointer-slot-in-struct-fn.md
+# struct (kind 3). docs/development/issues/archived/2026-10-17-return-address-of-scalar-or-non-struct-pointer-slot-in-struct-fn.md
 NS="not a struct\$"
 refuse4 "R40 the filed repro verbatim (&n, an integer, 8 B)" "$MS — \`&n\` $SLOT n's slot, $NS" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

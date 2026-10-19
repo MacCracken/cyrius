@@ -7,8 +7,8 @@ gives the same on x86_64.
 **Severity:** Medium — compiles with no diagnostic; the global holds a word whose value differs per target, where the
 same assignment inside a fn is refused (6.7.15) and the top-level DECLARATION is refused (6.7.15's D26 / D27).
 **Discovered:** 2026-10-18, the review of the 6.7.15 vectors lane — outside the filed surfaces of
-`issues/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md` (assignments in a fn) and
-`issues/2026-10-17-top-level-untyped-vector-call-or-method-result-binds-a-word.md` (top-level declarations).
+`issues/archived/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md` (assignments in a fn) and
+`issues/archived/2026-10-17-top-level-untyped-vector-call-or-method-result-binds-a-word.md` (top-level declarations).
 
 ## Reproduction
 

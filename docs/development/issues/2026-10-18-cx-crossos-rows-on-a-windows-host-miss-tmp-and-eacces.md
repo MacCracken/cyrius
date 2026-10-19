@@ -8,7 +8,7 @@ compiled once with `cycc_cx` and run from an empty directory under `C:\cyrius-te
 tests/gates/codegen/cx_crossos_rows_run.sh runs these files on the x86_64 Linux cxvm, where all three pass). A cx
 program with the same shapes fails the same way on Windows. No boundary is crossed.
 **Found:** in passing, running the three crossos files the path-call fix makes pass on cx
-(issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) on every host's cxvm: x86_64 Linux and
+(issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) on every host's cxvm: x86_64 Linux and
 pi pass all three in full; ecb / ach fail only the -ELOOP rows (filed:
 2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md); cass fails as below.
 

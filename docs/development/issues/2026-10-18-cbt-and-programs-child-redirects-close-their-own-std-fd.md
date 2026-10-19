@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 libfix3 lane (branch l6715-libfix3, after 6a1184258, which
 fixed the same class in lib/process.cyr, lib/regression.cyr and lib/pam.cyr —
-issues/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) with the worktree's `build/cyrius` (x86_64 Linux).
+issues/archived/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) with the worktree's `build/cyrius` (x86_64 Linux).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix3 lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6 — a lib-adjacent defect (cbt / programs): with 6.7.16's first items) — never 7.x.
 **Severity:** Low — a CLI verb (and the check driver / LSP / test-runner children) fails or loses a stream when the
 calling process was started with a standard fd closed. No boundary is crossed: the caller's own fd state drives it.
@@ -41,5 +41,5 @@ The lib/ fix's shape: close the source fd only when it is not the target (`if (f
 both-streams form, only when it is neither 1 nor 2). Several of these sites also open their output BEFORE a lower
 redirect (e.g. pulsar opens `sfd` then redirects it to 0; an `out_fd` that landed on 0 is overwritten by a later
 stdin redirect) — the ordering shape filed separately for lib/regression.cyr
-(2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md); fix both together per site. Row: the repro above
+(archived/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md); fix both together per site. Row: the repro above
 answers rc=0 and a 29-byte out2.js; a `programs/checks` row with fd 1 / 2 closed.

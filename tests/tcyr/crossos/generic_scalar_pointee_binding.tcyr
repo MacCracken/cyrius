@@ -3,7 +3,7 @@
 # binds i32, a `*f64` (or `&h` of an f64) f64, a `*i8` / `*i16` theirs, and the call runs that instance, exactly as the
 # explicit `second<i32>(pa)` does. Through 6.7.14 it ran the i64 base: `sizeof(T)` was 8, `*(p + 1)` stepped 8 bytes
 # and read 8 (over an i32 array, a[2] and a[3]'s word where a[1] is right), `gd(&h)` returned the double's bits as an
-# untyped word (issues/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md). Every `p: *T`
+# untyped word (issues/archived/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md). Every `p: *T`
 # source: a `*T` local, parameter, closure capture or global, a `: *T` call, a field declared `*T` reached through a
 # chain, `&x` of a signed narrow or f64 local or global; a generic method, a forward, a `: T` result, a tail call and
 # a declaration-zone call. A `pp: **T` reads the pointee of its `**T` argument the same way: a `**i32` local, `&p` of

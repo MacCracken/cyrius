@@ -1,4 +1,4 @@
-# asm_barrier_options.tcyr — 6.7.15 (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; the
+# asm_barrier_options.tcyr — 6.7.15 (issues/archived/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; the
 # user's decision D37, 2026-10-18: an aarch64 barrier accepts its option).
 #
 # Every barrier option the aarch64 assembler takes is EXECUTED here, on each host's own compiler: `dmb` / `dsb`

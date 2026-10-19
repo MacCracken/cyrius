@@ -37,7 +37,7 @@
 #      `const`, `do` lex as names). 6.7.14, issues/archived/2026-10-14-cybs-indexed-store-undefined-name-not-named.md
 #      — and at the top level after a fn whose local has the name (parse_fn_def left the fn's local count
 #      standing, so the last fn's locals were found and the class message printed). 6.7.15,
-#      issues/2026-10-17-cybs-top-level-name-of-last-fns-local-taken-as-known.md
+#      issues/archived/2026-10-17-cybs-top-level-name-of-last-fns-local-taken-as-known.md
 #   P  the preprocessor's fixed buffers refuse what does not fit, naming the cap, rc 1, nothing written
 #      (6.7.14, issues/archived/2026-10-13-cybs-include-scratch-and-buffers-unchecked.md). Each was unchecked: an
 #      include over its 2 MB slot had its tail overwritten by the file it includes (the filing's big.cyr
@@ -48,7 +48,7 @@
 #      statement past it is refused (the 6.7.13 cybs dropped it: exit 0); P5 an expansion of exactly
 #      16 MB compiles, one byte more is refused (the final check), and 65 spellings of one 2 MB include
 #      (130 MB) are refused at the first line past 16 MB, before the buffer runs past the brk end
-#      — and the include-once list (6.7.15, issues/2026-10-16-cybs-include-once-list-and-name-buffers-unchecked.md:
+#      — and the include-once list (6.7.15, issues/archived/2026-10-16-cybs-include-once-list-and-name-buffers-unchecked.md:
 #      256 entries of 256 B, ending at the include name buffers; neither the count nor the width was checked):
 #      P6 the filed 257-include program verbatim (its 257th was skipped as seen: exit 0, r 0 where the source
 #      says 42) is refused; 256 distinct includes compile, and a re-include at 256 is still skipped;

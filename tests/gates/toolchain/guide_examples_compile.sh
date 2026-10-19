@@ -156,7 +156,7 @@ done
 # ── axis 5: the guide's aarch64 blocks, compiled with the aarch64 cross compiler ────────
 # Every axis above compiles with the x86 compiler, which skips an `#ifplat aarch64` arm, so the `#ifplat`
 # example's `asm { dmb ish }` was refused on aarch64 (`unknown aarch64 asm mnemonic 'ish'`) for as long as the
-# guide showed it (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; 6.7.15's D37,
+# guide showed it (issues/archived/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md; 6.7.15's D37,
 # 2026-10-18: a barrier takes its option). Each block holding an `#ifplat aarch64` line is compiled, behind the
 # axis-4 prelude, by the aarch64 cross compiler built from this tree, and must compile clean; the `#ifplat`
 # example's binary must hold `dmb ish` (D5033BBF). Mutation: the aarch64 assembler without barrier options

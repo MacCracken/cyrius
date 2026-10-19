@@ -53,7 +53,7 @@
 #   main.cyr's EPE_ERRNO_STUBS call dropped                 axes 2, 4 FAIL (every PE build stops:
 #                                                           FIXUP's drained assert names the driver)
 #   lib/io.cyr's Windows arms back to `== 0 - 1`            axis 5 FAIL (axis 4 PASSES: wine)
-# 6.7.15 — CloseHandle joins the class (issues/2026-10-16-pe-close-returns-closehandle-bool.md):
+# 6.7.15 — CloseHandle joins the class (issues/archived/2026-10-16-pe-close-returns-closehandle-bool.md):
 # ECLOSE_PE handed back CloseHandle's BOOL, so a good close answered 1 and a failed one 0 (the
 # filed repro exited 110, Linux 91; file_close_r was never Err). It answers 0, or -errno through
 # the same table stub. Axis 1 and axis 4 run tests/tcyr/crossos/close_answer.tcyr; axis 2's probe
@@ -309,7 +309,7 @@ fmt_int(r4); println("");
 file_close(fd);
 xunlink("lseek_neg.tmp");
 EOF
-    # 6.7.15: the close repro (issues/2026-10-16-pe-close-returns-closehandle-bool.md), verbatim.
+    # 6.7.15: the close repro (issues/archived/2026-10-16-pe-close-returns-closehandle-bool.md), verbatim.
     cat > "$D/cl.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

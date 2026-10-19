@@ -72,7 +72,7 @@
 #   Z0. the compiler before the fix (50b9a8817)    -> RED, 11 checks: K's four struct deltas, the S row's four code
 #       forms, KF's binary64 1.5, E's two KS deltas
 # MUTATION LEDGER (6.7.15 — a float scalar's constant f64 expression baked, RC / KC / RS check 9;
-# issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md):
+# issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md):
 #   0. real tree                                   -> GREEN (20 rows)
 #   C0. the compiler before the fix (8981d679b)    -> RED, 20 checks: RS check 9, its two warnings (2, CA named),
 #       RC check 1, its 16 warnings and the 12 shapes named, KC's warning, image bytes and late store
@@ -259,7 +259,7 @@ fi
 # RC (6.7.15) — a float scalar's constant f64 expression is baked: an f64 const, a parenthesized literal, f64
 # arithmetic of them — `= CF`, `= (1.5)`, `= 1.5 + 1.0` (the filed repro, checks 1-3), an `f32` global's binary32
 # rounding (4, 8), a negation, an untyped global, a quotient that rounds, an infinity, a zero
-# (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md). Each was left to the late replay,
+# (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md). Each was left to the late replay,
 # warned "use a constant", and read 0. Still late and named, once each: a call (CX), a NaN (CN: its bits are the
 # target's, refused by the evaluator, quietly), an integer or enum operand in f64 arithmetic (CM, CE: the replay
 # warns about the mix, so it runs). tests/tcyr/crossos/zone_float_constant_initializer.tcyr checks the host values
@@ -372,7 +372,7 @@ ASM='asm { 0xF4; 0xF4; 0xF4; 0xF4; }\n'
 # 6.7.14: a baked scalar's replayed store is dropped — KX1's and KX3's (`KA + 0x100` loads KA) take
 # KA's code form twice (-1 over the baked copy), KX2's (KB) and KR1's (KI) once (+0); the D rows below
 # count the data copies.
-# 6.7.15: a baked struct literal's stores are dropped too (issues/2026-10-16-zone-struct-literal-baked-and-stored.md) —
+# 6.7.15: a baked struct literal's stores are dropped too (issues/archived/2026-10-16-zone-struct-literal-baked-and-stored.md) —
 # KS's (KD, KF) and KN's (KG, KH) leaves keep their data copy and lose their code form: +0 (through 6.7.14 +1, the
 # stores' `movabs rax, imm64` beside the bake); the S rows below count the two forms apart.
 row K '' "kernel;\n$PRE$DECL$ASM" "kernel;\n$PRE$ASM$DECL" \

@@ -7,8 +7,8 @@ aarch64 (qemu) and cx (cxvm), against the slot-open compiler (b2e1f4c48) on the 
 **Kind:** language — whether 6.7.15's D2 (a) ("every constant redeclaration is the value from program start") and
 6.7.14's D11 (b) (a constant initializer leaves no startup store) cover a struct or tuple literal redeclaration is the
 user's call.
-**Discovered:** by the frontend lane's review (2026-10-18), checking issues/2026-10-16-zone-struct-literal-baked-and-stored.md
-(the lane's 8981d679b) beside issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md (c31338f42,
+**Discovered:** by the frontend lane's review (2026-10-18), checking issues/archived/2026-10-16-zone-struct-literal-baked-and-stored.md
+(the lane's 8981d679b) beside issues/archived/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md (c31338f42,
 D2 (a)). The lane's handoff flagged the same-bytes case for the user (unit F5, item 1).
 
 ## What differs

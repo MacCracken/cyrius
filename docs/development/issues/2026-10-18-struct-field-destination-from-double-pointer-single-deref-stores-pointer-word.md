@@ -1,7 +1,7 @@
 # `o.s = *pp` (a struct-typed FIELD destination, pp a `**S`) stores the pointer word into the field's first word, where `o.s = p` copies the struct — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S2), landing
-issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md (a local, a global, `*q`
+issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md (a local, a global, `*q`
 and a declaration from `*pp` copy since that fix). Pre-existing: the same output on the lane base (fd2e325af's
 build/cycc) and after the fix, on x86_64, aarch64 (qemu) and cx (cxvm). Not that filing's surface (its table names a
 local, a global, `*q` and a declaration), so filed, not fixed.

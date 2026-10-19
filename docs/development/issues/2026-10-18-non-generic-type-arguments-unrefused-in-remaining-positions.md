@@ -1,7 +1,7 @@
 # `Name<..>` on a non-generic struct or a scalar is still unread (or refused with other words) in the positions 6.7.15's D6 readers do not reach — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G1), applying 6.7.15's D6 (a) to
-issues/2026-10-16-non-generic-type-given-type-arguments-compiles.md. Measured on the lane tree after that bite (the
+issues/archived/2026-10-16-non-generic-type-given-type-arguments-compiles.md. Measured on the lane tree after that bite (the
 D6 refusal is in `_parse_one_type_arg`, `_gen_ann_sid`, the fn definition's parameter and struct-return sites and
 `_vec_el_args`).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
@@ -93,9 +93,9 @@ The readers of these positions skip a `<..>` after a non-generic name (`SKIP_GEN
 
 - a pointer field `p: *Pt<..>`: `_fld_ptr_late` / the quiet `_ptr_step_peek` (pass 1) and `_ptr_tok_sid` at a use (the
   D6 bite keeps `_ptr_tok_sid` silent, so a use never reports out of source order); the generic analogue is
-  issues/2026-10-16-pointer-field-generic-type-args-read-only-at-use.md (6.7.15's D8, unit G2);
+  issues/archived/2026-10-16-pointer-field-generic-type-args-read-only-at-use.md (6.7.15's D8, unit G2);
 - a trait member's parameter `_trs_type`, a multi-value element `_mret_elem`, a `*fn(..)` parameter `_pty_name` /
-  `_pty_end`: the generic analogue is issues/2026-10-16-generic-type-args-unread-in-mret-trait-and-fn-pointer-signatures.md
+  `_pty_end`: the generic analogue is issues/archived/2026-10-16-generic-type-args-unread-in-mret-trait-and-fn-pointer-signatures.md
   (6.7.15's D7, unit G2) — the same three readers;
 - a `**Pt<..>` parameter: `_pty_end` (the reader behind two stars);
 - a scalar return `: i64<u8>`: `_PARSE_FN_DEF_IMPL`'s scalar-return arm consumes the name and leaves the `<` to the

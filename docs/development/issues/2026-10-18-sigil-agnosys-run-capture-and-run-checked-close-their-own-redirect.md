@@ -9,7 +9,7 @@ it is always fixed: fix it in the sigil source repo, release a sigil patch, and 
 **Severity:** Low — a lib / fold defect: a status-checked capture or run fails, or the child starts with a std fd
 closed, when the calling process was started with a standard fd closed. No boundary is crossed: the caller's own fd
 state drives it.
-**Found:** by the 6.7.15 libfix3 lane's review, beside L4 (issues/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md,
+**Found:** by the 6.7.15 libfix3 lane's review, beside L4 (issues/archived/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md,
 which fixed this class in lib/process.cyr, lib/regression.cyr and lib/pam.cyr in 6a1184258). It is the same class in
 the folded sigil, which that issue's three files and the lane's staged cbt / programs issue
 (2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md) do not cover.

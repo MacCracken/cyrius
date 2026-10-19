@@ -2,7 +2,7 @@
 # check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool
 # double_pointer_pin_scale_linear.sh — 6.7.15. Compile time is LINEAR in the number of distinct `**T` pointees.
 #
-# THE DEFECT (issues/2026-10-17-pointer-to-pointer-pin-intern-is-a-linear-search.md). A `**T`'s step word pins its
+# THE DEFECT (issues/archived/2026-10-17-pointer-to-pointer-pin-intern-is-a-linear-search.md). A `**T`'s step word pins its
 # pointee's word in a table (6.7.13), and `_pp_intern` (src/frontend/parse_types.cyr) found an existing pin by scanning
 # every pin so far. 6.7.14 raised the cap from 126 pins to 16383, so the scan ran up to 16383 entries per intern and a
 # unit with thousands of distinct pointees compiled in quadratic time. The filed generator, 1024 structs each taken

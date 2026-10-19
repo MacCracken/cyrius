@@ -10307,7 +10307,7 @@ fn _bnd_base_bad(S, fi): i64 {
 # ⛔ 6.7.15 — THE VERDICT IS MEMOISED PER GENERIC, AND THE JUDGEMENT HAS NO DEPTH CAP. `_bbs_fwd_bad` judged a
 # generic's forwards afresh at every asking (each call site, each base), so a chain of N forwarders cost N^2 scans,
 # and a depth cap (64) kept that bounded by answering "not bad" past it — a valid 66-deep chain's base was then
-# refused at a definition (issues/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). Each generic's
+# refused at a definition (issues/archived/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). Each generic's
 # verdict (with the diagnostics a refusal names: `_bbs_fwd`, `_bbs_root`, `_bbs_why`) is recorded once it is
 # known to hold: a "bad" one always (a bad base reached is a fact, wherever it was found); a "not bad" one only
 # when the whole judgement found nothing — inside a judgement that ends bad, a generic answered while one of its

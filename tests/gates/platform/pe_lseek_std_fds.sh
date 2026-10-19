@@ -1,6 +1,6 @@
 #!/bin/sh
 # 6.7.15 — a seek on fd 0 / 1 / 2 reaches the std stream on PE, as it does on Linux and macOS
-# (issues/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md).
+# (issues/archived/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md).
 #
 # ⛔ WHY: ELSEEK_PE (src/backend/x86/emit.cyr) popped the fd straight into rcx and called
 # SetFilePointerEx with it, so fd 0 / 1 / 2 reached kernel32 as the HANDLE values 0 / 1 / 2 — not

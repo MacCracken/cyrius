@@ -1,7 +1,7 @@
 # PE `xlseek` / `sys_lseek` on a PIPE or console handle succeeds on Windows (answers the asked offset, the stream does not move) where Linux and macOS answer -ESPIPE (-29); wine answers -1 — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform), on the tree that
-carries the fix for issues/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through
+carries the fix for issues/archived/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through
 GetStdHandle). PE built with `CYRIUS_TARGET_WIN=1 build/cycc`; run on real cass (Windows 11, `C:\cyrius-tests`) and
 under wine 11.19 (a private WINEPREFIX).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

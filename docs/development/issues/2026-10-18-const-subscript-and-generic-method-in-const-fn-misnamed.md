@@ -1,7 +1,7 @@
 # A subscript of a const, and an explicit generic method call `a.m<T>(..)` in a const fn, name the wrong rule (one with a false "undefined variable") — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 frontend lane (unit F3) beside
-issues/2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md, whose filed surface is a method call
+issues/archived/2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md, whose filed surface is a method call
 `.m(` and a subscript on a const fn's LOCAL, and a method call on a const. F3 refuses those by name (a subscript on any
 const fn frame entry — local, parameter or body const — is "a subscript is not in a const fn"). The shapes below are
 outside that surface and unchanged by it. Measured on the lane tree after F3's first two commits (b02930ac0 + the

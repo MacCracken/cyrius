@@ -143,7 +143,7 @@ var TU1 = mk1();
 var TU2 = (mk1());
 var TU3 = ((mk8()));
 fn tu_read(): i64 { return TU1.a + d1(TU2); }
-# --- 6.7.15: a wrapped `: Str` call at top level (issues/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md) ---
+# --- 6.7.15: a wrapped `: Str` call at top level (issues/archived/2026-10-17-top-level-wrapped-str-call-global-prints-header-bytes.md) ---
 # `var s = (mks());` at top level was an untyped word to the overload dispatcher (the one-call record wanted `IDENT (`
 # first), so `println(s)` printed the header's bytes and `who(s)` took the cstring base (1), where `var t = mks();`
 # routes to `who_str` (2). The whole wrap is transparent there too: the zone here, after a statement (TS3 / TS4) below.
@@ -152,7 +152,7 @@ var TS2 = ((mks()));
 fn ts_read(): i64 { return who(TS1) * 10 + who(TS2); }
 # --- 6.7.15 (the user's decisions D34 (a) / D35 (a), 2026-10-18): a whole method, operator or known `&f` result ---
 # `var G = B.m();` / `(A + A)` / `fncall0(&f)` / `callptr(&f)` of 8 B at top level bound nothing: `G.a` was "no struct
-# type in scope for 'G'" (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
+# type in scope for 'G'" (issues/archived/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
 # The zone here (typed at the end of pass 1, read by a fn body before the replay: `tm_read`); after a statement (TL*)
 # below. The 9-16 B refusal is tests/gates/frontend/struct_receive_inference_checked.sh's (DR16*).
 struct PM { a; }
@@ -169,7 +169,7 @@ var TM5 = TM1 + TM1;
 fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
 # --- 6.7.15: a zone generic call returning a generic struct's instance (`mkg1<T>(v: T): G1<T>`) binds it ---
 # `var x = mkg1(33);` in the zone was "no struct type in scope for 'x'" at `x.v`, where after the first statement it
-# binds (issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). TG2 is the `G1<i32>` instance.
+# binds (issues/archived/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). TG2 is the `G1<i32>` instance.
 var TG1 = mkg1(33);
 var TG2 = mkg1<i32>(30);
 fn tg_read(): i64 { return TG1.v + TG2.v; }

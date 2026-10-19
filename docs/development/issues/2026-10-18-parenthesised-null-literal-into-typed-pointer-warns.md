@@ -5,7 +5,7 @@ string-literal bite) with a compiler built from that tree; the warning is the sh
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a false warning on valid code that runs right; nothing miscompiles.
 **Kind:** bug (diagnostic).
-**Discovered:** 2026-10-18 by unit R2 while fixing issues/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md:
+**Discovered:** 2026-10-18 by unit R2 while fixing issues/archived/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md:
 that filing widens the STRING literal's exemption to a whole wrap (`("xyz")`, `(("x"))`) and to `"abc" + n`. The literal
 0's exemption (6.7.13's D18 (a): "The literal 0 alone is a null pointer") has the same one-token shape, and a wrapped
 `(0)` was outside that filing's surface, so it was not widened.

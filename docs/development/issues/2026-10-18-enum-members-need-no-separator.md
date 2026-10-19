@@ -6,7 +6,7 @@ frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/
 **Severity:** Low — accepted bad syntax; the members get the values the separated form gives.
 **Kind:** language (whether a missing separator is refused is the user's call — the struct-literal twin was decided
 as 6.7.15's D1 (a), 2026-10-18).
-**Discovered:** noted in passing by the 6.7.15 triage of issues/2026-10-16-struct-literal-elements-need-no-comma.md
+**Discovered:** noted in passing by the 6.7.15 triage of issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md
 ("enum members also accept a missing comma ... outside this filing") and re-measured by unit F2, which implemented
 D1 (a) for struct literals only.
 

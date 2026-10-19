@@ -1,5 +1,5 @@
 # str_field_method.tcyr — 6.7.15. A method on a `Str` FIELD
-# (issues/2026-10-17-method-call-on-str-field-does-not-parse.md).
+# (issues/archived/2026-10-17-method-call-on-str-field-does-not-parse.md).
 #
 # `w.s.len()`, `w.s.clone()` and `w.s.eq(x)` with `s: Str` a field were "expected ';', got '.'": a `Str` field is
 # one pointer slot holding the header's address (6.6.17), so the field walk stopped before the `.m(` and nothing

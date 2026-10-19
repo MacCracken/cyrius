@@ -5,10 +5,10 @@ compiled once with `cycc_cx` and run on cxvm built from the lane's tree on x86_6
 ecb and ach.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — a crossos row that "passes on every target" fails on cx unseen (the same class as
-issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md, which covers three other files). cxvm
+issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md, which covers three other files). cxvm
 runs trusted bytecode; no boundary.
 **Found:** the P4 unit's brief asks that audit_walk_fifo.tcyr on cx no longer exit mid-file on pi / ecb (the fork
-row of issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md). It no longer does: it reaches
+row of issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md). It no longer does: it reaches
 its summary on every host. Its remaining failures are the two refused calls below, outside both P4 issues' filed
 surface (mkdir / rmdir / unlink / rename / symlink / readlink / stat and the scalar list).
 

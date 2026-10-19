@@ -1,7 +1,7 @@
 # patra: `patra_insert_row` accepts a NEGATIVE BYTES / TEXT length with `PATRA_OK` and stores it raw; since 1.16.5 that cell reads `PATRA_ERR_PAGE` while `patra_result_get_bytes_len` / `_get_text_len` answer the raw negative value (-5), not the -1 a ref longer than the file answers — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 libfix3 lane (unit L5, the patra 1.16.5 fold patch for
-issues/2026-10-18-patra-oversized-bytes-ref-reads-as-empty-value.md) on patra `5d2a9da` (before) and `9c67b33` (after:
+issues/archived/2026-10-18-patra-oversized-bytes-ref-reads-as-empty-value.md) on patra `5d2a9da` (before) and `9c67b33` (after:
 L5's commits `306871e` + `9c67b33` in ~/Repos/patra), built by the libfix3 worktree's `build/cycc` with its `lib/`
 (x86_64 Linux; the crafted-file route also on pi). The insert route was found by the lane's review and re-measured by
 its fix step (BYTES and TEXT).

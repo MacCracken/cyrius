@@ -12,7 +12,7 @@
 # the annotation was dropped in silence (repro 2, exit 5). The reset now asks what the reached fn returns: a T bound
 # to a struct returns it by value (GFRS > 0) and is received as before — a copy, another struct refused at the
 # declaration — while a word (its base, a scalar or f64 instance) keeps the annotation, a handle.
-# Filed: docs/development/issues/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md
+# Filed: docs/development/issues/archived/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md
 #
 #   R1  the filed repro 1, verbatim (`gid(w.v)`, then `a.z`): compiles (refused at `a.z` before), and runs as its
 #       non-generic twin `wid(w.v)` does — the handle holds w.v's first word, so `a.z` faults on every leg alike

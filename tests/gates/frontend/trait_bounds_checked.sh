@@ -83,7 +83,7 @@
 #      BD6 a generic method; BD7 a method two bounds declare (ambiguous; refused only at an instance's call before, with
 #      a cascade, and compiled uncalled); BDK unchanged — an unbounded `Box<T>`, an unbounded slot beside a bounded
 #      one, a `f: *T` field, `b.v.show() + b.v.y`. BC7 moves from its 6.7.11 reading to the refusal.
-#      Filed: docs/development/issues/2026-10-16-bound-contract-unchecked-on-carrier-field-call.md
+#      Filed: docs/development/issues/archived/2026-10-16-bound-contract-unchecked-on-carrier-field-call.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (4c483d56) -> RED 10: BC7 BD0 (both rows) BD1-BD6 (built) BD7 (the instance's message); MBD1 `_bnd_fsite` without
 #      its unbounded-slot test -> RED 1: BDK; MBD2 the note without the field arm -> RED 1: BD0's note ('b'); MBD3 two
@@ -104,7 +104,7 @@
 #      generic's `Vec<Box<T>>` judged per instance, not in its base; VB6 a generic struct's field at `W<Pt>`; VB7 once
 #      per (struct, arguments); VB8 a refused argument alone; VB9 the list reads on after it; VBK the impl present (23).
 #      A signature's or a pointer field's `_targ_chk` judges no bound (off outside a Vec element).
-#      Filed: docs/development/issues/2026-10-16-vec-element-generic-struct-bound-unchecked.md
+#      Filed: docs/development/issues/archived/2026-10-16-vec-element-generic-struct-bound-unchecked.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (13fd8844) -> RED 13: VB0 (both rows) VB2 VB3 VB3b VB4-VB4d VB5 VB6 VB7 VB9 (each built); MVB1 `_vec_el_targs`
 #      without the element's judgement -> RED 10: VB0 (both) VB2 VB3 VB4b-VB4d VB5 VB6 VB7; MVB2 `_tck_nest` without its

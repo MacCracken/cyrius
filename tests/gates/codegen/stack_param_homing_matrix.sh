@@ -478,7 +478,7 @@ refuse_all toplevel-arg "$T/rt.cyr" "returns a struct by value" 2
 # the call itself (`_sc_pre`), a 9-16 B one by each destination that needs storage (typed `var`,
 # assignment, struct param). 6.7.15 (the user's D35 (a), 2026-10-18): the untyped `var u = bb.mp(6)` is refused too,
 # as the annotated `var G2: P2 = ..` is — it kept the first word and did not count through 6.7.14 (want 7)
-# (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
+# (issues/archived/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
 cat > "$T/rm.cyr" <<'EOF'
 struct P3 { x; y; z; }
 struct P2 { x; y; }

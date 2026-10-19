@@ -1,8 +1,8 @@
 # PE `sys_close` and `sys_ftruncate` on fd 0 / 1 / 2 pass the raw HANDLE values 0 / 1 / 2 to kernel32 (no GetStdHandle map): close(2) answers -9 and stderr stays open, ftruncate(1) of a redirected stdout fails — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform), on the tree that
-carries the fixes for issues/2026-10-16-pe-close-returns-closehandle-bool.md (a close answers 0 or -errno) and
-issues/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through GetStdHandle). PE built
+carries the fixes for issues/archived/2026-10-16-pe-close-returns-closehandle-bool.md (a close answers 0 or -errno) and
+issues/archived/2026-10-16-pe-lseek-std-fds-pass-raw-handle.md (ELSEEK_PE maps fd 0 / 1 / 2 through GetStdHandle). PE built
 with `CYRIUS_TARGET_WIN=1 build/cycc`; run on real cass (Windows 11, `C:\cyrius-tests`) and under wine 11.19.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — no in-tree caller closes or truncates fd 0 / 1 / 2 (lib/, cbt/, programs/, src/ grep for

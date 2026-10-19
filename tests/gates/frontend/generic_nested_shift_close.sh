@@ -11,7 +11,7 @@
 # only while no close is owed (`_ta_comma`: the nested arm and the nine list readers); (2) minting the
 # inner instance re-parses its struct, whose own reads reset the owed close — `_instantiate_generic_struct`
 # puts it back, so the fix does not depend on whether the instance already existed. 6.3.33 - 6.7.14, every
-# target. Filed: docs/development/issues/2026-10-16-nested-type-arg-shift-close-then-comma-drops-next-arg.md
+# target. Filed: docs/development/issues/archived/2026-10-16-nested-type-arg-shift-close-then-comma-drops-next-arg.md
 #
 #   A  the filed repro, verbatim: exit 2 (8 before); its `>>>` form (`P<P<P<R>>>`): 2 (8 before)
 #   S  `sizeof(Two<P<P<R>>, i16>)` at top level: 18 (24 before); in a fn after a local of it: 18 (24); the

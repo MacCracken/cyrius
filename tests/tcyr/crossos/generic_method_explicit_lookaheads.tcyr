@@ -5,7 +5,7 @@
 # Through 6.7.14 those lookaheads keyed a method call on the tokens `x . m (` only: `var a, b = p.mm<i64>(3);` was
 # "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?` and
 # SIGSEGV'd, a vector receive refused the call, a dyn could not be formed from it
-# (issues/2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md). The `<` form is taken only where the
+# (issues/archived/2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md). The `<` form is taken only where the
 # receiver's struct has no field of that name and a generic method of it, so `p.n < k >> (j)` stays a comparison (MC).
 # The refusals the same spellings meet (a pair bound to one name, a multi-value call into a struct, ...) are
 # tests/gates/frontend/generic_method_infer.sh L.

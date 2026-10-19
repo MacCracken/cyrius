@@ -424,7 +424,7 @@ refusedn f13 1 "F13: a local const in a local const's value, const M = L.x;" "fn
 exits f14 12 "F14: control — a local const L beside a global struct L: L.x stores and reads the global's field, as before" 'struct P { x; y; }\nvar L = P { 0, 0 };\nfn main() {\n    const L = 5;\n    L.x = 7;\n    return L.x + L;\n}\nsyscall(60, main());\n'
 exits f15 7 "F15: control — a struct local's field beside a local const" 'struct P { x; y; }\nfn main() {\n    var p: P;\n    p.x = 3;\n    const K = 4;\n    return p.x + K;\n}\nsyscall(60, main());\n'
 # K (6.7.15) — a method call or a subscript in a const fn, and a method call on a const, name their rule once
-# (issues/2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md; the four filed repros verbatim)
+# (issues/archived/2026-10-16-const-fn-subscript-method-and-const-method-receiver-misnamed.md; the four filed repros verbatim)
 KM="a method call is not in a const fn: it calls only const fns"
 KS="a subscript is not in a const fn: its body takes no memory (fields, arrays, load64, &x)"
 cat > "$T/cm1.cyr" <<'EOF'
@@ -480,7 +480,7 @@ refusedn sc6 1 "SC6: var v = L.m(1, 2); — the const Q after it is still declar
 exits km1 5 "KM1: control — a method call on a struct local in an ordinary fn" 'struct P { x; }\nimpl P { fn m(self) { return self.x + 1; } }\nfn main(): i64 { var p = P { 4 }; return p.m(); }\nsyscall(60, main());\n'
 exits km2 9 "KM2: control — a typed array local subscripted in an ordinary fn beside a const fn" 'const fn tw(n) { return n * 2; }\nfn main(): i64 { var a: i64[3]; a[1] = 4; return a[1] + tw(2) + 1; }\nsyscall(60, main());\n'
 # X (6.7.15) — a refused const fn's definition check holds no latch into its run-time body, whose repeat of the
-# check's refusal stands down (issues/2026-10-16-refused-const-fn-check-latch-leaks-into-its-body.md; LC4b and
+# check's refusal stands down (issues/archived/2026-10-16-refused-const-fn-check-latch-leaks-into-its-body.md; LC4b and
 # SX1 the filed repros verbatim)
 cat > "$T/lc4b.cyr" <<'EOF'
 # lc4b — the check refuses the local const's annotation; the run-time body then never binds k
@@ -511,7 +511,7 @@ refusedn x8 2 "X8: a local const after the check's refusal reports its own value
 refusedn x9 1 "X9: const k: i64; with no value, once" 'const fn cf(): i64 { const k: i64; return 1; }\nfn main() { return cf(); }\nvar r = main();\n' "1:29: $AN"
 # P (6.7.15) — a refused const context evaluated in place (an enum value, a global array size, `#assert`) holds no
 # latch when it ends in sync: the next one, and the next declaration, report their own errors
-# (issues/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md; P1-P5 its table, P6 / P7 its other rows)
+# (issues/archived/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md; P1-P5 its table, P6 / P7 its other rows)
 refusedn p1 2 "P1: two enums, each a bad value (was yy only)" 'enum E { Q = yy }\nenum F { R = ww }\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "2:14: $CU 'ww'"
 refusedn p2 2 "P2: two global array sizes (was yy only)" 'var g: i64[yy];\nvar h: i64[ww];\nsyscall(60, 0);\n' "1:12: $CU 'yy'" "2:12: $CU 'ww'"
 refusedn p3 2 "P3: an enum value, a const, a global array size (was yy only)" 'enum E { Q = yy }\nconst A = 2;\nvar g: i64[ww];\nsyscall(60, 0);\n' "1:14: $CU 'yy'" "3:12: $CU 'ww'"

@@ -105,7 +105,7 @@
 #       the refusal names the limit (4194304 B), the bytes emitted and the fn that reached it.
 #   R21 (6.7.12) a generated ~4.1 MB .cyx under the cap: native and cxvm each exit 241, and the .cyx
 #       must stay over 3 MiB (3 rows) — the region, cxvm's code cap and its guest memory all hold it.
-#   R22-R24 (6.7.15; issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md)
+#   R22-R24 (6.7.15; issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md)
 #       tests/tcyr/crossos/pe_open_failure_errno.tcyr, open_flags_per_target.tcyr and
 #       atomic_write_temp_exclusive.tcyr — native and cxvm each print `<N> passed, 0 failed`, N
 #       derived per target from the source's #ifdef arms (n_tgt; floors 10 / 44 / 22 on each leg),

@@ -778,7 +778,7 @@ fi
 # SIGKILLed; with $G8_IGN set it ignores SIGTERM. Every other call runs the real git and records
 # its pid in g8.pt.
 # (issues/archived/2026-10-15-git-run-and-clone-children-untracked-by-the-kill-handler.md,
-# issues/2026-10-16-kill-handler-waits-unbounded-for-a-forwarded-git.md)
+# issues/archived/2026-10-16-kill-handler-waits-unbounded-for-a-forwarded-git.md)
 G8="$T/g8"
 if command -v git > /dev/null 2>&1; then
     G8GIT=$(command -v git)
@@ -1027,7 +1027,7 @@ for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # A file planted at a temp name a copy will try is skipped by `_aw_open`'s exclusive create, and
 # since 6.7.15 never recorded, so the kill leaves it: 6.7.14 recorded the PREDICTED next name before
 # the open, and when a planted file sat there the kill unlinked it
-# (issues/2026-10-16-scratch-resolve-records-a-predicted-temp-name-it-did-not-create.md). The
+# (issues/archived/2026-10-16-scratch-resolve-records-a-predicted-temp-name-it-did-not-create.md). The
 # snapshot's syscalls.cyr is a FIFO the copy blocks in; with its temp in flight the gate plants
 # twenty `string.cyr.cyrtmp.<pid>.<n>` past that temp's counter, releases the FIFO (the real
 # content, then EOF) and SIGTERMs the CLI once the stand-in git sleeps in the clone.

@@ -6,7 +6,7 @@ x86_64; the frontend, every target), identical on the lane's previous compiler (
 **Severity:** Low — a silently different value: the scalar's constant is lost from the bytes the list leaves alone,
 where the literal spelling keeps them.
 **Kind:** bug (the guide documents the literal behaviour as the rule; the named spelling differs).
-**Discovered:** by unit F4 while implementing issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md
+**Discovered:** by unit F4 while implementing issues/archived/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md
 (the user's decision D2 (a), 2026-10-18). That filing is about a SCALAR redeclaration's order; this is the 6.6.16 list
 rule ("over an earlier scalar constant it keeps the bytes it does not list") for a named earlier constant — outside
 its surface, and not changed by it.

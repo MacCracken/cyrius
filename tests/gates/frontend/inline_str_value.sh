@@ -66,7 +66,7 @@
 # (D16a, the filed repro verbatim: 7, was 0 — the data word); `GP = gt` is not warned "assigning non-pointer to typed
 # pointer" (D16b; it was); a frame's `GP = t` is refused by name with the words `G = t` into a `Str` global has (X14).
 #
-# 6.7.15 (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md): a `*Str` dereference into
+# 6.7.15 (issues/archived/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md): a `*Str` dereference into
 # a `Str` parameter — `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`, `h.eq(*p)` — passes the header p points at (its
 # address, p), as `str_len(p)` does; it passed the header's first word, the data pointer, as the header (SD1, the filed
 # repro verbatim: 5555, was 5500).
@@ -464,7 +464,7 @@ for leg in $(legs); do
 done
 runs D18c 7 "\`var p: *Str = gt;\` takes gt's static address"
 
-# --- D16: the filed repro (issues/2026-10-17-inline-str-assigned-into-str-pointer-keeps-data-word.md), verbatim ---
+# --- D16: the filed repro (issues/archived/2026-10-17-inline-str-assigned-into-str-pointer-keeps-data-word.md), verbatim ---
 cat > "$T/D16a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -488,7 +488,7 @@ for leg in $(legs); do
 done
 runs D16b 77 "\`GP = gt; p = gt;\` take gt's static address (was 0)"
 
-# --- SD1: the filed repro (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md), verbatim ---
+# --- SD1: the filed repro (issues/archived/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md), verbatim ---
 cat > "$T/SD1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -514,7 +514,7 @@ for leg in $XLEGS $OLEGS; do
     else bad "SD1 ($leg): exit $got, prints '$last' (want 5555; 5500 = the data word passed as the header)"; fi
 done
 
-# --- D14: the filed repro (issues/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-stores-one-word.md), verbatim ---
+# --- D14: the filed repro (issues/archived/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-stores-one-word.md), verbatim ---
 cat > "$T/D14a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"

@@ -4873,7 +4873,7 @@ fn _deref_ed(S): i64 {
     return ed;
 }
 # ⛔ 6.7.15 — `*pu` THROUGH A TYPED `*u128` IS REFUSED BY NAME, as `pu[0]` is (the user's D20, 2026-10-18;
-# issues/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md): its element does not fit one register, and
+# issues/archived/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md): its element does not fit one register, and
 # the dereference read and wrote the low 8 bytes, silently — `var x: u128 = *pa;` dropped the high word, `*pa == a`
 # compared the low word, an if-expression branch was the low word, `*pa = b` left the old high word. The operand of
 # the `*` at `d` just parsed, its step word a `*u128`'s (step 16, element width 16 — the kind `_pk_word` vouches for: a

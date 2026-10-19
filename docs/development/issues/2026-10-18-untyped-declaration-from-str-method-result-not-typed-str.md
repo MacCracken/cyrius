@@ -1,7 +1,7 @@
 # An untyped `var k = h.clone();` (a `: Str` METHOD's result) is not typed `Str` — `k.len()` is refused "no struct type in scope for 'k'", where `var k = str_clone(h);` types k — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S4) beside
-issues/2026-10-17-method-call-on-str-field-does-not-parse.md (whose `var k = w.s.clone();` now parses and meets this);
+issues/archived/2026-10-17-method-call-on-str-field-does-not-parse.md (whose `var k = w.s.clone();` now parses and meets this);
 measured on the lane base (8b4d44602's frontend, the lane head before S4) and after S4 alike: x86_64 (frontend: every
 target alike). Pre-existing.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

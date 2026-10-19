@@ -1922,7 +1922,7 @@ fn _fld_meth_inline(S, ft): i64 {
     return 1;   # 6.7.15: a `Str` field too — `_load_inline_hop` passes its value (`_load_str_hop`)
 }
 # ⛔ 6.7.15 — A METHOD ON A `Str` FIELD: `w.s.len()`, `w.s.clone()`, `w.s.eq(x)`, `p.s.len()` through a `*W`,
-# `mk().s.len()`, `w.s.print();` as a statement (issues/2026-10-17-method-call-on-str-field-does-not-parse.md). A
+# `mk().s.len()`, `w.s.print();` as a statement (issues/archived/2026-10-17-method-call-on-str-field-does-not-parse.md). A
 # `Str` field is one pointer slot holding the header's address (6.6.17), so the walk stopped before the `.m(` and
 # nothing took it: "expected ';', got '.'". The receiver is the field's VALUE — the header, as `h.len()` passes a
 # handle's value and `str_len(w.s)` passes the field — loaded and parked as a `*Str` receiver (`_ptr_hop`), as a
@@ -2798,7 +2798,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
 # value is taken only when a `,` / `}` follows it, `_spi_follow`). The declaration zone's bake folds a leaf only when
 # its `,` / `}` follows (`_CF_TRY`, `_gai_flit`), so a commaless literal is left to the replay's store, which reports
 # it — a kernel build's too. `P { 3 4 }` and `P { b: 1 a: 2 }` compiled, the values landing where the commas put them
-# (issues/2026-10-16-struct-literal-elements-need-no-comma.md). A `;` / `)` / `]` / end of file after an element is
+# (issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md). A `;` / `)` / `]` / end of file after an element is
 # an unclosed literal, left to its own "expected '}'". CHANGELOG [6.7.15]
 fn _slit_sep(S): i64 {
     var t = PEEKT(S);
@@ -5589,7 +5589,7 @@ fn _gvc_unfolded(S, gvi, k): i64 {
 }
 # 1 = pass 1 makes no value compare for this declaration (prior `gpi` from _gv_fold_peek; `has` / `v` its constant):
 # its shape is refused — the type change is the one report, not also "conflicting value"
-# (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md) — or the prior's last declaration is
+# (issues/archived/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md) — or the prior's last declaration is
 # one pass 1 did not fold, and the compare is recorded for the replay (kind 1, at the cursor: the `=`).
 fn _gv_dup_later(S, gpi, has, v): i64 {
     if (gpi == 0 - 2) { return 1; }
@@ -6032,7 +6032,7 @@ fn _gvk_one(S, gi): i64 {
 }
 
 # ⛔ 6.7.15 — EVERY CONSTANT REDECLARATION IS THE VALUE FROM PROGRAM START (the user's decision D2 (a), 2026-10-18;
-# issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md). A redeclaration pass 1 folds (`= 7`,
+# issues/archived/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md). A redeclaration pass 1 folds (`= 7`,
 # `= 0`, `= 2 + 1`) supersedes every earlier writer of the slot (_gv_supersede); one only the replay folds (`= C`,
 # `= E.B`, `= A + 1`) did not, so its earlier writers stored in order: `var a = D; var b = a; var a = C;` gave b D,
 # `var G = 0; var b = G; var G = C;` b 0, `var a = f(); var b = a; var a = C;` b f(), and `var G = D;` / `= 0` then

@@ -1,7 +1,7 @@
 # The stub scan's token binding misses a `pp: **T` argument (6.7.14's D40) and a generic `: *T` call through `p: *T`: `var r = gd2(&GPP); r.pick(t)` in a generic is refused naming the stub method — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G4) on the lane's tree at 5bf321ca5
-(after the token-scans fix, issues/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md), x86_64; the same before.
+(after the token-scans fix, issues/archived/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md), x86_64; the same before.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G4, implementing the token-scans fix (`_tok_ta_arg`, src/frontend/parse.cyr):
 its filed surface is D8's `p: *T` / `x: T`; two bindings the parser makes are still unread by the scan.

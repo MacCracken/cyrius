@@ -483,7 +483,7 @@ var r = kmain();
 # WU (6.7.15) — an UNCLOSED wrap around a declaration's whole literal initializer (`var t: P = (P { 5, 6 };`) is ONE
 # error, the missing `)`: the literal is the initializer the wrap was meant to hold, so the initializer rule is not
 # reported first. It was "a struct literal is an initializer: ..." at the name, then "expected ')', got ';'"
-# (issues/2026-10-17-unclosed-wrap-around-struct-literal-initializer-names-the-literal-rule.md). Keyed on the
+# (issues/archived/2026-10-17-unclosed-wrap-around-struct-literal-initializer-names-the-literal-rule.md). Keyed on the
 # declaration's `= (` and the `;` after the literal: an operand (WU7) and an assignment (WU8) keep both errors.
 exact1 "WU1 filed repro: var t: P = (P { 5, 6 };" 'struct P { a; b; }
 fn run(): i64 { var t: P = (P { 5, 6 }; return t.a; }
@@ -524,7 +524,7 @@ error:<source>:3:55: expected ')', got ';'"
 # fn, after the first statement, in the declaration zone (the bake declines it, so the replay's store reports it; a
 # kernel build too), a nested struct's leaves and a nested whole value, a generic literal, a generic fn's body (once),
 # --syntax-only. Each compiled, the values where the commas put them (the filed repro exited 6)
-# (issues/2026-10-16-struct-literal-elements-need-no-comma.md). Controls: commas, and a trailing comma `P { 1, 2, }` /
+# (issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md). Controls: commas, and a trailing comma `P { 1, 2, }` /
 # `P { a: 1, b: 2, }`, build byte-identical to the plain form (CT1-CT3); W1-W7 above unchanged.
 MC="expected ',' between struct literal elements"
 CH='struct P { a; b; }

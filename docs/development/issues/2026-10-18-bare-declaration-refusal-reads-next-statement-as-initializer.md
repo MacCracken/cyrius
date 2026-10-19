@@ -5,7 +5,7 @@ frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — refused either way (rc 1); the first error is the right one, one invented error follows.
 **Kind:** bug (diagnostic cascade).
-**Discovered:** 2026-10-18, by unit F2 fixing issues/2026-10-16-var-missing-annotation-reported-as-expected-equals.md:
+**Discovered:** 2026-10-18, by unit F2 fixing issues/archived/2026-10-16-var-missing-annotation-reported-as-expected-equals.md:
 its `var b: ;` (now "expected a type for variable 'b', got ';'", the bare-declaration refusal standing down) inherits
 the bare declaration's recovery below. Not that issue's filed surface (its repro is `var b: = 0;` / `var G: = 4;`,
 each one error).

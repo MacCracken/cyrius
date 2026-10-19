@@ -9,8 +9,8 @@ shape. Filed from the 6.7.15 infratools lane's review.
 `set -u`. Under `sh` every axis runs and the verdict is right (PASS, 166 ok on the lane tree). Under
 `bash -eo pipefail` the gate ends early with rc 1 and prints neither PASS nor FAIL. That is GitHub's `run:` semantics,
 and CLAUDE.md asks every CI shell-loop gate to be tested under it. The issue is not the same gate as
-`2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md` (syscall_xlat_generated / removed_symbol_census),
-`2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md` (lsp_diagnostics_file_column), or the frontend lane's
+`archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md` (syscall_xlat_generated / removed_symbol_census),
+`archived/2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md` (lsp_diagnostics_file_column), or the frontend lane's
 staged `2026-10-18-redefinition-layout-gate-stops-under-pipefail.md`.
 **Affects:** tests/gates/toolchain/cli_temp_dir_no_leak.sh. The lines are 847 (`g8_run`), 979 (the g9 helper, inside
 an `if`), 1057 and 1063 (the g9p block, new in 6.7.15). The same shape is at b2e1f4c48's line 830.

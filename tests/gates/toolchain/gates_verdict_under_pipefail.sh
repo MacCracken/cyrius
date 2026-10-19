@@ -15,8 +15,8 @@
 #     NON-ZERO on success (io exits 42), so `-e` ended the gate on the first passing probe with
 #     its rc (42); behind it, axis 6's zero-warning `u=$(grep … | …)` and axis 7's out-of-scope
 #     compiles and cxvm runs, which all fail by design.
-# (issues/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
-#  issues/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md)
+# (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
+#  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md)
 #
 # WHAT IS PINNED
 #   axis 1  the checker tells a stop from a verdict: three fixture gates run the same way — a

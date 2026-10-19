@@ -52,7 +52,7 @@
 #   MG1 `_ret_ptr_base_bind` returns 0 (2026-10-16)  -> RED 5: PG0-PG4 (refused: unknown type 'T'; the tcyr
 #                                                       does not build)
 #   MG2 `_ret_ptr_sid` without its pass-1 test       -> RED 3: PG5 PG6 (reported twice), PG7 (refused)
-#   PD (6.7.15, docs/development/issues/2026-10-16-double-pointer-generic-return-read-in-pass-one.md) a `: **G<..>`
+#   PD (6.7.15, docs/development/issues/archived/2026-10-16-double-pointer-generic-return-read-in-pass-one.md) a `: **G<..>`
 #      return's pin is not read by pass 1 while its arguments do not resolve (`_ret_ptr_unres`, shared with
 #      `_ret_ptr_sid`'s one-star test): PD1 the filed repro 2 verbatim (`fn mk(): **Box<Later>`, Later declared below:
 #      refused "unknown type 'Later'" before) exits 2, PD2 the filed repro 1 verbatim (`: **Box<Zork>`) one error,
@@ -80,7 +80,7 @@
 #                                                       "unknown type 'E'", then the use's enum line
 #   MPA3 `_is_enum_name` without its declared-below arm -> RED 1: PA8 (two lines, as MPA2)
 #
-#   HF (6.7.15, docs/development/issues/2026-10-16-generic-struct-pointer-field-does-not-hop.md) a generic struct's
+#   HF (6.7.15, docs/development/issues/archived/2026-10-16-generic-struct-pointer-field-does-not-hop.md) a generic struct's
 #      `p: *T` field hops in its instance as a `p: *Pt` field does (6.6.17): `b.p.y` with `b: Pb<Pt>` was "expected ';',
 #      got '.'". HF1 the filed repro verbatim (9), HF2 a store `b.p.y = 3` (3), HF3 a method `b.p.m()` (78), HF4 inside
 #      a generic `fn g<T>(b: Pb<T>) { return b.p.y; }` (9), HF5 `Pb<i32>`'s `b.p + 1` steps 4 (9, unchanged) — on

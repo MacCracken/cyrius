@@ -33,7 +33,7 @@
 #      `: Vec<nosuch>` (the element not read after the refusal) — one line each; TV3 a default every impl overrides
 #      (checked at the trait), its override `: i64` — the trait's line alone; TV4 `--syntax-only` silent, as a fn's
 #      `: Vec<..>` return is; TVK `: i64`, `: *Vec<i64>`, a parameter `v: Vec<i64>` and `(Vec<i64>, i64)` build and run.
-#      Filed: docs/development/issues/2026-10-16-trait-member-vec-return-accepted.md
+#      Filed: docs/development/issues/archived/2026-10-16-trait-member-vec-return-accepted.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, CYCC= it): the lane's previous
 #      compiler (bd8ad547) -> RED 5: TV1 (both rows), TV2, TV2b (its element's line), TV3 (each built but TV2b); MTV1
 #      `_trs_ret_refused` answering 0 -> RED 5: the same; MTV2 `_trs_ret_refused` reporting under --syntax-only -> RED 1: TV4
@@ -45,7 +45,7 @@
 #      method's name when the impl has none); TR5 a multi-value return, as written; TR6 the trait below two impls; TR7 a
 #      dyn formed above and below the impl adds nothing (it reported "the return type differs" at the site too); TR8 /
 #      TR8b a side its own reader refuses reports alone; TRK the agreeing shapes, two impls (131). dyn_checked.sh F8b is
-#      this refusal now. Filed: docs/development/issues/2026-10-17-trait-member-u128-return-accepted-and-impl-return-unchecked.md
+#      this refusal now. Filed: docs/development/issues/archived/2026-10-17-trait-member-u128-return-accepted-and-impl-return-unchecked.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (d9273ec3) -> RED 7: TR1-TR7 (each built; TR7 the site's F8 line instead), and dyn_checked.sh F8b; MTR1
 #      `_tr_ret_chk` answering 0 -> the same; MTR2 `_tr_rt_bad` answering 0 -> RED 5: TS4 TS6 TV3 TR8 TR8b (a second

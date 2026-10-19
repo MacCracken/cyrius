@@ -179,7 +179,7 @@
 # assert no such warning, Q13 the by-name mismatch, and every Q row; TP is the control: `p = 5;` into a `*Pt` local and
 # `q = 7;` into a `*i64` one still warn (twice), on all four legs.
 #   M-T1 the parse.cyr guard reverted (measured) -> RED 8: H9 Q13 on all four legs; TP green
-# 6.7.15 (issues/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md) — a
+# 6.7.15 (issues/archived/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md) — a
 # by-name call (an explicit instance too) or a method (a field chain's too) of ANOTHER vector INSIDE PARENTHESES, into a
 # vector local, is refused in the by-name call's words, as unwrapped: one mismatch check for every spelling (`_vrcv_bad`
 # over `_vcall_vt`, which folds 6.7.13's `_vrcv_mbad` and 6.7.14's `_vrcv_ibad`). It was the receive's generic line,
@@ -285,7 +285,7 @@
 #   M-M4 `_simd_ret_call_ok` without `_ret_vmc`        -> RED 10: M2 M4 on all five legs (refused)
 #   M-M5 `_ret_vmc_pe` never taking it (Win64)         -> RED 2: M2 M4 win64 (0 / 1: the scalar path's word)
 #
-# 6.7.15 (issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) — a method declared `: V` on a
+# 6.7.15 (issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) — a method declared `: V` on a
 # FIELD-CHAIN receiver (`w.s.mv()`, `pw.s.mv()`, `h.w.s.mv()`, `n.ps.mv()`) is the vector where a single name's is: one
 # recogniser (`_vmc_open` -> `_mch_open`, parse_decl.cyr) serves the receives, D37's untyped declaration, D38's scalar
 # refusals, the value-form and `*V` arguments (`_svc_rs`) and D39's return. Before: the untyped declaration bound one word
@@ -296,7 +296,7 @@
 #   M-CR1 `_vmc_open` without its chain arm            -> RED 60: CR1-CR7 and CRK1-CRK5 on all five legs; CRK6 green (the
 #       return rule names `w` either way)
 #   M-CR2 `_svc_rs` naming token ti + 2                 -> RED 5: CRK5 on all five legs ("cannot pass 's'")
-# 6.7.15 (issues/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md) — a by-name call declared `: V` into
+# 6.7.15 (issues/archived/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md) — a by-name call declared `: V` into
 # a declaration annotated with a type of no integer width (`: f64`, `: f32`, `: bool`, `: cstring`, an enum, `: Vec`,
 # `: Result`, `: Option`) is refused "vector return type does not match the declared type", as the method is since
 # 6.7.14's D38: PARSE_VAR inferred the callee's vector whenever the annotation had no width, so `x` was a two-slot
@@ -318,7 +318,7 @@
 #   M-WR2 `_vrcv_mscal` asking a whole call (`start` 0)    -> RED 20: WRK3 WRK7 WRK9 WRK11 on all five legs (compiled)
 #   M-WR3 `_vasg_mscal` asking a whole method (the tree before) -> RED 15: WRK4-WRK6 on all five legs (compiled)
 #   M-WR4 `_vrcv_mscal` asking a whole method (the tree before) -> RED 40: WRK1-WRK3 WRK7-WRK11 on all five legs
-# 6.7.15 (issues/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md) — a vector call assigned to a
+# 6.7.15 (issues/archived/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md) — a vector call assigned to a
 # GLOBAL that is no vector (by name, an explicit instance, a method incl. a chain's, `fncallN(&f, ..)` / `callptr(&f, ..)`,
 # wrapped or not; a by-name call starting the source, as the local's arm reads it), and `fncallN(&f, ..)` /
 # `callptr(&f, ..)` into a scalar local or declaration, is refused "vector return type does not match the assigned
@@ -712,7 +712,7 @@ syscall(60, run() % 256);
     esac
 }
 C_ROWS="C1 C2 C3 C4 C5"
-# 6.7.15 (issues/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md): the
+# 6.7.15 (issues/archived/2026-10-17-wrapped-by-name-or-method-call-of-another-vector-into-vector-local-generic-words.md): the
 # filed repro's own definitions — an f64v4 by name and an f64v4 method, wrapped into f64v2 locals (Q14-Q20, QF).
 QW='fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); return v; }
 struct S { k; }
@@ -1136,7 +1136,7 @@ mk_msg() {
     MK6|MK7) echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`s\`";;
     esac
 }
-# ---- 6.7.15 (issues/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md): a by-name call declared `: V`
+# ---- 6.7.15 (issues/archived/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md): a by-name call declared `: V`
 # into a declaration annotated with a type of no integer width (rows NK refused once; row N1 the control, 161) ----------
 # NK1 the filed repro verbatim (`var x: f64 = mkv(41, 7);`), NK2-NK5 `: f32` / `: bool` / `: cstring` / an enum, NK6
 # an explicit instance into `: f64`, NK7-NK11 the method into the same five (refused since 6.7.14's D38, the parity
@@ -1207,7 +1207,7 @@ syscall(60, run() % 256);
     esac
 }
 N_ROWS="N1"
-# ---- 6.7.15 (issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared `: V`
+# ---- 6.7.15 (issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared `: V`
 # on a FIELD-CHAIN receiver (rows CR run, 161; rows CRK refused once) -----------------------------------------------------
 # CR1 the filed repro verbatim (the untyped declaration); CR2-CR5 `w.s.mv()`, `pw.s.mv()` (a pointer head), `h.w.s.mv()`
 # (two hops) and a generic method (`w.s.mg(40)`, `w.s.mg<i64>(40)`), each at the untyped and annotated declarations, the
@@ -1427,7 +1427,7 @@ wrk_msg() {
     *) echo "vector return type does not match the declared type";;
     esac
 }
-# ---- 6.7.15 (issues/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md): a vector call assigned to
+# ---- 6.7.15 (issues/archived/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md): a vector call assigned to
 # a GLOBAL that is no vector, and `fncallN(&f, ..)` / `callptr(&f, ..)` into a scalar local, refused as `x = mkv(..);` into a
 # local is (rows GA refused once; GAF the filed row 4 verbatim, its two lines; GV a vector global keeps its own refusal;
 # GC the control, 161) -----------------------------------------------------------------------------------------------------

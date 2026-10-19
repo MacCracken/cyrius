@@ -1,7 +1,7 @@
 # A 9-16 B struct fn's `return E;` with a malformed or undefined E reports the pair class's refusal AND E's own error — `return zz;` is two errors, `return &(q);` two — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S5) beside
-issues/2026-10-17-address-of-parenthesised-name-false-second-error.md (whose 8 B repro now reports one error; the 16 B
+issues/archived/2026-10-17-address-of-parenthesised-name-false-second-error.md (whose 8 B repro now reports one error; the 16 B
 twin keeps two). Measured on the lane head before S5 and after S5 alike, x86_64 (frontend: every target alike).
 Pre-existing.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

@@ -29,7 +29,7 @@
 #      a compound store, T bound to a generic instance, a rebind; and its PF rows, a generic struct's `p: *T` field
 #      hopping in its instance — generic_struct_field.sh HF) on every leg: "N passed, 0 failed (N total)"
 #   S  (6.7.15, the user's decision D11 (a), 2026-10-18) a SCALAR pointee binds too: S1 the filed repro verbatim
-#      (docs/development/issues/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md), m() 25 (was
+#      (docs/development/issues/archived/2026-10-16-generic-scalar-pointee-binds-i64-through-pointer-parameter.md), m() 25 (was
 #      89: gsz(pa) 4, gsz(&h) the f64 instance), S2 its m2() `second(pa)` 9 (was 11: the base stepped 8) — on every
 #      leg; S3 (x86_64) a stub generic given a `*i32` is refused once naming it, as before (a scalar binding of a stub)
 #   PS (6.7.15) tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr (every `p: *T` / `pp: **T` source of a scalar

@@ -7,7 +7,7 @@ slot-open compiler (b2e1f4c48) refused the same sources with "expected ')', got 
 **Severity:** Low — refused before and after (rc 1, one error at the same token); only the wording changed, and it now
 names the wrong construct for a tuple.
 **Kind:** bug (diagnostic wording).
-**Discovered:** by the frontend lane's review (2026-10-18), checking issues/2026-10-16-struct-literal-elements-need-no-comma.md.
+**Discovered:** by the frontend lane's review (2026-10-18), checking issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md.
 
 ## Reproduction
 

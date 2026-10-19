@@ -6,7 +6,7 @@ frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/
 **Severity:** Low — every shape is refused at compile time; nothing is silent. The message names a token, not the
 rule, and `pub fn` adds a second error.
 **Kind:** bug (diagnostic).
-**Discovered:** unit F6, fixing issues/2026-10-17-declaration-inside-block-or-fn-body-cascades.md, whose filed
+**Discovered:** unit F6, fixing issues/archived/2026-10-17-declaration-inside-block-or-fn-body-cascades.md, whose filed
 surface is `struct` / `enum` / `union` / `trait` / `impl` (now one error by name: "a `struct` declaration belongs to
 the declaration section at top level, not inside a fn body", `_decl_inner` in src/frontend/parse_fn_def.cyr). The
 other kinds 6.7.14's module-scope rule names (`_dl_kind`: `mod`, `use`, `pub` / `public`) were probed as controls.

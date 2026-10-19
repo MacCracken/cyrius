@@ -51,7 +51,7 @@
 #   P  (6.7.15) THE STUB SCAN'S TOKEN BINDING FOLLOWS THE PARSER'S POINTER RULE (6.7.14's D8 (a), and 6.7.15's D12 (a)
 #      spellings): `var r = gd(&GP0); return r.pick(t);` in a generic was refused naming the stub method P_pick (the
 #      scan answered 0 for `&GP0`, so `r` was untyped there and the forward of T into P_pick unseen). P0 the filed
-#      repro verbatim (docs/development/issues/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md) 44, P0c its
+#      repro verbatim (docs/development/issues/archived/2026-10-16-generic-token-scans-miss-d8-pointer-binding.md) 44, P0c its
 #      control (o removed, o2 alone: the explicit spelling) 4, unchanged — every leg; P1 the `var pp: *P` local form 4 and, through `p: *T`, P2 a `*P` global,
 #      P3 `GW.p` / `w.p` / `wp.p` field chains, P4 a `: *P` call, P5 `(&GP0)` / `(pp)`, P6 `&l` of a struct local;
 #      through `x: T` P7 `gid(*pp)` and `gid((l))` — each 4 (each refused naming P_pick before) — x86_64; PX an

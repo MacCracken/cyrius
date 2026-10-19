@@ -4,12 +4,12 @@
 # ⛔ THROUGH 6.7.14 a `var t: *T` LOCAL in an instance read its annotation with T unbound (`_sl_ptr_type` ->
 # `_ptr_ann_sid`, `FINDSTRUCT('T')`), so `t` was a plain pointer: `t.y`, `t.y = 4` and `t.m()` were refused "no
 # struct type in scope for 't'" while the parameter `p: *T` and a non-generic `var t: *Pt` worked
-# (issues/2026-10-16-generic-pointer-local-of-type-parameter-untyped-in-instance.md). A scalar T keeps a plain
+# (issues/archived/2026-10-16-generic-pointer-local-of-type-parameter-untyped-in-instance.md). A scalar T keeps a plain
 # pointer stepping sizeof(T).
 # ⛔ THROUGH 6.7.14 a generic struct's `p: *T` FIELD did not hop in its instance: `b.p.y` with `b: Pb<Pt>`
 # (`struct Pb<T> { p: *T; n; }`) was "expected ';', got '.'" — the instance's field kept T's step but no pointee
 # struct (`_fld_ptr_late` took only a struct's name), so the chain stopped at `b.p`
-# (issues/2026-10-16-generic-struct-pointer-field-does-not-hop.md). The PF rows.
+# (issues/archived/2026-10-16-generic-struct-pointer-field-does-not-hop.md). The PF rows.
 #
 # CROSS-HOST: tests/gates/frontend/generic_ptr_param_infer.sh runs this file on x86_64 (plain, CYRIUS_IR=3),
 # aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's cross-OS leg on ecb / ach / cass / pi. The filed

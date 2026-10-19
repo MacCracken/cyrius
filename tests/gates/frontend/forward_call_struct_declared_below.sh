@@ -9,8 +9,8 @@
 # "no struct type in scope for 't'", and a struct named like a vector was the vector ("vector return type does not
 # match the declared type"). Once every struct is registered, a signature naming one registered after it is read again
 # (`_psig_reread`, src/frontend/parse_fn_def.cyr). Filed:
-#   docs/development/issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md
-#   docs/development/issues/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md
+#   docs/development/issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md
+#   docs/development/issues/archived/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md
 #
 #   P  the parameter filing's repros, verbatim: P1 16 B by value (7), P1b its 24 B variant (7), P2 `g(&t) * 10 + h(t)`
 #      into `x: *R2` (77)

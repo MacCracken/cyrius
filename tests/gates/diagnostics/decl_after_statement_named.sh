@@ -37,7 +37,7 @@
 #   A   `async fn` after each statement kind runs through future_force (CYRIUS_ASYNC=1); `const fn` / `fn` still do
 #   C   controls: every kind before the first statement compiles and runs; --syntax-only gives the same one error
 #
-# ONE LEVEL DOWN (6.7.15; issues/2026-10-17-declaration-inside-block-or-fn-body-cascades.md). A `struct`, `enum`,
+# ONE LEVEL DOWN (6.7.15; issues/archived/2026-10-17-declaration-inside-block-or-fn-body-cascades.md). A `struct`, `enum`,
 # `union`, `trait` or `impl` inside a fn body or a block reached PARSE_STMT the same way: "unexpected struct"
 # (`union`: "expected ';', got union") and up to four invented errors — "expected '=', got '{'", "undefined variable
 # 'y'", "undefined variable 'Q'", and "return outside a fn body" once the resync took the fn body's own `}`. Now
@@ -53,7 +53,7 @@
 #       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
 #   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
 #
-# ITS USES (6.7.15; issues/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
+# ITS USES (6.7.15; issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
 # was stepped, so what it names was never registered, and each use was a second error: `var q = Q { 5 };`
 # "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable", `fn f(q: *Q)` "unknown
 # type 'Q' for parameter 'q'" + its `q.y` "no struct type in scope for 'q'". Now the struct, union and enum names

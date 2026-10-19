@@ -3,7 +3,7 @@
 # dce_seed_pass_linear.sh — 6.7.15. FIXUP's dead-code seed pass costs O(call sites + fns log fns),
 # not O(call sites x fns), on the x86 and the aarch64 backend — and it answers exactly as before.
 #
-# THE DEFECT (issues/2026-10-16-dce-seed-pass-host-scan-quadratic.md). Every x86 and aarch64
+# THE DEFECT (issues/archived/2026-10-16-dce-seed-pass-host-scan-quadratic.md). Every x86 and aarch64
 # build runs the reachability walk (the `N unreachable fns` note needs it, CYRIUS_DCE or not). Its
 # seed pass asks, for each call to a fn start, whether the call site lies inside a fn (else it is
 # a root), and asked `_dce_host_fn` — a scan of the whole fn table — each time. The filed program

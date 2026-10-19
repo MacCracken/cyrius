@@ -1,7 +1,7 @@
 # A struct VALUE dereference refused by its struct is named by its operand's last name — `ri(*gps(&s))` '*s', `take8(*gu(pu))` 'pu', `return *gu(pu);` '*pu', `var s: S8 = *h.pu;` 'pu' — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 vectors lane (unit V4), landing
-issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md: that fix names a refused dereference argument as
+issues/archived/2026-10-17-vector-dereference-refusal-names-operand-last-name.md: that fix names a refused dereference argument as
 the source spells it in `_sarg_vdo` (a `*V` into another pointer kind) and `_dro_check` (the address-passed arm:
 `rp(*gq(pq))` now '*gq(pq)', `rp(*pq)` '*pq'), through the new `_src_span_nm` (src/frontend/parse_fn.cyr). The struct
 VALUE arms read a different name: `_ess_deref` (parse_fn.cyr; the by-value struct of 8 B or less, the small-struct

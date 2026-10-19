@@ -1,7 +1,7 @@
 # In an x86 `kernel;` build a float global whose constant initializer mixes an integer or enum operand into f64 arithmetic (`= 1.5 + 1`, `= 1.5 * E.A`) is still a late store — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend, unit F5, after the fix of
-issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md), x86_64 (CYRIUS_ELF64_KERNEL=1, run as a
+issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md), x86_64 (CYRIUS_ELF64_KERNEL=1, run as a
 Linux process).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18 by the 6.7.15 frontend lane, unit F5: that issue's surface is "a constant f64 expression (an

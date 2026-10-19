@@ -1,7 +1,7 @@
 # A Vec element whose generic struct takes another generic struct's instance (`Vec<Box<Box<R>>>`) is not judged against the outer struct's bound — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 generics lane (unit G3), implementing D10 (a)
-(issues/2026-10-16-vec-element-generic-struct-bound-unchecked.md: a Vec element's generic struct is held to its
+(issues/archived/2026-10-16-vec-element-generic-struct-bound-unchecked.md: a Vec element's generic struct is held to its
 bounds, nothing minted). The filed surface is `Vec<Box<Pt>>`; this is the one shape the check-only read cannot judge,
 so it is filed, not extended.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

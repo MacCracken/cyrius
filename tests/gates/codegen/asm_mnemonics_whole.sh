@@ -28,11 +28,11 @@
 #      nothing written: x86 `clix`, `inb al, dx`, `nopx`, `stix`, `mfencex`, `outb dx, al`,
 #      `param_loadx(rax, 0)`; aarch64 `nopx`, `dmbx`, `retx`, `eretx`, `param_loadx(x0, 0)` — and the
 #      aarch64 names keep their words (dmb dsb isb nop wfi wfe svc ret eret). 6.7.15
-#      (issues/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md): a bare dmb / dsb / isb is the
+#      (issues/archived/2026-10-16-guide-ifplat-example-dmb-ish-does-not-compile.md): a bare dmb / dsb / isb is the
 #      full-system barrier, sy (D5033FBF / D5033F9F / D5033FDF), and wfe is hint #2 (D503205F) — llvm-mc's
 #      words; until 6.7.15 dmb and isb encoded the reserved option #0, dsb was SSBB (a speculative-store-
 #      bypass barrier) and wfe `msr S0_3_C1_C0_1, x0`
-#   7  (6.7.15, issues/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md) x86 lgdt /
+#   7  (6.7.15, issues/archived/2026-10-16-x86-asm-operands-ignored-lgdt-lidt-invlpg-mov-cr-ltr-int.md) x86 lgdt /
 #      lidt / invlpg / mov crN / ltr encode the register the source names — until 6.7.15 each encoded rax / ax
 #      whatever it named (`lgdt [rbx]` 0f 01 10, `mov cr8, rax` 0f 22 c0 = mov cr0, rax): each form's bytes
 #      (llvm-mc's encodings: REX.B for r8-r15, a SIB for rsp / r12, disp8 0 for rbp / r13, REX.R for cr8),

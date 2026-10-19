@@ -20,7 +20,7 @@
 #          pre-written: the client sends the fatal alert its refused ServerHello recorded, in the
 #          clear. A named SKIP where socketpair is refused (Windows, agnos).
 # On the lib before the fix: R1-R4, D1, D2, A1-A4, V1-V7's alert rows and W1 fail.
-#   T0-T2  6.7.15 (issues/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md):
+#   T0-T2  6.7.15 (issues/archived/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md):
 #          the block fills the ServerHello — the filed repro's `_sh12_trail` verbatim, 0 bytes after
 #          the block TLS_OK, 2 (and 1) refused with decode_error; `pos + ext_total > blen` let them
 #          through. On the 6.7.14 lib T1 and T2 fail.

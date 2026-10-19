@@ -1,7 +1,7 @@
 # A generic `: S` fn's `return &n;` (n a local or parameter) is not judged in the generic's BASE, which is its `T = i64` instance — `h(3)` alone still returns the slot's address as the struct — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S5) landing the user's D18
-(issues/2026-10-17-return-address-of-scalar-or-non-struct-pointer-slot-in-struct-fn.md): `return &n;` of a name holding
+(issues/archived/2026-10-17-return-address-of-scalar-or-non-struct-pointer-slot-in-struct-fn.md): `return &n;` of a name holding
 no struct is refused by name at every size — in every non-generic fn and in every generic INSTANCE. A generic's base
 body is parsed with its type parameters bound to i64 and is ALSO the code an i64 call runs; refusing there would refuse
 `fn hg<T>(x: T): S8 { var n: T = x; return &n; }` used only at `<S8>` (valid: D4 (a)'s struct, exit 26), so the lane

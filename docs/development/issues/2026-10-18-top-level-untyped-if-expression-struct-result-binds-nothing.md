@@ -1,7 +1,7 @@
 # A top-level untyped `var G = if (c) { B1 } else { B1 };` with a struct branch binds no struct — `G.a` is "no struct type in scope for 'G'", where in a fn `var g = if (..) { b } else { b };` binds; a 16 B struct branch at top level is refused "cannot be a vector, u128 or slice value" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R4) while landing
-issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md (6.7.15's D34 / D35:
+issues/archived/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md (6.7.15's D34 / D35:
 an untyped top-level whole method, operator or known `&f` result binds its struct). That issue's filed surface and
 decisions name a method, an operator, `fncall0(&f)` and `callptr(&f)`; an if-expression yielding a struct is another
 whole struct value and was left as found (D34's `_gu_rec` / `_gu_wsid` skip it: `_sc_fi < 0`, a leading `if`).

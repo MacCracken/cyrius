@@ -352,7 +352,7 @@ tprow K5 0 "fn: var q: *i64 = fncall0(&gi); (1 before)" "include \"lib/fnptr.cyr
 #     (retired by 6.7.15's D59: no element kind is read, `_tp_warn_l` is gone)
 # (A1 A6 A7, a declaration, were quieted by the D28 commit's `_tp_warn_decl` / the zone's `_scv_err`.)
 # 6.7.15 (6.7.14's D53 applied as worded — the user's decision D59, 2026-10-18;
-# issues/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md item 18): NO string literal warns into ANY `*T`,
+# issues/archived/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md item 18): NO string literal warns into ANY `*T`,
 # as the literal 0 never does — SK1-SK3 (`*i64`, the zone's `*i64`, a one-byte struct's `*B1`) and SK4 (`*f64`, `*i32`,
 # a `*P2`) are quiet; a value that is no literal (SK5) still warns. Warning text only: the binaries are unchanged.
 #   `_tp_exempt` with 6.7.14's `_ek_w(ed) != 1` test (the lane before D59) -> RED 4: SK1 (2) SK2 (1) SK3 (2) SK4 (3)
@@ -387,7 +387,7 @@ tpx A5 0 1 - "fn: p = &b[1]; with b a *i64, refused once" 'fn main(): i64 {\n   
 tpx A6 0 1 - "zone: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
 tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nsyscall(39);\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
 
-# --- axis 15 (6.7.15; issues/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md) ---
+# --- axis 15 (6.7.15; issues/archived/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md) ---
 # A string literal's address plus or minus ONE integer operand (an integer / char literal or a single name), and the
 # literal under parentheses that wrap it whole, are its address too: `var s: *u8 = "abc" + 1;` and `var t: *u8 =
 # ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse_decl.cyr), at every

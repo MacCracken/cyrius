@@ -1,8 +1,8 @@
 # On a macOS host cxvm hands the cx guest Darwin's errno values: `open(link, O_RDONLY|O_NOFOLLOW)` answers -62 (Darwin's ELOOP) where the .cyx ABI (x86_64 Linux) and every other host say -40 — OPEN
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform, unit P4), with cxvm
-built from the lane's tree (the host-dispatch fix, issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md,
-and the path calls, issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) for each host:
+built from the lane's tree (the host-dispatch fix, issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md,
+and the path calls, issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) for each host:
 x86_64 Linux (`build/cycc`), pi (`cycc_aarch64`), ecb (`CYRIUS_MACHO_ARM=1 cycc_aarch64` + `codesign -s -`), ach
 (`CYRIUS_MACHO=1 cycc`).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

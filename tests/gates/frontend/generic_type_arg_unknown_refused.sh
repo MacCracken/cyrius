@@ -131,7 +131,7 @@
 #      ways, a scalar parameter; local annotations; a literal head, `Box<i32<u8>>`, sizeof, `g<f64<u8>>`; globals; a
 #      generic body with three instances; `Box<Result<..>>` keeping its own refusal alone; a pointer return in source
 #      order, not pass 1's); a control (Box<Pt>, Box<Box<Pt>>, Vec<i64>, Vec<Box<Pt>>, Vec<Vec<i64>>, g<Box<Pt>>).
-#      Filed: docs/development/issues/2026-10-16-non-generic-type-given-type-arguments-compiles.md
+#      Filed: docs/development/issues/archived/2026-10-16-non-generic-type-given-type-arguments-compiles.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, this gate run with CYCC= it):
 #      MNG1 `_ngt_refuse` answering 0 (the bite off) -> RED 8: NG0-NG6, NG8 (each BUILT); MNG2 `_gen_ann_sid`'s
 #      non-generic arm without it -> RED 7: NG0 NG2-NG6 NG8; MNG3 its scalar arm without it -> RED 2: NG3 NG5; MNG4 the
@@ -152,7 +152,7 @@
 #      with three instances (once); SR4 `**Box<Zork>` (refused before too) still once; a control ((Box<Pt>, i64),
 #      `b: Box<i64>` / `Box<U>` / `*fn(Box<U>)` in a member, `*fn(Box<Pt>)`, a generic's own `*fn(Box<U>)`, Box<Later>
 #      with Later declared below, in each position).
-#      Filed: docs/development/issues/2026-10-16-generic-type-args-unread-in-mret-trait-and-fn-pointer-signatures.md
+#      Filed: docs/development/issues/archived/2026-10-16-generic-type-args-unread-in-mret-trait-and-fn-pointer-signatures.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, its cycc built from it, this gate run with CYCC= it):
 #      the lane's previous compiler (373ab3d29) -> RED 6: SR0-SR4 (each built; SR4's `**Box<Zork>` alone was refused); MSR1 `_mret_elem`
 #      on `_gtype_sid` again -> RED 2: SR0 SR1; MSR2 `_trs_targs` answering 0 -> RED 3: SR0 SR2 SR2b; MSR3 `_pty_targs`

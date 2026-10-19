@@ -5,7 +5,7 @@
 # a captured struct passed to `p: *T` (`gsz(l)`) compiles and passes the capture's copy's address. Through 6.7.14 each
 # ran the i64 base (8; a body that uses T as a struct was refused as its stub) and the captured `gsz(l)` was refused
 # "cannot pass 'l' to a parameter that is not a pointer to its struct type"
-# (issues/2026-10-16-generic-plain-parameter-wrapped-deref-or-captured-struct-binds-nothing.md). The field reads
+# (issues/archived/2026-10-16-generic-plain-parameter-wrapped-deref-or-captured-struct-binds-nothing.md). The field reads
 # (`x.w`) prove the instance reads the right struct: by value, through the pointer, from the capture's env copy (a
 # store through `p: *T` lands in it). Unchanged: a pointer through `x: T` (`gs((p))`, `gs(*pp)` of a `**S`) is i64.
 # The filed rows verbatim and the tuple-literal refusal: tests/gates/frontend/generic_ptr_param_infer.sh WD.

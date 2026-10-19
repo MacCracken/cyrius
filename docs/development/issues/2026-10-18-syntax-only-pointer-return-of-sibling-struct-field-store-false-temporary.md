@@ -1,7 +1,7 @@
 # `--syntax-only`: `gp().n = 5;` with `fn gp(): *Foo` defined HERE and `Foo` a sibling module's struct is a false "the result is a temporary" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S6) beside
-issues/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md, whose fix covers a callee this file does
+issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md, whose fix covers a callee this file does
 not define (a sibling's fn). Here the fn is defined in this file and only its return type's struct is a sibling's.
 Pre-existing (the lane head gives the same); x86_64 measured, the frontend's.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

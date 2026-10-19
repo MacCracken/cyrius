@@ -140,7 +140,7 @@ refused d92 "$TC" "D92: var G = 5; var G: bool = true" 'var G = 5;\nvar G: bool 
 # D93 — 6.7.15: X, between the two declarations, reads the FIRST (an integer) as the source says at its place, so
 # `var X: bool = G;` is X's own error after the type change (as it is with the refused line removed); through 6.7.14 X
 # read the refused bool declaration, which hid it — the mirror of shape 2, whose X was refused for reading the refused
-# integer (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md; global_redeclaration_one_
+# integer (issues/archived/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md; global_redeclaration_one_
 # definition.sh IC). Mutation: the replay's hiding dropped (`_gvr_hide` a no-op) -> D93 RED (one error).
 printf 'var G = 5;\nvar X: bool = G;\nvar G: bool = true;\nsyscall(60, G);\n' > "$T/d93.cyr"
 build d93
@@ -182,7 +182,7 @@ exits a5 0 "A5: a global after the first statement takes a comparison" 'var x = 
 # K — 6.7.15 (the user's decision D30 (a), 2026-10-18): a known `&f` callee's `: bool` result is a boolean value, as
 # the direct call `isb()`'s is — `var b: bool = fncall0(&isb);`, `callptr(&isb)`, `b = fncall0(&isb);`, a wrap, a
 # fncall1, `return` in a bool fn and a bool parameter compile; a callee held in a variable (6.7.11's D31) and a `: i64`
-# callee stay "not a bool" (issues/2026-10-17-known-callee-bool-result-not-a-bool.md; the run-time value is
+# callee stay "not a bool" (issues/archived/2026-10-17-known-callee-bool-result-not-a-bool.md; the run-time value is
 # tests/tcyr/crossos/fncall_scalar_result.tcyr). Mutation: `_icall_scalar` without its `_BX_MARK` -> K1-K7 refused.
 KH='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn isb(): bool { return true; }\nfn isb1(x): bool { return x > 2; }\n'
 exits k1 7 "K1: var b: bool = fncall0(&isb) (the filed repro)" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn isb(): bool { return true; }\nfn main(): i64 {\n    var b: bool = fncall0(&isb);\n    var c: bool = isb();\n    if (b) { return 7; }\n    return 3;\n}\nsyscall(60, main());\n'

@@ -1,8 +1,8 @@
 # A declaration-zone untyped `var y = b.mkg(P);` / `b.mkg<i32>(33)` — a GENERIC method returning a generic struct's instance (`fn mkg<T>(self, v: T): G1<T>`) — binds nothing (`y.v.a` is "no struct type in scope for 'y'"), where after the first statement it binds the instance — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R4) while landing
-issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md (6.7.15's D34) and
-issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md (a zone FREE generic call's instance).
+issues/archived/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md (6.7.15's D34) and
+issues/archived/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md (a zone FREE generic call's instance).
 The zone sweep types a method result from its tokens (`_gu_wsid` -> `_gz_ty`), which name a generic method's BASE
 fn and so the generic struct's base; the replay's call reaches the instance (`G1$Pt`), so typing the base would be a
 disagreement `_gz_agree` refuses ("the declaration zone misread ... please report it", measured with the guard

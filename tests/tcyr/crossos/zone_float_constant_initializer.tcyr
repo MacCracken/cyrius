@@ -1,6 +1,6 @@
 # zone_float_constant_initializer.tcyr — 6.7.15: a declaration-zone float global whose initializer is a constant f64
 # expression — an f64 const, a parenthesized literal, f64 arithmetic of them — is baked into the image like a float
-# literal (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md).
+# literal (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md).
 #
 # THE DEFECT (measured on 6.7.14, x86_64). 6.7.14 baked a float global's bare literal (`var G: f64 = 1.5;`, `-`
 # optional); `= CF`, `= (1.5)`, `= 1.5 + 1.0` stayed replayed stores, which an x86 `kernel;` build runs after its

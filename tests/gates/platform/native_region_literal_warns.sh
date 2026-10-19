@@ -38,7 +38,7 @@
 #     their peer file's top level. A constant declared OUTSIDE a region and used inside one is
 #     not judged;
 #   · ⛔ 6.7.15 — a fn-local const, by the same rule, judged where its name token sits
-#     (issues/2026-10-16-native-region-warning-skips-fn-local-const.md): an `#inline` fn's const
+#     (issues/archived/2026-10-16-native-region-warning-skips-fn-local-const.md): an `#inline` fn's const
 #     by the inline body's declaration, never the call site.
 #
 #   axis 1  the 6.7.12 filed repro VERBATIM: one warning naming 9 → 222 (mmap) and 1009 for native

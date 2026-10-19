@@ -14,7 +14,7 @@
 # opened O_WRONLY|O_CREAT|O_TRUNC (Linux's bits, 577): another local user who planted a symlink
 # at an upcoming pid's name had the capture truncate and overwrite any file the victim can write,
 # and a planted file was read back as the capture. The filed repro
-# (issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md) is the first row,
+# (issues/archived/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md) is the first row,
 # verbatim, run in a child with no TMPDIR (so it looks in /tmp, as it was run): it answered 0
 # (the victim emptied), now 9. The planted rows predict each name with the lib's own
 # `_regression_tmp_base` / `_regression_capture_name`, so they plant where the verb looks

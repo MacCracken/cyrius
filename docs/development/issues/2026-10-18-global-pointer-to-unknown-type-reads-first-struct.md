@@ -6,7 +6,7 @@ frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/
 **Severity:** Low — every shape is refused by its first error (no binary); the second error names a struct the
 source never declared, or none is printed and the field is resolved against an unrelated struct.
 **Kind:** bug (diagnostic; a wrong struct id recorded for a refused pointer target).
-**Discovered:** unit F6, fixing issues/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md: a global
+**Discovered:** unit F6, fixing issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md: a global
 `var x: *Q = 0;` whose `Q` was refused as a late declaration still printed a second error at `x.y` after the
 stand-downs (`_tn_refuse` stands down for a refused declaration's type; the `.field` arm then meets a non-zero sid).
 The same happens for a type declared nowhere, so it is not that issue's.

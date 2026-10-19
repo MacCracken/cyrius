@@ -7,7 +7,7 @@ compiles every row too (x86_64 144 / 72 / 232 for rows 1-3, 0 for row 4).
 **Severity:** Medium — compiles with no diagnostic; the untyped local holds one word plus a stack word, a value that
 differs per target, and an integer destination takes the result's word silently.
 **Discovered:** 2026-10-18, the review of the 6.7.15 vectors lane — outside the filed surface of
-`issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md` (a253da41a: a name-headed field
+`issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md` (a253da41a: a name-headed field
 chain, `w.s.mv()`, `pw.s.mv()`, `h.w.s.mv()`).
 
 ## Reproduction

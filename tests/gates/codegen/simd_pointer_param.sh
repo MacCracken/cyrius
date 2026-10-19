@@ -628,7 +628,7 @@ exit_rows OKDK2 "$D/okdk2.cyr" 42 "ri(*pps) of a **Pt passes its *Pt word"
 exit_rows OKDK3 "$D/okdk3.cyr" 42 "rg(*ppb) into a generic *T passes its *f64v2 word"
 refused OKDK4 "OKDK4 ri(*ps) of a struct: 6.7.13's D5 (a) refusal, once (unchanged)" "${OKDH}fn main(): i64 { var s: Pt; s.x = 42; var ps: *Pt = &s; return ri(*ps); }\nsyscall(60, main());\n" x86 "cannot pass '*ps' to a parameter that is not a pointer to its struct type in a call to 'ri' - a struct value is no address"
 
-# ⛔ 6.7.15 (issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md) — A REFUSED DEREFERENCE ARGUMENT IS
+# ⛔ 6.7.15 (issues/archived/2026-10-17-vector-dereference-refusal-names-operand-last-name.md) — A REFUSED DEREFERENCE ARGUMENT IS
 # NAMED AS THE SOURCE SPELLS IT: `_sarg_vdo` (a `*V` into another pointer kind) and `_dro_check` (the address-passed
 # arm: a `*V` into `*Pt`, a vector of another type, a `*S` / `**S` of another struct) quoted `*` and the operand's LAST
 # name — `ri(*gp(pb))` '*pb', `ri(*&b)` '*b', `ri(*h.pv)` '*pv', `ri(**ppb)` '*ppb' (one `*` short), `rp(*gq(pq))`

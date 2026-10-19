@@ -39,7 +39,7 @@
 #      from every source) on
 #      x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N
 #      derived from the file; the release gate's cross-OS leg runs it on ecb / ach / cass / pi
-#   B  (6.7.15, issues/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md) a generic's
+#   B  (6.7.15, issues/archived/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md) a generic's
 #      `pp: **Box<T>` parameter, T its own type parameter, COMPILES — its pin is read under the binding its body has
 #      (`_param_pin`: the base's T -> i64, an instance's own); it was refused "unknown type 'T' as a type argument" at
 #      the definition (one error, every target). B1 the filed repro verbatim (7), B2 the explicit `nb<i64>(&p)` and
@@ -262,7 +262,7 @@ xr B3 "$D/b3.cyr" 99 "nb<Pt>(&q) * 10 + nv<Pt>(&q): the instance's pin (**pp a B
 xr B4 "$D/b4.cyr" 11 "nc(&q) through a concrete **Box<Pt>"
 
 echo "W. a wrapped or computed pointer argument binds as the pointer (6.7.15, D22 A / D23 A)"
-# W1 the filed repro, verbatim (issues/2026-10-17-generic-double-pointer-argument-in-parentheses-binds-nothing.md).
+# W1 the filed repro, verbatim (issues/archived/2026-10-17-generic-double-pointer-argument-in-parentheses-binds-nothing.md).
 cat > "$D/w1.cyr" <<'X'
 include "lib/syscalls.cyr"
 struct P3 { a; b; c; }
@@ -296,7 +296,7 @@ X
 xr WK "$D/wk.cyr" 66 "controls: g(ps + 1 & 3), g(ps - ps), g(&s + 0) bind nothing (8 each), tg<P3>((pps)) 42"
 
 echo "D. a ***T (and deeper) binds T (6.7.15, D24 A)"
-# D1 / D2 the filed repros, verbatim (issues/2026-10-17-generic-triple-pointer-parameter-carries-nothing.md).
+# D1 / D2 the filed repros, verbatim (issues/archived/2026-10-17-generic-triple-pointer-parameter-carries-nothing.md).
 cat > "$D/d1.cyr" <<'X'
 include "lib/syscalls.cyr"
 struct P3 { a; b; c; }

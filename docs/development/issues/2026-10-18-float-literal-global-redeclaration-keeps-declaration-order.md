@@ -8,7 +8,7 @@ the slot-open compiler.
 guide's rule for redeclarations names integer constants only.
 **Kind:** language — whether a float literal redeclaration is "a constant redeclaration" (the value from program
 start, as 6.7.15's D2 (a) made every integer one) is the user's call.
-**Discovered:** by unit F4 while implementing issues/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md
+**Discovered:** by unit F4 while implementing issues/archived/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md
 (the user's decision D2 (a), 2026-10-18: "every constant redeclaration is the value from program start"). That
 filing's surface and the decision's examples are integer constants (a literal, `= 0`, a const or enum name); the
 float literal, baked since 6.7.14 (`_gvk_flt`), was left in its order.

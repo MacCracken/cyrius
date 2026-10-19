@@ -448,7 +448,7 @@ syscall(60, 0);
 refuse "U11 var x: Foo = 5  (control)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return 0; }'"$E" one
 refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q\.mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
 
-# U13-U28 (6.7.15, issues/2026-10-17-refused-annotation-type-cascades-at-field-uses.md) — a USE of a variable or parameter
+# U13-U28 (6.7.15, issues/archived/2026-10-17-refused-annotation-type-cascades-at-field-uses.md) — a USE of a variable or parameter
 # whose annotation was refused says nothing more: each `.field` read, field store and `.m()` on it printed "no struct type
 # in scope for 'x'; a '.field' access needs its struct declaration" after the "unknown type 'Foo'" line (the declaration
 # parses on as a plain i64). `_tn_refuse_var` (parse_types.cyr) marks it with the late-declaration refusal's stand-down
@@ -775,7 +775,7 @@ syscall(60, GE.a);
 '
 # 6.7.15 (the user's D35 (a), 2026-10-18): an untyped global from a 9-16 B method is refused as the annotated one is —
 # this row pinned it holding the first word (exit 50) through 6.7.14
-# (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md)
+# (issues/archived/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md)
 refuse "ZK2 var G2 = Q0.mk()  (untyped 16 B: refused)" "'Q.mk' returns a struct by value, and a struct result needs storage in a fn's frame" "$ZQ"'var G2 = Q0.mk();
 syscall(60, G2 * 10);
 ' one

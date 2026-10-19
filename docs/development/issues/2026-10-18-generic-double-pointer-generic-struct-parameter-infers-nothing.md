@@ -1,7 +1,7 @@
 # A generic's `pp: **Box<T>` parameter infers no `T` from a `**Box<Pt>` argument: `nb(&q)` runs the `i64` base and reads `Box<Pt>.n` at `Box<i64>`'s offset — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S2), landing
-issues/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md. Through 6.7.14 (and on the lane base,
+issues/archived/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md. Through 6.7.14 (and on the lane base,
 fd2e325af) a `pp: **Box<T>` definition was refused, so this call could not be written; since that fix the definition
 compiles and the inferred call is reachable. The filing's own rows (the repro `nb(&p)` with `p: *Box<i64>`, the
 explicit `nb<i64>(&p)`, the explicit `nb<Pt>(&q)`) are right; the inferred call with a non-i64 instance is not. Not

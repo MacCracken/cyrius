@@ -52,7 +52,7 @@
 #       `bash -eo pipefail`, and the run goes on (the stop-point race below, made deterministic)
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
 #
-# THE SHELL (6.7.15, issues/2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md): the gate
+# THE SHELL (6.7.15, issues/archived/2026-10-16-lsp-gate-exits-without-a-verdict-under-pipefail.md): the gate
 # re-runs itself under `bash -eo pipefail` (GitHub's `run:` semantics) when bash is on PATH, so the
 # run check.sh's supervisor starts with /bin/sh is the one its feeders are written for.
 # `CY_LSP_GATE_INNER=1` keeps the shell that started it (the plain `sh` run). Before 6.7.15 it

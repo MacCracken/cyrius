@@ -8,7 +8,7 @@ cxvm built from the lane's tree for each host: x86_64 Linux (`build/cycc`), ecb 
 `kill(pid, SIGSTOP)` continues it; `kill(pid, SIGUSR1)` delivers SIGBUS. No boundary is crossed (cxvm runs trusted
 bytecode, and a guest can already signal anything cxvm's user can; no ledger id).
 **Found:** the 6.7.15 platform lane's review, reading `_cx_host_posix` after the host-dispatch fix
-(issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md), whose filed surface was
+(issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md), whose filed surface was
 `kill(getpid(), 0)` only. Related, not the same: 2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md (the
 errno values, staged beside this; it names the signal class as "not measured").
 

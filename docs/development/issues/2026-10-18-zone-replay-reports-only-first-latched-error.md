@@ -6,7 +6,7 @@ frontend, every target), identical on the slot-open compiler (b2e1f4c48's build/
 **Severity:** Low — the build is refused (rc 1) and the first error is right; each later zone mistake is reported
 only after the earlier one is fixed.
 **Kind:** bug (diagnostic).
-**Discovered:** 2026-10-18, by unit F2 adding rows for issues/2026-10-16-struct-literal-elements-need-no-comma.md
+**Discovered:** 2026-10-18, by unit F2 adding rows for issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md
 (two commaless zone literals gave one error; the fn-local and after-the-first-statement forms give one per
 declaration). Not that issue's surface: every latched error class behaves this way in the zone.
 

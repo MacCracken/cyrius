@@ -1,7 +1,7 @@
 # A `.field` of an undefined fn's result after an earlier plain call to it reads "it does not return a struct" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S6) beside
-issues/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md, whose fix names an undefined callee
+issues/archived/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md, whose fix names an undefined callee
 ("undefined function 'undefd'") when the `.field` call is the fn's FIRST use. Pre-existing; x86_64 measured, the
 frontend's (every target).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

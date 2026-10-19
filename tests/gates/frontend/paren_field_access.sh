@@ -225,7 +225,7 @@ refused N7 "cannot take a field of the result of 'mk0': it does not return a str
 # 6.7.15 (the user's D19, 2026-10-18): a statement whose assignment DESTINATION is parenthesised stays refused, by
 # name — "an assignment's destination is not parenthesised - write `*pn += 1`" (the statement quoted without its wraps),
 # once at the `(`, the statement stepped in sync; it was "unexpected '('". A parenthesised value that is no place
-# keeps "unexpected '('" (P10 P11). issues/2026-10-17-parenthesised-assignment-destination-is-unexpected-paren.md
+# keeps "unexpected '('" (P10 P11). issues/archived/2026-10-17-parenthesised-assignment-destination-is-unexpected-paren.md
 PD="an assignment's destination is not parenthesised - write"
 printf '%s\n' 'fn main(): i64 { var n = 5; var pn: *i64 = &n; (*pn) += 1; return n; }' 'syscall(60, main());' > "$T/P1.cyr"
 refused P1 "<source>:1:48: $PD \`*pn += 1\`" "the filed repro verbatim: (*pn) += 1;"
@@ -267,7 +267,7 @@ refused P11 "unexpected '('" "(a, b) = (3, 4); a tuple literal: unchanged"
 # call in it is refused as the unwrapped `s.a;` is — "the field read 'a' is discarded - a statement is an assignment or
 # a call", once at the field; since 6.7.14's D24 (a) it compiled and did nothing. A call anywhere keeps it a statement,
 # as unwrapped (V9, V13). A read that does not parse keeps its own one error (Q8).
-# issues/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md (item 19)
+# issues/archived/2026-10-17-6714-behaviour-changes-beyond-the-decisions-text.md (item 19)
 QD="is discarded - a statement is an assignment or a call"
 src Q1 'fn main(): i64 { var s = P1 { 33 }; (s).a; return s.a; }
 syscall(60, main());'

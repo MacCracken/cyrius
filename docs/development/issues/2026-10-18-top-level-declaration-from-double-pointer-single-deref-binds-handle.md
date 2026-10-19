@@ -1,7 +1,7 @@
 # A top-level `var G: S = *GPP;` (GPP a `**S`) binds G to the struct as a handle, where the same declaration in a fn copies since 6.7.15 — OPEN (decision)
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S2), landing
-issues/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md. That fix makes `*pp` of a
+issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-stores-pointer-word.md. That fix makes `*pp` of a
 `**S` a `*S` copied through as the WHOLE source of a copy — `l = *pp`, `G = *pp` (in a fn and at top level), `*q =
 *pp`, and the declaration `var t: S = *pp;` IN A FN, as its `*S`-name twin `var t: S = p;` copies. A declaration of a
 GLOBAL from `*GPP` — in the declaration zone or after the first statement, at 8 B and over — was left as it was: a

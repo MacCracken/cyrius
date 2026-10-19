@@ -1,5 +1,5 @@
 #!/bin/sh
-# cx_host_dispatch.sh — 6.7.15 (issues/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md).
+# cx_host_dispatch.sh — 6.7.15 (issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md).
 # A cx guest's syscall carries the guest's x86-LINUX number; cxvm serves the calls it lists through the
 # HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
 # every host — on Windows through the PE routes, -38 where the PE peer has only a stub. What still differs
@@ -25,11 +25,11 @@
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never
 # 0x20000), F_GETFD, F_DUPFD_CLOEXEC (FD_CLOEXEC set on the copy); the path calls (6.7.15,
-# issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
+# issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
 # fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
-# issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
+# issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
 # fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub).
 #
 # AXES
@@ -55,7 +55,7 @@
 #   MU4 `_cx_host_stat` without its st_mode store -> RED 1: axis 3 (`lin=1024`: the aarch64 host's
 #       struct is refilled at the x86 offsets, the x86 host's is the guest's own — Darwin's layouts
 #       are held by the ecb / ach legs)
-#   MU5 (issues/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) the aarch64 peer's sys_dup2
+#   MU5 (issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) the aarch64 peer's sys_dup2
 #       without its self-dup arm (dup3 for every pair, the pre-6.7.15 body) -> RED 1: axis 3 (exit 12,
 #       `lin=2048`: dup2(1, 1) and the closed fd both -22, dup3's EINVAL)
 #

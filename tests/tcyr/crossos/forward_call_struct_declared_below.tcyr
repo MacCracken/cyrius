@@ -12,8 +12,8 @@
 # Every row compares a call made ABOVE its callee against a value computed another way (the literal fields, or the
 # same callee called from BELOW its definition). The structs named B* / Q* / f32v4 / Low are declared at the END of
 # the declaration section, below every fn that names them; A16 is declared first (the control).
-# (issues/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md,
-#  issues/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md)
+# (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md,
+#  issues/archived/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md)
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 

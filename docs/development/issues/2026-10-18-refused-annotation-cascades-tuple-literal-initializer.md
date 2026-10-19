@@ -6,9 +6,9 @@ non-type-token spellings.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Low — refused either way (rc 1); the first error is the right one, one invented error follows.
 **Kind:** bug (diagnostic cascade).
-**Discovered:** 2026-10-18, by unit F2 fixing issues/2026-10-16-var-missing-annotation-reported-as-expected-equals.md
+**Discovered:** 2026-10-18, by unit F2 fixing issues/archived/2026-10-16-var-missing-annotation-reported-as-expected-equals.md
 (its new "expected a type for variable 'b', got '='" shape meets the same cascade with a tuple initializer). Same
-class as issues/2026-10-17-refused-annotation-type-cascades-at-field-uses.md (receives lane), which covers a later
+class as issues/archived/2026-10-17-refused-annotation-type-cascades-at-field-uses.md (receives lane), which covers a later
 `.field` USE, not the declaration's own tuple-literal initializer.
 
 ## Reproduction

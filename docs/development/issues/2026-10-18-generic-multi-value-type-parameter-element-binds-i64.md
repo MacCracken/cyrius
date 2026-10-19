@@ -5,7 +5,7 @@ explicit-method lookahead bite, x86_64, CYRIUS_IR=3, aarch64 (qemu), cx (cxvm), 
 slot-open compiler for the free spellings.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Discovered:** 2026-10-18, 6.7.15 generics G5, checking that the explicit method spelling `var a, b = p.mm<f64>(h);`
-(now a destructure, issues/2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md) types its bindings as the
+(now a destructure, issues/archived/2026-10-16-explicit-method-type-args-in-method-call-lookaheads.md) types its bindings as the
 free spellings do: none of the generic spellings type a `V` element f64.
 **Severity:** Medium — silent: the element holds the double's bits and is used as an integer (a warning, "integer
 arithmetic with an f64 right operand", but the wrong value); the non-generic `fn mm3(x: f64): (f64, i64)` binds f64

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 generics lane (l6715-generics at d76d2e5cb, unit G6), x86_64
 (the frontend: every target alike). Found while landing
-issues/2026-10-17-generic-refusals-name-a-generic-method-by-its-mangled-name.md, whose fix names the CALLED generic as
+issues/archived/2026-10-17-generic-refusals-name-a-generic-method-by-its-mangled-name.md, whose fix names the CALLED generic as
 the call spells it (`generic 'P.fw' has no i64 instance ...` for `p.fw(5)`); the second name of the forward refusal —
 the generic the refused one forwards its T to — and the note under it were outside that issue's filed surface.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

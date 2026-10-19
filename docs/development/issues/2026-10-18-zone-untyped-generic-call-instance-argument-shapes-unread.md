@@ -1,7 +1,7 @@
 # A declaration-zone untyped generic call returning a generic struct's instance binds nothing when its type argument comes from an expression, a struct carrier or a bounded struct: `var x = mkg1(30 + 3);`, `mkc(BX)` (`b: Box<T>`), `mkb(P)` (`struct G1<T: Show>`) — `x.v` is "no struct type in scope for 'x'", where after the first statement each binds — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R4) while landing
-issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md. That fix reads a zone generic call's
+issues/archived/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md. That fix reads a zone generic call's
 type arguments from the tokens (`_gu_gen` / `_gu_tp`, src/frontend/parse_decl.cyr): an explicit list, and for an
 inferred one a struct (`_tok_gen_tp_sid`), a lone integer literal or a lone global; "when the tokens cannot bind T,
 keep today's answer" (the brief). The shapes below are the ones it leaves untyped, as before. Measured on the lane

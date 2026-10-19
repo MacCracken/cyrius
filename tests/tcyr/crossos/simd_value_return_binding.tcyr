@@ -89,7 +89,7 @@ fn drt4(p: *f64v4): f64v4 { return *p; }
 fn drtf(p: *f32v4): f32v4 { return *p; }
 fn dvlanes(x: f64v2): i64 { return load64(&x) * 1000 + load64(&x + 8); }
 
-# --- H (6.7.15, issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared
+# --- H (6.7.15, issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared
 #     `: V` on a FIELD-CHAIN receiver is the vector at every receive a single-name receiver's is (6.7.13's D29 A, 6.7.14's
 #     D37 / D38 / D39). The untyped `var v = w.s.mv();` bound one word — stack garbage, per target and per build (x86_64
 #     104, IR=3 40, aarch64 144, cx 98, PE 195 where 161 is right); the annotated declaration, the assignment, a value-form

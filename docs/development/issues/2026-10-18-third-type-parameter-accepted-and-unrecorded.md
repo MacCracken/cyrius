@@ -1,7 +1,7 @@
 # A third type parameter is accepted at the declaration and silently unrecorded; every explicit three-argument use is a parse error — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 generics lane (the nested-shift fix,
-issues/2026-10-16-nested-type-arg-shift-close-then-comma-drops-next-arg.md, turned
+issues/archived/2026-10-16-nested-type-arg-shift-close-then-comma-drops-next-arg.md, turned
 `sizeof(Three<P<P<R>>, i16, i32>)` from a silent wrong 28 into the parse error every three-argument use already
 gave). Pre-existing: the lane tree and the slot-open compiler b2e1f4c48 give identical results below.
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.

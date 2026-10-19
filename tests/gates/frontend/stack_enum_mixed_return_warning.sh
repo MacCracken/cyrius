@@ -220,7 +220,7 @@ fx pw_cl_q      "$P2
 fn f(x) { var g = |y| { var v = (gd<i32>(y))?; return v; }; return Ok(x); }"
 fx pw_cl_pair   "$P2
 fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; return Ok(x); }"
-# 6.7.15 (issues/2026-10-17-mixed-pair-return-warning-skips-impl-methods.md): an impl METHOD and an inherited trait
+# 6.7.15 (issues/archived/2026-10-17-mixed-pair-return-warning-skips-impl-methods.md): an impl METHOD and an inherited trait
 # DEFAULT are judged as a fn is — the walk took depth-0 `fn` tokens only, so the filed method (im_repro: exit 50, `t = 5`
 # the plain return read as the tag) built silent where its free-fn twin (im_free) warns. `_warn_mixed_impls`
 # (parse.cyr): each impl's methods (`_impl_method_entry`, read only) and each default it inherits, an untyped `self`

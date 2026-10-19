@@ -1,7 +1,7 @@
 # A second refused `case` label is reported as "expected ':', got identifier 'ww'" instead of its own refusal — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 frontend lane (unit F3) beside
-issues/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md, whose filed surface is the pass-1 / declaration-zone
+issues/archived/2026-10-16-pass1-in-place-const-refusals-swallow-the-next.md, whose filed surface is the pass-1 / declaration-zone
 in-place const contexts (enum values, global array sizes, `#assert`). A `case` label is the fifth in-place const
 context and is outside it: F3 leaves case labels as they were (`_ce_ctx_open` keeps a case label's latch). Measured
 the same on the slot-open compiler (b2e1f4c48's build/cycc), the lane before F3 (e5a003c6f) and after F3.

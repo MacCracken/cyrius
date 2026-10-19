@@ -315,7 +315,7 @@
 #   M-PW2 `_spi_top_ref` without its `_tn_once` mark                   -> RED 2: PW4 PW5 (2 errors)
 #   T4f-T4k (6.7.15) a refused dyn type argument is read as i64 (`_type_arg_leaf`, and `_parse_one_type_arg`'s arm for a
 #       name followed by `<`), so no `Box$dyn Show` is minted to cascade
-#       (issues/2026-10-16-dyn-type-argument-refusal-cascades-into-instance-local.md): T4f the filed repro verbatim (a
+#       (issues/archived/2026-10-16-dyn-type-argument-refusal-cascades-into-instance-local.md): T4f the filed repro verbatim (a
 #       second error, "declare Box$dyn Show 'a' with its value", before), T4g `g<dyn Show>(o)` with an untyped `o`,
 #       T4h `Two<i64, dyn Show>` / T4i `Box<Box<dyn Show>>` locals, T4j a `: Box<dyn Show>` return ("returned in two
 #       registers ... `Box$dyn Show`" before), T4k `Box<dyn Show<i64>>` — each one error line. Mutants (2026-10-18, the

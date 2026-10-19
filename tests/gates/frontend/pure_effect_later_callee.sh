@@ -157,7 +157,7 @@ EOF
 # P7-P10 (6.7.15): a callee called through a generic INSTANCE (`h<i32>(1)`, `a<i32>(2)`, a tail call, an impl method
 # `p.m<i32>(1)`) — the instance is its own fn entry, minted with the pending attributes parked, and nothing copied
 # the base's bits 16 / 32 to it (`_gen_inst_record` does now), so each was silent; the all-i64 spelling `a(2)` binds
-# the base and warned (issues/2026-10-17-pure-check-misses-explicit-generic-instance-callee.md).
+# the base and warned (issues/archived/2026-10-17-pure-check-misses-explicit-generic-instance-callee.md).
 row P7 3 "6:30: #pure fn calls #io fn 'h<i32>'|6:37: #pure fn calls #alloc fn 'a'|6:55: #pure fn calls #io fn 'h<i32>'|" <<'EOF'
 #io
 fn h<T>(x: T): i64 { return 1; }

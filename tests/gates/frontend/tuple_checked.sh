@@ -1044,7 +1044,7 @@ refused r17i "a multi-value call 'mk' $R17F" "R17i: \`h.p = mk(3);\`" "${TH5}${M
 refused r17j "a multi-value call 'B.mk' $R17F" "R17j: a method" "${TH5}struct B { v; }\nimpl B { fn mk(self, a): (i64, i64) { return (a, a); } }\n${F5}    var h: H;\n    var b: B;\n    h.p = b.mk(3);${E5}"
 refused r17k "a multi-value call 'mk' $R17F" "R17k: a global's field, at top level" "${TH5}${MK}var GH = H { 1, 2, 3 };\nGH.p = mk(3);\nsyscall(60, 0);\n"
 refused r17l "a multi-value call 'mk' $R17F" "R17l: a classic-for step's field" "${TH5}${MK}${F5}    var h: H;\n    for (var i = 0; i < 2; h.p = mk(i)) { i = i + 1; }${E5}"
-# R17m-r (6.7.15, issues/2026-10-17-wrapped-multi-value-call-into-tuple-field-reports-twice.md) — a WRAPPED multi-value
+# R17m-r (6.7.15, issues/archived/2026-10-17-wrapped-multi-value-call-into-tuple-field-reports-twice.md) — a WRAPPED multi-value
 # call into a tuple field is R17 alone: the issue's program verbatim gave R17 at the call (3:32) and then R12 at the
 # wrap's \`(\` (3:31). \`_tup_fsc_call\` notes its report (\`_tfc_rep\`) and \`_fsc_paren\` marks the wrap's \`(\` reported,
 # so the store's R12 stays quiet, as it does unwrapped (one token). A wrapped ONE-value call keeps its single R12

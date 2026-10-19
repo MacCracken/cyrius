@@ -1,7 +1,7 @@
 # A subscript store through a parenthesised base — `(pn)[0] = 1;`, `(*(&pn))[1] = 2;` — is still "unexpected '('" — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S5) landing the user's D19
-(issues/2026-10-17-parenthesised-assignment-destination-is-unexpected-paren.md): a statement whose whole assignment
+(issues/archived/2026-10-17-parenthesised-assignment-destination-is-unexpected-paren.md): a statement whose whole assignment
 destination is parenthesised (`(*p) += 1;`, `(n) = 7;`) is now refused by name, and `(s).a = v;` is refused by name since
 6.7.14's D24 (a); a SUBSCRIPT after the parentheses (`(pn)[0] = 1;`) is neither shape — the token after the `)` is `[`,
 not an assignment or a `.` — and keeps "unexpected '('". Measured on the lane head before S5 and after it alike, x86_64

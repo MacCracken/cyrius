@@ -441,7 +441,7 @@ _frow WF11 1 1 'var B: bool = false;\nvar B: bool = true;\nsyscall(60, B);\n'
 _frow WF12 0 1 'var B: bool = true;\nvar B: bool = (true);\nsyscall(60, B);\n'
 _frow WF13 0 "E:variable 'K' shadows an enum constant" 'enum E { K = 5; }\nvar K = 2 + 3;\nsyscall(60, K);\n'
 # WN — 6.7.15: a const- / enum-NAMED constant on either side of a redeclaration is compared, as a literal is
-#      (issues/2026-10-17-redeclared-global-named-constant-value-never-compared.md): pass 1 folds no name, so neither
+#      (issues/archived/2026-10-17-redeclared-global-named-constant-value-never-compared.md): pass 1 folds no name, so neither
 #      side was ever compared. A pair whose either side only the replay folds is compared there (_gvk_chain), in
 #      declaration order, at the later declaration's `=`, once. WN1-WN4 the filed repros (`3` then `C`, `C` then `3`,
 #      `3` then `E.B`, `D` then `C`: 3:7, 3:7, 3:7, 4:7; each was silent); WN5 / WN6 same-value pairs silent (`5` then

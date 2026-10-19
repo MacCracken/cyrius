@@ -5,7 +5,7 @@
 # 128 B: PP_MARK_INCLUDED kept the first 127 bytes of a spelling and PP_ALREADY_INCLUDED compared the whole one, so a
 # spelling of 128+ bytes never matched its own entry and a second `include` of it was not skipped — its top-level
 # statements ran twice, its fns were defined twice (the later binds), no message. Since v4.8.4-alpha2. The table now
-# holds a pointer per entry to the whole spelling, alloc'd (issues/2026-10-16-include-once-path-of-128-chars-included-twice.md).
+# holds a pointer per entry to the whole spelling, alloc'd (issues/archived/2026-10-16-include-once-path-of-128-chars-included-twice.md).
 #
 #   F1  the filing's repro verbatim: a 128-character file name included twice around z.cyr -> 41 (was 42)
 #   F2  the filing's 127-character control -> 41 (unchanged)

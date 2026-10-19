@@ -1,6 +1,6 @@
 # zone_struct_literal_value.tcyr — 6.7.15: a declaration-zone struct or tuple literal whose every element is a
 # constant is its global's value from program start, with no startup stores
-# (issues/2026-10-16-zone-struct-literal-baked-and-stored.md).
+# (issues/archived/2026-10-16-zone-struct-literal-baked-and-stored.md).
 #
 # THE DEFECT (measured on 6.7.14, x86_64). `var p = P { 1, 2 };` put its bytes in the image (6.6.16's bake) AND
 # stored every element again at startup — per field `mov eax, imm; push rax; movabs rcx, p; [add rcx, off;] pop rax;

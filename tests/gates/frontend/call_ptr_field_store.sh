@@ -70,7 +70,7 @@
 #                                                     cursor restored, the statement back on PCMPE)
 #   c2 `_icall_stmt_chain` reading the fncallN digit for 137 -> RED 44: CP1-CP10 x4 (the arity check: "fncallN
 #                                                     argument count does not match the N in its name")
-# (6.7.15, the structs lane, unit S6; issues/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md; the
+# (6.7.15, the structs lane, unit S6; issues/archived/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md; the
 # same procedure, 2026-10-18)
 #   u1 `_call_field` returning 0 for an unresolved callee (= the tree before) -> RED 47: U1-U11 x4 ("expected ';', got
 #                                                     '.'" / "expected '=', got '('", then the end-of-compile refusal),
@@ -78,13 +78,13 @@
 #   u2 `_call_undef` without its `_tsc_n` move    -> RED 32: the statement / step rows (U1 U2 U4 U6 U8-U11 x4: "the
 #                                                     result is a temporary" or "expected ';'" after the named error)
 #   u3 `_call_undef` without its intrinsic guard  -> RED 4: U14 x4 ("undefined function 'mulh64'")
-# (6.7.15, unit S6; issues/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md; the same procedure)
+# (6.7.15, unit S6; issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md; the same procedure)
 #   s1 neither `_cf_unres` arm (= the tree before) -> RED 21: S1-S7 x3 (the false "the result is a temporary"; S5-S7
 #                                                     its error in place of the tail's own)
 #   s2 `_fn_nodef` answering 1 only for an unregistered callee -> RED 6: S1 S3 x3 (the callee registered by the line's
 #                                                     earlier call)
 #   s3 `_step_cf_tail` without its arm             -> RED 9: S1 S2 S6 x3
-# (6.7.15, unit S6; issues/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md; the same procedure)
+# (6.7.15, unit S6; issues/archived/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md; the same procedure)
 #   t1 `_method_chain`'s top-level arm stepping only its `.name` / `(..)` steps (= the tree before) -> RED 32: T6-T12,
 #                                                     T15 x4 (the second, false "cannot subscript field 'p': it is not
 #                                                     a *T field")
@@ -323,13 +323,13 @@ refused F5 "expected '=', got '('" "for step \`f()\`, a call, keeps its refusal"
 row F6 'fn go(): i64 { var i = 0; for (i = 0; i < 3; gp().n) { i = i + 1; } return i; }'
 refused F6 "expected '=', got '('" "for step \`gp().n\`, no assignment, keeps its refusal"
 
-# --- T6-T13 (6.7.15, issues/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md): a top-level
+# --- T6-T13 (6.7.15, issues/archived/2026-10-17-toplevel-by-value-method-result-field-subscript-two-errors.md): a top-level
 # METHOD returning a struct by value, its `*T` field subscripted — one error, the no-frame refusal. The chain's walk
 # stopped before the `[`, and the subscript was then judged against a field never typed: a second, false "cannot
 # subscript field 'p': it is not a *T field". T6 is the filed repro verbatim; T13 the filed in-fn control (exit 5).
 # 6.7.15 (the wave-2 merge): T6-T15 call a real `impl O { fn mk }` method, so the refusal names it `O.mk` — the
 # vectors lane's source spelling for the top-level refusal (`_refuse_toplevel_struct_call` through `_fn_src_name`,
-# issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md); T4 / T5 / F4 call a FREE
+# issues/archived/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md); T4 / T5 / F4 call a FREE
 # fn named `O_mk`, which keeps its own name. T11's `&O_mk` names the method's own record, so it prints `O.mk` too.
 cat > "$T/T6.cyr" <<'EOF2'
 include "lib/syscalls.cyr"
@@ -470,7 +470,7 @@ cprow CP10 'fn main(): i64 { callptr(&gp, 5).b; return G.a; }
 syscall(60, main());'
 runs CP10 5 "control: \`callptr(&gp, 5).b;\`, a read statement"
 
-# --- U (6.7.15, issues/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md): a `.field` of an
+# --- U (6.7.15, issues/archived/2026-10-17-undefined-callee-field-assignment-names-no-undefined-fn.md): a `.field` of an
 # UNDEFINED fn's result is "undefined function 'undefd'" at the name, ONE error — no warning, no end-of-compile
 # refusal (the call is never registered), no binary. It was "expected ';', got '.'" (the step "expected '=', got '('")
 # then the end-of-compile refusal. U1 / U2 are the filed repros verbatim, with their positions.
@@ -556,7 +556,7 @@ done
 row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'
 refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an intrinsic, is no undefined fn"
 
-# --- S (6.7.15, issues/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md): --syntax-only (lint's
+# --- S (6.7.15, issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md): --syntax-only (lint's
 # pre-pass), a field assignment on a call whose callee this file does not define — a sibling module's — parses its
 # tail silently: it was "cannot assign to a field of a call result: the result is a temporary", true only of a callee
 # KNOWN to return a struct by value. S1 is the filed repro verbatim (the statement registers gp, so the step's callee

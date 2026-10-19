@@ -11,7 +11,7 @@ misaligned and reads the wrong element). Row 3: the read takes the neighbouring 
 language question (is `*(&x)` of a narrow scalar x?), named here because the D21 vidya line claims `*(&x)` is x for
 every x the compiler types.
 **Discovered:** 2026-10-18, the review of the 6.7.15 vectors lane — outside the filed surface of
-`issues/2026-10-17-dereference-of-address-of-typed-pointer-local-loses-its-pointee.md` (D21: reads, `*(&p) + n`, a
+`issues/archived/2026-10-17-dereference-of-address-of-typed-pointer-local-loses-its-pointee.md` (D21: reads, `*(&p) + n`, a
 store `*(&pb) = &x`). The guide's `*(&x) OP= v` sentence (docs/guides/cyrius-guide.md, the struct section) names the
 struct (refused), the handle and the scalar (the word op) only — not a typed pointer.
 

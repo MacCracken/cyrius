@@ -156,7 +156,7 @@
 #                                                           handle's uses stay right), GH0a GH0c GHK1-GHK4 green
 # A generic returning its own `: T` kept the reset (`_gen_ret_tp`) through 6.7.14: at a scalar instance the struct-
 # annotated local was refused at its field use. 6.7.15 — THE USER'S D13 (a), 2026-10-18: it is a handle, as the
-# non-generic word-returning call is (issues/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md;
+# non-generic word-returning call is (issues/archived/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md;
 # tests/gates/frontend/generic_t_return_decl.sh carries the rows of that decision). GHT1-GHT4 now pin the handle: a field
 # use compiles, and the word the handle holds is the call's (GHT1 `gid(&GQ)` reads GQ.z through it); GHT5 the
 # struct-instance control.
@@ -1230,7 +1230,7 @@ var G = B3.mk3();' 'G.c'
 refused DM9after "undefined variable 'nope'" "after an earlier error: 24 B adds its one refusal, no 'no struct type in scope'" 2
 
 # 6.7.15 — A DECLARATION-ZONE UNTYPED GENERIC CALL RETURNING A GENERIC STRUCT'S INSTANCE BINDS IT
-# (issues/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). `var x = mkg1(33);` with `fn mkg1<T>(v:
+# (issues/archived/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md). `var x = mkg1(33);` with `fn mkg1<T>(v:
 # T): G1<T>` bound nothing in the declaration zone (`x.v` was "no struct type in scope for 'x'"; `mkg1<i64>(33)` the same;
 # a 16 B `G2<T>` gave the D30 refusal AND that error), where the line after the first statement binds the instance
 # (D29). The end of pass 1 reads the type arguments from the tokens — an explicit list as the call parses it, else each

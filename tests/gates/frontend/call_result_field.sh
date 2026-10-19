@@ -32,7 +32,7 @@
 #          grammar error inside them is still reported (S2).
 #   G1/G2  (R2) an EXPLICIT generic call as a bare statement at top level, struct-returning (6.7.15: G1 names
 #          the instance as the source spells it, `mkg<i32>` — it printed `mkg$i32`; C4 / C6-C8 the method `B.mk`,
-#          not `B_mk` — issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md)
+#          not `B_mk` — issues/archived/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md)
 #          (`mkg<i32>(1);`, `mkg<i32>(1).a;`), is refused by name exactly as `mk3(1);` is — it was
 #          "expected '=', got '<'" plus two follow-on errors on 6.6.11.
 #   G3     (R2) `mu<i32>(3);` on a `#must_use` generic warns that the result is discarded, as the

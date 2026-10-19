@@ -1,7 +1,7 @@
 # A `*Str` dereference into a generic's `x: T` with T = `Str` (`gg<Str>(*p)`, inferred `gg(*p)`) passes the header's data word — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S3), measured on the lane's tree after its
-`str_len(*p)` fix (issues/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md) and on the lane
+`str_len(*p)` fix (issues/archived/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md) and on the lane
 base (c557ee1b1): the same values on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
 **Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
 **Severity:** Medium — silent: the callee reads the string's bytes as a `Str` header (`str_len` 0 here; a longer

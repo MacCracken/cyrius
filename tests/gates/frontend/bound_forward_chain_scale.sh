@@ -2,7 +2,7 @@
 # check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # bound_forward_chain_scale.sh — 6.7.15. The bounded-forward judgement costs about nothing per generic, at any depth.
 #
-# THE DEFECT (issues/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). A generic forwarding its T to a
+# THE DEFECT (issues/archived/2026-10-17-bounded-forward-judgement-capped-at-64-deep.md). A generic forwarding its T to a
 # generic whose i64 base is bad for its bound has no i64 instance either (6.7.14, `_bnd_base_bad` -> `_bbs_fwd_bad`).
 # The judgement walked the forwards afresh at every asking (each base, each call site), so a chain of N forwarders
 # cost N^2 scans, and a depth cap of 64 kept that bounded by answering "not bad" past it: a valid 66-deep chain was

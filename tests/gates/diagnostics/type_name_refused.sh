@@ -191,7 +191,7 @@ refused va_gen      'fn g<T>(a: T): i64 { var b: 1 = 0; return b + a; }\nsyscall
 # the declaration zone and after the first statement; the declaration reads its initializer from the `=`, and a `;` is
 # not also "uninitialized variable not allowed". It was "expected '=', got number 0" at the initializer (the `=` stepped
 # as the type), and `var c: ; var d = 2;` in the zone compiled, c = 2 (va_miss_next)
-# (issues/2026-10-16-var-missing-annotation-reported-as-expected-equals.md). Mutations (measured; scratch trees): the
+# (issues/archived/2026-10-16-var-missing-annotation-reported-as-expected-equals.md). Mutations (measured; scratch trees): the
 # 6.7.15 slot-open compiler (`_tn_head_var` not reporting a `=` / `;`) -> every va_miss / va_missing row RED (the old
 # "expected '='" at the wrong token; va_miss_next compiles); `_tn_head_var` without its step back -> RED the fn and
 # after-the-first-statement rows and the --syntax-only row (2-3 errors: "expected '='" too) — the zone rows are the

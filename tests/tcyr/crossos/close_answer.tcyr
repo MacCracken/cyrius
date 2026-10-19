@@ -1,7 +1,7 @@
 # close_answer.tcyr — 6.7.15: a close answers 0, or a negative errno when it fails, on every
 # target, Windows included.
 #
-# ⛔ THE DEFECT (issues/2026-10-16-pe-close-returns-closehandle-bool.md). ECLOSE_PE
+# ⛔ THE DEFECT (issues/archived/2026-10-16-pe-close-returns-closehandle-bool.md). ECLOSE_PE
 # (src/backend/x86/emit.cyr) handed back CloseHandle's BOOL unchanged: 1 for a good close, 0 for a
 # failed one. Every `sys_close(..) < 0` / `file_close(..) < 0` test was dead on Windows, and
 # `file_close_r` answered Ok(1) for a good close and Ok(0) for a failed one — never Err. Measured

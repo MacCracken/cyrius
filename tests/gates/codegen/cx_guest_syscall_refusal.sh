@@ -30,7 +30,7 @@
 #       uid_identity rows of cx_auto_call_main.sh)
 #   R6  the translated / served calls still work on both legs: open + write + lseek + read back a
 #       file in the cwd, close, getrandom(16) == 16, clock_gettime(REALTIME) == 0 with tv_sec > 0
-#   R7  (6.7.15; issues/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) the path
+#   R7  (6.7.15; issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) the path
 #       calls are served on both legs: mkdir, stat (S_IFDIR / S_IFREG, st_size, st_mtime at the x86
 #       offsets), symlink, readlink, rename, unlink (raw and the stdlib's sys_unlink), rmdir
 #   R8  (6.7.15) on cx a path or buffer outside the guest answers -EFAULT without reaching the host:

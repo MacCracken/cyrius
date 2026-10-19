@@ -9,7 +9,7 @@
 # compiler (the Mach-O ones on ecb / ach, the PE one on cass, the native aarch64 one on pi).
 # Mutation (the 6.7.14 lex_pp.cyr): a and b each 2 (want 1). The full shape, five legs and mutations:
 # tests/gates/frontend/include_once_long_spelling.sh
-# (issues/2026-10-16-include-once-path-of-128-chars-included-twice.md)
+# (issues/archived/2026-10-16-include-once-path-of-128-chars-included-twice.md)
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

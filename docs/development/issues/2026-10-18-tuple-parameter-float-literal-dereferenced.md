@@ -1,7 +1,7 @@
 # Into a tuple parameter, a float literal — `take(1.5)`, `take(-1.5)`, `take((2.0))` — compiles and is dereferenced as the tuple's address — OPEN
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R1) while landing 6.7.15's D36
-(issues/2026-10-17-tuple-parameter-negated-bool-or-constant-expression-literal-dereferenced.md: an argument made
+(issues/archived/2026-10-17-tuple-parameter-negated-bool-or-constant-expression-literal-dereferenced.md: an argument made
 only of integer / char / bool literals and operators is refused into a tuple parameter). D36's answer gives the
 words for an integer and a bool only ("cannot pass an integer …", "'a bool' for `true` / `false`"); a float literal
 is outside that text, so it was filed rather than given new words. Measured with the lane after R1 (140fd4c3e) and

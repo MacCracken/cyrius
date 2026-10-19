@@ -8,7 +8,7 @@ recogniser (the method here returns a scalar).
 struct type with an `add` method would be called silently with the wrong instance.
 **Kind:** bug (generic inference).
 **Discovered:** 2026-10-18, probing the chained-receiver vector method fix
-(issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) at a closure-capture head.
+(issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) at a closure-capture head.
 
 ## Reproduction
 

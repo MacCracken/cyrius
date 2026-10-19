@@ -1,7 +1,7 @@
 # tls12_ch_conformance.tcyr — 6.7.15: the native TLS 1.2 server's ClientHello extension block fills the
 # message, or the handshake is refused with decode_error.
 #
-# issues/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, the 1.2
+# issues/archived/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, the 1.2
 # server's arm; the user's decision 6.7.15 D40 (2026-10-18): "Refuse with decode_error". The parse
 # (_tn_12_parse_client_hello) read the block only `if (pos + ext_total <= blen)`, documented lenient:
 # bytes after the block were ignored, and a block that overran the message was read as no

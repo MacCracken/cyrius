@@ -6,7 +6,7 @@ the frontend, every target.
 **Severity:** Low — the program is refused either way (rc 1) and its first error, the annotation's, is printed; a
 second, genuine error on a DIFFERENT variable is counted but not printed.
 **Kind:** bug (diagnostic).
-**Discovered:** 2026-10-18 by unit R2 while fixing issues/2026-10-17-refused-annotation-type-cascades-at-field-uses.md.
+**Discovered:** 2026-10-18 by unit R2 while fixing issues/archived/2026-10-17-refused-annotation-type-cascades-at-field-uses.md.
 That fix marks a variable whose annotation was refused with the frontend lane's shared stand-down (`_ann_refd_mark` /
 `_ann_refd_said`, src/frontend/parse_fn_def.cyr, from 6.7.15's late-declaration-refusal fix), which records
 (the current fn — or top level — , the name) and stands down every `.field` / `.m()` / field-store report on that name
