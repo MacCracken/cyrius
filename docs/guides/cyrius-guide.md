@@ -654,6 +654,14 @@ constructing, and `fncall1(5, 6)` faulted. A UNIT variant (`mulh64 = 77;`) decla
 is accepted, but must be read qualified (`E.mulh64`): the bare name parses as the intrinsic, so
 `#derive(Serialize)` on that enum fails too.
 
+`sizeof(..)` and `mulh64(..)` are VALUES, not calls: a statement made of one (`mulh64(a, b);`,
+`sizeof(T);`, `sizeof(T) + 1;`) is refused once, at the name — *the value of 'mulh64(..)' is
+discarded - a statement is an assignment or a call* — with or without `--allow-undef`, as `x + 1;`
+and `(s).a;` are (6.7.16, the user's D11, 2026-10-19). Before 6.7.16 such a statement compiled as
+a call to an undefined fn of that name: refused for *undefined function 'mulh64'*, and
+`--allow-undef` wrote a binary that died with SIGILL at the line. `fncall0`..`fncall8(..);` call a
+fn, so each stays a statement.
+
 ### Default and named arguments (6.7.7)
 
 A trailing parameter may declare a **default**, and a direct call may **name** its arguments
