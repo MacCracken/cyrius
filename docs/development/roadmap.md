@@ -84,7 +84,7 @@ the handle line and size-independent struct copies, and P5-B execution coverage 
 
 ## The releases after 6.7.8 (placed 2026-10-09; shifted one 2026-10-11)
 
-Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09; sizes and the full lane maps: `~/.cache/c6/plan678_712.json`). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
+Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
 
 ### 6.7.16 — repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18)
 
