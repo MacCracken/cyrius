@@ -18,8 +18,9 @@
 #      position — the user's decision (a), 2026-10-13); R4 a tuple in a generic fn / struct; R6 an `async fn`
 #      tuple parameter; R11 a tuple (or a tuple field) used as a value; R12 a non-tuple source into
 #      a tuple place (an argument of another struct or tuple type too); R13 methods; R17 a
-#      multi-value call as a tuple argument (`g(f())`: bind it first); R21 `t.N` spellings that
-#      name no element
+#      multi-value call as a tuple argument (`g(f())`: bind it first; R17v / R17w an integer or bool literal
+#      or an argument made only of literals and operators, 6.7.14's D44 / 6.7.15's D36); R21 `t.N` spellings
+#      that name no element
 #   P  positive: the type, `t.N`, copies, fields, parameters — exit codes, values distinguishable
 #   T4 — the literal `(a, b)`, accepted in five positions (a `var` initializer in a fn and in either
 #      global zone, an assignment to a tuple variable, a tuple field store, a tuple argument, and
@@ -611,6 +612,33 @@ refused4 r17v8 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'tak
 exits4 r17v9 34 "R17v9: an untyped word is the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\` (\`mk\`: i64 returning an alloc)" 'include "lib/alloc.cyr"\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; return take(&t) + take(u) + take(mk()) - 68; }\nsyscall(60, f());\n'
 refused4 r17v10 "$LIT" "R17v10: an \`#inline\` callee" '#inline\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn f(): i64 { return take(5) + 1; }\nsyscall(60, f());\n'
 refused4 r17v11 "cannot pass an integer to tuple parameter 't' (i64, i64) of 'X.take'" "R17v11: a method's tuple parameter, \`x.take(5)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(5); }\nsyscall(60, f());\n'
+# R17w (6.7.15, D36, the user's decision of 2026-10-18; issues/2026-10-17-tuple-parameter-negated-bool-or-constant-
+# expression-literal-dereferenced.md) — an argument made ONLY of literals and operators is no tuple either: \`take(-5)\`,
+# \`take((-5))\`, \`take(true)\` and \`take(5 + 0)\` (the filed table, each in the filed template) compiled and the callee
+# read through the value (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE). \`_tal_scan\` reads the whole argument:
+# integer / char literals, \`true\` / \`false\`, operators and parentheses only — "an integer", or "a bool" when every
+# literal is \`true\` / \`false\`. A name (a const too), a call and \`&t\` keep passing the address (R17w12), and so does a
+# literal expression into a parameter that is not a tuple; a generic's tuple parameter stays R4 alone (R17w13).
+# Mutations (scratch trees, run 2026-10-18, every leg): the tree before (4862a462) -> R17w1-R17w11 BUILD (R17w12 /
+# R17w13 hold); \`_sarg_paren\` without its \`_tup_arg_lit\` call -> R17w8 BUILDS; \`_tal_end\` answering 1 for a
+# bool-only argument -> R17w3, R17w4, R17w10 name "an integer"; \`_tal_scan\` taking a name as a literal -> R17w12
+# refused (R17v9, the A rows and every tuple-variable argument too); \`_tup_arg_lit\` without its generic skip ->
+# R17w13 and R4c two error lines.
+TW='fn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\n'
+BOOLT="cannot pass a bool to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple"
+refused4 r17w1 "2:27: $LIT" "R17w1: \`take(-5)\`, the filed template" "${TW}fn f(): i64 { return take(-5); }\nsyscall(60, f());\n"
+refused4 r17w2 "2:28: $LIT" "R17w2: \`take((-5))\`" "${TW}fn f(): i64 { return take((-5)); }\nsyscall(60, f());\n"
+refused4 r17w3 "2:27: $BOOLT" "R17w3: \`take(true)\` is a bool" "${TW}fn f(): i64 { return take(true); }\nsyscall(60, f());\n"
+refused4 r17w4 "2:27: $BOOLT" "R17w4: \`take(false)\`" "${TW}fn f(): i64 { return take(false); }\nsyscall(60, f());\n"
+refused4 r17w5 "2:27: $LIT" "R17w5: \`take(5 + 0)\`" "${TW}fn f(): i64 { return take(5 + 0); }\nsyscall(60, f());\n"
+refused4 r17w6 "2:27: $LIT" "R17w6: \`take(~0)\`" "${TW}fn f(): i64 { return take(~0); }\nsyscall(60, f());\n"
+refused4 r17w7 "2:28: $LIT" "R17w7: \`take((1 << 3))\`" "${TW}fn f(): i64 { return take((1 << 3)); }\nsyscall(60, f());\n"
+refused4 r17w8 "2:27: $LIT" "R17w8: \`take((1) + 2)\`, a \`(\`-led literal expression" "${TW}fn f(): i64 { return take((1) + 2); }\nsyscall(60, f());\n"
+refused4 r17w9 "2:35: cannot pass an integer to tuple parameter 't' (i64, i64) of 'take2'" "R17w9: the second argument \`take2(1 + 2, -5)\` (the first, no tuple, is not judged)" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn f(): i64 { return take2(1 + 2, -5); }\nsyscall(60, f());\n'
+refused4 r17w10 "cannot pass a bool to tuple parameter 't' (i64, i64) of 'X.take'" "R17w10: a method's tuple parameter, \`x.take(!true)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(!true); }\nsyscall(60, f());\n'
+refused4 r17w11 "2:18: $LIT" "R17w11: at top level, \`take('a' - 1)\`" "${TW}syscall(60, take('a' - 1));\n"
+exits4 r17w12 34 "R17w12: still the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\`, a const \`take(C)\` (compiled, not taken), and a literal expression into a parameter that is no tuple" 'include "lib/alloc.cyr"\nconst C = 0;\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(x): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; if (x == 0) { return take(C); } return take(&t) + take(u) + take(mk()) + take2(-1 + 1, t) - 102; }\nsyscall(60, f(1));\n'
+refused4 r17w13 "1:12: a tuple type in a generic fn is refused" "R17w13: a generic's tuple parameter, \`g(-5, 0)\`: R4 alone" 'fn g<T>(t: (i64, i64), x: T): T { return x; }\nfn f(): i64 { return g(-5, 0); }\nsyscall(60, f());\n'
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"

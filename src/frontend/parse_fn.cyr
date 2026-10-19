@@ -2082,7 +2082,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
     # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
     if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
-    if (PEEKT(S) == 1) { _tup_arg_lit(S, fi, argc); }   # 6.7.14 (D44): `take(5)`, refused; pushed as before
+    _tup_arg_lit(S, fi, argc);   # 6.7.14's D44 `take(5)`, 6.7.15's D36 `take(-5)`: refused, pushed as before
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
@@ -2749,15 +2749,22 @@ fn _tup_arg_call(S, fi, argc): i64 {
 # the literal — a whole argument, inside any parentheses (`_sarg_paren` peels them) — in sync: the caller pushes
 # it as before and `_had_error` withholds the binary. Any other untyped word (`&t`, a name, a one-value call) is
 # still the address, as for a struct parameter: a tuple has no `*T` spelling. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AN ARGUMENT MADE ONLY OF LITERALS AND OPERATORS IS NO TUPLE EITHER (D36, the user's decision,
+# 2026-10-18): `take(-5)`, `take((-5))`, `take(true)` and `take(5 + 0)` compiled and the callee read through the
+# value (139 / 139 / 1 / 5), because only a lone integer literal reached the check. The whole argument is scanned
+# (`_tal_scan`): integer / char literals, `true` / `false`, operators and parentheses only — refused as "an
+# integer", or "a bool" when its every literal is `true` / `false`. A name (a const too), a call, `&` / `*` in front
+# of an operand, a string or a float exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
 fn _tup_arg_lit(S, fi, argc): i64 {
-    var nt = TOKTYP(S, GTI(S) + 1);
-    if (nt != 31 && nt != 11) { return 0; }
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
+    var lk = _tal_scan(S, GTI(S));
+    if (lk == 0) { return 0; }
     var o = _gen_def_open(S, fi);
     if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
     if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
-    PRSTR("cannot pass an integer to tuple parameter ");
+    if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
+    else { PRSTR("cannot pass an integer to tuple parameter "); }
     var pn = _bx_pname(S, fi, argc);
     if (pn >= 0) {
         _dyn_pq(S, pn);
@@ -2769,6 +2776,53 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     PRSTR(" - it takes a tuple");
     _dyn_eend(S);
     return 1;
+}
+# 6.7.15 (D36) — the argument from token k to its depth-0 `,` / `)`: 1 = made only of integer / char literals,
+# `true` / `false`, operators and parentheses, with an integer or char literal among them; 2 = the same with every
+# literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
+# between two (in front of one they read or take an address).
+fn _tal_scan(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var ints = 0;
+    var bools = 0;
+    var opnd = 0;   # 1 = the token before ends an operand: a literal or a `)`
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 31 || t == 11) {
+            if (d == 0) { return _tal_end(ints, bools, opnd); }
+            if (t == 31) { return 0; }
+            d = d - 1;
+        } elif (opnd == 1) {
+            if (_tal_binop(t) == 0) { return 0; }
+            opnd = 0;
+        } elif (t == 1) {
+            ints = 1;
+            opnd = 1;
+        } elif (t == 169 || t == 170) {
+            bools = 1;
+            opnd = 1;
+        } elif (t == 10) { d = d + 1; }
+        elif (t != 7 && t != 37 && t != 171) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _tal_end(ints, bools, opnd): i64 {
+    if (opnd == 0) { return 0; }
+    if (ints == 1) { return 1; }
+    if (bools == 1) { return 2; }
+    return 0;
+}
+# A binary operator `_tal_scan` takes: + - * / == != < > <= >= & % | ^ << >> && || >>> and the wrapping /
+# saturating / checked +% +| +? -% -| -? *% *| *?.
+fn _tal_binop(t): i64 {
+    if (t >= 6 && t <= 9) { return 1; }
+    if (t >= 17 && t <= 22) { return 1; }
+    if (t == 27 || t == 34 || t == 35 || t == 36 || t == 38 || t == 39) { return 1; }
+    if (t == 53 || t == 54 || t == 152) { return 1; }
+    if (t >= 113 && t <= 121) { return 1; }
+    return 0;
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
 # stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
@@ -3032,7 +3086,10 @@ fn _sarg_paren(S, fi, argc, tail): i64 {
     if (_tup_sarg_lit(S, fi, argc, tail) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     var k = _pwrap_k(S, st);
     var e = TOKTYP(S, _pw_end);
-    if (e != 31) { if (e != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
+    if (e != 31) { if (e != 11) {
+            _tup_arg_lit(S, fi, argc);   # 6.7.15 (D36): `take((1) + 2)`, a `(`-led literal expression
+            return _push_struct_expr_arg(S, fi, argc, tail);
+        } }
     STI(S, st + k);
     if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) {
         STI(S, st);   # not a struct source: the caller pushes the whole argument's value
