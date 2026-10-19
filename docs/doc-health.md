@@ -301,7 +301,10 @@ type: state
 > behaviour the code did not have, which is the class this ledger exists for: a doc that is
 > right about intent and silent about what actually happens reads as verified. Both are now
 > pinned by gates (`toolchain/self_host_src_per_target.sh`,
-> `toolchain/emit_js_refused_off_x86_linux.sh`), so the doc and the behaviour move together.
+> `toolchain/emit_js_per_host_fork.sh`), so the doc and the behaviour move together. Since
+> 6.7.15 (6.7.15's D38) every host's compiler carries the TypeScript front end, so the second
+> gate pins `--target=js` RUNNING on every POSIX host and refused by name only on Windows —
+> no longer refused off x86-64 Linux (the gate was renamed when it stopped pinning a refusal).
 > No other tier was re-verified at 6.6.6 by this bite.
 
 > **Touched at 6.6.6 (bite 24, not a sweep):** `docs/guides/cyrius-guide.md`, the same CLI
