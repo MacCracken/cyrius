@@ -2469,6 +2469,16 @@ back a "capture" the attacker controls. Measured same-user (the open follows the
 0 bytes); cross-user it is the kernel's documented behaviour: Linux's `fs.protected_symlinks` / `fs.protected_regular`
 (1 on the dev box and pi) refuse both in a sticky `/tmp`, macOS (`/private/tmp`, no such sysctl) does not.
 
-**Fix.** The capture file is created exclusively in a private place (the fix's commit and rows are in CHANGELOG
-[6.7.15]; the lane: libfix4, unit L6).
+**Fix (6.7.15, commit 7757c8e8f — lane libfix4, unit L6).** `_regression_capture_open` creates each candidate
+`<base>/<prefix><pid>`, then `….1` … `.63`, `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW` mode 0600 with each target's own
+bits; a taken name (a planted link or file) is skipped, and past the bound or on any other open error one stderr line
+names the refusal and nothing runs. The base is `$TMPDIR` when absolute, else `/tmp`; on Windows (no fork) nothing is
+created. Measured before → after with a child that prints: the victim's head overwritten ("OVERWRITE") → untouched on
+x86_64 Linux, pi, ecb and ach (on Darwin 577 carried no `O_TRUNC`, so the filed repro's silent child left the
+victim's 9 bytes even before the fix; on Linux it emptied them). Rows:
+`tests/tcyr/crossos/regression_capture_exclusive.tcyr` (the filed repro verbatim, planted links and files at each
+verb's names, all 64 taken, the file 0600 and gone once read — 22/22 on x86_64 Linux, ecb, ach and pi; the Windows
+row on cass) and `tests/gates/toolchain/regression_capture_exclusive.sh` (another process plants, the refusal named,
+the TMPDIR rules, and a static axis over `lib/` refusing a `/tmp` literal outside its allowlist and pinning the
+capture open's flags), mutation-proven.
 

@@ -2531,6 +2531,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"
 # _aw_open's write into the file it named and was renamed over the path. cyrfmt --write and
 # deps --lock skip planted names, refuse by name when 64 are taken; only _io_tmp_open builds it.
 _chk_gate "$ROOT/tests/gates/toolchain/atomic_temp_exclusive.sh"
+# 6.7.15 (CYRIUS-2026-0036) — lib/regression.cyr's capture verbs wrote the child's output to a
+# pid-predictable "/tmp/<prefix><pid>" opened O_CREAT|O_TRUNC: a planted link was followed. Each
+# candidate is created O_EXCL|O_NOFOLLOW 0600 under $TMPDIR, a taken name is skipped, all 64 taken
+# is refused by name; no lib/ literal names a /tmp path outside its allowlist.
+_chk_gate "$ROOT/tests/gates/toolchain/regression_capture_exclusive.sh"
 
 # 6.6.9 (bite 11) — a check-driver row that did not run its check (missing tool, host or
 # fixture) prints SKIP and is tallied as a SKIP, never as a PASS; CYRIUS_CHECK_NO_SKIP=1 (what

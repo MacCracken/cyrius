@@ -953,10 +953,11 @@ END {
 }
 AWK
 _fixed_port() { awk -f "$W/ports.awk" "$1"; }
-# file|literal|reason — literals that are not paths the test opens
+# file|literal|reason — literals that are not paths the test opens, or the head of a per-process name (the reason says how)
 PORT_ALLOW=''
 TMPLIT_ALLOW='tests/tcyr/crossos/flags.tcyr|/tmp/out.s|argv string for the flag parser; never opened
-tests/fixtures/aarch64_cluster/syscalls_combined.cyr|/tmp/out|argv string for the flag parser; never opened'
+tests/fixtures/aarch64_cluster/syscalls_combined.cyr|/tmp/out|argv string for the flag parser; never opened
+tests/tcyr/crossos/regression_capture_exclusive.tcyr|/tmp/audit_xc_|the CYRIUS-2026-0036 repro, verbatim: the name a capture verb tries first in /tmp, suffixed with the pid of the child that plants a link there and removes it, so no two runs share it (6.7.15)'
 mkdir -p "$W/fx6"
 printf 'var testpath = "/tmp/cyrius_fs_test";\n' > "$W/fx6/tmp_lit.tcyr"
 printf '    xsymlink("/tmp/cyr_xlat_f", "/tmp/cyr_xlat_lnk");\n' > "$W/fx6/tmp_two.tcyr"
@@ -1025,7 +1026,7 @@ if [ "$n6" -lt 400 ]; then
 elif [ "$bad6" != 0 ]; then
     FAIL=1
 elif [ "$st6" = 0 ]; then
-    echo "  ok: axis 6: $n6 tests/tcyr + tests/fixtures files name no fixed /tmp path ($nallow allowlisted non-path literals) and bind no fixed port (self-tested on 6 shapes + 1 clean file)"
+    echo "  ok: axis 6: $n6 tests/tcyr + tests/fixtures files name no fixed /tmp path ($nallow allowlisted literals, each with its reason) and bind no fixed port (self-tested on 6 shapes + 1 clean file)"
 fi
 
 # ── axis 9: STATIC — no gate runs wine in the SHARED default prefix, or leaves it running ──
