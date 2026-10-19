@@ -1694,8 +1694,13 @@ was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's deci
 mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
 scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
-through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. A
-method or operator result, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
+through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. So does a
+whole method, operator or known `&f` result (6.7.15; the user's decisions D34 (a) and D35 (a), 2026-10-18): `var G =
+B1.mk1();`, `= B1 + B1;`, `= fncall0(&mk1);` or `= callptr(&mk1);` of 8 bytes or less is that struct (`G.a` was *no
+struct type in scope for 'G'*), one of 9-16 bytes is refused as `var G: P2 = B2.mk();` is, naming the method as
+written (*'P2.mk' returns a struct by value, and a struct result needs storage in a fn's frame*; through 6.7.14 `G`
+held the first word, silently), and over 16 bytes the call's own refusal is the one error. An if-expression's
+struct, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
 bytes). An annotation that names no struct is never replaced by the callee's struct:

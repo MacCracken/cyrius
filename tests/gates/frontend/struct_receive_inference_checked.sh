@@ -641,8 +641,12 @@ rowz SAT6 after 'var G: cstring = B.mkg(7);'
 refused SAT6 "cannot initialise 'G: cstring' from 'Q.mkg', which returns the struct 'Q' - declare 'G: Q' or bind a field" "top level, after a first statement: a generic method into \`: cstring\`"
 rowz SATK1 after 'var G: i64 = B.mk3();'
 refused SATK1 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: a 24 B method at top level keeps its one no-frame refusal"
-printf '%s\n%s\nvar P = Q1 { 33 };\nvar G1: i64 = B.mk1();\nvar G2 = B.mk();\nvar Z = 0;\nZ = 1;\nalloc_init();\nvar G3: i64 = B.ms();\nvar G4: i64 = P + P;\nsyscall(60, G1 + str_len(G3) - 36 + G4 - 66 + 34 + G2 - 30);\n' "$MH" "$MZ" > "$T/SATK2.cyr"
-runs SATK2 34 "control: at top level an 8 B method / operator and a \`Str\` method into \`: i64\`, an untyped method, keep the word"
+printf '%s\n%s\nvar P = Q1 { 33 };\nvar G1: i64 = B.mk1();\nvar Z = 0;\nZ = 1;\nalloc_init();\nvar G3: i64 = B.ms();\nvar G4: i64 = P + P;\nsyscall(60, G1 + str_len(G3) - 36 + G4 - 66 + 34);\n' "$MH" "$MZ" > "$T/SATK2.cyr"
+runs SATK2 34 "control: at top level an 8 B method / operator and a \`Str\` method into \`: i64\` keep the word"
+# 6.7.15 (D35 (a)): the untyped 16 B method this row pinned as keeping the word (exit 30) is refused by name
+printf '%s\n%s\nvar G2 = B.mk();\nsyscall(60, G2.b);\n' "$MH" "$MZ" > "$T/SATK3.cyr"
+refused SATK3 "'Q.mk' returns a struct by value, and a struct result needs storage in a fn's frame" \
+    "\`var G2 = B.mk();\` (16 B, the zone) refused once (SATK2 pinned it keeping the word through 6.7.14)"
 # controls in a fn
 rowm SAK1 "fn f(): i64 { $MB var x: i64 = b.mk1(); var a1 = Q1 { 30 }; var y: u8 = a1 + a1; return x + y - 59; }"
 runs SAK1 34 "control: an 8 B method and operator result into \`: i64\` / \`: u8\` keep their one word"
@@ -1071,7 +1075,161 @@ var S = mks();
 var R = (mks());' 'str_len(S) + str_len(R) + 24'
 runs TUK1 34 "control: an untyped \`Str\` call at top level stays the handle (\`str_len(S)\`, wrapped too)"
 
-[ "$rows" -ge 229 ] || bad "only $rows rows ran (floor 229)"
+# 6.7.15 — D34 (a) / D35 (a) (the user, 2026-10-18): AN UNTYPED TOP-LEVEL WHOLE METHOD, OPERATOR OR KNOWN `&f` RESULT
+# BINDS ITS STRUCT AS THE FREE CALL DOES (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-
+# result-keeps-word.md). `var G = B1.mk1();`, `= B1 + B1;`, `= fncall0(&mk1);`, `= callptr(&mk1);` — wrapped or not, in
+# the declaration zone or after a first statement — of 8 B or less bound nothing (`G.a` was "no struct type in scope
+# for 'G'"); of 9-16 B G silently held the first word (33; 2 for the operator) where `var G: P2 = B2.mk();` is refused
+# by name. Now 8 B binds (`G.a` 33), 9-16 B is refused once ("'P2.mk' returns a struct by value, and a struct result
+# needs storage in a fn's frame", at the `;` as the annotated line's), and over 16 B the call's own refusal is the one
+# error (the "no struct type in scope" after it is gone). After the first statement PARSE_VAR's `_gu_late` reads the
+# parse's record (`_gu_rec`); in the zone `_gu_sweep` reads the tokens (`_gu_wsid`), the replay refuses from the record
+# (`_gu_zref`) and `_gz_agree` checks the 8 B verdict (`_gu_agps`); a verdict the handle-line walk changes is read
+# again (`_gu_recheck`). DM0 the filed repro verbatim; DB / DW (8 B bare / wrapped), DR16 / DR16W (16 B), DR24 / DR24W
+# (24 B) x {method, operator, fncall0, callptr} x {zone, after}; DM1 `G + G` dispatches, DM2 `G + 1` with no operator fn
+# is refused; DM3 a fn body reads `G.a` and passes G by value; DM4 `var Y: P1 = G;`; DM5 an operator on a handle global
+# stays pointer arithmetic (the walk's re-read); DM6 a refusal inside the initialiser is the one error; DM7 a chain
+# whose receiver refuses is one error; DM8 a twice-wrapped 16 B operator; DM9 24 B after an earlier error (2, not 3);
+# DM10 / DM11 a method returning `G1<i32>` and `fncall1(&mkg1, ..)` (a generic struct's) bind; DM12 a GENERIC method's
+# generic struct result in the zone is not misread (it is left untyped there); SATK2 / SATK3 above (SATK2's untyped
+# `var G2 = B.mk();` is now refused).
+#   (Each mutant: a scratch copy of the tree with the one change, its 2-stage compiler, this gate run from the copy.)
+#   N48 the tree before it (R3's tip, 326c1b56a)          -> RED 67 rows: DM0, DB* DW* DM1 DM3 DM4 DM10 DM11 x {zone,
+#                                                           after} x4 and DM2 x2 (x86_64) — "no struct type in scope for
+#                                                           'G'" / built; DR16* DR16W* DM8 SATK3 x4 (no refusal: G an
+#                                                           untyped word, its `.b` "no struct type in scope"); DR24*
+#                                                           DR24W* DM7 x4 (2 errors), DM9after x4 (3); A2 x4 (the tcyr's
+#                                                           TM* / TL* rows); DM5 DM6 DM12 green
+#   N49 `_gu_late` without its `_gu_rec` arm              -> RED 33: N48's after rows (DM9after included) and A2, x4 legs
+#   N50 `_gu_zsid` without `_gu_wsid` (the zone)           -> RED 35: N48's zone rows and A2; DR16*zone DM8 SATK3 now 2
+#                                                           errors (the replay's refusal stands, `G.b` adds the second)
+#   N51 `_gu_zref` without `_gu_rec`                       -> RED 10: DR16*zone DR16W*zone DM8 SATK3 x4 (BUILT)
+#   N52 `_gu_recheck` answering 0                          -> RED 1: DM5zone x4 ("the declaration zone misread whether
+#                                                           the initializer of 'G' is a struct value": `_gu_agps` caught
+#                                                           the stale verdict)
+#   N53 `_gu_reg` without `callptr`                        -> RED 3: DBcpzone DR16cpzone DR24cpzone x4 (the wrapped
+#                                                           `(callptr(..))` starts with `(`, still noted)
+#   N54 `_gu_rec` without its `_scv_err` read of the tokens -> RED 1: DM7after x4 (2 errors)
+#   N55 `_gu_rec` without its `_sc_rbeg` span              -> RED 1: DM9after x4 (3 errors)
+#   N55b `_gu_wsid` refusing every generic struct base     -> RED 2: DM10zone DM11zone x4 (no struct type in scope)
+#   N55c `_gu_wsid` taking a generic method's base too     -> RED 1: DM12 x4 ("the declaration zone misread whether the
+#                                                           initializer of 'Y' is a struct value")
+DH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P1 { a; }
+struct P2 { a; b; }
+struct P3 { a; b; c; }
+struct Q1 { a; }
+struct G1<T> { v: T; }
+struct Pt { a; }
+struct BG { a; }
+impl BG { fn mkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; } }
+impl P1 { fn mk1(self): P1 { var q: P1; q.a = 33; return q; } }
+impl P2 {
+    fn mk(self): P2 { var q: P2; q.a = 33; q.b = 4; return q; }
+    fn mkv(self, v): P2 { var q: P2; q.a = v; q.b = 4; return q; }
+}
+impl P3 { fn mk3(self): P3 { var q: P3; q.a = 33; q.b = 4; q.c = 5; return q; } }
+impl Q1 {
+    fn mq(self): Q1 { var q: Q1; q.a = 5; return q; }
+    fn mg(self): G1<i32> { var g: G1<i32>; g.v = 33; return g; }
+}
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn P1_add(l: P1, r: P1): P1 { var q: P1; q.a = l.a + r.a + 31; return q; }
+fn P2_add(l: P2, r: P2): P2 { var q: P2; q.a = l.a + r.a; q.b = 1; return q; }
+fn P3_add(l: P3, r: P3): P3 { var q: P3; q.a = l.a + r.a; q.b = 1; q.c = 2; return q; }
+fn mk1(): P1 { var p: P1; p.a = 33; return p; }
+fn mk2(): P2 { var p: P2; p.a = 33; p.b = 4; return p; }
+fn mk3(): P3 { var p: P3; p.a = 33; p.b = 4; p.c = 5; return p; }
+fn d1(p: P1): i64 { return p.a; }
+fn gp1(): *P1 { return &B1; }
+var B1 = P1 { 1 };
+var B2 = P2 { 1, 2 };
+var B3 = P3 { 1, 2, 3 };
+var BQ = Q1 { 1 };
+var BG0 = BG { 1 };
+var PT = Pt { 33 };'
+# rowd <name> <zone|after> <declarations> <exit expression>: after = behind a first statement (`$TS`)
+rowd() {
+    if [ "$2" = zone ]; then printf '%s\n%s\nsyscall(60, %s);\n' "$DH" "$3" "$4" > "$T/$1.cyr"
+    else printf '%s\n%s\n%s\nsyscall(60, %s);\n' "$DH" "$TS" "$3" "$4" > "$T/$1.cyr"; fi
+}
+cat > "$T/DM0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P1 { a; }
+struct P2 { a; b; }
+impl P1 { fn mk1(self): P1 { var q: P1; q.a = 33; return q; } }
+impl P2 { fn mk(self): P2 { var q: P2; q.a = 33; q.b = 4; return q; } }
+fn P1_add(l: P1, r: P1): P1 { var q: P1; q.a = l.a + r.a; return q; }
+fn P2_add(l: P2, r: P2): P2 { var q: P2; q.a = l.a + r.a; q.b = 1; return q; }
+fn mk1(): P1 { var p: P1; p.a = 33; return p; }
+fn mk2(): P2 { var p: P2; p.a = 33; p.b = 4; return p; }
+var B1 = P1 { 1 };
+var B2 = P2 { 1, 2 };
+var G = B1.mk1();
+syscall(60, G.a);
+EOF
+runs DM0 33 "D34's repro verbatim: \`var G = B1.mk1(); syscall(60, G.a);\` (refused before: no struct type in scope for 'G')"
+for zw in zone after; do
+    # kind: m (a method), op (an operator), fc (fncall0(&f)), cp (callptr(&f))
+    for k in m op fc cp; do
+        case $k in
+            m)  e8='B1.mk1()'; e16='B2.mk()'; e24='B3.mk3()'; n16="'P2.mk'"; n24="'P3.mk3'" ;;
+            op) e8='B1 + B1'; e16='B2 + B2'; e24='B3 + B3'; n16="'P2_add'"; n24="'P3_add'" ;;
+            fc) e8='fncall0(&mk1)'; e16='fncall0(&mk2)'; e24='fncall0(&mk3)'; n16="'mk2'"; n24="'mk3'" ;;
+            cp) e8='callptr(&mk1)'; e16='callptr(&mk2)'; e24='callptr(&mk3)'; n16="'mk2'"; n24="'mk3'" ;;
+        esac
+        rowd "DB$k$zw" $zw "var G = $e8;" 'G.a'
+        runs "DB$k$zw" 33 "top level ($zw): \`var G = $e8;\` is the 8 B struct (\`G.a\`)"
+        rowd "DW$k$zw" $zw "var G = ($e8);" 'G.a'
+        runs "DW$k$zw" 33 "top level ($zw): \`var G = ($e8);\`"
+        rowd "DR16$k$zw" $zw "var G = $e16;" 'G.b'
+        refused "DR16$k$zw" "$n16 $MNF" "top level ($zw): \`var G = $e16;\` (16 B) refused once, \`G.b\` no second error (the first word before)"
+        rowd "DR16W$k$zw" $zw "var G = ($e16);" 'G.a'
+        refused "DR16W$k$zw" "$n16 $MNF" "top level ($zw): \`var G = ($e16);\` refused once"
+        rowd "DR24$k$zw" $zw "var G = $e24;" 'G.c'
+        refused "DR24$k$zw" "$n24 $MNF" "top level ($zw): \`var G = $e24;\` (24 B), the call's one refusal (no 'no struct type in scope' after it)"
+        rowd "DR24W$k$zw" $zw "var G = ($e24);" 'G.a'
+        refused "DR24W$k$zw" "$n24 $MNF" "top level ($zw): \`var G = ($e24);\`, one error"
+    done
+    rowd "DM1$zw" $zw 'var G = B1.mk1();
+var K: P1 = G + G;' 'K.a - 64'
+    runs "DM1$zw" 33 "top level ($zw): \`G + G\` dispatches \`P1_add\`"
+    rowd "DM2$zw" $zw 'var G = BQ.mq();
+var K = G + 1;' '0'
+    rows=$((rows + 1))
+    compile x86_64 "DM2$zw"
+    if [ "$crc" -ne 0 ] && grep -q "undefined function 'Q1_add'" "$T/DM2$zw.x86_64.err" && [ ! -s "$T/DM2$zw.x86_64" ]; then
+        ok "DM2$zw top level ($zw): \`G + 1\` with no \`Q1_add\` is refused (it added to the word before)"
+    else bad "DM2$zw top level ($zw): \`G + 1\` was not refused for want of \`Q1_add\` (rc $crc)"; fi
+    rowd "DM3$zw" $zw 'var G = fncall0(&mk1);
+fn f(): i64 { return G.a + d1(G) - 33; }' 'f()'
+    runs "DM3$zw" 33 "top level ($zw): a fn body reads \`G.a\` and passes G by value"
+    rowd "DM4$zw" $zw 'var G = (B1 + B1);
+var Y: P1 = G;' 'Y.a'
+    runs "DM4$zw" 33 "top level ($zw): \`var Y: P1 = G;\` copies it"
+    rowd "DM5$zw" $zw 'var A: P1 = gp1();
+var G = A + A;' 'G - A - A + 33'
+    runs "DM5$zw" 33 "top level ($zw): \`A + A\` with A a handle global stays pointer arithmetic (an untyped word)"
+    rowd "DM6$zw" $zw 'var G = B2.mkv(nope);' '0'
+    refused "DM6$zw" "undefined variable 'nope'" "top level ($zw): a refusal inside the initialiser is the one error"
+    rowd "DM7$zw" $zw 'var G = B1.mk1().mk1();' 'G.a'
+    refused "DM7$zw" "'P1.mk1' $MNF" "top level ($zw): a chain whose receiver has no frame is one error (\`G.a\` adds none)"
+    rowd "DM10$zw" $zw 'var G = BQ.mg();' 'G.v'
+    runs "DM10$zw" 33 "top level ($zw): a method returning \`G1<i32>\` (a generic struct's instance) binds it"
+    rowd "DM11$zw" $zw 'var G = fncall1(&mkg1, 33);' 'G.v'
+    runs "DM11$zw" 33 "top level ($zw): \`fncall1(&mkg1, 33)\`, a generic's base through \`&f\`, binds G1"
+done
+rowd DM12 zone 'var Y = BG0.mkg(PT);' '33'
+runs DM12 33 "the zone: a GENERIC method's generic struct result is not typed from the base (the replay's is \`G1<Pt>\`)"
+rowd DM8 zone 'var G = ((B2 + B2));' 'G.b'
+refused DM8 "'P2_add' $MNF" "the zone: \`var G = ((B2 + B2));\` refused once"
+rowd DM9after after 'var E = nope;
+var G = B3.mk3();' 'G.c'
+refused DM9after "undefined variable 'nope'" "after an earlier error: 24 B adds its one refusal, no 'no struct type in scope'" 2
+
+[ "$rows" -ge 300 ] || bad "only $rows rows ran (floor 300)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15)"

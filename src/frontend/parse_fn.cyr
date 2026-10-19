@@ -6746,6 +6746,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
         elif (cls == 2) {                  # top level: `_sc_pre` already refused it
             _sc_rbeg = beg;
             _sc_rend = GTI(S);
+            _sc_rsid = GFRS(S, fi);
             return 0;
         }
     }
@@ -7022,8 +7023,9 @@ fn _scv_dyn_chk(S, pscale, ext, start): i64 {
 }
 
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
-# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word — 6.7.8: never a
-# dyn's, which is refused whatever the annotation (a dyn global's own is `_dyn_var`'s).
+# (a >16 B one already was, in `_sc_pre`). An untyped `var g = ..` is judged by PARSE_VAR's `_gu_late` (6.7.15's
+# D34 / D35: it binds the struct, a 9-16 B one refused as here) — 6.7.8: never a dyn's, which is refused whatever the
+# annotation (a dyn global's own is `_dyn_var`'s).
 fn _sc_global_receive(S, pscale, start): i64 {
     if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
     if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global

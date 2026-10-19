@@ -6764,7 +6764,7 @@ fn _gvi_scalar(S): i64 {
     _scv_err = 0;
     if (he == 0) { _scv_err = _had_error; }
     _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
-    if (_gu_untyped(S, st) == 1) { _gu_refuse(S, _gu_sid(S, st)); }   # 6.7.14 (D30): `var x = mk2(30);`
+    if (_gu_untyped(S, st) == 1) { _gu_zref(S, st); }   # 6.7.14 (D30): `var x = mk2(30);`; 6.7.15 (D35): `= B2.mk();`
     return 0;
 }
 # 6.7.14 (D28 (a)) — 1 = the zone declaration whose initialiser starts at `st` is annotated `*T` (`**T`, any number of
@@ -10755,6 +10755,7 @@ var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, 
 # operand dispatches on it; a declaration from it is `_gz_star`'s).
 var _gz_k = 0;
 var _gz_gb = 0;  # the generic struct a whole generic call's `: G<T>` return names (its instance is the call's)
+var _gz_mfi = 0 - 1;   # 6.7.15: the method or operator fn whose result `_gz_ty` last typed (`_gu_wsid`)
 # PARSE_GVAR_REG, the slot known (`gvi`; `ti` the initialiser's first token): a struct global of 8 B or
 # less is noted for the sweep — a literal (`lit` 1, struct `ssid`) as a fixed value (its token negated),
 # any other initialiser (the declared `asid`) to be judged.
@@ -10778,8 +10779,20 @@ fn _gz_reg(S, gvi, lit, ssid, asid, ti): i64 {
 # only goes 2 -> 1; the cursor is put back).
 fn _gz_sweep(S): i64 {
     _gu_sweep(S);   # 6.7.14 (D29): first — a judgment below can read one (`var G: S1 = X;`)
-    if (_gz_v == 0) { return 0; }
     var sv = GTI(S);
+    var ch = 1;
+    while (ch == 1) {
+        _gz_walk(S);
+        ch = _gu_recheck(S);   # 6.7.15 (D34): a verdict the walk changed, and the walk again
+    }
+    if (_gz_v != 0) { _gz_shapes(S, vec_len(_gz_v)); }
+    STI(S, sv);
+    return 0;
+}
+# The walk, to its fixpoint: each noted global still a value whose initialiser is no struct value of its type becomes
+# a handle.
+fn _gz_walk(S): i64 {
+    if (_gz_v == 0) { return 0; }
     var n = vec_len(_gz_v);
     var ch = 1;
     while (ch == 1) {
@@ -10795,8 +10808,6 @@ fn _gz_sweep(S): i64 {
             i = i + 2;
         }
     }
-    _gz_shapes(S, n);
-    STI(S, sv);
     return 0;
 }
 # A global declared twice in the zone, a struct value in one declaration and a handle in another, has
@@ -11000,6 +11011,7 @@ fn _gz_op(S, b, p): i64 {
     var r = GFRS(S, ofi);
     if (r <= 0) { return 0; }
     _gz_k = 1;
+    _gz_mfi = ofi;
     return r;
 }
 # The struct an operator's left operand [b, p) dispatches on (`_op_lst`): a struct result, an inline
@@ -11090,6 +11102,7 @@ fn _gz_chain(S, b, e): i64 {
         if (TOKTYP(S, i + 2) == 10) {
             var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
             if (mf < 0) { return 0; }
+            _gz_mfi = mf;
             var mc = _call_close(S, i + 2);
             t = GFRS(S, mf);
             k = 1;
@@ -11172,6 +11185,7 @@ fn _gz_bty(S, a, b): i64 {
 # by name — storing into the other layout is a silent miscompile. Quiet once an error is reported.
 fn _gz_agree(S, gps, gvi, ti, noff): i64 {
     if (gvi < 0) { return 0; }
+    if (gps == 0) { gps = _gu_agps(S, gvi, ti); }   # 6.7.15: an untyped global the sweep made an inline struct
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     if (_had_error == 1) { return 0; }
@@ -11210,9 +11224,17 @@ fn _gz_late(S, sid, start): i64 {
 # zone, where fns below are not yet registered and fn bodies read the global before its replay, the end of pass 1
 # does (`_gu_sweep`, from the tokens as `_gz_sweep` reads them) and the replay refuses (`_gvi_scalar`). A `Str` stays
 # a handle routed by its call (6.7.13's D6 (b) / 6.7.14's D22 (b): no other untyped top-level declaration takes a
-# type), a dyn its own refusals; a method / operator result keeps the word. CHANGELOG [6.7.14]
+# type), a dyn its own refusals. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AND A WHOLE METHOD, OPERATOR OR KNOWN `&f` RESULT (the user's decisions D34 (a) and D35 (a), 2026-10-18:
+# decision 12 and decision 5 cover the rest; in a fn `var g = b.mk1();` binds). `var G = B1.mk1();`, `= B1 + B1;`,
+# `= fncall0(&mk1);`, `= callptr(&mk1);` (wrapped or not) of 8 B or less bound nothing (`G.a` was "no struct type in
+# scope for 'G'"), and of 9-16 B G silently held the first word (33; 2 for the operator) where `var G: P2 = B2.mk();`
+# is refused by name (6.7.9). Now the same rule as the free call: after the first statement from the parse's own
+# record (`_gu_rec`: `_sc_whole`, or the span of a call over 16 B that refused itself), in the zone from the tokens
+# (`_gu_wsid`: `_gz_ty`'s call result) with the replay's refusal from the record and `_gz_agree` checking the 8 B
+# verdict as an annotated global's. An if-expression's struct is not this rule (it keeps the word). CHANGELOG [6.7.15]
 var _gu_c = 0;    # the call's name token (`_gu_sid`), where the refusal reports
-var _gu_v = 0;    # the declaration zone's untyped whole-call globals: (slot, initialiser token) pairs
+var _gu_v = 0;    # the declaration zone's untyped globals the sweep may type: (slot, initialiser token, struct) triples
 # The struct a top-level untyped declaration's initialiser at `start` binds (0 for none), resolved as the receive
 # resolves it (`_gen_resolve_call`, a dedup hit after the parse).
 fn _gu_sid(S, start): i64 {
@@ -11260,9 +11282,44 @@ fn _gu_refuse(S, sid): i64 {
 fn _gu_late(S, pscale, start): i64 {
     if (pscale != 0) { return pscale; }
     var sid = _gu_sid(S, start);
-    if (sid <= 0) { return 0; }
+    if (sid <= 0) { return 0 - _gu_rec(S, start); }   # 6.7.15 (D34 / D35): a method, operator or known `&f`
     _gu_refuse(S, sid);
     return 0 - sid;
+}
+# 6.7.15 (D34 / D35) — the struct of the whole method, operator or known `&f` result the initialiser at `start` (the
+# cursor on its `;`) is, from the parse's record: -3 (8 B or less, in rax) or -1 (9-16 B, no frame here: refused once
+# by name at the cursor, as `_sc_global_pair` refuses `var G: P2 = B2.mk();`; not after a refusal inside the
+# initialiser, `_scv_err`), or the span of a call over 16 B that refused itself (`_sc_rbeg`); inside any wrap. A line
+# refused inside its initialiser (a chain's receiver) is typed from its tokens (`_gu_wsid`), so its uses add nothing.
+# 0 = none — an if-expression's record (no fn), a `Str`, a dyn, a tuple.
+fn _gu_rec(S, start): i64 {
+    var t = _sc_whole(S, start);
+    if (t == 0 - 3 || t == 0 - 1) {
+        if (_sc_fi < 0) { return 0; }
+        var sid = _gu_ok(S, _sc_sid);
+        if (sid <= 0) { return 0; }
+        if (t == 0 - 1) { if (_scv_err == 0) { _refuse_toplevel_struct_call(S, _sc_fn); } }
+        return sid;
+    }
+    if (_gu_span(S, start, _sc_rbeg, _sc_rend) == 1) { return _gu_ok(S, _sc_rsid); }
+    if (_scv_err == 0) { return 0; }
+    var sv = GTI(S);
+    var r = _gu_wsid(S, start);
+    STI(S, sv);
+    return r;
+}
+# 1 = the tokens [b, e) are the initialiser [start, cursor), inside `b - start` parentheses that wrap it whole.
+fn _gu_span(S, start, b, e): i64 {
+    if (b < start) { return 0; }
+    var k = b - start;
+    if (e + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, start + i) != 10) { return 0; }
+        if (TOKTYP(S, e + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }
 # 1 = the declaration-zone replay's initialiser at `st` is an untyped `var NAME = ` one's.
 fn _gu_untyped(S, st): i64 {
@@ -11271,43 +11328,131 @@ fn _gu_untyped(S, st): i64 {
     if (TOKTYP(S, st - 3) != 3) { return 0; }
     return 1;
 }
-# PARSE_GVAR_REG: an untyped (`typed` 0), non-literal declaration whose initialiser at `ti` may be a call is noted.
+# The zone replay, the untyped initialiser at `st` just parsed: a 9-16 B free call refused at its name (`_gu_refuse`),
+# a 9-16 B method / operator / known `&f` result at the cursor (`_gu_rec`, 6.7.15's D35). The sweep typed the global.
+fn _gu_zref(S, st): i64 {
+    var sid = _gu_sid(S, st);
+    if (sid > 0) { return _gu_refuse(S, sid); }
+    _gu_rec(S, st);
+    return 0;
+}
+# PARSE_GVAR_REG: an untyped (`typed` 0), non-literal declaration whose initialiser at `ti` may be a call (6.7.15: or a
+# `callptr(..)`) is noted.
 fn _gu_reg(S, gvi, typed, ti): i64 {
     if (typed != 0) { return 0; }
     if (ti <= 0) { return 0; }
     var t = TOKTYP(S, ti);
-    if (t != 2) { if (t != 10) { return 0; } }
+    if (t != 2) { if (t != 10) { if (t != 137) { return 0; } } }
     if (_gu_v == 0) { _gu_v = vec_new(); }
     vec_push(_gu_v, gvi);
     vec_push(_gu_v, ti);
+    vec_push(_gu_v, 0);
     return 0;
 }
-# The end of pass 1: each noted global whose initialiser is one whole free call returning a struct takes it — inline
-# of 8 B or less, else a handle (refused at the replay, or by the call). The struct is read from the tokens
-# (`_gz_call_rs`: a generic's fixed or bound `: T` return; a generic struct's instance, not made before pass 2, is not
-# typed here). The cursor is put back.
+# The end of pass 1: each noted global whose initialiser is one whole call (or, 6.7.15, a whole method, operator or
+# known `&f` result) returning a struct takes it — inline of 8 B or less, else a handle (refused at the replay, or by
+# the call). The struct is read from the tokens (`_gu_zsid`). The cursor is put back.
 fn _gu_sweep(S): i64 {
     if (_gu_v == 0) { return 0; }
     var sv = GTI(S);
     var n = vec_len(_gu_v);
     var i = 0;
     while (i < n) {
-        var gvi = vec_get(_gu_v, i);
-        var c = _gu_call(S, vec_get(_gu_v, i + 1));
-        if (c >= 0) {
-            var sid = _gu_ok(S, _gz_call_rs(S, c));
-            if (_gz_gb > 0) { sid = 0; }
-            if (sid > 0) { _gu_type(S, gvi, sid); }
+        var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
+        if (sid > 0) {
+            _gu_type(S, vec_get(_gu_v, i), sid);
+            vec_set(_gu_v, i + 2, sid);
         }
-        i = i + 2;
+        i = i + 3;
     }
     STI(S, sv);
+    return 0;
+}
+# The struct the zone initialiser at token `ti` binds, from its tokens: a whole free call's return (`_gz_call_rs`: a
+# generic's fixed or bound `: T` return; a generic struct's instance is not typed here), else a whole method / operator
+# / known `&f` result (`_gu_wsid`). 0 none.
+fn _gu_zsid(S, ti): i64 {
+    var c = _gu_call(S, ti);
+    if (c >= 0) { if (_icall_open_at(S, c) < 0) {
+            var sid = _gu_ok(S, _gz_call_rs(S, c));
+            if (_gz_gb > 0) { sid = 0; }   # a generic struct's instance, not made before pass 2
+            return sid;
+        } }
+    return _gu_wsid(S, ti);
+}
+# 6.7.15 (D34) — the struct a whole method, operator or known `&f` result at token `b` (up to its `;`, inside any wrap)
+# has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not an if-expression's, not
+# a free call's (`_gu_call`'s), and not the generic struct's base a GENERIC method or operator returns (the replay's
+# call reaches an instance whose struct is not made here).
+fn _gu_wsid(S, b): i64 {
+    var e = _gz_end(S, b);
+    _gz_mfi = 0 - 1;
+    var t = _gu_ok(S, _gz_ty(S, b, e));
+    if (_gz_k != 1) { return 0; }
+    if (t <= 0) { return 0; }
+    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { return 0; } } }
+    var a = b;
+    while (TOKTYP(S, a) == 10) {
+        if (_gz_close(S, a, e) != e - 1) { break; }
+        a = a + 1;
+        e = e - 1;
+    }
+    if (_gu_wfree(S, a, e) == 1) { return 0; }
+    return t;
+}
+# 1 = [a, e) is an if-expression or one whole free call (a known `&f` callee is not one).
+fn _gu_wfree(S, a, e): i64 {
+    if (TOKTYP(S, a) == 15) { return 1; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) == e - 1) { return 1; }
     return 0;
 }
 fn _gu_type(S, gvi, sid): i64 {
     SVTYPE(S, gvi, sid);
     if (STRUCTSZ(S, sid - 1) > 8) { SVPM(S, gvi, 1); return 0; }
     SVPM(S, gvi, 2);
+    return 0;
+}
+# 6.7.15 — after the end of pass 1's handle-line walk (`_gz_sweep`): a method / operator verdict read before it can name
+# a struct the walk took back (an operator whose left operand the walk made a handle: pointer arithmetic, no dispatch).
+# Each typed global's initialiser is read again; one that no longer gives its struct is untyped as it was registered.
+# 1 = something changed (the walk runs again).
+fn _gu_recheck(S): i64 {
+    if (_gu_v == 0) { return 0; }
+    var ch = 0;
+    var n = vec_len(_gu_v);
+    var i = 0;
+    while (i < n) {
+        var sid = vec_get(_gu_v, i + 2);
+        if (sid > 0) { if (_gu_zsid(S, vec_get(_gu_v, i + 1)) != sid) {
+                SVTYPE(S, vec_get(_gu_v, i), 0);
+                SVPM(S, vec_get(_gu_v, i), 0);
+                vec_set(_gu_v, i + 2, 0);
+                ch = 1;
+            } }
+        i = i + 3;
+    }
+    return ch;
+}
+# 6.7.15 — an untyped zone global the sweep made an inline struct (its initialiser token `ti`): `0 - sid`, so the
+# replay checks that verdict as an annotated global's (`_gz_agree`: a disagreement is refused by name, never stored
+# into the other layout); else 0.
+fn _gu_agps(S, gvi, ti): i64 {
+    if (_gu_v == 0) { return 0; }
+    if (GVPM(S, gvi) != 2) { return 0; }
+    var n = vec_len(_gu_v);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_gu_v, i + 1) == ti) {
+            var sid = vec_get(_gu_v, i + 2);
+            if (sid <= 0) { return 0; }
+            if (GVTYPE(S, gvi) != sid) { return 0; }
+            return 0 - sid;
+        }
+        i = i + 3;
+    }
     return 0;
 }
 # ⛔ 6.7.10 (B7-1g) — 1 = global `gvi` is a struct HANDLE of 8 B or less (GVPM 1, a struct type). No

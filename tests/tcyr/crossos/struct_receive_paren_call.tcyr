@@ -150,6 +150,23 @@ fn tu_read(): i64 { return TU1.a + d1(TU2); }
 var TS1 = (mks());
 var TS2 = ((mks()));
 fn ts_read(): i64 { return who(TS1) * 10 + who(TS2); }
+# --- 6.7.15 (the user's decisions D34 (a) / D35 (a), 2026-10-18): a whole method, operator or known `&f` result ---
+# `var G = B.m();` / `(A + A)` / `fncall0(&f)` / `callptr(&f)` of 8 B at top level bound nothing: `G.a` was "no struct
+# type in scope for 'G'" (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
+# The zone here (typed at the end of pass 1, read by a fn body before the replay: `tm_read`); after a statement (TL*)
+# below. The 9-16 B refusal is tests/gates/frontend/struct_receive_inference_checked.sh's (DR16*).
+struct PM { a; }
+impl PM { fn dup(self): PM { var r: PM; r.a = self.a + 1; return r; } }
+fn PM_add(x: PM, y: PM): PM { var r: PM; r.a = x.a + y.a; return r; }
+fn mkpm(): PM { var r: PM; r.a = 30; return r; }
+fn dpm(p: PM): i64 { return p.a; }
+var GPM = PM { 16 };
+var TM1 = GPM.dup();
+var TM2 = (GPM + GPM);
+var TM3 = fncall0(&mkpm);
+var TM4 = callptr(&mkpm);
+var TM5 = TM1 + TM1;
+fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -238,6 +255,21 @@ var TS5 = mks();
 assert_eq(who(TS3) * 10 + who(TS4), 22, "after a statement: (mks()) / ((mks())) route to who_str (11 before)");
 assert_eq(strlen(TS3) * 10 + strlen(TS4), 55, "after a statement: strlen takes strlen_str");
 assert_eq(who(TS5), 2, "control: var TS5 = mks(); (unwrapped)");
+
+test_group("6.7.15 (D34): an untyped top-level method / operator / known-callee result binds its 8 B struct");
+assert_eq(TM1.a, 17, "the zone: var TM1 = GPM.dup(); TM1.a (refused before)");
+assert_eq(TM2.a, 32, "the zone: var TM2 = (GPM + GPM);");
+assert_eq(TM3.a + TM4.a, 60, "the zone: fncall0(&mkpm) / callptr(&mkpm)");
+assert_eq(TM5.a, 34, "the zone: TM1 + TM1 dispatches PM_add");
+assert_eq(tm_read(), 109, "a fn body reads the zone's globals and passes TM2 by value");
+var TL1 = GPM.dup();
+var TL2 = GPM + GPM;
+var TL3 = (fncall0(&mkpm));
+var TL4 = callptr(&mkpm);
+var TL5 = TL1 + TL2;
+assert_eq(TL1.a + dpm(TL2), 49, "after a statement: a method and an operator");
+assert_eq(TL3.a + TL4.a, 60, "after a statement: (fncall0(&mkpm)) / callptr(&mkpm)");
+assert_eq(TL5.a, 49, "after a statement: TL1 + TL2 dispatches PM_add");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

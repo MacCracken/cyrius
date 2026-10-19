@@ -771,11 +771,12 @@ syscall(60, GE.a);
 GE.a = 7;
 syscall(60, GE.a);
 '
-accept "ZK2 var G2 = Q0.mk()  (untyped: word 1)" "$ZQ"'var G2 = Q0.mk();
+# 6.7.15 (the user's D35 (a), 2026-10-18): an untyped global from a 9-16 B method is refused as the annotated one is —
+# this row pinned it holding the first word (exit 50) through 6.7.14
+# (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md)
+refuse "ZK2 var G2 = Q0.mk()  (untyped 16 B: refused)" "'Q.mk' returns a struct by value, and a struct result needs storage in a fn's frame" "$ZQ"'var G2 = Q0.mk();
 syscall(60, G2 * 10);
-' 50 "$ZQ"'var G2 = 5;
-syscall(60, G2 * 10);
-'
+' one
 accept "ZK3 G2 = Q0.mk() in a fn  (the fix-it)" "$ZQ"'var G2: Q = Q { 0, 0 };
 fn init(): i64 { G2 = Q0.mk(); return 0; }
 init();

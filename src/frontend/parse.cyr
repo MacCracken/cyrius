@@ -2038,6 +2038,7 @@ var _sc_vdst = 0;       # ... and that receive's slot
 # instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]
 var _sc_rbeg = 0 - 1;
 var _sc_rend = 0 - 1;
+var _sc_rsid = 0;   # 6.7.15 (D34): ... and the struct it returns, for an untyped top-level global (`_gu_rec`)
 # ⛔ 6.7.6 — A STRUCT RESULT AS THE LEFT OPERAND (`p.dup() + p`, `mk3(4) - s`, `a + b + c`): the
 # last struct-valued call result, stamped where it ENDS (a free call in `_call_scale_fix`, a method
 # or operator in `_sc_post` / `_sc_post_small`) with the code pointer, so it describes the value in
