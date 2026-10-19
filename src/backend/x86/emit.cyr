@@ -1846,15 +1846,17 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
 # codes, at most one row matches, `neg rax` makes it negative, and a code with no row answers -1,
 # the answer before 6.7.14. A stub clobbers rcx and rdx (volatile across the Win32 call the
 # reroute just made) and nothing in the caller's frame. CHANGELOG [6.7.14]
-# One more stub rides the same registry, emitted only when a site asks for it: the std-close
-# (class 2, ECLOSE_PE's fd 0 / 1 / 2 arm, `_pew_stub_close`). CHANGELOG [6.7.16]
+# Two more stubs ride the same registry, each emitted only when a site asks for it: the std-close
+# (class 2, ECLOSE_PE's fd 0 / 1 / 2 arm, `_pew_stub_close`) and the seek check (class 3,
+# ELSEEK_PE before SetFilePointerEx, `_pew_stub_seek`). CHANGELOG [6.7.16]
 var _pew_sl = 0;     # alloc()'d list of {registry index, class} pairs, 16 B each
 var _pew_ns = 0;
 var _pew_scap = 0;
 
 # At a reroute's failure point, rsp as it was for the failed call (16-aligned): `call <stub>`,
 # class 0 (the table) or 1 (ReadFile's, entered with the byte count in eax); 2 (the std-close,
-# entered with the fd in rax) at the same aligned rsp, before its Win32 call.
+# entered with the fd in rax) and 3 (the seek check, entered with the HANDLE in rcx) at the same
+# aligned rsp, before their Win32 call.
 fn _pe_w32_errno_site(S, cls): i64 {
     _pe_ensure_getlasterr(S);
     if (_pew_ns >= _pew_scap) { _pew_grow(); }
@@ -1891,6 +1893,7 @@ fn EPE_ERRNO_STUBS(S): i64 {
     var t = _pew_stub_table(S);
     var r = 0 - 1;
     var c = 0 - 1;
+    var k = 0 - 1;
     var i = 0;
     while (i < _pew_ns) {
         var cls = load64(_pew_sl + i * 16 + 8);
@@ -1902,6 +1905,10 @@ fn EPE_ERRNO_STUBS(S): i64 {
         if (cls == 2) {
             if (c < 0) { c = _pew_stub_close(S, t); }
             stub = c;
+        }
+        if (cls == 3) {
+            if (k < 0) { k = _pew_stub_seek(S); }
+            stub = k;
         }
         _pew_patch(S, load64(_pew_sl + i * 16), stub);
         i = i + 1;
@@ -1995,6 +2002,42 @@ fn _pew_stub_close_open(S, t, at, j_ret): i64 {
     _pew_land8(S, j_ret); _pew_land8(S, j_ok); _pew_land8(S, j_fl);
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x20); # .ret: add rsp, 0x20
     EB(S, 0x5F); EB(S, 0x5E); EB(S, 0x5B);              # pop rdi; pop rsi; pop rbx
+    EB(S, 0xC3);                                        # ret
+    return at;
+}
+
+# 6.7.16 — THE SEEK CHECK (class 3): a seek on a pipe or a console answers -29 (ESPIPE), as on
+# Linux (6.7.16's D31, user, 2026-10-19; macOS answers it for a pipe). Real Windows lets
+# SetFilePointerEx succeed on both — it answered the asked offset and the stream did not move — and
+# wine failed it ERROR_INVALID_FUNCTION (-1). Entered with rcx = the HANDLE, rsp 8 mod 16; answers
+# rax = 0 (seek it) or -29, with rcx kept. A pipe is GetFileType FILE_TYPE_PIPE (3; a socket too, as Linux); a
+# console is FILE_TYPE_CHAR (2) whose GetConsoleMode succeeds — NUL is FILE_TYPE_CHAR too and
+# still seeks, as /dev/null does on Linux. Anything else (a disk file, or a bad handle, which
+# SetFilePointerEx then fails -9) seeks. CHANGELOG [6.7.16]
+fn _pew_stub_seek(S): i64 {
+    var at = GCP(S);
+    EB(S, 0x53);                                        # push rbx (rsp 0 mod 16)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30 (shadow + the mode DWORD)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xCB);              # mov rbx, rcx (the HANDLE)
+    _pew_iat_call(S, _pe_ftype_get());                  # GetFileType(h)
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x03);              # cmp eax, 3 (FILE_TYPE_PIPE)
+    var j_p = _pew_j8(S, 0x74);                         # je .espipe
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02);              # cmp eax, 2 (FILE_TYPE_CHAR)
+    var j_ok = _pew_j8(S, 0x75);                        # jne .ok
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xD9);              # mov rcx, rbx
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # lea rdx, [rsp+0x20]
+    _pew_iat_call(S, _pe_conmode_get());                # GetConsoleMode(h, &mode)
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    var j_c = _pew_j8(S, 0x75);                         # jne .espipe (a console)
+    _pew_land8(S, j_ok);
+    EB(S, 0x31); EB(S, 0xC0);                           # .ok: xor eax, eax
+    var j_r = _pew_j8(S, 0xEB);                         # jmp .ret
+    _pew_land8(S, j_p); _pew_land8(S, j_c);
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 29); # .espipe: mov rax, -29
+    _pew_land8(S, j_r);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xD9);              # .ret: mov rcx, rbx (the HANDLE, kept)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x30); # add rsp, 0x30
+    EB(S, 0x5B);                                        # pop rbx
     EB(S, 0xC3);                                        # ret
     return at;
 }
@@ -3295,10 +3338,14 @@ fn ETLSSET_PE(S): i64 {
 # fd 0 / 1 / 2 map to the std handles through `_pe_fd_to_handle_rcx`, as EWRITE_PE / EREAD_PE /
 # EFLUSHFB_PE do: they reached SetFilePointerEx as the HANDLE values 0 / 1 / 2, so a seek on a
 # redirected stdin / stdout / stderr failed -9. CHANGELOG [6.7.15]
+# A pipe or a console answers -29 (ESPIPE), as on Linux (6.7.16's D31): the HANDLE goes through the
+# shared seek-check stub (`_pew_stub_seek`: GetFileType, GetConsoleMode) before SetFilePointerEx,
+# which real Windows lets succeed on both without moving the stream. CHANGELOG [6.7.16]
 fn ELSEEK_PE(S): i64 {
     var _xfr = _pe_fixed_frame(0x40, 4);   # 6.6.5: 0x40 + depth parity (see _pe_fixed_frame)
     _pe_ensure_seekfp(S);
     _pe_ensure_stdio(S);
+    _pe_ensure_ftype(S);
     var spe_idx = _pe_seekfp_get();
     var gsh_idx = _pe_stdio_getstd_get();
 
@@ -3313,6 +3360,9 @@ fn ELSEEK_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (offset)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r9 (whence)
     _pe_fd_to_handle_rcx(S, gsh_idx);              # rcx = HANDLE (std or direct)
+    _pe_w32_errno_site(S, 3);                      # call <seek check>: rax = 0, or -29 (pipe / console); rcx kept
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);         # test rax, rax
+    EB(S, 0x75); EB(S, 0x2C);                      # jnz +44 → .done (-29)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov r9, [rsp+0x38]
     # Zero the lpNewFilePointer output slot at [rsp+0x28].

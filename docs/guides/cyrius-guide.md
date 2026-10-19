@@ -8242,9 +8242,13 @@ answered -1).
 
 A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
 do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
-stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. ⚠ On
-a PIPE or a console std handle Windows lets the seek succeed (it answers the asked offset and the
-stream does not move) where Linux and macOS answer -29 (`ESPIPE`).
+stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. A seek
+on a PIPE or a console answers -29 (`ESPIPE`), as on Linux (6.7.16's D31; macOS answers it for a
+pipe), so `xlseek(0, 0, SEEK_CUR) < 0` tells a piped stdin from a file on every target: the reroute
+asks `GetFileType` first — `FILE_TYPE_PIPE` (a socket too), or `FILE_TYPE_CHAR` whose
+`GetConsoleMode` succeeds — and never calls `SetFilePointerEx` for those. `NUL` is a character
+device without a console mode and still seeks, as `/dev/null` does. Before 6.7.16 real Windows let
+the seek succeed (it answered the asked offset and the stream did not move) and wine answered -1.
 
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
