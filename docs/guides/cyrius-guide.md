@@ -1236,7 +1236,10 @@ fn and the assignment to a `*Struct` local or a `*T` global warned on it). A str
 address and never warns either, into any `*T` (6.7.14 for a byte pointer — `var s: *u8 = "abc";`, `t = "xyz";`, a `*i8`,
 a parameter, a global, in the declaration zone, each warned through 6.7.13; 6.7.15 for every other `*T`, the user's
 decision D59, 2026-10-18 — `var s: *i64 = "abcdefgh";`, `*f64`, `*i32`, a one-byte struct's `*B` warned through
-6.7.14). A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+6.7.14). So is the literal plus or minus one integer operand (an integer or char literal, or a single name), and the
+literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`, `("xyz")`, `(("x"))`, `("abc") + 1`
+— through 6.7.14 each warned. Any other expression with a string in it (`"abc" + x * 2`) is judged as any value
+is. A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
 not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured

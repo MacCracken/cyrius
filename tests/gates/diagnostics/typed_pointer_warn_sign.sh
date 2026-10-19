@@ -387,5 +387,22 @@ tpx A5 0 1 - "fn: p = &b[1]; with b a *i64, refused once" 'fn main(): i64 {\n   
 tpx A6 0 1 - "zone: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
 tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'var A: i64[4];\nsyscall(39);\nvar P: *i64 = &A[1];\nsyscall(60, 0);\n'
 
+# --- axis 15 (6.7.15; issues/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md) ---
+# A string literal's address plus or minus ONE integer operand (an integer / char literal or a single name), and the
+# literal under parentheses that wrap it whole, are its address too: `var s: *u8 = "abc" + 1;` and `var t: *u8 =
+# ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse_decl.cyr), at every
+# site `_tp_exempt` serves: a declaration in a fn, after the first statement and in the zone, an assignment. Any other
+# expression is judged as before (SLK1, SLK2). Warning text only: no binary changes (each row's exit is the one before).
+#   `_tp_exempt` without `_tp_str_exempt` (the literal alone, the lane before the bite) -> RED 6: SL0 (2) SL1 (6)
+#                                                                 SL2 (4) SL3 (3) SL4 (1) SL5 (1)
+tpx SL0 0 0 218 "the filed repro verbatim: \"abc\" + 1 and (\"xyz\") into a *u8 (2 warnings before)" 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var s: *u8 = "abc" + 1;\n    var t: *u8 = ("xyz");\n    return load8(s) + load8(t);\n}\nsyscall(60, main());\n'
+tpx SL1 0 0 111 "fn: \"abc\" + 1, (\"xyz\"), ((\"x\")), \"abc\" - 0, (\"abc\" + 1), (\"abc\") + n are quiet" 'fn main(): i64 {\n    var n = 1;\n    var a: *u8 = "abc" + 1;\n    var b: *u8 = ("xyz");\n    var c: *u8 = (("x"));\n    var d: *u8 = "abc" - 0;\n    var e: *u8 = ("abc" + 1);\n    var f: *u8 = ("abc") + n;\n    return load8(a) + load8(b) + load8(c) + load8(d) + load8(e) + load8(f) - 520;\n}\nsyscall(60, main());\n'
+tpx SL2 0 0 135 "assignments: t = (\"xyz\"); t = \"abc\" + n; into a *u8 local, a parameter, a *u8 global" 'var G: *u8 = 0;\nfn f(p: *u8): i64 {\n    var n = 2;\n    var t: *u8 = 0;\n    t = ("xyz");\n    var r = load8(t);\n    t = "abc" + n;\n    p = (("pq")) + 1;\n    G = ("g") - 0;\n    return r + load8(t) + load8(p) + load8(G) - 300;\n}\nsyscall(60, f(0));\n'
+tpx SL3 0 0 192 "zone: var P: *u8 = (\"abc\"); var P2: *u8 = \"abc\" + 1; var Q: *i64 = ((\"abcdefgh\")) - 0;" 'var P: *u8 = ("abc");\nvar P2: *u8 = "abc" + 1;\nvar Q: *i64 = (("abcdefgh")) - 0;\nsyscall(60, load8(P) + load8(P2) + load8(Q) - 100);\n'
+tpx SL4 0 0 120 "after a first statement: var q: *u8 = (\"x\") + 0;" 'syscall(39);\nvar q: *u8 = ("x") + 0;\nsyscall(60, load8(q));\n'
+tpx SL5 0 0 98 "a *i64 from (\"abc\") + 1 (D59 and the shape together)" 'fn main(): i64 {\n    var s: *i64 = ("abc") + 1;\n    return load8(s);\n}\nsyscall(60, main());\n'
+tpx SLK1 1 0 - "control: var p: *u8 = \"abc\" + x * 2; still warns (not one operand)" 'fn main(): i64 {\n    var x = 1;\n    var p: *u8 = "abc" + x * 2;\n    return 0;\n}\nsyscall(60, main());\n'
+tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 0; still warns" 'fn main(): i64 {\n    var p: *u8 = '"'"'a'"'"' + 0;\n    return 0;\n}\nsyscall(60, main());\n'
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15)"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15)"
