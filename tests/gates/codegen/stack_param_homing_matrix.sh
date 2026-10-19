@@ -80,7 +80,8 @@
 #   F6 a 9-16 B result never stored for a destination       -> RED  x86/aarch64 SIGSEGV · wine crash (cx has
 #                                                                  no pair rows)
 #   F7 no aarch64 X8 load                                   -> RED  aarch64 SIGSEGV only, correctly
-#   F8 `_sc_global_receive` never refuses                   -> RED  [toplevel-method-op] 5 times, want 7
+#   F8 `_sc_global_receive` never refuses                   -> RED  [toplevel-method-op] 5 times, want 7 (6.7.15, with
+#                                                                  D35's untyped refusal: 6 times, want 8)
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -475,8 +476,9 @@ EOF
 refuse_all toplevel-arg "$T/rt.cyr" "returns a struct by value" 2
 # 6.6.6 bite 14 review — the METHOD and OPERATOR forms at top level: a >16 B result is refused by
 # the call itself (`_sc_pre`), a 9-16 B one by each destination that needs storage (typed `var`,
-# assignment, struct param). Untyped `var u = b.mp(6)` keeps the first word and must NOT count.
-# Mutation: `_sc_global_receive` never refuses -> RED ("6 times, want 7").
+# assignment, struct param). 6.7.15 (the user's D35 (a), 2026-10-18): the untyped `var u = bb.mp(6)` is refused too,
+# as the annotated `var G2: P2 = ..` is — it kept the first word and did not count through 6.7.14 (want 7)
+# (issues/2026-10-17-top-level-untyped-method-operator-or-known-callee-struct-result-keeps-word.md).
 cat > "$T/rm.cyr" <<'EOF'
 struct P3 { x; y; z; }
 struct P2 { x; y; }
@@ -504,7 +506,7 @@ var D: V2 = E + E;
 var u = bb.mp(6);
 syscall(60, u);
 EOF
-refuse_all toplevel-method-op "$T/rm.cyr" "returns a struct by value" 7
+refuse_all toplevel-method-op "$T/rm.cyr" "returns a struct by value" 8
 # 6.6.20 (review) — a struct result of 8 B OR LESS given to a `p: *S` parameter at TOP LEVEL. In a
 # fn it now lands in a frame temp whose address is passed (tests/tcyr/crossos/
 # ptr_param_bare_struct.tcyr); at top level there is no frame, and every form below pushed the
