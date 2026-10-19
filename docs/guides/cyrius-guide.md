@@ -8221,13 +8221,13 @@ failed open -1. A close (`CloseHandle`) answers 0, or -errno through the same ta
 before 6.7.15 it answered CloseHandle's BOOL — 1 closed, 0 failed — so a `sys_close(..) < 0` test
 never fired and `file_close_r` was never `Err`.
 
-| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
+| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14+ |
 |---|---|---|---|
 | `file_read(-999, buf, 16)` | -9 | 0 (end of file) | -9 |
 | `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
-| `sys_close(-999)` | -9 | 0 (a good close: 1) | -9 since 6.7.15 (a good close: 0) |
+| `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
 
 A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
 do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
