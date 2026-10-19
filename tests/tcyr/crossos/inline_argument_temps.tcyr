@@ -5,10 +5,11 @@
 # the parameters. An argument may take frame temporaries above them (a u128 operation's 16-byte temp, the hidden temp
 # that parks a `*S` dereference before a struct operator) that record nothing in the frame's high-water, so the frame
 # could end below them, where the pushed left operand of `id(..) + id(..)` lives: the temp overwrote it. The filed
-# repro `id(a) + id(a + 1) + 2` (a u128) read 84 for 83 on x86_64, aarch64 and Windows, and its closure twin 43
-# (`_inl_flc_release`, src/frontend/parse_fn.cyr). Whether a caller shows it depends on its frame's padding, so each
-# row is its own fn with no local beyond the ones it needs; the `z` twins add one local to flip that padding. cx was
-# right throughout (a control). In this directory so the release gate runs it on ecb / ach / cass / pi.
+# repro `id(a) + id(a + 1) + 2` (a u128) read 84 for 83 on x86_64, aarch64 and Windows, and its closure twin 43 on
+# x86_64 and Windows, 84 on aarch64 (`_inl_flc_release`, src/frontend/parse_fn.cyr). Whether a caller shows it depends
+# on its frame's padding, so each row is its own fn with no local beyond the ones it needs; the `z` twins add one local
+# to flip that padding. cx was right throughout (a control). In this directory so the release gate runs it on ecb /
+# ach / cass / pi.
 include "lib/syscalls.cyr"
 include "lib/fnptr.cyr"
 include "lib/assert.cyr"
