@@ -1,0 +1,323 @@
+# regression_capture_exclusive.tcyr — CROSS-HOST: lib/regression.cyr's capture verbs
+# (regression_exec_capture[_status], regression_exec_with_arg_capture[_status],
+# regression_exec_with_arg_capture_both[_status]) create the file their child writes to
+# EXCLUSIVELY and PRIVATELY: a name planted where a verb looks — a symlink or a regular file — is
+# never followed, opened or truncated, the capture is still the child's own output, the file is
+# 0600 and gone once read, and with every name taken nothing runs. Runs on ecb (macOS arm64),
+# ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg — macOS is where the
+# hole was open: Linux's fs.protected_symlinks / protected_regular refuse another user's plant
+# in a sticky /tmp, Darwin has no such setting. Windows has no fork (nothing is created there)
+# and agnos captures through pipes (lib/regression_agnos.cyr), so there the file only reports
+# its summary.
+#
+# ⛔ WHY (6.7.15, CYRIUS-2026-0036). The verbs wrote the child's stdout to "/tmp/<prefix><pid>"
+# opened O_WRONLY|O_CREAT|O_TRUNC (Linux's bits, 577): another local user who planted a symlink
+# at an upcoming pid's name had the capture truncate and overwrite any file the victim can write,
+# and a planted file was read back as the capture. The filed repro
+# (issues/2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md) is the first row,
+# verbatim, run in a child with no TMPDIR (so it looks in /tmp, as it was run): it answered 0
+# (the victim emptied), now 9. The planted rows predict each name with the lib's own
+# `_regression_tmp_base` / `_regression_capture_name`, so they plant where the verb looks
+# whatever the scheme; each checks its plant was made. The refusal's stderr line and the TMPDIR
+# rules are tests/gates/toolchain/regression_capture_exclusive.sh. CHANGELOG [6.7.15]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/net.cyr"
+include "lib/process.cyr"
+include "lib/regression.cyr"
+
+alloc_init();
+args_init();
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# The "out" child: "cap-out\n" on stdout, "cap-err\n" on stderr.
+fn _cx_out(): i64 {
+    sys_write(1, "cap-out\n", 8);
+    sys_write(2, "cap-err\n", 8);
+    return 0;
+}
+
+# The "stat" child: what `path` is, as "f" (a regular file) or "x" (anything else) and its
+# permission bits in octal ("f600\n"), or "none\n" when it does not exist.
+fn _cx_stat(path): i64 {
+    var st[144];
+    if (xstat(path, &st) != 0) {
+        sys_write(1, "none\n", 5);
+        return 0;
+    }
+    var m = load32(&st + STAT_MODE);
+    var o[8];
+    store8(&o, 120);                                   # 'x'
+    if ((m & 0xF000) == 0x8000) { store8(&o, 102); }   # 'f'
+    store8(&o + 1, 48 + ((m / 64) & 7));
+    store8(&o + 2, 48 + ((m / 8) & 7));
+    store8(&o + 3, 48 + (m & 7));
+    store8(&o + 4, 10);
+    sys_write(1, &o, 5);
+    return 0;
+}
+
+# The filed repro, verbatim — its victim is the scratch path the parent names in CAP_VICTIM
+# (the filing's "/path/to/scratch/victim.txt"). It exits with the victim's byte count.
+fn _cx_repro(): i64 {
+    var victim = getenv("CAP_VICTIM");
+    file_write_all(victim, "precious\n", 9);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/audit_xc_");
+    str_builder_add_int(sb, sys_getpid());
+    var link = str_data(str_builder_build(sb));
+    sys_symlink(victim, link);            # what another local user plants ahead of time
+    var buf[64];
+    var n = regression_exec_capture(victim, &buf, 64, 0);   # any program: it is never the point
+    sys_unlink(link);
+    var vb[64];
+    syscall(60, file_read_all(victim, &vb, 64));
+    return 0;
+}
+
+if (argc() > 1) {
+    if (streq(argv(1), "out") == 1) { sys_exit(_cx_out()); }
+    if (streq(argv(1), "repro") == 1) { sys_exit(_cx_repro()); }
+    if (load8(argv(1)) == 47) { sys_exit(_cx_stat(argv(1))); }
+}
+var _cx_env = getenv("CAP_CHILD");
+if (_cx_env != 0) {
+    if (streq(_cx_env, "out") == 1) { sys_exit(_cx_out()); }
+    sys_exit(_cx_stat(_cx_env));
+}
+
+var _me = argv(0);
+
+fn _cr_cat(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# The verbs, by number: 0 regression_exec_capture · 1 _status · 2 regression_exec_with_arg_capture
+# · 3 _status · 4 regression_exec_with_arg_capture_both · 5 _status.
+fn _cr_prefix(v): i64 {
+    if (v < 2) { return "audit_xc_"; }
+    return "audit_xa_";
+}
+
+# Candidate `i` of the name verb `v` creates in this process.
+fn _cr_name(v, i): i64 { return _regression_capture_name(_regression_tmp_base(), _cr_prefix(v), i); }
+
+# What the "out" child leaves in the capture: stderr too for the _both verbs.
+fn _cr_want(v): i64 {
+    if (v >= 4) { return "cap-out\ncap-err\n"; }
+    return "cap-out\n";
+}
+
+# Run verb `v` on this test as its child, in child mode `mode` (argv(1) for the arg verbs,
+# CAP_CHILD for the others). Returns the bytes captured; a _status verb stores the status at
+# `st`, which otherwise keeps -9.
+fn _cr_run(v, mode, buf, cap, st): i64 {
+    store64(st, 0 - 9);
+    store64(st + 8, 0);
+    var envp = alloc(16);
+    store64(envp, _cr_cat("CAP_CHILD=", mode));
+    store64(envp + 8, 0);
+    if (v == 0) { return regression_exec_capture(_me, buf, cap, envp); }
+    if (v == 1) { return regression_exec_capture_status(_me, buf, cap, envp, st); }
+    if (v == 2) { return regression_exec_with_arg_capture(_me, mode, buf, cap, envp); }
+    if (v == 3) { return regression_exec_with_arg_capture_status(_me, mode, buf, cap, envp, st); }
+    if (v == 4) { return regression_exec_with_arg_capture_both(_me, mode, buf, cap, envp); }
+    return regression_exec_with_arg_capture_both_status(_me, mode, buf, cap, envp, st);
+}
+
+# The victim a planted link points at: "<base>/cap_victim.<pid>", absolute (a link resolves a
+# relative target against its own directory).
+fn _cr_victim(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _regression_tmp_base());
+    str_builder_add_cstr(sb, "/cap_victim.");
+    str_builder_add_int(sb, sys_getpid());
+    return str_data(str_builder_build(sb));
+}
+
+fn _cr_victim_intact(victim): i64 {
+    var vb[32];
+    if (file_read_all(victim, &vb, 32) != 9) { return 0; }
+    return regression_buf_eq(&vb, "precious\n", 9);
+}
+
+# Plant verb `v`'s first `n` names: kind 0 a symlink to `victim`, 1 a regular file holding "P".
+# Answers how many were made.
+fn _cr_plant(v, n, kind, victim): i64 {
+    var made = 0;
+    var i = 0;
+    while (i < n) {
+        var p = _cr_name(v, i);
+        if (kind == 0) {
+            if (sys_symlink(victim, p) == 0) { made = made + 1; }
+        } else {
+            if (file_write_all(p, "P", 1) == 1) { made = made + 1; }
+        }
+        i = i + 1;
+    }
+    return made;
+}
+
+# How many of verb `v`'s first `n` plants are as they were: still a symlink (kind 0), still a
+# file holding exactly "P" (kind 1).
+fn _cr_intact(v, n, kind): i64 {
+    var ok = 0;
+    var i = 0;
+    var b[16];
+    while (i < n) {
+        var p = _cr_name(v, i);
+        if (kind == 0) {
+            if (sys_readlink(p, &b, 16) > 0) { ok = ok + 1; }
+        } else {
+            if (sys_readlink(p, &b, 16) < 0) {
+                if (file_read_all(p, &b, 16) == 1) {
+                    if (load8(&b) == 80) { ok = ok + 1; }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return ok;
+}
+
+fn _cr_unplant(v, n): i64 {
+    var i = 0;
+    while (i < n) { xunlink(_cr_name(v, i)); i = i + 1; }
+    return 0;
+}
+
+# Verb `v` with its first `n` names planted (`kind`): 0 when the capture is the child's own
+# output (and a _status verb saw it exit 0), the victim keeps its 9 bytes and every plant is as
+# it was; else 1 the capture, 2 the victim, 3 a plant, 4 the plant could not be made, 5 the status.
+fn _cr_planted(v, n, kind): i64 {
+    var victim = _cr_victim();
+    if (file_write_all(victim, "precious\n", 9) != 9) { return 4; }
+    if (_cr_plant(v, n, kind, victim) != n) { _cr_unplant(v, n); xunlink(victim); return 4; }
+    var buf = alloc(64);
+    var st = alloc(16);
+    var got = _cr_run(v, "out", buf, 64, st);
+    var want = _cr_want(v);
+    var r = 0;
+    if (got != strlen(want)) { r = 1; }
+    if (r == 0) { if (regression_buf_eq(buf, want, got) == 0) { r = 1; } }
+    if (r == 0) { if (_cr_victim_intact(victim) == 0) { r = 2; } }
+    if (r == 0) { if (_cr_intact(v, n, kind) != n) { r = 3; } }
+    if (r == 0) { if (load64(st) != 0 && load64(st) != 0 - 9) { r = 5; } }
+    _cr_unplant(v, n);
+    xunlink(victim);
+    return r;
+}
+
+# Verb `v` with all 64 of its names taken (files), in a forked copy whose stderr is /dev/null
+# (the verb names its refusal there; the gate reads that line): 0 when it captured nothing,
+# a _status verb reported -1 (nothing ran), and all 64 plants are as they were.
+fn _cr_all_taken(v): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        var dn = sys_open("/dev/null", 1, 0);
+        if (dn >= 0) { sys_dup2(dn, 2); }
+        var victim = _cr_victim();
+        if (_cr_plant(v, 64, 1, victim) != 64) { _cr_unplant(v, 64); sys_exit(4); }
+        var buf = alloc(64);
+        var st = alloc(16);
+        var got = _cr_run(v, "out", buf, 64, st);
+        var r = 0;
+        if (got != 0) { r = 1; }
+        if (r == 0) { if (load64(st) != 0 - 1 && load64(st) != 0 - 9) { r = 5; } }
+        if (r == 0) { if (_cr_intact(v, 64, 1) != 64) { r = 3; } }
+        _cr_unplant(v, 64);
+        sys_exit(r);
+    }
+    var wt, wv = wait_pid(pid);
+    return result_unwrap_or(wt, wv, 0 - 1);
+}
+
+# Verb `v` with nothing planted: the child stats the name the verb should have created (its first
+# candidate) and reports "f600" — a regular file, owner read/write only — and once the verb has
+# returned the name is gone. 0 when both hold; 1 what the child saw, 2 the file was left.
+fn _cr_private(v): i64 {
+    var name = _cr_name(v, 0);
+    var buf = alloc(64);
+    var st = alloc(16);
+    var got = _cr_run(v, name, buf, 64, st);
+    if (got != 5) { return 1; }
+    if (regression_buf_eq(buf, "f600\n", 5) == 0) { return 1; }
+    var sb[144];
+    if (xstat(name, &sb) == 0) { return 2; }
+    return 0;
+}
+
+# The filed repro in a child with no TMPDIR in its environment: its exit is the victim's size.
+fn _cr_repro(): i64 {
+    var victim = _cr_victim();
+    var envp = alloc(16);
+    store64(envp, _cr_cat("CAP_VICTIM=", victim));
+    store64(envp + 8, 0);
+    var buf = alloc(64);
+    var st = alloc(16);
+    regression_exec_with_arg_capture_status(_me, "repro", buf, 64, envp, st);
+    xunlink(victim);
+    return load64(st);
+}
+
+test_group("the filed repro, verbatim (no TMPDIR, so it looks in /tmp): the victim keeps its 9 bytes");
+assert_eq(_cr_repro(), 9, "repro: victim.txt still 9 bytes (0 before 6.7.15)");
+
+test_group("a symlink planted at each of a verb's first 3 names: never followed; the capture is the child's own");
+assert_eq(_cr_planted(0, 3, 0), 0, "regression_exec_capture");
+assert_eq(_cr_planted(1, 3, 0), 0, "regression_exec_capture_status");
+assert_eq(_cr_planted(2, 3, 0), 0, "regression_exec_with_arg_capture");
+assert_eq(_cr_planted(3, 3, 0), 0, "regression_exec_with_arg_capture_status");
+assert_eq(_cr_planted(4, 3, 0), 0, "regression_exec_with_arg_capture_both");
+assert_eq(_cr_planted(5, 3, 0), 0, "regression_exec_with_arg_capture_both_status");
+
+test_group("a regular file planted at a verb's first name: never opened (O_EXCL), its byte left as it was");
+assert_eq(_cr_planted(0, 1, 1), 0, "regression_exec_capture");
+assert_eq(_cr_planted(1, 1, 1), 0, "regression_exec_capture_status");
+assert_eq(_cr_planted(2, 1, 1), 0, "regression_exec_with_arg_capture");
+assert_eq(_cr_planted(3, 1, 1), 0, "regression_exec_with_arg_capture_status");
+assert_eq(_cr_planted(4, 1, 1), 0, "regression_exec_with_arg_capture_both");
+assert_eq(_cr_planted(5, 1, 1), 0, "regression_exec_with_arg_capture_both_status");
+
+test_group("all 64 names taken: nothing runs and every plant is left as it was");
+assert_eq(_cr_all_taken(1), 0, "regression_exec_capture_status: 0 bytes, status -1");
+assert_eq(_cr_all_taken(3), 0, "regression_exec_with_arg_capture_status: 0 bytes, status -1");
+assert_eq(_cr_all_taken(5), 0, "regression_exec_with_arg_capture_both_status: 0 bytes, status -1");
+
+test_group("the capture file is the verb's own: a regular file, 0600, gone once read");
+assert_eq(_cr_private(0), 0, "regression_exec_capture");
+assert_eq(_cr_private(1), 0, "regression_exec_capture_status");
+assert_eq(_cr_private(2), 0, "regression_exec_with_arg_capture");
+assert_eq(_cr_private(3), 0, "regression_exec_with_arg_capture_status");
+assert_eq(_cr_private(4), 0, "regression_exec_with_arg_capture_both");
+assert_eq(_cr_private(5), 0, "regression_exec_with_arg_capture_both_status");
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: no fork, so a capture verb creates nothing and answers as a failed spawn");
+var _ws = alloc(16);
+var _wb = alloc(16);
+assert_eq(regression_exec_capture_status("x.exe", _wb, 16, 0, _ws), 0, "0 bytes");
+assert_eq(load64(_ws), 0 - 1, "status -1");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: the capture verbs read a pipe (lib/regression_agnos.cyr), no file");
+assert_eq(1, 1, "summary only");
+#endif
+
+var r = assert_summary();
