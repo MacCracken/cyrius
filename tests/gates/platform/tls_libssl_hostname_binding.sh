@@ -33,8 +33,9 @@
 #   X  bogus-symbol legs: L rebuilt against a lib/ copy whose lib/tls.cyr asks dlsym for a
 #      nonexistent name in place of each binder symbol in turn — tls_available() must be 0 and
 #      tls_connect_alloc must return 0 (fail closed). An unmutated copy must read available.
-# SKIP (exit 77, named): openssl(1) missing (whole gate); $HOME/.cyrius/dlopen-helper or
-# libssl.so.3 missing (the libssl legs — N still runs, a FAIL there is still a FAIL).
+# SKIP (exit 77, named): openssl(1) missing (whole gate); no dlopen-helper ($CYRIUS_HOME's,
+# else $HOME/.cyrius's — the probes run with a throwaway HOME holding a copy) or libssl.so.3
+# missing (the libssl legs — N still runs, a FAIL there is still a FAIL).
 # ANTI-VACUITY: with helper and libssl.so.3 present, tls_available() must be 1 under libssl
 # (a broken required-symbol resolution cannot read green as a skip), and the libssl rows run
 # are counted and floored.
@@ -200,11 +201,26 @@ EOF
     echo "FAIL: $G: the libssl-only probe did not compile"; tail -3 "$T/pl.err"; exit 1; }
 
 # ── is the libssl backend reachable here? ──
+# lib/fdlopen.cyr finds its helper only at $HOME/.cyrius/dlopen-helper, so every probe runs with
+# a throwaway HOME ($PH) holding a COPY of the helper the toolchain under test would use:
+# $CYRIUS_HOME/dlopen-helper (check.sh's staged home builds it from programs/dlopen-helper.c),
+# else the invoking $HOME/.cyrius/dlopen-helper, which is read and never written — the lookup
+# programs/checks/selfhost.cyr `_tcyr_helper_src` and ir3_dce_corpus.sh use. 6.7.16: reading the
+# live $HOME/.cyrius alone made the libssl legs SKIP on a fresh machine whose only helper is
+# the staged one, and the release gate refuses every SKIP. CHANGELOG [6.7.16]
 LIBSSL=1
 WHY=""
-HELPER="${HOME:-}/.cyrius/dlopen-helper"
-if [ -z "${HOME:-}" ] || [ ! -f "$HELPER" ]; then
-    LIBSSL=0; WHY="$HELPER missing (built by scripts/install.sh)"
+HELPER=""
+for _h in "${CYRIUS_HOME:-}/dlopen-helper" "${HOME:-}/.cyrius/dlopen-helper"; do
+    case "$_h" in /dlopen-helper|/.cyrius/dlopen-helper) continue ;; esac   # the variable was empty
+    if [ -f "$_h" ]; then HELPER=$_h; break; fi
+done
+PH="$T/home"
+mkdir -p "$PH/.cyrius" || { echo "FAIL: $G: cannot make the probes' HOME $PH"; exit 1; }
+if [ -z "$HELPER" ]; then
+    LIBSSL=0; WHY="no dlopen-helper in \$CYRIUS_HOME (${CYRIUS_HOME:-unset}) or \$HOME/.cyrius (built by scripts/install.sh)"
+elif ! cp "$HELPER" "$PH/.cyrius/dlopen-helper"; then
+    echo "FAIL: $G: cannot copy $HELPER into the probes' HOME $PH"; exit 1
 else
     found=0
     if ldconfig -p 2>/dev/null | grep -q 'libssl\.so\.3 '; then found=1; fi
@@ -216,8 +232,8 @@ else
 fi
 if [ "$LIBSSL" = 1 ]; then
     # ANTI-VACUITY: helper + libssl present => the backend MUST come up, in both builds.
-    a=0; $TO "$T/pd" avail || a=$?
-    b=0; $TO "$T/pl" avail || b=$?
+    a=0; HOME="$PH" $TO "$T/pd" avail || a=$?
+    b=0; HOME="$PH" $TO "$T/pl" avail || b=$?
     if [ "$a" != 11 ] || [ "$b" != 11 ]; then
         echo "  FAIL: helper and libssl.so.3 are present but tls_available() under libssl is not 1 (default build exit $a, libssl-only build exit $b; 11 = available) — a required symbol did not resolve, or the bootstrap broke"
         exit 1
@@ -284,7 +300,7 @@ _want() {  # <want> <rc> -> 0 if rc satisfies want
     return 1
 }
 one() {  # <leg> <binary> <backend> <host> <verify> <cafile> <want> <label>
-    rc=0; $TO "$2" "$3" "$PORT" "$6" "$4" "$5" >/dev/null 2>&1 || rc=$?
+    rc=0; HOME="$PH" $TO "$2" "$3" "$PORT" "$6" "$4" "$5" >/dev/null 2>&1 || rc=$?
     if _want "$7" "$rc"; then
         echo "  ok: [$1] $8 -> $7"
     else
@@ -318,7 +334,7 @@ srow() {
 prow() {
     if [ "$LIBSSL" = 1 ]; then
         for pb in pd pl; do
-            rc=0; $TO "$T/$pb" libssl "$PORT" "$T/ca.crt" "$1" "$2" "$3" >/dev/null 2>&1 || rc=$?
+            rc=0; HOME="$PH" $TO "$T/$pb" libssl "$PORT" "$T/ca.crt" "$1" "$2" "$3" >/dev/null 2>&1 || rc=$?
             if _want "$4" "$rc"; then echo "  ok: [P/$pb] $5 -> $4"
             else
                 echo "  FAIL: [P/$pb] $5 — want $4, probe exit $rc (10 accepted, 20 handshake refused, 30 alloc refused)"
@@ -433,7 +449,7 @@ if [ "$LIBSSL" = 1 ]; then
     cp "$ROOT/lib/tls.cyr" "$T/mut/lib/tls.cyr" || { echo "FAIL: $G: cannot copy tls.cyr into $T/mut"; exit 1; }
     serve dns
     (cd "$T/mut" && { echo '#define CYRIUS_TLS_LIBSSL'; cat "$T/probe.cyr"; } | "$CC" > "$T/px" 2>/dev/null) && chmod +x "$T/px"
-    rc=0; $TO "$T/px" avail || rc=$?
+    rc=0; HOME="$PH" $TO "$T/px" avail || rc=$?
     if [ "$rc" = 11 ]; then echo "  ok: [X] control: the unmutated copy reads available"
     else echo "  FAIL: [X] control: the unmutated lib/ copy reads exit $rc, want 11 — the X leg cannot measure"; FAILS=$((FAILS + 1)); fi
     NX=0
@@ -447,8 +463,8 @@ if [ "$LIBSSL" = 1 ]; then
         sed "s/\"$sym\"/\"cyrius_bogus_$sym\"/" "$ROOT/lib/tls.cyr" > "$T/mut/lib/tls.cyr"
         (cd "$T/mut" && { echo '#define CYRIUS_TLS_LIBSSL'; cat "$T/probe.cyr"; } | "$CC" > "$T/px" 2>/dev/null) && chmod +x "$T/px" || {
             echo "  FAIL: [X] $sym: the mutated probe did not compile"; FAILS=$((FAILS + 1)); continue; }
-        a=0; $TO "$T/px" avail || a=$?
-        b=0; $TO "$T/px" libssl0 "$PORT" "$CA" localhost peer || b=$?
+        a=0; HOME="$PH" $TO "$T/px" avail || a=$?
+        b=0; HOME="$PH" $TO "$T/px" libssl0 "$PORT" "$CA" localhost peer || b=$?
         if [ "$a" = 12 ] && [ "$b" = 30 ]; then
             echo "  ok: [X] $sym unresolvable -> tls_available() 0, tls_connect_alloc 0"
         else

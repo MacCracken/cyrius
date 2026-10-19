@@ -43,7 +43,8 @@ sudo apt-get install -y \
 
 The gates read nothing beyond these packages and the cyrius checkout: since 6.7.16 no other
 project's checkout, built or not (`release-gate.sh` step 4 also needs the four verification
-hosts over `ssh`). The table under *What the gates need* is the measurement behind both lines.
+hosts over `ssh`, and one driver row needs **outbound HTTPS to 1.1.1.1:443** — see *The network*
+below). The table under *What the gates need* is the measurement behind both lines.
 
 On Ubuntu 26.04 `qemu-user` ships the static binaries (named `qemu-aarch64`) and there is no
 `qemu-user-static` package. On an older Ubuntu / Debian `qemu-user` still provides `qemu-aarch64`;
@@ -94,7 +95,7 @@ invoked in a non-comment line. Packages are Arch / apt; "base" ships in a minima
 | `wine` | `wine`, `winepath`, `wineserver` | ~100 gates (PE builds run locally) | per gate: SKIP or a named SKIP leg |
 | `llvm` | `llvm-objdump` | 9 gates (e.g. `ir_nop_harvest.sh`, `lazy_init_release_fence.sh`) | FAIL or SKIP, per gate |
 | `binutils` | `objdump`, `readelf`, `ld` | `objdump` in 25 gate files (disassembly checks, `agnos-crossbuild-gate.sh` among them), `readelf` in 11 (`object_hides_libc_names.sh`, `dyn_checked.sh`, …), `ld` in `dyn_checked.sh` | per gate: SKIP, a named SKIP leg, or a disassembly check not run |
-| `gcc` | `gcc`, `cc` | `call_site_stack_alignment.sh`, `ffi_stack_protected_extern_c.sh` (gcc), `default_named_args_checked.sh`, `header_spellings_and_size.sh` (cc); `scripts/install.sh` builds the dlopen helper the driver's libssl `.tcyr` groups use | SKIP |
+| `gcc` | `gcc`, `cc` | `call_site_stack_alignment.sh`, `ffi_stack_protected_extern_c.sh` (gcc), `default_named_args_checked.sh`, `header_spellings_and_size.sh` (cc); `scripts/install.sh` builds the dlopen helper into check.sh's staged `CYRIUS_HOME`, which the driver's libssl `.tcyr` groups, its live TLS row and `tls_libssl_hostname_binding.sh`'s libssl legs read (`$CYRIUS_HOME/dlopen-helper`, else `$HOME/.cyrius/dlopen-helper`) | SKIP |
 | `clang` | `clang` | `header_spellings_and_size.sh` (the aarch64 / Darwin / Win64 header rows) | those three rows are not run (no SKIP is reported) |
 | `parted`, `mtools`, `edk2-ovmf` / `ovmf` | `parted`, `mformat` / `mcopy` / `mmd`, `OVMF_CODE.4m.fd` + `OVMF_VARS.4m.fd` | the driver's EFI rows: boot an EFI image under qemu + OVMF | SKIP. ⚠ The rows read OVMF at Arch's path, `/usr/share/edk2-ovmf/x64/`; Ubuntu's `ovmf` installs elsewhere, so there they SKIP |
 | `cpio` | `cpio` | `alloc_first_chunk_small_board.sh`'s OPT-IN row 4 (`CYRIUS_ALLOC_VM=1`: packs the initramfs it boots); the default run does not need it | FAIL when the row is asked for |
@@ -109,7 +110,21 @@ invoked in a non-comment line. Packages are Arch / apt; "base" ships in a minima
 | base (`coreutils`, `util-linux`, `findutils`, `procps`, `gawk`/`mawk`, `sed`, `grep`, `bash`) | `timeout`, `sha256sum`, `od`, `dd`, `truncate`, `mkfifo`, `stat`; `setsid`, `setarch`, `unshare`, `mount`; `find`, `xargs`; `ps`; `awk`; `sed`; `grep`; `bash` | everywhere (`bash` also runs the pipefail checks, `gates_verdict_under_pipefail.sh`) | FAIL |
 
 No gate reads another project's checkout (6.7.16 — `tests/gates/toolchain/gates_read_only_the_tree.sh`
-refuses one), so nothing beyond these packages and the cyrius checkout is needed.
+refuses one), so nothing beyond these packages, the cyrius checkout and the network below is
+needed.
+
+### The network
+
+One check-driver row leaves the box: **`TLS live`** (`_tls_live_gate`, `programs/checks/services.cyr`)
+connects to `1.1.1.1:443` and completes a TLS round-trip (an HTTP/1.1 response from
+`one.one.one.one`). It probes the address first (3 s); when it is unreachable the row SKIPs
+("1.1.1.1:443 unreachable (no network)"), and since `RG_SKIP_ALLOW` is empty that SKIP turns
+`release-gate.sh` step 3 RED. **A box that gates releases needs outbound TCP to 1.1.1.1:443.**
+`tests/tcyr/crypto/tls_native_realpeer.tcyr` dials the same address and, without it, skips its
+live rows inside the test (exit 0: no SKIP reaches the verdict, and that leg is simply not run).
+The TLS gates (`tls_libssl_hostname_binding.sh`, `tls_first_use_thread_race.sh`,
+`tls_native_client_auth_openssl.sh`) run against a local OpenSSL `s_server` on loopback. (The
+cross-OS leg's `ssh` to ecb / ach / cass / pi is step 4's, above.)
 
 The cyrius compiler itself is **bootstrapped**, not packaged: `sh bootstrap/bootstrap.sh` (seed asm → `cybs` → `cycc`). No crates.io, no toolchain package — that's the point.
 

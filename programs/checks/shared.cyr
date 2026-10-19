@@ -218,10 +218,6 @@ fn _network_probe_check(addr_ipv4, port, timeout_ms): i64 {
     return regression_network_probe(addr_ipv4, port, timeout_ms);
 }
 
-fn _run_with_timeout(bin_path, timeout_ms): i64 {
-    return regression_run_with_timeout(bin_path, timeout_ms, ENVP_ARR);
-}
-
 fn _pipe_file_to_bin_capture(bin_path, src_path, out_path): i64 {
     return regression_pipe_to_bin_capture(bin_path, src_path, out_path, EMPTY_ENVP);
 }

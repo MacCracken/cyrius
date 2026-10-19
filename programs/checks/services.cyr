@@ -1163,17 +1163,13 @@ fn _tls_live_gate(): i64 {
         _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
-    var home = getenv("HOME");
-    if (home == 0) {
-        _skip(label, "HOME unset");
-        return 0;
-    }
-    var dlh_sb = str_builder_new();
-    str_builder_add_cstr(dlh_sb, home);
-    str_builder_add_cstr(dlh_sb, "/.cyrius/dlopen-helper");
-    var dlopen_helper = str_data(str_builder_build(dlh_sb));
-    if (file_exists(dlopen_helper) != 1) {
-        _skip(label, _cat2(dlopen_helper, " missing — run scripts/install.sh"));
+    # 6.7.16 — the helper the toolchain under test would use ($CYRIUS_HOME's, which check.sh's
+    # staged home builds, else the invoking $HOME/.cyrius's), and the probe runs with
+    # _tcyr_envp()'s throwaway HOME holding a copy of it — lib/fdlopen.cyr looks only under
+    # $HOME. Reading the live $HOME/.cyrius alone SKIPped this row on a fresh machine whose only
+    # helper is the staged one. CHANGELOG [6.7.16]
+    if (_tcyr_helper_src() == 0) {
+        _skip(label, "no dlopen-helper in $CYRIUS_HOME or $HOME/.cyrius — run scripts/install.sh");
         return 0;
     }
     var ip_111 = 1 | (1 << 8) | (1 << 16) | (1 << 24);
@@ -1199,7 +1195,7 @@ fn _tls_live_gate(): i64 {
     }
     sys_chmod(bin, 493);
 
-    var ec = _run_with_timeout(bin, 30000);
+    var ec = regression_run_with_timeout(bin, 30000, _tcyr_envp());
     sys_unlink(bin);
 
     if (ec == 0) {
