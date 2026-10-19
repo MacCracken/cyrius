@@ -1,0 +1,281 @@
+# regression_capture_stdin_closed.tcyr — CROSS-HOST: lib/regression.cyr's verbs that write a
+# CALLER's output file (regression_exec_in_dir3[_env], regression_pipe_to_bin_capture) capture the
+# child's real stdout when the caller started with std fd 0 closed — alone or with fd 1 / fd 2 —
+# and the child starts with stdin, stdout and stderr all open. regression_ssh_remote_exec_capture
+# takes the same change and has no row here: it cannot run without a host. Runs on ecb (macOS
+# arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg; Windows has no
+# fork and agnos no execve or dup2, so there the file only reports its summary.
+#
+# ⛔ WHY (6.7.15). Each verb opens its output file in the PARENT, at the lowest free fd — 0 when
+# the caller closed stdin — and the child redirected stdin FIRST: /dev/null (or the pipe's read
+# end) was dup2'd over fd 0, which WAS the output file, and the output redirect then pointed
+# stdout at /dev/null (or the pipe). The capture came back empty. The filed repros
+# (issues/2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md) are the first rows,
+# verbatim: they answered 0 where the control answers 3. The child now lifts the output fd above
+# 2 before any redirect (`_regression_lift_fd`).
+#
+# THE MECHANISM. Each row runs in a FORKED copy of this test that closes the named fds first and
+# answers its result as its exit code, so the test's own stdout stays open. The probe rows spawn
+# this test ITSELF as the "fds" child (argument "fds" / "fdq", or CYRIUS_STDFD_PROBE in the
+# environment for the verb that takes no argument), which answers which of fds 0 / 1 / 2 it
+# started with closed: exit 64 + bits, and "S0b\n" on stdout ("fdq": the exit only). Files go in
+# a private 0700 directory under $TMPDIR (absolute) or /tmp, removed at the end.
+# CHANGELOG [6.7.15]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/net.cyr"
+include "lib/process.cyr"
+include "lib/regression.cyr"
+
+alloc_init();
+args_init();
+
+# The "fds" child: bit 0 / 1 / 2 set when fd 0 / 1 / 2 is CLOSED (F_GETFD = 1 on Linux and
+# Darwin). Answers 64 + bits and, unless `quiet`, writes "S0b\n" to fd 1.
+fn _fds_child(quiet): i64 {
+    var b = 0;
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (sys_fcntl(0, 1, 0) < 0) { b = b | 1; }
+    if (sys_fcntl(1, 1, 0) < 0) { b = b | 2; }
+    if (sys_fcntl(2, 1, 0) < 0) { b = b | 4; }
+    var t[8];
+    store8(&t, 83);              # 'S'
+    store8(&t + 1, 48);
+    store8(&t + 2, 48 + b);
+    store8(&t + 3, 10);
+    if (quiet == 0) { sys_write(1, &t, 4); }
+    #endif
+    #endif
+    return 64 + b;
+}
+
+if (argc() > 1) {
+    if (streq(argv(1), "fds") == 1) { sys_exit(_fds_child(0)); }
+    if (streq(argv(1), "fdq") == 1) { sys_exit(_fds_child(1)); }
+}
+if (getenv("CYRIUS_STDFD_PROBE") != 0) { sys_exit(_fds_child(0)); }
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+var _me = argv(0);
+
+fn _sc_cat3(a, b, c): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    return str_data(str_builder_build(sb));
+}
+
+# The private scratch directory, "<base>/regr_stdin_closed.<pid>".
+fn _sc_dir_name(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _regression_tmp_base());
+    str_builder_add_cstr(sb, "/regr_stdin_closed.");
+    str_builder_add_int(sb, sys_getpid());
+    return str_data(str_builder_build(sb));
+}
+var _dir = _sc_dir_name();
+var _dir_ok = xmkdir(_dir, 0x1C0);
+
+fn _sc(name): i64 { return _sc_cat3(_dir, "/", name); }
+
+# The filed repro 1, verbatim — its "/path/to/scratch/clob_out.txt" is `o`, in this test's
+# scratch directory. It exits with the bytes captured.
+fn _repro1(o): i64 {
+    sys_close(0);
+    var rc = regression_exec_in_dir3("/", "/bin/echo", "hi", 0, 0, o, 0);
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    syscall(60, n);
+    return 0;
+}
+
+# The filed repro 1's control: the `sys_close(0)` line removed.
+fn _control1(o): i64 {
+    var rc = regression_exec_in_dir3("/", "/bin/echo", "hi", 0, 0, o, 0);
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    syscall(60, n);
+    return 0;
+}
+
+# The filed repro 2, verbatim — "/path/to/scratch/clob2_out.txt" and "…/clob2_src.txt" are `o`
+# and `s`.
+fn _repro2(o, s): i64 {
+    file_write_all(s, "hi\n", 3);
+    sys_close(0);
+    var rc = regression_pipe_to_bin_capture("/bin/cat", s, o, 0);
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    syscall(60, n);
+    return 0;
+}
+
+# The filed repro 2's control: the `sys_close(0)` line removed.
+fn _control2(o, s): i64 {
+    file_write_all(s, "hi\n", 3);
+    var rc = regression_pipe_to_bin_capture("/bin/cat", s, o, 0);
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    syscall(60, n);
+    return 0;
+}
+
+# The capture in `o` (removed once read): its byte count when it is exactly "hi\n", else 99.
+fn _hi(o): i64 {
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    xunlink(o);
+    if (n != 3) { return 99; }
+    if (regression_buf_eq(&buf, "hi\n", 3) == 0) { return 99; }
+    return n;
+}
+
+# The "fds" child's bits from the capture in `o` (removed once read) — 99 when the capture is not
+# "S0b\n" (0 bytes: the child's stdout was not the file), 98 when the verb's answer `rc` is not
+# the child's own exit (64 + bits).
+fn _bits(o, rc): i64 {
+    var buf[64];
+    var n = file_read_all(o, &buf, 64);
+    xunlink(o);
+    if (n != 4) { return 99; }
+    if (load8(&buf) != 83) { return 99; }
+    var b = load8(&buf + 2) - 48;
+    if (rc != 64 + b) { return 98; }
+    return b;
+}
+
+fn _probe_envp(): i64 {
+    var e = alloc(16);
+    store64(e, "CYRIUS_STDFD_PROBE=1");
+    store64(e + 8, 0);
+    return e;
+}
+
+# Row `row`, run in the forked copy after its fds are closed; the answer is its exit code.
+fn _row(row): i64 {
+    var o = _sc("out");
+    var s = _sc("src");
+    if (row == 1) { return _repro1(_sc("clob_out.txt")); }
+    if (row == 2) { return _control1(_sc("clob_out.txt")); }
+    if (row == 3) { return _repro2(_sc("clob2_out.txt"), _sc("clob2_src.txt")); }
+    if (row == 4) { return _control2(_sc("clob2_out.txt"), _sc("clob2_src.txt")); }
+    if (row == 10) {
+        regression_exec_in_dir3("/", "/bin/echo", "hi", 0, 0, o, 0);
+        return _hi(o);
+    }
+    if (row == 11) {
+        file_write_all(s, "hi\n", 3);
+        regression_pipe_to_bin_capture("/bin/cat", s, o, 0);
+        xunlink(s);
+        return _hi(o);
+    }
+    if (row == 12) {
+        var ex = vec_new();
+        vec_push(ex, "RSC_EXTRA=1");
+        regression_exec_in_dir3_env("/", "/bin/echo", "hi", 0, 0, ex, o, 0);
+        return _hi(o);
+    }
+    if (row == 20) { return _bits(o, regression_exec_in_dir3(".", _me, "fds", 0, 0, o, 0)); }
+    if (row == 21) {
+        file_write_all(s, "x\n", 2);
+        var rc21 = regression_pipe_to_bin_capture(_me, s, o, _probe_envp());
+        xunlink(s);
+        return _bits(o, rc21);
+    }
+    # Output to /dev/null (out_path 0): the child's own exit, 64 + bits.
+    if (row == 22) { return regression_exec_in_dir3(".", _me, "fdq", 0, 0, 0, 0); }
+    if (row == 23) { return regression_pipe_to_bin_capture(_me, "/dev/null", 0, _probe_envp()); }
+    return 97;
+}
+
+# Fork a copy of this test, close the fds in `mask` (bit 0 / 1 / 2 = fd 0 / 1 / 2) there, run
+# `row`, and answer its exit code (-1 when no copy ran, -2 when there is no scratch directory:
+# a name already taken is never written into).
+fn _closed(mask, row): i64 {
+    if (_dir_ok != 0) { return 0 - 2; }
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        if ((mask & 1) != 0) { sys_close(0); }
+        if ((mask & 2) != 0) { sys_close(1); }
+        if ((mask & 4) != 0) { sys_close(2); }
+        sys_exit(_row(row));
+    }
+    var wt, wv = wait_pid(pid);
+    return result_unwrap_or(wt, wv, 0 - 1);
+}
+
+# "<what>, fds closed: <mask's fds>" — the row label.
+fn _label(what, mask): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, what);
+    if (mask == 0) { str_builder_add_cstr(sb, ", control"); }
+    if (mask != 0) { str_builder_add_cstr(sb, ", closed:"); }
+    if ((mask & 1) != 0) { str_builder_add_cstr(sb, " fd 0"); }
+    if ((mask & 2) != 0) { str_builder_add_cstr(sb, " fd 1"); }
+    if ((mask & 4) != 0) { str_builder_add_cstr(sb, " fd 2"); }
+    return str_data(str_builder_build(sb));
+}
+
+# `row` under every combination of closed std fds (mask 0 = the control .. 7 = all three).
+fn _every_mask(row, want, what): i64 {
+    var m = 0;
+    while (m < 8) {
+        assert_eq(_closed(m, row), want, _label(what, m));
+        m = m + 1;
+    }
+    return 0;
+}
+
+test_group("the scratch directory");
+assert_eq(_dir_ok, 0, "a private 0700 directory under the temp base");
+
+test_group("the filed repros, verbatim: fd 0 closed answers the control's 3 bytes");
+assert_eq(_closed(0, 1), 3, "regression_exec_in_dir3 echo hi, fd 0 closed: 3 bytes (0 before 6.7.15)");
+assert_eq(_closed(0, 2), 3, "regression_exec_in_dir3 echo hi, control: 3 bytes");
+assert_eq(_closed(0, 3), 3, "regression_pipe_to_bin_capture cat, fd 0 closed: 3 bytes (0 before 6.7.15)");
+assert_eq(_closed(0, 4), 3, "regression_pipe_to_bin_capture cat, control: 3 bytes");
+
+test_group("the capture is the child's \"hi\\n\" whichever std fds the caller closed");
+_every_mask(10, 3, "regression_exec_in_dir3 echo hi");
+_every_mask(11, 3, "regression_pipe_to_bin_capture cat");
+_every_mask(12, 3, "regression_exec_in_dir3_env echo hi");
+
+test_group("the child starts with fds 0, 1 and 2 open, its stdout the file (the probe's bits: 0)");
+_every_mask(20, 0, "regression_exec_in_dir3, the probe's capture");
+_every_mask(21, 0, "regression_pipe_to_bin_capture, the probe's capture");
+_every_mask(22, 64, "regression_exec_in_dir3 to /dev/null, the probe's exit");
+_every_mask(23, 64, "regression_pipe_to_bin_capture to /dev/null, the probe's exit");
+
+xunlink(_sc("clob_out.txt"));
+xunlink(_sc("clob2_out.txt"));
+xunlink(_sc("clob2_src.txt"));
+xunlink(_sc("out"));
+xunlink(_sc("src"));
+test_group("the scratch directory is removed");
+assert_eq(xrmdir(_dir), 0, "nothing left in it");
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: no fork, no dup2");
+assert_eq(sys_fork(), 0 - 1, "sys_fork is the documented -1");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: no execve or dup2 (lib/regression_agnos.cyr)");
+assert_eq(1, 1, "summary only");
+#endif
+
+var r = assert_summary();

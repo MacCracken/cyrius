@@ -154,8 +154,8 @@ fn _row(row): i64 {
     if (row == 22) { return _cap_status(buf, regression_exec_capture_status(me, buf, 64, envp, st), st); }
     if (row == 23) { return regression_exec_run(me, envp); }
     if (row == 24) { return regression_run_with_timeout(me, 30000, envp); }
-    # Not with fd 0 closed: the /dev/null output then opens at 0 and the stdin redirect
-    # overwrites it before it is used — a different shape, filed from the 6.7.15 libfix3 lane.
+    # fd 0 closed: the /dev/null output opens AT 0 and the child lifts it above 2 before its
+    # stdin redirect — every mask is regression_capture_stdin_closed.tcyr. CHANGELOG [6.7.15]
     if (row == 25) { return regression_pipe_to_bin_capture(me, "/dev/null", 0, envp); }
     return 97;
 }
@@ -224,6 +224,7 @@ assert_eq(_closed(1, 24), 64, "regression_run_with_timeout, fd 0 closed: stdin o
 assert_eq(_closed(2, 24), 64, "regression_run_with_timeout, fd 1 closed: stdout open");
 assert_eq(_closed(4, 24), 64, "regression_run_with_timeout, fd 2 closed: stderr open");
 assert_eq(_closed(0, 25), 64, "regression_pipe_to_bin_capture, control");
+assert_eq(_closed(1, 25), 64, "regression_pipe_to_bin_capture, fd 0 closed: stdin open (65 before 6.7.15)");
 assert_eq(_closed(2, 25), 64, "regression_pipe_to_bin_capture, fd 1 closed: stdout open");
 assert_eq(_closed(4, 25), 64, "regression_pipe_to_bin_capture, fd 2 closed: stderr open");
 #endif
