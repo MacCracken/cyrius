@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (l6715-receives, unit R2) with the lane
 base's compiler (4862a462e's tree + the lane's earlier units; the frontend, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — refused either way (rc 1); the error names the wrong problem: x is declared and captured, and the
 real fault is that it has no struct type.
 **Kind:** bug (diagnostic).

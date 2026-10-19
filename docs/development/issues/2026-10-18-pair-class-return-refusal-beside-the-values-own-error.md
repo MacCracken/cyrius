@@ -4,7 +4,7 @@
 issues/archived/2026-10-17-address-of-parenthesised-name-false-second-error.md (whose 8 B repro now reports one error; the 16 B
 twin keeps two). Measured on the lane head before S5 and after S5 alike, x86_64 (frontend: every target alike).
 Pre-existing.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — diagnostics only: the program is refused at the right line; a second error names the same
 statement. Not a security id (the developer's own source).
 **Kind:** diagnostic cascade.

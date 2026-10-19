@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 vectors lane (unit V2), x86_64, with the lane's compiler
 before V2's commits (the V1 tree) and after them: identical. Pre-existing, independent of V2's chained-receiver vector
 recogniser (the method here returns a scalar).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — valid source is refused at link time naming an operator the program never wrote (`W_add`); a
 struct type with an `add` method would be called silently with the wrong instance.
 **Kind:** bug (generic inference).

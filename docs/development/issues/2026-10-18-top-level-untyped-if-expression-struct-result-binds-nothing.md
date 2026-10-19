@@ -6,7 +6,8 @@ an untyped top-level whole method, operator or known `&f` result binds its struc
 decisions name a method, an operator, `fncall0(&f)` and `callptr(&f)`; an if-expression yielding a struct is another
 whole struct value and was left as found (D34's `_gu_rec` / `_gu_wsid` skip it: `_sc_fi < 0`, a leading `if`).
 Measured on the lane after R4 (14cc28034's tree, x86_64); the frontend is shared, so every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D16 — (a) G is the struct.
 **Severity:** Low — valid code refused at the global's first `.field` (8 B); a misleading refusal (16 B).
 **Kind:** language (the reach of decision 12 / 6.7.14's D29 and 6.7.15's D34 at top level).
 

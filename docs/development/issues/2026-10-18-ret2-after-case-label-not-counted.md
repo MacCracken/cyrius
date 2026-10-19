@@ -6,7 +6,7 @@ exits are `ret2(..);` statements). That fix counts a `ret2(..);` statement insid
 switch's case BLOCK (`case 1: { ret2(1, 2); }`); a `ret2(..);` written directly after the label is outside its filed
 surface and was filed rather than widened. Measured with the slot-open compiler (4862a462e's build/cycc) and the
 lane after R1 (140fd4c3e): identical, on x86_64; the count is shared frontend state, so every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — a silent wrong value on code that compiles clean (the third name reads whatever an earlier call
 left in the third return register: 88 seeded), on a rare shape: a fn whose two-value exits include a `ret2(..);`
 right after a `case` / `default` label, bound to three names or captured into a 3-tuple.

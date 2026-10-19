@@ -7,7 +7,8 @@ words for an integer and a bool only ("cannot pass an integer …", "'a bool' fo
 is outside that text, so it was filed rather than given new words. Measured with the lane after R1 (140fd4c3e) and
 built from that tree: `build/cycc`, the aarch64 cross compiler (qemu-aarch64), the cx compiler (cxvm) and
 `CYRIUS_TARGET_WIN=1` (wine, a private prefix).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D23 — Refused at the argument.
 **Severity:** Low — compiles clean and crashes at run time; an f64 literal can never be a tuple's address, and the
 spelling is unusual.
 **Kind:** language — needs the user's words for the refusal (D36 named integer and bool only), or a decision that a

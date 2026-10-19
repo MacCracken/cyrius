@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend at 6593fbf1d) on x86_64,
 aarch64 (qemu) and cx (cxvm), against the slot-open compiler (b2e1f4c48) on the same three.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend review, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D14 — (a) The later literal, from program start.
 **Severity:** Low — a silent value difference between two spellings of "a constant redeclaration"; no crash.
 **Kind:** language — whether 6.7.15's D2 (a) ("every constant redeclaration is the value from program start") and
 6.7.14's D11 (b) (a constant initializer leaves no startup store) cover a struct or tuple literal redeclaration is the

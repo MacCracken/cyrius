@@ -6,7 +6,7 @@ type arguments from the tokens (`_gu_gen` / `_gu_tp`, src/frontend/parse_decl.cy
 inferred one a struct (`_tok_gen_tp_sid`), a lone integer literal or a lone global; "when the tokens cannot bind T,
 keep today's answer" (the brief). The shapes below are the ones it leaves untyped, as before. Measured on the lane
 after R4 (14cc28034's tree, x86_64); the frontend is shared, so every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — valid code refused (no miscompile); the same line after the first statement works.
 **Kind:** bug (the zone and after-the-first-statement typings disagree).
 

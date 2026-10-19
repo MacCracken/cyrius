@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (unit R3, after the D32 / D33 bites,
 326c1b56a) with `build/cycc` built from that tree (x86_64); the lane before the unit (d5adfcd2a) gives the same exits.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — a silent wrong value (the struct's first word) where the guide says the line is judged per
 instance and the same line outside a generic is refused by name.
 **Discovered:** 2026-10-18, the receives lane, writing D32's rows (issues/2026-10-17-struct-result-assigned-to-pointer-

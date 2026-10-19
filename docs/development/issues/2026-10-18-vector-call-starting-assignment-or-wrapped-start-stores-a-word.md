@@ -4,7 +4,9 @@
 x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine); x86_64 the same on the lane's tree before V3 (024a5e421).
 Pre-existing: V3's D28 / D29 bite (issues/2026-10-17-wrapped-vector-call-into-untyped-or-scalar-declaration-binds-a-
 word.md) refuses the WHOLE wrapped call and a method starting a DECLARATION, as decided, and leaves these.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D25 — Refused, as the by-name call.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D26 — Refused, as unwrapped.
 **Severity:** Medium — compiles with no diagnostic; the destination holds the call's first word plus 1, a value that
 differs per target, where the same source spelled with an unwrapped by-name call is refused.
 **Kind:** language (decision) — the shapes are the assignment twin of 6.7.15's D29 (a method starting an integer

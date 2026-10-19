@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 vectors lane (unit V3's final tree, 89fd5ad53), x86_64 /
 x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine); the lane's tree before V3 (024a5e421) gives the same on
 x86_64. Pre-existing.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D24 — Refused by name.
 **Severity:** Medium — x86_64 / aarch64 compile clean and drop `+ 1` (the local holds the call's vector), cx adds 1
 to a lane, Windows refuses with a parse error naming the `+`: one source, three behaviours.
 **Kind:** bug (the receive's acceptance test reads the call, not the source it starts).

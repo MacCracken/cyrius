@@ -105,6 +105,20 @@ refusing any read outside the cyrius tree), and the language server's two —
 [an include fragment compiled through its entry](issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md)
 (with the user's `[lsp] skip` manifest key) and [`cyrius-lsp` on macOS](issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md).
 
+**The open (2026-10-19):** triaged on the slot-open compiler (`99177e350`): 103 issues, 101 open and 2 partial, none
+already fixed; S / M / L = 67 / 33 / 3; no heap-layout change. **67 decisions asked once, all as recommended** (the
+user, 2026-10-19). D36–D67 keep every one of the 32 changes 6.7.15 shipped beyond its decisions' text. D27, the
+ProtectedRoots measurement, was asked on its own: "Yes, this release". Each decision is on its issue's **Decision**
+line. **Wave 0 on main:** the cross-project gates came out first (no gate reads another project's checkout;
+`RG_SKIP_ALLOW` is empty; check.sh 565 / 565, the driver 128 / 128, 0 SKIPs). The rest of wave 0 is the fold wave
+(sigil 3.13.13, patra 1.16.6 — the user tags, an integration re-vendors) and ProtectedRoots, which the session runs
+with the user's cass desktop step. **The lanes** run at most two parser lanes per wave:
+- wave 1: frontend and structs, beside platform, tools (both language-server issues) and libfix;
+- wave 2: zone and gensig;
+- wave 3: genbind and receives.
+
+Each issue's **Placement** line names its unit.
+
 ### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is

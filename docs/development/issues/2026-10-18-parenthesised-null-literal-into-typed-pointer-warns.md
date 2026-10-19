@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (l6715-receives, unit R2, after the
 string-literal bite) with a compiler built from that tree; the warning is the shared frontend's, every target the same.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (frontend lane, wave 1, unit F5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — a false warning on valid code that runs right; nothing miscompiles.
 **Kind:** bug (diagnostic).
 **Discovered:** 2026-10-18 by unit R2 while fixing issues/archived/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md:

@@ -7,7 +7,7 @@ the source spells it in `_sarg_vdo` (a `*V` into another pointer kind) and `_dro
 VALUE arms read a different name: `_ess_deref` (parse_fn.cyr; the by-value struct of 8 B or less, the small-struct
 return, `_sarg_sval_ptr`'s refusal into another pointer kind) and `_hl_dstar` / `_hl_dnm` (parse_decl.cyr; a declaration
 or assignment of another struct) both quote `_hl_lastnm`. Diagnostics only; every target alike (the frontend's text).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — the right statement is refused once, at the right column; the quoted operand is not the source's,
 and two of the four drop the `*` the argument starts with.
 **Kind:** bug (diagnostic wording).

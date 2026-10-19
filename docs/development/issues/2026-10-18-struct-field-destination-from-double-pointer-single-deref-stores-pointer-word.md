@@ -5,7 +5,7 @@ issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-st
 and a declaration from `*pp` copy since that fix). Pre-existing: the same output on the lane base (fd2e325af's
 build/cycc) and after the fix, on x86_64, aarch64 (qemu) and cx (cxvm). Not that filing's surface (its table names a
 local, a global, `*q` and a declaration), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — silent: the field's first word takes the pointer `*pp` reads, the rest is left stale; no
 diagnostic. Not a security id (the developer's own source).
 **Kind:** bug — the field-destination twin of the filing above. 6.7.11 made a struct-typed field from a `*S` source

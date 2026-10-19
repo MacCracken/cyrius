@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 libfix3 lane (branch l6715-libfix3, after 6a1184258, which
 fixed the same class in lib/process.cyr, lib/regression.cyr and lib/pam.cyr —
 issues/archived/2026-10-18-process-capture-redirect-closes-its-own-std-fd.md) with the worktree's `build/cyrius` (x86_64 Linux).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix3 lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6 — a lib-adjacent defect (cbt / programs): with 6.7.16's first items) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (libfix lane, wave 1, unit L3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — a CLI verb (and the check driver / LSP / test-runner children) fails or loses a stream when the
 calling process was started with a standard fd closed. No boundary is crossed: the caller's own fd state drives it.
 **Found:** by the 6.7.15 libfix3 lane (unit L4) while sweeping `sys_dup2` callers for the lib/ fix; the brief scoped

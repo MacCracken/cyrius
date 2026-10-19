@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (unit R3, after the D31 bite, 0e135f5e3) with
 `build/cycc` built from that tree (x86_64); the lane before the bite (d5adfcd2a) refuses both the same.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — valid-looking source refused loudly, by name (a false diagnostic); no wrong value. Workaround: drop
 the wrap (`fncall0(&gp).b`) or bind it (`var q: *P2 = fncall0(&gp); q.b`).
 **Discovered:** 2026-10-18, the receives lane, D31 (issues/2026-10-17-known-callee-narrow-pointer-result-deref-reads-a-

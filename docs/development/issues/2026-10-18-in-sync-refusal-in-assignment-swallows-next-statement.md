@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 structs lane (beside D20, 62fbdf162), re-measured
 by its fix step on the lane head 342244fa8 and the lane base 8b4d44602 (x86_64). Pre-existing: the base does the same
 with a `pa[0]` subscript.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (frontend lane, wave 1, unit F1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — diagnostics: a later error is not reported (the build is still refused, rc 1, and the first error
 is right; one fix-and-rebuild round more).
 **Kind:** bug (diagnostics). Related to, not the same as, issues/2026-10-18-zone-replay-reports-only-first-latched-error.md

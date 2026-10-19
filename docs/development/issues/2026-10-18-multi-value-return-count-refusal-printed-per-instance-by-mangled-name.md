@@ -5,7 +5,7 @@
 issues/archived/2026-10-16-direct-error-writers-print-once-per-generic-instance.md (the per-instance latch for the parser's own
 writers): this refusal goes through ERR_IDENT, whose 6.7.14 latch keys on the names it prints — and each instance
 prints its own mangled name, so no two lines are one report.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (gensig lane, wave 2, unit GS5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — every input is refused (rc 1, no binary); one mistake reads as one line per instance, under a
 name the source never wrote.
 **Kind:** bug (diagnostic).

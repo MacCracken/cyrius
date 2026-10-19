@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S6) while checking that
 `_call_undef` (the undefined-callee field fix) leaves the identifier intrinsics alone. Pre-existing (the lane head
 gives the same); x86_64 measured, the frontend's (every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (frontend lane, wave 1, unit F1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D11 — Refuse it by name.
 **Severity:** Low — a statement that only computes an intrinsic discards its value; by default the compile is
 refused, but by naming a fn that does not exist, and `--allow-undef` builds a binary that traps at the line.
 **Kind:** language / diagnostics (statement position).

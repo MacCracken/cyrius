@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend at 50b9a8817, unit F4,
 x86_64; the frontend, every target), identical on the lane's previous compiler (79f6ca16d's build/cycc) and so on
 the slot-open compiler.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D13 — (a) The later float constant, from program start.
 **Severity:** Low — a read between two declarations of one float global sees the earlier literal, silently; the
 guide's rule for redeclarations names integer constants only.
 **Kind:** language — whether a float literal redeclaration is "a constant redeclaration" (the value from program

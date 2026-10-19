@@ -3,8 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-19 checking the `cyrius-lsp` Claude Code plugin (cyrius-plugins 0.2.0) on the
 verification hosts: ecb (macOS arm64) has the plugin but no server (`~/.cyrius/bin/cyrius-lsp` absent; its install is
 6.6.15, and no macOS release ships one), so the plugin's launcher exits 127 there.
-**Placement:** 6.7.16 — Break 2, repair 6 (placed 2026-10-19 with the language-server work of the same day; the user
-may move it) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (tools lane, wave 1, unit T4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — a `[release] bins` tool missing from two of the five platforms, and a Linux-only assumption in
 a shipped tool; no boundary is crossed.
 **Kind:** tooling (programs/cyrius-lsp.cyr, scripts/build-macos-*-tarball.sh).

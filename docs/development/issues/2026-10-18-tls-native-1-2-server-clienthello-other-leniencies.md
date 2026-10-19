@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 platform lane (branch l6715-platform), on the tree that
 already carries 6.7.15's D40 fix (the 1.2 server's extension block must fill the ClientHello).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (platform lane, wave 1, unit P4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D32 — Refuse with decode_error.
 **Severity:** Low — protocol conformance on the native TLS 1.2 server's ClientHello parse
 (`_tn_12_parse_client_hello`, lib/tls_native_hs12.cyr). Every handshake still has to pass the ServerKeyExchange
 signature and both Finished messages; no attacker crosses a boundary (the peer could send the same choices well

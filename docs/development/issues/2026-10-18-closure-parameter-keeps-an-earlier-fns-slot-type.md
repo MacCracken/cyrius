@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (unit R3, D32 / D33 bite) with `build/cycc`
 built from that tree (x86_64); the lane before the unit (d5adfcd2a) gives the same rc and exit for both repros.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — a silent miscompile: an untyped closure parameter is treated as a pointer to a struct that no
 part of the closure names, so a field read through it compiles and faults, and a struct-result assignment into it is
 a struct copy through the parameter's value (a wild write), where D33 (6.7.15) refuses it.

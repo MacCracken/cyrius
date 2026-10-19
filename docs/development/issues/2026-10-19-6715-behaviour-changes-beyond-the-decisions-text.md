@@ -6,7 +6,39 @@ asked at its wave-2 integration), then one verifier per item: each re-read the d
 measured the shape with the slot-open compiler (04b1013e2, 6.7.14's) and the merged 6.7.15 one. Each change below shipped in
 6.7.15 and changes what an existing program does, compiles, warns or prints in a way no decision's text names (or wider than
 its text). The user confirms or restores each at the 6.7.16 open (the 6.7.11 – 6.7.14 precedent).
-**Placement:** 6.7.16 — Break 2, repair 6 (decisions at its open; filed at the 6.7.15 close, 2026-10-19) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (decided at the 6.7.16 open, 2026-10-19: D36–D67, all Keep — no restore work; closes at the 6.7.16 close) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D36 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D37 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D38 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D39 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D40 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D41 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D42 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D43 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D44 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D45 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D46 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D47 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D48 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D49 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D50 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D51 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D52 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D53 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D54 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D55 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D56 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D57 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D58 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D59 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D60 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D61 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D62 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D63 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D64 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D65 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D66 — Keep.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D67 — Keep.
 **Severity:** Low — decisions to confirm, not defects; each change is in CHANGELOG [6.7.15] and ecosystem-migration § 6.7.15.
 
 ## Generics

@@ -9,7 +9,7 @@ disagreement `_gz_agree` refuses ("the declaration zone misread ... please repor
 removed). R4 leaves a generic method's (or operator's) generic-struct result untyped in the zone (`_gz_mfi` /
 `GFTP`), as before; resolving its instance at the end of pass 1 (`_gu_gen`'s reading, for a method) is outside both
 filed surfaces. Measured on the lane after R4 (14cc28034's tree, x86_64); the frontend is shared, so every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — valid code refused (no miscompile); the same line after the first statement works.
 **Kind:** bug (the zone and after-the-first-statement typings disagree).
 

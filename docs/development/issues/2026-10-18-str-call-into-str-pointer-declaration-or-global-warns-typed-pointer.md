@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S3) while measuring D16's `*Str`
 assignment, on the lane base (c557ee1b1) and the lane's tree alike: x86_64, aarch64, cx and PE compilers (one front end).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (frontend lane, wave 1, unit F5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — a false warning; the values are right. Not a security id (the developer's own source).
 **Kind:** bug (diagnostics) — a call declared `: Str` returns a header's address, which is what a `*Str` holds
 (`str_len(p)` reads it correctly); the same value assigned into a `*Str` LOCAL is quiet, so three sites disagree.

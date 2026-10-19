@@ -4,7 +4,7 @@
 free `: Str` call's global route as a Str); measured on the lane after its review fixes (l6715-receives, x86_64,
 the aarch64 cross compiler under qemu-aarch64, the cx compiler under cxvm) and on the lane base 4862a462e
 (x86_64): the same. Pre-existing.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives review, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — compiles clean and prints wrong bytes (exit 0); nothing tells the developer.
 **Kind:** bug (overload routing of an untyped global's value).
 

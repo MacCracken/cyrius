@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S6) while adding the --syntax-only rows of
 issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md. Pre-existing (the lane head's cx compiler
 gives the same lines). Measured on the cx compiler built from the lane tree (`src/main_cx.cyr`).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (tools lane, wave 1, unit T3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — no tool runs the cx compiler with `--syntax-only` today (`cyrius lint` runs cycc); the flag's
 contract (the guide: "`cyrius lint` (`--syntax-only`) accepts a file that calls a sibling module's fn by name") does
 not hold on that compiler.

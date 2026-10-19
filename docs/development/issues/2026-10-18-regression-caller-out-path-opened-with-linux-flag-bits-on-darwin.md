@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 libfix4 lane (branch l6715-libfix4, unit L6) on ecb
 (macOS arm64) and ach (Intel Mac), with compilers built from the lane's tree; x86_64 Linux for the control.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix4 lane; placed at its integration, 2026-10-19 — the user: what 6.7.15 files goes to repair 6; a lib/ defect: with 6.7.16's first items) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (libfix lane, wave 1, unit L1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** P2 — a wrong result on macOS from a public stdlib verb (a bug, not a security vulnerability: the
 path is the caller's own choice). `regression_exec_in_dir3` / `_env`, `regression_pipe_to_bin_capture` and
 `regression_ssh_remote_exec_capture` hand back a file that holds the child's output FOLLOWED BY whatever the file

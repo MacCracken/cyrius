@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 structs lane (in passing), re-measured by its fix
 step on the lane head 342244fa8 and the lane base 8b4d44602 alike (x86_64): rc 0, no diagnostic.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (gensig lane, wave 2, unit GS3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D5 — Refuse once, at the first extra argument, for structs and generic fn calls alike.
 **Severity:** Low — accepted bad syntax: the extra argument is dropped and the one-parameter instance is used, so
 nothing computes wrongly at the written name, but a typo'd or stale argument list is never reported.
 **Kind:** bug / language — the guide states no rule on type-argument count. Its neighbours are

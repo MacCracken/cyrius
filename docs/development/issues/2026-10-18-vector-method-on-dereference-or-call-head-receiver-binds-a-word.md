@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 vectors lane (its review-fix tree, 2e8b3d14f), x86_64 /
 x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine). Pre-existing: the lane base (8b4d44602's build/cycc)
 compiles every row too (x86_64 144 / 72 / 232 for rows 1-3, 0 for row 4).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — compiles with no diagnostic; the untyped local holds one word plus a stack word, a value that
 differs per target, and an integer destination takes the result's word silently.
 **Discovered:** 2026-10-18, the review of the 6.7.15 vectors lane — outside the filed surface of

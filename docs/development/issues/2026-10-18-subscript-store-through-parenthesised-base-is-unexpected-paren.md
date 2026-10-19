@@ -6,7 +6,8 @@ destination is parenthesised (`(*p) += 1;`, `(n) = 7;`) is now refused by name, 
 6.7.14's D24 (a); a SUBSCRIPT after the parentheses (`(pn)[0] = 1;`) is neither shape — the token after the `)` is `[`,
 not an assignment or a `.` — and keeps "unexpected '('". Measured on the lane head before S5 and after it alike, x86_64
 (frontend: every target alike). Pre-existing.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D22 — The words the parenthesised subscript read gets.
 **Severity:** Low — a refusal with a message that names only the token; nothing that compiles is affected. Not a
 security id (the developer's own source).
 **Kind:** language (whether `(p)[i] = v` is a statement) — or, if it stays out, a diagnostic.

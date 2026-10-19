@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S3) beside D14 (`t = *p` into an INLINE
 `Str` copies since 6.7.15); measured on the lane's tree and the lane base alike: x86_64, aarch64 (qemu), cx (cxvm), PE
 (wine).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D20 — Rebind h to the header p points at.
 **Severity:** Medium — the handle points at the string's bytes, read as a header (`str_len(h)` 0 here, a wild length
 for a longer string); the only diagnostic is "assigning non-pointer to typed pointer". Not a security id (the
 developer's own source).

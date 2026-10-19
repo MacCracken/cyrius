@@ -5,8 +5,10 @@ issues/archived/2026-10-18-patra-oversized-bytes-ref-reads-as-empty-value.md) on
 L5's commits `306871e` + `9c67b33` in ~/Repos/patra), built by the libfix3 worktree's `build/cycc` with its `lib/`
 (x86_64 Linux; the crafted-file route also on pi). The insert route was found by the lane's review and re-measured by
 its fix step (BYTES and TEXT).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix3 lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6 — a fold defect: its fold patch opens 6.7.16) — never 7.x. A fold defect: the
+**Placement:** 6.7.16 — Break 2, repair 6 (the fold wave at the 6.7.16 open: the source patch in patra, released 1.16.6 with D34 / D35 → the user's tag → the byte-identical re-vendor at an integration; placed 2026-10-19) — never 7.x. A fold defect: the
 fix is a patra patch (fix the source repo, then re-vendor).
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D34 — Refused with a parameter error.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D35 — Length -1, read refused.
 **Severity:** Low — reachable through patra's PUBLIC write API, not only a malformed file: `patra_insert_row` (and
 `patra_insert_row_or_ignore`, the same impl) takes a negative `blens[i]` for a BYTES / TEXT column, answers `PATRA_OK`
 and stores the negative length; a crafted or corrupted `.patra` file reaches the same cell. The cell's length getter

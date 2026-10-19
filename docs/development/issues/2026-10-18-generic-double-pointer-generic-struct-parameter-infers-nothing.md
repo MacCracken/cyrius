@@ -6,7 +6,7 @@ fd2e325af) a `pp: **Box<T>` definition was refused, so this call could not be wr
 compiles and the inferred call is reachable. The filing's own rows (the repro `nb(&p)` with `p: *Box<i64>`, the
 explicit `nb<i64>(&p)`, the explicit `nb<Pt>(&q)`) are right; the inferred call with a non-i64 instance is not. Not
 that filing's surface (it asks the definition to compile), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — silent: the i64 base runs on a `**Box<Pt>` and reads its fields at `Box<i64>`'s offsets (`b.n`
 reads `Pt.y`); no diagnostic. Not a security id (the developer's own source).
 **Kind:** bug (generics inference) — the `**G<T>` twin of 6.7.14's D40 A (`pp: **T` binds T from a `**S` argument,

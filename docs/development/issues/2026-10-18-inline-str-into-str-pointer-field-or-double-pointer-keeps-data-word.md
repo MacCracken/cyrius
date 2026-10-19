@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 structs lane (D16, bc2381c9f), re-measured by its
 fix step on the lane head 342244fa8 and on the lane base 8b4d44602 alike (x86_64; the review measured aarch64 (qemu)
 and cx (cxvm) the same). No diagnostic on any of them.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D19 — Refuse it, as a Str field store is refused.
 **Severity:** Medium — silent wrong value: the `*Str` holds the string's bytes read as a header (`str_len` 0 here, a
 wild length for a longer string). Not a security id (the developer's own source).
 **Kind:** bug — the field / pointee twin of what 6.7.15's D16 decided for NAMES (`p = t`, `p = gt`, `GP = gt` take the

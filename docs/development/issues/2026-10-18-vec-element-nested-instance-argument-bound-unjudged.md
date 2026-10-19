@@ -4,7 +4,8 @@
 (issues/archived/2026-10-16-vec-element-generic-struct-bound-unchecked.md: a Vec element's generic struct is held to its
 bounds, nothing minted). The filed surface is `Vec<Box<Pt>>`; this is the one shape the check-only read cannot judge,
 so it is filed, not extended.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (gensig lane, wave 2, unit GS3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D10 — Refuse it at the element, once, nothing created.
 **Severity:** Low — a Vec is an 8-byte handle; the annotation states a type the program could not declare by value.
 **Kind:** language (an outer bound on a nested instance; whether to judge it without minting the inner instance, or
 to mint it, is the user's call — D10 (a) says "No new instance is created").

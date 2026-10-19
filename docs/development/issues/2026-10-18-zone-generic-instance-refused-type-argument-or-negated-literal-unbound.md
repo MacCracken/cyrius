@@ -5,7 +5,7 @@ generic call's type arguments from the tokens, `_gu_gen` / `_gu_tp`); measured o
 and on the lane base 4862a462e (x86_64; the frontend, every target): the same. Beside the staged
 2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md (an expression, a struct carrier, a bounded
 G), which does not name these two.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives review, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — valid code refused (the negated literal) or one invented error after the real one (the refused
 type argument); no miscompile.
 **Kind:** bug (the zone and after-the-first-statement typings disagree).

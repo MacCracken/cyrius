@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 receives lane (l6715-receives at b7932c673, unit R2), x86_64;
 the frontend, every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (frontend lane, wave 1, unit F2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — the program is refused either way (rc 1) and its first error, the annotation's, is printed; a
 second, genuine error on a DIFFERENT variable is counted but not printed.
 **Kind:** bug (diagnostic).

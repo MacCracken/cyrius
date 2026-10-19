@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S3), measured on the lane's tree after its
 `str_len(*p)` fix (issues/archived/2026-10-17-str-pointer-dereference-into-str-parameter-passes-data-word.md) and on the lane
 base (c557ee1b1): the same values on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB6; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — silent: the callee reads the string's bytes as a `Str` header (`str_len` 0 here; a longer
 string gives a wild length and data pointer). Not a security id (the developer's own source).
 **Kind:** bug — the twin of the 6.7.15 fix, outside its filed surface (`str_len(*p)`, `f(**pp)`, `str_len(*w.p)`,

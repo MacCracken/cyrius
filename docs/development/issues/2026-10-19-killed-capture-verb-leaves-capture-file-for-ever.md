@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.15 libfix4 lane (branch l6715-libfix4, after unit L6 /
 CYRIUS-2026-0036's fix 7757c8e8f), x86_64 Linux.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix4 review; placed at its integration, 2026-10-19 — the user: what 6.7.15 files goes to repair 6; a lib/ defect: with 6.7.16's first items) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (libfix lane, wave 1, unit L2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — a leak of empty or partial files in `$TMPDIR` (or `/tmp`), not a security vulnerability: each
 file is the victim's own, mode 0600, and holds at most a capture of its own child's output.
 **Found:** by the 6.7.15 libfix4 review, while checking what the exclusive open changes for a leftover name.

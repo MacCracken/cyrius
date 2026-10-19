@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on real cass (Windows 11, `C:\cyrius-tests`) with a PE cxvm built from
 the 6.7.15 platform lane's tree (unit P4: the host dispatch and the path calls) by `build/cycc_win_cross`, each file
 compiled once with `cycc_cx` and run from an empty directory under `C:\cyrius-tests`.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 platform lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (platform lane, wave 1, unit P3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D28 — Named not-run on -38.
 **Severity:** Low — no runner runs the crossos corpus on a Windows host's cxvm (the cross-OS legs run it natively;
 tests/gates/codegen/cx_crossos_rows_run.sh runs these files on the x86_64 Linux cxvm, where all three pass). A cx
 program with the same shapes fails the same way on Windows. No boundary is crossed.

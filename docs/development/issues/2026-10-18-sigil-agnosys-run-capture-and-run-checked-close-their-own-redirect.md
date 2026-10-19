@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 libfix3 lane's review and fix step (branch l6715-libfix3)
 with the worktree's `build/cycc` and its vendored `lib/sigil.cyr` (sigil 3.13.12 @ `cf03996`), x86_64 Linux. The
 upstream source (`~/Repos/sigil/src/sys_util.cyr`, at the tag `3.13.12`) has the same lines (219-222, 365-370).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix3 review, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6 — a fold defect: its fold patch opens 6.7.16) — never 7.x. A fold defect, so
+**Placement:** 6.7.16 — Break 2, repair 6 (the fold wave at the 6.7.16 open: the source patch in sigil, released 3.13.13 → the user's tag → the byte-identical re-vendor at an integration; placed 2026-10-19) — never 7.x. A fold defect, so
 it is always fixed: fix it in the sigil source repo, release a sigil patch, and re-vendor `lib/sigil.cyr` byte-identical
 (never patch the vendored copy in place).
 **Severity:** Low — a lib / fold defect: a status-checked capture or run fails, or the child starts with a std fd

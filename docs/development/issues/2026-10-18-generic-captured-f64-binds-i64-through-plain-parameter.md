@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 generics lane (unit G4) on the lane's tree at 5bf321ca5
 (after D11 / D12 / the token-scan fix), x86_64; the same before them (the capture rung never read an f64).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 generics lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB3; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D3 — Yes: binds f64, like the local it captures.
 **Discovered:** 2026-10-18, 6.7.15 generics G4, implementing D12 (a) (a captured struct VALUE now binds S through
 `x: T` / `p: *T`, `_ic_cap`): the capture rung reads a captured struct and a captured `*S` / scalar pointer, and
 reads every other capture as a global of its name (`_infer_conc_global(S, noff, 0)`), so a captured f64 is i64.

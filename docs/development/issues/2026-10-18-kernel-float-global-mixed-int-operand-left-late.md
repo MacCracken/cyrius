@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 frontend lane (l6715-frontend, unit F5, after the fix of
 issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md), x86_64 (CYRIUS_ELF64_KERNEL=1, run as a
 Linux process).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 frontend lane, wave 1; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D15 — (a) In the image from program start.
 **Discovered:** 2026-10-18 by the 6.7.15 frontend lane, unit F5: that issue's surface is "a constant f64 expression (an
 f64 const, parentheses, f64 arithmetic of constants)"; F5 bakes exactly those (`_gvk_fx`, its pre-scan `_gvk_fscan`
 takes float literals and f64 consts only). An integer or enum operand in the same arithmetic is a kind mix the replay

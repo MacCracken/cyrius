@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the review of the 6.7.15 receives lane (d5adfcd2a, which made the
 warning judge impl methods and inherited trait defaults); measured on the lane after its review fixes (x86_64; the
 frontend, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives review, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (gensig lane, wave 2, unit GS5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — wording only: the warning fires once, at the right line; the name points at an impl that holds
 no code.
 **Kind:** bug (diagnostic wording).

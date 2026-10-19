@@ -5,8 +5,7 @@ it for a GREEN `release-gate.sh` required cloning and BUILDING four consumer pro
 their checkouts and SKIP without them — and `release-gate.sh` step 3 refuses every check.sh SKIP except
 `RG_SKIP_ALLOW` (`agnos_monotonic_clock_rdtsc.sh`, `agnos_sysinfo_tail_parity.sh`). The user, 2026-10-19: "we need to
 rip out all those gates longer term, LANGUAGES DO NOT GATE ON OTHER PROJECTS."
-**Placement:** 6.7.16 — Break 2, repair 6 (the user, 2026-10-19; best landed FIRST, so 6.7.16's own gates — and a new
-machine — need no consumer checkout) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (wave 0 on main, landed at the 6.7.16 open, 2026-10-19, before the lanes fork) — never 7.x.
 **Decision (user, 2026-10-19):** placed in 6.7.16; the TypeScript corpus replacement is its own arc after the 6.7.17
 audit, so here the two secureyeoman rows leave the gate and the 40 in-tree fixtures are the measure until that arc.
 **Severity:** Medium — the release gate's verdict depends on the state of consumer repos (their presence, their build,

@@ -4,8 +4,7 @@
 diagnostics on `src/common/ir.cyr`, `src/frontend/parse_ctrl.cyr`, `parse_fn_def.cyr`, `src/backend/x86/emit.cyr`,
 `lib/syscalls_windows.cyr`, `bootstrap/cybs.cyr` and a fold's `src/bytes.cyr` were all false. Design measured
 read-only the same day (below).
-**Placement:** 6.7.16 — Break 2, repair 6 (the user, 2026-10-19; a lane beside the cross-project gates rip and the
-macOS LSP issue) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (tools lane, wave 1, unit T5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Decision (user, 2026-10-19):** 6.7.16; the `[lsp] skip` manifest key is added (`cyrius.cyml` gains
 `[lsp] skip = ["bootstrap/cybs.cyr"]`); the design's other defaults stand.
 **Severity:** Medium — the language server's diagnostics are wrong for every file that is not itself a compile unit, in

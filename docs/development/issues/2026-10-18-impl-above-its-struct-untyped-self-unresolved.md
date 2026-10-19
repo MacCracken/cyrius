@@ -4,7 +4,8 @@
 re-read (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) with a method. Not that
 item's: the refusal does not depend on where the CALL is (the impl below `main` is refused too), and the unit's fix
 does not change it (identical on 8b4d44602's build/cycc and on the lane tree after S1).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (gensig lane, wave 2, unit GS4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D6 — Refuse it, as with the struct declared first.
 **Severity:** Low — a false refusal of a valid program (the declaration section's order between a struct and an
 impl of it), one error by name, no miscompile; `self: *T` written out, or the struct declared first, compiles.
 **Kind:** bug.

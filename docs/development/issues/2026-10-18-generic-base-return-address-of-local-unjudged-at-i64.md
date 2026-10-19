@@ -7,7 +7,9 @@ body is parsed with its type parameters bound to i64 and is ALSO the code an i64
 `fn hg<T>(x: T): S8 { var n: T = x; return &n; }` used only at `<S8>` (valid: D4 (a)'s struct, exit 26), so the lane
 leaves the base's locals / parameters / captures to the instances (`_ret_gen_base`, src/frontend/parse_fn.cyr). x86_64
 (frontend: every target alike).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D1 — Refused as a generic with no scalar instance.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D2 — Refused at the definition, as in a non-generic fn.
 **Severity:** Medium — silent: an i64 call of such a generic returns a dead frame's address as the struct's field (the
 pre-6.7.15 behaviour of every `return &n;`, now confined to this corner). Not a security id (the developer's own source).
 **Kind:** language (generics x D18) — the established answer for a body invalid at `T = i64` is the dead-stub base

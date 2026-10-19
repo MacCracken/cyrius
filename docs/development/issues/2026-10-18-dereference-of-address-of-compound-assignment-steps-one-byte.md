@@ -4,7 +4,8 @@
 x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine). Row 1 is pre-existing as a value (the lane base gives 14
 too) but is NEW as a disagreement: before the lane `*(&pi) = *(&pi) + 1` also stepped one byte (base 14); after D21
 (93478e55d) the plain form steps 4 and the compound form still steps 1. Row 3 is pre-existing (the base gives 59).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D21 — x's own width, as x itself.
 **Severity:** Low — compiles with no diagnostic; the pointer moves by 1 byte for 4 (a later read through it is
 misaligned and reads the wrong element). Row 3: the read takes the neighbouring global's bytes.
 **Kind:** row 1 a bug under D21 A (`*(&p)` is p, its type kept — so `*(&p) OP= n` is `p OP= n`); row 3 possibly a

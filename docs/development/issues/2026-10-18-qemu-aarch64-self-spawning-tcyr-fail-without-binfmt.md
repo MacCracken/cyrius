@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 by the 6.7.15 libfix3 lane (review, then fix step) on this dev box
 (x86_64 Arch Linux, `qemu-aarch64` 11.1.2, `/proc/sys/fs/binfmt_misc/` = `DOSWin register status`: no qemu-aarch64
 entry), with the worktree's `build/cycc_aarch64` (checked equal to its tree's build).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 libfix3 review, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (platform lane, wave 1, unit P4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — tooling / test environment, pre-existing. No gate runs the corpus under qemu, so nothing is red
 today. The risk: CLAUDE.md and `docs/development/dev-tools-linux.md` name `qemu-aarch64` as the local way to reproduce
 aarch64 failures, and these rows then report false aarch64 defects.

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 structs lane (unit S3), measured on the lane's tree after the
 D14 commit: x86_64, aarch64 (qemu), cx (cxvm) and PE (wine) alike (22, no diagnostic). The same on the lane base.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (structs lane, wave 1, unit S1; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — silent: t.data takes the header's address, t.len stays stale (the pun 6.7.14's D20 (a) and
 6.7.15's D14 retired for a handle and a `*Str` name). Not a security id (the developer's own source).
 **Kind:** bug — outside D14's filed table (`t = p`, `t = *p` with p a `*Str`): the `*Str` spelled `*pp`. Its plain-

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 vectors lane (its review-fix tree, 2e8b3d14f), x86_64 /
 x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine). Pre-existing: the lane base (8b4d44602's build/cycc)
 gives the same on x86_64.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 vectors review, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Medium — compiles with no diagnostic; the global holds a word whose value differs per target, where the
 same assignment inside a fn is refused (6.7.15) and the top-level DECLARATION is refused (6.7.15's D26 / D27).
 **Discovered:** 2026-10-18, the review of the 6.7.15 vectors lane — outside the filed surfaces of

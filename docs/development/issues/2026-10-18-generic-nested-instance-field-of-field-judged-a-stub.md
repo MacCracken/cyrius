@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-18 by the 6.7.15 receives lane (unit R4) while probing the zone generic-instance
 shapes of issues/archived/2026-10-17-zone-untyped-generic-struct-instance-call-binds-nothing.md; pre-existing (the R3 tip
 326c1b56a gives the same), in a fn as at top level. Measured on x86_64; the frontend is shared, so every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 receives lane, wave 3; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (genbind lane, wave 3, unit GB5; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
 **Severity:** Low — valid code refused, two errors (the second a cascade).
 **Kind:** bug (generics: the stub scan).
 

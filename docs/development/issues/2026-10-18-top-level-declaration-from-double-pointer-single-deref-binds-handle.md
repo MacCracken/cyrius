@@ -7,7 +7,9 @@ issues/archived/2026-10-17-whole-source-copy-from-double-pointer-single-deref-st
 GLOBAL from `*GPP` — in the declaration zone or after the first statement, at 8 B and over — was left as it was: a
 handle on the struct. Not the filing's surface (its repro and table are a fn's declaration), and its `*S`-name twin at
 top level is itself the guide's unsettled rule, so this needs the user's decision, not a fix.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.15 structs lane, wave 2; placed at its integration, 2026-10-18 — the user: what 6.7.15 files goes to repair 6) — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (zone lane, wave 2, unit Z4; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D17 — (a) G is a copy, at every size.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D18 — (a) G is a copy, at every size.
 **Severity:** Low — consistent with every other top-level declaration from a `*S`-typed source (`gp()`, `GW.p`,
 `GP + 0` all bind a handle at top level, the handle line); the difference is only against the same spelling in a fn.
 No miscompile in the handle's own terms.
