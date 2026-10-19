@@ -39,7 +39,13 @@
 #      in a program, a `kernel;` build, PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1)
 #   8  an operand those cannot take is refused by name, rc 1, nothing written (6.7.14's D16): `mov cr9, rax`
 #      ('cr9'; it was mov cr1, rax), `int 256` ('256'; it was int 0), `int 0x1FF` ('0x1FF'; it was int 0xff),
-#      `ltr eax` ('eax'), and a name only a register's first letters match (`lgdt [raxx]`, `ltr r8d`)
+#      `ltr eax` ('eax'), and a name only a register's first letters match (`lgdt [raxx]`, `ltr r8d`).
+#      6.7.16 (6.7.16's D33, the user, 2026-10-19; issues/2026-10-18-asm-param-load-register-read-by-first-
+#      letters.md): param_load reads its register whole — `param_load(raxx, 0)` / `param_load(r8d, 0)` are
+#      refused naming the operand (they loaded rax and a 64-bit r8), `param_load(rax, 0)` 48 8b 45 f8 and
+#      `param_load(r12, 1)` 4c 8b 65 f0 keep their bytes; on the aarch64 cross compiler `param_load(x0abc, 0)`
+#      and `param_load(x31, 0)` are refused (they loaded x0 and x3), `param_load(x0, 0)` F85F83A0 and
+#      `param_load(x30, 0)` F85F83BE keep their words
 #   9  (6.7.15, the same guide item; the user's decision D37, 2026-10-18: a barrier accepts its option) an
 #      aarch64 barrier takes its option: `dmb ish` bf 3b 03 d5, `dsb sy` 9f 3f 03 d5, `isb sy` df 3f 03 d5 and
 #      each other dmb / dsb option to llvm-mc's word; a bare barrier is sy; the next mnemonic is not an option
@@ -62,6 +68,8 @@
 #                                                                 isht / ish named as unknown mnemonics)
 #   the option read without the mnemonic test                  -> 9 RED (the forms no longer compile:
 #                                                                 `dmb dsb isb` refuses 'dsb' as an option)
+# (6.7.16) x86 ASM_PARAM_LOAD reading _asm_x86_reg again      -> 8 RED (param_load(raxx, 0), (r8d, 0) compile)
+#   aarch64 ASM_PARAM_LOAD reading _asm_aarch64_reg again      -> 8 RED (param_load(x0abc, 0), (x31, 0) compile)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: asm_mnemonics_whole: cannot cd to $ROOT"; exit 1; }
@@ -252,6 +260,25 @@ refused 8 "$CC" 'ltr r8d;' "ltr takes a 16-bit register, ax to di or r8w to r15w
 refused 8 "$CC" 'lgdt [raxx];' "lgdt takes one 64-bit register in brackets, [rax] to [r15], not 'raxx'"
 refused 8 "$CC" 'lidt rax;' "lidt takes one 64-bit register in brackets, [rax] to [r15], not 'rax'"
 refused 8 "$CC" 'invlpg [rax + 8];' "invlpg takes one 64-bit register in brackets, [rax] to [r15], not '+'"
+# param_load reads its register whole (6.7.16's D33): the filed `raxx` / `r8d` refused by name, whole names kept
+refused 8 "$CC" 'param_load(raxx, 0);' "param_load takes a 64-bit register (rax .. r15), not 'raxx'"
+refused 8 "$CC" 'param_load(r8d, 0);' "param_load takes a 64-bit register (rax .. r15), not 'r8d'"
+one 8 'param_load(rax, 0);' '48 8b 45 f8'
+one 8 'param_load(r12, 1);' '4c 8b 65 f0'
+if [ -s "$D/cc_a64" ]; then
+  refused 8 "$D/cc_a64" 'param_load(x0abc, 0);' "param_load takes a 64-bit register (x0 .. x30), not 'x0abc'"
+  refused 8 "$D/cc_a64" 'param_load(x31, 0);' "param_load takes a 64-bit register (x0 .. x30), not 'x31'"
+  for x in 'x0|a0 83 5f f8' 'x30|be 83 5f f8'; do
+    r=${x%%|*}; w=${x#*|}
+    printf 'fn f(): i64 {\n    asm { 0xF1; 0xF1; 0xF1; }\n    asm { param_load(%s, 0); }\n    asm { 0xF1; 0xF1; 0xF1; }\n    return 0;\n}\nsyscall(60, f());\n' "$r" > "$D/pl8.cyr"
+    rc=0; "$D/cc_a64" < "$D/pl8.cyr" > "$D/pl8" 2> "$D/pl8.err" || rc=$?
+    # each marker block is padded to 4 bytes (F1 F1 F1 00): drop the leading 00
+    g=$(bytes "$D/pl8" | head -1 | sed 's/^00 //')
+    if [ "$rc" -ne 0 ]; then bad "8: aarch64 \`asm { param_load($r, 0); }\` was refused (rc $rc): $(grep -v '^note\|^warning' "$D/pl8.err" | head -1)"
+    elif [ "$g" = "$w" ]; then echo "  ok   8: aarch64 asm { param_load($r, 0); } -> $g"
+    else bad "8: aarch64 \`asm { param_load($r, 0); }\` assembled to [$g], want [$w]"; fi
+  done
+fi
 
 # 9 — aarch64 barrier options (D37, 2026-10-18): each option's word (llvm-mc's), a bare barrier is sy, the next
 # mnemonic is not an option, and a word the barrier has no option for is refused by name

@@ -5966,6 +5966,11 @@ refused, naming it: `mov cr9, rax` names `cr9`, `int 256` names `256`, `ltr eax`
 `[rax]` and `mov cr8, rax` wrote CR0, and `int` kept the vector's low 8 bits, so `int 256` was
 `int 0`.)
 
+`param_load(reg, idx)` loads parameter `idx` from its prologue slot into a 64-bit register named
+whole, `rax` to `r15`: `param_load(rax, 0)` is 48 8B 45 F8. Any other operand is refused, naming it:
+`param_load(raxx, 0)` names `raxx`, `param_load(r8d, 0)` names `r8d`. (6.7.16: the first letters
+decided, so those loaded `rax` and a 64-bit `r8`.)
+
 A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
 it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
 `unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
@@ -5975,7 +5980,9 @@ On aarch64 the mnemonics are `svc` (`svc #0`: a `#` starts a comment, so the imm
 written), `wfi`, `wfe`, `nop`, `ret`, `eret`, `param_load(reg, idx)` and the barriers `dmb`, `dsb`
 and `isb`. A barrier takes its option after it: `dmb` and `dsb` take `sy`, `st`, `ld`, `ish`,
 `ishst`, `ishld`, `nsh`, `nshst`, `nshld`, `osh`, `oshst` and `oshld`, and `isb` takes `sy`. A bare
-barrier is the full-system one, `sy`.
+barrier is the full-system one, `sy`. `param_load` takes `x0` to `x30` by its whole name, and any
+other operand is refused, naming it (6.7.16: `param_load(x31, 0)` loaded `x3`, and
+`param_load(x0abc, 0)` loaded `x0`).
 
 ```
 #ifplat aarch64
