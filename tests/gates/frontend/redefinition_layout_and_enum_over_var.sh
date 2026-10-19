@@ -85,7 +85,9 @@ syscall(60, A & 255);'
 expect() {
   "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
   if [ "$rc" -ne 0 ]; then _bad "$1 $2: rc $rc (a warning must not fail the build)"; grep '^error' "$T/e" | head -2; return; fi
-  n=$(grep -c "$3" "$T/e")
+  # `|| true`: grep -c prints 0 AND exits 1 at a zero count, which ends the gate with no verdict
+  # under `bash -eo pipefail` (CHANGELOG [6.7.16]; gates_verdict_under_pipefail.sh runs it so).
+  n=$(grep -c "$3" "$T/e" || true)
   if [ "$n" -ne "$4" ]; then _bad "$1 $2: $n line(s) matching '$3', expected $4"; grep -v '^note' "$T/e" | head -3 | cut -c1-160 | sed 's/^/      /'; return; fi
   pass=$((pass + 1))
 }
