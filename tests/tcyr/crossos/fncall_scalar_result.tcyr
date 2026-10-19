@@ -12,6 +12,11 @@
 # 6.7.15 (the user's decision D30 (a), 2026-10-18): a `: bool` callee's result is a boolean value, as `isb()`'s is —
 # rows B; `var b: bool = fncall0(&isb);` was refused "not a bool" (the refusal side is
 # tests/gates/frontend/bool_checked.sh K; issues/2026-10-17-known-callee-bool-result-not-a-bool.md).
+# 6.7.15 (the user's decision D31 (a), 2026-10-18): a narrow `*T` callee's element kind is the value's own, as
+# `bp()`'s is — rows E: `*fncall0(&bp)` with `bp: *u8` read the whole word (the filed repro exited 80; 81 is right)
+# and `fncall0(&bp)[1]` was "cannot subscript ... it does not return a *T" (the refusal side is
+# tests/gates/frontend/pointer_subscript_checked.sh R6j-R6k / R1l-R1m; issues/2026-10-17-known-callee-narrow-pointer-
+# result-deref-reads-a-word-and-subscript-refused.md).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -89,6 +94,36 @@ fn bools(): i64 {
     return 0;
 }
 
+# E — a narrow `*T` callee: its element, as the direct call's (6.7.15, D31 (a)). GW is 0x0102030405060708.
+var GC: i64 = 0x80FF;
+var GS: i64 = 0x0102030405060708;
+fn bp(): *u8 { return &GW; }
+fn sp(): *i8 { return &GC; }
+fn hp(): *u16 { return &GW; }
+fn bs(): *u8 { return &GS; }
+fn elems(): i64 {
+    var a = *bp();
+    var b = *fncall0(&bp);
+    assert_eq(a * 10 + (b == a), 81, "E1: *fncall0(&bp) reads one byte, as *bp() (the filed repro: 81, was 80)");
+    assert_eq(*callptr(&bp), 8, "E2: *callptr(&bp) reads one byte");
+    assert_eq(*(fncall0(&gi) + 1), *(gi() + 1), "E3: *(fncall0(&gi) + 1) reads an i32, as *(gi() + 1)");
+    assert_eq(*(callptr(&gi) + 1), 0x01020304, "E4: *(callptr(&gi) + 1) is 0x01020304");
+    var g = fncall0(&bp)[1];
+    assert_eq(g, 7, "E5: fncall0(&bp)[1] (the filed repro 2: 7)");
+    assert_eq(callptr(&bp)[1], 7, "E6: callptr(&bp)[1]");
+    assert_eq(*fncall0(&sp), 0 - 1, "E7: *fncall0(&sp), a *i8, sign-extends");
+    assert_eq(fncall0(&sp)[0] + *callptr(&sp), 0 - 2, "E8: fncall0(&sp)[0] and *callptr(&sp) sign-extend");
+    assert_eq(*fncall0(&hp), 0x0708, "E9: *fncall0(&hp), a *u16, reads two bytes");
+    assert_eq(*(fncall0(&bp)), 8, "E10: *(fncall0(&bp)) in parentheses");
+    *fncall0(&bs) = 0x55;
+    assert_eq(GS, 0x0102030405060755, "E11: *fncall0(&bs) = 0x55 writes one byte, as *bs() = v");
+    fncall0(&bs)[1] = 0x66;
+    assert_eq(GS, 0x0102030405066655, "E12: fncall0(&bs)[1] = 0x66 writes one byte");
+    var fp = &bp;
+    assert_eq(*fncall0(fp), 0x0102030405060708, "E13: a callee in a variable: *fncall0(fp) reads the word");
+    return 0;
+}
+
 # V — a callee held in a variable is unknown: its result is a word.
 fn vars(): i64 {
     var fp = &gp;
@@ -104,4 +139,5 @@ var r1 = floats();
 var r2 = ptrs();
 var r3 = vars();
 var r4 = bools();
+var r5 = elems();
 var r = assert_summary();

@@ -1038,12 +1038,16 @@ fn _icall_result(S, cfi, t, beg): i64 {
 # An untyped `var a = fncall0(&f);` takes the f64 after its parse (`_var_rhs_if64`); the step is recorded against
 # the call's fncallN / callptr token `beg`, which the factor's scale fix (`_call_scale_fix`) keeps. CHANGELOG [6.7.14]
 # 6.7.15 (the user's decision D30 (a), 2026-10-18): and a `: bool` callee's result is a boolean value, as `isb()`'s is
-# (`_call_ret_ps`' 6.7.3 mark): `var b: bool = fncall0(&isb);` was refused "not a bool". CHANGELOG [6.7.15]
+# (`_call_ret_ps`' 6.7.3 mark): `var b: bool = fncall0(&isb);` was refused "not a bool". And (D31 (a)) a `*T`'s
+# element kind is the value's own, as `bp()`'s is: `_sub_word` / `_pk_post` / `_sub_ret_sid` read this record, so
+# `*fncall0(&bp)` with `bp: *u8` reads one byte (it read the word) and `fncall0(&bp)[1]` subscripts. CHANGELOG [6.7.15]
 var _icall_ps_beg = 0 - 1;
 var _icall_ps = 0;
+var _icall_fi = 0 - 1;   # 6.7.15 (D31): ... and its callee, for a `*S` element's name (`_sub_ret_sid`)
 fn _icall_scalar(S, cfi, beg): i64 {
     _icall_ps_beg = beg;
     _icall_ps = _fn_ret_ps(cfi);
+    _icall_fi = cfi;
     SPSC(S, _icall_ps);
     if (cfi < 0) { return 0; }
     if (GFRS(S, cfi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
@@ -4153,6 +4157,7 @@ fn _sub_word(S, h): i64 {
     if (h != 2) { return 0; }
     var c = _sub_callee(S);
     if (c < 0) { return GPSC(S); }
+    if (c == _icall_ps_beg) { return _icall_ps; }   # 6.7.15 (D31): a known `&f` callee's, not fncallN's own
     var fi = _pair_gen_inst(S, c);
     if (fi < 0) { return 0; }
     if (_fn_rps == 0) { return 0; }
@@ -4172,6 +4177,7 @@ fn _sub_ret_sid(S): i64 {
     var fi = _mcall_last;
     var c = _sub_callee(S);
     if (c >= 0) { fi = _pair_gen_inst(S, c); }
+    if (_sub_open(S) - 1 == _icall_ps_beg) { fi = _icall_fi; }   # 6.7.15 (D31): a known `&f` callee's
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     return L64(_fn_rpsid + fi * 8);
@@ -4840,10 +4846,16 @@ fn _pk_post(S, ti0): i64 {
     var h = _sub_how(S, ti0);
     if (h == 0) { return 0; }
     if (h == 2) { if (TOKTYP(S, _sub_open(S) - 1) != 2) {   # `-(q)` / `~(q)` end in `)` too: a call is
-            if (_sub_callee(S) < 0) { return 0; }             # `name(`, `.name(` or `name<..>(`
+            if (_sub_callee(S) < 0) { if (_pk_icall(S) == 0) { return 0; } }   # `name(`, `.name(`, `name<..>(`
         } }
     if (_sub_word(S, h) != w) { return 0; }
     return _PK_MARK(S, w);
+}
+# 1 = the call that ends at the cursor is `callptr(..)` whose callee is a known `&f` (`_icall_scalar` recorded its
+# token): `_sub_word` answers the recorded word. 6.7.15 (D31)
+fn _pk_icall(S): i64 {
+    if (_sub_open(S) - 1 == _icall_ps_beg) { return 1; }
+    return 0;
 }
 # ⛔ 6.7.8 (C2-5) — `*p` AT THE ELEMENT'S WIDTH (the user's decision, 2026-10-10: "`*p`, `*p = v`,
 # `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32 rounding included)

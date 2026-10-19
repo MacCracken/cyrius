@@ -447,7 +447,8 @@ The pointer is a name declared `*T`: a `var p: *T` local, a `p: *T` parameter, a
 a closure's capture of one, or a generic instance's `p: *T` at its `T` — or a field or a call
 DECLARED one (6.7.8): `h.p[i]` for a field `p: *T` (of a local, a global, a `*H`, `a.b.p[i]`,
 `self.p[i]`, a call's struct result `mk(4).p[i]`), and `f()[i]`, `g<i32>()[i]`, `o.m()[i]` for a
-callee declared `: *T`. The base is evaluated first — the field read, the call made once — and
+callee declared `: *T` — through a fn pointer too when the callee is written `&f` (6.7.15, the user's
+decision D31, 2026-10-18: `fncall0(&bp)[1]`, `callptr(&bp)[1]`). The base is evaluated first — the field read, the call made once — and
 then the index; `f()[i] = v`, `h.p[i] += 1` and both in a `for` step store through the pointer.
 A pointer laundered through an untyped name (`var q = p;`) is a plain word and takes no
 subscript. Through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32`) `*p` is `p[0]` (6.7.8,
@@ -469,7 +470,8 @@ Refused, by name (`cannot subscript 'a': ...`):
   on its two halves) — and `*pu` through a `*u128` is refused alike (6.7.15, *Pointers*);
 - a **field that is no `*T`** (`cannot subscript field 'n': it is not a *T field`) and a **call
   whose callee is not declared `: *T`** (`cannot subscript the result of 'f': ...`) — a builtin
-  (`load64(..)`), `callptr` and `fncallN` included; a parenthesised expression or a literal
+  (`load64(..)`), and `callptr` / `fncallN` whose callee is not written `&f` (`fncall0(fp)[1]`)
+  included; a parenthesised expression or a literal
   (`(p + 1)[i]`): name the pointer first, `var q: *T = p + 1; q[i]`;
 - `a[i][j]` — a subscript's result is an element, not an array — and `&a[i]`: write
   `&a + i * sizeof(T)` (or `p + i`).
@@ -1132,7 +1134,8 @@ into one warns, a wider integer into a narrow one warns "narrowing"); `*p OP= v`
 combines and stores at that width, so it wraps there (an `f32` combines in single precision). The
 pointer is narrow wherever the compiler knows it is one: a name declared `*T` (a local, a parameter,
 a global, a closure capture, a generic instance's at its `T`), a field declared `*T` (`*h.p`,
-`*self.p`, `*mk(4).p`), a call declared `: *T` (`*f()`, `*g<i16>(k)`, `*o.m()`), `p + n`, `p - n`,
+`*self.p`, `*mk(4).p`), a call declared `: *T` (`*f()`, `*g<i16>(k)`, `*o.m()`, and since 6.7.15 — the user's
+decision D31, 2026-10-18 — `*fncall0(&f)` / `*callptr(&f)` with the callee written `&f`), `p + n`, `p - n`,
 `n + p`, parenthesised, an if-expression whose branches all are, or the dereference of a pointer to
 one (`*pp` of a `pp: **T`, below). **Every other operand is a WORD
 address, read and written 8 bytes as before**: an untyped name (`var w = p;` is the spelling for a
@@ -2466,7 +2469,10 @@ value makes it that struct (6.7.11; see *Returning a struct by value*), and (6.7
 decisions D25 and D26, 2026-10-16) a `: f64` makes it an f64 whatever the arguments
 (`var a = fncall0(&f); a + 1.5` and `fncall1(&dbl, 3) * 2.0` are f64 operations, and `var a =
 fncall0(&f);` binds an f64), a `: *T` makes it a `*T`: `fncall0(&gp) + 1` steps one `T`, as
-`gp() + 1` does, and `var w: *P2 = fncall0(&gp);` does not warn. Through 6.7.13 both were an untyped
+`gp() + 1` does, and `var w: *P2 = fncall0(&gp);` does not warn — and (6.7.15; the user's decision
+D31, 2026-10-18) its element is the value's own: with `bp: *u8`, `*fncall0(&bp)` and `*callptr(&bp)`
+read one byte and `fncall0(&bp)[1]` subscripts, as `*bp()` and `bp()[1]` do (through 6.7.14 the
+dereference read the whole word and the subscript was refused). Through 6.7.13 both were an untyped
 word (the f64 only when the last argument was an f64, 6.7.6's rule): `a + 1.5` added integers and
 `fncall0(&gp) + 1` moved one byte. A `: bool` makes it a boolean value (6.7.15; the user's decision
 D30, 2026-10-18): `var b: bool = fncall0(&isb);`, `b = callptr(&isb);`, `return fncall0(&isb);` from
