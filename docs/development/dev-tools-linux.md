@@ -116,8 +116,8 @@ needed.
 ### The network
 
 One check-driver row leaves the box: **`TLS live`** (`_tls_live_gate`, `programs/checks/services.cyr`)
-connects to `1.1.1.1:443` and completes a TLS round-trip (an HTTP/1.1 response from
-`one.one.one.one`). It probes the address first (3 s); when it is unreachable the row SKIPs
+connects to `1.1.1.1:443` and completes a TLS round-trip through the libssl backend and the
+dlopen helper (an HTTP/1.1 response from `one.one.one.one`). It probes the address first (3 s); when it is unreachable the row SKIPs
 ("1.1.1.1:443 unreachable (no network)"), and since `RG_SKIP_ALLOW` is empty that SKIP turns
 `release-gate.sh` step 3 RED. **A box that gates releases needs outbound TCP to 1.1.1.1:443.**
 `tests/tcyr/crypto/tls_native_realpeer.tcyr` dials the same address and, without it, skips its
