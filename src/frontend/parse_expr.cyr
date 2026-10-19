@@ -4910,6 +4910,8 @@ fn _deref_read(S): i64 {
     if (ed != 0) { return _esub_load(S, ed); }
     var ow = _pk_word(S);
     var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
+    var aw = 0;
+    if (iw == 0) { aw = _amp_pw(S, d + 1, GTI(S)); }   # 6.7.15 (D21 A): `*(&p)` is p, its type kept
     var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.14: a `*V`'s vector, for an if-expression branch
     var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
     if (pk == 0) { pk = _dvi_park(S, d, vd); }   # 6.7.14 (D36): an untyped declaration's `*p` of a `*V`
@@ -4919,6 +4921,7 @@ fn _deref_read(S): i64 {
         _PK_MARK(S, iw);   # the pointee's word is this value's own (`_pk_word`)
         _ppd_note(S, d, ow);   # 6.7.13: and its struct, for `**pps`
     }
+    if (aw != 0) { SPSC(S, aw); _PK_MARK(S, aw); }
     if (vd != 0) {
         _dvd_note(S, d);
         _dro_vnote(S, d, vd);   # 6.7.14: into a pointer of another kind (`_sarg_vdo`)
@@ -5056,6 +5059,21 @@ fn _amp_vd(S, a, e): i64 {
     if (TOKTYP(S, b) != 27) { return 0; }
     if (TOKTYP(S, b + 1) != 2) { return 0; }
     return 0 - _name_vty(S, TOKVAL(S, b + 1));
+}
+# ⛔ 6.7.15 (D21 A, the user's decision, 2026-10-18) — A DEREFERENCE OF THE ADDRESS OF A TYPED POINTER IS THAT POINTER,
+# ITS TYPE KEPT: `*(&p)` with `p: *f64v2` is p, so `**(&p)` is the vector p points at (`lanes(**(&p))`, `return
+# **(&p);`, `var v = **(&p);` — they were refused, or bound one word and a stack word), `*(&ps)` of a `p: *Ps` is ps
+# (`(*(&ps)).y` reads its field), and through a narrow `p: *u8` `**(&p)` reads the byte `*p` reads (it read a word).
+# `&p` itself is unchanged — a byte pointer to p's slot (6.7.11's D15), so `*(&p + 0)` is still a byte — and only a
+# dereference of exactly `& NAME` recovers NAME's type, as 6.7.13 recovers a vector's (`_amp_vd`) and a struct's
+# (`_hl_dpsid`). The operand [a, e) exactly `& NAME` inside any balanced parentheses, NAME a typed-pointer local,
+# parameter, capture or global: NAME's step word (`_hl_name_pw`), else 0. CHANGELOG [6.7.15]
+fn _amp_pw(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    return _hl_name_pw(S, TOKVAL(S, b + 1));
 }
 # The vector type (<= -2048) the name `noff` has where `&` resolves it — a local (a parameter's copy too), a closure's
 # capture, a global — else 0.

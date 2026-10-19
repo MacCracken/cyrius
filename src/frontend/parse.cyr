@@ -426,7 +426,13 @@ fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
 # (`_tok_ta_chain`), a call returning a struct or `*S` (`_tok_ta_call`); through `x: T`: a struct value, a whole
 # dereference `*p` of a name declared `*S` (6.7.15's D12 (a)), a call returning a struct; either, inside a whole-
 # argument wrap (D12). Anything else answers 0 — a missed flag, never a false one. CHANGELOG [6.7.15]
+# 6.7.15 (D23 A): through `p: *T`, pointer arithmetic on one of those pointers too (`_tok_ta_arith`), as the parser
+# binds it (`_ic_parith`).
 fn _tok_ta_arg(S, a, i, at, ptr): i64 {
+    if (ptr == 1) {
+        var ae = _ic_arith_end(S, at);
+        if (ae > 0) { return _tok_ta_arith(S, a, i, at, ae); }
+    }
     at = _pwrap_in(S, at);
     if (at < 0) { return 0; }
     var t = TOKTYP(S, at);
@@ -490,12 +496,21 @@ fn _tok_ta_deref(S, a, i, at): i64 {
 # A whole field chain `x.f .. .p` at token at through `p: *T`: what its LEAF field declared `*S` points at, each hop
 # through an inline struct field or a `*T` field (`_gs_fld_sid`) from the head's struct, as `_gsc_chain` walks it.
 fn _tok_ta_chain(S, a, i, at): i64 {
+    var e = _tok_chain_end(S, at);
+    if (TOKTYP(S, e) != 31) { if (TOKTYP(S, e) != 11) { return 0; } }
+    return _tok_ta_chain_to(S, a, i, at, e);
+}
+# The token past the `name (. name)*` run starting at token at.
+fn _tok_chain_end(S, at): i64 {
     var e = at + 1;
     while (TOKTYP(S, e) == 41) {
-        if (TOKTYP(S, e + 1) != 2) { return 0; }
+        if (TOKTYP(S, e + 1) != 2) { return e; }
         e = e + 2;
     }
-    if (TOKTYP(S, e) != 31) { if (TOKTYP(S, e) != 11) { return 0; } }
+    return e;
+}
+# ... the chain filling exactly [at, e) (at least one `.`).
+fn _tok_ta_chain_to(S, a, i, at, e): i64 {
     var sid = _tok_ta_decl(S, a, i, TOKVAL(S, at));
     var k = at + 2;
     while (k < e - 1) {
@@ -514,6 +529,45 @@ fn _tok_ta_call(S, a, i, at, ptr): i64 {
     var r = _tok_init_sid(S, a, i, at);
     if (r > 0) { return r; }
     if (ptr == 0) { return 0; }
+    return _tok_ta_pcall(S, at);
+}
+# ⛔ 6.7.15 — A TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER TO THE SCAN TOO (the user's decision D23 A,
+# 2026-10-18): through `p: *T` the parser binds `gd(pp + 1)` as `gd(pp)` (`_ic_parith`), so the scan reads the
+# arithmetic [b, e) the way `_hl_psid` types it — through a `+` the side that is a pointer, through a `-` the left
+# when the right is none (`p - q` is a distance) — or `var r = gd(pp + 0); r.pick(t)` in a generic was refused naming
+# the stub method. An operand, inside any parentheses: a name declared `*S`, a whole field chain whose leaf is
+# declared `*S`, a call (not generic) declared `: *S`. Anything else 0, a missed flag. CHANGELOG [6.7.15]
+fn _tok_ta_arith(S, a, i, b, e): i64 {
+    b = _ie_unparen(S, b, e);
+    e = _ie_pe;
+    if (b >= e) { return 0; }
+    var k = _hl_addop(S, b, e);
+    if (k > b) {
+        var r = _tok_ta_arith(S, a, i, k + 1, e);
+        if (TOKTYP(S, k) == 6 || TOKTYP(S, k) == 113) {
+            var l = _tok_ta_arith(S, a, i, b, k);
+            if (l > 0) { return l; }
+            return r;
+        }
+        if (r > 0) { return 0; }
+        return _tok_ta_arith(S, a, i, b, k);
+    }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    if (e == b + 1) {
+        var n = _tok_ta_decl(S, a, i, TOKVAL(S, b));
+        if (_ttd_ptr == 1) { return n; }
+        return 0;
+    }
+    if (TOKTYP(S, b + 1) == 41) {
+        if (_tok_chain_end(S, b) != e) { return 0; }
+        return _tok_ta_chain_to(S, a, i, b, e);
+    }
+    if (TOKTYP(S, b + 1) != 10) { return 0; }
+    if (_call_close(S, b + 1) != e - 1) { return 0; }
+    return _tok_ta_pcall(S, b);
+}
+# ... a call `f(..)` at token at to a fn (not generic) declared `: *S`: S, else 0.
+fn _tok_ta_pcall(S, at): i64 {
     if (TOKTYP(S, at + 1) != 10) { return 0; }
     var fi = FINDFN(S, TOKVAL(S, at));
     if (fi < 0) { return 0; }
@@ -4539,7 +4593,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
-    if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
+    if (_agg_sc_err(S, _agc_t, noff) == 1) { return _asa_term(S, term); }   # 6.7.15: `Pt.dup`; no store, no warning
     if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
     if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
@@ -4553,6 +4607,14 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     return 1;
 }
 
+# `_AGG_ASSIGN_TYPE_ERR` for the struct-call record (`_sc_sid`) assigned to `noff` of type `td`: the callee named as the
+# source spells it, a method `Pt.dup` (`_err_ident_fn`). 1 = refused. CHANGELOG [6.7.15]
+fn _agg_sc_err(S, td, noff): i64 {
+    if (td >= 0) { return 0; }
+    if (td == 0 - _sc_sid) { return 0; }
+    _err_ident_fn(S, "cannot copy ", _sc_fn, _sc_fi, " into a variable of a different struct/vector type: ", noff);
+    return 1;
+}
 # ⛔ 6.7.14 — D24 AT AN ASSIGNMENT (the user's decision D27 (a), 2026-10-16). `x = mkp();` / `x = b.mk();` / `x = a + c;`
 # / `x = fncall0(&mkp);` (a classic-for step too) with the struct result over 8 B and `x` a SCALAR — a local, a
 # parameter or a global declared `: i64`, `: u8`, `: f64`, any annotation that names no struct — stored the
@@ -4574,7 +4636,10 @@ fn _asa_call(S, noff, fi, term): i64 {
 # ... a method / operator / known `&f` result the struct record spans (`_pcmpe_struct_assign`, `st` the source's
 # first token, the cursor on `term`).
 fn _asa_rec(S, noff, st, term): i64 {
-    if (_asa_refuse(S, noff, st - 1, _sc_beg, _sc_fn, _sc_sid) == 0) { return 0; }
+    _rcv_fi = _sc_fi;   # 6.7.15: named `Pt.mq`
+    var r = _asa_refuse(S, noff, st - 1, _sc_beg, _sc_fn, _sc_sid);
+    _rcv_fi = 0 - 1;
+    if (r == 0) { return 0; }
     return _asa_term(S, term);
 }
 fn _asa_term(S, term): i64 {

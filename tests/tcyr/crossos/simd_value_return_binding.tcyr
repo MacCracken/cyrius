@@ -89,6 +89,33 @@ fn drt4(p: *f64v4): f64v4 { return *p; }
 fn drtf(p: *f32v4): f32v4 { return *p; }
 fn dvlanes(x: f64v2): i64 { return load64(&x) * 1000 + load64(&x + 8); }
 
+# --- H (6.7.15, issues/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md): a method declared
+#     `: V` on a FIELD-CHAIN receiver is the vector at every receive a single-name receiver's is (6.7.13's D29 A, 6.7.14's
+#     D37 / D38 / D39). The untyped `var v = w.s.mv();` bound one word — stack garbage, per target and per build (x86_64
+#     104, IR=3 40, aarch64 144, cx 98, PE 195 where 161 is right); the annotated declaration, the assignment, a value-form
+#     argument and the return were refused "got `w`"; a `*f64v2` argument pushed lane 0 as the address (139). Raw lane
+#     bits, each lane distinct; on Win64 the receive's address is the method's hidden result pointer. ---
+struct CrS { k; }
+struct CrW { s: CrS; j; }
+struct CrH { w: CrW; i; }
+struct CrN { ps: *CrS; q; }
+impl CrS {
+    fn mv(self): f64v2 { var v: f64v2; store64(&v, 40 + self.k); store64(&v + 8, 7); return v; }
+    fn mg<T>(self, a: T): f64v2 { var v: f64v2; store64(&v, a + self.k); store64(&v + 8, 8); return v; }
+    fn m4(self): f64v4 { var v: f64v4; store64(&v, 1); store64(&v + 8, 2); store64(&v + 16, 3); store64(&v + 24, self.k); return v; }
+}
+fn cr_lanes(x: f64v2): i64 { return load64(&x) * 1000 + load64(&x + 8); }
+fn cr_rd(p: *f64v2): i64 { var v: f64v2 = *p; return load64(&v) * 1000 + load64(&v + 8); }
+fn cr_ret(w: *CrW): f64v2 { return w.s.mv(); }
+fn cr_ret2(h: *CrH): f64v2 { return h.w.s.mg<i64>(50); }
+
+# --- I (6.7.15, D28 A — the user's decision, 2026-10-18; issues/2026-10-17-wrapped-vector-call-into-untyped-or-scalar-
+#     declaration-binds-a-word.md): parentheses around a WHOLE vector call are transparent at an untyped declaration —
+#     `var x = (mk2(..));` / `var x = (s.m2());` are the vector's local, as unwrapped. They bound one word (x86_64 /
+#     aarch64 0 and 1, cx 154 and 155, PE 195 where 161 is right). Raw lane bits, each lane distinct; on Win64 the
+#     declaration's address is the call's hidden result pointer. ---
+fn iw2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+
 fn main(): i64 {
     var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
     var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
@@ -316,6 +343,64 @@ fn main(): i64 {
     var gpi: *i64 = &gx;
     var gxi = *gpi;
     assert_eq(gxi + 1, 78, "untyped var x = *pi of a *i64 stays a word");
+
+    # --- H: a method on a field-chain receiver (6.7.15) ---
+    test_group("H a vector method on a field chain w.s.mv()");
+    var cw: CrW; cw.s.k = 1; cw.j = 5;
+    var cu = cw.s.mv();
+    assert_eq(load64(&cu), 41, "untyped var v = w.s.mv() lane0");
+    assert_eq(load64(&cu + 8), 7, "untyped var v = w.s.mv() lane1");
+    var cad: f64v2 = cw.s.mv();
+    assert_eq(cr_lanes(cad), 41007, "declared from w.s.mv(), both lanes");
+    var cs: f64v2 = ge2<i64>(0, 0);
+    cs = cw.s.mv();
+    assert_eq(cr_lanes(cs), 41007, "assigned from w.s.mv(), both lanes");
+    assert_eq(cr_lanes(cw.s.mv()), 41007, "w.s.mv() into a value-form parameter");
+    assert_eq(cr_rd(cw.s.mv()), 41007, "w.s.mv() into a *f64v2 parameter");
+    var cr: f64v2 = cr_ret(&cw);
+    assert_eq(cr_lanes(cr), 41007, "return w.s.mv() from a f64v2 fn");
+    assert_eq(cw.s.k * 10 + cw.j, 15, "the receiver is intact");
+    var cpw: *CrW = &cw;
+    var cp = cpw.s.mv();
+    assert_eq(cr_lanes(cp), 41007, "untyped from pw.s.mv() (a pointer head)");
+    var ch: CrH; ch.w.s.k = 3; ch.i = 9;
+    var chu = ch.w.s.mv();
+    assert_eq(cr_lanes(chu), 43007, "untyped from h.w.s.mv() (two hops)");
+    var chg: f64v2 = ch.w.s.mg(60);
+    assert_eq(cr_lanes(chg), 63008, "declared from h.w.s.mg(60) (a generic method)");
+    var chr: f64v2 = cr_ret2(&ch);
+    assert_eq(cr_lanes(chr), 53008, "return h.w.s.mg<i64>(50) (an explicit instance)");
+    var cs0: CrS = CrS { 4 };
+    var cn: CrN; cn.ps = &cs0;
+    var cnu = cn.ps.mv();
+    assert_eq(cr_lanes(cnu), 44007, "untyped from n.ps.mv() (a *S field)");
+    var c4 = ch.w.s.m4();
+    assert_eq(load64(&c4) * 1000 + load64(&c4 + 8) * 100 + load64(&c4 + 16) * 10 + load64(&c4 + 24), 1233,
+      "untyped f64v4 from h.w.s.m4(), every lane");
+    assert_eq(ch.w.s.k * 10 + ch.i, 39, "the two-hop receiver is intact");
+
+    # --- I: a whole vector call in parentheses into an untyped declaration (6.7.15, D28) ---
+    test_group("I a whole vector call in parentheses, untyped");
+    var ia = (iw2(41, 7));
+    assert_eq(load64(&ia) * 10 + load64(&ia + 8), 417, "untyped var x = (mk2(41, 7)), both lanes");
+    var is1: CrS = CrS { 1 };
+    var ib = (is1.mv());
+    assert_eq(load64(&ib) * 10 + load64(&ib + 8), 417, "untyped var x = (s.m2()), both lanes");
+    var ic = ((iw2(42, 8)));
+    assert_eq(cr_lanes(ic), 42008, "untyped from a double wrap");
+    var ig = (ge2<i64>(43, 9));
+    assert_eq(cr_lanes(ig), 43009, "untyped from (g<T>(..))");
+    var ih = (ch.w.s.mg(60));
+    assert_eq(cr_lanes(ih), 63008, "untyped from (h.w.s.mg(60)), a chain's generic method");
+    var ip = (callptr(&iw2, 44, 10));
+    assert_eq(cr_lanes(ip), 44010, "untyped from (callptr(&f, ..))");
+    var i4 = (cs0.m4());
+    assert_eq(load64(&i4) * 1000 + load64(&i4 + 8) * 100 + load64(&i4 + 16) * 10 + load64(&i4 + 24), 1234,
+      "untyped f64v4 from (s.m4()), every lane");
+    var if4 = ((gef<i32>(5, 6)));
+    assert_eq(load32(&if4) * 1000 + load32(&if4 + 4) * 100 + (load32(&if4 + 8) - 100) * 10 + load32(&if4 + 12) - 100,
+      5656, "untyped f32v4 from ((g<T>(..))), every lane");
+    assert_eq(is1.k, 1, "the receiver is intact");
 
     var r = assert_summary();
     return r;

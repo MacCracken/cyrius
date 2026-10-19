@@ -1780,6 +1780,63 @@ fn _fsn_num(S, wp, n, lim): i64 {
     store8(S + 0xEC00000 + wp, 48 + n % 10);
     return wp + 1;
 }
+# ⛔ 6.7.15 — AN ARGUMENT IS NAMED AS THE SOURCE SPELLS IT. A refused dereference argument was quoted as `*` and its
+# operand's LAST name — `ri(*gp(pb))` as '*pb', `ri(*&b)` '*b', `ri(*h.pv)` '*pv', `ri(**ppb)` '*ppb' (`_hl_lastnm`).
+# The tokens [a, e) — the operand `gp(pb)`, `&b`, `h.pv`, `*ppb`, `(pb)` — written from the source at GNPOS + 1024,
+# uncommitted, past `_fn_src_name`'s scratch so one message may print both: each token's own bytes, one space where
+# the source has any between two (a comment or a line break is one space too). `dflt` when the tokens have no source
+# spelling in order (a token the parser made). CHANGELOG [6.7.15]
+fn _src_span_nm(S, a, e, dflt): i64 {
+    if (e <= a) { return dflt; }
+    NPOS_GUARD(S, 2048);
+    var b = GNPOS(S) + 1024;
+    var lim = b + 960;
+    var wp = b;
+    var pend = 0;
+    var i = a;
+    while (i < e) {
+        var o = GTOFF(S, i);
+        var nx = GTOFF(S, i + 1);
+        if (o <= 0) { return dflt; }
+        if (nx <= o) { return dflt; }
+        if (nx > GBL(S)) { return dflt; }
+        var q = _ssn_tok_end(S, i, o, nx);
+        if (i > a) { if (o > pend) { wp = _fsn_lit(S, wp, " ", lim); } }
+        while (o < q) {
+            if (wp >= lim) { o = q; }
+            else {
+                store8(S + 0xEC00000 + wp, load8(S + 0x459D000 + o));
+                wp = wp + 1;
+                o = o + 1;
+            }
+        }
+        pend = q;
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# The end of token `i`'s text, which starts at source offset `o` (the next token at `nx`): the first space, line break
+# or `#` comment before `nx`; a string literal runs to its closing quote.
+fn _ssn_tok_end(S, i, o, nx): i64 {
+    var q = o;
+    if (TOKTYP(S, i) == 30) {
+        q = o + 1;
+        while (q < nx) {
+            var cs = load8(S + 0x459D000 + q);
+            if (cs == 34) { return q + 1; }
+            if (cs == 92) { q = q + 1; }
+            q = q + 1;
+        }
+        return nx;
+    }
+    while (q < nx) {
+        var c = load8(S + 0x459D000 + q);
+        if (c == 32 || c == 9 || c == 10 || c == 13 || c == 35) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
 # The method record for fn `fi` just registered at a definition inside an impl (pass 1: `_impl_tnoff` is the
 # impl's type, token `nti` the method's own name), or at a call `x.m(..)` of type name `tn` (`_mcall_note`).
 fn _fn_meth_note(S, fi, tn, mn): i64 {
@@ -2391,9 +2448,10 @@ fn _svo_inner(S): i64 {
 # (`_vk_param`), the whole argument (inside any parentheses, `_svo_inner`) starting with `*`: that `*` is watched
 # (`_dro_vo`) while `_sarg_byval_small` parses and pushes the argument as before; when its operand named a vector (the
 # step word or an `&x` of one, `_dop_vd`) and ended the argument (`_dro_vnote`), the argument is refused by name —
-# `cannot pass '*ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the operand's last
-# name as the address-passed arm names it — once, without `_panic`. A `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their
-# word as before. Returns as `_sarg_byval_small` does. CHANGELOG [6.7.14]
+# `cannot pass '**ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the argument as the
+# source spells it (6.7.15, `_src_span_nm`; it was the operand's last name, '*ppb') — once, without `_panic`. A
+# `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their word as before. Returns as `_sarg_byval_small` does.
+# CHANGELOG [6.7.14]
 fn _sarg_vdo(S, fi, argc): i64 {
     var c = _svo_inner(S);
     if (TOKTYP(S, c) != 8) { return _sarg_byval_small(S, fi, argc); }
@@ -2405,7 +2463,7 @@ fn _sarg_vdo(S, fi, argc): i64 {
     _dro_vo = c;
     _dro_vod = 0;
     var r = _sarg_byval_small(S, fi, argc);
-    if (_dro_vod != 0) { _svo_err(S, c, 1, _hl_lastnm(S, c + 1, _dro_vend, 0), fi, kd); }
+    if (_dro_vod != 0) { _svo_err(S, c, 1, _svo_nm(S, c + 1, _dro_vend), fi, kd); }
     _dro_vo = vo;
     _dro_vod = vd;
     _dro_vend = ve;
@@ -2565,7 +2623,7 @@ fn _svc_rs(S, ti): i64 {
             vf = _vmc_fi(S, ti);
             if (vf < 0) { return 0; }
             _svc_k = 3;
-            _svc_nm = TOKVAL(S, ti + 2);
+            _svc_nm = TOKVAL(S, _vmc_mt);   # 6.7.15: a field chain's method too
         }
         rs = GFRS(S, vf);
         o = _vcall_o;
@@ -2594,6 +2652,16 @@ fn _svc_toplevel_err(S): i64 {
     _err_excerpt(S);
     _had_error = 1;
     return 0;
+}
+# ... at token `ti`, naming token `nt`'s name; the cursor kept. 1. 6.7.15 (D26): a top-level declaration's
+# (`_vtop_ref`).
+fn _svc_toplevel_at(S, ti, nt): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _svc_nm = TOKVAL(S, nt);
+    _svc_toplevel_err(S);
+    STI(S, sv);
+    return 1;
 }
 
 # ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
@@ -2634,19 +2702,24 @@ fn _dro_take(S, b): i64 {
     if (_dlo_cp != GCP(S)) { return 0; }
     return _opd_span(S, _dlo_beg, _dlo_end, b);
 }
-# The taken dereference as parameter `k` of fn `fi`: its struct checked (named by the operand's last name,
-# `*gp()` -> `gp`). The caller then reloads the pointer from `_dlo_h` (`_HTLOAD`; the right operand's
-# through `_opd_operand`).
+# The taken dereference as parameter `k` of fn `fi`: its struct checked, the argument named as the source spells it
+# (6.7.15, `_src_span_nm`: `*gq(pq)`; it named the operand's last name, `pq`). The caller then reloads the pointer from
+# `_dlo_h` (`_HTLOAD`; the right operand's through `_opd_operand`).
 fn _dro_check(S, fi, k): i64 {
-    var nm = _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0);   # 6.7.11: `*gu<U>()` names `gu`
-    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k, nm); }   # 6.7.12: a vector's (`_dlo_vec`)
-    return _sarg_type_err(S, fi, k, _dlo_sid, nm);
+    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k); }   # 6.7.12: a vector's (`_dlo_vec`)
+    return _sarg_type_err(S, fi, k, _dlo_sid, _dro_nm(S, _dlo_beg));
 }
-fn _dro_vcheck(S, fi, k, nm): i64 {
+# The taken dereference's tokens from `a` (its `*`, or past it) to its end, as the source spells them; else (6.7.11) the
+# operand's last name: `*gu<U>()` names `gu`.
+fn _dro_nm(S, a): i64 { return _src_span_nm(S, a, _dlo_end, _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0)); }
+# The tokens [a, e) as the source spells them, else (6.7.14) their last name.
+fn _svo_nm(S, a, e): i64 { return _src_span_nm(S, a, e, _hl_lastnm(S, a, e, 0)); }
+fn _dro_vcheck(S, fi, k): i64 {
     var pv = _pvec_param(S, fi, k);
     if (pv == _dlo_sid) { return 0; }
-    if (pv == 0) { return _svo_err(S, _dlo_beg, 1, nm, fi, _vk_param(S, fi, k)); }   # 6.7.13 (D31)
-    ERR_IDENT(S, "cannot pass ", nm, " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    var kd = _vk_param(S, fi, k);
+    if (pv == 0) { return _svo_err(S, _dlo_beg, 1, _dro_nm(S, _dlo_beg + 1), fi, kd); }   # 6.7.13 (D31)
+    ERR_IDENT(S, "cannot pass ", _dro_nm(S, _dlo_beg), " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     return 1;
 }
 
@@ -3486,7 +3559,7 @@ fn _ret_ptr_src(S): i64 {
     var ds = _hl_dstar_t(S, st, _ret_term);
     if (ds > 0) {
         if (_dx_plain(S, ds) == 0) { return 0 - 1; }
-        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_dnm, ds, 2); }
+        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_dnm, 0 - 1, ds, 2); }
         return _ret_ptr_copy(S, _hl_dx_src(S));
     }
     var e = _hl_dx_end(S, st, _ret_term);
@@ -3501,7 +3574,7 @@ fn _ret_ptr_src(S): i64 {
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
-    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
@@ -3547,7 +3620,7 @@ fn _ret_slot_amp(S, a, pe): i64 {
     if (cp == 0) {
         if (_hl_amp_in(S, noff, t) > 0) {
             if (_dx_plain(S, t) == 1) { return 0; }   # an inline struct: D4 (a)'s struct (or its kind-3 refusal)
-            _ret_sid_refuse(S, a, noff, t, 3);   # an inline `Str` / tuple / dyn: `&t` (a `*Str`)
+            _ret_sid_refuse(S, a, noff, 0 - 1, t, 3);   # an inline `Str` / tuple / dyn: `&t` (a `*Str`)
             return 1;
         }
     }
@@ -3707,7 +3780,7 @@ fn _ret_small_val(S, st): i64 {
     if (asid > 0) {
         if (asid >= 2048) { return 0; }
         if (_dyn_is(S, asid) == 1) { return 0; }   # refused at its own site (6.7.8 V4), once
-        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, asid, kind); }
+        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, _ess_fi, asid, kind); }
         return 0;
     }
     return _ret_small_ptr(S, st);
@@ -3732,6 +3805,7 @@ fn _ret_expr_sid(S, st): i64 {
     _fpk_want = fk;
     var asid = 0;
     var nm = 0;
+    _ess_fi = 0 - 1;
     if (TOKTYP(S, ist) == 2) {
         nm = TOKVAL(S, ist);
         var ie = GTI(S) - k;
@@ -3740,7 +3814,7 @@ fn _ret_expr_sid(S, st): i64 {
         elif (o > ist) { if (_call_close(S, o) + 1 == ie) { asid = _sarg_call_rs(S, ist); } }
     }
     if (asid == 0) {
-        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; }
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; _ess_fi = _sc_fi; }   # 6.7.15: `Pt.dup`
         elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
         elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }
     }
@@ -3760,14 +3834,15 @@ fn _ret_small_ptr(S, st): i64 {
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), ps, kind); }
+    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
     _hl_pval_ra(S, ps);
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
 # `*U8`)), 2 a dereference (`*pu` (a `U8`)), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
-# token `ti`; the parse goes on (no cascade).
-fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
+# token `ti`; the parse goes on (no cascade). `nm` the result of a call to fn `fi` is named as the source spells it
+# (`Pt.dup`, `_fn_src_name`; -1: a name as written). CHANGELOG [6.7.15]
+fn _ret_sid_refuse(S, ti, nm, fi, usid, kind): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3777,7 +3852,7 @@ fn _ret_sid_refuse(S, ti, nm, usid, kind): i64 {
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
     if (kind == 3) { PRSTR("&"); }
-    PRSTR(S + 0xEC00000 + nm);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, nm));
     PRSTR("` (a `");
     if (kind == 1 || kind == 3) { PRSTR("*"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
@@ -7723,17 +7798,27 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
 # "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
 # 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse_expr.cyr) moves it too. CHANGELOG [6.7.15]
+# 6.7.15: the callee `noff` named as the source spells it — a method `Pt.dup`, not its fn `Pt_dup` (`_fn_src_name`).
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # 6.7.15: a method `Pt.dup`, not `Pt_dup`
     syscall(SYS_WRITE, 2, "' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
     _had_error = 1;
     _tsc_n = _tsc_n + 1;
     return 0;
+}
+# ERR_IDENT whose first name `noff` is the result of a call to fn `fi` (a struct-call record's `_sc_fi`; -1: a name as
+# written), printed as the source spells it (`_fn_src_name`: `Pt.dup`). Reported once per token and record — keyed on
+# `noff`, the record's own name, not the scratch the spelling is written at. CHANGELOG [6.7.15]
+fn _err_ident_fn(S, msg, noff, fi, tail, noff2): i64 {
+    var nm = _fn_src_name(S, fi, noff);
+    if (nm == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }   # a free fn: its own name, keyed so
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    return ERR_IDENT(S, msg, nm, tail, noff2);
 }
 
 # v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
@@ -8260,14 +8345,33 @@ fn _fnc_pe_vec(S, fi, noff): i64 {
 # pair 0, the state an i64 caller already replays under — and restored after it. The caller's frame
 # layout (`_cur_fn_ret_stash`) is untouched. The body's own locals keep a nested replay safe. One call
 # in PARSE_FNCALL, as `_cov_body` was (cybs's per-fn reference ceiling). CHANGELOG [6.7.14]
+# A panic latch the caller set (a refused argument) survives the replay: the body's statement ends clear
+# it (`_stmt_resync`), so x86_64 / aarch64 / cx went on to print the next statement's refusal, which a real
+# call (Win64's vector arm, a non-inline fn) leaves latched and skipped. CHANGELOG [6.7.15]
 fn _inl_replay_body(S, fi): i64 {
     var sid = _cur_fn_ret_sid;
     var pair = _cur_fn_ret_pair;
+    var pn = _panic;
     _cur_fn_ret_sid = 0;
     _cur_fn_ret_pair = 0;
     _cov_body(S, fi, 0 - 1);
     _cur_fn_ret_sid = sid;
     _cur_fn_ret_pair = pair;
+    if (pn == 1) { _panic = 1; }
+    return 0;
+}
+
+# PARSE_FNCALL's inline path, after the arguments: the local count goes back to just past the parameter slots,
+# and `_flc_hwm` keeps the higher of that and the count the arguments reached. An argument may take frame
+# temporaries at GFLC and above (a u128 operation's `_w128_tmp`, `_HTEMP`'s hidden temps) and give nothing to
+# `_flc_hwm`; the frame was sized from the parameter slots alone, so `id(a) + id(a + 1)` (a u128) put `a + 1`'s
+# temp past the frame, over the pushed left operand (84 for 83). As 6.7.13's INT-1 `_icall_slot` records its
+# slot. The v6.3.37 (A3) parameter-slot record is the second bump. A helper: PARSE_FNCALL sits at cybs's per-fn
+# reference ceiling. CHANGELOG [6.7.15]
+fn _inl_flc_release(S, top): i64 {
+    if (GFLC(S) > _flc_hwm) { _flc_hwm = GFLC(S); }
+    SFLC(S, top);
+    if (top > _flc_hwm) { _flc_hwm = top; }
     return 0;
 }
 
@@ -8515,12 +8619,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                     # normal path — the normal-path check alone would miss it.
                     # 6.7.14: an unclosed list leaves its `;` (`_expect_step`) and has no count.
                     if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0); }
-                    # Set local count past the param slots
-                    SFLC(S, saved_flc + _ptot);
-                    # v6.3.37 (A3) — record the transient inline param-slot high-water so
-                    # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
-                    # param slot aliases a live runtime `push rax` and clobbers an operand.
-                    if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                    # Set local count past the param slots, keeping the argument temps' peak (see the helper)
+                    _inl_flc_release(S, saved_flc + _ptot);
                     # Register callee param names as temporary locals (packed in fn_inline)
                     var inl_packed = GFINL(S, fi);
                     var pn0 = inl_packed & 0xFFFFFFFF;
@@ -14634,8 +14734,15 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # wrap (`_pwrap_in`) — `gs((l))`, `gsz((p))`, `gsz((&GS))` — and through `x: T` a whole dereference of a `*S` is the
 # struct value S (`_ic_deref`) — `gs(*p)`. They ran the i64 base (`sizeof(T)` 8 for a 24-byte S), as did a closure's
 # captured struct (`_ic_cap`). A tuple literal binds nothing. CHANGELOG [6.7.15]
+# ⛔ 6.7.15 — THROUGH `p: *T` A TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (the user's decision D23 A,
+# 2026-10-18): `g(ps + 1)`, `g(1 + ps)`, `g((ps) - 1)` bind what ps points at (`_ic_parith`) — they ran the i64 base
+# (`p + 1` stepped 8 for a 24-byte S). Through `x: T` no pointer binds, so the arithmetic is read through `p: *T` only.
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
+    if (ptr == 1) {
+        var e = _ic_arith_end(S, a);
+        if (e > 0) { return _ic_parith(S, a, e); }
+    }
     a = _pwrap_in(S, a);
     if (a < 0) { return 0 - 8; }
     if (ptr == 1) {

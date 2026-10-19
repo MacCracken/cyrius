@@ -1101,8 +1101,11 @@ fn _fsc_copy(S, idx, sid, off, nb): i64 {
     return 0;
 }
 
-fn _fsc_type_err(S, snoff, fnoff): i64 {
-    ERR_IDENT(S, "cannot copy ", snoff, " into a struct field of a different struct type: ", fnoff);
+fn _fsc_type_err(S, snoff, fnoff): i64 { return _fsc_type_errf(S, snoff, 0 - 1, fnoff); }
+# ... `snoff` the result of a call to fn `sfi` (a struct-call record's `_sc_fi`; -1: a name), named as the source spells
+# it: a method `Pt.dup` (`_err_ident_fn`). CHANGELOG [6.7.15]
+fn _fsc_type_errf(S, snoff, sfi, fnoff): i64 {
+    _err_ident_fn(S, "cannot copy ", snoff, sfi, " into a struct field of a different struct type: ", fnoff);
     return 0;
 }
 
@@ -1278,7 +1281,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
     # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
-    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); } return 2; }
+    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); } return 2; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
@@ -1289,7 +1292,7 @@ fn _fsc_expr(S, ft, fnoff, term): i64 {
 }
 fn _fsc_from_call(S, t, ft, fnoff): i64 {
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 2; }
-    if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); return 2; }
+    if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); return 2; }
     _fsc_reset();
     _fsc_li = t;
     return 1;
@@ -2805,6 +2808,7 @@ fn _slit_sep(S): i64 {
 var _spi_pk = 0;
 var _spi_ps = 0;
 var _spi_pn = 0;
+var _spi_pfi = 0 - 1;   # 6.7.15: ... the fn `_spi_pn` is the result of (a method's record, `Pt.dup`), else -1
 
 # R5 (v6.4.15): positional struct-literal init, extracted from the two formerly-parallel
 # copies in PARSE_STRUCT_INIT and EMIT_GVAR_INITS (the .44 Str-field fix had to be applied to
@@ -2869,6 +2873,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     var est = 0 - 1;   # the element's first token, when it starts here
     if (_spi_pk == 0) {
         est = GTI(S);
+        _spi_pfi = 0 - 1;
         _spi_pk = _spi_src(S, ft);
     }
     if (_spi_pk == 4) { return _spi_took(S); }
@@ -2879,7 +2884,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
             return _spi_took(S);
         }
         if (_spi_chain_has(S, ft, _spi_ps) == 0) {
-            _fsc_type_err(S, _spi_pn, GETFNAME(S, si, fi));
+            _fsc_type_errf(S, _spi_pn, _spi_pfi, GETFNAME(S, si, fi));
             return _spi_took(S);
         }
     }
@@ -3078,10 +3083,11 @@ fn _spi_expr(S, ft): i64 {
         _fsc_li = t;
         _spi_ps = _sc_sid;
         _spi_pn = _sc_fn;
+        _spi_pfi = _sc_fi;
         return 1;
     }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); return 4; }
-    if (t == 0 - 3) { _spi_ps = _sc_sid; _spi_pn = _sc_fn; return 3; }
+    if (t == 0 - 3) { _spi_ps = _sc_sid; _spi_pn = _sc_fn; _spi_pfi = _sc_fi; return 3; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         _spi_ps = _fla_ft;
@@ -6851,6 +6857,7 @@ fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
 }
 fn _bx_gvi_expr(S, gps, gi, noff): i64 {
     var ti = GTI(S);
+    _vin_zone(S, gi, noff);   # 6.7.15 (D26 / D27): a vector call has no storage here
     _gvi_expr(S, gps);
     _tp_warn_gv(S, _gv_ent_slot(S, gi, 0, noff), ti);   # 6.7.13 (D18 (a)): a declaration-zone `*T`
     _gz_agree(S, gps, _gv_ent_slot(S, gi, 0, noff), ti, noff);   # 6.7.10 (B7-1g)
@@ -8019,11 +8026,11 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     if (GINFN(S) != 1) { return 0; }
     var vo = _vrcv_asg(S, noff, term);   # 6.7.11
     if (vo >= 0) { return vo; }
-    if (_gcall_open(S, GTI(S)) < 0) { return _vasg_mscal(S, noff, term); }   # 6.7.14 (D38): `x = s.mv();`
     var dst_li = FINDLOCAL(S, noff);
-    if (dst_li < 0) { return 0; }
-    var vfi = _vcall_fi(S, GTI(S));   # 6.7.13: `g<T>(..)` too
-    if (vfi < 0) { return 0; }   # callee does not return a vector — not our shape
+    var vfi = 0 - 1;
+    if (dst_li >= 0) { if (_gcall_open(S, GTI(S)) >= 0) { vfi = _vcall_fi(S, GTI(S)); } }   # 6.7.13: `g<T>(..)` too
+    # Not a by-name vector call into a local: 6.7.14 (D38) `x = s.mv();`; 6.7.15 a global, `x = fncallN(&f, ..)`.
+    if (vfi < 0) { return _vasg_mscal(S, noff, term); }
     var vrs = GFRS(S, vfi);
     var lt = GLTYPE(S, dst_li);
     # Destination is not the vector the callee returns. Diagnose rather than fall through to
@@ -8091,16 +8098,83 @@ fn _vcall_fi(S, ti): i64 {
 # call declared `: f64v2` was taken. At token `ti`: that method's fn when it is declared to return a vector, else -1;
 # `_vcall_o` its `(`. Its call is the method arm's (`_field_load_on`), which on Win64 passes a receive's own
 # destination as the hidden result pointer (`_sc_vbeg`, parse_fn.cyr). CHANGELOG [6.7.13]
+# 6.7.15: on a field chain `h.f.m(..)` too (`_vmc_open`).
 fn _vmc_fi(S, ti): i64 {
-    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    var o = _vmc_open(S, ti);   # 6.7.15: `x.m<..>(` too, at its explicit instance
     if (o < 0) { return 0 - 1; }
-    var mf = _pair_callee_at(S, ti);
+    var mf = _vmc_mf;
     if (mf < 0) { return 0 - 1; }
-    if (o == ti + 3) { mf = _mcall_gen(S, mf, o, _recv_sid(S, TOKVAL(S, ti)), 0); }
+    var mt = _vmc_mt;
+    if (o == mt + 1) { mf = _mcall_gen(S, mf, o, _vmc_rs, 0); }
+    _vmc_mt = mt;
     if (mf < 0) { return 0 - 1; }
     if (GFRS(S, mf) > 0 - 2048) { return 0 - 1; }
     _vcall_o = o;
     return mf;
+}
+# ⛔ 6.7.15 — A METHOD ON A FIELD CHAIN IS A METHOD CALL AT EVERY VECTOR RECEIVE: 6.7.13's D29 A (a method declared
+# `: V` is a call declared to return it) and 6.7.14's D37 / D38 / D39 hold for any receiver spelling, and only this
+# recogniser knew a single name — `var v = w.s.mv();` bound one word of stack garbage, the other receives refused
+# "got `w`". The method call at token `ti` — `x.m(` / `x.m<..>(` on a single name (`_mcall_open`, `_pair_callee_at`)
+# or on a field chain (`_mch_open`): its `(`, else -1; `_vmc_mf` the method's fn (a generic's base, an explicit
+# instance's), `_vmc_mt` its name token, `_vmc_rs` the receiver's struct. The pair `?` lookaheads
+# (`_tok_method_open`) still type no chain. CHANGELOG [6.7.15]
+var _vmc_mf = 0 - 1;
+var _vmc_mt = 0;
+var _vmc_rs = 0;
+fn _vmc_open(S, ti): i64 {
+    var o = _mcall_open(S, ti, 0 - 1);
+    if (o < 0) { return _mch_open(S, ti); }
+    _vmc_mf = _pair_callee_at(S, ti);
+    _vmc_mt = ti + 2;
+    _vmc_rs = _recv_sid(S, TOKVAL(S, ti));
+    return o;
+}
+# `h.f(.g)*.m(` / `.m<..>(` at token `ti`: `h` a name typed as a struct or a pointer to one (`_dyn_base_sid`, a chain's
+# base as `_chain_leaf` reads it), each field an inline struct's (GETFTYPE) or a `*S`'s (`_fld_ptr_sid`) — the hops
+# the method arm takes (`_load_inline_hop`, `_load_hop`) — and `m` a method of the last one's struct (`_meth_fn_at`;
+# `<..>` as the arm reads it, `_mtargs_at`): its `(` and `_vmc_*`, as `_vmc_open`; else -1.
+fn _mch_open(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (ti > 0) { if (TOKTYP(S, ti - 1) == 41) { return 0 - 1; } }   # mid-chain: not its head
+    var i = ti + 1;
+    while (_mchain_at(S, i) == 1) { i = i + 2; }
+    var mt = i - 1;
+    if (mt < ti + 4) { return 0 - 1; }   # a field at least: `h . f . m`
+    var cf = _cap_fld_sid;
+    var sid = _dyn_base_sid(S, TOKVAL(S, ti));
+    _cap_fld_sid = cf;   # a lookahead: the capture lookup's answer stays its caller's
+    var k = ti + 2;
+    while (k < mt) {
+        sid = _mch_hop(S, sid, k);
+        if (sid <= 0) { return 0 - 1; }
+        k = k + 2;
+    }
+    var o = i;
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, mt), mt);
+    if (TOKTYP(S, i) == 19) {
+        if (_mtargs_at(S, sid, mt) == 0) { return 0 - 1; }
+        o = _tok_targs_close(S, mt + 2) + 1;
+        mf = _mcall_xquiet(S, mf, i);
+    } elif (TOKTYP(S, i) != 10) { return 0 - 1; }
+    _vmc_mf = mf;
+    _vmc_mt = mt;
+    _vmc_rs = sid;
+    return o;
+}
+# The struct field token `k` of struct `sid` leads to: a `*S` field's S, an inline struct field's own; else 0.
+fn _mch_hop(S, sid, k): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
+    if (fi < 0) { return 0; }
+    var ps = _fld_ptr_sid(S, sid - 1, fi);
+    if (ps > 0) { return ps; }
+    var ft = GETFTYPE(S, sid - 1, fi);
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    return ft;
 }
 # The cursor on the call `fi` (`_vcall_fi`'s): its checks — and an explicit instance's own (`_gen_own_call_check`) —
 # then past its name, `<..>` and `(`, for a path that emits the call itself (Win64's hidden result pointer).
@@ -8253,34 +8327,61 @@ fn _vrcv_mty(S, ti): i64 {
     if (mf < 0) { return 0; }
     return GFRS(S, mf);
 }
-# A whole method call at token `ti` (ended by `term`) declared to return a vector other than `ty`, into a vector
-# local of type `ty`: refused by name, in the by-name call's words (`verb` "declared type" / "assigned variable") — 1;
-# else 0. CHANGELOG [6.7.13]
-fn _vrcv_mbad(S, ti, ty, term, verb): i64 {
-    var mt = _vrcv_mty(S, ti);
-    if (mt == 0) { return 0; }
-    if (mt == ty) { return 0; }
-    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != term) { return 0; }
-    return _vrcv_tyerr(S, ti, verb);
-}
-# ⛔ 6.7.14 — `callptr(&f, ..)` / `fncallN(&f, ..)` OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH.
-# `var v: f64v2 = callptr(&mk4, 41);` (`mk4` declared `: f64v4`) and `v = ..` were refused with the receive's generic
-# words ("a value-form vector local is initialised only from .. a call declared to return it (by name, a method, or
-# fncallN / callptr with the callee written `&f`) .. - got `callptr`"), whose own list names the shape written; by name
-# the same call is "vector return type does not match the declared type", a method as well (6.7.13's D29). The whole
-# call at token `ti` (ended by `term`), inside any parentheses, through fncallN / callptr with its callee written `&f`
-# (`_icall_rs_at`) declared to return a vector other than `ty`: refused in the by-name call's words, at the call, before
-# it is parsed — 1 (the panic latch keeps the generic line away); else 0. CHANGELOG [6.7.14]
-fn _vrcv_ibad(S, ti, ty, term, verb): i64 {
-    var e = _hl_dx_end(S, ti, term);
-    if (e < 0) { return 0; }
-    var a = _ie_unparen(S, ti, e);
-    var pe = _ie_pe;
-    var rs = _icall_rs_at(S, a);
+# ⛔ 6.7.14 — A CALL OF ANOTHER VECTOR INTO A VECTOR LOCAL IS A TYPE MISMATCH, IN THE BY-NAME CALL'S WORDS, at every
+# spelling of the call: a method (6.7.13's D29), `callptr(&f, ..)` / `fncallN(&f, ..)` (6.7.14) and — 6.7.15 — inside
+# parentheses a by-name call or a method too (`var v: f64v2 = (mk4(41));`, `w = (s.mv());`), which got the receive's
+# generic refusal ("a value-form vector local is initialised only from .. - got `(...)`"), whose own list names the
+# shape written. The whole call at token `ti` (ended by `term`, inside any parentheses; `_vcall_vt`) declared to
+# return a vector other than `ty`: refused, `verb` 0 "declared type" / 1 "assigned variable", at the call, before it
+# is parsed — 1 (the panic latch keeps the generic line away, and prints the unwrapped by-name call's refusal once:
+# PARSE_VAR and `_try_vector_call_assign` refuse it too); else 0. CHANGELOG [6.7.14] [6.7.15]
+fn _vrcv_bad(S, ti, ty, term, verb): i64 {
+    var rs = _vcall_vt(S, ti, term, 0);
     if (rs > 0 - 2048) { return 0; }
     if (rs == ty) { return 0; }
-    if (_call_close(S, a + 1) + 1 != pe) { return 0; }
-    return _vrcv_tyerr(S, a, verb);
+    return _vrcv_tyerr(S, _vcv_a, verb);
+}
+# ⛔ 6.7.15 — THE VECTOR A CALL DECLARES, ONE ANSWER FOR THE RECEIVES. The vector (its descriptor, <= -2048) the call at
+# token `ti` is declared to return, else 0: by name or an explicit instance `g<T>(..)` (`_vcall_fi`), a method on a
+# single name or a field chain (`_vmc_fi`), `fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`
+# (`_icall_rs_at`) — inside any parentheses wrapping the whole source [ti, `term`) (`_hl_dx_end`, `_ie_unparen`).
+# `start` 0: the call is the whole source; 1: an unwrapped call may start it (`mk2(..) + 1`). `_vcv_a` the call's first
+# token, `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base)
+# declares no vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
+var _vcv_a = 0;
+var _vcv_nt = 0;
+fn _vcall_vt(S, ti, term, start): i64 {
+    var a = ti;
+    var pe = 0 - 1;
+    var e = _hl_dx_end(S, ti, term);
+    if (e >= 0) {
+        a = _ie_unparen(S, ti, e);
+        pe = _ie_pe;
+    }
+    _vcv_a = a;
+    _vcv_nt = a;
+    var rs = _icall_rs_at(S, a);
+    var o = a + 1;
+    if (rs > 0 - 2048) {
+        var f = _vcall_fi(S, a);
+        if (f < 0) {
+            f = _vmc_vfi(S, a);
+            _vcv_nt = _vmc_mt;
+        }
+        if (f < 0) { return 0; }
+        rs = GFRS(S, f);
+        o = _vcall_o;
+    } else { _vcv_nt = _icall_fti(S, a); }
+    if (start == 1) { if (a == ti) { return rs; } }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    return rs;
+}
+# The method call at token `ti` (`_vmc_fi`) when its fn — a generic's base — is declared to return a vector, else -1.
+fn _vmc_vfi(S, ti): i64 {
+    if (_vmc_open(S, ti) < 0) { return 0 - 1; }
+    if (_vmc_mf < 0) { return 0 - 1; }
+    if (GFRS(S, _vmc_mf) > 0 - 2048) { return 0 - 1; }
+    return _vmc_fi(S, ti);
 }
 # The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. 1.
 fn _vrcv_tyerr(S, ti, verb): i64 {
@@ -8354,9 +8455,7 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     if (_vrcv_vec(S, pscale) == 0) { return _vrcv_mscal(S, pscale, ann); }   # 6.7.14 (D38): `var x: i64 = s.mv();`
     var k = _vrcv_src(S, GTI(S) + 1, pscale, 5);
     if (k == 0) {
-        if (_vrcv_mbad(S, GTI(S) + 1, pscale, 5, 0) == 0) {   # 6.7.13 (D29): a method declared to return another vector
-            _vrcv_ibad(S, GTI(S) + 1, pscale, 5, 0);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
-        }
+        _vrcv_bad(S, GTI(S) + 1, pscale, 5, 0);   # a call of another vector, wrapped or not
         return 0;
     }
     if (_vrcv_k == 0) { if (k == 1) { if (_vrcv_g == 0) { return 0; } } }   # 6.7.13: `g<T>(..)` is ours
@@ -8376,19 +8475,20 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
 # ..)` (6.7.13's D29) — it bound one word, whatever the scalar path stored (the filed repro: x86_64 / IR=3 / aarch64 1,
 # cx 155, PE 195 where 161 is right). The receive then takes it as the annotated form does (`_vrcv_src` kind 3; on Win64
 # the method's hidden result pointer is the local's address). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 (D28 A, the user's decision, 2026-10-18) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT (the guide's §
+# Parentheses): `var x = (mk2(41, 7));` / `= (s.m2());` / `= (callptr(&mk2, ..));` are the vector's local, as
+# unwrapped — they bound one word (x86_64 / aarch64 0 or 1, cx 154 / 155, PE 195 where 161 is right). Every spelling of
+# the whole call, wrapped or not (`_vcall_vt`). CHANGELOG [6.7.15]
 fn _vrcv_ity(S, ti): i64 {
-    var rs = _icall_rs_at(S, ti);
-    if (rs > 0 - 2048) { return _vmc_whole(S, ti, 5); }
-    if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
-    return rs;
+    return _vcall_vt(S, ti, 5, 0);
 }
 # The vector a whole method call `x.m(..)` at token `ti` (`term` after it) is declared to return (`_vrcv_mty`), else 0 —
 # a method its fn (the base, for a generic) declares no vector is not resolved (`_mcall_gen` would instantiate it
 # early). CHANGELOG [6.7.14]
 fn _vmc_whole(S, ti, term): i64 {
-    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too
+    var o = _vmc_open(S, ti);   # 6.7.15: `x.m<..>(` too; a field chain's
     if (o < 0) { return 0; }
-    var mf = _pair_callee_at(S, ti);
+    var mf = _vmc_mf;
     if (mf < 0) { return 0; }
     if (GFRS(S, mf) > 0 - 2048) { return 0; }
     if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
@@ -8401,22 +8501,49 @@ fn _vmc_whole(S, ti, term): i64 {
 # declaration's, D37) / the local `noff` — neither a 16 / 32-byte vector, whose receives refuse another vector
 # themselves — of another type: "vector return type does not match the declared type" / ".. the assigned variable". 0.
 # CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — every spelling of the call (`_vcall_vt`): inside parentheses (D28 A, the user's decision, 2026-10-18: `var
+# x: i64 = (mk2(41, 7));`, `x = (s.m2());` stored a word), `fncallN(&f, ..)` / `callptr(&f, ..)`, and into the
+# declaration a method or an indirect call that STARTS the initialiser (D29 A, 2026-10-18: `var x: i64 = s.m2() + 1;`
+# gave 1, cx / PE 42), as the by-name call has since 6.7.11. CHANGELOG [6.7.15]
 fn _vrcv_mscal(S, pscale, ann): i64 {
     if (ann == 0) { return 0; }
-    var mt = _vmc_whole(S, GTI(S) + 1, 5);
+    var mt = _vcall_vt(S, GTI(S) + 1, 5, 1);
     if (mt == 0) { return 0; }
     if (mt == pscale) { return 0; }
     ERR_MSG(S, "vector return type does not match the declared type", 51);
     return 0;
 }
+# ⛔ 6.7.15 — AND INTO A GLOBAL THAT IS NO VECTOR, and `fncallN(&f, ..)` / `callptr(&f, ..)` into a scalar local: the
+# filing's `G = mkv(41, 7);`, `G = s.mv();`, `G = fncall2(&mkv, 41, 7);` and `x = fncall2(&mkv, 41, 7);` stored one
+# word (x86_64 / aarch64 0, cx / PE 41) where `x = mkv(41, 7);` into a local is refused — 6.7.14's D27 (a), one rule
+# for every path. The global's by-name call is read as the local's arm reads it, starting the source (`_vasg_vt`); a
+# vector global keeps its own refusal (`_vecg_refuse`: read and written through its address). CHANGELOG [6.7.15]
 fn _vasg_mscal(S, noff, term): i64 {
+    var dt = 0;
     var li = FINDLOCAL(S, noff);
-    if (li < 0) { return 0; }
-    var mt = _vmc_whole(S, GTI(S), term);
+    if (li >= 0) { dt = GLTYPE(S, li); }
+    elif (_vasg_gnv(S, noff) == 0) { return 0; }
+    var mt = _vasg_vt(S, GTI(S), term);
     if (mt == 0) { return 0; }
-    if (mt == GLTYPE(S, li)) { return 0; }
-    ERR_MSG(S, "vector return type does not match the assigned variable", 55);
+    if (mt == dt) { return 0; }
+    _vrcv_tyerr(S, _vcv_a, 1);
     return 0;
+}
+# 1 = `noff` names a global that is no vector.
+fn _vasg_gnv(S, noff): i64 {
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0; }
+    if (GVVEC(S, gi) != 0) { return 0; }
+    return 1;
+}
+# The vector the right-hand side at token `ti` (ended by `term`) declares: a by-name call that starts it
+# (`_vcall_fi`, as the local's arm reads it), else a whole call of any spelling (`_vcall_vt`); 0 = none. `_vcv_a` the
+# call.
+fn _vasg_vt(S, ti, term): i64 {
+    var fi = _vcall_fi(S, ti);
+    if (fi < 0) { return _vcall_vt(S, ti, term, 0); }
+    _vcv_a = ti;
+    return GFRS(S, fi);
 }
 # PARSE_VAR in a fn, the initialiser [start, cursor) of a value-form vector declaration parsed by the
 # scalar path, so not a source the receives take: refused by name, once — not after the initialiser
@@ -8441,9 +8568,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     if (_vrcv_vec(S, lt) == 0) { return 0 - 1; }
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) {
-        if (_vrcv_mbad(S, GTI(S), lt, term, 1) == 0) {   # 6.7.13 (D29): a method declared to return another vector
-            _vrcv_ibad(S, GTI(S), lt, term, 1);   # 6.7.14: ... or a `callptr(&f, ..)` / `fncallN(&f, ..)`
-        }
+        _vrcv_bad(S, GTI(S), lt, term, 1);   # a call of another vector, wrapped or not
         return _vrcv_other(S, term);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
@@ -8691,7 +8816,7 @@ fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     PRSTR(": ");
     _rcv_ann_pr(S, ann, ae);
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + fnoff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
     PRSTR("', which returns the struct '");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     PRSTR("' - declare '");
@@ -8717,6 +8842,9 @@ fn _rcv_ann_refd(S, ann): i64 {
 # 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse.cyr): "cannot assign", the
 # destination's annotation printed from its declaration, which ends at token `_rcv_asg_e`; -1 = a declaration's.
 var _rcv_asg_e = 0 - 1;
+# 6.7.15 — the fn whose result `_rcv_ann_refuse` names (a struct-call record's `_sc_fi`: a method `Pt.mq` as the source
+# spells it, `_fn_src_name`); -1: the name as written.
+var _rcv_fi = 0 - 1;
 fn _rcv_head(): i64 {
     if (_rcv_asg_e >= 0) { return ": cannot assign '"; }
     return ": cannot initialise '";
@@ -8865,7 +8993,9 @@ fn _scv_rec_ann(S, pscale, start): i64 {
     if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
     var eq = GTI(S);
     STI(S, start - 1);
+    _rcv_fi = _sc_fi;   # 6.7.15: named `Pt.mq`
     var r = _rcv_ann_refuse(S, _sc_beg, _sc_fn, _sc_sid, pscale, ann, _scv_ann_nm);
+    _rcv_fi = 0 - 1;
     STI(S, eq);
     if (r == 1) { _tn_once(S, start); }
     if (r == 1) { _scv_refd = start; }
@@ -9122,6 +9252,63 @@ fn _dt_call_fn(S): i64 {
 }
 
 # Parse: var IDENT = expr ;
+# PARSE_VAR, cursor on its `=` (or the token after the name): the declaration's `pscale` after the by-name vector call
+# that starts its initialiser (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too). In a fn, no annotation of its
+# own takes the callee's vector (6.7.15: an annotation of no integer width — `: f64`, `: f32`, `: bool`, `: cstring`, an
+# enum — is one, so it meets the refusal below), and an annotation that DISAGREES with the callee is a type error: it
+# used to be silent in the same way the missing one was — the receive paths below require `GFRS == pscale`, so a
+# mismatch simply fell out of them into the scalar init (`var r: f64v4 = f64v2_add(a, b);` and `var r: i64 =
+# f64v2_add(a, b);` both read back as zero, exit 0). At top level: `_vin_top`. CHANGELOG [6.7.15]
+fn _vin_decl(S, pscale, sty, ann): i64 {
+    if (PEEKT(S) != 4) { return pscale; }
+    if (GINFN(S) != 1) {
+        _vin_top(S, pscale, ann);
+        return pscale;
+    }
+    var fi = _vcall_fi(S, GTI(S) + 1);
+    if (fi < 0) { return pscale; }
+    var rs = GFRS(S, fi);
+    if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
+    if (pscale != rs) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
+    return pscale;
+}
+# ⛔ 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18) — A CALL DECLARED TO RETURN A VECTOR INTO A TOP-LEVEL
+# DECLARATION IS REFUSED, as the annotated vector global and the `*V` argument are there (a vector result needs a fn's
+# frame; a vector global takes no initializer but 0) and as the scalar annotation is in a fn (6.7.10's decision 5: one
+# rule for locals and globals). An untyped `var w = mkv(41, 7);` / `var v = s.mv();` / `(..)` / `callptr(&mkv, ..)`
+# held one word (x86_64 / aarch64 0, cx 154, PE 195 where 161 is right) and `var x: i64 = mkv(41, 7);` the result's
+# word (0; cx / PE 41). Cursor on the `=`: a vector annotation is the vector global's own refusal (`_vecg_init_ok`);
+# else `_vtop_ref`. In the declaration zone the replay asks (`_vin_zone`). CHANGELOG [6.7.15]
+fn _vin_top(S, pscale, ann): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    return _vtop_ref(S, GTI(S) + 1, ann);
+}
+# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a whole call declared to return
+# a vector (any spelling, any wrap; annotated, an unwrapped one may start it, `_vcall_vt`) refused — untyped, at the
+# call in the words of a top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method,
+# `&f`); annotated, at the `=`, "vector return type does not match the declared type". 1 = refused.
+fn _vtop_ref(S, st, ann): i64 {
+    var start = 0;
+    if (ann != 0) { start = 1; }
+    var rs = _vcall_vt(S, st, 5, start);
+    if (rs == 0) { return 0; }
+    if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
+    var sv = GTI(S);
+    STI(S, st - 1);
+    ERR_MSG(S, "vector return type does not match the declared type", 51);
+    STI(S, sv);
+    return 1;
+}
+# The declaration zone's replay, cursor on the initialiser of global `gi` (`noff`): `_vtop_ref`, unless the global is
+# a vector (pass 1 refused its initializer: `_vecg_init_ok`).
+fn _vin_zone(S, gi, noff): i64 {
+    var slot = _gv_ent_slot(S, gi, 0, noff);
+    if (slot >= 0) { if (GVVEC(S, slot) != 0) { return 0; } }
+    var st = GTI(S);
+    var ann = 1;
+    if (_gu_untyped(S, st) == 1) { ann = 0; }
+    return _vtop_ref(S, st, ann);
+}
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
     # expect IDENT
@@ -9368,28 +9555,7 @@ fn PARSE_VAR(S): i64 {
     # 6.7.7 (B4): `_tup_var` runs it — first taking a tuple literal initializer, which declares the
     # whole tuple here (1: done).
     if (_tup_var(S, noff, pscale, ann_ti) == 1) { return 0; }
-    if (GINFN(S) == 1) {
-        if (PEEKT(S) == 4) {
-            # 6.7.13: an explicit instance `g<T>(..)` too (`_vcall_fi`, the vector-returning by-name call)
-            var _vin_fi = _vcall_fi(S, GTI(S) + 1);
-            if (_vin_fi >= 0) {
-                var _vin_rs = GFRS(S, _vin_fi);
-                if (pscale == 0) {
-                    # No annotation of its own: take the callee's.
-                    if (scalar_type == 0) { pscale = _vin_rs; }
-                }
-                # An annotation that DISAGREES with the callee is a type error, and
-                # it used to be silent in the same way the missing one was: the
-                # receive paths below require `GFRS == pscale`, so a mismatch simply
-                # fell out of them into the scalar init. `var r: f64v4 =
-                # f64v2_add(a, b);` and `var r: i64 = f64v2_add(a, b);` both read
-                # back as zero, exit 0. Refuse them instead of truncating.
-                if (pscale != _vin_rs) {
-                    ERR_MSG(S, "vector return type does not match the declared type", 51);
-                }
-            }
-        }
-    }
+    pscale = _vin_decl(S, pscale, scalar_type, ann_ti);   # 6.7.15: out of PARSE_VAR (cybs), + the top-level arm
 
     # v5.5.36 Phase 2: `var p: StructName;` — stack-local struct
     # with no initializer. `pscale < 0` means the type annotation
@@ -11325,11 +11491,19 @@ fn _hl_psid(S, a, e): i64 {
 # `**pp += 10` added to it. The operand E [a, e) of the inner `*`: its step word by its tokens (`_hl_pw`), whose pin
 # names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
 fn _hl_dref_psid(S, a, e): i64 {
-    var sid = _pp_sid(_ps_pin(_hl_pw(S, a, e)));
+    var sid = _hl_amp_psid(S, a, e);   # 6.7.15 (D21 A): `*(&ps)` is ps
+    if (sid <= 0) { sid = _pp_sid(_ps_pin(_hl_pw(S, a, e))); }
     _hl_cp = 0;
     if (sid <= 0) { return 0; }
     _hl_cp = 1;
     return sid;
+}
+# 6.7.15 (D21 A) — the operand [a, e) of a dereference that is exactly `& NAME` inside any balanced parentheses, NAME
+# a typed pointer to a struct (`_amp_pw`): the struct (`*(&ps)` is ps, a `*Ps`), else 0.
+fn _hl_amp_psid(S, a, e): i64 {
+    if (_amp_pw(S, a, e) == 0) { return 0; }
+    var b = _ie_unparen(S, a, e);
+    return _hl_psid(S, b + 1, b + 2);
 }
 # The step word of the pointer expression [a, e) by its tokens: a name (a local or parameter, a closure capture, a
 # global — its slot / snapshot / global word), a whole call or method declared `: *T` / `: **T` (`_fn_rps`), a chain
@@ -11352,7 +11526,11 @@ fn _hl_pw(S, a, e): i64 {
         return _hl_pw(S, a, k);
     }
     if (_gz_split(S, a, e) != 0 - 1) { return 0; }
-    if (TOKTYP(S, a) == 8) { return _pp_inner(S, _hl_pw(S, a + 1, e)); }
+    if (TOKTYP(S, a) == 8) {
+        var aw = _amp_pw(S, a + 1, e);   # 6.7.15 (D21 A): `*(&p)` is p
+        if (aw != 0) { return aw; }
+        return _pp_inner(S, _hl_pw(S, a + 1, e));
+    }
     return _hl_cw(S, a, e);
 }
 # ... of a name or a chain [b, e) (`_hl_pchain`'s shapes): its last step's declared word.

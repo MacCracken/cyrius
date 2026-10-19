@@ -536,7 +536,7 @@ fn main(): i64 {
 }
 syscall(60, main());
 EOF
-refused SA0 "cannot initialise 'x: i64' from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' or bind a field" \
+refused SA0 "cannot initialise 'x: i64' from 'Q.mk', which returns the struct 'Q' - declare 'x: Q' or bind a field" \
     "D13's repro verbatim: \`var x: i64 = b.mk();\` and \`var y: u8 = a + c;\` (exit 77 before)" 2
 if grep -qF "cannot initialise 'y: u8' from 'Q_add', which returns the struct 'Q' - declare 'y: Q' or bind a field" "$T/SA0.x86_64.err"; then
     ok "SA0 the operator declaration is refused by name too"
@@ -564,8 +564,8 @@ rowm() { printf '%s\n%s\nsyscall(60, f());\n' "$MH" "$2" > "$T/$1.cyr"; }
 MB='var b = Q { 1, 2 };'
 MO='var a = Q { 10, 1 }; var c = Q { 20, 3 };'
 MO3='var a = Q3 { 10, 1, 0 }; var c = Q3 { 20, 3, 0 };'
-MQ="from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' or bind a field"
-MQ3="from 'Q_mk3', which returns the struct 'Q3' - declare 'x: Q3' or bind a field"
+MQ="from 'Q.mk', which returns the struct 'Q' - declare 'x: Q' or bind a field"
+MQ3="from 'Q.mk3', which returns the struct 'Q3' - declare 'x: Q3' or bind a field"
 MQA="from 'Q_add', which returns the struct 'Q' - declare 'x: Q' or bind a field"
 MQ3A="from 'Q3_add', which returns the struct 'Q3' - declare 'x: Q3' or bind a field"
 rowm SA1 "fn f(): i64 { $MB var x: i64 = b.mk(); return x; }"
@@ -599,7 +599,7 @@ refused SA14 "cannot initialise 'x: i64' $MQ" "a wrapped method, \`(b.mk())\`"
 rowm SA15 "fn f(): i64 { $MO var x: bool = ((a + c)); if (x) { return 1; } return 0; }"
 refused SA15 "cannot initialise 'x: bool' $MQA" "a wrapped operator into \`: bool\` (the bool check not run again)"
 rowm SA16 "fn f(): i64 { $MB var x: i64 = b.mkg(33); return x; }"
-refused SA16 "cannot initialise 'x: i64' from 'Q_mkg', which returns the struct 'Q' - declare 'x: Q' or bind a field" "a generic method, \`b.mkg(33)\`"
+refused SA16 "cannot initialise 'x: i64' from 'Q.mkg', which returns the struct 'Q' - declare 'x: Q' or bind a field" "a generic method, \`b.mkg(33)\`"
 rowm SA17 "fn f(): i64 { $MB var g = |k| { var x: u8 = b.mk(); return x + k; }; return fncall1(g, 0); }"
 refused SA17 "cannot initialise 'x: u8' $MQ" "a method in a closure"
 rowm SA18 "fn f(): i64 { $MB var x: cstring = b.mk(); return 0; }"
@@ -625,7 +625,7 @@ rowz() {
     if [ "$2" = zone ]; then printf '%s\n%s\n%s\nsyscall(60, 0);\n' "$MH" "$MZ" "$3" > "$T/$1.cyr"
     else printf '%s\n%s\nvar Z = 0;\nZ = 1;\n%s\nsyscall(60, 0);\n' "$MH" "$MZ" "$3" > "$T/$1.cyr"; fi
 }
-MGQ="from 'Q_mk', which returns the struct 'Q' - declare 'G: Q' or bind a field"
+MGQ="from 'Q.mk', which returns the struct 'Q' - declare 'G: Q' or bind a field"
 MGA="from 'Q_add', which returns the struct 'Q' - declare 'G: Q' or bind a field"
 rowz SAT1 zone 'var G: i64 = B.mk();'
 refused SAT1 "cannot initialise 'G: i64' $MGQ" "top level, the declaration zone: \`var G: i64 = B.mk();\` (exit 30 before)"
@@ -638,7 +638,7 @@ refused SAT4 "cannot initialise 'G: f64' $MGA" "top level, after a first stateme
 rowz SAT5 zone 'var G: bool = (B.mk());'
 refused SAT5 "cannot initialise 'G: bool' $MGQ" "top level, the declaration zone: a wrapped method into \`: bool\` (once)"
 rowz SAT6 after 'var G: cstring = B.mkg(7);'
-refused SAT6 "cannot initialise 'G: cstring' from 'Q_mkg', which returns the struct 'Q' - declare 'G: Q' or bind a field" "top level, after a first statement: a generic method into \`: cstring\`"
+refused SAT6 "cannot initialise 'G: cstring' from 'Q.mkg', which returns the struct 'Q' - declare 'G: Q' or bind a field" "top level, after a first statement: a generic method into \`: cstring\`"
 rowz SATK1 after 'var G: i64 = B.mk3();'
 refused SATK1 "returns a struct by value, and a struct result needs storage in a fn's frame" "control: a 24 B method at top level keeps its one no-frame refusal"
 printf '%s\n%s\nvar P = Q1 { 33 };\nvar G1: i64 = B.mk1();\nvar G2 = B.mk();\nvar Z = 0;\nZ = 1;\nalloc_init();\nvar G3: i64 = B.ms();\nvar G4: i64 = P + P;\nsyscall(60, G1 + str_len(G3) - 36 + G4 - 66 + 34 + G2 - 30);\n' "$MH" "$MZ" > "$T/SATK2.cyr"
@@ -720,18 +720,18 @@ rowf PT12 'fn f(): i64 { var x: *P3 = callptr(&mk3); return x.c; }'
 refused PT12 "cannot initialise 'x: *P3' $PM24" "\`callptr(&mk3)\` (24 B)"
 rowf PT13 'fn f(): i64 { var x: *u8 = (fncall0(&mkp)); return 0; }'
 refused PT13 "cannot initialise 'x: *u8' $PM16" "a wrapped \`(fncall0(&mkp))\`"
-PMQ="from 'Q_mk', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`"
+PMQ="from 'Q.mk', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`"
 PMA="from 'Q_add', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`"
 rowm PT14 "fn f(): i64 { $MB var x: *Q = b.mk(); return x.b; }"
 refused PT14 "cannot initialise 'x: *Q' $PMQ" "a 16 B method into \`*Q\` (SIGSEGV before)"
 rowm PT15 "fn f(): i64 { $MB var x: *i64 = b.mk3(); return 0; }"
-refused PT15 "cannot initialise 'x: *i64' from 'Q_mk3', which returns the struct 'Q3' - declare 'x: Q3' and take \`&x\`" "a 24 B method into \`*i64\`"
+refused PT15 "cannot initialise 'x: *i64' from 'Q.mk3', which returns the struct 'Q3' - declare 'x: Q3' and take \`&x\`" "a 24 B method into \`*i64\`"
 rowm PT16 "fn f(): i64 { $MO var x: *Q = a + c; return x.b; }"
 refused PT16 "cannot initialise 'x: *Q' $PMA" "a 16 B operator into \`*Q\`"
 rowm PT17 "fn f(): i64 { $MO var x: *u8 = ((a + c)); return 0; }"
 refused PT17 "cannot initialise 'x: *u8' $PMA" "a wrapped operator into \`*u8\`"
 rowm PT18 "fn f(): i64 { $MB var x: *Q = b.mkg(5); return 0; }"
-refused PT18 "cannot initialise 'x: *Q' from 'Q_mkg', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`" "a generic method into \`*Q\`"
+refused PT18 "cannot initialise 'x: *Q' from 'Q.mkg', which returns the struct 'Q' - declare 'x: Q' and take \`&x\`" "a generic method into \`*Q\`"
 # controls: 8 B or less keeps its word and the typed-pointer warning (D14); an assignment through a *P2 local is unchanged
 # warned <name> <want exit> <what>: builds on every leg WITH the typed-pointer warning, and exits <want>
 warned() {
@@ -778,10 +778,10 @@ cp "$REPT-zone.cyr" "$T/PTT0z.cyr"
 refused PTT0z "cannot initialise 'X: *P2' from 'mkp', which returns the struct 'P2' - declare 'X: P2' and take \`&X\`" \
     "D28's repro 2 verbatim: the declaration zone (D24's \"or bind a field\" before)"
 cp "$REPT-zone-method.cyr" "$T/PTT0m.cyr"
-refused PTT0m "cannot initialise 'X: *Q' from 'Q_mk', which returns the struct 'Q' - declare 'X: Q' and take \`&X\`" \
+refused PTT0m "cannot initialise 'X: *Q' from 'Q.mk', which returns the struct 'Q' - declare 'X: Q' and take \`&X\`" \
     "D28's repro 3 verbatim: a method in the declaration zone (warning + 139 before)"
 PGT="from 'mk2', which returns the struct 'P2' - declare 'G: P2' and take \`&G\`"
-PGQ="from 'Q_mk', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`"
+PGQ="from 'Q.mk', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`"
 PGA="from 'Q_add', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`"
 for zw in zone after; do
     rowt "PTT1$zw" $zw 'var G: *P2 = mk2(5);'
@@ -803,7 +803,7 @@ for zw in zone after; do
     rowz "PTT9$zw" $zw 'var G: *u8 = A + C;'
     refused "PTT9$zw" "cannot initialise 'G: *u8' $PGA" "top level ($zw): an operator into \`*u8\`"
     rowz "PTT10$zw" $zw 'var G: *Q = B.mkg(7);'
-    refused "PTT10$zw" "cannot initialise 'G: *Q' from 'Q_mkg', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`" "top level ($zw): a generic method"
+    refused "PTT10$zw" "cannot initialise 'G: *Q' from 'Q.mkg', which returns the struct 'Q' - declare 'G: Q' and take \`&G\`" "top level ($zw): a generic method"
     rowt "PTT11$zw" $zw 'var G: *P3 = mk3(5);'
     refused "PTT11$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "top level ($zw): 24 B keeps its one no-frame refusal (no D14, no warning)"
     rowz "PTT12$zw" $zw 'var G: *i64 = B.mk3();'

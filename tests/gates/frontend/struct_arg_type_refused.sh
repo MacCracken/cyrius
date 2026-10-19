@@ -209,6 +209,22 @@
 # by the fixed compiler; measured 2026-10-18):
 #   `_psig_reread` returning at once                   -> RED 2: FB1 (refused) FB2 (compiled)
 #   `_psig_one` without its last-definition test       -> RED 1: FB3 (refused: a different struct type)
+# 6.7.15 (issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md) — a DESTINATION's
+# refusal names a method result as the source spells it too: the struct assignment (`w = s.dup()`), the small-struct
+# return, a field, a `*T` / scalar declaration (D14 / D24) and assignment (D27), a struct literal's element and the
+# top-level refusal print `Pt.dup` / `Pt.t1` / `Pt.mq` (they printed `Pt_dup` ..). DN1 the filed repro verbatim (its
+# two lines), DN2-DN13 each destination, on x86_64 / aarch64 / cx / PE; DNK1-DNK4 a free fn whose name looks mangled
+# (`Pt_add`, `Pt_p9`, `Pt_dup2`, `Pt_dup` itself) keeps it. Mutations (measured 2026-10-18, the gate run with each compiler):
+#   the tree before it (89fd5ad53)                     -> RED 15: DN1 DN1b DN2-DN13 (each printed `Pt_dup` ..), x4
+#   `_err_ident_fn` keying a free fn's report twice    -> RED 1: DNK1 (rc 1 and no error printed: the second key
+#     (no `nm == noff` test)                              was the first's, so the report swallowed itself)
+# DNW1-DNW3 (met in passing, its own commit): the refused record assignment `w = s.dup();` also printed "assigning
+# non-pointer to typed pointer" — it went on to the 8-byte store; it now ends its statement at the refusal.
+#   the commit before it (c9e95759d)                   -> RED 2: DNW1 DNW2 (the warning beside the refusal), x4
+#
+# 6.7.15 (issues/2026-10-17-vector-dereference-refusal-names-operand-last-name.md): D15 / D18, a dereference taken by
+# the address-passed arm (`_dro_check`), name the argument as written — '*(&p)', '**ppp' (they named 'p', 'ppp'); the
+# multi-target rows are simd_pointer_param.sh OKN.
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -733,7 +749,7 @@ refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass 't' $MA 'bs1'" \
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(*(&t)); } syscall(60, go());"
 refuse "D14 bs1(*&t) at top level" "cannot pass 'GT1' $MA 'bs1'" \
     "${T}var GT1 = T1 { 9 }; var r = bs1(*&GT1); syscall(60, r);"
-refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass 'p' $MA 'bq'" \
+refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass '\\*(&p)' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} return bq(*(&p)); } syscall(60, go());"
 accept "D16 gw(*(&w)) / gw(*&w) bind T = i32 through the address-of, as gw(w) does" \
     "${GW}fn go(): i64 { var w: W1<i32>; w.v = 0 - 6; return gw(*(&w)) * 10 + gw(*&w); } syscall(60, go());" \
@@ -748,7 +764,7 @@ accept "D17 bqp(**ppq), ppq: **Q into b: *Q passes *ppq" \
     "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; var ppq: **Q = &pq; return bqp(**ppq) * 10 + bqp((**ppq)); } syscall(60, go());" \
     77 \
     "${T}fn go(): i64 { ${PQ} var pq: *Q = &q; return bqp(pq) * 10 + bqp(pq); } syscall(60, go());"
-refuse "D18 bqp(**ppp), ppp: **Pt into b: *Q" "cannot pass 'ppp' $MA 'bqp'" \
+refuse "D18 bqp(**ppp), ppp: **Pt into b: *Q" "cannot pass '\\*\\*ppp' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} var pp: *Pt = &p; var ppp: **Pt = &pp; return bqp(**ppp); } syscall(60, go());"
 
 echo "=== 6.7.11 (review): a wrapped or dereferenced argument binds a generic carrier's T ==="
@@ -993,9 +1009,119 @@ fn c_rd(): i64 { return 5 + 2; }
 syscall(60, c_rd());
 '
 
-# Floors (6.7.14): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.14
-# (6.7.15: FB1-FB3).
-[ "$nrefuse" -ge 107 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 107)"; fail=$((fail+1)); }
+echo "=== 6.7.15: a DESTINATION's refusal names a method result as the source spells it (x86_64, aarch64, cx, PE) ==="
+# issues/2026-10-17-struct-receive-and-return-refusals-name-method-result-by-mangled-name.md: the struct assignment, the
+# small-struct return, a field destination, a `*T` / scalar declaration or assignment (D24 / D27), a struct literal's
+# element and the top-level refusal printed the struct-call record's fn — `Pt_dup` — where 6.7.14's argument and callee
+# refusals print `Pt.dup`. The frontend's text: each row is compiled by the host compiler, the aarch64 and cx compilers
+# built from this tree, and the host compiler for PE (CYRIUS_TARGET_WIN=1); one error each, no binary.
+A64=""; CXC=""
+if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; A64="$D/cc_a64"
+else echo "  FAIL: src/main_aarch64.cyr did not build"; fail=$((fail+1)); fi
+if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; CXC="$D/cc_cx"
+else echo "  FAIL: src/main_cx.cyr did not build"; fail=$((fail+1)); fi
+# refuse4 <label> <grep pattern> <source> [<error lines>] [nowarn]: on every target, rc != 0, no binary, the pattern in
+# the errors, exactly <error lines> `^error` lines (1 by default), and with `nowarn` no `^warning` line.
+refuse4() {
+    printf '%s' "$3" > "$D/r4.cyr"
+    want=${4:-1}
+    nrefuse=$((nrefuse+1))
+    bad=""
+    for leg in x86 a64 cx pe; do
+        rc=0
+        case $leg in
+            x86) "$CC" < "$D/r4.cyr" > "$D/r4.bin" 2> "$D/r4.err" || rc=$? ;;
+            a64) [ -n "$A64" ] || continue; "$A64" < "$D/r4.cyr" > "$D/r4.bin" 2> "$D/r4.err" || rc=$? ;;
+            cx)  [ -n "$CXC" ] || continue; "$CXC" < "$D/r4.cyr" > "$D/r4.bin" 2> "$D/r4.err" || rc=$? ;;
+            pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$D/r4.cyr" > "$D/r4.bin" 2> "$D/r4.err" || rc=$? ;;
+        esac
+        n=$(grep -c '^error' "$D/r4.err" || true)
+        if [ "$rc" = 0 ] || [ -s "$D/r4.bin" ] || [ "$n" != "$want" ] || ! grep -q "$2" "$D/r4.err"; then
+            bad="$bad $leg(rc=$rc, $n error(s): $(grep '^error' "$D/r4.err" | head -1))"
+        elif [ "${5:-}" = nowarn ] && grep -q '^warning' "$D/r4.err"; then
+            bad="$bad $leg($(grep '^warning' "$D/r4.err" | head -1))"
+        fi
+    done
+    if [ -z "$bad" ]; then printf '  ok(refused x4): %-37s\n' "$1"; pass=$((pass+1))
+    else printf '  FAIL: %-46s%s\n' "$1" "$bad"; fail=$((fail+1)); fi
+}
+DN='struct Pt { x; y; }
+struct Q { a; b; c; }
+struct P8 { x; }
+struct T1 { w; }
+struct T2 { w; }
+struct H { k; q: Q; t: T1; z; }
+struct HP { k; p: Pt; z; }
+impl Pt { fn dup(self): Pt { return self; } fn t1(self): T1 { var t: T1; return t; } fn mq(self): Q { var q: Q; return q; }
+  fn p8(self): P8 { var r: P8; return r; } }
+fn rd1(p: *P8): i64 { return p.x; }
+'
+# DN1: the filed repro, verbatim — its two refusals, in order, as the source spells each method.
+printf '%s' 'struct Pt { x; y; }
+struct Q { a; b; c; }
+struct T1 { w; }
+struct T2 { w; }
+impl Pt { fn dup(self): Pt { return self; } fn t1(self): T1 { var t: T1; return t; } }
+fn rt(s: *Pt): T2 { return s.t1(); }
+fn run(): i64 {
+    var s: Pt;
+    var w: Q;
+    w = s.dup();
+    return 0;
+}
+syscall(60, run());
+' > "$D/dn1.cyr"
+refuse4 "DN1 the filed repro, verbatim: 2 lines" "6:28: .*got \`Pt\.t1\` (a \`T1\`)" "$(cat "$D/dn1.cyr")" 2
+refuse4 "DN1b ... and its second line" "10:16: cannot copy 'Pt\.dup' into a variable of a different struct/vector type: 'w'" "$(cat "$D/dn1.cyr")" 2
+refuse4 "DN2 w = s.dup(), a Pt into a Q local" "cannot copy 'Pt\.dup' into a variable of a different struct/vector type: 'w'" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; w = s.dup(); return 0; } syscall(60, run());"
+refuse4 "DN3 return s.t1() from a T2 fn (8 B)" "got \`Pt\.t1\` (a \`T1\`)" \
+    "${DN}fn rt(s: *Pt): T2 { return s.t1(); } syscall(60, 0);"
+refuse4 "DN4 h.q = s.dup(), a field destination" "cannot copy 'Pt\.dup' into a struct field of a different struct type: 'q'" \
+    "${DN}fn run(): i64 { var s: Pt; var h: H; h.q = s.dup(); return 0; } syscall(60, run());"
+refuse4 "DN5 h.t = s.dup(), an 8 B field destination" "cannot copy 'Pt\.dup' into a struct field of a different struct type: 't'" \
+    "${DN}fn run(): i64 { var s: Pt; var h: H; h.t = s.dup(); return 0; } syscall(60, run());"
+refuse4 "DN6 var q: *Q = s.dup() (D14)" "cannot initialise 'q: \*Q' from 'Pt\.dup', which returns the struct 'Pt'" \
+    "${DN}fn run(): i64 { var s: Pt; var q: *Q = s.dup(); return 0; } syscall(60, run());"
+refuse4 "DN7 var x: i64 = s.mq() (D24)" "cannot initialise 'x: i64' from 'Pt\.mq', which returns the struct 'Q'" \
+    "${DN}fn run(): i64 { var s: Pt; var x: i64 = s.mq(); return 0; } syscall(60, run());"
+refuse4 "DN8 x = s.mq() into x: i64 (D27)" "cannot assign 'x: i64' from 'Pt\.mq', which returns the struct 'Q'" \
+    "${DN}fn run(): i64 { var s: Pt; var x: i64 = 0; x = s.mq(); return x; } syscall(60, run());"
+refuse4 "DN9 HP { 7, s.mq(), 8 }, a literal's element" "cannot copy 'Pt\.mq' into a struct field of a different struct type: 'p'" \
+    "${DN}fn run(): i64 { var s = Pt { 1, 2 }; var g = HP { 7, s.mq(), 8 }; return g.k; } syscall(60, run());"
+refuse4 "DN10 top level: H { 7, s.mq(), 8 }" "'Pt\.mq' returns a struct by value, and a struct result needs storage" \
+    "${DN}var s = Pt { 1, 2 }; var G = H { 7, s.mq(), 0, 8 }; syscall(60, G.k);"
+refuse4 "DN11 top level: rd1(s.p8()), an 8 B result" "'Pt\.p8' returns a struct by value, and a struct result needs storage" \
+    "${DN}var s = Pt { 1, 2 }; var r = rd1(s.p8()); syscall(60, r);"
+refuse4 "DN12 top level: (s.mq()).a" "'Pt\.mq' returns a struct by value, and a struct result needs storage" \
+    "${DN}var s = Pt { 1, 2 }; var r = (s.mq()).a; syscall(60, r);"
+refuse4 "DN13 top level: var G2: Q = s.mq()" "'Pt\.mq' returns a struct by value, and a struct result needs storage" \
+    "${DN}var s = Pt { 1, 2 }; var G2: Q = s.mq(); syscall(60, 0);"
+# DNW: the refused record assignment stores nothing — "assigning non-pointer to typed pointer" was printed beside the
+# refusal (the 8-byte store it fell to), plain and in parentheses; DNW3 the for step.
+refuse4 "DNW1 w = s.dup(): one error, no warning" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; w = s.dup(); return 0; } syscall(60, run());" 1 nowarn
+refuse4 "DNW2 w = (s.dup()): one error, no warning" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; w = (s.dup()); return 0; } syscall(60, run());" 1 nowarn
+refuse4 "DNW3 a for step w = s.dup(): one error" "cannot copy 'Pt\\.dup' into a variable" \
+    "${DN}fn run(): i64 { var s: Pt; var w: Q; var i = 0; for (i = 0; i < 1; w = s.dup()) { i = 1; } return i; } syscall(60, run());" 1 nowarn
+# A free fn whose name looks mangled keeps it: an operator fn `Pt_add`, and `Pt_p9` / `Pt_dup2` / `Pt_dup` called by name.
+refuse4 "DNK1 w = a + b, the free operator fn Pt_add" "cannot copy 'Pt_add' into a variable of a different struct/vector type: 'w'" \
+    "${DN}fn Pt_add(a: Pt, b: Pt): Pt { return a; } fn run(): i64 { var a: Pt; var b: Pt; var w: Q; w = a + b; return 0; } syscall(60, run());"
+refuse4 "DNK2 top level: rd1(Pt_p9(s)), a free fn" "'Pt_p9' returns a struct by value, and a struct result needs storage" \
+    "${DN}fn Pt_p9(a: Pt): P8 { var r: P8; return r; } var s = Pt { 1, 2 }; var r = rd1(Pt_p9(s)); syscall(60, r);"
+refuse4 "DNK3 return Pt_dup2(*s) from a T2 fn" "got \`Pt_dup2\` (a \`T1\`)" \
+    "${DN}fn Pt_dup2(a: Pt): T1 { var t: T1; return t; } fn rt(s: *Pt): T2 { return Pt_dup2(*s); } syscall(60, 0);"
+refuse4 "DNK4 h.q = Pt_dup(s), a free fn named Pt_dup (no impl)" "cannot copy 'Pt_dup' into a struct field of a different struct type: 'q'" \
+    "struct Pt { x; y; }
+struct Q { a; b; c; }
+struct H { k; q: Q; }
+fn Pt_dup(a: Pt): Pt { return a; }
+fn run(): i64 { var s: Pt; var h: H; h.q = Pt_dup(s); return 0; } syscall(60, run());"
+
+# Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
+# (the structs lane's FB rows and the vectors lane's DN rows together).
+[ "$nrefuse" -ge 128 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 128)"; fail=$((fail+1)); }
 [ "$naccept" -ge 41 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 41)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

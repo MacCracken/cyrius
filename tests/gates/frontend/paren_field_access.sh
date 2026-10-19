@@ -214,7 +214,7 @@ refused N4 "'mk3' returns a struct by value, and a struct result needs storage i
 src N5 'var B = P2 { 3, 4 };
 var X = (B.mk()).b;
 syscall(60, X);'
-refused N5 "'P2_mk' returns a struct by value, and a struct result needs storage in a fn's frame" "top level: (B.mk()).b, no frame"
+refused N5 "'P2.mk' returns a struct by value, and a struct result needs storage in a fn's frame" "top level: (B.mk()).b, no frame"
 src N6 'fn main(): i64 { var x = 5; return (x).a; }
 syscall(60, main());'
 refused N6 "no struct type in scope for 'x'" "(x).a, x no struct, as x.a"

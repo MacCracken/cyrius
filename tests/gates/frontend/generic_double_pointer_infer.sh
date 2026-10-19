@@ -21,10 +21,22 @@
 #      4 and `sz(ppi)` is 4, `gd(pph)` with `pph: **f64` is the f64 instance (its xmm result doubled: 5): 445 % 256 =
 #      189 (was 112: the i64 base stepped 8 and returned the double's bits) — every leg (more sources:
 #      tests/tcyr/crossos/generic_scalar_pointee_binding.tcyr's PP rows, generic_ptr_param_infer.sh PS)
-#   T  tests/tcyr/crossos/double_pointer_deref_step.tcyr (its GI / GK rows: every `**S` source, a method, a `: T`
-#      result, two type parameters, a named argument, a forward call, a forwarder, and the controls — a direct or a
-#      struct carrier wins, a `*S`, a `**Q2` that is no `**T`, `(pps)` and `pps + 0` bind nothing; 6.7.15 (D11 (a)):
-#      a `**i32` binds i32) on
+#   W  (6.7.15, the user's decisions D22 A / D23 A, 2026-10-18) parentheses around the whole argument are transparent
+#      and a typed pointer plus or minus n is still that pointer: W1 the filed repro verbatim, `tg((pps))` 42 (139,
+#      cx 254, PE 5 before), W2 its table's `tg(pps + 0)` 42 (the same fault), W3 `tg((&ps))` 42 (the same fault),
+#      W4 the single-star sibling through `p: *T` — `g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1)`, each
+#      step 24: 120 (72 before: the last three stepped 8); WK the controls — `g(ps + 1 & 3)` (a bitwise result),
+#      `g(ps - ps)` (a distance), `g(&s + 0)` (a byte pointer, 6.7.11's D15) bind nothing (8 each), with the
+#      explicit `tg<P3>((pps))` 42: 66 — every leg
+#   D  (6.7.15, the user's decision D24 A, 2026-10-18) `ppp: ***T` and deeper bind T: D1 / D2 the filed repros
+#      verbatim, `s3(ppps) * 10 + s3<P3>(ppps) / 24` 241 (81 before) and `t3(ppps)` 42 (139, cx 254, PE 5 before), D3
+#      `t4(p4) + t3(&pps) - 42` with `p4: ****P3` and `&pps` of a `**P3` 42 (a fault before) — every leg
+#   T  tests/tcyr/crossos/double_pointer_deref_step.tcyr (its GI / GK / GW / GD rows: every `**S` source, a method, a
+#      `: T` result, two type parameters, a named argument, a forward call, a forwarder, and the controls — a direct or
+#      a struct carrier wins, a `*S`, a `**Q2` that is no `**T`, `&ps + 0` bind nothing; 6.7.15 (D11 (a)): a `**i32`
+#      binds i32; 6.7.15 (D22 A / D23 A): wrapped and computed arguments, a field / global / call + 0, a method, the
+#      single-star `p: *T`, a generic forwarding the result into a method (the stub scan); (D24 A): `***T` / `****T`
+#      from every source) on
 #      x86_64 (default, CYRIUS_IR=3), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N
 #      derived from the file; the release gate's cross-OS leg runs it on ecb / ach / cass / pi
 #   B  (6.7.15, issues/2026-10-17-generic-double-pointer-to-generic-struct-parameter-refused.md) a generic's
@@ -57,6 +69,22 @@
 #   MB1 `_param_pin` reading the pin unbound (`_ek_pin`)  -> RED B1-B4 on every leg (refused at the definition: B4's
 #                                                             program holds the B2 / B3 generics too); the lane's
 #                                                             previous compiler (x86 / IR / PE legs) the same
+# (2026-10-18, 6.7.15 — the W / D rows and GW / GD; a scratch copy with the one change, its 2-stage cycc, CYCC= it:)
+#   MW1 the fix reverted (the lane's previous compiler)    -> RED 40: W1-W3 / D2 / D3 (139, cx 254, PE 5), W4 (72),
+#                                                             D1 (81) and T (the file does not build) on every leg;
+#                                                             WK green
+#   MW2 `_ic_pp_arg` without the `_pwrap_in` peel          -> RED W1, W3 (139 / cx 254 / PE 5) and T (x86_64 / IR /
+#                                                             aarch64 139, PE 5, cx 3 failed: gi_wrap, gi_wmeth, gi_deep3)
+#   MW3 `_ic_pp_arg` without its arithmetic arm            -> RED W2 and T (139 / PE 5, cx 4 failed: gi_arith,
+#                                                             gi_arith2, gi_wmeth, gi_deep3)
+#   MW4 `_ic_arg` without its arithmetic arm               -> RED W4 (72) and T (the file does not build: the stub row's
+#                                                             r.pick, as the parser bound nothing)
+#   MW5 `_ic_arith_end` taking any loosest operator        -> RED WK (82: `g(ps + 1 & 3)` bound P3)
+#   MD7 `_pp_is_tp` taking exactly two stars               -> RED D1 (81), D2 / D3 (139, cx 254, PE 5) and T (the file
+#                                                             does not build: `v.c` of `var v = gi_r3(ppps);`)
+#   MD8 `_ic_pp_deep` without its hops                     -> RED D1-D3 and T (as MD7)
+#   MD9 `_ic_pp_addr` without its `d > 2` arm              -> RED D3 and T (139 / PE 5, cx 3 failed: gi_deep, gi_deep2,
+#                                                             gi_dctl — `&ps` into `***T` bound P3)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -86,10 +114,10 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/double_pointer_deref_step.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=40
+FLOOR=51
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
-NGI=$(grep -cE 'assert_eq\(.*"G[IK]: ' "$TC")
-if [ "$NGI" -lt 14 ]; then echo "FAIL: $G: only $NGI GI / GK rows in $TC (floor 14) — rows were lost"; exit 1; fi
+NGI=$(grep -cE 'assert_eq\(.*"G[IKWD]: ' "$TC")
+if [ "$NGI" -lt 25 ]; then echo "FAIL: $G: only $NGI GI / GK / GW / GD rows in $TC (floor 25) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -233,7 +261,71 @@ xr B3 "$D/b3.cyr" 99 "nb<Pt>(&q) * 10 + nv<Pt>(&q): the instance's pin (**pp a B
     'syscall(60, main());'; } > "$D/b4.cyr"
 xr B4 "$D/b4.cyr" 11 "nc(&q) through a concrete **Box<Pt>"
 
-echo "T. $TC ($N rows, $NGI GI / GK)"
+echo "W. a wrapped or computed pointer argument binds as the pointer (6.7.15, D22 A / D23 A)"
+# W1 the filed repro, verbatim (issues/2026-10-17-generic-double-pointer-argument-in-parentheses-binds-nothing.md).
+cat > "$D/w1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn tg<T>(pp: **T): i64 { return take(**pp); }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; return tg((pps)); }
+syscall(60, main());
+X
+xr W1 "$D/w1.cyr" 42 "the filed repro: tg((pps))"
+sed -e 's/return tg((pps));/return tg(pps + 0);/' "$D/w1.cyr" > "$D/w2.cyr"
+xr W2 "$D/w2.cyr" 42 "its table's tg(pps + 0)"
+sed -e 's/return tg((pps));/return tg((\&ps));/' "$D/w1.cyr" > "$D/w3.cyr"
+xr W3 "$D/w3.cyr" 42 "tg((&ps))"
+cat > "$D/w4.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn g<T>(p: *T): i64 { var a = p + 1; var b = p; return a - b; }
+fn main(): i64 { var s: P3; var ps: *P3 = &s; return g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1); }
+syscall(60, main());
+X
+xr W4 "$D/w4.cyr" 120 "through p: *T, g((ps)) + g((&s)) + g(ps + 1) + g(1 + ps) + g((ps) - 1) (24 each)"
+cat > "$D/wk.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn tg<T>(pp: **T): i64 { return take(**pp); }
+fn g<T>(p: *T): i64 { var a = p + 1; var b = p; return a - b; }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; return g(ps + 1 & 3) + g(ps - ps) + g(&s + 0) + tg<P3>((pps)); }
+syscall(60, main());
+X
+xr WK "$D/wk.cyr" 66 "controls: g(ps + 1 & 3), g(ps - ps), g(&s + 0) bind nothing (8 each), tg<P3>((pps)) 42"
+
+echo "D. a ***T (and deeper) binds T (6.7.15, D24 A)"
+# D1 / D2 the filed repros, verbatim (issues/2026-10-17-generic-triple-pointer-parameter-carries-nothing.md).
+cat > "$D/d1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn s3<T>(ppp: ***T): i64 { var a = **ppp + 1; var b = **ppp; return a - b; }
+fn main(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var ppps: ***P3 = &pps; return s3(ppps) * 10 + s3<P3>(ppps) / 24; }
+syscall(60, main());
+X
+xr D1 "$D/d1.cyr" 241 "repro 1: s3(ppps) * 10 + s3<P3>(ppps) / 24 (s3 steps 24)"
+cat > "$D/d2.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn t3<T>(ppp: ***T): i64 { return take(***ppp); }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; var ppps: ***P3 = &pps; return t3(ppps); }
+syscall(60, main());
+X
+xr D2 "$D/d2.cyr" 42 "repro 2: t3(ppps) passes the struct to take"
+cat > "$D/d3.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P3 { a; b; c; }
+fn take(p: *P3): i64 { return p.c; }
+fn t3<T>(ppp: ***T): i64 { return take(***ppp); }
+fn t4<T>(p4: ****T): i64 { return take(****p4); }
+fn main(): i64 { var s: P3; s.c = 42; var ps: *P3 = &s; var pps: **P3 = &ps; var ppps: ***P3 = &pps; var p4: ****P3 = &ppps; return t4(p4) + t3(&pps) - 42; }
+syscall(60, main());
+X
+xr D3 "$D/d3.cyr" 42 "t4(p4) of a ****P3 and t3(&pps) of a **P3"
+
+echo "T. $TC ($N rows, $NGI GI / GK / GW / GD)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
     run_leg "$leg" "$TC" "$D/t_$n"
@@ -244,4 +336,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a \`pp: **Box<T>\` parameter (B, 6.7.15) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a \`pp: **Box<T>\` parameter (B, 6.7.15), a wrapped or computed argument (W, D22 A / D23 A), a \`***T\` and deeper (D, D24 A) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

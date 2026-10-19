@@ -35,6 +35,25 @@ fn ptr_api_roundtrip(): i64 {
     return 0;
 }
 
+# 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18; issues/2026-10-17-top-level-untyped-vector-call-or-method-
+# result-binds-a-word.md): a call declared to return a vector into a TOP-LEVEL declaration is refused — untyped `var w =
+# mkv(..);` / `= s.mv();` "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame", `var x:
+# i64 = mkv(..);` "vector return type does not match the declared type" (simd_return_shapes.sh rows TL) — where it held
+# one word (x86_64 / aarch64 0, cx 154, Windows 195). The controls, in both zones: the call made in a fn, its lanes read
+# into a top-level scalar or stored through a vector global's address; a scalar method or call keeps its word.
+fn vg_mk(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn vg_lanes(): i64 { var v = vg_mk(41, 7); return load64(&v) * 10 + load64(&v + 8); }
+fn vg_fill(p) { var v = vg_mk(43, 9); store64(p, load64(&v)); store64(p + 8, load64(&v + 8)); return 0; }
+struct VgS { k; }
+impl VgS { fn ks(self): i64 { return self.k + 1; } fn mv(self): f64v2 { return vg_mk(self.k, 8); } }
+fn vg_mlanes(s: *VgS): i64 { var v = s.mv(); return load64(&v) * 10 + load64(&v + 8); }
+var vgs: VgS = VgS { 5 };
+var vgl = vg_lanes();
+var vgk = vgs.ks();
+var vgn: i64 = vg_lanes() + 1;
+var g5: f64v2 = 0;
+var vgf = vg_fill(&g5);
+
 assert_eq(&after2 - &g2, 16, "f64v2 global is 16 B (declaration block)");
 assert_eq(&after4 - &g4, 32, "f64v4 global is 32 B (declaration block)");
 assert_eq(&afteri - &gi, 16, "i32v4 global is 16 B (declaration block)");
@@ -54,4 +73,19 @@ assert_eq(&hafter2 - &h2, 16, "f64v2 global is 16 B (after the first statement)"
 assert_eq(&hafter4 - &h4, 32, "f64v4 global is 32 B (after the first statement)");
 store64(&h2 + 8, 3);
 assert_eq(hafter2, 0x88, "the late global after an f64v2 is untouched by its second lane");
+
+# 6.7.15 (D26 / D27): the controls beside the refused top-level vector call.
+assert_eq(vgl, 417, "a vector call's lanes read in a fn, into a zone global");
+assert_eq(vgk, 6, "a scalar method into an untyped zone global keeps its word");
+assert_eq(vgn, 418, "a scalar call starting an i64 zone initialiser");
+assert_eq(lane_sum2(&g5), 52, "a vector call stored through a zone vector global's address");
+var hgl = vg_lanes();
+var hgk = vgs.ks();
+var hgm = vg_mlanes(&vgs);
+var h5: f64v2 = 0;
+vg_fill(&h5);
+assert_eq(hgl, 417, "a vector call's lanes read in a fn, into a late global");
+assert_eq(hgk, 6, "a scalar method into an untyped late global keeps its word");
+assert_eq(hgm, 58, "a vector method called in a fn on a global struct");
+assert_eq(load64(&h5) * 10 + load64(&h5 + 8), 439, "a vector call stored through a late vector global's address");
 var r = assert_summary();

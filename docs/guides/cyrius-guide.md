@@ -1149,7 +1149,8 @@ steps `n` elements of `T` and `*pp += n` steps them too, `*pp - *qq` is an eleme
 any two pointers, when the element sizes differ), `var q: *T = *pp;` / `q = *pp;` are silent, and `**pp`
 through a narrow `T` (`**u8`, `**i32`, `**f32`) is the element, read and written at its width. A
 `***T`'s `*ppp` is a `**T` (it steps a pointer's 8) and `**ppp` a `*T`. A generic's `pp: **T` called
-with no `<..>` takes `T` from a `**S` argument (6.7.14, D40 — *Generic Functions*). Through 6.7.12 `*pp` was the
+with no `<..>` takes `T` from a `**S` argument (6.7.14, D40 — *Generic Functions*), and a `ppp: ***T` from a `***S`
+(6.7.15, D24). Through 6.7.12 `*pp` was the
 untyped word: `*pp + 1` stepped one BYTE, `**pp` read and wrote 8 bytes whatever `T`, and the
 declaration warned *assigning non-pointer to typed pointer*. A program may name at most 16383 distinct
 pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types (max 16383)*; 126 in 6.7.13). **`**pps` of a `pps: **S` is the
@@ -1903,14 +1904,32 @@ through `fncallN(&mkv, ..)` / `callptr(&mkv, ..)` with the callee written `&f` (
 `callptr((&mkv), ..)`, 6.7.13), or (6.7.13) a
 method call `s.mv(..)` on a single name, `impl S { fn mv(self, ..): f64v2 }` (on Windows each call
 then passes the local's address as its hidden result pointer, as `mkv(..)` does — a method's before
-`self`). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
+`self`) — and (6.7.15) on a field chain, `w.s.mv(..)`, `pw.s.mv(..)`, `h.w.s.mv(..)`, `n.ps.mv(..)`
+through a `*S` field, at every destination below a single name's method meets (through 6.7.14 the
+untyped `var v = w.s.mv();` held one word, stack garbage per target, and the other destinations were
+refused *… got `w`*). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
 (6.7.13), as `var v = mkv(..);` is — and (6.7.14, the user's decision D37, 2026-10-16: A) so is `var v = s.mv(..);`
 (through 6.7.13 one word: x86_64 / aarch64 1, cx 155, Windows 195 where 161 is right). A method — and (6.7.14)
 `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped too — declared to return another vector is refused as a by-name call is
 (`vector return type does not match the declared type` / `.. the assigned variable`; through 6.7.13 the fncallN /
-callptr form got the generic refusal below, *… got `callptr`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
+callptr form got the generic refusal below, *… got `callptr`*), and (6.7.15) so is a by-name call or a method of
+another vector inside parentheses, `var v: f64v2 = (mk4(41));` / `w = (s.mv());` (through 6.7.14 the generic refusal,
+*… got `(...)`*); so is (6.7.14, the user's decision D38, 2026-10-16: A)
 a method's vector into a scalar, struct or pointer local, `var x: i64 = s.mv();` / `x = s.mv();`, as `var x: i64 =
-mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows). Every other source is refused by name (`a value-form vector local is initialised only
+mkv(..);` is (through 6.7.13 they stored a word: 0 on x86_64 / aarch64, 41 on cx / Windows) — and (6.7.15) any call
+declared to return a vector assigned to a global that is no vector, `G = mkv(41, 7);`, `G = s.mv();`, `G =
+fncall2(&mkv, 41, 7);`, and `fncallN(&f, ..)` / `callptr(&f, ..)` into a scalar local or declaration, `x =
+fncall2(&mkv, ..);` / `var y: i64 = callptr(&mkv, ..);` (through 6.7.14 each stored a word: 0 on x86_64 / aarch64, 41
+on cx / Windows; a vector global keeps its own refusal, below) — and (6.7.15) a by-name
+call into a declaration annotated with a type of no integer width, `var x: f64 = mkv(41, 7);` (`f32`, `bool`,
+`cstring`, an enum, `Vec`, `Result`, `Option`), as the method is: through 6.7.14 it compiled, `x` silently a two-slot
+vector local.
+Parentheses around the whole call are transparent at these destinations too (6.7.15, the user's decision D28,
+2026-10-18: A): an untyped `var v = (mkv(41, 7));`, `var v = (s.mv());` or `var v = (callptr(&mkv, ..));` is the
+`f64v2` local, and `var x: i64 = (mkv(41, 7));` / `x = (s.mv());` are refused (through 6.7.14 each held one word: 0
+or 1 on x86_64 / aarch64, 154 / 155 on cx, 195 on Windows, and the integer destinations the result's word); and a
+method — or `callptr(&f, ..)` — that STARTS an integer initialiser, `var x: i64 = s.mv() + 1;`, is refused as `mkv(41,
+7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local
@@ -2346,8 +2365,16 @@ value global, a closure's captured copy of one — is the struct value `x` is, w
 name, as `x` itself is. Through 6.7.12 it was an untyped word load: over 8 bytes `take(*(&x))` passed x's
 first field as the struct's address and `var d: S = *(&x);` was a handle holding it (a crash on every
 target), the assignments stored one word, `return *(&x)` was refused, and another struct's compiled. A
-handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` is still the untyped word the slot
-holds; `&x + n` is still a byte pointer, so `*(&x + 8)` is the word at that address. `*(&x) OP= v` is
+handle's or a `*T`'s `&h` is its slot (the handle line), so `*(&h)` of a handle is still the untyped word the
+slot holds. **`*(&p)` of a typed pointer is `p`, its type kept** (6.7.15, the user's decision D21, 2026-10-18:
+A): with `p: *f64v2`, `**(&p)` is the vector `*p` is (`lanes(**(&p))`, `return **(&p);`, `var v = **(&p);`);
+with `ps: *S`, `(*(&ps)).y` reads the field and `**(&ps)` is the struct; through a `pb: *u8`, `**(&pb)` reads
+and writes one byte, as `*pb` does; and `*(&p) + 1` steps as `p + 1` does — a local, a parameter, a closure's
+capture or a global, inside any parentheses. ⚠ Through 6.7.14 it was the untyped word: `**(&p)` was refused at
+every vector destination and an unannotated `var v = **(&p);` bound one word and a stack word (x86_64 178,
+aarch64 42, cx 98, Windows 146 where 161 is right), `(*(&ps)).y` was refused, and through a `*u8` `**(&pb)` read
+and wrote a whole word. `&x + n` is still a byte pointer, so `*(&x + 8)` (and `*(&p + 0)`) is the word at that
+address. `*(&x) OP= v` is
 refused as `x OP= v` is (*compound assignment to struct 'x' is refused*; write `x = x + b`) — since 6.7.14,
 the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (6.7.5), so `*(&s) += 10`
 turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op.
@@ -3938,6 +3965,14 @@ through its address — `&g` with the pointer forms (`f64v2_add(&g, &h)` routes 
 `f64v2_add_ptr`). A value-form read or write of it (`g = f(..)`, `var v: f64v2 = g;`,
 `g = v;`) or an initializer other than `0` is refused by name: a value-form vector is a
 local. (Before 6.6.17 it was one 8-byte slot, and each of those moved one word of it.)
+A call declared to return a vector — by name, `g<T>(..)`, a method, `callptr(&f, ..)` / `fncallN(&f, ..)`, inside
+parentheses too — into any other top-level declaration is refused (6.7.15, the user's decisions D26 and D27,
+2026-10-18: A): an untyped `var w = mkv(41, 7);` / `var v = s.mv();` by name, *'mkv' returns a vector by value, and a
+vector result needs storage in a fn's frame - call it inside a fn* (as such a call into a `*V` parameter is there), and
+`var x: i64 = mkv(41, 7);` (any annotation that is not the vector, a call or method starting the initialiser too) with
+*vector return type does not match the declared type*, as the line is in a fn. Through 6.7.14 each held one word, in
+the declaration zone and after the first statement: 0 on x86_64 / aarch64, 154 on cx, 195 on Windows, and the result's
+word under `: i64`. Make the call in a fn: store its lanes through `&g`, or read them into a scalar there.
 
 **A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
 `p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and
@@ -3985,8 +4020,10 @@ A):** a call result (`rp(mkv(42, 7))`, `ri(s.mv(..))`, `ri(callptr(&mkv, ..))`) 
 dereference (`rp(*pb)`, `ri(*pb)`) into a pointer of another kind are refused with the same words,
 naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a pointer to its vector
 type in a call to 'ri'`) — every dereference whose operand is a `*V`, however written: `**ppb`,
-`*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named by its
-operand's last name, `'*ppb'`; ⚠ through 6.7.13 every spelling but `* NAME` of a local into `*i64`, `*u8`,
+`*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named as the source
+spells it, `'**ppb'`, `'*gp(pb)'` — 6.7.15; through 6.7.14 by its operand's last name, `'*ppb'`, `'*pb'`, as a
+`*S` dereference of another struct into `*T` was, `'pq'` for `rp(*gq(pq))`; ⚠ through 6.7.13 every spelling but
+`* NAME` of a local into `*i64`, `*u8`,
 `**T` or a by-value struct of 8 B or less compiled and passed lane 0 as the address — 139 on x86_64 and
 aarch64, a cx guest fault, exit 5 on Windows); and a vector local, call result or `*pb` passed to a **by-value struct**
 parameter (`fn bv(p: Pt)`, at any size) is refused as `cannot pass 'b' to a by-value
@@ -6878,7 +6915,8 @@ on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
 every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
-`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and through an `x: T` parameter so does
+`g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
+minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
 field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
 this rule). Parentheses around the WHOLE argument carry what they wrap — a scalar's type too:
@@ -6949,11 +6987,16 @@ its own type, so `second(pa)` with `fn second<T>(p: *T): i64 { return *(p + 1); 
 instance (an `f64` result), exactly as `second<i32>(pa)` / `gd<f64>(&h)` do. Through 6.7.14
 they ran the i64 base: `sizeof(T)` 8, `p + 1` stepping 8 bytes and `*p` reading 8. A pointee
 that is no type argument — `*u8` .. `*u64`, `*f32`, `*bool` — and `*i64` bind `i64`, as an
-`f32` value does; through `x: T` no pointer binds.
+`f32` value does; through `x: T` no pointer binds. A typed pointer plus or minus `n` is still
+that pointer (6.7.15, the user's decision D23 A, 2026-10-18): through `p: *T`, `g(ps + 1)`,
+`g(1 + ps)`, `g((ps) - 1)`, `g(w.p + 1)` bind what `ps` / `w.p` point at, and a `*i32`'s
+`pa + 1` binds `i32` — through 6.7.14 each ran the i64 base (`p + 1` stepping 8 for a 24-byte
+`S`). `&s + n` is a byte pointer (6.7.11's D15) and binds nothing, nor does a distance
+`ps - qs` or a bitwise result (`ps + 1 & 3`).
 
 **Through a pointer-to-pointer parameter** (6.7.14). A `T` that no `x: T` / `p: *T`
-parameter and no generic struct carries is carried by the first parameter declared exactly
-`pp: **T`: a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
+parameter and no generic struct carries is carried by the first parameter declared
+`pp: **T` (or deeper, below): a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
 local, parameter, closure capture or global, a field declared `**S` reached through a chain
 (`w.pp`, `pw.pp`, `h.w.pp`), a call returning `**S` (a generic one at the instance it
 reaches), and `&p` / `&G` of a `*S` local, parameter or global. With
@@ -6964,10 +7007,18 @@ call and a generic method alike, so a `: T` result is the struct (`var v = gd(pp
 user's decision D40 (A), 2026-10-16: through 6.7.13 every such call ran the i64 base —
 `*pp + 1` stepped 8 and `take(**pp)` passed the first field as the address (a fault). A
 scalar pointee binds as through `p: *T` (6.7.15, D11 (a)): a `**i32` — the same sources, and
-`&p` of a `*i32` — binds `i32` (`*pp + 1` steps 4), a `**f64` `f64`. A `*S` (one star), a
-`***S`, a `**u8`, a parenthesised or computed argument (`(pps)`, `pps + 0`) bind nothing
-(`i64`), and a direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds
-from `x`. A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
+`&p` of a `*i32` — binds `i32` (`*pp + 1` steps 4), a `**f64` `f64`. Parentheses around the
+whole argument are transparent and a `**S` plus or minus `n` is still that `**S` (6.7.15, the
+user's decisions D22 A / D23 A, 2026-10-18): `tg((pps))`, `tg((&ps))`, `tg(pps + 0)`,
+`tg(0 + pps)` hand `take` the struct, as `tg(pps)` does — through 6.7.14 they ran the i64 base
+and faulted; `&ps + n` is a byte pointer and binds nothing. A `ppp: ***T` — and any deeper
+`*..*T` — binds `T` the same way, one pointee down per star (6.7.15, the user's decision D24 A,
+2026-10-18): `fn s3<T>(ppp: ***T)` called `s3(ppps)` with `ppps: ***P3` steps `**ppp + 1` 24
+and `t3(ppps)` hands `take(***ppp)` the struct, exactly as `s3<P3>(ppps)` / `t3<P3>(ppps)` do,
+from every source above and from `&pps` of a `**P3` (through 6.7.14 the i64 base: 8, and a
+fault). A `*S` (one star) into `**T`, a `**S` into `***T`, a `**u8` bind nothing (`i64`), and a
+direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from `x`.
+A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
 as the body reads `Box<T>` — at the base `Box<i64>`, in an instance its own `Box<..>`, so `**pp`
 is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with `q: *Box<Pt>`
 (through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). ⚠ It

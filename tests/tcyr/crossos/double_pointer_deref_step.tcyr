@@ -15,9 +15,15 @@
 # `take(**pp)` into `*P3` faulted (issues/archived/2026-10-16-generic-double-pointer-parameter-pointee-unbound.md). Every
 # `**S` source (a local, a parameter, a global, a field chain, a call, a generic call, `&p` / `&G` of a `*S`, a
 # capture), a method, a `: T` result, two type parameters, a named argument, a forward call, a forwarder; GK: the
-# controls (a direct or a struct carrier wins; a `*S`, a `**Q2` that is no `**T`, a wrapped or computed argument
-# bind nothing; 6.7.15, the user's decision D11 (a), 2026-10-18: a `**i32` binds i32 — it bound nothing, i64). The
-# filed repros verbatim: tests/gates/frontend/generic_double_pointer_infer.sh.
+# controls (a direct or a struct carrier wins; a `*S`, a `**Q2` that is no `**T`, `&ps + 0` — a byte pointer, 6.7.11's
+# D15 — bind nothing; 6.7.15, the user's decision D11 (a), 2026-10-18: a `**i32` binds i32 — it bound nothing, i64).
+# GW (6.7.15, the user's decisions D22 A / D23 A, 2026-10-18): parentheses around the whole argument are transparent
+# and a typed pointer plus or minus n is still that pointer — `tg((pps))`, `tg((&ps))`, `tg(pps + 0)`, `n + pps`,
+# `(pps) - n`, a field / global / call + 0, a method, and through a single-star `p: *T` `g(ps + 1)` / `g(1 + ps)` /
+# a `*i32`'s `pa + 1` — each ran the i64 base (8, or a fault for `take(**pp)`); a generic that forwards the result's
+# T into a method (the stub scan, `_tok_ta_arith`). GD (D24 A): `ppp: ***T` and `****T` bind T from a `***S` /
+# `****S` argument (`&pps` of a `**S` too) — they ran the i64 base (81 for 241, `take(***ppp)` faulted). The filed
+# repros verbatim: tests/gates/frontend/generic_double_pointer_infer.sh.
 #
 # CROSS-HOST: frontend typing, but the element reads and writes are each backend's narrow loads and stores. Run
 # on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
@@ -35,6 +41,12 @@ struct GiQ2 { u; v; }
 struct GiW { x; pp: **GiP3; }
 struct GiH { k; w: GiW; }
 impl GiP3 { fn gm<T>(self, pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b + self.c; } }
+impl GiP3 { fn gm1<T>(self, p: *T): i64 { var a = p + 1; var b = p; return a - b + self.c; } }   # GW
+impl GiP3 { fn gm3<T>(self, ppp: ***T): i64 { return gi_take(***ppp) + self.a; } }                 # GD
+struct GiW3 { x; ppp: ***GiP3; }                                                                    # GD
+struct GiPk { n; }                                                                                  # GW: the stub scan
+struct GiQk { a; b; }
+impl GiPk { fn pick<V>(self, w: V): i64 { return w.b + self.n; } }
 
 var GA: i64[3];
 var GP: *i64 = 0;
@@ -299,7 +311,68 @@ fn gi_ctl2(): i64 {
     var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
     var q: GiQ2; var pq: *GiQ2 = &q; var ppq: **GiQ2 = &pq;
     var bq: Bx<GiQ2>;
-    return gi_both(&bq, pps) * 1000000 + gi_nt(ppq) * 10000 + gi_sz((pps)) * 100 + gi_sz(pps + 0);   # 16080808
+    return gi_both(&bq, pps) * 10000 + gi_nt(ppq) * 100 + gi_sz(&ps + 0);   # 160808
+}
+# GW — D22 A / D23 A. Each was the i64 base: 8, or a fault for `take(**pp)`.
+fn gi_ps1<T>(p: *T): i64 { var a = p + 1; var b = p; return a - b; }
+fn gi_xs<T>(x: T): i64 { return sizeof(T); }
+fn gi_wrap(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    return gi_st((pps)) * 1000000 + gi_tg(((pps))) * 10000 + gi_tg((&ps)) * 100 + gi_sz(((&GI_PS)));   # 24424224
+}
+fn gi_arith(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    return gi_st(pps + 0) * 1000000 + gi_tg(pps - 0) * 10000 + gi_tg(0 + pps) * 100 + gi_sz((pps) + 1 - 1);   # 24424224
+}
+fn gi_arith2(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var w: GiW; w.pp = pps;
+    return gi_tg(w.pp + 0) * 1000000 + gi_tg(GI_PPS + 0) * 10000 + gi_tg(gi_mkpp() - 0) * 100 + gi_tg((pps + 0));   # 42424242
+}
+fn gi_single(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s;
+    var a: i32[4]; var pa: *i32 = &a;
+    return gi_ps1(ps + 1) * 1000000 + gi_ps1(1 + ps) * 10000 + gi_ps1((ps) - 1) * 100 + gi_ps1(pa + 1) * 10 + gi_xs(ps + 1) / 8;   # 24242441
+}
+fn gi_wmeth(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps;
+    return s.gm((pps)) * 10000 + s.gm(pps + 0) * 100 + s.gm1(ps + 1);   # 666666
+}
+fn gi_kd<T>(x: *T): T { var t: T = *x; return t; }
+fn gi_ko<T>(t: T): i64 { var s = GiPk { 1 }; var pk: *GiPk = &s; var r = gi_kd(pk + 0); return r.pick(t); }
+fn gi_stub(): i64 { var q = GiQk { 3, 4 }; return gi_ko(q); }   # 5
+# GD — D24 A. Each was the i64 base: 8 (81 for the filed repro's 241), or a fault for `take(***ppp)`.
+fn gi_s3<T>(ppp: ***T): i64 { var a = **ppp + 1; var b = **ppp; return a - b; }
+fn gi_t3<T>(ppp: ***T): i64 { return gi_take(***ppp); }
+fn gi_t4<T>(p4: ****T): i64 { return gi_take(****p4); }
+fn gi_z3<T>(ppp: ***T): i64 { return sizeof(T); }
+fn gi_r3<T>(ppp: ***T): T { return ***ppp; }
+fn gi_f3<T>(ppp: ***T): i64 { return gi_t3(ppp); }
+var GI_PPPS: ***GiP3 = &GI_PPS;
+fn gi_mk3(): ***GiP3 { return GI_PPPS; }
+fn gi_deep(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var ppps: ***GiP3 = &pps;
+    var p4: ****GiP3 = &ppps;
+    return gi_s3(ppps) * 1000000 + gi_t3(ppps) * 10000 + gi_t4(p4) * 100 + gi_t4(&ppps);   # 24424242
+}
+fn gi_deep2(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var ppps: ***GiP3 = &pps;
+    var w: GiW3; w.ppp = ppps;
+    return gi_t3(&pps) * 1000000 + gi_t3(w.ppp) * 10000 + gi_t3(GI_PPPS) * 100 + gi_t3(gi_mk3());   # 42424242
+}
+fn gi_deep3(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var ppps: ***GiP3 = &pps;
+    var v = gi_r3(ppps);
+    return gi_t3((ppps)) * 1000000 + gi_t3(ppps + 0) * 10000 + gi_f3(ppps) * 100 + v.c;   # 42424242
+}
+fn gi_deep4(): i64 {
+    var s = GiP3 { 1, 2, 42 }; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var ppps: ***GiP3 = &pps;
+    var f = |k| gi_t3(ppps) + k;
+    return s.gm3(ppps) * 10000 + fncall1(f, 1) * 100 + gi_z3(ppp: ppps);   # 434324
+}
+fn gi_dctl(): i64 {
+    var s: GiP3; var ps: *GiP3 = &s; var pps: **GiP3 = &ps; var ppps: ***GiP3 = &pps;
+    var i: i32[2]; var pi: *i32 = &i; var ppi: **i32 = &pi; var pppi: ***i32 = &ppi;
+    return gi_s3<GiP3>(ppps) * 10000 + gi_z3(pppi) * 1000 + gi_z3(pps) * 10 + gi_z3(&ps) / 8;   # 244081
 }
 
 assert_eq(dp_filed(), 0, "the filed repro: *(*pp + 1) and second(pp) read the second element (it exited 1)");
@@ -341,5 +414,16 @@ assert_eq(gi_pair(), 2416, "GI: two type parameters, each from its own **");
 assert_eq(gi_misc(), 242424, "GI: sizeof(T), a named argument, a forwarder's instance");
 assert_eq(gi_uses(), 24, "GI: a call above the generic's definition");
 assert_eq(gi_ctl(), 80804, "GK: a direct x: T carrier wins; a *P3 binds nothing; a **i32 binds i32 (D11 (a))");
-assert_eq(gi_ctl2(), 16080808, "GK: a struct carrier wins; a **Q2 that is no **T, (pps) and pps + 0 bind nothing");
+assert_eq(gi_ctl2(), 160808, "GK: a struct carrier wins; a **Q2 that is no **T and &ps + 0 (a byte pointer) bind nothing");
+assert_eq(gi_wrap(), 24424224, "GW: (pps), ((pps)), (&ps) and ((&G)) bind as pps / &ps do (D22 A; were 8 / a fault)");
+assert_eq(gi_arith(), 24424224, "GW: pps + 0, pps - 0, 0 + pps and (pps) + 1 - 1 are pps (D23 A; were 8 / a fault)");
+assert_eq(gi_arith2(), 42424242, "GW: a field, a global, a : **P3 call plus or minus 0, and (pps + 0) (D23 A)");
+assert_eq(gi_single(), 24242441, "GW: through p: *T, ps + 1, 1 + ps, (ps) - 1 step sizeof(P3), a *i32's pa + 1 binds i32; x: T binds no pointer");
+assert_eq(gi_wmeth(), 666666, "GW: a generic method's **T given (pps) and pps + 0, its *T given ps + 1");
+assert_eq(gi_stub(), 5, "GW: var r = gd(pk + 0); r.pick(t) in a generic (the stub scan reads the arithmetic too)");
+assert_eq(gi_deep(), 24424242, "GD: s3(ppps) steps 24, t3(ppps), t4(p4) and t4(&ppps) pass the struct (D24 A; were 8 / a fault)");
+assert_eq(gi_deep2(), 42424242, "GD: &pps of a **P3, a ***P3 field, global and : ***P3 call");
+assert_eq(gi_deep3(), 42424242, "GD: (ppps), ppps + 0, a forwarder and a : T result (var v = r3(ppps); v.c)");
+assert_eq(gi_deep4(), 434324, "GD: a generic method's ***T, a captured ***P3, a named argument");
+assert_eq(gi_dctl(), 244081, "GD: s3<P3>(ppps) unchanged; a ***i32 binds i32; a **P3 and &ps into ***T bind nothing");
 var r = assert_summary();

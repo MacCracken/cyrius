@@ -18,8 +18,8 @@
 #   P1 past pin 1500 (750 structs through `**S` and `***S` globals first): `take(**pps)`, `rw(*ppps)`, `take(*pps)`,
 #      `take(**gpps)` of a `**P3` global and `take(***ppps)` each read the field, and `*pps + 1` / `*gpps + 1` step
 #      sizeof(P3) (exit 42) on the same legs
-#   P2 the DRS1 shape past pin 1500: `take(**ppq)`, ppq a `**Q3` (another 24-byte struct), refused once by name on
-#      x86_64, aarch64, cx and PE
+#   P2 the DRS1 shape past pin 1500: `take(**ppq)`, ppq a `**Q3` (another 24-byte struct), refused once by name
+#      ('**ppq' as written since 6.7.15; it was 'ppq') on x86_64, aarch64, cx and PE
 #   K1 the cap: the 16384th pin (1024 structs through `**S` .. 17 stars) is refused once, "max 16383" (x86_64)
 #   K2 the guide states that cap (docs/guides/cyrius-guide.md, the `**T` paragraph)
 #   The 6.7.13 rows stay in tests/gates/codegen/simd_pointer_param.sh (DRS1 / DRSw) and
@@ -183,7 +183,7 @@ EOF
 echo "P1. past pin 1500: a \`**P3\` local, parameter, global and a \`***P3\` read the field, \`*pps + 1\` steps 24 (exit 42)"
 exit_rows P1 "$D/p1.cyr" 42 "five reads of 42, and \`*pps + 1\` / \`*gpps + 1\` stepping 24, less 216"
 echo "P2. past pin 1500: take(**ppq), ppq a \`**Q3\` (another 24-byte struct), refused once (the DRS1 shape)"
-P2F="cannot pass 'ppq' to a parameter of a different struct type in a call to 'take'"
+P2F="cannot pass '**ppq' to a parameter of a different struct type in a call to 'take'"
 refused P2x86 "P2 x86" "$D/p2.cyr" x86 "$P2F"
 [ -n "$A64" ] && refused P2a64 "P2 aarch64" "$D/p2.cyr" a64 "$P2F"
 [ -n "$CXCC" ] && refused P2cx "P2 cx" "$D/p2.cyr" cx "$P2F"

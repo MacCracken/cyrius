@@ -232,7 +232,7 @@ refuse "R6 return (mk());" "$MS — got \`mk\` (a \`U8\`)" "$T"'fn f(): S8 { ret
 refuse "R7 a handle of another struct (B7-1)" "$MS — got \`u\` (a \`U8\`)" "$T"'fn f(): S8 { var u: U8 = alloc(8); u.u = 9; return u; }'"$E"
 refuse "R8 a handle GLOBAL of another struct" "$MS — got \`GUH\` (a \`U8\`)" "$T"'fn f(): S8 { GUH = alloc(8); GUH.u = 11; return GUH; }'"$E"
 refuse "R9 return w.u; (a field of another struct)" "$MS — got \`u\` (a \`U8\`)" "$T"'fn f(): S8 { var w: W; w.u.u = 2; return w.u; }'"$E"
-refuse "R10 return u.dup(); (a method of another struct)" "$MS — got \`U8_dup\` (a \`U8\`)" "$T"'fn f(): S8 { var u: U8; return u.dup(); }'"$E"
+refuse "R10 return u.dup(); (a method of another struct)" "$MS — got \`U8\.dup\` (a \`U8\`)" "$T"'fn f(): S8 { var u: U8; return u.dup(); }'"$E"
 refuse "R11 return *pu; (a dereference of a *U8)" "$MS — got \`\\*pu\` (a \`U8\`)" "$T"'fn f(): S8 { var u: U8; u.u = 13; var pu: *U8 = &u; return *pu; }'"$E"
 
 echo "=== a pointer to another struct (8 B) ==="

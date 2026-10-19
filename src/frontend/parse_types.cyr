@@ -2974,28 +2974,58 @@ fn _ps_pin(w): i64 {
 # 6.7.13: a pin also carries its pointee `*S`'s struct (`sid`, 0 for none) — the step word says only sizeof(S), so
 # `**pps` of a `**S` names S through it (`_ppd_note`, parse_expr.cyr): two structs of one size get two pins.
 var _pp_sids = 0;   # a word per pin: the pointee's struct
+# 6.7.15 — THE PIN INTERN IS HASHED. `_pp_intern` found an existing pin by scanning every pin so far, and 6.7.14
+# raised the cap from 126 to 16383, so a unit with thousands of distinct `**T` pointees compiled in quadratic time
+# (1024 structs each at 15 pointer depths, 15360 pins: 4.5 s). `_pp_hix` is an open-addressing index over (step word,
+# field entry, struct): a pin per slot (0 empty), twice `_pp_cap` slots (a power of two, so at most half full),
+# alloc()'d and rebuilt by `_pp_grow`. Pins keep their first-come numbers (a step word carries its pin).
+# CHANGELOG [6.7.15]
+var _pp_hix = 0;
+var _pp_hmask = 0;  # the index's slots - 1
 fn _pp_intern(S, v, ent, sid): i64 {
     if (v == 0) { return 0; }
     if (_pp_tab == 0) { _pp_grow(128); }
-    var i = 1;
-    while (i <= _pp_n) {
-        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) {
-                if (L64(_pp_sids + i * 8) == sid) { return i; }
-            } }
-        i = i + 1;
-    }
+    var j = _pp_hslot(v, ent, sid);
+    var i = L64(_pp_hix + j * 8);
+    if (i != 0) { return i; }
     if (_pp_n >= 16383) {
         ERR_MSG(S, "too many pointer-to-pointer pointee types (max 16383)", 53);
         return 0;
     }
-    if (_pp_n + 1 >= _pp_cap) { _pp_grow(_pp_cap * 2); }
+    if (_pp_n + 1 >= _pp_cap) {
+        _pp_grow(_pp_cap * 2);
+        j = _pp_hslot(v, ent, sid);
+    }
     _pp_n = _pp_n + 1;
     S64(_pp_tab + _pp_n * 16, v);
     S64(_pp_tab + _pp_n * 16 + 8, ent);
     S64(_pp_sids + _pp_n * 8, sid);
+    S64(_pp_hix + j * 8, _pp_n);
     return _pp_n;
 }
-# The pin tables at `n` entries, the pins so far copied over. CHANGELOG [6.7.14]
+# The index slot of the pin (v, ent, sid): the one holding it, else the empty slot its probe ends at. CHANGELOG [6.7.15]
+fn _pp_hslot(v, ent, sid): i64 {
+    var j = _pp_hash(v, ent, sid) & _pp_hmask;
+    var i = L64(_pp_hix + j * 8);
+    while (i != 0) {
+        if (L64(_pp_tab + i * 16) == v) { if (L64(_pp_tab + i * 16 + 8) == ent) {
+                if (L64(_pp_sids + i * 8) == sid) { return j; }
+            } }
+        j = (j + 1) & _pp_hmask;
+        i = L64(_pp_hix + j * 8);
+    }
+    return j;
+}
+# A pin key's hash. A step word's pin and kind sit in its high bits, so each step folds the high half down before the
+# multiply (which carries only upward). CHANGELOG [6.7.15]
+fn _pp_hash(v, ent, sid): i64 {
+    var h = (v ^ (v >> 32)) * 0x9E3779B97F4A7C15;
+    h = ((h ^ (h >> 29)) ^ ent) * 0x9E3779B97F4A7C15;
+    h = ((h ^ (h >> 29)) ^ sid) * 0x9E3779B97F4A7C15;
+    return h ^ (h >> 32);
+}
+# The pin tables at `n` entries, the pins so far copied over, and (6.7.15) the index at 2n slots, rebuilt.
+# CHANGELOG [6.7.14]
 fn _pp_grow(n): i64 {
     var t = alloc(n * 16);
     var d = alloc(n * 8);
@@ -3009,6 +3039,22 @@ fn _pp_grow(n): i64 {
     _pp_tab = t;
     _pp_sids = d;
     _pp_cap = n;
+    _pp_hreindex(n * 2);
+    return 0;
+}
+# The index at `m` slots (a power of two), zeroed, every pin re-inserted. CHANGELOG [6.7.15]
+fn _pp_hreindex(m): i64 {
+    _pp_hix = alloc(m * 8);
+    _pp_hmask = m - 1;
+    var j = 0;
+    while (j < m) { S64(_pp_hix + j * 8, 0); j = j + 1; }
+    var i = 1;
+    while (i <= _pp_n) {
+        j = _pp_hash(L64(_pp_tab + i * 16), L64(_pp_tab + i * 16 + 8), L64(_pp_sids + i * 8)) & _pp_hmask;
+        while (L64(_pp_hix + j * 8) != 0) { j = (j + 1) & _pp_hmask; }
+        S64(_pp_hix + j * 8, i);
+        i = i + 1;
+    }
     return 0;
 }
 # The pin of the pointer annotation whose first `*` is token `ann`: its pointee interned when that pointee is
@@ -3088,17 +3134,21 @@ fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
 # `st<P3>(pps)` steps 24. A `T` that no `x: T` / `p: *T` parameter and no generic struct carries (`_gen_infer_sc`) is
 # carried by the first parameter declared exactly `**T`: the struct its whole argument's pin names (`_ic_pp_arg`).
 # `mth` 1: a method call, whose list starts at parameter 1 (as `_gen_infer_sc`). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AT ANY DEPTH OF TWO OR MORE (the user's decision D24 A, 2026-10-18): `ppp: ***T` (and deeper) binds T
+# from a `***S` argument, one pointee down per extra star (`_ic_pp_deep`) — `s3(ppps)` ran the i64 base (`**ppp + 1`
+# stepped 8, `take(***ppp)` faulted) where `s3<P3>(ppps)` steps 24. CHANGELOG [6.7.15]
 fn _gen_infer_ind(S, fi, open, which, mth): i64 {
     var f = (GFGM(S, fi) >> (24 + which * 20)) & 0xFFFFF;
     if (f != 0) { return _gen_infer_sc(S, fi, open, f, mth); }
     var k = _pp_tparam(S, fi, which);
     if (k <= mth) { return 0 - 8; }
+    var d = _ppt_d;   # read before the argument's own inference can ask again
     var a = _call_arg_pk(S, fi, open, k - 1, k - 1 - mth);
     if (a < 0) { return 0 - 8; }
-    return _ic_pp_arg(S, a);
+    return _ic_pp_arg(S, a, d);
 }
-# The 1-based index of fi's first parameter declared exactly `**T`, T its type parameter `which`, read from the
-# definition's tokens with `_dps_param`'s cursor put back (as `_ic_ptr_param`); 0 = none.
+# The 1-based index of fi's first parameter declared `*..*T` (two stars or more, `_pp_is_tp`), T its type parameter
+# `which`, read from the definition's tokens with `_dps_param`'s cursor put back (as `_ic_ptr_param`); 0 = none.
 fn _pp_tparam(S, fi, which): i64 {
     var tn = (GFTP(S, fi) >> (which * 32)) & 0xFFFFFFFF;
     if (tn == 0) { return 0; }
@@ -3116,30 +3166,73 @@ fn _pp_tparam(S, fi, which): i64 {
     if (r < 0) { return 0; }
     return r;
 }
-# 1 = the parameter `_dps_param` just read is typed `* * T` (three tokens), T the name at `tn`.
+# 1 = the parameter `_dps_param` just read is typed `*` d times then T (d >= 2: `**T`, 6.7.15's D24 A `***T` and
+# deeper), T the name at `tn`; `_ppt_d` = d.
+var _ppt_d = 0;
 fn _pp_is_tp(S, tn): i64 {
     var i = _dps_ts;
-    if (_dps_te != i + 3) { return 0; }
-    if (TOKTYP(S, i) != 8) { return 0; }
-    if (TOKTYP(S, i + 1) != 8) { return 0; }
-    if (TOKTYP(S, i + 2) != 2) { return 0; }
-    if (TOKVAL(S, i + 2) != tn) { return 0; }
+    var d = 0;
+    while (TOKTYP(S, i + d) == 8) { d = d + 1; }
+    if (d < 2) { return 0; }
+    if (_dps_te != i + d + 1) { return 0; }
+    if (TOKTYP(S, i + d) != 2) { return 0; }
+    if (TOKVAL(S, i + d) != tn) { return 0; }
+    _ppt_d = d;
     return 1;
 }
 # The struct a WHOLE argument at token a reaches through two pointers, as `T` of a `pp: **T` it is passed to: the pin of
 # its step word (`_pp_sid`) — a `**S` local, parameter, capture or global, a field declared `**S` reached through a
 # chain, a call returning `**S` (a generic one at the instance it reaches) — or `&p` of a `*S` local, parameter or
 # global (`_ic_pp_addr`). 6.7.15 (D11 (a)): the same sources of a `**i32` / `**f64` bind that scalar
-# (`_ic_pscalar`). Anything else (a `***S`, a `**u8`, an expression) infers i64.
-fn _ic_pp_arg(S, a): i64 {
+# (`_ic_pscalar`). Anything else (a `***S` into `**T`, a `**u8`, any other expression) infers i64.
+# ⛔ 6.7.15 — PARENTHESES AROUND THE WHOLE ARGUMENT ARE TRANSPARENT (the user's decision D22 A, 2026-10-18) and A
+# TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (D23 A): `tg((pps))`, `tg((&ps))` and `tg(pps + 0)` bind T as
+# `tg(pps)` does — they ran the i64 base (`take(**pp)` faulted: 139, cx 254, PE 5). The arithmetic is read by its
+# typed-pointer operand's step word (`_hl_pw`: `pps + n`, `n + pps`, `(pps) - n`); `&ps + n` is a byte pointer
+# (6.7.11's D15) and binds nothing. `d` the parameter's stars (D24): `_ic_pp_deep`. CHANGELOG [6.7.15]
+fn _ic_pp_arg(S, a, d): i64 {
+    var e = _ic_arith_end(S, a);
+    if (e > 0) { return _ic_pp_deep(S, _hl_pw(S, a, e), d); }
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0 - 8; }
     var t = TOKTYP(S, a);
-    if (t == 27) { return _ic_pp_addr(S, a + 1); }
+    if (t == 27) { return _ic_pp_addr(S, a + 1, d); }
     if (t != 2) { return 0 - 8; }
-    if (TOKTYP(S, a + 1) == 41) { return _ic_pp_sid(S, _ic_pp_chain(S, a)); }
+    if (TOKTYP(S, a + 1) == 41) { return _ic_pp_deep(S, _ic_pp_chain(S, a), d); }
     if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
     var nt = TOKTYP(S, a + 1);
-    if (nt == 10 || nt == 19) { return _ic_pp_sid(S, _fn_ret_ps(_gen_call_inst(S, a))); }
-    return _ic_pp_sid(S, _ic_pp_name(S, TOKVAL(S, a)));
+    if (nt == 10 || nt == 19) { return _ic_pp_deep(S, _fn_ret_ps(_gen_call_inst(S, a)), d); }
+    return _ic_pp_deep(S, _ic_pp_name(S, TOKVAL(S, a)), d);
+}
+# What a `*..*T` parameter of `d` stars binds from its argument's step word `w`: `d - 2` pointees down (`_pp_inner`,
+# one per star past two: a `***S`'s pin names a `**S`), the struct or scalar that pin names (`_ic_pp_sid`).
+# CHANGELOG [6.7.15]
+fn _ic_pp_deep(S, w, d): i64 {
+    while (d > 2) {
+        w = _pp_inner(S, w);
+        d = d - 1;
+    }
+    return _ic_pp_sid(S, w);
+}
+# ⛔ 6.7.15 (D23 A) — the end (its `,` / `)`) of the whole argument at token `a` when it is pointer arithmetic, inside
+# any parentheses: its loosest operator a `+` / `-` (`_gz_split`, the one applied last), else 0 — a name, a call, a
+# tuple literal, a comparison or a bitwise result (`p + 1 & 3` is no pointer) is none. CHANGELOG [6.7.15]
+fn _ic_arith_end(S, a): i64 {
+    var e = _arg_next(S, a);
+    var b = _ie_unparen(S, a, e);
+    var k = _gz_split(S, b, _ie_pe);
+    if (k < 0) { return 0; }
+    var t = TOKTYP(S, k);
+    if (t == 6 || t == 7 || t == 113 || t == 116) { return e; }
+    return 0;
+}
+# ... through a `p: *T` (D23 A): what the arithmetic [a, e)'s typed-pointer operand points at — a struct
+# (`_hl_psid`: a `*S` name, field, call, wrapped), else its scalar pointee's binding (`_ic_pscalar`, D11 (a)); i64 for
+# no typed pointer. CHANGELOG [6.7.15]
+fn _ic_parith(S, a, e): i64 {
+    var s = _hl_psid(S, a, e);
+    if (s > 0) { return s; }
+    return _ic_pscalar(_hl_pw(S, a, e));
 }
 # The struct step word `w`'s pin names (its pointee `*S`'s S), 6.7.15 (D11) else its pointee word's scalar
 # (`_pp_inner`: a `**i32`'s `*i32`), else i64.
@@ -3172,11 +3265,13 @@ fn _ic_pp_chain(S, a): i64 {
     return _fld_ps_get(S, (l >> 32) - 1, l & 0xFFFFFFFF);
 }
 # `&p` with p (token i, the whole argument) a `*S` local, parameter or global: S — 6.7.15 (D11): a `*i32` / `*f64` one
-# its scalar (`_ic_pscalar`). A capture's `&c` is its env copy's address and binds nothing (as `_ic_addr`).
-fn _ic_pp_addr(S, i): i64 {
+# its scalar (`_ic_pscalar`). A capture's `&c` is its env copy's address and binds nothing (as `_ic_addr`). 6.7.15
+# (D24 A): through `d` stars past two, `&pps` of a `**S` binds S as a `***S` does (its pointee is pps's word).
+fn _ic_pp_addr(S, i, d): i64 {
     if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
     var noff = TOKVAL(S, i);
     if (_cl_cap_esl(S, noff) >= 0) { return 0 - 8; }
+    if (d > 2) { return _ic_pp_deep(S, _ic_pp_name(S, noff), d - 1); }
     var li = FINDLOCAL(S, noff);
     if (li >= 0) {
         if (GLPTRP(S, li) == 0) { return 0 - 8; }
