@@ -376,7 +376,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [lib/regression.cyr's capture verbs write the child's stdout to `/tmp/audit_xc_<pid>` / `/tmp/audit_xa_<pid>`, opened O_CREAT | O_TRUNC with no O_EXCL / O_NOFOLLOW: a symlink planted at that name truncates and overwrites the file it points to](2026-10-18-regression-capture-temp-file-at-predictable-tmp-name.md)
 - [lib/regression.cyr opens the output file BEFORE the child's stdin redirect: a caller with fd 0 closed gets the output at fd 0, the stdin redirect overwrites it, and the capture is empty — `regression_exec_in_dir3` / `regression_pipe_to_bin_capture` answer 0 bytes where the control answers 3](2026-10-18-regression-output-fd-overwritten-by-stdin-redirect.md)
 
-**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (98)
+**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (101)
 
 - [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [asm_barrier_options.tcyr's header says a wrong barrier word faults (SIGILL), but a wrong option CRm runs as the full-system barrier](2026-10-18-asm-barrier-options-tcyr-header-claims-a-wrong-word-faults.md)
@@ -444,6 +444,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A refused `var` annotation, then a tuple literal initializer, cascades "a tuple literal cannot initialize 'b' - its declared type is not a tuple"](2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md)
 - [The refused-annotation stand-down matches by (fn, name): a same-named untyped variable in a nested block has its genuine "no struct type in scope" error silenced](2026-10-18-refused-annotation-stand-down-silences-a-shadowing-block-variable.md)
 - [Uses of a refused declaration's names that 6.7.15's stand-downs do not reach: const contexts, a trait bound, an uninitialized `var q: Q;`, a use before the declaration](2026-10-18-refused-declaration-names-cascade-in-const-contexts-bounds-and-uninit.md)
+- [lib/regression.cyr's verbs that write a CALLER's `out_path` open it with the literal 577 (Linux's O_WRONLY|O_CREAT|O_TRUNC): on Darwin that is O_WRONLY|O_ASYNC|O_CREAT, so an existing file is not truncated and keeps its old tail after a shorter output](2026-10-18-regression-caller-out-path-opened-with-linux-flag-bits-on-darwin.md)
 - [A `ret2(..);` right after a `case N:` / `default:` label is not counted as a two-value exit: `var a, b, c = g2(1);` binds a stale register](2026-10-18-ret2-after-case-label-not-counted.md)
 - [A scratch resolve keeps each copy's temp name recorded after the rename, so a kill unlinks a file put there later](2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md)
 - [A second refused `case` label is reported as "expected ':', got identifier 'ww'" instead of its own refusal](2026-10-18-second-refused-case-label-reported-as-expected-colon.md)
@@ -476,6 +477,8 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [The declaration zone's replay reports only the FIRST latched error: every later zone declaration's error is silent](2026-10-18-zone-replay-reports-only-first-latched-error.md)
 - [A declaration-zone untyped generic call returning a generic struct's instance binds nothing when its type argument comes from an expression, a struct carrier or a bounded struct: `var x = mkg1(30 + 3);`, `mkc(BX)` (`b: Box<T>`), `mkb(P)` (`struct G1<T: Show>`) — `x.v` is "no struct type in scope for 'x'", where after the first statement each binds](2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md)
 - [A declaration-zone untyped `var y = b.mkg(P);` / `b.mkg<i32>(33)` — a GENERIC method returning a generic struct's instance (`fn mkg<T>(self, v: T): G1<T>`) — binds nothing (`y.v.a` is "no struct type in scope for 'y'"), where after the first statement it binds the instance](2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md)
+- [A capture verb killed mid-capture leaves its `<base>/audit_x[ca]_<pid>[.N]` file behind for ever: nothing reaps it, and since CYRIUS-2026-0036's O_EXCL a later process with the same pid skips the name instead of reusing it](2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md)
+- [`regression_ssh_remote_exec_capture`'s output-fd lift (6.7.15) is pinned by no row and no static axis: removing it leaves every row and gate green](2026-10-19-ssh-remote-exec-capture-fd-lift-unpinned.md)
 
 **6.7.17 — the full security audit + the refactor / optimization review** (2)
 
