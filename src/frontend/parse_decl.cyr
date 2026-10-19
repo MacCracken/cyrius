@@ -11238,6 +11238,8 @@ fn _gz_late(S, sid, start): i64 {
 # CHANGELOG [6.7.15]
 var _gu_c = 0;    # the call's name token (`_gu_sid`), where the refusal reports
 var _gu_v = 0;    # the declaration zone's untyped globals the sweep may type: (slot, initialiser token, struct) triples
+var _gu_lt = 0;   # the last noted initialiser token (pass 1 notes in token order, so `_gu_find` bisects)
+var _gu_uo = 0;   # 1 once a note was not past the one before it (`_gu_find` then scans)
 # The struct a top-level untyped declaration's initialiser at `start` binds (0 for none), resolved as the receive
 # resolves it (`_gen_resolve_call`, a dedup hit after the parse).
 fn _gu_sid(S, start): i64 {
@@ -11347,6 +11349,8 @@ fn _gu_reg(S, gvi, typed, ti): i64 {
     var t = TOKTYP(S, ti);
     if (t != 2) { if (t != 10) { if (t != 137) { return 0; } } }
     if (_gu_v == 0) { _gu_v = vec_new(); }
+    if (ti <= _gu_lt) { _gu_uo = 1; }
+    _gu_lt = ti;
     vec_push(_gu_v, gvi);
     vec_push(_gu_v, ti);
     vec_push(_gu_v, 0);
@@ -11539,18 +11543,36 @@ fn _gu_recheck(S): i64 {
 fn _gu_agps(S, gvi, ti): i64 {
     if (_gu_v == 0) { return 0; }
     if (GVPM(S, gvi) != 2) { return 0; }
+    var i = _gu_find(ti);
+    if (i < 0) { return 0; }
+    var sid = vec_get(_gu_v, i + 2);
+    if (sid <= 0) { return 0; }
+    if (GVTYPE(S, gvi) != sid) { return 0; }
+    return 0 - sid;
+}
+# The `_gu_v` triple whose initialiser token is `ti` (its index; -1 none). The replay asks once per zone global, so a
+# scan per ask made the zone quadratic in its struct-call globals: the notes are in token order, so it bisects (a scan
+# if one ever was not). CHANGELOG [6.7.15]
+fn _gu_find(ti): i64 {
+    if (_gu_uo == 1) { return _gu_scan(ti); }
+    var lo = 0;
+    var hi = vec_len(_gu_v) / 3;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        var t = vec_get(_gu_v, mid * 3 + 1);
+        if (t == ti) { return mid * 3; }
+        if (t < ti) { lo = mid + 1; } else { hi = mid; }
+    }
+    return 0 - 1;
+}
+fn _gu_scan(ti): i64 {
     var n = vec_len(_gu_v);
     var i = 0;
     while (i < n) {
-        if (vec_get(_gu_v, i + 1) == ti) {
-            var sid = vec_get(_gu_v, i + 2);
-            if (sid <= 0) { return 0; }
-            if (GVTYPE(S, gvi) != sid) { return 0; }
-            return 0 - sid;
-        }
+        if (vec_get(_gu_v, i + 1) == ti) { return i; }
         i = i + 3;
     }
-    return 0;
+    return 0 - 1;
 }
 # ⛔ 6.7.10 (B7-1g) — 1 = global `gvi` is a struct HANDLE of 8 B or less (GVPM 1, a struct type). No
 # global was one before the handle line (every struct global of 8 B or less was inline), so each
