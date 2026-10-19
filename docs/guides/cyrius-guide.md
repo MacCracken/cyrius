@@ -214,7 +214,9 @@ A name that is not a type is a compile error that names it — `unknown type 'No
 variable 'a'`, `... for parameter 'x'`, `... as a fn return type`, `... in sizeof` — and a
 name that only *starts* like one gets a hint (`'i8x' is not 'i8' - a type name must match
 whole`). A type with no place at a site is refused once, its `<..>` with it
-(`fn f(): Vec<i64>` is one error). Before 6.6.16 most sites matched a prefix
+(`fn f(): Vec<i64>` is one error). The variable or parameter whose annotation was refused adds no error of its own (6.7.15): its
+`.field` reads, field stores and `.m()` calls are the annotation's one error (`var x: Foo = 5; return x.a;`, `fn f(q:
+*Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Before 6.6.16 most sites matched a prefix
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`

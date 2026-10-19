@@ -13691,7 +13691,7 @@ fn _pty_name(S, i): i64 {
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
-    _tn_refuse(S, i, " for parameter ", _pty_pnoff(S));
+    _tn_refuse_var(S, i, " for parameter ", _pty_pnoff(S));
     return 0;
 }
 # ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the

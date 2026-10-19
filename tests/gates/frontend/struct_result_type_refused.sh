@@ -448,6 +448,63 @@ syscall(60, 0);
 refuse "U11 var x: Foo = 5  (control)" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return 0; }'"$E" one
 refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q\.mk'" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: i64 = b.mk(); return 0; }'"$E" one
 
+# U13-U28 (6.7.15, issues/2026-10-17-refused-annotation-type-cascades-at-field-uses.md) — a USE of a variable or parameter
+# whose annotation was refused says nothing more: each `.field` read, field store and `.m()` on it printed "no struct type
+# in scope for 'x'; a '.field' access needs its struct declaration" after the "unknown type 'Foo'" line (the declaration
+# parses on as a plain i64). `_tn_refuse_var` (parse_types.cyr) marks it with the late-declaration refusal's stand-down
+# (`_ann_refd_mark` / `_ann_refd_said`, parse_fn_def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
+# level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
+# parameter of a fn — each still "no struct type in scope".
+#   the tree before (`_tn_refuse_var` = `_tn_refuse`, no mark)  -> RED 12: U13-U24 (2-4 error lines each); U25-U28 green
+echo "6.7.15 — a use of a variable whose annotation was refused is not a second error:"
+MS="no struct type in scope for"
+refuse "U13 var x: Foo = 5; return x.a;  (the filed repro)" "$MU" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn mk(self): Q { var q: Q; q.a = 333; q.b = 4; return q; } }
+fn mkq(): Q { var q: Q; q.a = 333; q.b = 4; return q; }
+fn main(): i64 {
+    var x: Foo = 5;
+    return x.a;
+}
+syscall(60, main());
+' one
+refuse "U14 var x: Foo = b.mk(); x.a = 1;  (store)" "$MU" "$UQ"'fn main(): i64 { var b = Q { 1, 2 }; var x: Foo = b.mk(); x.a = 1; return 0; }'"$E" one
+refuse "U15 fn f(q: *Foo) { return q.a; }  (param)" "unknown type 'Foo' for parameter 'q'" "$UQ"'fn f(q: *Foo): i64 { return q.a; }
+fn main(): i64 { return 0; }'"$E" one
+refuse "U16 var x: Foo = 5; return x.m();" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; return x.m(); }'"$E" one
+refuse "U17 var X: Foo = 5; X.a  (top, zone)" "$MU" "$UQ"'var X: Foo = 5;
+syscall(60, X.a);
+' one
+refuse "U18 var X: Foo = 5; X.a  (after a stmt)" "$MU" "$UQ"'var a = 1;
+a = 2;
+var X: Foo = 5;
+X.a = 3;
+syscall(60, X.a);
+' one
+refuse "U19 fn reads a refused zone global X.a" "$MU" "$UQ"'var X: Foo = 5;
+fn g(): i64 { X.b = 1; return X.a + X.m(); }
+syscall(60, g());
+' one
+refuse "U20 var p: *Foo = 0; return p.a;" "unknown type 'Foo' as the target of pointer 'p'" "$UQ"'fn main(): i64 { var p: *Foo = 0; return p.a; }'"$E" one
+refuse "U21 fn f(q: Foo) { return q.a; }  (by value)" "unknown type 'Foo' for parameter 'q'" "$UQ"'fn f(q: Foo): i64 { return q.a; }
+fn main(): i64 { return 0; }'"$E" one
+refuse "U22 a generic's two instances" "$MU" "$UQ"'fn g<T>(v: T): i64 { var y: Foo = 5; return y.a; }
+fn main(): i64 { return g(1) + g(2); }'"$E" one
+refuse "U23 in a closure body" "$MU" "$UQ"'fn main(): i64 { var f = |k| { var x: Foo = 5; return x.a + k; }; return fncall1(f, 0); }'"$E" one
+refuse "U24 each use: x.a = 3; x.b += 1; x.a + x.m()" "$MU" "$UQ"'fn main(): i64 { var x: Foo = 5; x.a = 3; x.b += 1; return x.a + x.m(); }'"$E" one
+refuse "U25 control: var y = 5; return y.a;" "$MS 'y'" "$UQ"'fn main(): i64 { var y = 5; return y.a; }'"$E" one
+refuse "U26 control: another fn's untyped x" "$MS 'x'" "$UQ"'fn f(): i64 { var x: Foo = 5; return 0; }
+fn g(): i64 { var x = 5; return x.a; }
+fn main(): i64 { return f() + g(); }'"$E" 2
+refuse "U27 control: a global named like a refused param" "$MS 'q'" "$UQ"'fn f(q: *Foo): i64 { return 0; }
+var q = 5;
+syscall(60, q.a);
+' 2
+refuse "U28 control: a local named like a refused global" "$MS 'X'" "$UQ"'var X: Foo = 5;
+fn g(): i64 { var X = 5; return X.a; }
+syscall(60, g());
+' 2
+
 # AS (6.7.14, the user's decision D27 (a), 2026-10-16; issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-
 # first-word.md) — a struct result over 8 B ASSIGNED to a scalar (a local, a parameter or a global declared `: i64`,
 # `: u8`, `: f64`, `: cstring`, any annotation naming no struct) is refused with D24's words, "cannot assign 'x: i64'

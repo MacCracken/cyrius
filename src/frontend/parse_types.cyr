@@ -282,6 +282,16 @@ fn _tn_refuse(S, ti, tail, noff2): i64 {
     _panic = 0;
     return 0;
 }
+# `_tn_refuse` for the annotation of a variable or parameter `vnoff`: the variable parses on as a plain i64, so
+# each `.field` / `.m()` / field store on it met the "no struct type in scope" arms — a second error after the
+# annotation's. It is marked (`_ann_refd_mark`, the stand-down the late-declaration refusal shares), so its uses
+# are counted, not reported. Marked whether or not this pass reports (a generic's instances, the zone's replay,
+# pass 1's quiet read report once). CHANGELOG [6.7.15]
+fn _tn_refuse_var(S, ti, tail, vnoff): i64 {
+    _tn_refuse(S, ti, tail, vnoff);
+    if (_syntax_only == 0) { _ann_refd_mark(S, vnoff); }
+    return 0;
+}
 # `i8x` is not `i8`: name the builtin a misspelling starts with, since the prefix used to be enough.
 fn _tn_prefix_note(S, noff): i64 {
     var n = L64(S + 0xEC00000 + noff);
@@ -365,7 +375,7 @@ fn _tn_ann(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) == 10) { STI(S, ti); return _tn_code(6, _tup_type(S, 0)); }   # 6.7.7 (B4): `(T, ..)`
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
-        if (TOKTYP(S, ti + 1) != 28) { _tn_refuse(S, ti, " for variable ", vnoff); }
+        if (TOKTYP(S, ti + 1) != 28) { _tn_refuse_var(S, ti, " for variable ", vnoff); }
     }
     return c;
 }
@@ -3365,7 +3375,7 @@ fn _tn_ptr(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) != 2) { return 8; }
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
-        _tn_refuse(S, ti, " as the target of pointer ", vnoff);
+        _tn_refuse_var(S, ti, " as the target of pointer ", vnoff);
         return 8;
     }
     if (_tn_class(c) == 1) { return _tn_val(c); }
@@ -3385,7 +3395,7 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
     else {
         var c = _tn_resolve_at(S, ti);
         if (c == 0) {
-            if (quiet == 0) { _tn_refuse(S, ti, " as the target of pointer ", vnoff); }
+            if (quiet == 0) { _tn_refuse_var(S, ti, " as the target of pointer ", vnoff); }
             return 8;
         }
         w = _tn_bytes(S, c);
@@ -3871,7 +3881,7 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
-    _tn_refuse(S, ti, " for parameter ", pnoff);
+    _tn_refuse_var(S, ti, " for parameter ", pnoff);
     return 0;
 }
 
