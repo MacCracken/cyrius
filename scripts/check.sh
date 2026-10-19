@@ -1962,7 +1962,8 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_negative_fd_not_socket.sh"
 
 # 6.6.7 bite 4 — an agnos socket read waits for its deadline on a REAL clock (#95, then the RTC
 # armed on its first non-zero read, then — only with no clock — the pause count) and a timeout
-# is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
+# is -11, not EOF; a stalled send is retried. Fake-kernel tiers (6.7.16: the live exchange under
+# mirshi, another project's binary, left the gate — that run is agnos's own CI's).
 _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
 
 # 6.6.20 (NET-01) — lib/ws.cyr's ws_close closes its socket through sock_close, never a raw

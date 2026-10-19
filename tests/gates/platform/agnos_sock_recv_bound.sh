@@ -16,14 +16,16 @@
 #
 # Axes 1-4 run the peer against the scripted fake kernel (tests/fixtures/agnos_sctrace.cyr, a
 # PTRACE_SYSEMU tracer: nothing executes, every answer is scripted), which makes each clock tier
-# deterministic and instant. Axis 5 runs a REAL TCP exchange under mirshi (skipped, and said
-# so, when mirshi is absent): a Linux-target cyrius peer on an ephemeral port — never a fixed
-# one, concurrent check.sh runs share the host — that answers after ~2 s. CHANGELOG [6.6.7]
+# deterministic and instant. CHANGELOG [6.6.7]
+# 6.7.16 — axis 5 is gone: it ran a REAL TCP exchange under mirshi, a BUILT binary from another
+# project's checkout, and a language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). The live path
+# under an agnos supervisor is agnos's own CI's check now; axes 1-4 carry every clock tier
+# against the in-tree fake kernel and need nothing outside this checkout.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_sock_recv_bound: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-SRVPID=""
-trap '[ -n "$SRVPID" ] && kill "$SRVPID" 2>/dev/null; rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT
 cd "$R" || exit 2
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL agnos_sock_recv_bound: no build/cycc"; exit 1; }
@@ -110,85 +112,8 @@ trace send0
 check "sys_write retries a 0 (no ACK progress) until the deadline, then -1 (nothing sent)" "-1" "$(mark 2)"
 check "  …and it did retry, not return on the first 0" "yes" "$([ "$(count2 48)" -gt 1 ] && echo yes || echo no)"
 
-# ── axis 5 — a REAL socket under mirshi: a 2 s answer arrives, it is not cut to EOF ──────────
-echo "axis 5 — a real TCP exchange under mirshi (#95 absent there → the RTC tier):"
-MIRSHI="${MIRSHI:-$HOME/Repos/mirshi/build/mirshi}"
-if [ -x "$MIRSHI" ]; then
-    # The peer: Linux-target cyrius, port 0, reports the port it got, answers "hello" after 2 s.
-    cat > "$T/srv.cyr" <<'EOF'
-include "lib/syscalls.cyr"
-include "lib/alloc.cyr"
-include "lib/string.cyr"
-include "lib/tagged.cyr"
-include "lib/net.cyr"
-include "lib/fmt.cyr"
-alloc_init();
-var s_t, s = tcp_socket();
-sock_bind(s, INADDR_LOOPBACK(), 0);
-sock_listen(s, 1);
-var sa[16];
-var al[8];
-store64(&al, 16);
-sys_getsockname(s, &sa, &al);
-var port = (load8(&sa + 2) << 8) | load8(&sa + 3);
-var pb[32];
-var pl = fmt_int_buf(port, &pb);
-syscall(SYS_WRITE, 1, &pb, pl);
-syscall(SYS_WRITE, 1, "\n", 1);
-var c_t, c = sock_accept(s);
-var ts[16];
-store64(&ts, 2);
-store64(&ts + 8, 0);
-sys_nanosleep(&ts, 0);
-sys_write(c, "hello", 5);
-sys_nanosleep(&ts, 0);
-sys_exit(0);
-EOF
-    cat > "$T/cli.cyr" <<'EOF'
-include "lib/syscalls.cyr"
-include "lib/alloc.cyr"
-include "lib/string.cyr"
-include "lib/tagged.cyr"
-include "lib/args.cyr"
-include "lib/net.cyr"
-alloc_init();
-args_init();
-AGNOS_SOCK_RECV_MAX_SPINS = 300;
-var p = argv(1);
-var port = 0;
-var i = 0;
-while (load8(p + i) != 0) { port = port * 10 + load8(p + i) - 48; i = i + 1; }
-var fd_t, fd = tcp_socket();
-var cr_t, cr = sock_connect(fd, INADDR_LOOPBACK(), port);
-var b[16];
-var r = sys_read(fd, &b, 16);
-if (r == 5) { sys_exit(42); }
-sys_exit(10 + r);
-EOF
-    "$CC" < "$T/srv.cyr" > "$T/srv" 2>/dev/null && chmod +x "$T/srv"
-    CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/cli.cyr" > "$T/cli" 2>/dev/null && chmod +x "$T/cli"
-    "$T/srv" > "$T/port" 2>/dev/null &
-    SRVPID=$!
-    k=0; while [ ! -s "$T/port" ] && [ "$k" -lt 50 ]; do sleep 0.1; k=$((k + 1)); done
-    PORT=$(head -1 "$T/port" 2>/dev/null)
-    if [ -z "$PORT" ]; then
-        check "the Linux TCP peer bound an ephemeral port" "a port" "none"
-    else
-        rc=0
-        timeout 60 "$MIRSHI" --net-allow 127.0.0.1/32 "$T/cli" "$PORT" > /dev/null 2>&1 || rc=$?
-        # 42 = the 5 bytes arrived; 10 = the read returned 0 (the pre-fix early "EOF").
-        check "a read on a peer that answers after 2 s gets its 5 bytes (not an early EOF)" "42" "$rc"
-    fi
-    kill "$SRVPID" 2>/dev/null || true; SRVPID=""
-else
-    echo "  SKIP: mirshi not built at $MIRSHI — axes 1-4 carry the tiers; this is the live path"
-    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
-fi
-
 echo ""
 if [ "$fails" = "0" ]; then
-    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
-    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: agnos_sock_recv_bound — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: agnos_sock_recv_bound — socket waits are timed by a real clock and a timeout is -11"
     exit 0
 fi

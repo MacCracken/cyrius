@@ -29,6 +29,12 @@
 # ⭐ AXIS 2 IS THE ANTI-VACUOUS ONE. A source grep alone would pass if the wrapper were never
 # linked; axis 2 compiles for AGNOS and asserts the syscall immediate 95 (0x5f) is actually
 # EMITTED. Axis 3 proves the non-AGNOS path was not disturbed.
+#
+# 6.7.16 — the RUNTIME axis is gone (axis 5: the refused-calibration probe run under mirshi, a
+# BUILT binary from another project's checkout). A language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md): running
+# cyrius-built agnos programs is agnos's own CI's check now. Axes 1-4 are static — the source
+# scan and the emitted code — and need nothing outside this checkout, so the gate never SKIPs.
 # v6.6.5 (review): SHELL-AGNOSTIC. Every `llvm-objdump ... | grep -q ...` here false-RED'd
 # under `bash -eo pipefail` — grep -q closes the pipe on its first hit, objdump takes
 # SIGPIPE, and pipefail makes the pipeline 141, so the gate printed axis 3's FAIL text on a
@@ -44,7 +50,7 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_monotonic_clock_rdtsc: mkte
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL agnos_monotonic_clock_rdtsc: no build/cycc"; exit 1; }
 # Every probe below does `include "lib/..."`, which resolves against the CWD — so the gate runs
-# FROM ITS OWN TREE. Run from elsewhere, axis 1 read $R/lib while axes 2/4/5 compiled whatever
+# FROM ITS OWN TREE. Run from elsewhere, axis 1 read $R/lib while axes 2/4 compiled whatever
 # lib/ the caller's CWD held, and the gate judged two different trees at once. CHANGELOG [6.6.7]
 cd "$R" || { echo "FAIL agnos_monotonic_clock_rdtsc: cannot cd to the tree root $R"; exit 1; }
 
@@ -228,65 +234,5 @@ else
   echo "  (llvm-objdump absent — axis 4 emission checks skipped)"
 fi
 
-# ── axis 5 — 6.6.7 RUNTIME, under mirshi: a refused-calibration clock ADVANCES, latched ─────
-# mirshi answers #95 with ENOSYS → -1 (and one stderr line per call), which is exactly the
-# refused-calibration boot. The probe first checks that premise with a raw #95 read and exits
-# 10 if #95 answers >= 0 — a mirshi that emulates #95 cannot reach the fallback, so the axis
-# SKIPs BY NAME rather than passing vacuously. Then it waits 10 ms on clock_now_ms and 5 ms on
-# bench's now_ns, each with a poll cap (3 / 4 = the clock stood still). Pre-6.6.7 both stuck,
-# and printed one ENOSYS line per read; the latch allows at most one per clock (+1 for the
-# probe's own premise read).
-MIRSHI="$HOME/Repos/mirshi/build/mirshi"
-RT="mirshi absent — runtime axis skipped"
-if [ -x "$MIRSHI" ]; then
-cat > "$T/rt.cyr" <<'EOF'
-include "lib/syscalls.cyr"
-include "lib/alloc.cyr"
-include "lib/string.cyr"
-include "lib/fmt.cyr"
-include "lib/vec.cyr"
-include "lib/fnptr.cyr"
-include "lib/chrono.cyr"
-include "lib/bench.cyr"
-fn main(): i64 {
-    if (syscall(95) >= 0) { return 10; }
-    var t0 = clock_now_ms();
-    var p = 0;
-    while (clock_now_ms() - t0 < 10) { p = p + 1; if (p > 20000) { return 3; } }
-    if (p < 2) { return 5; }
-    var b0 = now_ns();
-    p = 0;
-    while (now_ns() - b0 < 5000000) { p = p + 1; if (p > 20000) { return 4; } }
-    if (p < 2) { return 6; }
-    return 0;
-}
-var r = main();
-sys_exit(r);
-EOF
-  CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/rt.cyr" > "$T/rt.out" 2>"$T/rt.cerr" || {
-    echo "FAIL agnos_monotonic_clock_rdtsc axis5: CYRIUS_TARGET_AGNOS build of the runtime probe failed"
-    grep -E '^error' "$T/rt.cerr" | head -3 | sed 's/^/    /'; exit 1; }
-  chmod +x "$T/rt.out"
-  # `rc=0; (...) || rc=$?`, never `(...); rc=$?` — under `bash -e` a nonzero probe exit aborts
-  # the gate SILENTLY before the case below, so the named SKIP (10) and FAILs (3/4) never print.
-  rc=0
-  ( cd "$T" && "$MIRSHI" ./rt.out > "$T/rt.so" 2> "$T/rt.se" ) || rc=$?
-  case "$rc" in
-    0)
-      NE=$(grep -c '#95' "$T/rt.se" || true)
-      [ "$NE" -le 3 ] || {
-        echo "FAIL agnos_monotonic_clock_rdtsc axis5: $NE mirshi '#95' stderr lines for two clock waits —"
-        echo "  a clock is re-trying #95 on every read instead of latching to #40."; exit 1; }
-      RT="mirshi: both clocks advance on a refused-calibration #95, $NE #95 calls total (latched)" ;;
-    10) RT="SKIP axis5 by name: this mirshi answers #95 >= 0 (it emulates uptime_us), so the refused-calibration fallback is unreachable here"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)) ;;
-    3) echo "FAIL agnos_monotonic_clock_rdtsc axis5: clock_now_ms stood still under mirshi (#95 = -1) — 20000 polls, no 10 ms elapsed"; exit 1 ;;
-    4) echo "FAIL agnos_monotonic_clock_rdtsc axis5: bench now_ns stood still under mirshi (#95 = -1) — 20000 polls, no 5 ms elapsed"; exit 1 ;;
-    *) echo "FAIL agnos_monotonic_clock_rdtsc axis5: runtime probe under mirshi exited $rc"
-       head -5 "$T/rt.se" | sed 's/^/    /'; exit 1 ;;
-  esac
-fi
-
-# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
-if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: agnos_monotonic_clock_rdtsc — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS agnos_monotonic_clock_rdtsc: $NR1 #95 readers in lib/ all test the -1 sentinel, #40 only as the fallback, clock_now_ns + bench now_ns latched · both AGNOS builds emit syscall 95 + 40 and no raw 228 · the Linux path still uses clock_gettime · $RT"
+echo "PASS agnos_monotonic_clock_rdtsc: $NR1 #95 readers in lib/ all test the -1 sentinel, #40 only as the fallback, clock_now_ns + bench now_ns latched · both AGNOS builds emit syscall 95 + 40 and no raw 228 · the Linux path still uses clock_gettime"
 exit 0

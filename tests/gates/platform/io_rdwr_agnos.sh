@@ -7,20 +7,21 @@
 # bits are identical Linux↔agnos (RDONLY/WRONLY/RDWR = 0/1/2), so they pass through:
 #   ao = ao | (flags & 3);
 # Asserts: (1) the Linux round-trip (create+write O_RDWR, close, reopen O_RDWR, read)
-# exits 42; (2) the agnos-target build compiles clean; (3) if mirshi is present, the
-# agnos binary round-trips read-after-write under mirshi (exits 42 — the real fix
-# check; pre-fix exits 4 on the reopened-fd read); (4) source integrity — io.cyr's
+# exits 42; (2) the agnos-target build compiles clean; (4) source integrity — io.cyr's
 # agnos branch passes the access mode through, not a fold-to-WRONLY.
 # See 2026-07-08-io-file-open-agnos-rdwr-downgraded-to-wronly.md.
 # v6.6.4 (5): the security bits. `file_open` bridged O_DIRECTORY→AO_DIRECTORY but DROPPED
 # O_NOFOLLOW and O_EXCL under a comment saying agnos has no such bits — the kernel added
 # AO_NOFOLLOW (0x1000) at 1.56.53 and AO_EXCL (0x2000) at 1.56.56 and its ABI doc listed
 # both as "the cyrius peer is still owed". So patra's WAL open (`O_RDWR|O_CREAT|O_TRUNC|
-# O_NOFOLLOW`) followed a symlink and truncated its target on agnos. Asserts, under mirshi
-# (≥ 1.11.2, which translates both bits): O_NOFOLLOW on a symlink is refused and the plain
-# open of the same path succeeds; O_CREAT|O_EXCL on an existing file is refused and O_CREAT
-# alone succeeds. Plus source integrity for both bridge lines, so the axis has teeth
-# without mirshi.
+# O_NOFOLLOW`) followed a symlink and truncated its target on agnos. Asserts (5): the probe —
+# O_NOFOLLOW on a symlink is refused and the plain open of the same path succeeds; O_CREAT|O_EXCL
+# on an existing file is refused and O_CREAT alone succeeds — exits 42 on Linux, builds clean
+# for agnos, and the source carries both bridge lines and both AO_* constants.
+# 6.7.16 — part (3) and (5)'s agnos leg are gone: they RAN the agnos binaries under mirshi, a
+# BUILT binary from another project's checkout, and a language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). Running
+# cyrius-built agnos programs is agnos's own CI's check now; what stays needs only this checkout.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 # v6.6.6: a CHECKED mktemp dir, and every probe path lives inside it. The probes used FIXED
@@ -64,23 +65,15 @@ EOF
 # (1) Linux round-trip.
 sed "s|@TMP@|$TMP|g" "$TMP/rw.cyr.in" > "$TMP/rw.cyr" && [ -s "$TMP/rw.cyr" ] || { echo "FAIL: cannot write the O_RDWR probe into $TMP"; exit 1; }
 cat "$TMP/rw.cyr" | build/cycc > "$TMP/rw_lin" 2>/dev/null || { echo "FAIL: Linux O_RDWR build"; exit 1; }
-chmod +x "$TMP/rw_lin"; "$TMP/rw_lin" >/dev/null 2>&1; el=$?
+# `el=0; … || el=$?`, never `…; el=$?`: the probe exits 42 when it PASSES, and under `bash -e`
+# a bare non-zero exit ended the gate there with no verdict (6.7.16).
+chmod +x "$TMP/rw_lin"; el=0; "$TMP/rw_lin" >/dev/null 2>&1 || el=$?
 [ "$el" = "42" ] || { echo "FAIL: Linux O_RDWR round-trip exit=$el (expect 42)"; exit 1; }
 
 # (2) agnos build compiles clean.
 cat "$TMP/rw.cyr" | CYRIUS_TARGET_AGNOS=1 build/cycc > "$TMP/rw_agnos" 2>/dev/null \
   || { echo "FAIL: agnos O_RDWR build"; exit 1; }
-chmod +x "$TMP/rw_agnos"
-
-# (3) mirshi (agnos→Linux supervisor), if present, runs the real agnos round-trip.
-MIRSHI="$HOME/Repos/mirshi/build/mirshi"
-if [ -x "$MIRSHI" ]; then
-    "$MIRSHI" "$TMP/rw_agnos" >/dev/null 2>&1; em=$?
-    [ "$em" = "42" ] || { echo "FAIL: agnos O_RDWR under mirshi exit=$em (expect 42; pre-fix=4 read-on-write-only)"; exit 1; }
-    MIR="mirshi round-trip=42"
-else
-    MIR="mirshi absent (agnos build clean only)"
-fi
+[ -s "$TMP/rw_agnos" ] || { echo "FAIL: the agnos O_RDWR build is EMPTY"; exit 1; }
 
 # (5) v6.6.4: O_NOFOLLOW / O_EXCL reach the kernel as AO_NOFOLLOW / AO_EXCL.
 cat > "$TMP/sec.cyr.in" <<'EOF'
@@ -114,17 +107,11 @@ sed "s|@TMP@|$TMP|g" "$TMP/sec.cyr.in" > "$TMP/sec.cyr" && [ -s "$TMP/sec.cyr" ]
 cat "$TMP/sec.cyr" | build/cycc > "$TMP/sec_lin" 2>/dev/null || { echo "FAIL: Linux O_NOFOLLOW/O_EXCL build"; exit 1; }
 chmod +x "$TMP/sec_lin"
 rm -f "$TMP/sec_link" "$TMP/sec_target"; ln -s "$TMP/sec_target" "$TMP/sec_link"
-"$TMP/sec_lin" >/dev/null 2>&1; es=$?
+es=0; "$TMP/sec_lin" >/dev/null 2>&1 || es=$?
 [ "$es" = "42" ] || { echo "FAIL: Linux O_NOFOLLOW/O_EXCL probe exit=$es (expect 42; 3=NOFOLLOW followed, 4=EXCL clobbered)"; exit 1; }
 cat "$TMP/sec.cyr" | CYRIUS_TARGET_AGNOS=1 build/cycc > "$TMP/sec_agnos" 2>/dev/null \
   || { echo "FAIL: agnos O_NOFOLLOW/O_EXCL build"; exit 1; }
-chmod +x "$TMP/sec_agnos"
-if [ -x "$MIRSHI" ]; then
-    rm -f "$TMP/sec_link" "$TMP/sec_target"; ln -s "$TMP/sec_target" "$TMP/sec_link"
-    "$MIRSHI" "$TMP/sec_agnos" >/dev/null 2>&1; em2=$?
-    [ "$em2" = "42" ] || { echo "FAIL: agnos O_NOFOLLOW/O_EXCL under mirshi exit=$em2 (expect 42; 3=O_NOFOLLOW dropped → symlink followed, 4=O_EXCL dropped → existing file clobbered; needs mirshi ≥ 1.11.2)"; exit 1; }
-    MIR="$MIR; O_NOFOLLOW/O_EXCL refused under mirshi=42"
-fi
+[ -s "$TMP/sec_agnos" ] || { echo "FAIL: the agnos O_NOFOLLOW/O_EXCL build is EMPTY"; exit 1; }
 rm -f "$TMP/sec_link" "$TMP/sec_target"
 grep -q 'if ((flags & 131072) != 0) { ao = ao | 0x1000; }' lib/io.cyr \
   || { echo "FAIL: lib/io.cyr agnos branch no longer bridges O_NOFOLLOW -> AO_NOFOLLOW (0x1000)"; exit 1; }
@@ -139,5 +126,5 @@ grep -q 'ao = ao | (flags & 3);' lib/io.cyr \
 grep -q 'if ((flags & 3) != 0) { ao = ao | 0x1; }' lib/io.cyr \
   && { echo "FAIL: lib/io.cyr still folds O_RDWR→AO_WRONLY (the bug)"; exit 1; }
 
-echo "OK: O_RDWR Linux round-trip=42; agnos build clean; $MIR; io.cyr passes access mode through; O_NOFOLLOW/O_EXCL bridged (Linux probe=42)"
+echo "PASS: io_rdwr_agnos — O_RDWR Linux round-trip=42; both agnos builds clean; io.cyr passes access mode through; O_NOFOLLOW/O_EXCL bridged (Linux probe=42)"
 exit 0
