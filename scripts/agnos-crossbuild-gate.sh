@@ -2,16 +2,20 @@
 # AGNOS cross-build gate (v6.0.87 — the arc-.32 gate). The `CYRIUS_TARGET_AGNOS`
 # target landed .48-.49 + boot-to-prompt .55-.56, but nothing GUARDS agnos
 # codegen from silent rot — the exact "found by ports" class that rotted the
-# macOS port for 9 minors. This compiles a representative agnos-target program
-# (+ agnoshi, the gating consumer, if checked out) and asserts a valid agnos-ABI
-# ELF. Runs in CI (ci.yml) and standalone.
+# macOS port for 9 minors. This compiles representative in-tree agnos-target
+# programs and asserts a valid agnos-ABI ELF. Runs in CI (ci.yml) and standalone.
 #
 #   sh scripts/agnos-crossbuild-gate.sh
 #
-# Exit 0 = pass. A missing agnoshi checkout is FLAGGED (not silently skipped,
-# per feedback_flag_missing_repos_dont_skip) but does not fail the gate — the
-# always-present in-tree probe is the hard gate. Set CYRIUS_AGNOSHI_DIR to point
-# at a non-default agnoshi checkout.
+# Exit 0 = pass. Everything it builds is in this checkout. 6.7.16: part 2 — the
+# cross-build of agnoshi's agnsh from a sibling checkout ($CYRIUS_AGNOSHI_DIR, else
+# ../agnoshi) — is gone: a language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). A
+# consumer's cross-build is that consumer's CI's check.
+# 6.7.16: every disassembly is written to a file and grepped there, never `objdump | grep -q`
+# or `echo "$dis" | grep -q` — under `bash -eo pipefail` grep -q's early exit SIGPIPEs the
+# writer and the pipeline fails: a false RED on the `|| FAIL` checks (measured: "server probe
+# emits no syscall 56") and a false GREEN on the `&& FAIL` one.
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -190,9 +194,9 @@ build/cyrius build --agnos "$W/_agnos_server_gate.cyr" "$W/_agnos_server_gate.ou
     || { echo "FAIL: CYRIUS_TARGET_AGNOS server-socket peer did not compile (#56/#57 / listen-fd adapter regression)"; exit 1; }
 assert_agnos_elf "$W/_agnos_server_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    sdis=$(objdump -d -M intel "$W/_agnos_server_gate.out" 2>/dev/null)
-    echo "$sdis" | grep -qE 'mov +eax,0x38\b' || { echo "FAIL: server probe emits no syscall 56 (sock_listen rotted to a stub?)"; exit 1; }
-    echo "$sdis" | grep -qE 'mov +eax,0x39\b' || { echo "FAIL: server probe emits no syscall 57 (sock_accept rotted to a stub?)"; exit 1; }
+    objdump -d -M intel "$W/_agnos_server_gate.out" > "$W/_agnos_server_gate.dis" 2>/dev/null || true
+    grep -qE 'mov +eax,0x38\b' "$W/_agnos_server_gate.dis" || { echo "FAIL: server probe emits no syscall 56 (sock_listen rotted to a stub?)"; exit 1; }
+    grep -qE 'mov +eax,0x39\b' "$W/_agnos_server_gate.dis" || { echo "FAIL: server probe emits no syscall 57 (sock_accept rotted to a stub?)"; exit 1; }
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS server-socket peer (#56/#57) -> valid agnos ELF + emits sock_listen/sock_accept"
 
@@ -223,13 +227,13 @@ build/cyrius build --agnos "$W/_agnos_fs_gate.cyr" "$W/_agnos_fs_gate.out" >/dev
     || { echo "FAIL: CYRIUS_TARGET_AGNOS fs dir-listing peer did not compile (fs.cyr agnos getdents/dirent branch regression)"; exit 1; }
 assert_agnos_elf "$W/_agnos_fs_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    fdis=$(objdump -d -M intel "$W/_agnos_fs_gate.out" 2>/dev/null)
-    echo "$fdis" | grep -qE 'mov +eax,0x1d\b' || { echo "FAIL: fs probe emits no syscall 29 (agnos getdents rotted to Linux #217?)"; exit 1; }
+    objdump -d -M intel "$W/_agnos_fs_gate.out" > "$W/_agnos_fs_gate.dis" 2>/dev/null || true
+    grep -qE 'mov +eax,0x1d\b' "$W/_agnos_fs_gate.dis" || { echo "FAIL: fs probe emits no syscall 29 (agnos getdents rotted to Linux #217?)"; exit 1; }
     # AO_DIRECTORY(0x800) MUST be the open flag: without it the agnos kernel
     # routes to ext2_open() which rejects a directory inode (-1), so dir_list
     # returns empty + is_dir returns 0 for every dir. This guards the exact
     # P0 the v6.2.23 adversarial review caught (open flags=0 was dead on agnos).
-    echo "$fdis" | grep -qE 'mov +e[a-z]+,0x800\b' || { echo "FAIL: fs probe does not pass AO_DIRECTORY(0x800) to sys_open (dir opens dead on agnos)"; exit 1; }
+    grep -qE 'mov +e[a-z]+,0x800\b' "$W/_agnos_fs_gate.dis" || { echo "FAIL: fs probe does not pass AO_DIRECTORY(0x800) to sys_open (dir opens dead on agnos)"; exit 1; }
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS fs dir-listing peer (getdents #29 + AO_DIRECTORY open + dirent §4.2) -> valid agnos ELF"
 
@@ -300,7 +304,8 @@ if grep -q "undefined function 'file_" "$W/_agnos_flock_gate.log"; then
 fi
 assert_agnos_elf "$W/_agnos_flock_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    objdump -d -M intel "$W/_agnos_flock_gate.out" 2>/dev/null | grep -qE 'mov +e[a-z]+,0x3b\b' \
+    objdump -d -M intel "$W/_agnos_flock_gate.out" > "$W/_agnos_flock_gate.dis" 2>/dev/null || true
+    grep -qE 'mov +e[a-z]+,0x3b\b' "$W/_agnos_flock_gate.dis" \
         || { echo "FAIL: io flock probe emits no SYS_FLOCK #59 (0x3b) — agnos flock rotted to raw Linux #73?"; exit 1; }
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS io.cyr file-lock helpers (xflock #59 + xlseek SEEK_END) -> defined + valid agnos ELF"
@@ -347,9 +352,9 @@ if grep -q "undefined function 'sys_net_\|undefined function 'sys_winsize\|undef
 fi
 assert_agnos_elf "$W/_agnos_signet_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    ndis=$(objdump -d -M intel "$W/_agnos_signet_gate.out" 2>/dev/null)
-    echo "$ndis" | grep -qE 'mov +eax,0x3d\b' || { echo "FAIL: probe emits no SYS_NET_CONFIG #61 (0x3d) — net_config rotted to a stub?"; exit 1; }
-    echo "$ndis" | grep -qE 'mov +eax,0x3c\b' || { echo "FAIL: probe emits no SYS_WINSIZE #60 (0x3c) — winsize rotted to a stub?"; exit 1; }
+    objdump -d -M intel "$W/_agnos_signet_gate.out" > "$W/_agnos_signet_gate.dis" 2>/dev/null || true
+    grep -qE 'mov +eax,0x3d\b' "$W/_agnos_signet_gate.dis" || { echo "FAIL: probe emits no SYS_NET_CONFIG #61 (0x3d) — net_config rotted to a stub?"; exit 1; }
+    grep -qE 'mov +eax,0x3c\b' "$W/_agnos_signet_gate.dis" || { echo "FAIL: probe emits no SYS_WINSIZE #60 (0x3c) — winsize rotted to a stub?"; exit 1; }
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS signal constants + sigset wrappers (1<<sig) + net_config #61 + winsize #60 -> defined + correct numbers + valid agnos ELF"
 
@@ -406,16 +411,18 @@ if command -v objdump >/dev/null 2>&1; then
     # is wrong — proven by mutation (#84 -> 99 still reported PASS). The real syscall
     # number is the `mov eax,0xNN` immediately preceding each `syscall`, so extract that
     # set and assert membership. CHANGELOG [6.4.70].
-    gnums=$(objdump -d -M intel "$W/_agnos_gpu_gate.out" 2>/dev/null | awk '
+    objdump -d -M intel "$W/_agnos_gpu_gate.out" > "$W/_agnos_gpu_gate.dis" 2>/dev/null || true
+    gnums=$(awk '
       /mov +eax,0x[0-9a-f]+/ { if (match($0, /0x[0-9a-f]+$/)) last=substr($0, RSTART, RLENGTH) }
-      /\<syscall\>/ { if (last != "") { print last; last="" } }' | sort -u)
+      /\<syscall\>/ { if (last != "") { print last; last="" } }' "$W/_agnos_gpu_gate.dis" | sort -u)
+    printf '%s\n' "$gnums" > "$W/_agnos_gpu_gate.nums"
     for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL \
                 0x56:86:SYS_SHM_CREATE_GPU 0x57:87:SYS_GPU_BLIT_SHM 0x58:88:SYS_GPU_FILL_RECT 0x59:89:SYS_GPU_CAPS \
                 0x5a:90:SYS_GPU_READBACK_SHM 0x5b:91:SYS_GPU_BLIT_BB \
                 0x5c:92:SYS_GPU_SHADER_OP 0x5d:93:SYS_GPU_MODESET_OP \
                 0x5e:94:SYS_GPU_RECOVER_OP 0x5f:95:SYS_UPTIME_US; do
         hex=${want%%:*}; rest=${want#*:}; dec=${rest%%:*}; nm=${rest#*:}
-        echo "$gnums" | grep -qw "$hex" \
+        grep -qw "$hex" "$W/_agnos_gpu_gate.nums" \
             || { echo "FAIL: gpu probe emits no $nm #$dec ($hex) AT A SYSCALL SITE — band rotted to a stub or renumbered?"; exit 1; }
     done
 fi
@@ -438,20 +445,9 @@ if build/cyrius build "$W/_agnos_gpu_gate.cyr" "$W/_agnos_gpu_linux.out" >"$W/_a
     exit 1
 fi
 if command -v objdump >/dev/null 2>&1 && [ -f "$W/_agnos_gpu_linux.out" ]; then
-    objdump -d -M intel "$W/_agnos_gpu_linux.out" 2>/dev/null | grep -qE 'mov +eax,0x5[2-9a-d]\b' \
+    objdump -d -M intel "$W/_agnos_gpu_linux.out" > "$W/_agnos_gpu_linux.dis" 2>/dev/null || true
+    grep -qE 'mov +eax,0x5[2-9a-d]\b' "$W/_agnos_gpu_linux.dis" \
         && { echo "FAIL: a Linux build emitted syscall 82-93 (rename..fchown) for the gpu band"; exit 1; }
 fi
 rm -f "$W/_agnos_gpu_linux.out"
 echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82-#95 correct numbers) + ABSENT on Linux (8 destructive rows gated)"
-
-# 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
-AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
-if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then
-    ( cd "$AGNOSHI" && CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_NO_WARN_SHADOW_LIB=1 \
-        "$ROOT/build/cyrius" build --agnos src/agnsh.cyr "$W/_agnsh_gate.out" >/dev/null 2>&1 ) \
-        || { echo "FAIL: agnoshi did not cross-build for CYRIUS_TARGET_AGNOS"; exit 1; }
-    assert_agnos_elf "$W/_agnsh_gate.out"
-    echo "PASS: agnoshi (agnsh) -> valid agnos ELF"
-else
-    echo "FLAG: agnoshi checkout not at $AGNOSHI (set CYRIUS_AGNOSHI_DIR) — consumer cross-build NOT verified"
-fi

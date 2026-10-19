@@ -1821,8 +1821,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 # real in-repo regression.
 
 # ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
-# This gate compiles ten CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55, the
-# server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band, agnoshi).
+# This gate compiles nine in-tree CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55,
+# the server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band; the tenth,
+# agnoshi from a sibling checkout, left in 6.7.16).
 # It lived ONLY in `.github/workflows/ci.yml`, so `release-gate.sh` — the thing CLAUDE.md calls
 # the single consolidated pre-tag check — was structurally blind to it.
 #
