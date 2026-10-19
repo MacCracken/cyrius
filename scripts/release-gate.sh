@@ -21,7 +21,8 @@
 #                           (the ONE tracked cross-bin; nothing checked it and it went
 #                            ~60 releases stale — v6.6.6. Skipped under --quick.)
 #   2. SEED DERIVE          seed -> cybs -> cycc byte-identical          [the critical one]
-#   3. check.sh             all gates green; a SKIP fails unless RG_SKIP_ALLOW names it
+#   3. check.sh             all gates green; a SKIP fails unless RG_SKIP_ALLOW names it (empty
+#                           since 6.7.16: no SKIP passes)
 #   4. cross-OS self-host   ecb (macOS-arm64) + ach (Intel-Mac) + cass (Windows) + pi
 #                           (aarch64), REAL hardware
 #   5. bench                record self_compile + cycc size              (non-blocking)
@@ -31,7 +32,8 @@
 #   sh scripts/release-gate.sh --quick    steps 1-3 only (LOCAL ITERATION — NOT release-ready)
 #   sh scripts/release-gate.sh --check-verdict <check.sh output> <its exit status>
 #                                         step 3's verdict alone, over a saved run; runs
-#                                         nothing (tests/gates/toolchain/release_gate_check_verdict.sh)
+#                                         nothing (tests/gates/toolchain/release_gate_check_verdict.sh);
+#                                         this mode alone reads RG_SKIP_ALLOW_FIXTURE (below)
 
 # Step 3 — the gates allowed to SKIP (exit 77, "could not run its check"), by exact path, one
 # per line. ANY other SKIP fails the step. check.sh itself exits 0 over a SKIP ("GREEN, with N
@@ -39,12 +41,11 @@
 # green over gates that never checked anything (CI runs its delegated rows under
 # CYRIUS_CHECK_NO_SKIP=1; this did not). Each entry needs its reason; widening the list is a
 # decision, not a fix. CHANGELOG [6.6.20]
-#   agnos_monotonic_clock_rdtsc  axis 5's refused-calibration fallback is unreachable on a
-#                                mirshi that answers #95 (the dev box's does)
-#   agnos_sysinfo_tail_parity    its runtime axis's pre-1.57.9 path is unreachable on a mirshi
-#                                that fills sched_kicks (the dev box's does)
-RG_SKIP_ALLOW="tests/gates/platform/agnos_monotonic_clock_rdtsc.sh
-tests/gates/platform/agnos_sysinfo_tail_parity.sh"
+# EMPTY since 6.7.16: the release gate allows NO SKIP. Its two entries existed only for runtime
+# axes run under another project's built binary, and those axes left the gates (a language does
+# not gate on other projects — docs/development/issues/2026-10-19-gates-read-other-projects-
+# checkouts.md). The mechanism stays: an entry here is a decision with its reason, never a fix.
+RG_SKIP_ALLOW=""
 
 # Step 3's verdict over a check.sh output file <$1> and its exit status <$2>. Prints what it
 # read; returns 1 with the reason in _RG_WHY. A function so a gate can drive it with fixtures.
@@ -114,6 +115,10 @@ _rg_check_verdict() {
 if [ "${1:-}" = "--check-verdict" ]; then
     [ -f "${2:-}" ] && [ -n "${3:-}" ] ||
         { echo "usage: sh scripts/release-gate.sh --check-verdict <check.sh output> <its exit status>" >&2; exit 2; }
+    # A FIXTURE allow list, read by this mode alone (it runs nothing, so it certifies nothing):
+    # with RG_SKIP_ALLOW empty, a gate still proves the allowed-SKIP path — and that the entries
+    # match by exact path — through it. Step 3 below never reads it. (6.7.16)
+    if [ -n "${RG_SKIP_ALLOW_FIXTURE+x}" ]; then RG_SKIP_ALLOW=$RG_SKIP_ALLOW_FIXTURE; fi
     if _rg_check_verdict "$2" "$3"; then echo "STEP 3: GREEN"; exit 0; fi
     echo "STEP 3: RED — $_RG_WHY"
     exit 1
@@ -273,7 +278,8 @@ step "3/5" "check.sh (full gate suite)"
 #
 # 6.6.20: the verdict is `_rg_check_verdict` (top of this file): check.sh's exit status, the
 # DRIVER's tally line (not the last "passed, N failed" a shell gate printed), and every SKIP
-# on RG_SKIP_ALLOW — check.sh exits 0 over a SKIP, and that 0 used to be taken as green.
+# on RG_SKIP_ALLOW (empty since 6.7.16, so any SKIP is RED) — check.sh exits 0 over a SKIP, and
+# that 0 used to be taken as green.
 #
 # `|| rc=$?` keeps this working under `set -e`.
 rc=0

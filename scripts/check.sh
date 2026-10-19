@@ -1739,7 +1739,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 # 6.6.20 — release-gate.sh step 3's verdict over a check.sh run, driven with fixtures through
 # `release-gate.sh --check-verdict` (it runs neither check.sh nor the release gate). Step 3
 # took check.sh's exit 0 over SKIPped gates (check.sh exits 0 on "GREEN, with N SKIPPED") and
-# printed the last shell gate's tally as the driver's. Every SKIP must now be on RG_SKIP_ALLOW.
+# printed the last shell gate's tally as the driver's. Every SKIP must now be on RG_SKIP_ALLOW —
+# empty since 6.7.16, so the release gate passes no SKIP at all.
 _chk_gate "$ROOT/tests/gates/toolchain/release_gate_check_verdict.sh"
 
 # 6.6.20 — every cross-OS leg (release-gate step 4: ecb, ach, cass, pi) runs the same three cx
