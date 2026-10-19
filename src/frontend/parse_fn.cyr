@@ -17525,6 +17525,9 @@ fn _cond_is_one(S, k): i64 {
 # `break` in a nested while / for / loop / do / switch / match leaves THAT construct (guide, Control
 # Flow), and one in a closure body or nested fn is its own unit: their bodies are stepped over for
 # the break test (`_brk_inner_end`). Returns anywhere but a closure / nested fn count.
+# A `ret2(..);` statement (`_ret2_stmt`) is an exit too: a loop left only through them ends a body
+# in its two values as one of `return (a, b);` does (6.7.14's D42 reach). `_prescan_ret_single`
+# bails on any `ret2` before it asks, so only the arity count meets it. CHANGELOG [6.7.15]
 fn _loop_exits_by_return(S, o, c): i64 {
     var rets = 0;
     var j = o + 1;
@@ -17532,6 +17535,7 @@ fn _loop_exits_by_return(S, o, c): i64 {
         var t = TOKTYP(S, j);
         if (t == 51) { return 0; }
         if (t == 33) { rets = 1; }
+        if (t == 97) { if (_ret2_stmt(S, j) == 1) { rets = 1; } }
         var sk = _brk_inner_end(S, j);
         if (sk > j) {
             if (t != 13 && t != 32) { if (_has_return_tok(S, j, sk) == 1) { rets = 1; } }
@@ -17566,12 +17570,14 @@ fn _brk_inner_end(S, j): i64 {
     }
     return 0 - 1;
 }
-# 1 = a `return` of THIS fn lies in tokens (j, e]: one outside any closure body / nested fn.
+# 1 = a `return` of THIS fn lies in tokens (j, e]: one outside any closure body / nested fn — or a
+# `ret2(..);` statement, an exit of this fn too (`_ret2_stmt`; CHANGELOG [6.7.15]).
 fn _has_return_tok(S, j, e): i64 {
     var k = j + 1;
     while (k <= e) {
         var t = TOKTYP(S, k);
         if (t == 33) { return 1; }
+        if (t == 97) { if (_ret2_stmt(S, k) == 1) { return 1; } }
         if (t == 13 || t == 32) {
             var sk = _skip_nested_body(S, k);
             if (sk > k) { k = sk; }

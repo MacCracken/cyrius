@@ -3354,8 +3354,10 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # exits too (6.7.14, the user's decision of 2026-10-16): a
 #                                     # body left only through them — ending in one, or in an
 #                                     # if / elif / else whose every arm ends in an exit — returns 2
-#                                     # values (the third name read a stale register). A `ret2`
-#                                     # inside an expression is not counted
+#                                     # values (the third name read a stale register). A body
+#                                     # ending in an infinite loop no `break` leaves, whose exits
+#                                     # are `ret2(..);` statements, is counted too (6.7.15). A
+#                                     # `ret2` inside an expression is not counted
 #   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
 #                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
 #                                     # (6.7.11, kept by the user 2026-10-15; through 6.7.10 the
