@@ -52,4 +52,5 @@ language, never the reverse; cyrius never surveys consumers).
 - `RG_SKIP_ALLOW` re-derived (empty if the two agnos SKIPs were only the mirshi axes).
 - A fresh machine with only the cyrius checkout and the packages in `docs/development/dev-tools-linux.md` runs
   `release-gate.sh` GREEN; that document lists every package the gates need (today it omits gcc, clang, parted, mtools,
-  edk2-ovmf, cpio and diffutils).
+  edk2-ovmf, cpio and diffutils, and its Arch line names an `xxd` package Arch does not have — `xxd` comes from `vim`
+  or `tinyxxd`; measured on ans 2026-10-19).
