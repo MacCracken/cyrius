@@ -17,7 +17,13 @@
 #     compiles and cxvm runs, which all fail by design;
 #   * io_rdwr_agnos.sh (6.7.16) — `"$TMP/rw_lin" …; el=$?`: the probe exits 42 when it passes,
 #     so `-e` ended the gate on the first passing probe with rc 42;
-#   * gates_read_only_the_tree.sh (6.7.16) — new, written pipefail-safe, and listed so it stays so.
+#   * gates_read_only_the_tree.sh (6.7.16) — new, written pipefail-safe, and listed so it stays so;
+#   * scripts/agnos-crossbuild-gate.sh (6.7.16) — not a stop but a FALSE verdict: `echo "$sdis" |
+#     grep -q 'mov +eax,0x38\b' || FAIL` over a large disassembly — grep -q exits at its first
+#     match, the echo dies of SIGPIPE, pipefail fails the pipeline, so a PRESENT syscall read as
+#     missing ("FAIL: server probe emits no syscall 56", rc 1); and its `objdump … | grep -q … &&
+#     FAIL` Linux-band check would have read a real hit as GREEN. Every disassembly is now written
+#     to a file and grepped there.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md)
 #
@@ -30,8 +36,9 @@
 #           so by name). check.sh runs each of them under `sh` as its own row.
 # Mutation (6.7.15): any gate's fix reverted (axis 2's `|| true` dropped, the census's
 # `for-each-ref` back to `git tag … | head -1`, axis 5's `prc=0; ( … ) || prc=$?` back to
-# `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines. Add a gate to GATES
-# when its pipefail stop is fixed.
+# `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines; 6.7.16: the
+# agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1).
+# Add a gate to GATES when its pipefail stop or false verdict is fixed.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -45,7 +52,8 @@ GATES="tests/gates/platform/syscall_xlat_generated.sh
 tests/gates/toolchain/removed_symbol_census.sh
 tests/gates/toolchain/stdlib_modules_self_sufficient.sh
 tests/gates/platform/io_rdwr_agnos.sh
-tests/gates/toolchain/gates_read_only_the_tree.sh"
+tests/gates/toolchain/gates_read_only_the_tree.sh
+scripts/agnos-crossbuild-gate.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
