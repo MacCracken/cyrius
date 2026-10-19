@@ -6,10 +6,13 @@
 # actually used the primitive — DOMAIN libraries — was never in scope, and the membership list of
 # "the 12" was written down NOWHERE. agnostik calls `tagged_new` 19 times; agnova 9.
 #
-# An ecosystem survey cannot be PROVED from inside this repo. It CAN be FORCED, and that is what
-# `tests/gates/toolchain/removed_symbol_census.sh` does: when a public stdlib symbol disappears
-# from `docs/api-surface.snapshot`, the gate censuses every repo under ~/Repos and goes RED unless
-# the symbol has a row here naming who still calls it and where the migration is tracked.
+# An ecosystem survey cannot be PROVED from inside this repo, and since 6.7.16 cyrius runs none:
+# a consumer meets a removal at its own pin bump, through the CHANGELOG and
+# docs/development/ecosystem-migration.md. What IS forced is the ACCOUNTING:
+# `tests/gates/toolchain/removed_symbol_census.sh` censuses THIS checkout (lib/ vendors the folds)
+# and, when a public stdlib symbol has disappeared from `docs/api-surface.snapshot` since the last
+# release tag, goes RED unless the symbol has a row here naming where the migration is tracked
+# (it names the in-tree callers, when there are any).
 #
 # ⚠ A ROW IS AN ACCOUNTING RECORD, NOT A MUTE BUTTON. Adding one means you have looked at the
 # callers and written down the plan. Adding one to silence the gate without doing that is the

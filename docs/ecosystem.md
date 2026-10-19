@@ -34,9 +34,12 @@ plus whenever a port lands or a new repo joins.
 > never covered and was never meant to.
 >
 > ⭐ **THE SCOPE OF THIS TABLE, STATED SO IT CANNOT BE BORROWED AGAIN:** it covers the
-> **fold-table stdlibs only**. It is evidence about *these repos* and about nothing else. Any
-> claim about "the ecosystem" needs `tests/gates/toolchain/removed_symbol_census.sh`, which walks
-> every sibling checkout including vendored `lib/` and `dist/`, and the migration notes in
+> **fold-table stdlibs only**. It is evidence about *these repos* and about nothing else, and
+> since 6.7.16 cyrius makes no claim about "the ecosystem" at all: no gate surveys a consumer.
+> `tests/gates/toolchain/removed_symbol_census.sh` censuses THIS checkout (`lib/` vendors the
+> folds) and requires a `docs/retired-symbols.allow` row for every public symbol removed since
+> the last release tag; a consumer meets the removal at its own pin bump, through the CHANGELOG
+> and the migration notes in
 > [`docs/development/ecosystem-migration.md`](development/ecosystem-migration.md) (the 6.6.2 per-repo worklist is
 > archived: [`archive/ecosystem-migration-6.6.2.md`](development/archive/ecosystem-migration-6.6.2.md)).
 > Tracked domain consumers of the boxed primitives: **agnostik**, **agnova**, plus the five repos
