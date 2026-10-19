@@ -1,0 +1,260 @@
+# sankoch DEFLATE / zlib — round-trips and reference streams, in-tree (6.7.16).
+#
+# Until 6.7.16 the only check of sankoch's DEFLATE in cyrius's gate was a check-driver row that
+# ran ANOTHER project's built binary (sit, a git-like store whose objects are zlib streams) over a
+# 100-commit fixture. A language does not gate on other projects
+# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md), so that row left
+# and the folded stdlib is tested directly, here, on every host the corpus runs on:
+#   * round-trips through deflate_compress / deflate_compress_level and zlib_compress /
+#     zlib_compress_level at levels 1, 6 and 9 (fixed and dynamic Huffman), over empty, 1-byte,
+#     all-zero, LCG-random (incompressible) and word-salad inputs, the last two past 64 KiB so the
+#     encoder splits blocks and back-references cross them;
+#   * sit's own shape: 100 small "file N content\n" blobs, each its own zlib stream;
+#   * REFERENCE streams made by the zlib C library (Python's zlib, embedded as hex): an empty
+#     stream, one byte, a level-9 dynamic-Huffman stream, a raw level-1 DEFLATE stream and a
+#     level-0 STORED block — so the decoder is checked against an encoder that is not its own;
+#   * the trailers: crc32 / adler32 on their published check values, a zlib header that passes
+#     its FCHECK, the Adler-32 trailer of a produced stream, and a flipped trailer byte that the
+#     decoder REFUSES (ERR_CHECKSUM_MISMATCH) — a decoder that ignored it would pass the rest.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/atomic.cyr"
+include "lib/sync.cyr"
+include "lib/assert.cyr"
+include "lib/sankoch.cyr"
+
+# ── input generators ─────────────────────────────────────────────────────────────────────
+var _LCG = 0;
+fn lcg_next(): i64 {
+    _LCG = _LCG * 6364136223846793005 + 1442695040888963407;
+    return (_LCG >> 33) & 0x7FFFFFFF;
+}
+
+# "file N content\n" for N = from .. from + count - 1, written at buf; returns the length.
+fn put_dec(buf, n): i64 {
+    var tmp[24];
+    var k = 0;
+    if (n == 0) { store8(&tmp, 48); k = 1; }
+    while (n > 0) { store8(&tmp + k, 48 + n % 10); n = n / 10; k = k + 1; }
+    var i = 0;
+    while (i < k) { store8(buf + i, load8(&tmp + k - 1 - i)); i = i + 1; }
+    return k;
+}
+fn put_str(buf, s): i64 {
+    var n = strlen(s);
+    memcpy(buf, s, n);
+    return n;
+}
+fn fill_lines(buf, from, count): i64 {
+    var o = 0;
+    var i = 0;
+    while (i < count) {
+        o = o + put_str(buf + o, "file ");
+        o = o + put_dec(buf + o, from + i);
+        o = o + put_str(buf + o, " content\n");
+        i = i + 1;
+    }
+    return o;
+}
+fn fill_random(buf, n, seed): i64 {
+    _LCG = seed;
+    var i = 0;
+    while (i < n) { store8(buf + i, lcg_next() & 255); i = i + 1; }
+    return n;
+}
+fn fill_words(buf, n, seed): i64 {
+    _LCG = seed;
+    var words: i64[8];
+    store64(&words, "deflate ");
+    store64(&words + 8, "huffman ");
+    store64(&words + 16, "window ");
+    store64(&words + 24, "literal ");
+    store64(&words + 32, "length ");
+    store64(&words + 40, "distance ");
+    store64(&words + 48, "block\n");
+    store64(&words + 56, "adler32 ");
+    var o = 0;
+    while (o < n) {
+        var w = load64(&words + (lcg_next() % 8) * 8);
+        var wl = strlen(w);
+        var j = 0;
+        while (j < wl && o < n) { store8(buf + o, load8(w + j)); o = o + 1; j = j + 1; }
+    }
+    return n;
+}
+
+fn same(a, b, n): i64 {
+    var i = 0;
+    while (i < n) { if (load8(a + i) != load8(b + i)) { return 0; } i = i + 1; }
+    return 1;
+}
+
+# ── round-trips: n on success; a distinct negative code per failure ─────────────────────────
+# level 0 = the default-level entry point (deflate_compress / zlib_compress).
+fn rt_deflate(src, n, level): i64 {
+    var cap = n + n / 8 + 1024;
+    var comp = alloc(cap);
+    var clen = 0;
+    if (level == 0) { clen = deflate_compress(src, n, comp, cap); }
+    else { clen = deflate_compress_level(src, n, comp, cap, level); }
+    if (clen <= 0) { return 0 - 1; }
+    var out = alloc(n + 16);
+    var dlen = deflate_decompress(comp, clen, out, n + 16);
+    if (dlen != n) { return 0 - 2; }
+    if (same(src, out, n) != 1) { return 0 - 3; }
+    if (deflate_bytes_consumed() != clen) { return 0 - 4; }
+    return n;
+}
+fn rt_zlib(src, n, level): i64 {
+    var cap = n + n / 8 + 1024;
+    var comp = alloc(cap);
+    var clen = 0;
+    if (level == 0) { clen = zlib_compress(src, n, comp, cap); }
+    else { clen = zlib_compress_level(src, n, comp, cap, level); }
+    if (clen < 6) { return 0 - 1; }
+    # RFC 1950 header: CM = 8 (deflate), CINFO <= 7, and (CMF * 256 + FLG) % 31 == 0.
+    var cmf = load8(comp);
+    var flg = load8(comp + 1);
+    if ((cmf & 15) != 8 || (cmf >> 4) > 7) { return 0 - 5; }
+    if ((cmf * 256 + flg) % 31 != 0) { return 0 - 6; }
+    # Trailer: the big-endian Adler-32 of the INPUT.
+    var t = comp + clen - 4;
+    var stored = (load8(t) << 24) | (load8(t + 1) << 16) | (load8(t + 2) << 8) | load8(t + 3);
+    if (stored != adler32(src, n)) { return 0 - 7; }
+    var out = alloc(n + 16);
+    var dlen = zlib_decompress(comp, clen, out, n + 16);
+    if (dlen != n) { return 0 - 2; }
+    if (same(src, out, n) != 1) { return 0 - 3; }
+    return n;
+}
+
+# ── reference streams (hex, from the zlib C library) ──────────────────────────────────────
+var _HX = 0;
+var _HXN = 0;
+fn _hv(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    return c - 87;
+}
+fn hx(s): i64 {
+    var i = 0;
+    while (load8(s + i) != 0) {
+        store8(_HX + _HXN, _hv(load8(s + i)) * 16 + _hv(load8(s + i + 1)));
+        _HXN = _HXN + 1;
+        i = i + 2;
+    }
+    return _HXN;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _HX = alloc(4096);
+    var big = 100000;
+    var src = alloc(big + 64);
+    var n = 0;
+
+    test_group("checksums on their published check values");
+    assert_eq(crc32_init_table() >= 0, 1, "crc32_init_table() (crc32's documented precondition)");
+    assert_eq(crc32("123456789", 9), 0xCBF43926, "crc32(\"123456789\") = 0xCBF43926");
+    assert_eq(adler32("Wikipedia", 9), 0x11E60398, "adler32(\"Wikipedia\") = 0x11E60398");
+
+    test_group("raw DEFLATE round-trips");
+    assert_eq(rt_deflate(src, 0, 0), 0, "empty input");
+    store8(src, 97);
+    assert_eq(rt_deflate(src, 1, 0), 1, "1 byte");
+    memset(src, 0, 70000);
+    assert_eq(rt_deflate(src, 70000, 6), 70000, "70000 zero bytes, level 6 (highly compressible, > 64 KiB)");
+    n = fill_random(src, 70000, 12345);
+    assert_eq(rt_deflate(src, n, 1), n, "70000 LCG-random bytes, level 1 (incompressible, > 64 KiB)");
+    assert_eq(rt_deflate(src, n, 9), n, "70000 LCG-random bytes, level 9");
+    n = fill_words(src, big, 777);
+    assert_eq(rt_deflate(src, n, 0), n, "100000-byte word salad, default level");
+    assert_eq(rt_deflate(src, n, 1), n, "100000-byte word salad, level 1 (fixed Huffman)");
+    assert_eq(rt_deflate(src, n, 6), n, "100000-byte word salad, level 6 (dynamic Huffman)");
+    assert_eq(rt_deflate(src, n, 9), n, "100000-byte word salad, level 9");
+
+    test_group("zlib round-trips (header FCHECK, Adler-32 trailer)");
+    assert_eq(rt_zlib(src, 0, 0), 0, "empty input");
+    store8(src, 97);
+    assert_eq(rt_zlib(src, 1, 0), 1, "1 byte");
+    n = fill_random(src, 70000, 99);
+    assert_eq(rt_zlib(src, n, 0), n, "70000 LCG-random bytes, default level");
+    n = fill_words(src, big, 4242);
+    assert_eq(rt_zlib(src, n, 1), n, "100000-byte word salad, level 1");
+    assert_eq(rt_zlib(src, n, 6), n, "100000-byte word salad, level 6");
+    assert_eq(rt_zlib(src, n, 9), n, "100000-byte word salad, level 9");
+
+    test_group("sit's shape: 100 small blobs, each its own zlib stream");
+    var bad = 0;
+    var b = 0;
+    while (b < 100) {
+        var bl = fill_lines(src, b, 1);
+        if (rt_zlib(src, bl, 0) != bl) { bad = bad + 1; }
+        b = b + 1;
+    }
+    assert_eq(bad, 0, "100 \"file N content\" blobs round-trip, 0 bad");
+
+    test_group("reference streams from the zlib C library decode");
+    var out = alloc(2048);
+    _HXN = 0;
+    hx("789c030000000001");
+    assert_eq(zlib_decompress(_HX, _HXN, out, 2048), 0, "zlib.compress(b\"\") -> 0 bytes");
+    _HXN = 0;
+    hx("789c4b040000620062");
+    assert_eq(zlib_decompress(_HX, _HXN, out, 2048), 1, "zlib.compress(b\"a\") -> 1 byte");
+    assert_eq(load8(out), 97, "  ...and it is 'a'");
+    var want = alloc(2048);
+    var wl = fill_lines(want, 0, 100);
+    assert_eq(wl, 1590, "the reference input is 100 lines, 1590 bytes");
+    _HXN = 0;
+    hx("78da5dd4418a02300c40d1bda7f008b64ddaf43ca2200ccec6fb33cc4afa967ff7689a3c5f3f8feb");
+    hx("ed7aff7d7f1eefcfe5f99fedcc7ee63833cecc33e799ebcc3a73c39085ab016bc81ab486ad816be8");
+    hx("1abc86afe3ebbe1bbe8eafe3ebf83abe8eafe3ebf806be816f38587c03dfc037f00d7c03dfc017f8");
+    hx("025fe00b7f1ebec017f8025fe00b7c892ff125bec497ae06bec497f8125fe29bf826be896fe29bf8");
+    hx("a6bb8b6fe29bf826be856fe15bf816be856fe15b1e177c0bdfc257f80a5fe12b7c85aff015bef2fa");
+    hx("e12b7c1bdfc6b7f16d7c1bdfc6b7f16d7cdbf3fcf5fd01e43f10b7");
+    assert_eq(_HXN, 227, "the level-9 reference stream is 227 bytes");
+    var zl = zlib_decompress(_HX, _HXN, out, 2048);
+    assert_eq(zl, 1590, "zlib level 9 (dynamic Huffman) -> 1590 bytes");
+    assert_eq(same(out, want, 1590), 1, "  ...equal to the input");
+    _HXN = 0;
+    hx("5dce398a02401000c0dc57f804e7e8ee99f78882b0b889ff67d948a6c2caeaf9fa795c6fd7fbeffb");
+    hx("f3787f2ecf7fb693fde438394fc6c93c5927d7c97db2d9e2d58835668d5ae3d6c835768d5ee3d7f9");
+    hx("757e9d5fe7d7f9757e9d5fe7d7f9757e83dfe037f80d7e83dfe037f80d7e83dfe037f94d7e93dfe4");
+    hx("37f94d7e93dfe437f94d7ec12ff805bfe017fc825ff00b7ec12ff825bfe497fc925ff24b7ec92ff9");
+    hx("25bfe457fc8a5ff12b7ec5aff815bfe257fc8adfe2b7f82d7e8bdfe2b7f82d7e8bdfe2b7f86d7e9b");
+    hx("dfe6b7f96d7e9bdfe6b7f96d7efbfbfb03");
+    assert_eq(_HXN, 217, "the level-1 raw reference stream is 217 bytes");
+    var dl = deflate_decompress(_HX, _HXN, out, 2048);
+    assert_eq(dl, 1590, "raw DEFLATE level 1 -> 1590 bytes");
+    assert_eq(same(out, want, 1590), 1, "  ...equal to the input");
+    assert_eq(deflate_bytes_consumed(), _HXN, "  ...and the whole stream is consumed");
+    var i = 0;
+    while (i < 300) { store8(want + i, (i * 7 + 3) % 256); i = i + 1; }
+    _HXN = 0;
+    hx("7801012c01d3fe");
+    var k = 0;
+    while (k < 300) {
+        store8(_HX + _HXN, (k * 7 + 3) % 256);
+        _HXN = _HXN + 1;
+        k = k + 1;
+    }
+    var ad = adler32(want, 300);
+    assert_eq(ad, 0xA0B492E3, "adler32 of the stored block's input = zlib's 0xA0B492E3");
+    store8(_HX + _HXN, (ad >> 24) & 255);
+    store8(_HX + _HXN + 1, (ad >> 16) & 255);
+    store8(_HX + _HXN + 2, (ad >> 8) & 255);
+    store8(_HX + _HXN + 3, ad & 255);
+    _HXN = _HXN + 4;
+    assert_eq(_HXN, 311, "the level-0 reference stream is 311 bytes");
+    assert_eq(zlib_decompress(_HX, _HXN, out, 2048), 300, "zlib level 0 (a STORED block) -> 300 bytes");
+    assert_eq(same(out, want, 300), 1, "  ...equal to the input");
+
+    test_group("a damaged trailer is REFUSED");
+    store8(_HX + _HXN - 1, load8(_HX + _HXN - 1) ^ 1);
+    assert_eq(zlib_decompress(_HX, _HXN, out, 2048), 0 - ERR_CHECKSUM_MISMATCH,
+      "one flipped Adler-32 bit -> ERR_CHECKSUM_MISMATCH");
+
+    return assert_summary();
+}
+var rc = main(); syscall(SYS_EXIT, rc);
