@@ -13,13 +13,14 @@
 # O_WRONLY|O_ASYNC|O_CREAT — not even O_TRUNC.)
 #
 # THE FIX. `_regression_capture_open` creates each candidate "<base>/<prefix><pid>", then
-# "…<pid>.1" … ".63", O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW mode 0600 with each target's own bits; a
-# taken name is skipped; past the bound — or on any other open error — one stderr line names the
+# "…<pid>.1" … ".63", O_CREAT|O_EXCL|O_NOFOLLOW mode 0600 with each target's own bits (O_RDWR
+# since 6.7.16, which unlinks the name at once and reads the capture back from the fd); a taken
+# name is skipped; past the bound — or on any other open error — one stderr line names the
 # refusal and nothing runs. The base is $TMPDIR when it is absolute (trailing slashes dropped),
 # else /tmp (cbt's `_cbt_tmpbase` rule). The platform rows — the filed repro verbatim, planted
-# links and files at each verb's names, all 64 taken, the file 0600 and gone once read — are
-# tests/tcyr/crossos/regression_capture_exclusive.tcyr, which the release gate runs on ecb, ach
-# and pi (macOS is where the hole was open).
+# links and files at each verb's names, all 64 taken, the file 0600 and unlinked before the
+# child runs — are tests/tcyr/crossos/regression_capture_exclusive.tcyr, which the release gate
+# runs on ecb, ach, pi and cass (macOS is where the hole was open).
 #
 # AXES (Linux; the probe is built from THIS tree with build/cycc). The planting shell `exec`s the
 # probe, so its $$ IS the probe's pid and the names are predicted exactly — another process
@@ -36,7 +37,10 @@
 #      allowlisted file|fn, each with its reason, and an entry matching no live literal fails;
 #      (b) lib/regression.cyr: `_regression_capture_open`'s open spells O_CREAT, O_EXCL,
 #      O_NOFOLLOW and 0x180, only it calls `_regression_capture_name`, and each capture verb gets
-#      its file from it. Both detectors self-tested.
+#      its file from it; since 6.7.16 it also unlinks the name it created (`sys_unlink(name)`), and
+#      each verb reads the capture back from its fd (`_regression_capture_read`) and never names a
+#      file (no file_read_all / file_open / sys_unlink). Both detectors self-tested (the 6.7.16 rules
+#      on the live file with the unlink deleted, and with the three read-backs put back by name).
 #
 # MUTATION LEDGER (2026-10-18, 6.7.15, each in a scratch copy of the tree's lib/; the .tcyr's
 # count of 22 rows alongside):
@@ -55,6 +59,14 @@
 #   i. 6.7.15's base (`_regression_tmp_path`, 577)                     -> axes 2, 3a, 3b, 4a, 4b; the
 #      .tcyr does not compile (it predicts names with the new helpers). Axis 1 reads green there:
 #      the old code looked in /tmp, not the gate's TMPDIR, so its plants were never in the way.
+# MUTATION LEDGER (2026-10-19, 6.7.16 — the name unlinked at its create, the capture read from the
+# fd; issues/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). The .tcyr has 23 rows:
+#   j. the unlink dropped                    -> axes 1 (the files are left) and 4b; the .tcyr 7 (the
+#      6 `_cr_private` rows see the name while the child runs, and a leaked name stops one plant)
+#   k. the parent's lift dropped              -> the .tcyr 1 (`_cr_parent_stderr`: fd 2 closed, the
+#      knob warning written into the capture)
+#   l. the read-back's lseek dropped          -> the .tcyr 19 (every capture reads empty)
+#   m. 6.7.15's verbs (unlink after a read-back by name) -> axis 4b; the .tcyr 6 (`_cr_private`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -217,8 +229,13 @@ _capopen_bad() {
         printf '%s\n' "$o" | grep -q "$w" || echo "the capture open lacks $w: $(printf '%s' "$o" | cut -f2 | sed 's/^ *//')"
     done
     awk -F'\t' '$1 != "_regression_capture_open" && $1 != "_regression_capture_name" && $2 ~ /_regression_capture_name\(/ { print "a caller other than _regression_capture_open builds a capture name: " $1 }' "$W/code"
+    # 6.7.16: the name is unlinked at its create, and the verbs read the capture back from the fd
+    awk -F'\t' '$1 == "_regression_capture_open" && $2 ~ /sys_unlink\(name\)/' "$W/code" | grep -q . \
+        || echo "_regression_capture_open does not unlink the name it created"
     for v in regression_exec_capture_status regression_exec_with_arg_capture_status regression_exec_with_arg_capture_both_status; do
         awk -F'\t' -v v="$v" '$1 == v && $2 ~ /_regression_capture_open\(/' "$W/code" | grep -q . || echo "$v does not take its file from _regression_capture_open"
+        awk -F'\t' -v v="$v" '$1 == v && $2 ~ /_regression_capture_read\(/' "$W/code" | grep -q . || echo "$v does not read its capture back from its fd (_regression_capture_read)"
+        awk -F'\t' -v v="$v" '$1 == v && $2 ~ /file_read_all\(|file_open\(|sys_unlink\(/ { print v " reaches its capture by name:" $2 }' "$W/code"
     done
 }
 # self-tests: the 6.7.14 shape, the luks shape, the bare base; a comment and a look-alike are not
@@ -239,9 +256,15 @@ st4=0
 [ "$(_tmplits "$W/fx/lits.cyr" | tr '\n' ' ')" = "_luks _old " ] || { fail "axis 4 self-test: the literal scanner saw '$(_tmplits "$W/fx/lits.cyr" | tr '\n' ' ')' (want _luks _old)"; st4=1; }
 n4=$(awk -f "$W/lits.awk" "$W/fx/lits.cyr" | awk -F'\t' '$2 == "/tmp" || $2 ~ /^\/tmp\//' | grep -c .)
 [ "$n4" = 4 ] || { fail "axis 4 self-test: $n4 /tmp literals counted in the fixture (want 4: the comment and \"/tmpfoo\" are not)"; st4=1; }
-sed 's/O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0x180/O_WRONLY | O_CREAT | O_TRUNC, 0x180/' "$ROOT/lib/regression.cyr" > "$W/fx/noexcl.cyr"
+sed 's/O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0x180/O_RDWR | O_CREAT | O_TRUNC, 0x180/' "$ROOT/lib/regression.cyr" > "$W/fx/noexcl.cyr"
 cmp -s "$W/fx/noexcl.cyr" "$ROOT/lib/regression.cyr" && { fail "axis 4 self-test: the capture open is not spelled as this gate expects — update the mutation"; st4=1; }
 [ -n "$(_capopen_bad "$W/fx/noexcl.cyr")" ] || { fail "axis 4 self-test: a capture open without O_EXCL / O_NOFOLLOW was not flagged"; st4=1; }
+awk '/^fn _regression_capture_open\(/ { f = 1 } f && /^            sys_unlink\(name\);$/ { next } /^}/ { f = 0 } { print }' "$ROOT/lib/regression.cyr" > "$W/fx/nounlink.cyr"
+cmp -s "$W/fx/nounlink.cyr" "$ROOT/lib/regression.cyr" && { fail "axis 4 self-test: the capture open's unlink is not spelled as this gate expects — update the mutation"; st4=1; }
+[ -n "$(_capopen_bad "$W/fx/nounlink.cyr")" ] || { fail "axis 4 self-test: a capture open that keeps its name was not flagged"; st4=1; }
+sed 's/^    return _regression_capture_read(out_fd, buf, buflen);$/    var total = file_read_all(out_path, buf, buflen); sys_unlink(out_path); return total;/' "$ROOT/lib/regression.cyr" > "$W/fx/byname.cyr"
+cmp -s "$W/fx/byname.cyr" "$ROOT/lib/regression.cyr" && { fail "axis 4 self-test: the capture read-back is not spelled as this gate expects — update the mutation"; st4=1; }
+[ "$(_capopen_bad "$W/fx/byname.cyr" | grep -c 'reaches its capture by name')" = 3 ] || { fail "axis 4 self-test: the verbs reading the capture back by name were not each flagged"; st4=1; }
 # (a) the literals
 ALLOW4='lib/regression.cyr|_regression_tmp_base|the base when TMPDIR is unset, relative or empty: every name under it is created by _regression_capture_open, O_CREAT|O_EXCL|O_NOFOLLOW 0600
 lib/sigil.cyr|luks_keyfile_path|"<prefix><pid>-<16 random hex>", created by luks_write_keyfile O_CREAT|O_EXCL|O_NOFOLLOW 0600 (sigil Audit F-3)'
@@ -262,7 +285,7 @@ a4=$st4
 # (b) the capture open
 b=$(_capopen_bad "$ROOT/lib/regression.cyr")
 [ -z "$b" ] || { echo "$b" | sed "s/^/FAIL: $NAME: axis 4b: /"; FAIL=1; a4=1; }
-[ "$a4" = 0 ] && echo "  ok: axis 4: no lib/ string literal names a /tmp path outside the 2 allowlisted sites ($nf files, $nl literals); the capture open is O_CREAT|O_EXCL|O_NOFOLLOW 0600 and the only builder of a capture name (detectors self-tested)"
+[ "$a4" = 0 ] && echo "  ok: axis 4: no lib/ string literal names a /tmp path outside the 2 allowlisted sites ($nf files, $nl literals); the capture open is O_CREAT|O_EXCL|O_NOFOLLOW 0600, unlinks the name at once and is the only builder of a capture name; each verb reads its capture back from the fd, never by name (detectors self-tested)"
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: $NAME"; exit 1; fi
 echo "PASS $NAME (lib/regression.cyr's capture verbs create their file O_EXCL|O_NOFOLLOW 0600 under \$TMPDIR: a planted link or file is skipped, every name taken is refused by name, and no lib/ literal names a /tmp path outside the allowlist)"
