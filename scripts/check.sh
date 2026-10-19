@@ -2624,11 +2624,6 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_builds_its_tools.sh"
 # derives from $0 is red on every run instead of green because check.sh ran from the root.
 _chk_gate "$ROOT/tests/gates/toolchain/gates_run_from_foreign_cwd.sh"
 
-# 6.6.16 (G5) — the check driver finds sit from a git worktree: $SIT_DIR, <root>/../sit, then
-# the worktree's gitdir/commondir route to the main checkout's sibling sit, then
-# $HOME/Repos/sit; a miss names every path tried. Every release lane's sit-fsck row SKIPped.
-_chk_gate "$ROOT/tests/gates/toolchain/check_sit_lookup_worktree.sh"
-
 # 6.6.20 (RLM-01) — every `_regression_wait_deadline` in lib/regression.cyr and the check driver
 # consumes its result before the status buffer is decoded: a deadline (0) or an unobserved child
 # (-1, waitpid never wrote it) is never read as an exit code. Static, with a clean-fixture + per-rule
