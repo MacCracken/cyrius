@@ -179,6 +179,23 @@ exits a15 1 "A15: an operator's bool parameter takes a parenthesised comparison"
 exits a16 3 "A16: a bool[N] list takes comparisons and !, evaluated (6.7.4: a list element is a const context)" 'const K = 2;\nvar A: bool[3] = {1 < 2, K == 3, !false};\nfn main(): i64 { return load64(&A) + load64(&A + 8) * 4 + load64(&A + 16) * 2; }\nsyscall(60, main());\n'
 exits a5 0 "A5: a global after the first statement takes a comparison" 'var x = 1;\nsyscall(60, 0);\nvar G: bool = x > 0;\n'
 
+# K — 6.7.15 (the user's decision D30 (a), 2026-10-18): a known `&f` callee's `: bool` result is a boolean value, as
+# the direct call `isb()`'s is — `var b: bool = fncall0(&isb);`, `callptr(&isb)`, `b = fncall0(&isb);`, a wrap, a
+# fncall1, `return` in a bool fn and a bool parameter compile; a callee held in a variable (6.7.11's D31) and a `: i64`
+# callee stay "not a bool" (issues/2026-10-17-known-callee-bool-result-not-a-bool.md; the run-time value is
+# tests/tcyr/crossos/fncall_scalar_result.tcyr). Mutation: `_icall_scalar` without its `_BX_MARK` -> K1-K7 refused.
+KH='include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn isb(): bool { return true; }\nfn isb1(x): bool { return x > 2; }\n'
+exits k1 7 "K1: var b: bool = fncall0(&isb) (the filed repro)" 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fnptr.cyr"\nfn isb(): bool { return true; }\nfn main(): i64 {\n    var b: bool = fncall0(&isb);\n    var c: bool = isb();\n    if (b) { return 7; }\n    return 3;\n}\nsyscall(60, main());\n'
+exits k2 1 "K2: var b: bool = callptr(&isb)" "$KH$M var b: bool = callptr(&isb); return b; }$E"
+exits k3 1 "K3: b = fncall0(&isb)" "$KH$M var b: bool = false; b = fncall0(&isb); return b; }$E"
+exits k4 1 "K4: = (fncall0(&isb))" "$KH$M var b: bool = (fncall0(&isb)); return b; }$E"
+exits k5 1 "K5: = fncall1(&isb1, 3)" "$KH$M var b: bool = fncall1(&isb1, 3); return b; }$E"
+exits k6 1 "K6: return fncall0(&isb) in a : bool fn" "${KH}fn rb(): bool { return fncall0(&isb); }\n$M return rb(); }$E"
+exits k7 2 "K7: a bool parameter takes fncall0(&isb)" "${KH}fn tb(q: bool): i64 { return q * 2; }\n$M return tb(fncall0(&isb)); }$E"
+refused k8 "$DI" "K8: var f = &isb; = fncall0(f) (a callee in a variable)" "$KH$M var f = &isb; var b: bool = fncall0(f); return b; }$E"
+refused k9 "$DI" "K9: = fncall0(&isi) (an i64 callee)" "${KH}fn isi(): i64 { return 1; }\n$M var b: bool = fncall0(&isi); return b; }$E"
+refused k10 "$DI" "K10: = fncall0(&isb) + 0 (arithmetic over it)" "$KH$M var b: bool = fncall0(&isb) + 0; return b; }$E"
+
 # X — `--syntax-only` (cyrius lint's pre-pass) checks nothing: a sibling file's names are unknown there.
 printf 'fn main(): i64 { var b: bool = sibling_fn(); var c: bool = SIB; return 0; }\nsyscall(60, main());\n' > "$T/x1.cyr"
 "$CC" --syntax-only < "$T/x1.cyr" > /dev/null 2> "$T/x1.err" || true

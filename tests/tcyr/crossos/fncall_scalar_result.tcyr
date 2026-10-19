@@ -9,6 +9,9 @@
 # tests/gates/diagnostics/typed_pointer_warn_sign.sh axis 13). A callee held in a VARIABLE is unknown (6.7.11's D31):
 # its result stays a word — rows V (issues/archived/2026-10-16-known-callee-pointer-or-f64-result-untyped.md). There is no
 # f32 row: `: f32` is not a fn return type. In this directory so the release gate runs it on ecb / ach / cass / pi.
+# 6.7.15 (the user's decision D30 (a), 2026-10-18): a `: bool` callee's result is a boolean value, as `isb()`'s is —
+# rows B; `var b: bool = fncall0(&isb);` was refused "not a bool" (the refusal side is
+# tests/gates/frontend/bool_checked.sh K; issues/2026-10-17-known-callee-bool-result-not-a-bool.md).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
@@ -62,6 +65,30 @@ fn ptrs(): i64 {
     return 0;
 }
 
+# B — a `: bool` callee: a boolean value, as the direct call's (6.7.15, D30 (a)).
+fn isb(): bool { return true; }
+fn isf(): bool { return false; }
+fn isb1(x): bool { return x > 2; }
+fn rb(): bool { return fncall0(&isb); }
+fn tb(q: bool): i64 { return q * 2; }
+fn bools(): i64 {
+    var b: bool = fncall0(&isb);
+    var c: bool = isb();
+    var r = 3;
+    if (b) { r = 7; }
+    assert_eq(r, 7, "B1: var b: bool = fncall0(&isb) (the filed repro: 7)");
+    var d: bool = callptr(&isf);
+    assert_eq(d + c * 2, 2, "B2: var d: bool = callptr(&isf) is false");
+    var e: bool = false;
+    e = fncall0(&isb);
+    assert_eq(e, 1, "B3: e = fncall0(&isb)");
+    var g: bool = fncall1(&isb1, 3);
+    var h: bool = (fncall1(&isb1, 1));
+    assert_eq(g + h * 2, 1, "B4: fncall1(&isb1, 3) is true, (fncall1(&isb1, 1)) false");
+    assert_eq(rb() + tb(fncall0(&isb)), 3, "B5: return fncall0(&isb) in a bool fn, a bool parameter");
+    return 0;
+}
+
 # V — a callee held in a variable is unknown: its result is a word.
 fn vars(): i64 {
     var fp = &gp;
@@ -76,4 +103,5 @@ fn vars(): i64 {
 var r1 = floats();
 var r2 = ptrs();
 var r3 = vars();
+var r4 = bools();
 var r = assert_summary();

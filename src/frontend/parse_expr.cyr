@@ -1037,6 +1037,8 @@ fn _icall_result(S, cfi, t, beg): i64 {
 # a `*T` carries T's step (`_fn_ret_ps`), whatever the arguments; a callee held in a variable stays a word (D31).
 # An untyped `var a = fncall0(&f);` takes the f64 after its parse (`_var_rhs_if64`); the step is recorded against
 # the call's fncallN / callptr token `beg`, which the factor's scale fix (`_call_scale_fix`) keeps. CHANGELOG [6.7.14]
+# 6.7.15 (the user's decision D30 (a), 2026-10-18): and a `: bool` callee's result is a boolean value, as `isb()`'s is
+# (`_call_ret_ps`' 6.7.3 mark): `var b: bool = fncall0(&isb);` was refused "not a bool". CHANGELOG [6.7.15]
 var _icall_ps_beg = 0 - 1;
 var _icall_ps = 0;
 fn _icall_scalar(S, cfi, beg): i64 {
@@ -1045,6 +1047,7 @@ fn _icall_scalar(S, cfi, beg): i64 {
     SPSC(S, _icall_ps);
     if (cfi < 0) { return 0; }
     if (GFRS(S, cfi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
+    if (_bx_fn_is_bool(S, cfi) == 1) { _BX_MARK(S); }   # D30: last, after any emission
     return 0;
 }
 # ⛔ 6.7.11 — A KNOWN CALLEE'S STRUCT RESULT. A call through a fn pointer must give a struct-returning

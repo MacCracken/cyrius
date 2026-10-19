@@ -2468,7 +2468,10 @@ decisions D25 and D26, 2026-10-16) a `: f64` makes it an f64 whatever the argume
 fncall0(&f);` binds an f64), a `: *T` makes it a `*T`: `fncall0(&gp) + 1` steps one `T`, as
 `gp() + 1` does, and `var w: *P2 = fncall0(&gp);` does not warn. Through 6.7.13 both were an untyped
 word (the f64 only when the last argument was an f64, 6.7.6's rule): `a + 1.5` added integers and
-`fncall0(&gp) + 1` moved one byte. Through a variable or a closure the callee is unknown and the
+`fncall0(&gp) + 1` moved one byte. A `: bool` makes it a boolean value (6.7.15; the user's decision
+D30, 2026-10-18): `var b: bool = fncall0(&isb);`, `b = callptr(&isb);`, `return fncall0(&isb);` from
+a bool fn and a bool parameter take it, as they take `isb()` — through 6.7.14 each was refused "not a
+bool". Through a variable or a closure the callee is unknown and the
 result is an untyped word: write `f64_add(fncall1(fp, d), 1.0)` or bind it to a `var r: f64`.
 
 ## Strings
@@ -6817,7 +6820,8 @@ var count = 10 + ready;           # a bool READS as the integer 0 or 1
 global), field, parameter, fn return, multi-value-return element or const takes only a
 **boolean value**: `true` / `false`, a comparison (`==` `!=` `<` `>` `<=` `>=`, and the
 `f64_eq` / `f64_lt` / `f64_gt` / `f64_le` / `f64_ge` builtins), `!x`, `&&` / `||`, another bool
-(a bool variable, field, parameter, capture or const, a call to a `: bool` fn), or any of these
+(a bool variable, field, parameter, capture or const, a call to a `: bool` fn — directly or through
+`fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`, 6.7.15), or any of these
 in parentheses. Everything else is refused by name — the literals `0` and `1` included:
 
 ```
