@@ -2477,8 +2477,8 @@ created. Measured before → after with a child that prints: the victim's head o
 x86_64 Linux, pi, ecb and ach (on Darwin 577 carried no `O_TRUNC`, so the filed repro's silent child left the
 victim's 9 bytes even before the fix; on Linux it emptied them). Rows:
 `tests/tcyr/crossos/regression_capture_exclusive.tcyr` (the filed repro verbatim, planted links and files at each
-verb's names, all 64 taken, the file 0600 and gone once read — 22/22 on x86_64 Linux, ecb, ach and pi; the Windows
-row on cass) and `tests/gates/toolchain/regression_capture_exclusive.sh` (another process plants, the refusal named,
+verb's names, all 64 taken, the file 0600 and gone once read — 22/22 on x86_64 Linux, ecb, ach and pi; the two Windows
+rows, wine and cass) and `tests/gates/toolchain/regression_capture_exclusive.sh` (another process plants, the refusal named,
 the TMPDIR rules, and a static axis over `lib/` refusing a `/tmp` literal outside its allowlist and pinning the
 capture open's flags), mutation-proven.
 
