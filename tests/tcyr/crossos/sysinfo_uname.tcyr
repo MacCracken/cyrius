@@ -143,7 +143,8 @@ assert_eq(stm, tm, "system_total_memory() agrees with sysinfo_total_memory()");
 # -ENOSYS rather than a fabricated count. This file also builds for agnos, where the answer
 # is the kernel's: -1 (agnos < 1.57.9, or mirshi, which writes only the 40-byte base — the
 # pre-filled slot comes back untouched) or a count >= 0. Never -ENOSYS, never other residue.
-# (The buffer/length/pre-fill shape is pinned by tests/gates/platform/agnos_sysinfo_tail_parity.sh.)
+# (The buffer/length/pre-fill shape is defined by lib/sys.cyr's in-tree rows — SYSINFO_SIZE_FULL,
+# SI_SCHED_KICKS; the cross-repo parity check against agnos's kernel is agnos's own job since 6.7.16.)
 test_group("sched_kicks");
 #ifdef CYRIUS_TARGET_AGNOS
 # Leave a NEGATIVE, non-(-1) pattern where sys_sched_kicks' buffer will sit, so a reader that
