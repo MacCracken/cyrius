@@ -73,7 +73,8 @@
 #          constant f64 expression (`= CF`, `= (1.5)`, `= 1.5 + 1.0`, an f32's rounding) is baked as its literal is,
 #          its bits IEEE's on every target; an earlier read sees it (was 0), an earlier call's write is kept
 #          (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
-#          kmode_enum_initializer_baked.sh RC / KC)
+#          kmode_enum_initializer_baked.sh RC / KC); 6.7.16 (D15 (a)) rows 12-18: an integer or enum operand on the
+#          right (`1.5 + 1`, `1.5 * E.A`) baked too, its bits the target's own run-time arithmetic (18)
 #   L1-L10 6.7.16: a list over a NAMED scalar constant keeps the bytes it does not list, as over a literal (L10)
 #          (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md), by value on every
 #          leg: a const name (L1, the filed repro: 9 -> 14), an enum name (L2), a literal then a const (L3: the later
@@ -81,6 +82,7 @@
 #          var a[1] = {0, 4};` (L6: 0x400), a const between two lists (L7: 9 -> 14), a computed initializer between
 #          the const and the list (L8: 9 -> 14), an earlier initializer's read (L9: 9 -> 14)
 #   T13-T16 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr on the same four legs
+#   S33    6.7.16 (D15 (a)): `var M: f64 = 1.5 + 1;` (warned) is byte-identical to `= 1.5` — no startup store
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -115,6 +117,9 @@
 # store runs into a sink); `_gvi_slot` always making the sink -> S8-S11; `_gvk_one` not folding a superseded entry
 # (6.7.14's early return) -> S11 (`var a = C; var a = 5;`: C's sink store, as through 6.7.14); `_gvi_baked` making
 # a superseded constant the last var -> O14 on all three legs.
+# MUTATION (measured, 6.7.16 — the mixed operand, D15 (a); the kernel rows are kmode_enum_initializer_baked.sh's
+# ledger): `_gvk_fscan` not taking an integer literal -> 5 red: S33, T9-T12 (row 12: 0); `_gvk_fqual` taking no `E.A`
+# -> 4 red: T9-T12 (row 13: the call's write reset); `_gvi_mixw` keeping its code -> 1 red: S33.
 # MUTATION (measured, 6.7.15 — the float constant expression): the tree before the fix (8981d679b's src) -> 4 red, T9-T12
 # (9: an earlier read 0, 10: the startup store reset the call's write); `_gvk_fx`'s f32 narrowing dropped -> T9-T12
 # (4, 8: binary64 bits in an f32).
@@ -231,6 +236,10 @@ same_w S25 4 "var G: f64 = 1.5;\nvar G: f64 = 2.5;\n$G48" "var G: f64 = 2.5;\n$G
 same_w S26 64 'var F: f32 = 1.5;\nvar F: f32 = 2.5;\nsyscall(60, (load32(&F) >> 24) & 255);\n' 'var F: f32 = 2.5;\nsyscall(60, (load32(&F) >> 24) & 255);\n'
 same_w S27 4 "const CF = 2.5;\nvar G: f64 = 1.5;\nvar G: f64 = CF;\n$G48" "const CF = 2.5;\nvar G: f64 = CF;\n$G48"
 same S28 248 "var G: f64 = 1.5;\nvar G: f64 = 1.5;\n$G48" "var G: f64 = 1.5;\n$G48"
+# S33 — 6.7.16 (the user's decision D15 (a), 2026-10-19): f64 arithmetic with an integer operand on the right (`1.5 + 1`,
+# warned) is baked and leaves no startup code: BYTE-IDENTICAL to the literal of its bits, 1.5 (through 6.7.15 a
+# startup store; its replay is parsed for the warning and taken back, _gvi_mixw).
+same_w S33 63 'var M: f64 = 1.5 + 1;\nsyscall(60, (load64(&M) >> 56) & 255);\n' 'var M: f64 = 1.5;\nsyscall(60, (load64(&M) >> 56) & 255);\n'
 # S12-S16 — 6.7.15: a baked struct / tuple literal leaves no startup stores (issues/2026-10-16-zone-struct-literal-baked-
 # and-stored.md): each build is BYTE-IDENTICAL to the same 16 bytes written as a typed list (baked since 6.6.16, no
 # code) — positional, named, a tuple inferred and annotated, and an x86 `kernel;` build (ELF64). Through 6.7.14 each

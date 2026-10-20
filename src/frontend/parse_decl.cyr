@@ -6160,6 +6160,7 @@ fn _gvk_pre(S): i64 {
     _gvk_bk = alloc(gc + 8);
     _gvk_v = alloc(gc * 8 + 8);
     _gvk_ik = alloc(gc + 8);
+    _gvk_mw = alloc(gc + 8);   # 6.7.16
     _gvs_b = alloc(gc * 8 + 8);   # 6.7.15: each baked literal's bytes (_spc_try)
     var gi = 0;
     while (gi < gc) {
@@ -6194,7 +6195,10 @@ fn _gvk_one(S, gi): i64 {
         _cf_enum = 0;
         if (_cf_ok == 0) { return 0; }
         store8(_gvk_ik + gi, 1);
-    } else { store8(_gvk_ik + gi, 2); }   # 6.7.16 (D13 (a)): a float constant, its bits
+    } else {
+        store8(_gvk_ik + gi, 2);   # 6.7.16 (D13 (a)): a float constant, its bits
+        store8(_gvk_mw + gi, _gvk_fmix);   # 6.7.16 (D15 (a))
+    }
     store64(_gvk_v + gi * 8, v);
     if ((_gv_sup(graw) & 1) != 0) { return 4; }   # 6.7.15: the later constant's value is the slot's
     S64(_vgsi_base + vi * 8, v);
@@ -6300,6 +6304,7 @@ fn _gvk_sup1(S, g, k, vi): i64 {
 # baked.md). `sti` = the entry's `var`, `ti` its initializer. CHANGELOG [6.7.14]
 fn _gvk_flt(S, sti, vi, ti): i64 {
     _gai_ok = 0;
+    _gvk_fmix = 0;
     var t = GVTYPE(S, vi);
     if (t != F64_TYID) { if (t != F32_TYID) { if (TOKTYP(S, sti + 2) != 4) { return 0; } } }
     var lt = ti;
@@ -6333,30 +6338,68 @@ fn _gvk_fx(S, t, ti): i64 {
     if (t == F32_TYID) { return _gai_f32(v); }
     return v;
 }
+# ⛔ 6.7.16 — AND AN INTEGER OR ENUM OPERAND (the user's decision D15 (a), 2026-10-19; issues/2026-10-18-kernel-float-
+# global-mixed-int-operand-left-late.md). `var M: f64 = 1.5 + 1;` and `= 1.5 * E.A` were left to the replay, because
+# the scan took float literals and f64 consts only: an x86 `kernel;` build read 0 (and named them late), an earlier
+# initializer's read saw 0 and a call in one that wrote M was reset. The scan now also takes an integer literal, an
+# integer const and an enum constant, bare or qualified (`E.A`: a name, `.`, a member of that enum; `_gvk_fname`),
+# and the evaluator computes the mix as the run-time arithmetic does — the LEFT operand's kind picks f64 and the
+# integer is its raw bits (`_ce_binop`) — so an f64 result is baked. An integer left operand (`1 + 1.5`: integer
+# arithmetic on the float's bits) is no f64 result and stays with the replay, as does a NaN. The replay's warning about
+# the mix is kept: such an entry (`_gvk_mw`) is parsed once more, its code taken back (_gvi_baked). CHANGELOG [6.7.16]
+var _gvk_fmix = 0;   # the scan met an integer operand
+var _gvk_mw = 0;     # per deferred entry: 1 = a baked float with an integer operand (its replay warns)
 fn _gvk_fscan(S, ti): i64 {
+    _gvk_fmix = 0;
     var k = ti;
     var n = 0;
     while (TOKTYP(S, k) != 5) {
         if (k >= GTCNT(S)) { return 0; }
         var t = TOKTYP(S, k);
         if (t == 2) {
-            if (_gvk_fname(S, k) == 0) { return 0; }
+            var w = _gvk_fname(S, k);
+            if (w == 0) { return 0; }
             n = n + 1;
+            k = k + w - 1;
         } elif (t == 61) { n = n + 1; }
+        elif (t == 1) { n = n + 1; _gvk_fmix = 1; }   # 6.7.16: an integer literal
         elif (t < 6 || t > 11) { return 0; }   # + - * / ( )
         k = k + 1;
     }
     return n;
 }
-# The name at token `k`: an f64 const the replay reads as that const, and not another file's private one.
+# The operand at token `k`, as the replay reads it — its token count, 0 = not one the bake takes: an f64 const, or
+# (6.7.16) an integer const (1), a qualified enum constant (`E.A`, 3: _gvk_fqual) or a bare one (1: _gvk_fenum); not
+# another file's private name, not a call, not a field.
 fn _gvk_fname(S, k): i64 {
     var nt = TOKTYP(S, k + 1);
-    if (nt == 41 || nt == 10) { return 0; }   # `a.b`, a call
+    if (nt == 10) { return 0; }   # a call
+    if (nt == 41) { return _gvk_fqual(S, k); }
+    if (_gvk_name_ok(S, k) == 0) { return 0; }
     var ci = _cst_find(S, TOKVAL(S, k));
-    if (ci < 0) { return 0; }
-    if (_cst_kind_peek(S, ci) != 1) { return 0; }
+    if (ci < 0) { return _gvk_fenum(S, k); }
+    var ck = _cst_kind_peek(S, ci);
+    if (ck != 0) { if (ck != 1) { return 0; } }
     if (_findvar_core(S, TOKVAL(S, k)) != L64(_cst_tab + ci * 64 + 24)) { return 0; }
-    return _gvk_name_ok(S, k);
+    if (ck == 0) { _gvk_fmix = 1; }
+    return 1;
+}
+# A bare enum constant: the global the name resolves to (as the replay's read) is one.
+fn _gvk_fenum(S, k): i64 {
+    var vi = _findvar_core(S, TOKVAL(S, k));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    if (GVENUMID(S, vi) <= 0) { return 0; }
+    _gvk_fmix = 1;
+    return 1;
+}
+# `E.A`: E no variable, A a constant of the enum named E (_enum_qual_resolve's first answer, quietly).
+fn _gvk_fqual(S, k): i64 {
+    if (TOKTYP(S, k + 2) != 2) { return 0; }
+    if (_ce_is_var(S, TOKVAL(S, k)) == 1) { return 0; }
+    if (_enum_variant_in(S, TOKVAL(S, k), TOKVAL(S, k + 2)) < 0) { return 0; }
+    _gvk_fmix = 1;
+    return 3;
 }
 
 # ⛔ 6.7.14 — A BAKED SCALAR IS NOT REPLAYED WHERE ITS STORE WROTE WHAT THE SLOT ALREADY HOLDS (issues/2026-10-08-const-
@@ -6821,6 +6864,7 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
     if (load8(_gvk_bk + gi) != 3) { return 0; }
     if (GVGAI(S, idx) != 0) { return 0; }   # a zone list's blob, laid down by the replay since _gvk_pre ran
     var st = GTI(S);
+    if (load8(_gvk_mw + gi) == 1) { _gvi_mixw(S); }   # 6.7.16 (D15 (a)): the mix warning, once
     while (PEEKT(S) != 5) {
         if (PEEKT(S) == 12) { return 1; }
         STI(S, GTI(S) + 1);
@@ -6829,6 +6873,15 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
     if (GVTYPE(S, idx) < 0) { _tp_warn(S, st); }
     if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) == 0) { _gv_slvar(S, idx); }   # 6.7.15: superseded, it was a sink's
     return 1;
+}
+# A baked float whose initializer mixes an integer operand into f64 arithmetic (_gvk_fscan): parsed as the replay
+# parsed it, so its "f64 arithmetic with a non-f64 right operand" is given at the token and in the order it was, and
+# the code it emitted is taken back (_gvs_mark / _gvs_undo) — nothing is stored. CHANGELOG [6.7.16]
+fn _gvi_mixw(S): i64 {
+    _gvs_mark(S);
+    PCMPE(S);
+    _gvs_undo(S);
+    return 0;
 }
 # The slot entry `gi`'s scalar initializer is replayed into: _gv_target's — or, for a constant the replay steps (bk 3,
 # _gvi_baked) that a later constant superseded, its own slot, which it does not write and does not make the "last

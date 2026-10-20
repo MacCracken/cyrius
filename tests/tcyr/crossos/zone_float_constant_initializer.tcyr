@@ -38,6 +38,27 @@ var fg10: f64 = FCF;
 # 11 — a call stays a startup store
 fn fk11(): f64 { return 1.5; }
 var fc11: f64 = fk11() + 1.0;
+# 12 - 17 — 6.7.16 (the user's decision D15 (a), 2026-10-19; issues/2026-10-18-kernel-float-global-mixed-int-operand-
+# left-late.md): an integer or enum operand on the RIGHT of f64 arithmetic is baked too — the integer is its raw bits,
+# as at run time (1 is the least subnormal: 1.5 + it rounds to 1.5; 1.5 * 3's bits is 4.5 x 2^-1074, which rounds to
+# 4's bits) — so an earlier read sees the value (12: was 0) and an earlier call's write is kept (13: was reset). Each
+# mix is still warned ("f64 arithmetic with a non-f64 right operand"): this file warns by design. An integer LEFT
+# operand (17: integer arithmetic on the float's bits) stays a startup store. After the first statement the same
+# arithmetic is computed at run time by the target's float unit, and must give the baked bits (18).
+enum FE { FA = 3; }
+const FCI = 2;
+fn frd12(): i64 { return load64(&fm12); }
+var fr12 = frd12();
+var fm12: f64 = 1.5 + 1;
+fn fset13(): i64 { fn13 = 2.5; return 1; }
+var fr13 = fset13();
+var fn13: f64 = 1.5 * FE.FA;
+var fp14: f64 = 1.5 * FA;
+var fq15: f64 = 1.5 + FCI;
+var fs16: f32 = 1.5 + 1;
+var fl17: f64 = 1 + 1.5;
+var fx18: f64 = 1.5;
+var fp18: f64 = 1.5 * FE.FA;
 
 assert_eq(load64(&fg1), 0x3FF8000000000000, "1: = FCF");
 assert_eq(load64(&fp2), 0x3FF8000000000000, "2: = (1.5)");
@@ -52,4 +73,14 @@ assert_eq(load64(&fq8), 0xBFC999999999999A, "8: = -(FCG + FCG)");
 assert_eq(fr9, 0x4008000000000000, "9: an earlier read sees the value (was 0)");
 assert_eq(load64(&fg10), 0x4022000000000000, "10: an earlier call's write is kept (was FCF)");
 assert_eq(load64(&fc11), 0x4004000000000000, "11: a call's value, stored at startup");
+assert_eq(fr12, 0x3FF8000000000000, "12: = 1.5 + 1: an earlier read sees the value (was 0)");
+assert_eq(load64(&fn13), 0x4004000000000000, "13: = 1.5 * E.A: an earlier call's write is kept (was 4)");
+assert_eq(load64(&fp14), 4, "14: = 1.5 * A: a subnormal, ties to even");
+assert_eq(load64(&fq15), 0x3FF8000000000000, "15: = 1.5 + an integer const");
+assert_eq(load64(&fs16), 0x3FC00000, "16: f32 = 1.5 + 1, binary32");
+assert_eq(load64(&fl17), 0x3FF8000000000001, "17: = 1 + 1.5: integer arithmetic on the float's bits, at startup");
+var fy18 = fx18 + 1;
+var fz18 = fx18 * FE.FA;
+assert_eq(load64(&fy18), load64(&fm12), "18: the target's 1.5 + 1 is the baked bits");
+assert_eq(load64(&fz18), load64(&fp18), "18: the target's 1.5 * 3 (a subnormal) is the baked bits");
 var r = assert_summary();

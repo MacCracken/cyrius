@@ -7699,8 +7699,15 @@ evaluator, IEEE 754 binary64 as the target computes it. Through 6.7.14 those sta
 stores: an x86 `kernel;` build's program read 0 (warned "use a constant", which an f64 const did
 not satisfy), an earlier initializer's read saw 0, and a call in an earlier initializer that
 wrote the global was reset by the store (its write is now kept, as over a literal). Still a
-deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`),
-and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned). A *redeclared* float global follows the
+deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`), and
+an integer **left** operand (`1 + 1.5` is integer arithmetic on the float's bits, warned). An integer
+or enum operand on the **right** of f64 arithmetic — `var M: f64 = 1.5 + 1;`, `= 1.5 * E.A`, `= 1.5 *
+A`, `= 1.5 + C` with `C` an integer const — is baked too (6.7.16, the user's decision D15 (a),
+2026-10-19), computed as the run-time arithmetic computes it: the integer is its raw bits (`1` is the
+least subnormal, so `1.5 + 1` is 1.5, and `1.5 * 3` is 4.5 x 2^-1074, which rounds to the bits 4), and
+"f64 arithmetic with a non-f64 right operand" is still warned, once. Through 6.7.15 it was a startup
+store: an x86 `kernel;` build's program read 0 (and the initializer was named late), an earlier
+initializer's read saw 0, and an earlier call's write was reset. A *redeclared* float global follows the
 constant redeclaration rule above (6.7.16, the user's decision D13 (a), 2026-10-19): a float
 constant redeclaration is the global's value from program start and an earlier float constant
 declaration of it leaves no startup store — `var G: f64 = 1.5; var b = load64(&G); var G: f64 =
