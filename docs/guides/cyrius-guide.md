@@ -9287,6 +9287,16 @@ bytes as x86_64 Linux (6.7.15). Each reads stdin, or the file named after the fl
 line split as `CommandLineToArgvW` splits it). `ts_test_runner` therefore works on every
 POSIX install. The cx compiler (`cycc_cx`) has no TS front end.
 
+The compilers that run on Linux (`cycc`, `cycc_aarch64`, the aarch64 native `cycc`, the
+Linux-hosted `cycc_win` and `cycc_cx`) read their flags and that path from
+`/proc/self/cmdline`, whole: a command line of up to 2,097,151 bytes is read in full, and a
+longer one is refused by name (`error: the command line is longer than 2097151 bytes`, exit 1),
+never scanned cut.
+Before 6.7.16 they read its first 255 bytes, so a path that ended past them was cut and the
+cut name opened (`error: cannot open '<prefix>'` for a file that exists), and a flag past them
+(`--version`, `--syntax-only`, `--allow-undef`, `--pie`) was ignored. Pinned by
+`tests/gates/toolchain/emit_js_per_host_fork.sh` axis 5. See CHANGELOG [6.7.16].
+
 `cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
 `cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
 to a file — run `cycc.exe --emit-js app.tsx > app.js` directly.

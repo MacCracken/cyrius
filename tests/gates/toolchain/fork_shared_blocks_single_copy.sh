@@ -12,7 +12,11 @@
 #             `_find_fn_by_name(S, "main", 4)`; main_aarch64, _macho, _native and main_x86_macho
 #             open-coded the same five-deep byte compare.
 #   cmdline — main_cx.cyr's Linux and agnos arms carried two verbatim /proc/self/cmdline scans;
-#             one helper (_cx_cmdline_flags) now serves both.
+#             one helper (_cx_cmdline_flags) now serves both. 6.7.16: the READ itself has one
+#             copy, src/common/util.cyr's _cmdline_read (to EOF, into a 2 MiB mapping; a full
+#             one refused by name). The five /proc drivers each read 255 bytes into their own
+#             buffer, and each cut a TS path past byte 255 (emit_js_per_host_fork.sh axis 5).
+#             No src/main*.cyr names /proc/self/cmdline; each /proc driver calls the reader once.
 # Plus a runtime row, because the lookup swap changes code: on the aarch64 cross and, under
 # qemu-aarch64, the aarch64 and native compilers, a program whose `fn main` follows a
 # `fn mainframe` exits with main's 42, and one with only `fn mai` exits with its last value.
@@ -22,6 +26,8 @@
 #   main_win.cyr's include replaced by the 45-line block inline   -> RED "regions: src/main_win.cyr assigns"
 #   main_aarch64.cyr restored to its pre-6.6.20 copy             -> RED "main: src/main_aarch64.cyr open-codes"
 #                                                                    + "only 5 drivers look `main` up" + regions
+#   (6.7.16) main_aarch64.cyr opens /proc/self/cmdline itself again -> RED "the files whose code
+#                                                                    opens /proc/self/cmdline are …"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: fork_shared_blocks_single_copy: cannot cd to $ROOT"; exit 1; }
@@ -60,8 +66,18 @@ rows=$((rows + 1))
 [ "$nmain" -ge 6 ] || bad "main: only $nmain drivers look \`main\` up through _find_fn_by_name (floor 6)"
 
 rows=$((rows + 1))
-c=$(code src/main_cx.cyr | grep -c '"/proc/self/cmdline"' || true)
-[ "$c" = 1 ] || bad "cmdline: src/main_cx.cyr opens /proc/self/cmdline at $c site(s) (want 1, _cx_cmdline_flags)"
+c=$(code src/main_cx.cyr | grep -c '^fn _cx_cmdline_flags(' || true)
+[ "$c" = 1 ] || bad "cmdline: src/main_cx.cyr defines _cx_cmdline_flags $c time(s) (want 1: one scan for its Linux and agnos arms)"
+# 6.7.16 — one /proc/self/cmdline reader: the only src/ file whose code names the path is
+# src/common/util.cyr, and each /proc driver reads through _cmdline_read once.
+rows=$((rows + 1))
+pf=$(for f in $(find src -name '*.cyr' | sort); do code "$f" | grep -q '"/proc/self/cmdline"' && echo "$f"; done)
+[ "$pf" = src/common/util.cyr ] || bad "cmdline: the files whose code opens /proc/self/cmdline are '$(echo $pf)' (want only src/common/util.cyr, _cmdline_read)"
+for f in src/main.cyr src/main_aarch64.cyr src/main_aarch64_native.cyr src/main_win.cyr src/main_cx.cyr; do
+    rows=$((rows + 1))
+    c=$(code "$f" | grep -c '_cmdline_read()' || true)
+    [ "$c" = 1 ] || bad "cmdline: $f calls _cmdline_read() $c time(s) (want 1)"
+done
 
 # ── runtime: the auto-call still finds exactly `main` ───────────────────────────────────
 printf 'fn mainframe(): i64 { return 7; }\nfn main(): i64 { return 42; }\n' > "$T/mm.cyr"
@@ -93,5 +109,5 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL fork_shared_blocks_single_copy: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS fork_shared_blocks_single_copy: $rows rows — one heap-region block ($n drivers), one \`main\` lookup ($nmain drivers), one cx cmdline scan; aarch64 auto-call finds exactly \`main\`"
+echo "PASS fork_shared_blocks_single_copy: $rows rows — one heap-region block ($n drivers), one \`main\` lookup ($nmain drivers), one cx cmdline scan, one /proc/self/cmdline reader (5 drivers); aarch64 auto-call finds exactly \`main\`"
 exit 0

@@ -3508,6 +3508,51 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
 }
 
 # ================================================================
+# COMMAND-LINE FLAGS — the /proc/self/cmdline drivers (Linux, agnos)
+# ================================================================
+# The WHOLE command line, read to EOF into its own 2 MiB mapping (lib/args.cyr's args_init
+# starts at that size); returns its byte count, or 0 when /proc cannot be opened, and leaves
+# the bytes (NUL-separated, a 0 after the last) at _cmdline_buf. Every /proc driver's flag
+# scan reads it here. They read at most 255 bytes into a fixed buffer and took a short read
+# for the whole line, so a --parse-ts / --lex-ts / --emit-js path past byte 255 was cut and
+# the cut name opened, and any flag past it was dropped. A line that fills the mapping, or
+# that cannot be mapped or read, is refused by name: a cut copy is never scanned. Not a
+# top-level `var b[N]`: cybs sizes one as N bytes where cycc gives N * 8, and gen1 runs this.
+# CHANGELOG [6.7.16]
+#ifndef CYRIUS_TARGET_MACOS
+#ifndef CYRIUS_TARGET_WIN
+var _cmdline_buf = 0;
+fn _cmdline_read(): i64 {
+    var fd = 0;
+    if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
+    else { fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
+    if (fd < 0) { return 0; }
+    var b = syscall(9, 0, 2097152, 3, 0x22, 0 - 1, 0);
+    if (b < 4096) { _cmdline_refuse("cannot map 2 MiB to read the command line"); }
+    var n = 0;
+    var r = 1;
+    while (r > 0 && n < 2097152) {
+        r = syscall(SYS_READ, fd, b + n, 2097152 - n);
+        if (r > 0) { n = n + r; }
+    }
+    syscall(SYS_CLOSE, fd);
+    if (r < 0) { _cmdline_refuse("cannot read the command line"); }
+    if (n >= 2097152) { _cmdline_refuse("the command line is longer than 2097151 bytes"); }
+    _cmdline_buf = b;
+    return n;
+}
+
+fn _cmdline_refuse(why): i64 {
+    PRSTR("error: ");
+    PRSTR(why);
+    PRSTR(" (/proc/self/cmdline is read whole; a cut copy is never scanned)\n");
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+#endif
+#endif
+
+# ================================================================
 # COMMAND-LINE FLAGS — macOS (no /proc)
 # ================================================================
 #ifdef CYRIUS_TARGET_MACOS
