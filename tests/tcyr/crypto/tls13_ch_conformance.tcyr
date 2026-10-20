@@ -305,6 +305,7 @@ test_group("W1: the refusal's alert reaches the wire (tls_native_accept)");
 var w = _w1();
 if (w == 0 - 999) {
     assert_eq(1, 1, "W1: SKIP — socketpair refused on this target");
+    _skip("W1");
 } else {
     assert_eq(w, TLS_ERR_BAD_HANDSHAKE, "W1: accept refuses the ClientHello");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
