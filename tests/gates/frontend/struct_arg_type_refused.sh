@@ -237,6 +237,12 @@
 #   the fix reverted                                    -> RED 31: the 13 re-pinned rows, DS1-DS3 DS4b DS5-DS17 (DS4's
 #                                                          '**pp' reads the same either way)
 #   real tree                                           -> GREEN (149 refusal rows — floor 149 — and 41 acceptance rows)
+# DSW1-DSW4 (met in passing, its own commit): a refused dereference assignment, `l = *pq`, printed "assigning
+# non-pointer to typed pointer" beside its refusal (the 8-byte store it fell to); `_asg_dstar` now marks the statement
+# refused (`_asg_tup_refd`), as 6.7.15's DNW rows end `w = s.dup()`. Mutation (2026-10-19, the commit before it):
+#   the line reverted                                   -> RED 3: DSW1-DSW3 (the warning beside the refusal), x4; DSW4
+#                                                          (the for step) never warned
+#   real tree                                           -> GREEN (153 refusal rows — floor 153 — and 41 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1241,6 +1247,16 @@ var GL: P3 = *GPQ;"
 refuse4 "DS17 a span over a comment and a line break: one space" "cannot pass '\*gu( pu)' $MA 'take8'" \
     "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; return take8(*gu(  # a comment
   pu)); } syscall(60, go());"
+# DSW (met in passing, its own commit): the refused dereference ASSIGNMENT also printed "assigning non-pointer to typed
+# pointer" — it went on to the 8-byte store (as 6.7.15's DNW `w = s.dup()` did); it now ends at the refusal.
+refuse4 "DSW1 l = *pq: one error, no warning" "cannot copy '\*pq' into a variable" \
+    "${DS}fn go(): i64 { var q: Q3; var pq: *Q3 = &q; var l: P3; l = *pq; return l.x; } syscall(60, go());" 1 nowarn
+refuse4 "DSW2 s = *pu (8 B): one error, no warning" "cannot copy '\*pu' into a variable" \
+    "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; var s: S8; s = *pu; return s.s; } syscall(60, go());" 1 nowarn
+refuse4 "DSW3 l = ((*gq(&q))): one error, no warning" "cannot copy '\*gq(&q)' into a variable" \
+    "${DS}fn go(): i64 { var q: Q3; var l: P3; l = ((*gq(&q))); return l.x; } syscall(60, go());" 1 nowarn
+refuse4 "DSW4 a for step l = *pq: one error, no warning" "cannot copy '\*pq' into a variable" \
+    "${DS}fn go(): i64 { var q: Q3; var pq: *Q3 = &q; var l: P3; var i = 0; for (i = 0; i < 1; l = *pq) { i = 1; } return i; } syscall(60, go());" 1 nowarn
 # Controls: a name keeps its own spelling, and so does a `*T` source that is no dereference (`_hl_psrc`).
 refuse4 "DSK1 var l: P3 = q; (a name, no dereference)" "cannot copy 'q' into a variable of a different struct/vector type: 'l'" \
     "${DS}fn go(): i64 { var q: Q3; var l: P3 = q; return l.x; } syscall(60, go());"
@@ -1251,7 +1267,7 @@ fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 149 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 149)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 153 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 153)"; fail=$((fail+1)); }
 [ "$naccept" -ge 41 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 41)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
