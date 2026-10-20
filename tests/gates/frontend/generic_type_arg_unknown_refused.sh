@@ -181,6 +181,8 @@
 #      the impl's line); MNR1 `_tr_rt_bad` without its `_ngt_tail` arm -> RED 2: NR11 NR12 (the impl check's line).
 #      NR13 (a find repaired in passing): a union's by-value field, PARSE_UNION_DEF's parallel copy of the struct's
 #      field reader, the same; its mutant (the D7 commit's compiler, 4c6a024a3) -> RED 1: NR13 (the parse error).
+#      NR14 (a find repaired in passing): a slice's pointer element `[*Pt<i64>]` (`_tn_slice_ptr_el`) the same; its
+#      mutant (the compiler before it, eafa5a40d) -> RED 1: NR14 (the parse errors).
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -923,6 +925,9 @@ errs nr12 1 "NR12: an impl's : Pt<i64> against a member's : Pt — the method's 
 nr nr13 'union U { f: Pt<i64>; g: i64<u8>; h: f64<i32>; k; }'
 errs nr13 3 "NR13: a union's by-value fields, as a struct's (was 'expected identifier, got <', the first alone)" \
     "error:<source>:5:14: $NGS" "error:<source>:5:26: 'i64' $NGI" "error:<source>:5:38: 'f64' $NGI"
+nr nr14 'fn s(): i64 { var a: [*Pt<i64>] = 0; var b: slice<*i32<u8>> = 0; var c: [*Pt] = 0; return 0; }'
+errs nr14 2 "NR14: a slice's pointer element, [*Pt<i64>] and slice<*i32<u8>> (were 'expected ]' / 'expected =' + a cascade)" \
+    "error:<source>:5:24: $NGS" "error:<source>:5:52: 'i32' $NGI"
 rc=0; "$CC" --syntax-only < "$T/nr2.cyr" > /dev/null 2> "$T/nrx.err" || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/nrx.err"; then ok "NRX: --syntax-only says nothing (as D6's positions)"
 else bad "NRX: --syntax-only rc $rc: $(grep '^error' "$T/nrx.err" | head -1)"; fi
