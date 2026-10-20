@@ -69,6 +69,14 @@
 #      TRC3 a method the trait does not declare, each after a return refusal — two lines. Filed:
 #      docs/development/issues/2026-10-18-impl-check-stops-at-first-differing-return.md
 #      Mutant (2026-10-20): the lane's base compiler (b73e8d5fe, the early return) -> RED 3: TRC1 TRC2 TRC3 (one line)
+#   TP (6.7.16) a generic member's own `<U>` reads after a `*fn(..)` in its signature: the signature resolver
+#      (`_tn_sig_tparam`) walked back to the NEAREST `fn` token, the fn-pointer type's, and refused `U` as "unknown type".
+#      A `fn` behind a `*` is now stepped over. TP1 the filed repro verbatim (exit 5; it was refused at 3:47); TP2 the
+#      `*fn` last, a `: U` return (refused at 3:51); TP3 a `U` inside the `*fn(U): i64` itself (refused at 3:34) — each
+#      5; TP4 a non-generic member unchanged; TP5 an unknown name after a `*fn(..)` still refused once; TP6 a non-generic
+#      fn's `U` after a `*fn(..)` still refused once. Filed:
+#      docs/development/issues/2026-10-18-generic-trait-member-type-parameter-unknown-after-fn-pointer-type.md
+#      Mutant (2026-10-20): the lane's previous compiler (7a6df215c, no step-over) -> RED 3: TP1 TP2 TP3 (refused)
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -391,5 +399,26 @@ syscall(60, main());
 EOF
 exits trk 131 "TRK: member and impl agree — i64 and none both ways, f64, *u128, (i64, f64), Pt, a generic's U (renamed V), Box<Pt>, bool; two impls"
 
+# ── TP (6.7.16) — a generic member's own <U> after a *fn(..) in its signature ──
+cat > "$T/tp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x; }
+trait Sh { fn g<U>(self, c: *fn(i64): i64, u: U): U; }
+impl Sh for P { fn g<U>(self, c: *fn(i64): i64, u: U): U { return u; } }
+fn main(): i64 { var p = P { 1 }; return p.g(0, 5); }
+syscall(60, main());
+EOF
+exits tp1 5 "TP1: the filed repro verbatim — u: U after a *fn(..) (it was refused: unknown type 'U')"
+printf "$R"'trait Sh { fn g<U>(self, u: U, c: *fn(i64): i64): U; }\nimpl Sh for P { fn g<U>(self, u: U, c: *fn(i64): i64): U { return u; } }\nfn main(): i64 { var p = P { 1 }; return p.g(5, 0); }\nsyscall(60, main());\n' > "$T/tp2.cyr"
+exits tp2 5 "TP2: the *fn(..) last — the : U return after it"
+printf "$R"'trait Sh { fn g<U>(self, cb: *fn(U): i64, u: U): U; }\nimpl Sh for P { fn g<U>(self, cb: *fn(U): i64, u: U): U { return u; } }\nfn main(): i64 { var p = P { 1 }; return p.g(0, 5); }\nsyscall(60, main());\n' > "$T/tp3.cyr"
+exits tp3 5 "TP3: a U inside the *fn(U): i64 itself"
+printf "$R"'trait Sh { fn g(self, c: *fn(i64): i64, u: i64): i64; }\nimpl Sh for P { fn g(self, c: *fn(i64): i64, u: i64): i64 { return u; } }\nfn main(): i64 { var p = P { 1 }; return p.g(0, 5); }\nsyscall(60, main());\n' > "$T/tp4.cyr"
+exits tp4 5 "TP4: a non-generic member with a *fn(..) parameter unchanged"
+printf "$R"'trait Sh { fn g<U>(self, c: *fn(i64): i64, u: Nope): U; }\nsyscall(60, 4);\n' > "$T/tp5.cyr"
+refused_at tp5 "unknown type 'Nope' for parameter 'u'" 3:47 "TP5: an unknown name after a *fn(..) in a generic member stays refused"
+printf 'include "lib/syscalls.cyr"\nfn h(c: *fn(i64): i64, u: U): i64 { return 1; }\nsyscall(60, 4);\n' > "$T/tp6.cyr"
+refused_at tp6 "unknown type 'U' for parameter 'u'" 2:27 "TP6: a non-generic fn's U after a *fn(..) stays refused"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16)"
