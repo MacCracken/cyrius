@@ -158,6 +158,14 @@
 #      on `_gtype_sid` again -> RED 2: SR0 SR1; MSR2 `_trs_targs` answering 0 -> RED 3: SR0 SR2 SR2b; MSR3 `_pty_targs`
 #      answering 0 -> RED 3: SR0 SR3 SR4; MSR4 `_targ_is_tp` without the member's `_trs_fn` arm -> RED 1: the SR control
 #      ("unknown type 'U'"); MSR5 `_trs_targs` not ending the walk -> RED 1: SR2b (two lines)
+#   PL (6.7.16) A `**Box<Zork>` PARAMETER'S REFUSAL SWALLOWED THE NEXT PARAMETER'S ERROR: the slot's pointee pin is read
+#      while the `*` is marked (`_mark_ptr_param` -> `_param_pin` -> .. -> `_gen_ann_sid`), whose refusal sets the panic
+#      latch, so `fn ap(p: **Box<Zork>, q: Nope)` reported 'Zork' alone (`*Box<Zork>` reported both). The latch is put
+#      back around the pin's read, as `_targ_chk` does; the refusal stands at its token once (the parameter reader's
+#      read of the same list repeats it). PL0 the filed repro verbatim (two lines); PL1 a generic's, two instances; PL2
+#      `***Box<Zork>`; PL3 two such parameters, then one more; a control (`**Box<Pt>`, exit 4). SR4 stays once.
+#      Filed: docs/development/issues/2026-10-18-double-pointer-generic-parameter-refusal-swallows-the-next.md
+#      Mutant (2026-10-20): the lane's previous compiler (1e3aad696) -> RED 4: PL0-PL3 (the first line alone)
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -805,5 +813,30 @@ syscall(60, main());
 EOF
 exits srk 0 "SR control: (Box<Pt>, i64), a member's Box<i64> / own Box<U> / *fn(Box<U>), *fn(Box<Pt>), a generic's own *fn(Box<U>), Box<Later> (declared below) in each position, unchanged"
 
+# ── 6.7.16: a `**Box<Zork>` parameter's refusal leaves the next parameter's error standing ────────────────────────────
+cat > "$T/pl0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn ap(p: **Box<Zork>, q: Nope): i64 { return 0; }
+syscall(60, 4);
+EOF
+errs pl0 2 "PL0: the filed repro verbatim — the type argument and the next parameter, each once (q: Nope was swallowed)" \
+    "error:<source>:3:20: unknown type 'Zork' $TA" "error:<source>:3:26: unknown type 'Nope' for parameter 'q'"
+PLH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }'
+pl() { printf '%s\n%s\nsyscall(60, 4);\n' "$PLH" "$2" > "$T/$1.cyr"; }
+pl pl1 'fn gp<T>(p: **Box<Zork>, q: Nope, t: T): i64 { return 0; }
+fn f(): i64 { return gp(0, 0, 1) + gp<i32>(0, 0, 2); }'
+errs pl1 2 "PL1: a generic's **Box<Zork> (its pin read under the binding) with two instances — each once" \
+    "error:<source>:4:23: unknown type 'Zork' $TA" "error:<source>:4:29: unknown type 'Nope' for parameter 'q'"
+pl pl2 'fn ap(p: ***Box<Zork>, q: Nope): i64 { return 0; }'
+errs pl2 2 "PL2: ***Box<Zork> — each once" "error:<source>:4:21: unknown type 'Zork' $TA" "error:<source>:4:27: unknown type 'Nope' for parameter 'q'"
+pl pl3 'fn ap(p: **Box<Zork>, q: **Box<Zork2>, r: Nope): i64 { return 0; }'
+errs pl3 3 "PL3: two **Box<..> refusals and the parameter after them — each once" \
+    "error:<source>:4:20: unknown type 'Zork' $TA" "error:<source>:4:37: unknown type 'Zork2' $TA" "error:<source>:4:43: unknown type 'Nope' for parameter 'r'"
+printf '%s\nfn ap(p: **Box<Pt>, q: i64): i64 { return q; }\nsyscall(60, ap(0, 4));\n' "$PLH" > "$T/plk.cyr"
+exits plk 4 "PL control: fn ap(p: **Box<Pt>, q: i64) with ap(0, 4), unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16)"

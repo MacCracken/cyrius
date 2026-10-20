@@ -13607,7 +13607,13 @@ fn _mark_ptr_param(S): i64 {
         ed = _ek_at(S, GTI(S));
     }
     var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _param_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
+    # 6.7.16: a `**Box<Zork>` pin's refusal is the parameter reader's own line (it reads the same list), so the
+    # latch the pin's read set is put back, as `_targ_chk` does — it swallowed the next parameter's error.
+    # CHANGELOG [6.7.16]
+    var svpn = _panic;
+    var pn = _param_pin(S, GTI(S) - 1);
+    if (svpn == 0) { _panic = 0; }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, pn));   # 6.7.13: a `**T`'s pointee
     return 0;
 }
 # ⛔ 6.7.15 — A GENERIC'S `pp: **Box<T>` PARAMETER READS ITS PIN UNDER THE BINDING ITS BODY HAS: the base's T -> i64
