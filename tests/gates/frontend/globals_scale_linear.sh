@@ -75,30 +75,42 @@ want() {  # the exit code each program must produce at size $2
       *)   echo $(( $2 & 255 )) ;;
     esac
 }
-best() {  # best-of-3 wall ms for compiling $1 (-1 if any compile fails)
-    b=99999999
+# Mutation (6.7.16): CYCC pointed at a stand-in compiler that sleeps n^2 / 400,000 ms on an n-line input
+# before running cycc (a quadratic table walk, ~3.5x for a doubled count) -> RED on every row, each
+# after its 3 rounds (const 305 -> 1096 ms, 35/10x); the real compiler alone and under 16 busy loops
+# -> PASS (const 110 -> 190 ms under load, 17/10x).
+# The pair at N and 2N, the two sizes ALTERNATED (N, 2N, N, 2N, N, 2N), each its best of 3: a load
+# burst from another process lands on both sizes alike instead of on one. Sets T1 / T2 (-1: a compile
+# failed). 6.7.16: the two sizes were timed back to back (all of N, then all of 2N), so a burst on
+# the 2N side read as a scaling regression (const: 54 -> 185 ms, 3.4x, in a full check.sh beside
+# other suites; 47 -> 88 ms, 1.8x, alone).
+pair() {
+    T1=99999999; T2=99999999
     for _ in 1 2 3; do
-        s=$(date +%s%N)
-        "$CC" < "$1" > "$1.bin" 2> "$1.err" || { echo -1; return; }
-        e=$(( ($(date +%s%N) - s) / 1000000 ))
-        [ "$e" -lt "$b" ] && b=$e
+        for _k in 1 2; do
+            s=$(date +%s%N)
+            "$CC" < "$D/$1.$_k.cyr" > "$D/$1.$_k.cyr.bin" 2> "$D/$1.$_k.cyr.err" || { T1=-1; T2=-1; return; }
+            e=$(( ($(date +%s%N) - s) / 1000000 ))
+            if [ "$_k" = 1 ]; then
+                if [ "$e" -lt "$T1" ]; then T1=$e; fi
+            elif [ "$e" -lt "$T2" ]; then T2=$e; fi
+        done
     done
-    echo "$b"
+    return 0
 }
 
 NFAIL=0
 for shape in const enum defer ref redecl structcall; do
     gen "$shape" "$N" > "$D/$shape.1.cyr"
     gen "$shape" $((N * 2)) > "$D/$shape.2.cyr"
-    T1=$(best "$D/$shape.1.cyr")
-    T2=$(best "$D/$shape.2.cyr")
+    pair "$shape"
     if [ "$T1" -lt 0 ] || [ "$T2" -lt 0 ]; then
         echo "  FAIL: [$shape] the compile failed: $(grep -h -m1 -i error "$D/$shape.1.cyr.err" "$D/$shape.2.cyr.err" 2>/dev/null | head -1)"
         NFAIL=$((NFAIL + 1)); continue
     fi
     # the fast path must still be the RIGHT path: run the 2N program
     chmod +x "$D/$shape.2.cyr.bin"
-    "$D/$shape.2.cyr.bin"; rc=$?
+    rc=0; "$D/$shape.2.cyr.bin" || rc=$?   # 6.7.16: `prog; rc=$?` stopped `bash -eo pipefail` at its nonzero exit
     w=$(want "$shape" $((N * 2)))
     if [ "$rc" != "$w" ]; then
         echo "  FAIL: [$shape] the $((N * 2))-global program exited $rc, want $w"
@@ -106,6 +118,17 @@ for shape in const enum defer ref redecl structcall; do
     fi
     [ "$T1" -lt 1 ] && T1=1
     R10=$(( T2 * 10 / T1 ))
+    # Over the limit: re-measure the whole pair, up to 3 rounds, each retry said by name. A quadratic
+    # table walk (about 4x for a doubled count) is over the limit in every round; a burst is not.
+    _r=1
+    while [ "$R10" -gt 30 ] && [ "$_r" -lt 3 ]; do
+        echo "  retry: [$shape] ${T1}ms -> ${T2}ms (${R10}/10x) over the limit, re-measuring the pair (round $((_r + 1)) of 3)"
+        _r=$((_r + 1))
+        pair "$shape"
+        if [ "$T1" -lt 0 ] || [ "$T2" -lt 0 ]; then R10=999; break; fi
+        [ "$T1" -lt 1 ] && T1=1
+        R10=$(( T2 * 10 / T1 ))
+    done
     if [ "$R10" -gt 30 ]; then
         echo "  FAIL: [$shape] ${N} -> $((N * 2)) globals costs ${R10}/10x (${T1}ms -> ${T2}ms, limit 3.0x) — registration or lookup is scanning the whole var table again"
         NFAIL=$((NFAIL + 1))
