@@ -1195,11 +1195,13 @@ fn PARSE_RETURN(S): i64 {
     var en = _err_n;   # 6.7.16: what the arms refuse, in this statement
     var pt = _prr_ti;   # 6.7.16: a return inside the value (a closure's, a replay's) keeps this one's pending refusal
     var pn = _prr_en;
+    var pk = _prr_k;
     _prr_ti = 0 - 1;
     _PARSE_RETURN_ARMS(S);
-    _pair_ret_late(S);   # 6.7.16: the pair class's refusal, after the value's own parse
+    _pair_ret_late(S);   # 6.7.16: the pair / vector class's refusal, after the value's own parse
     _prr_ti = pt;
     _prr_en = pn;
+    _prr_k = pk;
     if (bad == 1) { _mret_ret_late(S, st, he, en); }
     return 0;
 }
@@ -7977,12 +7979,15 @@ fn _cur_fn_returns_vector(S): i64 {
 # declared to return this vector — and (6.7.14) unless it starts with a call naming no fn, inside any parentheses
 # (`_vrcv_nofnw`): the undefined-function path names that one, as the vector local's receive leaves it since 6.7.13
 # ("got `f64v2_splat`" came first). The tail arm diverts such a call here (`_tc_frame_divert`). CHANGELOG [6.7.14]
+# 6.7.16: the refusal is pending until the value is parsed (`_pair_ret_late`): a value's own error comes alone.
 fn _ret_vec_rule(S): i64 {
     if (_cur_fn_returns_vector(S) == 0) { return 0; }
     if (_simd_ret_call_ok(S) == 1) { return 0; }
     var ti = GTI(S);
     if (_vrcv_nofnw(S, ti, _gz_end(S, ti)) == 1) { return 0; }
-    return _refuse_simd_return(S);
+    _pair_ret_defer(S);   # 6.7.16: printed after the value's own parse (`_pair_ret_late`)
+    _prr_k = 2;
+    return 0;
 }
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }
@@ -8051,11 +8056,16 @@ fn _refuse_pair_return(S): i64 {
 # value's first token and the statement's error count; PARSE_RETURN asks `_pair_ret_late` once its arms have parsed the
 # value: the refusal is printed at that token unless the statement reported an error since (a report or a repeat,
 # `_err_n` — never the file-wide `_had_error`, so an earlier statement's error forces nothing). CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (the receives review) — AND THE VECTOR CLASS'S: `_ret_vec_rule` printed the 6.6.6 refusal before the value
+# was parsed, so a vector fn's `return zz;`, `return &(q);`, `return 5 + ;`, `return zz + 1;`, `return (zz);` and
+# `return q.zz;` were the refusal AND the value's own error. It records its pending refusal here too (`_prr_k` 2).
 var _prr_ti = 0 - 1;   # the refused value's first token, -1 = none pending
 var _prr_en = 0;       # `_err_n` when it was recorded
+var _prr_k = 1;        # the refusal: 1 the pair class's, 2 the vector class's
 fn _pair_ret_defer(S): i64 {
     _prr_ti = GTI(S);
     _prr_en = _err_n;
+    _prr_k = 1;
     return 0;
 }
 fn _pair_ret_late(S): i64 {
@@ -8065,7 +8075,8 @@ fn _pair_ret_late(S): i64 {
     if (_err_n != _prr_en) { return 0; }
     var sv = GTI(S);
     STI(S, ti);   # `_err_head` and `_pair_ret_offender` read the cursor's token
-    _refuse_pair_return(S);
+    if (_prr_k == 2) { _refuse_simd_return(S); }
+    else { _refuse_pair_return(S); }
     STI(S, sv);
     return 0;
 }

@@ -1989,7 +1989,9 @@ this rule's words (*… got `this expression`*), as `return *p;` itself was thro
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
 multi-value `return (a, b);`, a `callptr(fp, ..)` through a fn pointer held in a variable, a **global** of the
 right vector type, or a call returning a scalar or a different-width vector — is a compile error
-since v6.6.6 naming what it got. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
+since v6.6.6 naming what it got. A value with an error of its own — `return zz;` with `zz` undefined,
+`return &(q);`, `return 5 + ;` — reports that error alone (6.7.16; the refusal came first, then the value's
+error), as the 9-16 byte struct class does. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
 (*… got `this expression`*), though its callee is known. Before v6.6.6 every one of those compiled clean and handed back
 a half-written register pair; `return x + y;` returned `y` unchanged and `return G;` for a
 global read a stale register rather than `G`. The two that are worth spelling out because they

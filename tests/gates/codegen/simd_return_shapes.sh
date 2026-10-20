@@ -26,7 +26,10 @@
 #        reads 0 at the parent too: the top-level initializer of a vector global never stores,
 #        a separate pre-existing defect reported by bite 21's review, not fixed here.) The two
 #        `return IDENT;` branches resolve the name with FINDLOCAL, so a global never matched
-#        and fell straight through to the scalar path. Refused.
+#        and fell straight through to the scalar path. Refused. 6.7.16 (the receives review): by the
+#        vector global's own read refusal alone ("vector global 'G' is read and written through its
+#        address"), the value's own error — the 6.6.6 refusal waits for the value to parse
+#        (`_pair_ret_late`) and printed both through 6.7.15 (`r_msg`).
 #
 # ROOT CAUSE. PARSE_RETURN's `_is_simd128` / `_is_simd256` branches handle exactly
 # `return IDENT;` for a local of the matching class and fall through to the scalar PCMPE path
@@ -2460,13 +2463,14 @@ a_want() {
 }
 
 # ---- legs ------------------------------------------------------------------------------------
+r_msg() { case "$1" in X14) echo "vector global 'G' is read and written through its address";; *) echo "$MSG";; esac; }
 refuse_all() {  # $1 leg label  $2 compiler
     for row in $REFUSE_ROWS; do
         r_src "$row" > "$W/r.cyr"
         rc=0
         cat "$W/r.cyr" | "$2" > "$W/r.out" 2>"$W/r.err" || rc=$?
         nrefuse=$((nrefuse+1))
-        if ! grep -q "$MSG" "$W/r.err" 2>/dev/null; then
+        if ! grep -q "$(r_msg "$row")" "$W/r.err" 2>/dev/null; then
             bad "$1 $row: not refused (rc=$rc, first line: $(head -1 "$W/r.err" 2>/dev/null))"
         elif [ -s "$W/r.out" ]; then
             bad "$1 $row: reported but still emitted an artifact"

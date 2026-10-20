@@ -766,8 +766,54 @@ for sxz in 16 24; do
         "error:<source>:4:36: $SR"
 done
 
+# 6.7.16 (the receives review) — AND THE VECTOR CLASS'S 6.6.6 RULE (`_ret_vec_rule`): its refusal ("a vector-returning fn
+# carries its result in a fixed register pair ... got `zz`") was printed before the value was parsed, so a vector fn's
+# `return zz;`, `return &(q);`, `return 5 + ;`, `return zz + 1;`, `return (zz);`, `return q.zz;` were the refusal AND the
+# value's own error. It is pending until the value is parsed now (`_pair_ret_late`, kind 2), as the 9-16 B class's is: the
+# value's own error alone; a value that parses keeps the refusal (VEC1-VEC7: a literal, a scalar local, after an earlier
+# statement's error, beside a closure's own return, at a generic's every instance once, three statements three errors).
+# f64v2 and f64v4, on the four compilers. Mutation (2026-10-20, measured):
+#   `_ret_vec_rule` refusing before the value's parse (the tree before) -> RED 80: VE1-VE7, VE9, VE10, VEC7 at both
+#       widths on the four legs (the refusal, then the value's error)
+VR='a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got'
+for vt in f64v2 f64v4; do
+    VM='
+fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); return load64(&r); }
+syscall(60, main());
+'
+    errs4 "VE1 return zz; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz; }'"$VM" "error:<source>:1:36: $UZ"
+    errs4 "VE2 return &(q); ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return &(q); }'"$VM" "error:<source>:1:35: expected identifier, got '('"
+    errs4 "VE3 return 5 + ; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return 5 + ; }'"$VM" "error:<source>:1:38: unexpected ';'"
+    errs4 "VE4 return zz + 1; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz + 1; }'"$VM" "error:<source>:1:37: $UZ"
+    errs4 "VE5 return (zz); ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return (zz); }'"$VM" "error:<source>:1:37: $UZ"
+    errs4 "VE6 return q.zz; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return q.zz; }'"$VM" \
+        "error:<source>:1:38: no struct type in scope for 'q'; a '.field' access needs its struct declaration (missing include?)"
+    errs4 "VE7 a closure's return, then the value's own error ($vt)" 'fn ap(f, x) { return x; }
+fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, zz); }'"$VM" "error:<source>:2:58: $UZ"
+    errs4 "VE9 an earlier statement in error: one error per statement ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var a = yy; return zz; }'"$VM" \
+        "error:<source>:1:37: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:48: $UZ"
+    errs4 "VE10 a generic's return zz; at three types: once ($vt)" 'fn mk<T>(q: T): '"$vt"' { return zz; }
+fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); var r2: '"$vt"' = mk(5); var r3: '"$vt"' = mk<i32>(5); return load64(&r); }
+syscall(60, main());
+' "error:<source>:1:34: $UZ"
+    errs4 "VEC1 control: return 5; keeps the refusal ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return 5; }'"$VM" "error:<source>:1:34: $VR \`5\`"
+    errs4 "VEC2 control: return t; (a scalar local) keeps it ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var t = 3; return t; }'"$VM" \
+        "error:<source>:1:45: $VR \`t\`"
+    errs4 "VEC3 control: an earlier statement in error, then return 5; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var a = yy; return 5; }'"$VM" \
+        "error:<source>:1:37: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:46: $VR \`5\`"
+    errs4 "VEC4 control: a closure's own return inside the value ($vt)" 'fn ap(f, x) { return x; }
+fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, 5); }'"$VM" "error:<source>:2:34: $VR \`ap\`"
+    errs4 "VEC6 control: a generic's return 5; at three types: once ($vt)" 'fn mk<T>(q: T): '"$vt"' { return 5; }
+fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); var r2: '"$vt"' = mk(5); var r3: '"$vt"' = mk<i32>(5); return load64(&r); }
+syscall(60, main());
+' "error:<source>:1:32: $VR \`5\`"
+    errs4 "VEC7 control: three statements, three errors ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { if (load64(q) == 1) { return zz; } return 5; }
+fn mk2(q: *'"$vt"'): '"$vt"' { return 6 + ; }'"$VM" "error:<source>:1:58: $UZ" "error:<source>:1:69: $VR \`5\`" \
+        "error:<source>:2:39: unexpected ';'"
+done
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 108 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 108) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 138 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 138) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0
