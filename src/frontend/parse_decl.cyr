@@ -7768,7 +7768,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     return 1;
 }
 
-# 6.7.10 (B7 review) — `_gci_toplevel`'s `var G: T = <* E>;` for any dereference of a `*T` (`_hl_dstar`,
+# 6.7.10 (B7 review) — `_gci_toplevel`'s `var G: T = <* E>;` for any dereference of a `*T` (`_hl_dstar_x`,
 # `_sci_dexpr`'s global twin): 1 = over 8 B, copied by `_gci_toplevel` through a hidden global holding E
 # into the inline G it registers after it; 0 = not one, refused (a `*U` of another struct, by name), or 8
 # B or less — the arm's value store then copies the word (`_gz_late` judges it a value).
@@ -8420,7 +8420,7 @@ fn _sci_slots(S, noff, pscale, nslots): i64 {
     return named;
 }
 # ⛔ 6.7.10 (B7 review) — `var q: T = <* E>;` in a fn for ANY dereference whose operand E is typed `*T`
-# (`_hl_dstar`): `(*p)`, `*(p + i)`, `*h.p`, `*gp()`, `*w.m().p`, `(*self)`. `*p` is a struct VALUE at every
+# (`_hl_dstar_x`): `(*p)`, `*(p + i)`, `*h.p`, `*gp()`, `*w.m().p`, `(*self)`. `*p` is a struct VALUE at every
 # size (the user's decision 6, 2026-10-12), and only `* IDENT ;` was recognised: every other spelling
 # fell to the scalar init, so at 8 B or less q became a HANDLE holding the word the dereference read
 # (inline through 6.7.9) and its first `q.v = 9` SIGSEGV'd; over 8 B it was that garbage handle on 6.7.9
@@ -11372,7 +11372,7 @@ fn _gz_inst_of(S, c, g): i64 {
     return 1;
 }
 # `* IDENT ;` at token `b`, IDENT a global `*sid`: 1. 6.7.10 (review): or any other dereference of a
-# `*sid` up to the `;` (`_hl_dstar`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
+# `*sid` up to the `;` (`_hl_dstar_x`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
 # ⛔ 6.7.16 (D17 (a)) — and `*pp` of a `**sid` in any spelling (`_hl_dstar_x`'s mode 1: `*GPP`, `(*GPP)`): a top-level
 # `var G: S = *GPP;` is a copy at every size, as the same line in a fn is since 6.7.15 (it bound a handle), so pass 1
 # registers G inline and the sweep keeps it a value. CHANGELOG [6.7.16]
@@ -12431,9 +12431,9 @@ var _hl_dk = 0;
 var _hl_dnm = 0;
 var _hl_dna = 0 - 1;   # 6.7.16: the `*` of the dereference `_hl_dstar_x` typed last (-1: `_hl_dnm` is `_hl_psrc`'s)
 var _hl_dne = 0 - 1;   # ... and the token after its operand
-fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
-# ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
-# step or of the parentheses wrapping it, `_hl_dx_end`).
+# `_hl_dstar_x` with no `**S` arm, for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of
+# a for step or of the parentheses wrapping it, `_hl_dx_end`). A declaration's initialiser asks `_hl_dstar_x(S, ti, 5,
+# 1)` itself (6.7.16, D17 (a): its `*pp` of a `**S` copies at top level too). CHANGELOG [6.7.16]
 fn _hl_dstar_t(S, ti, term): i64 { return _hl_dstar_x(S, ti, term, 0); }
 # ⛔ 6.7.15 — `*pp` OF A `**S` IS A `*S` AS A WHOLE COPY SOURCE TOO: with `pp` 1 this also answers a dereference whose
 # operand is a `**S` (`*pp` the `*S` 6.7.13's D9 (a) made it, `_hl_dref_psid`), `_hl_dpp` 1 — its copy goes through
@@ -12545,7 +12545,7 @@ fn _hl_dx_end(S, ti, term): i64 {
     }
     return 0 - 1;
 }
-# The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
+# The cursor on the dereference `_hl_dstar_x` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
 # the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
 # hidden global at top level), the wrap closed, the cursor left on the `;`. Returns the temp (`_HTEMP`).
 # 6.7.15: for `*pp` of a `**S` (`_hl_dpp`) the whole `*pp` is parsed — rax = the `*S` it reads.

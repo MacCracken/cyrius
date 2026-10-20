@@ -3278,7 +3278,7 @@ fn _ess_wrap(S, st): i64 {
     return st + k;
 }
 # ⛔ 6.7.11 — A WHOLE DEREFERENCE INTO A BY-VALUE STRUCT OF 8 B OR LESS IS CHECKED BY ITS STRUCT, as
-# over 8 B (`_dro_check`) and in a declaration (`_hl_dstar`): `*p` is a struct VALUE at every size (6.7.10,
+# over 8 B (`_dro_check`) and in a declaration (`_hl_dstar_x`): `*p` is a struct VALUE at every size (6.7.10,
 # decision 6), so `take8(*pu)` with `pu: *U8` into `s: S8` is refused by name, as `take8(u)` is — it
 # compiled and passed U8's bytes (the user's decision, 2026-10-13: refuse by name; `take8(pu)` keeps the
 # 2026-10-08 pointer rule). After the argument's parse, [st, cursor) is one `* E` inside any balanced
