@@ -4327,11 +4327,16 @@ if (simd_has_fma()  == 1) { /* vfmadd231ps available */ }
 ```
 
 `simd_has_avx2()` tests `CPUID.7.EBX` bit 5; `simd_has_fma()` tests
-`CPUID.1.ECX` bit 12 (a *different* bit). The fma / dot wrappers
-(`f32v8_fma`, `f32v8_dot`, `f64v4_fmadd`, `f64v4_dot`) read these, cached, and
-fall back to the 128-bit SSE ops (2 × 128-bit iterations) when a feature is
-absent, so consumer code stays correct on any x86 CPU; the add / sub / mul /
-div wrappers take the 128-bit path unconditionally (v6.5.60 / v6.5.62). Where
+`CPUID.1.ECX` bit 12 (a *different* bit). The fma / dot wrappers read these,
+cached, and fall back to the 128-bit SSE ops (2 × 128-bit iterations) when a
+feature is absent, so consumer code stays correct on any x86 CPU:
+`f32v8_fma_ptr` (the FMA bit) and `f32v8_dot_ptr` (the AVX2 bit), and
+`f64v4_fmadd` / `f64v4_fmadd_ptr` and `f64v4_dot` / `f64v4_dot_ptr` (the AVX2
+bit). The f32v8 pair dispatches only under its `_ptr` name: `f32v8_fma` and
+`f32v8_dot` are the bare builtins above — unconditional AVX2, with the lane
+count as an argument — and the `&IDENT` routing does not reach the wrapper
+from them. The add / sub / mul / div wrappers take the 128-bit path
+unconditionally (v6.5.60 / v6.5.62). Where
 ymm genuinely pays — a batch loop over many lanes — call the `f64v256_*` /
 `f32v8_*` builtins directly behind `simd_has_avx2()`.
 `cycc` itself never calls the AVX2 ops, so the compiler stays pure SSE2 and
