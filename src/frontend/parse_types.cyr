@@ -370,13 +370,15 @@ fn _ngt_tail(S, nti): i64 {
     return " takes no type arguments";
 }
 # The refusal itself, at name token `nti` (`tail` its words): once, silent under --syntax-only, the latch put back. 1.
-fn _ngt_say(S, nti, tail): i64 {
+fn _ngt_say(S, nti, tail): i64 { return _ngt_say_n(S, nti, TOKVAL(S, nti), tail); }
+# ... naming `noff` (6.7.16: a method as the source spells it, `Pt.m`).
+fn _ngt_say_n(S, nti, noff, tail): i64 {
     if (_syntax_only == 1) { return 1; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, nti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, nti);
-    ERR_IDENT(S, "", TOKVAL(S, nti), tail, 0 - 1);
+    ERR_IDENT(S, "", noff, tail, 0 - 1);
     STI(S, sv);
     _panic = 0;
     return 1;

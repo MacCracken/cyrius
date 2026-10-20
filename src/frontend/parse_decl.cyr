@@ -886,7 +886,7 @@ fn _rlf_more(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 2) == 10) { return 0; }
-    if (_mtargs_at(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)`
+    if (_mtargs_ng(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)` (6.7.16: `w.v.m<i64>(h)`)
     return 1;
 }
 fn _resolve_leaf_field(S, si, fi, off): i64 {
@@ -1957,7 +1957,7 @@ fn _ptr_park(S, psid): i64 {
 fn _fld_meth_inline(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_at(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
+    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_ng(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
     if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
     return 1;   # 6.7.15: a `Str` field too — `_load_inline_hop` passes its value (`_load_str_hop`)
 }
@@ -2096,6 +2096,76 @@ fn _meth_xsite(S, mf, c0, c1, nt): i64 {
         if (b >= 0) { if (L64(_bs_tab + b * 32 + 8) < 0) { _mx_qt = 0; _ta_refd = 0; return mf; } }
     }
     return _meth_xinst(S, mf, c0, c1);
+}
+# ⛔ 6.7.16 — A TYPE-ARGUMENT LIST ON A CALLEE THAT TAKES NONE: `p.m<i64>(1)` with `fn m(self, k)`, `w.v.m<i64>(1)`, a
+# bounded T's non-generic member `v.show<i64>()` / `b.v.show<i64>()`, `nf<i64>(6)` / `nf<i64>(6);` with `fn nf(a)`. The
+# `<` was read as less-than: "unknown field 'm' on struct 'Pt'" + "undefined variable 'i64'", "no struct type in scope
+# for 'v'", "expected ';', got '.'", "undefined variable 'nf'" + "expected ';', got '>'" — two or three errors, none
+# naming the list. Refused once at the callee's name with D6 / D7's words for `Pt<i64>` — "'Pt.m' is not a generic
+# method: it takes no type arguments", "'nf' is not a generic fn: ..." — the list stepped and the call parsed as
+# `p.m(1)` / `nf(6)`, so nothing cascades. Only a list whose every name is a type (`_tylist_at`): `p.n < a, b > (c)`
+# keeps its comparison reading. CHANGELOG [6.7.16]
+# 1 = token nt is `.m<..>(`'s method on struct `sid` that takes type arguments (`_mtargs_at`), or any other `.m<types>(`
+# with m no field of sid (`_mlist_end`); at a scalar field (sid <= 0), a bounded site's — the field walks stop at it for
+# the member arm.
+fn _mtargs_ng(S, sid, nt): i64 {
+    if (_mtargs_at(S, sid, nt) == 1) { return 1; }
+    if (sid <= 0) {
+        if (_mngt_at(S, sid, nt) >= 0) { return 1; }
+        return 0;
+    }
+    if (_mlist_end(S, sid, nt) >= 0) { return 1; }
+    return 0;
+}
+# The `>` closing `.m<..>(`'s list at method-name token nt when it is a type list (`_tylist_at`) followed by `(` and m
+# no field of struct sid (sid <= 0: a receiver of no known struct); else -1.
+fn _mlist_end(S, sid, nt): i64 {
+    if (TOKTYP(S, nt) != 2) { return 0 - 1; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0 - 1; }
+    if (sid >= 2048) { return 0 - 1; }
+    if (sid > 0) { if (FINDFIELD(S, sid - 1, TOKVAL(S, nt)) >= 0) { return 0 - 1; } }
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    if (_tylist_at(S, nt + 2, e, 0 - 1) == 0) { return 0 - 1; }
+    return e;
+}
+# The method `.m<..>(` at token nt reaches when it is NOT generic, the list a type list; else -1. On struct sid: m no
+# field of it (a field keeps the comparison); at sid <= 0, a bounded site's callee (a scalar T's impl method).
+fn _mngt_at(S, sid, nt): i64 {
+    if (_mlist_end(S, sid, nt) < 0) { return 0 - 1; }
+    var mf = 0 - 1;
+    if (sid <= 0) {
+        if (_bs_n == 0) { return 0 - 1; }
+        var b = _bs_find(S, nt);
+        if (b < 0) { return 0 - 1; }
+        mf = _bs_callee(S, b, 0);
+    } else {
+        mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    }
+    if (mf < 0) { return 0 - 1; }
+    if (GFTP(S, mf) != 0) { return 0 - 1; }
+    return mf;
+}
+# The member arm past a list it does not take (cursor on the `<` past the method's name; receiver (idx, sid)): a
+# method that is not generic refused (`_mngt_at`), and any `.m<types>(` (`_mlist_end`: no such method, a receiver of
+# no known struct) stepped too — the call parsed from its `(` as the plain spelling is, which reports what `p.m(1)`
+# reports. 1 = taken; 0 = not that shape.
+fn _meth_ngt(S, noff, fnoff, beg, idx, sid): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var e = _mlist_end(S, sid, nt);
+    if (e < 0) { return 0; }
+    var mf = _mngt_at(S, sid, nt);
+    if (mf >= 0) {
+        var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
+        _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
+    }
+    STI(S, e + 1);
+    _mx_ti = nt;   # the arm's method name, not the list's `>`
+    _field_load_on(S, noff, fnoff, beg, idx, sid);
+    _mx_ti = 0 - 1;
+    return 1;
 }
 # The fn `p.m<c0, c1>(..)` reaches (generic method mf): its instance, else its base — refused where the free
 # spelling refuses it (`_explicit_generic_call` / `_gen_call_head`).
@@ -2430,12 +2500,14 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
+        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)`, as `q.m(1)`
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) {
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.14 (D7 (a)): `p.id<f64>(h)`
+        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `p.m<i64>(1)`, as `p.m(1)`
         # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
         # silent and do not _panic (which would swallow the next real syntax error).
         if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain

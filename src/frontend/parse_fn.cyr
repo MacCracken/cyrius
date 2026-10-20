@@ -10529,21 +10529,26 @@ fn _bnd_mopen(S, fi, k): i64 {
     var e = _tok_targs_close(S, k + 1);
     if (e < 0) { return 0; }
     if (TOKTYP(S, e + 1) != 10) { return 0; }
-    var j = k + 1;
-    while (j < e) {
-        t = TOKTYP(S, j);
+    return _tylist_at(S, k + 1, e, fi);
+}
+# 1 = the tokens [a, e) — a `<..>` list's inside — are a type-argument list: names that are types (`_bnd_tyname`),
+# `,` and nested `< >` / `>>` / `>>>` alone. `fi` the generic whose own type parameters count (-1: none).
+fn _tylist_at(S, a, e, fi): i64 {
+    while (a < e) {
+        var t = TOKTYP(S, a);
         if (t == 2) {
-            if (_bnd_tyname(S, fi, TOKVAL(S, j)) == 0) { return 0; }
+            if (_bnd_tyname(S, fi, TOKVAL(S, a)) == 0) { return 0; }
         } elif (t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 0; }
-        j = j + 1;
+        a = a + 1;
     }
     return 1;
 }
-# 1 = the name `noff` is a type a type-argument list can name: generic fi's own type parameter, a scalar, a name the
-# return reader takes (a struct registered so far, Result, Option, cstring, a vector), or a struct, union or enum
-# declared anywhere in the file (pass 1 has not registered one declared below).
+# 1 = the name `noff` is a type a type-argument list can name: generic fi's own type parameter (fi >= 0) or one bound
+# right now, a scalar, a name the return reader takes (a struct registered so far, Result, Option, cstring, a vector),
+# or a struct, union or enum declared anywhere in the file (pass 1 has not registered one declared below).
 fn _bnd_tyname(S, fi, noff): i64 {
-    if (_is_tparam_of(S, fi, noff) == 1) { return 1; }
+    if (fi >= 0) { if (_is_tparam_of(S, fi, noff) == 1) { return 1; } }
+    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
     if (_tn_scalar(L64(S + 0xEC00000 + noff)) != 0) { return 1; }
     if (_classify_return_type(S, noff) != 0) { return 1; }
     return _declared_any(S, noff);

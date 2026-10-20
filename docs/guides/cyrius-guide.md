@@ -7272,7 +7272,12 @@ the list stepped (a scalar return, a by-value field and a slice element were par
 rest compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
 i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
 the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
-6.7.15 the extra argument was read and dropped). A token that is no name at all
+6.7.15 the extra argument was read and dropped). A fn or method that is not generic takes none: `nf<i64>(6)`,
+`p.m<i64>(1)` (on any receiver or chain, a bounded `T`'s member that is not generic included) is refused once, at the
+name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not a generic method: it takes no type
+arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
+'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*). Only a list of type names is read so: `p.n < a, b >
+(c)` stays two comparisons. A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses

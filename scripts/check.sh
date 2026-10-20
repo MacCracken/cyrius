@@ -2917,6 +2917,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_count_refused.sh"
 # (the user's D8). Its uses say nothing more, a bound on it goes with it, source order, --syntax-only, the
 # controls x86 / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_tparam_count_refused.sh"
+# 6.7.16 — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call
+# parsed as its plain spelling: `nf<i64>(6)` / `p.m<i64>(1)` read the `<` as less-than ("undefined variable 'nf'",
+# "unknown field 'm'" + "undefined variable 'i64'"). A fn, a method on every receiver, a bounded T's member, no such
+# method, --syntax-only silent, comparisons and generic callees unchanged, every cross compiler. Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/frontend/type_args_on_nongeneric_refused.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
