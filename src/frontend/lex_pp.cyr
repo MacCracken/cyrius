@@ -4838,6 +4838,34 @@ fn PP_MACRO_PASS(S): i64 {
     return 0;
 }
 
+# PP_IFDEF_PASS's 24 MB temp copy of the source — the preprocess_out cap (v6.5.39; it was
+# sized for the 8 MB cap at v5.11.33, and 2 MB at 0x44A000 before that).
+# mmap flags differ between Linux and macOS:
+#   Linux: MAP_PRIVATE(2) | MAP_ANONYMOUS(0x20) = 0x22 = 34
+#   macOS: MAP_PRIVATE(2) | MAP_ANON(0x1000)    = 0x1002
+# We try Linux flags first (runs fine on Linux host), fall back to
+# macOS flags if the kernel rejects them (EINVAL on macOS — BSD raw
+# SVC returns -errno now that ESYSCALL emits `csneg x0, x0, x0, cc`).
+# agnos has no Linux mmap: its 9 is mkdir and its 11 mount, so the agnos cycc_cx failed every
+# compile here (the pass copied the source to the error value: SIGSEGV). Its mmap is 27 (the
+# length alone; zero-filled; 0 = failure), as main_cx.cyr's arena and lib/alloc_agnos.cyr map.
+# A map that failed is refused by name on every target, never written through. CHANGELOG [6.7.16]
+fn _pp_tmp_map(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var tmp = syscall(27, 25165824);
+    #else
+    var tmp = syscall(9, 0, 25165824, 3, 34, 0 - 1, 0);
+    if (tmp < 0) {
+        tmp = syscall(9, 0, 25165824, 3, 0x1002, 0 - 1, 0);
+    }
+    #endif
+    if (tmp < 4096) {
+        syscall(SYS_WRITE, 2, "error: cannot map the preprocessor's 24 MiB source buffer\n", 58);
+        syscall(SYS_EXIT, 1);
+    }
+    return tmp;
+}
+
 # Second pass: evaluate #ifdef/#define/#endif only (no includes).
 # Processes conditional blocks in already-included content.
 #
@@ -4855,24 +4883,11 @@ fn PP_MACRO_PASS(S): i64 {
 # This eliminates the Bug #35 family of copy-back overflows that corrupted
 # compiler state (BL/CP at 0x18C100+) for programs >256KB of expanded source.
 fn PP_IFDEF_PASS(S): i64 {
-    # Allocate a temp buffer via mmap to hold the source. This avoided copying it to
+    # A temp buffer (_pp_tmp_map) holds the source. This avoided copying it to
     # input_buf when that sat at S+0 and overflowed into heap state for programs >256KB
     # (Bug #35); input_buf is 24 MB at S + _SRCB since v6.5.39.
     # The temp buffer is separate memory that the helpers can safely read from.
-    #
-    # mmap flags differ between Linux and macOS:
-    #   Linux: MAP_PRIVATE(2) | MAP_ANONYMOUS(0x20) = 0x22 = 34
-    #   macOS: MAP_PRIVATE(2) | MAP_ANON(0x1000)    = 0x1002
-    # We try Linux flags first (runs fine on Linux host), fall back to
-    # macOS flags if the kernel rejects them (EINVAL on macOS — BSD raw
-    # SVC returns -errno now that ESYSCALL emits `csneg x0, x0, x0, cc`).
-    var prot = 3;     # PROT_READ | PROT_WRITE
-    # The tmp buffer matches the 24 MB preprocess_out cap (v6.5.39; it was sized
-    # for the 8 MB cap at v5.11.33, and 2 MB at 0x44A000 before that).
-    var tmp = syscall(9, 0, 25165824, prot, 34, 0 - 1, 0);
-    if (tmp < 0) {
-        tmp = syscall(9, 0, 25165824, prot, 0x1002, 0 - 1, 0);
-    }
+    var tmp = _pp_tmp_map();
     # v4.8.4-alpha3: fixpoint loop so nested includes in files expanded
     # during this pass (e.g. registry.cyr → hashmap.cyr → fnptr.cyr)
     # are themselves scanned for further includes. Without the loop only
@@ -5152,7 +5167,11 @@ fn PP_IFDEF_PASS(S): i64 {
     }
     # No copy-back. Output stays at S+0x459D000. LEX reads from there.
     # Free the temp buffer.
+    #ifdef CYRIUS_TARGET_AGNOS
+    syscall(28, tmp, 25165824);   # agnos munmap (its 11 is mount)
+    #else
     syscall(11, tmp, 25165824);
+    #endif
     return 0;
 }
 

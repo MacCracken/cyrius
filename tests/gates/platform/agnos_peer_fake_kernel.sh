@@ -33,6 +33,13 @@
 # removed -> 2 FAIL (the direct calls issue three #56 and answer 0); net_connect_nb's guard alone
 # removed -> 2 FAIL (three #47, the answer 0). The host-observable guards are agnos_negative_fd_not_socket.sh's
 # built-in M4-M10.
+# 6.7.16: axis 14 the agnos build of the cx compiler (CYRIUS_TARGET_AGNOS=1 src/main_cx.cyr), run
+# WHOLE under the tracer's cli mode — its mmap#27 done for real, stdin fed from the tracer's, its
+# fd-1 output copied to fd 3. C1: it compiles a program (exit 0, no Linux mmap#9 / munmap#11 —
+# agnos's mkdir / mount), and the .cyx equals the Linux cycc_cx's and runs to 7 under cxvm. C2: a
+# refused preprocessor buffer is named (exit 1). Mutants measured: the open's preprocessor (its
+# raw Linux mmap#9, unchecked) -> `sc 9 0 25165824 3 34`, then signal 11 — every agnos compile
+# died (C1 and C2 FAIL); the agnos arm alone removed -> C1 exit 1 after one #9 (refused by name).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -684,6 +691,32 @@ check "_agnos_listen_start(-1 / 1 / +9) is -1 each" "-111" "$(mark 196)"
 check "  and none of them issued a sock_listen#56, sock_accept#57 or sock_connect#47" "0 0 0" \
     "$(awk '$1 == "sc" && $2 == 999 && $3 == 190 { on = 1; next } $1 == "sc" && $2 == 999 && $3 == 199 { exit } on && $1 == "sc" && $2 == 56 { a++ } on && $1 == "sc" && $2 == 57 { b++ } on && $1 == "sc" && $2 == 47 { c++ } END { print a + 0, b + 0, c + 0 }' "$T/run.log")"
 check "slots 7 and 1 keep their ports (8087, 8081) and listen ids (id 0, stored +1)" "808708081 11" "$(mark 197) $(mark 198)"
+
+# ── axis 14 — the agnos build of the cx compiler, run whole (6.7.16) ──────────────────────────
+# The tracer's cli mode: write#1 accepted and logged as `txt <fd> <bytes>`, open#7 refused, stdin
+# fed from the tracer's own, mmap#27 done for real (the arena and heap exist), the child's fd-1
+# output copied to the tracer's fd 3.
+echo "axis 14 — the agnos cycc_cx compiles under the fake kernel (6.7.16):"
+cxok=1
+CYRIUS_TARGET_AGNOS=1 "$CC" < src/main_cx.cyr > "$T/cxag" 2> "$T/cxag.err" && chmod +x "$T/cxag" || {
+    echo "  FAIL: the agnos cycc_cx did not build"; grep -E '^error' "$T/cxag.err" | head -3; fails=$((fails + 1)); cxok=0; }
+"$CC" < src/main_cx.cyr > "$T/cxl" 2> "$T/cxl.err" && chmod +x "$T/cxl" \
+    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && chmod +x "$T/cxvm" || {
+    echo "  FAIL: the Linux cycc_cx / cxvm did not build"; fails=$((fails + 1)); cxok=0; }
+if [ "$cxok" = 1 ]; then
+    printf 'var x = 7;\nsyscall(60, x);\n' > "$T/c7.cyr"
+    "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c1.log" 3> "$T/c1.cyx" 2>&1
+    "$T/cxl" < "$T/c7.cyr" > "$T/c1l.cyx" 2> /dev/null
+    vm=x; [ -s "$T/c1.cyx" ] && { vm=0; "$T/cxvm" < "$T/c1.cyx" > /dev/null 2>&1 || vm=$?; }
+    same=no; [ -s "$T/c1.cyx" ] && cmp -s "$T/c1.cyx" "$T/c1l.cyx" && same=yes
+    check "C1 it compiles \`var x = 7; syscall(60, x);\`: exit 0, no #9 / #11, the Linux cycc_cx's .cyx, 7 under cxvm" \
+        "exit 0 | 0 | yes | 7" \
+        "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c1.log") | $(awk '$1 == "sc" && ($2 == 9 || $2 == 11) { c++ } END { print c + 0 }' "$T/c1.log") | $same | $vm"
+    "$T/sct" "$T/cxag" clipp < "$T/c7.cyr" > "$T/c2.log" 2>&1
+    check "C2 a refused preprocessor buffer (mmap#27 of 24 MiB answers 0) is named: exit 1" \
+        "txt 2 error: cannot map the preprocessor's 24 MiB source buffer| / exit 1" \
+        "$(awk '$1 == "txt" && $2 == 2 { print; exit }' "$T/c2.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c2.log")"
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then

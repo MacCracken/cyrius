@@ -2,14 +2,17 @@
 #
 # Runs an agnos-target static ELF as a Linux child under PTRACE_SYSEMU: every syscall the
 # child makes is STOPPED before the host kernel sees it, logged with its a1..a4 registers,
-# and answered by this program — nothing the child asks for is executed. It exists because
+# and answered by this program — nothing the child asks for is executed (but the cli mode's
+# mmap#27, below). It exists because
 # the agnos peer's defects are in the ARGUMENTS it hands the kernel (r10 left undefined,
 # flag bits smuggled in through an oversized length, a -1 fd that means "disarm") and in how
 # it reacts to kernel ANSWERS (a clock that is refused, a recv that never has data) — both
 # invisible to a compile check, and neither reachable without an agnos kernel. A scripted
 # answer table makes them deterministic.
 #
-# usage: agnos_sctrace <agnos-elf> <mode>
+# usage: agnos_sctrace <agnos-elf> <mode> [arg ...]
+# Each arg after <mode> is handed to the child as its argv[1], argv[2], … (argv[0] is the ELF's
+# path), on the init stack agnos builds, so a program's flag scan can be traced. CHANGELOG [6.7.16]
 # stdout, one line per syscall: `sc <nr> <a1> <a2> <a3> <a4>` (decimal; a4 = r10), then
 # `exit <code>` — or `limit` after MAX_CALLS stops, or `signal <n>` if the child faults.
 #
@@ -102,6 +105,15 @@
 #   accnever — #57 answers -1 for ever: nothing ever arrives.
 #   rcvlate  — sock_recv#49 answers 0 (WOULD_BLOCK) three times, then ONE byte 'P' (poked into
 #              the child), then two bytes "QQ" (min(len, 2)), then 0 for ever.
+# The cli mode (6.7.16) runs a command-line program — the agnos build of the cx compiler — to its
+# end: write#1 accepts the whole count and logs its bytes as `txt <fd> <bytes>` (at most 200; a NUL
+# or a newline shown as `|`); open#7 answers -1 (no such file — agnos has no /proc); read#5 on fd 0
+# hands the child the next bytes of the TRACER's stdin (0 at its EOF); mmap#27 maps its length in
+# the child for real (re-run there as a Linux anonymous mmap: zero-filled, 0 = failure, as agnos
+# answers), so the program's arena and heap exist; every other number answers as in plain. The
+# bytes of each write#1 on the child's fd 1 are also copied whole to the tracer's fd 3, when the
+# caller opened one (`3> out`): the program's own output, beside the log.
+#   clipp — cli, but a 25165824-byte mmap#27 (the preprocessor's 24 MiB source buffer) answers 0.
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -562,10 +574,149 @@ fn _st_rg_answer(pid, mode, nr, k, regs): i64 {
 }
 #endif
 
+# ── cli (6.7.16): a command-line program run to its end (see the mode list at the top) ──
+fn _st_is_cli(mode): i64 {
+    if (_st_mode_is(mode, "cli") == 1) { return 1; }
+    return _st_mode_is(mode, "clipp");
+}
+
+# A child's write#1 on its fd 1, copied whole to the tracer's fd 3 (when the caller opened one):
+# the program's real output, beside the log.
+fn _st_cli_out(pid, addr, len): i64 {
+    var tb[4096];
+    var off = 0;
+    while (off < len) {
+        var c = len - off;
+        if (c > 4096) { c = 4096; }
+        var lv[16];
+        store64(&lv, &tb);
+        store64(&lv + 8, c);
+        var rv[16];
+        store64(&rv, addr + off);
+        store64(&rv + 8, c);
+        if (syscall(310, pid, &lv, 1, &rv, 1, 0) != c) { return 0 - 1; }   # process_vm_readv
+        syscall(1, 3, &tb, c);
+        off = off + c;
+    }
+    return 0;
+}
+
+# `txt <fd> <bytes>`: the bytes a write#1 hands over, at most 200, a NUL or a newline as `|`.
+fn _st_text(pid, fd, addr, len): i64 {
+    if (len > 200) { len = 200; }
+    syscall(1, 1, "txt ", 4);
+    _st_num(fd);
+    syscall(1, 1, " ", 1);
+    var w[8];
+    var i = 0;
+    while (i < len) {
+        store64(&w, 0);
+        syscall(101, 2, pid, addr + i, &w);  # PTRACE_PEEKDATA (raw: the word lands at &w)
+        var c = load8(&w);
+        if (c == 0 || c == 10) { c = 124; }
+        store8(&w, c);
+        syscall(1, 1, &w, 1);
+        i = i + 1;
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# read#5 on fd 0: the next bytes of the tracer's own stdin, copied into the child at `buf`.
+fn _st_cli_read0(pid, buf, len): i64 {
+    var tb[4096];
+    if (len > 4096) { len = 4096; }
+    if (len <= 0) { return 0; }
+    var got = syscall(0, 0, &tb, len);
+    if (got < 0) { return 0 - 1; }
+    if (got == 0) { return 0; }
+    var lv[16];
+    store64(&lv, &tb);
+    store64(&lv + 8, got);
+    var rv[16];
+    store64(&rv, buf);
+    store64(&rv + 8, got);
+    if (syscall(311, pid, &lv, 1, &rv, 1, 0) != got) { return 0 - 1; }   # process_vm_writev
+    return got;
+}
+
+# mmap#27(len), done for real: PTRACE_SYSEMU already skipped the call, so the child is put back
+# on its 2-byte `syscall` with a Linux anonymous mmap in the registers and resumed with
+# PTRACE_SYSCALL to that syscall's EXIT stop — PTRACE_GET_SYSCALL_INFO's op 2 after an op 1 (the
+# skipped call reports an exit stop of its own first; the op needs PTRACE_O_TRACESYSGOOD, which
+# main sets in this mode). At most three stops: anything else and the child is killed, never let
+# run on — its next syscall would execute for real. `regs` is restored and the map answered (0
+# when Linux refused it: agnos's failure value).
+fn _st_cli_mmap(pid, regs, len): i64 {
+    var sv[216];
+    var i = 0;
+    while (i < 216) { store64(&sv + i, load64(regs + i)); i = i + 8; }
+    store64(regs + 80, 9);                         # rax: Linux mmap
+    store64(regs + 112, 0);                        # rdi: any address
+    store64(regs + 104, len);                      # rsi
+    store64(regs + 96, 3);                         # rdx: PROT_READ | PROT_WRITE
+    store64(regs + 56, 0x22);                      # r10: MAP_PRIVATE | MAP_ANONYMOUS
+    store64(regs + 72, 0 - 1);                     # r8: no fd
+    store64(regs + 64, 0);                         # r9: offset
+    store64(regs + 128, load64(regs + 128) - 2);   # rip: back onto the `syscall`
+    syscall(101, 13, pid, 0, regs);                # PTRACE_SETREGS
+    var info[88];                                  # struct ptrace_syscall_info
+    var st = 0;
+    var entered = 0;
+    var done = 0;
+    var n = 0;
+    while (done == 0 && n < 3) {
+        syscall(101, 24, pid, 0, 0);               # PTRACE_SYSCALL
+        syscall(61, pid, &st, 0, 0);
+        if ((st & 0xFFFF) != 0x857F) { n = 3; }    # not a syscall stop (SIGTRAP | 0x80)
+        else {
+            store64(&info, 0);
+            syscall(101, 0x420E, pid, 88, &info);  # PTRACE_GET_SYSCALL_INFO
+            var op = load8(&info);
+            if (op == 1) { entered = 1; }
+            if (op == 2 && entered == 1) { done = 1; }
+            n = n + 1;
+        }
+    }
+    syscall(101, 12, pid, 0, regs);                # PTRACE_GETREGS: rax = the map
+    var got = load64(regs + 80);
+    i = 0;
+    while (i < 216) { store64(regs + i, load64(&sv + i)); i = i + 8; }
+    if (done == 0) {
+        _st_line("mmapfail", st, entered, n, 0, 0);
+        syscall(62, pid, 9);
+        return 0;
+    }
+    if (got < 0) { return 0; }
+    return got;
+}
+
+fn _st_cli_answer(pid, mode, nr, k, regs): i64 {
+    var a1 = load64(regs + 112);
+    var a2 = load64(regs + 104);
+    var a3 = load64(regs + 96);
+    if (nr == 1) {
+        _st_text(pid, a1, a2, a3);
+        if (a1 == 1) { _st_cli_out(pid, a2, a3); }
+        return a3;
+    }
+    if (nr == 7) { return 0 - 1; }
+    if (nr == 5) {
+        if (a1 == 0) { return _st_cli_read0(pid, a2, a3); }
+        return 0 - 1;
+    }
+    if (nr == 27) {
+        if (a1 == 25165824 && _st_mode_is(mode, "clipp") == 1) { return 0; }
+        return _st_cli_mmap(pid, regs, a1);
+    }
+    return _st_answer("plain", nr, k, a1, a3);
+}
+
 fn main(): i64 {
     args_init();
-    if (argc() < 3) {
-        syscall(1, 2, "usage: agnos_sctrace <agnos-elf> <mode>\n", 40);
+    var na = argc();
+    if (na < 3) {
+        syscall(1, 2, "usage: agnos_sctrace <agnos-elf> <mode> [arg ...]\n", 50);
         return 2;
     }
     var path = argv(1);
@@ -573,19 +724,24 @@ fn main(): i64 {
     var counts[1024];                     # 128 x i64 per-number call counts
     var i = 0;
     while (i < 128) { store64(&counts + i * 8, 0); i = i + 1; }
+    # The child's argv: the ELF's path, then every arg after <mode>, then NULL (na - 1 slots).
+    var av = alloc(na * 8);
+    store64(av, path);
+    i = 3;
+    while (i < na) { store64(av + (i - 2) * 8, argv(i)); i = i + 1; }
+    store64(av + (na - 2) * 8, 0);
     var pid = syscall(57);
     if (pid == 0) {
         syscall(101, 0, 0, 0, 0);          # PTRACE_TRACEME
-        var av[16];
-        store64(&av, path);
-        store64(&av + 8, 0);
         var ev[8];
         store64(&ev, 0);
-        syscall(59, path, &av, &ev);        # execve — stops with SIGTRAP
+        syscall(59, path, av, &ev);         # execve — stops with SIGTRAP
         syscall(60, 127);
     }
     var st = 0;
     syscall(61, pid, &st, 0, 0);
+    # cli: syscall stops report SIGTRAP | 0x80, which PTRACE_GET_SYSCALL_INFO needs.
+    if (_st_is_cli(mode) == 1) { syscall(101, 0x4200, pid, 0, 1); }   # PTRACE_O_TRACESYSGOOD
     var regs[216];                        # struct user_regs_struct
     var n = 0;
     while (n < MAX_CALLS) {
@@ -596,6 +752,7 @@ fn main(): i64 {
             return 0;
         }
         var sig = (st >> 8) & 0xFF;
+        if (sig == 0x85) { sig = 5; }       # SIGTRAP | 0x80: a syscall stop (cli)
         if (sig != 5) {                     # not SIGTRAP: the child faulted
             _st_line("signal", sig, 0, 0, 0, 0);
             syscall(62, pid, 9);
@@ -634,6 +791,7 @@ fn main(): i64 {
         var ans = 0;
         if (_st_is_rg(mode) == 1) { ans = _st_rg_answer(pid, mode, nr, k, &regs); }
         elif (_st_is_sk(mode) == 1) { ans = _st_sk_answer(pid, mode, nr, k, &regs); }
+        elif (_st_is_cli(mode) == 1) { ans = _st_cli_answer(pid, mode, nr, k, &regs); }
         else { ans = _st_answer(mode, nr, k, load64(&regs + 112), load64(&regs + 96)); }
         store64(&regs + 80, ans);
         syscall(101, 13, pid, 0, &regs);    # PTRACE_SETREGS
