@@ -69,7 +69,8 @@ fn read_header(): i64 {
         if (n <= 0) { return -1; }
         pos += 1;
         if (pos >= 4) {
-            if (load8(&buf + pos - 4) == 13 && load8(&buf + pos - 3) == 10 && load8(&buf + pos - 2) == 13 && load8(&buf + pos - 1) == 10) {
+            if (load8(&buf + pos - 4) == 13 && load8(&buf + pos - 3) == 10
+              && load8(&buf + pos - 2) == 13 && load8(&buf + pos - 1) == 10) {
                 found = 1;
             }
         }
@@ -2768,7 +2769,8 @@ fn _lsp_parse_diag(s, p, eol, sev, open_path, root): i64 {
 # Publish the diagnostics of the parsed set that sit on `file` as one notification on `uri`.
 fn _lsp_publish_file(uri, file, s): i64 {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"");
+    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",");
+    str_builder_add_cstr(sb, "\"params\":{\"uri\":\"");
     _lsp_json_esc(sb, uri, 0, strlen(uri));
     str_builder_add_cstr(sb, "\",\"diagnostics\":[");
     var n = 0;
@@ -3069,11 +3071,8 @@ fn handle_initialize(body) : i64 {
     str_builder_add_int(sb, id);
     str_builder_add_cstr(sb, ",\"result\":{\"capabilities\":{");
     str_builder_add_cstr(sb, "\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},");
-    # v5.7.39: advertise definitionProvider + documentSymbolProvider.
-    # `textDocument/semanticTokens/full` deferred to a future slot —
-    # the slot framing of "polish" landed cross-file resolution +
-    # go-to-def first; semantic tokens earn their own slot when
-    # consumer pull surfaces.
+    # v5.7.39: advertise definitionProvider + documentSymbolProvider (semanticTokensProvider
+    # followed at v5.9.10, below).
     str_builder_add_cstr(sb, "\"definitionProvider\":true,");
     str_builder_add_cstr(sb, "\"documentSymbolProvider\":true,");
     # v6.1.24: textDocument/hover — reuses the cross-file symbol table to show a
@@ -3093,7 +3092,8 @@ fn handle_initialize(body) : i64 {
     # uncolored. Editors fall back to textmate grammar for the
     # remaining uncolored bytes (literals, operators, comments).
     str_builder_add_cstr(sb, "\"semanticTokensProvider\":{");
-    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\",\"parameter\"],\"tokenModifiers\":[]},");
+    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",");
+    str_builder_add_cstr(sb, "\"enumMember\",\"keyword\",\"parameter\"],\"tokenModifiers\":[]},");
     str_builder_add_cstr(sb, "\"full\":true}");
     str_builder_add_cstr(sb, "}}}");
     send_response(str_data(str_builder_build(sb)));
@@ -3483,7 +3483,8 @@ fn handle_document_symbol(body): i64 {
 }
 
 # v5.9.10: textDocument/references.
-# Request:  { ..., params: { textDocument: { uri }, position: { line, character }, context: { includeDeclaration: bool } } }
+# Request:  { ..., params: { textDocument: { uri }, position: { line, character },
+#             context: { includeDeclaration: bool } } }
 # Response: Location[] | null
 #
 # Semantics: find every IDENT token in every indexed file whose
