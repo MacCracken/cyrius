@@ -772,9 +772,15 @@ done
 # value's own error. It is pending until the value is parsed now (`_pair_ret_late`, kind 2), as the 9-16 B class's is: the
 # value's own error alone; a value that parses keeps the refusal (VEC1-VEC7: a literal, a scalar local, after an earlier
 # statement's error, beside a closure's own return, at a generic's every instance once, three statements three errors).
-# f64v2 and f64v4, on the four compilers. Mutation (2026-10-20, measured):
-#   `_ret_vec_rule` refusing before the value's parse (the tree before) -> RED 80: VE1-VE7, VE9, VE10, VEC7 at both
-#       widths on the four legs (the refusal, then the value's error)
+# f64v2 and f64v4, on the four compilers. VE8 / VEC5 (6.7.16, met with them): an `#inline` callee's `return` replayed
+# inside a vector fn is the callee's (`_inl_replay_body` masks the caller's vector class, as 6.7.14 masked its struct
+# class) — it was judged by the vector rule at the callee's line ("2:25: ... got `x`", and a valid fn storing
+# `one(40)` into its own vector local was refused: crossos/simd_value_return_binding.tcyr group K). Mutations (2026-10-20,
+# measured):
+#   `_inl_replay_body` without the vector mask (the tree before) -> RED 16: VE8 and VEC5 at both widths on the four legs
+#       ("2:25: ... got `x`" first)
+#   `_ret_vec_rule` refusing before the value's parse (the tree before) -> RED 96: VE1-VE10, VEC5, VEC7 at both widths
+#       on the four legs (the refusal, then the value's error)
 VR='a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got'
 for vt in f64v2 f64v4; do
     VM='
@@ -807,13 +813,21 @@ fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, 5); }'"$VM" "error:<s
 fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); var r2: '"$vt"' = mk(5); var r3: '"$vt"' = mk<i32>(5); return load64(&r); }
 syscall(60, main());
 ' "error:<source>:1:32: $VR \`5\`"
+    errs4 "VE8 an #inline replay's return, then the value's own error ($vt)" '#inline
+fn one(x): i64 { return x + 1; }
+fn ap(a, b) { return a; }
+fn mk(q: *'"$vt"'): '"$vt"' { return ap(one(5), zz); }'"$VM" "error:<source>:4:47: $UZ"
+    errs4 "VEC5 control: an #inline replay's return inside the value is the callee's ($vt)" '#inline
+fn one(x): i64 { return x + 1; }
+fn mk(q: *'"$vt"'): '"$vt"' { return one(5); }
+fn mk2(q: *'"$vt"'): '"$vt"' { return one(zz); }'"$VM" "error:<source>:3:34: $VR \`one\`" "error:<source>:4:41: $UZ"
     errs4 "VEC7 control: three statements, three errors ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { if (load64(q) == 1) { return zz; } return 5; }
 fn mk2(q: *'"$vt"'): '"$vt"' { return 6 + ; }'"$VM" "error:<source>:1:58: $UZ" "error:<source>:1:69: $VR \`5\`" \
         "error:<source>:2:39: unexpected ';'"
 done
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 138 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 138) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 142 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 142) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

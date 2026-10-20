@@ -2004,7 +2004,9 @@ look reasonable:
   store the lanes into a local and return the local. The builtin `ret2(a, b);` is the same pair, so
   it is refused in a vector fn too, by the same text (*… got `ret2`*; 6.7.14, the user's decision of
   2026-10-16): through 6.7.13 it compiled and the caller's vector held whatever the vector registers
-  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own.
+  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own — and
+  so is an `#inline` fn's `return` (6.7.16: through 6.7.15 a replayed `return x + 1;` met this rule at the
+  callee's line, so a vector fn storing `one(40)` into its own local was refused).
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
   wrong lane on Windows.

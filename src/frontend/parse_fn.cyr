@@ -8830,15 +8830,23 @@ fn _fnc_pe_vec(S, fi, noff): i64 {
 # A panic latch the caller set (a refused argument) survives the replay: the body's statement ends clear
 # it (`_stmt_resync`), so x86_64 / aarch64 / cx went on to print the next statement's refusal, which a real
 # call (Win64's vector arm, a non-inline fn) leaves latched and skipped. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND NEVER THE CALLER'S VECTOR RETURN: the replay carries a vector CALLEE's class (v6.5.59) and left a
+# vector CALLER's in place for any other callee, so the callee's `return x + 1;` met the 6.6.6 rule — `fn mk():
+# f64v2 { var w: f64v2; store64(&w, one(40)); ..; return w; }` with `#inline fn one(x): i64` was refused "a
+# vector-returning fn carries its result ... got `x`" at the callee's line, on every target. Masked to an untyped
+# caller's 0 too, restored after. CHANGELOG [6.7.16]
 fn _inl_replay_body(S, fi): i64 {
     var sid = _cur_fn_ret_sid;
     var pair = _cur_fn_ret_pair;
+    var rs = _cur_fn_ret_scalar;
     var pn = _panic;
     _cur_fn_ret_sid = 0;
     _cur_fn_ret_pair = 0;
+    if (_is_simd_any(S, GFRS(S, fi)) == 0) { if (_is_simd_any(S, rs) == 1) { _cur_fn_ret_scalar = 0; } }
     _cov_body(S, fi, 0 - 1);
     _cur_fn_ret_sid = sid;
     _cur_fn_ret_pair = pair;
+    _cur_fn_ret_scalar = rs;
     if (pn == 1) { _panic = 1; }
     return 0;
 }
