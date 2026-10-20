@@ -90,7 +90,7 @@ through — and checks each file in one of five modes:
 |---|---|---|---|
 | itself | the file is an entry: the manifest's `[build] entry`, or a `.cyr` no other includes (a test file is always its own) | the file | its list, and each file the compile names (as before) |
 | fragment | an entry includes it, on the server's own target | that entry | its list, and each named file whose own unit is the same entry |
-| peer | an entry includes it only under `CYRIUS_TARGET_WIN`, `_AGNOS`, `CYRIUS_MACHO` or `_EFI` (an x86_64 Linux server selects these) | that entry, with the selector in its environment | its list only |
+| peer | an entry includes it only under `CYRIUS_TARGET_WIN`, `_AGNOS`, `CYRIUS_MACHO` or `_EFI` (an x86_64 Linux server selects these) | that entry, with the selector in its environment | its list, and the unit's other open peers' |
 | note | only a target the server cannot compile for includes it (aarch64, cx) | nothing | one Information diagnostic saying so |
 | skip | `[lsp] skip` names it | nothing | an empty list |
 
@@ -99,7 +99,11 @@ when that reaches it, else the one with the fewest include hops, then the first
 in path order; a test file's includes never make anything a fragment. When a
 fragment's or a peer's own list is clean but its unit has errors in other files,
 it gets one Information line naming the unit (`checked as part of src/main.cyr,
-which has 2 errors in other files`).
+which has 2 errors in other files`). The line follows the unit: a check of the
+unit from any of its files brings each open fragment and peer of it to the list
+its own check would give it now, so the line appears on an open fragment when
+another file of the unit breaks, stays while the unit has errors elsewhere, and
+goes when the last of them is fixed.
 
 `lib/` follows the stdlib's own contract (`tests/gates/toolchain/
 stdlib_modules_self_sufficient.sh`): a **peer** is `lib/<R>_<x>.cyr` where
