@@ -15,9 +15,14 @@
 # host that lacks it. This gate reads the script (it runs nothing remote) and refuses a leg
 # that drops any of the three, for every host release-gate.sh walks.
 #
+# 6.7.16 — and (d), the cx crossos leg: each leg calls `_co_cxw_posix <host>` (`_co_cxw_cass` on cass),
+# which runs four tests/tcyr/crossos files on that host's cxvm and judges each against its cx
+# assertion count less the rows it names as not run (axis 3); the helpers exist, and the file list
+# names all four (issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md).
 # Mutation ledger (measured 6.6.20): the 6.6.19 script → axis 2 red on ach (it stages no
 # `_co_cx.cyx`); delete the cass `nat.cyx` line → axis 2 red on cass (c); add a fifth host to
-# release-gate.sh's loop with no leg here → axis 1 red.
+# release-gate.sh's loop with no leg here → axis 1 red. (6.7.16) the pi leg's `_co_cxw_posix pi`
+# deleted → axis 3 red on pi; audit_walk_fifo dropped from CO_CXW → axis 3 red.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -58,4 +63,18 @@ for h in $HOSTS; do
         fail "axis 2: the $h leg does not run its cycc_cx output to exit 42 (c)"
 done
 
-echo "PASS: cross_os_legs_cx_parity ($_nh legs: $HOSTS — guest I/O, thread fixture, native cycc_cx round trip)"
+# ── axis 3 (6.7.16): each leg runs the cx crossos leg (d) ───────────────────────────────
+grep -q '^_co_cxw_posix() {$' "$CO" || fail "axis 3: $CO defines no _co_cxw_posix"
+grep -q '^_co_cxw_cass() {$' "$CO" || fail "axis 3: $CO defines no _co_cxw_cass"
+_cxw=$(sed -n 's/^CO_CXW="\(.*\)"$/\1/p' "$CO" | head -1)
+for f in pe_open_failure_errno open_flags_per_target atomic_write_temp_exclusive audit_walk_fifo; do
+    case " $_cxw " in *" $f "*) ;; *) fail "axis 3: CO_CXW ($_cxw) does not name $f" ;; esac
+    [ -f "tests/tcyr/crossos/$f.tcyr" ] || fail "axis 3: CO_CXW names $f, which tests/tcyr/crossos/ lacks"
+done
+for h in $HOSTS; do
+    L=$(leg "$h")
+    if [ "$h" = cass ]; then want='_co_cxw_cass'; else want="_co_cxw_posix $h"; fi
+    printf '%s\n' "$L" | grep -qx " *$want" || fail "axis 3: the $h leg does not run the cx crossos leg ($want) (d)"
+done
+
+echo "PASS: cross_os_legs_cx_parity ($_nh legs: $HOSTS — guest I/O, thread fixture, native cycc_cx round trip, the cx crossos files)"

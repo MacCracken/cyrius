@@ -409,6 +409,19 @@ fn _pe_ensure_closeh(S): i64 {
 }
 fn _pe_closeh_get(): i64 { return _pe_closeh_idx; }
 
+# 6.7.16 — kernel32!SetStdHandle(nStdHandle, h) → BOOL, for a close of fd 0 / 1 / 2 (ECLOSE_PE's
+# std-close stub): the slot is set to INVALID_HANDLE_VALUE, so GetStdHandle stops answering the
+# closed HANDLE, which a later CreateFileW can reuse. CHANGELOG [6.7.16]
+var _pe_setstd_ready      = 0;
+var _pe_setstd_idx        = 0;
+fn _pe_ensure_setstd(S): i64 {
+    if (_pe_setstd_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_setstd_idx, "SetStdHandle");
+    _pe_setstd_ready = 1;
+    return 0;
+}
+fn _pe_setstd_get(): i64 { return _pe_setstd_idx; }
+
 # v6.0.51: Windows process-creation kernel32 imports (the ai-hwaccel
 # spawn arc). Mirror the _pe_ensure_closeh scaffold. Called from the
 # bespoke EWIN*_PE emit reroutes in src/backend/x86/emit.cyr; see
@@ -620,6 +633,24 @@ fn _pe_ensure_seteof(S): i64 {
     return 0;
 }
 fn _pe_seteof_get(): i64 { return _pe_seteof_idx; }
+
+# 6.7.16 — kernel32!GetFileType(h) → DWORD and GetConsoleMode(h, &mode) → BOOL, for a seek
+# (ELSEEK_PE's seek-check stub): a pipe (FILE_TYPE_PIPE) or a console (FILE_TYPE_CHAR whose
+# GetConsoleMode succeeds) answers -29 (ESPIPE) as on Linux, where SetFilePointerEx succeeded on
+# real Windows without moving the stream. NUL is FILE_TYPE_CHAR with no console mode, and still
+# seeks. CHANGELOG [6.7.16]
+var _pe_ftype_ready       = 0;
+var _pe_ftype_idx         = 0;
+var _pe_conmode_idx       = 0;
+fn _pe_ensure_ftype(S): i64 {
+    if (_pe_ftype_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_ftype_idx, "GetFileType");
+    _pe_register_kernel32(S, &_pe_conmode_idx, "GetConsoleMode");
+    _pe_ftype_ready = 1;
+    return 0;
+}
+fn _pe_ftype_get(): i64 { return _pe_ftype_idx; }
+fn _pe_conmode_get(): i64 { return _pe_conmode_idx; }
 
 # 6.6.10 — the five kernel32 imports behind a Windows process TREE (reroute ids 0xF040-0xF044;
 # ECREATEJOB_PE … ESETJOBINFO_PE in x86/emit.cyr). A child is created CREATE_SUSPENDED,

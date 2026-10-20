@@ -374,6 +374,13 @@ fn _win_truncate_verified(h, path): i64 {
 # Returns 0 on success, or a negative errno when the close fails: -9
 # for a handle that is not open, as on Linux. Until 6.7.15 it answered
 # CloseHandle's BOOL (1 closed, 0 failed). CHANGELOG [6.7.15]
+# fd 0 / 1 / 2 close the std streams, as on Linux: the std handle is
+# closed and its slot cleared (SetStdHandle), so a later write to the fd
+# answers -9 and a second close -9. A HANDLE another std slot still holds
+# (a child started with one handle as stdout and stderr) stays open for
+# that slot. Until 6.7.16 the fd went to CloseHandle as the HANDLE value
+# 0 / 1 / 2: the close answered -9 and the stream stayed open.
+# CHANGELOG [6.7.16]
 fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
 }
@@ -387,6 +394,11 @@ fn sys_close(fd) {
 # fd 0 / 1 / 2 seek the std handles (GetStdHandle), so a seek on a
 # redirected stdin / stdout / stderr reaches its file, as on Linux; until
 # 6.7.15 they failed -9. CHANGELOG [6.7.15]
+# A pipe or a console (a std handle or any other) answers -29 (ESPIPE),
+# as on Linux (macOS: a pipe), so `xlseek(0, 0, SEEK_CUR) < 0` detects a
+# piped stdin; NUL still seeks, as /dev/null does. Until 6.7.16 real
+# Windows answered the asked offset (the stream did not move) and wine -1.
+# CHANGELOG [6.7.16]
 fn sys_lseek(fd, offset, whence) {
     return syscall(SYS_LSEEK, fd, offset, whence);
 }
@@ -639,6 +651,8 @@ fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
 # one). ⚠ That includes an O_APPEND descriptor, where Linux succeeds: the PE open of O_APPEND
 # grants FILE_APPEND_DATA WITHOUT FILE_WRITE_DATA (NT's per-write append), and SetEndOfFile
 # needs the latter. Truncate by path (sys_truncate), or open without O_APPEND. CHANGELOG [6.6.9]
+# fd 0 / 1 / 2 truncate the std stream's file (a redirected stdout, say), as on Linux; until 6.7.16
+# SetEndOfFile got the HANDLE value 0 / 1 / 2 and the truncate answered -1. CHANGELOG [6.7.16]
 fn sys_ftruncate(fd, length): i64 {
     if (length < 0) { return 0 - 22; }
     var cur = syscall(SYS_LSEEK, fd, 0, 1);

@@ -11,28 +11,39 @@
 # handle). ELSEEK_PE now does too: offset and whence are parked at [rsp+0x30] / [rsp+0x38] of a
 # 0x40 frame across the GetStdHandle call, the EWRITE_PE shape.
 #
-# A PIPE OR CONSOLE std handle — measured 2026-10-18 on real cass (Windows 11): SetFilePointerEx
-# SUCCEEDS on both and the stream does not move (the filed repro with a piped stdin prints
-# `3 0 0 1 97`; with a console stdin / stdout / stderr the seeks answer 3 / 0 / 0). wine 11.19
-# fails it ERROR_INVALID_FUNCTION (1), which has no row in the shared GetLastError table: -1
-# (`-1 0 0 1 97`). Linux and macOS answer -ESPIPE (-29). The pipe row below pins wine's answer
-# and the part both Windows answers share: the std handle is reached (never the old -9), and the
-# stream does not move (the next byte read is 'a'). Whether a Windows pipe / console seek should
-# answer -29 is filed, not decided here (6.7.15 platform lane staging).
+# A PIPE OR CONSOLE — 6.7.16 (issues/2026-10-18-pe-seek-on-pipe-or-console-std-handle-succeeds.md;
+# 6.7.16's D31, "-29 (ESPIPE), as Linux"): real Windows lets SetFilePointerEx succeed on both and
+# the stream does not move (on cass the filed repro with a piped stdin printed `3 0 0 1 97`; a
+# console stdin / stdout / stderr answered 3 / 0 / 0), and wine 11.19 failed it
+# ERROR_INVALID_FUNCTION, -1 (`-1 0 0 1 97`). Linux answers -ESPIPE (-29). ELSEEK_PE now calls one
+# shared seek-check stub (class 3 of the EPE_ERRNO_STUBS registry) between the std-fd map and
+# SetFilePointerEx: GetFileType FILE_TYPE_PIPE (a socket too), or FILE_TYPE_CHAR whose
+# GetConsoleMode succeeds, answers -29 and SetFilePointerEx is never called; NUL is FILE_TYPE_CHAR
+# with no console mode and still seeks (its answer is unchanged). Measured (2026-10-19, a zig-built
+# probe): wine's GetFileType answers 3 for a Unix pipe; on cass, for cmd's `|` pipes and sshd's pipes
+# (sshd's fail SetFilePointerEx ERROR_INVALID_PARAMETER, so they answered -22), and 2 with a console
+# mode for a ConPTY. After the fix, on cass: piped stdin `-29 0 0 1 97`, piped stdout (`| findstr .`)
+# `3 -29 0 1 100`, a ConPTY console -29 / -29 / -29, `> nul` unchanged (`0 5`).
 #
 # THE AXES
 #   axis 1  POSIX ORACLE (always): the filed repro, verbatim, natively: `3 0 0 1 100` with every
-#           std stream redirected to / from a file, `-29 0 0 1 97` with a piped stdin.
+#           std stream redirected to / from a file, `-29 0 0 1 97` with a piped stdin, `3 -29 0 1
+#           100` with a piped stdout (6.7.16).
 #   axis 2  EMITTER SHAPE (objdump): a probe with a literal seek and a var-held one
 #           (EPE_SYSCALL_DYNAMIC's argc-4 switch) builds for PE. EVERY call through the
 #           SetFilePointerEx IAT slot is reached through the std-fd map: `cmp $0x2,%rax` and a call
 #           through GetStdHandle's slot before it, offset / whence stored to 0x30 / 0x38(%rsp)
 #           before the map and reloaded into rdx / r9 after it, and the frame's `sub` and `add`
 #           equal (0x40, or 0x48 at odd depth). At least 2 sites (anti-vacuous). CI has no wine:
-#           this axis is what pins the fix there.
+#           this axis is what pins the fix there. 6.7.16: between the GetStdHandle call and the
+#           SetFilePointerEx call, `call <seek check>; test %rax,%rax; jne` to the frame's `add`; every
+#           site shares ONE seek-check stub, whose body reads GetFileType, `cmp $0x3` / `je`, `cmp $0x2`
+#           / `jne`, GetConsoleMode, `mov $-29,%rax` and `mov %rbx,%rcx` (the HANDLE kept) in order.
 #   axis 3  BEHAVIOUR under wine (skipped without wine — NOT hardware; the real-cass run is in
 #           the CHANGELOG): the filed repro, verbatim, prints `3 0 0 1 100` with stdin / stdout /
-#           stderr redirected to / from files; with a piped stdin `-1 0 0 1 97` (see above).
+#           stderr redirected to / from files; `-29 0 0 1 97` with a piped stdin (6.7.16; `-1 0 0 1
+#           97` before); `3 -29 0 1 100` with a piped stdout; and a seek on NUL (wine's cmd `> nul`)
+#           keeps its answer, `0 5`.
 #
 # MUTATION LEDGER — every mutant BUILT AND RUN 2026-10-18 (6.7.15 platform lane, P2; x86_64 Linux
 # + wine 11.19; CYCC=<mutant cycc>):
@@ -45,7 +56,17 @@
 #                                                           PASSES — wine's GetStdHandle leaves r9
 #                                                           alone, which Win64 does not promise
 #                                                           (r9 is volatile): why axis 2 reads it
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.15]
+#   mutant (2026-10-19, 6.7.16 platform lane, P1; wine 11.20)  result
+#   the pre-fix compiler (480de63eb), and ELSEEK_PE without  axis 2 FAIL (no seek-check call); axis 3
+#   the seek-check call                                     FAIL (piped stdin `-1 0 0 1 97`, piped
+#                                                           stdout `3 -1 0 1 100`)
+#   the site's `jnz` past SetFilePointerEx NOPped           axis 2 FAIL (not tested); axis 3 FAIL (-1)
+#   the stub's `cmp eax, 3` (FILE_TYPE_PIPE) never equal    axis 2 FAIL (1/13); axis 3 FAIL (-1)
+#   the stub's GetConsoleMode test dropped (`jne` -> `jmp`) axis 2 FAIL (8/13); axis 3 FAIL (NUL `-29
+#                                                           -29`: every character device refused)
+#   the stub's `mov rcx, rbx` (the HANDLE kept) NOPped      axis 2 FAIL (11/13); axis 3 FAIL (every
+#                                                           seek -9: GetFileType clobbered rcx)
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_lseek_std_fds: build/cycc missing"; exit 77; }
@@ -91,6 +112,20 @@ fmt_int(n); println("");
 fmt_int(load8(&ch)); println("");
 EOF
 printf 'abcdefgh' > "$D/in.txt"
+# 6.7.16: a seek on NUL (stdout and stderr), reported into a file.
+cat > "$D/nulseek.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var b = xlseek(1, 0, 1);      # stdout to NUL: SEEK_CUR
+var c = xlseek(2, 5, 0);      # stderr to NUL: SEEK_SET to 5
+var fd = file_open("nulseek.txt", O_WRONLY | O_CREAT | O_TRUNC, 420);
+fmt_int_fd(fd, b); file_write(fd, " ", 1);
+fmt_int_fd(fd, c); file_write(fd, "\n", 1);
+file_close(fd);
+EOF
 
 # axis 1: the POSIX oracle.
 mkdir -p "$D/n"
@@ -105,6 +140,9 @@ else
     ( cd "$D/n" && ulimit -c 0; printf 'abcdefgh' | ./stdseek > p.out 2> p.err ) || true
     got=$(line "$D/n/p.out")
     if [ "$got" = "-29 0 0 1 97" ]; then ok; else bad "axis 1: the repro natively with a piped stdin prints '$got' (want '-29 0 0 1 97': -ESPIPE, the pipe unmoved)"; fi
+    ( cd "$D/n" && ulimit -c 0; ./stdseek < "$D/in.txt" 2> o.err | cat > o.out ) || true
+    got=$(line "$D/n/o.out")
+    if [ "$got" = "3 -29 0 1 100" ]; then ok; else bad "axis 1: the repro natively with a piped stdout prints '$got' (want '3 -29 0 1 100')"; fi
 fi
 
 # axis 2: the emitter shape.
@@ -130,9 +168,10 @@ else
     if [ -z "$SF" ] || [ -z "$GS" ]; then
         bad "axis 2: the probe does not import SetFilePointerEx and GetStdHandle ('$SF' '$GS')"
     else
-        # Per SetFilePointerEx IAT call site: "<ok|BAD:why>". Instruction text only (after the 2nd tab).
+        # Per SetFilePointerEx IAT call site: "<ok|BAD:why> <seek-check stub>". Instruction text only
+        # (after the 2nd tab); a[] holds each instruction's address.
         awk -F'\t' -v sf="$SF" -v gs="$GS" '
-            NF >= 3 { n++; t[n] = $3 }
+            NF >= 3 { n++; t[n] = $3; x = $1; sub(/^ +/, "", x); sub(/:$/, "", x); a[n] = "0x" x }
             function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
             function imm(x,   k) { k = x; sub(/^[a-z]+ +\$/, "", k); sub(/,.*/, "", k); return k }
             END {
@@ -142,7 +181,7 @@ else
                     # The nearest IAT call before this one must be the std-fd map'"'"'s GetStdHandle.
                     g = 0
                     for (k = i - 1; k >= 1 && k >= i - 20; k--) if (slot(t[k]) != "") { g = k; break }
-                    if (g == 0 || slot(t[g]) != gs) { print "BAD:no-GetStdHandle-call-before-it"; continue }
+                    if (g == 0 || slot(t[g]) != gs) { print "BAD:no-GetStdHandle-call-before-it -"; continue }
                     rd = 0; r9 = 0
                     for (k = g + 1; k < i; k++) {
                         if (t[k] ~ /^mov +0x30\(%rsp\),%rdx/) rd = 1
@@ -161,14 +200,48 @@ else
                     else if (sd == 0 || s9 == 0) why = "BAD:offset-whence-not-parked-before-GetStdHandle"
                     else if (rd == 0 || r9 == 0) why = "BAD:offset-whence-not-reloaded-after-GetStdHandle"
                     else if (sb == 0 || ad == 0 || imm(t[sb]) != imm(t[ad]) || imm(t[sb]) !~ /^0x4[08]$/) why = "BAD:frame-sub-add(" t[sb] " / " t[ad] ")"
-                    print why
+                    # 6.7.16: the seek check — `call <stub>; test %rax,%rax; jne <the frame add>`
+                    # between the map and the call (a pipe / console answers -29 and skips it).
+                    kc = 0; ks = "-"
+                    for (k = g + 1; k < i; k++) if (t[k] ~ /^call +0x[0-9a-f]+/) { kc = k; break }
+                    if (kc != 0) { ks = t[kc]; sub(/^call +/, "", ks); sub(/ .*/, "", ks) }
+                    if (why == "ok") {
+                        jt = t[kc + 2]; sub(/^jne +/, "", jt); sub(/ .*/, "", jt)
+                        if (kc == 0) why = "BAD:no-seek-check-call-before-it"
+                        else if (t[kc + 1] !~ /^test +%rax,%rax/ || t[kc + 2] !~ /^jne /) why = "BAD:the-seek-check-answer-is-not-tested"
+                        else if (jt != a[ad]) why = "BAD:-29-does-not-skip-to-the-frame-add(" jt "/" a[ad] ")"
+                    }
+                    print why, ks
                 }
             }' "$D/dis" > "$D/sites"
         c=$(wc -l < "$D/sites" | tr -d ' ')
-        b=$(grep -v '^ok$' "$D/sites" | head -1 || true)
+        b=$(awk '$1 != "ok" {print $1; exit}' "$D/sites")
+        K=$(awk '{print $2}' "$D/sites" | sort -u)
         if [ "$c" -lt 2 ]; then bad "axis 2: only $c SetFilePointerEx site(s) in the probe (floor 2: the literal and the var-held route)"
-        elif [ -n "$b" ]; then bad "axis 2: a SetFilePointerEx site is not reached through the std-fd map ($b)"
-        else ok; fi
+        elif [ -n "$b" ]; then bad "axis 2: a SetFilePointerEx site is not reached through the std-fd map and the seek check ($b)"
+        elif [ "$(printf '%s\n' "$K" | wc -l | tr -d ' ')" != 1 ]; then bad "axis 2: the seek sites must share ONE seek-check stub ($(echo $K))"
+        else
+            ok
+            FT=$(va GetFileType); CM=$(va GetConsoleMode)
+            awk -F'\t' -v at="$K" '
+                { x = $1; sub(/^ +/, "", x); sub(/:$/, "", x) }
+                ("0x" x) == at { on = 1 }
+                on && NF >= 3 { print $3 }
+                on && $3 ~ /^ret/ { exit }' "$D/dis" > "$D/kstub"
+            got=$(awk -v ft="$FT" -v cm="$CM" '
+                function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
+                BEGIN { np = split("F|^cmp +\\$0x3,%eax|^je |^cmp +\\$0x2,%eax|^jne |^lea +0x20\\(%rsp\\),%rdx|M|^test +%eax,%eax|^jne |^xor +%eax,%eax|^mov +\\$0xffffffffffffffe3,%rax|^mov +%rbx,%rcx|^ret", pat, "|"); k = 1 }
+                k <= np {
+                    if (pat[k] == "F") { if (ft != "" && slot($0) == ft) k++ }
+                    else if (pat[k] == "M") { if (cm != "" && slot($0) == cm) k++ }
+                    else if ($0 ~ pat[k]) k++
+                }
+                END { print k - 1 "/" np }' "$D/kstub")
+            case "$got" in
+                13/13) ok ;;
+                *) bad "axis 2: the seek-check stub at $K does not read GetFileType, the pipe / char tests, GetConsoleMode, the -29 answer and the kept HANDLE in order (matched $got; imports GetFileType '$FT' GetConsoleMode '$CM'): $(tr '\n' ';' < "$D/kstub" | tr -s ' ')" ;;
+            esac
+        fi
     fi
 fi
 
@@ -194,12 +267,25 @@ else
         if [ "$got" = "3 0 0 1 100" ]; then ok; else bad "axis 3: the repro under wine, std streams redirected to / from files, prints '$got' (want '3 0 0 1 100'; '-9 -9 -9 1 97' is the old raw-handle answer)"; fi
         printf 'abcdefgh' | _wine stdseek.exe "$D/w/p.out" "$D/w/p.err" || true
         got=$(line "$D/w/p.out")
-        if [ "$got" = "-1 0 0 1 97" ]; then ok; else bad "axis 3: the repro under wine with a piped stdin prints '$got' (want '-1 0 0 1 97': wine's ERROR_INVALID_FUNCTION, the pipe unmoved; real cass '3 0 0 1 97'; '-9 -9 -9 1 97' is the old raw-handle answer)"; fi
+        if [ "$got" = "-29 0 0 1 97" ]; then ok; else bad "axis 3: the repro under wine with a piped stdin prints '$got' (want '-29 0 0 1 97': -ESPIPE, the pipe unmoved; '-1 0 0 1 97' is wine's old ERROR_INVALID_FUNCTION answer, real cass answered '3 0 0 1 97'; '-9 -9 -9 1 97' is the old raw-handle answer)"; fi
+        # 6.7.16: a piped stdout is a pipe too.
+        _wine stdseek.exe /dev/stdout "$D/w/o.err" < "$D/in.txt" | cat > "$D/w/o.out" || true
+        got=$(line "$D/w/o.out")
+        if [ "$got" = "3 -29 0 1 100" ]; then ok; else bad "axis 3: the repro under wine with a piped stdout prints '$got' (want '3 -29 0 1 100')"; fi
+        # 6.7.16: NUL is a character device with no console mode: its seek keeps its answer (cmd's
+        # `> nul`; the probe reports into a file).
+        ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/nulseek.cyr" > "$D/w/nulseek.exe" 2> "$D/wn.err" ) || true
+        rm -f "$D/w/nulseek.txt"
+        ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine cmd /c "nulseek.exe > nul 2> nul" < /dev/null > /dev/null 2>&1 ) || true
+        got=$(line "$D/w/nulseek.txt" 2> /dev/null)
+        if [ "$got" = "0 5" ]; then ok; else bad "axis 3: a seek on NUL under wine (cmd's > nul) answers '$got' (want '0 5', its answer before 6.7.16: NUL has no console mode, so it is not refused -29)"; fi
     fi
     WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
 fi
 
 echo "$pass passed, $fail failed"
-[ "$pass" -ge 2 ] || { echo "FAIL: pe_lseek_std_fds: only $pass rows ran (floor 2)"; exit 1; }
+[ "$pass" -ge 3 ] || { echo "FAIL: pe_lseek_std_fds: only $pass rows ran (floor 3: axis 1 always runs)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_lseek_std_fds"; exit 1; fi
-echo "PASS: pe_lseek_std_fds — a seek on fd 0 / 1 / 2 reaches the std stream on PE (GetStdHandle), as on Linux"
+echo "PASS: pe_lseek_std_fds — a seek on fd 0 / 1 / 2 reaches the std stream on PE (GetStdHandle), and a pipe or console answers -29, as on Linux"

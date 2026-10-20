@@ -173,6 +173,8 @@ enum SysNr {
     # consumer needs it on macOS). The shared wrappers decline with -78 under
     # #ifdef CYRIUS_TARGET_MACOS, so the numbers are never emitted on this target; the names
     # exist so cross-platform source COMPILES. macho_route_parity.sh allow-lists them.
+    # (6.7.16: sys_mknodat makes a FIFO over Darwin mknod — the raw x86 133, routed 133 → 14 —
+    # and still never emits 259.)
     SYS_UNSHARE = 272;
     SYS_CHROOT = 161;
     SYS_PIVOT_ROOT = 155;

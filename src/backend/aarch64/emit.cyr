@@ -1328,6 +1328,10 @@ fn ESYSXLAT(S): i64 {
         _esx_arm(S, 87, 10);    # raw x86 unlink   87→10
         _esx_arm(S, 89, 58);    # raw x86 readlink 89→58
         _esx_arm(S, 33, 90);    # raw x86 dup2     33→90
+        # 6.7.16: the x86 mknod number, for sys_mknodat's Darwin FIFO arm
+        # (lib/syscalls_linux_common.cyr); the x86 twin is in EMACHO_SYSXLAT. No aarch64-Linux
+        # arm: the call sits inside `#ifdef CYRIUS_TARGET_MACOS`. CHANGELOG [6.7.16]
+        _esx_arm(S, 133, 14);   # raw x86 mknod   133→14
         # v6.6.5: raw x86 nanosleep(35) → poll(NULL, 0, ms). See EMACHO_NANOSLEEP_ARM.
         EMACHO_NANOSLEEP_ARM(S);
         _esx_arm(S, 146, 23);  # setuid    146→23

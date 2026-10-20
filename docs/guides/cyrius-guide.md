@@ -8221,19 +8221,34 @@ failed open -1. A close (`CloseHandle`) answers 0, or -errno through the same ta
 before 6.7.15 it answered CloseHandle's BOOL — 1 closed, 0 failed — so a `sys_close(..) < 0` test
 never fired and `file_close_r` was never `Err`.
 
-| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14 |
+| Call that fails | Linux | Windows before 6.7.14 | Windows 6.7.14+ |
 |---|---|---|---|
 | `file_read(-999, buf, 16)` | -9 | 0 (end of file) | -9 |
 | `file_write(-999, "abcd", 4)` | -9 | 0 | -9 |
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
-| `sys_close(-999)` | -9 | 0 (a good close: 1) | -9 since 6.7.15 (a good close: 0) |
+| `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
+
+A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
+std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later
+`file_write(2, ..)` answers -9 and a second `sys_close(2)` -9 — nothing written to fd 2 can land
+in a file opened after the close. When another std slot holds the same handle (`run_capture` /
+`exec_capture` start a child with ONE pipe as its stdout and stderr), the handle stays open for
+that slot, as Linux keeps a file open while another descriptor refers to it: the child's
+`sys_close(2)` leaves its stdout writing. Before 6.7.16 the fd went to `CloseHandle` as the handle
+value 0 / 1 / 2: the close answered -9 (0 before 6.7.15) and the stream stayed open.
+`sys_ftruncate(1, n)` of a redirected stdout truncates its file since the same release (it
+answered -1).
 
 A seek on fd 0 / 1 / 2 reaches the std stream, as `file_read` / `file_write` / `xfsync` on them
 do (6.7.15 — the fd went to `SetFilePointerEx` as the handle value 0 / 1 / 2 and failed -9): with
-stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. ⚠ On
-a PIPE or a console std handle Windows lets the seek succeed (it answers the asked offset and the
-stream does not move) where Linux and macOS answer -29 (`ESPIPE`).
+stdin redirected from a file, `xlseek(0, 3, SEEK_SET)` is 3 and the next read starts there. A seek
+on a PIPE or a console answers -29 (`ESPIPE`), as on Linux (6.7.16's D31; macOS answers it for a
+pipe), so `xlseek(0, 0, SEEK_CUR) < 0` tells a piped stdin from a file on every target: the reroute
+asks `GetFileType` first — `FILE_TYPE_PIPE` (a socket too), or `FILE_TYPE_CHAR` whose
+`GetConsoleMode` succeeds — and never calls `SetFilePointerEx` for those. `NUL` is a character
+device without a console mode and still seeks, as `/dev/null` does. Before 6.7.16 real Windows let
+the seek succeed (it answered the asked offset and the stream did not move) and wine answered -1.
 
 The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
 `dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
@@ -8908,6 +8923,11 @@ The rules, in order:
    word. `how` is the peer's own `SIG_BLOCK` / `SIG_UNBLOCK` / `SIG_SETMASK` (1 / 2 / 3 on
    Darwin). The exec family (`run`, `exec_vec`, …) now empties a mask inherited from a launcher
    on macOS too.
+   ⭐ 6.7.16: `sys_mknodat(AT_FDCWD, path, S_IFIFO | mode, 0)` makes a FIFO on both Macs (it
+   returned -78), over Darwin's `mknod` (BSD 14, through the x86 number 133 both Mach-O backends
+   route; XNU makes a FIFO without privilege). `mknod` takes no dirfd, so a relative path under
+   another dirfd still declines with -78, as does any other node type (Linux makes a regular
+   file through mknodat; Darwin refuses one unprivileged).
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
    and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL

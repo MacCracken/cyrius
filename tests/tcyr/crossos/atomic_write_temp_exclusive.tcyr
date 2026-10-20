@@ -30,16 +30,21 @@ include "lib/tagged.cyr"
 include "lib/process.cyr"
 include "lib/assert.cyr"
 
+# cwd-relative on PE and, since 6.7.16, on cx: a .cyx runs on a Windows host's cxvm too, where
+# "/tmp/" is C:\tmp, absent, so every fixture failed. Every runner starts each cx leg in its own
+# empty directory.
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE)
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE / cx)
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
     var o = 0;
     #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_CX
     memcpy(p, "/tmp/", 5);
     o = 5;
+    #endif
     #endif
     memcpy(p + o, name, nl);
     o = o + nl;
@@ -62,6 +67,23 @@ fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><
     memcpy(p + o, suffix, sl);
     store8(p + o + sl, 0);
     return p;
+}
+
+# 6.7.16's D28 (user, 2026-10-19): on cx, an is_symlink row whose readlink answers -38 — cxvm's
+# answer on a host with no readlink route (Windows) — is named as not run instead of failing.
+# 1 = the row runs; 0 = the "not run" line was printed. Natively always 1.
+fn _sym_row(p, name): i64 {
+    #ifdef CYRIUS_TARGET_CX
+    var lb[8];
+    if (xreadlink(p, &lb, 8) == 0 - 38) {
+        var pre = "  not run: this host has no readlink route: ";
+        sys_write(1, pre, strlen(pre));
+        sys_write(1, name, strlen(name));
+        sys_write(1, "\n", 1);
+        return 0;
+    }
+    #endif
+    return 1;
 }
 
 # The name the NEXT atomic write of `path` tries first (the counter is stepped back).
@@ -139,7 +161,9 @@ fn main(): i64 {
     assert_eq(_content_is(victim, "precious"), 1, "the file the planted link names was NOT written");
     assert_eq(is_symlink(str_from(path)), 0, "`path` is a regular file, not the planted link renamed over it");
     assert_eq(_content_is(path, "first"), 1, "`path` holds the new bytes");
-    assert_eq(is_symlink(str_from(lnk)), 1, "the planted link is left where it was");
+    if (_sym_row(lnk, "the planted link is left where it was") == 1) {
+        assert_eq(is_symlink(str_from(lnk)), 1, "the planted link is left where it was");
+    }
     xunlink(lnk);
 
     test_group("a DANGLING symlink at the next temp name: its target is not created");

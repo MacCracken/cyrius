@@ -2,9 +2,10 @@
 # cx_host_dispatch.sh — 6.7.15 (issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md).
 # A cx guest's syscall carries the guest's x86-LINUX number; cxvm serves the calls it lists through the
 # HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
-# every host — on Windows through the PE routes, -38 where the PE peer has only a stub. What still differs
-# from x86_64 Linux (on macOS a failure's errno and a signal number are Darwin's; off x86_64 Linux and
-# Windows F_GETFL reports only the nine mapped bits) is filed; the fixture's rows do not reach it.
+# every host — on Windows through the PE routes, -38 where the PE peer has only a stub — and a failure
+# answers x86_64 Linux's errno on every host (6.7.16: a Darwin host's is mapped back, `_cx_errno_linux`),
+# kill's signal reaches the host as the host's number (6.7.16, `_cx_sig_host`), and F_GETFL answers
+# x86_64 Linux's word, O_LARGEFILE included (6.7.16's D29, `_cx_largefile`).
 #
 # THE DEFECT. Until 6.7.15 cxvm issued the listed calls as `syscall(sn, …)`, a RUNTIME number, and each
 # host's compiler renumbers a runtime number through a chain built for that host's own stdlib numbers.
@@ -24,20 +25,44 @@
 # sees the child's pid and the child (which sees 0) writes its getpid() to a file the parent reads
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never
-# 0x20000), F_GETFD, F_DUPFD_CLOEXEC (FD_CLOEXEC set on the copy); the path calls (6.7.15,
+# 0x20000, and O_LARGEFILE 0x8000 on the opened file — 6.7.16's D29), F_GETFD, F_DUPFD_CLOEXEC
+# (FD_CLOEXEC set on the copy); the path calls (6.7.15,
 # issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
 # fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
 # issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
-# fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub).
+# fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub); a failure's errno (6.7.16,
+# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
+# -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
+# unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
+# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38);
+# kill(getpid(), 99) -22 (6.7.16, issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
+# signal no host has; Windows -38). The signal map itself (SIGUSR1 10 is Darwin's 30, 10 there is
+# SIGBUS) is held by the ecb / ach legs of scripts/cross-os-selfhost.sh, which run the filed repro
+# (kill(getpid(), 10)) to its SIGUSR1 death, status 158 there. Row 15 (6.7.16,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): poll(NULL, 0, 60) sleeps; mknodat
+# makes a FIFO stat calls one; getdents64 reads a directory whole with a 4096- and a 96-byte buffer
+# (every name once, d_type DT_FIFO for the FIFO — a Darwin host converts its records and, for the
+# small buffer, reads the directory again) and a 16-byte one is -22; wait4 reaps the fork row's child,
+# then -ECHILD; a child that stops itself, is continued and is killed by SIGUSR1 gives 0x137f, 0xffff
+# (WCONTINUED) and 10 (a Darwin host reports 0x117f, 0x137f, 30) (Windows: the sleep, the rest -38).
+# Row 16 (6.7.16, issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md):
+# O_CREAT | O_EXCL over an existing directory -17 on every host, Windows included (cass's CreateFileW
+# says ERROR_ACCESS_DENIED, which cxvm answered as -13 until 6.7.16; wine says ERROR_FILE_EXISTS).
+# Row 17 (6.7.16, the platform review of issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md):
+# getdents64 lists /dev — a Mac's devfs has no extended readdir, so a small re-read returns fewer
+# records than were delivered — with a 200-byte buffer, the 4096-byte listing's names in its order,
+# and with a 96-byte one, which ends (0, or -22 on a Mac: ecb 592 of 635) within 2 x the names in
+# calls, its names a prefix of that listing (Windows: no /dev, -2; or getdents64 -38).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
 #   2  the fixture on the x86_64 cxvm built from this tree: exit 77, `cxh lin=0`
 #   3  the fixture on an aarch64 cxvm built from this tree, under qemu-aarch64: exit 77 (named SKIP
 #      without qemu — qemu is an emulator; pi runs the same .cyx in the cross-OS leg)
-#   4  audit_walk_fifo.tcyr on that aarch64 cxvm reaches its summary line (it exited 10 mid-file)
+#   4  audit_walk_fifo.tcyr on that aarch64 cxvm reaches its summary line (it exited 10 mid-file) and,
+#      since 6.7.16, reads `8 passed, 0 failed` (2 passed, 6 failed: getdents64 / mknodat / wait4 -38)
 #   5  the fixture on a PE cxvm under wine: exit 78, `pe=0` (named SKIP without wine; cass runs it)
 #   6  cxvm builds for every host target with no syscall diagnostic: the two Mach-O targets name no
 #      unrouted number (each would SIGSYS there), and the PE build no longer warns that a runtime-
@@ -58,6 +83,32 @@
 #   MU5 (issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) the aarch64 peer's sys_dup2
 #       without its self-dup arm (dup3 for every pair, the pre-6.7.15 body) -> RED 1: axis 3 (exit 12,
 #       `lin=2048`: dup2(1, 1) and the closed fd both -22, dup3's EINVAL)
+# MU6 (6.7.16, the Darwin errno map) `_cx_errno_linux` answering r as it is — the 6.7.15 cxvm — ->
+#       no local axis sees it (the map is the identity on a Linux or Windows host): on ecb and ach
+#       the fixture exits 13, `lin=4096` (-62 / -66), measured; the cross-OS legs require 77
+# MU7 `_cx_host_enosys` answering -38 on macOS (cxvm's own refusal spelled Linux's way, then mapped
+#       as Darwin's ENOTSOCK) -> on ach exit 13, `lin=4096` (syscall(999) -88; every unserved number
+#       and fcntl's lock commands read -88), measured; local axes unchanged, as MU6
+# MU8 (6.7.16, the signal map) `_cx_host_kill` passing the guest's number as it is -> no local axis
+#       sees it (the identity on a Linux host): on ecb and ach the cross-OS legs' kill repro dies of
+#       Darwin's SIGBUS ("Bus error: 10", status 138, want 158), measured
+# MU9 (6.7.16's D29) `_cx_largefile` answering 0 (F_GETFL without O_LARGEFILE off x86_64 Linux, the
+#       6.7.15 word) -> RED 1: axis 3 (exit 10, `lin=512`: qemu reports arm64's 0x20000), measured;
+#       on pi, ecb and ach the same exit 10 (the cross-OS legs require 77), measured
+# MU10 (6.7.16, the audit-walk calls) the cxvm before them (86dafdc49's programs/cxvm.cyr in a scratch
+#       copy of the tree, so every axis builds it) -> RED 4: axes 2 / 3 (exit 15, `lin=16384`), axis
+#       4 (`2 passed, 6 failed`), axis 5 (exit 2, `pe=16384`: poll(NULL, 0, 60) was not served)
+# MU11 `_cx_wstatus_linux` answering the host's word as it is -> no local axis sees it (the identity
+#       on a Linux host): on ecb and ach the fixture exits 15, `lin=16384` (0x117f, Darwin's SIGSTOP),
+#       measured
+# MU12 `_cx_darwin_getdents` without its put-back (the records past the guest's buffer dropped) ->
+#       on ecb and ach exit 15, `lin=16384` (the 96-byte listing misses names), measured
+# MU13 (6.7.16) `_cx_host_open` without its Windows -13 -> -17 rule -> no local axis sees it (wine's
+#       CreateFileW says ERROR_FILE_EXISTS): on cass the fixture exits 2, `pe=32768`, measured
+# MU14 (6.7.16, the platform review) `_cx_darwin_getdents` handing the guest every record it converted
+#       whatever the re-read returned (26e8eeaff's programs/cxvm.cyr) -> no local axis sees it (the
+#       converter is Darwin's): on ecb the fixture exits 17, `lin=65536` (/dev with 200 bytes read 953
+#       names, 318 of them repeats, for 635), measured
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -155,9 +206,12 @@ else
     if [ -s "$T/aw.cyx" ]; then
         mkdir -p "$T/a4"
         rc=0; (cd "$T/a4" && timeout 120 qemu-aarch64 "$T/cxvm_a64" < "$T/aw.cyx" > "$T/a4.out" 2>&1) || rc=$?
-        if grep -q '^[0-9]* passed, [0-9]* failed' "$T/a4.out"; then
-            ok "axis 4: audit_walk_fifo.tcyr on the aarch64 cxvm reaches its summary ($(grep -m1 '^[0-9]* passed' "$T/a4.out"); exit $rc)"
-        else bad "axis 4: audit_walk_fifo.tcyr on the aarch64 cxvm stopped without a summary (exit $rc; the parent took fork's child branch before 6.7.15)"; fi
+        a4s=$(grep -m1 '^[0-9]* passed, [0-9]* failed' "$T/a4.out" || true)
+        a4n=${a4s%% passed*}
+        if [ -z "$a4s" ]; then bad "axis 4: audit_walk_fifo.tcyr on the aarch64 cxvm stopped without a summary (exit $rc; the parent took fork's child branch before 6.7.15)"
+        elif [ "$rc" = 0 ] && [ "$a4n" -ge 8 ] && case "$a4s" in *" passed, 0 failed"*) true ;; *) false ;; esac; then
+            ok "axis 4: audit_walk_fifo.tcyr on the aarch64 cxvm reaches its summary, every row green ($a4s)"
+        else bad "axis 4: audit_walk_fifo.tcyr on the aarch64 cxvm: exit $rc, '$a4s' (want 8+ passed, 0 failed; getdents64 / mknodat / wait4 answered -38 before 6.7.16)"; fi
     else bad "axis 4: audit_walk_fifo.tcyr does not build for cx: $(grep -m1 '^error' "$T/aw.err")"; fi
 fi
 
@@ -198,5 +252,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) and dup2's self-dup give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup, a failure's errno, kill's signal, F_GETFL's O_LARGEFILE and getdents64 / mknodat / wait4 / poll(NULL, 0, ms) give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0

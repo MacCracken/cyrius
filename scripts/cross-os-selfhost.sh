@@ -250,13 +250,101 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the
 # path calls (mkdir / stat — the struct cxvm refills at the x86-Linux offsets from Darwin's — /
 # symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15) and dup2's
-# self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3). Each
+# self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3) and a
+# failure's errno (6.7.16: ecb's and ach's cxvm answered Darwin's ELOOP -62 / ENOTEMPTY -66 for -40 / -39,
+# so the fixture exited 13 there; cxvm maps a Darwin errno back now) and F_GETFL's O_LARGEFILE (6.7.16's
+# D29: pi's, ecb's and ach's cxvm dropped it, exit 10) and a /dev listing with small buffers (6.7.16:
+# ecb's cxvm repeated devfs entries — 953 names for 635 with 200 bytes — exit 17). Each
 # host's own cxvm must exit 77 — every row with x86_64 Linux's answer — and cass's 78, the PE routes'
 # answers (-38 where the PE peer has only a stub). Until 6.7.15 cxvm handed the guest's number to the
 # host compiler's renumbering: on pi a guest lseek ran getxattr and fork ran close (the parent took
 # the child branch), on ecb kill ran lseek and getppid / dup / lseek / exit_group died of SIGSYS.
-# CHANGELOG [6.7.15]
+# CHANGELOG [6.7.15] [6.7.16]
 cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.cyx
+# 6.7.16 — kill's signal on a Mac's cxvm (issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md,
+# the filed repro verbatim): the guest's kill(getpid(), 10) is x86_64 Linux's SIGUSR1, and cxvm on ecb /
+# ach must deliver Darwin's SIGUSR1 (30): status 158. Until 6.7.16 the number went as it was and 10 is
+# Darwin's SIGBUS ("Bus error: 10", status 138). CHANGELOG [6.7.16]
+cat > "$CO_TMP"/_co_cxs.cyr <<'CXS'
+# kill(getpid(), 10): x86_64 Linux's SIGUSR1 (default action: terminate).
+var p = syscall(39);
+syscall(62, p, 10);
+syscall(60, 0);
+CXS
+# 6.7.16 — the cx CROSSOS leg (issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): four crossos files, built once with
+# the local cycc_cx, run on each host's own cxvm, each from its own empty directory, and must exit 0
+# printing `<N> passed, 0 failed`, N their cx assertion count less the rows they name as not run.
+# Only a Windows host's cxvm names any (6.7.16's D28: a row whose call has no route there prints
+# `not run: this host has no <call> route`): open_flags_per_target 3 and atomic_write_temp_exclusive 1
+# (readlink, is_symlink's rows), audit_walk_fifo 6 (getdents64, fork, mknodat). No runner ran these
+# files on a host's cxvm before (cx_crossos_rows_run.sh runs them on the x86_64 Linux one, and
+# wine's Z:\tmp hid the /tmp class): until 6.7.16 cass's cxvm read 9 / 10, 6 / 44 and 2 / 22
+# passed, and audit_walk_fifo read 2 / 8 on every POSIX host's. CHANGELOG [6.7.16]
+CO_CXW="pe_open_failure_errno open_flags_per_target atomic_write_temp_exclusive audit_walk_fifo"
+for _f in $CO_CXW; do cat tests/tcyr/crossos/$_f.tcyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_cxw_$_f.cyx; done
+# _co_n_cx FILE — the assertion lines a cx build of FILE compiles (`#ifdef` / `#ifndef
+# CYRIUS_TARGET_<X>` nest, `#else` flips the innermost; cx_crossos_rows_run.sh's n_tgt).
+_co_n_cx() {
+  awk -v t=CYRIUS_TARGET_CX '
+      /^[[:space:]]*#ifdef[[:space:]]/  { d++; on[d] = ($2 == t); next }
+      /^[[:space:]]*#ifndef[[:space:]]/ { d++; on[d] = ($2 != t); next }
+      /^[[:space:]]*#else/  { on[d] = !on[d]; next }
+      /^[[:space:]]*#endif/ { d--; next }
+      /^[[:space:]]*assert(_[a-z]+)?\(/ { a = 1; for (i = 1; i <= d; i++) if (!on[i]) a = 0; if (a) n++ }
+      END { print n + 0 }' "$1"
+}
+# _co_cxw_notrun HOST FILE — the rows FILE names as not run on HOST's cxvm (6.7.16's D28).
+_co_cxw_notrun() {
+  case "$1:$2" in
+    cass:open_flags_per_target) echo 3 ;;
+    cass:atomic_write_temp_exclusive) echo 1 ;;
+    cass:audit_walk_fifo) echo 6 ;;
+    *) echo 0 ;;
+  esac
+}
+# _co_cxw_judge HOST — each file's run (fetched to $CO_TMP/_cxw_HOST/) exited 0, named exactly the
+# not-run rows HOST expects, and printed `<N> passed, 0 failed (<N> total)`.
+_co_cxw_judge() {
+  _cb=0
+  for _f in $CO_CXW; do
+    _o="$CO_TMP/_cxw_$1/_cxw_$_f.out"
+    _rc=$(tr -d '\r ' < "$CO_TMP/_cxw_$1/_cxw_$_f.rc" 2>/dev/null || true)
+    _all=$(_co_n_cx tests/tcyr/crossos/$_f.tcyr)
+    _nr=$(tr -d '\r' < "$_o" 2>/dev/null | grep -c '^  not run: this host has no [a-z0-9_]* route: ' || true)
+    _wnr=$(_co_cxw_notrun "$1" "$_f")
+    _sum=$(tr -d '\r' < "$_o" 2>/dev/null | tail -1 || true)
+    _n=$((_all - _wnr))
+    if [ "$_rc" = 0 ] && [ "$_nr" = "$_wnr" ] && [ "$_sum" = "$_n passed, 0 failed ($_n total)" ]; then
+      echo "  cx crossos: $1 $_f — $_sum, $_nr not run"
+    else
+      echo "  cx crossos FAIL: $1 $_f — exit '$_rc', '$_sum', $_nr not run (want $_n passed, 0 failed, $_wnr not run)"
+      tr -d '\r' < "$_o" 2>/dev/null | grep -E 'FAIL|not run' | head -6 | sed 's/^/      /' || true
+      _cb=1
+    fi
+  done
+  [ "$_cb" = 0 ] || { echo "SELFHOST_FAIL: $1 — the cx crossos leg FAILED (the four files on its cxvm). NOT SELFHOST_OK."; exit 1; }
+}
+# _co_cxw_posix HOST — on ecb / ach / pi, with the cxvm the leg built in ~/$RD.
+_co_cxw_posix() {
+  for _f in $CO_CXW; do scp -q $SSHO "$CO_TMP"/_cxw_$_f.cyx "$1:~/$RD/"; done
+  ssh $SSHO "$1" "cd ~/$RD && for f in $CO_CXW; do rm -rf _cxw_\$f && mkdir _cxw_\$f && (cd _cxw_\$f && _r=0; ../cxvm < ../_cxw_\$f.cyx > ../_cxw_\$f.out 2>&1 || _r=\$?; echo \$_r > ../_cxw_\$f.rc); done" || true
+  mkdir -p "$CO_TMP/_cxw_$1"
+  for _f in $CO_CXW; do scp -q $SSHO "$1:~/$RD/_cxw_$_f.out" "$1:~/$RD/_cxw_$_f.rc" "$CO_TMP/_cxw_$1/" || true; done
+  _co_cxw_judge "$1"
+}
+# _co_cxw_cass — on cass, with the cxvm.exe the leg built under C:\cyrius-tests\$RD (cmd /v reads the
+# exit code; `2> err &`, never `2>nul &`, which corrupts the redirect).
+_co_cxw_cass() {
+  for _f in $CO_CXW; do scp -q $SSHO "$CO_TMP"/_cxw_$_f.cyx "cass:$WRDS"/_cxw_$_f.cyx; done
+  for _f in $CO_CXW; do
+    ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && mkdir _cxw_'"$_f"' && cd _cxw_'"$_f"' && ..\cxvm.exe < ..\_cxw_'"$_f"'.cyx > ..\_cxw_'"$_f"'.out 2> ..\_cxw_'"$_f"'.err & (echo !errorlevel!)> ..\_cxw_'"$_f"'.rc"' || true
+  done
+  mkdir -p "$CO_TMP/_cxw_cass"
+  for _f in $CO_CXW; do scp -q $SSHO "cass:$WRDS/_cxw_$_f.out" "cass:$WRDS/_cxw_$_f.rc" "$CO_TMP/_cxw_cass/" || true; done
+  _co_cxw_judge cass
+}
+cat "$CO_TMP"/_co_cxs.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxs.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 #
@@ -394,7 +482,7 @@ case "$HOST" in
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
     _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ecb:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "$CO_TMP"/_co_cxs.cyx "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
     # main() is never called and the program exits with argc). Then cx C:
@@ -413,9 +501,12 @@ case "$HOST" in
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
+      && (_csrc=0; ./cxvm < _co_cxs.cyx > /dev/null 2>&1 || _csrc=$?; [ $_csrc -eq 158 ]) \
       && cat src/main_cx.cyr | ./r1r > cycc_cx && chmod +x cycc_cx && codesign -s - -f cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
+    # 6.7.16 — the cx crossos leg on this host's cxvm (see CO_CXW above).
+    _co_cxw_posix ecb
     # v6.4.22 cx: the NATIVE macho cycc_cx (r1r, which hardcodes CYRIUS_TARGET_MACOS)
     # compiles a .cyr → .cyx that the native cxvm runs to exit 42. Guards the
     # main_cx.cyr per-target arena (mmap on macho, not brk — the fault this fixed).
@@ -477,7 +568,7 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
     _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ach:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "$CO_TMP"/_co_cxs.cyx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
@@ -499,9 +590,12 @@ case "$HOST" in
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
+      && (_csrc=0; ./cxvm < _co_cxs.cyx > /dev/null 2>&1 || _csrc=$?; [ $_csrc -eq 158 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
+    # 6.7.16 — the cx crossos leg on this host's cxvm (see CO_CXW above).
+    _co_cxw_posix ach
     # 6.6.11 B08: the cx thread fixture (see its build above) — this leg had no cxvm at all.
     # Here, as on ecb, a futex lib/thread.cyr let through on cx killed cxvm with SIGSYS (140) until
     # 6.7.14's D55 (cxvm now answers it -38).
@@ -588,6 +682,8 @@ case "$HOST" in
       && ! grep -q "raw syscall" _cli.err \
       && printf "fn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n" > _hello.cyr \
       && mkdir -p build && cp n1 build/cycc && CYRIUS_HOME=$PWD/_home CYRIUS_RESOLVED=1 ./cyrius_native run _hello.cyr > _run.out 2>&1'
+    # 6.7.16 — the cx crossos leg on this host's cxvm (see CO_CXW above).
+    _co_cxw_posix pi
     # v6.4.22 cx: native aarch64-Linux cycc_cx (brk arena — aarch64-Linux has brk)
     # compiles a .cyr → .cyx the native cxvm runs to 42. (macho/PE were the broken
     # arenas; pi confirms the per-target #ifdef keeps the Linux path working.)
@@ -697,6 +793,9 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
       exit 1
     fi
+    # 6.7.16 — the cx crossos leg on cass's cxvm.exe (see CO_CXW above): the rows with no Windows
+    # route are named as not run (6.7.16's D28).
+    _co_cxw_cass
     # 6.7.15 (D38) — the TypeScript front end on cycc.exe (c2.exe): --parse-ts exits 0 on a clean
     # .ts and 1 on a bad one, and `--emit-js <file>` writes x86_64 Linux's bytes. Until 6.7.15 every
     # compiler but x86_64 Linux's skipped the flags and compiled the TypeScript as cyrius.

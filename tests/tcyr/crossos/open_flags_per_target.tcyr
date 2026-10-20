@@ -34,17 +34,21 @@ include "lib/process.cyr"
 include "lib/assert.cyr"
 
 # v6.6.6: a PER-PROCESS scratch name (fixed names were shared by concurrent runs). Windows has no
-# /tmp — the cross-OS runner's cwd there is C:\cyrius-tests — so the PE name is cwd-relative.
+# /tmp — the cross-OS runner's cwd there is C:\cyrius-tests — so the PE name is cwd-relative, and
+# so is cx's (6.7.16): a .cyx runs on a Windows host's cxvm too, where "/tmp/" is C:\tmp, absent,
+# and every fixture failed. Every runner starts each cx leg in its own empty directory.
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE)
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE / cx)
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
     var o = 0;
     #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_CX
     memcpy(p, "/tmp/", 5);
     o = 5;
+    #endif
     #endif
     memcpy(p + o, name, nl);
     o = o + nl;
@@ -88,6 +92,23 @@ fn _seed(p): i64 {
     return 0;
 }
 
+# 6.7.16's D28 (user, 2026-10-19): on cx, an is_symlink row whose readlink answers -38 — cxvm's
+# answer on a host with no readlink route (Windows) — is named as not run instead of failing.
+# 1 = the row runs; 0 = the "not run" line was printed. Natively always 1.
+fn _sym_row(p, name): i64 {
+    #ifdef CYRIUS_TARGET_CX
+    var lb[8];
+    if (xreadlink(p, &lb, 8) == 0 - 38) {
+        var pre = "  not run: this host has no readlink route: ";
+        sys_write(1, pre, strlen(pre));
+        sys_write(1, name, strlen(name));
+        sys_write(1, "\n", 1);
+        return 0;
+    }
+    #endif
+    return 1;
+}
+
 # -ELOOP on this target.
 fn _eloop(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
@@ -123,7 +144,9 @@ fn main(): i64 {
     # On Windows a link needs Developer Mode or an elevated process; the release-gate host and
     # CI's runner are both elevated, so a failure here is a real failure, not a skip.
     assert_eq(xsymlink(tgt, lnk), 0, "xsymlink makes the fixture (on Windows: CreateSymbolicLinkW)");
-    assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink(link) is 1 (was 0 for everything on Windows)");
+    if (_sym_row(lnk, "is_symlink(link) is 1") == 1) {
+        assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink(link) is 1 (was 0 for everything on Windows)");
+    }
     assert_eq(is_symlink(str_from(tgt)), 0, "is_symlink(regular file) is 0");
     # dir_walk asks is_symlink for every entry. The first 6.6.9 Windows arm bump-allocated the
     # widened path and a WIN32_FIND_DATAW on every call and never gave them back.
@@ -188,7 +211,9 @@ fn main(): i64 {
 
     test_group("O_CREAT|O_EXCL never follows a final symlink, even a dangling one");
     assert_eq(xsymlink(absent, dng), 0, "a DANGLING symlink fixture");
-    assert_eq(is_symlink(str_from(dng)), 1, "is_symlink(dangling link) is 1");
+    if (_sym_row(dng, "is_symlink(dangling link) is 1") == 1) {
+        assert_eq(is_symlink(str_from(dng)), 1, "is_symlink(dangling link) is 1");
+    }
     var e1 = file_open(dng, O_WRONLY | O_CREAT | O_EXCL, 420);
     # 6.7.14: Windows too — EOPEN_PE maps CreateFileW's ERROR_FILE_EXISTS through GetLastError;
     # it was a bare -1. CHANGELOG [6.7.14]
@@ -225,7 +250,9 @@ fn main(): i64 {
     if (tdf >= 0) { sys_close(tdf); }
     assert_eq(_fsize(tgt), 2, "…and did NOT truncate the file on the way");
     assert_eq(xsymlink(dir, dln), 0, "a symlink to the directory");
-    assert_eq(is_symlink(str_from(dln)), 1, "is_symlink(link to a dir) is 1 — dir_walk will not descend it");
+    if (_sym_row(dln, "is_symlink(link to a dir) is 1") == 1) {
+        assert_eq(is_symlink(str_from(dln)), 1, "is_symlink(link to a dir) is 1 — dir_walk will not descend it");
+    }
     var dl1 = file_open(dln, O_RDONLY | O_DIRECTORY, 0);
     assert_eq(dl1 >= 0, 1, "O_DIRECTORY through a link to a directory opens");
     if (dl1 >= 0) { sys_close(dl1); }

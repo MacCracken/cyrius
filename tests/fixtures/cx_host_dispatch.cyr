@@ -15,9 +15,9 @@
 # Each row sets a bit in `lin` when its answer is not x86_64 Linux's, and in `pe` when it is not
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
-# answer, 78 when every row has the Windows one, and otherwise 1 + the lowest failing Linux row
-# (1..12). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
-# and exit(3) follows it in case it returns.
+# answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
+# (1..17: row 1 is bit 1, row 17 bit 65536). The exit itself is the exit_group row: a 77 / 78 can
+# only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
 # a NATIVE aarch64 build would renumber into other calls (the defect above, one level down), so it is
@@ -164,7 +164,9 @@ fn _cxh_paths(): i64 {
 }
 
 # fcntl's scalar commands, the status flags in Linux bits both ways: 0 the Linux answers, 1 every
-# command -38 (Windows has no fcntl), 2 neither.
+# command -38 (Windows has no fcntl), 2 neither. F_GETFL of an opened file carries x86_64 Linux's
+# O_LARGEFILE 0x8000 on every host (6.7.16's D29, issues/2026-10-18-cxvm-fgetfl-drops-o-largefile-off-
+# x86-linux.md): the aarch64 Linux and Darwin cxvm dropped it until 6.7.16.
 fn _cxh_fcntl(): i64 {
     var fd = syscall(2, "cxh_f", 3074, 0);    # O_RDWR | O_APPEND | O_NONBLOCK
     if (fd < 0) { return 2; }
@@ -181,6 +183,7 @@ fn _cxh_fcntl(): i64 {
     var ok = 1;
     if (g1 < 0 || (g1 & 3075) != 3074) { ok = 0; }
     if ((g1 & 0x20000) != 0) { ok = 0; }        # x86's O_NOFOLLOW: never reported (arm64's O_LARGEFILE)
+    if ((g1 & 0x8000) == 0) { ok = 0; }         # x86's O_LARGEFILE: an open()ed file carries it
     if (s1 != 0 || g2 < 0 || (g2 & 3075) != 1026) { ok = 0; }
     if (s2 != 0 || g3 < 0 || (g3 & 3075) != 3074) { ok = 0; }
     if (fdf != 0) { ok = 0; }
@@ -204,6 +207,256 @@ fn _cxh_dup2(): i64 {
     if (one == 1 && cl == 0 - 9) { return 0; }
     if (one == 0 - 38 && cl == 0 - 38) { return 1; }
     return 2;
+}
+
+# A failure's errno is x86_64 Linux's on every host (6.7.16,
+# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md): open(link, O_RDONLY | O_NOFOLLOW)
+# -ELOOP 40 and rmdir of a non-empty directory -ENOTEMPTY 39, where a Darwin host's own answers are
+# 62 and 66 (cxvm maps them back; a Mac's cxvm answered -62 / -66 until 6.7.16); and a number nothing
+# serves answers -ENOSYS 38 — x86_64 Linux's own answer for an unassigned number, cxvm's D55 refusal on
+# every host (spelled the host's way inside cxvm, so the map leaves it 38: Darwin's 38 is ENOTSOCK).
+# 0 the Linux answers, 1 the Windows ones (-40, -1 for the rmdir — the PE peer's sys_rmdir answers -1
+# for every failure — and -38), 2 neither.
+fn _cxh_errno(): i64 {
+    syscall(87, "cxh_el");
+    syscall(87, "cxh_et");
+    syscall(87, "cxh_n/f");
+    syscall(84, "cxh_n");
+    var t = syscall(2, "cxh_et", 577, 420);   # O_WRONLY | O_CREAT | O_TRUNC
+    if (t >= 0) { syscall(3, t); }
+    var sl = syscall(88, "cxh_et", "cxh_el");
+    var lp = syscall(2, "cxh_el", 131072, 0); # O_RDONLY | O_NOFOLLOW on a symlink: -ELOOP
+    if (lp >= 0) { syscall(3, lp); }
+    var mk = syscall(83, "cxh_n", 448);
+    var nf = syscall(2, "cxh_n/f", 577, 420);
+    if (nf >= 0) { syscall(3, nf); }
+    var rd = syscall(84, "cxh_n");            # a non-empty directory: -ENOTEMPTY
+    syscall(87, "cxh_n/f");
+    syscall(84, "cxh_n");
+    syscall(87, "cxh_el");
+    syscall(87, "cxh_et");
+    var ns = syscall(999);                    # unassigned on x86_64 Linux; not a call cxvm serves
+    if (t < 0 || sl != 0 || mk != 0 || nf < 0 || ns != 0 - 38) { return 2; }
+    if (lp == 0 - 40 && rd == 0 - 39) { return 0; }
+    if (lp == 0 - 40 && rd == 0 - 1) { return 1; }
+    return 2;
+}
+
+# 1 iff the linux_dirent64 records in `b` (`n` bytes) are well-formed (d_reclen align8(20 + namlen),
+# the name NUL-terminated); each name adds its bit to the mask at `seen`: 1 ".", 2 "..", 4 "a",
+# 8 "ccccc", 16 the FIFO "f" with d_type DT_FIFO (1), 32 the 56-byte name, 64 anything else, 128 a
+# name seen twice.
+fn _cxh_dents(b, n, seen): i64 {
+    var pos = 0;
+    while (pos < n) {
+        var rl = load16(b + pos + 16);
+        var nm = b + pos + 19;
+        var nl = 0;
+        while (load8(nm + nl) != 0) { nl = nl + 1; }
+        if (rl != ((20 + nl + 7) & (0 - 8))) { return 0; }
+        var bit = 64;
+        if (nl == 1 && load8(nm) == 46) { bit = 1; }
+        if (nl == 2 && load8(nm) == 46 && load8(nm + 1) == 46) { bit = 2; }
+        if (nl == 1 && load8(nm) == 97) { bit = 4; }
+        if (nl == 5 && load8(nm) == 99) { bit = 8; }
+        if (nl == 1 && load8(nm) == 102 && load8(b + pos + 18) == 1) { bit = 16; }
+        if (nl == 56 && load8(nm) == 98) { bit = 32; }
+        if ((load64(seen) & bit) != 0) { bit = 128; }
+        store64(seen, load64(seen) | bit);
+        pos = pos + rl;
+    }
+    return 1;
+}
+
+# The directory `d` read whole through getdents64 with an `n`-byte buffer: the mask of _cxh_dents,
+# -1 for a malformed record, or the call's own failure.
+fn _cxh_list(d, n): i64 {
+    var fd = syscall(2, d, 65536, 0);         # O_RDONLY | O_DIRECTORY
+    if (fd < 0) { return fd; }
+    var b[4096];
+    var seen[8];
+    store64(&seen, 0);
+    var r = syscall(217, fd, &b, n);
+    while (r > 0) {
+        if (_cxh_dents(&b, r, &seen) == 0) { syscall(3, fd); return 0 - 1; }
+        r = syscall(217, fd, &b, n);
+    }
+    syscall(3, fd);
+    if (r < 0) { return r; }
+    return load64(&seen);
+}
+
+# Monotonic milliseconds (clock_gettime, served on every host).
+fn _cxh_ms(): i64 {
+    var ts[16];
+    syscall(228, 1, &ts);
+    return load64(&ts) * 1000 + load64(&ts + 8) / 1000000;
+}
+
+# The child of _cxh_waits: SIGSTOP itself, then sleep until the parent's SIGUSR1 ends it (30 s at
+# most, so a parent that failed cannot leave it running).
+fn _cxh_stopper(): i64 {
+    syscall(62, syscall(39), 19);
+    var k = 0;
+    while (k < 300) { syscall(7, 0, 0, 100); k = k + 1; }
+    syscall(60, 0);
+    return 0;
+}
+
+# wait4's status words for a child that stops itself, is continued and is killed by SIGUSR1:
+# Linux's 0x137f (WUNTRACED), 0xffff (WCONTINUED) and 10, a struct rusage filled on the last
+# (a Darwin host reports 0x117f, 0x137f and 30, and its WCONTINUED is 0x10). 0 all three, else 2.
+fn _cxh_waits(): i64 {
+    var pid = syscall(57);
+    if (pid == 0) { _cxh_stopper(); }
+    if (pid < 0) { return 2; }
+    var ws[8];
+    store64(&ws, 0);
+    var bad = 0;
+    if (syscall(61, pid, &ws, 2, 0) != pid || load32(&ws) != 0x137F) { bad = 2; }
+    syscall(62, pid, 18);                      # SIGCONT
+    if (bad == 0) {
+        if (syscall(61, pid, &ws, 8, 0) != pid || load32(&ws) != 0xFFFF) { bad = 2; }
+    }
+    syscall(62, pid, 10);                      # SIGUSR1: its default action ends the child
+    var ru[144];
+    store64(&ru + 32, 0 - 1);                  # ru_maxrss
+    var w3 = syscall(61, pid, &ws, 0, &ru);
+    if (w3 != pid || (load32(&ws) & 0x7F) != 10 || load64(&ru + 32) < 0) { bad = 2; }
+    return bad;
+}
+
+# getdents64, mknodat, wait4 and poll(NULL, 0, ms) (6.7.16,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md — the first three answered -38
+# and lib/chrono.cyr's sleep_ms was a no-op on cx): poll(NULL, 0, 60) sleeps; mknodat makes a FIFO,
+# which stat and the listing both call one; the directory reads whole with a 4096- and a 96-byte
+# buffer (a Darwin host converts each record, and for the 96-byte one puts the directory back and
+# reads again: no name lost or repeated), and a 16-byte one is -EINVAL; wait4 reaps the fork row's
+# child and then answers -ECHILD, and its status words are Linux's (_cxh_waits). 0 the Linux
+# answers, 1 the Windows ones (the sleep served; mknodat, getdents64 and wait4 -38, no fork), 2
+# neither.
+fn _cxh_walk(): i64 {
+    var t0 = _cxh_ms();
+    var pl = syscall(7, 0, 0, 60);
+    var slept = _cxh_ms() - t0;
+    syscall(87, "cxh_w/a");
+    syscall(87, "cxh_w/ccccc");
+    syscall(87, "cxh_w/f");
+    syscall(87, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    syscall(84, "cxh_w");
+    syscall(83, "cxh_w", 448);
+    var fd = syscall(2, "cxh_w/a", 577, 420);
+    syscall(3, fd);
+    fd = syscall(2, "cxh_w/ccccc", 577, 420);
+    syscall(3, fd);
+    fd = syscall(2, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 577, 420);
+    syscall(3, fd);
+    var mk = syscall(259, 0 - 100, "cxh_w/f", 4480, 0);   # S_IFIFO | 0600 at AT_FDCWD
+    var st[144];
+    var sf = syscall(4, "cxh_w/f", &st);
+    var fm = load32(&st + 24) & 61440;
+    var big = _cxh_list("cxh_w", 4096);
+    var small = _cxh_list("cxh_w", 96);
+    var tiny = _cxh_list("cxh_w", 16);
+    syscall(87, "cxh_w/f");
+    syscall(87, "cxh_w/a");
+    syscall(87, "cxh_w/ccccc");
+    syscall(87, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    syscall(84, "cxh_w");
+    var ws[8];
+    var nc = syscall(61, 0 - 1, &ws, 0, 0);    # reap the fork row's child, then no child is left
+    while (nc > 0) { nc = syscall(61, 0 - 1, &ws, 0, 0); }
+    if (pl != 0 || slept < 50) { return 2; }
+    if (mk == 0 - 38 && big == 0 - 38 && small == 0 - 38 && tiny == 0 - 38 && nc == 0 - 38) { return 1; }
+    if (mk != 0 || sf != 0 || fm != 4096) { return 2; }
+    if (big != 63 || small != 63 || tiny != 0 - 22 || nc != 0 - 10) { return 2; }
+    return _cxh_waits();
+}
+
+# A hash of the NUL-terminated name at `nm` (the /dev row compares listings by it).
+fn _cxh_nh(nm): i64 {
+    var h = 7;
+    var i = 0;
+    while (load8(nm + i) != 0) {
+        h = h * 131 + load8(nm + i);
+        i = i + 1;
+    }
+    return h * 131 + i;
+}
+
+# The directory `d` listed through getdents64 with an `n`-byte buffer, in at most `cap` calls. At
+# `res`: [0] the records read, [8] a hash of their names in order, [16] that hash after the first
+# `at` records, [24] the last answer — 0 the end, a failure (the open's too), 1 when `cap` calls
+# reached no end, 2 a malformed record (d_reclen not align8(20 + namlen)).
+fn _cxh_seq(d, n, cap, at, res): i64 {
+    store64(res, 0);
+    store64(res + 8, 0);
+    store64(res + 16, 0);
+    var fd = syscall(2, d, 65536, 0);          # O_RDONLY | O_DIRECTORY
+    if (fd < 0) {
+        store64(res + 24, fd);
+        return 0;
+    }
+    var b[4096];
+    var cnt = 0;
+    var h = 0;
+    var calls = 0;
+    var r = 1;
+    while (r > 0 && calls < cap) {
+        r = syscall(217, fd, &b, n);
+        calls = calls + 1;
+        var pos = 0;
+        while (r > 0 && pos < r) {
+            var rl = load16(&b + pos + 16);
+            var nl = 0;
+            while (nl < 256 && load8(&b + pos + 19 + nl) != 0) { nl = nl + 1; }
+            if (rl != ((20 + nl + 7) & (0 - 8))) { r = 0 - 1000; }
+            if (r > 0) {
+                h = h * 1000003 + _cxh_nh(&b + pos + 19);
+                cnt = cnt + 1;
+                if (cnt == at) { store64(res + 16, h); }
+                pos = pos + rl;
+            }
+        }
+    }
+    syscall(3, fd);
+    if (r > 0) { r = 1; }
+    if (r == 0 - 1000) { r = 2; }
+    store64(res, cnt);
+    store64(res + 8, h);
+    store64(res + 24, r);
+    return 0;
+}
+
+# getdents64 lists /dev — a Mac's devfs, which has no extended readdir — with small buffers (6.7.16,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md, the platform review): a Darwin
+# host's cxvm converts getdirentries64's records and, when the guest's buffer holds fewer than it
+# read, puts the directory back and reads those again; devfs re-reads fewer records than were
+# delivered (or none), and until the review fix the guest got the records twice — 953 names for
+# 635 with 200 bytes on ecb, and a 96-byte listing never ended. Now the 200-byte listing reads the
+# 4096-byte one's names in its order, and the 96-byte one ends — 0 or a failure (-22 on a Mac's
+# devfs, whose old dirents a small re-read cannot hold) — within twice as many calls as there are
+# names, its names a prefix of that listing. 0 the Linux answers, 1 the Windows ones (no /dev, or
+# getdents64 -38: no route), 2 neither.
+fn _cxh_devlist(): i64 {
+    var big[32];
+    var mid[32];
+    var sm[32];
+    var again[32];
+    _cxh_seq("/dev", 4096, 100000, 0, &big);
+    var c = load64(&big);
+    var rb = load64(&big + 24);
+    if (c == 0 && (rb == 0 - 2 || rb == 0 - 38)) { return 1; }
+    if (rb != 0 || c < 3) { return 2; }
+    _cxh_seq("/dev", 200, 2 * c + 8, 0, &mid);
+    _cxh_seq("/dev", 96, 2 * c + 8, 0, &sm);
+    var m = load64(&sm);
+    _cxh_seq("/dev", 4096, 100000, m, &again);
+    if (load64(&mid) != c || load64(&mid + 8) != load64(&big + 8) || load64(&mid + 24) != 0) { return 2; }
+    if (load64(&sm + 24) > 0 || m < 1 || m > c) { return 2; }
+    if (load64(&again) != c || load64(&again + 8) != load64(&big + 8)) { return 2; }
+    if (load64(&again + 16) != load64(&sm + 8)) { return 2; }
+    return 0;
 }
 
 var me = syscall(39);
@@ -230,6 +483,28 @@ var ph = _cxh_paths();
 _cxh_row(1024, ph == 0, ph == 1);
 var d2 = _cxh_dup2();
 _cxh_row(2048, d2 == 0, d2 == 1);
+var en = _cxh_errno();
+_cxh_row(4096, en == 0, en == 1);
+# kill's signal is x86_64 Linux's number on every host (6.7.16,
+# issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
+# Darwin host maps the guest's number to its own, and refuses one it lacks with the same -22).
+# Windows: -38, the PE peer's kill is a stub.
+var k99 = syscall(62, me, 99);
+_cxh_row(8192, k99 == 0 - 22, k99 == 0 - 38);
+var wk = _cxh_walk();
+_cxh_row(16384, wk == 0, wk == 1);
+# O_CREAT | O_EXCL over an existing directory answers -EEXIST on every host (6.7.16,
+# issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md): Windows' CreateFileW
+# says ERROR_ACCESS_DENIED there (-13 through the PE errno table; wine says ERROR_FILE_EXISTS), and a
+# Windows host's cxvm answered the guest -13 until 6.7.16.
+syscall(84, "cxh_xd");
+syscall(83, "cxh_xd", 448);
+var xd = syscall(2, "cxh_xd", 193, 420);     # O_WRONLY | O_CREAT | O_EXCL
+if (xd >= 0) { syscall(3, xd); }
+syscall(84, "cxh_xd");
+_cxh_row(32768, xd == 0 - 17, xd == 0 - 17);
+var dv = _cxh_devlist();
+_cxh_row(65536, dv == 0, dv == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

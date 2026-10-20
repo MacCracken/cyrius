@@ -64,7 +64,44 @@
 #                                                           failure check); axis 4 FAIL (the close repro
 #                                                           exits 110, close_answer 4 passed 9 failed)
 #   ECLOSE_PE's `xor eax,eax` dropped (TRUE answers the BOOL 1)  axis 2 FAIL; axis 4 FAIL
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15]
+# 6.7.16 — fd 0 / 1 / 2 reach the std handles in a close and a truncate
+# (issues/2026-10-18-pe-close-and-ftruncate-pass-std-fds-raw.md; 6.7.16's D30, "close it, as Linux
+# does"). ECLOSE_PE and ESETEOF_PE put the fd straight into rcx, so CloseHandle / SetEndOfFile got
+# the HANDLE values 0 / 1 / 2: `sys_close(2)` answered -9 and stderr stayed open (the filed repro
+# printed `-9 1` on cass and wine, Linux `0 -9`), and `sys_ftruncate(1, 3)` of a redirected stdout
+# answered -1 (exit 99, Linux 100). A close of fd 0 / 1 / 2 now calls the shared std-close stub —
+# GetStdHandle; 0 or INVALID_HANDLE_VALUE (not open, or closed already) is -9; SetStdHandle(n,
+# INVALID_HANDLE_VALUE), so a later CreateFileW cannot be handed the closed value and receive fd 2's
+# writes; CloseHandle only when no other std slot holds the same HANDLE (lib/process_win.cyr gives a
+# child ONE pipe as stdout and stderr) — and SetEndOfFile maps the fd through `_pe_fd_to_handle_rcx`.
+# Measured on cass (2026-10-19): a ConPTY console, sshd's pipes and cmd's redirects (`2>&1` too) give
+# three distinct std handles; CloseHandle(INVALID_HANDLE_VALUE) answers TRUE (the current-process
+# pseudo-handle), which is why the stub answers -9 itself. Rows: axis 1 runs the two filed repros,
+# a second close and the one-handle child natively; axis 2's probe adds a literal std close and a
+# SetEndOfFile, and every CloseHandle call is either a site's fd > 2 arm (`cmp $0x2,%rax; ja; call
+# <std-close stub>; jmp; mov %rax,%rcx`) or the stub's own, whose body must read GetStdHandle, the
+# -9 arm, SetStdHandle(.., -1), the GetStdHandle loop comparing each slot with the HANDLE, then
+# CloseHandle; every SetEndOfFile call follows the std-fd map; axis 4 runs the same rows under wine
+# plus a reuse row (after the close a file is opened and fd 2 written: -9, the file stays empty —
+# Linux answers 1 there, its open reuses fd 2, so that row is PE-only). ⚠ wine's std handle for a
+# Unix-side redirect refuses SetEndOfFile (ERROR_INVALID_HANDLE, measured with a zig-built probe), so
+# the truncate repro runs under wine's cmd, whose redirect is a real file handle, as cmd's is on cass.
+#   mutant (2026-10-19, 6.7.16 platform lane, P1; wine 11.20)  result
+#   the pre-fix compiler (480de63eb)                        axis 2 FAIL (no SetStdHandle import); axis 4
+#                                                           FAIL (`-9 1` with 'x'; truncate 99 abcdefgh;
+#                                                           close2 `-9 -9`; child `2 oe / -9 1 1`)
+#   ECLOSE_PE's std arm dropped (`ja` -> `jmp`: raw value)  axis 2 FAIL (CloseHandle not behind the
+#                                                           test); axis 4 FAIL (the old answers)
+#   the stub's `cmp rax, rsi` never equal (always closes)   axis 2 FAIL (7/13); axis 4 FAIL (the child's
+#                                                           stdout closed with stderr: `0 / 0 -9 -9`)
+#   the stub's SetStdHandle call NOPped                     axis 2 FAIL (5/13); axis 4 FAIL (the loop
+#                                                           finds the HANDLE in its own slot: never
+#                                                           closed, `0 1` with 'x', close2 `0 0`)
+#   the stub's -9 arm dropped (`ja` -> `jmp`)               axis 2 FAIL (2/13); axis 4 FAIL (close2
+#                                                           `0 0`: INVALID_HANDLE_VALUE matched its own
+#                                                           cleared slot)
+#   ESETEOF_PE's map back to `mov rcx, rax`                 axis 2 FAIL (SE BAD); axis 4 FAIL (99)
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_reroute_failure_errno: build/cycc missing"; exit 77; }
@@ -120,6 +157,187 @@ for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4"; do
     else ok; fi
 done
 
+# 6.7.16 — the std-fd close and truncate probes. The two filed repros, verbatim (closestd, trstd);
+# a second close of the same std fd (close2: Linux `0 -9`); a child whose stdout and stderr are ONE
+# handle on Windows (clsh_child, started by clsh_parent through exec_capture: Linux and Windows
+# alike, the child's close(2) leaves its stdout writing — `1 o` captured, the child reports `0 1 -9`);
+# and, PE-only, the reuse row (clreuse: after the close a file is opened and fd 2 written).
+line() { tr -d '\r' < "$1" | tr '\n' ' ' | sed 's/ *$//'; }
+cat > "$D/closestd.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var c = sys_close(2);         # close stderr
+var w = file_write(2, "x", 1); # a write to the closed fd
+fmt_int(c); println("");
+fmt_int(w); println("");
+EOF
+cat > "$D/trstd.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+file_write(1, "abcdefgh", 8);
+var t = sys_ftruncate(1, 3);  # stdout redirected to a file
+syscall(SYS_EXIT, 100 + t);   # Linux 100 (0); a failure 99 (-1)
+EOF
+cat > "$D/close2.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var c1 = sys_close(2);        # stderr: closed
+var c2 = sys_close(2);        # not open any more: -EBADF
+fmt_int(c1); println("");
+fmt_int(c2); println("");
+EOF
+cat > "$D/clsh_child.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var c = sys_close(2);              # stderr — on Windows the SAME handle as stdout here
+var w1 = file_write(1, "o", 1);    # stdout must still write
+var w2 = file_write(2, "e", 1);    # the closed fd fails EBADF
+var fd = file_open("clsh.txt", O_WRONLY | O_CREAT | O_TRUNC, 420);
+fmt_int_fd(fd, c); file_write(fd, " ", 1);
+fmt_int_fd(fd, w1); file_write(fd, " ", 1);
+fmt_int_fd(fd, w2); file_write(fd, "\n", 1);
+file_close(fd);
+EOF
+# $1 = the child as exec_capture is given it
+clsh_parent() { cat <<EOF
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/process.cyr"
+alloc_init();
+var args = vec_new();
+vec_push(args, "$1");
+var buf[64];
+var n = exec_capture(args, &buf, 64);
+fmt_int(n); file_write(1, " ", 1);
+if (n > 0) { file_write(1, &buf, n); }
+println("");
+EOF
+}
+cat > "$D/clreuse.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var c = sys_close(2);
+var fd = file_open("clreuse.tmp", O_WRONLY | O_CREAT | O_TRUNC, 420);
+var w = file_write(2, "x", 1);    # PE: -9, never into clreuse.tmp
+file_close(fd);
+var buf[8];
+var rd = file_open("clreuse.tmp", O_RDONLY, 0);
+var n = file_read(rd, &buf, 8);
+file_close(rd);
+fmt_int(c); println("");
+fmt_int(w); println("");
+fmt_int(n); println("");
+EOF
+
+# axis 1, 6.7.16: the std-fd rows natively.
+for p in closestd trstd close2 clsh_child; do
+    ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
+    chmod +x "$D/n/$p" 2> /dev/null || true
+done
+clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
+( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
+chmod +x "$D/n/clsh_parent" 2> /dev/null || true
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ]; then
+    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" | grep -m2 '^error' | tr '\n' ' ')"
+else
+    ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
+    got=$(line "$D/n/cs.out")
+    if [ "$got" = "0 -9" ] && [ ! -s "$D/n/cs.err" ]; then ok; else bad "axis 1: the close repro natively prints '$got' (want '0 -9', nothing on stderr)"; fi
+    trc=0; ( cd "$D/n" && ulimit -c 0; ./trstd > tr.out ) || trc=$?
+    if [ "$trc" = 100 ] && [ "$(cat "$D/n/tr.out")" = abc ]; then ok; else bad "axis 1: the truncate repro natively exits $trc with tr.out '$(cat "$D/n/tr.out")' (want 100, 'abc')"; fi
+    ( cd "$D/n" && ulimit -c 0; ./close2 > c2.out 2> /dev/null ) || true
+    got=$(line "$D/n/c2.out")
+    if [ "$got" = "0 -9" ]; then ok; else bad "axis 1: a second close of fd 2 natively: '$got' (want '0 -9')"; fi
+    ( cd "$D/n" && ulimit -c 0; ./clsh_parent > ps.out 2> /dev/null ) || true
+    got="$(line "$D/n/ps.out") / $(line "$D/n/clsh.txt" 2> /dev/null)"
+    if [ "$got" = "1 o / 0 1 -9" ]; then ok; else bad "axis 1: the child's close(2) natively: '$got' (want '1 o / 0 1 -9')"; fi
+fi
+
+# axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
+# CloseHandle call is a site's fd > 2 arm, behind `cmp $0x2,%rax; ja`, whose fd 0 / 1 / 2 arm calls
+# the std-close stub — or that stub's own call; the stub reads, in order, GetStdHandle, the -9 arm
+# for 0 / INVALID_HANDLE_VALUE, SetStdHandle(.., -1), the GetStdHandle loop that compares every
+# slot with the HANDLE (the one-handle child's stdout lives on that compare), then CloseHandle.
+# Every SetEndOfFile call follows the std-fd map (`cmp $0x2,%rax`, then a GetStdHandle call).
+_std_map_axis() {
+    GS=$(va GetStdHandle); SS=$(va SetStdHandle); SE=$(va SetEndOfFile)
+    if [ -z "$GS" ] || [ -z "$SS" ] || [ -z "$SE" ]; then
+        bad "axis 2: the probe does not import GetStdHandle / SetStdHandle / SetEndOfFile ('$GS' '$SS' '$SE'): a close or truncate of fd 0 / 1 / 2 does not reach the std handles"
+        return 0
+    fi
+    awk -F'\t' -v ch="$CH" -v gs="$GS" -v se="$SE" '
+        NF >= 3 { n++; t[n] = $3 }
+        function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
+        function tgt(x,   k) { k = x; sub(/^call +/, "", k); sub(/ .*/, "", k); return k }
+        END {
+            for (i = 1; i <= n; i++) {
+                s = slot(t[i])
+                if (s == ch) {
+                    if (t[i-1] ~ /^mov +%rsi,%rcx/) { print "CH stub -"; continue }
+                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^ja / && t[i-5] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
+                    print "CH BAD:not-behind-the-std-fd-test"; continue
+                }
+                if (s == se) {
+                    g = 0
+                    for (k = i - 1; k >= 1 && k >= i - 12; k--) if (slot(t[k]) != "") { g = k; break }
+                    cm = 0
+                    for (k = g - 1; k >= 1 && k >= g - 6; k--) if (t[k] ~ /^cmp +\$0x2,%rax/) cm = 1
+                    if (g == 0 || slot(t[g]) != gs || cm == 0) print "SE BAD:no-std-fd-map-before-it"
+                    else print "SE ok"
+                }
+            }
+        }' "$D/dis" > "$D/stdmap"
+    cs=$(awk '$1 == "CH" && $2 == "site"' "$D/stdmap" | wc -l | tr -d ' ')
+    cst=$(awk '$1 == "CH" && $2 == "stub"' "$D/stdmap" | wc -l | tr -d ' ')
+    se_n=$(awk '$1 == "SE" && $2 == "ok"' "$D/stdmap" | wc -l | tr -d ' ')
+    b=$(grep -m1 'BAD' "$D/stdmap" || true)
+    C=$(awk '$1 == "CH" && $2 == "site" {print $3}' "$D/stdmap" | sort -u)
+    if [ -n "$b" ]; then bad "axis 2: a CloseHandle / SetEndOfFile call is not reached through the std-fd map ($b)"
+    elif [ "$cs" -lt 2 ] || [ "$cst" != 1 ] || [ "$se_n" -lt 1 ]; then
+        bad "axis 2: $cs CloseHandle site(s) behind the std-fd test (floor 2: the literal and the var-held route), $cst in the std-close stub (want 1), $se_n SetEndOfFile site(s) after the map (floor 1)"
+    elif [ "$(printf '%s\n' "$C" | wc -l | tr -d ' ')" != 1 ]; then
+        bad "axis 2: the close sites must share ONE std-close stub ($(echo $C))"
+    else
+        ok
+        awk -F'\t' -v at="$C" '
+            { a = $1; sub(/^ +/, "", a); sub(/:$/, "", a) }
+            ("0x" a) == at { on = 1 }
+            on && NF >= 3 { print $3 }
+            on && $3 ~ /^ret/ { exit }' "$D/dis" > "$D/cstub"
+        got=$(awk -v gs="$GS" -v ss="$SS" -v ch="$CH" '
+            function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
+            BEGIN { np = split("G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
+            k <= np {
+                if (pat[k] == "G") { if (slot($0) == gs) k++ }
+                else if (pat[k] == "S") { if (slot($0) == ss) k++ }
+                else if (pat[k] == "C") { if (slot($0) == ch) k++ }
+                else if ($0 ~ pat[k]) k++
+            }
+            END { print k - 1 "/" np }' "$D/cstub")
+        case "$got" in
+            13/13) ok ;;
+            *) bad "axis 2: the std-close stub at $C does not read GetStdHandle, the -9 arm, SetStdHandle(.., -1), the slot-compare loop and CloseHandle in order (matched $got): $(tr '\n' ';' < "$D/cstub" | tr -s ' ')" ;;
+        esac
+    fi
+}
+
 # axis 2 + 3: the emitter shape and the table.
 cat > "$D/shape.cyr" <<'EOF'
 var buf[16];
@@ -133,6 +351,8 @@ fn main(): i64 {
     r = r + syscall(3, 0 - 999);
     r = r + by_number(0, 0 - 999, &buf, 16);
     r = r + by_number1(3, 0 - 999);
+    r = r + syscall(3, 2);
+    r = r + syscall(61503, 1);
     return r;
 }
 var r = main();
@@ -204,6 +424,8 @@ else
             elif [ -n "$b" ]; then bad "axis 2: a $api site is not followed by its failure check and stub call ($b)"
             else ok; fi
         done
+        # 6.7.16: every CloseHandle and SetEndOfFile call is reached through the std-fd map.
+        _std_map_axis
         TS=$(awk '$1 != "ReadFile" {print $3}' "$D/sites" | sort -u)
         RS=$(awk '$1 == "ReadFile" {print $3}' "$D/sites" | sort -u)
         if [ "$(printf '%s\n' "$TS" | wc -l | tr -d ' ')" != 1 ] || [ "$(printf '%s\n' "$RS" | wc -l | tr -d ' ')" != 1 ] || [ "$TS" = "$RS" ]; then
@@ -342,6 +564,40 @@ EOF
     else xrc=0; _wine cl.exe "$D/cl.out" || xrc=$?
         if [ "$xrc" = 91 ]; then ok; else bad "axis 4: the close repro exits $xrc under wine (want 91: a good close 0, close(-999) -9; 110 is the old BOOL answer)"; fi
     fi
+    # 6.7.16: the std-fd close and truncate rows (the probes above axis 2). The caller redirects.
+    _wrun() {
+        ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine "$@" )
+    }
+    for p in closestd trstd close2 clsh_child clreuse; do
+        ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
+    done
+    clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ]; then
+        bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
+    else
+        _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
+        got=$(line "$D/w/cs.out")
+        if [ "$got" = "0 -9" ] && [ ! -s "$D/w/cs.err" ]; then ok
+        else bad "axis 4: the close repro under wine prints '$got', stderr '$(cat "$D/w/cs.err")' (want '0 -9' and an empty stderr; '-9 1' with 'x' is the old raw-handle answer)"; fi
+        # wine's std handle for a Unix-side redirect refuses SetEndOfFile (ERROR_INVALID_HANDLE), so the
+        # redirect is cmd's, a real file handle, as it is on cass.
+        trc=0; _wrun cmd /c "trstd.exe > tr.out" < /dev/null > /dev/null 2>&1 || trc=$?
+        trg=$(tr -d '\r' < "$D/w/tr.out" 2> /dev/null)
+        if [ "$trc" = 100 ] && [ "$trg" = abc ]; then ok
+        else bad "axis 4: the truncate repro under wine (cmd's redirect) exits $trc with tr.out '$trg' (want 100, 'abc'; 99 and 'abcdefgh' is the old raw-handle answer)"; fi
+        _wrun close2.exe < /dev/null > "$D/w/c2.out" 2> /dev/null || true
+        got=$(line "$D/w/c2.out")
+        if [ "$got" = "0 -9" ]; then ok; else bad "axis 4: a second close of fd 2 under wine: '$got' (want '0 -9': the slot holds INVALID_HANDLE_VALUE, which CloseHandle would accept)"; fi
+        _wrun clsh_parent.exe < /dev/null > "$D/w/ps.out" 2> /dev/null || true
+        got="$(line "$D/w/ps.out") / $(line "$D/w/clsh.txt" 2> /dev/null)"
+        if [ "$got" = "1 o / 0 1 -9" ]; then ok; else bad "axis 4: the one-handle child's close(2) under wine: '$got' (want '1 o / 0 1 -9': its stdout still writes; '0 / 0 -9 -9' closed the shared HANDLE, '2 oe / -9 1 1' is the old raw-handle answer)"; fi
+        _wrun clreuse.exe < /dev/null > "$D/w/cr.out" 2> /dev/null || true
+        got=$(line "$D/w/cr.out")
+        if [ "$got" = "0 -9 0" ]; then ok; else bad "axis 4: a write to fd 2 after its close and a new open, under wine: '$got' (want '0 -9 0': -9, and nothing lands in the new file)"; fi
+    fi
     for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$t" > "$D/w/$b.exe" 2> "$D/$b.werr" ) || true
@@ -360,6 +616,6 @@ EOF
 fi
 
 echo "$pass passed, $fail failed"
-[ "$pass" -ge 9 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 9)"; exit 1; }
+[ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle"
