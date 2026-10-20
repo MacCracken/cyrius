@@ -1079,8 +1079,27 @@ fn _mret_ret_err(S, st): i64 {
     if (GFRN(S, _cur_fn_ix) == 3) { tail = " returns 3 values - return (a, b, c)"; }
     var sv = GTI(S);
     STI(S, st);
-    ERR_IDENT(S, "", L64(_fnt_names + _mret_fn(S) * 8), tail, 0 - 1);
+    _mret_err_ident(S, _mret_fn(S), tail);
     STI(S, sv);
+    return 0;
+}
+# ERR_IDENT's "'f'<tail>" naming fn fi as the source spells it — a method `P.mv`, never the fn table's `P_mv`
+# (`_fn_src_name`, written after the head, which may use its scratch); its identity ERR_IDENT's on the table name.
+# CHANGELOG [6.7.16]
+fn _mret_err_ident(S, fi, tail): i64 {
+    var msg = "";
+    var noff = L64(_fnt_names + fi * 8);
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + (0 - 1)) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
     return 0;
 }
 # ... after the arms: reported unless one of them refused something of its own — a report or a repeat counted in

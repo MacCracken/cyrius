@@ -264,7 +264,8 @@ refused ret_fwd_struct "struct P { a; b; }\nfn mk(): P { var p: P; p.a = 1; p.b 
 # refused too, at the producer (D22 A, 2026-10-15) — two mistakes, two lines; the forward's is still R2.
 refused ret_fwd_struct_tup "struct P { a; b; }\nfn mk(): P { ret2(1, 2); }\nfn f(): (i64, i64) { return mk(); }\nvar a, b = f();\nsyscall(60, a);\n" "$R2" 2
 check "ret_fwd_struct_tup: the producer's own ret2 refusal" yes "$(grep -qF "2:14: a fn returning the struct \`P\` returns that struct — \`ret2\` writes two values" "$T/ret_fwd_struct_tup.err" && echo yes || echo no)"
-refused ret_method 'struct P { a; }\nimpl P { fn m(self): (i64, i64) { return self.a; } }\nfn main(): i64 { var p = P { 4 }; var a, b = p.m(); return a; }\nsyscall(60, main());\n' "'P_m' returns 2 values - return (a, b)"
+# 6.7.16: a method is named as the source spells it, `P.m` (it printed the fn table's `P_m`; generic_body_error_once.sh MS).
+refused ret_method 'struct P { a; }\nimpl P { fn m(self): (i64, i64) { return self.a; } }\nfn main(): i64 { var p = P { 4 }; var a, b = p.m(); return a; }\nsyscall(60, main());\n' "'P.m' returns 2 values - return (a, b)"
 runs ret_fwd      "${G56}fn f(x): (i64, i64) { return g(x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
 runs ret_fwd_callptr "${G56}fn f(x): (i64, i64) { var fp = &g; return callptr(fp, x); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56
 runs ret_fwd_wrap "${G56}fn f(x): (i64, i64) { return (g(x)); }\nfn main(): i64 { var a, b = f(5); return a * 10 + b; }\nvar r = main(); syscall(60, r);\n" 56

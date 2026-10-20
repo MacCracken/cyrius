@@ -83,6 +83,10 @@
 #       compiler (c454bdf1f) -> RED M1 M2 M3 M5 M6 M7 M8 M9; MM1 `_mret_ret_check` without the instance arm (the naming
 #       alone) -> RED M2 M6 M7; MM2 `_inst_base_fi` reset to -1 after an instance, as before -> RED M5; MM3 `_err_n`
 #       counted in `_err_once` alone -> RED M6 M7.
+#   MS  (6.7.16, a find repaired in passing) the refusal names a METHOD as the source spells it, `P.mv` (`_mret_err_ident`,
+#       `_fn_src_name`), as every call-site diagnostic has since 6.7.14 — it printed the fn table's `P_mv`, generic or
+#       not: MS1 a generic method at two instances, MS2 a trait impl's method. Mutant: the item's own compiler
+#       (f5fc13aae) -> RED MS1 MS2.
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run with
 # CYCC= it):
@@ -467,6 +471,10 @@ printf '%s\n%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64, i64) { return (1, 2)
 mrows M8 "$D/m8.cyr" "a 3-value generic's return (1, 2); at P and Q (3 lines before)" "error:<source>:3:42: 'gr' returns 3 values - return (a, b, c)"
 printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { if (x == 0) { return 1; } return 2; }' "$MR" > "$D/m9.cyr"
 erows M9 "$D/m9.cyr" 2 "two wrong-count returns in one body at P and Q: each once (6 lines before)" "3:51: 'gr' returns 2 values" "3:63: 'gr' returns 2 values"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'impl P { fn mv<T>(self, x: T): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b = u.mv(v); var c, d = u.mv(1); return a; }' 'syscall(60, run());' > "$D/ms1.cyr"
+erows MS1 "$D/ms1.cyr" 1 "a generic METHOD's wrong-count return at two instances: once, as the source spells it" "error:<source>:3:52: 'P.mv' returns 2 values - return (a, b)"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'trait Tw { fn tw(self): (i64, i64); }' 'impl Tw for P { fn tw(self): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var a, b = u.tw(); return a; } syscall(60, run());' > "$D/ms2.cyr"
+erows MS2 "$D/ms2.cyr" 1 "a trait impl's method (not generic): named as the source spells it" "error:<source>:4:50: 'P.tw' returns 2 values - return (a, b)"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C); a warning once (W, WD); an error a writer prints itself once (A, DW); a multi-value fn's wrong-count return once, named after the generic (M)"
