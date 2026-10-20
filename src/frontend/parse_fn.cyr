@@ -10670,6 +10670,7 @@ fn _ce_name_said(S, noff): i64 {
 # 1 = stood down. CHANGELOG [6.7.14]
 fn _ce_fld_said(S): i64 {
     if (_ce_fn_refd == 0) { return 0; }
+    _ce_mx_skip(S);   # 6.7.16: `.m<..>(..)`
     _had_error = 1;
     _panic = 1;
     return 1;
@@ -11003,10 +11004,14 @@ fn _ce_fcmpb(S, t, a, b): i64 {
 # value "expected ';' after a const's value"). 1 = refused. CHANGELOG [6.7.14]
 # 6.7.15 — and a method call `.m(`, which said "expected ';', got '.'" too: on a const fn's local "a method
 # call is not in a const fn" (it calls only const fns), on a const "const 'C' has no methods". CHANGELOG [6.7.15]
+# 6.7.16 — and the explicit generic spelling `.m<..>(` (`_ce_mtargs_at`), taken as a field until now: "a field is
+# not in a const fn" (a const's "has no fields"), and the run-time body then read `<i64>` as a comparison
+# ("undefined variable 'i64'"; stepped over by `_ce_mx_skip`). CHANGELOG [6.7.16]
 fn _ce_fld_refused(S, noff, isc): i64 {
     if (_mchain_at(S, _ce_ti + 1) == 0) { return 0; }
     _ce_ti = _ce_ti + 1;
     if (TOKTYP(S, _ce_ti + 2) == 10) { return _ce_meth_refused(S, noff, isc); }
+    if (_ce_mtargs_at(S, _ce_ti + 2) == 1) { return _ce_meth_refused(S, noff, isc); }
     if (isc == 1) { _ce_badn(S, "const ", noff, " has no fields - a const has no storage"); return 1; }
     _ce_bad(S, "a field is not in a const fn: its body takes no memory (fields, arrays, load64, &x)", 83);
     return 1;
@@ -11015,6 +11020,55 @@ fn _ce_meth_refused(S, noff, isc): i64 {
     if (isc == 1) { _ce_badn(S, "const ", noff, " has no methods - a const has no storage"); return 1; }
     _ce_bad(S, "a method call is not in a const fn: it calls only const fns", 59);
     return 1;
+}
+# 1 iff token k is the `<` of a `<..>(`: an explicit type-argument list and its call (bounded by shape,
+# `_tok_targs_close`; nothing is resolved here). 6.7.16
+fn _ce_mtargs_at(S, k): i64 {
+    if (TOKTYP(S, k) != 19) { return 0; }
+    var e = _tok_targs_close(S, k + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    return 1;
+}
+# A refused const fn's run-time body standing down at `.m` (`_ce_fld_said`) with the cursor on a `<..>(` its check
+# refused as a method call: the list and the call's arguments are stepped whole, not read as comparisons of
+# undefined names. CHANGELOG [6.7.16]
+fn _ce_mx_skip(S): i64 {
+    if (_ce_mtargs_at(S, GTI(S)) == 0) { return 0; }
+    var c = _tok_close_paren(S, _tok_targs_close(S, GTI(S) + 1) + 1);
+    if (c > 0) { STI(S, c + 1); }
+    return 0;
+}
+# A const (`_ce_ti` on its name: a top-level or a local const) followed by `.field`, `.m(..)` or — 6.7.16 — a
+# subscript `[`: "cannot subscript const 'C' - a const has no storage", at the `[`, as its field and method are
+# refused (it said "expected ';', got '['" in a const fn, "expected ';' after a const's value" in a const's value,
+# "expected ']'" in an array size). The evaluator stops past the `]`, so a context that ends there (an enum
+# member's `,`, an array size's `]`, a case label's `:`) is left in sync. A const fn's own frame entries keep
+# `_ce_sub_refused`'s rule. 1 = refused. CHANGELOG [6.7.16]
+fn _ce_cst_refused(S, noff): i64 {
+    if (_ce_fld_refused(S, noff, 1) == 1) { return 1; }   # 6.7.14
+    if (TOKTYP(S, _ce_ti + 1) != 28) { return 0; }
+    _ce_ti = _ce_ti + 1;
+    _ce_badn(S, "cannot subscript const ", noff, " - a const has no storage");
+    _ce_ti = _ce_brk_end(S, _ce_ti);
+    return 1;
+}
+# The token after the `]` closing the `[` at token ti (any nesting), else ti: an unclosed one stops at `;` `{` `}`.
+fn _ce_brk_end(S, ti): i64 {
+    var d = 0;
+    var i = ti;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return ti; }
+        if (t == 28) { d = d + 1; }
+        if (t == 29) {
+            d = d - 1;
+            if (d == 0) { return i + 1; }
+        }
+        i = i + 1;
+    }
+    return ti;
 }
 # 6.7.15 — `a[i]` on a const fn's local (a frame entry, `_ce_ti` on its name): "a subscript is not in a const
 # fn", at the `[` — it said "expected ';', got '['", and the run-time body added "cannot subscript 'a'"
@@ -11046,7 +11100,7 @@ fn _ce_name(S): i64 {
     if (_ce_infn == 0) { if (_ce_top == 0) {
             var lc = _lc_find(S, noff);
             if (lc >= 0) {
-                if (_ce_fld_refused(S, noff, 1) == 1) { return 0; }   # 6.7.14
+                if (_ce_cst_refused(S, noff) == 1) { return 0; }   # 6.7.14, 6.7.16
                 _ce_ti = _ce_ti + 1;
                 _ce_k = L64(_lc_tab + lc * 48 + 24);
                 return L64(_lc_tab + lc * 48 + 32);
@@ -11058,7 +11112,7 @@ fn _ce_name(S): i64 {
         } }
     var ci = _cst_find(S, noff);
     if (ci >= 0) {
-        if (_ce_fld_refused(S, noff, 1) == 1) { return 0; }   # 6.7.14
+        if (_ce_cst_refused(S, noff) == 1) { return 0; }   # 6.7.14, 6.7.16
         # a `private` const of another file is refused here as a read of it is anywhere
         var vsv = GTI(S);
         STI(S, _ce_ti);
@@ -12340,6 +12394,18 @@ fn _cst_fld_at(S, noff, st, dti): i64 {
     elif (st == 2) { ERR_IDENT(S, "const ", noff, " has no methods - a const has no storage", 0 - 1); }
     else { ERR_IDENT(S, "const ", noff, " has no fields - a const has no storage", 0 - 1); }
     STI(S, sv);
+    return 1;
+}
+# 6.7.16 — `C[i]` / `L[i]` in run-time code (the cursor on its `[`): a top-level or local const subscripted is
+# refused by name at the `[`, as its `.field` is — a top-level const's size-0 slot said "cannot subscript 'C': it is
+# not a typed array, ...", a local const (no slot) "undefined variable 'L'". Asked only on `_arr_sub_addr`'s
+# refusing arms (no slot; no element), so nothing that compiles changes. In sync: every caller parses the brackets
+# on. 1 = refused (or stood down in a refused const fn's body). CHANGELOG [6.7.16]
+fn _cst_sub_at(S, noff): i64 {
+    if (_cst_named(S, noff) == 0) { return 0; }
+    if (_ce_fld_said(S) == 1) { return 1; }
+    _refuse_in_sync(S);
+    ERR_IDENT(S, "cannot subscript const ", noff, " - a const has no storage", 0 - 1);
     return 1;
 }
 # A const on the left of `=` / `OP=`, or under `&`: refused by name (it has no storage).

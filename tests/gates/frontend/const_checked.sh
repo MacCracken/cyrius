@@ -90,6 +90,15 @@
 #      filed repro), a closure body (LC2), a top-level const read above and below it (LC3), a const
 #      fn body (LC4); a refused value reports its own error beside it and nothing else (LC5); the
 #      unannotated const is unchanged (LC6). Before, every read of the name was a second error
+#   Q  (6.7.16) a const subscripted names its rule once — "cannot subscript const 'C' - a const has no storage", at
+#      the `[`: in a const fn (Q1), an ordinary fn (Q2), a local const (Q3: a FALSE "undefined variable 'L'"
+#      before), a const's value (Q4), a store and an `OP=` store (Q11, Q12), a local const's value (Q16), a case
+#      label (Q21), a generic's two instances (Q22), a string const (Q23); in sync — the brackets are stepped, so
+#      the next statement, array size, enum member, #assert or const reports its own error (Q13-Q15, Q17-Q20). An
+#      explicit generic method call `a.m<T>(..)` in a const fn is a method call (Q5, Q6-Q8, Q10: "a field is not in a
+#      const fn" and a FALSE "undefined variable 'i64'" before); the run-time body steps it whole, a later name of
+#      its own still reported (Q9). The five filed repros verbatim (Q1-Q5); controls Q24 (a const fn's own body
+#      const keeps 6.7.15's rule), Q25 (an inner typed array named like a local const), Q26 (`p.id<i64>(7)` runs)
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; (6.7.3) `_for_step_assign` without its `_asg_lvalue_refused` check -> L5, L6 BUILD
@@ -145,6 +154,11 @@
 # RED; never restoring -> P2, P13, P14, P16 RED (and 6.7.11's I5 / V2e: no step past the value); without its
 # stopped-at fallback -> P14 RED; PARSE_GVAR_ARR without its close -> P2, P14 RED; `_assert_open` not clearing ->
 # P18, P19 RED; `_assert_end` never restoring -> P4, P8, P12 RED.
+# Q (run 2026-10-19): the compiler before the bite (e6c35814f) -> Q1-Q23 RED (Q24-Q26 green); `_ce_cst_refused`
+# without its subscript arm -> Q1, Q4, Q16-Q21 RED; `_cst_sub_at` answering 0 -> Q2, Q3, Q11-Q15, Q22, Q23 RED;
+# `_cst_sub_at` without `_refuse_in_sync` -> Q13, Q14 RED; `_ce_fld_refused` without its `_ce_mtargs_at` arm -> Q5-Q10
+# RED; `_ce_fld_said` without `_ce_mx_skip` -> Q5, Q6, Q8-Q10 RED (the run-time body's "undefined variable 'i64'");
+# `_ce_cst_refused` not stepping past the `]` -> Q17, Q18 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -564,8 +578,73 @@ refusedn b11 1 "B11: control — a for step N += 1 keeps the lvalue refusal" "${
 # skipped every other statement in a row), in a fn and at top level.
 refusedn b12 5 "B12: five refused statements in a row, each reported" "${BH}N = 1;\n    GREEN = 2;\n    Color.RED = 3;\n    N;\n    GREEN;${BT}" "4:7: cannot assign to const 'N'" "5:11: cannot assign to enum constant 'GREEN'" "6:15: cannot assign to enum constant 'RED'" "7:6: expected '=', got ';'" "8:10: expected '=', got ';'"
 refusedn b13 4 "B13: the same at top level" 'const N = 5;\nenum Color { RED, GREEN }\nN;\nGREEN;\nColor.GREEN;\nvar x = 1;\nx;\nsyscall(60, 0);\n' "3:2: expected '=', got ';'" "4:6: expected '=', got ';'" "5:12: expected '=', got ';'" "7:2: expected '=', got ';'"
+# Q (6.7.16) — a const subscripted names its rule, in a const context and in run-time code, and an explicit generic
+# method call `a.m<T>(..)` in a const fn is a method call (issues/2026-10-18-const-subscript-and-generic-method-in-
+# const-fn-misnamed.md; Q1-Q5 the five filed repros verbatim)
+QS="a const has no storage"
+cat > "$T/qq1.cyr" <<'EOF'
+# q1 — a top-level const subscripted in a const fn
+const C = 5;
+const fn f(n) {
+    return C[0];
+}
+fn main() { return 0; }
+var r = main();
+EOF
+refusedf qq1 1 "Q1: the filed repro q1, C[0] in a const fn (was \"expected ';', got '['\")" "4:13: cannot subscript const 'C' - $QS"
+cat > "$T/qq2.cyr" <<'EOF'
+# q2 — a top-level const subscripted in an ordinary fn
+const C = 5;
+fn main(): i64 { return C[0]; }
+syscall(60, main());
+EOF
+refusedf qq2 1 "Q2: the filed repro q2, C[0] in an ordinary fn (was \"it is not a typed array, ...\")" "3:26: cannot subscript const 'C' - $QS"
+cat > "$T/qq3.cyr" <<'EOF'
+# q3 — a local const subscripted
+fn main(): i64 { const L = 5; return L[0]; }
+syscall(60, main());
+EOF
+refusedf qq3 1 "Q3: the filed repro q3, a local const L[0] (was a FALSE \"undefined variable 'L'\")" "2:39: cannot subscript const 'L' - $QS"
+cat > "$T/qq4.cyr" <<'EOF'
+# q4 — a const subscripted in a const context
+const C = 5;
+const K = C[0];
+syscall(60, K);
+EOF
+refusedf qq4 1 "Q4: the filed repro q4, const K = C[0]; (was \"expected ';' after a const's value\")" "3:12: cannot subscript const 'C' - $QS"
+cat > "$T/qr3.cyr" <<'EOF'
+# r3 — an explicit generic method call on a const fn's local
+const fn f(n) {
+    var a = n;
+    return a.m<i64>(1);
+}
+fn main() { return 0; }
+var r = main();
+EOF
+refusedf qr3 1 "Q5: the filed repro r3, a.m<i64>(1) on a const fn's local (was \"a field is not in a const fn\" + a FALSE \"undefined variable 'i64'\")" "4:13: $KM"
+refusedn q6 1 "Q6: C.m<i64>(1) on a top-level const in a const fn (was \"has no fields\" + \"undefined variable 'i64'\")" "const C = 5;\nconst fn f(n) {\n    return C.m<i64>(1);\n}\n$FM" "3:13: const 'C' has no methods - $QS"
+refusedn q7 1 "Q7: const K = C.m<i64>(1); (was \"has no fields\")" 'const C = 5;\nconst K = C.m<i64>(1);\nsyscall(60, K);\n' "2:12: const 'C' has no methods - $QS"
+refusedn q8 1 "Q8: two type arguments and a parenthesised argument, var b = a.m<i64, i32>(1, (2));" "const fn f(n) {\n    var a = n;\n    var b = a.m<i64, i32>(1, (2));\n    return b;\n}\n$FM" "3:14: $KM"
+refusedn q9 2 "Q9: the call is stepped whole, a later undefined name is still the run-time body's own" "const fn f(n) {\n    var a = n;\n    return a.m<i64>(1) + zz9;\n}\n$FM" "3:13: $KM" "3:29: undefined variable 'zz9'"
+refusedn q10 1 "Q10: a parameter, n.m<i64>(1)" "const fn f(n) {\n    return n.m<i64>(1);\n}\n$FM" "2:13: $KM"
+refusedn q11 1 "Q11: a store C[0] = 5; (was \"it is not a typed array, ...\")" 'const C = 5;\nfn main(): i64 { C[0] = 5; return 0; }\nsyscall(60, main());\n' "2:19: cannot subscript const 'C' - $QS"
+refusedn q12 1 "Q12: a local const's store L[0] += 5; (was \"undefined variable 'L'\")" 'fn main(): i64 { const L = 5; L[0] += 5; return 0; }\nsyscall(60, main());\n' "1:32: cannot subscript const 'L' - $QS"
+refusedn q13 2 "Q13: in sync — the statement after var y = L[0]; reports its own error" 'fn main(): i64 { const L = 5; var y = L[0]; y = zz9; return y; }\nsyscall(60, main());\n' "1:40: cannot subscript const 'L' - $QS" "1:52: undefined variable 'zz9'"
+refusedn q14 2 "Q14: in sync at top level, after the first statement" 'const C = 5;\nvar y = 1;\ny = C[0];\ny = zz9;\nsyscall(60, y);\n' "3:6: cannot subscript const 'C' - $QS" "4:8: undefined variable 'zz9'"
+refusedn q15 2 "Q15: a top-level block's local const, then the next statement" 'var y = 1;\nif (1) { const L = 5; y = L[0]; }\ny = zz9;\nsyscall(60, y);\n' "2:28: cannot subscript const 'L' - $QS" "3:8: undefined variable 'zz9'"
+refusedn q16 1 "Q16: a local const's value, const M = L[0]; (was \"expected ';', got '['\")" 'fn main(): i64 { const L = 5; const M = L[0]; return M; }\nsyscall(60, main());\n' "1:42: cannot subscript const 'L' - $QS"
+refusedn q17 2 "Q17: a global array size, then the next one (was \"expected ']'\" and the next swallowed)" 'const C = 5;\nvar a: i64[C[0]];\nvar b: i64[zz];\nsyscall(60, 0);\n' "2:13: cannot subscript const 'C' - $QS" "3:12: $CU 'zz'"
+refusedn q18 2 "Q18: an enum value, then the next member (was \"expected identifier, got '['\" + two duplicate-symbol warnings)" 'const C = 5;\nenum E { A = C[0], B = zz }\nsyscall(60, 0);\n' "2:15: cannot subscript const 'C' - $QS" "2:24: $CU 'zz'"
+refusedn q19 2 "Q19: an #assert, then the next (was \"#assert: expected \`,\` or \`;\`\")" 'const C = 5;\n#assert C[0] == 1, "m";\n#assert zz == 1, "m";\nsyscall(60, 0);\n' "2:10: cannot subscript const 'C' - $QS" "3:9: $CU 'zz'"
+refusedn q20 2 "Q20: const K = C[0]; then the next const" 'const C = 5;\nconst K = C[0];\nconst J = zz;\nsyscall(60, K);\n' "2:12: cannot subscript const 'C' - $QS" "3:11: $CU 'zz'"
+refusedn q21 1 "Q21: a case label case C[0]: (was \"expected ':', got '['\")" 'const C = 5;\nfn f(v): i64 {\n    switch (v) {\n        case C[0]: return 1;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(1));\n' "4:15: cannot subscript const 'C' - $QS"
+refusedn q22 1 "Q22: a generic fn's two instances, once" 'const C = 5;\nfn g<T>(x: T): i64 { return C[0]; }\nfn main(): i64 { return g<i64>(1) + g<i32>(2); }\nsyscall(60, main());\n' "2:30: cannot subscript const 'C' - $QS"
+refusedn q23 1 "Q23: a string const, S[0]" 'const S = "abc";\nfn main(): i64 { var y = S[0]; return y; }\nsyscall(60, main());\n' "2:27: cannot subscript const 'S' - $QS"
+refusedn q24 1 "Q24: control — a const fn's own body const keeps \"a subscript is not in a const fn\"" "const fn f(n) {\n    const k = 3;\n    return k[0];\n}\n$FM" "3:13: $KS"
+exits q25 3 "Q25: control — a typed array local named like an outer local const subscripts as the array" 'fn main(): i64 {\n    const L = 5;\n    if (1) { var L: i64[2]; L[0] = 3; return L[0]; }\n    return 0;\n}\nsyscall(60, main());\n'
+exits q26 7 "Q26: control — a generic method called with explicit type arguments in an ordinary fn" 'struct P { x; }\nimpl P { fn id<T>(self, v: T): T { return v; } }\nfn main(): i64 { var p = P { 1 }; return p.id<i64>(7); }\nsyscall(60, main());\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), and a bare const statement is expected '=' (B)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), a bare const statement is expected '=' (B), and a subscript of a const and a.m<T>(..) in a const fn name their rule (Q)"

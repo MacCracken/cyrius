@@ -3866,11 +3866,11 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
-                _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
-                ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
-                _gv_note_blockscoped(S, noff);
-            } }
+        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+                    _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
+                    ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+                    _gv_note_blockscoped(S, noff);
+                } } }   # 6.7.16: a local const (`_cst_sub_at`)
         aw = 0;
     } elif (aw == 0) {
         _sub_refuse(S, noff, k, ix, d, pw);
@@ -3913,6 +3913,7 @@ fn _arr_sub_addr(S, noff): i64 {
 # `_arr_sub_addr` resolved them): each by name at the `[`, the brackets then consumed. 6.7.8 (C2-4a)
 fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
     if (_ce_fld_said(S) == 1) { return 0; }   # 6.7.15: a refused const fn's body (`_ce_sub_refused`)
+    if (_cst_sub_at(S, noff) == 1) { return 0; }   # 6.7.16: a top-level const's size-0 slot
     var el = ": a subscript takes an integer, f64, f32 or bool element";
     if (pw > 0) {
         var sid = _sub_ptr_sid(S, noff, k, ix);
