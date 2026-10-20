@@ -128,6 +128,8 @@
 #       reviewers' "mutation E", which left the round-2 gate GREEN)            8 fails
 #   MR  cyrld honours -o only at argv(1) (the 6.6.4 shape)                     3 fails
 #   MU  THIS GATE without its HOME override, run with an empty outer HOME      7 fails
+#   MV  (6.7.16, D79) `_cbt_tmpdir`'s PE carve-out back (`#ifndef CYRIUS_TARGET_WIN`
+#       around the EEXIST-only test): a missing %TEMP% reads as 16 taken names  2 fails (wine)
 #   MB/MC/MD are caught ONLY by axis 19 (wine) — on a box without wine they are
 #   covered by the cass rows in scripts/cross-os-selfhost.sh, nowhere else.
 # 6.7.12 — axis 18b (--help / -h on every dispatched verb; each mutant a scratch copy of the
@@ -1141,6 +1143,13 @@ else
         wrun test pass.tcyr fail.tcyr
         check "⭐ wine: the private temp base is %TEMP% (named in the fail-closed refusal)" 1 \
             "$(grep -c 'cannot create a private temp directory under C:.cyr-no-such-base' "$T/out" || true)"
+        # 6.7.16 (issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md, D79):
+        # PE's mkdir answers the errno, so a missing %TEMP% is named as THAT, with -ENOENT's 2 — as
+        # deps_cache_capture_failure_named.sh's axis 5 holds TMPDIR on POSIX — never as "16
+        # candidates were taken" (its answer while every failed mkdir was -1).
+        check "⭐ wine: a missing %TEMP% is named with its errno (2)" 1 \
+            "$(grep -c 'under C:.cyr-no-such-base (errno 2, fail-closed)' "$T/out" || true)"
+        check "  …and never as 16 taken candidates" 0 "$(grep -c 'candidates were taken' "$T/out" || true)"
         WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TEMP /d "$WTEMP" /f > /dev/null 2>&1 || true
         WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TMP /d "$WTEMP" /f > /dev/null 2>&1 || true
     else
