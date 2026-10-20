@@ -24,7 +24,8 @@
 # controls: a plain `undefd();` and an intrinsic keep their own paths); S1-S9 (6.7.15) --syntax-only, a field assignment
 # on a call whose callee this file does not define parses silently (S1 the filed repro; S5-S7 a grammar error in its
 # tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary"; their
-# cx leg and SX, 6.7.16: the cx compiler accepts them too, and a full cx compile names an undefined fn once);
+# cx leg and SX, 6.7.16: the cx compiler accepts them too, and a full cx compile names an undefined fn once; SA1 SA2,
+# 6.7.16: --syntax-only still prints the `large static data` advisory on every leg, cx included);
 # T6-T15 (6.7.15) a top-level METHOD returning a struct by value, its `*T` field subscripted, one error (T6 the filed
 # repro; T13 its in-fn control, exit 5; T14 a genuine non-`*T` subscript in a fn keeps its refusal; T15 the next
 # statement still checked); T16-T18 (6.7.15) the free call's value twin, `var x = mk().p[0];` at top level, one error.
@@ -95,6 +96,8 @@
 #   x1 the `_syntax_only` exit dropped (= the tree before) -> RED 7: S1-S4 cx (rc 1, "undefined function(s) called (cx
 #                                                     backend)"), S5-S7 cx (that refusal a second error line)
 #   x2 the walk's REPORTED (-2) mark dropped       -> RED 1: SX ("gp listed 2 time(s)")
+#   x3 the `_syntax_only` exit without its two advisory calls (= the lane's first cut, 87cd284ac) -> RED 2: SA1 SA2 cx
+#                                                     ("the large-static advisory printed 0 time(s)")
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -634,9 +637,37 @@ if [ "$CX" -eq 1 ]; then
     elif [ -s "$T/SX.cyx" ]; then bad "SX (cx): a .cyx was written"
     else ok "SX two calls of an undefined gp, a full compile (cx): refused, gp named once"; fi
 else echo "  SKIP SX — the cx compiler did not build"; skips=$((skips + 1)); fi
+# SA1 SA2 (6.7.16, the tools lane's review): --syntax-only still prints the `large static data` advisory on every leg.
+# The cx exit above was first placed before cx's two advisories, so cycc_cx alone printed nothing for SA1, where every
+# native fork (and cx at the 6.7.16 open) printed the warning. SA2 adds a call to a sibling's fn in an unreachable fn
+# (every leg accepts it under the flag): the advisory and the undefined-function warning both print.
+synadv() {
+    rows=$((rows + 1))
+    for leg in x86_64 aarch64 pe cx; do
+        [ "$leg" = aarch64 ] && [ "$QEMU" -eq 0 ] && continue
+        [ "$leg" = cx ] && [ "$CX" -eq 0 ] && continue
+        crc=0
+        case $leg in
+            x86_64)  timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            aarch64) timeout 60 "$A64" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            cx)      timeout 60 "$CXC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+        esac
+        nl=$(grep -c '^warning: large static data (2400008 bytes)' "$T/$1.$leg.err" || true)
+        if [ "$crc" -ne 0 ]; then bad "$1 $3 ($leg): rc $crc (want 0): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
+        elif grep -q '^error' "$T/$1.$leg.err"; then bad "$1 $3 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        elif [ "$nl" -ne 1 ]; then bad "$1 $3 ($leg): the large-static advisory printed $nl time(s) (want 1)"
+        elif [ "$2" = gp ] && ! grep -q "^warning: undefined function 'gp'" "$T/$1.$leg.err"; then bad "$1 $3 ($leg): no undefined-function warning"
+        else ok "$1 $3 ($leg): the advisory printed"; fi
+    done
+}
+printf 'var big: i64[300000]; fn f(): i64 { return big[0]; } var r = f(); syscall(60, r);\n' > "$T/SA1.cyr"
+synadv SA1 - "a 2,400,008-byte static under --syntax-only"
+printf 'var big: i64[300000];\nfn f(): i64 { return big[0]; }\nfn h(): i64 { return gp(); }\nvar r = f();\nsyscall(60, r);\n' > "$T/SA2.cyr"
+synadv SA2 gp "the same with a sibling's fn called from an unreachable fn"
 
-FLOOR_ROWS=73   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX
+FLOOR_ROWS=75   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

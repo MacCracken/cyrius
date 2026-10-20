@@ -418,8 +418,13 @@ var dbase = cp;
 # as on the native forks, so it stops here with _had_error: no refusal, no fixup patching,
 # no .cyx. It was refused, one line per call site. cx has no reachability data, so a
 # reachable undefined call is accepted here too, where the native forks refuse it.
-# CHANGELOG [6.7.16]
-if (_syntax_only == 1) { syscall(SYS_EXIT, _had_error); }
+# The two advisories below (large static data, capacity) still print first: every native
+# fork prints them under the flag, and the walk is all this exit skips. CHANGELOG [6.7.16]
+if (_syntax_only == 1) {
+    _warn_large_static(totvar, 0, 0);
+    _capacity_warnings(S, _CX_CODE_CAP, 0);
+    syscall(SYS_EXIT, _had_error);
+}
 var cx_undef = 0;
 var ufi = 0;
 while (ufi < GFCNT(S)) {
