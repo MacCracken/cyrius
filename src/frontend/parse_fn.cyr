@@ -7856,23 +7856,23 @@ fn _simd_ret_call_ok(S): i64 {
     var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
-    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != 5) { return 0; }   # 6.7.16: the whole value
+    if (_vcall_more(S, _call_close(S, _vcall_o) + 1, 5) == 1) { return 0; }   # 6.7.16: the whole value
     return 1;
 }
-# 6.7.16: 1 = the return value at the cursor is one whole call `f(..)` / `g<T>(..)` (`;` after its `)`) — PARSE_RETURN's
-# Win64 own-call arm took any call that started it, emitting it and stopping at the rest.
+# 6.7.16: 1 = the return value at the cursor is one whole call `f(..)` / `g<T>(..)` (no operator after its `)`,
+# `_vcall_more`) — PARSE_RETURN's Win64 own-call arm took any call that started it, emitting it and stopping at the rest.
 fn _ret_vwcall(S): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
-    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
+    if (_vcall_more(S, _call_close(S, o) + 1, 5) == 1) { return 0; }
     return 1;
 }
-# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (`;` after it), `f` declared
-# to return this fn's vector (`_icall_rs_at`).
+# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (no operator after it,
+# `_vcall_more`), `f` declared to return this fn's vector (`_icall_rs_at`).
 fn _ret_vicall(S): i64 {
     if (_icall_rs_at(S, GTI(S)) != _cur_fn_ret_scalar) { return 0; }
     if (_cur_fn_ret_scalar > 0 - 2048) { return 0; }
-    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != 5) { return 0; }
+    if (_vcall_more(S, _call_close(S, GTI(S) + 1) + 1, 5) == 1) { return 0; }
     return 1;
 }
 # On Win64 that call returns through a hidden pointer (int arg 0), as `f(..)` does: into an anonymous temp

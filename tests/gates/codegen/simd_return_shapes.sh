@@ -2198,6 +2198,104 @@ syscall(60, r() % 256);
     esac
 }
 RVC_ROWS="RVC1"
+# ---- 6.7.16 (the receives review): a WHOLE vector call followed by a stray token is still the whole call (rows SX, one
+# error each — the parse's own). The receives and the vector return told a call that only STARTS the source (D24) by the
+# token after its `)`, and read anything but the terminator as an operator, so the value-form / 6.6.6 refusal ("... got
+# `mk2`") came in front of the parse's "expected ';', got number 5" — two errors, the first naming the wrong mistake
+# (by name since D24; the method and `&f` spellings since 6.7.13). Only a binary operator, `.`, `[` or a postfix `?`
+# makes the call a start (`_vcall_more`). SX1-SX8 by name (an untyped, annotated and assigned receive, `,` after it, a
+# return, a stray `)`), SX9 / SX14 / SX4 / SX5 / SX16 a method (return, assignment, untyped, annotated, wrapped start),
+# SX10 / SX11 `callptr(&f)`, SX12 / SX13 / SX17 f64v4, SX15 an explicit instance, SX18 f32v4. Before: two errors on every
+# SX row (this lane's D24 tests); at 41ca7d41c on SX5, SX9-SX11, SX14 (6.7.13's method / `&f` arms). Mutation (2026-10-20,
+# measured):
+#   M-SX1 `_vcall_more` reading every token but the terminator as an operator (the tree before) -> RED 90: SX1-SX18 on
+#       five legs, two errors each
+sx_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    SX1) printf '%s' "$OPF"'fn r(): i64 { var w = mk2(41, 7) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX2) printf '%s' "$OPF"'fn r(): i64 { var w: f64v2 = mk2(41, 7), x = 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX3) printf '%s' "$OPF"'fn r(): i64 { var w: f64v2; w = mk2(41, 7) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX4) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w = s.m2() 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX5) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w: f64v2 = s.m2(), x = 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX6) printf '%s' "$OPF"'fn f(): f64v2 { return mk2(41, 7) 5; }
+fn r(): i64 { var v: f64v2 = f(); return load64(&v); }
+syscall(60, r() % 256);
+' ;;
+    SX7) printf '%s' "$OPF"'fn f(): f64v2 { return mk2(41, 7), 1; }
+fn r(): i64 { var v: f64v2 = f(); return load64(&v); }
+syscall(60, r() % 256);
+' ;;
+    SX8) printf '%s' "$OPF"'fn r(): i64 { var w = mk2(41, 7)); return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX9) printf '%s' "$OPF"'fn f(s: Mv): f64v2 { return s.m2() 5; }
+fn r(): i64 { return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX10) printf '%s' "$OPH"'fn f(): f64v2 { return callptr(&mk2, 41, 7) 5; }
+fn r(): i64 { return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX11) printf '%s' "$OPH"'fn r(): i64 { var w: f64v2 = callptr(&mk2, 41, 7) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX12) printf '%s' "$OPH"'fn r(): i64 { var w: f64v4 = mk4(41) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX13) printf '%s' "$OPH"'fn f(): f64v4 { return mk4(41) 5; }
+fn r(): i64 { return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX14) printf '%s' "$OPH"'fn r(): i64 { var s: Mv = Mv { 1 }; var w: f64v2; w = s.m2() 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX15) printf '%s' "$OPH"'fn r(): i64 { var w = mkg<i64>(41, 7) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX16) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w = (s.m2()) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX17) printf '%s' "$OPH"'fn r(): i64 { var w = mk4(41), x = 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    SX18) printf '%s' "$OPH"'fn r(): i64 { var w: f32v4 = mkf(1, 2, 3, 4) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+SX_ROWS="SX1 SX2 SX3 SX4 SX5 SX6 SX7 SX8 SX9 SX10 SX11 SX12 SX13 SX14 SX15 SX16 SX17 SX18"
+sx_msg() {
+    case "$1" in
+    SX1) echo "4:34: expected ';', got number 5";;
+    SX2) echo "4:40: expected ';', got ','";;
+    SX3) echo "4:44: expected ';', got number 5";;
+    SX4) echo "4:52: expected ';', got number 5";;
+    SX5) echo "4:58: expected ';', got ','";;
+    SX6) echo "4:35: expected ';', got number 5";;
+    SX7) echo "4:34: expected ';', got ','";;
+    SX8) echo "4:33: expected ';', got ')'";;
+    SX9) echo "4:36: expected ';', got number 5";;
+    SX10) echo "9:45: expected ';', got number 5";;
+    SX11) echo "9:51: expected ';', got number 5";;
+    SX12) echo "9:38: expected ';', got number 5";;
+    SX13) echo "9:32: expected ';', got number 5";;
+    SX14) echo "9:62: expected ';', got number 5";;
+    SX15) echo "9:39: expected ';', got number 5";;
+    SX16) echo "4:54: expected ';', got number 5";;
+    SX17) echo "9:30: expected ';', got ','";;
+    SX18) echo "9:46: expected ';', got number 5";;
+    esac
+}
 
 
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
@@ -2749,6 +2847,8 @@ refuse_tab_all host "$CC" rv_src "$RV_ROWS" rv_msg
 refuse_tab_all host-ir3 "$CC" rv_src "$RV_ROWS" rv_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr rvc_src "$RVC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr rvc_src "$RVC_ROWS" CYRIUS_IR=3
+refuse_tab_all host "$CC" sx_src "$SX_ROWS" sx_msg
+refuse_tab_all host-ir3 "$CC" sx_src "$SX_ROWS" sx_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr gc_src "$GC_ROWS" CYRIUS_IR=3
 refuse_h_all host "$CC"
@@ -2792,6 +2892,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_tab_all cx "$W/cycc_cx" cxr opc_src "$OPC_ROWS"
     refuse_tab_all cx "$W/cycc_cx" rv_src "$RV_ROWS" rv_msg
     accept_tab_all cx "$W/cycc_cx" cxr rvc_src "$RVC_ROWS"
+    refuse_tab_all cx "$W/cycc_cx" sx_src "$SX_ROWS" sx_msg
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
@@ -2837,6 +2938,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_tab_all aarch64 "$W/cycc_a64" a64r opc_src "$OPC_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" rv_src "$RV_ROWS" rv_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r rvc_src "$RVC_ROWS"
+        refuse_tab_all aarch64 "$W/cycc_a64" sx_src "$SX_ROWS" sx_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
@@ -2887,6 +2989,7 @@ if command -v wine > /dev/null 2>&1; then
         accept_tab_all win64 "$W/cycc_win" wr_ opc_src "$OPC_ROWS"
         refuse_tab_all win64 "$W/cycc_win" rv_src "$RV_ROWS" rv_msg
         accept_tab_all win64 "$W/cycc_win" wr_ rvc_src "$RVC_ROWS"
+        refuse_tab_all win64 "$W/cycc_win" sx_src "$SX_ROWS" sx_msg
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
@@ -2904,7 +3007,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -2931,8 +3034,8 @@ na_floor=$((na_floor + $(set -- $RVC_ROWS; echo $#) * 3))   # 6.7.16: every RVC 
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

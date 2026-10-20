@@ -8868,8 +8868,8 @@ fn _vrcv_src(S, ti, ty, term): i64 {
     }
     if (r == 0) { return _vrcv_dsrc(S, ti, term); }   # 6.7.13 (D34): a whole `*E`
     var x = _call_close(S, o) + 1;   # the token after the call
-    if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { return 0; } }
-    elif (TOKTYP(S, x) != term) { return 0; }
+    if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { if (_vcall_more(S, x, 11) == 1) { return 0; } } }
+    elif (_vcall_more(S, x, term) == 1) { return 0; }   # 6.7.16: a stray token is the parse's
     return r;
 }
 # ⛔ 6.7.13 (D34 A, the user's decision, 2026-10-15) — `var v: V = *p;` / `v = *p;` WITH `p: *V` COPY THE VECTOR
@@ -9077,15 +9077,39 @@ fn _vrcv_vcall(S, ti, ty, term): i64 {
     var fi = _vcall_fi(S, ti);   # 6.7.13: `g<T>(..)` too
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != ty) { return 1; }
-    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != term) { return 0; }
+    if (_vcall_more(S, _call_close(S, _vcall_o) + 1, term) == 1) { return 0; }
     return 1;
 }
-# 6.7.16 (D24): 1 = token `ti` starts `IDENT (` whose call is the whole initialiser (`;` after its `)`) — what
-# PARSE_VAR's inline 16- / 32-byte receives take; they took any `IDENT (` and dropped what followed the call.
+# 6.7.16 (D24): 1 = token `ti` starts `IDENT (` whose call is the whole initialiser (no operator after its `)`,
+# `_vcall_more`) — what PARSE_VAR's inline 16- / 32-byte receives take; they took any `IDENT (` and dropped what
+# followed the call.
 fn _vrcv_wcall(S, ti): i64 {
     if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
+    if (_vcall_more(S, _call_close(S, ti + 1) + 1, 5) == 1) { return 0; }
     return 1;
+}
+# ⛔ 6.7.16 — A WHOLE CALL FOLLOWED BY A STRAY TOKEN IS STILL THE WHOLE CALL. The receives and the vector return tell a
+# call that only STARTS the source (D24: `mk2(41, 7) + 1`) by the token after its `)`, and read anything but the
+# terminator as an operator: `var w = mk2(41, 7) 5;`, `var w: f64v2 = mk2(41, 7), x = 1;`, `w = mk2(41, 7) 5;`, `var w =
+# s.m2() 5;` and `return mk2(41, 7) 5;` printed the value-form / 6.6.6 refusal ("... got `mk2`") in front of the
+# parse's own "expected ';', got number 5" — two errors, the first naming the wrong mistake (the method and `&f`
+# spellings since 6.7.13). Only a token an expression continues with — a binary operator (`_tal_binop`), `.`, `[`, a
+# postfix `?` — makes the call a start; the receive or the return takes a call followed by any other, and the parse
+# reports that token alone. 1 = token `x`, after a call's `)` (or the `)`s closing parentheses it is inside: `_vcv_more`),
+# continues the source ended by `term`. CHANGELOG [6.7.16]
+fn _vcall_more(S, x, term): i64 {
+    var t = TOKTYP(S, x);
+    if (t == term) { return 0; }
+    if (_tal_binop(t) == 1) { return 1; }
+    if (t == 41 || t == 28 || t == 124) { return 1; }
+    return 0;
+}
+# `_vcall_more` after the call `_vcall_vt` found (`_vcv_o` its `(`) in a declaration's initialiser (`;` ends it), past
+# the `)`s that close parentheses opened before it (a call that starts the source has only `(` in front of it).
+fn _vcv_more(S): i64 {
+    var x = _call_close(S, _vcv_o) + 1;
+    while (TOKTYP(S, x) == 11) { x = x + 1; }
+    return _vcall_more(S, x, 5);
 }
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
 # `ty`: inside its parentheses, the call — on PE passing `dst`'s address as its hidden result pointer,
@@ -9180,7 +9204,7 @@ fn _vmc_whole(S, ti, term): i64 {
     var mf = _vmc_mf;
     if (mf < 0) { return 0; }
     if (GFRS(S, mf) > 0 - 2048) { return 0; }
-    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
+    if (_vcall_more(S, _call_close(S, o) + 1, term) == 1) { return 0; }   # 6.7.16: a stray token is the parse's
     return _vrcv_mty(S, ti);
 }
 # ⛔ 6.7.14 (D38 A, the user's decision, 2026-10-16) — A METHOD DECLARED TO RETURN A VECTOR INTO A DESTINATION OF
@@ -10017,6 +10041,7 @@ fn _vin_ustart(S, pscale, sty, ann): i64 {
     if (ann != 0) { return pscale; }
     var rs = _vcall_vt(S, GTI(S) + 1, 5, 1);
     if (rs == 0) { return 0; }
+    if (_vcv_more(S) == 0) { return 0; }   # 6.7.16: no operator after it — a stray token is the parse's
     if (_vcall_vt(S, GTI(S) + 1, 5, 0) != 0) { return 0; }   # the whole call: `_vrcv_ity`'s
     return rs;
 }
