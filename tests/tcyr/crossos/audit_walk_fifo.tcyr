@@ -6,9 +6,12 @@
 # O_RDONLY | O_DIRECTORY | O_CLOEXEC now, and macOS routes through dir_list_checked, which does
 # the same since 6.7.11. The FIFO rows run on Linux and macOS, in a forked child the parent waits
 # 5 s for, so a regression reads RED here rather than hanging the leg (Linux makes the FIFO with
-# sys_mknodat; Darwin's declined until 6.7.16, so /usr/bin/mkfifo does). Windows has no FIFO and agnos no
-# mknodat: there the file and directory rows run. The gate twin (x86 + qemu, an O_RDONLY mutant
-# that must block) is tests/gates/platform/audit_walk_fifo_refused.sh. CHANGELOG [6.7.12]
+# sys_mknodat; Darwin's declined until 6.7.16, so /usr/bin/mkfifo does). Windows has no FIFO and
+# agnos no mknodat: there the file and directory rows run. The gate twin (x86 + qemu, an O_RDONLY
+# mutant that must block) is tests/gates/platform/audit_walk_fifo_refused.sh. CHANGELOG [6.7.12]
+# On cx every POSIX host's cxvm serves the walk's getdents64, the FIFO's mknodat and the child's
+# fork / wait4 (6.7.16; 2 passed, 6 failed until then); a Windows host's cxvm has no route for
+# them, and there those rows print "not run: this host has no <call> route" (6.7.16's D28).
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -62,8 +65,40 @@ fn _walk_codes(p): i64 {
     return code;
 }
 
+# 6.7.16's D28 (user, 2026-10-19): on cx a row whose call answered -38 — cxvm's answer on a host
+# with no route for it (a Windows host: getdents64, mknodat, wait4, fork) — is named as not run
+# instead of failing. _no_route(r, call) is `call` when that is so (cx only), else 0; _not_run
+# prints the line.
+fn _no_route(r, call): i64 {
+    #ifdef CYRIUS_TARGET_CX
+    if (r == 0 - 38) { return call; }
+    #endif
+    return 0;
+}
+fn _not_run(call, name): i64 {
+    var a = "  not run: this host has no ";
+    var b = " route: ";
+    sys_write(1, a, strlen(a));
+    sys_write(1, call, strlen(call));
+    sys_write(1, b, strlen(b));
+    sys_write(1, name, strlen(name));
+    sys_write(1, "\n", 1);
+    return 0;
+}
+
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_AGNOS
+# What fork and the last wait4 answered in _walk_in_child (D28's not-run rows read them on cx).
+var _awf_fork = 0;
+var _awf_wait = 0;
+
+# The call with no route a forked walk met (fork, then wait4), else 0 (see _no_route).
+fn _child_route(): i64 {
+    var c = _no_route(_awf_fork, "fork");
+    if (c == 0) { c = _no_route(_awf_wait, "wait4"); }
+    return c;
+}
+
 # A FIFO at `path`: mknodat(S_IFIFO|0600) on Linux, /usr/bin/mkfifo on macOS. 0 = made.
 fn _mkfifo(path): i64 {
     #ifdef CYRIUS_TARGET_MACOS
@@ -81,16 +116,21 @@ fn _mkfifo(path): i64 {
 # (killed), -2 no fork, -3 it died.
 fn _walk_in_child(path): i64 {
     var pid = sys_fork();
+    _awf_fork = pid;
+    _awf_wait = 0;
     if (pid < 0) { return 0 - 2; }
     if (pid == 0) { sys_exit(_walk_codes(path)); }
     var st[8];
     store64(&st, 0);
     var waited = 0;
     while (waited < 5000) {
-        if (sys_waitpid(pid, &st, 1) == pid) {      # 1 = WNOHANG
+        var w = sys_waitpid(pid, &st, 1);           # 1 = WNOHANG
+        _awf_wait = w;
+        if (w == pid) {
             if (WIFEXITED(load32(&st)) == 1) { return WEXITSTATUS(load32(&st)); }
             return 0 - 3;
         }
+        if (_no_route(w, "wait4") != 0) { waited = 5000; }
         sleep_ms(10);
         waited = waited + 10;
     }
@@ -112,21 +152,47 @@ fn main(): i64 {
     var dv = vec_new();
     vec_push(dv, str_from(dir));
     audit_fmt_walk("build/cyrfmt", dv);
-    assert_eq(AW_FMT_ERRORS, 0, "audit_fmt_walk over a directory holding no source file: no error");
+    var dr = 0;                                        # the listing's own failure, from its note
+    if (AW_FMT_ERRORS == 1) {
+        if (_ends_with(vec_get(AW_FMT_ERROR_FILES, 0), "error 38") == 1) { dr = 0 - 38; }
+    }
+    var drc = _no_route(dr, "getdents64");
+    if (drc == 0) {
+        assert_eq(AW_FMT_ERRORS, 0, "audit_fmt_walk over a directory holding no source file: no error");
+    } else { _not_run(drc, "audit_fmt_walk over a directory"); }
 
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
     test_group("a regular file is an unlistable directory (ENOTDIR)");
-    assert_eq(_walk_in_child(member), 0, "fmt and lint walkers over a file: one error each, its note 'error 20'");
+    var mc = _walk_in_child(member);
+    var mrc = _child_route();
+    if (mrc == 0) {
+        assert_eq(mc, 0, "fmt and lint walkers over a file: one error each, its note 'error 20'");
+    } else { _not_run(mrc, "fmt and lint walkers over a file"); }
 
     test_group("a FIFO is refused at the open, not waited on (6.7.12)");
     var fifo = _name("cyrius_awf_", "_fifo");
     xunlink(fifo);                                     # a killed earlier run cannot poison this one
-    assert_eq(_mkfifo(fifo), 0, "premise: a FIFO was made (mknodat on Linux, /usr/bin/mkfifo on macOS)");
-    var fc = _walk_in_child(fifo);
-    assert_neq(fc, 0 - 1, "the walkers RETURN on a FIFO (with O_RDONLY alone open(2) blocked until the 5 s kill)");
-    assert_eq(fc, 0, "fmt and lint walkers over the FIFO: one error each, its note 'error 20'");
-    assert_eq(xunlink(fifo), 0, "the FIFO unlinks");
+    var mk = _mkfifo(fifo);
+    var frc = _no_route(mk, "mknodat");                # no FIFO: every row below is not run
+    if (frc == 0) {
+        assert_eq(mk, 0, "premise: a FIFO was made (mknodat on Linux, /usr/bin/mkfifo on macOS)");
+    } else { _not_run(frc, "premise: a FIFO was made"); }
+    var fc = 0 - 2;
+    var crc = frc;
+    if (frc == 0) {
+        fc = _walk_in_child(fifo);
+        crc = _child_route();
+    }
+    if (crc == 0) {
+        assert_neq(fc, 0 - 1, "the walkers RETURN on a FIFO (with O_RDONLY alone open(2) blocked until the 5 s kill)");
+    } else { _not_run(crc, "the walkers RETURN on a FIFO"); }
+    if (crc == 0) {
+        assert_eq(fc, 0, "fmt and lint walkers over the FIFO: one error each, its note 'error 20'");
+    } else { _not_run(crc, "fmt and lint walkers over the FIFO"); }
+    if (frc == 0) {
+        assert_eq(xunlink(fifo), 0, "the FIFO unlinks");
+    } else { _not_run(frc, "the FIFO unlinks"); }
     #endif
     #endif
 

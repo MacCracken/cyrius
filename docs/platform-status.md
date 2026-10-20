@@ -161,6 +161,17 @@ guarantee:
   until 6.7.16, so a cx wait loop ended at once); a poll with pollfds is -38. Windows has no route for
   `getdents64`, `mknodat` or `wait4` (-38; its `fork` is -38 too). Until 6.7.16 all four answered -38,
   so `tests/tcyr/crossos/audit_walk_fifo.tcyr` read `2 passed, 6 failed` on every host's cxvm.
+  **A Windows host (6.7.16):** an `O_CREAT | O_EXCL` `open` that CreateFileW refuses with
+  `ERROR_ACCESS_DENIED` (-13) over a name that exists — `CREATE_NEW` over an existing directory, on
+  Windows 11 — answers -17 (`EEXIST`), Linux's answer and the rule `lib/io.cyr`'s
+  `file_create_exclusive` applies natively on Windows, which a cx guest (compiled for x86_64 Linux)
+  never reached: its `file_create_exclusive` over a directory read -13 on cass's cxvm. Where a crossos
+  row needs a call a Windows host has no route for (`readlink` for `is_symlink`, and `getdents64`,
+  `mknodat`, `wait4`, `fork` for `audit_walk_fifo.tcyr`'s walk and FIFO rows), the row sees cxvm's -38
+  and prints `not run: this host has no <call> route` instead of failing (6.7.16's D28): cass's cxvm
+  reads `open_flags_per_target` 41 passed + 3 not run, `atomic_write_temp_exclusive` 21 + 1,
+  `audit_walk_fifo` 2 + 6, `pe_open_failure_errno` 10, 0 failed — the cx crossos leg of
+  `scripts/cross-os-selfhost.sh` runs the four on every host's cxvm.
   `tests/gates/codegen/cx_host_dispatch.sh` and the cross-OS legs run one fixture on every host.
   **Every other number answers `-ENOSYS` (-38) without reaching the host** — `lstat`, `statfs`,
   `munmap`, `mprotect`, `mmap`, `nanosleep`, a `poll` with pollfds, the socket calls that take an

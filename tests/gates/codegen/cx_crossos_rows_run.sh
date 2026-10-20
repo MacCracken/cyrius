@@ -112,7 +112,10 @@
 #       each leg run from its own empty directory. On cx their xmkdir / xsymlink / is_symlink /
 #       file_write_atomic fixtures reached cxvm's -38 (6.7.14's D55; the host's -EFAULT before it):
 #       8 passed, 2 failed / 25 passed, 19 failed / 6 passed, 16 failed. cxvm translates the paths of
-#       mkdir / rmdir / unlink / rename / symlink / readlink / stat since 6.7.15.
+#       mkdir / rmdir / unlink / rename / symlink / readlink / stat since 6.7.15. Since 6.7.16 the cx
+#       build's fixtures are cwd-relative, as PE's (a Windows host's cxvm has no /tmp), and an
+#       is_symlink row that meets a host with no readlink route is named as not run (6.7.16's D28 —
+#       never here: this host routes it); the counts are unchanged.
 #   R25 (6.7.15, the same issue) the filed `file_write_atomic("wa_target.txt", "hello", 5)`, native and
 #       on cxvm, each from its own empty directory: it prints 0 and exits 0, wa_target.txt holds
 #       "hello", and no `.cyrtmp.` name is left (cx printed -38 and left wa_target.txt.cyrtmp.<pid>.1).

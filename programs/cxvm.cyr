@@ -419,7 +419,7 @@ fn _cx_errno_darwin(e): i64 {
 fn _cx_host_call(sn, a, b, c): i64 {
     if (sn == 0) { return sys_read(a, b, c); }
     if (sn == 1) { return sys_write(a, b, c); }
-    if (sn == 2) { return sys_open(a, _cx_open_flags(b), c); }
+    if (sn == 2) { return _cx_host_open(a, b, c); }
     if (sn == 3) { return sys_close(a); }
     if (sn == 8) { return sys_lseek(a, b, c); }
     if (sn == 60) { return sys_exit(a); }
@@ -458,6 +458,22 @@ fn _cx_host_poll(fds, nfds, ms): i64 {
     #ifndef CYRIUS_TARGET_WIN
     return syscall(SYS_POLL, 0, 0, ms);
     #endif
+}
+
+# open(path, flags, mode). On a Windows host CreateFileW refuses CREATE_NEW over an existing
+# DIRECTORY with ERROR_ACCESS_DENIED (-13 through the PE errno table; wine says ERROR_FILE_EXISTS),
+# where Linux, the .cyx ABI, answers -EEXIST. So an O_CREAT | O_EXCL open answering -13 over a name
+# that exists answers -17 — the rule lib/io.cyr's file_create_exclusive and _io_tmp_taken apply
+# natively on Windows, which a cx guest (compiled for x86_64 Linux) never reaches: its
+# file_create_exclusive over a directory read -13 on cass. CHANGELOG [6.7.16]
+fn _cx_host_open(path, flags, mode): i64 {
+    var r = sys_open(path, _cx_open_flags(flags), mode);
+    #ifdef CYRIUS_TARGET_WIN
+    if (r == 0 - 13 && (flags & 0xC0) == 0xC0) {        # O_CREAT | O_EXCL, the guest's bits
+        if (sys_access(path, 0) == 0) { return 0 - 17; }
+    }
+    #endif
+    return r;
 }
 
 # readlink(path, buf, n): Windows has no readlink route (lib/io.cyr's xreadlink answers -1 there).

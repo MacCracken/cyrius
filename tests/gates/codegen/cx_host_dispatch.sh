@@ -47,6 +47,9 @@
 # small buffer, reads the directory again) and a 16-byte one is -22; wait4 reaps the fork row's child,
 # then -ECHILD; a child that stops itself, is continued and is killed by SIGUSR1 gives 0x137f, 0xffff
 # (WCONTINUED) and 10 (a Darwin host reports 0x117f, 0x137f, 30) (Windows: the sleep, the rest -38).
+# Row 16 (6.7.16, issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md):
+# O_CREAT | O_EXCL over an existing directory -17 on every host, Windows included (cass's CreateFileW
+# says ERROR_ACCESS_DENIED, which cxvm answered as -13 until 6.7.16; wine says ERROR_FILE_EXISTS).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -95,6 +98,8 @@
 #       measured
 # MU12 `_cx_darwin_getdents` without its put-back (the records past the guest's buffer dropped) ->
 #       on ecb and ach exit 15, `lin=16384` (the 96-byte listing misses names), measured
+# MU13 (6.7.16) `_cx_host_open` without its Windows -13 -> -17 rule -> no local axis sees it (wine's
+#       CreateFileW says ERROR_FILE_EXISTS): on cass the fixture exits 2, `pe=32768`, measured
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).

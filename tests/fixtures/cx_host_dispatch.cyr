@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
-# (1..15: row 1 is bit 1, row 15 bit 16384). The exit itself is the exit_group row: a 77 / 78 can
+# (1..16: row 1 is bit 1, row 16 bit 32768). The exit itself is the exit_group row: a 77 / 78 can
 # only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
@@ -407,6 +407,16 @@ var k99 = syscall(62, me, 99);
 _cxh_row(8192, k99 == 0 - 22, k99 == 0 - 38);
 var wk = _cxh_walk();
 _cxh_row(16384, wk == 0, wk == 1);
+# O_CREAT | O_EXCL over an existing directory answers -EEXIST on every host (6.7.16,
+# issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md): Windows' CreateFileW
+# says ERROR_ACCESS_DENIED there (-13 through the PE errno table; wine says ERROR_FILE_EXISTS), and a
+# Windows host's cxvm answered the guest -13 until 6.7.16.
+syscall(84, "cxh_xd");
+syscall(83, "cxh_xd", 448);
+var xd = syscall(2, "cxh_xd", 193, 420);     # O_WRONLY | O_CREAT | O_EXCL
+if (xd >= 0) { syscall(3, xd); }
+syscall(84, "cxh_xd");
+_cxh_row(32768, xd == 0 - 17, xd == 0 - 17);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="
