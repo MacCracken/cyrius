@@ -55,11 +55,17 @@ if [ "$N" -ge 14000 ]; then
   exit 1
 fi
 
-# 2. no size regression against the default path.
+# 2. no size regression against the default path: the IR=3 build no more than 20,000 B LARGER (un-harvested it was
+# +65,320). ⛔ 6.7.16 — a SMALLER IR=3 build is no regression: the gate took the absolute difference, and the two file
+# sizes move in 4,096 B steps, so it went RED when the default build crossed one more page than the IR=3 build — measured
+# on the receives lane, default 2,606,712 -> 2,610,808 B with IR=3 at 2,590,328 B both times (IR=3 16,384 B smaller, then
+# 20,480 B: "delta 20480", RED) for a ~100-byte source change. Step 3 is the load-bearing assertion. Rows (2026-10-20,
+# scratch copies): the tree -> PASS (IR=3 2,590,328 B vs 2,610,808 B); the harvest gated `IR_ENABLED(S) == 0` -> RED at
+# step 1 (33,447 NOPs); that and step 1 disabled -> RED here (+200,704 B larger). CHANGELOG [6.7.16]
 SD=$(stat -c%s "$T/stage1"); SI=$(stat -c%s "$T/ir3")
-D=$(( SI - SD )); [ "$D" -lt 0 ] && D=$(( -D ))
+D=$(( SI - SD ))
 if [ "$D" -gt 20000 ]; then
-  echo "FAIL ir_nop_harvest: IR=3 build is $SI B vs default $SD B (delta $D). Un-harvested delta was +65320."
+  echo "FAIL ir_nop_harvest: IR=3 build is $SI B vs default $SD B (+$D B larger). Un-harvested delta was +65320."
   exit 1
 fi
 
