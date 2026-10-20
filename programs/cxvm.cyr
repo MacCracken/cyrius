@@ -428,6 +428,7 @@ fn _cx_host_call(sn, a, b, c): i64 {
     if (sn == 74) { return sys_fsync(a); }
     if (sn == 75) { return sys_fdatasync(a); }
     if (sn == 77) { return sys_ftruncate(a, b); }
+    if (sn == 76) { return sys_truncate(a, b); }
     if (sn == 72) { return _cx_host_fcntl(a, b, c); }
     if (sn == 83) { return sys_mkdir(a, b); }
     if (sn == 84) { return sys_rmdir(a); }
@@ -1124,7 +1125,9 @@ fn cx_run(code, code_len): i64 {
             # _cx_host_stat fills in x86-Linux layout. Until 6.7.15 each answered -38 (6.7.14's
             # D55; before it, the host's -EFAULT for a raw guest offset), so xmkdir / xsymlink /
             # file_write_atomic failed on cx. CHANGELOG [6.7.15]
-            elif (sn == 83 || sn == 84 || sn == 87) { sfault = _cx_syspath(s2, &sx); s2 = load64(&sx); }
+            # truncate(76) = (path, length) → s2 too: ftruncate was served and truncate answered
+            # -38, so a guest's sys_truncate failed on every host. CHANGELOG [6.7.16]
+            elif (sn == 83 || sn == 84 || sn == 87 || sn == 76) { sfault = _cx_syspath(s2, &sx); s2 = load64(&sx); }
             elif (sn == 82 || sn == 88) {
                 sfault = _cx_syspath(s2, &sx); s2 = load64(&sx);
                 if (sfault == 0) { sfault = _cx_syspath(s3, &sx); s3 = load64(&sx); }

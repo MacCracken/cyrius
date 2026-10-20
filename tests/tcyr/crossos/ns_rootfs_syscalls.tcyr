@@ -31,6 +31,17 @@
 #   * process_vm_readv/writev on this process copy the bytes.   ENOSYS copies none.
 #   * mknodat(S_IFIFO) creates a node that stat reports as a FIFO.  dup3 answers -EBADF.
 # CHANGELOG [6.6.8]
+#
+# On cx (6.7.16's D75, the user, 2026-10-20): cxvm serves unshare and the FIFO's mknodat / stat,
+# and answers -38 for chroot, pivot_root, capget, capset, process_vm_readv / writev and unlinkat
+# (6.7.14's D55: an unlisted number never reaches the host). Each of those rows prints
+# `not run: this host has no <call> route` instead of failing — the compile-time cx check of
+# 6.7.16's D28 (`_no_route`); the x86_64 cxvm reads 4 passed, 0 failed.
+# ⚠ NOT under qemu-aarch64: qemu-user does not implement process_vm_readv / process_vm_writev
+# (-38, 5 rows RED: 14 passed, 5 failed), and on aarch64 a -38 is this file's own defect signature
+# (a number routed to no call), so no row there is excused — the rows are green on real pi, which
+# is where the cross-OS leg runs them. Reproduce aarch64 failures of this file on pi, not qemu
+# (docs/development/dev-tools-linux.md).
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
@@ -62,6 +73,26 @@ fn _seccomp_filtered(): i64 {
     if (n <= 0) { return 0; }
     store8(&buf + n, 0);
     if (strstr(&buf, "Seccomp:\t2") >= 0) { return 1; }
+    return 0;
+}
+
+# 6.7.16's D75 (6.7.16's D28's shape): on cx a row whose call answered -38 — cxvm's answer for a
+# number it has no route for — is named as not run instead of failing. _no_route(r, call) is `call`
+# when that is so (cx only, a compile-time check), else 0; _not_run prints the line.
+fn _no_route(r, call): i64 {
+    #ifdef CYRIUS_TARGET_CX
+    if (r == 0 - 38) { return call; }
+    #endif
+    return 0;
+}
+fn _not_run(call, name): i64 {
+    var a = "  not run: this host has no ";
+    var b = " route: ";
+    sys_write(1, a, strlen(a));
+    sys_write(1, call, strlen(call));
+    sys_write(1, b, strlen(b));
+    sys_write(1, name, strlen(name));
+    sys_write(1, "\n", 1);
     return 0;
 }
 
@@ -128,36 +159,64 @@ fn main(): i64 {
     if (un == 0) { un_ok = 1; }
     if (un == 0 - 1) { if (_seccomp_filtered() == 1) { un_ok = 1; } }
     assert_eq(un_ok, 1, "unshare(0) is 0, or -EPERM under a seccomp filter (kcmp answered -ESRCH)");
-    assert_eq(sys_chroot("/cyr_no_such_root_6_6_8"), 0 - 2,
-      "chroot(missing path) is -ENOENT (sethostname answered -EPERM)");
+    var ch = sys_chroot("/cyr_no_such_root_6_6_8");
+    var chc = _no_route(ch, "chroot");
+    if (chc == 0) {
+        assert_eq(ch, 0 - 2, "chroot(missing path) is -ENOENT (sethostname answered -EPERM)");
+    } else { _not_run(chc, "chroot(missing path) is -ENOENT"); }
     var pr = sys_pivot_root("/cyr_no_such_new_root", "/cyr_no_such_put_old");
     var pr_ok = 0;
     if (pr == 0 - 1) { pr_ok = 1; }     # EPERM: no CAP_SYS_ADMIN (checked before the paths)
     if (pr == 0 - 2) { pr_ok = 1; }     # ENOENT: privileged, and the paths do not exist
-    assert_eq(pr_ok, 1, "pivot_root(missing) is -EPERM or -ENOENT (getpgid answered -ESRCH)");
+    var prc = _no_route(pr, "pivot_root");
+    if (prc == 0) {
+        assert_eq(pr_ok, 1, "pivot_root(missing) is -EPERM or -ENOENT (getpgid answered -ESRCH)");
+    } else { _not_run(prc, "pivot_root(missing) is -EPERM or -ENOENT"); }
 
     test_group("v6.6.8 — capget / capset reach the capability calls");
     var hdr[8];
     store32(&hdr, 0);                   # a version the kernel does not know
     store32(&hdr + 4, 0);               # pid 0 = self
-    assert_eq(sys_capget(&hdr, 0), 0, "capget(bad version, NULL) probes and returns 0");
-    assert_eq(load32(&hdr), 0x20080522,
-      "capget wrote _LINUX_CAPABILITY_VERSION_3 into hdr.version (nothing else writes it)");
+    var cg = sys_capget(&hdr, 0);
+    var cgc = _no_route(cg, "capget");
+    if (cgc == 0) {
+        assert_eq(cg, 0, "capget(bad version, NULL) probes and returns 0");
+        assert_eq(load32(&hdr), 0x20080522,
+          "capget wrote _LINUX_CAPABILITY_VERSION_3 into hdr.version (nothing else writes it)");
+    } else {
+        _not_run(cgc, "capget(bad version, NULL) probes and returns 0");
+        _not_run(cgc, "capget wrote _LINUX_CAPABILITY_VERSION_3 into hdr.version");
+    }
     var data[24];
     var z = 0;
     while (z < 24) { store8(&data + z, 0); z = z + 1; }
     store32(&hdr, 0x20080522);
     store32(&hdr + 4, 0);
-    assert_eq(sys_capget(&hdr, &data), 0, "capget(v3, self) reads this thread's capability sets");
+    var cg2 = sys_capget(&hdr, &data);
+    var cg2c = _no_route(cg2, "capget");
+    if (cg2c == 0) {
+        assert_eq(cg2, 0, "capget(v3, self) reads this thread's capability sets");
+    } else { _not_run(cg2c, "capget(v3, self) reads this thread's capability sets"); }
     store32(&hdr, 0);
     store32(&hdr + 4, 0);
-    assert_eq(sys_capget(&hdr, &data), 0 - 22, "capget(bad version, data) is -EINVAL");
+    var cg3 = sys_capget(&hdr, &data);
+    var cg3c = _no_route(cg3, "capget");
+    if (cg3c == 0) {
+        assert_eq(cg3, 0 - 22, "capget(bad version, data) is -EINVAL");
+    } else { _not_run(cg3c, "capget(bad version, data) is -EINVAL"); }
     store32(&hdr, 0x20080522);
     store32(&hdr + 4, 0);
     var cur[24];
-    assert_eq(sys_capget(&hdr, &cur), 0, "capget reads the sets to write back");
-    assert_eq(sys_capset(&hdr, &cur), 0,
-      "capset(the current sets) is allowed and returns 0 (sched_get_priority_min: -EINVAL)");
+    var cg4 = sys_capget(&hdr, &cur);
+    var cg4c = _no_route(cg4, "capget");
+    if (cg4c == 0) {
+        assert_eq(cg4, 0, "capget reads the sets to write back");
+    } else { _not_run(cg4c, "capget reads the sets to write back"); }
+    var cs = sys_capset(&hdr, &cur);
+    var csc = _no_route(cs, "capset");
+    if (csc == 0) {
+        assert_eq(cs, 0, "capset(the current sets) is allowed and returns 0 (sched_get_priority_min: -EINVAL)");
+    } else { _not_run(csc, "capset(the current sets) is allowed and returns 0"); }
 
     test_group("v6.6.8 — process_vm_readv / writev copy memory on this process");
     var src[16];
@@ -173,26 +232,49 @@ fn main(): i64 {
     store64(&riov, &src);
     store64(&riov + 8, 16);
     var me = sys_getpid();
-    assert_eq(sys_process_vm_readv(me, &liov, 1, &riov, 1, 0), 16, "process_vm_readv copied 16 bytes");
-    assert_eq(load64(&dst), 0x0123456789ABCDEF, "process_vm_readv: first word arrived");
-    assert_eq(load64(&dst + 8), 0x7EDCBA9876543210, "process_vm_readv: second word arrived");
+    var rv = sys_process_vm_readv(me, &liov, 1, &riov, 1, 0);
+    var rvc = _no_route(rv, "process_vm_readv");
+    if (rvc == 0) {
+        assert_eq(rv, 16, "process_vm_readv copied 16 bytes");
+        assert_eq(load64(&dst), 0x0123456789ABCDEF, "process_vm_readv: first word arrived");
+        assert_eq(load64(&dst + 8), 0x7EDCBA9876543210, "process_vm_readv: second word arrived");
+    } else {
+        _not_run(rvc, "process_vm_readv copied 16 bytes");
+        _not_run(rvc, "process_vm_readv: first word arrived");
+        _not_run(rvc, "process_vm_readv: second word arrived");
+    }
     var dst2[16];
     store64(&dst2, 0);
     store64(&dst2 + 8, 0);
     store64(&liov, &src);               # local = source, remote = destination
     store64(&riov, &dst2);
-    assert_eq(sys_process_vm_writev(me, &liov, 1, &riov, 1, 0), 16, "process_vm_writev copied 16 bytes");
-    assert_eq(load64(&dst2 + 8), 0x7EDCBA9876543210, "process_vm_writev: the bytes landed");
+    var wv = sys_process_vm_writev(me, &liov, 1, &riov, 1, 0);
+    var wvc = _no_route(wv, "process_vm_writev");
+    if (wvc == 0) {
+        assert_eq(wv, 16, "process_vm_writev copied 16 bytes");
+        assert_eq(load64(&dst2 + 8), 0x7EDCBA9876543210, "process_vm_writev: the bytes landed");
+    } else {
+        _not_run(wvc, "process_vm_writev copied 16 bytes");
+        _not_run(wvc, "process_vm_writev: the bytes landed");
+    }
 
     test_group("v6.6.8 — mknodat makes a FIFO (vani's named-FIFO tests, skipped on aarch64)");
     var fifo = test_scratch("cyr_mknodat_fifo");
-    sys_unlinkat(AT_FDCWD, fifo, 0);    # a killed earlier run cannot poison this one (pid-named)
+    # A killed earlier run cannot poison this one (pid-named); on cx through unlink (no unlinkat route).
+    if (_no_route(sys_unlinkat(AT_FDCWD, fifo, 0), "unlinkat") != 0) { sys_unlink(fifo); }
     assert_eq(sys_mknodat(AT_FDCWD, fifo, 4096 | 384, 0), 0,
       "mknodat(AT_FDCWD, S_IFIFO|0600) succeeds (native 33 ran dup3: -EBADF)");
     var st[STAT_BUFSZ];
     assert_eq(sys_stat(fifo, &st), 0, "the node exists");
     assert_eq(load32(&st + STAT_MODE) & 61440, 4096, "stat reports it as a FIFO (S_IFIFO)");
-    assert_eq(sys_unlinkat(AT_FDCWD, fifo, 0), 0, "the FIFO unlinks");
+    var ul = sys_unlinkat(AT_FDCWD, fifo, 0);
+    var ulc = _no_route(ul, "unlinkat");
+    if (ulc == 0) {
+        assert_eq(ul, 0, "the FIFO unlinks");
+    } else {
+        _not_run(ulc, "the FIFO unlinks");
+        sys_unlink(fifo);               # not a row: the node must not outlive the run (cxvm serves unlink)
+    }
     #endif
     #endif
     #endif

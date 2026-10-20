@@ -225,7 +225,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING\|WRITE_THROUGH)` — the rename is on disk when it returns (write-through since v6.6.7; before that the Windows rename was atomic but not durable) |
 | `xfsync` | `xfsync(fd) → 0/-errno` | Flush to stable storage. agnos has no per-fd fsync → whole-fs `sync` (documented residual). Windows routes to `FlushFileBuffers` (v6.6.7; **before that it returned 0 without flushing, for any fd**) and returns -1 on failure — including for an `O_RDONLY` handle, which Linux flushes and Windows refuses |
 | `xstat` | `xstat(path, buf) → 0/-errno` | stat into `buf`. **-1 on Windows.** Read fields via `STAT_MODE` etc. — the offsets differ per arch (st_mode @24 x86-Linux, @16 aarch64, @4 macOS-arm64) |
-| `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record). **-1 on Windows** — use `dir_list` |
+| `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record): the whole records that fit in `n`, then -22 when the next does not, on macOS too since 6.7.16 (`n` under 64 is -22 there). **-1 on Windows** — use `dir_list` |
 | `xlseek` | `xlseek(fd, off, whence) → off/-errno` | Reposition (whence 0=SET / 1=CUR / 2=END) |
 | `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). Windows (6.7.12): `LockFileEx` on one sentinel byte at 2^63 − 1 (Windows locks are mandatory; the data bytes stay readable and writable through other handles), a held `LOCK_NB` is -11; it was -1 for every lock. A re-lock to the mode the handle holds is a no-op that keeps the lock (6.7.13; it was dropped and re-taken, letting a waiting handle in) |
 
@@ -818,9 +818,9 @@ Linux-shaped buffers (v6.5.16), so every accessor works unchanged there; Windows
 | `sysinfo_uptime` / `sysinfo_total_memory` / `sysinfo_free_memory` / `sysinfo_procs` | `(info) → n` | Seconds, bytes (Linux's `mem_unit` applied, saturating) and the process count from a filled buffer |
 | `sysinfo_cpu_user` / `sysinfo_cpu_kern` | `(buf, cpu) → ticks/-1` | agnos only: per-core 100 Hz ticks in ring 3 / ring 0 (`cpu` 0..3) |
 | `sysinfo_blk_read` / `sysinfo_blk_write` | `(buf, tag) → sectors/-1` | agnos only: cumulative sectors per block-device tag |
-| `sys_sched_kicks` | `sys_sched_kicks() → n/-1/-errno` | agnos: reschedule IPIs sent since boot (-1 from a kernel older than 1.57.9); -38 elsewhere |
+| `sys_sched_kicks` | `sys_sched_kicks() → n/-1/-errno` | agnos: reschedule IPIs sent since boot (-1 from a kernel older than 1.57.9); -ENOSYS elsewhere: -78 on macOS (Darwin's ENOSYS, since 6.7.16), -38 on Linux, Windows and cx |
 | `system_uptime` / `system_total_memory` / `system_free_memory` | `() → n/-errno` | One-call forms of the accessors |
-| `sys_gettid` | `sys_gettid() → tid/-errno` | Thread id: Linux `gettid`, agnos its pid; -38 on macOS and Windows |
+| `sys_gettid` | `sys_gettid() → tid/-errno` | Thread id: Linux `gettid`, agnos its pid; -ENOSYS where it is not wired: -78 on macOS (Darwin's ENOSYS, since 6.7.16), -38 on Windows and cx |
 | `is_root` | `is_root() → 0/1` | Effective uid 0 (Linux, macOS), uid 0 (agnos); always 0 on Windows |
 
 ## Identity & Authentication
@@ -1634,7 +1634,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_connect` | `tls_native_connect(ctx, fd) → TLS_OK/err` | TLS 1.3 client handshake |
 | `tls_native_connect_12` | `tls_native_connect_12(ctx, fd) → TLS_OK/err` | TLS 1.2 client handshake |
 | `tls_native_accept` | `tls_native_accept(ctx, fd) → TLS_OK/err` | TLS 1.3 server handshake |
-| `tls_native_accept_12` | `tls_native_accept_12(ctx, fd) → TLS_OK/err` | TLS 1.2 server handshake; a ClientHello extension block, when present, fills the rest of the message — bytes after it or a block that overruns it are refused with decode_error (`TLS_ERR_BAD_HANDSHAKE`, 6.7.15; until then ignored); so is a ClientHello with no, an empty or an overrunning compression_methods, an extension overrunning its block, or a message too short for its random / session id / cipher_suites — the alert is sent (6.7.16; until then the first four negotiated and the short ones failed with no alert) |
+| `tls_native_accept_12` | `tls_native_accept_12(ctx, fd) → TLS_OK/err` | TLS 1.2 server handshake; a ClientHello extension block, when present, fills the rest of the message — bytes after it or a block that overruns it are refused with decode_error (`TLS_ERR_BAD_HANDSHAKE`, 6.7.15; until then ignored); so is a ClientHello with no, an empty or an overrunning compression_methods, an extension overrunning its block, or a message too short for its random / session id / cipher_suites — the alert is sent (6.7.16; until then the first four negotiated and the short ones failed with no alert); a compression_methods list without the null method or an extension type named twice is illegal_parameter (6.7.16; until then both negotiated) |
 | `tls_native_write` | `tls_native_write(ctx, buf, len) → n/err` | Send application data (plaintext → AEAD record). A peer that reset the connection is `TLS_ERR_IO`, never SIGPIPE (6.6.14: `MSG_NOSIGNAL` on Linux, `SO_NOSIGPIPE` on macOS) |
 | `tls_native_read` | `tls_native_read(ctx, buf, max) → n/err` | Receive application data (AEAD record → plaintext) |
 | `tls_native_close` | `tls_native_close(ctx) → TLS_OK/err` | Clean close handshake (sends close_notify alert) |
@@ -1776,7 +1776,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `tls_native_server_load_creds` | `tls_native_server_load_creds(ctx) → TLS_OK/err` | Validate certificate chain + private key before accepting |
-| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or ONE HelloRetryRequest; call again with the second ClientHello) in response to ClientHello — x25519 / secp256r1 / secp384r1 (6.6.15); the ClientHello's extension block fills the rest of the message, a byte after it is decode_error (6.7.15) |
+| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or ONE HelloRetryRequest; call again with the second ClientHello) in response to ClientHello — x25519 / secp256r1 / secp384r1 (6.6.15); the ClientHello's extension block fills the rest of the message, a byte after it is decode_error (6.7.15); so is a 1-3 byte tail after the block's last whole extension or an empty legacy_compression_methods, and an extension type named twice or a legacy_compression_methods other than the single null method is illegal_parameter (6.7.16; until then all four were answered) |
 | `tls_native_server_sent_hrr` | `tls_native_server_sent_hrr(ctx) → 0/1` | Check if last respond_hello was HelloRetryRequest (vs ServerHello) |
 | `tls_native_server_derive_handshake` | `tls_native_server_derive_handshake(ctx) → TLS_OK/err` | Derive handshake secrets from ECDHE + CH..SH transcript |
 | `tls_native_server_build_flight` | `tls_native_server_build_flight(ctx, out, out_max) → len/err` | Build server flight (EncryptedExtensions + Certificate + Finished) |

@@ -358,13 +358,15 @@ fn _win_open_checked(path, flags, mode): i64 {
 # and truncated only when it is the SAME FILE as `h` (`_win_same_file`) — a name swapped in
 # between, for a link or for another file, is refused. 0 on success, -1 on failure.
 # CHANGELOG [6.6.9]
+# The 0xF03F reroute answers 0 / -errno since 6.7.16 (it was SetEndOfFile's BOOL), so success is
+# `== 0`. CHANGELOG [6.7.16]
 fn _win_truncate_verified(h, path): i64 {
-    if (syscall(61503, h) != 0) { return 0; }
+    if (syscall(61503, h) == 0) { return 0; }
     var t = syscall(SYS_OPEN, path, 131073, 0);   # O_WRONLY | O_NOFOLLOW
     if (t < 0) { return 0 - 1; }
     var r = 0 - 1;
     if (_win_same_file(h, t) == 1) {
-        if (syscall(61503, t) != 0) { r = 0; }
+        if (syscall(61503, t) == 0) { r = 0; }
     }
     syscall(SYS_CLOSE, t);
     return r;
@@ -380,6 +382,10 @@ fn _win_truncate_verified(h, path): i64 {
 # (a child started with one handle as stdout and stderr) stays open for
 # that slot. Until 6.7.16 the fd went to CloseHandle as the HANDLE value
 # 0 / 1 / 2: the close answered -9 and the stream stayed open.
+# CHANGELOG [6.7.16]
+# A negative fd answers -9, as on Linux, and never reaches CloseHandle:
+# -1 / -2 are the current-process / -thread pseudo-handles, which it
+# "closes" with TRUE, so until 6.7.16 `sys_close(-1)` answered 0.
 # CHANGELOG [6.7.16]
 fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
@@ -529,19 +535,24 @@ fn sys_dup2(oldfd, newfd): i64 { return 0 - 38; }
 # caller's `< 0` path runs (lib/regression.cyr, lib/pam.cyr's Linux-only body); before this the
 # name was UNDEFINED on PE and every call site compiled to a ud2 trap. CHANGELOG [6.6.9] bite 7.
 fn sys_pipe(fds): i64 { return 0 - 1; }
+# mkdir / unlink / rmdir answer 0 on success, or a negative errno as Linux does: the Win32
+# failure is mapped through the PE backend's GetLastError table, so an existing name is -17,
+# a missing path -2, a non-empty directory -39 (macOS answers its own -66 there) and a refused
+# one -13. Until 6.7.16 every failure was -1. A path the emitter cannot widen (invalid UTF-8)
+# is still -1: no Win32 call was made. CHANGELOG [6.7.16]
 # mkdir — routed to kernel32!CreateDirectoryW by the PE backend's syscall(83)
-# reroute (src/backend/pe/emit.cyr _pe_ensure_createdir, v5.11.22). Returns 0 on
-# success, -1 on failure. (Was a no-op `return 0` stub through v6.3.42 — VR-01
-# surfaced that it never actually created the directory on Windows.)
+# reroute (src/backend/pe/emit.cyr _pe_ensure_createdir, v5.11.22). (Was a no-op
+# `return 0` stub through v6.3.42 — VR-01 surfaced that it never actually created
+# the directory on Windows.)
 fn sys_mkdir(path, mode): i64 { return syscall(83, path, mode); }
 # unlink — routed to kernel32!DeleteFileW by the PE backend's syscall(87) reroute
-# (_pe_ensure_deletef, v5.11.22). Returns 0 on success, -1 on failure. (Was a
-# no-op `return 0` stub through v6.3.42 — VR-01 surfaced the file was never deleted.)
+# (_pe_ensure_deletef, v5.11.22). (Was a no-op `return 0` stub through v6.3.42 —
+# VR-01 surfaced the file was never deleted.)
 fn sys_unlink(path): i64 { return syscall(87, path); }
 # Remove an empty directory — kernel32!RemoveDirectoryW through the 0xF03B reroute (the one
-# lib/io.cyr's xrmdir already uses). Returns 0 on success, -1 on failure. 6.6.10: the reroute
-# existed since 6.6.6 but no `sys_rmdir` did, so a portable caller of the POSIX name failed to
-# COMPILE for PE (tests/tcyr/platform/fs.tcyr). CHANGELOG [6.6.10]
+# lib/io.cyr's xrmdir already uses). 6.6.10: the reroute existed since 6.6.6 but no
+# `sys_rmdir` did, so a portable caller of the POSIX name failed to COMPILE for PE
+# (tests/tcyr/platform/fs.tcyr). CHANGELOG [6.6.10]
 fn sys_rmdir(path): i64 { return syscall(0xF03B, path); }
 
 # --- v6.5.25: raw floor wrappers this STANDALONE peer never defined ---
@@ -646,9 +657,13 @@ fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
 # Set a file's length by descriptor — REAL since 6.6.9 (it declined with -38 before). Windows
 # sets the end of file at the CURRENT file pointer (SetEndOfFile, reroute 0xF03F), so this
 # seeks to `length`, sets it, and puts the pointer back where the caller had it, which is what
-# ftruncate(2) leaves alone. Growing zero-fills, as POSIX requires. 0 on success, -22
-# (-EINVAL) for a negative length, -1 on a Win32 failure (a handle without write access, for
-# one). ⚠ That includes an O_APPEND descriptor, where Linux succeeds: the PE open of O_APPEND
+# ftruncate(2) leaves alone. Growing zero-fills, as POSIX requires. 0 on success, or a
+# negative errno as Linux answers it (6.7.16's D79 / D80): -22 (-EINVAL) for a negative length
+# and for a descriptor it cannot truncate — a pipe or a console (the seek's -29), a device such as
+# NUL, and a handle without write access (SetEndOfFile's -13: a read-only descriptor), -9 for a
+# bad or closed one, another failure's own errno through the Win32 table. Until 6.7.16 every
+# Win32 failure was -1.
+# ⚠ An O_APPEND descriptor answers -22 too, where Linux succeeds: the PE open of O_APPEND
 # grants FILE_APPEND_DATA WITHOUT FILE_WRITE_DATA (NT's per-write append), and SetEndOfFile
 # needs the latter. Truncate by path (sys_truncate), or open without O_APPEND. CHANGELOG [6.6.9]
 # fd 0 / 1 / 2 truncate the std stream's file (a redirected stdout, say), as on Linux; until 6.7.16
@@ -656,19 +671,37 @@ fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
 fn sys_ftruncate(fd, length): i64 {
     if (length < 0) { return 0 - 22; }
     var cur = syscall(SYS_LSEEK, fd, 0, 1);
-    if (cur < 0) { return 0 - 1; }
-    if (syscall(SYS_LSEEK, fd, length, 0) < 0) { return 0 - 1; }
-    var ok = syscall(61503, fd);
+    if (cur < 0) { return _win_ftrunc_err(cur); }
+    var sk = syscall(SYS_LSEEK, fd, length, 0);
+    if (sk < 0) { return _win_ftrunc_err(sk); }
+    var r = syscall(61503, fd);
     syscall(SYS_LSEEK, fd, cur, 0);
-    if (ok == 0) { return 0 - 1; }
+    # Both seeks just accepted the descriptor, so a -9 here is the object refusing the truncate,
+    # not a bad fd: wine answers SetEndOfFile on its NUL device ERROR_INVALID_HANDLE. -22, as
+    # Linux's ftruncate of /dev/null (6.7.16's D80). CHANGELOG [6.7.16]
+    if (r == 0 - 9) { return 0 - 22; }
+    if (r < 0) { return _win_ftrunc_err(r); }
     return 0;
 }
+# A failed step of sys_ftruncate → its answer: what it cannot truncate is -22, as Linux's
+# ftruncate answers a pipe, a device and a read-only descriptor — the seek check's -29 (a pipe or
+# a console), SetEndOfFile's -13 (no FILE_WRITE_DATA) and a code the shared Win32 table leaves -1:
+# a device that cannot be truncated, like NUL, whose SetEndOfFile fails ERROR_INVALID_FUNCTION on
+# real Windows (the table keeps -1 for that code: a `1:22` row would change every reroute's
+# answer). Any other errno is the answer as it is. CHANGELOG [6.7.16]
+fn _win_ftrunc_err(e): i64 {
+    if (e == 0 - 29) { return 0 - 22; }
+    if (e == 0 - 13) { return 0 - 22; }
+    if (e == 0 - 1) { return 0 - 22; }
+    return e;
+}
 # Set a file's length by path — REAL since 6.6.9: opens the path for writing (following a
-# link, as truncate(2) does), then sys_ftruncate. Same returns. CHANGELOG [6.6.9]
+# link, as truncate(2) does), then sys_ftruncate. Same returns, and a failed open answers its own
+# errno (-2 for a missing path; -1 until 6.7.16). CHANGELOG [6.6.9] [6.7.16]
 fn sys_truncate(path, length): i64 {
     if (length < 0) { return 0 - 22; }
     var h = syscall(SYS_OPEN, path, 1, 0);   # O_WRONLY
-    if (h < 0) { return 0 - 1; }
+    if (h < 0) { return h; }
     var r = sys_ftruncate(h, length);
     syscall(SYS_CLOSE, h);
     return r;

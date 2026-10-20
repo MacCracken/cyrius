@@ -95,13 +95,27 @@ fn main(): i64 {
     test_group("sys_prctl — 5-arg wrapper (PR_GET_DUMPABLE probe)");
     # prctl is Linux-only; Darwin has no equivalent, so the wrapper returns
     # -ENOSYS there (v6.5.15 — it used to emit an unrouted svc that fired the
-    # previous syscall's BSD number). Assert the documented contract per target.
+    # previous syscall's BSD number), in Darwin's numbering since 6.7.16 (78; its
+    # 38 is ENOTSOCK). Assert the documented contract per target.
     var dump = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    # On cx (6.7.16's D75, the user, 2026-10-20: a named not-run where the target is known): cxvm
+    # has no prctl route — it answers -38 for a number it does not list, on every host (6.7.14's
+    # D55) — so the row is named as not run there, and runs if cxvm ever answers otherwise.
+    var dump_nr = 0;
+    #ifdef CYRIUS_TARGET_CX
+    if (dump == 0 - 38) {
+        dump_nr = 1;
+        var nrl = "  not run: this host has no prctl route: prctl PR_GET_DUMPABLE returns 0/1/2\n";
+        sys_write(1, nrl, strlen(nrl));
+    }
+    #endif
     #ifndef CYRIUS_TARGET_MACOS
-    assert(dump == 0 || dump == 1 || dump == 2, "prctl PR_GET_DUMPABLE returns 0/1/2");
+    if (dump_nr == 0) {
+        assert(dump == 0 || dump == 1 || dump == 2, "prctl PR_GET_DUMPABLE returns 0/1/2");
+    }
     #endif
     #ifdef CYRIUS_TARGET_MACOS
-    assert_eq(dump, 0 - 38, "prctl is -ENOSYS on Darwin (no such syscall)");
+    assert_eq(dump, 0 - 78, "prctl is -ENOSYS (Darwin's 78) on Darwin (no such syscall)");
     #endif
 
     test_group("compile-time callability of remaining wrappers");

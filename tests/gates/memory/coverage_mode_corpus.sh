@@ -37,6 +37,14 @@
 #   CC an instrumented cycc compiles src/main.cyr byte-identical to cycc(src), with the same
 #      stderr; its dump (through src/main.cyr's own `syscall(SYS_EXIT, _had_error);`) is ONE block
 #      of more than 500 records (coverage_exec_hits.sh CC1, again here beside the corpus)
+#   S  6.7.16: a .tcyr carrying `# corpus: serial` (a line of its own, spelled as check.sh's
+#      `# check: serial`; the set derived by grep, never listed) runs one job at a time AFTER the
+#      pool, on both legs. Its verdict is a live timing comparison, and this gate's own workers were
+#      the contention: crossos/bench_timer_floor.tcyr read "exits 1 plain, 0 under the mode" here,
+#      and crypto/tls_native_ccs_deadline.tcyr "exits 0 plain, 5 under the mode" inside check.sh.
+#      S1 at least 2 files carry it; S2 each marked file ran in the serial pass and every other file
+#      in the pool (the worker records its pass); S3 each serial run started after the pool's last
+#      run ended and after the serial run before it ended (the worker's wall interval, in ns)
 #
 # P5B-4's one-off run (2026-10-12): 562 .tcyr plain vs instrumented, 0 compile-status or exit
 # deltas, 0 runs without a record. Some tests leave a forked child holding their binary for a
@@ -60,6 +68,9 @@
 #   MP3  lang/enums.tcyr fails to compile only under the mode     -> RED C on both legs
 #   MP4  tests/tcyr/CORPUS_FLOOR raised to 563 (the corpus + 1)   -> RED F on both legs (the reader is
 #        blind)
+#   MS1  (6.7.16) the honouring dropped (every file in the pool's job list) -> RED S2 4 of 4: both
+#        marked files on both legs "ran in the pool pass, not the serial pass"
+#   MS2  (6.7.16) the marked-file floor raised to 3                -> RED S1
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 SELF="$ROOT/tests/gates/memory/$(basename "$0")"
@@ -128,11 +139,14 @@ _judge() {
     REC=1
 }
 
-# ── a worker: one file, one leg (`xargs` below runs this script as `--one <leg> <id> <src>`) ─────
+# ── a worker: one file, one leg (`xargs` below runs this script as `--one <leg> <id> <src>`; the
+# serial pass the same, one at a time). It records its pass and its wall interval in ns (axis S).
 if [ "${1:-}" = "--one" ]; then
     T=${COVCORPUS_T:?}; TH=${COVCORPUS_HOME:?}
     cd "$ROOT" || exit 1
+    w0=$(date +%s%N)
     _pair "$2" "$3" "$4" > "$T/r/$2.$3"
+    printf '%s %s %s\n' "${COVCORPUS_PASS:-pool}" "$w0" "$(date +%s%N)" > "$T/w/$2.$3"
     exit 0
 fi
 
@@ -142,7 +156,7 @@ trap 'rm -rf "$T"' EXIT
 ulimit -c 0 2>/dev/null || true
 cd "$ROOT" || exit 1
 unset CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE CYRIUS_BOUNDS CYRIUS_DCE CYRIUS_IR
-mkdir -p "$T/b" "$T/r" "$T/p"
+mkdir -p "$T/b" "$T/r" "$T/p" "$T/w"
 fails=0
 rows=0
 ok()  { rows=$((rows + 1)); echo "  ok   $1"; }
@@ -200,10 +214,22 @@ else bad "A7 under IR=3: judged '${WHY:-clean}', RB $RB (want compared-only)"; f
 find tests/tcyr -name '*.tcyr' | LC_ALL=C sort > "$T/list"
 NF=$(grep -c . "$T/list" || true)
 if grep -q '[[:space:]]' "$T/list"; then bad "X: a .tcyr path holds whitespace (the worker list splits on it): $(grep -m1 '[[:space:]]' "$T/list")"; fi
-awk '{ print "x86", NR, $0 }' "$T/list" > "$T/jobs"
-awk '{ print "ir3", NR, $0 }' "$T/list" >> "$T/jobs"
+# The `# corpus: serial` files (axis S) leave the pool's job list and run one job at a time after
+# it, derived by grep (the /dev/null keeps grep off stdin and never matches).
+xargs grep -l '^# corpus: serial' /dev/null < "$T/list" > "$T/serial" 2> /dev/null || true
+: > "$T/sjobs"
+_jobs() {
+    awk -v leg="$1" -v sf="$T/serial" -v sj="$T/sjobs" '
+        BEGIN { while ((getline l < sf) > 0) s[l] = 1 }
+        { if ($0 in s) print leg, NR, $0 >> sj; else print leg, NR, $0 }' "$T/list"
+}
+_jobs x86 > "$T/jobs"
+_jobs ir3 >> "$T/jobs"
 t0=$(date +%s)
 COVCORPUS_T="$T" COVCORPUS_HOME="$TH" CYCC="$CC" xargs -P "$J" -n 3 sh "$SELF" --one < "$T/jobs"
+while read -r sl si sf; do
+    COVCORPUS_T="$T" COVCORPUS_HOME="$TH" CYCC="$CC" COVCORPUS_PASS=serial sh "$SELF" --one "$sl" "$si" "$sf" < /dev/null
+done < "$T/sjobs"
 t1=$(date +%s)
 for leg in x86 ir3; do
     n=0; nrec=0; nrecs=0; nnk=0; nblk=0; nbad=0; cboth=""; rboth=""; nmiss=0
@@ -228,6 +254,35 @@ for leg in x86 ir3; do
     elif [ "$nrec" -lt "$FL" ]; then bad "F $leg: $nrec of $n runs left a record (floor $FL) — is the mode still counting?"
     else ok "F $leg: $n walked, $nrec with a record (floor $FL)"; fi
 done
+
+# ── S: the `# corpus: serial` files ran alone, after the pool ───────────────────────────────────
+# Each run's pass and wall interval (the worker's `$T/w/<leg>.<id>`): S2 every marked file ran in
+# the serial pass and every other file in the pool, on both legs; S3 each serial run started after
+# the pool's last run ended and after the serial run before it ended. Compared as 19-digit integers
+# by `sort -n` and the shell, never by awk (a double cannot hold a ns timestamp).
+SFL=2
+NS=$(grep -c . "$T/serial" || true)
+if [ "$NS" -ge "$SFL" ]; then ok "S1 $NS .tcyr carry '# corpus: serial' (floor $SFL):$(sed 's|^tests/tcyr/| |' "$T/serial" | tr -d '\n')"
+else bad "S1 $NS .tcyr carry '# corpus: serial' (floor $SFL) — the marker reader went blind, or the marked timing files lost it"; fi
+for leg in x86 ir3; do
+    awk -v leg="$leg" -v T="$T" '{ f = T "/w/" leg "." NR; w = "none 0 0"; if ((getline l < f) > 0) w = l; close(f); print leg, $0, w }' "$T/list"
+done > "$T/wtab"
+awk -v sf="$T/serial" 'BEGIN { while ((getline l < sf) > 0) s[l] = 1 }
+    { want = ($2 in s) ? "serial" : "pool"; if ($3 != want) print "S2 " $1 ": " $2 " ran in the " $3 " pass, not the " want " pass" }' "$T/wtab" > "$T/s2"
+if [ -s "$T/s2" ]; then while IFS= read -r l; do bad "$l"; done < "$T/s2"
+else ok "S2 the $NS marked file(s) ran in the serial pass and the other $((NF - NS)) in the pool, on both legs"; fi
+PEND=$(awk '$3 == "pool" { print $5 }' "$T/wtab" | LC_ALL=C sort -n | tail -1)
+s3=0; sprev=${PEND:-0}; sfirst=""
+while read -r sl si sf; do
+    sp=none; ss=0; se=0
+    [ -f "$T/w/$sl.$si" ] && read -r sp ss se < "$T/w/$sl.$si"
+    if [ "$ss" -lt "$sprev" ]; then
+        s3=$((s3 + 1)); bad "S3 $sl: $sf started $(( (sprev - ss) / 1000000 )) ms before the run ahead of it ended — not alone"
+    fi
+    [ -n "$sfirst" ] || sfirst=$(( (ss - ${PEND:-ss}) / 1000000 ))
+    sprev=$se
+done < "$T/sjobs"
+if [ "$s3" = 0 ] && [ -s "$T/sjobs" ]; then ok "S3 the $(grep -c . "$T/sjobs") serial run(s) ran one at a time, the first $sfirst ms after the pool's last run ended"; fi
 
 # ── CC: an instrumented cycc reproduces cycc from src ────────────────────────────────────────────
 if [ "$(tail -1 src/main.cyr)" != 'syscall(SYS_EXIT, _had_error);' ]; then bad "CC: src/main.cyr no longer ends in 'syscall(SYS_EXIT, _had_error);' — re-derive the row"

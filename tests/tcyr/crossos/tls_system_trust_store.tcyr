@@ -31,6 +31,22 @@
 # TLS G2 RSA CA OCSP 04, Microsoft TLS RSA Root G2) to DigiCert Global Root G2, which is in the
 # Windows store and in every POSIX bundle.
 # Cross-OS because the store is a different thing on every host.
+#
+# ⚠ UNDER WINE (6.7.16's D75, the user, 2026-10-20: "Named not-run where the target is known").
+# A fresh wine prefix's ROOT store holds no certificate, so tls_native_set_ca_system answers
+# TLS_ERR_IO with 0 roots and every row that needs the system set failed (77 of 247 with the two
+# causes below, measured under wine 11.20). Wine is detected by ntdll's wine_get_version export
+# (`_ts_is_wine`, as sandhi_pe_resolver_no_etc_path.tcyr does), and then:
+#   * each group that needs the system set prints `not run: this wine prefix has no system roots`
+#     once and skips exactly those rows (`_ts_group_noroots`), when the set really did not load;
+#   * the memory-store policy rows whose store cannot be built because wine's crypt32 refuses the
+#     property (CertSetCertificateContextProperty FALSE, GetLastError 120, for ids 84, 104, 122,
+#     126 and 127 — measured) print `not run: wine's crypt32 does not set certificate property
+#     <id>` (`_tm_eq`), in every prefix;
+#   * the planted-bundle rows: wine opens /etc/ssl/cert.pem on the Linux host, whose own file is
+#     there, so the test plants nothing and says so.
+# A fresh prefix then reads 170 passed, 0 failed. Real Windows has no wine_get_version, so none of
+# these fires on cass and a -12 or a refused property there still fails its rows. CHANGELOG [6.7.16]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -133,6 +149,50 @@ fn _ts_verify(ctx, leaf, inters, now): i64 {
     return tls_native_client_verify_chain(ctx, now);
 }
 
+# Print `  not run: <why><what>\n`.
+fn _ts_not_run(why, what): i64 {
+    var a = "  not run: ";
+    syscall(1, 1, a, strlen(a));
+    syscall(1, 1, why, strlen(why));
+    syscall(1, 1, what, strlen(what));
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# 1 under wine: its ntdll exports wine_get_version, which no Windows ntdll has. 0 off Windows.
+fn _ts_is_wine(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var nt = syscall(0xF013, "ntdll.dll");
+    if (nt == 0) { return 0; }
+    if (syscall(0xF014, nt, "wine_get_version") != 0) { return 1; }
+    #endif
+    return 0;
+}
+
+# 1 when this run is under wine AND the system set does not load there: TLS_ERR_IO with 0 roots,
+# a fresh prefix's empty ROOT store (D75, see the header). Probed once, on a ctx of its own and only
+# under wine, so on real Windows the planted-bundle rows' load is still the process's first.
+var _ts_nr = 0 - 1;
+fn _ts_noroots(): i64 {
+    if (_ts_nr >= 0) { return _ts_nr; }
+    _ts_nr = 0;
+    if (_ts_is_wine() == 1) {
+        var c = tls_native_new_client("localhost", 9);
+        if (tls_native_set_ca_system(c) == TLS_ERR_IO) {
+            if (_ts_installed(c) == 0) { _ts_nr = 1; }
+        }
+    }
+    return _ts_nr;
+}
+
+# A group that needs the system set: 1, after its one not-run line, when _ts_noroots holds — the
+# group then skips the rows that need the set and runs the rest.
+fn _ts_group_noroots(): i64 {
+    if (_ts_noroots() == 0) { return 0; }
+    _ts_not_run("this wine prefix has no system roots", "");
+    return 1;
+}
+
 # Windows: a planted C:\etc\ssl\cert.pem is NOT a trust root. Runs before anything else loads the
 # system set (it is loaded once per process, so this is the load).
 fn test_planted_bundle_ignored(): i64 {
@@ -148,8 +208,18 @@ fn test_planted_bundle_ignored(): i64 {
     if (file_exists("/etc/ssl/cert.pem") == 0) {
         if (file_write_all("/etc/ssl/cert.pem", pem, plen) == plen) { made_pem = 1; }
     }
-    assert_eq(made_pem, 1, "the test planted /etc/ssl/cert.pem (it did not exist)");
+    # D75: under wine the path opens the Linux host's own /etc/ssl/cert.pem, so there is nothing
+    # to plant (the plant and the left-behind rows are not run; the rest still runs).
+    var wine_host = 0;
+    if (made_pem == 0) { wine_host = _ts_is_wine(); }
+    if (wine_host == 1) {
+        _ts_not_run("under wine /etc/ssl/cert.pem is this Linux host's own file: ",
+          "the test plants nothing there (the plant and the left-behind rows)");
+    } else {
+        assert_eq(made_pem, 1, "the test planted /etc/ssl/cert.pem (it did not exist)");
+    }
     assert_eq(file_exists("/etc/ssl/cert.pem"), 1, "the planted file is there to be read");
+    var nr = _ts_group_noroots();
     var c = tls_native_new_client("localhost", 9);
     var rc = tls_native_set_ca_system(c);
     syscall(1, 1, "  set_ca_system rc ", 19);
@@ -157,8 +227,10 @@ fn test_planted_bundle_ignored(): i64 {
     syscall(1, 1, ", ", 2);
     fmt_int(_ts_installed(c));
     syscall(1, 1, " roots installed\n", 17);
-    assert_eq(rc, TLS_OK, "the Windows ROOT store loads (TLS_OK, not TLS_ERR_IO)");
-    assert_gt(_ts_installed(c), 0, "and installs roots");
+    if (nr == 0) {
+        assert_eq(rc, TLS_OK, "the Windows ROOT store loads (TLS_OK, not TLS_ERR_IO)");
+        assert_gt(_ts_installed(c), 0, "and installs roots");
+    }
     # The planted root must not anchor anything: its own self-signed cert does not verify.
     var leaf = x509_cert_alloc();
     assert_eq(x509_parse(_ts_p256, _ts_p256_len, leaf), 1, "the planted root parses");
@@ -173,7 +245,10 @@ fn test_planted_bundle_ignored(): i64 {
     assert_eq(inbuf, 0, "the planted PEM is not in the cached system bundle");
     # The client-purpose set a server ctx loads (CYRIUS-2026-0027) reads the store too, never the file.
     var sc = _tn_ctx_new(TLS_ROLE_SERVER);
-    assert_eq(tls_native_set_ca_system(sc), TLS_OK, "a server ctx's system set loads while the file is planted");
+    var src = tls_native_set_ca_system(sc);
+    if (nr == 0) {
+        assert_eq(src, TLS_OK, "a server ctx's system set loads while the file is planted");
+    }
     var inbuf2 = 0;
     if (_tn_ca_cl_len > 0) { inbuf2 = _ts_contains(_tn_ca_cl_buf, _tn_ca_cl_len, b, bl); }
     assert_eq(inbuf2, 0, "  and the planted PEM is not in it");
@@ -181,7 +256,9 @@ fn test_planted_bundle_ignored(): i64 {
     if (made_pem == 1) { assert_eq(xunlink("/etc/ssl/cert.pem"), 0, "the planted file is removed"); }
     if (made_ssl == 1) { assert_eq(xrmdir("/etc/ssl"), 0, "the created /etc/ssl is removed"); }
     if (made_etc == 1) { assert_eq(xrmdir("/etc"), 0, "the created /etc is removed"); }
-    assert_eq(file_exists("/etc/ssl/cert.pem"), 0, "nothing planted is left behind");
+    if (wine_host == 0) {
+        assert_eq(file_exists("/etc/ssl/cert.pem"), 0, "nothing planted is left behind");
+    }
     return 0;
 }
 
@@ -199,9 +276,13 @@ fn _ts_blocks(pem, len): i64 {
 # Every target: the system set loads, once, and its counts add up.
 fn test_system_roots(): i64 {
     test_group("tls_native_set_ca_system: the system set loads and its counts add up");
+    var nr = _ts_group_noroots();
     var c = tls_native_new_client("localhost", 9);
-    assert_eq(tls_native_set_ca_system(c), TLS_OK, "tls_native_set_ca_system: TLS_OK");
-    assert_gt(_tn_ca_len, 0, "the system bundle has bytes");
+    var rc = tls_native_set_ca_system(c);
+    if (nr == 0) {
+        assert_eq(rc, TLS_OK, "tls_native_set_ca_system: TLS_OK");
+        assert_gt(_tn_ca_len, 0, "the system bundle has bytes");
+    }
     var blocks = _ts_blocks(_tn_ca_buf, _tn_ca_len);
     var inst = _ts_installed(c);
     var sk = tls_native_ca_skipped(c);
@@ -214,31 +295,46 @@ fn test_system_roots(): i64 {
     syscall(1, 1, " skipped (", 10);
     fmt_int(_tn_ca_sys_refused);
     syscall(1, 1, " refused by store policy)\n", 26);
-    assert_gt(inst, 0, "it installs roots");
+    if (nr == 0) {
+        assert_gt(inst, 0, "it installs roots");
+    }
     assert_eq(inst + sk, blocks + _tn_ca_sys_refused, "installed + skipped == PEM blocks + refused");
     #ifndef CYRIUS_TARGET_WIN
     assert_eq(_tn_ca_sys_refused, 0, "POSIX: nothing is refused outside the bundle");
     #endif
     var d = tls_native_new_client("localhost", 9);
     var u0 = alloc_used();
-    assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
-    assert_eq(alloc_used() - u0, 0, "and allocates nothing: the set is loaded once, shared");
+    var rd = tls_native_set_ca_system(d);
+    var ud = alloc_used() - u0;
+    if (nr == 0) {
+        assert_eq(rd, TLS_OK, "a second ctx installs too");
+    }
+    assert_eq(ud, 0, "and allocates nothing: the set is loaded once, shared");
     assert_eq(load64(d + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT), "the same set");
     # A SERVER ctx (it verifies client chains) loads the system roots too.
     var sv = _tn_ctx_new(TLS_ROLE_SERVER);
-    assert_eq(tls_native_set_ca_system(sv), TLS_OK, "a server ctx: tls_native_set_ca_system TLS_OK");
-    assert_gt(_ts_installed(sv), 0, "  and installs roots");
+    var rs = tls_native_set_ca_system(sv);
+    if (nr == 0) {
+        assert_eq(rs, TLS_OK, "a server ctx: tls_native_set_ca_system TLS_OK");
+        assert_gt(_ts_installed(sv), 0, "  and installs roots");
+    }
     #ifndef CYRIUS_TARGET_WIN
     assert_eq(load64(sv + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT),
       "POSIX: the same set as a client ctx (a bundle has no per-root purpose)");
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    assert_neq(load64(sv + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT),
-      "Windows: a different set from a client ctx's — the roots trusted for client authentication");
+    if (nr == 0) {
+        assert_neq(load64(sv + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT),
+          "Windows: a different set from a client ctx's — the roots trusted for client authentication");
+    }
     var sv2 = _tn_ctx_new(TLS_ROLE_SERVER);
     var u1 = alloc_used();
-    assert_eq(tls_native_set_ca_system(sv2), TLS_OK, "a second server ctx installs too");
-    assert_eq(alloc_used() - u1, 0, "  allocating nothing: the client-purpose set is loaded once, shared");
+    var rs2 = tls_native_set_ca_system(sv2);
+    var us2 = alloc_used() - u1;
+    if (nr == 0) {
+        assert_eq(rs2, TLS_OK, "a second server ctx installs too");
+    }
+    assert_eq(us2, 0, "  allocating nothing: the client-purpose set is loaded once, shared");
     assert_eq(load64(sv2 + TLS_CTX_OFF_CA_ROOT), load64(sv + TLS_CTX_OFF_CA_ROOT), "  the same set");
     #endif
     return 0;
@@ -254,6 +350,7 @@ fn _ts_cert(der, dlen): i64 {
 # Every target: a real public chain verifies against the system roots, offline, at a fixed time.
 fn test_real_chain(): i64 {
     test_group("a real chain (www.microsoft.com -> DigiCert Global Root G2) verifies against the system roots");
+    var nr = _ts_group_noroots();
     var leaf = _ts_cert(_ts_ms, _ts_ms_len);
     var ica = _ts_cert(_ts_mi, _ts_mi_len);
     var xr = _ts_cert(_ts_mr, _ts_mr_len);
@@ -265,8 +362,12 @@ fn test_real_chain(): i64 {
     store64(inters + 8, ica);
     store64(inters + 16, xr);
     var c = tls_native_new_client("www.microsoft.com", 17);
-    assert_eq(tls_native_set_ca_system(c), TLS_OK, "the system set installs");
-    assert_eq(_ts_verify(c, leaf, inters, _ts_now), TLS_OK, "the chain verifies (TLS_OK)");
+    var rc = tls_native_set_ca_system(c);
+    var vc = _ts_verify(c, leaf, inters, _ts_now);
+    if (nr == 0) {
+        assert_eq(rc, TLS_OK, "the system set installs");
+        assert_eq(vc, TLS_OK, "the chain verifies (TLS_OK)");
+    }
     # Controls: the system set is what anchored it, and the time is honoured.
     var d = tls_native_new_client("www.microsoft.com", 17);
     assert_eq(tls_native_set_ca_bundle(d, _ts_p256, _ts_p256_len, 1), TLS_OK, "a set of only the fixture root");
@@ -409,6 +510,7 @@ fn _tp_anchor_of(cur): i64 {
 # root, trust anchor. Before 6.7.12 nothing beyond the root set was consulted.
 fn test_policy_deny_rows(): i64 {
     test_group("the trust policy's deny list binds every certificate of a path (6.7.12)");
+    var nr = _ts_group_noroots();
     var leaf = _ts_cert(_ts_ms, _ts_ms_len);
     var ica = _ts_cert(_ts_mi, _ts_mi_len);
     var xr = _ts_cert(_ts_mr, _ts_mr_len);
@@ -418,54 +520,60 @@ fn test_policy_deny_rows(): i64 {
     store64(inters + 8, ica);
     store64(inters + 16, xr);
     var anchor = _tp_anchor_of(xr);
-    assert_neq(anchor, 0, "DigiCert Global Root G2 is in the system set and anchors the chain");
-    assert_eq(_tp_ms(leaf, inters, 0), TLS_OK, "no policy: the chain verifies (control)");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, 0)), TLS_OK, "an unrelated key denied: verifies");
-    assert_eq(_tp_ms(leaf, inters, _tn_pol_new(0, 0, 0, 0, 0, 0)), TLS_OK, "an empty policy: verifies");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(ica, 0)), TLS_ERR_CERT_INVALID,
-      "the INTERMEDIATE's key denied: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(xr, 0)), TLS_ERR_CERT_INVALID,
-      "the cross-signed root's key denied: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(leaf, 0)), TLS_ERR_CERT_INVALID, "the LEAF's key denied: refused");
-    if (anchor != 0) {
-        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(anchor, 0)), TLS_ERR_CERT_INVALID,
-          "the trust anchor's key denied: refused");
+    # D75: every row below reads the chain against the system set (_tp_ms answers -99 without it).
+    if (nr == 0) {
+        assert_neq(anchor, 0, "DigiCert Global Root G2 is in the system set and anchors the chain");
+        assert_eq(_tp_ms(leaf, inters, 0), TLS_OK, "no policy: the chain verifies (control)");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, 0)), TLS_OK, "an unrelated key denied: verifies");
+        assert_eq(_tp_ms(leaf, inters, _tn_pol_new(0, 0, 0, 0, 0, 0)), TLS_OK, "an empty policy: verifies");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(ica, 0)), TLS_ERR_CERT_INVALID,
+          "the INTERMEDIATE's key denied: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(xr, 0)), TLS_ERR_CERT_INVALID,
+          "the cross-signed root's key denied: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(leaf, 0)), TLS_ERR_CERT_INVALID, "the LEAF's key denied: refused");
+        if (anchor != 0) {
+            assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(anchor, 0)), TLS_ERR_CERT_INVALID,
+              "the trust anchor's key denied: refused");
+        }
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, ica)), TLS_ERR_CERT_INVALID,
+          "the intermediate's key second in the list: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(ica)), TLS_ERR_CERT_INVALID,
+          "the intermediate denied byte for byte (the Disallowed store's form): refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(other)), TLS_OK, "an unrelated certificate denied: verifies");
+        # 6.7.14: the CTL's other form, the SHA-384 of a SHA-384-signed certificate's TBS. The leaf, the
+        # intermediate and the cross-signed root are sha384WithRSA; the anchor is sha256WithRSA.
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(ica, 0)), TLS_ERR_CERT_INVALID,
+          "the INTERMEDIATE's TBS SHA-384 denied (6.7.14): refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(xr, 0)), TLS_ERR_CERT_INVALID,
+          "the cross-signed root's TBS SHA-384 denied: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(leaf, 0)), TLS_ERR_CERT_INVALID,
+          "the LEAF's TBS SHA-384 denied: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, ica)), TLS_ERR_CERT_INVALID,
+          "the intermediate's TBS SHA-384 second in the list: refused");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, 0)), TLS_OK, "an unrelated TBS SHA-384 denied: verifies");
+        if (anchor != 0) {
+            assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(anchor, 0)), TLS_OK,
+              "the SHA-256-signed anchor's TBS SHA-384 listed: verifies (only SHA-384-signed ones are judged by it)");
+            # 6.7.15: every digest's list — the anchor is sha256WithRSA, so its 32-byte signature hash binds it.
+            assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, anchor)), TLS_ERR_CERT_INVALID,
+              "the SHA-256-signed anchor's TBS SHA-256 denied (6.7.15): refused");
+            assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(20, anchor)), TLS_OK,
+              "  its TBS SHA-1 listed: verifies (not its signature hash)");
+        }
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, other)), TLS_OK, "an unrelated TBS SHA-256 denied: verifies");
+        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(64, ica)), TLS_OK,
+          "the SHA-384-signed intermediate's TBS SHA-512 listed: verifies (not its signature hash)");
     }
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_keys(other, ica)), TLS_ERR_CERT_INVALID,
-      "the intermediate's key second in the list: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(ica)), TLS_ERR_CERT_INVALID,
-      "the intermediate denied byte for byte (the Disallowed store's form): refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_cert(other)), TLS_OK, "an unrelated certificate denied: verifies");
-    # 6.7.14: the CTL's other form, the SHA-384 of a SHA-384-signed certificate's TBS. The leaf, the
-    # intermediate and the cross-signed root are sha384WithRSA; the anchor is sha256WithRSA.
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(ica, 0)), TLS_ERR_CERT_INVALID,
-      "the INTERMEDIATE's TBS SHA-384 denied (6.7.14): refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(xr, 0)), TLS_ERR_CERT_INVALID,
-      "the cross-signed root's TBS SHA-384 denied: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(leaf, 0)), TLS_ERR_CERT_INVALID,
-      "the LEAF's TBS SHA-384 denied: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, ica)), TLS_ERR_CERT_INVALID,
-      "the intermediate's TBS SHA-384 second in the list: refused");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(other, 0)), TLS_OK, "an unrelated TBS SHA-384 denied: verifies");
-    if (anchor != 0) {
-        assert_eq(_tp_ms(leaf, inters, _tp_deny_tbs(anchor, 0)), TLS_OK,
-          "the SHA-256-signed anchor's TBS SHA-384 listed: verifies (only SHA-384-signed ones are judged by it)");
-        # 6.7.15: every digest's list — the anchor is sha256WithRSA, so its 32-byte signature hash binds it.
-        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, anchor)), TLS_ERR_CERT_INVALID,
-          "the SHA-256-signed anchor's TBS SHA-256 denied (6.7.15): refused");
-        assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(20, anchor)), TLS_OK,
-          "  its TBS SHA-1 listed: verifies (not its signature hash)");
-    }
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(32, other)), TLS_OK, "an unrelated TBS SHA-256 denied: verifies");
-    assert_eq(_tp_ms(leaf, inters, _tp_deny_sig(64, ica)), TLS_OK,
-      "the SHA-384-signed intermediate's TBS SHA-512 listed: verifies (not its signature hash)");
     # A caller's own bundle carries no system policy: installing one clears it.
     var c = tls_native_new_client("www.microsoft.com", 17);
     store64(c + TLS_CTX_OFF_CA_POLICY, _tp_deny_keys(ica, 0));
     assert_eq(tls_native_set_ca_bundle(c, _ts_p256, _ts_p256_len, 1), TLS_OK, "a caller's bundle installs");
     assert_eq(load64(c + TLS_CTX_OFF_CA_POLICY), 0, "  and clears the policy");
     var d = tls_native_new_client("www.microsoft.com", 17);
-    assert_eq(tls_native_set_ca_system(d), TLS_OK, "the system set installs");
+    var rd = tls_native_set_ca_system(d);
+    if (nr == 0) {
+        assert_eq(rd, TLS_OK, "the system set installs");
+    }
     #ifndef CYRIUS_TARGET_WIN
     assert_eq(load64(d + TLS_CTX_OFF_CA_POLICY), 0, "  POSIX: with no policy (a bundle is a list of roots)");
     #endif
@@ -681,6 +789,7 @@ fn test_ctl_md_sighash_row(): i64 {
 # notBefore precedes the bound, and refuses one issued on or after it — it is the LEAF's date that counts.
 fn test_policy_bound_rows(): i64 {
     test_group("a root's issuance bound: older leaves anchor, newer ones do not (6.7.12, D9)");
+    var nr = _ts_group_noroots();
     var root = _ts_cert(_ts_eku_root, 348);
     var leaf = _ts_cert(_ts_eku_leaf, 432);
     assert_neq(root, 0, "the eku root parses");
@@ -712,7 +821,9 @@ fn test_policy_bound_rows(): i64 {
     store64(inters + 8, ica);
     store64(inters + 16, xr);
     var anchor = _tp_anchor_of(xr);
-    assert_neq(anchor, 0, "the microsoft.com chain's anchor is in the system set");
+    if (nr == 0) {
+        assert_neq(anchor, 0, "the microsoft.com chain's anchor is in the system set");
+    }
     if (anchor != 0) {
         var lnb = x509_cert_not_before(mleaf);
         assert_eq(_tp_ms(mleaf, inters, _tp_bound(anchor, lnb + 1)), TLS_OK,
@@ -1218,6 +1329,9 @@ fn test_store_policy(): i64 {
     syscall(1, 1, " 20 / 32 / 48 / 64-byte signature hashes applied, ", 50);
     fmt_int(_ts_ctl_nx);
     syscall(1, 1, " of other lengths not applied\n", 30);
+    # D75: under wine with no system roots nothing was published, and every row from here on
+    # re-derives the store's own bundle.
+    if (_ts_group_noroots() == 1) { return 0; }
     assert_neq(_tn_ca_sys_pol, 0, "the system set was published with a trust policy");
     if (_tn_ca_sys_pol == 0) { return 0; }
     if (_ts_ctl_present == 1) {
@@ -1333,6 +1447,39 @@ fn _tm_long(sa): i64 {
     return p;
 }
 
+# 6.7.16's D75: under wine a row whose store could not be built (-9) because crypt32 refused one
+# of its properties with GetLastError 120 (the call has no implementation — wine's crypt32 for ids
+# 84, 104, 122, 126 and 127, measured) is named as not run; anywhere else, and for any other
+# failure, it is the row's assert_eq. `_tm_then` is a row that reads the same run (its bound).
+var _tm_badprop = 0;    # the property id the last run's CertSetCertificateContextProperty refused
+var _tm_baderr = 0;     # and its GetLastError
+var _tm_skip = 0;       # 1: the last _tm_eq row was not run
+var _TM_NO_IMPL = 120;  # GetLastError: the call has no implementation
+
+fn _tm_not_run(name): i64 {
+    var a = "  not run: wine's crypt32 does not set certificate property ";
+    syscall(1, 1, a, strlen(a));
+    fmt_int(_tm_badprop);
+    syscall(1, 1, ": ", 2);
+    syscall(1, 1, name, strlen(name));
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn _tm_eq(got, want, name): i64 {
+    _tm_skip = 0;
+    if (got == 0 - 9 && _tm_baderr == _TM_NO_IMPL && _ts_is_wine() == 1) {
+        _tm_skip = 1;
+        return _tm_not_run(name);
+    }
+    return assert_eq(got, want, name);
+}
+
+fn _tm_then(got, want, name): i64 {
+    if (_tm_skip == 1) { return _tm_not_run(name); }
+    return assert_eq(got, want, name);
+}
+
 # ROOT (memory) holds the fixture root with the properties given since _tm_reset; Disallowed
 # (memory) holds nothing (dis 0), the fixture too (1), or a different certificate (2); the trust
 # policy holds the row's deny keys and certs (_tm_nkeys / _tm_ncerts). Run _tn_w_export into a
@@ -1341,6 +1488,8 @@ fn _tm_long(sa): i64 {
 # value in _tm_bound), 0 excluded (nothing written, nothing counted), 2 refused (nothing written,
 # counted once), -1 anything else, -9 the stores could not be built as the row says.
 fn _tm_run(fns, dis_holds, cap): i64 {
+    _tm_badprop = 0;
+    _tm_baderr = 0;
     var open = load64(fns);
     var root = callptr(open, 2, 0, 0, 0, 0);            # CERT_STORE_PROV_MEMORY
     var dis = callptr(open, 2, 0, 0, 0, 0);
@@ -1358,7 +1507,11 @@ fn _tm_run(fns, dis_holds, cap): i64 {
         store64(&blob, load64(_tm_props + i * 24 + 16));
         store64(&blob + 8, load64(_tm_props + i * 24 + 8));
         if (ok == 1) {
-            if ((callptr(_tm_setp, load64(&cc), load64(_tm_props + i * 24), 0, &blob) & 0xFFFFFFFF) == 0) { ok = 0; }
+            if ((callptr(_tm_setp, load64(&cc), load64(_tm_props + i * 24), 0, &blob) & 0xFFFFFFFF) == 0) {
+                ok = 0;
+                _tm_badprop = load64(_tm_props + i * 24);
+                _tm_baderr = syscall(0xF04B) & 0xFFFFFFFF;
+            }
         }
         i = i + 1;
     }
@@ -1516,31 +1669,31 @@ fn test_policy_rows(): i64 {
     _tm_pem_len = _ts_pem(_tm_pem, _ts_p256, _ts_p256_len);
     var cap = 4096;
     # Control and Disallowed.
-    assert_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
-    assert_eq(_tm_run(&fns, 1, cap), 0, "also in Disallowed: excluded, not counted");
-    assert_eq(_tm_run(&fns, 2, cap), 1, "a DIFFERENT certificate in Disallowed: still exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
+    _tm_eq(_tm_run(&fns, 1, cap), 0, "also in Disallowed: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 2, cap), 1, "a DIFFERENT certificate in Disallowed: still exported");
     # 6.7.12: the trust policy's deny list (the disallowed CTL's keys, the Disallowed store's
     # certificates) keeps a root out the way the Disallowed store does.
     _tm_keys = alloc(32);
     _tm_certs = alloc(32);
     _tm_nkeys = 1;
     _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "its key in the CTL's list: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "its key in the CTL's list: excluded, not counted");
     _tm_nkeys = 1;
     _tn_spki_md5(_ts_mr, _ts_mr_len, _tm_keys);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a DIFFERENT key in the CTL's list: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a DIFFERENT key in the CTL's list: exported");
     _tm_ncerts = 1;
     store64(_tm_certs, _ts_p256);
     store64(_tm_certs + 8, _ts_p256_len);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "it, byte for byte, in the policy's deny certs: excluded");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "it, byte for byte, in the policy's deny certs: excluded");
     _tm_nkeys = 1;
     _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
     _tm_with(84, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 0, "refused by name constraints AND its key listed: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "refused by name constraints AND its key listed: excluded, not counted");
     _tm_nkeys = 1;
     _tn_spki_md5(_ts_p256, _ts_p256_len, _tm_keys);
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "a NotBefore root whose key is listed: excluded, no bound");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "a NotBefore root whose key is listed: excluded, no bound");
     # 6.7.14: the CTL's TBS SHA-384s keep a SHA-384-signed root out the same way. The row's certificate
     # is the cross-signed Microsoft TLS RSA Root G2 (sha384WithRSA); the P-256 fixture root is
     # ecdsa-with-SHA256, so a listed SHA-384 of its TBS is not its signature hash.
@@ -1550,169 +1703,169 @@ fn test_policy_rows(): i64 {
     _tm_cert_len = _ts_mr_len;
     _tm_pem = alloc(4096);
     _tm_pem_len = _ts_pem(_tm_pem, _ts_mr, _ts_mr_len);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a SHA-384-signed root, no property: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a SHA-384-signed root, no property: exported");
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs384(_ts_mr);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "  its TBS SHA-384 in the CTL's list: excluded, not counted (6.7.14)");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "  its TBS SHA-384 in the CTL's list: excluded, not counted (6.7.14)");
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs384(_ts_mi);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-384 in the CTL's list: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-384 in the CTL's list: exported");
     _tm_cert = _ts_p256;
     _tm_cert_len = _ts_p256_len;
     _tm_pem = pem0;
     _tm_pem_len = pem0_len;
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs384(_ts_p256);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "the ecdsa-with-SHA256 fixture with the SHA-384 of its TBS listed: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "the ecdsa-with-SHA256 fixture with the SHA-384 of its TBS listed: exported");
     # 6.7.15: the CTL's 32 and 20-byte entries keep a SHA-256 / SHA-1-signed root out the same way.
     _tm_siglen = 32;
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs(_ts_p256, 32);
-    assert_eq(_tm_run(&fns, 0, cap), 0,
+    _tm_eq(_tm_run(&fns, 0, cap), 0,
       "  its TBS SHA-256 (its signature hash) listed: excluded, not counted (6.7.15)");
     _tm_siglen = 32;
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs(_ts_mr, 32);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-256 listed: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT TBS SHA-256 listed: exported");
     _tm_cert = _ts_dn;
     _tm_cert_len = _ts_dn_len;
     _tm_pem = alloc(4096);
     _tm_pem_len = _ts_pem(_tm_pem, _ts_dn, _ts_dn_len);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "DigiNotar Root CA (sha1WithRSA) in ROOT, no property: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "DigiNotar Root CA (sha1WithRSA) in ROOT, no property: exported");
     _tm_siglen = 20;
     _tm_ntbs = 1;
     _tm_tbs = hex_decode("00bbba38b51af4d816e03a4eb309140626879511", 40);
-    assert_eq(_tm_run(&fns, 0, cap), 0,
+    _tm_eq(_tm_run(&fns, 0, cap), 0,
       "  its 20-byte signature hash (crypt32's prop 15) listed: excluded, not counted");
     _tm_siglen = 20;
     _tm_ntbs = 1;
     _tm_tbs = _tp_tbs(_ts_p256, 20);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT 20-byte hash listed: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "  a DIFFERENT 20-byte hash listed: exported");
     _tm_cert = _ts_p256;
     _tm_cert_len = _ts_p256_len;
     _tm_pem = pem0;
     _tm_pem_len = pem0_len;
     # The purposes allow-list (prop 9).
     _tm_with(9, _TM_CS);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
     _tm_with(9, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [codeSigning, serverAuth]: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "purposes [codeSigning, serverAuth]: exported");
     _tm_with(9, _TM_ANY);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
     _tm_with(9, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [] (no purpose at all): not a TLS root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "purposes [] (no purpose at all): not a TLS root");
     _tm_with(9, _TM_CS);
     _tm_with(104, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "not a TLS root AND a disable date: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "not a TLS root AND a disable date: excluded, not counted");
     # A malformed purpose list cannot be judged: refused and counted, never taken.
     _tm_with(9, "3100");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
     _tm_with(9, "3005060300");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes truncated: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes truncated: refused");
     _tm_with(9, "300a06082b0601050507030100");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes [serverAuth] plus a trailing byte: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes [serverAuth] plus a trailing byte: refused");
     _tm_with(9, "3002060030");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with an empty OID: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes with an empty OID: refused");
     _tm_with(9, "3003068101");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with a long-form OID length: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes with a long-form OID length: refused");
     _tm_with(9, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes present but EMPTY: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes present but EMPTY: refused");
     # A purpose list of any length is read whole (size-queried), or refused and counted.
     _tm_with_bytes(9, _tm_long(1), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a 694-byte purpose list ending in serverAuth: read whole, exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a 694-byte purpose list ending in serverAuth: read whole, exported");
     _tm_with_bytes(9, _tm_long(0), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list without serverAuth: not a TLS root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list without serverAuth: not a TLS root");
     _tm_with_bytes(9, _tm_long(1), 694);
-    assert_eq(_tm_run(&fns, 0, 650), 2, "a purpose list too long for the buffer's free tail: refused, COUNTED");
+    _tm_eq(_tm_run(&fns, 0, 650), 2, "a purpose list too long for the buffer's free tail: refused, COUNTED");
     # Root-program name constraints (prop 84): the verifier cannot confine a root to names, so refused.
     _tm_with(84, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
     _tm_with(84, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY name-constraints property: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY name-constraints property: refused");
     _tm_with(9, _TM_CS);
     _tm_with(84, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 0, "name constraints on a root that is not for TLS: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "name constraints on a root that is not for TLS: excluded, not counted");
     # The disable date (prop 104), scoped by prop 122.
     _tm_with(104, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
     _tm_with(104, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY disable date (VeriSign Class 3 G5 has one): refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY disable date (VeriSign Class 3 G5 has one): refused");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [serverAuth]: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [serverAuth]: refused");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_ANY);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [anyExtendedKeyUsage]: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [anyExtendedKeyUsage]: refused");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_CS);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [codeSigning] only: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [codeSigning] only: exported");
     _tm_with(104, _TM_DATE);
     _tm_with(122, "3100");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date with a MALFORMED scope: refused (fails closed)");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date with a MALFORMED scope: refused (fails closed)");
     _tm_with(104, _TM_DATE);
     _tm_with(122, "300a06082b06010505070303ff");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [codeSigning] plus a trailing byte: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [codeSigning] plus a trailing byte: refused");
     _tm_with(122, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a purpose scope with no date carries no distrust: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a purpose scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
-    assert_eq(_tm_run(&fns, 1, cap), 0, "refused by date AND in Disallowed: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 1, cap), 0, "refused by date AND in Disallowed: excluded, not counted");
     # The NotBefore date (prop 126: certificates issued after it are not trusted), scoped by 127.
     # 6.7.12 (D9): a NotBefore date covering the purpose no longer refuses the root — it is exported WITH
     # an issuance bound (3), so the leaves it issued before the date verify, as on SChannel. Until 6.7.11
     # each `3` below was a `2`: refused whole, counted.
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for every purpose: exported WITH a bound");
-    assert_eq(_tm_bound, _TM_DATE_UNIX, "  the bound is the date in Unix seconds, rounded up");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for every purpose: exported WITH a bound");
+    _tm_then(_tm_bound, _TM_DATE_UNIX, "  the bound is the date in Unix seconds, rounded up");
     _tm_with(126, _TM_DATE_EXACT);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date on a whole second: exported with a bound");
-    assert_eq(_tm_bound, _TM_DATE_EXACT_UNIX, "  the bound is that second exactly");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date on a whole second: exported with a bound");
+    _tm_then(_tm_bound, _TM_DATE_EXACT_UNIX, "  the bound is that second exactly");
     _tm_with(126, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY NotBefore date: refused (cannot be judged)");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY NotBefore date: refused (cannot be judged)");
     _tm_with(126, "0080e9e6");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a 4-byte NotBefore date (not a FILETIME): refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a 4-byte NotBefore date (not a FILETIME): refused");
     _tm_with(126, "0080e9e6f9c7d90100");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a 9-byte NotBefore date: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a 9-byte NotBefore date: refused");
     _tm_with(126, "00000000000000ff");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore FILETIME with its top bit set: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore FILETIME with its top bit set: refused");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [serverAuth]: exported with a bound");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [serverAuth]: exported with a bound");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [codeSigning, serverAuth] (Entrust's shape): bounded");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [codeSigning, serverAuth] (Entrust's shape): bounded");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_ANY);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [anyExtendedKeyUsage]: bounded");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [anyExtendedKeyUsage]: bounded");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): no bound");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): no bound");
     _tm_with(126, _TM_DATE);
     _tm_with(127, "3005060300");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with a MALFORMED scope: refused (fails closed)");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with a MALFORMED scope: refused (fails closed)");
     _tm_with(126, _TM_DATE);
     _tm_with(127, "");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with an EMPTY scope value: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with an EMPTY scope value: refused");
     _tm_with(126, _TM_DATE);
     _tm_with_bytes(127, _tm_long(0), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for a 694-byte [codeSigning ...] scope: read whole, exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for a 694-byte [codeSigning ...] scope: read whole, exported");
     _tm_with(126, _TM_DATE);
     _tm_with_bytes(127, _tm_long(1), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for a 694-byte scope ending in serverAuth: bounded");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for a 694-byte scope ending in serverAuth: bounded");
     _tm_with(127, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_CS);
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a Disable date for [codeSigning] but NotBefore for all: bounded");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a Disable date for [codeSigning] but NotBefore for all: bounded");
     _tm_with(104, _TM_DATE);
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a Disable date for all AND a NotBefore date: refused (Disable wins)");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a Disable date for all AND a NotBefore date: refused (Disable wins)");
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 1, cap), 0, "a NotBefore date AND in Disallowed: excluded, no bound");
+    _tm_eq(_tm_run(&fns, 1, cap), 0, "a NotBefore date AND in Disallowed: excluded, no bound");
     _tm_with(126, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, 300), 2, "a bounded root that does not fit the buffer: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, 300), 2, "a bounded root that does not fit the buffer: refused, counted");
     # A block that does not fit the buffer is refused and counted, never silently dropped.
-    assert_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
     return 0;
 }
 
@@ -1726,47 +1879,47 @@ fn test_policy_rows_client(): i64 {
     assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
     var cap = 4096;
     _tm_pu = _TN_PURPOSE_CLIENT;
-    assert_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
     _tm_with(9, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [serverAuth]: NOT a client root, not counted (6.6.16: exported)");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "purposes [serverAuth]: NOT a client root, not counted (6.6.16: exported)");
     _tm_with(9, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [clientAuth]: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "purposes [clientAuth]: exported");
     _tm_with(9, _TM_SA_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [serverAuth, clientAuth]: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "purposes [serverAuth, clientAuth]: exported");
     _tm_with(9, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning, serverAuth]: not a client root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning, serverAuth]: not a client root");
     _tm_with(9, _TM_ANY);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
     _tm_with(9, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes []: not a client root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "purposes []: not a client root");
     _tm_with(9, "3100");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
     _tm_with(84, "3000");
-    assert_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
-    assert_eq(_tm_run(&fns, 1, cap), 0, "in Disallowed: excluded, not counted");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
+    _tm_eq(_tm_run(&fns, 1, cap), 0, "in Disallowed: excluded, not counted");
     # A dated distrust is scoped by ITS purpose list, read for the client purpose.
     _tm_with(104, _TM_DATE);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [clientAuth]: refused");
+    _tm_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [clientAuth]: refused");
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [serverAuth] only: exported for client authentication");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [serverAuth] only: exported for client authentication");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [clientAuth]: exported with a bound (6.7.12)");
+    _tm_eq(_tm_run(&fns, 0, cap), 3, "a NotBefore date for [clientAuth]: exported with a bound (6.7.12)");
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning, serverAuth]: no bound for client authentication");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning, serverAuth]: no bound for client authentication");
     _tm_with_bytes(9, _tm_long(1), 694);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list ending in serverAuth: not a client root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list ending in serverAuth: not a client root");
     # The mirror, for the server purpose: a [clientAuth] root is not a TLS server anchor.
     _tm_pu = _TN_PURPOSE_SERVER;
     _tm_with(9, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "server purpose, purposes [clientAuth]: not a server root");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "server purpose, purposes [clientAuth]: not a server root");
     _tm_with(9, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "server purpose, purposes [serverAuth]: exported (control)");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "server purpose, purposes [serverAuth]: exported (control)");
     return 0;
 }
 
@@ -1799,13 +1952,13 @@ fn test_policy_client_chain(): i64 {
     # Store purposes [serverAuth]: the server-purpose export anchors a SERVER chain (control) ...
     _tm_pu = _TN_PURPOSE_SERVER;
     _tm_with(9, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth] root: in the server-purpose export");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth] root: in the server-purpose export");
     assert_eq(_tm_verify(TLS_ROLE_CLIENT, leaf, _TN_PURPOSE_SERVER), TLS_OK,
       "  control: a client ctx on that export verifies the leaf as a TLS server");
     # ... and the client-purpose export, which a server ctx installs, does not hold it.
     _tm_pu = _TN_PURPOSE_CLIENT;
     _tm_with(9, _TM_SA);
-    assert_eq(_tm_run(&fns, 0, cap), 0, "[serverAuth] root: NOT in the client-purpose export");
+    _tm_eq(_tm_run(&fns, 0, cap), 0, "[serverAuth] root: NOT in the client-purpose export");
     _tm_out_len = 0;
     # The chain against what 6.6.16 installed on a server ctx (the server-purpose export):
     _tm_pu = _TN_PURPOSE_SERVER;
@@ -1816,11 +1969,11 @@ fn test_policy_client_chain(): i64 {
     # Store purposes [clientAuth]: the client-purpose export holds it, and the client chain verifies.
     _tm_pu = _TN_PURPOSE_CLIENT;
     _tm_with(9, _TM_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "[clientAuth] root: in the client-purpose export");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "[clientAuth] root: in the client-purpose export");
     assert_eq(_tm_verify(TLS_ROLE_SERVER, leaf, _TN_PURPOSE_CLIENT), TLS_OK,
       "  a server ctx on that export verifies the leaf as a TLS client");
     _tm_with(9, _TM_SA_CA);
-    assert_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth, clientAuth] root: in the client-purpose export");
+    _tm_eq(_tm_run(&fns, 0, cap), 1, "[serverAuth, clientAuth] root: in the client-purpose export");
     assert_eq(_tm_verify(TLS_ROLE_SERVER, leaf, _TN_PURPOSE_CLIENT), TLS_OK, "  and the client chain verifies");
     _tm_cert = _ts_p256;
     _tm_cert_len = _ts_p256_len;

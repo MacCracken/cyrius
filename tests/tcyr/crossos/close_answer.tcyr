@@ -11,6 +11,8 @@
 # (`_pe_w32_errno_site`, the table the read / write / open / seek reroutes use), and a handle that
 # is not open (ERROR_INVALID_HANDLE) is -EBADF, -9, as on Linux and macOS. The first group is the
 # filed repro, its file named per process (test_scratch). CHANGELOG [6.7.15]
+# The last group (issues/2026-10-19-pe-close-of-negative-fd-closes-a-pseudo-handle.md): a negative fd
+# answers -9 on Windows too, without reaching CloseHandle (6.7.16's D78). CHANGELOG [6.7.16]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -46,6 +48,16 @@ assert_eq(gv, 0, "...and its payload is 0 (Windows said Ok(1))");
 var bt, bv = file_close_r(0 - 999);
 assert_eq(is_err_result(bt), 1, "file_close_r(-999) is Err (Windows said Ok(0))");
 assert_eq(bv, IoBadFd, "...and its payload is IoBadFd");
+
+test_group("a negative fd is no descriptor: -EBADF (6.7.16's D78)");
+# Windows handed every negative fd to CloseHandle as the HANDLE: -1 / -2 are the current-process /
+# -thread pseudo-handles, which it "closes" with TRUE, so these answered 0 there (Linux -9).
+assert_eq(sys_close(0 - 1), 0 - 9, "sys_close(-1) is -9 (Windows answered 0)");
+assert_eq(sys_close(0 - 2), 0 - 9, "sys_close(-2) is -9 (Windows answered 0)");
+assert_eq(file_close(0 - 1), 0 - 9, "file_close(-1) is -9 (Windows answered 0)");
+var nt, nv = file_close_r(0 - 1);
+assert_eq(is_err_result(nt), 1, "file_close_r(-1) is Err (Windows said Ok(0))");
+assert_eq(nv, IoBadFd, "...and its payload is IoBadFd");
 
 xunlink(p);
 

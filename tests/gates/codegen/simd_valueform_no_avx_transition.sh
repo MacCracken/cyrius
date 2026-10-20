@@ -1,5 +1,5 @@
 #!/bin/sh
-# check: serial — a timing measurement (value form vs a 128-bit reference); under the parallel pool's load it read 190% once (6.7.6), alone 100%
+# check: serial — a timing measurement (value form vs a 128-bit reference); under the parallel pool's load it read 190% once (6.7.6), alone 100%; ~190 ms fixtures read by their own CPU time, re-measured up to 3 rounds, since 6.7.16
 # simd_valueform_no_avx_transition.sh — v6.5.60, REWRITTEN v6.5.62.
 #
 # The fixed-lane SIMD wrappers must not pay a per-call AVX2 dispatch, and the ymm kernel must
@@ -39,6 +39,24 @@
 #
 # ⚠ RATIOS, not absolute times, measured back-to-back on the same box so load moves both halves
 # together.
+#
+# ⚠ AND EVERY TIMED FIXTURE RUNS ~180 ms AND REPORTS ITS OWN CPU TIME, IN MICROSECONDS, BEST OF 5
+# (6.7.16). Axes 1 and 2a timed 8-35 ms fixtures by the wall clock in whole ms, where 1 ms is ~7 %
+# of a ratio and a few ms of preemption on one side crosses a bound: axis 2a read `_ptr chain 27ms
+# vs dispatch-free reference 18ms (150%, bound 135%)` on a correct tree at load ~20 (axis 1 read
+# 190 % once, 6.7.6). Longer fixtures alone do not cure it: measured at load ~32 on this 16-thread
+# box (20 busy loops beside the usual load), ~180 ms fixtures by the WALL clock in µs read axis 2a
+# 94-166 % honest against 135-208 % for the dispatch mutant — no bound separates those — whether
+# timed back to back, interleaved, or both pinned to one CPU. The wall clock counts the time a
+# fixture waits for a CPU; its own CPU time does not. Each fixture therefore prints
+# CLOCK_PROCESS_CPUTIME_ID in µs as it exits (`_cpu_report`, prepended by `build`) and `best_cpu`
+# keeps the lowest of 5: at that same load axis 2a read 113-116 % honest, 148-151 % mutant; axis 1
+# 90-92 % / 180-193 %. Under load that VARIES (other sessions, load 11-23) the honest reading still
+# wanders (2a 82-127 %), so a reading at or over a bound is re-measured, up to 3 rounds
+# (`ratio_rounds`), and the axis fails only when every round is over: the regressions these bounds
+# guard read over them every round. A reference whose CPU time is under 100,000 µs FAILS by name
+# (`too-fast`): these are the regression axes, and a skip would hide them. CHANGELOG [6.7.16];
+# issues/2026-10-19-simd-valueform-axis2a-reads-150-percent-under-host-load.md
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: simd_valueform_no_avx_transition: cannot cd to $R"; exit 1; }
@@ -46,27 +64,62 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: simd_valueform_no_avx_transition:
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL simd_valueform_no_avx_transition: no build/cycc"; exit 1; }
 
-build() { "$CC" < "$T/$1.cyr" > "$T/$1" 2>/dev/null || { echo "FAIL simd_valueform_no_avx_transition: $1 fixture did not compile"; exit 1; }; chmod +x "$T/$1"; }
-best() {  # best of 5, in ms
-  b=999999; r=0
+# Every fixture is compiled behind this head: `_cpu_report()` prints the process's CPU time
+# (clock_gettime(CLOCK_PROCESS_CPUTIME_ID = 2), x86_64 228) in µs and a newline. Builtins only, so it
+# sits before the fixture's own includes.
+cat > "$T/head.cyr" <<'EOF'
+fn _cpu_report(): i64 {
+    var ts[16];
+    syscall(228, 2, &ts);
+    var us = load64(&ts) * 1000000 + load64(&ts + 8) / 1000;
+    var buf[32];
+    var p = 31;
+    store8(&buf + p, 10);
+    p = p - 1;
+    if (us == 0) { store8(&buf + p, 48); p = p - 1; }
+    while (us > 0) { store8(&buf + p, 48 + us % 10); us = us / 10; p = p - 1; }
+    syscall(1, 1, &buf + p + 1, 31 - p);
+    return 0;
+}
+EOF
+build() { cat "$T/head.cyr" "$T/$1.cyr" | "$CC" > "$T/$1" 2>/dev/null || { echo "FAIL simd_valueform_no_avx_transition: $1 fixture did not compile"; exit 1; }; chmod +x "$T/$1"; }
+best_cpu() {  # best of 5 of the CPU time the fixture reports, in µs; `x` when a run printed none
+  b=999999999; r=0
   while [ $r -lt 5 ]; do
-    s=$(date +%s%N); "$1"; e=$(date +%s%N); m=$(( (e - s) / 1000000 ))
-    [ $m -lt $b ] && b=$m
+    m=$("$1" 2>/dev/null) || true
+    case "$m" in ''|*[!0-9]*) echo x; return 0 ;; esac
+    [ "$m" -lt "$b" ] && b=$m
     r=$((r + 1))
   done
   echo $b
 }
-best_us() {  # best of 5, in microseconds (axis 2b: its ratio needs better than 1 ms resolution)
-  b=999999999; r=0
-  while [ $r -lt 5 ]; do
-    s=$(date +%s%N); "$1"; e=$(date +%s%N); m=$(( (e - s) / 1000 ))
-    [ $m -lt $b ] && b=$m
-    r=$((r + 1))
+need_cpu() {  # need_cpu <axis> <fixture> <value>
+  case "$3" in ''|*[!0-9]*) echo "FAIL simd_valueform_no_avx_transition $1: the $2 fixture printed no CPU time — fixture broken, nothing to compare"; exit 1 ;; esac
+}
+# ratio_rounds <axis> <a> <b> <bound>: best_cpu a / best_cpu b, as a percentage, re-measured for up
+# to 3 rounds while it reads at or over the bound. Sets RA / RB / RR (the last round's), RN (the
+# rounds run) and RLOG (every round's reading). A disagreement is RE-MEASURED, never re-judged: the
+# regression each bound guards reads over it on every round, and a FAIL names all three readings.
+ratio_rounds() {
+  RN=0; RLOG=""
+  while [ "$RN" -lt 3 ]; do
+    RA=$(best_cpu "$2"); need_cpu "$1" "${2##*/}" "$RA"
+    RB=$(best_cpu "$3"); need_cpu "$1" "${3##*/}" "$RB"
+    RN=$((RN + 1))
+    RR=$(( RA * 100 / RB ))
+    RLOG="$RLOG ${RA}us/${RB}us ${RR}%;"
+    [ "$RR" -lt "$4" ] && return 0
   done
-  echo $b
+  return 0
 }
 
 # ── axis 1 — the VALUE form must not be slower than a hand-written 128-bit reference ────────
+# 48,000,000 calls (2,000,000 until 6.7.16: ~9 ms): ~185 ms of CPU each on this box, 1.8x the
+# too-fast floor. Measured 2026-10-20 through this gate, three runs each: honest 100-101 % at load
+# ~3-6 and 106-107 % at load ~31 (20 busy loops beside the usual load); the value form routed
+# through the ymm kernel behind a per-call dispatch (the pre-6.5.60 shape: `if (simd_has_avx2() ==
+# 1) { f64v256_add(&r, &a, &b, 4); }` in f64v4_add) 279-293 % and 183-189 % — over the bound on
+# every round of every run. Bound 170 % sits between them.
 cat > "$T/std.cyr" <<'EOF'
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
@@ -74,7 +127,8 @@ fn main(): i64 {
     var a: f64v4 = f64v4_splat(0x3FF0000000000000);
     var b: f64v4 = f64v4_splat(0x4000000000000000);
     var i = 0;
-    while (i < 2000000) { var t: f64v4 = f64v4_add(a, b); i = i + 1; }
+    while (i < 48000000) { var t: f64v4 = f64v4_add(a, b); i = i + 1; }
+    _cpu_report();
     syscall(60, 0, 0, 0, 0, 0);
     return 0;
 }
@@ -87,17 +141,18 @@ fn main(): i64 {
     var a: f64v4 = f64v4_splat(0x3FF0000000000000);
     var b: f64v4 = f64v4_splat(0x4000000000000000);
     var i = 0;
-    while (i < 2000000) { var t: f64v4 = ref_add(a, b); i = i + 1; }
+    while (i < 48000000) { var t: f64v4 = ref_add(a, b); i = i + 1; }
+    _cpu_report();
     syscall(60, 0, 0, 0, 0, 0);
     return 0;
 }
 EOF
 build std; build ref
-S=$(best "$T/std"); F=$(best "$T/ref")
-[ "$F" -ge 2 ] || { echo "FAIL simd_valueform_no_avx_transition: reference ran in ${F}ms — too fast to compare, fixture broken"; exit 1; }
-R100=$(( S * 100 / F ))
+ratio_rounds axis1 "$T/std" "$T/ref" 170
+S=$RA; F=$RB; R100=$RR; RN1=$RN
+[ "$F" -ge 100000 ] || { echo "FAIL simd_valueform_no_avx_transition axis1: too-fast — the reference ran in ${F}us, under 100,000 (a ratio of short runs is noise; lengthen the fixtures, or the fixture is broken)"; exit 1; }
 if [ "$R100" -ge 170 ]; then
-  echo "FAIL simd_valueform_no_avx_transition axis1: stdlib value form ${S}ms vs 128-bit reference ${F}ms (${R100}%, bound 170%)."
+  echo "FAIL simd_valueform_no_avx_transition axis1: stdlib value form vs 128-bit reference, CPU time, bound 170%, every round over it:${RLOG}"
   echo "  The f64v4 VALUE forms are paying an AVX<->SSE transition per call again."
   exit 1
 fi
@@ -111,6 +166,13 @@ fi
 # axis CANNOT FIRE FOR ITS OWN TARGET, which is the vacuous-gate trap this file's header warns
 # about. Measured with a 6-link chain: dispatch-free 100 %, per-call dispatch 160 %. Bound 135 %
 # sits between them.
+# 6.7.16: 7,000,000 passes (500,000 until then: ~15 ms), ~195 ms of CPU each on this box.
+# Re-measured 2026-10-20 through this gate, three runs each: dispatch-free 96-100 % at load ~3-6 and
+# 98-100 % at load ~31; the per-call dispatch mutant (`if (simd_has_avx2() == 1) {
+# f64v256_add(&r, a_ptr, b_ptr, 4); }` in f64v4_add_ptr, the v6.5.24-.61 shape) 161-169 % on every
+# round at load ~3-6. ⚠ At load ~31 the mutant compresses: 136-146 % on every round of two runs, and
+# under 135 % in the third, which axis 2c (the structural backstop below) then failed. The 135 %
+# bound still separates them; on a box that loaded, 2c is what holds.
 cat > "$T/pstd.cyr" <<'EOF'
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
@@ -118,7 +180,7 @@ fn main(): i64 {
     var a: f64v4 = f64v4_splat(0x3FF0000000000000);
     var b: f64v4 = f64v4_splat(0x4000000000000000);
     var i = 0;
-    while (i < 500000) {
+    while (i < 7000000) {
         var t1: f64v4 = f64v4_add_ptr(&a, &b);
         var t2: f64v4 = f64v4_add_ptr(&t1, &b);
         var t3: f64v4 = f64v4_add_ptr(&t2, &b);
@@ -127,6 +189,7 @@ fn main(): i64 {
         var t6: f64v4 = f64v4_add_ptr(&t5, &b);
         i = i + 1;
     }
+    _cpu_report();
     syscall(60, 0, 0, 0, 0, 0);
     return 0;
 }
@@ -139,7 +202,7 @@ fn main(): i64 {
     var a: f64v4 = f64v4_splat(0x3FF0000000000000);
     var b: f64v4 = f64v4_splat(0x4000000000000000);
     var i = 0;
-    while (i < 500000) {
+    while (i < 7000000) {
         var t1: f64v4 = pref_add(&a, &b);
         var t2: f64v4 = pref_add(&t1, &b);
         var t3: f64v4 = pref_add(&t2, &b);
@@ -148,16 +211,17 @@ fn main(): i64 {
         var t6: f64v4 = pref_add(&t5, &b);
         i = i + 1;
     }
+    _cpu_report();
     syscall(60, 0, 0, 0, 0, 0);
     return 0;
 }
 EOF
 build pstd; build pref
-PS=$(best "$T/pstd"); PF=$(best "$T/pref")
-[ "$PF" -ge 4 ] || { echo "FAIL simd_valueform_no_avx_transition axis2a: reference ran in ${PF}ms — too fast to compare, fixture broken"; exit 1; }
-P100=$(( PS * 100 / PF ))
+ratio_rounds axis2a "$T/pstd" "$T/pref" 135
+PS=$RA; PF=$RB; P100=$RR; RN2=$RN
+[ "$PF" -ge 100000 ] || { echo "FAIL simd_valueform_no_avx_transition axis2a: too-fast — the reference ran in ${PF}us, under 100,000 (the regression axis must not skip; lengthen the fixtures, or the fixture is broken)"; exit 1; }
 if [ "$P100" -ge 135 ]; then
-  echo "FAIL simd_valueform_no_avx_transition axis2a: _ptr chain ${PS}ms vs dispatch-free reference ${PF}ms (${P100}%, bound 135%)."
+  echo "FAIL simd_valueform_no_avx_transition axis2a: _ptr chain vs dispatch-free reference, CPU time, bound 135%, every round over it:${RLOG}"
   echo "  A per-call simd_has_avx2() dispatch is back in the fixed-lane _ptr wrappers (that cost ~25% from v6.5.24 to .61)."
   exit 1
 fi
@@ -187,6 +251,11 @@ fi
 # not a win. The real win reads 52-55 % on a quiet box. Mutation (6.7.14): that routing -> RED,
 # eight runs of eight.
 # issues/archived/2026-10-16-simd-valueform-axis2b-reads-100-percent-under-host-load.md
+# 6.7.16: 600,000 passes (150,000 until then) and the fixtures' own CPU time, as axes 1 and 2a (see
+# the header): the 128-bit run ~190 ms, the 256-bit ~100 ms. At 150,000 passes and CPU time the
+# routing mutation above read 86 % — a PASS — in one run of four at load ~18; at 600,000 it read
+# 96-103 % on every round of four runs, honest 51-57 %. The 20,000 µs too-fast floor (a named skip)
+# and the 90 % bound unchanged.
 cat > "$T/hasavx.cyr" <<'EOF'
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
@@ -203,9 +272,10 @@ fn main(): i64 {
     var i = 0;
     while (i < 1024) { store64(&A + i * 8, 0x3FF0000000000000); store64(&B + i * 8, 0x4000000000000000); i = i + 1; }
     var k = 0;
-    while (k < 150000) { f64v_add(&D, &A, &B, 1024); k = k + 1; }
+    while (k < 600000) { f64v_add(&D, &A, &B, 1024); k = k + 1; }
     var bad = 1;
     if (load64(&D + 1023 * 8) == 0x4008000000000000) { bad = 0; }
+    _cpu_report();
     syscall(60, bad, 0, 0, 0, 0);
     return 0;
 }
@@ -218,9 +288,10 @@ fn main(): i64 {
     var i = 0;
     while (i < 1024) { store64(&A + i * 8, 0x3FF0000000000000); store64(&B + i * 8, 0x4000000000000000); i = i + 1; }
     var k = 0;
-    while (k < 150000) { f64v256_add(&D, &A, &B, 1024); k = k + 1; }
+    while (k < 600000) { f64v256_add(&D, &A, &B, 1024); k = k + 1; }
     var bad = 1;
     if (load64(&D + 1023 * 8) == 0x4008000000000000) { bad = 0; }
+    _cpu_report();
     syscall(60, bad, 0, 0, 0, 0);
     return 0;
 }
@@ -231,15 +302,16 @@ if [ "$HAS_AVX2" -eq 0 ]; then
 else
 build k128; build k256
 for k in k128 k256; do
-  rc=0; "$T/$k" || rc=$?
+  rc=0; "$T/$k" > /dev/null || rc=$?
   [ "$rc" = 0 ] || { echo "FAIL simd_valueform_no_avx_transition axis2b: the $k fixture exits $rc, want 0 (its last lane 1.0 + 2.0 = 3.0) — fixture broken, nothing to time"; exit 1; }
 done
-K1=$(best_us "$T/k128"); K2=$(best_us "$T/k256")
+ratio_rounds axis2b "$T/k256" "$T/k128" "$KR_BOUND"
+K2=$RA; K1=$RB
 if [ "$K1" -ge 20000 ]; then
-  KR=$(( K2 * 100 / K1 )); KD=" (${K2}us/${K1}us)"
+  KR=$RR; KD=" (${K2}us/${K1}us)"
   if [ "$KR" -ge "$KR_BOUND" ]; then
     echo "FAIL simd_valueform_no_avx_transition axis2b: the ymm kernel no longer wins at batch n"
-    echo "  f64v256_add ${K2}us vs f64v_add ${K1}us over n=1024 x 150,000 (${KR}%, must be < ${KR_BOUND}%)."
+    echo "  f64v256_add vs f64v_add over n=1024 x 600,000, CPU time, must be < ${KR_BOUND}%, every round over it:${RLOG}"
     echo "  If ymm stopped paying even in a batch loop, the wrappers' dispatch removal needs re-deciding."
     exit 1
   fi
@@ -279,5 +351,5 @@ EOF
 build c
 "$T/c" || { echo "FAIL simd_valueform_no_avx_transition axis3: f64v4_add value form is numerically wrong"; exit 1; }
 
-echo "PASS simd_valueform_no_avx_transition: value ${S}ms/${F}ms (${R100}%) · _ptr ${PS}ms/${PF}ms (${P100}%) · ymm batch win ${KR}%${KD} · no per-call dispatch · 4 lanes correct"
+echo "PASS simd_valueform_no_avx_transition: value ${S}us/${F}us CPU (${R100}%, round ${RN1}) · _ptr ${PS}us/${PF}us CPU (${P100}%, round ${RN2}) · ymm batch win ${KR}%${KD} · no per-call dispatch · 4 lanes correct"
 exit 0

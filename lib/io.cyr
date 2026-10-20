@@ -184,8 +184,8 @@ fn xrmdir(path): i64 {
 # exists; it is the same trap `xrmdir` was added for at v6.5.2.
 #
 # Windows DOES route here (83 is in the PE reroute set); so does `xrmdir` since v6.6.6
-# (0xF03B RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos.
-# CHANGELOG [6.5.7]
+# (0xF03B RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos, and on
+# Windows since 6.7.16 (it answered -1 for every failure there). CHANGELOG [6.5.7] [6.7.16]
 fn xmkdir(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var mn = 0;
@@ -410,12 +410,17 @@ fn xstat(path, buf): i64 {
 # dirent record — agnos §4.2 differs structurally from Linux dirent64). agnos
 # getdents #29 (3-arg) / Linux+macOS getdents64 217 (4th `basep` arg ignored on
 # Linux, used by macOS getdirentries). Windows has no getdents — use dir_list.
+# The answer is Linux's on macOS too: the whole records that fit in n, then
+# -EINVAL (-22) when the next one does not (_xgetdents_darwin). CHANGELOG [6.7.16]
 fn xgetdents(fd, buf, n): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_getdents(fd, buf, n);
     #endif
     #ifdef CYRIUS_TARGET_WIN
     return -1;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return _xgetdents_darwin(fd, buf, n);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -425,6 +430,66 @@ fn xgetdents(fd, buf, n): i64 {
     #endif
     #endif
 }
+
+#ifdef CYRIUS_TARGET_MACOS
+# xgetdents on macOS. getdirentries64 fills Darwin's struct direntry — d_reclen @16, a record
+# align8(25 + namlen) bytes, at most 1048 (sizeof(struct direntry)) — and has no "buffer too small"
+# answer a caller can rely on: macOS 13 handed a buffer no record fits never returns (it spins in
+# the kernel, unkillable, its directory locked — 24 bytes, measured on ach), and macOS 27 refuses
+# under 64 bytes (EINVAL) and answers 0 — the end of the directory — when the next record does not
+# fit, losing it and every entry after it. So the kernel never gets a buffer under 1048 bytes, and
+# the answer is Linux's: the whole records that fit, then -EINVAL when the next one does not.
+# Under 1048 the call reads into a private 1048-byte buffer; when every record it read fits in n
+# they are copied out. Otherwise the directory is put back where it was (its lseek position, which
+# Darwin keeps as a cookie) and read again straight into the caller's buffer with exactly the
+# fitting records' bytes (at least 64), which leaves the position after the last record handed
+# back: nothing is lost or repeated. On APFS that re-read returns all of them; a filesystem without
+# extended readdir (devfs, fdesc) converts from old dirents in 3/8 of the buffer and can return
+# fewer, or none — then the directory is put back again and the call answers -EINVAL, so a listing
+# of /dev with n under 1048 can end early (ecb: 96 bytes ended after 592 of 635 entries), never
+# with an entry repeated. n under 64 answers -EINVAL, Darwin's own floor. The same put-back is
+# cxvm's _cx_darwin_getdents, which converts the records too. CHANGELOG [6.7.16]
+fn _xgetdents_darwin(fd, buf, n): i64 {
+    var basep[8];
+    store64(&basep, 0);
+    if (n >= 1048) { return syscall(SYS_GETDENTS64, fd, buf, n, &basep); }
+    if (n < 64) { return 0 - 22; }
+    var c0 = xlseek(fd, 0, 1);
+    if (c0 < 0) { return c0; }
+    var hb[1048];
+    var r = syscall(SYS_GETDENTS64, fd, &hb, 1048, &basep);
+    if (r <= 0) { return r; }
+    var k = _xgetdents_fit(&hb, r, n);
+    if (k >= r) {
+        var i = 0;
+        while (i < r) { store8(buf + i, load8(&hb + i)); i = i + 1; }
+        return r;
+    }
+    xlseek(fd, c0, 0);
+    if (k == 0) { return 0 - 22; }
+    var want = k;
+    if (want < 64) { want = 64; }
+    store64(&basep, 0);
+    var r2 = syscall(SYS_GETDENTS64, fd, buf, want, &basep);
+    if (r2 <= 0) {
+        xlseek(fd, c0, 0);
+        return 0 - 22;
+    }
+    return r2;
+}
+
+# The bytes of the whole Darwin records at the front of hb's first `r` bytes that fit in `n`.
+fn _xgetdents_fit(hb, r, n): i64 {
+    var pos = 0;
+    while (pos < r) {
+        var drl = load16(hb + pos + 16);
+        if (drl <= 0) { break; }
+        if (pos + drl > n) { break; }
+        pos = pos + drl;
+    }
+    return pos;
+}
+#endif
 
 # Reposition the fd offset (whence 0=SET / 1=CUR / 2=END). SYS_LSEEK is carried
 # in every syscall peer (Linux #8, aarch64 #62, macos #8, agnos #58), so this is

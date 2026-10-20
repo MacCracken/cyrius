@@ -355,6 +355,61 @@ mrc=0
 "$TMP/mut/mut.bin" > /dev/null 2>&1 || mrc=$?
 [ "$mrc" != "0" ] || fail "the probe PASSED against a bench_run pinned to one iteration per clock pair — axis D cannot see the defect this release fixed (VACUOUS, which is exactly what it was before v6.5.19)"
 
+# ── D2b. the runtime test's RETRIED rows still see a deterministic defect, every run ──
+# tests/tcyr/crossos/bench_timer_floor.tcyr's three live comparisons (its axes 1, 2 and 4)
+# re-measure both sides for up to 5 rounds and fail only when every round disagrees (6.7.16:
+# 6 of 24 runs RED 24-way on a correct tree, the load alone). A retry must never pass a
+# regression that is not noise, so the tcyr itself is built against two broken stdlib copies
+# here and each row it guards must be RED after round 5 of 5:
+#   MA  the pre-6.5.19 shape — `_bench_chunk_for` returns 1 (a clock pair per iteration) and
+#       `_bench_calibrate_clock` returns 0 (nothing netted): axis 1 (the floor vs an independent
+#       measurement, 0 against ~1,400 ns here) and axis 2 (the 256x row, 1,442 ns against 5)
+#   MB  `bench_run` books each window as ONE op — a slow op reported per window: axis 4
+#       (~1,050,000 ns against ~52,000)
+# Measured at the commit: MA exits 71 in 3.4 s, MB 27 in 0.6 s, the rows RED on every run.
+# The axis's own mutants (the tcyr edited, the gate run): `_btf_retry` answering 1 after its
+# last round -> RED "mutant A left '…agrees with an independent measurement' GREEN";
+# `_BTF_ROUNDS = 1` -> RED "mutant A never reached round 5 of 5". CHANGELOG [6.7.16]
+BTF=tests/tcyr/crossos/bench_timer_floor.tcyr
+[ -f "$BTF" ] || fail "$BTF is gone — axis D2b has nothing to prove"
+for m in A B; do
+    mkdir -p "$TMP/btf$m/lib" || exit 2
+    cp lib/*.cyr "$TMP/btf$m/lib/" || exit 2
+    cp "$BTF" "$TMP/btf$m/t.tcyr" || exit 2
+done
+awk '
+/^fn _bench_chunk_for\(per_ps, err, pairs\): i64 \{$/ { print; print "    return 1;"; skip = 1; next }
+skip == 1 && /^\}$/ { print; skip = 0; next }
+skip == 1 { next }
+/^fn _bench_calibrate_clock\(\): i64 \{$/ { cal = 1 }
+cal == 1 && /^    return best;$/ { print "    return 0;"; cal = 0; next }
+{ print }
+' lib/bench.cyr > "$TMP/btfA/lib/bench.cyr"
+grep -q '^    return 0;$' "$TMP/btfA/lib/bench.cyr" && grep -q '^    return 1;$' "$TMP/btfA/lib/bench.cyr" \
+    || fail "axis D2b's mutant A lacks a forced return — the awk no longer matches _bench_chunk_for / _bench_calibrate_clock in lib/bench.cyr"
+_d2b_site='            _bench_record(b, raw + hraw, chunk + hk, 1 + hp, 1);'
+grep -qxF "$_d2b_site" lib/bench.cyr || fail "axis D2b's mutant B anchor (bench_run's sized-chunk _bench_record) is gone from lib/bench.cyr — re-derive it"
+awk -v site="$_d2b_site" '$0 == site { print "            _bench_record(b, raw + hraw, 1, 1 + hp, 1);"; next } { print }' \
+    lib/bench.cyr > "$TMP/btfB/lib/bench.cyr"
+cmp -s lib/bench.cyr "$TMP/btfB/lib/bench.cyr" && fail "axis D2b's mutant B is a no-op"
+for m in A B; do
+    ( cd "$TMP/btf$m" && "$CC" < t.tcyr > t.bin 2> t.err ) || fail "axis D2b: $BTF does not build against mutant $m's stdlib"
+    chmod +x "$TMP/btf$m/t.bin"
+    brc=0
+    ( cd "$TMP/btf$m" && ./t.bin < /dev/null > t.out 2>&1 ) || brc=$?
+    [ "$brc" != 0 ] || fail "axis D2b: $BTF PASSED against mutant $m's stdlib — its retried rows let a deterministic defect through"
+done
+_d2b_row() {
+    grep -qF "retry: $2 disagreed on round 5 of 5" "$TMP/btf$1/t.out" \
+        || fail "axis D2b: mutant $1 never reached round 5 of 5 of '$2' — the retry stopped early, or the row stopped retrying"
+    grep -qF "FAIL: $3" "$TMP/btf$1/t.out" \
+        || fail "axis D2b: mutant $1 left '$3' GREEN — a retry hid a deterministic defect"
+}
+_d2b_row A "the floor vs an independent measurement" "bench_clock_overhead_ns() agrees with an independent measurement"
+_d2b_row A "bench_run vs the batched path (a sub-floor op)" "bench_run does not report MORE than the batched path for a sub-floor op"
+_d2b_row B "bench_run vs an independently timed slow op" "bench_run matches an independently timed slow op"
+echo "  D2b: $BTF's three retried rows RED after round 5 of 5 on both deterministic mutants (MA: per-iteration, nothing netted; MB: per-window booking)"
+
 # ── D3. the resolution rule, proved by a SCRIPTED clock, and by mutants ──
 # ⭐ WHY A SCRIPTED CLOCK AND NOT A MEASUREMENT. The defect fixed in v6.6.5 is a
 # STATISTICS defect: a mean floor subtracted from a quantity whose minimum is reported.
@@ -910,5 +965,5 @@ EOS
         fail "the ELF build of the $mod-only consumer failed (rc $lrc)"; }
 done
 
-echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule decided per ROW by op count per clock pair, proved by a scripted clock with $nmut/23 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, chrono-only and bench-only consumers both cross-build for PE)"
+echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule decided per ROW by op count per clock pair, proved by a scripted clock with $nmut/23 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, the runtime test's three retried rows RED after 5 rounds on two deterministic mutants, chrono-only and bench-only consumers both cross-build for PE)"
 exit 0

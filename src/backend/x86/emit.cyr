@@ -1945,7 +1945,9 @@ fn _pew_iat_call(S, idx): i64 {
 # 6.7.16 — THE STD-CLOSE (class 2): `sys_close(0 / 1 / 2)` closes the program's real stdin / stdout
 # / stderr, as on Linux (6.7.16's D30, user, 2026-10-19). The fd went to CloseHandle as the HANDLE
 # value 0 / 1 / 2, which is no handle: the close answered -9 and the stream stayed open. Entered
-# with rax = the fd (0..2), rsp 8 mod 16; answers rax = 0, or -errno.
+# with rax = the fd (0..2, or negative), rsp 8 mod 16; answers rax = 0, or -errno.
+#   - A negative fd is no descriptor: -9 (EBADF) before any Win32 call (6.7.16's D78; ECLOSE_PE's
+#     signed compare sends it here).
 #   - GetStdHandle(-10 - fd) is 0 (no such stream) or INVALID_HANDLE_VALUE (closed already): -9,
 #     Linux's EBADF for a descriptor that is not open. CloseHandle(INVALID_HANDLE_VALUE) would
 #     answer TRUE — it is the current-process pseudo-handle (measured on cass and wine).
@@ -1961,6 +1963,8 @@ fn _pew_stub_close(S, t): i64 {
     var at = GCP(S);
     EB(S, 0x53); EB(S, 0x56); EB(S, 0x57);              # push rbx; push rsi; push rdi (rsp 0 mod 16)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);              # test rax, rax
+    var j_neg = _pew_j8(S, 0x78);                       # js .ebadf (a negative fd)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC3);              # mov rbx, rax (the fd)
     EB(S, 0x48); EB(S, 0xF7); EB(S, 0xDB);              # neg rbx
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEB); EB(S, 0x0A); # sub rbx, 10 (rbx = nStdHandle)
@@ -1970,7 +1974,8 @@ fn _pew_stub_close(S, t): i64 {
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x40); EB(S, 0x01); # lea rax, [rax+1]
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01); # cmp rax, 1
     var j_open = _pew_j8(S, 0x77);                      # ja .open (h is neither -1 nor 0)
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 9); # mov rax, -9 (EBADF: not open)
+    _pew_land8(S, j_neg);
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 9); # .ebadf: mov rax, -9 (EBADF: not open)
     var j_ret = _pew_j8(S, 0xEB);                       # jmp .ret
     _pew_land8(S, j_open);
     return _pew_stub_close_open(S, t, at, j_ret);
@@ -2249,6 +2254,11 @@ fn EWRITE_PE(S): i64 {
 # shared std-close stub (`_pew_stub_close`: GetStdHandle, SetStdHandle(INVALID_HANDLE_VALUE), and
 # CloseHandle unless another std slot holds the same HANDLE); any other fd IS the handle, as in
 # `_pe_fd_to_handle_rcx`. CHANGELOG [6.7.16]
+# A NEGATIVE fd answers -9, as on Linux (6.7.16's D78): the compare is signed, so it joins fd
+# 0 / 1 / 2 in the stub, which answers -9 for it before any Win32 call. Unsigned, it reached
+# CloseHandle as the HANDLE, and -1 / -2 are the current-process / -thread pseudo-handles, which
+# CloseHandle "closes" with TRUE: `sys_close(-1)` answered 0. A real handle is a small positive
+# multiple of 4, so the signed compare misroutes none. CHANGELOG [6.7.16]
 fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
     _pe_ensure_stdio(S);
@@ -2258,20 +2268,29 @@ fn ECLOSE_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
-    EB(S, 0x77); EB(S, 0x07);                           # ja +7 → .direct (the fd IS the handle)
-    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno
+    EB(S, 0x7F); EB(S, 0x07);                           # jg +7 → .direct (the fd IS the handle; SIGNED)
+    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno (fd <= 2)
     EB(S, 0xEB); EB(S, 0x16);                           # jmp +22 → .done
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (hObject)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CloseHandle]
     _pe_iat_fixup_add(S, GCP(S), ch_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno
+    _pe_align_unframe(S);                               # .done: mov rsp, rbx; pop rbx
+    return 0;
+}
+
+# A kernel32 BOOL in eax → 0 (TRUE) or -errno through the shared GetLastError stub (FALSE). Emitted
+# right after the call, while rsp is as it was for it (16-aligned: the stub's `call` needs that).
+# ECLOSE_PE (6.7.15), the narrow-path reroutes (`_pe_path_bool1`) and ESETEOF_PE (6.7.16).
+# CHANGELOG [6.7.16]
+fn _pe_bool_errno(S): i64 {
     EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
     EB(S, 0x74); EB(S, 0x04);                           # jz +4 → .fail
     EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax (TRUE: 0)
     EB(S, 0xEB); EB(S, 0x05);                           # jmp +5 → .done
     _pe_w32_errno_site(S, 0);                           # .fail: call <stub>: rax = -errno
-    _pe_align_unframe(S);                               # .done: mov rsp, rbx; pop rbx
-    return 0;
+    return 0;                                           # .done
 }
 
 # v6.0.51: Windows process-creation reroutes (the ai-hwaccel spawn arc).
@@ -3113,7 +3132,7 @@ fn EFLUSHFB_PE(S): i64 {
 #   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
 #   syscall(0xF03E, link, target, flags) → CreateSymbolicLinkW (argc 4; NARROW UTF-8 paths
 #                                          since 6.7.12 — see ESYMLINKW_PE below the path frame)
-#   syscall(0xF03F, h) → SetEndOfFile (argc 2)
+#   syscall(0xF03F, h) → SetEndOfFile (argc 2) — 0, or -errno (no longer the BOOL) since 6.7.16
 fn EGETFINFO_PE(S): i64 {
     _pe_ensure_getfinfo(S);
     _pe_call_4arg_aligned(S, _pe_getfinfo_get());
@@ -3123,6 +3142,9 @@ fn EGETFINFO_PE(S): i64 {
 # fd 0 / 1 / 2 map to the std handles through `_pe_fd_to_handle_rcx`, the EFLUSHFB_PE shape: they
 # reached SetEndOfFile as the HANDLE values 0 / 1 / 2, so `sys_ftruncate(1, n)` of a redirected
 # stdout failed -1 while its two seeks reached the file (6.7.15). CHANGELOG [6.7.16]
+# The answer is 0, or -errno through the shared GetLastError stub (`_pe_bool_errno`) — no longer
+# the raw BOOL, which every caller (lib/syscalls_windows.cyr's sys_ftruncate and
+# `_win_truncate_verified`) folded into -1 (6.7.16's D79). CHANGELOG [6.7.16]
 fn ESETEOF_PE(S): i64 {
     _pe_ensure_seteof(S);
     _pe_ensure_stdio(S);
@@ -3135,8 +3157,8 @@ fn ESETEOF_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+SetEndOfFile]
     _pe_iat_fixup_add(S, GCP(S), se_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16)
     _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
-    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
     return 0;
 }
 
@@ -3788,12 +3810,16 @@ fn _pe_widen_path(S, woff, foff): i64 {
 
 # One narrow path → one BOOL kernel32 call (CreateDirectoryW, DeleteFileW, RemoveDirectoryW).
 # r11 = the UTF-8 path. rcx = the wide path; `zrdx` also zeroes rdx (CreateDirectoryW's
-# lpSecurityAttributes). A refused path is FALSE without the call. BOOL → 0 / -1 (dec+sar).
+# lpSecurityAttributes). TRUE answers 0; FALSE answers -errno through the shared GetLastError
+# stub (`_pe_bool_errno`), so mkdir of an existing directory is -17, rmdir of a non-empty one -39
+# and unlink / rmdir of a missing path -2, as on Linux (6.7.16's D79). Until 6.7.16 every failure
+# was -1 (`dec rax; sar rax, 63`). A refused path (invalid UTF-8, too long) skips the call and
+# stays -1, as EOPEN_PE's does: no Win32 call failed, so no GetLastError is read. CHANGELOG [6.7.16]
 fn _pe_path_bool1(S, idx, zrdx): i64 {
     _pe_path_frame(S, _PE_PATH_FRAME1);
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
     _pe_widen_path(S, 0x80, 0x10080);
-    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax (FALSE if refused)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
     var out = _pe_j(S, 0x84);                           # jz out
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi
@@ -3801,10 +3827,9 @@ fn _pe_path_bool1(S, idx, zrdx): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+api]
     _pe_iat_fixup_add(S, GCP(S), idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (rsp as for the call)
     _pe_j_land(S, out);
     _pe_path_unframe(S);
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
     return 0;
 }
 
@@ -3843,8 +3868,9 @@ fn _pe_path_call1(S, idx, two, dword): i64 {
 
 # v5.11.23: emit Win64 mkdir: `syscall(83, path, mode)` →
 # CreateDirectoryW(lpPathName, lpSecurityAttributes). Drops `mode`
-# (Windows uses ACLs, not POSIX mode bits). Returns 0 on success,
-# -1 on failure (Linux mkdir convention).
+# (Windows uses ACLs, not POSIX mode bits). Returns 0 on success, or
+# a negative errno on failure, as on Linux (-17 for an existing name;
+# -1 for every failure until 6.7.16 — `_pe_path_bool1`).
 #
 # Stack on entry (top→bottom): [mode] [path] [sc_nr=83].
 #
@@ -3887,7 +3913,8 @@ fn EDELETEF_PE(S): i64 {
 # not return until the rename is on disk — the Windows analogue of the directory fsync
 # that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
 # atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
-# 0 (success) / -1 (fail) via the EDELETEF_PE dec+sar idiom. Frame: `_PE_PATH_FRAME2`
+# 0 (success) / -1 (fail) via the dec+sar idiom (EDELETEF_PE's until 6.7.16, which answers
+# -errno now through `_pe_path_bool1`). Frame: `_PE_PATH_FRAME2`
 # (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
@@ -4075,7 +4102,8 @@ fn ESYMLINKW_PE(S): i64 {
 # v6.6.6: RemoveDirectoryW(lpPathName) — `syscall(0xF03B, path)`, the reroute behind
 # lib/io.cyr's `xrmdir` on PE. EDELETEF_PE above with a different kernel32 import:
 # same 1-argument shape ([path] [sc_nr] on entry), same `_pe_path_bool1` (the shared widen,
-# BOOL -> 0/-1, the probed rbx-anchored frame; 6.6.11).
+# BOOL -> 0 / -errno since 6.7.16 — -39 for a non-empty directory, -1 for any failure before —
+# the probed rbx-anchored frame; 6.6.11).
 #
 # WHY IT EXISTS: `xrmdir` returned -1 on Windows with no reroute wired, so the CLI's
 # private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`, created on every run since

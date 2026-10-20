@@ -1583,7 +1583,7 @@ fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
 #          UTF-8 paths since 6.7.12 (the emitter widens them; the link, and an absolute target,
 #          get `\\?\` at 248+ units — a relative target is decoded only);
 #   0xF03F SetEndOfFile(h) → argc 2 — O_TRUNC|O_NOFOLLOW truncates only after the verify, and
-#          sys_ftruncate.
+#          sys_ftruncate; 0 / -errno since 6.7.16 (the BOOL before).
 # Literal-only, like every 0xF0xx id: a number held in a var reaches EPE_SYSCALL_DYNAMIC,
 # which routes Linux numbers only and returns -38 for anything else. CHANGELOG [6.6.9]
 fn _PE_ROUTE_FILEHANDLE(S, sc_num, argc): i64 {

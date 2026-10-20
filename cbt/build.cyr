@@ -1088,15 +1088,14 @@ fn _cbt_tmpdir(): i64 {
         }
         # Only EEXIST is a TAKEN candidate. Anything else (a $TMPDIR that does not exist or
         # is not writable) fails the same way 16 times, and the "candidates were taken"
-        # advice sent the user hunting stale dirs that were never there. PE keeps the loop:
-        # its mkdir reroute reports no errno. CHANGELOG [6.6.9]
-        #ifndef CYRIUS_TARGET_WIN
+        # advice sent the user hunting stale dirs that were never there. CHANGELOG [6.6.9]
+        # PE too since 6.7.16, whose mkdir answers the errno (it answered -1 for every failure,
+        # so a missing %TEMP% read as 16 taken names). CHANGELOG [6.7.16]
         if (mr != 0 - 17) {
             _progress_close();
             _cbt_tmpbase_fail(base, 0 - mr);
             sys_exit(1);
         }
-        #endif
         attempt = attempt + 1;
     }
     # v6.6.6 (bite 24 review) — see the branch above. REACHABLE on POSIX, not just PE:
@@ -1114,15 +1113,19 @@ fn _cbt_tmpdir(): i64 {
 }
 
 # The temp base itself refused the private directory (errno `e`, not EEXIST): name the base,
-# the errno, and whether it came from $TMPDIR. The caller closes the progress line first and
-# exits fail-closed (from inside `_cbt_tmpdir`, where nothing has been created yet).
-# CHANGELOG [6.6.9]
+# the errno, and whether it came from $TMPDIR (on Windows: %TEMP% / %TMP%, 6.7.16). The caller
+# closes the progress line first and exits fail-closed (from inside `_cbt_tmpdir`, where nothing
+# has been created yet). CHANGELOG [6.6.9]
 fn _cbt_tmpbase_fail(base, e): i64 {
     sys_write(STDOUT_FD, "error: cannot create a private temp directory under ", 52);
     sys_write(STDOUT_FD, base, strlen(base));
     sys_write(STDOUT_FD, " (errno ", 8);
     fmt_int_fd(STDOUT_FD, e);
     println(", fail-closed)");
+    #ifdef CYRIUS_TARGET_WIN
+    println("  %TEMP% (%TMP% when TEMP is unset) does not exist or is not writable; point it at a writable directory.");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     if (_cbt_tmpbase_env == 1) {
         sys_write(STDOUT_FD, "  TMPDIR=", 9);
         sys_write(STDOUT_FD, base, strlen(base));
@@ -1130,6 +1133,7 @@ fn _cbt_tmpbase_fail(base, e): i64 {
     } else {
         println("  the temp base does not exist or is not writable; set TMPDIR to an absolute, writable path.");
     }
+    #endif
     println("  cyrius will NOT fall back to a shared temp name (CYRIUS-2026-0005/CYRIUS-2026-0006).");
     return 0;
 }

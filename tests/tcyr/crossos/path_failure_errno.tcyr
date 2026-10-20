@@ -1,0 +1,125 @@
+# path_failure_errno.tcyr — 6.7.16: a failed mkdir / unlink / rmdir / ftruncate / truncate answers
+# the negative errno that names the failure on every target, Windows included.
+#
+# ⛔ THE DEFECT (issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md). The
+# PE path reroutes behind mkdir (83, CreateDirectoryW), unlink (87 and 0xF035, DeleteFileW) and
+# rmdir (0xF03B, RemoveDirectoryW) — `_pe_path_bool1` in src/backend/x86/emit.cyr — turned the BOOL
+# into 0 / -1 and never read GetLastError, and lib/syscalls_windows.cyr's sys_ftruncate /
+# sys_truncate answered -1 at every failing step: the filed pathfail printed `0 -1 -1 -1 -1 0 0` on
+# cass and wine (Linux `0 -17 -39 -2 -2 0 0`), and ftfail `-1 -1 -1 -1` (Linux `-22 -9 -2 -9`).
+#
+# THE FIX (6.7.16's D79 and D80, the user, 2026-10-20). A FALSE BOOL goes through the shared
+# GetLastError stub, the table the open / read / write / seek / close reroutes use (80 / 183 ->
+# -17, 145 -> -39, 2 / 3 -> -2); SetEndOfFile's reroute (0xF03F) answers 0 / -errno too, and
+# sys_ftruncate answers what it cannot truncate — a pipe or console, a read-only descriptor — with
+# -22, as Linux does (and macOS: measured on ecb and ach). Per target: Darwin's ENOTEMPTY is its own
+# 66; the other answers share their numbers. Every name is per process (test_scratch).
+# CHANGELOG [6.7.16]
+#
+# The null device (6.7.16 p16 review): ftruncate of it opened O_WRONLY is -22 on Linux, as for any
+# device. Windows' NUL answered -1 — real Windows' SetEndOfFile fails ERROR_INVALID_FUNCTION, a code
+# the shared table leaves -1 — and wine -9 (its SetEndOfFile says ERROR_INVALID_HANDLE on a handle
+# both seeks had just accepted); both are -22 now. Darwin truncates its null device as a no-op, so
+# macOS answers its own 0 there (measured on ecb and ach). truncate by path is -22 everywhere, macOS
+# included. A cx guest reads its host's answer: -22 on the x86_64 Linux cxvm.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tagged.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# ENOTEMPTY as this target's own kernel spells it (a cx guest reads x86_64 Linux's 39 on every host:
+# cxvm maps a Darwin host's back).
+var notempty = 0 - 39;
+#ifdef CYRIUS_TARGET_MACOS
+notempty = 0 - 66;
+#endif
+
+# The null device by this target's name, and what its ftruncate answers (see the header).
+var nulname = "/dev/null";
+var nul_ftrunc = 0 - 22;
+#ifdef CYRIUS_TARGET_WIN
+nulname = "NUL";
+#endif
+#ifdef CYRIUS_TARGET_MACOS
+nul_ftrunc = 0;
+#endif
+
+# The NUL-terminated `a` followed by `b`, in a fresh allocation.
+fn _pfe_join(a, b): i64 {
+    var na = 0;
+    while (load8(a + na) != 0) { na = na + 1; }
+    var nb = 0;
+    while (load8(b + nb) != 0) { nb = nb + 1; }
+    var p = alloc(na + nb + 1);
+    var i = 0;
+    while (i < na) { store8(p + i, load8(a + i)); i = i + 1; }
+    i = 0;
+    while (i <= nb) { store8(p + na + i, load8(b + i)); i = i + 1; }
+    return p;
+}
+
+var d = test_scratch("pfe_d");
+var f = _pfe_join(d, "/f");
+var m = test_scratch("pfe_missing");
+xunlink(f);
+xrmdir(d);
+
+#ifdef CYRIUS_TARGET_AGNOS
+# agnos's peer takes mkdir / unlink / rmdir LENGTH-CARRYING and has no truncate (-38): the portable
+# pair runs, as in listen_rmdir_wrappers.tcyr.
+var ska = "  SKIP: agnos's mkdir / unlink / rmdir are length-carrying; the portable xmkdir / xrmdir run\n";
+sys_write(1, ska, strlen(ska));
+assert_eq(xmkdir(d, 493), 0, "made the scratch directory");
+assert_eq(xrmdir(d), 0, "xrmdir removes it");
+#endif
+
+#ifndef CYRIUS_TARGET_AGNOS
+test_group("sys_mkdir / sys_unlink / sys_rmdir (the filed repro)");
+assert_eq(sys_mkdir(d, 448), 0, "mkdir of a new directory is 0");
+assert_eq(sys_mkdir(d, 448), 0 - 17, "mkdir of an existing directory is -17 (Windows answered -1)");
+var fd = file_open(f, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_eq(fd >= 0, 1, "the fixture file opens");
+if (fd >= 0) { sys_close(fd); }
+assert_eq(sys_rmdir(d), notempty, "rmdir of a non-empty directory is -ENOTEMPTY (Windows answered -1)");
+assert_eq(sys_unlink(m), 0 - 2, "unlink of a missing path is -2 (Windows answered -1)");
+assert_eq(sys_rmdir(m), 0 - 2, "rmdir of a missing path is -2 (Windows answered -1)");
+
+test_group("xmkdir / xunlink / xrmdir answer the same (on Windows: 0xF035 / 0xF03B)");
+assert_eq(xmkdir(d, 493), 0 - 17, "xmkdir of an existing directory is -17");
+assert_eq(xrmdir(d), notempty, "xrmdir of a non-empty directory is -ENOTEMPTY");
+assert_eq(xunlink(m), 0 - 2, "xunlink of a missing path is -2");
+assert_eq(xrmdir(m), 0 - 2, "xrmdir of a missing path is -2");
+assert_eq(xmkdir(_pfe_join(m, "/sub"), 493), 0 - 2, "xmkdir under a missing parent is -2");
+
+test_group("sys_ftruncate / sys_truncate");
+var w = file_open(f, O_RDWR, 0);
+assert_eq(w >= 0, 1, "the fixture reopens for writing");
+assert_eq(sys_write(w, "abcdefgh", 8), 8, "eight bytes written");
+assert_eq(sys_ftruncate(w, 3), 0, "a good ftruncate is 0");
+assert_eq(sys_lseek(w, 0, 1), 8, "...and leaves the file pointer where it was");
+assert_eq(sys_lseek(w, 0, 2), 3, "...and the file is 3 bytes long");
+assert_eq(sys_ftruncate(w, 0 - 1), 0 - 22, "a negative length is -22");
+if (w >= 0) { sys_close(w); }
+var ro = file_open(f, O_RDONLY, 0);
+assert_eq(ro >= 0, 1, "the fixture reopens read-only");
+assert_eq(sys_ftruncate(ro, 1), 0 - 22, "ftruncate of a read-only descriptor is -22 (Windows answered -1)");
+if (ro >= 0) { sys_close(ro); }
+assert_eq(sys_ftruncate(0 - 999, 3), 0 - 9, "ftruncate of a non-descriptor is -9 (Windows answered -1)");
+var nul = file_open(nulname, O_WRONLY, 0);
+assert_eq(nul >= 0, 1, "the null device opens for writing");
+assert_eq(sys_ftruncate(nul, 3), nul_ftrunc, "ftruncate of the null device is -22 (Windows answered -1; macOS truncates it: 0)");
+if (nul >= 0) { sys_close(nul); }
+assert_eq(sys_truncate(nulname, 3), 0 - 22, "truncate of the null device is -22 (Windows answered -1)");
+assert_eq(sys_truncate(m, 3), 0 - 2, "truncate of a missing path is -2 (Windows answered -1)");
+assert_eq(sys_truncate(f, 1), 0, "a good truncate is 0");
+
+test_group("cleanup succeeds");
+assert_eq(sys_unlink(f), 0, "unlink of the file is 0");
+assert_eq(sys_rmdir(d), 0, "rmdir of the now-empty directory is 0");
+#endif
+
+var r = assert_summary();

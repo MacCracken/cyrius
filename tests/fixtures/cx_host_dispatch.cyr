@@ -122,8 +122,9 @@ fn _cxh_open(): i64 {
 
 # The path calls (6.7.15; issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md):
 # mkdir, stat (the guest's struct stat is x86_64 Linux's, which cxvm fills from the host's: st_mode @24,
-# st_size @48, st_mtime @88), symlink, readlink, rename, unlink, rmdir. 0 the Linux answers, 1 the
-# Windows ones (stat and readlink -38: no PE route; the rest served), 2 neither.
+# st_size @48, st_mtime @88), symlink, readlink, rename, unlink, rmdir; and truncate (6.7.16: it
+# answered -38 on every host while ftruncate was served) cuts the 7-byte file to 3. 0 the Linux
+# answers, 1 the Windows ones (stat and readlink -38: no PE route; the rest served), 2 neither.
 fn _cxh_paths(): i64 {
     syscall(87, "cxh_l");
     syscall(87, "cxh_p");
@@ -142,6 +143,9 @@ fn _cxh_paths(): i64 {
     var fmode = load32(&st + 24) & 61440;
     var fsize = load64(&st + 48);
     var fmt = load64(&st + 88);
+    var tr = syscall(76, "cxh_p", 3);
+    var st2 = syscall(4, "cxh_p", &st);
+    var tsize = load64(&st + 48);
     var sl = syscall(88, "cxh_p", "cxh_l");
     var lb[32];
     var rl = syscall(89, "cxh_l", &lb, 32);
@@ -153,11 +157,13 @@ fn _cxh_paths(): i64 {
     if (mk != 0 || sd != 0 || dmode != 16384) { lin_ok = 0; }        # S_IFDIR
     if (sf != 0 || fmode != 32768 || fsize != 7) { lin_ok = 0; }     # S_IFREG, 7 bytes
     if (fmt < 1000000000) { lin_ok = 0; }                            # a 2001+ mtime, in seconds
+    if (tr != 0 || st2 != 0 || tsize != 3) { lin_ok = 0; }           # truncated to 3 bytes
     if (sl != 0 || rl != 5 || load8(&lb + 4) != 112) { lin_ok = 0; } # readlink: "cxh_p"
     if (rn != 0 || ul != 0 || ug != 0 || rd != 0) { lin_ok = 0; }
     if (lin_ok == 1) { return 0; }
     var pe_ok = 1;
     if (mk != 0 || sd != 0 - 38 || sf != 0 - 38 || rl != 0 - 38) { pe_ok = 0; }
+    if (tr != 0 || st2 != 0 - 38) { pe_ok = 0; }
     if (sl != 0 || rn != 0 || ul != 0 || ug != 0 || rd != 0) { pe_ok = 0; }
     if (pe_ok == 1) { return 1; }
     return 2;
@@ -215,8 +221,8 @@ fn _cxh_dup2(): i64 {
 # 62 and 66 (cxvm maps them back; a Mac's cxvm answered -62 / -66 until 6.7.16); and a number nothing
 # serves answers -ENOSYS 38 — x86_64 Linux's own answer for an unassigned number, cxvm's D55 refusal on
 # every host (spelled the host's way inside cxvm, so the map leaves it 38: Darwin's 38 is ENOTSOCK).
-# 0 the Linux answers, 1 the Windows ones (-40, -1 for the rmdir — the PE peer's sys_rmdir answers -1
-# for every failure — and -38), 2 neither.
+# 0 the Linux answers — a Windows host's too since 6.7.16's D79 (its rmdir answered -1 for every
+# failure: issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md) — 2 neither.
 fn _cxh_errno(): i64 {
     syscall(87, "cxh_el");
     syscall(87, "cxh_et");
@@ -238,7 +244,6 @@ fn _cxh_errno(): i64 {
     var ns = syscall(999);                    # unassigned on x86_64 Linux; not a call cxvm serves
     if (t < 0 || sl != 0 || mk != 0 || nf < 0 || ns != 0 - 38) { return 2; }
     if (lp == 0 - 40 && rd == 0 - 39) { return 0; }
-    if (lp == 0 - 40 && rd == 0 - 1) { return 1; }
     return 2;
 }
 
@@ -463,8 +468,10 @@ var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
 _cxh_row(2, pp > 0, pp == 0 - 38);
+# close(-1) is -9 on Windows too since 6.7.16's D78 (it was 0: CloseHandle of -1, the current-process
+# pseudo-handle).
 var cl = syscall(3, 0 - 1);
-_cxh_row(4, cl == 0 - 9, cl == 0);            # on Windows -1 is the current-process pseudo-handle
+_cxh_row(4, cl == 0 - 9, cl == 0 - 9);
 var kl = syscall(62, me, 0);
 _cxh_row(8, kl == 0, kl == 0 - 38);
 var du = syscall(32, 0 - 1);
@@ -484,7 +491,7 @@ _cxh_row(1024, ph == 0, ph == 1);
 var d2 = _cxh_dup2();
 _cxh_row(2048, d2 == 0, d2 == 1);
 var en = _cxh_errno();
-_cxh_row(4096, en == 0, en == 1);
+_cxh_row(4096, en == 0, en == 0);
 # kill's signal is x86_64 Linux's number on every host (6.7.16,
 # issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
 # Darwin host maps the guest's number to its own, and refuses one it lacks with the same -22).

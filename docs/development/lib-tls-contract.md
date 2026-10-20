@@ -212,6 +212,13 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   legacy_session_id over 32 bytes or a byte after the ClientHello's extension block (decode_error;
   until 6.7.15 bytes after the block were ignored), no cipher suite in common and no shared group
   (handshake_failure). A second ClientHello that no longer offers TLS 1.3 is illegal_parameter.
+  The extension block is walked once before any extension is looked up: an entry overrunning it or
+  a 1-3 byte tail after its last whole extension is decode_error (6.7.16, the user's D81 — until
+  then the tail was never read and the hello negotiated), an empty legacy_compression_methods does
+  not parse either (decode_error), and once the hello parses, an extension type named twice
+  (RFC 8446 §4.2; the user's D82) and a legacy_compression_methods other than the single null method
+  (RFC 8446 §4.1.2; the user's D83) are illegal_parameter — until 6.7.16 the server negotiated on
+  the first copy and never read the compression byte.
   **Which version a ClientHello asks for is its supported_versions' alone** (RFC 8446 §4.2.1): one
   listing 0x0304 is TLS 1.3; one without it, or without the extension, is TLS 1.2 — a key_share
   does not make it 1.3 (until 6.6.15 it did, so the server negotiated 1.3 with a client that had
@@ -239,7 +246,11 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   length overruns the block — the block is walked once before any extension is looked up — and a
   message too short for its random, session id or cipher_suites (6.7.16, the user's D32 — until
   then the first four negotiated, an overrunning extension read as absent: no extended master
-  secret, no ALPN, the server's first group; the short messages failed with no alert sent).
+  secret, no ALPN, the server's first group; the short messages failed with no alert sent). Once
+  the hello parses, a compression_methods list without the null method (RFC 5246 §7.4.1.2: it MUST
+  contain it — the ServerHello names it; the user's D83) and an extension type named twice
+  (§7.4.1.4; the user's D82) are illegal_parameter (6.7.16 — until then both negotiated, the second
+  on the first copy); null anywhere in the list is accepted.
   `tls_native_accept`, which routes a 1.2 hello here, refuses them the same way (its version
   sniffer already refused some: no compression byte, an overrunning list, a short message, an
   extension overrunning the block before any supported_versions). A ClientHello that ends after

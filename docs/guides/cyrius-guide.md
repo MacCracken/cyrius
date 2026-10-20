@@ -4272,8 +4272,10 @@ past `n`, so under-sizing `dst` is a memory-corruption footgun.
 
 > The bare `f32v8_*` builtins emit **unconditional AVX2** (they `#UD` on a
 > pre-AVX2 CPU). Call them only when `simd_has_avx2()` is true, or use the
-> `lib/simd.cyr` wrappers below, which pick the AVX2 or SSE-fallback path
-> for you.
+> `lib/simd.cyr` wrappers below, which run on any x86: their add / sub / mul
+> take the 2×SSE path with no per-call dispatch (since v6.5.62 — at a fixed
+> lane count the dispatch call cost more than the ymm kernel saved), and
+> their fma / dot pick the AVX2 path when the CPU has it.
 
 ### `lib/simd.cyr` typed wrappers
 
@@ -4295,11 +4297,11 @@ var l0 = f32v4_lane0(r);                 # → f32 bit pattern of lane 0
 # Pointer form — pass addresses; `&IDENT` auto-routes to f32v4_add_ptr
 var r2: f32v4 = f32v4_add(&a, &b);
 
-# 256-bit wrappers self-select AVX2 vs 2×SSE at runtime
+# 256-bit wrappers run on any x86 (add / sub / mul: 2×SSE; fma / dot: AVX2 when present)
 var x: f32v8 = f32v8_make(f32_from(1.0), f32_from(2.0), f32_from(3.0), f32_from(4.0),
                           f32_from(5.0), f32_from(6.0), f32_from(7.0), f32_from(8.0));
 var y: f32v8 = f32v8_splat(f32_from(2.0));
-var z: f32v8 = f32v8_add_ptr(&x, &y);    # vaddps ymm on AVX2, else 2×SSE addps
+var z: f32v8 = f32v8_add_ptr(&x, &y);    # 2×SSE addps, no per-call dispatch
 
 # Integer vectors
 var p: i32v4 = i32v4_make(1, 2, 3, 4);
@@ -4325,9 +4327,18 @@ if (simd_has_fma()  == 1) { /* vfmadd231ps available */ }
 ```
 
 `simd_has_avx2()` tests `CPUID.7.EBX` bit 5; `simd_has_fma()` tests
-`CPUID.1.ECX` bit 12 (a *different* bit). The `f32v8_*` wrappers call these
-internally and fall back to the 128-bit SSE ops (2 × 128-bit iterations)
-when a feature is absent, so consumer code stays correct on any x86 CPU.
+`CPUID.1.ECX` bit 12 (a *different* bit). The fma / dot wrappers read these,
+cached, and fall back to the 128-bit SSE ops (2 × 128-bit iterations) when a
+feature is absent, so consumer code stays correct on any x86 CPU:
+`f32v8_fma_ptr` (the FMA bit) and `f32v8_dot_ptr` (the AVX2 bit), and
+`f64v4_fmadd` / `f64v4_fmadd_ptr` and `f64v4_dot` / `f64v4_dot_ptr` (the AVX2
+bit). The f32v8 pair dispatches only under its `_ptr` name: `f32v8_fma` and
+`f32v8_dot` are the bare builtins above — unconditional AVX2, with the lane
+count as an argument — and the `&IDENT` routing does not reach the wrapper
+from them. The add / sub / mul / div wrappers take the 128-bit path
+unconditionally (v6.5.60 / v6.5.62). Where
+ymm genuinely pays — a batch loop over many lanes — call the `f64v256_*` /
+`f32v8_*` builtins directly behind `simd_has_avx2()`.
 `cycc` itself never calls the AVX2 ops, so the compiler stays pure SSE2 and
 self-hosts everywhere.
 
@@ -8027,6 +8038,12 @@ the lock got in between); the held mode is recorded as a lock on one more byte b
 (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies with the handle. Changing the mode
 (SH ↔ EX) drops the old lock first, as flock's conversion does. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
+`xgetdents(fd, buf, n)` answers as Linux's getdents64 does on every target that has one: the whole
+records that fit in `n`, then -22 (-EINVAL) when the next does not — on macOS too since 6.7.16
+(6.7.16's D77), where `n` under 64 is -22 and Darwin's `getdirentries64` is never handed a buffer
+under 1048 bytes (macOS 13 spun forever in the kernel on one no record fits; macOS 27 answered 0, a
+false end). A `/dev` (devfs) listing under 1048 bytes may end early with -22 there, never with an
+entry repeated; list with 1048 bytes or more to be sure of every entry.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
 plus `sys_chdir` and `signal_default`, which had no counterpart to `signal_ignore` even
@@ -8422,6 +8439,29 @@ never fired and `file_close_r` was never `Err`.
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
+| `sys_close(-1)`, `sys_close(-2)` | -9 | 0 | 0; -9 since 6.7.16 |
+| `sys_mkdir(dir)` of an existing directory | -17 | -1 | -1; -17 since 6.7.16 |
+| `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
+| `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
+| `sys_ftruncate` of a pipe, the null device (`NUL`) or a read-only fd | -22 (macOS: 0 for `/dev/null`) | -1 | -1; -22 since 6.7.16 |
+| `sys_ftruncate(-999, n)` (not a descriptor) | -9 | -1 | -1; -9 since 6.7.16 |
+| `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
+
+A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
+current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
+`sys_close(fd)` of a failed open's -1 read as a good close; `file_close_r(-1)` is `Err(IoBadFd)`.
+
+`mkdir`, `unlink` and `rmdir` (`sys_*` and `xmkdir` / `xunlink` / `xrmdir`: `CreateDirectoryW`,
+`DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
+through the same table since 6.7.16 — an existing name -17 (`ERROR_ALREADY_EXISTS`), a non-empty
+directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path -2, access denied
+-13 — where each answered -1 for every failure. `sys_ftruncate` answers -22 for a descriptor it
+cannot truncate, as Linux does: a pipe or a console (the seek is -29 there), a device such as `NUL`
+(`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
+`/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,
+on Windows only, an `O_APPEND` one (its handle has `FILE_APPEND_DATA` without `FILE_WRITE_DATA`;
+Linux truncates it). `sys_truncate("NUL", n)` is -22 too, as `truncate` of `/dev/null` is on Linux
+and macOS. A path that is not valid UTF-8 still answers -1: no Win32 call is made for it.
 
 A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
 std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later
@@ -9071,6 +9111,11 @@ The rules, in order:
    `sys_getrlimit` are real (Darwin 123 / 194 — but `RLIMIT_NOFILE` is 8 there, not 7), and the
    xattr calls and `sys_statx` return -78: Darwin's xattr calls take two extra arguments and
    Darwin has no statx. PE and agnos decline all fifteen with -38.
+   ⭐ A stdlib wrapper with no route declines in the HOST's numbering: -78 on both Macs
+   (Darwin's ENOSYS; Darwin's 38 is ENOTSOCK), -38 on Linux, Windows, agnos and cx. Until 6.7.16
+   `sys_prctl`, `sys_gettid` and `sys_sched_kicks` answered -38 on macOS (6.7.16's D76);
+   `tests/gates/platform/macos_declines_answer_darwin_enosys.sh` is the census of every decline a
+   macOS build reaches.
    In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
    then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
    `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,

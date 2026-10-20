@@ -21,7 +21,8 @@
 # builds once and runs on pi, ecb, ach and cass: raw x86-Linux syscalls, one bit per row, a
 # `cxh lin=<mask> pe=<mask>` line, exit 77 when every row has the x86_64-Linux answer, 78 when every
 # row has the Windows one (the exit is exit_group's own row). Rows: getpid > 0; getppid > 0;
-# close(-1) -9; kill(getpid(), 0) 0; dup(-1) -9; lseek(-1, 0, 0) -9; sched_yield 0; fork — the parent
+# close(-1) -9 (Windows too since 6.7.16's D78; it answered 0, CloseHandle of the current-process
+# pseudo-handle); kill(getpid(), 0) 0; dup(-1) -9; lseek(-1, 0, 0) -9; sched_yield 0; fork — the parent
 # sees the child's pid and the child (which sees 0) writes its getpid() to a file the parent reads
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never
@@ -29,14 +30,15 @@
 # (FD_CLOEXEC set on the copy); the path calls (6.7.15,
 # issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
-# fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
+# fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir, and truncate to 3
+# bytes (6.7.16: -38 on every host until then, while ftruncate was served) (Windows: stat and
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
 # issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
 # fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub); a failure's errno (6.7.16,
 # issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
 # -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
 # unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
-# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38);
+# ENOTSOCK) (Windows the same since 6.7.16's D79 — its rmdir answered -1 for every failure);
 # kill(getpid(), 99) -22 (6.7.16, issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
 # signal no host has; Windows -38). The signal map itself (SIGUSR1 10 is Darwin's 30, 10 there is
 # SIGBUS) is held by the ecb / ach legs of scripts/cross-os-selfhost.sh, which run the filed repro
@@ -105,6 +107,8 @@
 #       on ecb and ach exit 15, `lin=16384` (the 96-byte listing misses names), measured
 # MU13 (6.7.16) `_cx_host_open` without its Windows -13 -> -17 rule -> no local axis sees it (wine's
 #       CreateFileW says ERROR_FILE_EXISTS): on cass the fixture exits 2, `pe=32768`, measured
+# MU15 (6.7.16, p16) cxvm without its truncate (76) arm -> RED 3: axes 2 / 3 exit 11 (`lin=1024`:
+#       truncate -38), axis 5 exits 2 (`pe=1024`), measured
 # MU14 (6.7.16, the platform review) `_cx_darwin_getdents` handing the guest every record it converted
 #       whatever the re-read returned (26e8eeaff's programs/cxvm.cyr) -> no local axis sees it (the
 #       converter is Darwin's): on ecb the fixture exits 17, `lin=65536` (/dev with 200 bytes read 953
