@@ -183,6 +183,18 @@
 #      field reader, the same; its mutant (the D7 commit's compiler, 4c6a024a3) -> RED 1: NR13 (the parse error).
 #      NR14 (a find repaired in passing): a slice's pointer element `[*Pt<i64>]` (`_tn_slice_ptr_el`) the same; its
 #      mutant (the compiler before it, eafa5a40d) -> RED 1: NR14 (the parse errors).
+#   UC (6.7.16) AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING — `nofn<i64>(1)` — read its type arguments as
+#      comparisons: "undefined variable 'nofn'", "undefined variable 'i64'", "expected ';', got '>'" (three lines for one
+#      mistake); as a statement "expected '=', got '<'" first; under --syntax-only (lint's pre-pass) a sibling module's
+#      generic called so was a false syntax error. Now `_call_undef`'s callee (6.7.15): "undefined function 'nofn'" once,
+#      at the name, the list, the call and its chain stepped (`_ugc_call`; the statement, `_stmt_undef_gcall`), silent
+#      under --syntax-only — when every name in the list is a type here (`_ugc_open`), so a shift or two comparisons of
+#      values keep their reading (UC9, UC10). UC1-UC8, UCX (a find met fixing
+#      issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). Mutants (2026-10-20, a scratch copy
+#      of the tree, its 2-stage cycc, this gate run from it): the compiler before it (e9df2922) -> RED 15: UC1-UC8 (three
+#      lines), UCX x7; MUC1 `_ugc_open` taking any list (`_tok_targs_close`) -> RED 2: UC9 UC10 ("undefined function
+#      'zz'", UC10 an arity line too); MUC2 `_stmt_explicit_generic` without the statement arm -> RED 4: UC2 UC3, UCX uc2
+#      uc3 (CF1 / UG0 read the issue archive, which the scratch copies left out: not counted).
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -957,5 +969,39 @@ syscall(60, main());
 EOF
 exits nrk 0 "NR control: *Box<Pt> / *Pt / **Pt / *i32 / Box<i64> fields, a member's Pt / Box<i64> / *fn(Box<Pt>), *fn(Box<Pt>) and **Box<Pt> parameters, (Box<i64>, *i32), [Pt], *i32 — unchanged"
 
+# UC (6.7.16) — an explicit-generic call of a name that is nothing (`nofn<i64>(1)`): "undefined function 'nofn'" once, at
+# the name (`_ugc_call`, `_stmt_undef_gcall`); the list read only when every name in it is a type here (`_ugc_open`).
+UCH='struct Pt { v; }
+struct Box<T> { v: T; }
+fn take2(a, b): i64 { return a; }
+'
+uc() { printf '%sfn main(): i64 { %s return 0; }\nsyscall(60, main());\n' "$UCH" "$2" > "$T/$1.cyr"; }
+UF="undefined function 'nofn'"
+uc uc1 'var x = nofn<i64>(1);'
+errs uc1 1 "UC1: var x = nofn<i64>(1); — once (was 'nofn' / 'i64' undefined variables + \"expected ';', got '>'\")" "error:<source>:4:26: $UF"
+uc uc2 'nofn<i64>(1);'
+errs uc2 1 "UC2: the statement nofn<i64>(1); — once (was \"expected '=', got '<'\" + 2)" "error:<source>:4:18: $UF"
+uc uc3 'nofn<i64>(1).n = 5;'
+errs uc3 1 "UC3: nofn<i64>(1).n = 5; — the chain and the store stepped with it" "error:<source>:4:18: $UF"
+uc uc4 'var x = nofn<i64, Pt>(1, 2);'
+errs uc4 1 "UC4: two type arguments" "error:<source>:4:26: $UF"
+uc uc5 'var x = nofn<Box<i64>>(1).v;'
+errs uc5 1 "UC5: a nested Box<i64> (the >> close) and a .field" "error:<source>:4:26: $UF"
+uc uc6 'return nofn<u8>(1);'
+errs uc6 1 "UC6: return nofn<u8>(1); (u8: a type, if no type argument)" "error:<source>:4:25: $UF"
+uc uc7 'var x = nofn<i64>(1) + yy;'
+errs uc7 2 "UC7: an error after the call is its own" "error:<source>:4:26: $UF" "error:<source>:4:43: undefined variable 'yy' (missing include or enum?)"
+printf 'fn gen<T>(x: T): i64 { return nofn<T>(x); }\nfn main(): i64 { return gen(1) + gen<i32>(2); }\nsyscall(60, main());\n' > "$T/uc8.cyr"
+errs uc8 1 "UC8: nofn<T>(x) in a generic body parsed three times — once" "error:<source>:1:31: $UF"
+uc uc9 'var x = zz < 2 >> (3);'
+errs uc9 1 "UC9 control: zz < 2 >> (3) is a shift — the variable, as before" "error:<source>:4:29: undefined variable 'zz' (missing include or enum?)"
+uc uc10 'var b = 1; var c = 2; var x = take2(zz < b, c > (3));'
+errs uc10 1 "UC10 control: two comparisons of values — the variable, as before" "error:<source>:4:57: undefined variable 'zz' (missing include or enum?)"
+for f in uc1 uc2 uc3 uc4 uc5 uc6 uc8; do
+    rc=0; "$CC" --syntax-only < "$T/$f.cyr" > /dev/null 2> "$T/$f.sx" || rc=$?
+    if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/$f.sx"; then ok "UCX $f: --syntax-only (a sibling module's generic) says nothing"
+    else bad "UCX $f: --syntax-only rc $rc: $(grep '^error' "$T/$f.sx" | head -1)"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"

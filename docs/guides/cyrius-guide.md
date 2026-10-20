@@ -1444,7 +1444,11 @@ does not return a struct is refused too, and so is an assignment to a result's f
 once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15; it was `expected ';', got '.'`, the
 step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). The same holds after a plain
 call to it (`undefd(); undefd().n += 1;` — 6.7.16; it was *cannot take a field of the result of 'undefd': it does not
-return a struct*); the plain call keeps its own end-of-compile refusal. Under `cyrius lint`'s
+return a struct*); the plain call keeps its own end-of-compile refusal. An explicit-generic call of a name defined
+nowhere — `nofn<i64>(1)`, with or without a `.f` / `.m(..)` / `[i]` after it, as a statement too — is *undefined
+function 'nofn'* the same way, once, at the name (6.7.16; its type arguments were read as comparisons: *undefined
+variable 'i64'*, *expected ';', got '>'* — as a statement *expected '=', got '<'* first), when every name between the
+`<` and `>` is a type here; under `--syntax-only` it is accepted. Under `cyrius lint`'s
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
 struct by value earns) — and so are they when `gp` is defined here as `fn gp(): *Foo` with `Foo` a sibling module's

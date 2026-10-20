@@ -5525,6 +5525,66 @@ fn _undef_var_report(S, noff, tail): i64 {
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
     return 0;
 }
+# The factor's read of a name that is nothing in any scope (cursor past it): reported (not under --syntax-only, where it
+# is the constant 0 of a sibling file's name), its value 0; or the call `_ugc_call` takes.
+fn _undef_read(S, noff): i64 {
+    if (_ugc_call(S, noff) == 1) { return 0; }
+    if (_syntax_only == 0) { _undef_var_report(S, noff, " (missing include or enum?)"); }
+    EMOVI(S, 0);
+    return 0;
+}
+# ⛔ 6.7.16 — `nofn<i64>(1)`, AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING: its type arguments were read as
+# comparisons, so one mistake was three errors — "undefined variable 'nofn'", "undefined variable 'i64'", "expected ';',
+# got '>'" (a `.f` after the call: "expected ';', got '.'"; `[i]`: "cannot subscript the result of ''>''") — and under
+# --syntax-only (lint's pre-pass) a sibling module's generic called so was a false "expected ';', got '>'". Now it is
+# `_call_undef`'s callee (6.7.15): "undefined function 'nofn'" at its name — an ERROR, as it was refused before under
+# every flag — once; the type arguments, the call and its `.f` / `.m(..)` / `[..]` chain stepped over unparsed, rax 0,
+# and `_tsc_n` moved (the statement form steps its tail with no second error, `_stmt_undef_gcall`). Silent under
+# --syntax-only. Cursor on the `<` after the name, a list of type names before a `(` (`_ugc_open`). 1 = consumed, 0 =
+# not this shape. CHANGELOG [6.7.16]
+fn _ugc_call(S, noff): i64 {
+    var o = _ugc_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var e = _pf_chain_end(S, _call_close(S, o) + 1);
+    if (_syntax_only == 0) {
+        STI(S, GTI(S) - 1);
+        _err_in_sync(S, "undefined function ", noff, 0);
+        _tsc_n = _tsc_n + 1;
+    }
+    STI(S, e);
+    _addr_field_val(S);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# The `(` of `<..>(` when the `<` at token `lt` opens a list of type names (`_ugc_tyname`, `,`, a nested `<..>`) that
+# closes exactly right before it, else -1. The name is nothing, so the tokens alone tell a call from comparisons:
+# `zz < 2 >> (3)` (a shift) and `f(zz < b, c > (d))` (two comparisons of values) are no list.
+fn _ugc_open(S, lt): i64 {
+    if (TOKTYP(S, lt) != 19) { return 0 - 1; }
+    var d = 1;
+    var i = lt + 1;
+    while (d > 0) {
+        var t = TOKTYP(S, i);
+        if (t == 2) { if (_ugc_tyname(S, TOKVAL(S, i)) == 0) { return 0 - 1; } }
+        elif (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t != 31) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (d != 0) { return 0 - 1; }
+    if (TOKTYP(S, i) != 10) { return 0 - 1; }
+    return i;
+}
+# 1 = the name `noff` is a type here: one of the type-name vocabulary (`_tn_resolve`: a struct or union, a scalar, a
+# vector, Result / Option / .., an enum) or a type parameter in scope (`_targ_is_tp`).
+fn _ugc_tyname(S, noff): i64 {
+    if (_tn_resolve(S, noff) != 0) { return 1; }
+    return _targ_is_tp(S, noff);
+}
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -5827,9 +5887,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # and we return exactly as the sibling success paths above do, so the
             # token stream stays in sync and no cascade is invented. See _syntax_only
             # (src/common/util.cyr) for why report-and-continue was rejected here.
-            if (_syntax_only == 1) { EMOVI(S, 0); return 0; }
-            _undef_var_report(S, noff, " (missing include or enum?)");   # 6.7.14: once per token (ERR_UNDEF)
-            EMOVI(S, 0); return 0;
+            _undef_read(S, noff);   # 6.7.14: once per token (ERR_UNDEF); 6.7.16: `nofn<i64>(1)` is a call (`_ugc_call`)
+            return 0;
         }
         var vt = GVTYPE(S, idx);
         _gv_load_ps(S, idx, vt);
