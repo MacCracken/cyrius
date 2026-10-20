@@ -596,7 +596,10 @@ var r = add(20, 22);   # r = 42
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` in an `impl` is a `*T`
   (since **6.7.0**): `self.x` reads and writes the receiver's fields, `T_m(x)` / `T_m(&x)` / `x.m()`
   agree, and arithmetic on it (`self + 8`, `self[i]`, `self += n`) is refused — read fields with
-  `self.field`, or declare `self: *T` to step whole elements (see *Traits and impl blocks*). A typed `self: T` follows the parameter rule: a struct is a **value**
+  `self.field`, or declare `self: *T` to step whole elements (see *Traits and impl blocks*). That holds
+  whichever comes first, the `impl` or its `struct` (6.7.16; with the impl written above the struct,
+  `self.x` was *no struct type in scope for 'self'*, `T_m(x)` passed x's value and faulted, and
+  `self + 8` compiled — the user's D6). A typed `self: T` follows the parameter rule: a struct is a **value**
   at every width — one of 8 bytes or less arrives in a register, a wider one by address and is
   copied on entry (v6.6.16) — so `fn Odd_sum(self: Odd)` and `fn P3_bump(self: P3)` see a copy,
   and writing `self.a` inside them does not change `x`. Before v6.6.11 the dot form pushed `&x`

@@ -17,6 +17,15 @@
 #      read), `self != 0`, passing `self` on, `var a = self;` then byte arithmetic on `a`
 #   D  an explicit `self: *T` is untouched: its arithmetic compiles (and steps elements)
 #   E  a GENERIC method's instance (re-parsed from its call site, outside the impl) types `self` too
+#   F  (6.7.16) an impl written ABOVE its struct: pass 1 met the impl before the struct registered, so
+#      `_iself_prescan` recorded nothing — `self.b` was "no struct type in scope for 'self'" and the direct
+#      call `R2_get(t)` passed t's value (SIGSEGV), 6.7.0's A4 crash in this order. The end of pass 1 re-reads
+#      such a method (`_psig_late_impl`): F0 the filed repro verbatim; F1 main below both; F2 a trait impl's
+#      method, direct and through a dyn; F3 a generic method; F4 / F4b the three call spellings agree (24 B and
+#      8 B); F5 `load64(self + 8)` refused once, as with the struct first (the user's D6, 2026-10-19); two
+#      controls (the struct first; `self: *R2` written out). Filed: docs/development/issues/2026-10-18-impl-
+#      above-its-struct-untyped-self-unresolved.md. Mutant (2026-10-20): the lane's previous compiler
+#      (ebb53e470) -> RED 7: F0-F3 ("no struct type in scope"), F4 F4b (exit 139), F5 (BUILT)
 #
 # Mutations: make `_iself_def_sid` return 0 -> A + E RED ("no struct type in scope"). Drop the
 # `_iself_arith_check` call in PARSE_FACTOR -> B RED (all but `+=` build). Drop its `PEEKT == 41`
@@ -110,5 +119,36 @@ syscall(60, main());
 ' > "$T/e.cyr"
 exits e 42 "E: a generic method instance types self (re-parsed outside the impl)"
 
+# ── F (6.7.16): an impl written ABOVE its struct ──
+cat > "$T/f0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn main(): i64 { var t: R2 = R2 { 5, 7 }; return t.get(); }
+impl R2 { fn get(self): i64 { return self.b; } }
+struct R2 { a; b; }
+syscall(60, main());
+EOF
+exits f0 7 "F0: the filed repro verbatim (was 'no struct type in scope for self')"
+printf 'include "lib/syscalls.cyr"\nimpl R2 { fn get(self): i64 { return self.b; } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; return t.get(); }\nsyscall(60, main());\n' > "$T/f1.cyr"
+exits f1 7 "F1: main below the impl and the struct"
+printf 'include "lib/syscalls.cyr"\ntrait Gt { fn get(self): i64; }\nimpl Gt for R2 { fn get(self): i64 { return self.b; } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; var o: dyn Gt = &t; return t.get() + o.get() - 7; }\nsyscall(60, main());\n' > "$T/f2.cyr"
+exits f2 7 "F2: a trait impl's method, called direct and through a dyn"
+printf 'include "lib/syscalls.cyr"\nimpl R2 { fn get<U>(self, u: U): i64 { return self.b + u; } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; var k: i32 = 3; return t.get(k); }\nsyscall(60, main());\n' > "$T/f3.cyr"
+exits f3 10 "F3: a generic method of an impl above its struct"
+printf 'include "lib/syscalls.cyr"\nimpl R2 { fn get(self): i64 { return load64(self); } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; return R2_get(t); }\nsyscall(60, main());\n' > "$T/f4.cyr"
+exits f4 5 "F4: the direct call R2_get(t) passes &t (it passed t's value: SIGSEGV, exit 139)"
+printf 'include "lib/syscalls.cyr"\nimpl B1 { fn m(self): i64 { return load64(self); } fn setv(self, x) { self.v = x; return 0; } }\nstruct B1 { v; }\nfn main(): i64 { var b = B1 { 7 }; var r = B1_m(b) + b.m() + B1_m(&b); B1_setv(b, 2); return r + b.v; }\nsyscall(60, main());\n' > "$T/f4b.cyr"
+exits f4b 23 "F4b: an 8-byte struct — B1_m(b) == b.m() == B1_m(&b), B1_setv(b, ..) writes b"
+printf 'include "lib/syscalls.cyr"\nimpl R2 { fn get(self): i64 { return load64(self + 8); } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; return t.get(); }\nsyscall(60, main());\n' > "$T/f5.cyr"
+build f5
+n=$(grep -c "arithmetic on an untyped \`self\` is refused" "$T/f5.err")
+if [ "$rc" -eq 0 ]; then bad "F5: load64(self + 8), impl above its struct: BUILT (rc 0; it read the second word, exit 7)"
+elif [ "$n" -ne 1 ] || [ "$(grep -c '^error' "$T/f5.err")" -ne 1 ]; then bad "F5: rc $rc, $(grep -c '^error' "$T/f5.err") error line(s), $n refusal(s) (want 1)"
+elif ! grep -q "points at 'R2'" "$T/f5.err"; then bad "F5: refused without naming R2"
+else ok "F5: load64(self + 8), impl above its struct: refused once, naming R2, as with the struct first (the user's D6)"; fi
+printf 'include "lib/syscalls.cyr"\nstruct R2 { a; b; }\nimpl R2 { fn get(self): i64 { return self.b; } }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; return t.get(); }\nsyscall(60, main());\n' > "$T/fk1.cyr"
+exits fk1 7 "F control: the struct declared first"
+printf 'include "lib/syscalls.cyr"\nimpl R2 { fn get(self: *R2): i64 { return self.b; } }\nstruct R2 { a; b; }\nfn main(): i64 { var t: R2 = R2 { 5, 7 }; return t.get(); }\nsyscall(60, main());\n' > "$T/fk2.cyr"
+exits fk2 7 "F control: self: *R2 written out, the impl above its struct"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: impl_self_typed — $fails row(s) red"; exit 1; fi
-echo "PASS: impl_self_typed — an untyped impl \`self\` is a \`*T\` (fields, the three call spellings, generic instances) and arithmetic on it is refused by name (6 spellings); field arithmetic, comparison, pass-on and an explicit \`self: *T\` are untouched"
+echo "PASS: impl_self_typed — an untyped impl \`self\` is a \`*T\` (fields, the three call spellings, generic instances) and arithmetic on it is refused by name (6 spellings); field arithmetic, comparison, pass-on and an explicit \`self: *T\` are untouched; an impl written above its struct types it too (F, 6.7.16)"
