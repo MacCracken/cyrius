@@ -79,6 +79,8 @@ fn _mf_vocab_b(i): i64 {
     if (i == 46) { return "build|bounds|read|-|CYRIUS_BOUNDS|--bounds|build / run / test / fuzz: the bounds-checked mode (bool); an entry file's #bounds line is the lowest rung"; }
     # 6.7.10 (P5-B): the execution-coverage mode's programs — `[coverage] programs` stays TEXT coverage
     if (i == 47) { return "coverage|exec|read|-|-|--exec|cyrius coverage --exec: RUN programs built instrumented and run; the fns they enter are counted (globs)"; }
+    # 6.7.16 (the user, 2026-10-19): files cyrius-lsp never compiles (bootstrap/cybs.cyr here)
+    if (i == 48) { return "lsp|skip|read|-|-|-|cyrius-lsp: files it never compiles (paths from the project root)"; }
     return 0;
 }
 
@@ -1359,7 +1361,7 @@ var _CFG_DEFAULT = 0;
 var _CFG_MANIFEST = 1;
 var _CFG_ENV = 2;
 var _CFG_ARG = 3;
-var _CFG_N = 22;
+var _CFG_N = 23;
 var _CK_ENTRY = 0;
 var _CK_OUTPUT = 1;
 var _CK_DCE = 2;
@@ -1384,6 +1386,7 @@ var _CK_TEST_STDLIB = 18;
 var _CK_TEST_EMBED = 19;   # [test.embed], as "NAME=path"
 var _CK_BOUNDS = 20;       # 6.7.8 (C2-7): the bounds-checked mode (bool; build / run / test / fuzz)
 var _CK_COV_EXEC = 21;     # 6.7.10 (P5-B): [coverage] exec, the execution-coverage programs (globs)
+var _CK_LSP_SKIP = 22;     # 6.7.16: [lsp] skip, the files cyrius-lsp never compiles (its --print-config read)
 # 1 when the resolved `dce` is on and did NOT come from the environment: compile() then hands cycc
 # CYRIUS_DCE=1, replacing any inherited value (an argument beats CYRIUS_DCE=0).
 var _cfg_dce_inject = 0;
@@ -1418,6 +1421,7 @@ fn _cfg_name(i): i64 {
     if (i == _CK_TEST_EMBED) { return "test.embed"; }
     if (i == _CK_BOUNDS) { return "build.bounds"; }
     if (i == _CK_COV_EXEC) { return "coverage.exec"; }
+    if (i == _CK_LSP_SKIP) { return "lsp.skip"; }
     return "embed";
 }
 
@@ -1427,7 +1431,7 @@ fn _cfg_kind(i): i64 {
     if (i == _CK_DCE || i == _CK_STRICT || i == _CK_TEST_STANDALONE || i == _CK_BOUNDS) { return 1; }
     if (i == _CK_DEFINES || i == _CK_TEST || i == _CK_MODULES || i == _CK_PROGRAMS || i == _CK_EMBED) { return 2; }
     if (i == _CK_TEST_FILES || i == _CK_TEST_MODULES || i == _CK_TEST_DEFINES || i == _CK_TEST_STDLIB) { return 2; }
-    if (i == _CK_TEST_EMBED || i == _CK_COV_EXEC) { return 2; }
+    if (i == _CK_TEST_EMBED || i == _CK_COV_EXEC || i == _CK_LSP_SKIP) { return 2; }
     return 0;
 }
 
@@ -1780,6 +1784,27 @@ fn _cfg_resolve_test_rows(): i64 {
         }
         _cfg_put(_CK_TEST_EMBED, ev, _CFG_MANIFEST, "[test.embed]");
     }
+    return 0;
+}
+
+# 6.7.16 — the [lsp] row `--print-config` shows: `skip`, the files cyrius-lsp never compiles for
+# diagnostics (paths from the project root; bootstrap/cybs.cyr in this repo, assembly for the seed's
+# bootstrap/asm). Nothing else reads it: the server reads this row (programs/cyrius-lsp.cyr
+# _cu_config), so the CLI's own resolution of the manifest is the one place it is parsed. An unknown
+# [lsp] key is named, as [test]'s are. 0, or 1 after naming a value of the wrong type. CHANGELOG [6.7.16]
+var _lsp_cfg_warned = 0;
+fn _cfg_resolve_lsp_rows(): i64 {
+    if (_mf_state != 1) { return 0; }
+    if (_lsp_cfg_warned == 0) {
+        _lsp_cfg_warned = 1;
+        _cfg_warn_section("lsp");
+    }
+    var sk = _mf_strs("lsp", "skip");
+    if (_toml_bad == 1) {
+        _cfg_bad("lsp", "skip", "a path or an array of paths");
+        return 1;
+    }
+    if (sk != 0) { _cfg_put(_CK_LSP_SKIP, sk, _CFG_MANIFEST, "[lsp] skip"); }
     return 0;
 }
 
@@ -2708,6 +2733,7 @@ fn _cfg_print_row(i): i64 {
 fn _cfg_print_config(src_arg, out_arg): i64 {
     if (_cfg_resolve_build(src_arg, out_arg) != 0) { return 1; }
     if (_cfg_resolve_test_rows() != 0) { return 1; }
+    if (_cfg_resolve_lsp_rows() != 0) { return 1; }
     _cfg_out("cyrius build configuration (argument > environment > manifest > default)\n");
     _cfg_out("  manifest: ");
     if (_mf_state == 1) { _cfg_out(_mf_path); } else { _cfg_out("(none)"); }

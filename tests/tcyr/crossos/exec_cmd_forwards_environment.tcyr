@@ -1,0 +1,90 @@
+# exec_cmd_forwards_environment.tcyr — 6.7.16
+#
+# lib/process.cyr's exec_cmd hands its child THIS process's whole environment (and so does
+# programs/cyriusly.cyr's _cy_run_argv, through the same _read_environ_envp). The envp was read
+# from /proc/self/environ with ONE read of at most 65,535 bytes: macOS has no /proc, so every
+# exec_cmd child ran with an EMPTY environment there (the compiled cyriusly the macOS tarballs
+# ship since 6.7.16 ran install.sh with no HOME and no CYRIUS_HOME), and on Linux an environment
+# larger than the read was cut, every variable past the cut gone. It is built from lib/io.cyr's
+# env_block now, the block getenv reads whole. The review of the 6.7.16 tools lane
+# (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md, its tarball half).
+#
+# THE MECHANISM. A test cannot set its own environment, so it runs ITSELF again (argv(0), through
+# exec_env, which hands the child exactly the environment given) with CY_ECF_PHASE set. That copy
+# calls exec_cmd with a /bin/sh line testing the variables, and answers the line's exit code:
+#   E1  SMALL=s                                       `test "$SMALL" = s`                  -> 0
+#   E2  BIG (70,000 bytes) FIRST, then SMALL=s        the same, and ${#BIG} is 70000        -> 0
+#   E3  the control: E1's copy with no SMALL          `test "$SMALL" = s`                  -> 1
+# E3 proves the line can fail, so E1 / E2 passing is the child seeing the variable (and a copy
+# that could not start reads 127, never 0 or 1). Runs on ecb, ach and pi through the release
+# gate's cross-OS leg (macOS is where the environment was empty). Windows has its own exec_cmd
+# (cmd.exe, CreateProcess inheriting the environment) and agnos no /bin/sh: there the file reports
+# only its summary. CHANGELOG [6.7.16]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+
+alloc_init();
+args_init();
+
+# The copy's job: run the phase's line through exec_cmd and answer its exit code.
+fn _ecf_copy(ph): i64 {
+    if (load8(ph) == 50) { return exec_cmd("test \"$SMALL\" = s && test ${#BIG} -eq 70000"); }
+    return exec_cmd("test \"$SMALL\" = s");
+}
+
+# "BIG=" and 70,000 'b's, NUL-terminated.
+fn _ecf_big(): i64 {
+    var b = alloc(70008);
+    memcpy(b, "BIG=", 4);
+    var i = 0;
+    while (i < 70000) {
+        store8(b + 4 + i, 98);
+        i = i + 1;
+    }
+    store8(b + 70004, 0);
+    return b;
+}
+
+# This test run again as a copy in exactly the environment `env` (a vec of "NAME=value"), its exit.
+fn _ecf_run(env): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    return exec_env(av, env);
+}
+
+fn _ecf_rows(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("exec_cmd's child sees the variables its parent has");
+    var e1 = vec_new();
+    vec_push(e1, "CY_ECF_PHASE=1");
+    vec_push(e1, "PATH=/usr/bin:/bin");
+    vec_push(e1, "SMALL=s");
+    assert_eq(_ecf_run(e1), 0, "E1 SMALL=s reaches the child of exec_cmd");
+    var e2 = vec_new();
+    vec_push(e2, _ecf_big());
+    vec_push(e2, "CY_ECF_PHASE=2");
+    vec_push(e2, "PATH=/usr/bin:/bin");
+    vec_push(e2, "SMALL=s");
+    assert_eq(_ecf_run(e2), 0, "E2 SMALL=s set after a 70,000-byte BIG reaches it, and BIG whole");
+    var e3 = vec_new();
+    vec_push(e3, "CY_ECF_PHASE=1");
+    vec_push(e3, "PATH=/usr/bin:/bin");
+    assert_eq(_ecf_run(e3), 1, "E3 control: with no SMALL the same line fails");
+    #endif
+    #endif
+    return 0;
+}
+
+var _ecf_ph = getenv("CY_ECF_PHASE");
+if (_ecf_ph != 0) { sys_exit(_ecf_copy(_ecf_ph)); }
+_ecf_rows();
+var r = assert_summary();

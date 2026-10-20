@@ -77,8 +77,6 @@ var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reach
 # CHANGELOG [6.7.15]
 include "src/frontend/ts/driver_flags.cyr"
 include "src/frontend/ts/driver_args.cyr"
-var _vbuf[256];
-var _vfd = 0;
 # v5.5.9: the command-line parse uses /proc/self/cmdline, a
 # Linux-only pseudofile. On Windows this CreateFileW returns
 # INVALID_HANDLE_VALUE and subsequent ReadFile on the bad handle
@@ -88,23 +86,22 @@ var _vfd = 0;
 # v6.0.54: the Windows equivalent below uses GetCommandLineW (the
 # `syscall(0xF006)` PE reroute, src/backend/x86/emit.cyr) — the
 # "GetCommandLineW-based replacement" the prior comment queued.
+# The Linux arm reads it whole (_cmdline_read, src/common/util.cyr). CHANGELOG [6.7.16]
 #ifdef CYRIUS_TARGET_LINUX
-if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
-else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
+var _vn = _cmdline_read();
+var _vbuf = _cmdline_buf;
 if (_vn > 0) {
     var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
+    while (_vi < _vn) { if (load8(_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
     # Walk the cmdline args, looking for cycc's flags. Each
     # arg is NUL-terminated; cmdline contains argv[0]\0argv[1]\0...
     while (_vi < _vn) {
         # The TypeScript flags and the path after one (src/frontend/ts/driver_args.cyr). CHANGELOG [6.7.15]
-        _ts_arg(&_vbuf + _vi, _vn - _vi);
+        _ts_arg(_vbuf + _vi, _vn - _vi);
         # "--ve" (--version) — short-circuit exit
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 118 && load8(_vbuf + _vi + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC_WIN, _VERSION_LEN_CYCC_WIN);
                     syscall(SYS_EXIT, 0);
                 }
@@ -114,22 +111,22 @@ if (_vn > 0) {
         # 6.6.17: this fork never read it, so `cyrius lint`'s pre-pass on Windows got a full
         # resolving compile. chars s(115) y(121).
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 115 && load8(_vbuf + _vi + 3) == 121) {
                     _syntax_only = 1;
                 }
             }
         }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 97 && load8(_vbuf + _vi + 3) == 108) {
                     _allow_undef = 1;
                 }
             }
         }
         # Skip to next arg (past next \0)
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
+        while (_vi < _vn && load8(_vbuf + _vi) != 0) { _vi = _vi + 1; }
         _vi = _vi + 1;
     }
 }

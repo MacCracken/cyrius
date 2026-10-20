@@ -6306,13 +6306,14 @@ fn _asm_x86_reg(n): i64 {
 # prologue spills params at: -(idx + 1 + _cur_fn_regalloc)*8. Byte-identical to the old
 # hand-rolled literals when _cur_fn_regalloc==0 (disp8 form, mod=01, rm=rbp). noff is
 # the mnemonic's name offset. The dispatch matches the whole name (_asm_is_param_load, 6.7.14).
+# The register is read whole (_asm_x86_gpr): `raxx` and `r8d` loaded rax and a 64-bit r8 until
+# 6.7.16, and any other operand is refused, naming it (6.7.16's D33). CHANGELOG [6.7.16]
 # See issue 2026-05-21-asm-block-global-symbol-pseudo.
 fn ASM_PARAM_LOAD(S, noff): i64 {
     if (PEEKT(S) != 10) { ERR(S); }      # (
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 2) { ERR(S); }       # register identifier
-    var reg = _asm_x86_reg(L64(S + 0xEC00000 + PEEKV(S)));
-    if (reg < 0) { ERR(S); }
+    var reg = _asm_x86_gpr(_asm_x86_name(S));
+    if (reg < 0) { return _asm_refuse(S, GTI(S), "param_load takes a 64-bit register (rax .. r15), not "); }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }      # ,
     STI(S, GTI(S) + 1);

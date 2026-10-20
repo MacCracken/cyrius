@@ -90,6 +90,8 @@
 #     removed (RED, and every later run then fails to start under it).
 #   * (6.7.15, axis 7's planted-temp row) the CLI before the held record (6.7.14's predicted name)
 #     -> 1 RED (19 of the 20 planted files left: the kill unlinked the predicted one).
+#   * (6.7.16, axis 7's renamed-temp row) the clear dropped from `_dep_aw_finish` (6.7.15's kept
+#     record) -> 1 RED (624 of 640 planted files left: one per copy, at the temp name it renamed).
 #   * (6.7.15, axis 7's TERM-ignoring git row; each mutant replaces build/cyrius) the 6.7.14 CLI
 #     (git tracked fwd 1: a wait without limit) -> 1 RED (the CLI exits 59,952 ms after the SIGTERM,
 #     when the stand-in's sleep 60 ends); fwd 2 SIGKILLed at once (no signal sent) -> 6 RED (no TERM
@@ -107,6 +109,12 @@
 # it did before the handler, so a cyrius parent reads a signal death; the in-flight names (what a
 # SIGKILL still leaves) are ones check.sh's reaper removes (`_chk_cli_scratch`, read out of
 # scripts/check.sh).
+#
+# UNDER `bash -eo pipefail` (GitHub's `run:` shell; CHANGELOG [6.7.16]). Every cleanup `kill` /
+# `wait` of a process that may already be gone, and every `$(… | head -1)` that can run before its
+# directory exists, carries `|| true`: under `-e` a failing one ended the gate with no verdict (a
+# stand-in the CLI already stopped: ESRCH; a killed FIFO holder's `wait`: 143; `ls` of a dir not
+# made yet: pipefail). gates_verdict_under_pipefail.sh runs this gate so; check.sh runs it under sh.
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -609,7 +617,7 @@ kill_run() {
     { wait "$_kb"; } 2>/dev/null || true
     _kc=$(cat "$T/k2.cc" 2>/dev/null || true)
     if [ -n "$_kc" ] && kill -0 "$_kc" 2>/dev/null; then
-        echo running > "$T/k7-$_kt.cc"; kill -KILL "$_kc" 2>/dev/null
+        echo running > "$T/k7-$_kt.cc"; kill -KILL "$_kc" 2>/dev/null || true
     else
         echo gone > "$T/k7-$_kt.cc"
     fi
@@ -733,7 +741,7 @@ if [ -n "${P6:-}" ] && [ -d "$P6" ] && command -v git > /dev/null 2>&1; then
         { wait "$_gb"; } 2>/dev/null || true
         _gc=$(cat "$T/g7.cc" 2>/dev/null || true)
         if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
-            echo running > "$T/k7-$_gt.cc"; kill -KILL "$_gc" 2>/dev/null
+            echo running > "$T/k7-$_gt.cc"; kill -KILL "$_gc" 2>/dev/null || true
         else
             echo gone > "$T/k7-$_gt.cc"
         fi
@@ -839,12 +847,12 @@ G8STAND
         ( echo $(( (_gt1 - _gt0) / 1000000 )) ) > "$T/k7-$_g8t.ms" 2>/dev/null || echo none > "$T/k7-$_g8t.ms"
         _gc=$(cat "$T/g8.cc" 2>/dev/null || true)
         if [ -n "$_gc" ] && kill -0 "$_gc" 2>/dev/null; then
-            echo running > "$T/k7-$_g8t.cc"; kill -KILL "$_gc" 2>/dev/null
+            echo running > "$T/k7-$_g8t.cc"; kill -KILL "$_gc" 2>/dev/null || true
         else
             echo gone > "$T/k7-$_g8t.cc"
         fi
         _gl=$(cat "$T/g8.sl" 2>/dev/null || true)
-        [ -n "$_gl" ] && kill -KILL "$_gl" 2>/dev/null
+        [ -n "$_gl" ] && kill -KILL "$_gl" 2>/dev/null || true
         cat "$T/g8.sig" > "$T/k7-$_g8t.sig" 2>/dev/null || echo none > "$T/k7-$_g8t.sig"
     }
     # the dep cache, cloned and verified once by the real git (the fsck / rev-parse rows reuse it)
@@ -924,9 +932,9 @@ G8STAND
     check "  …the git clone is stopped" no "$([ -n "$k7c" ] && kill -0 "$k7c" 2>/dev/null && echo yes || echo no)"
     check "  …and removed its partial clone from the dep cache (a SIGKILLed or orphaned clone leaves it)" no \
         "$([ -e "$G8/home/deps/sib/v1.0.0" ] && echo yes || echo no)"
-    [ -n "$k7c" ] && kill -KILL "$k7c" 2>/dev/null
+    [ -n "$k7c" ] && kill -KILL "$k7c" 2>/dev/null || true
     k7u=$(cat "$T/g8.up" 2>/dev/null || true)
-    [ -n "$k7u" ] && kill -KILL "$k7u" 2>/dev/null
+    [ -n "$k7u" ] && kill -KILL "$k7u" 2>/dev/null || true
     for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 else
     echo "  SKIP (named): axis 7 deps git-children rows — git is not installed"
@@ -972,14 +980,30 @@ g9_run() {
     _g9q=$(cat "$T/p7-$_g9t" 2>/dev/null || true)
     ( cd "$TB/cyrius-$_g9q" 2>/dev/null && find . -mindepth 1 ) > "$T/k7-$_g9t.live" 2>/dev/null || : > "$T/k7-$_g9t.live"
     if [ "${G9_PLANT:-0}" = 1 ] && [ -d "$TB/cyrius-$_g9q/locked-deps/lib" ]; then : > "$TB/cyrius-$_g9q/locked-deps/lib/gate_keepme"; fi
+    if [ "${G9_PLANT:-0}" = 40 ] && [ -d "$TB/cyrius-$_g9q/locked-deps/lib" ]; then g9_plant40 "$TB/cyrius-$_g9q/locked-deps/lib" "$_g9q"; fi
     [ -n "$_g9q" ] && kill -TERM "$_g9q" 2>/dev/null || true
     { wait "$_g9b"; } 2>/dev/null || true
     _g9c=$(cat "$T/g9.cc" 2>/dev/null || true)
     if [ -n "$_g9c" ] && kill -0 "$_g9c" 2>/dev/null; then
-        echo running > "$T/k7-$_g9t.cc"; kill -KILL "$_g9c" 2>/dev/null
+        echo running > "$T/k7-$_g9t.cc"; kill -KILL "$_g9c" 2>/dev/null || true
     else
         echo gone > "$T/k7-$_g9t.cc"
     fi
+}
+# g9_plant40 <scratch lib/> <cli pid>: another same-user process puts a file at
+# `<file>.cyrtmp.<pid>.<n>`, n = 1..40, beside each renamed copy (the filed shape); the copies, the
+# temps in flight and the planted names land in $T/g9p40.{copies,temps,names}.
+g9_plant40() {
+    ls "$1" 2>/dev/null | grep -vc 'cyrtmp' > "$T/g9p40.copies" || true
+    ls "$1" 2>/dev/null | grep -c 'cyrtmp' > "$T/g9p40.temps" || true
+    : > "$T/g9p40.names"
+    for _pf in $(ls "$1" 2>/dev/null); do
+        _pn=1
+        while [ "$_pn" -le 40 ]; do
+            echo mine > "$1/$_pf.cyrtmp.$2.$_pn"; echo "$_pf.cyrtmp.$2.$_pn" >> "$T/g9p40.names"; _pn=$((_pn + 1))
+        done
+    done
+    :
 }
 # the project's own lib/ and cyrius.lock, as the run found them
 g9_same() { cmp -s "$ROOT/lib/string.cyr" "$G9/p/lib/string.cyr" && cmp -s "$T/g9.lock0" "$G9/p/cyrius.lock" && echo yes || echo no; }
@@ -1016,7 +1040,7 @@ if mkfifo "$S9" 2>/dev/null; then
         "$(grep -q '^\./locked-deps/lib/string\.cyr\.cyrtmp\.' "$T/k7-g9t.live" 2>/dev/null && echo yes || echo no)"
     check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9t.rc" 2>/dev/null || echo none)"
     check "  …its private dir is gone (no .cyrtmp left)" 0 "$(k7_dirs g9t "$TB")"
-    kill "$k9w" 2>/dev/null; { wait "$k9w"; } 2>/dev/null
+    kill "$k9w" 2>/dev/null || true; { wait "$k9w"; } 2>/dev/null || true
     rm -f "$S9"
 else
     echo "  SKIP (named): axis 7 deps --locked mid-copy row — mkfifo failed on this host"
@@ -1046,7 +1070,7 @@ if mkfifo "$SY9" 2>/dev/null; then
     _gw=0; k9p=; k9l=; k9k=
     while [ "$_gw" -lt 600 ]; do
         k9p=$(cat "$T/p7-g9p" 2>/dev/null || true); k9l="$TB/cyrius-$k9p/locked-deps/lib"
-        k9k=$(ls "$k9l" 2>/dev/null | sed -n 's/^syscalls\.cyr\.cyrtmp\.[0-9]*\.\([0-9]*\)$/\1/p' | head -1)
+        k9k=$(ls "$k9l" 2>/dev/null | sed -n 's/^syscalls\.cyr\.cyrtmp\.[0-9]*\.\([0-9]*\)$/\1/p' | head -1 || true)
         [ -n "$k9p" ] && [ -n "$k9k" ] && break
         sleep 0.05; _gw=$((_gw + 1))
     done
@@ -1054,13 +1078,13 @@ if mkfifo "$SY9" 2>/dev/null; then
     while [ -n "$k9k" ] && [ "$j" -le 20 ]; do echo mine > "$k9l/string.cyr.cyrtmp.$k9p.$((k9k + j))"; j=$((j + 1)); done
     k9n0=$(ls "$k9l" 2>/dev/null | grep -c '^string\.cyr\.cyrtmp\.' || true)
     exec 8> "$SY9"; rm -f "$SY9"; mv "$SY9.real" "$SY9"; cat "$SY9" >&8; exec 8>&-
-    kill "$k9h" 2>/dev/null; { wait "$k9h"; } 2>/dev/null
+    kill "$k9h" 2>/dev/null || true; { wait "$k9h"; } 2>/dev/null || true
     _gw=0
     while [ ! -s "$T/g9.cc" ] && [ "$_gw" -lt 600 ]; do sleep 0.05; _gw=$((_gw + 1)); done
     k9s=$([ -f "$k9l/string.cyr" ] && echo yes || echo no)
     [ -n "$k9p" ] && kill -TERM "$k9p" 2>/dev/null || true
     { wait "$_g9b"; } 2>/dev/null || true
-    _g9c=$(cat "$T/g9.cc" 2>/dev/null || true); [ -n "$_g9c" ] && kill -KILL "$_g9c" 2>/dev/null
+    _g9c=$(cat "$T/g9.cc" 2>/dev/null || true); [ -n "$_g9c" ] && kill -KILL "$_g9c" 2>/dev/null || true
     check "deps --locked with twenty files planted at string.cyr's next temp names — the copy beside them ran (anti-vacuous: syscalls.cyr's temp in flight, the plants, string.cyr copied)" "20 yes" \
         "${k9n0:-0} $k9s"
     check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9p.rc" 2>/dev/null || echo none)"
@@ -1074,6 +1098,27 @@ else
 fi
 [ -p "$SY9" ] && rm -f "$SY9"
 [ -e "$SY9.real" ] && mv "$SY9.real" "$SY9"
+for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
+# A copy's temp name is free once it is renamed into place, so a kill must not unlink what another
+# same-user process puts there later: since 6.7.16 `_dep_copy_file` clears the temp's record when
+# `_aw_commit` / `_aw_abort` returns, under the same HUP / INT / TERM hold (cbt/deps.cyr
+# `_dep_aw_finish`); 6.7.15 kept the record, and the kill unlinked one planted file per copy
+# (issues/2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md). Once the stand-in git sleeps
+# in the clone, the gate plants forty `<file>.cyrtmp.<pid>.<n>` beside each copy and SIGTERMs.
+G9_PLANT=40
+g9_run g9r 6.6.6 "" clone deps --locked
+G9_PLANT=0
+K9R="$TB/cyrius-$(cat "$T/p7-g9r" 2>/dev/null || echo none)/locked-deps/lib"
+k9rc=$(cat "$T/g9p40.copies" 2>/dev/null || echo 0)
+k9rn=$(wc -l < "$T/g9p40.names" 2>/dev/null | tr -d ' ' || true)
+check "deps --locked SIGTERM'd with forty files planted at the temp names beside each renamed copy (anti-vacuous: the copies, no temp in flight, 40 planted per copy)" "yes 0 yes" \
+    "$([ "${k9rc:-0}" -ge 5 ] && echo yes || echo no) $(cat "$T/g9p40.temps" 2>/dev/null || echo none) $([ "${k9rn:-0}" -eq $((${k9rc:-0} * 40)) ] && echo yes || echo no)"
+check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-g9r.rc" 2>/dev/null || echo none)"
+k9rk=0
+while read -r f; do [ -f "$K9R/$f" ] && k9rk=$((k9rk + 1)); done < "$T/g9p40.names"
+check "  …every planted file survives the kill (6.7.15 unlinked the one at each copy's own temp name)" "${k9rn:-none}" "$k9rk"
+check "  …and nothing of the resolve's own is left beside them under locked-deps/lib/" 0 \
+    "$(ls "$K9R" 2>/dev/null | grep -vc 'cyrtmp' || true)"
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # rmdir only (axis 4's contract): a foreign file in the scratch's lib/ survives, with its directories,
 # and is the only file left.
@@ -1148,7 +1193,7 @@ if [ -d "$D7/home/versions/$V7/lib" ]; then
     # until then a kill left all of it (issues/archived/2026-10-15-distlib-verify-killed-leaves-its-stdlib-mirror-in-dist.md).
     check "  …and no dist/.dlverify-<pid> mirror is left in the project" 0 "$(ls -d "$D7K/p/dist"/.dlverify-* 2>/dev/null | wc -l | tr -d ' ')"
     nrun=0
-    for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null; }; done
+    for c in $(cat "$T/d7k.cc" 2>/dev/null); do kill -0 "$c" 2>/dev/null && { nrun=$((nrun + 1)); kill -KILL "$c" 2>/dev/null || true; }; done
     check "  …every target's compiler is stopped" 0 "$nrun"
     for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 else

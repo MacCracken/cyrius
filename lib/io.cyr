@@ -1649,6 +1649,28 @@ fn _env_load(): i64 {
     return 0;
 }
 
+# The whole environment `getenv` reads, as one block of NUL-terminated `NAME=value` entries (read
+# once and cached: /proc/self/environ on Linux, the entry-stack envp on macOS). Answers the block's
+# address and stores its length in bytes at `lenp` (when `lenp` is not 0); answers 0, storing 0,
+# when there is no block: an empty or unreadable environment, and on Windows and agnos, where
+# `getenv` asks the system one name at a time (on Windows a `/proc/self/environ` read would open
+# `\proc\self\environ` on the current drive, a path any local user can create). The block is shared:
+# read it, never write it. A program forwarding its environment to a child builds the child's envp
+# from it rather than opening /proc itself, which macOS does not have. CHANGELOG [6.7.16]
+fn env_block(lenp): i64 {
+    if (lenp != 0) { store64(lenp, 0); }
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    _env_load();
+    if (_env_len <= 0) { return 0; }
+    if (lenp != 0) { store64(lenp, _env_len); }
+    return _env_blk;
+}
+
 # Read environment variable by name. Returns pointer to a heap copy of the value, or 0 if
 # not found (or if that copy could not be allocated — v6.6.8).
 # Reads from /proc/self/environ (null-separated KEY=VALUE pairs).

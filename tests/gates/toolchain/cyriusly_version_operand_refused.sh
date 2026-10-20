@@ -1,9 +1,9 @@
 #!/bin/sh
 # Gate: cyriusly's version operand must be a version — `uninstall`, `use` and `install` refuse
 # anything else by name, and install / uninstall pass the operand as ARGV, never inside a
-# `/bin/sh -c` line (6.6.20, RS-04). Both peers: the compiled programs/cyriusly.cyr (the Linux
-# x86_64 tarball) and the shell twin scripts/cyriusly (the aarch64 and macOS tarballs, and
-# install.sh's fallback). Since 6.7.3 (the cyriusly cmdtools CWD-script bug) it also holds the binary's `cmdtools` to the
+# `/bin/sh -c` line (6.6.20, RS-04). Both peers: the compiled programs/cyriusly.cyr (bin/cyriusly
+# in every tarball: Linux x86_64, aarch64 since 6.7.14, macOS and Windows since 6.7.16) and the shell
+# twin scripts/cyriusly (each POSIX tarball's scripts/, and install.sh's fallback). Since 6.7.3 (the cyriusly cmdtools CWD-script bug) it also holds the binary's `cmdtools` to the
 # ACTIVE install's twin, <home>/versions/<current>/scripts/cyriusly — never the current
 # directory's `scripts/cyriusly` — and every store writer to shipping that twin (axes 7 and 9).
 #

@@ -83,10 +83,13 @@ syscall(60, A & 255);'
 
 # expect <compiler> <fixture> <needle or -> <count>
 expect() {
-  "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
-  if [ "$rc" -ne 0 ]; then _bad "$1 $2: rc $rc (a warning must not fail the build)"; grep '^error' "$T/e" | head -2; return; fi
-  n=$(grep -c "$3" "$T/e")
-  if [ "$n" -ne "$4" ]; then _bad "$1 $2: $n line(s) matching '$3', expected $4"; grep -v '^note' "$T/e" | head -3 | cut -c1-160 | sed 's/^/      /'; return; fi
+  # Every status a red row can produce is caught (`rc=0; … || rc=$?`, `|| true`): under
+  # `bash -eo pipefail` a failing compile, a zero-count grep -c or an empty diagnostic pipe would
+  # otherwise end the gate with no verdict (CHANGELOG [6.7.16]; gates_verdict_under_pipefail.sh).
+  rc=0; "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e" || rc=$?
+  if [ "$rc" -ne 0 ]; then _bad "$1 $2: rc $rc (a warning must not fail the build)"; grep '^error' "$T/e" | head -2 || true; return; fi
+  n=$(grep -c "$3" "$T/e" || true)
+  if [ "$n" -ne "$4" ]; then _bad "$1 $2: $n line(s) matching '$3', expected $4"; grep -v '^note' "$T/e" | head -3 | cut -c1-160 | sed 's/^/      /' || true; return; fi
   pass=$((pass + 1))
 }
 LAY='redefined with a different layout'
@@ -108,8 +111,8 @@ for c in x86 aarch64; do
   expect "$c" ev_literal   "$EOV" 0
 done
 # the warning names the redefinition's line (line 5, the second `struct SP`)
-"$T/x86" < "$T/sp_derive.cyr" > "$T/o" 2>"$T/e"
-if grep -q "^warning:<source>:5:.*struct 'SP' $LAY" "$T/e"; then pass=$((pass + 1)); else _bad "sp_derive: the warning does not point at the second definition"; grep "$LAY" "$T/e" | head -1; fi
+"$T/x86" < "$T/sp_derive.cyr" > "$T/o" 2>"$T/e" || true
+if grep -q "^warning:<source>:5:.*struct 'SP' $LAY" "$T/e"; then pass=$((pass + 1)); else _bad "sp_derive: the warning does not point at the second definition"; grep "$LAY" "$T/e" | head -1 || true; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL redefinition_layout_and_enum_over_var: $fail row(s) red, $pass green"; exit 1; fi
 echo "PASS redefinition_layout_and_enum_over_var: $pass rows — a re-laid-out struct/union and an enum over a zero/computed global are reported on x86 and aarch64, the benign shapes stay silent"

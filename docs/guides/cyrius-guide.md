@@ -1410,7 +1410,10 @@ once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15
 step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). Under `cyrius lint`'s
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
-struct by value earns). A call declared `: *Struct` returns
+struct by value earns). The cx compiler accepts them too since 6.7.16: `cycc_cx --syntax-only` refused every call to a
+fn the file does not define (*undefined function(s) called (cx backend)*). Under the flag it writes no `.cyx`, and,
+having no reachability data, it also accepts a reachable such call, which the native compilers refuse there. Without
+the flag it still refuses the call, naming each fn once. A call declared `: *Struct` returns
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`
@@ -4850,6 +4853,17 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `scripts` | read | — | — | — | release.yml, install.sh, scripts/release-scripts.sh |
+| `[lsp]` | `skip` | read | — | — | — | cyrius-lsp: files it never compiles (paths from the project root) |
+
+`[lsp] skip` (6.7.16) lists files `cyrius-lsp` never compiles for diagnostics, as paths from the
+project root — a `.cyr` that is not cycc input, such as this repo's `bootstrap/cybs.cyr` (assembly
+for the seed's `bootstrap/asm`), which the server otherwise checked and covered in false errors, or
+one only another compiler builds, such as this repo's `src/main_aarch64_native.cyr` (built by the
+aarch64 compiler, raw: an x86_64 check with the `[deps]` prepend reads its `SYS_*` numbers as
+conflicts and publishes false warnings on the shared files it includes). The
+server reads it as `cyrius build --print-config` prints it (`lsp.skip = [...]`), so the CLI's own
+manifest reader is the only parser; see `docs/guides/editor-integration.md` for how the server picks
+the unit each other file is checked through.
 
 ## Embedding data files: `[embed]`
 
@@ -4928,7 +4942,8 @@ bundle module that calls an embed the bundle does not carry is refused by name, 
 gets the freshness check a generator script never had. `--modular` writes each carried embed as
 its own `embed_<NAME>` sub-module.
 
-`cyrius-lsp` does not read the manifest, so it shows `NAME()` as undefined.
+`cyrius-lsp` checks a project file with `cyrius check --with-deps`, which prepends the `[embed]`
+modules as every compile does, so its diagnostics know `NAME()`.
 
 ## Tests: `[test]`, `scope = "test"`, `test.cyml` (6.7.6)
 
@@ -5966,6 +5981,11 @@ refused, naming it: `mov cr9, rax` names `cr9`, `int 256` names `256`, `ltr eax`
 `[rax]` and `mov cr8, rax` wrote CR0, and `int` kept the vector's low 8 bits, so `int 256` was
 `int 0`.)
 
+`param_load(reg, idx)` loads parameter `idx` from its prologue slot into a 64-bit register named
+whole, `rax` to `r15`: `param_load(rax, 0)` is 48 8B 45 F8. Any other operand is refused, naming it:
+`param_load(raxx, 0)` names `raxx`, `param_load(r8d, 0)` names `r8d`. (6.7.16: the first letters
+decided, so those loaded `rax` and a 64-bit `r8`.)
+
 A mnemonic is matched by its whole name, and one the assembler does not have is refused, naming
 it: `asm { clix; }` is `unknown x86 asm mnemonic 'clix'`, and on aarch64 `asm { nopx; }` is
 `unknown aarch64 asm mnemonic 'nopx'`. (Before 6.7.14 the first letters decided, so `clix`
@@ -5975,7 +5995,9 @@ On aarch64 the mnemonics are `svc` (`svc #0`: a `#` starts a comment, so the imm
 written), `wfi`, `wfe`, `nop`, `ret`, `eret`, `param_load(reg, idx)` and the barriers `dmb`, `dsb`
 and `isb`. A barrier takes its option after it: `dmb` and `dsb` take `sy`, `st`, `ld`, `ish`,
 `ishst`, `ishld`, `nsh`, `nshst`, `nshld`, `osh`, `oshst` and `oshld`, and `isb` takes `sy`. A bare
-barrier is the full-system one, `sy`.
+barrier is the full-system one, `sy`. `param_load` takes `x0` to `x30` by its whole name, and any
+other operand is refused, naming it (6.7.16: `param_load(x31, 0)` loaded `x3`, and
+`param_load(x0abc, 0)` loaded `x0`).
 
 ```
 #ifplat aarch64
@@ -8351,6 +8373,13 @@ error, not a short directory: after `FindNextFileW` returns 0 the lister reads
 
 **Environment**
 - `getenv(name)` → pointer to value, or 0
+- `env_block(lenp)` → 0, storing a length of 0 (6.7.16): Windows has no environment block in
+  the stdlib, since `getenv` asks per name. On Linux and macOS it answers the whole environment
+  `getenv` reads, NUL-terminated `NAME=value` entries, its length stored at `lenp` — what a
+  program building a child's envp reads instead of `/proc/self/environ`, which macOS lacks.
+  `lib/process.cyr`'s `exec_cmd` (and so the compiled `cyriusly`) builds its child's environment
+  from it since 6.7.16: it read `/proc/self/environ` itself, once and at most 65,535 bytes, so on
+  macOS the child ran with an empty environment and on Linux every variable past the cut was lost.
 
 Windows has no `/proc/self/environ`; the lookup routes to
 `GetEnvironmentVariableA` (0xF015). The compiler reads its own `CYRIUS_*` knobs
@@ -9299,6 +9328,16 @@ bytes as x86_64 Linux (6.7.15). Each reads stdin, or the file named after the fl
 (`cycc --emit-js app.tsx`; on Windows a quoted path and a non-ASCII name work, the command
 line split as `CommandLineToArgvW` splits it). `ts_test_runner` therefore works on every
 POSIX install. The cx compiler (`cycc_cx`) has no TS front end.
+
+The compilers that run on Linux (`cycc`, `cycc_aarch64`, the aarch64 native `cycc`, the
+Linux-hosted `cycc_win` and `cycc_cx`) read their flags and that path from
+`/proc/self/cmdline`, whole: a command line of up to 2,097,151 bytes is read in full, and a
+longer one is refused by name (`error: the command line is longer than 2097151 bytes`, exit 1),
+never scanned cut.
+Before 6.7.16 they read its first 255 bytes, so a path that ended past them was cut and the
+cut name opened (`error: cannot open '<prefix>'` for a file that exists), and a flag past them
+(`--version`, `--syntax-only`, `--allow-undef`, `--pie`) was ignored. Pinned by
+`tests/gates/toolchain/emit_js_per_host_fork.sh` axis 5. See CHANGELOG [6.7.16].
 
 `cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
 `cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output

@@ -71,7 +71,8 @@ fn EMITMACHO_ARM64(S): i64 { return 0; }
 # ================================================================
 
 # Command-line flags from /proc/self/cmdline — the same block as the Linux
-# aarch64 cross-compiler (main_aarch64.cyr); the native path resolves SYS_OPEN
+# aarch64 cross-compiler (main_aarch64.cyr), read whole by _cmdline_read
+# (src/common/util.cyr, CHANGELOG [6.7.16]); the native path resolves SYS_OPEN
 # to openat(56) so the AT_FDCWD = -100 branch fires. `--strict` is ACCEPTED and
 # does nothing (see src/main.cyr). CHANGELOG [6.6.20]
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
@@ -79,26 +80,22 @@ var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reach
 # CHANGELOG [6.7.15]
 include "src/frontend/ts/driver_flags.cyr"
 include "src/frontend/ts/driver_args.cyr"
-var _vbuf[256];
-var _vfd = 0;
-if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
-else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
+var _vn = _cmdline_read();
+var _vbuf = _cmdline_buf;
 if (_vn > 0) {
     var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
+    while (_vi < _vn) { if (load8(_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
     while (_vi < _vn) {
         # The TypeScript flags and the path after one (src/frontend/ts/driver_args.cyr). CHANGELOG [6.7.15]
-        _ts_arg(&_vbuf + _vi, _vn - _vi);
+        _ts_arg(_vbuf + _vi, _vn - _vi);
         # "--ve" (--version) — print + exit. v6.6.6: MISSING here, which is the
         # shipped ARM-Linux compiler (`cyrius pulsar` installs this fork as
         # `cycc`), so on a Raspberry Pi / aarch64 box `cycc --version` compiled
         # EMPTY stdin and wrote an ELF to stdout with exit 0 instead of printing
         # a version. CHANGELOG [6.6.6]
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 118 && load8(_vbuf + _vi + 3) == 101) {
                     _write_out_all(_VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
                     syscall(SYS_EXIT, 0);
                 }
@@ -109,16 +106,16 @@ if (_vn > 0) {
         # was a name defined in another file was refused as unparseable on this host.
         # chars s(115) y(121). CHANGELOG [6.6.20]
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 115 && load8(_vbuf + _vi + 3) == 121) {
                     _syntax_only = 1;
                 }
             }
         }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 97 && load8(_vbuf + _vi + 3) == 108) {
                     _allow_undef = 1;
                 }
             }
@@ -127,13 +124,13 @@ if (_vn > 0) {
         # read below). This fork had neither, so `cyrius build --pie` on an ARM host wrote a
         # fixed-address ET_EXEC and exited 0. chars p(112) i(105) e(101). CHANGELOG [6.6.20]
         if (_vi + 5 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 105 && load8(&_vbuf + _vi + 4) == 101) {
+            if (load8(_vbuf + _vi) == 45 && load8(_vbuf + _vi + 1) == 45) {
+                if (load8(_vbuf + _vi + 2) == 112 && load8(_vbuf + _vi + 3) == 105 && load8(_vbuf + _vi + 4) == 101) {
                     _pie_mode = 1;
                 }
             }
         }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
+        while (_vi < _vn && load8(_vbuf + _vi) != 0) { _vi = _vi + 1; }
         _vi = _vi + 1;
     }
 }

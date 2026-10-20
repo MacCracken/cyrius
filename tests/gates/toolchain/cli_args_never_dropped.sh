@@ -40,7 +40,8 @@
 #     "has a row" MEANS "is probed": COVERED is the axis-2 probe list itself;
 #   * axis 13 does the same for cyriusly and ark, from their own dispatch fns;
 #   * axis 14's expected argument count is `seq`'s, and axis 15 reads the tool list
-#     out of cbt/ and the package list out of build-windows-tarball.sh.
+#     out of cbt/ and (15b, 6.7.16) the [release] bins list out of cyrius.cyml, and
+#     reads what ships out of the tarballs the three builders actually produce.
 #
 # HERMETIC. Everything is built from this tree with ./build/cycc into a throwaway
 # CYRIUS_HOME, AND HOME is a throwaway whose .cyrius is that same directory. Until 6.6.16
@@ -135,6 +136,14 @@
 #   MV2 cyrius-init: port's arm dropped                                      3 fails (port x2, direct)
 #   MV3 cyrsign-efi: the lone --help / -h check dropped                      3 fails (sign-efi x2, direct)
 #   MV4 cyrsign-efi: `--help` accepted anywhere (not only alone)             1 fail  (the anti-vacuous row)
+# 6.7.16 — axis 15b (the tarballs ship the manifest; each mutant a scratch copy of the tree run
+# through THIS gate; M25 and MO above are the retired static census's rows):
+#   MW1 scripts/release-bins.sh skips cyrius-lsp on every target             2 fails (both macOS
+#       builders named: "does not ship [release] bins entry cyrius-lsp")
+#   MW2 build-macos-arm64-tarball.sh copies scripts/cyriusly over bin/ after  1 fail  (bin/cyriusly
+#       the helper (6.7.15's line)                                             "is not a macos-arm64 image")
+#   MW3 build-windows-tarball.sh at 480de63eb (the hand list)                 2 fails (ark, cyrld,
+#       cyriusly, ts_test_runner, cyrsign-efi named; cyrsign-efi as a delegated tool too)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -780,45 +789,106 @@ echo "axis 15 — Windows: every sibling tool resolves through the .exe-aware _t
 BYPASS=$(grep -n 'make_path(_tools_dir' cbt/*.cyr | grep -v ':[0-9]*:[[:space:]]*#' || true)
 check "tool lookups in cbt/ that bypass _tool_path (the .exe arm)" 0 "$(printf '%s' "$BYPASS" | grep -c . || true)"
 [ -n "$BYPASS" ] && printf '%s\n' "$BYPASS" | sed 's/^/    /'
-# …and every tool the CLI resolves that way is PACKAGED by the Windows tarball, or
-# exempted here with a reason. (cyaudit and cyrius_api_surface were missing, so
-# `cyrius vet/deny/api-surface` had no tool to spawn on a Windows install at all.)
-# (EXE_EXEMPT_cyrius_init is GONE as of v6.6.6 — it cross-compiles to PE and the Windows
-#  tarball ships it plus its templates. tests/gates/toolchain/cyrius_init_builds_for_pe.sh
-#  is what keeps that true.)
-EXE_EXEMPT_cyrsign_efi='Linux-only helper by design (cbt/cyrius.cyr sign-efi comment: the execve stub returns -1 elsewhere)'
-EXE_EXEMPT_cycc_aarch64='the tarball ships no aarch64 cross-compiler; a Windows-install packaging scope line, not an argument defect'
+echo "axis 15b — every cyrius.cyml [release] bins entry ships in the macOS and Windows tarballs, built for the target:"
+# ── 6.7.16 — THE TARBALLS SHIP THE MANIFEST. Every cyrius.cyml [release] bins entry is shipped by
+# each of build-macos-arm64-tarball.sh, build-macos-x86-tarball.sh and build-windows-tarball.sh, or
+# exempted HERE with a reason (REL_EXEMPT_*). Those builders built a HAND list (cyrfmt cyrlint cyrdoc
+# cyrius-init cyrsign cxvm cyaudit cyrius_api_surface), so no macOS or Windows binary install had
+# cyrius-lsp, ark, cyrld, ts_test_runner or cyrsign-efi, and bin/cyriusly was the shell script on
+# macOS (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md; the user's 6.7.14 D59: the
+# manifest is the source of truth for every tarball). They now build the list through
+# scripts/release-bins.sh. The census before this one read the builders' TEXT (a `for tool in` line,
+# a `/bin/<t>` name), which cannot see a helper that skips an entry or a later line that overwrites
+# one; so the three builders are RUN here (in parallel) and their tarballs unpacked. An entry counts
+# as shipped when bin/<entry> (bin/<entry>.exe on Windows) is there, executable, and an image for that
+# target, read from its bytes here (Mach-O: magic cffaedfe + cputype; PE: MZ, "PE\0\0" at e_lfanew,
+# machine 0x8664) — not by asking the helper. The manifest is parsed with sed/grep, not the helper's
+# awk. An exemption naming no manifest entry, or an exempted entry the tarball ships after all, is
+# stale and FAILS. The delegated tools (_tool_path, above) are held to the same unpacked bin/ (v6.6.5's
+# round-3 review: cyaudit and cyrius_api_surface were missing from all three, so `cyrius vet`, `deny`
+# and `api-surface` said "tool not found").
 TOOLS=$(grep -ho '_tool_path(_tools_dir, "[^"]*")' cbt/*.cyr | sed 's/.*"\(.*\)")/\1/' | LC_ALL=C sort -u)
 check "tool census found the delegated tools (>= 8)" yes "$([ "$(printf '%s\n' "$TOOLS" | grep -c .)" -ge 8 ] && echo yes || echo no)"
-unpacked=0
-for t in $TOOLS; do
-    if grep '^for tool in ' scripts/build-windows-tarball.sh | tr ' ;' '\n\n' | grep -qx "$t"; then continue; fi
-    if grep -q "/bin/$t\.exe" scripts/build-windows-tarball.sh; then continue; fi
-    ev="EXE_EXEMPT_$(printf '%s' "$t" | tr -- '-' '_')"
-    eval "reason=\${$ev:-}"
-    if [ -n "$reason" ]; then continue; fi
-    echo "  FAIL: the CLI resolves tool '$t' but build-windows-tarball.sh does not ship $t.exe"
-    unpacked=$((unpacked + 1))
+REL_EXEMPT_cybs='every target: the x86_64 assembly the 29 KB seed assembles (bootstrap/cybs.cyr) — it has no Mach-O or PE form'
+REL_EXEMPT_windows_cyrius_lsp='Windows: cycc_win refuses it (2 reachable undefined fns: sys_fstat and sys_readlink have no PE wrapper), and it forks its compiler child through pipes, which PE stubs as -1'
+TOOL_EXEMPT_macos_x86_64_cycc_aarch64='Intel macOS: no aarch64 cross-compiler ships (the arm64 tarball copies its native cycc to cycc_aarch64) — a packaging scope line'
+TOOL_EXEMPT_windows_cycc_aarch64='Windows: the tarball ships no aarch64 cross-compiler — a packaging scope line'
+RBINS=$(sed -n '/^\[release\]/,/^\[/p' cyrius.cyml | grep -E '^bins[[:space:]]*=' | grep -oE '"[^"]+"' | tr -d '"' | tr '\n' ' ' || true)
+check "the manifest's [release] bins read here (>= 15 entries)" yes "$([ "$(echo $RBINS | wc -w)" -ge 15 ] && echo yes || echo no)"
+for ex in $(set | sed -n 's/^REL_EXEMPT_\([A-Za-z0-9_]*\)=.*/\1/p'); do
+    nm=${ex#windows_}
+    hit=0; for b in $RBINS; do [ "$(printf '%s' "$b" | tr -- '-' '_')" = "$nm" ] && hit=1; done
+    check "REL_EXEMPT_$ex names a [release] bins entry (a stale exemption is removed)" 1 "$hit"
 done
-check "delegated tools missing from the Windows tarball (no reason given)" 0 "$unpacked"
-# The same census over BOTH macOS tarball scripts (round-3 review: they shipped neither
-# cyaudit nor cyrius_api_surface, so vet/deny/api-surface said "tool not found" on every
-# macOS binary install — the Windows fix had stopped at Windows).
-MAC_EXEMPT_cyrsign_efi="$EXE_EXEMPT_cyrsign_efi"
-MAC_EXEMPT_cycc_aarch64='arm64: the native cycc is copied to cycc_aarch64 by its own line; x86: no aarch64 cross-compiler ships — a packaging scope line'
-for ms in scripts/build-macos-arm64-tarball.sh scripts/build-macos-x86-tarball.sh; do
-    unpacked=0
-    for t in $TOOLS; do
-        if grep '^for tool in ' "$ms" | tr ' ;' '\n\n' | grep -qx "$t"; then continue; fi
-        if grep -q "/bin/$t\"" "$ms"; then continue; fi
-        ev="MAC_EXEMPT_$(printf '%s' "$t" | tr -- '-' '_')"
-        eval "reason=\${$ev:-}"
-        if [ -n "$reason" ]; then continue; fi
-        echo "  FAIL: the CLI resolves tool '$t' but $ms does not ship it"
-        unpacked=$((unpacked + 1))
+# _hx <file> <offset> <count>: those bytes as hex.
+_hx() { od -An -tx1 -j"$2" -N"$3" "$1" | tr -d ' \n'; }
+# _img_ok <target> <file>: 0 when <file> is an image for <target>.
+_img_ok() {
+    [ -s "$2" ] || return 1
+    case "$1" in
+        macos-arm64)  [ "$(_hx "$2" 0 8)" = cffaedfe0c000001 ] ;;
+        macos-x86_64) [ "$(_hx "$2" 0 8)" = cffaedfe07000001 ] ;;
+        windows)
+            [ "$(_hx "$2" 0 2)" = 4d5a ] || return 1
+            _lf=$(od -An -tu4 -j60 -N4 "$2" | tr -d ' \n')
+            [ -n "$_lf" ] && [ "$(_hx "$2" "$_lf" 6)" = 504500006486 ] ;;
+    esac
+}
+TB_MISSING=""
+for tool in xxd tar sha256sum od; do command -v "$tool" > /dev/null 2>&1 || TB_MISSING="$TB_MISSING $tool"; done
+if [ -n "$TB_MISSING" ]; then
+    echo "  SKIP: the tarball builders need$TB_MISSING, not found on PATH — no tarball was built or read"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
+else
+    V=$(tr -d '[:space:]' < VERSION)
+    TBP=""
+    for k in macos-arm64 macos-x86 windows; do
+        mkdir -p "$T/tb_$k"
+        ( sh "scripts/build-$k-tarball.sh" "$T/tb_$k/dist" > "$T/tb_$k/out" 2>&1; echo $? > "$T/tb_$k/rc" ) &
+        TBP="$TBP $!"
     done
-    check "delegated tools missing from $(basename "$ms") (no reason given)" 0 "$unpacked"
-done
+    for p in $TBP; do wait "$p" || true; done
+    for k in macos-arm64 macos-x86 windows; do
+        case "$k" in
+            macos-arm64) tg=macos-arm64;  st="cyrius-$V-aarch64-macos";  ext="" ;;
+            macos-x86)   tg=macos-x86_64; st="cyrius-$V-x86_64-macos";   ext="" ;;
+            windows)     tg=windows;      st="cyrius-$V-x86_64-windows"; ext=".exe" ;;
+        esac
+        sc="build-$k-tarball.sh"
+        trc=$(cat "$T/tb_$k/rc" 2>/dev/null || echo none)
+        check "$sc builds its tarball (exit)" 0 "$trc"
+        [ "$trc" = 0 ] || { tail -3 "$T/tb_$k/out" | sed 's/^/    /'; continue; }
+        mkdir -p "$T/tb_$k/u"
+        tar xzf "$T/tb_$k/dist/$st.tar.gz" -C "$T/tb_$k/u" || { check "$st.tar.gz unpacks" 0 1; continue; }
+        TBIN="$T/tb_$k/u/$st/bin"
+        miss=0
+        for b in $RBINS; do
+            bn=$(printf '%s' "$b" | tr -- '-' '_')
+            eval "r1=\${REL_EXEMPT_$bn:-}"
+            r2=""; [ "$tg" = windows ] && eval "r2=\${REL_EXEMPT_windows_$bn:-}"
+            f="$TBIN/$b$ext"
+            if [ -n "$r1$r2" ]; then
+                if [ -e "$f" ]; then echo "  FAIL: $sc ships $b$ext, which this gate exempts ($r1$r2) — drop the stale exemption"; miss=$((miss + 1)); fi
+                continue
+            fi
+            if [ ! -f "$f" ]; then echo "  FAIL: $sc does not ship [release] bins entry $b (no bin/$b$ext)"; miss=$((miss + 1)); continue; fi
+            if [ "$tg" != windows ] && [ ! -x "$f" ]; then echo "  FAIL: $sc ships bin/$b, not executable"; miss=$((miss + 1)); continue; fi
+            _img_ok "$tg" "$f" || { echo "  FAIL: $sc ships bin/$b$ext, which is not a $tg image ($(_hx "$f" 0 8))"; miss=$((miss + 1)); }
+        done
+        check "[release] bins entries $sc does not ship as $tg images (none exempted without a reason)" 0 "$miss"
+        unpacked=0
+        for t in $TOOLS; do
+            eval "reason=\${TOOL_EXEMPT_$(printf '%s' "$tg" | tr -- '-' '_')_$(printf '%s' "$t" | tr -- '-' '_'):-}"
+            if [ -f "$TBIN/$t$ext" ]; then
+                [ -z "$reason" ] && continue
+                echo "  FAIL: $sc ships bin/$t$ext, which this gate exempts ($reason) — drop the stale exemption"
+            elif [ -n "$reason" ]; then continue
+            else echo "  FAIL: the CLI resolves tool '$t' but $sc does not ship bin/$t$ext"; fi
+            unpacked=$((unpacked + 1))
+        done
+        check "delegated tools missing from $sc (no reason given)" 0 "$unpacked"
+    done
+fi
 
 echo "axis 16 — --exit-with-count must not switch the strict checks OFF:"
 # The spec: a strict verdict is 2, --exit-with-count is the count, and the exit code is

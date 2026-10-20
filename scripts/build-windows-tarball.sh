@@ -64,20 +64,23 @@ cat cbt/cyrius.cyr   | "$WORK/cc_win" > "$WORK/$STAGE/bin/cyrius.exe"
 # have packaged a 0-byte binary. Closed by the 0xF03A GetModuleFileNameW reroute + the
 # three Windows wrappers; `cyrius init` and `cyrius port` now exist on a Windows install.
 # See docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
-for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface; do
-    if [ -f "programs/${tool}.cyr" ]; then
-        cat "programs/${tool}.cyr" | "$WORK/cc_win" > "$WORK/$STAGE/bin/${tool}.exe"
-    fi
-done
+# ⛔ 6.7.16 — that list was a HAND list (cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit
+# cyrius_api_surface), each built only `if [ -f programs/<tool>.cyr ]` and checked only `if [ -f ]`,
+# so a Windows binary install had no ark, cyrld, cyriusly, ts_test_runner or cyrsign-efi, and an entry
+# whose source went missing shipped nothing, silently. Every cyrius.cyml [release] bins entry is now
+# read from the manifest and built, and arch-checked, by scripts/release-bins.sh; an entry with no
+# source fails the step by name. cyrius-lsp is the one entry that helper names and does not build here
+# (cycc_win refuses it: sys_fstat and sys_readlink have no PE wrapper, and it forks a compiler child
+# through pipes). tests/gates/toolchain/cli_args_never_dropped.sh axis 15 holds this builder to the
+# manifest. CHANGELOG [6.7.16]
+sh scripts/release-bins.sh windows "$WORK/$STAGE/bin" "$WORK/cc_win"
 # cycc_cx source is src/main_cx.cyr (a fork), not programs/ — own line.
 cat src/main_cx.cyr | "$WORK/cc_win" > "$WORK/$STAGE/bin/cycc_cx.exe"
 
-# Validate every binary is a real PE (MZ magic = 4d5a) — refuse to package an
-# empty / non-PE artifact (the "found by ports" guard).
-for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrius-init.exe cyrsign.exe \
-         cxvm.exe cycc_cx.exe cyaudit.exe cyrius_api_surface.exe; do
+# Validate the binaries this builder compiles itself are real PEs (MZ magic = 4d5a) — refuse to
+# package an empty / non-PE artifact (the "found by ports" guard). release-bins.sh checks its own.
+for b in cycc.exe cyrius.exe cycc_cx.exe; do
     f="$WORK/$STAGE/bin/$b"
-    [ -f "$f" ] || continue
     magic=$(xxd -l2 -p "$f" 2>/dev/null)
     [ "$magic" = "4d5a" ] || { echo "ERROR: $b not PE (magic=$magic)"; exit 1; }
 done

@@ -115,9 +115,19 @@ build_pe "$ROOT/programs/cyrius-init.cyr" "$T/cyrius-init.exe" "cyrius-init"
 
 # ── AXIS 2: every tool the Windows tarball packages, derived from the script itself.
 echo "axis 2 — every tool build-windows-tarball.sh packages actually cross-builds:"
-TOOLS=$(grep '^for tool in ' "$TARBALL" | sed 's/^for tool in //; s/; do.*//')
+# 6.7.16: the builder has no `for tool in` hand loop any more. It builds every cyrius.cyml
+# [release] bins entry through scripts/release-bins.sh (issues/2026-10-19-cyrius-lsp-absent-from-
+# macos-and-reads-proc.md), so the list is the manifest's, less cyrius-lsp, the one entry that helper
+# names as refused for PE (sys_fstat / sys_readlink); the entries with no programs/ source (cybs,
+# cycc, cyrius) are skipped below. tests/gates/toolchain/cli_args_never_dropped.sh axis 15b RUNS the
+# builder and reads the tarball. CHANGELOG [6.7.16]
+check "the builder builds the manifest's bins through release-bins.sh windows" yes \
+    "$(grep -q '^sh scripts/release-bins.sh windows ' "$TARBALL" && echo yes || echo no)"
+check "…which names cyrius-lsp as its one PE exclusion" yes \
+    "$(grep -q '\[ "\$TARGET" = windows \] && \[ "\$1" = cyrius-lsp \]' scripts/release-bins.sh && echo yes || echo no)"
+TOOLS=$(sed -n '/^\[release\]/,/^\[/p' cyrius.cyml | grep -E '^bins[[:space:]]*=' | grep -oE '"[^"]+"' | tr -d '"' | grep -vx 'cyrius-lsp' | tr '\n' ' ' || true)
 NTOOLS=$(printf '%s\n' $TOOLS | grep -c . || true)
-check "tools found in the packaging loop (anti-vacuous floor >= 6)" yes "$([ "$NTOOLS" -ge 6 ] && echo yes || echo no)"
+check "tools found in the manifest's [release] bins (anti-vacuous floor >= 6)" yes "$([ "$NTOOLS" -ge 6 ] && echo yes || echo no)"
 check "cyrius-init is one of them (it was exempted until 6.6.6)" 1 "$(printf '%s\n' $TOOLS | grep -cx 'cyrius-init' || true)"
 for t in $TOOLS; do
     [ "$t" = "cyrius-init" ] && continue          # axis 1 already built it
@@ -130,8 +140,10 @@ done
 echo "axis 5 — the packaging and the diagnostic agree with the code:"
 check "the tarball copies the scaffolding templates" yes \
     "$(grep -q 'cp -r programs/cyrius-init-templates' "$TARBALL" && echo yes || echo no)"
-check "the tarball validates cyrius-init.exe's PE magic" yes \
-    "$(grep -q 'cyrius-init\.exe' "$TARBALL" && echo yes || echo no)"
+# 6.7.16: the helper, not the builder, checks each binary it builds (MZ, then "PE\0\0" + machine
+# 0x8664 at e_lfanew); the builder names no tool .exe any more.
+check "the tarball's tools are PE-checked (release-bins.sh reads the PE signature and machine)" yes \
+    "$(grep -q '504500006486' scripts/release-bins.sh && echo yes || echo no)"
 check "install.ps1 copies programs\\ into the version slot" yes \
     "$(grep -q 'VerDir\\programs' scripts/install.ps1 && echo yes || echo no)"
 check "install.ps1 copies programs\\ into the active home" yes \

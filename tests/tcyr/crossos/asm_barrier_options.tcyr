@@ -3,9 +3,11 @@
 #
 # Every barrier option the aarch64 assembler takes is EXECUTED here, on each host's own compiler: `dmb` / `dsb`
 # with each of their twelve options, `isb sy`, and the bare trio (the full-system barrier). A barrier is
-# unprivileged, so a wrong word faults (SIGILL) instead of passing; asm_mnemonics_whole.sh checks the words
-# themselves (axes 6 and 9, the cross compiler). Until 6.7.15 an option was refused (`unknown aarch64 asm
-# mnemonic 'ish'`) and the bare `dsb` was SSBB. On an x86 host the block is not compiled and the row checks only
+# unprivileged, so this row proves that each option word compiles on the host's own compiler and executes without
+# a trap. It does not prove the word is the right one: a barrier with a wrong option (CRm) is still a barrier and
+# runs without a fault, so the words themselves are pinned by asm_mnemonics_whole.sh (axes 6 and 9, against
+# llvm-mc's words, on the cross compiler; CHANGELOG [6.7.16]). Until 6.7.15 an option was refused (`unknown aarch64
+# asm mnemonic 'ish'`) and the bare `dsb` was SSBB. On an x86 host the block is not compiled and the row checks only
 # that the fn returns past it (x86's fences run in tests/tcyr/codegen/inline_asm_fences.tcyr).
 
 include "lib/assert.cyr"

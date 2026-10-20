@@ -2088,7 +2088,20 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 # (the CLI, else cycc with `#@incdir`), so a loose file's sibling include resolves. 6.7.14 (D47 /
 # D54) — a loose file reads no pin of the server's working directory (CYRIUS_RESOLVED=1 and
 # CYRIUS_NO_WARN_PIN_DRIFT=1 on its check), while a project file keeps its pin's redirect.
+# 6.7.16 — a server started with its fd 1 closed gives its `cyrius check` / cycc child a /dev/null
+# stdout (each child redirect keeps a fd that is already its target), R19-R21.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
+
+# 6.7.16 — cyrius-lsp checks a project file through its UNIT, not alone: a fragment through the
+# entry that includes it (the manifest's [build] entry first, then the fewest include hops, then
+# path order), a Windows / agnos / macOS-only lib/ peer through its public module under that target's
+# selector, an aarch64- or cx-only one as a NOTE (no compile), a public lib/ module as `include
+# "lib/<m>.cyr"` alone (no [deps] prepend), and `[lsp] skip` never. One compile serves every
+# fragment of a unit until a file it depends on changes on disk; the compiler's output is read
+# whole (it kept 8,191 bytes). F1-F23 (each with its mutant), and S: every src/, lib/ and
+# bootstrap/cybs.cyr file of this tree opened in one session, each one's own list empty but for
+# named entries' and NOTEs' (55 false errors on src/frontend/parse_ctrl.cyr before).
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_fragment_compiles_its_unit.sh"
 
 # 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a
 # count of 8+ digits fused with the one before: `0 110000000`), and splits words on all six C

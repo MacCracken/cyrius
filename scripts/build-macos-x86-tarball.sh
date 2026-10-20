@@ -50,33 +50,28 @@ sh scripts/release-scripts.sh "$WORK/$STAGE/bin"
 # dedicated x86 macho driver — carries the .44 DCE-stub fix + .43 carry-negate
 # keystone). build/cycc + CYRIUS_MACHO=1 emits the x86 Mach-O directly.
 cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc"
-# Wrapper + quality tools, cross-emitted to x86_64 Mach-O.
+# The wrapper, cross-emitted to x86_64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cyrius"
+# Every other cyrius.cyml [release] bins entry, read from the manifest and arch-checked by
+# scripts/release-bins.sh (see the arm64 builder): bin/cyriusly is the compiled version manager, its
+# shell twin scripts/cyriusly. CHANGELOG [6.7.16]
+sh scripts/release-bins.sh macos-x86_64 "$WORK/$STAGE/bin" ./build/cycc
 # cx: both cxvm (RUNTIME) + cycc_cx (COMPILER) ship — v6.4.22 fixed cycc_cx's
 # Mach-O cross-native brk-fault (now mmap per-target). x86-macOS users can
 # build+run .cyx natively. (cycc_cx line is separate — src/main_cx.cyr, a fork.)
-# v6.6.5 (round-3 review) — cyaudit + cyrius_api_surface were MISSING here, as they
-# were from the Windows tarball: `cyrius vet`, `cyrius deny` and `cyrius api-surface`
-# said "tool not found" on every macOS binary install. The CLI resolves both through
-# _tool_path; tests/gates/toolchain/cli_args_never_dropped.sh axis 15 now checks every
-# tarball script against that list.
-for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface; do
-    cat "programs/${tool}.cyr" | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/${tool}"
-done
 cat src/main_cx.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc_cx"
-# The version manager, as the shell script (the [release] scripts were staged above).
-cp scripts/cyriusly "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
-# 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
-# the one layout every POSIX slot has and scripts/verify-store.sh judges
+# 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin at scripts/ — install.sh lands it at
+# versions/<v>/scripts/cyriusly, where the compiled bin/cyriusly's `cmdtools` runs it, the one layout
+# every POSIX slot has and scripts/verify-store.sh judges
 mkdir -p "$WORK/$STAGE/scripts"
 cp scripts/cyriusly "$WORK/$STAGE/scripts/"
 chmod +x "$WORK/$STAGE/scripts/cyriusly"
 
-# Validate every Mach-O binary (magic cffaedfe = MH_MAGIC_64, cputype
-# 07000001 = CPU_TYPE_X86_64) — refuse to package a non-x86 / empty artifact.
-for b in cycc cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cycc_cx \
-         cyaudit cyrius_api_surface; do
+# Validate the Mach-O binaries this builder compiles itself (magic cffaedfe = MH_MAGIC_64, cputype
+# 07000001 = CPU_TYPE_X86_64) — refuse to package a non-x86 / empty artifact. release-bins.sh checks
+# its own the same way.
+for b in cycc cyrius cycc_cx; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')
