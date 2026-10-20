@@ -118,6 +118,17 @@ fn _cy_win_ps1_line(ver): i64 {
     return 0;
 }
 
+# `use --global` refused, with or without a version (`ver`, or "<version>" when none was given):
+# install.ps1 makes <home>\bin and <home>\lib COPIES of the active version, which the switch would
+# re-point as links. Returns 1.
+fn _cy_win_refuse_use_global(ver): i64 {
+    _cy_win_refuse("use --global", "install.ps1 makes <home>\\bin and <home>\\lib copies of the active ");
+    _cy_err_s("version, which this would re-point as links\n");
+    _cy_err_s("  switch the active version by running install.ps1 with its tarball:\n");
+    _cy_win_ps1_line(ver);
+    return 1;
+}
+
 # A copy of `p` with every '/' as '\' — a path a Windows user can paste into cmd.exe.
 fn _cy_win_slashes(p): i64 {
     var n = strlen(p);
@@ -577,13 +588,8 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
     }
     if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }   # RS-04, 6.6.20
     #ifdef CYRIUS_TARGET_WIN
-    if (is_global == 1) {   # 6.7.16's D84 — before any link is made or read
-        _cy_win_refuse("use --global", "install.ps1 makes <home>\\bin and <home>\\lib copies of the active ");
-        _cy_err_s("version, which this would re-point as links\n");
-        _cy_err_s("  switch the active version by running install.ps1 with its tarball:\n");
-        _cy_win_ps1_line(ver_cstr);
-        return 1;
-    }
+    # 6.7.16's D84 — before any link is made or read
+    if (is_global == 1) { return _cy_win_refuse_use_global(ver_cstr); }
     #endif
 
     var home = _cyrius_home();
@@ -612,6 +618,12 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
         # Per-repo default — write cyrius.cyml's [package].cyrius field.
         if (file_exists("cyrius.cyml") == 0) {
             syscall(1, 2, "error: no cyrius.cyml in this directory.\n", 41);
+            #ifdef CYRIUS_TARGET_WIN
+            # not `--global`, which Windows refuses (6.7.16's D84); install.ps1 switches it there
+            _cy_err_s("  cd to a project root to pin it there; on Windows install.ps1 switches the active version:\n");
+            _cy_win_ps1_line(ver_cstr);
+            return 1;
+            #endif
             syscall(1, 2, "  cd to a project root, or pass --global to set the global toolchain default.\n", 78);
             return 1;
         }
@@ -794,6 +806,12 @@ fn _cmd_uninstall(ver_cstr): i64 {
     var vlen = strlen(ver_cstr);
     if (clen == vlen) {
         if (memeq(&cur_buf, ver_cstr, vlen) == 1) {
+            #ifdef CYRIUS_TARGET_WIN
+            # `use --global` is refused on Windows (6.7.16's D84): install.ps1 switches the version
+            _cy_err_s("Cannot uninstall active version. Switch first with install.ps1:\n");
+            _cy_win_ps1_line("<other>");
+            return 1;
+            #endif
             syscall(1, 2, "Cannot uninstall active version. Switch first: cyriusly use <other>\n", 68);
             return 1;
         }
@@ -1235,6 +1253,9 @@ fn main(): i64 {
         # `use --global` with no version used to print the resolved version and drop the
         # flag — there is nothing to switch globally TO. Named, not ignored.
         if (_cy_global == 1 && _cy_at(0) == 0) {
+            #ifdef CYRIUS_TARGET_WIN
+            return _cy_win_refuse_use_global("<version>");   # 6.7.16's D84: with or without a version
+            #endif
             _cy_err_tok("cyriusly: --global needs a version: ", "use <ver> --global");
             return 1;
         }

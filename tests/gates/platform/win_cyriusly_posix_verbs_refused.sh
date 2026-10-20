@@ -21,16 +21,20 @@
 # AXES
 #   S   STATIC, derived: every `_cmd_*` fn in programs/cyriusly.cyr that reaches a POSIX shell or a
 #       link switch (`_cy_run_argv(`, `_exec_shell(`, `_relink_atomic(`) has an
-#       `#ifdef CYRIUS_TARGET_WIN` arm calling `_cy_win_refuse(` BEFORE its first such call. A new
+#       `#ifdef CYRIUS_TARGET_WIN` arm calling `_cy_win_refuse(` (or a `_cy_win_refuse_*(` helper)
+#       BEFORE its first such call. A new
 #       shell-backed verb cannot ship without one. Anti-vacuous: the scan finds >= 5 such fns, and
 #       a synthetic fn with the call and no arm is reported.
 #   R1-R6  (wine) install / update / setup / uninstall / cmdtools / use --global: rc 1, the named
 #       `cyriusly: <verb> is not available on Windows:` line, nothing on stdout (no "Installing",
 #       no "Checking for updates"), the store byte-for-byte as it was (versions\, current, bin\ —
 #       a real directory, install.ps1's copy layout — no *.cyrtmp*). install / use --global name
-#       the install.ps1 command for THAT version; uninstall the directory to remove.
+#       the install.ps1 command for THAT version; uninstall the directory to remove. R6c: `use
+#       --global` with NO version is refused the same way (it said "--global needs a version: 'use
+#       <ver> --global'", the refused form).
 #   G   the guards before the refusal still answer first: a path-shaped version is "not a version"
-#       (RS-04), the active version "Cannot uninstall", a version not installed "not installed"
+#       (RS-04), the active version "Cannot uninstall" — switching first with install.ps1, never
+#       `cyriusly use <other>` (a project pin there) — a version not installed "not installed"
 #       (rc 0, as on POSIX).
 #   K1-K6  (wine) list, version, use <v> (the cyrius.cyml pin, written), --help (with the Windows
 #       note), --version: rc 0; `use <v>` of a version not installed and `list` of an empty store
@@ -42,6 +46,8 @@
 #   K7-K8  (wine, met with D84's rows) with no CYRIUS_HOME the home is install.ps1's
 #       %USERPROFILE%\.cyrius (cyriusly read HOME, unset on a Windows console: every verb looked in
 #       /root/.cyrius), and `which` names <home>\bin\cycc.exe (it printed <home>/bin/cycc).
+#   K9  (wine, 6.7.16 review) `use <v>` outside a project names install.ps1 for switching the
+#       active version, never `--global` (refused there).
 #   wine is NOT hardware: without it the wine axes are a named SKIP (exit 77); the cass leg of
 #   scripts/cross-os-selfhost.sh runs R1-R6 and K1-K2 on real Windows.
 #
@@ -50,7 +56,9 @@
 # update rc 255, use --global rc 0 with the store changed), and the rows after R6 that read the
 # store it changed, plus K4-K6 (the hints named `cyriusly install`, the help had no Windows note);
 # install's arm alone removed -> RED S, R1 (5 rows); use --global's arm alone removed -> RED S, R6,
-# R6b and the store rows after them (13 rows).
+# R6b and the store rows after them (13 rows). The review fix (6.7.16): the D84 commit's hints ->
+# RED 5 rows: R6c (rc 1, but "--global needs a version: 'use <ver> --global'" and no refusal), G2
+# (`Switch first: cyriusly use <other>`), K9 (`pass --global`).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -97,7 +105,7 @@ function flush() {
 }
 code ~ /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_WIN([ \t]|$)/ { inwin = 1; winref = 0; next }
 code ~ /^[ \t]*#endif/ { if (inwin == 1 && winref == 1 && armline == 0) { armline = FNR }; inwin = 0; next }
-inwin == 1 { if (code ~ /_cy_win_refuse\(/) { winref = 1 }; next }
+inwin == 1 { if (code ~ /_cy_win_refuse[A-Za-z_]*\(/) { winref = 1 }; next }
 code ~ /(_cy_run_argv|_exec_shell|_relink_atomic)\(/ && code !~ /^fn / { if (first == 0) { first = FNR } }
 END { flush() }
 AWK
@@ -189,11 +197,16 @@ else
     refused R6 "use --global" use 6.7.14 --global
     check "  …the install.ps1 command that activates 6.7.14" yes "$(has 'install.ps1 -Tarball cyrius-6.7.14-x86_64-windows.tar.gz' "$T/err.u")"
     refused R6b "use --global" use --global 6.7.14
+    refused R6c "use --global" use --global
+    check "  …the install.ps1 line, with no version given" yes "$(has 'install.ps1 -Tarball cyrius-<version>-x86_64-windows.tar.gz' "$T/err.u")"
+    check "  …never the refused 'use <ver> --global'" no "$(has 'use <ver> --global' "$T/err.u")"
 
     wrun install ../versions
     check "G1 install ../versions: still 'not a version' first, rc 1" "1 yes" "$RC $(has 'cyriusly: not a version: ' "$T/err.u")"
     wrun uninstall 6.7.15
     check "G2 uninstall of the ACTIVE 6.7.15: still refused as active, rc 1" "1 yes" "$RC $(has 'Cannot uninstall active version' "$T/err.u")"
+    check "  …switch first with install.ps1, never 'cyriusly use' (a project pin on Windows)" "yes no" \
+        "$(has 'install.ps1 -Tarball cyrius-<other>-x86_64-windows.tar.gz' "$T/err.u") $(has 'cyriusly use' "$T/err.u")"
     wrun uninstall 9.9.9
     check "G3 uninstall 9.9.9 (not installed): 'not installed', rc 0" "0 yes" "$RC $(has 'Version 9.9.9 not installed.' "$T/out.u")"
     check "  …and the store as it was" yes "$(unchanged)"
@@ -203,6 +216,11 @@ else
     check "  …both versions, 6.7.15 active" yes "$(grep -qx '    6.7.14' "$T/out.u" && grep -qx '  \* 6.7.15 (active)' "$T/out.u" && echo yes || echo no)"
     wrun version
     check "K2 version: rc 0, 'cyriusly 6.7.15'" "0 yes" "$RC $(grep -qx 'cyriusly 6.7.15' "$T/out.u" && echo yes || echo no)"
+    wrun use 6.7.14
+    check "K9 use 6.7.14 outside a project: rc 1, 'no cyrius.cyml'" "1 yes" "$RC $(has 'error: no cyrius.cyml in this directory.' "$T/err.u")"
+    check "  …install.ps1 named for switching the active version, never '--global'" "yes no" \
+        "$(has 'install.ps1 -Tarball cyrius-6.7.14-x86_64-windows.tar.gz' "$T/err.u") $(has '--global' "$T/err.u")"
+    check "  …and the store as it was" yes "$(unchanged)"
     printf '[package]\nname = "p"\nversion = "0.1.0"\n' > "$T/w/cyrius.cyml"
     wrun use 6.7.14
     check "K3 use 6.7.14 (the project pin): rc 0" 0 "$RC"

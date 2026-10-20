@@ -1141,7 +1141,7 @@ case "$HOST" in
       || { echo "SELFHOST_FAIL: cass — cyriusly.exe or its home could not be staged. NOT SELFHOST_OK."; exit 1; }
     _CYL='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=C:\cyrius-tests\'"$RD"'\cyh&& cyriusly.exe'
     _cybad=""; _cyn=0; _cyget=""
-    for _cv in "install 6.7.15" "update" "setup" "uninstall 6.7.14" "cmdtools list" "use 6.7.14 --global"; do
+    for _cv in "install 6.7.15" "update" "setup" "uninstall 6.7.14" "cmdtools list" "use 6.7.14 --global" "use --global"; do
       _cyn=$((_cyn + 1))
       ssh $SSHO cass "cmd /v /c \"$_CYL $_cv > _cyr$_cyn.out 2> _cyr$_cyn.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" \
         || _cybad="$_cybad [$_cv: rc not 1]"
@@ -1154,11 +1154,16 @@ case "$HOST" in
     _CYU='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=&& set HOME=&& set USERPROFILE=C:\cyrius-tests\'"$RD"'\up&& cyriusly.exe'
     ssh $SSHO cass "cmd /v /c \"$_CYU version > _cyk3.out 2> _cyk3.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version with no CYRIUS_HOME: rc not 0]"
     ssh $SSHO cass "cmd /v /c \"$_CYL which > _cyk4.out 2> _cyk4.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [which: rc not 0]"
+    # The hints of the verbs D84 keeps name install.ps1, never a verb Windows refuses or a plain
+    # `use` (a project pin): uninstall of the ACTIVE version (G2) and `use <v>` outside a project
+    # (K9, run in up\, which has no cyrius.cyml). CHANGELOG [6.7.16]
+    ssh $SSHO cass "cmd /v /c \"$_CYL uninstall 6.7.15 > _cyk5.out 2> _cyk5.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" || _cybad="$_cybad [uninstall of the active version: rc not 1]"
+    ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD\\up && set CYRIUS_HOME=C:\\cyrius-tests\\$RD\\cyh&& ..\\cyriusly.exe use 6.7.14 > ..\\_cyk6.out 2> ..\\_cyk6.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" || _cybad="$_cybad [use 6.7.14 outside a project: rc not 1]"
     ssh $SSHO cass "cmd /c \"cd /d C:\\cyrius-tests\\$RD && dir /s /b /a cyh > _cyls.txt\"" || _cybad="$_cybad [the store could not be listed]"
     mkdir -p "$CO_TMP"/_cyout && rm -f "$CO_TMP"/_cyout/*
-    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyk3.out" "cass:$WRDS/_cyk4.out" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
+    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyk3.out" "cass:$WRDS/_cyk4.out" "cass:$WRDS/_cyk5.err" "cass:$WRDS/_cyk6.err" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
     _cyn=0
-    for _cvb in install update setup uninstall cmdtools "use --global"; do
+    for _cvb in install update setup uninstall cmdtools "use --global" "use --global"; do
       _cyn=$((_cyn + 1))
       [ -f "$CO_TMP/_cyout/_cyr$_cyn.out" ] && [ ! -s "$CO_TMP/_cyout/_cyr$_cyn.out" ] || _cybad="$_cybad [$_cvb: wrote to stdout]"
       tr -d '\r' < "$CO_TMP/_cyout/_cyr$_cyn.err" 2>/dev/null | grep -qF "cyriusly: $_cvb is not available on Windows: " || _cybad="$_cybad [$_cvb: not refused by name]"
@@ -1167,16 +1172,21 @@ case "$HOST" in
     tr -d '\r' < "$CO_TMP"/_cyout/_cyk2.out 2>/dev/null | grep -qx 'cyriusly 6.7.15' || _cybad="$_cybad [version: no 'cyriusly 6.7.15']"
     tr -d '\r' < "$CO_TMP"/_cyout/_cyk3.out 2>/dev/null | grep -qx 'cyriusly 6.7.13' || _cybad="$_cybad [no CYRIUS_HOME: not %USERPROFILE%\\.cyrius]"
     tr -d '\r' < "$CO_TMP"/_cyout/_cyk4.out 2>/dev/null | grep -q '\\cyh\\bin\\cycc\.exe$' || _cybad="$_cybad [which: not <home>\\bin\\cycc.exe]"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyr7.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-<version>-x86_64-windows.tar.gz' || _cybad="$_cybad [use --global with no version: no install.ps1 line]"
+    { tr -d '\r' < "$CO_TMP"/_cyout/_cyk5.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-<other>-x86_64-windows.tar.gz' \
+      && ! grep -qF 'cyriusly use' "$CO_TMP"/_cyout/_cyk5.err; } || _cybad="$_cybad [uninstall of the active version: not 'switch first with install.ps1']"
+    { tr -d '\r' < "$CO_TMP"/_cyout/_cyk6.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-6.7.14-x86_64-windows.tar.gz' \
+      && ! grep -qF -- '--global' "$CO_TMP"/_cyout/_cyk6.err; } || _cybad="$_cybad [use 6.7.14 outside a project: not install.ps1, or names --global]"
     if ! [ -s "$CO_TMP"/_cyout/_cyls.txt ] || grep -q 'cyrtmp' "$CO_TMP"/_cyout/_cyls.txt \
       || ! tr -d '\r' < "$CO_TMP"/_cyout/_cyls.txt | grep -q '\\versions\\6\.7\.14$'; then
       _cybad="$_cybad [the store changed: a *.cyrtmp* left, or versions\\6.7.14 removed]"
     fi
     if [ -n "$_cybad" ]; then
       _co_cass_defender
-      echo "SELFHOST_FAIL: cass — cyriusly.exe (6.7.16's D84):$_cybad. Remote output: $WRD\\_cyr*.*, _cyk*.out, _cyls.txt. NOT SELFHOST_OK."
+      echo "SELFHOST_FAIL: cass — cyriusly.exe (6.7.16's D84):$_cybad. Remote output: $WRD\\_cyr*.*, _cyk*.*, _cyls.txt. NOT SELFHOST_OK."
       exit 1
     fi
-    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global refused by name (rc 1, the store as it was); list and version rc 0; the home %USERPROFILE%\\.cyrius with no CYRIUS_HOME; which names bin\\cycc.exe"
+    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global (with and without a version) refused by name (rc 1, the store as it was); list and version rc 0; the home %USERPROFILE%\\.cyrius with no CYRIUS_HOME; which names bin\\cycc.exe; the active-uninstall and no-project hints name install.ps1"
     # 6.7.16 — `_relink_atomic` removes its temp link when the switch fails. A link to a directory is
     # a directory entry on Windows that DeleteFileW refuses, so a failed `use --global` left
     # bin.cyrtmp.<pid>.<n> (a SYMLINKD) here while saying "nothing was changed". No verb reaches it
