@@ -80,6 +80,13 @@
 #           -> every r2_loop_ refusal builds (9); `_loop_exits_by_return` without its `ret2` arm -> the same less
 #           r2_loop_nested r2_loop_switch (7); `_has_return_tok` without its `ret2` arm -> r2_loop_nested
 #           r2_loop_switch build.
+#           (6.7.16) A `ret2(..);` right after a `case N:` / `default:` label starts a statement too
+#           (issues/2026-10-18-ret2-after-case-label-not-counted.md: the repro read the seeded 88 on every target): the
+#           r2_case_ rows. MUTATIONS (scratch trees, run 2026-10-20, every leg): the tree before (43e661ac) -> every
+#           r2_case_ refusal builds (6); `_ret2_lbl` without its `default` arm -> r2_case_default; without the walk to
+#           `case` -> r2_case_repro r2_case_loop r2_case_tup3 r2_case_expr r2_case_method build; the walk crossing a
+#           `:` -> GREEN (r2_case_named holds by the `;` after the call too: no source puts a `:` that is no label
+#           right before a whole `ret2(..);` — the stop is the brief's guard, kept).
 #   axis 8  6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
 #           the destructure (issues/archived/2026-10-15-paren-wrapped-call-destructure-refused.md: the filed program was "needs a
 #           call on the right-hand side" twice on x86_64 / aarch64 / cx / PE; unwrapped it exits 41). `_dt_wrap_k` (k `(`,
@@ -436,6 +443,23 @@ refused7 r2_loop_switch "${H88}fn g2(x) { loop { switch (x) { case 1: { ret2(1, 
 refused7 r2_loop_top "${LP7}var a, b, c = g2(5);\nsyscall(60, a);\n" "2:15: $G32"
 runs7 r2_loop_brk "${H88}fn g2(x) { loop { if (x > 0) { ret2(x, 1); } break; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
 runs7 r2_loop_two "${H88}${LP7}fn main(): i64 { var x, y, w = h(); var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
+# 6.7.16 — a `ret2(..);` RIGHT AFTER A SWITCH LABEL starts a statement too (issues/2026-10-18-ret2-after-case-label-not-counted.md:
+# `case 1: ret2(1, 2);` read as a `ret2` inside an expression, so the count went unrecorded and the repro read the seeded 88 on
+# every target): the repro verbatim, `default: ret2(..);`, a loop-ending switch, the 3-tuple capture, a case value that is an
+# expression (`case 1 + 1:`, `case (3):`) and a method are refused once; the repro's fn bound to two names runs (1, 2), as the
+# loop-ending one does; a `ret2` after a named argument's `:` (after a label) is inside an expression, uncounted, as r2_expr's
+# (cyrius has no `?:`, so a named argument is the `:` that can stand there).
+CL7='fn g2(x) { switch (x) { case 1: ret2(1, 2); default: x = 1; } ret2(3, 4); }\n'
+CB7='fn g2(x) { loop { switch (x) { case 1: ret2(1, 2); default: x = 1; } } }\n'
+refused7 r2_case_repro "${H88}${CL7}fn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_case_default "${H88}fn g2(x) { switch (x) { case 2: x = 3; default: ret2(1, 2); } ret2(3, 4); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_case_loop "${H88}${CB7}fn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_case_tup3 "${H88}${CL7}fn main(): i64 { var x, y, w = h(); var t: (i64, i64, i64) = g2(1); return t.2; }\nsyscall(60, main());\n" "3:62: cannot capture 'g2' into tuple (i64, i64, i64) - it returns 2 values"
+refused7 r2_case_expr "${H88}fn g2(x) { switch (x) { case 1 + 1: ret2(1, 2); case (3): ret2(5, 6); default: x = 1; } ret2(3, 4); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return c; }\nsyscall(60, main());\n" "3:51: $G32"
+refused7 r2_case_method "struct P { x; }\nimpl P { fn dm(self) { switch (self.x) { case 1: ret2(1, 2); } ret2(3, 4); } }\nfn main(): i64 { var p = P { 4 }; var a, b, c = p.dm(); return a; }\nsyscall(60, main());\n" "binds 3 names, but 'P.dm' returns 2 values"
+runs7 r2_case_two "${H88}${CL7}fn main(): i64 { var x, y, w = h(); var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
+runs7 r2_case_loop_two "${H88}${CB7}fn main(): i64 { var x, y, w = h(); var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
+runs7 r2_case_named "${H88}fn take(v) { return v; }\nfn g2(x) { switch (x) { case 1: take(v: ret2(1, 2)); default: x = 1; } ret2(3, 4); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
 
 echo "axis 8 - parentheses around the whole call are transparent to the destructure (D45), on every target:"
 TWO8='fn two(x): (i64, i64) { return (x, x + 1); }\n'

@@ -3522,6 +3522,8 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # values (the third name read a stale register). A body
 #                                     # ending in an infinite loop no `break` leaves, whose exits
 #                                     # are `ret2(..);` statements, is counted too (6.7.15). A
+#                                     # `ret2(..);` statement starts after a `;`, `{` or `}`, or
+#                                     # directly after a `case` / `default` label (6.7.16). A
 #                                     # `ret2` inside an expression is not counted
 #   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
 #                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"

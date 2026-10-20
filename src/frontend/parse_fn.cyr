@@ -18456,12 +18456,31 @@ fn _fn_ret_arity(S, fi): i64 {
 }
 # 6.7.14 — 1 = the `ret2` at token k is a whole statement: it starts one (`;` `{` `}` before it) and
 # its `(..)` is followed by the `;` (D42). Anything else is a `ret2` inside an expression.
+# ⛔ 6.7.16 — OR RIGHT AFTER A SWITCH LABEL: `case 1: ret2(1, 2);` / `default: ret2(1, 2);` start a statement too, but the
+# token before was the label's `:`, so the `ret2` read as one inside an expression and the fn's count went unrecorded:
+# `var a, b, c = g2(1);` bound c to a stale register (88 seeded, every target) where `case 1: return (1, 2);` is refused
+# (issues/2026-10-18-ret2-after-case-label-not-counted.md; 6.7.14's D42, kept by 6.7.15's D62). `_ret2_lbl`. CHANGELOG [6.7.16]
 fn _ret2_stmt(S, k): i64 {
     var p = TOKTYP(S, k - 1);
-    if (p != 5 && p != 13 && p != 14) { return 0; }
+    if (p == 49) { if (_ret2_lbl(S, k - 1) == 0) { return 0; } }
+    elif (p != 5 && p != 13 && p != 14) { return 0; }
     if (TOKTYP(S, k + 1) != 10) { return 0; }
     if (TOKTYP(S, _call_close(S, k + 1) + 1) != 5) { return 0; }
     return 1;
+}
+# 1 = the `:` at token c closes a switch label: `default:`, or `case <value>:` — walking back to the `case` crosses no
+# `;` `{` `}` `:` (a case value is a const expression), so a named argument's or a struct literal field's `:` never
+# reaches one.
+fn _ret2_lbl(S, c): i64 {
+    if (TOKTYP(S, c - 1) == 59) { return 1; }
+    var k = c - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 58) { return 1; }
+        if (t == 5 || t == 13 || t == 14 || t == 49) { return 0; }
+        k = k - 1;
+    }
+    return 0;
 }
 # 6.7.14 — 1 = the block `{` at o .. `}` at e is left only through an exit `_prescan_ret_arity`
 # counts: it ends in a `return` or an infinite loop (`_body_ends_in_return`), in a `ret2(..);`
