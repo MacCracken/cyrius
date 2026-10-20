@@ -922,6 +922,11 @@ fn _cmd_install(ver_cstr): i64 {
     return _cy_run_argv(in_args);
 }
 
+# `update`'s script: $1 = the active version. Shell-out: curl the GitHub releases API + grep
+# tag_name (lib/json.cyr could parse it; v5.11.10's port-closeout kept the pipeline). Its switch
+# hint is `use <v> --global`: a plain `use` pins the project. CHANGELOG [6.7.16]
+var _CY_UPDATE_SH = "LATEST=$(curl -sSf https://api.github.com/repos/MacCracken/cyrius/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"tag_name\": *\"\\([^\"]*\\)\".*/\\1/'); CUR=$1; if [ -z \"$LATEST\" ]; then echo 'Could not check for updates.'; elif [ \"$LATEST\" = \"$CUR\" ]; then echo \"Already up to date: $CUR\"; else echo \"Update available: $CUR -> $LATEST\"; echo \"Run: cyriusly install $LATEST && cyriusly use $LATEST --global\"; fi";
+
 # `cyriusly update` — check GitHub releases API for latest tag.
 fn _cmd_update(): i64 {
     #ifdef CYRIUS_TARGET_WIN
@@ -931,12 +936,18 @@ fn _cmd_update(): i64 {
     return 1;
     #endif
     syscall(1, 1, "Checking for updates...\n", 24);
-    # Shell-out: curl GitHub releases API + grep tag_name. Plain JSON
-    # parsing in cyrius is doable (lib/json.cyr) but for v5.11.10's
-    # port-closeout slot, the cmdline pipeline is the pragmatic shape. Its switch hint is
-    # `use <v> --global`: a plain `use` pins the project. CHANGELOG [6.7.16]
-    var cmd = "LATEST=$(curl -sSf https://api.github.com/repos/MacCracken/cyrius/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"tag_name\": *\"\\([^\"]*\\)\".*/\\1/'); CUR=$(cat ~/.cyrius/current 2>/dev/null || echo none); if [ -z \"$LATEST\" ]; then echo 'Could not check for updates.'; elif [ \"$LATEST\" = \"$CUR\" ]; then echo \"Already up to date: $CUR\"; else echo \"Update available: $CUR -> $LATEST\"; echo \"Run: cyriusly install $LATEST && cyriusly use $LATEST --global\"; fi";
-    return _exec_shell(cmd);
+    # A CONSTANT script; the active version is its `$1`, read as `version` reads it (<home>/current,
+    # CYRIUS_HOME honoured) — the line read ~/.cyrius/current, so under CYRIUS_HOME it compared
+    # another store's version ("none -> <latest>" while `version` named it). CHANGELOG [6.7.16]
+    var cur[64];
+    _cyrius_current_into(&cur, 64);
+    var up = vec_new();
+    vec_push(up, "/bin/sh");
+    vec_push(up, "-c");
+    vec_push(up, _CY_UPDATE_SH);
+    vec_push(up, "cyriusly-update");
+    vec_push(up, &cur);
+    return _cy_run_argv(up);
 }
 
 # `cyriusly setup` — install from current repo checkout.
