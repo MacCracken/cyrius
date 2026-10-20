@@ -278,6 +278,37 @@ var GAI_CALLS = 0;
 fn gai_side(): i64 { GAI_CALLS = GAI_CALLS + 1; return 0x7777; }
 var GRC = gai_side();
 var GRC[1] = {0, 4};
+# 6.7.16 — and the scalar constant may be NAMED (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-
+# unlisted-bytes.md): a const or enum name keeps its bytes as the literal does (it read 0x0009), the last constant
+# before the list is its seed however each is spelled (`0x0506` then `GAI_KD` seeded the stale literal: 0x0509), a
+# computed initializer in between is no constant, and a named constant between two lists reaches the earlier one as a
+# literal does. The differing pairs warn ("redefined with conflicting value") by design.
+const GAI_KC = 0x0506;
+const GAI_KD = 0x0708;
+enum GaiK { GK = 0x0506; }
+fn gai_rkr(): i64 { return GRKR; }
+var GRKRD = gai_rkr();
+fn gai_nine(): i64 { return 0x0102; }
+var GRKC = GAI_KC;
+var GRKC[1] = {9};
+var GRKE = GaiK.GK;
+var GRKE[1] = {9};
+var GRLN = 0x0506;
+var GRLN = GAI_KD;
+var GRLN[1] = {9};
+var GRNL = GAI_KD;
+var GRNL = 0x0506;
+var GRNL[1] = {9};
+var GRCF = gai_nine();
+var GRCF[1] = {9};
+var GRNC = GAI_KC;
+var GRNC = gai_nine();
+var GRNC[1] = {9};
+var GRLL[1] = {7};
+var GRLL = GAI_KC;
+var GRLL[1] = {9};
+var GRKR = GAI_KC;
+var GRKR[1] = {9};
 
 alloc_init();
 
@@ -384,5 +415,13 @@ assert_eq(load64(&GRK), 0x0509, "a list over a scalar constant keeps the bytes i
 assert_eq(load64(&GRZ), 0x0300, "a list over `= 0` is the value (the later declaration wins)");
 assert_eq(load64(&GRC), 0x0400, "a list over a computed initializer is the value");
 assert_eq(GAI_CALLS, 1, "the computed initializer still ran, once");
+assert_eq(load64(&GRKC), 0x0509, "a list over a const-named scalar keeps the bytes it does not list");
+assert_eq(load64(&GRKE), 0x0509, "a list over an enum-named scalar keeps the bytes it does not list");
+assert_eq(load64(&GRLN), 0x0709, "a literal then a const name: the later constant seeds the list");
+assert_eq(load64(&GRNL), 0x0509, "a const name then a literal: the later literal seeds the list");
+assert_eq(load64(&GRCF), 9, "a list over a computed scalar is the value");
+assert_eq(load64(&GRNC), 0x0509, "a computed initializer between a const name and the list is no constant");
+assert_eq(load64(&GRLL), 0x0509, "a const name between two lists: the second keeps its bytes, as over a literal");
+assert_eq(GRKRD, 0x0509, "an earlier initializer reads the list over a const name");
 
 var r = assert_summary();

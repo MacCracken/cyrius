@@ -4558,7 +4558,7 @@ fn _gai_stmt(S, ann_ti, n): i64 {
 fn _gai_now(S, vi, lb, ann_ti): i64 {
     var sv = GTI(S);
     STI(S, lb);
-    _gai_eval(S, vi, ann_ti);
+    _gai_eval(S, vi, ann_ti, GVSI(S, vi));
     STI(S, sv);
     return 0;
 }
@@ -4575,22 +4575,24 @@ fn _gai_replay(S, gi, noff, gsup, sti): i64 {
     var ann = _gai_ann(S, sti);
     var vi = _gv_ent_slot(S, gi, 0, noff);
     if ((gsup & 1) != 0) { vi = 0 - 1; }
-    _gai_eval(S, vi, ann);
+    var seed = 0;
+    if (vi >= 0) { seed = _gai_seed(S, gi, vi, noff); }
+    _gai_eval(S, vi, ann, seed);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 0;
 }
 
 # Evaluate `{ e, e, .. }` (cursor on `{`, left past `}`) into slot `vi`'s blob (vi < 0: errors
-# only). The walk has reported the shape; this reports the values.
-fn _gai_eval(S, vi, ann): i64 {
+# only; `seed` a new blob's first word, _gai_blob). The walk has reported the shape; this reports the values.
+fn _gai_eval(S, vi, ann, seed): i64 {
     var k = _gai_kind(S, ann);
     var eb = _gai_w;
     _gai_isbool = 0;
     if (ann > 0) { if (TOKTYP(S, ann) == 2) { _gai_isbool = _bx_is_bool_name(S, TOKVAL(S, ann)); } }
     if (_syntax_only == 1) { k = 0; }
     var b = 0;
-    if (k > 0) { b = _gai_blob(S, vi, eb, k); }
+    if (k > 0) { b = _gai_blob(S, vi, eb, k, seed); }
     STI(S, GTI(S) + 1);
     var off = 0;
     while (PEEKT(S) != 14) {
@@ -4607,22 +4609,51 @@ fn _gai_eval(S, vi, ann): i64 {
     return 0;
 }
 
-# Slot `vi`'s blob, made on first use: zeroed, then seeded with a scalar constant this slot folded
-# from (a bare `var B[1]` redeclaring `var B = 5;` keeps the bytes it does not list, as the replayed
-# stores did). A later declaration of the slot reuses it, so the overlay order is the old store
-# order. 0 for `vi < 0`.
-fn _gai_blob(S, vi, eb, k): i64 {
+# Slot `vi`'s blob, made on first use: zeroed, then seeded with `seed`, the scalar constant this slot
+# held (a bare `var B[1]` redeclaring `var B = 5;` keeps the bytes it does not list, as the replayed
+# stores did; _gai_seed). A later declaration of the slot reuses it, so the overlay order is the old
+# store order. 0 for `vi < 0`.
+fn _gai_blob(S, vi, eb, k, seed): i64 {
     if (vi < 0) { return 0; }
     var b = GVGAI(S, vi);
     if (b == 0) {
         var sz = L64(_vars_base + vi * 8);
         b = alloc(sz + 24);
         store64(b, sz);
-        if (sz >= 8) { store64(b + 16, GVSI(S, vi)); }
+        if (sz >= 8) { store64(b + 16, seed); }
         SVGAI(S, vi, b);
     }
     store64(b + 8, eb | (k << 8));
     return b;
+}
+# ⛔ 6.7.16 — THE SEED IS THE SLOT'S LAST CONSTANT BEFORE THE LIST, HOWEVER IT IS SPELLED
+# (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md). It was the static init,
+# which only a pass-1 literal writes: a const- or enum-named scalar (`var a = C; var a[1] = {9};`) is a deferred entry
+# the list supersedes (_gvk_one's bk 4: folded, not baked), so the list dropped its bytes (0x0009, where `var a =
+# 0x0506;` gives 0x0509), and `var a = 0x0506; var a = C;` seeded the stale literal. Now the nearest earlier entry
+# of slot `vi` that folded (`_gvk_ik`; a computed one is no constant and is stepped past, as the literal's static
+# init outlives it) is the seed, unless a pass-1 constant redeclaration came after it (_gv_supersede's bit 43): then
+# that literal, the static init, is. `gi` = the list's entry, `noff` its name. CHANGELOG [6.7.16]
+fn _gai_seed(S, gi, vi, noff): i64 {
+    if (_gvx_m == 0) { return GVSI(S, vi); }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        var g = r >> 2;
+        if (g < gi) { if ((r & 3) == 0) { if (_gai_seed_ent(S, g, vi) == 1) {
+                    if ((_gv_sup(L64(_gvt(S) + g * 8)) & 8) != 0) { return GVSI(S, vi); }
+                    return load64(_gvk_v + g * 8);
+                } } }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return GVSI(S, vi);
+}
+# 1 = entry `g` declared slot `vi` and _gvk_pre folded its initializer to a constant.
+fn _gai_seed_ent(S, g, vi): i64 {
+    if (g >= _gv_ent_cap) { return 0; }
+    if ((load64(_gv_ent_base + g * 8) & 0x1FFFFF) - 1 != vi) { return 0; }
+    if (load8(_gvk_ik + g) == 0) { return 0; }
+    return 1;
 }
 
 # One element at token `ti`, written at byte `off` of blob `b` (b == 0: checked only). An empty
@@ -4823,7 +4854,8 @@ fn _gai_is_list(S, sti): i64 {
 
 # cx (_gv_cx_prestore): make the blob of every slot a live leading-block list writes — the replay
 # fills it — so the prestore leaves that slot to the var data. The blob is seeded with the scalar
-# constant the slot held; storing the scalar at run time would land over the baked list.
+# constant the slot held (_gai_seed, as the replay seeds it); storing the scalar at run time would
+# land over the baked list.
 fn _gai_cx_blobs(S): i64 {
     var gc = L64(S + 0x19A000);
     var gi = 0;
@@ -4831,10 +4863,16 @@ fn _gai_cx_blobs(S): i64 {
         var graw = L64(_gvt(S) + gi * 8);
         var sti = _gv_tok(graw);
         if ((_gv_sup(graw) & 1) == 0) {
-            if (_gai_is_list(S, sti) == 1) { _gai_blob(S, _gv_ent_slot(S, gi, 0, TOKVAL(S, sti + 1)), 0, 0); }
+            if (_gai_is_list(S, sti) == 1) { _gai_cx_blob(S, gi, TOKVAL(S, sti + 1)); }
         }
         gi = gi + 1;
     }
+    return 0;
+}
+fn _gai_cx_blob(S, gi, noff): i64 {
+    var vi = _gv_ent_slot(S, gi, 0, noff);
+    if (vi < 0) { return 0; }
+    _gai_blob(S, vi, 0, 0, _gai_seed(S, gi, vi, noff));
     return 0;
 }
 
@@ -5034,6 +5072,8 @@ fn _gv_reg8(S, noff, ty, ti): i64 {
 # runs f() into a sink. An earlier LIST is left alone (two lists overlay in order, the shared
 # blob). A constant scalar redeclaration (`lists` = 0) supersedes every earlier entry, lists
 # included: it wins whole. CHANGELOG [6.6.16]
+# 6.7.16: and marks it with bit 43 — a scalar constant came after it, so a later list's seed is that
+# constant's static init, not this entry's fold (_gai_seed). CHANGELOG [6.7.16]
 fn _gv_supersede(S, noff, lists): i64 {
     if (_gvx_m == 0) { return 0; }
     var e = _nm_get(S, _gvx_m, noff);
@@ -5043,6 +5083,7 @@ fn _gv_supersede(S, noff, lists): i64 {
         var keep = 0;
         if (lists == 1) { keep = _gai_is_list(S, _gv_tok(L64(a))); }
         if (keep == 0) { S64(a, L64(a) | ((1 << (v & 3)) << 40)); }
+        if (lists == 0) { S64(a, L64(a) | (8 << 40)); }
         e = load64(_gvx_nxt + (e - 1) * 8);
     }
     return 0;
@@ -6206,12 +6247,17 @@ fn _gvc_cmp(S, slot, v, ti): i64 {
         } }
     return _gvc_set(slot, 1, v);
 }
-# Entry `gi`, an integer fold of its slot: compared at its `=`; baked (not superseded), it supersedes.
+# Entry `gi`, an integer fold of its slot: compared at its `=`; it supersedes the slot's earlier writers. Baked (bk 1),
+# all of them; superseded itself (bk 4), by a later list or constant that already superseded every earlier scalar
+# entry, the one writer left is an earlier list — which a literal's pass-1 supersede reaches too (_gv_supersede):
+# `var a[1] = {7}; var a = C; var a[1] = {9};` is C's bytes under the second list, as with `var a = 0x0506;`
+# (6.7.16, issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md).
 fn _gvk_link(S, gi): i64 {
     var sti = _gv_tok(L64(_gvt(S) + gi * 8));
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
     _gvc_cmp(S, vi, load64(_gvk_v + gi * 8), _gvk_rhs(S, sti) - 1);
-    if (load8(_gvk_bk + gi) == 1) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
+    var bk = load8(_gvk_bk + gi);
+    if (bk == 1 || bk == 4) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
     return 0;
 }
 # Every target of an entry before `gi` that writes slot `vi` (named `noff`) is superseded, as _gv_supersede marks.
@@ -6429,7 +6475,7 @@ fn _gvk_warn(S, sti): i64 {
 fn _spc_try(S, gi, idx, sid): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
     if (_spc_walk(S, sid, 0) == 0) { return 0; }
-    var b = _gai_blob(S, idx, 8, 6);
+    var b = _gai_blob(S, idx, 8, 6, GVSI(S, idx));
     _spc_walk(S, sid, b + 16);
     store8(_gvk_bk + gi, 2);
     store64(_gvs_b + gi * 8, _gvs_snap(b));   # 6.7.15: its bytes, for a later literal's compare (_gvs_quiet)

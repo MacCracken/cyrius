@@ -7750,7 +7750,14 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   an earlier `= 0` or computed initializer of the name it is the value from
   program start — `var a = f(); var a[1] = {0, 4};` runs `f()` and reads `0x400`
   — and over an earlier scalar **constant** it keeps the bytes it does not list
-  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`).
+  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`). The constant may be named
+  (6.7.16): `const C = 0x0506; var a = C; var a[1] = {9};` reads `0x0509` too —
+  through 6.7.15 a const or enum name's bytes were dropped (`0x0009`). The bytes kept
+  are the slot's **last** constant before the list, however each is spelled
+  (`var a = 0x0506; var a = D; var a[1] = {9};` with `D = 0x0708` reads `0x0709`;
+  through 6.7.15 the stale literal's `0x0509`); a computed initializer in between is no
+  constant and is passed over, and a constant between two lists reaches the earlier
+  one (`var a[1] = {7}; var a = C; var a[1] = {9};` reads `0x0509`, as with a literal).
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a

@@ -59,6 +59,13 @@
 #          its bits IEEE's on every target; an earlier read sees it (was 0), an earlier call's write is kept
 #          (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
 #          kmode_enum_initializer_baked.sh RC / KC)
+#   L1-L10 6.7.16: a list over a NAMED scalar constant keeps the bytes it does not list, as over a literal (L10)
+#          (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md), by value on every
+#          leg: a const name (L1, the filed repro: 9 -> 14), an enum name (L2), a literal then a const (L3: the later
+#          constant, 14 -> 16), a const then a literal (L4), a computed scalar (L5: 9) and the guide's `var a = f();
+#          var a[1] = {0, 4};` (L6: 0x400), a const between two lists (L7: 9 -> 14), a computed initializer between
+#          the const and the list (L8: 9 -> 14), an earlier initializer's read (L9: 9 -> 14)
+#   T13-T16 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr on the same four legs
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -102,6 +109,11 @@
 # (33: the first literal's stores dropped under the second's bytes), T5-T8; `_gvs_same` returning 0 -> 7 red: Z11 on
 # all three legs, T5-T8; `_gvs_undo` not taking the fixups back -> 48 red (the stale fixups patch the program's code:
 # SIGSEGV / SIGILL).
+# MUTATION (measured, 6.7.16, mutated scratch copies of the tree, every leg built from each — the list seed):
+# `_gai_seed` returning the static init (the tree before the fix) -> 22 red: L1-L3 and L7-L9 on all three legs,
+# T13-T16 (6 of the tcyr's rows each); `_gvk_link` not superseding for a superseded fold (bk 4) -> 7 red: L7 on all
+# three legs (9: the earlier list's blob kept), T13-T16; `_gv_supersede` not setting bit 43 -> 7 red: L4 on all three
+# legs (16: the const before the literal seeded), T13-T16.
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -292,7 +304,17 @@ Z9|11|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 1, 2 };
 Z10|92|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
 Z11|92|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
 Z12|34|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
-Z13|17|struct P { a; b; }\nvar q = P { 7, 8 };\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p: P = q;\nsyscall(60, b * 10 + p.a);\n"
+Z13|17|struct P { a; b; }\nvar q = P { 7, 8 };\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p: P = q;\nsyscall(60, b * 10 + p.a);\n
+L1|14|const C = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L2|14|enum E { V = 0x0506; }\nvar a = E.V;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L3|16|const C = 0x0708;\nvar a = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L4|14|const C = 0x0708;\nvar a = C;\nvar a = 0x0506;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L5|9|fn f(): i64 { return 0x0506; }\nvar a = f();\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L6|4|fn f(): i64 { return 7; }\nvar a = f();\nvar a[1] = {0, 4};\nsyscall(60, a >> 8);\n
+L7|14|const C = 0x0506;\nvar a[1] = {7};\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L8|14|const C = 0x0506;\nfn f(): i64 { return 0x0102; }\nvar a = C;\nvar a = f();\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L9|14|const C = 0x0506;\nfn g(): i64 { return a; }\nvar b = g();\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (b & 255) + (b >> 8));\n
+L10|14|var a = 0x0506;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n"
 
 # leg NAME COMPILER RUNNER... — every row compiled by COMPILER and run (RUNNER prefix; "cx" runs the .cyx on cxvm).
 leg() {
@@ -408,7 +430,7 @@ tl() {
   rows=$((rows + 1)); id=$1; b=$2; shift 2
   [ -s "$b" ] || { bad "$id: the crossos file did not compile"; return; }
   chmod +x "$b"; x=0
-  if [ "$id" = T3 ] || [ "$id" = T7 ] || [ "$id" = T11 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
+  if [ "$id" = T3 ] || [ "$id" = T7 ] || [ "$id" = T11 ] || [ "$id" = T15 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
   else timeout 180 "$@" "$b" > "$b.out" 2> /dev/null || x=$?; fi
   [ "$x" -eq 0 ] && grep -q "$NT passed, 0 failed" "$b.out" || bad "$id: exit $x: $(grep -m3 FAIL "$b.out" | tr '\n' '|')$(tail -1 "$b.out")"
 }
@@ -444,6 +466,19 @@ if command -v wine > /dev/null 2>&1; then
   tl T12 "$W/t12.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
     WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
 else echo "  SKIP: const_init_bake_and_fold T12 (PE) — wine not installed"; skips=$((skips + 1)); fi
+
+# T13-T16 — 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr (its list-over-a-named-scalar rows, L1-L9's shapes in
+# one zone) on the same four legs.
+TC="$ROOT/tests/tcyr/crossos/global_array_initializer.tcyr"
+NT=$(grep -c '^assert_eq' "$TC")
+"$CC" < "$TC" > "$W/t13" 2> /dev/null; tl T13 "$W/t13" env
+if [ -x "$W/cycc_a64" ]; then "$W/cycc_a64" < "$TC" > "$W/t14" 2> /dev/null; tl T14 "$W/t14" qemu-aarch64; fi
+if [ -x "$W/cycc_cx" ]; then "$W/cycc_cx" < "$TC" > "$W/t15" 2> /dev/null; tl T15 "$W/t15"; fi
+if command -v wine > /dev/null 2>&1; then
+  CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$W/t16.exe" 2> /dev/null
+  tl T16 "$W/t16.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
+else echo "  SKIP: const_init_bake_and_fold T16 (PE) — wine not installed"; skips=$((skips + 1)); fi
 
 [ "$rows" -ge 50 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL const_init_bake_and_fold: $fail of $rows row(s) red"; exit 1; fi
