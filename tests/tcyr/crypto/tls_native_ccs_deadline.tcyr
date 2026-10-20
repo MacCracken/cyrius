@@ -1,3 +1,4 @@
+# corpus: serial — receive timeouts and deadlines timed against a forked peer: the corpus gates run this file alone, after their pool (6.7.16)
 # tls_native_ccs_deadline.tcyr — 6.6.13 (CYRIUS-2026-0017): ChangeCipherSpec records are bounded by
 # the RFC window, and a per-connection deadline bounds every TLS read and write, end to end.
 #

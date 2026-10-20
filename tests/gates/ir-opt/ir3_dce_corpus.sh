@@ -26,6 +26,13 @@
 #      cwd; the driver's 120 s deadline): exit 0, unless pinned below
 #   F  the floor: the files walked are at least tests/tcyr/CORPUS_FLOOR line 1 (its only copy) — a
 #      reader that went blind fails here instead of passing over nothing
+#   S  6.7.16: a .tcyr carrying `# corpus: serial` (a line of its own, spelled as check.sh's
+#      `# check: serial`; the set derived by grep, never listed) runs one at a time AFTER the pool.
+#      Its verdict is a live timing comparison, and this gate's own workers were the contention:
+#      crypto/tls_native_ccs_deadline.tcyr exited 5 under the pair inside check.sh, 0 alone. S1 at
+#      least 2 files carry it; S2 each marked file ran in the serial pass and every other file in
+#      the pool (the worker records its pass); S3 each serial run started after the pool's last run
+#      ended and after the serial run before it ended (the worker's wall interval, in ns)
 #
 # PINNED (the expected failures) — one line each, `<path under tests/tcyr> <the issues/ file that
 # owns it>`. EMPTY since 6.7.15: derive/derive_enum_inside_ifdef.tcyr (139) was the last, fixed by
@@ -39,6 +46,10 @@
 #       derive/derive_enum_inside_ifdef.tcyr exits 139
 #   M3  tests/tcyr/CORPUS_FLOOR raised past the corpus -> RED F (the reader is blind)
 #   M4  the worker compiles without CYRIUS_DCE=1 -> RED A1 (the shim's plant never fires)
+#   M5  (6.7.16) the honouring dropped (every file in the pool's job list) -> RED S2 2 of 2: both
+#       marked files "ran in the pool pass, not the serial pass"
+#   M6  (6.7.16) the serial pass's runs backgrounded (`&`, then `wait`) -> RED S3:
+#       crypto/tls_native_ccs_deadline.tcyr "started 468 ms before the run ahead of it ended"
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 SELF="$ROOT/tests/gates/ir-opt/$(basename "$0")"
@@ -90,11 +101,14 @@ _pins_unmatched() {
     done < "$1"
 }
 
-# ── a worker: one corpus file (`xargs` below runs this script as `--one <id> <src>`) ─────────────
+# ── a worker: one corpus file (`xargs` below runs this script as `--one <id> <src>`; the serial pass
+# the same, one at a time). It records its pass and its wall interval in ns (axis S).
 if [ "${1:-}" = "--one" ]; then
     T=${IR3DCE_T:?}; TH=${IR3DCE_HOME:?}
     cd "$ROOT" || exit 1
+    w0=$(date +%s%N)
     _one "$CC" "$2" "$3" > "$T/r/$2"
+    printf '%s %s %s\n' "${IR3DCE_PASS:-pool}" "$w0" "$(date +%s%N)" > "$T/w/$2"
     exit 0
 fi
 
@@ -104,7 +118,7 @@ trap 'rm -rf "$T"' EXIT
 ulimit -c 0 2>/dev/null || true
 cd "$ROOT" || exit 1
 unset CYRIUS_COVERAGE CYRIUS_COVERAGE_FILE CYRIUS_BOUNDS CYRIUS_DCE CYRIUS_IR
-mkdir -p "$T/b" "$T/r" "$T/p"
+mkdir -p "$T/b" "$T/r" "$T/p" "$T/w"
 fails=0
 rows=0
 ok()  { rows=$((rows + 1)); echo "  ok   $1"; }
@@ -173,9 +187,17 @@ else bad "A6 the unmatched pins read '$a6' (want 'lang/gone.tcyr ')"; fi
 find tests/tcyr -name '*.tcyr' | LC_ALL=C sort > "$T/list"
 NF=$(grep -c . "$T/list" || true)
 if grep -q '[[:space:]]' "$T/list"; then bad "C: a .tcyr path holds whitespace (the worker list splits on it): $(grep -m1 '[[:space:]]' "$T/list")"; fi
-awk '{ print NR, $0 }' "$T/list" > "$T/jobs"
+# The `# corpus: serial` files (axis S) leave the pool's job list and run one at a time after it,
+# derived by grep (the /dev/null keeps grep off stdin and never matches).
+xargs grep -l '^# corpus: serial' /dev/null < "$T/list" > "$T/serial" 2> /dev/null || true
+awk -v sf="$T/serial" -v sj="$T/sjobs" '
+    BEGIN { printf "" > sj; while ((getline l < sf) > 0) s[l] = 1 }
+    { if ($0 in s) print NR, $0 > sj; else print NR, $0 }' "$T/list" > "$T/jobs"
 t0=$(date +%s)
 IR3DCE_T="$T" IR3DCE_HOME="$TH" CYCC="$CC" xargs -P "$J" -n 2 sh "$SELF" --one < "$T/jobs"
+while read -r si sf; do
+    IR3DCE_T="$T" IR3DCE_HOME="$TH" CYCC="$CC" IR3DCE_PASS=serial sh "$SELF" --one "$si" "$sf" < /dev/null
+done < "$T/sjobs"
 t1=$(date +%s)
 n=0; npass=0; nbad=0; nmiss=0; pinned_f=""
 while read -r f; do
@@ -197,6 +219,33 @@ if [ "$nbad" = 0 ] && [ "$nmiss" = 0 ]; then
 fi
 if [ "$n" -lt "$FL" ]; then bad "F $n .tcyr walked (the corpus floor is $FL) — the reader is blind"
 else ok "F $n walked (floor $FL)"; fi
+
+# ── S: the `# corpus: serial` files ran alone, after the pool ───────────────────────────────────
+# Each run's pass and wall interval (the worker's `$T/w/<id>`): S2 every marked file ran in the
+# serial pass and every other file in the pool; S3 each serial run started after the pool's last
+# run ended and after the serial run before it ended. Compared as 19-digit integers by `sort -n` and
+# the shell, never by awk (a double cannot hold a ns timestamp).
+SFL=2
+NS=$(grep -c . "$T/serial" || true)
+if [ "$NS" -ge "$SFL" ]; then ok "S1 $NS .tcyr carry '# corpus: serial' (floor $SFL):$(sed 's|^tests/tcyr/| |' "$T/serial" | tr -d '\n')"
+else bad "S1 $NS .tcyr carry '# corpus: serial' (floor $SFL) — the marker reader went blind, or the marked timing files lost it"; fi
+awk -v T="$T" '{ f = T "/w/" NR; w = "none 0 0"; if ((getline l < f) > 0) w = l; close(f); print $0, w }' "$T/list" > "$T/wtab"
+awk -v sf="$T/serial" 'BEGIN { while ((getline l < sf) > 0) s[l] = 1 }
+    { want = ($1 in s) ? "serial" : "pool"; if ($2 != want) print "S2 " $1 " ran in the " $2 " pass, not the " want " pass" }' "$T/wtab" > "$T/s2"
+if [ -s "$T/s2" ]; then while IFS= read -r l; do bad "$l"; done < "$T/s2"
+else ok "S2 the $NS marked file(s) ran in the serial pass and the other $((NF - NS)) in the pool"; fi
+PEND=$(awk '$2 == "pool" { print $4 }' "$T/wtab" | LC_ALL=C sort -n | tail -1)
+s3=0; sprev=${PEND:-0}; sfirst=""
+while read -r si sf; do
+    sp=none; ss=0; se=0
+    [ -f "$T/w/$si" ] && read -r sp ss se < "$T/w/$si"
+    if [ "$ss" -lt "$sprev" ]; then
+        s3=$((s3 + 1)); bad "S3 $sf started $(( (sprev - ss) / 1000000 )) ms before the run ahead of it ended — not alone"
+    fi
+    [ -n "$sfirst" ] || sfirst=$(( (ss - ${PEND:-ss}) / 1000000 ))
+    sprev=$se
+done < "$T/sjobs"
+if [ "$s3" = 0 ] && [ -s "$T/sjobs" ]; then ok "S3 the $(grep -c . "$T/sjobs") serial run(s) ran one at a time, the first $sfirst ms after the pool's last run ended"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G: $fails of $rows row(s) red"; exit 1; fi
 echo "PASS: $G ($rows rows: $NF .tcyr under CYRIUS_IR=3 CYRIUS_DCE=1 in $((t1 - t0)) s on $J workers — every one compiles and exits 0; the detectors catch a planted pair-only exit and a stale pin)"
