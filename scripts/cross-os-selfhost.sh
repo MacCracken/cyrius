@@ -616,6 +616,47 @@ _co_cyly() {
   return 1
 }
 
+# _co_relink_probe <out.cyr> — a probe of programs/cyriusly.cyr's `_relink_atomic` (with
+# `_cy_remove_link`, extracted from the source — the real text, not a copy): ra\bin is a REAL
+# directory holding a file, so pointing it at ra\tgt fails, and the probe exits 0 only when the
+# switch failed AND no `bin.cyrtmp.*` temp link is left in ra\ (1+ = links left, 10+ = the switch
+# "succeeded", 90+ = the staging failed). For the cass leg. CHANGELOG [6.7.16]
+_co_relink_probe() {
+  {
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fmt.cyr"\n'
+    printf 'include "lib/vec.cyr"\ninclude "lib/str.cyr"\ninclude "lib/io.cyr"\ninclude "lib/fs.cyr"\n'
+    awk '/^fn _cy_remove_link\(/,/^}/' programs/cyriusly.cyr
+    awk '/^fn _relink_atomic\(/,/^}/' programs/cyriusly.cyr
+    cat <<'EOF'
+fn main(): i64 {
+    alloc_init();
+    if (xmkdir("ra", 493) != 0) { return 90; }
+    if (xmkdir("ra/tgt", 493) != 0) { return 91; }
+    if (xmkdir("ra/bin", 493) != 0) { return 92; }
+    var fd = xopen("ra/bin/f", O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) { return 93; }
+    sys_close(fd);
+    var r = _relink_atomic("ra/bin", "tgt");
+    var ents = vec_new();
+    if (dir_list_checked(str_from("ra"), ents) < 0) { return 94; }
+    var left = 0;
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        if (str_len(e) > 11) {
+            if (memeq(str_data(e), "bin.cyrtmp.", 11) == 1) { left = left + 1; }
+        }
+        i = i + 1;
+    }
+    if (r >= 0) { left = left + 10; }
+    return left;
+}
+var r = main();
+syscall(60, r);
+EOF
+  } > "$1"
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -1082,6 +1123,21 @@ case "$HOST" in
       exit 1
     fi
     echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global refused by name (rc 1, the store as it was); list and version rc 0"
+    # 6.7.16 — `_relink_atomic` removes its temp link when the switch fails. A link to a directory is
+    # a directory entry on Windows that DeleteFileW refuses, so a failed `use --global` left
+    # bin.cyrtmp.<pid>.<n> (a SYMLINKD) here while saying "nothing was changed". No verb reaches it
+    # on Windows since D84 refused `use --global`; the probe calls the fn itself (_co_relink_probe).
+    # wine cannot run this row: its rename of a link over a directory succeeds. CHANGELOG [6.7.16]
+    _co_relink_probe "$CO_TMP"/_co_ra.cyr && cat "$CO_TMP"/_co_ra.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_ra.exe 2>/dev/null \
+      && ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'\_ra"' \
+      && scp -q $SSHO "$CO_TMP"/_co_ra.exe "cass:$WRDS"/_ra/ra.exe \
+      || { echo "SELFHOST_FAIL: cass — the _relink_atomic probe could not be built or staged. NOT SELFHOST_OK."; exit 1; }
+    if ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"'\_ra && ra.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)"'; then
+      echo "  relink on cass: a failed switch (bin\\ a real directory) leaves no bin.cyrtmp link"
+    else
+      echo "SELFHOST_FAIL: cass — _relink_atomic left its bin.cyrtmp temp link after a failed switch, or the switch did not fail (dir /a $WRD\\_ra\\ra). NOT SELFHOST_OK."
+      exit 1
+    fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this

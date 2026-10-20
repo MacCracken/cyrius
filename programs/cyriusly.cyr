@@ -472,14 +472,27 @@ fn _cy_err_shown(p, n): i64 {
 # leaves it EXACTLY as it was — including when it is a directory, where the rename fails EISDIR
 # instead of the old sequence silently doing nothing and claiming success.
 
+# Remove the symlink `path` itself, never what it names. On Windows a link to a DIRECTORY is a
+# directory entry: DeleteFileW (sys_unlink) refuses it and RemoveDirectoryW (sys_rmdir) removes
+# the link alone. `_relink_atomic` removed its temp with sys_unlink only, so on Windows a failed
+# switch left `bin.cyrtmp.<pid>.<n>` behind while saying "nothing was changed" (measured on cass;
+# `use --global` is refused there since 6.7.16's D84, so no verb reaches it now). CHANGELOG [6.7.16]
+fn _cy_remove_link(path): i64 {
+    var r = sys_unlink(path);
+    #ifdef CYRIUS_TARGET_WIN
+    if (r < 0) { r = sys_rmdir(path); }
+    #endif
+    return r;
+}
+
 # Point `link_path` at `target` atomically. Returns 0, or a negative errno.
 fn _relink_atomic(link_path, target): i64 {
     var tmp = _io_tmp_name(link_path);     # "<link>.cyrtmp.<pid>.<ctr>" — a unique sibling
-    sys_unlink(tmp);                       # a leftover from a killed run
+    _cy_remove_link(tmp);                  # a leftover from a killed run
     var r = sys_symlink(target, tmp);
     if (r < 0) { return r; }
     var rr = file_rename(tmp, link_path);
-    if (rr < 0) { sys_unlink(tmp); return rr; }
+    if (rr < 0) { _cy_remove_link(tmp); return rr; }
     return 0;
 }
 
@@ -512,7 +525,7 @@ fn _undo_relink(link_path, old_target, new_target): i64 {
     var cur = _link_target_dup(link_path);
     if (cur == 0) { return 1; }                     # already nothing — as it was
     if (streq(cur, new_target) == 0) { return 0; }  # not ours; leave it and say so
-    if (sys_unlink(link_path) < 0) { return 0; }
+    if (_cy_remove_link(link_path) < 0) { return 0; }
     return 1;
 }
 

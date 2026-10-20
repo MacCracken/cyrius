@@ -35,6 +35,10 @@
 #   K1-K6  (wine) list, version, use <v> (the cyrius.cyml pin, written), --help (with the Windows
 #       note), --version: rc 0; `use <v>` of a version not installed and `list` of an empty store
 #       name install.ps1, never `cyriusly install`.
+#   L   STATIC: `_relink_atomic` / `_undo_relink` remove a link only through `_cy_remove_link`,
+#       which falls back to RemoveDirectoryW on Windows — a link to a directory is a directory
+#       entry DeleteFileW refuses, so a failed switch left its bin.cyrtmp temp link (measured on
+#       cass). wine cannot show it; the cass leg runs the extracted fn (_co_relink_probe).
 #   wine is NOT hardware: without it the wine axes are a named SKIP (exit 77); the cass leg of
 #   scripts/cross-os-selfhost.sh runs R1-R6 and K1-K2 on real Windows.
 #
@@ -121,6 +125,22 @@ awk -f "$T/s.awk" "$T/s_self.cyr" > "$T/s_self.out"
 check "  ⭐ ANTI-VACUOUS: a verb with no arm is reported" yes "$(grep -qx '_cmd_bare UNARMED' "$T/s_self.out" && echo yes || echo no)"
 check "  …and one whose arm comes AFTER the call" yes "$(grep -qx '_cmd_late UNARMED' "$T/s_self.out" && echo yes || echo no)"
 check "  …and an armed one is cleared" yes "$(grep -qx '_cmd_armed ok' "$T/s_self.out" && echo yes || echo no)"
+
+# ── axis L — a link this file removes is removed as a LINK on Windows too (static) ──────────
+# `_relink_atomic` removed its temp with sys_unlink alone; on Windows a link to a directory is a
+# directory entry DeleteFileW refuses, so a failed switch left bin.cyrtmp.<pid>.<n> behind while
+# saying "nothing was changed" (measured on cass). Static here because wine cannot show it (its
+# rename of a link over a directory succeeds); the cass leg runs the extracted fn on hardware.
+echo "axis L — the link removals go through _cy_remove_link, which removes a directory link on Windows:"
+fnbody() { awk -v f="$1" '$0 ~ "^fn " f "\\(" {p=1} p {print} p && /^}/ {exit}' "$SRC"; }
+for f in _relink_atomic _undo_relink; do
+    b=$(fnbody "$f")
+    check "$f: no bare sys_unlink / xunlink" 0 "$(printf '%s\n' "$b" | grep -cE '(sys_unlink|xunlink)\(' || true)"
+    check "  …it removes through _cy_remove_link" yes "$(printf '%s\n' "$b" | grep -q '_cy_remove_link(' && echo yes || echo no)"
+done
+rl=$(fnbody _cy_remove_link)
+check "_cy_remove_link falls back to sys_rmdir under CYRIUS_TARGET_WIN" yes \
+    "$(printf '%s\n' "$rl" | awk '/#ifdef CYRIUS_TARGET_WIN/{w=1} w && /sys_rmdir\(/{f=1} /#endif/{w=0} END{print (f ? "yes" : "no")}')"
 
 # ── the wine axes ────────────────────────────────────────────────────────────────────────
 echo "the Windows cyriusly.exe (wine — NOT hardware; cass is the cross-OS leg):"
