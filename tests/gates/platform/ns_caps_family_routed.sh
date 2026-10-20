@@ -26,9 +26,11 @@
 #   B  x86_64-linux / aarch64-linux / macOS / Windows peers declare each SYS_* as the x86
 #      number; the agnos peer declares NONE (a Linux number there issues a live agnos call —
 #      that peer's own documented rule); AUDIT_ARCH_NATIVE is the right AUDIT_ARCH_* value.
-#   C  every wrapper exists in lib/syscalls_linux_common.cyr with a Darwin -78 arm, and in the
-#      two STANDALONE peers (Windows, agnos) as a -38 stub — the family list is DERIVED from
-#      linux_common, so a ninth wrapper cannot ship on three targets and not the other two.
+#   C  every wrapper exists in lib/syscalls_linux_common.cyr with a Darwin arm that declines
+#      with -78 and names no SYS_* number (sys_mknodat's also makes a FIFO over Darwin mknod, the
+#      raw x86 133 both Mach-O backends route — 6.7.16), and in the two STANDALONE peers
+#      (Windows, agnos) as a -38 stub — the family list is DERIVED from linux_common, so a ninth
+#      wrapper cannot ship on three targets and not the other two.
 #   D  RUN it: a probe built by the aarch64 cross compiler (built from THIS tree) under
 #      `qemu-aarch64 -strace` issues each call by name and none of the calls above. Visibly
 #      skipped without qemu. ⚠ Emulation is not hardware — tests/tcyr/crossos/
@@ -44,6 +46,7 @@
 #   4. declare SYS_CHROOT = 51 (native) in the aarch64 peer -> FAIL B (the native number)
 #   5. delete `fn sys_mknodat` from the agnos peer          -> FAIL C (STANDALONE … no sys_mknodat)
 #   6. drop sys_unshare's Darwin arm in linux_common        -> FAIL C (no -78 macOS arm)
+#   8. (6.7.16) sys_mknodat's Darwin arm issuing `syscall(SYS_MKNODAT, …)` -> FAIL C
 #   7. declare `SYS_UNSHARE = 272;` in the agnos peer       -> FAIL B
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -206,9 +209,14 @@ for c in CALLS:
         bad.append(f"axis C: lib/syscalls_linux_common.cyr defines no {fn}")
         continue
     fam.append((fn, mm.group(1)))
-    if not re.search(r'#ifdef CYRIUS_TARGET_MACOS\s*\n\s*return 0 - 78;', mm.group(2)):
-        bad.append(f"axis C: {fn} has no `#ifdef CYRIUS_TARGET_MACOS return 0 - 78;` arm — "
-                   f"Darwin has no such call, so the number would reach the Mach-O emit")
+    # The Darwin arm declines with -78 and never names a SYS_* number (the Linux one would reach
+    # the Mach-O emit). sys_mknodat's arm also composes a FIFO over Darwin mknod through the raw
+    # x86 133 both Mach-O backends route (6.7.16), so the arm is read whole, not as one statement.
+    arm = re.search(r'#ifdef CYRIUS_TARGET_MACOS\s*\n(.*?)#endif', mm.group(2), re.S)
+    if not arm or 'return 0 - 78;' not in arm.group(1) or 'SYS_' in arm.group(1):
+        bad.append(f"axis C: {fn} has no `#ifdef CYRIUS_TARGET_MACOS` arm that declines with "
+                   f"`return 0 - 78;` and names no SYS_* number — Darwin has no such call, so the "
+                   f"number would reach the Mach-O emit")
 for rel in ('lib/syscalls_windows.cyr', 'lib/syscalls_x86_64_agnos.cyr'):
     t = rd(rel)
     gap = [fn for fn, _ in fam

@@ -29,7 +29,7 @@
 # the listing never returned (agora's store scan froze its poll server). The FIFO rows run on
 # Linux and macOS; the listers run in a forked child the parent waits 5 s for, so a regression
 # reads RED here rather than hanging the leg. Linux makes the FIFO with sys_mknodat; Darwin's
-# declines (-78), so /usr/bin/mkfifo does there. Windows has no FIFO; agnos opens with AO_DIRECTORY
+# declined (-78 until 6.7.16), so /usr/bin/mkfifo does there. Windows has no FIFO; agnos opens with AO_DIRECTORY
 # already and has no mknodat (-38), so neither runs the group. A regular file is -ENOTDIR
 # on every POSIX host now (Darwin's getdirentries answered -22, EINVAL). CHANGELOG [6.7.11]
 include "lib/assert.cyr"

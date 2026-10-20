@@ -87,6 +87,22 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     test_group("v6.6.8 — Darwin declines all eight with -78 (ENOSYS) and never emits the number");
     _check_declines(0 - 78, "declines with -78 on macOS");
+    # 6.7.16: one exception — a FIFO at AT_FDCWD (or an absolute path) is made over Darwin's mknod
+    # (the x86 133, routed to BSD 14 on both Macs), for cxvm's mknodat. _check_declines' mknodat
+    # is relative to Linux's -100, a dirfd Darwin's mknod cannot take, so it still declines.
+    # CHANGELOG [6.7.16]
+    test_group("6.7.16 — Darwin makes a FIFO over mknod; any other node still declines");
+    var mf = test_scratch("cyr_mknod_fifo");
+    sys_unlink(mf);
+    assert_eq(sys_mknodat(AT_FDCWD, mf, 4096 | 384, 0), 0,
+      "mknodat(AT_FDCWD, S_IFIFO|0600) makes the FIFO (-78 until 6.7.16)");
+    var mst[STAT_BUFSZ];
+    assert_eq(sys_stat(mf, &mst), 0, "the node exists");
+    assert_eq(load32(&mst + STAT_MODE) & 61440, 4096, "stat reports it as a FIFO (S_IFIFO)");
+    assert_eq(sys_mknodat(AT_FDCWD, mf, 4096 | 384, 0), 0 - 17, "a second mknodat is -EEXIST");
+    assert_eq(sys_unlink(mf), 0, "the FIFO unlinks");
+    assert_eq(sys_mknodat(AT_FDCWD, mf, 32768 | 384, 0), 0 - 78,
+      "a regular-file node (S_IFREG) still declines with -78");
     #endif
 
     #ifdef CYRIUS_TARGET_WIN

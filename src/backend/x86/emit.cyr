@@ -1296,6 +1296,9 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 87, 0x200000A);   # unlink   87 → 10
     _msx(S, 88, 0x2000039);   # symlink  88 → 57
     _msx(S, 89, 0x200003A);   # readlink 89 → 58
+    # 6.7.16: mknod, for sys_mknodat's Darwin FIFO arm (lib/syscalls_linux_common.cyr), the arm64
+    # twin in ESYSXLAT. 133 > 127, so the imm32 form. CHANGELOG [6.7.16]
+    _msx32(S, 133, 0x200000E); # mknod   133 → 14
     _msx(S, 86, 0x2000009);   # link     86 → 9  (v6.5.7: `link` was the ONE hole in this
     # run — unlink/symlink/readlink were all mapped, so the gap
     # read as complete. An unmapped number reaches Darwin

@@ -23,10 +23,10 @@
 #       (past sp - 1 MiB) is refused with the old break; 1 (below the start) asks; the start shrinks
 #       it back; below the start is refused
 #   H6  an `alloc(16)` program is a .cyx under 128 KB (it was 151,466 B) and exits 0 on cx
-#   H7  audit_walk_fifo.tcyr on cx runs to its summary line with no `alloc:` exhaustion (its mkdir /
-#       mknodat rows answer -38 under D55: a separate, staged shape). An x86_64-Linux row: on an
-#       aarch64 host cxvm's guest fork runs close and the file stops early (staged:
-#       stdlib/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md)
+#   H7  audit_walk_fifo.tcyr on cx runs to its summary line with no `alloc:` exhaustion (its
+#       getdents64 / mknodat / wait4 answered -38 under D55 until 6.7.16; cx_crossos_rows_run.sh R26
+#       holds its full count now). An x86_64-Linux row: on an aarch64 host cxvm's guest fork ran
+#       close and the file stopped early until 6.7.15 (cx_host_dispatch.sh axis 4)
 #   H8  alloc_reset rewinds to the same base and hands back zeroed memory, alloc_used counts (native + cx)
 #   H9  an H1 .cyx on a cxvm that does not serve brk (this tree's cxvm with the brk arm cut out — what a
 #       pre-6.7.14 cxvm is, under D55) exits 1 naming it: `alloc: this cxvm does not serve brk (12)`

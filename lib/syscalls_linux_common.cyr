@@ -581,11 +581,18 @@ fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i
 # type bits: S_IFIFO 0o010000 (4096) makes a FIFO — `sys_mknodat(AT_FDCWD, p, 4096 | 0600,
 # 0)` is mkfifo(3); S_IFREG/S_IFCHR/S_IFBLK the rest (devices need CAP_MKNOD). `dev` is the
 # device number, 0 otherwise.
-# ⚠ Darwin declines (-78): no Mach-O row exists for it, and a composed arm (over mknod or
-# mkfifo) waits for a consumer that needs one there.
+# ⚠ Darwin: a FIFO only, over mknod (BSD 14, through the x86 mknod number 133, which both Mach-O
+# backends route; XNU's mknod makes a FIFO without privilege) — at AT_FDCWD or an absolute path,
+# since mknod takes no dirfd. Any other node type, or a relative path under another dirfd,
+# declines with -78 (-ENOSYS), as every call did there until 6.7.16; cxvm's mknodat for a cx guest
+# on a Mac is the consumer that needed the route. CHANGELOG [6.7.16]
 fn sys_mknodat(dirfd, path, mode, dev): i64 {
     #ifdef CYRIUS_TARGET_MACOS
-    return 0 - 78;
+    if ((mode & 0xF000) != 0x1000) { return 0 - 78; }      # S_IFIFO only
+    if (dirfd != AT_FDCWD && path != 0) {
+        if (load8(path) != 47) { return 0 - 78; }          # relative to a dirfd mknod cannot take
+    }
+    return syscall(133, path, mode, dev);                  # mknod: 133 → BSD 14 on both Macs
     #endif
     #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_MKNODAT, dirfd, path, mode, dev);

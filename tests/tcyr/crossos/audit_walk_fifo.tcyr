@@ -6,7 +6,7 @@
 # O_RDONLY | O_DIRECTORY | O_CLOEXEC now, and macOS routes through dir_list_checked, which does
 # the same since 6.7.11. The FIFO rows run on Linux and macOS, in a forked child the parent waits
 # 5 s for, so a regression reads RED here rather than hanging the leg (Linux makes the FIFO with
-# sys_mknodat; Darwin's declines, so /usr/bin/mkfifo does). Windows has no FIFO and agnos no
+# sys_mknodat; Darwin's declined until 6.7.16, so /usr/bin/mkfifo does). Windows has no FIFO and agnos no
 # mknodat: there the file and directory rows run. The gate twin (x86 + qemu, an O_RDONLY mutant
 # that must block) is tests/gates/platform/audit_walk_fifo_refused.sh. CHANGELOG [6.7.12]
 include "lib/assert.cyr"

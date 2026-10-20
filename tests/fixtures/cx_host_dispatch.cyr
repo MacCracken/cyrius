@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
-# (1..14: row 1 is bit 1, row 14 bit 8192). The exit itself is the exit_group row: a 77 / 78 can
+# (1..15: row 1 is bit 1, row 15 bit 16384). The exit itself is the exit_group row: a 77 / 78 can
 # only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
@@ -242,6 +242,137 @@ fn _cxh_errno(): i64 {
     return 2;
 }
 
+# 1 iff the linux_dirent64 records in `b` (`n` bytes) are well-formed (d_reclen align8(20 + namlen),
+# the name NUL-terminated); each name adds its bit to the mask at `seen`: 1 ".", 2 "..", 4 "a",
+# 8 "ccccc", 16 the FIFO "f" with d_type DT_FIFO (1), 32 the 56-byte name, 64 anything else, 128 a
+# name seen twice.
+fn _cxh_dents(b, n, seen): i64 {
+    var pos = 0;
+    while (pos < n) {
+        var rl = load16(b + pos + 16);
+        var nm = b + pos + 19;
+        var nl = 0;
+        while (load8(nm + nl) != 0) { nl = nl + 1; }
+        if (rl != ((20 + nl + 7) & (0 - 8))) { return 0; }
+        var bit = 64;
+        if (nl == 1 && load8(nm) == 46) { bit = 1; }
+        if (nl == 2 && load8(nm) == 46 && load8(nm + 1) == 46) { bit = 2; }
+        if (nl == 1 && load8(nm) == 97) { bit = 4; }
+        if (nl == 5 && load8(nm) == 99) { bit = 8; }
+        if (nl == 1 && load8(nm) == 102 && load8(b + pos + 18) == 1) { bit = 16; }
+        if (nl == 56 && load8(nm) == 98) { bit = 32; }
+        if ((load64(seen) & bit) != 0) { bit = 128; }
+        store64(seen, load64(seen) | bit);
+        pos = pos + rl;
+    }
+    return 1;
+}
+
+# The directory `d` read whole through getdents64 with an `n`-byte buffer: the mask of _cxh_dents,
+# -1 for a malformed record, or the call's own failure.
+fn _cxh_list(d, n): i64 {
+    var fd = syscall(2, d, 65536, 0);         # O_RDONLY | O_DIRECTORY
+    if (fd < 0) { return fd; }
+    var b[4096];
+    var seen[8];
+    store64(&seen, 0);
+    var r = syscall(217, fd, &b, n);
+    while (r > 0) {
+        if (_cxh_dents(&b, r, &seen) == 0) { syscall(3, fd); return 0 - 1; }
+        r = syscall(217, fd, &b, n);
+    }
+    syscall(3, fd);
+    if (r < 0) { return r; }
+    return load64(&seen);
+}
+
+# Monotonic milliseconds (clock_gettime, served on every host).
+fn _cxh_ms(): i64 {
+    var ts[16];
+    syscall(228, 1, &ts);
+    return load64(&ts) * 1000 + load64(&ts + 8) / 1000000;
+}
+
+# The child of _cxh_waits: SIGSTOP itself, then sleep until the parent's SIGUSR1 ends it (30 s at
+# most, so a parent that failed cannot leave it running).
+fn _cxh_stopper(): i64 {
+    syscall(62, syscall(39), 19);
+    var k = 0;
+    while (k < 300) { syscall(7, 0, 0, 100); k = k + 1; }
+    syscall(60, 0);
+    return 0;
+}
+
+# wait4's status words for a child that stops itself, is continued and is killed by SIGUSR1:
+# Linux's 0x137f (WUNTRACED), 0xffff (WCONTINUED) and 10, a struct rusage filled on the last
+# (a Darwin host reports 0x117f, 0x137f and 30, and its WCONTINUED is 0x10). 0 all three, else 2.
+fn _cxh_waits(): i64 {
+    var pid = syscall(57);
+    if (pid == 0) { _cxh_stopper(); }
+    if (pid < 0) { return 2; }
+    var ws[8];
+    store64(&ws, 0);
+    var bad = 0;
+    if (syscall(61, pid, &ws, 2, 0) != pid || load32(&ws) != 0x137F) { bad = 2; }
+    syscall(62, pid, 18);                      # SIGCONT
+    if (bad == 0) {
+        if (syscall(61, pid, &ws, 8, 0) != pid || load32(&ws) != 0xFFFF) { bad = 2; }
+    }
+    syscall(62, pid, 10);                      # SIGUSR1: its default action ends the child
+    var ru[144];
+    store64(&ru + 32, 0 - 1);                  # ru_maxrss
+    var w3 = syscall(61, pid, &ws, 0, &ru);
+    if (w3 != pid || (load32(&ws) & 0x7F) != 10 || load64(&ru + 32) < 0) { bad = 2; }
+    return bad;
+}
+
+# getdents64, mknodat, wait4 and poll(NULL, 0, ms) (6.7.16,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md — the first three answered -38
+# and lib/chrono.cyr's sleep_ms was a no-op on cx): poll(NULL, 0, 60) sleeps; mknodat makes a FIFO,
+# which stat and the listing both call one; the directory reads whole with a 4096- and a 96-byte
+# buffer (a Darwin host converts each record, and for the 96-byte one puts the directory back and
+# reads again: no name lost or repeated), and a 16-byte one is -EINVAL; wait4 reaps the fork row's
+# child and then answers -ECHILD, and its status words are Linux's (_cxh_waits). 0 the Linux
+# answers, 1 the Windows ones (the sleep served; mknodat, getdents64 and wait4 -38, no fork), 2
+# neither.
+fn _cxh_walk(): i64 {
+    var t0 = _cxh_ms();
+    var pl = syscall(7, 0, 0, 60);
+    var slept = _cxh_ms() - t0;
+    syscall(87, "cxh_w/a");
+    syscall(87, "cxh_w/ccccc");
+    syscall(87, "cxh_w/f");
+    syscall(87, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    syscall(84, "cxh_w");
+    syscall(83, "cxh_w", 448);
+    var fd = syscall(2, "cxh_w/a", 577, 420);
+    syscall(3, fd);
+    fd = syscall(2, "cxh_w/ccccc", 577, 420);
+    syscall(3, fd);
+    fd = syscall(2, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 577, 420);
+    syscall(3, fd);
+    var mk = syscall(259, 0 - 100, "cxh_w/f", 4480, 0);   # S_IFIFO | 0600 at AT_FDCWD
+    var st[144];
+    var sf = syscall(4, "cxh_w/f", &st);
+    var fm = load32(&st + 24) & 61440;
+    var big = _cxh_list("cxh_w", 4096);
+    var small = _cxh_list("cxh_w", 96);
+    var tiny = _cxh_list("cxh_w", 16);
+    syscall(87, "cxh_w/f");
+    syscall(87, "cxh_w/a");
+    syscall(87, "cxh_w/ccccc");
+    syscall(87, "cxh_w/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    syscall(84, "cxh_w");
+    var ws[8];
+    var nc = syscall(61, 0 - 1, &ws, 0, 0);    # reap the fork row's child, then no child is left
+    while (nc > 0) { nc = syscall(61, 0 - 1, &ws, 0, 0); }
+    if (pl != 0 || slept < 50) { return 2; }
+    if (mk == 0 - 38 && big == 0 - 38 && small == 0 - 38 && tiny == 0 - 38 && nc == 0 - 38) { return 1; }
+    if (mk != 0 || sf != 0 || fm != 4096) { return 2; }
+    if (big != 63 || small != 63 || tiny != 0 - 22 || nc != 0 - 10) { return 2; }
+    return _cxh_waits();
+}
+
 var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
@@ -274,6 +405,8 @@ _cxh_row(4096, en == 0, en == 1);
 # Windows: -38, the PE peer's kill is a stub.
 var k99 = syscall(62, me, 99);
 _cxh_row(8192, k99 == 0 - 22, k99 == 0 - 38);
+var wk = _cxh_walk();
+_cxh_row(16384, wk == 0, wk == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

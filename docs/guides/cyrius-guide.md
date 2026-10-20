@@ -8923,6 +8923,11 @@ The rules, in order:
    word. `how` is the peer's own `SIG_BLOCK` / `SIG_UNBLOCK` / `SIG_SETMASK` (1 / 2 / 3 on
    Darwin). The exec family (`run`, `exec_vec`, …) now empties a mask inherited from a launcher
    on macOS too.
+   ⭐ 6.7.16: `sys_mknodat(AT_FDCWD, path, S_IFIFO | mode, 0)` makes a FIFO on both Macs (it
+   returned -78), over Darwin's `mknod` (BSD 14, through the x86 number 133 both Mach-O backends
+   route; XNU makes a FIFO without privilege). `mknod` takes no dirfd, so a relative path under
+   another dirfd still declines with -78, as does any other node type (Linux makes a regular
+   file through mknodat; Darwin refuses one unprivileged).
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
    and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL

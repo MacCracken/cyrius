@@ -14,7 +14,10 @@
 #   mkdir / rmdir / unlink / rename / symlink / readlink / stat (their paths and buffers
 #   translated like open's) through the host's own stdlib wrappers (6.7.15; until then the scalar
 #   calls went to the host as the guest's raw number, which the aarch64 and Mach-O hosts renumbered
-#   into other calls, and the path calls answered -38), so running an untrusted .cyx == running a
+#   into other calls, and the path calls answered -38), and getdents64 / mknodat / wait4 (their
+#   buffers and paths translated) and poll as poll(NULL, 0, ms), a sleep (6.7.16; each answered
+#   -38 until then — _cx_host_getdents, _cx_host_mknodat, _cx_host_wait4, _cx_host_poll), so
+#   running an untrusted .cyx == running a
 #   native binary with cxvm's privileges over those calls. A served call answers in the .cyx ABI's
 #   terms, x86_64 Linux's, on every host: a Darwin host's errno is mapped back (6.7.16; a guest on
 #   a Mac read Darwin's ELOOP -62 where Linux says -40 — _cx_errno_linux), and kill's signal goes to
@@ -319,7 +322,8 @@ fn _cx_guest_brk(addr): i64 {
 # socket, listen, unshare, timerfd_create and epoll_create1 off Linux (their arguments are Linux's),
 # and on Windows every call whose PE peer is a stub (getppid, kill, dup, dup2, flock, fchmod, fchown,
 # the uid / gid getters, sched_yield, fork, fcntl — fork and kill answer -1 there; dup2 answered the
-# fd it was asked for until 6.7.15 and declines -38 itself now). fcntl serves its scalar commands
+# fd it was asked for until 6.7.15 and declines -38 itself now) and getdents64, mknodat and wait4,
+# which Windows has no route for (6.7.16: served on every POSIX host). fcntl serves its scalar commands
 # only (F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD_CLOEXEC — the lock commands take a
 # struct pointer), the status flags in Linux bits both ways. Add a call only when no argument is a
 # pointer, or translate the pointer in op 0x70 first.
@@ -432,7 +436,28 @@ fn _cx_host_call(sn, a, b, c): i64 {
     if (sn == 88) { return sys_symlink(a, b); }
     if (sn == 89) { return _cx_host_readlink(a, b, c); }
     if (sn == 4) { return _cx_host_stat(a, b); }
+    if (sn == 7) { return _cx_host_poll(a, b, c); }
     return _cx_host_posix(sn, a, b, c);
+}
+
+# The guest's fourth syscall argument (r5), set by op 0x70 for the calls that take one: mknodat's
+# dev and wait4's translated rusage. CHANGELOG [6.7.16]
+var _cx_a4 = 0;
+
+# poll(fds, nfds, ms), served only as poll(NULL, 0, ms) — a sleep of `ms`, the call lib/chrono.cyr's
+# sleep_ms issues on cx (6.7.16; until then sleep_ms was a no-op there, and a 5 s wait loop ended
+# at once). The null `fds` is compared, never read. Any other poll would hand the host guest
+# pollfds, so it answers -ENOSYS. A POSIX host runs its own poll (a negative ms waits until a
+# signal, as on Linux); Windows sleeps through kernel32 Sleep, where a negative ms sleeps 0.
+fn _cx_host_poll(fds, nfds, ms): i64 {
+    if (fds != 0 || nfds != 0) { return _cx_host_enosys(); }
+    #ifdef CYRIUS_TARGET_WIN
+    sleep_ms(ms);
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return syscall(SYS_POLL, 0, 0, ms);
+    #endif
 }
 
 # readlink(path, buf, n): Windows has no readlink route (lib/io.cyr's xreadlink answers -1 there).
@@ -508,9 +533,131 @@ fn _cx_host_posix(sn, a, b, c): i64 {
     if (sn == 108) { return sys_getegid(); }
     if (sn == 24) { return sys_sched_yield(); }
     if (sn == 57) { return sys_fork(); }
+    if (sn == 61) { return _cx_host_wait4(a, b, c, _cx_a4); }
+    if (sn == 217) { return _cx_host_getdents(a, b, c); }
+    if (sn == 259) { return _cx_host_mknodat(a, b, c, _cx_a4); }
     return _cx_host_linux(sn, a, b, c);
     #endif
 }
+
+#ifndef CYRIUS_TARGET_WIN
+# wait4(pid, status, options, rusage) through the host's own four-argument wait4 (struct rusage is
+# 144 bytes on x86_64 Linux, aarch64 Linux and Darwin alike). On a Darwin host the options and the
+# status word are Linux's both ways (_cx_wait_opts, _cx_wstatus_linux). CHANGELOG [6.7.16]
+fn _cx_host_wait4(pid, st, opts, ru): i64 {
+    var r = syscall(SYS_WAIT4, pid, st, _cx_wait_opts(opts), ru);
+    if (r > 0 && st != 0) { store32(st, _cx_wstatus_linux(load32(st))); }
+    return r;
+}
+
+# wait4's options: WNOHANG 1 and WUNTRACED 2 are the same everywhere; Linux's WCONTINUED 8 is
+# Darwin's 0x10 (Darwin's 8 is WSTOPPED, which its wait4 ignores, so a guest's WCONTINUED never saw
+# a continued child there). Any other bit goes as it is, for the host to judge.
+fn _cx_wait_opts(o): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if ((o & 8) != 0) { return (o & (0 - 9)) | 0x10; }
+    #endif
+    return o;
+}
+
+# A status word the host reported, in x86_64 Linux's terms. The layout is the same on Darwin —
+# exited (code << 8), signaled (sig | core 0x80), stopped ((sig << 8) | 0x7f) — but the signal
+# numbers are Darwin's (_cx_sig_linux maps them back: a child killed by SIGUSR1 reads 30 there), and
+# Darwin reports a continued child as stopped by SIGCONT (0x137f) where Linux says 0xffff.
+fn _cx_wstatus_linux(s): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var lo = s & 0x7F;
+    if (lo == 0) { return s; }
+    if (lo == 0x7F) {
+        var ss = (s >> 8) & 0xFF;
+        if (ss == SIGCONT) { return 0xFFFF; }
+        return (_cx_sig_linux(ss) << 8) | 0x7F;
+    }
+    return (s & (0 - 128)) | _cx_sig_linux(lo);
+    #endif
+    return s;
+}
+
+# mknodat(dirfd, path, mode, dev) through the host's sys_mknodat, the guest's AT_FDCWD (Linux's
+# -100) given as the host's (Darwin's is -2). On a Darwin host the stdlib routes a FIFO only (mknod,
+# lib/syscalls_linux_common.cyr), and any other node answers -ENOSYS. CHANGELOG [6.7.16]
+fn _cx_host_mknodat(dirfd, path, mode, dev): i64 {
+    if (dirfd == 0 - 100) { dirfd = AT_FDCWD; }
+    return sys_mknodat(dirfd, path, mode, dev);
+}
+
+# getdents64(fd, buf, n): the guest's records are x86_64 Linux's struct linux_dirent64, which both
+# Linux hosts fill as they are. A Darwin host converts (_cx_darwin_getdents). CHANGELOG [6.7.16]
+fn _cx_host_getdents(fd, buf, n): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return _cx_darwin_getdents(fd, buf, n);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return sys_getdents64(fd, buf, n);
+    #endif
+}
+#endif
+
+#ifdef CYRIUS_TARGET_MACOS
+# getdents64 on a Darwin host. getdirentries64 fills Darwin's struct direntry — d_ino @0, d_seekoff
+# @8, d_reclen @16, d_namlen @18, d_type @20, d_name @21, a record align8(25 + namlen) bytes — and
+# each record is rewritten into the guest's n bytes as linux_dirent64: d_ino @0, d_off @8 (Darwin's
+# d_seekoff, 0 on APFS), d_reclen @16, d_type @18 (the DT_* values are the same), d_name @19 with
+# its NUL, align8(20 + namlen) bytes — never longer than the Darwin record it came from.
+# The host read is never smaller than 1048 bytes (Darwin's struct direntry, so any one record
+# fits): macOS 13's getdirentries64 handed a buffer no record fits never returns — it spins in the
+# kernel, unkillable (24 bytes, measured on ach) — and macOS 27's refuses under 64 (EINVAL) and
+# answers 0, an early end, when the next record does not fit. So when the guest's n holds fewer
+# records than the host read, the directory is put back where it was (its lseek position, which
+# Darwin keeps as a cookie) and read again with exactly the converted records' Darwin bytes, at
+# least 64: those records come back, the next does not fit, and the position is after the last one
+# delivered. A guest n under 64 answers -EINVAL, Darwin's own floor.
+fn _cx_darwin_getdents(fd, gbuf, n): i64 {
+    if (n < 64) { return 0 - 22; }
+    var hb[4096];
+    var bp[8];
+    var b = n;
+    if (b < 1048) { b = 1048; }
+    if (b > 4096) { b = 4096; }
+    var c0 = sys_lseek(fd, 0, 1);
+    store64(&bp, 0);
+    var r = syscall(SYS_GETDENTS64, fd, &hb, b, &bp);
+    if (r <= 0) { return r; }
+    var pos = 0;
+    var out = 0;
+    var dsum = 0;
+    while (pos < r) {
+        var drl = load16(&hb + pos + 16);
+        if (drl <= 0) { break; }
+        var nl = load16(&hb + pos + 18);
+        var lrl = (20 + nl + 7) & (0 - 8);
+        if (out + lrl > n) { break; }
+        _cx_dirent_put(gbuf + out, &hb + pos, nl, lrl);
+        out = out + lrl;
+        dsum = dsum + drl;
+        pos = pos + drl;
+    }
+    if (pos >= r) { return out; }
+    sys_lseek(fd, c0, 0);
+    if (out == 0) { return 0 - 22; }
+    if (dsum < 64) { dsum = 64; }
+    store64(&bp, 0);
+    syscall(SYS_GETDENTS64, fd, &hb, dsum, &bp);
+    return out;
+}
+
+# One Darwin direntry at `d` as a linux_dirent64 of `lrl` bytes at `g` (name `nl` bytes, NUL-padded).
+fn _cx_dirent_put(g, d, nl, lrl): i64 {
+    store64(g, load64(d));
+    store64(g + 8, load64(d + 8));
+    store16(g + 16, lrl);
+    store8(g + 18, load8(d + 20));
+    var i = 0;
+    while (i < nl) { store8(g + 19 + i, load8(d + 21 + i)); i = i + 1; }
+    while (19 + i < lrl) { store8(g + 19 + i, 0); i = i + 1; }
+    return 0;
+}
+#endif
 
 # kill(pid, sig): the guest's signal is x86_64 Linux's number (the .cyx ABI) and reaches the host as
 # the host's (_cx_sig_host); one the host lacks answers -EINVAL without reaching it. Until 6.7.16 a
@@ -906,8 +1053,8 @@ fn cx_run(code, code_len): i64 {
             # given syscall treats as a pointer (scalar fd/len/flags/whence must
             # NOT be shifted). Keyed on the GUEST x86-Linux number `sn`, which
             # _cx_host_sys then serves through the host's own wrappers (6.7.15).
-            # Linux ABI arg order → s2=arg0, s3=arg1, ... (no listed call takes more
-            # than three, so r5 / r6 are not read).
+            # Linux ABI arg order → s2=arg0, s3=arg1, ... (mknodat and wait4 take a
+            # fourth, read from r5 into _cx_a4 below; nothing reads r6).
             #   read(0)/write(1)  = (fd, buf, count)   → buf   is arg1 = s3
             #   open(2)           = (path, flags, mode)→ path  is arg0 = s2
             # CHANGELOG [6.4.20]: open fixed s3 (=flags) instead of s2 (=path) —
@@ -947,6 +1094,22 @@ fn cx_run(code, code_len): i64 {
                 if (sn == 4) { sn_n = 144; }
                 sfault = _cx_syspath(s2, &sx); s2 = load64(&sx);
                 if (sfault == 0) { sfault = _cx_sysbuf(s3, sn_n, &sx); s3 = load64(&sx); }
+            }
+            # 6.7.16: getdents64(217) = (fd, buf, n) → the n-byte s3; mknodat(259) = (dirfd,
+            # path, mode, dev) → the path s3, dev from r5; wait4(61) = (pid, status, options,
+            # rusage) → the 4-byte status s3 and the 144-byte struct rusage from r5, either of
+            # them null. Each answered -38 until 6.7.16 (6.7.14's D55), so a directory walk
+            # listed nothing, a FIFO could not be made and a parent never reaped its child.
+            # poll(7) is served only as poll(NULL, 0, ms), whose pointer is never read
+            # (_cx_host_poll). CHANGELOG [6.7.16]
+            elif (sn == 217) { sfault = _cx_sysbuf(s3, s4, &sx); s3 = load64(&sx); }
+            elif (sn == 259) {
+                sfault = _cx_syspath(s3, &sx); s3 = load64(&sx);
+                _cx_a4 = cx_reg_get(5);
+            }
+            elif (sn == 61) {
+                sfault = _cx_sysbuf(s3, 4, &sx); s3 = load64(&sx);
+                if (sfault == 0) { sfault = _cx_sysbuf(cx_reg_get(5), 144, &sx); _cx_a4 = load64(&sx); }
             }
             # --- dispatch: getrandom and clock_gettime are served by the host's stdlib
             # (_cx_host_getrandom / _cx_host_clock_gettime, v6.6.8), brk in guest space

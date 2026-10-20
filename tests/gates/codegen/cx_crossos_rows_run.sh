@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (74, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (76, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -116,6 +116,12 @@
 #   R25 (6.7.15, the same issue) the filed `file_write_atomic("wa_target.txt", "hello", 5)`, native and
 #       on cxvm, each from its own empty directory: it prints 0 and exits 0, wa_target.txt holds
 #       "hello", and no `.cyrtmp.` name is left (cx printed -38 and left wa_target.txt.cyrtmp.<pid>.1).
+#   R26 (6.7.16; issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md)
+#       tests/tcyr/crossos/audit_walk_fifo.tcyr — native and cxvm each print `<N> passed, 0 failed`, N
+#       derived per target (n_tgt; floor 8 on each leg), each leg from its own empty directory. On cx
+#       its directory walk needs getdents64, its FIFO mknodat, its forked walk wait4 and sleep_ms (a
+#       no-op on cx until 6.7.16, so the 5 s window was ~0): all four answered -38, `2 passed, 6
+#       failed` on every host's cxvm.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -174,6 +180,12 @@
 #      (-38, wa_target.txt.cyrtmp.<pid>.1 left), 70 green. lib/syscalls_x86_64_linux.cyr's cx arm in
 #      sys_unlink restored -> this gate stays 74/74 (no row here reads an unlink's answer, and R25's
 #      write succeeds before its cleanup unlink); cx_guest_syscall_refusal.sh R7 holds that arm.
+#   n. (6.7.16, R26; the real tree 76/76; each mutant cxvm passed as CXVM) the cxvm before it
+#      (86dafdc49's programs/cxvm.cyr) -> R26 cxvm RED (2 passed, 6 failed), 75 green; its wait4 (61)
+#      arm dropped -> RED (5 passed, 3 failed); getdents64 (217) dropped -> RED (7 passed, 1 failed);
+#      mknodat (259) dropped -> RED (5 passed, 3 failed). Its poll (7) arm dropped stays GREEN here:
+#      on this host the forked walks end inside the parent's un-slept WNOHANG loop. The sleep is held
+#      by cx_guest_syscall_refusal.sh R9 (sleep_ms(60) takes 60 ms) and the cx_host_dispatch fixture.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -723,8 +735,24 @@ for leg in native cx; do
     else bad "R25 $leg: exit $RC, printed '$got', wa_target.txt holds '$held', $left .cyrtmp. name(s) left ($(ls -A "$T/run" | tr '\n' ' '))"; fi
 done
 
-WANT=74
+# ── R26 — audit_walk_fifo (6.7.16): getdents64, mknodat, wait4 and sleep_ms's poll on cx ──
+src=tests/tcyr/crossos/audit_walk_fifo.tcyr
+echo "R26 — $src (its walk, FIFO and forked child need getdents64 / mknodat / wait4 / poll on cx; 6.7.16):"
+w=$(n_tgt "$src" LINUX)
+if [ "$w" -lt 8 ]; then bad "R26 native: only $w x86_64-Linux assertions in $src (floor 8)"
+elif "$CC" < "$src" > "$T/awn" 2> "$T/awne"; then
+    chmod +x "$T/awn"; dirleg native "$T/awn" "$T/awno"
+    summary "R26 $src native" "$T/awno" "$RC" "$w"
+else bad "R26 native: does not compile: $(grep -m1 '^error' "$T/awne")"; fi
+w=$(n_tgt "$src" CX)
+if [ "$w" -lt 8 ]; then bad "R26 cxvm: only $w cx assertions in $src (floor 8)"
+elif "$CX" < "$src" > "$T/aw.cyx" 2> "$T/awce"; then
+    dirleg cx "$T/aw.cyx" "$T/awco"
+    summary "R26 $src cxvm" "$T/awco" "$RC" "$w"
+else bad "R26 cxvm: cycc_cx does not compile it: $(grep -m1 '^error' "$T/awce")"; fi
+
+WANT=76
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21), and the path-call files (pe_open_failure_errno, open_flags_per_target, atomic_write_temp_exclusive) and the filed file_write_atomic run on cxvm as natively (R22-R25)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21), and the path-call files (pe_open_failure_errno, open_flags_per_target, atomic_write_temp_exclusive) and the filed file_write_atomic run on cxvm as natively (R22-R25), and audit_walk_fifo's walk, FIFO and forked child (getdents64 / mknodat / wait4 / sleep) on cxvm as natively (R26)"
 exit 0

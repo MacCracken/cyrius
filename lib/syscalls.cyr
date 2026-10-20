@@ -87,7 +87,8 @@ include "lib/syscalls_x86_64_agnos.cyr"
 # scalar-only calls (close, lseek, exit, getpid, kill, fork, fcntl …) served through the
 # HOST's own wrappers running the call the guest names on every host, -38 where the host has
 # no route (6.7.15), as are the path calls mkdir / rmdir / unlink / rename / symlink /
-# readlink / stat, their paths and buffers translated (6.7.15). Every other number answers
+# readlink / stat, their paths and buffers translated (6.7.15), and getdents64 / mknodat /
+# wait4 likewise and poll as poll(NULL, 0, ms), a sleep (6.7.16). Every other number answers
 # -ENOSYS (-38) without reaching the host (6.7.14, D55), so a wrapper outside that set
 # compiles on cx and answers -38. docs/platform-status.md states the whole guest contract.
 # 6.7.12: sys_pipe / sys_fstat refuse with -ENOSYS on cx (sys_unlink too until 6.7.15) and
