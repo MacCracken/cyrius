@@ -2037,7 +2037,12 @@ Parentheses around the whole call are transparent at these destinations too (6.7
 `f64v2` local, and `var x: i64 = (mkv(41, 7));` / `x = (s.mv());` are refused (through 6.7.14 each held one word: 0
 or 1 on x86_64 / aarch64, 154 / 155 on cx, 195 on Windows, and the integer destinations the result's word); and a
 method — or `callptr(&f, ..)` — that STARTS an integer initialiser, `var x: i64 = s.mv() + 1;`, is refused as `mkv(41,
-7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1). Every other source is refused by name (`a value-form vector local is initialised only
+7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1) — and so is one that starts
+an ASSIGNMENT's right-hand side, `x = s.mv() + 1;` / `x = callptr(&mkv, 41, 7) + 1;` (6.7.16, the user's decision D25,
+2026-10-19: A), and the parentheses change nothing for a call that starts an integer source either: `var x: i64 =
+(mkv(41, 7)) + 1;`, `x = (mkv(41, 7)) + 1;`, `var x: i64 = (s.mv()) + 1;`, `var x: i64 = (mkv(41, 7) + 1);` are refused
+with the unwrapped spelling's words (6.7.16, D26: A; through 6.7.15 each stored the result's word plus 1: 1 on x86_64 /
+aarch64, 42 on cx / Windows). Every other source is refused by name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local

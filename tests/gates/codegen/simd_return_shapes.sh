@@ -335,6 +335,22 @@
 #   M-WR2 `_vrcv_mscal` asking a whole call (`start` 0)    -> RED 20: WRK3 WRK7 WRK9 WRK11 on all five legs (compiled)
 #   M-WR3 `_vasg_mscal` asking a whole method (the tree before) -> RED 15: WRK4-WRK6 on all five legs (compiled)
 #   M-WR4 `_vrcv_mscal` asking a whole method (the tree before) -> RED 40: WRK1-WRK3 WRK7-WRK11 on all five legs
+# 6.7.16 (D25 A / D26 A, the user's decisions, 2026-10-19; issues/2026-10-18-vector-call-starting-assignment-or-wrapped-
+# start-stores-a-word.md) — a method or `callptr(&f, ..)` that STARTS an assignment's right-hand side is refused as the
+# by-name call is (`_vasg_vt` reads `_vcall_vt` with `start` 1, as the declaration's `_vrcv_mscal` does), and parentheses
+# change nothing for a call that starts an integer source: `(mk2(41, 7)) + 1` (`_vcv_wpeel`), `(mk2(41, 7) + 1)` (a call
+# starting a whole wrap's inside). Before (re-measured at 41ca7d41c + the method-head bite): `x = s.m2() + 1;`, `x =
+# callptr(&mk2, 41, 7) + 1;`, `var x: i64 = (mk2(41, 7)) + 1;`, `x = (mk2(41, 7)) + 1;`, `var x: i64 = (s.m2()) + 1;`
+# stored the result's word plus 1 (x86_64 / IR=3 / aarch64 1, cx / PE 42). Rows WRK12-WRK16 (the filed rows 1-5
+# verbatim), WRK17-WRK21 (f64v4 twins), WRK22 (a for step), WRK23 / WRK24 (a global in a fn, at top level), WRK25 /
+# WRK26 (a top-level `: i64` in the declaration zone, after the first statement), WRK27 (a call starting a whole wrap),
+# WRK28-WRK31 (a double wrap, a parenthesised head, a chain, `(callptr(&f))`), refused once; WR7 the controls (`var w =
+# (mk2(41, 7));` 161, `x = load64(&w) + 1;` 42). Five legs. Mutations (2026-10-20, measured):
+#   M-WR5 `_vasg_vt` asking a whole call (`start` 0, the tree before) -> RED 65: WRK12 WRK13 WRK15 WRK17 WRK18 WRK20
+#       WRK22-WRK24 WRK28-WRK31 on five legs
+#   M-WR6 `_vcv_wpeel` peeling nothing                  -> RED 65: WRK14-WRK16 WRK19-WRK22 WRK25 WRK26 WRK28-WRK31 on five
+#   M-WR7 `start` 1 taking only an unwrapped start (the tree before) -> RED 5: WRK27 on five legs
+
 # 6.7.15 (issues/archived/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md) — a vector call assigned to a
 # GLOBAL that is no vector (by name, an explicit instance, a method incl. a chain's, `fncallN(&f, ..)` / `callptr(&f, ..)`,
 # wrapped or not; a by-name call starting the source, as the local's arm reads it), and `fncallN(&f, ..)` /
@@ -1512,7 +1528,14 @@ impl Mv {
     fn gm<T>(self, a: T): f64v2 { return mk2(a + self.k, 7); }
 }
 '
+# 6.7.16 (D25 / D26): an f64v4 method and call for the WRK17-WRK21 twins.
+W4='include "lib/fnptr.cyr"
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, 7); store64(&v + 16, 8); store64(&v + 24, 9); return v; }
+struct M4 { k; }
+impl M4 { fn m4(self): f64v4 { return mk4(41); } }
+'
 wr_src() {  # $1 row id -> source on stdout; each exits 161 when right
+
     case "$1" in
     WR1) printf '%s' "$WF"'fn r(): i64 { var x = (mk2(41, 7)); return load64(&x) * 10 + load64(&x + 8); }
 syscall(60, r() % 256);
@@ -1535,9 +1558,12 @@ syscall(60, r() % 256);
     if (load32(&f) * 1000 + load32(&f + 4) * 100 + load32(&f + 8) * 10 + load32(&f + 12) != 5678) { return 2; } return 161; }
 syscall(60, r());
 ' ;;
+    WR7) printf '%s' "$WF"'fn r(): i64 { var w = (mk2(41, 7)); var x = 0; x = load64(&w) + 1; if (x != 42) { return 1; } return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
     esac
 }
-WR_ROWS="WR1 WR2 WR3 WR4 WR5 WR6"
+WR_ROWS="WR1 WR2 WR3 WR4 WR5 WR6 WR7"
 wrk_src() {  # $1 row id -> source on stdout
     case "$1" in
     WRK1) printf '%s' "$WF"'fn r(): i64 { var x: i64 = (mk2(41, 7)); return x; }
@@ -1573,12 +1599,77 @@ syscall(60, r() % 256);
     WRK11) printf '%s' "$WH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: i64 = s.gm<i64>(40) + 1; return x; }
 syscall(60, r() % 256);
 ' ;;
+    WRK12) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var x = 0; x = s.m2() + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK13) printf '%s' "$WF"'fn r(): i64 { var x = 0; x = callptr(&mk2, 41, 7) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK14) printf '%s' "$WF"'fn r(): i64 { var x: i64 = (mk2(41, 7)) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK15) printf '%s' "$WF"'fn r(): i64 { var x = 0; x = (mk2(41, 7)) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK16) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: i64 = (s.m2()) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK17) printf '%s' "$W4"'fn r(): i64 { var s: M4 = M4 { 1 }; var x = 0; x = s.m4() + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK18) printf '%s' "$W4"'fn r(): i64 { var x = 0; x = callptr(&mk4, 41) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK19) printf '%s' "$W4"'fn r(): i64 { var x: i64 = (mk4(41)) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK20) printf '%s' "$W4"'fn r(): i64 { var x = 0; x = ((mk4(41))) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK21) printf '%s' "$W4"'fn r(): i64 { var s: M4 = M4 { 1 }; var x: i64 = (s.m4()) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK22) printf '%s' "$WF"'fn r(): i64 { var x = 0; for (var i = 0; i < 1; x = (mk2(i, 1)) + 1) { i = i + 1; } return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK23) printf '%s' "$WF"'var G = 0;
+fn r(): i64 { var s: Mv = Mv { 1 }; G = s.m2() + 1; return G; }
+syscall(60, r() % 256);
+' ;;
+    WRK24) printf '%s' "$WF"'var G = 0;
+syscall(1, 1, "", 0);
+var s: Mv = Mv { 1 };
+G = s.m2() + 1;
+syscall(60, G % 256);
+' ;;
+    WRK25) printf '%s' "$WF"'var X: i64 = (mk2(41, 7)) + 1;
+syscall(60, X % 256);
+' ;;
+    WRK26) printf '%s' "$WF"'syscall(1, 1, "", 0);
+var X: i64 = (mk2(41, 7)) + 1;
+syscall(60, X % 256);
+' ;;
+    WRK27) printf '%s' "$WF"'fn r(): i64 { var x: i64 = (mk2(41, 7) + 1); return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK28) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var x = 0; x = ((s.m2())) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK29) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var ps: *Mv = &s; var x = 0; x = ((*ps).m2()) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK30) printf '%s' "$WH"'fn r(): i64 { var w: W; var x = 0; x = (w.s.m2()) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK31) printf '%s' "$WH"'fn r(): i64 { var x = 0; x = (callptr(&mk2, 41, 7)) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
     esac
 }
-WRK_ROWS="WRK1 WRK2 WRK3 WRK4 WRK5 WRK6 WRK7 WRK8 WRK9 WRK10 WRK11"
+WRK_ROWS="WRK1 WRK2 WRK3 WRK4 WRK5 WRK6 WRK7 WRK8 WRK9 WRK10 WRK11 WRK12 WRK13 WRK14 WRK15 WRK16 WRK17 WRK18 WRK19 WRK20 WRK21 WRK22 WRK23 WRK24 WRK25 WRK26 WRK27 WRK28 WRK29 WRK30 WRK31"
 wrk_msg() {
     case "$1" in
-    WRK4|WRK5|WRK6) echo "vector return type does not match the assigned variable";;
+    WRK4|WRK5|WRK6|WRK12|WRK13|WRK15|WRK17|WRK18|WRK20|WRK22|WRK23|WRK24|WRK28|WRK29|WRK30|WRK31) echo "vector return type does not match the assigned variable";;
     *) echo "vector return type does not match the declared type";;
     esac
 }

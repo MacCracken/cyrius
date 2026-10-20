@@ -8957,9 +8957,16 @@ fn _vrcv_bad(S, ti, ty, term, verb): i64 {
 # token `ti` is declared to return, else 0: by name or an explicit instance `g<T>(..)` (`_vcall_fi`), a method on a
 # single name or a field chain (`_vmc_fi`), `fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`
 # (`_icall_rs_at`) — inside any parentheses wrapping the whole source [ti, `term`) (`_hl_dx_end`, `_ie_unparen`).
-# `start` 0: the call is the whole source; 1: an unwrapped call may start it (`mk2(..) + 1`). `_vcv_a` the call's first
-# token, `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base)
-# declares no vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
+# `start` 0: the call is the whole source; 1: a call may start it (`mk2(..) + 1`). `_vcv_a` the call's first token,
+# `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base) declares no
+# vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D26 A, the user's decision, 2026-10-19) — PARENTHESES CHANGE NOTHING FOR A CALL THAT STARTS THE SOURCE
+# EITHER: with `start` 1 a call inside parentheses that end before the source does — `(mk2(41, 7)) + 1`, `((s.m2())) + 1`
+# (`_vcv_wpeel`) — or one that starts the inside of a wrap around the whole source — `(mk2(41, 7) + 1)` — starts it, as
+# unwrapped (guide § Parentheses; 6.7.15's D28 made a whole wrap transparent). `var x: i64 = (mk2(41, 7)) + 1;`, `x =
+# (mk2(41, 7)) + 1;` and `var x: i64 = (s.m2()) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42)
+# where the unwrapped spellings are refused (issues/2026-10-18-vector-call-starting-assignment-or-wrapped-start-stores-
+# a-word.md). CHANGELOG [6.7.16]
 var _vcv_a = 0;
 var _vcv_nt = 0;
 fn _vcall_vt(S, ti, term, start): i64 {
@@ -8970,23 +8977,45 @@ fn _vcall_vt(S, ti, term, start): i64 {
         a = _ie_unparen(S, ti, e);
         pe = _ie_pe;
     }
+    if (start == 1) { a = _vcv_wpeel(S, a); }
     _vcv_a = a;
-    _vcv_nt = a;
-    var rs = _icall_rs_at(S, a);
-    var o = a + 1;
-    if (rs > 0 - 2048) {
-        var f = _vcall_fi(S, a);
-        if (f < 0) {
-            f = _vmc_vfi(S, a);
-            _vcv_nt = _vmc_mt;
-        }
-        if (f < 0) { return 0; }
-        rs = GFRS(S, f);
-        o = _vcall_o;
-    } else { _vcv_nt = _icall_fti(S, a); }
-    if (start == 1) { if (a == ti) { return rs; } }
-    if (_call_close(S, o) + 1 != pe) { return 0; }
+    var rs = _vcv_at(S, a);
+    if (rs == 0) { return 0; }
+    if (start == 1) { return rs; }
+    if (_call_close(S, _vcv_o) + 1 != pe) { return 0; }
     return rs;
+}
+# The vector the call at token `a` is declared to return (`_vcall_vt`'s spellings), else 0; `_vcv_o` its `(`, `_vcv_nt`
+# the name its refusals give.
+var _vcv_o = 0;
+fn _vcv_at(S, a): i64 {
+    _vcv_nt = a;
+    _vcv_o = a + 1;
+    var rs = _icall_rs_at(S, a);
+    if (rs <= 0 - 2048) {
+        _vcv_nt = _icall_fti(S, a);
+        return rs;
+    }
+    var f = _vcall_fi(S, a);
+    if (f < 0) {
+        f = _vmc_vfi(S, a);
+        _vcv_nt = _vmc_mt;
+    }
+    if (f < 0) { return 0; }
+    _vcv_o = _vcall_o;
+    return GFRS(S, f);
+}
+# The source at token `a` opening with k parentheses around a whole vector call (`_pwrap_k`: each `(` closing right
+# before its enclosing `)`), the call followed by those k `)` and more after them: the call's first token; else `a`.
+fn _vcv_wpeel(S, a): i64 {
+    if (TOKTYP(S, a) != 10) { return a; }
+    var pw = _pw_end;
+    var k = _pwrap_k(S, a);
+    var x = _pw_end - k;   # the innermost `)`
+    _pw_end = pw;
+    if (_vcv_at(S, a + k) == 0) { return a; }
+    if (_call_close(S, _vcv_o) + 1 != x) { return a; }
+    return a + k;
 }
 # ⛔ 6.7.16 — `ti` when the source there opens with `(` and is a method declared to return a vector on a parenthesised
 # head (`(*ps).mv()`, `((s)).mv()`: `_vmc_vfi`), which no wrap of the whole source reads (`_pwrap_in` answers -1 for
@@ -9172,11 +9201,17 @@ fn _vasg_gnv(S, noff): i64 {
     return 1;
 }
 # The vector the right-hand side at token `ti` (ended by `term`) declares: a by-name call that starts it
-# (`_vcall_fi`, as the local's arm reads it), else a whole call of any spelling (`_vcall_vt`); 0 = none. `_vcv_a` the
-# call.
+# (`_vcall_fi`, as the local's arm reads it), else a call of any spelling that starts it (`_vcall_vt`); 0 = none.
+# `_vcv_a` the call.
+# ⛔ 6.7.16 (D25 A, the user's decision, 2026-10-19) — A METHOD OR `callptr(&f, ..)` THAT STARTS AN ASSIGNMENT'S
+# RIGHT-HAND SIDE IS REFUSED, AS THE BY-NAME CALL IS (6.7.14's D27 (a): one rule for a declaration and an assignment;
+# 6.7.15's D29 refused it starting an initialiser): `x = s.m2() + 1;` and `x = callptr(&mk2, 41, 7) + 1;` stored the
+# result's word plus 1 (x86_64 / aarch64 1, cx / PE 42) where `x = mk2(41, 7) + 1;` is "vector return type does not
+# match the assigned variable" — `start` 1, as the declaration's `_vrcv_mscal` reads it (and D26: wrapped too).
+# CHANGELOG [6.7.16]
 fn _vasg_vt(S, ti, term): i64 {
     var fi = _vcall_fi(S, ti);
-    if (fi < 0) { return _vcall_vt(S, ti, term, 0); }
+    if (fi < 0) { return _vcall_vt(S, ti, term, 1); }
     _vcv_a = ti;
     return GFRS(S, fi);
 }
