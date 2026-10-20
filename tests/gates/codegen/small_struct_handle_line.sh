@@ -282,8 +282,11 @@
 #   R17 (6.7.16, issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md, the user's D17
 #      (a), 2026-10-19) a TOP-LEVEL `var G: S = *GPP;` copies at every size, in the declaration zone and after the first
 #      statement: the filed repro VERBATIM prints 04646.. and exits 9 on the same legs (09999.. through 6.7.15: Z, Z8, T,
-#      T8 handles on the struct); the file's d_* rows (floor 88) carry 16 / 8 / 3 B and every spelling; GC9 a `**H`
-#      declared below G is refused by name, as `*P` is (GC3); another struct: struct_copy_type_checked.sh R35 / R36
+#      T8 handles on the struct); the file's d_* rows carry 16 / 8 / 3 B and every spelling; GC9 a `**H`
+#      declared below G is refused by name, as `*P` is (GC3); another struct: struct_copy_type_checked.sh R35 / R36.
+#      And the user's D18 (a): its `*S`-name twin `var G: S = P;` (P a `*S` global) copies at every size too — the
+#      repro's N / N8 print 4 / 6 (R17 prints 0464646; 9 and the pointer word through 6.7.15, the guide's "not yet
+#      settled" layout); the file's n_* rows (floor 99); GC10 a P declared below G over 8 B refused by name
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -1040,7 +1043,7 @@ done
 TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
 [ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
 NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
-PSFLOOR=88   # 6.7.16: + the wf_* rows; + the d_* rows (D17)
+PSFLOOR=99   # 6.7.16: + the wf_* rows; + the d_* rows (D17); + the n_* rows (D18)
 if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
 echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
 for leg in $XLEGS $OTHER; do
@@ -1181,7 +1184,8 @@ done
 # 6.7.16 — R17: the repro of issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md,
 # verbatim. The user's D17 (a), 2026-10-19: a top-level `var G: S = *GPP;` (GPP a `**S`) is a copy at every size, in
 # the declaration zone and after the first statement — Z.y / T.y read 4 and Z8.v / T8.v 6 after `GS.y = 9` (9 / 9
-# through 6.7.15: handles on GS / GS8); the fn's `var t: P = *GPP;` copies (exit 9).
+# through 6.7.15: handles on GS / GS8); the fn's `var t: P = *GPP;` copies (exit 9). And D18 (a): its `*S`-name twin
+# `var N: P = GP;` copies too — N.y reads 4 and N8.v 6 (9, a handle, and the pointer word through 6.7.15).
 cat > "$D/repro_tl.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/fmt.cyr"
@@ -1206,13 +1210,13 @@ fmt_int(Z.y); fmt_int(Z8.v); fmt_int(T.y); fmt_int(T8.v); fmt_int(N.y); fmt_int(
 fn main(): i64 { var t: P = *GPP; GS.y = 5; return t.y; }
 syscall(60, main());
 EOF
-echo "R17. the filed top-level *GPP repro, verbatim (prints 04646 then N / N8; exit 9)"
+echo "R17. the filed top-level *GPP repro, verbatim (prints 0464646; exit 9)"
 for leg in $XLEGS $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
     run_leg "$leg" "$D/repro_tl.cyr" "$D/rtl_$n"
     if [ "$RC" -eq -1 ]; then bad "R17 $leg: did not build: $(grep '^error' "$D/rtl_$n.err" | head -1)"
-    elif [ "$RC" -eq 9 ] && [ "${LAST#04646}" != "$LAST" ]; then ok "R17 $leg: $LAST, exit 9"
-    else bad "R17 $leg: exit $RC, printed '$LAST', want 04646... and exit 9"; fi
+    elif [ "$RC" -eq 9 ] && [ "$LAST" = "0464646" ]; then ok "R17 $leg: $LAST, exit 9"
+    else bad "R17 $leg: exit $RC, printed '$LAST', want 0464646 and exit 9"; fi
 done
 
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
@@ -1299,6 +1303,8 @@ crow "GC3 var G: H = *P with P declared below it refused by name" "refuse:from a
   'struct H { v; w; }\nvar G: H = *P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
 crow "GC9 var G: H = *GPP with GPP (a **H) declared below it refused by name (6.7.16, D17 (a): a copy, as *P is)" "refuse:cannot copy-init 'G' from a dereference of a global or fn declared below it (declare it first): 'GPP'" \
   'struct H { v; w; }\nvar G: H = *GPP;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nvar GPP: **H = &P;\nsyscall(60, G.v);\n'
+crow "GC10 var G: H = P with P (a *H) declared below it refused by name (6.7.16, D18 (a): a copy, as *P is)" "refuse:cannot copy-init 'G' from a global declared below it (declare the source first): 'P'" \
+  'struct H { v; w; }\nvar G: H = P;\nvar A = H { 4, 0 };\nvar P: *H = &A;\nsyscall(60, G.v);\n'
 crow "GC4 a global declared a value and then a handle is refused" "refuse:redeclared with a different type or size" \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nvar G = S8 { 1 };\nvar G: S8 = alloc(8);\nsyscall(60, G.v);\n'
 crow "GC4 ... a call value and then a handle" "refuse:redeclared with a different type or size" \
@@ -2045,4 +2051,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies (R17, GC9)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies, and var G: S = P from a *S global's name (R17, GC9, GC10)"

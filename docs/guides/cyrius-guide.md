@@ -1617,9 +1617,12 @@ S8 = w.s + a;` calls `S8_add` and copies its result, as `l + a` with a struct va
 (see *Parentheses, struct operands and `Str` fields*). Through 6.7.9 the first words were added,
 and in 6.7.10 before the fix `q` was a handle holding that sum.
 
-⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
-layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
-over 8.
+**A global declared from a `*T` GLOBAL's name copies (6.7.16).** `var G: S8 = P;` / `var G: P3 = (P);` with `P`
+a `*S8` / `*P3` global copies the struct `P` points at, at every size, in the declaration zone and after the first
+statement, as the same line in a fn does (the user's D18 (a), 2026-10-19): `G` is its own copy, and a write to either
+side leaves the other. Through 6.7.15 it kept its 6.7.9 layout — inline, holding the POINTER WORD, at 8 bytes or less
+(`G.v` read the address); a handle bound to `P`'s object over 8. A `P` declared below `G` is refused by name over 8
+bytes (*cannot copy-init 'G' from a global declared below it*), as `*P` is. Alias the object with `var G: *S8 = P;`.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),

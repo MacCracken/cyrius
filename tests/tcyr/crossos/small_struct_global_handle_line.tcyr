@@ -24,9 +24,9 @@
 #     handle to address 9: `+` on it is pointer arithmetic, no operator dispatch; `= 0` a NULL handle),
 #     a method or operator whose fn returns no struct;
 #   * a BIND (a second handle to the same object): another handle global, as at 16 B.
-#   ⚠ NOT CHANGED, awaiting the user: a global initialised from a `*T` global's NAME (`var G: S8 = P;`)
-#     keeps the layout it had (8 B or less an inline value holding the pointer word; over 8 B a handle
-#     bound to P's object) — a local copies there (6.7.0), a global over 8 B binds; no row pins either.
+#   * 6.7.16 (the user's D18 (a), 2026-10-19): a global initialised from a `*T` global's NAME (`var G: S8 =
+#     P;`) is a COPY at every size, as a local is (6.7.0) — through 6.7.15 it kept its 6.7.9 layout (8 B or
+#     less the pointer word, over 8 B a handle bound to P's object); its rows: double_pointer_struct_value.tcyr n_*.
 #   A handle global's consumers take its STRUCT, as a handle local's do: a by-value argument (`f(G)`,
 #   `f((G))`, a method's, a generic's), `return G` / `return (G)`, an operator's right operand, an
 #   if-expression branch, `q = G` / `G = q` / `G = V` / `V = G` (copied through the address; handle <-
