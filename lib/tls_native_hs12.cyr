@@ -1414,10 +1414,11 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     # read is bounds-checked against blen (an untrusted ClientHello). A hello that does not parse
     # is decode_error, recorded so the driver sends it: no compression_methods byte, an empty list,
     # a list overrunning the message, a block that does not fill the rest of the message (6.7.15's
-    # D40), an extension whose header or data overruns the block (_tn_12_ch_ext_frames — walked
-    # once, before any lookup, so a malformed list is never read as "absent": no extended master
-    # secret, no ALPN, the server's first group), and the three short-message refusals above. The
-    # answer the 1.3 server and both clients give (6.7.16's D32, the user, 2026-10-19). A hello
+    # D40), an extension whose header or data overruns the block or a 1-3 byte tail after its last
+    # whole extension (_tn_ch_ext_walk — walked once, before any lookup, so a malformed list is
+    # never read as "absent": no extended master secret, no ALPN, the server's first group), and
+    # the three short-message refusals above. The answer the 1.3 server and both clients give
+    # (6.7.16's D32, the user, 2026-10-19; the 1.3 server's block tail, 6.7.16's D81). A hello
     # that ends after compression_methods has no block: EMS 0, no ALPN, our first group.
     # CHANGELOG [6.7.16]
     pos = pos + cs_len;
@@ -1432,7 +1433,7 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
         var ext_total = _tn_be16_r(body + pos);
         pos = pos + 2;
         if (pos + ext_total != blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-        if (_tn_12_ch_ext_frames(body + pos, ext_total) != 1) {
+        if (_tn_ch_ext_walk(body + pos, ext_total) != 1) {
             return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
         }
         var ep = 0;
@@ -1459,22 +1460,6 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     store64(ctx + TLS_CTX_OFF_GROUP, group);
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
-}
-
-# 1 if a TLS 1.2 ClientHello's extension block (`ep`, `total` bytes) frames — each entry's 4-byte
-# header and its data inside the block, the last one ending at `total` — else 0. The 1.2 server walks
-# it once before looking anything up, because _tn_find_ext stops at the first entry that overruns
-# and its -1 was read as "absent" (6.7.16's D32: decode_error). Local to the 1.2 parse: the 1.3
-# server's ClientHello parse and _tn_server_negotiate_alpn, which it shares, are unchanged.
-# CHANGELOG [6.7.16]
-fn _tn_12_ch_ext_frames(ep, total): i64 {
-    var q = 0;
-    while (q < total) {
-        if (q + 4 > total) { return 0; }
-        q = q + 4 + _tn_be16_r(ep + q + 2);
-    }
-    if (q != total) { return 0; }
-    return 1;
 }
 
 # 1 if the TLS 1.2 server can negotiate wire suite `w`: an ECDHE suite whose ServerHello it can
