@@ -40,6 +40,10 @@
 # refused preprocessor buffer is named (exit 1). Mutants measured: the open's preprocessor (its
 # raw Linux mmap#9, unchecked) -> `sc 9 0 25165824 3 34`, then signal 11 — every agnos compile
 # died (C1 and C2 FAIL); the agnos arm alone removed -> C1 exit 1 after one #9 (refused by name).
+# C0: the agnos build carries agnos's syscall numbers in the driver's own enum. Mutant measured: the
+# Linux enum alone (the open's) -> 4 "duplicate symbol 'SYS_*' redefined with conflicting value"
+# warnings (SYS_EXIT, SYS_READ, SYS_CLOSE, SYS_OPEN), each with a note that the wrong call would be
+# made — on a build whose calls the stdlib's redefinition made right (C0 FAIL).
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
 # and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
 # /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
@@ -728,6 +732,8 @@ CYRIUS_TARGET_AGNOS=1 "$CC" < src/main_cx.cyr > "$T/cxag" 2> "$T/cxag.err" && ch
     && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && chmod +x "$T/cxvm" || {
     echo "  FAIL: the Linux cycc_cx / cxvm did not build"; fails=$((fails + 1)); cxok=0; }
 if [ "$cxok" = 1 ]; then
+    check "C0 the agnos cycc_cx builds without a warning (its SYS_* are agnos's own)" "0" \
+        "$(grep -c '^warning' "$T/cxag.err" || true)"
     printf 'var x = 7;\nsyscall(60, x);\n' > "$T/c7.cyr"
     "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c1.log" 3> "$T/c1.cyx" 2>&1
     "$T/cxl" < "$T/c7.cyr" > "$T/c1l.cyx" 2> /dev/null

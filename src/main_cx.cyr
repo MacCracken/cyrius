@@ -8,7 +8,15 @@
 # CHANGELOG [6.6.20] The bytecode buffer and the break-chain shadow are off-heap allocs (see
 # `_cx_code_base` below). CHANGELOG [6.7.12]
 
+# agnos's own numbers in an agnos build: lib/alloc.cyr's lib/syscalls.cyr defines them again, and
+# with the Linux values here that was four "redefined with conflicting value" warnings (and notes
+# saying the wrong call would be made) on every agnos cycc_cx build, whose calls the redefinition
+# alone made right. No SYS_BRK: agnos has no brk (its 12 is sync). CHANGELOG [6.7.16]
+#ifdef CYRIUS_TARGET_AGNOS
+enum Sys { SYS_READ = 5; SYS_WRITE = 1; SYS_OPEN = 7; SYS_CLOSE = 6; SYS_EXIT = 0; }
+#else
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
+#endif
 
 include "src/version_str.cyr"
 include "src/common/util.cyr"
