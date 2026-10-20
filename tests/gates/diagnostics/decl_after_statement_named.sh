@@ -158,12 +158,13 @@
 #       generic struct bounded by a late trait; UF13 `: Foo` / `: 5` / `: Foo<i64>` with no initializer, the next
 #       statement's mistake reported; UF14 the zone and after a statement; UF15 a generic's two instances; UF16
 #       control (`: i64`, `: *Foo` keep "uninitialized"); UF17 `s: Str`, a store and a method, a fn above the
-#       include; UF18 --syntax-only of shapes 1-5
+#       include; UF18 --syntax-only of UF1-UF5's shapes (written UF18(n) below)
 #   UE3 / UE4  exact: a const naming a name declared nowhere, a valid trait's unmet bound, a by-name `*Result`
 #       parameter the inclusion did not declare — still reported
 #
-#   (6.7.16, measured) the lane before it (8bccee4d5) -> RED UF1-UF15 UF17 UF18 x4 UE3 UE4 (22); UF16, UF18's shape
-#                                                         4 (pass 2 already) and every row before them green
+#   (6.7.16, measured) the lane before it (8bccee4d5) -> RED UF1-UF15 UF17 UF18(1-4) UE3 UE4 (22); UF16, UF18(5)
+#                                                         (one error under --syntax-only already) and every row
+#                                                         before them green
 #   `_dl_fill` returns at once                         -> RED UF2 UF5 UF7 UF8 UF11 UF17 UF18(2)
 #   `_ce_unk` without its stand-down                   -> RED UF1 UF2 UF7 UF8 UF9 UF10 UF18(1) UF18(2)
 #   `_bnd_refd` returns 0                              -> RED UF3 UF11 UF12 UF18(3) UE3
