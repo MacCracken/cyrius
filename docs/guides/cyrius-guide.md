@@ -1841,7 +1841,9 @@ top-level call keeps its one refusal (a struct result needs a fn's frame).
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
 overloaded operator returning it, or (6.7.11) a pointer to that struct (below). Anything else — a call returning a *different* struct, an
-integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
+integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. A value with
+an error of its own — `return zz;` with `zz` undefined, `return &(q);`, `return 5 + ;` — reports that
+error alone, as at 8 bytes (6.7.16; the refusal came first, then the value's error). Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. Since 6.7.11 that includes a call that only STARTS the value: `return mk2(1) ==
 p;` (any operator that does not dispatch — a comparison, `& | ^ % << >>`, `&& ||`) is refused *… got

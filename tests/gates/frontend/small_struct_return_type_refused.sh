@@ -103,6 +103,19 @@
 # compilers. Mutation (2026-10-19, a scratch tree with the src before the fix, the gate run from it):
 #   the fix reverted                                    -> RED 16: R11b-R11e on each of the four legs
 #   real tree                                           -> GREEN (70 refusal rows — floor 70 — and 28 acceptance rows)
+# 6.7.16 — P1-P15, PC1-PC9: a 9-16 B fn's `return E;` reports E's own error alone, the class's refusal printed after E's
+# parse (`_pair_ret_late`); every `^error` line compared, on the four compilers (`errs4`). Mutation (2026-10-20, a scratch
+# copy of the tree, its 2-stage mutant, the gate run from it):
+#   the tree before it (parse_fn.cyr at 8535eb44)       -> RED 68: P1-P15 (the refusal, then E's error: 2 lines), PC5
+#                                                          PC7 (the same in their mk2 / mk) — each on the four legs
+#   `_pair_ret_late` standing down on the file-wide     -> RED 8: PC3 PC7 (the refusal lost after an earlier
+#   `_had_error` instead of the statement's `_err_n`       statement's error)
+#   PARSE_RETURN not keeping a pending refusal across   -> RED 16: P13 P14 PC4 PC5 (the outer refusal printed by the
+#   a return inside the value                              inner return, in its fn's context: "struct `struct`"; and
+#                                                          P13 P14 then E's error)
+#   `_pair_ret_late` not putting the cursor on E        -> RED 29: PC1-PC7 (the refusal at the `;`, "got `this
+#                                                          expression`"), R1b
+#   real tree                                           -> GREEN (94 refusal rows — floor 94 — and 28 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -638,8 +651,97 @@ fn main(): i64 { var c: P3 = r(); return c.x; }
 syscall(60, main());
 '
 
+# 6.7.16 — THE VALUE'S OWN ERROR FIRST (issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md): a 9-16 B
+# struct fn's `return E;` whose E reports an error of its own printed the class's refusal ("... two registers ... got `zz`")
+# AND E's error, the refusal first (it was printed before E was parsed). It is printed after E's parse now, unless the
+# statement reported an error since (`_pair_ret_late`, the statement's `_err_n`): one error, E's own, as the 8 B class
+# gives. Every `^error` line is compared, in order, on the four compilers.
+errs4() {  # $1 label  $2 source  $3... the exact `^error` lines, in order; no binary — x86_64, aarch64, cx and PE
+    nrefuse=$((nrefuse+1))
+    e4l=$1; printf '%s' "$2" > "$D/e4.cyr"; shift 2
+    printf '%s\n' "$@" > "$D/e4.want"
+    for l4 in x86_64 aarch64 cx pe; do
+        rc=0
+        case $l4 in
+            x86_64)  "$CC" < "$D/e4.cyr" > "$D/e4.bin" 2>"$D/e4.err" || rc=$? ;;
+            aarch64) "$D/cc_a64" < "$D/e4.cyr" > "$D/e4.bin" 2>"$D/e4.err" || rc=$? ;;
+            cx)      "$D/cc_cx" < "$D/e4.cyr" > "$D/e4.bin" 2>"$D/e4.err" || rc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/e4.cyr" > "$D/e4.bin" 2>"$D/e4.err" || rc=$? ;;
+        esac
+        grep '^error' "$D/e4.err" > "$D/e4.got" 2>/dev/null || true
+        if [ -s "$D/e4.bin" ]; then
+            printf '  FAIL: %-50s emitted a binary (rc=%s)\n' "$e4l ($l4)" "$rc"; fail=$((fail+1))
+        elif cmp -s "$D/e4.want" "$D/e4.got"; then
+            printf '  ok(errors): %-46s %s line(s)\n' "$e4l ($l4)" "$(wc -l < "$D/e4.got" | tr -d ' ')"; pass=$((pass+1))
+        else
+            printf '  FAIL: %-50s %s error line(s), want %s: %s\n' "$e4l ($l4)" "$(wc -l < "$D/e4.got" | tr -d ' ')" \
+                "$(wc -l < "$D/e4.want" | tr -d ' ')" "$(head -2 "$D/e4.got" | tr '\n' '|')"; fail=$((fail+1))
+        fi
+    done
+}
+PQ='struct Q { v; w; }
+'
+PM='
+fn main(): i64 { var s: Q; var r: Q = mk(&s); return r.v; }
+syscall(60, main());
+'
+PR='a fn returning the 9-16 byte struct `Q` is returned in two registers, so `return` takes a local of that struct or a call returning it — got'
+UZ="undefined variable 'zz' (missing include or enum?)"
+errs4 "P1 the filed repro verbatim (pr2): return zz;" 'struct Q { v; w; }
+fn mk(q: *Q): Q { return zz; }
+fn main(): i64 { var s: Q; var r: Q = mk(&s); return r.v; }
+syscall(60, main());
+' "error:<source>:2:28: $UZ"
+errs4 "P2 return &(q);" "$PQ"'fn mk(q: *Q): Q { return &(q); }'"$PM" "error:<source>:2:27: expected identifier, got '('"
+errs4 "P3 return 5 + ;" "$PQ"'fn mk(q: *Q): Q { return 5 + ; }'"$PM" "error:<source>:2:30: unexpected ';'"
+errs4 "P4 return (zz);" "$PQ"'fn mk(q: *Q): Q { return (zz); }'"$PM" "error:<source>:2:29: $UZ"
+errs4 "P5 return *zz;" "$PQ"'fn mk(q: *Q): Q { return *zz; }'"$PM" "error:<source>:2:29: $UZ"
+errs4 "P6 return q.zz; (no such field)" "$PQ"'fn mk(q: *Q): Q { return q.zz; }'"$PM" "error:<source>:2:30: unknown field 'zz' on struct 'Q'"
+errs4 "P7 return zz.v;" "$PQ"'fn mk(q: *Q): Q { return zz.v; }'"$PM" "error:<source>:2:30: undefined variable 'zz'"
+errs4 "P8 return &zz;" "$PQ"'fn mk(q: *Q): Q { return &zz; }'"$PM" "error:<source>:2:29: undefined variable 'zz'"
+errs4 "P9 return q.v + zz;" "$PQ"'fn mk(q: *Q): Q { return q.v + zz; }'"$PM" "error:<source>:2:34: $UZ"
+errs4 "P10 return (5 + );" "$PQ"'fn mk(q: *Q): Q { return (5 + ); }'"$PM" "error:<source>:2:31: unexpected ')'"
+errs4 "P11 a generic's return zz; at three types: once" "$PQ"'fn mk<T>(q: T): Q { return zz; }
+fn main(): i64 { var s: Q; var r: Q = mk(&s); var r2: Q = mk(5); var r3: Q = mk<i32>(5); return r.v; }
+syscall(60, main());
+' "error:<source>:2:30: $UZ"
+errs4 "P12 an error in a closure body inside the value" 'include "lib/fnptr.cyr"
+'"$PQ"'fn mk(q: *Q): Q { return fncall1(|x| { return x + zz; }, 5); }'"$PM" "error:<source>:3:53: $UZ"
+errs4 "P13 a closure's return, then the value's own error" "$PQ"'fn ap(f, x) { return x; }
+fn mk(q: *Q): Q { return ap(|x| { return x; }, zz); }'"$PM" "error:<source>:3:50: $UZ"
+errs4 "P14 an #inline replay's return, then the value's own error" "$PQ"'#inline
+fn one(x): i64 { return x + 1; }
+fn ap(a, b) { return a; }
+fn mk(q: *Q): Q { return ap(one(5), zz); }'"$PM" "error:<source>:5:39: $UZ"
+errs4 "P15 an earlier statement in error: one error per statement" "$PQ"'fn mk(q: *Q): Q { var a = yy; return zz; }'"$PM" \
+    "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:40: $UZ"
+# Unchanged: a value that parses keeps the class's refusal — after an earlier statement's error too, beside a closure's
+# or an #inline replay's own return, at a generic's every instance once — and the 8 B / 24 B classes their own error.
+errs4 "PC1 control: return 5; keeps the refusal" "$PQ"'fn mk(q: *Q): Q { return 5; }'"$PM" "error:<source>:2:26: $PR \`5\`"
+errs4 "PC2 control: return t; (a scalar local) keeps it" "$PQ"'fn mk(q: *Q): Q { var t = 3; return t; }'"$PM" \
+    "error:<source>:2:37: $PR \`t\`"
+errs4 "PC3 control: an earlier statement in error, then return 5;" "$PQ"'fn mk(q: *Q): Q { var a = yy; return 5; }'"$PM" \
+    "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:38: $PR \`5\`"
+errs4 "PC4 control: a closure's own return inside the value" "$PQ"'fn ap(f, x) { return x; }
+fn mk(q: *Q): Q { return ap(|x| { return x; }, 5); }'"$PM" "error:<source>:3:26: $PR \`ap\`"
+errs4 "PC5 control: an #inline replay's return inside the value" "$PQ"'#inline
+fn one(x): i64 { return x + 1; }
+fn mk(q: *Q): Q { return one(5); }
+fn mk2(q: *Q): Q { return one(zz); }'"$PM" "error:<source>:4:26: $PR \`one\`" "error:<source>:5:33: $UZ"
+errs4 "PC6 control: a generic's return 5; at three types: once" "$PQ"'fn mk<T>(q: T): Q { return 5; }
+fn main(): i64 { var s: Q; var r: Q = mk(&s); var r2: Q = mk(5); var r3: Q = mk<i32>(5); return r.v; }
+syscall(60, main());
+' "error:<source>:2:28: $PR \`5\`"
+errs4 "PC7 control: three statements, three errors" "$PQ"'fn mk(q: *Q): Q { if (q.v == 1) { return zz; } return 5; }
+fn mk2(q: *Q): Q { return 6 + ; }'"$PM" "error:<source>:2:44: $UZ" "error:<source>:2:55: $PR \`5\`" \
+    "error:<source>:3:31: unexpected ';'"
+errs4 "PC8 control: the 8 B class's return zz;" 'struct Q { v; }
+fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:28: $UZ"
+errs4 "PC9 control: the 24 B class's return zz;" 'struct Q { v; w; x; }
+fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:26: struct-return: identifier is not a local"
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 70 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 70) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 94 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 94) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0
