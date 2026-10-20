@@ -390,8 +390,7 @@ else fail "F22 runs: $(tr '\n' ';' < "$W/r22.shim") / b.cyr: $(pub "$W/r22" p1/s
 #       compiler, raw: a check of it on x86_64 with the [deps] prepend read its SYS_* numbers as
 #       conflicts and republished `syscall arity mismatch` on util.cyr, env.cyr, runtime.cyr, lex.cyr,
 #       driver_input.cyr and lib/syscalls_*.cyr), so an empty list like every other file
-#   EXEMPT (filed from the 6.7.16 tools lane): lib/yukti.cyr, a fold that does not compile alone
-#       (2026-10-19-yukti-fold-does-not-compile-alone.md)
+#   (6.7.16: no exemption — lib/yukti.cyr compiles alone since the yukti 2.3.18 refold)
 tree_files() { ( cd "$ROOT" && { find src lib -name '*.cyr'; echo bootstrap/cybs.cyr; } | sort ); }
 NS=$(tree_files | wc -l | tr -d ' ')
 { trap '' PIPE; start; for f in $(tree_files); do open_msg Open "$ROOT/$f"; done; stop; true; } 2> /dev/null \
@@ -403,7 +402,6 @@ for f in $(tree_files); do
     last=$(grep "^\"uri\":\"TREE/$f\"," "$W/rs.t" | awk '{ l = $0 } END { if (NR) print l }' || true)
     [ -n "$last" ] && seen=$((seen + 1))
     case "$f" in
-        lib/yukti.cyr) continue ;;
         src/main.cyr|src/main_win.cyr|src/main_x86_macho.cyr)
             sev=$(printf '%s' "$last" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
             [ "$sev" = '"severity":2 ' ] && printf '%s' "$last" | grep -qF 'large static data' && continue ;;

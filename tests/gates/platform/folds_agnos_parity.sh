@@ -219,16 +219,35 @@ for d in $FOLDS; do
     [ "$rc" = 0 ] || fails=$((fails + 1))
 done
 
-# ANTI-VACUOUS: the borrow detectors must fire. yukti uses patra's constants (it declares
-# patra); built WITHOUT patra it has to be reported as borrowing from patra. And sandhi's
-# bundle includes sigil (a declared dep), so the include walk from sandhi has to reach it — a
-# walk that reaches nothing would pass every fold's include check while checking nothing.
+# ANTI-VACUOUS: the borrow detectors must fire. (1) The undefined-name detector: a bundle whose
+# `# Requires` block is short leaves another fold's names undefined, and they must be reported as a
+# borrow from that fold. Since yukti 2.3.18 (6.7.16) the real bundle includes patra itself, so this
+# runs on a scratch copy of lib/ whose yukti has its `include "lib/patra.cyr"` line removed — a
+# planted short block: built WITHOUT patra it has to be reported as borrowing from patra. (2) The
+# include walk: the REAL yukti probed without patra reaches lib/patra.cyr through its includes and
+# must be reported. And sandhi's bundle includes sigil (a declared dep), so the include walk from
+# sandhi has to reach it — a walk that reaches nothing would pass every fold's include check while
+# checking nothing.
 if [ -f lib/yukti.cyr ] && [ -f lib/patra.cyr ]; then
+    mkdir -p "$D/anti" && cp -R lib "$D/anti/lib"
+    grep -v '^include "lib/patra.cyr"$' lib/yukti.cyr > "$D/anti/lib/yukti.cyr"
+    if cmp -s lib/yukti.cyr "$D/anti/lib/yukti.cyr"; then
+        echo "  FAIL: anti-vacuous premise — lib/yukti.cyr has no 'include \"lib/patra.cyr\"' line to remove: re-derive the planted short block"
+        fails=$((fails + 1))
+    else
+        rc=0
+        ( cd "$D/anti" && probe yukti "sakshi" ) > "$D/anti.out" 2>&1 || rc=$?
+        if [ "$rc" != "1" ] || ! grep -q "from patra, which yukti does not declare" "$D/anti.out"; then
+            echo "  FAIL: anti-vacuous — a yukti bundle with patra cut from its requires block, built WITHOUT patra, was not reported as a borrow (rc $rc)"
+            sed 's/^/      /' "$D/anti.out" | head -4
+            fails=$((fails + 1))
+        fi
+    fi
     rc=0
-    probe yukti "sakshi" > "$D/anti.out" 2>&1 || rc=$?
-    if [ "$rc" != "1" ] || ! grep -q "from patra, which yukti does not declare" "$D/anti.out"; then
-        echo "  FAIL: anti-vacuous — yukti built WITHOUT its declared patra was not reported as a borrow (rc $rc)"
-        sed 's/^/      /' "$D/anti.out" | head -4
+    probe yukti "sakshi" > "$D/anti2.out" 2>&1 || rc=$?
+    if [ "$rc" != "1" ] || ! grep -q "yukti reaches lib/patra.cyr through its includes without declaring it" "$D/anti2.out"; then
+        echo "  FAIL: anti-vacuous — the real yukti probed WITHOUT its declared patra was not reported as reaching patra (rc $rc)"
+        sed 's/^/      /' "$D/anti2.out" | head -4
         fails=$((fails + 1))
     fi
 fi
