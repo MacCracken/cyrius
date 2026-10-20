@@ -6108,7 +6108,8 @@ var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cy
 # _gvk_bk 4 (6.7.15): a superseded entry's constant, folded for the compare and not baked.
 var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal, 3 = 1 not replayed
 var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked or folded (bk 1 / 3 / 4)
-var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15), 2 = float bits (6.7.16)
+# _gvk_ik 2 / 3 (6.7.16): float bits (compared, supersedes), a struct / tuple literal of constants (supersedes only).
+var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15), 2, 3
 var _spc_ti = 0;     # the struct walker's token
 var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
 var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
@@ -6163,6 +6164,11 @@ fn _gvk_pre(S): i64 {
     var gi = 0;
     while (gi < gc) {
         store8(_gvk_bk + gi, _gvk_one(S, gi));
+        gi = gi + 1;
+    }
+    gi = 0;
+    while (gi < gc) {   # 6.7.16 (D14 (a)): a struct / tuple literal the replay will bake is a constant (_gvs_pre)
+        if (load8(_gvk_bk + gi) == 0) { if (_gvs_pre(S, gi) == 1) { store8(_gvk_ik + gi, 3); } }
         gi = gi + 1;
     }
     _gvk_chain(S, gc);   # 6.7.15: a baked constant supersedes the slot's earlier writers; the replay's compares
@@ -6264,6 +6270,7 @@ fn _gvc_cmp(S, slot, v, ti): i64 {
 fn _gvk_link(S, gi): i64 {
     var sti = _gv_tok(L64(_gvt(S) + gi * 8));
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (load8(_gvk_ik + gi) == 3) { return _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }   # 6.7.16 (D14 (a)): no compare
     _gvc_cmp(S, vi, load64(_gvk_v + gi * 8), _gvk_rhs(S, sti) - 1);
     var bk = load8(_gvk_bk + gi);
     if (bk == 1 || bk == 4) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
@@ -6451,6 +6458,7 @@ fn _gvk_left(S, gi, sti, idx): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
     var k = load8(_gvk_bk + gi);
     if (k == 2) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16: a superseded literal of constants runs nothing
     if (k == 1 || k == 3) { if (GVGAI(S, idx) == 0) { return 0; } }
     return _gvk_warn(S, sti);
 }
@@ -6483,6 +6491,7 @@ fn _gvk_warn(S, sti): i64 {
 # marked baked (2).
 fn _spc_try(S, gi, idx, sid): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16 (D14 (a)): a later literal is the slot's bytes
     if (_spc_walk(S, sid, 0) == 0) { return 0; }
     var b = _gai_blob(S, idx, 8, 6, GVSI(S, idx));
     _spc_walk(S, sid, b + 16);
@@ -6587,14 +6596,80 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
 # (_spc_try, bk 2) AND replayed every element's store — per field on x86_64 `mov eax, imm; push rax; movabs rcx, p;
 # [add rcx, off;] pop rax; mov [rcx], rax`. 6.7.14's scalar rule (_gvk_quiet; 6.7.14's D11 (b): a constant
 # initializer is the global's value from program start) now covers the baked literal: its stores are dropped when no
-# earlier live writer of the slot exists and no later entry can bake other bytes over it (a later literal: `var p =
-# P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` keeps both literals' stores, so b reads 1), or when the nearest
-# earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
+# earlier live writer of the slot exists (6.7.16: a later literal of constants supersedes it, below), or when the
+# nearest earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
 # bool field's refusal, an integer into a float field) — and the code it emitted is taken back (_gvs_mark /
 # _gvs_undo). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write.
 # cx bakes the literal into its var data too (main_cx.cyr, _gai_bake). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
+# 2026-10-19; issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md). 6.7.15's D2 (a) made every scalar
+# constant redeclaration the global's value from program start, but a struct or tuple literal is baked at the replay
+# (_spc_try), after _gvk_chain had run, so a later literal of other bytes superseded nothing: `var p = P { 1, 2 }; var
+# b = p.a; var p = P { 3, 4 };` gave b 1 (both literals stored in order) and a call between the two that wrote p was
+# overwritten by the later literal's stores (p.a 3, not the call's 9). Now _gvs_pre (in _gvk_pre, before the chain)
+# dry-runs the literal walker on each struct / tuple entry where the replay will walk it — the same head, the same
+# slot type, the same closer — and an entry whose every leaf folds is a constant (`_gvk_ik` 3): _gvk_link supersedes
+# the slot's earlier writers for it, as for a scalar constant (an earlier computed one runs into a sink). A superseded
+# literal of constants bakes nothing (_spc_try), stores nothing (_gvs_quiet: its walk runs for its diagnostics and the
+# code is taken back) and makes no sink (_gvi_slot). So an earlier literal leaves no
+# startup store, a read between the two sees the later bytes, and a call between them keeps its write. Not compared
+# (a warning is for scalars). CHANGELOG [6.7.16]
 var _gvs_b = 0;   # per deferred entry: a copy of the bytes _spc_try baked (bk 2), [size][bytes]
 var _gvs_m = 0;   # the emit state _gvs_mark saved (one walk at a time: a baked literal holds no nested literal)
+# 1 = entry `gi` is a struct / tuple literal the replay will bake into its slot: every leaf a constant, the walk
+# (_spc_walk, check only) from the element the replay starts it at. Names resolve as at the replay (_gvk_pre's).
+fn _gvs_pre(S, gi): i64 {
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (_gvk_live(S, vi) == 0) { return 0; }
+    if (GVPM(S, vi) != 2) { return 0; }   # an inline struct / tuple global: the slot IS the bytes
+    var sid = GVTYPE(S, vi);
+    if (sid <= 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + gi * 8)));
+    if (rt == 0) { return 0; }
+    var at = _gvs_open(S, rt, sid);
+    if (at == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, at);
+    var ok = _spc_walk(S, sid, 0);
+    STI(S, sv);
+    _spc_cl = 14;
+    return ok;
+}
+# The first element token of the literal initializer at `rt` into a slot of type `sid` — as EMIT_GVAR_INITS reaches
+# it: a tuple literal (`_gvi_tuple`: any wrap, ending at the `;`) for a tuple type, else a struct literal head (`P {`,
+# `W<..> {`, a wrap holding exactly it: `_lit_head_w`) naming the slot's struct — with `_spc_cl` its closer; 0 = none.
+fn _gvs_open(S, rt, sid): i64 {
+    var pe = _pw_end;
+    var r = _gvs_open1(S, rt, sid);
+    _pw_end = pe;
+    return r;
+}
+fn _gvs_open1(S, rt, sid): i64 {
+    if (_tup_is(S, sid) == 1) {
+        var lp = _tup_lit_at(S, rt);
+        if (lp < 0) { return 0; }
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        _spc_cl = 11;
+        return lp + 1;
+    }
+    var h = rt;
+    if (TOKTYP(S, h) == 10) {
+        var k = _slit_wrap_k(S, h);
+        if (k == 0) { return 0; }
+        h = h + k;
+    }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    var b = FINDSTRUCT(S, TOKVAL(S, h));
+    if (b <= 0) { return 0; }
+    var o = h + 1;
+    if (TOKTYP(S, o) == 19) { o = _targs_end(S, o + 1) + 1; }   # `W<..> {`: pass 1's instance is the slot's type
+    elif (b != sid) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    _spc_cl = 14;
+    return o + 1;
+}
 fn _gvs_snap(b): i64 {
     var n = load64(b);
     var c = alloc(n + 8);
@@ -6605,14 +6680,20 @@ fn _gvs_snap(b): i64 {
 }
 # 1 = entry `gi`'s literal (into slot `idx`) is baked and its stores are dropped: the walk runs under _gvs_mark.
 fn _gvs_quiet(S, gi, idx): i64 {
-    if (load8(_gvk_bk + gi) != 2) { return 0; }
     if (gi >= _gv_ent_cap) { return 0; }
     if ((load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1 != idx) { return 0; }   # its own slot, not a sink
+    if (_gvs_sup(S, gi) == 1) { return 1; }   # 6.7.16 (D14 (a)): superseded by a later literal: no store
+    if (load8(_gvk_bk + gi) != 2) { return 0; }
     var noff = TOKVAL(S, _gv_tok(L64(_gvt(S) + gi * 8)) + 1);
     var p = _gvk_prev(S, gi, idx, noff, 2);
     if (p == 0 - 2) { return 0; }
-    if (p == 0 - 1) { return 1 - _gvs_later(S, gi, idx, noff); }
+    if (p == 0 - 1) { return 1; }
     return _gvs_same(load64(_gvs_b + p * 8), load64(_gvs_b + gi * 8));
+}
+# 1 = entry `gi` is a struct / tuple literal of constants (`_gvk_ik` 3) that a later one superseded (_gvk_link).
+fn _gvs_sup(S, gi): i64 {
+    if (load8(_gvk_ik + gi) != 3) { return 0; }
+    return _gv_sup(L64(_gvt(S) + gi * 8)) & 1;
 }
 fn _gvs_same(a, b): i64 {
     if (a == 0 || b == 0) { return 0; }
@@ -6624,32 +6705,6 @@ fn _gvs_same(a, b): i64 {
         i = i + 1;
     }
     return 1;
-}
-# 1 = an entry after `gi` writes slot `vi` (named `noff`) and may bake its own literal over the image's bytes.
-fn _gvs_later(S, gi, vi, noff): i64 {
-    if (_gvx_m == 0) { return 0; }
-    var e = _nm_get(S, _gvx_m, noff);
-    while (e != 0) {
-        var r = load64(_gvx_rec + (e - 1) * 8);
-        if ((r >> 2) > gi) { if (_gvs_lw(S, r >> 2, r & 3, vi) == 1) { return 1; } }
-        e = load64(_gvx_nxt + (e - 1) * 8);
-    }
-    return 0;
-}
-fn _gvs_lw(S, g, k, vi): i64 {
-    var w = 0;
-    if (g < _gv_ent_cap) { w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF; }
-    if (w == 0) { return 1; }   # unrecorded: it may be this slot
-    if (w - 1 != vi) { return 0; }
-    if (k != 0) { return 1; }
-    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + g * 8)));
-    if (rt == 0) { return 1; }   # a list, a destructure
-    var t = TOKTYP(S, rt);
-    if (t == 10) { return 1; }   # a tuple literal, a wrap
-    if (t != 2) { return 0; }
-    t = TOKTYP(S, rt + 1);
-    if (t == 13 || t == 19) { return 1; }   # `Name {`, `Name<..> {`
-    return 0;
 }
 # The emit state before the walk of a literal whose stores are dropped, and its undo: the code position, the
 # fixups and IR nodes it recorded, the jump sources (CYRIUS_IR / CYRIUS_DCE), the peephole trackers, the constant
@@ -6782,6 +6837,7 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
 fn _gvi_slot(S, gi, gsup, gps, noff): i64 {
     var vi = _gv_ent_slot(S, gi, 0, noff);
     if (gps == 0) { if (vi >= 0) { if (load8(_gvk_bk + gi) == 3) { if (GVGAI(S, vi) == 0) { return vi; } } } }
+    if (vi >= 0) { if (load8(_gvk_ik + gi) == 3) { return vi; } }   # 6.7.16 (D14 (a)): a literal of constants, the same
     return _gv_target(S, vi, gsup, 0);
 }
 # A declaration-zone struct literal's fields, named or positional, as PARSE_STRUCT_INIT reads them (into the

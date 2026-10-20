@@ -7675,10 +7675,15 @@ baked into the image and stored again at startup, element by element (on x86_64 
 movabs rcx, p; pop rax; mov [rcx], rax` per field). The stores are gone, by the same rule: the global
 holds the literal from program start, so a call in an earlier initializer that writes it keeps its
 write (`var r = setp(); var p = P { 1, 2 };`, `setp` storing 9 into `p.a`, ends with `p.a == 9`;
-through 6.7.14 the startup store reset it to 1). A *redeclared* literal keeps its place in declaration
-order — `var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 1`, and a write from a
-call between the two is overwritten by the later literal — unless it repeats the earlier literal's
-bytes, which the global then already holds (a call's write between the two is kept). Every
+through 6.7.14 the startup store reset it to 1). A *redeclared* literal of constants follows the
+constant redeclaration rule above (6.7.16, the user's decision D14 (a), 2026-10-19): it is the
+global's value from program start, and an earlier literal of the name leaves no startup store —
+`var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 3`, and a call between the two
+that writes `p.a = 9` keeps its write (`p` ends as `{ 9, 4 }`), in every spelling (a tuple, the named
+form, a generic struct's literal, a wrap). An earlier *computed* initializer of the name still runs,
+its result discarded (`var p = P { f(), 2 };` or `var q: Q = mk();` before the literal), and a later
+computed literal (`P { f(), 4 }`) runs in declaration order. Through 6.7.15 a redeclared literal kept
+its place: `b` read 1, and the call's write was overwritten by the later literal's stores. Every
 diagnostic the literal's elements get is still given (an integer into a float field, a `bool` field).
 
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
@@ -7744,7 +7749,8 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 - A redeclaration whose initializer is a compile-time **constant** (an integer
   literal or a foldable integer expression, zero included, or a const or enum name —
   6.7.15, see *Global Initializers* — or a float constant: a float literal or a constant
-  f64 expression, 6.7.16) is the global's value **from program start**,
+  f64 expression, 6.7.16 — or a struct or tuple literal of constants, 6.7.16) is the
+  global's value **from program start**,
   and an earlier constant declaration of it leaves no startup store. An earlier
   *computed* initializer of the same name (`var a = f();`) still runs — its side
   effects happen — but its result is discarded.

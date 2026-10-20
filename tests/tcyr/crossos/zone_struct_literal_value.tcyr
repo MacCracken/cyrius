@@ -7,9 +7,16 @@
 # mov [rcx], rax` — the named form and a tuple literal alike. Every value was right; the code was redundant. THE FIX
 # (6.7.14's scalar rule, its D11 (b): a constant initializer is the global's value from program start): the stores
 # are dropped where the image's bytes are the literal's — no earlier writer of the global and no later literal
-# baked over it, or an earlier literal of the same bytes. A redeclared literal of other bytes keeps its place (10,
-# 14). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write (12, 13:
-# through 6.7.14 the startup store reset it to the literal's 1).
+# baked over it, or an earlier literal of the same bytes. As with a scalar constant, a call in an earlier initializer
+# that writes the global keeps its write (12, 13: through 6.7.14 the startup store reset it to the literal's 1).
+#
+# ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
+# 2026-10-19; issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), as a scalar constant redeclaration
+# is (6.7.15's D2 (a)): an earlier literal of the name leaves no startup store. A read between two literals of other
+# bytes sees the later one (10: 13 -> 33; 15 - 20 every spelling: tuple, named, generic, wrapped, annotated tuple,
+# enum leaves), a call between them keeps its write (14: 34 -> 94), an earlier computed initializer still runs, its
+# result discarded (21, 24), a later computed one keeps its order (22), and a constant literal before a computed one
+# leaves no store either (23: the call's write before it is kept, 15 -> 95).
 #
 # WHY A CROSS-HOST TEST: the bytes are the file image's on five targets and cx's .cyx var data on the sixth; this
 # file runs every row on each host's own compiler. All declarations are in ONE declaration zone (every `var` and `fn`
@@ -61,11 +68,53 @@ var p13 = ZP { 1, 2 };
 fn set13(): i64 { p13.a = 9; return 1; }
 var r13 = set13();
 var p13 = ZP { 1, 2 };
-# 14 — between two literals of other bytes the later one is stored at its place
+# 14 — between two literals of other bytes the call's write is kept (6.7.16, D14 (a); through 6.7.15 the later
+# literal was stored at its place: 34)
 var p14 = ZP { 1, 2 };
 fn set14(): i64 { p14.a = 9; return 1; }
 var r14 = set14();
 var p14 = ZP { 3, 4 };
+# 15 - 24 — 6.7.16 (D14 (a)): the later literal from program start, in every spelling
+var t15 = (1, 2);
+var b15 = t15.0;
+var t15 = (3, 4);
+var a15 = 1;
+var c15 = a15;
+var a15 = 2;
+var p16 = ZP { b: 2, a: 1 };
+var b16 = p16.a;
+var p16 = ZP { b: 4, a: 3 };
+var w17 = ZW<i32> { 1, 2 };
+var b17 = w17.v;
+var w17 = ZW<i32> { 3, 4 };
+var p18: ZP = (ZP { 1, 2 });
+var b18 = p18.a;
+var p18: ZP = (ZP { 3, 4 });
+var t19: (i64, i64) = (1, 2);
+var b19 = t19.0;
+var t19: (i64, i64) = (3, 4);
+var p20 = ZP { 1, 2 };
+var b20 = p20.a;
+var p20 = ZP { ZE.ZA, ZB + 1 };
+var n21 = 0;
+fn f21(): i64 { n21 = n21 + 1; return 7; }
+var p21 = ZP { f21(), 2 };
+var b21 = p21.a;
+var p21 = ZP { 3, 4 };
+fn f22(): i64 { return 7; }
+var p22 = ZP { 1, 2 };
+var b22 = p22.a;
+var p22 = ZP { f22(), 4 };
+fn set23(): i64 { p23.a = 9; return 1; }
+var r23 = set23();
+var p23 = ZP { 1, 2 };
+var b23 = p23.a;
+var p23 = ZP { f22(), 2 };
+struct ZQ { a; }
+fn mk24(): ZQ { var t: ZQ = ZQ { 7 }; return t; }
+var q24: ZQ = mk24();
+var b24 = q24.a;
+var q24 = ZQ { 3 };
 
 assert_eq(p1.a * 10 + p1.b, 12, "1: P { 1, 2 }");
 assert_eq(p2.a * 10 + p2.b, 12, "2: P { b: 2, a: 1 }");
@@ -80,9 +129,19 @@ assert_eq(p6.a * 10 + p6.b, 35, "6: P { A, E.B + 1 }");
 assert_eq(w7.v * 10 + w7.n, 56, "7: W<i32> { 5, 6 }");
 assert_eq(p8.a * 10 + p8.b, 78, "8: (P { 7, 8 })");
 assert_eq(r9 * 10 + p9.b, 66, "9: an earlier read sees the image's bytes");
-assert_eq(b10 * 10 + p10.a, 13, "10: a redeclared literal keeps its place");
+assert_eq(b10 * 10 + p10.a, 33, "10: a redeclared literal is the later one from program start (6.7.16; was 13)");
 assert_eq(b11 * 10 + p11.a, 11, "11: a same-bytes redeclaration");
 assert_eq(p12.a * 10 + p12.b, 92, "12: an earlier call's write is kept (was 12)");
 assert_eq(p13.a * 10 + p13.b, 92, "13: a call between two same literals keeps its write (was 12)");
-assert_eq(p14.a * 10 + p14.b, 34, "14: the later literal of other bytes is stored at its place");
+assert_eq(p14.a * 10 + p14.b, 94, "14: a call between two literals of other bytes keeps its write (6.7.16; was 34)");
+assert_eq(b15 * 10 + c15, 32, "15: (1, 2); b = t.0; (3, 4) beside a scalar pair -> b 3 (was 12)");
+assert_eq(b16 * 10 + p16.b, 34, "16: the named form -> b 3 (was 14)");
+assert_eq(b17 * 10 + w17.n, 34, "17: a generic literal -> b 3 (was 14)");
+assert_eq(b18 * 10 + p18.b, 34, "18: a wrapped literal -> b 3 (was 14)");
+assert_eq(b19 * 10 + t19.1, 34, "19: an annotated tuple -> b 3 (was 14)");
+assert_eq(b20 * 10 + p20.b, 35, "20: enum leaves -> b 3 (was 15)");
+assert_eq(b21 * 10 + n21, 31, "21: an earlier computed literal runs once, its result discarded (was 71)");
+assert_eq(b22 * 10 + p22.a, 17, "22: a later computed literal keeps its order");
+assert_eq(b23 * 10 + p23.a, 97, "23: a constant literal before a computed one leaves no store: the call's write is read (was 17)");
+assert_eq(b24 * 10 + q24.a, 33, "24: an earlier computed struct initializer runs into a sink (was 73)");
 var r = assert_summary();

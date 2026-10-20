@@ -53,10 +53,19 @@
 #          program's own first instruction (the filed repro verbatim, named, tuple, nested narrow fields, f64 / f32
 #          fields, a generic literal, a wrap)
 #   Z1-Z13 the same shapes by value on every leg, and the orderings: an earlier read through a fn sees the bytes (Z7), a
-#          redeclared literal of other bytes keeps its place (Z8: 13), a same-bytes one (Z9), and the program-start
-#          rule (6.7.14's D11 (b)) — a call in an earlier initializer that writes the global keeps its write over the
-#          literal (Z10, and Z11 between two same literals: 92, through 6.7.14 12), while a later literal of other
-#          bytes is stored at its place (Z12: 34); a later copy of another global (Z13)
+#          redeclared literal of other bytes is the later one from program start (Z8: 33 — 6.7.16, D14 (a); 6.7.15 13),
+#          a same-bytes one (Z9), and the program-start rule (6.7.14's D11 (b)) — a call in an earlier initializer that
+#          writes the global keeps its write over the literal (Z10, and Z11 between two same literals: 92, through
+#          6.7.14 12), and between two literals of other bytes (Z12: 94 — 6.7.16; 6.7.15 34: the later literal was
+#          stored at its place); a later copy of another global (Z13)
+#   Z14-Z26 6.7.16 (the user's decision D14 (a), 2026-10-19): a redeclared literal of constants is the value from program
+#          start (issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), by value on every leg: the
+#          filing's d1-d4 (Z14 12 -> 32, Z15 1 -> 3, Z16 / Z17 9), every spelling of the pair (Z18 named, Z19 generic,
+#          Z20 wrapped, Z21 an annotated tuple: 14 -> 34), an earlier computed literal runs once into a sink (Z22: 71 ->
+#          31), a later computed one keeps its order (Z23: 17), a constant literal before a computed one leaves no
+#          store (Z24: the earlier call's write is read, 15 -> 95), an earlier computed struct initializer runs into a
+#          sink (Z25: 73 -> 33), a same-bytes pair then other bytes (Z26: 94); S29-S32 the earlier literal leaves
+#          nothing (byte-identical to the later one alone)
 #   V6-V8  the dropped literal's walk still reports: an integer into an f64 field (warned, at 2:14), a bool field's
 #          non-bool value, another file's private const
 #   T5-T8  tests/tcyr/crossos/zone_struct_literal_value.tcyr on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
@@ -115,6 +124,15 @@
 # (33: the first literal's stores dropped under the second's bytes), T5-T8; `_gvs_same` returning 0 -> 7 red: Z11 on
 # all three legs, T5-T8; `_gvs_undo` not taking the fixups back -> 48 red (the stale fixups patch the program's code:
 # SIGSEGV / SIGILL).
+# MUTATION (measured, 6.7.16, mutated scratch copies of the tree, every leg built from each — the redeclared literal,
+# D14 (a)): `_gvs_pre` marking nothing (no literal supersedes) -> 20 red: S29-S32, Z12 / Z22 / Z25 / Z26 on all three
+# legs (the earlier literal's or computed writer's store reset the call's write, or ran into the slot), T5-T8 (3 rows
+# each) — Z8, Z14, Z15, Z18-Z21 stay green, the earlier literal's dropped stores leaving the later bake to be read;
+# `_gvs_quiet` keeping a superseded literal's stores -> 38 red: S29-S32 (31: 12), Z8 Z12 Z14 Z15 Z18-Z21 Z26 on all
+# three legs (the earlier literal stored over the later bytes at startup), T5-T8 (8 rows each); `_gvi_slot` making a
+# sink for it -> 4 red: S29-S32 (a sink and its code); `_gvk_left` naming it in a kernel build -> 1 red: S32 (the late
+# warning); `_spc_try` baking a superseded literal -> GREEN (the later literal's bake writes every byte over it: the
+# guard keeps a superseded literal out of the blob, as a superseded list is, _gai_replay).
 # MUTATION (measured, 6.7.16, a mutated scratch copy of the tree, every leg built from it — the float redeclaration):
 # `_gvk_chain` linking integer folds only (6.7.15's `== 1`) -> 31 red: S25-S27, N14-N19 / N21 / N22 on all three legs
 # (N20, the computed control, stays green), T1-T4 (6 of the tcyr's rows each).
@@ -247,6 +265,14 @@ entry S20 179 'struct I { x: i8; y: i32; }\nstruct O { a; i: I; c: u16; }\nvar o
 entry S21 211 'struct F { d: f64; g: f32; n; }\nvar f = F { 1.5, 0.1, 7 };\nsyscall(60, ((load64(&f) >> 52) + load32(&f + 8) + f.n) & 255);\n'
 entry S23 56 'struct W<T> { v: T; n; }\nvar w = W<i32> { 5, 6 };\nsyscall(60, w.v * 10 + w.n);\n'
 entry S24 78 'struct P { a; b; }\nvar p: P = (P { 7, 8 });\nsyscall(60, p.a * 10 + p.b);\n'
+# S29-S32 — 6.7.16 (the user's decision D14 (a), 2026-10-19): an earlier literal of constants leaves no startup store, no
+# blob and no sink — a struct pair, a tuple pair, a named pair and an x86 `kernel;` (ELF64) pair are each BYTE-IDENTICAL
+# to the later literal alone (through 6.7.15 both literals were stored in order, at the same size).
+PQ='syscall(60, p.a * 10 + p.b);\n'
+same S29 34 "struct P { a; b; }\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\n$PQ" "struct P { a; b; }\nvar p = P { 3, 4 };\n$PQ"
+same S30 34 'var t = (1, 2);\nvar t = (3, 4);\nsyscall(60, t.0 * 10 + t.1);\n' 'var t = (3, 4);\nsyscall(60, t.0 * 10 + t.1);\n'
+same S31 34 "struct P { a; b; }\nvar p = P { b: 2, a: 1 };\nvar p = P { b: 4, a: 3 };\n$PQ" "struct P { a; b; }\nvar p = P { b: 4, a: 3 };\n$PQ"
+same S32 34 "kernel;\nstruct P { a; b; }\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\n$PQ" "kernel;\nstruct P { a; b; }\nvar p = P { 3, 4 };\n$PQ" CYRIUS_ELF64_KERNEL=1
 
 # The ordering / value rows: ID|WANT|SOURCE, run on every leg.
 ROWS="O1|53|${F}var a = 5;\nvar b = a;\nvar a = f();\nsyscall(60, b * 10 + a);\n
@@ -325,12 +351,25 @@ Z4|179|struct I { x: i8; y: i32; }\nstruct O { a; i: I; c: u16; }\nvar o = O { 1
 Z5|211|struct F { d: f64; g: f32; n; }\nvar f = F { 1.5, 0.1, 7 };\nsyscall(60, ((load64(&f) >> 52) + load32(&f + 8) + f.n) & 255);\n
 Z6|35|enum E { A = 3; B = 4; }\nstruct P { a; b; }\nvar p = P { A, E.B + 1 };\nsyscall(60, p.a * 10 + p.b);\n
 Z7|66|struct P { a; b; }\nfn rd(): i64 { return p.b; }\nvar r = rd();\nvar p = P { 5, 6 };\nsyscall(60, r * 10 + p.b);\n
-Z8|13|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + p.a);\n
+Z8|33|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + p.a);\n
 Z9|11|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 1, 2 };\nsyscall(60, b * 10 + p.a);\n
 Z10|92|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
 Z11|92|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
-Z12|34|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
+Z12|94|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
 Z13|17|struct P { a; b; }\nvar q = P { 7, 8 };\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p: P = q;\nsyscall(60, b * 10 + p.a);\n
+Z14|32|var t = (1, 2);\nvar b = t.0;\nvar t = (3, 4);\nvar a = 1;\nvar c = a;\nvar a = 2;\nsyscall(60, b * 10 + c);\n
+Z15|3|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b);\n
+Z16|9|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a);\n
+Z17|9|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a);\n
+Z18|34|struct P { a; b; }\nvar p = P { b: 2, a: 1 };\nvar b = p.a;\nvar p = P { b: 4, a: 3 };\nsyscall(60, b * 10 + p.b);\n
+Z19|34|struct W<T> { v: T; n; }\nvar w = W<i32> { 1, 2 };\nvar b = w.v;\nvar w = W<i32> { 3, 4 };\nsyscall(60, b * 10 + w.n);\n
+Z20|34|struct P { a; b; }\nvar p: P = (P { 1, 2 });\nvar b = p.a;\nvar p: P = (P { 3, 4 });\nsyscall(60, b * 10 + p.b);\n
+Z21|34|var t: (i64, i64) = (1, 2);\nvar b = t.0;\nvar t: (i64, i64) = (3, 4);\nsyscall(60, b * 10 + t.1);\n
+Z22|31|struct P { a; b; }\nvar n = 0;\nfn f(): i64 { n = n + 1; return 7; }\nvar p = P { f(), 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + n);\n
+Z23|17|struct P { a; b; }\nfn f(): i64 { return 7; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { f(), 4 };\nsyscall(60, b * 10 + p.a);\n
+Z24|95|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { f(), 2 };\nfn f(): i64 { return 5; }\nsyscall(60, b * 10 + p.a);\n
+Z25|33|struct P1 { a; }\nfn mk(): P1 { var t: P1 = P1 { 7 }; return t; }\nvar p: P1 = mk();\nvar b = p.a;\nvar p = P1 { 3 };\nsyscall(60, b * 10 + p.a);\n
+Z26|94|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
 L1|14|const C = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
 L2|14|enum E { V = 0x0506; }\nvar a = E.V;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
 L3|16|const C = 0x0708;\nvar a = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
