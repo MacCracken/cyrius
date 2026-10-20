@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
-# (1..16: row 1 is bit 1, row 16 bit 32768). The exit itself is the exit_group row: a 77 / 78 can
+# (1..17: row 1 is bit 1, row 17 bit 65536). The exit itself is the exit_group row: a 77 / 78 can
 # only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
@@ -373,6 +373,92 @@ fn _cxh_walk(): i64 {
     return _cxh_waits();
 }
 
+# A hash of the NUL-terminated name at `nm` (the /dev row compares listings by it).
+fn _cxh_nh(nm): i64 {
+    var h = 7;
+    var i = 0;
+    while (load8(nm + i) != 0) {
+        h = h * 131 + load8(nm + i);
+        i = i + 1;
+    }
+    return h * 131 + i;
+}
+
+# The directory `d` listed through getdents64 with an `n`-byte buffer, in at most `cap` calls. At
+# `res`: [0] the records read, [8] a hash of their names in order, [16] that hash after the first
+# `at` records, [24] the last answer — 0 the end, a failure (the open's too), 1 when `cap` calls
+# reached no end, 2 a malformed record (d_reclen not align8(20 + namlen)).
+fn _cxh_seq(d, n, cap, at, res): i64 {
+    store64(res, 0);
+    store64(res + 8, 0);
+    store64(res + 16, 0);
+    var fd = syscall(2, d, 65536, 0);          # O_RDONLY | O_DIRECTORY
+    if (fd < 0) {
+        store64(res + 24, fd);
+        return 0;
+    }
+    var b[4096];
+    var cnt = 0;
+    var h = 0;
+    var calls = 0;
+    var r = 1;
+    while (r > 0 && calls < cap) {
+        r = syscall(217, fd, &b, n);
+        calls = calls + 1;
+        var pos = 0;
+        while (r > 0 && pos < r) {
+            var rl = load16(&b + pos + 16);
+            var nl = 0;
+            while (nl < 256 && load8(&b + pos + 19 + nl) != 0) { nl = nl + 1; }
+            if (rl != ((20 + nl + 7) & (0 - 8))) { r = 0 - 1000; }
+            if (r > 0) {
+                h = h * 1000003 + _cxh_nh(&b + pos + 19);
+                cnt = cnt + 1;
+                if (cnt == at) { store64(res + 16, h); }
+                pos = pos + rl;
+            }
+        }
+    }
+    syscall(3, fd);
+    if (r > 0) { r = 1; }
+    if (r == 0 - 1000) { r = 2; }
+    store64(res, cnt);
+    store64(res + 8, h);
+    store64(res + 24, r);
+    return 0;
+}
+
+# getdents64 lists /dev — a Mac's devfs, which has no extended readdir — with small buffers (6.7.16,
+# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md, the platform review): a Darwin
+# host's cxvm converts getdirentries64's records and, when the guest's buffer holds fewer than it
+# read, puts the directory back and reads those again; devfs re-reads fewer records than were
+# delivered (or none), and until the review fix the guest got the records twice — 953 names for
+# 635 with 200 bytes on ecb, and a 96-byte listing never ended. Now the 200-byte listing reads the
+# 4096-byte one's names in its order, and the 96-byte one ends — 0 or a failure (-22 on a Mac's
+# devfs, whose old dirents a small re-read cannot hold) — within twice as many calls as there are
+# names, its names a prefix of that listing. 0 the Linux answers, 1 the Windows ones (no /dev, or
+# getdents64 -38: no route), 2 neither.
+fn _cxh_devlist(): i64 {
+    var big[32];
+    var mid[32];
+    var sm[32];
+    var again[32];
+    _cxh_seq("/dev", 4096, 100000, 0, &big);
+    var c = load64(&big);
+    var rb = load64(&big + 24);
+    if (c == 0 && (rb == 0 - 2 || rb == 0 - 38)) { return 1; }
+    if (rb != 0 || c < 3) { return 2; }
+    _cxh_seq("/dev", 200, 2 * c + 8, 0, &mid);
+    _cxh_seq("/dev", 96, 2 * c + 8, 0, &sm);
+    var m = load64(&sm);
+    _cxh_seq("/dev", 4096, 100000, m, &again);
+    if (load64(&mid) != c || load64(&mid + 8) != load64(&big + 8) || load64(&mid + 24) != 0) { return 2; }
+    if (load64(&sm + 24) > 0 || m < 1 || m > c) { return 2; }
+    if (load64(&again) != c || load64(&again + 8) != load64(&big + 8)) { return 2; }
+    if (load64(&again + 16) != load64(&sm + 8)) { return 2; }
+    return 0;
+}
+
 var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
@@ -417,6 +503,8 @@ var xd = syscall(2, "cxh_xd", 193, 420);     # O_WRONLY | O_CREAT | O_EXCL
 if (xd >= 0) { syscall(3, xd); }
 syscall(84, "cxh_xd");
 _cxh_row(32768, xd == 0 - 17, xd == 0 - 17);
+var dv = _cxh_devlist();
+_cxh_row(65536, dv == 0, dv == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

@@ -151,10 +151,17 @@ guarantee:
   `linux_dirent64`; a Darwin host converts `getdirentries64`'s records — `d_off` is Darwin's
   `d_seekoff`, 0 on APFS — reading at least 1048 bytes (macOS 13's call never returns when handed a
   buffer no record fits) and, when the guest's buffer holds fewer records than it read, putting the
-  directory back and reading those records again, so no entry is lost or repeated; a count under 64
-  answers -EINVAL there (Darwin's own floor). A Darwin host makes a FIFO only (`mknod`; any other node
-  -38, the stdlib's own answer) and answers `wait4` in Linux terms both ways: `WCONTINUED` (8) is
-  Darwin's 0x10, and the status word's signal numbers are mapped back (`_cx_sig_linux`: a child killed
+  directory back, reading those records again and handing the guest exactly the records that re-read
+  returned, so no entry is lost or repeated. On APFS the re-read returns them all; on a filesystem
+  without extended readdir (devfs, fdesc), which converts from smaller old dirents, it can return fewer
+  or none — then the directory is put back again and the call answers -EINVAL, so a buffer under 1048
+  bytes may end such a listing early (ecb's `/dev`: 96 bytes ended after 592 of its 635 entries, 200
+  bytes listed all; ach's: 64 bytes ended after 328 of 334) — never with an entry repeated (until the
+  6.7.16 review fix a 200-byte `/dev` listing on ecb read 953 names for 635, and a 96-byte one never
+  ended). A count under 64 answers -EINVAL there (Darwin's own floor). A Darwin host makes a FIFO
+  only (`mknod`; any other node -38, the stdlib's own answer) and answers `wait4` in Linux terms
+  both ways: `WCONTINUED` (8) is Darwin's 0x10, and the status word's signal numbers are mapped back
+  (`_cx_sig_linux`: a child killed
   by SIGUSR1 reads 10, not Darwin's 30), a continued child 0xffff (Darwin reports it stopped by
   SIGCONT, 0x137f). `poll` (7) is served only as `poll(NULL, 0, ms)` — a sleep, the host's own poll
   (Sleep on Windows, where a negative `ms` sleeps 0), and what `sleep_ms` issues on cx (a no-op there

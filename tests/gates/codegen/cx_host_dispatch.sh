@@ -50,6 +50,11 @@
 # Row 16 (6.7.16, issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md):
 # O_CREAT | O_EXCL over an existing directory -17 on every host, Windows included (cass's CreateFileW
 # says ERROR_ACCESS_DENIED, which cxvm answered as -13 until 6.7.16; wine says ERROR_FILE_EXISTS).
+# Row 17 (6.7.16, the platform review of issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md):
+# getdents64 lists /dev — a Mac's devfs has no extended readdir, so a small re-read returns fewer
+# records than were delivered — with a 200-byte buffer, the 4096-byte listing's names in its order,
+# and with a 96-byte one, which ends (0, or -22 on a Mac: ecb 592 of 635) within 2 x the names in
+# calls, its names a prefix of that listing (Windows: no /dev, -2; or getdents64 -38).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -100,6 +105,10 @@
 #       on ecb and ach exit 15, `lin=16384` (the 96-byte listing misses names), measured
 # MU13 (6.7.16) `_cx_host_open` without its Windows -13 -> -17 rule -> no local axis sees it (wine's
 #       CreateFileW says ERROR_FILE_EXISTS): on cass the fixture exits 2, `pe=32768`, measured
+# MU14 (6.7.16, the platform review) `_cx_darwin_getdents` handing the guest every record it converted
+#       whatever the re-read returned (26e8eeaff's programs/cxvm.cyr) -> no local axis sees it (the
+#       converter is Darwin's): on ecb the fixture exits 17, `lin=65536` (/dev with 200 bytes read 953
+#       names, 318 of them repeats, for 635), measured
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).

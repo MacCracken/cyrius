@@ -625,40 +625,64 @@ fn _cx_host_getdents(fd, buf, n): i64 {
 # kernel, unkillable (24 bytes, measured on ach) — and macOS 27's refuses under 64 (EINVAL) and
 # answers 0, an early end, when the next record does not fit. So when the guest's n holds fewer
 # records than the host read, the directory is put back where it was (its lseek position, which
-# Darwin keeps as a cookie) and read again with exactly the converted records' Darwin bytes, at
-# least 64: those records come back, the next does not fit, and the position is after the last one
-# delivered. A guest n under 64 answers -EINVAL, Darwin's own floor.
+# Darwin keeps as a cookie) and read again with the converted records' Darwin bytes (at least 64),
+# and the guest gets exactly the records that re-read returned, which leave the directory's
+# position after the last one: nothing is lost or repeated. On APFS that re-read returns all of
+# them. A filesystem without extended readdir (devfs, fdesc) converts from old dirents read into
+# 3/8 of the buffer, in its own offsets, and can return fewer — or none, when the first record's
+# old dirent does not fit: then the directory is put back again and the call answers -EINVAL, so a
+# guest n under 1048 can end a listing of /dev early (measured on ecb: 96 bytes ended after 592 of
+# 635 entries; 200 bytes listed all 635) — never with an entry repeated. A guest n under 64 answers
+# -EINVAL, Darwin's own floor. CHANGELOG [6.7.16]
 fn _cx_darwin_getdents(fd, gbuf, n): i64 {
     if (n < 64) { return 0 - 22; }
     var hb[4096];
     var bp[8];
+    var used[8];
     var b = n;
     if (b < 1048) { b = 1048; }
     if (b > 4096) { b = 4096; }
     var c0 = sys_lseek(fd, 0, 1);
+    if (c0 < 0 && n < 1048) { return c0; }
     store64(&bp, 0);
     var r = syscall(SYS_GETDENTS64, fd, &hb, b, &bp);
     if (r <= 0) { return r; }
-    var pos = 0;
-    var out = 0;
-    var dsum = 0;
-    while (pos < r) {
-        var drl = load16(&hb + pos + 16);
-        if (drl <= 0) { break; }
-        var nl = load16(&hb + pos + 18);
-        var lrl = (20 + nl + 7) & (0 - 8);
-        if (out + lrl > n) { break; }
-        _cx_dirent_put(gbuf + out, &hb + pos, nl, lrl);
-        out = out + lrl;
-        dsum = dsum + drl;
-        pos = pos + drl;
-    }
-    if (pos >= r) { return out; }
+    var out = _cx_dirents_conv(gbuf, n, &hb, r, &used);
+    if (load64(&used) >= r) { return out; }
     sys_lseek(fd, c0, 0);
     if (out == 0) { return 0 - 22; }
+    var dsum = load64(&used);
     if (dsum < 64) { dsum = 64; }
     store64(&bp, 0);
-    syscall(SYS_GETDENTS64, fd, &hb, dsum, &bp);
+    var r2 = syscall(SYS_GETDENTS64, fd, &hb, dsum, &bp);
+    if (r2 <= 0) {
+        sys_lseek(fd, c0, 0);
+        return 0 - 22;
+    }
+    out = _cx_dirents_conv(gbuf, n, &hb, r2, &used);
+    if (load64(&used) < r2) {
+        sys_lseek(fd, c0, 0);
+        return 0 - 22;
+    }
+    return out;
+}
+
+# The Darwin records in hb's first `r` bytes converted into gbuf's `n` bytes, in order, until the
+# next does not fit: the linux_dirent64 bytes written; the Darwin bytes they came from at `used`.
+fn _cx_dirents_conv(gbuf, n, hb, r, used): i64 {
+    var pos = 0;
+    var out = 0;
+    while (pos < r) {
+        var drl = load16(hb + pos + 16);
+        if (drl <= 0) { break; }
+        var nl = load16(hb + pos + 18);
+        var lrl = (20 + nl + 7) & (0 - 8);
+        if (out + lrl > n) { break; }
+        _cx_dirent_put(gbuf + out, hb + pos, nl, lrl);
+        out = out + lrl;
+        pos = pos + drl;
+    }
+    store64(used, pos);
     return out;
 }
 
