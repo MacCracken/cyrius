@@ -91,6 +91,12 @@
 #      docs/development/issues/2026-10-18-trait-member-return-outside-fn-return-set-accepted.md
 #      Mutant (2026-10-20): the lane's previous compiler (d4a59f3e4) -> RED 8: TM1 TM1b TM4 TM4b TM6 (built), TM3 (no
 #      line), TM5 TM5b (the impl's "returns .., trait declares .." lines instead); TM2 and TM3b green
+#   TRR (6.7.16 review) "a side its own reader refuses" counts only names a reader READS: a `<..>` after `Result`,
+#      `Option` or an enum is stepped unread, so a `Pt<i64>` inside one is refused by nobody — D7's arm in `_tr_rt_bad`
+#      counted it, and a member's `: Result<Pt<i64>>` against an impl's `: i64` compiled (refused by the impl on the
+#      lane's base b73e8d5fe). TRR1 that program — the impl's line, once; TRR2 `Option<Pt<i64>>` with a dyn formed above
+#      the impl — the impl's line alone (the lane's head printed the site's "the return type differs" instead).
+#      Mutant (2026-10-20): the lane's previous compiler (b667c0c69) -> RED 2: TRR1 (built), TRR2 (the site's line)
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -521,5 +527,11 @@ lines_are tm5b "TM5b: a default two impls override — the trait's line alone" "
 printf "$R"'trait T { fn c(self): Color; }\nenum Color { Red, Green }\nsyscall(60, 0);\n' > "$T/tm6.cyr"
 refused_at tm6 "type 'Color' $FR" 3:23 "TM6: an enum declared below the trait"
 
+# ── TRR (6.7.16 review) — a reader-refused side is judged by the names a reader reads ──
+printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Result<Pt<i64>>; }\nimpl T for P { fn c(self): i64 { return 4; } }\nsyscall(60, 0);\n' > "$T/trr1.cyr"
+refused_at trr1 "'P.c' returns i64, trait 'T' declares Result<Pt<i64>>" 5:28 "TRR1: a member's : Result<Pt<i64>> (its list unread) against : i64 — the impl's line (it built)"
+printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Option<Pt<i64>>; }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn c(self): i64 { return 4; } }\nsyscall(60, 0);\n' > "$T/trr2.cyr"
+refused_at trr2 "'P.c' returns i64, trait 'T' declares Option<Pt<i64>>" 6:28 "TRR2: ... : Option<Pt<i64>> with a dyn formed above the impl — the impl's line alone"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16)"
