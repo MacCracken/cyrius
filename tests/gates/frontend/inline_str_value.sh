@@ -84,6 +84,12 @@
 # 22; no warning before or after). Into a `*Str` or a handle `q = *pp` stays the rebind `q = p` is (the tcyr's pps_*
 # controls).
 #
+# 6.7.16 (the user's decision D20, 2026-10-19; issues/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-
+# data-word.md): `h = *p` into a `Str` HANDLE (p a `*Str`) rebinds h to the header p points at, as `h = p` does — a
+# local, a parameter, a global, wrapped, a for step, at top level (the tcyr's hd_* rows, R_TOP12). It stored the
+# header's data word as the handle with a false "assigning non-pointer to typed pointer" (HD1, the filed repro
+# verbatim: 5 and no warning, was 0 and the warning).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X14 refused (the message first, ONE `^error`, no
@@ -95,7 +101,7 @@
 # statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); CMP a handle into the retyped methods builds
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -171,6 +177,9 @@
 #   2026-10-19 (6.7.16, `t = *pp` of a `**Str`; the same scratch-copy method):
 #   l1 `_asg_dstar` asking `_hl_dstar_x(.., 1)`    -> RED 14: R1 x7 (10 rows: the pps_* copies and R_TOP11 — t.data the
 #      (the fix reverted)                             header's address, t.len stale), PP1 x7 (22)
+#   2026-10-19 (6.7.16, D20 `h = *p` into a handle; the same scratch-copy method):
+#   m1 `_istr_dxa` returning 0 for a handle        -> RED 18: R1 x7 (10 rows: the hd_* rows and R_TOP12 — the data
+#      (the fix reverted)                             word as the handle), HD1 x4 (warned) + x7 (0)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -293,7 +302,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=132   # 6.7.16: + the pps_* rows, R_TOP11
+FLOOR=142   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -590,6 +599,32 @@ for leg in $(legs); do
 done
 runs PP1 55 "the filed repro: \`t = *pp;\` (pp a \`**Str\`) copies the header into an inline Str (was 22: t.data = *pp, t.len stale)" "$XLEGS $OLEGS"
 
+# --- HD1: the filed repro (issues/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
+# `h = *p` into a Str handle (p a `*Str`) rebinds h to the header p points at (6.7.16, D20; through 6.7.15 the header's
+# data word, str_len 0, and a false "assigning non-pointer to typed pointer"), no warning ---
+cat > "$T/HD1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var h = str_from("zz");
+    h = *p;
+    return str_len(h);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" HD1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/HD1.$leg" ]; then bad "HD1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/HD1.$leg.err"; then bad "HD1 ($leg): warned: $(grep '^warning' "$T/HD1.$leg.err" | head -1)"
+    else ok "HD1 \`h = *p;\` ($leg): no warning"; fi
+done
+runs HD1 5 "the filed repro: \`h = *p;\` into a Str handle rebinds it to the header p points at (D20; was 0, the data word)" "$XLEGS $OLEGS"
+
 # --- D21 / D22: the filed repros 1 and 2 (issues/archived/2026-10-15-top-level-str-declaration-from-inline-str-global-copies.md), verbatim ---
 cat > "$T/D21a.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -688,7 +723,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=54   # 6.7.16: + PP1 (2 rows); the floor is the count that runs
+FLOOR_ROWS=56   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

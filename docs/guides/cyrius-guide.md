@@ -3296,7 +3296,11 @@ local, parameter or global; `*p` of any `*Str`-typed expression: `**pp`, `*w.p`,
 stale). Since 6.7.16 `t = *pp` with `pp: **Str` copies too — `*pp` is the `*Str` it reads (6.7.13's D9 (a)), copied
 through as `t = p` is (a local, parameter, global, field or `: **Str` call's `*pp`, `(*pp)`, a for step, at top
 level); through 6.7.15 `t.data` took the header's address and `t.len` stayed stale. Into a `*Str` or a handle, `q =
-*pp` stays the rebind `q = p` is. An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
+*pp` stays the rebind `q = p` is. A `Str` HANDLE is rebound by every assignment, so `h = *p` with `p: *Str` (h a
+handle local, parameter or global; `*p` of any `*Str`-typed expression, wrapped, a for step, at top level) rebinds h
+to the header p points at — `h == p` afterwards, as after `h = p`, and a later `h.len = 2` is seen through p (the
+user's decision D20, 2026-10-19; through 6.7.15 h took the header's data word, with the warning *assigning
+non-pointer to typed pointer*). An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
 are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
 (with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
 inline struct (the user's decision D15, 2026-10-18) — assign in each branch instead (`if (c) { t = a; } else { t = b;
