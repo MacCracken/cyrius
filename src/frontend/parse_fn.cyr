@@ -1554,7 +1554,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
             var _rc_is256 = _is_simd256(S, _cur_fn_ret_scalar);
             if (_rc_is128 == 1 || _rc_is256 == 1) {
                 if (PEEKT(S) == 2) {
-                    if (_gcall_open(S, GTI(S)) >= 0) {   # IDENT '(' → a call (6.7.13: or `g<T>(`)
+                    if (_ret_vwcall(S) == 1) {   # IDENT '(' → a call (6.7.13: or `g<T>(`; 6.7.16: the whole value)
                         var _rc_noff = PEEKV(S);
                         var _rc_fi = _vcall_fi(S, GTI(S));
                         if (_rc_fi >= 0) {
@@ -7824,6 +7824,11 @@ fn _pair_ret_offender(S): i64 {
 # known; through a variable it stays refused (no declared type: X13).
 # 6.7.14 (D35 A): and a whole dereference `* E` (`_vrcv_dsrc`, by its tokens) — E's vector is known once it is parsed,
 # which `_ret_vderef` does (another vector, or none, refused there in this rule's words). CHANGELOG [6.7.14]
+# ⛔ 6.7.16 — THE BY-NAME CALL ONLY WHEN IT IS THE WHOLE VALUE: `return mk2(41, 7) + 1;` from a `: f64v2` fn passed this
+# rule on its first token, so x86_64 / aarch64 returned the call's vector (161, the `+ 1` dropped), cx added the 1 to a
+# lane (165) and Windows' own-call arm stopped at the `+` ("expected ';', got '+'") — there is no vector `+` (X4), and
+# `return s.m2() + 1;` was refused. Refused "got `mk2`" on every target (D24's reading, 6.7.16, at the return).
+# CHANGELOG [6.7.16]
 fn _simd_ret_call_ok(S): i64 {
     if (_ret_vicall(S) == 1) { return 1; }
     if (_ret_vmc(S) == 1) { return 1; }   # 6.7.14 (D39): `return s.mv();`
@@ -7831,6 +7836,15 @@ fn _simd_ret_call_ok(S): i64 {
     var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
+    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != 5) { return 0; }   # 6.7.16: the whole value
+    return 1;
+}
+# 6.7.16: 1 = the return value at the cursor is one whole call `f(..)` / `g<T>(..)` (`;` after its `)`) — PARSE_RETURN's
+# Win64 own-call arm took any call that started it, emitting it and stopping at the rest.
+fn _ret_vwcall(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
     return 1;
 }
 # 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (`;` after it), `f` declared
