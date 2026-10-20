@@ -463,8 +463,10 @@ var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
 _cxh_row(2, pp > 0, pp == 0 - 38);
+# close(-1) is -9 on Windows too since 6.7.16's D78 (it was 0: CloseHandle of -1, the current-process
+# pseudo-handle).
 var cl = syscall(3, 0 - 1);
-_cxh_row(4, cl == 0 - 9, cl == 0);            # on Windows -1 is the current-process pseudo-handle
+_cxh_row(4, cl == 0 - 9, cl == 0 - 9);
 var kl = syscall(62, me, 0);
 _cxh_row(8, kl == 0, kl == 0 - 38);
 var du = syscall(32, 0 - 1);

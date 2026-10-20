@@ -21,7 +21,8 @@
 # builds once and runs on pi, ecb, ach and cass: raw x86-Linux syscalls, one bit per row, a
 # `cxh lin=<mask> pe=<mask>` line, exit 77 when every row has the x86_64-Linux answer, 78 when every
 # row has the Windows one (the exit is exit_group's own row). Rows: getpid > 0; getppid > 0;
-# close(-1) -9; kill(getpid(), 0) 0; dup(-1) -9; lseek(-1, 0, 0) -9; sched_yield 0; fork — the parent
+# close(-1) -9 (Windows too since 6.7.16's D78; it answered 0, CloseHandle of the current-process
+# pseudo-handle); kill(getpid(), 0) 0; dup(-1) -9; lseek(-1, 0, 0) -9; sched_yield 0; fork — the parent
 # sees the child's pid and the child (which sees 0) writes its getpid() to a file the parent reads
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never

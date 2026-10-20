@@ -8422,6 +8422,11 @@ never fired and `file_close_r` was never `Err`.
 | `file_open("missing", O_RDONLY, 0)` | -2 | -1 | -2 |
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
+| `sys_close(-1)`, `sys_close(-2)` | -9 | 0 | 0; -9 since 6.7.16 |
+
+A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
+current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
+`sys_close(fd)` of a failed open's -1 read as a good close; `file_close_r(-1)` is `Err(IoBadFd)`.
 
 A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
 std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later

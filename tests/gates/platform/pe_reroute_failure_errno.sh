@@ -79,9 +79,10 @@
 # pseudo-handle), which is why the stub answers -9 itself. Rows: axis 1 runs the two filed repros,
 # a second close and the one-handle child natively; axis 2's probe adds a literal std close and a
 # SetEndOfFile, and every CloseHandle call is either a site's fd > 2 arm (`cmp $0x2,%rax; ja; call
-# <std-close stub>; jmp; mov %rax,%rcx`) or the stub's own, whose body must read GetStdHandle, the
-# -9 arm, SetStdHandle(.., -1), the GetStdHandle loop comparing each slot with the HANDLE, then
-# CloseHandle; every SetEndOfFile call follows the std-fd map; axis 4 runs the same rows under wine
+# <std-close stub>; jmp; mov %rax,%rcx`, the `ja` a `jg` since D78, below) or the stub's own, whose
+# body must read GetStdHandle, the -9 arm, SetStdHandle(.., -1), the GetStdHandle loop comparing
+# each slot with the HANDLE, then CloseHandle; every SetEndOfFile call follows the std-fd map;
+# axis 4 runs the same rows under wine
 # plus a reuse row (after the close a file is opened and fd 2 written: -9, the file stays empty —
 # Linux answers 1 there, its open reuses fd 2, so that row is PE-only). ⚠ wine's std handle for a
 # Unix-side redirect refuses SetEndOfFile (ERROR_INVALID_HANDLE, measured with a zig-built probe), so
@@ -101,6 +102,23 @@
 #                                                           `0 0`: INVALID_HANDLE_VALUE matched its own
 #                                                           cleared slot)
 #   ESETEOF_PE's map back to `mov rcx, rax`                 axis 2 FAIL (SE BAD); axis 4 FAIL (99)
+# 6.7.16 — a NEGATIVE fd answers -9 in a close (issues/2026-10-19-pe-close-of-negative-fd-closes-a-
+# pseudo-handle.md; 6.7.16's D78, "-9, as Linux"). ECLOSE_PE's `cmp rax, 2; ja` was unsigned, so every
+# negative fd reached CloseHandle as the HANDLE, and -1 / -2 are the current-process / -thread
+# pseudo-handles, which CloseHandle "closes" with TRUE: the filed closeneg printed `0 0 0` on cass
+# and wine (Linux `-9 -9 -9`). The compare is signed (`jg`), so a negative fd joins 0 / 1 / 2 in the
+# std-close stub, which now opens `test %rax,%rax; js` to its -9 arm, before any Win32 call. Rows:
+# axis 1 and axis 4 run closeneg (`-9 -9 -9`) and close_answer.tcyr's negative-fd group; axis 2 reads
+# each close site's `cmp $0x2,%rax; jg` and the stub's leading `test %rax,%rax; js`.
+#   mutant (2026-10-20, 6.7.16 p16 lane, PP1; wine 11.20)    result
+#   ECLOSE_PE's `jg` back to `ja` (the stub keeps its js)   axis 2 FAIL (CH BAD: not behind the signed
+#                                                           test); axis 4 FAIL (closeneg `0 0 0`;
+#                                                           close_answer 13 passed 5 failed)
+#   the stub's `js` never taken (`jo`)                      axis 2 FAIL (the stub matched 1/15); axis 4
+#                                                           PASSES: GetStdHandle(-fd - 10) refuses every
+#                                                           negative fd's slot, so the -9 arm answers it
+#                                                           one Win32 call later — the js answers it
+#                                                           before any, and axis 2 holds it
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -246,16 +264,31 @@ fmt_int(w); println("");
 fmt_int(n); println("");
 EOF
 
+# 6.7.16's D78: a negative fd is no descriptor (the filed repro, verbatim).
+cat > "$D/closeneg.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+var a = sys_close(0 - 1);     # not a descriptor: Linux -9
+var b = sys_close(0 - 2);     # not a descriptor: Linux -9
+var c = file_close(0 - 1);    # the same through lib/io.cyr
+fmt_int(a); println("");
+fmt_int(b); println("");
+fmt_int(c); println("");
+EOF
+
 # axis 1, 6.7.16: the std-fd rows natively.
-for p in closestd trstd close2 clsh_child; do
+for p in closestd trstd close2 clsh_child closeneg; do
     ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
     chmod +x "$D/n/$p" 2> /dev/null || true
 done
 clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
-if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ]; then
-    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" | grep -m2 '^error' | tr '\n' ' ')"
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ]; then
+    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" | grep -m2 '^error' | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
     got=$(line "$D/n/cs.out")
@@ -268,11 +301,15 @@ else
     ( cd "$D/n" && ulimit -c 0; ./clsh_parent > ps.out 2> /dev/null ) || true
     got="$(line "$D/n/ps.out") / $(line "$D/n/clsh.txt" 2> /dev/null)"
     if [ "$got" = "1 o / 0 1 -9" ]; then ok; else bad "axis 1: the child's close(2) natively: '$got' (want '1 o / 0 1 -9')"; fi
+    ( cd "$D/n" && ulimit -c 0; ./closeneg > cn.out 2> /dev/null ) || true
+    got=$(line "$D/n/cn.out")
+    if [ "$got" = "-9 -9 -9" ]; then ok; else bad "axis 1: the negative-fd close repro natively: '$got' (want '-9 -9 -9')"; fi
 fi
 
 # axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
-# CloseHandle call is a site's fd > 2 arm, behind `cmp $0x2,%rax; ja`, whose fd 0 / 1 / 2 arm calls
-# the std-close stub — or that stub's own call; the stub reads, in order, GetStdHandle, the -9 arm
+# CloseHandle call is a site's fd > 2 arm, behind the SIGNED `cmp $0x2,%rax; jg`, whose fd <= 2 arm
+# (0 / 1 / 2 and, D78, every negative fd) calls the std-close stub — or that stub's own call; the
+# stub reads, in order, `test %rax,%rax; js` (a negative fd: -9), GetStdHandle, the -9 arm
 # for 0 / INVALID_HANDLE_VALUE, SetStdHandle(.., -1), the GetStdHandle loop that compares every
 # slot with the HANDLE (the one-handle child's stdout lives on that compare), then CloseHandle.
 # Every SetEndOfFile call follows the std-fd map (`cmp $0x2,%rax`, then a GetStdHandle call).
@@ -291,7 +328,7 @@ _std_map_axis() {
                 s = slot(t[i])
                 if (s == ch) {
                     if (t[i-1] ~ /^mov +%rsi,%rcx/) { print "CH stub -"; continue }
-                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^ja / && t[i-5] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
+                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^jg / && t[i-5] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
                     print "CH BAD:not-behind-the-std-fd-test"; continue
                 }
                 if (s == se) {
@@ -323,7 +360,7 @@ _std_map_axis() {
             on && $3 ~ /^ret/ { exit }' "$D/dis" > "$D/cstub"
         got=$(awk -v gs="$GS" -v ss="$SS" -v ch="$CH" '
             function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
-            BEGIN { np = split("G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
+            BEGIN { np = split("^test +%rax,%rax|^js |G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
             k <= np {
                 if (pat[k] == "G") { if (slot($0) == gs) k++ }
                 else if (pat[k] == "S") { if (slot($0) == ss) k++ }
@@ -332,8 +369,8 @@ _std_map_axis() {
             }
             END { print k - 1 "/" np }' "$D/cstub")
         case "$got" in
-            13/13) ok ;;
-            *) bad "axis 2: the std-close stub at $C does not read GetStdHandle, the -9 arm, SetStdHandle(.., -1), the slot-compare loop and CloseHandle in order (matched $got): $(tr '\n' ';' < "$D/cstub" | tr -s ' ')" ;;
+            15/15) ok ;;
+            *) bad "axis 2: the std-close stub at $C does not read the negative-fd test, GetStdHandle, the -9 arm, SetStdHandle(.., -1), the slot-compare loop and CloseHandle in order (matched $got): $(tr '\n' ';' < "$D/cstub" | tr -s ' ')" ;;
         esac
     fi
 }
@@ -570,12 +607,12 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$@" )
     }
-    for p in closestd trstd close2 clsh_child clreuse; do
+    for p in closestd trstd close2 clsh_child clreuse closeneg; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
     done
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
-    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ]; then
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ]; then
         bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
@@ -597,6 +634,9 @@ EOF
         _wrun clreuse.exe < /dev/null > "$D/w/cr.out" 2> /dev/null || true
         got=$(line "$D/w/cr.out")
         if [ "$got" = "0 -9 0" ]; then ok; else bad "axis 4: a write to fd 2 after its close and a new open, under wine: '$got' (want '0 -9 0': -9, and nothing lands in the new file)"; fi
+        _wrun closeneg.exe < /dev/null > "$D/w/cn.out" 2> /dev/null || true
+        got=$(line "$D/w/cn.out")
+        if [ "$got" = "-9 -9 -9" ]; then ok; else bad "axis 4: the negative-fd close repro under wine: '$got' (want '-9 -9 -9'; '0 0 0' is CloseHandle of the -1 / -2 pseudo-handles)"; fi
     fi
     for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)

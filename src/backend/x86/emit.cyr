@@ -1945,7 +1945,9 @@ fn _pew_iat_call(S, idx): i64 {
 # 6.7.16 — THE STD-CLOSE (class 2): `sys_close(0 / 1 / 2)` closes the program's real stdin / stdout
 # / stderr, as on Linux (6.7.16's D30, user, 2026-10-19). The fd went to CloseHandle as the HANDLE
 # value 0 / 1 / 2, which is no handle: the close answered -9 and the stream stayed open. Entered
-# with rax = the fd (0..2), rsp 8 mod 16; answers rax = 0, or -errno.
+# with rax = the fd (0..2, or negative), rsp 8 mod 16; answers rax = 0, or -errno.
+#   - A negative fd is no descriptor: -9 (EBADF) before any Win32 call (6.7.16's D78; ECLOSE_PE's
+#     signed compare sends it here).
 #   - GetStdHandle(-10 - fd) is 0 (no such stream) or INVALID_HANDLE_VALUE (closed already): -9,
 #     Linux's EBADF for a descriptor that is not open. CloseHandle(INVALID_HANDLE_VALUE) would
 #     answer TRUE — it is the current-process pseudo-handle (measured on cass and wine).
@@ -1961,6 +1963,8 @@ fn _pew_stub_close(S, t): i64 {
     var at = GCP(S);
     EB(S, 0x53); EB(S, 0x56); EB(S, 0x57);              # push rbx; push rsi; push rdi (rsp 0 mod 16)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);              # test rax, rax
+    var j_neg = _pew_j8(S, 0x78);                       # js .ebadf (a negative fd)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC3);              # mov rbx, rax (the fd)
     EB(S, 0x48); EB(S, 0xF7); EB(S, 0xDB);              # neg rbx
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEB); EB(S, 0x0A); # sub rbx, 10 (rbx = nStdHandle)
@@ -1970,7 +1974,8 @@ fn _pew_stub_close(S, t): i64 {
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x40); EB(S, 0x01); # lea rax, [rax+1]
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01); # cmp rax, 1
     var j_open = _pew_j8(S, 0x77);                      # ja .open (h is neither -1 nor 0)
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 9); # mov rax, -9 (EBADF: not open)
+    _pew_land8(S, j_neg);
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 9); # .ebadf: mov rax, -9 (EBADF: not open)
     var j_ret = _pew_j8(S, 0xEB);                       # jmp .ret
     _pew_land8(S, j_open);
     return _pew_stub_close_open(S, t, at, j_ret);
@@ -2249,6 +2254,11 @@ fn EWRITE_PE(S): i64 {
 # shared std-close stub (`_pew_stub_close`: GetStdHandle, SetStdHandle(INVALID_HANDLE_VALUE), and
 # CloseHandle unless another std slot holds the same HANDLE); any other fd IS the handle, as in
 # `_pe_fd_to_handle_rcx`. CHANGELOG [6.7.16]
+# A NEGATIVE fd answers -9, as on Linux (6.7.16's D78): the compare is signed, so it joins fd
+# 0 / 1 / 2 in the stub, which answers -9 for it before any Win32 call. Unsigned, it reached
+# CloseHandle as the HANDLE, and -1 / -2 are the current-process / -thread pseudo-handles, which
+# CloseHandle "closes" with TRUE: `sys_close(-1)` answered 0. A real handle is a small positive
+# multiple of 4, so the signed compare misroutes none. CHANGELOG [6.7.16]
 fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
     _pe_ensure_stdio(S);
@@ -2258,8 +2268,8 @@ fn ECLOSE_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
-    EB(S, 0x77); EB(S, 0x07);                           # ja +7 → .direct (the fd IS the handle)
-    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno
+    EB(S, 0x7F); EB(S, 0x07);                           # jg +7 → .direct (the fd IS the handle; SIGNED)
+    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno (fd <= 2)
     EB(S, 0xEB); EB(S, 0x16);                           # jmp +22 → .done
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (hObject)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CloseHandle]
