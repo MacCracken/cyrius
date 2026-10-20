@@ -740,8 +740,13 @@ fn main(): i64 {
     }
     var st = 0;
     syscall(61, pid, &st, 0, 0);
-    # cli: syscall stops report SIGTRAP | 0x80, which PTRACE_GET_SYSCALL_INFO needs.
-    if (_st_is_cli(mode) == 1) { syscall(101, 0x4200, pid, 0, 1); }   # PTRACE_O_TRACESYSGOOD
+    # PTRACE_O_EXITKILL: a tracer that dies takes its child with it. Detached, the child ran on
+    # NATIVELY — every agnos number it asked for became a different Linux call (open#7 poll,
+    # mkdir#9 mmap, exit#0 read). CHANGELOG [6.7.16] cli adds PTRACE_O_TRACESYSGOOD: syscall
+    # stops report SIGTRAP | 0x80, which PTRACE_GET_SYSCALL_INFO needs.
+    var opts = 0x100000;
+    if (_st_is_cli(mode) == 1) { opts = opts | 1; }
+    syscall(101, 0x4200, pid, 0, opts);   # PTRACE_SETOPTIONS
     var regs[216];                        # struct user_regs_struct
     var n = 0;
     while (n < MAX_CALLS) {

@@ -67,6 +67,25 @@ CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/h.cyr" > "$T/h.bin" 2>/dev/null && chmod +x "$
 "$T/sct" "$T/h.bin" plain > "$T/h.log" 2>&1
 check "the fake kernel traces a trivial agnos program (write, then exit 7)" "1 0 7" \
     "$(awk '$1 == "sc" && $2 == 1 { w++ } $1 == "sc" && $2 == 0 { e++ } $1 == "exit" { c = $2 } END { print w + 0, (e == 1 ? 0 : 9), c + 0 }' "$T/h.log")"
+# 6.7.16: a tracer that dies takes its child with it (PTRACE_O_EXITKILL). Detached, the child ran on
+# NATIVELY, every agnos number a different Linux call — this one writes "x" to its stderr for ever,
+# which under the tracer is only logged. Mutant measured (the option not set): the child alive
+# after the tracer's SIGKILL, its stderr growing (row FAIL; the gate kills it by its pid).
+printf 'include "lib/syscalls.cyr"\nwhile (1 == 1) { sys_write(2, "x", 1); }\n' > "$T/k.cyr"
+CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/k.cyr" > "$T/k.bin" 2>/dev/null && chmod +x "$T/k.bin"
+"$T/sct" "$T/k.bin" plain > "$T/k.log" 2> "$T/k.err" &
+tp=$!
+i=0
+while [ "$(grep -c '^sc 1 ' "$T/k.log" 2>/dev/null || true)" -lt 20 ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+kc=$(tr -d ' \n' < "/proc/$tp/task/$tp/children" 2>/dev/null || true)
+kill -9 "$tp" 2>/dev/null; wait "$tp" 2>/dev/null
+live() { [ -n "$1" ] && ks=$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) && [ -n "$ks" ] && [ "$ks" != Z ]; }
+i=0
+while live "$kc" && [ $i -lt 40 ]; do sleep 0.05; i=$((i + 1)); done
+kst=gone
+if live "$kc"; then kst=running; kill -9 "$kc" 2>/dev/null; fi
+check "a tracer killed mid-run takes its child with it (gone, nothing written natively)" "child gone 0" \
+    "$([ -n "$kc" ] && echo child || echo no-child) $kst $(wc -c < "$T/k.err" | tr -d ' ')"
 
 run() {  # $1 = probe body file, $2 = mode → $T/run.log
     printf 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\n' > "$T/p.cyr"
