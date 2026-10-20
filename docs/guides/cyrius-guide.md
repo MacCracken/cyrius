@@ -3020,7 +3020,9 @@ fn demo(): i64 {
   struct's all-`i64` list is its base struct, so `Box<i64>` and `Box`, or `Box<Box<i64>>` and
   `Box<Box<i64> >`, are one type) — and refused at the impl: `fn c(self): i64` implementing `fn c(self): f64;` is
   *'P.c' returns i64, trait 'T' declares f64* (6.7.15, the user's D4; through 6.7.14 it compiled, and a
-  bounded generic caller declared `: f64` received the integer bits). Parameter types are not compared. A trait may
+  bounded generic caller declared `: f64` received the integer bits). A return refusal does not end the check: a
+  second method's mismatch and a required method left out report in the same compile (6.7.16). Parameter types are
+  not compared. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
   statements. One after it is one error by name (6.7.14; see *Functions*).

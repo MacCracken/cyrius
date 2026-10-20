@@ -9380,7 +9380,9 @@ fn _tr_check_impl(S, ii): i64 {
                 ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
                 return 0;
             } }
-        if (_tr_ret_chk(S, ii, tk, k) == 1) { return 0; }   # 6.7.15 (D4): and its return type
+        # 6.7.15 (D4): and its return type. Its refusal sets no panic latch (it consumes nothing), so the walk goes on:
+        # the next method's mismatch and a missing method report in the same compile. CHANGELOG [6.7.16]
+        _tr_ret_chk(S, ii, tk, k);
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);

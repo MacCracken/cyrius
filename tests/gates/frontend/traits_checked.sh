@@ -62,6 +62,13 @@
 #      (0ca74300) -> RED 4: TRS1-TRS4 (refused); MTRS1 `_tr_ret_differs` back on `_dyn_ty_eq` (normalisation off) -> the
 #      same; MTRS2 `_tyn_expand` keeping `>>` one token -> RED 2: TRS1 TRS4; MTRS3 `_tyn_i64_list` answering 0 (no
 #      all-i64 fold) -> RED 3: TRS2 TRS3 TRS4
+#   TRC (6.7.16) a return refusal does not end the impl's check: `_tr_check_impl` returned on the first method whose
+#      return differs, so a second mismatch and a required method left out each appeared only once the line before it
+#      was fixed. The refusal sets no panic latch (it consumes nothing), so the walk goes on. TRC1 the filed repro
+#      verbatim: exactly three lines (3:28 `P.a`, 3:58 `P.b`, the missing `c`); TRC2 a parameter-count mismatch and
+#      TRC3 a method the trait does not declare, each after a return refusal — two lines. Filed:
+#      docs/development/issues/2026-10-18-impl-check-stops-at-first-differing-return.md
+#      Mutant (2026-10-20): the lane's base compiler (b73e8d5fe, the early return) -> RED 3: TRC1 TRC2 TRC3 (one line)
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -299,6 +306,33 @@ printf "$BX"'trait T { fn c(self): Box<Box<i64>>; }\nimpl T for Pt { fn c(self):
 refused_at trs6 "'Pt.c' returns Box<Box<i32> >, trait 'T' declares Box<Box<i64>>" 4:29 "TRS6: Box<Box<i32> > against Box<Box<i64>> stays refused"
 printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Pt { var b: Pt; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs7.cyr"
 refused_at trs7 "'Pt.c' returns Pt, trait 'T' declares Box<i64>" 4:29 "TRS7: a struct that is not the member's stays refused"
+# ── TRC (6.7.16) — a return refusal does not end the impl's check ──
+lines_are() {   # <name> <what> <line:col|message>...: refused with exactly these error lines, in this order
+    nm=$1; what=$2; shift 2
+    build "$nm"
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
+    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    : > "$T/$nm.want"
+    for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
+    if cmp -s "$T/$nm.got" "$T/$nm.want"; then ok "$what: exactly $# lines"
+    else bad "$what: got $(tr '\n' '|' < "$T/$nm.got") want $(tr '\n' '|' < "$T/$nm.want")"; fi
+}
+cat > "$T/trc1.cyr" <<'EOF'
+struct P { x; }
+trait T { fn a(self): f64; fn b(self): f64; fn c(self): i64; }
+impl T for P { fn a(self): i64 { return 1; } fn b(self): i64 { return 2; } }
+fn main(): i64 { return 0; }
+EOF
+lines_are trc1 "TRC1: the filed repro verbatim — both mismatches and the missing method" \
+    "3:28: 'P.a' returns i64, trait 'T' declares f64" "3:58: 'P.b' returns i64, trait 'T' declares f64" \
+    "3:16: impl is missing method 'c', required by trait 'T'"
+printf 'struct P { x; }\ntrait T { fn a(self): f64; fn b(self, k): i64; }\nimpl T for P { fn a(self): i64 { return 1; } fn b(self): i64 { return 2; } }\nfn main(): i64 { return 0; }\n' > "$T/trc2.cyr"
+lines_are trc2 "TRC2: a parameter-count mismatch after a return refusal" \
+    "3:28: 'P.a' returns i64, trait 'T' declares f64" \
+    "3:16: method 'b' takes a different number of parameters than its declaration in trait 'T'"
+printf 'struct P { x; }\ntrait T { fn a(self): f64; }\nimpl T for P { fn a(self): i64 { return 1; } fn z(self): i64 { return 3; } }\nfn main(): i64 { return 0; }\n' > "$T/trc3.cyr"
+lines_are trc3 "TRC3: a method the trait does not declare after a return refusal" \
+    "3:28: 'P.a' returns i64, trait 'T' declares f64" "3:16: method 'z' is not declared in trait 'T'"
 
 cat > "$T/trk.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -358,4 +392,4 @@ EOF
 exits trk 131 "TRK: member and impl agree — i64 and none both ways, f64, *u128, (i64, f64), Pt, a generic's U (renamed V), Box<Pt>, bool; two impls"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16)"
