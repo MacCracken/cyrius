@@ -359,6 +359,10 @@
 #       (a list no reader reads). Mutants (2026-10-20, CYCC= its compiler): the lane's head aff3849ff -> RED 5:
 #       F8p1-F8p5 (two lines; F8p5 named 'a'); `_dsq_rf_of` without the parameter set (`_ty_rd_scan(.., 1)`) -> RED 1:
 #       F8p7 BUILT; `_ty_rd_scan` reading every `<..>` -> RED 2: F8r7 F8p8 BUILT (and traits_checked.sh TRR1 / TRR2)
+#       F8p9-F8p11 (a find repaired with them, diagnostics only) a slice or a bare `u128` parameter, each reader's
+#       refusal since 6.7.8 / 6.7.14: `p: [i64]`, an impl's `p: u128`, `p: *[i64]` — the reader's line alone; F8p12 a
+#       `p: *u128` (a type) keeps the site's line. Mutant (2026-10-20): the lane's head ca1c163da -> RED 3: F8p9 F8p10
+#       F8p11 (two lines each)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -681,6 +685,10 @@ F8PS="${F8M} 'sh' does not match its declaration in trait T2: parameter 'p' has 
 refused f08p6 "4:36: $F8PS" "F8p6: a \`p: *Late\` (a struct declared below everything) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: *Late): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}struct Late { z; }\n"
 refused f08p7 "4:36: $F8PS" "F8p7: a by-name \`p: Str\` (no lib/str.cyr) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Str): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 refused f08p8 "4:36: $F8PS" "F8p8: a \`p: Result<Nope>\` (its list no reader reads) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Result<Nope>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p9 "2:27: a slice cannot be a parameter" "F8p9: a member's \`p: [i64]\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: [i64]): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p10 "4:32: \`u128\` is not supported as a parameter type yet" "F8p10: an impl's \`p: u128\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: i64): i64; }\n${FQ}impl T2 for P { fn sh(self, p: u128): i64 { return 1; } }\n${MQ}"
+refused f08p11 "2:28: a pointer to a slice is not a type" "F8p11: a member's \`p: *[i64]\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: *[i64]): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p12 "4:36: $F8PS" "F8p12: a \`p: *u128\` (a type) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: *u128): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).

@@ -1716,8 +1716,23 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
 # a reader reads (`_ty_rd_scan`, a parameter's set: `s: Str`, a vector, a type parameter are types); a name inside an
 # unread `Result<..>` is refused by no one and keeps the site's line. 1 = either side is such a type. CHANGELOG [6.7.16]
 fn _dsq_rf_of(S, xs, xe, ys, ye): i64 {
-    if (_ty_rd_scan(S, xs, xe, 2) == 1) { return 1; }
-    return _ty_rd_scan(S, ys, ye, 2);
+    if (_dsq_rf_one(S, xs, xe) == 1) { return 1; }
+    return _dsq_rf_one(S, ys, ye);
+}
+# One side: a slice behind any `*`s (`[T]`, `slice<T>`, `*[T]`) or a bare `u128` — each reader's refusal of a
+# parameter (6.7.8, 6.7.14) — or a name a reader reads and refuses.
+fn _dsq_rf_one(S, a, ae): i64 {
+    if (a == ae) { return 0; }
+    if (TOKTYP(S, a) == 105) { return 1; }   # `*u128` is a type
+    var i = a;
+    while (i < ae) {
+        if (TOKTYP(S, i) != 8) {
+            if (_sl_ann_at(S, i) == 1) { return 1; }
+            return _ty_rd_scan(S, a, ae, 2);
+        }
+        i = i + 1;
+    }
+    return 0;
 }
 # 1 when either type's tokens [a, ae) / [b, be) are empty (no annotation: an i64).
 fn _dsq_un_of(a, ae, b, be): i64 {
