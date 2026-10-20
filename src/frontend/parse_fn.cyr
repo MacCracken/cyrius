@@ -7700,14 +7700,18 @@ fn _op_term_cont(t): i64 {
 # expression is neither a method call nor an operator expression (cursor untouched). When it is
 # one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
 # binary is never written). CHANGELOG [6.6.6]
+# 6.7.16: not when the value's parse reported an error of its own (the statement's `_err_n`) — `return zz + 1;` from a
+# 9-16 or > 16 B struct fn was "undefined variable 'zz'" AND this refusal; that error alone now, as at 8 B. CHANGELOG [6.7.16]
 fn _return_struct_expr(S): i64 {
     if (_ret_expr_head(S) == 0) { return 0 - 1; }
     var st = GTI(S);
+    var en = _err_n;
     var w = _sc_arm(S);
     PCMPE(S);
     _sc_want = w;
     var t = _sc_whole(S, st);
     if (t >= 0) { if (_sc_sid == _cur_fn_ret_sid) { return t; } }
+    if (_err_n != en) { return 0; }
     ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
     return 0;
 }

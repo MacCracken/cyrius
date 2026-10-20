@@ -116,6 +116,11 @@
 #   `_pair_ret_late` not putting the cursor on E        -> RED 29: PC1-PC7 (the refusal at the `;`, "got `this
 #                                                          expression`"), R1b
 #   real tree                                           -> GREEN (94 refusal rows — floor 94 — and 28 acceptance rows)
+# 6.7.16 — SX1-SX5, SXC1 SXC2 at 16 and 24 B: the method / operator arm (`_return_struct_expr`) refuses only a value whose
+# parse reported nothing. Mutation (2026-10-20, as above):
+#   its refusal not yielding to the value's error       -> RED 40: SX1-SX5 at 16 and 24 B (the error, then the
+#   (the tree before it)                                   refusal: 2 lines), on the four legs
+#   real tree                                           -> GREEN (108 refusal rows — floor 108 — and 28 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -740,8 +745,29 @@ fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:28: $UZ"
 errs4 "PC9 control: the 24 B class's return zz;" 'struct Q { v; w; x; }
 fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:26: struct-return: identifier is not a local"
 
+# ... and the method / operator arm both struct classes share (`_return_struct_expr`): its refusal ("struct-return fn:
+# return must be a bare local identifier ...") followed a value that had reported its own error — `return zz + 1;`,
+# `return q.e(zz);` at 16 and at 24 B were that error AND the refusal. The error alone now; a value that parses keeps it.
+SX='impl Q { fn e(self, n): i64 { return n; } }
+fn mk2(n): i64 { return n; }
+'
+SR='struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct'
+for sxz in 16 24; do
+    if [ "$sxz" = 16 ]; then SQ="$PQ$SX"; else SQ='struct Q { v; w; x; }
+'"$SX"; fi
+    errs4 "SX1 return zz + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz + 1; }'"$PM" "error:<source>:4:29: $UZ"
+    errs4 "SX2 return zz - q; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz - q; }'"$PM" "error:<source>:4:29: $UZ"
+    errs4 "SX3 return (zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return (zz) + 1; }'"$PM" "error:<source>:4:29: $UZ"
+    errs4 "SX4 return q.e(zz); ($sxz B, a scalar method)" "$SQ"'fn mk(q: *Q): Q { return q.e(zz); }'"$PM" "error:<source>:4:32: $UZ"
+    errs4 "SX5 return mk2(zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return mk2(zz) + 1; }'"$PM" "error:<source>:4:32: $UZ"
+    errs4 "SXC1 control: return q.e(1); keeps the refusal ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return q.e(1); }'"$PM" \
+        "error:<source>:4:32: $SR"
+    errs4 "SXC2 control: return mk2(1) + 1; keeps it ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return mk2(1) + 1; }'"$PM" \
+        "error:<source>:4:36: $SR"
+done
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 94 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 94) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 108 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 108) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0
