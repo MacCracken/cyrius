@@ -9431,14 +9431,15 @@ fn _tr_ret_differs(S, tp, fp): i64 {
     return 1;
 }
 # 1 when the return type [a, ae) is refused by its own reader — the trait's for a member (`im` 0), PARSE_FN_DEF's for a
-# method (1): a slice, `u128` or `Vec` as the type, a name that is no type, and for a method a name a fn's return does
-# not take (`_tn_ret_report`'s: u8..u64, f32, an enum).
+# method (1): a slice, `u128` or `Vec` as the type, a name that is no type, a name a fn's return does not take
+# (`_tn_ret_report`'s: u8..u64, f32, an enum; a member's too since 6.7.16's D9), and a member's `*fn( .. )`.
 fn _tr_rt_bad(S, a, ae, im): i64 {
     if (a == ae) { return 0; }
     if (_sl_ann_at(S, a) == 1) { return 1; }
     if (TOKTYP(S, a) == 105) { return 1; }
     if (_trs_ret_vec(S, a) == 1) { return 1; }
-    if (im == 1) { if (_tr_rt_nonret(S, a) == 1) { return 1; } }
+    if (_tr_rt_nonret(S, a) == 1) { return 1; }
+    if (im == 0) { if (_trs_ret_fnp(S, a) == 1) { return 1; } }
     var k = a;
     while (k < ae) {
         if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
@@ -9574,13 +9575,23 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
 # reported under `--syntax-only` too, as the fn's is). `: *Vec<T>`, `: *u128`, a `*fn( .. ): Vec<T>` / `*fn( .. ): u128`
 # type's own return and a parameter `v: Vec<T>` are unchanged (the user's D9 (a) and D3 (a), 2026-10-18). 1 = refused
 # (the member's walk ends). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D9) — AND FOR THE REST OF THE SET: a name a fn's return does not take (`_trs_ret_nonret`: u8..u64, f32, an
+# enum) is "type 'u8' cannot be a fn return type" and its note, silent under `--syntax-only` (the name reads on there,
+# as a fn's does); a `*fn( .. )` return is its own line (`_trs_fnp_refuse`), reported under `--syntax-only` too, as a
+# fn's `: *fn( .. )` grammar refusal is. Each compiled, though no impl can define it (the user's D9, 2026-10-19).
+# CHANGELOG [6.7.16]
 fn _trs_ret_refused(S, ti): i64 {
     if (TOKTYP(S, ti) == 105) {
         _trs_bad = 1;
         _u128_refuse(S, ti, "a fn return type yet");
         return 1;
     }
-    if (_trs_ret_vec(S, ti) == 0) { return 0; }
+    if (_trs_ret_fnp(S, ti) == 1) {
+        _trs_bad = 1;
+        _trs_fnp_refuse(S, ti);
+        return 1;
+    }
+    if (_trs_ret_vec(S, ti) == 0) { if (_trs_ret_nonret(S, ti) == 0) { return 0; } }
     _trs_bad = 1;
     if (_syntax_only == 1) { return 1; }
     var sv = GTI(S);
@@ -9596,6 +9607,40 @@ fn _trs_ret_vec(S, ti): i64 {
     if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) != 0x00636556) { return 0; }   # "Vec\0"
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     return 1;
+}
+# 1 when token `ti` names a type a fn's return does not take (`_tr_rt_nonret`'s set: u8..u64, f32, an enum). A name
+# that is no type is not one (`_trs_name` refuses it, "unknown type"), and under --syntax-only, which resolves nothing,
+# none is.
+fn _trs_ret_nonret(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tr_rt_nonret(S, ti) == 0) { return 0; }
+    if (_tn_resolve_at(S, ti) == 0) { return 0; }
+    return 1;
+}
+# 1 when the type at token `ti` is a fn-pointer type: `*`.. then `fn (`.
+fn _trs_ret_fnp(S, ti): i64 {
+    if (TOKTYP(S, ti) != 8) { return 0; }
+    var k = ti;
+    while (TOKTYP(S, k) == 8) { k = k + 1; }
+    if (TOKTYP(S, k) != 32) { return 0; }
+    if (TOKTYP(S, k + 1) != 10) { return 0; }
+    return 1;
+}
+# "a fn-pointer type `*fn( .. )` cannot be a fn return type" at token `ti` (its first `*`), once, with a fn's return
+# note. Not a panic: the trait's walk goes on to its next member.
+fn _trs_fnp_refuse(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a fn-pointer type `*fn( .. )` cannot be a fn return type\n");
+    _err_excerpt(S);
+    _tn_ret_note();
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 # 1 when an impl of trait `tx` does not define `m` — it inherits the default.
 fn _tr_dflt_inh(S, tx, m): i64 {

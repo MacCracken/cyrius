@@ -3035,8 +3035,11 @@ fn demo(): i64 {
   compares its parameter count and its return type (above). A member's return is held to a fn's return set: `fn a(self):
   Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
   not supported as a fn return type yet*, at the member, once — no impl could define either (6.7.15, the user's D9
-  and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). `: *Vec<i64>`,
-  `: *u128` and a parameter `v: Vec<i64>` are unchanged.
+  and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). So is the rest of the
+  set since 6.7.16 (the user's D9): `: u8`..`: u64`, `: f32` and an enum are *type 'u8' cannot be a fn return type*,
+  and `: *fn(i64): i64` is *a fn-pointer type `*fn( .. )` cannot be a fn return type* (that one under `cyrius lint`
+  too, as a fn's `: *fn( .. )` grammar refusal is); through 6.7.15 each compiled. Declare `: i64` or a pointer
+  instead. `: *Vec<i64>`, `: *u128`, `: *Color` and a parameter `v: Vec<i64>` or `cb: *fn(i64): u128` are unchanged.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*

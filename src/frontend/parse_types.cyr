@@ -4001,9 +4001,14 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
+        _tn_ret_note();
     }
     _panic = 0;
+    return 0;
+}
+# The fn return set, under a refused return type (a trait member's `*fn( .. )` return too, 6.7.16).
+fn _tn_ret_note(): i64 {
+    PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
     return 0;
 }
 

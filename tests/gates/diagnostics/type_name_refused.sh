@@ -395,11 +395,12 @@ refused u128_inline   '#inline\nfn g(v: u128): i64 { return 1; }\nfn f(): i64 { 
 refused u128_trait_ret1 'struct P { x; }\ntrait T { fn n(self): u128; }\nsyscall(60, 4);\n' "$UR"
 refused u128_trait_ret2 'struct P { x; }\nstruct Q { y; }\nimpl T for P { fn c(self): i64 { return 4; } }\nimpl T for Q { fn c(self): i64 { return 5; } }\ntrait T { fn c(self): u128 { return 4; } }\nsyscall(60, 4);\n' "$UR"
 # ANTI-VACUOUS: `*u128` (behind a `*`) and a `*fn( .. )`'s own u128 are read as before; a member's `: *u128` return and
-# a `*fn( .. ): u128` type's own return (a member no impl implements) still compile; a u128 local is untouched.
+# a `*fn( .. ): u128` type's own return still compile; a u128 local is untouched. (6.7.16: that `*fn( .. ): u128` sits in
+# a parameter, `cb`, of a member no impl implements — a member's `*fn( .. )` RETURN is refused since 6.7.16's D9.)
 runs u128_ptr_param   'fn lo(v: *u128): i64 { return load64(v); }\nfn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); return lo(&b); }\nsyscall(60, f());\n' 5
 runs u128_fnptr_inner 'include "lib/fnptr.cyr"\nfn k(x): i64 { return 3; }\nfn ap(cb: *fn(u128): i64): i64 { return fncall1(cb, 0); }\nsyscall(60, ap(&k));\n' 3
 refused u128_trait_ret 'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' "$UR"
-runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self): *fn(i64): u128; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
+runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self, cb: *fn(i64): u128): i64; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
 runs u128_local       'fn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); if (b > 0xFFFFFFFFFFFFFFFF) { return 9; } return 1; }\nsyscall(60, f());\n' 9
 # 6.7.16: a trait member's `*fn( .. ): u128` parameter — the fn pointer's own return, as a fn's parameter reads it.
 runs u128_trait_fnret 'include "lib/fnptr.cyr"\nstruct P { x; }\ntrait T { fn e(self, cb: *fn(i64): u128): i64; }\nimpl T for P { fn e(self, cb: *fn(i64): u128): i64 { return fncall1(cb, 0); } }\nfn k(x): i64 { return 3; }\nfn main(): i64 { var p = P { 1 }; return p.e(&k); }\nsyscall(60, main());\n' 3
