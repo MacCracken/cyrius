@@ -350,6 +350,14 @@
 #       WRK22-WRK24 WRK28-WRK31 on five legs
 #   M-WR6 `_vcv_wpeel` peeling nothing                  -> RED 65: WRK14-WRK16 WRK19-WRK22 WRK25 WRK26 WRK28-WRK31 on five
 #   M-WR7 `start` 1 taking only an unwrapped start (the tree before) -> RED 5: WRK27 on five legs
+# 6.7.16 (the receives review) — and behind leading parentheses that close AFTER an operator: `_vcv_wpeel` peeled only
+# parentheses whose innermost `)` closed right after the call, so `var x: i64 = (mk2(41, 7) + 1) * 2;` and `x = (mk2(41,
+# 7) + 1) * 2;` stored the result's word (x86_64 / IR=3 / aarch64 2, cx 84), `var x: i64 = (s.m2() * 2) + 1;` 1 (cx 83),
+# and the untyped / top-level `var w = (mk2(41, 7) + 1) * 2;` compiled the same way. Now a call at any depth of leading
+# parentheses starts the source. Rows WRK32-WRK41 (a declaration, an assignment, a method, a parenthesised head, the
+# zone, after the first statement, an f64v4 twin, a global in a fn, `callptr(&f)`, a top-level assignment) and OP22-OP25
+# (untyped, in a fn and at top level), refused once on five legs. Mutation (2026-10-20, measured):
+#   M-WR8 `_vcv_wpeel` back to the innermost-`)` peel (the tree before) -> RED 70: WRK32-WRK41 OP22-OP25 on five legs
 
 # 6.7.15 (issues/archived/2026-10-17-vector-call-or-method-assigned-to-scalar-global-stores-a-word.md) — a vector call assigned to a
 # GLOBAL that is no vector (by name, an explicit instance, a method incl. a chain's, `fncallN(&f, ..)` / `callptr(&f, ..)`,
@@ -1691,12 +1699,46 @@ syscall(60, r() % 256);
     WRK31) printf '%s' "$WH"'fn r(): i64 { var x = 0; x = (callptr(&mk2, 41, 7)) + 1; return x; }
 syscall(60, r() % 256);
 ' ;;
+    WRK32) printf '%s' "$WF"'fn r(): i64 { var x: i64 = (mk2(41, 7) + 1) * 2; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK33) printf '%s' "$WF"'fn r(): i64 { var x = 0; x = (mk2(41, 7) + 1) * 2; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK34) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: i64 = (s.m2() * 2) + 1; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK35) printf '%s' "$WF"'fn r(): i64 { var s: Mv = Mv { 1 }; var ps: *Mv = &s; var x: i64 = ((*ps).m2() + 1) * 2; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK36) printf '%s' "$WF"'var X: i64 = (mk2(41, 7) + 1) * 2;
+syscall(60, X % 256);
+' ;;
+    WRK37) printf '%s' "$WF"'syscall(1, 1, "", 0);
+var X: i64 = ((mk2(41, 7) + 1) * 2) + 3;
+syscall(60, X % 256);
+' ;;
+    WRK38) printf '%s' "$W4"'fn r(): i64 { var x = 0; x = ((mk4(41) + 1) * 2) + 3; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK39) printf '%s' "$WF"'var G = 0;
+fn r(): i64 { var s: Mv = Mv { 1 }; G = (s.m2() + 1) * 2; return G; }
+syscall(60, r() % 256);
+' ;;
+    WRK40) printf '%s' "$WH"'fn r(): i64 { var x = 0; x = (callptr(&mk2, 41, 7) + 1) * 2; return x; }
+syscall(60, r() % 256);
+' ;;
+    WRK41) printf '%s' "$WF"'var G = 0;
+syscall(1, 1, "", 0);
+G = (mk2(41, 7) + 1) * 2;
+syscall(60, G % 256);
+' ;;
     esac
 }
-WRK_ROWS="WRK1 WRK2 WRK3 WRK4 WRK5 WRK6 WRK7 WRK8 WRK9 WRK10 WRK11 WRK12 WRK13 WRK14 WRK15 WRK16 WRK17 WRK18 WRK19 WRK20 WRK21 WRK22 WRK23 WRK24 WRK25 WRK26 WRK27 WRK28 WRK29 WRK30 WRK31"
+WRK_ROWS="WRK1 WRK2 WRK3 WRK4 WRK5 WRK6 WRK7 WRK8 WRK9 WRK10 WRK11 WRK12 WRK13 WRK14 WRK15 WRK16 WRK17 WRK18 WRK19 WRK20 WRK21 WRK22 WRK23 WRK24 WRK25 WRK26 WRK27 WRK28 WRK29 WRK30 WRK31 WRK32 WRK33 WRK34 WRK35 WRK36 WRK37 WRK38 WRK39 WRK40 WRK41"
 wrk_msg() {
     case "$1" in
-    WRK4|WRK5|WRK6|WRK12|WRK13|WRK15|WRK17|WRK18|WRK20|WRK22|WRK23|WRK24|WRK28|WRK29|WRK30|WRK31) echo "vector return type does not match the assigned variable";;
+    WRK4|WRK5|WRK6|WRK12|WRK13|WRK15|WRK17|WRK18|WRK20|WRK22|WRK23|WRK24|WRK28|WRK29|WRK30|WRK31|WRK33|WRK38|WRK39|WRK40|WRK41) echo "vector return type does not match the assigned variable";;
     *) echo "vector return type does not match the declared type";;
     esac
 }
@@ -2057,24 +2099,38 @@ syscall(60, r() % 256);
     OP21) printf '%s' "$OPH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); w = mk4(41) + 1; return 1; }
 syscall(60, r() % 256);
 ' ;;
+    OP22) printf '%s' "$OPF"'fn r(): i64 { var w = (mk2(41, 7) + 1) * 2; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP23) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w = ((s.m2() * 2)) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP24) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+var w = (mkv(41, 7) + 1) * 2;
+syscall(60, w % 256);
+' ;;
+    OP25) printf '%s' "$OPH"'syscall(1, 1, "", 0);
+var w = (mk2(41, 7) + 1) * 2;
+syscall(60, 0);
+' ;;
     esac
 }
-OP_ROWS="OP1 OP2 OP3 OP4 OP5 OP6 OP7 OP8 OP9 OP10 OP11 OP12 OP13 OP14 OP15 OP16 OP17 OP18 OP19 OP20 OP21"
+OP_ROWS="OP1 OP2 OP3 OP4 OP5 OP6 OP7 OP8 OP9 OP10 OP11 OP12 OP13 OP14 OP15 OP16 OP17 OP18 OP19 OP20 OP21 OP22 OP23 OP24 OP25"
 op_msg() {
     case "$1" in
     OP1|OP2|OP19) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk2\`";;
     OP3) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk2\`";;
     OP4|OP5) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`s\`";;
-    OP6) echo "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    OP6|OP24) echo "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
     OP7|OP8) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk4\`";;
     OP9) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk4\`";;
     OP10) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mkf\`";;
     OP11) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`(...)\`";;
-    OP12|OP16) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`(...)\`";;
+    OP12|OP16|OP22|OP23) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`(...)\`";;
     OP13) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`callptr\`";;
     OP14) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mkg\`";;
     OP15) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`x\`";;
-    OP17) echo "'mk2' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    OP17|OP25) echo "'mk2' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
     OP18) echo "'m2' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
     OP20) echo "vector return type does not match the declared type";;
     OP21) echo "vector return type does not match the assigned variable";;

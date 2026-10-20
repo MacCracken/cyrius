@@ -2046,13 +2046,14 @@ method — or `callptr(&f, ..)` — that STARTS an integer initialiser, `var x: 
 7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1) — and so is one that starts
 an ASSIGNMENT's right-hand side, `x = s.mv() + 1;` / `x = callptr(&mkv, 41, 7) + 1;` (6.7.16, the user's decision D25,
 2026-10-19: A), and the parentheses change nothing for a call that starts an integer source either: `var x: i64 =
-(mkv(41, 7)) + 1;`, `x = (mkv(41, 7)) + 1;`, `var x: i64 = (s.mv()) + 1;`, `var x: i64 = (mkv(41, 7) + 1);` are refused
-with the unwrapped spelling's words (6.7.16, D26: A; through 6.7.15 each stored the result's word plus 1: 1 on x86_64 /
-aarch64, 42 on cx / Windows). There is no vector `+`, so an operator after a vector call is refused at a vector
+(mkv(41, 7)) + 1;`, `x = (mkv(41, 7)) + 1;`, `var x: i64 = (s.mv()) + 1;`, `var x: i64 = (mkv(41, 7) + 1);` and —
+behind any number of leading parentheses, closing anywhere — `var x: i64 = (mkv(41, 7) + 1) * 2;` are refused with the
+unwrapped spelling's words (6.7.16, D26: A; through 6.7.15 each stored the result's word plus 1: 1 on x86_64 / aarch64,
+42 on cx / Windows). There is no vector `+`, so an operator after a vector call is refused at a vector
 destination and at an untyped declaration too (6.7.16, the user's decision D24, 2026-10-19: A): `var w = mkv(41, 7) +
 1;`, `var w: f64v2 = mkv(41, 7) + 1;`, `w = mkv(41, 7) + 1;`, `var w = s.mv() + 1;`, `var w = (s.mv()) + 1;` are refused
-by name (*… got `mkv`* / *… got `s`* / *… got `(...)`*), and at top level `var w = mkv(41, 7) + 1;` is refused as the
-whole call is (through 6.7.15 the `+ 1` was dropped on x86_64 / aarch64, added to one lane on cx, a parse error on
+by name (*… got `mkv`* / *… got `s`* / *… got `(...)`*; `var w = (mkv(41, 7) + 1) * 2;` too), and at top level `var w
+= mkv(41, 7) + 1;` is refused as the whole call is (through 6.7.15 the `+ 1` was dropped on x86_64 / aarch64, added to one lane on cx, a parse error on
 Windows, and the method bound one word) — bind the vector first and read its lanes. Every other source is refused by
 name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its

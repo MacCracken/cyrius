@@ -8969,9 +8969,9 @@ fn _vrcv_bad(S, ti, ty, term, verb): i64 {
 # `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base) declares no
 # vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
 # ⛔ 6.7.16 (D26 A, the user's decision, 2026-10-19) — PARENTHESES CHANGE NOTHING FOR A CALL THAT STARTS THE SOURCE
-# EITHER: with `start` 1 a call inside parentheses that end before the source does — `(mk2(41, 7)) + 1`, `((s.m2())) + 1`
-# (`_vcv_wpeel`) — or one that starts the inside of a wrap around the whole source — `(mk2(41, 7) + 1)` — starts it, as
-# unwrapped (guide § Parentheses; 6.7.15's D28 made a whole wrap transparent). `var x: i64 = (mk2(41, 7)) + 1;`, `x =
+# EITHER: with `start` 1 a call behind any leading parentheses — `(mk2(41, 7)) + 1`, `((s.m2())) + 1`, `(mk2(41, 7) +
+# 1) * 2` (`_vcv_wpeel`) — or one that starts the inside of a wrap around the whole source — `(mk2(41, 7) + 1)` — starts
+# it, as unwrapped (guide § Parentheses; 6.7.15's D28 made a whole wrap transparent). `var x: i64 = (mk2(41, 7)) + 1;`, `x =
 # (mk2(41, 7)) + 1;` and `var x: i64 = (s.m2()) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42)
 # where the unwrapped spellings are refused (issues/2026-10-18-vector-call-starting-assignment-or-wrapped-start-stores-
 # a-word.md). CHANGELOG [6.7.16]
@@ -9027,17 +9027,21 @@ fn _vcv_at(S, a): i64 {
     _vcv_o = _vcall_o;
     return GFRS(S, f);
 }
-# The source at token `a` opening with k parentheses around a whole vector call (`_pwrap_k`: each `(` closing right
-# before its enclosing `)`), the call followed by those k `)` and more after them: the call's first token; else `a`.
+# The source at token `a` opening with leading parentheses whose first operand is a vector call (`_vcv_at`): the call's
+# first token; else `a`. A `(` that heads a method itself (`(*ps).m2() + 1`, `_vmc_vfi`) is that call; past every
+# leading `(`, the token after them. ⛔ 6.7.16 — AT ANY DEPTH, CLOSING ANYWHERE: the peel took only parentheses whose
+# innermost `)` closed right after the call, so `var x: i64 = (mk2(41, 7) + 1) * 2;`, `x = (mk2(..) + 1) * 2;`, `var x:
+# i64 = (s.m2() * 2) + 1;` and the untyped / top-level `var w = (mk2(..) + 1) * 2;` stored the result's word (x86_64 /
+# aarch64 2, cx 84) where `mk2(41, 7) + 1 * 2` is refused (D24 / D26: parentheses change nothing). CHANGELOG [6.7.16]
 fn _vcv_wpeel(S, a): i64 {
-    if (TOKTYP(S, a) != 10) { return a; }
-    var pw = _pw_end;
-    var k = _pwrap_k(S, a);
-    var x = _pw_end - k;   # the innermost `)`
-    _pw_end = pw;
-    if (_vcv_at(S, a + k) == 0) { return a; }
-    if (_call_close(S, _vcv_o) + 1 != x) { return a; }
-    return a + k;
+    var j = a;
+    while (TOKTYP(S, j) == 10) {
+        if (_vcv_at(S, j) != 0) { return j; }
+        j = j + 1;
+    }
+    if (j == a) { return a; }
+    if (_vcv_at(S, j) != 0) { return j; }
+    return a;
 }
 # ⛔ 6.7.16 — `ti` when the source there opens with `(` and is a method declared to return a vector on a parenthesised
 # head (`(*ps).mv()`, `((s)).mv()`: `_vmc_vfi`), which no wrap of the whole source reads (`_pwrap_in` answers -1 for
