@@ -4,8 +4,9 @@
 # Usage: cyrius-lsp (launched by editor)
 #
 # Capabilities (advertised in `initialize`):
-#   - diagnostics       — compile via the `cyrius` wrapper (so includes resolve)
-#                         + parse cycc's stderr into errors/warnings
+#   - diagnostics       — compile via the `cyrius` wrapper (so includes resolve), a project file
+#                         through its unit (COMPILE UNITS, 6.7.16) + parse cycc's stderr into
+#                         errors/warnings
 #   - definitionProvider     — cross-file go-to-definition (symbol table)
 #   - documentSymbolProvider — file outline
 #   - referencesProvider     — find-all-uses
@@ -30,8 +31,10 @@ include "lib/str.cyr"
 include "lib/syscalls.cyr"
 # 6.7.16: argv(0), which _resolve_install_dir opens on macOS (no /proc/self/exe there).
 include "lib/args.cyr"
+# 6.7.16: dir_list_into, which the compile units' project walk lists each directory with.
+include "lib/fs.cyr"
 # 6.6.10: the declaration reader the CLI uses (`cyrius coverage`, `cyrius distlib`) — ONE
-# answer to "what does this file declare at top level". See lsp_index_file.
+# answer to "what does this file declare at top level". See lsp_index_decls.
 include "cbt/srcscan.cyr"
 
 fn prints(s): i64 { syscall(1, 1, s, strlen(s)); return 0; }
@@ -249,7 +252,7 @@ var _cyrius_path = 0;
 # ================================================================
 # Parallel-array symbol table for cross-file go-to-definition and
 # document-outline support. Indexed lazily — every textDocument/
-# didOpen / didChange / didSave triggers `lsp_index_file(path)`,
+# didOpen / didChange / didSave triggers `lsp_index_file_r(path, …)`,
 # which scans the file for top-level fn/var/enum/struct decls and
 # recursively walks `include "..."` directives. A path is indexed
 # at most once per LSP session (tracked by the indexed-path set, `_lsp_indexed_off`)
@@ -478,7 +481,11 @@ fn _lsp_find_eol(buf, start, total): i64 {
 # recursively walk `include "..."` directives. Path is the absolute
 # cstring file path. Idempotent — second call on the same path is a
 # no-op via _lsp_already_indexed. Returns 0 on success.
-fn lsp_index_file(path): i64 {
+# 6.7.16 — an include resolves from `root` (the project root; a loose file's: this server's working
+# directory), then `root`/`incdir` (the entry's directory, the CLI's `#@incdir`), then the including
+# file's own directory — always to an absolute path (_lsp_index_resolve). It resolved against the
+# server's working directory, as given. CHANGELOG [6.7.16]
+fn lsp_index_file_r(path, root, incdir): i64 {
     if (_lsp_already_indexed(path) == 1) { return 0; }
     var path_off = _lsp_mark_indexed(path);
     if (path_off < 0) { return 0; }    # allocation refused → soft-fail
@@ -490,76 +497,49 @@ fn lsp_index_file(path): i64 {
     var total = 0;
     var buf = file_read_whole(path, &total);
     if (buf == 0) { return 0; }
+    var path_dir = _lsp_dir_of(path);
 
-    # Compute the directory of `path` for include-relative resolution.
-    var path_len = strlen(path);
-    var slash = 0 - 1;
-    var pi = 0;
-    while (pi < path_len) {
-        if (load8(path + pi) == 47) { slash = pi; }
-        pi = pi + 1;
-    }
-    var path_dir = 0;
-    var path_dir_len = 0;
-    if (slash >= 0) {
-        path_dir_len = slash + 1;       # include trailing slash
-        path_dir = alloc(path_dir_len + 1);
-        var di = 0;
-        while (di < path_dir_len) {
-            store8(path_dir + di, load8(path + di));
-            di = di + 1;
-        }
-        store8(path_dir + path_dir_len, 0);
-    }
-
-    var line = 0;
     var pos = 0;
     while (pos < total) {
         var eol = _lsp_find_eol(buf, pos, total);
-
-        # `include "path/to/file.cyr"` — recurse.
-        # Match at start-of-line (no leading whitespace; cyrius style).
+        # `include "path/to/file.cyr"` at column 0 (as cycc reads it) — recurse.
         if (eol - pos > 9 && memeq(buf + pos, "include \"", 9) == 1) {
             var qs = pos + 9;
             var qe = qs;
             while (qe < eol && load8(buf + qe) != 34) { qe = qe + 1; }
             if (qe < eol && qe > qs) {
-                var inc_len = qe - qs;
-                # Try project-relative first (typical cyrius style:
-                # `include "lib/string.cyr"` resolves from CWD).
-                var inc_proj = alloc(inc_len + 1);
-                var ii = 0;
-                while (ii < inc_len) {
-                    store8(inc_proj + ii, load8(buf + qs + ii));
-                    ii = ii + 1;
-                }
-                store8(inc_proj + inc_len, 0);
-                if (file_exists(inc_proj) == 1) {
-                    lsp_index_file(inc_proj);
-                } elif (path_dir != 0) {
-                    # Fall back to relative-to-current-file dir.
-                    var inc_rel = alloc(path_dir_len + inc_len + 1);
-                    var ji = 0;
-                    while (ji < path_dir_len) {
-                        store8(inc_rel + ji, load8(path_dir + ji));
-                        ji = ji + 1;
-                    }
-                    var ki = 0;
-                    while (ki < inc_len) {
-                        store8(inc_rel + path_dir_len + ki, load8(buf + qs + ki));
-                        ki = ki + 1;
-                    }
-                    store8(inc_rel + path_dir_len + inc_len, 0);
-                    if (file_exists(inc_rel) == 1) {
-                        lsp_index_file(inc_rel);
-                    }
-                }
+                var inc = alloc(qe - qs + 1);
+                memcpy(inc, buf + qs, qe - qs);
+                store8(inc + qe - qs, 0);
+                var found = _lsp_index_resolve(inc, root, incdir, path_dir);
+                if (found != 0) { lsp_index_file_r(found, root, incdir); }
             }
         }
         pos = eol + 1;
-        line = line + 1;
     }
     lsp_index_decls(buf, total, path_off);
+    return 0;
+}
+
+# The file an `include "<inc>"` of a file in directory `path_dir` names, for lsp_index_file_r: an
+# absolute `inc` as is; else `root`/`inc`, `root`/`incdir`/`inc`, `path_dir`/`inc` (with `root` 0,
+# `inc` as given first); the first that exists, or 0.
+fn _lsp_index_resolve(inc, root, incdir, path_dir): i64 {
+    if (load8(inc) == 47) {
+        if (file_exists(inc) == 1) { return inc; }
+        return 0;
+    }
+    if (root != 0) {
+        var c1 = _cu_resolve_name(root, inc);
+        if (file_exists(c1) == 1) { return c1; }
+        if (incdir != 0) {
+            var c2 = _cu_resolve_name(_lsp_join(root, incdir, 0, strlen(incdir)), inc);
+            if (file_exists(c2) == 1) { return c2; }
+        }
+    } elif (file_exists(inc) == 1) { return inc; }
+    if (path_dir == 0 || load8(path_dir) == 0) { return 0; }   # a bare name has no directory to try
+    var c3 = _cu_resolve_name(path_dir, inc);
+    if (file_exists(c3) == 1) { return c3; }
     return 0;
 }
 
@@ -928,6 +908,1299 @@ fn _lsp_lift_fd(fd): i64 {
     return nfd;
 }
 
+# 6.7.12 — the directory the diagnostics' relative file names resolve against first: the project
+# root when the last compile ran `cyrius check` there; (6.7.13) outside a project this server's
+# working directory, where both loose routes compile (0 when it cannot be read).
+var _lsp_last_root = 0;
+# 6.7.13 — the name the last `cyrius check` outside a project was given for the file (relative to
+# the working directory when under it), so its verdict line is known; 0 otherwise. (6.7.16: in a
+# project, what the unit's check was given — its entry from the root, or the lib/ include file.)
+var _lsp_last_unit = 0;
+
+# The largest compiler output _lsp_drain reads: 64 MiB, the cap _LSP_DOC_MAX sets for a document.
+var _LSP_DRAIN_MAX = 67108864;
+
+# Read `fd` to its end into a fresh NUL-terminated buffer that doubles as it fills.
+# ⛔ 6.7.16 — both readers kept the first 8,191 bytes of the compiler's stderr and never read the
+# rest: src/frontend/parse_ctrl.cyr compiled alone printed 11,163, and a unit compile can print an
+# entry's warnings ahead of the open file's own error. Past _LSP_DRAIN_MAX it stops reading and says
+# so in the log (the child then meets a closed pipe). CHANGELOG [6.7.16]
+fn _lsp_drain(fd): i64 {
+    var cap = 8192;
+    var buf = alloc(cap);
+    if (buf == 0) { return 0; }
+    var total = 0;
+    var go = 1;
+    while (go == 1) {
+        if (total + 1 >= cap) {
+            if (cap >= _LSP_DRAIN_MAX) {
+                log_msg("the compiler printed more than 64 MiB (_LSP_DRAIN_MAX): the rest is not read");
+                break;
+            }
+            var nb = alloc(cap * 2);
+            if (nb == 0) {
+                log_msg("could not grow the compiler-output buffer: the rest is not read");
+                break;
+            }
+            memcpy(nb, buf, total);
+            buf = nb;
+            cap = cap * 2;
+        }
+        var r = sys_read(fd, buf + total, cap - 1 - total);
+        if (r == 0 - 4) { continue; }
+        if (r <= 0) { go = 0; }
+        else { total = total + r; }
+    }
+    store8(buf + total, 0);
+    return buf;
+}
+
+# Run `path` with `argv` and `envp` (NULL-terminated arrays) from directory `cwd` (0: this server's),
+# its stdin /dev/null and its standard fd `capfd` (1 or 2) a pipe this server drains (_lsp_drain),
+# the other one /dev/null. The text, or 0 when the pipe or the fork failed. The child's redirects keep
+# a fd that is already its target, and the pipe end is lifted above fd 2 first (6.7.16, see
+# _lsp_redirect / _lsp_lift_fd). One runner for the check and for `cyrius build --print-config`.
+fn _lsp_run_capture(path, argv, envp, cwd, capfd): i64 {
+    var pipe_fds[16];
+    if (sys_pipe(&pipe_fds) < 0) { return 0; }
+    var pipe_read = load32(&pipe_fds);
+    var pipe_write = load32(&pipe_fds + 4);
+    var pid = sys_fork();
+    if (pid < 0) { return _lsp_fork_failed(path, pid, pipe_read, pipe_write); }   # 6.6.20
+    if (pid == 0) {
+        sys_close(pipe_read);
+        pipe_write = _lsp_lift_fd(pipe_write);
+        var nfdi = sys_open("/dev/null", 0, 0);
+        if (nfdi >= 0) { _lsp_redirect(nfdi, 0); }
+        var nfdo = sys_open("/dev/null", 1, 0);
+        if (nfdo >= 0) { _lsp_redirect(nfdo, 3 - capfd); }
+        _lsp_redirect(pipe_write, capfd);
+        # v6.5.16: sys_chdir, not a raw x86 `syscall(80, ...)` — 80 is the aarch64 peer's SYS_FSTAT
+        # (tests/gates/platform/macho_route_parity.sh).
+        if (cwd != 0) { sys_chdir(cwd); }
+        sys_execve(path, argv, envp);
+        sys_exit(127);
+    }
+    sys_close(pipe_write);
+    var out = _lsp_drain(pipe_read);
+    sys_close(pipe_read);
+    _lsp_reap(pid);
+    return out;
+}
+
+# `envp` (a NULL-terminated array, or 0 for none) for a unit compiled for ONE target: every
+# inherited target selector dropped (an editor started under CYRIUS_TARGET_WIN=1 would compile every
+# unit for Windows) and `selector` (an entry such as "CYRIUS_TARGET_WIN=1", or 0) added. A fresh
+# array. CHANGELOG [6.7.16]
+fn _lsp_envp_target(envp, selector): i64 {
+    var n = 0;
+    if (envp != 0) { while (load64(envp + n * 8) != 0) { n = n + 1; } }
+    var out = alloc((n + 2) * 8);
+    var k = 0;
+    var i = 0;
+    while (i < n) {
+        var e = load64(envp + i * 8);
+        if (_lsp_env_selects(e) == 0) {
+            store64(out + k * 8, e);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    if (selector != 0) {
+        store64(out + k * 8, selector);
+        k = k + 1;
+    }
+    store64(out + k * 8, 0);
+    return out;
+}
+
+# 1 when environment entry `e` selects a compile target (what _lsp_envp_target drops).
+fn _lsp_env_selects(e): i64 {
+    if (_lsp_env_named(e, "CYRIUS_TARGET_WIN=") == 1) { return 1; }
+    if (_lsp_env_named(e, "CYRIUS_TARGET_AGNOS=") == 1) { return 1; }
+    if (_lsp_env_named(e, "CYRIUS_TARGET_EFI=") == 1) { return 1; }
+    if (_lsp_env_named(e, "CYRIUS_MACHO=") == 1) { return 1; }
+    if (_lsp_env_named(e, "CYRIUS_MACHO_ARM=") == 1) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# COMPILE UNITS (6.7.16)
+# ================================================================
+# ⛔ issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md — in a project the open file
+# was always the unit (`cyrius check --with-deps --no-redirect <the open file>`). A file that is an
+# `include` of another was compiled ALONE, so every name an earlier include declares read
+# "undefined": 55 false errors on src/frontend/parse_ctrl.cyr, a duplicate-fn warning for each fn of
+# lib/string.cyr and 67 on lib/syscalls_windows.cyr (the [deps] prepend defining them first), and 3
+# errors on bootstrap/cybs.cyr (assembly for the seed's bootstrap/asm, not cycc input). Now each file
+# is checked through its UNIT — (entry, target, deps) — chosen from the project's include graph, in
+# one of five modes:
+#   SELF      an entry: checked itself, and each file its compile names gets its list, as before
+#             (a project file with the [deps] prepend; a lib/ module standalone, below)
+#   FRAGMENT  reached from an entry on this server's own target: the entry is compiled; the open
+#             file and each named file whose own unit is the same get their lists (one file, one
+#             unit: a shared include another entry reaches first is left to that entry)
+#   PEER      reached only on a target this server selects by environment (an x86_64 Linux server:
+#             CYRIUS_TARGET_WIN=1, CYRIUS_TARGET_AGNOS=1, CYRIUS_MACHO=1, CYRIUS_TARGET_EFI=1): the
+#             entry is compiled under it, and the open file alone gets its list
+#   NOTE      reached only on a target this server cannot compile for (aarch64, cx): no compile, one
+#             Information diagnostic saying so
+#   SKIP      named by the manifest's `[lsp] skip`: never compiled
+# A FRAGMENT or PEER whose own list is clean while its unit has errors gets a one-line Information
+# note naming the unit. THE GRAPH: every .cyr under the root but hidden directories, the root's build/
+# and dist/, and a subdirectory with its own cyrius.cyml (a sub-project); test files are not in it (a
+# test's includes make nothing a fragment, and a test is its own unit). Each column-0 `include "x"`
+# resolves as cycc resolves it — from the root, then the entry's own directory (the CLI's `#@incdir`)
+# — and holds on the targets its #ifdef / #ifndef stack lets it through (_cu_sym_mask). ENTRIES: the
+# manifest's [build] entry (`cyrius build --print-config`: the CLI's own resolution, `src` included),
+# then every non-lib/ .cyr no other .cyr includes. A fragment's entry: the manifest's first, then the
+# fewest include hops, then path order. lib/ keeps the contract
+# tests/gates/toolchain/stdlib_modules_self_sufficient.sh pins: a peer is lib/<R>_<x>.cyr where
+# lib/<R>.cyr exists, included by R's family, with no `# Usage: include` line of its own and no
+# distlib marker; anything else is public, checked as `include "lib/<m>.cyr"` alone (no prepend), and
+# a peer is checked through its nearest public includer under the target that includes it. The graph
+# is kept per root and refreshed by mtime + size (an unknown file walks it again); a unit's compile is
+# kept on its closure's mtimes and sizes, lib/**, the manifest + lock and the CLI / cycc binaries, so N
+# fragments of one entry cost one compile. CHANGELOG [6.7.16]
+#
+# A graph (alloc 136): 0 root  8 its length  16 files (a vec of file records, sorted by path)  24 / 32
+#   the path index and its capacity  40 generation (bumped on every change)  48 the manifest entry's
+#   index (-1 none)  56 the [lsp] skip paths (absolute)  64 what the configuration was read from
+#   72 the unit compiles kept  80 opened files the walk does not reach  88 1 once walked  96 the
+#   entries in rank order  104 the walk stamp  112 1 once the configuration was read  120 the manifest
+#   entry relative to the root (0 none)  128 1 after a walk: every edge is resolved again
+# A file record (alloc 112): 0 path (absolute)  8 the same past root + "/"  16 / 24 / 32 mtime sec /
+#   nsec / size  40 flags (_CU_LIB / _CU_FOLD / _CU_USAGE / _CU_INCLUDED)  48 its include edges  56 /
+#   64 its unit and the generation it was chosen in  72 1 = a lib/ peer  80 its lib/ includers (a vec
+#   of index, target-bits pairs)  88 / 96 a walk's stamp and hops  104 its closures as an entry (one
+#   slot per target)
+# An edge (alloc 32): 0 the include path as written  8 the targets it holds on  16 the file it names
+#   from the root (-1 none, -2 not resolved yet)  24 from the includer's own directory (-1 none)
+# A unit (alloc 64): 0 mode  8 entry (absolute)  16 entry (from the root)  24 target  32 deps (1 =
+#   --with-deps --no-redirect, 0 = `include "<entry>"` alone)  40 key  48 a NOTE's text  56 root
+var _CU_SELF = 1;
+var _CU_FRAGMENT = 2;
+var _CU_PEER = 3;
+var _CU_NOTE = 4;
+var _CU_SKIP = 5;
+var _CU_LIB = 2;
+var _CU_FOLD = 4;
+var _CU_USAGE = 8;
+var _CU_INCLUDED = 16;
+# The targets an #ifdef stack is read for, one bit each: 0 x86_64 Linux, 1 Windows, 2 agnos,
+# 3 x86_64 macOS, 4 EFI, 5 aarch64 Linux, 6 aarch64 macOS, 7 cx.
+var _CU_NCFG = 8;
+var _CU_ALL = 255;
+var _CU_FNV = 1469598103934665603;
+
+var _cu_graphs = 0;   # vec of graphs, one per project root
+var _cu_cur_g = 0;    # the graph of the document being handled (0: none)
+var _cu_st = 0;       # a stat buffer
+var _cu_rb = 0;       # the reused read buffer the scan reads a file into, and its capacity
+var _cu_rbcap = 0;
+var _cu_stk = 0;      # the scan's #if stack: 64 frames of (targets before it, its #else side)
+var _cu_dl_scr = 0;   # the directory listing's buffers (dir_list_into), grown to fit
+var _cu_dl_names = 0;
+var _cu_dl_ncap = 0;
+var _cu_dl_offs = 0;
+var _cu_dl_omax = 0;
+var _cu_tmpdir = 0;   # the private directory of the lib/ include file, and the file
+var _cu_wrapfile = 0;
+
+fn _cu_cfg_name(c): i64 {
+    if (c == 0) { return "x86_64 Linux"; }
+    if (c == 1) { return "Windows"; }
+    if (c == 2) { return "agnos"; }
+    if (c == 3) { return "x86_64 macOS"; }
+    if (c == 4) { return "EFI"; }
+    if (c == 5) { return "aarch64 Linux"; }
+    if (c == 6) { return "aarch64 macOS"; }
+    return "cx";
+}
+
+# The environment entry that makes an x86_64 cycc compile for target `c`; 0 for none (the host).
+fn _cu_cfg_env(c): i64 {
+    if (c == 1) { return "CYRIUS_TARGET_WIN=1"; }
+    if (c == 2) { return "CYRIUS_TARGET_AGNOS=1"; }
+    if (c == 3) { return "CYRIUS_MACHO=1"; }
+    if (c == 4) { return "CYRIUS_TARGET_EFI=1"; }
+    return 0;
+}
+
+# The target this server's unselected compiles are for: its own.
+fn _cu_host_cfg(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 6;
+    #endif
+    return 3;
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 5;
+    #endif
+    return 0;
+}
+
+# The k-th target a unit is looked for on: the host first, then — an x86_64 Linux server only, whose
+# cycc selects them by environment — Windows, agnos, x86_64 macOS and EFI; -1 past the last.
+fn _cu_try_cfg(k): i64 {
+    if (k == 0) { return _cu_host_cfg(); }
+    if (_cu_host_cfg() != 0 || k > 4) { return 0 - 1; }
+    return k;
+}
+
+# 1 when this server compiles for target `c` (the host, or one _cu_try_cfg selects).
+fn _cu_can_select(c): i64 {
+    if (c == _cu_host_cfg()) { return 1; }
+    if (_cu_host_cfg() == 0 && c >= 1 && c <= 4) { return 1; }
+    return 0;
+}
+
+# The targets (bits) an `#ifdef <s[0, n)>` holds on — the predefines each target's cycc sets — or -1
+# for any other name (a project's own flag, CYRIUS_POISON): both of its sides are kept.
+fn _cu_sym_mask(s, n): i64 {
+    if (n == 19 && memeq(s, "CYRIUS_TARGET_LINUX", 19) == 1) { return 33; }
+    if (n == 17 && memeq(s, "CYRIUS_TARGET_WIN", 17) == 1) { return 18; }
+    if (n == 17 && memeq(s, "CYRIUS_TARGET_EFI", 17) == 1) { return 16; }
+    if (n == 19 && memeq(s, "CYRIUS_TARGET_MACOS", 19) == 1) { return 72; }
+    if (n == 19 && memeq(s, "CYRIUS_TARGET_AGNOS", 19) == 1) { return 4; }
+    if (n == 16 && memeq(s, "CYRIUS_TARGET_CX", 16) == 1) { return 128; }
+    if (n == 15 && memeq(s, "CYRIUS_ARCH_X86", 15) == 1) { return 31; }
+    if (n == 19 && memeq(s, "CYRIUS_ARCH_AARCH64", 19) == 1) { return 96; }
+    if (n == 26 && memeq(s, "CYRIUS_HAS_VAL_SIMD_PARAMS", 26) == 1) { return 255; }
+    return 0 - 1;
+}
+
+fn _cu_mode_name(m): i64 {
+    if (m == _CU_SELF) { return "itself"; }
+    if (m == _CU_FRAGMENT) { return "fragment"; }
+    if (m == _CU_PEER) { return "peer"; }
+    if (m == _CU_NOTE) { return "note"; }
+    return "skip";
+}
+
+fn _cu_f(g, i): i64 { return vec_get(load64(g + 16), i); }
+fn _cu_nf(g): i64 { return vec_len(load64(g + 16)); }
+fn _cu_flag(f, b): i64 {
+    if ((load64(f + 40) & b) != 0) { return 1; }
+    return 0;
+}
+
+# a + b as a fresh cstr.
+fn _cu_cat(a, b): i64 {
+    var al = strlen(a);
+    var bl = strlen(b);
+    var r = alloc(al + bl + 1);
+    memcpy(r, a, al);
+    memcpy(r + al, b, bl);
+    store8(r + al + bl, 0);
+    return r;
+}
+
+# `dir` + "/" + `inc` with any leading "./" of `inc` dropped; `inc` itself when it is absolute.
+fn _cu_resolve_name(dir, inc): i64 {
+    if (load8(inc) == 47) { return inc; }
+    var p = inc;
+    while (load8(p) == 46 && load8(p + 1) == 47) { p = p + 2; }
+    return _lsp_join(dir, p, 0, strlen(p));
+}
+
+fn _cu_strcmp(a, b): i64 {
+    var i = 0;
+    while (load8(a + i) == load8(b + i)) {
+        if (load8(a + i) == 0) { return 0; }
+        i = i + 1;
+    }
+    return load8(a + i) - load8(b + i);
+}
+
+fn _cu_cmp_files(a, b): i64 { return _cu_strcmp(load64(a + 8), load64(b + 8)); }
+
+fn _cu_hash_str(h, s): i64 {
+    var i = 0;
+    while (load8(s + i) != 0) {
+        h = (h ^ load8(s + i)) * 1099511628211;
+        i = i + 1;
+    }
+    return h;
+}
+
+fn _cu_hash_int(h, v): i64 {
+    var k = 0;
+    while (k < 8) {
+        h = (h ^ ((v >> (k * 8)) & 255)) * 1099511628211;
+        k = k + 1;
+    }
+    return h;
+}
+
+# stat `path` into _cu_st: its mode bits, or -1. _cu_st_mt / _mn / _sz read the rest.
+fn _cu_stat(path): i64 {
+    if (_cu_st == 0) { _cu_st = alloc(256); }
+    if (sys_stat(path, _cu_st) < 0) { return 0 - 1; }
+    return load32(_cu_st + STAT_MODE) & 65535;
+}
+fn _cu_st_mt(): i64 { return load64(_cu_st + STAT_MTIME); }
+fn _cu_st_mn(): i64 { return load64(_cu_st + STAT_MTIME_NSEC); }
+fn _cu_st_sz(): i64 { return load64(_cu_st + STAT_SIZE); }
+
+# `h` mixed with `path`'s mtime and size (-1 when it does not stat).
+fn _cu_mix_stat(h, path): i64 {
+    if (path == 0 || _cu_stat(path) < 0) { return _cu_hash_int(h, 0 - 1); }
+    h = _cu_hash_int(h, _cu_st_mt());
+    h = _cu_hash_int(h, _cu_st_mn());
+    return _cu_hash_int(h, _cu_st_sz());
+}
+
+# `h` mixed with file record `f`'s path and the mtime and size its refresh read.
+fn _cu_mix_rec(h, f): i64 {
+    h = _cu_hash_str(h, load64(f));
+    h = _cu_hash_int(h, load64(f + 16));
+    h = _cu_hash_int(h, load64(f + 24));
+    return _cu_hash_int(h, load64(f + 32));
+}
+
+# The path index of graph `g`: open addressing over its files' paths.
+fn _cu_index(g): i64 {
+    var n = _cu_nf(g);
+    var cap = 64;
+    while (cap < n * 2 + 16) { cap = cap * 2; }
+    var t = alloc(cap * 8);
+    memset(t, 0, cap * 8);
+    var i = 0;
+    while (i < n) {
+        var s = _cu_hash_str(_CU_FNV, load64(_cu_f(g, i))) & (cap - 1);
+        while (load64(t + s * 8) != 0) { s = (s + 1) & (cap - 1); }
+        store64(t + s * 8, i + 1);
+        i = i + 1;
+    }
+    store64(g + 24, t);
+    store64(g + 32, cap);
+    return 0;
+}
+
+# The index of the file at absolute `path` in graph `g`, or -1.
+fn _cu_find(g, path): i64 {
+    var t = load64(g + 24);
+    if (t == 0) { return 0 - 1; }
+    var cap = load64(g + 32);
+    var s = _cu_hash_str(_CU_FNV, path) & (cap - 1);
+    while (load64(t + s * 8) != 0) {
+        var i = load64(t + s * 8) - 1;
+        if (streq(load64(_cu_f(g, i)), path) == 1) { return i; }
+        s = (s + 1) & (cap - 1);
+    }
+    return 0 - 1;
+}
+
+# Read `path` whole into the reused buffer _cu_rb (up to _LSP_DOC_MAX); its length, or -1.
+fn _cu_read(path): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    if (_cu_rb == 0) {
+        _cu_rbcap = 262144;
+        _cu_rb = alloc(_cu_rbcap);
+    }
+    var n = 0;
+    var go = 1;
+    while (go == 1) {
+        if (n + 1 >= _cu_rbcap) {
+            var nb = 0;
+            if (_cu_rbcap < _LSP_DOC_MAX) { nb = alloc(_cu_rbcap * 2); }
+            if (nb == 0) { break; }
+            memcpy(nb, _cu_rb, n);
+            _cu_rb = nb;
+            _cu_rbcap = _cu_rbcap * 2;
+        }
+        var r = sys_read(fd, _cu_rb + n, _cu_rbcap - 1 - n);
+        if (r == 0 - 4) { continue; }
+        if (r <= 0) { go = 0; }
+        else { n = n + r; }
+    }
+    sys_close(fd);
+    store8(_cu_rb + n, 0);
+    return n;
+}
+
+# The offset of `needle` in buf[a, b), or -1.
+fn _cu_find_in(buf, a, b, needle): i64 {
+    var nl = strlen(needle);
+    var p = a;
+    while (p + nl <= b) {
+        if (memeq(buf + p, needle, nl) == 1) { return p; }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 when buf[w, w + n) is the directive word `word`.
+fn _cu_word(buf, w, n, word): i64 {
+    if (n != strlen(word)) { return 0; }
+    return memeq(buf + w, word, n);
+}
+
+# Read file record `f` from disk: its include edges, each with the targets its #ifdef / #ifndef stack
+# lets it through, and for a lib/ file its distlib marker (the first 40 lines) and its own `# Usage:
+# include "<path>"` line. An `include` counts at column 0 only, as cycc reads it; `#if`, `#ifplat`,
+# `#elif` and a flag that is not a target predefine keep both of their sides.
+fn _cu_scan(f): i64 {
+    var edges = vec_new();
+    store64(f + 48, edges);
+    var fl = load64(f + 40) & _CU_LIB;
+    var n = _cu_read(load64(f));
+    if (n < 0) {
+        store64(f + 40, fl);
+        return 0;
+    }
+    var buf = _cu_rb;
+    var uneedle = 0;
+    if (fl != 0) { uneedle = _cu_cat(_cu_cat("include \"", load64(f + 8)), "\""); }
+    if (_cu_stk == 0) { _cu_stk = alloc(1024); }
+    var stk = _cu_stk;
+    var depth = 0;
+    var over = 0;
+    var cur = _CU_ALL;
+    var line = 0;
+    var pos = 0;
+    while (pos < n) {
+        var eol = pos;
+        while (eol < n && load8(buf + eol) != 10) { eol = eol + 1; }
+        if (eol - pos > 9 && memeq(buf + pos, "include \"", 9) == 1) {
+            var qs = pos + 9;
+            var qe = qs;
+            while (qe < eol && load8(buf + qe) != 34) { qe = qe + 1; }
+            if (qe < eol && qe > qs) {
+                var inc = alloc(qe - qs + 1);
+                memcpy(inc, buf + qs, qe - qs);
+                store8(inc + qe - qs, 0);
+                var e = alloc(32);
+                store64(e, inc);
+                store64(e + 8, cur);
+                store64(e + 16, 0 - 2);   # not resolved yet (_cu_derive)
+                store64(e + 24, 0 - 1);
+                vec_push(edges, e);
+            }
+        } else {
+            var p = pos;
+            while (p < eol && (load8(buf + p) == 32 || load8(buf + p) == 9)) { p = p + 1; }
+            if (p < eol && load8(buf + p) == 35) {
+                var w = p + 1;
+                var we = w;
+                while (we < eol && load8(buf + we) > 32) { we = we + 1; }
+                var wl = we - w;
+                var sp = we;
+                while (sp < eol && (load8(buf + sp) == 32 || load8(buf + sp) == 9)) { sp = sp + 1; }
+                var se = sp;
+                while (se < eol && _lsp_id_cont(load8(buf + se)) == 1) { se = se + 1; }
+                var isdef = _cu_word(buf, w, wl, "ifdef");
+                if (isdef == 1 || _cu_word(buf, w, wl, "ifndef") == 1) {
+                    if (depth < 64) {
+                        var m = _cu_sym_mask(buf + sp, se - sp);
+                        var a = cur;
+                        var b = cur;
+                        if (m >= 0 && isdef == 1) { a = cur & m; b = cur & (_CU_ALL - m); }
+                        if (m >= 0 && isdef == 0) { a = cur & (_CU_ALL - m); b = cur & m; }
+                        store64(stk + depth * 16, cur);
+                        store64(stk + depth * 16 + 8, b);
+                        cur = a;
+                        depth = depth + 1;
+                    } else { over = over + 1; }
+                } elif (_cu_word(buf, w, wl, "if") == 1 || _cu_word(buf, w, wl, "ifplat") == 1) {
+                    if (depth < 64) {
+                        store64(stk + depth * 16, cur);
+                        store64(stk + depth * 16 + 8, cur);
+                        depth = depth + 1;
+                    } else { over = over + 1; }
+                } elif (_cu_word(buf, w, wl, "elif") == 1) {
+                    if (over == 0 && depth > 0) {
+                        cur = load64(stk + (depth - 1) * 16);
+                        store64(stk + (depth - 1) * 16 + 8, cur);
+                    }
+                } elif (_cu_word(buf, w, wl, "else") == 1) {
+                    if (over == 0 && depth > 0) { cur = load64(stk + (depth - 1) * 16 + 8); }
+                } elif (_cu_word(buf, w, wl, "endif") == 1 || _cu_word(buf, w, wl, "endplat") == 1) {
+                    if (over > 0) { over = over - 1; }
+                    elif (depth > 0) {
+                        depth = depth - 1;
+                        cur = load64(stk + depth * 16);
+                    }
+                }
+            }
+        }
+        if (fl != 0) {
+            if (line < 40) {
+                if (_cu_find_in(buf, pos, eol, "Generated by: cyrius distlib") >= 0) { fl = fl | _CU_FOLD; }
+                if (_cu_find_in(buf, pos, eol, "Bundled distribution of") >= 0) { fl = fl | _CU_FOLD; }
+            }
+            if (load8(buf + pos) == 35) {
+                var us = _cu_find_in(buf, pos, eol, "sage:");
+                if (us >= 0 && _cu_find_in(buf, us, eol, uneedle) >= 0) { fl = fl | _CU_USAGE; }
+            }
+        }
+        pos = eol + 1;
+        line = line + 1;
+    }
+    store64(f + 40, fl);
+    return 0;
+}
+
+# The entries of directory `d` into the reused name buffers (name k at _cu_dl_names +
+# _cu_dl_offs[k]); their count, or a negative error. The buffers grow until the directory fits.
+fn _cu_list(d): i64 {
+    if (_cu_dl_scr == 0) {
+        _cu_dl_scr = alloc(4096);
+        _cu_dl_ncap = 65536;
+        _cu_dl_names = alloc(_cu_dl_ncap);
+        _cu_dl_omax = 2048;
+        _cu_dl_offs = alloc(_cu_dl_omax * 8);
+    }
+    var ds = str_from(d);
+    var tries = 0;
+    while (tries < 24) {
+        var r = dir_list_into(ds, _cu_dl_scr, 4096, _cu_dl_names, _cu_dl_ncap, _cu_dl_offs, _cu_dl_omax);
+        if (r == 0 - 3) {
+            _cu_dl_ncap = _cu_dl_ncap * 2;
+            _cu_dl_names = alloc(_cu_dl_ncap);
+        } elif (r == 0 - 4) {
+            _cu_dl_omax = _cu_dl_omax * 2;
+            _cu_dl_offs = alloc(_cu_dl_omax * 8);
+        } else { return r; }
+        tries = tries + 1;
+    }
+    return 0 - 1;
+}
+
+# The record for `path` (statted: mtime `mt` / `mn`, size `sz`): the previous walk's when unchanged,
+# its scan kept; else a new one, scanned.
+fn _cu_record(g, oldfiles, path, mt, mn, sz): i64 {
+    if (oldfiles != 0) {
+        var oi = _cu_find(g, path);
+        if (oi >= 0) {
+            var of = vec_get(oldfiles, oi);
+            if (load64(of + 16) == mt && load64(of + 24) == mn && load64(of + 32) == sz) { return of; }
+        }
+    }
+    var f = alloc(112);
+    memset(f, 0, 112);
+    store64(f, path);
+    var rel = path + load64(g + 8) + 1;
+    store64(f + 8, rel);
+    store64(f + 16, mt);
+    store64(f + 24, mn);
+    store64(f + 32, sz);
+    if (memeq(rel, "lib/", 4) == 1) { store64(f + 40, _CU_LIB); }
+    _cu_scan(f);
+    return f;
+}
+
+# Walk graph `g`'s root: every .cyr file, but not under a hidden directory, the root's build/ or dist/,
+# a linked directory, or a subdirectory with its own cyrius.cyml (a sub-project). Sorted by path.
+fn _cu_walk(g): i64 {
+    var root = load64(g);
+    var oldfiles = 0;
+    if (load64(g + 88) == 1) { oldfiles = load64(g + 16); }
+    var files = vec_new();
+    var dirs = vec_new();
+    vec_push(dirs, root);
+    while (vec_len(dirs) > 0) {
+        var d = vec_pop(dirs);
+        var atroot = streq(d, root);
+        var cnt = _cu_list(d);
+        var k = 0;
+        while (k < cnt) {
+            var name = _cu_dl_names + load64(_cu_dl_offs + k * 8);
+            k = k + 1;
+            if (load8(name) == 46) { continue; }
+            var full = _lsp_join(d, name, 0, strlen(name));
+            var mode = _cu_stat(full);
+            if (mode < 0) { continue; }
+            var mt = _cu_st_mt();
+            var mn = _cu_st_mn();
+            var sz = _cu_st_sz();
+            if ((mode & 61440) == 16384) {
+                if (atroot == 1 && (streq(name, "build") == 1 || streq(name, "dist") == 1)) { continue; }
+                var lb[16];
+                if (sys_readlink(full, &lb, 8) >= 0) { continue; }
+                if (file_exists(_lsp_join(full, "cyrius.cyml", 0, 11)) == 1) { continue; }
+                vec_push(dirs, full);
+            } elif ((mode & 61440) == 32768 && _lsp_ends(name, ".cyr") == 1) {
+                vec_push(files, _cu_record(g, oldfiles, full, mt, mn, sz));
+            }
+        }
+    }
+    vec_sort_by(files, &_cu_cmp_files);
+    store64(g + 16, files);
+    store64(g + 88, 1);
+    store64(g + 128, 1);   # the file indices moved: every edge is resolved again
+    return 0;
+}
+
+# The length of lib/ file `f`'s stem when it is top-level ("lib/<stem>.cyr"), else -1.
+fn _cu_stem_len(f): i64 {
+    if (_cu_flag(f, _CU_LIB) == 0) { return 0 - 1; }
+    var rel = load64(f + 8);
+    var sl = strlen(rel) - 8;
+    if (sl <= 0) { return 0 - 1; }
+    var q = 0;
+    while (q < sl) {
+        if (load8(rel + 4 + q) == 47) { return 0 - 1; }
+        q = q + 1;
+    }
+    return sl;
+}
+
+# 1 when lib/ file `i` is a PEER, by the stdlib's contract (stdlib_modules_self_sufficient.sh): it is
+# lib/<R>_<x>.cyr where lib/<R>.cyr exists (the longest such R), a file of R's family (R itself or an
+# R_*) includes it, and it has neither the distlib marker nor a `# Usage: include` line naming itself.
+fn _cu_lib_peer(g, i): i64 {
+    var f = _cu_f(g, i);
+    if (_cu_flag(f, _CU_FOLD) == 1 || _cu_flag(f, _CU_USAGE) == 1) { return 0; }
+    var sl = _cu_stem_len(f);
+    if (sl <= 0) { return 0; }
+    var stem = load64(f + 8) + 4;
+    var n = _cu_nf(g);
+    var rl = 0;
+    var j = 0;
+    while (j < n) {
+        var rj = _cu_stem_len(_cu_f(g, j));
+        if (rj > rl && rj < sl && load8(stem + rj) == 95) {
+            if (memeq(stem, load64(_cu_f(g, j) + 8) + 4, rj) == 1) { rl = rj; }
+        }
+        j = j + 1;
+    }
+    if (rl == 0) { return 0; }
+    var rd = load64(f + 80);
+    var k = 0;
+    while (k < vec_len(rd)) {
+        var inf = _cu_f(g, vec_get(rd, k));
+        var il = _cu_stem_len(inf);
+        var is = load64(inf + 8) + 4;
+        if (il >= rl && memeq(is, stem, rl) == 1) {
+            if (il == rl || load8(is + rl) == 95) { return 1; }
+        }
+        k = k + 2;
+    }
+    return 0;
+}
+
+# Resolve edge `e` of file record `f`: the file it names from the root (e + 16), else — for the "is it
+# included" test only — from the includer's own directory (e + 24); -1 when none.
+fn _cu_resolve_edge(g, f, e): i64 {
+    var inc = load64(e);
+    var t = _cu_find(g, _cu_resolve_name(load64(g), inc));
+    store64(e + 16, t);
+    store64(e + 24, 0 - 1);
+    if (t < 0 && load8(inc) != 47) { store64(e + 24, _cu_find(g, _cu_resolve_name(_lsp_dir_of(load64(f)), inc))); }
+    return 0;
+}
+
+# Graph `g`'s derived state, after a walk or a rescan: the path index, every edge resolved (from the
+# root, else — for the "is it included" test only — from the includer's own directory), each file's
+# `included` flag and lib/ includers, the lib/ classes, the manifest entry and the ranked entries.
+fn _cu_derive(g): i64 {
+    _cu_index(g);
+    var root = load64(g);
+    var n = _cu_nf(g);
+    var i = 0;
+    while (i < n) {
+        var f = _cu_f(g, i);
+        store64(f + 40, load64(f + 40) & (0 - 1 - _CU_INCLUDED));
+        store64(f + 56, 0);
+        store64(f + 72, 0);
+        store64(f + 80, vec_new());
+        store64(f + 104, 0);
+        i = i + 1;
+    }
+    var all = load64(g + 128);
+    store64(g + 128, 0);
+    i = 0;
+    while (i < n) {
+        var f2 = _cu_f(g, i);
+        var edges = load64(f2 + 48);
+        var j = 0;
+        while (j < vec_len(edges)) {
+            var e = vec_get(edges, j);
+            j = j + 1;
+            # An edge is resolved once — after its file's scan, or after a walk moved the indices —
+            # so a save does not re-join every include path of the project (no allocator free).
+            if (all != 0 || load64(e + 16) == 0 - 2) { _cu_resolve_edge(g, f2, e); }
+            var t = load64(e + 16);
+            if (t < 0) { t = load64(e + 24); }
+            if (t >= 0 && t != i && load64(e + 8) != 0) {
+                var tf = _cu_f(g, t);
+                store64(tf + 40, load64(tf + 40) | _CU_INCLUDED);
+                if (_cu_flag(f2, _CU_LIB) == 1 && _cu_flag(tf, _CU_LIB) == 1) {
+                    vec_push(load64(tf + 80), i);
+                    vec_push(load64(tf + 80), load64(e + 8));
+                }
+            }
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < n) {
+        var f3 = _cu_f(g, i);
+        if (_cu_flag(f3, _CU_LIB) == 1) { store64(f3 + 72, _cu_lib_peer(g, i)); }
+        i = i + 1;
+    }
+    var mi = 0 - 1;
+    if (load64(g + 120) != 0) { mi = _cu_find(g, _cu_resolve_name(root, load64(g + 120))); }
+    if (mi >= 0 && _cu_flag(_cu_f(g, mi), _CU_LIB) == 1) { mi = 0 - 1; }
+    store64(g + 48, mi);
+    var ents = vec_new();
+    if (mi >= 0) { vec_push(ents, mi); }
+    i = 0;
+    while (i < n) {
+        var f4 = _cu_f(g, i);
+        if (i != mi && _cu_flag(f4, _CU_LIB) == 0 && _cu_flag(f4, _CU_INCLUDED) == 0) { vec_push(ents, i); }
+        i = i + 1;
+    }
+    store64(g + 96, ents);
+    store64(g + 40, load64(g + 40) + 1);
+    return 0;
+}
+
+# Entry `e`'s closure on target `c` (a bit index): a vec of (file index, include hops) pairs, every
+# non-lib/ file it reaches through edges that hold on `c`, each resolved as cycc resolves it for this
+# entry — from the root, then the entry's own directory (the `#@incdir` the CLI writes). Kept until
+# the graph changes.
+fn _cu_closure(g, e, c): i64 {
+    var ef = _cu_f(g, e);
+    var slots = load64(ef + 104);
+    if (slots == 0) {
+        slots = alloc(_CU_NCFG * 8);
+        memset(slots, 0, _CU_NCFG * 8);
+        store64(ef + 104, slots);
+    }
+    var have = load64(slots + c * 8);
+    if (have != 0) { return have; }
+    var root = load64(g);
+    var incdir = _lsp_incdir(load64(ef + 8));
+    var idir = 0;
+    if (incdir != 0) { idir = _lsp_join(root, incdir, 0, strlen(incdir)); }
+    var bit = 1 << c;
+    var stamp = load64(g + 104) + 1;
+    store64(g + 104, stamp);
+    var out = vec_new();
+    store64(ef + 88, stamp);
+    vec_push(out, e);
+    vec_push(out, 0);
+    var qi = 0;
+    while (qi < vec_len(out)) {
+        var x = vec_get(out, qi);
+        var hx = vec_get(out, qi + 1);
+        qi = qi + 2;
+        var edges = load64(_cu_f(g, x) + 48);
+        var j = 0;
+        while (j < vec_len(edges)) {
+            var ed = vec_get(edges, j);
+            j = j + 1;
+            if ((load64(ed + 8) & bit) == 0) { continue; }
+            var t = load64(ed + 16);
+            if (t < 0 && idir != 0 && load8(load64(ed)) != 47) { t = _cu_find(g, _cu_resolve_name(idir, load64(ed))); }
+            if (t < 0) { continue; }
+            var tf = _cu_f(g, t);
+            if (_cu_flag(tf, _CU_LIB) == 1 || load64(tf + 88) == stamp) { continue; }
+            store64(tf + 88, stamp);
+            vec_push(out, t);
+            vec_push(out, hx + 1);
+        }
+    }
+    store64(slots + c * 8, out);
+    return out;
+}
+
+# The include hops from entry `e` to file `i` on target `c`, or -1 when `e` does not reach it there.
+fn _cu_hops(g, e, i, c): i64 {
+    var cl = _cu_closure(g, e, c);
+    var k = 0;
+    while (k < vec_len(cl)) {
+        if (vec_get(cl, k) == i) { return vec_get(cl, k + 1); }
+        k = k + 2;
+    }
+    return 0 - 1;
+}
+
+# The public lib/ module nearest above peer `i` on target `c` — the fewest include hops up lib/
+# includers whose edge holds on `c`, then path order — or -1.
+fn _cu_lib_ancestor(g, i, c): i64 {
+    var bit = 1 << c;
+    var stamp = load64(g + 104) + 1;
+    store64(g + 104, stamp);
+    store64(_cu_f(g, i) + 88, stamp);
+    var front = vec_new();
+    vec_push(front, i);
+    while (vec_len(front) > 0) {
+        var next = vec_new();
+        var best = 0 - 1;
+        var k = 0;
+        while (k < vec_len(front)) {
+            var rd = load64(_cu_f(g, vec_get(front, k)) + 80);
+            k = k + 1;
+            var j = 0;
+            while (j < vec_len(rd)) {
+                var a = vec_get(rd, j);
+                var m = vec_get(rd, j + 1);
+                j = j + 2;
+                if ((m & bit) == 0) { continue; }
+                var af = _cu_f(g, a);
+                if (load64(af + 88) == stamp) { continue; }
+                store64(af + 88, stamp);
+                if (load64(af + 72) == 0) {
+                    if (best < 0 || a < best) { best = a; }
+                } else { vec_push(next, a); }
+            }
+        }
+        if (best >= 0) { return best; }
+        front = next;
+    }
+    return 0 - 1;
+}
+
+# A unit record (see the layout above) for entry `epath` (`erel` from root `root`) on target `c`.
+fn _cu_unit(root, mode, epath, erel, c, deps): i64 {
+    var u = alloc(64);
+    memset(u, 0, 64);
+    store64(u, mode);
+    store64(u + 8, epath);
+    store64(u + 16, erel);
+    store64(u + 24, c);
+    store64(u + 32, deps);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, epath);
+    str_builder_add_cstr(sb, "|");
+    str_builder_add_int(sb, c);
+    str_builder_add_cstr(sb, "|");
+    str_builder_add_int(sb, deps);
+    store64(u + 40, str_data(str_builder_build(sb)));
+    store64(u + 56, root);
+    return u;
+}
+
+# The unit of mode `mode` whose entry is file `e` of graph `g`.
+fn _cu_unit_f(g, mode, e, c, deps): i64 {
+    var ef = _cu_f(g, e);
+    return _cu_unit(load64(g), mode, load64(ef), load64(ef + 8), c, deps);
+}
+
+# A NOTE for file `i`: reached only on the targets `reach` (bits), through `via`.
+fn _cu_note_unit(g, i, via, reach): i64 {
+    var u = _cu_unit_f(g, _CU_NOTE, via, _cu_host_cfg(), 0);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "not compiled here: ");
+    str_builder_add_cstr(sb, load64(_cu_f(g, i) + 8));
+    str_builder_add_cstr(sb, " is compiled only for ");
+    var c = 0;
+    var nn = 0;
+    while (c < _CU_NCFG) {
+        if ((reach & (1 << c)) != 0) {
+            if (nn > 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, _cu_cfg_name(c));
+            nn = nn + 1;
+        }
+        c = c + 1;
+    }
+    str_builder_add_cstr(sb, " (through ");
+    str_builder_add_cstr(sb, load64(_cu_f(g, via) + 8));
+    str_builder_add_cstr(sb, "), which this server does not compile for");
+    store64(u + 48, str_data(str_builder_build(sb)));
+    return u;
+}
+
+# The unit of lib/ file `i`: a public module is its own, standalone; a peer is checked through its
+# nearest public includer on the first target that reaches one (a FRAGMENT on the host, a PEER on a
+# selected target), else it is a NOTE.
+fn _cu_lib_unit(g, i): i64 {
+    if (load64(_cu_f(g, i) + 72) == 0) { return _cu_unit_f(g, _CU_SELF, i, _cu_host_cfg(), 0); }
+    var k = 0;
+    var c = _cu_try_cfg(0);
+    while (c >= 0) {
+        var a = _cu_lib_ancestor(g, i, c);
+        if (a >= 0) {
+            var md = _CU_PEER;
+            if (k == 0) { md = _CU_FRAGMENT; }
+            return _cu_unit_f(g, md, a, c, 0);
+        }
+        k = k + 1;
+        c = _cu_try_cfg(k);
+    }
+    var reach = 0;
+    var via = 0 - 1;
+    c = 0;
+    while (c < _CU_NCFG) {
+        if (_cu_can_select(c) == 0) {
+            var a2 = _cu_lib_ancestor(g, i, c);
+            if (a2 >= 0) {
+                reach = reach | (1 << c);
+                if (via < 0) { via = a2; }
+            }
+        }
+        c = c + 1;
+    }
+    if (reach != 0) { return _cu_note_unit(g, i, via, reach); }
+    return _cu_unit_f(g, _CU_SELF, i, _cu_host_cfg(), 0);
+}
+
+# The unit of project (non-lib/) file `i`: an entry is its own (the manifest's always); a fragment's
+# is the entry that reaches it on the first target one does — the manifest entry first, then the
+# fewest hops, then path order; reached only on a target this server cannot compile for, a NOTE;
+# reached by no entry at all, its own.
+fn _cu_proj_unit(g, i): i64 {
+    var mi = load64(g + 48);
+    if (i == mi || _cu_flag(_cu_f(g, i), _CU_INCLUDED) == 0) { return _cu_unit_f(g, _CU_SELF, i, _cu_host_cfg(), 1); }
+    var ents = load64(g + 96);
+    var k = 0;
+    var c = _cu_try_cfg(0);
+    while (c >= 0) {
+        var best = 0 - 1;
+        var bh = 0;
+        var j = 0;
+        while (j < vec_len(ents)) {
+            var e = vec_get(ents, j);
+            j = j + 1;
+            var h = _cu_hops(g, e, i, c);
+            if (h < 0) { continue; }
+            if (e == mi) {
+                best = e;
+                break;
+            }
+            if (best < 0 || h < bh) {
+                best = e;
+                bh = h;
+            }
+        }
+        if (best >= 0) {
+            var md = _CU_PEER;
+            if (k == 0) { md = _CU_FRAGMENT; }
+            return _cu_unit_f(g, md, best, c, 1);
+        }
+        k = k + 1;
+        c = _cu_try_cfg(k);
+    }
+    var reach = 0;
+    var via = 0 - 1;
+    c = 0;
+    while (c < _CU_NCFG) {
+        if (_cu_can_select(c) == 0) {
+            var j2 = 0;
+            while (j2 < vec_len(ents)) {
+                var e2 = vec_get(ents, j2);
+                j2 = j2 + 1;
+                if (_cu_hops(g, e2, i, c) >= 0) {
+                    reach = reach | (1 << c);
+                    if (via < 0) { via = e2; }
+                    break;
+                }
+            }
+        }
+        c = c + 1;
+    }
+    if (reach != 0) { return _cu_note_unit(g, i, via, reach); }
+    return _cu_unit_f(g, _CU_SELF, i, _cu_host_cfg(), 1);
+}
+
+# File `i`'s unit, chosen once per graph generation.
+fn _cu_unit_of(g, i): i64 {
+    var f = _cu_f(g, i);
+    if (load64(f + 56) != 0 && load64(f + 64) == load64(g + 40)) { return load64(f + 56); }
+    var u = 0;
+    if (_cu_flag(f, _CU_LIB) == 1) { u = _cu_lib_unit(g, i); }
+    else { u = _cu_proj_unit(g, i); }
+    store64(f + 56, u);
+    store64(f + 64, load64(g + 40));
+    return u;
+}
+
+# The offset just past `key` where it begins a line of `s`, or -1.
+fn _cu_cfg_value(s, key): i64 {
+    var kl = strlen(key);
+    var n = strlen(s);
+    var p = 0;
+    while (p + kl <= n) {
+        if ((p == 0 || load8(s + p - 1) == 10) && memeq(s + p, key, kl) == 1) { return p + kl; }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# s[p, the next '"' or the line's end) as a fresh cstr.
+fn _cu_quoted(s, p): i64 {
+    var e = p;
+    while (load8(s + e) != 0 && load8(s + e) != 34 && load8(s + e) != 10) { e = e + 1; }
+    var r = alloc(e - p + 1);
+    memcpy(r, s + p, e - p);
+    store8(r + e - p, 0);
+    return r;
+}
+
+# Read graph `g`'s manifest entry and `[lsp] skip` through `cyrius build --print-config` from its root
+# — the CLI's own resolution (`entry` or its synonym `src`, the pin's toolchain) — again whenever
+# cyrius.cyml, cyrius.lock or the CLI changed. 1 when they were read again. A CLI older than 6.7.16
+# prints no lsp.skip row (no skip), and a check that fails (an uninstalled pin) leaves no entry.
+fn _cu_config(g): i64 {
+    var root = load64(g);
+    var sig = _cu_mix_stat(_CU_FNV, _lsp_join(root, "cyrius.cyml", 0, 11));
+    sig = _cu_mix_stat(sig, _lsp_join(root, "cyrius.lock", 0, 11));
+    sig = _cu_mix_stat(sig, _cyrius_path);
+    if (load64(g + 112) == 1 && load64(g + 64) == sig) { return 0; }
+    store64(g + 112, 1);
+    store64(g + 64, sig);
+    store64(g + 120, 0);
+    var skip = vec_new();
+    store64(g + 56, skip);
+    var argv = alloc(32);
+    store64(argv, _cyrius_path);
+    store64(argv + 8, "build");
+    store64(argv + 16, "--print-config");
+    store64(argv + 24, 0);
+    var out = _lsp_run_capture(_cyrius_path, argv, _lsp_envp_target(_lsp_envp(), 0), root, 1);
+    if (out == 0) { return 1; }
+    var ep = _cu_cfg_value(out, "  build.entry = \"");
+    if (ep >= 0) { store64(g + 120, _cu_quoted(out, ep)); }
+    var p = _cu_cfg_value(out, "  lsp.skip = [");
+    if (p >= 0) {
+        while (load8(out + p) != 0 && load8(out + p) != 93 && load8(out + p) != 10) {
+            if (load8(out + p) == 34) {
+                var v = _cu_quoted(out, p + 1);
+                vec_push(skip, _cu_resolve_name(root, v));
+                p = p + strlen(v) + 2;
+            } else { p = p + 1; }
+        }
+    }
+    return 1;
+}
+
+# The graph of project root `root` (an empty one the first time).
+fn _cu_graph(root): i64 {
+    if (_cu_graphs == 0) { _cu_graphs = vec_new(); }
+    var i = 0;
+    while (i < vec_len(_cu_graphs)) {
+        var g = vec_get(_cu_graphs, i);
+        if (streq(load64(g), root) == 1) { return g; }
+        i = i + 1;
+    }
+    var ng = alloc(136);
+    memset(ng, 0, 136);
+    store64(ng, root);
+    store64(ng + 8, strlen(root));
+    store64(ng + 16, vec_new());
+    store64(ng + 48, 0 - 1);
+    store64(ng + 56, vec_new());
+    store64(ng + 72, vec_new());
+    store64(ng + 80, vec_new());
+    store64(ng + 96, vec_new());
+    vec_push(_cu_graphs, ng);
+    return ng;
+}
+
+# Bring graph `g` up to date for opening `path`: its configuration; every file's mtime and size (a
+# changed one is scanned again; a vanished one, or a .cyr `path` it does not hold and was not already
+# found missing by a walk, walks the tree again); then, after any change, the derived state.
+fn _cu_refresh(g, path): i64 {
+    var ch = _cu_config(g);
+    var walk = 0;
+    if (load64(g + 88) == 0) { walk = 1; }
+    else {
+        var files = load64(g + 16);
+        var i = 0;
+        while (i < vec_len(files)) {
+            var f = vec_get(files, i);
+            i = i + 1;
+            if (_cu_stat(load64(f)) < 0) {
+                walk = 1;
+                break;
+            }
+            var mt = _cu_st_mt();
+            var mn = _cu_st_mn();
+            var sz = _cu_st_sz();
+            if (mt != load64(f + 16) || mn != load64(f + 24) || sz != load64(f + 32)) {
+                store64(f + 16, mt);
+                store64(f + 24, mn);
+                store64(f + 32, sz);
+                _cu_scan(f);
+                ch = 1;
+            }
+        }
+        if (walk == 0 && _lsp_ends(path, ".cyr") == 1 && _cu_find(g, path) < 0) {
+            if (_lsp_vec_has(load64(g + 80), path) == 0) { walk = 1; }
+        }
+    }
+    if (walk == 1) {
+        _cu_walk(g);
+        store64(g + 80, vec_new());
+        ch = 1;
+    }
+    if (ch == 1) { _cu_derive(g); }
+    if (_lsp_ends(path, ".cyr") == 1 && _cu_find(g, path) < 0) { vec_push(load64(g + 80), path); }
+    return 0;
+}
+
+# The unit the document at `path`, under project root `root`, is checked through (never 0). A test
+# file, or a file the walk does not reach, is its own unit, as before 6.7.16.
+fn _cu_unit_for(root, path): i64 {
+    var g = _cu_graph(root);
+    _cu_cur_g = g;
+    _cu_refresh(g, path);
+    var rel = _lsp_rel_to(root, path);
+    if (_lsp_vec_has(load64(g + 56), path) == 1) { return _cu_unit(root, _CU_SKIP, path, rel, _cu_host_cfg(), 1); }
+    var i = _cu_find(g, path);
+    if (i < 0) { return _cu_unit(root, _CU_SELF, path, rel, _cu_host_cfg(), 1); }
+    return _cu_unit_of(g, i);
+}
+
+# 1 when the file at `path`'s own unit is the one keyed `key`.
+fn _cu_file_in_unit(path, key): i64 {
+    var g = _cu_cur_g;
+    if (g == 0) { return 0; }
+    var i = _cu_find(g, path);
+    if (i < 0) { return 0; }
+    return streq(load64(_cu_unit_of(g, i) + 40), key);
+}
+
+# A private file holding `include "<rel>"\n` — how a lib/ module is checked alone, the way the
+# stdlib's contract states it (stdlib_modules_self_sufficient.sh): INCLUDED, not fed as the entry. Fed
+# as the entry its include-once guard does not know its name, so a module its own includes reach
+# again was compiled twice (lib/alloc.cyr for agnos: 42 duplicate-fn warnings), and cycc refuses
+# lib/fnptr.cyr's fncall0..8 in the main source (by design, 6.6.20). The file lives in a directory
+# this server makes mode 0700 under $TMPDIR (absolute) or /tmp for the one compile (_cu_wrapper_done
+# removes both after it); mkdir fails on a name that exists, so nothing planted there is used. Its
+# path, or 0 when it cannot be written.
+fn _cu_wrapper(rel): i64 {
+    if (_cu_tmpdir == 0) {
+        var base = getenv("TMPDIR");
+        if (base == 0 || load8(base) != 47) { base = "/tmp"; }
+        var k = 0;
+        while (k < 16 && _cu_tmpdir == 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, base);
+            str_builder_add_cstr(sb, "/cyrius-lsp-");
+            str_builder_add_int(sb, sys_getpid());
+            str_builder_add_cstr(sb, "-");
+            str_builder_add_int(sb, k);
+            var d = str_data(str_builder_build(sb));
+            if (sys_mkdir(d, 448) == 0) { _cu_tmpdir = d; }
+            k = k + 1;
+        }
+        if (_cu_tmpdir == 0) { return 0; }
+        _cu_wrapfile = _lsp_join(_cu_tmpdir, "unit.cyr", 0, 8);
+    }
+    var fd = sys_open(_cu_wrapfile, O_WRONLY | O_CREAT | O_EXCL, 384);   # a fresh directory: never there before
+    if (fd < 0) { return 0; }
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "include \"");
+    str_builder_add_cstr(sb2, rel);
+    str_builder_add_cstr(sb2, "\"\n");
+    var txt = str_data(str_builder_build(sb2));
+    var wr = _lsp_write_all(fd, txt, strlen(txt));
+    sys_close(fd);
+    if (wr != 0) {
+        _cu_cleanup();
+        return 0;
+    }
+    return _cu_wrapfile;
+}
+
+# Remove the lib/ include file and its directory: after each compile through it, and at exit.
+fn _cu_cleanup(): i64 {
+    if (_cu_tmpdir == 0) { return 0; }
+    sys_unlink(_cu_wrapfile);
+    sys_rmdir(_cu_tmpdir);
+    _cu_tmpdir = 0;
+    return 0;
+}
+
+# What unit `u` (entry: file `ei` of graph `g`) depends on: its key, its closure (a project unit; the
+# entry alone for a lib/ one, whose includes are all lib/), every lib/ file, cyrius.cyml, cyrius.lock
+# and the CLI and cycc binaries — paths, mtimes and sizes, as this request's refresh read them.
+fn _cu_sig(g, u, ei): i64 {
+    var h = _cu_hash_str(_CU_FNV, load64(u + 40));
+    if (load64(u + 32) == 1) {
+        var cl = _cu_closure(g, ei, load64(u + 24));
+        var k = 0;
+        while (k < vec_len(cl)) {
+            h = _cu_mix_rec(h, _cu_f(g, vec_get(cl, k)));
+            k = k + 2;
+        }
+    } else { h = _cu_mix_rec(h, _cu_f(g, ei)); }
+    var n = _cu_nf(g);
+    var i = 0;
+    while (i < n) {
+        var f = _cu_f(g, i);
+        if (_cu_flag(f, _CU_LIB) == 1) { h = _cu_mix_rec(h, f); }
+        i = i + 1;
+    }
+    var root = load64(g);
+    h = _cu_mix_stat(h, _lsp_join(root, "cyrius.cyml", 0, 11));
+    h = _cu_mix_stat(h, _lsp_join(root, "cyrius.lock", 0, 11));
+    h = _cu_mix_stat(h, _cyrius_path);
+    return _cu_mix_stat(h, _cycc_path);
+}
+
+# Log what is done with unit `u`: `what` + its entry (mode, target).
+fn _cu_log_unit(what, u): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, load64(u + 16));
+    str_builder_add_cstr(sb, " (");
+    str_builder_add_cstr(sb, _cu_mode_name(load64(u)));
+    str_builder_add_cstr(sb, ", ");
+    str_builder_add_cstr(sb, _cu_cfg_name(load64(u + 24)));
+    if (load64(u + 32) == 0) { str_builder_add_cstr(sb, ", standalone"); }
+    str_builder_add_cstr(sb, ")");
+    log_msg(str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# The compile output of unit `u`: the one kept for it when nothing it depends on (_cu_sig) has changed
+# on disk since, else a fresh `cyrius check` (_compile_via_wrapper) from the root — the entry with
+# --with-deps --no-redirect for a project unit, `include "<module>"` alone for a lib/ one — under the
+# unit's target selector. A unit whose entry the graph does not hold (a test, a stray) is not kept.
+fn _cu_compile(u): i64 {
+    var g = _cu_cur_g;
+    var ei = 0 - 1;
+    if (g != 0) { ei = _cu_find(g, load64(u + 8)); }
+    var sig = 0;
+    var c = 0;
+    if (ei >= 0) {
+        sig = _cu_sig(g, u, ei);
+        var cv = load64(g + 72);
+        var k = 0;
+        while (k < vec_len(cv)) {
+            if (streq(load64(vec_get(cv, k)), load64(u + 40)) == 1) { c = vec_get(cv, k); }
+            k = k + 1;
+        }
+        if (c != 0 && load64(c + 8) == sig) {
+            _cu_log_unit("unit unchanged on disk, its last compile reused: ", u);
+            _lsp_last_unit = load64(c + 24);   # the name its check was given (its verdict line)
+            return load64(c + 16);
+        }
+    }
+    var name = load64(u + 16);
+    var wrapped = 0;
+    if (load64(u + 32) == 0) {
+        var w = _cu_wrapper(name);
+        if (w != 0) {
+            name = w;
+            wrapped = 1;
+        } else { log_msg("no private include file for a lib/ module could be written: checked as the entry"); }
+    }
+    _lsp_last_unit = name;
+    _cu_log_unit("compiling unit ", u);
+    var out = _compile_via_wrapper(name, load64(u + 56), load64(u + 32), _cu_cfg_env(load64(u + 24)));
+    if (wrapped == 1) { _cu_cleanup(); }
+    if (ei >= 0 && out != 0) {
+        if (c == 0) {
+            c = alloc(32);
+            store64(c, load64(u + 40));
+            vec_push(load64(g + 72), c);
+        }
+        store64(c + 8, sig);
+        store64(c + 16, out);
+        store64(c + 24, name);
+    }
+    return out;
+}
+
 # v5.11.56: fork cyrius wrapper with cwd=project_root, exec
 # `cyrius check --with-deps --no-redirect <filepath>`. Wrapper handles [deps.*]
 # resolution that raw cycc (read source from stdin, no project
@@ -939,11 +2212,16 @@ fn _lsp_lift_fd(fd): i64 {
 # file showed the entry's diagnostics and never its own. A toolchain older than 6.7.12 (a project
 # can pin one) refuses the flag by name; then the check runs again without it, as before.
 # CHANGELOG [6.7.12]
-fn _compile_via_wrapper(filepath, project_root): i64 {
-    var out = _compile_via_wrapper_run(filepath, project_root, 1);
-    if (out != 0 && _lsp_has(out, "unknown option '--no-redirect'") == 1) {
+# 6.7.16 — (unit, root, deps, selector): `unit` is what the check is given (a unit's entry relative
+# to `root`, a lib/ unit's private include file, a loose file), `root` the directory it runs from
+# (0: a loose file, this server's working directory), `deps` 1 for `--with-deps --no-redirect` (a
+# project unit) and 0 for a standalone check, `selector` the unit's target environment entry (0: the
+# host). See COMPILE UNITS. CHANGELOG [6.7.16]
+fn _compile_via_wrapper(unit, root, deps, selector): i64 {
+    var out = _compile_via_wrapper_run(unit, root, deps, selector, 1);
+    if (deps == 1 && out != 0 && _lsp_has(out, "unknown option '--no-redirect'") == 1) {
         log_msg("this project's cyrius predates --no-redirect (6.7.12): checking with the module redirect");
-        out = _compile_via_wrapper_run(filepath, project_root, 0);
+        out = _compile_via_wrapper_run(unit, root, deps, selector, 0);
     }
     return out;
 }
@@ -992,74 +2270,41 @@ fn _lsp_has(hay, needle): i64 {
     return 0;
 }
 
-# One `cyrius check --with-deps [--no-redirect] <filepath>` run from `project_root`; its stderr.
-# 6.7.13: `project_root` 0 = a file outside any project — `cyrius check <filepath>` (standalone,
-# as `cyrius check` runs in a loose directory) from THIS server's working directory, no chdir.
+# One `cyrius check [--with-deps [--no-redirect]] <unit>` run from `root`; its stderr, read whole
+# (_lsp_drain). (6.7.16: the arguments as for _compile_via_wrapper; the run is _lsp_run_capture.)
+# 6.7.13: `root` 0 = a file outside any project — `cyrius check <unit>` (standalone, as `cyrius
+# check` runs in a loose directory) from THIS server's working directory, no chdir.
 # 6.7.14 (D47 / D54, the user 2026-10-16): that run reads no pin (`_lsp_envp_unpinned`): the
 # server's working directory may be a project pinning a cyrius that is not installed, and its pin
 # error is not the loose file's — the pin belongs to the project that pins it. So the CLI's version
 # redirect is off, and so is cycc's drift warning about that same pin (`cyrius.cyml pins X but cycc
 # is Y`), which the redirect being off would otherwise surface on the loose file instead. The
 # project route keeps both. CHANGELOG [6.7.14]
-fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
-    var pipe_fds[16];
-    var pr = sys_pipe(&pipe_fds);
-    if (pr < 0) { return 0; }
-    var pipe_read = load32(&pipe_fds);
-    var pipe_write = load32(&pipe_fds + 4);
-    var pid = sys_fork();
-    if (pid < 0) { return _lsp_fork_failed(_cyrius_path, pid, pipe_read, pipe_write); }   # 6.6.20
-    if (pid == 0) {
-        sys_close(pipe_read);
-        pipe_write = _lsp_lift_fd(pipe_write);   # 6.7.16
-        var nfdi = sys_open("/dev/null", 0, 0);
-        if (nfdi >= 0) { _lsp_redirect(nfdi, 0); }
-        var nfdo = sys_open("/dev/null", 1, 0);
-        if (nfdo >= 0) { _lsp_redirect(nfdo, 1); }
-        _lsp_redirect(pipe_write, 2);
-        # v6.5.16: was a raw `syscall(80, ...)` on the "LSP is x86-only" assumption.
-        # A raw x86 number is not portable AND it collides: 80 is the aarch64 peer's
-        # SYS_FSTAT, so once the Mach-O arm branch routes 80→fstat64 this call would
-        # have silently become an fstat on a path pointer instead of a chdir. The
-        # wrapper renumbers per peer (x86-Linux 80, arm-macho alias 1049→12,
-        # x86-macho 80→12) and is correct on every target. See the macho route
-        # parity gate, tests/gates/platform/macho_route_parity.sh.
-        var argv[48];   # N BYTES per CLAUDE.md buffer contract: 6 ptrs = 48 B
-        var ai = 0;
-        store64(&argv, _cyrius_path);
-        store64(&argv + 8, "check");
-        ai = 16;
-        if (project_root != 0) {
-            sys_chdir(project_root);
-            store64(&argv + 16, "--with-deps");
-            ai = 24;
-            if (no_redirect == 1) { store64(&argv + ai, "--no-redirect"); ai = ai + 8; }
+# 6.7.16: a project run's environment carries the unit's target selector and no inherited one
+# (_lsp_envp_target). CHANGELOG [6.7.16]
+fn _compile_via_wrapper_run(unit, root, deps, selector, no_redirect): i64 {
+    var argv = alloc(48);   # cyrius, check, --with-deps, --no-redirect, the unit, NULL
+    store64(argv, _cyrius_path);
+    store64(argv + 8, "check");
+    var ai = 16;
+    if (deps == 1) {
+        store64(argv + ai, "--with-deps");
+        ai = ai + 8;
+        if (no_redirect == 1) {
+            store64(argv + ai, "--no-redirect");
+            ai = ai + 8;
         }
-        store64(&argv + ai, filepath);
-        store64(&argv + ai + 8, 0);
-        var envp = _lsp_envp();
-        if (project_root == 0) { envp = _lsp_envp_unpinned(envp); }
-        if (envp == 0) {
-            var envp_empty[1];
-            store64(&envp_empty, 0);
-            sys_execve(_cyrius_path, &argv, &envp_empty);
-        } else {
-            sys_execve(_cyrius_path, &argv, envp);
-        }
-        syscall(60, 127);
     }
-    sys_close(pipe_write);
-    var errbuf = alloc(8192);
-    var total = 0;
-    var chunk = 1;
-    while (chunk > 0 && total < 8191) {
-        chunk = syscall(0, pipe_read, errbuf + total, 8191 - total);
-        if (chunk > 0) { total += chunk; }
+    store64(argv + ai, unit);
+    store64(argv + ai + 8, 0);
+    var envp = _lsp_envp();
+    if (root == 0) { envp = _lsp_envp_unpinned(envp); }
+    else { envp = _lsp_envp_target(envp, selector); }
+    if (envp == 0) {
+        envp = alloc(8);
+        store64(envp, 0);
     }
-    store8(errbuf + total, 0);
-    sys_close(pipe_read);
-    _lsp_reap(pid);
-    return errbuf;
+    return _lsp_run_capture(_cyrius_path, argv, envp, root, 2);
 }
 
 # 6.7.13 — this server's working directory (a fresh string), or 0 when it cannot be read: the
@@ -1169,14 +2414,6 @@ fn _lsp_write_all(fd, buf, n): i64 {
     return 0;
 }
 
-# 6.7.12 — the directory the diagnostics' relative file names resolve against first: the project
-# root when the last compile ran `cyrius check` there; (6.7.13) outside a project this server's
-# working directory, where both loose routes compile (0 when it cannot be read).
-var _lsp_last_root = 0;
-# 6.7.13 — the name the last `cyrius check` outside a project was given for the file (relative to
-# the working directory when under it), so its verdict line is known; 0 otherwise.
-var _lsp_last_unit = 0;
-
 # Run cycc on a file path, capture stderr for errors.
 # Returns a pointer to the stderr output (null-terminated), or 0 on failure.
 # v5.11.56: when both the cyrius wrapper and a project root are
@@ -1197,22 +2434,20 @@ var _lsp_last_unit = 0;
 # by the CLI's own rule (`_lsp_incdir`: a relative, `..`-free directory). A file outside the
 # working directory's subtree gets no marker, as `cyrius check` writes none there. Relative names
 # in the diagnostics resolve against that directory first (`_lsp_last_root`). CHANGELOG [6.7.13]
-fn compile_and_capture(filepath): i64 {
+# 6.7.16 — in a project (`u` non-zero), the unit's compile: see COMPILE UNITS. CHANGELOG [6.7.16]
+fn compile_and_capture(filepath, u): i64 {
     _lsp_last_root = 0;
     _lsp_last_unit = 0;
-    if (_cyrius_path != 0) {
-        var project_root = find_project_root(filepath);
-        if (project_root != 0) {
-            _lsp_last_root = project_root;
-            return _compile_via_wrapper(filepath, project_root);
-        }
+    if (u != 0) {
+        _lsp_last_root = load64(u + 56);
+        return _cu_compile(u);
     }
     var cwd = _lsp_cwd();
     var unit = _lsp_rel_to(cwd, filepath);
     _lsp_last_root = cwd;
     if (_cyrius_path != 0) {
         _lsp_last_unit = unit;
-        return _compile_via_wrapper_run(unit, 0, 0);
+        return _compile_via_wrapper_run(unit, 0, 0, 0, 0);
     }
     if (_cycc_path == 0) { return 0; }
     var incdir = _lsp_incdir(unit);
@@ -1253,17 +2488,9 @@ fn compile_and_capture(filepath): i64 {
         syscall(60, 127);
     }
 
-    # Parent: read stderr from pipe
+    # Parent: read stderr from pipe, whole (6.7.16: it kept the first 8,191 bytes; see _lsp_drain)
     sys_close(pipe_write);
-
-    var errbuf = alloc(8192);
-    var total = 0;
-    var chunk = 1;
-    while (chunk > 0 && total < 8191) {
-        chunk = syscall(0, pipe_read, errbuf + total, 8191 - total);
-        if (chunk > 0) { total += chunk; }
-    }
-    store8(errbuf + total, 0);
+    var errbuf = _lsp_drain(pipe_read);
     sys_close(pipe_read);
 
     # Wait for child
@@ -1296,6 +2523,11 @@ var _ld_col = 0;    # vec: 0-based start character
 var _ld_sev = 0;    # vec: 1 error, 2 warning
 var _ld_ms = 0;     # vec: the message's start offset in the compiler's text
 var _ld_me = 0;     # vec: its end offset
+var _ld_txt = 0;    # vec: 0, or a message of its own (a cstr) in place of the text at [ms, me) (6.7.16)
+# 6.7.16 — the file `<source>`, a line-only location and a location-less WARNING land on, and the
+# directory a relative name falls back to: the unit's entry (the open file when it is its own unit).
+# A location-less ERROR stays on the open file. CHANGELOG [6.7.16]
+var _lsp_unit_path = 0;
 var _lsp_pub_units = 0;   # vec of cstr: per (unit, file) pair, the unit (an open document's path)
 var _lsp_pub_files = 0;   # vec of cstr: the file that unit last published diagnostics on
 
@@ -1338,11 +2570,14 @@ fn _lsp_join(dir, s, p, n): i64 {
     return r;
 }
 
-# The file a diagnostic names (s[p, p + n)), resolved: `<source>` is the open file; an absolute
-# name is itself; a relative one is tried against `root` (when there is one) and then the open
-# file's directory. 0 when it names no file there.
+# The file a diagnostic names (s[p, p + n)), resolved: `<source>` is the unit's entry
+# (_lsp_unit_path; 6.7.16 — the open file when it is its own unit); an absolute name is itself; a
+# relative one is tried against `root` (when there is one) and then the entry's directory. 0 when it
+# names no file there.
 fn _lsp_resolve_file(s, p, n, open_path, root): i64 {
-    if (n == 8 && memeq(s + p, "<source>", 8) == 1) { return open_path; }
+    var unit = _lsp_unit_path;
+    if (unit == 0) { unit = open_path; }
+    if (n == 8 && memeq(s + p, "<source>", 8) == 1) { return unit; }
     if (n > 0 && load8(s + p) == 47) {
         var a = alloc(n + 1);
         memcpy(a, s + p, n);
@@ -1353,7 +2588,7 @@ fn _lsp_resolve_file(s, p, n, open_path, root): i64 {
         var c1 = _lsp_join(root, s, p, n);
         if (file_exists(c1) == 1) { return c1; }
     }
-    var c2 = _lsp_join(_lsp_dir_of(open_path), s, p, n);
+    var c2 = _lsp_join(_lsp_dir_of(unit), s, p, n);
     if (file_exists(c2) == 1) { return c2; }
     return 0;
 }
@@ -1414,6 +2649,28 @@ fn _lsp_diag_add(file, line, col, sev, ms, me): i64 {
     vec_push(_ld_sev, sev);
     vec_push(_ld_ms, ms);
     vec_push(_ld_me, me);
+    vec_push(_ld_txt, 0);
+    return 0;
+}
+
+# Record a diagnostic of this server's own (`txt`, a cstr) at line 0 of `file`, severity `sev`
+# (3: Information). 6.7.16.
+fn _lsp_diag_txt(file, sev, txt): i64 {
+    _lsp_diag_add(file, 0, 0, sev, 0, 0);
+    vec_set(_ld_txt, vec_len(_ld_txt) - 1, txt);
+    return 0;
+}
+
+# Start an empty parsed set (the diagnostics of one publish).
+fn _lsp_diag_reset(): i64 {
+    _ld_file = vec_new();
+    _ld_line = vec_new();
+    _ld_col = vec_new();
+    _ld_sev = vec_new();
+    _ld_ms = vec_new();
+    _ld_me = vec_new();
+    _ld_txt = vec_new();
+    _lsp_ll_path = 0;
     return 0;
 }
 
@@ -1442,8 +2699,13 @@ fn _lsp_verdict_for(s, pos, eol, path): i64 {
 # Parse one `error:` / `warning:` line, s[pos, eol), whose location starts at `p`.
 fn _lsp_parse_diag(s, p, eol, sev, open_path, root): i64 {
     var endp[8];
+    var unit = _lsp_unit_path;
+    if (unit == 0) { unit = open_path; }
     if (p < eol && load8(s + p) == 32) {   # `error: message` — no location
-        _lsp_diag_add(open_path, 0, 0, sev, p + 1, eol);
+        # 6.7.16: a warning with no location is the unit's (`large static data`); an error stays on
+        # the open file, where it is seen
+        if (sev == 2) { _lsp_diag_add(unit, 0, 0, sev, p + 1, eol); }
+        else { _lsp_diag_add(open_path, 0, 0, sev, p + 1, eol); }
         return 0;
     }
     # `error:N: message` — a line, no file
@@ -1453,7 +2715,7 @@ fn _lsp_parse_diag(s, p, eol, sev, open_path, root): i64 {
         var m0 = q0 + 1;
         if (m0 < eol && load8(s + m0) == 32) { m0 = m0 + 1; }
         if (ln0 > 0) { ln0 = ln0 - 1; }
-        _lsp_diag_add(open_path, ln0, 0, sev, m0, eol);
+        _lsp_diag_add(unit, ln0, 0, sev, m0, eol);
         return 0;
     }
     # `error:<file>:<line>[:<col>]: message` — the file ends at the first `:<digits>:`
@@ -1519,7 +2781,9 @@ fn _lsp_publish_file(uri, file, s): i64 {
             str_builder_add_cstr(sb, "}},\"severity\":");
             str_builder_add_int(sb, vec_get(_ld_sev, i));
             str_builder_add_cstr(sb, ",\"source\":\"cyrius\",\"message\":\"");
-            _lsp_json_esc(sb, s, vec_get(_ld_ms, i), vec_get(_ld_me, i));
+            var tx = vec_get(_ld_txt, i);
+            if (tx != 0) { _lsp_json_esc(sb, tx, 0, strlen(tx)); }
+            else { _lsp_json_esc(sb, s, vec_get(_ld_ms, i), vec_get(_ld_me, i)); }
             str_builder_add_cstr(sb, "\"}");
             n = n + 1;
         }
@@ -1550,15 +2814,24 @@ fn _lsp_vec_has(v, x): i64 {
 
 # Publish the compile of the open document (`uri`, at `open_path`) from its stderr text; `root`
 # as for _lsp_resolve_file. Answers the number of diagnostics published.
-fn parse_and_send_diagnostics(uri, open_path, stderr_output, root): i64 {
-    _ld_file = vec_new();
-    _ld_line = vec_new();
-    _ld_col = vec_new();
-    _ld_sev = vec_new();
-    _ld_ms = vec_new();
-    _ld_me = vec_new();
-    _lsp_ll_path = 0;
+# 6.7.16 — `u`, the document's unit (0: a loose file, its own). The open document always gets its
+# list; then a SELF unit (or a loose file) publishes on each other file its compile names, as before;
+# a FRAGMENT on each such file whose own unit is the same (_cu_file_in_unit); a PEER on none. A
+# FRAGMENT or PEER whose own list has no error while the unit has errors elsewhere gets a one-line
+# Information note at its line 0 naming the unit. What a unit published is remembered under the
+# unit's key — the open document too, when its list was not empty — so a recompile of that unit
+# from any of its files clears what it no longer names. CHANGELOG [6.7.16]
+fn parse_and_send_diagnostics(uri, open_path, stderr_output, root, u): i64 {
+    _lsp_diag_reset();
     if (_lsp_pub_units == 0) { _lsp_pub_units = vec_new(); _lsp_pub_files = vec_new(); }
+    var mode = _CU_SELF;
+    var key = open_path;
+    _lsp_unit_path = open_path;
+    if (u != 0) {
+        mode = load64(u);
+        key = load64(u + 40);
+        _lsp_unit_path = load64(u + 8);
+    }
     var s = stderr_output;
     var slen = strlen(s);
     var errors = 0;
@@ -1592,15 +2865,19 @@ fn parse_and_send_diagnostics(uri, open_path, stderr_output, root): i64 {
             vi = vi + 1;
         }
     }
+    if (mode == _CU_FRAGMENT || mode == _CU_PEER) { _lsp_unit_note(open_path, u); }
     # The open document always gets its list (an empty one clears it); then each other file named.
     var files = vec_new();
     var total = _lsp_publish_file(uri, open_path, s);
+    var own = total;
     var i = 0;
     while (i < vec_len(_ld_file)) {
         var f = vec_get(_ld_file, i);
         if (streq(f, open_path) == 0 && _lsp_vec_has(files, f) == 0) {
-            vec_push(files, f);
-            total = total + _lsp_publish_file(_lsp_uri_of(f), f, s);
+            if (mode == _CU_SELF || (mode == _CU_FRAGMENT && _cu_file_in_unit(f, key) == 1)) {
+                vec_push(files, f);
+                total = total + _lsp_publish_file(_lsp_uri_of(f), f, s);
+            }
         }
         i = i + 1;
     }
@@ -1611,8 +2888,8 @@ fn parse_and_send_diagnostics(uri, open_path, stderr_output, root): i64 {
     while (j < vec_len(_lsp_pub_units)) {
         var uj = vec_get(_lsp_pub_units, j);
         var fj = vec_get(_lsp_pub_files, j);
-        if (streq(uj, open_path) == 1) {
-            if (_lsp_vec_has(files, fj) == 0) { _lsp_publish_file(_lsp_uri_of(fj), 0, s); }
+        if (streq(uj, key) == 1) {
+            if (streq(fj, open_path) == 0 && _lsp_vec_has(files, fj) == 0) { _lsp_publish_file(_lsp_uri_of(fj), 0, s); }
         } else {
             vec_push(keep_u, uj);
             vec_push(keep_f, fj);
@@ -1621,14 +2898,59 @@ fn parse_and_send_diagnostics(uri, open_path, stderr_output, root): i64 {
     }
     var k = 0;
     while (k < vec_len(files)) {
-        vec_push(keep_u, open_path);
+        vec_push(keep_u, key);
         vec_push(keep_f, vec_get(files, k));
         k = k + 1;
+    }
+    if (own > 0 && streq(key, open_path) == 0) {
+        vec_push(keep_u, key);
+        vec_push(keep_f, open_path);
     }
     _lsp_pub_units = keep_u;
     _lsp_pub_files = keep_f;
     log_msg("sent diagnostics");
     return total;
+}
+
+# The one-line Information note a FRAGMENT / PEER document (`open_path`, unit `u`) gets when its own
+# list holds no error while its unit's compile has errors in other files.
+fn _lsp_unit_note(open_path, u): i64 {
+    var mine = 0;
+    var elsewhere = 0;
+    var i = 0;
+    while (i < vec_len(_ld_file)) {
+        if (vec_get(_ld_sev, i) == 1) {
+            if (streq(vec_get(_ld_file, i), open_path) == 1) { mine = mine + 1; }
+            else { elsewhere = elsewhere + 1; }
+        }
+        i = i + 1;
+    }
+    if (mine > 0 || elsewhere == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "checked as part of ");
+    str_builder_add_cstr(sb, load64(u + 16));
+    var sel = _cu_cfg_env(load64(u + 24));
+    if (sel != 0) {
+        str_builder_add_cstr(sb, " (");
+        str_builder_add_cstr(sb, sel);
+        str_builder_add_cstr(sb, ")");
+    }
+    str_builder_add_cstr(sb, ", which has ");
+    str_builder_add_int(sb, elsewhere);
+    if (elsewhere == 1) { str_builder_add_cstr(sb, " error in another file"); }
+    else { str_builder_add_cstr(sb, " errors in other files"); }
+    _lsp_diag_txt(open_path, 3, str_data(str_builder_build(sb)));
+    return 0;
+}
+
+# Publish on `uri` (the document at `path`) one Information diagnostic of this server's own, `txt`
+# at line 0 — or, with `txt` 0, an empty list. 6.7.16 (a NOTE unit; a SKIP one).
+fn _lsp_publish_own(uri, path, txt): i64 {
+    _lsp_diag_reset();
+    if (txt != 0) { _lsp_diag_txt(path, 3, txt); }
+    _lsp_publish_file(uri, path, "");
+    log_msg("sent diagnostics");
+    return 0;
 }
 
 # ================================================================
@@ -1697,19 +3019,61 @@ fn handle_did_open_or_save(body): i64 {
     # returned before both and got no diagnostics at all. CHANGELOG [6.7.12]
     if (_lsp_is_cyrius_doc(path) == 0) { return 0; }
 
-    # v5.7.39: index this file (and transitive includes) into the
-    # symbol table for go-to-def + outline. Idempotent — second
-    # didOpen on the same file is a no-op via _lsp_already_indexed.
-    lsp_index_file(path);
-
-    var stderr_out = compile_and_capture(path);
-    if (stderr_out == 0) {
-        # Compilation failed to launch — clear diagnostics
-        parse_and_send_diagnostics(uri, path, "", 0);
+    # 6.7.16 — in a project (with the CLI), the document's UNIT: see COMPILE UNITS. A SKIP is never
+    # compiled (an empty list); a NOTE gets its one Information diagnostic, no compile.
+    # CHANGELOG [6.7.16]
+    var u = 0;
+    var root = 0;
+    _cu_cur_g = 0;
+    if (_cyrius_path != 0) {
+        root = find_project_root(path);
+        if (root != 0) { u = _cu_unit_for(root, path); }
+    }
+    if (u != 0 && load64(u) == _CU_SKIP) {
+        log_msg("not compiled: cyrius.cyml [lsp] skip names it");
+        _lsp_publish_own(uri, path, 0);
         return 0;
     }
 
-    parse_and_send_diagnostics(uri, path, stderr_out, _lsp_last_root);
+    # v5.7.39: index this file (and transitive includes) into the
+    # symbol table for go-to-def + outline. Idempotent — second
+    # didOpen on the same file is a no-op via _lsp_already_indexed.
+    _lsp_index_doc(path, root, u);
+
+    if (u != 0 && load64(u) == _CU_NOTE) {
+        log_msg(load64(u + 48));
+        _lsp_publish_own(uri, path, load64(u + 48));
+        return 0;
+    }
+
+    var stderr_out = compile_and_capture(path, u);
+    if (stderr_out == 0) {
+        # Compilation failed to launch — clear diagnostics
+        parse_and_send_diagnostics(uri, path, "", 0, u);
+        return 0;
+    }
+
+    parse_and_send_diagnostics(uri, path, stderr_out, _lsp_last_root, u);
+    return 0;
+}
+
+# Index the document at `path` and the files it includes, resolved from the compile's root — the
+# project root, or this server's working directory for a loose file — then the unit's entry's
+# directory (6.7.16: `lsp_index_file` resolved them against the server's working directory, so a
+# project opened from elsewhere missed its own includes, and a relative name made a `file://lib/…`
+# location). In a project its unit's entry is indexed too, so go-to-definition from a fragment reaches
+# what the entry's earlier includes declare. CHANGELOG [6.7.16]
+fn _lsp_index_doc(path, root, u): i64 {
+    var iroot = root;
+    var incdir = 0;
+    if (iroot == 0) {
+        iroot = _lsp_cwd();
+        if (iroot != 0) { incdir = _lsp_incdir(_lsp_rel_to(iroot, path)); }
+    } elif (u != 0 && load64(u + 32) == 1) {
+        incdir = _lsp_incdir(load64(u + 16));
+    }
+    lsp_index_file_r(path, iroot, incdir);
+    if (u != 0 && streq(load64(u + 8), path) == 0) { lsp_index_file_r(load64(u + 8), iroot, incdir); }
     return 0;
 }
 
@@ -2610,6 +3974,7 @@ fn main(): i64 {
         }
     }
 
+    _cu_cleanup();   # 6.7.16: the lib/ include file's private directory, should a compile have left it
     return 0;
 }
 

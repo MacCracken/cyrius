@@ -28,7 +28,9 @@
 #   3  the LSP's two diagnostics spawns (raw cycc outside a project, the `cyrius` wrapper inside
 #      one) log the fork failure instead of publishing silently empty diagnostics. (6.7.13: a
 #      loose file goes to the wrapper too when the CLI is found — `cyrius check` from the server's
-#      working directory — so the raw-cycc spawn is driven from a home holding cycc alone.)
+#      working directory — so the raw-cycc spawn is driven from a home holding cycc alone. 6.7.16:
+#      a project's file first reads its configuration through `cyrius build --print-config`, a
+#      third spawn, named the same way.)
 #   4  derived: every `sys_fork()` in cbt/ and programs/cyrius-lsp.cyr is checked for failure in
 #      its fn (or handed back to the caller), and no `sys_waitpid` result is thrown away. A
 #      `_cbt_fork_tracked(fwd)` call (6.7.13: the tracked fork, cbt/sigclean.cyr) is a site too.
@@ -268,8 +270,11 @@ msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"
     < "$W/lsp.in" > "$W/lsp2.out" 2> "$W/lsp2.err" || true
 grep -q "could not start $W/lhome2/.cyrius/bin/cycc: fork failed" "$W/lsp2.err" \
     || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp2.err" | tail -3 | tr '\n' ' ')"
-[ "$(grep -c "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err")" = 2 ] \
-    || fail "axis 3: the wrapper diagnostics spawn (a project's file, and a loose one) did not log its fork failure twice"
+# 6.7.16: a project's file spawns the CLI twice — `cyrius build --print-config` (its unit's
+# configuration, issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md) and the check — so
+# three failures are named: those two, and the loose file's check
+[ "$(grep -c "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err")" = 3 ] \
+    || fail "axis 3: the wrapper spawns (a project file's configuration read and check, a loose file's check) did not each log a fork failure: $(grep -c "could not start" "$W/lsp.err") logged"
 grep -q '"id":2,' "$W/lsp.out" && grep -q '"id":2,' "$W/lsp2.out" \
     || fail "axis 3: the server did not answer shutdown after the failed spawns"
 [ "$FAIL" = "$x" ] && echo "  ok axis 3: both LSP diagnostics spawns log the fork failure, and the server goes on"
