@@ -473,12 +473,16 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        # read_fd and out_fd were opened in the PARENT: a driver started with fd 0 closed opened
+        # out_fd AT 0 and the stdin redirect overwrote it (cycc's stdout became the pipe), and one
+        # started with fd 1 closed opened it AT 1, where the unguarded close closed the redirect
+        # just made. Lifted above 2, then redirected with the same-fd guard. CHANGELOG [6.7.16]
+        var rfd = _regression_lift_fd(read_fd);
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -526,12 +530,12 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(err_fd, 2);
-        sys_close(err_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var efd = _regression_lift_fd(err_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(efd, 2);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 1); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 1); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -674,12 +678,12 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -734,12 +738,12 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -798,12 +802,12 @@ fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -861,12 +865,12 @@ fn _self_host_pipe_win(src_path, compiler_path, out_path): i64 {
     if (pid == 0) {
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -939,12 +943,12 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
@@ -999,12 +1003,12 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0);
-        sys_close(read_fd);
-        sys_dup2(out_fd, 1);
-        sys_close(out_fd);
+        var rfd = _regression_lift_fd(read_fd);   # as `_self_host_pipe`'s. CHANGELOG [6.7.16]
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var argv[24];
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);

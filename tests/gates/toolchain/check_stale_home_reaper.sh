@@ -52,6 +52,19 @@
 #      the number check loosened to a prefix -> 4 RED (axis 12's count, look-alikes cpp_12x,
 #      check_.tmp.5, cpp_); test_out added to the list -> 3 RED (axes 12, 13, 16); sha_out
 #      dropped -> 3 RED (axis 12 twice, 16).
+#   17-22 (6.7.16) a capture verb's file — lib/regression.cyr's `audit_x[ca]_<pid>[.N]`, left for
+#      ever by a process killed mid-capture (issues/2026-10-19-killed-capture-verb-leaves-capture-
+#      file-for-ever.md): dead + old is reaped in each shape (xc, xa, .N) and counted on its own
+#      line (17); a LIVE pid's survive with the age gate off, and the fresh dead one is then reaped
+#      (18); a fresh one survives the default (19); a symlink to a regular file, a dangling one and a
+#      directory at such a name are kept, the link's target untouched (20); eleven look-alike names
+#      are kept (21); a file ANOTHER uid owns at such a name is kept (22 — planted with `sudo -n` or,
+#      unprivileged, a user namespace over this user's subuids; neither -> that row alone SKIPs, by
+#      name). Mutations (measured, in a scratch copy of check.sh): the `_chk_reap_dead_capture_files`
+#      call removed -> 6 RED (axis 17 x5, 18b); `-O` dropped -> axis 22 RED; `! -L` dropped -> axis
+#      20 RED (the symlink to a file; the run with the age gate off — `find -type f` alone skips a
+#      link); the liveness check removed -> 3 RED (17's count, 18 x2); the name-shape `case` removed
+#      -> 4 RED (17's count, 21 x3); the age gate dropped -> 2 RED (17's count, 19).
 #   6  a NON-NUMERIC $CYRIUS_CHECK_REAP_MINS does not silently turn the age gate OFF. As
 #      first written the threshold went straight into `[ "$n" -gt 0 ]`, so `=4h` made that
 #      test error (`[: 4h: integer expected`, rc 2 -> false), the `-mmin` filter was skipped
@@ -362,9 +375,91 @@ cmp -s "$D/want_plain" "$D/have_plain" || _fail "axis 16: check.sh's scratch nam
 cmp -s "$D/want_n" "$D/have_n" || _fail "axis 16: check.sh's numbered scratch names differ from cbt/'s: missing [$(comm -23 "$D/want_n" "$D/have_n" | tr '\n' ' ')] extra [$(comm -13 "$D/want_n" "$D/have_n" | tr '\n' ' ')]"
 rm -rf "$K_TEST" "$K_TOUT" "$K_LSP" "$K_UNK" "$K_DIR" "$K_LNK" $K_LIKE "$K_DEPS" "$S_LIVE" "$S_YOUNG"
 
+echo "axis 17-22 (6.7.16): a capture verb's audit_x[ca]_<pid>[.N] file of a DEAD process is reaped"
+# lib/regression.cyr's capture verbs left `<base>/audit_xc_<pid>` / `audit_xa_<pid>[.N]` behind when
+# killed mid-capture, for ever (CYRIUS-2026-0036's O_EXCL skips a taken name). check.sh reaps one
+# only when it is a regular file (not a link), this user's, older than the threshold, and the pid
+# in its name is dead.
+XT="$W/tmp"   # the harness TMPDIR: the base the reaper scans
+_mkcap() {  # $1 = name under the harness TMPDIR, $2 = age in minutes; a regular file
+    _c="$XT/$1"
+    echo x > "$_c"
+    [ "$2" != "0" ] && touch -d "$2 minutes ago" "$_c"
+    echo "$_c"
+}
+X_XC=$(_mkcap "audit_xc_$DEAD_PID" 300)
+X_XA=$(_mkcap "audit_xa_$DEAD_PID" 300)
+X_XCN=$(_mkcap "audit_xc_$DEAD_PID.7" 300)
+X_XAN=$(_mkcap "audit_xa_$DEAD_PID.63" 300)
+X_LIVE=$(_mkcap "audit_xc_$LIVE_PID" 300)
+X_LIVEN=$(_mkcap "audit_xa_$LIVE_PID.2" 300)
+X_FRESH=$(_mkcap "audit_xc_$DEAD_PID.9" 0)
+# a symlink at such a name — to a regular file (so `-f` alone would take it) and dangling — and a
+# directory: never ours to remove, and the link's target keeps its bytes
+echo keep > "$W/cap_target"
+X_LNK="$XT/audit_xc_$DEAD_PID.11"
+X_DANG="$XT/audit_xa_$DEAD_PID.12"
+X_DIR="$XT/audit_xc_$DEAD_PID.13"
+ln -s "$W/cap_target" "$X_LNK"
+ln -s "$W/no_such_target" "$X_DANG"
+touch -h -d '300 minutes ago' "$X_LNK" "$X_DANG" 2>/dev/null || true
+mkdir "$X_DIR" && touch -d '300 minutes ago' "$X_DIR"
+# look-alikes: not the verb's name shape
+X_LIKE=""
+for _n in "audit_xc_${DEAD_PID}x" "audit_xc_$DEAD_PID." "audit_xc_$DEAD_PID.5x" "audit_xc_$DEAD_PID.4.5" \
+          "audit_xb_$DEAD_PID" "audit_xcc_$DEAD_PID" "xaudit_xc_$DEAD_PID" "audit_xc_" "audit_xc_.5" \
+          "audit_xrun_$DEAD_PID" "audit_xc_-$DEAD_PID"; do
+    X_LIKE="$X_LIKE $(_mkcap "$_n" 300)"
+done
+_run 240 alpha
+# axis 17: dead + old, in each shape -> reaped, and counted on its own line
+for _x in "$X_XC" "$X_XA" "$X_XCN" "$X_XAN"; do
+    [ -e "$_x" ] && _fail "axis 17: a 5-hour-old ${_x##*/} whose process is dead was NOT reaped"
+done
+grep -q 'reaped 4 capture file(s) audit_x\[ca\]_<pid> in ' "$W/out" \
+    || _fail "axis 17: check.sh did not report the 4 reaped capture files: $(grep reaped "$W/out" || true)"
+# axis 19: the age gate — a fresh dead-pid name survives the default threshold
+[ -f "$X_FRESH" ] || _fail "axis 19: a capture file created seconds ago was reaped at the default threshold"
+# axis 18: with the age gate OFF, a LIVE pid's names survive — the pid alone protects them
+_run 0 alpha
+[ -f "$X_LIVE" ] || _fail "axis 18: audit_xc_<LIVE pid> was reaped — a running capture would lose its file"
+[ -f "$X_LIVEN" ] || _fail "axis 18: audit_xa_<LIVE pid>.2 was reaped"
+[ -e "$X_FRESH" ] && _fail "axis 18 (anti-vacuous): with the age gate off the fresh dead-pid capture file survived — nothing was eligible"
+# axis 20 (after both runs — the age gate's `find -type f` alone skips a link, so the run with it
+# off is the one that tests the link rule): a symlink (to a regular file, so `-f` and `-O` alone
+# would take it; dangling) or a directory at such a name is kept, and the link's target untouched
+[ -L "$X_LNK" ] || _fail "axis 20: a SYMLINK to a regular file at a capture name was removed"
+[ "$(cat "$W/cap_target" 2>/dev/null)" = keep ] || _fail "axis 20: the target of a symlink at a capture name was changed or removed"
+[ -L "$X_DANG" ] || _fail "axis 20: a DANGLING symlink at a capture name was removed"
+[ -d "$X_DIR" ] || _fail "axis 20: a DIRECTORY at a capture name was removed"
+# axis 21 (after both runs): look-alike names are never touched
+for _k in $X_LIKE; do
+    [ -f "$_k" ] || _fail "axis 21: ${_k##*/} was reaped — not a capture verb's name"
+done
+# axis 22: another user's file at such a name is kept ($W/tmp is this user's and not sticky, so
+# only the ownership test stops the rm). An unprivileged gate cannot chown one into place; `sudo -n`
+# can, and so can a user namespace over this user's subordinate ids (`unshare --map-auto
+# --map-root-user`: uid 1 inside is a subuid outside). Neither -> this row alone SKIPs, by name.
+X_FOREIGN="$XT/audit_xc_$DEAD_PID.21"
+_plant_foreign() {  # $1 = path: a regular file another uid owns, 300 minutes old
+    if sudo -n true 2>/dev/null; then
+        sudo -n sh -c 'echo x > "$1" && chown 65534 "$1" && touch -d "300 minutes ago" "$1"' sh "$1" 2>/dev/null && return 0
+    fi
+    unshare --map-auto --map-root-user sh -c 'echo x > "$1" && chown 1:1 "$1" && touch -d "300 minutes ago" "$1"' sh "$1" 2>/dev/null
+}
+if _plant_foreign "$X_FOREIGN" && [ -f "$X_FOREIGN" ] && [ ! -O "$X_FOREIGN" ]; then
+    X_FUID=$(ls -ln "$X_FOREIGN" | awk '{print $3}')
+    _run 0 alpha
+    if [ -f "$X_FOREIGN" ]; then echo "  ok: axis 22: an old dead-pid capture name owned by uid $X_FUID (not this user) is kept"
+    else _fail "axis 22: a capture-shaped file ANOTHER user owns (uid $X_FUID) was reaped"; fi
+else
+    echo "  SKIP: axis 22 (another user's capture-shaped file is kept) — neither sudo -n nor an unprivileged user namespace (unshare --map-auto) can plant a file another uid owns here"
+fi
+rm -rf "$X_LIVE" "$X_LIVEN" "$X_FOREIGN" $X_LIKE "$X_LNK" "$X_DANG" "$X_DIR" "$W/cap_target"
+
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: stale staged CYRIUS_HOMEs and dead CLIs' empty or scratch-only temp dirs are reaped; live ones and post-mortems are not"
+    echo "PASS: stale staged CYRIUS_HOMEs, dead CLIs' empty or scratch-only temp dirs and dead capture verbs' files are reaped; live ones, post-mortems, links and other users' names are not"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"

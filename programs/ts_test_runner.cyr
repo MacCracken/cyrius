@@ -32,6 +32,25 @@ include "lib/fs.cyr"
 include "lib/args.cyr"
 include "lib/process.cyr"
 
+# In the CHILD: point `target` at `fd` and drop `fd` — unless `fd` already IS `target` (a runner
+# started with that std fd closed opened `fd` AT it, and the old unguarded close closed the
+# redirect it had just made). lib/process.cyr's `_proc_redirect` twin. CHANGELOG [6.7.16]
+fn _ttr_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
+# In the CHILD, before its first redirect: move `fd` — one the PARENT opened — above 2 when it is
+# one of them. lib/regression.cyr's `_regression_lift_fd` twin. CHANGELOG [6.7.16]
+fn _ttr_lift_fd(fd): i64 {
+    if (fd > 2) { return fd; }
+    var nfd = sys_fcntl(fd, F_DUPFD, 3);
+    if (nfd < 0) { return fd; }
+    sys_close(fd);
+    return nfd;
+}
+
 # ----------------------------------------------------------------
 # Run `cycc <mode_flag>` with fixture as stdin, return WEXITSTATUS.
 # Same shape as programs/checks/ts.cyr's `_ts_mode_run`.
@@ -42,12 +61,11 @@ fn _run_mode(cc_path, fixture_path, mode_flag): i64 {
     var pid = sys_fork();
     if (pid < 0) { sys_close(fd); return 0 - 1; }
     if (pid == 0) {
-        sys_dup2(fd, 0);
-        sys_close(fd);
+        _ttr_redirect(_ttr_lift_fd(fd), 0);
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _ttr_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _ttr_redirect(dn2, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + flag + NUL = 24 B
         store64(&argv,      cc_path);
         store64(&argv + 8,  mode_flag);

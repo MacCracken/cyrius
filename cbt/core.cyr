@@ -700,6 +700,34 @@ fn _envp_self_build(): i64 {
     return out;
 }
 
+# In a CHILD: point `target` (0 / 1 / 2) at `fd` and drop `fd` — unless `fd` already IS `target`.
+# A CLI started with a std fd closed hands that number to the child's next open, and
+# `dup2(fd, fd)` is a no-op: the old `sys_dup2(fd, N); sys_close(fd);` then closed the redirect it
+# had just made — `cyrius build x.cyr out 0<&-` opened the source AT 0, cycc read an empty stdin
+# and the build said OK for an empty program; `--target=js … 1>&-` wrote its JS to a closed fd.
+# lib/process.cyr's `_proc_redirect` twin. Compiled on every target: a PE fork site is dead
+# behind its `#ifdef CYRIUS_TARGET_WIN` return but still compiled (sys_dup2 is a stub there).
+# CHANGELOG [6.7.16]
+fn _cbt_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
+# In a CHILD, before its first redirect onto 0 / 1 / 2: move `fd` — one the PARENT opened for
+# this child — above 2 when it is one of them, and answer its number now. A parent started with
+# fd 0 closed opens its capture AT 0, and the child's stdin redirect (/dev/null) overwrote it
+# before the capture redirect read it. F_DUPFD answers the lowest free fd >= 3; if even that is
+# refused, the child carries on with `fd` as it is. lib/regression.cyr's `_regression_lift_fd`
+# twin. CHANGELOG [6.7.16]
+fn _cbt_lift_fd(fd): i64 {
+    if (fd > 2) { return fd; }
+    var nfd = sys_fcntl(fd, F_DUPFD, 3);
+    if (nfd < 0) { return fd; }
+    sys_close(fd);
+    return nfd;
+}
+
 # ================================================================
 # Tool discovery
 # ================================================================

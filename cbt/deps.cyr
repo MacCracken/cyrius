@@ -2526,14 +2526,17 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
     var pid = _cbt_fork_tracked(0);
     if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } _cbt_scratch_untrack(errf); return 0 - 1; }
     if (pid == 0) {
+        # The capture opened in the PARENT: one started with fd 0 closed put it AT 0, and the
+        # stdin redirect below overwrote it before the stdout redirect read it. CHANGELOG [6.7.16]
+        var lfd = _cbt_lift_fd(cfd);
         var nfd = sys_open("/dev/null", O_RDONLY, 0);
-        if (nfd >= 0) { sys_dup2(nfd, 0); sys_close(nfd); }
-        var ofd = cfd;
+        if (nfd >= 0) { _cbt_redirect(nfd, 0); }
+        var ofd = lfd;
         if (outf == 0) { ofd = sys_open("/dev/null", O_WRONLY, 0); }
-        if (ofd >= 0) { sys_dup2(ofd, 1); sys_close(ofd); }
+        if (ofd >= 0) { _cbt_redirect(ofd, 1); }
         var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
-        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        if (efd >= 0) { _cbt_redirect(efd, 2); }
         # The ceiling is the parent of the PHYSICAL directory, where git starts its discovery: a
         # dep reached through a symlink (`links/foo -> ../mono/libs/foo`) got the LINK's parent,
         # and git walked up from the target into the enclosing repository. CHANGELOG [6.7.12]
@@ -5852,17 +5855,20 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a
         # 9th parameter because every other call site would have to carry a 0 for it, and
         # the one user sets and clears it around a single call. CHANGELOG [6.6.5].
+        # The capture opened in the PARENT is lifted above 2 first, as `_dep_wt_run`'s: AT 0 the
+        # stdin redirect overwrote it. CHANGELOG [6.7.16]
+        var lfd = _cbt_lift_fd(cfd);
         if (_git_in_path != 0) {
             var ifd = sys_open(_git_in_path, O_RDONLY, 0);
-            if (ifd >= 0) { sys_dup2(ifd, 0); sys_close(ifd); }
+            if (ifd >= 0) { _cbt_redirect(ifd, 0); }
             else { sys_exit(127); }
         }
-        var ofd = cfd;
+        var ofd = lfd;
         if (outf == 0) { ofd = sys_open("/dev/null", O_WRONLY, 0); }
-        if (ofd >= 0) { sys_dup2(ofd, 1); sys_close(ofd); }
+        if (ofd >= 0) { _cbt_redirect(ofd, 1); }
         var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
-        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        if (efd >= 0) { _cbt_redirect(efd, 2); }
         # The ceiling at the parent of the PHYSICAL cache directory, as `_dep_wt_run` puts it: a
         # cache directory that is a symlink stopped discovery at the LINK's parent. CHANGELOG [6.7.12]
         var cdir = _dep_child_phys(clone_dir);

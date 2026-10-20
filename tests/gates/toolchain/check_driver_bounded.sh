@@ -123,6 +123,24 @@ check() {
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: check_driver_bounded: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
+# ── 6.7.16: every run below gets a TMPDIR inside $T, so nothing it leaves outlives the gate ──
+# Axis 2 SIGKILLs a runner in the middle of `regression_exec_capture_status`, which then runs no
+# cleanup: until 6.7.16 its `<base>/audit_xc_<pid>` stayed in the CALLER's TMPDIR for ever (since
+# CYRIUS-2026-0036's O_EXCL a later process with that pid skips the name, so nothing reused it).
+# CALLER_BASE is where the verb would have put it — TMPDIR when absolute, else /tmp
+# (`_regression_tmp_base`) — and the last rows check it gained nothing. The harness logs each
+# run's pid and TMPDIR to HARNESS_PIDLOG for them. CHANGELOG [6.7.16]
+case "${TMPDIR:-}" in /*) CALLER_BASE=$TMPDIR ;; *) CALLER_BASE=/tmp ;; esac
+_capnames() {  # the audit_x[ca]_* names in $1, one per line, sorted
+    for _cn in "$1"/audit_x[ca]_*; do
+        if [ -e "$_cn" ] || [ -L "$_cn" ]; then printf '%s\n' "${_cn##*/}"; fi
+    done | LC_ALL=C sort
+}
+_capnames "$CALLER_BASE" > "$T/caller.before"
+mkdir "$T/tmp" || { echo "FAIL: check_driver_bounded: cannot make the private TMPDIR $T/tmp"; exit 1; }
+TMPDIR="$T/tmp"; export TMPDIR
+HARNESS_PIDLOG="$T/harness.pids"; export HARNESS_PIDLOG
+
 # ── fixtures ────────────────────────────────────────────────────────────────────────
 # A fixture that never terminates: a live accumulator so nothing can fold it away, and no
 # syscall in the loop so it is a genuine spin — the shape that produced the hang.
@@ -167,6 +185,19 @@ var HARNESS_ENVP[16];
 
 fn main(): i64 {
     args_init();
+    # 6.7.16: "<pid> <TMPDIR>" per run, appended to HARNESS_PIDLOG — the gate's last rows read it.
+    var plog = getenv("HARNESS_PIDLOG");
+    if (plog != 0) {
+        var lsb = str_builder_new();
+        str_builder_add_int(lsb, sys_getpid());
+        str_builder_add_cstr(lsb, " ");
+        var ltd = getenv("TMPDIR");
+        if (ltd != 0) { str_builder_add_cstr(lsb, ltd); }
+        str_builder_add_cstr(lsb, "\n");
+        var lline = str_data(str_builder_build(lsb));
+        var lfd = sys_open(plog, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
+        if (lfd >= 0) { sys_write(lfd, lline, strlen(lline)); sys_close(lfd); }
+    }
     var bin = argv(1);
     if (bin == 0) { return 2; }
     store64(&HARNESS_ENVP, 0);
@@ -781,6 +812,33 @@ check "4f every driver call above removed its private run dir (TMPDIR=\$T/drvtmp
     "$(find "$DTMP" -mindepth 1 -maxdepth 1 -name 'cyrcheck.*' | wc -l | tr -d ' ')"
 check "   …premise: the axis-4 driver calls ran (4b and its control wrote their rows)" "yes" \
     "$([ -s "$T/a4b.out" ] && [ -s "$T/a4b2.out" ] && echo yes || echo no)"
+
+# ── axis 5 — 6.7.16: NOTHING THIS GATE RAN LEFT A CAPTURE FILE IN THE CALLER'S TMPDIR ──
+# Axis 2's SIGKILLed runner used to leave `audit_xc_<its pid>` in the caller's TMPDIR, one per run,
+# for ever (issues/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). Every harness
+# run logged "<pid> <TMPDIR>"; 5a every one saw the gate's private dir; 5b no name the caller's base
+# gained during the run carries one of those pids (a name another process made meanwhile — a
+# concurrent check.sh sharing /tmp — is not this gate's). MUTATIONS (6.7.16): the TMPDIR line
+# removed -> 5a RED; with it AND lib/regression.cyr at 6.7.15 (the name unlinked only after the
+# read-back) -> 5a and 5b RED, naming audit_xc_<axis 2's runner>.
+echo "axis 5 — no capture file is left in the caller's TMPDIR ($CALLER_BASE):"
+nlog=$(grep -c . "$T/harness.pids" 2>/dev/null || true)
+check "5 premise: the harness runs logged their pid and TMPDIR (axes 0-2e: 9 runs)" "yes" \
+    "$([ "${nlog:-0}" -ge 9 ] && echo yes || echo no)"
+check "5a every harness run made its captures under the gate's own TMPDIR" "0" \
+    "$(awk -v t="$T/tmp" '$2 != t' "$T/harness.pids" 2>/dev/null | grep -c . || true)"
+_capnames "$CALLER_BASE" > "$T/caller.after"
+LC_ALL=C comm -13 "$T/caller.before" "$T/caller.after" > "$T/caller.new"
+cut -d' ' -f1 "$T/harness.pids" 2>/dev/null > "$T/harness.pidlist"
+: > "$T/caller.ours"
+while read -r _nn; do
+    _np=${_nn#audit_x?_}
+    _np=${_np%%.*}
+    if grep -qx "$_np" "$T/harness.pidlist"; then printf '%s\n' "$_nn" >> "$T/caller.ours"; fi
+done < "$T/caller.new"
+check "5b the caller's TMPDIR gained no audit_x[ca]_<pid> name from this gate's runs" "0" \
+    "$(grep -c . "$T/caller.ours" || true)"
+if [ -s "$T/caller.ours" ]; then sed "s|^|        left: $CALLER_BASE/|" "$T/caller.ours"; fi
 
 echo ""
 if [ "$fails" = "0" ]; then

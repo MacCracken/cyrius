@@ -1,0 +1,187 @@
+# regression_out_path_truncated.tcyr — CROSS-HOST: lib/regression.cyr's verbs that write a CALLER's
+# out_path (regression_exec_in_dir3[_env], regression_pipe_to_bin_capture,
+# regression_ssh_remote_exec_capture) TRUNCATE it: a file that held more than the child writes holds
+# exactly the child's output afterwards. Runs on ecb (macOS arm64), ach (Intel Mac) and pi (aarch64)
+# through the release gate's cross-OS leg; Windows has no fork and agnos runs
+# lib/regression_agnos.cyr, so there the file only reports its summary.
+#
+# ⛔ WHY (6.7.16). The three verbs opened out_path with the literal 577 — Linux's
+# O_WRONLY|O_CREAT|O_TRUNC. Darwin's O_CREAT is 0x200 and O_TRUNC 0x400, so there 577 is
+# O_WRONLY|O_ASYNC|O_CREAT: no truncation, and a shorter output left the file's old tail behind it.
+# The filed repro (issues/archived/2026-10-18-regression-caller-out-path-opened-with-linux-flag-bits-on-darwin.md)
+# exited 9 ("hi\ncious\n") on ecb and ach, 3 on Linux. The verbs now pass O_WRONLY | O_CREAT |
+# O_TRUNC, the per-target constants.
+#
+# THE ssh ROW needs no host: `ssh -GF/dev/null <name>` (-G then -F /dev/null) prints the resolved
+# configuration to stdout and exits 0 without connecting, and -F /dev/null reads no configuration
+# file at all — not ~/.ssh/config, not the system ssh_config — so nothing a config names runs. It
+# is a named SKIP when neither /usr/bin/ssh nor /bin/ssh exists (the paths the verb execs).
+#
+# Files go in a private 0700 directory under $TMPDIR (absolute) or /tmp, removed at the end.
+# CHANGELOG [6.7.16]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/result.cyr"
+include "lib/net.cyr"
+include "lib/process.cyr"
+include "lib/regression.cyr"
+
+alloc_init();
+args_init();
+
+# The filed repro's child: "hi\n" on stdout.
+if (argc() > 1) {
+    if (streq(argv(1), "child") == 1) { sys_write(1, "hi\n", 3); sys_exit(0); }
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+var _me = argv(0);
+
+# The private scratch directory, "<base>/regr_out_trunc.<pid>".
+fn _ot_dir_name(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _regression_tmp_base());
+    str_builder_add_cstr(sb, "/regr_out_trunc.");
+    str_builder_add_int(sb, sys_getpid());
+    return str_data(str_builder_build(sb));
+}
+var _dir = _ot_dir_name();
+var _dir_ok = xmkdir(_dir, 0x1C0);
+
+fn _ot(name): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
+# The filed repro, verbatim but for two names: its relative "trunc_out.txt" is `out`, in this
+# test's scratch directory, and its argv(0) is `_me` (argv(0), read once at the top). It exits with
+# the bytes the file holds afterwards — 3 ("hi\n"); 9 ("hi\ncious\n") before 6.7.16 on Darwin.
+fn _repro(out): i64 {
+    file_write_all(out, "precious\n", 9);
+    regression_exec_in_dir3(".", _me, "child", 0, 0, out, 0);
+    var b[64];
+    syscall(60, file_read_all(out, &b, 64));
+    return 0;
+}
+
+# Run the filed repro in a forked copy of this test; its exit code (-1 when no copy ran, -2 when
+# there is no scratch directory: a name already taken is never written into).
+fn _repro_exit(out): i64 {
+    if (_dir_ok != 0) { return 0 - 2; }
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) { sys_exit(_repro(out)); }
+    var wt, wv = wait_pid(pid);
+    return result_unwrap_or(wt, wv, 0 - 1);
+}
+
+# `path` filled with `n` bytes of 0x01 (a byte no child output here contains): 0, or -1.
+fn _prefill(path, n): i64 {
+    var p = alloc(n);
+    if (p == 0) { return 0 - 1; }
+    memset(p, 1, n);
+    if (file_write_all(path, p, n) != n) { return 0 - 1; }
+    return 0;
+}
+
+var _rcap = 65536;
+var _rbuf = alloc(_rcap);
+
+# The file `o` (removed once read): its byte count when it is exactly "hi\n", 99 when it holds
+# more (the old tail), 98 when it holds something else.
+fn _hi(o): i64 {
+    var n = file_read_all(o, _rbuf, _rcap);
+    xunlink(o);
+    if (n > 3) { return 99; }
+    if (n != 3) { return 98; }
+    if (regression_buf_eq(_rbuf, "hi\n", 3) == 0) { return 98; }
+    return n;
+}
+
+test_group("the scratch directory");
+assert_eq(_dir_ok, 0, "a private 0700 directory under the temp base");
+assert(_rbuf != 0, "the read buffer");
+
+test_group("the filed repro: a 9-byte out_path holds the child's 3 bytes, not the old tail");
+var _tro = _ot("trunc_out.txt");
+assert_eq(_repro_exit(_tro), 3, "regression_exec_in_dir3 self \"child\": exit 3 (9 on Darwin before 6.7.16)");
+assert_eq(_hi(_tro), 3, "trunc_out.txt is exactly \"hi\\n\"");
+
+test_group("each caller-out_path verb truncates a longer existing file");
+var _o = _ot("out");
+var _s = _ot("src");
+
+_prefill(_o, 4096);
+assert_eq(regression_exec_in_dir3("/", "/bin/echo", "hi", 0, 0, _o, 0), 0, "regression_exec_in_dir3 echo hi: exit 0");
+assert_eq(_hi(_o), 3, "regression_exec_in_dir3: a 4096-byte out_path holds exactly \"hi\\n\"");
+
+_prefill(_o, 4096);
+var _ex = vec_new();
+vec_push(_ex, "RSC_EXTRA=1");
+var _rce = regression_exec_in_dir3_env("/", "/bin/echo", "hi", 0, 0, _ex, _o, 0);
+assert_eq(_rce, 0, "regression_exec_in_dir3_env echo hi: exit 0");
+assert_eq(_hi(_o), 3, "regression_exec_in_dir3_env: a 4096-byte out_path holds exactly \"hi\\n\"");
+
+_prefill(_o, 4096);
+file_write_all(_s, "hi\n", 3);
+assert_eq(regression_pipe_to_bin_capture("/bin/cat", _s, _o, 0), 0, "regression_pipe_to_bin_capture cat: exit 0");
+xunlink(_s);
+assert_eq(_hi(_o), 3, "regression_pipe_to_bin_capture: a 4096-byte out_path holds exactly \"hi\\n\"");
+
+# The ssh verb: `ssh -GF/dev/null <name>` into a 16384-byte out_path. Its output is a few KB of
+# "key value" lines, among them "hostname <name>"; afterwards the file must be shorter than the
+# prefill and hold none of its 0x01 bytes.
+test_group("regression_ssh_remote_exec_capture truncates (ssh -G, no host)");
+var _have_ssh = file_exists("/usr/bin/ssh") | file_exists("/bin/ssh");
+if (_have_ssh == 0) {
+    println("    SKIP: regression_ssh_remote_exec_capture row: neither /usr/bin/ssh nor /bin/ssh exists");
+}
+if (_have_ssh != 0) {
+    _prefill(_o, 16384);
+    var _src = regression_ssh_remote_exec_capture("-GF/dev/null", "cyrius-out-path-truncated.invalid", _o, 0);
+    assert_eq(_src, 0, "ssh -GF/dev/null <name>: exit 0");
+    var _sn = file_read_all(_o, _rbuf, _rcap);
+    xunlink(_o);
+    assert(_sn > 0, "the capture is not empty");
+    assert(_sn < 16384, "the capture is shorter than the 16384-byte prefill (it was truncated)");
+    var _ones = 0;
+    var _i = 0;
+    while (_i < _sn) {
+        if (load8(_rbuf + _i) == 1) { _ones = _ones + 1; }
+        _i = _i + 1;
+    }
+    assert_eq(_ones, 0, "no byte of the old contents is left");
+    var _hn = regression_count_substr(_rbuf, _sn, "hostname cyrius-out-path-truncated.invalid\n");
+    assert_eq(_hn, 1, "the capture is ssh -G's: it names the host");
+}
+
+xunlink(_tro);
+xunlink(_o);
+xunlink(_s);
+test_group("the scratch directory is removed");
+assert_eq(xrmdir(_dir), 0, "nothing left in it");
+#endif
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: no fork, so no verb that captures can run");
+assert_eq(sys_fork(), 0 - 1, "sys_fork is the documented -1");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: lib/regression_agnos.cyr's verbs (file_open maps the neutral O_* bits)");
+assert_eq(1, 1, "summary only");
+#endif
+
+var r = assert_summary();

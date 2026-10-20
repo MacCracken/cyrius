@@ -556,6 +556,42 @@ _chk_reap_dead_cli_tmpdirs() {
 }
 _chk_reap_dead_cli_tmpdirs
 
+# ── 6.7.16: a capture verb's file, left by a process killed mid-capture ──
+# lib/regression.cyr's capture verbs create `<base>/audit_xc_<pid>` / `audit_xa_<pid>` (then
+# `.1` … `.63` past a taken name) and, since 6.7.16, unlink it right after the create. Until then
+# the name was unlinked only after the read-back, so a process SIGKILLed mid-capture (the check
+# driver at a deadline, check_driver_bounded.sh's runner, the user) left it for ever — since
+# CYRIUS-2026-0036's O_EXCL a later process with that pid skips the name instead of reusing it.
+# The same rule as the CLI dirs above: by AGE and by the pid in the NAME being dead, only names of
+# exactly `audit_x[ca]_<digits>[.<digits>]`, only REGULAR files THIS user owns — never a symlink
+# (rm takes the link, never its target, and a planted one is not ours) or another user's name.
+# The base is the verb's own: $TMPDIR when absolute, else /tmp. Gate:
+# tests/gates/toolchain/check_stale_home_reaper.sh axes 17-22. CHANGELOG [6.7.16]
+_chk_reap_dead_capture_files() {
+    case "${TMPDIR:-}" in /*) _rtmp=$TMPDIR ;; *) _rtmp=/tmp ;; esac
+    [ -d "$_rtmp" ] || return 0
+    _reaped=0
+    for _f in "$_rtmp"/audit_x[ca]_[0-9]*; do
+        [ -f "$_f" ] && [ ! -L "$_f" ] && [ -O "$_f" ] || continue
+        _r=${_f##*/}
+        _r=${_r#audit_x?_}
+        case "$_r" in ''|*[!0-9.]*|.*|*.|*.*.*) continue ;; esac   # <digits>[.<digits>] only
+        _pid=${_r%%.*}
+        if [ "$_CHK_REAP_MINS" -gt 0 ]; then
+            [ -n "$(find "$_f" -maxdepth 0 -type f -mmin +"$_CHK_REAP_MINS" 2>/dev/null)" ] || continue
+        fi
+        _chk_pid_alive "$_pid" && continue
+        rm -f "$_f" 2>/dev/null || true
+        [ -e "$_f" ] || [ -L "$_f" ] || _reaped=$((_reaped + 1))
+    done
+    if [ "$_reaped" -gt 0 ]; then
+        printf "check: reaped %s capture file(s) audit_x[ca]_<pid> in %s (their process is gone, older than %s min)\n" \
+            "$_reaped" "$_rtmp" "$_CHK_REAP_MINS"
+    fi
+    return 0
+}
+_chk_reap_dead_capture_files
+
 # ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
 #
 # Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib
@@ -2640,6 +2676,23 @@ _chk_gate "$ROOT/tests/gates/toolchain/gates_read_only_the_tree.sh"
 # (-1, waitpid never wrote it) is never read as an exit code. Static, with a clean-fixture + per-rule
 # mutant self-test; the runtime rows are tests/tcyr/platform/regression_wait_unobserved.tcyr.
 _chk_gate "$ROOT/tests/gates/toolchain/regression_wait_status_checked.sh"
+
+# 6.7.16 — lib/regression.cyr's fd shapes hold on every target: every open's flag argument is 0,
+# 1 or the per-target O_* constants (577, Linux's O_WRONLY|O_CREAT|O_TRUNC, is
+# O_WRONLY|O_ASYNC|O_CREAT on Darwin: a caller's out_path kept its old tail), and every fork child
+# that puts the parent's out_fd onto 1 after its stdin redirect lifts it first
+# (`_regression_lift_fd`; floor 3, the RED line names the verb). Static, with a fixture +
+# per-shape mutant self-test and nine live mutants of the file itself; the runtime rows are
+# tests/tcyr/crossos/regression_out_path_truncated.tcyr and regression_capture_stdin_closed.tcyr.
+_chk_gate "$ROOT/tests/gates/toolchain/regression_child_fd_shapes.sh"
+
+# 6.7.16 — a child the CLI, the check driver or a programs/ tool forks gets the std fds its
+# redirects name with the parent's fd 0, 1 or 2 closed: every redirect goes through a same-fd
+# guard (`_cbt_redirect`, `_regression_redirect`, a twin) and a parent-opened fd is lifted above 2
+# first. Runtime rows: the filed `build --target=js … 1>&-` repro, native / cx builds, run_cx, the
+# cx JIT build and the driver's output row with each std fd closed; a static census of cbt/ and
+# programs/ (no unguarded sys_dup2 / sys_close pair; fixture, mutant and three live mutants).
+_chk_gate "$ROOT/tests/gates/toolchain/cli_child_redirect_closed_std_fds.sh"
 
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs

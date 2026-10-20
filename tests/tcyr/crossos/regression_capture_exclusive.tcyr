@@ -3,12 +3,12 @@
 # regression_exec_with_arg_capture_both[_status]) create the file their child writes to
 # EXCLUSIVELY and PRIVATELY: a name planted where a verb looks — a symlink or a regular file — is
 # never followed, opened or truncated, the capture is still the child's own output, the file is
-# 0600 and gone once read, and with every name taken nothing runs. Runs on ecb (macOS arm64),
-# ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg — macOS is where the
-# hole was open: Linux's fs.protected_symlinks / protected_regular refuse another user's plant
-# in a sticky /tmp, Darwin has no such setting. Windows has no fork (nothing is created there)
-# and agnos captures through pipes (lib/regression_agnos.cyr), so there the file only reports
-# its summary.
+# 0600 and unlinked before the child runs (6.7.16), and with every name taken nothing runs. Runs
+# on ecb (macOS arm64), ach (Intel Mac) and pi (aarch64) through the release gate's cross-OS leg —
+# macOS is where the hole was open: Linux's fs.protected_symlinks / protected_regular refuse
+# another user's plant in a sticky /tmp, Darwin has no such setting. Windows has no fork (nothing
+# is created there) and agnos captures through pipes (lib/regression_agnos.cyr), so there the file
+# only reports its summary.
 #
 # ⛔ WHY (6.7.15, CYRIUS-2026-0036). The verbs wrote the child's stdout to "/tmp/<prefix><pid>"
 # opened O_WRONLY|O_CREAT|O_TRUNC (Linux's bits, 577): another local user who planted a symlink
@@ -20,6 +20,11 @@
 # `_regression_tmp_base` / `_regression_capture_name`, so they plant where the verb looks
 # whatever the scheme; each checks its plant was made. The refusal's stderr line and the TMPDIR
 # rules are tests/gates/toolchain/regression_capture_exclusive.sh. CHANGELOG [6.7.15]
+# ⛔ 6.7.16: the name was unlinked only after the read-back, so a process killed mid-capture left it
+# for ever (O_EXCL skips a taken name). The verb now unlinks it right after the create and reads the
+# capture back from its own fd: `_cr_private`'s child fstats its stdout (0600, a regular file) and
+# finds the name already gone, and `_cr_parent_stderr` pins that the parent's kept fd is lifted off
+# the std fds. CHANGELOG [6.7.16]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -47,23 +52,45 @@ fn _cx_out(): i64 {
     return 0;
 }
 
-# The "stat" child: what `path` is, as "f" (a regular file) or "x" (anything else) and its
-# permission bits in octal ("f600\n"), or "none\n" when it does not exist.
-fn _cx_stat(path): i64 {
+# The "fstat" child: what its own stdout is — "f" (a regular file) or "x" (anything else) and its
+# permission bits in octal ("f600"; "x???" when fstat fails) — then whether `path`, the name the
+# verb created, exists while it runs: " none\n" or " here\n".
+fn _cx_fstat(path): i64 {
     var st[144];
-    if (xstat(path, &st) != 0) {
-        sys_write(1, "none\n", 5);
-        return 0;
-    }
-    var m = load32(&st + STAT_MODE);
     var o[8];
     store8(&o, 120);                                   # 'x'
-    if ((m & 0xF000) == 0x8000) { store8(&o, 102); }   # 'f'
-    store8(&o + 1, 48 + ((m / 64) & 7));
-    store8(&o + 2, 48 + ((m / 8) & 7));
-    store8(&o + 3, 48 + (m & 7));
-    store8(&o + 4, 10);
-    sys_write(1, &o, 5);
+    store8(&o + 1, 63);
+    store8(&o + 2, 63);
+    store8(&o + 3, 63);
+    if (sys_fstat(1, &st) == 0) {
+        var m = load32(&st + STAT_MODE);
+        if ((m & 0xF000) == 0x8000) { store8(&o, 102); }   # 'f'
+        store8(&o + 1, 48 + ((m / 64) & 7));
+        store8(&o + 2, 48 + ((m / 8) & 7));
+        store8(&o + 3, 48 + (m & 7));
+    }
+    sys_write(1, &o, 4);
+    var sb[144];
+    if (xstat(path, &sb) == 0) { sys_write(1, " here\n", 6); }
+    else { sys_write(1, " none\n", 6); }
+    return 0;
+}
+
+# The "pcap" child: its own fd 2 CLOSED and CYRIUS_CHECK_TIMEOUT malformed in its environment, so
+# the lib's first deadline read warns on stderr — in the PARENT, after the fork, while the capture
+# runs. It captures the "out" child: 0 when the capture is exactly "cap-out\n" and the status 0,
+# 1 the capture, 2 the status. Unlifted, the capture fd opens AT 2 and the warning lands in it.
+fn _cx_pcap(): i64 {
+    sys_close(2);
+    var envp = alloc(16);
+    store64(envp, "CAP_CHILD=out");
+    store64(envp + 8, 0);
+    var buf = alloc(64);
+    var st = alloc(16);
+    var got = regression_exec_capture_status(argv(0), buf, 64, envp, st);
+    if (got != 8) { return 1; }
+    if (regression_buf_eq(buf, "cap-out\n", 8) == 0) { return 1; }
+    if (load64(st) != 0) { return 2; }
     return 0;
 }
 
@@ -88,12 +115,13 @@ fn _cx_repro(): i64 {
 if (argc() > 1) {
     if (streq(argv(1), "out") == 1) { sys_exit(_cx_out()); }
     if (streq(argv(1), "repro") == 1) { sys_exit(_cx_repro()); }
-    if (load8(argv(1)) == 47) { sys_exit(_cx_stat(argv(1))); }
+    if (streq(argv(1), "pcap") == 1) { sys_exit(_cx_pcap()); }
+    if (load8(argv(1)) == 47) { sys_exit(_cx_fstat(argv(1))); }
 }
 var _cx_env = getenv("CAP_CHILD");
 if (_cx_env != 0) {
     if (streq(_cx_env, "out") == 1) { sys_exit(_cx_out()); }
-    sys_exit(_cx_stat(_cx_env));
+    sys_exit(_cx_fstat(_cx_env));
 }
 
 var _me = argv(0);
@@ -251,19 +279,36 @@ fn _cr_all_taken(v): i64 {
     return result_unwrap_or(wt, wv, 0 - 1);
 }
 
-# Verb `v` with nothing planted: the child stats the name the verb should have created (its first
-# candidate) and reports "f600" — a regular file, owner read/write only — and once the verb has
-# returned the name is gone. 0 when both hold; 1 what the child saw, 2 the file was left.
+# Verb `v` with nothing planted: the child fstats its stdout — the capture — and reports "f600" (a
+# regular file, owner read/write only), and finds the name the verb created (its first candidate)
+# already gone while it runs; once the verb has returned the name is still gone. 0 when all hold;
+# 1 what the child's stdout was, 3 the name was there while the child ran, 2 it was there after.
 fn _cr_private(v): i64 {
     var name = _cr_name(v, 0);
     var buf = alloc(64);
     var st = alloc(16);
     var got = _cr_run(v, name, buf, 64, st);
-    if (got != 5) { return 1; }
-    if (regression_buf_eq(buf, "f600\n", 5) == 0) { return 1; }
+    if (got != 10) { return 1; }
+    if (regression_buf_eq(buf, "f600", 4) == 0) { return 1; }
+    if (regression_buf_eq(buf + 4, " none\n", 6) == 0) { return 3; }
     var sb[144];
     if (xstat(name, &sb) == 0) { return 2; }
     return 0;
+}
+
+# A capture run by a process whose fd 2 is closed, while the lib writes its deadline-knob warning
+# on stderr (the "pcap" child, run with CYRIUS_CHECK_TIMEOUT=abc and this run's TMPDIR): its exit.
+fn _cr_parent_stderr(): i64 {
+    var envp = alloc(24);
+    store64(envp, "CYRIUS_CHECK_TIMEOUT=abc");
+    store64(envp + 8, 0);
+    store64(envp + 16, 0);
+    var td = getenv("TMPDIR");
+    if (td != 0) { store64(envp + 8, _cr_cat("TMPDIR=", td)); }
+    var buf = alloc(64);
+    var st = alloc(16);
+    regression_exec_with_arg_capture_status(_me, "pcap", buf, 64, envp, st);
+    return load64(st);
 }
 
 # The filed repro in a child with no TMPDIR in its environment: its exit is the victim's size.
@@ -303,13 +348,16 @@ assert_eq(_cr_all_taken(1), 0, "regression_exec_capture_status: 0 bytes, status 
 assert_eq(_cr_all_taken(3), 0, "regression_exec_with_arg_capture_status: 0 bytes, status -1");
 assert_eq(_cr_all_taken(5), 0, "regression_exec_with_arg_capture_both_status: 0 bytes, status -1");
 
-test_group("the capture file is the verb's own: a regular file, 0600, gone once read");
+test_group("the capture file is the verb's own: a regular file, 0600, unlinked before the child runs (6.7.16)");
 assert_eq(_cr_private(0), 0, "regression_exec_capture");
 assert_eq(_cr_private(1), 0, "regression_exec_capture_status");
 assert_eq(_cr_private(2), 0, "regression_exec_with_arg_capture");
 assert_eq(_cr_private(3), 0, "regression_exec_with_arg_capture_status");
 assert_eq(_cr_private(4), 0, "regression_exec_with_arg_capture_both");
 assert_eq(_cr_private(5), 0, "regression_exec_with_arg_capture_both_status");
+
+test_group("the parent's kept capture fd is never one of its std fds (6.7.16)");
+assert_eq(_cr_parent_stderr(), 0, "fd 2 closed + a stderr warning mid-capture: the capture is the child's alone");
 #endif
 #endif
 
