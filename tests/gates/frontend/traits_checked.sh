@@ -97,6 +97,13 @@
 #      lane's base b73e8d5fe). TRR1 that program — the impl's line, once; TRR2 `Option<Pt<i64>>` with a dyn formed above
 #      the impl — the impl's line alone (the lane's head printed the site's "the return type differs" instead).
 #      Mutant (2026-10-20): the lane's previous compiler (b667c0c69) -> RED 2: TRR1 (built), TRR2 (the site's line)
+#      TRR3-TRR6 (D5's shape): a generic struct given more type arguments than it declares is its reader's refusal too
+#      (`_ta_over`), so the impl adds no "returns .." line beside "'Box' takes 1 type argument, 2 given": TRR3 the
+#      review's dd7 (a member's `: Box<i64, Pt>`, the impl's `: Box`), TRR4 dd8 (the impl's `: Box<i64, Pt>`) — the
+#      reader's line alone; TRR5 `Option<Box<i64, Pt>>` (a list no reader reads) keeps the impl's line; TRR6 under
+#      `--syntax-only`, where D5 is silent, dd7 keeps the impl's line (lint's one report of it). Mutant (2026-10-20):
+#      the lane's head aff3849ff -> RED 2: TRR3 TRR4 (two lines); `_ta_over`'s arm without its `_syntax_only` guard ->
+#      RED 1: TRR6 (no line)
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -532,6 +539,18 @@ printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Result<Pt<i64>>; }\nimpl 
 refused_at trr1 "'P.c' returns i64, trait 'T' declares Result<Pt<i64>>" 5:28 "TRR1: a member's : Result<Pt<i64>> (its list unread) against : i64 — the impl's line (it built)"
 printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Option<Pt<i64>>; }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn c(self): i64 { return 4; } }\nsyscall(60, 0);\n' > "$T/trr2.cyr"
 refused_at trr2 "'P.c' returns i64, trait 'T' declares Option<Pt<i64>>" 6:28 "TRR2: ... : Option<Pt<i64>> with a dyn formed above the impl — the impl's line alone"
+BR='struct Box<T> { n: i64; v: T; }\nstruct Pt { x; y; }\nstruct P { a; b; }\n'
+printf "$BR"'trait T2 { fn sh(self): Box<i64, Pt>; }\nimpl T2 for P { fn sh(self): Box { var b: Box; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trr3.cyr"
+refused_at trr3 "'Box' takes 1 type argument, 2 given" 4:34 "TRR3: dd7 — a member's : Box<i64, Pt>, the impl's : Box — the reader's line alone"
+printf "$BR"'trait T2 { fn sh(self): Box; }\nimpl T2 for P { fn sh(self): Box<i64, Pt> { var b: Box; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trr4.cyr"
+refused_at trr4 "'Box' takes 1 type argument, 2 given" 5:39 "TRR4: dd8 — the impl's : Box<i64, Pt> — the reader's line alone"
+printf "$BR"'trait T2 { fn sh(self): Option<Box<i64, Pt>>; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr5.cyr"
+refused_at trr5 "'P.sh' returns i64, trait 'T2' declares Option<Box<i64, Pt>>" 5:30 "TRR5: a member's : Option<Box<i64, Pt>> (its list unread) keeps the impl's line"
+rc=0; "$CC" --syntax-only < "$T/trr3.cyr" > "$T/trr6.bin" 2> "$T/trr6.err" || rc=$?
+grep '^error' "$T/trr6.err" > "$T/trr6.got"
+printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt>\n" > "$T/trr6.want"
+if [ "$rc" -ne 0 ] && cmp -s "$T/trr6.got" "$T/trr6.want"; then ok "TRR6: --syntax-only (D5 silent there) keeps dd7's impl line"
+else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16)"

@@ -1691,11 +1691,11 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
             if (xv != _dps_va) { return 7; }
             var ys = _dps_ts;
             var ye = _dps_te;
-            if (_ty_norm_eq(S, xs, xe, ys, ye) == 0) {
-                _dsq_k = xn;
-                _dsq_un = _dsq_un_of(xs, xe, ys, ye);
-                return 3;
-            }
+            if (_ty_norm_eq(S, xs, xe, ys, ye) == 0) { if (_dsq_rf_of(S, xs, xe, ys, ye) == 0) {
+                    _dsq_k = xn;
+                    _dsq_un = _dsq_un_of(xs, xe, ys, ye);
+                    return 3;
+                } }
             k = k + 1;
         }
     }
@@ -1708,6 +1708,16 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
         return 4;
     }
     return 0;
+}
+# ⛔ 6.7.16 — A PARAMETER TYPE ITS OWN READER REFUSES IS THAT REFUSAL ALONE, as a return is (`_dyn_ret_hand`): the
+# member's reader (`_trs_type`) or the method's (PARSE_FN_DEF) already said `n: Nope`, `p: *Pt<i64>` (D7) or
+# `b: *Box<i64, Pt>` (D5), and the pair check added "parameter 'p' has another type" beside it. Such a parameter is
+# stepped and the rest of the signature compared, so a later parameter that differs still reports. Judged by the names
+# a reader reads (`_ty_rd_scan`, a parameter's set: `s: Str`, a vector, a type parameter are types); a name inside an
+# unread `Result<..>` is refused by no one and keeps the site's line. 1 = either side is such a type. CHANGELOG [6.7.16]
+fn _dsq_rf_of(S, xs, xe, ys, ye): i64 {
+    if (_ty_rd_scan(S, xs, xe, 2) == 1) { return 1; }
+    return _ty_rd_scan(S, ys, ye, 2);
 }
 # 1 when either type's tokens [a, ae) / [b, be) are empty (no annotation: an i64).
 fn _dsq_un_of(a, ae, b, be): i64 {

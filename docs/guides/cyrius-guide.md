@@ -3173,11 +3173,12 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 against the trait in full: each parameter after `self` and the return by its resolved type (an
 untyped parameter, or an omitted return, is `i64`; each type read as an annotation is, so `*Box<i64>` and `*Box`,
 or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
-error, formed or not — see *Traits*; since 6.7.16 a return its own reader refuses, such as a member's `: u8`, is that
-refusal alone), generic-ness and `...`; the value class — a
-method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
-that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
-feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by
+error, formed or not — see *Traits*; since 6.7.16 a parameter or return type its own reader refuses — a member's
+`: u8`, `p: *Pt<i64>`, `b: *Box<i64, Pt>`, `n: Nope` — is that refusal alone, the rest of the signature still
+compared), generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
+fills a slot only when the trait member declares that enum (`: Result`), so the call through the dyn returns
+what the trait declares; and the `self` a dyn can feed. For a struct `T` that is an untyped `self`, `self: *T`,
+or a `self: T` over 8 bytes (passed by
 address and copied on entry). **A `self: T` of 8 bytes or less is refused**, naming the method: it
 arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. (A
 struct with `u8` / `u16` / `u32` / `f32` fields can shrink into it: since 6.7.10 `struct C4 { r:

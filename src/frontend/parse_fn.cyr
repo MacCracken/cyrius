@@ -9534,7 +9534,8 @@ fn _tr_rt_head(S, a, ae): i64 {
 # struct (`_targ_chk`) and after `Vec` (`_vec_ann_chk`), and stepped unread after any other name (`Result<..>`,
 # `Option<..>`, an enum's), so a name inside such a list is refused by nobody — counting it left a member's
 # `: Result<Pt<i64>>` against an impl's `: i64` refused by no one (it compiled). A refused name is `Pt<i64>` /
-# `i64<u8>` (D7), and with `un` one that is no type (1 a return's reading, 2 a parameter's). CHANGELOG [6.7.16]
+# `i64<u8>` (D7), a generic struct given more type arguments than it declares (D5), and with `un` one that is no type
+# (1 a return's reading, 2 a parameter's). CHANGELOG [6.7.16]
 fn _ty_rd_scan(S, a, ae, un): i64 {
     var k = a;
     while (k < ae) {
@@ -9548,6 +9549,7 @@ fn _ty_rd_scan(S, a, ae, un): i64 {
 }
 fn _ty_rd_name(S, k, un): i64 {
     if (_ngt_tail(S, k) != 0) { return 1; }
+    if (_syntax_only == 0) { if (_ta_over(S, k) == 1) { return 1; } }   # D5's shape; silent under lint, as D5 is
     if (un == 0) { return 0; }
     if (_tn_resolve_at(S, k) != 0) { return 0; }
     if (un == 2) { if (_classify_param_type(S, TOKVAL(S, k)) != 0) { return 0; } }   # `s: Str`, a vector
@@ -16115,6 +16117,43 @@ fn _ta_x3(S, gk, gi): i64 {
 fn _tp_np(tp): i64 {
     if (((tp >> 32) & 0xFFFFFFFF) != 0) { return 2; }
     return 1;
+}
+# 1 when name token `k` is a generic struct whose `<..>` lists more arguments than it declares — the shape
+# `_ta_extra` refuses, read off the tokens (the cursor untouched, nothing parsed): the impl check and the pair check
+# know such a type as its reader's refusal (`_ty_rd_name`). Not a struct declaring a third parameter (D8: refused at
+# its declaration, its uses quiet). CHANGELOG [6.7.16]
+fn _ta_over(S, k): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, k));
+    if (sid <= 0) { return 0; }
+    var tp = GSTP(S, sid - 1);
+    if (tp == 0) { return 0; }
+    var np = _tp_np(tp);
+    if (_ta_list_n(S, k + 1) <= np) { return 0; }
+    if (np == 2) { if (_ta_x3(S, 1, TOKVAL(S, k)) == 1) { return 0; } }
+    return 1;
+}
+# The arguments of the `<..>` whose `<` is token `lt`: one, and one more per `,` of the list's own depth (outside a
+# `*fn( .. )`'s parentheses) that a type follows — a `,` before the close is the empty argument `_ta_extra` lets pass.
+fn _ta_list_n(S, lt): i64 {
+    var i = lt + 1;
+    var d = 1;
+    var p = 0;
+    var n = 1;
+    var e = GTCNT(S);
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 13 || t == 14 || t == 5) { return n; }   # `{` `}` `;`: an unclosed list
+        if (t == 19) { d = d + 1; }
+        if (t == 10) { p = p + 1; }
+        if (t == 11) { p = p - 1; }
+        d = d - _targ_gt_n(t);
+        if (d <= 0) { return n; }
+        if (t == 31) { if (d == 1) { if (p == 0) { if (_targ_gt_n(TOKTYP(S, i + 1)) == 0) { n = n + 1; } } } }
+        i = i + 1;
+    }
+    return n;
 }
 # `_ta_rest` for generic struct `sid` (1-based) / generic fn `fi` (a fn that is no generic, or none: two, as before).
 fn _ta_rest_s(S, sid): i64 {

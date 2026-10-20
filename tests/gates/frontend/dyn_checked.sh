@@ -348,6 +348,17 @@
 #       one report it has. Mutants (2026-10-20, CYCC= its compiler): the lane's head b690e6a3d -> RED 6: F8r1-F8r6 (two
 #       lines each); `_tr_ret_rf` judging a side by `_tr_rt_bad` (which counts the `Nope` inside `Result<..>`) ->
 #       F8r7 BUILT (rc 0: a dyn formed from an impl whose return differs, reported by no one)
+#   F8p (6.7.16 review) a parameter type its own reader refuses is that refusal alone too: the pair check compared it
+#       and added "parameter 'p' has another type" beside the reader's line (`n: Nope`, D7's `p: *Pt<i64>`, D5's
+#       `b: *Box<i64, Pt>`); such a parameter is now stepped (`_dsq_rf_of`) and the rest compared. F8p1 / F8p2 the
+#       review's dd9 (`b: *Box<i64, Pt>` / `*Box`) and dd10 (`p: *Pt<i64>` / `*Pt`); F8p3 dd11 (a member's
+#       `: Box<i64, Pt>` return, D5's, with a dyn: the reader's line, the impl's "returns .." gone too); F8p4 the staged
+#       file's repro 3 (an impl's `n: Nope`); F8p5 a later parameter that differs still reports (`a: Nope` stepped,
+#       `b: f64` against `b: i64` named); the guards keep the site's line where no reader refuses: F8p6 a struct
+#       declared below everything, F8p7 a by-name `s: Str` (no lib/str.cyr: a type by its name), F8p8 `Result<Nope>`
+#       (a list no reader reads). Mutants (2026-10-20, CYCC= its compiler): the lane's head aff3849ff -> RED 5:
+#       F8p1-F8p5 (two lines; F8p5 named 'a'); `_dsq_rf_of` without the parameter set (`_ty_rd_scan(.., 1)`) -> RED 1:
+#       F8p7 BUILT; `_ty_rd_scan` reading every `<..>` -> RED 2: F8r7 F8p8 BUILT (and traits_checked.sh TRR1 / TRR2)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -654,6 +665,22 @@ refused f08r4 "3:25: type 'Color' cannot be a fn return type" "F8r4: dd4 — a m
 refused f08r5 "4:30: type 'u8' cannot be a fn return type" "F8r5: an impl's \`: u8\` under a member with none (the staged file's repro 1)" "${PQ}trait T2 { fn sh(self); }\n${FQ}impl T2 for P { fn sh(self): u8 { return 1; } }\n${MQ}"
 refused f08r6 "2:25: unknown type 'Nope' as a fn return type" "F8r6: a member's \`: Nope\` (the staged file's repro 2)" "${PQ}trait T2 { fn sh(self): Nope; }\n${FQ}impl T2 for P { fn sh(self) { return 1; } }\n${MQ}"
 refused f08r7 "3:36: ${F8M} 'sh' does not match its declaration in trait T2: the return type differs" "F8r7: a member's \`: Result<Nope>\` (its list no reader reads) against \`: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self): Result<Nope>; }\n${FQ}impl T2 for P { fn sh(self): i64 { return 1; } }\n${MQ}"
+# F8p — 6.7.16 review: a parameter type its own reader refuses is that refusal alone; the rest is still compared.
+BQ='struct Box<T> { n: i64; v: T; }\nstruct Pt { x; y; }\n'
+refused f08p1 "4:37: 'Box' takes 1 type argument, 2 given" "F8p1: dd9 — a member's \`b: *Box<i64, Pt>\`, the impl's \`*Box\`" "${BQ}${PQ}trait T2 { fn sh(self, b: *Box<i64, Pt>): i64; }\nimpl T2 for P { fn sh(self, b: *Box): i64 { return 0; } }\n${FQ}${MQ}"
+refused f08p2 "3:28: 'Pt' is not a generic struct: it takes no type arguments" "F8p2: dd10 — a member's \`p: *Pt<i64>\`, the impl's \`*Pt\`" "struct Pt { x; y; }\n${PQ}trait T2 { fn sh(self, p: *Pt<i64>): i64; }\n${FQ}impl T2 for P { fn sh(self, p: *Pt): i64 { return 1; } }\n${MQ}"
+refused f08p3 "4:34: 'Box' takes 1 type argument, 2 given" "F8p3: dd11 — a member's \`: Box<i64, Pt>\` return, the impl's \`: Box\`" "${BQ}${PQ}trait T2 { fn sh(self): Box<i64, Pt>; }\nimpl T2 for P { fn sh(self): Box { var b: Box; return b; } }\n${FQ}${MQ}"
+refused f08p4 "4:32: unknown type 'Nope' for parameter 'n'" "F8p4: an impl's \`n: Nope\` under an untyped \`n\` (the staged file's repro 3)" "${PQ}trait T2 { fn sh(self, n): i64; }\n${FQ}impl T2 for P { fn sh(self, n: Nope): i64 { return 1; } }\n${MQ}"
+printf '%b' "${PQ}trait T2 { fn sh(self, a: Nope, b: f64): i64; }\nimpl T2 for P { fn sh(self, a: i64, b: i64): i64 { return 1; } }\n${FQ}${MQ}" > "$T/f08p5.cyr"
+build f08p5
+grep '^error' "$T/f08p5.err" > "$T/f08p5.got"
+printf "error:<source>:2:27: unknown type 'Nope' for parameter 'a'\nerror:<source>:4:36: ${F8M} 'sh' does not match its declaration in trait T2: parameter 'b' has another type\n" > "$T/f08p5.want"
+if [ "$rc" -ne 0 ] && cmp -s "$T/f08p5.got" "$T/f08p5.want"; then ok "F8p5: a refused \`a: Nope\` is stepped and the later \`b: f64\` / \`b: i64\` still named — exactly 2 lines"
+else bad "F8p5: rc $rc: $(tr '\n' '|' < "$T/f08p5.got")"; fi
+F8PS="${F8M} 'sh' does not match its declaration in trait T2: parameter 'p' has another type"
+refused f08p6 "4:36: $F8PS" "F8p6: a \`p: *Late\` (a struct declared below everything) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: *Late): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}struct Late { z; }\n"
+refused f08p7 "4:36: $F8PS" "F8p7: a by-name \`p: Str\` (no lib/str.cyr) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Str): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p8 "4:36: $F8PS" "F8p8: a \`p: Result<Nope>\` (its list no reader reads) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Result<Nope>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).
