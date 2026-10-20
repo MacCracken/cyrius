@@ -695,14 +695,19 @@ check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld
 # closed earlier in a block that still encloses the site — and that arm names what it does
 # (axis 2's test). ⚠ Per block, not per fn (the fork detector's rule): sign-efi's site is in
 # `main`, which holds every verb, and an earlier verb's Windows arm would otherwise count as
-# this one's. The preprocessor nesting is a stack (a nested `#ifdef` inside an `#ifndef
+# this one's. A fork exempts the exec of ITS OWN block (the child's) the same way: the flag
+# clears when the fork's block closes, so a forked verb before sign-efi in `main` does not hide
+# sign-efi's site (a fork flag never reset did, 6.7.16 review). The preprocessor nesting is a stack (a nested `#ifdef` inside an `#ifndef
 # CYRIUS_TARGET_WIN` does not close it). The behaviour is pinned under wine by
 # tests/gates/platform/win_cli_sign_efi_spawns.sh. MUTATION (6.7.16): the tree before the
 # sign-efi fix -> RED (cyrius.cyr's sign-efi site UNARMED); `x_sibling_block` scanned per fn
-# (armd never reset when its block closes) -> RED (the self-test row).
+# (armd never reset when its block closes) -> RED (the self-test row); the fork flag never
+# reset when its block closes (the first cut) -> RED (`x_fork_sibling`, the self-test row: a
+# forked verb before an exec-in-place verb in one fn hid the second's site, so with more than
+# the two known sites a new unarmed one in `main` after a forking verb read green).
 echo "axis 7 — ⭐ every exec-in-place sys_execve in cbt/ has a PE arm that spawns or refuses by name:"
 cat > "$T/exec.awk" <<'AWK'
-function reset() { fork = 0; sp = 0; armd = -1; hand = ""; depth = 0; winret = 0; winbody = "" }
+function reset() { fork = 0; fdepth = 0; sp = 0; armd = -1; hand = ""; depth = 0; winret = 0; winbody = "" }
 function cnt(k,   i, c) { c = 0; for (i = 1; i <= sp; i++) if (index(k, st[i]) > 0) c++; return c }
 function close_win() { if (winret == 1) { armd = wdepth; hand = winbody } }
 /^fn [A-Za-z_]/ { reset(); fname = $2; sub(/\(.*/, "", fname) }
@@ -724,7 +729,7 @@ code ~ /^[ \t]*#endif/ { if (sp > 0) { if (st[sp] == "w" && cnt("w") == 1) close
 {
     o = gsub(/\{/, "{", code); c = gsub(/\}/, "}", code)
     if (cnt("w") > 0) { winbody = winbody " " code; if (code ~ /return|_cbt_exit\(/) winret = 1 }
-    if ((code ~ /sys_fork\(\)/ || code ~ /_cbt_fork_tracked\(/) && code !~ /^fn /) fork = 1
+    if ((code ~ /sys_fork\(\)/ || code ~ /_cbt_fork_tracked\(/) && code !~ /^fn /) { fork = 1; fdepth = depth }
     if (code ~ /sys_execve\(/ && fork == 0) {
         pe = "UNARMED"; arm = ""
         if (cnt("w") > 0) { pe = "UNARMED-PE-ONLY" }
@@ -734,6 +739,7 @@ code ~ /^[ \t]*#endif/ { if (sp > 0) { if (st[sp] == "w" && cnt("w") == 1) close
     }
     depth += o - c
     if (armd >= 0 && depth < armd) armd = -1
+    if (fork == 1 && depth < fdepth) fork = 0
 }
 AWK
 escan() { awk -f "$T/exec.awk" "$@"; }
@@ -793,6 +799,21 @@ fn x_silent(): i64 {
     sys_execve(p, a, e);
     return 1;
 }
+fn x_fork_sibling(): i64 {
+    if (verb_a == 1) {
+        var pid = sys_fork();
+        if (pid == 0) {
+            sys_execve(p, a, e);
+            sys_exit(127);
+        }
+        return 0;
+    }
+    if (verb_b == 1) {
+        sys_execve(p, a, e);
+        return 1;
+    }
+    return 0;
+}
 fn x_prose(): i64 {
     # sys_execve(p, a, e) in a comment
     var s = "sys_execve(p, a, e)";
@@ -800,10 +821,12 @@ fn x_prose(): i64 {
 }
 EOF
 escan "$T/self/e.cyr" > "$T/self/eout"
-check "  ⭐ the detector finds the 6 exec-in-place sites (not the forked child's, not prose)" 6 "$(grep -c 'fn=' "$T/self/eout" || true)"
+check "  ⭐ the detector finds the 7 exec-in-place sites (not the forked children's, not prose)" 7 "$(grep -c 'fn=' "$T/self/eout" || true)"
 check "  …flags the unguarded one" 1 "$(grep -c 'fn=x_unarmed pe=UNARMED' "$T/self/eout" || true)"
 check "  …clears a returning arm and an _cbt_exit arm" 2 "$(grep -cE 'fn=x_(returns|exits) pe=ok' "$T/self/eout" || true)"
 check "  ⭐ …flags a site whose only arm closed with ANOTHER verb's block" 1 "$(grep -c 'fn=x_sibling_block pe=UNARMED' "$T/self/eout" || true)"
+check "  ⭐ …flags an exec-in-place site after ANOTHER block's fork (a fork exempts only its own block)" 1 "$(grep -c 'fn=x_fork_sibling pe=UNARMED' "$T/self/eout" || true)"
+check "  …and still not that fork's own child exec" 1 "$(grep -c 'fn=x_fork_sibling' "$T/self/eout" || true)"
 check "  …clears a site in an #ifndef that holds a nested #ifdef" 1 "$(grep -c 'fn=x_nested_ifndef pe=ok' "$T/self/eout" || true)"
 check "  …and does not admit a silent return-0 arm" no "$(admitted "$(grep 'fn=x_silent' "$T/self/eout" | sed 's/.*arm=//')")"
 escan cbt/*.cyr > "$T/xsites"
