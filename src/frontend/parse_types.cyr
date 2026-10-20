@@ -3053,7 +3053,6 @@ fn _ps_vdesc(w): i64 {
 var _pp_tab = 0;    # 2 words per pin (1..16383): the pointee's step word (or 0 - T's token - 1), its field entry (-1)
 var _pp_n = 0;
 var _pp_cap = 0;    # the pins `_pp_tab` / `_pp_sids` hold (index 0 unused), doubled as they fill
-var _pp_late = 0;   # set when `_pp_word_at` pinned a late `**S` (the field records its binding)
 # ⛔ 6.7.14 — A PINNED WORD IS BIT 62 PLUS A 14-BIT PIN IN BITS 48-61. The pin rode bits 56-62 (126 pins), and since a
 # pin carries its pointee's struct (6.7.13) two same-size structs take two pins, so 127 distinct `**S` structs were
 # refused "max 126" where one pin per size had served them. A `**T`'s pointee is a pointer, so its word names no
@@ -3191,8 +3190,7 @@ fn _pp_word_at(S, a, si, ent): i64 {
     if (t == 8) { return _ps_pw(8, _pp_pin_at(S, a, si, ent)); }
     if (t != 2) { if (t != 105) { return 0; } }
     if (si >= 0) { if (t == 2) { if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) {
-                _pp_late = 1;
-                return 0 - (a + 2);
+                return 0 - (a + 2);   # late: its field records the binding (`_fld_pp_one`, every `**` field's)
             } } }
     var sv = GTI(S);
     STI(S, a + 1);
@@ -3635,7 +3633,6 @@ fn _fld_pp_one(S, si, ann, ent): i64 {
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     _fld_pb_note(S, ent, si);
     _fld_pb_bind(S, ent);
-    _pp_late = 0;
     var pn = _pp_pin_at(S, ann, si, ent);
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     S64(_fld_ps + ent * 8, _ps_pw(L64(_fld_ps + ent * 8), pn));
