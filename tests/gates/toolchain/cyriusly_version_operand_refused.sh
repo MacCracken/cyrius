@@ -57,6 +57,12 @@
 #            named, and NOTHING written (the refusal comes before the slot is created)
 #        9d  STATIC: the source-bootstrap path installs it; release.yml stages it in both Linux
 #            tarballs; both macOS builders stage it
+#  10  the binary's hints that SWITCH the active version say `use <v> --global` — its plain `use`
+#      pins the project's cyrius.cyml (v5.11.26), so "Switch first: cyriusly use <other>" (the
+#      active-version uninstall guard) and update's "Run: … && cyriusly use <v>" switched nothing;
+#      help says what each form does ("use <version>  Switch to a version" for both). The shell
+#      twin's `use` IS the global switch, so its hints stay. 6.7.16 (met with the review of
+#      6.7.16's D84 hints). MUTATION: the 6.7.15 hints -> RED 10a, 10b, 10c.
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
 # binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
@@ -105,6 +111,8 @@ mkdir -p "$W/fakebin"
 cat > "$W/fakebin/curl" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "$W/curl.log"
+# the releases API (axis 10's update): the latest tag is 6.6.20
+case "\$*" in *api.github.com*) printf '  "tag_name": "6.6.20",\n'; exit 0 ;; esac
 out=""
 while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac; done
 if [ -n "\$out" ]; then exec > "\$out"; fi
@@ -389,6 +397,22 @@ for mb in build-macos-arm64-tarball.sh build-macos-x86-tarball.sh; do
         || { bad "axis 9d: scripts/$mb does not stage the twin at \$WORK/\$STAGE/scripts/"; a9=1; }
 done
 [ "$a9" -eq 0 ] && echo "  ok axis 9: the tarball and refresh-only paths install the twin at versions/<v>/scripts/cyriusly (the installed binary runs it), a tree whose bins ship cyriusly without it is refused before anything is written, and the source-bootstrap path and all four POSIX tarball builders stage it"
+
+# ── axis 10: the binary's switch hints name `use <v> --global` (its plain `use` pins the project) ──
+a10=0
+store
+run bin uninstall 6.6.19
+{ [ "$RC" -eq 1 ] && grep -qF 'Switch first: cyriusly use <other> --global' "$W/err"; } \
+    || { bad "axis 10a: uninstall of the ACTIVE 6.6.19 (rc $RC) does not say 'Switch first: cyriusly use <other> --global'"; a10=1; }
+store
+run bin update
+{ [ "$RC" -eq 0 ] && grep -qxF 'Run: cyriusly install 6.6.20 && cyriusly use 6.6.20 --global' "$W/out"; } \
+    || { bad "axis 10b: update (rc $RC) does not say 'Run: cyriusly install 6.6.20 && cyriusly use 6.6.20 --global': $(grep Run: "$W/out")"; a10=1; }
+run bin --help
+{ grep -qF "use <version>      Pin this project's cyrius.cyml to a version" "$W/out" \
+    && grep -qF 'use <ver> --global Switch the active version' "$W/out" && ! grep -qF 'Switch to a version' "$W/out"; } \
+    || { bad "axis 10c: help does not say plain use pins the project and --global switches the active version"; a10=1; }
+[ "$a10" -eq 0 ] && echo "  ok axis 10: the binary's active-uninstall and update hints say 'use <v> --global', and help says what each use form does"
 
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
 echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install, uninstall and cmdtools pass their operands as argv; cmdtools runs only the active install's shell twin, which every writer ships)"

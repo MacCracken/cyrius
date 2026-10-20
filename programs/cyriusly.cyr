@@ -245,7 +245,12 @@ fn _cmd_help(): i64 {
     syscall(1, 1, "COMMANDS:\n", 10);
     syscall(1, 1, "    version            Show active version\n", 43);
     syscall(1, 1, "    list               List installed versions\n", 47);
-    syscall(1, 1, "    use <version>      Switch to a version\n", 43);
+    # `use <v>` pins the project; `--global` switches the active version (v5.11.26). It said
+    # "Switch to a version" for both. CHANGELOG [6.7.16]
+    var hu1 = "    use <version>      Pin this project's cyrius.cyml to a version\n";
+    var hu2 = "    use <ver> --global Switch the active version\n";
+    syscall(1, 1, hu1, strlen(hu1));
+    syscall(1, 1, hu2, strlen(hu2));
     syscall(1, 1, "    install <version>  Download and install\n", 44);
     syscall(1, 1, "    setup              Install from current repo checkout (refuses without build/cycc)\n", 87);
     syscall(1, 1, "    uninstall <ver>    Remove a version\n", 40);
@@ -812,7 +817,8 @@ fn _cmd_uninstall(ver_cstr): i64 {
             _cy_win_ps1_line("<other>");
             return 1;
             #endif
-            syscall(1, 2, "Cannot uninstall active version. Switch first: cyriusly use <other>\n", 68);
+            # `--global`: a plain `use` pins the project and leaves the active version. CHANGELOG [6.7.16]
+            _cy_err_s("Cannot uninstall active version. Switch first: cyriusly use <other> --global\n");
             return 1;
         }
     }
@@ -927,8 +933,9 @@ fn _cmd_update(): i64 {
     syscall(1, 1, "Checking for updates...\n", 24);
     # Shell-out: curl GitHub releases API + grep tag_name. Plain JSON
     # parsing in cyrius is doable (lib/json.cyr) but for v5.11.10's
-    # port-closeout slot, the cmdline pipeline is the pragmatic shape.
-    var cmd = "LATEST=$(curl -sSf https://api.github.com/repos/MacCracken/cyrius/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"tag_name\": *\"\\([^\"]*\\)\".*/\\1/'); CUR=$(cat ~/.cyrius/current 2>/dev/null || echo none); if [ -z \"$LATEST\" ]; then echo 'Could not check for updates.'; elif [ \"$LATEST\" = \"$CUR\" ]; then echo \"Already up to date: $CUR\"; else echo \"Update available: $CUR -> $LATEST\"; echo \"Run: cyriusly install $LATEST && cyriusly use $LATEST\"; fi";
+    # port-closeout slot, the cmdline pipeline is the pragmatic shape. Its switch hint is
+    # `use <v> --global`: a plain `use` pins the project. CHANGELOG [6.7.16]
+    var cmd = "LATEST=$(curl -sSf https://api.github.com/repos/MacCracken/cyrius/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"tag_name\": *\"\\([^\"]*\\)\".*/\\1/'); CUR=$(cat ~/.cyrius/current 2>/dev/null || echo none); if [ -z \"$LATEST\" ]; then echo 'Could not check for updates.'; elif [ \"$LATEST\" = \"$CUR\" ]; then echo \"Already up to date: $CUR\"; else echo \"Update available: $CUR -> $LATEST\"; echo \"Run: cyriusly install $LATEST && cyriusly use $LATEST --global\"; fi";
     return _exec_shell(cmd);
 }
 
