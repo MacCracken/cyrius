@@ -203,6 +203,23 @@ var TG10 = mkzb(GP1);
 var TG11 = mkzc(ZBX);
 var TG12 = mkg1(&ZM);
 fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG10.v.zshow(); }
+# --- 6.7.16: a generic method's generic struct result (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
+# `var y = b.mkg(P);` / `b.mkg<i32>(33)` with `fn mkg<T>(self, v: T): G1<T>` bound nothing in the zone (`y.v`: "no
+# struct type in scope for 'y'"); they are the instance the call reaches, as after the first statement (TN*, below). A
+# generic operator fn's result is its base (`ZB_add<T>`: the dispatch calls the base); TM9 an explicit generic method
+# returning a plain struct.
+struct ZB { a; }
+impl ZB {
+    fn zmkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+    fn zmk<T>(self, v: T): P1 { var p: P1; p.a = v; return p; }
+}
+fn ZB_add<T>(l: ZB, r: T): G1<T> { var g: G1<T>; g.v = l.a + r; return g; }
+var GZB = ZB { 3 };
+var TM6 = GZB.zmkg(GP1);
+var TM7 = GZB.zmkg<i32>(33);
+var TM8 = GZB + 30;
+var TM9 = GZB.zmk<i32>(33);
+fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -333,6 +350,17 @@ var TH11 = mkzc(ZBX);
 assert_eq(TH3.v + TH4.v, 30, "after a statement: mkg1(30 + 3) / mkg1(-3)");
 assert_eq(f64_to(TH5.v * 22.0) + f64_to(TH7.v * 22.0), 66, "after a statement: mkg1(1.5) / mkg1(zid(1.5))");
 assert_eq(TH10.v.zshow() + zt4(TH11), 67, "after a statement: a bounded ZG, a struct carrier");
+
+test_group("6.7.16: a zone generic method's generic struct result is the instance its call reaches");
+assert_eq(TM6.v.a, 33, "the zone: GZB.zmkg(GP1) is a G1<P1> (refused at TM6.v before)");
+assert_eq(TM7.v + zt4(TM7), 66, "the zone: GZB.zmkg<i32>(33) is a G1<i32>");
+assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn's base G1");
+assert_eq(TM9.a, 33, "the zone: GZB.zmk<i32>(33), an explicit generic method's plain struct");
+assert_eq(tm_read2(), 132, "a fn body reads them before the replay");
+var TN6 = GZB.zmkg(GP1);
+var TN7 = GZB.zmkg<i32>(33);
+var TN8 = GZB + 30;
+assert_eq(TN6.v.a + zt4(TN7) + TN8.v, 99, "after a statement: the same three");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

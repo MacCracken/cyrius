@@ -11167,6 +11167,11 @@ var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, 
 var _gz_k = 0;
 var _gz_gb = 0;  # the generic struct a whole generic call's `: G<T>` return names (its instance is the call's)
 var _gz_mfi = 0 - 1;   # 6.7.15: the method or operator fn whose result `_gz_ty` last typed (`_gu_wsid`)
+# 6.7.16: that step's method name token (-1: an operator fn), its `(` and its receiver's struct (`_gu_minst`)
+var _gz_mti = 0 - 1;
+var _gz_mop = 0;
+var _gz_mrs = 0;
+var _gz_mx = 0;        # 6.7.16: 1 while `_gz_ty` splits — `_gz_split` then reads `R.m<..>(` as one operand
 # PARSE_GVAR_REG, the slot known (`gvi`; `ti` the initialiser's first token): a struct global of 8 B or
 # less is noted for the sweep — a literal (`lit` 1, struct `ssid`) as a fixed value (its token negated),
 # any other initialiser (the declared `asid`) to be judged.
@@ -11357,7 +11362,10 @@ fn _gz_ty(S, b, e): i64 {
     }
     if (b >= e) { return 0; }
     if (TOKTYP(S, b) == 15) { return _gz_ie(S, b, e); }
+    var mx = _gz_mx;
+    _gz_mx = 1;
     var p = _gz_split(S, b, e);
+    _gz_mx = mx;
     if (p == 0 - 2) { return 0; }
     if (p >= 0) { return _gz_op(S, b, p); }
     return _gz_unary(S, b, e);
@@ -11376,14 +11384,18 @@ fn _gz_bin(t): i64 {
 # Where [b, e) splits as a binary expression outside every bracket: the LAST operator of the loosest
 # level present (both loops are left-associative, so it is the one applied last), -1 for none, -2 for
 # an operator neither loop parses (a comparison, a logic link: an integer, never a struct).
+# 6.7.16: for the zone's reader (`_gz_mx`), an explicit generic method call `R.m<..>(..)` is one operand, as the
+# parser's member arm reads it (`_gz_mxopen`) — its `<` was a comparison, so the line typed nothing. CHANGELOG [6.7.16]
 fn _gz_split(S, b, e): i64 {
     var pa = 0 - 1;
     var pm = 0 - 1;
     var opd = 0;
+    var os = b;   # the operand's first token past its prefixes (a member's receiver starts there)
     var i = b;
     while (i < e) {
         var t = TOKTYP(S, i);
         if (t == 10 || t == 13 || t == 28) {
+            if (opd == 0) { os = i; }
             i = _gz_close(S, i, e) + 1;
             opd = 1;
             continue;
@@ -11391,20 +11403,47 @@ fn _gz_split(S, b, e): i64 {
         if (opd == 0) {
             if (t == 2) {
                 var o = _gcall_open(S, i);
-                if (o > i + 1) { i = o; opd = 1; continue; }   # `f<..>(`: on to its `(`
+                if (o > i + 1) { os = i; i = o; opd = 1; continue; }   # `f<..>(`: on to its `(`
             }
-            if (t != 7 && t != 8 && t != 27 && t != 37) { opd = 1; }   # else a prefix
+            if (t != 7 && t != 8 && t != 27 && t != 37) { opd = 1; os = i; }   # else a prefix
         } else {
             var c = _gz_bin(t);
             if (c == 1) { pa = i; opd = 0; }
             elif (c == 2) { pm = i; opd = 0; }
-            elif (c == 3) { opd = 0; }
+            elif (c == 3) {
+                var mo = _gz_mxopen(S, os, i);
+                if (mo > 0) { i = mo; continue; }   # `R.m<..>(`: on to its `(`
+                opd = 0;
+            }
             elif (c == 0) { return 0 - 2; }
         }
         i = i + 1;
     }
     if (pa >= 0) { return pa; }
     return pm;
+}
+# The `(` of `R . m < .. > (` at the `.` (token d), R the operand [os, d), when the zone's reader asks (`_gz_mx`) and
+# R's struct has a generic method m and no field m (`_mtargs_at`, the parser's member arm's own test); else 0.
+fn _gz_mxopen(S, os, d): i64 {
+    if (_gz_mx == 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 2) { return 0; }
+    if (TOKTYP(S, d + 2) != 19) { return 0; }
+    if (_mtargs_at(S, _gz_rsid(S, os, d), d + 1) == 0) { return 0; }
+    return _tok_targs_close(S, d + 3) + 1;
+}
+# The struct the receiver [a, d) is (`_gz_ty`: a value, a handle, a `*T`), the reader's state put back; 0 none.
+fn _gz_rsid(S, a, d): i64 {
+    var k = _gz_k;
+    var gb = _gz_gb;
+    var mf = _gz_mfi;
+    var mt = _gz_mti;
+    var t = _gz_ty(S, a, d);
+    _gz_k = k;
+    _gz_gb = gb;
+    _gz_mfi = mf;
+    _gz_mti = mt;
+    if (t >= 2048) { return 0; }
+    return t;
 }
 # [b, p) OP [p + 1, ..): an overloaded `+ - * /` dispatches on its left operand's struct (`_gz_lty`)
 # and has its operator fn's struct return; any other operator, or no dispatch, gives no struct.
@@ -11423,6 +11462,7 @@ fn _gz_op(S, b, p): i64 {
     if (r <= 0) { return 0; }
     _gz_k = 1;
     _gz_mfi = ofi;
+    _gz_mti = 0 - 1;
     return r;
 }
 # The struct an operator's left operand [b, p) dispatches on (`_op_lst`): a struct result, an inline
@@ -11510,11 +11550,12 @@ fn _gz_chain(S, b, e): i64 {
         if (t >= 2048) { return 0; }
         if (TOKTYP(S, i) != 41) { return 0; }
         if (TOKTYP(S, i + 1) != 2) { return 0; }
-        if (TOKTYP(S, i + 2) == 10) {
+        var mo = _gz_mopen(S, t, i + 1);   # 6.7.16: `.m(` or `.m<..>(`
+        if (mo > 0) {
             var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
             if (mf < 0) { return 0; }
-            _gz_mfi = mf;
-            var mc = _call_close(S, i + 2);
+            _gz_mstep(mf, i + 1, mo, t);
+            var mc = _call_close(S, mo);
             t = GFRS(S, mf);
             k = 1;
             if (t <= 0) {
@@ -11542,6 +11583,21 @@ fn _gz_chain(S, b, e): i64 {
     if (t >= 2048) { return 0; }
     _gz_k = k;
     return t;
+}
+# The `(` of the method call whose name is token `n` on struct `t`: `.m(`, or (6.7.16) the explicit `.m<..>(` the
+# parser's member arm reads (`_mtargs_at`: m no field of t and a generic method of it); else 0.
+fn _gz_mopen(S, t, n): i64 {
+    if (TOKTYP(S, n + 1) == 10) { return n + 1; }
+    if (_mtargs_at(S, t, n) == 0) { return 0; }
+    return _tok_targs_close(S, n + 2) + 1;
+}
+# The method step `_gz_ty` last read: its fn, name token, `(` and receiver's struct (`_gu_minst`).
+fn _gz_mstep(mf, n, mo, rs): i64 {
+    _gz_mfi = mf;
+    _gz_mti = n;
+    _gz_mop = mo;
+    _gz_mrs = rs;
+    return 0;
 }
 # The struct the call `f(..)` / `g<..>(..)` at token `j` returns by value: its fn's, a generic's bound
 # `: T` read from the tokens as the pair scans read it (`_tok_gen_ret_sid`, nothing instantiated); 0.
@@ -11828,15 +11884,16 @@ fn _gu_zsid(S, ti): i64 {
 }
 # 6.7.15 (D34) — the struct a whole method, operator or known `&f` result at token `b` (up to its `;`, inside any wrap)
 # has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not an if-expression's, not
-# a free call's (`_gu_call`'s), and not the generic struct's base a GENERIC method or operator returns (the replay's
-# call reaches an instance whose struct is not made here).
+# a free call's (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches
+# (`_gu_minst`; the base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a generic operator fn's its base.
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
     var t = _gu_ok(S, _gz_ty(S, b, e));
     if (_gz_k != 1) { return 0; }
     if (t <= 0) { return 0; }
-    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { return 0; } } }
+    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
+    if (t <= 0) { return 0; }
     var a = b;
     while (TOKTYP(S, a) == 10) {
         if (_gz_close(S, a, e) != e - 1) { break; }
@@ -11845,6 +11902,81 @@ fn _gu_wsid(S, b): i64 {
     }
     if (_gu_wfree(S, a, e) == 1) { return 0; }
     return t;
+}
+# ⛔ 6.7.16 — A ZONE GENERIC METHOD'S GENERIC STRUCT RESULT IS ITS INSTANCE. The struct the last method step `_gz_ty`
+# read (`_gz_mfi` generic, returning `: G<..>`, G = `g`) returns at its call: its type arguments as the parser's member
+# arm binds them — an explicit list as `_meth_targs` / `_meth_xinst` read it (`_gu_mx`), else `_mcall_gen`'s inference
+# (`_gu_mi`: `_mcall_infer`, `self` at parameter 0, no fn instance made) — then G for the base, else the instance its
+# return names (`_gu_inst`), the one the replay's call reaches. `var y = b.mkg(P);` / `b.mkg<i32>(33)` bound nothing in
+# the zone (`y.v`: "no struct type in scope for 'y'") and bound the instance after the first statement. A GENERIC
+# OPERATOR fn is G: its dispatch (EMIT_OP_DISPATCH) calls the base, as after the first statement. 0 = not read here.
+# CHANGELOG [6.7.16]
+fn _gu_minst(S, g): i64 {
+    if (_gz_mti < 0) { return g; }
+    var gb = _gz_gb;
+    _gz_gb = g;
+    var r = 0;
+    if (TOKTYP(S, _gz_mti + 1) == 19) { r = _gu_mx(S, _gz_mfi, g); }
+    else { r = _gu_mi(S, _gz_mfi, g); }
+    _gz_gb = gb;
+    return r;
+}
+# The explicit list `.m<..>(` (its name token `_gz_mti`), read as the free call's is (`_gu_xlist`) when it holds names
+# only (`_gu_xnames`: a `*`, a number, a slice is the call's to refuse, never parsed here); a list the call refuses
+# (`<*u8>`, `<u8>`) is G, as the arm reaches the base (`_meth_xinst`) and the line after the first statement takes it.
+fn _gu_mx(S, mf, g): i64 {
+    if (_gu_xnames(S, _gz_mti + 2) == 0) { return g; }
+    if (_gu_xlist(S, _gz_mti) == 0) { return g; }
+    var c0 = _gu_x0;
+    var c1 = _gu_x1;
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    if (c0 == 0 - 8) { if (c1 == 0 || c1 == 0 - 8) { return g; } }
+    if (c0 < 0) { if (c1 <= 0) { if (_gen_stub(S, mf) != 0) { return g; } } }
+    return _gu_inst(S, mf, c0, c1);
+}
+# 1 = the type-argument list from its first argument at token `i` is names, commas and nested `<..>` only.
+fn _gu_xnames(S, i): i64 {
+    var e = _tok_targs_close(S, i);
+    if (e < 0) { return 0; }
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t != 2 && t != 19 && t != 20 && t != 31 && t != 39 && t != 152) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+fn _gu_mi(S, mf, g): i64 {
+    _gen_stub(S, mf);
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    _gi_sc = 0;
+    _gu_miss = 0;
+    var c0 = _mcall_infer(S, mf, _gz_mop, 0, _gz_mrs);
+    var c1 = 0;
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, mf, _gz_mop, 1, _gz_mrs); }
+    var inst = _gu_mbind(S, mf, c0, c1);
+    _gu_noinst = ni;
+    SFLC(S, lc);
+    STI(S, sv);
+    _gi_sc = sc;
+    _gu_miss = ms;
+    if (inst < 0) { return 0; }
+    if (inst == 0) { return g; }
+    return _gu_inst(S, mf, c0, c1);
+}
+# `_mcall_gen`'s verdict on the binding (c0, c1) just inferred: 1 the instance, 0 the base, -1 not read (`_gu_miss`,
+# or a tuple: the call refuses itself).
+fn _gu_mbind(S, mf, c0, c1): i64 {
+    if (_gu_miss == 1) { return 0 - 1; }
+    if (_tup_is(S, c0) == 1) { return 0 - 1; }
+    if (_tup_is(S, c1) == 1) { return 0 - 1; }
+    if (c0 > 0 || c1 > 0) { return 1; }
+    return _gen_sc_inst(S, mf);
 }
 # 1 = [a, e) is an if-expression or one whole free call (a known `&f` callee is not one).
 fn _gu_wfree(S, a, e): i64 {
