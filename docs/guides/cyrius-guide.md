@@ -4272,8 +4272,10 @@ past `n`, so under-sizing `dst` is a memory-corruption footgun.
 
 > The bare `f32v8_*` builtins emit **unconditional AVX2** (they `#UD` on a
 > pre-AVX2 CPU). Call them only when `simd_has_avx2()` is true, or use the
-> `lib/simd.cyr` wrappers below, which pick the AVX2 or SSE-fallback path
-> for you.
+> `lib/simd.cyr` wrappers below, which run on any x86: their add / sub / mul
+> take the 2×SSE path with no per-call dispatch (since v6.5.62 — at a fixed
+> lane count the dispatch call cost more than the ymm kernel saved), and
+> their fma / dot pick the AVX2 path when the CPU has it.
 
 ### `lib/simd.cyr` typed wrappers
 
@@ -4295,11 +4297,11 @@ var l0 = f32v4_lane0(r);                 # → f32 bit pattern of lane 0
 # Pointer form — pass addresses; `&IDENT` auto-routes to f32v4_add_ptr
 var r2: f32v4 = f32v4_add(&a, &b);
 
-# 256-bit wrappers self-select AVX2 vs 2×SSE at runtime
+# 256-bit wrappers run on any x86 (add / sub / mul: 2×SSE; fma / dot: AVX2 when present)
 var x: f32v8 = f32v8_make(f32_from(1.0), f32_from(2.0), f32_from(3.0), f32_from(4.0),
                           f32_from(5.0), f32_from(6.0), f32_from(7.0), f32_from(8.0));
 var y: f32v8 = f32v8_splat(f32_from(2.0));
-var z: f32v8 = f32v8_add_ptr(&x, &y);    # vaddps ymm on AVX2, else 2×SSE addps
+var z: f32v8 = f32v8_add_ptr(&x, &y);    # 2×SSE addps, no per-call dispatch
 
 # Integer vectors
 var p: i32v4 = i32v4_make(1, 2, 3, 4);
@@ -4325,9 +4327,13 @@ if (simd_has_fma()  == 1) { /* vfmadd231ps available */ }
 ```
 
 `simd_has_avx2()` tests `CPUID.7.EBX` bit 5; `simd_has_fma()` tests
-`CPUID.1.ECX` bit 12 (a *different* bit). The `f32v8_*` wrappers call these
-internally and fall back to the 128-bit SSE ops (2 × 128-bit iterations)
-when a feature is absent, so consumer code stays correct on any x86 CPU.
+`CPUID.1.ECX` bit 12 (a *different* bit). The fma / dot wrappers
+(`f32v8_fma`, `f32v8_dot`, `f64v4_fmadd`, `f64v4_dot`) read these, cached, and
+fall back to the 128-bit SSE ops (2 × 128-bit iterations) when a feature is
+absent, so consumer code stays correct on any x86 CPU; the add / sub / mul /
+div wrappers take the 128-bit path unconditionally (v6.5.60 / v6.5.62). Where
+ymm genuinely pays — a batch loop over many lanes — call the `f64v256_*` /
+`f32v8_*` builtins directly behind `simd_has_avx2()`.
 `cycc` itself never calls the AVX2 ops, so the compiler stays pure SSE2 and
 self-hosts everywhere.
 
