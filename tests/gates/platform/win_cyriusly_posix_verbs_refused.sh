@@ -39,6 +39,9 @@
 #       which falls back to RemoveDirectoryW on Windows — a link to a directory is a directory
 #       entry DeleteFileW refuses, so a failed switch left its bin.cyrtmp temp link (measured on
 #       cass). wine cannot show it; the cass leg runs the extracted fn (_co_relink_probe).
+#   K7-K8  (wine, met with D84's rows) with no CYRIUS_HOME the home is install.ps1's
+#       %USERPROFILE%\.cyrius (cyriusly read HOME, unset on a Windows console: every verb looked in
+#       /root/.cyrius), and `which` names <home>\bin\cycc.exe (it printed <home>/bin/cycc).
 #   wine is NOT hardware: without it the wine axes are a named SKIP (exit 77); the cass leg of
 #   scripts/cross-os-selfhost.sh runs R1-R6 and K1-K2 on real Windows.
 #
@@ -215,6 +218,27 @@ else
     rm -rf "$T/ch/versions"/*
     wrun list
     check "K6 list of an empty store: rc 0, install.ps1 named (not 'cyriusly install')" "0 yes no" "$RC $(has 'install a release with install.ps1' "$T/out.u") $(has 'cyriusly install' "$T/out.u")"
+    # K7 / K8 (6.7.16, met with D84's rows) — the home with no CYRIUS_HOME is install.ps1's
+    # %USERPROFILE%\.cyrius: cyriusly read HOME, which Windows sets only under a POSIX shell or
+    # ssh, so every verb looked in /root/.cyrius ("cyriusly none", nothing installed). And `which`
+    # names bin\cycc.exe, the file a Windows install has (it printed <home>/bin/cycc).
+    UPW=$(timeout 120 wine cmd /c 'echo %USERPROFILE%' 2> /dev/null | tr -d '\r')
+    UPU=$(winepath -u "$UPW" 2> /dev/null)
+    if [ -z "$UPW" ] || [ ! -d "$UPU" ]; then
+        echo "  FAIL: K7 — wine's %USERPROFILE% could not be read ('$UPW' -> '$UPU')"; fails=$((fails + 1))
+    else
+        mkdir -p "$UPU/.cyrius/versions/6.7.13" && printf '6.7.13' > "$UPU/.cyrius/current"
+        urun() { RC=0; ( cd "$T/w" && env -u CYRIUS_HOME -u HOME timeout 300 wine "$T/cyriusly.exe" "$@" > "$T/out" 2> "$T/err" ) || RC=$?; tr -d '\r' < "$T/out" > "$T/out.u"; }
+        urun home
+        check "K7 no CYRIUS_HOME: home is %USERPROFILE%\\.cyrius (it was /root/.cyrius)" "0 $UPW\\.cyrius" "$RC $(cat "$T/out.u")"
+        urun version
+        check "  …version reads its current (it was 'cyriusly none')" "0 cyriusly 6.7.13" "$RC $(cat "$T/out.u")"
+        urun list
+        check "  …list finds its versions" yes "$(grep -qx '  \* 6.7.13 (active)' "$T/out.u" && echo yes || echo no)"
+        urun which
+        check "K8 which: <home>\\bin\\cycc.exe (it was <home>/bin/cycc)" "0 $UPW\\.cyrius\\bin\\cycc.exe" "$RC $(cat "$T/out.u")"
+        rm -rf "$UPU/.cyrius"
+    fi
 fi
 
 echo ""

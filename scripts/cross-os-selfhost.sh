@@ -1087,7 +1087,8 @@ case "$HOST" in
     cat programs/cyriusly.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_cyly.exe 2>/dev/null
     rm -rf "$CO_TMP"/_cyh "$CO_TMP"/_co_cyh.tgz && mkdir -p "$CO_TMP"/_cyh/cyh/versions/6.7.14/bin "$CO_TMP"/_cyh/cyh/versions/6.7.15/bin "$CO_TMP"/_cyh/cyh/bin \
       && printf '6.7.15' > "$CO_TMP"/_cyh/cyh/current && printf 'x' > "$CO_TMP"/_cyh/cyh/bin/cycc.exe \
-      && (cd "$CO_TMP"/_cyh && tar czf ../_co_cyh.tgz cyh) \
+      && mkdir -p "$CO_TMP"/_cyh/up/.cyrius/versions/6.7.13 && printf '6.7.13' > "$CO_TMP"/_cyh/up/.cyrius/current \
+      && (cd "$CO_TMP"/_cyh && tar czf ../_co_cyh.tgz cyh up) \
       && scp -q $SSHO "$CO_TMP"/_co_cyly.exe "cass:$WRDS"/cyriusly.exe \
       && scp -q $SSHO "$CO_TMP"/_co_cyh.tgz "cass:$WRDS"/_co_cyh.tgz \
       && ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && tar xzf _co_cyh.tgz"' \
@@ -1102,9 +1103,14 @@ case "$HOST" in
     done
     ssh $SSHO cass "cmd /v /c \"$_CYL list > _cyk1.out 2> _cyk1.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [list: rc not 0]"
     ssh $SSHO cass "cmd /v /c \"$_CYL version > _cyk2.out 2> _cyk2.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version: rc not 0]"
+    # The home with no CYRIUS_HOME is %USERPROFILE%\.cyrius (HOME unset, as on a plain console —
+    # sshd sets it here), and `which` names bin\cycc.exe. CHANGELOG [6.7.16]
+    _CYU='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=&& set HOME=&& set USERPROFILE=C:\cyrius-tests\'"$RD"'\up&& cyriusly.exe'
+    ssh $SSHO cass "cmd /v /c \"$_CYU version > _cyk3.out 2> _cyk3.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version with no CYRIUS_HOME: rc not 0]"
+    ssh $SSHO cass "cmd /v /c \"$_CYL which > _cyk4.out 2> _cyk4.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [which: rc not 0]"
     ssh $SSHO cass "cmd /c \"cd /d C:\\cyrius-tests\\$RD && dir /s /b /a cyh > _cyls.txt\"" || _cybad="$_cybad [the store could not be listed]"
     mkdir -p "$CO_TMP"/_cyout && rm -f "$CO_TMP"/_cyout/*
-    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
+    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyk3.out" "cass:$WRDS/_cyk4.out" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
     _cyn=0
     for _cvb in install update setup uninstall cmdtools "use --global"; do
       _cyn=$((_cyn + 1))
@@ -1113,6 +1119,8 @@ case "$HOST" in
     done
     tr -d '\r' < "$CO_TMP"/_cyout/_cyk1.out 2>/dev/null | grep -qx '  \* 6.7.15 (active)' || _cybad="$_cybad [list: no '* 6.7.15 (active)']"
     tr -d '\r' < "$CO_TMP"/_cyout/_cyk2.out 2>/dev/null | grep -qx 'cyriusly 6.7.15' || _cybad="$_cybad [version: no 'cyriusly 6.7.15']"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk3.out 2>/dev/null | grep -qx 'cyriusly 6.7.13' || _cybad="$_cybad [no CYRIUS_HOME: not %USERPROFILE%\\.cyrius]"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk4.out 2>/dev/null | grep -q '\\cyh\\bin\\cycc\.exe$' || _cybad="$_cybad [which: not <home>\\bin\\cycc.exe]"
     if ! [ -s "$CO_TMP"/_cyout/_cyls.txt ] || grep -q 'cyrtmp' "$CO_TMP"/_cyout/_cyls.txt \
       || ! tr -d '\r' < "$CO_TMP"/_cyout/_cyls.txt | grep -q '\\versions\\6\.7\.14$'; then
       _cybad="$_cybad [the store changed: a *.cyrtmp* left, or versions\\6.7.14 removed]"
@@ -1122,7 +1130,7 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — cyriusly.exe (6.7.16's D84):$_cybad. Remote output: $WRD\\_cyr*.*, _cyk*.out, _cyls.txt. NOT SELFHOST_OK."
       exit 1
     fi
-    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global refused by name (rc 1, the store as it was); list and version rc 0"
+    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global refused by name (rc 1, the store as it was); list and version rc 0; the home %USERPROFILE%\\.cyrius with no CYRIUS_HOME; which names bin\\cycc.exe"
     # 6.7.16 — `_relink_atomic` removes its temp link when the switch fails. A link to a directory is
     # a directory entry on Windows that DeleteFileW refuses, so a failed `use --global` left
     # bin.cyrtmp.<pid>.<n> (a SYMLINKD) here while saying "nothing was changed". No verb reaches it

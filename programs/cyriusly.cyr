@@ -26,16 +26,28 @@ include "lib/process.cyr"
 
 # CYRIUS_HOME default: $HOME/.cyrius. The shell version honors
 # the override env var; the cyrius port does the same.
+# Windows: %USERPROFILE%\.cyrius, install.ps1's default (the CLI's find_tools reads the same).
+# It read HOME, which Windows sets only under a POSIX shell or an ssh session, so on a plain
+# console every verb looked in /root/.cyrius: `list` said nothing was installed, `version`
+# "cyriusly none" (6.7.16, found with D84's rows). CHANGELOG [6.7.16]
 fn _cyrius_home(): i64 {
     var h = getenv("CYRIUS_HOME");
     if (h != 0 && load8(h) != 0) { return h; }
+    #ifdef CYRIUS_TARGET_WIN
+    var up = getenv("USERPROFILE");
+    if (up != 0 && load8(up) != 0) { return _cy_dot_cyrius(up, 92); }
+    #endif
     var u = getenv("HOME");
     if (u == 0) { return "/root/.cyrius"; }
-    # Allocate the joined path "$HOME/.cyrius" + NUL.
-    var ulen = strlen(u);
+    return _cy_dot_cyrius(u, 47);
+}
+
+# "<base><sep>.cyrius" + NUL, freshly allocated.
+fn _cy_dot_cyrius(base, sep): i64 {
+    var ulen = strlen(base);
     var out = alloc(ulen + 16);
-    memcpy(out, u, ulen);
-    store8(out + ulen, 47);                 # '/'
+    memcpy(out, base, ulen);
+    store8(out + ulen, sep);
     store8(out + ulen + 1, 46);              # '.'
     memcpy(out + ulen + 2, "cyrius", 6);
     store8(out + ulen + 8, 0);
@@ -193,10 +205,14 @@ fn _cmd_list(): i64 {
     return 0;
 }
 
-# `cyriusly which` — print path to active compiler.
+# `cyriusly which` — print path to active compiler. On Windows `<home>\bin\cycc.exe`, the name
+# install.ps1 installs (it printed `<home>/bin/cycc`, a file no Windows install has). CHANGELOG [6.7.16]
 fn _cmd_which(): i64 {
     var home = _cyrius_home();
     var binpath = _path_join(home, "bin/cycc");
+    #ifdef CYRIUS_TARGET_WIN
+    binpath = _cy_win_slashes(_path_join(home, "bin/cycc.exe"));
+    #endif
     syscall(1, 1, binpath, strlen(binpath));
     syscall(1, 1, "\n", 1);
     return 0;
