@@ -1162,7 +1162,7 @@ declaration warned *assigning non-pointer to typed pointer*. A program may name 
 pointees of a pointer to a pointer (*too many pointer-to-pointer pointee types (max 16383)*; 126 in 6.7.13). **`**pps` of a `pps: **S` is the
 struct S as an argument (6.7.13):** `take(**pps)` into `p: *S` (or a by-value `S` over 8 B) passes `*pps`, as
 `take(*ps)` passes `ps` — a `**S` local, parameter, field, global or capture, inside parentheses or written `*(*pps)`
-— and a `**Q` of another struct is refused by name (*cannot pass 'ppq' to a parameter of a different struct type*). ⚠
+— and a `**Q` of another struct is refused by name (*cannot pass '\*\*ppq' to a parameter of a different struct type*). ⚠
 Through 6.7.12 (and 6.7.13 before this) the word `**pps` read — S's first field — was passed as the address: 139 on
 x86_64 and aarch64, a cx guest fault, exit 5 on Windows. **Since 6.7.14 `**pp` is the struct value `*p` is at every
 use** (6.7.10's decision 6): `var t: S = **pp;` copies, a by-value argument passes the struct (a 1..7-byte one read
@@ -1174,10 +1174,10 @@ operator's operand and a by-value argument (`return *pp;` from a `: S` fn return
 too**, copied through as `l = p` is: `l = *pp`, `G = *pp` (in a fn and at top level), `*q = *pp`, `**qq = *pp`, a for
 step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at (a top-level `var G: S = *GPP;` keeps
 the handle every top-level declaration from a `*S` source gets — see *the handle line*); into a `*S` or a handle
-`q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy 'qq' into a
+`q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy '\*qq' into a
 variable of a different struct/vector type*). **Since 6.7.16 a struct-typed FIELD destination copies too:** `o.s =
 *pp`, `G.s = *pp`, `w.s = *pp` through a `*W`, `o.s = (*pp)`, a for step and a top-level `G.s = *GPP` copy the struct
-`*pp` points at, as `o.s = p` does; a `**Q`'s `*qq` into an `S` field is refused by name (*cannot copy 'qq' into a
+`*pp` points at, as `o.s = p` does; a `**Q`'s `*qq` into an `S` field is refused by name (*cannot copy '\*qq' into a
 struct field of a different struct type: 's'*), and a `*S` field (`o.ps = *pp`) takes the pointer. ⚠ Through 6.7.14
 the first four stored the pointer word into the first field (the rest stale), the field destination through 6.7.15,
 and the declaration bound `t` to the struct as a handle. `**pp = u` copies the struct and `**pp OP= v` is refused, as
