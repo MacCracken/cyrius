@@ -1630,7 +1630,11 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
 # parameter after `self`, then the return, by type (a name by its resolved type, untyped = i64,
 # every other token by its kind), generic-ness and `...` alike. Else what differs: 3 a parameter's
 # type (`_dsq_k` its name token), 4 the return type, 5 the parameter count, 6 one generic, 7 a `...`.
+# Each type is read as an annotation is (`_ty_norm_eq`, the impl-return check's comparator): `Box<i64>` IS `Box` and
+# `>>` IS `> >`, as the guide's "by its resolved type" says — compared token by token they were "another type".
+# CHANGELOG [6.7.16]
 var _dsq_k = 0;   # the trait's differing parameter (its name token)
+var _dsq_un = 0;  # 1 when a side of the differing type (3 / 4) is unannotated: F8's "(.. is i64)" hint applies
 fn _dyn_sig_eq(S, tp, fp): i64 {
     var ga = 0;
     var gb = 0;
@@ -1653,8 +1657,11 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
         else {
             if (ha != hb) { return 5; }
             if (xv != _dps_va) { return 7; }
-            if (_dyn_ty_eq(S, xs, xe, _dps_ts, _dps_te) == 0) {
+            var ys = _dps_ts;
+            var ye = _dps_te;
+            if (_ty_norm_eq(S, xs, xe, ys, ye) == 0) {
                 _dsq_k = xn;
+                _dsq_un = _dsq_un_of(xs, xe, ys, ye);
                 return 3;
             }
             k = k + 1;
@@ -1663,7 +1670,17 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
     var ra = _dyn_ret_at(S, a);
     var re = _dps_te;
     var rb = _dyn_ret_at(S, b);
-    if (_dyn_ty_eq(S, ra, re, rb, _dps_te) == 0) { return 4; }
+    var rbe = _dps_te;
+    if (_ty_norm_eq(S, ra, re, rb, rbe) == 0) {
+        _dsq_un = _dsq_un_of(ra, re, rb, rbe);
+        return 4;
+    }
+    return 0;
+}
+# 1 when either type's tokens [a, ae) / [b, be) are empty (no annotation: an i64).
+fn _dsq_un_of(a, ae, b, be): i64 {
+    if (a == ae) { return 1; }
+    if (b == be) { return 1; }
     return 0;
 }
 # Parameter `k` of the list whose `(` is token `o`: 1 and its type's tokens [`_dps_ts`, `_dps_te`)
@@ -1897,9 +1914,13 @@ fn _dyn_f8(S, ti, ii, m, d): i64 {
     if (d == 3) {
         PRSTR("parameter ");
         _dyn_pq(S, TOKVAL(S, _dsq_k));
-        PRSTR(" has another type (an untyped parameter is i64)");
+        PRSTR(" has another type");
+        if (_dsq_un == 1) { PRSTR(" (an untyped parameter is i64)"); }   # only when a side is untyped [6.7.16]
     }
-    elif (d == 4) { PRSTR("the return type differs (no return type is i64)"); }
+    elif (d == 4) {
+        PRSTR("the return type differs");
+        if (_dsq_un == 1) { PRSTR(" (no return type is i64)"); }
+    }
     elif (d == 5) { PRSTR("the parameter count differs"); }
     elif (d == 6) { PRSTR("one is generic, the other is not"); }
     elif (d == 7) { PRSTR("a variadic `...` differs"); }

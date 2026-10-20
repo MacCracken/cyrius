@@ -3165,7 +3165,8 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 
 **The check, once per pair.** The first forming of a (trait, type) pair checks `impl Tr for T`
 against the trait in full: each parameter after `self` and the return by its resolved type (an
-untyped parameter, or an omitted return, is `i64`; since 6.7.15 a return that differs is the impl's own
+untyped parameter, or an omitted return, is `i64`; each type read as an annotation is, so `*Box<i64>` and `*Box`,
+or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
 error, formed or not — see *Traits*), generic-ness and `...`; the value class — a
 method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
 that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can

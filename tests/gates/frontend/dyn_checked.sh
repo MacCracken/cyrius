@@ -322,6 +322,22 @@
 #       KC procedure):
 #   M-T4f the `_dyn_is` arm removed from `_type_arg_leaf`              -> RED 4: T4f T4h T4i T4j (2 error lines)
 #   M-T4k the `_dyn_is` arm removed from `_parse_one_type_arg`'s `<` arm -> RED 1: T4k (2 error lines)
+#   F8n (6.7.16) the pair check reads each type as an annotation is (`_ty_norm_eq`, the impl-return check's comparator):
+#       `Box<i64>` IS `Box` and `Box<Box<i64>>` IS `Box<Box<i64> >` (6.7.15's D4 / its review fix), as the guide's "by its
+#       resolved type" says; `_dyn_sig_eq` compared tokens (`_dyn_ty_eq`), so an impl accepted and run directly could
+#       not be formed into a dyn (issues/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md).
+#       F8n1-F8n3 the three filed programs verbatim (a return `Box<i64>` / `Box`, a return `Box<Box<i64>>` /
+#       `Box<Box<i64> >`, a parameter `*Box<i64>` / `*Box`) — each forms its dyn and exits 4; F8n4 a `Box<i32>` member
+#       against a `Box<i64>` impl return stays refused once, by the impl (4:29); F8n5 a `*Box<i32>` parameter against
+#       `*Box` stays refused at the site, with no "(an untyped parameter is i64)" — both sides are annotated (F8a keeps
+#       the hint: one side untyped). The calls through such a dyn (a parameter, a 16 B and a 24 B result): dyn_objects.tcyr
+#       §spellings, through the A / IX3 legs (x86 IR=1 / 3 / DCE, aarch64, PE) and cx_crossos_rows_run.sh R9 (cx).
+#       Mutants (2026-10-20, CYCC= its compiler):
+#   M-F8n1 the lane's base compiler (b73e8d5fe: tokens compared, the hint always) -> RED 12: F8n1-F8n3 (refused), F8n5
+#                                                                         (the hint), CW and the A x86 IR=1 / IR=3 /
+#                                                                         DCE / PE and IX3 dyn_objects legs (§spellings
+#                                                                         refused at 738:22)
+#   M-F8n2 the hint printed whatever `_dsq_un` says                    -> RED 1: F8n5
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -580,6 +596,43 @@ refused f08e "${F8M} 'sh' does not match its declaration in trait T2: its \`self
 refused f08f "cannot form dyn T2 from i64 - its method 'sh' does not match its declaration in trait T2: \`self: *T\` - the dyn of a scalar holds its value" "F8f: a scalar impl's \`self: *i64\`" "${SN}trait T2 { fn sh(self): i64; }\nimpl T2 for i64 { fn sh(self: *i64): i64 { return 1; } }\nfn f(): i64 { var n: i64 = 5; var o: dyn T2 = n; return 0; }\nsyscall(60, 0);\n"
 refused f08g "${FN}'q' - a pointer to a scalar: the dyn of a scalar holds its value" "F8g: a \`q: *i64\` into a scalar impl" "${SN}fn f(q: *i64): i64 { var o: dyn Num = q; return 0; }\nsyscall(60, 0);\n"
 refused f08h "${F8M} 'z' does not match its declaration in trait T2: parameter 'n' has another type" "F8h: one report per pair — three forming sites in two fns, one error at the first (a parameter's type: a return type is the impl's own, F8b)" "${SN}trait T2 { fn sh(self): i64; fn z(self, n): i64; }\nimpl T2 for P { fn sh(self): i64 { return 1; } fn z(self, n: u8): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; var o2: dyn T2 = q; return 0; }\nfn h(q: *P): i64 { var o: dyn T2 = q; return 0; }\nsyscall(60, 0);\n"
+# F8n — 6.7.16: one type however it is spelled is one type to the pair check (`_ty_norm_eq`); the hint only for an
+# untyped side. F8n1-F8n3 are the filing's three programs verbatim.
+F8N1=$(cat <<'EOF'
+struct Box<T> { n: i64; v: T; }
+struct Pt { x: i64; y: i64; }
+trait T { fn c(self): Box<i64>; }
+impl T for Pt { fn c(self): Box { var b: Box; b.n = 4; return b; } }
+fn f(q: *Pt): i64 { var o: dyn T = q; return 0; }
+fn main(): i64 { var p: Pt; var r: Box = p.c(); return r.n; }
+EOF
+)
+F8N2=$(cat <<'EOF'
+struct Box<T> { n: i64; v: T; }
+struct Pt { x: i64; y: i64; }
+trait T { fn c(self): Box<Box<i64>>; }
+impl T for Pt { fn c(self): Box<Box<i64> > { var b: Box<Box<i64> >; b.n = 4; return b; } }
+fn f(q: *Pt): i64 { var o: dyn T = q; return 0; }
+fn main(): i64 { var p: Pt; var r: Box<Box<i64> > = p.c(); return r.n; }
+EOF
+)
+F8N3=$(cat <<'EOF'
+struct Box<T> { n: i64; v: T; }
+struct Pt { x: i64; y: i64; }
+trait T { fn m(self, b: *Box<i64>): i64; }
+impl T for Pt { fn m(self, b: *Box): i64 { return b.n; } }
+fn f(q: *Pt): i64 { var o: dyn T = q; return 0; }
+fn main(): i64 { var p: Pt; var b: Box; b.n = 4; return p.m(&b); }
+EOF
+)
+exits f08n1 4 "F8n1: a member's \`: Box<i64>\`, the impl's \`: Box\` — the dyn forms (refused: 'the return type differs')" "$F8N1\n"
+exits f08n2 4 "F8n2: \`: Box<Box<i64>>\` against \`: Box<Box<i64> >\` — the dyn forms" "$F8N2\n"
+exits f08n3 4 "F8n3: a parameter \`b: *Box<i64>\` against \`b: *Box\` — the dyn forms (refused: 'parameter 'b' has another type')" "$F8N3\n"
+BXP='struct Box<T> { n: i64; v: T; }\nstruct Pt { x: i64; y: i64; }\n'
+refused f08n4 "4:29: 'Pt.c' returns Box<i32>, trait 'T' declares Box<i64>" "F8n4: a member's \`: Box<i64>\`, the impl's \`: Box<i32>\` — refused once, by the impl" "${BXP}trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box<i32> { var b: Box<i32>; b.n = 4; return b; } }\nfn f(q: *Pt): i64 { var o: dyn T = q; return 0; }\nfn main(): i64 { return 0; }\n"
+refused f08n5 "5:36: cannot form dyn T from Pt - its method 'm' does not match its declaration in trait T: parameter 'b' has another type" "F8n5: a parameter \`b: *Box<i32>\` against \`b: *Box\` — refused once, at the site" "${BXP}trait T { fn m(self, b: *Box<i32>): i64; }\nimpl T for Pt { fn m(self, b: *Box): i64 { return b.n; } }\nfn f(q: *Pt): i64 { var o: dyn T = q; return 0; }\nfn main(): i64 { return 0; }\n"
+if grep -qF "(an untyped parameter is i64)" "$T/f08n5.err"; then bad "F8n5: '(an untyped parameter is i64)', though both sides are annotated"
+else ok "F8n5: ... with no '(an untyped parameter is i64)' (both sides annotated)"; fi
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).
@@ -1189,4 +1242,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: dyn_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: dyn_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), the slice and declared-scalar stamps apart and the closure / instance snapshot's names put back, every target (AL, AX), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A); where dyn meets C2's subscripts, \`*p\` width, slices and the bounds-checked mode, every target (IX)"
+echo "PASS: dyn_checked — \`dyn\`: the reserved word (K); the type in a local, a global, a parameter, a return, a field and a trait signature (TY, S); every open type position refused by name (T1-T13); uninitialised dyn locals (U); opacity — no value, no address, no words (V1-V9); every forming refusal once, at its source (F1-F11), one type however it is spelled (F8n), the slice and declared-scalar stamps apart and the closure / instance snapshot's names put back, every target (AL, AX), the zone dyn of a kernel build (K), wrapped sources (PF); every destination of a dyn result takes it whole (P); the fold across lines (H28); --syntax-only (X); the tools — embed, LSP, grammar, header, fmt, lint, doc, api-surface, type-audit — and the guide's dyn examples (TT); the P program and dyn_objects.tcyr on x86 / IR=3 / DCE / aarch64 / cx / PE (A); where dyn meets C2's subscripts, \`*p\` width, slices and the bounds-checked mode, every target (IX)"
