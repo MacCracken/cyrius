@@ -252,7 +252,8 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15) and dup2's
 # self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3) and a
 # failure's errno (6.7.16: ecb's and ach's cxvm answered Darwin's ELOOP -62 / ENOTEMPTY -66 for -40 / -39,
-# so the fixture exited 13 there; cxvm maps a Darwin errno back now). Each
+# so the fixture exited 13 there; cxvm maps a Darwin errno back now) and F_GETFL's O_LARGEFILE (6.7.16's
+# D29: pi's, ecb's and ach's cxvm dropped it, exit 10). Each
 # host's own cxvm must exit 77 — every row with x86_64 Linux's answer — and cass's 78, the PE routes'
 # answers (-38 where the PE peer has only a stub). Until 6.7.15 cxvm handed the guest's number to the
 # host compiler's renumbering: on pi a guest lseek ran getxattr and fork ran close (the parent took

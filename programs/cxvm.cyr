@@ -19,7 +19,8 @@
 #   terms, x86_64 Linux's, on every host: a Darwin host's errno is mapped back (6.7.16; a guest on
 #   a Mac read Darwin's ELOOP -62 where Linux says -40 — _cx_errno_linux), and kill's signal goes to
 #   the host as the host's number (6.7.16; a guest's SIGUSR1 10 delivered Darwin's SIGBUS —
-#   _cx_sig_host). Every other number answers -ENOSYS
+#   _cx_sig_host), and F_GETFL's word is x86_64 Linux's, O_LARGEFILE included (6.7.16's D29 —
+#   _cx_largefile). Every other number answers -ENOSYS
 #   (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
@@ -580,7 +581,8 @@ fn _cx_host_linux(sn, a, b, c): i64 {
 }
 
 # 1 when the guest's open / status flag bits ARE the host's: x86_64 Linux, and Windows (the PE peer's
-# O_* are the x86-Linux values).
+# O_* are the x86-Linux values). There F_GETFL's word goes back as the host reports it, O_LARGEFILE
+# included — the word every other host's answer is made to match (6.7.16's D29).
 fn _cx_flags_native(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return 1;
@@ -598,7 +600,8 @@ fn _cx_flags_native(): i64 {
 # aarch64 Linux O_DIRECTORY / O_NOFOLLOW are 0x4000 / 0x8000 (x86's 0x10000 is arm64's O_DIRECT and
 # 0x20000 its O_LARGEFILE), on Darwin O_CREAT is 0x200 and x86's O_NONBLOCK 0x800 is O_EXCL — and
 # any other bit is dropped, since several mean another flag there (x86's O_DIRECT 0x4000 is arm64's
-# O_DIRECTORY).
+# O_DIRECTORY; a guest's O_LARGEFILE 0x8000 is arm64's O_NOFOLLOW, and a 64-bit host opens every file
+# large anyway). F_GETFL's way back is _cx_flags_back.
 fn _cx_open_flags(f): i64 {
     if (_cx_flags_native() == 1) { return f; }
     #ifndef CYRIUS_TARGET_WIN
@@ -615,9 +618,12 @@ fn _cx_open_flags(f): i64 {
     #endif
 }
 
-# F_GETFL's answer: the host's bits in, the guest's x86-Linux bits out (the same nine as above;
-# anything else the host reports — arm64's O_LARGEFILE 0x20000 is x86's O_NOFOLLOW — is dropped).
-fn _cx_flags_back(h): i64 {
+# F_GETFL's answer for `fd`: the host's bits in, x86_64 Linux's word out (6.7.16's D29) — the same
+# nine as above, plus O_LARGEFILE (x86's 0x8000) wherever x86_64 Linux reports it (_cx_largefile).
+# Anything else the host reports is dropped. Until 6.7.16 O_LARGEFILE was dropped too, so the filed
+# repro (F_GETFL of a stdout opened on /dev/null) read 0x8001 on the x86_64 Linux cxvm and 0x1 on
+# every other host's.
+fn _cx_flags_back(h, fd): i64 {
     if (_cx_flags_native() == 1) { return h; }
     #ifndef CYRIUS_TARGET_WIN
     var f = h & 3;
@@ -629,8 +635,27 @@ fn _cx_flags_back(h): i64 {
     if ((h & O_DIRECTORY) != 0) { f = f | 0x10000; }
     if ((h & O_NOFOLLOW) != 0) { f = f | 0x20000; }
     if ((h & O_CLOEXEC) != 0) { f = f | 0x80000; }
-    return f;
+    return f | _cx_largefile(h, fd);
     #endif
+}
+
+# x86's O_LARGEFILE (0x8000) where x86_64 Linux reports it: that kernel sets it on every open() of a
+# 64-bit process, and never on a pipe or a socket, which open() does not make. aarch64 Linux reports
+# its own O_LARGEFILE (0x20000, x86's O_NOFOLLOW) in the same cases. Darwin has none, so cxvm sets it
+# for an fd whose host st_mode is neither S_IFIFO nor S_IFSOCK — an open()ed FIFO reads as a pipe
+# there (x86_64 Linux sets the bit on it).
+fn _cx_largefile(h, fd): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    if ((h & O_LARGEFILE) != 0) { return 0x8000; }
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var st[256];
+    if (sys_fstat(fd, &st) < 0) { return 0; }
+    var ft = _cx_hs_narrow(&st + STAT_MODE) & 0xF000;
+    if (ft == 0x1000 || ft == 0xC000) { return 0; }   # S_IFIFO, S_IFSOCK
+    return 0x8000;
+    #endif
+    return 0;
 }
 
 # fcntl(fd, cmd, arg) for its scalar commands; Windows has no fcntl (its peer declines with -38).
@@ -642,7 +667,7 @@ fn _cx_host_fcntl(fd, cmd, arg): i64 {
     if (cmd == 3) {                                  # F_GETFL
         var fl = sys_fcntl(fd, 3, 0);
         if (fl < 0) { return fl; }
-        return _cx_flags_back(fl);
+        return _cx_flags_back(fl, fd);
     }
     if (cmd == 4) { return sys_fcntl(fd, 4, _cx_open_flags(arg)); }   # F_SETFL
     if (cmd >= 0 && cmd <= 2) { return sys_fcntl(fd, cmd, arg); }      # F_DUPFD, F_GETFD, F_SETFD

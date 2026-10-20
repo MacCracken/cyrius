@@ -164,7 +164,9 @@ fn _cxh_paths(): i64 {
 }
 
 # fcntl's scalar commands, the status flags in Linux bits both ways: 0 the Linux answers, 1 every
-# command -38 (Windows has no fcntl), 2 neither.
+# command -38 (Windows has no fcntl), 2 neither. F_GETFL of an opened file carries x86_64 Linux's
+# O_LARGEFILE 0x8000 on every host (6.7.16's D29, issues/2026-10-18-cxvm-fgetfl-drops-o-largefile-off-
+# x86-linux.md): the aarch64 Linux and Darwin cxvm dropped it until 6.7.16.
 fn _cxh_fcntl(): i64 {
     var fd = syscall(2, "cxh_f", 3074, 0);    # O_RDWR | O_APPEND | O_NONBLOCK
     if (fd < 0) { return 2; }
@@ -181,6 +183,7 @@ fn _cxh_fcntl(): i64 {
     var ok = 1;
     if (g1 < 0 || (g1 & 3075) != 3074) { ok = 0; }
     if ((g1 & 0x20000) != 0) { ok = 0; }        # x86's O_NOFOLLOW: never reported (arm64's O_LARGEFILE)
+    if ((g1 & 0x8000) == 0) { ok = 0; }         # x86's O_LARGEFILE: an open()ed file carries it
     if (s1 != 0 || g2 < 0 || (g2 & 3075) != 1026) { ok = 0; }
     if (s2 != 0 || g3 < 0 || (g3 & 3075) != 3074) { ok = 0; }
     if (fdf != 0) { ok = 0; }

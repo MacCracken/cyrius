@@ -4,9 +4,8 @@
 # HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
 # every host — on Windows through the PE routes, -38 where the PE peer has only a stub — and a failure
 # answers x86_64 Linux's errno on every host (6.7.16: a Darwin host's is mapped back, `_cx_errno_linux`),
-# and kill's signal reaches the host as the host's number (6.7.16, `_cx_sig_host`). What still differs
-# from x86_64 Linux (off x86_64 Linux and Windows F_GETFL reports only the nine mapped bits) is filed;
-# the fixture's rows do not reach it.
+# kill's signal reaches the host as the host's number (6.7.16, `_cx_sig_host`), and F_GETFL answers
+# x86_64 Linux's word, O_LARGEFILE included (6.7.16's D29, `_cx_largefile`).
 #
 # THE DEFECT. Until 6.7.15 cxvm issued the listed calls as `syscall(sn, …)`, a RUNTIME number, and each
 # host's compiler renumbers a runtime number through a chain built for that host's own stdlib numbers.
@@ -26,7 +25,8 @@
 # sees the child's pid and the child (which sees 0) writes its getpid() to a file the parent reads
 # back; open's flags (O_CREAT|O_TRUNC, O_CREAT|O_EXCL -17, O_APPEND, O_TRUNC, O_DIRECTORY on a file
 # -20); fcntl F_GETFL / F_SETFL in Linux bits both ways (O_APPEND 0x400, O_NONBLOCK 0x800, never
-# 0x20000), F_GETFD, F_DUPFD_CLOEXEC (FD_CLOEXEC set on the copy); the path calls (6.7.15,
+# 0x20000, and O_LARGEFILE 0x8000 on the opened file — 6.7.16's D29), F_GETFD, F_DUPFD_CLOEXEC
+# (FD_CLOEXEC set on the copy); the path calls (6.7.15,
 # issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
 # fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
@@ -77,6 +77,9 @@
 # MU8 (6.7.16, the signal map) `_cx_host_kill` passing the guest's number as it is -> no local axis
 #       sees it (the identity on a Linux host): on ecb and ach the cross-OS legs' kill repro dies of
 #       Darwin's SIGBUS ("Bus error: 10", status 138, want 158), measured
+# MU9 (6.7.16's D29) `_cx_largefile` answering 0 (F_GETFL without O_LARGEFILE off x86_64 Linux, the
+#       6.7.15 word) -> RED 1: axis 3 (exit 10, `lin=512`: qemu reports arm64's 0x20000), measured;
+#       on pi, ecb and ach the same exit 10 (the cross-OS legs require 77), measured
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -217,5 +220,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup, a failure's errno and kill's signal give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup, a failure's errno, kill's signal and F_GETFL's O_LARGEFILE give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0

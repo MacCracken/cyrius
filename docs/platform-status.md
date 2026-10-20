@@ -107,8 +107,9 @@ guarantee:
   `kill`'s signal is x86_64 Linux's number too (6.7.16): a Darwin host gets its own (`_cx_sig_host`;
   SIGUSR1 10 is Darwin's 30), and a Linux signal Darwin lacks (`SIGSTKFLT`, `SIGPWR`, the realtime
   band 32-64) answers -22 there — until then the guest's number went as it was, so `kill(pid,
-  SIGUSR1)` delivered Darwin's SIGBUS, `SIGCHLD` its SIGSTOP and `SIGSTOP` its SIGCONT. Off x86_64
-  Linux and Windows `F_GETFL` reports only the nine mapped bits (below). The calls: `close`, `lseek`, `exit` / `exit_group`, `dup` /
+  SIGUSR1)` delivered Darwin's SIGBUS, `SIGCHLD` its SIGSTOP and `SIGSTOP` its SIGCONT. And
+  `F_GETFL` answers x86_64 Linux's word on every host (6.7.16's D29; below). The calls: `close`,
+  `lseek`, `exit` / `exit_group`, `dup` /
   `dup2`, `getpid` / `getppid`, the four uid / gid getters, `kill`, `fork`, `sched_yield`, `fsync` /
   `fdatasync`, `flock`, `ftruncate`, `fchmod` / `fchown`, `socket`, `listen`, `unshare`,
   `timerfd_create`, `epoll_create1`, and `fcntl` for its scalar commands (`F_DUPFD`, `F_GETFD` /
@@ -116,7 +117,14 @@ guarantee:
   the list, derived from a run of the cx corpus. `open`'s flags and `fcntl`'s status flags travel in
   x86-Linux bits both ways: the access mode plus `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`,
   `O_NONBLOCK`, `O_DIRECTORY`, `O_NOFOLLOW` and `O_CLOEXEC` are mapped to the host's bits, any other
-  bit is dropped off x86_64 Linux and Windows (several mean another flag there). Where the host has no
+  bit is dropped off x86_64 Linux and Windows (several mean another flag there) — except that
+  `F_GETFL` also reports `O_LARGEFILE` (0x8000) wherever x86_64 Linux would, which sets it on every
+  `open()` of a 64-bit process and never on a pipe or a socket (6.7.16's D29): aarch64 Linux's own
+  0x20000 is reported as 0x8000, and a Darwin host, which has no such flag, reports it for every fd
+  whose `st_mode` is neither a FIFO nor a socket — so an `open()`ed FIFO reads without it there
+  (Darwin's `st_mode` cannot tell it from a pipe), where x86_64 Linux sets it. Until 6.7.16 every host
+  but x86_64 Linux dropped it (`fcntl(1, F_GETFL)` with stdout on `/dev/null`: 0x8001 on the x86_64
+  Linux cxvm, 0x1 elsewhere). Where the host has no
   route the answer is -38: `socket`, `listen`, `unshare`, `timerfd_create` and `epoll_create1` off
   Linux, and on Windows every call whose PE peer is a stub (`getppid`, `kill`, `dup`, `dup2`, `flock`,
   `fchmod`, `fchown`, the uid / gid getters, `sched_yield`, `fork`, `fcntl`). Until 6.7.15 these
