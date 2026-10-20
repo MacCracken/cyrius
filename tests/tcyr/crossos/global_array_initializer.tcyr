@@ -309,6 +309,14 @@ var GRLL = GAI_KC;
 var GRLL[1] = {9};
 var GRKR = GAI_KC;
 var GRKR[1] = {9};
+# the seed is the slot's last INTEGER constant: a float constant between it and the list stops the search (stepping
+# past the float seeded the const it superseded: 0x0509), and a const after the float seeds.
+var GRKF = GAI_KC;
+var GRKF = 1.5;
+var GRKF[1] = {9};
+var GRFK = 1.5;
+var GRFK = GAI_KC;
+var GRFK[1] = {9};
 
 alloc_init();
 
@@ -423,5 +431,7 @@ assert_eq(load64(&GRCF), 9, "a list over a computed scalar is the value");
 assert_eq(load64(&GRNC), 0x0509, "a computed initializer between a const name and the list is no constant");
 assert_eq(load64(&GRLL), 0x0509, "a const name between two lists: the second keeps its bytes, as over a literal");
 assert_eq(GRKRD, 0x0509, "an earlier initializer reads the list over a const name");
+assert_eq(load64(&GRKF), 9, "a float constant between a const name and the list stops the seed");
+assert_eq(load64(&GRFK), 0x0509, "a const name after a float constant seeds the list");
 
 var r = assert_summary();

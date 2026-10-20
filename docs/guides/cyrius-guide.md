@@ -7795,11 +7795,17 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   (`var a = 0x0506; var a[1] = {9};` reads `0x0509`). The constant may be named
   (6.7.16): `const C = 0x0506; var a = C; var a[1] = {9};` reads `0x0509` too —
   through 6.7.15 a const or enum name's bytes were dropped (`0x0009`). The bytes kept
-  are the slot's **last** constant before the list, however each is spelled
+  are the slot's **last integer** constant before the list, however each is spelled
   (`var a = 0x0506; var a = D; var a[1] = {9};` with `D = 0x0708` reads `0x0709`;
   through 6.7.15 the stale literal's `0x0509`); a computed initializer in between is no
   constant and is passed over, and a constant between two lists reaches the earlier
   one (`var a[1] = {7}; var a = C; var a[1] = {9};` reads `0x0509`, as with a literal).
+  A **float** constant in between stops the search — it superseded the integer
+  constant before it, so `var a = C; var a = 1.5; var a[1] = {9};` reads `0x0009`,
+  not C's `0x0509` — and its own bits are not kept: what a list over a float
+  constant keeps (its bits; over a literal before the float, the literal's bytes
+  still read through) is open
+  (`docs/development/issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md`).
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a
