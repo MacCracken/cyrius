@@ -31,7 +31,9 @@
 #      (`_bnd_base_bad` -> `_bbs_fwd_bad`): o(h) calls o$f64, o(3) is refused naming the forward and the impl i64
 #      lacks. F0 the filed repro verbatim (5); F1 o<f64>(h); F2 o(3) refused once, the forward and the note, not the
 #      stub text; F3 both impls (56); F4 / F4b two levels o2 -> o -> gb; F5 an explicit gb<T>(x) forward with a
-#      struct too; F6 / F6b a generic method forward; F7 / F7b a forward to a generic instantiating a bounded
+#      struct too; F6 / F6b a generic method forward (6.7.16: F6b names it `P.gbm`, as the source spells it, in the
+#      refusal and its note — it named the fn table's `P_gbm`; generic_method_infer.sh N3a-N3d); F7 / F7b a forward to
+#      a generic instantiating a bounded
 #      struct; F8 / F8b / F8c / F8d mutual recursion (a cycle ends); F9 &o; F10 a tail call; F11 the definition alone;
 #      F12 a chain of 64 forwards (6.7.14's reach: `_bbf_dep`'s cap, lifted by 6.7.15's F13-F15e).
 #      I7 (an unbounded generic forwarding to a bounded one, u(5)) now names the forward, not the stub text.
@@ -307,7 +309,7 @@ fn om<T>(q: P, x: T): i64 { return q.gbm(x); }'
 fmk f6 "$FM" 'var q: P = P { 10 }; var h: f64 = 1.5; return om(q, h);'
 exits f6 15 "F6: a forward to a bounded generic METHOD, q.gbm(x)"
 fmk f6b "$FM" 'var q: P = P { 10 }; return om(q, 3);'
-fwdref f6b om P_gbm "the bound on type parameter 'T' of 'P_gbm' needs \`impl Show for i64\`" "F6b: om(q, 3)"
+fwdref f6b om P.gbm "the bound on type parameter 'T' of 'P.gbm' needs \`impl Show for i64\`" "F6b: om(q, 3) (the method as the source spells it, 6.7.16)"
 FS='struct Box<T: Show> { v: T; n; }
 fn mkn<T>(x: T): i64 { var b: Box<T>; b.v = x; b.n = 3; return b.n; }
 fn os<T>(x: T): i64 { return mkn(x); }'

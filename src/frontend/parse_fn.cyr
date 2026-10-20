@@ -10603,16 +10603,18 @@ fn _bbf_push(g): i64 {
     return 0;
 }
 # The refusal for a scalar call (or `&g`) of generic fi whose base forwards its T to a bad base: the
-# forward, then a note naming what the chain's last generic needs.
+# forward, then a note naming what the chain's last generic needs. The forward target and the note's generic are
+# named as the source spells them (`P.bk` for a method, `_fn_src_name`), each printed as soon as it is written: the
+# spelling's scratch is one GNPOS slot. CHANGELOG [6.7.16]
 fn _refuse_bnd_fwd(S, fi, noff): i64 {
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_panic == 1) { return 0; }
-    _gen_ident_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
+    _gen_fwd_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", _bbs_fwd - 1);
     var r = _bbs_root - 1;
     if (r < 0) { return 0; }
     if (_bbs_why > 0) {
         PRSTR("  note: '");
-        PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, r, L64(_fnt_names + r * 8)));
         PRSTR("' instantiates the bounded generic struct '");
         PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
         PRSTR("' with its type parameter, and i64 does not satisfy its bound\n");
@@ -10626,7 +10628,7 @@ fn _refuse_bnd_fwd(S, fi, noff): i64 {
     PRSTR("  note: the bound on type parameter '");
     PRSTR(S + 0xEC00000 + (((GFTP(S, r) >> (slot * 32)) & 0xFFFFFFFF) - 1));
     PRSTR("' of '");
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, r, L64(_fnt_names + r * 8)));
     PRSTR("' needs `impl ");
     PRSTR(S + 0xEC00000 + L64(_tr_tab + tx * 32));
     PRSTR(" for i64`, and there is none\n");
@@ -15015,6 +15017,27 @@ fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
         PRSTR("'");
     }
     PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# `_gen_ident_err` whose second name is generic fi2's, spelled as the source writes it (`P.bk`, `_fn_src_name`) and
+# written after the first is printed (one GNPOS scratch). Its identity is ERR_IDENT's on the table names. CHANGELOG [6.7.16]
+fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
+    var msg = "generic ";
+    var noff2 = L64(_fnt_names + fi2 * 8);
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": generic '");
+    if (_gen_msp == 0) { PRSTR(S + 0xEC00000 + noff); }
+    else { PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff)); }
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi2, noff2));
+    PRSTR("'\n");
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
