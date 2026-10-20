@@ -3924,14 +3924,16 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
-                ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
-                _gv_note_blockscoped(S, noff);
-            } }
+        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+                    _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
+                    ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+                    _gv_note_blockscoped(S, noff);
+                } } }   # 6.7.16: a local const (`_cst_sub_at`)
         aw = 0;
     } elif (aw == 0) {
         _sub_refuse(S, noff, k, ix, d, pw);
     } elif (aw > 8) {
+        _refuse_in_sync(S);
         ERR_IDENT(S, "cannot subscript ", noff, ": a u128 element does not fit one register - use load64/store64 on its two halves", 0 - 1);
         aw = 0;
     }
@@ -3969,6 +3971,7 @@ fn _arr_sub_addr(S, noff): i64 {
 # `_arr_sub_addr` resolved them): each by name at the `[`, the brackets then consumed. 6.7.8 (C2-4a)
 fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
     if (_ce_fld_said(S) == 1) { return 0; }   # 6.7.15: a refused const fn's body (`_ce_sub_refused`)
+    if (_cst_sub_at(S, noff) == 1) { return 0; }   # 6.7.16: a top-level const's size-0 slot
     var el = ": a subscript takes an integer, f64, f32 or bool element";
     if (pw > 0) {
         var sid = _sub_ptr_sid(S, noff, k, ix);
@@ -3994,9 +3997,10 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
       t, 0 - 1);
 }
 # `cannot subscript 'NAME'` + `a` + `b` (+ `'N2'` when `n2` >= 0), at the cursor — ERR_IDENT's
-# line, with its tail in two literals.
+# line, with its tail in two literals. In sync: every caller parses the brackets on (6.7.16).
 fn _sub_err(S, noff, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    _refuse_in_sync(S);
     if (_derr_seen(GTI(S), "_sub_err", ((noff * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15: once
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -4241,9 +4245,11 @@ fn _sub_ret_sid(S): i64 {
     return L64(_fn_rpsid + fi * 8);
 }
 # A refusal at the `[`: `hd`, then the name token `nt` quoted (nt >= 0), `a`, `b`, and a second
-# name `n2` quoted (a C string; 0 none) — ERR_IDENT's line.
+# name `n2` quoted (a C string; 0 none) — ERR_IDENT's line. In sync: every caller steps the
+# brackets / steps on (6.7.16).
 fn _psub_err(S, hd, nt, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
+    _refuse_in_sync(S);
     if (_derr_seen(GTI(S), "_psub_err", (((hd * 31 + nt) * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
@@ -4951,9 +4957,11 @@ fn _deref_u128(S, d): i64 {
 }
 # "cannot dereference 'pu': ..." at the `*` (token `d`), the operand named by its last name (`*w.pu` 'pu', `*gpu()`
 # 'gpu') behind the `*`s it opens with (`**pp` '*pp', as 6.7.15's `**pp OP= v` refusal spells it) — `_psub_ed`'s u128
-# words. Once at the token (a generic's instances parse it again); the panic latch set, as the subscript's is.
+# words. Once at the token (a generic's instances parse it again); the panic latch set, as the subscript's is —
+# in sync, the read and the store parse on (6.7.16).
 fn _deref_u128_err(S, d): i64 {
     if (_panic == 1) { return 0; }
+    _refuse_in_sync(S);
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
     var star = _sval_stars(S, d + 1);
     if (_derr_seen(d, "_deref_u128_err", nm * 31 + star, 1) == 1) { return 0; }

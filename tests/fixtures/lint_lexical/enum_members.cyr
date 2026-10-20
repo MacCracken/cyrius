@@ -16,6 +16,6 @@ fn after_plain(): i64 {
 }
 enum Exempt { ERR_SKIPPED = 1 }   #skip-lint
 enum Semi { OK_S = 0; ERR_S1 = 1; ERR_S2 = -2; }
-enum Bare { ERR_U1 ERR_U2 }
+enum Bare { ERR_U1, ERR_U2 }
 enum Payload { ERR_P(code) = 7, OK_P }
 syscall(60, ERR_TWO + ERR_B + ERR_NL + P_ONE + ERR_STATE + ERR_S1 + ERR_U2 + OK_P);

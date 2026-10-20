@@ -2667,10 +2667,12 @@ fn _sl_last_marks(S, li, lbool, st, ann): i64 {
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
     if (GLPTRP(S, li) == 1) { _sl_ptr_ed(S, li, ann); }
     _dsc_stamp(S, li, _dsc_name(S, ann));   # 6.7.8 (D5): a declared scalar a dyn is formed from
+    _ann_refd_bind_l(S, li);   # 6.7.16: a refused annotation's stand-down is this slot's
     return 0;
 }
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
+    _ann_refd_bind_g(S, vi);   # 6.7.16: a refused annotation's stand-down is this global's (after the fold)
     _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
     _gv_pvd_set(vi, _ek_vd(S, ann));   # 6.7.12: a `*V`'s vector
     _gv_ppn_set(vi, _ek_pin(S, ann));  # 6.7.13: a `**T`'s pointee
@@ -2871,10 +2873,17 @@ fn _gv_ptr_sid(S, vi): i64 {
     return L64(_gv_psid + vi * 8);
 }
 # The struct a global receiver `vi` names for `.field`: a `*T` global's T, else its var type.
+# ⛔ 6.7.16 — A `*T` GLOBAL WHOSE T IS NO STRUCT NAMES NONE: its var type is 0 - its step (6.6.17), never a struct
+# id, and the field arms took any negative id as the program's FIRST struct — `var x: *Foo = 0; x.y` (Foo refused)
+# added "unknown field 'y' on struct 'var'", beside `struct P { a; }` resolved `x.a` as P's `a`, and a `*i64`
+# global's `x.a` compiled and read through P. 0 here, so the `sid == 0` arms answer as for a local: the refused
+# annotation's stand-down, else "no struct type in scope for 'x'". The vector band (<= -2048) is kept. CHANGELOG [6.7.16]
 fn _gv_recv_sid(S, vi): i64 {
     var p = _gv_ptr_sid(S, vi);
     if (p > 0) { return p; }
-    return GVTYPE(S, vi);
+    var t = GVTYPE(S, vi);
+    if (t < 0) { if (t > 0 - 2048) { return 0; } }
+    return t;
 }
 # 1 = global `vi`'s slot HOLDS the struct's address: a pointer-mode struct global, or a `*T` one.
 fn _gv_holds_addr(S, vi): i64 {
@@ -3903,12 +3912,27 @@ fn _sizeof_type(S, asrt): i64 {
 # names and reports nothing, so each is reported once.
 fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     _dsc_param(S, GTI(S));   # 6.7.8 (D5): a declared scalar, stamped on its slot by `_param_record`
-    if (ptc != 0) { return 0; }
+    if (ptc != 0) { return _tn_byname_refd(S, pnoff); }
     var ti = GTI(S);
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse_var(S, ti, " for parameter ", pnoff);
+    return 0;
+}
+
+# 6.7.16 — a by-name handle (`s: Str`, `s: *Str`; Result, Option, Tagged) is accepted unread, so when the struct of
+# that name was declared by a refused declaration (a late `include "lib/str.cyr"`, `_dl_refd_at`) and no struct
+# answers it, the parameter took no annotation refusal and no mark: its `s.len` was "no struct type in scope for 's'"
+# after the inclusion's one error. It is marked as a refused annotation's variable (`_ann_refd_mark`), so its uses
+# stand down. A name a struct answers, or one no refused declaration declared, is untouched. CHANGELOG [6.7.16]
+fn _tn_byname_refd(S, pnoff): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    if (_dl_refd_at(S, noff) == 0) { return 0; }
+    _ann_refd_mark(S, pnoff);
     return 0;
 }
 
@@ -4254,6 +4278,30 @@ fn FIELDOFF(S, si, fi): i64 {
     return off;
 }
 
+# ⛔ 6.7.16 — ENUM MEMBERS ARE SEPARATED BY `;` OR `,` (the user's decision D12, 2026-10-19: refused by name).
+# After a member (cursor past it): a `;` / `,` is stepped; the enum's `}` / end of file is left (a trailing
+# separator stays valid); a name — the next member — is "expected ';' or ',' between enum members", at it, once
+# (pass 1 reports; the passes after it re-read the same tokens), and the member is read from there. `enum E { A B }`
+# compiled, B = 1 as `{ A, B }` gives (issues/2026-10-18-enum-members-need-no-separator.md); 6.7.15's D1 (a) for a
+# struct literal, `_slit_sep`. Any other token keeps the member loop's own "expected identifier". CHANGELOG [6.7.16]
+fn _enum_sep(S, emit_code): i64 {
+    var t = PEEKT(S);
+    if (t == 5 || t == 31) { STI(S, GTI(S) + 1); return 0; }
+    if (t != 2) { return 0; }
+    if (emit_code != 0) { return 0; }
+    if (_panic == 0) { _enum_sep_lat = 1; }
+    ERR_MSG(S, "expected ';' or ',' between enum members", 40);
+    return 0;
+}
+# ... and the latch that report set is released at the enum's own `}`: the declaration ends in sync, so the
+# next enum's missing separator is its own error (pass 1 has no statement resync to release it).
+var _enum_sep_lat = 0;
+fn _enum_sep_end(S): i64 {
+    if (_enum_sep_lat == 1) { if (PEEKT(S) == 14) { _panic = 0; } }
+    _enum_sep_lat = 0;
+    return 0;
+}
+
 # Parse: enum Name { A; B; C; } — registers variants as global constants
 # Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
 # Pass 1: just register var names + sizes (no code)
@@ -4559,12 +4607,9 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 if (idx >= 0) { if (GVENUMID(S, idx) != 0) { EMOVI(S, val); EVSTORE(S, idx); } }
             }
             val = val + 1;
-            # v5.8.21: accept either ';' (5) or ',' (31) between
-            # variants, mirroring the canonical pin shape
-            # `enum Result<T,E> { Ok(T), Err(E) }`. The historical
-            # ';' form (used across stdlib syscalls + lib/tagged.cyr's
-            # OptionTag/ResultTag/EitherTag) keeps working.
-            if (PEEKT(S) == 5 || PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            # v5.8.21: either ';' (5) or ',' (31) between variants (`enum Result<T,E> { Ok(T), Err(E) }`
+            # and the historical ';' form); 6.7.16 (D12): one of them is required.
+            _enum_sep(S, emit_code);
         }
     }
     # v6.5.19: the loop can now exit on EOF as well as on `}` (the include-length ifdef bug guard above),
@@ -4572,6 +4617,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     # `enum E {` truncated mid-body exited 0 and cycc emitted a binary for a file that
     # simply stops — trading a SIGSEGV for silent acceptance, which is worse.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    _enum_sep_end(S);
     STI(S, GTI(S) + 1);
     return 0;
 }

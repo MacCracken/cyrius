@@ -216,8 +216,12 @@ name that only *starts* like one gets a hint (`'i8x' is not 'i8' - a type name m
 whole`). A type with no place at a site is refused once, its `<..>` with it
 (`fn f(): Vec<i64>` is one error). The variable or parameter whose annotation was refused adds no error of its own (6.7.15): its
 `.field` reads, field stores and `.m()` calls are the annotation's one error (`var x: Foo = 5; return x.a;`, `fn f(q:
-*Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Not yet a top-level
-`var P: *Foo` global: its uses still add an error naming a struct it never had (filed). Before 6.6.16 most sites matched a prefix
+*Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Only that variable: a
+same-named one declared in a nested or a sibling block is another variable, and its own errors are reported (6.7.16;
+through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). A top-level `var P:
+*Foo` global's uses too (6.7.16; through 6.7.15 they added an error naming a struct it never had, or read the program's
+first struct), and a `*T` global whose `T` is no struct — `var x: *i64 = &g;` — takes no `.field`, as a local does: *no
+struct type in scope for 'x'* (it compiled and read through the first struct). Before 6.6.16 most sites matched a prefix
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
@@ -527,8 +531,10 @@ var r = add(20, 22);   # r = 42
   file that declares a `struct` (lib/str.cyr:24) must come before ...`). Through 6.7.13 each was
   `unexpected struct` (`union`: `expected ';', got union`) followed by up to three invented errors, and
   the include's failed inside the included file. The same holds one level down: a `struct`, `enum`,
-  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and the
-  body parses on after it:
+  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and so
+  is a `mod`, `use` or `pub` / `public` (6.7.16; through 6.7.15 `unexpected mod` / `unexpected
+  pub'/'public`, and a `pub fn` a second error as a nested fn). The body parses on after it — a `pub
+  var x = 1;` / `pub const` there still declares its name, so a use of it adds nothing:
 
   ```text
   error:<source>:1:15: a `struct` declaration belongs to the declaration section at top level, not inside a fn body
@@ -540,7 +546,14 @@ var r = add(20, 22);   # r = 42
   (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
   `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
   6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
-  scope for 'q'", ...). A name declared nowhere is still reported.
+  scope for 'q'", ...). So do (6.7.16) `E.B` / `B` in a const context (a `case` label, a const, an array
+  size), a refused trait as a bound (`fn g<T: Tr>`), `var q: Q;` with no initializer (any refused
+  annotation with no initializer: the no-initializer rule is not said after it), a by-name `s: *Str`
+  parameter of a refused `include "lib/str.cyr"`, and a use parsed BEFORE the late declaration (an
+  earlier fn's `q: *Q`, a top-level const swept at the end of pass 1) — the names are known from pass 1.
+  A name declared nowhere is still reported. ⚠ A use inside the declaration zone itself (a zone global's
+  array size or enum value naming a late enum) is evaluated before the first statement is known, and is
+  still reported.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
@@ -653,6 +666,14 @@ declared the intrinsic's name — before 6.6.20 `mulh64(..)` ran the intrinsic i
 constructing, and `fncall1(5, 6)` faulted. A UNIT variant (`mulh64 = 77;`) declares no fn and
 is accepted, but must be read qualified (`E.mulh64`): the bare name parses as the intrinsic, so
 `#derive(Serialize)` on that enum fails too.
+
+`sizeof(..)` and `mulh64(..)` are VALUES, not calls: a statement made of one (`mulh64(a, b);`,
+`sizeof(T);`, `sizeof(T) + 1;`) is refused once, at the name — *the value of 'mulh64(..)' is
+discarded - a statement is an assignment or a call* — with or without `--allow-undef`, as `x + 1;`
+and `(s).a;` are (6.7.16, the user's D11, 2026-10-19). Before 6.7.16 such a statement compiled as
+a call to an undefined fn of that name: refused for *undefined function 'mulh64'*, and
+`--allow-undef` wrote a binary that died with SIGILL at the line. `fncall0`..`fncall8(..);` call a
+fn, so each stays a statement.
 
 ### Default and named arguments (6.7.7)
 
@@ -1239,14 +1260,18 @@ after the first top-level statement and in the declaration zone, and an assignme
 global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
-fn and the assignment to a `*Struct` local or a `*T` global warned on it). A string literal alone is its literal's
+fn and the assignment to a `*Struct` local or a `*T` global warned on it) — under parentheses that wrap it whole
+too, `(0)`, `((0))` (6.7.16; through 6.7.15 each warned), while `(0) + 1` is judged as any value is. A string literal alone is its literal's
 address and never warns either, into any `*T` (6.7.14 for a byte pointer — `var s: *u8 = "abc";`, `t = "xyz";`, a `*i8`,
 a parameter, a global, in the declaration zone, each warned through 6.7.13; 6.7.15 for every other `*T`, the user's
 decision D59, 2026-10-18 — `var s: *i64 = "abcdefgh";`, `*f64`, `*i32`, a one-byte struct's `*B` warned through
 6.7.14). So is the literal plus or minus one integer operand (an integer or char literal, or a single name), and the
 literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`, `("xyz")`, `(("x"))`, `("abc") + 1`
 — through 6.7.14 each warned. Any other expression with a string in it (`"abc" + x * 2`) is judged as any value
-is. A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+is. A call declared `: Str` (a fn, or a method on a name) into a `*Str` is the header's address, the whole value
+up to the `;`, and never warns (6.7.16): `var p: *Str = str_from("ab");`, `GP = h.clone();` into a `*Str` global, a
+zone `var G: *Str = str_from("x");` — through 6.7.15 each warned, where `q = str_from("ab");` into a `*Str` local did
+not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word). A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
 not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
@@ -1334,7 +1359,9 @@ The elements are separated by commas; a trailing comma is allowed (`Point { 10, 
 comma is one error at the second element, in either form and every position (6.7.15, the user's
 decision D1 (a), 2026-10-18): `var q = Point { 10 20 };` and `var q = Point { y: 20 x: 10 };` are
 `expected ',' between struct literal elements`. ⚠ Through 6.7.14 both compiled, the values landing
-where the commas would have put them.
+where the commas would have put them. A tuple literal's missing comma is the same one error, named for
+the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` (6.7.16; 6.7.15 said
+"struct literal").
 
 **A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
@@ -3695,7 +3722,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
 | `return (a, b);` from a fn declared `: P` (a named struct, any size; 6.7.11) | ``a fn returning the struct `P` returns that struct — `(a, b)` is a tuple, another type`` |
 | `ret2(a, b);` in a fn declared `: P` (any size; 6.7.13) | ``a fn returning the struct `P` returns that struct — `ret2` writes two values`` |
-| `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
+| `var k: i64 = (1, 2);` (an annotation that is refused itself — `var k: Nope = (1, 2);`, `var k: = (1, 2);` — is its one error, 6.7.16) | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
@@ -6107,6 +6134,12 @@ var c2 = Color.BLUE;                 # Namespaced access (v1.11.0+)
 
 ```
 
+Members are separated by `;` or `,` (mixed in one declaration too), and a trailing one is allowed
+(`enum E { A, B, }`). A missing separator is one error at the next member, a line break being no
+separator (6.7.16, the user's decision D12, 2026-10-19): `enum E { A B }` and `enum E { A = 1 B = 5 }`
+are `expected ';' or ',' between enum members`. ⚠ Through 6.7.15 both compiled, with the values the
+separated form gives.
+
 **An enum constant is a value, not a variable** (6.7.3). `RED = 4;`, `RED += 1;`, `&RED`,
 `Color.RED = 4;` and `&Color.RED` are refused by name, as on a `const` — and so is a `for` step
 that writes one. Every read of `RED` is its declared value, so before 6.7.3 such a write changed
@@ -6267,7 +6300,7 @@ tag and the payload separately (or use a struct).
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
-Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators may be `;` or `,` — mixed in same decl works. In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
+Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 
 Helper API:
 
@@ -6857,8 +6890,10 @@ fn f(v): i64 {
   run-time multiply / add where `N * 2` folded; the values never differed), an f64 is its float literal, a string is its literal (passed where a `Str` is
   expected it is wrapped like the literal). `N = ..`, `N += ..` and `&N` are refused by name
   (a `for` step included, 6.7.3), and so is a field of it, `N.x = ..` or `N.x`, in code and in a
-  const context alike (6.7.14: it was blamed on a missing struct declaration), and a method call
-  on it, `N.m(..)` ("const 'N' has no methods", 6.7.15). A statement that
+  const context alike (6.7.14: it was blamed on a missing struct declaration), a method call
+  on it, `N.m(..)` / `N.m<T>(..)` ("const 'N' has no methods", 6.7.15), and a subscript, `N[i]` /
+  `N[i] = ..` ("cannot subscript const 'N' - a const has no storage", 6.7.16: a local const said
+  "undefined variable", a const context "expected ';'"). A statement that
   only names it (`N;`, `N + 1;`, a `for` step `N`) assigns nothing: it is the syntax error any
   name gets there, `expected '='` (6.7.14; it said "cannot assign to const 'N'").
   It takes no type annotation: its type is its value's (`const H = 1.5;` is an f64).
@@ -6889,7 +6924,7 @@ fn f(v): i64 {
   `f64_to`, `f64_eq` / `lt` / `gt` / `le` / `ge`, `f64_neg`, `f64_abs`, `f64_floor`,
   `f64_ceil`, `f64_trunc`). Not: memory (`load64`, arrays, `&x`, fields — `a.x` is refused
   naming the rule, 6.7.14, and a subscript `a[i]` too, 6.7.15), syscalls, globals, an ordinary
-  fn's call or a method call (`a.m(..)`, refused naming the rule, 6.7.15), a transcendental
+  fn's call or a method call (`a.m(..)`, refused naming the rule, 6.7.15; `a.m<T>(..)` too, 6.7.16), a transcendental
   builtin, a generic const fn.
 - **The same answer as run time.** Typing is the runtime's: an operator takes its f64 form when
   its LEFT operand is f64, and an integer right operand contributes its bits. f64 is computed

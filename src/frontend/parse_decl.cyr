@@ -2812,6 +2812,9 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     _slit_sep(S);   # 6.7.15 (D1 (a)): the `,` after the element is required
     return 0;
 }
+# A tuple literal's elements store through the same EMIT_STRUCT_FIELD_W: `_tup_elems` sets `_slit_tup` around each
+# element's store, so `(1, 2 3)` names a tuple literal. CHANGELOG [6.7.16]
+var _slit_tup = 0;
 # ⛔ 6.7.15 — A STRUCT LITERAL'S ELEMENTS ARE SEPARATED BY COMMAS (the user's decision D1 (a), 2026-10-18). After an
 # element (cursor past it): a `,` is stepped; the literal's `}` (a tuple literal's `)`, which shares the store) is
 # left, so a trailing comma stays valid; a token that can open another element is "expected ',' between struct
@@ -2826,6 +2829,10 @@ fn _slit_sep(S): i64 {
     var t = PEEKT(S);
     if (t == 31) { STI(S, GTI(S) + 1); return 0; }
     if (t == 14 || t == 11 || t == 5 || t == 12 || t == 29) { return 0; }
+    if (_slit_tup == 1) {
+        ERR_MSG(S, "expected ',' between tuple literal elements", 43);
+        return 0;
+    }
     ERR_MSG(S, "expected ',' between struct literal elements", 44);
     return 0;
 }
@@ -3572,7 +3579,10 @@ fn _tup_elems(S, sid, gidx, li, infer): i64 {
         _tup_elem_val(S, sid, k, infer);
         _sl_base_li = li;   # read by EMIT_STRUCT_FIELD_W: set after the element (a closure in it may declare its own)
         _sfw_have = 1;
+        var st = _slit_tup;
+        _slit_tup = 1;   # `_slit_sep` names a tuple literal
         EMIT_STRUCT_FIELD_W(S, gidx, k * 8, 8);   # consumes the `,` after the element
+        _slit_tup = st;
         k = k + 1;
     }
     _sl_base_li = sv;
@@ -3696,7 +3706,7 @@ fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
     elif (pscale < 0) { if (pscale > 0 - 2048) { if (_tup_is(S, 0 - pscale) == 1) { sid = 0 - pscale; } } }
     if (infer == 0) {
         if (sid == 0) {   # R9: a scalar, struct, bool, slice, vector or pointer annotation
-            _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+            _tup_r9(S, lp, noff, ann);   # 6.7.16: not after a refused annotation
             return 0;
         }
     }
@@ -3719,6 +3729,38 @@ fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
     return 1;
 }
 
+# ⛔ 6.7.16 — R9 IS NOT SAID AFTER A REFUSED ANNOTATION: `var b: Nonexist = (1, 2);` (and `var b: 1 =`, `var b: =`, a
+# refused late struct's `var b: Q =`, in a fn, the declaration zone and after the first statement) added "a tuple
+# literal cannot initialize 'b' - its declared type is not a tuple" after the annotation's error — the refusal left
+# no type (pscale / gps 0), which R9 read as a declared non-tuple. The literal at `lp` stands down, counted: its token
+# is marked reported (`_tn_once`), so the factor's refusal of the literal PARSE_VAR parses on to stands down too, and
+# the declaration is what the refused annotation left — a plain word whose uses the annotation's mark stands down.
+# Annotation token `ann` (`_tup_ann_refd`). A type the annotation still names keeps R9: `var b: i64 =`, `var b: *Nope
+# =` (a pointer), `var b: i64<u8> =` (i64; its type arguments refused). CHANGELOG [6.7.16]
+fn _tup_r9(S, lp, noff, ann): i64 {
+    if (_tup_ann_refd(S, ann) == 1) {
+        _tn_once(S, lp);
+        _had_error = 1;
+        return 0;
+    }
+    _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+    _tp_refd_at = lp;   # 6.7.16: and a `*T` declaration's "assigning non-pointer to typed pointer" is not said about it
+    return 0;
+}
+# 1 = the annotation whose first token is `ann` was refused and names no type: a name no type answers that was
+# reported (`_tn_seen_at`) or that a refused declaration declared (`_dl_refd_at`), or a token that is no type at all
+# (6.7.14's D15: a number, an operator; 6.7.15: a missing type, the `=` / `;`), reported there. A name that resolves
+# (`i64` of a refused `i64<u8>`, a type parameter) and a `*` / `[` / `(` head are declared types. CHANGELOG [6.7.16]
+fn _tup_ann_refd(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    var t = TOKTYP(S, ann);
+    if (t == 8 || t == 28 || t == 10) { return 0; }
+    if (t == 2) {
+        if (_tn_resolve_at(S, ann) != 0) { return 0; }
+        if (_dl_refd_at(S, TOKVAL(S, ann)) == 1) { return 1; }
+    }
+    return _tn_seen_at(S, ann);
+}
 # ⛔ 6.7.7 (B4, T5) — THE BRIDGE: A TUPLE CAPTURES A MULTI-VALUE CALL BY ITS TYPE (the user's decision,
 # 2026-10-08): `var t: (i64, f64) = f();`, `t = f();` into an existing tuple (a for step too), `G =
 # f();` at top level and the declaration zone's `var G: T = f();`. It takes the right-hand sides the
@@ -5143,6 +5185,7 @@ fn _gvi_store(S, vi): i64 {
 # and the nameless high half has no other reference — an EFLSTORE to it would be patched into a
 # register move and leave the stack slot unwritten. A `lea` keeps a slot in memory.
 fn _w16_local_init(S, lc, ann): i64 {
+    _ann_refd_bind_l(S, lc);   # 6.7.16: a refused slice element's stand-down is this slot's
     if (TOKTYP(S, ann) == 105) {
         _w128_init_place(S, 1, lc);
         SLW128(S, lc);
@@ -5546,12 +5589,69 @@ fn _gvar_ann_head(S, noff): i64 {
 # `var X;` is "uninitialized variable not allowed", any other token "expected '='". A `;` the annotation reported
 # already (`var b: ;`, `_tn_head_var`) is that one error: the statement is latched quietly, as the refusal latches it.
 # CHANGELOG [6.7.15]
+# 6.7.16: at a `;` the refusal is in sync — PARSE_VAR ends the declaration at that `;` (`_var_eq_step`) — so it marks
+# where (`_pair_sync_ti`, read by `_stmt_resync`); the annotation's own report at the `;` latched already, so that arm
+# marks unconditionally. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND NOT AFTER A REFUSED ANNOTATION: `var q: Q;` (Q a refused late struct) and `var q: Foo;` added
+# "uninitialized variable not allowed" to the annotation's error — the refusal left the variable a plain word, which
+# the rule reads as a scalar with no value; a struct local takes no initializer. The annotation was refused and names
+# no type (`_decl_ann_refd`): latched quietly, in sync, as the `var c: ;` arm is; the declaration registers (its uses
+# stand down through the annotation's mark). A type the annotation still names keeps the error (`var q: i64;`, `var
+# q: *Foo;` — a pointer needs its value either way). CHANGELOG [6.7.16]
 fn _decl_eq_err(S): i64 {
     if (PEEKT(S) == 5) {
-        if (_tn_seen_at(S, GTI(S)) == 1) { _panic = 1; return 0; }
+        if (_tn_seen_at(S, GTI(S)) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        if (_decl_ann_refd(S) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        _refuse_in_sync(S);
         ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
     }
     ERR_EXPECT(S, 4);
+    return 0;
+}
+# 1 = the declaration whose `;` is at the cursor is `var NAME: T .. ;` and its annotation T was refused and names no
+# type (`_tup_ann_refd`: a name no type answers that was reported or that a refused declaration declared, or a token
+# that is no type, reported). Walked back to its `var` (a `;` / `{` / `}` first: not this shape).
+fn _decl_ann_refd(S): i64 {
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    if (k + 3 >= GTI(S)) { return 0; }
+    if (_tup_ann_refd(S, k + 3) == 0) { return 0; }
+    _had_error = 1;
+    return 1;
+}
+# ⛔ 6.7.16 — A BARE `var c;` / `var c: ;` ENDS AT ITS OWN `;`. PARSE_VAR's `=` step (the cursor where the `=` belongs)
+# stepped the `;` after the refusal and read the NEXT statement as the initializer; the resync then dropped that
+# statement, so `var c; var d = 9; return d;` added "undefined variable 'd'" and `c = 4;` "undefined variable 'c'".
+# Now the `;` is left for the declaration's own end, the value is a 0 (`_var_value`: no struct-literal, inference or
+# expression read — each needs a token the `;` is not) and the name is registered. Out of PARSE_VAR (a cybs-ceiling
+# fn). Any other token is "expected '='" and stepped, as before. CHANGELOG [6.7.16]
+var _var_bare_at = 0 - 1;
+fn _var_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    _decl_eq_err(S);
+    if (PEEKT(S) == 5) { _var_bare_at = GTI(S); return 1; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
+# declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
+fn _var_value(S): i64 {
+    if (_var_bare_at != GTI(S)) { PCMPE(S); return 0; }
+    _var_bare_at = 0 - 1;
+    _tp_refd_at = GTI(S);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
     return 0;
 }
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
@@ -6688,7 +6788,7 @@ fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     elif (gps < 0) { if (gps > 0 - 2048) { if (_tup_is(S, 0 - gps) == 1) { sid = 0 - gps; } } }
     if (infer == 0) {
         if (sid == 0) {
-            _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+            _tup_r9(S, lp, noff, sti + 3);   # 6.7.16: not after a refused annotation
             return _tup_lit_skip(S, st, 5);
         }
     }
@@ -6815,16 +6915,26 @@ fn _gvi_ptr_ann(S, st): i64 {
 # literal 0 is"; the user's decision D59, 2026-10-18). 6.7.14 exempted only a `*u8` / `*i8` destination, so `var s:
 # *i64 = "abcdefgh";`, `*f64`, `*i32` and a one-byte struct's `*B1` still warned "non-pointer" of a value that is its
 # literal's address. CHANGELOG [6.7.15]
-# 1 = the initialiser / right-hand side at token `st`, alone up to its `;`, is the literal 0 (a null pointer) or a
-# string literal (its literal's address, `_tp_str_exempt`), into any `*T`.
+# 1 = the initialiser / right-hand side at token `st`, alone up to its `;`, is the literal 0 (a null pointer,
+# `_tp_null_exempt`) or a string literal (its literal's address, `_tp_str_exempt`), into any `*T`.
 fn _tp_exempt(S, st): i64 {
     if (st < 0) { return 0; }
-    if (TOKTYP(S, st) == 1) {
-        if (TOKTYP(S, st + 1) != 5) { return 0; }
-        if (TOKVAL(S, st) == 0) { return 1; }
-        return 0;
-    }
+    if (_tp_null_exempt(S, st) == 1) { return 1; }
     return _tp_str_exempt(S, st);
+}
+# 1 = from `st` to its `;`: the integer literal 0 under any parentheses that wrap it whole — `0`, `(0)`, `((0))` (the
+# guide's whole-wrap transparency, as the string literal's arm peels it). `var p: *i64 = (0);`, `p = (0);` and a zone
+# `var G: *i64 = (0);` warned "non-pointer" where `= 0;` was quiet; `(0) + 1` and `(1)` are judged as before
+# (issues/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md). Warning text only. CHANGELOG [6.7.16]
+fn _tp_null_exempt(S, st): i64 {
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var a = st + k;
+    if (TOKTYP(S, a) != 1) { return 0; }
+    if (TOKVAL(S, a) != 0) { return 0; }
+    if (_pair_unwrap_k(S, a + 1, k, a) < 0) { return 0; }
+    if (TOKTYP(S, a + 1 + k) != 5) { return 0; }
+    return 1;
 }
 # ⛔ 6.7.15 — A STRING LITERAL'S ADDRESS PLUS OR MINUS AN INTEGER, AND THE LITERAL IN PARENTHESES, ARE ITS ADDRESS TOO:
 # `var s: *u8 = "abc" + 1;` and `var t: *u8 = ("xyz");` warned "assigning non-pointer to typed pointer" (6.7.14 took the
@@ -6870,6 +6980,7 @@ fn _tp_warn_gv(S, slot, st): i64 {
     if (GPSC(S) != 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_tn_seen_at(S, st) == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, slot)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
 }
 # PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
@@ -6879,7 +6990,60 @@ fn _tp_warn_gv(S, slot, st): i64 {
 fn _tp_warn_decl(S, ann, st): i64 {
     if (_ptr_refd_ti == ann) { return 0; }
     if (_scv_err == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _ptr_ann_sid_tp(S, ann)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
+}
+# `_PARSE_STMT_IMPL`'s assignment to a `*T` global `gvi` (the value at `st`, the cursor past it): the warning, unless
+# the value is a `: Str` call into a `*Str` global. CHANGELOG [6.7.16]
+fn _tp_warn_gasg(S, gvi, st): i64 {
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, gvi)) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# ⛔ 6.7.16 — A `: Str` CALL INTO A `*Str` IS ITS POINTER. A fn or method declared `: Str` returns the header's address
+# (a `Str` is a handle: `_rcv_big`), which is what a `*Str` holds, so `var p: *Str = str_from(..);`, a zone
+# `var G: *Str = str_from(..);` and `GP = str_from(..);` / `GP = h.clone();` into a `*Str` global no longer warn
+# "assigning non-pointer to typed pointer" — the `*Str` local's assignment was already quiet (`_asg_ret_sid`, v6.5.28)
+# (issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). 1 = the value from `st` to
+# its `;` is one call — a free fn (`f(..)`) or a method on a name, through nested struct fields (`h.m(..)`,
+# `w.h.m(..)`, `_asg_rhs_steps`) — whose declared return is `psid`, the destination's pointee, and that is `Str`. Any
+# other struct's call keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is
+# returned as its word, not an address; over 8 B is D14's refusal). Warning text only.
+fn _tp_call_pointee(S, st, psid): i64 {
+    if (st < 0) { return 0; }
+    if (psid <= 0) { return 0; }
+    if (psid != _STR_SID(S)) { return 0; }
+    if (TOKTYP(S, st) != 2) { return 0; }
+    var nt = TOKTYP(S, st + 1);
+    if (nt == 10) { return _tp_fcall_ret(S, st, psid); }
+    if (nt != 41) { return 0; }
+    if (_tp_ends_call(S, st) == 0) { return 0; }
+    if (_asg_rhs_steps(S, st + 1, _recv_sid(S, TOKVAL(S, st))) == psid) { return 1; }
+    return 0;
+}
+# ... the free call `f(..)` at `st`, the whole value: 1 = f is declared `: psid`.
+fn _tp_fcall_ret(S, st, psid): i64 {
+    var e = _tok_close_paren(S, st + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 5) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, st));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) == psid) { return 1; }
+    return 0;
+}
+# ... 1 = the value from `st` ends `)` before its `;`: a call, not a field read (`h.name`).
+fn _tp_ends_call(S, st): i64 {
+    var e = st;
+    var n = GTCNT(S);
+    while (e < n) {
+        var t = TOKTYP(S, e);
+        if (t == 5) {
+            if (TOKTYP(S, e - 1) == 11) { return 1; }
+            return 0;
+        }
+        if (t == 12) { return 0; }
+        e = e + 1;
+    }
+    return 0;
 }
 # A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
 # its `;`, as the replay would report.
@@ -10161,8 +10325,7 @@ fn PARSE_VAR(S): i64 {
     # generic message. Now: a clear "uninitialized variable not
     # allowed; use `var X = 0;` or initial value" pointing at
     # the specific fix.
-    if (PEEKT(S) != 4) { _decl_eq_err(S); }
-    STI(S, GTI(S) + 1);
+    _var_eq_step(S);   # 6.7.16: a bare declaration is left on its `;`, its value a 0 (`_var_value`)
     # Check for struct init: var p = StructName { expr, expr, ... };
     # v5.9.33 (agnosys 1.1.12 follow-up): require the next-next token to be
     # `{` before committing to the struct-init path. A bare ident reference
@@ -10231,7 +10394,7 @@ fn PARSE_VAR(S): i64 {
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
     var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
-    PCMPE(S);
+    _var_value(S);   # PCMPE; 6.7.16: a bare declaration's 0
     _scv_disarm(S, scv_prev);
     _scv_rec_ann(S, pscale, scv_start);   # 6.7.13 (D13): a method / operator struct result into `: i64`
     _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value

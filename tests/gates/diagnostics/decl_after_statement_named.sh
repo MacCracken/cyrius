@@ -53,6 +53,40 @@
 #       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
 #   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
 #
+# THE OTHER KINDS ONE LEVEL DOWN (6.7.16; issues/2026-10-18-mod-use-pub-inside-fn-body-or-block-named-by-token.md).
+# `_decl_inner` took the five kinds 6.7.15's issue filed; a `mod`, `use`, `pub` / `public` in a fn body or a block
+# reached PARSE_STMT's fallback: "unexpected mod", "unexpected pub'/'public" (the token table's two-spelling name),
+# and a `pub fn` there added "fn 'g' is defined inside fn 'f'". Now every kind `_dl_kind` names, one error by the
+# rule at the keyword; a `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`: the declaration declares,
+# its use is no "undefined variable"); a `pub const fn` steps to its body's `}` (`_dl_skip_at` stepped on to the
+# NEXT `;`, module scope too); a derive's same-line step follows only a `struct` / `enum`, what `#derive` takes
+# (`_dl_derived`: `use m.g; pub var x = 1;` on one line stepped the `pub` and, in a fn body, the body's `}`); a
+# `pub use` alias is entered as reported like a `use` one (`_dl_quiet`).
+#
+#   NM  each of mod / use / pub var / pub const / pub fn / public fn / pub const fn / pub mod / pub use in a
+#       top-level if block, a top-level while block and a fn body: one error; NM1-NM6 the filed repros verbatim;
+#       NM7 / NM8 a pub var / const then used; NM9 the body parses on; NM10 use + pub on one line; NM11 a pub use
+#       alias called; NM12 pub const fn; NM13 a generic's two instances; NM14 a switch case, a closure, an impl
+#       method; NM15 a bare `pub }`; NM16 --syntax-only; NM17-NM19 the module-scope arm of the same steps;
+#       NM20-NM22 two declarations on one line (`pub fn` + `pub fn`, `impl` + `fn`, in a body and a block): the
+#       derive step follows a `struct` / `enum` only
+#
+#   (6.7.16, measured) the lane before it (b2053aff7) -> RED all 46 NM rows; the 107 rows before them green
+#   `_decl_inner` back to its five kinds              -> RED NM (27 kind rows), NM1-NM16
+#   `_dl_pub_mark` returns 0                          -> RED NM7 NM8 NM9 NM10 NM13 NM14 ("undefined variable 'x'")
+#   `_dl_derived` without its struct / enum test      -> RED NM9 NM10 NM11 NM16 NM18 NM20 NM21 NM22 (the next
+#                                                        declaration stepped as a derive's; "expected '}', got end
+#                                                        of file")
+#   (measured) the test as "ended at its `}`" (F4's    -> RED NM20 NM21 NM22 (a `pub fn` / `impl` ends at its `}`)
+#   first cut, da0927adc)
+#   `_dl_quiet` without its `pub use` step            -> RED NM11 NM19 ("undefined function 'g'")
+#   `_dl_skip_at` without its `pub const fn` line     -> RED NM12 NM17 (the next statement's error lost)
+#
+#   PM  module scope (met in passing, 6.7.16): a late `pub var x = 5;` / `public var` stepped whole, so a use of x
+#       was "undefined variable 'x'" — the marker is stepped alone there too (`_decl_late`'s `_dl_pub_mark`);
+#       PM3 a `pub const` (pass 1's const prepass had registered it) the control
+#   (measured) `_decl_late` without its `_dl_pub_mark` -> RED PM1 PM2
+#
 # ITS USES (6.7.15; issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
 # was stepped, so what it names was never registered, and each use was a second error: `var q = Q { 5 };`
 # "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable", `fn f(q: *Q)` "unknown
@@ -104,6 +138,43 @@
 #   `_dl_member_at` without `_dl_fn_quiet`           -> RED UX4 ("undefined function 'Ok2'" + "refusing to emit")
 #   `_slit_refd_stmt` returns 0                      -> RED UX5 (the statement's cascade)
 #   `_slit_stray` without its `_ann_refd_mark`       -> RED UX1 UX2 UX6 UX7 (the literal's variable's `.y`)
+#
+# THE USES THOSE STAND-DOWNS DID NOT REACH (6.7.16; issues/2026-10-18-refused-declaration-names-cascade-in-const-contexts-
+# bounds-and-uninit.md). A refused enum's name in a const context (a case label, a const, an array size) was "unknown
+# name 'E' in a const context" — and a top-level const's, swept at the end of pass 1, printed BEFORE the declaration's
+# own error; a refused trait as a bound "its type argument does not implement trait 'Tr'"; `var q: Q;` (and any
+# refused annotation with no initializer, `var q: Foo;`) "uninitialized variable not allowed"; a use parsed before the
+# declaration (an earlier fn's `q: *Q`) "type 'Q' is declared after its use"; a refused inclusion's by-name `s: *Str`
+# parameter "no struct type in scope for 's'". Now pass 1's tail walk enters each late declaration's names where
+# PARSE_PROG will refuse it (`_dl_fill`, stepping the same tokens: `_dl_late_step`), a trait's name too; the const
+# evaluator's unknown-name arms (`_ce_unk`) and the bound check (`_bnd_refd`) stand down for a refused name, counted
+# and latched as the printed refusal is; the no-initializer refusal stands down after a refused annotation naming no
+# type (`_decl_ann_refd` -> `_tup_ann_refd`), in sync; a by-name handle parameter whose struct a refused declaration
+# declared is marked (`_tn_byname_refd`).
+#
+#   UF  UF1-UF6 the filed repros verbatim (1b: the declaration's error only — nothing printed before it); UF7 a bare
+#       member in a const; UF8 case labels in a fn above the declaration; UF9 an array size after it, in sync;
+#       UF10 an inner enum in its own body's labels / const; UF11 a bound in a fn above the trait; UF12 a zone
+#       generic struct bounded by a late trait; UF13 `: Foo` / `: 5` / `: Foo<i64>` with no initializer, the next
+#       statement's mistake reported; UF14 the zone and after a statement; UF15 a generic's two instances; UF16
+#       control (`: i64`, `: *Foo` keep "uninitialized"); UF17 `s: Str`, a store and a method, a fn above the
+#       include; UF18 --syntax-only of UF1-UF5's shapes (written UF18(n) below)
+#   UE3 / UE4  exact: a const naming a name declared nowhere, a valid trait's unmet bound, a by-name `*Result`
+#       parameter the inclusion did not declare — still reported
+#
+#   (6.7.16, measured) the lane before it (8bccee4d5) -> RED UF1-UF15 UF17 UF18(1-4) UE3 UE4 (22); UF16, UF18(5)
+#                                                         (one error under --syntax-only already) and every row
+#                                                         before them green
+#   `_dl_fill` returns at once                         -> RED UF2 UF5 UF7 UF8 UF11 UF17 UF18(2)
+#   `_ce_unk` without its stand-down                   -> RED UF1 UF2 UF7 UF8 UF9 UF10 UF18(1) UF18(2)
+#   `_bnd_refd` returns 0                              -> RED UF3 UF11 UF12 UF18(3) UE3
+#   `_dl_name_at` without the trait keyword            -> RED UF3 UF11 UF12 UF18(3) UE3
+#   `_decl_ann_refd` returns 0                         -> RED UF4 UF13 UF14 UF15 UF18(4)
+#   `_decl_ann_refd` never reading token 0             -> RED UF14 (the zone's first declaration)
+#   `_tn_byname_refd` returns 0                        -> RED UF6 UF17 UE4
+#   `_ce_unk` standing down for any name               -> RED UE3 ("unknown name 'Z'" silenced)
+#   `_bnd_refd` standing down for any trait            -> RED UE3 (Tv's genuine bound silenced)
+#   `_tn_byname_refd` marking any by-name handle       -> RED UE4 (`r.len` silenced)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -444,6 +515,149 @@ one "NC a const fn's body: the check's one refusal" 'const fn f(): i64 { struct 
 syscall(60, f());
 ' "error:<source>:1:21: not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while / return / break / continue and calls of const fns"
 
+# ── NM: one level down, the other kinds — `mod`, `use`, `pub` / `public` (6.7.16) ─────────────────────────────
+NMKINDS='mod|mod m;|a `mod`
+use|use m.g;|a `use`
+pub-var|pub var x = 1;|a `pub`
+pub-const|pub const C = 1;|a `pub`
+pub-fn|pub fn g(): i64 { return 1; }|a `pub`
+public-fn|public fn g(): i64 { return 1; }|a `public`
+pub-const-fn|pub const fn g(): i64 { return 1; }|a `pub`
+pub-mod|pub mod m;|a `pub`
+pub-use|pub use m.g;|a `pub`'
+printf '%s\n' "$NMKINDS" | while IFS='|' read -r k decl art; do
+    [ -n "$k" ] || continue
+    one "NM $k in a top-level if block" "${NHEAD}if (a == 1) { $decl }
+syscall(60, a);
+" "error:<source>:4:15: $art declaration $IR a block"
+    one "NM $k in a top-level while block" "${NHEAD}while (a == 1) { $decl a = 2; }
+syscall(60, a);
+" "error:<source>:4:18: $art declaration $IR a block"
+    one "NM $k in a fn body" "${NHEAD}fn f(): i64 { $decl return 1; }
+syscall(60, f() + a);
+" "error:<source>:4:15: $art declaration $IR a fn body"
+done > "$D/nm.out"
+cat "$D/nm.out"
+pass=$((pass + $(grep -c '^  ok' "$D/nm.out" || true))); fail=$((fail + $(grep -c '^  FAIL' "$D/nm.out" || true)))
+
+one "NM1 filed: mod in a fn body" "$(printf 'fn f(): i64 { mod m; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`mod\` declaration $IR a fn body"
+one "NM2 filed: use in a fn body" "$(printf 'fn f(): i64 { use m.g; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`use\` declaration $IR a fn body"
+one "NM3 filed: pub var in a fn body" "$(printf 'fn f(): i64 { pub var x = 1; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM4 filed: mod in a top-level block" "$(printf 'var a = 1;\nif (a == 1) { mod m; }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`mod\` declaration $IR a block"
+one "NM5 filed: pub fn in a fn body (it was two)" "$(printf 'fn f(): i64 { pub fn g(): i64 { return 1; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM6 filed: pub fn in a top-level block" "$(printf 'var a = 1;\nif (a == 1) { pub fn g(): i64 { return 1; } }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`pub\` declaration $IR a block"
+one "NM7 pub var then a use of it: one error" 'fn f(): i64 { pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM8 public var / pub const then used, in a block" 'var a = 1;
+if (a == 1) { public var x = 1; pub const C = 2; a = x + C; }
+syscall(60, a);
+' "error:<source>:2:15: a \`public\` declaration $IR a block
+error:<source>:2:33: a \`pub\` declaration $IR a block"
+one "NM9 the body parses on: each, then a mistake" 'fn f(): i64 { mod m; use m.g; pub var x = 1; public fn g2(): i64 { return 1; } return x + g2() + zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`mod\` declaration $IR a fn body
+error:<source>:1:22: a \`use\` declaration $IR a fn body
+error:<source>:1:31: a \`pub\` declaration $IR a fn body
+error:<source>:1:46: a \`public\` declaration $IR a fn body
+error:<source>:1:100: undefined variable 'zz' (missing include or enum?)"
+one "NM10 use then pub on one line: no derive step" 'fn f(): i64 { use m.g; pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`use\` declaration $IR a fn body
+error:<source>:1:24: a \`pub\` declaration $IR a fn body"
+one "NM11 a pub use alias called: no undefined fn" 'fn f(): i64 { pub mod m; pub use m.g; return g(); }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:26: a \`pub\` declaration $IR a fn body"
+one "NM12 pub const fn: the next statement is its own" 'fn f(): i64 { pub const fn g(): i64 { return 1; } return zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:60: undefined variable 'zz' (missing include or enum?)"
+one "NM13 a generic fn at two instances: once each" 'fn f<T>(x: T): T { pub var y = x; mod m; return y; }
+syscall(60, f<i64>(1) + f<i32>(2));
+' "error:<source>:1:20: a \`pub\` declaration $IR a fn body
+error:<source>:1:35: a \`mod\` declaration $IR a fn body"
+one "NM14 a switch case, a closure, an impl method" 'struct P { x; }
+impl P { fn m(self): i64 { mod mm; return 1; } }
+var g = |x| { pub var y = x; return y; };
+fn f(x): i64 { switch (x) { case 1: use m.g; return 2; } return 1; }
+syscall(60, f(1));
+' "error:<source>:2:28: a \`mod\` declaration $IR a fn body
+error:<source>:4:37: a \`use\` declaration $IR a fn body
+error:<source>:3:15: a \`pub\` declaration $IR a fn body"
+one "NM15 a pub with nothing after it: the block's } left" 'var a = 1;
+if (a == 1) { pub }
+syscall(60, a);
+' "error:<source>:2:15: a \`pub\` declaration $IR a block"
+one "NM16 --syntax-only: the same errors" 'fn f(): i64 { mod m; use m.g; pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`mod\` declaration $IR a fn body
+error:<source>:1:22: a \`use\` declaration $IR a fn body
+error:<source>:1:31: a \`pub\` declaration $IR a fn body" --syntax-only
+one "NM17 module scope: pub const fn, the next statement's error" 'var a = 1;
+a = 2;
+pub const fn g(): i64 { return 1; }
+syscall(60, zz);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
+error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+one "NM18 module scope: use then pub fn on one line" 'mod mm;
+fn g(): i64 { return 1; }
+mod;
+syscall(39);
+use mm.g; pub fn pg(): i64 { return 2; }
+syscall(60, g() + pg());
+' "error:<source>:5:1: a \`use\` declaration $R (line 4)
+error:<source>:5:11: a \`pub\` declaration $R (line 4)"
+one "NM19 module scope: a pub use alias called" 'mod mm;
+fn g(): i64 { return 1; }
+mod;
+syscall(39);
+pub use mm.g;
+syscall(60, g());
+' "error:<source>:5:1: a \`pub\` declaration $R (line 4)"
+one "NM20 two pub fns on one line in a fn body" 'fn f(): i64 { pub fn g(): i64 { return 1; } pub fn h(): i64 { return 2; } return zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:45: a \`pub\` declaration $IR a fn body
+error:<source>:1:84: undefined variable 'zz' (missing include or enum?)"
+one "NM21 an impl then a fn on one line in a fn body" 'struct P { x; }
+fn f(): i64 { impl P { fn m(self): i64 { return 1; } } fn h(): i64 { return 2; } return zz; }
+syscall(60, f());
+' "error:<source>:2:15: an \`impl\` declaration $IR a fn body
+error:<source>:2:56: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:2:91: undefined variable 'zz' (missing include or enum?)"
+one "NM22 pub fn and public fn on one line in a block" 'var a = 1;
+if (a == 1) { pub fn g(): i64 { return 1; } public fn h(): i64 { return 2; } a = zz; }
+syscall(60, a);
+' "error:<source>:2:15: a \`pub\` declaration $IR a block
+error:<source>:2:45: a \`public\` declaration $IR a block
+error:<source>:2:84: undefined variable 'zz' (missing include or enum?)"
+one "PM1 module scope: pub var then used, one error" 'var a = 1;
+a = 2;
+pub var x = 5;
+syscall(60, x);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)"
+one "PM2 module scope: public var used in a fn, then a mistake" 'var a = 1;
+a = 2;
+public var x = 5;
+fn f(): i64 { return x; }
+syscall(60, f() + zz);
+' "error:<source>:3:1: a \`public\` declaration $R (line 2)
+error:<source>:5:21: undefined variable 'zz' (missing include or enum?)"
+one "PM3 control: module scope pub const then used" 'var a = 1;
+a = 2;
+pub const C = 5;
+const D = C + 1;
+syscall(60, D + zz);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
+error:<source>:5:19: undefined variable 'zz' (missing include or enum?)"
+
 # ── U: a use of what a refused declaration names (6.7.15) ───────────────────────────────────────────────────
 L='must come before the first top-level statement (line 2)'
 one "U1 filed: struct literal of a refused struct" "$(printf 'var a = 1;\na = 2;\nstruct Q { y; }\nvar q = Q { 5 };\nsyscall(60, 0);\n')
@@ -531,6 +745,115 @@ fn g(q): i64 { return q.y; }
 syscall(60, 0);
 " "error:<source>:3:1: a \`struct\` declaration $L
 error:<source>:5:26: no struct type in scope for 'q'; a '.field' access needs its struct declaration (missing include?)"
+
+# ── UF: the uses 6.7.15's stand-downs did not reach (6.7.16) ─────────────────────────────────────────────────
+FH='var a = 1;\na = 2;\n'   # the filing's H, for its repros verbatim
+L5='must come before the first top-level statement (line 5)'
+one "UF1 filed 1a: a case label E.A" "$(printf "${FH}enum E { A, B }\nfn g(x): i64 { switch (x) { case E.A: return 1; } return 0; }\nsyscall(60, g(1));\n")
+" "error:<source>:3:1: an \`enum\` declaration $L"
+one "UF2 filed 1b: a const and an array size, the declaration's error only" "$(printf "${FH}enum E { A, B }\nconst C = E.B;\nvar arr: i64[E.B];\nsyscall(60, C);\n")
+" "error:<source>:3:1: an \`enum\` declaration $L"
+one "UF3 filed 2: a refused trait as a bound" "$(printf "${FH}trait Tr { fn m(self): i64; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1));\n")
+" "error:<source>:3:1: a \`trait\` declaration $L"
+one "UF4 filed 3: var q: Q; with no initializer" "$(printf "${FH}struct Q { y; }\nfn h(): i64 { var q: Q; return q.y; }\nsyscall(60, h());\n")
+" "error:<source>:3:1: a \`struct\` declaration $L"
+one "UF5 filed 4: a use before the declaration" "$(printf "${FH}fn g(q: *Q): i64 { return q.y; }\nstruct Q { y; }\nsyscall(60, 0);\n")
+" "error:<source>:4:1: a \`struct\` declaration $L"
+one "UF6 filed 5: a refused inclusion's by-name *Str parameter" "$(printf 'syscall(39);\ninclude "lib/str.cyr"\nfn f(s: *Str): i64 { return s.len; }\nsyscall(60, 3);\n')
+" "error:<source>:2:1: an include of a file that declares a \`struct\` (lib/str.cyr:24) must come before the first top-level statement (line 1)"
+one "UF7 a bare member in a const, a const of that; then a mistake" "${UH}enum E { A, B }
+const C = B;
+const K = C + 1;
+syscall(60, K + zz);
+" "error:<source>:3:1: an \`enum\` declaration $L
+error:<source>:6:19: undefined variable 'zz' (missing include or enum?)"
+one "UF8 case labels in a fn above the declaration" "${UH}fn g(x): i64 { switch (x) { case E.A: return 1; case B: return 2; } return 0; }
+enum E { A, B }
+syscall(60, g(1));
+" "error:<source>:4:1: an \`enum\` declaration $L"
+one "UF9 an array size after it, in sync: the next statement's mistake" "${UH}enum E { A, B }
+var arr: i64[E.B];
+syscall(60, zz);
+" "error:<source>:3:1: an \`enum\` declaration $L
+error:<source>:5:15: undefined variable 'zz' (missing include or enum?)"
+one "UF10 an inner enum in its body's case labels and const" 'fn f(x): i64 {
+    enum E { A, B }
+    switch (x) { case E.A: return 1; case B: return 2; }
+    const C = E.B;
+    return C;
+}
+syscall(60, f(1));
+' "error:<source>:2:5: an \`enum\` declaration $IR a fn body"
+one "UF11 the bound in a fn above the trait" "${UH}fn h(): i64 { return g<i64>(1); }
+fn g<T: Tr>(x: T): i64 { return 1; }
+trait Tr { fn m(self): i64; }
+syscall(60, h());
+" "error:<source>:5:1: a \`trait\` declaration $L"
+one "UF12 a zone generic struct bounded by a late trait" "struct Bx<T: Tr> { v: T; }
+${UH}trait Tr { fn m(self): i64; }
+var b: Bx<i64> = Bx<i64> { 5 };
+syscall(60, b.v);
+" "error:<source>:4:1: a \`trait\` declaration must come before the first top-level statement (line 3)"
+one "UF13 refused annotations with no initializer, in sync" 'fn f(): i64 { var q: Foo; var r: 5; var s: Foo<i64>; return zz; }
+syscall(60, f());
+' "error:<source>:1:22: unknown type 'Foo' for variable 'q'
+error:<source>:1:34: expected a type for variable 'r', got number 5
+error:<source>:1:44: unknown type 'Foo' for variable 's'
+error:<source>:1:63: undefined variable 'zz' (missing include or enum?)"
+one "UF14 the declaration zone and after a statement" "var q: Foo;
+${UH}struct Q { y; }
+var p: Q;
+syscall(60, p.y + zz);
+" "error:<source>:1:8: unknown type 'Foo' for variable 'q'
+error:<source>:4:1: a \`struct\` declaration must come before the first top-level statement (line 3)
+error:<source>:6:21: undefined variable 'zz' (missing include or enum?)"
+one "UF15 a generic's two instances: once" 'fn f<T>(x: T): i64 { var q: Foo; return 1; }
+syscall(60, f<i64>(1) + f<i32>(2));
+' "error:<source>:1:29: unknown type 'Foo' for variable 'q'"
+one "UF16 control: a type it still names keeps the error" 'fn f(): i64 { var q: i64; var p: *Foo; return zz; }
+syscall(60, f());
+' "error:<source>:1:25: uninitialized variable not allowed; use \`var X = 0;\` or initial value
+error:<source>:1:35: unknown type 'Foo' as the target of pointer 'p'
+error:<source>:1:38: uninitialized variable not allowed; use \`var X = 0;\` or initial value
+error:<source>:1:49: undefined variable 'zz' (missing include or enum?)"
+one "UF17 by-name Str: a value, a store and a method, a fn above" 'syscall(39);
+fn h(t: *Str): i64 { return t.len; }
+include "lib/str.cyr"
+fn f(s: Str): i64 { return s.len; }
+fn g(s: *Str): i64 { s.len = 3; return s.m(); }
+syscall(60, 3);
+' "error:<source>:3:1: an include of a file that declares a \`struct\` (lib/str.cyr:24) must come before the first top-level statement (line 1)"
+for u in 1 2 3 4 5; do
+    case $u in
+        1) us="$(printf "${FH}enum E { A, B }\nfn g(x): i64 { switch (x) { case E.A: return 1; } return 0; }\nsyscall(60, g(1));\n")"; uw="error:<source>:3:1: an \`enum\` declaration $L";;
+        2) us="$(printf "${FH}enum E { A, B }\nconst C = E.B;\nvar arr: i64[E.B];\nsyscall(60, C);\n")"; uw="error:<source>:3:1: an \`enum\` declaration $L";;
+        3) us="$(printf "${FH}trait Tr { fn m(self): i64; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1));\n")"; uw="error:<source>:3:1: a \`trait\` declaration $L";;
+        4) us="$(printf "${FH}struct Q { y; }\nfn h(): i64 { var q: Q; return q.y; }\nsyscall(60, h());\n")"; uw="error:<source>:3:1: a \`struct\` declaration $L";;
+        5) us="$(printf "${FH}fn g(q: *Q): i64 { return q.y; }\nstruct Q { y; }\nsyscall(60, 0);\n")"; uw="error:<source>:4:1: a \`struct\` declaration $L";;
+    esac
+    one "UF18 --syntax-only: UF$u's shape, one error" "$us
+" "$uw" --syntax-only
+done
+one "UE3 exact: a const of a name declared nowhere, a valid trait's bound" "trait Tv { fn m(self): i64; }
+fn k<T: Tv>(x: T): i64 { return 1; }
+fn g<T: Tr>(x: T): i64 { return 2; }
+${UH}enum E { A, B }
+trait Tr { fn m(self): i64; }
+const C = Z.B;
+var y = g<i64>(1);
+var w = k<i64>(1);
+syscall(60, E.A + y + w);
+" "error:<source>:8:11: unknown name 'Z' in a const context
+error:<source>:6:1: an \`enum\` declaration $L5
+error:<source>:7:1: a \`trait\` declaration $L5
+error:<source>:10:16: generic 'k': its type argument does not implement trait 'Tv'"
+one "UE4 exact: a by-name Result parameter the inclusion did not declare" 'syscall(39);
+include "lib/str.cyr"
+fn h(s: *Str): i64 { return s.len; }
+fn f(r: *Result): i64 { return r.len; }
+syscall(60, 3);
+' "error:<source>:2:1: an include of a file that declares a \`struct\` (lib/str.cyr:24) must come before the first top-level statement (line 1)
+error:<source>:4:37: no struct type in scope for 'r'; a '.field' access needs its struct declaration (missing include?)"
 runs "UC control: the declarations before the statement" 'struct Q { y; }
 enum E { A, B }
 var a = 1;

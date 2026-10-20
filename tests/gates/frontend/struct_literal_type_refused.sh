@@ -85,6 +85,9 @@
 #   `_slit_sep` without its `;` exception           -> RED CT4 (an unclosed literal named a missing `,`)
 #   `_slit_sep` without its `)` exception           -> this gate green; tests/gates/frontend/tuple_checked.sh RED (a tuple
 #                                                      literal shares the element store: its last element's `)`)
+# (6.7.16, the tuple wording; measured)
+#   `_tup_elems` without its `_slit_tup` (the 6.7.15 -> RED TU1-TU5 TU8 (the struct literal's wording); TU6 TU7 green
+#     wording)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -612,6 +615,34 @@ syscall(60, G.b + H.a + B.w);
 exact1 "CT4 control: an unclosed literal P { 1, 2;" "$CH"'fn run(): i64 { var p = P { 1, 2; return p.b; }
 syscall(60, run());
 ' "error:<source>:5:33: expected '}', got ';'"
+# TU (6.7.16) — a tuple literal shares the element store, so a missing `,` between its elements said "struct
+# literal"; it is "expected ',' between tuple literal elements", at the same token: in a fn, the declaration zone,
+# after the first statement, an argument, an assignment, --syntax-only. A struct literal keeps its wording, inside a
+# tuple too (TU6, refused earlier as an initializer: that one error)
+# (issues/2026-10-18-commaless-tuple-literal-named-as-struct-literal.md).
+MU="expected ',' between tuple literal elements"
+exact1 "TU1 filed repro: fn (1, 2 3)" 'fn f(): i64 { var t = (1, 2 3); return t.1; }
+' "error:<source>:1:29: $MU"
+exact1 "TU2 filed repro: the zone (1, 2 3)" 'var t = (1, 2 3);
+' "error:<source>:1:15: $MU"
+exact1 "TU3 after a statement" 'var z = 1;
+z = 2;
+var t = (1, 2 3);
+syscall(60, t.1);
+' "error:<source>:3:15: $MU"
+exact1 "TU4 an argument g((1, 2 3))" 'fn g(t: (i64, i64)): i64 { return t.1; }
+fn f(): i64 { return g((1, 2 3)); }
+' "error:<source>:2:30: $MU"
+exact1 "TU5 an assignment t = (4, 5 6)" 'fn f(): i64 { var t: (i64, i64) = (1, 2); t = (4, 5 6); return t.1; }
+' "error:<source>:1:53: $MU"
+exact1 "TU6 control: (P { 1 2 }, 3) its one error" 'struct P { a; b; }
+fn f(): i64 { var t = (P { 1 2 }, 3); return t.1; }
+' "error:<source>:2:24: $MS"
+exact1 "TU7 control: P { 1 2 } keeps the struct wording" 'struct P { a; b; }
+fn f(): i64 { var p = P { 1 2 }; return p.a; }
+' "error:<source>:2:29: $MC"
+exact1 "TU8 --syntax-only: fn (1, 2 3)" 'fn f(): i64 { var t = (1, 2 3); return t.1; }
+' "error:<source>:1:29: $MU" --syntax-only
 accept "CT3 commas: the filed repro with them" 'struct P { a; b; }
 fn f(): i64 {
     var p = P { b: 1, a: 2 };

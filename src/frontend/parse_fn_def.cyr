@@ -418,6 +418,7 @@ fn _prescan_tail_loop(S): i64 {
     var go = 1;
     while (go == 1) {
         var t = PEEKT(S);
+        _dl_fill(S, t);   # 6.7.16: a declaration PARSE_PROG will refuse here — its names, before any use is parsed
         if (t == 12) { go = 0; }                       # EOF
         # ⚠ _IS_FN_KW, not a bare `t == 32`: the pass-1 scan (_tl_scan1) asks _IS_FN_KW, so a
         # bare test here would make the two scanners disagree about what a DEFINITION is and
@@ -595,17 +596,45 @@ fn _decl_late(S): i64 {
     if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     if (_tl_stmt1 < 0) { return 0; }
     var ti = GTI(S);
+    _dl_late_step(S, ti, 1);
+    _dl_names(S, ti, GTI(S));   # 6.7.15
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# The late declaration at the cursor (token `ti`) stepped as its refusal steps it, and reported when `rep` is 1: an
+# inclusion's rest (`_dl_incl`), a `pub var` / `pub const` marker alone (6.7.16: `pub var x = 1;` still declares x,
+# as below module scope), else through its `}` / `;` and a derive's line. Pass 1's fill (`_dl_fill`) steps the same
+# tokens, `rep` 0.
+fn _dl_late_step(S, ti, rep): i64 {
     var l1 = GTLINE(S, ti);
     var f1 = FM_SITE(S, l1);
     var f0 = FM_SITE(S, GTLINE(S, _tl_stmt1));
     var n0 = _fm_site_line;
-    if (f1 != f0) { if (_dl_incl(S, l1, f0, n0) == 1) { return 1; } }
-    _dl_report(S, ti, f1, f0, n0);
+    if (f1 != f0) { if (_dl_incl(S, l1, f0, n0, rep) == 1) { return 0; } }
+    if (rep == 1) { _dl_report(S, ti, f1, f0, n0); }
+    if (_dl_pub_mark(S) == 1) { return 0; }
     _dl_skip(S);
-    _dl_derived(S);
-    _dl_names(S, ti, GTI(S));   # 6.7.15
-    _dl_quiet(S, ti, GTI(S));
-    return 1;
+    _dl_derived(S, ti);
+    return 0;
+}
+# ⛔ 6.7.16 — THE REFUSED NAMES ARE KNOWN BEFORE ANY USE IS PARSED. 6.7.15 entered them (`_dl_names`) when PARSE_PROG
+# met the late declaration, in source order, so a use parsed before it was still a second error: a top-level const
+# (`_cst_sweep`, the end of pass 1) "unknown name 'E' in a const context", printed BEFORE the declaration's own
+# error, and an earlier fn's `q: *Q` "type 'Q' is declared after its use". Pass 1's tail walk (`_prescan_tail_loop`,
+# every top-level statement after the first) meets each such declaration at depth 0 — exactly where PARSE_PROG's
+# `_decl_late` will refuse it — and enters its names here, stepping the same tokens (`_dl_late_step`, `rep` 0); the
+# walk itself goes on as before (the cursor put back). A range already entered (an inclusion's rest) is not walked
+# again. CHANGELOG [6.7.16]
+var _dl_fill_end = 0;
+fn _dl_fill(S, t): i64 {
+    if (_dl_kind(t) == 0) { return 0; }
+    var ti = GTI(S);
+    if (ti < _dl_fill_end) { return 0; }
+    _dl_late_step(S, ti, 0);
+    _dl_names(S, ti, GTI(S));
+    _dl_fill_end = GTI(S);
+    STI(S, ti);
+    return 0;
 }
 # ⛔ 6.7.15 — ONE LEVEL DOWN: a `struct`, `enum`, `union`, `trait` or `impl` in a fn body or a block (GINFN 1, or
 # `_pp_depth` past module scope) belongs to the declaration section too (the guide's rule, D13 (a)'s one level
@@ -615,16 +644,32 @@ fn _decl_late(S): i64 {
 # declaration stepped as at module scope (`_dl_skip_in`: never the `}` that closes the enclosing body), and what it
 # names and the fns it would define entered as reported (`_dl_names`, `_dl_quiet`), so the body parses on in sync.
 # CHANGELOG [6.7.15]
+# 6.7.16: every kind the module-scope rule names (`_dl_kind`) — a `mod`, `use`, `pub` / `public` there was
+# "unexpected mod" / "unexpected pub'/'public" (the token table's name), and a `pub fn` added "fn 'g' is defined inside
+# fn 'f'". A `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`), so the declaration still declares and a
+# use of it is no "undefined variable". CHANGELOG [6.7.16]
 fn _decl_inner(S): i64 {
     if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
-    var t = PEEKT(S);
-    if (t != 40 && t != 60 && t != 101 && t != 167 && t != 77) { return 0; }   # struct enum union trait impl
+    if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     var ti = GTI(S);
     _dl_in_report(S, ti);
+    if (_dl_pub_mark(S) == 1) { return 1; }
     _dl_skip_in(S);
-    _dl_derived(S);
+    _dl_derived(S, ti);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# A refused `pub var` / `pub const` (not a `pub const fn`) at the cursor: the marker stepped, the declaration left to
+# parse as one without it. 1 = stepped.
+fn _dl_pub_mark(S): i64 {
+    if (PEEKT(S) != 73) { return 0; }
+    var t2 = TOKTYP(S, GTI(S) + 1);
+    if (t2 != 3) {
+        if (t2 != 168) { return 0; }
+        if (TOKTYP(S, GTI(S) + 2) == 32) { return 0; }
+    }
+    STI(S, GTI(S) + 1);
     return 1;
 }
 # "a `struct` declaration belongs to the declaration section at top level, not inside a fn body" (or "... not
@@ -648,7 +693,13 @@ fn _dl_in_report(S, ti): i64 {
 # (v6.5.20, PP_DERIVE_SERIALIZE). They are the refused type's, so a `fn` / `public fn` the declaration's line still
 # holds is stepped with the rest of that line (the derive's `#assert sizeof(Q)` was "unknown type 'Q'", an enum's
 # `public` codec a second refusal).
-fn _dl_derived(S): i64 {
+# 6.7.16: only after a `struct` / `enum` (`pub` / `public` before it or not) — the declarations a `#derive` takes
+# (PP_DERIVE_*): `use m.g; pub var x = 1;` or two `pub fn`s on one line in a fn body stepped the next declaration and
+# the body's own `}` ("expected '}', got end of file"). The declaration's keyword is token `ti`. CHANGELOG [6.7.16]
+fn _dl_derived(S, ti): i64 {
+    var k = TOKTYP(S, ti);
+    if (k == 73) { k = TOKTYP(S, ti + 1); }
+    if (k != 40) { if (k != 60) { return 0; } }
     if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
     var ln = GTLINE(S, GTI(S) - 1);
     while (PEEKT(S) != 12) {
@@ -700,41 +751,39 @@ fn _dl_where(S, f1, f0, n0): i64 {
 # that file resumes after it — the include's own line is that resume's base less one — the include is reported
 # there, once, and the rest of the inclusion is stepped. 0 = no such resume (the statement is in a file that ended
 # before: the caller reports the declaration itself).
-fn _dl_incl(S, l1, f0, n0): i64 {
+fn _dl_incl(S, l1, f0, n0, rep): i64 {
     if (f0 < 0) { return 0; }
     var cnt = load64(S + 0x71A000);
     var i = 0;
     while (i < cnt) {
         if (load64(S + 0x71A040 + i * 24) > l1) {
-            if (load64(S + 0x71A040 + i * 24 + 16) == f0) { return _dl_incl_at(S, l1, i, f0, n0); }
+            if (load64(S + 0x71A040 + i * 24 + 16) == f0) { return _dl_incl_at(S, l1, i, f0, n0, rep); }
         }
         i = i + 1;
     }
     return 0;
 }
-fn _dl_incl_at(S, l1, e, f0, n0): i64 {
+fn _dl_incl_at(S, l1, e, f0, n0, rep): i64 {
     var ti = GTI(S);
-    if (_panic == 0) {
-        PRSTR("error:");
-        PRSTR(S + 0x721000 + f0);
-        PRSTR(":");
-        PRNUM((load64(S + 0x71A040 + e * 24 + 8) >> 32) - 1);
-        PRSTR(":1: an include of a file that declares ");
-        _dl_art_kw(S, ti);
-        PRSTR(" (");
-        FM_LOOKUP(S, l1);
-        PRSTR(") must come before the first top-level statement (line ");
-        PRNUM(n0);
-        PRSTR(")\n");
-        _had_error = 1;
-    }
+    if (rep == 1) { if (_panic == 0) {
+            PRSTR("error:");
+            PRSTR(S + 0x721000 + f0);
+            PRSTR(":");
+            PRNUM((load64(S + 0x71A040 + e * 24 + 8) >> 32) - 1);
+            PRSTR(":1: an include of a file that declares ");
+            _dl_art_kw(S, ti);
+            PRSTR(" (");
+            FM_LOOKUP(S, l1);
+            PRSTR(") must come before the first top-level statement (line ");
+            PRNUM(n0);
+            PRSTR(")\n");
+            _had_error = 1;
+        } }
     var st = load64(S + 0x71A040 + e * 24);
     while (PEEKT(S) != 12) {
         if (GTLINE(S, GTI(S)) >= st) { break; }
         STI(S, GTI(S) + 1);
     }
-    _dl_names(S, ti, GTI(S));   # 6.7.15
-    _dl_quiet(S, ti, GTI(S));
     return 1;
 }
 # ⚠ The fns a refused declaration would have defined — a `pub fn`, an impl's methods (`T_m`), a `use` alias, the free
@@ -753,6 +802,7 @@ fn _dl_quiet(S, a, e): i64 {
         if (k == 32) { if (TOKTYP(S, i + 1) == 2) { _dl_fn_at(S, i, d, isid); } }
         i = i + 1;
     }
+    if (TOKTYP(S, a) == 73) { a = a + 1; }   # 6.7.16: `pub use m.f;` too
     if (TOKTYP(S, a) == 74) { if (TOKTYP(S, e - 2) == 2) { _dl_fn_quiet(S, TOKVAL(S, e - 2), a, 0); } }   # `use m.f;`
     return 0;
 }
@@ -794,7 +844,7 @@ fn _dl_fn_quiet(S, noff, kw, meth): i64 {
 # reporter, and one declared nowhere is still reported. A payload member's constructor is a fn: `_dl_fn_quiet`.
 # CHANGELOG [6.7.15]
 var _dlr = 0;   # the refused names (name offsets), a vec made at the first
-var _dlv = 0;   # (scope, name) pairs: the variables `_ann_refd_mark` marked, a vec made at the first
+var _dlv = 0;   # (scope, name, slot) triples: the variables `_ann_refd_mark` marked, a vec made at the first
 fn _dl_names(S, a, e): i64 {
     var d = 0;
     var i = a;
@@ -807,10 +857,10 @@ fn _dl_names(S, a, e): i64 {
     }
     return 0;
 }
-# A `struct` / `union` / `enum` keyword at token `i` (`k`), at depth 0 of the stepped range: its name, an enum's
-# members.
+# A `struct` / `union` / `enum` / `trait` keyword at token `i` (`k`), at depth 0 of the stepped range: its name, an
+# enum's members. 6.7.16: a trait's name too — a bound naming it (`_bnd_refd`) stands down. CHANGELOG [6.7.16]
 fn _dl_name_at(S, i, k, e): i64 {
-    if (k != 40 && k != 101 && k != 60) { return 0; }
+    if (k != 40 && k != 101 && k != 60 && k != 167) { return 0; }
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     _dl_refd_add(S, TOKVAL(S, i + 1));
     if (k == 60) { _dl_members(S, i + 2, e); }
@@ -869,6 +919,11 @@ fn _dl_refd_ann(S, ti, vnoff): i64 {
 # The stand-down helper the "no struct type in scope" reporters share: variable `vnoff`, declared here — a local
 # or a parameter of the fn being compiled (its `_cur_fn_ix`), at top level a global — took an annotation that was
 # refused (or, `_slit_stray`, a refused struct's literal), so its uses are counted, not reported (`_ann_refd_said`).
+# ⛔ 6.7.16 — THE RECORD IS THE VARIABLE, NOT ITS NAME: (scope, name) stood down every same-named variable of the
+# fn, so `var x: Foo = 5; if (1) { var x = 7; return x.a; }` lost the inner, untyped x's genuine "no struct type
+# in scope for 'x'". The slot is pending (-1) here — the mark comes before the declaration registers — and the
+# registration binds it (`_ann_refd_bind`: a local's, a parameter's, a global's after the fold); a record no
+# registration bound matches by name, as before. CHANGELOG [6.7.16]
 fn _ann_refd_mark(S, vnoff): i64 {
     if (vnoff < 0) { return 0; }
     if (_dlv == 0) { _dlv = vec_new(); }
@@ -876,7 +931,40 @@ fn _ann_refd_mark(S, vnoff): i64 {
     if (GINFN(S) == 1) { sc = _cur_fn_ix; }
     vec_push(_dlv, sc);
     vec_push(_dlv, vnoff);
+    vec_push(_dlv, 0 - 1);
     return 0;
+}
+# A declaration of `noff` registered as `idx` (a global >= 0, a local or parameter `0 - 2 - li`): every record of
+# its scope and name still pending is its. Nothing to do when no variable was marked.
+fn _ann_refd_bind(S, noff, idx): i64 {
+    if (_dlv == 0) { return 0; }
+    var sc = 0 - 2;
+    if (GINFN(S) == 1) { sc = _cur_fn_ix; }
+    var n = vec_len(_dlv);
+    var i = 0;
+    while (i < n) {
+        if (_ann_refd_rec(S, i, sc, noff, 0 - 1) == 1) { vec_set(_dlv, i + 2, idx); }
+        i = i + 3;
+    }
+    return 0;
+}
+# Local slot `li`'s registration (`_ann_refd_bind`), its name read from the slot.
+fn _ann_refd_bind_l(S, li): i64 {
+    if (_dlv == 0) { return 0; }
+    return _ann_refd_bind(S, L64(S + 0x5D9D000 + li * 8), 0 - 2 - li);
+}
+# Global `vi`'s registration (`_ann_refd_bind`), its name read from the slot.
+fn _ann_refd_bind_g(S, vi): i64 {
+    if (_dlv == 0) { return 0; }
+    return _ann_refd_bind(S, L64(_varn_base + vi * 8), vi);
+}
+# 1 = record `i` is scope `sc`'s and names `noff`, and its slot is `idx` or pending (-1): a use (`idx` a slot)
+# matches its bound variable or a pending record; a registration (`idx` -1) only a pending one.
+fn _ann_refd_rec(S, i, sc, noff, idx): i64 {
+    if (vec_get(_dlv, i) != sc) { return 0; }
+    var b = vec_get(_dlv, i + 2);
+    if (b != idx) { if (b != 0 - 1) { return 0; } }
+    return STREQ(S, vec_get(_dlv, i + 1), noff);
 }
 # 1 = variable `noff`, resolved to `idx` (a global >= 0, a local < -1), was marked by `_ann_refd_mark` in its
 # scope: counted as ERR_IDENT would count the report (`_had_error`, the panic latch: the statement resyncs), not
@@ -892,19 +980,18 @@ fn _ann_refd_said(S, noff, idx): i64 {
     var n = vec_len(_dlv);
     var i = 0;
     while (i < n) {
-        if (vec_get(_dlv, i) == sc) {
-            if (STREQ(S, vec_get(_dlv, i + 1), noff) == 1) {
-                _had_error = 1;
-                _panic = 1;
-                return 1;
-            }
+        if (_ann_refd_rec(S, i, sc, noff, idx) == 1) {
+            _had_error = 1;
+            _panic = 1;
+            return 1;
         }
-        i = i + 2;
+        i = i + 3;
     }
     return 0;
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
 # first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
+# 6.7.16: a `pub const fn` ends at its body's `}` — it stepped on to the NEXT statement's `;`. CHANGELOG [6.7.16]
 fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
 # Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
 fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
@@ -915,6 +1002,7 @@ fn _dl_skip_at(S, inner): i64 {
     if (t == 73) {
         var t2 = TOKTYP(S, GTI(S) + 1);
         if (t2 == 3 || t2 == 168 || t2 == 72 || t2 == 74) { semi = 1; }
+        if (t2 == 168) { if (TOKTYP(S, GTI(S) + 2) == 32) { semi = 0; } }   # `pub const fn`
     }
     var d = 0;
     while (PEEKT(S) != 12) {

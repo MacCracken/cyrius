@@ -186,6 +186,47 @@ runs use_alias  'mod m;\nfn foo(a, b): i64 { return 77; }\nmod n;\nuse m.foo;\nf
 runs en_unit    'enum E { A; mulh64 = 77; }\nfn main(): i64 { return E.mulh64; }\nsyscall(60, main());\n' 77
 runs en_ctor    "$EA"'enum E { A; Pair(a, b); }\nfn main(): i64 { var e = Pair(4, 8); return load64(e + 16) + load64(e); }\nsyscall(60, main());\n' 9
 
+# AXIS 5 (6.7.16, the user's D11, 2026-10-19: "Refuse it by name") — `mulh64(a, b);` / `sizeof(T);` AS A
+# STATEMENT is one error at the name, "the value of 'mulh64(..)' is discarded - a statement is an assignment or a
+# call", no binary, with or without --allow-undef. The `IDENT (` statement arm sent it to PARSE_FNCALL: "undefined
+# function 'mulh64'" (+ "refusing to emit binary"), `sizeof(H);` "undefined variable 'H'" first, and --allow-undef
+# wrote a binary that exited 132 (SIGILL at the unresolved call) (issues/2026-10-18-intrinsic-as-bare-statement-is-
+# undefined-function.md). Compiled from the checkout (lib/syscalls.cyr resolves). The value forms still run (16), the
+# next statement's own error is still reported, and `fncallN(..);` stays a call (fc_stmt above).
+# MUTATION (measured 2026-10-19, a scratch copy, CYCC= its compiler): `_stmt_intrinsic` returning 0 at once (the
+# slot-open compiler's behaviour) -> RED all ten st_* rows, 12 assertions (the undefined-function lines; st_mh_undef
+# rc 0 with a binary); without its `_refuse_in_sync` -> RED st_next and st_next_sz (the resync skipped the next
+# statement: one error); without its stand-down at a `.` after the call -> RED call_ptr_field_store.sh's U14 control
+# on its four legs (`mulh64(2, 3).n = 5;` keeps "expected ';', got '.'", that statement is no D11 shape).
+SI=" is discarded - a statement is an assignment or a call"
+# stmt <name> <printf-fmt> <want error lines> [cc-arg]: from the checkout; rc 1, no binary, the error lines exactly
+stmt() {
+    printf '%b' "$2" > "$T/$1.cyr"
+    rc=0
+    (cd "$ROOT" && "$CC" ${4:-} < "$T/$1.cyr" > "$T/$1.out" 2> "$T/$1.err") || rc=$?
+    check "$1: exits 1" 1 "$rc"
+    check "$1: error lines" "$3" "$(grep -E '^(error|warning)' "$T/$1.err" | tr '\n' '|')"
+    check "$1: emits no binary" 0 "$(wc -c < "$T/$1.out" | tr -d ' ')"
+}
+echo "axis 5 — an identifier intrinsic as a whole statement is refused by name (D11):"
+SH='include "lib/syscalls.cyr"\nstruct H { n; m; }\n'
+stmt st_mh       "${SH}"'fn go(): i64 { mulh64(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'mulh64(..)'$SI|"
+stmt st_mh_undef "${SH}"'fn go(): i64 { mulh64(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'mulh64(..)'$SI|" --allow-undef
+stmt st_sz       "${SH}"'fn go(): i64 { sizeof(H); return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'sizeof(..)'$SI|"
+stmt st_sz_undef "${SH}"'fn go(): i64 { sizeof(H); return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'sizeof(..)'$SI|" --allow-undef
+stmt st_mh_syn   "${SH}"'fn go(): i64 { mulh64(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'mulh64(..)'$SI|" --syntax-only
+stmt st_top      "${SH}"'mulh64(2, 3);\nsyscall(60, 0);\nsizeof(H);\n' "error:<source>:3:1: the value of 'mulh64(..)'$SI|error:<source>:5:1: the value of 'sizeof(..)'$SI|"
+stmt st_gen      "${SH}"'fn g<T>(a: T): i64 { sizeof(H); return 0; }\nsyscall(60, g(1) + g<i32>(2));\n' "error:<source>:3:22: the value of 'sizeof(..)'$SI|"
+stmt st_expr     "${SH}"'fn go(): i64 { sizeof(H) + 1; return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'sizeof(..)'$SI|"
+stmt st_next     "${SH}"'fn go(): i64 {\n    var y = 0;\n    mulh64(2, 3);\n    y = zz9;\n    return y;\n}\nsyscall(60, go());\n' "error:<source>:5:5: the value of 'mulh64(..)'$SI|error:<source>:6:12: undefined variable 'zz9' (missing include or enum?)|"
+stmt st_next_sz  "${SH}"'fn go(): i64 {\n    var y = 0;\n    if (y == 0) { sizeof(H); y = zz8; }\n    return y;\n}\nsyscall(60, go());\n' "error:<source>:5:19: the value of 'sizeof(..)'$SI|error:<source>:5:37: undefined variable 'zz8' (missing include or enum?)|"
+printf '%b' "${SH}"'fn go(): i64 { var x = mulh64(2, 3); var n = sizeof(H); return x + n; }\nsyscall(60, go());\n' > "$T/st_val.cyr"
+rc=0; (cd "$ROOT" && "$CC" < "$T/st_val.cyr" > "$T/st_val" 2> "$T/st_val.err") || rc=$?
+check "st_val: the value forms compile" 0 "$rc"
+chmod +x "$T/st_val" 2>/dev/null
+rc=0; "$T/st_val" || rc=$?
+check "st_val: mulh64(2, 3) + sizeof(H) exits 16" 16 "$rc"
+
 echo ""
 if [ "$fails" = 0 ]; then
     echo "PASS: intrinsic_names_reserved — sizeof / mulh64 / fncall0..8 are refused as declared names"

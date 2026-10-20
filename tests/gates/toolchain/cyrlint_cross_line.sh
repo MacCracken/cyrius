@@ -456,7 +456,7 @@ nl_of() {
 check "sys_open notes (wrapped x2, single-line x2, _sys_open not a stopper, 'sys_open (' and a '(' on the next line, the 2nd call on a line)" "1 4 12 13 15 17 20" "$(nl_of "$LX/sysopen_wrapped.cyr" 'raw sys_open')"
 check "getdents notes (wrapped, single-line, 'syscall (', '(' on the next line, …syscall( kept; a walk stops at the call's own ')')" "2 5 15 18 21" "$(nl_of "$LX/getdents_wrapped.cyr" 'raw getdents')"
 run_prog "$LX/enum_members.cyr"
-check "runtime: enum_members is valid cyrius (the ;, bare and payload forms parse)" 16 "$RUN_RC"
+check "runtime: enum_members is valid cyrius (the ;, valueless and payload forms parse; 6.7.16 D12: separated)" 16 "$RUN_RC"
 check "every bare ERR_* member noted, per member" "2 2 4 4 9 18 18 19 19 20" "$(nl_of "$LX/enum_members.cyr" 'bare ERR_')"
 LDIR="$LX"; check "  …the same notes when the path is RELATIVE (6.6.8: the owner test read the path's spelling)" "2 2 4 4 9 18 18 19 19 20" "$(nl_of enum_members.cyr 'bare ERR_')"; LDIR=""
 

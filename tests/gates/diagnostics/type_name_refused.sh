@@ -212,6 +212,33 @@ refused va_miss_for    "${FN}    for (var i: = 0; i < 2; i = i + 1) { }\n    ret
 refused va_miss_repro 'fn f(): i64 {\n    var b: = 0;\n    return b;\n}\nvar G: = 4;\nsyscall(60, f() + G);\n' "5:8: $VA 'G', got '='" 2
 rows=$((rows + 1))
 check "va_miss_repro: names 2:12 'b'" yes "$(grep -qF -- "2:12: $VA 'b', got '='" "$T/va_miss_repro.err" && echo yes || echo no)"
+# 6.7.16: a bare `var c;` / `var c: ;` in a fn or after the first statement ENDS AT ITS `;` and registers `c` — the
+# declaration stepped the `;` and read the next statement as its initializer, so `var d = 9;` was dropped ("undefined
+# variable 'd'") and `c = 4;` said "undefined variable 'c'" (issues/2026-10-18-bare-declaration-refusal-reads-next-
+# statement-as-initializer.md). The _next rows: the statement after it is no keyword statement, so it is parsed only
+# because the refusal is in sync (the resync would skip it, its error with it). MUTATION LEDGER (measured
+# (scratch trees, CYCC= the copy's compiler): the slot-open compiler and `_var_eq_step` stepping the `;` (6.7.15's
+# behaviour) -> RED bare_repro / _late / _ann / _gen / _ptr (two errors), _reg (three), the three _next rows ("undefined
+# variable 'c'", not 'zz'), bare_ptr's warning; `_decl_eq_err` not marking in sync (either arm) -> RED the three _next
+# rows (one error: the resync skipped `c = zz;`) — its `uninitialized` arm alone bare_next / _late_next, its
+# annotation arm alone bare_ann_next; `_var_value` without its `_tp_refd_at` -> RED bare_ptr (a warning at the `;`);
+# `_var_value` running PCMPE on the `;` -> RED bare_ptr only (the factor leaves a latched `;` where it is; the branch
+# is the warning's stand-down and a defined 0). The zone's `var c;` (EMIT_GVAR_INITS) was one error already: bare_zone.
+UV="uninitialized variable not allowed"
+refused bare_repro    'fn f(): i64 {\n    var c;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:10: $UV"
+refused bare_late     'syscall(39);\nvar c;\nvar d = 9;\nsyscall(60, d);\n' "2:6: $UV"
+refused bare_ann      'fn f(): i64 {\n    var c: ;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:12: $VA 'c', got ';'"
+refused bare_reg      'fn f(): i64 {\n    var c;\n    c = 4;\n    return zz;\n}\nsyscall(60, f());\n' "4:14: undefined variable 'zz'" 2
+rows=$((rows + 1))
+check "bare_reg: names 2:10" yes "$(grep -qF -- "2:10: $UV" "$T/bare_reg.err" && echo yes || echo no)"
+refused bare_next     'fn f(): i64 {\n    var c;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
+refused bare_late_next 'syscall(39);\nvar c;\nc = zz;\nsyscall(60, c);\n' "3:7: undefined variable 'zz'" 2
+refused bare_ann_next 'fn f(): i64 {\n    var c: ;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
+refused bare_gen      'fn g<T>(a: T): i64 {\n    var c;\n    var d = 9;\n    return d + a + c;\n}\nsyscall(60, g(1) + g(2));\n' "2:10: $UV"
+refused bare_ptr      'fn f(): i64 {\n    var c: *i64;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:16: $UV"
+rows=$((rows + 1))
+check "bare_ptr: no warning beside it" 0 "$(grep -c '^warning' "$T/bare_ptr.err")"
+refused bare_zone     'var c;\nvar d = 9;\nsyscall(60, d);\n' "1:6: $UV"
 rows=$((rows + 1))
 rc=0; "$CC" --syntax-only < "$T/va_missing.cyr" > /dev/null 2> "$T/va_mso.err" || rc=$?
 check "va_missing under --syntax-only: refused" "1 yes 1" "$rc $(grep -qF "$VA 'b', got '='" "$T/va_mso.err" && echo yes || echo no) $(grep -c '^error' "$T/va_mso.err")"
@@ -375,6 +402,36 @@ for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     check "$sx: --syntax-only exits 1" 1 "$rc"
     check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
 done
+
+echo "axis 7 - a \`*T\` global whose T is no struct names none at \`.field\` (6.7.16):"
+# 6.7.16 (issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md) — a `*T` GLOBAL's var type is 0 - its
+# step (6.6.17), and `_gv_recv_sid` handed it to the field arms as a struct id: any negative id was the program's FIRST
+# struct. `var x: *Foo = 0; x.y` (Foo refused) added "unknown field 'y' on struct 'var'" (the first lexed word), beside
+# `struct P { a; }` `x.a` was resolved as P's `a`, a refused late struct's pointer the same; and a SCALAR `*i64` global's
+# `x.a` COMPILED (rc 0) and read through P, its store said "unknown field 'a' on struct 'struct'", `x.m()` "undefined
+# function 'P.m'". Now the `*T` step band answers no struct (0): the refused annotation stands down (one error), and a
+# `*i64` global's `.a` / store / `.m()` is "no struct type in scope for 'x'", the local's words. A `*P` global still
+# reads through P (gp_P / gp_P_late). MUTATION (measured: the lane's compiler before the fix, whose `_gv_recv_sid`
+# returns GVTYPE for the step band as the slot-open one does): RED 9 — gp_repro1 / gp_repro3 / gp_late (2 errors:
+# "unknown field 'y' on struct 'var'"), gp_uses ("undefined function 'P.m'"), gp_i64_read / gp_i64_fn (compiled, rc 0),
+# gp_i64_store / gp_i64_late ("unknown field 'a' on struct 'struct'"), gp_i64_meth; green gp_repro2 (one error either
+# way: x.a was resolved as P's, silently), gp_i64_local, gp_P, gp_P_late.
+NS="no struct type in scope for 'x'"
+refused gp_repro1     'var x: *Foo = 0;\nsyscall(60, x.y);\n' "1:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_repro2     'struct P { a; }\nvar x: *Foo = 0;\nsyscall(60, x.a);\n' "2:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_repro3     'var a = 1;\na = 2;\nstruct Q { y; }\nvar x: *Q = 0;\nsyscall(60, x.y);\n' "3:1: a \`struct\` declaration must come before the first top-level statement (line 2)"
+refused gp_late       'var a = 1;\na = 2;\nvar x: *Foo = 0;\nsyscall(60, x.y);\n' "3:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_uses       'struct P { a; }\nvar x: *Foo = 0;\nx.a = 3;\nfn g(): i64 { x.a = 1; return x.a + x.m(); }\nsyscall(60, x.a + x.m() + g());\n' "2:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_i64_read   'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nsyscall(60, x.a);\n' "4:16: $NS; a '.field' access"
+refused gp_i64_store  'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nx.a = 3;\nsyscall(60, g);\n' "4:5: $NS; a '.field' assignment"
+refused gp_i64_meth   'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nsyscall(60, x.m());\n' "4:16: $NS; a method call"
+refused gp_i64_late   'struct P { a; }\nvar g = 7;\ng = 8;\nvar x: *i64 = &g;\nx.a = 3;\nsyscall(60, x.a);\n' "6:16: $NS; a '.field' access" 2
+rows=$((rows + 1))
+check "gp_i64_late: names the store 5:5" yes "$(grep -qF -- "5:5: $NS; a '.field' assignment" "$T/gp_i64_late.err" && echo yes || echo no)"
+refused gp_i64_fn     'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nfn h(): i64 { return x.a; }\nsyscall(60, h());\n' "4:25: $NS; a '.field' access"
+refused gp_i64_local  'struct P { a; }\nfn f(): i64 { var g = 7; var x: *i64 = &g; x.a = 3; return x.a; }\nsyscall(60, f());\n' "2:63: $NS; a '.field' access" 2
+runs gp_P             'struct P { a; b; }\nvar q = P { 7, 9 };\nvar x: *P = &q;\nsyscall(60, x.b);\n' 9
+runs gp_P_late        'struct P { a; b; }\nvar q = P { 7, 9 };\nvar y = 1;\ny = 2;\nvar x: *P = &q;\nx.a = 3;\nsyscall(60, x.b + x.a);\n' 12
 
 if [ "$rows" -lt 140 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 140)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
