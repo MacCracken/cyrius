@@ -44,3 +44,8 @@ stdlib = [
     "unicode/casefold", "unicode/_casefold_data",
     "unicode/normalize", "unicode/_normalize_data",
 ]
+
+# cyrius-lsp never compiles these for diagnostics: bootstrap/cybs.cyr is assembly for the seed's
+# bootstrap/asm, not cycc input (docs/guides/editor-integration.md).
+[lsp]
+skip = ["bootstrap/cybs.cyr"]

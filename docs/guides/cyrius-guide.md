@@ -4853,6 +4853,14 @@ cyrius build configuration (argument > environment > manifest > default)
 | `[release]` | `bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `cross_bins` | read | — | — | — | release.yml, install.sh, cyrius pulsar |
 | `[release]` | `scripts` | read | — | — | — | release.yml, install.sh, scripts/release-scripts.sh |
+| `[lsp]` | `skip` | read | — | — | — | cyrius-lsp: files it never compiles (paths from the project root) |
+
+`[lsp] skip` (6.7.16) lists files `cyrius-lsp` never compiles for diagnostics, as paths from the
+project root — a `.cyr` that is not cycc input, such as this repo's `bootstrap/cybs.cyr` (assembly
+for the seed's `bootstrap/asm`), which the server otherwise checked and covered in false errors. The
+server reads it as `cyrius build --print-config` prints it (`lsp.skip = [...]`), so the CLI's own
+manifest reader is the only parser; see `docs/guides/editor-integration.md` for how the server picks
+the unit each other file is checked through.
 
 ## Embedding data files: `[embed]`
 
