@@ -10020,6 +10020,7 @@ fn _bnd_memo_seen(g, c0, c1): i64 {
 }
 # Print the concrete type's name, for a refusal.
 fn _bnd_pr_conc(S, conc): i64 {
+    if (_pn_is(conc) == 1) { return _pn_pr(S, conc); }   # 6.7.16 (D10): `Box$R`, never minted
     if (conc > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8)); return 0; }
     if (conc == 0 - 4) { PRSTR("i32"); }
     elif (conc == 0 - 2) { PRSTR("i16"); }
@@ -10054,7 +10055,7 @@ fn _bnd_check(S, g, c0, c1): i64 {
         if (tx >= 0) {
             if (_bnd_quiet == 1) { if (g < 0) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = 0 - g; } } return 1; }
             if (_bnd_refd(S, tx) == 1) { return 1; }   # 6.7.16: a refused trait's bound
-            if (_bnd_memo_seen(g, c0, c1) == 1) { return 1; }
+            if (_bnd_memo_seen(g, _pn_canon(c0), _pn_canon(c1)) == 1) { return 1; }   # 6.7.16 (D10): `_pn_canon`
             # 6.7.14: a refusal the panic latch swallows prints nothing — its note alone, after an earlier
             # error in the statement (`gs(5) + gb(3)`), named a bound the reader was never shown. CHANGELOG [6.7.14]
             if (_panic == 1) { return 1; }
@@ -16126,9 +16127,13 @@ fn _parse_one_type_arg(S): i64 {
     var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
     var lv = _tck_open(S);                           # 6.7.15 (D10): under `_ta_chk`, this list's own judgement
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
+    var x0 = _tck_take();                            # 6.7.16 (D10): the instance it names, if any
     var in1 = _ta_rest_s(S, base_sid);               # `,` — 6.7.16 (D5): as many as it declares
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
-    if (_ta_chk == 1) { return _tck_nest(S, base_sid, in0, in1, lit, lv); }   # 6.7.14 (D5): read, not minted
+    if (_ta_chk == 1) {   # 6.7.14 (D5): read, not minted
+        _tck_xset(x0);
+        return _tck_nest(S, base_sid, in0, in1, lit, lv);
+    }
     return _targ_inst(S, base_sid, in0, in1, lit);
 }
 # 6.7.15 (D8) — `Later<..>` in a pointer field's list read at its declaration (`_ta_late`; cursor on the `<`), Later a
@@ -16144,6 +16149,7 @@ fn _targ_later(S, noff): i64 {
     _parse_one_type_arg(S);
     _ta_rest_l(S, noff);   # 6.7.16 (D5)
     _consume_gt(S);
+    _tck_last = 0;
     return 0 - 8;
 }
 # ⛔ 6.7.15 — A NESTED `Box<i64>` IS THE BASE `Box`, as the annotation `var b: Box<i64>` declares it (the 6.6.10 rule of
@@ -16207,8 +16213,11 @@ fn _targ_chk(S, lt): i64 {
     _ta_chk = 1;
     _ta_pending_gt = 0;
     STI(S, lt + 1);
+    _tck_last = 0;
     var c0 = _parse_one_type_arg(S);
+    var x0 = _tck_take();
     var c1 = _tck_rest(S, lt - 1);   # 6.7.16 (D5)
+    _tck_xset(x0);   # 6.7.16 (D10): an argument that is an instance, as `_tck_nest`'s
     _tck_c0 = c0;   # 6.7.15 (D10): what was read, for a Vec element's bound (`_vec_el_targs`)
     _tck_c1 = c1;
     _ta_chk = sv_ck;
@@ -16231,12 +16240,25 @@ fn _tck_rest(S, nti): i64 {
 # base's (`_bnd_sbase`) — reported at the struct's name, once per (struct, arguments) as every bound refusal (the
 # user's D10 (a), 2026-10-18). Not judged: a list with a refused argument (its refusal stands alone), one naming a
 # type parameter not bound here (each instance judges its binding) or a struct declared further down, and one whose
-# argument is itself an instance (only minting it names it; that struct's own bound is judged in its turn). Off
-# outside a Vec element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+# argument is a list refused here (as by value, where the refused instance leaves the base). Off outside a Vec
+# element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D10) — AN ARGUMENT THAT IS ITSELF AN INSTANCE (`Vec<Box<Box<R>>>`, `Box<T: Show>`) was not judged: only
+# minting names it, so the outer list was marked unjudgeable and the line compiled, where `var b: Box<Box<R>>;` is
+# refused — no `impl Show for Box<R>` can be written, so no source satisfies an outer bound on an instance. It is now
+# judged as the by-value form judges it (the user's D10, 2026-10-19), nothing minted: the inner list, judged in its
+# turn, stands in its enclosing list's slot as a PENDING instance (`_pn_of`, a sentinel type code), which no impl
+# names, so a bounded slot holding it fails with the by-value line and note, the note spelling it as
+# `_mint_generic_name` would (`impl Show for Box$R`, `_pn_pr`); an unbounded slot stays silent. CHANGELOG [6.7.16]
 var _ta_vbnd = 0;   # 1 while a Vec element's list is read (`_vec_el_targs`)
 var _tck_c0 = 0;    # the arguments the last `_targ_chk` read
 var _tck_c1 = 0;
 var _tck_nj = 0;    # 1 when the list being read cannot be judged (above)
+var _tck_last = 0;  # 6.7.16 (D10): the pending instance the nested list just read is (`_tck_nest`), else 0
+var _tck_x0 = 0;    # ... and those the list being judged holds in its slots 0 / 1 (`_tck_xset`)
+var _tck_x1 = 0;
+var _pn_tab = 0;    # the pending instances, interned: (sid, c0, c1) — 24 B each, grown (`_tab_grow`)
+var _pn_n = 0;
+var _pn_cap = 0;
 # Under `_ta_chk`, cursor just past a nested `<`: the enclosing list's state, packed (its name token * 4, its refusal
 # flag * 2, its no-judge flag), both flags cleared for this list. 0 and nothing touched outside `_ta_chk`.
 fn _tck_open(S): i64 {
@@ -16244,7 +16266,21 @@ fn _tck_open(S): i64 {
     var lv = (GTI(S) - 2) * 4 + _ta_refd * 2 + _tck_nj;
     _ta_refd = 0;
     _tck_nj = 0;
+    _tck_last = 0;
     return lv;
+}
+# The pending instance the argument just read is (0 = none), taken: each argument reads its own.
+fn _tck_take(): i64 {
+    var v = _tck_last;
+    _tck_last = 0;
+    return v;
+}
+# The list's slot-0 pending instance `x0` (taken before its second argument was read) and its slot-1 one, for the
+# judgement that follows.
+fn _tck_xset(x0): i64 {
+    _tck_x1 = _tck_take();
+    _tck_x0 = x0;
+    return 0;
 }
 # The nested generic struct `sid` read under `_ta_chk` (`lv` from `_tck_open`): judged inside a Vec element, the
 # enclosing list's flags put back (with this list's), and read as its base — an instance its enclosing list cannot
@@ -16253,9 +16289,85 @@ fn _tck_nest(S, sid, in0, in1, lit, lv): i64 {
     var nj = _tck_nj | _ta_refd;
     _ta_refd = ((lv / 2) & 1) | _ta_refd;
     _tck_nj = (lv & 1) | nj;
-    if (_ta_vbnd == 1) { if (nj == 0) { _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
-    if (_targ_is_inst(in0, in1) == 1) { _tck_nj = 1; }
+    var bad = 0;
+    if (_ta_vbnd == 1) { if (nj == 0) { bad = _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
+    _tck_last = 0;
+    if (_targ_is_inst(in0, in1) == 1) {
+        if (_ta_vbnd == 0 || nj == 1 || bad == 1) { _tck_nj = 1; }   # 6.7.16 (D10): else a pending instance
+        else { _tck_last = _pn_of(sid, _tck_xc(in0, _tck_x0), _tck_xc(in1, _tck_x1)); }
+    }
     return sid;
+}
+# An argument's type code for its list's judgement: the pending instance it is (`x`), else what was read (`c`).
+fn _tck_xc(c, x): i64 {
+    if (x != 0) { return x; }
+    return c;
+}
+# The pending instance (`sid` its generic struct, 1-based; `c0` / `c1` its arguments, each a type code or another
+# pending instance): its sentinel type code, 0 - 1000000 - its entry (interned, so one shape is one code — a bound's
+# refusal is reported once per (struct, arguments), `_bnd_memo_seen`). Never a struct: nothing is minted.
+fn _pn_of(sid, c0, c1): i64 {
+    var i = 0;
+    while (i < _pn_n) {
+        var e = _pn_tab + i * 24;
+        if (load64(e) == sid) { if (load64(e + 8) == c0) { if (load64(e + 16) == c1) { return 0 - 1000000 - i; } } }
+        i = i + 1;
+    }
+    if (_pn_tab == 0) { _pn_tab = alloc(16 * 24); _pn_cap = 16; }
+    if (_pn_n >= _pn_cap) { _pn_tab = _tab_grow(_pn_tab, _pn_cap * 3); _pn_cap = _pn_cap * 2; }
+    var e2 = _pn_tab + _pn_n * 24;
+    store64(e2, sid);
+    store64(e2 + 8, c0);
+    store64(e2 + 16, c1);
+    _pn_n = _pn_n + 1;
+    return 0 - 999999 - _pn_n;
+}
+# Type code `c` as a bound refusal's memo keys it: a minted instance as the pending instance of its base and
+# arguments (`_sinst`), so `var b: Box<Box<R>>;` and `Vec<Box<Box<R>>>` are one (struct, arguments) — reported once.
+fn _pn_canon(c): i64 {
+    var b = _sinst_base(c);
+    if (b == 0) { return c; }
+    var e = _sinst + (c - 1) * 24;
+    return _pn_of(b, _pn_canon(L64(e + 8)), _pn_canon(L64(e + 16)));
+}
+# 1 when type code `c` is a pending instance's sentinel.
+fn _pn_is(c): i64 {
+    if (c <= 0 - 1000000) { return 1; }
+    return 0;
+}
+# Print pending instance `c` as `_mint_generic_name` spells its would-be name (`Box$R`, `Pair$i64$<Box$R>`).
+fn _pn_pr(S, c): i64 {
+    var e = _pn_tab + (0 - 1000000 - c) * 24;
+    var sid = load64(e);
+    var c1 = load64(e + 16);
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("$");
+    if (c1 == 0) {
+        _pn_pr_arg(S, load64(e + 8), 0);
+        return 0;
+    }
+    _pn_pr_arg(S, load64(e + 8), 1);
+    PRSTR("$");
+    _pn_pr_arg(S, c1, 1);
+    return 0;
+}
+# One argument of it: a pending instance in full (`frag`: a two-parameter list's fragment, bracketed), anything else
+# written by `_append_conc_name` / `_append_conc_frag2` into the name pool's scratch, uncommitted, and printed.
+fn _pn_pr_arg(S, c, frag): i64 {
+    if (_pn_is(c) == 1) {
+        if (frag == 1) { PRSTR("<"); }
+        _pn_pr(S, c);
+        if (frag == 1) { PRSTR(">"); }
+        return 0;
+    }
+    if (c == 0) { c = 0 - 8; }   # unbound reads as i64, as the bound check reads it
+    NPOS_GUARD(S, _conc_frag_len(S, c) + 4);
+    var b = GNPOS(S);
+    var w = 0;
+    if (frag == 1) { w = _append_conc_frag2(S, b, c); } else { w = _append_conc_name(S, b, c); }
+    store8(S + 0xEC00000 + w, 0);
+    PRSTR(S + 0xEC00000 + b);
+    return 0;
 }
 # 1 when a list read as (c0, c1) names an instance, not the all-i64 (or unbound) base (`_targ_inst`'s rule).
 fn _targ_is_inst(c0, c1): i64 {
@@ -16264,17 +16376,19 @@ fn _targ_is_inst(c0, c1): i64 {
     return 0;
 }
 # Generic struct `sid` read as (c0, c1) (`lit`: the list written out) judged against its bounds at token `at`, minting
-# nothing; the panic latch a report sets is put back, so the list reads on.
+# nothing — a slot holding a pending instance (`_tck_x0` / `_tck_x1`) judged as it; the panic latch a report sets is
+# put back, so the list reads on. 1 = refused.
 fn _vbnd_judge(S, sid, c0, c1, lit, at): i64 {
     if (_MONOMORPH_OK != 1) { return 0; }
     var sv = GTI(S);
     var sv_pn = _panic;
+    var bad = 0;
     STI(S, at);
-    if (_targ_is_inst(c0, c1) == 1) { _bnd_check_struct(S, sid - 1, c0, c1); }
+    if (_targ_is_inst(c0, c1) == 1) { bad = _bnd_check_struct(S, sid - 1, _tck_xc(c0, _tck_x0), _tck_xc(c1, _tck_x1)); }
     elif (lit == 1) { _bnd_sbase(S, sid); }
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
-    return 0;
+    return bad;
 }
 # 0 = say nothing: under `_targ_chk` a name the cursor just passed was reported already (a generic body, both passes).
 fn _ta_chk_ok(S): i64 {

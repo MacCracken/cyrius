@@ -112,6 +112,22 @@
 #      judgement -> RED 2: VB4 VB9; MVB3 `_vec_el_bare` answering 0 -> RED 1: VB3b; MVB4 `_vbnd_judge` keeping the panic
 #      latch -> RED 1: VB9 (one line); MVB5 `_type_arg_leaf`'s type-parameter arm not marking the list -> RED 1: VBK (a
 #      generic's base judged at i64)
+#   VN (6.7.16, the user's D10, 2026-10-19) A VEC ELEMENT'S GENERIC STRUCT WHOSE ARGUMENT IS ITSELF AN INSTANCE is
+#      judged as the by-value form: `var w: Vec<Box<Box<R>>> = 0;` with `struct Box<T: Show>` and `impl Show for R`
+#      compiled (exit 5) — only minting names `Box<R>`, so the outer list was marked unjudgeable — while
+#      `var b: Box<Box<R>>;` is refused: no `impl Show for Box<R>` can be written. The inner list, judged in its turn,
+#      now stands in the outer slot as a PENDING instance (`_pn_of`, nothing minted) that no impl names, its note
+#      spelled as `_mint_generic_name` would. VN0 the filed repro verbatim (once at 7:16, the note `impl Show for
+#      Box$R`); VN1 `Vec<SB<UB<R>>>` (outer bounded, inner unbounded); VN2 an unbounded outer over an instance builds;
+#      VN3 `Vec<Box<Box<i64>>>`'s inner base judged as 6.7.15 judged it (its two lines); VN4 a field, a parameter, a
+#      global; VN5 deeper — the first refused list alone (`Vec<Box<Box<Box<R>>>>`), a pending argument's own pending
+#      argument named whole (`UB$UB$R`); VN6 a generic's `Vec<Box<Box<T>>>` per instance; VN7 once per (struct,
+#      arguments), the by-value form among them (`_pn_canon`); VN8 an `impl Show for Box` names no instance.
+#      Filed: docs/development/issues/2026-10-18-vec-element-nested-instance-argument-bound-unjudged.md
+#      Mutants (2026-10-20; MVN1 / MVN2 a one-edit scratch copy of the tree each, CYCC= its cycc): the lane's previous
+#      compiler (cacd0ff68) -> RED 15: VN0 VN1 VN5 VN5b (both rows each), VN4 VN4b VN4c VN6 (each built), VN7 (the
+#      by-value line alone), VN8 (both rows: the element built); MVN1 `_pn_canon` answering its argument -> RED 1: VN7
+#      (two lines); MVN2 `_tck_nest` keeping a refused list's enclosing list judgeable -> RED 1: VN5 (a second line)
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
 #
@@ -612,5 +628,63 @@ syscall(60, main());
 EOF
 exits vbk 23 "VBK: with the impl — Vec<Box<R>> (local, field, global, parameter), nested, a generic's Vec<Box<T>> at R, W<R>, an unbounded Two, Vec<Pt>"
 
+# VN — 6.7.16 (D10): a Vec element's generic struct whose argument is itself an instance, judged as by value
+cat > "$T/vn0.cyr" <<'EOF'
+include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+impl Show for R { fn show(self): i64 { return self.r; } }
+fn main(): i64 {
+    var w: Vec<Box<Box<R>>> = 0;
+    return 5;
+}
+syscall(60, main());
+EOF
+errs vn0 1 "VN0: the filed repro verbatim — refused once, at the element (it built: exit 5)" "error:<source>:7:16: $VBE"
+note() {   # <name> <instance> <what>
+    if grep -qF "needs \`impl Show for $2\`" "$T/$1.err"; then ok "$3: the note names $2"
+    else bad "$3: no note naming $2: $(grep note "$T/$1.err" | tr '\n' ' ')"; fi
+}
+note vn0 'Box$R' "VN0"
+VNH='include "lib/vec.cyr"
+trait Show { fn show(self): i64; }
+struct R { r; }
+struct Box<T: Show> { v: T; n; }
+struct UB<T> { v: T; }
+struct SB<T: Show> { v: T; }
+impl Show for R { fn show(self): i64 { return self.r; } }'
+vn() { printf '%s\n%s\nsyscall(60, 7);\n' "$VNH" "$2" > "$T/$1.cyr"; }
+SBE="generic 'SB': its type argument does not implement trait 'Show'"
+vn vn1 'fn f(): i64 { var w: Vec<SB<UB<R>>> = 0; return 5; }'
+errs vn1 1 "VN1: Vec<SB<UB<R>>>, an unbounded inner instance" "error:<source>:8:26: $SBE"
+note vn1 'UB$R' "VN1"
+printf '%s\n%s\nsyscall(60, f());\n' "$VNH" 'fn f(): i64 { var w: Vec<UB<Box<R>>> = 0; var u: Vec<UB<UB<R>>> = 0; return 5; }' > "$T/vn2.cyr"
+exits vn2 5 "VN2: an unbounded outer struct over an instance builds"
+vn vn3 'fn f(): i64 { var w: Vec<Box<Box<i64>>> = 0; return 5; }'
+errs vn3 2 "VN3: Vec<Box<Box<i64>>> — the inner base, judged as 6.7.15 judged it" "error:<source>:8:30: $VBE" "error:<source>:8:26: $VBE"
+note vn3 'Box' "VN3: the outer against impl Show for Box (a base, no instance)"
+vn vn4 'struct H2 { w: Vec<Box<Box<R>>>; k; }'
+errs vn4 1 "VN4: a struct field" "error:<source>:8:20: $VBE"
+vn vn4b 'fn f(m: Vec<Box<Box<R>>>): i64 { return 5; }'
+errs vn4b 1 "VN4b: a parameter, at the definition" "error:<source>:8:13: $VBE"
+vn vn4c 'var GW: Vec<Box<Box<R>>> = 0;'
+errs vn4c 1 "VN4c: a global" "error:<source>:8:13: $VBE"
+vn vn5 'fn f(): i64 { var w: Vec<Box<Box<Box<R>>>> = 0; return 5; }'
+errs vn5 1 "VN5: Vec<Box<Box<Box<R>>>> — the first refused list alone, as by value" "error:<source>:8:30: $VBE"
+note vn5 'Box$R' "VN5"
+vn vn5b 'fn f(): i64 { var w: Vec<Box<UB<UB<R>>>> = 0; return 5; }'
+errs vn5b 1 "VN5b: Vec<Box<UB<UB<R>>>>" "error:<source>:8:26: $VBE"
+note vn5b 'UB$UB$R' "VN5b"
+vn vn6 'fn g<T>(x: T): i64 { var w: Vec<Box<Box<T>>> = 0; return 5; }
+fn f(): i64 { var r = R { 1 }; return g(r) + g<R>(r); }'
+errs vn6 1 "VN6: a generic's Vec<Box<Box<T>>> — per instance (R once), not in its base" "error:<source>:8:33: $VBE"
+vn vn7 'fn f(): i64 { var w: Vec<Box<Box<R>>> = 0; var b: Box<Box<R>>; var u: Vec<Box<Box<R>>> = 0; return 5; }'
+errs vn7 1 "VN7: once per (struct, arguments), the by-value form among them" "error:<source>:8:26: $VBE"
+vn vn8 'impl Show for Box { fn show(self): i64 { return 1; } }
+fn f(): i64 { var w: Vec<Box<Box<R>>> = 0; return 5; }'
+errs vn8 2 "VN8: impl Show for Box names no instance — the element refused (the impl's own i64 line apart)" "error:<source>:9:26: $VBE"
+note vn8 'Box$R' "VN8"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"

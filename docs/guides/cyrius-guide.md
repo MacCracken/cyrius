@@ -7461,7 +7461,10 @@ describe<i32>(7);   # needs impl Show for i32
   returned 0) — is refused), and a generic struct's instance,
   its i64 base included (a bare `Shown`, a written `Shown<i64>`) — a `Vec<..>` element too, though no instance is
   minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
-  Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked).
+  Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked),
+  and an element whose argument is itself an instance — `Vec<Box<Box<R>>>`, `Vec<SB<UB<R>>>` — as `var b: Box<Box<R>>;`
+  is, its note naming `impl Show for Box$R`: no impl can name an instance, so a bound on one never holds (6.7.16, the
+  user's D10; through 6.7.15 that element compiled).
   An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
   instance's one note names the type the call binds (6.7.11).
