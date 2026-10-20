@@ -3306,6 +3306,7 @@ fn ERR_MSG(S, msg, len): i64 {
 # reported, as before); once per token (`_err_dup`). 1 = printed. CHANGELOG [6.7.14]
 fn ERR_UNDEF(S, noff, tail): i64 {
     _had_error = 1;
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_err_dup(S, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
     _err_quiet = 0;
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3332,10 +3333,16 @@ var _edup = 0;       # (token + 1, identity) pairs, open addressing; alloc'd at 
 var _edup_cap = 0;   # its slots, a power of two
 var _edup_n = 0;     # the slots in use
 var _err_quiet = 0;  # 1: the last emitter printed nothing (the panic latch, or a repeat) — its note stays quiet
+# 6.7.16 — every error report AND every repeat of one (not one the panic latch swallows): `_err_once`, ERR_UNDEF,
+# `_derr_seen`. A generic instance re-parses its base's statements in a file that has already failed, so "did this
+# statement refuse something" is this count before and after it, never the file-wide `_had_error` (PARSE_RETURN's
+# count check, parse_fn.cyr). CHANGELOG [6.7.16]
+var _err_n = 0;
 # The emitters' head: 0 = print nothing (the panic latch holds, or this report at the cursor's token was
 # printed already: `_had_error` and the latch are set as the print would have), 1 = print it.
 fn _err_once(S, id): i64 {
     if (_panic == 1) { _err_quiet = 1; return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_ce_err_dup(S, id) == 1) {   # 6.7.15: + a refused const fn's token, in its body (parse_fn.cyr)
         _had_error = 1;
         _panic = 1;
@@ -3374,6 +3381,7 @@ fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 
 # 1, the panic latch) set as the print would have, `_err_quiet` 1 (a note the caller prints after it stays quiet).
 # Else it is recorded, `_err_quiet` 0: 0. A writer keeps its own `_panic` test. CHANGELOG [6.7.15]
 fn _derr_seen(ti, tag, a, latch): i64 {
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_err_dup_at(ti, (tag * 31 + a) * 8 + 7) == 1) {
         _had_error = 1;
         if (latch == 1) { _panic = 1; }

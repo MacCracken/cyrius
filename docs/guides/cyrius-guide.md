@@ -3448,6 +3448,9 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # not multiple values)
 #   ret2(a, b);                       # two values in a fn declared with three (6.7.13): the
 #                                     # caller's third read what an earlier call left
+# In a generic it is one report, naming the generic (`'gr' returns 2 values ..`) however many
+# instances re-parse the body, and none beside an error the statement already has (`return 1, 2;`
+# is `expected ';'` alone) — 6.7.16; it was one line per instance, each naming `gr$P`.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the

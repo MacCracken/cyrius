@@ -1032,6 +1032,13 @@ fn _ret2_in_vector(S, ti): i64 {
 # the callee's body in the caller's context: its definition checked itself. Under --syntax-only a
 # sibling file's tuple or callee is unknown: silent. 1 = refused, to report after the arms.
 # CHANGELOG [6.7.11]
+# ⛔ 6.7.16 — A GENERIC'S WRONG-COUNT `return` IS ONE REPORT, NAMED AFTER THE GENERIC. Its body is parsed for the base
+# and again per instance, and each parse named its own fn — `'gr' returns 2 values` then `'gr$P' ...`, `'gr$Q' ...` —
+# so the once-per-token latch (keyed on the name) saw different reports; and an instance, parsed in a file the base had
+# failed, took the up-front arm, so `return 1, 2;` was the base's `expected ';'` plus one count line per instance. An
+# instance now names its base (`_mret_fn`: the latch sees one report) and takes the base's arm — judged before the
+# arms, reported after them unless they refused (or repeated) something of their own in THIS statement (`_err_n`,
+# counted before and after them, PARSE_RETURN). A non-instance in a failed file keeps the up-front arm. CHANGELOG [6.7.16]
 fn _mret_ret_check(S, st): i64 {
     if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
     if (GIDEP(S) != 0) { return 0; }
@@ -1043,7 +1050,27 @@ fn _mret_ret_check(S, st): i64 {
     STI(S, sv);
     if (ok == 1) { return 0; }
     if (_had_error == 0) { return 1; }
+    if (_mret_fn(S) != _cur_fn_ix) { return 1; }   # 6.7.16: an instance takes the base's arm
     _mret_ret_err(S, st);
+    return 0;
+}
+# The fn a multi-value return's refusal names: the base generic inside one of its instances (`gr`, never `gr$P`), else
+# the fn being parsed. CHANGELOG [6.7.16]
+fn _mret_fn(S): i64 {
+    if (_inst_base_fi < 0) { return _cur_fn_ix; }
+    if (_gen_inst_of(S, _cur_fn_ix, _inst_base_fi) == 0) { return _cur_fn_ix; }   # a closure in the instance's body
+    return _inst_base_fi;
+}
+# 1 iff fn fi's name is fn b's name followed by `$` (an instance minted from b).
+fn _gen_inst_of(S, fi, b): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var q = S + 0xEC00000 + L64(_fnt_names + b * 8);
+    var i = 0;
+    while (load8(q + i) != 0) {
+        if (load8(p + i) != load8(q + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + i) == 36) { return 1; }
     return 0;
 }
 # "'f' returns 2 values - return (a, b)" at token `st`, the cursor kept.
@@ -1052,15 +1079,16 @@ fn _mret_ret_err(S, st): i64 {
     if (GFRN(S, _cur_fn_ix) == 3) { tail = " returns 3 values - return (a, b, c)"; }
     var sv = GTI(S);
     STI(S, st);
-    ERR_IDENT(S, "", L64(_fnt_names + _cur_fn_ix * 8), tail, 0 - 1);
+    ERR_IDENT(S, "", L64(_fnt_names + _mret_fn(S) * 8), tail, 0 - 1);
     STI(S, sv);
     return 0;
 }
-# ... after the arms: reported unless one of them refused something of its own. The statement is
-# whole, so the panic latch is cleared (nothing to resync — the next statement is reported too).
-fn _mret_ret_late(S, st, he): i64 {
-    if (he != 0) { return 0; }
-    if (_had_error != 0) { return 0; }
+# ... after the arms: reported unless one of them refused something of its own — a report or a repeat counted in
+# `_err_n` since `en`, or (`he` 0: the file had not failed) any error at all. The statement is whole, so the panic
+# latch is cleared (nothing to resync — the next statement is reported too).
+fn _mret_ret_late(S, st, he, en): i64 {
+    if (_err_n != en) { return 0; }
+    if (he == 0) { if (_had_error != 0) { return 0; } }
     _mret_ret_err(S, st);
     _panic = 0;
     return 0;
@@ -1145,8 +1173,9 @@ fn PARSE_RETURN(S): i64 {
     _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there, or in a <= 8 B struct fn
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
+    var en = _err_n;   # 6.7.16: what the arms refuse, in this statement
     _PARSE_RETURN_ARMS(S);
-    if (bad == 1) { _mret_ret_late(S, st, he); }
+    if (bad == 1) { _mret_ret_late(S, st, he, en); }
     return 0;
 }
 # The return's arms, each a spelling it emits and leaves by (the 6.6.6 note below).
@@ -15787,6 +15816,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var tab = _fnst_tab_save(S);
     var st = _fnst_save(S);
     STI(S, defstart);
+    var sv_ibf = _inst_base_fi;
     _inst_name = mangled;
     _inst_base_fi = base_fi;
     _inst_conc0 = conc0;
@@ -15798,7 +15828,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _gen_msp = sv_msp;
     _attr_unpark(attrs);
     _inst_name = 0;
-    _inst_base_fi = 0 - 1;
+    _inst_base_fi = sv_ibf;   # 6.7.16: an enclosing instance's base again (`_mret_fn`), -1 outside one
     _inst_conc0 = 0;
     _inst_conc1 = 0;
     # --- restore the enclosing fn's state ---
