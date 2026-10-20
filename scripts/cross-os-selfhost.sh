@@ -250,12 +250,14 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags and the
 # path calls (mkdir / stat — the struct cxvm refills at the x86-Linux offsets from Darwin's — /
 # symlink / readlink / rename / unlink / rmdir; the path calls answered -38 until 6.7.15) and dup2's
-# self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3). Each
+# self-dup (dup2(1, 1) answered -22 on pi's cxvm until 6.7.15: the host's sys_dup2 issued dup3) and a
+# failure's errno (6.7.16: ecb's and ach's cxvm answered Darwin's ELOOP -62 / ENOTEMPTY -66 for -40 / -39,
+# so the fixture exited 13 there; cxvm maps a Darwin errno back now). Each
 # host's own cxvm must exit 77 — every row with x86_64 Linux's answer — and cass's 78, the PE routes'
 # answers (-38 where the PE peer has only a stub). Until 6.7.15 cxvm handed the guest's number to the
 # host compiler's renumbering: on pi a guest lseek ran getxattr and fork ran close (the parent took
 # the child branch), on ecb kill ran lseek and getppid / dup / lseek / exit_group died of SIGSYS.
-# CHANGELOG [6.7.15]
+# CHANGELOG [6.7.15] [6.7.16]
 cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.

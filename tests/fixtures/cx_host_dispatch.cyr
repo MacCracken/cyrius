@@ -15,9 +15,9 @@
 # Each row sets a bit in `lin` when its answer is not x86_64 Linux's, and in `pe` when it is not
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
-# answer, 78 when every row has the Windows one, and otherwise 1 + the lowest failing Linux row
-# (1..12). The exit itself is the exit_group row: a 77 / 78 can only come from exit_group(77 / 78),
-# and exit(3) follows it in case it returns.
+# answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
+# (1..13: row 1 is bit 1, row 13 bit 4096). The exit itself is the exit_group row: a 77 / 78 can
+# only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
 # a NATIVE aarch64 build would renumber into other calls (the defect above, one level down), so it is
@@ -206,6 +206,39 @@ fn _cxh_dup2(): i64 {
     return 2;
 }
 
+# A failure's errno is x86_64 Linux's on every host (6.7.16,
+# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md): open(link, O_RDONLY | O_NOFOLLOW)
+# -ELOOP 40 and rmdir of a non-empty directory -ENOTEMPTY 39, where a Darwin host's own answers are
+# 62 and 66 (cxvm maps them back; a Mac's cxvm answered -62 / -66 until 6.7.16); and a number nothing
+# serves answers -ENOSYS 38 — x86_64 Linux's own answer for an unassigned number, cxvm's D55 refusal on
+# every host (spelled the host's way inside cxvm, so the map leaves it 38: Darwin's 38 is ENOTSOCK).
+# 0 the Linux answers, 1 the Windows ones (-40, -1 for the rmdir — the PE peer's sys_rmdir answers -1
+# for every failure — and -38), 2 neither.
+fn _cxh_errno(): i64 {
+    syscall(87, "cxh_el");
+    syscall(87, "cxh_et");
+    syscall(87, "cxh_n/f");
+    syscall(84, "cxh_n");
+    var t = syscall(2, "cxh_et", 577, 420);   # O_WRONLY | O_CREAT | O_TRUNC
+    if (t >= 0) { syscall(3, t); }
+    var sl = syscall(88, "cxh_et", "cxh_el");
+    var lp = syscall(2, "cxh_el", 131072, 0); # O_RDONLY | O_NOFOLLOW on a symlink: -ELOOP
+    if (lp >= 0) { syscall(3, lp); }
+    var mk = syscall(83, "cxh_n", 448);
+    var nf = syscall(2, "cxh_n/f", 577, 420);
+    if (nf >= 0) { syscall(3, nf); }
+    var rd = syscall(84, "cxh_n");            # a non-empty directory: -ENOTEMPTY
+    syscall(87, "cxh_n/f");
+    syscall(84, "cxh_n");
+    syscall(87, "cxh_el");
+    syscall(87, "cxh_et");
+    var ns = syscall(999);                    # unassigned on x86_64 Linux; not a call cxvm serves
+    if (t < 0 || sl != 0 || mk != 0 || nf < 0 || ns != 0 - 38) { return 2; }
+    if (lp == 0 - 40 && rd == 0 - 39) { return 0; }
+    if (lp == 0 - 40 && rd == 0 - 1) { return 1; }
+    return 2;
+}
+
 var me = syscall(39);
 _cxh_row(1, me > 0, me > 0);
 var pp = syscall(110);
@@ -230,6 +263,8 @@ var ph = _cxh_paths();
 _cxh_row(1024, ph == 0, ph == 1);
 var d2 = _cxh_dup2();
 _cxh_row(2048, d2 == 0, d2 == 1);
+var en = _cxh_errno();
+_cxh_row(4096, en == 0, en == 1);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

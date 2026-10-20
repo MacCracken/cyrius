@@ -99,13 +99,17 @@ guarantee:
   allocates needs a 6.7.14 cxvm (an older one answers brk -38 or with a host address, and
   `alloc_init` names it). A short list of **scalar-only** calls — every argument and
   the result an fd, pid, id, flag or length — is served through the HOST's own stdlib wrappers,
-  each running the call the guest names on every host (6.7.15); on macOS a failure's errno and a
-  signal number are still Darwin's (filed), and off x86_64 Linux and Windows `F_GETFL` reports only
-  the nine mapped bits (below): `close`, `lseek`, `exit` / `exit_group`, `dup` /
+  each running the call the guest names on every host (6.7.15). A failure answers x86_64 Linux's
+  errno on every host (6.7.16): a Darwin host's is mapped back by name (`_cx_errno_linux`), and a
+  Darwin-only one reads as the Linux code nearest its meaning (`EPROCLIM` `EAGAIN`, the Sun RPC band
+  `EPROTO`, `EBADEXEC` / `EBADARCH` / `EBADMACHO` `ENOEXEC`, …) — a Mac's cxvm answered Darwin's
+  numbers until then, `open(link, O_RDONLY | O_NOFOLLOW)` -62 (`ELOOP`) where Linux says -40. On
+  macOS a signal number is still Darwin's (filed), and off x86_64 Linux and Windows `F_GETFL`
+  reports only the nine mapped bits (below). The calls: `close`, `lseek`, `exit` / `exit_group`, `dup` /
   `dup2`, `getpid` / `getppid`, the four uid / gid getters, `kill`, `fork`, `sched_yield`, `fsync` /
   `fdatasync`, `flock`, `ftruncate`, `fchmod` / `fchown`, `socket`, `listen`, `unshare`,
   `timerfd_create`, `epoll_create1`, and `fcntl` for its scalar commands (`F_DUPFD`, `F_GETFD` /
-  `F_SETFD`, `F_GETFL` / `F_SETFL`, `F_DUPFD_CLOEXEC`) — `_cx_host_sys` in `programs/cxvm.cyr` is
+  `F_SETFD`, `F_GETFL` / `F_SETFL`, `F_DUPFD_CLOEXEC`) — `_cx_host_call` in `programs/cxvm.cyr` is
   the list, derived from a run of the cx corpus. `open`'s flags and `fcntl`'s status flags travel in
   x86-Linux bits both ways: the access mode plus `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`,
   `O_NONBLOCK`, `O_DIRECTORY`, `O_NOFOLLOW` and `O_CLOEXEC` are mapped to the host's bits, any other

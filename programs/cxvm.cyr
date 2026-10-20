@@ -10,12 +10,14 @@
 # ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
 #   translates read/write/open (0/1/2), serves getrandom/clock_gettime (318/228) through the
 #   host's stdlib and brk (12) in guest space (6.7.14), and serves a short list of SCALAR-ONLY
-#   calls (close, lseek, exit, getpid, kill, fork, fsync … — _cx_host_sys) and the PATH calls
+#   calls (close, lseek, exit, getpid, kill, fork, fsync … — _cx_host_call) and the PATH calls
 #   mkdir / rmdir / unlink / rename / symlink / readlink / stat (their paths and buffers
 #   translated like open's) through the host's own stdlib wrappers (6.7.15; until then the scalar
 #   calls went to the host as the guest's raw number, which the aarch64 and Mach-O hosts renumbered
 #   into other calls, and the path calls answered -38), so running an untrusted .cyx == running a
-#   native binary with cxvm's privileges over those calls. Every other number answers -ENOSYS
+#   native binary with cxvm's privileges over those calls. A served call answers in the .cyx ABI's
+#   terms, x86_64 Linux's, on every host: a Darwin host's errno is mapped back (6.7.16; a guest on
+#   a Mac read Darwin's ELOOP -62 where Linux says -40 — _cx_errno_linux). Every other number answers -ENOSYS
 #   (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
@@ -151,7 +153,7 @@ fn cx_init(): i64 {
 # (ProcessPrng), and Darwin's getentropy returns 0 for success. sys_getrandom is written per
 # peer for exactly that. CHANGELOG [6.6.8]
 fn _cx_host_getrandom(buf, len, flags): i64 {
-    return sys_getrandom(buf, len, flags);
+    return _cx_errno_linux(sys_getrandom(buf, len, flags));
 }
 
 # clock_gettime(clk, ts) for the guest, with the LINUX contract the .cyx ABI promises (fill
@@ -163,7 +165,9 @@ fn _cx_host_getrandom(buf, len, flags): i64 {
 # {sec, nsec}; this note said "untouched" for both until 6.6.10) — and Windows routes it to
 # GetTickCount64, milliseconds since boot. Neither Mac leaves a Linux timespec. So read
 # the host clock through lib/chrono.cyr, which is written per host, and fill the timespec
-# here. clk 0 (CLOCK_REALTIME) is wall time; every other id is the monotonic clock.
+# here. clk 0 (CLOCK_REALTIME) is wall time; every other id is the monotonic clock. No host errno
+# reaches the guest from here (lib/chrono.cyr's readers answer nanoseconds; the one failure is
+# cxvm's own -EFAULT, 14 on Darwin too), so it needs no _cx_errno_linux (6.7.16).
 # CHANGELOG [6.6.8]
 fn _cx_host_clock_gettime(clk, ts): i64 {
     if (ts == 0) { return 0 - 14; }   # -EFAULT, as Linux answers a null timespec
@@ -316,8 +320,96 @@ fn _cx_guest_brk(addr): i64 {
 # only (F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD_CLOEXEC — the lock commands take a
 # struct pointer), the status flags in Linux bits both ways. Add a call only when no argument is a
 # pointer, or translate the pointer in op 0x70 first.
-# CHANGELOG [6.7.14] [6.7.15]
+# Every answer leaves through _cx_errno_linux, so a failure reads x86_64 Linux's errno on every host
+# (6.7.16). _cx_host_call and the fns it reaches answer in the HOST's errno — a host wrapper's own
+# answer, and cxvm's own refusals spelled the host's way: _cx_host_enosys() for -ENOSYS (Darwin's
+# is 78; 38 is its ENOTSOCK), a literal only where both agree (EFAULT 14, EINVAL 22).
+# CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 fn _cx_host_sys(sn, a, b, c): i64 {
+    return _cx_errno_linux(_cx_host_call(sn, a, b, c));
+}
+
+# A failure's errno in x86_64 Linux's numbering. Only [-4095, -1] is an errno (every served call's
+# success is >= 0: a count, an offset, a pid, an fd, flags); Linux and Windows hosts already answer
+# Linux's values (the PE peer maps GetLastError onto them), so only a Darwin host maps. Until 6.7.16
+# a guest on a Mac read Darwin's numbers: open(link, O_RDONLY | O_NOFOLLOW) -62 (ELOOP) where Linux
+# and every other host say -40.
+fn _cx_errno_linux(r): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (r < 0 && r >= 0 - 4095) { return 0 - _cx_errno_darwin(0 - r); }
+    #endif
+    return r;
+}
+
+# -ENOSYS as this host spells it (see _cx_host_sys): _cx_errno_linux turns Darwin's 78 into 38.
+fn _cx_host_enosys(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 0 - 38;
+    #endif
+}
+
+#ifdef CYRIUS_TARGET_MACOS
+# Darwin's errno (sys/errno.h) -> x86_64 Linux's (asm-generic/errno.h), by name. The host peer's
+# Errno names hold Darwin's values; EAGAIN is the only one that differs. A Darwin-only errno goes
+# to the Linux code nearest its meaning, named on its line. An errno past Darwin's ELAST passes as it is.
+fn _cx_errno_darwin(e): i64 {
+    if (e == 11) { return 35; }       # EDEADLK (Linux's 11 is EAGAIN)
+    if (e < 35) { return e; }         # 1-34 but 11: EPERM .. ERANGE, the same numbers
+    if (e == EAGAIN) { return 11; }   # 35, EWOULDBLOCK too
+    if (e == 36) { return 115; }      # EINPROGRESS
+    if (e == 37) { return 114; }      # EALREADY
+    # ENOTSOCK 38 .. ECONNREFUSED 61 are Linux's 88 .. 111, one run (ENOTSUP 45 is Linux's EOPNOTSUPP
+    # 95, which Linux's ENOTSUP equals).
+    if (e <= 61) { return e + 50; }
+    if (e == 62) { return 40; }       # ELOOP
+    if (e == 63) { return 36; }       # ENAMETOOLONG
+    if (e == 64) { return 112; }      # EHOSTDOWN
+    if (e == 65) { return 113; }      # EHOSTUNREACH
+    if (e == 66) { return 39; }       # ENOTEMPTY
+    if (e == 67) { return 11; }       # EPROCLIM (Darwin-only): EAGAIN, Linux's fork past RLIMIT_NPROC
+    if (e == 68) { return 87; }       # EUSERS
+    if (e == 69) { return 122; }      # EDQUOT
+    if (e == 70) { return 116; }      # ESTALE
+    if (e == 71) { return 66; }       # EREMOTE
+    # EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL (Darwin-only, Sun RPC): EPROTO
+    if (e >= 72 && e <= 76) { return 71; }
+    if (e == 77) { return 37; }       # ENOLCK
+    if (e == 78) { return 38; }       # ENOSYS
+    if (e == 79) { return 134; }      # EFTYPE: Linux's own EFTYPE (asm-generic/errno.h)
+    if (e == 80 || e == 81) { return 13; }   # EAUTH, ENEEDAUTH (Darwin-only, NFS): EACCES
+    if (e == 82 || e == 83) { return 5; }    # EPWROFF, EDEVERR (Darwin-only, a device failure): EIO
+    if (e == 84) { return 75; }       # EOVERFLOW
+    if (e == 85 || e == 86) { return 8; }    # EBADEXEC, EBADARCH (Darwin-only): ENOEXEC
+    if (e == 87) { return 80; }       # ESHLIBVERS (Darwin-only, a shared library's version): ELIBBAD
+    if (e == 88) { return 8; }        # EBADMACHO (Darwin-only, a malformed Mach-O): ENOEXEC
+    if (e == 89) { return 125; }      # ECANCELED
+    if (e == 90) { return 43; }       # EIDRM
+    if (e == 91) { return 42; }       # ENOMSG
+    if (e == 92) { return 84; }       # EILSEQ
+    if (e == 93) { return 61; }       # ENOATTR: ENODATA, what Linux's xattr calls answer
+    if (e == 94) { return 74; }       # EBADMSG
+    if (e == 95) { return 72; }       # EMULTIHOP
+    if (e == 96) { return 61; }       # ENODATA
+    if (e == 97) { return 67; }       # ENOLINK
+    if (e == 98) { return 63; }       # ENOSR
+    if (e == 99) { return 60; }       # ENOSTR
+    if (e == 100) { return 71; }      # EPROTO
+    if (e == 101) { return 62; }      # ETIME
+    if (e == 102) { return 95; }      # EOPNOTSUPP
+    if (e == 103) { return 95; }      # ENOPOLICY (Darwin-only, no MAC policy by that name): EOPNOTSUPP
+    if (e == 104) { return 131; }     # ENOTRECOVERABLE
+    if (e == 105) { return 130; }     # EOWNERDEAD
+    if (e == 106) { return 105; }     # EQFULL (Darwin-only, an interface's output queue): ENOBUFS
+    if (e == 107) { return 1; }       # ENOTCAPABLE (Darwin-only, capabilities insufficient): EPERM
+    return e;
+}
+#endif
+
+# The listed calls, answering in the host's errno (_cx_host_sys maps it).
+fn _cx_host_call(sn, a, b, c): i64 {
     if (sn == 0) { return sys_read(a, b, c); }
     if (sn == 1) { return sys_write(a, b, c); }
     if (sn == 2) { return sys_open(a, _cx_open_flags(b), c); }
@@ -343,7 +435,7 @@ fn _cx_host_sys(sn, a, b, c): i64 {
 # readlink(path, buf, n): Windows has no readlink route (lib/io.cyr's xreadlink answers -1 there).
 fn _cx_host_readlink(path, buf, n): i64 {
     #ifdef CYRIUS_TARGET_WIN
-    return 0 - 38;
+    return _cx_host_enosys();
     #endif
     #ifndef CYRIUS_TARGET_WIN
     return sys_readlink(path, buf, n);
@@ -359,7 +451,7 @@ fn _cx_host_readlink(path, buf, n): i64 {
 # every other byte 0. Windows has no stat route (lib/io.cyr's xstat answers -1 there).
 fn _cx_host_stat(path, gbuf): i64 {
     #ifdef CYRIUS_TARGET_WIN
-    return 0 - 38;
+    return _cx_host_enosys();
     #endif
     #ifdef CYRIUS_TARGET_LINUX
     #ifdef CYRIUS_ARCH_X86
@@ -397,7 +489,7 @@ fn _cx_hs_narrow(p): i64 {
 # The listed calls a POSIX host serves and Windows does not.
 fn _cx_host_posix(sn, a, b, c): i64 {
     #ifdef CYRIUS_TARGET_WIN
-    return 0 - 38;
+    return _cx_host_enosys();
     #endif
     #ifndef CYRIUS_TARGET_WIN
     if (sn == 110) { return sys_getppid(); }
@@ -427,7 +519,7 @@ fn _cx_host_linux(sn, a, b, c): i64 {
     if (sn == 283) { return sys_timerfd_create(a, b); }
     if (sn == 291) { return syscall(SYS_EPOLL_CREATE1, a); }
     #endif
-    return 0 - 38;
+    return _cx_host_enosys();
 }
 
 # 1 when the guest's open / status flag bits ARE the host's: x86_64 Linux, and Windows (the PE peer's
@@ -487,7 +579,7 @@ fn _cx_flags_back(h): i64 {
 # fcntl(fd, cmd, arg) for its scalar commands; Windows has no fcntl (its peer declines with -38).
 fn _cx_host_fcntl(fd, cmd, arg): i64 {
     #ifdef CYRIUS_TARGET_WIN
-    return 0 - 38;
+    return _cx_host_enosys();
     #endif
     #ifndef CYRIUS_TARGET_WIN
     if (cmd == 3) {                                  # F_GETFL
@@ -498,7 +590,7 @@ fn _cx_host_fcntl(fd, cmd, arg): i64 {
     if (cmd == 4) { return sys_fcntl(fd, 4, _cx_open_flags(arg)); }   # F_SETFL
     if (cmd >= 0 && cmd <= 2) { return sys_fcntl(fd, cmd, arg); }      # F_DUPFD, F_GETFD, F_SETFD
     if (cmd == 1030) { return sys_fcntl(fd, _cx_f_dupfd_cloexec(), arg); }
-    return 0 - 38;
+    return _cx_host_enosys();
     #endif
 }
 

@@ -2,8 +2,9 @@
 # cx_host_dispatch.sh — 6.7.15 (issues/archived/2026-10-17-cxvm-forwards-guest-x86-numbers-through-host-renumbering.md).
 # A cx guest's syscall carries the guest's x86-LINUX number; cxvm serves the calls it lists through the
 # HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
-# every host — on Windows through the PE routes, -38 where the PE peer has only a stub. What still differs
-# from x86_64 Linux (on macOS a failure's errno and a signal number are Darwin's; off x86_64 Linux and
+# every host — on Windows through the PE routes, -38 where the PE peer has only a stub — and a failure
+# answers x86_64 Linux's errno on every host (6.7.16: a Darwin host's is mapped back, `_cx_errno_linux`).
+# What still differs from x86_64 Linux (on macOS a signal number is Darwin's; off x86_64 Linux and
 # Windows F_GETFL reports only the nine mapped bits) is filed; the fixture's rows do not reach it.
 #
 # THE DEFECT. Until 6.7.15 cxvm issued the listed calls as `syscall(sn, …)`, a RUNTIME number, and each
@@ -30,7 +31,11 @@
 # fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
 # issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
-# fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub).
+# fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub); a failure's errno (6.7.16,
+# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
+# -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
+# unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
+# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38).
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -58,6 +63,12 @@
 #   MU5 (issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) the aarch64 peer's sys_dup2
 #       without its self-dup arm (dup3 for every pair, the pre-6.7.15 body) -> RED 1: axis 3 (exit 12,
 #       `lin=2048`: dup2(1, 1) and the closed fd both -22, dup3's EINVAL)
+# MU6 (6.7.16, the Darwin errno map) `_cx_errno_linux` answering r as it is — the 6.7.15 cxvm — ->
+#       no local axis sees it (the map is the identity on a Linux or Windows host): on ecb and ach
+#       the fixture exits 13, `lin=4096` (-62 / -66), measured; the cross-OS legs require 77
+# MU7 `_cx_host_enosys` answering -38 on macOS (cxvm's own refusal spelled Linux's way, then mapped
+#       as Darwin's ENOTSOCK) -> on ach exit 13, `lin=4096` (syscall(999) -88; every unserved number
+#       and fcntl's lock commands read -88), measured; local axes unchanged, as MU6
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -198,5 +209,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir) and dup2's self-dup give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup and a failure's errno give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0
