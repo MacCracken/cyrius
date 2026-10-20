@@ -6295,7 +6295,8 @@ another path but a SINGLE value here"*, v6.6.0). Any constructor of the enum is 
 including a **nullary** one: `return None();` (or `return None;`) beside `return Some(v);` is
 correct and silent (v6.6.9; it used to warn and suggest `Err`). An `impl` method and a trait default it inherits are
 judged as a fn is (6.7.15), named as written (*"`Pt.qm` returns ..."*; a default inherited by several impls warns
-once): through 6.7.14 only a top-level fn or a closure was, so `impl Pt { fn qm(self) { if (..) { return Ok(self.x); }
+once, named as its trait's member, *"`Dv.qd` returns ..."* — 6.7.16; it named the first impl that inherits it, `Pt.qd`;
+an override keeps its impl's name): through 6.7.14 only a top-level fn or a closure was, so `impl Pt { fn qm(self) { if (..) { return Ok(self.x); }
 return 5; } }` built silent and `var t, v = p.qm();` read 5 as the tag. A fn that returns a raw status on
 one path still sees the warning even when its callers only sign-test that path, and it is still a
 defect: vani's `vani_drain` / `vani_state` were kept that way through vani 1.2.7, and a two-value

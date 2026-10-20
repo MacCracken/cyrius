@@ -234,6 +234,11 @@ fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; ret
 #   `_warn_mixed_method` without `_pbs_iself`                -> RED 2: im_iself (0 — `self.div` unresolved, x86, aarch64)
 #   `_warn_mixed_impls` without `_warn_mixed_defaults`       -> RED 7: im_default2 im_override im_override_ok (x86, aarch64),
 #                                                               the im_default2 position check
+# 6.7.16 (issues/2026-10-18-mixed-return-warning-trait-default-names-first-impl.md): an inherited default's warning names
+# the trait's member, `Dv.qd` (`_warn_mixed_default` hands `_warn_mixed_method` the trait's name), not the first impl
+# that inherits it — `Pt.qd` sent the reader to an empty `impl Dv for Pt { }`; an override keeps its impl's name
+# (im_override_pt: `Pt.qd` at the override, `Dv.qd` for Qt's inherited copy). Mutant (2026-10-20): the lane's previous
+# compiler (ac9f22b4d) -> RED 2: the im_default2 and im_override_pt name checks.
 printf '%s\n' 'include "lib/result.cyr"
 struct Pt { x; y; }
 impl Pt { fn qm(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }
@@ -268,6 +273,14 @@ syscall(60, main());' > "$T/im_override.cyr"
 printf '%s\n%s\n' "$IMD" 'impl Dv for Qt { fn qd(self) { if (self.x > 0) { return Ok(1); } return Err(7); } }
 fn main(): i64 { var p = Pt { 0, 0 }; var q = Qt { 0, 0 }; var t, v = p.qd(); var u, w = q.qd(); return t * 10 + u; }
 syscall(60, main());' > "$T/im_override_ok.cyr"
+printf '%s\n' 'include "lib/result.cyr"
+trait Dv { fn qd(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }
+struct Pt { x; y; }
+struct Qt { x; z; }
+impl Dv for Pt { fn qd(self) { if (self.x > 0) { return Ok(self.x); } return 5; } }
+impl Dv for Qt { }
+fn main(): i64 { var p = Pt { 0, 0 }; var q = Qt { 0, 0 }; var t, v = p.qd(); var u, w = q.qd(); return t * 10 + u; }
+syscall(60, main());' > "$T/im_override_pt.cyr"
 printf '%s\n' 'include "lib/result.cyr"
 struct Pt { x; y; }
 impl Pt { fn gq<T>(self, d: T) { if (d == 0) { return Err(9); } return 7; } }
@@ -352,6 +365,7 @@ for c in x86 aarch64; do
   warns "$c" im_default2 1
   warns "$c" im_override 2
   warns "$c" im_override_ok 1
+  warns "$c" im_override_pt 2
   warns "$c" im_generic 1
   warns "$c" im_iself 1
   warns "$c" im_annot 2
@@ -364,9 +378,16 @@ if grep -q '^warning:<source>:3:64: `Pt.qm` returns a `: stack` pair on another 
 else _bad "im_repro: the warning is not at 3:64 naming \`Pt.qm\`: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
 chmod +x "$T/imr"; "$T/imr"; rc=$?
 if [ "$rc" -eq 50 ]; then pass=$((pass + 1)); else _bad "im_repro: exit $rc, want 50 (the warning changes no code)"; fi
-"$T/x86" < "$T/im_default2.cyr" > /dev/null 2>"$T/e"
-if grep -q '^warning:<source>:2:65: `Pt.qd` returns' "$T/e"; then pass=$((pass + 1))
-else _bad "im_default2: the one warning is not the default's at 2:65: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
+# 6.7.16: an inherited default is named as its trait's member, `Dv.qd` — the code's home — not the first inheriting
+# impl's `Pt.qd` (an empty `impl Dv for Pt { }`); an override keeps its own impl's name.
+"$T/x86" < "$T/im_default2.cyr" > "$T/imd" 2>"$T/e"
+if grep -q '^warning:<source>:2:65: `Dv.qd` returns' "$T/e"; then pass=$((pass + 1))
+else _bad "im_default2: the one warning is not the default's at 2:65 naming \`Dv.qd\`: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
+chmod +x "$T/imd"; "$T/imd"; rc=$?
+if [ "$rc" -eq 55 ]; then pass=$((pass + 1)); else _bad "im_default2: exit $rc, want 55 (the warning changes no code)"; fi
+"$T/x86" < "$T/im_override_pt.cyr" > /dev/null 2>"$T/e"
+if grep -q '^warning:<source>:5:71: `Pt.qd` returns' "$T/e" && grep -q '^warning:<source>:2:65: `Dv.qd` returns' "$T/e"; then pass=$((pass + 1))
+else _bad "im_override_pt: not 5:71 \`Pt.qd\` (the override) and 2:65 \`Dv.qd\` (Qt's inherited default): $(grep "$NEEDLE" "$T/e" | cut -c1-80 | tr '\n' ' ')"; fi
 
 # the hint no longer prescribes Err alone (it named `return Err(x);` for an Option)
 "$T/x86" < "$T/raw_zero.cyr" > "$T/o" 2>"$T/e"
