@@ -8838,15 +8838,17 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 `≥ 0x200000` (agnos user-range floor).
 
 **The cx compiler on agnos.** `CYRIUS_TARGET_AGNOS=1 cycc < src/main_cx.cyr` builds `cycc_cx` as
-an agnos program. It reads `--version` and `--syntax-only` off the init stack agnos builds at
-exec (agnos has no `/proc`), maps its 246 MiB arena and the preprocessor's 24 MiB source
-buffer with agnos `mmap` (#27) — a buffer agnos refuses is named
-(`error: cannot map the preprocessor's 24 MiB source buffer`, exit 1 — on every target) — and
-opens each include with agnos `open` (#7: the name and its length). Before 6.7.16 it opened
+an agnos program. It reads `--version` and `--syntax-only`, and its environment (every `CYRIUS_*`
+knob), off the init stack agnos builds at exec (agnos has no `/proc`); maps its 246 MiB arena and
+the preprocessor's 24 MiB source buffer with agnos `mmap` (#27) — a buffer that cannot be mapped
+is named (`error: cannot map the preprocessor's 24 MiB source buffer`, exit 1, on every target);
+and opens each include with agnos `open` (#7: the name and its length). Before 6.7.16 it opened
 `/proc/self/cmdline` with Linux `openat`'s argument shape, so `cycc_cx --version` compiled stdin
-and `--syntax-only` was ignored; it opened includes the same way, so none was found; and it mapped
-the preprocessor's buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died. It runs whole under
-`tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14's fake kernel. See CHANGELOG [6.7.16].
+and `--syntax-only` was ignored; it read no environment, so every knob was dead (and a refusal
+naming one — `async fn requires CYRIUS_ASYNC=1` — unactionable); it opened includes with the
+`openat` shape too, so none was found; and it mapped the preprocessor's buffer with Linux `mmap`
+(#9 — agnos `mkdir`), so every compile died. It runs whole under the fake kernel of
+`tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG [6.7.16].
 
 ### AGNOS Syscall ABI
 

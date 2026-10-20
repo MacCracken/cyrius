@@ -47,6 +47,9 @@
 # C5: READFILE's opens (the path, the overlay, the store slot, `#@incdir`) are one helper with an
 # agnos arm. Mutant measured: the open's READFILE (Linux openat's shape on agnos) -> `sc 7 -100
 # <ptr> 0 0`, the include refused ("cannot open"), exit 1 (C5 FAIL).
+# C6: _read_env's macOS init-stack arm serves agnos too (envp after argv's NULL, through r15).
+# Mutant measured: the macOS-only guard restored (the open's env.cyr: no agnos arm, every name
+# answers 0) -> CYRIUS_POISON=1 compiles the unset program, 22 22 (C6 FAIL).
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
 # and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
 # /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
@@ -724,9 +727,10 @@ check "  and none of them issued a sock_listen#56, sock_accept#57 or sock_connec
 check "slots 7 and 1 keep their ports (8087, 8081) and listen ids (id 0, stored +1)" "808708081 11" "$(mark 197) $(mark 198)"
 
 # ── axis 14 — the agnos build of the cx compiler, run whole (6.7.16) ──────────────────────────
-# The tracer's cli mode: write#1 accepted and logged as `txt <fd> <bytes>`, open#7 refused, stdin
-# fed from the tracer's own, mmap#27 done for real (the arena and heap exist), the child's fd-1
-# output copied to the tracer's fd 3.
+# The tracer's cli mode: write#1 accepted and logged as `txt <fd> <bytes>`, an agnos-shaped open#7
+# served read-only from the host, stdin fed from the tracer's own, mmap#27 done for real (the arena
+# and heap exist), the child's fd-1 output copied to the tracer's fd 3, the tracer's environment
+# handed down — so every run is under `env -i` (only what a row sets).
 echo "axis 14 — the agnos cycc_cx compiles under the fake kernel (6.7.16):"
 cxok=1
 CYRIUS_TARGET_AGNOS=1 "$CC" < src/main_cx.cyr > "$T/cxag" 2> "$T/cxag.err" && chmod +x "$T/cxag" || {
@@ -738,26 +742,26 @@ if [ "$cxok" = 1 ]; then
     check "C0 the agnos cycc_cx builds without a warning (its SYS_* are agnos's own)" "0" \
         "$(grep -c '^warning' "$T/cxag.err" || true)"
     printf 'var x = 7;\nsyscall(60, x);\n' > "$T/c7.cyr"
-    "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c1.log" 3> "$T/c1.cyx" 2>&1
-    "$T/cxl" < "$T/c7.cyr" > "$T/c1l.cyx" 2> /dev/null
+    env -i "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c1.log" 3> "$T/c1.cyx" 2>&1
+    env -i "$T/cxl" < "$T/c7.cyr" > "$T/c1l.cyx" 2> /dev/null
     vm=x; [ -s "$T/c1.cyx" ] && { vm=0; "$T/cxvm" < "$T/c1.cyx" > /dev/null 2>&1 || vm=$?; }
     same=no; [ -s "$T/c1.cyx" ] && cmp -s "$T/c1.cyx" "$T/c1l.cyx" && same=yes
     check "C1 it compiles \`var x = 7; syscall(60, x);\`: exit 0, no #9 / #11, the Linux cycc_cx's .cyx, 7 under cxvm" \
         "exit 0 | 0 | yes | 7" \
         "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c1.log") | $(awk '$1 == "sc" && ($2 == 9 || $2 == 11) { c++ } END { print c + 0 }' "$T/c1.log") | $same | $vm"
-    "$T/sct" "$T/cxag" clipp < "$T/c7.cyr" > "$T/c2.log" 2>&1
+    env -i "$T/sct" "$T/cxag" clipp < "$T/c7.cyr" > "$T/c2.log" 2>&1
     check "C2 a refused preprocessor buffer (mmap#27 of 24 MiB answers 0) is named: exit 1" \
         "txt 2 error: cannot map the preprocessor's 24 MiB source buffer| / exit 1" \
         "$(awk '$1 == "txt" && $2 == 2 { print; exit }' "$T/c2.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c2.log")"
     # The flags come off the init stack (the tracer hands the child its arguments): agnos has no
     # /proc/self/cmdline. issues/2026-10-19-cx-agnos-arm-reads-flags-from-proc-agnos-lacks.md
-    "$T/sct" "$T/cxag" cli --version < /dev/null > "$T/c3.log" 2>&1
+    env -i "$T/sct" "$T/cxag" cli --version < /dev/null > "$T/c3.log" 2>&1
     check "C3 \`cycc_cx --version\` writes the version to fd 1 and exits 0, opening nothing" \
         "txt 1 $("$CC" --version | tr '\n' '|') / exit 0 / 0 open#7" \
         "$(awk '$1 == "txt" { print; exit }' "$T/c3.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c3.log") / $(awk '$1 == "sc" && $2 == 7 { c++ } END { print c + 0 }' "$T/c3.log") open#7"
     printf 'var x = nope;\n' > "$T/c4.cyr"
-    "$T/sct" "$T/cxag" cli --syntax-only < "$T/c4.cyr" > "$T/c4.log" 3> /dev/null 2>&1
-    "$T/sct" "$T/cxag" cli < "$T/c4.cyr" > "$T/c4n.log" 3> /dev/null 2>&1
+    env -i "$T/sct" "$T/cxag" cli --syntax-only < "$T/c4.cyr" > "$T/c4.log" 3> /dev/null 2>&1
+    env -i "$T/sct" "$T/cxag" cli < "$T/c4.cyr" > "$T/c4n.log" 3> /dev/null 2>&1
     check "C4 \`--syntax-only\` is seen: an unresolved name compiles (exit 0); without it, exit 1 naming it" \
         "exit 0 / exit 1 undefined variable 'nope'" \
         "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4n.log") $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c4n.log" | grep -o "undefined variable 'nope'")"
@@ -766,11 +770,19 @@ if [ "$cxok" = 1 ]; then
     mkdir -p "$T/inc"
     printf 'fn seven(): i64 { return 7; }\n' > "$T/inc/inc7.cyr"
     printf 'include "inc7.cyr"\nsyscall(60, seven());\n' > "$T/inc/m.cyr"
-    (cd "$T/inc" && "$T/sct" "$T/cxag" cli < m.cyr > "$T/c5.log" 3> "$T/c5.cyx" 2>&1)
+    (cd "$T/inc" && env -i "$T/sct" "$T/cxag" cli < m.cyr > "$T/c5.log" 3> "$T/c5.cyx" 2>&1)
     vm=x; [ -s "$T/c5.cyx" ] && { vm=0; "$T/cxvm" < "$T/c5.cyx" > /dev/null 2>&1 || vm=$?; }
     check "C5 an include opens as agnos's open#7(name, namelen, 0): exit 0, the .cyx runs to 7" \
         "sc 7 8 0 | exit 0 | 7" \
         "$(awk '$1 == "sc" && $2 == 7 { print $1, $2, $4, $5; exit }' "$T/c5.log") | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c5.log") | $vm"
+    # Its environment comes off the init stack too (the cli child gets the tracer's): CYRIUS_POISON
+    # predefines the CYRIUS_POISON macro, so the program's #ifdef arm is taken (11), or not (22).
+    printf '#ifdef CYRIUS_POISON\nsyscall(60, 11);\n#endif\nsyscall(60, 22);\n' > "$T/c6.cyr"
+    env -i "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c6.log" 3> "$T/c6.cyx" 2>&1
+    env -i CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c6p.log" 3> "$T/c6p.cyx" 2>&1
+    v0=x; [ -s "$T/c6.cyx" ] && { v0=0; "$T/cxvm" < "$T/c6.cyx" > /dev/null 2>&1 || v0=$?; }
+    v1=x; [ -s "$T/c6p.cyx" ] && { v1=0; "$T/cxvm" < "$T/c6p.cyx" > /dev/null 2>&1 || v1=$?; }
+    check "C6 it reads its environment: unset -> 22, CYRIUS_POISON=1 -> 11 (the knob's predefine)" "22 11" "$v0 $v1"
 fi
 
 echo ""

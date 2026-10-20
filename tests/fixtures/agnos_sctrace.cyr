@@ -114,6 +114,7 @@
 # hands the child the next bytes of the TRACER's stdin (0 at its EOF); mmap#27 maps its length in
 # the child for real (re-run there as a Linux anonymous mmap: zero-filled, 0 = failure, as agnos
 # answers), so the program's arena and heap exist; every other number answers as in plain. The
+# child's environment is the tracer's own (every other mode gives it none). The
 # bytes of each write#1 on the child's fd 1 are also copied whole to the tracer's fd 3, when the
 # caller opened one (`3> out`): the program's own output, beside the log.
 #   clipp — cli, but a 25165824-byte mmap#27 (the preprocessor's 24 MiB source buffer) answers 0.
@@ -720,6 +721,41 @@ fn _st_cli_mmap(pid, regs, len): i64 {
     return got;
 }
 
+# The tracer's own environment as an envp array (NULL-terminated), for the cli child: read whole
+# from /proc/self/environ (at most 1 MiB) and split on its NULs.
+fn _st_envp(): i64 {
+    var cap = 1048576;
+    var b = alloc(cap + 1);
+    var v = alloc(8);
+    store64(v, 0);
+    var fd = syscall(2, "/proc/self/environ", 0, 0);
+    if (fd < 0) { return v; }
+    var n = 0;
+    var r = 1;
+    while (r > 0 && n < cap) {
+        r = syscall(0, fd, b + n, cap - n);
+        if (r > 0) { n = n + r; }
+    }
+    syscall(3, fd);
+    store8(b + n, 0);
+    var cnt = 0;
+    var i = 0;
+    while (i < n) { if (load8(b + i) == 0) { cnt = cnt + 1; } i = i + 1; }
+    v = alloc((cnt + 2) * 8);
+    var k = 0;
+    var st = 0;
+    i = 0;
+    while (i < n) {
+        if (load8(b + i) == 0) {
+            if (i > st) { store64(v + k * 8, b + st); k = k + 1; }
+            st = i + 1;
+        }
+        i = i + 1;
+    }
+    store64(v + k * 8, 0);
+    return v;
+}
+
 fn _st_cli_answer(pid, mode, nr, k, regs): i64 {
     var a1 = load64(regs + 112);
     var a2 = load64(regs + 104);
@@ -765,12 +801,13 @@ fn main(): i64 {
     i = 3;
     while (i < na) { store64(av + (i - 2) * 8, argv(i)); i = i + 1; }
     store64(av + (na - 2) * 8, 0);
+    var ev = alloc(8);                    # the child's envp: empty, but the tracer's own in cli
+    store64(ev, 0);
+    if (_st_is_cli(mode) == 1) { ev = _st_envp(); }
     var pid = syscall(57);
     if (pid == 0) {
         syscall(101, 0, 0, 0, 0);          # PTRACE_TRACEME
-        var ev[8];
-        store64(&ev, 0);
-        syscall(59, path, av, &ev);         # execve — stops with SIGTRAP
+        syscall(59, path, av, ev);          # execve — stops with SIGTRAP
         syscall(60, 127);
     }
     var st = 0;
