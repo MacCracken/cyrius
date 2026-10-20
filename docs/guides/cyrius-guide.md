@@ -1352,7 +1352,9 @@ The elements are separated by commas; a trailing comma is allowed (`Point { 10, 
 comma is one error at the second element, in either form and every position (6.7.15, the user's
 decision D1 (a), 2026-10-18): `var q = Point { 10 20 };` and `var q = Point { y: 20 x: 10 };` are
 `expected ',' between struct literal elements`. ⚠ Through 6.7.14 both compiled, the values landing
-where the commas would have put them.
+where the commas would have put them. A tuple literal's missing comma is the same one error, named for
+the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` (6.7.16; 6.7.15 said
+"struct literal").
 
 **A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
