@@ -8598,42 +8598,181 @@ var _vmc_rs = 0;
 fn _vmc_open(S, ti): i64 {
     var o = _mcall_open(S, ti, 0 - 1);
     if (o < 0) { return _mch_open(S, ti); }
+    if (_mchain_at(S, _call_close(S, o) + 1) == 1) {   # 6.7.16: `o.gp(..).s.mv()` — the chain's last method
+        var x = _mch_open(S, ti);
+        if (x >= 0) { return x; }
+    }
     _vmc_mf = _pair_callee_at(S, ti);
     _vmc_mt = ti + 2;
     _vmc_rs = _recv_sid(S, TOKVAL(S, ti));
     return o;
 }
-# `h.f(.g)*.m(` / `.m<..>(` at token `ti`: `h` a name typed as a struct or a pointer to one (`_dyn_base_sid`, a chain's
-# base as `_chain_leaf` reads it), each field an inline struct's (GETFTYPE) or a `*S`'s (`_fld_ptr_sid`) — the hops
-# the method arm takes (`_load_inline_hop`, `_load_hop`) — and `m` a method of the last one's struct (`_meth_fn_at`;
-# `<..>` as the arm reads it, `_mtargs_at`): its `(` and `_vmc_*`, as `_vmc_open`; else -1.
+# The last method of the chain at token `ti` — `h.f(.g)*.m(` / `.m<..>(`, each step a field an inline struct's
+# (GETFTYPE) or a `*S`'s (`_fld_ptr_sid`) or a method whose result is a struct or a `*S` — the hops the method arm takes
+# (`_load_inline_hop`, `_load_hop`, `_method_chain`) — and `m` a method of the last one's struct (`_meth_fn_at`; `<..>`
+# as the arm reads it, `_mtargs_at`): its `(` and `_vmc_*`, as `_vmc_open`; else -1. The head `h` (`_mch_head`): a name
+# typed as a struct or a pointer to one (`_dyn_base_sid`, a chain's base as `_chain_leaf` reads it; then a step at
+# least, `x.m(` is `_mcall_open`'s).
+# ⛔ 6.7.16 — AND ANY HEAD THE METHOD ARM TAKES: a parenthesised one — `(*ps).mv()`, `(*pw).s.mv()`, `(s).mv()`,
+# `(gw(&w)).s.mv()` (`_paren_field`) — a call — `gw(&w).s.mv()`, `mks(1).mv()`, `callptr(&gw, &w).s.mv()` (`_call_field`,
+# `_icall_chain`) — and a method's result mid-chain (`o.gp(&w).s.mv()`). 6.7.15 read a name head only: on any other,
+# `var v = ..;` bound one word of stack garbage, `var x: i64 = ..;` stored a word, `var v: f64v2 = ..;` was refused
+# "got `(...)`" (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md). The typers it
+# asks are lookaheads: their answers stay their callers'. CHANGELOG [6.7.16]
 fn _mch_open(S, ti): i64 {
-    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
     if (ti > 0) { if (TOKTYP(S, ti - 1) == 41) { return 0 - 1; } }   # mid-chain: not its head
-    var i = ti + 1;
-    while (_mchain_at(S, i) == 1) { i = i + 2; }
-    var mt = i - 1;
-    if (mt < ti + 4) { return 0 - 1; }   # a field at least: `h . f . m`
     var cf = _cap_fld_sid;
-    var sid = _dyn_base_sid(S, TOKVAL(S, ti));
+    var cp = _hl_cp;
+    var da = _hl_damp;
+    var o = 0 - 1;
+    var sid = _mch_head(S, ti);
+    if (sid > 0) { o = _mch_walk(S, ti, sid, _mch_hx, _mch_nh); }
     _cap_fld_sid = cf;   # a lookahead: the capture lookup's answer stays its caller's
-    var k = ti + 2;
-    while (k < mt) {
-        sid = _mch_hop(S, sid, k);
+    _hl_cp = cp;
+    _hl_damp = da;
+    return o;
+}
+# From token `i` (after the head of struct `sid` at `ti`; `nh` 1 = a name head), the chain's steps to its last method:
+# its `(` and `_vmc_*`, else -1.
+fn _mch_walk(S, ti, sid, i, nh): i64 {
+    while (_mchain_at(S, i) == 1) {
+        var nt = i + 1;
+        var o = _mch_mopen(S, sid, nt);
+        if (o < 0) {
+            sid = _mch_hop(S, sid, nt);
+            i = i + 2;
+        } else {
+            var c = _call_close(S, o) + 1;
+            if (_mchain_at(S, c) == 0) {
+                if (nh == 1) { if (nt == ti + 2) { return 0 - 1; } }   # `x.m(`: `_mcall_open`'s
+                return _mch_last(S, sid, nt, o);
+            }
+            sid = _mch_mres(S, sid, nt, o);
+            i = c;
+        }
         if (sid <= 0) { return 0 - 1; }
-        k = k + 2;
     }
-    var o = i;
-    var mf = _meth_fn_at(S, sid, TOKVAL(S, mt), mt);
-    if (TOKTYP(S, i) == 19) {
-        if (_mtargs_at(S, sid, mt) == 0) { return 0 - 1; }
-        o = _tok_targs_close(S, mt + 2) + 1;
-        mf = _mcall_xquiet(S, mf, i);
-    } elif (TOKTYP(S, i) != 10) { return 0 - 1; }
-    _vmc_mf = mf;
-    _vmc_mt = mt;
+    return 0 - 1;
+}
+# The `(` of the method step whose name is token `nt` on struct `sid` — `.m(`, or `.m<..>(` when m is a generic method
+# and no field of it (`_mtargs_at`, the arm's own test) — else -1: a field.
+fn _mch_mopen(S, sid, nt): i64 {
+    if (TOKTYP(S, nt + 1) == 10) { return nt + 1; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0 - 1; }
+    if (_mtargs_at(S, sid, nt) == 0) { return 0 - 1; }
+    return _tok_targs_close(S, nt + 2) + 1;
+}
+# The fn of that method step (its `(` at `o`): an explicit instance's quietly (`_mcall_xquiet`), else `_meth_fn_at`'s.
+fn _mch_mfn(S, sid, nt, o): i64 {
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    if (o != nt + 1) { mf = _mcall_xquiet(S, mf, nt + 1); }
+    return mf;
+}
+# The chain's last method: `_vmc_*` set, its `(` returned.
+fn _mch_last(S, sid, nt, o): i64 {
+    _vmc_mf = _mch_mfn(S, sid, nt, o);
+    _vmc_mt = nt;
     _vmc_rs = sid;
     return o;
+}
+# The struct a method step's result continues the chain through (`_method_chain`): a struct by value, else a `*S`'s S
+# (`_mchain_ptr`); 0 = none.
+fn _mch_mres(S, sid, nt, o): i64 {
+    var mf = _mch_mfn(S, sid, nt, o);
+    if (mf < 0) { return 0; }
+    var t = GFRS(S, mf);
+    if (t > 0) {
+        if (t >= 2048) { return 0; }
+        return t;
+    }
+    return _hl_fn_psid(mf);
+}
+# The receiver head at token `ti`: its struct (0: none this reads), `_mch_hx` the token after it, `_mch_nh` 1 for a name.
+# A name (`_dyn_base_sid`); a call `f(..)` / `g<..>(..)` / `fncallN(&f, ..)` / `callptr(&f, ..)` (`_mch_chead`); a
+# parenthesised head (`_mch_whead`).
+var _mch_hx = 0;
+var _mch_nh = 0;
+fn _mch_head(S, ti): i64 {
+    if (TOKTYP(S, ti) == 10) { return _mch_whead(S, ti); }
+    _mch_nh = 0;
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { o = _gcall_open(S, ti); }
+    if (o >= 0) {
+        _mch_hx = _call_close(S, o) + 1;
+        return _mch_chead(S, ti, o);
+    }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    _mch_hx = ti + 1;
+    _mch_nh = 1;
+    return _dyn_base_sid(S, TOKVAL(S, ti));
+}
+# A call head at token `ti` (its `(` at `o`, `_mch_hx` after its `)`), as `_call_field` / `_call_ptr_field` /
+# `_icall_chain` take it: a `: *S` fn's S (a generic's too), a struct returned by value (the known `&f`'s), or a
+# generic's `: T` bound to a struct at this call (`_gen_ret_bound`, a peek); else 0.
+fn _mch_chead(S, ti, o): i64 {
+    var t = _hl_pchain(S, ti, _mch_hx);
+    if (t > 0) { return t; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    t = GFRS(S, fi);
+    if (t > 0) {
+        if (t >= 2048) { return 0; }
+        return t;
+    }
+    var sg = _gi_sc;
+    t = _gen_ret_bound(S, fi, ti, o);
+    _gi_sc = sg;
+    return t;
+}
+# A parenthesised head `( E )` at token `ti` (a tuple literal is none), as `_paren_field` takes it: a dereference `*E`
+# of a `*S` (`_mch_dsid`), a value typed `*S` (`_hl_psid`), else a name, a call or a chain (`_mch_ty`) — inside any
+# parentheses; `_mch_hx` after the `)`.
+fn _mch_whead(S, ti): i64 {
+    var c = _call_close(S, ti);
+    var t = 0;
+    if (_tup_lit_at(S, ti) < 0) {
+        var a = _ie_unparen(S, ti + 1, c);
+        var pe = _ie_pe;
+        if (TOKTYP(S, a) == 8) { t = _mch_dsid(S, a, pe); }
+        else {
+            t = _hl_psid(S, a, pe);
+            if (t <= 0) { t = _mch_ty(S, a, pe); }
+        }
+    }
+    _mch_hx = c + 1;
+    _mch_nh = 0;
+    return t;
+}
+# The struct the one dereference [a, pe) (`*` at `a`, nothing after its operand) reads: its operand's `*S`
+# (`_hl_dpsid`, as `_hl_dstar_t` types it); else 0.
+fn _mch_dsid(S, a, pe): i64 {
+    if (pe - a < 2) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    return _hl_dpsid(S, a + 1, pe);
+}
+# The struct the whole receiver expression [a, e) is: a head (`_mch_head`), then field and method steps up to `e`; else 0.
+fn _mch_ty(S, a, e): i64 {
+    if (a >= e) { return 0; }
+    var sid = _mch_head(S, a);
+    var i = _mch_hx;
+    while (i < e) {
+        if (sid <= 0) { return 0; }
+        if (_mchain_at(S, i) == 0) { return 0; }
+        var nt = i + 1;
+        var o = _mch_mopen(S, sid, nt);
+        if (o < 0) {
+            sid = _mch_hop(S, sid, nt);
+            i = i + 2;
+        } else {
+            sid = _mch_mres(S, sid, nt, o);
+            i = _call_close(S, o) + 1;
+        }
+    }
+    if (i != e) { return 0; }
+    if (sid >= 2048) { return 0; }
+    return sid;
 }
 # The struct field token `k` of struct `sid` leads to: a `*S` field's S, an inline struct field's own; else 0.
 fn _mch_hop(S, sid, k): i64 {
@@ -8705,8 +8844,8 @@ fn _vrcv_src(S, ti, ty, term): i64 {
     var c = ti;
     if (TOKTYP(S, ti) == 10) {
         _vrcv_k = _pwrap_k(S, ti);
-        if (TOKTYP(S, _pw_end) != term) { return 0; }
-        c = ti + _vrcv_k;
+        if (TOKTYP(S, _pw_end) == term) { c = ti + _vrcv_k; }
+        else { _vrcv_k = 0; }   # 6.7.16: no wrap — a method's parenthesised head, `(*ps).mv()`
     }
     var r = 0;
     var o = c + 1;
@@ -8848,6 +8987,16 @@ fn _vcall_vt(S, ti, term, start): i64 {
     if (start == 1) { if (a == ti) { return rs; } }
     if (_call_close(S, o) + 1 != pe) { return 0; }
     return rs;
+}
+# ⛔ 6.7.16 — `ti` when the source there opens with `(` and is a method declared to return a vector on a parenthesised
+# head (`(*ps).mv()`, `((s)).mv()`: `_vmc_vfi`), which no wrap of the whole source reads (`_pwrap_in` answers -1 for
+# it, as for `(x) + 1`); else -1. For the argument paths that peel a whole wrap first (`_sar_take`, `_sarg_pe_vform`,
+# `_try_push_struct_addr_arg`): `lanes((*ps).mv())` was refused "got `(...)`" and `rd((*ps).mv())` into a `*f64v2`
+# pushed lane 0 as the address (139). CHANGELOG [6.7.16]
+fn _vmc_phead(S, ti): i64 {
+    if (TOKTYP(S, ti) != 10) { return 0 - 1; }
+    if (_vmc_vfi(S, ti) < 0) { return 0 - 1; }
+    return ti;
 }
 # The method call at token `ti` (`_vmc_fi`) when its fn — a generic's base — is declared to return a vector, else -1.
 fn _vmc_vfi(S, ti): i64 {

@@ -296,6 +296,23 @@
 #   M-CR1 `_vmc_open` without its chain arm            -> RED 60: CR1-CR7 and CRK1-CRK5 on all five legs; CRK6 green (the
 #       return rule names `w` either way)
 #   M-CR2 `_svc_rs` naming token ti + 2                 -> RED 5: CRK5 on all five legs ("cannot pass 's'")
+# 6.7.16 (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md) — and on EVERY OTHER
+# RECEIVER the method arm takes: a parenthesised head (`(*ps).mv()`, `((*ps)).mv()`, `(*pw).s.mv()`, `(s).mv()`,
+# `(ps).mv()`, `(w.s).mv()`, `(gw(&w)).s.mv()`, `(mks(3)).mv()`, `(*q.ps).mv()`, `(ps + 0).mv()`), a call's result
+# (`gw(&w).s.mv()`, `gs(&s).mv()`, `mks(3).mv()`, `gwg<W>(&w).s.mv()`, `callptr(&gw, &w).s.mv()`, `fncall1(&gs, ps).mv()`)
+# and a method's result mid-chain (`o.gp(&w).s.mv()`, `o.me(&s).mv()`): `_mch_open`'s head (`_mch_head`: a name, a call,
+# `( E )`) and steps (`_mch_walk`: fields and methods), `_vrcv_src` taking a `(` that wraps no whole source as no wrap,
+# and the argument paths' `_vmc_phead`. Before (the filing, re-measured at 41ca7d41c): `var v = (*ps).mv();` bound one
+# word of stack garbage (x86_64 96, IR=3 112, aarch64 168, cx 106, PE 195 where 161 is right; rows 2 / 3 likewise),
+# `var x: i64 = (*ps).mv();` stored a word (0; cx / PE 41), `var v: f64v2 = (*ps).mv();` was refused "got `(...)`".
+# Rows CR8-CR17 (run, 161; CR8-CR11 the filed rows 1-3 and 5 verbatim) and CRK7-CRK16 (refused once; CRK7 the filed row
+# 4 verbatim) on host / host IR=3 / cx / aarch64 / win64. Mutations (2026-10-20, measured):
+#   M-CR3 `_mch_head` reading a name head only            -> RED 90: CR8-CR17 and CRK7-CRK11 CRK13-CRK15 on all five
+#       legs; CRK12 (a name head) and CRK16 (the return rule names `(...)` either way) green
+#   M-CR4 `_vmc_open` without the chain's last method     -> RED 10: CR16 and CRK12 (`o.gp(&w).s.mv()`) on five legs
+#   M-CR5 `_vrcv_src` reading a leading `(` as a wrap     -> RED 35: CR8 CR9 CR11 CR12 CR13 CR15 CR17 on five legs
+#   M-CR6 `_vmc_phead` answering -1                       -> RED 25: CR12 CR13 CR15 CR17 (a value-form / `*f64v2`
+#       argument) and CRK11 on five legs
 # 6.7.15 (issues/archived/2026-10-17-by-name-vector-call-into-f64-declaration-stores-a-word.md) — a by-name call declared `: V` into
 # a declaration annotated with a type of no integer width (`: f64`, `: f32`, `: bool`, `: cstring`, an enum, `: Vec`,
 # `: Result`, `: Option`) is refused "vector return type does not match the declared type", as the method is since
@@ -1240,7 +1257,24 @@ impl S {
     fn md(self): f64v4 { return mkd(1, 2, 3, self.k); }
 }
 '
+# 6.7.16 (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): CPF the filing's header;
+# CRP the heads CR12-CR17 and CRK8-CRK16 add to CRH.
+CPF='fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct S { k; }
+struct W { s: S; j; }
+impl S { fn mv(self): f64v2 { return mkv(41, 7); } }
+fn gw(p: *W): *W { return p; }
+'
+CRP='struct O { k; }
+struct Q { ps: *S; }
+impl O { fn gp(self, p: *W): *W { return p; } fn me(self, s: *S): *S { return s; } fn gpx<T>(self, p: *T): *T { return p; } }
+fn gw(p: *W): *W { return p; }
+fn gs(p: *S): *S { return p; }
+fn mks(k): S { var s: S = S { k }; return s; }
+fn gwg<T>(p: *T): *T { return p; }
+'
 cr_src() {  # $1 row id -> source on stdout; each exits 161 when right
+
     case "$1" in
     CR1) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 struct S { k; }
@@ -1305,9 +1339,87 @@ include "lib/fnptr.cyr"
   return fncall1(f, 0) + fncall1(g, 0) - 417 - 417 + 161; }
 syscall(60, run() % 256);
 ' ;;
+    CR8) printf '%s' "$CPF"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var v = (*ps).mv(); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    CR9) printf '%s' "$CPF"'fn run(): i64 { var w: W; w.s.k = 1; var pw: *W = &w; var v = (*pw).s.mv(); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    CR10) printf '%s' "$CPF"'fn run(): i64 { var w: W; w.s.k = 1; var v = gw(&w).s.mv(); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    CR11) printf '%s' "$CPF"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var v: f64v2 = (*ps).mv(); return load64(&v) * 10 + load64(&v + 8); }
+syscall(60, run() % 256);
+' ;;
+    CR12) printf '%s' "$CRH$CRP"'fn ret(ps: *S): f64v2 { return (*ps).mv(); }
+fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s;
+  var a = (*ps).mv(); if (load64(&a + 8) != 7) { return 1; } if (lanes(a) != 417) { return 2; }
+  var b: f64v2 = ((*ps)).mv(); if (lanes(b) != 417) { return 3; }
+  var c: f64v2 = mkv(0, 0); c = (*(ps)).mv(); if (lanes(c) != 417) { return 4; }
+  if (lanes((*ps).mv()) != 417) { return 5; } if (rd((*ps).mv()) != 417) { return 6; }
+  var d: f64v2 = ret(ps); if (lanes(d) != 417) { return 7; } if (s.k != 1) { return 8; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    CR13) printf '%s' "$CRH$CRP"'fn ret(pw: *W): f64v2 { return (*pw).s.mv(); }
+fn run(): i64 { var w: W; w.s.k = 2; w.j = 5; var pw: *W = &w;
+  var a = (*pw).s.mv(); if (load64(&a + 8) != 7) { return 1; } if (lanes(a) != 427) { return 2; }
+  var b: f64v2 = (*pw).s.mv(); if (lanes(b) != 427) { return 3; }
+  var c: f64v2 = mkv(0, 0); c = (*pw).s.mv(); if (lanes(c) != 427) { return 4; }
+  if (lanes((*pw).s.mv()) != 427) { return 5; } if (rd((*pw).s.mv()) != 427) { return 6; }
+  var d: f64v2 = ret(pw); if (lanes(d) != 427) { return 7; } if (w.s.k * 10 + w.j != 25) { return 8; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    CR14) printf '%s' "$CRH$CRP"'fn ret(w: *W): f64v2 { return gw(w).s.mv(); }
+fn run(): i64 { var w: W; w.s.k = 3; w.j = 5;
+  var a = gw(&w).s.mv(); if (load64(&a + 8) != 7) { return 1; } if (lanes(a) != 437) { return 2; }
+  var b: f64v2 = gw(&w).s.mv(); if (lanes(b) != 437) { return 3; }
+  var c: f64v2 = mkv(0, 0); c = gw(&w).s.mv(); if (lanes(c) != 437) { return 4; }
+  if (lanes(gw(&w).s.mv()) != 437) { return 5; } if (rd(gw(&w).s.mv()) != 437) { return 6; }
+  var d: f64v2 = ret(&w); if (lanes(d) != 437) { return 7; } if (w.s.k * 10 + w.j != 35) { return 8; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    CR15) printf '%s' "$CRH$CRP"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var w: W; w.s.k = 2; w.j = 5; var pw: *W = &w; var o: O = O { 0 }; var q: Q; q.ps = &s;
+  var a = (s).mv(); if (lanes(a) != 417) { return 1; }
+  var b = (ps).mv(); if (lanes(b) != 417) { return 2; }
+  var c = (pw).s.mv(); if (lanes(c) != 427) { return 3; }
+  var d = (w.s).mv(); if (lanes(d) != 427) { return 4; }
+  var e = (gw(&w)).s.mv(); if (lanes(e) != 427) { return 5; }
+  var f = (mks(3)).mv(); if (lanes(f) != 437) { return 6; }
+  var g: f64v2 = (*q.ps).mv(); if (lanes(g) != 417) { return 7; }
+  var h: f64v2 = (ps + 0).mv(); if (lanes(h) != 417) { return 8; }
+  var i: f64v2 = (*o.me(&s)).mv(); if (lanes(i) != 417) { return 9; }
+  if (lanes((o.me(ps)).mv()) != 417) { return 10; } if (s.k * 10 + w.s.k != 12) { return 11; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    CR16) printf '%s' 'include "lib/fnptr.cyr"
+'"$CRH$CRP"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var w: W; w.s.k = 2; w.j = 5; var pw: *W = &w; var o: O = O { 0 };
+  var a = gs(&s).mv(); if (lanes(a) != 417) { return 1; }
+  var b = mks(3).mv(); if (lanes(b) != 437) { return 2; }
+  var c: f64v2 = gwg<W>(&w).s.mv(); if (lanes(c) != 427) { return 3; }
+  var d = gwg(pw).s.mv(); if (lanes(d) != 427) { return 4; }
+  var e = callptr(&gw, &w).s.mv(); if (lanes(e) != 427) { return 5; }
+  var f: f64v2 = mkv(0, 0); f = fncall1(&gs, ps).mv(); if (lanes(f) != 417) { return 6; }
+  var g = o.gp(&w).s.mv(); if (lanes(g) != 427) { return 7; }
+  var h: f64v2 = o.me(&s).mv(); if (lanes(h) != 417) { return 8; }
+  if (rd(o.gpx<W>(pw).s.mv()) != 427) { return 9; } if (lanes(gw(pw).s.mv()) != 427) { return 10; }
+  if (s.k * 10 + w.s.k != 12) { return 11; } return 161; }
+syscall(60, run() % 256);
+' ;;
+    CR17) printf '%s' 'include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+'"$CRH$CRP"'fn run(): i64 { alloc_init(); var s: S = S { 4 }; var ps: *S = &s; var w: W; w.s.k = 4; var pw: *W = &w;
+  var a = (*ps).mg(40); if (lanes(a) != 447) { return 1; }
+  var b: f64v2 = (*ps).mg<i64>(50); if (lanes(b) != 547) { return 2; }
+  var c = gw(&w).s.mg(60); if (lanes(c) != 647) { return 3; }
+  var f = (*ps).mf(); if (lf(f) != 5674) { return 4; }
+  var d: f64v4 = gw(pw).s.md(); if (lanes4(d) != 1234) { return 5; } d = mkd(0, 0, 0, 0); d = ((*ps)).md(); if (lanes4(d) != 1234) { return 6; }
+  var u = |k| lanes((*ps).mv()) + k; var v = |k| { var x = gw(pw).s.mv(); return lanes(x) + k; };
+  if (fncall1(u, 0) + fncall1(v, 0) != 894) { return 7; } return 161; }
+syscall(60, run() % 256);
+' ;;
     esac
 }
-CR_ROWS="CR1 CR2 CR3 CR4 CR5 CR6 CR7"
+CR_ROWS="CR1 CR2 CR3 CR4 CR5 CR6 CR7 CR8 CR9 CR10 CR11 CR12 CR13 CR14 CR15 CR16 CR17"
 crk_src() {  # $1 row id -> source on stdout
     case "$1" in
     CRK1) printf '%s' "$CRH"'fn run(): i64 { var w: W; w.s.k = 1; var x: i64 = w.s.mv(); return x; }
@@ -1329,15 +1441,49 @@ syscall(60, run());
 fn run(): i64 { var w: W; var v: f64v4 = bad(&w); return lanes4(v); }
 syscall(60, run());
 ' ;;
+    CRK7) printf '%s' "$CPF"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var x: i64 = (*ps).mv(); return x; }
+syscall(60, run() % 256);
+' ;;
+    CRK8) printf '%s' "$CRH$CRP"'fn run(): i64 { var w: W; w.s.k = 1; var x = 0; x = gw(&w).s.mv(); return x; }
+syscall(60, run());
+' ;;
+    CRK9) printf '%s' "$CRH$CRP"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; var u: f64v4 = (*ps).mv(); return 1; }
+syscall(60, run());
+' ;;
+    CRK10) printf '%s' "$CRH$CRP"'fn run(): i64 { var w: W; var pw: *W = &w; var u: f64v4 = mkd(1, 2, 3, 4); u = (*pw).s.mv(); return 1; }
+syscall(60, run());
+' ;;
+    CRK11) printf '%s' "$CRH$CRP"'fn run(): i64 { var s: S = S { 1 }; var ps: *S = &s; return lanes4((*ps).mv()); }
+syscall(60, run());
+' ;;
+    CRK12) printf '%s' "$CRH$CRP"'fn run(): i64 { var o: O = O { 0 }; var w: W; var x = 0; x = o.gp(&w).s.mv(); return x; }
+syscall(60, run());
+' ;;
+    CRK13) printf '%s' "$CRH$CRP"'fn run(): i64 { var x: f64 = mks(1).mv(); return 1; }
+syscall(60, run());
+' ;;
+    CRK14) printf '%s' "$CRH$CRP"'fn run(): i64 { var s: S = S { 1 }; var x: i64 = ((s)).mv(); return x; }
+syscall(60, run());
+' ;;
+    CRK15) printf '%s' "$CRH$CRP"'fn rd4(p: *f64v4): i64 { var v: f64v4 = *p; return load64(&v); }
+fn run(): i64 { var w: W; w.s.k = 1; return rd4(gw(&w).s.mv()); }
+syscall(60, run());
+' ;;
+    CRK16) printf '%s' "$CRH$CRP"'fn bad(ps: *S): f64v4 { return (*ps).mv(); }
+fn run(): i64 { var s: S = S { 1 }; var v: f64v4 = bad(&s); return lanes4(v); }
+syscall(60, run());
+' ;;
     esac
 }
-CRK_ROWS="CRK1 CRK2 CRK3 CRK4 CRK5 CRK6"
+CRK_ROWS="CRK1 CRK2 CRK3 CRK4 CRK5 CRK6 CRK7 CRK8 CRK9 CRK10 CRK11 CRK12 CRK13 CRK14 CRK15 CRK16"
 crk_msg() {
     case "$1" in
-    CRK1|CRK3) echo "vector return type does not match the declared type";;
-    CRK2|CRK4) echo "vector return type does not match the assigned variable";;
-    CRK5) echo "cannot pass 'mv' to a parameter of a different vector type in a call to 'lanes4'";;
+    CRK1|CRK3|CRK7|CRK9|CRK13|CRK14) echo "vector return type does not match the declared type";;
+    CRK2|CRK4|CRK8|CRK10|CRK12) echo "vector return type does not match the assigned variable";;
+    CRK5|CRK11) echo "cannot pass 'mv' to a parameter of a different vector type in a call to 'lanes4'";;
+    CRK15) echo "cannot pass 'mv' to a parameter of a different vector type in a call to 'rd4'";;
     CRK6) echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`w\`";;
+    CRK16) echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`(...)\`";;
     esac
 }
 # ---- 6.7.15 (D28 A / D29 A, the user's decisions, 2026-10-18; issues/2026-10-17-wrapped-vector-call-into-untyped-or-

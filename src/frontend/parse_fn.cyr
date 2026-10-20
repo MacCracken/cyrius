@@ -2131,7 +2131,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     var pvf = _sarg_pe_vform(S, fi, argc, tail);   # 6.7.14: Win64's value-form vector parameter, `_sar_src`'s sources
     if (pvf >= 0) { return pvf; }
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
-    if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
+    if (PEEKT(S) == 10) { if (_vmc_phead(S, GTI(S)) < 0) { return _sarg_paren(S, fi, argc, tail); } }   # 6.7.6 (6.7.16: no `(*ps).mv()`)
     if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }   # 6.7.12 (D27): `rd(mkv(..))` into `*V`
     # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
     # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
@@ -2293,6 +2293,7 @@ fn _sarg_pe_vform(S, fi, argc, tail): i64 {
     var ti = GTI(S);
     _sar_ti = ti;
     var c = _pwrap_in(S, ti);   # 6.7.14: inside parentheses wrapping the whole argument, as `_sar_take` reads it
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
     if (c >= 0) {
         STI(S, c);
         if (_spv_one(S, fi, argc, tail, vf) == 1) {
@@ -6450,6 +6451,7 @@ fn _sar_take(S, fi, cls, want, dst): i64 {
     var ti = GTI(S);
     _sar_ti = ti;
     var c = _pwrap_in(S, ti);
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
     if (c < 0) { return 0 - 2; }
     STI(S, c);
     var r = _sar_one(S, fi, cls, want, dst);
