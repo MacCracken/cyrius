@@ -1157,6 +1157,35 @@ cascade cs4e 1 "CS4e: a zone literal of 257 elements, then \`G.0\` (the filed re
 cascade cs8 1 "CS8: \`var A: (i64, i64) = B;\` above \`var B = (1, 2);\` (the filed repro): the real cause alone" 'var A: (i64, i64) = B;\nvar B = (1, 2);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy-init 'A' from a global declared below it (declare the source first): 'B'"
 cascade cs8b 1 "CS8b: ... a scalar \`B\` below: R12 alone" 'var A: (i64, i64) = B;\nvar B = 5;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:8: cannot initialize tuple 'A' with a value that is not a tuple"
 cascade cs8c 1 "CS8c: ... a 3-tuple \`B\` below: the type mismatch alone" 'var A: (i64, i64) = B;\nvar B = (1, 2, 3);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
+# CS9 (6.7.16, issues/2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md) — a REFUSED annotation over a
+# tuple literal initializer is the annotation's one error: the refusal left no type, which R9 read as a declared
+# non-tuple ("a tuple literal cannot initialize 'b' - its declared type is not a tuple" after it, every row below
+# through 6.7.15). `_tup_r9` (parse_decl.cyr) stands R9 down for an annotation refused at its token (`_tup_ann_refd`:
+# an unknown name, a token that is no type, a missing type, a refused declaration's struct), so the declaration is
+# the plain word the refusal left, its uses standing down through the annotation's mark (CS9l / CS9m: `.0`, `.a`).
+# A type the annotation still names keeps R9: R9d (`: i64`), CS9n (the zone's and the post-statement `: i64`),
+# CS9o (`i64<u8>`: i64, its type arguments refused). MUTATIONS (measured): the lane's compiler before the bite -> RED 13,
+# CS9-CS9m (2 error lines each: the R9 line after the annotation's), CS9n / CS9n2 / CS9o green; `_tup_ann_refd` without
+# its `_dl_refd_at` arm -> RED CS9i CS9j; without its `_tn_resolve_at` test (any reported name) -> RED CS9o (R9 lost).
+TA="unknown type 'Nonexist' for variable"
+TX="expected a type for variable"
+TL="a \`struct\` declaration must come before the first top-level statement (line 2)"
+cascade cs9 1 "CS9: \`var b: Nonexist = (1, 2);\` (the filed repro): the annotation alone" 'fn f(): i64 {\n    var b: Nonexist = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:12: $TA 'b'"
+cascade cs9b 1 "CS9b: \`var b: 1 = (1, 2);\` (a token that is no type)" 'fn f(): i64 {\n    var b: 1 = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:12: $TX 'b', got number 1"
+cascade cs9c 1 "CS9c: \`var b: = (1, 2);\` (no type)" 'fn f(): i64 {\n    var b: = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:12: $TX 'b', got '='"
+cascade cs9d 1 "CS9d: the zone's \`var G: = (1, 2);\`" 'var G: = (1, 2);\nsyscall(60, 0);\n' "1:8: $TX 'G', got '='"
+cascade cs9e 1 "CS9e: the zone's \`var G: Nonexist = (1, 2);\`" 'var G: Nonexist = (1, 2);\nsyscall(60, 0);\n' "1:8: $TA 'G'"
+cascade cs9f 1 "CS9f: the zone's \`var G: 7 = (1, 2);\`" 'var G: 7 = (1, 2);\nsyscall(60, 0);\n' "1:8: $TX 'G', got number 7"
+cascade cs9g 1 "CS9g: after the first statement, \`var G: Nonexist = (1, 2);\`" 'syscall(39);\nvar G: Nonexist = (1, 2);\nsyscall(60, 0);\n' "2:8: $TA 'G'"
+cascade cs9h 1 "CS9h: after the first statement, \`var G: = (1, 2);\`" 'syscall(39);\nvar G: = (1, 2);\nsyscall(60, 0);\n' "2:8: $TX 'G', got '='"
+cascade cs9i 1 "CS9i: a refused late struct's \`var b: Q = (1, 2);\` in a fn" 'var a = 1;\na = 2;\nstruct Q { y; }\nfn f(): i64 {\n    var b: Q = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "3:1: $TL"
+cascade cs9j 1 "CS9j: ... at top level after it" 'var a = 1;\na = 2;\nstruct Q { y; }\nvar b: Q = (1, 2);\nsyscall(60, b.0 + b.y);\n' "3:1: $TL"
+cascade cs9k 1 "CS9k: in a generic fn, two instances: once" 'fn g<T>(a: T): i64 {\n    var b: Nonexist = (1, 2);\n    return a;\n}\nsyscall(60, g(1) + g<i32>(2));\n' "2:12: $TA 'b'"
+cascade cs9l 1 "CS9l: then \`b.0 + b.1 + b.a\`: nothing more" 'fn f(): i64 {\n    var b: Nonexist = (1, 2);\n    return b.0 + b.1 + b.a;\n}\nsyscall(60, f());\n' "2:12: $TA 'b'"
+cascade cs9m 1 "CS9m: the zone's, then \`G.0 + G.1 + G.a\`" 'var G: Nonexist = (1, 2);\nsyscall(60, G.0 + G.1 + G.a);\n' "1:8: $TA 'G'"
+cascade cs9n 1 "CS9n: control — the zone's \`var G: i64 = (1, 2);\` keeps R9" 'var G: i64 = (1, 2);\nsyscall(60, 0);\n' "1:14: a tuple literal cannot initialize 'G' - its declared type is not a tuple"
+cascade cs9n2 1 "CS9n2: control — after the first statement, \`: i64\` keeps R9" 'syscall(39);\nvar G: i64 = (1, 2);\nsyscall(60, 0);\n' "2:14: a tuple literal cannot initialize 'G' - its declared type is not a tuple"
+cascade cs9o 2 "CS9o: control — \`var b: i64<u8> = (1, 2);\`: its type arguments, then R9 (b is an i64)" 'fn f(): i64 {\n    var b: i64<u8> = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:12: 'i64' takes no type arguments" "2:22: a tuple literal cannot initialize 'b' - its declared type is not a tuple"
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).

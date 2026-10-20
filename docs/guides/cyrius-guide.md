@@ -3655,7 +3655,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `return ((1, 2));` | ``a multi-value return is written `return (a, b);` - drop the extra parentheses`` |
 | `return (a, b);` from a fn declared `: P` (a named struct, any size; 6.7.11) | ``a fn returning the struct `P` returns that struct — `(a, b)` is a tuple, another type`` |
 | `ret2(a, b);` in a fn declared `: P` (any size; 6.7.13) | ``a fn returning the struct `P` returns that struct — `ret2` writes two values`` |
-| `var k: i64 = (1, 2);` | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
+| `var k: i64 = (1, 2);` (an annotation that is refused itself — `var k: Nope = (1, 2);`, `var k: = (1, 2);` — is its one error, 6.7.16) | `a tuple literal cannot initialize 'k' - its declared type is not a tuple` |
 | `G = (3, 4);` at top level | `a tuple literal assigned at top level has no frame to be built in …` |
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
