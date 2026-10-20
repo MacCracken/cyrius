@@ -44,7 +44,8 @@
 #      filed repro; TR2 the bounded-generic caller (exit 2: the bits); TR3 / TR4 a missing annotation either side (at the
 #      method's name when the impl has none); TR5 a multi-value return, as written; TR6 the trait below two impls; TR7 a
 #      dyn formed above and below the impl adds nothing (it reported "the return type differs" at the site too); TR8 /
-#      TR8b a side its own reader refuses reports alone; TRK the agreeing shapes, two impls (131). dyn_checked.sh F8b is
+#      TR8b a side its own reader refuses reports alone (TR8c, 6.7.16: a method's `*fn( .. )` return too); TRK the agreeing
+#      shapes, two impls (131). dyn_checked.sh F8b is
 #      this refusal now. Filed: docs/development/issues/archived/2026-10-17-trait-member-u128-return-accepted-and-impl-return-unchecked.md
 #      Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (d9273ec3) -> RED 7: TR1-TR7 (each built; TR7 the site's F8 line instead), and dyn_checked.sh F8b; MTR1
@@ -311,6 +312,11 @@ printf "$R"'trait T { fn c(self): Nope; }\nimpl T for P { fn c(self): i64 { retu
 refused_at tr8 "unknown type 'Nope' as a fn return type" 3:23 "TR8: a member's return its reader refuses — that refusal alone"
 printf "$R"'trait T { fn c(self): i64; }\nimpl T for P { fn c(self): u8 { return 4; } }\nsyscall(60, 0);\n' > "$T/tr8b.cyr"
 refused_at tr8b "type 'u8' cannot be a fn return type" 4:28 "TR8b: an impl's return a fn's reader refuses (: u8) — that refusal alone"
+# 6.7.16: a method's `*fn( .. )` return is PARSE_FN_DEF's grammar refusal; the impl's "'P.d' returns *fn(i64): i64,
+# trait 'T' declares i64" line beside it (4:28) was a second report of it. Mutant (2026-10-20): the lane's previous
+# compiler (00d27769b, `_tr_rt_bad` reading a `*fn( .. )` on the member side only) -> RED 1: TR8c (two lines).
+printf "$R"'trait T { fn d(self): i64; }\nimpl T for P { fn d(self): *fn(i64): i64 { return 0; } }\nsyscall(60, 0);\n' > "$T/tr8c.cyr"
+refused_at tr8c "expected identifier, got reserved keyword 'fn'" 4:29 "TR8c: an impl's *fn( .. ) return — the fn's grammar refusal alone"
 # ── TRS (6.7.15, the D4 review fix) — one type spelled two ways is one type ──
 BX='struct Box<T> { n: i64; v: T; }\nstruct Pt { x: i64; y: i64; }\n'
 printf "$BX"'trait T { fn c(self): Box<Box<i64>>; }\nimpl T for Pt { fn c(self): Box<Box<i64> > { var b: Box<Box<i64> >; b.n = 4; return b; } }\nfn main(): i64 { var p: Pt; var r: Box<Box<i64> > = p.c(); return r.n; }\n' > "$T/trs1.cyr"
