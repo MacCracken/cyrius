@@ -659,9 +659,10 @@ fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
 # seeks to `length`, sets it, and puts the pointer back where the caller had it, which is what
 # ftruncate(2) leaves alone. Growing zero-fills, as POSIX requires. 0 on success, or a
 # negative errno as Linux answers it (6.7.16's D79 / D80): -22 (-EINVAL) for a negative length
-# and for a descriptor it cannot truncate — a pipe or a console (the seek's -29) and a handle
-# without write access (SetEndOfFile's -13: a read-only descriptor), -9 for a bad or closed one,
-# another failure's own errno through the Win32 table. Until 6.7.16 every Win32 failure was -1.
+# and for a descriptor it cannot truncate — a pipe or a console (the seek's -29), a device such as
+# NUL, and a handle without write access (SetEndOfFile's -13: a read-only descriptor), -9 for a
+# bad or closed one, another failure's own errno through the Win32 table. Until 6.7.16 every
+# Win32 failure was -1.
 # ⚠ An O_APPEND descriptor answers -22 too, where Linux succeeds: the PE open of O_APPEND
 # grants FILE_APPEND_DATA WITHOUT FILE_WRITE_DATA (NT's per-write append), and SetEndOfFile
 # needs the latter. Truncate by path (sys_truncate), or open without O_APPEND. CHANGELOG [6.6.9]
@@ -675,16 +676,23 @@ fn sys_ftruncate(fd, length): i64 {
     if (sk < 0) { return _win_ftrunc_err(sk); }
     var r = syscall(61503, fd);
     syscall(SYS_LSEEK, fd, cur, 0);
+    # Both seeks just accepted the descriptor, so a -9 here is the object refusing the truncate,
+    # not a bad fd: wine answers SetEndOfFile on its NUL device ERROR_INVALID_HANDLE. -22, as
+    # Linux's ftruncate of /dev/null (6.7.16's D80). CHANGELOG [6.7.16]
+    if (r == 0 - 9) { return 0 - 22; }
     if (r < 0) { return _win_ftrunc_err(r); }
     return 0;
 }
 # A failed step of sys_ftruncate → its answer: what it cannot truncate is -22, as Linux's
-# ftruncate answers a pipe and a read-only descriptor — the seek check's -29 (a pipe or a
-# console) and SetEndOfFile's -13 (no FILE_WRITE_DATA); any other errno is the answer as it is.
-# CHANGELOG [6.7.16]
+# ftruncate answers a pipe, a device and a read-only descriptor — the seek check's -29 (a pipe or
+# a console), SetEndOfFile's -13 (no FILE_WRITE_DATA) and a code the shared Win32 table leaves -1:
+# a device that cannot be truncated, like NUL, whose SetEndOfFile fails ERROR_INVALID_FUNCTION on
+# real Windows (the table keeps -1 for that code: a `1:22` row would change every reroute's
+# answer). Any other errno is the answer as it is. CHANGELOG [6.7.16]
 fn _win_ftrunc_err(e): i64 {
     if (e == 0 - 29) { return 0 - 22; }
     if (e == 0 - 13) { return 0 - 22; }
+    if (e == 0 - 1) { return 0 - 22; }
     return e;
 }
 # Set a file's length by path — REAL since 6.6.9: opens the path for writing (following a

@@ -8438,7 +8438,7 @@ never fired and `file_close_r` was never `Err`.
 | `sys_mkdir(dir)` of an existing directory | -17 | -1 | -1; -17 since 6.7.16 |
 | `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
 | `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
-| `sys_ftruncate` of a pipe or a read-only fd | -22 | -1 | -1; -22 since 6.7.16 |
+| `sys_ftruncate` of a pipe, the null device (`NUL`) or a read-only fd | -22 (macOS: 0 for `/dev/null`) | -1 | -1; -22 since 6.7.16 |
 | `sys_ftruncate(99, n)` (never opened) | -9 | -1 | -1; -9 since 6.7.16 |
 | `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
 
@@ -8451,10 +8451,12 @@ current-process and current-thread pseudo-handles, which `CloseHandle` "closes" 
 through the same table since 6.7.16 — an existing name -17 (`ERROR_ALREADY_EXISTS`), a non-empty
 directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path -2, access denied
 -13 — where each answered -1 for every failure. `sys_ftruncate` answers -22 for a descriptor it
-cannot truncate, as Linux does: a pipe or a console (the seek is -29 there) and one without write
-access — a read-only descriptor and, on Windows only, an `O_APPEND` one (its handle has
-`FILE_APPEND_DATA` without `FILE_WRITE_DATA`; Linux truncates it). A path that is not valid UTF-8
-still answers -1: no Win32 call is made for it.
+cannot truncate, as Linux does: a pipe or a console (the seek is -29 there), a device such as `NUL`
+(`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
+`/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,
+on Windows only, an `O_APPEND` one (its handle has `FILE_APPEND_DATA` without `FILE_WRITE_DATA`;
+Linux truncates it). `sys_truncate("NUL", n)` is -22 too, as `truncate` of `/dev/null` is on Linux
+and macOS. A path that is not valid UTF-8 still answers -1: no Win32 call is made for it.
 
 A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
 std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later

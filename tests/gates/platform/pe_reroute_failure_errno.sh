@@ -150,6 +150,15 @@
 #   sys_ftruncate's -29 / -13 -> -22 map dropped (lib)      axis 4 FAIL (ftfail `-29 -9 -2 -9`); on cass
 #                                                           path_failure_errno's read-only row reads -13
 #                                                           (wine answers that SetEndOfFile -22 itself)
+# The null device (the p16 review): ftruncate of NUL opened O_WRONLY, and truncate("NUL"), are -22, as
+# Linux's of /dev/null. Real Windows' SetEndOfFile fails it ERROR_INVALID_FUNCTION, which the table
+# leaves -1 (sys_ftruncate maps that -1 to -22); wine's says ERROR_INVALID_HANDLE on the handle both
+# seeks just accepted (sys_ftruncate maps that step's -9 to -22). path_failure_errno.tcyr pins both.
+#   mutant (2026-10-20, 6.7.16 p16 review fix; wine 11.20)   result
+#   SetEndOfFile's -9 -> -22 dropped (lib)                  axis 4 FAIL (path_failure_errno 25 / 2 under
+#                                                           wine: the null-device rows read -9); cass 27 / 27
+#   _win_ftrunc_err's -1 -> -22 dropped (lib)               wine 27 / 27 (wine never answers -1 there);
+#                                                           on cass path_failure_errno 25 / 2 (-1, -1)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -165,7 +174,7 @@ for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5"; do
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's at
 # 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=24
+F1=10; F2=10; F3=13; F4=13; F5=27
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -793,4 +802,4 @@ fi
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; ftruncate of a pipe or read-only descriptor -22"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; ftruncate of a pipe, the null device or a read-only descriptor -22"

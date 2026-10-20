@@ -15,6 +15,13 @@
 # -22, as Linux does (and macOS: measured on ecb and ach). Per target: Darwin's ENOTEMPTY is its own
 # 66; the other answers share their numbers. Every name is per process (test_scratch).
 # CHANGELOG [6.7.16]
+#
+# The null device (6.7.16 p16 review): ftruncate of it opened O_WRONLY is -22 on Linux, as for any
+# device. Windows' NUL answered -1 — real Windows' SetEndOfFile fails ERROR_INVALID_FUNCTION, a code
+# the shared table leaves -1 — and wine -9 (its SetEndOfFile says ERROR_INVALID_HANDLE on a handle
+# both seeks had just accepted); both are -22 now. Darwin truncates its null device as a no-op, so
+# macOS answers its own 0 there (measured on ecb and ach). truncate by path is -22 everywhere, macOS
+# included. A cx guest reads its host's answer: -22 on the x86_64 Linux cxvm.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -29,6 +36,16 @@ alloc_init();
 var notempty = 0 - 39;
 #ifdef CYRIUS_TARGET_MACOS
 notempty = 0 - 66;
+#endif
+
+# The null device by this target's name, and what its ftruncate answers (see the header).
+var nulname = "/dev/null";
+var nul_ftrunc = 0 - 22;
+#ifdef CYRIUS_TARGET_WIN
+nulname = "NUL";
+#endif
+#ifdef CYRIUS_TARGET_MACOS
+nul_ftrunc = 0;
 #endif
 
 # The NUL-terminated `a` followed by `b`, in a fresh allocation.
@@ -92,6 +109,11 @@ assert_eq(ro >= 0, 1, "the fixture reopens read-only");
 assert_eq(sys_ftruncate(ro, 1), 0 - 22, "ftruncate of a read-only descriptor is -22 (Windows answered -1)");
 if (ro >= 0) { sys_close(ro); }
 assert_eq(sys_ftruncate(0 - 999, 3), 0 - 9, "ftruncate of a non-descriptor is -9 (Windows answered -1)");
+var nul = file_open(nulname, O_WRONLY, 0);
+assert_eq(nul >= 0, 1, "the null device opens for writing");
+assert_eq(sys_ftruncate(nul, 3), nul_ftrunc, "ftruncate of the null device is -22 (Windows answered -1; macOS truncates it: 0)");
+if (nul >= 0) { sys_close(nul); }
+assert_eq(sys_truncate(nulname, 3), 0 - 22, "truncate of the null device is -22 (Windows answered -1)");
 assert_eq(sys_truncate(m, 3), 0 - 2, "truncate of a missing path is -2 (Windows answered -1)");
 assert_eq(sys_truncate(f, 1), 0, "a good truncate is 0");
 
