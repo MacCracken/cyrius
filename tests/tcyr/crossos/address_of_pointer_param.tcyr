@@ -21,6 +21,10 @@
 # untyped declaration bound one word and a stack word), `**(&pb)` through a `*u8` reads one byte (a word), and
 # `*(&pi) + 1` steps as `pi + 1` does. `&q` itself, and `*(&pb + 0)`, are unchanged (`&pb + 0` a byte pointer to the
 # slot, its dereference the slot's word).
+#
+# 6.7.16 — `*(&pi) OP= n` steps as `pi OP= n` (the amp_cop_* rows; it stepped one byte), and (the user's D21,
+# 2026-10-19) `*(&x)` of a narrow integer x reads and writes x's width, as x itself (the amp_narrow_* rows; it was the
+# untyped word). issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
@@ -135,6 +139,15 @@ fn row_ad_step(): i64 {
 # byte distance the pointer moved, so a one-byte step reads as 1 (or 2), never the element's size.
 var AC_GPI: *i32 = 0;
 var AC_TPI: *i32 = 0;
+# The narrow globals of the D21 rows below, declared here, before the first top-level statement.
+var AN_GQ: i32 = 5;
+var AN_GR: i32 = 9;
+var AN_GB: u8 = 7;
+var AN_GC: u8 = 3;
+var AN_GS: i16 = 0;
+var AN_GT: i16 = 4;
+var AN_TQ: i32 = 5;
+var AN_TR: i32 = 9;
 fn ac_d(p, o): i64 { return p - o; }   # untyped: the byte distance
 fn ac_param(pi: *i32): i64 { var o = pi; *(&pi) += 1; return ac_d(pi, o); }
 fn row_amp_cop_inc(): i64 { var buf: i64[4]; var pi: *i32 = &buf; *(&pi) += 1; return ac_d(pi, &buf); }
@@ -159,6 +172,60 @@ AC_TPI = &AC_TBUF;
 *(&AC_TPI) += 1;
 var AC_TOP = ac_d(AC_TPI, &AC_TBUF);
 
+# --- 6.7.16 (D21, the user's decision, 2026-10-19): `*(&x)` of a NARROW integer x is x, at x's width -------------
+# issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 3. It was the untyped word:
+# the read took the neighbouring global's bytes (packed narrow globals) or an `i32` -1's zero high half, and the store
+# wrote 8 bytes over the next global. `*(&x + 0)` is still the byte pointer's word (6.7.11's D15).
+fn an_id(v): i64 { return v; }
+fn an_par(x: i32, y: i16): i64 { var a = *(&x); *(&y) += 1; return a * 100 + y; }
+fn row_amp_narrow_gread(): i64 { AN_GQ = 5; AN_GR = 9; var x = *(&AN_GQ); return x; }
+fn row_amp_narrow_gstore(): i64 { AN_GQ = 5; AN_GR = 9; *(&AN_GQ) = 7; return AN_GQ * 10 + AN_GR; }
+fn row_amp_narrow_gcop(): i64 { AN_GQ = 0 - 1; AN_GR = 9; *(&AN_GQ) += 3; *((&AN_GQ)) -= 1; return AN_GQ * 10 + AN_GR; }   # a word op carried into GR
+fn row_amp_narrow_local(): i64 { var a: i32 = 0 - 1; return *(&a); }
+fn row_amp_narrow_kinds(): i64 {
+    var b: u8 = 200;
+    var c: i16 = 0 - 3;
+    var d: i8 = 0 - 4;
+    var e: u16 = 65000;
+    var f: u32 = 4000000000;
+    var g: i32 = 0 - 7;
+    var r = 0;
+    if (*(&b) == 200) { r = r + 1; }
+    if (*(&c) == 0 - 3) { r = r + 10; }
+    if (*(&d) == 0 - 4) { r = r + 100; }
+    if (*(&e) == 65000) { r = r + 1000; }
+    if (*(&f) == 4000000000) { r = r + 10000; }
+    if (*&g == 0 - 7) { r = r + 100000; }
+    return r;
+}
+fn row_amp_narrow_lstore(): i64 {
+    var a: i32 = 0;
+    *(&a) = 0x1FFFFFFFF;   # as `a = ..`: the low 4 bytes, -1
+    var r = 0;
+    if (a == 0 - 1) { r = r + 1; }
+    *(&a) += 1;
+    if (a == 0) { r = r + 10; }
+    var c: i16 = 0x7FFF;
+    *(&c) += 1;            # wraps at 16 bits, as `c += 1` does
+    if (*(&c) == 0 - 32768) { r = r + 100; }
+    return r;
+}
+fn row_amp_narrow_param(): i64 { return an_par(0 - 6, 0 - 2); }
+fn row_amp_narrow_gu8(): i64 { AN_GB = 7; AN_GC = 3; *(&AN_GB) = 0x1FF; return AN_GB * 1000 + AN_GC; }
+fn row_amp_narrow_wrap(): i64 { AN_GB = 255; AN_GC = 3; *(&AN_GB) += 1; return AN_GB * 1000 + AN_GC; }
+fn row_amp_narrow_gi16(): i64 { AN_GS = 0; AN_GT = 4; *(&AN_GS) = 0 - 2; return *(&AN_GS) * 100 - AN_GT; }
+fn row_amp_narrow_for(): i64 {
+    AN_GQ = 0 - 2; AN_GR = 9;
+    for (var i = 0; i < 3; *(&AN_GQ) += 1) { i = i + 1; }   # -2 -> 1: a word op carried into GR
+    return AN_GQ * 10 + AN_GR;
+}
+fn row_amp_narrow_expr(): i64 { var a: i32 = 0 - 1; return (*(&a) + 1) * 10 + an_id(*(&a)) + 1; }
+fn row_amp_narrow_plus0(): i64 { AN_GQ = 5; AN_GR = 9; if (*(&AN_GQ + 0) == 5 + (9 << 32)) { return 1; } return 0; }
+fn row_amp_narrow_capture(): i64 { var a: i32 = 0 - 1; var f = |k| *(&a) + k; return fncall1(f, 0); }
+fn row_amp_narrow_word(): i64 { var n = 0x123456789; return *(&n); }
+*(&AN_TQ) = 7;
+var AN_TOPV = *(&AN_TQ) * 10 + AN_TR;
+
 assert_eq(row_ad_param_field(), 24, "D21: (*(&q)).y and **(&q) of a *Ao16 parameter: its field, its struct");
 assert_eq(row_ad_local_field(), 24, "D21: (*(&q)).y / (*((&q))).x of a *Ao16 local");
 assert_eq(row_ad_global_field(), 24, "D21: (*(&G)).y of a *Ao16 global");
@@ -181,6 +248,22 @@ assert_eq(row_amp_cop_param(), 4, "6.7.16: *(&pi) += 1 of a pi: *i32 parameter s
 assert_eq(row_amp_cop_global(), 4, "6.7.16: *(&G) += 1 of a *i32 global steps 4 bytes");
 assert_eq(row_amp_cop_for(), 123, "6.7.16: a for step *(&pi) += 1 steps 4 bytes a turn");
 assert_eq(AC_TOP, 4, "6.7.16: top level *(&G) += 1 of a *i32 global steps 4 bytes");
+assert_eq(row_amp_narrow_gread(), 5, "D21 (6.7.16): var x = *(&GQ) of a packed i32 global reads GQ alone");
+assert_eq(row_amp_narrow_gstore(), 79, "D21 (6.7.16): *(&GQ) = 7 writes 4 bytes, the next global kept");
+assert_eq(row_amp_narrow_gcop(), 19, "D21 (6.7.16): *(&GQ) += 3 / *((&GQ)) -= 1 of an i32 -1 at 4 bytes, no carry into the next global");
+assert_eq(row_amp_narrow_local(), 0 - 1, "D21 (6.7.16): *(&a) of an i32 local -1 is -1");
+assert_eq(row_amp_narrow_kinds(), 111111, "D21 (6.7.16): *(&x) of u8 / i16 / i8 / u16 / u32 / i32 (*&g) locals");
+assert_eq(row_amp_narrow_lstore(), 111, "D21 (6.7.16): *(&a) = / += on an i32 local, += on an i16 wraps");
+assert_eq(row_amp_narrow_param(), 0 - 601, "D21 (6.7.16): *(&x) of an i32 parameter -6, *(&y) += 1 of an i16 one -2");
+assert_eq(row_amp_narrow_gu8(), 255003, "D21 (6.7.16): *(&GB) = 0x1FF of a u8 global writes one byte");
+assert_eq(row_amp_narrow_wrap(), 3, "D21 (6.7.16): *(&GB) += 1 of a u8 global 255 wraps, no carry into the next");
+assert_eq(row_amp_narrow_gi16(), 0 - 204, "D21 (6.7.16): *(&GS) of an i16 global: -2 stored and read at 2 bytes");
+assert_eq(row_amp_narrow_for(), 19, "D21 (6.7.16): a for step *(&GQ) += 1 at 4 bytes, no carry into the next global");
+assert_eq(row_amp_narrow_expr(), 0, "D21 (6.7.16): *(&a) + 1 and an_id(*(&a)) of an i32 -1");
+assert_eq(row_amp_narrow_plus0(), 1, "D21 control: *(&GQ + 0) is still the byte pointer's word (6.7.11 D15)");
+assert_eq(row_amp_narrow_capture(), 0 - 1, "D21 control: *(&a) of a captured i32 -1 is its env word, -1");
+assert_eq(row_amp_narrow_word(), 0x123456789, "D21 control: *(&n) of an i64 is the word");
+assert_eq(AN_TOPV, 79, "D21 (6.7.16): top level *(&TQ) = 7 and its read at 4 bytes");
 assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
 assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
 assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");

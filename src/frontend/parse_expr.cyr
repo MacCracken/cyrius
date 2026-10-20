@@ -4980,6 +4980,7 @@ fn _deref_read(S): i64 {
     PARSE_FACTOR(S);
     if (_deref_u128(S, d) == 1) { return 0; }   # 6.7.15 (D20): refused by name, as `pu[0]` is
     var ed = _deref_ed(S);
+    if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x is x, at its width
     if (ed != 0) { return _esub_load(S, ed); }
     var ow = _pk_word(S);
     var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
@@ -5147,6 +5148,53 @@ fn _amp_pw(S, a, e): i64 {
     if (TOKTYP(S, b) != 27) { return 0; }
     if (TOKTYP(S, b + 1) != 2) { return 0; }
     return _hl_name_pw(S, TOKVAL(S, b + 1));
+}
+# ⛔ 6.7.16 (D21, the user's decision, 2026-10-19) — A DEREFERENCE OF THE ADDRESS OF A NARROW INTEGER VARIABLE IS THAT
+# VARIABLE, AT ITS WIDTH: `*(&x)` with x an `i32` / `u8` / `i16` / ... reads x's bytes, sign- or zero-extended as x
+# reads them, and `*(&x) = v` / `*(&x) OP= v` (`_deref_store`) write them. It was the untyped word: `*(&GQ)` of a
+# packed `i32` global read GQ and the next global (5 + (9 << 32) where 5 is right), `*(&GQ) = 7` zeroed that global,
+# and `*(&a)` of an `i32` local -1 read 4294967295. The operand [a, e) exactly `& NAME` inside any balanced
+# parentheses (as `_amp_pw`), NAME a narrow integer local (`_amp_lew`) or global (`_amp_gew`): its element kind
+# (`_ek_*`: the width, | 0x40 when signed), else 0. A narrow parameter (SLTYPE 0: its slot holds the caller's word) and
+# a closure's capture (one env word) keep the word, which their own reads load whole. `&x + n` is still a byte pointer
+# (6.7.11's D15). CHANGELOG [6.7.16]
+fn _amp_ew(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    var noff = TOKVAL(S, b + 1);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _amp_lew(S, li); }
+        if (_hl_capn(S, noff) == 1) { return 0; }
+    }
+    return _amp_gew(S, _findvar_core(S, noff));
+}
+# A scalar local's kind when it is an `i8`..`i32` / `u8`..`u32` — SLTYPE 1 / 2 / 4, signed by its negative
+# slice-width word, as the name's own read takes it — else 0 (an aggregate, an array, a pointer, a bool, a parameter).
+fn _amp_lew(S, li): i64 {
+    if (GLPTRP(S, li) != 0) { return 0; }
+    if (GLSPAN(S, li) != 0) { return 0; }
+    if (GLAEW(S, li) != 0) { return 0; }
+    if (GLBOOL(S, li) != 0) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (lt != 1) { if (lt != 2) { if (lt != 4) { return 0; } } }
+    if (GSLICE_W(S, li) < 0) { return lt | 0x40; }
+    return lt;
+}
+# A global's kind when it is a packed `i8`..`i32` / `u8`..`u32` scalar (its var size 1 / 2 / 4, GVSGN 1 when
+# signed), as the name's own read takes it — else 0 (a struct value under 8 B, an array, any 8-byte slot).
+fn _amp_gew(S, vi): i64 {
+    if (vi < 0) { return 0; }
+    if (GVTYPE(S, vi) <= 0) { return 0; }
+    var sz = L64(_vars_base + vi * 8);
+    if (sz != 1) { if (sz != 2) { if (sz != 4) { return 0; } } }
+    if (GVPM(S, vi) == 2) { return 0; }
+    var g = GVSGN(S, vi);
+    if (g >= 0x100) { return 0; }
+    if (g == 1) { return sz | 0x40; }
+    return sz;
 }
 # The vector type (<= -2048) the name `noff` has where `&` resolves it — a local (a parameter's copy too), a closure's
 # capture, a global — else 0.

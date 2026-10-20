@@ -2433,9 +2433,16 @@ and wrote a whole word. `&x + n` is still a byte pointer, so `*(&x + 8)` (and `*
 address. `*(&x) OP= v` is
 refused as `x OP= v` is (*compound assignment to struct 'x' is refused*; write `x = x + b`) — since 6.7.14,
 the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (6.7.5), so `*(&s) += 10`
-turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op. `*(&p) OP= n`
+turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of an `i64` scalar keep the word op. `*(&p) OP= n`
 of a typed pointer is `p OP= n`: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `pi += 1` does (6.7.16; through
-6.7.15 it stepped one byte, where `*(&pi) + 1` stepped the element).
+6.7.15 it stepped one byte, where `*(&pi) + 1` stepped the element). **`*(&x)` of a narrow integer `x` is `x`, at its
+width** (6.7.16, the user's decision D21, 2026-10-19): with x an `i8`..`i32` / `u8`..`u32` local or global,
+`*(&x)` reads x's bytes as `x` reads them (sign- or zero-extended) and `*(&x) = v` / `*(&x) OP= v` write x's width,
+as `x = v` / `x OP= v` do — `var y = *(&GQ);` of a packed `i32` global is GQ, `*(&GQ) = 7` leaves the
+next global alone, `*(&a)` of an `i32` -1 is -1. ⚠ Through 6.7.15 it was the untyped word: the read took the next
+global's bytes (5 + (9 << 32) where 5 is right) and an `i32` -1's zero high half (4294967295), and the store wrote 8
+bytes, zeroing the next global. A narrow parameter and a closure's capture keep the word: their own reads load the
+whole slot (a parameter's holds the caller's word) or env word.
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,

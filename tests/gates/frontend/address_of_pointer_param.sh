@@ -27,6 +27,10 @@
 #      filed repro verbatim: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `q += 1` does (6.7.15's D21 A:
 #      `*(&p)` is p) — exit 44 (14 before: one byte) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm)
 #      and PE (wine); the amp_cop_* rows in T carry its shapes
+#   R4 6.7.16 (D21, the user's decision, 2026-10-19) — the same issue's row 3, the filed repro verbatim: `*(&GQ)`
+#      of a packed `i32` global reads GQ alone, at its width, as GQ itself — exit 5 (59 before: 8 bytes, GQ and
+#      the next global GR) on the same legs; the amp_narrow_* rows in T carry its shapes (stores, OP=, the
+#      widths and signs, a for step, top level) and its controls (`*(&GQ + 0)`, a capture, an i64)
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -43,6 +47,13 @@
 #   M2  (2026-10-19) `_deref_store` without its `_amp_pw` line (the 6.7.16 fix reverted) -> RED 12: R3 (exit
 #                                                    14) on all 5 legs; T on all 7 legs, the 11 amp_cop_*
 #                                                    step rows (the `*u8` control green)
+#   M3  (2026-10-19) `_amp_ew` answers 0 (D21's width reverted) -> RED 12: R4 (exit 59) on all 5 legs; T
+#                                                    on all 7 legs, the 12 amp_narrow_* rows that read or
+#                                                    write a narrow local or packed global (the parameter
+#                                                    row and the controls green)
+#   M4  (2026-10-19) `_deref_store` without its `_amp_ew` line (the read kept) -> RED 7: T on all 7 legs,
+#                                                    the 7 store / OP= rows on packed globals (a local's
+#                                                    8-byte slot hides a word store); R4 green (a read)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -74,7 +85,7 @@ R1=docs/development/issues/repros/2026-10-10-address-of-pointer-param-over-8b-is
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=41
+FLOOR=57
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -177,6 +188,21 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "R3 $leg: exit $RC, want 44"; fi
 done
 
+echo "R4. 6.7.16 (D21): the filed row-3 repro verbatim — \`*(&GQ)\` of a packed i32 global reads GQ alone (exit 5; 59 = GQ and GR)"
+cat > "$D/narrow.cyr" <<'EOF'
+var GQ: i32 = 5;
+var GR: i32 = 9;
+fn run(): i64 { var x = *(&GQ); if (x == 5) { return 5; } if (x == 5 + (9 << 32)) { return 59; } return 1; }
+syscall(60, run());
+EOF
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'R4_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/narrow.cyr" "$D/w_$n"
+    if [ "$RC" -eq -1 ]; then bad "R4 $leg: did not build: $(grep -m1 'error' "$D/w_$n.err")"
+    elif [ "$RC" -eq 5 ]; then ok "R4 $leg: exit 5"
+    else bad "R4 $leg: exit $RC, want 5"; fi
+done
+
 echo "N. a #naked fn (compile only): by-value \`&q\` stays the slot's content, a *P parameter's \`&q\` is the slot"
 # nk_src <param type> <initialiser> <out>: one #naked fn, kept by `&nk`, its asm a bare return.
 nk_src() {
@@ -225,4 +251,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), \`*(&GQ)\` of a narrow global reads its width (R4), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
