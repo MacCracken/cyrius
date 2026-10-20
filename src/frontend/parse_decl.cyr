@@ -8621,6 +8621,7 @@ fn _vmc_open(S, ti): i64 {
 # asks are lookaheads: their answers stay their callers'. CHANGELOG [6.7.16]
 fn _mch_open(S, ti): i64 {
     if (ti > 0) { if (TOKTYP(S, ti - 1) == 41) { return 0 - 1; } }   # mid-chain: not its head
+    if (_mchain_at(S, _mch_hend(S, ti)) == 0) { return 0 - 1; }   # no step after the head, by its shape
     var cf = _cap_fld_sid;
     var cp = _hl_cp;
     var da = _hl_damp;
@@ -8686,6 +8687,14 @@ fn _mch_mres(S, sid, nt, o): i64 {
         return t;
     }
     return _hl_fn_psid(mf);
+}
+# The token after the receiver head at `ti` by its shape alone (`_mch_head`'s, untyped): `( .. )`, a call, a name.
+fn _mch_hend(S, ti): i64 {
+    if (TOKTYP(S, ti) == 10) { return _call_close(S, ti) + 1; }
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { o = _gcall_open(S, ti); }
+    if (o >= 0) { return _call_close(S, o) + 1; }
+    return ti + 1;
 }
 # The receiver head at token `ti`: its struct (0: none this reads), `_mch_hx` the token after it, `_mch_nh` 1 for a name.
 # A name (`_dyn_base_sid`); a call `f(..)` / `g<..>(..)` / `fncallN(&f, ..)` / `callptr(&f, ..)` (`_mch_chead`); a
@@ -8969,6 +8978,7 @@ fn _vrcv_bad(S, ti, ty, term, verb): i64 {
 var _vcv_a = 0;
 var _vcv_nt = 0;
 fn _vcall_vt(S, ti, term, start): i64 {
+    if (_vcv_maybe(S, ti) == 0) { return 0; }
     var a = ti;
     var pe = 0 - 1;
     var e = _hl_dx_end(S, ti, term);
@@ -8983,6 +8993,19 @@ fn _vcall_vt(S, ti, term, start): i64 {
     if (start == 1) { return rs; }
     if (_call_close(S, _vcv_o) + 1 != pe) { return 0; }
     return rs;
+}
+# 6.7.16: 0 = no call of `_vcall_vt`'s spellings can start the source at token `ti` — it opens with neither `(`,
+# `callptr`, nor a name followed by `(` / `<` / `.` — so the scans are skipped (every declaration and assignment asks).
+fn _vcv_maybe(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 10) { return 1; }
+    if (t == 137) { return 1; }
+    if (t != 2) { return 0; }
+    t = TOKTYP(S, ti + 1);
+    if (t == 10) { return 1; }
+    if (t == 19) { return 1; }
+    if (t == 41) { return 1; }
+    return 0;
 }
 # The vector the call at token `a` is declared to return (`_vcall_vt`'s spellings), else 0; `_vcv_o` its `(`, `_vcv_nt`
 # the name its refusals give.
