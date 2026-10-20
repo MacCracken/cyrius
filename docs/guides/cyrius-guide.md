@@ -791,7 +791,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   after an `impl Trait for T` method's own refusal). A direct call `V2_add(a, b)` fills it as usual.
 - **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
   whose default names a sibling's const. The grammar refusals (a positional argument after a
-  named one, a name through `fncallN`) still fire there.
+  named one, a name through `fncallN`) still fire there. A call in the chain of a receiver whose
+  struct a sibling declares — `a.h.k(1)`, `a.m<i64>(1)`, `a.h.m<i64>(1)` — parses there too, its
+  arguments checked (6.7.16; it was *expected ';', got '('* / *got '>'*).
 - **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
   count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
   `_slice_idx_get_N` family and `_slice_idx_addr` (6.7.8, the slice store), the `_chk_*` /

@@ -539,6 +539,48 @@ for f in so_bad1 so_bad2; do
     check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 done
 
+# ── AXIS 14 (6.7.16) — a CALL in the chain of a receiver whose struct this file cannot see: `a.m<i64>(1)` (6.7.14's
+# explicit spelling), `a.h.k(1)`, `a.h.m<i64>(1)` with `a: Foo` and Foo (with `h: *Foo`) a sibling's. The receiver has no
+# struct here, and `--syntax-only` walked the rest as `.field`s: the `<` was read as less-than and the stray `>` /
+# `(` reported — "expected ';', got '>'" / "got '('" — a syntax error the file does not have (6.7.16's D4 put a bounded T
+# bound to a scalar on the same path: trait_bounds_checked.sh BXS). The chain walk (`_synonly_chain_call`) steps a
+# method's list by its shape (`_synonly_mlist`) and parses each call's arguments. ANTI-VACUOUS: a syntax error inside
+# such a call's arguments is still reported, at its token. RED on f272ffabf (the bite before): every --syntax-only and
+# LINTED row of so14a-so14d, and the three position rows (the stray `<` / `(` reported, not the error inside).
+# MUTATIONS (2026-10-20, a one-edit scratch copy of src/ each, installed as build/cycc): `_synonly_chain_call` without
+# `_synonly_mlist` -> so14a, so14c, so14d RED (+ the so14_bad1 / so14_bad3 position rows); the `sid == 0` arm back on
+# `_synonly_skip_chain` -> so14a-so14d RED (+ all three position rows).
+echo "axis 14 — a call in the chain of a receiver whose struct is in a SIBLING file passes --syntax-only and lint:"
+printf 'struct Foo { g; h: *Foo; }\nimpl Foo { fn m<V>(self, x: V) { return x + self.g; } fn k(self, x) { return x; } }\n' > "$T/w/so14_sib.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1);\n    return a.m<i64>(2) + a.g;\n}\nvar r = 0;\n' > "$T/w/so14a.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.k(1);\n    return a.h.k(2) + a.h.g;\n}\nvar r = 0;\n' > "$T/w/so14b.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1);\n    return a.h.m<i64>(2);\n}\nvar r = 0;\n' > "$T/w/so14c.cyr"
+printf 'fn f(a: Foo): i64 {\n    var v = a.m<i64>(1);\n    return v + a.h.m<Foo>(a);\n}\nvar r = 0;\n' > "$T/w/so14d.cyr"
+for f in so14a so14b so14c so14d; do
+    cat "$T/w/so14_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+    check "premise: $f compiles once Foo is in scope" 0 "$j_rc"
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1;\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad1.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.k(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad2.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad3.cyr"
+for x in so14_bad1:2:15 so14_bad2:2:13 so14_bad3:2:18; do
+    f=${x%%:*}; at=${x#*:}
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "ANTI-VACUOUS: $f, a syntax error inside the call, is refused by --syntax-only" "yes" "$([ "$s_rc" != 0 ] && echo yes || echo no)"
+    check "ANTI-VACUOUS: $f names it at $at, alone" "1 1" "$(grep -c '^error' "$T/se") $(grep -cE "^error:<source>:$at: expected " "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+done
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: lint-reports-unparseable — lint tells the truth about parsing AND still lints"

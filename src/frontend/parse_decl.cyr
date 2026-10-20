@@ -41,14 +41,34 @@ fn _synonly_skip_chain(S): i64 {
 # source (the v6.5.19 class). The rest of the chain is walked as `_synonly_skip_chain` walks it, and each
 # `(args)` in it parsed through PCMPE, so a grammar error inside one is still caught. The store's tail is
 # `_synonly_fld_tail`'s. --syntax-only emits nothing: no compiled output changes. CHANGELOG [6.7.14]
+# 6.7.16: and a method's explicit list (`.m<..>(`, `_synonly_mlist`) stepped before its arguments; the walk serves a
+# receiver of no known struct too (`_field_load_on`'s `sid == 0` and unknown-field arms), where `x.m<i64>(1)` was
+# "expected ';', got '>'" and `x.f.m(1)` "expected ';', got '('" — a bounded T bound to a scalar among them (6.7.16's D4).
 fn _synonly_chain_call(S): i64 {
     var go = 1;
     while (go == 1) {
         _synonly_skip_chain(S);
+        _synonly_mlist(S);
         if (PEEKT(S) == 10) { _synonly_args(S); }
         else { go = 0; }
     }
     return 0;
+}
+# A `<..>` at the cursor that a `(` follows and that holds names, `,` and angle brackets alone: stepped, the cursor on
+# the `(` (by its shape — a file read alone cannot see the types another file declares). CHANGELOG [6.7.16]
+fn _synonly_mlist(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var e = _tok_targs_close(S, GTI(S) + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    var j = GTI(S) + 1;
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (t != 2 && t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 0; }
+        j = j + 1;
+    }
+    STI(S, e + 1);
+    return 1;
 }
 # `(args)` at the cursor: each argument through PCMPE, the `)` consumed.
 fn _synonly_args(S): i64 {
@@ -2406,7 +2426,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     if (sid == 0) {
         # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
-        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain, `.m<..>(` too
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
@@ -2418,7 +2438,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.14 (D7 (a)): `p.id<f64>(h)`
         # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
         # silent and do not _panic (which would swallow the next real syntax error).
-        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain
         ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
         return 0;
     }

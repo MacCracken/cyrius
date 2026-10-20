@@ -144,6 +144,12 @@
 #      (the stub); MBX5 `_meth_xsite` minting at a refused site -> RED 1: BX8 (Pt.other<i64>'s own refusal too); MBX6 no
 #      `_meth_targs` in the scalar arm -> RED 3: BX5 BX6 BX7; MBX7 no `_declared_any` -> RED 1: BX3 (a struct declared
 #      below).
+#   BXS (6.7.16) `--syntax-only` (cyrius lint) parses BX5-BX7 silently: a scalar T's receiver has no struct, and the
+#      chain walk left the explicit list — "expected ';', got '>'", a syntax error the file does not have; the walk
+#      (`_synonly_chain_call`) now steps a method's list (`_synonly_mlist`) and parses the call (lint_reports_unparseable.sh
+#      axis 14, a sibling's struct). Mutants (2026-10-20): the previous compiler (f272ffabf) -> RED 3: BXS x3;
+#      `_synonly_chain_call` without `_synonly_mlist` -> RED 3: BXS x3; the `sid == 0` arm back on `_synonly_skip_chain`
+#      -> RED 3: BXS x3.
 #   VB (6.7.15, the user's D10 (a), 2026-10-18) A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>>
 #      = 0;` with `struct Box<T: Show>` and no `impl Show for Pt` compiled (the filed repro exited 5) — the element's
 #      list was read for names only (6.7.14's D5), the bound judged only where an instance is minted. Judged at the
@@ -871,6 +877,13 @@ fn go(): i64 { var p: Pt; p.y = 6; return gn(p); }
 syscall(60, go());
 EOF
 errs bx8 1 "BX8: a refused site's call is consumed quietly at the instance — nothing minted, so Pt.other<i64>'s own refusal does not print" "error:<source>:6:38: $BDM"
+# BXS (6.7.16): --syntax-only (cyrius lint) parses the explicit spelling at a scalar T — the receiver has no struct,
+# and the chain walk left the list: "expected ';', got '>'", a syntax error the file does not have.
+for b in bx5 bx6 bx7; do
+    src=0; "$CC" --syntax-only < "$T/$b.cyr" > /dev/null 2> "$T/$b.so" || src=$?
+    if [ "$src" -eq 0 ] && [ "$(grep -c '^error' "$T/$b.so")" -eq 0 ]; then ok "BXS: --syntax-only on $b is silent (rc 0)"
+    else bad "BXS: --syntax-only on $b: rc $src: $(grep '^error' "$T/$b.so" | head -2 | tr '\n' '|')"; fi
+done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too (BX, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
