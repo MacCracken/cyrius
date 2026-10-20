@@ -41,6 +41,18 @@
 #   W3     G1 through tls_native_accept: a fatal illegal_parameter on the wire. A named SKIP where
 #          socketpair is refused.
 # On the lib before D82: G1-G3, G5-G6 and W3 are answered with a ServerHello; G7 is refused by D81.
+#
+# The same issue; the user's decision 6.7.16 D83 (2026-10-20): "Refuse with illegal_parameter on both
+# versions". The parse skipped legacy_compression_methods unread (`pos = pos + 1 + comp_len`), so
+# any list was answered (the filed row E). RFC 8446 §4.1.2: exactly one byte, 0 — "any other value"
+# is illegal_parameter.
+#   E1     the filed row E: [1] — refused, TLS_ERR_HANDSHAKE_FAILED, illegal_parameter.
+#   E2-E3  [0, 0] and [1, 0] (null, but not the single null method) — refused the same way.
+#   E4     an empty list does not parse (<1..2^8-1>): decode_error, as the 1.2 parse's P6 (D32).
+#   E5     framing first: [1] with T5's 2-byte tail inside the block is decode_error.
+#   W4     E1 through tls_native_accept: a fatal illegal_parameter on the wire. A named SKIP where
+#          socketpair is refused.
+# On the lib before D83: E1-E4 and W4 are answered with a ServerHello; E5 is refused by D81.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -241,6 +253,31 @@ fn _long13(): i64 {
     return n;
 }
 
+# A fresh G_CH whose legacy_compression_methods (the client's [0]) becomes [a] (`b` < 0), [a, b] (the
+# rest moved up a byte) or, `a` < 0, the empty list (the rest moved down a byte). Its length.
+fn _cm13(a, b): i64 {
+    _ch13();
+    var n = G_CHN;
+    var ce = 4 + _ext_off(G_CH + 4) - 2;              # the list's length byte
+    var tmp = alloc(1024);
+    if (a < 0) {
+        memcpy(tmp, G_CH + ce + 2, n - ce - 2);
+        memcpy(G_CH + ce + 1, tmp, n - ce - 2);
+        store8(G_CH + ce, 0);
+        return n - 1;
+    }
+    if (b < 0) {
+        store8(G_CH + ce + 1, a);
+        return n;
+    }
+    memcpy(tmp, G_CH + ce + 2, n - ce - 2);
+    memcpy(G_CH + ce + 3, tmp, n - ce - 2);
+    store8(G_CH + ce, 2);
+    store8(G_CH + ce + 1, a);
+    store8(G_CH + ce + 2, b);
+    return n + 1;
+}
+
 alloc_init();
 
 test_group("T: the 1.3 server's ClientHello extension block fills the message");
@@ -333,6 +370,41 @@ if (w == 0 - 999) {
     assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W3: accept refuses server_name twice");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
       "W3: the server sent a fatal illegal_parameter, in the clear");
+}
+
+test_group("E: legacy_compression_methods other than the one null method is illegal_parameter (D83)");
+var en = 1;
+while (en <= 5) {
+    if (en == 1) { gl = _cm13(1, 0 - 1); nm = "E1: [1] (row E)"; }
+    if (en == 2) { gl = _cm13(0, 0); nm = "E2: [0, 0]"; }
+    if (en == 3) { gl = _cm13(1, 0); nm = "E3: [1, 0]"; }
+    if (en == 4) { gl = _cm13(0 - 1, 0); nm = "E4: an empty list"; }
+    if (en == 5) {
+        gl = _cm13(1, 0 - 1);
+        var e5 = _ext_off(G_CH + 4);
+        _tn_be16_w(G_CH + 4 + e5, _tn_be16_r(G_CH + 4 + e5) + 2);
+        gl = gl + 2;
+        nm = "E5: [1] and a 2-byte tail inside the block";
+    }
+    if (en >= 4) {
+        assert_eq(_resp(gl), TLS_ERR_BAD_HANDSHAKE, nm);
+        assert_eq(_alert(), TLS_AD_DECODE_ERROR, "  ... decode_error: it does not parse");
+    } else {
+        assert_eq(_resp(gl), TLS_ERR_HANDSHAKE_FAILED, nm);
+        assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "  ... illegal_parameter");
+    }
+    assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "  ... the ctx failed");
+    en = en + 1;
+}
+
+test_group("W4: E1's refusal reaches the wire (tls_native_accept)");
+w = _wire13(_cm13(1, 0 - 1));
+if (w == 0 - 999) {
+    assert_eq(1, 1, "W4: SKIP — socketpair refused on this target");
+} else {
+    assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W4: accept refuses [1]");
+    assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
+      "W4: the server sent a fatal illegal_parameter, in the clear");
 }
 
 var r = assert_summary();

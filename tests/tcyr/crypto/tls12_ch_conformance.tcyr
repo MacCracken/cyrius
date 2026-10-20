@@ -53,6 +53,18 @@
 #   R9     R1 through tls_native_accept_12 and tls_native_accept: a fatal illegal_parameter on the
 #          wire. A named SKIP where socketpair is refused.
 # On the lib before D82: R1-R3, R5-R7 and R9 negotiate 0xC02C; R8 was decode_error already.
+#
+# The same issue; the user's decision 6.7.16 D83 (2026-10-20): "Refuse with illegal_parameter on both
+# versions". The parse checked compression_methods' framing (D32) and never its contents, so a list
+# without the null method negotiated (the filed row A: 49196 alert=0) and the ServerHello named a
+# method the client had not offered. RFC 5246 §7.4.1.2: the list MUST contain null.
+#   M1     the filed row A: [1] — refused, TLS_ERR_HANDSHAKE_FAILED, illegal_parameter.
+#   M2     [2, 3]: no null among two — refused. M3 the same hello without an extension block.
+#   M4-M5  controls: [1, 0] and [0, 1] — null anywhere in the list negotiates.
+#   M6     framing first: [1] with P7's 2-byte block is decode_error (D32 unchanged).
+#   M7     M1 through tls_native_accept_12 and tls_native_accept: a fatal illegal_parameter on the
+#          wire. A named SKIP where socketpair is refused.
+# On the lib before D83: M1-M3 and M7 negotiate 0xC02C; M6 was decode_error already.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -223,6 +235,25 @@ fn _long12(): i64 {
     return bl;
 }
 
+# A fresh G_CH whose compression_methods (the client's [0]) becomes [a] (`b` < 0) or [a, b] (the rest
+# of the body moved up a byte). The body length.
+fn _cm12(a, b): i64 {
+    _ch12();
+    var bl = G_CHN - 4;
+    var ce = _cs_end(G_CH + 4);
+    if (b < 0) {
+        store8(G_CH + 4 + ce + 1, a);
+        return bl;
+    }
+    var tmp = alloc(1024);
+    memcpy(tmp, G_CH + 4 + ce + 2, bl - ce - 2);
+    memcpy(G_CH + 4 + ce + 3, tmp, bl - ce - 2);
+    store8(G_CH + 4 + ce, 2);
+    store8(G_CH + 4 + ce + 1, a);
+    store8(G_CH + 4 + ce + 2, b);
+    return bl + 1;
+}
+
 alloc_init();
 
 test_group("S: a ClientHello whose extension block does not fill the message is refused (D40)");
@@ -373,6 +404,57 @@ while (via >= 0) {
             assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "R9: tls_native_accept_12 refuses server_name twice");
         } else {
             assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "R9: tls_native_accept refuses server_name twice");
+        }
+        assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
+          "  ... the server sent a fatal illegal_parameter, in the clear");
+        assert_eq(G_WST, TLS_STATE_ERROR, "  ... the server's ctx failed");
+    }
+    via = via - 12;
+}
+
+test_group("M: compression_methods without the null method is illegal_parameter (D83)");
+var mn = 1;
+while (mn <= 6) {
+    if (mn == 1) { bl = _cm12(1, 0 - 1); nm = "M1: [1], no null method (row A)"; }
+    if (mn == 2) { bl = _cm12(2, 3); nm = "M2: [2, 3], no null method"; }
+    if (mn == 3) { _cm12(2, 3); bl = _ext_off(G_CH + 4); nm = "M3: [2, 3] and no extension block"; }
+    if (mn == 4) { bl = _cm12(1, 0); nm = "M4: [1, 0] negotiates"; }
+    if (mn == 5) { bl = _cm12(0, 1); nm = "M5: [0, 1] negotiates"; }
+    if (mn == 6) {
+        _cm12(1, 0 - 1);
+        var e6 = _ext_off(G_CH + 4);
+        _tn_be16_w(G_CH + 4 + e6, 2);
+        _tn_be16_w(G_CH + 4 + e6 + 2, 0x0017);
+        bl = e6 + 4;
+        nm = "M6: [1] and a 2-byte block, too short for an extension header";
+    }
+    if (mn == 4 || mn == 5) {
+        assert_eq(_parse(bl) > 0, 1, nm);
+        assert_eq(_alert(), 0, "  ... no alert recorded");
+    } else {
+        if (mn == 6) {
+            assert_eq(_parse(bl), TLS_ERR_BAD_HANDSHAKE, nm);
+            assert_eq(_alert(), TLS_AD_DECODE_ERROR, "  ... decode_error: framing is refused first");
+        } else {
+            assert_eq(_parse(bl), TLS_ERR_HANDSHAKE_FAILED, nm);
+            assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "  ... illegal_parameter");
+        }
+        assert_eq(load64(G_SRV + TLS_CTX_OFF_USE_EMS), 0, "  ... no extended master secret taken");
+    }
+    mn = mn + 1;
+}
+
+test_group("M7: M1's refusal reaches the wire");
+via = 12;
+while (via >= 0) {
+    w = _wire(via, _cm12(1, 0 - 1));
+    if (w == 0 - 999) {
+        assert_eq(1, 1, "M7: SKIP — socketpair refused on this target");
+    } else {
+        if (via == 12) {
+            assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "M7: tls_native_accept_12 refuses [1]");
+        } else {
+            assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "M7: tls_native_accept refuses [1]");
         }
         assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
           "  ... the server sent a fatal illegal_parameter, in the clear");
