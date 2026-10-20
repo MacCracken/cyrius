@@ -43,7 +43,22 @@ var wrs = sys_sysinfo(&wsi);
 assert_eq(wrs, 0 - 38, "sys_sysinfo is -ENOSYS on Windows");
 #endif
 
+#ifdef CYRIUS_TARGET_CX
+# On cx (6.7.16's D75, the user, 2026-10-20: a named not-run where the target is known): cxvm serves
+# neither uname (63) nor sysinfo (99) — it answers -38 for a number it does not list, on every host
+# (6.7.14's D55) — so the uname, sysinfo and convenience groups below (24 rows) are not run there.
+# The -38 itself is asserted: a cxvm that grows a route turns this group red until the rows run on cx.
+test_group("uname/sysinfo — cx: no route");
+var cu[390];
+assert_eq(sys_uname(&cu), 0 - 38, "sys_uname answers -38 on cx (cxvm has no uname route)");
+var cs[120];
+assert_eq(sys_sysinfo(&cs), 0 - 38, "sys_sysinfo answers -38 on cx (cxvm has no sysinfo route)");
+var cnr = "  not run: this host has no uname / sysinfo route: the uname, sysinfo and convenience groups (24 rows)\n";
+sys_write(1, cnr, strlen(cnr));
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_CX
 # ---- uname ----------------------------------------------------------------
 # Canaries either side of the 390-byte struct: a field filled from a scratch
 # buffer must never run past UTS_SIZE. On macOS kern.version alone is 103-104
@@ -135,6 +150,7 @@ var su_sane = (su < 3153600000);
 assert_eq(su_sane, 1, "system_uptime() is in range");
 var stm = system_total_memory();
 assert_eq(stm, tm, "system_total_memory() agrees with sysinfo_total_memory()");
+#endif
 #endif
 
 # 6.6.7: sys_sched_kicks reads agnos sysinfo#35's 1.57.9 `sched_kicks` field. Off agnos it is
