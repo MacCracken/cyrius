@@ -1185,6 +1185,23 @@ fn test_the_floor_is_subtracted_not_merely_known() {
     # NOT a bigger constant.
     var below = 0;
     if (avg < fl / 4 + 8) { below = 1; }
+    #ifdef CYRIUS_TARGET_CX
+    # On cx the premise fails (6.7.16's D75, the user, 2026-10-20: a named not-run where the target
+    # is known): the no-op is an interpreted call, ~2 us on the x86_64 cxvm (2,015-2,027 ns
+    # measured), and the clock read one host call, ~3 us (2,970 ns) — the fast clock on a slow cpu
+    # the note above names. Leg (e)'s scripted 3 ns op states the property closed-form there too.
+    if (below == 0) {
+        var nr1 = "  not run: on cx a no-op (";
+        var nr2 = " ns, interpreted) is not far below a clock read (";
+        var nr3 = " ns): bench_run on a no-op reports well under one clock read\n";
+        sys_write(1, nr1, strlen(nr1));
+        fmt_int(avg);
+        sys_write(1, nr2, strlen(nr2));
+        fmt_int(fl);
+        sys_write(1, nr3, strlen(nr3));
+        return;
+    }
+    #endif
     assert_eq(below, 1, "bench_run on a no-op reports well under one clock read");
 }
 
