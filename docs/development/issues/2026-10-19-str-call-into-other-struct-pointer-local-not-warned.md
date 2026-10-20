@@ -4,7 +4,7 @@
 same on the lane's compiler before F5 (11dfa7bff). Noted by the structs-lane triage of
 issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md ("the LOCAL arm's exemption
 (`_asg_ret_sid > 0`, any struct) also silences `lq = mkq()` (a `: Str` call) into a `*P` local") and measured here.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF4) — never 7.x.
 **Severity:** Low — a missing warning: the `*P` local is given a `Str` header's address, silently.
 **Kind:** bug (diagnostics).
 

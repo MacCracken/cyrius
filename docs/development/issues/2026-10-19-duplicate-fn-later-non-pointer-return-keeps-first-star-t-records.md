@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-19 by the 6.7.16 structs lane (unit S4) while adding a per-fn `: *T` record
 (`_fn_rpun`, issues/2026-10-18-syntax-only-pointer-return-of-sibling-struct-field-store-false-temporary.md). Pre-existing:
 measured on the S3 lane head (ff6df9ff5's build/cycc) and its aarch64 (qemu) and cx (cxvm) compilers — identical.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS1) — never 7.x.
 **Severity:** Medium — a silent miscompile, but only of a program carrying the "duplicate fn" warning (last definition
 wins).
 **Kind:** bug (codegen: a call's pointer step).

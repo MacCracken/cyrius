@@ -4,7 +4,7 @@
 rows on ecb; measured with the INSTALLED 6.7.15 CLI on ecb (`~/.cyrius/bin/cyrius`, read only) and with a CLI
 cross-built from the lane tree (l6716-libfix, after c86336672). Not touched by the lane's redirect fix: the
 refusal happens before any fork.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 libfix lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 libfix lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; t16 lane, wave 3, unit TT3) — never 7.x.
 **Severity:** Medium — a documented verb does not work at all on one host family (Apple Silicon); exit 1 with a
 message that blames a target selector the user did not pass. No boundary is crossed.
 

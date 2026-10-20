@@ -4,7 +4,8 @@
 `**Str`) left the other `*Str` stores alone. Pre-existing: the same output on the slot-open compiler (480de63eb) and after
 that fix, on x86_64, aarch64 (qemu) and cx (cxvm). Not that filing's surface (an inline `Str` destination), so filed, not
 fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D73 — q's first word becomes p.
 **Severity:** Medium — silent: the header q points at gets the other string's data pointer as its data word and keeps its
 own length; no diagnostic. Not a security id (the developer's own source).
 **Kind:** language (likely a decision) — the pointee-destination twin of 6.7.16's D20 (`h = *p` into a handle). `*p` of a

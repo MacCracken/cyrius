@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 platform lane (branch l6716-platform, unit P2), probes
 built from the lane's tree (`CYRIUS_MACHO=1 cycc` for ach, `CYRIUS_MACHO_ARM=1 cycc_aarch64` + `codesign -s -` for
 ecb). The lane does not change these wrappers.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D76 — -78, Darwin's ENOSYS.
 **Severity:** Low — a macOS program that tests a declined call against the host's ENOSYS (`== 0 - 78`, what the
 other macOS declines answer) misreads these two, and one that tests `== 0 - 38` reads Darwin's ENOTSOCK as
 "not implemented" everywhere else. No boundary is crossed (no ledger id).

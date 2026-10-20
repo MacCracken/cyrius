@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 platform lane (branch l6716-platform, unit P2, tree
 86dafdc49; the unit changed only programs/cxvm.cyr, a cx fixture, a cx gate's comments, docs and
 scripts/cross-os-selfhost.sh — nothing either test compiles or runs).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP4) — never 7.x.
 **Severity:** Medium — a release-gate flake: `sh scripts/check.sh` and the cross-OS legs go red on a correct
 tree and nothing names the cause as load (no ledger id; no boundary).
 **Found:** running the unit's gates. Four red results, each green when rerun alone:

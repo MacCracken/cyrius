@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 frontend lane (l6716-frontend at 478e4f6cd, x86_64; the
 shared front end, every target), identical on the lane's compiler before F5 (11dfa7bff). Met while implementing
 6.7.16's D12 (the enum member separator, issues/2026-10-18-enum-members-need-no-separator.md).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF6) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D69 — Refuse it by name.
 **Severity:** Low — accepted bad syntax; each field gets the offset the separated form gives.
 **Kind:** language (whether a missing field separator is refused is the user's call — the twins were decided as
 6.7.15's D1 (a), struct literal elements, and 6.7.16's D12, enum members: "Refuse it by name").

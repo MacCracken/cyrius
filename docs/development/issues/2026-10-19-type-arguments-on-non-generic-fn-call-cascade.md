@@ -6,7 +6,7 @@ shape never reaches). Measured on the slot-open compiler (480de63eb's build/cycc
 (x86_64; the frontend, every target): identical. Not the type-position shape of
 issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md (`Pt<i64>` as a TYPE, 6.7.15's D6 /
 6.7.16's D7): this is a CALL with explicit type arguments.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF6) — never 7.x.
 **Severity:** Low — refused (rc 1), but none of the three errors names the mistake, two are invented.
 **Kind:** bug (diagnostics).
 

@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — found 2026-10-19 by the 6.7.16 frontend lane (unit F4) in its full `sh scripts/check.sh` on the
 lane head f626ea03c. Deterministic (not load): the gate builds stage1 = cycc(src) and stage1's `CYRIUS_IR=3` build and
 compares their sizes.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF1) — never 7.x.
 **Severity:** Medium for the release (check.sh is red, so release-gate step 3 is red) — the compiler is correct: the
 gate's own real assertion (the IR=3-built cycc reproduces the default cycc byte-identically) passes.
 **Kind:** bug (gate).

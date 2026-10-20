@@ -5,7 +5,8 @@ issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-wor
 since that fix). Pre-existing: the same output on the slot-open compiler (480de63eb) and after the fix, on x86_64,
 aarch64 (qemu) and cx (cxvm). Not that filing's surface (its table is the assignment; its own control line
 "`var u: Str = *pp; t = u;` exits 55" reads u before the header changes, so the alias does not show), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D74 — Its own copy.
 **Severity:** Medium — silent: u aliases the header `*pp` points at (a later write through either is seen by the other),
 where every other `*Str` source declaration copies it; no diagnostic. Not a security id (the developer's own source).
 **Kind:** bug — the declaration twin of the filing above. A `Str` declaration in a fn copies the header from a `*Str`

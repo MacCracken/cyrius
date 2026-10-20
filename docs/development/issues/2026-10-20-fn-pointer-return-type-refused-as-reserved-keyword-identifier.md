@@ -5,7 +5,7 @@
 `: *fn(..)` message is worth naming too". D9 named the trait member's line only ("a `*fn(..)` return gets its own
 line"); the fn's own message was not asked, so it is filed, not changed. Pre-existing: identical on the lane's compiler
 before GS2 (7a6df215c) and since 6.7.11 made `*fn( .. )` a parameter type.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG2) — never 7.x.
 **Severity:** Low — diagnostics only: the program is refused either way; the message names a non-problem and gives
 advice that does not apply (there is no variable, field or fn to rename).
 **Kind:** bug (diagnostics).

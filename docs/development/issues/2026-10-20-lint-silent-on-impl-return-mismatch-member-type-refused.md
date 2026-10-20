@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — raised 2026-10-20 by the 6.7.16 gensig review (file_as_issue 1) and measured by the lane's
 review-fix step on the lane head 7f3d2260d against the lane's base b73e8d5fe (x86_64; frontend only, so every
 target is the same).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG1) — never 7.x.
 **Severity:** Low. A full compile still refuses every program below. Lint passes them.
 **Kind:** tooling / diagnostics. What lint should report here is the user's call.
 

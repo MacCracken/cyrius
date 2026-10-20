@@ -4,7 +4,7 @@
 D20's filed surface (a `Str` handle NAME destination). Pre-existing: the same output on the slot-open compiler
 (480de63eb) and on the lane's compiler, on x86_64, aarch64 (qemu) and cx (cxvm). Not that filing's surface, so filed,
 not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS2) — never 7.x.
 **Severity:** Medium — a silent wrong value on valid code: the field gets the header's first word (its data pointer) as
 the handle, so `str_len(w.s)` reads whatever the string's bytes hold; no diagnostic. Not a security id (the developer's
 own source).

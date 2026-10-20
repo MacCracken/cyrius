@@ -5,7 +5,7 @@ fix (issues/2026-10-18-bare-declaration-refusal-reads-next-statement-as-initiali
 at their `;` and register `c`). This shape takes a different PARSE_VAR arm (the uninitialized-struct one) and is
 outside that filing. Measured on the slot-open compiler (480de63eb's build/cycc) and on the lane head 814a8fb36
 (x86_64; the frontend, every target): identical.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF2) — never 7.x.
 **Severity:** Low — refused either way (rc 1); the first error is the right one; the next statement is lost or one
 invented error follows.
 **Kind:** bug (diagnostic cascade).

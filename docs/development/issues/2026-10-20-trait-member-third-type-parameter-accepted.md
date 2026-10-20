@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-20 by the 6.7.16 gensig lane (unit GS3), implementing 6.7.16's D8 (a third type
 parameter is refused at its declaration, by name). Measured on the lane head after the D8 bite (cacd0ff68) and before it.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D92 — Refuse it at the member.
 **Severity:** Low — no value is computed wrongly that a fn would not refuse: an impl's method declaring the same three
 parameters is refused by D8 at the impl, and a member with a default body is refused when the default is parsed. What
 stays accepted is the member's own declaration, and an impl that declares fewer parameters for it.

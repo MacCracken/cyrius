@@ -4,7 +4,8 @@
 `*fn` arm for issues/2026-10-18-trait-member-fn-pointer-parameter-u128-return-refused.md. Pre-existing: identical on
 the lane's compiler before this unit (7a6df215c) and since 6.7.11 — 6.7.11's D34 (b) gave a fn's parameter "`_trs_type`'s
 grammar plus bare `*fn`", and the trait reader (`_trs_type`) kept the grammar without the bare `*fn`.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D91 — Yes, as a fn parameter does.
 **Severity:** Low — a valid trait member is refused (no wrong code); the impl's own method with the same parameter
 compiles and runs.
 **Kind:** bug (a valid signature refused: the trait reader is documented as PARSE_FN_DEF's grammar, 6.7.8, and

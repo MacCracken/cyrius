@@ -5,7 +5,8 @@ element (issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-pos
 struct given arguments, is now D6's line at the name). Measured on the lane's base (1e3aad696) and head, x86_64:
 identical. Not that filing's surface (a generic struct's own list is no D6 / D7 shape), and whether the shape should
 declare is the user's call, so it is filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D89 — Declare it, as `[Pt]` does.
 **Severity:** Low — refused (no miscompile), but by a parse error that names no type, and `slice<..>` cascades.
 **Kind:** language (a generic instance in a slice element position: declare it as `[Pt]` declares, or refuse it by
 name — the user's call).

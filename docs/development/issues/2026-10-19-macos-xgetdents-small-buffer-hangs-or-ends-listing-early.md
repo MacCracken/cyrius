@@ -4,7 +4,8 @@
 getdirentries64 for cxvm's getdents64 conversion
 (issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md). Not fixed there: it changes what a
 program computes (a new refusal or a different answer from `xgetdents` on macOS).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D77 — Linux's answer: the records that fit, then -22.
 **Severity:** Medium — a stdlib wrapper that, on a supported host, hangs its process unkillably (and
 every later access to that directory) or truncates a directory listing with a success-shaped answer.
 The developer's own code chooses the buffer; no boundary is crossed (a bug, not a vulnerability).

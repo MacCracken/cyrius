@@ -4,7 +4,8 @@
 integer x at its width): a narrow parameter's own read is its whole slot word, so `*(&y)` of one keeps the word too (as
 y itself). Pre-existing: the same output on the lane's compiler before S5 (45135d7db) and after it; x86_64, aarch64
 (qemu), cx (cxvm) and PE (wine) alike. Not D21's filed surface (D21 makes `*(&x)` read as x does), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D72 — Narrowed in the fn, like a narrow local.
 **Severity:** Medium — a silent wrong value: a narrow parameter holds values outside its type (511 in a `u8`), and
 arithmetic on it does not wrap at its width as a narrow local's does (`y += 1` of an `i16` 32767 is 32768 in a
 parameter, -32768 in a local). Not a security id (the developer's own source).

@@ -4,7 +4,7 @@
 shared front end), the same on the lane's compiler before F5 (11dfa7bff). Met while fixing
 issues/2026-10-18-commaless-tuple-literal-named-as-struct-literal.md (whose filing notes the two-element shape's first
 error as unchanged; its second was outside that surface).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF3) — never 7.x.
 **Severity:** Low — refused (rc 1); a second, invented error.
 **Kind:** bug (diagnostics: a refusal cascade).
 

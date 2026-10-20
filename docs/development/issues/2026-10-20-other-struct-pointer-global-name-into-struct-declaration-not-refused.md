@@ -6,7 +6,8 @@ shared front end, every target alike). Pre-existing: b73e8d5fe's compiler gives 
 62ba267ac: a top-level `var G: S = P;` with P a `*S` global's name is a copy at every size). D18 decided the `*S` name of
 the declared struct; a `*U` of ANOTHER struct is beyond its surface, so it is filed, not fixed (62ba267ac leaves it
 exactly as it was).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D87 — (a) Refuse it by name at every size.
 **Severity:** Medium — compiles with no diagnostic; the declaration reads U's bytes as a P (a handle onto the U object),
 or at 8 B or less at top level the address as the struct's word.
 **Kind:** bug (a missing refusal).

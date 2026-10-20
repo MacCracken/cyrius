@@ -4,7 +4,7 @@
 issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md, 7eb1197ea) on ecb and ach; reproduced on x86_64
 Linux with the l6716-tools server (cf2b34ef1's tree) by the lane's review-fix step. Not fixed there: the note's place in
 the stale bookkeeping is a design change to the unit publish, beyond the review's must-fix list.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; t16 lane, wave 3, unit TT1) — never 7.x.
 **Severity:** Low — an editor's Information line (`checked as part of src/main.cyr, which has 1 error in another
 file`) disappears from a clean fragment while its unit still has the error; no diagnostic is wrong, one is lost.
 **Kind:** tooling (programs/cyrius-lsp.cyr, `parse_and_send_diagnostics`).

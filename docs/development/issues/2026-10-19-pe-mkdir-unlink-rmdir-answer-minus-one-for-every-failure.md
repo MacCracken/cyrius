@@ -3,7 +3,9 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 platform lane (branch l6716-platform, unit P2), with
 the PE cross compiler built from the lane's tree, under wine 11.20 (a private WINEPREFIX) and on real cass
 (Windows 11, `C:\cyrius-tests`). The lane does not change these wrappers; the answer is the slot-open one.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP1) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D79 — Linux's negative errno, through the Windows error table.
+**Decision (user, 2026-10-20, the found issues' round):** D80 — -22, as Linux.
 **Severity:** Low — a portable program that tells "already exists" (`xmkdir` of an existing directory), "absent"
 (`xunlink` of a missing file) or "not empty" (`xrmdir`) apart by the errno reads a bare -1 on Windows, where
 every other target (and, since 6.7.14, a failed PE open / read / write / seek, and since 6.7.15 a failed close)

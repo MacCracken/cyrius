@@ -6,7 +6,8 @@ outside that decision's question ("a narrow integer variable x (i32, i16, u8 ...
 the dereference is the untyped 8-byte load of the slot. Pre-existing: the same output on the lane's compiler before S5
 (45135d7db) and after it (x86_64). Filed because 6.7.15's D21 vidya line reads `*(&x)` as x "for every x the compiler
 types", which a float x is not.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D70 — f itself, with f's type.
 **Severity:** Low — an unusual spelling (`*(&f)` for `f`); the arithmetic form warns ("integer arithmetic with an f64
 right operand"), and the bits are f's, so a store or a copy keeps the value; only typed use (an operator, a float
 parameter's conversion) goes wrong. Not a security id (the developer's own source).

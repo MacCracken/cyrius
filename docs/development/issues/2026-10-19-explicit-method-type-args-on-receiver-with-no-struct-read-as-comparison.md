@@ -6,7 +6,7 @@ generic method call in a CONST FN: F3 makes the definition check refuse `a.m<T>(
 call, and the refused const fn's run-time body step the call whole (`_ce_mx_skip`, through `_ce_fld_said`). The
 ordinary run-time shapes below never reach that stand-down and are unchanged by F3: measured identical on the lane
 before F3 (e6c35814f's build/cycc) and after it (x86_64; the frontend, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF6) — never 7.x.
 **Severity:** Low — every input below is refused in a normal compile (rc 1); the second error is invented. Under
 `--syntax-only` the last shape refuses a call the grammar accepts (its receiver's struct being declared elsewhere is
 `--syntax-only`'s own use case).

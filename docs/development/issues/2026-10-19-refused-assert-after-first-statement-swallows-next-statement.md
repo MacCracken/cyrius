@@ -4,7 +4,7 @@
 issues/2026-10-18-refused-declaration-names-cascade-in-const-contexts-bounds-and-uninit.md (an `#assert E.B == 1` row
 of a refused enum lost the following statement's `zz`). Identical on the lane before F4 (b2053aff7's build/cycc)
 for any refused `#assert`; not that issue's surface. x86_64; the frontend, every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF2) — never 7.x.
 **Severity:** Low — refused (rc 1); the next statement's own mistake is reported only after the `#assert` is fixed.
 **Kind:** bug (diagnostic).
 

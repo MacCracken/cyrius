@@ -5,7 +5,7 @@ narrow integer x at its width): a row's `i16` global, declared after the rows fi
 65534 for -2 — through `x` itself and so through `*(&x)`, which reads as x does. Pre-existing: the same output on the
 lane's compiler before S5 (45135d7db) and after it; x86_64, aarch64 (qemu), cx (cxvm) and PE (wine) alike. Not D21's
 filed surface (`*(&x)` agrees with `x` either way), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS3) — never 7.x.
 **Severity:** Medium — a silent wrong value: every read of the global (a plain read, a comparison, arithmetic, an
 argument) takes the zero-extended bytes, so a negative value reads as a large positive one; the store is right. Any
 program with a top-level statement (`alloc_init();`, `main();`) before a signed narrow global meets it. Not a security

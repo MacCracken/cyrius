@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — met 2026-10-20 by the 6.7.16 gensig review-fix step, on the review's probe dd5. Measured on
 the lane head 7f3d2260d and the lane's base b73e8d5fe (x86_64; frontend only): identical, so this is pre-existing.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG1) — never 7.x.
 **Severity:** Low. Diagnostics only: the compile already fails on the impl's own refusal.
 **Kind:** bug (diagnostics). This is the same class as 6.7.15's D4 hand-off for a return type. A difference the
 impl's own check refuses, formed or not, is that check's error and not the forming site's.

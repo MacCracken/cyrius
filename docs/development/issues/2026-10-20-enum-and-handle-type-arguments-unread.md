@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — raised 2026-10-20 by the 6.7.16 gensig review (file_as_issue 3, the enum) and widened to its
 class by the lane's review-fix step. Measured on the lane head 7f3d2260d and the lane's base b73e8d5fe (x86_64):
 identical on both, so this is pre-existing, not a regression.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D88 — By declaration: refused where none are declared, read where declared.
 **Severity:** Low. Nothing is computed wrongly from the written base name: an enum is an i64, and the handles are
 8-byte handles. But the list is never read, so a name in it that is no type (`Nope`) or a refused shape (`Pt<i64>`) is
 never reported, and one consequence (repro 2) is a trait impl whose return differs that compiles.

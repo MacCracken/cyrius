@@ -4,7 +4,7 @@
 `_fn_nodef`'s state at a call (issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md).
 Pre-existing since 6.7.15's `_cf_unres` arm; measured on the S3 lane head (ff6df9ff5's build/cycc) and on the S4
 compiler alike (x86_64; the frontend's, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS1) — never 7.x.
 **Severity:** Low — `cyrius lint` (`--syntax-only`) misses an error a full build reports; nothing compiles wrongly.
 **Kind:** diagnostics (--syntax-only).
 

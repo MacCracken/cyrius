@@ -4,7 +4,7 @@
 ASSIGNED into a `*Str` field takes its header's address; a frame's is refused). Pre-existing: the same output on the
 lane's compiler before D19 (4acc6f7c4) and after it, x86_64. Not that filing's surface (its destinations are
 assignments: `w.p = gt`, `GW.p = gt`, `pw.p = gt`, `*pp = gt`), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS2) — never 7.x.
 **Severity:** Medium — silent wrong value: the `*Str` field holds the string's bytes read as a header (`str_len(w.p)` 0
 here, a wild length for a longer string); a frame's `t` compiles silently where the same element into a `Str` field is
 refused as would-dangle. Not a security id (the developer's own source).

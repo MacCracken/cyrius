@@ -7,7 +7,7 @@ copied into a struct of another type (`_hl_psrc` / `_hl_pnm`, and the small-stru
 quotes the chain's last identifier, which for a call with arguments is an argument's name, not the source's. Not that
 issue's filed surface (no dereference), so filed, not fixed. Pre-existing: the same output on the lane's compiler
 before S5 (45135d7db) and after it (x86_64; the frontend's text, every target alike).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS1) — never 7.x.
 **Severity:** Low — the right statement is refused once, at the right column; the quoted name is an argument
 (`'q'`), which reads as if the variable q were the source.
 **Kind:** bug (diagnostic wording).

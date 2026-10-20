@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone at 4bd0d7ae2, unit Z1, x86_64), and
 identical on the slot-open compiler (b73e8d5fe's build/cycc).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D86 — (a) The list keeps the float's bytes it does not list.
 **Severity:** Low — a silently different value in a rare shape (an untyped float global redeclared as a bare byte
 list); no crash.
 **Kind:** bug — the guide's list rule ("over an earlier scalar **constant** it keeps the bytes it does not list") and

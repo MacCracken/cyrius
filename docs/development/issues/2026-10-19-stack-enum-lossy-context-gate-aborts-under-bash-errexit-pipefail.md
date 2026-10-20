@@ -6,7 +6,7 @@ and empty log with the slot-open compiler (480de63eb's build/cycc as `CYCC=`) an
 not touch this gate. `sh` (how check.sh drives it, `_chk_gate`) passes, so check.sh is green. Not repaired in the lane:
 the fix-up was tried and is not one line (two bare status captures, then six `$(grep -c ..)` captures each trip
 `set -e` in turn), so filed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS1) — never 7.x.
 **Severity:** Low — gate hygiene. The gate is `sh`-driven by check.sh, so no red row is hidden today; under
 `bash -eo pipefail` (a CI-style shell) it aborts at its first row whose program exits non-zero by design, printing
 nothing, which reads as a silent failure, not a named one. Not a security id (the project's own test script).

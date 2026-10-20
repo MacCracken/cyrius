@@ -4,7 +4,7 @@
 same on the lane's compiler before F5 (11dfa7bff). Met while implementing 6.7.16's D12 (the enum member separator,
 whose new error releases its own latch at the enum's `}` — `_enum_sep_end` — so a second enum's missing separator is
 its own error; the loop's older "expected identifier" does not).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF3) — never 7.x.
 **Severity:** Low — every such input is still refused (rc 1); the later errors appear one compile at a time.
 **Kind:** bug (diagnostics). Same class as issues/2026-10-18-later-bound-contract-refusals-swallowed-in-pass-one.md
 (pass 1 has no statement resync: a refusal's panic latch holds until pass 2) — a different reporter.

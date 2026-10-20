@@ -4,7 +4,7 @@
 ship every `[release] bins` entry (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md), cyrsign-efi among
 them. Measured on the Windows tarball scripts/build-windows-tarball.sh builds from the l6716-tools tree, under wine
 (a private prefix); `cyrsign-efi.exe --help` itself runs there and on cass (usage, rc 0).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; t16 lane, wave 3, unit TT3) — never 7.x.
 **Severity:** Low — a CLI verb that cannot reach a binary the install ships; the helper runs when called directly.
 **Kind:** tooling (cbt/cyrius.cyr).
 

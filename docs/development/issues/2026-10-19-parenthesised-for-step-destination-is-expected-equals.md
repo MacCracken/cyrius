@@ -5,7 +5,7 @@
 prints the parenthesised subscript read's words). Measured on the lane head before S3 (f3331c48e) and after it alike,
 x86_64 (frontend: every target alike). Pre-existing since each statement refusal landed (6.7.14's D24 (a), 6.7.15's
 D19, 6.7.16's D22): none reached the for step.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS1) — never 7.x.
 **Severity:** Low — a refusal (rc 1, no binary) whose message names the token after the `(` and not the rule; nothing
 that compiles is affected. Not a security id (the developer's own source).
 **Kind:** diagnostic (the for step's wording for shapes the statement refuses by name).

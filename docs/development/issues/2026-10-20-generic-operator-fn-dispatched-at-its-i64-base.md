@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone, unit Z2, x86_64; the operator dispatch
 is the shared frontend), and identical on the lane base (f8139264f's compiler).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ4) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D85 — (a) The operator binds T as the call does.
 **Severity:** Medium — a silent wrong value (no diagnostic): the operator spelling and the free spelling of the same
 call compute different things.
 **Kind:** bug — or, if a generic operator fn is not meant to be accepted, a missing refusal; which one is the user's

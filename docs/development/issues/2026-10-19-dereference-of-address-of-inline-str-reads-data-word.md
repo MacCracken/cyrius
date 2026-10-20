@@ -4,7 +4,8 @@
 handle rebinds h; p a `*Str`). Pre-existing: the same output on the lane's compiler before D20 (4acc6f7c4) and after it,
 x86_64. `&t` of an inline `Str` is not typed `*Str` by the dereference readers, so none of D20's, D14's or 6.7.15's
 `*Str`-dereference arms see it — not D20's filed surface (`*p` of a `*Str`), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 structs lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; s16 lane, wave 4, unit SS2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D71 — t itself: a handle on t.
 **Severity:** Low — silent wrong value (the string's bytes read as a header: `str_len` 0 for "xyz"); the assignment
 forms warn "assigning non-pointer to typed pointer". An unusual spelling (`*(&t)` for `t`). Not a security id (the
 developer's own source).

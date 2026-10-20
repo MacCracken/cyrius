@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone at aa0d05620, x86_64; the shared
 front end, every target) against the slot-open compiler (b73e8d5fe's build/cycc).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone review, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ1) — never 7.x.
 **Severity:** Low — the program is refused (rc 1) and the enum's own error is printed first; one invented error follows
 (one mistake, two errors: the dx_multi_error.sh K rows' rule).
 **Kind:** bug (diagnostic cascade).

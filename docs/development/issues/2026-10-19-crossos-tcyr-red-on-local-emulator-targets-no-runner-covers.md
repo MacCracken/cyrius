@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 by the 6.7.16 platform lane's gate (the per-file exit-code loop
 over the lane's .tcyr on x86_64, qemu-aarch64, the x86_64 cxvm and wine), and proved PRE-EXISTING at the lane base
 480de63eb (a `git archive` of it with its own build/cycc, the cx / aarch64 / PE compilers and cxvm built from it).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP4) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D75 — Named not-run where the target is known; qemu documented.
 **Severity:** Low — no runner runs these files there (check.sh's corpus gates run x86_64; the cross-OS legs run the
 corpus natively on pi / ecb / ach / cass, where all three are green; the cx crossos leg runs four other files), so
 no gate is red. The cost is a misread local reproduction: CLAUDE.md sends aarch64 repros to qemu-aarch64, and the

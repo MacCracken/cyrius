@@ -3,7 +3,8 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 platform lane (branch l6716-platform, unit P1, on the tree
 that maps fd 0 / 1 / 2 to the std handles in a close), under wine 11.20 (a private WINEPREFIX) and on real cass
 (Windows 11, `C:\cyrius-tests`). The same answer on the slot-open compiler 480de63eb under wine.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP1) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D78 — -9, as Linux.
 **Severity:** Low — no in-tree caller closes a negative fd on purpose; a portable program whose `sys_close` /
 `file_close` / `file_close_r` gets a failed open's `-1` (the common `fd = open(..); ... close(fd)` without a `< 0`
 check) reads a success on Windows where Linux reports -EBADF. Not a security issue (the program's own handle table;

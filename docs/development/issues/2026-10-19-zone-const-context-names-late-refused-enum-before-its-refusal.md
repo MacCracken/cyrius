@@ -8,7 +8,7 @@ DURING the zone scan (`_tl_scan1` -> PARSE_GVAR_REG -> PARSE_GVAR_ARR; PARSE_ENU
 statement — and so the late declarations — is known. That issue's triage named PARSE_GVAR_ARR, but its filed repro's
 array (`var arr: i64[E.B];`, line 5) is after the first statement (PARSE_VAR, pass 2), which F4 covers; the zone shape
 below was in no repro. Measured on F4's lane head (x86_64; the frontend, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF5) — never 7.x.
 **Severity:** Low — refused (rc 1); the declaration's error is printed, after one invented error.
 **Kind:** bug (diagnostic cascade).
 

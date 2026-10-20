@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — found 2026-10-20 by the 6.7.16 frontend lane review (lane head 478e4f6cd). The refusal itself
 is correct on all five compilers (measured below); the gap is that no gate would see it regress off x86_64.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF1) — never 7.x.
 **Severity:** Low (test coverage) — no defect today; a target fork that stops refusing D11's shape would ship green.
 **Kind:** bug (gate coverage).
 

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 frontend lane (l6716-frontend, unit F2, x86_64), identical
 on the slot-open compiler (480de63eb's build/cycc); the frontend, every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF2) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D68 — Refuse it with the local's words.
 **Severity:** Medium — `.field` on an integer-typed global compiles (rc 0) and reads / writes the global through an
 unrelated struct's field offset; on an `f64` / `f32` global the COMPILER segfaults (rc 139, no diagnostic). The local
 form is refused ("no struct type in scope for 'g'").

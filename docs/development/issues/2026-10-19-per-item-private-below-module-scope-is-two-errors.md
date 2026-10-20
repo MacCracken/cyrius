@@ -4,7 +4,7 @@
 `pub` rows of issues/2026-10-18-mod-use-pub-inside-fn-body-or-block-named-by-token.md (`private` is not one of the
 kinds the declaration-section rule names, so not that issue's surface). Identical on the lane before F4
 (b2053aff7's build/cycc) and on F4's lane head. x86_64; the frontend, every target.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF5) — never 7.x.
 **Severity:** Low — refused (rc 1) every time; the first error is right, a second (and a third) follows.
 **Kind:** bug (diagnostic cascade).
 

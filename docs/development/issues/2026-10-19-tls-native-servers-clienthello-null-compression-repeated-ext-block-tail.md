@@ -2,7 +2,10 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 platform lane (branch l6716-platform, after unit P4's D32
 commit d9bc1c3af), x86_64 Linux, the lane's `build/cycc`.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 platform lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D81 — Refuse with decode_error.
+**Decision (user, 2026-10-20, the found issues' round):** D82 — Refuse with illegal_parameter.
+**Decision (user, 2026-10-20, the found issues' round):** D83 — Refuse with illegal_parameter on both versions.
 **Severity:** Low — protocol conformance on the native servers' ClientHello parses (`_tn_12_parse_client_hello`,
 lib/tls_native_hs12.cyr; `_tn_parse_client_hello`, lib/tls_native_hs13.cyr). Every handshake still has to pass the
 server's signature and both Finished MACs over a transcript that holds these bytes; a peer could send the same choices

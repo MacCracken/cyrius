@@ -4,7 +4,7 @@
 front end, every target alike); pre-existing (7965f3685's compiler the same). Met beside
 issues/2026-10-18-zone-replay-reports-only-first-latched-error.md, whose fix (7a4f9ecdf) releases the panic latch at
 each replayed zone entry; this is the latch the replay ENDS with.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ1) — never 7.x.
 **Severity:** Low — the build is refused (rc 1); the first statement's mistake is reported only after the zone's is
 fixed.
 **Kind:** bug (diagnostic).

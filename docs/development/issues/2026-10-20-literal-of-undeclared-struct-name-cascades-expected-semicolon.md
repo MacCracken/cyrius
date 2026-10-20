@@ -4,7 +4,7 @@
 front end); the pair pre-exists (7965f3685's compiler prints it for line 2, and the fn form identically). Met while checking that the zone replay's per-entry latch release
 (issues/2026-10-18-zone-replay-reports-only-first-latched-error.md) adds no cascade of its own: it does not — it
 reports this pre-existing pair once per declaration, as a fn does.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ1) — never 7.x.
 **Severity:** Low — refused (rc 1); an invented second error (more in a fn).
 **Kind:** bug (diagnostics: a refusal cascade).
 

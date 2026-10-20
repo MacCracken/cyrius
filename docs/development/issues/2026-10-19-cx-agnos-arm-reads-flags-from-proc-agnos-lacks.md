@@ -4,7 +4,7 @@
 the one whole-line reader (`_cmdline_read`, issues/2026-10-18-cmdline-read-cuts-ts-path-at-255-bytes.md).
 Pre-existing (the 6.7.16 open's `src/main_cx.cyr` has the same arm). Not measured on agnos: no agnos runtime is
 reachable from this lane; the evidence below is the source and the agnos build's own diagnostics.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; t16 lane, wave 3, unit TT2) — never 7.x.
 **Severity:** Low — only a cx compiler built with `CYRIUS_TARGET_AGNOS=1` and run on agnos is affected. There it
 reads no flag at all: `cycc_cx --version` compiles its stdin instead of printing the version (the defect class
 6.6.6 fixed on the aarch64 and cx drivers), and `--syntax-only` is ignored.

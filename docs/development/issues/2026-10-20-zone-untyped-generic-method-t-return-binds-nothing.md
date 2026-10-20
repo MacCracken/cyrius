@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone, unit Z2, x86_64; the frontend is
 shared), and identical on the lane base (f8139264f's compiler).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ2) — never 7.x.
 **Severity:** Low — valid code refused (no miscompile); the same line after the first statement works.
 **Kind:** bug (the zone and after-the-first-statement typings disagree).
 **Discovered:** by unit Z2 while landing issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md

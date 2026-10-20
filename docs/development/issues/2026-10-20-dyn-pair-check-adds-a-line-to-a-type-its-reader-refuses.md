@@ -6,7 +6,7 @@
 parameter; D5's over-long list at the impl check and the site: ca1c163da). Each now gives exactly the reader's one
 line: dyn_checked.sh F8r1-F8r6 and F8p1-F8p11, traits_checked.sh TRR3 / TRR4. What stays open is the residual in
 *Residual* below. It was measured on the lane head 7f3d2260d and is identical on the lane's base b73e8d5fe.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG3) — never 7.x.
 **Severity:** Low. Diagnostics only: the compile already fails on the reader's own error.
 **Kind:** bug (diagnostics).
 

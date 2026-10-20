@@ -5,7 +5,8 @@ scripts/release-bins.sh builds every `[release] bins` entry for the Windows tarb
 cyriusly before). Measured by the lane's review-fix step on cass (C:\cyrius-tests, a `.bat` reading %errorlevel%) and
 under wine (a private prefix), with cyriusly.exe built from the l6716-tools tree as the tarball builds it
 (`CYRIUS_TARGET_WIN=1 cycc < programs/cyriusly.cyr`; T4's runs covered only `--help` / `--version`).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools review, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; t16 lane, wave 3, unit TT3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D84 — Ship it; those verbs refuse by name.
 **Severity:** Low — a shipped binary whose shell-backed verbs cannot work on its platform: `install` prints
 "Installing Cyrius <v>..." and stops with rc -1 and no reason, so a user reads it as a network or install failure.
 `use`, `version`, `list`, `uninstall`, `--help`, `--version` are native and run.

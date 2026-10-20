@@ -4,7 +4,8 @@
 2026-10-19) to issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md. Measured on the lane
 head (eafa5a40d) and the lane's base (1e3aad696), x86_64: identical. The tuple element reader is not one of the
 positions that filing lists, and refusing the shape changes what compiles, so it is filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D93 — Refuse it at the element's name.
 **Severity:** Low — nothing is miscompiled at the written name (the element is the scalar), but the list is never
 read, where every other position refuses `i64<u8>` once at the name (6.7.15's D6, 6.7.16's D7).
 **Kind:** language (the D6 / D7 rule — "Refuse it once, at the name" — in a reader neither filing listed: the user's

@@ -6,7 +6,7 @@ bake, its gates, three other crossos .tcyr files and the guide): `CYRIUS_CROSS_O
 scripts/cross-os-selfhost.sh cass crossos` → `SELFHOST_OK: cass`, then `ran 356 passed, 1 failed on cass`, `failing:
 exec_cmd_forwards_environment.tcyr(assert summary reports 0 assertions)`, `LIBTEST_FAIL: 1 test(s) on cass`, rc 1.
 ecb, ach and pi: SELFHOST_OK + LIBTEST_OK on the same tree.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; t16 lane, wave 3, unit TT1) — never 7.x.
 **Severity:** Medium for the release (release-gate step 4 runs the whole corpus on cass and goes red on this file);
 Low as a defect (a test-shape problem, no wrong value).
 **Kind:** test / gate (the tools lane's bd794af7a added the file; the lane's commit message says "green on ... cass

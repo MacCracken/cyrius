@@ -6,7 +6,7 @@ issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md: cyrius-lsp n
 lib/yukti.cyr is the one lib/ file that publishes an error that way. Measured on the l6716-tools tree (cycc 6.7.15,
 build/cycc = the lane's fixpoint) and against the upstream tag: ~/Repos/yukti at be504f5 (`release 2.3.17`) ships
 dist/yukti.deps = fs, hashmap, process — the same three the vendored bundle's requires block includes.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 tools lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; on main: the yukti 2.3.18 fold patch, the user's tag, then the re-vendor) — never 7.x.
 **Severity:** Medium — a folded stdlib that is not self-sufficient: a consumer that includes it without also including
 patra, sakshi and io first gets a compile error (and 25 undefined-function warnings); the stdlib rule is that `include
 "lib/<m>.cyr"` alone compiles clean. A fold defect: fixed upstream in yukti, re-vendored (never in lib/ in place).

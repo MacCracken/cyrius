@@ -7,7 +7,7 @@ cb004c8c8 / 62ba267ac) put the name `GP8` in the same class — through 6.7.15 i
 moment (0) and exited 0, silently wrong (A.v 0 where 6 is right). Met while landing
 issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md; not that filing's surface (its
 repro declares every source above the global), so filed, not fixed.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 zone lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; s16 lane, wave 4, unit SZ3) — never 7.x.
 **Severity:** Low — a source declared below the global it initialises is an ordering mistake the compiler already refuses
 over 8 B; at 8 B or less the program faults at startup (SIGSEGV), before its first statement, instead of being told.
 **Kind:** bug (a missing refusal).

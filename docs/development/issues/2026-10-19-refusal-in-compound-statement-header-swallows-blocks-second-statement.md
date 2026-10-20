@@ -4,7 +4,7 @@
 issues/2026-10-18-in-sync-refusal-in-assignment-swallows-next-statement.md, whose fix (`_refuse_in_sync`) covers a
 statement that refuses and then ends at its own `;`. Measured on the slot-open compiler (480de63eb's build/cycc) and
 on the lane head 814a8fb36 (x86_64; the frontend, every target): identical.
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF2) — never 7.x.
 **Severity:** Low — diagnostics: an error in the block is not reported (the build is refused, rc 1, and the first
 error is right; one fix-and-rebuild round more).
 **Kind:** bug (diagnostics).

@@ -6,7 +6,7 @@ a LATE module-scope declaration) F4 fixed by entering those names in pass 1 (`_d
 first statement — the brief's scope). A declaration refused one level down (`_decl_inner`, 6.7.15) enters its names
 only when PARSE_PROG parses that fn body, so a use in an earlier fn is reported. Measured on F4's lane head (x86_64;
 the frontend, every target).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF5) — never 7.x.
 **Severity:** Low — refused (rc 1); the declaration's error is printed, after one invented error.
 **Kind:** bug (diagnostic cascade).
 

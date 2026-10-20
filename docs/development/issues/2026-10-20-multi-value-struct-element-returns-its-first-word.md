@@ -5,7 +5,8 @@ issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md
 `(Box<i64>, *i32)` element on as a `Box<i64>` argument and faulted). Measured on the lane head (eafa5a40d) and on the
 lane's base (1e3aad696), x86_64, identical. Not this lane's surface (the element's type-argument reading is; what a
 struct element carries is not).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 gensig lane, wave 2; placed at the wave-2 integration, 2026-10-20 — the user: what 6.7.16 finds is fixed in 6.7.16, "INTO .16"; f16 lane, wave 4, unit FG3) — never 7.x.
+**Decision (user, 2026-10-20, the found issues' round):** D90 — Refuse the element at the return.
 **Severity:** Medium — silent: a 16 B struct element loses every word past its first, with no diagnostic; the binding
 is a plain word, and handing it to a by-value struct parameter reads it as an address (SIGSEGV).
 **Kind:** bug (codegen / typing: what the declared signature says).

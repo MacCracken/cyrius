@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — measured 2026-10-19 on the 6.7.16 frontend lane (l6716-frontend at 478e4f6cd, x86_64; the
 shared front end). Met while fixing issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md
 (its filed surface is a `: Str` CALL; 478e4f6cd's `_tp_call_pointee` takes calls only, so the field read is outside it).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 frontend lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; f16 lane, wave 4, unit FF4) — never 7.x.
 **Severity:** Low — a false warning on valid code that runs right.
 **Kind:** bug (diagnostics).
 

@@ -4,7 +4,7 @@
 the second of two full `sh scripts/check.sh` runs on the same tree, with the box's load average ~20 from other
 sessions. The unit touches only cbt/, programs/, scripts/check.sh's registry and one new toolchain gate — nothing
 this gate compiles (it includes only lib/simd.cyr and lib/syscalls.cyr).
-**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 libfix lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16") — never 7.x.
+**Placement:** 6.7.16 — Break 2, repair 6 (filed from the 6.7.16 libfix lane, wave 1; placed at the wave-1 integration, 2026-10-20 — the user, asked where what 6.7.16 files goes: "INTO .16"; p16 lane, wave 3, unit PP4) — never 7.x.
 **Severity:** Low — a gate flake: a full suite went red with no code change behind it; nothing a user meets. Same
 class as the archived 2026-10-16-simd-valueform-axis2b-reads-100-percent-under-host-load.md (axis 2b, fixed in
 6.7.14 by longer fixtures timed in microseconds); axis 2a kept its millisecond-scale fixtures.
