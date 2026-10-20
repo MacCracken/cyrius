@@ -17,9 +17,17 @@
 #   E3  the control: E1's copy with no SMALL          `test "$SMALL" = s`                  -> 1
 # E3 proves the line can fail, so E1 / E2 passing is the child seeing the variable (and a copy
 # that could not start reads 127, never 0 or 1). Runs on ecb, ach and pi through the release
-# gate's cross-OS leg (macOS is where the environment was empty). Windows has its own exec_cmd
-# (cmd.exe, CreateProcess inheriting the environment) and agnos no /bin/sh: there the file reports
-# only its summary. CHANGELOG [6.7.16]
+# gate's cross-OS leg (macOS is where the environment was empty).
+#
+# WINDOWS has its own exec_cmd (lib/process_win.cyr: cmd.exe, CreateProcess handed the parent's
+# environment block) and the same copy mechanism (exec_env builds the child's block), so a PE
+# build asserts through `cmd /c` lines — a file that asserts nothing there is graded a failure by
+# the cass leg (`N passed` must be >= 1):
+#   W1  SMALL=s                                       `if "%SMALL%"=="s"`                  -> 0
+#   W3  the control: W1's copy with no SMALL          the same line                        -> 1
+#   W4  the parent's own environment                  `if defined SystemRoot` (no copy)    -> 0
+# E2's 70,000-byte variable has no W2: a Windows environment variable is capped at 32,767
+# characters. agnos has no shell for exec_cmd's line and is not a lib-test host. CHANGELOG [6.7.16]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -36,6 +44,9 @@ args_init();
 
 # The copy's job: run the phase's line through exec_cmd and answer its exit code.
 fn _ecf_copy(ph): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return exec_cmd("if \"%SMALL%\"==\"s\" (exit 0) else (exit 1)");
+    #endif
     if (load8(ph) == 50) { return exec_cmd("test \"$SMALL\" = s && test ${#BIG} -eq 70000"); }
     return exec_cmd("test \"$SMALL\" = s");
 }
@@ -61,6 +72,18 @@ fn _ecf_run(env): i64 {
 }
 
 fn _ecf_rows(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("exec_cmd's child sees the variables its parent has (cmd.exe)");
+    var w1 = vec_new();
+    vec_push(w1, "CY_ECF_PHASE=1");
+    vec_push(w1, "SMALL=s");
+    assert_eq(_ecf_run(w1), 0, "W1 SMALL=s reaches the child of exec_cmd");
+    var w3 = vec_new();
+    vec_push(w3, "CY_ECF_PHASE=1");
+    assert_eq(_ecf_run(w3), 1, "W3 control: with no SMALL the same line fails");
+    assert_eq(exec_cmd("if defined SystemRoot (exit 0) else (exit 1)"), 0,
+      "W4 exec_cmd's child inherits the parent's own environment (SystemRoot)");
+    #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
     test_group("exec_cmd's child sees the variables its parent has");
