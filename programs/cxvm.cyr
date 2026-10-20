@@ -17,7 +17,9 @@
 #   into other calls, and the path calls answered -38), so running an untrusted .cyx == running a
 #   native binary with cxvm's privileges over those calls. A served call answers in the .cyx ABI's
 #   terms, x86_64 Linux's, on every host: a Darwin host's errno is mapped back (6.7.16; a guest on
-#   a Mac read Darwin's ELOOP -62 where Linux says -40 — _cx_errno_linux). Every other number answers -ENOSYS
+#   a Mac read Darwin's ELOOP -62 where Linux says -40 — _cx_errno_linux), and kill's signal goes to
+#   the host as the host's number (6.7.16; a guest's SIGUSR1 10 delivered Darwin's SIGBUS —
+#   _cx_sig_host). Every other number answers -ENOSYS
 #   (-38) without reaching the host (6.7.14, D55): a guest address never goes to the host.
 #   What cxvm DOES guarantee since 6.6.12 (the cxvm host-memory bug): a guest cannot reach the HOST's memory
 #   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
@@ -493,7 +495,7 @@ fn _cx_host_posix(sn, a, b, c): i64 {
     #endif
     #ifndef CYRIUS_TARGET_WIN
     if (sn == 110) { return sys_getppid(); }
-    if (sn == 62) { return sys_kill(a, b); }
+    if (sn == 62) { return _cx_host_kill(a, b); }
     if (sn == 32) { return syscall(SYS_DUP, a); }
     if (sn == 33) { return sys_dup2(a, b); }
     if (sn == 73) { return syscall(SYS_FLOCK, a, b); }
@@ -507,6 +509,61 @@ fn _cx_host_posix(sn, a, b, c): i64 {
     if (sn == 57) { return sys_fork(); }
     return _cx_host_linux(sn, a, b, c);
     #endif
+}
+
+# kill(pid, sig): the guest's signal is x86_64 Linux's number (the .cyx ABI) and reaches the host as
+# the host's (_cx_sig_host); one the host lacks answers -EINVAL without reaching it. Until 6.7.16 a
+# Darwin host got the Linux number as it was: SIGUSR1 10 is Darwin's SIGBUS, SIGCHLD 17 its SIGSTOP,
+# SIGSTOP 19 its SIGCONT — a guest's kill(pid, SIGCHLD) stopped the target.
+fn _cx_host_kill(pid, sig): i64 {
+    var hs = _cx_sig_host(sig);
+    if (hs < 0 && sig >= 0) { return hs; }
+    return sys_kill(pid, hs);
+}
+
+# x86_64 Linux's signal number -> the host's: Darwin's (sys/signal.h) on macOS, the same number
+# elsewhere (aarch64 Linux shares x86's; Windows has no kill route). The host peer's Signal names
+# hold Darwin's values. A Linux signal Darwin lacks — SIGSTKFLT 16, SIGPWR 30, the realtime band
+# 32-64 — answers -EINVAL (22 on both), as Darwin's kill answers a signal it does not know. Any
+# other number (0, a negative one, past 64) goes as it is, for the host to judge.
+fn _cx_sig_host(s): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (s == 7) { return 10; }          # SIGBUS
+    if (s == 10) { return SIGUSR1; }    # 30
+    if (s == 12) { return SIGUSR2; }    # 31
+    if (s == 17) { return SIGCHLD; }    # 20
+    if (s == 18) { return SIGCONT; }    # 19
+    if (s == 19) { return SIGSTOP; }    # 17
+    if (s == 20) { return 18; }         # SIGTSTP
+    if (s == 23) { return 16; }         # SIGURG
+    if (s == 29) { return 23; }         # SIGIO
+    if (s == 31) { return 12; }         # SIGSYS
+    if (s == 16 || s == 30) { return 0 - 22; }   # SIGSTKFLT, SIGPWR
+    if (s >= 32 && s <= 64) { return 0 - 22; }   # SIGRTMIN .. SIGRTMAX
+    #endif
+    return s;
+}
+
+# The host's signal number -> x86_64 Linux's, the reverse of _cx_sig_host, for a status word the
+# host reports (wait4's WTERMSIG / WSTOPSIG). The two Darwin signals x86_64 Linux lacks go to the
+# nearest: SIGEMT 7 (an emulator trap) to SIGILL 4, and SIGINFO 29 (a status request) to SIGPWR 30,
+# the number Linux's alpha port gives SIGINFO (`#define SIGPWR SIGINFO` there).
+fn _cx_sig_linux(d): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (d == 7) { return 4; }           # SIGEMT -> SIGILL
+    if (d == 10) { return 7; }          # SIGBUS
+    if (d == 12) { return 31; }         # SIGSYS
+    if (d == 16) { return 23; }         # SIGURG
+    if (d == SIGSTOP) { return 19; }    # 17
+    if (d == 18) { return 20; }         # SIGTSTP
+    if (d == SIGCONT) { return 18; }    # 19
+    if (d == SIGCHLD) { return 17; }    # 20
+    if (d == 23) { return 29; }         # SIGIO
+    if (d == 29) { return 30; }         # SIGINFO -> SIGPWR
+    if (d == SIGUSR1) { return 10; }    # 30
+    if (d == SIGUSR2) { return 12; }    # 31
+    #endif
+    return d;
 }
 
 # socket, listen, unshare, timerfd_create and epoll_create1, on a Linux host only: their arguments

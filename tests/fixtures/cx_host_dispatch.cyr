@@ -16,7 +16,7 @@
 # Windows' (the PE routes; -ENOSYS, -38, where the PE peer has only a stub). One line
 # `cxh lin=<mask> pe=<mask>` goes to stdout, then the run exits 77 when every row has the Linux
 # answer, 78 when every row has the Windows one, and otherwise the lowest failing Linux row's number
-# (1..13: row 1 is bit 1, row 13 bit 4096). The exit itself is the exit_group row: a 77 / 78 can
+# (1..14: row 1 is bit 1, row 14 bit 8192). The exit itself is the exit_group row: a 77 / 78 can
 # only come from exit_group(77 / 78), and exit(3) follows it in case it returns.
 #
 # The whole program sits under `#ifndef CYRIUS_ARCH_AARCH64`: its raw numbers are x86-Linux's, which
@@ -265,6 +265,12 @@ var d2 = _cxh_dup2();
 _cxh_row(2048, d2 == 0, d2 == 1);
 var en = _cxh_errno();
 _cxh_row(4096, en == 0, en == 1);
+# kill's signal is x86_64 Linux's number on every host (6.7.16,
+# issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
+# Darwin host maps the guest's number to its own, and refuses one it lacks with the same -22).
+# Windows: -38, the PE peer's kill is a stub.
+var k99 = syscall(62, me, 99);
+_cxh_row(8192, k99 == 0 - 22, k99 == 0 - 38);
 
 var line[64];
 store64(&line, 0x3D6E696C20687863);           # "cxh lin="

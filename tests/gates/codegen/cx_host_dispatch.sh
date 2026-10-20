@@ -3,9 +3,10 @@
 # A cx guest's syscall carries the guest's x86-LINUX number; cxvm serves the calls it lists through the
 # HOST's own stdlib wrappers (programs/cxvm.cyr `_cx_host_sys`), so each runs the call the guest names on
 # every host — on Windows through the PE routes, -38 where the PE peer has only a stub — and a failure
-# answers x86_64 Linux's errno on every host (6.7.16: a Darwin host's is mapped back, `_cx_errno_linux`).
-# What still differs from x86_64 Linux (on macOS a signal number is Darwin's; off x86_64 Linux and
-# Windows F_GETFL reports only the nine mapped bits) is filed; the fixture's rows do not reach it.
+# answers x86_64 Linux's errno on every host (6.7.16: a Darwin host's is mapped back, `_cx_errno_linux`),
+# and kill's signal reaches the host as the host's number (6.7.16, `_cx_sig_host`). What still differs
+# from x86_64 Linux (off x86_64 Linux and Windows F_GETFL reports only the nine mapped bits) is filed;
+# the fixture's rows do not reach it.
 #
 # THE DEFECT. Until 6.7.15 cxvm issued the listed calls as `syscall(sn, …)`, a RUNTIME number, and each
 # host's compiler renumbers a runtime number through a chain built for that host's own stdlib numbers.
@@ -35,7 +36,11 @@
 # issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
 # -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
 # unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
-# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38).
+# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38);
+# kill(getpid(), 99) -22 (6.7.16, issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
+# signal no host has; Windows -38). The signal map itself (SIGUSR1 10 is Darwin's 30, 10 there is
+# SIGBUS) is held by the ecb / ach legs of scripts/cross-os-selfhost.sh, which run the filed repro
+# (kill(getpid(), 10)) to its SIGUSR1 death, status 158 there.
 #
 # AXES
 #   1  the fixture built NATIVELY (x86_64 Linux, the oracle): exit 77, `cxh lin=0`
@@ -69,6 +74,9 @@
 # MU7 `_cx_host_enosys` answering -38 on macOS (cxvm's own refusal spelled Linux's way, then mapped
 #       as Darwin's ENOTSOCK) -> on ach exit 13, `lin=4096` (syscall(999) -88; every unserved number
 #       and fcntl's lock commands read -88), measured; local axes unchanged, as MU6
+# MU8 (6.7.16, the signal map) `_cx_host_kill` passing the guest's number as it is -> no local axis
+#       sees it (the identity on a Linux host): on ecb and ach the cross-OS legs' kill repro dies of
+#       Darwin's SIGBUS ("Bus error: 10", status 138, want 158), measured
 #
 # COMPILERS. CC=${CYCC:-build/cycc}; the cx compiler, cxvm (x86 and aarch64), the aarch64 cross
 # compiler and the PE cross compiler are built from THIS tree (CYCC_CX / CXVM override the first two).
@@ -209,5 +217,5 @@ else bad "axis 6:$a6"; fi
 WANT=$((6 - skip))
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: $G — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup and a failure's errno give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
+echo "PASS: $G — $pass/$WANT axes ($skip named SKIP): a cx guest's getpid / getppid / close / kill / dup / lseek / sched_yield / fork / exit_group, open's flags, fcntl's status flags, the path calls (mkdir / stat / symlink / readlink / rename / unlink / rmdir), dup2's self-dup, a failure's errno and kill's signal give the fixture's x86_64-Linux answers on the x86 and aarch64 cxvm (its Windows answers on the PE one) — cxvm serves them through the host's own wrappers, running the call the guest names, not the guest's number"
 exit 0

@@ -103,9 +103,12 @@ guarantee:
   errno on every host (6.7.16): a Darwin host's is mapped back by name (`_cx_errno_linux`), and a
   Darwin-only one reads as the Linux code nearest its meaning (`EPROCLIM` `EAGAIN`, the Sun RPC band
   `EPROTO`, `EBADEXEC` / `EBADARCH` / `EBADMACHO` `ENOEXEC`, …) — a Mac's cxvm answered Darwin's
-  numbers until then, `open(link, O_RDONLY | O_NOFOLLOW)` -62 (`ELOOP`) where Linux says -40. On
-  macOS a signal number is still Darwin's (filed), and off x86_64 Linux and Windows `F_GETFL`
-  reports only the nine mapped bits (below). The calls: `close`, `lseek`, `exit` / `exit_group`, `dup` /
+  numbers until then, `open(link, O_RDONLY | O_NOFOLLOW)` -62 (`ELOOP`) where Linux says -40.
+  `kill`'s signal is x86_64 Linux's number too (6.7.16): a Darwin host gets its own (`_cx_sig_host`;
+  SIGUSR1 10 is Darwin's 30), and a Linux signal Darwin lacks (`SIGSTKFLT`, `SIGPWR`, the realtime
+  band 32-64) answers -22 there — until then the guest's number went as it was, so `kill(pid,
+  SIGUSR1)` delivered Darwin's SIGBUS, `SIGCHLD` its SIGSTOP and `SIGSTOP` its SIGCONT. Off x86_64
+  Linux and Windows `F_GETFL` reports only the nine mapped bits (below). The calls: `close`, `lseek`, `exit` / `exit_group`, `dup` /
   `dup2`, `getpid` / `getppid`, the four uid / gid getters, `kill`, `fork`, `sched_yield`, `fsync` /
   `fdatasync`, `flock`, `ftruncate`, `fchmod` / `fchown`, `socket`, `listen`, `unshare`,
   `timerfd_create`, `epoll_create1`, and `fcntl` for its scalar commands (`F_DUPFD`, `F_GETFD` /

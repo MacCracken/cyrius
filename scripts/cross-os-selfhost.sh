@@ -259,6 +259,17 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # the child branch), on ecb kill ran lseek and getppid / dup / lseek / exit_group died of SIGSYS.
 # CHANGELOG [6.7.15] [6.7.16]
 cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.cyx
+# 6.7.16 — kill's signal on a Mac's cxvm (issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md,
+# the filed repro verbatim): the guest's kill(getpid(), 10) is x86_64 Linux's SIGUSR1, and cxvm on ecb /
+# ach must deliver Darwin's SIGUSR1 (30): status 158. Until 6.7.16 the number went as it was and 10 is
+# Darwin's SIGBUS ("Bus error: 10", status 138). CHANGELOG [6.7.16]
+cat > "$CO_TMP"/_co_cxs.cyr <<'CXS'
+# kill(getpid(), 10): x86_64 Linux's SIGUSR1 (default action: terminate).
+var p = syscall(39);
+syscall(62, p, 10);
+syscall(60, 0);
+CXS
+cat "$CO_TMP"/_co_cxs.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxs.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 #
@@ -396,7 +407,7 @@ case "$HOST" in
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
     _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ecb:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "$CO_TMP"/_co_cxs.cyx "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
     # main() is never called and the program exits with argc). Then cx C:
@@ -415,6 +426,7 @@ case "$HOST" in
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
+      && (_csrc=0; ./cxvm < _co_cxs.cyx > /dev/null 2>&1 || _csrc=$?; [ $_csrc -eq 158 ]) \
       && cat src/main_cx.cyr | ./r1r > cycc_cx && chmod +x cycc_cx && codesign -s - -f cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
@@ -479,7 +491,7 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
     _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "ach:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "$CO_TMP"/_co_cxh.cyx "$CO_TMP"/_co_cxs.cyx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
@@ -501,6 +513,7 @@ case "$HOST" in
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && (_chrc=0; ./cxvm < _co_cxh.cyx > /dev/null || _chrc=$?; [ $_chrc -eq 77 ]) \
+      && (_csrc=0; ./cxvm < _co_cxs.cyx > /dev/null 2>&1 || _csrc=$?; [ $_csrc -eq 158 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
