@@ -8851,8 +8851,7 @@ fn _vrcv_src(S, ti, ty, term): i64 {
     var o = c + 1;
     if (_icall_rs_at(S, c) == ty) { r = 2; }
     elif (_vrcv_byname(S, c, ty) == 1) {
-        if (_vrcv_k == 0) { return 1; }   # the receives below, as ever (`_vrcv_g`: an explicit instance)
-        r = 1;
+        r = 1;   # unwrapped: the receives below, as ever (`_vrcv_g`: an explicit instance) — 6.7.16 (D24), the whole source only
         o = _vcall_o;   # 6.7.13: past `<..>`
     } elif (_vrcv_mty(S, c) == ty) {
         r = 3;
@@ -9043,10 +9042,22 @@ fn _vrcv_tyerr(S, ti, verb): i64 {
     STI(S, sv);
     return 1;
 }
-# 1 = token `ti` starts a by-name call to a fn declared to return a vector — any: the receives check
-# its type (a different vector is refused there, before the parse).
-fn _vrcv_vcall(S, ti): i64 {
-    if (_vcall_fi(S, ti) < 0) { return 0; }   # 6.7.13: `g<T>(..)` too
+# 1 = token `ti` starts a by-name call to a fn declared to return a vector the by-name paths take or refuse
+# themselves: another vector than `ty` (refused there, before the parse), or `ty`'s when the call is the whole
+# source, ended by `term` (the receives). ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19): a `ty` call that only
+# STARTS the source (`mk2(41, 7) + 1`) is the value-form refusal's — the receives took the call and dropped the rest.
+fn _vrcv_vcall(S, ti, ty, term): i64 {
+    var fi = _vcall_fi(S, ti);   # 6.7.13: `g<T>(..)` too
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != ty) { return 1; }
+    if (TOKTYP(S, _call_close(S, _vcall_o) + 1) != term) { return 0; }
+    return 1;
+}
+# 6.7.16 (D24): 1 = token `ti` starts `IDENT (` whose call is the whole initialiser (`;` after its `)`) — what
+# PARSE_VAR's inline 16- / 32-byte receives take; they took any `IDENT (` and dropped what followed the call.
+fn _vrcv_wcall(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    if (TOKTYP(S, _call_close(S, ti + 1) + 1) != 5) { return 0; }
     return 1;
 }
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
@@ -9223,7 +9234,7 @@ fn _vrcv_decl_err(S, pscale, start): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     if (_scv_err == 1) { return 0; }
-    if (_vrcv_vcall(S, start) == 1) { return 0; }
+    if (_vrcv_vcall(S, start, pscale, 5) == 1) { return 0; }   # 6.7.16 (D24): not `pscale`'s call that starts it
     if (_vrcv_nofnw(S, start, GTI(S)) == 1) { return 0; }   # 6.7.13: the undefined-function path's (6.7.14: wrapped)
     return _vrcv_err(S, start, "initialised", _vrcv_fptr(S, start, GTI(S)));
 }
@@ -9239,7 +9250,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) {
         _vrcv_bad(S, GTI(S), lt, term, 1);   # a call of another vector, wrapped or not
-        return _vrcv_other(S, term);
+        return _vrcv_other(S, term, lt);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
     if (k == 4) { _vrcv_demit(S, li, lt, "assigned", noff); }   # 6.7.13 (D34): `*p`
@@ -9248,13 +9259,14 @@ fn _vrcv_asg(S, noff, term): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
-# The assigned source that is no vector: a by-name call declared to return one, and (6.7.13) a call
-# naming no fn (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
+# The assigned source that is no vector of type `lt`: a by-name call declared to return one the path below takes or
+# refuses (`_vrcv_vcall`; 6.7.16, D24: not `lt`'s call that only starts the source), and (6.7.13) a call naming no fn
+# (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
 # — once: not when its own parse reported (a vector global's read, `_vecg_refuse`), nor (6.7.14) for a wrapped call
 # naming no fn, which the parse registered — and the statement consumed (1).
-fn _vrcv_other(S, term): i64 {
+fn _vrcv_other(S, term, lt): i64 {
     var ti = GTI(S);
-    if (_vrcv_vcall(S, ti) == 1) { return 0 - 1; }
+    if (_vrcv_vcall(S, ti, lt, term) == 1) { return 0 - 1; }
     if (_vrcv_nofn(S, ti) == 1) { return 0 - 1; }   # 6.7.13: the undefined-function path names it
     var he = _had_error;
     PCMPE(S);
@@ -9957,11 +9969,29 @@ fn _vin_decl(S, pscale, sty, ann): i64 {
         return pscale;
     }
     var fi = _vcall_fi(S, GTI(S) + 1);
-    if (fi < 0) { return pscale; }
+    if (fi < 0) { return _vin_ustart(S, pscale, sty, ann); }   # 6.7.16 (D24): a method / `&f` / a wrap starting it
     var rs = GFRS(S, fi);
     if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
     if (pscale != rs) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
     return pscale;
+}
+# ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19) — AN UNTYPED DECLARATION WHOSE INITIALISER A VECTOR CALL STARTS
+# BUT IS NOT IS REFUSED BY NAME, as every annotated spelling is: `var w = mk2(41, 7) + 1;` dropped the `+ 1` on x86_64 /
+# aarch64 (161), added it to a lane on cx (165) and failed to parse on Windows ("expected ';', got '+'"); `var w =
+# s.m2() + 1;` bound one word (11; cx 165, PE 205) — guide § vector returns: there is no vector `+`. The call's vector
+# is the declaration's, so it meets the value-form refusal (`_vrcv_decl_err`: "a value-form vector local is
+# initialised only from .. - got `mk2`"), as `var w: f64v2 = s.m2() + 1;` does. The by-name call is read above (its
+# start infers, as ever); here a method, `callptr(&f, ..)` / `fncallN(&f, ..)` or a wrapped call that starts it
+# (`_vcall_vt` `start` 1, D26's peel). A whole call is `_vrcv_ity`'s (D37 / D28). In a fn, cursor on the `=`; the
+# declaration's `pscale`. CHANGELOG [6.7.16]
+fn _vin_ustart(S, pscale, sty, ann): i64 {
+    if (pscale != 0) { return pscale; }
+    if (sty != 0) { return pscale; }
+    if (ann != 0) { return pscale; }
+    var rs = _vcall_vt(S, GTI(S) + 1, 5, 1);
+    if (rs == 0) { return 0; }
+    if (_vcall_vt(S, GTI(S) + 1, 5, 0) != 0) { return 0; }   # the whole call: `_vrcv_ity`'s
+    return rs;
 }
 # ⛔ 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18) — A CALL DECLARED TO RETURN A VECTOR INTO A TOP-LEVEL
 # DECLARATION IS REFUSED, as the annotated vector global and the `*V` argument are there (a vector result needs a fn's
@@ -9974,14 +10004,13 @@ fn _vin_top(S, pscale, ann): i64 {
     if (pscale <= 0 - 2048) { return 0; }
     return _vtop_ref(S, GTI(S) + 1, ann);
 }
-# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a whole call declared to return
-# a vector (any spelling, any wrap; annotated, an unwrapped one may start it, `_vcall_vt`) refused — untyped, at the
-# call in the words of a top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method,
-# `&f`); annotated, at the `=`, "vector return type does not match the declared type". 1 = refused.
+# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a call declared to return a
+# vector that is it or starts it (any spelling, any wrap, `_vcall_vt`) refused — untyped, at the call in the words of a
+# top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method, `&f`); annotated, at the
+# `=`, "vector return type does not match the declared type". 1 = refused. 6.7.16 (D24 A): untyped, a call that only
+# starts it too — `var w = mkv(41, 7) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42).
 fn _vtop_ref(S, st, ann): i64 {
-    var start = 0;
-    if (ann != 0) { start = 1; }
-    var rs = _vcall_vt(S, st, 5, start);
+    var rs = _vcall_vt(S, st, 5, 1);
     if (rs == 0) { return 0; }
     if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
     var sv = GTI(S);
@@ -10344,7 +10373,7 @@ fn PARSE_VAR(S): i64 {
     if ((_is_simd128(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # any 16B/1-XMM vector receive
         var _f2c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f2c_look_ti) == 2) {
-            if (TOKTYP(S, _f2c_look_ti + 1) == 10) {
+            if (_vrcv_wcall(S, _f2c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
                 var _f2c_look_noff = TOKVAL(S, _f2c_look_ti);
                 var _f2c_look_fi = FINDFN(S, _f2c_look_noff);
                 if (_f2c_look_fi >= 0) {
@@ -10412,7 +10441,7 @@ fn PARSE_VAR(S): i64 {
     if ((_is_simd256(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _f4c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f4c_look_ti) == 2) {
-            if (TOKTYP(S, _f4c_look_ti + 1) == 10) {
+            if (_vrcv_wcall(S, _f4c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
                 var _f4c_look_noff = TOKVAL(S, _f4c_look_ti);
                 var _f4c_look_fi = FINDFN(S, _f4c_look_noff);
                 if (_f4c_look_fi >= 0) {

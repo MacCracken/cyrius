@@ -388,6 +388,25 @@
 #   M-TL2 the replay without `_vin_zone`             -> RED 50: TL1-TL3 TL7 TL9-TL13 TL15 (the zone) on five legs
 #   M-TL3 `_vtop_ref` asking a whole call when annotated -> RED 5: TL12 on five legs
 #   M-TL4 no vector-global guard (zone, late)         -> RED 10: TLV1 TLV2 on five legs (a second error)
+# 6.7.16 (D24 A, the user's decision, 2026-10-19; issues/2026-10-18-operator-after-vector-call-into-vector-local-
+# dropped.md) — an operator after a vector call: every by-name receive takes the call only when it is the WHOLE source
+# (`_vrcv_src`, PARSE_VAR's inline 16- / 32-byte receives through `_vrcv_wcall`, the assignment's `_vrcv_other` and the
+# declaration's `_vrcv_decl_err` through `_vrcv_vcall`), so a vector destination meets the value-form refusal, and an
+# untyped declaration whose initialiser a vector call of any spelling STARTS but is not takes that call's vector
+# (`_vin_ustart`) and is refused the same way; at top level the untyped declaration's start is refused as its whole
+# call is (`_vtop_ref`, 6.7.15's D26 words). Before (re-measured on this lane): `var w = mk2(41, 7) + 1;`, `var w:
+# f64v2 = ..`, `w = ..` gave 161 on x86_64 / IR=3 / aarch64 (the `+ 1` dropped), 165 on cx (added to a lane), and on
+# Windows "expected ';', got '+'"; `var w = s.m2() + 1;` bound one word (11; cx 165, PE 205); top-level `var w = mkv(41,
+# 7) + 1;` stored the result's word plus 1 (1; cx / PE 42). Rows OP (refused once; OP1-OP6 the filed rows verbatim) and
+# OPC1 (the whole call at every destination, width and spelling: 161) on host / host IR=3 / cx / aarch64 / win64.
+# Mutations (2026-10-20, measured):
+#   M-OP1 `_vrcv_src` taking a by-name call that only starts the source (the tree before) -> RED 15: OP3 OP9 OP14 on five
+#       legs (the assignment's by-name arm, an explicit instance's declaration)
+#   M-OP2 `_vrcv_wcall` reading `IDENT (` only (the tree before) -> RED 30: OP1 OP2 OP7 OP8 OP10 OP19 on five legs
+#   M-OP3 `_vrcv_vcall` exempting any by-name call (the tree before) -> RED 45: OP1-OP3 OP7-OP10 OP14 OP19 on five legs
+#   M-OP4 `_vin_decl` without `_vin_ustart`            -> RED 25: OP4 OP12 OP13 OP15 OP16 on five legs
+#   M-OP5 `_vtop_ref` asking a whole call when untyped (the tree before) -> RED 15: OP6 OP17 OP18 on five legs
+
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -1942,6 +1961,134 @@ tl_msg() {
     *) echo "vector return type does not match the declared type";;
     esac
 }
+# ---- 6.7.16 (D24 A, the user's decision, 2026-10-19; issues/2026-10-18-operator-after-vector-call-into-vector-local-
+# dropped.md): an operator after a vector call into a VECTOR LOCAL, or into an untyped declaration, is refused by name
+# (rows OP refused once; OPC the whole-call controls, 161) ---------------------------------------------------------------
+# OP1-OP6 the filed rows 1-6 verbatim (1 / 4 / 6 per the decision); OP7-OP10 f64v4 / f32v4 twins; OP11 `w = (mk2(..)) +
+# 1;`; OP12 `var w = (s.m2()) + 1;`; OP13-OP16 `callptr(&f, ..)`, an explicit instance, a chain's method, a parenthesised
+# head; OP17 / OP18 top level after the first statement (by name, a method); OP19 another operator; OP20 / OP21 a call of
+# another vector starting it (the mismatch's words, as before).
+OPF='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(41, 7); } }
+'
+OPH='include "lib/fnptr.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, 7); store64(&v + 16, 8); store64(&v + 24, 9); return v; }
+fn mkf(a, b, c, d): f32v4 { var v: f32v4; store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d); return v; }
+struct Mv { k; }
+struct W { s: Mv; j; }
+impl Mv { fn m2(self): f64v2 { return mk2(41, 7); } fn m4(self): f64v4 { return mk4(41); } }
+'
+op_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    OP1) printf '%s' "$OPF"'fn r(): i64 { var w = mk2(41, 7) + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
+    OP2) printf '%s' "$OPF"'fn r(): i64 { var w: f64v2 = mk2(41, 7) + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
+    OP3) printf '%s' "$OPF"'fn r(): i64 { var w: f64v2; w = mk2(41, 7) + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
+    OP4) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w = s.m2() + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
+    OP5) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w: f64v2 = s.m2() + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+' ;;
+    OP6) printf '%s' 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+var w = mkv(41, 7) + 1;
+syscall(60, w % 256);
+' ;;
+    OP7) printf '%s' "$OPH"'fn r(): i64 { var w = mk4(41) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP8) printf '%s' "$OPH"'fn r(): i64 { var w: f64v4 = mk4(41) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP9) printf '%s' "$OPH"'fn r(): i64 { var w: f64v4 = mk4(1); w = mk4(41) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP10) printf '%s' "$OPH"'fn r(): i64 { var f = mkf(1, 2, 3, 4) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP11) printf '%s' "$OPF"'fn r(): i64 { var w: f64v2 = mk2(1, 2); w = (mk2(41, 7)) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP12) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; var w = (s.m2()) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP13) printf '%s' "$OPH"'fn r(): i64 { var w = callptr(&mk2, 41, 7) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP14) printf '%s' "$OPH"'fn r(): i64 { var w = mkg<i64>(41, 7) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP15) printf '%s' "$OPH"'fn r(): i64 { var x: W; var w = x.s.m2() + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP16) printf '%s' "$OPH"'fn r(): i64 { var s: Mv = Mv { 1 }; var ps: *Mv = &s; var w = (*ps).m2() + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP17) printf '%s' "$OPH"'syscall(1, 1, "", 0);
+var w = mk2(41, 7) + 1;
+syscall(60, 0);
+' ;;
+    OP18) printf '%s' "$OPH"'var GS: Mv = Mv { 1 };
+var w = GS.m2() + 1;
+syscall(60, 0);
+' ;;
+    OP19) printf '%s' "$OPH"'fn r(): i64 { var w = mk2(41, 7) * 2; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP20) printf '%s' "$OPH"'fn r(): i64 { var w: f64v2 = mk4(41) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    OP21) printf '%s' "$OPH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); w = mk4(41) + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+OP_ROWS="OP1 OP2 OP3 OP4 OP5 OP6 OP7 OP8 OP9 OP10 OP11 OP12 OP13 OP14 OP15 OP16 OP17 OP18 OP19 OP20 OP21"
+op_msg() {
+    case "$1" in
+    OP1|OP2|OP19) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk2\`";;
+    OP3) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk2\`";;
+    OP4|OP5) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`s\`";;
+    OP6) echo "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    OP7|OP8) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk4\`";;
+    OP9) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mk4\`";;
+    OP10) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mkf\`";;
+    OP11) echo "$MSGV assigned only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`(...)\`";;
+    OP12|OP16) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`(...)\`";;
+    OP13) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`callptr\`";;
+    OP14) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`mkg\`";;
+    OP15) echo "$MSGV initialised only from a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written \`&f\`) or a dereference of a pointer to its type (\`*p\`) - got \`x\`";;
+    OP17) echo "'mk2' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    OP18) echo "'m2' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn";;
+    OP20) echo "vector return type does not match the declared type";;
+    OP21) echo "vector return type does not match the assigned variable";;
+    esac
+}
+# The controls: the whole call at every destination, every width and spelling (161).
+opc_src() {  # $1 row id -> source on stdout; exits 161 when right
+    case "$1" in
+    OPC1) printf '%s' "$OPH"'fn r(): i64 { var s: Mv = Mv { 1 };
+  var a = mk2(41, 7); var b: f64v2 = mk2(41, 7); var c: f64v2 = mk2(0, 0); c = mk2(41, 7);
+  if (load64(&a) * 10 + load64(&a + 8) != 417) { return 1; } if (load64(&b) * 10 + load64(&b + 8) != 417) { return 2; }
+  if (load64(&c) * 10 + load64(&c + 8) != 417) { return 3; }
+  var d = mk4(4); var e: f64v4 = mk4(1); e = mk4(4); if (load64(&d) + load64(&d + 24) + load64(&e + 16) != 21) { return 4; }
+  var f = mkf(1, 2, 3, 4); if (load32(&f) * 1000 + load32(&f + 4) * 100 + load32(&f + 8) * 10 + load32(&f + 12) != 1234) { return 5; }
+  var g = s.m2(); var h = (mk2(41, 7)); var i = callptr(&mk2, 41, 7); var j = mkg<i64>(41, 7);
+  if (load64(&g + 8) + load64(&h + 8) + load64(&i + 8) + load64(&j + 8) != 28) { return 6; } return 161; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+OPC_ROWS="OPC1"
+
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -2483,6 +2630,10 @@ refuse_tab_all host-ir3 "$CC" gt_src "$GT_ROWS" gt_msg CYRIUS_IR=3
 refuse_gaf_all host "$CC"
 refuse_tab_all host "$CC" tl_src "$TL_ROWS" tl_msg
 refuse_tab_all host-ir3 "$CC" tl_src "$TL_ROWS" tl_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" op_src "$OP_ROWS" op_msg
+refuse_tab_all host-ir3 "$CC" op_src "$OP_ROWS" op_msg CYRIUS_IR=3
+accept_tab_all host "$CC" hostr opc_src "$OPC_ROWS"
+accept_tab_all host-ir3 "$CC" hostr opc_src "$OPC_ROWS" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr gc_src "$GC_ROWS" CYRIUS_IR=3
 refuse_h_all host "$CC"
@@ -2522,6 +2673,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_tab_all cx "$W/cycc_cx" gt_src "$GT_ROWS" gt_msg
     refuse_gaf_all cx "$W/cycc_cx"
     refuse_tab_all cx "$W/cycc_cx" tl_src "$TL_ROWS" tl_msg
+    refuse_tab_all cx "$W/cycc_cx" op_src "$OP_ROWS" op_msg
+    accept_tab_all cx "$W/cycc_cx" cxr opc_src "$OPC_ROWS"
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
@@ -2563,6 +2716,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_tab_all aarch64 "$W/cycc_a64" gt_src "$GT_ROWS" gt_msg
         refuse_gaf_all aarch64 "$W/cycc_a64"
         refuse_tab_all aarch64 "$W/cycc_a64" tl_src "$TL_ROWS" tl_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" op_src "$OP_ROWS" op_msg
+        accept_tab_all aarch64 "$W/cycc_a64" a64r opc_src "$OPC_ROWS"
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
@@ -2609,6 +2764,8 @@ if command -v wine > /dev/null 2>&1; then
         refuse_tab_all win64 "$W/cycc_win" gt_src "$GT_ROWS" gt_msg
         refuse_gaf_all win64 "$W/cycc_win"
         refuse_tab_all win64 "$W/cycc_win" tl_src "$TL_ROWS" tl_msg
+        refuse_tab_all win64 "$W/cycc_win" op_src "$OP_ROWS" op_msg
+        accept_tab_all win64 "$W/cycc_win" wr_ opc_src "$OPC_ROWS"
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
@@ -2626,7 +2783,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -2648,11 +2805,12 @@ na_floor=$((na_floor + $(set -- $CR_ROWS; echo $#) * 3))   # 6.7.15: every CR ro
 na_floor=$((na_floor + $(set -- $N_ROWS; echo $#) * 3))   # 6.7.15: every N row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $WR_ROWS; echo $#) * 3))   # 6.7.15 (D28): every WR row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $GC_ROWS; echo $#) * 3))   # 6.7.15: every GC row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $OPC_ROWS; echo $#) * 3))   # 6.7.16 (D24): every OPC row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
