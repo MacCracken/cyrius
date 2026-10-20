@@ -564,14 +564,18 @@ if CYRIUS_TARGET_EFI=1 "$CC" < "$T/w5b.cyr" > "$T/w5b.bin" 2> "$T/w5b.err"; then
 else
     bad "W5: the EFI build (no efi_main) failed: $(grep -m1 '^error' "$T/w5b.err")"
 fi
-# W6: an error is reported once, as before, and a failing build warns nothing.
+# W6: each error is reported once (not again by the bake's pre-pass), one per bad declaration — 6.7.16: the zone
+# replay's panic latch is released at each entry, so `Nope.A` is reported beside `E2.A` (through 6.7.15 the first
+# latched error swallowed it) — and a failing build warns nothing.
 rows=$((rows + 1))
 printf 'kernel;\nenum E1 { A = 3; }\nenum E2 { Z = 1; }\nvar X = E2.A;\nvar Y = Nope.A;\nasm { 0xF4; }\n' > "$T/w6.cyr"
 if "$CC" < "$T/w6.cyr" > "$T/w6.bin" 2> "$T/w6.err"; then
     bad "W6: a wrong-enum initializer compiled"
 else
-    [ "$(grep -c '^error' "$T/w6.err")" = 1 ] || bad "W6: $(grep -c '^error' "$T/w6.err") errors, want 1"
+    [ "$(grep -c '^error' "$T/w6.err")" = 2 ] || bad "W6: $(grep -c '^error' "$T/w6.err") errors, want 2"
     grep "'A' is not a variant of 'E2'" "$T/w6.err" > /dev/null || bad "W6: the wrong-enum message changed"
+    grep "5:9: 'Nope' is not an enum" "$T/w6.err" > /dev/null || bad "W6: the second declaration's error is not reported"
+    [ "$(grep -c "is not a variant of 'E2'" "$T/w6.err")" = 1 ] || bad "W6: the wrong-enum error is reported more than once"
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
