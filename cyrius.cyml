@@ -45,7 +45,9 @@ stdlib = [
     "unicode/normalize", "unicode/_normalize_data",
 ]
 
-# cyrius-lsp never compiles these for diagnostics: bootstrap/cybs.cyr is assembly for the seed's
-# bootstrap/asm, not cycc input (docs/guides/editor-integration.md).
+# cyrius-lsp never compiles these for diagnostics (docs/guides/editor-integration.md):
+# bootstrap/cybs.cyr is assembly for the seed's bootstrap/asm, not cycc input;
+# src/main_aarch64_native.cyr is built only by the aarch64 compiler, raw (no [deps]), so every
+# x86_64 check of it — the [deps] prepend's x86 SYS_* numbers under its own — is false.
 [lsp]
-skip = ["bootstrap/cybs.cyr"]
+skip = ["bootstrap/cybs.cyr", "src/main_aarch64_native.cyr"]

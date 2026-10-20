@@ -125,11 +125,16 @@ includes resolve from the project root (a loose file's: the server's working
 directory), not from wherever the server was started.
 
 **`[lsp] skip`** lists files the server never compiles, as paths from the
-project root — a `.cyr` that is not cycc input. This repo's `cyrius.cyml`:
+project root — a `.cyr` that is not cycc input, or one only another compiler
+builds, which the server's own check would cover in false diagnostics (and, as
+an entry, publish them on the shared files it includes). This repo's
+`cyrius.cyml`:
 
 ```toml
 [lsp]
-skip = ["bootstrap/cybs.cyr"]   # assembly for the seed's bootstrap/asm
+skip = ["bootstrap/cybs.cyr", "src/main_aarch64_native.cyr"]
+# bootstrap/cybs.cyr: assembly for the seed's bootstrap/asm
+# src/main_aarch64_native.cyr: built only by the aarch64 compiler, raw (no [deps])
 ```
 
 ### Build / install

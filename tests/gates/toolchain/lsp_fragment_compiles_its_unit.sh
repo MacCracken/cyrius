@@ -53,7 +53,8 @@
 #   F23 a server KILLED after a lib/ module's compile (an editor that never sends shutdown) leaves no
 #       private directory: it is removed when the compile is done, not at exit
 #   S   the acceptance sweep: every src/, lib/ and bootstrap/cybs.cyr file of this tree opened in one
-#       session; each one's own list is empty but for named entries' and NOTEs' (see the row)
+#       session; each one's LAST list of the session (what the editor shows at its end) is empty but
+#       for named entries' and NOTEs' (see the row), so a later unit polluting a shared fragment fails
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
 #
 # PROVEN RED (measured when written; each mutant a scratch copy of the server built with this tree's
@@ -85,6 +86,11 @@
 #   `<source>` on the open file         F3 F4 F5 F16
 #   the unit's entry named absolute     F1 F6 F10 F11 F14 F14b F15 F18 F19 F20 F22 S
 #   a PEER publishing like an entry     F20
+#   this repo's cyrius.cyml without src/main_aarch64_native.cyr in [lsp] skip (the tools lane's review,
+#       6.7.16)  S: the fork's own duplicate SYS_* warnings, and its SELF unit's `syscall arity
+#       mismatch` warnings republished on the shared src/common/util.cyr, src/backend/common/env.cyr,
+#       runtime.cyr, src/frontend/lex.cyr, ts/driver_input.cyr and lib/syscalls_*.cyr — which their
+#       FIRST publish (the grading before) showed empty
 # THE SHELL: the gate re-runs itself under `bash -eo pipefail` (GitHub's `run:` semantics), as
 # lsp_diagnostics_file_column.sh does; `CY_LSP_GATE_INNER=1` keeps the shell that started it. A
 # pipeline that can end early is written so its status is never the verdict (6.7.15's lesson: the
@@ -373,15 +379,19 @@ if empty "$W/r22" p1/src/b.cyr && grep -q '^run: build --print-config | cwd='"$W
 else fail "F22 runs: $(tr '\n' ';' < "$W/r22.shim") / b.cyr: $(pub "$W/r22" p1/src/b.cyr | cut -c1-200)"; fi
 
 # ── S: the acceptance sweep — this tree's own src/ and lib/, and bootstrap/cybs.cyr ──────────
-# Every file opened in one session; each one's OWN list (its first publish) must be empty, but for
-# what these entries and notes really say (the files their unit is themselves, or a NOTE):
+# Every file opened in one session; each one's LAST list of the session — what the editor shows when
+# the sweep ends, after every later unit has published — must be empty, but for what these entries and
+# notes really say (the files their unit is themselves, or a NOTE). Its first publish alone could not
+# see a later SELF unit republishing a shared fragment (the aarch64-native fork's did, below):
 #   src/main.cyr, src/main_win.cyr, src/main_x86_macho.cyr — their own location-less
 #       `large static data` warning (an entry's, unchanged)
 #   lib/alloc_cx.cyr (cx), lib/syscalls_aarch64_linux.cyr (aarch64) — the one Information NOTE
-#   EXEMPT (filed from the 6.7.16 tools lane): src/main_aarch64_native.cyr, an entry the aarch64
-#       compiler builds, checked on x86_64 Linux with the [deps] prepend (duplicate SYS_* symbols:
-#       2026-10-19-lsp-checks-aarch64-native-fork-with-x86-deps-prepend.md); lib/yukti.cyr, a fold
-#       that does not compile alone (2026-10-19-yukti-fold-does-not-compile-alone.md)
+#   src/main_aarch64_native.cyr — named by this repo's `[lsp] skip` (built only by the aarch64
+#       compiler, raw: a check of it on x86_64 with the [deps] prepend read its SYS_* numbers as
+#       conflicts and republished `syscall arity mismatch` on util.cyr, env.cyr, runtime.cyr, lex.cyr,
+#       driver_input.cyr and lib/syscalls_*.cyr), so an empty list like every other file
+#   EXEMPT (filed from the 6.7.16 tools lane): lib/yukti.cyr, a fold that does not compile alone
+#       (2026-10-19-yukti-fold-does-not-compile-alone.md)
 tree_files() { ( cd "$ROOT" && { find src lib -name '*.cyr'; echo bootstrap/cybs.cyr; } | sort ); }
 NS=$(tree_files | wc -l | tr -d ' ')
 { trap '' PIPE; start; for f in $(tree_files); do open_msg Open "$ROOT/$f"; done; stop; true; } 2> /dev/null \
@@ -389,25 +399,26 @@ NS=$(tree_files | wc -l | tr -d ' ')
 sed -e "s|file://$ROOT/|TREE/|" "$W/rs" > "$W/rs.t"
 bad=""; seen=0
 for f in $(tree_files); do
-    first=$(grep "^\"uri\":\"TREE/$f\"," "$W/rs.t" | head -1 || true)
-    [ -n "$first" ] && seen=$((seen + 1))
+    # its LAST publish of the session
+    last=$(grep "^\"uri\":\"TREE/$f\"," "$W/rs.t" | awk '{ l = $0 } END { if (NR) print l }' || true)
+    [ -n "$last" ] && seen=$((seen + 1))
     case "$f" in
-        src/main_aarch64_native.cyr|lib/yukti.cyr) continue ;;
+        lib/yukti.cyr) continue ;;
         src/main.cyr|src/main_win.cyr|src/main_x86_macho.cyr)
-            sev=$(printf '%s' "$first" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
-            [ "$sev" = '"severity":2 ' ] && printf '%s' "$first" | grep -qF 'large static data' && continue ;;
+            sev=$(printf '%s' "$last" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
+            [ "$sev" = '"severity":2 ' ] && printf '%s' "$last" | grep -qF 'large static data' && continue ;;
         lib/alloc_cx.cyr|lib/syscalls_aarch64_linux.cyr)
-            sev=$(printf '%s' "$first" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
-            [ "$sev" = '"severity":3 ' ] && printf '%s' "$first" | grep -qF 'not compiled here' && continue ;;
-        *) [ "$first" = "\"uri\":\"TREE/$f\",\"diagnostics\":[]}}" ] && continue ;;
+            sev=$(printf '%s' "$last" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
+            [ "$sev" = '"severity":3 ' ] && printf '%s' "$last" | grep -qF 'not compiled here' && continue ;;
+        *) [ "$last" = "\"uri\":\"TREE/$f\",\"diagnostics\":[]}}" ] && continue ;;
     esac
-    # the first message (awk reads its input whole: a `| head -1` would end a writer with
+    # its first message (awk reads its input whole: a `| head -1` would end a writer with
     # SIGPIPE, the pipeline's status under pipefail, and `set -e` would end the gate unverdicted)
     bad="$bad
-    $f: $(printf '%s\n' "${first:-no publish}" | awk '{ i = index($0, "\"message\":\""); if (i) { s = substr($0, i + 11); print substr(s, 1, index(s, "\"") - 1) } else print substr($0, 1, 160) }')"
+    $f: $(printf '%s\n' "${last:-no publish}" | awk '{ i = index($0, "\"message\":\""); if (i) { s = substr($0, i + 11); print substr(s, 1, index(s, "\"") - 1) } else print substr($0, 1, 160) }')"
 done
 if [ "$NS" -ge 150 ] && [ "$seen" = "$NS" ] && [ -z "$bad" ]; then
-    ok "S the acceptance sweep: $NS files of src/, lib/ and bootstrap/cybs.cyr opened, each one's own list as it should be"
+    ok "S the acceptance sweep: $NS files of src/, lib/ and bootstrap/cybs.cyr opened, each one's last list as it should be"
 else fail "S the sweep ($seen of $NS files published; floor 150):$bad"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G"; exit 1; }
