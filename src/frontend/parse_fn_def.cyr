@@ -2993,6 +2993,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             } else {
                 _cur_fn_ret_scalar = _rtc;
                 STI(S, GTI(S) + 1);
+                _ngt_skip(S);   # 6.7.16 (D7): `: i64<u8>` refused at the name (it was "expected '{', got '<'")
             }
         }
     }

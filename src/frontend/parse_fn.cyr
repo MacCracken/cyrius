@@ -9433,7 +9433,8 @@ fn _tr_ret_differs(S, tp, fp): i64 {
 # 1 when the return type [a, ae) is refused by its own reader — the trait's for a member, PARSE_FN_DEF's for a method,
 # one set since 6.7.16's D9: a slice, `u128` or `Vec` as the type, a name that is no type, a name a fn's return does
 # not take (`_tn_ret_report`'s: u8..u64, f32, an enum) and a `*fn( .. )` (a method's is PARSE_FN_DEF's grammar
-# refusal, so the impl's "returns .." line beside it was a second report of one error). CHANGELOG [6.7.16]
+# refusal, so the impl's "returns .." line beside it was a second report of one error), and a non-generic `Pt<..>` /
+# `i64<..>` anywhere in it (6.7.16's D7 at a member, 6.7.15's D6 at a method). CHANGELOG [6.7.16]
 fn _tr_rt_bad(S, a, ae): i64 {
     if (a == ae) { return 0; }
     if (_sl_ann_at(S, a) == 1) { return 1; }
@@ -9443,7 +9444,10 @@ fn _tr_rt_bad(S, a, ae): i64 {
     if (_trs_ret_fnp(S, a) == 1) { return 1; }
     var k = a;
     while (k < ae) {
-        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
+        if (TOKTYP(S, k) == 2) {
+            if (_tn_resolve_at(S, k) == 0) { return 1; }
+            if (_ngt_tail(S, k) != 0) { return 1; }   # 6.7.16 (D7): `Pt<i64>`, refused by either reader
+        }
         k = k + 1;
     }
     return 0;
@@ -9715,6 +9719,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     if (TOKTYP(S, i) != 19) { return i; }
     _vec_ann_chk(S, i - 1, nm);   # 6.7.14 (D4): `v: Vec<T>` reads T, as in a fn definition
     _trs_targs(S, i - 1);         # 6.7.15 (D7): `b: Box<nosuch>` reads its list
+    _trs_ngt(S, i - 1);           # 6.7.16 (D7): `p: Pt<i64>`, `i64<u8>`
     var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
     while (i < q) {
         t = TOKTYP(S, i);
@@ -9744,6 +9749,14 @@ fn _trs_targs(S, ti): i64 {
     _targ_chk(S, ti + 1);
     if (_ta_refd == 1) { _trs_bad = 1; }
     _ta_refd = sv_rf;
+    return 0;
+}
+# 6.7.16 (D7): a trait member's non-generic `Pt<..>` / `i64<..>` (`ti` the name) is D6's refusal, at the name; it ends
+# the member's walk, as the reader's other refusals do. CHANGELOG [6.7.16]
+fn _trs_ngt(S, ti): i64 {
+    if (_trs_bad == 1) { return 0; }
+    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    if (_syntax_only == 0) { _trs_bad = 1; }
     return 0;
 }
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
@@ -13919,6 +13932,7 @@ fn _pty_list(S, i, loud): i64 {
 fn _pty_name(S, i): i64 {
     _vec_ann_chk(S, i, _pty_pnoff(S));   # 6.7.11: `p: **Vec<T>`, a `*fn(Vec<T>)` parameter
     _pty_targs(S, i);                    # 6.7.15 (D7): `cb: *fn(Box<Zork>): i64`
+    _ngt_refuse(S, i);                   # 6.7.16 (D7): `cb: *fn(Pt<i64>): i64`, `p: **Pt<i64>`
     var nm = TOKVAL(S, i);
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
@@ -16941,6 +16955,7 @@ fn _mret_elem(S, fi, quiet): i64 {
         else { t = _gtype_sid(S, fi, t); }
     }
     if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
+    if (quiet == 0) { _ngt_refuse(S, GTI(S)); }   # 6.7.16 (D7): `(Pt<i64>, i64)`
     STI(S, GTI(S) + 1);                 # consume the type IDENT
     SKIP_GENERICS(S);
     return t;

@@ -346,26 +346,48 @@ fn _tn_seen_at(S, ti): i64 {
 # reads the name's own type, so nothing cascades. A dyn (`dyn Show<..>`) is the dyn pre-pass's; a generic struct, `Vec`,
 # Result / Option / Tagged, cstring, an enum and a type parameter are not this shape. 1 = the shape. CHANGELOG [6.7.15]
 fn _ngt_refuse(S, nti): i64 {
+    var tail = _ngt_tail(S, nti);
+    if (tail == 0) { return 0; }
+    return _ngt_say(S, nti, tail);
+}
+# The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
+# (`_tr_rt_bad`) knows a return its reader refuses.
+fn _ngt_tail(S, nti): i64 {
     if (_MONOMORPH_OK != 1) { return 0; }   # CYRIUS_MONOMORPH=0: no struct is recorded as generic
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
     var noff = TOKVAL(S, nti);
     var sid = FINDSTRUCT(S, noff);
-    var tail = " takes no type arguments";
     if (sid > 0) {
         if (GSTP(S, sid - 1) != 0) { return 0; }
         if (_dyn_is(S, sid) == 1) { return 0; }
-        tail = " is not a generic struct: it takes no type arguments";
-    } elif (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
+        return " is not a generic struct: it takes no type arguments";
+    }
+    if (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
+    return " takes no type arguments";
+}
+# The refusal itself, at name token `nti` (`tail` its words): once, silent under --syntax-only, the latch put back. 1.
+fn _ngt_say(S, nti, tail): i64 {
     if (_syntax_only == 1) { return 1; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, nti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, nti);
-    ERR_IDENT(S, "", noff, tail, 0 - 1);
+    ERR_IDENT(S, "", TOKVAL(S, nti), tail, 0 - 1);
     STI(S, sv);
     _panic = 0;
     return 1;
+}
+# ⛔ 6.7.16 (D7) — THE REST OF D6'S POSITIONS: a pointer field `p: *Pt<i64>` (its pointee declared above or further
+# down: `_fld_ngt`), a trait member's type (`_trs_ngt`), a multi-value element, a `*fn( .. )` type and a `**Pt<..>`
+# parameter (`_pty_name`), a `*i32<u8>` local / global / return / field (`_ptr_annot`) compiled with the `<..>` unread;
+# a scalar return `: i64<u8>`, a by-value field `f: Pt<i64>` / `g: i64<u8>` and a slice element `[Pt<i64>]` were a parse
+# error (a return's cascaded). Each is refused once, at the name, with D6's words, and the list is stepped, so nothing
+# cascades (the user's D7, 2026-10-19). Cursor past a name: its non-generic `<..>` refused and stepped. CHANGELOG [6.7.16]
+fn _ngt_skip(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (_ngt_refuse(S, GTI(S) - 1) == 1) { SKIP_GENERICS(S); }
+    return 0;
 }
 # 1 when the name (its first 8 bytes `n`) is a builtin scalar: i8..i64, u8..u64, f32, f64, bool.
 fn _ngt_scalar(n): i64 {
@@ -3472,6 +3494,7 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
         STI(S, GTI(S) + 1);
         if (quiet == 0) { _vec_ann_chk(S, GTI(S) - 1, vnoff); }   # 6.7.11: `*Vec<T>` reads T
+        if (quiet == 0) { _ngt_refuse(S, GTI(S) - 1); }   # 6.7.16 (D7): `*i32<u8>` (`*Pt<..>` said so already)
         SKIP_GENERICS(S);
     } elif (PEEKT(S) == 10) {
         if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
@@ -3575,6 +3598,7 @@ fn _fld_ptr_late(S): i64 {
     }
     if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
     _fld_targ_chk(S, ti);
+    _fld_ngt(S, ti);   # 6.7.16 (D7)
     STI(S, ti + 1);
     SKIP_GENERICS(S);
     return 0 - (ti + 1);
@@ -3601,6 +3625,16 @@ fn _fld_targ_chk(S, ti): i64 {
     _ta_late = sv_lt;
     _ta_refd = sv_rf;
     return 0;
+}
+# 6.7.16 (D7): a pointer field's non-generic pointee given `<..>` (`ti` its name), refused at the field, once: a struct
+# declared above by `_ngt_refuse`; one declared further down (the reason this reader exists) by its declaration's
+# tokens, as `_fld_targ_chk` reads a generic one. A use re-reads the same tokens silently (`_ptr_tok_sid`).
+fn _fld_ngt(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) > 0) { return _ngt_refuse(S, ti); }
+    if (_declared_later_gen(S, TOKVAL(S, ti)) == 1) { return 0; }
+    return _ngt_say(S, ti, " is not a generic struct: it takes no type arguments");
 }
 # 1 when token `ti` is a type parameter bound to a struct right now, with no `<` after it.
 fn _fld_tp_struct(S, ti): i64 {
@@ -3771,7 +3805,17 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         _tn_refuse(S, ti, " as the element of slice ", vnoff);
         return 8;
     }
+    _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
     return _tn_bytes(S, c);
+}
+# A slice element's non-generic `<..>` (`ti` the name): refused at the name and stepped, the cursor on the list's last
+# token (the caller steps past it). It was "expected ']', got '<'". CHANGELOG [6.7.16]
+fn _tn_slice_ngt(S, ti): i64 {
+    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return 0;
 }
 
 # ⛔ 6.7.8 (C2-6a) — SLICES STAY FN-LOCALS, AND EVERY OTHER POSITION SAYS SO BY NAME (the user's
@@ -5408,10 +5452,12 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                         }
                     } elif (fscalar > 0) {
+                        _ngt_skip(S);   # 6.7.16 (D7): `g: i64<u8>`
                         # Store as negative width for sized scalars, 0 for i64 (default)
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
                     } else {
+                        _ngt_skip(S);   # 6.7.16 (D7): `f: Pt<i64>`, `h: f64<u8>` (a generic struct's list is `_sfield_named`'s)
                         _sfield_named(S, si, fnoff, tnoff, _stp, _sown);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                     }
                 }
