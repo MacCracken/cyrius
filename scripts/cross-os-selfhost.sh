@@ -1035,6 +1035,53 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — cyrius.exe sign-efi did not reach the cyrsign-efi.exe beside it (want rc 0 and its usage; without it rc 127 naming cyrsign-efi.exe). Remote output: $WRD\\_se*.txt. NOT SELFHOST_OK."
       exit 1
     fi
+    # 6.7.16 (6.7.16's D84) — the Windows tarball's cyriusly.exe refuses its POSIX verbs by name.
+    # install / update / setup / uninstall / cmdtools / use --global run /bin/sh, curl and rm, or
+    # re-point bin\ and lib\ as links where install.ps1 makes copies: here `install 6.7.15` printed
+    # "Installing Cyrius 6.7.15..." and exited -1, `uninstall` "rm -rf failed", and `use 6.7.14
+    # --global` failed and left a bin.cyrtmp.<pid>.<n> link. Each now exits 1 with `cyriusly: <verb>
+    # is not available on Windows: …` and nothing on stdout; the store (install.ps1's layout: bin\ a
+    # real directory) is left as it was; list and version give rc 0. The outputs come back here to be
+    # read. tests/gates/platform/win_cyriusly_posix_verbs_refused.sh is the wine twin. CHANGELOG [6.7.16]
+    cat programs/cyriusly.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_cyly.exe 2>/dev/null
+    rm -rf "$CO_TMP"/_cyh "$CO_TMP"/_co_cyh.tgz && mkdir -p "$CO_TMP"/_cyh/cyh/versions/6.7.14/bin "$CO_TMP"/_cyh/cyh/versions/6.7.15/bin "$CO_TMP"/_cyh/cyh/bin \
+      && printf '6.7.15' > "$CO_TMP"/_cyh/cyh/current && printf 'x' > "$CO_TMP"/_cyh/cyh/bin/cycc.exe \
+      && (cd "$CO_TMP"/_cyh && tar czf ../_co_cyh.tgz cyh) \
+      && scp -q $SSHO "$CO_TMP"/_co_cyly.exe "cass:$WRDS"/cyriusly.exe \
+      && scp -q $SSHO "$CO_TMP"/_co_cyh.tgz "cass:$WRDS"/_co_cyh.tgz \
+      && ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && tar xzf _co_cyh.tgz"' \
+      || { echo "SELFHOST_FAIL: cass — cyriusly.exe or its home could not be staged. NOT SELFHOST_OK."; exit 1; }
+    _CYL='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=C:\cyrius-tests\'"$RD"'\cyh&& cyriusly.exe'
+    _cybad=""; _cyn=0; _cyget=""
+    for _cv in "install 6.7.15" "update" "setup" "uninstall 6.7.14" "cmdtools list" "use 6.7.14 --global"; do
+      _cyn=$((_cyn + 1))
+      ssh $SSHO cass "cmd /v /c \"$_CYL $_cv > _cyr$_cyn.out 2> _cyr$_cyn.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" \
+        || _cybad="$_cybad [$_cv: rc not 1]"
+      _cyget="$_cyget cass:$WRDS/_cyr$_cyn.out cass:$WRDS/_cyr$_cyn.err"
+    done
+    ssh $SSHO cass "cmd /v /c \"$_CYL list > _cyk1.out 2> _cyk1.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [list: rc not 0]"
+    ssh $SSHO cass "cmd /v /c \"$_CYL version > _cyk2.out 2> _cyk2.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version: rc not 0]"
+    ssh $SSHO cass "cmd /c \"cd /d C:\\cyrius-tests\\$RD && dir /s /b /a cyh > _cyls.txt\"" || _cybad="$_cybad [the store could not be listed]"
+    mkdir -p "$CO_TMP"/_cyout && rm -f "$CO_TMP"/_cyout/*
+    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
+    _cyn=0
+    for _cvb in install update setup uninstall cmdtools "use --global"; do
+      _cyn=$((_cyn + 1))
+      [ -f "$CO_TMP/_cyout/_cyr$_cyn.out" ] && [ ! -s "$CO_TMP/_cyout/_cyr$_cyn.out" ] || _cybad="$_cybad [$_cvb: wrote to stdout]"
+      tr -d '\r' < "$CO_TMP/_cyout/_cyr$_cyn.err" 2>/dev/null | grep -qF "cyriusly: $_cvb is not available on Windows: " || _cybad="$_cybad [$_cvb: not refused by name]"
+    done
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk1.out 2>/dev/null | grep -qx '  \* 6.7.15 (active)' || _cybad="$_cybad [list: no '* 6.7.15 (active)']"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk2.out 2>/dev/null | grep -qx 'cyriusly 6.7.15' || _cybad="$_cybad [version: no 'cyriusly 6.7.15']"
+    if ! [ -s "$CO_TMP"/_cyout/_cyls.txt ] || grep -q 'cyrtmp' "$CO_TMP"/_cyout/_cyls.txt \
+      || ! tr -d '\r' < "$CO_TMP"/_cyout/_cyls.txt | grep -q '\\versions\\6\.7\.14$'; then
+      _cybad="$_cybad [the store changed: a *.cyrtmp* left, or versions\\6.7.14 removed]"
+    fi
+    if [ -n "$_cybad" ]; then
+      _co_cass_defender
+      echo "SELFHOST_FAIL: cass — cyriusly.exe (6.7.16's D84):$_cybad. Remote output: $WRD\\_cyr*.*, _cyk*.out, _cyls.txt. NOT SELFHOST_OK."
+      exit 1
+    fi
+    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global refused by name (rc 1, the store as it was); list and version rc 0"
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this

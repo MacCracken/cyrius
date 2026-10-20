@@ -78,6 +78,50 @@ fn _path_join(prefix, suffix): i64 {
     return out;
 }
 
+# ⛔ 6.7.16 (6.7.16's D84) — ON WINDOWS THE POSIX VERBS REFUSE BY NAME. The Windows tarball ships
+# cyriusly.exe since 6.7.16 (it is one of the [release] bins), and install, update, setup,
+# uninstall and cmdtools run /bin/sh, curl and rm, while `use --global` re-points <home>\bin and
+# <home>\lib as links where install.ps1 makes COPIES. Measured on cass: `install 6.7.15` printed
+# "Installing Cyrius 6.7.15..." and exited -1 with no reason, `uninstall` printed "rm -rf failed",
+# `use 6.7.14 --global` failed and left a bin.cyrtmp.<pid>.<n> link behind. Each now says it is
+# not available on Windows and what to do instead, and exits 1 before any output or change.
+# version, list, which, home, use <v> (the project pin) and help work there.
+# tests/gates/platform/win_cyriusly_posix_verbs_refused.sh; the cass leg. CHANGELOG [6.7.16]
+#ifdef CYRIUS_TARGET_WIN
+# `cyriusly: <verb> is not available on Windows: <why>` on stderr (`why` ends its line); 1, the
+# verb's exit code.
+fn _cy_win_refuse(verb, why): i64 {
+    _cy_err_s("cyriusly: ");
+    _cy_err_s(verb);
+    _cy_err_s(" is not available on Windows: ");
+    _cy_err_s(why);
+    return 1;
+}
+
+# The install.ps1 command that installs (or re-activates) release `ver` on stderr, indented.
+fn _cy_win_ps1_line(ver): i64 {
+    _cy_err_s("    powershell -ExecutionPolicy Bypass -File install.ps1 -Tarball cyrius-");
+    _cy_err_s(ver);
+    _cy_err_s("-x86_64-windows.tar.gz\n");
+    return 0;
+}
+
+# A copy of `p` with every '/' as '\' — a path a Windows user can paste into cmd.exe.
+fn _cy_win_slashes(p): i64 {
+    var n = strlen(p);
+    var out = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        var c = load8(p + i);
+        if (c == 47) { c = 92; }
+        store8(out + i, c);
+        i = i + 1;
+    }
+    store8(out + n, 0);
+    return out;
+}
+#endif
+
 # ----------------------------------------------------------------
 # Subcommands
 # ----------------------------------------------------------------
@@ -92,6 +136,18 @@ fn _cmd_version(): i64 {
     return 0;
 }
 
+# `list`'s line for a store with no version, naming how to install one: install.ps1 on Windows,
+# where `cyriusly install` refuses (6.7.16's D84). Returns 0.
+fn _cy_list_none(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wn = "  (none — install a release with install.ps1 -Tarball cyrius-<version>-x86_64-windows.tar.gz)\n";
+    syscall(1, 1, wn, strlen(wn));
+    return 0;
+    #endif
+    syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
+    return 0;
+}
+
 # `cyriusly list` — list installed versions, mark active with "* ".
 fn _cmd_list(): i64 {
     var home = _cyrius_home();
@@ -99,10 +155,7 @@ fn _cmd_list(): i64 {
     syscall(1, 1, "Installed versions:\n", 20);
     var cur_buf[64];
     _cyrius_current_into(&cur_buf, 64);
-    if (is_dir(str_from(versions_dir)) == 0) {
-        syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
-        return 0;
-    }
+    if (is_dir(str_from(versions_dir)) == 0) { return _cy_list_none(); }
     # 6.6.10: CHECKED — an unreadable versions/ printed "(none — install with …)", telling the
     # user nothing was installed. CHANGELOG [6.6.10]
     var entries = vec_new();
@@ -113,10 +166,7 @@ fn _cmd_list(): i64 {
         return 1;
     }
     var ec = vec_len(entries);
-    if (ec == 0) {
-        syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
-        return 0;
-    }
+    if (ec == 0) { return _cy_list_none(); }
     var i = 0;
     while (i < ec) {
         var entry = vec_get(entries, i);
@@ -177,6 +227,12 @@ fn _cmd_help(): i64 {
     syscall(1, 1, "    home               Show install directory\n", 46);
     syscall(1, 1, "    cmdtools [action]  Manage prompt integrations\n", 50);
     syscall(1, 1, "    help               Show this help\n", 38);
+    #ifdef CYRIUS_TARGET_WIN
+    var wh1 = "\nOn Windows, install, update, setup, uninstall, cmdtools and use --global are not\n";
+    var wh2 = "available (6.7.16): install.ps1 installs a release and switches the active version.\n";
+    syscall(1, 1, wh1, strlen(wh1));
+    syscall(1, 1, wh2, strlen(wh2));
+    #endif
     return 0;
 }
 
@@ -491,6 +547,15 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
         return _print_resolved_version();
     }
     if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }   # RS-04, 6.6.20
+    #ifdef CYRIUS_TARGET_WIN
+    if (is_global == 1) {   # 6.7.16's D84 — before any link is made or read
+        _cy_win_refuse("use --global", "install.ps1 makes <home>\\bin and <home>\\lib copies of the active ");
+        _cy_err_s("version, which this would re-point as links\n");
+        _cy_err_s("  switch the active version by running install.ps1 with its tarball:\n");
+        _cy_win_ps1_line(ver_cstr);
+        return 1;
+    }
+    #endif
 
     var home = _cyrius_home();
     var hlen = strlen(home);
@@ -503,6 +568,11 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
     if (is_dir(str_from(ver_dir)) == 0) {
         syscall(1, 2, "error: cyrius ", 14);
         syscall(1, 2, ver_cstr, vlen);
+        #ifdef CYRIUS_TARGET_WIN
+        _cy_err_s(" not installed.\n  install it with install.ps1 (cyriusly install is not available on Windows):\n");
+        _cy_win_ps1_line(ver_cstr);
+        return 1;
+        #endif
         syscall(1, 2, " not installed.\n  run: cyriusly install ", 40);
         syscall(1, 2, ver_cstr, vlen);
         syscall(1, 2, "\n", 1);
@@ -632,9 +702,9 @@ fn _cy_refuse_version(v): i64 {
 # deadline killed it, -1 = nothing ran. 6.6.20 (RS-04): what install / uninstall / cmdtools run
 # instead of a `/bin/sh -c` line built from the operand.
 # The POSIX body uses lib/process.cyr's fork/execve internals, which have no Windows peer; on PE
-# this is exec_vec (CreateProcess with the inherited environment, argv as given). Nothing ships a
-# Windows cyriusly — the verbs it runs are /bin/sh, curl and rm — but the file keeps compiling for
-# every target it compiled for before.
+# this is exec_vec (CreateProcess with the inherited environment, argv as given). No Windows verb
+# reaches it: what it runs is /bin/sh, so install, uninstall and cmdtools refuse by name there
+# first (6.7.16's D84); the arm keeps the file compiling for every target.
 fn _cy_run_argv(args): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var wr = exec_vec(args);
@@ -712,6 +782,13 @@ fn _cmd_uninstall(ver_cstr): i64 {
         syscall(1, 1, " not installed.\n", 16);
         return 0;
     }
+    #ifdef CYRIUS_TARGET_WIN
+    _cy_win_refuse("uninstall", "it removes the version with rm -rf through /bin/sh\n");
+    _cy_err_s("  remove the directory yourself: rmdir /s /q \"");
+    _cy_err_s(_cy_win_slashes(ver_dir));
+    _cy_err_s("\"\n");
+    return 1;
+    #endif
     # Recursive rm through `rm` itself (a native walk is future work). 6.6.20 (RS-04): as ARGV —
     # the shell script is a constant and the directory is its `$1`, so no shell parses the path.
     var rm_args = vec_new();
@@ -767,6 +844,12 @@ fn _cmd_install(ver_cstr): i64 {
         return 1;
     }
     if (_cy_version_ok(ver_cstr) == 0) { return _cy_refuse_version(ver_cstr); }   # RS-04, 6.6.20
+    #ifdef CYRIUS_TARGET_WIN
+    _cy_win_refuse("install", "it runs the POSIX installer (scripts/install.sh) through /bin/sh and curl\n");
+    _cy_err_s("  install a release from its tarball with install.ps1 (at the tarball's top level):\n");
+    _cy_win_ps1_line(ver_cstr);
+    return 1;
+    #endif
     var vlen = strlen(ver_cstr);
     syscall(1, 1, "Installing Cyrius ", 18);
     syscall(1, 1, ver_cstr, vlen);
@@ -788,6 +871,12 @@ fn _cmd_install(ver_cstr): i64 {
 
 # `cyriusly update` — check GitHub releases API for latest tag.
 fn _cmd_update(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    _cy_win_refuse("update", "it asks GitHub for the latest release through /bin/sh, curl, grep and sed\n");
+    _cy_err_s("  the releases are at https://github.com/MacCracken/cyrius/releases; install one with install.ps1:\n");
+    _cy_win_ps1_line("<version>");
+    return 1;
+    #endif
     syscall(1, 1, "Checking for updates...\n", 24);
     # Shell-out: curl GitHub releases API + grep tag_name. Plain JSON
     # parsing in cyrius is doable (lib/json.cyr) but for v5.11.10's
@@ -814,6 +903,12 @@ fn _cmd_update(): i64 {
 # in-progress content under a released name is what corrupted the 6.6.1/6.6.2 slots.
 # Check out the tag, or bump VERSION, or use a throwaway CYRIUS_HOME.
 fn _cmd_setup(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    _cy_win_refuse("setup", "it builds and installs a checkout through /bin/sh, awk and scripts/install.sh\n");
+    _cy_err_s("  install a release with install.ps1 (-Tarball <the release tarball>, or -Stage <its ");
+    _cy_err_s("extracted directory>)\n");
+    return 1;
+    #endif
     # Sanity check: must run from repo checkout.
     if (file_exists("VERSION") == 0) {
         syscall(1, 2, "error: cyriusly setup must run from a Cyrius repo checkout\n", 59);
@@ -933,6 +1028,11 @@ fn _cy_twin_path(): i64 {
 # 6.6.20 (RS-04): the operands ride as ARGV — this concatenated them into a `/bin/sh -c` line, so
 # `cyriusly cmdtools 'list;cmd'` ran `cmd`. CHANGELOG [6.6.20]
 fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    _cy_win_refuse("cmdtools", "the starship / p10k prompt integrations are the POSIX shell twin's ");
+    _cy_err_s("(scripts/cyriusly), run through /bin/sh\n");
+    return 1;
+    #endif
     var twin = _cy_twin_path();
     if (twin == 0) { return 1; }
     var ct_args = vec_new();
