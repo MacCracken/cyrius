@@ -3345,12 +3345,36 @@ fn _stmt_paren_dst(S, st): i64 {
     var k = _pwrap_k(S, st);
     var e = _pw_end;
     _pw_end = pe;
+    if (TOKTYP(S, e) == 28) { return _stmt_paren_sub(S, st, e); }   # 6.7.16 (D22): `(pn)[0] = 1;`
     if (_pf_asg_at(S, e) == 0) { return 0; }
     if (_pd_place(S, st + k, e - k) == 0) { return 0; }
     var p0 = _panic;
     _pd_err(S, st + k, e - k, e);
     _panic = p0;
     STI(S, st);
+    _cst_skip_sync(S);
+    return 1;
+}
+# ⛔ 6.7.16 — A SUBSCRIPT STORE THROUGH A PARENTHESISED BASE STAYS REFUSED, IN THE READ'S WORDS (the user's D22,
+# 2026-10-19): `(pn)[0] = 1;`, `(*(&pn))[1] = 2;`, `(pn)[0] += 1;` were "unexpected '('" — the token after the `)` is `[`,
+# neither 6.7.14's `( .. ).name` statement nor D19's parenthesised destination — and now print what the read `(pn)[0]`
+# prints, "a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T = ..;
+# q[i])", once at the `(`, the statement stepped in sync (the latch as it was), so the next statement is parsed
+# normally. `e` = the `[` after the outermost `)`; the `[..]` steps must end in an assignment, else 0 (cursor untouched:
+# `(pn)[0];` keeps "unexpected '('"). CHANGELOG [6.7.16]
+fn _stmt_paren_sub(S, st, e): i64 {
+    var x = e;
+    while (TOKTYP(S, x) == 28) {
+        x = _pf_sq_close(S, x);
+        if (TOKTYP(S, x) != 29) { return 0; }
+        x = x + 1;
+    }
+    if (_pf_asg_at(S, x) == 0) { return 0; }
+    var p0 = _panic;
+    STI(S, st);
+    _psub_err(S, ": a subscript's base is a name, a *T field or a call returning *T", 0 - 1,
+      " - name the pointer first (var q: *T = ..; q[i])", "", 0);   # once per site: its own `_derr_seen`
+    _panic = p0;
     _cst_skip_sync(S);
     return 1;
 }

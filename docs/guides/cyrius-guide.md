@@ -2303,7 +2303,11 @@ A whole assignment DESTINATION in parentheses is not a statement either (6.7.15,
 `(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(s.a) = 3;`, `(*(&s)) -= 1;` are refused once, by name,
 quoting the statement without its parentheses (*an assignment's destination is not parenthesised - write
 `*p += 1`*) — they were *unexpected '('*. Parentheses around a value that is no place (`(n + 1) = 7;`) and a tuple
-literal keep *unexpected '('*.
+literal keep *unexpected '('*. A SUBSCRIPT store through a parenthesised base — `(pn)[0] = 1;`, `(*(&pn))[1] = 2;`,
+`(pn)[0] += 1;` — is refused once, at the `(`, in the words the read `(pn)[0]` gets (6.7.16, the user's D22,
+2026-10-19: `a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T =
+..; q[i])`); it was *unexpected '('*. Dropping the parentheses is no fix there: `*pn[0]` is `*(pn[0])`. A classic-for
+step is not a statement: a parenthesised destination there (`(n) = 7`, `(pn)[0] = 7`) still says *expected '='*.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
