@@ -4939,7 +4939,8 @@ bundle module that calls an embed the bundle does not carry is refused by name, 
 gets the freshness check a generator script never had. `--modular` writes each carried embed as
 its own `embed_<NAME>` sub-module.
 
-`cyrius-lsp` does not read the manifest, so it shows `NAME()` as undefined.
+`cyrius-lsp` checks a project file with `cyrius check --with-deps`, which prepends the `[embed]`
+modules as every compile does, so its diagnostics know `NAME()`.
 
 ## Tests: `[test]`, `scope = "test"`, `test.cyml` (6.7.6)
 
