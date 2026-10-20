@@ -100,6 +100,10 @@
 # is): R33 `o.s = *qq` in a fn, R34 top level `GO.s = (*GQQ)` — ONE error each, no binary (both compiled through 6.7.15:
 # the pointer word stored into the field). The copies are double_pointer_struct_value.tcyr's wf_* rows.
 # Mutation (2026-10-19, CYCC=the lane's compiler before the fix): RED 2 — R33 / R34 compile.
+# 6.7.16 (the user's D17 (a), 2026-10-19; issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-
+# handle.md): a TOP-LEVEL `var G: P3 = *GQQ;` copies too, so it is refused by name — R35 in the declaration zone, R36
+# `(*GQQ)` after the first statement (both compiled through 6.7.15: a handle). Mutation (2026-10-20, CYCC=the lane's
+# compiler before the fix): RED 2 — R35 / R36 compile.
 # 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): the source is named as written,
 # from its `*` — R33 '*qq', R34 '*GQQ' (they were 'qq', 'GQQ'); every other printer: struct_arg_type_refused.sh DS.
 #
@@ -363,6 +367,23 @@ var GPQ: *Q3 = &GQ;
 var GQQ: **Q3 = &GPQ;
 GO.s = (*GQQ);
 syscall(60, GO.s.z);
+'
+# R35 / R36 (6.7.16, the user's D17 (a), 2026-10-19) — a TOP-LEVEL `var G: P3 = *GQQ;` copies the struct `*GQQ` points
+# at, as the same line in a fn does (R30), so a `**Q3`'s `*GQQ` is refused by name: R35 in the declaration zone, R36
+# `(*GQQ)` after the first statement — ONE error each, no binary (both compiled through 6.7.15: a handle on GQ).
+frefuse "R35 var Z: P3 = *GQQ  (the zone)" "cannot copy '*GQQ' into a variable of a different struct/vector type: 'Z'" "$P3Q3"'var GQ = Q3{7,8,9};
+var GPQ: *Q3 = &GQ;
+var GQQ: **Q3 = &GPQ;
+var Z: P3 = *GQQ;
+syscall(60, Z.z);
+'
+frefuse "R36 var T: P3 = (*GQQ)  (after a statement)" "cannot copy '*GQQ' into a variable of a different struct/vector type: 'T'" "$P3Q3"'var GQ = Q3{7,8,9};
+var GPQ: *Q3 = &GQ;
+var GQQ: **Q3 = &GPQ;
+var k = 0;
+k = 1;
+var T: P3 = (*GQQ);
+syscall(60, T.z);
 '
 # C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
 CMSG="compound assignment to the struct"
@@ -676,7 +697,7 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 59 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 59)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34
+[ "$nrefuse" -ge 61 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 61)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing

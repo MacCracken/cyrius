@@ -80,6 +80,16 @@
 #       the mix not warned (its replay dropped)
 #   C2. _gvk_fx evaluating loudly (_ce_top_expr)   -> RED, 1 check: RC does not build (CN's NaN refusal is an error)
 #   C3. _gvk_fx's f32 narrowing dropped            -> RED, 1 check: RC check 4 (an f32 read as binary64 bits)
+# MUTATION LEDGER (6.7.16 — an integer or enum operand in a float scalar's constant f64 expression baked, D15 (a); RC
+# checks 14 / 15, RM; issues/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md):
+#   0. real tree                                   -> GREEN (22 rows)
+#   F1. _gvk_fscan not taking an integer literal   -> RED, 5 checks: RC check 14 (CM read 0), 3 late warnings, CM named,
+#       RM check 1 and its late warning (const_init_bake_and_fold.sh: S33, T9-T12 row 12)
+#   F2. _gvk_fqual taking no `E.A`                 -> RED, 2 checks: RM check 2 and its late warning (T9-T12 row 13)
+#   F3. _gvk_fenum taking no bare enum constant    -> RED, 3 checks: RC check 15 (CE read 0), 3 late warnings, CE named
+#   F4. _gvi_baked not reparsing a mixed entry     -> RED, 3 checks: RC's two mix warnings, RM's and RM host's (none)
+#   F5. _gvi_mixw keeping the code it parsed       -> GREEN here; const_init_bake_and_fold.sh S33 RED (not
+#       byte-identical to the literal)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -261,9 +271,10 @@ fi
 # rounding (4, 8), a negation, an untyped global, a quotient that rounds, an infinity, a zero
 # (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md). Each was left to the late replay,
 # warned "use a constant", and read 0. Still late and named, once each: a call (CX), a NaN (CN: its bits are the
-# target's, refused by the evaluator, quietly), an integer or enum operand in f64 arithmetic (CM, CE: the replay
-# warns about the mix, so it runs). tests/tcyr/crossos/zone_float_constant_initializer.tcyr checks the host values
-# on x86_64, aarch64, cx and PE (const_init_bake_and_fold.sh T9-T12).
+# target's, refused by the evaluator, quietly). 6.7.16 (the user's decision D15 (a), 2026-10-19): an integer or enum
+# operand on the right of f64 arithmetic (CM, CE) is baked too — checks 14 / 15, no longer named — and the replay's
+# mix warning is still given, once each. tests/tcyr/crossos/zone_float_constant_initializer.tcyr checks the host
+# values on x86_64, aarch64, cx and PE (const_init_bake_and_fold.sh T9-T12).
 cat > "$T/rc.cyr" <<'EOF'
 kernel;
 const CF = 1.5;
@@ -299,7 +310,9 @@ ck(load64(&D), 0x3FD5555555555555, 9);
 ck(load64(&I), 0x7FF0000000000000, 10);
 ck(load64(&Z), 0, 11);
 ck(load64(&Q), 0xBFC999999999999A, 12);
-ck(load64(&CX) + load64(&CN) + load64(&CM) + load64(&CE), 0, 13);
+ck(load64(&CX) + load64(&CN), 0, 13);
+ck(load64(&CM), 0x3FF8000000000000, 14);
+ck(load64(&CE), 4, 15);
 syscall(60, 100);
 EOF
 rows=$((rows + 1))
@@ -307,14 +320,53 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rc.cyr" > "$T/rc.bin" 2> "$T/rc.err" && [ -
     chmod +x "$T/rc.bin"
     rc=0
     "$T/rc.bin" > /dev/null 2>&1 || rc=$?
-    [ "$rc" = 100 ] || bad "RC: the kernel program read a wrong float scalar at check $rc (1-3 the filed repro: = CF, = (1.5), = 1.5 + 1.0; 4 f32 = CF; 5 -CF; 6 arithmetic; 7 untyped; 8 f32 rounded; 9 1/3; 10 inf; 11 0.0 - 0.0; 12 -(CG + CG); 13 the late ones read 0)"
-    [ "$(nwarn "$T/rc.err")" = 4 ] || bad "RC: $(nwarn "$T/rc.err") late-initializer warnings, want 4 (CX, CN, CM, CE)"
-    for n in CX CN CM CE; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null || bad "RC: no warning names $n (left to the late replay)"; done
-    for n in G P A F N M K H D I Z Q; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null && bad "RC: $n is named (a constant f64 expression is baked since 6.7.15)"; done
-    [ "$(grep -c 'f64 arithmetic with a non-f64 right operand' "$T/rc.err")" = 2 ] || bad "RC: the mixed operands of CM / CE are not warned (the replay runs them)"
+    [ "$rc" = 100 ] || bad "RC: the kernel program read a wrong float scalar at check $rc (1-3 the filed repro: = CF, = (1.5), = 1.5 + 1.0; 4 f32 = CF; 5 -CF; 6 arithmetic; 7 untyped; 8 f32 rounded; 9 1/3; 10 inf; 11 0.0 - 0.0; 12 -(CG + CG); 13 the late ones read 0; 14 / 15 the 6.7.16 mixed operands)"
+    [ "$(nwarn "$T/rc.err")" = 2 ] || bad "RC: $(nwarn "$T/rc.err") late-initializer warnings, want 2 (CX, CN)"
+    for n in CX CN; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null || bad "RC: no warning names $n (left to the late replay)"; done
+    for n in G P A F N M K H D I Z Q CM CE; do grep "$WMSG '$n'" "$T/rc.err" > /dev/null && bad "RC: $n is named (a constant f64 expression is baked since 6.7.15; a mixed operand since 6.7.16)"; done
+    [ "$(grep -c 'f64 arithmetic with a non-f64 right operand' "$T/rc.err")" = 2 ] || bad "RC: the mixed operands of CM / CE are not warned once each ($(grep -c 'f64 arithmetic with a non-f64 right operand' "$T/rc.err"))"
     [ "$(grep -c '^error' "$T/rc.err")" = 0 ] || bad "RC: an error: $(grep -m1 '^error' "$T/rc.err") (the evaluator's NaN refusal must be quiet)"
 else
     bad "RC: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rc.err")"
+fi
+# RM (6.7.16) — the filed repro of issues/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md, verbatim: in a
+# CYRIUS_ELF64_KERNEL=1 build M (`1.5 + 1`) and N (`1.5 * E.A`) are in the image from program start (exit 100; through
+# 6.7.15 exit 1, M read 0), the two mix warnings are given once each at 3:21 / 4:23 and no late-initializer warning;
+# and the host build of the same file without `kernel;` exits 100 with its two warnings (2:21 / 3:23).
+cat > "$T/rm.cyr" <<'EOF'
+kernel;
+enum E { A = 3; }
+var M: f64 = 1.5 + 1;
+var N: f64 = 1.5 * E.A;
+fn ck(got, want, k): i64 { if (got != want) { syscall(60, k); } return 0; }
+ck(load64(&M), 0x3FF8000000000000, 1);
+ck(load64(&N), 0x0000000000000004, 2);
+syscall(60, 100);
+EOF
+rows=$((rows + 1))
+if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rm.cyr" > "$T/rm.bin" 2> "$T/rm.err" && [ -s "$T/rm.bin" ]; then
+    chmod +x "$T/rm.bin"
+    rc=0
+    "$T/rm.bin" > /dev/null 2>&1 || rc=$?
+    [ "$rc" = 100 ] || bad "RM: the kernel program read a wrong value at check $rc (1 M = 1.5 + 1, 2 N = 1.5 * E.A)"
+    [ "$(nwarn "$T/rm.err")" = 0 ] || bad "RM: $(nwarn "$T/rm.err") late-initializer warnings, want 0"
+    mw=$( (grep 'f64 arithmetic with a non-f64 right operand' "$T/rm.err" || true) | sed 's/^warning:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ')
+    [ "$mw" = "3:21 4:23 " ] || bad "RM: the mix warnings are at '$mw', want '3:21 4:23 ' (once each)"
+    [ "$(grep -c '^error' "$T/rm.err")" = 0 ] || bad "RM: an error: $(grep -m1 '^error' "$T/rm.err")"
+else
+    bad "RM: the ELF64 kernel build of the filed repro failed: $(grep -m1 '^error' "$T/rm.err")"
+fi
+rows=$((rows + 1))
+grep -v '^kernel;$' "$T/rm.cyr" > "$T/rmh.cyr"
+if "$CC" < "$T/rmh.cyr" > "$T/rmh.bin" 2> "$T/rmh.err" && [ -s "$T/rmh.bin" ]; then
+    chmod +x "$T/rmh.bin"
+    rc=0
+    "$T/rmh.bin" > /dev/null 2>&1 || rc=$?
+    [ "$rc" = 100 ] || bad "RM host: read a wrong value at check $rc"
+    mw=$( (grep 'f64 arithmetic with a non-f64 right operand' "$T/rmh.err" || true) | sed 's/^warning:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ')
+    [ "$mw" = "2:21 3:23 " ] || bad "RM host: the mix warnings are at '$mw', want '2:21 3:23 '"
+else
+    bad "RM host: the build failed: $(grep -m1 '^error' "$T/rmh.err")"
 fi
 # KC (6.7.15) — the filed shape in a default `kernel;` build (the ELF32 multiboot image): no warning, G's image
 # bytes are CF's binary64 bits with H's 7 after them, and no `movabs rax, 1.5` (the late store) in the code.
@@ -512,18 +564,22 @@ if CYRIUS_TARGET_EFI=1 "$CC" < "$T/w5b.cyr" > "$T/w5b.bin" 2> "$T/w5b.err"; then
 else
     bad "W5: the EFI build (no efi_main) failed: $(grep -m1 '^error' "$T/w5b.err")"
 fi
-# W6: an error is reported once, as before, and a failing build warns nothing.
+# W6: each error is reported once (not again by the bake's pre-pass), one per bad declaration — 6.7.16: the zone
+# replay's panic latch is released at each entry, so `Nope.A` is reported beside `E2.A` (through 6.7.15 the first
+# latched error swallowed it) — and a failing build warns nothing.
 rows=$((rows + 1))
 printf 'kernel;\nenum E1 { A = 3; }\nenum E2 { Z = 1; }\nvar X = E2.A;\nvar Y = Nope.A;\nasm { 0xF4; }\n' > "$T/w6.cyr"
 if "$CC" < "$T/w6.cyr" > "$T/w6.bin" 2> "$T/w6.err"; then
     bad "W6: a wrong-enum initializer compiled"
 else
-    [ "$(grep -c '^error' "$T/w6.err")" = 1 ] || bad "W6: $(grep -c '^error' "$T/w6.err") errors, want 1"
+    [ "$(grep -c '^error' "$T/w6.err")" = 2 ] || bad "W6: $(grep -c '^error' "$T/w6.err") errors, want 2"
     grep "'A' is not a variant of 'E2'" "$T/w6.err" > /dev/null || bad "W6: the wrong-enum message changed"
+    grep "5:9: 'Nope' is not an enum" "$T/w6.err" > /dev/null || bad "W6: the second declaration's error is not reported"
+    [ "$(grep -c "is not a variant of 'E2'" "$T/w6.err")" = 1 ] || bad "W6: the wrong-enum error is reported more than once"
     [ "$(nwarn "$T/w6.err")" = 0 ] || bad "W6: a failing build warned"
 fi
 
-[ "$rows" -ge 20 ] || bad "only $rows rows ran (floor 20)"
+[ "$rows" -ge 22 ] || bad "only $rows rows ran (floor 22)"
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: kmode_enum_initializer_baked ($fail checks failed over $rows rows)"
     exit 1

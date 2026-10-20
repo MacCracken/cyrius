@@ -155,12 +155,29 @@ KU='struct P { x; }\nfn main() {\n'
 cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:9: undefined variable 't'"
 cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:9: undefined variable 't'" "4:16: undefined variable 'u'"
 cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:8: undefined variable 't'"
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16)"; exit 1; }
+# Z1-Z8 (6.7.16, issues/2026-10-18-zone-replay-reports-only-first-latched-error.md) — THE DECLARATION ZONE REPORTS ONE ERROR
+#     PER DECLARATION, as a fn's statements do. EMIT_GVAR_INITS replayed its entries without releasing the panic latch,
+#     so the first latched error swallowed every later entry's: Z1 (the filed repro, verbatim) printed only 2:13, Z2 one
+#     "unknown struct field", Z3 one "expected ','", Z4 (a destructure's zone check between two others) one, Z8 (a bad
+#     declaration between good ones) one. Controls: Z5 one bad declaration is one error; Z6 the pair after a first
+#     statement (PARSE_VAR: a statement each, two before too); Z7 a vector-call pair (its refusal latches nothing: two
+#     before too). RED with the latch clear reverted (6.7.16's 7965f3685 as CYCC): Z1-Z4 Z8.
+ZG='fn g(): i64 { return 1; }\n'
+ZP='struct P { a; b; }\n'
+cascade Z1 2 "$ZG"'var p = g(1 2);\nvar q = g(3 4);\nsyscall(60, 0);\n' "2:13: expected ')', got number 2" "3:13: expected ')', got number 4"
+cascade Z2 2 "$ZP"'var p = P { c: 1, b: 2 };\nvar q = P { d: 1, b: 2 };\nsyscall(60, 0);\n' "2:16: unknown struct field in initializer" "3:16: unknown struct field in initializer"
+cascade Z3 2 "$ZP"'var p = P { 3 4 };\nvar q = P { 5 6 };\nsyscall(60, 0);\n' "2:15: expected ',' between struct literal elements" "3:15: expected ',' between struct literal elements"
+cascade Z4 3 "$ZG"'fn h(): i64 { return 1; }\nvar p = g(1 2);\nvar a, b = h();\nvar q = g(3 4);\nsyscall(60, 0);\n' "3:13: expected ')', got number 2" "4:12: multi-value destructure binds 2 names, but 'h' returns 1 value" "5:13: expected ')', got number 4"
+cascade Z5 1 "$ZG"'var p = g(1 2);\nvar q = 5;\nsyscall(60, q);\n' "2:13: expected ')', got number 2"
+cascade Z6 2 "$ZG"'syscall(39);\nvar p = g(1 2);\nvar q = g(3 4);\nsyscall(60, 0);\n' "3:13: expected ')', got number 2" "4:13: expected ')', got number 4"
+cascade Z7 2 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nstruct S { k; }\nimpl S { fn mv(self): f64v2 { return mkv(41, 7); } }\nvar s: S = S { 1 };\nvar w = mkv(41, 7);\nvar v = s.mv();\nsyscall(60, 0);\n' "5:9: 'mkv' returns a vector by value" "6:9: 'mv' returns a vector by value"
+cascade Z8 2 "$ZG"'var a = 1;\nvar p = g(1 2);\nvar b = 2;\nvar q = g(3 4);\nvar c = 3;\nsyscall(60, a + b + c);\n' "3:13: expected ')', got number 2" "5:13: expected ')', got number 4"
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z8)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), valid emits"
 exit 0

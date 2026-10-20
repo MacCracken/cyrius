@@ -173,6 +173,80 @@ fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
 var TG1 = mkg1(33);
 var TG2 = mkg1<i32>(30);
 fn tg_read(): i64 { return TG1.v + TG2.v; }
+# --- 6.7.16: whatever carries the type argument (issues/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md) ---
+# The zone read a carrying argument only as a struct, a lone integer literal or a lone global, so an expression, `-3`,
+# a float literal, a call returning a scalar, `&n`, a struct carrier and a bounded generic struct bound nothing (`x.v`
+# was "no struct type in scope for 'x'"); it now binds as the replay's call does. After a statement (TH*) below. TG9's
+# carrier is a global swept below it (0 when TG9 is made); TG11 reads it made.
+struct ZBox<T> { v: T; }
+trait ZShow { fn zshow(self): i64; }
+struct ZG<T: ZShow> { v: T; }
+impl ZShow for P1 { fn zshow(self): i64 { return self.a + 1; } }
+fn mkzc<T>(b: ZBox<T>): G1<T> { var g: G1<T>; g.v = b.v; return g; }
+fn mkzb<T: ZShow>(v: T): ZG<T> { var g: ZG<T>; g.v = v; return g; }
+fn mkzp<T>(p: *T): G1<T> { var g: G1<T>; g.v = *p; return g; }
+fn zsc(): i64 { return 30; }
+fn zid<T>(v: T): T { return v; }
+fn mkzbox(): ZBox<i32> { var b: ZBox<i32>; b.v = 33; return b; }
+fn zt4(g: G1<i32>): i64 { return g.v; }
+var ZN: i32 = 33;
+var ZM = 33;
+var TG3 = mkg1(30 + 3);
+var TG4 = mkg1(-3);
+var TG5 = mkg1(1.5);
+var TG6 = mkg1(zsc() + 3);
+var TG7 = mkg1(zid(1.5));
+var TG8 = mkzp(&ZN);
+var TG9 = mkzc(ZBX);
+var ZBX = mkzbox();
+var TG10 = mkzb(GP1);
+var TG11 = mkzc(ZBX);
+var TG12 = mkg1(&ZM);
+fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG10.v.zshow(); }
+# --- 6.7.16: a generic method's generic struct result (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
+# `var y = b.mkg(P);` / `b.mkg<i32>(33)` with `fn mkg<T>(self, v: T): G1<T>` bound nothing in the zone (`y.v`: "no
+# struct type in scope for 'y'"); they are the instance the call reaches, as after the first statement (TN*, below). A
+# generic operator fn's result is its base (`ZB_add<T>`: the dispatch calls the base); TM9 an explicit generic method
+# returning a plain struct.
+struct ZB { a; }
+impl ZB {
+    fn zmkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+    fn zmk<T>(self, v: T): P1 { var p: P1; p.a = v; return p; }
+}
+fn ZB_add<T>(l: ZB, r: T): G1<T> { var g: G1<T>; g.v = l.a + r; return g; }
+var GZB = ZB { 3 };
+var TM6 = GZB.zmkg(GP1);
+var TM7 = GZB.zmkg<i32>(33);
+var TM8 = GZB + 30;
+var TM9 = GZB.zmk<i32>(33);
+fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
+# --- 6.7.16 (the user's decision D16 (a), 2026-10-19): an if-expression of struct branches binds the struct ---
+# `var G = if (c) { B1 } else { B1 };` at top level bound nothing: `G.a` was "no struct type in scope for 'G'", where in a fn
+# the line binds (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
+# a fn body before the replay: `ti_read`); after a statement (TJ*) below.
+var TI1 = if (1 == 1) { GP1 } else { mk1() };
+var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
+var TI3 = TI2 + TI2;
+fn ti_read(): i64 { return TI1.a + TI2.a; }
+# --- 6.7.16: a `: Str` METHOD at top level routes its global as a Str (issues/2026-10-18-top-level-untyped-str-method-global-
+# prints-header-bytes.md) ---
+# `var s = BB.mks();` recorded no call (the record wanted `IDENT (`), so `println(s)` printed the header's bytes and
+# `who(s)` took the cstring base (1), where `var t = mks();` routes to `who_str` (2). A whole method call — wrapped, or
+# ending a field chain — routes as the free call does: the zone here, after a statement (TQ5 / TQ6) below.
+struct QB { a; }
+struct QW { b: QB; }
+impl QB {
+    fn qs(self): Str { return str_from("abcde"); }
+    fn qi(self): i64 { return 7; }
+}
+fn mkqw(): QW { var w: QW; w.b.a = 1; return w; }
+var GQB = QB { 1 };
+var GQW = mkqw();
+var TQ1 = GQB.qs();
+var TQ2 = (GQB.qs());
+var TQ3 = GQW.b.qs();
+var TQ4 = GQB.qi();
+fn tq_read(): i64 { return who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -281,6 +355,61 @@ test_group("6.7.15: a zone generic call's generic struct instance");
 assert_eq(TG1.v, 33, "the zone: var TG1 = mkg1(33); TG1.v (refused before)");
 assert_eq(TG2.v + 3, 33, "the zone: var TG2 = mkg1<i32>(30); a G1<i32>");
 assert_eq(tg_read(), 63, "a fn body reads TG1.v / TG2.v before the replay");
+
+test_group("6.7.16: a zone generic call binds its instance whatever carries the type argument");
+assert_eq(TG3.v, 33, "the zone: mkg1(30 + 3) (refused at TG3.v before)");
+assert_eq(TG4.v, 0 - 3, "the zone: mkg1(-3)");
+assert_eq(f64_to(TG5.v * 22.0), 33, "the zone: mkg1(1.5) is a G1<f64>");
+assert_eq(TG6.v, 33, "the zone: mkg1(zsc() + 3), a call returning a scalar");
+assert_eq(f64_to(TG7.v * 22.0), 33, "the zone: mkg1(zid(1.5)), a generic call's f64");
+assert_eq(TG8.v + zt4(TG8), 66, "the zone: mkzp(&ZN), ZN: i32 through p: *T, is a G1<i32>");
+assert_eq(TG9.v, 0, "the zone: mkzc(ZBX), ZBX swept below it, is a G1<i32> (ZBX not yet made)");
+assert_eq(TG10.v.a + TG10.v.zshow(), 67, "the zone: mkzb(GP1), a bounded ZG<T: ZShow>");
+assert_eq(TG11.v, 33, "the zone: mkzc(ZBX), a struct carrier ZBox<i32>");
+assert_eq(load64(TG12.v), 33, "the zone: mkg1(&ZM) through x: T is the address (T = i64)");
+assert_eq(tg_read2(), 130, "a fn body reads them before the replay");
+var TH3 = mkg1(30 + 3);
+var TH4 = mkg1(-3);
+var TH5 = mkg1(1.5);
+var TH7 = mkg1(zid(1.5));
+var TH10 = mkzb(GP1);
+var TH11 = mkzc(ZBX);
+assert_eq(TH3.v + TH4.v, 30, "after a statement: mkg1(30 + 3) / mkg1(-3)");
+assert_eq(f64_to(TH5.v * 22.0) + f64_to(TH7.v * 22.0), 66, "after a statement: mkg1(1.5) / mkg1(zid(1.5))");
+assert_eq(TH10.v.zshow() + zt4(TH11), 67, "after a statement: a bounded ZG, a struct carrier");
+
+test_group("6.7.16: a zone generic method's generic struct result is the instance its call reaches");
+assert_eq(TM6.v.a, 33, "the zone: GZB.zmkg(GP1) is a G1<P1> (refused at TM6.v before)");
+assert_eq(TM7.v + zt4(TM7), 66, "the zone: GZB.zmkg<i32>(33) is a G1<i32>");
+assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn's base G1");
+assert_eq(TM9.a, 33, "the zone: GZB.zmk<i32>(33), an explicit generic method's plain struct");
+assert_eq(tm_read2(), 132, "a fn body reads them before the replay");
+var TN6 = GZB.zmkg(GP1);
+var TN7 = GZB.zmkg<i32>(33);
+var TN8 = GZB + 30;
+assert_eq(TN6.v.a + zt4(TN7) + TN8.v, 99, "after a statement: the same three");
+
+test_group("6.7.16 (D16): an untyped top-level if-expression of struct branches binds the struct");
+assert_eq(TI1.a, 33, "the zone: if (..) { GP1 } else { mk1() } is a P1 (refused at TI1.a before)");
+assert_eq(TI2.a, 17, "the zone: a wrapped if-expression, its taken branch a method's PM");
+assert_eq(TI3.a, 34, "the zone: TI2 + TI2 dispatches PM_add");
+assert_eq(ti_read(), 50, "a fn body reads them before the replay");
+var TJ1 = if (1 == 1) { GP1 } else { mk1() };
+var TJ2 = if (1 == 2) { GPM } elif (1 == 1) { GPM.dup() } else { GPM };
+var TJ3 = TJ2 + TJ2;
+TJ1.a = 30;
+assert_eq(TJ1.a + d1(TJ1) + GP1.a, 93, "after a statement: TJ1 is its own P1 (GP1 unchanged), d1(TJ1) by value");
+assert_eq(TJ3.a, 34, "after a statement: an elif chain, TJ2 + TJ2 dispatches PM_add");
+
+test_group("6.7.16: a top-level : Str method global routes as a Str");
+assert_eq(who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3), 222, "the zone: GQB.qs(), (GQB.qs()), GQW.b.qs() route to who_str (111 before)");
+assert_eq(strlen(TQ1) * 10 + strlen(TQ3), 55, "the zone: strlen(TQ1) / strlen(TQ3) take strlen_str");
+assert_eq(who(TQ4), 1, "control: a : i64 method's global stays unrouted");
+assert_eq(tq_read(), 222, "a fn body reads the zone's method Str globals before the replay");
+var TQ5 = GQB.qs();
+var TQ6 = (GQW.b.qs());
+assert_eq(who(TQ5) * 10 + who(TQ6), 22, "after a statement: GQB.qs(), (GQW.b.qs()) route to who_str (11 before)");
+assert_eq(strlen(TQ5), 5, "after a statement: strlen takes strlen_str");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

@@ -191,6 +191,23 @@ if [ "$rc" -eq 0 ]; then bad "D8: var v: S = if (k == 1) { *p } else { *q } (16 
 elif [ -s "$T/d08.bin" ]; then bad "D8: refused but still emitted a binary"
 elif [ "$(grep -c "$BIG: struct 'S'" "$T/d08.err")" -ne 2 ]; then bad "D8: want the over-8-bytes refusal once per branch: $(grep '^error' "$T/d08.err" | head -2 | tr '\n' '|')"
 else ok "D8: the filed { *p } else { *q } at 16 B is refused at each branch, no binary"; fi
+# 6.7.16 (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md, the user's D16 (a)) — A 16 B
+# STRUCT GLOBAL AS A BRANCH IS REFUSED NAMING THE STRUCT, as a 16 B struct local is (R12-R15): `_ie_wide_name` took
+# any 16 B global for a u128, so `var G = if (1 == 1) { B2 } else { B2 };` (top level, and a fn reading the global)
+# was refused "cannot be a vector, u128 or slice value". G16a the top level, G16b a fn; G16c the control: a u128
+# global keeps the vector / u128 wording. RED with `_ie_wide_name`'s struct test removed: G16a G16b.
+twice_named() {   # <name> <message> <what> <source> — refused once at EACH of two branches with <message>, no binary
+    printf '%b' "$4" > "$T/$1.cyr"
+    build "$1"
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif [ -s "$T/$1.bin" ]; then bad "$3: refused but still emitted a binary"
+    elif [ "$(grep -c '^error' "$T/$1.err")" -ne 2 ] || [ "$(grep -cF "$2" "$T/$1.err")" -ne 2 ]; then
+        bad "$3: want '$2' once per branch: $(grep '^error' "$T/$1.err" | head -2 | tr '\n' '|')"
+    else ok "$3: refused at each branch, naming it"; fi
+}
+twice_named g16a "$BIG: struct 'P2'" "G16a: top level, var G = if (..) { B2 } else { B2 } with B2 a 16 B struct global" 'struct P2 { a; b; }\nvar B2 = P2 { 33, 4 };\nvar G = if (1 == 1) { B2 } else { B2 };\nsyscall(60, 0);\n'
+twice_named g16b "$BIG: struct 'P2'" "G16b: a fn's if-expression of a 16 B struct global" 'struct P2 { a; b; }\nvar B2 = P2 { 33, 4 };\nfn f(c): i64 { var g = if (c) { B2 } else { B2 }; return 0; }\nsyscall(60, f(1));\n'
+twice_named g16c "cannot be a vector, u128 or slice value" "G16c: control, a u128 global keeps the vector / u128 wording" 'var U: u128 = 5;\nvar G = if (1 == 1) { U } else { U };\nsyscall(60, 0);\n'
 # 6.7.14 (issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md) — A VECTOR DEREFERENCE IS A
 # VECTOR VALUE (6.7.13's D34), refused as a vector name branch is (R16): through 6.7.13 `{ *pa } else { *pb }`
 # compiled to lane 0's word (42), no diagnostic. D9 is the filed repro, refused at each branch as `{ a } else { b }`.

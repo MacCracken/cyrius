@@ -35,6 +35,12 @@
 #          writes the global (`setg`) keeping its write over `= 5` / `= C` after `= 3`, `= D`, `= 0`; N12 an earlier
 #          computed initializer still runs (its count) with its result discarded; N13 a bool global keeps its
 #          startup store (its replay judges the value, after setg)
+#   N14-N22 6.7.16 (the user's decision D13 (a), 2026-10-19): a FLOAT constant redeclaration is the value from program
+#          start too (issues/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md), by value on every
+#          leg: the three filed repros (N14 / N15 248 -> 4, N16 4 -> 224: setg's 0.5 kept), an f32 pair (N17 63 -> 64),
+#          `= CF` (N18) and `= 1.5 + 1.0` (N19) after a literal, a computed float redeclaration still in order (N20: 252),
+#          a computed initializer then a float constant (N21: f() runs into a sink, 5 -> 249), `= 0` then a float (N22:
+#          0 -> 248); S25-S28 the earlier float's store is gone (byte-identical to the later one alone)
 #   T1-T4  tests/tcyr/crossos/global_constant_redeclaration_order.tcyr (the table and the controls in one zone) on
 #          x86_64, aarch64 (qemu), cx (cxvm) and PE (wine, a private prefix) — the release gate runs it on the hosts
 #   S8-S11 an earlier constant declaration leaves no startup store: `var a = D; var a = C;`, `var a = 0; var a = C;`,
@@ -47,10 +53,19 @@
 #          program's own first instruction (the filed repro verbatim, named, tuple, nested narrow fields, f64 / f32
 #          fields, a generic literal, a wrap)
 #   Z1-Z13 the same shapes by value on every leg, and the orderings: an earlier read through a fn sees the bytes (Z7), a
-#          redeclared literal of other bytes keeps its place (Z8: 13), a same-bytes one (Z9), and the program-start
-#          rule (6.7.14's D11 (b)) — a call in an earlier initializer that writes the global keeps its write over the
-#          literal (Z10, and Z11 between two same literals: 92, through 6.7.14 12), while a later literal of other
-#          bytes is stored at its place (Z12: 34); a later copy of another global (Z13)
+#          redeclared literal of other bytes is the later one from program start (Z8: 33 — 6.7.16, D14 (a); 6.7.15 13),
+#          a same-bytes one (Z9), and the program-start rule (6.7.14's D11 (b)) — a call in an earlier initializer that
+#          writes the global keeps its write over the literal (Z10, and Z11 between two same literals: 92, through
+#          6.7.14 12), and between two literals of other bytes (Z12: 94 — 6.7.16; 6.7.15 34: the later literal was
+#          stored at its place); a later copy of another global (Z13)
+#   Z14-Z26 6.7.16 (the user's decision D14 (a), 2026-10-19): a redeclared literal of constants is the value from program
+#          start (issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), by value on every leg: the
+#          filing's d1-d4 (Z14 12 -> 32, Z15 1 -> 3, Z16 / Z17 9), every spelling of the pair (Z18 named, Z19 generic,
+#          Z20 wrapped, Z21 an annotated tuple: 14 -> 34), an earlier computed literal runs once into a sink (Z22: 71 ->
+#          31), a later computed one keeps its order (Z23: 17), a constant literal before a computed one leaves no
+#          store (Z24: the earlier call's write is read, 15 -> 95), an earlier computed struct initializer runs into a
+#          sink (Z25: 73 -> 33), a same-bytes pair then other bytes (Z26: 94); S29-S32 the earlier literal leaves
+#          nothing (byte-identical to the later one alone)
 #   V6-V8  the dropped literal's walk still reports: an integer into an f64 field (warned, at 2:14), a bool field's
 #          non-bool value, another file's private const
 #   T5-T8  tests/tcyr/crossos/zone_struct_literal_value.tcyr on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
@@ -58,7 +73,19 @@
 #          constant f64 expression (`= CF`, `= (1.5)`, `= 1.5 + 1.0`, an f32's rounding) is baked as its literal is,
 #          its bits IEEE's on every target; an earlier read sees it (was 0), an earlier call's write is kept
 #          (issues/archived/2026-10-16-kernel-float-global-constant-not-a-literal-left-late.md; the kernel rows are
-#          kmode_enum_initializer_baked.sh RC / KC)
+#          kmode_enum_initializer_baked.sh RC / KC); 6.7.16 (D15 (a)) rows 12-18: an integer or enum operand on the
+#          right (`1.5 + 1`, `1.5 * E.A`) baked too, its bits the target's own run-time arithmetic (18)
+#   L1-L13 6.7.16: a list over a NAMED scalar constant keeps the bytes it does not list, as over a literal (L10)
+#          (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md), by value on every
+#          leg: a const name (L1, the filed repro: 9 -> 14), an enum name (L2), a literal then a const (L3: the later
+#          constant, 14 -> 16), a const then a literal (L4), a computed scalar (L5: 9) and the guide's `var a = f();
+#          var a[1] = {0, 4};` (L6: 0x400), a const between two lists (L7: 9 -> 14), a computed initializer between
+#          the const and the list (L8: 9 -> 14), an earlier initializer's read (L9: 9 -> 14); the seed is the slot's
+#          last INTEGER constant: a float constant between it and the list stops the search (L11, the zone review's
+#          program: 0, and L12: 9 — stepping past the float seeded the const it superseded, 5 / 14), a const after the
+#          float seeds (L13: 14, the control)
+#   T13-T16 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr on the same four legs
+#   S33    6.7.16 (D15 (a)): `var M: f64 = 1.5 + 1;` (warned) is byte-identical to `= 1.5` — no startup store
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
 #          const_fold_int_min_div.tcyr on wine and cass)
 #   K1     an x86 `kernel;` build (ELF64): the program reads the baked values, no late-replay warning, and the build
@@ -93,6 +120,9 @@
 # store runs into a sink); `_gvi_slot` always making the sink -> S8-S11; `_gvk_one` not folding a superseded entry
 # (6.7.14's early return) -> S11 (`var a = C; var a = 5;`: C's sink store, as through 6.7.14); `_gvi_baked` making
 # a superseded constant the last var -> O14 on all three legs.
+# MUTATION (measured, 6.7.16 — the mixed operand, D15 (a); the kernel rows are kmode_enum_initializer_baked.sh's
+# ledger): `_gvk_fscan` not taking an integer literal -> 5 red: S33, T9-T12 (row 12: 0); `_gvk_fqual` taking no `E.A`
+# -> 4 red: T9-T12 (row 13: the call's write reset); `_gvi_mixw` keeping its code -> 1 red: S33.
 # MUTATION (measured, 6.7.15 — the float constant expression): the tree before the fix (8981d679b's src) -> 4 red, T9-T12
 # (9: an earlier read 0, 10: the startup store reset the call's write); `_gvk_fx`'s f32 narrowing dropped -> T9-T12
 # (4, 8: binary64 bits in an f32).
@@ -102,6 +132,26 @@
 # (33: the first literal's stores dropped under the second's bytes), T5-T8; `_gvs_same` returning 0 -> 7 red: Z11 on
 # all three legs, T5-T8; `_gvs_undo` not taking the fixups back -> 48 red (the stale fixups patch the program's code:
 # SIGSEGV / SIGILL).
+# MUTATION (measured, 6.7.16, mutated scratch copies of the tree, every leg built from each — the redeclared literal,
+# D14 (a)): `_gvs_pre` marking nothing (no literal supersedes) -> 20 red: S29-S32, Z12 / Z22 / Z25 / Z26 on all three
+# legs (the earlier literal's or computed writer's store reset the call's write, or ran into the slot), T5-T8 (3 rows
+# each) — Z8, Z14, Z15, Z18-Z21 stay green, the earlier literal's dropped stores leaving the later bake to be read;
+# `_gvs_quiet` keeping a superseded literal's stores -> 38 red: S29-S32 (31: 12), Z8 Z12 Z14 Z15 Z18-Z21 Z26 on all
+# three legs (the earlier literal stored over the later bytes at startup), T5-T8 (8 rows each); `_gvi_slot` making a
+# sink for it -> 4 red: S29-S32 (a sink and its code); `_gvk_left` naming it in a kernel build -> 1 red: S32 (the late
+# warning); `_spc_try` baking a superseded literal -> GREEN (the later literal's bake writes every byte over it: the
+# guard keeps a superseded literal out of the blob, as a superseded list is, _gai_replay).
+# MUTATION (measured, 6.7.16, a mutated scratch copy of the tree, every leg built from it — the float redeclaration):
+# `_gvk_chain` linking integer folds only (6.7.15's `== 1`) -> 31 red: S25-S27, N14-N19 / N21 / N22 on all three legs
+# (N20, the computed control, stays green), T1-T4 (6 of the tcyr's rows each).
+# MUTATION (measured, 6.7.16, mutated scratch copies of the tree, every leg built from each — the list seed):
+# `_gai_seed` returning the static init (the tree before the fix) -> 22 red: L1-L3 and L7-L9 on all three legs,
+# T13-T16 (6 of the tcyr's rows each); `_gvk_link` not superseding for a superseded fold (bk 4) -> 7 red: L7 on all
+# three legs (9: the earlier list's blob kept), T13-T16; `_gv_supersede` not setting bit 43 -> 7 red: L4 on all three
+# legs (16: the const before the literal seeded), T13-T16.
+# MUTATION (measured, 6.7.16, a scratch copy of the tree at cbb267ab3's src — the zone review's fix): `_gai_seed`
+# stepping past a float constant (`_gai_seed_ent` 0 for `_gvk_ik` 2) -> 10 red: L11 / L12 on all three legs (5 / 14: the
+# const the float superseded seeded the list), T13-T16 (GRKF 0x0509); L13 stays green.
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -184,6 +234,18 @@ same_w S8 5 'const C = 5;\nconst D = 3;\nvar a = D;\nvar a = C;\nsyscall(60, a);
 same_w S9 5 'const C = 5;\nvar a = 0;\nvar a = C;\nsyscall(60, a);\n' 'const C = 5;\nvar a = 5;\nsyscall(60, a);\n'
 same_w S10 4 'enum E { A = 2; B = 4; }\nvar a = E.A;\nvar a = E.B;\nsyscall(60, a);\n' 'enum E { A = 2; B = 4; }\nvar a = 4;\nsyscall(60, a);\n'
 same S11 5 'const C = 5;\nvar a = C;\nvar a = 5;\nsyscall(60, a);\n' 'const C = 5;\nvar a = 5;\nsyscall(60, a);\n'
+# S25-S28 — 6.7.16 (D13 (a)): an earlier FLOAT constant declaration leaves no startup store either: an f64 pair, an f32
+# pair, `= 1.5` then `= CF` are each BYTE-IDENTICAL to the later one alone (through 6.7.15 the earlier literal's store
+# ran first, at the same size), and a same-bits pair (S28, silent) was already.
+G48='syscall(60, (load64(&G) >> 48) & 255);\n'
+same_w S25 4 "var G: f64 = 1.5;\nvar G: f64 = 2.5;\n$G48" "var G: f64 = 2.5;\n$G48"
+same_w S26 64 'var F: f32 = 1.5;\nvar F: f32 = 2.5;\nsyscall(60, (load32(&F) >> 24) & 255);\n' 'var F: f32 = 2.5;\nsyscall(60, (load32(&F) >> 24) & 255);\n'
+same_w S27 4 "const CF = 2.5;\nvar G: f64 = 1.5;\nvar G: f64 = CF;\n$G48" "const CF = 2.5;\nvar G: f64 = CF;\n$G48"
+same S28 248 "var G: f64 = 1.5;\nvar G: f64 = 1.5;\n$G48" "var G: f64 = 1.5;\n$G48"
+# S33 — 6.7.16 (the user's decision D15 (a), 2026-10-19): f64 arithmetic with an integer operand on the right (`1.5 + 1`,
+# warned) is baked and leaves no startup code: BYTE-IDENTICAL to the literal of its bits, 1.5 (through 6.7.15 a
+# startup store; its replay is parsed for the warning and taken back, _gvi_mixw).
+same_w S33 63 'var M: f64 = 1.5 + 1;\nsyscall(60, (load64(&M) >> 56) & 255);\n' 'var M: f64 = 1.5;\nsyscall(60, (load64(&M) >> 56) & 255);\n'
 # S12-S16 — 6.7.15: a baked struct / tuple literal leaves no startup stores (issues/2026-10-16-zone-struct-literal-baked-
 # and-stored.md): each build is BYTE-IDENTICAL to the same 16 bytes written as a typed list (baked since 6.6.16, no
 # code) — positional, named, a tuple inferred and annotated, and an x86 `kernel;` build (ELF64). Through 6.7.14 each
@@ -218,6 +280,14 @@ entry S20 179 'struct I { x: i8; y: i32; }\nstruct O { a; i: I; c: u16; }\nvar o
 entry S21 211 'struct F { d: f64; g: f32; n; }\nvar f = F { 1.5, 0.1, 7 };\nsyscall(60, ((load64(&f) >> 52) + load32(&f + 8) + f.n) & 255);\n'
 entry S23 56 'struct W<T> { v: T; n; }\nvar w = W<i32> { 5, 6 };\nsyscall(60, w.v * 10 + w.n);\n'
 entry S24 78 'struct P { a; b; }\nvar p: P = (P { 7, 8 });\nsyscall(60, p.a * 10 + p.b);\n'
+# S29-S32 — 6.7.16 (the user's decision D14 (a), 2026-10-19): an earlier literal of constants leaves no startup store, no
+# blob and no sink — a struct pair, a tuple pair, a named pair and an x86 `kernel;` (ELF64) pair are each BYTE-IDENTICAL
+# to the later literal alone (through 6.7.15 both literals were stored in order, at the same size).
+PQ='syscall(60, p.a * 10 + p.b);\n'
+same S29 34 "struct P { a; b; }\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\n$PQ" "struct P { a; b; }\nvar p = P { 3, 4 };\n$PQ"
+same S30 34 'var t = (1, 2);\nvar t = (3, 4);\nsyscall(60, t.0 * 10 + t.1);\n' 'var t = (3, 4);\nsyscall(60, t.0 * 10 + t.1);\n'
+same S31 34 "struct P { a; b; }\nvar p = P { b: 2, a: 1 };\nvar p = P { b: 4, a: 3 };\n$PQ" "struct P { a; b; }\nvar p = P { b: 4, a: 3 };\n$PQ"
+same S32 34 "kernel;\nstruct P { a; b; }\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\n$PQ" "kernel;\nstruct P { a; b; }\nvar p = P { 3, 4 };\n$PQ" CYRIUS_ELF64_KERNEL=1
 
 # The ordering / value rows: ID|WANT|SOURCE, run on every leg.
 ROWS="O1|53|${F}var a = 5;\nvar b = a;\nvar a = f();\nsyscall(60, b * 10 + a);\n
@@ -246,6 +316,15 @@ N9|9|const C = 5;\nconst D = 3;\nvar G = D;\nfn setg(): i64 { G = 9; return 1; }
 N10|9|const C = 5;\nvar G = 0;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = C;\nsyscall(60, G);\n
 N11|9|var G = 0;\nfn setg(): i64 { G = 9; return 1; }\nvar r = setg();\nvar G = 5;\nsyscall(60, G);\n
 N12|51|const C = 5;\nvar n = 0;\nfn f(): i64 { n = n + 1; return 3; }\nvar a = f();\nvar b = a;\nvar a = C;\nsyscall(60, b * 10 + n);\n
+N14|4|var G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = 2.5;\nsyscall(60, (b >> 48) & 255);\n
+N15|4|var K = 1.5;\nvar b = load64(&K);\nvar K = 2.5;\nsyscall(60, (b >> 48) & 255);\n
+N16|224|var G: f64 = 1.5;\nfn setg(): i64 { G = 0.5; return 1; }\nvar r = setg();\nvar G: f64 = 2.5;\nsyscall(60, (load64(&G) >> 48) & 255);\n
+N17|64|var F: f32 = 1.5;\nvar b = load32(&F);\nvar F: f32 = 2.5;\nsyscall(60, (b >> 24) & 255);\n
+N18|4|const CF = 2.5;\nvar G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = CF;\nsyscall(60, (b >> 48) & 255);\n
+N19|4|var G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = 1.5 + 1.0;\nsyscall(60, (b >> 48) & 255);\n
+N20|252|fn fx(): f64 { return 2.5; }\nvar G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = fx();\nsyscall(60, ((b >> 48) & 255) + ((load64(&G) >> 48) & 255));\n
+N21|249|var n = 0;\nfn fx(): f64 { n = n + 1; return 2.5; }\nvar G: f64 = fx();\nvar b = load64(&G);\nvar G: f64 = 1.5;\nsyscall(60, ((b >> 48) & 255) + n);\n
+N22|248|var G: f64 = 0;\nvar b = load64(&G);\nvar G: f64 = 1.5;\nsyscall(60, (b >> 48) & 255);\n
 N13|11|const T = true;\nvar G: bool = T;\nfn setg(): i64 { G = false; return 1; }\nvar r = setg();\nvar G: bool = T;\nsyscall(60, G + 10);\n
 D1|5|var R = (0 - 0x7FFFFFFFFFFFFFFF - 1) % (0 - 1);\nsyscall(60, R + 5);\n
 D2|8|enum CfMax { CF_MAX = 0x7FFFFFFFFFFFFFFF; }\nvar Q = (0 - CF_MAX - 1) / (0 - 1);\nsyscall(60, (Q >> 63) + 7);\n
@@ -287,12 +366,38 @@ Z4|179|struct I { x: i8; y: i32; }\nstruct O { a; i: I; c: u16; }\nvar o = O { 1
 Z5|211|struct F { d: f64; g: f32; n; }\nvar f = F { 1.5, 0.1, 7 };\nsyscall(60, ((load64(&f) >> 52) + load32(&f + 8) + f.n) & 255);\n
 Z6|35|enum E { A = 3; B = 4; }\nstruct P { a; b; }\nvar p = P { A, E.B + 1 };\nsyscall(60, p.a * 10 + p.b);\n
 Z7|66|struct P { a; b; }\nfn rd(): i64 { return p.b; }\nvar r = rd();\nvar p = P { 5, 6 };\nsyscall(60, r * 10 + p.b);\n
-Z8|13|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + p.a);\n
+Z8|33|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + p.a);\n
 Z9|11|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 1, 2 };\nsyscall(60, b * 10 + p.a);\n
 Z10|92|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
 Z11|92|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a * 10 + p.b);\n
-Z12|34|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
-Z13|17|struct P { a; b; }\nvar q = P { 7, 8 };\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p: P = q;\nsyscall(60, b * 10 + p.a);\n"
+Z12|94|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 1; }\nvar r = setp();\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
+Z13|17|struct P { a; b; }\nvar q = P { 7, 8 };\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p: P = q;\nsyscall(60, b * 10 + p.a);\n
+Z14|32|var t = (1, 2);\nvar b = t.0;\nvar t = (3, 4);\nvar a = 1;\nvar c = a;\nvar a = 2;\nsyscall(60, b * 10 + c);\n
+Z15|3|struct P { a; b; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b);\n
+Z16|9|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a);\n
+Z17|9|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nsyscall(60, p.a);\n
+Z18|34|struct P { a; b; }\nvar p = P { b: 2, a: 1 };\nvar b = p.a;\nvar p = P { b: 4, a: 3 };\nsyscall(60, b * 10 + p.b);\n
+Z19|34|struct W<T> { v: T; n; }\nvar w = W<i32> { 1, 2 };\nvar b = w.v;\nvar w = W<i32> { 3, 4 };\nsyscall(60, b * 10 + w.n);\n
+Z20|34|struct P { a; b; }\nvar p: P = (P { 1, 2 });\nvar b = p.a;\nvar p: P = (P { 3, 4 });\nsyscall(60, b * 10 + p.b);\n
+Z21|34|var t: (i64, i64) = (1, 2);\nvar b = t.0;\nvar t: (i64, i64) = (3, 4);\nsyscall(60, b * 10 + t.1);\n
+Z22|31|struct P { a; b; }\nvar n = 0;\nfn f(): i64 { n = n + 1; return 7; }\nvar p = P { f(), 2 };\nvar b = p.a;\nvar p = P { 3, 4 };\nsyscall(60, b * 10 + n);\n
+Z23|17|struct P { a; b; }\nfn f(): i64 { return 7; }\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { f(), 4 };\nsyscall(60, b * 10 + p.a);\n
+Z24|95|struct P { a; b; }\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nvar b = p.a;\nvar p = P { f(), 2 };\nfn f(): i64 { return 5; }\nsyscall(60, b * 10 + p.a);\n
+Z25|33|struct P1 { a; }\nfn mk(): P1 { var t: P1 = P1 { 7 }; return t; }\nvar p: P1 = mk();\nvar b = p.a;\nvar p = P1 { 3 };\nsyscall(60, b * 10 + p.a);\n
+Z26|94|struct P { a; b; }\nvar p = P { 1, 2 };\nfn setp(): i64 { p.a = 9; return 0; }\nvar r = setp();\nvar p = P { 1, 2 };\nvar p = P { 3, 4 };\nsyscall(60, p.a * 10 + p.b);\n
+L1|14|const C = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L2|14|enum E { V = 0x0506; }\nvar a = E.V;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L3|16|const C = 0x0708;\nvar a = 0x0506;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L4|14|const C = 0x0708;\nvar a = C;\nvar a = 0x0506;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L5|9|fn f(): i64 { return 0x0506; }\nvar a = f();\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L6|4|fn f(): i64 { return 7; }\nvar a = f();\nvar a[1] = {0, 4};\nsyscall(60, a >> 8);\n
+L7|14|const C = 0x0506;\nvar a[1] = {7};\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L8|14|const C = 0x0506;\nfn f(): i64 { return 0x0102; }\nvar a = C;\nvar a = f();\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L9|14|const C = 0x0506;\nfn g(): i64 { return a; }\nvar b = g();\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (b & 255) + (b >> 8));\n
+L10|14|var a = 0x0506;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L11|0|const C = 0x0506;\nvar a = C;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a >> 8) & 255);\n
+L12|9|const C = 0x0506;\nvar a = C;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L13|14|const C = 0x0506;\nvar a = 1.5;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n"
 
 # leg NAME COMPILER RUNNER... — every row compiled by COMPILER and run (RUNNER prefix; "cx" runs the .cyx on cxvm).
 leg() {
@@ -408,7 +513,7 @@ tl() {
   rows=$((rows + 1)); id=$1; b=$2; shift 2
   [ -s "$b" ] || { bad "$id: the crossos file did not compile"; return; }
   chmod +x "$b"; x=0
-  if [ "$id" = T3 ] || [ "$id" = T7 ] || [ "$id" = T11 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
+  if [ "$id" = T3 ] || [ "$id" = T7 ] || [ "$id" = T11 ] || [ "$id" = T15 ]; then timeout 60 "$VM" < "$b" > "$b.out" 2>&1 || x=$?
   else timeout 180 "$@" "$b" > "$b.out" 2> /dev/null || x=$?; fi
   [ "$x" -eq 0 ] && grep -q "$NT passed, 0 failed" "$b.out" || bad "$id: exit $x: $(grep -m3 FAIL "$b.out" | tr '\n' '|')$(tail -1 "$b.out")"
 }
@@ -444,6 +549,19 @@ if command -v wine > /dev/null 2>&1; then
   tl T12 "$W/t12.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
     WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
 else echo "  SKIP: const_init_bake_and_fold T12 (PE) — wine not installed"; skips=$((skips + 1)); fi
+
+# T13-T16 — 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr (its list-over-a-named-scalar rows, L1-L9's,
+# L12's and L13's shapes in one zone) on the same four legs.
+TC="$ROOT/tests/tcyr/crossos/global_array_initializer.tcyr"
+NT=$(grep -c '^assert_eq' "$TC")
+"$CC" < "$TC" > "$W/t13" 2> /dev/null; tl T13 "$W/t13" env
+if [ -x "$W/cycc_a64" ]; then "$W/cycc_a64" < "$TC" > "$W/t14" 2> /dev/null; tl T14 "$W/t14" qemu-aarch64; fi
+if [ -x "$W/cycc_cx" ]; then "$W/cycc_cx" < "$TC" > "$W/t15" 2> /dev/null; tl T15 "$W/t15"; fi
+if command -v wine > /dev/null 2>&1; then
+  CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$W/t16.exe" 2> /dev/null
+  tl T16 "$W/t16.exe" env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine
+else echo "  SKIP: const_init_bake_and_fold T16 (PE) — wine not installed"; skips=$((skips + 1)); fi
 
 [ "$rows" -ge 50 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL const_init_bake_and_fold: $fail of $rows row(s) red"; exit 1; fi

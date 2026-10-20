@@ -1193,8 +1193,10 @@ is refused, as `{ *p }` is), `l = **pp` — through a `**S` local, parameter, fi
 operator's operand and a by-value argument (`return *pp;` from a `: S` fn returns the struct it points at,
 `l = *pp + 0` copies it, `bs(*pp)` passes it). **Since 6.7.15 `*pp` is that `*S` as the whole source of a copy
 too**, copied through as `l = p` is: `l = *pp`, `G = *pp` (in a fn and at top level), `*q = *pp`, `**qq = *pp`, a for
-step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at (a top-level `var G: S = *GPP;` keeps
-the handle every top-level declaration from a `*S` source gets — see *the handle line*); into a `*S` or a handle
+step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at — **and since 6.7.16 a top-level `var G:
+S = *GPP;` too** (`(*GPP)`, `*gpp()`, `*W.pp`; in the declaration zone and after the first statement, at every size: the
+user's D17 (a), 2026-10-19 — through 6.7.15 G was a handle on the struct, and a `**Q`'s `*GQQ` into an `S` global
+compiled; it is refused by name now, and so is a `**S` global declared below G over 8 bytes, as `*P` is); into a `*S` or a handle
 `q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy '\*qq' into a
 variable of a different struct/vector type*). **Since 6.7.16 a struct-typed FIELD destination copies too:** `o.s =
 *pp`, `G.s = *pp`, `w.s = *pp` through a `*W`, `o.s = (*pp)`, a for step and a top-level `G.s = *GPP` copy the struct
@@ -1572,8 +1574,8 @@ writes. A struct value is a literal; another inline struct of the type — a loc
 parameter, a global, a closure's captured copy of one, parenthesised or not; a struct-typed field
 (`b.v`); a `*T` name, or a dereference of a `*T` in any spelling — `*p`, `(*p)`, `*(p + 1)`,
 `*h.p`, `*gp()`, `*w.mp()` with `p`, `h.p`, `gp()`, `w.mp()` typed `*T` (copied through the
-pointer), and since 6.7.13 `*(&x)` / `*&x` of an inline `x`; since 6.7.15, in a fn, `*pp` / `(*pp)` of a `**T`
-(the `*T` it reads, copied through as a `*T` name is — it was a handle); and a call, method, operator or if-expression that returns the struct (a generic or a
+pointer), and since 6.7.13 `*(&x)` / `*&x` of an inline `x`; since 6.7.15 in a fn, and since 6.7.16 (D17 (a)) at top
+level too, `*pp` / `(*pp)` of a `**T` (the `*T` it reads, copied through as a `*T` name is — it was a handle); and a call, method, operator or if-expression that returns the struct (a generic or a
 parenthesised call too, and since 6.7.11 a call through `fncallN(&f, ..)` / `callptr(&f, ..)` whose
 callee `f` returns it). Everything else is a handle: `alloc(..)`, `&x`, an untyped value (a
 dereference of one, `*x`, included), a call returning a `*T` or an untyped value (a call through a
@@ -1615,9 +1617,12 @@ S8 = w.s + a;` calls `S8_add` and copies its result, as `l + a` with a struct va
 (see *Parentheses, struct operands and `Str` fields*). Through 6.7.9 the first words were added,
 and in 6.7.10 before the fix `q` was a handle holding that sum.
 
-⚠ Not yet settled: a global declared from a `*T` GLOBAL's name (`var G: S8 = P;`) keeps its 6.7.9
-layout — inline, holding the pointer word, at 8 bytes or less; a handle bound to `P`'s object
-over 8.
+**A global declared from a `*T` GLOBAL's name copies (6.7.16).** `var G: S8 = P;` / `var G: P3 = (P);` with `P`
+a `*S8` / `*P3` global copies the struct `P` points at, at every size, in the declaration zone and after the first
+statement, as the same line in a fn does (the user's D18 (a), 2026-10-19): `G` is its own copy, and a write to either
+side leaves the other. Through 6.7.15 it kept its 6.7.9 layout — inline, holding the POINTER WORD, at 8 bytes or less
+(`G.v` read the address); a handle bound to `P`'s object over 8. A `P` declared below `G` is refused by name over 8
+bytes (*cannot copy-init 'G' from a global declared below it*), as `*P` is. Alias the object with `var G: *S8 = P;`.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
@@ -1733,18 +1738,30 @@ was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's deci
 mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
 scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none; a generic call's instance too — in the
 declaration zone since 6.7.15, `var x = mkg1(33);` with `fn mkg1<T>(v: T): G1<T>` is `G1`, `mkg1<i32>(33)` is
-`G1<i32>`), and one of 9-16 bytes is refused as
+`G1<i32>`, and since 6.7.16 whatever carries the type argument binds it there as the call does: `mkg1(30 + 3)` and
+`mkg1(-3)` are `G1`, `mkg1(1.5)` is `G1<f64>`, a struct carrier `mkc(BX)` with `BX: Box<i32>` is `G1<i32>`, and a
+bounded `struct G1<T: Show>` gives its instance, its bound judged once, at the call — each was *no struct type in
+scope for 'x'* at `x.v` in the zone and bound after the first statement), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
 through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. So does a
 whole method, operator or known `&f` result (6.7.15; the user's decisions D34 (a) and D35 (a), 2026-10-18): `var G =
 B1.mk1();`, `= B1 + B1;`, `= fncall0(&mk1);` or `= callptr(&mk1);` of 8 bytes or less is that struct (`G.a` was *no
-struct type in scope for 'G'*), one of 9-16 bytes is refused as `var G: P2 = B2.mk();` is, naming the method as
-written (*'P2.mk' returns a struct by value, and a struct result needs storage in a fn's frame*; through 6.7.14 `G`
-held the first word, silently), and over 16 bytes the call's own refusal is the one error. An if-expression's
-struct, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
+struct type in scope for 'G'*; in the declaration zone since 6.7.16 a generic method's result too, the instance its call
+reaches: `var y = b.mkg(P);` with `fn mkg<T>(self, v: T): G1<T>` is `G1<Pt>`, `b.mkg<i32>(33)` is `G1<i32>`, and a
+generic operator fn's result is its base `G1`, as its dispatch calls the base), one of 9-16 bytes is refused as `var
+G: P2 = B2.mk();` is, naming the method as written (*'P2.mk' returns a struct by value, and a struct result needs
+storage in a fn's frame*; through 6.7.14 `G` held the first word, silently), and over 16 bytes the call's own
+refusal is the one error. So does a whole if-expression whose branches are a struct of 8 bytes or less (6.7.16; the
+user's decision D16 (a), 2026-10-19): `var G = if (c) { B1 } else { B1 };` is that struct (`G.a` was *no struct type in
+scope for 'G'*; `G + G` dispatches `P1_add`), its first branch's struct as in a fn (a later branch of another type is
+refused once); a 16-byte struct branch is refused naming the struct (*an if expression branch cannot be a struct value
+over 8 bytes: struct 'P2'*; through 6.7.15 a 16-byte struct global there was refused as *a vector, u128 or slice value*)
+and `G` stays untyped, as in a fn. A `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
-bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
+bytes), and since 6.7.16 a method call is such a call — `var s = BB.mks();` with `fn mks(self): Str`, `(BB.mks())`, a
+chain ending in one (`W.b.mks()`), a `*B` receiver or `.m<..>(..)`, in the declaration zone or after the first
+statement, the method declared anywhere (through 6.7.15 `println(s)` printed the header's bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
 `var k = h.clone();`, alone or ending a chain (`var k = w.s.clone();`, `var k = h.clone().clone();`, `var k =
 mks().clone();`): `k` was an untyped word, `k.len()` was refused *no struct type in scope for 'k'* and `println(k)` /
 `show(k)` took the untyped overload where `show_str` takes a `Str`; `k + 1` is unchanged (the handle's word plus 1).
@@ -2522,7 +2539,7 @@ untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the 
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
 annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word (a whole free call
-excepted since 6.7.14, above).
+excepted since 6.7.14, a method, operator or known `&f` result since 6.7.15, and an if-expression since 6.7.16, above).
 
 **So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
 (or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`
@@ -4094,7 +4111,11 @@ vector result needs storage in a fn's frame - call it inside a fn* (as such a ca
 `var x: i64 = mkv(41, 7);` (any annotation that is not the vector, a call or method starting the initialiser too) with
 *vector return type does not match the declared type*, as the line is in a fn. Through 6.7.14 each held one word, in
 the declaration zone and after the first statement: 0 on x86_64 / aarch64, 154 on cx, 195 on Windows, and the result's
-word under `: i64`. Make the call in a fn: store its lanes through `&g`, or read them into a scalar there.
+word under `: i64`. And (6.7.16) an ASSIGNMENT at top level of any such call to a global that is no vector — `G =
+mkv(41, 7);`, `G = s.mv();`, wrapped, `fncall2(&mkv, ..)`, as the program's first statement or in a top-level for step —
+is refused *vector return type does not match the assigned variable*, as it is in a fn (through 6.7.15 it compiled with
+no diagnostic and stored one word: 0 on x86_64 / aarch64, 41 on cx / Windows). Make the call in a fn: store its lanes
+through `&g`, or read them into a scalar there.
 
 **A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
 `p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and
@@ -7675,10 +7696,15 @@ baked into the image and stored again at startup, element by element (on x86_64 
 movabs rcx, p; pop rax; mov [rcx], rax` per field). The stores are gone, by the same rule: the global
 holds the literal from program start, so a call in an earlier initializer that writes it keeps its
 write (`var r = setp(); var p = P { 1, 2 };`, `setp` storing 9 into `p.a`, ends with `p.a == 9`;
-through 6.7.14 the startup store reset it to 1). A *redeclared* literal keeps its place in declaration
-order — `var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 1`, and a write from a
-call between the two is overwritten by the later literal — unless it repeats the earlier literal's
-bytes, which the global then already holds (a call's write between the two is kept). Every
+through 6.7.14 the startup store reset it to 1). A *redeclared* literal of constants follows the
+constant redeclaration rule above (6.7.16, the user's decision D14 (a), 2026-10-19): it is the
+global's value from program start, and an earlier literal of the name leaves no startup store —
+`var p = P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` gives `b == 3`, and a call between the two
+that writes `p.a = 9` keeps its write (`p` ends as `{ 9, 4 }`), in every spelling (a tuple, the named
+form, a generic struct's literal, a wrap). An earlier *computed* initializer of the name still runs,
+its result discarded (`var p = P { f(), 2 };` or `var q: Q = mk();` before the literal), and a later
+computed literal (`P { f(), 4 }`) runs in declaration order. Through 6.7.15 a redeclared literal kept
+its place: `b` read 1, and the call's write was overwritten by the later literal's stores. Every
 diagnostic the literal's elements get is still given (an integer into a float field, a `bool` field).
 
 **So does a float literal (6.7.14).** A float scalar whose initializer is a float literal,
@@ -7694,8 +7720,22 @@ evaluator, IEEE 754 binary64 as the target computes it. Through 6.7.14 those sta
 stores: an x86 `kernel;` build's program read 0 (warned "use a constant", which an f64 const did
 not satisfy), an earlier initializer's read saw 0, and a call in an earlier initializer that
 wrote the global was reset by the store (its write is now kept, as over a literal). Still a
-deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`),
-and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned).
+deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`), and
+an integer **left** operand (`1 + 1.5` is integer arithmetic on the float's bits, warned). An integer
+or enum operand on the **right** of f64 arithmetic — `var M: f64 = 1.5 + 1;`, `= 1.5 * E.A`, `= 1.5 *
+A`, `= 1.5 + C` with `C` an integer const — is baked too (6.7.16, the user's decision D15 (a),
+2026-10-19), computed as the run-time arithmetic computes it: the integer is its raw bits (`1` is the
+least subnormal, so `1.5 + 1` is 1.5, and `1.5 * 3` is 4.5 x 2^-1074, which rounds to the bits 4), and
+"f64 arithmetic with a non-f64 right operand" is still warned, once. Through 6.7.15 it was a startup
+store: an x86 `kernel;` build's program read 0 (and the initializer was named late), an earlier
+initializer's read saw 0, and an earlier call's write was reset. A *redeclared* float global follows the
+constant redeclaration rule above (6.7.16, the user's decision D13 (a), 2026-10-19): a float
+constant redeclaration is the global's value from program start and an earlier float constant
+declaration of it leaves no startup store — `var G: f64 = 1.5; var b = load64(&G); var G: f64 =
+2.5;` gives `b` 2.5's bits, and `var G: f64 = 1.5;`, then `var r = setg();` (`setg` storing 0.5),
+then `var G: f64 = 2.5;` ends at 0.5. Through 6.7.15 a float redeclaration kept declaration
+order: `b` read 1.5, and the later literal's startup store reset `setg`'s write to 2.5. A computed
+float redeclaration (`var G: f64 = fx();`) still runs in order.
 
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
@@ -7736,7 +7776,9 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 
 - A redeclaration whose initializer is a compile-time **constant** (an integer
   literal or a foldable integer expression, zero included, or a const or enum name —
-  6.7.15, see *Global Initializers*) is the global's value **from program start**,
+  6.7.15, see *Global Initializers* — or a float constant: a float literal or a constant
+  f64 expression, 6.7.16 — or a struct or tuple literal of constants, 6.7.16) is the
+  global's value **from program start**,
   and an earlier constant declaration of it leaves no startup store. An earlier
   *computed* initializer of the same name (`var a = f();`) still runs — its side
   effects happen — but its result is discarded.
@@ -7750,7 +7792,20 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   an earlier `= 0` or computed initializer of the name it is the value from
   program start — `var a = f(); var a[1] = {0, 4};` runs `f()` and reads `0x400`
   — and over an earlier scalar **constant** it keeps the bytes it does not list
-  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`).
+  (`var a = 0x0506; var a[1] = {9};` reads `0x0509`). The constant may be named
+  (6.7.16): `const C = 0x0506; var a = C; var a[1] = {9};` reads `0x0509` too —
+  through 6.7.15 a const or enum name's bytes were dropped (`0x0009`). The bytes kept
+  are the slot's **last integer** constant before the list, however each is spelled
+  (`var a = 0x0506; var a = D; var a[1] = {9};` with `D = 0x0708` reads `0x0709`;
+  through 6.7.15 the stale literal's `0x0509`); a computed initializer in between is no
+  constant and is passed over, and a constant between two lists reaches the earlier
+  one (`var a[1] = {7}; var a = C; var a[1] = {9};` reads `0x0509`, as with a literal).
+  A **float** constant in between stops the search — it superseded the integer
+  constant before it, so `var a = C; var a = 1.5; var a[1] = {9};` reads `0x0009`,
+  not C's `0x0509` — and its own bits are not kept: what a list over a float
+  constant keeps (its bits; over a literal before the float, the literal's bytes
+  still read through) is open
+  (`docs/development/issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md`).
 - A redeclaration that changes the **type or size** (`var a = 5;` then
   `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
   one of the two would read the other's storage in the wrong shape. Same rule as a
@@ -7772,8 +7827,9 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   as the earlier one is (6.7.14: through 6.7.13 only an exact `= NUM ;` was compared,
   so `var a = 5; var a = 2 + 1;` was silent), and a const or enum name, on either side
   (6.7.15: `var a = 3; var a = C;`, `var a = C; var a = 3;`, `= E.B` and `var a = D;
-  var a = C;` were silent). Each later constant is compared with the last constant
-  declared before it. An earlier *computed* initializer has no value to compare, and
+  var a = C;` were silent), and a float constant, bit for bit (6.7.16: `var G: f64 = 1.5;
+  var G: f64 = 2.5;` was silent; a same-bits pair is still silent). Each later constant is
+  compared with the last constant declared before it. An earlier *computed* initializer has no value to compare, and
   stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`

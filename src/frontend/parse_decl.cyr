@@ -4558,7 +4558,7 @@ fn _gai_stmt(S, ann_ti, n): i64 {
 fn _gai_now(S, vi, lb, ann_ti): i64 {
     var sv = GTI(S);
     STI(S, lb);
-    _gai_eval(S, vi, ann_ti);
+    _gai_eval(S, vi, ann_ti, GVSI(S, vi));
     STI(S, sv);
     return 0;
 }
@@ -4575,22 +4575,24 @@ fn _gai_replay(S, gi, noff, gsup, sti): i64 {
     var ann = _gai_ann(S, sti);
     var vi = _gv_ent_slot(S, gi, 0, noff);
     if ((gsup & 1) != 0) { vi = 0 - 1; }
-    _gai_eval(S, vi, ann);
+    var seed = 0;
+    if (vi >= 0) { seed = _gai_seed(S, gi, vi, noff); }
+    _gai_eval(S, vi, ann, seed);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 0;
 }
 
 # Evaluate `{ e, e, .. }` (cursor on `{`, left past `}`) into slot `vi`'s blob (vi < 0: errors
-# only). The walk has reported the shape; this reports the values.
-fn _gai_eval(S, vi, ann): i64 {
+# only; `seed` a new blob's first word, _gai_blob). The walk has reported the shape; this reports the values.
+fn _gai_eval(S, vi, ann, seed): i64 {
     var k = _gai_kind(S, ann);
     var eb = _gai_w;
     _gai_isbool = 0;
     if (ann > 0) { if (TOKTYP(S, ann) == 2) { _gai_isbool = _bx_is_bool_name(S, TOKVAL(S, ann)); } }
     if (_syntax_only == 1) { k = 0; }
     var b = 0;
-    if (k > 0) { b = _gai_blob(S, vi, eb, k); }
+    if (k > 0) { b = _gai_blob(S, vi, eb, k, seed); }
     STI(S, GTI(S) + 1);
     var off = 0;
     while (PEEKT(S) != 14) {
@@ -4607,22 +4609,63 @@ fn _gai_eval(S, vi, ann): i64 {
     return 0;
 }
 
-# Slot `vi`'s blob, made on first use: zeroed, then seeded with a scalar constant this slot folded
-# from (a bare `var B[1]` redeclaring `var B = 5;` keeps the bytes it does not list, as the replayed
-# stores did). A later declaration of the slot reuses it, so the overlay order is the old store
-# order. 0 for `vi < 0`.
-fn _gai_blob(S, vi, eb, k): i64 {
+# Slot `vi`'s blob, made on first use: zeroed, then seeded with `seed`, the scalar constant this slot
+# held (a bare `var B[1]` redeclaring `var B = 5;` keeps the bytes it does not list, as the replayed
+# stores did; _gai_seed). A later declaration of the slot reuses it, so the overlay order is the old
+# store order. 0 for `vi < 0`.
+fn _gai_blob(S, vi, eb, k, seed): i64 {
     if (vi < 0) { return 0; }
     var b = GVGAI(S, vi);
     if (b == 0) {
         var sz = L64(_vars_base + vi * 8);
         b = alloc(sz + 24);
         store64(b, sz);
-        if (sz >= 8) { store64(b + 16, GVSI(S, vi)); }
+        if (sz >= 8) { store64(b + 16, seed); }
         SVGAI(S, vi, b);
     }
     store64(b + 8, eb | (k << 8));
     return b;
+}
+# ⛔ 6.7.16 — THE SEED IS THE SLOT'S LAST INTEGER CONSTANT BEFORE THE LIST, HOWEVER IT IS SPELLED
+# (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md). It was the static init,
+# which only a pass-1 literal writes: a const- or enum-named scalar (`var a = C; var a[1] = {9};`) is a deferred entry
+# the list supersedes (_gvk_one's bk 4: folded, not baked), so the list dropped its bytes (0x0009, where `var a =
+# 0x0506;` gives 0x0509), and `var a = 0x0506; var a = C;` seeded the stale literal. Now the nearest earlier entry
+# of slot `vi` that folded to an integer (`_gvk_ik` 1; a computed one is no constant and is stepped past, as the
+# literal's static init outlives it) is the seed, unless a pass-1 constant redeclaration came after it
+# (_gv_supersede's bit 43): then that literal, the static init, is. A nearer FLOAT constant (`_gvk_ik` 2; it
+# supersedes the slot's earlier writers, D13 (a)) stops the walk at the static init, the seed before 6.7.16:
+# stepping past it seeded the integer constant it superseded (`var a = C; var a = 1.5; var a[1] = {9};` kept C's
+# byte). Whether a float's bits seed a list is
+# issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md. `gi` = the list's entry,
+# `noff` its name. CHANGELOG [6.7.16]
+fn _gai_seed(S, gi, vi, noff): i64 {
+    if (_gvx_m == 0) { return GVSI(S, vi); }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        var g = r >> 2;
+        var sk = 0;
+        if (g < gi) { if ((r & 3) == 0) { sk = _gai_seed_ent(S, g, vi); } }
+        if (sk == 2) { return GVSI(S, vi); }
+        if (sk == 1) {
+            if ((_gv_sup(L64(_gvt(S) + g * 8)) & 8) != 0) { return GVSI(S, vi); }
+            return load64(_gvk_v + g * 8);
+        }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return GVSI(S, vi);
+}
+# Entry `g` against slot `vi`: 1 = it declared the slot and _gvk_pre folded its initializer to an integer constant
+# (`_gvk_ik` 1); 2 = it declared the slot with another constant — a float's bits (`_gvk_ik` 2), a struct / tuple
+# literal of constants (3) — which stops _gai_seed's walk; 0 = neither (another slot, a computed initializer).
+fn _gai_seed_ent(S, g, vi): i64 {
+    if (g >= _gv_ent_cap) { return 0; }
+    if ((load64(_gv_ent_base + g * 8) & 0x1FFFFF) - 1 != vi) { return 0; }
+    var ik = load8(_gvk_ik + g);
+    if (ik == 1) { return 1; }
+    if (ik == 0) { return 0; }
+    return 2;
 }
 
 # One element at token `ti`, written at byte `off` of blob `b` (b == 0: checked only). An empty
@@ -4823,7 +4866,8 @@ fn _gai_is_list(S, sti): i64 {
 
 # cx (_gv_cx_prestore): make the blob of every slot a live leading-block list writes — the replay
 # fills it — so the prestore leaves that slot to the var data. The blob is seeded with the scalar
-# constant the slot held; storing the scalar at run time would land over the baked list.
+# constant the slot held (_gai_seed, as the replay seeds it); storing the scalar at run time would
+# land over the baked list.
 fn _gai_cx_blobs(S): i64 {
     var gc = L64(S + 0x19A000);
     var gi = 0;
@@ -4831,10 +4875,16 @@ fn _gai_cx_blobs(S): i64 {
         var graw = L64(_gvt(S) + gi * 8);
         var sti = _gv_tok(graw);
         if ((_gv_sup(graw) & 1) == 0) {
-            if (_gai_is_list(S, sti) == 1) { _gai_blob(S, _gv_ent_slot(S, gi, 0, TOKVAL(S, sti + 1)), 0, 0); }
+            if (_gai_is_list(S, sti) == 1) { _gai_cx_blob(S, gi, TOKVAL(S, sti + 1)); }
         }
         gi = gi + 1;
     }
+    return 0;
+}
+fn _gai_cx_blob(S, gi, noff): i64 {
+    var vi = _gv_ent_slot(S, gi, 0, noff);
+    if (vi < 0) { return 0; }
+    _gai_blob(S, vi, 0, 0, _gai_seed(S, gi, vi, noff));
     return 0;
 }
 
@@ -5034,6 +5084,8 @@ fn _gv_reg8(S, noff, ty, ti): i64 {
 # runs f() into a sink. An earlier LIST is left alone (two lists overlay in order, the shared
 # blob). A constant scalar redeclaration (`lists` = 0) supersedes every earlier entry, lists
 # included: it wins whole. CHANGELOG [6.6.16]
+# 6.7.16: and marks it with bit 43 — a scalar constant came after it, so a later list's seed is that
+# constant's static init, not this entry's fold (_gai_seed). CHANGELOG [6.7.16]
 fn _gv_supersede(S, noff, lists): i64 {
     if (_gvx_m == 0) { return 0; }
     var e = _nm_get(S, _gvx_m, noff);
@@ -5043,6 +5095,7 @@ fn _gv_supersede(S, noff, lists): i64 {
         var keep = 0;
         if (lists == 1) { keep = _gai_is_list(S, _gv_tok(L64(a))); }
         if (keep == 0) { S64(a, L64(a) | ((1 << (v & 3)) << 40)); }
+        if (lists == 0) { S64(a, L64(a) | (8 << 40)); }
         e = load64(_gvx_nxt + (e - 1) * 8);
     }
     return 0;
@@ -6066,7 +6119,8 @@ var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cy
 # _gvk_bk 4 (6.7.15): a superseded entry's constant, folded for the compare and not baked.
 var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal, 3 = 1 not replayed
 var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked or folded (bk 1 / 3 / 4)
-var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15)
+# _gvk_ik 2 / 3 (6.7.16): float bits (compared, supersedes), a struct / tuple literal of constants (supersedes only).
+var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15), 2, 3
 var _spc_ti = 0;     # the struct walker's token
 var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
 var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
@@ -6117,10 +6171,16 @@ fn _gvk_pre(S): i64 {
     _gvk_bk = alloc(gc + 8);
     _gvk_v = alloc(gc * 8 + 8);
     _gvk_ik = alloc(gc + 8);
+    _gvk_mw = alloc(gc + 8);   # 6.7.16
     _gvs_b = alloc(gc * 8 + 8);   # 6.7.15: each baked literal's bytes (_spc_try)
     var gi = 0;
     while (gi < gc) {
         store8(_gvk_bk + gi, _gvk_one(S, gi));
+        gi = gi + 1;
+    }
+    gi = 0;
+    while (gi < gc) {   # 6.7.16 (D14 (a)): a struct / tuple literal the replay will bake is a constant (_gvs_pre)
+        if (load8(_gvk_bk + gi) == 0) { if (_gvs_pre(S, gi) == 1) { store8(_gvk_ik + gi, 3); } }
         gi = gi + 1;
     }
     _gvk_chain(S, gc);   # 6.7.15: a baked constant supersedes the slot's earlier writers; the replay's compares
@@ -6146,6 +6206,9 @@ fn _gvk_one(S, gi): i64 {
         _cf_enum = 0;
         if (_cf_ok == 0) { return 0; }
         store8(_gvk_ik + gi, 1);
+    } else {
+        store8(_gvk_ik + gi, 2);   # 6.7.16 (D13 (a)): a float constant, its bits
+        store8(_gvk_mw + gi, _gvk_fmix);   # 6.7.16 (D15 (a))
     }
     store64(_gvk_v + gi * 8, v);
     if ((_gv_sup(graw) & 1) != 0) { return 4; }   # 6.7.15: the later constant's value is the slot's
@@ -6160,9 +6223,16 @@ fn _gvk_one(S, gi): i64 {
 # `var G = 0; var b = G; var G = C;` b 0, `var a = f(); var b = a; var a = C;` b f(), and `var G = D;` / `= 0` then
 # `var r = setg(); var G = C;` reset setg's write to C. Now an entry whose integer fold _gvk_one baked (bk 1)
 # supersedes the earlier writers of its slot the same way — a computed one runs into a sink, a constant runs nothing
-# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. A float literal
-# (`_gvk_flt`) keeps its order (not a constant this decision named). The walk also makes the compares pass 1 left to
-# the replay (`_gvc_rec`, see _gvc_add), in declaration order: an integer fold against the slot's constant before it.
+# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. The walk also
+# makes the compares pass 1 left to the replay (`_gvc_rec`, see _gvc_add), in declaration order: a fold against the
+# slot's constant before it.
+# ⛔ 6.7.16 — A FLOAT CONSTANT TOO (the user's decision D13 (a), 2026-10-19; issues/2026-10-18-float-literal-global-
+# redeclaration-keeps-declaration-order.md). A float literal (`_gvk_flt`) and a constant f64 expression (`_gvk_fx`) were
+# baked but kept their order: `var G: f64 = 1.5; var b = load64(&G); var G: f64 = 2.5;` gave b 1.5, a call between the
+# two that wrote G was reset by the later literal's store, and a differing pair was never compared. Their bits
+# (`_gvk_ik` 2) now link as an integer fold does: the later float constant is the value from program start, an earlier
+# float declaration of the name leaves no startup store, and the pair is compared bit for bit (a warning, at the later
+# `=`). A computed float redeclaration still runs in order. CHANGELOG [6.7.16]
 var _gvc_sv = 0;   # per slot: the chain's last constant
 var _gvc_sh = 0;   # per slot: 1 = it has one
 fn _gvk_chain(S, gc): i64 {
@@ -6173,7 +6243,7 @@ fn _gvk_chain(S, gc): i64 {
     var gi = 0;
     while (gi < gc) {
         ri = _gvc_upto(S, ri, gi);
-        if (load8(_gvk_ik + gi) == 1) { _gvk_link(S, gi); }
+        if (load8(_gvk_ik + gi) != 0) { _gvk_link(S, gi); }
         gi = gi + 1;
     }
     _gvc_upto(S, ri, gc);
@@ -6206,12 +6276,19 @@ fn _gvc_cmp(S, slot, v, ti): i64 {
         } }
     return _gvc_set(slot, 1, v);
 }
-# Entry `gi`, an integer fold of its slot: compared at its `=`; baked (not superseded), it supersedes.
+# Entry `gi`, a constant of its slot (an integer fold, or 6.7.16's float bits): compared at its `=`; it supersedes the
+# slot's earlier writers. Baked (bk 1),
+# all of them; superseded itself (bk 4), by a later list or constant that already superseded every earlier scalar
+# entry, the one writer left is an earlier list — which a literal's pass-1 supersede reaches too (_gv_supersede):
+# `var a[1] = {7}; var a = C; var a[1] = {9};` is C's bytes under the second list, as with `var a = 0x0506;`
+# (6.7.16, issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md).
 fn _gvk_link(S, gi): i64 {
     var sti = _gv_tok(L64(_gvt(S) + gi * 8));
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (load8(_gvk_ik + gi) == 3) { return _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }   # 6.7.16 (D14 (a)): no compare
     _gvc_cmp(S, vi, load64(_gvk_v + gi * 8), _gvk_rhs(S, sti) - 1);
-    if (load8(_gvk_bk + gi) == 1) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
+    var bk = load8(_gvk_bk + gi);
+    if (bk == 1 || bk == 4) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
     return 0;
 }
 # Every target of an entry before `gi` that writes slot `vi` (named `noff`) is superseded, as _gv_supersede marks.
@@ -6238,6 +6315,7 @@ fn _gvk_sup1(S, g, k, vi): i64 {
 # baked.md). `sti` = the entry's `var`, `ti` its initializer. CHANGELOG [6.7.14]
 fn _gvk_flt(S, sti, vi, ti): i64 {
     _gai_ok = 0;
+    _gvk_fmix = 0;
     var t = GVTYPE(S, vi);
     if (t != F64_TYID) { if (t != F32_TYID) { if (TOKTYP(S, sti + 2) != 4) { return 0; } } }
     var lt = ti;
@@ -6271,30 +6349,68 @@ fn _gvk_fx(S, t, ti): i64 {
     if (t == F32_TYID) { return _gai_f32(v); }
     return v;
 }
+# ⛔ 6.7.16 — AND AN INTEGER OR ENUM OPERAND (the user's decision D15 (a), 2026-10-19; issues/2026-10-18-kernel-float-
+# global-mixed-int-operand-left-late.md). `var M: f64 = 1.5 + 1;` and `= 1.5 * E.A` were left to the replay, because
+# the scan took float literals and f64 consts only: an x86 `kernel;` build read 0 (and named them late), an earlier
+# initializer's read saw 0 and a call in one that wrote M was reset. The scan now also takes an integer literal, an
+# integer const and an enum constant, bare or qualified (`E.A`: a name, `.`, a member of that enum; `_gvk_fname`),
+# and the evaluator computes the mix as the run-time arithmetic does — the LEFT operand's kind picks f64 and the
+# integer is its raw bits (`_ce_binop`) — so an f64 result is baked. An integer left operand (`1 + 1.5`: integer
+# arithmetic on the float's bits) is no f64 result and stays with the replay, as does a NaN. The replay's warning about
+# the mix is kept: such an entry (`_gvk_mw`) is parsed once more, its code taken back (_gvi_baked). CHANGELOG [6.7.16]
+var _gvk_fmix = 0;   # the scan met an integer operand
+var _gvk_mw = 0;     # per deferred entry: 1 = a baked float with an integer operand (its replay warns)
 fn _gvk_fscan(S, ti): i64 {
+    _gvk_fmix = 0;
     var k = ti;
     var n = 0;
     while (TOKTYP(S, k) != 5) {
         if (k >= GTCNT(S)) { return 0; }
         var t = TOKTYP(S, k);
         if (t == 2) {
-            if (_gvk_fname(S, k) == 0) { return 0; }
+            var w = _gvk_fname(S, k);
+            if (w == 0) { return 0; }
             n = n + 1;
+            k = k + w - 1;
         } elif (t == 61) { n = n + 1; }
+        elif (t == 1) { n = n + 1; _gvk_fmix = 1; }   # 6.7.16: an integer literal
         elif (t < 6 || t > 11) { return 0; }   # + - * / ( )
         k = k + 1;
     }
     return n;
 }
-# The name at token `k`: an f64 const the replay reads as that const, and not another file's private one.
+# The operand at token `k`, as the replay reads it — its token count, 0 = not one the bake takes: an f64 const, or
+# (6.7.16) an integer const (1), a qualified enum constant (`E.A`, 3: _gvk_fqual) or a bare one (1: _gvk_fenum); not
+# another file's private name, not a call, not a field.
 fn _gvk_fname(S, k): i64 {
     var nt = TOKTYP(S, k + 1);
-    if (nt == 41 || nt == 10) { return 0; }   # `a.b`, a call
+    if (nt == 10) { return 0; }   # a call
+    if (nt == 41) { return _gvk_fqual(S, k); }
+    if (_gvk_name_ok(S, k) == 0) { return 0; }
     var ci = _cst_find(S, TOKVAL(S, k));
-    if (ci < 0) { return 0; }
-    if (_cst_kind_peek(S, ci) != 1) { return 0; }
+    if (ci < 0) { return _gvk_fenum(S, k); }
+    var ck = _cst_kind_peek(S, ci);
+    if (ck != 0) { if (ck != 1) { return 0; } }
     if (_findvar_core(S, TOKVAL(S, k)) != L64(_cst_tab + ci * 64 + 24)) { return 0; }
-    return _gvk_name_ok(S, k);
+    if (ck == 0) { _gvk_fmix = 1; }
+    return 1;
+}
+# A bare enum constant: the global the name resolves to (as the replay's read) is one.
+fn _gvk_fenum(S, k): i64 {
+    var vi = _findvar_core(S, TOKVAL(S, k));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    if (GVENUMID(S, vi) <= 0) { return 0; }
+    _gvk_fmix = 1;
+    return 1;
+}
+# `E.A`: E no variable, A a constant of the enum named E (_enum_qual_resolve's first answer, quietly).
+fn _gvk_fqual(S, k): i64 {
+    if (TOKTYP(S, k + 2) != 2) { return 0; }
+    if (_ce_is_var(S, TOKVAL(S, k)) == 1) { return 0; }
+    if (_enum_variant_in(S, TOKVAL(S, k), TOKVAL(S, k + 2)) < 0) { return 0; }
+    _gvk_fmix = 1;
+    return 3;
 }
 
 # ⛔ 6.7.14 — A BAKED SCALAR IS NOT REPLAYED WHERE ITS STORE WROTE WHAT THE SLOT ALREADY HOLDS (issues/2026-10-08-const-
@@ -6306,9 +6422,9 @@ fn _gvk_fname(S, k): i64 {
 # § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (bk 1, or 4: folded but superseded) is stepped
 # over by the replay. A superseded constant runs nothing: a later constant is the slot's value (6.7.15, D2 (a): a
 # baked integer fold supersedes like a literal, _gvk_chain). Otherwise the slot's image value is its value and the
-# nearest earlier replayed writer of the slot, if any, is a baked entry of that value — after _gvk_chain that is a
-# float literal's (`_gvk_flt` entries keep their order: a computed initializer or a float of another value before
-# it keeps the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
+# nearest earlier replayed writer of the slot, if any, is a baked entry of that value (after _gvk_chain, which since
+# 6.7.16 supersedes for a float constant too, only a computed initializer or another file's private const before it
+# is left to keep the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
 # dropped: a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3),
 # and an initializer naming another file's private const (the replay reports it) — superseded, each still runs into
 # its sink. cx stores the image value first (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14] [6.7.15]
@@ -6396,6 +6512,7 @@ fn _gvk_left(S, gi, sti, idx): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
     var k = load8(_gvk_bk + gi);
     if (k == 2) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16: a superseded literal of constants runs nothing
     if (k == 1 || k == 3) { if (GVGAI(S, idx) == 0) { return 0; } }
     return _gvk_warn(S, sti);
 }
@@ -6428,8 +6545,9 @@ fn _gvk_warn(S, sti): i64 {
 # marked baked (2).
 fn _spc_try(S, gi, idx, sid): i64 {
     if (_gvk_live(S, idx) == 0) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16 (D14 (a)): a later literal is the slot's bytes
     if (_spc_walk(S, sid, 0) == 0) { return 0; }
-    var b = _gai_blob(S, idx, 8, 6);
+    var b = _gai_blob(S, idx, 8, 6, GVSI(S, idx));
     _spc_walk(S, sid, b + 16);
     store8(_gvk_bk + gi, 2);
     store64(_gvs_b + gi * 8, _gvs_snap(b));   # 6.7.15: its bytes, for a later literal's compare (_gvs_quiet)
@@ -6532,14 +6650,80 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
 # (_spc_try, bk 2) AND replayed every element's store — per field on x86_64 `mov eax, imm; push rax; movabs rcx, p;
 # [add rcx, off;] pop rax; mov [rcx], rax`. 6.7.14's scalar rule (_gvk_quiet; 6.7.14's D11 (b): a constant
 # initializer is the global's value from program start) now covers the baked literal: its stores are dropped when no
-# earlier live writer of the slot exists and no later entry can bake other bytes over it (a later literal: `var p =
-# P { 1, 2 }; var b = p.a; var p = P { 3, 4 };` keeps both literals' stores, so b reads 1), or when the nearest
-# earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
+# earlier live writer of the slot exists (6.7.16: a later literal of constants supersedes it, below), or when the
+# nearest earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
 # bool field's refusal, an integer into a float field) — and the code it emitted is taken back (_gvs_mark /
 # _gvs_undo). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write.
 # cx bakes the literal into its var data too (main_cx.cyr, _gai_bake). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
+# 2026-10-19; issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md). 6.7.15's D2 (a) made every scalar
+# constant redeclaration the global's value from program start, but a struct or tuple literal is baked at the replay
+# (_spc_try), after _gvk_chain had run, so a later literal of other bytes superseded nothing: `var p = P { 1, 2 }; var
+# b = p.a; var p = P { 3, 4 };` gave b 1 (both literals stored in order) and a call between the two that wrote p was
+# overwritten by the later literal's stores (p.a 3, not the call's 9). Now _gvs_pre (in _gvk_pre, before the chain)
+# dry-runs the literal walker on each struct / tuple entry where the replay will walk it — the same head, the same
+# slot type, the same closer — and an entry whose every leaf folds is a constant (`_gvk_ik` 3): _gvk_link supersedes
+# the slot's earlier writers for it, as for a scalar constant (an earlier computed one runs into a sink). A superseded
+# literal of constants bakes nothing (_spc_try), stores nothing (_gvs_quiet: its walk runs for its diagnostics and the
+# code is taken back) and makes no sink (_gvi_slot). So an earlier literal leaves no
+# startup store, a read between the two sees the later bytes, and a call between them keeps its write. Not compared
+# (a warning is for scalars). CHANGELOG [6.7.16]
 var _gvs_b = 0;   # per deferred entry: a copy of the bytes _spc_try baked (bk 2), [size][bytes]
 var _gvs_m = 0;   # the emit state _gvs_mark saved (one walk at a time: a baked literal holds no nested literal)
+# 1 = entry `gi` is a struct / tuple literal the replay will bake into its slot: every leaf a constant, the walk
+# (_spc_walk, check only) from the element the replay starts it at. Names resolve as at the replay (_gvk_pre's).
+fn _gvs_pre(S, gi): i64 {
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (_gvk_live(S, vi) == 0) { return 0; }
+    if (GVPM(S, vi) != 2) { return 0; }   # an inline struct / tuple global: the slot IS the bytes
+    var sid = GVTYPE(S, vi);
+    if (sid <= 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + gi * 8)));
+    if (rt == 0) { return 0; }
+    var at = _gvs_open(S, rt, sid);
+    if (at == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, at);
+    var ok = _spc_walk(S, sid, 0);
+    STI(S, sv);
+    _spc_cl = 14;
+    return ok;
+}
+# The first element token of the literal initializer at `rt` into a slot of type `sid` — as EMIT_GVAR_INITS reaches
+# it: a tuple literal (`_gvi_tuple`: any wrap, ending at the `;`) for a tuple type, else a struct literal head (`P {`,
+# `W<..> {`, a wrap holding exactly it: `_lit_head_w`) naming the slot's struct — with `_spc_cl` its closer; 0 = none.
+fn _gvs_open(S, rt, sid): i64 {
+    var pe = _pw_end;
+    var r = _gvs_open1(S, rt, sid);
+    _pw_end = pe;
+    return r;
+}
+fn _gvs_open1(S, rt, sid): i64 {
+    if (_tup_is(S, sid) == 1) {
+        var lp = _tup_lit_at(S, rt);
+        if (lp < 0) { return 0; }
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        _spc_cl = 11;
+        return lp + 1;
+    }
+    var h = rt;
+    if (TOKTYP(S, h) == 10) {
+        var k = _slit_wrap_k(S, h);
+        if (k == 0) { return 0; }
+        h = h + k;
+    }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    var b = FINDSTRUCT(S, TOKVAL(S, h));
+    if (b <= 0) { return 0; }
+    var o = h + 1;
+    if (TOKTYP(S, o) == 19) { o = _targs_end(S, o + 1) + 1; }   # `W<..> {`: pass 1's instance is the slot's type
+    elif (b != sid) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    _spc_cl = 14;
+    return o + 1;
+}
 fn _gvs_snap(b): i64 {
     var n = load64(b);
     var c = alloc(n + 8);
@@ -6550,14 +6734,20 @@ fn _gvs_snap(b): i64 {
 }
 # 1 = entry `gi`'s literal (into slot `idx`) is baked and its stores are dropped: the walk runs under _gvs_mark.
 fn _gvs_quiet(S, gi, idx): i64 {
-    if (load8(_gvk_bk + gi) != 2) { return 0; }
     if (gi >= _gv_ent_cap) { return 0; }
     if ((load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1 != idx) { return 0; }   # its own slot, not a sink
+    if (_gvs_sup(S, gi) == 1) { return 1; }   # 6.7.16 (D14 (a)): superseded by a later literal: no store
+    if (load8(_gvk_bk + gi) != 2) { return 0; }
     var noff = TOKVAL(S, _gv_tok(L64(_gvt(S) + gi * 8)) + 1);
     var p = _gvk_prev(S, gi, idx, noff, 2);
     if (p == 0 - 2) { return 0; }
-    if (p == 0 - 1) { return 1 - _gvs_later(S, gi, idx, noff); }
+    if (p == 0 - 1) { return 1; }
     return _gvs_same(load64(_gvs_b + p * 8), load64(_gvs_b + gi * 8));
+}
+# 1 = entry `gi` is a struct / tuple literal of constants (`_gvk_ik` 3) that a later one superseded (_gvk_link).
+fn _gvs_sup(S, gi): i64 {
+    if (load8(_gvk_ik + gi) != 3) { return 0; }
+    return _gv_sup(L64(_gvt(S) + gi * 8)) & 1;
 }
 fn _gvs_same(a, b): i64 {
     if (a == 0 || b == 0) { return 0; }
@@ -6569,32 +6759,6 @@ fn _gvs_same(a, b): i64 {
         i = i + 1;
     }
     return 1;
-}
-# 1 = an entry after `gi` writes slot `vi` (named `noff`) and may bake its own literal over the image's bytes.
-fn _gvs_later(S, gi, vi, noff): i64 {
-    if (_gvx_m == 0) { return 0; }
-    var e = _nm_get(S, _gvx_m, noff);
-    while (e != 0) {
-        var r = load64(_gvx_rec + (e - 1) * 8);
-        if ((r >> 2) > gi) { if (_gvs_lw(S, r >> 2, r & 3, vi) == 1) { return 1; } }
-        e = load64(_gvx_nxt + (e - 1) * 8);
-    }
-    return 0;
-}
-fn _gvs_lw(S, g, k, vi): i64 {
-    var w = 0;
-    if (g < _gv_ent_cap) { w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF; }
-    if (w == 0) { return 1; }   # unrecorded: it may be this slot
-    if (w - 1 != vi) { return 0; }
-    if (k != 0) { return 1; }
-    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + g * 8)));
-    if (rt == 0) { return 1; }   # a list, a destructure
-    var t = TOKTYP(S, rt);
-    if (t == 10) { return 1; }   # a tuple literal, a wrap
-    if (t != 2) { return 0; }
-    t = TOKTYP(S, rt + 1);
-    if (t == 13 || t == 19) { return 1; }   # `Name {`, `Name<..> {`
-    return 0;
 }
 # The emit state before the walk of a literal whose stores are dropped, and its undo: the code position, the
 # fixups and IR nodes it recorded, the jump sources (CYRIUS_IR / CYRIUS_DCE), the peephole trackers, the constant
@@ -6711,6 +6875,7 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
     if (load8(_gvk_bk + gi) != 3) { return 0; }
     if (GVGAI(S, idx) != 0) { return 0; }   # a zone list's blob, laid down by the replay since _gvk_pre ran
     var st = GTI(S);
+    if (load8(_gvk_mw + gi) == 1) { _gvi_mixw(S); }   # 6.7.16 (D15 (a)): the mix warning, once
     while (PEEKT(S) != 5) {
         if (PEEKT(S) == 12) { return 1; }
         STI(S, GTI(S) + 1);
@@ -6720,6 +6885,15 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
     if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) == 0) { _gv_slvar(S, idx); }   # 6.7.15: superseded, it was a sink's
     return 1;
 }
+# A baked float whose initializer mixes an integer operand into f64 arithmetic (_gvk_fscan): parsed as the replay
+# parsed it, so its "f64 arithmetic with a non-f64 right operand" is given at the token and in the order it was, and
+# the code it emitted is taken back (_gvs_mark / _gvs_undo) — nothing is stored. CHANGELOG [6.7.16]
+fn _gvi_mixw(S): i64 {
+    _gvs_mark(S);
+    PCMPE(S);
+    _gvs_undo(S);
+    return 0;
+}
 # The slot entry `gi`'s scalar initializer is replayed into: _gv_target's — or, for a constant the replay steps (bk 3,
 # _gvi_baked) that a later constant superseded, its own slot, which it does not write and does not make the "last
 # var" (as its sink did not): the sink, an 8-byte global, would be the one trace of a declaration that leaves no
@@ -6727,6 +6901,7 @@ fn _gvi_baked(S, gi, idx, gps): i64 {
 fn _gvi_slot(S, gi, gsup, gps, noff): i64 {
     var vi = _gv_ent_slot(S, gi, 0, noff);
     if (gps == 0) { if (vi >= 0) { if (load8(_gvk_bk + gi) == 3) { if (GVGAI(S, vi) == 0) { return vi; } } } }
+    if (vi >= 0) { if (load8(_gvk_ik + gi) == 3) { return vi; } }   # 6.7.16 (D14 (a)): a literal of constants, the same
     return _gv_target(S, vi, gsup, 0);
 }
 # A declaration-zone struct literal's fields, named or positional, as PARSE_STRUCT_INIT reads them (into the
@@ -7101,6 +7276,9 @@ fn EMIT_GVAR_INITS(S): i64 {
         var sti = _gv_tok(graw);
         if (_gvr_n > 0) { _gvr_hide(S, sti); }   # 6.7.15: a refused type change, as the source reads here
         STI(S, sti);
+        # Each entry starts with the panic latch clear, as a fn's statement does (the cursor is re-seated at
+        # its `var`, so no resync): an earlier entry's error latched through every later one. CHANGELOG [6.7.16]
+        _panic = 0;
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume IDENT
@@ -7434,6 +7612,7 @@ fn _gci_inline(S, sid, ann): i64 {
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (_dyn_is(S, sid) == 1) { return sid; }   # 6.7.8 (D5): a dyn global is always inline (formed or copied)
     if (_gz_star(S, GTI(S), sid) == 1) { return sid; }   # 6.7.10 (B7-1g): `*p` is a struct value
+    if (_gz_pnat(S, GTI(S), sid) >= 0) { return sid; }   # 6.7.16 (D18 (a)): so is a `*T` global's name
     if (_gci_src(S, GTI(S)) != sid) { return 0; }
     return sid;
 }
@@ -7516,7 +7695,10 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var ss = _gci_src(S, GTI(S));
-    if (ss == 0) { return _gz_star_init(S, dgv, gps, dnoff); }   # 6.7.10 (B7-1g): `*p`
+    if (ss == 0) {
+        if (_gz_pn_init(S, dgv, gps, dnoff) == 1) { return 1; }   # 6.7.16 (D18 (a)): a `*T` global's name
+        return _gz_star_init(S, dgv, gps, dnoff);   # 6.7.10 (B7-1g): `*p`
+    }
     if (_AGG_ASSIGN_TYPE_ERR(S, gps, 0 - ss, dnoff, _gci_nm) == 1) { return 0; }
     if (dgv < 0) { return 0; }
     if (STRUCTSZ(S, ss - 1) <= 8) { return 0; }
@@ -7550,8 +7732,14 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     var ss = _gci_src(S, GTI(S) + 1);
     var pg = 0 - 1;   # 6.7.10 (B7-1g): `var G: T = *p;` — p's slot (`*p` is a struct value)
     var dx = 0;       # 6.7.10 (review): 1 = any other dereference of a `*T` (`_gci_dx_top`)
+    var pn = 0 - 1;   # 6.7.16 (D18 (a)): `var G: T = P;` — P a `*T` global's name (`_gz_pnat`), copied at every size
     if (ss == 0) {
-        if (_sci_star(S, GTI(S) + 1) == 0) {
+        pn = _gz_pnat(S, GTI(S) + 1, sid);
+        if (pn >= 0) {
+            pg = FINDVAR(S, TOKVAL(S, pn));
+            if (pg < 0) { return 0; }
+        }
+        elif (_gz_star1(S, GTI(S) + 1) == 0) {
             dx = _gci_dx_top(S, noff, pscale);
             if (dx == 0) { return 0; }
         } else {
@@ -7561,7 +7749,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
         ss = sid;
     }
     if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ss, noff, _gci_nm) == 1) { return 0; }
-    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { if (dx == 0) { if (pn < 0) { return 0; } } }   # 6.7.16: `*GPP`, `P` (D17 / D18)
     STI(S, GTI(S) + 1);   # consume '='
     var took = 2;
     var h = 0;
@@ -7570,10 +7758,13 @@ fn _gci_toplevel(S, noff, pscale): i64 {
         took = 3;
     }
     elif (pg < 0) { took = _gci_take(S, sid); }
+    elif (pn >= 0) { STI(S, _gz_end(S, GTI(S))); }   # the name and its wrap, the cursor on `;`
     else { STI(S, GTI(S) + 2); }   # `* IDENT`, the cursor on `;`
     var vcnt = GVCNT(S);
+    var gsz = STRUCTSZ(S, sid - 1);
+    if (gsz < 8) { gsz = 8; }   # 6.7.16: 8 B or less, the value slot the arm's value store registers (`_vecg_size`)
     S64(_varn_base + vcnt * 8, noff);
-    S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
+    S64(_vars_base + vcnt * 8, gsz);
     SVTYPE(S, vcnt, sid);
     SVPM(S, vcnt, 2);
     SLVAR(S, vcnt);
@@ -7588,14 +7779,19 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     return 1;
 }
 
-# 6.7.10 (B7 review) — `_gci_toplevel`'s `var G: T = <* E>;` for any dereference of a `*T` (`_hl_dstar`,
+# 6.7.10 (B7 review) — `_gci_toplevel`'s `var G: T = <* E>;` for any dereference of a `*T` (`_hl_dstar_x`,
 # `_sci_dexpr`'s global twin): 1 = over 8 B, copied by `_gci_toplevel` through a hidden global holding E
 # into the inline G it registers after it; 0 = not one, refused (a `*U` of another struct, by name), or 8
 # B or less — the arm's value store then copies the word (`_gz_late` judges it a value).
+# 6.7.16 (D17 (a)): `*pp` of a `**S` (`_hl_dstar_x`'s mode 1) is 1 at EVERY size — copied through the `*S` it reads, as
+# in a fn (`_sci_dexpr`); the value store would keep that pointer word, a handle. CHANGELOG [6.7.16]
 fn _gci_dx_top(S, noff, pscale): i64 {
-    var ps = _hl_dstar(S, GTI(S) + 1);
+    var ps = _hl_dstar_x(S, GTI(S) + 1, 5, 1);
     if (ps <= 0) { return 0; }
+    var dpp = _hl_dpp;
     if (_agg_dx_err(S, pscale, 0 - ps, noff) == 1) { return 0; }
+    _hl_dpp = dpp;
+    if (dpp == 1) { return 1; }
     if (STRUCTSZ(S, (0 - pscale) - 1) <= 8) { return 0; }
     return 1;
 }
@@ -8235,7 +8431,7 @@ fn _sci_slots(S, noff, pscale, nslots): i64 {
     return named;
 }
 # ⛔ 6.7.10 (B7 review) — `var q: T = <* E>;` in a fn for ANY dereference whose operand E is typed `*T`
-# (`_hl_dstar`): `(*p)`, `*(p + i)`, `*h.p`, `*gp()`, `*w.m().p`, `(*self)`. `*p` is a struct VALUE at every
+# (`_hl_dstar_x`): `(*p)`, `*(p + i)`, `*h.p`, `*gp()`, `*w.m().p`, `(*self)`. `*p` is a struct VALUE at every
 # size (the user's decision 6, 2026-10-12), and only `* IDENT ;` was recognised: every other spelling
 # fell to the scalar init, so at 8 B or less q became a HANDLE holding the word the dereference read
 # (inline through 6.7.9) and its first `q.v = 9` SIGSEGV'd; over 8 B it was that garbage handle on 6.7.9
@@ -8300,7 +8496,7 @@ fn _sci_pname(S, ti): i64 {
 # return is written through a hidden pointer, so the destination address is pushed as arg 0
 # rather than a pair being stored after the call.
 fn _try_vector_call_assign(S, noff, term): i64 {
-    if (GINFN(S) != 1) { return 0; }
+    if (GINFN(S) != 1) { return _vasg_gtop(S, noff, term); }   # 6.7.16: a top-level assignment
     var vo = _vrcv_asg(S, noff, term);   # 6.7.11
     if (vo >= 0) { return vo; }
     var dst_li = FINDLOCAL(S, noff);
@@ -8803,6 +8999,19 @@ fn _vasg_mscal(S, noff, term): i64 {
     var mt = _vasg_vt(S, GTI(S), term);
     if (mt == 0) { return 0; }
     if (mt == dt) { return 0; }
+    _vrcv_tyerr(S, _vcv_a, 1);
+    return 0;
+}
+# ⛔ 6.7.16 — AND AT TOP LEVEL: `G = mkv(41, 7);` / `G = s.mv();` (after the first statement, or in a top-level for
+# step) into a global that is no vector stored one word, silently — x86_64 / aarch64 0, cx / PE 41 — where the same
+# assignment in a fn is refused (6.7.15) and the top-level declaration is too (6.7.15's D26 / D27):
+# `_try_vector_call_assign` returned before any check outside a fn. The global's arm of `_vasg_mscal`, read with no
+# local table (there is none at top level, and the last fn's locals are still in it): a call declared to return a
+# vector, of any spelling `_vasg_vt` reads, is refused with the in-fn assignment's words and nothing is emitted. A
+# vector global keeps its own refusal (`_vecg_refuse`). 0. CHANGELOG [6.7.16]
+fn _vasg_gtop(S, noff, term): i64 {
+    if (_vasg_gnv(S, noff) == 0) { return 0; }
+    if (_vasg_vt(S, GTI(S), term) == 0) { return 0; }
     _vrcv_tyerr(S, _vcv_a, 1);
     return 0;
 }
@@ -11003,6 +11212,11 @@ var _gz_v = 0;   # the declaration zone's struct globals of 8 B or less: (slot, 
 var _gz_k = 0;
 var _gz_gb = 0;  # the generic struct a whole generic call's `: G<T>` return names (its instance is the call's)
 var _gz_mfi = 0 - 1;   # 6.7.15: the method or operator fn whose result `_gz_ty` last typed (`_gu_wsid`)
+# 6.7.16: that step's method name token (-1: an operator fn), its `(` and its receiver's struct (`_gu_minst`)
+var _gz_mti = 0 - 1;
+var _gz_mop = 0;
+var _gz_mrs = 0;
+var _gz_mx = 0;        # 6.7.16: 1 while `_gz_ty` splits — `_gz_split` then reads `R.m<..>(` as one operand
 # PARSE_GVAR_REG, the slot known (`gvi`; `ti` the initialiser's first token): a struct global of 8 B or
 # less is noted for the sweep — a literal (`lit` 1, struct `ssid`) as a fixed value (its token negated),
 # any other initialiser (the declared `asid`) to be judged.
@@ -11112,10 +11326,10 @@ fn _gz_fsrc(S, b, sid): i64 {
     if (t != sid) { return 0; }
     return 1;
 }
-# ⚠ 6.7.10 (B7-1g) — `var G: T = P;` with P a `*U` global's NAME (inside any parentheses): left with the
-# layout it had (8 B or less, an inline value holding the pointer word; over 8 B, a handle bound to P's
-# object) until the user decides whether a global from a `*T` name copies the struct, as a local does
-# (6.7.0), or binds, as a global over 8 B does. 1 = [b, its `;`) is such a name.
+# `var G: T = P;` with P a `*U` global's NAME (inside any parentheses): 1 = [b, its `;`) is such a name — a struct
+# value to the sweep (8 B or less, G inline). 6.7.10 (B7-1g) left it the layout it had until the user decided; 6.7.16's
+# D18 (a): a `*T` name of the declared struct copies at every size (`_gz_pnat`). A `*U` of another struct keeps the
+# 6.7.9 layout (8 B or less, the pointer word; over 8 B, a handle bound to P's object).
 fn _gz_pname(S, b): i64 {
     var a = _ie_unparen(S, b, _gz_end(S, b));
     if (_ie_pe != a + 1) { return 0; }
@@ -11123,6 +11337,40 @@ fn _gz_pname(S, b): i64 {
     var gvi = _findvar_core(S, TOKVAL(S, a));
     if (gvi < 0) { return 0; }
     if (_gv_ptr_sid(S, gvi) <= 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 (D18 (a)) — A TOP-LEVEL `var G: S = P;` WITH P A `*S` GLOBAL'S NAME IS A COPY, AT EVERY SIZE (the user's
+# decision, 2026-10-19), in the declaration zone and after the first statement, as the same line in a fn is (6.7.0):
+# through 6.7.15 the guide's "not yet settled" layout — 8 B or less G held the pointer word, over 8 B G was a handle
+# bound to P's object. The initialiser at token `b` (up to its `;`, inside any parentheses) is the name of a `*sid`
+# global, sid the declared struct, a plain one (a `Str`, tuple or dyn keeps its own rules): the name's token, else -1.
+# Pass 1 registers G inline (`_gci_inline`); the replay (`_gz_pn_init`) and PARSE_VAR's top-level arm
+# (`_gci_toplevel`) copy through P's slot, as `*P` does. CHANGELOG [6.7.16]
+fn _gz_pnat(S, b, sid): i64 {
+    if (sid <= 0) { return 0 - 1; }
+    var a = _ie_unparen(S, b, _gz_end(S, b));
+    if (_ie_pe != a + 1) { return 0 - 1; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    var gvi = _findvar_core(S, TOKVAL(S, a));
+    if (gvi < 0) { return 0 - 1; }
+    if (_gv_ptr_sid(S, gvi) != sid) { return 0 - 1; }
+    if (_dx_plain(S, sid) == 0) { return 0 - 1; }
+    return a;
+}
+# The replay of `var G: S = P;` (`_gz_pnat`, cursor on the initialiser): copied through P into G at every size, the
+# cursor left on the `;` (1); 0 = not one. A P pass 1 could not see over 8 B (declared below G: G a handle) is refused,
+# as `*P` is (`_gci_below`). CHANGELOG [6.7.16]
+fn _gz_pn_init(S, dgv, gps, dnoff): i64 {
+    var sid = 0 - gps;
+    var a = _gz_pnat(S, GTI(S), sid);
+    if (a < 0) { return 0; }
+    if (dgv < 0) { return 0; }
+    if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
+    var pg = FINDVAR(S, TOKVAL(S, a));
+    STI(S, _gz_end(S, GTI(S)));
+    if (pg < 0) { return 1; }
+    _agc_copy_bytes(S, 0 - 1, dgv, 0 - 1, 0 - 1000 - pg, STRUCTSZ(S, sid - 1));
+    _gv_slvar(S, dgv);
     return 1;
 }
 # 1 = struct `c` is an instance of the generic struct `g` (`_sinst`, 6.7.8).
@@ -11135,13 +11383,23 @@ fn _gz_inst_of(S, c, g): i64 {
     return 1;
 }
 # `* IDENT ;` at token `b`, IDENT a global `*sid`: 1. 6.7.10 (review): or any other dereference of a
-# `*sid` up to the `;` (`_hl_dstar`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
+# `*sid` up to the `;` (`_hl_dstar_x`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
+# ⛔ 6.7.16 (D17 (a)) — and `*pp` of a `**sid` in any spelling (`_hl_dstar_x`'s mode 1: `*GPP`, `(*GPP)`): a top-level
+# `var G: S = *GPP;` is a copy at every size, as the same line in a fn is since 6.7.15 (it bound a handle), so pass 1
+# registers G inline and the sweep keeps it a value. CHANGELOG [6.7.16]
 fn _gz_star(S, b, sid): i64 {
-    if (_sci_star(S, b) == 0) {
-        if (_hl_dstar(S, b) == sid) { return 1; }
+    if (_gz_star1(S, b) == 1) {
+        if (_gz_pg(S, b) == sid) { return 1; }
         return 0;
     }
-    if (_gz_pg(S, b) != sid) { return 0; }
+    if (_hl_dstar_x(S, b, 5, 1) == sid) { return 1; }
+    return 0;
+}
+# 1 = `* IDENT ;` at token `b` with IDENT a `*T` global, T a struct (`_gz_star_src`'s copy through its slot); a `**S`
+# or untyped IDENT is 0 — the general dereference arm's (`_hl_dstar_x`). CHANGELOG [6.7.16]
+fn _gz_star1(S, b): i64 {
+    if (_sci_star(S, b) == 0) { return 0; }
+    if (_gz_pg(S, b) <= 0) { return 0; }
     return 1;
 }
 # The struct the pointer global after the `*` at token `b` points at (`*T` annotation), else 0.
@@ -11193,7 +11451,10 @@ fn _gz_ty(S, b, e): i64 {
     }
     if (b >= e) { return 0; }
     if (TOKTYP(S, b) == 15) { return _gz_ie(S, b, e); }
+    var mx = _gz_mx;
+    _gz_mx = 1;
     var p = _gz_split(S, b, e);
+    _gz_mx = mx;
     if (p == 0 - 2) { return 0; }
     if (p >= 0) { return _gz_op(S, b, p); }
     return _gz_unary(S, b, e);
@@ -11212,14 +11473,18 @@ fn _gz_bin(t): i64 {
 # Where [b, e) splits as a binary expression outside every bracket: the LAST operator of the loosest
 # level present (both loops are left-associative, so it is the one applied last), -1 for none, -2 for
 # an operator neither loop parses (a comparison, a logic link: an integer, never a struct).
+# 6.7.16: for the zone's reader (`_gz_mx`), an explicit generic method call `R.m<..>(..)` is one operand, as the
+# parser's member arm reads it (`_gz_mxopen`) — its `<` was a comparison, so the line typed nothing. CHANGELOG [6.7.16]
 fn _gz_split(S, b, e): i64 {
     var pa = 0 - 1;
     var pm = 0 - 1;
     var opd = 0;
+    var os = b;   # the operand's first token past its prefixes (a member's receiver starts there)
     var i = b;
     while (i < e) {
         var t = TOKTYP(S, i);
         if (t == 10 || t == 13 || t == 28) {
+            if (opd == 0) { os = i; }
             i = _gz_close(S, i, e) + 1;
             opd = 1;
             continue;
@@ -11227,20 +11492,47 @@ fn _gz_split(S, b, e): i64 {
         if (opd == 0) {
             if (t == 2) {
                 var o = _gcall_open(S, i);
-                if (o > i + 1) { i = o; opd = 1; continue; }   # `f<..>(`: on to its `(`
+                if (o > i + 1) { os = i; i = o; opd = 1; continue; }   # `f<..>(`: on to its `(`
             }
-            if (t != 7 && t != 8 && t != 27 && t != 37) { opd = 1; }   # else a prefix
+            if (t != 7 && t != 8 && t != 27 && t != 37) { opd = 1; os = i; }   # else a prefix
         } else {
             var c = _gz_bin(t);
             if (c == 1) { pa = i; opd = 0; }
             elif (c == 2) { pm = i; opd = 0; }
-            elif (c == 3) { opd = 0; }
+            elif (c == 3) {
+                var mo = _gz_mxopen(S, os, i);
+                if (mo > 0) { i = mo; continue; }   # `R.m<..>(`: on to its `(`
+                opd = 0;
+            }
             elif (c == 0) { return 0 - 2; }
         }
         i = i + 1;
     }
     if (pa >= 0) { return pa; }
     return pm;
+}
+# The `(` of `R . m < .. > (` at the `.` (token d), R the operand [os, d), when the zone's reader asks (`_gz_mx`) and
+# R's struct has a generic method m and no field m (`_mtargs_at`, the parser's member arm's own test); else 0.
+fn _gz_mxopen(S, os, d): i64 {
+    if (_gz_mx == 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 2) { return 0; }
+    if (TOKTYP(S, d + 2) != 19) { return 0; }
+    if (_mtargs_at(S, _gz_rsid(S, os, d), d + 1) == 0) { return 0; }
+    return _tok_targs_close(S, d + 3) + 1;
+}
+# The struct the receiver [a, d) is (`_gz_ty`: a value, a handle, a `*T`), the reader's state put back; 0 none.
+fn _gz_rsid(S, a, d): i64 {
+    var k = _gz_k;
+    var gb = _gz_gb;
+    var mf = _gz_mfi;
+    var mt = _gz_mti;
+    var t = _gz_ty(S, a, d);
+    _gz_k = k;
+    _gz_gb = gb;
+    _gz_mfi = mf;
+    _gz_mti = mt;
+    if (t >= 2048) { return 0; }
+    return t;
 }
 # [b, p) OP [p + 1, ..): an overloaded `+ - * /` dispatches on its left operand's struct (`_gz_lty`)
 # and has its operator fn's struct return; any other operator, or no dispatch, gives no struct.
@@ -11259,6 +11551,7 @@ fn _gz_op(S, b, p): i64 {
     if (r <= 0) { return 0; }
     _gz_k = 1;
     _gz_mfi = ofi;
+    _gz_mti = 0 - 1;
     return r;
 }
 # The struct an operator's left operand [b, p) dispatches on (`_op_lst`): a struct result, an inline
@@ -11346,11 +11639,12 @@ fn _gz_chain(S, b, e): i64 {
         if (t >= 2048) { return 0; }
         if (TOKTYP(S, i) != 41) { return 0; }
         if (TOKTYP(S, i + 1) != 2) { return 0; }
-        if (TOKTYP(S, i + 2) == 10) {
+        var mo = _gz_mopen(S, t, i + 1);   # 6.7.16: `.m(` or `.m<..>(`
+        if (mo > 0) {
             var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
             if (mf < 0) { return 0; }
-            _gz_mfi = mf;
-            var mc = _call_close(S, i + 2);
+            _gz_mstep(mf, i + 1, mo, t);
+            var mc = _call_close(S, mo);
             t = GFRS(S, mf);
             k = 1;
             if (t <= 0) {
@@ -11378,6 +11672,21 @@ fn _gz_chain(S, b, e): i64 {
     if (t >= 2048) { return 0; }
     _gz_k = k;
     return t;
+}
+# The `(` of the method call whose name is token `n` on struct `t`: `.m(`, or (6.7.16) the explicit `.m<..>(` the
+# parser's member arm reads (`_mtargs_at`: m no field of t and a generic method of it); else 0.
+fn _gz_mopen(S, t, n): i64 {
+    if (TOKTYP(S, n + 1) == 10) { return n + 1; }
+    if (_mtargs_at(S, t, n) == 0) { return 0; }
+    return _tok_targs_close(S, n + 2) + 1;
+}
+# The method step `_gz_ty` last read: its fn, name token, `(` and receiver's struct (`_gu_minst`).
+fn _gz_mstep(mf, n, mo, rs): i64 {
+    _gz_mfi = mf;
+    _gz_mti = n;
+    _gz_mop = mo;
+    _gz_mrs = rs;
+    return 0;
 }
 # The struct the call `f(..)` / `g<..>(..)` at token `j` returns by value: its fn's, a generic's bound
 # `: T` read from the tokens as the pair scans read it (`_tok_gen_ret_sid`, nothing instantiated); 0.
@@ -11479,7 +11788,7 @@ fn _gz_late(S, sid, start): i64 {
 # is refused by name (6.7.9). Now the same rule as the free call: after the first statement from the parse's own
 # record (`_gu_rec`: `_sc_whole`, or the span of a call over 16 B that refused itself), in the zone from the tokens
 # (`_gu_wsid`: `_gz_ty`'s call result) with the replay's refusal from the record and `_gz_agree` checking the 8 B
-# verdict as an annotated global's. An if-expression's struct is not this rule (it keeps the word). And a zone generic
+# verdict as an annotated global's. (6.7.16, D16: an if-expression's struct too — `_gu_ierec`, `_gu_ie`.) And a zone generic
 # call returning a generic struct's instance (`fn mkg1<T>(v: T): G1<T>`, `var x = mkg1(33);`, `mkg1<i32>(33)`) takes
 # that instance, as it does after the first statement (`_gu_gen`; `x.v` was "no struct type in scope for 'x'").
 # CHANGELOG [6.7.15]
@@ -11543,11 +11852,15 @@ fn _gu_late(S, pscale, start): i64 {
 # by name at the cursor, as `_sc_global_pair` refuses `var G: P2 = B2.mk();`; not after a refusal inside the
 # initialiser, `_scv_err`), or the span of a call over 16 B that refused itself (`_sc_rbeg`); inside any wrap. A line
 # refused inside its initialiser (a chain's receiver) is typed from its tokens (`_gu_wsid`), so its uses add nothing.
-# 0 = none — an if-expression's record (no fn), a `Str`, a dyn, a tuple.
+# 0 = none — a `Str`, a dyn, a tuple.
+# ⛔ 6.7.16 — AND A WHOLE IF-EXPRESSION'S STRUCT OF 8 B OR LESS (the user's decision D16 (a), 2026-10-19: 6.7.15's D34 /
+# 6.7.14's D29 reach it; in a fn `var g = if (c) { b } else { b };` binds): its record (`_ie_struct_result`: -3, no fn,
+# spanning the `if`) binds as a method's does — `G.a` was "no struct type in scope for 'G'". Over 8 B the branches
+# refuse themselves (`_ie_big_err`, naming the struct) and leave no record: G stays untyped. CHANGELOG [6.7.16]
 fn _gu_rec(S, start): i64 {
     var t = _sc_whole(S, start);
     if (t == 0 - 3 || t == 0 - 1) {
-        if (_sc_fi < 0) { return 0; }
+        if (_sc_fi < 0) { return _gu_ierec(S, t); }
         var sid = _gu_ok(S, _sc_sid);
         if (sid <= 0) { return 0; }
         if (t == 0 - 1) { if (_scv_err == 0) { _refuse_toplevel_struct_call(S, _sc_fn); } }
@@ -11559,6 +11872,12 @@ fn _gu_rec(S, start): i64 {
     var r = _gu_wsid(S, start);
     STI(S, sv);
     return r;
+}
+# The record `_gu_rec` read with no fn (`t`): an if-expression's (-3, `_sc_beg` its `if`) gives its struct; else 0.
+fn _gu_ierec(S, t): i64 {
+    if (t != 0 - 3) { return 0; }
+    if (TOKTYP(S, _sc_beg) != 15) { return 0; }
+    return _gu_ok(S, _sc_sid);
 }
 # 1 = the tokens [b, e) are the initialiser [start, cursor), inside `b - start` parentheses that wrap it whole.
 fn _gu_span(S, start, b, e): i64 {
@@ -11589,12 +11908,12 @@ fn _gu_zref(S, st): i64 {
     return 0;
 }
 # PARSE_GVAR_REG: an untyped (`typed` 0), non-literal declaration whose initialiser at `ti` may be a call (6.7.15: or a
-# `callptr(..)`) is noted.
+# `callptr(..)`; 6.7.16: or an if-expression, D16) is noted.
 fn _gu_reg(S, gvi, typed, ti): i64 {
     if (typed != 0) { return 0; }
     if (ti <= 0) { return 0; }
     var t = TOKTYP(S, ti);
-    if (t != 2) { if (t != 10) { if (t != 137) { return 0; } } }
+    if (t != 2) { if (t != 10) { if (t != 137) { if (t != 15) { return 0; } } } }
     if (_gu_v == 0) { _gu_v = vec_new(); }
     if (ti <= _gu_lt) { _gu_uo = 1; }
     _gu_lt = ti;
@@ -11606,26 +11925,54 @@ fn _gu_reg(S, gvi, typed, ti): i64 {
 # The end of pass 1: each noted global whose initialiser is one whole call (or, 6.7.15, a whole method, operator or
 # known `&f` result) returning a struct takes it — inline of 8 B or less, else a handle (refused at the replay, or by
 # the call). The struct is read from the tokens (`_gu_zsid`). The cursor is put back.
+# 6.7.16: to a fixpoint — a reading may take another noted global's struct (`mkc(BX)`, BX swept below it), which the
+# replay reads as the sweep left it, so the notes are read again until none changes (one pass per note at most).
+# CHANGELOG [6.7.16]
 fn _gu_sweep(S): i64 {
     if (_gu_v == 0) { return 0; }
     var sv = GTI(S);
     var n = vec_len(_gu_v);
+    var k = 0;
+    while (_gu_pass(S, n) == 1) {
+        k = k + 3;
+        if (k > n) { break; }
+    }
+    STI(S, sv);
+    return 0;
+}
+# One reading of every note, with what the readings before it typed; 1 = a global's struct changed.
+fn _gu_pass(S, n): i64 {
+    var ch = 0;
     var i = 0;
     while (i < n) {
         var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
-        if (sid > 0) {
-            _gu_type(S, vec_get(_gu_v, i), sid);
-            vec_set(_gu_v, i + 2, sid);
+        if (sid != vec_get(_gu_v, i + 2)) {
+            _gu_set(S, i, sid);
+            ch = 1;
         }
         i = i + 3;
     }
-    STI(S, sv);
+    return ch;
+}
+# Note `i`'s global takes struct `sid` (`_gu_type`; a handle for a refused type-argument list, `_gu_hdl`), or with 0 is
+# untyped as it was registered.
+fn _gu_set(S, i, sid): i64 {
+    var gvi = vec_get(_gu_v, i);
+    vec_set(_gu_v, i + 2, sid);
+    if (sid > 0) {
+        _gu_type(S, gvi, sid);
+        if (_gu_hdl == 1) { SVPM(S, gvi, 1); }
+        return 0;
+    }
+    SVTYPE(S, gvi, 0);
+    SVPM(S, gvi, 0);
     return 0;
 }
 # The struct the zone initialiser at token `ti` binds, from its tokens: a whole free call's return (`_gz_call_rs`: a
 # generic's fixed or bound `: T` return; 6.7.15, a generic struct's instance through `_gu_gen`), else a whole method /
 # operator / known `&f` result (`_gu_wsid`). 0 none.
 fn _gu_zsid(S, ti): i64 {
+    _gu_hdl = 0;
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_ok(S, _gz_call_rs(S, c));
@@ -11635,28 +11982,118 @@ fn _gu_zsid(S, ti): i64 {
     return _gu_wsid(S, ti);
 }
 # 6.7.15 (D34) — the struct a whole method, operator or known `&f` result at token `b` (up to its `;`, inside any wrap)
-# has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not an if-expression's, not
-# a free call's (`_gu_call`'s), and not the generic struct's base a GENERIC method or operator returns (the replay's
-# call reaches an instance whose struct is not made here).
+# has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not a free call's
+# (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches (`_gu_minst`; the
+# base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a generic operator fn's its base; and a whole
+# if-expression's struct (`_gu_ie`, D16).
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
     var t = _gu_ok(S, _gz_ty(S, b, e));
     if (_gz_k != 1) { return 0; }
     if (t <= 0) { return 0; }
-    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { return 0; } } }
     var a = b;
     while (TOKTYP(S, a) == 10) {
         if (_gz_close(S, a, e) != e - 1) { break; }
         a = a + 1;
         e = e - 1;
     }
+    if (TOKTYP(S, a) == 15) { return _gu_ie(S, t); }
+    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
+    if (t <= 0) { return 0; }
     if (_gu_wfree(S, a, e) == 1) { return 0; }
     return t;
 }
-# 1 = [a, e) is an if-expression or one whole free call (a known `&f` callee is not one).
+# ⛔ 6.7.16 — A ZONE IF-EXPRESSION OF STRUCT BRANCHES BINDS ITS STRUCT (the user's decision D16 (a), 2026-10-19), as the
+# line after the first statement does (`_gu_ierec`) and a fn's `var g = if (c) { b } else { b };`: `t`, the struct its
+# first branch reads as (`_gz_ie`), when 8 B or less — `var G = if (1 == 1) { B1 } else { B1 };` was untyped, so `G.a`
+# was "no struct type in scope for 'G'". The first branch's, as the parse's merge keeps it (`_ie_merge`): a later
+# branch of another type is refused there, once, and G is still the first's (no `G.a` cascade, as in a fn). Over 8 B
+# the branches refuse themselves at the replay, naming the struct (`_ie_big_err`), and G stays untyped, as in a fn. A
+# generic struct's base is not bound (a generic call's branch reads as its base, not the instance its call makes). 0 =
+# not bound. CHANGELOG [6.7.16]
+fn _gu_ie(S, t): i64 {
+    if (STRUCTSZ(S, t - 1) > 8) { return 0; }
+    if (GSTP(S, t - 1) != 0) { return 0; }
+    return t;
+}
+# ⛔ 6.7.16 — A ZONE GENERIC METHOD'S GENERIC STRUCT RESULT IS ITS INSTANCE. The struct the last method step `_gz_ty`
+# read (`_gz_mfi` generic, returning `: G<..>`, G = `g`) returns at its call: its type arguments as the parser's member
+# arm binds them — an explicit list as `_meth_targs` / `_meth_xinst` read it (`_gu_mx`), else `_mcall_gen`'s inference
+# (`_gu_mi`: `_mcall_infer`, `self` at parameter 0, no fn instance made) — then G for the base, else the instance its
+# return names (`_gu_inst`), the one the replay's call reaches. `var y = b.mkg(P);` / `b.mkg<i32>(33)` bound nothing in
+# the zone (`y.v`: "no struct type in scope for 'y'") and bound the instance after the first statement. A GENERIC
+# OPERATOR fn is G: its dispatch (EMIT_OP_DISPATCH) calls the base, as after the first statement. 0 = not read here.
+# CHANGELOG [6.7.16]
+fn _gu_minst(S, g): i64 {
+    if (_gz_mti < 0) { return g; }
+    var gb = _gz_gb;
+    _gz_gb = g;
+    var r = 0;
+    if (TOKTYP(S, _gz_mti + 1) == 19) { r = _gu_mx(S, _gz_mfi, g); }
+    else { r = _gu_mi(S, _gz_mfi, g); }
+    _gz_gb = gb;
+    return r;
+}
+# The explicit list `.m<..>(` (its name token `_gz_mti`), read as the free call's is (`_gu_xlist`) when it holds names
+# only (`_gu_xnames`: a `*`, a number, a slice is the call's to refuse, never parsed here); a list the call refuses
+# (`<*u8>`, `<u8>`) is G, as the arm reaches the base (`_meth_xinst`) and the line after the first statement takes it.
+fn _gu_mx(S, mf, g): i64 {
+    if (_gu_xnames(S, _gz_mti + 2) == 0) { return g; }
+    if (_gu_xlist(S, _gz_mti) == 0) { return g; }
+    var c0 = _gu_x0;
+    var c1 = _gu_x1;
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    if (c0 == 0 - 8) { if (c1 == 0 || c1 == 0 - 8) { return g; } }
+    if (c0 < 0) { if (c1 <= 0) { if (_gen_stub(S, mf) != 0) { return g; } } }
+    return _gu_inst(S, mf, c0, c1);
+}
+# 1 = the type-argument list from its first argument at token `i` is names, commas and nested `<..>` only.
+fn _gu_xnames(S, i): i64 {
+    var e = _tok_targs_close(S, i);
+    if (e < 0) { return 0; }
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t != 2 && t != 19 && t != 20 && t != 31 && t != 39 && t != 152) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+fn _gu_mi(S, mf, g): i64 {
+    _gen_stub(S, mf);
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    _gi_sc = 0;
+    _gu_miss = 0;
+    var c0 = _mcall_infer(S, mf, _gz_mop, 0, _gz_mrs);
+    var c1 = 0;
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) != 0) { c1 = _mcall_infer(S, mf, _gz_mop, 1, _gz_mrs); }
+    var inst = _gu_mbind(S, mf, c0, c1);
+    _gu_noinst = ni;
+    SFLC(S, lc);
+    STI(S, sv);
+    _gi_sc = sc;
+    _gu_miss = ms;
+    if (inst < 0) { return 0; }
+    if (inst == 0) { return g; }
+    return _gu_inst(S, mf, c0, c1);
+}
+# `_mcall_gen`'s verdict on the binding (c0, c1) just inferred: 1 the instance, 0 the base, -1 not read (`_gu_miss`,
+# or a tuple: the call refuses itself).
+fn _gu_mbind(S, mf, c0, c1): i64 {
+    if (_gu_miss == 1) { return 0 - 1; }
+    if (_tup_is(S, c0) == 1) { return 0 - 1; }
+    if (_tup_is(S, c1) == 1) { return 0 - 1; }
+    if (c0 > 0 || c1 > 0) { return 1; }
+    return _gen_sc_inst(S, mf);
+}
+# 1 = [a, e) is one whole free call (a known `&f` callee is not one). An if-expression is `_gu_ie`'s (6.7.16).
 fn _gu_wfree(S, a, e): i64 {
-    if (TOKTYP(S, a) == 15) { return 1; }
     if (_icall_open_at(S, a) >= 0) { return 0; }
     var o = _gcall_open(S, a);
     if (o < 0) { return 0; }
@@ -11668,62 +12105,129 @@ fn _gu_wfree(S, a, e): i64 {
 # — an explicit list as that call parses it, else each type parameter's carrying argument (`_gu_tp`) — then G itself
 # for an all-i64 binding (the base fn: the base struct), else the instance the return names under that binding
 # (`_gu_inst`). 0 when the tokens bind no type argument: the global stays untyped, as before.
+# 6.7.16: an inferred binding is decided as `_gen_resolve_call` decides it — the base unless an argument binds a struct
+# or marks `_gi_sc` (an f64, a struct carrier's scalar) — and a binding the sweep cannot read (`_gu_miss`) binds nothing.
+# ⛔ 6.7.16 — A LIST THE CALL REFUSES (`mkg1<*u8>(33)`) IS A HANDLE OF G, as the line after the first statement takes it:
+# the call reaches its base (`_gen_resolve_call`), whose result the parse records as no struct value (`_gz_late`). The
+# global stayed untyped, so its `x.v` added "no struct type in scope for 'x'" after the type argument's own refusal.
+# `_gu_hdl` tells the sweep (`_gu_set`). CHANGELOG [6.7.16]
+var _gu_hdl = 0;
 fn _gu_gen(S, c): i64 {
     var fi = FINDFN(S, TOKVAL(S, c));
     if (fi < 0) { return 0; }
     var c0 = 0 - 8;
     var c1 = 0;
     if (TOKTYP(S, c + 1) == 19) {
-        if (_targs_resolvable(S, c + 2) == 0) { return 0; }
-        var sv = GTI(S);
-        var sv_gt = _ta_pending_gt;
-        _ta_pending_gt = 0;
-        STI(S, c + 2);
-        c0 = _parse_one_type_arg(S);
-        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
-        _ta_pending_gt = sv_gt;
-        STI(S, sv);
-    } else {
-        c0 = _gu_tp(S, c, fi, 0);
-        if (c0 == 0) { return 0; }
-        if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) {
-            c1 = _gu_tp(S, c, fi, 1);
-            if (c1 == 0) { return 0; }
+        if (_gu_xlist(S, c) == 0) {
+            _gu_hdl = 1;
+            return _gz_gb;
         }
+        c0 = _gu_x0;
+        c1 = _gu_x1;
+        if (c0 <= 0 && c1 <= 0) {
+            if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return _gz_gb; }
+            if (_gen_stub(S, fi) != 0) { return 0; }
+        }
+        return _gu_inst(S, fi, c0, c1);
     }
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gi_sc = 0;
+    _gu_miss = 0;
+    c0 = _gu_tp(S, c, fi, 0);
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _gu_tp(S, c, fi, 1); }
+    var g = _gi_sc;
+    var miss = _gu_miss;
+    _gi_sc = sc;
+    _gu_miss = ms;
+    if (miss == 1) { return 0; }
     if (c0 <= 0 && c1 <= 0) {
-        if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return _gz_gb; }
+        if (g == 0) { return _gz_gb; }
         if (_gen_stub(S, fi) != 0) { return 0; }
     }
     return _gu_inst(S, fi, c0, c1);
 }
-# The binding of type parameter `w` of generic `fi` at the call whose name is token `c`, read from the tokens: a struct
-# by the pair scans' reader (`_tok_gen_tp_sid`); else, as the parser's `_gen_infer_tp` binds it, i64 for a lone integer
-# literal or no carrying argument, and a lone global's name its global's binding (`_infer_conc_global`; no local is in
-# scope at top level). 0 = not read here (a struct carrier, any other argument).
+# The explicit type-argument list of the call whose name is token `c`, read as `_gen_resolve_call` reads it, into
+# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses (`_targs_resolvable`).
+var _gu_x0 = 0;
+var _gu_x1 = 0;
+fn _gu_xlist(S, c): i64 {
+    if (_targs_resolvable(S, c + 2) == 0) { return 0; }
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    _ta_pending_gt = 0;
+    STI(S, c + 2);
+    _gu_x0 = _parse_one_type_arg(S);
+    _gu_x1 = 0;
+    if (_ta_comma(S) == 1) { _gu_x1 = _parse_one_type_arg(S); }
+    _ta_pending_gt = sv_gt;
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.16 — THE SWEEP BINDS A TYPE PARAMETER AS PASS 2 DOES, WITH ITS OWN CLASSIFIER. The binding of type parameter
+# `w` of generic `fi` at the call whose name is token `c`: a struct by the pair scans' reader (`_tok_gen_tp_sid`), else
+# what `_gen_infer_tp` binds — the carrying argument through `_ic_arg`, a struct carrier through `_gen_infer_ind` —
+# so `mkg1(30 + 3)`, `mkg1(-3)`, `mkg1(1.5)`, `mkg1(sc())`, `mkg1(&n)` and `mkc(BX)` with `BX: Box<i32>` bind what the
+# replay's call binds (they bound nothing: `x.v` was "no struct type in scope for 'x'" in the zone and worked after
+# the first statement). No fn instance is made here (`_gu_noinst`; a fn body compiled now would read the zone's
+# layouts before they are judged): a binding only an instance answers is a miss (`_gu_miss`) — the global stays
+# untyped, as before — as is a tuple (the call refuses itself). No local is in scope (as at the replay). `_gi_sc` is
+# marked as `_gen_infer_tp` marks it. CHANGELOG [6.7.16]
+var _gu_noinst = 0;
+var _gu_miss = 0;
 fn _gu_tp(S, c, fi, w): i64 {
     var s = _tok_gen_tp_sid(S, c - 1, c - 1, c, fi, w);
     if (s > 0) { return s; }
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    var r = _gu_tp_ic(S, c, fi, w);
+    SFLC(S, lc);
+    _gu_noinst = ni;
+    STI(S, sv);
+    if (_tup_is(S, r) == 1) { _gu_miss = 1; }
+    if (r == 0 - 9) { _gi_sc = 1; }
+    return r;
+}
+fn _gu_tp_ic(S, c, fi, w): i64 {
     var m = GFGM(S, fi);
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
-    if (pk == 0) { return 0; }
+    if (pk == 0) { return _gen_infer_ind(S, fi, c + 1, w, 0); }
     var a = _call_arg_for(S, fi, c + 1, pk - 1);
     if (a < 0) { return 0 - 8; }
-    var nt = TOKTYP(S, a + 1);
-    if (nt != 31) { if (nt != 11) { return 0; } }
-    var t = TOKTYP(S, a);
-    if (t == 1) { return 0 - 8; }
-    if (t != 2) { return 0; }
-    if (_findvar_core(S, TOKVAL(S, a)) < 0) { return 0; }
+    return _ic_arg(S, fi, a, pk);
+}
+# `_ic_call_rs` at the sweep: what the GENERIC call at the cursor (fi its base, `r` its return) returns, with no instance
+# made — a `: T` return is T's binding at this call when that is a struct or f64 (the instance's, `_gtype_tp_ret`), else
+# `r`; a `: G<..>` return (an instance's struct) or a pointer carrier is a miss. CHANGELOG [6.7.16]
+fn _gu_ircs(S, fi, r, ptr): i64 {
+    if (ptr == 1) { _gu_miss = 1; return r; }
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) {
+        if (r > 0) { if (r < 2048) { if (GSTP(S, r - 1) != 0) { _gu_miss = 1; } } }
+        return r;
+    }
+    var c = GTI(S);
     var sc = _gi_sc;
-    var r = _infer_conc_global(S, TOKVAL(S, a), _ic_ptr_param(S, fi, pk - 1));
+    var b = 0 - 8;
+    if (TOKTYP(S, c + 1) == 19) {
+        if (_gu_xlist(S, c) == 0) { _gu_miss = 1; }
+        elif (w == 1) { b = _gu_x1; }
+        else { b = _gu_x0; }
+    } else { b = _gu_tp(S, c, fi, w); }
     _gi_sc = sc;
+    if (b > 0) { return b; }
+    if (b == 0 - 9) { return b; }
     return r;
 }
 # The struct generic `fi`'s return `: G<..>` (`_gz_gb` G) names under the binding (c0, c1), read by `_gtype_sid` as
 # PARSE_FN_DEF reads an instance's return — `G$..` minted and deduped by name, so the instance the replay's call makes
-# returns this same struct. Only a list of plain names, and a G with no bounds (its judgement is the call's). 0 = none.
+# returns this same struct. Only a list of plain names. 0 = none.
+# 6.7.16: a G with bounds too (`struct G1<T: Show>`), its bound judged quietly (`_bnd_quiet`): the call's own instance
+# judges it, once; a failing one keeps the base G, as `_ret_targ_parse` does for that instance. CHANGELOG [6.7.16]
 fn _gu_inst(S, fi, c0, c1): i64 {
     var o = _gen_def_open(S, fi);
     if (o < 0) { return 0; }
@@ -11733,17 +12237,21 @@ fn _gu_inst(S, fi, c0, c1): i64 {
     var n = rc + 2;
     if (TOKTYP(S, n) != 2) { return 0; }
     if (FINDSTRUCT(S, TOKVAL(S, n)) != _gz_gb) { return 0; }
-    if (GSBND(S, _gz_gb - 1) != 0) { return 0; }
     if (_gu_plain(S, n + 1) == 0) { return 0; }
     var sv = GTI(S);
     var s0 = _inst_conc0;
     var s1 = _inst_conc1;
+    var q = _bnd_quiet;
+    var qh = _bnd_quiet_hit;
+    _bnd_quiet = 1;
     _inst_conc0 = c0;
     _inst_conc1 = c1;
     STI(S, n);
     var r = _gtype_sid(S, fi, _gz_gb);
     _inst_conc0 = s0;
     _inst_conc1 = s1;
+    _bnd_quiet = q;
+    _bnd_quiet_hit = qh;
     STI(S, sv);
     return r;
 }
@@ -11909,7 +12417,7 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var b = GTI(S);
-    if (_sci_star(S, b) == 0) { return _gz_dx_init(S, dgv, gps, dnoff); }   # 6.7.10 (review): any `*E`
+    if (_gz_star1(S, b) == 0) { return _gz_dx_init(S, dgv, gps, dnoff); }   # 6.7.10 (review): any `*E`; 6.7.16: `*GPP`
     var pg = _gz_star_src(S, b, gps, dnoff);
     if (pg < 0) { return 0; }
     var sid = 0 - gps;
@@ -11934,9 +12442,9 @@ var _hl_dk = 0;
 var _hl_dnm = 0;
 var _hl_dna = 0 - 1;   # 6.7.16: the `*` of the dereference `_hl_dstar_x` typed last (-1: `_hl_dnm` is `_hl_psrc`'s)
 var _hl_dne = 0 - 1;   # ... and the token after its operand
-fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
-# ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
-# step or of the parentheses wrapping it, `_hl_dx_end`).
+# `_hl_dstar_x` with no `**S` arm, for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of
+# a for step or of the parentheses wrapping it, `_hl_dx_end`). A declaration's initialiser asks `_hl_dstar_x(S, ti, 5,
+# 1)` itself (6.7.16, D17 (a): its `*pp` of a `**S` copies at top level too). CHANGELOG [6.7.16]
 fn _hl_dstar_t(S, ti, term): i64 { return _hl_dstar_x(S, ti, term, 0); }
 # ⛔ 6.7.15 — `*pp` OF A `**S` IS A `*S` AS A WHOLE COPY SOURCE TOO: with `pp` 1 this also answers a dereference whose
 # operand is a `**S` (`*pp` the `*S` 6.7.13's D9 (a) made it, `_hl_dref_psid`), `_hl_dpp` 1 — its copy goes through
@@ -12048,7 +12556,7 @@ fn _hl_dx_end(S, ti, term): i64 {
     }
     return 0 - 1;
 }
-# The cursor on the dereference `_hl_dstar` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
+# The cursor on the dereference `_hl_dstar_x` vetted (`_hl_dk` parentheses, then `*`): E is parsed — rax =
 # the pointer, as `_deref_read` parses its operand — and parked in a hidden temp (a frame slot in a fn, a
 # hidden global at top level), the wrap closed, the cursor left on the `;`. Returns the temp (`_HTEMP`).
 # 6.7.15: for `*pp` of a `**S` (`_hl_dpp`) the whole `*pp` is parsed — rax = the `*S` it reads.
@@ -12509,13 +13017,17 @@ fn _hl_name_ty(S, noff): i64 {
 # (`_gci_inline` asked `_gz_star`), the cursor on the `;` (1); 8 B or less, the value store copies its word
 # (0). A `*U` of another struct is refused by name; a dereference pass 1 could not type (a `*T` global or
 # fn declared below G) is refused by name, as a whole source declared below is (`_gci_below`).
+# 6.7.16 (D17 (a)): `*pp` of a `**S` (`_hl_dstar_x`'s mode 1) is copied through the `*S` it reads at EVERY size — the
+# value store would keep that pointer word (a handle). CHANGELOG [6.7.16]
 fn _gz_dx_init(S, dgv, gps, dnoff): i64 {
-    var ps = _hl_dstar(S, GTI(S));
+    var ps = _hl_dstar_x(S, GTI(S), 5, 1);
     if (ps <= 0) { return 0; }
+    var dpp = _hl_dpp;
     if (_agg_dx_err(S, gps, 0 - ps, dnoff) == 1) { return 0; }
     var sid = 0 - gps;
-    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { if (dpp == 0) { return 0; } }
     if (dgv < 0) { return 0; }
+    _hl_dpp = dpp;
     if (GVPM(S, dgv) != 2) {
         ERR_IDENT(S, "cannot copy-init ", dnoff,
           " from a dereference of a global or fn declared below it (declare it first): ", _hl_dnm);

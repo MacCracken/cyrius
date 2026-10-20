@@ -39,6 +39,18 @@
 # docs/development/issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md
 # (its repro verbatim is small_struct_handle_line.sh R16f; another struct's `**U` into an S field is refused by name,
 # struct_copy_type_checked.sh R33 / R34).
+#
+# 6.7.16 — a TOP-LEVEL `var G: S = *GPP;` (GPP a `**S`) is a copy at every size (the user's decision D17 (a),
+# 2026-10-19), in the declaration zone and after the first statement, as the same line in a fn is since 6.7.15: it bound
+# a handle on the struct (G read 9 after `DS.y = 9`). Rows d_*: 16 / 8 / 3 B, `*DPP`, `(*DPP)`, `*dpp()`, `*DW.pp`, a
+# write to the copy leaving the source, each in the zone and after the first statement. Filed: docs/development/issues/
+# 2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md (its repro verbatim is
+# small_struct_handle_line.sh R17; a `**Q`'s `*GQQ` into a P global is refused by name, struct_copy_type_checked.sh
+# R35 / R36, and one declared below G over 8 B, small_struct_handle_line.sh GC9).
+# And its `*S`-name twin, `var G: S = P;` with P a `*S` global's name (the user's D18 (a), 2026-10-19): a copy at every
+# size too, as the line is in a fn — through 6.7.15 the guide's "not yet settled" 6.7.9 layout (8 B or less G held the
+# pointer word, over 8 B a handle bound to P's object). Rows n_*: 16 / 8 / 3 B, a generic instance, `(P)`, a write to
+# the copy, each in the zone and after the first statement; untyped `var Q = P;` and `var R: *P = P;` stay the pointer.
 include "lib/assert.cyr"
 
 struct P { x; y; }
@@ -190,6 +202,37 @@ fn wf_cap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var f =
 fn wf_rebind(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 1, 2 }; var o = WFP { 0, &d }; o.ps = *pp; s.y = 9; return o.ps.y * 10 + d.y; }
 
 var TZ: P = **GPP;   # the declaration zone
+# 6.7.16 (D17 (a)) — top-level declarations from `*pp` of a `**S` copy (see the header): the declaration zone.
+var DS = P { 3, 4 };
+var DSP: *P = &DS;
+var DPP: **P = &DSP;
+var DS8 = P8 { 6 };
+var DS8P: *P8 = &DS8;
+var DPP8: **P8 = &DS8P;
+var DSC = C3 { 1, 2, 3 };
+var DSCP: *C3 = &DSC;
+var DPPC: **C3 = &DSCP;
+var DW = W { &DSP, 0 };
+fn dpp(): **P { return &DSP; }
+fn dpp8(): **P8 { return &DS8P; }
+var DZ: P = *DPP;
+var DZ8: P8 = *DPP8;
+var DZC3: C3 = *DPPC;
+var DZW: P = (*DPP);
+var DZW8: P8 = ((*DPP8));
+var DZF: P = *dpp();
+var DZF8: P8 = *dpp8();
+var DZM: P = *DW.pp;
+struct NB<T> { v: T; n; }
+var NSB = NB<i64> { 5, 6 };
+var NSBP: *NB<i64> = &NSB;
+var NZ: P = DSP;
+var NZ8: P8 = DS8P;
+var NZC3: C3 = (DSCP);
+var NZW8: P8 = ((DS8P));
+var NZB: NB<i64> = NSBP;
+var NZQ = DSP;
+var NZR: *P = DSP;
 
 assert_eq(f_take(), 4, "take(**pp) into a by-value P (the filed repro 1)");
 assert_eq(f_decl(), 4, "var t: P = **pp (the filed repro 2)");
@@ -285,5 +328,49 @@ assert_eq(TWG.s.x * 10 + TWG.s.y, 34, "wf: top level: a for step TWG.s = (*TPP) 
 assert_eq(TL.x * 10 + TL.y, 34, "top level: TL = *TPP copies");
 assert_eq(TL8.v, 9, "top level: TL8 = *G8PP copies (8 B)");
 assert_eq(TF.y, 4, "top level: a for step TF = *TPP copies");
+var DT: P = *DPP;
+var DT8: P8 = (*DPP8);
+var DTC3: C3 = (*DPPC);
+var DTF: P = *dpp();
+var DTF8: P8 = *dpp8();
+var DTM: P = *DW.pp;
+var NT: P = (DSP);
+var NT8: P8 = DS8P;
+var NTC3: C3 = DSCP;
+var NTB: NB<i64> = (NSBP);
+var NTQ = DSP;
+var NTR: *P = DSP;
+DS.y = 9;
+DS8.v = 9;
+DSC.b = 9;
+DZ.x = 70;
+DZ8.v = DZ8.v + 1;
+DT.x = 71;
+NSB.n = 9;
+NZ.x = 72;
+NT8.v = NT8.v + 2;
+assert_eq(DZ.x * 10 + DZ.y, 704, "d: zone var DZ: P = *DPP copies (DS.y = 9 unseen; the write stays in DZ)");
+assert_eq(DZ8.v, 7, "d: zone var DZ8: P8 = *DPP8 copies (8 B)");
+assert_eq(t3(DZC3), 10203, "d: zone var DZC3: C3 = *DPPC copies byte-exact (3 B)");
+assert_eq(DZW.y * 10 + DZW8.v, 46, "d: zone (*DPP), ((*DPP8)) copy");
+assert_eq(DZF.y * 10 + DZF8.v, 46, "d: zone *dpp(), *dpp8() of a : **P call copy");
+assert_eq(DZM.y, 4, "d: zone *DW.pp of a **P field copies");
+assert_eq(DT.x * 10 + DT.y, 714, "d: after a statement var DT: P = *DPP copies");
+assert_eq(DT8.v, 6, "d: after a statement var DT8: P8 = (*DPP8) copies (8 B)");
+assert_eq(t3(DTC3), 10203, "d: after a statement (*DPPC) copies byte-exact (3 B)");
+assert_eq(DTF.y * 10 + DTF8.v, 46, "d: after a statement *dpp(), *dpp8() copy");
+assert_eq(DTM.y, 4, "d: after a statement *DW.pp copies");
+assert_eq(DS.x * 10 + DS.y + DS8.v * 100, 939, "d / n: the sources keep their own values (no write reached them)");
+assert_eq(NZ.x * 10 + NZ.y, 724, "n: zone var NZ: P = DSP (a *P global's name) copies (D18; was a handle: 9)");
+assert_eq(NZ8.v, 6, "n: zone var NZ8: P8 = DS8P copies (8 B; was the pointer word)");
+assert_eq(t3(NZC3), 10203, "n: zone var NZC3: C3 = (DSCP) copies byte-exact (3 B)");
+assert_eq(NZW8.v, 6, "n: zone ((DS8P)) copies");
+assert_eq(NZB.v * 10 + NZB.n, 56, "n: zone a *NB<i64> name into an NB<i64> global copies");
+assert_eq(load64(NZQ + 8) * 10 + NZR.y, 99, "n: zone untyped var NZQ = DSP and var NZR: *P = DSP stay the pointer");
+assert_eq(NT.y, 4, "n: after a statement var NT: P = (DSP) copies");
+assert_eq(NT8.v, 8, "n: after a statement var NT8: P8 = DS8P copies (8 B; the write stays in NT8)");
+assert_eq(t3(NTC3), 10203, "n: after a statement var NTC3: C3 = DSCP copies byte-exact (3 B)");
+assert_eq(NTB.v * 10 + NTB.n, 56, "n: after a statement a *NB<i64> name copies");
+assert_eq(load64(NTQ + 8) * 10 + NTR.y, 99, "n: after a statement untyped NTQ = DSP, NTR: *P = DSP stay the pointer");
 
 var r = assert_summary();
