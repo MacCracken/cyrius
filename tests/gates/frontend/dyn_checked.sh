@@ -338,6 +338,16 @@
 #                                                                         DCE / PE and IX3 dyn_objects legs (§spellings
 #                                                                         refused at 738:22)
 #   M-F8n2 the hint printed whatever `_dsq_un` says                    -> RED 1: F8n5
+#   F8r (6.7.16 review) a return its own reader refuses is that refusal alone, formed or not (D9's "refused once"): the
+#       pair check read `_tr_ret_differs`' 0 as "agree", but it is 0 for a reader-refused side too, so since the D9 / D7
+#       bites a member's `: u8` / enum / `*Pt<i64>` return printed the site's "the return type differs" beside its
+#       refusal (`_dyn_ret_hand` now hands such a side to its reader, judged by `_tr_rt_rd`). F8r1-F8r4 the review's dd1
+#       (`: u8`, no impl return), dd2 (`: u8` / `: i64`), dd3 (`: *Pt<i64>` / `: *Pt`), dd4 (`: Color` / `: i64`);
+#       F8r5 / F8r6 the lane's staged file's repros 1 / 2 (an impl's `: u8` under no member return; a member's `: Nope`);
+#       F8r7 a member's `: Result<Nope>` (a list no reader reads, so no reader refuses it) keeps the site's line — the
+#       one report it has. Mutants (2026-10-20, CYCC= its compiler): the lane's head b690e6a3d -> RED 6: F8r1-F8r6 (two
+#       lines each); `_tr_ret_rf` judging a side by `_tr_rt_bad` (which counts the `Nope` inside `Result<..>`) ->
+#       F8r7 BUILT (rc 0: a dyn formed from an impl whose return differs, reported by no one)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -633,6 +643,17 @@ refused f08n4 "4:29: 'Pt.c' returns Box<i32>, trait 'T' declares Box<i64>" "F8n4
 refused f08n5 "5:36: cannot form dyn T from Pt - its method 'm' does not match its declaration in trait T: parameter 'b' has another type" "F8n5: a parameter \`b: *Box<i32>\` against \`b: *Box\` — refused once, at the site" "${BXP}trait T { fn m(self, b: *Box<i32>): i64; }\nimpl T for Pt { fn m(self, b: *Box): i64 { return b.n; } }\nfn f(q: *Pt): i64 { var o: dyn T = q; return 0; }\nfn main(): i64 { return 0; }\n"
 if grep -qF "(an untyped parameter is i64)" "$T/f08n5.err"; then bad "F8n5: '(an untyped parameter is i64)', though both sides are annotated"
 else ok "F8n5: ... with no '(an untyped parameter is i64)' (both sides annotated)"; fi
+# F8r — 6.7.16 review: a return its own reader refuses is that refusal alone; the site adds nothing.
+PQ='struct P { a; b; }\n'
+FQ='fn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\n'
+MQ='fn main(): i64 { return 0; }\n'
+refused f08r1 "2:25: type 'u8' cannot be a fn return type" "F8r1: dd1 — a member's \`: u8\`, the impl none, the dyn above it" "${PQ}trait T2 { fn sh(self): u8; }\n${FQ}impl T2 for P { fn sh(self) { return 1; } }\n${MQ}"
+refused f08r2 "2:25: type 'u8' cannot be a fn return type" "F8r2: dd2 — a member's \`: u8\`, the impl's \`: i64\`, the dyn below it" "${PQ}trait T2 { fn sh(self): u8; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08r3 "3:26: 'Pt' is not a generic struct: it takes no type arguments" "F8r3: dd3 — a member's \`: *Pt<i64>\`, the impl's \`: *Pt\`" "struct Pt { x; y; }\n${PQ}trait T2 { fn sh(self): *Pt<i64>; }\n${FQ}impl T2 for P { fn sh(self): *Pt { return 0; } }\n${MQ}"
+refused f08r4 "3:25: type 'Color' cannot be a fn return type" "F8r4: dd4 — a member's \`: Color\` (an enum), the impl's \`: i64\`" "${PQ}enum Color { Red, Green }\ntrait T2 { fn sh(self): Color; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08r5 "4:30: type 'u8' cannot be a fn return type" "F8r5: an impl's \`: u8\` under a member with none (the staged file's repro 1)" "${PQ}trait T2 { fn sh(self); }\n${FQ}impl T2 for P { fn sh(self): u8 { return 1; } }\n${MQ}"
+refused f08r6 "2:25: unknown type 'Nope' as a fn return type" "F8r6: a member's \`: Nope\` (the staged file's repro 2)" "${PQ}trait T2 { fn sh(self): Nope; }\n${FQ}impl T2 for P { fn sh(self) { return 1; } }\n${MQ}"
+refused f08r7 "3:36: ${F8M} 'sh' does not match its declaration in trait T2: the return type differs" "F8r7: a member's \`: Result<Nope>\` (its list no reader reads) against \`: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self): Result<Nope>; }\n${FQ}impl T2 for P { fn sh(self): i64 { return 1; } }\n${MQ}"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).

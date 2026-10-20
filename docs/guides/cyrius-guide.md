@@ -3173,7 +3173,8 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 against the trait in full: each parameter after `self` and the return by its resolved type (an
 untyped parameter, or an omitted return, is `i64`; each type read as an annotation is, so `*Box<i64>` and `*Box`,
 or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
-error, formed or not — see *Traits*), generic-ness and `...`; the value class — a
+error, formed or not — see *Traits*; since 6.7.16 a return its own reader refuses, such as a member's `: u8`, is that
+refusal alone), generic-ness and `...`; the value class — a
 method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
 that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
 feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by

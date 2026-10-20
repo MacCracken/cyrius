@@ -9478,6 +9478,33 @@ fn _tr_ret_differs(S, tp, fp): i64 {
     if (_tr_rt_bad(S, _trr_b, _trr_be) == 1) { return 0; }
     return 1;
 }
+# ⛔ 6.7.16 — FORMING A DYN ADDS NOTHING BESIDE A RETURN ITS OWN READER REFUSES. `_tr_ret_differs` answers 0 both when
+# the returns agree and when a side is one its reader refuses (`_tr_rt_bad`), and the pair check read every 0 as
+# "agree, not mine either": since D9 / D7 put a member's `: u8`, enum or `*Pt<i64>` return in that set, a formed dyn
+# printed "the return type differs" beside the member's one refusal (D9's "refused once"). 1 = the member at `fn`
+# token `tp` and the method at `fp` differ in a return that is not the site's to report: the impl's own refusal, or a
+# side whose reader refuses it — judged on its own (`_tr_ret_rf`), so a side `_tr_rt_bad` counts that no reader
+# refuses (a name inside an unread `Result<..>`) keeps the site's line. CHANGELOG [6.7.16]
+fn _dyn_ret_hand(S, tp, fp): i64 {
+    if (_tr_ret_differs(S, tp, fp) == 1) { return 1; }
+    return _tr_ret_rf(S, tp, fp);
+}
+fn _tr_ret_rf(S, tp, fp): i64 {
+    var a = _tr_paren(S, tp);
+    var b = _tr_paren(S, fp);
+    if (a < 0 || b < 0) { return 0; }
+    var ra = _dyn_ret_at(S, a);
+    var re = _dps_te;
+    if (_tr_rt_rd(S, ra, re) == 1) { return 1; }
+    var rb = _dyn_ret_at(S, b);
+    var rbe = _dps_te;
+    return _tr_rt_rd(S, rb, rbe);
+}
+# 1 when return type [a, ae) is one its reader refuses: its head (`_tr_rt_head`), or a name it reads (`_ty_rd_scan`).
+fn _tr_rt_rd(S, a, ae): i64 {
+    if (_tr_rt_head(S, a, ae) == 1) { return 1; }
+    return _ty_rd_scan(S, a, ae, 1);
+}
 # 1 when the return type [a, ae) is refused by its own reader — the trait's for a member, PARSE_FN_DEF's for a method,
 # one set since 6.7.16's D9: a slice, `u128` or `Vec` as the type, a name that is no type, a name a fn's return does
 # not take (`_tn_ret_report`'s: u8..u64, f32, an enum) and a `*fn( .. )` (a method's is PARSE_FN_DEF's grammar
