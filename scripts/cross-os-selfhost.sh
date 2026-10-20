@@ -272,9 +272,9 @@ cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.
 # portability gap. If you add a corpus test that reads a file, its input belongs here —
 # a missing input is indistinguishable from a broken port in the failure list.
 if [ -n "$LIBTEST" ]; then
-  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr programs/cyrius-lsp.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr programs/cyrius-lsp.cyr programs/cyriusly.cyr
 else
-  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr programs/cyrius-lsp.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr programs/cyrius-lsp.cyr programs/cyriusly.cyr
 fi
 
 # ── 6.7.10 (P5-B): EXECUTION COVERAGE ON THE HARDWARE ─────────────────────────────────────────
@@ -493,6 +493,41 @@ _co_lsp_check() {
   return "$_lbad"
 }
 
+# ── 6.7.16: THE COMPILED cyriusly HANDS ITS CHILDREN ITS ENVIRONMENT (ecb, ach) ─────────────────
+# The macOS tarballs ship the COMPILED version manager as bin/cyriusly since 6.7.16 (the shell
+# script before). Its install / update / setup / cmdtools reach their children through
+# lib/process.cyr's _read_environ_envp, which read /proc/self/environ — macOS has none, so every
+# child ran with an EMPTY environment (`cyriusly install <v>` would run install.sh with no HOME and
+# no CYRIUS_HOME, aimed at /.cyrius). It builds the envp from lib/io.cyr's env_block now. Each Mac
+# leg builds programs/cyriusly.cyr with the host's own cycc and runs `cyriusly cmdtools list` under
+# `env -i CYRIUS_HOME=<abs> HOME=<abs> PATH=/usr/bin:/bin` against a throwaway install whose active
+# version's twin (versions/9.9.9/scripts/cyriusly) prints what it received:
+#   C1  the twin saw exactly that HOME and that CYRIUS_HOME (and the verb's two arguments).
+# A miss fails the leg by name (CYLY_FAIL: <host>). Mutation (measured 6.7.16, the tools lane's
+# review): the /proc reader -> C1 RED on ecb and ach, "twin saw HOME=[] CYRIUS_HOME=[]".
+# CHANGELOG [6.7.16]
+_co_cyly() {
+  _ch=$1; _ccmd=$2
+  _csg=""
+  [ "$_ch" = ecb ] && _csg=" && codesign -s - -f _cyly"
+  _CRP=$(ssh $SSHO "$_ch" "cd ~/$RD && pwd") && [ -n "$_CRP" ] || { echo "  cyriusly: ~/$RD on $_ch could not be resolved"; return 1; }
+  rm -rf "$CO_TMP/_cylyst" && mkdir -p "$CO_TMP/_cylyst/_cylyh/ch/versions/9.9.9/scripts" "$CO_TMP/_cylyst/_cylyh/hh" || return 1
+  printf '9.9.9\n' > "$CO_TMP/_cylyst/_cylyh/ch/current"
+  printf '#!/bin/sh\necho "twin saw HOME=[$HOME] CYRIUS_HOME=[$CYRIUS_HOME] args=[$*]"\n' > "$CO_TMP/_cylyst/_cylyh/ch/versions/9.9.9/scripts/cyriusly"
+  (cd "$CO_TMP/_cylyst" && tar czf ../_co_cyly.tgz _cylyh) || return 1
+  scp -q $SSHO "$CO_TMP/_co_cyly.tgz" "$_ch:~/$RD/" \
+    && ssh $SSHO "$_ch" "cd ~/$RD && rm -rf _cylyh && tar xzf _co_cyly.tgz && cat programs/cyriusly.cyr | $_ccmd > _cyly 2> _cyly.berr && test -s _cyly && chmod +x _cyly$_csg" \
+    || { echo "  cyriusly: programs/cyriusly.cyr did not build on $_ch, or its home could not be staged (~/$RD/_cyly.berr)"; return 1; }
+  _cgot=$(ssh $SSHO "$_ch" "cd ~/$RD && env -i CYRIUS_HOME=$_CRP/_cylyh/ch HOME=$_CRP/_cylyh/hh PATH=/usr/bin:/bin ./_cyly cmdtools list 2>&1" || true)
+  _cwant="twin saw HOME=[$_CRP/_cylyh/hh] CYRIUS_HOME=[$_CRP/_cylyh/ch] args=[cmdtools list]"
+  if printf '%s\n' "$_cgot" | grep -qxF "$_cwant"; then
+    echo "  cyriusly on $_ch: C1 the compiled cyriusly's cmdtools child saw its HOME and CYRIUS_HOME"
+    return 0
+  fi
+  echo "  cyriusly C1 ($_ch): the twin did not get the parent's HOME and CYRIUS_HOME (want: $_cwant; got: $(printf '%s' "$_cgot" | head -3 | cut -c1-240))"
+  return 1
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -580,6 +615,10 @@ case "$HOST" in
     _co_lsp ecb "CYRIUS_MACHO_ARM=1 ./r1r" r1r cyrius_native cycc_aarch64 \
       && _co_lsp_check ecb \
       || { echo "LSP_FAIL: ecb — cyrius-lsp did not find cycc / publish the file's error / forward its environment under a launcher's minimal env (~/$RD/_lsp*.log, _lsp*.out). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — the compiled cyriusly (the arm64 tarball's bin/cyriusly) hands its children its
+    # environment (see _co_cyly); built by r1r, ad-hoc signed.
+    _co_cyly ecb "CYRIUS_MACHO_ARM=1 ./r1r" \
+      || { echo "CYLY_FAIL: ecb — the compiled cyriusly's cmdtools child did not get its HOME / CYRIUS_HOME (~/$RD/_cyly*). NOT SELFHOST_OK."; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -664,6 +703,10 @@ case "$HOST" in
     _co_lsp ach "./r1" r1 cyrius_native \
       && _co_lsp_check ach \
       || { echo "LSP_FAIL: ach — cyrius-lsp did not find cycc / publish the file's error / forward its environment under a launcher's minimal env (~/$RD/_lsp*.log, _lsp*.out). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — the compiled cyriusly (the x86_64 tarball's bin/cyriusly) hands its children its
+    # environment (see _co_cyly); built by r1.
+    _co_cyly ach "./r1" \
+      || { echo "CYLY_FAIL: ach — the compiled cyriusly's cmdtools child did not get its HOME / CYRIUS_HOME (~/$RD/_cyly*). NOT SELFHOST_OK."; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.

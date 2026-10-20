@@ -8362,6 +8362,9 @@ error, not a short directory: after `FindNextFileW` returns 0 the lister reads
   the stdlib, since `getenv` asks per name. On Linux and macOS it answers the whole environment
   `getenv` reads, NUL-terminated `NAME=value` entries, its length stored at `lenp` — what a
   program building a child's envp reads instead of `/proc/self/environ`, which macOS lacks.
+  `lib/process.cyr`'s `exec_cmd` (and so the compiled `cyriusly`) builds its child's environment
+  from it since 6.7.16: it read `/proc/self/environ` itself, once and at most 65,535 bytes, so on
+  macOS the child ran with an empty environment and on Linux every variable past the cut was lost.
 
 Windows has no `/proc/self/environ`; the lookup routes to
 `GetEnvironmentVariableA` (0xF015). The compiler reads its own `CYRIUS_*` knobs
