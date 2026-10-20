@@ -30,7 +30,7 @@
 #      CYRIUS_VERSION=6.6.20; use 6.6.18 pins it                              (binary + shell)
 #   5  STATIC: `_cmd_install` / `_cmd_uninstall` / `_cmd_cmdtools` in programs/cyriusly.cyr reach
 #      no `_exec_shell(` / `exec_cmd(` — the operand never rides in a shell line, even behind the
-#      validator
+#      validator (and `_cmd_update`, whose active version is its script's $1 since 6.7.16)
 #   6  `use` with no operand (the binary's second [package].cyrius reader, CBT-01): an
 #      escape-bearing traversal pin, `../../x`, `6..6` and an unquoted pin -> exit 1, named, the
 #      escape shown as \xNN and never raw; controls: `6.6.19`, `6.6.20_rc` (the CLI's pin rule
@@ -57,6 +57,15 @@
 #            named, and NOTHING written (the refusal comes before the slot is created)
 #        9d  STATIC: the source-bootstrap path installs it; release.yml stages it in both Linux
 #            tarballs; both macOS builders stage it
+#  10  the binary's hints that SWITCH the active version say `use <v> --global` — its plain `use`
+#      pins the project's cyrius.cyml (v5.11.26), so "Switch first: cyriusly use <other>" (the
+#      active-version uninstall guard) and update's "Run: … && cyriusly use <v>" switched nothing;
+#      help says what each form does ("use <version>  Switch to a version" for both). The shell
+#      twin's `use` IS the global switch, so its hints stay. 6.7.16 (met with the review of
+#      6.7.16's D84 hints). MUTATION: the 6.7.15 hints -> RED 10a, 10b, 10c.
+#      10d: `update` compares the version `version` names — <home>/current, CYRIUS_HOME honoured;
+#      it read ~/.cyrius/current, so with HOME elsewhere it said "Update available: none -> 6.6.20"
+#      while `version` said 6.6.20 (6.7.16, met with 10b). MUTATION: the ~/.cyrius read -> RED 10d.
 #
 # MUTATION LEDGER (2026-10-06, 6.6.20): `_cy_version_ok` answering 1 turns axes 1-3 RED on the
 # binary (the store deleted, the injected `touch` RAN, the traversal pin written and --global
@@ -105,6 +114,8 @@ mkdir -p "$W/fakebin"
 cat > "$W/fakebin/curl" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "$W/curl.log"
+# the releases API (axis 10's update): the latest tag is 6.6.20
+case "\$*" in *api.github.com*) printf '  "tag_name": "6.6.20",\n'; exit 0 ;; esac
 out=""
 while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift 2 ;; *) shift ;; esac; done
 if [ -n "\$out" ]; then exec > "\$out"; fi
@@ -213,14 +224,14 @@ done
 
 # ── axis 5: static — no shell line in install / uninstall ───────────────────────────────
 a5=0
-for f in _cmd_install _cmd_uninstall _cmd_cmdtools; do
+for f in _cmd_install _cmd_uninstall _cmd_cmdtools _cmd_update; do
     body=$(awk -v f="$f" '$0 ~ "^fn " f "\\(" {on=1} on {print} on && /^}/ {exit}' "$ROOT/programs/cyriusly.cyr")
     [ -n "$body" ] || { echo "  FAIL axis 5: could not find fn $f in programs/cyriusly.cyr"; fail=1; a5=1; continue; }
     if printf '%s\n' "$body" | grep -v '^ *#' | grep -qE '_exec_shell\(|exec_cmd\('; then
         echo "  FAIL axis 5: $f runs a shell LINE (_exec_shell / exec_cmd) — its operand must ride as argv"; fail=1; a5=1
     fi
 done
-[ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install, _cmd_uninstall and _cmd_cmdtools run no shell line"
+[ "$a5" -eq 0 ] && echo "  ok axis 5: _cmd_install, _cmd_uninstall, _cmd_cmdtools and _cmd_update run no shell line"
 
 # ── axis 6: `use` with NO operand reads the [package].cyrius pin — the CLI's pin rule, never echoed
 #    raw (binary only: the shell twin's `use` requires an operand) ──────────────────────────────
@@ -389,6 +400,32 @@ for mb in build-macos-arm64-tarball.sh build-macos-x86-tarball.sh; do
         || { bad "axis 9d: scripts/$mb does not stage the twin at \$WORK/\$STAGE/scripts/"; a9=1; }
 done
 [ "$a9" -eq 0 ] && echo "  ok axis 9: the tarball and refresh-only paths install the twin at versions/<v>/scripts/cyriusly (the installed binary runs it), a tree whose bins ship cyriusly without it is refused before anything is written, and the source-bootstrap path and all four POSIX tarball builders stage it"
+
+# ── axis 10: the binary's switch hints name `use <v> --global` (its plain `use` pins the project) ──
+a10=0
+store
+run bin uninstall 6.6.19
+{ [ "$RC" -eq 1 ] && grep -qF 'Switch first: cyriusly use <other> --global' "$W/err"; } \
+    || { bad "axis 10a: uninstall of the ACTIVE 6.6.19 (rc $RC) does not say 'Switch first: cyriusly use <other> --global'"; a10=1; }
+store
+run bin update
+{ [ "$RC" -eq 0 ] && grep -qxF 'Run: cyriusly install 6.6.20 && cyriusly use 6.6.20 --global' "$W/out"; } \
+    || { bad "axis 10b: update (rc $RC) does not say 'Run: cyriusly install 6.6.20 && cyriusly use 6.6.20 --global': $(grep Run: "$W/out")"; a10=1; }
+run bin --help
+{ grep -qF "use <version>      Pin this project's cyrius.cyml to a version" "$W/out" \
+    && grep -qF 'use <ver> --global Switch the active version' "$W/out" && ! grep -qF 'Switch to a version' "$W/out"; } \
+    || { bad "axis 10c: help does not say plain use pins the project and --global switches the active version"; a10=1; }
+store
+mkdir -p "$W/elsewhere"
+for _uv in 6.6.20 6.6.19; do
+    echo "$_uv" > "$H/current"
+    RC=0
+    ( cd "$W/proj" && env HOME="$W/elsewhere" CYRIUS_HOME="$H" PATH="$W/fakebin:$PATH" "$W/cyriusly" update ) > "$W/out" 2> "$W/err" || RC=$?
+    if [ "$_uv" = 6.6.20 ]; then _uw='Already up to date: 6.6.20'; else _uw='Update available: 6.6.19 -> 6.6.20'; fi
+    { [ "$RC" -eq 0 ] && grep -qxF "$_uw" "$W/out"; } \
+        || { bad "axis 10d: update with CYRIUS_HOME's current $_uv and HOME elsewhere (rc $RC) does not say '$_uw': $(sed -n 2p "$W/out")"; a10=1; }
+done
+[ "$a10" -eq 0 ] && echo "  ok axis 10: the binary's active-uninstall and update hints say 'use <v> --global', help says what each use form does, and update compares CYRIUS_HOME's active version"
 
 [ "$fail" -eq 0 ] || { echo "FAIL: $NAME"; exit 1; }
 echo "PASS: $NAME (cyriusly uninstall / install / use refuse a non-version operand by name, in both peers; install, uninstall and cmdtools pass their operands as argv; cmdtools runs only the active install's shell twin, which every writer ships)"

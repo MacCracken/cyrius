@@ -28,6 +28,8 @@
 #          reads the same pin
 #   W7     (wine) through cyrius.exe: `build --strict-pin` on the drifted pin rc 1, the error, no
 #          output; a plain build rc 0 with the warning
+#   agnos  the agnos cycc_cx (6.7.16): tests/gates/platform/agnos_peer_fake_kernel.sh C8, under the
+#          fake kernel (its open / read / close / exit are agnos's own numbers)
 # Mutations (measured): the two guards restored (6.7.11's lex.cyr) -> S1 S2 W1 W2 W6 W7 RED; the PE
 # call dropped from `_init_cyrius_lib` -> S2 W1 W2 W6 W7 RED; the macOS call dropped -> S2 RED.
 set -u

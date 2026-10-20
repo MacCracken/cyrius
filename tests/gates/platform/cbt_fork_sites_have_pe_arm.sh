@@ -54,6 +54,11 @@
 # DERIVED from the sources here rather than fixed once by hand, so the next builder cannot
 # be written that way either.
 #
+# ⭐ AXIS 7 — EVERY EXEC-IN-PLACE `sys_execve` HAS ONE TOO (6.7.16). An execve with no fork before
+# it replaces the CLI, and on PE it is the same -1 stub: `cyrius sign-efi` fell through to "helper
+# not found (Linux-only …)" on Windows with cyrsign-efi.exe beside it. The arm must DOMINATE the
+# site (closed earlier in a block still enclosing it), not merely sit earlier in the same fn.
+#
 # ⭐ AXIS 5 AND AXIS 4'S SOAK ROWS — AN ARM MUST NOT LIE ABOUT THE RESULT (6.6.6 review).
 # A fix that arms a fork and then reports a verdict it did not earn is the defect wearing
 # the fix's clothes, and the first cut did it twice:
@@ -679,11 +684,172 @@ check "  ⭐ ANTI-VACUOUS: the detector flags a synthetic fixed builder" 1 \
 check "  …clears the sized one" 1 "$(grep -c ' sized ' "$T/bld.self" || true)"
 check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld.self" || true)"
 
+# ── AXIS 7 — ⭐ EVERY EXEC-IN-PLACE `sys_execve` HAS A PE ARM (6.7.16). An execve that runs in
+# a forked child is covered by its fork's arm (axes 1-2); one that REPLACES the CLI itself (no
+# fork before it in its fn) is a -1 stub on PE just the same, and nothing above saw it: `cyrius
+# sign-efi` exec'd cyrsign-efi in place, so the Windows CLI fell through to "helper not found
+# (Linux-only …)" with cyrsign-efi.exe shipped beside it
+# (issues/2026-10-19-windows-cli-sign-efi-cannot-run-the-shipped-helper.md). The rule: the site
+# sits in a PE-excluded region (`#ifndef CYRIUS_TARGET_WIN`, a macOS-only `#ifdef`), or an
+# `#ifdef CYRIUS_TARGET_WIN` region that leaves (`return` / `_cbt_exit(`) DOMINATES it — it
+# closed earlier in a block that still encloses the site — and that arm names what it does
+# (axis 2's test). ⚠ Per block, not per fn (the fork detector's rule): sign-efi's site is in
+# `main`, which holds every verb, and an earlier verb's Windows arm would otherwise count as
+# this one's. A fork exempts the exec of ITS OWN block (the child's) the same way: the flag
+# clears when the fork's block closes, so a forked verb before sign-efi in `main` does not hide
+# sign-efi's site (a fork flag never reset did, 6.7.16 review). The preprocessor nesting is a stack (a nested `#ifdef` inside an `#ifndef
+# CYRIUS_TARGET_WIN` does not close it). The behaviour is pinned under wine by
+# tests/gates/platform/win_cli_sign_efi_spawns.sh. MUTATION (6.7.16): the tree before the
+# sign-efi fix -> RED (cyrius.cyr's sign-efi site UNARMED); `x_sibling_block` scanned per fn
+# (armd never reset when its block closes) -> RED (the self-test row); the fork flag never
+# reset when its block closes (the first cut) -> RED (`x_fork_sibling`, the self-test row: a
+# forked verb before an exec-in-place verb in one fn hid the second's site, so with more than
+# the two known sites a new unarmed one in `main` after a forking verb read green).
+echo "axis 7 — ⭐ every exec-in-place sys_execve in cbt/ has a PE arm that spawns or refuses by name:"
+cat > "$T/exec.awk" <<'AWK'
+function reset() { fork = 0; fdepth = 0; sp = 0; armd = -1; hand = ""; depth = 0; winret = 0; winbody = "" }
+function cnt(k,   i, c) { c = 0; for (i = 1; i <= sp; i++) if (index(k, st[i]) > 0) c++; return c }
+function close_win() { if (winret == 1) { armd = wdepth; hand = winbody } }
+/^fn [A-Za-z_]/ { reset(); fname = $2; sub(/\(.*/, "", fname) }
+{
+    code = $0
+    gsub(/"[^"]*"/, "", code)
+    if (code !~ /^[ \t]*#(ifdef|ifndef|endif|else|elif)/) { sub(/#.*/, "", code) }
+}
+code ~ /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_WIN([ \t]|$)/ { st[++sp] = "w"; if (cnt("w") == 1) { winret = 0; winbody = ""; wdepth = depth }; next }
+code ~ /^[ \t]*#ifndef[ \t]+CYRIUS_TARGET_WIN([ \t]|$)/ { st[++sp] = "n"; next }
+code ~ /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_MACOS([ \t]|$)/ { st[++sp] = "m"; next }
+code ~ /^[ \t]*#if/ { st[++sp] = "o"; next }
+code ~ /^[ \t]*#else/ {
+    if (sp > 0 && st[sp] == "w") { if (cnt("w") == 1) close_win(); st[sp] = "n" }
+    else if (sp > 0 && st[sp] == "n") { st[sp] = "w"; if (cnt("w") == 1) { winret = 0; winbody = ""; wdepth = depth } }
+    next
+}
+code ~ /^[ \t]*#endif/ { if (sp > 0) { if (st[sp] == "w" && cnt("w") == 1) close_win(); sp-- }; next }
+{
+    o = gsub(/\{/, "{", code); c = gsub(/\}/, "}", code)
+    if (cnt("w") > 0) { winbody = winbody " " code; if (code ~ /return|_cbt_exit\(/) winret = 1 }
+    if ((code ~ /sys_fork\(\)/ || code ~ /_cbt_fork_tracked\(/) && code !~ /^fn /) { fork = 1; fdepth = depth }
+    if (code ~ /sys_execve\(/ && fork == 0) {
+        pe = "UNARMED"; arm = ""
+        if (cnt("w") > 0) { pe = "UNARMED-PE-ONLY" }
+        else if (cnt("nm") > 0) { pe = "ok"; arm = "pe_excluded_region(" }
+        else if (armd >= 0) { pe = "ok"; arm = hand }
+        printf "%s:%d fn=%s pe=%s arm=%s\n", FILENAME, FNR, fname, pe, arm
+    }
+    depth += o - c
+    if (armd >= 0 && depth < armd) armd = -1
+    if (fork == 1 && depth < fdepth) fork = 0
+}
+AWK
+escan() { awk -f "$T/exec.awk" "$@"; }
+# admitted ARM -> "yes" when it names a spawn helper, a named error, a fails-closed sentinel or
+# the PE-excluded region (axis 2's list).
+admitted() { echo "$1" | grep -Eq '(_win_[A-Za-z0-9_]*|exec_(capture|cmd|vec|env)[A-Za-z0-9_]*|_err[A-Za-z0-9_]*|_ew|pe_excluded_region) *\(|return 0 - 1' && echo yes || echo no; }
+cat > "$T/self/e.cyr" <<'EOF'
+fn x_unarmed(): i64 {
+    sys_execve(p, a, e);
+    return 1;
+}
+fn x_returns(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_spawn_vec(p, a);
+    #endif
+    sys_execve(p, a, e);
+    return 1;
+}
+fn x_exits(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    _cbt_exit(_win_redirect_to_pinned(p));
+    #endif
+    sys_execve(p, a, e);
+    return 1;
+}
+fn x_sibling_block(): i64 {
+    if (verb_a == 1) {
+        #ifdef CYRIUS_TARGET_WIN
+        return _win_spawn_vec(p, a);
+        #endif
+        return 0;
+    }
+    if (verb_b == 1) {
+        sys_execve(p, a, e);
+        return 1;
+    }
+    return 0;
+}
+fn x_nested_ifndef(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifdef CYRIUS_ARCH_AARCH64
+    var q = 1;
+    #endif
+    sys_execve(p, a, e);
+    #endif
+    return 1;
+}
+fn x_in_child(): i64 {
+    var pid = sys_fork();
+    if (pid == 0) { sys_execve(p, a, e); sys_exit(127); }
+    return 0;
+}
+fn x_silent(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    sys_execve(p, a, e);
+    return 1;
+}
+fn x_fork_sibling(): i64 {
+    if (verb_a == 1) {
+        var pid = sys_fork();
+        if (pid == 0) {
+            sys_execve(p, a, e);
+            sys_exit(127);
+        }
+        return 0;
+    }
+    if (verb_b == 1) {
+        sys_execve(p, a, e);
+        return 1;
+    }
+    return 0;
+}
+fn x_prose(): i64 {
+    # sys_execve(p, a, e) in a comment
+    var s = "sys_execve(p, a, e)";
+    return 0;
+}
+EOF
+escan "$T/self/e.cyr" > "$T/self/eout"
+check "  ⭐ the detector finds the 7 exec-in-place sites (not the forked children's, not prose)" 7 "$(grep -c 'fn=' "$T/self/eout" || true)"
+check "  …flags the unguarded one" 1 "$(grep -c 'fn=x_unarmed pe=UNARMED' "$T/self/eout" || true)"
+check "  …clears a returning arm and an _cbt_exit arm" 2 "$(grep -cE 'fn=x_(returns|exits) pe=ok' "$T/self/eout" || true)"
+check "  ⭐ …flags a site whose only arm closed with ANOTHER verb's block" 1 "$(grep -c 'fn=x_sibling_block pe=UNARMED' "$T/self/eout" || true)"
+check "  ⭐ …flags an exec-in-place site after ANOTHER block's fork (a fork exempts only its own block)" 1 "$(grep -c 'fn=x_fork_sibling pe=UNARMED' "$T/self/eout" || true)"
+check "  …and still not that fork's own child exec" 1 "$(grep -c 'fn=x_fork_sibling' "$T/self/eout" || true)"
+check "  …clears a site in an #ifndef that holds a nested #ifdef" 1 "$(grep -c 'fn=x_nested_ifndef pe=ok' "$T/self/eout" || true)"
+check "  …and does not admit a silent return-0 arm" no "$(admitted "$(grep 'fn=x_silent' "$T/self/eout" | sed 's/.*arm=//')")"
+escan cbt/*.cyr > "$T/xsites"
+NX=$(grep -c 'fn=' "$T/xsites" || true)
+# A floor, not an equality: the pin redirect (cyrius.cyr `_try_redirect_to_pinned`) and sign-efi
+# (`main`) at 6.7.16. A new exec-in-place site is welcome; it has to be armed.
+check "the scan finds at least the 2 known exec-in-place sites (found $NX)" yes "$([ "$NX" -ge 2 ] && echo yes || echo no)"
+grep -v ' pe=ok ' "$T/xsites" > "$T/xunarmed" || true
+if [ -s "$T/xunarmed" ]; then echo "  exec-in-place sites with no PE arm:"; sed 's/^/    /' "$T/xunarmed"; fi
+check "no exec-in-place site is UNARMED" 0 "$(wc -l < "$T/xunarmed" | tr -d ' ')"
+: > "$T/xsilent"
+while IFS= read -r ln; do
+    case "$ln" in *pe=ok*) ;; *) continue ;; esac
+    [ "$(admitted "${ln#*arm=}")" = yes ] || echo "$ln" >> "$T/xsilent"
+done < "$T/xsites"
+if [ -s "$T/xsilent" ]; then echo "  exec-in-place arms that do nothing and say nothing:"; sed 's/^/    /' "$T/xsilent"; fi
+check "every exec-in-place arm names a spawn or a refusal" 0 "$(wc -l < "$T/xsilent" | tr -d ' ')"
+
 echo ""
 if [ "$fails" = "0" ]; then
     # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
     if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cbt_fork_sites_have_pe_arm — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-    echo "PASS: cbt-fork-sites-have-pe-arm — $NSITE fork sites, every one armed and named"
+    echo "PASS: cbt-fork-sites-have-pe-arm — $NSITE fork sites and $NX exec-in-place sites, every one armed and named"
     exit 0
 fi
 echo "FAIL: cbt-fork-sites-have-pe-arm — $fails assertion(s) failed"

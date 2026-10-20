@@ -69,7 +69,8 @@ fn read_header(): i64 {
         if (n <= 0) { return -1; }
         pos += 1;
         if (pos >= 4) {
-            if (load8(&buf + pos - 4) == 13 && load8(&buf + pos - 3) == 10 && load8(&buf + pos - 2) == 13 && load8(&buf + pos - 1) == 10) {
+            if (load8(&buf + pos - 4) == 13 && load8(&buf + pos - 3) == 10
+              && load8(&buf + pos - 2) == 13 && load8(&buf + pos - 1) == 10) {
                 found = 1;
             }
         }
@@ -1042,12 +1043,14 @@ fn _lsp_env_selects(e): i64 {
 #             unit: a shared include another entry reaches first is left to that entry)
 #   PEER      reached only on a target this server selects by environment (an x86_64 Linux server:
 #             CYRIUS_TARGET_WIN=1, CYRIUS_TARGET_AGNOS=1, CYRIUS_MACHO=1, CYRIUS_TARGET_EFI=1): the
-#             entry is compiled under it, and the open file alone gets its list
+#             entry is compiled under it, and the open file gets its list (and the unit's other
+#             open PEERs theirs)
 #   NOTE      reached only on a target this server cannot compile for (aarch64, cx): no compile, one
 #             Information diagnostic saying so
 #   SKIP      named by the manifest's `[lsp] skip`: never compiled
 # A FRAGMENT or PEER whose own list is clean while its unit has errors gets a one-line Information
-# note naming the unit. THE GRAPH: every .cyr under the root but hidden directories, the root's build/
+# note naming the unit, kept in step by every publish of the unit (_lsp_pub_record). THE GRAPH:
+# every .cyr under the root but hidden directories, the root's build/
 # and dist/, and a subdirectory with its own cyrius.cyml (a sub-project); test files are not in it (a
 # test's includes make nothing a fragment, and a test is its own unit). Each column-0 `include "x"`
 # resolves as cycc resolves it — from the root, then the entry's own directory (the CLI's `#@incdir`)
@@ -2531,8 +2534,13 @@ var _ld_txt = 0;    # vec: 0, or a message of its own (a cstr) in place of the t
 # directory a relative name falls back to: the unit's entry (the open file when it is its own unit).
 # A location-less ERROR stays on the open file. CHANGELOG [6.7.16]
 var _lsp_unit_path = 0;
-var _lsp_pub_units = 0;   # vec of cstr: per (unit, file) pair, the unit (an open document's path)
+var _lsp_pub_units = 0;   # vec of cstr: per (unit, file) pair, the unit's key
 var _lsp_pub_files = 0;   # vec of cstr: the file that unit last published diagnostics on
+# vec: what the pair is — 0 a file the unit published on; an open FRAGMENT / PEER document of the
+# unit, whose list follows the unit (its unit note included): 1 its last list was empty, 2 it was not.
+# A unit note is made for a document and named by no compile, so it was cleared as a list the unit
+# no longer named; a PEER publishes no other file, so it cleared its peers' own errors. CHANGELOG [6.7.16]
+var _lsp_pub_note = 0;
 
 # The digits at s[p, eol) as a number; *endp = the first non-digit (p when there is none).
 fn _lsp_num(s, p, eol, endp): i64 {
@@ -2761,7 +2769,8 @@ fn _lsp_parse_diag(s, p, eol, sev, open_path, root): i64 {
 # Publish the diagnostics of the parsed set that sit on `file` as one notification on `uri`.
 fn _lsp_publish_file(uri, file, s): i64 {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"");
+    str_builder_add_cstr(sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",");
+    str_builder_add_cstr(sb, "\"params\":{\"uri\":\"");
     _lsp_json_esc(sb, uri, 0, strlen(uri));
     str_builder_add_cstr(sb, "\",\"diagnostics\":[");
     var n = 0;
@@ -2822,11 +2831,13 @@ fn _lsp_vec_has(v, x): i64 {
 # a FRAGMENT on each such file whose own unit is the same (_cu_file_in_unit); a PEER on none. A
 # FRAGMENT or PEER whose own list has no error while the unit has errors elsewhere gets a one-line
 # Information note at its line 0 naming the unit. What a unit published is remembered under the
-# unit's key — the open document too, when its list was not empty — so a recompile of that unit
-# from any of its files clears what it no longer names. CHANGELOG [6.7.16]
+# unit's key (_lsp_pub_record) — an open FRAGMENT / PEER document always, an open SELF one when its
+# list was not empty — so a recompile of that unit from any of its files clears what it no longer
+# names, and brings each open FRAGMENT / PEER document of the unit to the list its own publish would
+# give it now: its diagnostics, and the note while the unit has errors elsewhere. CHANGELOG [6.7.16]
 fn parse_and_send_diagnostics(uri, open_path, stderr_output, root, u): i64 {
     _lsp_diag_reset();
-    if (_lsp_pub_units == 0) { _lsp_pub_units = vec_new(); _lsp_pub_files = vec_new(); }
+    _lsp_pub_init();
     var mode = _CU_SELF;
     var key = open_path;
     _lsp_unit_path = open_path;
@@ -2869,6 +2880,9 @@ fn parse_and_send_diagnostics(uri, open_path, stderr_output, root, u): i64 {
         }
     }
     if (mode == _CU_FRAGMENT || mode == _CU_PEER) { _lsp_unit_note(open_path, u); }
+    # The unit's other open FRAGMENT / PEER documents get their notes too, so the files loop below
+    # republishes one with its note, never without it.
+    var docs = _lsp_unit_docs(key, open_path, u);
     # The open document always gets its list (an empty one clears it); then each other file named.
     var files = vec_new();
     var total = _lsp_publish_file(uri, open_path, s);
@@ -2884,39 +2898,114 @@ fn parse_and_send_diagnostics(uri, open_path, stderr_output, root, u): i64 {
         }
         i = i + 1;
     }
-    # Clear what this unit published last time and no longer names; remember what it named now.
-    var keep_u = vec_new();
-    var keep_f = vec_new();
+    _lsp_pub_record(key, open_path, mode, own, files, docs, s);
+    log_msg("sent diagnostics");
+    return total;
+}
+
+# The (unit, file) records, made on first use.
+fn _lsp_pub_init(): i64 {
+    if (_lsp_pub_units == 0) {
+        _lsp_pub_units = vec_new();
+        _lsp_pub_files = vec_new();
+        _lsp_pub_note = vec_new();
+    }
+    return 0;
+}
+
+# The open FRAGMENT / PEER documents recorded under unit `key` but `open_path` that are still of the
+# unit (a vec of paths); each gets its unit note in the parsed set when it is due.
+fn _lsp_unit_docs(key, open_path, u): i64 {
+    var docs = vec_new();
+    if (u == 0) { return docs; }
+    var j = 0;
+    while (j < vec_len(_lsp_pub_units)) {
+        var fj = vec_get(_lsp_pub_files, j);
+        if (vec_get(_lsp_pub_note, j) > 0 && streq(vec_get(_lsp_pub_units, j), key) == 1 && streq(fj, open_path) == 0) {
+            if (_cu_file_in_unit(fj, key) == 1) {
+                _lsp_unit_note(fj, u);
+                vec_push(docs, fj);
+            }
+        }
+        j = j + 1;
+    }
+    return docs;
+}
+
+# The number of diagnostics of the parsed set on `file`.
+fn _lsp_diags_on(file): i64 {
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(_ld_file)) {
+        if (streq(vec_get(_ld_file, i), file) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# After unit `key`'s publish from `open_path` (`mode`, `own` diagnostics on it; `files` the other files
+# it published on; `docs` its other open documents, _lsp_unit_docs): publish on each file the unit
+# published on before and no longer names an empty list, and on each open document the files loop did
+# not reach its list now (a PEER's compile still names its peers; an empty one only when it last
+# showed something); then remember what the unit published. An open document's record under another
+# unit is dropped (its list is this unit's now).
+fn _lsp_pub_record(key, open_path, mode, own, files, docs, s): i64 {
+    var ku = vec_new();
+    var kf = vec_new();
+    var kn = vec_new();
     var j = 0;
     while (j < vec_len(_lsp_pub_units)) {
         var uj = vec_get(_lsp_pub_units, j);
         var fj = vec_get(_lsp_pub_files, j);
+        var nj = vec_get(_lsp_pub_note, j);
         if (streq(uj, key) == 1) {
-            if (streq(fj, open_path) == 0 && _lsp_vec_has(files, fj) == 0) { _lsp_publish_file(_lsp_uri_of(fj), 0, s); }
-        } else {
-            vec_push(keep_u, uj);
-            vec_push(keep_f, fj);
+            if (streq(fj, open_path) == 0 && _lsp_vec_has(files, fj) == 0) {
+                if (_lsp_vec_has(docs, fj) == 1) {
+                    var n = _lsp_diags_on(fj);
+                    if (n > 0 || nj == 2) { _lsp_publish_file(_lsp_uri_of(fj), fj, s); }
+                    var st = 1;
+                    if (n > 0) { st = 2; }
+                    _lsp_pub_push(ku, kf, kn, key, fj, st);
+                } elif (nj != 1) {
+                    _lsp_publish_file(_lsp_uri_of(fj), 0, s);
+                }
+            }
+        } elif (nj == 0 || streq(fj, open_path) == 0) {
+            _lsp_pub_push(ku, kf, kn, uj, fj, nj);
         }
         j = j + 1;
     }
     var k = 0;
     while (k < vec_len(files)) {
-        vec_push(keep_u, key);
-        vec_push(keep_f, vec_get(files, k));
+        var fk = vec_get(files, k);
+        var sk = 0;
+        if (_lsp_vec_has(docs, fk) == 1) { sk = 2; }
+        _lsp_pub_push(ku, kf, kn, key, fk, sk);
         k = k + 1;
     }
-    if (own > 0 && streq(key, open_path) == 0) {
-        vec_push(keep_u, key);
-        vec_push(keep_f, open_path);
+    if (mode == _CU_FRAGMENT || mode == _CU_PEER) {
+        var so = 1;
+        if (own > 0) { so = 2; }
+        _lsp_pub_push(ku, kf, kn, key, open_path, so);
+    } elif (own > 0 && streq(key, open_path) == 0) {
+        _lsp_pub_push(ku, kf, kn, key, open_path, 0);
     }
-    _lsp_pub_units = keep_u;
-    _lsp_pub_files = keep_f;
-    log_msg("sent diagnostics");
-    return total;
+    _lsp_pub_units = ku;
+    _lsp_pub_files = kf;
+    _lsp_pub_note = kn;
+    return 0;
+}
+
+# Append the record (key, file, st) to the record vecs being built.
+fn _lsp_pub_push(ku, kf, kn, key, file, st): i64 {
+    vec_push(ku, key);
+    vec_push(kf, file);
+    vec_push(kn, st);
+    return 0;
 }
 
 # The one-line Information note a FRAGMENT / PEER document (`open_path`, unit `u`) gets when its own
-# list holds no error while its unit's compile has errors in other files.
+# list holds no error while its unit's compile has errors in other files. 1 when it was added.
 fn _lsp_unit_note(open_path, u): i64 {
     var mine = 0;
     var elsewhere = 0;
@@ -2943,15 +3032,30 @@ fn _lsp_unit_note(open_path, u): i64 {
     if (elsewhere == 1) { str_builder_add_cstr(sb, " error in another file"); }
     else { str_builder_add_cstr(sb, " errors in other files"); }
     _lsp_diag_txt(open_path, 3, str_data(str_builder_build(sb)));
-    return 0;
+    return 1;
 }
 
 # Publish on `uri` (the document at `path`) one Information diagnostic of this server's own, `txt`
-# at line 0 — or, with `txt` 0, an empty list. 6.7.16 (a NOTE unit; a SKIP one).
+# at line 0 — or, with `txt` 0, an empty list. 6.7.16 (a NOTE unit; a SKIP one). Its record as an
+# open document of a unit is dropped: no unit's publish speaks for it now.
 fn _lsp_publish_own(uri, path, txt): i64 {
     _lsp_diag_reset();
     if (txt != 0) { _lsp_diag_txt(path, 3, txt); }
     _lsp_publish_file(uri, path, "");
+    _lsp_pub_init();
+    var ku = vec_new();
+    var kf = vec_new();
+    var kn = vec_new();
+    var j = 0;
+    while (j < vec_len(_lsp_pub_units)) {
+        var fj = vec_get(_lsp_pub_files, j);
+        var nj = vec_get(_lsp_pub_note, j);
+        if (nj == 0 || streq(fj, path) == 0) { _lsp_pub_push(ku, kf, kn, vec_get(_lsp_pub_units, j), fj, nj); }
+        j = j + 1;
+    }
+    _lsp_pub_units = ku;
+    _lsp_pub_files = kf;
+    _lsp_pub_note = kn;
     log_msg("sent diagnostics");
     return 0;
 }
@@ -2967,11 +3071,8 @@ fn handle_initialize(body) : i64 {
     str_builder_add_int(sb, id);
     str_builder_add_cstr(sb, ",\"result\":{\"capabilities\":{");
     str_builder_add_cstr(sb, "\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},");
-    # v5.7.39: advertise definitionProvider + documentSymbolProvider.
-    # `textDocument/semanticTokens/full` deferred to a future slot —
-    # the slot framing of "polish" landed cross-file resolution +
-    # go-to-def first; semantic tokens earn their own slot when
-    # consumer pull surfaces.
+    # v5.7.39: advertise definitionProvider + documentSymbolProvider (semanticTokensProvider
+    # followed at v5.9.10, below).
     str_builder_add_cstr(sb, "\"definitionProvider\":true,");
     str_builder_add_cstr(sb, "\"documentSymbolProvider\":true,");
     # v6.1.24: textDocument/hover — reuses the cross-file symbol table to show a
@@ -2991,7 +3092,8 @@ fn handle_initialize(body) : i64 {
     # uncolored. Editors fall back to textmate grammar for the
     # remaining uncolored bytes (literals, operators, comments).
     str_builder_add_cstr(sb, "\"semanticTokensProvider\":{");
-    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",\"enumMember\",\"keyword\",\"parameter\"],\"tokenModifiers\":[]},");
+    str_builder_add_cstr(sb, "\"legend\":{\"tokenTypes\":[\"function\",\"variable\",\"struct\",\"enum\",");
+    str_builder_add_cstr(sb, "\"enumMember\",\"keyword\",\"parameter\"],\"tokenModifiers\":[]},");
     str_builder_add_cstr(sb, "\"full\":true}");
     str_builder_add_cstr(sb, "}}}");
     send_response(str_data(str_builder_build(sb)));
@@ -3381,7 +3483,8 @@ fn handle_document_symbol(body): i64 {
 }
 
 # v5.9.10: textDocument/references.
-# Request:  { ..., params: { textDocument: { uri }, position: { line, character }, context: { includeDeclaration: bool } } }
+# Request:  { ..., params: { textDocument: { uri }, position: { line, character },
+#             context: { includeDeclaration: bool } } }
 # Response: Location[] | null
 #
 # Semantics: find every IDENT token in every indexed file whose

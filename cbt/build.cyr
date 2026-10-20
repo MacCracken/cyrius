@@ -2534,13 +2534,18 @@ fn _target_cc_has_js(): i64 {
     return 0;
 }
 
-# 1 when the compiler the js arm EXECS (current_cc()) is the host cycc — the one
-# `_target_cc_has_js` asks about. 6.7.12: under `--aarch64` current_cc() is cycc_aarch64, which
-# ignores `--emit-js`, read its stdin as the source (blocking forever on a terminal) and had its
-# ELF renamed over the .js with an OK. The CLI refuses that pair first (_cli_targets_exclusive);
-# this keeps the arm closed to any later selector. CHANGELOG [6.7.12]
+# 1 when the compiler the js arm EXECS (current_cc()) is the one a run with no target selector
+# runs — the host's own compiler, the one `_target_cc_has_js` asks about. 6.7.12: under
+# `--aarch64` current_cc() was the x86_64-hosted cross compiler cycc_aarch64, which ignored
+# `--emit-js`, read its stdin as the source (blocking forever on a terminal) and had its ELF renamed
+# over the .js with an OK. The CLI refuses that pair first (_cli_targets_exclusive); this keeps the
+# arm closed to any later selector. CHANGELOG [6.7.12]
+# 6.7.16: the question is "did a selector change the compiler", so the default is `_cc_default()`,
+# not the `cycc` slot: on arm64 macOS the default IS cycc_aarch64 (the native Mach-O compiler), and
+# `cyrius build --target=js x.ts out.js` with no selector was refused there as if one had been given
+# (issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md). CHANGELOG [6.7.16]
 fn _js_cc_is_host(): i64 {
-    if (current_cc() == _cc) { return 1; }
+    if (current_cc() == _cc_default()) { return 1; }
     return 0;
 }
 

@@ -1227,6 +1227,19 @@ fn current_cc(): i64 {
     return _cc;
 }
 
+# The compiler current_cc() answers when NO target selector was given: on arm64 macOS the native
+# Mach-O compiler `cycc_aarch64` (find_tools and main default `_arch` to ARCH_AARCH64 there, under
+# the same two macros), `cycc` everywhere else. `_js_cc_is_host` (cbt/build.cyr) compares against
+# it. CHANGELOG [6.7.16]
+fn _cc_default(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
+    return _cc_arm;
+    #endif
+    #endif
+    return _cc;
+}
+
 fn arch_name(): i64 {
     if (_arch == ARCH_AARCH64) { return "aarch64"; }
     # 6.7.12 — on an aarch64 Linux host the default build runs the host's own cycc (`_cc`), which

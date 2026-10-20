@@ -26,7 +26,8 @@
 #   F6  a standalone file (no includer) is checked itself, its own error at its line
 #   F7  a loose file (no project) is checked as before: `check <file>` from the server's directory
 #   F8  a stale list is cleared: d.cyr's error, fixed on disk, is cleared when another file of the
-#       same unit is saved
+#       same unit is saved — and d.cyr, an open fragment now clean while src/main.cyr keeps its own
+#       error, gets the unit note in its place
 #   F9  ONE compile for N fragments: a.cyr, b.cyr and c.cyr opened -> one check of src/main.cyr;
 #       F9b a file of the unit changed on disk -> compiled again
 #   F10 a discovered entry: tool/part.cyr (included only by tool/run.cyr, as `include "part.cyr"`,
@@ -52,6 +53,20 @@
 #       its host unit's check carries them
 #   F23 a server KILLED after a lib/ module's compile (an editor that never sends shutdown) leaves no
 #       private directory: it is removed when the compile is done, not at exit
+#   THE UNIT NOTE FOLLOWS THE UNIT (issues/2026-10-19-cyrius-lsp-clears-a-fragment-unit-note-from-
+#   another-file.md: the note was recorded as a list the unit's next publish no longer named, and
+#   cleared): an open FRAGMENT / PEER document's LAST list is what its own publish would give it now —
+#   the filed project, src/main.cyr including a, b and d, only d.cyr erring:
+#   F24 b, d and a opened (the filed sequence): b.cyr's last publish is still the note
+#   F24b b and d opened, d.cyr fixed on disk and saved: b.cyr's (and d.cyr's) last publish is empty
+#   F25 b.cyr with a warning of its own: d opened, b.cyr's last list is its warning AND the note
+#   F26 two Windows-only lib/ peers of one module, each erring: opening the second (a PEER publishes
+#       no other file) keeps the first's own error
+#   F27 the entry src/main.cyr opened after b.cyr (a SELF publish of the unit): b.cyr keeps the note
+#   F28 b opened while the unit is clean, then d.cyr broken on disk and saved: b.cyr gets the note
+#   F29 b.cyr leaves the unit (src/main.cyr's include of it removed) and is saved, its own unit now:
+#       d.cyr's save does not clear b.cyr's own errors; F29b b.cyr named by `[lsp] skip` mid-session:
+#       d.cyr's save sends it no note
 #   S   the acceptance sweep: every src/, lib/ and bootstrap/cybs.cyr file of this tree opened in one
 #       session; each one's LAST list of the session (what the editor shows at its end) is empty but
 #       for named entries' and NOTEs' (see the row), so a later unit polluting a shared fragment fails
@@ -91,6 +106,12 @@
 #       mismatch` warnings republished on the shared src/common/util.cyr, src/backend/common/env.cyr,
 #       runtime.cyr, src/frontend/lex.cyr, ts/driver_input.cyr and lib/syscalls_*.cyr — which their
 #       FIRST publish (the grading before) showed empty
+#   the note recorded as a list (the wave-3 open server, 0ba98b3bf)  F8 F24 F25 F26 F27 F28 F29
+#   a PEER's other open documents cleared, not republished  F26
+#   an open document recorded only when its list is not empty  F28
+#   the unit's other open documents given no note  F8 F24 F25 F27 F28
+#   an open document's record under its old unit kept  F29
+#   a SKIP / NOTE publish keeping the document's unit record  F29b
 # THE SHELL: the gate re-runs itself under `bash -eo pipefail` (GitHub's `run:` semantics), as
 # lsp_diagnostics_file_column.sh does; `CY_LSP_GATE_INNER=1` keeps the shell that started it. A
 # pipeline that can end early is written so its status is never the verdict (6.7.15's lesson: the
@@ -156,6 +177,11 @@ serve() {
 }
 pub() { grep "^\"uri\":\"$2\"," "$1" || true; }
 empty() { [ "$(pub "$1" "$2" | tail -1)" = "\"uri\":\"$2\",\"diagnostics\":[]}}" ]; }
+# the severities of one publish line, in order ("3 ", "2 3 ")
+sevs() { printf '%s' "$1" | { grep -o '"severity":[0-9]' || true; } | sed 's/.*://' | tr '\n' ' '; }
+NOTE1='"message":"checked as part of src/main.cyr, which has 1 error in another file"'
+# its LAST publish is the unit note alone, naming one error elsewhere
+note_last() { l=$(pub "$1" "$2" | tail -1); [ "$(sevs "$l")" = '3 ' ] && printf '%s' "$l" | grep -qF "$NOTE1"; }
 checks() { grep -c '^run: check' "$1.shim" || true; }
 # wait for the server's Nth "sent diagnostics" (a feeder that edits a file between two opens)
 sent_wait() { w=0; while [ "$(grep -c 'sent diagnostics' "$W/lsp.log" || true)" -lt "$1" ] && [ "$w" -lt 600 ]; do sleep 0.1; w=$((w + 1)); done; }
@@ -242,13 +268,97 @@ if printf '%s' "$PM" | grep -qF '"start":{"line":3,"character":18}' && printf '%
     ok "F5 the entry's own error (<source>) is published on src/main.cyr, line 3"
 else fail "F5 src/main.cyr: ${PM:-none}"; fi
 
-# F8: d.cyr fixed on disk, then b.cyr saved: d.cyr's list is cleared by the unit's recompile
+# F8: d.cyr fixed on disk, then b.cyr saved: d.cyr's error is cleared by the unit's recompile — and
+# d.cyr, an open fragment clean now while src/main.cyr keeps its own error, gets the unit note
 : > "$W/lsp.log"
 { trap '' PIPE; start; open_msg Open "$P/src/d.cyr"; sent_wait 1
   printf 'var d1 = 1;\nvar d2 = 2;\nvar bad = d1 + 1;\n' > "$P/src/d.cyr"; open_msg Save "$P/src/b.cyr"; stop; true; } 2> /dev/null | serve "$W/r8"
-if pub "$W/r8" p2/src/d.cyr | head -1 | grep -qF 'nope_d' && [ "$(pub "$W/r8" p2/src/d.cyr | tail -1)" = '"uri":"p2/src/d.cyr","diagnostics":[]}}' ]; then
-    ok "F8 src/d.cyr fixed on disk: src/b.cyr's save (same unit) publishes an empty list on it"
+if pub "$W/r8" p2/src/d.cyr | head -1 | grep -qF 'nope_d' && note_last "$W/r8" p2/src/d.cyr; then
+    ok "F8 src/d.cyr fixed on disk: src/b.cyr's save (same unit) clears its error — the unit note (src/main.cyr's own error) in its place"
 else fail "F8 src/d.cyr's publishes: $(pub "$W/r8" p2/src/d.cyr | tr '\n' ' ' | cut -c1-300)"; fi
+
+# ── p7: the unit note follows the unit — the filed project of ───────────────────────────────
+# issues/2026-10-19-cyrius-lsp-clears-a-fragment-unit-note-from-another-file.md
+mk7() {   # mk7 <dir> <src/d.cyr's text>
+    mkdir -p "$1/src"
+    printf '[package]\nname = "lspfrag"\nversion = "0.1.0"\n\n[build]\nentry = "src/main.cyr"\n' > "$1/cyrius.cyml"
+    printf 'include "src/a.cyr"\ninclude "src/b.cyr"\ninclude "src/d.cyr"\nsyscall(60, total_b());\n' > "$1/src/main.cyr"
+    printf 'var shared_x = 40;\nfn helper_a(): i64 { return 2; }\n' > "$1/src/a.cyr"
+    printf 'fn total_b(): i64 { return shared_x + helper_a(); }\n' > "$1/src/b.cyr"
+    printf '%b' "$2" > "$1/src/d.cyr"
+}
+D_BAD='var d1 = 1;\nvar bad = nope_d + 1;\n'
+D_OK='var d1 = 1;\nvar ok = d1 + 1;\n'
+mk7 "$W/p7" "$D_BAD"
+{ trap '' PIPE; start; open_msg Open "$W/p7/src/b.cyr"; open_msg Open "$W/p7/src/d.cyr"; open_msg Open "$W/p7/src/a.cyr"
+  stop; true; } 2> /dev/null | serve "$W/r24"
+if note_last "$W/r24" p7/src/b.cyr && note_last "$W/r24" p7/src/a.cyr; then
+    ok "F24 b.cyr, d.cyr and a.cyr opened: b.cyr's last publish is still the unit note (d.cyr's open did not clear it)"
+else fail "F24 src/b.cyr's publishes: $(pub "$W/r24" p7/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-400)"; fi
+mk7 "$W/p7b" "$D_BAD"
+: > "$W/lsp.log"
+{ trap '' PIPE; start; open_msg Open "$W/p7b/src/b.cyr"; open_msg Open "$W/p7b/src/d.cyr"; sent_wait 2
+  printf '%b' "$D_OK" > "$W/p7b/src/d.cyr"; open_msg Save "$W/p7b/src/d.cyr"; stop; true; } 2> /dev/null | serve "$W/r24b"
+if pub "$W/r24b" p7b/src/b.cyr | head -1 | grep -qF "$NOTE1" && empty "$W/r24b" p7b/src/b.cyr && empty "$W/r24b" p7b/src/d.cyr; then
+    ok "F24b d.cyr fixed on disk and saved (the unit clean): b.cyr's note is cleared, d.cyr's error too"
+else fail "F24b src/b.cyr's publishes: $(pub "$W/r24b" p7b/src/b.cyr | tr '\n' ' ' | cut -c1-300) / d.cyr last: $(pub "$W/r24b" p7b/src/d.cyr | tail -1 | cut -c1-200)"; fi
+mk7 "$W/p7c" "$D_BAD"
+printf 'fn total_b(): i64 { return shared_x + helper_a(); }\nfn dupb(): i64 { return 1; }\nfn dupb(): i64 { return 2; }\n' > "$W/p7c/src/b.cyr"
+{ trap '' PIPE; start; open_msg Open "$W/p7c/src/b.cyr"; open_msg Open "$W/p7c/src/d.cyr"; stop; true; } 2> /dev/null | serve "$W/r25"
+L25=$(pub "$W/r25" p7c/src/b.cyr | tail -1)
+if [ "$(pub "$W/r25" p7c/src/b.cyr | wc -l)" = 2 ] && [ "$(sevs "$L25")" = '2 3 ' ] && printf '%s' "$L25" | grep -qF "duplicate fn 'dupb'" \
+   && printf '%s' "$L25" | grep -qF "$NOTE1"; then
+    ok "F25 b.cyr with a warning of its own: d.cyr's open republishes it with its warning AND the note"
+else fail "F25 src/b.cyr's publishes: $(pub "$W/r25" p7c/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-400)"; fi
+mk7 "$W/p7e" "$D_BAD"
+{ trap '' PIPE; start; open_msg Open "$W/p7e/src/b.cyr"; open_msg Open "$W/p7e/src/main.cyr"; stop; true; } 2> /dev/null | serve "$W/r27"
+if [ "$(pub "$W/r27" p7e/src/b.cyr | wc -l)" = 2 ] && note_last "$W/r27" p7e/src/b.cyr && empty "$W/r27" p7e/src/main.cyr; then
+    ok "F27 the entry src/main.cyr opened after b.cyr (a SELF publish of the unit): b.cyr keeps the note"
+else fail "F27 src/b.cyr's publishes: $(pub "$W/r27" p7e/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-300)"; fi
+mk7 "$W/p7f" "$D_OK"
+: > "$W/lsp.log"
+{ trap '' PIPE; start; open_msg Open "$W/p7f/src/b.cyr"; sent_wait 1
+  printf '%b' "$D_BAD" > "$W/p7f/src/d.cyr"; open_msg Save "$W/p7f/src/d.cyr"; stop; true; } 2> /dev/null | serve "$W/r28"
+if pub "$W/r28" p7f/src/b.cyr | head -1 | grep -qF '"diagnostics":[]}}' && note_last "$W/r28" p7f/src/b.cyr; then
+    ok "F28 b.cyr opened while its unit was clean, then d.cyr broken and saved: b.cyr gets the note"
+else fail "F28 src/b.cyr's publishes: $(pub "$W/r28" p7f/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-300)"; fi
+# F29: b.cyr leaves the unit (src/main.cyr no longer includes it) and is saved, its own unit now;
+# then d.cyr is saved: the old unit's publish does not clear b.cyr's own list
+mk7 "$W/p7h" "$D_BAD"
+: > "$W/lsp.log"
+{ trap '' PIPE; start; open_msg Open "$W/p7h/src/b.cyr"; sent_wait 1
+  printf 'include "src/a.cyr"\ninclude "src/d.cyr"\nsyscall(60, 0);\n' > "$W/p7h/src/main.cyr"; open_msg Save "$W/p7h/src/b.cyr"; sent_wait 2
+  open_msg Save "$W/p7h/src/d.cyr"; stop; true; } 2> /dev/null | serve "$W/r29"
+L29=$(pub "$W/r29" p7h/src/b.cyr | tail -1)
+if pub "$W/r29" p7h/src/b.cyr | head -1 | grep -qF "$NOTE1" && printf '%s' "$L29" | grep -qF "undefined variable 'shared_x'" \
+   && grep -q '^run: check --with-deps --no-redirect src/b.cyr ' "$W/r29.shim"; then
+    ok "F29 b.cyr left its unit and was saved (its own unit now): d.cyr's save does not clear b.cyr's own errors"
+else fail "F29 src/b.cyr's publishes: $(pub "$W/r29" p7h/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-400)"; fi
+# F29b: b.cyr named by [lsp] skip mid-session and saved (an empty list, never compiled); then d.cyr is
+# saved: its unit sends b.cyr no note
+mk7 "$W/p7i" "$D_BAD"
+: > "$W/lsp.log"
+{ trap '' PIPE; start; open_msg Open "$W/p7i/src/b.cyr"; sent_wait 1
+  printf '\n[lsp]\nskip = ["src/b.cyr"]\n' >> "$W/p7i/cyrius.cyml"; open_msg Save "$W/p7i/src/b.cyr"; sent_wait 2
+  open_msg Save "$W/p7i/src/d.cyr"; stop; true; } 2> /dev/null | serve "$W/r29b"
+if pub "$W/r29b" p7i/src/b.cyr | head -1 | grep -qF "$NOTE1" && empty "$W/r29b" p7i/src/b.cyr && [ "$(pub "$W/r29b" p7i/src/d.cyr | wc -l)" = 2 ]; then
+    ok "F29b b.cyr named by [lsp] skip mid-session: d.cyr's save sends it no unit note"
+else fail "F29b src/b.cyr's publishes: $(pub "$W/r29b" p7i/src/b.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-400)"; fi
+# F26: two Windows-only peers of lib/plat.cyr, each with an error of its own (PEERs of one unit)
+P=$W/p7g
+mkdir -p "$P/lib" "$P/src"
+printf '[package]\nname = "p7g"\nversion = "0.1.0"\n' > "$P/cyrius.cyml"
+printf '# a stand-in: ./lib holding syscalls.cyr is the stdlib the CLI resolves [deps] from\n' > "$P/lib/syscalls.cyr"
+printf '# Usage: include "lib/plat.cyr"\nfn plat_base(): i64 { return 7; }\n#ifdef CYRIUS_TARGET_WIN\ninclude "lib/plat_w1.cyr"\ninclude "lib/plat_w2.cyr"\n#endif\n' > "$P/lib/plat.cyr"
+printf 'var w1 = nope_w1 + 1;\n' > "$P/lib/plat_w1.cyr"
+printf 'var w2 = nope_w2 + 1;\n' > "$P/lib/plat_w2.cyr"
+printf 'var x = plat_base();\n' > "$P/src/main.cyr"
+{ trap '' PIPE; start; open_msg Open "$P/lib/plat_w1.cyr"; open_msg Open "$P/lib/plat_w2.cyr"; stop; true; } 2> /dev/null | serve "$W/r26"
+L26=$(pub "$W/r26" p7g/lib/plat_w1.cyr | tail -1)
+if [ "$(sevs "$L26")" = '1 ' ] && printf '%s' "$L26" | grep -qF "undefined variable 'nope_w1'" \
+   && [ "$(sevs "$(pub "$W/r26" p7g/lib/plat_w2.cyr | tail -1)")" = '1 ' ] && [ -z "$(pub "$W/r26" p7g/lib/plat.cyr)" ]; then
+    ok "F26 a second Windows-only peer opened: the first keeps its own error (a PEER publishes no other file, and clears none it still names)"
+else fail "F26 lib/plat_w1.cyr's publishes: $(pub "$W/r26" p7g/lib/plat_w1.cyr | sed 's/"range":{[^}]*}[^}]*}},//g' | tr '\n' ' ' | cut -c1-300)"; fi
 
 # ── F7: a loose file (no cyrius.cyml above it) ──────────────────────────────────────────────
 mkdir -p "$W/srv/loose"

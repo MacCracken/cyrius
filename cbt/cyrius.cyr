@@ -559,6 +559,35 @@ fn _released_slot_guard_current(): i64 {
     return 1;
 }
 
+# `cyrius sign-efi` with no cyrsign-efi helper where the toolchain's tools live: the path it
+# looked for (`.exe` on Windows, the name the tarball ships) and how to build one; exit 127.
+# It said "Linux-only" (macOS and Windows tarballs ship the helper since 6.7.16) and named a
+# `programs/cyrsign_efi.cyr` that does not exist. CHANGELOG [6.7.16]
+fn _sign_efi_missing(tool): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sign-efi: the cyrsign-efi helper is not installed at ");
+    str_builder_add_cstr(sb, tool);
+    #ifdef CYRIUS_TARGET_WIN
+    str_builder_add_cstr(sb, ".exe");
+    #endif
+    str_builder_add_cstr(sb, " (build it with `cyrius build programs/cyrsign-efi.cyr build/cyrsign-efi`)");
+    _err(str_data(str_builder_build(sb)));
+    return 127;
+}
+
+# The execve of an installed helper returned (it only returns on failure): name the helper
+# and the error (`rc` is the negated errno); exit 127. CHANGELOG [6.7.16]
+fn _sign_efi_exec_failed(tool, rc): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sign-efi: could not run ");
+    str_builder_add_cstr(sb, tool);
+    str_builder_add_cstr(sb, " (execve error ");
+    str_builder_add_int(sb, 0 - rc);
+    str_builder_add_cstr(sb, ")");
+    _err(str_data(str_builder_build(sb)));
+    return 127;
+}
+
 fn main(): i64 {
     alloc_init();
     args_init();
@@ -751,12 +780,25 @@ fn main(): i64 {
     # --- sign-efi: UEFI Authenticode PE signing ---
     # Dispatches to the separate `cyrsign-efi` helper binary (sigil's RSA bignum
     # scratch is ~13 MB of reachable static data — folding it into `cyrius` would
-    # bloat the CLI 24x). execve replaces this process, so the helper's exit code
-    # is ours. On non-Linux the sys_execve stub returns -1 → the error path fires.
-    # CHANGELOG [6.4.47] (arc #3 bite 1).
+    # bloat the CLI 24x). On POSIX execve replaces this process, so the helper's exit
+    # code is ours. CHANGELOG [6.4.47] (arc #3 bite 1).
+    # Windows has no exec-in-place (`sys_execve` is a -1 stub on PE), so cyrius.exe runs the
+    # cyrsign-efi.exe the tarball ships beside it as a CHILD and exits with its code (the
+    # `_win_redirect_to_pinned` shape). A missing helper is named on every target, and an
+    # execve that fails on an installed one says why. CHANGELOG [6.7.16]
     if (streq(cmd, "sign-efi") == 1) {
         find_tools();
         var _se_tool = _tool_path(_tools_dir, "cyrsign-efi");
+        if (file_exists(_se_tool) == 0) { return _sign_efi_missing(_se_tool); }
+        #ifdef CYRIUS_TARGET_WIN
+        var _se_av = vec_new();
+        var _se_wi = cmd_idx + 1;
+        while (_se_wi < argc()) {
+            vec_push(_se_av, argv(_se_wi));
+            _se_wi = _se_wi + 1;
+        }
+        return _win_spawn_vec(_se_tool, _se_av);
+        #endif
         # v6.6.5 (round-2 review) — the argv is built on the HEAP from argc(), sized
         # to the tail it is actually given. It used to be `var _se_argv: i64[16]`
         # filled under `if (_se_ni < 15)`, i.e. arguments past the 15th were dropped
@@ -776,9 +818,8 @@ fn main(): i64 {
             _se_ai = _se_ai + 1;
         }
         store64(_se_argv + _se_ni * 8, 0);
-        sys_execve(_se_tool, _se_argv, _envp);
-        _err("sign-efi: cyrsign-efi helper not found (Linux-only; build it with `cyrius build programs/cyrsign_efi.cyr build/cyrsign-efi`)");
-        return 127;
+        var _se_rc = sys_execve(_se_tool, _se_argv, _envp);
+        return _sign_efi_exec_failed(_se_tool, _se_rc);
     }
 
     # --- Build commands ---

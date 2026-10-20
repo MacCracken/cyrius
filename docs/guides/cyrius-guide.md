@@ -5326,7 +5326,10 @@ operand is processed or rejected, never silently dropped; and a global `-q`/`-v`
 the operands. `cyrius <verb> --help` (or `-h`) prints exactly the flags the parser accepts, on
 every verb — since 6.7.12 the raw-tail verbs `init`, `port` and `sign-efi` too, whose helpers
 (`cyrius-init`, `cyrsign-efi`) print their usage on stdout and exit 0 (`cyrsign-efi` takes the
-help only as its lone argument and still refuses every other `-` token). `run` is the
+help only as its lone argument and still refuses every other `-` token). `sign-efi` runs the
+`cyrsign-efi` installed beside the CLI — on Windows as a child whose exit code it returns
+(6.7.16: cyrius.exe could not reach the `cyrsign-efi.exe` the tarball ships) — and a missing
+helper is named with the path it looked for, rc 127. `run` is the
 one stop-at-first-positional verb: a flag written after the source belongs to the program
 (`cyrius run -- prog.cyr a` is the same as `cyrius run prog.cyr a`). A value flag given twice
 is an error that names it (`--target=js --target=cx` used to mean cx, silently) — except the
@@ -8877,6 +8880,23 @@ compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `ex
 code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at entry
 `≥ 0x200000` (agnos user-range floor).
 
+**The cx compiler on agnos.** `CYRIUS_TARGET_AGNOS=1 cycc < src/main_cx.cyr` builds `cycc_cx` as an
+agnos program. It reads `--version` and `--syntax-only`, and its environment (every `CYRIUS_*` knob;
+the first 256 entries, as `getenv` there), off the init stack agnos builds at exec (agnos has no
+`/proc`); maps its 246 MiB arena and the preprocessor's 24 MiB source buffer with agnos `mmap` (#27)
+— a buffer that cannot be mapped is named (`error: cannot map the preprocessor's 24 MiB source
+buffer`, exit 1, on every target); opens each include with agnos `open` (#7: the name and its
+length); and checks the working directory's `cyrius.cyml` pin against its own version as every
+host's compiler does (6.7.12's D5: a warning, a failure under `CYRIUS_STRICT_PIN=1`, silent under
+`CYRIUS_NO_WARN_PIN_DRIFT=1`). Before 6.7.16 it opened `/proc/self/cmdline` with Linux `openat`'s
+argument shape, so `cycc_cx --version` compiled stdin and `--syntax-only` was ignored; it read no
+environment, so every knob was dead (and a refusal naming one — `async fn requires CYRIUS_ASYNC=1` —
+unactionable); it opened includes with the `openat` shape too, so none was found; it mapped the
+preprocessor's buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died; and it had no
+pin-drift check, so a drifted pin built silently whatever the two pin knobs said. It runs whole
+under the fake kernel of `tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG
+[6.7.16].
+
 ### AGNOS Syscall ABI
 
 agnos defines an append-only syscall surface: **#0–#104 and #106–#111**
@@ -9555,8 +9575,12 @@ Before 6.7.16 they read its first 255 bytes, so a path that ended past them was 
 cut name opened (`error: cannot open '<prefix>'` for a file that exists), and a flag past them
 (`--version`, `--syntax-only`, `--allow-undef`, `--pie`) was ignored. Pinned by
 `tests/gates/toolchain/emit_js_per_host_fork.sh` axis 5. See CHANGELOG [6.7.16].
+The macOS compilers, and `cycc_cx` built for agnos, read their flags off the entry stack instead
+(neither system has a `/proc`; see *The cx compiler on agnos*).
 
-`cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
+`cyrius build --target=js` runs on every POSIX host — arm64 macOS included since 6.7.16, where
+the CLI refused it (rc 1, "runs this host's cycc, not the compiler another target selector
+chose") because its default compiler is `cycc_aarch64`, not `cycc`. On Windows it **refuses by name**:
 `cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
 to a file — run `cycc.exe --emit-js app.tsx > app.js` directly.
 

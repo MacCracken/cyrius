@@ -426,6 +426,41 @@ _co_cov_posix() {
   return 0
 }
 
+# _co_js <host> <cli> <cc> [<cc's other name>…] — `cyrius build --target=js` with no target
+# selector, on ecb / ach / pi (6.7.16). The home is ~/$RD/_jsh: bin/cyrius (<cli>) and bin/cycc
+# (<cc>, plus a copy under each other name — arm64 macOS's CLI runs cycc_aarch64). On arm64 macOS
+# the js arm refused the filed repro ("runs this host's cycc, not the compiler another target
+# selector chose", rc 1): its predicate was `current_cc() == _cc`, and the default compiler there
+# is cycc_aarch64 (issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md).
+#   J1  the filed repro verbatim (`const x: number = 1;` / `console.log(x);` -> out.js): rc 0 and
+#       the 29 bytes `const x = 1;\nconsole.log(x);\n`.
+#   J2  `--aarch64 --target=js`: rc 1, 6.7.12's D20 line, no output written.
+# tests/gates/toolchain/emit_js_per_host_fork.sh axis 6 evaluates the predicate per host.
+# Names each miss; 0 when both rows hold. CHANGELOG [6.7.16]
+_co_js() {
+  _jh=$1; _jcli=$2; _jcc=$3; shift 3
+  _jextra=""
+  for _jn in "$@"; do _jextra="$_jextra && cp $_jcc _jsh/bin/$_jn"; done
+  ssh $SSHO "$_jh" "cd ~/$RD && rm -rf _jsh _jsw && mkdir -p _jsh/bin _jsw && cp $_jcli _jsh/bin/cyrius && cp $_jcc _jsh/bin/cycc$_jextra" \
+    || { echo "  js: the home could not be staged on $_jh"; return 1; }
+  _jrun='D=$(cd .. && pwd) && CYRIUS_HOME="$D/_jsh" CYRIUS_RESOLVED=1 "$D/_jsh/bin/cyrius" build'
+  _JRC1=0; ssh $SSHO "$_jh" "cd ~/$RD/_jsw && printf 'const x: number = 1;\nconsole.log(x);\n' > x.ts && $_jrun"' --target=js x.ts out.js > ../_js1.out 2>&1' || _JRC1=$?
+  _JRC2=0; ssh $SSHO "$_jh" "cd ~/$RD/_jsw && $_jrun"' --aarch64 --target=js x.ts out2.js > ../_js2.out 2>&1' || _JRC2=$?
+  _JGOT=$(ssh $SSHO "$_jh" "cd ~/$RD/_jsw && printf 'const x = 1;\nconsole.log(x);\n' > want.js && if cmp -s out.js want.js; then printf SAME; else printf DIFF; fi; [ -e out2.js ] && printf OUT2; true") || _JGOT="(could not read)"
+  _JD20=$(ssh $SSHO "$_jh" "cd ~/$RD && grep -cxF 'error: --aarch64 and --target=js select two emit targets; pass one' _js2.out || true") || _JD20=0
+  _jbad=0
+  [ "$_JRC1" = 0 ] || { echo "  js J1 ($_jh): the filed repro exited $_JRC1 (want 0): $(ssh $SSHO "$_jh" "head -3 ~/$RD/_js1.out" 2>/dev/null | tr '\n' ' ')"; _jbad=1; }
+  case "$_JGOT" in
+    SAME*) ;;
+    *) echo "  js J1 ($_jh): out.js is not the 29 bytes 'const x = 1;\\nconsole.log(x);\\n' ($_JGOT; ~/$RD/_jsw/out.js)"; _jbad=1 ;;
+  esac
+  [ "$_JRC2" = 1 ] || { echo "  js J2 ($_jh): --aarch64 --target=js exited $_JRC2 (want 1)"; _jbad=1; }
+  [ "$_JD20" = 1 ] || { echo "  js J2 ($_jh): no D20 line ('--aarch64 and --target=js select two emit targets; pass one')"; _jbad=1; }
+  case "$_JGOT" in *OUT2*) echo "  js J2 ($_jh): out2.js was written"; _jbad=1 ;; esac
+  [ "$_jbad" = 0 ] && echo "  js on $_jh: J1 the filed repro rc 0, out.js the 29 bytes; J2 --aarch64 --target=js rc 1 by D20's line, nothing written"
+  return "$_jbad"
+}
+
 # _co_cov_check <host> <X2's `Corpus runs:` tail> [<a second X2 FAIL line, as a prefix>] — grades
 # the X1 / X2 runs that _co_cov_posix or the cass leg made: their exit codes (_COV_RC1 must be 0,
 # _COV_RC2 1), the temp dir left empty (_COV_LEFT), and their output, pulled back to $CO_TMP (CRs
@@ -616,6 +651,63 @@ _co_cyly() {
   return 1
 }
 
+# _co_relink_probe <out.cyr> — a probe of programs/cyriusly.cyr's `_relink_atomic` (with
+# `_cy_remove_link`, extracted from the source — the real text, not a copy): ra\bin is a REAL
+# directory holding a file, so pointing it at ra\tgt fails, and the probe exits 0 only when the
+# switch failed AND no `bin.cyrtmp.*` temp link is left in ra\ (1+ = links left, 10+ = the switch
+# "succeeded", 90-94 = the staging failed). First it proves the host can make and remove such a
+# link (95 = sys_symlink failed: no symlink privilege / Developer Mode off; 96 = `_cy_remove_link`
+# left it): `_relink_atomic` returns a failed symlink before any temp exists, so without the
+# proof an unprivileged host passed the row with the cleanup never run (6.7.16 review).
+# For the cass leg. CHANGELOG [6.7.16]
+_co_relink_probe() {
+  {
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fmt.cyr"\n'
+    printf 'include "lib/vec.cyr"\ninclude "lib/str.cyr"\ninclude "lib/io.cyr"\ninclude "lib/fs.cyr"\n'
+    awk '/^fn _cy_remove_link\(/,/^}/' programs/cyriusly.cyr
+    awk '/^fn _relink_atomic\(/,/^}/' programs/cyriusly.cyr
+    cat <<'EOF'
+fn main(): i64 {
+    alloc_init();
+    if (xmkdir("ra", 493) != 0) { return 90; }
+    if (xmkdir("ra/tgt", 493) != 0) { return 91; }
+    if (xmkdir("ra/bin", 493) != 0) { return 92; }
+    var fd = xopen("ra/bin/f", O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) { return 93; }
+    sys_close(fd);
+    if (sys_symlink("tgt", "ra/probe") < 0) { return 95; }
+    _cy_remove_link("ra/probe");
+    var pents = vec_new();
+    if (dir_list_checked(str_from("ra"), pents) < 0) { return 94; }
+    var pi = 0;
+    while (pi < vec_len(pents)) {
+        var pe = vec_get(pents, pi);
+        if (str_len(pe) == 5) {
+            if (memeq(str_data(pe), "probe", 5) == 1) { return 96; }
+        }
+        pi = pi + 1;
+    }
+    var r = _relink_atomic("ra/bin", "tgt");
+    var ents = vec_new();
+    if (dir_list_checked(str_from("ra"), ents) < 0) { return 94; }
+    var left = 0;
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        if (str_len(e) > 11) {
+            if (memeq(str_data(e), "bin.cyrtmp.", 11) == 1) { left = left + 1; }
+        }
+        i = i + 1;
+    }
+    if (r >= 0) { left = left + 10; }
+    return left;
+}
+var r = main();
+syscall(60, r);
+EOF
+  } > "$1"
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -701,6 +793,10 @@ case "$HOST" in
       && _co_cov_posix ecb cyrius_native r1r cycc_aarch64 \
       && _co_cov_check ecb '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ecb — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on arm64 macOS (see _co_js): the native
+    # CLI with r1r as cycc and as cycc_aarch64, the one this CLI runs.
+    _co_js ecb cyrius_native r1r cycc_aarch64 \
+      || { echo "JS_FAIL: ecb — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     # 6.7.16 — cyrius-lsp on arm64 macOS (see _co_lsp): built by r1r; its home holds the native CLI
     # and r1r as cycc and cycc_aarch64 (the arm64 CLI asks for the latter).
     _co_lsp ecb "CYRIUS_MACHO_ARM=1 ./r1r" r1r cyrius_native cycc_aarch64 \
@@ -792,6 +888,9 @@ case "$HOST" in
       && _co_cov_posix ach cyrius_native r1 \
       && _co_cov_check ach '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ach — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on x86_64 macOS (see _co_js).
+    _co_js ach cyrius_native r1 \
+      || { echo "JS_FAIL: ach — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     # 6.7.16 — cyrius-lsp on x86_64 macOS (see _co_lsp): built by r1, unsigned (as every binary here);
     # ach has no ~/.cyrius, so the throwaway home is the only one.
     _co_lsp ach "./r1" r1 cyrius_native \
@@ -887,6 +986,10 @@ case "$HOST" in
       && _co_cov_posix pi cyrius_native n1 \
       && _co_cov_check pi '4 (1 .tcyr, 3 program(s)), 2 failed' '  FAIL: programs/asm_test.cyr (exited 0 but left no coverage record' \
       || { echo "SELFHOST_FAIL: pi — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 and asm_test's missing record named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on aarch64 Linux (see _co_js): the native
+    # CLI with n1 (the native fork ARM users install) as cycc.
+    _co_js pi cyrius_native n1 \
+      || { echo "JS_FAIL: pi — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
@@ -1011,6 +1114,113 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, the CRLF-wrapped deferral 2, run argc a b c 4). Remote output: $WRD\\_cl*.txt. NOT SELFHOST_OK."
       exit 1
     fi
+    # 6.7.16 — `cyrius sign-efi` reaches the cyrsign-efi.exe beside cyrius.exe (the Windows tarball
+    # ships it): rc 0 and its usage. The CLI exec'd the helper in place — `sys_execve` is a -1 stub
+    # on PE — and said "helper not found (Linux-only …)", rc 127. With the helper removed, rc 127
+    # naming cyrsign-efi.exe and programs/cyrsign-efi.cyr. The exit codes are graded on cass with
+    # `if !errorlevel!`; the outputs come back here to be read (no cmd.exe quoting meets them).
+    # tests/gates/platform/win_cli_sign_efi_spawns.sh is the wine twin. CHANGELOG [6.7.16]
+    cat programs/cyrsign-efi.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_se.exe 2>/dev/null
+    _SE1=0; _SE2=0
+    scp -q $SSHO "$CO_TMP"/_co_se.exe "cass:$WRDS"/wh/bin/cyrsign-efi.exe \
+      || { echo "SELFHOST_FAIL: cass — sign-efi: cyrsign-efi.exe could not be staged. NOT SELFHOST_OK."; exit 1; }
+    ssh $SSHO cass "cmd /v /c \"$_CLI sign-efi --help > _se1.txt 2> _se1e.txt & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _SE1=1
+    ssh $SSHO cass "cmd /c \"del C:\\cyrius-tests\\$RD\\wh\\bin\\cyrsign-efi.exe\"" || _SE2=1
+    ssh $SSHO cass "cmd /v /c \"$_CLI sign-efi --help > _se2.txt 2> _se2e.txt & if !errorlevel! NEQ 127 (exit 1) else (exit 0)\"" || _SE2=1
+    rm -f "$CO_TMP"/_se1.txt "$CO_TMP"/_se2e.txt
+    scp -q $SSHO "cass:$WRDS/_se1.txt" "cass:$WRDS/_se2e.txt" "$CO_TMP/" 2>/dev/null || true
+    if [ "$_SE1" = 0 ] && [ "$_SE2" = 0 ] \
+      && tr -d '\r' < "$CO_TMP"/_se1.txt 2>/dev/null | grep -qF 'Usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>' \
+      && tr -d '\r' < "$CO_TMP"/_se2e.txt 2>/dev/null | grep -qE 'sign-efi: the cyrsign-efi helper is not installed at .*cyrsign-efi\.exe \(build it with `cyrius build programs/cyrsign-efi\.cyr'; then
+      echo "  sign-efi on cass: cyrius.exe ran cyrsign-efi.exe (rc 0, its usage); without it, rc 127 naming cyrsign-efi.exe"
+    else
+      _co_cass_defender
+      echo "SELFHOST_FAIL: cass — cyrius.exe sign-efi did not reach the cyrsign-efi.exe beside it (want rc 0 and its usage; without it rc 127 naming cyrsign-efi.exe). Remote output: $WRD\\_se*.txt. NOT SELFHOST_OK."
+      exit 1
+    fi
+    # 6.7.16 (6.7.16's D84) — the Windows tarball's cyriusly.exe refuses its POSIX verbs by name.
+    # install / update / setup / uninstall / cmdtools / use --global run /bin/sh, curl and rm, or
+    # re-point bin\ and lib\ as links where install.ps1 makes copies: here `install 6.7.15` printed
+    # "Installing Cyrius 6.7.15..." and exited -1, `uninstall` "rm -rf failed", and `use 6.7.14
+    # --global` failed and left a bin.cyrtmp.<pid>.<n> link. Each now exits 1 with `cyriusly: <verb>
+    # is not available on Windows: …` and nothing on stdout; the store (install.ps1's layout: bin\ a
+    # real directory) is left as it was; list and version give rc 0. The outputs come back here to be
+    # read. tests/gates/platform/win_cyriusly_posix_verbs_refused.sh is the wine twin. CHANGELOG [6.7.16]
+    cat programs/cyriusly.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_cyly.exe 2>/dev/null
+    rm -rf "$CO_TMP"/_cyh "$CO_TMP"/_co_cyh.tgz && mkdir -p "$CO_TMP"/_cyh/cyh/versions/6.7.14/bin "$CO_TMP"/_cyh/cyh/versions/6.7.15/bin "$CO_TMP"/_cyh/cyh/bin \
+      && printf '6.7.15' > "$CO_TMP"/_cyh/cyh/current && printf 'x' > "$CO_TMP"/_cyh/cyh/bin/cycc.exe \
+      && mkdir -p "$CO_TMP"/_cyh/up/.cyrius/versions/6.7.13 && printf '6.7.13' > "$CO_TMP"/_cyh/up/.cyrius/current \
+      && (cd "$CO_TMP"/_cyh && tar czf ../_co_cyh.tgz cyh up) \
+      && scp -q $SSHO "$CO_TMP"/_co_cyly.exe "cass:$WRDS"/cyriusly.exe \
+      && scp -q $SSHO "$CO_TMP"/_co_cyh.tgz "cass:$WRDS"/_co_cyh.tgz \
+      && ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && tar xzf _co_cyh.tgz"' \
+      || { echo "SELFHOST_FAIL: cass — cyriusly.exe or its home could not be staged. NOT SELFHOST_OK."; exit 1; }
+    _CYL='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=C:\cyrius-tests\'"$RD"'\cyh&& cyriusly.exe'
+    _cybad=""; _cyn=0; _cyget=""
+    for _cv in "install 6.7.15" "update" "setup" "uninstall 6.7.14" "cmdtools list" "use 6.7.14 --global" "use --global"; do
+      _cyn=$((_cyn + 1))
+      ssh $SSHO cass "cmd /v /c \"$_CYL $_cv > _cyr$_cyn.out 2> _cyr$_cyn.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" \
+        || _cybad="$_cybad [$_cv: rc not 1]"
+      _cyget="$_cyget cass:$WRDS/_cyr$_cyn.out cass:$WRDS/_cyr$_cyn.err"
+    done
+    ssh $SSHO cass "cmd /v /c \"$_CYL list > _cyk1.out 2> _cyk1.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [list: rc not 0]"
+    ssh $SSHO cass "cmd /v /c \"$_CYL version > _cyk2.out 2> _cyk2.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version: rc not 0]"
+    # The home with no CYRIUS_HOME is %USERPROFILE%\.cyrius (HOME unset, as on a plain console —
+    # sshd sets it here), and `which` names bin\cycc.exe. CHANGELOG [6.7.16]
+    _CYU='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=&& set HOME=&& set USERPROFILE=C:\cyrius-tests\'"$RD"'\up&& cyriusly.exe'
+    ssh $SSHO cass "cmd /v /c \"$_CYU version > _cyk3.out 2> _cyk3.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [version with no CYRIUS_HOME: rc not 0]"
+    ssh $SSHO cass "cmd /v /c \"$_CYL which > _cyk4.out 2> _cyk4.err & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _cybad="$_cybad [which: rc not 0]"
+    # The hints of the verbs D84 keeps name install.ps1, never a verb Windows refuses or a plain
+    # `use` (a project pin): uninstall of the ACTIVE version (G2) and `use <v>` outside a project
+    # (K9, run in up\, which has no cyrius.cyml). CHANGELOG [6.7.16]
+    ssh $SSHO cass "cmd /v /c \"$_CYL uninstall 6.7.15 > _cyk5.out 2> _cyk5.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" || _cybad="$_cybad [uninstall of the active version: rc not 1]"
+    ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD\\up && set CYRIUS_HOME=C:\\cyrius-tests\\$RD\\cyh&& ..\\cyriusly.exe use 6.7.14 > ..\\_cyk6.out 2> ..\\_cyk6.err & if !errorlevel! NEQ 1 (exit 1) else (exit 0)\"" || _cybad="$_cybad [use 6.7.14 outside a project: rc not 1]"
+    ssh $SSHO cass "cmd /c \"cd /d C:\\cyrius-tests\\$RD && dir /s /b /a cyh > _cyls.txt\"" || _cybad="$_cybad [the store could not be listed]"
+    mkdir -p "$CO_TMP"/_cyout && rm -f "$CO_TMP"/_cyout/*
+    scp -q $SSHO $_cyget "cass:$WRDS/_cyk1.out" "cass:$WRDS/_cyk2.out" "cass:$WRDS/_cyk3.out" "cass:$WRDS/_cyk4.out" "cass:$WRDS/_cyk5.err" "cass:$WRDS/_cyk6.err" "cass:$WRDS/_cyls.txt" "$CO_TMP"/_cyout/ 2>/dev/null || true
+    _cyn=0
+    for _cvb in install update setup uninstall cmdtools "use --global" "use --global"; do
+      _cyn=$((_cyn + 1))
+      [ -f "$CO_TMP/_cyout/_cyr$_cyn.out" ] && [ ! -s "$CO_TMP/_cyout/_cyr$_cyn.out" ] || _cybad="$_cybad [$_cvb: wrote to stdout]"
+      tr -d '\r' < "$CO_TMP/_cyout/_cyr$_cyn.err" 2>/dev/null | grep -qF "cyriusly: $_cvb is not available on Windows: " || _cybad="$_cybad [$_cvb: not refused by name]"
+    done
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk1.out 2>/dev/null | grep -qx '  \* 6.7.15 (active)' || _cybad="$_cybad [list: no '* 6.7.15 (active)']"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk2.out 2>/dev/null | grep -qx 'cyriusly 6.7.15' || _cybad="$_cybad [version: no 'cyriusly 6.7.15']"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk3.out 2>/dev/null | grep -qx 'cyriusly 6.7.13' || _cybad="$_cybad [no CYRIUS_HOME: not %USERPROFILE%\\.cyrius]"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyk4.out 2>/dev/null | grep -q '\\cyh\\bin\\cycc\.exe$' || _cybad="$_cybad [which: not <home>\\bin\\cycc.exe]"
+    tr -d '\r' < "$CO_TMP"/_cyout/_cyr7.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-<version>-x86_64-windows.tar.gz' || _cybad="$_cybad [use --global with no version: no install.ps1 line]"
+    { tr -d '\r' < "$CO_TMP"/_cyout/_cyk5.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-<other>-x86_64-windows.tar.gz' \
+      && ! grep -qF 'cyriusly use' "$CO_TMP"/_cyout/_cyk5.err; } || _cybad="$_cybad [uninstall of the active version: not 'switch first with install.ps1']"
+    { tr -d '\r' < "$CO_TMP"/_cyout/_cyk6.err 2>/dev/null | grep -qF 'install.ps1 -Tarball cyrius-6.7.14-x86_64-windows.tar.gz' \
+      && ! grep -qF -- '--global' "$CO_TMP"/_cyout/_cyk6.err; } || _cybad="$_cybad [use 6.7.14 outside a project: not install.ps1, or names --global]"
+    if ! [ -s "$CO_TMP"/_cyout/_cyls.txt ] || grep -q 'cyrtmp' "$CO_TMP"/_cyout/_cyls.txt \
+      || ! tr -d '\r' < "$CO_TMP"/_cyout/_cyls.txt | grep -q '\\versions\\6\.7\.14$'; then
+      _cybad="$_cybad [the store changed: a *.cyrtmp* left, or versions\\6.7.14 removed]"
+    fi
+    if [ -n "$_cybad" ]; then
+      _co_cass_defender
+      echo "SELFHOST_FAIL: cass — cyriusly.exe (6.7.16's D84):$_cybad. Remote output: $WRD\\_cyr*.*, _cyk*.*, _cyls.txt. NOT SELFHOST_OK."
+      exit 1
+    fi
+    echo "  cyriusly on cass: install / update / setup / uninstall / cmdtools / use --global (with and without a version) refused by name (rc 1, the store as it was); list and version rc 0; the home %USERPROFILE%\\.cyrius with no CYRIUS_HOME; which names bin\\cycc.exe; the active-uninstall and no-project hints name install.ps1"
+    # 6.7.16 — `_relink_atomic` removes its temp link when the switch fails. A link to a directory is
+    # a directory entry on Windows that DeleteFileW refuses, so a failed `use --global` left
+    # bin.cyrtmp.<pid>.<n> (a SYMLINKD) here while saying "nothing was changed". No verb reaches it
+    # on Windows since D84 refused `use --global`; the probe calls the fn itself (_co_relink_probe).
+    # wine cannot run this row: its rename of a link over a directory succeeds. CHANGELOG [6.7.16]
+    _co_relink_probe "$CO_TMP"/_co_ra.cyr && cat "$CO_TMP"/_co_ra.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_ra.exe 2>/dev/null \
+      && ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'\_ra"' \
+      && scp -q $SSHO "$CO_TMP"/_co_ra.exe "cass:$WRDS"/_ra/ra.exe \
+      || { echo "SELFHOST_FAIL: cass — the _relink_atomic probe could not be built or staged. NOT SELFHOST_OK."; exit 1; }
+    # The probe's exit code comes back as text (RARC=<n>): 95 / 96 mean the row could not run.
+    _rarc=$(ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"'\_ra && ra.exe & echo RARC=!errorlevel!"' 2>/dev/null | tr -d '\r' | sed -n 's/^RARC=//p') || _rarc=""
+    case "$_rarc" in
+      0) echo "  relink on cass: a failed switch (bin\\ a real directory) leaves no bin.cyrtmp link (links proved makeable and removable first)" ;;
+      95|96) echo "SELFHOST_FAIL: cass — symlinks cannot be made on cass: the row could not run (probe rc $_rarc: 95 sys_symlink failed — no symlink privilege / Developer Mode; 96 _cy_remove_link left the probe link). NOT SELFHOST_OK."
+        exit 1 ;;
+      *) echo "SELFHOST_FAIL: cass — _relink_atomic left its bin.cyrtmp temp link after a failed switch, or the switch did not fail (probe rc '${_rarc}'; dir /a $WRD\\_ra\\ra). NOT SELFHOST_OK."
+        exit 1 ;;
+    esac
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this

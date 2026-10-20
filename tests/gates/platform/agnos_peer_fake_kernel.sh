@@ -33,6 +33,37 @@
 # removed -> 2 FAIL (the direct calls issue three #56 and answer 0); net_connect_nb's guard alone
 # removed -> 2 FAIL (three #47, the answer 0). The host-observable guards are agnos_negative_fd_not_socket.sh's
 # built-in M4-M10.
+# 6.7.16: axis 14 the agnos build of the cx compiler (CYRIUS_TARGET_AGNOS=1 src/main_cx.cyr), run
+# WHOLE under the tracer's cli mode — its mmap#27 done for real, stdin fed from the tracer's, its
+# fd-1 output copied to fd 3. C1: it compiles a program (exit 0, no Linux mmap#9 / munmap#11 —
+# agnos's mkdir / mount), and the .cyx equals the Linux cycc_cx's and runs to 7 under cxvm. C2: a
+# refused preprocessor buffer is named (exit 1). Mutants measured: the open's preprocessor (its
+# raw Linux mmap#9, unchecked) -> `sc 9 0 25165824 3 34`, then signal 11 — every agnos compile
+# died (C1 and C2 FAIL); the agnos arm alone removed -> C1 exit 1 after one #9 (refused by name).
+# C0: the agnos build carries agnos's syscall numbers in the driver's own enum. Mutant measured: the
+# Linux enum alone (the open's) -> 4 "duplicate symbol 'SYS_*' redefined with conflicting value"
+# warnings (SYS_EXIT, SYS_READ, SYS_CLOSE, SYS_OPEN), each with a note that the wrong call would be
+# made — on a build whose calls the stdlib's redefinition made right (C0 FAIL).
+# C5: READFILE's opens (the path, the overlay, the store slot, `#@incdir`) are one helper with an
+# agnos arm. Mutant measured: the open's READFILE (Linux openat's shape on agnos) -> `sc 7 -100
+# <ptr> 0 0`, the include refused ("cannot open"), exit 1 (C5 FAIL).
+# C6: _read_env's macOS init-stack arm serves agnos too (envp after argv's NULL, through r15).
+# Mutant measured: the macOS-only guard restored (the open's env.cyr: no agnos arm, every name
+# answers 0) -> CYRIUS_POISON=1 compiles the unset program, 22 22 (C6 FAIL).
+# C8: the pin-drift check (6.7.12's D5, every host) runs on agnos: a drifted pin warns, CYRIUS_STRICT_PIN
+# fails it, CYRIUS_NO_WARN_PIN_DRIFT silences it. Mutant measured: no agnos arm in _init_cyrius_lib ->
+# no warning, exit 0 under every knob (C8 FAIL); the Linux-shaped open kept -> `sc 7 -100 …`, no
+# warning (C8 FAIL); the x86 read#0 kept -> agnos exit#0 with the fd as its code: every run in a
+# directory holding a cyrius.cyml exits 4 (C1 C2 C4 C6 C8 FAIL). 6.7.16 review.
+# C9: _read_env's envp walk stops after 256 entries on agnos (lib/args_agnos.cyr's bound). Mutant
+# measured: the bound removed -> the knob after 300 entries is read (11; C9 FAIL). 6.7.16 review.
+# C7: main.cyr's agnos build. Mutants measured: _cmdline_read's agnos return removed -> its first
+# syscall is `sc 7 -100 …` (C7 FAIL); main.cyr's Linux enum alone -> 4 duplicate-symbol warnings.
+# C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
+# and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
+# /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
+# no agnos return) -> its first syscall is `sc 7 -100 …` (Linux openat's shape sent to agnos
+# open), no version is written and stdin is compiled; `--syntax-only` is ignored (C3, C4 FAIL).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -55,6 +86,25 @@ CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/h.cyr" > "$T/h.bin" 2>/dev/null && chmod +x "$
 "$T/sct" "$T/h.bin" plain > "$T/h.log" 2>&1
 check "the fake kernel traces a trivial agnos program (write, then exit 7)" "1 0 7" \
     "$(awk '$1 == "sc" && $2 == 1 { w++ } $1 == "sc" && $2 == 0 { e++ } $1 == "exit" { c = $2 } END { print w + 0, (e == 1 ? 0 : 9), c + 0 }' "$T/h.log")"
+# 6.7.16: a tracer that dies takes its child with it (PTRACE_O_EXITKILL). Detached, the child ran on
+# NATIVELY, every agnos number a different Linux call — this one writes "x" to its stderr for ever,
+# which under the tracer is only logged. Mutant measured (the option not set): the child alive
+# after the tracer's SIGKILL, its stderr growing (row FAIL; the gate kills it by its pid).
+printf 'include "lib/syscalls.cyr"\nwhile (1 == 1) { sys_write(2, "x", 1); }\n' > "$T/k.cyr"
+CYRIUS_TARGET_AGNOS=1 "$CC" < "$T/k.cyr" > "$T/k.bin" 2>/dev/null && chmod +x "$T/k.bin"
+"$T/sct" "$T/k.bin" plain > "$T/k.log" 2> "$T/k.err" &
+tp=$!
+i=0
+while [ "$(grep -c '^sc 1 ' "$T/k.log" 2>/dev/null || true)" -lt 20 ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i + 1)); done
+kc=$(tr -d ' \n' < "/proc/$tp/task/$tp/children" 2>/dev/null || true)
+kill -9 "$tp" 2>/dev/null; wait "$tp" 2>/dev/null
+live() { [ -n "$1" ] && ks=$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) && [ -n "$ks" ] && [ "$ks" != Z ]; }
+i=0
+while live "$kc" && [ $i -lt 40 ]; do sleep 0.05; i=$((i + 1)); done
+kst=gone
+if live "$kc"; then kst=running; kill -9 "$kc" 2>/dev/null; fi
+check "a tracer killed mid-run takes its child with it (gone, nothing written natively)" "child gone 0" \
+    "$([ -n "$kc" ] && echo child || echo no-child) $kst $(wc -c < "$T/k.err" | tr -d ' ')"
 
 run() {  # $1 = probe body file, $2 = mode → $T/run.log
     printf 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\n' > "$T/p.cyr"
@@ -684,6 +734,107 @@ check "_agnos_listen_start(-1 / 1 / +9) is -1 each" "-111" "$(mark 196)"
 check "  and none of them issued a sock_listen#56, sock_accept#57 or sock_connect#47" "0 0 0" \
     "$(awk '$1 == "sc" && $2 == 999 && $3 == 190 { on = 1; next } $1 == "sc" && $2 == 999 && $3 == 199 { exit } on && $1 == "sc" && $2 == 56 { a++ } on && $1 == "sc" && $2 == 57 { b++ } on && $1 == "sc" && $2 == 47 { c++ } END { print a + 0, b + 0, c + 0 }' "$T/run.log")"
 check "slots 7 and 1 keep their ports (8087, 8081) and listen ids (id 0, stored +1)" "808708081 11" "$(mark 197) $(mark 198)"
+
+# ── axis 14 — the agnos build of the cx compiler, run whole (6.7.16) ──────────────────────────
+# The tracer's cli mode: write#1 accepted and logged as `txt <fd> <bytes>`, an agnos-shaped open#7
+# served read-only from the host, stdin fed from the tracer's own, mmap#27 done for real (the arena
+# and heap exist), the child's fd-1 output copied to the tracer's fd 3, the tracer's environment
+# handed down — so every run is under `env -i` (only what a row sets).
+echo "axis 14 — the agnos cycc_cx compiles under the fake kernel (6.7.16):"
+cxok=1
+CYRIUS_TARGET_AGNOS=1 "$CC" < src/main_cx.cyr > "$T/cxag" 2> "$T/cxag.err" && chmod +x "$T/cxag" || {
+    echo "  FAIL: the agnos cycc_cx did not build"; grep -E '^error' "$T/cxag.err" | head -3; fails=$((fails + 1)); cxok=0; }
+"$CC" < src/main_cx.cyr > "$T/cxl" 2> "$T/cxl.err" && chmod +x "$T/cxl" \
+    && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> "$T/cxvm.err" && chmod +x "$T/cxvm" || {
+    echo "  FAIL: the Linux cycc_cx / cxvm did not build"; fails=$((fails + 1)); cxok=0; }
+if [ "$cxok" = 1 ]; then
+    check "C0 the agnos cycc_cx builds without a warning (its SYS_* are agnos's own)" "0" \
+        "$(grep -c '^warning' "$T/cxag.err" || true)"
+    printf 'var x = 7;\nsyscall(60, x);\n' > "$T/c7.cyr"
+    env -i "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c1.log" 3> "$T/c1.cyx" 2>&1
+    env -i "$T/cxl" < "$T/c7.cyr" > "$T/c1l.cyx" 2> /dev/null
+    vm=x; [ -s "$T/c1.cyx" ] && { vm=0; "$T/cxvm" < "$T/c1.cyx" > /dev/null 2>&1 || vm=$?; }
+    same=no; [ -s "$T/c1.cyx" ] && cmp -s "$T/c1.cyx" "$T/c1l.cyx" && same=yes
+    check "C1 it compiles \`var x = 7; syscall(60, x);\`: exit 0, no #9 / #11, the Linux cycc_cx's .cyx, 7 under cxvm" \
+        "exit 0 | 0 | yes | 7" \
+        "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c1.log") | $(awk '$1 == "sc" && ($2 == 9 || $2 == 11) { c++ } END { print c + 0 }' "$T/c1.log") | $same | $vm"
+    env -i "$T/sct" "$T/cxag" clipp < "$T/c7.cyr" > "$T/c2.log" 2>&1
+    check "C2 a refused preprocessor buffer (mmap#27 of 24 MiB answers 0) is named: exit 1" \
+        "txt 2 error: cannot map the preprocessor's 24 MiB source buffer| / exit 1" \
+        "$(awk '$1 == "txt" && $2 == 2 { print; exit }' "$T/c2.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c2.log")"
+    # The flags come off the init stack (the tracer hands the child its arguments): agnos has no
+    # /proc/self/cmdline. issues/2026-10-19-cx-agnos-arm-reads-flags-from-proc-agnos-lacks.md
+    env -i "$T/sct" "$T/cxag" cli --version < /dev/null > "$T/c3.log" 2>&1
+    check "C3 \`cycc_cx --version\` writes the version to fd 1 and exits 0, opening nothing" \
+        "txt 1 $("$CC" --version | tr '\n' '|') / exit 0 / 0 open#7" \
+        "$(awk '$1 == "txt" { print; exit }' "$T/c3.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c3.log") / $(awk '$1 == "sc" && $2 == 7 { c++ } END { print c + 0 }' "$T/c3.log") open#7"
+    printf 'var x = nope;\n' > "$T/c4.cyr"
+    env -i "$T/sct" "$T/cxag" cli --syntax-only < "$T/c4.cyr" > "$T/c4.log" 3> /dev/null 2>&1
+    env -i "$T/sct" "$T/cxag" cli < "$T/c4.cyr" > "$T/c4n.log" 3> /dev/null 2>&1
+    check "C4 \`--syntax-only\` is seen: an unresolved name compiles (exit 0); without it, exit 1 naming it" \
+        "exit 0 / exit 1 undefined variable 'nope'" \
+        "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4n.log") $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c4n.log" | grep -o "undefined variable 'nope'")"
+    # An include is opened in agnos's shape, open#7(name, namelen, flags) — the tracer serves it
+    # from the host, relative to its own directory (here $T/inc).
+    mkdir -p "$T/inc"
+    printf 'fn seven(): i64 { return 7; }\n' > "$T/inc/inc7.cyr"
+    printf 'include "inc7.cyr"\nsyscall(60, seven());\n' > "$T/inc/m.cyr"
+    (cd "$T/inc" && env -i "$T/sct" "$T/cxag" cli < m.cyr > "$T/c5.log" 3> "$T/c5.cyx" 2>&1)
+    vm=x; [ -s "$T/c5.cyx" ] && { vm=0; "$T/cxvm" < "$T/c5.cyx" > /dev/null 2>&1 || vm=$?; }
+    # The include's open is the one naming 8 bytes ("inc7.cyr"): the pin-drift check's probe of
+    # cyrius.cyml (11 bytes, absent here) comes first since 6.7.16. A Linux openat-shaped open
+    # (`sc 7 -100 <ptr> 0 0`) names no length at all.
+    check "C5 an include opens as agnos's open#7(name, namelen, 0): exit 0, the .cyx runs to 7" \
+        "sc 7 8 0 | exit 0 | 7" \
+        "$(awk '$1 == "sc" && $2 == 7 && $4 == 8 { print $1, $2, $4, $5; exit }' "$T/c5.log") | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c5.log") | $vm"
+    # Its environment comes off the init stack too (the cli child gets the tracer's): CYRIUS_POISON
+    # predefines the CYRIUS_POISON macro, so the program's #ifdef arm is taken (11), or not (22).
+    printf '#ifdef CYRIUS_POISON\nsyscall(60, 11);\n#endif\nsyscall(60, 22);\n' > "$T/c6.cyr"
+    env -i "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c6.log" 3> "$T/c6.cyx" 2>&1
+    env -i CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c6p.log" 3> "$T/c6p.cyx" 2>&1
+    v0=x; [ -s "$T/c6.cyx" ] && { v0=0; "$T/cxvm" < "$T/c6.cyx" > /dev/null 2>&1 || v0=$?; }
+    v1=x; [ -s "$T/c6p.cyx" ] && { v1=0; "$T/cxvm" < "$T/c6p.cyx" > /dev/null 2>&1 || v1=$?; }
+    check "C6 it reads its environment: unset -> 22, CYRIUS_POISON=1 -> 11 (the knob's predefine)" "22 11" "$v0 $v1"
+    # C9: the envp walk is bounded at 256 entries on agnos, as lib/args_agnos.cyr's reader — it runs
+    # for every CYRIUS_* read, and an unterminated envp was walked until it faulted. The knob after
+    # 300 other entries reads as unset (22), with no fault; after 200, it is seen (11).
+    f300=$(i=0; while [ "$i" -lt 300 ]; do printf 'CYF%d=x ' "$i"; i=$((i + 1)); done)
+    f200=$(i=0; while [ "$i" -lt 200 ]; do printf 'CYF%d=x ' "$i"; i=$((i + 1)); done)
+    # shellcheck disable=SC2086
+    env -i $f300 CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c9.log" 3> "$T/c9.cyx" 2>&1
+    # shellcheck disable=SC2086
+    env -i $f200 CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c9b.log" 3> "$T/c9b.cyx" 2>&1
+    v2=x; [ -s "$T/c9.cyx" ] && { v2=0; "$T/cxvm" < "$T/c9.cyx" > /dev/null 2>&1 || v2=$?; }
+    v3=x; [ -s "$T/c9b.cyx" ] && { v3=0; "$T/cxvm" < "$T/c9b.cyx" > /dev/null 2>&1 || v3=$?; }
+    check "C9 the envp walk stops at 256 entries: the knob after 300 others unset (22, exit 0), after 200 seen (11)" \
+        "22 exit 0 | 11" \
+        "$v2 $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c9.log") | $v3"
+    # C8: the pin-drift check runs on agnos too — 6.7.12's D5 makes it the pin contract on every
+    # host, and the agnos cycc_cx had no arm, so CYRIUS_STRICT_PIN / CYRIUS_NO_WARN_PIN_DRIFT were
+    # dead there. A cyrius.cyml pinning 0.0.1 in the directory: the warning on fd 2 and exit 0; with
+    # CYRIUS_STRICT_PIN=1 exit 1 naming the drift; with CYRIUS_NO_WARN_PIN_DRIFT=1 silent, exit 0.
+    mkdir -p "$T/pin"
+    printf '[package]\nname = "p"\ncyrius = "0.0.1"\n' > "$T/pin/cyrius.cyml"
+    (cd "$T/pin" && env -i "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8.log" 3> /dev/null 2>&1)
+    (cd "$T/pin" && env -i CYRIUS_STRICT_PIN=1 "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8s.log" 3> /dev/null 2>&1)
+    (cd "$T/pin" && env -i CYRIUS_NO_WARN_PIN_DRIFT=1 "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8n.log" 3> /dev/null 2>&1)
+    pdv=$("$CC" --version | sed 's/^cycc //')
+    check "C8 a drifted cyrius.cyml pin on agnos: warned (exit 0); CYRIUS_STRICT_PIN=1 -> exit 1 naming it; CYRIUS_NO_WARN_PIN_DRIFT=1 -> silent" \
+        "warning: cyrius.cyml pins 0.0.1 but cycc is $pdv / exit 0 | error: cyrius.cyml pins 0.0.1 but cycc is $pdv / exit 1 | 0 / exit 0" \
+        "$(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c8.log" | grep -o "^warning: cyrius.cyml pins 0.0.1 but cycc is [^ ]*") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8.log") | $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c8s.log" | grep -o "^error: cyrius.cyml pins 0.0.1 but cycc is [^ ]*") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8s.log") | $(grep -c 'pins 0.0.1' "$T/c8n.log" || true) / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8n.log")"
+fi
+# C7: src/main.cyr built for agnos is no agnos compiler (its arena is brk, which agnos answers as
+# sync()), but it builds without the duplicate-symbol warnings and its first act is that arena —
+# refused by name — not a Linux-shaped open of /proc/self/cmdline (_cmdline_read answers 0 there).
+if CYRIUS_TARGET_AGNOS=1 "$CC" < src/main.cyr > "$T/mag" 2> "$T/mag.err"; then
+    chmod +x "$T/mag"
+    env -i "$T/sct" "$T/mag" cli --version < /dev/null > "$T/c7.log" 3> /dev/null 2>&1
+    check "C7 main.cyr for agnos: 0 duplicate-symbol warnings; first syscall brk#12, the arena refused by name, exit 1" \
+        "0 | sc 12 | 1 | exit 1" \
+        "$(grep -c "^warning.*duplicate symbol" "$T/mag.err" || true) | $(awk '$1 == "sc" { print $1, $2; exit }' "$T/c7.log") | $(grep -c "cannot map the 246 MiB compiler arena" "$T/c7.log" || true) | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c7.log")"
+else
+    echo "  FAIL: src/main.cyr did not build for agnos"; grep -E '^error' "$T/mag.err" | head -3; fails=$((fails + 1))
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then

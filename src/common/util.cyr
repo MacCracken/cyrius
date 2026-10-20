@@ -3519,7 +3519,7 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
 }
 
 # ================================================================
-# COMMAND-LINE FLAGS — the /proc/self/cmdline drivers (Linux, agnos)
+# COMMAND-LINE FLAGS — the /proc/self/cmdline drivers (Linux)
 # ================================================================
 # The WHOLE command line, read to EOF into its own 2 MiB mapping (lib/args.cyr's args_init
 # starts at that size); returns its byte count, or 0 when /proc cannot be opened, and leaves
@@ -3530,10 +3530,16 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
 # that cannot be mapped or read, is refused by name: a cut copy is never scanned. Not a
 # top-level `var b[N]`: cybs sizes one as N bytes where cycc gives N * 8, and gen1 runs this.
 # CHANGELOG [6.7.16]
+# agnos has no /proc: its argv is on the init stack (_ARGV_FLAGS_MACHO below), and this
+# reader's open is Linux-shaped (agnos's 7 is open(name, namelen), its 9 mkdir), so an agnos
+# build answers 0 at once and opens nothing. CHANGELOG [6.7.16]
 #ifndef CYRIUS_TARGET_MACOS
 #ifndef CYRIUS_TARGET_WIN
 var _cmdline_buf = 0;
 fn _cmdline_read(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
     var fd = 0;
     if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
     else { fd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
@@ -3564,10 +3570,17 @@ fn _cmdline_refuse(why): i64 {
 #endif
 
 # ================================================================
-# COMMAND-LINE FLAGS — macOS (no /proc)
+# COMMAND-LINE FLAGS — macOS and agnos (no /proc): the entry stack
 # ================================================================
-#ifdef CYRIUS_TARGET_MACOS
-# Return the argc/argv base the Mach-O entry prologue parked.
+# Compiled on every target that is neither Linux nor Windows — macOS and agnos (exactly one
+# CYRIUS_TARGET_* is predefined by the compiling driver; cybs counts as Linux). agnos parks its
+# init rsp in r15 at the entry landing (src/main.cyr, `mov r15, rsp`, r15 reserved from regalloc)
+# and lays argc / argv out inline, as x86 Mach-O does — the x86 arms below are its arms, and the
+# agnos cycc_cx reads its flags here. It read /proc/self/cmdline, which agnos lacks, so
+# `--version` compiled stdin and `--syntax-only` was ignored. CHANGELOG [6.7.16]
+#ifndef CYRIUS_TARGET_LINUX
+#ifndef CYRIUS_TARGET_WIN
+# Return the argc/argv base the Mach-O (or agnos) entry prologue parked.
 #
 # v6.6.6: MOVED here from src/backend/common/runtime.cyr, unchanged. util.cyr is
 # the ONE module every fork includes; runtime.cyr is not (main_cx.cyr keeps its
@@ -3601,6 +3614,8 @@ fn _macho_x28(): i64 {
     # r15 is now valid. NOTE the x86 layout is INLINE ([r15]=argc, argv[i] at
     # r15+8+i*8) — the x86 caller in _read_env must not use the arm64 x28 struct
     # double-deref. See issue 2026-06-02-macos-x86-release-no-compiler.md layer 6.
+    # agnos: the same r15, parked by src/main.cyr's agnos landing and reserved there too
+    # (_ra_cap 4 on _TARGET_AGNOS); the same inline layout (lib/args_agnos.cyr). CHANGELOG [6.7.16]
     var r = 0;
     asm {
         0x4C; 0x89; 0xF8;          # mov rax, r15
@@ -3627,7 +3642,7 @@ fn _ARGV_FLAG_ONE(p): i64 {
     return 0;
 }
 
-# Scan argv for cycc's flags on macOS. Returns a bitmask:
+# Scan argv for cycc's flags on macOS and agnos. Returns a bitmask:
 #   1 = --version   4 = --allow-undef   8 = --syntax-only
 # Bit 8 (6.6.20): `cyrius lint` passes --syntax-only on every POSIX host; without it a file
 # whose only fault was a name defined in another file was refused as unparseable on macOS.
@@ -3669,4 +3684,5 @@ fn _ARGV_FLAGS_MACHO(): i64 {
     }
     return f;
 }
+#endif
 #endif
