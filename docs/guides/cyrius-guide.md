@@ -1746,8 +1746,12 @@ reaches: `var y = b.mkg(P);` with `fn mkg<T>(self, v: T): G1<T>` is `G1<Pt>`, `b
 generic operator fn's result is its base `G1`, as its dispatch calls the base), one of 9-16 bytes is refused as `var
 G: P2 = B2.mk();` is, naming the method as written (*'P2.mk' returns a struct by value, and a struct result needs
 storage in a fn's frame*; through 6.7.14 `G` held the first word, silently), and over 16 bytes the call's own
-refusal is the one error. An if-expression's
-struct, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
+refusal is the one error. So does a whole if-expression whose branches are a struct of 8 bytes or less (6.7.16; the
+user's decision D16 (a), 2026-10-19): `var G = if (c) { B1 } else { B1 };` is that struct (`G.a` was *no struct type in
+scope for 'G'*; `G + G` dispatches `P1_add`), its first branch's struct as in a fn (a later branch of another type is
+refused once); a 16-byte struct branch is refused naming the struct (*an if expression branch cannot be a struct value
+over 8 bytes: struct 'P2'*; through 6.7.15 a 16-byte struct global there was refused as *a vector, u128 or slice value*)
+and `G` stays untyped, as in a fn. A `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
 bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
@@ -2528,7 +2532,7 @@ untyped word: `c.v` was *no struct type in scope for 'c'*, `c + 1` added to the 
 `S_add`, or is refused if there is none), and `take(c)` passed the parenthesised 9-16 byte result's
 first word as its address. A method chain ending in an integer method stays untyped; a scalar
 annotation (`var c: i64 = (a + b);`) keeps the first word; an untyped global keeps the word (a whole free call
-excepted since 6.7.14, above).
+excepted since 6.7.14, a method, operator or known `&f` result since 6.7.15, and an if-expression since 6.7.16, above).
 
 **So does an untyped name of a struct value** (6.7.12, the user's decision of 2026-10-15): `var q = p;`
 (or `var q = (p);`) in a fn, with `p` an inline struct local, a by-value struct parameter (`self: T`

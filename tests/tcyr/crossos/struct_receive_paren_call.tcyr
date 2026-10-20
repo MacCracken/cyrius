@@ -220,6 +220,14 @@ var TM7 = GZB.zmkg<i32>(33);
 var TM8 = GZB + 30;
 var TM9 = GZB.zmk<i32>(33);
 fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
+# --- 6.7.16 (the user's decision D16 (a), 2026-10-19): an if-expression of struct branches binds the struct ---
+# `var G = if (c) { B1 } else { B1 };` at top level bound nothing: `G.a` was "no struct type in scope for 'G'", where in a fn
+# the line binds (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
+# a fn body before the replay: `ti_read`); after a statement (TJ*) below.
+var TI1 = if (1 == 1) { GP1 } else { mk1() };
+var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
+var TI3 = TI2 + TI2;
+fn ti_read(): i64 { return TI1.a + TI2.a; }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -361,6 +369,18 @@ var TN6 = GZB.zmkg(GP1);
 var TN7 = GZB.zmkg<i32>(33);
 var TN8 = GZB + 30;
 assert_eq(TN6.v.a + zt4(TN7) + TN8.v, 99, "after a statement: the same three");
+
+test_group("6.7.16 (D16): an untyped top-level if-expression of struct branches binds the struct");
+assert_eq(TI1.a, 33, "the zone: if (..) { GP1 } else { mk1() } is a P1 (refused at TI1.a before)");
+assert_eq(TI2.a, 17, "the zone: a wrapped if-expression, its taken branch a method's PM");
+assert_eq(TI3.a, 34, "the zone: TI2 + TI2 dispatches PM_add");
+assert_eq(ti_read(), 50, "a fn body reads them before the replay");
+var TJ1 = if (1 == 1) { GP1 } else { mk1() };
+var TJ2 = if (1 == 2) { GPM } elif (1 == 1) { GPM.dup() } else { GPM };
+var TJ3 = TJ2 + TJ2;
+TJ1.a = 30;
+assert_eq(TJ1.a + d1(TJ1) + GP1.a, 93, "after a statement: TJ1 is its own P1 (GP1 unchanged), d1(TJ1) by value");
+assert_eq(TJ3.a, 34, "after a statement: an elif chain, TJ2 + TJ2 dispatches PM_add");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

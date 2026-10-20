@@ -11702,7 +11702,7 @@ fn _gz_late(S, sid, start): i64 {
 # is refused by name (6.7.9). Now the same rule as the free call: after the first statement from the parse's own
 # record (`_gu_rec`: `_sc_whole`, or the span of a call over 16 B that refused itself), in the zone from the tokens
 # (`_gu_wsid`: `_gz_ty`'s call result) with the replay's refusal from the record and `_gz_agree` checking the 8 B
-# verdict as an annotated global's. An if-expression's struct is not this rule (it keeps the word). And a zone generic
+# verdict as an annotated global's. (6.7.16, D16: an if-expression's struct too — `_gu_ierec`, `_gu_ie`.) And a zone generic
 # call returning a generic struct's instance (`fn mkg1<T>(v: T): G1<T>`, `var x = mkg1(33);`, `mkg1<i32>(33)`) takes
 # that instance, as it does after the first statement (`_gu_gen`; `x.v` was "no struct type in scope for 'x'").
 # CHANGELOG [6.7.15]
@@ -11766,11 +11766,15 @@ fn _gu_late(S, pscale, start): i64 {
 # by name at the cursor, as `_sc_global_pair` refuses `var G: P2 = B2.mk();`; not after a refusal inside the
 # initialiser, `_scv_err`), or the span of a call over 16 B that refused itself (`_sc_rbeg`); inside any wrap. A line
 # refused inside its initialiser (a chain's receiver) is typed from its tokens (`_gu_wsid`), so its uses add nothing.
-# 0 = none — an if-expression's record (no fn), a `Str`, a dyn, a tuple.
+# 0 = none — a `Str`, a dyn, a tuple.
+# ⛔ 6.7.16 — AND A WHOLE IF-EXPRESSION'S STRUCT OF 8 B OR LESS (the user's decision D16 (a), 2026-10-19: 6.7.15's D34 /
+# 6.7.14's D29 reach it; in a fn `var g = if (c) { b } else { b };` binds): its record (`_ie_struct_result`: -3, no fn,
+# spanning the `if`) binds as a method's does — `G.a` was "no struct type in scope for 'G'". Over 8 B the branches
+# refuse themselves (`_ie_big_err`, naming the struct) and leave no record: G stays untyped. CHANGELOG [6.7.16]
 fn _gu_rec(S, start): i64 {
     var t = _sc_whole(S, start);
     if (t == 0 - 3 || t == 0 - 1) {
-        if (_sc_fi < 0) { return 0; }
+        if (_sc_fi < 0) { return _gu_ierec(S, t); }
         var sid = _gu_ok(S, _sc_sid);
         if (sid <= 0) { return 0; }
         if (t == 0 - 1) { if (_scv_err == 0) { _refuse_toplevel_struct_call(S, _sc_fn); } }
@@ -11782,6 +11786,12 @@ fn _gu_rec(S, start): i64 {
     var r = _gu_wsid(S, start);
     STI(S, sv);
     return r;
+}
+# The record `_gu_rec` read with no fn (`t`): an if-expression's (-3, `_sc_beg` its `if`) gives its struct; else 0.
+fn _gu_ierec(S, t): i64 {
+    if (t != 0 - 3) { return 0; }
+    if (TOKTYP(S, _sc_beg) != 15) { return 0; }
+    return _gu_ok(S, _sc_sid);
 }
 # 1 = the tokens [b, e) are the initialiser [start, cursor), inside `b - start` parentheses that wrap it whole.
 fn _gu_span(S, start, b, e): i64 {
@@ -11812,12 +11822,12 @@ fn _gu_zref(S, st): i64 {
     return 0;
 }
 # PARSE_GVAR_REG: an untyped (`typed` 0), non-literal declaration whose initialiser at `ti` may be a call (6.7.15: or a
-# `callptr(..)`) is noted.
+# `callptr(..)`; 6.7.16: or an if-expression, D16) is noted.
 fn _gu_reg(S, gvi, typed, ti): i64 {
     if (typed != 0) { return 0; }
     if (ti <= 0) { return 0; }
     var t = TOKTYP(S, ti);
-    if (t != 2) { if (t != 10) { if (t != 137) { return 0; } } }
+    if (t != 2) { if (t != 10) { if (t != 137) { if (t != 15) { return 0; } } } }
     if (_gu_v == 0) { _gu_v = vec_new(); }
     if (ti <= _gu_lt) { _gu_uo = 1; }
     _gu_lt = ti;
@@ -11886,16 +11896,15 @@ fn _gu_zsid(S, ti): i64 {
     return _gu_wsid(S, ti);
 }
 # 6.7.15 (D34) — the struct a whole method, operator or known `&f` result at token `b` (up to its `;`, inside any wrap)
-# has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not an if-expression's, not
-# a free call's (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches
-# (`_gu_minst`; the base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a generic operator fn's its base.
+# has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not a free call's
+# (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches (`_gu_minst`; the
+# base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a generic operator fn's its base; and a whole
+# if-expression's struct (`_gu_ie`, D16).
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
     var t = _gu_ok(S, _gz_ty(S, b, e));
     if (_gz_k != 1) { return 0; }
-    if (t <= 0) { return 0; }
-    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
     if (t <= 0) { return 0; }
     var a = b;
     while (TOKTYP(S, a) == 10) {
@@ -11903,7 +11912,23 @@ fn _gu_wsid(S, b): i64 {
         a = a + 1;
         e = e - 1;
     }
+    if (TOKTYP(S, a) == 15) { return _gu_ie(S, t); }
+    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
+    if (t <= 0) { return 0; }
     if (_gu_wfree(S, a, e) == 1) { return 0; }
+    return t;
+}
+# ⛔ 6.7.16 — A ZONE IF-EXPRESSION OF STRUCT BRANCHES BINDS ITS STRUCT (the user's decision D16 (a), 2026-10-19), as the
+# line after the first statement does (`_gu_ierec`) and a fn's `var g = if (c) { b } else { b };`: `t`, the struct its
+# first branch reads as (`_gz_ie`), when 8 B or less — `var G = if (1 == 1) { B1 } else { B1 };` was untyped, so `G.a`
+# was "no struct type in scope for 'G'". The first branch's, as the parse's merge keeps it (`_ie_merge`): a later
+# branch of another type is refused there, once, and G is still the first's (no `G.a` cascade, as in a fn). Over 8 B
+# the branches refuse themselves at the replay, naming the struct (`_ie_big_err`), and G stays untyped, as in a fn. A
+# generic struct's base is not bound (a generic call's branch reads as its base, not the instance its call makes). 0 =
+# not bound. CHANGELOG [6.7.16]
+fn _gu_ie(S, t): i64 {
+    if (STRUCTSZ(S, t - 1) > 8) { return 0; }
+    if (GSTP(S, t - 1) != 0) { return 0; }
     return t;
 }
 # ⛔ 6.7.16 — A ZONE GENERIC METHOD'S GENERIC STRUCT RESULT IS ITS INSTANCE. The struct the last method step `_gz_ty`
@@ -11981,9 +12006,8 @@ fn _gu_mbind(S, mf, c0, c1): i64 {
     if (c0 > 0 || c1 > 0) { return 1; }
     return _gen_sc_inst(S, mf);
 }
-# 1 = [a, e) is an if-expression or one whole free call (a known `&f` callee is not one).
+# 1 = [a, e) is one whole free call (a known `&f` callee is not one). An if-expression is `_gu_ie`'s (6.7.16).
 fn _gu_wfree(S, a, e): i64 {
-    if (TOKTYP(S, a) == 15) { return 1; }
     if (_icall_open_at(S, a) >= 0) { return 0; }
     var o = _gcall_open(S, a);
     if (o < 0) { return 0; }

@@ -1543,7 +1543,97 @@ for zw in zone after; do
     refused "GZM8$zw" "a type argument is a type name, got '*'" "the $zw: \`b.mkg<*u8>(33)\` is the type argument's one refusal (\`y.v\` adds none)"
 done
 
-[ "$rows" -ge 362 ] || bad "only $rows rows ran (floor 362)"
+# ---- 6.7.16 (the user's decision D16 (a), 2026-10-19): an untyped top-level if-expression of struct branches binds the
+# struct (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md) -------------------------------
+# `var G = if (c) { B1 } else { B1 };` (B1 a struct of 8 B or less) bound nothing at top level — `G.a` was "no struct type
+# in scope for 'G'" in the declaration zone and after the first statement, where in a fn the line binds — and a 16 B
+# struct branch was refused "cannot be a vector, u128 or slice value", naming no struct (`_ie_wide_name` took any 16 B
+# global for a u128). Now G is the struct of 8 B or less — in the zone from the tokens (`_gu_ie`: the first branch's
+# struct, as the parse's merge keeps it), after the first statement from the parse's record (`_gu_ierec`) — so `G.a`
+# reads it and `G + G` dispatches its operator; a 16 B struct branch is refused naming the struct, as in a fn, and G
+# stays untyped (its `G.a` the cascade line a fn's `g.a` gives too). TI1 the filed repro verbatim (the zone), TI2 its
+# after-a-statement form verbatim, TI3 the 16 B form verbatim (zone and after: the two struct-named branch refusals +
+# the cascade); TI4 `G + G` (P1_add), TI5 an elif chain, TI6 the branch spellings (a name, a call, `*GP`, a field), TI7
+# wrapped, TI9 a write to G (its own copy: B1 unchanged), TI10 by value (a control), TI11 two struct types (one refusal, no
+# cascade, as in a fn), each zone and after; TI8 a fn body reads `G.a` before the replay.
+#   N78 the tree before it (5d2c35caf's src)               -> RED 17: TI1zone TI2after TI3zone TI3after TI4-TI7 TI9 TI11
+#                                                           x {zone, after} TI8, x4 legs (refused: "no struct type in
+#                                                           scope for 'G'"; TI3 the vector wording; TI11 a cascade); TI10
+#                                                           green (a control: an 8 B word by value reads alike)
+#   N79 `_gu_reg` not noting an `if` initialiser           -> RED 7: TI1zone TI4zone TI5zone TI6zone TI8 TI9zone TI11zone
+#                                                           x4 (TI7zone, noted by its `(`, green)
+#   N80 `_gu_ierec` answering 0                            -> RED 7: TI2after TI4after-TI7after TI9after TI11after x4
+#   N81 `_ie_wide_name` without its struct test            -> RED 2: TI3zone TI3after x4 (+ their wording check)
+TIH='include "lib/syscalls.cyr"
+struct P1 { a; }
+struct Q1 { a; }
+struct W { p: P1; }
+fn P1_add(x: P1, y: P1): P1 { var r: P1; r.a = x.a + y.a; return r; }
+fn mk1(): P1 { var p: P1; p.a = 33; return p; }
+fn mkw(): W { var w: W; w.p.a = 33; return w; }
+fn tk(p: P1): i64 { return p.a; }
+var B1 = P1 { 33 };
+var C1 = P1 { 30 };
+var Q = Q1 { 7 };
+var GP: *P1 = &B1;
+var WW = mkw();'
+# zafg <name>: $T/<name>after.cyr is $T/<name>zone.cyr with a first statement before its first `var G = `
+zafg() { awk '!d && /^var G = /{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"; }
+# rowi <name> <declaration of G> <exit expression>: the zone file over $TIH (`zafg` makes the after one)
+rowi() { printf '%s\n%s\nsyscall(60, %s);\n' "$TIH" "$2" "$3" > "$T/$1zone.cyr"; zafg "$1"; }
+cat > "$T/TI1zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P1 { a; }
+var B1 = P1 { 33 };
+var G = if (1 == 1) { B1 } else { B1 };
+syscall(60, G.a);
+EOF
+runs TI1zone 33 "the filed repro verbatim (the zone): \`var G = if (1 == 1) { B1 } else { B1 };\` binds P1, \`G.a\`"
+cat > "$T/TI2after.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P1 { a; }
+var Z = 0;
+Z = 1;
+var B1 = P1 { 33 };
+var G = if (Z == 1) { B1 } else { B1 };
+syscall(60, G.a);
+EOF
+runs TI2after 33 "the filed repro after a first statement (\`Z == 1\`): G binds P1"
+cat > "$T/TI3zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+var B2 = P2 { 33, 4 };
+var G = if (1 == 1) { B2 } else { B2 };
+syscall(60, G.a);
+EOF
+zafg TI3
+TIB="an if expression branch cannot be a struct value over 8 bytes: struct 'P2'"
+for zw in zone after; do
+    refused "TI3$zw" "$TIB" "the $zw: a 16 B struct branch is refused naming the struct, at each branch, + the \`G.a\` cascade (as in a fn)" 3
+    if [ "$(grep -c "$TIB" "$T/TI3$zw.x86_64.err" || true)" = 2 ] && grep -q "no struct type in scope for 'G'" "$T/TI3$zw.x86_64.err"; then
+        ok "TI3$zw both branch refusals name 'P2'; the third line is the \`G.a\` cascade"
+    else bad "TI3$zw want two struct-named branch refusals and the cascade: $(grep '^error' "$T/TI3$zw.x86_64.err" | tr '\n' '|')"; fi
+done
+rowi TI4 'var G = if (1 == 1) { B1 } else { C1 };
+var H = G + G;' 'H.a'
+rowi TI5 'var G = if (1 == 2) { C1 } elif (1 == 1) { B1 } else { C1 };' 'G.a'
+rowi TI6 'var G = if (1 == 1) { B1 } elif (1 == 2) { mk1() } elif (1 == 3) { *GP } else { WW.p };' 'G.a'
+rowi TI7 'var G = (if (1 == 1) { B1 } else { C1 });' 'G.a'
+rowi TI9 'var G = if (1 == 1) { B1 } else { C1 };
+G.a = 40;' 'G.a + B1.a'
+rowi TI10 'var G = if (1 == 2) { B1 } else { C1 };' 'tk(G)'
+for n in 4 5 6 7 9 10; do
+    w=33; [ "$n" = 4 ] && w=66; [ "$n" = 9 ] && w=73; [ "$n" = 10 ] && w=30
+    for zw in zone after; do runs "TI$n$zw" "$w" "the $zw: TI$n's if-expression global is P1"; done
+done
+printf '%s\nvar G = if (1 == 1) { B1 } else { C1 };\nfn f(): i64 { return G.a; }\nsyscall(60, f());\n' "$TIH" > "$T/TI8.cyr"
+runs TI8 33 "the zone: a fn body reads \`G.a\` before the replay"
+rowi TI11 'var G = if (1 == 1) { B1 } else { Q };' 'G.a'
+for zw in zone after; do
+    refused "TI11$zw" "if expression branches differ in type: struct 'Q1' here, struct 'P1' before it" "the $zw: two struct types are refused once; G is the first branch's (no \`G.a\` cascade, as in a fn)"
+done
+
+[ "$rows" -ge 381 ] || bad "only $rows rows ran (floor 381)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16)"
