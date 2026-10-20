@@ -1,0 +1,164 @@
+# xgetdents_small_buffer.tcyr — 6.7.16 (D77): xgetdents(fd, buf, n) answers the whole records that
+# fit in n, then -EINVAL (-22) when the next record does not — Linux's getdents64 answer — on every
+# target that has it, macOS included.
+#
+# ⛔ THE DEFECT (issues/2026-10-19-macos-xgetdents-small-buffer-hangs-or-ends-listing-early.md). On
+# macOS xgetdents handed Darwin's getdirentries64 the caller's n as it was. macOS 27 answers 0 — the
+# end of the directory — when the next record does not fit, so a 64-byte loop over a directory
+# holding a 100-byte name stopped there with a success-shaped answer and lost that entry and every
+# one after it (ecb: `3 records …, last answer 0`); a 24-byte call on macOS 13 never returned (ach:
+# the process spun in the kernel, unkillable, its directory locked). lib/io.cyr now never gives the
+# kernel a buffer under 1048 bytes (Darwin's largest record) and puts the directory back for what
+# does not fit.
+#
+# The fixture: a directory holding `a` and a 100-byte name, so ".", "..", "a" fit 64 bytes on both
+# layouts (Linux records align8(20 + namlen) — 24 each; Darwin's align8(25 + namlen) — 32 each) and
+# the long name fits neither (120 / 128 bytes). Directory order differs per filesystem, so the
+# 64-byte listing is checked against the 200-byte one's order: it must hand back exactly the entries
+# before the long name, each once, then -22. Windows has no getdents (xgetdents answers -1) and
+# agnos's records are its own layout: both SKIP by name.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# The record's name: Darwin's direntry carries it at +21, linux_dirent64 (Linux, and a cx guest on
+# any host — cxvm converts) at +19.
+var XG_NAME = 19;
+#ifdef CYRIUS_TARGET_MACOS
+XG_NAME = 21;
+#endif
+
+# The NUL-terminated `a` followed by `b`, in a fresh allocation.
+fn _xg_join(a, b): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var p = alloc(na + nb + 1);
+    memcpy(p, a, na);
+    memcpy(p + na, b, nb + 1);
+    return p;
+}
+
+# Which fixture entry a record names: 1 ".", 2 "..", 3 "a", 4 the long name, 0 anything else.
+fn _xg_which(rec, longname): i64 {
+    var nm = rec + XG_NAME;
+    if (streq(nm, ".") == 1) { return 1; }
+    if (streq(nm, "..") == 1) { return 2; }
+    if (streq(nm, "a") == 1) { return 3; }
+    if (streq(nm, longname) == 1) { return 4; }
+    return 0;
+}
+
+# List fd from the start with an n-byte buffer: each entry's id appended to `ids` (a vec), and the
+# last answer (0 at the true end, or the refusal) returned. A record of length 0 or past the answer
+# stops the walk (an id 9 marks it).
+fn _xg_list(fd, n, ids, longname): i64 {
+    var b[4096];
+    xlseek(fd, 0, 0);
+    var r = xgetdents(fd, &b, n);
+    var guard = 0;
+    while (r > 0 && guard < 64) {
+        var pos = 0;
+        while (pos < r) {
+            var rl = load16(&b + pos + 16);
+            if (rl <= 0 || pos + rl > r) { vec_push(ids, 9); pos = r; }
+            else { vec_push(ids, _xg_which(&b + pos, longname)); pos = pos + rl; }
+        }
+        r = xgetdents(fd, &b, n);
+        guard = guard + 1;
+    }
+    return r;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+var skw = "  SKIP: Windows has no getdents (xgetdents answers -1; dir_list is the lister)\n";
+syscall(1, 1, skw, strlen(skw));
+assert_eq(1, 1, "skipped");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var ska = "  SKIP: agnos's directory records are its own layout (agnos-userland-abi.md 4.2)\n";
+syscall(1, 1, ska, strlen(ska));
+assert_eq(1, 1, "skipped");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+var longname = "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL";
+assert_eq(strlen(longname), 100, "the long name is 100 bytes");
+var d = test_scratch("xgd");
+var fa = _xg_join(d, "/a");
+var fl = _xg_join(_xg_join(d, "/"), longname);
+xunlink(fa);
+xunlink(fl);
+xrmdir(d);
+assert_eq(xmkdir(d, 493), 0, "made the fixture directory");
+assert_eq(file_write_all(fa, "x", 1), 1, "wrote a");
+assert_eq(file_write_all(fl, "x", 1), 1, "wrote the 100-byte name");
+var fd = sys_open(d, O_RDONLY | O_DIRECTORY, 0);
+assert(fd >= 0, "opened the fixture directory");
+
+test_group("a 200-byte buffer lists every entry exactly once");
+var all = vec_new();
+var r200 = _xg_list(fd, 200, all, longname);
+assert_eq(r200, 0, "the listing ends with 0, the true end");
+assert_eq(vec_len(all), 4, "four entries: ., .., a and the long name");
+var seen = 0;
+var bad = 0;
+var i = 0;
+while (i < vec_len(all)) {
+    var w = vec_get(all, i);
+    if (w < 1 || w > 4) { bad = bad + 1; }
+    else { seen = seen | (1 << w); }
+    i = i + 1;
+}
+assert_eq(bad, 0, "every record is a fixture entry");
+assert_eq(seen, 30, "., .., a and the long name each appear");
+
+test_group("a 64-byte buffer: the entries before the long name, each once, then -22");
+var small = vec_new();
+var r64 = _xg_list(fd, 64, small, longname);
+assert_eq(r64, 0 - 22, "the listing ends -22 when the long name does not fit (macOS 27 answered 0)");
+# The 200-byte listing's order up to the long name is exactly what a 64-byte buffer can hand back.
+var before = 0;
+while (before < vec_len(all) && vec_get(all, before) != 4) { before = before + 1; }
+assert_eq(vec_len(small), before, "as many entries as precede the long name in the full listing");
+var same = 1;
+i = 0;
+while (i < vec_len(small) && i < before) {
+    if (vec_get(small, i) != vec_get(all, i)) { same = 0; }
+    i = i + 1;
+}
+assert_eq(same, 1, "the same entries in the same order: none lost, none repeated");
+
+test_group("a 64-byte buffer at the long name keeps answering -22, and the directory stays put");
+var b2[4096];
+var again = xgetdents(fd, &b2, 64);
+assert_eq(again, 0 - 22, "a second 64-byte call at the long name is -22 again (not 0, not a skip)");
+var big = xgetdents(fd, &b2, 200);
+assert(big > 0, "a 200-byte call from there hands back the long name");
+if (big > 0) { assert_eq(_xg_which(&b2, longname), 4, "the first record from there is the long name"); }
+
+test_group("a 24-byte buffer");
+var b3[4096];
+xlseek(fd, 0, 0);
+var r24 = xgetdents(fd, &b3, 24);
+#ifdef CYRIUS_TARGET_MACOS
+assert_eq(r24, 0 - 22, "macOS: -22 (no Darwin record fits; macOS 13 never returned)");
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+assert_eq(r24, 24, "Linux: the one 24-byte record that fits");
+#endif
+
+sys_close(fd);
+xunlink(fa);
+xunlink(fl);
+assert_eq(xrmdir(d), 0, "removed the fixture directory");
+#endif
+#endif
+
+var r = assert_summary();

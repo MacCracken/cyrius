@@ -8027,6 +8027,12 @@ the lock got in between); the held mode is recorded as a lock on one more byte b
 (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies with the handle. Changing the mode
 (SH ↔ EX) drops the old lock first, as flock's conversion does. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
+`xgetdents(fd, buf, n)` answers as Linux's getdents64 does on every target that has one: the whole
+records that fit in `n`, then -22 (-EINVAL) when the next does not — on macOS too since 6.7.16
+(6.7.16's D77), where `n` under 64 is -22 and Darwin's `getdirentries64` is never handed a buffer
+under 1048 bytes (macOS 13 spun forever in the kernel on one no record fits; macOS 27 answered 0, a
+false end). A `/dev` (devfs) listing under 1048 bytes may end early with -22 there, never with an
+entry repeated; list with 1048 bytes or more to be sure of every entry.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
 plus `sys_chdir` and `signal_default`, which had no counterpart to `signal_ignore` even
