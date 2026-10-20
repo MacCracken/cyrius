@@ -2680,6 +2680,7 @@ _chk_gate "$ROOT/tests/gates/frontend/bound_forward_chain_scale.sh"   # 6.7.15 (
 _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
+_chk_gate "$ROOT/tests/gates/frontend/enum_member_separator.sh"   # 6.7.16 (D12): `enum E { A B }` is one error at B
 _chk_gate "$ROOT/tests/gates/frontend/if_expr_checked.sh"   # 6.7.4 (B3)
 _chk_gate "$ROOT/tests/gates/frontend/loop_do_checked.sh"   # 6.7.5 (B5)
 _chk_gate "$ROOT/tests/gates/frontend/default_named_args_checked.sh"   # 6.7.7 (B6); 6.7.11 SC rows (the source scanners)

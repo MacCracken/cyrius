@@ -1847,7 +1847,8 @@ fn PP_DVIF(base, p, end): i64 {
 
 # Everything after a field's (or member's) name: `: Type`, and for an enum member `= value`,
 # each optional, then at most one `;` or `,`. The next field may follow with no separator, which
-# the parser also allows. `end` (stop) on any other byte.
+# the parser allows for a struct field (an enum member's is refused, 6.7.16's D12). `end` (stop) on
+# any other byte.
 fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     p = PP_DTRIV(base, p, end);
     if (p < end) {

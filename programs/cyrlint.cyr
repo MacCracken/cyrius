@@ -1527,7 +1527,8 @@ fn _ovc_skip_parens(buf, p, lim): i64 {
 
 # p is just past an `enum`: record each member, bare and qualified by the enum's name, by its
 # literal value (`NAME = <integer literal>`) or as unknown (implicit, a payload, an expression).
-# The separator is optional, as in the parser. Returns where the body ends (or the search gave
+# The separator is not required here (the parser requires it since 6.7.16, D12: a refused file still
+# gets its notes). Returns where the body ends (or the search gave
 # up: `;`, `(`, `=` or `}` before the `{`).
 fn _ovc_enum(buf, p, total): i64 {
     var q = _ov_ws(buf, p, total);

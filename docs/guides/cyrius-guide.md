@@ -6059,6 +6059,12 @@ var c2 = Color.BLUE;                 # Namespaced access (v1.11.0+)
 
 ```
 
+Members are separated by `;` or `,` (mixed in one declaration too), and a trailing one is allowed
+(`enum E { A, B, }`). A missing separator is one error at the next member, a line break being no
+separator (6.7.16, the user's decision D12, 2026-10-19): `enum E { A B }` and `enum E { A = 1 B = 5 }`
+are `expected ';' or ',' between enum members`. ⚠ Through 6.7.15 both compiled, with the values the
+separated form gives.
+
 **An enum constant is a value, not a variable** (6.7.3). `RED = 4;`, `RED += 1;`, `&RED`,
 `Color.RED = 4;` and `&Color.RED` are refused by name, as on a `const` — and so is a `for` step
 that writes one. Every read of `RED` is its declared value, so before 6.7.3 such a write changed
@@ -6219,7 +6225,7 @@ tag and the payload separately (or use a struct).
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
-Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators may be `;` or `,` — mixed in same decl works. In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
+Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 
 Helper API:
 

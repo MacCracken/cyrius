@@ -107,14 +107,15 @@ struct AccCmt {
     y: i64;
 }
 
-# --- enums: `,` separators, newline separators, comments, char literal, `: stack` ---
+# --- enums: `,` separators, one member per line, comments, char literal, `: stack` ---
+# (a line break is no separator: ENl's `,`s are required since 6.7.16, the user's decision D12)
 #derive(Serialize)
 enum EComma { RED = 0, GREEN = 1, BLUE = 2 }
 
 #derive(Serialize)
 enum ENl {
-    N_A = 10
-    N_B = 11
+    N_A = 10,
+    N_B = 11,
     N_C = 12
 }
 
