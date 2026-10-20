@@ -331,6 +331,9 @@ var _ta_chk = 0;
 # 6.7.15 (D8): 1 while `_targ_chk` reads a `*G<..>` pointer field's list at its declaration (`_fld_targ_chk`): a struct
 # declared further down is a name there, as the field's own T is (6.6.17).
 var _ta_late = 0;
+# 6.7.16 (D5): 1 while a lookahead or typer reads a type-argument list (cursor put back): an argument past what its
+# generic declares is stepped there without a word; the reader that parses the list reports it (`_ta_extra`).
+var _ta_xq = 0;
 # v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
 # cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
 # has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds

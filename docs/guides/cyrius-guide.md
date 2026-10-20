@@ -7231,7 +7231,10 @@ a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0
 `Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
 once, at the name: *'Pt' is not a generic struct: it takes no type arguments* (*'i64' takes
 no type arguments*) (6.7.15, the user's D6; through 6.7.14 the list was skipped unread, so a
-name inside it was never checked). A token that is no name at all
+name inside it was never checked). A list longer than its generic declares — `var b: Box<i64,
+i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
+the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
+6.7.15 the extra argument was read and dropped). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses

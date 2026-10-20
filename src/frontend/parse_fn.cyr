@@ -15393,7 +15393,7 @@ fn _gen_resolve_call(S, ti): i64 {
         _ta_pending_gt = 0;
         STI(S, ti + 2);
         c0 = _parse_one_type_arg(S);
-        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+        c1 = _ta_rest_f(S, fi);   # 6.7.16 (D5): the one read of the list on a path that emits its own call
         _ta_pending_gt = sv_gt;
         STI(S, sv);
         if (c0 <= 0 && c1 <= 0) {
@@ -15849,6 +15849,125 @@ fn _ta_comma(S): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
+# ⛔ 6.7.16 (D5) — A TYPE-ARGUMENT LIST LONGER THAN ITS GENERIC DECLARES: `var b: Box<i64, i64>;` with `struct Box<T>`,
+# and `g<i32, Pt>(5)` on `fn g<T>`, compiled — every reader took two arguments whatever the generic declared (a
+# one-parameter generic's second into c1), and dropped the rest. Each list reader now reads the arguments its generic
+# declares (`np`) through these: an argument past them — a `,` that starts another argument of THIS list, no close
+# owed — is refused once, at that argument, "'Box' takes 1 type argument, 2 given" (the user's D5, 2026-10-19), and
+# the rest of the list is stepped unread (`_targ_skip_arg`, the close it owes kept), so the list reads as if the
+# extra arguments were deleted and nothing cascades. Quiet in a lookahead or typer (`_ta_xq`): the reader that parses
+# the list reports it. CHANGELOG [6.7.16]
+# After the first argument: the second when the generic declares one (else 0), then the extra check. `gk` / `gi`
+# name the generic for the refusal: 1 a struct (gi its name), 2 a fn (gi its index), 0 quiet.
+fn _ta_rest(S, np, gk, gi): i64 {
+    var c1 = 0;
+    if (np > 1) { if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); } }
+    if (_ta_xq == 1) { gk = 0; }
+    _ta_extra(S, np, gk, gi);
+    return c1;
+}
+fn _ta_extra(S, np, gk, gi): i64 {
+    if (_ta_comma(S) == 0) { return 0; }
+    if (_targ_gt_n(PEEKT(S)) > 0) { _parse_one_type_arg(S); return 0; }   # `Box<i64,>`: an empty argument, as before
+    var at = GTI(S);
+    var n = np + 1;
+    _targ_skip_arg(S);
+    while (_ta_comma(S) == 1) {
+        n = n + 1;
+        _targ_skip_arg(S);
+    }
+    if (gk != 0) { _ta_xrefuse(S, at, np, n, gk, gi); }
+    return 0;
+}
+fn _ta_xrefuse(S, at, np, n, gk, gi): i64 {
+    if (_syntax_only == 1) { return 0; }   # as D6's `_ngt_refuse`
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, at) == 0) { return 0; }
+    var nm = gi;
+    if (gk == 2) { nm = _fn_src_name(S, gi, L64(_fnt_names + gi * 8)); }   # `g`, a method's `P.m`
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + nm);
+    PRSTR("' takes ");
+    PRNUM(np);
+    PRSTR(" type argument");
+    if (np != 1) { PRSTR("s"); }
+    PRSTR(", ");
+    PRNUM(n);
+    PRSTR(" given\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# The type parameters generic packed names `tp` records (`GSTP` / `GFTP`): 1, or 2 when its second slot is set.
+fn _tp_np(tp): i64 {
+    if (((tp >> 32) & 0xFFFFFFFF) != 0) { return 2; }
+    return 1;
+}
+# `_ta_rest` for generic struct `sid` (1-based) / generic fn `fi` (a fn that is no generic, or none: two, as before).
+fn _ta_rest_s(S, sid): i64 {
+    return _ta_rest(S, _tp_np(GSTP(S, sid - 1)), 1, L64(S + 0x1A6018 + (sid - 1) * 8));
+}
+fn _ta_rest_f(S, fi): i64 {
+    var tp = 0;
+    if (fi >= 0) { tp = GFTP(S, fi); }
+    if (tp == 0) { return _ta_rest(S, 2, 0, 0); }
+    return _ta_rest(S, _tp_np(tp), 2, fi);
+}
+# ... for the fn named `noff` as the call spells it.
+fn _ta_rest_n(S, noff): i64 { return _ta_rest_f(S, FINDFN(S, noff)); }
+# ... for the generic struct named `noff`, declared further down (`_ta_late`): what its declaration lists.
+fn _ta_rest_l(S, noff): i64 {
+    var lt = _tp_later_lt(S, noff);
+    if (lt < 0) { return _ta_rest(S, 2, 0, 0); }
+    var np = _tp_count_at(S, lt);
+    if (np > 2) { np = 2; }
+    if (np < 1) { np = 1; }
+    return _ta_rest(S, np, 1, noff);
+}
+# The `<` of the generic struct or union `noff` declared further down (`_declared_later_gen`'s), or -1.
+fn _tp_later_lt(S, noff): i64 {
+    var k = GTI(S);
+    var n = GTCNT(S);
+    while (k + 2 < n) {
+        var t = TOKTYP(S, k);
+        if (t == 40 || t == 101) {
+            if (TOKTYP(S, k + 1) == 2) { if (TOKTYP(S, k + 2) == 19) {
+                    if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return k + 2; }
+                } }
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# The type parameters a declaration's `<..>` (its `<` at token `lt`) lists, counted as `_capture_tparams` counts
+# them: each name at the list's own depth that does not follow a bound's `:` or `+`.
+fn _tp_count_at(S, lt): i64 {
+    var i = lt + 1;
+    var n = 0;
+    var d = 1;
+    var e = GTCNT(S);
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return n; }
+        if (t == 2) { if (d == 1) { if (_tp_after_bound(S, i) == 0) { n = n + 1; } } }
+        if (t == 19) { d = d + 1; }
+        d = d - _targ_gt_n(t);
+        if (d <= 0) { return n; }
+        i = i + 1;
+    }
+    return n;
+}
+# 1 when the name at token `i` is a bound's trait (it follows `:` or `+`).
+fn _tp_after_bound(S, i): i64 {
+    var p = TOKTYP(S, i - 1);
+    if (p == 49 || p == 6) { return 1; }
+    return 0;
+}
 
 # v6.3.33 (generics tail — NESTED + multi-arg): consume ONE type argument at the
 # cursor and return its concrete encoding (per _classify_return_type: >0 struct sid,
@@ -15969,8 +16088,7 @@ fn _parse_one_type_arg(S): i64 {
     var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
     var lv = _tck_open(S);                           # 6.7.15 (D10): under `_ta_chk`, this list's own judgement
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
-    var in1 = 0;
-    if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
+    var in1 = _ta_rest_s(S, base_sid);               # `,` — 6.7.16 (D5): as many as it declares
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
     if (_ta_chk == 1) { return _tck_nest(S, base_sid, in0, in1, lit, lv); }   # 6.7.14 (D5): read, not minted
     return _targ_inst(S, base_sid, in0, in1, lit);
@@ -15986,7 +16104,7 @@ fn _targ_later(S, noff): i64 {
     }
     STI(S, GTI(S) + 1);
     _parse_one_type_arg(S);
-    if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+    _ta_rest_l(S, noff);   # 6.7.16 (D5)
     _consume_gt(S);
     return 0 - 8;
 }
@@ -16052,8 +16170,7 @@ fn _targ_chk(S, lt): i64 {
     _ta_pending_gt = 0;
     STI(S, lt + 1);
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var c1 = _tck_rest(S, lt - 1);   # 6.7.16 (D5)
     _tck_c0 = c0;   # 6.7.15 (D10): what was read, for a Vec element's bound (`_vec_el_targs`)
     _tck_c1 = c1;
     _ta_chk = sv_ck;
@@ -16061,6 +16178,12 @@ fn _targ_chk(S, lt): i64 {
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
     return 0;
+}
+# `_ta_rest` for the generic struct named at token `nti` — declared above, or further down (a late `*G<..>` field).
+fn _tck_rest(S, nti): i64 {
+    var sid = FINDSTRUCT(S, TOKVAL(S, nti));
+    if (sid > 0) { return _ta_rest_s(S, sid); }
+    return _ta_rest_l(S, TOKVAL(S, nti));
 }
 # ⛔ 6.7.15 (D10) — A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>> = 0;` with
 # `struct Box<T: Show>` and no `impl Show for Pt` compiled, where `var b: Box<Pt>;` is refused — the element's list is
@@ -17985,9 +18108,11 @@ fn _ret_targ_parse(S, base): i64 {
     _ta_pending_gt = 0;
     var lit = _targs_literal(S, GTI(S) + 2);   # 6.7.1 (C3): `Box<i64>` written out
     STI(S, GTI(S) + 2);                  # the name, `<`
+    var sv_xq = _ta_xq;
+    _ta_xq = 1;                          # 6.7.16 (D5): pass 2's `_gtype_sid_def` reports the list
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var c1 = _ta_rest_s(S, base);
+    _ta_xq = sv_xq;
     _consume_gt(S);
     _ta_pending_gt = sv_gt;
     var inst = 0;
