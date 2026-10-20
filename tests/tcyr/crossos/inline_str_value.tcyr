@@ -22,6 +22,21 @@
 # into an inline `Str` (D14, the ps_* rows; an if-expression of handles keeps the word, D15); `p = t` / `GP = gt` into a
 # `*Str` take the header's address as the declaration does (D16, the pa_* rows); a `*Str` dereference into a `Str`
 # parameter passes p (`str_len(*p)`, the sd_* rows); a zone `var HB: Str = gb;` with gb declared below binds (D17).
+# Since 6.7.16 `t = *pp` with pp a `**Str` (so `*pp` is a `*Str`) copies the header too, as `t = p` does (the pps_*
+# rows, R_TOP11: a local, a bare `var t: Str;`, an inline global, a for step, wrapped, a parameter, a `**Str` global,
+# a `: **Str` call, a `**Str` field, `**ppp`, a capture, top level); it stored the header's address into t.data and
+# left t.len stale (the filed repro 22, want 55; issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-
+# stores-one-word.md, its repro verbatim is inline_str_value.sh PP1). Into a `*Str` or a handle `q = *pp` stays the
+# rebind `q = p` is. And `h = *p` into a `Str` HANDLE (p a `*Str`) rebinds h to the header p points at, as `h = p`
+# does (the user's D20, 2026-10-19; the hd_* rows, R_TOP12: a local, a parameter, a global, wrapped, a for step, `*GP`,
+# `*gp()`, `*w.p`, `*w.sp()`, a capture, top level): it stored the header's data word as the handle (the filed repro 0,
+# want 5; issues/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md, inline_str_value.sh HD1).
+# And an inline `Str` stored into a `*Str` FIELD or through a `**Str` takes its header's address, as `p = gt` into a
+# `*Str` name does (the user's D19, 2026-10-19; the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14: a local's field, a
+# global's, through a `*W`, nested, a `: *W` call's, a for step, a capture, `*pp`, `*(pp)`, `*GPP`, `*gpp()`, a `pp:
+# **Str` parameter, top level); it stored the data word (the filed repros 0, want 9 and 7; issues/2026-10-18-inline-
+# str-into-str-pointer-field-or-double-pointer-keeps-data-word.md, inline_str_value.sh FD1 / FD2). A frame's t is
+# refused by name into any field (a local struct's too, D19) and through `*pp` (the gate's X15-X19).
 #
 # CROSS-HOST: the address is EFLADDR / EVADDR on each backend, the tail-call rows check that a frame address
 # laundered through a handle diverts the `jmp` (`_fn_local_addr`). Run on ecb / ach (Mach-O), cass (PE) and pi
@@ -164,6 +179,23 @@ fn ps_chain(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str =
 fn ps_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var c = || { var t: Str = Str { "zz", 2 }; t = p; var u: Str; u = *p; return t.len * 10 + f(u); }; return callptr(c); }
 fn ps_inl(): i64 { var t: Str = Str { "zz", 2 }; var p: *Str = t; var u: Str; u = *p; t.len = 1; return u.len; }
 
+# ── `t = *pp` with pp a `**Str` (so `*pp` is a `*Str`) copies the header into an inline `Str` too (6.7.16) ─────────
+var GPPS: **Str = &GPS;                # a `**Str` global the pps_* rows read through
+fn gpps(): **Str { return &GPS; }
+struct WPP { pp: **Str; n; }
+fn pps_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var t: Str = Str { "zz", 2 }; t = *pp; a.len = 1; return t.len * 10 + f(t); }
+fn pps_bare(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var t: Str; t = *pp; a.len = 1; return t.len * 10 + f(t); }
+fn pps_global(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; gi4 = *pp; a.len = 1; var r = gi4.len * 10 + f(gi4); gi4.len = 2; return r; }
+fn pps_step(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var t: Str = Str { "zz", 2 }; var i = 0; for (i = 0; i < 1; t = *pp) { i = i + 1; } a.len = 1; return t.len * 10 + f(t); }
+fn pps_wrap(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var t: Str; t = (*pp); var u: Str; u = *(pp); var v: Str; v = ((*pp)); var w: Str; w = *(pp + 0); a.len = 1; return t.len * 1000 + u.len * 100 + v.len * 10 + w.len; }
+fn pps_param(pp: **Str): i64 { var t: Str = Str { "zz", 2 }; t = *pp; return t.len * 10 + f(t); }
+fn pps_param_c(): i64 { var a = str_from("abcde"); var p: *Str = a; return pps_param(&p); }
+fn pps_chain(): i64 { var a = str_from("abcde"); GPS = a; var p: *Str = a; var pp: **Str = &p; var ppp: ***Str = &pp; var w: WPP = WPP { pp, 1 }; var t: Str; t = *GPPS; var u: Str; u = *gpps(); var v: Str; v = *w.pp; var x: Str; x = **ppp; GPS = 0; a.len = 1; return t.len * 1000 + u.len * 100 + v.len * 10 + x.len; }
+fn pps_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var c = || { var t: Str = Str { "zz", 2 }; t = *pp; return t.len * 10 + f(t); }; return callptr(c); }
+fn pps_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var pp: **Str = &p; var u: Str = Str { "q", 9 }; u = *pp; t.len = 1; return u.len * 10 + f(u); }
+fn pps_rebind(): i64 { var a = str_from("abcde"); var b = str_from("xy"); var p: *Str = a; var pp: **Str = &p; var q: *Str = b; q = *pp; a.len = 3; return (q == p) * 100 + str_len(q) * 10 + str_len(b); }
+fn pps_handle(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var h = str_from("xy"); h = *pp; a.len = 3; return (h == p) * 100 + str_len(h); }
+
 # ── an inline `Str` ASSIGNED into a `*Str` takes its header's address, as the declaration does (6.7.15, D16) ──────
 fn pa_local(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = t; p.len = 3; return t.len * 10 + str_len(p); }
 fn pa_gt(): i64 { var p: *Str = 0; p = gt; return str_len(p); }
@@ -171,6 +203,26 @@ fn pa_gp(): i64 { GPS = gt; var r = str_len(GPS); GPS = 0; return r; }
 fn pa_param(p: *Str): i64 { var t: Str = Str { "abcde", 5 }; p = t; return str_len(p); }
 fn pa_wrap(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; p = (t); var q: *Str = 0; q = ((gt)); return str_len(p) * 10 + str_len(q); }
 fn pa_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; var i = 0; for (i = 0; i < 1; p = t) { i = i + 1; } return str_len(p); }
+# ── an inline `Str` into a `*Str` FIELD or through a `**Str` takes its header's address (6.7.16, D19) ─────────────
+struct WS { p: *Str; n; }
+struct OS { w: WS; pw: *WS; }
+var GWS: WS = WS { 0, 0 };
+fn mkws(): *WS { return &GWS; }
+fn pa_fld_local(): i64 { var w: WS = WS { 0, 1 }; w.p = gt; return str_len(w.p); }
+fn pa_fld_global(): i64 { GWS.p = gt; var r = str_len(GWS.p); GWS.p = 0; return r; }
+fn pa_fld_ptr(): i64 { var w: WS = WS { 0, 1 }; var pw: *WS = &w; pw.p = gt; return str_len(w.p); }
+fn pa_fld_nest(): i64 { var w0: WS = WS { 0, 1 }; var o: OS = OS { w0, &w0 }; o.w.p = gt; o.pw.p = (gt); return str_len(o.w.p) * 10 + str_len(w0.p); }
+fn pa_fld_call(): i64 { mkws().p = gt; var r = str_len(GWS.p); GWS.p = 0; return r; }
+fn pa_fld_step(): i64 { var w: WS = WS { 0, 1 }; var i = 0; for (i = 0; i < 1; w.p = gt) { i = i + 1; } return str_len(w.p); }
+fn pa_fld_bind(): i64 { var w: WS = WS { 0, 1 }; w.p = gt; w.p.len = 3; var r = gt.len; gt.len = 7; return r; }
+fn pa_fld_cap(): i64 { var t: Str = Str { "abc", 3 }; var c = || { var w: WS = WS { 0, 1 }; w.p = t; GWS.p = t; var r = str_len(w.p) * 10 + str_len(GWS.p); GWS.p = 0; return r; }; return callptr(c); }
+fn pa_pp_local(): i64 { var q: *Str = 0; var pp: **Str = &q; *pp = gt; return str_len(q); }
+fn pa_pp_wrap(): i64 { var q: *Str = 0; var pp: **Str = &q; *(pp) = (gt); return str_len(q); }
+fn pa_pp_step(): i64 { var q: *Str = 0; var pp: **Str = &q; var i = 0; for (i = 0; i < 1; *pp = gt) { i = i + 1; } return str_len(q); }
+fn pa_pp_gpp(): i64 { *GPPS = gt; var r = str_len(GPS); GPS = 0; *gpps() = gt; r = r * 10 + str_len(GPS); GPS = 0; return r; }
+fn pa_pp_param(pp: **Str): i64 { *pp = gt; return 0; }
+fn pa_pp_param_c(): i64 { var q: *Str = 0; pa_pp_param(&q); return str_len(q); }
+fn pa_pp_cap(): i64 { var t: Str = Str { "abc", 3 }; var q: *Str = 0; var pp: **Str = &q; var c = || { *pp = t; return 0; }; callptr(c); return str_len(q); }
 # ── a `*Str` dereference into a `Str` parameter passes the header p points at, not its data word (6.7.15) ──────────
 struct WP { p: *Str; n; }
 fn WP_sp(self: *WP): *Str { return self.p; }
@@ -191,6 +243,16 @@ fn sd_ptr(): i64 { var h = str_from("abcde"); var p: *Str = h; var pp: **Str = &
 fn sd_pp(): i64 { var h = str_from("abcde"); var p: *Str = h; var pp: **Str = &p; var ppp: ***Str = &pp; return str_len(*pp) * 100 + f(*pp) * 10 + f(***ppp); }
 fn sd_untyped(): i64 { var h = str_from("abcde"); var p: *Str = h; if (fu(*p) == load64(h)) { return 1; } return 0; }
 fn pa_cap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = 0; p = t; GPS = t; return str_len(p) * 10 + str_len(GPS); }; return callptr(c); }
+# ── `h = *p` into a `Str` handle rebinds h to the header p points at, as `h = p` does (6.7.16, D20) ─────────────
+fn hd_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var h = str_from("zz"); h = *p; a.len = 3; return (h == p) * 100 + str_len(h); }
+fn hd_typed(): i64 { var a = str_from("abcde"); var p: *Str = a; var h: Str = str_from("zz"); h = *p; h.len = 2; return (h == a) * 100 + str_len(p); }
+fn hd_global(): i64 { var a = str_from("abcdefg"); var p: *Str = a; GH = str_from("q"); GH = *p; var r = (GH == a) * 100 + f(GH); GH = 0; return r; }
+fn hd_param(h: Str, p: *Str): i64 { h = *p; return (h == p) * 100 + str_len(h); }
+fn hd_wrap(): i64 { var a = str_from("abcd"); var p: *Str = a; var h = str_from("z"); h = (*p); var r = (h == a); h = str_from("z"); h = *(p); r = r * 10 + (h == a); h = str_from("z"); h = ((*p)); r = r * 10 + (h == a); h = str_from("z"); h = *(p + 0); return r * 10 + (h == a); }
+fn hd_step(): i64 { var a = str_from("abc"); var p: *Str = a; var h = str_from("zz"); var i = 0; var n = 0; for (i = 0; i < 2; h = *p) { n = n * 10 + str_len(h); i = i + 1; } return n * 10 + str_len(h); }
+fn hd_chain(): i64 { var a = str_from("abcde"); GPS = a; var w: WP = WP { a, 1 }; var h = str_from("z"); h = *GPS; var r = (h == a); h = str_from("z"); h = *gsp(); r = r * 10 + (h == a); h = str_from("z"); h = *w.p; r = r * 10 + (h == a); h = str_from("z"); h = *w.sp(); GPS = 0; return r * 10 + (h == a); }
+fn hd_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var c = || { var h = str_from("z"); h = *p; return (h == p) * 100 + str_len(h); }; return callptr(c); }
+fn hd_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var h = str_from("z"); h = *p; h.len = 1; return t.len; }
 
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
@@ -278,6 +340,17 @@ gi4.len = 2;
 gi4 = *GPS;
 var R_TOP10 = f(gi4);
 gi4.len = 2;
+gi4 = *GPPS;                 # top level: an inline Str global <- `*pp` of a `**Str` global (6.7.16)
+var R_TOP11 = gi4.len * 10 + f(gi4);
+gi4.len = 2;
+GH = *GPS;                   # top level: a Str handle global <- `*p` of a `*Str` global rebinds it (6.7.16, D20)
+var R_TOP12 = (GH == GPS) * 100 + f(GH);
+GH = 0;
+GWS.p = gt;                  # top level: an inline Str global into a `*Str` field of a global (6.7.16, D19)
+var R_TOP13 = str_len(GWS.p);
+GWS.p = 0;
+*GPPS = gt;                  # top level: through a `**Str` global (6.7.16, D19)
+var R_TOP14 = str_len(GPS);
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -344,6 +417,17 @@ assert_eq(ps_wrap(), 555, "t = (p); u = (*p); v = *(p + 0)");
 assert_eq(ps_chain(), 555, "t = **pp, u = *w.p, v = *gsp()");
 assert_eq(ps_cap(), 55, "a closure's own inline Str <- a captured *Str, p and *p");
 assert_eq(ps_inl(), 2, "u = *p with p bound to an inline Str: a copy (t.len = 1 after leaves u)");
+assert_eq(pps_local(), 55, "t = *pp (pp a **Str) copies the header into an inline Str (the filed repro: 22, t.len stale)");
+assert_eq(pps_bare(), 55, "a bare var t: Str; <- *pp");
+assert_eq(pps_global(), 55, "an inline Str global <- *pp");
+assert_eq(pps_step(), 55, "a for step t = *pp");
+assert_eq(pps_wrap(), 5555, "t = (*pp); u = *(pp); v = ((*pp)); w = *(pp + 0)");
+assert_eq(pps_param_c(), 55, "<- *pp of a `pp: **Str` parameter");
+assert_eq(pps_chain(), 5555, "t = *GPP (a **Str global), u = *gpp(), v = *w.pp, x = **ppp (a ***Str)");
+assert_eq(pps_cap(), 55, "a closure's own inline Str <- *pp of a captured **Str");
+assert_eq(pps_inl(), 33, "u = *pp with *pp an inline Str's header: a copy (t.len = 1 after leaves u)");
+assert_eq(pps_rebind(), 132, "q = *pp into a *Str rebinds, as q = p does (b untouched)");
+assert_eq(pps_handle(), 103, "h = *pp into a Str handle rebinds it to the header (as h = p)");
 assert_eq(pa_local(), 33, "p = t into a *Str local takes t's header: p.len = 3 writes t.len (D16; the data word before)");
 assert_eq(pa_gt(), 7, "p = gt into a *Str local");
 assert_eq(pa_gp(), 7, "GP = gt into a *Str global");
@@ -351,6 +435,29 @@ assert_eq(pa_param(0), 5, "p = t into a `p: *Str` parameter");
 assert_eq(pa_wrap(), 77, "p = (t); q = ((gt));");
 assert_eq(pa_step(), 7, "a for step p = t");
 assert_eq(pa_cap(), 77, "a closure: p = t and GP = t of the captured copy");
+assert_eq(hd_local(), 103, "h = *p into a Str handle rebinds it to the header p points at (D20; the filed repro: the data word, 0)");
+assert_eq(hd_typed(), 102, "var h: Str ...; h = *p: a change through h is seen through p");
+assert_eq(hd_global(), 107, "GH = *p into a Str handle global");
+assert_eq(hd_param(str_from("q"), str_from("abcde")), 105, "h = *p into a `h: Str` parameter");
+assert_eq(hd_wrap(), 1111, "h = (*p); h = *(p); h = ((*p)); h = *(p + 0)");
+assert_eq(hd_step(), 233, "a for step h = *p");
+assert_eq(hd_chain(), 1111, "h = *GP (a *Str global), *gsp(), *w.p (a *Str field), *w.sp() (a `: *Str` method)");
+assert_eq(hd_cap(), 105, "a closure's own handle <- *p of a captured *Str");
+assert_eq(hd_inl(), 1, "h = *p with p bound to an inline Str's header: h is that header (h.len = 1 writes t.len)");
+assert_eq(pa_fld_local(), 7, "w.p = gt into a *Str field of a local takes gt's header (D19; the filed repro: the data word)");
+assert_eq(pa_fld_global(), 7, "GW.p = gt into a *Str field of a global");
+assert_eq(pa_fld_ptr(), 7, "pw.p = gt through a *W");
+assert_eq(pa_fld_nest(), 77, "o.w.p = gt (a nested struct's field), o.pw.p = (gt) (through a *W field)");
+assert_eq(pa_fld_call(), 7, "mkw().p = gt, a `: *W` call's field");
+assert_eq(pa_fld_step(), 7, "a for step w.p = gt");
+assert_eq(pa_fld_bind(), 3, "w.p = gt is gt's header: w.p.len = 3 writes gt.len");
+assert_eq(pa_fld_cap(), 33, "a closure: w.p = t / GW.p = t of the captured copy");
+assert_eq(pa_pp_local(), 7, "*pp = gt through a **Str takes gt's header (the filed repro 2: the data word)");
+assert_eq(pa_pp_wrap(), 7, "*(pp) = (gt)");
+assert_eq(pa_pp_step(), 7, "a for step *pp = gt");
+assert_eq(pa_pp_gpp(), 77, "*GPP = gt (a **Str global), *gpp() = gt (a `: **Str` call)");
+assert_eq(pa_pp_param_c(), 7, "*pp = gt through a `pp: **Str` parameter");
+assert_eq(pa_pp_cap(), 3, "a closure: *pp = t of the captured copy, pp captured");
 assert_eq(sd_std(), 55, "str_len(*p) / str_len(**pp) pass the header (the filed repro: 0 and 0)");
 assert_eq(sd_user(), 55, "a user f(*p) / f(**pp)");
 assert_eq(sd_field(), 5, "str_len(*w.p), a `*Str` field");
@@ -395,6 +502,10 @@ assert_eq(R_TOP7, 7, "top level: GP = gt into a *Str global (D16)");
 assert_eq(R_TOP8, 7, "top level: str_len(*GP) passes the header GP points at");
 assert_eq(R_TOP9, 7, "top level: gi = GP copies the header (D14)");
 assert_eq(R_TOP10, 7, "top level: gi = *GP copies the header (D14)");
+assert_eq(R_TOP11, 77, "top level: gi = *GPP of a **Str global copies the header (6.7.16)");
+assert_eq(R_TOP13, 7, "top level: GW.p = gt into a *Str field of a global (6.7.16, D19)");
+assert_eq(R_TOP14, 7, "top level: *GPP = gt through a **Str global (6.7.16, D19)");
+assert_eq(R_TOP12, 107, "top level: GH = *GP into a Str handle global rebinds it to gt's header (6.7.16, D20)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

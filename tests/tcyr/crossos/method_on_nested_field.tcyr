@@ -8,8 +8,14 @@
 # so a write through it lands in the outer struct. And `var u = s.clone();` for a method returning a
 # struct of 8 B or less types `u` (it was `no struct type in scope for 'u'`; a free call's 8-byte
 # result and a method's 16 / 24-byte one already were) — only when the call is the whole initialiser.
+# Since 6.7.16 a method declared `: Str` types it too — a `Str` handle, as `var k = str_clone(h);` is: `var k =
+# h.clone(); k.len()` was refused "no struct type in scope for 'k'" (issues/2026-10-18-untyped-declaration-from-str-
+# method-result-not-typed-str.md), and so were the chains `var k = w.s.clone();` and `var k = h.clone().clone();` (the
+# ms_str_* rows). Typed, k takes a `Str` overload (`show(k)` -> `show_str`, as `show(str_clone(h))` does); its
+# arithmetic is unchanged (`k + 1` is the handle's word plus 1).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
+include "lib/str.cyr"
 include "lib/assert.cyr"
 
 struct V { a; b; }
@@ -31,6 +37,24 @@ var G = B { 0, 0, 0 };
 fn mk(k): B { var b: B; b.n = 0; b.v.a = k; b.v.b = k; return b; }
 fn via_ptr(p: *B): i64 { return p.v.sum(); }
 
+struct WS { s: Str; n; }
+fn mkh(): Str { return str_from("abcdef"); }
+fn show(x): i64 { return 1; }
+fn show_str(s: Str): i64 { return 2; }
+fn ms_str_verbatim(): i64 {
+    var h: Str = str_from("abcde");
+    var k = h.clone();
+    return k.len();
+}
+fn ms_str_field(): i64 { var h: Str = str_from("abcde"); var w: WS = WS { h, 1 }; var k = w.s.clone(); return k.len(); }
+fn ms_str_twice(): i64 { var h: Str = str_from("abcde"); var k = h.clone().clone(); return k.len(); }
+fn ms_str_cat(): i64 { var h: Str = str_from("abcde"); var k = h.clone(); var c = k.cat(h); return c.len(); }
+fn ms_str_call(): i64 { var k = mkh().clone(); return k.len(); }
+fn ms_str_args(): i64 { var h: Str = str_from("abcde"); var k = h.sub(1, 3); return k.len(); }
+fn ms_str_copy(): i64 { var h: Str = str_from("abcde"); var k = h.clone(); var r = (k != h) * 10; k.len = 2; return r + h.len(); }
+fn ms_str_ov(): i64 { var h: Str = str_from("abcde"); var k = h.clone(); var k2 = str_clone(h); return show(k) * 10 + show(k2); }
+fn ms_str_arith(): i64 { var h: Str = str_from("abcde"); var k = h.clone(); var x = 0; x = k; var r = 0; if (k + 1 == x + 1) { r = r + 1; } if (k - h == x - h) { r = r + 10; } return r; }
+
 fn run(): i64 {
     var b: B;
     b.n = 0; b.v.a = 1; b.v.b = 2;
@@ -50,6 +74,15 @@ fn run(): i64 {
     assert_eq(u.get(), 9, "var u = s.clone() types u by the 8-byte result");
     var t = s.clone().x + 1;
     assert_eq(t, 10, "a chain on the result is a plain value, not a typed struct");
+    assert_eq(ms_str_verbatim(), 5, "var k = h.clone(); k.len() — a `: Str` method types k (the filed repro: refused)");
+    assert_eq(ms_str_field(), 5, "var k = w.s.clone(); a chain from a Str field");
+    assert_eq(ms_str_twice(), 5, "var k = h.clone().clone();");
+    assert_eq(ms_str_cat(), 10, "k.cat(h) on the typed k");
+    assert_eq(ms_str_call(), 6, "var k = mkh().clone(); a chain from a `: Str` call");
+    assert_eq(ms_str_args(), 3, "var k = h.sub(1, 3); a method with arguments");
+    assert_eq(ms_str_copy(), 15, "k is its own handle (the clone): k.len = 2 leaves h");
+    assert_eq(ms_str_ov(), 22, "show(k) takes the Str overload, as show(str_clone(h)) does (12 through 6.7.15)");
+    assert_eq(ms_str_arith(), 11, "k + 1 / k - h unchanged: the handle's word, as an untyped x = k");
     return 0;
 }
 

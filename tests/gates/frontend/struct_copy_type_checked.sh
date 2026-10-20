@@ -94,6 +94,15 @@
 # word stored, or a handle bound). The copies themselves are tests/tcyr/crossos/double_pointer_struct_value.tcyr.
 # Mutation (2026-10-18, CYCC=the lane's compiler before the fix): RED 4 — R29-R32 compile.
 #
+# 6.7.16 — `o.s = *pp` INTO A STRUCT-TYPED FIELD copies the struct `*pp` points at too (issues/2026-10-18-struct-field-
+# destination-from-double-pointer-single-deref-stores-pointer-word.md), so a `**Q3`'s `*qq` into a P3 FIELD is refused by
+# name with the field's words ("cannot copy '*qq' into a struct field of a different struct type: 's'", as `o.s = *pu`
+# is): R33 `o.s = *qq` in a fn, R34 top level `GO.s = (*GQQ)` — ONE error each, no binary (both compiled through 6.7.15:
+# the pointer word stored into the field). The copies are double_pointer_struct_value.tcyr's wf_* rows.
+# Mutation (2026-10-19, CYCC=the lane's compiler before the fix): RED 2 — R33 / R34 compile.
+# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): the source is named as written,
+# from its `*` — R33 '*qq', R34 '*GQQ' (they were 'qq', 'GQQ'); every other printer: struct_arg_type_refused.sh DS.
+#
 # 6.7.15 — `**pp OP= v` NAMES ITS OPERAND AS WRITTEN (issues/2026-10-17-double-pointer-compound-refusal-names-the-
 # pointer-as-the-struct.md): the outer `*`'s operand is `*pp`, so the refusal reads "the struct '*pp' points at" with
 # the hint `**pp = **pp + b` — it named 'pp' (a pointer to a pointer) with `*p = *p + b`. W1 the filed repro verbatim,
@@ -323,6 +332,37 @@ var GPQ: *Q3 = &GQ;
 var GQQ: **Q3 = &GPQ;
 GT = *GQQ;
 syscall(60, GT.z);
+'
+# R33 / R34 (6.7.16) — the same `*qq` into a P3 FIELD: refused by name with the field's words, ONE error, no binary.
+frefuse() {  # $1 label  $2 the full error text  $3 source
+    printf '%s' "$3" > "$D/r.cyr"
+    rc=0
+    cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    ne=$(grep -c '^error' "$D/r.err" || true)
+    if [ "$rc" -eq 0 ]; then
+        printf '  FAIL: %-38s compiled (rc 0)\n' "$1"; fail=$((fail+1))
+    elif ! grep '^error' "$D/r.err" | head -1 | grep -qF "$2"; then
+        printf '  FAIL: %-38s refused, but not as expected: %s\n' "$1" "$(grep '^error' "$D/r.err" | head -1)"; fail=$((fail+1))
+    elif [ "$ne" -ne 1 ]; then
+        printf '  FAIL: %-38s %s error lines (want 1)\n' "$1" "$ne"; fail=$((fail+1))
+    elif [ -s "$D/r.bin" ]; then
+        printf '  FAIL: %-38s refused, but a binary was written\n' "$1"; fail=$((fail+1))
+    else
+        printf '  ok(refused): %-31s\n' "$1"; pass=$((pass+1))
+    fi
+}
+frefuse "R33 o.s = *qq  (a **Q3, a P3 field)" "cannot copy '*qq' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
+fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pq: *Q3 = &q; var qq: **Q3 = &pq; var o: WO; o.s = *qq; return o.s.z; }
+var r = main(); syscall(60, r);
+'
+frefuse "R34 GO.s = (*GQQ)  (top level)" "cannot copy '*GQQ' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
+var GO = WO{0,0,0,0};
+var GQ = Q3{7,8,9};
+var GPQ: *Q3 = &GQ;
+var GQQ: **Q3 = &GPQ;
+GO.s = (*GQQ);
+syscall(60, GO.s.z);
 '
 # C1-C4 — `*p OP= v` through a `*S`: refused by name, as `l += a` on a struct value is.
 CMSG="compound assignment to the struct"
@@ -636,7 +676,7 @@ fi
 
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 57 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 57)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8
+[ "$nrefuse" -ge 59 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 59)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing

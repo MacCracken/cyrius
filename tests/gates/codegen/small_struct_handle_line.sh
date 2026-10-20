@@ -32,7 +32,9 @@
 #      small_struct_return_type_refused.sh carries the whole class)
 #      C7 (the review fix) a dereference of a `*U8` / `*UH` at any other spelling — `(*pu)`, `*gu()`,
 #      `*w.pu` — is refused by name, as `*pu` is; C8 `(*x)` with x UNTYPED is no struct value: a handle
-#      holding the word `*x` reads (decision 1)
+#      holding the word `*x` reads (decision 1). 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-
+#      name-operand-last-name.md): C4 C7 GC2 GC6 name the dereference as written ('*pu', '*gu()', '*w.pu', '*GU';
+#      they named 'pu', 'gu', 'GU')
 #   P  (Linux x86_64 + aarch64) a 7 B handle onto the LAST 7 bytes of a 2-page anonymous mapping
 #      whose second page is unmapped: passed by value, returned, an operator's right operand, an
 #      if-expression branch, a closure capture's argument and `c = a` — exit 0, no fault (no byte
@@ -273,6 +275,10 @@
 #      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32). The file's gb_* rows (floor 59):
 #      a generic's `pp: **GBox<T>` parameter compiles (issues/2026-10-17-generic-double-pointer-to-generic-struct-
 #      parameter-refused.md; its repro is generic_double_pointer_infer.sh B1)
+#      6.7.16 (issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md): `o.s =
+#      *pp` into a struct-typed FIELD copies too (the file's wf_* rows, floor 76); R16f that filing's repro VERBATIM:
+#      prints 444 (004 through 6.7.15: the pointer word in the field's first word); another struct is refused by name
+#      (struct_copy_type_checked.sh R33 / R34)
 #   D  compile rows (x86): D1 `takeh(*pu)` / `rd8(*pu)` with `pu` a `*U` of another struct refused by name, as
 #      a struct variable of another type is; D2 `a - *pu`, `a - *gu()` the same; D3 an untyped `*y` keeps the
 #      word it reads (exit 5: the word is the struct's address, as before)
@@ -379,6 +385,9 @@
 #   MP2 `_hl_pw` without its `*E` (`_pp_inner`) arm -> RED 7: R16 x7 (`***ppp`: SIGSEGV, cxvm the word)
 #   MP3 `_hl_cw` without its field arm               -> RED 7: R16 x7 (`**w.pp`: SIGSEGV, cxvm the word)
 #   MP4 `_hl_cw` without its generic arm (`_gen_call_word`) -> RED 7: R16 x7 (`**gq<i64>(1)`: SIGSEGV, cxvm the word)
+# 6.7.16 FIELD `*pp` MUTATION LEDGER (2026-10-19, the same method; R16 / R16f):
+#   MF1 `_fsc_dstar` asking `_hl_dstar_x(.., 0)` (the fix reverted) -> RED 14: R16 x7 (16 wf_* rows: the pointer word
+#                                                      in the field), R16f x7 (004)
 # B7-1c MUTATION LEDGER (2026-10-12, the same method):
 #   the B7-1b tree (d046368e, no *T operand)          -> RED 14: R5 x7 (`l = p` held the pointer, then
 #                                                      `q = r` rebound q: SIGSEGV x86 x4 / aarch64, cxvm out of
@@ -1026,7 +1035,7 @@ done
 TPS=tests/tcyr/crossos/double_pointer_struct_value.tcyr
 [ -f "$TPS" ] || { echo "FAIL: $G: $TPS is missing"; exit 1; }
 NPS=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPS")
-PSFLOOR=59
+PSFLOOR=76   # 6.7.16: + the wf_* rows
 if [ "$NPS" -lt "$PSFLOOR" ]; then echo "FAIL: $G: only $NPS rows in $TPS (floor $PSFLOOR) — rows were lost"; exit 1; fi
 echo "R16. $TPS ($NPS rows: **pp through a **S is the struct value)"
 for leg in $XLEGS $OTHER; do
@@ -1130,7 +1139,29 @@ fn main(): i64 {
 }
 syscall(60, main());
 EOF
-for rw in d:1:444 e:2:4444; do
+# 6.7.16 — R16f: the repro of issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-
+# word.md, verbatim: `o.s = *pp;` / `GW.s = *pp;` into a struct-typed field copy (004 through 6.7.15: the pointer word).
+cat > "$D/repro_pw3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct P { x; y; }
+struct W { a; s: P; }
+var GW = W { 0, 0, 0 };
+fn main(): i64 {
+    var s = P { 3, 4 };
+    var p: *P = &s;
+    var pp: **P = &p;
+    var o = W { 0, 0, 0 };
+    var c = W { 0, 0, 0 };
+    o.s = *pp;
+    GW.s = *pp;
+    c.s = p;
+    fmt_int(o.s.y); fmt_int(GW.s.y); fmt_int(c.s.y);
+    return 0;
+}
+syscall(60, main());
+EOF
+for rw in d:1:444 e:2:4444 f:3:444; do
     rs=${rw%%:*}; rn=${rw#*:}; rw=${rn#*:}; rn=${rn%%:*}
     echo "R16$rs. the filed whole-source *pp repro $rn, verbatim (prints $rw)"
     for leg in $XLEGS $OTHER; do
@@ -1170,19 +1201,19 @@ crow "C2 q = mku(1) into an S8 handle refused" "refuse:cannot copy 'mku' into a 
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nstruct U8 { u; }\nfn mku(n): U8 { var r: U8; r.u = n; return r; }\nfn f() { var q: S8 = alloc(8); q = mku(1); return q.v; }\nalloc_init();\nsyscall(60, f());\n'
 crow "C3 bs1((t)) with t: T1 into p: S1 refused by name (6.7.11, the user's decision 2026-10-13)" "refuse:cannot pass 't' to a parameter of a different struct type in a call to 'bs1'" \
   'struct S1 { a: i8; }\nstruct T1 { b: i8; }\nfn bs1(p: S1) { return p.a; }\nfn f() { var t: T1; t.b = 7; return bs1((t)); }\nsyscall(60, f());\n'
-crow "C4 var q: S8 = *pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+crow "C4 var q: S8 = *pu (pu: *U8) refused" "refuse:cannot copy '\*pu' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var q: S8 = *pu; return q.v; }\nsyscall(60, f());\n'
-crow "C4 var q: H = *pu (pu: *UH) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+crow "C4 var q: H = *pu (pu: *UH) refused" "refuse:cannot copy '\*pu' into a variable of a different struct/vector type: 'q'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nfn f() { var u: UH; u.u = 4; var pu: *UH = &u; var q: H = *pu; return q.v; }\nsyscall(60, f());\n'
-crow "C4 var q: S8 = *GU (GU: *U8) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'q'" \
+crow "C4 var q: S8 = *GU (GU: *U8) refused" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GU: *U8 = 0;\nfn f() { var u: U8; u.u = 4; GU = &u; var q: S8 = *GU; return q.v; }\nsyscall(60, f());\n'
-crow "C7 var q: S8 = (*pu) (pu: *U8) refused (any dereference)" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+crow "C7 var q: S8 = (*pu) (pu: *U8) refused (any dereference)" "refuse:cannot copy '\*pu' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var q: S8 = (*pu); return q.v; }\nsyscall(60, f());\n'
-crow "C7 var q: H = (*pu) (pu: *UH) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+crow "C7 var q: H = (*pu) (pu: *UH) refused" "refuse:cannot copy '\*pu' into a variable of a different struct/vector type: 'q'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nfn f() { var u: UH; u.u = 4; var pu: *UH = &u; var q: H = (*pu); return q.v; }\nsyscall(60, f());\n'
-crow "C7 var q: S8 = *gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'q'" \
+crow "C7 var q: S8 = *gu() (a : *U8 fn) refused" "refuse:cannot copy '\*gu()' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nfn gu(): *U8 { return &GV; }\nfn f() { var q: S8 = *gu(); return q.v; }\nsyscall(60, f());\n'
-crow "C7 var q: S8 = *w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'q'" \
+crow "C7 var q: S8 = *w.pu (a *U8 field) refused" "refuse:cannot copy '\*w\.pu' into a variable of a different struct/vector type: 'q'" \
   'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nfn f() { var u: U8; u.u = 4; var w = WU { &u }; var q: S8 = *w.pu; return q.v; }\nsyscall(60, f());\n'
 crow "C8 var q: S8 = (*x) with x untyped: a handle (decision 1), holding the word *x reads" 7 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn f() { var o = alloc(8); store64(o, 0); var cell = alloc(8); store64(cell, o); var x = cell; var q: S8 = (*x); q.v = 7; return load64(o); }\nalloc_init();\nsyscall(60, f());\n'
@@ -1200,19 +1231,19 @@ crow "GC1 its 16 B twin" 3 \
   'struct V2 { a; b; }\nfn V2_add(a, b) { return 77; }\nvar ga: V2 = 1;\nvar gb: V2 = 2;\nfn f() { return ga + gb; }\nsyscall(60, f());\n'
 crow "GC1 a global struct value still dispatches" 102 \
   'struct Num { v; }\nfn Num_add(a, b) { return a * 100 + b; }\nvar ga = Num { 1 };\nvar gb = Num { 2 };\nfn f() { return ga + gb; }\nsyscall(60, f());\n'
-crow "GC2 var G: S8 = *GU (GU: *U8) refused in the declaration zone" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+crow "GC2 var G: S8 = *GU (GU: *U8) refused in the declaration zone" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'G'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar G: S8 = *GU;\nsyscall(60, G.v);\n'
-crow "GC2 var G: H = *GU (GU: *UH) refused in the declaration zone" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+crow "GC2 var G: H = *GU (GU: *UH) refused in the declaration zone" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'G'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar G: H = *GU;\nsyscall(60, G.v);\n'
-crow "GC2 var G: S8 = *GU refused after the first statement" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+crow "GC2 var G: S8 = *GU refused after the first statement" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'G'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar k = 0;\nk = 1;\nvar G: S8 = *GU;\nsyscall(60, G.v);\n'
-crow "GC6 var G: S8 = (*GU) (GU: *U8) refused in the declaration zone (any dereference)" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+crow "GC6 var G: S8 = (*GU) (GU: *U8) refused in the declaration zone (any dereference)" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'G'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nvar GU: *U8 = &GV;\nvar G: S8 = (*GU);\nsyscall(60, G.v);\n'
-crow "GC6 var G: H = *gu() (a : *UH fn) refused in the declaration zone" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'G'" \
+crow "GC6 var G: H = *gu() (a : *UH fn) refused in the declaration zone" "refuse:cannot copy '\*gu()' into a variable of a different struct/vector type: 'G'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nfn gu(): *UH { return &GV; }\nvar G: H = *gu();\nsyscall(60, G.v);\n'
-crow "GC6 var G: S8 = *gu() refused after the first statement" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'G'" \
+crow "GC6 var G: S8 = *gu() refused after the first statement" "refuse:cannot copy '\*gu()' into a variable of a different struct/vector type: 'G'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar GV = U8 { 4 };\nfn gu(): *U8 { return &GV; }\nvar k = 0;\nk = 1;\nvar G: S8 = *gu();\nsyscall(60, G.v);\n'
-crow "GC6 var G: H = (*GU) refused after the first statement" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
+crow "GC6 var G: H = (*GU) refused after the first statement" "refuse:cannot copy '\*GU' into a variable of a different struct/vector type: 'G'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar GV = UH { 4, 0 };\nvar GU: *UH = &GV;\nvar k = 0;\nk = 1;\nvar G: H = (*GU);\nsyscall(60, G.v);\n'
 crow "GC7 var G: H = *gp() with gp declared below it refused by name (over 8 B pass 1 sizes G)" "refuse:from a dereference of a global or fn declared below it" \
   'struct H { v; w; }\nvar A = H { 4, 0 };\nvar G: H = *gp();\nfn gp(): *H { return &A; }\nsyscall(60, G.v);\n'

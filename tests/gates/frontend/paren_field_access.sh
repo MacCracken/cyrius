@@ -18,7 +18,8 @@
 # ROWS — each on x86_64, aarch64 (qemu-aarch64), cx (cxvm) and PE (wine, a private prefix; a missing tool is a SKIP
 # that names it): R0 the filed repro verbatim (33); V1-V12 the values; A1 the crossos values file
 # (tests/tcyr/crossos/struct_receive_paren_call.tcyr, the release gate's real-hardware carrier); N1-N7 the refusals,
-# each exactly one error line, no binary.
+# each exactly one error line, no binary. 6.7.16: KC1-KC5 and A2 (a known `&f` callee's `*S`), PS0-PS11 (a subscript
+# store through a parenthesised base, D22), below.
 #
 # MUTATION LEDGER (2026-10-17, a scratch copy of src/ with the one edit, this gate run as CYCC=<mutant>; the
 # aarch64 / cx compilers build from the tree's src/, so a mutant is RED on its x86_64 and PE legs):
@@ -45,6 +46,26 @@
 #                                                             refusal's own ERR_IDENT honours the latch (the test keeps
 #                                                             the restore from clearing that latch); Q11-Q13 pin the
 #                                                             one-error outcome
+# 6.7.16 (a known `&f` callee typed by its tokens, measured 2026-10-19; the same scratch-tree mutants, each run with its
+# 2-stage compiler, every leg the mutant's). Rows KC1-KC3 (the filed repro and its two other spellings), KC4 KC5 (a
+# variable / a shadowed callee still refused), A2 (tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr):
+#   the fix reverted (the lane's S2 head)                   -> RED 16: KC1-KC3 refused "not a struct" on every leg, A2
+#                                                             refused (`return *fncall0(&gp);`, the wraps)
+#   `_hl_ic_fi` without its shadow test (a local, capture   -> RED 4: KC5 built on every leg (`&gp` of a local typed as
+#   or global of the callee's name)                           the fn's `*P2`)
+#   `_hl_psrc` without its `callptr` arm                    -> RED 4: A2 exit 5 on every leg (kc_asg_c kc_fld_c kc_chain
+#                                                             kc_paren kc_top: the pointer word stored, b 0)
+#   `_hl_cw` without its known-callee arm                   -> RED 4: A2 refused (kc_pp's `(*fncall0(&gpp)).b`)
+#   `_hl_ic_psid` answering 0 for a struct by value         -> RED 4: A2 refused (kc_bv_chain's `(fncall0(&mkw).p).b`)
+# 6.7.16 (D22, measured 2026-10-19; the same scratch-tree mutants). Rows PS0-PS11:
+#   the fix reverted (the known-callee commit)              -> RED 35: PS1-PS8 on every leg ("unexpected '('"), PS1's
+#                                                             second line, PS0 (the store's words are not the read's),
+#                                                             PS11 (--syntax-only)
+#   `_stmt_paren_sub` without its assignment test           -> RED 4: PS9 on every leg (`(pn)[0];` named in D22's words)
+#   ... without restoring the latch (`_panic = p0`)         -> GREEN: `_cst_skip_sync` clears it at the statement's end, so
+#                                                             PS3 / PS4 still report the next statement (kept as D19's
+#                                                             sibling keeps it); `_psub_err`'s own `_derr_seen` makes
+#                                                             the refusal once per site, a generic's three parses too (PS5)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -320,7 +341,116 @@ crc=0; "$CC" --syntax-only < "$T/Q9.cyr" > /dev/null 2> "$T/Q9.err" || crc=$?
 if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/Q9.err")" -eq 1 ] && grep -qF "the field read 'a' $QD" "$T/Q9.err"; then ok "Q9 --syntax-only refuses (s).a; as it refuses s.a;"
 else bad "Q9 --syntax-only: rc $crc: $(grep '^error' "$T/Q9.err" | head -2 | tr '\n' '|')"; fi
 
-FLOOR=46
+# 6.7.16 — a KNOWN `&f` callee's `*S` result inside the wrap is the `*S` the direct call's is (6.7.14's D26 (a), 6.7.13's
+# D16): `(*fncall0(&gp)).b`, `(fncall0(&gp)).b` and `(*callptr(&gp)).b` with `gp: *P2` were refused "the value in these
+# parentheses is not a struct" — the token typers (`_hl_pchain` / `_hl_cw`) read `gp()` but not `fncallN(&f, ..)` /
+# `callptr(&f, ..)`. A callee held in a variable stays a word (6.7.11's D31), and so does `&gp` of a LOCAL named gp
+# (the `&` factor takes the local): both still refused. The same typing is every token-typed consumer's — the copies,
+# arguments, returns and top level of A2 (tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr).
+# issues/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md
+cat > "$T/KC1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+struct P2 { a; b; }
+var G: P2 = P2 { 11, 22 };
+fn gp(): *P2 { return &G; }
+fn main(): i64 {
+    var x = (*gp()).b;
+    var y = (*fncall0(&gp)).b;
+    return x + y;
+}
+syscall(60, main());
+EOF
+runs KC1 44 "the filed repro verbatim: (*fncall0(&gp)).b (refused 'not a struct' before)"
+sed 's/(\*fncall0(&gp))\.b/(fncall0(\&gp)).b/' "$T/KC1.cyr" > "$T/KC2.cyr"
+grep -qF 'var y = (fncall0(&gp)).b;' "$T/KC2.cyr" || bad "KC2 the repro's second spelling was not written"
+runs KC2 44 "the repro with (fncall0(&gp)).b (refused before)"
+sed 's/(\*fncall0(&gp))\.b/(*callptr(\&gp)).b/' "$T/KC1.cyr" > "$T/KC3.cyr"
+grep -qF 'var y = (*callptr(&gp)).b;' "$T/KC3.cyr" || bad "KC3 the repro's third spelling was not written"
+runs KC3 44 "the repro with (*callptr(&gp)).b (refused before)"
+PV="a field is read only from a struct value - the value in these parentheses is not a struct"
+src KC4 'fn main(): i64 { var f = &gp; return (fncall0(f)).b; }
+syscall(60, main());'
+refused KC4 "$PV" "(fncall0(f)).b, f a variable: a word (D31), still refused"
+src KC5 'fn main(): i64 { var gp = 5; return (fncall0(&gp)).b; }
+syscall(60, main());'
+refused KC5 "$PV" "(fncall0(&gp)).b with a local gp: &gp is the local's address, still refused"
+TK=tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr
+[ -f "$TK" ] || { echo "FAIL: $G: $TK is missing"; exit 1; }
+NK=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TK")
+KFLOOR=24
+if [ "$NK" -lt "$KFLOOR" ]; then bad "only $NK rows in $TK (floor $KFLOOR) — rows were lost"; fi
+cp "$TK" "$T/A2.cyr"
+runs A2 0 "$TK ($NK rows: a known callee's *P2 at every token-typed consumer)"
+
+
+# 6.7.16 (the user's D22, 2026-10-19): a SUBSCRIPT store through a parenthesised base stays refused, in the words the
+# parenthesised subscript READ gets — "a subscript's base is a name, a *T field or a call returning *T - name the pointer
+# first (var q: *T = ..; q[i])" — once at the `(`, the statement stepped in sync (the next statement parsed normally); it
+# was "unexpected '('" (`_stmt_paren_sub`, from `_stmt_paren_dst`). Not an assignment after the `[..]` steps
+# (`(pn)[0];`) keeps "unexpected '('" (PS9). A classic-for STEP is not a statement and keeps "expected '='" for every
+# parenthesised destination (PS10; filed with the D19 / D24 (a) step shapes).
+# issues/2026-10-18-subscript-store-through-parenthesised-base-is-unexpected-paren.md
+SB="a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T = ..; q[i])"
+cat > "$T/PS1.cyr" <<'EOF'
+fn main(): i64 {
+    var buf[16];
+    var pn: *i64 = &buf;
+    (pn)[0] = 1;
+    (*(&pn))[1] = 2;
+    return pn[0] + pn[1];
+}
+syscall(60, main());
+EOF
+refused PS1 "<source>:4:5: $SB" "the filed repro verbatim: (pn)[0] = 1; (*(&pn))[1] = 2; (unexpected '(' before)" 2
+if ! grep '^error' "$T/PS1.x86_64.err" | sed -n 2p | grep -qF "<source>:5:5: $SB"; then bad "PS1 the second line's refusal is not the read's words at 5:5"; fi
+# the words ARE the read's: the read `return (pn)[0];` prints the same text after its position
+printf '%s\n' 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; return (pn)[0]; }' 'syscall(60, main());' > "$T/PS0.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" < "$T/PS0.cyr" > /dev/null 2> "$T/PS0.err" || crc=$?
+rd=$(grep '^error' "$T/PS0.err" | head -1 | sed 's/^error:<source>:[0-9]*:[0-9]*: //')
+st=$(grep '^error' "$T/PS1.x86_64.err" | head -1 | sed 's/^error:<source>:[0-9]*:[0-9]*: //')
+if [ "$crc" -ne 0 ] && [ -n "$rd" ] && [ "$rd" = "$st" ]; then ok "PS0 the store's words are the read's: '$rd'"
+else bad "PS0 the store says '$st', the read (rc $crc) '$rd'"; fi
+src PS2 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] += 1; return pn[0]; }
+syscall(60, main());'
+refused PS2 "$SB" "(pn)[0] += 1; a compound store"
+src PS3 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] = 1; zz = 2; return pn[0]; }
+syscall(60, main());'
+refused PS3 "$SB" "the next statement is parsed normally: its own error (undefined zz) is still reported" 2
+if ! grep -qF "undefined variable 'zz'" "$T/PS3.x86_64.err"; then bad "PS3 the next statement's error is missing"; fi
+src PS4 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] <<= 1; ((pn))[1] = 2; return pn[0]; }
+syscall(60, main());'
+refused PS4 "$SB" "two in a row (<<=, two wraps): each once" 2
+src PS5 'fn g<T>(x: T): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] = 1; return x; }
+fn main(): i64 { return g(1) + g<i32>(2) + g<i16>(3); }
+syscall(60, main());'
+refused PS5 "$SB" "a generic at three types: once"
+src PS6 'var GB[16];
+var GP: *i64 = &GB;
+(GP)[0] = 1;
+syscall(60, GP[0]);'
+refused PS6 "<source>:18:1: $SB" "top level: (GP)[0] = 1;"
+src PS7 'fn main(): i64 { var buf[32]; var pp: **i64 = &buf; (pp)[0][1] = 1; return 0; }
+syscall(60, main());'
+refused PS7 "$SB" "(pp)[0][1] = 1; two subscript steps"
+src PS8 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; var i = 0; while (i < 1) { (pn)[0] = 1; i = i + 1; } return pn[0]; }
+syscall(60, main());'
+refused PS8 "$SB" "in a loop body"
+src PS9 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0]; return pn[0]; }
+syscall(60, main());'
+refused PS9 "unexpected '('" "(pn)[0]; no assignment: unchanged"
+src PS10 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; var i = 0; for (i = 0; i < 1; (pn)[0] = 7) { i = i + 1; } return pn[0]; }
+syscall(60, main());'
+refused PS10 "expected '=', got identifier 'pn'" "a for STEP: unchanged (filed: the step reaches no statement refusal)"
+printf '%s\n' 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] = 1; return 0; }' 'syscall(60, main());' > "$T/PS11.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/PS11.cyr" > /dev/null 2> "$T/PS11.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/PS11.err")" -eq 1 ] && grep -qF "$SB" "$T/PS11.err"; then ok "PS11 --syntax-only refuses (pn)[0] = 1; in the read's words"
+else bad "PS11 --syntax-only: rc $crc: $(grep '^error' "$T/PS11.err" | head -2 | tr '\n' '|')"; fi
+
+FLOOR=64   # 6.7.16: + KC1-KC5, A2; + PS0-PS11 (D22)
 [ "$rows" -ge "$FLOOR" ] || bad "only $rows rows ran (floor $FLOOR)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails failed ($rows rows, $skips legs skipped)"; exit 1; fi
-echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60) ($skips legs skipped)"
+echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60); a known &f callee's *S read through the wrap; a subscript store through parentheses refused once in the read's words (D22) ($skips legs skipped)"

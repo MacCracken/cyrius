@@ -31,6 +31,14 @@
 # (a declaration copy, a by-value argument), the explicit `<GPt>` instance (its pin names GBox<GPt>: n at 16), a
 # concrete `**GBox<GPt>` parameter unchanged. Filed: docs/development/issues/2026-10-17-generic-double-pointer-to-
 # generic-struct-parameter-refused.md (its repro verbatim is tests/gates/frontend/generic_double_pointer_infer.sh B1).
+#
+# 6.7.16 — `o.s = *pp` into a struct-typed FIELD copies the struct `*pp` points at, as `o.s = p` does: it stored the
+# pointer word into the field's first word, the rest stale (the filed repro printed 004, want 444). Rows wf_*: 8 / 16 /
+# 24 / 3 B, a local's field, a global's, through a `*W`, a by-value parameter's, `(*pp)` / `*(pp)`, a for step, `*GPP`,
+# `*gpp()`, `*w.pp`, `**ppp`, a capture, top level; `o.ps = *pp` into a `*P` field stays the pointer store. Filed:
+# docs/development/issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md
+# (its repro verbatim is small_struct_handle_line.sh R16f; another struct's `**U` into an S field is refused by name,
+# struct_copy_type_checked.sh R33 / R34).
 include "lib/assert.cyr"
 
 struct P { x; y; }
@@ -157,6 +165,30 @@ fn gb_inst(): i64 { var y: GBox<GPt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *GBo
 fn gb_conc(): i64 { var y: GBox<GPt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *GBox<GPt> = &y; return gb_nc(&q); }
 fn w_c3(): i64 { var s: C3; s.a = 1; s.b = 2; s.c = 3; var p: *C3 = &s; var pp: **C3 = &p; var l: C3; l = *pp; var t: C3 = *pp; s.b = 9; return l.a * 100 + l.b * 10 + l.c + t.b * 1000; }
 
+# 6.7.16 — `o.s = *pp` into a struct-typed field (see the header).
+struct WF { a; s: P; }
+struct WF8 { a; s: P8; }
+struct P3 { x; y; z; }
+struct WF3 { a; s: P3; }
+struct WFC { s: C3; t: u8; }
+struct WFP { a; ps: *P; }
+var GWF = WF { 0, 0, 0 };
+fn wf_local(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var o = WF { 1, 0, 0 }; o.s = *pp; s.y = 9; return o.a * 100 + o.s.x * 10 + o.s.y; }
+fn wf_global(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; GWF.s = *pp; s.y = 9; return GWF.s.x * 10 + GWF.s.y; }
+fn wf_8(): i64 { var s = P8 { 6 }; var p: *P8 = &s; var pp: **P8 = &p; var o = WF8 { 1, 0 }; o.s = *pp; s.v = 9; return o.a * 10 + o.s.v; }
+fn wf_24(): i64 { var s = P3 { 1, 2, 3 }; var p: *P3 = &s; var pp: **P3 = &p; var o = WF3 { 0, 0, 0, 0 }; o.s = *pp; s.z = 9; return o.s.x * 100 + o.s.y * 10 + o.s.z; }
+fn wf_c3(): i64 { var s: C3; s.a = 1; s.b = 2; s.c = 3; var p: *C3 = &s; var pp: **C3 = &p; var o: WFC; o.s.a = 0; o.s.b = 0; o.s.c = 0; o.t = 7; o.s = *pp; s.b = 9; return o.s.a * 1000 + o.s.b * 100 + o.s.c * 10 + o.t; }
+fn wf_wrap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var o = WF { 0, 0, 0 }; o.s = (*pp); var m = WF { 0, 0, 0 }; m.s = *(pp); s.y = 9; return o.s.y * 10 + m.s.y; }
+fn wf_for(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var o = WF { 0, 0, 0 }; for (var i = 0; i < 1; o.s = *pp) { i = 1; } s.y = 9; return o.s.x * 10 + o.s.y; }
+fn wf_ptr(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = WF { 0, 0, 0 }; var w: *WF = &d; w.s = *pp; s.y = 9; return d.s.x * 10 + d.s.y; }
+fn wf_gpp(): i64 { var o = WF { 0, 0, 0 }; o.s = *GPP; var m = WF { 0, 0, 0 }; m.s = *gpp(); return o.s.y * 10 + m.s.y; }
+fn wf_field(): i64 { var w: W; w.pp = &GSP; w.n = 0; var o = WF { 0, 0, 0 }; o.s = *w.pp; return o.s.x * 10 + o.s.y; }
+fn wf_triple(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var ppp: ***P = &pp; var o = WF { 0, 0, 0 }; o.s = **ppp; s.y = 9; return o.s.x * 10 + o.s.y; }
+fn wf_param(v: WF, pp: **P): i64 { v.s = *pp; return v.s.x * 10 + v.s.y; }
+fn wf_param_c(): i64 { var s = P { 3, 4 }; var p: *P = &s; var o = WF { 0, 1, 2 }; var r = wf_param(o, &p); return r * 100 + o.s.x * 10 + o.s.y; }
+fn wf_cap(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var f = |d| { var o = WF { 0, 0, 0 }; o.s = *pp; return o.s.x * 10 + o.s.y + d; }; return callptr(f, 0); }
+fn wf_rebind(): i64 { var s = P { 3, 4 }; var p: *P = &s; var pp: **P = &p; var d = P { 1, 2 }; var o = WFP { 0, &d }; o.ps = *pp; s.y = 9; return o.ps.y * 10 + d.y; }
+
 var TZ: P = **GPP;   # the declaration zone
 
 assert_eq(f_take(), 4, "take(**pp) into a by-value P (the filed repro 1)");
@@ -216,6 +248,20 @@ assert_eq(gb_i64(), 77, "gb: a generic's pp: **GBox<T> compiles: gb_nb(&p), gb_n
 assert_eq(gb_val(), 7107, "gb: **pp through **GBox<T> is the struct value: a declaration copy, a by-value argument");
 assert_eq(gb_inst(), 991, "gb: the explicit GBox<GPt> instance pins its own struct (n at 16)");
 assert_eq(gb_conc(), 11, "gb: a concrete pp: **GBox<GPt> parameter (unchanged)");
+assert_eq(wf_local(), 134, "wf: o.s = *pp copies into a local's P field (the filed repro: the word, 004)");
+assert_eq(wf_global(), 34, "wf: GW.s = *pp copies into a global's P field, in a fn");
+assert_eq(wf_8(), 16, "wf: o.s = *pp into an 8 B P8 field");
+assert_eq(wf_24(), 123, "wf: o.s = *pp into a 24 B P3 field");
+assert_eq(wf_c3(), 1237, "wf: o.s = *pp into a 3-byte C3 field, byte-exact (o.t kept)");
+assert_eq(wf_wrap(), 44, "wf: o.s = (*pp), m.s = *(pp)");
+assert_eq(wf_for(), 34, "wf: a for step o.s = *pp");
+assert_eq(wf_ptr(), 34, "wf: w.s = *pp through a *WF");
+assert_eq(wf_gpp(), 44, "wf: o.s = *GPP, m.s = *gpp()");
+assert_eq(wf_field(), 34, "wf: o.s = *w.pp of a **P field");
+assert_eq(wf_triple(), 34, "wf: o.s = **ppp of a ***P");
+assert_eq(wf_param_c(), 3412, "wf: v.s = *pp into a by-value WF parameter's field (the caller's o untouched)");
+assert_eq(wf_cap(), 34, "wf: o.s = *pp of a captured **P in a closure");
+assert_eq(wf_rebind(), 92, "wf: o.ps = *pp into a *P field stores the pointer (d untouched)");
 var TS = P { 3, 4 };
 var TSP: *P = &TS;
 var TPP: **P = &TSP;
@@ -226,7 +272,16 @@ TL8 = *G8PP;
 var TF = P { 0, 0 };
 var ti = 0;
 for (ti = 0; ti < 1; TF = *TPP) { ti = 1; }
+var TWF = WF { 1, 0, 0 };
+TWF.s = *TPP;
+var TWF8 = WF8 { 1, 0 };
+TWF8.s = *G8PP;
+var TWG = WF { 0, 0, 0 };
+for (ti = 0; ti < 1; TWG.s = (*TPP)) { ti = 1; }
 TS.y = 9;
+assert_eq(TWF.a * 100 + TWF.s.x * 10 + TWF.s.y, 134, "wf: top level: TWF.s = *TPP copies");
+assert_eq(TWF8.a * 10 + TWF8.s.v, 19, "wf: top level: TWF8.s = *G8PP copies (8 B)");
+assert_eq(TWG.s.x * 10 + TWG.s.y, 34, "wf: top level: a for step TWG.s = (*TPP) copies");
 assert_eq(TL.x * 10 + TL.y, 34, "top level: TL = *TPP copies");
 assert_eq(TL8.v, 9, "top level: TL8 = *G8PP copies (8 B)");
 assert_eq(TF.y, 4, "top level: a for step TF = *TPP copies");

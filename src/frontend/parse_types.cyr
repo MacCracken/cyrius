@@ -3650,6 +3650,7 @@ fn _ret_ptr_annot(S, fi, quiet): i64 {
     return 0;
 }
 fn _ret_ptr_record(S, fi, quiet): i64 {
+    _ret_ptr_unk(S, fi);                     # 6.7.16: --syntax-only, a T this file does not declare
     var psid = _ret_ptr_sid(S, quiet);       # 6.7.11: T bound to a struct too
     if (psid > 0) {
         if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
@@ -3679,6 +3680,32 @@ fn _fn_ret_ps(fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rps == 0) { return 0; }
     return L64(_fn_rps + fi * 8);
+}
+# ⛔ 6.7.16 — --syntax-only, `gp().n = 5;` WITH `fn gp(): *Foo` DEFINED HERE AND `Foo` A SIBLING MODULE'S STRUCT was
+# "cannot assign to a field of a call result: the result is a temporary": gp resolves, but neither its struct by value
+# nor its `*T` struct is known here, so `_call_field` stepped over the call silently and the statement judged the `=`
+# as a by-value result's (6.7.13's D8 (a): a `: *T` result's field is an lvalue). Per fn, 1 = its return is `*T` (one
+# `*`) whose T is a name no type here resolves — `_tn_ptr_step`'s refusal, which --syntax-only keeps silent for a
+# sibling's type. Recorded at each `: *T` record (pass 1 for a forward call, pass 2 again), only under --syntax-only:
+# the byte table is allocated at its first 1, so a compile never allocates it. CHANGELOG [6.7.16]
+var _fn_rpun = 0;
+fn _ret_ptr_unk(S, fi): i64 {
+    if (_syntax_only == 0) { return 0; }
+    if (fi < 0 || fi >= 131072) { return 0; }
+    var k = GTI(S);
+    var u = 0;
+    if (TOKTYP(S, k) == 8) { if (TOKTYP(S, k + 1) == 2) { if (_tn_resolve_at(S, k + 1) == 0) { u = 1; } } }
+    if (_fn_rpun == 0) {
+        if (u == 0) { return 0; }
+        _fn_rpun = alloc(131072);
+    }
+    store8(_fn_rpun + fi, u);
+    return 0;
+}
+fn _fn_ret_unk(fi): i64 {
+    if (fi < 0 || fi >= 131072) { return 0; }
+    if (_fn_rpun == 0) { return 0; }
+    return load8(_fn_rpun + fi);
 }
 
 # A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its

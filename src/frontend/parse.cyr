@@ -3927,8 +3927,9 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
 # ⛔ 6.7.15 — and `*pp` of a `**S` (`_hl_dstar_x`'s twin, `_hl_dpp`): the `*S` it reads, copied through as `l = p`
 # copies — into a value, or the pointee of `*q = *pp` (`_dst_arms`); into a handle or a `*S` it stays the one-word
 # store, a rebind, as `q = p` is (`_asg_dpp_rebind`). CHANGELOG [6.7.15]
+# 6.7.16: mode 2 — and `*pp` of a `**Str` into an inline `Str` (`_hl_dpp_str`, `_istr_dxa`). CHANGELOG [6.7.16]
 fn _asg_dstar(S, noff, term): i64 {
-    var ps = _hl_dstar_x(S, GTI(S), term, 1);
+    var ps = _hl_dstar_x(S, GTI(S), term, 2);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return _istr_dxa(S, noff, ps, term); }   # 6.7.15 (D14): `t = *p` of a `*Str`
     if (_agc_operand(S, noff) == 0) { return 0; }
@@ -3937,7 +3938,10 @@ fn _asg_dstar(S, noff, term): i64 {
     if (dt >= 0) { return 0; }
     if (dt <= 0 - 2048) { return 0; }
     if (_dx_plain(S, 0 - dt) == 0) { return 0; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, dt, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    if (_agg_dx_err(S, dt, 0 - ps, noff) == 1) {   # 6.7.16: the source as written, from its `*`
+        _asg_tup_refd = 1;   # 6.7.16: and no "assigning non-pointer to typed pointer" beside the refusal
+        return 0;
+    }
     var dli = _agc_li;
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
     var dgv = _agc_gvi;
@@ -4495,6 +4499,8 @@ fn _dst_word(S, h, sz): i64 {
 # keeps the WORD store (`_asg_store_w` at width 0 is EPOPC + ESTORE64). Before, `*q = 5` through a
 # `*i32` zeroed the next element. CHANGELOG [6.7.8]
 # 6.7.11: through a `*S` (a struct), `*p = v` copies the struct and `*p OP= v` is refused (`_dst_struct`).
+# 6.7.16: `*(&pi) OP= n` of a typed pointer steps as `pi OP= n` does — `*(&p)` is p, its type kept (6.7.15's D21 A,
+# `_amp_pw`), as `*(&pi) + n` already stepped; it stepped one byte. CHANGELOG [6.7.16]
 fn _deref_store(S, term): i64 {
     var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
@@ -4502,7 +4508,9 @@ fn _deref_store(S, term): i64 {
     if (_dst_struct(S, term, d) == 1) { return 0; }
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
+    if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x, at x's width
     var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp += n` steps a `**T`'s pointee
+    if (iw == 0) { iw = _amp_pw(S, d + 1, GTI(S)); }   # `*(&pi)` is pi
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {
