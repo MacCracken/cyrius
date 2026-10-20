@@ -25,7 +25,8 @@
 #
 # ROWS: T1 a 1500-deep chain never called (each base is judged at its definition) in source order, T2 defined deepest
 # first (the first judgement walks the whole chain), T3 the filed 3000-deep chain called at f64, whose one error is
-# the instance-nesting refusal (no definition refused).
+# the instance-nesting refusal (no definition refused) — since 6.7.16 the stack bound's (`_rd_enter`: about 300 links
+# instantiate before it; trait_bounds_checked.sh F14d-F14g).
 #
 # MUTATION PROOF (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): `_bbm_get` answering -1 (no memo,
 # no cap) -> RED T1 T2 T3 (7.2x / 7.1x / 15.3x); the 6.7.14 compiler -> RED T1 T2 (refused at o65's definition) and T3
@@ -78,7 +79,7 @@ row() {  # <id> <n> <order> <call> <what> <runs>
         fi
     else
         ne=$(grep -c '^error' "$D/$1.b.cyr.err" || true)
-        if [ "$RB" -eq 0 ] || [ "$ne" -ne 1 ] || ! grep -q "nesting too deep (over 256 levels" "$D/$1.b.cyr.err"; then
+        if [ "$RB" -ne 1 ] || [ "$ne" -ne 1 ] || ! grep -q "nesting too deep ([0-9]* generic instances" "$D/$1.b.cyr.err"; then
             echo "  FAIL: [$1] $5: not the nesting refusal alone (rc $RB, $ne errors): $(grep '^error' "$D/$1.b.cyr.err" | head -2 | tr '\n' '|')"
             NFAIL=$((NFAIL + 1)); return
         fi

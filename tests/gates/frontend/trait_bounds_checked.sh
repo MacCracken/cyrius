@@ -61,6 +61,19 @@
 #      defined deepest first); MMC2 a not-bad verdict kept inside a judgement that ends bad -> RED 2: F15d F15e (A's base
 #      emitted, X(x) at i64 refused at A's definition); MMC3 no memo (no cap) -> green here, RED in
 #      bound_forward_chain_scale.sh (7-15x)
+#   F14d-F14g (6.7.16) THE CALL THAT INSTANTIATES A CHAIN IS BOUNDED BY THE STACK, NOT BY 256 LEVELS
+#      (issues/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md). An instance is parsed nested inside
+#      the call that reaches it, and each link spent two of the parser's 256 levels: the filed 122-link chain was
+#      "nesting too deep (over 256 levels)". An instance's body counts its own levels (`_rd_inst_enter`) and the
+#      stack bounds the chain (`_rd_enter`: 6 MB, ~300 links). On x86 the enclosing fn's jump-target table (1023) held
+#      every nested instance's targets — ~190 links were "function exceeds 1023 jump targets (x86 LASE cap)" — and an
+#      instance's range is now opaque there instead (`_jt_merge`, `_jir_in`; the sibling shape, many generics
+#      instantiated in one fn, is jump_target_cap.sh). F14d a 3000-deep chain: refused ONCE by the stack bound, naming
+#      the instance count; F14e the filed repro verbatim (122 links, 5); F14f 200 bounded links (5); F14g 200 links
+#      with no bound, `sizeof(T)` at the end (8). On every host: tests/tcyr/crossos/generic_forward_chain_deep.tcyr.
+#      Mutants (2026-10-20, a one-edit scratch copy of src/ each, CYCC= its cycc): no `_rd_inst_enter` reset -> RED
+#      F14d F14e F14f F14g ("over 256 levels"); no stack bound -> RED F14d (rc 139); the 6.3.35 merge back (an
+#      instance's targets into the enclosing table, no opaque range) -> RED F14f F14g ("1023 jump targets").
 #   BC (6.7.14) A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`), `T: Show`, was
 #      no bounded site (only a name declared `T` / `*T` was), so 6.7.11's carrier rule counted it a struct use: the
 #      base was the stub, and `gs(bi)` with `bi: Box<i64>` was refused although `impl Show for i64` exists. The call
@@ -378,10 +391,26 @@ fchain f14c 120 '' 'o119(3)'
 fwdref f14c o119 o118 "needs \`impl Show for i64\`" "F14c: o119(3) — refused once, naming the forward and the chain end's impl"
 fchain f14d 3000 '' 'o2999(h)'
 build f14d
-if [ "$rc" -eq 0 ]; then bad "F14d: a 3000-deep chain at f64: BUILT (the nesting refusal is its limit)"
-elif [ "$(grep -c '^error' "$T/f14d.err")" -ne 1 ] || ! grep -q "nesting too deep (over 256 levels" "$T/f14d.err"; then
-    bad "F14d: a 3000-deep chain at f64: not the nesting refusal alone: $(grep '^error' "$T/f14d.err" | head -2 | tr '\n' '|')"
-else ok "F14d: a 3000-deep chain at f64: the instance-nesting refusal alone (no definition refused); its time is bound_forward_chain_scale.sh"; fi
+if [ "$rc" -eq 0 ]; then bad "F14d: a 3000-deep chain at f64: BUILT (the stack bound is its limit)"
+elif [ "$rc" -ne 1 ]; then bad "F14d: a 3000-deep chain at f64: rc $rc (a signal? want the refusal, rc 1)"
+elif [ "$(grep -c '^error' "$T/f14d.err")" -ne 1 ] || ! grep -q "nesting too deep ([0-9]* generic instances, each parsed inside the call that reaches it, used over 6 MB of the compiler's stack)" "$T/f14d.err"; then
+    bad "F14d: a 3000-deep chain at f64: not the stack bound's refusal alone: $(grep '^error' "$T/f14d.err" | head -2 | tr '\n' '|')"
+else ok "F14d: a 3000-deep chain at f64: the stack bound's refusal alone, $(grep -o '[0-9]* generic instances' "$T/f14d.err") (no definition refused); its time is bound_forward_chain_scale.sh"; fi
+# F14e: the filed repro, verbatim (its generator, n = 122): `describe` bounded, o0 -> describe, main's own return.
+filedchain() { n=$2; { echo 'trait Show { fn show(self): i64; }'
+  echo 'fn describe<T: Show>(x: T): i64 { return x.show(); }'
+  echo 'impl Show for f64 { fn show(self): i64 { return 5; } }'
+  echo 'fn o0<T>(x: T): i64 { return describe(x); }'
+  i=1; while [ $i -lt $n ]; do echo "fn o$i<T>(x: T): i64 { return o$((i-1))(x); }"; i=$((i+1)); done
+  echo "fn main(): i64 { var h: f64 = 1.5; return o$((n-1))(h); }"; } > "$T/$1.cyr"; }
+filedchain f14e 122
+exits f14e 5 "F14e: the filed repro verbatim, 122 links at f64 (was: nesting too deep (over 256 levels))"
+fchain f14f 200
+exits f14f 5 "F14f: 200 bounded links at f64, o199(h)"
+{ printf 'include "lib/syscalls.cyr"\nfn z0<T>(x: T): i64 { return sizeof(T); }\n'
+  k=1; while [ "$k" -lt 200 ]; do printf 'fn z%d<T>(x: T): i64 { return z%d(x); }\n' "$k" "$((k - 1))"; k=$((k + 1)); done
+  printf 'fn main(): i64 { var h: f64 = 1.5; return z199(h); }\nsyscall(60, main());\n'; } > "$T/f14g.cyr"
+exits f14g 8 "F14g: 200 links with no bound, sizeof(T) at the end, z199(h)"
 # F15: cycles still end, and are judged right: a ring of 40 generics (rK -> rK+1, r39 -> r0) with one exit to gb (r20)
 { printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nimpl Show for f64 { fn show(self): i64 { return 5; } }\n'
   printf 'fn gb<T: Show>(x: T): i64 { return x.show(); }\n'

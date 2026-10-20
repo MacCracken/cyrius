@@ -7520,8 +7520,13 @@ describe<i32>(7);   # needs impl Show for i32
   included, "uses its type parameter as a struct"; 6.7.14 judged a chain only 64 forwards deep, so a
   65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth). A
   generic method, as the forward target or in the note, is named as the source spells it, `P.bk` (6.7.16; it
-  printed the fn table's `P_bk`). The call that instantiates such a chain at another type is still held to the parser's nesting bound: about 120
-  forwards, past which it is *nesting too deep (over 256 levels)*, a chain without a bound alike.
+  printed the fn table's `P_bk`). The call that instantiates such a chain at another type parses each link's instance
+  inside the call that reaches it, so the chain is bounded by the compiler's stack, not by the parser's 256 nesting
+  levels (an instance's body counts its own): about 300 links compile (a few fewer with the Windows compiler), and a
+  longer chain is refused *nesting too deep (N generic instances, each parsed inside the call that reaches it, used
+  over 6 MB of the compiler's stack)*, a chain without a bound alike. Until 6.7.16 it was about 120 links (*over 256
+  levels*), and on x86 about 190 (*function exceeds 1023 jump targets*, which also refused one fn calling ~210
+  distinct generics: an instance's jump targets now stay its own).
 
 Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct
 was refused as "a struct beside a second type argument", and no bound was checked. Dispatch is

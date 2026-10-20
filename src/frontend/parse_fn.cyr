@@ -15908,27 +15908,75 @@ fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
 # fn's code range, that reset wipes the ENCLOSING fn's recorded jump targets — so the
 # enclosing fn's LASE (`IS_JUMP_TARGET`) then mis-eliminates a load that IS a branch
 # join (dropping early returns, clobbering a live local, corrupting operands). Snapshot
-# the enclosing targets before the inline emit and merge them back after, so the
-# enclosing LASE sees BOTH the instance's targets (already emitted in-range) and its
-# own. (jump_src / nop-run compaction needs no restore: the enclosing fn is always
-# `_cur_fn_has_closure` here → frame-trim is skipped and no nop_runs are produced.)
+# the enclosing targets before the inline emit and put them back after. (jump_src /
+# nop-run compaction needs no restore: the enclosing fn is always `_cur_fn_has_closure`
+# here → frame-trim is skipped and no nop_runs are produced.)
+# ⛔ 6.7.16 — AN INSTANCE'S CODE IS OPAQUE TO THE FNS IT IS EMITTED INSIDE, AND ITS JUMP TARGETS STAY ITS OWN. They were
+# merged into the enclosing fn's table so its LASE walk would not eliminate across a branch join inside the instance —
+# and every instance nested in that one merged its own: the table (1023 entries) held the whole chain's, so ~190
+# generics forwarding their T, called at f64, were refused "function exceeds 1023 jump targets (x86 LASE cap) -
+# split the function" over a one-line main. Now the instance's range is recorded (`_jir_push`) and `IS_JUMP_TARGET`
+# answers 1 anywhere inside it: the enclosing walks change no byte the instance's own passes already settled (with
+# all of its targets), and the table holds the fn's own targets only. CHANGELOG [6.7.16]
 fn _jt_snapshot(S): i64 {
     var n = L64(S + 0x19E000);
-    var buf = alloc((n + 1) * 8);
+    var buf = alloc((n + 3) * 8);
     store64(buf, n);
+    store64(buf + 8, _jir_lo);
+    store64(buf + 16, _jir_n);
     var i = 0;
-    while (i < n) { store64(buf + 8 + i * 8, L64(S + 0x19E008 + i * 8)); i = i + 1; }
+    while (i < n) { store64(buf + 24 + i * 8, L64(S + 0x19E008 + i * 8)); i = i + 1; }
+    _jir_lo = _jir_n;   # the instance's own ranges start here
     return buf;
 }
-fn _jt_merge(S, buf): i64 {
+# After the instance (`jmp` the patch offset of the jump over it, the cursor at its end): the enclosing targets back
+# in place of the instance's, and the instance's range recorded.
+fn _jt_merge(S, buf, jmp): i64 {
     var saved = load64(buf);
-    var cur = L64(S + 0x19E000);
+    var cur = 0;
     var i = 0;
     while (i < saved) {
-        if (cur < 1023) { S64(S + 0x19E008 + cur * 8, load64(buf + 8 + i * 8)); cur = cur + 1; }
+        if (cur < 1023) { S64(S + 0x19E008 + cur * 8, load64(buf + 24 + i * 8)); cur = cur + 1; }
         i = i + 1;
     }
     S64(S + 0x19E000, cur);
+    _jir_lo = load64(buf + 8);
+    _jir_n = load64(buf + 16);
+    _jir_push(jmp + 4, GCP(S));
+    return 0;
+}
+
+# The code ranges [start, end) of the instances emitted inline in the fns being parsed, as a stack: the fn being
+# parsed owns the pairs from `_jir_lo` up (PARSE_FN_DEF truncates to it at its start: a top-level fn to 0).
+var _jir_v = 0;
+var _jir_n = 0;
+var _jir_cap = 0;
+var _jir_lo = 0;
+fn _jir_push(s, e): i64 {
+    if (_jir_n >= _jir_cap) {
+        var nc = _jir_cap * 2 + 64;
+        var nb = alloc(nc * 16);
+        var i = 0;
+        while (i < _jir_n * 2) { store64(nb + i * 8, load64(_jir_v + i * 8)); i = i + 1; }
+        _jir_v = nb;
+        _jir_cap = nc;
+    }
+    store64(_jir_v + _jir_n * 16, s);
+    store64(_jir_v + _jir_n * 16 + 8, e);
+    _jir_n = _jir_n + 1;
+    return 0;
+}
+# 1 when code offset `off` is inside an instance emitted in the fn being parsed.
+fn _jir_in(off): i64 {
+    var i = _jir_lo;
+    while (i < _jir_n) {
+        if (off >= load64(_jir_v + i * 16)) { if (off < load64(_jir_v + i * 16 + 8)) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _jir_reset(): i64 {
+    _jir_n = _jir_lo;
     return 0;
 }
 
@@ -16031,7 +16079,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var attrs = _attr_park();         # 6.6.17: a pending attribute is the next definition's
     var sv_msp = _gen_msp;            # 6.7.15: a method call's spelling names its own refusals, not the body's
     _gen_msp = 0;
+    var sv_rd = _rd_inst_enter();     # 6.7.16: the instance's levels count from 0 (`_rd_enter`)
     PARSE_FN_DEF(S);
+    _rd_inst_exit(sv_rd);
     _gen_msp = sv_msp;
     _attr_unpark(attrs);
     _inst_name = 0;
@@ -16041,7 +16091,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     # --- restore the enclosing fn's state ---
     _fnst_restore(S, st);
     _fnst_tab_restore(S, tab);
-    _jt_merge(S, jt_snap);           # v6.3.35: restore enclosing targets (alongside the instance's)
+    _jt_merge(S, jt_snap, jmp);      # v6.3.35: restore enclosing targets; 6.7.16: the instance's range, not its targets
     EPATCH(S, jmp);
     # The instance is emitted INLINE in the enclosing fn's code range (jumped over),
     # so mark the enclosing fn to skip its regalloc byte-scan post-pass (it would
@@ -16820,6 +16870,7 @@ fn DSE_PASS(S, fn_start): i64 {
 
 # Check if a codebuf offset is a jump target (recorded by EPATCH)
 fn IS_JUMP_TARGET(S, off): i64 {
+    if (_jir_n > _jir_lo) { if (_jir_in(off) == 1) { return 1; } }   # 6.7.16: inside an instance (`_jt_merge`)
     var jtc = L64(S + 0x19E000);
     # AR-03 (v6.1.38): only 1023 slots are valid (0x19E008..0x1A0000); EJMP's
     # overflow path bumps the count to the 1024 sentinel, so clamp before reading

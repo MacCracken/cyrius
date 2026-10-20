@@ -2461,6 +2461,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     S64(S + 0x1AC020, _defer_base);  # defer_count = this fn's base
     _tcp_drop(S);   # 6.7.3: no in-loop tail call is left over from the previous body
     S64(S + 0x19E000, 0);  # jump_target_count = 0
+    _jir_reset();          # 6.7.16: and this fn's instance ranges (`_jt_merge`)
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
     S64(S + 0x1AC800, 0);  # v6.5.20: sw_tbl_cnt = 0 (per-fn switch-table repair)

@@ -48,6 +48,15 @@
 #     blocks / if / while / parens / unary / call; nested-fn stays GREEN at every depth (it
 #     is refused and skipped, see above); axis 3's bound row RED — nested blocks at 1024
 #     compile rc 0 with no diagnostic under the mutant; the nested-fn refusal row green.
+#
+# ⛔ 6.7.16 — AXIS 4: A CHAIN OF GENERIC INSTANCES IS BOUNDED BY THE STACK. An instance is parsed nested inside the call
+# that reaches it, so a chain of generics forwarding their T nests one PARSE_FN_DEF per link with no source nesting at
+# all; each link spent two of the 256 levels, and 122 links were refused. An instance's body now counts its own levels
+# (`_rd_inst_enter`) and `_rd_enter` bounds the native stack itself (6 MB below its first frame), so the 256-level
+# counter still bounds every lexical shape above exactly as before (axis 3), while a chain of ~300 links compiles
+# (tests/gates/frontend/trait_bounds_checked.sh F14d-F14g) and a longer one — or one whose links each nest 100 blocks
+# deep — is refused by name, never a SIGSEGV. Mutants (2026-10-20, CYCC= its cycc): no stack bound -> RED axis 4 (rc -11
+# on both chains); no `_rd_inst_enter` reset -> RED axis 4 (the 200-link chain refused "over 256 levels").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -158,6 +167,26 @@ rc, err = run(SHAPES["nested fn"](1024))
 check("nested fn @ 1024 exits 1", 1, rc)
 check("nested fn @ 1024 is the nested-fn refusal, once", 1, err.count("is defined inside fn 'f'; define it at top level"))
 check("nested fn @ 1024 never reaches the depth bound", False, "nesting too deep" in err)
+
+# ── AXIS 4 (6.7.16) — a chain of generic instances: bounded by the stack, refused by name, no signal.
+print("axis 4 — a chain of generic instances is bounded by the compiler's stack, refused by name:")
+def chain(n, body_nest):
+    src = ["fn o0<T>(x: T): i64 { return sizeof(T); }"]
+    for k in range(1, n):
+        src.append(f"fn o{k}<T>(x: T): i64 {{ " + "{ " * body_nest + f"return o{k - 1}(x); " + "}" * body_nest + " }")
+    src.append(f"fn main(): i64 {{ var h: f64 = 1.5; return o{n - 1}(h); }}")
+    return "\n".join(src) + "\n"
+for n, nest in ((3000, 0), (3000, 100)):
+    rc, err = run(chain(n, nest))
+    label = f"a {n}-link chain at f64" + (f", each link nesting {nest} blocks" if nest else "")
+    check(f"{label}: exits 1, not a signal", 1, rc)
+    check(f"{label}: one error, the stack bound's", True,
+          err.count("error:") == 1 and "generic instances, each parsed inside the call that reaches it" in err)
+rc, err = run(chain(200, 0))
+check("a 200-link chain at f64 compiles (the bound is the stack, not 256 levels)", 0, rc)
+rc, err = run("fn f() { return " + "(" * 100000 + "1" + ")" * 100000 + "; }\n")
+check("100000 nested parens: still the 256-level refusal, exit 1", 1, rc)
+check("…naming the level bound", True, "nesting too deep (over 256 levels" in err)
 
 print("")
 if fails == 0:
