@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.15 — released 2026-10-19** (tagged at `ce23de59e`; the store slot refreshed from the tag, `SOURCE_COMMIT` matches). 6.7.15: Break 2 repair 5, what 6.7.14 filed — 119 issues closed in seven lanes over four waves, CYRIUS-2026-0036 fixed, the fold patra 1.16.5. |
-| **cycc** | x86 **2,598,448 B** (`.text` **2,373,920**) at the 6.7.16 wave-2 integration (wave 1: 2,565,440 B; 6.7.15 released at 2,542,240 B, `.text` 2,314,392; +56,208 B). `build/cycc-native-aarch64` **2,819,808 B** (6.7.15: 2,755,520 B). Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
+| **cycc** | x86 **2,598,504 B** (`.text` **2,373,856**) at the 6.7.16 p16 / t16 integration (wave 2: 2,598,448 B; 6.7.15 released at 2,542,240 B, `.text` 2,314,392). `build/cycc-native-aarch64` **2,819,864 B** (6.7.15: 2,755,520 B). Dead-code floor **52 fns / 10,597 B** (x86, unchanged). |
 | **Bootstrap / cross-OS** | 6.7.15: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on the FULL corpus, REAL hardware through `scripts/release-gate.sh` (on `dc6533f90`). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.15 `release-gate.sh` GREEN (2026-10-19, on `dc6533f90`): check.sh 569 / 569 shell gates, the driver 131 / 131, the 2 named agnos-parity SKIPs; all four hosts on the full corpus. After the release (the 2026-10-19 detour, docs + scripts/ only, no src/ change): check.sh GREEN on `96d1f53a9` — 569 / 569 shell gates, 0 failures, the check driver green, the same 2 named agnos-parity SKIPs. self_compile 1,190 ms (A/B 6.7.14 1,765 → 6.7.15 1,197 ms, −32.2 %; same input −34.6 %). |
 | **Corpus** | **663** `.tcyr` (**353** in `crossos/`) · **106** `lib/*.cyr` · **565** shell gates under `tests/gates/<bucket>/` · api-surface **5,891**. |
