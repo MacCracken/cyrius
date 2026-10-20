@@ -601,6 +601,7 @@ fn _decl_late(S): i64 {
     var n0 = _fm_site_line;
     if (f1 != f0) { if (_dl_incl(S, l1, f0, n0) == 1) { return 1; } }
     _dl_report(S, ti, f1, f0, n0);
+    if (_dl_pub_mark(S) == 1) { return 1; }   # 6.7.16: `pub var x = 1;` still declares x (as below module scope)
     _dl_skip(S);
     _dl_derived(S);
     _dl_names(S, ti, GTI(S));   # 6.7.15

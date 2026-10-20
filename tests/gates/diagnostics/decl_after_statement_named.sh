@@ -77,6 +77,11 @@
 #   `_dl_quiet` without its `pub use` step            -> RED NM11 NM19 ("undefined function 'g'")
 #   `_dl_skip_at` without its `pub const fn` line     -> RED NM12 NM17 (the next statement's error lost)
 #
+#   PM  module scope (met in passing, 6.7.16): a late `pub var x = 5;` / `public var` stepped whole, so a use of x
+#       was "undefined variable 'x'" — the marker is stepped alone there too (`_decl_late`'s `_dl_pub_mark`);
+#       PM3 a `pub const` (pass 1's const prepass had registered it) the control
+#   (measured) `_decl_late` without its `_dl_pub_mark` -> RED PM1 PM2
+#
 # ITS USES (6.7.15; issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
 # was stepped, so what it names was never registered, and each use was a second error: `var q = Q { 5 };`
 # "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable", `fn f(q: *Q)` "unknown
@@ -574,6 +579,25 @@ syscall(39);
 pub use mm.g;
 syscall(60, g());
 ' "error:<source>:5:1: a \`pub\` declaration $R (line 4)"
+one "PM1 module scope: pub var then used, one error" 'var a = 1;
+a = 2;
+pub var x = 5;
+syscall(60, x);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)"
+one "PM2 module scope: public var used in a fn, then a mistake" 'var a = 1;
+a = 2;
+public var x = 5;
+fn f(): i64 { return x; }
+syscall(60, f() + zz);
+' "error:<source>:3:1: a \`public\` declaration $R (line 2)
+error:<source>:5:21: undefined variable 'zz' (missing include or enum?)"
+one "PM3 control: module scope pub const then used" 'var a = 1;
+a = 2;
+pub const C = 5;
+const D = C + 1;
+syscall(60, D + zz);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
+error:<source>:5:19: undefined variable 'zz' (missing include or enum?)"
 
 # ── U: a use of what a refused declaration names (6.7.15) ───────────────────────────────────────────────────
 L='must come before the first top-level statement (line 2)'
