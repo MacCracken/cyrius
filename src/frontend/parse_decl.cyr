@@ -7718,7 +7718,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     var pg = 0 - 1;   # 6.7.10 (B7-1g): `var G: T = *p;` — p's slot (`*p` is a struct value)
     var dx = 0;       # 6.7.10 (review): 1 = any other dereference of a `*T` (`_gci_dx_top`)
     if (ss == 0) {
-        if (_sci_star(S, GTI(S) + 1) == 0) {
+        if (_gz_star1(S, GTI(S) + 1) == 0) {
             dx = _gci_dx_top(S, noff, pscale);
             if (dx == 0) { return 0; }
         } else {
@@ -7728,7 +7728,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
         ss = sid;
     }
     if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ss, noff, _gci_nm) == 1) { return 0; }
-    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { if (dx == 0) { return 0; } }   # 6.7.16 (D17 (a)): `*GPP` copies at 8 B too
     STI(S, GTI(S) + 1);   # consume '='
     var took = 2;
     var h = 0;
@@ -7739,8 +7739,10 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     elif (pg < 0) { took = _gci_take(S, sid); }
     else { STI(S, GTI(S) + 2); }   # `* IDENT`, the cursor on `;`
     var vcnt = GVCNT(S);
+    var gsz = STRUCTSZ(S, sid - 1);
+    if (gsz < 8) { gsz = 8; }   # 6.7.16: 8 B or less, the value slot the arm's value store registers (`_vecg_size`)
     S64(_varn_base + vcnt * 8, noff);
-    S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
+    S64(_vars_base + vcnt * 8, gsz);
     SVTYPE(S, vcnt, sid);
     SVPM(S, vcnt, 2);
     SLVAR(S, vcnt);
@@ -7759,10 +7761,15 @@ fn _gci_toplevel(S, noff, pscale): i64 {
 # `_sci_dexpr`'s global twin): 1 = over 8 B, copied by `_gci_toplevel` through a hidden global holding E
 # into the inline G it registers after it; 0 = not one, refused (a `*U` of another struct, by name), or 8
 # B or less — the arm's value store then copies the word (`_gz_late` judges it a value).
+# 6.7.16 (D17 (a)): `*pp` of a `**S` (`_hl_dstar_x`'s mode 1) is 1 at EVERY size — copied through the `*S` it reads, as
+# in a fn (`_sci_dexpr`); the value store would keep that pointer word, a handle. CHANGELOG [6.7.16]
 fn _gci_dx_top(S, noff, pscale): i64 {
-    var ps = _hl_dstar(S, GTI(S) + 1);
+    var ps = _hl_dstar_x(S, GTI(S) + 1, 5, 1);
     if (ps <= 0) { return 0; }
+    var dpp = _hl_dpp;
     if (_agg_dx_err(S, pscale, 0 - ps, noff) == 1) { return 0; }
+    _hl_dpp = dpp;
+    if (dpp == 1) { return 1; }
     if (STRUCTSZ(S, (0 - pscale) - 1) <= 8) { return 0; }
     return 1;
 }
@@ -11308,12 +11315,22 @@ fn _gz_inst_of(S, c, g): i64 {
 }
 # `* IDENT ;` at token `b`, IDENT a global `*sid`: 1. 6.7.10 (review): or any other dereference of a
 # `*sid` up to the `;` (`_hl_dstar`: `(*P)`, `*gp()`, `*GW.p`, `*(P + 1)`).
+# ⛔ 6.7.16 (D17 (a)) — and `*pp` of a `**sid` in any spelling (`_hl_dstar_x`'s mode 1: `*GPP`, `(*GPP)`): a top-level
+# `var G: S = *GPP;` is a copy at every size, as the same line in a fn is since 6.7.15 (it bound a handle), so pass 1
+# registers G inline and the sweep keeps it a value. CHANGELOG [6.7.16]
 fn _gz_star(S, b, sid): i64 {
-    if (_sci_star(S, b) == 0) {
-        if (_hl_dstar(S, b) == sid) { return 1; }
+    if (_gz_star1(S, b) == 1) {
+        if (_gz_pg(S, b) == sid) { return 1; }
         return 0;
     }
-    if (_gz_pg(S, b) != sid) { return 0; }
+    if (_hl_dstar_x(S, b, 5, 1) == sid) { return 1; }
+    return 0;
+}
+# 1 = `* IDENT ;` at token `b` with IDENT a `*T` global, T a struct (`_gz_star_src`'s copy through its slot); a `**S`
+# or untyped IDENT is 0 — the general dereference arm's (`_hl_dstar_x`). CHANGELOG [6.7.16]
+fn _gz_star1(S, b): i64 {
+    if (_sci_star(S, b) == 0) { return 0; }
+    if (_gz_pg(S, b) <= 0) { return 0; }
     return 1;
 }
 # The struct the pointer global after the `*` at token `b` points at (`*T` annotation), else 0.
@@ -12331,7 +12348,7 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
     var b = GTI(S);
-    if (_sci_star(S, b) == 0) { return _gz_dx_init(S, dgv, gps, dnoff); }   # 6.7.10 (review): any `*E`
+    if (_gz_star1(S, b) == 0) { return _gz_dx_init(S, dgv, gps, dnoff); }   # 6.7.10 (review): any `*E`; 6.7.16: `*GPP`
     var pg = _gz_star_src(S, b, gps, dnoff);
     if (pg < 0) { return 0; }
     var sid = 0 - gps;
@@ -12931,13 +12948,17 @@ fn _hl_name_ty(S, noff): i64 {
 # (`_gci_inline` asked `_gz_star`), the cursor on the `;` (1); 8 B or less, the value store copies its word
 # (0). A `*U` of another struct is refused by name; a dereference pass 1 could not type (a `*T` global or
 # fn declared below G) is refused by name, as a whole source declared below is (`_gci_below`).
+# 6.7.16 (D17 (a)): `*pp` of a `**S` (`_hl_dstar_x`'s mode 1) is copied through the `*S` it reads at EVERY size — the
+# value store would keep that pointer word (a handle). CHANGELOG [6.7.16]
 fn _gz_dx_init(S, dgv, gps, dnoff): i64 {
-    var ps = _hl_dstar(S, GTI(S));
+    var ps = _hl_dstar_x(S, GTI(S), 5, 1);
     if (ps <= 0) { return 0; }
+    var dpp = _hl_dpp;
     if (_agg_dx_err(S, gps, 0 - ps, dnoff) == 1) { return 0; }
     var sid = 0 - gps;
-    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { if (dpp == 0) { return 0; } }
     if (dgv < 0) { return 0; }
+    _hl_dpp = dpp;
     if (GVPM(S, dgv) != 2) {
         ERR_IDENT(S, "cannot copy-init ", dnoff,
           " from a dereference of a global or fn declared below it (declare it first): ", _hl_dnm);
