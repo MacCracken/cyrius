@@ -1733,7 +1733,10 @@ was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's deci
 mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
 scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none; a generic call's instance too — in the
 declaration zone since 6.7.15, `var x = mkg1(33);` with `fn mkg1<T>(v: T): G1<T>` is `G1`, `mkg1<i32>(33)` is
-`G1<i32>`), and one of 9-16 bytes is refused as
+`G1<i32>`, and since 6.7.16 whatever carries the type argument binds it there as the call does: `mkg1(30 + 3)` and
+`mkg1(-3)` are `G1`, `mkg1(1.5)` is `G1<f64>`, a struct carrier `mkc(BX)` with `BX: Box<i32>` is `G1<i32>`, and a
+bounded `struct G1<T: Show>` gives its instance, its bound judged once, at the call — each was *no struct type in
+scope for 'x'* at `x.v` in the zone and bound after the first statement), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
 through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. So does a
 whole method, operator or known `&f` result (6.7.15; the user's decisions D34 (a) and D35 (a), 2026-10-18): `var G =

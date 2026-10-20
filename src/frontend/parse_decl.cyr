@@ -11770,20 +11770,42 @@ fn _gu_reg(S, gvi, typed, ti): i64 {
 # The end of pass 1: each noted global whose initialiser is one whole call (or, 6.7.15, a whole method, operator or
 # known `&f` result) returning a struct takes it — inline of 8 B or less, else a handle (refused at the replay, or by
 # the call). The struct is read from the tokens (`_gu_zsid`). The cursor is put back.
+# 6.7.16: to a fixpoint — a reading may take another noted global's struct (`mkc(BX)`, BX swept below it), which the
+# replay reads as the sweep left it, so the notes are read again until none changes (one pass per note at most).
+# CHANGELOG [6.7.16]
 fn _gu_sweep(S): i64 {
     if (_gu_v == 0) { return 0; }
     var sv = GTI(S);
     var n = vec_len(_gu_v);
+    var k = 0;
+    while (_gu_pass(S, n) == 1) {
+        k = k + 3;
+        if (k > n) { break; }
+    }
+    STI(S, sv);
+    return 0;
+}
+# One reading of every note, with what the readings before it typed; 1 = a global's struct changed.
+fn _gu_pass(S, n): i64 {
+    var ch = 0;
     var i = 0;
     while (i < n) {
         var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
-        if (sid > 0) {
-            _gu_type(S, vec_get(_gu_v, i), sid);
-            vec_set(_gu_v, i + 2, sid);
+        if (sid != vec_get(_gu_v, i + 2)) {
+            _gu_set(S, i, sid);
+            ch = 1;
         }
         i = i + 3;
     }
-    STI(S, sv);
+    return ch;
+}
+# Note `i`'s global takes struct `sid` (`_gu_type`), or with 0 is untyped as it was registered.
+fn _gu_set(S, i, sid): i64 {
+    var gvi = vec_get(_gu_v, i);
+    vec_set(_gu_v, i + 2, sid);
+    if (sid > 0) { return _gu_type(S, gvi, sid); }
+    SVTYPE(S, gvi, 0);
+    SVPM(S, gvi, 0);
     return 0;
 }
 # The struct the zone initialiser at token `ti` binds, from its tokens: a whole free call's return (`_gz_call_rs`: a
@@ -11832,62 +11854,121 @@ fn _gu_wfree(S, a, e): i64 {
 # — an explicit list as that call parses it, else each type parameter's carrying argument (`_gu_tp`) — then G itself
 # for an all-i64 binding (the base fn: the base struct), else the instance the return names under that binding
 # (`_gu_inst`). 0 when the tokens bind no type argument: the global stays untyped, as before.
+# 6.7.16: an inferred binding is decided as `_gen_resolve_call` decides it — the base unless an argument binds a struct
+# or marks `_gi_sc` (an f64, a struct carrier's scalar) — and a binding the sweep cannot read (`_gu_miss`) binds nothing.
 fn _gu_gen(S, c): i64 {
     var fi = FINDFN(S, TOKVAL(S, c));
     if (fi < 0) { return 0; }
     var c0 = 0 - 8;
     var c1 = 0;
     if (TOKTYP(S, c + 1) == 19) {
-        if (_targs_resolvable(S, c + 2) == 0) { return 0; }
-        var sv = GTI(S);
-        var sv_gt = _ta_pending_gt;
-        _ta_pending_gt = 0;
-        STI(S, c + 2);
-        c0 = _parse_one_type_arg(S);
-        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
-        _ta_pending_gt = sv_gt;
-        STI(S, sv);
-    } else {
-        c0 = _gu_tp(S, c, fi, 0);
-        if (c0 == 0) { return 0; }
-        if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) {
-            c1 = _gu_tp(S, c, fi, 1);
-            if (c1 == 0) { return 0; }
+        if (_gu_xlist(S, c) == 0) { return 0; }
+        c0 = _gu_x0;
+        c1 = _gu_x1;
+        if (c0 <= 0 && c1 <= 0) {
+            if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return _gz_gb; }
+            if (_gen_stub(S, fi) != 0) { return 0; }
         }
+        return _gu_inst(S, fi, c0, c1);
     }
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gi_sc = 0;
+    _gu_miss = 0;
+    c0 = _gu_tp(S, c, fi, 0);
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _gu_tp(S, c, fi, 1); }
+    var g = _gi_sc;
+    var miss = _gu_miss;
+    _gi_sc = sc;
+    _gu_miss = ms;
+    if (miss == 1) { return 0; }
     if (c0 <= 0 && c1 <= 0) {
-        if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return _gz_gb; }
+        if (g == 0) { return _gz_gb; }
         if (_gen_stub(S, fi) != 0) { return 0; }
     }
     return _gu_inst(S, fi, c0, c1);
 }
-# The binding of type parameter `w` of generic `fi` at the call whose name is token `c`, read from the tokens: a struct
-# by the pair scans' reader (`_tok_gen_tp_sid`); else, as the parser's `_gen_infer_tp` binds it, i64 for a lone integer
-# literal or no carrying argument, and a lone global's name its global's binding (`_infer_conc_global`; no local is in
-# scope at top level). 0 = not read here (a struct carrier, any other argument).
+# The explicit type-argument list of the call whose name is token `c`, read as `_gen_resolve_call` reads it, into
+# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses (`_targs_resolvable`).
+var _gu_x0 = 0;
+var _gu_x1 = 0;
+fn _gu_xlist(S, c): i64 {
+    if (_targs_resolvable(S, c + 2) == 0) { return 0; }
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    _ta_pending_gt = 0;
+    STI(S, c + 2);
+    _gu_x0 = _parse_one_type_arg(S);
+    _gu_x1 = 0;
+    if (_ta_comma(S) == 1) { _gu_x1 = _parse_one_type_arg(S); }
+    _ta_pending_gt = sv_gt;
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.16 — THE SWEEP BINDS A TYPE PARAMETER AS PASS 2 DOES, WITH ITS OWN CLASSIFIER. The binding of type parameter
+# `w` of generic `fi` at the call whose name is token `c`: a struct by the pair scans' reader (`_tok_gen_tp_sid`), else
+# what `_gen_infer_tp` binds — the carrying argument through `_ic_arg`, a struct carrier through `_gen_infer_ind` —
+# so `mkg1(30 + 3)`, `mkg1(-3)`, `mkg1(1.5)`, `mkg1(sc())`, `mkg1(&n)` and `mkc(BX)` with `BX: Box<i32>` bind what the
+# replay's call binds (they bound nothing: `x.v` was "no struct type in scope for 'x'" in the zone and worked after
+# the first statement). No fn instance is made here (`_gu_noinst`; a fn body compiled now would read the zone's
+# layouts before they are judged): a binding only an instance answers is a miss (`_gu_miss`) — the global stays
+# untyped, as before — as is a tuple (the call refuses itself). No local is in scope (as at the replay). `_gi_sc` is
+# marked as `_gen_infer_tp` marks it. CHANGELOG [6.7.16]
+var _gu_noinst = 0;
+var _gu_miss = 0;
 fn _gu_tp(S, c, fi, w): i64 {
     var s = _tok_gen_tp_sid(S, c - 1, c - 1, c, fi, w);
     if (s > 0) { return s; }
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    var r = _gu_tp_ic(S, c, fi, w);
+    SFLC(S, lc);
+    _gu_noinst = ni;
+    STI(S, sv);
+    if (_tup_is(S, r) == 1) { _gu_miss = 1; }
+    if (r == 0 - 9) { _gi_sc = 1; }
+    return r;
+}
+fn _gu_tp_ic(S, c, fi, w): i64 {
     var m = GFGM(S, fi);
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
-    if (pk == 0) { return 0; }
+    if (pk == 0) { return _gen_infer_ind(S, fi, c + 1, w, 0); }
     var a = _call_arg_for(S, fi, c + 1, pk - 1);
     if (a < 0) { return 0 - 8; }
-    var nt = TOKTYP(S, a + 1);
-    if (nt != 31) { if (nt != 11) { return 0; } }
-    var t = TOKTYP(S, a);
-    if (t == 1) { return 0 - 8; }
-    if (t != 2) { return 0; }
-    if (_findvar_core(S, TOKVAL(S, a)) < 0) { return 0; }
+    return _ic_arg(S, fi, a, pk);
+}
+# `_ic_call_rs` at the sweep: what the GENERIC call at the cursor (fi its base, `r` its return) returns, with no instance
+# made — a `: T` return is T's binding at this call when that is a struct or f64 (the instance's, `_gtype_tp_ret`), else
+# `r`; a `: G<..>` return (an instance's struct) or a pointer carrier is a miss. CHANGELOG [6.7.16]
+fn _gu_ircs(S, fi, r, ptr): i64 {
+    if (ptr == 1) { _gu_miss = 1; return r; }
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) {
+        if (r > 0) { if (r < 2048) { if (GSTP(S, r - 1) != 0) { _gu_miss = 1; } } }
+        return r;
+    }
+    var c = GTI(S);
     var sc = _gi_sc;
-    var r = _infer_conc_global(S, TOKVAL(S, a), _ic_ptr_param(S, fi, pk - 1));
+    var b = 0 - 8;
+    if (TOKTYP(S, c + 1) == 19) {
+        if (_gu_xlist(S, c) == 0) { _gu_miss = 1; }
+        elif (w == 1) { b = _gu_x1; }
+        else { b = _gu_x0; }
+    } else { b = _gu_tp(S, c, fi, w); }
     _gi_sc = sc;
+    if (b > 0) { return b; }
+    if (b == 0 - 9) { return b; }
     return r;
 }
 # The struct generic `fi`'s return `: G<..>` (`_gz_gb` G) names under the binding (c0, c1), read by `_gtype_sid` as
 # PARSE_FN_DEF reads an instance's return — `G$..` minted and deduped by name, so the instance the replay's call makes
-# returns this same struct. Only a list of plain names, and a G with no bounds (its judgement is the call's). 0 = none.
+# returns this same struct. Only a list of plain names. 0 = none.
+# 6.7.16: a G with bounds too (`struct G1<T: Show>`), its bound judged quietly (`_bnd_quiet`): the call's own instance
+# judges it, once; a failing one keeps the base G, as `_ret_targ_parse` does for that instance. CHANGELOG [6.7.16]
 fn _gu_inst(S, fi, c0, c1): i64 {
     var o = _gen_def_open(S, fi);
     if (o < 0) { return 0; }
@@ -11897,17 +11978,21 @@ fn _gu_inst(S, fi, c0, c1): i64 {
     var n = rc + 2;
     if (TOKTYP(S, n) != 2) { return 0; }
     if (FINDSTRUCT(S, TOKVAL(S, n)) != _gz_gb) { return 0; }
-    if (GSBND(S, _gz_gb - 1) != 0) { return 0; }
     if (_gu_plain(S, n + 1) == 0) { return 0; }
     var sv = GTI(S);
     var s0 = _inst_conc0;
     var s1 = _inst_conc1;
+    var q = _bnd_quiet;
+    var qh = _bnd_quiet_hit;
+    _bnd_quiet = 1;
     _inst_conc0 = c0;
     _inst_conc1 = c1;
     STI(S, n);
     var r = _gtype_sid(S, fi, _gz_gb);
     _inst_conc0 = s0;
     _inst_conc1 = s1;
+    _bnd_quiet = q;
+    _bnd_quiet_hit = qh;
     STI(S, sv);
     return r;
 }

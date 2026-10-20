@@ -173,6 +173,36 @@ fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
 var TG1 = mkg1(33);
 var TG2 = mkg1<i32>(30);
 fn tg_read(): i64 { return TG1.v + TG2.v; }
+# --- 6.7.16: whatever carries the type argument (issues/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md) ---
+# The zone read a carrying argument only as a struct, a lone integer literal or a lone global, so an expression, `-3`,
+# a float literal, a call returning a scalar, `&n`, a struct carrier and a bounded generic struct bound nothing (`x.v`
+# was "no struct type in scope for 'x'"); it now binds as the replay's call does. After a statement (TH*) below. TG9's
+# carrier is a global swept below it (0 when TG9 is made); TG11 reads it made.
+struct ZBox<T> { v: T; }
+trait ZShow { fn zshow(self): i64; }
+struct ZG<T: ZShow> { v: T; }
+impl ZShow for P1 { fn zshow(self): i64 { return self.a + 1; } }
+fn mkzc<T>(b: ZBox<T>): G1<T> { var g: G1<T>; g.v = b.v; return g; }
+fn mkzb<T: ZShow>(v: T): ZG<T> { var g: ZG<T>; g.v = v; return g; }
+fn mkzp<T>(p: *T): G1<T> { var g: G1<T>; g.v = *p; return g; }
+fn zsc(): i64 { return 30; }
+fn zid<T>(v: T): T { return v; }
+fn mkzbox(): ZBox<i32> { var b: ZBox<i32>; b.v = 33; return b; }
+fn zt4(g: G1<i32>): i64 { return g.v; }
+var ZN: i32 = 33;
+var ZM = 33;
+var TG3 = mkg1(30 + 3);
+var TG4 = mkg1(-3);
+var TG5 = mkg1(1.5);
+var TG6 = mkg1(zsc() + 3);
+var TG7 = mkg1(zid(1.5));
+var TG8 = mkzp(&ZN);
+var TG9 = mkzc(ZBX);
+var ZBX = mkzbox();
+var TG10 = mkzb(GP1);
+var TG11 = mkzc(ZBX);
+var TG12 = mkg1(&ZM);
+fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG10.v.zshow(); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -281,6 +311,28 @@ test_group("6.7.15: a zone generic call's generic struct instance");
 assert_eq(TG1.v, 33, "the zone: var TG1 = mkg1(33); TG1.v (refused before)");
 assert_eq(TG2.v + 3, 33, "the zone: var TG2 = mkg1<i32>(30); a G1<i32>");
 assert_eq(tg_read(), 63, "a fn body reads TG1.v / TG2.v before the replay");
+
+test_group("6.7.16: a zone generic call binds its instance whatever carries the type argument");
+assert_eq(TG3.v, 33, "the zone: mkg1(30 + 3) (refused at TG3.v before)");
+assert_eq(TG4.v, 0 - 3, "the zone: mkg1(-3)");
+assert_eq(f64_to(TG5.v * 22.0), 33, "the zone: mkg1(1.5) is a G1<f64>");
+assert_eq(TG6.v, 33, "the zone: mkg1(zsc() + 3), a call returning a scalar");
+assert_eq(f64_to(TG7.v * 22.0), 33, "the zone: mkg1(zid(1.5)), a generic call's f64");
+assert_eq(TG8.v + zt4(TG8), 66, "the zone: mkzp(&ZN), ZN: i32 through p: *T, is a G1<i32>");
+assert_eq(TG9.v, 0, "the zone: mkzc(ZBX), ZBX swept below it, is a G1<i32> (ZBX not yet made)");
+assert_eq(TG10.v.a + TG10.v.zshow(), 67, "the zone: mkzb(GP1), a bounded ZG<T: ZShow>");
+assert_eq(TG11.v, 33, "the zone: mkzc(ZBX), a struct carrier ZBox<i32>");
+assert_eq(load64(TG12.v), 33, "the zone: mkg1(&ZM) through x: T is the address (T = i64)");
+assert_eq(tg_read2(), 130, "a fn body reads them before the replay");
+var TH3 = mkg1(30 + 3);
+var TH4 = mkg1(-3);
+var TH5 = mkg1(1.5);
+var TH7 = mkg1(zid(1.5));
+var TH10 = mkzb(GP1);
+var TH11 = mkzc(ZBX);
+assert_eq(TH3.v + TH4.v, 30, "after a statement: mkg1(30 + 3) / mkg1(-3)");
+assert_eq(f64_to(TH5.v * 22.0) + f64_to(TH7.v * 22.0), 66, "after a statement: mkg1(1.5) / mkg1(zid(1.5))");
+assert_eq(TH10.v.zshow() + zt4(TH11), 67, "after a statement: a bounded ZG, a struct carrier");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

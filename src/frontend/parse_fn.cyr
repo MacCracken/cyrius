@@ -13984,6 +13984,7 @@ fn _ic_call_rs(S, fi, ptr): i64 {
     if (_MONOMORPH_OK == 0) { return _ic_rps(S, fi, r, ptr); }
     if (GFTP(S, fi) == 0) { return _ic_rps(S, fi, r, ptr); }
     if (r < 0) { if (r != 0 - 8) { return r; } }   # a declared scalar / vector return: the instance's too
+    if (_gu_noinst == 1) { return _gu_ircs(S, fi, r, ptr); }   # 6.7.16: the zone sweep makes no instance
     var ifi = _gen_call_inst(S, GTI(S));
     if (ifi < 0) { return r; }
     if (ptr == 1) { if (_fn_ret_ps(ifi) > 0) { return _ic_rps(S, ifi, r, 1); } }   # 6.7.15: a scalar pointee too
@@ -14013,6 +14014,7 @@ fn _gen_call_inst(S, ti): i64 {
     if (fi < 0) { return fi; }
     if (_MONOMORPH_OK == 0) { return fi; }
     if (GFTP(S, fi) == 0) { return fi; }
+    if (_gu_noinst == 1) { _gu_miss = 1; return fi; }   # 6.7.16: the zone sweep makes no instance (`_gu_tp`)
     var sv = _gi_sc;
     var st = GTI(S);
     STI(S, ti);
@@ -15627,6 +15629,7 @@ fn _fnst_tab_restore(S, b): i64 {
 # restore. Returns the specialized fi, or -2 for the not-yet-handled pc>0 case (the
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
+    if (_gu_noinst == 1) { _gu_miss = 1; return 0 - 4; }   # 6.7.16: never at the zone sweep (`_gu_tp`)
     # A STRUCT type argument re-emits the body with T bound to the struct sid, so a `T`
     # parameter is a by-value struct parameter and `p.x` resolves (v6.3.39, one parameter).
     # 6.7.1 (C3): on a two-parameter generic too — a struct as either argument, or both
