@@ -278,6 +278,16 @@ fn _cm13(a, b): i64 {
     return n + 1;
 }
 
+# Print a wire row's SKIP: a SKIP is never read as coverage (Windows refuses socketpair).
+fn _skip(row): i64 {
+    var a = "  SKIP: ";
+    var b = " — socketpair refused on this target\n";
+    print(a, strlen(a));
+    print(row, strlen(row));
+    print(b, strlen(b));
+    return 0;
+}
+
 alloc_init();
 
 test_group("T: the 1.3 server's ClientHello extension block fills the message");
@@ -320,6 +330,7 @@ test_group("W2: T5's refusal reaches the wire (tls_native_accept)");
 w = _wire13(_tail13(2));
 if (w == 0 - 999) {
     assert_eq(1, 1, "W2: SKIP — socketpair refused on this target");
+    _skip("W2");
 } else {
     assert_eq(w, TLS_ERR_BAD_HANDSHAKE, "W2: accept refuses the ClientHello");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
@@ -366,6 +377,7 @@ _ch13();
 w = _wire13(_dup(G_CHN, 0));
 if (w == 0 - 999) {
     assert_eq(1, 1, "W3: SKIP — socketpair refused on this target");
+    _skip("W3");
 } else {
     assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W3: accept refuses server_name twice");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
@@ -401,6 +413,7 @@ test_group("W4: E1's refusal reaches the wire (tls_native_accept)");
 w = _wire13(_cm13(1, 0 - 1));
 if (w == 0 - 999) {
     assert_eq(1, 1, "W4: SKIP — socketpair refused on this target");
+    _skip("W4");
 } else {
     assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W4: accept refuses [1]");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,

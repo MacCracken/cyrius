@@ -399,6 +399,8 @@ while (via >= 0) {
     w = _wire(via, _dup(G_CHN - 4, 0));
     if (w == 0 - 999) {
         assert_eq(1, 1, "R9: SKIP — socketpair refused on this target");
+        var sk9 = "  SKIP: R9 — socketpair refused on this target\n";
+        print(sk9, strlen(sk9));
     } else {
         if (via == 12) {
             assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "R9: tls_native_accept_12 refuses server_name twice");
@@ -450,6 +452,8 @@ while (via >= 0) {
     w = _wire(via, _cm12(1, 0 - 1));
     if (w == 0 - 999) {
         assert_eq(1, 1, "M7: SKIP — socketpair refused on this target");
+        var sk7 = "  SKIP: M7 — socketpair refused on this target\n";
+        print(sk7, strlen(sk7));
     } else {
         if (via == 12) {
             assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "M7: tls_native_accept_12 refuses [1]");
