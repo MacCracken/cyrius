@@ -24,6 +24,10 @@
 #      `var xa = p.id<f64>(h);` (an f64), a chain `w.v.id<f64>(h)`, struct type arguments of 8 / 16 / 24 B (a
 #      receive, an annotation, a return), a bounded member, two type parameters, a `*P` receiver, a statement,
 #      `p.pick<T>(t)` in a generic, `p.k<i64>(9)` — it was refused "unknown field 'id'" + "undefined variable"
+#   PQ (6.7.16) a forwarder whose receiver is typed by a generic call the way the parser binds it — `pp: **T` (6.7.14's
+#      D40 A), a generic `: *U` call, a `pp: **Box<T>` carrier — is a stub too: `var r = gd2(&GP); r.pick(t)` was
+#      refused naming P.pick (the stub scan's token binding read none of them). issues/2026-10-18-generic-token-scans-
+#      miss-double-pointer-and-generic-pointer-call-binding.md (its programs verbatim: generic_method_infer.sh PQ0a / PQ0b)
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -104,6 +108,29 @@ struct WP { v: P; k; }
 fn ox<T>(p: P, t: T): i64 { return p.pick<T>(t); }
 fn rx(p: P, t: T2): T2 { return p.id<T2>(t); }
 fn rq(p: P, t: Q): Q { return p.id<Q>(t); }
+# 6.7.16: the stub scan reads a `pp: **T` binding, a generic `: *U` call and a `pp: **Box<T>` carrier.
+var GPQ0 = P { 1 };
+var GPQP: *P = &GPQ0;
+var GPQPP: **P = &GPQP;
+fn pq_gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+fn pq_gd<T>(x: *T): T { var t: T = *x; return t; }
+fn pq_gpi<T>(x: *T): *T { return x; }
+fn pq_unb<T>(pp: **Box<T>): T { var b: *Box<T> = *pp; return b.v; }
+fn pq_o1<T>(t: T): i64 { var r = pq_gd2(&GPQP); return r.pick(t); }
+fn pq_o2<T>(t: T): i64 { var r = pq_gd(pq_gpi(pq_gpi(&GPQ0))); return r.pick(t); }
+fn pq_o3<T>(t: T, pp: **P): i64 { var r = pq_gd2(pp); return r.pick(t); }
+fn pq_o4<T>(t: T): i64 { var r = pq_gd2(GPQPP + 0); return r.pick(t); }
+fn pq_o5<T>(t: T, pb: **Box<P>): i64 { var r = pq_unb(pb); return r.pick(t); }
+fn run_pq(): i64 {
+    var q = Q { 1, 7, 3 };
+    var b: Box<P>; b.v.v = 2; var pb: *Box<P> = &b;
+    assert_eq(pq_o1(q), 7, "PQ1: var r = gd2(&GPQP); r.pick(t) (a `pp: **T` binding)");
+    assert_eq(pq_o2(q), 7, "PQ2: var r = gd(gpi(gpi(&GPQ0))); r.pick(t) (generic `: *U` calls)");
+    assert_eq(pq_o3(q, &GPQP), 7, "PQ3: gd2(pp), a `pp: **P` parameter");
+    assert_eq(pq_o4(q), 7, "PQ4: gd2(GPQPP + 0), a `**P` global + 0");
+    assert_eq(pq_o5(q, &pb), 7, "PQ5: unb(pb), a `pp: **Box<T>` carrier given a `**Box<P>` parameter");
+    return 0;
+}
 fn run_x(): i64 {
     var p = P { 5 };
     var q = Q { 1, 7, 3 };
@@ -217,5 +244,6 @@ fn run(): i64 {
 }
 var r0 = run();
 var r1 = run_x();
+var r2 = run_pq();
 var rr = assert_summary();
 syscall(60, rr);

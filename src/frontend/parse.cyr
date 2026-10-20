@@ -411,10 +411,172 @@ fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var m = GFGM(S, fi);
     var pk = w + 1;
     if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
-    if (pk == 0) { return _tok_gen_sc_sid(S, a, i, j, fi, (m >> (24 + w * 20)) & 0xFFFFF); }   # 6.7.8
+    if (pk == 0) {
+        var f = (m >> (24 + w * 20)) & 0xFFFFF;
+        if (f != 0) { return _tok_gen_sc_sid(S, a, i, j, fi, f); }   # 6.7.8
+        return _tok_pp_tp(S, a, i, j, fi, w);   # 6.7.16: a `pp: **T`
+    }
     var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     return _tok_ta_arg(S, a, i, at, _ic_ptr_param(S, fi, pk - 1));
+}
+# ⛔ 6.7.16 — THE SCAN READS A `pp: **T` BINDING AS THE PARSER MAKES IT (6.7.14's D40 A, `_gen_infer_ind`): T that no
+# `x: T` / `p: *T` parameter and no struct carrier carries rides the first parameter declared `*..*T` (`_pp_tparam`,
+# d stars), and the struct its whole argument points through to binds it (`_tok_pp_arg`). The scan answered 0, so
+# `var r = gd2(&GPP); r.pick(t)` in a generic left `r` untyped, the forward of T into the stub method `P_pick` was not
+# seen, and the generic's i64 base was refused naming `P.pick`, where the parser binds `gd2`'s T to P. CHANGELOG [6.7.16]
+fn _tok_pp_tp(S, a, i, j, fi, w): i64 {
+    var k = _pp_tparam(S, fi, w);
+    if (k <= 0) { return 0; }
+    var d = _ppt_d;
+    var at = _call_arg_for(S, fi, j + 1, k - 1);
+    if (at < 0) { return 0; }
+    return _tpl_as_sid(S, _tok_pp_arg(S, a, i, at, d));
+}
+# What a `*..*T` parameter of d stars reaches through the whole argument at token at, from the tokens — the twin of
+# `_ic_pp_arg`'s sources: `&name` of a name declared with d - 1 stars, a name declared with d (a local's or a
+# parameter's annotation: `0 - (k + 1)`, k the type past its stars; a global's step word: the struct, `_ic_pp_deep`), a
+# field chain whose leaf is declared with d (its word), a call declared with d (a generic's `: *..*U` at what U binds
+# here), wrapped (6.7.15's D22 A), or pointer arithmetic on one of them (D23 A). 0 = none — a missed flag, never a
+# false one. CHANGELOG [6.7.16]
+fn _tok_pp_arg(S, a, i, at, d): i64 {
+    var ae = _ic_arith_end(S, at);
+    if (ae > 0) { return _tok_pp_arith(S, a, i, at, ae, d); }
+    at = _pwrap_in(S, at);
+    if (at < 0) { return 0; }
+    var t = TOKTYP(S, at);
+    if (t == 27) {
+        if (_gsc_name_end(S, at + 1) == 0) { return 0; }
+        return _tpl_name(S, a, i, TOKVAL(S, at + 1), 1, d);
+    }
+    if (t != 2) { return 0; }
+    var nt = TOKTYP(S, at + 1);
+    if (nt == 31 || nt == 11) { return _tpl_name(S, a, i, TOKVAL(S, at), 0, d); }
+    if (nt == 41) {
+        var e = _tok_chain_end(S, at);
+        if (TOKTYP(S, e) != 31) { if (TOKTYP(S, e) != 11) { return 0; } }
+        return _tpl_chain(S, a, i, at, e, d);
+    }
+    if (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { return _tpl_call(S, a, i, at, d); } }
+    return 0;
+}
+# ... the arithmetic [b, e): its pointer operand, as `_tok_ta_arith` reads a `p: *T`'s.
+fn _tok_pp_arith(S, a, i, b, e, d): i64 {
+    b = _ie_unparen(S, b, e);
+    e = _ie_pe;
+    if (b >= e) { return 0; }
+    var k = _hl_addop(S, b, e);
+    if (k > b) {
+        var r = _tok_pp_arith(S, a, i, k + 1, e, d);
+        if (TOKTYP(S, k) == 6 || TOKTYP(S, k) == 113) {
+            var l = _tok_pp_arith(S, a, i, b, k, d);
+            if (l != 0) { return l; }
+            return r;
+        }
+        if (r != 0) { return 0; }
+        return _tok_pp_arith(S, a, i, b, k, d);
+    }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    if (e == b + 1) { return _tpl_name(S, a, i, TOKVAL(S, b), 0, d); }
+    if (TOKTYP(S, b + 1) == 41) {
+        if (_tok_chain_end(S, b) != e) { return 0; }
+        return _tpl_chain(S, a, i, b, e, d);
+    }
+    if (TOKTYP(S, b + 1) != 10) { return 0; }
+    if (_call_close(S, b + 1) != e - 1) { return 0; }
+    return _tpl_call(S, a, i, b, d);
+}
+# The name noff (`amp` 1: `&name`) by scope from token i: a local's or a parameter's annotation with d - amp stars, else
+# a global's word (`_ic_pp_name` / `_ic_pp_addr`).
+fn _tpl_name(S, a, i, noff, amp, d): i64 {
+    var dt = _tok_name_decl(S, a, i, noff);
+    if (dt >= 0) {
+        if (TOKTYP(S, dt + 1) != 49) { return 0; }
+        var k = dt + 2;
+        var n = amp;
+        while (TOKTYP(S, k) == 8) { n = n + 1; k = k + 1; }
+        if (n != d) { return 0; }
+        if (TOKTYP(S, k) != 2) { return 0; }
+        return 0 - (k + 1);
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    var r = 0;
+    if (amp == 0) { r = _ic_pp_deep(S, _gv_ptr_word(S, vi), d); }
+    elif (d > 2) { r = _ic_pp_deep(S, _gv_ptr_word(S, vi), d - 1); }
+    else { r = _gv_ptr_sid(S, vi); }
+    if (r <= 0) { return 0; }
+    return r;
+}
+# A whole field chain [at, e): its leaf field's word read d stars down (`_tok_ta_chain_to`'s walk).
+fn _tpl_chain(S, a, i, at, e, d): i64 {
+    var sid = _tok_ta_decl(S, a, i, TOKVAL(S, at));
+    var k = at + 2;
+    while (k < e - 1) {
+        if (sid <= 0) { return 0; }
+        sid = _gs_fld_sid(S, sid, TOKVAL(S, k));
+        k = k + 2;
+    }
+    if (sid <= 0) { return 0; }
+    var fx = FINDFIELD(S, sid - 1, TOKVAL(S, e - 1));
+    if (fx < 0) { return 0; }
+    var r = _ic_pp_deep(S, _fld_ps_get(S, sid - 1, fx), d);
+    if (r <= 0) { return 0; }
+    return r;
+}
+# A call at token at whose callee's return is declared with d stars: its type (`0 - (k + 1)`), or for a generic's
+# `*..*U` (U its type parameter) what U binds at this call (`_tok_gen_tp_dep`).
+fn _tpl_call(S, a, i, at, d): i64 {
+    var fi = FINDFN(S, TOKVAL(S, at));
+    if (fi < 0) { return 0; }
+    var k = _tok_ret_ann(S, fi);
+    if (k < 0) { return 0; }
+    var n = 0;
+    while (TOKTYP(S, k) == 8) { n = n + 1; k = k + 1; }
+    if (n != d) { return 0; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0 - (k + 1); }
+    var w = _tok_tp_which(S, fi, k);
+    if (w < 0) { return 0; }
+    return _tok_gen_tp_dep(S, a, i, at, fi, w);
+}
+# The struct an answer of `_tok_pp_arg` names: a struct id, or the struct an annotation names (`_tok_decl_sid`'s
+# reading: a generic struct's base). 0 otherwise.
+fn _tpl_as_sid(S, v): i64 {
+    if (v > 0) { return v; }
+    if (v == 0) { return 0; }
+    var r = FINDSTRUCT(S, TOKVAL(S, 0 - v - 1));
+    if (r < 0) { return 0; }
+    return r;
+}
+# The first token of fi's declared return type (past its `:`), or -1.
+fn _tok_ret_ann(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    return c + 2;
+}
+# Which type parameter (0 / 1) of fi the bare name at token k is, or -1 (a `<` after it is no bare name).
+fn _tok_tp_which(S, fi, k): i64 {
+    if (TOKTYP(S, k) != 2) { return 0 - 1; }
+    if (TOKTYP(S, k + 1) == 19) { return 0 - 1; }
+    var rn = TOKVAL(S, k) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
+}
+# `_tok_gen_tp_sid` on a generic call met inside an argument: one level per nested call, bounded by the parser's own
+# nesting cap (256 levels, "nesting too deep"), so no source it accepts reaches this guard.
+var _ttg_dep = 0;
+fn _tok_gen_tp_dep(S, a, i, at, fi, w): i64 {
+    if (_ttg_dep >= 256) { return 0; }
+    _ttg_dep = _ttg_dep + 1;
+    var r = _tok_gen_tp_sid(S, a, i, at, fi, w);
+    _ttg_dep = _ttg_dep - 1;
+    return r;
 }
 # ⛔ 6.7.15 — THE TOKEN BINDING FOLLOWS THE PARSER'S POINTER RULE (6.7.14's D8 (a), `_ic_arg`): the whole argument at
 # token at, through fi's carrying parameter — `p: *T` (`ptr` 1) or `x: T` — read as the parser binds it, from the
@@ -524,12 +686,12 @@ fn _tok_ta_chain_to(S, a, i, at, e): i64 {
     return _fld_ptr_sid(S, sid - 1, fx);
 }
 # A whole call (token at): the struct it returns (`_tok_init_sid`: a generic's `: T` at this call), and through
-# `p: *T` what a `: *S` return points at (a fn that is not generic: a generic's binds at its instance, unread here).
+# `p: *T` what a `: *S` return points at (6.7.16: a generic's `: *U`, what U binds at this call).
 fn _tok_ta_call(S, a, i, at, ptr): i64 {
     var r = _tok_init_sid(S, a, i, at);
     if (r > 0) { return r; }
     if (ptr == 0) { return 0; }
-    return _tok_ta_pcall(S, at);
+    return _tok_ta_pcall(S, a, i, at);
 }
 # ⛔ 6.7.15 — A TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER TO THE SCAN TOO (the user's decision D23 A,
 # 2026-10-18): through `p: *T` the parser binds `gd(pp + 1)` as `gd(pp)` (`_ic_parith`), so the scan reads the
@@ -564,16 +726,27 @@ fn _tok_ta_arith(S, a, i, b, e): i64 {
     }
     if (TOKTYP(S, b + 1) != 10) { return 0; }
     if (_call_close(S, b + 1) != e - 1) { return 0; }
-    return _tok_ta_pcall(S, b);
+    return _tok_ta_pcall(S, a, i, b);
 }
-# ... a call `f(..)` at token at to a fn (not generic) declared `: *S`: S, else 0.
-fn _tok_ta_pcall(S, at): i64 {
-    if (TOKTYP(S, at + 1) != 10) { return 0; }
+# ... a call `f(..)` at token at to a fn declared `: *S`: S, else 0. ⛔ 6.7.16 — a GENERIC callee declared `: *U` (U one
+# of its type parameters) answers what U binds at this call (`_tok_gen_tp_dep`), as the parser types the call by the
+# instance it reaches (`_ic_call_rs`): `var r = gd(gpi(&GP0)); r.pick(t)` in a generic answered 0, and the generic's
+# i64 base was refused naming the stub method `P.pick`. CHANGELOG [6.7.16]
+fn _tok_ta_pcall(S, a, i, at): i64 {
     var fi = FINDFN(S, TOKVAL(S, at));
     if (fi < 0) { return 0; }
-    if (GFTP(S, fi) != 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return _tok_ta_gpcall(S, a, i, at, fi); }
+    if (TOKTYP(S, at + 1) != 10) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     return L64(_fn_rpsid + fi * 8);
+}
+fn _tok_ta_gpcall(S, a, i, at, fi): i64 {
+    var k = _tok_ret_ann(S, fi);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k) != 8) { return 0; }
+    var w = _tok_tp_which(S, fi, k + 1);
+    if (w < 0) { return 0; }
+    return _tok_gen_tp_dep(S, a, i, at, fi, w);
 }
 # 1 = the call `name(..)` / `name<..>(..)` at token at is the whole argument (a `,` or `)` follows it).
 fn _tok_call_whole(S, at): i64 {
@@ -590,12 +763,24 @@ fn _tok_call_whole(S, at): i64 {
 # Anything else answers 0 — a missed flag, never a false one.
 fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if ((f & 255) == 0) { return 0; }
-    if (((f >> 9) & 1) == 1) { return 0; }   # 6.7.16: a `**G<..>` carrier, unread here
     var at = _call_arg_for(S, fi, j + 1, (f & 255) - 1);
     if (at < 0) { return 0; }
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
     if (g <= 0) { return 0; }
+    if (((f >> 9) & 1) == 1) { return _tok_sc_pp(S, a, i, at, g, f, _gsc_stars(S, fi, (f >> 10) & 1023)); }
     return _tok_sc_arg(S, a, i, at, g, f);
+}
+# ⛔ 6.7.16 — a `**G<..>` carrier (bit 9, `_gs_pparam`): the X in its slot of the G<X> the whole argument points through
+# to with `d` stars (`_tok_pp_arg`) — an annotation walked (`_tok_ann_walk`), an instance read (`_tsp_conc`), as the
+# parser binds it (`_gen_infer_sc` -> `_ic_pp_arg`). CHANGELOG [6.7.16]
+fn _tok_sc_pp(S, a, i, at, g, f, d): i64 {
+    var v = _tok_pp_arg(S, a, i, at, d);
+    var r = 0;
+    if (v > 0) { r = _tsp_conc(S, v, g, f); }
+    if (v < 0) { r = _tok_ann_walk(S, 0 - v - 1, g, f); }
+    if (r <= 0) { return 0; }
+    if (GSTP(S, r - 1) != 0) { return 0; }
+    return r;
 }
 # ... the X the whole argument at token at holds in the slot of G (the generic struct g) — as
 # `_gsc_arg` reads it.
@@ -759,14 +944,15 @@ fn _tok_tp_byarg(S, a, i, o, fi, w, g, f): i64 {
 # X at (g, f) in U is the X at (G', slot') and then (g, f) in b's argument — the current step pushed.
 fn _tok_sc_carry(S, a, i, o, fi, fc, g, f): i64 {
     if ((fc & 255) == 0) { return 0; }
-    if (((fc >> 9) & 1) == 1) { return 0; }   # 6.7.16: a `**G<..>` carrier, unread here
     var at = _call_arg_for(S, fi, o, (fc & 255) - 1);
     if (at < 0) { return 0; }
     var g2 = _gsc_g(S, fi, (fc >> 10) & 1023);
     if (g2 <= 0) { return 0; }
     var h = _tsp_push(g, (f >> 8) & 1, f >> 32);
     if (h == 0) { return 0; }
-    var r = _tok_sc_arg(S, a, i, at, g2, fc | (h << 32));
+    var r = 0;
+    if (((fc >> 9) & 1) == 1) { r = _tok_sc_pp(S, a, i, at, g2, fc | (h << 32), _gsc_stars(S, fi, (fc >> 10) & 1023)); }   # 6.7.16
+    else { r = _tok_sc_arg(S, a, i, at, g2, fc | (h << 32)); }
     _tsp_pop();
     return r;
 }

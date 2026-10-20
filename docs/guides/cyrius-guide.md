@@ -7363,9 +7363,15 @@ name into such a method — `fn o<T>(p: P, t: T) { return p.pick(t); }`, or a
 generic method's `self.pick(w)` — is a stub too: `o(p, 5)` is refused, `o(p, q)`
 calls `o$Q`. The receiver may be a name, a field chain (`h.p.pick(t)`, `x.hp.p.pick(t)`
 through a `*H` field) or a call's result (`mk().pick(t)`, `mkh().p.pick(t)`, a method
-call's `h.gp().pick(t)`, a generic's plain `: P` return).
+call's `h.gp().pick(t)`, a generic's plain `: P` return). A local typed by a generic call is
+typed as the parser binds the call: `var r = gd2(&GPP); return r.pick(t);` with
+`fn gd2<T>(pp: **T): T` and `GPP: *P`, and `var r = gd(gpi(&GP0));` with `fn gpi<T>(x: *T): *T`,
+forward `t` into `P.pick` as `gd2<P>(&GPP)` does — every `**T` source (a `**P` local,
+parameter, global or field, `&pl`, a `: **P` call, a generic `: **U` one, wrapped, `+ 0`, a
+`***T`), a generic `: *U` call at any depth, and a `pp: **Box<T>` carrier (6.7.16; through
+6.7.15 such a forwarder was refused naming `P.pick`, its i64 base reaching the stub method).
 A `T` forwarded inside a struct carrier counts the same: a struct carrier's name (`gx(b)`
-with `b: Box<T>`) or a generic call carrying `T` (`gx(mk1(x))`, `gx(mk1<T>(x))`, nested
+with `b: Box<T>`; 6.7.16: a `pp: **Box<T>` parameter or local into a stub's `**Box<U>`) or a generic call carrying `T` (`gx(mk1(x))`, `gx(mk1<T>(x))`, nested
 `gx(wrap(b))`) passed to a stub `fn gx<T>(b: Box<T>)` — or to a stub generic method — makes the
 forwarder a stub: `outer(p)` and `outer<Pt>(p)` call `outer$Pt`, `outer(5)` is refused naming
 `outer` (6.7.14; through 6.7.13 the forwarder's definition was refused, called or not,
