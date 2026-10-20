@@ -826,8 +826,44 @@ fn mk2(q: *'"$vt"'): '"$vt"' { return 6 + ; }'"$VM" "error:<source>:1:58: $UZ" "
         "error:<source>:2:39: unexpected ';'"
 done
 
+# 6.7.16 (met with the vector rule's rows) — AND A TUPLE LITERAL'S: the multi-value arm printed "a fn returning the
+# struct `Q` returns that struct — `(a, b)` is a tuple" (6.7.11) / the vector rule (6.6.6) before the literal was parsed,
+# so `return (zz, 1);` was that AND "undefined variable 'zz'" at 8, 16 and 24 B and in a vector fn. Pending until the
+# arm has parsed the literal now (`_ret_tup_defer`, `_pair_ret_late` kind 3): the element's error alone (TU1-TU5); a
+# literal of four or more values gives the class's refusal once, where it was that and "multi-value return needs 2 or 3
+# types" (TU6 / TU7); a literal that parses keeps the refusal, and a scalar fn keeps the arity error (TUC1-TUC4). Mutation
+# (2026-10-20, measured):
+#   the arm refusing before the literal's parse, the arity error unguarded (the tree before) -> RED 28: TU1-TU7 on the
+#       four legs
+TT='a fn returning the struct `Q` returns that struct — '
+TM='
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+errs4 "TU1 return (zz, 1); (16 B)" 'struct Q { v; w; }
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+errs4 "TU2 return (zz, 1); (8 B)" 'struct Q { v; }
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+errs4 "TU3 return (zz, 1); (24 B)" 'struct Q { v; w; x; }
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+errs4 "TU4 return (1, 5 + ); (f64v2)" 'fn mk(q: *f64v2): f64v2 { return (1, 5 + ); }'"$TM" "error:<source>:1:42: unexpected ')'"
+errs4 "TU5 return (zz, 1, 2); (f64v4)" 'fn mk(q: *f64v4): f64v4 { return (zz, 1, 2); }'"$TM" "error:<source>:1:37: $UZ"
+errs4 "TU6 return (1, 2, 3, 4); (16 B): the class's refusal once" 'struct Q { v; w; }
+fn mk(q: *Q): Q { return (1, 2, 3, 4); }'"$TM" "error:<source>:2:26: $TT\`(a, b, c)\` is a tuple, another type"
+errs4 "TU7 return (1, 2, 3, 4); (f64v2): the class's refusal once" 'fn mk(q: *f64v2): f64v2 { return (1, 2, 3, 4); }'"$TM" \
+    "error:<source>:1:34: $VR \`(...)\`"
+errs4 "TUC1 control: return (1, 2); keeps the refusal (16 B)" 'struct Q { v; w; }
+fn mk(q: *Q): Q { return (1, 2); }'"$TM" "error:<source>:2:26: $TT\`(a, b)\` is a tuple, another type"
+errs4 "TUC2 control: return (1, 2); keeps the refusal (f64v2)" 'fn mk(q: *f64v2): f64v2 { return (1, 2); }'"$TM" \
+    "error:<source>:1:34: $VR \`(...)\`"
+errs4 "TUC3 control: a scalar fn's return (1, 2, 3, 4); keeps the arity error" 'fn mk(q): i64 { return (1, 2, 3, 4); }'"$TM" \
+    "error:<source>:1:24: multi-value return needs 2 or 3 types"
+errs4 "TUC4 control: an earlier statement in error, then return (1, 2);" 'struct Q { v; w; }
+fn mk(q: *Q): Q { var a = yy; return (1, 2); }'"$TM" "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" \
+    "error:<source>:2:38: $TT\`(a, b)\` is a tuple, another type"
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 142 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 142) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 153 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 153) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

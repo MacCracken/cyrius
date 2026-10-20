@@ -1866,7 +1866,9 @@ Through 6.7.10 it took the multi-value path: over 16 bytes the caller's result w
 (it read 0, 0, 0), at 8 bytes or less the second value was dropped, and at 9-16 bytes it gave the
 two words only because that class's registers are the multi-value ones. Build the struct and return
 it: `var p: P3 = P3 { a, b, 0 }; return p;`. A fn declared `: (T1, T2)`, or with no return type,
-returns `(a, b)` as before.
+returns `(a, b)` as before. A literal with an error of its own — `return (zz, 1);` — reports that error
+alone, here and in a vector fn (6.7.16; the refusal came first), and one of four or more values the
+refusal alone (it added "multi-value return needs 2 or 3 types").
 
 The builtin `ret2(a, b)` is the same two values, so it is refused there the same way, in every class and
 `return ret2(..);` too (6.7.13, the user's decision of 2026-10-15): ``a fn returning the struct `P3`

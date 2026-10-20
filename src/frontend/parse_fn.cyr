@@ -1365,15 +1365,13 @@ fn _PARSE_RETURN_ARMS(S): i64 {
         # f64v4. The PAIR class is untouched: rax:rdx IS its ABI. Refuse here and let the arms
         # below parse the tuple anyway, so the token stream stays in sync for the rest of the
         # body. See `_refuse_simd_return`. CHANGELOG [6.6.6]
-        if (mr_is_tuple == 1) { _refuse_vector_tuple_return(S); }
+        if (mr_is_tuple == 1) { _ret_tup_defer(S); }   # 6.7.16: printed after the literal's parse
         if (mr_is_tuple == 1) { if (mr_commas > 1) {
                 # --- arity 3 ---------------------------------------------------
                 # Push each value but the last, leave the last in rax, then unwind
                 # into the return registers back-to-front. Generalises the arity-2
                 # sequence below; nothing here is arity-2-specific.
-                if (mr_commas > 2) {
-                    ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
-                }
+                if (mr_commas > 2) { _ret_tup_arity(S); }
                 STI(S, GTI(S) + 1);  # consume (
                 _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check, each element
                 EPUSHR(S);                                                          # push a
@@ -8011,6 +8009,36 @@ fn _refuse_vector_tuple_return(S): i64 {
     _refuse_simd_return(S);
     return 0;
 }
+# ⛔ 6.7.16 — THE LITERAL'S OWN ERROR FIRST, as `_ret_vec_rule`'s and the 9-16 B class's: the multi-value arm printed
+# the refusal above before the literal was parsed, so `return (zz, 1);` from a vector fn or a fn returning a struct (8,
+# 16, 24 B) was the refusal AND "undefined variable 'zz'", and `return (1, 5 + );` the refusal and "unexpected ')'". It
+# is pending (`_pair_ret_late`, kind 3) until the arm has parsed the literal. CHANGELOG [6.7.16]
+fn _ret_tup_defer(S): i64 {
+    _pair_ret_defer(S);
+    _prr_k = 3;
+    return 0;
+}
+# ... and a literal of more than three values (cursor on its `(`): "multi-value return needs 2 or 3 types", whose
+# panic latch keeps the arm's three-value parse quiet — in a fn whose class refuses every tuple (`_ret_tup_cls`), the
+# class's refusal instead, now and latched the same way: it names the mistake (both were printed).
+fn _ret_tup_arity(S): i64 {
+    if (_ret_tup_cls(S) == 0) {
+        ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
+        return 0;
+    }
+    _prr_ti = 0 - 1;
+    _refuse_vector_tuple_return(S);
+    _panic = 1;
+    return 0;
+}
+# 1 = this fn's return class refuses a tuple literal (`_refuse_vector_tuple_return` prints): a vector fn, or a plain
+# struct's outside an inline replay (`_refuse_struct_tuple_return`'s own test).
+fn _ret_tup_cls(S): i64 {
+    if (_cur_fn_returns_vector(S) == 1) { return 1; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    return _dx_plain(S, _cur_fn_ret_sid);
+}
 # ⛔ 6.7.11 — A TUPLE LITERAL IS NOT THE STRUCT A FN DECLARED `: S` RETURNS (the user's decision,
 # 2026-10-13: refused by name in every class). The multi-value arms load rax:rdx[:r3], which is the
 # 9-16 B pair's ABI by coincidence only: a fn returning a struct over 16 B never wrote its result
@@ -8061,7 +8089,7 @@ fn _refuse_pair_return(S): i64 {
 # `return q.zz;` were the refusal AND the value's own error. It records its pending refusal here too (`_prr_k` 2).
 var _prr_ti = 0 - 1;   # the refused value's first token, -1 = none pending
 var _prr_en = 0;       # `_err_n` when it was recorded
-var _prr_k = 1;        # the refusal: 1 the pair class's, 2 the vector class's
+var _prr_k = 1;        # the refusal: 1 the pair class's, 2 the vector class's, 3 a tuple literal's (`_ret_tup_defer`)
 fn _pair_ret_defer(S): i64 {
     _prr_ti = GTI(S);
     _prr_en = _err_n;
@@ -8076,6 +8104,7 @@ fn _pair_ret_late(S): i64 {
     var sv = GTI(S);
     STI(S, ti);   # `_err_head` and `_pair_ret_offender` read the cursor's token
     if (_prr_k == 2) { _refuse_simd_return(S); }
+    elif (_prr_k == 3) { _refuse_vector_tuple_return(S); }
     else { _refuse_pair_return(S); }
     STI(S, sv);
     return 0;
