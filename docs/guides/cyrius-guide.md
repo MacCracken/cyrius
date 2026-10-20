@@ -4111,7 +4111,11 @@ vector result needs storage in a fn's frame - call it inside a fn* (as such a ca
 `var x: i64 = mkv(41, 7);` (any annotation that is not the vector, a call or method starting the initialiser too) with
 *vector return type does not match the declared type*, as the line is in a fn. Through 6.7.14 each held one word, in
 the declaration zone and after the first statement: 0 on x86_64 / aarch64, 154 on cx, 195 on Windows, and the result's
-word under `: i64`. Make the call in a fn: store its lanes through `&g`, or read them into a scalar there.
+word under `: i64`. And (6.7.16) an ASSIGNMENT at top level of any such call to a global that is no vector — `G =
+mkv(41, 7);`, `G = s.mv();`, wrapped, `fncall2(&mkv, ..)`, as the program's first statement or in a top-level for step —
+is refused *vector return type does not match the assigned variable*, as it is in a fn (through 6.7.15 it compiled with
+no diagnostic and stored one word: 0 on x86_64 / aarch64, 41 on cx / Windows). Make the call in a fn: store its lanes
+through `&g`, or read them into a scalar there.
 
 **A `*V` parameter is a pointer (6.7.11).** `fn rd(p: *f64v2)` takes one integer word, as
 `p: *Pt` does — `p + 1` steps one whole vector (16 / 32 bytes), as a `*f64v2` local's does — and
