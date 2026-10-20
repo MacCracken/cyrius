@@ -53,6 +53,30 @@
 #       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
 #   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
 #
+# THE OTHER KINDS ONE LEVEL DOWN (6.7.16; issues/2026-10-18-mod-use-pub-inside-fn-body-or-block-named-by-token.md).
+# `_decl_inner` took the five kinds 6.7.15's issue filed; a `mod`, `use`, `pub` / `public` in a fn body or a block
+# reached PARSE_STMT's fallback: "unexpected mod", "unexpected pub'/'public" (the token table's two-spelling name),
+# and a `pub fn` there added "fn 'g' is defined inside fn 'f'". Now every kind `_dl_kind` names, one error by the
+# rule at the keyword; a `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`: the declaration declares,
+# its use is no "undefined variable"); a `pub const fn` steps to its body's `}` (`_dl_skip_at` stepped on to the
+# NEXT `;`, module scope too); a derive's same-line step follows only a declaration that ended at its `}`
+# (`_dl_derived`: `use m.g; pub var x = 1;` on one line stepped the `pub` and, in a fn body, the body's `}`); a
+# `pub use` alias is entered as reported like a `use` one (`_dl_quiet`).
+#
+#   NM  each of mod / use / pub var / pub const / pub fn / public fn / pub const fn / pub mod / pub use in a
+#       top-level if block, a top-level while block and a fn body: one error; NM1-NM6 the filed repros verbatim;
+#       NM7 / NM8 a pub var / const then used; NM9 the body parses on; NM10 use + pub on one line; NM11 a pub use
+#       alias called; NM12 pub const fn; NM13 a generic's two instances; NM14 a switch case, a closure, an impl
+#       method; NM15 a bare `pub }`; NM16 --syntax-only; NM17-NM19 the module-scope arm of the same steps
+#
+#   (6.7.16, measured) the lane before it (b2053aff7) -> RED all 46 NM rows; the 107 rows before them green
+#   `_decl_inner` back to its five kinds              -> RED NM (27 kind rows), NM1-NM16
+#   `_dl_pub_mark` returns 0                          -> RED NM7 NM8 NM9 NM10 NM13 NM14 ("undefined variable 'x'")
+#   `_dl_derived` without its `}` test                -> RED NM9 NM10 NM11 NM16 NM18 (the `pub` stepped; "expected
+#                                                        '}', got end of file")
+#   `_dl_quiet` without its `pub use` step            -> RED NM11 NM19 ("undefined function 'g'")
+#   `_dl_skip_at` without its `pub const fn` line     -> RED NM12 NM17 (the next statement's error lost)
+#
 # ITS USES (6.7.15; issues/archived/2026-10-17-late-declaration-refusal-cascades-at-its-uses.md). The refused declaration
 # was stepped, so what it names was never registered, and each use was a second error: `var q = Q { 5 };`
 # "undefined variable 'Q'" + "expected ';', got '{'", `E.B` / `B` "undefined variable", `fn f(q: *Q)` "unknown
@@ -443,6 +467,113 @@ one "NS14 --syntax-only: the same one error" "$(printf 'fn f(): i64 { struct Q {
 one "NC a const fn's body: the check's one refusal" 'const fn f(): i64 { struct Q { y; } return 1; }
 syscall(60, f());
 ' "error:<source>:1:21: not in a const fn: its body takes var / const / assignment / if / elif / else / while / for / loop / do-while / return / break / continue and calls of const fns"
+
+# ── NM: one level down, the other kinds — `mod`, `use`, `pub` / `public` (6.7.16) ─────────────────────────────
+NMKINDS='mod|mod m;|a `mod`
+use|use m.g;|a `use`
+pub-var|pub var x = 1;|a `pub`
+pub-const|pub const C = 1;|a `pub`
+pub-fn|pub fn g(): i64 { return 1; }|a `pub`
+public-fn|public fn g(): i64 { return 1; }|a `public`
+pub-const-fn|pub const fn g(): i64 { return 1; }|a `pub`
+pub-mod|pub mod m;|a `pub`
+pub-use|pub use m.g;|a `pub`'
+printf '%s\n' "$NMKINDS" | while IFS='|' read -r k decl art; do
+    [ -n "$k" ] || continue
+    one "NM $k in a top-level if block" "${NHEAD}if (a == 1) { $decl }
+syscall(60, a);
+" "error:<source>:4:15: $art declaration $IR a block"
+    one "NM $k in a top-level while block" "${NHEAD}while (a == 1) { $decl a = 2; }
+syscall(60, a);
+" "error:<source>:4:18: $art declaration $IR a block"
+    one "NM $k in a fn body" "${NHEAD}fn f(): i64 { $decl return 1; }
+syscall(60, f() + a);
+" "error:<source>:4:15: $art declaration $IR a fn body"
+done > "$D/nm.out"
+cat "$D/nm.out"
+pass=$((pass + $(grep -c '^  ok' "$D/nm.out" || true))); fail=$((fail + $(grep -c '^  FAIL' "$D/nm.out" || true)))
+
+one "NM1 filed: mod in a fn body" "$(printf 'fn f(): i64 { mod m; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`mod\` declaration $IR a fn body"
+one "NM2 filed: use in a fn body" "$(printf 'fn f(): i64 { use m.g; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`use\` declaration $IR a fn body"
+one "NM3 filed: pub var in a fn body" "$(printf 'fn f(): i64 { pub var x = 1; return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM4 filed: mod in a top-level block" "$(printf 'var a = 1;\nif (a == 1) { mod m; }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`mod\` declaration $IR a block"
+one "NM5 filed: pub fn in a fn body (it was two)" "$(printf 'fn f(): i64 { pub fn g(): i64 { return 1; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM6 filed: pub fn in a top-level block" "$(printf 'var a = 1;\nif (a == 1) { pub fn g(): i64 { return 1; } }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`pub\` declaration $IR a block"
+one "NM7 pub var then a use of it: one error" 'fn f(): i64 { pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body"
+one "NM8 public var / pub const then used, in a block" 'var a = 1;
+if (a == 1) { public var x = 1; pub const C = 2; a = x + C; }
+syscall(60, a);
+' "error:<source>:2:15: a \`public\` declaration $IR a block
+error:<source>:2:33: a \`pub\` declaration $IR a block"
+one "NM9 the body parses on: each, then a mistake" 'fn f(): i64 { mod m; use m.g; pub var x = 1; public fn g2(): i64 { return 1; } return x + g2() + zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`mod\` declaration $IR a fn body
+error:<source>:1:22: a \`use\` declaration $IR a fn body
+error:<source>:1:31: a \`pub\` declaration $IR a fn body
+error:<source>:1:46: a \`public\` declaration $IR a fn body
+error:<source>:1:100: undefined variable 'zz' (missing include or enum?)"
+one "NM10 use then pub on one line: no derive step" 'fn f(): i64 { use m.g; pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`use\` declaration $IR a fn body
+error:<source>:1:24: a \`pub\` declaration $IR a fn body"
+one "NM11 a pub use alias called: no undefined fn" 'fn f(): i64 { pub mod m; pub use m.g; return g(); }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:26: a \`pub\` declaration $IR a fn body"
+one "NM12 pub const fn: the next statement is its own" 'fn f(): i64 { pub const fn g(): i64 { return 1; } return zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:60: undefined variable 'zz' (missing include or enum?)"
+one "NM13 a generic fn at two instances: once each" 'fn f<T>(x: T): T { pub var y = x; mod m; return y; }
+syscall(60, f<i64>(1) + f<i32>(2));
+' "error:<source>:1:20: a \`pub\` declaration $IR a fn body
+error:<source>:1:35: a \`mod\` declaration $IR a fn body"
+one "NM14 a switch case, a closure, an impl method" 'struct P { x; }
+impl P { fn m(self): i64 { mod mm; return 1; } }
+var g = |x| { pub var y = x; return y; };
+fn f(x): i64 { switch (x) { case 1: use m.g; return 2; } return 1; }
+syscall(60, f(1));
+' "error:<source>:2:28: a \`mod\` declaration $IR a fn body
+error:<source>:4:37: a \`use\` declaration $IR a fn body
+error:<source>:3:15: a \`pub\` declaration $IR a fn body"
+one "NM15 a pub with nothing after it: the block's } left" 'var a = 1;
+if (a == 1) { pub }
+syscall(60, a);
+' "error:<source>:2:15: a \`pub\` declaration $IR a block"
+one "NM16 --syntax-only: the same errors" 'fn f(): i64 { mod m; use m.g; pub var x = 1; return x; }
+syscall(60, f());
+' "error:<source>:1:15: a \`mod\` declaration $IR a fn body
+error:<source>:1:22: a \`use\` declaration $IR a fn body
+error:<source>:1:31: a \`pub\` declaration $IR a fn body" --syntax-only
+one "NM17 module scope: pub const fn, the next statement's error" 'var a = 1;
+a = 2;
+pub const fn g(): i64 { return 1; }
+syscall(60, zz);
+' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
+error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+one "NM18 module scope: use then pub fn on one line" 'mod mm;
+fn g(): i64 { return 1; }
+mod;
+syscall(39);
+use mm.g; pub fn pg(): i64 { return 2; }
+syscall(60, g() + pg());
+' "error:<source>:5:1: a \`use\` declaration $R (line 4)
+error:<source>:5:11: a \`pub\` declaration $R (line 4)"
+one "NM19 module scope: a pub use alias called" 'mod mm;
+fn g(): i64 { return 1; }
+mod;
+syscall(39);
+pub use mm.g;
+syscall(60, g());
+' "error:<source>:5:1: a \`pub\` declaration $R (line 4)"
 
 # ── U: a use of what a refused declaration names (6.7.15) ───────────────────────────────────────────────────
 L='must come before the first top-level statement (line 2)'

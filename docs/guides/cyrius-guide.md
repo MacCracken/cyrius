@@ -531,8 +531,10 @@ var r = add(20, 22);   # r = 42
   file that declares a `struct` (lib/str.cyr:24) must come before ...`). Through 6.7.13 each was
   `unexpected struct` (`union`: `expected ';', got union`) followed by up to three invented errors, and
   the include's failed inside the included file. The same holds one level down: a `struct`, `enum`,
-  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and the
-  body parses on after it:
+  `union`, `trait` or `impl` inside a fn body or a block is one error at its keyword (6.7.15), and so
+  is a `mod`, `use` or `pub` / `public` (6.7.16; through 6.7.15 `unexpected mod` / `unexpected
+  pub'/'public`, and a `pub fn` a second error as a nested fn). The body parses on after it — a `pub
+  var x = 1;` / `pub const` there still declares its name, so a use of it adds nothing:
 
   ```text
   error:<source>:1:15: a `struct` declaration belongs to the declaration section at top level, not inside a fn body

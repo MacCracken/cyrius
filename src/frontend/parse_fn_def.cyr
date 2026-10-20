@@ -615,16 +615,32 @@ fn _decl_late(S): i64 {
 # declaration stepped as at module scope (`_dl_skip_in`: never the `}` that closes the enclosing body), and what it
 # names and the fns it would define entered as reported (`_dl_names`, `_dl_quiet`), so the body parses on in sync.
 # CHANGELOG [6.7.15]
+# 6.7.16: every kind the module-scope rule names (`_dl_kind`) — a `mod`, `use`, `pub` / `public` there was
+# "unexpected mod" / "unexpected pub'/'public" (the token table's name), and a `pub fn` added "fn 'g' is defined inside
+# fn 'f'". A `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`), so the declaration still declares and a
+# use of it is no "undefined variable". CHANGELOG [6.7.16]
 fn _decl_inner(S): i64 {
     if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
-    var t = PEEKT(S);
-    if (t != 40 && t != 60 && t != 101 && t != 167 && t != 77) { return 0; }   # struct enum union trait impl
+    if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     var ti = GTI(S);
     _dl_in_report(S, ti);
+    if (_dl_pub_mark(S) == 1) { return 1; }
     _dl_skip_in(S);
     _dl_derived(S);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# A refused `pub var` / `pub const` (not a `pub const fn`) at the cursor: the marker stepped, the declaration left to
+# parse as one without it. 1 = stepped.
+fn _dl_pub_mark(S): i64 {
+    if (PEEKT(S) != 73) { return 0; }
+    var t2 = TOKTYP(S, GTI(S) + 1);
+    if (t2 != 3) {
+        if (t2 != 168) { return 0; }
+        if (TOKTYP(S, GTI(S) + 2) == 32) { return 0; }
+    }
+    STI(S, GTI(S) + 1);
     return 1;
 }
 # "a `struct` declaration belongs to the declaration section at top level, not inside a fn body" (or "... not
@@ -648,7 +664,10 @@ fn _dl_in_report(S, ti): i64 {
 # (v6.5.20, PP_DERIVE_SERIALIZE). They are the refused type's, so a `fn` / `public fn` the declaration's line still
 # holds is stepped with the rest of that line (the derive's `#assert sizeof(Q)` was "unknown type 'Q'", an enum's
 # `public` codec a second refusal).
+# 6.7.16: only after a declaration that ended at its `}` — a derive writes after a struct's / enum's: `use m.g; pub
+# var x = 1; .. }` on one line stepped the `pub` declaration and, in a fn body, the body's own `}`. CHANGELOG [6.7.16]
 fn _dl_derived(S): i64 {
+    if (TOKTYP(S, GTI(S) - 1) != 14) { return 0; }
     if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
     var ln = GTLINE(S, GTI(S) - 1);
     while (PEEKT(S) != 12) {
@@ -753,6 +772,7 @@ fn _dl_quiet(S, a, e): i64 {
         if (k == 32) { if (TOKTYP(S, i + 1) == 2) { _dl_fn_at(S, i, d, isid); } }
         i = i + 1;
     }
+    if (TOKTYP(S, a) == 73) { a = a + 1; }   # 6.7.16: `pub use m.f;` too
     if (TOKTYP(S, a) == 74) { if (TOKTYP(S, e - 2) == 2) { _dl_fn_quiet(S, TOKVAL(S, e - 2), a, 0); } }   # `use m.f;`
     return 0;
 }
@@ -941,6 +961,7 @@ fn _ann_refd_said(S, noff, idx): i64 {
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
 # first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
+# 6.7.16: a `pub const fn` ends at its body's `}` — it stepped on to the NEXT statement's `;`. CHANGELOG [6.7.16]
 fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
 # Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
 fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
@@ -951,6 +972,7 @@ fn _dl_skip_at(S, inner): i64 {
     if (t == 73) {
         var t2 = TOKTYP(S, GTI(S) + 1);
         if (t2 == 3 || t2 == 168 || t2 == 72 || t2 == 74) { semi = 1; }
+        if (t2 == 168) { if (TOKTYP(S, GTI(S) + 2) == 32) { semi = 0; } }   # `pub const fn`
     }
     var d = 0;
     while (PEEKT(S) != 12) {
