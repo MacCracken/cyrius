@@ -59,7 +59,7 @@
 # and a `pub fn` there added "fn 'g' is defined inside fn 'f'". Now every kind `_dl_kind` names, one error by the
 # rule at the keyword; a `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`: the declaration declares,
 # its use is no "undefined variable"); a `pub const fn` steps to its body's `}` (`_dl_skip_at` stepped on to the
-# NEXT `;`, module scope too); a derive's same-line step follows only a declaration that ended at its `}`
+# NEXT `;`, module scope too); a derive's same-line step follows only a `struct` / `enum`, what `#derive` takes
 # (`_dl_derived`: `use m.g; pub var x = 1;` on one line stepped the `pub` and, in a fn body, the body's `}`); a
 # `pub use` alias is entered as reported like a `use` one (`_dl_quiet`).
 #
@@ -67,13 +67,18 @@
 #       top-level if block, a top-level while block and a fn body: one error; NM1-NM6 the filed repros verbatim;
 #       NM7 / NM8 a pub var / const then used; NM9 the body parses on; NM10 use + pub on one line; NM11 a pub use
 #       alias called; NM12 pub const fn; NM13 a generic's two instances; NM14 a switch case, a closure, an impl
-#       method; NM15 a bare `pub }`; NM16 --syntax-only; NM17-NM19 the module-scope arm of the same steps
+#       method; NM15 a bare `pub }`; NM16 --syntax-only; NM17-NM19 the module-scope arm of the same steps;
+#       NM20-NM22 two declarations on one line (`pub fn` + `pub fn`, `impl` + `fn`, in a body and a block): the
+#       derive step follows a `struct` / `enum` only
 #
 #   (6.7.16, measured) the lane before it (b2053aff7) -> RED all 46 NM rows; the 107 rows before them green
 #   `_decl_inner` back to its five kinds              -> RED NM (27 kind rows), NM1-NM16
 #   `_dl_pub_mark` returns 0                          -> RED NM7 NM8 NM9 NM10 NM13 NM14 ("undefined variable 'x'")
-#   `_dl_derived` without its `}` test                -> RED NM9 NM10 NM11 NM16 NM18 (the `pub` stepped; "expected
-#                                                        '}', got end of file")
+#   `_dl_derived` without its struct / enum test      -> RED NM9 NM10 NM11 NM16 NM18 NM20 NM21 NM22 (the next
+#                                                        declaration stepped as a derive's; "expected '}', got end
+#                                                        of file")
+#   (measured) the test as "ended at its `}`" (F4's    -> RED NM20 NM21 NM22 (a `pub fn` / `impl` ends at its `}`)
+#   first cut, da0927adc)
 #   `_dl_quiet` without its `pub use` step            -> RED NM11 NM19 ("undefined function 'g'")
 #   `_dl_skip_at` without its `pub const fn` line     -> RED NM12 NM17 (the next statement's error lost)
 #
@@ -615,6 +620,23 @@ syscall(39);
 pub use mm.g;
 syscall(60, g());
 ' "error:<source>:5:1: a \`pub\` declaration $R (line 4)"
+one "NM20 two pub fns on one line in a fn body" 'fn f(): i64 { pub fn g(): i64 { return 1; } pub fn h(): i64 { return 2; } return zz; }
+syscall(60, f());
+' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:45: a \`pub\` declaration $IR a fn body
+error:<source>:1:84: undefined variable 'zz' (missing include or enum?)"
+one "NM21 an impl then a fn on one line in a fn body" 'struct P { x; }
+fn f(): i64 { impl P { fn m(self): i64 { return 1; } } fn h(): i64 { return 2; } return zz; }
+syscall(60, f());
+' "error:<source>:2:15: an \`impl\` declaration $IR a fn body
+error:<source>:2:56: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:2:91: undefined variable 'zz' (missing include or enum?)"
+one "NM22 pub fn and public fn on one line in a block" 'var a = 1;
+if (a == 1) { pub fn g(): i64 { return 1; } public fn h(): i64 { return 2; } a = zz; }
+syscall(60, a);
+' "error:<source>:2:15: a \`pub\` declaration $IR a block
+error:<source>:2:45: a \`public\` declaration $IR a block
+error:<source>:2:84: undefined variable 'zz' (missing include or enum?)"
 one "PM1 module scope: pub var then used, one error" 'var a = 1;
 a = 2;
 pub var x = 5;

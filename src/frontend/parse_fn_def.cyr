@@ -614,7 +614,7 @@ fn _dl_late_step(S, ti, rep): i64 {
     if (rep == 1) { _dl_report(S, ti, f1, f0, n0); }
     if (_dl_pub_mark(S) == 1) { return 0; }
     _dl_skip(S);
-    _dl_derived(S);
+    _dl_derived(S, ti);
     return 0;
 }
 # ⛔ 6.7.16 — THE REFUSED NAMES ARE KNOWN BEFORE ANY USE IS PARSED. 6.7.15 entered them (`_dl_names`) when PARSE_PROG
@@ -655,7 +655,7 @@ fn _decl_inner(S): i64 {
     _dl_in_report(S, ti);
     if (_dl_pub_mark(S) == 1) { return 1; }
     _dl_skip_in(S);
-    _dl_derived(S);
+    _dl_derived(S, ti);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
     return 1;
@@ -693,10 +693,13 @@ fn _dl_in_report(S, ti): i64 {
 # (v6.5.20, PP_DERIVE_SERIALIZE). They are the refused type's, so a `fn` / `public fn` the declaration's line still
 # holds is stepped with the rest of that line (the derive's `#assert sizeof(Q)` was "unknown type 'Q'", an enum's
 # `public` codec a second refusal).
-# 6.7.16: only after a declaration that ended at its `}` — a derive writes after a struct's / enum's: `use m.g; pub
-# var x = 1; .. }` on one line stepped the `pub` declaration and, in a fn body, the body's own `}`. CHANGELOG [6.7.16]
-fn _dl_derived(S): i64 {
-    if (TOKTYP(S, GTI(S) - 1) != 14) { return 0; }
+# 6.7.16: only after a `struct` / `enum` (`pub` / `public` before it or not) — the declarations a `#derive` takes
+# (PP_DERIVE_*): `use m.g; pub var x = 1;` or two `pub fn`s on one line in a fn body stepped the next declaration and
+# the body's own `}` ("expected '}', got end of file"). The declaration's keyword is token `ti`. CHANGELOG [6.7.16]
+fn _dl_derived(S, ti): i64 {
+    var k = TOKTYP(S, ti);
+    if (k == 73) { k = TOKTYP(S, ti + 1); }
+    if (k != 40) { if (k != 60) { return 0; } }
     if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
     var ln = GTLINE(S, GTI(S) - 1);
     while (PEEKT(S) != 12) {
