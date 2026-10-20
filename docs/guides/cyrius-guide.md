@@ -1257,7 +1257,8 @@ after the first top-level statement and in the declaration zone, and an assignme
 global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
-fn and the assignment to a `*Struct` local or a `*T` global warned on it). A string literal alone is its literal's
+fn and the assignment to a `*Struct` local or a `*T` global warned on it) — under parentheses that wrap it whole
+too, `(0)`, `((0))` (6.7.16; through 6.7.15 each warned), while `(0) + 1` is judged as any value is. A string literal alone is its literal's
 address and never warns either, into any `*T` (6.7.14 for a byte pointer — `var s: *u8 = "abc";`, `t = "xyz";`, a `*i8`,
 a parameter, a global, in the declaration zone, each warned through 6.7.13; 6.7.15 for every other `*T`, the user's
 decision D59, 2026-10-18 — `var s: *i64 = "abcdefgh";`, `*f64`, `*i32`, a one-byte struct's `*B` warned through

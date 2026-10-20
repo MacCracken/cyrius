@@ -196,6 +196,55 @@ rc=0; "$CC" < "$D/d3.cyr" > /dev/null 2> "$D/d3.err" || rc=$?
 n=$(grep -c "pointer difference of pointers with different element sizes" "$D/d3.err" || true)
 [ "$rc" != 0 ] && [ "$n" = 1 ] || bad "D3 (*pp - b, a *i64 less a *u8): rc $rc, refused $n time(s), want refused once"
 
+# N (6.7.16; issues/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md): the literal 0 is a null pointer
+# under parentheses that wrap it whole (6.7.13's D18 (a) by the guide's whole-wrap transparency, as 6.7.15's D59 took
+# the string literal): `var p: *i64 = (0);`, `p = (0);` and a zone `var G: *i64 = (0);` warned "non-pointer" where
+# `= 0;` is quiet. N0 the filed repro verbatim; N1 `((0))`, after the first statement, a global assignment, a `*P`
+# local, a parameter; N2 (controls) `(0) + 1`, `(1)`, `(0) + 0` still warn, one each. Mutation: `_tp_null_exempt`
+# peeling no `(` (the 6.7.15 shape) -> N0 N1 RED (3 and 9 warnings).
+cat > "$D/n0.cyr" <<'EOF'
+fn main(): i64 {
+    var p: *i64 = (0);
+    p = (0);
+    return 0;
+}
+var G: *i64 = (0);
+syscall(60, main());
+EOF
+chk "N0 (the filed repro verbatim: (0) into a *i64 decl, assignment, zone global)" n0.cyr "assigning non-pointer to typed pointer" 0 0
+cat > "$D/n1.cyr" <<'EOF'
+struct P { a; }
+fn main(): i64 {
+    var p: *i64 = ((0));
+    p = ((0));
+    var s: *P = (0);
+    s = (0);
+    return 0;
+}
+fn f(q: *P): i64 { q = (0); return 0; }
+var G: *i64 = ((0));
+var z = 1;
+z = 2;
+var H: *i64 = ((0));
+H = (0);
+G = (0);
+syscall(60, main() + f(0));
+EOF
+chk "N1 (((0)), a *P local, a parameter, after the first statement, a global assignment)" n1.cyr "assigning non-pointer to typed pointer" 0 0
+cat > "$D/n2.cyr" <<'EOF'
+fn main(): i64 {
+    var p: *i64 = (0) + 1;
+    p = (1);
+    var q: *i64 = (1);
+    q = (0) + 0;
+    return 0;
+}
+var G: *i64 = (1);
+var K: *i64 = (0) + 1;
+syscall(60, main());
+EOF
+chk "N2 (control: (0) + 1, (1), (0) + 0 still warn)" n2.cyr "assigning non-pointer to typed pointer" 6
+
 if [ "$fail" -ne 0 ]; then echo "FAIL false_warnings_valid_shapes: $fail row(s) red"; exit 1; fi
-echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a))"
+echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a)); \`(0)\` wrapped whole is the null literal"
 exit 0
