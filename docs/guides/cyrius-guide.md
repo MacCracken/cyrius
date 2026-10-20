@@ -7402,7 +7402,11 @@ i64, `f64` (inferred from a whole f64 argument since 6.7.9), narrow scalars
 anything else is an ordinary call). An inlined body's `return` is its own: inside a fn that returns a
 struct by value it is never judged by that fn's struct (6.7.14; through 6.7.13 `fn gpg<T>(): *T { return
 GPA; }` called in a fn returning a 9-16 or 24 byte struct was refused, naming the enclosing fn's struct;
-an `#inline` fn the same). At most two type parameters are recorded. A
+an `#inline` fn the same). A generic takes at most two type parameters: a third (`fn g3<A, B, C>`,
+`struct Three<A, B, C>`, bounded or not) is refused at the declaration, once, by name — *a third
+type parameter 'C': a generic takes at most two type parameters* — and its uses say nothing more
+(6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
+`sizeof(C)` as 8 for a 24-byte struct). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;
@@ -7448,8 +7452,8 @@ describe<i32>(7);   # needs impl Show for i32
   method). A `*T` field (`p: *T`), and a field whose type parameter has no bound, keep resolving per
   instance.
 - **`T: A + B`** requires every impl. A bound names a declared trait (an undeclared one is refused),
-  takes no type arguments, and goes on one of the first two type parameters (at most two are
-  recorded); up to 8 per parameter.
+  takes no type arguments, and goes on a generic's one or two type parameters (a third is refused
+  itself, 6.7.16); up to 8 per parameter.
 - **Every instantiation is checked**, and is refused when its type has no impl — naming the trait
   and the `impl` it needs: an inferred or explicit type argument, the **i64 base** an i64 call
   reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is not emitted and

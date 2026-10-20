@@ -2911,6 +2911,11 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_nested_shift_close.sh"
 # extra argument dropped (the user's D5). The filed repros, every struct and fn-call position, a generic
 # body once, --syntax-only silent, the controls x86 / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_count_refused.sh"
+# 6.7.16 — a third type parameter is refused at its declaration, once, by name: `fn g3<A, B, C>` bound C
+# to nothing (`sizeof(C)` read 8 for a 24-byte struct) and `struct Three<A, B, C>` laid it out as an i64
+# (the user's D8). Its uses say nothing more, a bound on it goes with it, source order, --syntax-only, the
+# controls x86 / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_tparam_count_refused.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;

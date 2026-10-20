@@ -1547,7 +1547,7 @@ var _ctp_buf = 0;      # `_capture_tparams`' bounds: per slot (0|1), 8 x (name, 
 var _ctp_n0 = 0;       # bounds captured on type parameter 0 / 1
 var _ctp_n1 = 0;
 var _ctp_bad = 0;      # a refused bound shape: its token + 1 (0 = none)
-var _ctp_badk = 0;     # 1 = no trait name after `:` / `+`, 2 = more than 8 bounds, 3 = a third type parameter
+var _ctp_badk = 0;     # 1 = no trait name after `:` / `+`, 2 = more than 8 bounds, 4 = a trait given type arguments
 var _fnt_bnd = 0;      # per fn: its bound block (0 = no bound)
 var _st_bnd = 0;       # per struct: its bound block
 var _bs_tab = 0;       # bounded call sites (4 words): method-name token, trait, type-parameter name, `*T`

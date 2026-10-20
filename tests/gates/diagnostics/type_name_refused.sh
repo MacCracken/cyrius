@@ -25,8 +25,10 @@
 #           reported too.
 #   axis 2  ANTI-VACUOUS: every name of the vocabulary compiles at every site that takes it, a
 #           `Str` param in a unit without lib/str.cyr (the by-name handle), enums declared on
-#           either side, a fn's type parameters (first, second and THIRD, in the default build and
-#           CYRIUS_MONOMORPH=0), a struct declared below its use, the prefix-named struct, and
+#           either side, a fn's type parameters (first and second in the default build; a THIRD under
+#           CYRIUS_MONOMORPH=0, where no list is recorded — in the default build a third is refused at its
+#           declaration alone, its uses `var y: C` / `sizeof(C)` adding no "unknown type", 6.7.16 the user's
+#           D8: tparam_third), a struct declared below its use, the prefix-named struct, and
 #           `Vec` / `Vec<T>` (the struct-field vocabulary's handle) at every annotation site.
 #   axis 3  `--syntax-only` (what `cyrius lint` runs) resolves nothing: every axis-1 shape exits 0
 #           with no `unknown type` line — a refused return type's `<..>` included.
@@ -327,8 +329,10 @@ runs str_param 'fn f(s: Str): i64 { return 4; }\nsyscall(60, f(0));\n' 4
 runs vec_forms 'var g: Vec<i64> = 0;\nsyscall(39);\nvar h: Vec<i64> = 0;\nfn f(v: Vec): i64 { return 1; }\nfn k<T>(v: Vec<T>): i64 { return 2; }\nfn m(): i64 {\n    var x: Vec<i64> = 0;\n    var p: *Vec<i64> = &x;\n    var a: Vec[2];\n    return sizeof(Vec) + f(x) + k<i64>(x) + g + h;\n}\nsyscall(60, m());\n' 11
 runs enum_sides 'enum Color { RED = 1; BLUE = 2; }\nvar g: Color = 2;\nvar h: Late = 1;\nfn f(c: Color, d: Late): i64 { var l: Color = c; var m: Late = d; return l + m + g + h; }\nenum Late { A = 1; }\nsyscall(60, f(3, 4));\n' 10
 GEN='fn g<T>(a: T): i64 {\n    var y: T = a;\n    var s: [T] = 0;\n    var p: *T = 0;\n    return y + sizeof(T);\n}\nfn h<A, B, C>(a: A, b: B, c: C): i64 {\n    var y: C = c;\n    return y + sizeof(C);\n}\n'
-runs tparams       "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" 23
+GEN2='fn g<T>(a: T): i64 {\n    var y: T = a;\n    var s: [T] = 0;\n    var p: *T = 0;\n    return y + sizeof(T);\n}\nfn h<A, B>(a: A, b: B): i64 {\n    var y: B = b;\n    return y + sizeof(B);\n}\n'
+runs tparams       "${GEN2}syscall(60, g(3) + h(1, 4));\n" 23
 runs tparams_mono0 "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" 23 CYRIUS_MONOMORPH=0
+refused tparam_third "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" "a third type parameter 'C': a generic takes at most two type parameters"
 runs fwd_struct 'fn f(p: *Late): i64 {\n    var q: Late;\n    q.a = 5;\n    return q.a;\n}\nstruct Late { a; b; }\nsyscall(60, f(0));\n' 5
 runs own_tparam 'struct Box<T> { v: T; n; }\nsyscall(60, sizeof(Box));\n' 16
 runs u8pair_ptr 'struct u8pair { a; b; }\nvar buf: i64[2];\nvar p: u8pair = 0;\nfn f(): i64 {\n    p = &buf;\n    p.a = 300;\n    p.b = 7;\n    if (load64(&buf) != 300) { return 1; }\n    return p.a - 300 + p.b;\n}\nsyscall(60, f());\n' 7

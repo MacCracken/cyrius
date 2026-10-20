@@ -11,7 +11,8 @@
 #
 #   D  the definition: an undeclared trait in a bound; a method no bound declares (the contract),
 #      also on a `var q: T` local; a method two bounds declare (ambiguous); a bound with type
-#      arguments; a bound on a third type parameter; `<T: >` — each refused once, by name
+#      arguments; a bound on a third type parameter (6.7.16: the third parameter itself is refused, its bound
+#      with it — the user's D8); `<T: >` — each refused once, by name
 #   I  an instantiation whose type has no impl: inferred, explicit, the i64 base reached by a scalar
 #      call (whose body is then the dead stub), `&g`, a tail call, a second bounded parameter, and
 #      an unbounded generic forwarding its T to a bounded one — refused once, naming the trait and
@@ -177,7 +178,7 @@ refused d4 "ambiguous method 'size': more than one trait in this type parameter'
 mk d5 'fn f<T: Show<i64>>(v: T): i64 { return 1; }' 'return f(p);'
 refused d5 "a trait in a bound takes no type arguments: 'Show'" "D5: a bound with type arguments"
 mk d6 'fn f<A, B, C: Show>(a: A): i64 { return 1; }' 'return f(p);'
-refused d6 "a bound on a third type parameter" "D6: a bound on a third type parameter"
+refused d6 "a third type parameter 'C': a generic takes at most two type parameters" "D6: a bound on a third type parameter (6.7.16 D8: the parameter refused)"
 mk d7 'fn f<T: >(v: T): i64 { return 1; }' 'return f(p);'
 refused d7 "expected a trait name in a type parameter's bound" "D7: <T: >"
 

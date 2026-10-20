@@ -9869,12 +9869,10 @@ fn _ctp_bounds(S, slot): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) != 2) {
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 1; }
+            _ctp_badat(slot, GTI(S) + 1, 1);
             return 0;
         }
-        if (slot > 1) {
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 3; }
-        } else {
+        if (slot <= 1) {
             var k = _ctp_n0;
             if (slot == 1) { k = _ctp_n1; }
             if (k >= 8) {
@@ -9887,7 +9885,7 @@ fn _ctp_bounds(S, slot): i64 {
         }
         STI(S, GTI(S) + 1);             # consume the trait name
         if (PEEKT(S) == 19) {           # a trait takes no type arguments
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S); _ctp_badk = 4; }
+            _ctp_badat(slot, GTI(S), 4);
             # its `>>` may close the parameter list too (`<T: Show<i64>>`)
             if (_skip_targ_list(S) > 0) { _ctp_closed = 1; return 0; }
         }
@@ -9897,6 +9895,13 @@ fn _ctp_bounds(S, slot): i64 {
     return 0;
 }
 
+# A refused bound shape `k` at token `at` - 1, kept for `_bnd_make` to report (the first one). A third type parameter's
+# bound records none: the parameter itself is refused (`_ctp_third`), its bound with it. CHANGELOG [6.7.16]
+fn _ctp_badat(slot, at, k): i64 {
+    if (slot > 1) { return 0; }
+    if (_ctp_bad == 0) { _ctp_bad = at; _ctp_badk = k; }
+    return 0;
+}
 # A refusal AT token `ti` (the cursor is put back): pass 1 reports from a pre-scan.
 fn _bnd_err_at(S, ti, msg, noff, tail, noff2): i64 {
     var sv = GTI(S);
@@ -9923,7 +9928,6 @@ fn _bnd_make(S, tp): i64 {
         if (_ctp_badk == 1) { _bnd_errm_at(S, bt, "expected a trait name in a type parameter's bound (`T: Show + Eq`)", 66); }
         if (_ctp_badk == 2) { _bnd_err_at(S, bt, "too many bounds on one type parameter (max 8): ", TOKVAL(S, bt), 0, 0 - 1); }
         if (_ctp_badk == 4) { _bnd_err_at(S, bt, "a trait in a bound takes no type arguments: ", TOKVAL(S, bt), 0, 0 - 1); }
-        if (_ctp_badk == 3) { _bnd_err_at(S, bt, "a bound on a third type parameter: at most two type parameters are recorded, so ", TOKVAL(S, bt), " would never be checked", 0 - 1); }
     }
     if (_ctp_n0 + _ctp_n1 == 0) { return 0; }
     var blk = alloc(18 * 8);
@@ -13397,6 +13401,9 @@ fn _skip_targ_list(S): i64 {
 # Default path (_MONOMORPH_OK == 0): delegates to SKIP_GENERICS verbatim and returns 0
 # — byte-identical to the pre-v6.3.9 skip. Only ≤2 params are captured (the inline
 # replay's pc≤2 ceiling); extra params are consumed but not recorded.
+# ⛔ 6.7.16 (D8) — and a third is REFUSED, once, at its name (`_ctp_third`): it was consumed and bound nothing, so
+# `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
+# with no diagnostic. CHANGELOG [6.7.16]
 fn _capture_tparams(S): i64 {
     if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
@@ -13416,6 +13423,7 @@ fn _capture_tparams(S): i64 {
             if (PEEKT(S) == 2) {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
                 if (n == 1) { off1 = PEEKV(S) + 1; }
+                if (n == 2) { _ctp_third(S); }
                 n = n + 1;
                 STI(S, GTI(S) + 1);
                 # 6.7.1 (C3): `T: Show + Eq` — a BOUND, not two more type parameters (it minted
@@ -13431,6 +13439,20 @@ fn _capture_tparams(S): i64 {
     }
     STI(S, GTI(S) + 1);  # consume >
     return off0 | (off1 << 32);
+}
+
+# The third type parameter of the list `_capture_tparams` reads (the cursor on its name) — "a third type parameter
+# 'C': a generic takes at most two type parameters" (the user's D8, 2026-10-19: the guide's two-slot model), once per
+# token, the panic latch put back so the declaration reads on. Pass 1 says it (a struct's definition, a fn's prescan,
+# in source order, as the bound refusal it replaces was), never an instance's re-emit. Its uses say nothing more
+# (`_ta_x3`). It needs no name resolved, so `--syntax-only` (cyrius lint) reports it too. CHANGELOG [6.7.16]
+fn _ctp_third(S): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    ERR_IDENT(S, "a third type parameter ", PEEKV(S), ": a generic takes at most two type parameters", 0 - 1);
+    _panic = 0;
+    return 0;
 }
 
 # v6.3.9 (F-fns): infer the CANONICAL concrete-type token of the arg expression at
@@ -15882,6 +15904,7 @@ fn _ta_extra(S, np, gk, gi): i64 {
 fn _ta_xrefuse(S, at, np, n, gk, gi): i64 {
     if (_syntax_only == 1) { return 0; }   # as D6's `_ngt_refuse`
     if (_panic == 1) { return 0; }
+    if (np == 2) { if (_ta_x3(S, gk, gi) == 1) { return 0; } }   # 6.7.16 (D8): refused at its declaration
     if (_tn_once(S, at) == 0) { return 0; }
     var nm = gi;
     if (gk == 2) { nm = _fn_src_name(S, gi, L64(_fnt_names + gi * 8)); }   # `g`, a method's `P.m`
@@ -15901,6 +15924,21 @@ fn _ta_xrefuse(S, at, np, n, gk, gi): i64 {
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;
+    return 0;
+}
+# 1 when the generic a count refusal would name declares a third type parameter — refused at its declaration
+# (`_ctp_third`), so its uses say nothing more (the user's D8). `gk` / `gi` as `_ta_rest`'s. CHANGELOG [6.7.16]
+fn _ta_x3(S, gk, gi): i64 {
+    var lt = 0 - 1;
+    if (gk == 2) { if (GFDS(S, gi) > 0) { lt = GFDS(S, gi) + 1; } }
+    else {
+        var sid = FINDSTRUCT(S, gi);
+        if (sid > 0) { if (GSDS(S, sid - 1) > 0) { lt = GSDS(S, sid - 1) + 1; } }
+        else { lt = _tp_later_lt(S, gi); }
+    }
+    if (lt <= 0) { return 0; }
+    if (TOKTYP(S, lt) != 19) { return 0; }
+    if (_tp_count_at(S, lt) > 2) { return 1; }
     return 0;
 }
 # The type parameters generic packed names `tp` records (`GSTP` / `GFTP`): 1, or 2 when its second slot is set.
