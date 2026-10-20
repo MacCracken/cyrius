@@ -19,7 +19,7 @@
 #      tuple parameter; R11 a tuple (or a tuple field) used as a value; R12 a non-tuple source into
 #      a tuple place (an argument of another struct or tuple type too); R13 methods; R17 a
 #      multi-value call as a tuple argument (`g(f())`: bind it first; R17v / R17w an integer or bool literal
-#      or an argument made only of literals and operators, 6.7.14's D44 / 6.7.15's D36); R21 `t.N` spellings
+#      or an argument made only of literals and operators, 6.7.14's D44 / 6.7.15's D36; R17x its words, 6.7.16); R21 `t.N` spellings
 #      that name no element
 #   P  positive: the type, `t.N`, copies, fields, parameters — exit codes, values distinguishable
 #   T4 — the literal `(a, b)`, accepted in five positions (a `var` initializer in a fn and in either
@@ -639,6 +639,26 @@ refused4 r17w10 "cannot pass a bool to tuple parameter 't' (i64, i64) of 'X.take
 refused4 r17w11 "2:18: $LIT" "R17w11: at top level, \`take('a' - 1)\`" "${TW}syscall(60, take('a' - 1));\n"
 exits4 r17w12 34 "R17w12: still the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\`, a const \`take(C)\` (compiled, not taken), and a literal expression into a parameter that is no tuple" 'include "lib/alloc.cyr"\nconst C = 0;\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(x): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; if (x == 0) { return take(C); } return take(&t) + take(u) + take(mk()) + take2(-1 + 1, t) - 102; }\nsyscall(60, f(1));\n'
 refused4 r17w13 "1:12: a tuple type in a generic fn is refused" "R17w13: a generic's tuple parameter, \`g(-5, 0)\`: R4 alone" 'fn g<T>(t: (i64, i64), x: T): T { return x; }\nfn f(): i64 { return g(-5, 0); }\nsyscall(60, f());\n'
+# R17x (6.7.16; issues/2026-10-18-tuple-parameter-comparison-argument-called-an-integer.md) — the words name the
+# argument's VALUE: a boolean value (guide § bool: a comparison, \`!x\`, \`&&\` / \`||\`, or any of these in parentheses)
+# is "a bool", as \`take(true)\` is; D36's scan said "an integer" for each (it read only the literals). \`_tty_arg\` reads
+# the argument at the parser's levels, so an operator applied to a boolean value is "an integer" (R17x11-R17x13).
+# R17w3 / R17w4 / R17w10 are unchanged. Mutation (2026-10-20, every leg): \`_tup_arg_lit\` without its \`_tal_kind\` call
+# -> R17x1-R17x10b say "an integer" (the controls and R17w hold).
+refused4 r17x1 "2:27: $BOOLT" "R17x1: the issue's \`take(1 == 1)\` verbatim is a bool" "${TW}fn f(): i64 { return take(1 == 1); }\nsyscall(60, f());\n"
+refused4 r17x2 "2:27: $BOOLT" "R17x2: \`take(!0)\`" "${TW}fn f(): i64 { return take(!0); }\nsyscall(60, f());\n"
+refused4 r17x3 "2:27: $BOOLT" "R17x3: \`take(2 < 3)\`" "${TW}fn f(): i64 { return take(2 < 3); }\nsyscall(60, f());\n"
+refused4 r17x4 "2:28: $BOOLT" "R17x4: \`take((1 != 0))\`, wrapped" "${TW}fn f(): i64 { return take((1 != 0)); }\nsyscall(60, f());\n"
+refused4 r17x5 "2:27: $BOOLT" "R17x5: \`take(1 < 2 && 3 > 2)\`" "${TW}fn f(): i64 { return take(1 < 2 && 3 > 2); }\nsyscall(60, f());\n"
+refused4 r17x6 "2:27: $BOOLT" "R17x6: \`take(!(1 + 2))\` (\`!\` over a parenthesised sum)" "${TW}fn f(): i64 { return take(!(1 + 2)); }\nsyscall(60, f());\n"
+refused4 r17x7 "2:27: $BOOLT" "R17x7: \`take(1 + 2 == 3)\` (the comparison is the loosest operator)" "${TW}fn f(): i64 { return take(1 + 2 == 3); }\nsyscall(60, f());\n"
+refused4 r17x8 "2:27: $BOOLT" "R17x8: \`take(0 || 1)\`" "${TW}fn f(): i64 { return take(0 || 1); }\nsyscall(60, f());\n"
+refused4 r17x9 "3:46: cannot pass a bool to tuple parameter 't' (i64, i64) of 'X.take'" "R17x9: a method's tuple parameter, \`x.take(2 >= 1)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(2 >= 1); }\nsyscall(60, f());\n'
+refused4 r17x10 "2:36: cannot pass a bool to tuple parameter 't' (i64, i64) of 'take2'" "R17x10: the second argument, \`take2(1 == 1, 2 != 1)\` (the first, no tuple, is not judged)" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn f(): i64 { return take2(1 == 1, 2 != 1); }\nsyscall(60, f());\n'
+refused4 r17x10b "2:18: $BOOLT" "R17x10b: at top level, \`take('a' == 97)\`" "${TW}syscall(60, take('a' == 97));\n"
+refused4 r17x11 "2:27: $LIT" "R17x11: control — \`take((1 == 1) + 1)\` stays an integer" "${TW}fn f(): i64 { return take((1 == 1) + 1); }\nsyscall(60, f());\n"
+refused4 r17x12 "2:27: $LIT" "R17x12: control — \`take(!0 + 1)\` stays an integer (\`!\` binds its factor)" "${TW}fn f(): i64 { return take(!0 + 1); }\nsyscall(60, f());\n"
+refused4 r17x13 "2:27: $LIT" "R17x13: control — \`take(-(1 == 1))\` stays an integer (\`-\` outermost)" "${TW}fn f(): i64 { return take(-(1 == 1)); }\nsyscall(60, f());\n"
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"
