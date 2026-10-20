@@ -655,7 +655,11 @@ _co_cyly() {
 # `_cy_remove_link`, extracted from the source — the real text, not a copy): ra\bin is a REAL
 # directory holding a file, so pointing it at ra\tgt fails, and the probe exits 0 only when the
 # switch failed AND no `bin.cyrtmp.*` temp link is left in ra\ (1+ = links left, 10+ = the switch
-# "succeeded", 90+ = the staging failed). For the cass leg. CHANGELOG [6.7.16]
+# "succeeded", 90-94 = the staging failed). First it proves the host can make and remove such a
+# link (95 = sys_symlink failed: no symlink privilege / Developer Mode off; 96 = `_cy_remove_link`
+# left it): `_relink_atomic` returns a failed symlink before any temp exists, so without the
+# proof an unprivileged host passed the row with the cleanup never run (6.7.16 review).
+# For the cass leg. CHANGELOG [6.7.16]
 _co_relink_probe() {
   {
     printf 'include "lib/syscalls.cyr"\ninclude "lib/string.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/fmt.cyr"\n'
@@ -671,6 +675,18 @@ fn main(): i64 {
     var fd = xopen("ra/bin/f", O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) { return 93; }
     sys_close(fd);
+    if (sys_symlink("tgt", "ra/probe") < 0) { return 95; }
+    _cy_remove_link("ra/probe");
+    var pents = vec_new();
+    if (dir_list_checked(str_from("ra"), pents) < 0) { return 94; }
+    var pi = 0;
+    while (pi < vec_len(pents)) {
+        var pe = vec_get(pents, pi);
+        if (str_len(pe) == 5) {
+            if (memeq(str_data(pe), "probe", 5) == 1) { return 96; }
+        }
+        pi = pi + 1;
+    }
     var r = _relink_atomic("ra/bin", "tgt");
     var ents = vec_new();
     if (dir_list_checked(str_from("ra"), ents) < 0) { return 94; }
@@ -1196,12 +1212,15 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'\_ra"' \
       && scp -q $SSHO "$CO_TMP"/_co_ra.exe "cass:$WRDS"/_ra/ra.exe \
       || { echo "SELFHOST_FAIL: cass — the _relink_atomic probe could not be built or staged. NOT SELFHOST_OK."; exit 1; }
-    if ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"'\_ra && ra.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)"'; then
-      echo "  relink on cass: a failed switch (bin\\ a real directory) leaves no bin.cyrtmp link"
-    else
-      echo "SELFHOST_FAIL: cass — _relink_atomic left its bin.cyrtmp temp link after a failed switch, or the switch did not fail (dir /a $WRD\\_ra\\ra). NOT SELFHOST_OK."
-      exit 1
-    fi
+    # The probe's exit code comes back as text (RARC=<n>): 95 / 96 mean the row could not run.
+    _rarc=$(ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"'\_ra && ra.exe & echo RARC=!errorlevel!"' 2>/dev/null | tr -d '\r' | sed -n 's/^RARC=//p') || _rarc=""
+    case "$_rarc" in
+      0) echo "  relink on cass: a failed switch (bin\\ a real directory) leaves no bin.cyrtmp link (links proved makeable and removable first)" ;;
+      95|96) echo "SELFHOST_FAIL: cass — symlinks cannot be made on cass: the row could not run (probe rc $_rarc: 95 sys_symlink failed — no symlink privilege / Developer Mode; 96 _cy_remove_link left the probe link). NOT SELFHOST_OK."
+        exit 1 ;;
+      *) echo "SELFHOST_FAIL: cass — _relink_atomic left its bin.cyrtmp temp link after a failed switch, or the switch did not fail (probe rc '${_rarc}'; dir /a $WRD\\_ra\\ra). NOT SELFHOST_OK."
+        exit 1 ;;
+    esac
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
