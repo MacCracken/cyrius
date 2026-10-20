@@ -8444,7 +8444,7 @@ never fired and `file_close_r` was never `Err`.
 | `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
 | `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
 | `sys_ftruncate` of a pipe, the null device (`NUL`) or a read-only fd | -22 (macOS: 0 for `/dev/null`) | -1 | -1; -22 since 6.7.16 |
-| `sys_ftruncate(99, n)` (never opened) | -9 | -1 | -1; -9 since 6.7.16 |
+| `sys_ftruncate(-999, n)` (not a descriptor) | -9 | -1 | -1; -9 since 6.7.16 |
 | `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
