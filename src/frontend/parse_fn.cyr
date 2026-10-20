@@ -9660,7 +9660,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
             if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
             i = _trs_inner(S, i + 2, q, tail, nm);
-            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, tail, nm); } }
+            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_fnret(S, i + 1, q, tail, nm); } }
             return i;
         } }
     if (t != 2) { return _trs_err(S, i, 2); }
@@ -9701,9 +9701,9 @@ fn _trs_targs(S, ti): i64 {
     return 0;
 }
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
-# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. The member's own `: u128` return is refused
-# before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter (`nm < 0`) is a multi-value
-# element's or a `*fn( .. )` type's return, which reads on.
+# `*`, or inside a tuple / `*fn( .. )` list or that fn pointer's own `: T` (`_trs_lvl`), unchanged. The member's own
+# `: u128` return is refused before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter
+# (`nm < 0`) is a multi-value element's or a `*fn( .. )` type's return, which reads on.
 var _trs_lvl = 0;
 fn _trs_u128(S, i, st, nm): i64 {
     if (nm < 0) { return i + 1; }
@@ -9716,6 +9716,15 @@ fn _trs_u128(S, i, st, nm): i64 {
 fn _trs_inner(S, i, q, tail, nm): i64 {
     _trs_lvl = _trs_lvl + 1;
     var r = _trs_list(S, i, q, tail, nm);
+    _trs_lvl = _trs_lvl - 1;
+    return r;
+}
+# A `*fn( .. )` type's own `: T` (`i` past its `:`), read a level in, as its list is: it is the fn pointer's return,
+# not the parameter's type, so `cb: *fn(i64): u128` reads on, as a fn's parameter reader (`_pty_fn`, inner 1) reads
+# it. It was read at the parameter's level and refused as a `u128` parameter. CHANGELOG [6.7.16]
+fn _trs_fnret(S, i, q, tail, nm): i64 {
+    _trs_lvl = _trs_lvl + 1;
+    var r = _trs_type(S, i, q, tail, nm);
     _trs_lvl = _trs_lvl - 1;
     return r;
 }

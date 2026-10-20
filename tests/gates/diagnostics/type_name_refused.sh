@@ -48,6 +48,12 @@
 #           Mutant (2026-10-18, a scratch copy of src/, CYCC= it): `_trs_ret_refused` without its u128 arm -> RED
 #           u128_trait_ret1 / u128_trait_ret / u128_trait_ret2 (each built) and its --syntax-only row; the lane's
 #           previous compiler (64c2fc8e) the same.
+#           6.7.16: a trait member's `cb: *fn(i64): u128` is a fn pointer's own return, read on as a fn's parameter
+#           reads it (u128_trait_fnret, the filed repro verbatim, exit 3): it was refused as a `u128` parameter (3:36).
+#           The parameter's own `u128` after it stays refused, at its own token (u128_trait_fnret_own, 2:45; it was
+#           reported at the fn pointer's 2:36). (issues/2026-10-18-trait-member-fn-pointer-parameter-u128-return-refused.md)
+#           Mutant (2026-10-20): the lane's previous compiler (be7156d69, the return read at the parameter's level)
+#           -> RED 2: u128_trait_fnret (refused), u128_trait_fnret_own (at 2:36).
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -395,6 +401,9 @@ runs u128_fnptr_inner 'include "lib/fnptr.cyr"\nfn k(x): i64 { return 3; }\nfn a
 refused u128_trait_ret 'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' "$UR"
 runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self): *fn(i64): u128; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
 runs u128_local       'fn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); if (b > 0xFFFFFFFFFFFFFFFF) { return 9; } return 1; }\nsyscall(60, f());\n' 9
+# 6.7.16: a trait member's `*fn( .. ): u128` parameter — the fn pointer's own return, as a fn's parameter reads it.
+runs u128_trait_fnret 'include "lib/fnptr.cyr"\nstruct P { x; }\ntrait T { fn e(self, cb: *fn(i64): u128): i64; }\nimpl T for P { fn e(self, cb: *fn(i64): u128): i64 { return fncall1(cb, 0); } }\nfn k(x): i64 { return 3; }\nfn main(): i64 { var p = P { 1 }; return p.e(&k); }\nsyscall(60, main());\n' 3
+refused u128_trait_fnret_own 'struct P { x; }\ntrait T { fn e(self, cb: *fn(i64): u128, v: u128): i64; }\nsyscall(60, 4);\n' "2:45: $UP"
 # --syntax-only (what `cyrius lint` runs) refuses them too: the return / field forms were its syntax error.
 for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     rows=$((rows + 1))
