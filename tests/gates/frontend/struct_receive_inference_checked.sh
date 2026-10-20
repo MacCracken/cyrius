@@ -1410,7 +1410,52 @@ done
 awk '/^var x = /{print "var e = nope;"} {print}' "$T/GZ21zone.cyr" > "$T/GZ21b.cyr"
 refused GZ21b "undefined variable 'nope'" "the zone: the bound is judged at the call's replay, after an earlier line's error (not at the end of pass 1)" 2
 
-[ "$rows" -ge 330 ] || bad "only $rows rows ran (floor 330)"
+# 6.7.16 — A ZONE GENERIC CALL WITH A NEGATED-LITERAL CARRIER OR A REFUSED TYPE ARGUMENT TYPES ITS GLOBAL AS THE LINE AFTER
+# THE FIRST STATEMENT DOES (issues/2026-10-18-zone-generic-instance-refused-type-argument-or-negated-literal-unbound.md).
+# `var x = mkg1(-3);` left x untyped in the zone (`x.v`: "no struct type in scope for 'x'"; after a first statement it
+# exits 253): `-3` is now read by the classifier (edd339932's `_gu_tp`), i64, the base. `var x = mkg1<*u8>(33);` gave
+# the type argument's refusal AND "no struct type in scope for 'x'" at `x.v`; after a first statement the refusal alone,
+# x a handle of G1 (the call reaches its base, whose result is recorded as no struct value). The sweep now types x so
+# (`_gu_gen` / `_gu_hdl`), so its uses add nothing the line after the first statement does not: GZ11 / GZ12 the filed
+# repros verbatim (zone; after with `var Z0 = 0; Z0 = 1;` before `var x`), GZ12f a fn body reading `x.v` before the
+# replay, GZ12p `var y = x + 1;` (pointer arithmetic on the handle, as after: no `G1_add`), GZ12w a 16 B `G2` (`x.w`).
+#   N68 the tree before it (edd339932's `_gu_gen`: a refused list untyped) -> RED 3: GZ12zone GZ12f GZ12wzone x4 (2
+#                                                           errors: "no struct type in scope for 'x'")
+#   N69 `_gu_tp` without its classifier (edd339932's N62)   -> RED GZ11zone x4 ("no struct type in scope for 'x'"), with
+#                                                           N62's 13
+#   N70 `_gu_set` without `_gu_hdl` (an inline G1)          -> RED 1: GZ12pzone x4 (`x + 1` dispatches the undefined
+#                                                           `G1_add`: a warning and a second error)
+cat > "$T/GZ11zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var x = mkg1(-3);
+syscall(60, x.v);
+EOF
+cat > "$T/GZ12zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var x = mkg1<*u8>(33);
+syscall(60, x.v);
+EOF
+zaft GZ11
+zaft GZ12
+for zw in zone after; do runs "GZ11$zw" 253 "the $zw: the filed \`var x = mkg1(-3); syscall(60, x.v);\` binds G1 (T = i64)"; done
+refused GZ12zone "4:14: a type argument is a type name, got '*'" "the zone: the filed \`mkg1<*u8>(33)\` is the type argument's one refusal (\`x.v\` added a second)"
+refused GZ12after "5:14: a type argument is a type name, got '*'" "control: after a first statement, the one refusal"
+printf '%s\nvar x = mkg1<*u8>(33);\nfn f(): i64 { return x.v; }\nsyscall(60, f());\n' "$GZG" > "$T/GZ12f.cyr"
+refused GZ12f "a type argument is a type name, got '*'" "the zone: a fn body reads \`x.v\` before the replay: the refusal alone"
+printf '%s\nvar x = mkg1<*u8>(33);\nvar y = x + 1;\nsyscall(60, y);\n' "$GZG" > "$T/GZ12pzone.cyr"
+zaft GZ12p
+printf '%s\nstruct G2<T> { v: T; w: T; }\nfn mkg2<T>(v: T): G2<T> { var g: G2<T>; g.v = v; g.w = v; return g; }\nvar x = mkg2<*u8>(33);\nsyscall(60, x.w);\n' "$GZG" > "$T/GZ12wzone.cyr"
+zaft GZ12w
+for zw in zone after; do
+    refused "GZ12p$zw" "a type argument is a type name, got '*'" "the $zw: \`var y = x + 1;\` on the refused call's handle adds nothing (no \`G1_add\`)"
+    refused "GZ12w$zw" "a type argument is a type name, got '*'" "the $zw: a 16 B \`mkg2<*u8>(33)\`, \`x.w\`: the one refusal"
+done
+
+[ "$rows" -ge 339 ] || bad "only $rows rows ran (floor 339)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument (6.7.16)"

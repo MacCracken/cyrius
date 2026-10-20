@@ -11799,11 +11799,16 @@ fn _gu_pass(S, n): i64 {
     }
     return ch;
 }
-# Note `i`'s global takes struct `sid` (`_gu_type`), or with 0 is untyped as it was registered.
+# Note `i`'s global takes struct `sid` (`_gu_type`; a handle for a refused type-argument list, `_gu_hdl`), or with 0 is
+# untyped as it was registered.
 fn _gu_set(S, i, sid): i64 {
     var gvi = vec_get(_gu_v, i);
     vec_set(_gu_v, i + 2, sid);
-    if (sid > 0) { return _gu_type(S, gvi, sid); }
+    if (sid > 0) {
+        _gu_type(S, gvi, sid);
+        if (_gu_hdl == 1) { SVPM(S, gvi, 1); }
+        return 0;
+    }
     SVTYPE(S, gvi, 0);
     SVPM(S, gvi, 0);
     return 0;
@@ -11812,6 +11817,7 @@ fn _gu_set(S, i, sid): i64 {
 # generic's fixed or bound `: T` return; 6.7.15, a generic struct's instance through `_gu_gen`), else a whole method /
 # operator / known `&f` result (`_gu_wsid`). 0 none.
 fn _gu_zsid(S, ti): i64 {
+    _gu_hdl = 0;
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_ok(S, _gz_call_rs(S, c));
@@ -11856,13 +11862,21 @@ fn _gu_wfree(S, a, e): i64 {
 # (`_gu_inst`). 0 when the tokens bind no type argument: the global stays untyped, as before.
 # 6.7.16: an inferred binding is decided as `_gen_resolve_call` decides it — the base unless an argument binds a struct
 # or marks `_gi_sc` (an f64, a struct carrier's scalar) — and a binding the sweep cannot read (`_gu_miss`) binds nothing.
+# ⛔ 6.7.16 — A LIST THE CALL REFUSES (`mkg1<*u8>(33)`) IS A HANDLE OF G, as the line after the first statement takes it:
+# the call reaches its base (`_gen_resolve_call`), whose result the parse records as no struct value (`_gz_late`). The
+# global stayed untyped, so its `x.v` added "no struct type in scope for 'x'" after the type argument's own refusal.
+# `_gu_hdl` tells the sweep (`_gu_set`). CHANGELOG [6.7.16]
+var _gu_hdl = 0;
 fn _gu_gen(S, c): i64 {
     var fi = FINDFN(S, TOKVAL(S, c));
     if (fi < 0) { return 0; }
     var c0 = 0 - 8;
     var c1 = 0;
     if (TOKTYP(S, c + 1) == 19) {
-        if (_gu_xlist(S, c) == 0) { return 0; }
+        if (_gu_xlist(S, c) == 0) {
+            _gu_hdl = 1;
+            return _gz_gb;
+        }
         c0 = _gu_x0;
         c1 = _gu_x1;
         if (c0 <= 0 && c1 <= 0) {
