@@ -156,6 +156,13 @@
 #   ERR_IDENT -> RED S1 S2 S4 S5 S7_pe S8 S9 E5 E6 N1 N3 N4 N5 N7 (as the lane's previous compiler); MN2
 #   `_instantiate_generic_fn` without the clear -> RED N6; MN3 `_mcall_inst` without the set -> RED S9; MN4
 #   `_meth_xinst` without the set -> RED E5 E6; MN5 `_mcall_xquiet` without the set -> RED N5 N7.
+# 6.7.16 — THE FORWARD REFUSAL NAMES ITS FORWARD TARGET AS THE SOURCE SPELLS IT (issues/2026-10-18-generic-forward-
+#   refusal-names-forwarded-method-by-mangled-name.md): `generic 'o1' has no i64 instance: it forwards its type
+#   parameter to 'P_bk'` and its note `of 'P_bk' needs` named the fn table's method; both name `P.bk` now
+#   (`_gen_fwd_err`, `_fn_src_name`), each written out before the next is computed (one GNPOS scratch). N3a the filed
+#   repro verbatim, N3b a free forward target keeps `gb`, N3c a method forwarding to a method (`P.fw`, `P.bk`, one
+#   report for two sites), N3d the bounded-struct note (`'P.bs' instantiates ..`). Mutant (2026-10-20, CYCC=): the
+#   lane's previous compiler (b3ec1dee1) -> RED N3a N3c N3d.
 # 6.7.15 (the P rows; 2026-10-18, CYCC= the mutant, so its x86_64 / IR / PE legs carry it):
 #   MT1 the fix reverted (the lane's previous compiler) -> RED P0 (refused naming P_pick), P1-P7 (each refused), PX
 #                                                         (the stub refusal naming o); P0c green
@@ -833,6 +840,57 @@ fn main(): i64 { var p: P; p.k = 1; return p.fw(5); }
 syscall(60, main());
 XEOF
 nrow N3 "$D/n3.cyr" "generic 'P.fw' has no i64 instance: it forwards its type parameter to 'gb'" "p.fw(5), a method forwarding T to a bounded generic"
+# fwrow <id> <src> <error fragment> <note fragment> <what>: refused with exactly one error line and one note line,
+# holding the two fragments (6.7.16: the forward refusal's second name and its note, `_gen_fwd_err`)
+fwrow() {
+    frc=0; "$CC" < "$2" > "$D/$1" 2> "$D/$1.err" || frc=$?
+    fe=$(grep -c '^error' "$D/$1.err" || true)
+    fn=$(grep -c '^  note: ' "$D/$1.err" || true)
+    if [ "$frc" -eq 0 ]; then bad "$1: $5 compiled (want it refused)"
+    elif [ "$fe" -ne 1 ] || [ "$fn" -ne 1 ]; then bad "$1: $5: $fe errors and $fn notes, want 1 and 1: $(tr '\n' ' ' < "$D/$1.err")"
+    elif grep '^error' "$D/$1.err" | grep -qF "$3" && grep '^  note: ' "$D/$1.err" | grep -qF "$4"; then ok "$1: $5: $3 / $4"
+    else bad "$1: $5: not '$3' / '$4': $(grep -e '^error' -e '^  note: ' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+cat > "$D/n3a.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct P { k; }
+impl P { fn bk<V: Show>(self, v: V): i64 { return 1; } }
+fn o1<T>(p: P, t: T): i64 { return p.bk(t); }
+fn main(): i64 { var p: P; p.k = 1; return o1(p, 5); }
+syscall(60, main());
+XEOF
+fwrow N3a "$D/n3a.cyr" "6:47: generic 'o1' has no i64 instance: it forwards its type parameter to 'P.bk'" "the bound on type parameter 'V' of 'P.bk' needs" "the forward target a method: the filed repro, verbatim"
+cat > "$D/n3b.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+fn gb<V: Show>(v: V): i64 { return 1; }
+fn o2<T>(t: T): i64 { return gb(t); }
+fn main(): i64 { return o2(5); }
+syscall(60, main());
+XEOF
+fwrow N3b "$D/n3b.cyr" "generic 'o2' has no i64 instance: it forwards its type parameter to 'gb'" "the bound on type parameter 'V' of 'gb' needs" "a free generic as the forward target keeps its name (control)"
+cat > "$D/n3c.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct P { k; }
+impl P { fn bk<V: Show>(self, v: V): i64 { return 1; } }
+impl P { fn fw<U>(self, u: U): i64 { return self.bk(u); } }
+fn main(): i64 { var p: P; p.k = 1; var a = p.fw(5); return a + p.fw(6); }
+syscall(60, main());
+XEOF
+fwrow N3c "$D/n3c.cyr" "6:49: generic 'P.fw' has no i64 instance: it forwards its type parameter to 'P.bk'" "of 'P.bk' needs" "p.fw(5) a method forwarding to self.bk(u): P.fw and P.bk, one report"
+cat > "$D/n3d.cyr" <<'XEOF'
+trait Show { fn show(self): i64; }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+struct Bx<T: Show> { v: T; }
+struct P { k; }
+impl P { fn bs<V>(self, v: V): i64 { var b: Bx<V>; return 1; } }
+fn o3<T>(p: P, t: T): i64 { return p.bs(t); }
+fn main(): i64 { var p: P; p.k = 1; return o3(p, 5); }
+syscall(60, main());
+XEOF
+fwrow N3d "$D/n3d.cyr" "generic 'o3' has no i64 instance: it forwards its type parameter to 'P.bs'" "note: 'P.bs' instantiates the bounded generic struct 'Bx'" "the forward target a method instantiating a bounded struct (the other note)"
 cat > "$D/n4.cyr" <<'XEOF'
 trait Show { fn show(self): i64; }
 impl Show for f64 { fn show(self): i64 { return 5; } }

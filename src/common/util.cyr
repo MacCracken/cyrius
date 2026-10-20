@@ -331,6 +331,9 @@ var _ta_chk = 0;
 # 6.7.15 (D8): 1 while `_targ_chk` reads a `*G<..>` pointer field's list at its declaration (`_fld_targ_chk`): a struct
 # declared further down is a name there, as the field's own T is (6.6.17).
 var _ta_late = 0;
+# 6.7.16 (D5): 1 while a lookahead or typer reads a type-argument list (cursor put back): an argument past what its
+# generic declares is stepped there without a word; the reader that parses the list reports it (`_ta_extra`).
+var _ta_xq = 0;
 # v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
 # cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
 # has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds
@@ -1544,7 +1547,7 @@ var _ctp_buf = 0;      # `_capture_tparams`' bounds: per slot (0|1), 8 x (name, 
 var _ctp_n0 = 0;       # bounds captured on type parameter 0 / 1
 var _ctp_n1 = 0;
 var _ctp_bad = 0;      # a refused bound shape: its token + 1 (0 = none)
-var _ctp_badk = 0;     # 1 = no trait name after `:` / `+`, 2 = more than 8 bounds, 3 = a third type parameter
+var _ctp_badk = 0;     # 1 = no trait name after `:` / `+`, 2 = more than 8 bounds, 4 = a trait given type arguments
 var _fnt_bnd = 0;      # per fn: its bound block (0 = no bound)
 var _st_bnd = 0;       # per struct: its bound block
 var _bs_tab = 0;       # bounded call sites (4 words): method-name token, trait, type-parameter name, `*T`
@@ -3303,6 +3306,7 @@ fn ERR_MSG(S, msg, len): i64 {
 # reported, as before); once per token (`_err_dup`). 1 = printed. CHANGELOG [6.7.14]
 fn ERR_UNDEF(S, noff, tail): i64 {
     _had_error = 1;
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_err_dup(S, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
     _err_quiet = 0;
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3329,10 +3333,16 @@ var _edup = 0;       # (token + 1, identity) pairs, open addressing; alloc'd at 
 var _edup_cap = 0;   # its slots, a power of two
 var _edup_n = 0;     # the slots in use
 var _err_quiet = 0;  # 1: the last emitter printed nothing (the panic latch, or a repeat) — its note stays quiet
+# 6.7.16 — every error report AND every repeat of one (not one the panic latch swallows): `_err_once`, ERR_UNDEF,
+# `_derr_seen`. A generic instance re-parses its base's statements in a file that has already failed, so "did this
+# statement refuse something" is this count before and after it, never the file-wide `_had_error` (PARSE_RETURN's
+# count check, parse_fn.cyr). CHANGELOG [6.7.16]
+var _err_n = 0;
 # The emitters' head: 0 = print nothing (the panic latch holds, or this report at the cursor's token was
 # printed already: `_had_error` and the latch are set as the print would have), 1 = print it.
 fn _err_once(S, id): i64 {
     if (_panic == 1) { _err_quiet = 1; return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_ce_err_dup(S, id) == 1) {   # 6.7.15: + a refused const fn's token, in its body (parse_fn.cyr)
         _had_error = 1;
         _panic = 1;
@@ -3371,6 +3381,7 @@ fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 
 # 1, the panic latch) set as the print would have, `_err_quiet` 1 (a note the caller prints after it stays quiet).
 # Else it is recorded, `_err_quiet` 0: 0. A writer keeps its own `_panic` test. CHANGELOG [6.7.15]
 fn _derr_seen(ti, tag, a, latch): i64 {
+    _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_err_dup_at(ti, (tag * 31 + a) * 8 + 7) == 1) {
         _had_error = 1;
         if (latch == 1) { _panic = 1; }

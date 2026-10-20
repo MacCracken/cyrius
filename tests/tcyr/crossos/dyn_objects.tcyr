@@ -53,6 +53,10 @@
 #                  and `callptr((&mkdk), &p)` copy the dyn result, `fncall1(&mkpk, &p)` (a `*P` result) forms
 #   §literal       (6.7.13, D17) a dyn-returning call in parentheses is a struct literal's dyn element, as the
 #                  unwrapped call is: `H { 7, (mkdk(&p)), 8 }`, double parentheses
+#   §spellings     (6.7.16) one type spelled two ways is one type to the pair check: a member's `*Bs<i64>` /
+#                  `Bs<i64>` / `Bs<Bs<i64>>` against the impl's `*Bs` / `Bs` / `Bs<Bs<i64> >` forms the dyn (it was
+#                  refused, "parameter 'b' has another type"), and a parameter, a 16 B and a 24 B result go through
+#                  its slots (issues/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md)
 # The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
 # what a prototype is not (S4-S7) and what the call is (CG1-CG2) are compile-time:
 # tests/gates/frontend/dyn_checked.sh. cx runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R9).
@@ -718,6 +722,25 @@ fn pairs_bind(): i64 {
     return r + t5 * 100000000000 + v5 * 1000000000 + o.one() * 10000000000000;
 }
 
+# ── §spellings (6.7.16) ──────────────────────────────────────────────────────────────────────────────
+struct Bs<T> { n: i64; v: T; }
+struct Sp { x: i64; y: i64; }
+trait Spl { fn m(self, b: *Bs<i64>): i64; fn c(self): Bs<i64>; fn e(self): Bs<Bs<i64>>; }
+impl Spl for Sp {
+    fn m(self, b: *Bs): i64 { return b.n + self.x; }
+    fn c(self): Bs { var b: Bs; b.n = self.y; return b; }
+    fn e(self): Bs<Bs<i64> > { var b: Bs<Bs<i64> >; b.n = self.x + self.y; return b; }
+}
+fn spellings(): i64 {
+    var p = Sp { 1, 3 };
+    var b: Bs;
+    b.n = 4;
+    var o: dyn Spl = &p;
+    var r: Bs<i64> = o.c();
+    var e: Bs<Bs<i64>> = o.e();
+    return o.m(&b) * 100 + r.n * 10 + e.n;
+}
+
 alloc_init();
 # A global after the first statement.
 var GS: dyn Show = &P1;
@@ -775,6 +798,7 @@ arguments();
 results();
 assert_eq(known_callee(), 18181818, "§known `fncall1(&mkdk, &p)` / `callptr((&mkdk), &p)` copy the dyn, `fncall1(&mkpk, &p)` forms, an assignment takes it");
 assert_eq(lit_wrapped(), 6497849, "§literal `H { 7, (mkdk(&p)), 8 }` and `((mkdk(&p)))`: a wrapped dyn call is the element");
+assert_eq(spellings(), 534, "§spellings `*Bs<i64>` / `Bs<i64>` / `Bs<Bs<i64>>` members, `*Bs` / `Bs` / `Bs<Bs<i64> >` impl: the dyn forms and calls");
 assert_eq(c_ord(), 507002, "§calls C-ORD: the callee and `self` are read before an argument reseats the dyn");
 assert_eq(copies(), 595959, "§copies every copy holds `&p`: all see `p.a = 5`");
 assert_eq(closures(), 4912, "§closures a capture is by value: the closure keeps p's words after `o = &q`");

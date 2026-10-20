@@ -3687,8 +3687,7 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
     # type-args instantiate → their instance sid; `>>` tail handled).
     var _ta_conc = _parse_one_type_arg(S);
-    var _ta_conc1 = 0;
-    if (_ta_comma(S) == 1) { _ta_conc1 = _parse_one_type_arg(S); }  # `,`
+    var _ta_conc1 = _ta_rest_f(S, fi);  # `,` — 6.7.16 (D5): as many as the fn declares
     _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
     if (_ta_refd == 1) { return _gen_call_refd(S, noff); }   # 6.7.14
     # Call the base (the all-i64 instance) only when EVERY arg is i64.

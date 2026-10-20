@@ -596,7 +596,10 @@ var r = add(20, 22);   # r = 42
 - **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` in an `impl` is a `*T`
   (since **6.7.0**): `self.x` reads and writes the receiver's fields, `T_m(x)` / `T_m(&x)` / `x.m()`
   agree, and arithmetic on it (`self + 8`, `self[i]`, `self += n`) is refused — read fields with
-  `self.field`, or declare `self: *T` to step whole elements (see *Traits and impl blocks*). A typed `self: T` follows the parameter rule: a struct is a **value**
+  `self.field`, or declare `self: *T` to step whole elements (see *Traits and impl blocks*). That holds
+  whichever comes first, the `impl` or its `struct` (6.7.16; with the impl written above the struct,
+  `self.x` was *no struct type in scope for 'self'*, `T_m(x)` passed x's value and faulted, and
+  `self + 8` compiled — the user's D6). A typed `self: T` follows the parameter rule: a struct is a **value**
   at every width — one of 8 bytes or less arrives in a register, a wider one by address and is
   copied on entry (v6.6.16) — so `fn Odd_sum(self: Odd)` and `fn P3_bump(self: P3)` see a copy,
   and writing `self.a` inside them does not change `x`. Before v6.6.11 the dot form pushed `&x`
@@ -3037,7 +3040,9 @@ fn demo(): i64 {
   struct's all-`i64` list is its base struct, so `Box<i64>` and `Box`, or `Box<Box<i64>>` and
   `Box<Box<i64> >`, are one type) — and refused at the impl: `fn c(self): i64` implementing `fn c(self): f64;` is
   *'P.c' returns i64, trait 'T' declares f64* (6.7.15, the user's D4; through 6.7.14 it compiled, and a
-  bounded generic caller declared `: f64` received the integer bits). Parameter types are not compared. A trait may
+  bounded generic caller declared `: f64` received the integer bits). A return refusal does not end the check: a
+  second method's mismatch and a required method left out report in the same compile (6.7.16). Parameter types are
+  not compared. A trait may
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
   statements. One after it is one error by name (6.7.14; see *Functions*).
@@ -3050,8 +3055,11 @@ fn demo(): i64 {
   compares its parameter count and its return type (above). A member's return is held to a fn's return set: `fn a(self):
   Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
   not supported as a fn return type yet*, at the member, once — no impl could define either (6.7.15, the user's D9
-  and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). `: *Vec<i64>`,
-  `: *u128` and a parameter `v: Vec<i64>` are unchanged.
+  and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). So is the rest of the
+  set since 6.7.16 (the user's D9): `: u8`..`: u64`, `: f32` and an enum are *type 'u8' cannot be a fn return type*,
+  and `: *fn(i64): i64` is *a fn-pointer type `*fn( .. )` cannot be a fn return type* (that one under `cyrius lint`
+  too, as a fn's `: *fn( .. )` grammar refusal is); through 6.7.15 each compiled. Declare `: i64` or a pointer
+  instead. `: *Vec<i64>`, `: *u128`, `: *Color` and a parameter `v: Vec<i64>` or `cb: *fn(i64): u128` are unchanged.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*
@@ -3180,11 +3188,14 @@ so does every copy of `o`. A dyn formed from `&local` and returned outlives the 
 
 **The check, once per pair.** The first forming of a (trait, type) pair checks `impl Tr for T`
 against the trait in full: each parameter after `self` and the return by its resolved type (an
-untyped parameter, or an omitted return, is `i64`; since 6.7.15 a return that differs is the impl's own
-error, formed or not — see *Traits*), generic-ness and `...`; the value class — a
-method returning a `: stack` pair (`return Ok(..);`) fills a slot only when the trait member declares
-that enum (`: Result`), so the call through the dyn returns what the trait declares; and the `self` a dyn can
-feed. For a struct `T` that is an untyped `self`, `self: *T`, or a `self: T` over 8 bytes (passed by
+untyped parameter, or an omitted return, is `i64`; each type read as an annotation is, so `*Box<i64>` and `*Box`,
+or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
+error, formed or not — see *Traits*; since 6.7.16 a parameter or return type its own reader refuses — a member's
+`: u8`, `p: *Pt<i64>`, `b: *Box<i64, Pt>`, `n: Nope` — is that refusal alone, the rest of the signature still
+compared), generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
+fills a slot only when the trait member declares that enum (`: Result`), so the call through the dyn returns
+what the trait declares; and the `self` a dyn can feed. For a struct `T` that is an untyped `self`, `self: *T`,
+or a `self: T` over 8 bytes (passed by
 address and copied on entry). **A `self: T` of 8 bytes or less is refused**, naming the method: it
 arrives in a register, and the data word is a pointer — declare `self` untyped or `self: *T`. (A
 struct with `u8` / `u16` / `u32` / `f32` fields can shrink into it: since 6.7.10 `struct C4 { r:
@@ -3456,6 +3467,9 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # not multiple values)
 #   ret2(a, b);                       # two values in a fn declared with three (6.7.13): the
 #                                     # caller's third read what an earlier call left
+# In a generic it is one report, naming the generic (`'gr' returns 2 values ..`) however many
+# instances re-parse the body, and none beside an error the statement already has (`return 1, 2;`
+# is `expected ';'` alone) — 6.7.16; it was one line per instance, each naming `gr$P`.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the
@@ -6307,7 +6321,8 @@ another path but a SINGLE value here"*, v6.6.0). Any constructor of the enum is 
 including a **nullary** one: `return None();` (or `return None;`) beside `return Some(v);` is
 correct and silent (v6.6.9; it used to warn and suggest `Err`). An `impl` method and a trait default it inherits are
 judged as a fn is (6.7.15), named as written (*"`Pt.qm` returns ..."*; a default inherited by several impls warns
-once): through 6.7.14 only a top-level fn or a closure was, so `impl Pt { fn qm(self) { if (..) { return Ok(self.x); }
+once, named as its trait's member, *"`Dv.qd` returns ..."* — 6.7.16; it named the first impl that inherits it, `Pt.qd`;
+an override keeps its impl's name): through 6.7.14 only a top-level fn or a closure was, so `impl Pt { fn qm(self) { if (..) { return Ok(self.x); }
 return 5; } }` built silent and `var t, v = p.qm();` read 5 as the tag. A fn that returns a raw status on
 one path still sees the warning even when its callers only sign-test that path, and it is still a
 defect: vani's `vani_drain` / `vani_state` were kept that way through vani 1.2.7, and a two-value
@@ -7246,7 +7261,16 @@ a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0
 `Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
 once, at the name: *'Pt' is not a generic struct: it takes no type arguments* (*'i64' takes
 no type arguments*) (6.7.15, the user's D6; through 6.7.14 the list was skipped unread, so a
-name inside it was never checked). A token that is no name at all
+name inside it was never checked). Since 6.7.16 (the user's D7) these positions say so too: a
+pointer field `p: *Pt<i64>`, a by-value field `f: Pt<i64>` / `g: i64<u8>` (a struct's or a
+union's), a trait member's type, a multi-value element `(Pt<i64>, i64)`, a `*fn(Pt<i64>): i64`
+type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]`, a scalar return
+`: i64<u8>`, and `*i32<u8>` as a local, a global, a return or a field — once, at the name, with
+the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
+rest compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
+i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
+the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
+6.7.15 the extra argument was read and dropped). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses
@@ -7414,7 +7438,11 @@ i64, `f64` (inferred from a whole f64 argument since 6.7.9), narrow scalars
 anything else is an ordinary call). An inlined body's `return` is its own: inside a fn that returns a
 struct by value it is never judged by that fn's struct (6.7.14; through 6.7.13 `fn gpg<T>(): *T { return
 GPA; }` called in a fn returning a 9-16 or 24 byte struct was refused, naming the enclosing fn's struct;
-an `#inline` fn the same). At most two type parameters are recorded. A
+an `#inline` fn the same). A generic takes at most two type parameters: a third (`fn g3<A, B, C>`,
+`struct Three<A, B, C>`, bounded or not) is refused at the declaration, once, by name — *a third
+type parameter 'C': a generic takes at most two type parameters* — and its uses say nothing more
+(6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
+`sizeof(C)` as 8 for a 24-byte struct). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;
@@ -7460,8 +7488,8 @@ describe<i32>(7);   # needs impl Show for i32
   method). A `*T` field (`p: *T`), and a field whose type parameter has no bound, keep resolving per
   instance.
 - **`T: A + B`** requires every impl. A bound names a declared trait (an undeclared one is refused),
-  takes no type arguments, and goes on one of the first two type parameters (at most two are
-  recorded); up to 8 per parameter.
+  takes no type arguments, and goes on a generic's one or two type parameters (a third is refused
+  itself, 6.7.16); up to 8 per parameter.
 - **Every instantiation is checked**, and is refused when its type has no impl — naming the trait
   and the `impl` it needs: an inferred or explicit type argument, the **i64 base** an i64 call
   reaches (`describe(5)` needs `impl Show for i64`; without one, `describe`'s base is not emitted and
@@ -7469,7 +7497,10 @@ describe<i32>(7);   # needs impl Show for i32
   returned 0) — is refused), and a generic struct's instance,
   its i64 base included (a bare `Shown`, a written `Shown<i64>`) — a `Vec<..>` element too, though no instance is
   minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
-  Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked).
+  Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked),
+  and an element whose argument is itself an instance — `Vec<Box<Box<R>>>`, `Vec<SB<UB<R>>>` — as `var b: Box<Box<R>>;`
+  is, its note naming `impl Show for Box$R`: no impl can name an instance, so a bound on one never holds (6.7.16, the
+  user's D10; through 6.7.15 that element compiled).
   An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
   instance's one note names the type the call binds (6.7.11).
@@ -7487,8 +7518,9 @@ describe<i32>(7);   # needs impl Show for i32
   it forwards its type parameter to 'describe'* with a note naming the impl the chain's end needs
   (6.7.14; through 6.7.13 such a forwarder was a struct stub, refused at every scalar call, `f64`
   included, "uses its type parameter as a struct"; 6.7.14 judged a chain only 64 forwards deep, so a
-  65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth). The
-  call that instantiates such a chain at another type is still held to the parser's nesting bound: about 120
+  65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth). A
+  generic method, as the forward target or in the note, is named as the source spells it, `P.bk` (6.7.16; it
+  printed the fn table's `P_bk`). The call that instantiates such a chain at another type is still held to the parser's nesting bound: about 120
   forwards, past which it is *nesting too deep (over 256 levels)*, a chain without a bound alike.
 
 Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct

@@ -9,9 +9,12 @@
 # it. A trait declared below its impls works (one pre-scan records every trait first). The
 # compile-time refusals (undeclared trait, extra / missing method, parameter count, ambiguity,
 # duplicate trait / method, a non-`fn` member) are tests/gates/frontend/traits_checked.sh.
+# 6.7.16: a generic member's own `<U>` after a `*fn(..)` in its signature (`Ap.ap`; it was "unknown type 'U'"), and a
+# member's `cb: *fn(i64): u128` (`Ap.ap2`; refused as a `u128` parameter), called through the receiver with a fn pointer.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
+include "lib/fnptr.cyr"
 
 struct P { x; y; }
 struct Q { v; }
@@ -37,6 +40,13 @@ trait Named { fn name(self): i64; }
 impl Named for Q { fn name(self): i64 { return 1; } }
 impl Q { fn name(self): i64 { return 2; } }
 
+trait Ap { fn ap<U>(self, c: *fn(i64): i64, u: U): U; fn ap2(self, cb: *fn(i64): u128): i64; }
+impl Ap for R {
+    fn ap<U>(self, c: *fn(i64): i64, u: U): U { self.n = fncall1(c, self.n); return u; }
+    fn ap2(self, cb: *fn(i64): u128): i64 { return fncall1(cb, self.n) * 2; }
+}
+fn tc_inc(x): i64 { return x + 1; }
+
 fn run(): i64 {
     var p = P { 1, 2 };
     var q = Q { 3 };
@@ -54,6 +64,10 @@ fn run(): i64 {
     assert_eq(r.hundred(), 600, "Wide's default calls self.size() -> Wide's own size");
     assert_eq(q.name(), 2, "an inherent method wins the plain name over a trait's");
     assert_eq(Q_Named_name(q), 1, "the trait's method stays reachable qualified");
+    var ra = R { 7 };
+    assert_eq(ra.ap(&tc_inc, 30), 30, "a generic member's <U> after a *fn(..) parameter: its own u");
+    assert_eq(ra.n, 8, "... and the *fn(..) it was given, called through self");
+    assert_eq(ra.ap2(&tc_inc), 18, "a member's cb: *fn(i64): u128 parameter, called through self");
     return 0;
 }
 

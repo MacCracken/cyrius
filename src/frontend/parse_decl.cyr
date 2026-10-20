@@ -2036,8 +2036,7 @@ fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
     _ta_pending_gt = 0;
     _ta_refd = 0;
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var c1 = _ta_rest_f(S, mf);   # 6.7.16 (D5)
     _consume_gt(S);
     _mx_fi = _meth_xinst(S, mf, c0, c1);
     _mx_ti = nt;
@@ -2088,9 +2087,11 @@ fn _mcall_xquiet(S, mf, lt): i64 {
     _ta_pending_gt = 0;
     _ta_refd = 0;
     STI(S, lt + 1);
+    var sv_xq = _ta_xq;
+    _ta_xq = 1;   # 6.7.16 (D5): the method's own read (`_meth_targs`) reports the list
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var c1 = _ta_rest_f(S, mf);
+    _ta_xq = sv_xq;
     var rf = _ta_refd;
     _ta_pending_gt = sv_gt;
     _ta_refd = sv_rf;
@@ -5480,8 +5481,7 @@ fn _gen_ann_sid(S, sid): i64 {
     # v6.3.33: conc0 [, conc1] via _parse_one_type_arg (a NESTED generic type-arg is
     # instantiated → its instance sid).
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }  # `,`
+    var c1 = _ta_rest_s(S, sid);          # `,` — 6.7.16 (D5): as many as the struct declares
     _consume_gt(S);                       # the closing `>` (or `>>` tail)
     # v6.3.37 (B1 half-A): c0 == 0 is an UNRESOLVED type parameter (`var p: Pair<T>` in a
     # generic body) = the base all-i64 instance, as the return-type classification treats it,
@@ -10416,7 +10416,7 @@ fn PARSE_VAR(S): i64 {
                 STI(S, GTI(S) + 1);   # consume `<`
                 _ta_pending_gt = 0;
                 _parse_one_type_arg(S);
-                if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+                _ta_rest_n(S, asv_fnoff);   # 6.7.16 (D5)
                 _consume_gt(S);
             } }
         if (PEEKT(S) != 10) {
@@ -10491,7 +10491,7 @@ fn PARSE_VAR(S): i64 {
                 STI(S, GTI(S) + 1);   # consume `<`
                 _ta_pending_gt = 0;
                 _parse_one_type_arg(S);
-                if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+                _ta_rest_n(S, asp_fnoff);   # 6.7.16 (D5)
                 _consume_gt(S);
             } }
         if (PEEKT(S) != 10) {
@@ -12040,7 +12040,7 @@ fn _gu_minst(S, g): i64 {
 # (`<*u8>`, `<u8>`) is G, as the arm reaches the base (`_meth_xinst`) and the line after the first statement takes it.
 fn _gu_mx(S, mf, g): i64 {
     if (_gu_xnames(S, _gz_mti + 2) == 0) { return g; }
-    if (_gu_xlist(S, _gz_mti) == 0) { return g; }
+    if (_gu_xlist(S, _gz_mti, mf) == 0) { return g; }
     var c0 = _gu_x0;
     var c1 = _gu_x1;
     if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
@@ -12118,7 +12118,7 @@ fn _gu_gen(S, c): i64 {
     var c0 = 0 - 8;
     var c1 = 0;
     if (TOKTYP(S, c + 1) == 19) {
-        if (_gu_xlist(S, c) == 0) {
+        if (_gu_xlist(S, c, fi) == 0) {
             _gu_hdl = 1;
             return _gz_gb;
         }
@@ -12148,18 +12148,22 @@ fn _gu_gen(S, c): i64 {
     return _gu_inst(S, fi, c0, c1);
 }
 # The explicit type-argument list of the call whose name is token `c`, read as `_gen_resolve_call` reads it, into
-# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses (`_targs_resolvable`).
+# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses (`_targs_resolvable`). `fi` is the generic fn or method
+# the list belongs to: the rest of the list is read for ITS type parameters, quietly — the call's own parse reports a
+# longer list (6.7.16's D5).
 var _gu_x0 = 0;
 var _gu_x1 = 0;
-fn _gu_xlist(S, c): i64 {
+fn _gu_xlist(S, c, fi): i64 {
     if (_targs_resolvable(S, c + 2) == 0) { return 0; }
     var sv = GTI(S);
     var sv_gt = _ta_pending_gt;
     _ta_pending_gt = 0;
     STI(S, c + 2);
+    var sv_xq = _ta_xq;
+    _ta_xq = 1;   # 6.7.16 (D5): the call's own parse reports the list
     _gu_x0 = _parse_one_type_arg(S);
-    _gu_x1 = 0;
-    if (_ta_comma(S) == 1) { _gu_x1 = _parse_one_type_arg(S); }
+    _gu_x1 = _ta_rest_f(S, fi);
+    _ta_xq = sv_xq;
     _ta_pending_gt = sv_gt;
     STI(S, sv);
     return 1;
@@ -12214,7 +12218,7 @@ fn _gu_ircs(S, fi, r, ptr): i64 {
     var sc = _gi_sc;
     var b = 0 - 8;
     if (TOKTYP(S, c + 1) == 19) {
-        if (_gu_xlist(S, c) == 0) { _gu_miss = 1; }
+        if (_gu_xlist(S, c, fi) == 0) { _gu_miss = 1; }
         elif (w == 1) { b = _gu_x1; }
         else { b = _gu_x0; }
     } else { b = _gu_tp(S, c, fi, w); }
@@ -12931,8 +12935,11 @@ fn _gen_call_targs(S, b, o, fi): i64 {
         var sv_gt = _ta_pending_gt;
         _ta_pending_gt = 0;
         STI(S, b + 2);
+        var sv_xq = _ta_xq;
+        _ta_xq = 1;   # 6.7.16 (D5): the call's own parse reports the list
         _gct_c0 = _parse_one_type_arg(S);
-        if (_ta_comma(S) == 1) { _gct_c1 = _parse_one_type_arg(S); }
+        _gct_c1 = _ta_rest_f(S, fi);
+        _ta_xq = sv_xq;
         _ta_pending_gt = sv_gt;
         STI(S, sv);
     } else {

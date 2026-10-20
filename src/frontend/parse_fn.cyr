@@ -1032,6 +1032,13 @@ fn _ret2_in_vector(S, ti): i64 {
 # the callee's body in the caller's context: its definition checked itself. Under --syntax-only a
 # sibling file's tuple or callee is unknown: silent. 1 = refused, to report after the arms.
 # CHANGELOG [6.7.11]
+# ⛔ 6.7.16 — A GENERIC'S WRONG-COUNT `return` IS ONE REPORT, NAMED AFTER THE GENERIC. Its body is parsed for the base
+# and again per instance, and each parse named its own fn — `'gr' returns 2 values` then `'gr$P' ...`, `'gr$Q' ...` —
+# so the once-per-token latch (keyed on the name) saw different reports; and an instance, parsed in a file the base had
+# failed, took the up-front arm, so `return 1, 2;` was the base's `expected ';'` plus one count line per instance. An
+# instance now names its base (`_mret_fn`: the latch sees one report) and takes the base's arm — judged before the
+# arms, reported after them unless they refused (or repeated) something of their own in THIS statement (`_err_n`,
+# counted before and after them, PARSE_RETURN). A non-instance in a failed file keeps the up-front arm. CHANGELOG [6.7.16]
 fn _mret_ret_check(S, st): i64 {
     if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
     if (GIDEP(S) != 0) { return 0; }
@@ -1043,7 +1050,27 @@ fn _mret_ret_check(S, st): i64 {
     STI(S, sv);
     if (ok == 1) { return 0; }
     if (_had_error == 0) { return 1; }
+    if (_mret_fn(S) != _cur_fn_ix) { return 1; }   # 6.7.16: an instance takes the base's arm
     _mret_ret_err(S, st);
+    return 0;
+}
+# The fn a multi-value return's refusal names: the base generic inside one of its instances (`gr`, never `gr$P`), else
+# the fn being parsed. CHANGELOG [6.7.16]
+fn _mret_fn(S): i64 {
+    if (_inst_base_fi < 0) { return _cur_fn_ix; }
+    if (_gen_inst_of(S, _cur_fn_ix, _inst_base_fi) == 0) { return _cur_fn_ix; }   # a closure in the instance's body
+    return _inst_base_fi;
+}
+# 1 iff fn fi's name is fn b's name followed by `$` (an instance minted from b).
+fn _gen_inst_of(S, fi, b): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var q = S + 0xEC00000 + L64(_fnt_names + b * 8);
+    var i = 0;
+    while (load8(q + i) != 0) {
+        if (load8(p + i) != load8(q + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + i) == 36) { return 1; }
     return 0;
 }
 # "'f' returns 2 values - return (a, b)" at token `st`, the cursor kept.
@@ -1052,15 +1079,35 @@ fn _mret_ret_err(S, st): i64 {
     if (GFRN(S, _cur_fn_ix) == 3) { tail = " returns 3 values - return (a, b, c)"; }
     var sv = GTI(S);
     STI(S, st);
-    ERR_IDENT(S, "", L64(_fnt_names + _cur_fn_ix * 8), tail, 0 - 1);
+    _mret_err_ident(S, _mret_fn(S), tail);
     STI(S, sv);
     return 0;
 }
-# ... after the arms: reported unless one of them refused something of its own. The statement is
-# whole, so the panic latch is cleared (nothing to resync — the next statement is reported too).
-fn _mret_ret_late(S, st, he): i64 {
-    if (he != 0) { return 0; }
-    if (_had_error != 0) { return 0; }
+# ERR_IDENT's "'f'<tail>" naming fn fi as the source spells it — a method `P.mv`, never the fn table's `P_mv`
+# (`_fn_src_name`, written after the head, which may use its scratch); its identity ERR_IDENT's on the table name.
+# CHANGELOG [6.7.16]
+fn _mret_err_ident(S, fi, tail): i64 {
+    var msg = "";
+    var noff = L64(_fnt_names + fi * 8);
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + (0 - 1)) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ... after the arms: reported unless one of them refused something of its own — a report or a repeat counted in
+# `_err_n` since `en`, or (`he` 0: the file had not failed) any error at all. The statement is whole, so the panic
+# latch is cleared (nothing to resync — the next statement is reported too).
+fn _mret_ret_late(S, st, he, en): i64 {
+    if (_err_n != en) { return 0; }
+    if (he == 0) { if (_had_error != 0) { return 0; } }
     _mret_ret_err(S, st);
     _panic = 0;
     return 0;
@@ -1145,8 +1192,9 @@ fn PARSE_RETURN(S): i64 {
     _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there, or in a <= 8 B struct fn
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
+    var en = _err_n;   # 6.7.16: what the arms refuse, in this statement
     _PARSE_RETURN_ARMS(S);
-    if (bad == 1) { _mret_ret_late(S, st, he); }
+    if (bad == 1) { _mret_ret_late(S, st, he, en); }
     return 0;
 }
 # The return's arms, each a spelling it emits and leaves by (the 6.6.6 note below).
@@ -9486,7 +9534,9 @@ fn _tr_check_impl(S, ii): i64 {
                 ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
                 return 0;
             } }
-        if (_tr_ret_chk(S, ii, tk, k) == 1) { return 0; }   # 6.7.15 (D4): and its return type
+        # 6.7.15 (D4): and its return type. Its refusal sets no panic latch (it consumes nothing), so the walk goes on:
+        # the next method's mismatch and a missing method report in the same compile. CHANGELOG [6.7.16]
+        _tr_ret_chk(S, ii, tk, k);
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);
@@ -9530,25 +9580,110 @@ fn _tr_ret_differs(S, tp, fp): i64 {
     _trr_b = _dyn_ret_at(S, b);
     _trr_be = _dps_te;
     if (_ty_norm_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }   # `Box<i64>` is `Box`, `>>` is `> >`
-    if (_tr_rt_bad(S, _trr_a, _trr_ae, 0) == 1) { return 0; }
-    if (_tr_rt_bad(S, _trr_b, _trr_be, 1) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_a, _trr_ae) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_b, _trr_be) == 1) { return 0; }
     return 1;
 }
-# 1 when the return type [a, ae) is refused by its own reader — the trait's for a member (`im` 0), PARSE_FN_DEF's for a
-# method (1): a slice, `u128` or `Vec` as the type, a name that is no type, and for a method a name a fn's return does
-# not take (`_tn_ret_report`'s: u8..u64, f32, an enum).
-fn _tr_rt_bad(S, a, ae, im): i64 {
+# ⛔ 6.7.16 — FORMING A DYN ADDS NOTHING BESIDE A RETURN ITS OWN READER REFUSES. `_tr_ret_differs` answers 0 both when
+# the returns agree and when a side is one its reader refuses (`_tr_rt_bad`), and the pair check read every 0 as
+# "agree, not mine either": since D9 / D7 put a member's `: u8`, enum or `*Pt<i64>` return in that set, a formed dyn
+# printed "the return type differs" beside the member's one refusal (D9's "refused once"). 1 = the member at `fn`
+# token `tp` and the method at `fp` differ in a return that is not the site's to report: the impl's own refusal, or a
+# side whose reader refuses it — judged on its own (`_tr_ret_rf`), so a side `_tr_rt_bad` counts that no reader
+# refuses (a name inside an unread `Result<..>`) keeps the site's line. CHANGELOG [6.7.16]
+fn _dyn_ret_hand(S, tp, fp): i64 {
+    if (_tr_ret_differs(S, tp, fp) == 1) { return 1; }
+    return _tr_ret_rf(S, tp, fp);
+}
+fn _tr_ret_rf(S, tp, fp): i64 {
+    var a = _tr_paren(S, tp);
+    var b = _tr_paren(S, fp);
+    if (a < 0 || b < 0) { return 0; }
+    var ra = _dyn_ret_at(S, a);
+    var re = _dps_te;
+    if (_tr_rt_rd(S, ra, re) == 1) { return 1; }
+    var rb = _dyn_ret_at(S, b);
+    var rbe = _dps_te;
+    return _tr_rt_rd(S, rb, rbe);
+}
+# 1 when return type [a, ae) is one its reader refuses: its head (`_tr_rt_head`), or a name it reads (`_ty_rd_scan`).
+fn _tr_rt_rd(S, a, ae): i64 {
+    if (_tr_rt_head(S, a, ae) == 1) { return 1; }
+    return _ty_rd_scan(S, a, ae, 1);
+}
+# 1 when the return type [a, ae) is refused by its own reader — the trait's for a member, PARSE_FN_DEF's for a method,
+# one set since 6.7.16's D9: a slice, `u128` or `Vec` as the type, a name that is no type, a name a fn's return does
+# not take (`_tn_ret_report`'s: u8..u64, f32, an enum) and a `*fn( .. )` (a method's is PARSE_FN_DEF's grammar
+# refusal, so the impl's "returns .." line beside it was a second report of one error), and a non-generic `Pt<..>` /
+# `i64<..>` where a reader reads it (6.7.16's D7 at a member, 6.7.15's D6 at a method). CHANGELOG [6.7.16]
+fn _tr_rt_bad(S, a, ae): i64 {
+    if (_tr_rt_head(S, a, ae) == 1) { return 1; }
+    var k = a;
+    while (k < ae) {   # 6.7.15's D4 arm: a name that is no type, wherever it stands
+        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
+        k = k + 1;
+    }
+    return _ty_rd_scan(S, a, ae, 0);   # 6.7.16 (D7): `Pt<i64>`, refused by either reader
+}
+# The head of return type [a, ae) when a fn's return does not take it: a slice, `u128`, `Vec`, `_tr_rt_nonret`'s
+# names, a `*fn( .. )` — each its reader's refusal.
+fn _tr_rt_head(S, a, ae): i64 {
     if (a == ae) { return 0; }
     if (_sl_ann_at(S, a) == 1) { return 1; }
     if (TOKTYP(S, a) == 105) { return 1; }
     if (_trs_ret_vec(S, a) == 1) { return 1; }
-    if (im == 1) { if (_tr_rt_nonret(S, a) == 1) { return 1; } }
+    if (_tr_rt_nonret(S, a) == 1) { return 1; }
+    if (_trs_ret_fnp(S, a) == 1) { return 1; }
+    return 0;
+}
+# 1 when type [a, ae) holds a name its reader refuses, among the names a reader READS: a `<..>` is read after a generic
+# struct (`_targ_chk`) and after `Vec` (`_vec_ann_chk`), and stepped unread after any other name (`Result<..>`,
+# `Option<..>`, an enum's), so a name inside such a list is refused by nobody — counting it left a member's
+# `: Result<Pt<i64>>` against an impl's `: i64` refused by no one (it compiled). A refused name is `Pt<i64>` /
+# `i64<u8>` (D7), a generic struct given more type arguments than it declares (D5), and with `un` one that is no type
+# (1 a return's reading, 2 a parameter's). CHANGELOG [6.7.16]
+fn _ty_rd_scan(S, a, ae, un): i64 {
     var k = a;
     while (k < ae) {
-        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
+        if (TOKTYP(S, k) == 2) {
+            if (_ty_rd_name(S, k, un) == 1) { return 1; }
+            if (TOKTYP(S, k + 1) == 19) { if (_ty_rd_reads(S, k) == 0) { k = _ty_list_end(S, k + 1) - 1; } }
+        }
         k = k + 1;
     }
     return 0;
+}
+fn _ty_rd_name(S, k, un): i64 {
+    if (_ngt_tail(S, k) != 0) { return 1; }
+    if (_syntax_only == 0) { if (_ta_over(S, k) == 1) { return 1; } }   # D5's shape; silent under lint, as D5 is
+    if (un == 0) { return 0; }
+    if (_tn_resolve_at(S, k) != 0) { return 0; }
+    if (un == 2) { if (_classify_param_type(S, TOKVAL(S, k)) != 0) { return 0; } }   # `s: Str`, a vector
+    return 1;
+}
+# 1 when a reader reads the `<..>` after name token `k`: a generic struct's, or the builtin `Vec`'s.
+fn _ty_rd_reads(S, k): i64 {
+    var sid = FINDSTRUCT(S, TOKVAL(S, k));
+    if (sid > 0) {
+        if (GSTP(S, sid - 1) != 0) { return 1; }
+        return 0;
+    }
+    return _trs_ret_vec(S, k);
+}
+# The token after the `<..>` whose `<` is token `lt` (a `>>` closes two lists, a `>>>` three).
+fn _ty_list_end(S, lt): i64 {
+    var i = lt + 1;
+    var d = 1;
+    var e = GTCNT(S);
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 13 || t == 14 || t == 5) { return i; }   # `{` `}` `;`: an unclosed list
+        if (t == 19) { d = d + 1; }
+        d = d - _targ_gt_n(t);
+        i = i + 1;
+        if (d <= 0) { return i; }
+    }
+    return i;
 }
 fn _tr_rt_nonret(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0; }
@@ -9678,13 +9813,23 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
 # reported under `--syntax-only` too, as the fn's is). `: *Vec<T>`, `: *u128`, a `*fn( .. ): Vec<T>` / `*fn( .. ): u128`
 # type's own return and a parameter `v: Vec<T>` are unchanged (the user's D9 (a) and D3 (a), 2026-10-18). 1 = refused
 # (the member's walk ends). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D9) — AND FOR THE REST OF THE SET: a name a fn's return does not take (`_trs_ret_nonret`: u8..u64, f32, an
+# enum) is "type 'u8' cannot be a fn return type" and its note, silent under `--syntax-only` (the name reads on there,
+# as a fn's does); a `*fn( .. )` return is its own line (`_trs_fnp_refuse`), reported under `--syntax-only` too, as a
+# fn's `: *fn( .. )` grammar refusal is. Each compiled, though no impl can define it (the user's D9, 2026-10-19).
+# CHANGELOG [6.7.16]
 fn _trs_ret_refused(S, ti): i64 {
     if (TOKTYP(S, ti) == 105) {
         _trs_bad = 1;
         _u128_refuse(S, ti, "a fn return type yet");
         return 1;
     }
-    if (_trs_ret_vec(S, ti) == 0) { return 0; }
+    if (_trs_ret_fnp(S, ti) == 1) {
+        _trs_bad = 1;
+        _trs_fnp_refuse(S, ti);
+        return 1;
+    }
+    if (_trs_ret_vec(S, ti) == 0) { if (_trs_ret_nonret(S, ti) == 0) { return 0; } }
     _trs_bad = 1;
     if (_syntax_only == 1) { return 1; }
     var sv = GTI(S);
@@ -9700,6 +9845,40 @@ fn _trs_ret_vec(S, ti): i64 {
     if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) != 0x00636556) { return 0; }   # "Vec\0"
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     return 1;
+}
+# 1 when token `ti` names a type a fn's return does not take (`_tr_rt_nonret`'s set: u8..u64, f32, an enum). A name
+# that is no type is not one (`_trs_name` refuses it, "unknown type"), and under --syntax-only, which resolves nothing,
+# none is.
+fn _trs_ret_nonret(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tr_rt_nonret(S, ti) == 0) { return 0; }
+    if (_tn_resolve_at(S, ti) == 0) { return 0; }
+    return 1;
+}
+# 1 when the type at token `ti` is a fn-pointer type: `*`.. then `fn (`.
+fn _trs_ret_fnp(S, ti): i64 {
+    if (TOKTYP(S, ti) != 8) { return 0; }
+    var k = ti;
+    while (TOKTYP(S, k) == 8) { k = k + 1; }
+    if (TOKTYP(S, k) != 32) { return 0; }
+    if (TOKTYP(S, k + 1) != 10) { return 0; }
+    return 1;
+}
+# "a fn-pointer type `*fn( .. )` cannot be a fn return type" at token `ti` (its first `*`), once, with a fn's return
+# note. Not a panic: the trait's walk goes on to its next member.
+fn _trs_fnp_refuse(S, ti): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a fn-pointer type `*fn( .. )` cannot be a fn return type\n");
+    _err_excerpt(S);
+    _tn_ret_note();
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
 }
 # 1 when an impl of trait `tx` does not define `m` — it inherits the default.
 fn _tr_dflt_inh(S, tx, m): i64 {
@@ -9764,7 +9943,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
             if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
             i = _trs_inner(S, i + 2, q, tail, nm);
-            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_type(S, i + 1, q, tail, nm); } }
+            if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_fnret(S, i + 1, q, tail, nm); } }
             return i;
         } }
     if (t != 2) { return _trs_err(S, i, 2); }
@@ -9773,6 +9952,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     if (TOKTYP(S, i) != 19) { return i; }
     _vec_ann_chk(S, i - 1, nm);   # 6.7.14 (D4): `v: Vec<T>` reads T, as in a fn definition
     _trs_targs(S, i - 1);         # 6.7.15 (D7): `b: Box<nosuch>` reads its list
+    _trs_ngt(S, i - 1);           # 6.7.16 (D7): `p: Pt<i64>`, `i64<u8>`
     var d = 0;   # `<..>` is skipped, as PARSE_FN_DEF's SKIP_GENERICS does
     while (i < q) {
         t = TOKTYP(S, i);
@@ -9804,10 +9984,18 @@ fn _trs_targs(S, ti): i64 {
     _ta_refd = sv_rf;
     return 0;
 }
+# 6.7.16 (D7): a trait member's non-generic `Pt<..>` / `i64<..>` (`ti` the name) is D6's refusal, at the name; it ends
+# the member's walk, as the reader's other refusals do. CHANGELOG [6.7.16]
+fn _trs_ngt(S, ti): i64 {
+    if (_trs_bad == 1) { return 0; }
+    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    if (_syntax_only == 0) { _trs_bad = 1; }
+    return 0;
+}
 # 6.7.14 (D10 (a)): a trait member's `u128` PARAMETER is refused as a fn definition's is (`_pty_u128`); behind a
-# `*`, or inside a tuple / `*fn( .. )` list (`_trs_lvl`), unchanged. The member's own `: u128` return is refused
-# before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter (`nm < 0`) is a multi-value
-# element's or a `*fn( .. )` type's return, which reads on.
+# `*`, or inside a tuple / `*fn( .. )` list or that fn pointer's own `: T` (`_trs_lvl`), unchanged. The member's own
+# `: u128` return is refused before this reader (`_trs_ret_refused`, 6.7.15's D3); one met here with no parameter
+# (`nm < 0`) is a multi-value element's or a `*fn( .. )` type's return, which reads on.
 var _trs_lvl = 0;
 fn _trs_u128(S, i, st, nm): i64 {
     if (nm < 0) { return i + 1; }
@@ -9820,6 +10008,15 @@ fn _trs_u128(S, i, st, nm): i64 {
 fn _trs_inner(S, i, q, tail, nm): i64 {
     _trs_lvl = _trs_lvl + 1;
     var r = _trs_list(S, i, q, tail, nm);
+    _trs_lvl = _trs_lvl - 1;
+    return r;
+}
+# A `*fn( .. )` type's own `: T` (`i` past its `:`), read a level in, as its list is: it is the fn pointer's return,
+# not the parameter's type, so `cb: *fn(i64): u128` reads on, as a fn's parameter reader (`_pty_fn`, inner 1) reads
+# it. It was read at the parameter's level and refused as a `u128` parameter. CHANGELOG [6.7.16]
+fn _trs_fnret(S, i, q, tail, nm): i64 {
+    _trs_lvl = _trs_lvl + 1;
+    var r = _trs_type(S, i, q, tail, nm);
     _trs_lvl = _trs_lvl - 1;
     return r;
 }
@@ -9918,12 +10115,10 @@ fn _ctp_bounds(S, slot): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) != 2) {
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 1; }
+            _ctp_badat(slot, GTI(S) + 1, 1);
             return 0;
         }
-        if (slot > 1) {
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S) + 1; _ctp_badk = 3; }
-        } else {
+        if (slot <= 1) {
             var k = _ctp_n0;
             if (slot == 1) { k = _ctp_n1; }
             if (k >= 8) {
@@ -9936,7 +10131,7 @@ fn _ctp_bounds(S, slot): i64 {
         }
         STI(S, GTI(S) + 1);             # consume the trait name
         if (PEEKT(S) == 19) {           # a trait takes no type arguments
-            if (_ctp_bad == 0) { _ctp_bad = GTI(S); _ctp_badk = 4; }
+            _ctp_badat(slot, GTI(S), 4);
             # its `>>` may close the parameter list too (`<T: Show<i64>>`)
             if (_skip_targ_list(S) > 0) { _ctp_closed = 1; return 0; }
         }
@@ -9946,6 +10141,13 @@ fn _ctp_bounds(S, slot): i64 {
     return 0;
 }
 
+# A refused bound shape `k` at token `at` - 1, kept for `_bnd_make` to report (the first one). A third type parameter's
+# bound records none: the parameter itself is refused (`_ctp_third`), its bound with it. CHANGELOG [6.7.16]
+fn _ctp_badat(slot, at, k): i64 {
+    if (slot > 1) { return 0; }
+    if (_ctp_bad == 0) { _ctp_bad = at; _ctp_badk = k; }
+    return 0;
+}
 # A refusal AT token `ti` (the cursor is put back): pass 1 reports from a pre-scan.
 fn _bnd_err_at(S, ti, msg, noff, tail, noff2): i64 {
     var sv = GTI(S);
@@ -9972,7 +10174,6 @@ fn _bnd_make(S, tp): i64 {
         if (_ctp_badk == 1) { _bnd_errm_at(S, bt, "expected a trait name in a type parameter's bound (`T: Show + Eq`)", 66); }
         if (_ctp_badk == 2) { _bnd_err_at(S, bt, "too many bounds on one type parameter (max 8): ", TOKVAL(S, bt), 0, 0 - 1); }
         if (_ctp_badk == 4) { _bnd_err_at(S, bt, "a trait in a bound takes no type arguments: ", TOKVAL(S, bt), 0, 0 - 1); }
-        if (_ctp_badk == 3) { _bnd_err_at(S, bt, "a bound on a third type parameter: at most two type parameters are recorded, so ", TOKVAL(S, bt), " would never be checked", 0 - 1); }
     }
     if (_ctp_n0 + _ctp_n1 == 0) { return 0; }
     var blk = alloc(18 * 8);
@@ -10065,6 +10266,7 @@ fn _bnd_memo_seen(g, c0, c1): i64 {
 }
 # Print the concrete type's name, for a refusal.
 fn _bnd_pr_conc(S, conc): i64 {
+    if (_pn_is(conc) == 1) { return _pn_pr(S, conc); }   # 6.7.16 (D10): `Box$R`, never minted
     if (conc > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8)); return 0; }
     if (conc == 0 - 4) { PRSTR("i32"); }
     elif (conc == 0 - 2) { PRSTR("i16"); }
@@ -10099,7 +10301,7 @@ fn _bnd_check(S, g, c0, c1): i64 {
         if (tx >= 0) {
             if (_bnd_quiet == 1) { if (g < 0) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = 0 - g; } } return 1; }
             if (_bnd_refd(S, tx) == 1) { return 1; }   # 6.7.16: a refused trait's bound
-            if (_bnd_memo_seen(g, c0, c1) == 1) { return 1; }
+            if (_bnd_memo_seen(g, _pn_canon(c0), _pn_canon(c1)) == 1) { return 1; }   # 6.7.16 (D10): `_pn_canon`
             # 6.7.14: a refusal the panic latch swallows prints nothing — its note alone, after an earlier
             # error in the statement (`gs(5) + gb(3)`), named a bound the reader was never shown. CHANGELOG [6.7.14]
             if (_panic == 1) { return 1; }
@@ -10634,16 +10836,18 @@ fn _bbf_push(g): i64 {
     return 0;
 }
 # The refusal for a scalar call (or `&g`) of generic fi whose base forwards its T to a bad base: the
-# forward, then a note naming what the chain's last generic needs.
+# forward, then a note naming what the chain's last generic needs. The forward target and the note's generic are
+# named as the source spells them (`P.bk` for a method, `_fn_src_name`), each printed as soon as it is written: the
+# spelling's scratch is one GNPOS slot. CHANGELOG [6.7.16]
 fn _refuse_bnd_fwd(S, fi, noff): i64 {
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_panic == 1) { return 0; }
-    _gen_ident_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", L64(_fnt_names + (_bbs_fwd - 1) * 8));
+    _gen_fwd_err(S, fi, noff, " has no i64 instance: it forwards its type parameter to ", _bbs_fwd - 1);
     var r = _bbs_root - 1;
     if (r < 0) { return 0; }
     if (_bbs_why > 0) {
         PRSTR("  note: '");
-        PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, r, L64(_fnt_names + r * 8)));
         PRSTR("' instantiates the bounded generic struct '");
         PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
         PRSTR("' with its type parameter, and i64 does not satisfy its bound\n");
@@ -10657,7 +10861,7 @@ fn _refuse_bnd_fwd(S, fi, noff): i64 {
     PRSTR("  note: the bound on type parameter '");
     PRSTR(S + 0xEC00000 + (((GFTP(S, r) >> (slot * 32)) & 0xFFFFFFFF) - 1));
     PRSTR("' of '");
-    PRSTR(S + 0xEC00000 + L64(_fnt_names + r * 8));
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, r, L64(_fnt_names + r * 8)));
     PRSTR("' needs `impl ");
     PRSTR(S + 0xEC00000 + L64(_tr_tab + tx * 32));
     PRSTR(" for i64`, and there is none\n");
@@ -13446,6 +13650,9 @@ fn _skip_targ_list(S): i64 {
 # Default path (_MONOMORPH_OK == 0): delegates to SKIP_GENERICS verbatim and returns 0
 # — byte-identical to the pre-v6.3.9 skip. Only ≤2 params are captured (the inline
 # replay's pc≤2 ceiling); extra params are consumed but not recorded.
+# ⛔ 6.7.16 (D8) — and a third is REFUSED, once, at its name (`_ctp_third`): it was consumed and bound nothing, so
+# `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
+# with no diagnostic. CHANGELOG [6.7.16]
 fn _capture_tparams(S): i64 {
     if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
@@ -13465,6 +13672,7 @@ fn _capture_tparams(S): i64 {
             if (PEEKT(S) == 2) {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
                 if (n == 1) { off1 = PEEKV(S) + 1; }
+                if (n == 2) { _ctp_third(S); }
                 n = n + 1;
                 STI(S, GTI(S) + 1);
                 # 6.7.1 (C3): `T: Show + Eq` — a BOUND, not two more type parameters (it minted
@@ -13480,6 +13688,20 @@ fn _capture_tparams(S): i64 {
     }
     STI(S, GTI(S) + 1);  # consume >
     return off0 | (off1 << 32);
+}
+
+# The third type parameter of the list `_capture_tparams` reads (the cursor on its name) — "a third type parameter
+# 'C': a generic takes at most two type parameters" (the user's D8, 2026-10-19: the guide's two-slot model), once per
+# token, the panic latch put back so the declaration reads on. Pass 1 says it (a struct's definition, a fn's prescan,
+# in source order, as the bound refusal it replaces was), never an instance's re-emit. Its uses say nothing more
+# (`_ta_x3`). It needs no name resolved, so `--syntax-only` (cyrius lint) reports it too. CHANGELOG [6.7.16]
+fn _ctp_third(S): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    ERR_IDENT(S, "a third type parameter ", PEEKV(S), ": a generic takes at most two type parameters", 0 - 1);
+    _panic = 0;
+    return 0;
 }
 
 # v6.3.9 (F-fns): infer the CANONICAL concrete-type token of the arg expression at
@@ -13633,7 +13855,13 @@ fn _mark_ptr_param(S): i64 {
         ed = _ek_at(S, GTI(S));
     }
     var pw = _ps_vw(_ps_word(ps, ed), _ek_vd(S, GTI(S) - 1));   # 6.7.12: a `*V`'s vector
-    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, _param_pin(S, GTI(S) - 1)));   # 6.7.13: a `**T`'s pointee
+    # 6.7.16: a `**Box<Zork>` pin's refusal is the parameter reader's own line (it reads the same list), so the
+    # latch the pin's read set is put back, as `_targ_chk` does — it swallowed the next parameter's error.
+    # CHANGELOG [6.7.16]
+    var svpn = _panic;
+    var pn = _param_pin(S, GTI(S) - 1);
+    if (svpn == 0) { _panic = 0; }
+    SSLICE_W(S, GFLC(S), 0 - 0x7E00 - _ps_pw(pw, pn));   # 6.7.13: a `**T`'s pointee
     return 0;
 }
 # ⛔ 6.7.15 — A GENERIC'S `pp: **Box<T>` PARAMETER READS ITS PIN UNDER THE BINDING ITS BODY HAS: the base's T -> i64
@@ -13939,6 +14167,7 @@ fn _pty_list(S, i, loud): i64 {
 fn _pty_name(S, i): i64 {
     _vec_ann_chk(S, i, _pty_pnoff(S));   # 6.7.11: `p: **Vec<T>`, a `*fn(Vec<T>)` parameter
     _pty_targs(S, i);                    # 6.7.15 (D7): `cb: *fn(Box<Zork>): i64`
+    _ngt_refuse(S, i);                   # 6.7.16 (D7): `cb: *fn(Pt<i64>): i64`, `p: **Pt<i64>`
     var nm = TOKVAL(S, i);
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
@@ -15028,6 +15257,27 @@ fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
     _panic = 1;
     return 0;
 }
+# `_gen_ident_err` whose second name is generic fi2's, spelled as the source writes it (`P.bk`, `_fn_src_name`) and
+# written after the first is printed (one GNPOS scratch). Its identity is ERR_IDENT's on the table names. CHANGELOG [6.7.16]
+fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
+    var msg = "generic ";
+    var noff2 = L64(_fnt_names + fi2 * 8);
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": generic '");
+    if (_gen_msp == 0) { PRSTR(S + 0xEC00000 + noff); }
+    else { PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff)); }
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi2, noff2));
+    PRSTR("'\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
 # The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
 fn _refuse_gen_stub(S, fi, noff): i64 {
     _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
@@ -15444,7 +15694,7 @@ fn _gen_resolve_call(S, ti): i64 {
         _ta_pending_gt = 0;
         STI(S, ti + 2);
         c0 = _parse_one_type_arg(S);
-        if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+        c1 = _ta_rest_f(S, fi);   # 6.7.16 (D5): the one read of the list on a path that emits its own call
         _ta_pending_gt = sv_gt;
         STI(S, sv);
         if (c0 <= 0 && c1 <= 0) {
@@ -15773,6 +16023,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var tab = _fnst_tab_save(S);
     var st = _fnst_save(S);
     STI(S, defstart);
+    var sv_ibf = _inst_base_fi;
     _inst_name = mangled;
     _inst_base_fi = base_fi;
     _inst_conc0 = conc0;
@@ -15784,7 +16035,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _gen_msp = sv_msp;
     _attr_unpark(attrs);
     _inst_name = 0;
-    _inst_base_fi = 0 - 1;
+    _inst_base_fi = sv_ibf;   # 6.7.16: an enclosing instance's base again (`_mret_fn`), -1 outside one
     _inst_conc0 = 0;
     _inst_conc1 = 0;
     # --- restore the enclosing fn's state ---
@@ -15900,6 +16151,178 @@ fn _ta_comma(S): i64 {
     if (PEEKT(S) != 31) { return 0; }
     STI(S, GTI(S) + 1);
     return 1;
+}
+# ⛔ 6.7.16 (D5) — A TYPE-ARGUMENT LIST LONGER THAN ITS GENERIC DECLARES: `var b: Box<i64, i64>;` with `struct Box<T>`,
+# and `g<i32, Pt>(5)` on `fn g<T>`, compiled — every reader took two arguments whatever the generic declared (a
+# one-parameter generic's second into c1), and dropped the rest. Each list reader now reads the arguments its generic
+# declares (`np`) through these: an argument past them — a `,` that starts another argument of THIS list, no close
+# owed — is refused once, at that argument, "'Box' takes 1 type argument, 2 given" (the user's D5, 2026-10-19), and
+# the rest of the list is stepped unread (`_targ_skip_arg`, the close it owes kept), so the list reads as if the
+# extra arguments were deleted and nothing cascades. Quiet in a lookahead or typer (`_ta_xq`): the reader that parses
+# the list reports it. CHANGELOG [6.7.16]
+# After the first argument: the second when the generic declares one (else 0), then the extra check. `gk` / `gi`
+# name the generic for the refusal: 1 a struct (gi its name), 2 a fn (gi its index), 0 quiet.
+fn _ta_rest(S, np, gk, gi): i64 {
+    var c1 = 0;
+    if (np > 1) { if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); } }
+    if (_ta_xq == 1) { gk = 0; }
+    _ta_extra(S, np, gk, gi);
+    return c1;
+}
+fn _ta_extra(S, np, gk, gi): i64 {
+    if (_ta_comma(S) == 0) { return 0; }
+    if (_targ_gt_n(PEEKT(S)) > 0) { _parse_one_type_arg(S); return 0; }   # `Box<i64,>`: an empty argument, as before
+    var at = GTI(S);
+    var n = np + 1;
+    _targ_skip_arg(S);
+    while (_ta_comma(S) == 1) {
+        n = n + 1;
+        _targ_skip_arg(S);
+    }
+    if (gk != 0) { _ta_xrefuse(S, at, np, n, gk, gi); }
+    return 0;
+}
+fn _ta_xrefuse(S, at, np, n, gk, gi): i64 {
+    if (_syntax_only == 1) { return 0; }   # as D6's `_ngt_refuse`
+    if (_panic == 1) { return 0; }
+    if (np == 2) { if (_ta_x3(S, gk, gi) == 1) { return 0; } }   # 6.7.16 (D8): refused at its declaration
+    if (_tn_once(S, at) == 0) { return 0; }
+    var nm = gi;
+    if (gk == 2) { nm = _fn_src_name(S, gi, L64(_fnt_names + gi * 8)); }   # `g`, a method's `P.m`
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + nm);
+    PRSTR("' takes ");
+    PRNUM(np);
+    PRSTR(" type argument");
+    if (np != 1) { PRSTR("s"); }
+    PRSTR(", ");
+    PRNUM(n);
+    PRSTR(" given\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# 1 when the generic a count refusal would name declares a third type parameter — refused at its declaration
+# (`_ctp_third`), so its uses say nothing more (the user's D8). `gk` / `gi` as `_ta_rest`'s. CHANGELOG [6.7.16]
+fn _ta_x3(S, gk, gi): i64 {
+    var lt = 0 - 1;
+    if (gk == 2) { if (GFDS(S, gi) > 0) { lt = GFDS(S, gi) + 1; } }
+    else {
+        var sid = FINDSTRUCT(S, gi);
+        if (sid > 0) { if (GSDS(S, sid - 1) > 0) { lt = GSDS(S, sid - 1) + 1; } }
+        else { lt = _tp_later_lt(S, gi); }
+    }
+    if (lt <= 0) { return 0; }
+    if (TOKTYP(S, lt) != 19) { return 0; }
+    if (_tp_count_at(S, lt) > 2) { return 1; }
+    return 0;
+}
+# The type parameters generic packed names `tp` records (`GSTP` / `GFTP`): 1, or 2 when its second slot is set.
+fn _tp_np(tp): i64 {
+    if (((tp >> 32) & 0xFFFFFFFF) != 0) { return 2; }
+    return 1;
+}
+# 1 when name token `k` is a generic struct whose `<..>` lists more arguments than it declares — the shape
+# `_ta_extra` refuses, read off the tokens (the cursor untouched, nothing parsed): the impl check and the pair check
+# know such a type as its reader's refusal (`_ty_rd_name`). Not a struct declaring a third parameter (D8: refused at
+# its declaration, its uses quiet). CHANGELOG [6.7.16]
+fn _ta_over(S, k): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, k));
+    if (sid <= 0) { return 0; }
+    var tp = GSTP(S, sid - 1);
+    if (tp == 0) { return 0; }
+    var np = _tp_np(tp);
+    if (_ta_list_n(S, k + 1) <= np) { return 0; }
+    if (np == 2) { if (_ta_x3(S, 1, TOKVAL(S, k)) == 1) { return 0; } }
+    return 1;
+}
+# The arguments of the `<..>` whose `<` is token `lt`: one, and one more per `,` of the list's own depth (outside a
+# `*fn( .. )`'s parentheses) that a type follows — a `,` before the close is the empty argument `_ta_extra` lets pass.
+fn _ta_list_n(S, lt): i64 {
+    var i = lt + 1;
+    var d = 1;
+    var p = 0;
+    var n = 1;
+    var e = GTCNT(S);
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 13 || t == 14 || t == 5) { return n; }   # `{` `}` `;`: an unclosed list
+        if (t == 19) { d = d + 1; }
+        if (t == 10) { p = p + 1; }
+        if (t == 11) { p = p - 1; }
+        d = d - _targ_gt_n(t);
+        if (d <= 0) { return n; }
+        if (t == 31) { if (d == 1) { if (p == 0) { if (_targ_gt_n(TOKTYP(S, i + 1)) == 0) { n = n + 1; } } } }
+        i = i + 1;
+    }
+    return n;
+}
+# `_ta_rest` for generic struct `sid` (1-based) / generic fn `fi` (a fn that is no generic, or none: two, as before).
+fn _ta_rest_s(S, sid): i64 {
+    return _ta_rest(S, _tp_np(GSTP(S, sid - 1)), 1, L64(S + 0x1A6018 + (sid - 1) * 8));
+}
+fn _ta_rest_f(S, fi): i64 {
+    var tp = 0;
+    if (fi >= 0) { tp = GFTP(S, fi); }
+    if (tp == 0) { return _ta_rest(S, 2, 0, 0); }
+    return _ta_rest(S, _tp_np(tp), 2, fi);
+}
+# ... for the fn named `noff` as the call spells it.
+fn _ta_rest_n(S, noff): i64 { return _ta_rest_f(S, FINDFN(S, noff)); }
+# ... for the generic struct named `noff`, declared further down (`_ta_late`): what its declaration lists.
+fn _ta_rest_l(S, noff): i64 {
+    var lt = _tp_later_lt(S, noff);
+    if (lt < 0) { return _ta_rest(S, 2, 0, 0); }
+    var np = _tp_count_at(S, lt);
+    if (np > 2) { np = 2; }
+    if (np < 1) { np = 1; }
+    return _ta_rest(S, np, 1, noff);
+}
+# The `<` of the generic struct or union `noff` declared further down (`_declared_later_gen`'s), or -1.
+fn _tp_later_lt(S, noff): i64 {
+    var k = GTI(S);
+    var n = GTCNT(S);
+    while (k + 2 < n) {
+        var t = TOKTYP(S, k);
+        if (t == 40 || t == 101) {
+            if (TOKTYP(S, k + 1) == 2) { if (TOKTYP(S, k + 2) == 19) {
+                    if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return k + 2; }
+                } }
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+# The type parameters a declaration's `<..>` (its `<` at token `lt`) lists, counted as `_capture_tparams` counts
+# them: each name at the list's own depth that does not follow a bound's `:` or `+`.
+fn _tp_count_at(S, lt): i64 {
+    var i = lt + 1;
+    var n = 0;
+    var d = 1;
+    var e = GTCNT(S);
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return n; }
+        if (t == 2) { if (d == 1) { if (_tp_after_bound(S, i) == 0) { n = n + 1; } } }
+        if (t == 19) { d = d + 1; }
+        d = d - _targ_gt_n(t);
+        if (d <= 0) { return n; }
+        i = i + 1;
+    }
+    return n;
+}
+# 1 when the name at token `i` is a bound's trait (it follows `:` or `+`).
+fn _tp_after_bound(S, i): i64 {
+    var p = TOKTYP(S, i - 1);
+    if (p == 49 || p == 6) { return 1; }
+    return 0;
 }
 
 # v6.3.33 (generics tail — NESTED + multi-arg): consume ONE type argument at the
@@ -16021,10 +16444,13 @@ fn _parse_one_type_arg(S): i64 {
     var lit = _targs_literal(S, GTI(S));             # 6.7.15: `Box<i64>` written out (see `_targ_inst`)
     var lv = _tck_open(S);                           # 6.7.15 (D10): under `_ta_chk`, this list's own judgement
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
-    var in1 = 0;
-    if (_ta_comma(S) == 1) { in1 = _parse_one_type_arg(S); }   # `,`
+    var x0 = _tck_take();                            # 6.7.16 (D10): the instance it names, if any
+    var in1 = _ta_rest_s(S, base_sid);               # `,` — 6.7.16 (D5): as many as it declares
     _consume_gt(S);                                  # consume the nested `>` (or `>>`)
-    if (_ta_chk == 1) { return _tck_nest(S, base_sid, in0, in1, lit, lv); }   # 6.7.14 (D5): read, not minted
+    if (_ta_chk == 1) {   # 6.7.14 (D5): read, not minted
+        _tck_xset(x0);
+        return _tck_nest(S, base_sid, in0, in1, lit, lv);
+    }
     return _targ_inst(S, base_sid, in0, in1, lit);
 }
 # 6.7.15 (D8) — `Later<..>` in a pointer field's list read at its declaration (`_ta_late`; cursor on the `<`), Later a
@@ -16038,8 +16464,9 @@ fn _targ_later(S, noff): i64 {
     }
     STI(S, GTI(S) + 1);
     _parse_one_type_arg(S);
-    if (_ta_comma(S) == 1) { _parse_one_type_arg(S); }
+    _ta_rest_l(S, noff);   # 6.7.16 (D5)
     _consume_gt(S);
+    _tck_last = 0;
     return 0 - 8;
 }
 # ⛔ 6.7.15 — A NESTED `Box<i64>` IS THE BASE `Box`, as the annotation `var b: Box<i64>` declares it (the 6.6.10 rule of
@@ -16103,9 +16530,11 @@ fn _targ_chk(S, lt): i64 {
     _ta_chk = 1;
     _ta_pending_gt = 0;
     STI(S, lt + 1);
+    _tck_last = 0;
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var x0 = _tck_take();
+    var c1 = _tck_rest(S, lt - 1);   # 6.7.16 (D5)
+    _tck_xset(x0);   # 6.7.16 (D10): an argument that is an instance, as `_tck_nest`'s
     _tck_c0 = c0;   # 6.7.15 (D10): what was read, for a Vec element's bound (`_vec_el_targs`)
     _tck_c1 = c1;
     _ta_chk = sv_ck;
@@ -16113,6 +16542,12 @@ fn _targ_chk(S, lt): i64 {
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
     return 0;
+}
+# `_ta_rest` for the generic struct named at token `nti` — declared above, or further down (a late `*G<..>` field).
+fn _tck_rest(S, nti): i64 {
+    var sid = FINDSTRUCT(S, TOKVAL(S, nti));
+    if (sid > 0) { return _ta_rest_s(S, sid); }
+    return _ta_rest_l(S, TOKVAL(S, nti));
 }
 # ⛔ 6.7.15 (D10) — A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>> = 0;` with
 # `struct Box<T: Show>` and no `impl Show for Pt` compiled, where `var b: Box<Pt>;` is refused — the element's list is
@@ -16122,12 +16557,25 @@ fn _targ_chk(S, lt): i64 {
 # base's (`_bnd_sbase`) — reported at the struct's name, once per (struct, arguments) as every bound refusal (the
 # user's D10 (a), 2026-10-18). Not judged: a list with a refused argument (its refusal stands alone), one naming a
 # type parameter not bound here (each instance judges its binding) or a struct declared further down, and one whose
-# argument is itself an instance (only minting it names it; that struct's own bound is judged in its turn). Off
-# outside a Vec element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+# argument is a list refused here (as by value, where the refused instance leaves the base). Off outside a Vec
+# element, so a signature's or a pointer field's `_targ_chk` judges no bound. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D10) — AN ARGUMENT THAT IS ITSELF AN INSTANCE (`Vec<Box<Box<R>>>`, `Box<T: Show>`) was not judged: only
+# minting names it, so the outer list was marked unjudgeable and the line compiled, where `var b: Box<Box<R>>;` is
+# refused — no `impl Show for Box<R>` can be written, so no source satisfies an outer bound on an instance. It is now
+# judged as the by-value form judges it (the user's D10, 2026-10-19), nothing minted: the inner list, judged in its
+# turn, stands in its enclosing list's slot as a PENDING instance (`_pn_of`, a sentinel type code), which no impl
+# names, so a bounded slot holding it fails with the by-value line and note, the note spelling it as
+# `_mint_generic_name` would (`impl Show for Box$R`, `_pn_pr`); an unbounded slot stays silent. CHANGELOG [6.7.16]
 var _ta_vbnd = 0;   # 1 while a Vec element's list is read (`_vec_el_targs`)
 var _tck_c0 = 0;    # the arguments the last `_targ_chk` read
 var _tck_c1 = 0;
 var _tck_nj = 0;    # 1 when the list being read cannot be judged (above)
+var _tck_last = 0;  # 6.7.16 (D10): the pending instance the nested list just read is (`_tck_nest`), else 0
+var _tck_x0 = 0;    # ... and those the list being judged holds in its slots 0 / 1 (`_tck_xset`)
+var _tck_x1 = 0;
+var _pn_tab = 0;    # the pending instances, interned: (sid, c0, c1) — 24 B each, grown (`_tab_grow`)
+var _pn_n = 0;
+var _pn_cap = 0;
 # Under `_ta_chk`, cursor just past a nested `<`: the enclosing list's state, packed (its name token * 4, its refusal
 # flag * 2, its no-judge flag), both flags cleared for this list. 0 and nothing touched outside `_ta_chk`.
 fn _tck_open(S): i64 {
@@ -16135,7 +16583,21 @@ fn _tck_open(S): i64 {
     var lv = (GTI(S) - 2) * 4 + _ta_refd * 2 + _tck_nj;
     _ta_refd = 0;
     _tck_nj = 0;
+    _tck_last = 0;
     return lv;
+}
+# The pending instance the argument just read is (0 = none), taken: each argument reads its own.
+fn _tck_take(): i64 {
+    var v = _tck_last;
+    _tck_last = 0;
+    return v;
+}
+# The list's slot-0 pending instance `x0` (taken before its second argument was read) and its slot-1 one, for the
+# judgement that follows.
+fn _tck_xset(x0): i64 {
+    _tck_x1 = _tck_take();
+    _tck_x0 = x0;
+    return 0;
 }
 # The nested generic struct `sid` read under `_ta_chk` (`lv` from `_tck_open`): judged inside a Vec element, the
 # enclosing list's flags put back (with this list's), and read as its base — an instance its enclosing list cannot
@@ -16144,9 +16606,85 @@ fn _tck_nest(S, sid, in0, in1, lit, lv): i64 {
     var nj = _tck_nj | _ta_refd;
     _ta_refd = ((lv / 2) & 1) | _ta_refd;
     _tck_nj = (lv & 1) | nj;
-    if (_ta_vbnd == 1) { if (nj == 0) { _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
-    if (_targ_is_inst(in0, in1) == 1) { _tck_nj = 1; }
+    var bad = 0;
+    if (_ta_vbnd == 1) { if (nj == 0) { bad = _vbnd_judge(S, sid, in0, in1, lit, lv / 4); } }
+    _tck_last = 0;
+    if (_targ_is_inst(in0, in1) == 1) {
+        if (_ta_vbnd == 0 || nj == 1 || bad == 1) { _tck_nj = 1; }   # 6.7.16 (D10): else a pending instance
+        else { _tck_last = _pn_of(sid, _tck_xc(in0, _tck_x0), _tck_xc(in1, _tck_x1)); }
+    }
     return sid;
+}
+# An argument's type code for its list's judgement: the pending instance it is (`x`), else what was read (`c`).
+fn _tck_xc(c, x): i64 {
+    if (x != 0) { return x; }
+    return c;
+}
+# The pending instance (`sid` its generic struct, 1-based; `c0` / `c1` its arguments, each a type code or another
+# pending instance): its sentinel type code, 0 - 1000000 - its entry (interned, so one shape is one code — a bound's
+# refusal is reported once per (struct, arguments), `_bnd_memo_seen`). Never a struct: nothing is minted.
+fn _pn_of(sid, c0, c1): i64 {
+    var i = 0;
+    while (i < _pn_n) {
+        var e = _pn_tab + i * 24;
+        if (load64(e) == sid) { if (load64(e + 8) == c0) { if (load64(e + 16) == c1) { return 0 - 1000000 - i; } } }
+        i = i + 1;
+    }
+    if (_pn_tab == 0) { _pn_tab = alloc(16 * 24); _pn_cap = 16; }
+    if (_pn_n >= _pn_cap) { _pn_tab = _tab_grow(_pn_tab, _pn_cap * 3); _pn_cap = _pn_cap * 2; }
+    var e2 = _pn_tab + _pn_n * 24;
+    store64(e2, sid);
+    store64(e2 + 8, c0);
+    store64(e2 + 16, c1);
+    _pn_n = _pn_n + 1;
+    return 0 - 999999 - _pn_n;
+}
+# Type code `c` as a bound refusal's memo keys it: a minted instance as the pending instance of its base and
+# arguments (`_sinst`), so `var b: Box<Box<R>>;` and `Vec<Box<Box<R>>>` are one (struct, arguments) — reported once.
+fn _pn_canon(c): i64 {
+    var b = _sinst_base(c);
+    if (b == 0) { return c; }
+    var e = _sinst + (c - 1) * 24;
+    return _pn_of(b, _pn_canon(L64(e + 8)), _pn_canon(L64(e + 16)));
+}
+# 1 when type code `c` is a pending instance's sentinel.
+fn _pn_is(c): i64 {
+    if (c <= 0 - 1000000) { return 1; }
+    return 0;
+}
+# Print pending instance `c` as `_mint_generic_name` spells its would-be name (`Box$R`, `Pair$i64$<Box$R>`).
+fn _pn_pr(S, c): i64 {
+    var e = _pn_tab + (0 - 1000000 - c) * 24;
+    var sid = load64(e);
+    var c1 = load64(e + 16);
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("$");
+    if (c1 == 0) {
+        _pn_pr_arg(S, load64(e + 8), 0);
+        return 0;
+    }
+    _pn_pr_arg(S, load64(e + 8), 1);
+    PRSTR("$");
+    _pn_pr_arg(S, c1, 1);
+    return 0;
+}
+# One argument of it: a pending instance in full (`frag`: a two-parameter list's fragment, bracketed), anything else
+# written by `_append_conc_name` / `_append_conc_frag2` into the name pool's scratch, uncommitted, and printed.
+fn _pn_pr_arg(S, c, frag): i64 {
+    if (_pn_is(c) == 1) {
+        if (frag == 1) { PRSTR("<"); }
+        _pn_pr(S, c);
+        if (frag == 1) { PRSTR(">"); }
+        return 0;
+    }
+    if (c == 0) { c = 0 - 8; }   # unbound reads as i64, as the bound check reads it
+    NPOS_GUARD(S, _conc_frag_len(S, c) + 4);
+    var b = GNPOS(S);
+    var w = 0;
+    if (frag == 1) { w = _append_conc_frag2(S, b, c); } else { w = _append_conc_name(S, b, c); }
+    store8(S + 0xEC00000 + w, 0);
+    PRSTR(S + 0xEC00000 + b);
+    return 0;
 }
 # 1 when a list read as (c0, c1) names an instance, not the all-i64 (or unbound) base (`_targ_inst`'s rule).
 fn _targ_is_inst(c0, c1): i64 {
@@ -16155,17 +16693,19 @@ fn _targ_is_inst(c0, c1): i64 {
     return 0;
 }
 # Generic struct `sid` read as (c0, c1) (`lit`: the list written out) judged against its bounds at token `at`, minting
-# nothing; the panic latch a report sets is put back, so the list reads on.
+# nothing — a slot holding a pending instance (`_tck_x0` / `_tck_x1`) judged as it; the panic latch a report sets is
+# put back, so the list reads on. 1 = refused.
 fn _vbnd_judge(S, sid, c0, c1, lit, at): i64 {
     if (_MONOMORPH_OK != 1) { return 0; }
     var sv = GTI(S);
     var sv_pn = _panic;
+    var bad = 0;
     STI(S, at);
-    if (_targ_is_inst(c0, c1) == 1) { _bnd_check_struct(S, sid - 1, c0, c1); }
+    if (_targ_is_inst(c0, c1) == 1) { bad = _bnd_check_struct(S, sid - 1, _tck_xc(c0, _tck_x0), _tck_xc(c1, _tck_x1)); }
     elif (lit == 1) { _bnd_sbase(S, sid); }
     if (sv_pn == 0) { _panic = 0; }
     STI(S, sv);
-    return 0;
+    return bad;
 }
 # 0 = say nothing: under `_targ_chk` a name the cursor just passed was reported already (a generic body, both passes).
 fn _ta_chk_ok(S): i64 {
@@ -16712,6 +17252,7 @@ fn _mret_elem(S, fi, quiet): i64 {
         else { t = _gtype_sid(S, fi, t); }
     }
     if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
+    if (quiet == 0) { _ngt_refuse(S, GTI(S)); }   # 6.7.16 (D7): `(Pt<i64>, i64)`
     STI(S, GTI(S) + 1);                 # consume the type IDENT
     SKIP_GENERICS(S);
     return t;
@@ -18037,9 +18578,11 @@ fn _ret_targ_parse(S, base): i64 {
     _ta_pending_gt = 0;
     var lit = _targs_literal(S, GTI(S) + 2);   # 6.7.1 (C3): `Box<i64>` written out
     STI(S, GTI(S) + 2);                  # the name, `<`
+    var sv_xq = _ta_xq;
+    _ta_xq = 1;                          # 6.7.16 (D5): pass 2's `_gtype_sid_def` reports the list
     var c0 = _parse_one_type_arg(S);
-    var c1 = 0;
-    if (_ta_comma(S) == 1) { c1 = _parse_one_type_arg(S); }
+    var c1 = _ta_rest_s(S, base);
+    _ta_xq = sv_xq;
     _consume_gt(S);
     _ta_pending_gt = sv_gt;
     var inst = 0;

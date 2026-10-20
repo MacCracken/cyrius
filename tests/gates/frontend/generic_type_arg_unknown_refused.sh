@@ -158,6 +158,31 @@
 #      on `_gtype_sid` again -> RED 2: SR0 SR1; MSR2 `_trs_targs` answering 0 -> RED 3: SR0 SR2 SR2b; MSR3 `_pty_targs`
 #      answering 0 -> RED 3: SR0 SR3 SR4; MSR4 `_targ_is_tp` without the member's `_trs_fn` arm -> RED 1: the SR control
 #      ("unknown type 'U'"); MSR5 `_trs_targs` not ending the walk -> RED 1: SR2b (two lines)
+#   PL (6.7.16) A `**Box<Zork>` PARAMETER'S REFUSAL SWALLOWED THE NEXT PARAMETER'S ERROR: the slot's pointee pin is read
+#      while the `*` is marked (`_mark_ptr_param` -> `_param_pin` -> .. -> `_gen_ann_sid`), whose refusal sets the panic
+#      latch, so `fn ap(p: **Box<Zork>, q: Nope)` reported 'Zork' alone (`*Box<Zork>` reported both). The latch is put
+#      back around the pin's read, as `_targ_chk` does; the refusal stands at its token once (the parameter reader's
+#      read of the same list repeats it). PL0 the filed repro verbatim (two lines); PL1 a generic's, two instances; PL2
+#      `***Box<Zork>`; PL3 two such parameters, then one more; a control (`**Box<Pt>`, exit 4). SR4 stays once.
+#      Filed: docs/development/issues/2026-10-18-double-pointer-generic-parameter-refusal-swallows-the-next.md
+#      Mutant (2026-10-20): the lane's previous compiler (1e3aad696) -> RED 4: PL0-PL3 (the first line alone)
+#   NR (6.7.16, the user's D7, 2026-10-19) `Name<..>` ON A NON-GENERIC STRUCT OR A SCALAR IN THE POSITIONS D6 DID NOT
+#      REACH: a pointer field `p: *Pt<i64>` (its pointee above or further down, `_fld_ngt`), a trait member's type
+#      (`_trs_ngt`: a refusal ends the member's walk, as the reader's others), a multi-value element (`_mret_elem`), a
+#      `*fn( .. )` type and a `**Pt<..>` parameter (`_pty_name`), a `*i32<u8>` local / global / return / field / element
+#      (`_ptr_annot`) compiled with the list unread (the filed stage1 exited 7); a scalar return `: i64<u8>`, a by-value
+#      field `f: Pt<i64>` / `g: i64<u8>` and a slice element `[Pt<i64>]` were parse errors (a return's cascaded). Each
+#      is D6's line, once, at the name, the list stepped (`_ngt_skip`, `_tn_slice_ngt`); the impl check counts a
+#      `Pt<..>` return as its reader's refusal (`_tr_rt_bad`), so neither side adds "'P.r' returns ..". NR0-NR5 the
+#      filed programs verbatim; NR6-NR10 the rest of each reader's positions, a generic's instances once; NR11 / NR12 a
+#      member's and a method's `: Pt<i64>` against the other's `: Pt`; NRX --syntax-only silent, as D6; a control.
+#      Filed: docs/development/issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md
+#      Mutants (2026-10-20): the lane's previous compiler (b56d6abb7) -> RED 14 (NR0-NR12, NRX: built, parse errors,
+#      the impl's line); MNR1 `_tr_rt_bad` without its `_ngt_tail` arm -> RED 2: NR11 NR12 (the impl check's line).
+#      NR13 (a find repaired in passing): a union's by-value field, PARSE_UNION_DEF's parallel copy of the struct's
+#      field reader, the same; its mutant (the D7 commit's compiler, 4c6a024a3) -> RED 1: NR13 (the parse error).
+#      NR14 (a find repaired in passing): a slice's pointer element `[*Pt<i64>]` (`_tn_slice_ptr_el`) the same; its
+#      mutant (the compiler before it, eafa5a40d) -> RED 1: NR14 (the parse errors).
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -805,5 +830,132 @@ syscall(60, main());
 EOF
 exits srk 0 "SR control: (Box<Pt>, i64), a member's Box<i64> / own Box<U> / *fn(Box<U>), *fn(Box<Pt>), a generic's own *fn(Box<U>), Box<Later> (declared below) in each position, unchanged"
 
+# ── 6.7.16: a `**Box<Zork>` parameter's refusal leaves the next parameter's error standing ────────────────────────────
+cat > "$T/pl0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+fn ap(p: **Box<Zork>, q: Nope): i64 { return 0; }
+syscall(60, 4);
+EOF
+errs pl0 2 "PL0: the filed repro verbatim — the type argument and the next parameter, each once (q: Nope was swallowed)" \
+    "error:<source>:3:20: unknown type 'Zork' $TA" "error:<source>:3:26: unknown type 'Nope' for parameter 'q'"
+PLH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }'
+pl() { printf '%s\n%s\nsyscall(60, 4);\n' "$PLH" "$2" > "$T/$1.cyr"; }
+pl pl1 'fn gp<T>(p: **Box<Zork>, q: Nope, t: T): i64 { return 0; }
+fn f(): i64 { return gp(0, 0, 1) + gp<i32>(0, 0, 2); }'
+errs pl1 2 "PL1: a generic's **Box<Zork> (its pin read under the binding) with two instances — each once" \
+    "error:<source>:4:23: unknown type 'Zork' $TA" "error:<source>:4:29: unknown type 'Nope' for parameter 'q'"
+pl pl2 'fn ap(p: ***Box<Zork>, q: Nope): i64 { return 0; }'
+errs pl2 2 "PL2: ***Box<Zork> — each once" "error:<source>:4:21: unknown type 'Zork' $TA" "error:<source>:4:27: unknown type 'Nope' for parameter 'q'"
+pl pl3 'fn ap(p: **Box<Zork>, q: **Box<Zork2>, r: Nope): i64 { return 0; }'
+errs pl3 3 "PL3: two **Box<..> refusals and the parameter after them — each once" \
+    "error:<source>:4:20: unknown type 'Zork' $TA" "error:<source>:4:37: unknown type 'Zork2' $TA" "error:<source>:4:43: unknown type 'Nope' for parameter 'r'"
+printf '%s\nfn ap(p: **Box<Pt>, q: i64): i64 { return q; }\nsyscall(60, ap(0, 4));\n' "$PLH" > "$T/plk.cyr"
+exits plk 4 "PL control: fn ap(p: **Box<Pt>, q: i64) with ap(0, 4), unchanged"
+
+# ── 6.7.16: `Name<..>` on a non-generic struct or a scalar in the positions D6 did not reach (the user's D7) ──────────
+cat > "$T/nr0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct H { p: *Pt<i64>; k; }
+trait Sh { fn m(self, p: Pt<i64>): i64; }
+fn mv(): (Pt<i64>, i64) { var p: Pt; return (p, 3); }
+fn ap(cb: *fn(Pt<i64>): i64): i64 { return 0; }
+fn dp(p: **Pt<i64>): i64 { return 0; }
+fn main(): i64 { var h: H; h.k = 7; return h.k + ap(0) + dp(0); }
+syscall(60, main());
+EOF
+errs nr0 5 "NR0: the filed stage1 verbatim — a pointer field, a trait member, a multi-value element, a *fn(..) and a ** parameter, each once at the name (it compiled: exit 7)" \
+    "error:<source>:3:16: $NGS" "error:<source>:4:26: $NGS" "error:<source>:5:11: $NGS" "error:<source>:6:15: $NGS" "error:<source>:7:12: $NGS"
+cat > "$T/nr1.cyr" <<'EOF'
+struct Pt { x; y; }
+fn f(): i64<u8> { return 3; }
+syscall(60, f());
+EOF
+errs nr1 1 "NR1: the filed scalar return verbatim — one line at the name (was 'expected {' and 'undefined variable u8')" "error:<source>:2:9: 'i64' $NGI"
+cat > "$T/nr2.cyr" <<'EOF'
+struct Pt { x; y; }
+struct H { f: Pt<i64>; g: i64<u8>; k; }
+fn s(): i64 { var a: [Pt<i64>] = 0; return 0; }
+syscall(60, 7);
+EOF
+errs nr2 3 "NR2: the filed by-value fields and slice element verbatim — one line each, at the name (were parse errors)" \
+    "error:<source>:2:15: $NGS" "error:<source>:2:27: 'i64' $NGI" "error:<source>:3:23: $NGS"
+printf 'fn f(): i64 { var d: *i32<u8> = 0; return 0; }\nfn main(): i64 { return f() + 7; }\n' > "$T/nr3.cyr"
+errs nr3 1 "NR3: the filed *i32<u8> local verbatim (it compiled: exit 7)" "error:<source>:1:23: 'i32' $NGI"
+printf 'var gd: *i32<u8> = 0;\nfn main(): i64 { return 7; }\n' > "$T/nr4.cyr"
+errs nr4 1 "NR4: the filed *i32<u8> global verbatim (it compiled: exit 7)" "error:<source>:1:10: 'i32' $NGI"
+printf 'fn f(): *i32<u8> { return 0; }\nfn main(): i64 { var p = f(); return 7; }\n' > "$T/nr5.cyr"
+errs nr5 1 "NR5: the filed : *i32<u8> return verbatim (it compiled: exit 7)" "error:<source>:1:10: 'i32' $NGI"
+NRH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct P { k; }'
+nr() { printf '%s\n%s\nsyscall(60, 7);\n' "$NRH" "$2" > "$T/$1.cyr"; }
+nr nr6 'trait Sh { fn r(self): Pt<i64>; fn q(self, a: *Pt<i64>): (Pt<i64>, i64); fn n(self, a: i32<u8>, b: Nope): i64; }'
+errs nr6 3 "NR6: a trait member's return, a pointer parameter (its walk ends there: one line per member) and a scalar, its next parameter's Nope unreported" \
+    "error:<source>:5:24: $NGS" "error:<source>:5:48: $NGS" "error:<source>:5:88: 'i32' $NGI"
+nr nr7 'fn ap(cb: *fn(i64): Pt<i64>, cc: *fn(i32<u8>): i64): i64 { return 0; }
+fn dq(p: **i32<u8>): i64 { return 0; }'
+errs nr7 3 "NR7: a *fn(..)'s own return, a scalar inside *fn(..), a **i32<u8> parameter" \
+    "error:<source>:5:21: $NGS" "error:<source>:5:38: 'i32' $NGI" "error:<source>:6:12: 'i32' $NGI"
+nr nr8 'struct H { p: *Later<i64>; q: *i32<u8>; r: **Pt<i64>; k; }
+struct Later { z; }'
+errs nr8 3 "NR8: pointer fields — a pointee declared further down, a scalar, behind two *" \
+    "error:<source>:5:16: 'Later' is not a generic struct: it takes no type arguments" "error:<source>:5:32: 'i32' $NGI" "error:<source>:5:46: $NGS"
+nr nr9 'fn mv(): (*i32<u8>, i64<u8>) { return (0, 3); }
+fn s(): i64 { var a: slice<Pt<i64>> = 0; var b: [i64<u8>] = 0; return 0; }
+fn f(): f64<i32> { return 3.0; }
+fn g(): bool<u8> { return true; }'
+errs nr9 6 "NR9: multi-value elements (a pointer, a scalar), slice<Pt<..>>, [i64<u8>], f64 and bool returns — one line each" \
+    "error:<source>:5:12: 'i32' $NGI" "error:<source>:5:21: 'i64' $NGI" "error:<source>:6:28: $NGS" "error:<source>:6:50: 'i64' $NGI" "error:<source>:7:9: 'f64' $NGI" "error:<source>:8:9: 'bool' $NGI"
+nr nr10 'struct G<T> { v: T; p: *Pt<i64>; q: Pt<i64>; }
+fn h<T>(x: T): i64 { var d: *i32<u8> = 0; return 1; }
+fn f(): i64 { var a: G<i64>; var b: G<i32>; var c: G<Pt>; return h(1) + h<i32>(2); }'
+errs nr10 3 "NR10: a generic struct's fields with three instances and a generic body with two — once each" \
+    "error:<source>:5:25: $NGS" "error:<source>:5:37: $NGS" "error:<source>:6:30: 'i32' $NGI"
+nr nr11 'trait Sh { fn r(self): Pt<i64>; }
+impl Sh for P { fn r(self): Pt { var q: Pt; return q; } }'
+errs nr11 1 "NR11: a member's : Pt<i64> with an impl's : Pt — the member's line alone (the impl check adds no 'returns Pt')" "error:<source>:5:24: $NGS"
+nr nr12 'trait Sh { fn r(self): Pt; }
+impl Sh for P { fn r(self): Pt<i64> { var q: Pt; return q; } }'
+errs nr12 1 "NR12: an impl's : Pt<i64> against a member's : Pt — the method's line alone, in D6's words" "error:<source>:6:29: $NGS"
+nr nr13 'union U { f: Pt<i64>; g: i64<u8>; h: f64<i32>; k; }'
+errs nr13 3 "NR13: a union's by-value fields, as a struct's (was 'expected identifier, got <', the first alone)" \
+    "error:<source>:5:14: $NGS" "error:<source>:5:26: 'i64' $NGI" "error:<source>:5:38: 'f64' $NGI"
+nr nr14 'fn s(): i64 { var a: [*Pt<i64>] = 0; var b: slice<*i32<u8>> = 0; var c: [*Pt] = 0; return 0; }'
+errs nr14 2 "NR14: a slice's pointer element, [*Pt<i64>] and slice<*i32<u8>> (were 'expected ]' / 'expected =' + a cascade)" \
+    "error:<source>:5:24: $NGS" "error:<source>:5:52: 'i32' $NGI"
+rc=0; "$CC" --syntax-only < "$T/nr2.cyr" > /dev/null 2> "$T/nrx.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/nrx.err"; then ok "NRX: --syntax-only says nothing (as D6's positions)"
+else bad "NRX: --syntax-only rc $rc: $(grep '^error' "$T/nrx.err" | head -1)"; fi
+cat > "$T/nrk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct H { p: *Box<Pt>; q: *Pt; r: **Pt; s: *i32; b: Box<i64>; v: Pt; k; }
+trait Sh { fn m(self, p: Pt, b: Box<i64>, c: *fn(Box<Pt>): i64): (Pt, i64); }
+struct P { k; }
+impl Sh for P { fn m(self, p: Pt, b: Box<i64>, c: *fn(Box<Pt>): i64): (Pt, i64) { return (p, 3); } }
+fn ap(cb: *fn(Box<Pt>): i64, p: **Box<Pt>): i64 { return 4; }
+fn mv(): (Box<i64>, *i32) { var b: Box<i64>; return (b, 0); }
+fn r(): i64 { return 5; }
+fn main(): i64 {
+    var h: H; h.k = 1;
+    var d: *i32 = 0;
+    var a: [Pt] = 0;
+    var e, c = mv();
+    var o = P { 1 };
+    var p: Pt;
+    var b: Box<i64>;
+    var x, y = o.m(p, b, 0);
+    return h.k + ap(0, 0) + r() + y - 13;
+}
+syscall(60, main());
+EOF
+exits nrk 0 "NR control: *Box<Pt> / *Pt / **Pt / *i32 / Box<i64> fields, a member's Pt / Box<i64> / *fn(Box<Pt>), *fn(Box<Pt>) and **Box<Pt> parameters, (Box<i64>, *i32), [Pt], *i32 — unchanged"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16)"

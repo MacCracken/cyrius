@@ -543,7 +543,7 @@ fn _psig_one(S, i): i64 {
     var fi = vec_get(_psig_tab, i);
     var ti = vec_get(_psig_tab, i + 1);
     if (GFDS(S, fi) != ti + 1) { return 0; }
-    if (_psig_late(S, ti, vec_get(_psig_tab, i + 3)) == 0) { return 0; }
+    if (_psig_late(S, ti, vec_get(_psig_tab, i + 3)) == 0) { if (_psig_late_impl(S, i) == 0) { return 0; } }
     SMOD(S, vec_get(_psig_tab, i + 5));
     _impl_tnoff = vec_get(_psig_tab, i + 6);
     _impl_trait = vec_get(_psig_tab, i + 7);
@@ -565,6 +565,18 @@ fn _psig_late(S, ti, sc0): i64 {
         k = k + 1;
     }
     return 0;
+}
+# ⛔ 6.7.16 — AN `impl T { .. }` WRITTEN ABOVE `struct T`: entry `i`'s impl type (`_psig_note`'s `_impl_tnoff`) names
+# a struct registered after it. An untyped `self` is typed `*T` from pass 1's record (`_iself_prescan`: SFISELF and the
+# struct-pointer ABI mark on parameter 0), which found no struct there, so `self.b` was "no struct type in scope for
+# 'self'" and the direct call `T_m(t)` passed t's value where `t.m()` passes `&t` (a load through it faulted, 6.7.0's
+# A4 crash in this order). The re-read records it, as it does with the struct declared first, so arithmetic on that
+# `self` is refused in either order (the user's D6, 2026-10-19). An impl that follows its struct is never re-read.
+# CHANGELOG [6.7.16]
+fn _psig_late_impl(S, i): i64 {
+    var t = vec_get(_psig_tab, i + 6);
+    if (t == 0) { return 0; }
+    return _psig_late_name(S, t, vec_get(_psig_tab, i + 3));
 }
 fn _psig_late_name(S, noff, sc0): i64 {
     var sc = GSTC(S);
@@ -2993,6 +3005,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             } else {
                 _cur_fn_ret_scalar = _rtc;
                 STI(S, GTI(S) + 1);
+                _ngt_skip(S);   # 6.7.16 (D7): `: i64<u8>` refused at the name (it was "expected '{', got '<'")
             }
         }
     }

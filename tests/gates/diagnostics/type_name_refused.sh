@@ -25,8 +25,10 @@
 #           reported too.
 #   axis 2  ANTI-VACUOUS: every name of the vocabulary compiles at every site that takes it, a
 #           `Str` param in a unit without lib/str.cyr (the by-name handle), enums declared on
-#           either side, a fn's type parameters (first, second and THIRD, in the default build and
-#           CYRIUS_MONOMORPH=0), a struct declared below its use, the prefix-named struct, and
+#           either side, a fn's type parameters (first and second in the default build; a THIRD under
+#           CYRIUS_MONOMORPH=0, where no list is recorded — in the default build a third is refused at its
+#           declaration alone, its uses `var y: C` / `sizeof(C)` adding no "unknown type", 6.7.16 the user's
+#           D8: tparam_third), a struct declared below its use, the prefix-named struct, and
 #           `Vec` / `Vec<T>` (the struct-field vocabulary's handle) at every annotation site.
 #   axis 3  `--syntax-only` (what `cyrius lint` runs) resolves nothing: every axis-1 shape exits 0
 #           with no `unknown type` line — a refused return type's `<..>` included.
@@ -48,6 +50,12 @@
 #           Mutant (2026-10-18, a scratch copy of src/, CYCC= it): `_trs_ret_refused` without its u128 arm -> RED
 #           u128_trait_ret1 / u128_trait_ret / u128_trait_ret2 (each built) and its --syntax-only row; the lane's
 #           previous compiler (64c2fc8e) the same.
+#           6.7.16: a trait member's `cb: *fn(i64): u128` is a fn pointer's own return, read on as a fn's parameter
+#           reads it (u128_trait_fnret, the filed repro verbatim, exit 3): it was refused as a `u128` parameter (3:36).
+#           The parameter's own `u128` after it stays refused, at its own token (u128_trait_fnret_own, 2:45; it was
+#           reported at the fn pointer's 2:36). (issues/2026-10-18-trait-member-fn-pointer-parameter-u128-return-refused.md)
+#           Mutant (2026-10-20): the lane's previous compiler (be7156d69, the return read at the parameter's level)
+#           -> RED 2: u128_trait_fnret (refused), u128_trait_fnret_own (at 2:36).
 #
 # MUTATION LEDGER (6.6.16, built from scratch copies of src/, measured):
 #   the slot-open compiler                    -> axis 1 RED on 35 of its 38 rows (all but the
@@ -321,8 +329,10 @@ runs str_param 'fn f(s: Str): i64 { return 4; }\nsyscall(60, f(0));\n' 4
 runs vec_forms 'var g: Vec<i64> = 0;\nsyscall(39);\nvar h: Vec<i64> = 0;\nfn f(v: Vec): i64 { return 1; }\nfn k<T>(v: Vec<T>): i64 { return 2; }\nfn m(): i64 {\n    var x: Vec<i64> = 0;\n    var p: *Vec<i64> = &x;\n    var a: Vec[2];\n    return sizeof(Vec) + f(x) + k<i64>(x) + g + h;\n}\nsyscall(60, m());\n' 11
 runs enum_sides 'enum Color { RED = 1; BLUE = 2; }\nvar g: Color = 2;\nvar h: Late = 1;\nfn f(c: Color, d: Late): i64 { var l: Color = c; var m: Late = d; return l + m + g + h; }\nenum Late { A = 1; }\nsyscall(60, f(3, 4));\n' 10
 GEN='fn g<T>(a: T): i64 {\n    var y: T = a;\n    var s: [T] = 0;\n    var p: *T = 0;\n    return y + sizeof(T);\n}\nfn h<A, B, C>(a: A, b: B, c: C): i64 {\n    var y: C = c;\n    return y + sizeof(C);\n}\n'
-runs tparams       "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" 23
+GEN2='fn g<T>(a: T): i64 {\n    var y: T = a;\n    var s: [T] = 0;\n    var p: *T = 0;\n    return y + sizeof(T);\n}\nfn h<A, B>(a: A, b: B): i64 {\n    var y: B = b;\n    return y + sizeof(B);\n}\n'
+runs tparams       "${GEN2}syscall(60, g(3) + h(1, 4));\n" 23
 runs tparams_mono0 "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" 23 CYRIUS_MONOMORPH=0
+refused tparam_third "${GEN}syscall(60, g(3) + h(1, 2, 4));\n" "a third type parameter 'C': a generic takes at most two type parameters"
 runs fwd_struct 'fn f(p: *Late): i64 {\n    var q: Late;\n    q.a = 5;\n    return q.a;\n}\nstruct Late { a; b; }\nsyscall(60, f(0));\n' 5
 runs own_tparam 'struct Box<T> { v: T; n; }\nsyscall(60, sizeof(Box));\n' 16
 runs u8pair_ptr 'struct u8pair { a; b; }\nvar buf: i64[2];\nvar p: u8pair = 0;\nfn f(): i64 {\n    p = &buf;\n    p.a = 300;\n    p.b = 7;\n    if (load64(&buf) != 300) { return 1; }\n    return p.a - 300 + p.b;\n}\nsyscall(60, f());\n' 7
@@ -389,12 +399,16 @@ refused u128_inline   '#inline\nfn g(v: u128): i64 { return 1; }\nfn f(): i64 { 
 refused u128_trait_ret1 'struct P { x; }\ntrait T { fn n(self): u128; }\nsyscall(60, 4);\n' "$UR"
 refused u128_trait_ret2 'struct P { x; }\nstruct Q { y; }\nimpl T for P { fn c(self): i64 { return 4; } }\nimpl T for Q { fn c(self): i64 { return 5; } }\ntrait T { fn c(self): u128 { return 4; } }\nsyscall(60, 4);\n' "$UR"
 # ANTI-VACUOUS: `*u128` (behind a `*`) and a `*fn( .. )`'s own u128 are read as before; a member's `: *u128` return and
-# a `*fn( .. ): u128` type's own return (a member no impl implements) still compile; a u128 local is untouched.
+# a `*fn( .. ): u128` type's own return still compile; a u128 local is untouched. (6.7.16: that `*fn( .. ): u128` sits in
+# a parameter, `cb`, of a member no impl implements — a member's `*fn( .. )` RETURN is refused since 6.7.16's D9.)
 runs u128_ptr_param   'fn lo(v: *u128): i64 { return load64(v); }\nfn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); return lo(&b); }\nsyscall(60, f());\n' 5
 runs u128_fnptr_inner 'include "lib/fnptr.cyr"\nfn k(x): i64 { return 3; }\nfn ap(cb: *fn(u128): i64): i64 { return fncall1(cb, 0); }\nsyscall(60, ap(&k));\n' 3
 refused u128_trait_ret 'struct P { x; }\ntrait T { fn c(self): u128; }\nimpl T for P { fn c(self): i64 { return 4; } }\nfn f(): i64 { var p = P { 1 }; return p.c(); }\nsyscall(60, f());\n' "$UR"
-runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self): *fn(i64): u128; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
+runs u128_trait_ptr   'struct P { x; }\ntrait T { fn c(self): *u128; }\ntrait T2 { fn d(self, cb: *fn(i64): u128): i64; }\nimpl T for P { fn c(self): *u128 { return 0; } }\nfn f(): i64 { var p = P { 1 }; if (p.c() == 0) { return 4; } return 1; }\nsyscall(60, f());\n' 4
 runs u128_local       'fn f(): i64 { var b: u128 = 5; store64(&b + 8, 7); if (b > 0xFFFFFFFFFFFFFFFF) { return 9; } return 1; }\nsyscall(60, f());\n' 9
+# 6.7.16: a trait member's `*fn( .. ): u128` parameter — the fn pointer's own return, as a fn's parameter reads it.
+runs u128_trait_fnret 'include "lib/fnptr.cyr"\nstruct P { x; }\ntrait T { fn e(self, cb: *fn(i64): u128): i64; }\nimpl T for P { fn e(self, cb: *fn(i64): u128): i64 { return fncall1(cb, 0); } }\nfn k(x): i64 { return 3; }\nfn main(): i64 { var p = P { 1 }; return p.e(&k); }\nsyscall(60, main());\n' 3
+refused u128_trait_fnret_own 'struct P { x; }\ntrait T { fn e(self, cb: *fn(i64): u128, v: u128): i64; }\nsyscall(60, 4);\n' "2:45: $UP"
 # --syntax-only (what `cyrius lint` runs) refuses them too: the return / field forms were its syntax error.
 for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     rows=$((rows + 1))

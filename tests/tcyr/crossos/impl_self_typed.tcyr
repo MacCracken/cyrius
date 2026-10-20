@@ -27,6 +27,22 @@ impl Tri {
     fn plus<T>(self, x: T): i64 { return self.c + x; }
 }
 
+# 6.7.16: an impl written ABOVE its struct types `self` too. Pass 1 met it before the struct registered, so `self.v` was
+# "no struct type in scope for 'self'" and the direct call `Lo_raw(lo)` passed lo's value (SIGSEGV) — the end of pass 1
+# now re-reads it (issues/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md).
+impl Lo {
+    fn get(self): i64 { return self.v; }
+    fn raw(self): i64 { return load64(self); }
+    fn set(self, x) { self.v = x; return 0; }
+}
+impl Lt {
+    fn sum(self): i64 { return self.a + self.b + self.c; }
+    fn first(self): i64 { return load64(self); }
+    fn plus<T>(self, x: T): i64 { return self.c + x; }
+}
+struct Lo { v; }
+struct Lt { a; b; c; }
+
 fn heap_tri(): i64 { var q: Tri = alloc(24); q.a = 4; q.b = 5; q.c = 6; return q.sum(); }
 
 fn run(): i64 {
@@ -51,6 +67,17 @@ fn run(): i64 {
     var w: i32 = 5;
     assert_eq(t.plus(w), 35, "a generic method's instance types self");
     assert_eq(heap_tri(), 15, "a heap (pointer-mode) receiver");
+
+    var lo = Lo { 7 };
+    assert_eq(lo.get(), 7, "an impl above its struct: lo.get()");
+    assert_eq(Lo_raw(lo), 7, "Lo_raw(lo) passes &lo (was lo's value: SIGSEGV)");
+    assert_eq(Lo_get(&lo), 7, "Lo_get(&lo)");
+    Lo_set(lo, 4);
+    assert_eq(lo.v, 4, "Lo_set(lo, ..) writes the caller's struct");
+    var lt = Lt { 1, 2, 3 };
+    assert_eq(Lt_first(lt), 1, "Lt_first(lt) on a 24-byte struct");
+    assert_eq(lt.sum() + Lt_sum(lt) + Lt_sum(&lt), 18, "the three spellings agree, impl above its struct");
+    assert_eq(lt.plus(w), 8, "a generic method of an impl above its struct");
     return 0;
 }
 

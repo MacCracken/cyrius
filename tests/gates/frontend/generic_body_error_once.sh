@@ -69,6 +69,24 @@
 #       is refused, a duplicate fn, `_dl_report`, `_fn_redirect`, `_dsg_report`, `private` per item, a bare-metal
 #       include, a global's redeclaration, an array initializer — module scope only, a top-level struct / vector /
 #       operator call), the internal `_pd_line_err`, and the fatal exits
+#   M   (6.7.16) A GENERIC MULTI-VALUE FN'S WRONG-COUNT `return` (issues/2026-10-18-multi-value-return-count-refusal-
+#       printed-per-instance-by-mangled-name.md): each parse named its own fn through ERR_IDENT (`'gr' returns 2
+#       values`, `'gr$P' ...`), so the latch keyed on the name saw a new report per instance; and an instance, parsed
+#       in a file the base had failed, took the up-front arm, adding a count line beside the base's own error. An
+#       instance now names its base (`_mret_fn`) and takes the base's arm, reported after the arms unless they
+#       refused or repeated something in that statement (`_err_n`, counted by `_err_once`, ERR_UNDEF and
+#       `_derr_seen`). M1 the filed repro verbatim; M2 the comma form at two struct instances (the base's `expected
+#       ';'` alone); M3 a stub base, whose instances alone parse the return; M4 the non-generic control; M5 a generic
+#       instantiated in the body before the return (`_inst_base_fi` put back after a nested instance); M6 / M7 an
+#       arm's own error (ERR_UNDEF, an arity writer) at two instances; M8 a 3-value generic; M9 two returns, each once.
+#       Mutants (2026-10-20, a scratch copy of the tree with the one change, CYCC= its cycc): the lane's previous
+#       compiler (c454bdf1f) -> RED M1 M2 M3 M5 M6 M7 M8 M9; MM1 `_mret_ret_check` without the instance arm (the naming
+#       alone) -> RED M2 M6 M7; MM2 `_inst_base_fi` reset to -1 after an instance, as before -> RED M5; MM3 `_err_n`
+#       counted in `_err_once` alone -> RED M6 M7.
+#   MS  (6.7.16, a find repaired in passing) the refusal names a METHOD as the source spells it, `P.mv` (`_mret_err_ident`,
+#       `_fn_src_name`), as every call-site diagnostic has since 6.7.14 — it printed the fn table's `P_mv`, generic or
+#       not: MS1 a generic method at two instances, MS2 a trait impl's method. Mutant: the item's own compiler
+#       (f5fc13aae) -> RED MS1 MS2.
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run with
 # CYCC= it):
@@ -418,5 +436,45 @@ if [ "$vrc" -eq 0 ]; then bad "DW19: a private global read in a generic body com
 elif [ "$nv1" -eq 1 ] && [ "$nv2" -eq 1 ]; then ok "DW19: two private globals read in a generic body at three types: each once (3 each before)"
 else bad "DW19: 'pg' $nv1 and 'pg2' $nv2 lines, want 1 and 1"; fi
 
+echo "M. a generic multi-value fn's wrong-count return: one report, named after the generic (6.7.16)"
+# mrows <id> <src> <what> <fragment>: erows with one error line holding <fragment>, and no line naming an instance
+# (`gr$P`)
+mrows() {
+    erows "$1" "$2" 1 "$3" "$4"
+    ni=$(grep '^error' "$D/$1.err" | grep -c 'gr\$' || true)
+    if [ "$ni" -ne 0 ]; then bad "$1: $3: $ni line(s) name an instance: $(grep '^error' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+cat > "$D/m1.cyr" <<'XEOF'
+struct P { a; b; }
+fn gr<T>(x: T): (i64, i64) { return 1; }
+fn run(): i64 { var u = P { 1, 2 }; var a, b = gr(1); var c, d = gr(u); return a; }
+syscall(60, run());
+XEOF
+mrows M1 "$D/m1.cyr" "the filed repro, verbatim: return 1; at the base and P (2 lines before)" "error:<source>:2:37: 'gr' returns 2 values - return (a, b)"
+MV='struct P { a; b; }
+struct Q { a; b; }'
+MR='fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b = gr(u); var c, d = gr(v); return a; }
+syscall(60, run());'
+printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { return 1, 2; }' "$MR" > "$D/m2.cyr"
+mrows M2 "$D/m2.cyr" "the comma form return 1, 2; at P and Q: the base's own error alone (3 lines before)" "error:<source>:3:38: expected ';', got ','"
+printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { var q = x.a; return 1; }' "$MR" > "$D/m3.cyr"
+mrows M3 "$D/m3.cyr" "a stub base (x.a), its instances at P and Q only (2 lines before)" "error:<source>:3:50: 'gr' returns 2 values - return (a, b)"
+printf '%s\n%s\n%s\n' 'fn gr(x): (i64, i64) { return 1, 2; }' 'fn run(): i64 { var a, b = gr(1); return a; }' 'syscall(60, run());' > "$D/m4.cyr"
+mrows M4 "$D/m4.cyr" "the non-generic comma form (the control)" "error:<source>:1:32: expected ';', got ','"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'fn hh<U>(y: U): i64 { return 0; }' 'fn gr<T>(x: T): (i64, i64) { var q = hh(x); return 1; }' "$MR" > "$D/m5.cyr"
+mrows M5 "$D/m5.cyr" "a generic call instantiated before the return, in the body (3 lines before)" "error:<source>:4:52: 'gr' returns 2 values - return (a, b)"
+printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { return zz; }' "$MR" > "$D/m6.cyr"
+mrows M6 "$D/m6.cyr" "return zz; at P and Q: the arm's own error alone (3 lines before)" "undefined variable 'zz'"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'fn h(k): i64 { return k; }' 'fn gr<T>(x: T): (i64, i64) { return h(1, 2); }' "$MR" > "$D/m7.cyr"
+mrows M7 "$D/m7.cyr" "return h(1, 2); at P and Q: the arity error alone (3 lines before)" "'h' expects 1 argument, got 2"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64, i64) { return (1, 2); }' 'fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b, e = gr(u); var c, d, f = gr(v); return a; }' 'syscall(60, run());' > "$D/m8.cyr"
+mrows M8 "$D/m8.cyr" "a 3-value generic's return (1, 2); at P and Q (3 lines before)" "error:<source>:3:42: 'gr' returns 3 values - return (a, b, c)"
+printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { if (x == 0) { return 1; } return 2; }' "$MR" > "$D/m9.cyr"
+erows M9 "$D/m9.cyr" 2 "two wrong-count returns in one body at P and Q: each once (6 lines before)" "3:51: 'gr' returns 2 values" "3:63: 'gr' returns 2 values"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'impl P { fn mv<T>(self, x: T): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b = u.mv(v); var c, d = u.mv(1); return a; }' 'syscall(60, run());' > "$D/ms1.cyr"
+erows MS1 "$D/ms1.cyr" 1 "a generic METHOD's wrong-count return at two instances: once, as the source spells it" "error:<source>:3:52: 'P.mv' returns 2 values - return (a, b)"
+printf '%s\n%s\n%s\n%s\n' "$MV" 'trait Tw { fn tw(self): (i64, i64); }' 'impl Tw for P { fn tw(self): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var a, b = u.tw(); return a; } syscall(60, run());' > "$D/ms2.cyr"
+erows MS2 "$D/ms2.cyr" 1 "a trait impl's method (not generic): named as the source spells it" "error:<source>:4:50: 'P.tw' returns 2 values - return (a, b)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C); a warning once (W, WD); an error a writer prints itself once (A, DW)"
+echo "PASS: $G — an error in a generic body is printed once: the filed repro (R), the issue's table (T1-T9), two different errors (D), the other emitters and their notes (E, N), instance-dependent messages (V), a generic struct's field notes (S) and a bound refusal's note (B) once with their error, and the per-token control (C); a warning once (W, WD); an error a writer prints itself once (A, DW); a multi-value fn's wrong-count return once, named after the generic (M)"

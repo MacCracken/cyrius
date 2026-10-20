@@ -181,15 +181,24 @@ fn _tn_tparam(S, ti, noff): i64 {
     return _tn_sig_tparam(S, ti, noff);
 }
 # Is `noff` (at token `ti`, in a fn SIGNATURE — a param or return type) one of that fn's own
-# `<T, ..>`? The signature holds no `{`, `}` or `;`, so meeting one means `ti` is not in one.
+# `<T, ..>`? The signature holds no `{`, `}` or `;`, so meeting one means `ti` is not in one. A `fn`
+# behind a `*` is a fn-pointer type inside the signature (`c: *fn(i64): i64`), not the signature's:
+# the walk steps over it to the signature's own `fn`, so a trait member's `<U>` reads after a `*fn(..)`
+# as a fn's does. CHANGELOG [6.7.16]
 fn _tn_sig_tparam(S, ti, noff): i64 {
     var k = ti - 1;
     while (k >= 0) {
         var t = TOKTYP(S, k);
         if (t == 13 || t == 14 || t == 5) { return 0; }
-        if (t == 32) { return _fn_tp_has(S, k, noff); }
+        if (t == 32) { if (_tn_fnptr_kw(S, k) == 0) { return _fn_tp_has(S, k, noff); } }
         k = k - 1;
     }
+    return 0;
+}
+# 1 when the `fn` at token `k` follows a `*`: a fn-pointer type's (`*fn( .. ) [: T]`).
+fn _tn_fnptr_kw(S, k): i64 {
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, k - 1) == 8) { return 1; }
     return 0;
 }
 # 1 when `noff` is one of the `<T, ..>` of the fn whose `fn` token is `k` (`fn name <`).
@@ -337,26 +346,48 @@ fn _tn_seen_at(S, ti): i64 {
 # reads the name's own type, so nothing cascades. A dyn (`dyn Show<..>`) is the dyn pre-pass's; a generic struct, `Vec`,
 # Result / Option / Tagged, cstring, an enum and a type parameter are not this shape. 1 = the shape. CHANGELOG [6.7.15]
 fn _ngt_refuse(S, nti): i64 {
+    var tail = _ngt_tail(S, nti);
+    if (tail == 0) { return 0; }
+    return _ngt_say(S, nti, tail);
+}
+# The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
+# (`_tr_rt_bad`) knows a return its reader refuses.
+fn _ngt_tail(S, nti): i64 {
     if (_MONOMORPH_OK != 1) { return 0; }   # CYRIUS_MONOMORPH=0: no struct is recorded as generic
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
     var noff = TOKVAL(S, nti);
     var sid = FINDSTRUCT(S, noff);
-    var tail = " takes no type arguments";
     if (sid > 0) {
         if (GSTP(S, sid - 1) != 0) { return 0; }
         if (_dyn_is(S, sid) == 1) { return 0; }
-        tail = " is not a generic struct: it takes no type arguments";
-    } elif (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
+        return " is not a generic struct: it takes no type arguments";
+    }
+    if (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
+    return " takes no type arguments";
+}
+# The refusal itself, at name token `nti` (`tail` its words): once, silent under --syntax-only, the latch put back. 1.
+fn _ngt_say(S, nti, tail): i64 {
     if (_syntax_only == 1) { return 1; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, nti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, nti);
-    ERR_IDENT(S, "", noff, tail, 0 - 1);
+    ERR_IDENT(S, "", TOKVAL(S, nti), tail, 0 - 1);
     STI(S, sv);
     _panic = 0;
     return 1;
+}
+# ⛔ 6.7.16 (D7) — THE REST OF D6'S POSITIONS: a pointer field `p: *Pt<i64>` (its pointee declared above or further
+# down: `_fld_ngt`), a trait member's type (`_trs_ngt`), a multi-value element, a `*fn( .. )` type and a `**Pt<..>`
+# parameter (`_pty_name`), a `*i32<u8>` local / global / return / field (`_ptr_annot`) compiled with the `<..>` unread;
+# a scalar return `: i64<u8>`, a by-value field `f: Pt<i64>` / `g: i64<u8>` and a slice element `[Pt<i64>]` were a parse
+# error (a return's cascaded). Each is refused once, at the name, with D6's words, and the list is stepped, so nothing
+# cascades (the user's D7, 2026-10-19). Cursor past a name: its non-generic `<..>` refused and stepped. CHANGELOG [6.7.16]
+fn _ngt_skip(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (_ngt_refuse(S, GTI(S) - 1) == 1) { SKIP_GENERICS(S); }
+    return 0;
 }
 # 1 when the name (its first 8 bytes `n`) is a builtin scalar: i8..i64, u8..u64, f32, f64, bool.
 fn _ngt_scalar(n): i64 {
@@ -1606,8 +1637,9 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
         if (im >= 0) {
             fp = L64(_tim_tab + im * 24 + 8);
             var d = _dyn_sig_eq(S, L64(_trm_ft + k * 8), fp);
-            # 6.7.15 (D4): a return type that differs is the impl's own refusal (`_tr_ret_chk`), not the site's.
-            if (d == 4) { if (_tr_ret_differs(S, L64(_trm_ft + k * 8), fp) == 1) { d = 0; } }
+            # 6.7.15 (D4): a return type that differs is the impl's own refusal (`_tr_ret_chk`), not the site's; and
+            # 6.7.16: a return its own reader refuses is that refusal alone (`_dyn_ret_hand`).
+            if (d == 4) { if (_dyn_ret_hand(S, L64(_trm_ft + k * 8), fp) == 1) { d = 0; } }
             if (d != 0) { return _dyn_f8(S, ti, ii, m, d); }
         }
         if (_dyn_slot_ok(S, k) == 1) {
@@ -1630,7 +1662,11 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
 # parameter after `self`, then the return, by type (a name by its resolved type, untyped = i64,
 # every other token by its kind), generic-ness and `...` alike. Else what differs: 3 a parameter's
 # type (`_dsq_k` its name token), 4 the return type, 5 the parameter count, 6 one generic, 7 a `...`.
+# Each type is read as an annotation is (`_ty_norm_eq`, the impl-return check's comparator): `Box<i64>` IS `Box` and
+# `>>` IS `> >`, as the guide's "by its resolved type" says — compared token by token they were "another type".
+# CHANGELOG [6.7.16]
 var _dsq_k = 0;   # the trait's differing parameter (its name token)
+var _dsq_un = 0;  # 1 when a side of the differing type (3 / 4) is unannotated: F8's "(.. is i64)" hint applies
 fn _dyn_sig_eq(S, tp, fp): i64 {
     var ga = 0;
     var gb = 0;
@@ -1653,17 +1689,55 @@ fn _dyn_sig_eq(S, tp, fp): i64 {
         else {
             if (ha != hb) { return 5; }
             if (xv != _dps_va) { return 7; }
-            if (_dyn_ty_eq(S, xs, xe, _dps_ts, _dps_te) == 0) {
-                _dsq_k = xn;
-                return 3;
-            }
+            var ys = _dps_ts;
+            var ye = _dps_te;
+            if (_ty_norm_eq(S, xs, xe, ys, ye) == 0) { if (_dsq_rf_of(S, xs, xe, ys, ye) == 0) {
+                    _dsq_k = xn;
+                    _dsq_un = _dsq_un_of(xs, xe, ys, ye);
+                    return 3;
+                } }
             k = k + 1;
         }
     }
     var ra = _dyn_ret_at(S, a);
     var re = _dps_te;
     var rb = _dyn_ret_at(S, b);
-    if (_dyn_ty_eq(S, ra, re, rb, _dps_te) == 0) { return 4; }
+    var rbe = _dps_te;
+    if (_ty_norm_eq(S, ra, re, rb, rbe) == 0) {
+        _dsq_un = _dsq_un_of(ra, re, rb, rbe);
+        return 4;
+    }
+    return 0;
+}
+# ⛔ 6.7.16 — A PARAMETER TYPE ITS OWN READER REFUSES IS THAT REFUSAL ALONE, as a return is (`_dyn_ret_hand`): the
+# member's reader (`_trs_type`) or the method's (PARSE_FN_DEF) already said `n: Nope`, `p: *Pt<i64>` (D7) or
+# `b: *Box<i64, Pt>` (D5), and the pair check added "parameter 'p' has another type" beside it. Such a parameter is
+# stepped and the rest of the signature compared, so a later parameter that differs still reports. Judged by the names
+# a reader reads (`_ty_rd_scan`, a parameter's set: `s: Str`, a vector, a type parameter are types); a name inside an
+# unread `Result<..>` is refused by no one and keeps the site's line. 1 = either side is such a type. CHANGELOG [6.7.16]
+fn _dsq_rf_of(S, xs, xe, ys, ye): i64 {
+    if (_dsq_rf_one(S, xs, xe) == 1) { return 1; }
+    return _dsq_rf_one(S, ys, ye);
+}
+# One side: a slice behind any `*`s (`[T]`, `slice<T>`, `*[T]`) or a bare `u128` — each reader's refusal of a
+# parameter (6.7.8, 6.7.14) — or a name a reader reads and refuses.
+fn _dsq_rf_one(S, a, ae): i64 {
+    if (a == ae) { return 0; }
+    if (TOKTYP(S, a) == 105) { return 1; }   # `*u128` is a type
+    var i = a;
+    while (i < ae) {
+        if (TOKTYP(S, i) != 8) {
+            if (_sl_ann_at(S, i) == 1) { return 1; }
+            return _ty_rd_scan(S, a, ae, 2);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 when either type's tokens [a, ae) / [b, be) are empty (no annotation: an i64).
+fn _dsq_un_of(a, ae, b, be): i64 {
+    if (a == ae) { return 1; }
+    if (b == be) { return 1; }
     return 0;
 }
 # Parameter `k` of the list whose `(` is token `o`: 1 and its type's tokens [`_dps_ts`, `_dps_te`)
@@ -1897,9 +1971,13 @@ fn _dyn_f8(S, ti, ii, m, d): i64 {
     if (d == 3) {
         PRSTR("parameter ");
         _dyn_pq(S, TOKVAL(S, _dsq_k));
-        PRSTR(" has another type (an untyped parameter is i64)");
+        PRSTR(" has another type");
+        if (_dsq_un == 1) { PRSTR(" (an untyped parameter is i64)"); }   # only when a side is untyped [6.7.16]
     }
-    elif (d == 4) { PRSTR("the return type differs (no return type is i64)"); }
+    elif (d == 4) {
+        PRSTR("the return type differs");
+        if (_dsq_un == 1) { PRSTR(" (no return type is i64)"); }
+    }
     elif (d == 5) { PRSTR("the parameter count differs"); }
     elif (d == 6) { PRSTR("one is generic, the other is not"); }
     elif (d == 7) { PRSTR("a variadic `...` differs"); }
@@ -3442,6 +3520,7 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     if (PEEKT(S) == 2 || PEEKT(S) == 105) {
         STI(S, GTI(S) + 1);
         if (quiet == 0) { _vec_ann_chk(S, GTI(S) - 1, vnoff); }   # 6.7.11: `*Vec<T>` reads T
+        if (quiet == 0) { _ngt_refuse(S, GTI(S) - 1); }   # 6.7.16 (D7): `*i32<u8>` (`*Pt<..>` said so already)
         SKIP_GENERICS(S);
     } elif (PEEKT(S) == 10) {
         if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
@@ -3545,6 +3624,7 @@ fn _fld_ptr_late(S): i64 {
     }
     if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
     _fld_targ_chk(S, ti);
+    _fld_ngt(S, ti);   # 6.7.16 (D7)
     STI(S, ti + 1);
     SKIP_GENERICS(S);
     return 0 - (ti + 1);
@@ -3571,6 +3651,16 @@ fn _fld_targ_chk(S, ti): i64 {
     _ta_late = sv_lt;
     _ta_refd = sv_rf;
     return 0;
+}
+# 6.7.16 (D7): a pointer field's non-generic pointee given `<..>` (`ti` its name), refused at the field, once: a struct
+# declared above by `_ngt_refuse`; one declared further down (the reason this reader exists) by its declaration's
+# tokens, as `_fld_targ_chk` reads a generic one. A use re-reads the same tokens silently (`_ptr_tok_sid`).
+fn _fld_ngt(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) > 0) { return _ngt_refuse(S, ti); }
+    if (_declared_later_gen(S, TOKVAL(S, ti)) == 1) { return 0; }
+    return _ngt_say(S, ti, " is not a generic struct: it takes no type arguments");
 }
 # 1 when token `ti` is a type parameter bound to a struct right now, with no `<` after it.
 fn _fld_tp_struct(S, ti): i64 {
@@ -3741,7 +3831,17 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         _tn_refuse(S, ti, " as the element of slice ", vnoff);
         return 8;
     }
+    _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
     return _tn_bytes(S, c);
+}
+# A slice element's non-generic `<..>` (`ti` the name): refused at the name and stepped, the cursor on the list's last
+# token (the caller steps past it). It was "expected ']', got '<'". CHANGELOG [6.7.16]
+fn _tn_slice_ngt(S, ti): i64 {
+    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return 0;
 }
 
 # ⛔ 6.7.8 (C2-6a) — SLICES STAY FN-LOCALS, AND EVERY OTHER POSITION SAYS SO BY NAME (the user's
@@ -3831,6 +3931,7 @@ fn _tn_slice_ptr_el(S, noff): i64 {
         return 0;
     }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    _ngt_skip(S);   # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'")
     return 0;
 }
 # A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
@@ -3971,9 +4072,14 @@ fn _tn_ret_report(S, ti): i64 {
         PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
     } else {
         ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
-        PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
+        _tn_ret_note();
     }
     _panic = 0;
+    return 0;
+}
+# The fn return set, under a refused return type (a trait member's `*fn( .. )` return too, 6.7.16).
+fn _tn_ret_note(): i64 {
+    PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
     return 0;
 }
 
@@ -5373,10 +5479,12 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                         }
                     } elif (fscalar > 0) {
+                        _ngt_skip(S);   # 6.7.16 (D7): `g: i64<u8>`
                         # Store as negative width for sized scalars, 0 for i64 (default)
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
                     } else {
+                        _ngt_skip(S);   # 6.7.16 (D7): `f: Pt<i64>`, `h: f64<u8>` (a generic struct's list is `_sfield_named`'s)
                         _sfield_named(S, si, fnoff, tnoff, _stp, _sown);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                     }
                 }
@@ -5445,9 +5553,11 @@ fn PARSE_UNION_DEF(S): i64 {
                         _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                     }
                 } elif (fscalar > 0) {
+                    _ngt_skip(S);   # 6.7.16: `g: i64<u8>`, as PARSE_STRUCT_DEF's (D7)
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {
+                    _ngt_skip(S);   # 6.7.16: `f: Pt<i64>`, as PARSE_STRUCT_DEF's (D7)
                     _sfield_named(S, si, fnoff, tnoff, 0, noff);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                 }
             } else {
