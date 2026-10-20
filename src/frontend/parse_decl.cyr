@@ -1721,7 +1721,9 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
-            if (lt < 0) { sid = 0 - lt; }
+            # 6.7.16: the vector band is no struct id — sid 0 (its arm stays quiet behind the latch); `0 - lt` read
+            # struct 2092's tables: `v.m()` went on to "undefined function 'enum.m'" and refused the binary for it.
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field load (s.ptr / s.len).
             # A slice fn-local has GLTYPE=0 and _slice_lw>0 (per-local
@@ -2743,7 +2745,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
             if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
-            if (lt < 0) { sid = 0 - lt; }
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }   # 6.7.16: as the load's (no struct 2092)
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field store (s.ptr = expr;
             # s.len = expr;). Mirror of the slice-load path in

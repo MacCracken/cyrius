@@ -15,10 +15,18 @@
 #
 # Value-form SIMD params are non-PE (SysV XMM ABI), so the mismatch check is
 # gated behind a Linux/macOS host; the field guard is arch-independent.
+#
+#  1c (6.7.16). The message is the ONLY error: after it the receiver is no struct (sid 0), and nothing reads the
+#     vector band as a struct id. Through 6.7.15 the field arms went on with sid `0 - sltype` (2121): `v.m()`
+#     built the method name from whatever struct 2120's table entry held and called it — "warning: undefined
+#     function 'fn.m'" ('enum.m' for an f64v2) and "error: refusing to emit binary with 1 reachable undefined
+#     function(s)" after the message.
+#     Mutation: the tree before (404f482da) -> RED 1c on each of the three method rows (measured one at a time:
+#     the gate stops at its first failure); the field rows were one error already.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: simd_vec_reject: cannot cd to $ROOT"; exit 1; }
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: simd_vec_reject: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: simd_vec_reject: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -45,6 +53,16 @@ if "$CC" < "$T.2" > /dev/null 2>"$E"; then
 fi
 grep -q 'SIMD vector has no named fields' "$E" || { rm -f "$T.2"; echo "FAIL: heap-dependent error (OOB read):"; cat "$E"; exit 1; }
 rm -f "$T.2"
+
+# --- Guard 1c (6.7.16): the message is the only error, in every field / method position ---
+for body in 'return v.m();' 'v.m();' 'return v.m(1, 2) + 1;' 'return v.someField.b;' 'v.someField = 1;' 'v.a.b += 2;'; do
+    printf 'include "lib/simd.cyr"\nfn main(): i64 {\n    var v: f32v4 = f32v4_splat(0x3F800000);\n    %s\n    return 0;\n}\nvar ec = main();\n' "$body" > "$T"
+    rc=0; "$CC" < "$T" > /dev/null 2>"$E" || rc=$?
+    nerr=$(grep -c '^error' "$E" || true)
+    if [ "$rc" -eq 0 ] || [ "$nerr" -ne 1 ] || ! grep -q '^error.*SIMD vector has no named fields' "$E" || grep -q 'undefined function' "$E"; then
+        echo "FAIL: f32v4 \`$body\` — want exactly one error, the SIMD one (rc=$rc, $nerr error lines):"; cat "$E"; exit 1
+    fi
+done
 
 # --- Guard 2: mismatched SIMD arg rejected when the ABI engages ---
 cat > "$T" <<'EOF'
@@ -107,4 +125,4 @@ var ec = main();
 EOF
 "$CC" < "$T" > /dev/null 2>&1 || { echo "FAIL: matching f32v4 tail call failed to compile (over-rejection)"; exit 1; }
 
-echo "PASS: f32v4 .field hard-errors (heap-independent) + mismatched SIMD arg rejected in call + tail position (v6.4.4/.15)"
+echo "PASS: f32v4 .field hard-errors (heap-independent; the one error in every field / method position) + mismatched SIMD arg rejected in call + tail position (v6.4.4/.15)"
