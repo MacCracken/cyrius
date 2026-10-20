@@ -19,7 +19,7 @@
 #      tuple parameter; R11 a tuple (or a tuple field) used as a value; R12 a non-tuple source into
 #      a tuple place (an argument of another struct or tuple type too); R13 methods; R17 a
 #      multi-value call as a tuple argument (`g(f())`: bind it first; R17v / R17w an integer or bool literal
-#      or an argument made only of literals and operators, 6.7.14's D44 / 6.7.15's D36; R17x its words, R17y a float literal, 6.7.16); R21 `t.N` spellings
+#      or an argument made only of literals and operators, 6.7.14's D44 / 6.7.15's D36; R17x its words, R17y a float literal, R17z no single expression, 6.7.16); R21 `t.N` spellings
 #      that name no element
 #   P  positive: the type, `t.N`, copies, fields, parameters — exit codes, values distinguishable
 #   T4 — the literal `(a, b)`, accepted in five positions (a `var` initializer in a fn and in either
@@ -679,6 +679,15 @@ refused4 r17y8 "2:27: $LIT" "R17y8: \`take(1 + 1.5)\` is an integer (typed by it
 refused4 r17y9 "3:46: cannot pass an f64 to tuple parameter 't' (i64, i64) of 'X.take'" "R17y9: a method's tuple parameter, \`x.take(1.5)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(1.5); }\nsyscall(60, f());\n'
 refused4 r17y10 "2:31: cannot pass an f64 to tuple parameter 't' (i64, i64) of 'take2'" "R17y10: the second argument, \`take2(1, 0.5)\`" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn f(): i64 { return take2(1, 0.5); }\nsyscall(60, f());\n'
 exits4 r17y11 34 "R17y11: control — an \`f64\` const name \`take(F)\` compiles (a name is a word; compiled, not taken)" "const F = 1.5;\n${TW}fn f(x): i64 { var t: (i64, i64) = (3, 4); if (x == 0) { return take(F); } return take(&t); }\nsyscall(60, f(1));\n"
+# R17z (6.7.16) — tokens of literals and operators that are NO SINGLE EXPRESSION are not judged: \`take(1 < 2 < 3)\` (one
+# comparison per operand), \`take(1 == 1 == 1)\` and \`take((1 +) - 2)\` printed "cannot pass an integer to tuple parameter"
+# in front of the parse's own error (two errors for one mistake, the first naming the wrong one); the parse reports it
+# alone, as for a parameter that is no tuple. Mutation (2026-10-20, every leg): \`_tal_kind\` judging what \`_tty_arg\` could
+# not read (answering 1) -> R17z1-R17z4 two error lines.
+refused4 r17z1 "2:33: expected ')', got '<'" "R17z1: \`take(1 < 2 < 3)\` — the parse's error alone" "${TW}fn f(): i64 { return take(1 < 2 < 3); }\nsyscall(60, f());\n"
+refused4 r17z2 "2:34: expected ')', got '=='" "R17z2: \`take(1 == 1 == 1)\`" "${TW}fn f(): i64 { return take(1 == 1 == 1); }\nsyscall(60, f());\n"
+refused4 r17z3 "2:31: unexpected ')'" "R17z3: \`take((1 +) - 2)\`" "${TW}fn f(): i64 { return take((1 +) - 2); }\nsyscall(60, f());\n"
+refused4 r17z4 "2:37: expected ')', got '<'" "R17z4: \`take(1.5 < 2.0 < 3.0)\`" "${TW}fn f(): i64 { return take(1.5 < 2.0 < 3.0); }\nsyscall(60, f());\n"
 
 # ── R21: `t.N` spellings that name no element ──────────────────────────────────────────────────────
 refused r21a "unknown field '2' on struct '(i64, i64)'" "R21a: \`t.2\` past the arity (a read)" "${TT}    return t.2;${TE}"

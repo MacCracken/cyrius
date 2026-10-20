@@ -2832,6 +2832,7 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     var o = _gen_def_open(S, fi);
     if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
     lk = _tal_kind(S, lk);
+    if (lk == 0) { return 0; }   # 6.7.16: no single expression — the parse's own error, alone
     if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
     if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
     elif (lk == 3) { PRSTR("cannot pass an f64 to tuple parameter "); }
@@ -2900,10 +2901,14 @@ fn _tal_binop(t): i64 {
 # guide § bool counts a comparison, `!x`, `&&` / `||` — or any of these in parentheses — a boolean value. The words
 # follow the argument's value: 2 when every literal is `true` / `false` (D36) or the value is a boolean one; 3 an
 # f64 (D23); else 1. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND 0, NOT JUDGED, WHEN THE TOKENS ARE NO SINGLE EXPRESSION. `_tal_scan` checks the vocabulary, not the
+# grammar, so `take(1 < 2 < 3)` (one comparison per operand, _PLOGIC_ATOM), `take(1 == 1 == 1)` and
+# `take((1 +) - 2)` printed "cannot pass an integer to tuple parameter ..." in front of the parse's own error —
+# two errors for one mistake, the first naming the wrong one. The parse reports it alone. CHANGELOG [6.7.16]
 fn _tal_kind(S, lk): i64 {
-    if (lk == 2) { return 2; }
     var vk = _tty_arg(S, GTI(S));
-    if (vk == 0) { return lk; }   # no single expression: the parse reports it after
+    if (vk == 0) { return 0; }
+    if (lk == 2) { return 2; }
     return vk;
 }
 # `_tty_arg` reads a literal-only argument (`_tal_scan` has seen only literals, operators and parentheses) the way
