@@ -18,7 +18,7 @@
 # ROWS — each on x86_64, aarch64 (qemu-aarch64), cx (cxvm) and PE (wine, a private prefix; a missing tool is a SKIP
 # that names it): R0 the filed repro verbatim (33); V1-V12 the values; A1 the crossos values file
 # (tests/tcyr/crossos/struct_receive_paren_call.tcyr, the release gate's real-hardware carrier); N1-N7 the refusals,
-# each exactly one error line, no binary.
+# each exactly one error line, no binary. 6.7.16: KC1-KC5 and A2 (a known `&f` callee's `*S`, below).
 #
 # MUTATION LEDGER (2026-10-17, a scratch copy of src/ with the one edit, this gate run as CYCC=<mutant>; the
 # aarch64 / cx compilers build from the tree's src/, so a mutant is RED on its x86_64 and PE legs):
@@ -45,6 +45,17 @@
 #                                                             refusal's own ERR_IDENT honours the latch (the test keeps
 #                                                             the restore from clearing that latch); Q11-Q13 pin the
 #                                                             one-error outcome
+# 6.7.16 (a known `&f` callee typed by its tokens, measured 2026-10-19; the same scratch-tree mutants, each run with its
+# 2-stage compiler, every leg the mutant's). Rows KC1-KC3 (the filed repro and its two other spellings), KC4 KC5 (a
+# variable / a shadowed callee still refused), A2 (tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr):
+#   the fix reverted (the lane's S2 head)                   -> RED 16: KC1-KC3 refused "not a struct" on every leg, A2
+#                                                             refused (`return *fncall0(&gp);`, the wraps)
+#   `_hl_ic_fi` without its shadow test (a local, capture   -> RED 4: KC5 built on every leg (`&gp` of a local typed as
+#   or global of the callee's name)                           the fn's `*P2`)
+#   `_hl_psrc` without its `callptr` arm                    -> RED 4: A2 exit 5 on every leg (kc_asg_c kc_fld_c kc_chain
+#                                                             kc_paren kc_top: the pointer word stored, b 0)
+#   `_hl_cw` without its known-callee arm                   -> RED 4: A2 refused (kc_pp's `(*fncall0(&gpp)).b`)
+#   `_hl_ic_psid` answering 0 for a struct by value         -> RED 4: A2 refused (kc_bv_chain's `(fncall0(&mkw).p).b`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -320,7 +331,50 @@ crc=0; "$CC" --syntax-only < "$T/Q9.cyr" > /dev/null 2> "$T/Q9.err" || crc=$?
 if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/Q9.err")" -eq 1 ] && grep -qF "the field read 'a' $QD" "$T/Q9.err"; then ok "Q9 --syntax-only refuses (s).a; as it refuses s.a;"
 else bad "Q9 --syntax-only: rc $crc: $(grep '^error' "$T/Q9.err" | head -2 | tr '\n' '|')"; fi
 
-FLOOR=46
+# 6.7.16 — a KNOWN `&f` callee's `*S` result inside the wrap is the `*S` the direct call's is (6.7.14's D26 (a), 6.7.13's
+# D16): `(*fncall0(&gp)).b`, `(fncall0(&gp)).b` and `(*callptr(&gp)).b` with `gp: *P2` were refused "the value in these
+# parentheses is not a struct" — the token typers (`_hl_pchain` / `_hl_cw`) read `gp()` but not `fncallN(&f, ..)` /
+# `callptr(&f, ..)`. A callee held in a variable stays a word (6.7.11's D31), and so does `&gp` of a LOCAL named gp
+# (the `&` factor takes the local): both still refused. The same typing is every token-typed consumer's — the copies,
+# arguments, returns and top level of A2 (tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr).
+# issues/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md
+cat > "$T/KC1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+struct P2 { a; b; }
+var G: P2 = P2 { 11, 22 };
+fn gp(): *P2 { return &G; }
+fn main(): i64 {
+    var x = (*gp()).b;
+    var y = (*fncall0(&gp)).b;
+    return x + y;
+}
+syscall(60, main());
+EOF
+runs KC1 44 "the filed repro verbatim: (*fncall0(&gp)).b (refused 'not a struct' before)"
+sed 's/(\*fncall0(&gp))\.b/(fncall0(\&gp)).b/' "$T/KC1.cyr" > "$T/KC2.cyr"
+grep -qF 'var y = (fncall0(&gp)).b;' "$T/KC2.cyr" || bad "KC2 the repro's second spelling was not written"
+runs KC2 44 "the repro with (fncall0(&gp)).b (refused before)"
+sed 's/(\*fncall0(&gp))\.b/(*callptr(\&gp)).b/' "$T/KC1.cyr" > "$T/KC3.cyr"
+grep -qF 'var y = (*callptr(&gp)).b;' "$T/KC3.cyr" || bad "KC3 the repro's third spelling was not written"
+runs KC3 44 "the repro with (*callptr(&gp)).b (refused before)"
+PV="a field is read only from a struct value - the value in these parentheses is not a struct"
+src KC4 'fn main(): i64 { var f = &gp; return (fncall0(f)).b; }
+syscall(60, main());'
+refused KC4 "$PV" "(fncall0(f)).b, f a variable: a word (D31), still refused"
+src KC5 'fn main(): i64 { var gp = 5; return (fncall0(&gp)).b; }
+syscall(60, main());'
+refused KC5 "$PV" "(fncall0(&gp)).b with a local gp: &gp is the local's address, still refused"
+TK=tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr
+[ -f "$TK" ] || { echo "FAIL: $G: $TK is missing"; exit 1; }
+NK=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TK")
+KFLOOR=24
+if [ "$NK" -lt "$KFLOOR" ]; then bad "only $NK rows in $TK (floor $KFLOOR) — rows were lost"; fi
+cp "$TK" "$T/A2.cyr"
+runs A2 0 "$TK ($NK rows: a known callee's *P2 at every token-typed consumer)"
+
+FLOOR=52   # 6.7.16: + KC1-KC5, A2
 [ "$rows" -ge "$FLOOR" ] || bad "only $rows rows ran (floor $FLOOR)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails failed ($rows rows, $skips legs skipped)"; exit 1; fi
 echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60) ($skips legs skipped)"

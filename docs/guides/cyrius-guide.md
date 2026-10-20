@@ -1904,6 +1904,16 @@ got '.'`. A statement storing into a field of the result — `fncall1(&gp, 5).b 
 `*T` callee's result and is refused by name for a by-value one (*cannot assign to a field of a call result: the
 result is a temporary*), whichever spelling: through 6.7.13 the `callptr(&gp, 5).b = 40;` statement was `expected
 ';', got '='` (6.7.14).
+A known callee declared `: *T` (or `: **T`) is that pointer wherever a source is typed before it is parsed, as the
+direct call is (6.7.16): with `gp: *P2`, `var t: P2 = *fncall0(&gp);`, `l = callptr(&gp);`, `o.s = fncall0(&gp);`,
+`m = *fncall0(&gp);`, `take(*fncall0(&gp))`, `return *callptr(&gp);` from a `: P2` fn, the wraps `(fncall0(&gp)).b`
+/ `(*callptr(&gp)).b`, `**fncall0(&gpp)` of a `: **P2` callee and a chain `*fncall0(&gpw).p` copy or read the struct
+`gp()` points at. Through 6.7.15 the declaration bound a handle to the struct's first field (a SIGSEGV), the
+assignments stored the pointer word into the first field, the argument passed the first word as the struct's address
+(a SIGSEGV), and the `return` and the wraps were refused. A by-value callee's struct is typed the same way:
+`t = fncall0(&mks);` (`mks: Str`) into an inline `Str` copies the header (its length stayed stale). The `f` of `&f`
+resolves as the `&` operator resolves it — a local, closure capture or global named `f` is that variable, so
+`fncall0(&f)` is then a callee held in a variable.
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the

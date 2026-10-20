@@ -11943,9 +11943,14 @@ fn _hl_pw(S, a, e): i64 {
 }
 # ... of a name or a chain [b, e) (`_hl_pchain`'s shapes): its last step's declared word.
 fn _hl_cw(S, b, e): i64 {
-    if (TOKTYP(S, b) != 2) { return 0; }
+    var ko = _icall_open_at(S, b);   # 6.7.16: a known `&f` callee's, as `_hl_pchain`'s
+    if (TOKTYP(S, b) != 2) { if (ko < 0) { return 0; } }
     var dot = _hl_lastdot(S, b, e);
     if (dot < 0) {
+        if (ko >= 0) {
+            if (_call_close(S, ko) != e - 1) { return 0; }
+            return _fn_ret_ps(_hl_ic_fi(S, b));
+        }
         var o = _gcall_open(S, b);
         if (o < 0) {
             if (e != b + 1) { return 0; }
@@ -12058,12 +12063,19 @@ fn _hl_dstep(st, sz): i64 {
 var _hl_cp = 0;
 fn _hl_pchain(S, b, e): i64 {
     _hl_cp = 0;
-    if (TOKTYP(S, b) != 2) { return 0; }
+    var ko = _icall_open_at(S, b);   # 6.7.16: `fncallN(&f, ..)` / `callptr(&f, ..)` (`_hl_ic_psid`)
+    if (TOKTYP(S, b) != 2) { if (ko < 0) { return 0; } }
     var t = 0;
     var p = 0;
     var i = b + 1;
     var o = _gcall_open(S, b);
-    if (o >= 0) {
+    if (ko >= 0) {
+        var kc = _call_close(S, ko);
+        if (kc >= e) { return 0; }
+        t = _hl_ic_psid(S, b);
+        p = _hl_icp;
+        i = kc + 1;
+    } elif (o >= 0) {
         var c = _call_close(S, o);
         if (c >= e) { return 0; }
         var fi = FINDFN(S, TOKVAL(S, b));
@@ -12127,7 +12139,7 @@ fn _hl_psrc(S, a, e): i64 {
         if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); }
         return pt;
     }
-    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a) != 2) { if (_icall_open_at(S, a) < 0) { return 0; } }   # 6.7.16: `callptr(&f)` (`_hl_ic_psid`)
     if (e == a + 1) { if (GINFN(S) == 1) {
             if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0; }
             if (_hl_capn(S, TOKVAL(S, a)) == 1) { return 0; }
@@ -12154,6 +12166,37 @@ fn _hl_fn_psid(fi): i64 {
     if (fi < 0) { return 0; }
     if (_fn_rpsid == 0) { return 0; }
     return L64(_fn_rpsid + fi * 8);
+}
+# ⛔ 6.7.16 — A KNOWN `&f` CALLEE'S RESULT IS TYPED BY ITS TOKENS AS THE DIRECT CALL'S (6.7.14's D26 (a), 6.7.13's D16):
+# the token typers read `f(..)` but not `fncallN(&f, ..)` / `callptr(&f, ..)`, so with `gp: *P2` the wraps
+# `(fncall0(&gp)).b` / `(*fncall0(&gp)).b` were refused "not a struct" (6.7.14's D24 (a)), `var t: P2 =
+# *fncall0(&gp);` bound a handle to G's first field (SIGSEGV) and `l = fncall0(&gp)`, `o.s = fncall0(&gp)`, `m =
+# *fncall0(&gp)` stored the pointer word into the first field. The struct of the call at token `b`: fn `f`'s `*T`
+# (`_hl_icp` 1), else its struct by value; 0 for a callee held in a variable (6.7.11's D31: a word). CHANGELOG [6.7.16]
+var _hl_icp = 0;
+fn _hl_ic_psid(S, b): i64 {
+    _hl_icp = 0;
+    var fi = _hl_ic_fi(S, b);
+    if (fi < 0) { return 0; }
+    var t = _hl_fn_psid(fi);
+    if (t > 0) {
+        _hl_icp = 1;
+        return t;
+    }
+    return GFRS(S, fi);
+}
+# The fn of the call through fncallN / callptr at token `b` when its callee is `&f` (`_icall_fti`) and `f` resolves to
+# that fn as the `&` factor resolves it (no local, capture or global of the name), else -1.
+fn _hl_ic_fi(S, b): i64 {
+    var f = _icall_fti(S, b);
+    if (f < 0) { return 0 - 1; }
+    var noff = TOKVAL(S, f);
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) >= 0) { return 0 - 1; }
+        if (_hl_capn(S, noff) == 1) { return 0 - 1; }
+    }
+    if (_findvar_core(S, noff) >= 0) { return 0 - 1; }
+    return FINDFN(S, noff);
 }
 # ⛔ 6.7.11 — A GENERIC CALL DECLARED `: *T` IS A STRUCT SOURCE, as `fn gp(): *S` is (6.7.10): `l = gpg<S>()`
 # stored the pointer word, `*gpg<S>()` as a value faulted and `gpg<S>().v` was refused, because the chain

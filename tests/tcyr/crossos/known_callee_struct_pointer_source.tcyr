@@ -1,0 +1,143 @@
+# known_callee_struct_pointer_source.tcyr — 6.7.16. A KNOWN `&f` CALLEE'S RESULT IS TYPED AS THE DIRECT CALL'S BY THE
+# TOKEN TYPERS TOO (6.7.14's D26 (a), 6.7.13's D16): with `gp: *P2`, `fncall0(&gp)` / `callptr(&gp)` is the `*P2`
+# `gp()` is at every consumer that reads a source's type from its tokens before it is parsed — a copy (declaration,
+# assignment, field), a by-value argument, a `return`, a wrap before `.name` (6.7.14's D24 (a)), a dereference of a
+# `**P2` callee, a chain through the result.
+#
+# THROUGH 6.7.15 those readers (`_hl_pchain` / `_hl_cw` / `_hl_psrc`, src/frontend/parse_decl.cyr) read `f(..)` but not
+# `fncallN(&f, ..)` / `callptr(&f, ..)`: `var t: P2 = *fncall0(&gp);` bound a handle to G's first field (SIGSEGV),
+# `l = fncall0(&gp)`, `o.s = fncall0(&gp)` and `m = *fncall0(&gp)` stored the pointer word into the first field (b read
+# 0), `take(*fncall0(&gp))` passed G's first word as the struct's address (SIGSEGV), `return *fncall0(&gp);` from a
+# `: P2` fn and `(fncall0(&gp)).b` / `(*fncall0(&gp)).b` were refused, and `t = fncall0(&mks)` (`mks: Str`) into an
+# inline `Str` kept t's stale length. Each row equals its direct twin (`gp()`, `mks()`). A callee held in a VARIABLE
+# stays a word (6.7.11's D31): row kc_var.
+# Filed: docs/development/issues/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md (its repro and
+# its two other spellings verbatim, and the variable / shadowed callee refusals, are
+# tests/gates/frontend/paren_field_access.sh KC1-KC5; that gate runs this file on x86_64, aarch64, cx and PE as A2).
+# CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct P2 { a; b; }
+struct O { s: P2; z; }
+struct W { p: *P2; n; }
+
+var G: P2 = P2 { 11, 22 };
+var GW: W = W { &G, 3 };
+var GPS: *P2 = &G;
+fn gp(): *P2 { return &G; }
+fn gpn(i, j): *P2 { if (i * 10 + j != 12) { return 0; } return &G; }
+fn gpw(): *W { return &GW; }
+fn mkw(): W { var r: W = W { &G, 7 }; return r; }
+fn gpp(): **P2 { return &GPS; }
+fn mks(): Str { return str_from("hello"); }
+fn take(x: P2): i64 { return x.b; }
+fn rv(): P2 { return *fncall0(&gp); }
+fn rvc(): P2 { return *callptr(&gp); }
+
+# The four shapes of the triage's risk line, and their callptr spelling: each a COPY (a write to it leaves G).
+fn risk() {
+    var t: P2 = *fncall0(&gp);
+    t.a = 1;
+    assert_eq(t.b * 100 + G.a, 2211, "kc_decl: var t: P2 = *fncall0(&gp); a copy (SIGSEGV before)");
+    var tc: P2 = *callptr(&gp);
+    assert_eq(tc.b, 22, "kc_decl_c: var t: P2 = *callptr(&gp); (SIGSEGV before)");
+    var l: P2 = P2 { 0, 0 };
+    l = fncall0(&gp);
+    l.a = 1;
+    assert_eq(l.b * 100 + G.a, 2211, "kc_asg: l = fncall0(&gp); a copy (b 0 before)");
+    var lc: P2 = P2 { 0, 0 };
+    lc = callptr(&gp);
+    assert_eq(lc.b, 22, "kc_asg_c: l = callptr(&gp); (b 0 before)");
+    var o: O;
+    o.z = 0;
+    o.s = fncall0(&gp);
+    assert_eq(o.s.b, 22, "kc_fld: o.s = fncall0(&gp); (0 before)");
+    var oc: O;
+    oc.z = 0;
+    oc.s = callptr(&gp);
+    assert_eq(oc.s.b, 22, "kc_fld_c: o.s = callptr(&gp); (0 before)");
+    var m: P2 = P2 { 0, 0 };
+    m = *fncall0(&gp);
+    assert_eq(m.b, 22, "kc_dasg: m = *fncall0(&gp); (0 and a warning before)");
+    var mc: P2 = P2 { 0, 0 };
+    mc = *callptr(&gp);
+    assert_eq(mc.b, 22, "kc_dasg_c: m = *callptr(&gp); (0 before)");
+    return 0;
+}
+
+fn more() {
+    var o: O;
+    o.z = 0;
+    o.s = *fncall0(&gp);
+    var od: O;
+    od.z = 0;
+    od.s = *callptr(&gp);
+    assert_eq(o.s.b + od.s.b, 44, "kc_fld_d: o.s = *fncall0(&gp); / *callptr(&gp) (0 before)");
+    assert_eq(take(*fncall0(&gp)) + take(*callptr(&gp)), 44, "kc_arg: take(*fncall0(&gp)), by value (SIGSEGV before)");
+    var r1 = rv();
+    var r2 = rvc();
+    assert_eq(r1.b + r2.b, 44, "kc_ret: return *fncall0(&gp); from a : P2 fn (refused before)");
+    assert_eq((fncall0(&gp)).b + (*fncall0(&gp)).b, 44, "kc_wrap: (fncall0(&gp)).b, (*fncall0(&gp)).b (refused)");
+    assert_eq((callptr(&gp)).b + (*callptr(&gp)).b, 44, "kc_wrap_c: (callptr(&gp)).b, (*callptr(&gp)).b (refused)");
+    assert_eq(((fncall0((&gp)))).b + (*(callptr(((&gp))))).b, 44, "kc_wrap2: two wraps, the callee wrapped too");
+    var ta: P2 = *fncall2(&gpn, 1, 2);
+    assert_eq(ta.b + (fncall2(&gpn, 1, 2)).b, 44, "kc_args: *fncall2(&gpn, 1, 2), a callee with arguments");
+    var tw: P2 = *fncall0(&gpw).p;
+    var lw: P2 = P2 { 0, 0 };
+    lw = callptr(&gpw).p;
+    assert_eq(tw.b + lw.b + (fncall0(&gpw).p).b, 66, "kc_chain: *fncall0(&gpw).p, callptr(&gpw).p, a *W's *P2 field");
+    var tv: P2 = *callptr(&mkw).p;
+    assert_eq(tv.b + (fncall0(&mkw).p).b, 44, "kc_bv_chain: *callptr(&mkw).p, (fncall0(&mkw).p).b, W by value");
+    var tp: P2 = **fncall0(&gpp);
+    var mp: P2 = P2 { 0, 0 };
+    mp = **callptr(&gpp);
+    assert_eq(tp.b + mp.b + (*fncall0(&gpp)).b, 66, "kc_pp: **fncall0(&gpp), a : **P2 callee (SIGSEGV / 0 before)");
+    var lf: P2 = P2 { 0, 0 };
+    var i = 0;
+    for (i = 0; i < 1; lf = fncall0(&gp)) { i = i + 1; }
+    assert_eq(lf.b, 22, "kc_for: a for step's l = fncall0(&gp) (0 before)");
+    var tq: P2 = P2 { 0, 0 };
+    tq = (*(fncall0(&gp)));
+    var tr: P2 = P2 { 0, 0 };
+    tr = (callptr(&gp));
+    var ts: P2 = (*(fncall0(&gp)));
+    assert_eq(tq.b + tr.b + ts.b, 66, "kc_paren: t = (*(fncall0(&gp))), t = (callptr(&gp)), var t: P2 = (*(..))");
+    var k = |z| {
+        var tk: P2 = *fncall0(&gp);
+        return tk.b + z;
+    };
+    assert_eq(fncall1(k, 0), 22, "kc_cap: var t: P2 = *fncall0(&gp); in a closure (SIGSEGV before)");
+    var st: Str = Str { "ab", 2 };
+    st = fncall0(&mks);
+    var sc: Str = Str { "ab", 2 };
+    sc = callptr(&mks);
+    assert_eq(st.len * 10 + sc.len, 55, "kc_str: t = fncall0(&mks); into an inline Str, mks : Str (t.len 2 before)");
+    return 0;
+}
+
+# A callee held in a variable is unknown (6.7.11's D31): its result is a word, a struct-typed receive a handle on G.
+fn control() {
+    var f = &gp;
+    var h: P2 = fncall0(f);
+    h.a = 7;
+    var w = G.a;
+    G.a = 11;
+    assert_eq(h.b * 100 + w, 2207, "kc_var: var h: P2 = fncall0(f); f a variable: a handle (D31, unchanged)");
+    return 0;
+}
+
+risk();
+more();
+control();
+# Top level: a hidden global parks the pointer.
+var TT: P2 = *fncall0(&gp);
+var T2: P2 = P2 { 0, 0 };
+T2 = callptr(&gp);
+var T3: P2 = P2 { 0, 0 };
+T3 = *fncall0(&gp);
+assert_eq(TT.b + T2.b + T3.b, 66, "kc_top: var TT: P2 = *fncall0(&gp); T2 = callptr(&gp); T3 = *fncall0(&gp);");
+var r = assert_summary();
