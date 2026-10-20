@@ -122,8 +122,9 @@ fn _cxh_open(): i64 {
 
 # The path calls (6.7.15; issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md):
 # mkdir, stat (the guest's struct stat is x86_64 Linux's, which cxvm fills from the host's: st_mode @24,
-# st_size @48, st_mtime @88), symlink, readlink, rename, unlink, rmdir. 0 the Linux answers, 1 the
-# Windows ones (stat and readlink -38: no PE route; the rest served), 2 neither.
+# st_size @48, st_mtime @88), symlink, readlink, rename, unlink, rmdir; and truncate (6.7.16: it
+# answered -38 on every host while ftruncate was served) cuts the 7-byte file to 3. 0 the Linux
+# answers, 1 the Windows ones (stat and readlink -38: no PE route; the rest served), 2 neither.
 fn _cxh_paths(): i64 {
     syscall(87, "cxh_l");
     syscall(87, "cxh_p");
@@ -142,6 +143,9 @@ fn _cxh_paths(): i64 {
     var fmode = load32(&st + 24) & 61440;
     var fsize = load64(&st + 48);
     var fmt = load64(&st + 88);
+    var tr = syscall(76, "cxh_p", 3);
+    var st2 = syscall(4, "cxh_p", &st);
+    var tsize = load64(&st + 48);
     var sl = syscall(88, "cxh_p", "cxh_l");
     var lb[32];
     var rl = syscall(89, "cxh_l", &lb, 32);
@@ -153,11 +157,13 @@ fn _cxh_paths(): i64 {
     if (mk != 0 || sd != 0 || dmode != 16384) { lin_ok = 0; }        # S_IFDIR
     if (sf != 0 || fmode != 32768 || fsize != 7) { lin_ok = 0; }     # S_IFREG, 7 bytes
     if (fmt < 1000000000) { lin_ok = 0; }                            # a 2001+ mtime, in seconds
+    if (tr != 0 || st2 != 0 || tsize != 3) { lin_ok = 0; }           # truncated to 3 bytes
     if (sl != 0 || rl != 5 || load8(&lb + 4) != 112) { lin_ok = 0; } # readlink: "cxh_p"
     if (rn != 0 || ul != 0 || ug != 0 || rd != 0) { lin_ok = 0; }
     if (lin_ok == 1) { return 0; }
     var pe_ok = 1;
     if (mk != 0 || sd != 0 - 38 || sf != 0 - 38 || rl != 0 - 38) { pe_ok = 0; }
+    if (tr != 0 || st2 != 0 - 38) { pe_ok = 0; }
     if (sl != 0 || rn != 0 || ul != 0 || ug != 0 || rd != 0) { pe_ok = 0; }
     if (pe_ok == 1) { return 1; }
     return 2;

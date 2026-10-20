@@ -30,7 +30,8 @@
 # (FD_CLOEXEC set on the copy); the path calls (6.7.15,
 # issues/archived/2026-10-16-cx-crossos-mkdir-symlink-rows-fail-and-no-gate-runs-them.md) — mkdir, stat of a
 # directory and of a 7-byte file (S_IFDIR / S_IFREG, st_size, st_mtime at the x86-Linux offsets cxvm
-# fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir (Windows: stat and
+# fills from the host's own struct stat), symlink, readlink, rename, unlink, rmdir, and truncate to 3
+# bytes (6.7.16: -38 on every host until then, while ftruncate was served) (Windows: stat and
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
 # issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
 # fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub); a failure's errno (6.7.16,
@@ -106,6 +107,8 @@
 #       on ecb and ach exit 15, `lin=16384` (the 96-byte listing misses names), measured
 # MU13 (6.7.16) `_cx_host_open` without its Windows -13 -> -17 rule -> no local axis sees it (wine's
 #       CreateFileW says ERROR_FILE_EXISTS): on cass the fixture exits 2, `pe=32768`, measured
+# MU15 (6.7.16, p16) cxvm without its truncate (76) arm -> RED 3: axes 2 / 3 exit 11 (`lin=1024`:
+#       truncate -38), axis 5 exits 2 (`pe=1024`), measured
 # MU14 (6.7.16, the platform review) `_cx_darwin_getdents` handing the guest every record it converted
 #       whatever the re-read returned (26e8eeaff's programs/cxvm.cyr) -> no local axis sees it (the
 #       converter is Darwin's): on ecb the fixture exits 17, `lin=65536` (/dev with 200 bytes read 953
