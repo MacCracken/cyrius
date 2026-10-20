@@ -1415,7 +1415,8 @@ call to it (`undefd(); undefd().n += 1;` — 6.7.16; it was *cannot take a field
 return a struct*); the plain call keeps its own end-of-compile refusal. Under `cyrius lint`'s
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
-struct by value earns). A call declared `: *Struct` returns
+struct by value earns) — and so are they when `gp` is defined here as `fn gp(): *Foo` with `Foo` a sibling module's
+struct (6.7.16); a `: Foo` result by value, a `: **Foo` and a `: *i64` keep the refusal. A call declared `: *Struct` returns
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`
