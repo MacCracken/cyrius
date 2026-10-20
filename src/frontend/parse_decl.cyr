@@ -5812,10 +5812,41 @@ fn _decl_ann_refd(S): i64 {
 var _var_bare_at = 0 - 1;
 fn _var_eq_step(S): i64 {
     if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
-    _decl_eq_err(S);
+    if (_synonly_sib_local(S) == 0) { _decl_eq_err(S); }   # 6.7.16: `var a: Foo;`, Foo a sibling's (lint)
     if (PEEKT(S) == 5) { _var_bare_at = GTI(S); return 1; }
     STI(S, GTI(S) + 1);
     return 0;
+}
+# ⛔ 6.7.16 — `--syntax-only` (cyrius lint), A LOCAL OF A SIBLING MODULE'S STRUCT: `var a: Foo;` / `var b: Box<i64>;`
+# with Foo / Box declared in another file. A struct local takes no initializer, but here the name answers no type, its
+# annotation's refusal is silent under the flag, and the bare-declaration rule read a word with no value: "uninitialized
+# variable not allowed", which lint does not count as context (`_lint_msg_is_context`), so lint refused the file —
+# the ordinary layout of a manifest that concatenates modules (the v6.5.19 class). 1 = the declaration whose `;` is at
+# the cursor is `var NAME: X;` or `var NAME: X<..>;` with X a name no type answers here: accepted, as the unit's build
+# accepts it. `var p: *Foo;` (a pointer needs its value), `var x: i64;` and a type this file declares keep the
+# refusal. CHANGELOG [6.7.16]
+fn _synonly_sib_local(S): i64 {
+    if (_syntax_only != 1) { return 0; }
+    if (PEEKT(S) != 5) { return 0; }
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    var a = k + 3;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (a + 1 != GTI(S)) {
+        if (TOKTYP(S, a + 1) != 19) { return 0; }
+        if (_tok_targs_close(S, a + 2) != GTI(S) - 1) { return 0; }
+    }
+    if (_tn_resolve_at(S, a) != 0) { return 0; }
+    return 1;
 }
 # PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
 # declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).

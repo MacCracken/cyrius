@@ -581,6 +581,39 @@ for x in so14_bad1:2:15 so14_bad2:2:13 so14_bad3:2:18; do
     check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 done
 
+# ── AXIS 15 (6.7.16) — a LOCAL of a sibling module's struct: `var a: Foo;`, `var b: Box<i64>;` with Foo / Box declared
+# in another file. A struct local takes no initializer; under `--syntax-only` the name answers no type, its
+# annotation's refusal is silent, and the bare-declaration rule said "uninitialized variable not allowed" — not a
+# context message, so lint refused the file. `_synonly_sib_local` accepts a name no type answers there. ANTI-VACUOUS:
+# `var p: *Foo;` (a pointer needs its value) and `var x: i64;` keep the refusal, and still refuse lint. RED on
+# 9ac212def (the bite before): every --syntax-only and LINTED row of so15a / so15b. MUTATION (2026-10-20, a scratch
+# copy of src/ installed as build/cycc): `_synonly_sib_local` answering 0 -> the same rows RED.
+echo "axis 15 — a local of a SIBLING file's struct type passes --syntax-only and lint:"
+printf 'struct Foo { g; h: *Foo; }\nstruct Box<T> { v: T; n; }\n' > "$T/w/so15_sib.cyr"
+printf 'fn f(): i64 {\n    var a: Foo;\n    a.g = 1;\n    return a.g;\n}\nvar r = f();\n' > "$T/w/so15a.cyr"
+printf 'fn f(): i64 {\n    var b: Box<i64>;\n    b.n = 2;\n    var c: Box<Foo>;\n    return b.n + c.n;\n}\nvar r = f();\n' > "$T/w/so15b.cyr"
+for f in so15a so15b; do
+    cat "$T/w/so15_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+    check "premise: $f compiles once its structs are in scope" 0 "$j_rc"
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'fn f(): i64 {\n    var p: *Foo;\n    return 0;\n}\nvar r = f();\n' > "$T/w/so15_bad1.cyr"
+printf 'fn f(): i64 {\n    var x: i64;\n    return 0;\n}\nvar r = f();\n' > "$T/w/so15_bad2.cyr"
+for f in so15_bad1 so15_bad2; do
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "ANTI-VACUOUS: $f keeps 'uninitialized variable not allowed' under --syntax-only" "yes 1" "$([ "$s_rc" != 0 ] && echo yes || echo no) $(grep -c '^error:<source>:2:[0-9]*: uninitialized variable not allowed' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+done
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: lint-reports-unparseable — lint tells the truth about parsing AND still lints"

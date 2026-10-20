@@ -793,7 +793,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   whose default names a sibling's const. The grammar refusals (a positional argument after a
   named one, a name through `fncallN`) still fire there. A call in the chain of a receiver whose
   struct a sibling declares — `a.h.k(1)`, `a.m<i64>(1)`, `a.h.m<i64>(1)` — parses there too, its
-  arguments checked (6.7.16; it was *expected ';', got '('* / *got '>'*).
+  arguments checked (6.7.16; it was *expected ';', got '('* / *got '>'*), and so does a local of a sibling's struct
+  type, `var a: Foo;` / `var b: Box<i64>;` (6.7.16; it was *uninitialized variable not allowed*, which lint does not
+  count as context — `var p: *Foo;` still owes its value).
 - **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
   count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
   `_slice_idx_get_N` family and `_slice_idx_addr` (6.7.8, the slice store), the `_chk_*` /
