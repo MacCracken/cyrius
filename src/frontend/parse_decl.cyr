@@ -7292,7 +7292,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
             var ewk = _dt_wrap_in(S, 5);   # 6.7.14 (D45): `var a, b = (f(7));`
-            _dt_zone_check(S, egn, ewk);   # 6.6.17 (a5)
+            var edz = _dt_zone_check(S, egn, ewk);   # 6.6.17 (a5)
             var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
@@ -7308,6 +7308,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
             _gvk_dst(S, sti, ei1, ei2, ei3);   # 6.6.16 (C6): a kernel build names what stays late
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            if (edz == 1) { _panic = 0; }   # the zone check's report: latched through its statement
             STI(S, GTI(S) + 1);
             gi = gi + 1;
             continue;
@@ -7380,7 +7381,6 @@ fn EMIT_GVAR_INITS(S): i64 {
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
     # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
     _warn_mixed_pair_returns(S);
-    _panic = 0;   # nor the program's first statement: the last entry's latch swallowed its error. CHANGELOG [6.7.16]
     return 0;
 }
 
