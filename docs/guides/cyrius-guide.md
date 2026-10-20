@@ -9529,7 +9529,9 @@ cut name opened (`error: cannot open '<prefix>'` for a file that exists), and a 
 The macOS compilers, and `cycc_cx` built for agnos, read their flags off the entry stack instead
 (neither system has a `/proc`; see *The cx compiler on agnos*).
 
-`cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
+`cyrius build --target=js` runs on every POSIX host — arm64 macOS included since 6.7.16, where
+the CLI refused it (rc 1, "runs this host's cycc, not the compiler another target selector
+chose") because its default compiler is `cycc_aarch64`, not `cycc`. On Windows it **refuses by name**:
 `cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
 to a file — run `cycc.exe --emit-js app.tsx > app.js` directly.
 

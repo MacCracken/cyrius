@@ -40,6 +40,13 @@
 #           5d one of exactly 2,097,152 bytes (it fills the 2 MiB mapping) is refused by name; 5e
 #           `--emit-js <path>` with the path across byte 2,097,152 is refused by name, the cut path
 #           never opened. 5c-5e raise the stack limit (Linux's ARG_MAX follows it).
+#   axis 6  (6.7.16, issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md)
+#           EVALUATES `_js_cc_is_host()` under each host's macro set from find_tools' own
+#           default-arch block: with no target selector it answers 1 on every host (arm64 macOS's
+#           default compiler is cycc_aarch64, and the `current_cc() == _cc` predicate refused
+#           `--target=js` there, rc 1 on ecb); `_arch = ARCH_AARCH64` answers 0 wherever it changes
+#           the compiler (6.7.12's rule kept). The hardware rows are the `_co_js` leg of
+#           scripts/cross-os-selfhost.sh (ecb, ach, pi).
 #
 # MUTATION LEDGER (measured at 6.7.15; each a scratch copy of the tree, the gate pointed at it
 # with EJR_SRC_DIR / EJR_BUILD_CYR, or the CLI rebuilt from it)
@@ -55,6 +62,8 @@
 #   C2. the refusal of a full mapping dropped         -> RED 5d, 5e on every driver (5e x86: the
 #                                                       scan ran off the mapping, SIGSEGV)
 #   C3. the refusal at n >= 2097151 (one byte early)  -> RED 5c on every driver
+# Axis 6 (measured at 6.7.16): `_js_cc_is_host` back to `current_cc() == _cc` -> RED macos-arm64
+#   (default=0); `_cc_default` answering `_cc` everywhere -> RED macos-arm64; real tree -> GREEN.
 #
 # ⚠ qemu-aarch64 is an EMULATOR, not hardware. The real-hardware `--emit-js` runs on pi, ecb,
 # ach and cass are the cross-OS legs (scripts/cross-os-selfhost.sh) and ts_flags_every_driver.sh.
@@ -379,11 +388,88 @@ else
   set --
 fi
 
+# ── axis 6 — `_js_cc_is_host()` under each host's DEFAULT arch (6.7.16) ─────────────────
+# The js arm refuses when a target selector changed the compiler (6.7.12). Its predicate was
+# `current_cc() == _cc`, and on arm64 macOS the DEFAULT — no selector at all — makes current_cc()
+# `_cc_arm` (`cycc_aarch64`, the native Mach-O compiler), so `cyrius build --target=js x.ts out.js`
+# was refused there as if a selector had been given (issues/2026-10-19-macos-arm64-cli-refuses-
+# target-js-with-no-selector.md; rc 1 on ecb). The predicate, current_cc(), `_cc_default()` and
+# find_tools' default-arch block are EXTRACTED (the real text) and evaluated under each host's
+# macro set with `_cc` and `_cc_arm` distinct: the default must answer 1 on every host, and
+# `_arch = ARCH_AARCH64` (the `--aarch64` selector) must answer 0 where it changes the compiler —
+# every host but arm64 macOS, where it is the default. The ecb / ach / pi run of the filed repro is
+# the `_co_js` leg of scripts/cross-os-selfhost.sh.
+CORE_CYR="${EJR_CORE_CYR:-$R/cbt/core.cyr}"
+awk '/^fn current_cc\(\): i64 \{/,/^\}/' "$CORE_CYR"  > "$D/a6fns.cyr"
+awk '/^fn _cc_default\(\): i64 \{/,/^\}/' "$CORE_CYR" >> "$D/a6fns.cyr"
+awk '/^fn _js_cc_is_host\(\): i64 \{/,/^\}/' "$BUILD_CYR" >> "$D/a6fns.cyr"
+# find_tools' default-arch block: its directives and `_arch = …` lines before its first `var`.
+awk '/^fn find_tools\(\): i64 \{/{p=1;next} p && /^[ \t]*var /{exit} p && (/^[ \t]*#(ifdef|ifndef|endif|else)/ || /^[ \t]*_arch[ \t]*=/){print}' "$CORE_CYR" > "$D/a6def.cyr"
+if [ "$(grep -c '^fn ' "$D/a6fns.cyr" || true)" -lt 2 ] || ! grep -q '_js_cc_is_host' "$D/a6fns.cyr"; then
+  echo "FAIL axis6: could not extract current_cc / _js_cc_is_host — did they move or change shape?"
+  fail=1
+elif ! grep -q '_arch[ \t]*=[ \t]*ARCH_AARCH64' "$D/a6def.cyr"; then
+  echo "FAIL axis6: find_tools has no default-arch block (\`_arch = ARCH_AARCH64\` under the macOS arm64 macros) — did it change shape?"
+  fail=1
+else
+  : > "$D/a6"
+  printf '%s\n' "$ROWS" | while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    lab=$(printf '%s' "$row" | cut -d: -f1)
+    defs=$(printf '%s' "$row" | cut -d: -f2)
+    P="$D/k_$lab.cyr"
+    : > "$P"
+    for d in $defs; do echo "#define $d" >> "$P"; done
+    cat >> "$P" <<'PRE'
+var _cc = 0;
+var _cc_arm = 0;
+var _arch = 0;
+var ARCH_X86 = 0;
+var ARCH_AARCH64 = 1;
+PRE
+    cat "$D/a6fns.cyr" >> "$P"
+    { echo 'fn _a6_default(): i64 {'; cat "$D/a6def.cyr"; echo '    return 0;'; echo '}'; } >> "$P"
+    cat >> "$P" <<'PROBE'
+_cc = "bin/cycc";
+_cc_arm = "bin/cycc_aarch64";
+_arch = ARCH_X86;
+_a6_default();
+var _d = _js_cc_is_host();
+_arch = ARCH_AARCH64;
+var _s = _js_cc_is_host();
+syscall(60, _d * 10 + _s);
+PROBE
+    if ! cat "$P" | "$CC" > "$D/kb_$lab" 2> "$D/ke_$lab" || [ ! -s "$D/kb_$lab" ]; then
+      echo "  axis6 $lab: PROBE FAILED TO COMPILE"; sed -n 1,5p "$D/ke_$lab" | sed 's/^/    /'
+      echo "$lab BAD" >> "$D/a6"; continue
+    fi
+    chmod +x "$D/kb_$lab"
+    got=0; ( ulimit -c 0; "$D/kb_$lab" ) || got=$?
+    echo "$lab $got" >> "$D/a6"
+  done
+  n6=$(grep -c . "$D/a6" 2>/dev/null || true); [ -n "$n6" ] || n6=0
+  if [ "$n6" -ne 5 ]; then
+    echo "FAIL axis6: expected 5 evaluated rows, got $n6"
+    fail=1
+  fi
+  while read -r lab got; do
+    # 10: the default answers 1, the --aarch64 selector 0; arm64 macOS 11 (--aarch64 IS its default).
+    want=10
+    [ "$lab" = macos-arm64 ] && want=11
+    if [ "$got" != "$want" ]; then
+      echo "FAIL axis6: $lab — _js_cc_is_host() gave default=$((got / 10)) selector=$((got % 10)) (exit $got), expected exit $want"
+      echo "            (default 1: a run with no target selector runs the host's own compiler; selector 0"
+      echo "             where --aarch64 changes it — every host but arm64 macOS)"
+      fail=1
+    fi
+  done < "$D/a6"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL emit_js_per_host_fork"
   exit 1
 fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: emit_js_per_host_fork — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS emit_js_per_host_fork: $(grep -c . "$D/want_js") host forks carry the TS front end, _target_cc_has_js() names them; 5 hosts evaluated; x86-64 Linux and the aarch64 CLI (qemu, not hardware) emit the same JS; axis 5: $n5 rows on $DRV5 — the whole command line read (a TS path past byte 255, a --version after a 300-byte argument, 2097151 bytes), 2097152 refused by name"
+echo "PASS emit_js_per_host_fork: $(grep -c . "$D/want_js") host forks carry the TS front end, _target_cc_has_js() names them; 5 hosts evaluated; x86-64 Linux and the aarch64 CLI (qemu, not hardware) emit the same JS; axis 5: $n5 rows on $DRV5 — the whole command line read (a TS path past byte 255, a --version after a 300-byte argument, 2097151 bytes), 2097152 refused by name; axis 6: _js_cc_is_host() answers 1 for every host's default compiler, 0 for a selector that changes it"
 exit 0

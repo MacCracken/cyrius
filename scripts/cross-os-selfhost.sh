@@ -426,6 +426,41 @@ _co_cov_posix() {
   return 0
 }
 
+# _co_js <host> <cli> <cc> [<cc's other name>…] — `cyrius build --target=js` with no target
+# selector, on ecb / ach / pi (6.7.16). The home is ~/$RD/_jsh: bin/cyrius (<cli>) and bin/cycc
+# (<cc>, plus a copy under each other name — arm64 macOS's CLI runs cycc_aarch64). On arm64 macOS
+# the js arm refused the filed repro ("runs this host's cycc, not the compiler another target
+# selector chose", rc 1): its predicate was `current_cc() == _cc`, and the default compiler there
+# is cycc_aarch64 (issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md).
+#   J1  the filed repro verbatim (`const x: number = 1;` / `console.log(x);` -> out.js): rc 0 and
+#       the 29 bytes `const x = 1;\nconsole.log(x);\n`.
+#   J2  `--aarch64 --target=js`: rc 1, 6.7.12's D20 line, no output written.
+# tests/gates/toolchain/emit_js_per_host_fork.sh axis 6 evaluates the predicate per host.
+# Names each miss; 0 when both rows hold. CHANGELOG [6.7.16]
+_co_js() {
+  _jh=$1; _jcli=$2; _jcc=$3; shift 3
+  _jextra=""
+  for _jn in "$@"; do _jextra="$_jextra && cp $_jcc _jsh/bin/$_jn"; done
+  ssh $SSHO "$_jh" "cd ~/$RD && rm -rf _jsh _jsw && mkdir -p _jsh/bin _jsw && cp $_jcli _jsh/bin/cyrius && cp $_jcc _jsh/bin/cycc$_jextra" \
+    || { echo "  js: the home could not be staged on $_jh"; return 1; }
+  _jrun='D=$(cd .. && pwd) && CYRIUS_HOME="$D/_jsh" CYRIUS_RESOLVED=1 "$D/_jsh/bin/cyrius" build'
+  _JRC1=0; ssh $SSHO "$_jh" "cd ~/$RD/_jsw && printf 'const x: number = 1;\nconsole.log(x);\n' > x.ts && $_jrun"' --target=js x.ts out.js > ../_js1.out 2>&1' || _JRC1=$?
+  _JRC2=0; ssh $SSHO "$_jh" "cd ~/$RD/_jsw && $_jrun"' --aarch64 --target=js x.ts out2.js > ../_js2.out 2>&1' || _JRC2=$?
+  _JGOT=$(ssh $SSHO "$_jh" "cd ~/$RD/_jsw && printf 'const x = 1;\nconsole.log(x);\n' > want.js && if cmp -s out.js want.js; then printf SAME; else printf DIFF; fi; [ -e out2.js ] && printf OUT2; true") || _JGOT="(could not read)"
+  _JD20=$(ssh $SSHO "$_jh" "cd ~/$RD && grep -cxF 'error: --aarch64 and --target=js select two emit targets; pass one' _js2.out || true") || _JD20=0
+  _jbad=0
+  [ "$_JRC1" = 0 ] || { echo "  js J1 ($_jh): the filed repro exited $_JRC1 (want 0): $(ssh $SSHO "$_jh" "head -3 ~/$RD/_js1.out" 2>/dev/null | tr '\n' ' ')"; _jbad=1; }
+  case "$_JGOT" in
+    SAME*) ;;
+    *) echo "  js J1 ($_jh): out.js is not the 29 bytes 'const x = 1;\\nconsole.log(x);\\n' ($_JGOT; ~/$RD/_jsw/out.js)"; _jbad=1 ;;
+  esac
+  [ "$_JRC2" = 1 ] || { echo "  js J2 ($_jh): --aarch64 --target=js exited $_JRC2 (want 1)"; _jbad=1; }
+  [ "$_JD20" = 1 ] || { echo "  js J2 ($_jh): no D20 line ('--aarch64 and --target=js select two emit targets; pass one')"; _jbad=1; }
+  case "$_JGOT" in *OUT2*) echo "  js J2 ($_jh): out2.js was written"; _jbad=1 ;; esac
+  [ "$_jbad" = 0 ] && echo "  js on $_jh: J1 the filed repro rc 0, out.js the 29 bytes; J2 --aarch64 --target=js rc 1 by D20's line, nothing written"
+  return "$_jbad"
+}
+
 # _co_cov_check <host> <X2's `Corpus runs:` tail> [<a second X2 FAIL line, as a prefix>] — grades
 # the X1 / X2 runs that _co_cov_posix or the cass leg made: their exit codes (_COV_RC1 must be 0,
 # _COV_RC2 1), the temp dir left empty (_COV_LEFT), and their output, pulled back to $CO_TMP (CRs
@@ -742,6 +777,10 @@ case "$HOST" in
       && _co_cov_posix ecb cyrius_native r1r cycc_aarch64 \
       && _co_cov_check ecb '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ecb — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on arm64 macOS (see _co_js): the native
+    # CLI with r1r as cycc and as cycc_aarch64, the one this CLI runs.
+    _co_js ecb cyrius_native r1r cycc_aarch64 \
+      || { echo "JS_FAIL: ecb — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     # 6.7.16 — cyrius-lsp on arm64 macOS (see _co_lsp): built by r1r; its home holds the native CLI
     # and r1r as cycc and cycc_aarch64 (the arm64 CLI asks for the latter).
     _co_lsp ecb "CYRIUS_MACHO_ARM=1 ./r1r" r1r cyrius_native cycc_aarch64 \
@@ -833,6 +872,9 @@ case "$HOST" in
       && _co_cov_posix ach cyrius_native r1 \
       && _co_cov_check ach '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ach — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on x86_64 macOS (see _co_js).
+    _co_js ach cyrius_native r1 \
+      || { echo "JS_FAIL: ach — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     # 6.7.16 — cyrius-lsp on x86_64 macOS (see _co_lsp): built by r1, unsigned (as every binary here);
     # ach has no ~/.cyrius, so the throwaway home is the only one.
     _co_lsp ach "./r1" r1 cyrius_native \
@@ -928,6 +970,10 @@ case "$HOST" in
       && _co_cov_posix pi cyrius_native n1 \
       && _co_cov_check pi '4 (1 .tcyr, 3 program(s)), 2 failed' '  FAIL: programs/asm_test.cyr (exited 0 but left no coverage record' \
       || { echo "SELFHOST_FAIL: pi — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 and asm_test's missing record named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — `cyrius build --target=js` with no selector on aarch64 Linux (see _co_js): the native
+    # CLI with n1 (the native fork ARM users install) as cycc.
+    _co_js pi cyrius_native n1 \
+      || { echo "JS_FAIL: pi — cyrius build --target=js with no selector did not emit (J1), or --aarch64 --target=js was not refused by D20's line (J2) (~/$RD/_js*.out). NOT SELFHOST_OK."; exit 1; }
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
