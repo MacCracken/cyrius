@@ -418,6 +418,7 @@ fn _prescan_tail_loop(S): i64 {
     var go = 1;
     while (go == 1) {
         var t = PEEKT(S);
+        _dl_fill(S, t);   # 6.7.16: a declaration PARSE_PROG will refuse here — its names, before any use is parsed
         if (t == 12) { go = 0; }                       # EOF
         # ⚠ _IS_FN_KW, not a bare `t == 32`: the pass-1 scan (_tl_scan1) asks _IS_FN_KW, so a
         # bare test here would make the two scanners disagree about what a DEFINITION is and
@@ -595,18 +596,45 @@ fn _decl_late(S): i64 {
     if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     if (_tl_stmt1 < 0) { return 0; }
     var ti = GTI(S);
+    _dl_late_step(S, ti, 1);
+    _dl_names(S, ti, GTI(S));   # 6.7.15
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# The late declaration at the cursor (token `ti`) stepped as its refusal steps it, and reported when `rep` is 1: an
+# inclusion's rest (`_dl_incl`), a `pub var` / `pub const` marker alone (6.7.16: `pub var x = 1;` still declares x,
+# as below module scope), else through its `}` / `;` and a derive's line. Pass 1's fill (`_dl_fill`) steps the same
+# tokens, `rep` 0.
+fn _dl_late_step(S, ti, rep): i64 {
     var l1 = GTLINE(S, ti);
     var f1 = FM_SITE(S, l1);
     var f0 = FM_SITE(S, GTLINE(S, _tl_stmt1));
     var n0 = _fm_site_line;
-    if (f1 != f0) { if (_dl_incl(S, l1, f0, n0) == 1) { return 1; } }
-    _dl_report(S, ti, f1, f0, n0);
-    if (_dl_pub_mark(S) == 1) { return 1; }   # 6.7.16: `pub var x = 1;` still declares x (as below module scope)
+    if (f1 != f0) { if (_dl_incl(S, l1, f0, n0, rep) == 1) { return 0; } }
+    if (rep == 1) { _dl_report(S, ti, f1, f0, n0); }
+    if (_dl_pub_mark(S) == 1) { return 0; }
     _dl_skip(S);
     _dl_derived(S);
-    _dl_names(S, ti, GTI(S));   # 6.7.15
-    _dl_quiet(S, ti, GTI(S));
-    return 1;
+    return 0;
+}
+# ⛔ 6.7.16 — THE REFUSED NAMES ARE KNOWN BEFORE ANY USE IS PARSED. 6.7.15 entered them (`_dl_names`) when PARSE_PROG
+# met the late declaration, in source order, so a use parsed before it was still a second error: a top-level const
+# (`_cst_sweep`, the end of pass 1) "unknown name 'E' in a const context", printed BEFORE the declaration's own
+# error, and an earlier fn's `q: *Q` "type 'Q' is declared after its use". Pass 1's tail walk (`_prescan_tail_loop`,
+# every top-level statement after the first) meets each such declaration at depth 0 — exactly where PARSE_PROG's
+# `_decl_late` will refuse it — and enters its names here, stepping the same tokens (`_dl_late_step`, `rep` 0); the
+# walk itself goes on as before (the cursor put back). A range already entered (an inclusion's rest) is not walked
+# again. CHANGELOG [6.7.16]
+var _dl_fill_end = 0;
+fn _dl_fill(S, t): i64 {
+    if (_dl_kind(t) == 0) { return 0; }
+    var ti = GTI(S);
+    if (ti < _dl_fill_end) { return 0; }
+    _dl_late_step(S, ti, 0);
+    _dl_names(S, ti, GTI(S));
+    _dl_fill_end = GTI(S);
+    STI(S, ti);
+    return 0;
 }
 # ⛔ 6.7.15 — ONE LEVEL DOWN: a `struct`, `enum`, `union`, `trait` or `impl` in a fn body or a block (GINFN 1, or
 # `_pp_depth` past module scope) belongs to the declaration section too (the guide's rule, D13 (a)'s one level
@@ -720,41 +748,39 @@ fn _dl_where(S, f1, f0, n0): i64 {
 # that file resumes after it — the include's own line is that resume's base less one — the include is reported
 # there, once, and the rest of the inclusion is stepped. 0 = no such resume (the statement is in a file that ended
 # before: the caller reports the declaration itself).
-fn _dl_incl(S, l1, f0, n0): i64 {
+fn _dl_incl(S, l1, f0, n0, rep): i64 {
     if (f0 < 0) { return 0; }
     var cnt = load64(S + 0x71A000);
     var i = 0;
     while (i < cnt) {
         if (load64(S + 0x71A040 + i * 24) > l1) {
-            if (load64(S + 0x71A040 + i * 24 + 16) == f0) { return _dl_incl_at(S, l1, i, f0, n0); }
+            if (load64(S + 0x71A040 + i * 24 + 16) == f0) { return _dl_incl_at(S, l1, i, f0, n0, rep); }
         }
         i = i + 1;
     }
     return 0;
 }
-fn _dl_incl_at(S, l1, e, f0, n0): i64 {
+fn _dl_incl_at(S, l1, e, f0, n0, rep): i64 {
     var ti = GTI(S);
-    if (_panic == 0) {
-        PRSTR("error:");
-        PRSTR(S + 0x721000 + f0);
-        PRSTR(":");
-        PRNUM((load64(S + 0x71A040 + e * 24 + 8) >> 32) - 1);
-        PRSTR(":1: an include of a file that declares ");
-        _dl_art_kw(S, ti);
-        PRSTR(" (");
-        FM_LOOKUP(S, l1);
-        PRSTR(") must come before the first top-level statement (line ");
-        PRNUM(n0);
-        PRSTR(")\n");
-        _had_error = 1;
-    }
+    if (rep == 1) { if (_panic == 0) {
+            PRSTR("error:");
+            PRSTR(S + 0x721000 + f0);
+            PRSTR(":");
+            PRNUM((load64(S + 0x71A040 + e * 24 + 8) >> 32) - 1);
+            PRSTR(":1: an include of a file that declares ");
+            _dl_art_kw(S, ti);
+            PRSTR(" (");
+            FM_LOOKUP(S, l1);
+            PRSTR(") must come before the first top-level statement (line ");
+            PRNUM(n0);
+            PRSTR(")\n");
+            _had_error = 1;
+        } }
     var st = load64(S + 0x71A040 + e * 24);
     while (PEEKT(S) != 12) {
         if (GTLINE(S, GTI(S)) >= st) { break; }
         STI(S, GTI(S) + 1);
     }
-    _dl_names(S, ti, GTI(S));   # 6.7.15
-    _dl_quiet(S, ti, GTI(S));
     return 1;
 }
 # ⚠ The fns a refused declaration would have defined — a `pub fn`, an impl's methods (`T_m`), a `use` alias, the free
@@ -828,10 +854,10 @@ fn _dl_names(S, a, e): i64 {
     }
     return 0;
 }
-# A `struct` / `union` / `enum` keyword at token `i` (`k`), at depth 0 of the stepped range: its name, an enum's
-# members.
+# A `struct` / `union` / `enum` / `trait` keyword at token `i` (`k`), at depth 0 of the stepped range: its name, an
+# enum's members. 6.7.16: a trait's name too — a bound naming it (`_bnd_refd`) stands down. CHANGELOG [6.7.16]
 fn _dl_name_at(S, i, k, e): i64 {
-    if (k != 40 && k != 101 && k != 60) { return 0; }
+    if (k != 40 && k != 101 && k != 60 && k != 167) { return 0; }
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     _dl_refd_add(S, TOKVAL(S, i + 1));
     if (k == 60) { _dl_members(S, i + 2, e); }

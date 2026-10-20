@@ -5560,14 +5560,41 @@ fn _gvar_ann_head(S, noff): i64 {
 # 6.7.16: at a `;` the refusal is in sync — PARSE_VAR ends the declaration at that `;` (`_var_eq_step`) — so it marks
 # where (`_pair_sync_ti`, read by `_stmt_resync`); the annotation's own report at the `;` latched already, so that arm
 # marks unconditionally. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND NOT AFTER A REFUSED ANNOTATION: `var q: Q;` (Q a refused late struct) and `var q: Foo;` added
+# "uninitialized variable not allowed" to the annotation's error — the refusal left the variable a plain word, which
+# the rule reads as a scalar with no value; a struct local takes no initializer. The annotation was refused and names
+# no type (`_decl_ann_refd`): latched quietly, in sync, as the `var c: ;` arm is; the declaration registers (its uses
+# stand down through the annotation's mark). A type the annotation still names keeps the error (`var q: i64;`, `var
+# q: *Foo;` — a pointer needs its value either way). CHANGELOG [6.7.16]
 fn _decl_eq_err(S): i64 {
     if (PEEKT(S) == 5) {
         if (_tn_seen_at(S, GTI(S)) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        if (_decl_ann_refd(S) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
         _refuse_in_sync(S);
         ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
     }
     ERR_EXPECT(S, 4);
     return 0;
+}
+# 1 = the declaration whose `;` is at the cursor is `var NAME: T .. ;` and its annotation T was refused and names no
+# type (`_tup_ann_refd`: a name no type answers that was reported or that a refused declaration declared, or a token
+# that is no type, reported). Walked back to its `var` (a `;` / `{` / `}` first: not this shape).
+fn _decl_ann_refd(S): i64 {
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    if (k + 3 >= GTI(S)) { return 0; }
+    if (_tup_ann_refd(S, k + 3) == 0) { return 0; }
+    _had_error = 1;
+    return 1;
 }
 # ⛔ 6.7.16 — A BARE `var c;` / `var c: ;` ENDS AT ITS OWN `;`. PARSE_VAR's `=` step (the cursor where the `=` belongs)
 # stepped the `;` after the refusal and read the NEXT statement as the initializer; the resync then dropped that

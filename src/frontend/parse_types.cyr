@@ -3885,12 +3885,27 @@ fn _sizeof_type(S, asrt): i64 {
 # names and reports nothing, so each is reported once.
 fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     _dsc_param(S, GTI(S));   # 6.7.8 (D5): a declared scalar, stamped on its slot by `_param_record`
-    if (ptc != 0) { return 0; }
+    if (ptc != 0) { return _tn_byname_refd(S, pnoff); }
     var ti = GTI(S);
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse_var(S, ti, " for parameter ", pnoff);
+    return 0;
+}
+
+# 6.7.16 — a by-name handle (`s: Str`, `s: *Str`; Result, Option, Tagged) is accepted unread, so when the struct of
+# that name was declared by a refused declaration (a late `include "lib/str.cyr"`, `_dl_refd_at`) and no struct
+# answers it, the parameter took no annotation refusal and no mark: its `s.len` was "no struct type in scope for 's'"
+# after the inclusion's one error. It is marked as a refused annotation's variable (`_ann_refd_mark`), so its uses
+# stand down. A name a struct answers, or one no refused declaration declared, is untouched. CHANGELOG [6.7.16]
+fn _tn_byname_refd(S, pnoff): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    if (_dl_refd_at(S, noff) == 0) { return 0; }
+    _ann_refd_mark(S, pnoff);
     return 0;
 }
 

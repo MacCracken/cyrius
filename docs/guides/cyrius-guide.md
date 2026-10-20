@@ -546,7 +546,14 @@ var r = add(20, 22);   # r = 42
   (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
   `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
   6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
-  scope for 'q'", ...). A name declared nowhere is still reported.
+  scope for 'q'", ...). So do (6.7.16) `E.B` / `B` in a const context (a `case` label, a const, an array
+  size), a refused trait as a bound (`fn g<T: Tr>`), `var q: Q;` with no initializer (any refused
+  annotation with no initializer: the no-initializer rule is not said after it), a by-name `s: *Str`
+  parameter of a refused `include "lib/str.cyr"`, and a use parsed BEFORE the late declaration (an
+  earlier fn's `q: *Q`, a top-level const swept at the end of pass 1) — the names are known from pass 1.
+  A name declared nowhere is still reported. ⚠ A use inside the declaration zone itself (a zone global's
+  array size or enum value naming a late enum) is evaluated before the first statement is known, and is
+  still reported.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
