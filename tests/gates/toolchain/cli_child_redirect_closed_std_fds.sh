@@ -49,12 +49,13 @@
 #   6  STATIC census over cbt/**/*.cyr and programs/**/*.cyr, comments and string contents
 #      masked: an unguarded `sys_close(X)` as the statement right after `sys_dup2(X, N)` (further
 #      `sys_dup2(X, …)` of the same X in between are skipped — the both-streams form) is RED,
-#      naming file:line:fn. ALLOW names the sites another 6.7.16 lane owns (a row that matches no
-#      live site is RED: drop it when that lane lands). Self-test first: a fixture of 5 bad and 6
+#      naming file:line:fn. ALLOW names sites another lane owns (a row that matches no live site is
+#      RED: drop it when that lane lands — empty since the 6.7.16 wave-1 integration). Self-test first: a fixture of 5 bad and 6
 #      good shapes reads exactly the 5, a mutant of a good one is caught, and three LIVE mutants
 #      go RED naming their fn — compile()'s stdin redirect back to the unguarded pair,
 #      `_cbt_redirect`'s guard dropped, and shared.cyr `_exec_in_dir`'s both-streams guard
-#      dropped. Floors: >= 100 files, >= 15 sys_dup2 statements read.
+#      dropped. Floors: >= 100 files, >= 14 sys_dup2 statements read (15 before the tools lane folded
+#      cyrius-lsp's child redirects into one guarded `_lsp_redirect`; 14 at the wave-1 integration).
 #   7  a git dep (a local file:// origin tagged v1 and v2) with fd 0 closed: `cyrius deps` (the clone,
 #      then the cached clone re-verified through `hash-object --stdin-paths` — `_git_run`) rc 0 with
 #      the v1 file vendored, and `cyrius update` (`ls-remote --tags` — `_dep_wt_run`) rc 0 listing
@@ -199,17 +200,17 @@ for m in "cbt/build.cyr:compile:sfd" "cbt/core.cyr:_cbt_redirect:fd" "programs/c
     else fail "axis 6 live mutant: $f with ${rest%%:*}'s guard dropped is NOT caught"; fi
 done
 
-# The census of the tree. ALLOW: `file:fn` rows another 6.7.16 lane owns — programs/cyrius-lsp.cyr's
-# two child setups, which the tools lane (T4 / T5) rewrites and guards. Each row must still match
-# a live site; once that lane has landed, a row that matches nothing is RED — delete it then.
-ALLOW="programs/cyrius-lsp.cyr:_compile_via_wrapper_run
-programs/cyrius-lsp.cyr:compile_and_capture"
+# The census of the tree. ALLOW: `file:fn` rows another lane owns. Each row must still match a live
+# site; a row that matches nothing is RED — delete it then. EMPTY since the 6.7.16 wave-1 integration:
+# programs/cyrius-lsp.cyr's two child setups, allowed while the tools lane (T4 / T5) rewrote them,
+# now run through its guarded `_lsp_redirect`.
+ALLOW=""
 files=$(cd "$ROOT" && find cbt programs -name '*.cyr' -type f | sort)
 res=$(cd "$ROOT" && census $files)
 ndup=$(printf '%s\n' "$res" | sed -n 's/^#dup2 //p')
 nfil=$(printf '%s\n' "$res" | sed -n 's/^#files //p')
 [ "${nfil:-0}" -ge 100 ] || fail "axis 6 floor: ${nfil:-0} files read under cbt/ and programs/ (want >= 100)"
-[ "${ndup:-0}" -ge 15 ] || fail "axis 6 floor: ${ndup:-0} sys_dup2 statements read (want >= 15)"
+[ "${ndup:-0}" -ge 14 ] || fail "axis 6 floor: ${ndup:-0} sys_dup2 statements read (want >= 14)"
 bad=0; allowed=0
 for v in $(printf '%s\n' "$res" | grep -v '^#'); do
     key=$(printf '%s' "$v" | cut -d: -f1,3)
@@ -221,7 +222,7 @@ for a in $ALLOW; do
     printf '%s\n' "$res" | grep -v '^#' | cut -d: -f1,3 | grep -qx "$a" \
         || fail "axis 6: ALLOW row '$a' matches no unguarded site any more — delete it from this gate"
 done
-[ "$bad" = 0 ] && ok "axis 6: no unguarded sys_dup2 / sys_close pair in cbt/ or programs/ ($nfil files, $ndup sys_dup2 statements; $allowed allowed site(s) in the tools lane's cyrius-lsp)"
+[ "$bad" = 0 ] && ok "axis 6: no unguarded sys_dup2 / sys_close pair in cbt/ or programs/ ($nfil files, $ndup sys_dup2 statements; $allowed allowed site(s))"
 
 # ── build the tools from THIS tree ──
 B="$W/bin"; B2="$W/bin2"; H="$W/home"
