@@ -245,6 +245,64 @@ syscall(60, main());
 EOF
 chk "N2 (control: (0) + 1, (1), (0) + 0 still warn)" n2.cyr "assigning non-pointer to typed pointer" 6
 
+# SP (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a call declared
+# `: Str` returns the header's address, which is what a `*Str` holds, so a `: Str` call into a `*Str` declaration (in a
+# fn, the zone, after the first statement) or a `*Str` global's assignment is quiet, as the `*Str` local's assignment
+# already was (v6.5.28): SP0 the filed repro verbatim (2 warnings before, exit 20); SP1 the method forms (a local, a
+# global and a nested-field receiver, into a declaration and a global), the zone and after-the-first-statement
+# declarations and assignment (8 before, exit 112). The `: Q` / `: P1` / `**Str` controls are
+# tests/gates/diagnostics/typed_pointer_warn_sign.sh axis 16. Mutation: `_tp_call_pointee` answering 0 -> SP0 SP1 RED
+# (2 and 8 warnings).
+cat > "$D/sp0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var GP: *Str = 0;
+fn main(): i64 {
+    alloc_init();
+    var p: *Str = str_from("abcde");
+    GP = str_from("xyz");
+    var q: *Str = 0;
+    q = str_from("ab");
+    return str_len(p) * 100 + str_len(GP) * 10 + str_len(q);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+chk "SP0 (the filed repro verbatim: a : Str call into a *Str declaration and global)" sp0.cyr "assigning non-pointer to typed pointer" 0 20
+cat > "$D/sp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct H { name: Str; n; }
+struct W { h: H; k; }
+fn H_clone(self: H): Str { return str_from("hc"); }
+var _ai = alloc_init();
+var GZ: *Str = 0;
+var GP2: *Str = str_from("zone");
+var GH: H = alloc(16);
+fn main(): i64 {
+    var h: H = alloc(16);
+    h.name = str_from("nm");
+    h.n = 1;
+    GH.name = str_from("gh");
+    var w: W;
+    w.h.name = str_from("w");
+    w.k = 0;
+    var p: *Str = h.clone();
+    GZ = h.clone();
+    var g: *Str = GH.clone();
+    GZ = GH.clone();
+    var n: *Str = w.h.clone();
+    return str_len(p) + str_len(GZ) * 10 + str_len(GP2) * 20 + str_len(g) + str_len(n);
+}
+var z = 1;
+z = 2;
+var GP3: *Str = str_from("late");
+GP3 = str_from("later!");
+var r = main() + str_len(GP3);
+syscall(SYS_EXIT, r);
+EOF
+chk "SP1 (methods, a nested receiver, the zone, after the first statement)" sp1.cyr "assigning non-pointer to typed pointer" 0 112
+
 if [ "$fail" -ne 0 ]; then echo "FAIL false_warnings_valid_shapes: $fail row(s) red"; exit 1; fi
-echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a)); \`(0)\` wrapped whole is the null literal"
+echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a)); \`(0)\` wrapped whole is the null literal; a \`: Str\` call into a \`*Str\` is its pointer"
 exit 0

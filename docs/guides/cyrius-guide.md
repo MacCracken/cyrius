@@ -1265,7 +1265,10 @@ decision D59, 2026-10-18 — `var s: *i64 = "abcdefgh";`, `*f64`, `*i32`, a one-
 6.7.14). So is the literal plus or minus one integer operand (an integer or char literal, or a single name), and the
 literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`, `("xyz")`, `(("x"))`, `("abc") + 1`
 — through 6.7.14 each warned. Any other expression with a string in it (`"abc" + x * 2`) is judged as any value
-is. A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+is. A call declared `: Str` (a fn, or a method on a name) into a `*Str` is the header's address, the whole value
+up to the `;`, and never warns (6.7.16): `var p: *Str = str_from("ab");`, `GP = h.clone();` into a `*Str` global, a
+zone `var G: *Str = str_from("x");` — through 6.7.15 each warned, where `q = str_from("ab");` into a `*Str` local did
+not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word). A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
 not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured

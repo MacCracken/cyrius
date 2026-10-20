@@ -6958,6 +6958,7 @@ fn _tp_warn_gv(S, slot, st): i64 {
     if (GPSC(S) != 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_tn_seen_at(S, st) == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, slot)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
 }
 # PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
@@ -6967,7 +6968,60 @@ fn _tp_warn_gv(S, slot, st): i64 {
 fn _tp_warn_decl(S, ann, st): i64 {
     if (_ptr_refd_ti == ann) { return 0; }
     if (_scv_err == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _ptr_ann_sid_tp(S, ann)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
+}
+# `_PARSE_STMT_IMPL`'s assignment to a `*T` global `gvi` (the value at `st`, the cursor past it): the warning, unless
+# the value is a `: Str` call into a `*Str` global. CHANGELOG [6.7.16]
+fn _tp_warn_gasg(S, gvi, st): i64 {
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, gvi)) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# ⛔ 6.7.16 — A `: Str` CALL INTO A `*Str` IS ITS POINTER. A fn or method declared `: Str` returns the header's address
+# (a `Str` is a handle: `_rcv_big`), which is what a `*Str` holds, so `var p: *Str = str_from(..);`, a zone
+# `var G: *Str = str_from(..);` and `GP = str_from(..);` / `GP = h.clone();` into a `*Str` global no longer warn
+# "assigning non-pointer to typed pointer" — the `*Str` local's assignment was already quiet (`_asg_ret_sid`, v6.5.28)
+# (issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). 1 = the value from `st` to
+# its `;` is one call — a free fn (`f(..)`) or a method on a name, through nested struct fields (`h.m(..)`,
+# `w.h.m(..)`, `_asg_rhs_steps`) — whose declared return is `psid`, the destination's pointee, and that is `Str`. Any
+# other struct's call keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is
+# returned as its word, not an address; over 8 B is D14's refusal). Warning text only.
+fn _tp_call_pointee(S, st, psid): i64 {
+    if (st < 0) { return 0; }
+    if (psid <= 0) { return 0; }
+    if (psid != _STR_SID(S)) { return 0; }
+    if (TOKTYP(S, st) != 2) { return 0; }
+    var nt = TOKTYP(S, st + 1);
+    if (nt == 10) { return _tp_fcall_ret(S, st, psid); }
+    if (nt != 41) { return 0; }
+    if (_tp_ends_call(S, st) == 0) { return 0; }
+    if (_asg_rhs_steps(S, st + 1, _recv_sid(S, TOKVAL(S, st))) == psid) { return 1; }
+    return 0;
+}
+# ... the free call `f(..)` at `st`, the whole value: 1 = f is declared `: psid`.
+fn _tp_fcall_ret(S, st, psid): i64 {
+    var e = _tok_close_paren(S, st + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 5) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, st));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) == psid) { return 1; }
+    return 0;
+}
+# ... 1 = the value from `st` ends `)` before its `;`: a call, not a field read (`h.name`).
+fn _tp_ends_call(S, st): i64 {
+    var e = st;
+    var n = GTCNT(S);
+    while (e < n) {
+        var t = TOKTYP(S, e);
+        if (t == 5) {
+            if (TOKTYP(S, e - 1) == 11) { return 1; }
+            return 0;
+        }
+        if (t == 12) { return 0; }
+        e = e + 1;
+    }
+    return 0;
 }
 # A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
 # its `;`, as the replay would report.

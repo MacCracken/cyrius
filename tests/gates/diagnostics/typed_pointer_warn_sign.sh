@@ -404,5 +404,19 @@ tpx SL5 0 0 98 "a *i64 from (\"abc\") + 1 (D59 and the shape together)" 'fn main
 tpx SLK1 1 0 - "control: var p: *u8 = \"abc\" + x * 2; still warns (not one operand)" 'fn main(): i64 {\n    var x = 1;\n    var p: *u8 = "abc" + x * 2;\n    return 0;\n}\nsyscall(60, main());\n'
 tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 0; still warns" 'fn main(): i64 {\n    var p: *u8 = '"'"'a'"'"' + 0;\n    return 0;\n}\nsyscall(60, main());\n'
 
+# --- axis 16 (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md) ---
+# A `: Str` call into a `*Str` declaration or global is quiet now (tests/gates/diagnostics/false_warnings_valid_shapes.sh
+# SP0 SP1): `_tp_call_pointee` takes only a call whose declared return IS the pointee and that pointee a `Str` (a handle,
+# the header's address). These still warn: a `: Q1` call (an 8-byte struct, its word) into a `*Str` — a declaration in a
+# fn and in the zone, a global assignment, the method forms (SC1); a `: P1` call into a `*P1` (a struct of 8 B or less is
+# returned as its word, not an address — SC2); `str_from(..)` into a `**Str` (SC3); a `: Str` call that is not the
+# whole value (SC4). Mutation: `_tp_call_pointee` without its `Str` test -> RED SC2 and axis 12's z_8b (0 warnings, the
+# struct's word taken as an address); `_tp_fcall_ret` without its whole-value test -> RED SC4.
+SCH='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nstruct H { name: Str; n; }\nfn H_mq(self: H): Q1 { var q: Q1; q.a = 3; return q; }\nfn mkq(): Q1 { var q: Q1; q.a = 3; return q; }\nvar _ai = alloc_init();\n'
+tpx SC1 5 0 - "a : Q1 call into a *Str: a declaration, a global, the zone, the method forms (5 warnings)" "${SCH}var GP: *Str = 0;\nvar GQ: *Str = mkq();\nfn main(): i64 {\n    var h: H = alloc(16);\n    var p: *Str = mkq();\n    GP = mkq();\n    var m: *Str = h.mq();\n    GP = h.mq();\n    return 0;\n}\nsyscall(60, main());\n"
+tpx SC2 1 0 - "a : P1 call into a *P1 (an 8-byte struct's word, no address)" 'struct P1 { a; }\nfn mk1(): P1 { var p: P1; p.a = 7; return p; }\nfn main(): i64 { var o: *P1 = mk1(); return 0; }\nsyscall(60, main());\n'
+tpx SC3 2 0 - "str_from(..) into a **Str declaration and global" "${SCH}var GPP: **Str = 0;\nfn main(): i64 {\n    var pp: **Str = str_from(\"x\");\n    GPP = str_from(\"y\");\n    return 0;\n}\nsyscall(60, main());\n"
+tpx SC4 2 0 - "a : Str call that is not the whole value: str_from(..) + 0 into a *Str declaration and global" "${SCH}var GP: *Str = 0;\nfn main(): i64 {\n    var p: *Str = str_from(\"x\") + 0;\n    GP = str_from(\"y\") + 0;\n    return 0;\n}\nsyscall(60, main());\n"
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15)"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str (6.7.16)"
