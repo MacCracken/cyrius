@@ -14678,8 +14678,8 @@ fn _bbf_swap(): i64 {
     return 0;
 }
 # A carrier `name: [*]G<..>` (token ti on G's name): its entries, one per slot a type parameter of fi
-# takes whole.
-fn _gcr_note(S, fi, noff, ti): i64 {
+# takes whole. `pp` 256 for a `**G<..>` (6.7.16): its slot entries are 256 + slot, which `_gs_cfield` skips.
+fn _gcr_note(S, fi, noff, ti, pp): i64 {
     var j = ti + 2;
     var slot = 0;
     var d = 1;
@@ -14688,7 +14688,7 @@ fn _gcr_note(S, fi, noff, ti): i64 {
         var t = TOKTYP(S, j);
         if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return 0; }
         if (d == 1) { if (_gs_targ_whole(S, j) == 1) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) {
-                    _gcr_add(noff, TOKVAL(S, ti), slot);
+                    _gcr_add(noff, TOKVAL(S, ti), slot + pp);
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
@@ -14712,7 +14712,9 @@ fn _gs_cfield(S, i): i64 {
     var e = 0;
     while (e < _gcr_n) {
         if (load64(_gcr + e * 24) == noff) {
-            if (_gs_gfield_tp(S, load64(_gcr + e * 24 + 8), load64(_gcr + e * 24 + 16), TOKVAL(S, i + 2)) == 1) { return 1; }
+            if (load64(_gcr + e * 24 + 16) < 256) {   # 6.7.16: a `**G<..>` carrier has no fields (`_gs_pparam`)
+                if (_gs_gfield_tp(S, load64(_gcr + e * 24 + 8), load64(_gcr + e * 24 + 16), TOKVAL(S, i + 2)) == 1) { return 1; }
+            }
         }
         e = e + 1;
     }
@@ -14847,6 +14849,7 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
     if (TOKTYP(S, i + 1) != 49) { return pk; }
     var ti = i + 2;
     if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) == 8) { return _gs_pparam(S, fi, i, ti, pc, pk); }   # 6.7.16: `**G<..T..>`
     if (TOKTYP(S, ti) != 2) { return pk; }
     if (pc > 254) { return pk; }
     var tp = GFTP(S, fi);
@@ -14860,10 +14863,25 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
         if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
     }
     if (TOKTYP(S, ti + 1) == 19) {
-        _gcr_note(S, fi, TOKVAL(S, i), ti);   # 6.7.11: `b.v.y` (`_gs_cfield`)
-        pk = _gs_carrier(S, fi, ti, pc, pk);   # 6.7.8: `G<..T..>`
+        _gcr_note(S, fi, TOKVAL(S, i), ti, 0);   # 6.7.11: `b.v.y` (`_gs_cfield`)
+        pk = _gs_carrier(S, fi, ti, pc, pk, 0);   # 6.7.8: `G<..T..>`
     }
     return pk;
+}
+# ⛔ 6.7.16 — A `**G<..T..>` PARAMETER CARRIES T (two stars or more: `pp: **Box<T>`, `ppp: ***Box<T>`). `_gs_param`
+# skipped one `*`, so it recorded no carrier: `nb(&q)` with `q: *Box<Pt>` inferred i64 and ran the base, reading
+# `Box<Pt>.n` at `Box<i64>`'s offset (`Pt.y`, silently), where `nb<Pt>(&q)` reads n. The carrier is recorded as a
+# `*G<..T..>` one with bit 9 set (`_gs_carrier`), and a call reads its WHOLE argument through its pointers
+# (`_gen_infer_sc`: `_ic_pp_arg`, as a `pp: **T` reads its own). Token `ti` is the parameter's second `*`. Its name is
+# a carrier the forward scan follows (`_gs_carries`), never a `b.v.y` one: a `**` has no fields (`_gs_cfield`).
+# CHANGELOG [6.7.16]
+fn _gs_pparam(S, fi, i, ti, pc, pk): i64 {
+    while (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return pk; }
+    if (TOKTYP(S, ti + 1) != 19) { return pk; }
+    if (pc > 254) { return pk; }
+    _gcr_note(S, fi, TOKVAL(S, i), ti, 256);
+    return _gs_carrier(S, fi, ti, pc, pk, 512);
 }
 # ⛔ 6.7.8 — A STRUCT CARRIER. `fn gx<T>(b: Box<T>)` gave T no carrying parameter, so
 # `gx(b)` with `b: Box<Pt>` inferred i64 and called the base (`b: Box`) — refused as a struct
@@ -14872,13 +14890,13 @@ fn _gs_param(S, fi, i, pc, pk): i64 {
 # T a WHOLE type argument at depth 1, now carries T through G's slot — both alike: a value or a
 # pointer argument binds T (`_gsc_arg`; 6.7.9 the by-value carrier's pointer too).
 # Per type parameter w, a 20-bit field of GFGM at bit 24 + 20w (bits 0-23 keep their meaning):
-#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 unused (6.7.8's `*`) ·
-#   bits 10-19 G's name token as an offset from the list's `(` — G is looked up when a call
-#   infers, so a struct declared below the fn is found.
+#   bits 0-7 the parameter's index + 1 · bit 8 T's slot in G · bit 9 a `**G<..>` (6.7.16, `_gs_pparam`;
+#   the stars are counted back from G's name) · bits 10-19 G's name token as an offset from the list's `(`
+#   — G is looked up when a call infers, so a struct declared below the fn is found.
 # The first carrying parameter wins, as for a direct carrier; a direct carrier wins over this one
 # (`_gen_infer_tp`). `Box<Pair<T>>` (T nested) records nothing — its refusal stands.
 # CHANGELOG [6.7.8]
-fn _gs_carrier(S, fi, ti, pc, pk): i64 {
+fn _gs_carrier(S, fi, ti, pc, pk, pb): i64 {
     var off = ti - _gs_open;
     if (off > 1023) { return pk; }
     var tp = GFTP(S, fi);
@@ -14890,7 +14908,7 @@ fn _gs_carrier(S, fi, ti, pc, pk): i64 {
         var t = TOKTYP(S, j);
         if (t == 12 || t == 10 || t == 11 || t == 13 || t == 5) { return pk; }
         if (d == 1) { if (slot < 2) { if (_gs_targ_whole(S, j) == 1) {
-                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | (off << 10));
+                    pk = _gs_sc_rec(pk, TOKVAL(S, j), tp, (pc + 1) | (slot << 8) | pb | (off << 10));
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
@@ -14945,15 +14963,23 @@ fn _gs_scan(S, fi, i, mode): i64 {
     return 0;
 }
 # `var x: T` / `var x: *T` at token i: x is T-typed from here on. 6.7.11: `var x: [*]G<..T..>` is a
-# carrier (`_gcr_note`).
+# carrier (`_gcr_note`); 6.7.16: `var x: **G<..T..>` one the forward scan follows (`_gs_pparam`).
 fn _gs_var(S, fi, i): i64 {
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     if (TOKTYP(S, i + 2) != 49) { return 0; }
     var ti = i + 3;
     if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) == 8) { return _gs_ppvar(S, fi, i + 1, ti); }
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { _gsn_add(TOKVAL(S, i + 1)); }
-    if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, i + 1), ti); }
+    if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, i + 1), ti, 0); }
+    return 0;
+}
+# ... `var x: **G<..T..>` (x at token ni, ti on the second `*`). CHANGELOG [6.7.16]
+fn _gs_ppvar(S, fi, ni, ti): i64 {
+    while (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, ni), ti, 256); }
     return 0;
 }
 fn _gs_use(S, fi, i, mode): i64 {
@@ -15437,13 +15463,19 @@ fn _gen_infer_tp(S, fi, open, which): i64 {
 # — today's base, and its refusal. A scalar other than i64 (`b: Box<i32>`) marks `_gi_sc`, so the
 # call instantiates `gx$i32` as `gx<i32>(b)` does (its base takes a `Box`: a different layout).
 # `mth` 1: a method call, whose list starts at parameter 1 (`_mcall_infer`, 6.7.11). CHANGELOG [6.7.8]
+# ⛔ 6.7.16 — a `**G<..T..>` carrier (bit 9, `_gs_pparam`) reads its whole argument through its pointers, as a
+# `pp: **T` does (`_ic_pp_arg`, its stars `_gsc_stars`: `&q` of a `*G<X>`, a `**G<X>` name, field or call, one pointee
+# down per star past two); a G<X> there binds X, anything else i64. It ran the base. CHANGELOG [6.7.16]
 fn _gen_infer_sc(S, fi, open, f, mth): i64 {
     var k = f & 255;
     if (k <= mth) { return 0 - 8; }
     var a = _call_arg_pk(S, fi, open, k - 1, k - 1 - mth);
     if (a < 0) { return 0 - 8; }
-    var c = _gsc_arg(S, a);
-    var r = _sinst_conc(S, c, _gsc_g(S, fi, f >> 10), (f >> 8) & 1);
+    var off = (f >> 10) & 1023;
+    var c = 0;
+    if (((f >> 9) & 1) == 1) { c = _ic_pp_arg(S, a, _gsc_stars(S, fi, off)); }
+    else { c = _gsc_arg(S, a); }
+    var r = _sinst_conc(S, c, _gsc_g(S, fi, off), (f >> 8) & 1);
     if (r == 0) { return 0 - 8; }
     if (r < 0) { if (r != 0 - 8) { _gi_sc = 1; } }
     return r;
@@ -15454,6 +15486,15 @@ fn _gen_sc_inst(S, fi): i64 {
     if (_gi_sc == 0) { return 0; }
     if (_gen_stub(S, fi) != 0) { return 0; }
     return 1;
+}
+# The stars before the generic struct a carrier names (its name token `off` past fi's `(`). CHANGELOG [6.7.16]
+fn _gsc_stars(S, fi, off): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    var j = o + off - 1;
+    var d = 0;
+    while (TOKTYP(S, j) == 8) { d = d + 1; j = j - 1; }
+    return d;
 }
 # The generic struct G a struct carrier names: its name token is `off` past fi's `(`. 0 when it is
 # not a generic struct.

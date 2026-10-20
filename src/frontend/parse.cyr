@@ -590,6 +590,7 @@ fn _tok_call_whole(S, at): i64 {
 # Anything else answers 0 — a missed flag, never a false one.
 fn _tok_gen_sc_sid(S, a, i, j, fi, f): i64 {
     if ((f & 255) == 0) { return 0; }
+    if (((f >> 9) & 1) == 1) { return 0; }   # 6.7.16: a `**G<..>` carrier, unread here
     var at = _call_arg_for(S, fi, j + 1, (f & 255) - 1);
     if (at < 0) { return 0; }
     var g = _gsc_g(S, fi, (f >> 10) & 1023);
@@ -758,6 +759,7 @@ fn _tok_tp_byarg(S, a, i, o, fi, w, g, f): i64 {
 # X at (g, f) in U is the X at (G', slot') and then (g, f) in b's argument — the current step pushed.
 fn _tok_sc_carry(S, a, i, o, fi, fc, g, f): i64 {
     if ((fc & 255) == 0) { return 0; }
+    if (((fc >> 9) & 1) == 1) { return 0; }   # 6.7.16: a `**G<..>` carrier, unread here
     var at = _call_arg_for(S, fi, o, (fc & 255) - 1);
     if (at < 0) { return 0; }
     var g2 = _gsc_g(S, fi, (fc >> 10) & 1023);

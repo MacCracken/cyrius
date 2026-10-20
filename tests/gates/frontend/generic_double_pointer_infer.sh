@@ -46,6 +46,30 @@
 #      `**pp` as the struct value (a declaration copy, a by-value argument: 77), B3 the `<Pt>` instances, `**pp` read
 #      through the instance's own pin (n at 16: 99), B4 a concrete `**Box<Pt>` parameter (11, unchanged) — every leg; more rows are
 #      tests/tcyr/crossos/double_pointer_struct_value.tcyr's gb_* (small_struct_handle_line.sh R16)
+#   G  (6.7.16, issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md) a `pp: **Box<T>`
+#      parameter CARRIES T from its argument, as `p: *Box<T>` does: `_gs_param` read one `*`, so `nb(&q)` with
+#      `q: *Box<Pt>` inferred nothing and ran the i64 base, reading `Box<Pt>.n` at `Box<i64>`'s offset (Pt.y). The
+#      carrier is recorded with GFGM bit 9 (`_gs_pparam`) and a call reads its whole argument through its pointers
+#      (`_gen_infer_sc` -> `_ic_pp_arg`, one pointee down per star past two). G1 the filed repro verbatim prints 99916
+#      (92916 before); G2 a **Box<Pt> parameter, field, `: **Box<Pt>` call, `***Box<T>` from `&qq` and a generic
+#      method, 9 each (45; 18 before); G3 a forwarder passing its `pp` (a parameter, a `**Box<T>` local) into a stub
+#      generic is a stub (77; refused "generic 'st' has no i64 instance" before) — on every leg; GK1 `pp.v.n` on a
+#      `**Box<T>` stays refused in an uncalled generic, GK2 a `*Pt`'s `&ps` binds nothing (8). More rows:
+#      tests/tcyr/crossos/generic_ptr_struct_source.tcyr's pq_* (small_struct_handle_line.sh R12).
+# (2026-10-20, 6.7.16 — the G rows; a scratch copy of the tree with the one change, its 2-stage cycc, CYCC= it:)
+#   MG1 the tree before (03f7ab003)                       -> RED 15: G1 (92916), G2 (10) and G3 (refused "generic 'st'
+#                                                            has no i64 instance") on every leg; the tcyr's pq_* 88s
+#   MG2 `_gs_pparam` without its `_gcr_note`               -> RED 5: G3 on every leg (the forward unseen); the tcyr refused
+#   MG3 `_gs_ppvar` noting nothing                        -> RED 5: G3 (fl's `**Box<T>` local) on every leg; the tcyr
+#                                                            refused
+#   MG4 `_gen_infer_sc` reading a bit-9 carrier as `*G<..>` -> RED 15, as MG1 (G3: "generic 'fw' has no i64 instance");
+#                                                            the tcyr refused
+#   MG5 `_gsc_stars` answering 2                           -> RED 5: G2 (38: n3's `***Box<T>` read one pointee short)
+#                                                            on every leg; the tcyr's pq_deep (88088)
+#   MG7 the `**` carrier's entries untagged (`_gcr_note(.., 0)`) -> RED 1: GK1 (rc 0 — `pp.v.n` read as a struct use
+#                                                            of T made `bad` a stub, its refusal unprinted)
+#   MG6 `_gs_cfield` without its `< 256` test              -> GREEN: `_gs_gtp` reads no slot 256 + n either, so the tag
+#                                                            alone keeps a `**` carrier out (the test is for the reader)
 #
 # MUTATION LEDGER (2026-10-17; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run FROM
 # that copy with CYCC= it, so every leg's compiler carries the mutant):
@@ -325,6 +349,86 @@ syscall(60, main());
 X
 xr D3 "$D/d3.cyr" 42 "t4(p4) of a ****P3 and t3(&pps) of a **P3"
 
+echo "G. a pp: **Box<T> parameter carries T (6.7.16)"
+# xo <id> <src> <want> <what>: exit 0 and the last line printed, on every leg
+xo() {
+    for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+        n=$(printf '%s_%s' "$1" "$leg" | tr -c 'a-zA-Z0-9' '_')
+        run_leg "$leg" "$2" "$D/o_$n"
+        if [ "$RC" -eq -1 ]; then bad "$1 $leg: $4 did not build: $(grep -m1 'error' "$D/o_$n.err")"
+        elif [ "$RC" -eq 0 ] && [ "$LAST" = "$3" ]; then ok "$1 $leg: $4 prints $3"
+        else bad "$1 $leg: $4 exits $RC, prints '$LAST', want '$3'"; fi
+    done
+}
+# G1 the filed repro, verbatim (issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md).
+cat > "$D/g1.cyr" <<'X'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn n1<T>(p: *Box<T>): i64 { return p.n; }
+fn nb<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; }
+fn np<T>(pp: **T): i64 { return sizeof(T); }
+fn main(): i64 {
+    var y: Box<Pt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *Box<Pt> = &y;
+    var pt: Pt; pt.x = 1; var ppt: *Pt = &pt;
+    fmt_int(n1(q)); fmt_int(nb(&q)); fmt_int(nb<Pt>(&q)); fmt_int(np(&ppt));
+    return 0;
+}
+syscall(60, main());
+X
+xo G1 "$D/g1.cyr" 99916 "the filed repro: n1(q) nb(&q) nb<Pt>(&q) np(&ppt)"
+# G2 every source of a **Box<Pt>, each nb 9 (2 when the i64 base reads Pt.y): a **Box<Pt> parameter, a field, a
+# `: **Box<Pt>` call, `***Box<T>` from `&qq`, a generic method's `pp: **Box<T>`
+cat > "$D/g2.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct HB { k; qq: **Box<Pt>; }
+var GQ: *Box<Pt> = 0;
+fn nb<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; }
+fn n3<T>(ppp: ***Box<T>): i64 { var b: *Box<T> = **ppp; return b.n; }
+impl Pt { fn mb<T>(self, pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; } }
+fn via(qq: **Box<Pt>): i64 { return nb(qq); }
+fn mk(): **Box<Pt> { return &GQ; }
+fn main(): i64 {
+    var y: Box<Pt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *Box<Pt> = &y; GQ = &y;
+    var h: HB; h.qq = &q; var qq: **Box<Pt> = &q; var p: Pt;
+    return via(&q) + nb(h.qq) + nb(mk()) + n3(&qq) + p.mb(&q);
+}
+syscall(60, main());
+X
+xr G2 "$D/g2.cyr" 45 "nb through a **Box<Pt> parameter, field, : **Box<Pt> call, n3(&qq), p.mb(&q) (9 each)"
+# G3 a forwarder's `pp` passed into a stub `fn st<T>(pp: **Box<T>)` whose body reads `b.v.y` (T as a struct): the
+# forwarder is a stub too, so its base is not emitted ("generic 'st' has no i64 instance" at fw's call before)
+cat > "$D/g3.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn st<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.v.y; }
+fn fw<T>(pp: **Box<T>): i64 { return st(pp); }
+fn fl<T>(pp: **Box<T>): i64 { var qq: **Box<T> = pp; return st(qq); }
+fn main(): i64 { var y: Box<Pt>; y.v.y = 7; y.n = 9; var q: *Box<Pt> = &y; return fw(&q) * 10 + fl(&q); }
+syscall(60, main());
+X
+xr G3 "$D/g3.cyr" 77 "fw(&q) / fl(&q) forward a **Box<T> parameter / local into a stub (v.y 7)"
+# GK the controls (x86_64): a `pp.v.y` on a `pp: **Box<T>` is still refused in an uncalled generic (a `**` has no
+# fields, so the carrier is no struct use of T), and `nb(&ps)` of a `*Pt` into `**Box<T>` binds nothing (the base)
+printf '%s\n' 'include "lib/syscalls.cyr"' 'struct Box<T> { v: T; n; }' \
+    'fn bad<T>(pp: **Box<T>): i64 { return pp.v.n; }' 'syscall(60, 1);' > "$D/gk1.cyr"
+"$CC" < "$D/gk1.cyr" > "$D/gk1" 2> "$D/gk1.err"; r=$?
+if [ "$r" -ne 0 ] && [ "$(grep -c "no struct type in scope for 'pp'" "$D/gk1.err")" -eq 1 ]; then ok "GK1: pp.v.n on a pp: **Box<T> refused once (uncalled)"
+else bad "GK1: pp.v.n on a pp: **Box<T>: rc $r, $(grep -m1 '^error' "$D/gk1.err")"; fi
+cat > "$D/gk2.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn nb<T>(pp: **Box<T>): i64 { return sizeof(T); }
+fn main(): i64 { var p: Pt; var ps: *Pt = &p; return nb(&ps); }
+syscall(60, main());
+X
+xr GK2 "$D/gk2.cyr" 8 "nb(&ps) of a *Pt binds nothing (the base, sizeof 8)"
+
 echo "T. $TC ($N rows, $NGI GI / GK / GW / GD)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
@@ -336,4 +440,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a \`pp: **Box<T>\` parameter (B, 6.7.15), a wrapped or computed argument (W, D22 A / D23 A), a \`***T\` and deeper (D, D24 A) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"
+echo "PASS: $G — a \`pp: **T\` parameter binds T from a \`**S\` argument (D40 A): the filed repros (R), a \`**P3\` parameter (P), a generic method (M), the explicit spelling (E), a \`**i32\` / \`**f64\` (S, D11 (a)), a \`pp: **Box<T>\` parameter (B, 6.7.15), a wrapped or computed argument (W, D22 A / D23 A), a \`***T\` and deeper (D, D24 A), a \`pp: **Box<T>\` carries T (G, 6.7.16) and $N rows (T) on x86_64 / IR / aarch64 / cx / PE"

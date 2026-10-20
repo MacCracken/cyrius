@@ -7228,8 +7228,14 @@ direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from 
 A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
 as the body reads `Box<T>` — at the base `Box<i64>`, in an instance its own `Box<..>`, so `**pp`
 is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with `q: *Box<Pt>`
-(through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). ⚠ It
-infers nothing yet: `nb(&q)` runs the `i64` base (filed) — write `nb<Pt>(&q)`.
+(through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). It
+carries `T` as `p: *Box<T>` does (6.7.16): a call reads its whole argument through its pointers,
+as a `pp: **T` reads its own — `&q` of a `*Box<Pt>`, a `**Box<Pt>` local, parameter, global,
+field or `: **Box<Pt>` call, wrapped — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
+`nb$Pt` as `nb<Pt>(&q)` does; a `ppp: ***Box<T>` reads one pointee down per extra star, a
+`Pair<i64, T>` its slot, a `Box<i32>` its scalar, on a free call and a generic method alike.
+Through 6.7.15 `nb(&q)` ran the `i64` base and read `Box<Pt>.n` at `Box<i64>`'s offset. Anything
+else (`&ps` of a `*Pt`, a `*Box<Pt>` into `**Box<T>`) binds nothing.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
