@@ -3616,9 +3616,10 @@ pass a bool …*. The words name the argument's value: a boolean value (§ bool)
 one is not: `take((1 == 1) + 1)` and `take(!0 + 1)` are *an integer*. A float literal is a literal
 too (6.7.16, the user's decision of 2026-10-19; until then it compiled and the callee read through the
 double's bits): `take(1.5)`, `take(-1.5)`, `take((2.0))`, `take(1.5 + 1)` — *cannot pass an f64 to
-tuple parameter …* — with the value typed as the operators type it: a float comparison,
-`take(1.5 < 2.0)`, is *a bool*, and `take(1 + 1.5)` (an integer add of 1.5's bits: binary operators
-are typed by their left operand) or `take(1.5 & 1)` *an integer*. A name (a const too, an `f64` one
+tuple parameter …* — an f64 being the value the compiler types f64 ([Types](#types)): `take(1 + 1.5)`
+and `take(2 * 1.5)` too (integer arithmetic on 1.5's bits, whose result keeps the f64 type), and
+`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` *an integer*
+(`& | ^ % << >> >>>` give an integer). A name (a const too, an `f64` one
 included), `&t` and a one-value call such as `take(one(3))` are words like any other and are passed
 as the address; it is the caller's to make it one.
 

@@ -662,11 +662,15 @@ refused4 r17x13 "2:27: $LIT" "R17x13: control — \`take(-(1 == 1))\` stays an i
 # R17y (6.7.16, D23, the user's decision of 2026-10-19; issues/2026-10-18-tuple-parameter-float-literal-dereferenced.md)
 # — a FLOAT literal is a literal too: \`take(1.5)\`, \`take(-1.5)\`, \`take((2.0))\` and \`take(1.5 + 1)\` compiled and the
 # callee read through the double's bits (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE) — \`_tal_scan\` took no token
-# 61. Refused as "an f64" when the value is one (a float literal, \`-\` of one, \`+ - * /\` with one on the LEFT); a float
-# comparison is "a bool" (R17y7), and \`take(1 + 1.5)\` — an integer add of 1.5's bits, the guide's left-operand rule —
-# "an integer" (R17y8). A name exempts it, an \`f64\` const too (R17y11, compiled, not taken). Mutations (2026-10-20,
-# every leg): \`_tal_scan\` without token 61 -> R17y1-R17y10 BUILD (R17y11 holds); \`_tty_prim\` reading a float literal as
-# an integer (class 1) -> R17y1-R17y6, R17y9, R17y10 name "an integer".
+# 61. Refused as "an f64" when the compiler types the value f64 (D23: "an f64 when the compiler sees one"): a float
+# literal, \`+ - * /\` with one on EITHER side (R17y8, R17y12-R17y14: \`1 + 1.5\` adds 1.5's bits as an integer, but its
+# result keeps the f64 type, guide § f64), \`-\` / \`~\` over one (R17y15), a saturating link whose right operand is one
+# (R17y16); a float comparison is "a bool" (R17y7), and \`1.5 & 1\` (6.7.13's D12) or a saturating link with an integer
+# right operand "an integer" (R17y17, R17y18, R17y18b). A name exempts it, an \`f64\` const too (R17y11, compiled, not taken).
+# Mutations (2026-10-20, every leg): \`_tal_scan\` without token 61 -> R17y1-R17y10 BUILD (R17y11 holds); \`_tty_prim\`
+# reading a float literal as an integer (class 1) -> R17y1-R17y6, R17y9, R17y10 name "an integer"; \`_tty_bin\` typing a
+# link by its LEFT operand only (the lane's first reading) -> RED 24: R17y8, R17y12-R17y14b, R17y16 name "an integer";
+# \`_tty_un\` giving \`~\` an integer -> RED 4: R17y15 names "an integer".
 F64T="cannot pass an f64 to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple"
 refused4 r17y1 "2:27: $F64T" "R17y1: the issue's \`take(1.5)\` verbatim" "${TW}fn f(): i64 { return take(1.5); }\nsyscall(60, f());\n"
 refused4 r17y2 "2:27: $F64T" "R17y2: \`take(-1.5)\`" "${TW}fn f(): i64 { return take(-1.5); }\nsyscall(60, f());\n"
@@ -675,10 +679,19 @@ refused4 r17y4 "2:27: $F64T" "R17y4: \`take(1.5 + 1)\`" "${TW}fn f(): i64 { retu
 refused4 r17y5 "2:18: $F64T" "R17y5: at top level, \`take(2.5)\`" "${TW}syscall(60, take(2.5));\n"
 refused4 r17y6 "2:27: $F64T" "R17y6: a float constant expression, \`take(2.0 * 1.5)\`" "${TW}fn f(): i64 { return take(2.0 * 1.5); }\nsyscall(60, f());\n"
 refused4 r17y7 "2:27: $BOOLT" "R17y7: a float comparison, \`take(1.5 < 2.0)\`, is a bool" "${TW}fn f(): i64 { return take(1.5 < 2.0); }\nsyscall(60, f());\n"
-refused4 r17y8 "2:27: $LIT" "R17y8: \`take(1 + 1.5)\` is an integer (typed by its left operand)" "${TW}fn f(): i64 { return take(1 + 1.5); }\nsyscall(60, f());\n"
+refused4 r17y8 "2:27: $F64T" "R17y8: \`take(1 + 1.5)\` is an f64 (the mix's result keeps the f64 type)" "${TW}fn f(): i64 { return take(1 + 1.5); }\nsyscall(60, f());\n"
 refused4 r17y9 "3:46: cannot pass an f64 to tuple parameter 't' (i64, i64) of 'X.take'" "R17y9: a method's tuple parameter, \`x.take(1.5)\`" 'struct X { v; }\nimpl X { fn take(self, t: (i64, i64)): i64 { return t.0 * 10 + t.1; } }\nfn f(): i64 { var x = X { 0 }; return x.take(1.5); }\nsyscall(60, f());\n'
 refused4 r17y10 "2:31: cannot pass an f64 to tuple parameter 't' (i64, i64) of 'take2'" "R17y10: the second argument, \`take2(1, 0.5)\`" 'fn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn f(): i64 { return take2(1, 0.5); }\nsyscall(60, f());\n'
 exits4 r17y11 34 "R17y11: control — an \`f64\` const name \`take(F)\` compiles (a name is a word; compiled, not taken)" "const F = 1.5;\n${TW}fn f(x): i64 { var t: (i64, i64) = (3, 4); if (x == 0) { return take(F); } return take(&t); }\nsyscall(60, f(1));\n"
+refused4 r17y12 "2:27: $F64T" "R17y12: \`take(2 * 1.5)\`, an f64 on the right of \`*\`" "${TW}fn f(): i64 { return take(2 * 1.5); }\nsyscall(60, f());\n"
+refused4 r17y13 "2:27: $F64T" "R17y13: \`take(1 / 1.5)\`" "${TW}fn f(): i64 { return take(1 / 1.5); }\nsyscall(60, f());\n"
+refused4 r17y14 "2:27: $F64T" "R17y14: \`take(-(1 + 1.5))\`" "${TW}fn f(): i64 { return take(-(1 + 1.5)); }\nsyscall(60, f());\n"
+refused4 r17y14b "2:27: $F64T" "R17y14b: \`take(2 -% 1.5)\`, a wrapping operator" "${TW}fn f(): i64 { return take(2 -% 1.5); }\nsyscall(60, f());\n"
+refused4 r17y15 "2:27: $F64T" "R17y15: \`take(~1.5)\` (\`~\` keeps the f64 type)" "${TW}fn f(): i64 { return take(~1.5); }\nsyscall(60, f());\n"
+refused4 r17y16 "3:27: $F64T" "R17y16: \`take(2 +| 1.5)\`, a saturating link's result keeps its right operand's type" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 +| 1.5); }\nsyscall(60, f());\n"
+refused4 r17y17 "3:27: $LIT" "R17y17: control — \`take(1.5 +| 1)\` is an integer" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(1.5 +| 1); }\nsyscall(60, f());\n"
+refused4 r17y18 "2:27: $LIT" "R17y18: control — \`take(1.5 & 1)\` is an integer (6.7.13's D12)" "${TW}fn f(): i64 { return take(1.5 & 1); }\nsyscall(60, f());\n"
+refused4 r17y18b "2:27: $LIT" "R17y18b: control — \`take(-!1.5)\` is an integer (\`!\` clears the type)" "${TW}fn f(): i64 { return take(-!1.5); }\nsyscall(60, f());\n"
 # R17z (6.7.16) — tokens of literals and operators that are NO SINGLE EXPRESSION are not judged: \`take(1 < 2 < 3)\` (one
 # comparison per operand), \`take(1 == 1 == 1)\` and \`take((1 +) - 2)\` printed "cannot pass an integer to tuple parameter"
 # in front of the parse's own error (two errors for one mistake, the first naming the wrong one); the parse reports it
