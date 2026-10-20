@@ -949,17 +949,30 @@ fn _mret_zero(S, fi): i64 {
 # `_refuse_struct_tuple_return`; D22 A, the user's decision, 2026-10-15): over 16 B the result pointer
 # was never written, at 8 B or less the second value was dropped, at 9-16 B the words came back by ABI
 # coincidence only. `_ret2_in_struct`, once and in sync; a dyn keeps `_mret_land`'s V7 text.
+# ⛔ 6.7.16 — AFTER ITS ARGUMENTS: each refusal was printed at the `ret2` before `(a, b)` was parsed, so `ret2(zz, 1);`
+# in a struct fn or a vector fn (and `return ret2(zz, 1);` in a struct fn), outside a fn or in a 3-value fn was the
+# refusal AND "undefined variable 'zz'" — the arguments' own error comes alone now, as a `return`'s value's does
+# (`_pair_ret_late`). `_ret2_ctx` answers the landing (1 = none: outside a fn), `_ret2_late` refuses once the arguments
+# are parsed, unless they reported an error (`_err_n` since `en`). CHANGELOG [6.7.16]
 fn _ret2_ctx(S, ti): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    return 1;
+}
+fn _ret2_late(S, ti, en): i64 {
+    if (_err_n != en) { return 0; }
     if (GINFN(S) == 1) {
         _ret2_in_struct(S, ti);
         _ret2_in_vector(S, ti);   # 6.7.14 (D43)
         return _ret2_in3(S, ti);
     }
-    if (_tn_once(S, ti) == 0) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 0; }
     var p0 = _panic;
+    var sv = GTI(S);
+    STI(S, ti);
     ERR_MSG(S, "ret2 outside a fn body", 22);
+    STI(S, sv);
     if (p0 == 0) { _panic = 0; }
-    return 1;
+    return 0;
 }
 fn _ret2_in3(S, ti): i64 {
     if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }

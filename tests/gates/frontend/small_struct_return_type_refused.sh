@@ -862,8 +862,30 @@ errs4 "TUC4 control: an earlier statement in error, then return (1, 2);" 'struct
 fn mk(q: *Q): Q { var a = yy; return (1, 2); }'"$TM" "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" \
     "error:<source>:2:38: $TT\`(a, b)\` is a tuple, another type"
 
+# 6.7.16 (met with them) — AND `ret2(a, b)`'s refusals (`_ret2_late`): in a struct fn (6.7.13's D22), a vector fn (6.7.14's
+# D43), a 3-value fn (D21) and outside a fn (D20) each was printed at the `ret2` before its arguments were parsed, so
+# `ret2(zz, 1);` was the refusal AND "undefined variable 'zz'". After the arguments now, unless they reported an error:
+# the arguments' error alone (R2E1-R2E5); arguments that parse keep the refusal (R2C1-R2C4). Mutation (2026-10-20,
+# measured):
+#   `_ret2_late` refusing whatever the arguments reported (its `_err_n` test removed) -> RED 20: R2E1-R2E5 on the four
+#       legs
+RQ='struct Q { v; w; }
+'
+errs4 "R2E1 return ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { return ret2(zz, 1); }'"$TM" "error:<source>:2:33: $UZ"
+errs4 "R2E2 ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { ret2(zz, 1); }'"$TM" "error:<source>:2:26: $UZ"
+errs4 "R2E3 ret2(zz, 1); (f64v2)" "$RQ"'fn mk(q: *f64v2): f64v2 { ret2(zz, 1); }'"$TM" "error:<source>:2:34: $UZ"
+errs4 "R2E4 ret2(zz, 1); in a 3-value fn" "$RQ"'fn mk(q): (i64, i64, i64) { if (q == 1) { ret2(zz, 1); } return (1, 2, 3); }'"$TM" \
+    "error:<source>:2:50: $UZ"
+errs4 "R2E5 ret2(zz, 1); outside a fn" "$RQ"'ret2(zz, 1);'"$TM" "error:<source>:2:8: $UZ"
+errs4 "R2C1 control: ret2(1, 2); keeps the refusal (16 B)" "$RQ"'fn mk(q: *Q): Q { ret2(1, 2); }'"$TM" \
+    "error:<source>:2:19: $TT\`ret2\` writes two values"
+errs4 "R2C2 control: ret2(1, 2); keeps it (f64v2)" "$RQ"'fn mk(q: *f64v2): f64v2 { ret2(1, 2); }'"$TM" "error:<source>:2:27: $VR \`ret2\`"
+errs4 "R2C3 control: ret2(1, 1); keeps it in a 3-value fn" "$RQ"'fn mk(q): (i64, i64, i64) { if (q == 1) { ret2(1, 1); } return (1, 2, 3); }'"$TM" \
+    "error:<source>:2:43: 'mk' returns 3 values - return (a, b, c)"
+errs4 "R2C4 control: ret2(1, 2); keeps it outside a fn" "$RQ"'ret2(1, 2);'"$TM" "error:<source>:2:1: ret2 outside a fn body"
+
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 153 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 153) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 162 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 162) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

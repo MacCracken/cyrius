@@ -1872,7 +1872,8 @@ refusal alone (it added "multi-value return needs 2 or 3 types").
 
 The builtin `ret2(a, b)` is the same two values, so it is refused there the same way, in every class and
 `return ret2(..);` too (6.7.13, the user's decision of 2026-10-15): ``a fn returning the struct `P3`
-returns that struct — `ret2` writes two values``. It compiled through 6.7.12 with the same three
+returns that struct — `ret2` writes two values`` — printed once its arguments parse: `ret2(zz, 1);` reports
+`zz` alone (6.7.16; the refusal came first, here, in a vector or 3-value fn and outside a fn). It compiled through 6.7.12 with the same three
 outcomes (0, 0, 0 over 16 bytes; the second value dropped at 8 bytes or less; the two words by
 coincidence at 9-16 bytes). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's
 own and still compiles — and an `#inline` fn's `return ret2(..);` replayed in a 9-16 byte struct fn,
