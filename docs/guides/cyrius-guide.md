@@ -1309,7 +1309,12 @@ whether or not the field is used, as a `b: Box<Zork>` field's are: `p: *Box<Zork
 'Zork' as a type argument" and `p: *Box<1>` "a type argument is a type name, got number 1" — a
 struct declared further down is a name there, so `*Box<B>` / `*Box<A>` still point
 two structs at each other (6.7.15, the user's decision D8 (a), 2026-10-18; through 6.7.14 the list was
-read only at a use, so an unused field compiled).
+read only at a use, so an unused field compiled). A `**G<..>` field (two stars or more) mints its instance after
+the struct's closing `}`, under the struct's own type arguments: `qq: **Box<Pt>`, `p: **Box<A>` inside `A`,
+`struct HG<T> { qq: **Box<T>; }` and `struct LL<T> { next: **LL<T>; }` compile, and `*h.qq + 1` steps the
+instance's size. (Through 6.7.15 such a field minted the instance in the middle of the struct's own fields: one it
+named first lost its fields — *unknown field 'v' on struct 'Box$Pt'* — and a generic struct's own-T field was
+*unknown type 'T' as a type argument*.)
 
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds

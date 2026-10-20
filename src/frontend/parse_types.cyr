@@ -3546,6 +3546,7 @@ fn _ptr_step_peek(S, vnoff, quiet): i64 {
     if (sid <= 0) { return ps; }
     if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
     if (quiet == 1) { if (GSTP(S, sid - 1) == 0) { return ps; } }   # 6.7.15 (D6): pass 2 refuses `*Pt<..>`
+    if (_ppk_nomint == 1) { if (GSTP(S, sid - 1) != 0) { _fld_targ_chk(S, ti); return ps; } }   # 6.7.16
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
     STI(S, ti);
@@ -3565,18 +3566,79 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     var vd = _ek_vd(S, GTI(S));             # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
     var ann = GTI(S);
     var ps = _fld_ptr_late(S);
-    if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
+    if (ps == 0) { ps = _fld_ptr_annot(S, fnoff, ann); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    _pp_late = 0;
-    var pn = _pp_pin_at(S, ann, si, ent);   # 6.7.13: a `**T`'s pointee (a `**S` of this struct pinned late)
-    S64(_fld_ps + ent * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));   # a late struct T (`0 - token`) keeps its form
+    S64(_fld_ps + ent * 8, _ps_vw(_ps_word(ps, ed), vd));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
-    elif (_pp_late == 1) { _fld_pb_note(S, ent, si); }
+    _fld_pp_push(S, ann, ent, si);   # 6.7.13: a `**T`'s pointee, pinned at the struct's `}` (6.7.16)
+    return 0;
+}
+# ⛔ 6.7.16 — A `**G<..>` FIELD MINTS ITS INSTANCE AFTER THE STRUCT'S `}`. A struct's fields fill one run of the field
+# pool, and a `**Box<S16>` field minted `Box<S16>` in the middle of that run — its annotation sized the instance it
+# never uses (a `**` steps 8) and its pin sized it again — so the instance's fields took the slots the struct's next
+# field then overwrote: `b.v` / `b.n` of a `Box<S16>` were "unknown field" ever after (`**Box<A>` inside A also sized
+# Box<A> with the A so far). The annotation now checks its type arguments without minting (`_fld_targ_chk`, as a
+# `*Box<..>` field's, 6.7.15's D8), and the pin is taken at the `}` (`_fld_pp_end`), the struct whole and its run
+# closed. CHANGELOG [6.7.16]
+var _ppk_nomint = 0;   # `_ptr_step_peek` checks a generic's list without minting it
+fn _fld_ptr_annot(S, fnoff, ann): i64 {
+    if (TOKTYP(S, ann + 1) != 8) { return _ptr_annot(S, fnoff, 0); }
+    _ppk_nomint = 1;
+    var ps = _ptr_annot(S, fnoff, 0);
+    _ppk_nomint = 0;
+    return ps;
+}
+var _fpp = 0;     # 3 words per pending pin: the annotation's first `*`, the field entry, the struct
+var _fpp_n = 0;
+var _fpp_cap = 0;
+fn _fld_pp_push(S, ann, ent, si): i64 {
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 8) { return 0; }
+    if (_fpp_n >= _fpp_cap) {
+        var t = alloc((_fpp_cap * 2 + 16) * 24);
+        _tab_copy(t, _fpp, _fpp_n * 3);
+        _fpp = t;
+        _fpp_cap = _fpp_cap * 2 + 16;
+    }
+    S64(_fpp + _fpp_n * 24, ann);
+    S64(_fpp + _fpp_n * 24 + 8, ent);
+    S64(_fpp + _fpp_n * 24 + 16, si);
+    _fpp_n = _fpp_n + 1;
+    return 0;
+}
+# At struct si's `}`: its pending pins, in field order (a pin may mint an instance, whose own run of pending pins
+# above these is its own). CHANGELOG [6.7.16]
+fn _fld_pp_end(S, si): i64 {
+    var b = _fpp_n;
+    while (b > 0) {
+        if (L64(_fpp + (b - 1) * 24 + 16) != si) { break; }
+        b = b - 1;
+    }
+    var e = _fpp_n;
+    var k = b;
+    while (k < e) {
+        _fld_pp_one(S, si, L64(_fpp + k * 24), L64(_fpp + k * 24 + 8));
+        k = k + 1;
+    }
+    _fpp_n = b;
+    return 0;
+}
+# One pending pin (`ann` the field's first `*`, `ent` its entry), read under the struct's own binding as a late `*S<..>`
+# field's is (`_fld_pb_note`: an instance's arguments, the definition's T -> i64): `struct W<T> { p: **Box<T>; }` read
+# `Box<T>` unbound, "unknown type 'T' as a type argument". A `**S` of this struct is pinned late. CHANGELOG [6.7.16]
+fn _fld_pp_one(S, si, ann, ent): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_note(S, ent, si);
+    _fld_pb_bind(S, ent);
+    _pp_late = 0;
+    var pn = _pp_pin_at(S, ann, si, ent);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    S64(_fld_ps + ent * 8, _ps_pw(L64(_fld_ps + ent * 8), pn));
     return 0;
 }
 # ⛔ 6.6.20 — the binding a late `*S<..>` field is re-read under. `_fld_ps_get` / `_fld_ptr_sid`
@@ -5561,6 +5623,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
+    _fld_pp_end(S, si);   # 6.7.16: its `**G<..>` fields' pins, the run closed
     _sdef_tp_ti = _sv_tp_ti;
     if (_sdef_bb > 0) { SSBB(S, si, _sdef_bb); }   # 6.7.1 (C3)
     _sdef_bb = _sv_sbb;
@@ -5633,6 +5696,7 @@ fn PARSE_UNION_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
+    _fld_pp_end(S, si);   # 6.7.16: as PARSE_STRUCT_DEF's
     _sdef_tp_ti = _sv_tp_ti;
     _chk_struct_redef(S, _uprev, sid, _uname_ti);
     return 0;

@@ -12,6 +12,15 @@
 # `Box<i32>` is 4 + 8 = 12 B. The refusals (a field naming its own struct) and the `#derive` walk
 # are tests/gates/frontend/generic_struct_field.sh. Mutation: skip `_sdef_gen_prescan` -> cycc
 # SIGSEGVs on this file.
+#
+# 6.7.16 — A `**G<..>` FIELD (two stars or more) mints G<..> after the struct's `}`, under the struct's own binding.
+# Its annotation and its pin minted the instance in the middle of the struct's run of the field pool, so the
+# instance's fields took slots the struct's next field overwrote: `PB<Pt>` first named by `qq: **PB<Pt>` had no `v` /
+# `n` ("unknown field 'v' on struct 'PB$Pt'", the file refused), and `**PB<SA>` inside SA sized PB<SA> with the SA so
+# far. A generic struct's `**PB<T>` / `**LL<T>` field was "unknown type 'T' as a type argument". Rows F12-F17: the
+# field before and after other fields, `***`, a union, the struct's own name, a generic struct's self link and
+# `**PB<T>` at its instances and its base — each through the pin (`*h.qq + 1` steps the instance, `*h.qq` is its
+# `*PB<..>`, `**h.qq` its value). The refusals are generic_struct_field.sh PP.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -28,6 +37,52 @@ struct HI { bi: Box<i64>; e; }
 # inside a generic struct: Box<T> follows the instance
 struct W<T> { w: Box<T>; m; }
 union U { ub: Box<i32>; raw; }
+# 6.7.16: a `**G<..>` field is the first to name each of these instances
+struct Pt2 { a; b; c; }
+struct PB<T> { v: T; n; }
+struct HQ { k; qq: **PB<Pt>; m; }
+struct HQ3 { qq: ***PB<Pt2>; k; }
+union UQ { qq: **PB<Pair<i64, Pt>>; raw; }
+struct SA { k; p: **PB<SA>; m; }
+struct LL<T> { v: T; next: **LL<T>; m; }
+struct HG<T> { qq: **PB<T>; k; }
+
+fn pp_hq(): i64 {
+    var b: PB<Pt>; b.v.x = 1; b.v.y = 5; b.n = 6; var pb: *PB<Pt> = &b;
+    var h: HQ; h.k = 1; h.m = 2; h.qq = &pb;
+    var a = *h.qq + 1; var c = *h.qq; var q: *PB<Pt> = *h.qq; var v: PB<Pt> = **h.qq;
+    return h.k * 100000 + h.m * 10000 + (a - c) * 100 + q.n * 10 + v.v.y + sizeof(PB<Pt>) * 1000000;
+}
+fn pp_hq3(): i64 {
+    var b: PB<Pt2>; b.v.c = 4; b.n = 3; var pb: *PB<Pt2> = &b; var ppb: **PB<Pt2> = &pb;
+    var h: HQ3; h.k = 7; h.qq = &ppb;
+    var a = **h.qq + 1; var c = **h.qq; var q: *PB<Pt2> = **h.qq;
+    return h.k * 10000 + (a - c) * 100 + q.n * 10 + q.v.c;
+}
+fn pp_uq(): i64 {
+    var b: PB<Pair<i64, Pt>>; b.v.a = 2; b.v.b.y = 3; b.n = 4; var pb: *PB<Pair<i64, Pt>> = &b;
+    var u: UQ; u.qq = &pb;
+    var a = *u.qq + 1; var c = *u.qq; var q: *PB<Pair<i64, Pt>> = *u.qq;
+    return (a - c) * 1000 + q.n * 100 + q.v.b.y * 10 + q.v.a;
+}
+fn pp_sa(): i64 {
+    var s: SA; s.k = 1; s.m = 2; var b: PB<SA>; b.n = 3; b.v.m = 4; var pb: *PB<SA> = &b; s.p = &pb;
+    var q: *PB<SA> = *s.p;
+    return s.k * 100000 + s.m * 10000 + q.n * 1000 + q.v.m * 100 + sizeof(PB<SA>);
+}
+fn pp_ll(): i64 {
+    var l: LL<Pt>; l.v.y = 5; l.m = 7; var pl: *LL<Pt> = &l; l.next = &pl;
+    var a = *l.next + 1; var c = *l.next; var q: *LL<Pt> = *l.next;
+    return (a - c) * 1000 + q.m * 100 + (**l.next).v.y * 10 + sizeof(LL<Pt>) / 8;
+}
+fn pp_hg(): i64 {
+    var b: PB<Pt>; b.v.y = 4; b.n = 3; var pb: *PB<Pt> = &b;
+    var h: HG<Pt>; h.k = 2; h.qq = &pb;
+    var a = *h.qq + 1; var c = *h.qq; var q: *PB<Pt> = *h.qq;
+    var bi: PB<i64>; bi.n = 6; var pbi: *PB<i64> = &bi; var hi: HG<i64>; hi.qq = &pbi; var qi: *PB<i64> = *hi.qq;
+    var hb: HG; hb.qq = &pbi; var e = *hb.qq + 1; var f = *hb.qq;
+    return h.k * 1000000 + (a - c) * 10000 + q.n * 1000 + (**h.qq).v.y * 100 + qi.n * 10 + (e - f) / 8;
+}
 
 fn hsum(h: H): i64 { return h.a + h.b.v + h.b.n + h.c; }
 
@@ -52,6 +107,12 @@ fn run(): i64 {
     assert_eq(wb.w.v + wb.m, 42, "F10: the base W (Box<T> = the base Box)");
     var u: U; u.ub.v = 42;
     assert_eq(u.ub.v, 42, "F11: Box<i32> in a union");
+    assert_eq(pp_hq(), 24122465, "F12: qq: **PB<Pt> (PB<Pt>'s first use): its fields, k / m around it, *h.qq + 1 steps 24, *h.qq, **h.qq");
+    assert_eq(pp_hq3(), 73234, "F13: qq: ***PB<Pt2>, k after it: **h.qq + 1 steps 32");
+    assert_eq(pp_uq(), 32432, "F14: a union's qq: **PB<Pair<i64, Pt>>: *u.qq + 1 steps 32");
+    assert_eq(pp_sa(), 123432, "F15: p: **PB<SA> inside SA: PB<SA> holds the whole SA (24 + 8)");
+    assert_eq(pp_ll(), 32754, "F16: LL<T>'s next: **LL<T> at LL<Pt>: steps 32, *l.next a *LL<Pt>");
+    assert_eq(pp_hg(), 2243462, "F17: HG<T>'s qq: **PB<T>: HG<Pt> steps 24, HG<i64> a *PB<i64>, the base HG steps 16");
     return 0;
 }
 var r0 = run();

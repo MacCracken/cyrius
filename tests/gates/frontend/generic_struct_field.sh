@@ -93,6 +93,25 @@
 #                                                       on every leg ("expected ';', got '.'"); HF5 green (and
 #                                                       generic_ptr_param_infer.sh PT on every leg: does not build)
 #   MHF2 `_fld_ptr_sid` back on `_ptr_tok_sid` (T read unbound) -> RED 20: HF1-HF4 on every leg; HF5 green (PT as MHF1)
+#
+#   PP (6.7.16, met writing issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md's field
+#      row) a `**G<..>` field (two stars or more) mints G<..> after the struct's `}`, under the struct's own binding. Its
+#      annotation (`_ptr_annot`) and its pin (`_pp_pin_at`) minted the instance in the middle of the struct's run of
+#      the field pool — the run this gate's first mutation describes — so the struct's next field overwrote the
+#      instance's: PP1 `qq: **PB<Pt>` naming PB<Pt> first (92; before: "unknown field 'v' on struct 'PB$Pt'"), PP2
+#      fields after it (92; "unknown field 'n'"), PP3 a union's `**PB<Pair<i64, Pt>>` (75), PP4 `**PB<SA>` inside SA
+#      (69: PB<SA> was minted with the SA so far); a generic struct's own-T field was "unknown type 'T' as a type
+#      argument": PP5 `struct HG<T> { qq: **PB<T>; }` (76: HG<Pt>'s pin steps 24, the base's 16), PP6 `next: **LL<T>`
+#      (107) — on every leg; PPK1 / PPK2 the field's type-argument and bound refusals, once each, unchanged. The
+#      annotation checks its list without minting (`_fld_ptr_annot`, `_fld_targ_chk` as a `*G<..>` field's) and the
+#      pin is taken at the `}` (`_fld_pp_end`). More rows: tests/tcyr/crossos/generic_struct_field.tcyr F12-F17.
+#   (2026-10-20; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MPP1 the tree before (ef63d4610)                     -> RED 30: PP1-PP6 on every leg (refused: "unknown field 'v' /
+#                                                           'n' / 'b'", PP5 PP6 "unknown type 'T'"); the tcyr refused
+#   MPP2 `_fld_ptr_annot` mints (`_ppk_nomint` never set) -> RED 30, as MPP1
+#   MPP3 the pin taken at the field (`_fld_pp_push` pins at once) -> RED 20: PP1 PP2 PP4 (refused) and PP6 (99: the pin
+#                                                           sized LL<Pt> with the fields so far, 24) on every leg
+#   MPP4 `_fld_pp_one` without the struct's binding      -> RED 5: PP5 on every leg ("unknown type 'T'"); the tcyr refused
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -477,6 +496,78 @@ syscall(60, go());
 EOF
 xr HF5 "$T/hf5.cyr" 9 "Pb<i32>'s b.p + 1 steps 4 (unchanged)"
 
+# PP — 6.7.16: a `**G<..>` field mints G<..> after the struct's `}`, under the struct's own binding.
+PPH='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct PB<T> { v: T; n; }'
+cat > "$T/pp1.cyr" <<X
+$PPH
+struct HQ { k; qq: **PB<Pt>; m; }
+fn go(): i64 {
+    var b: PB<Pt>; b.v.y = 5; b.n = 6; var pb: *PB<Pt> = &b;
+    var h: HQ; h.k = 1; h.m = 2; h.qq = &pb;
+    var a = *h.qq + 1; var c = *h.qq; var q: *PB<Pt> = *h.qq; var v: PB<Pt> = **h.qq;
+    return (a - c) + q.n * 10 + v.v.y + h.k + h.m;
+}
+syscall(60, go());
+X
+xr PP1 "$T/pp1.cyr" 92 "qq: **PB<Pt> names PB<Pt> first: its fields, *h.qq + 1 steps 24, *h.qq, **h.qq"
+sed -e 's/struct HQ { k; qq: \*\*PB<Pt>; m; }/struct HQ { qq: **PB<Pt>; m; k; }/' "$T/pp1.cyr" > "$T/pp2.cyr"
+grep -q 'struct HQ { qq: ' "$T/pp2.cyr" || bad "PP2: the sed did not apply"
+xr PP2 "$T/pp2.cyr" 92 "the same with two fields after qq (they overwrote PB<Pt>'s v and n)"
+cat > "$T/pp3.cyr" <<X
+$PPH
+struct Pair<A, B> { a: A; b: B; }
+union UQ { qq: **PB<Pair<i64, Pt>>; raw; }
+fn go(): i64 {
+    var b: PB<Pair<i64, Pt>>; b.v.b.y = 3; b.n = 4; var pb: *PB<Pair<i64, Pt>> = &b;
+    var u: UQ; u.qq = &pb;
+    var a = *u.qq + 1; var c = *u.qq; var q: *PB<Pair<i64, Pt>> = *u.qq;
+    return (a - c) + q.n * 10 + q.v.b.y;
+}
+syscall(60, go());
+X
+xr PP3 "$T/pp3.cyr" 75 "a union's qq: **PB<Pair<i64, Pt>>: *u.qq + 1 steps 32"
+cat > "$T/pp4.cyr" <<X
+$PPH
+struct SA { k; p: **PB<SA>; m; }
+fn go(): i64 {
+    var s: SA; s.k = 1; s.m = 2; var b: PB<SA>; b.n = 3; b.v.m = 4; var pb: *PB<SA> = &b; s.p = &pb;
+    var q: *PB<SA> = *s.p;
+    return q.n * 10 + q.v.m + sizeof(PB<SA>) + s.k + s.m;
+}
+syscall(60, go());
+X
+xr PP4 "$T/pp4.cyr" 69 "p: **PB<SA> inside SA: PB<SA> holds the whole SA (32 B)"
+cat > "$T/pp5.cyr" <<X
+$PPH
+struct HG<T> { qq: **PB<T>; k; }
+fn go(): i64 {
+    var b: PB<Pt>; b.v.y = 4; b.n = 3; var pb: *PB<Pt> = &b;
+    var h: HG<Pt>; h.k = 2; h.qq = &pb;
+    var a = *h.qq + 1; var c = *h.qq; var q: *PB<Pt> = *h.qq;
+    var bi: PB<i64>; var pbi: *PB<i64> = &bi; var hb: HG; hb.qq = &pbi; var e = *hb.qq + 1; var f = *hb.qq;
+    return (a - c) + q.n * 10 + (**h.qq).v.y + h.k + (e - f);
+}
+syscall(60, go());
+X
+xr PP5 "$T/pp5.cyr" 76 "HG<T>'s qq: **PB<T> compiles: HG<Pt> steps 24, the base HG 16"
+cat > "$T/pp6.cyr" <<X
+$PPH
+struct LL<T> { v: T; next: **LL<T>; m; }
+fn go(): i64 {
+    var l: LL<Pt>; l.v.y = 5; l.m = 7; var pl: *LL<Pt> = &l; l.next = &pl;
+    var a = *l.next + 1; var c = *l.next; var q: *LL<Pt> = *l.next;
+    return (a - c) + q.m * 10 + (**l.next).v.y;
+}
+syscall(60, go());
+X
+xr PP6 "$T/pp6.cyr" 107 "LL<T>'s next: **LL<T> compiles: LL<Pt> steps 32"
+printf '%s\nstruct HQ { k; qq: **PB<Zork>; }\nsyscall(60, 1);\n' "$PPH" > "$T/ppk1.cyr"
+refused_once ppk1 "unknown type 'Zork' as a type argument" "PPK1: qq: **PB<Zork> (unchanged)"
+printf '%s\ntrait Show { fn show(self): i64; }\nstruct Bx<T: Show> { v: T; n; }\nstruct HQ { k; qq: **Bx<Pt>; }\nsyscall(60, 1);\n' "$PPH" > "$T/ppk2.cyr"
+refused_once ppk2 "does not implement trait 'Show'" "PPK2: qq: **Bx<Pt>, Pt not Show (unchanged)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), and a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF)"
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF), and a **G<..> field mints its instance after the struct's } under the struct's binding (PP)"
