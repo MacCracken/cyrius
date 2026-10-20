@@ -44,6 +44,9 @@
 # Linux enum alone (the open's) -> 4 "duplicate symbol 'SYS_*' redefined with conflicting value"
 # warnings (SYS_EXIT, SYS_READ, SYS_CLOSE, SYS_OPEN), each with a note that the wrong call would be
 # made — on a build whose calls the stdlib's redefinition made right (C0 FAIL).
+# C5: READFILE's opens (the path, the overlay, the store slot, `#@incdir`) are one helper with an
+# agnos arm. Mutant measured: the open's READFILE (Linux openat's shape on agnos) -> `sc 7 -100
+# <ptr> 0 0`, the include refused ("cannot open"), exit 1 (C5 FAIL).
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
 # and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
 # /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
@@ -758,6 +761,16 @@ if [ "$cxok" = 1 ]; then
     check "C4 \`--syntax-only\` is seen: an unresolved name compiles (exit 0); without it, exit 1 naming it" \
         "exit 0 / exit 1 undefined variable 'nope'" \
         "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4n.log") $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c4n.log" | grep -o "undefined variable 'nope'")"
+    # An include is opened in agnos's shape, open#7(name, namelen, flags) — the tracer serves it
+    # from the host, relative to its own directory (here $T/inc).
+    mkdir -p "$T/inc"
+    printf 'fn seven(): i64 { return 7; }\n' > "$T/inc/inc7.cyr"
+    printf 'include "inc7.cyr"\nsyscall(60, seven());\n' > "$T/inc/m.cyr"
+    (cd "$T/inc" && "$T/sct" "$T/cxag" cli < m.cyr > "$T/c5.log" 3> "$T/c5.cyx" 2>&1)
+    vm=x; [ -s "$T/c5.cyx" ] && { vm=0; "$T/cxvm" < "$T/c5.cyx" > /dev/null 2>&1 || vm=$?; }
+    check "C5 an include opens as agnos's open#7(name, namelen, 0): exit 0, the .cyx runs to 7" \
+        "sc 7 8 0 | exit 0 | 7" \
+        "$(awk '$1 == "sc" && $2 == 7 { print $1, $2, $4, $5; exit }' "$T/c5.log") | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c5.log") | $vm"
 fi
 
 echo ""
