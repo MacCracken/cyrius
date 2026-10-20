@@ -119,6 +119,13 @@ with the user's cass desktop step. **The lanes** run at most two parser lanes pe
 
 Each issue's **Placement** line names its unit.
 
+**What 6.7.16 files stays in 6.7.16** (the user, 2026-10-20, asked at the wave-1 integration where the lanes' findings
+go: "INTO .16"). Wave 1 merged green on `b73e8d5fe`: the five lanes, `build/cycc` 2,565,440 B, check.sh 570 / 570, the
+driver 128 / 128, seed-derive OK. Its 47 findings are placed here, and their own triage and decisions follow. The
+parser findings run in a wave after wave 3. The platform, tools and libfix findings run beside wave 3. A 48th finding,
+a suggested CLAUDE.md line about qemu-aarch64 and binfmt, is the user's to take or drop; it is not an issue. Each later
+wave's findings follow the same rule.
+
 ### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
