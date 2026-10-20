@@ -471,9 +471,9 @@ refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q
 # parses on as a plain i64). `_tn_refuse_var` (parse_types.cyr) marks it with the late-declaration refusal's stand-down
 # (`_ann_refd_mark` / `_ann_refd_said`, parse_fn_def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
 # level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
-# parameter of a fn — each still "no struct type in scope". NOT covered (the review of b7932c673): a top-level `var P:
-# *Foo` global takes a garbage struct type, so `P.a` still adds "unknown field 'a' on struct '<some name>'" (pre-existing,
-# issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md; no row pins it).
+# parameter of a fn — each still "no struct type in scope". A top-level `var P: *Foo` global took a garbage struct type
+# through 6.7.15 (`P.a` added "unknown field 'a' on struct '<some name>'"); 6.7.16 stands it down too
+# (issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md; rows: type_name_refused.sh axis 7).
 #   the tree before (`_tn_refuse_var` = `_tn_refuse`, no mark)  -> RED 12: U13-U24 (2-4 error lines each); U25-U28 green
 echo "6.7.15 — a use of a variable whose annotation was refused is not a second error:"
 MS="no struct type in scope for"

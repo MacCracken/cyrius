@@ -403,6 +403,36 @@ for sx in u128_ret u128_field u128_param u128_trait_ret1; do
     check "$sx: --syntax-only error lines" 1 "$(grep -c '^error' "$T/$sx.sx")"
 done
 
+echo "axis 7 - a \`*T\` global whose T is no struct names none at \`.field\` (6.7.16):"
+# 6.7.16 (issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md) — a `*T` GLOBAL's var type is 0 - its
+# step (6.6.17), and `_gv_recv_sid` handed it to the field arms as a struct id: any negative id was the program's FIRST
+# struct. `var x: *Foo = 0; x.y` (Foo refused) added "unknown field 'y' on struct 'var'" (the first lexed word), beside
+# `struct P { a; }` `x.a` was resolved as P's `a`, a refused late struct's pointer the same; and a SCALAR `*i64` global's
+# `x.a` COMPILED (rc 0) and read through P, its store said "unknown field 'a' on struct 'struct'", `x.m()` "undefined
+# function 'P.m'". Now the `*T` step band answers no struct (0): the refused annotation stands down (one error), and a
+# `*i64` global's `.a` / store / `.m()` is "no struct type in scope for 'x'", the local's words. A `*P` global still
+# reads through P (gp_P / gp_P_late). MUTATION (measured: the lane's compiler before the fix, whose `_gv_recv_sid`
+# returns GVTYPE for the step band as the slot-open one does): RED 9 — gp_repro1 / gp_repro3 / gp_late (2 errors:
+# "unknown field 'y' on struct 'var'"), gp_uses ("undefined function 'P.m'"), gp_i64_read / gp_i64_fn (compiled, rc 0),
+# gp_i64_store / gp_i64_late ("unknown field 'a' on struct 'struct'"), gp_i64_meth; green gp_repro2 (one error either
+# way: x.a was resolved as P's, silently), gp_i64_local, gp_P, gp_P_late.
+NS="no struct type in scope for 'x'"
+refused gp_repro1     'var x: *Foo = 0;\nsyscall(60, x.y);\n' "1:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_repro2     'struct P { a; }\nvar x: *Foo = 0;\nsyscall(60, x.a);\n' "2:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_repro3     'var a = 1;\na = 2;\nstruct Q { y; }\nvar x: *Q = 0;\nsyscall(60, x.y);\n' "3:1: a \`struct\` declaration must come before the first top-level statement (line 2)"
+refused gp_late       'var a = 1;\na = 2;\nvar x: *Foo = 0;\nsyscall(60, x.y);\n' "3:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_uses       'struct P { a; }\nvar x: *Foo = 0;\nx.a = 3;\nfn g(): i64 { x.a = 1; return x.a + x.m(); }\nsyscall(60, x.a + x.m() + g());\n' "2:9: unknown type 'Foo' as the target of pointer 'x'"
+refused gp_i64_read   'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nsyscall(60, x.a);\n' "4:16: $NS; a '.field' access"
+refused gp_i64_store  'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nx.a = 3;\nsyscall(60, g);\n' "4:5: $NS; a '.field' assignment"
+refused gp_i64_meth   'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nsyscall(60, x.m());\n' "4:16: $NS; a method call"
+refused gp_i64_late   'struct P { a; }\nvar g = 7;\ng = 8;\nvar x: *i64 = &g;\nx.a = 3;\nsyscall(60, x.a);\n' "6:16: $NS; a '.field' access" 2
+rows=$((rows + 1))
+check "gp_i64_late: names the store 5:5" yes "$(grep -qF -- "5:5: $NS; a '.field' assignment" "$T/gp_i64_late.err" && echo yes || echo no)"
+refused gp_i64_fn     'struct P { a; }\nvar g = 7;\nvar x: *i64 = &g;\nfn h(): i64 { return x.a; }\nsyscall(60, h());\n' "4:25: $NS; a '.field' access"
+refused gp_i64_local  'struct P { a; }\nfn f(): i64 { var g = 7; var x: *i64 = &g; x.a = 3; return x.a; }\nsyscall(60, f());\n' "2:63: $NS; a '.field' access" 2
+runs gp_P             'struct P { a; b; }\nvar q = P { 7, 9 };\nvar x: *P = &q;\nsyscall(60, x.b);\n' 9
+runs gp_P_late        'struct P { a; b; }\nvar q = P { 7, 9 };\nvar y = 1;\ny = 2;\nvar x: *P = &q;\nx.a = 3;\nsyscall(60, x.b + x.a);\n' 12
+
 if [ "$rows" -lt 140 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 140)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"

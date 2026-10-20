@@ -2873,10 +2873,17 @@ fn _gv_ptr_sid(S, vi): i64 {
     return L64(_gv_psid + vi * 8);
 }
 # The struct a global receiver `vi` names for `.field`: a `*T` global's T, else its var type.
+# ⛔ 6.7.16 — A `*T` GLOBAL WHOSE T IS NO STRUCT NAMES NONE: its var type is 0 - its step (6.6.17), never a struct
+# id, and the field arms took any negative id as the program's FIRST struct — `var x: *Foo = 0; x.y` (Foo refused)
+# added "unknown field 'y' on struct 'var'", beside `struct P { a; }` resolved `x.a` as P's `a`, and a `*i64`
+# global's `x.a` compiled and read through P. 0 here, so the `sid == 0` arms answer as for a local: the refused
+# annotation's stand-down, else "no struct type in scope for 'x'". The vector band (<= -2048) is kept. CHANGELOG [6.7.16]
 fn _gv_recv_sid(S, vi): i64 {
     var p = _gv_ptr_sid(S, vi);
     if (p > 0) { return p; }
-    return GVTYPE(S, vi);
+    var t = GVTYPE(S, vi);
+    if (t < 0) { if (t > 0 - 2048) { return 0; } }
+    return t;
 }
 # 1 = global `vi`'s slot HOLDS the struct's address: a pointer-mode struct global, or a `*T` one.
 fn _gv_holds_addr(S, vi): i64 {
