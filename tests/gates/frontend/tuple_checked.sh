@@ -1186,6 +1186,18 @@ cascade cs9m 1 "CS9m: the zone's, then \`G.0 + G.1 + G.a\`" 'var G: Nonexist = (
 cascade cs9n 1 "CS9n: control — the zone's \`var G: i64 = (1, 2);\` keeps R9" 'var G: i64 = (1, 2);\nsyscall(60, 0);\n' "1:14: a tuple literal cannot initialize 'G' - its declared type is not a tuple"
 cascade cs9n2 1 "CS9n2: control — after the first statement, \`: i64\` keeps R9" 'syscall(39);\nvar G: i64 = (1, 2);\nsyscall(60, 0);\n' "2:14: a tuple literal cannot initialize 'G' - its declared type is not a tuple"
 cascade cs9o 2 "CS9o: control — \`var b: i64<u8> = (1, 2);\`: its type arguments, then R9 (b is an i64)" 'fn f(): i64 {\n    var b: i64<u8> = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:12: 'i64' takes no type arguments" "2:22: a tuple literal cannot initialize 'b' - its declared type is not a tuple"
+# CS9p-CS9s (6.7.16, met in passing): R9 on a `*T` declaration was followed by "assigning non-pointer to typed pointer"
+# about the refused literal (PARSE_VAR parses on to it; `_tp_refd_at`, as 6.7.14's refused `&a[i]` sets it, now marks
+# R9's literal too). A later declaration's own warning is still given (CS9s). MUTATION (measured: `_tup_r9` without
+# its `_tp_refd_at`) -> RED 4: CS9p CS9q CS9r (1 warning line), CS9s (2: R9's and the control's). The zone's `var b:
+# *i64 = (1, 2);` warned nothing before either (the replay's `_tup_lit_skip`).
+cascade cs9p 1 "CS9p: R9 on \`var b: *i64 = (1, 2);\`: no typed-pointer warning beside it" 'fn f(): i64 {\n    var b: *i64 = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:19: a tuple literal cannot initialize 'b' - its declared type is not a tuple"
+cascade cs9q 2 "CS9q: \`var b: *Nope = (1, 2);\`: the target's refusal and R9 (a pointer), no warning" 'fn f(): i64 {\n    var b: *Nope = (1, 2);\n    return 0;\n}\nsyscall(60, f());\n' "2:13: unknown type 'Nope' as the target of pointer 'b'" "2:20: a tuple literal cannot initialize 'b' - its declared type is not a tuple"
+cascade cs9r 1 "CS9r: after the first statement, \`var b: *i64 = (1, 2);\`" 'syscall(39);\nvar b: *i64 = (1, 2);\nsyscall(60, 0);\n' "2:15: a tuple literal cannot initialize 'b' - its declared type is not a tuple"
+printf 'fn f(): i64 {\n    var b: *i64 = (1, 2);\n    var c: *i64 = 5;\n    return 0;\n}\nsyscall(60, f());\n' > "$T/cs9s.cyr"
+build cs9s
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/cs9s.err")" -eq 1 ] && [ "$(grep -c '^warning' "$T/cs9s.err")" -eq 1 ] && grep -q "^warning:<source>:3:20: assigning non-pointer to typed pointer" "$T/cs9s.err"; then ok "CS9s: control — the next declaration's own warning (3:20) is still given"
+else bad "CS9s: control: $(grep '^error\|^warning' "$T/cs9s.err" | tr '\n' '|') (want R9 at 2:19 and the warning at 3:20)"; fi
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).

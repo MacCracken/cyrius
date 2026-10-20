@@ -3712,6 +3712,7 @@ fn _tup_r9(S, lp, noff, ann): i64 {
         return 0;
     }
     _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+    _tp_refd_at = lp;   # 6.7.16: and a `*T` declaration's "assigning non-pointer to typed pointer" is not said about it
     return 0;
 }
 # 1 = the annotation whose first token is `ann` was refused and names no type: a name no type answers that was
