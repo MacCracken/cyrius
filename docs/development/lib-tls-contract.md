@@ -233,11 +233,21 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   message: bytes after it, or a block that overruns it, are decode_error (`TLS_ERR_BAD_HANDSHAKE`;
   6.7.15, the user's D40 — until then the parse was lenient, ignored the bytes and read an
   overrunning block as no extensions: no extended master secret, no ALPN, its own first group). A
-  ClientHello that ends after its compression methods carries no extensions and negotiates
-  without them. A ClientKeyExchange point sigil refuses, or whose length byte is not
-  the group's point length, is illegal_parameter; one of another size or handshake type is
-  decode_error. The group never depends on the certificate: a P-384 certificate signs a secp256r1
-  exchange when the client lists both. But in TLS 1.2 the client's list also bounds an ECDSA
+  ClientHello whose compression_methods or extension list does not parse is decode_error too, and
+  `tls_native_accept_12` sends the alert: no compression_methods byte, an empty list (RFC 5246
+  requires at least one method), a list longer than the message, an extension whose header or
+  length overruns the block — the block is walked once before any extension is looked up — and a
+  message too short for its random, session id or cipher_suites (6.7.16, the user's D32 — until
+  then the first four negotiated, an overrunning extension read as absent: no extended master
+  secret, no ALPN, the server's first group; the short messages failed with no alert sent).
+  `tls_native_accept`, which routes a 1.2 hello here, refuses them the same way (its version
+  sniffer already refused some: no compression byte, an overrunning list, a short message, an
+  extension overrunning the block before any supported_versions). A ClientHello that ends after
+  its compression methods carries no extensions and negotiates without them. A ClientKeyExchange
+  point sigil refuses, or whose length byte is not the group's point length, is
+  illegal_parameter; one of another size or handshake type is decode_error. The group never
+  depends on the certificate: a P-384 certificate signs a secp256r1 exchange when the client lists
+  both. But in TLS 1.2 the client's list also bounds an ECDSA
   certificate's curve (RFC 8422 §5.1), so a client whose supported_groups omits it is refused with
   handshake_failure — the server's refusal, where until 6.6.15 the client refused the certificate
   ("wrong curve").

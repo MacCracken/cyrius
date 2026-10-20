@@ -1,5 +1,6 @@
 # tls12_ch_conformance.tcyr — 6.7.15: the native TLS 1.2 server's ClientHello extension block fills the
-# message, or the handshake is refused with decode_error.
+# message, or the handshake is refused with decode_error. 6.7.16: so is a ClientHello whose
+# compression_methods or extension list does not parse, and the short-message refusals send theirs.
 #
 # issues/archived/2026-10-17-tls-native-hello-bytes-after-extension-block-1-2-sh-and-server-ch.md, the 1.2
 # server's arm; the user's decision 6.7.15 D40 (2026-10-18): "Refuse with decode_error". The parse
@@ -19,6 +20,22 @@
 #   W2     the same through tls_native_accept: its version sniffer (_tn_ch_is_tls13, which only
 #          routes) hands the 1.2 hello to the 1.2 server, which refuses it the same way.
 # On the lib before the fix: S1-S4, W1 and W2 fail.
+#
+# issues/2026-10-18-tls-native-1-2-server-clienthello-other-leniencies.md; the user's decision 6.7.16
+# D32 (2026-10-19): "Refuse with decode_error". The 1.2 parse skipped a missing compression_methods
+# byte, read a list overrunning the message as "no extension block", read a _tn_find_ext -1 (an
+# extension overrunning the block) as "absent", and returned its three short-message refusals bare,
+# with no alert recorded, so tls_native_accept_12 sent none.
+#   P1-P5  the filed repro's five shapes (no compression_methods byte; a list claiming 5 bytes where
+#          the message ends after 1; an extension whose length overruns a block that fills the
+#          message; cipher_suites overrunning the message; a body shorter than random + session id
+#          length), plus P6 an empty compression_methods list (RFC 5246: <1..2^8-1>) and P7 a block
+#          whose 2 bytes cannot hold an extension header: each TLS_ERR_BAD_HANDSHAKE, decode_error.
+#   X1-X7  each P shape through tls_native_accept_12 over a socketpair: refused, the client end reads
+#          a fatal decode_error in the clear, the ctx failed. Y1-Y7 the same through tls_native_accept.
+#          A named SKIP where socketpair is refused.
+# On the lib before D32: P1-P7's results (P1-P3, P6, P7 negotiated 0xC02C) or alerts (P4, P5: none),
+# X1-X7 and Y6-Y7 fail; Y1-Y5 pass (the version sniffer, _tn_ch_is_tls13, already refused them).
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -87,14 +104,50 @@ fn _read_n(fd, buf, n): i64 {
 # description, read in the clear), or -999 when socketpair is refused.
 var G_W1 = 0;
 fn _w1(via): i64 {
+    _ch12();
+    return _wire(via, G_CHN - 4 + 2);
+}
+
+# The P rows' shapes, k 1-7 (the header comment's P1-P7), applied to a fresh G_CH; the body length
+# to parse. P1-P5 are the filed repro's statements.
+fn _cs_end(body): i64 {
+    var pos = 2 + 32;
+    pos = pos + 1 + (load8(body + pos) & 0xFF);
+    pos = pos + 2 + _tn_be16_r(body + pos);
+    return pos;
+}
+fn _shape(k): i64 {
+    _ch12();
+    var ce = _cs_end(G_CH + 4);
+    var eo = _ext_off(G_CH + 4);
+    if (k == 1) { return ce; }
+    if (k == 2) { store8(G_CH + 4 + ce, 5); return ce + 2; }
+    if (k == 3) {
+        _tn_be16_w(G_CH + 4 + eo, 4);
+        _tn_be16_w(G_CH + 4 + eo + 2, 0x0017);
+        _tn_be16_w(G_CH + 4 + eo + 4, 0x00FF);
+        return eo + 6;
+    }
+    if (k == 4) { _tn_be16_w(G_CH + 4 + 35 + (load8(G_CH + 4 + 34) & 0xFF), 0x7FFF); return G_CHN - 4; }
+    if (k == 5) { return 20; }
+    if (k == 6) { store8(G_CH + 4 + ce, 0); return ce + 1; }
+    _tn_be16_w(G_CH + 4 + eo, 2);
+    _tn_be16_w(G_CH + 4 + eo + 2, 0x0017);
+    return eo + 4;
+}
+
+# The accept of `via` (as _w1) over a socketpair, the first `blen` bytes of G_CH's body written to the
+# client end as one plaintext handshake record. The alert in G_W1 as _w1; the server's ctx state in
+# G_WST.
+var G_WST = 0;
+fn _wire(via, blen): i64 {
     G_W1 = 0 - 1;
+    G_WST = 0 - 1;
     var fds: i64[1];
     if (sys_socketpair(1, 1, 0, &fds) < 0) { return 0 - 999; }
     var fdp = load64(&fds);
     var sfd = fdp & 0xFFFFFFFF;
     var cfd = (fdp >> 32) & 0xFFFFFFFF;
-    _ch12();
-    var blen = G_CHN - 4 + 2;
     tls_native_handshake_write_header(G_CH, TLS_HS_CLIENT_HELLO, blen);
     var rec = alloc(1100);
     tls_native_record_write_header(rec, TLS_CT_HANDSHAKE, 0x0303, 4 + blen);
@@ -104,6 +157,7 @@ fn _w1(via): i64 {
     tls_native_set_deadline(srv, clock_now_ns() + 10000000000);
     var rc = 0;
     if (via == 12) { rc = tls_native_accept_12(srv, sfd); } else { rc = tls_native_accept(srv, sfd); }
+    G_WST = load64(srv + TLS_CTX_OFF_STATE);
     sys_close(sfd);
     var arec = alloc(16);
     if (_read_n(cfd, arec, 7) != 7) { sys_close(cfd); G_W1 = 0 - 2; return rc; }
@@ -167,6 +221,53 @@ if (w == 0 - 999) {
       "W2: tls_native_accept routes the 1.2 hello to the 1.2 server, which refuses it");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
       "W2: the server sent a fatal decode_error, in the clear");
+}
+
+test_group("P: a ClientHello whose compression_methods or extension list does not parse, or too short (D32)");
+var pnames: i64[8];
+store64(&pnames + 8, "P1: no compression_methods byte");
+store64(&pnames + 16, "P2: compression_methods claiming 5, the message ending after 1");
+store64(&pnames + 24, "P3: an extension whose length overruns the block (the block fills the message)");
+store64(&pnames + 32, "P4: cipher_suites length overrunning the message");
+store64(&pnames + 40, "P5: a body shorter than random + session id length");
+store64(&pnames + 48, "P6: an empty compression_methods list");
+store64(&pnames + 56, "P7: a 2-byte block, too short for an extension header");
+var k = 1;
+var nm = 0;
+while (k <= 7) {
+    nm = load64(&pnames + k * 8);
+    assert_eq(_parse(_shape(k)), TLS_ERR_BAD_HANDSHAKE, nm);
+    assert_eq(_alert(), TLS_AD_DECODE_ERROR, "  ... decode_error recorded");
+    assert_eq(load64(G_SRV + TLS_CTX_OFF_USE_EMS), 0, "  ... no extended master secret taken");
+    k = k + 1;
+}
+
+var via = 12;
+while (via >= 0) {
+    if (via == 12) {
+        test_group("X: each P shape through tls_native_accept_12, on the wire");
+    } else {
+        test_group("Y: each P shape through tls_native_accept, on the wire");
+    }
+    k = 1;
+    while (k <= 7) {
+        nm = load64(&pnames + k * 8);
+        w = _wire(via, _shape(k));
+        if (w == 0 - 999) {
+            # Printed: a SKIP is never read as coverage (Windows refuses socketpair).
+            assert_eq(1, 1, "SKIP — socketpair refused on this target");
+            var sk = "  SKIP: this group — socketpair refused on this target\n";
+            print(sk, strlen(sk));
+            k = 7;
+        } else {
+            assert_eq(w, TLS_ERR_BAD_HANDSHAKE, nm);
+            assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
+              "  ... the server sent a fatal decode_error, in the clear");
+            assert_eq(G_WST, TLS_STATE_ERROR, "  ... the server's ctx failed");
+        }
+        k = k + 1;
+    }
+    via = via - 12;
 }
 
 var r = assert_summary();

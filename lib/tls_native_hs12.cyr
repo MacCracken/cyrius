@@ -1384,7 +1384,7 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
 # ECDHE_ECDSA_AES128_GCM_SHA256 failed with no alert (the ServerHello cannot name it).
 # CHANGELOG [6.6.15]
 fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
-    if (blen < 2 + 32 + 1) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (blen < 2 + 32 + 1) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var crand = _tn_alloc(ctx, _TLS_RANDOM_LEN);
     if (crand == 0) { return TLS_ERR_OOM; }
     memcpy(crand, body + 2, 32);
@@ -1394,10 +1394,10 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     # SessionID<0..32> (RFC 5246 §7.4.1.2), as the 1.3 parser refuses. CHANGELOG [6.7.12]
     if (sid_len > 32) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     pos = pos + 1 + sid_len;
-    if (pos + 2 > blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (pos + 2 > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var cs_len = _tn_be16_r(body + pos);
     pos = pos + 2;
-    if (pos + cs_len > blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (pos + cs_len > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var chosen = 0;
     var j = 0;
     while (j + 2 <= cs_len) {
@@ -1409,43 +1409,48 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
             j = j + 2;
         }
     }
-    # Detect the client's extended_master_secret offer (RFC 7627). Walk past
-    # cipher_suites + compression_methods to the extensions block; all reads are
-    # bounds-checked vs blen (untrusted CH). (The cipher loop used pos+j indexing
-    # and did not mutate pos, so pos is still at cipher_suites.) A ClientHello that
-    # ends after compression_methods has no block: EMS stays 0, no ALPN, our first
-    # group. A block, when present, fills the rest of the message: bytes after it,
-    # or a block that overruns it, are decode_error — the answer the 1.3 server and
-    # both clients give (6.7.15's D40, the user, 2026-10-18). Until then this parse
-    # was lenient and read an overrunning block as no extensions, which quietly
-    # dropped the extended master secret. CHANGELOG [6.7.15]
+    # Past cipher_suites (the loop above indexed pos + j and left pos there) come
+    # compression_methods<1..2^8-1> (RFC 5246 §7.4.1.2) and the optional extension block; every
+    # read is bounds-checked against blen (an untrusted ClientHello). A hello that does not parse
+    # is decode_error, recorded so the driver sends it: no compression_methods byte, an empty list,
+    # a list overrunning the message, a block that does not fill the rest of the message (6.7.15's
+    # D40), an extension whose header or data overruns the block (_tn_12_ch_ext_frames — walked
+    # once, before any lookup, so a malformed list is never read as "absent": no extended master
+    # secret, no ALPN, the server's first group), and the three short-message refusals above. The
+    # answer the 1.3 server and both clients give (6.7.16's D32, the user, 2026-10-19). A hello
+    # that ends after compression_methods has no block: EMS 0, no ALPN, our first group.
+    # CHANGELOG [6.7.16]
     pos = pos + cs_len;
     var group = 0;
-    if (pos + 1 <= blen) {
-        var cm_len = load8(body + pos) & 0xFF;
-        pos = pos + 1 + cm_len;
-        if (pos < blen) {
-            if (pos + 2 > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-            var ext_total = _tn_be16_r(body + pos);
-            pos = pos + 2;
-            if (pos + ext_total != blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-            var ep = 0;
-            var el = 0;
-            var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
-            if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
-            # ALPN (RFC 7301): negotiate against the server's configured
-            # list; _tn_build_server_hello_12 emits the result. Lenient.
-            _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
-            var sgp = 0;
-            var sgl = 0;
-            if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
-                group = _tn_pick_group(ctx, sgp, sgl);
-                if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-                if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
-                var kc = _tn_12_key_curve(ctx);
-                if (kc != 0) {
-                    if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
-                }
+    if (pos + 1 > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    var cm_len = load8(body + pos) & 0xFF;
+    if (cm_len == 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    if (pos + 1 + cm_len > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    pos = pos + 1 + cm_len;
+    if (pos < blen) {
+        if (pos + 2 > blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+        var ext_total = _tn_be16_r(body + pos);
+        pos = pos + 2;
+        if (pos + ext_total != blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+        if (_tn_12_ch_ext_frames(body + pos, ext_total) != 1) {
+            return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
+        }
+        var ep = 0;
+        var el = 0;
+        var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);
+        if (got == 1) { store64(ctx + TLS_CTX_OFF_USE_EMS, 1); }
+        # ALPN (RFC 7301): negotiate against the server's configured
+        # list; _tn_build_server_hello_12 emits the result. Lenient.
+        _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
+        var sgp = 0;
+        var sgl = 0;
+        if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
+            group = _tn_pick_group(ctx, sgp, sgl);
+            if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+            if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+            var kc = _tn_12_key_curve(ctx);
+            if (kc != 0) {
+                if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
             }
         }
     }
@@ -1454,6 +1459,22 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     store64(ctx + TLS_CTX_OFF_GROUP, group);
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
+}
+
+# 1 if a TLS 1.2 ClientHello's extension block (`ep`, `total` bytes) frames — each entry's 4-byte
+# header and its data inside the block, the last one ending at `total` — else 0. The 1.2 server walks
+# it once before looking anything up, because _tn_find_ext stops at the first entry that overruns
+# and its -1 was read as "absent" (6.7.16's D32: decode_error). Local to the 1.2 parse: the 1.3
+# server's ClientHello parse and _tn_server_negotiate_alpn, which it shares, are unchanged.
+# CHANGELOG [6.7.16]
+fn _tn_12_ch_ext_frames(ep, total): i64 {
+    var q = 0;
+    while (q < total) {
+        if (q + 4 > total) { return 0; }
+        q = q + 4 + _tn_be16_r(ep + q + 2);
+    }
+    if (q != total) { return 0; }
+    return 1;
 }
 
 # 1 if the TLS 1.2 server can negotiate wire suite `w`: an ECDHE suite whose ServerHello it can
