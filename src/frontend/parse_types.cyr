@@ -175,10 +175,13 @@ fn _tn_resolve_at(S, ti): i64 {
     if (_tn_tparam(S, ti, noff) == 1) { return _tn_code(4, 7); }
     return 0;
 }
+# The signature's own `<T>` is read before the enclosing body's: in a signature `_arr_fn_tparam` finds no body and
+# walks back over every earlier fn, so each generic definition cost the whole file before it. Each test only
+# accepts, so the order changes no verdict. CHANGELOG [6.7.16]
 fn _tn_tparam(S, ti, noff): i64 {
     if (_is_own_tparam(S, noff) == 1) { return 1; }
-    if (_arr_fn_tparam(S, ti, noff) == 1) { return 1; }
-    return _tn_sig_tparam(S, ti, noff);
+    if (_tn_sig_tparam(S, ti, noff) == 1) { return 1; }
+    return _arr_fn_tparam(S, ti, noff);
 }
 # Is `noff` (at token `ti`, in a fn SIGNATURE — a param or return type) one of that fn's own
 # `<T, ..>`? The signature holds no `{`, `}` or `;`, so meeting one means `ti` is not in one. A `fn`
@@ -4016,8 +4019,8 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     if (ptc != 0) { return _tn_byname_refd(S, pnoff); }
     var ti = GTI(S);
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
+    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }   # the captured `<T>` first: no scan. CHANGELOG [6.7.16]
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
-    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse_var(S, ti, " for parameter ", pnoff);
     return 0;
 }
@@ -4856,35 +4859,82 @@ fn _is_own_tparam(S, noff): i64 {
     return 0;
 }
 
-# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60)
-# followed by the name — LATER in the token stream?
+# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60; only those, the
+# keywords `_dlx_pos` holds) followed by the name — LATER in the token stream?
+# ⛔ 6.7.16 — read from `_dlx_pos`, the declarations' positions, not every token from the cursor to the end of the
+# file: a type parameter in a generic fn's signature reaches this once per resolution (`x: *T` three times), so N
+# generic definitions cost N x the file — 3000 `fn oK<T>(x: *T)` took 6.2 s. CHANGELOG [6.7.16]
 fn _declared_later(S, noff, ta, tb): i64 {
-    var k = GTI(S);
-    var n = GTCNT(S);
-    while (k + 1 < n) {
+    _dlx_build(S);
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
         var t = TOKTYP(S, k);
-        if (t == ta || t == tb) {
-            if (TOKTYP(S, k + 1) == 2) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
-        }
-        k = k + 1;
+        if (t == ta || t == tb) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
+        i = i + 1;
     }
     return 0;
 }
 
 # 1 when a GENERIC struct or union of this name (`struct NAME <`) is declared later in the token stream. 6.7.15
 fn _declared_later_gen(S, noff): i64 {
-    var k = GTI(S);
+    _dlx_build(S);
     var n = GTCNT(S);
-    while (k + 2 < n) {
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
         var t = TOKTYP(S, k);
-        if (t == 40 || t == 101) {
-            if (TOKTYP(S, k + 1) == 2) { if (TOKTYP(S, k + 2) == 19) {
+        if (t == 40 || t == 101) { if (k + 2 < n) { if (TOKTYP(S, k + 2) == 19) {
                     if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; }
-                } }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The token positions `k` of every `struct`, `union` or `enum` keyword followed by a name (`k + 1` an identifier),
+# ascending — what the two scans above test, built once per token stream (`_dlx_tc`, its token count + 1; the only
+# rewrite after the lexer, `_dyn_fold`, changes the count, and none touches a keyword or the name after one).
+var _dlx_pos = 0;
+var _dlx_n = 0;
+var _dlx_tc = 0;
+fn _dlx_build(S): i64 {
+    var n = GTCNT(S);
+    if (_dlx_tc == n + 1) { return 0; }
+    var c = 0;
+    var k = 0;
+    while (k + 1 < n) {
+        c = c + _dlx_at(S, k);
+        k = k + 1;
+    }
+    _dlx_pos = alloc(c * 8 + 8);
+    _dlx_n = 0;
+    k = 0;
+    while (k + 1 < n) {
+        if (_dlx_at(S, k) == 1) {
+            S64(_dlx_pos + _dlx_n * 8, k);
+            _dlx_n = _dlx_n + 1;
         }
         k = k + 1;
     }
+    _dlx_tc = n + 1;
     return 0;
+}
+fn _dlx_at(S, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t != 40 && t != 101 && t != 60) { return 0; }
+    if (TOKTYP(S, k + 1) == 2) { return 1; }
+    return 0;
+}
+# The first index of `_dlx_pos` at or after token `g`.
+fn _dlx_from(g): i64 {
+    var lo = 0;
+    var hi = _dlx_n;
+    while (lo < hi) {
+        var m = (lo + hi) / 2;
+        if (L64(_dlx_pos + m * 8) < g) { lo = m + 1; } else { hi = m; }
+    }
+    return lo;
 }
 
 # The refusal. The cursor is already past the type name, so the declaration parses on: the
