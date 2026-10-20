@@ -50,35 +50,34 @@ cat src/main_aarch64.cyr  | "$WORK/cc_l" > "$WORK/cc_x"  && chmod +x "$WORK/cc_x
 # the same native arm64 binary (no separate x86 cycc on Apple Silicon).
 cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cycc"
 cp "$WORK/$STAGE/bin/cycc" "$WORK/$STAGE/bin/cycc_aarch64"
-# Wrapper + quality tools, cross-emitted to arm64 Mach-O.
+# The wrapper, cross-emitted to arm64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cyrius"
+# Every other cyrius.cyml [release] bins entry, read from the manifest and arch-checked by
+# scripts/release-bins.sh: this builder built a hand list (cyrfmt cyrlint cyrdoc cyrius-init cyrsign
+# cxvm cyaudit cyrius_api_surface), so a macOS binary install had no cyrius-lsp, ark, cyrld,
+# ts_test_runner or cyrsign-efi. bin/cyriusly is now the compiled version manager, as on Linux; its
+# shell twin is scripts/cyriusly below. (v6.6.5's round-3 review had added cyaudit +
+# cyrius_api_surface to that hand list: `cyrius vet`, `deny` and `api-surface` said "tool not found".)
+# tests/gates/toolchain/cli_args_never_dropped.sh axis 15 holds this builder to the manifest.
+# CHANGELOG [6.7.16]
+sh scripts/release-bins.sh macos-arm64 "$WORK/$STAGE/bin" "$WORK/cc_x"
 # cx: both the RUNTIME (cxvm) and the COMPILER (cycc_cx) ship — a binary-install
 # macOS user can `cyrius build --target=cx` AND `cyrius run *.cyx`. v6.4.22 fixed
 # cycc_cx's Mach-O cross-native fault (the arena used brk, which XNU lacks → now
 # mmap per-target); verified on ecb (native compile→run round-trip).
-# v6.6.5 (round-3 review) — cyaudit + cyrius_api_surface were MISSING here, as they
-# were from the Windows tarball: `cyrius vet`, `cyrius deny` and `cyrius api-surface`
-# said "tool not found" on every macOS binary install. The CLI resolves both through
-# _tool_path; tests/gates/toolchain/cli_args_never_dropped.sh axis 15 now checks every
-# tarball script against that list.
-for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface; do
-    cat "programs/${tool}.cyr" | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/${tool}"
-done
 # cycc_cx source is src/main_cx.cyr (a fork), not programs/cycc_cx.cyr — own line.
 cat src/main_cx.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cycc_cx"
-# The version manager, as the shell script (the [release] scripts were staged above).
-cp scripts/cyriusly "$WORK/$STAGE/bin/"
 chmod +x "$WORK/$STAGE/bin"/*
-# 6.7.3 (the cyriusly cmdtools CWD-script bug): the twin at scripts/ too — install.sh lands it at versions/<v>/scripts/cyriusly,
-# the one layout every POSIX slot has and scripts/verify-store.sh judges
+# 6.7.3 (the cyriusly cmdtools CWD-script bug): the shell twin at scripts/ — install.sh lands it at
+# versions/<v>/scripts/cyriusly, where the compiled bin/cyriusly's `cmdtools` runs it, the one layout
+# every POSIX slot has and scripts/verify-store.sh judges
 mkdir -p "$WORK/$STAGE/scripts"
 cp scripts/cyriusly "$WORK/$STAGE/scripts/"
 chmod +x "$WORK/$STAGE/scripts/cyriusly"
 
-# Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —
-# refuse to package a non-arm64 / empty artifact.
-for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cycc_cx \
-         cyaudit cyrius_api_surface; do
+# Validate the Mach-O binaries this builder compiles itself (magic cffaedfe, cputype 0x0100000C) —
+# refuse to package a non-arm64 / empty artifact. release-bins.sh checks its own the same way.
+for b in cycc cycc_aarch64 cyrius cycc_cx; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')

@@ -1150,6 +1150,7 @@ http::http_get/1
 http::http_get_a/2
 http::http_get_r/1
 http::http_status/1
+io::env_block/1
 io::eprint/2
 io::file_append_locked/3
 io::file_close/1

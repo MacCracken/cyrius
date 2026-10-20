@@ -21,7 +21,9 @@
 #   4  each BUILDER, run with CYRIUS_CYML=<the fake-entry copy>, exits non-zero, names the entry
 #      and writes no tarball.
 #   5  end to end: each builder on the real manifest produces a tarball whose bin/ holds every
-#      entry, executable and byte-identical to its source, and bin/cyriusly (the shell script).
+#      entry, executable and byte-identical to its source; bin/cyriusly is the compiled version
+#      manager (a Mach-O, since 6.7.16: scripts/release-bins.sh builds every [release] bins entry,
+#      as on Linux) and scripts/cyriusly its shell twin, byte-identical to the tree's.
 #      It needs xxd, tar and sha256sum, as the builders do. Without them it says so by name and
 #      exits 77 (a SKIP, never a pass).
 #
@@ -152,8 +154,11 @@ else
         tar xzf "$T/a5_$k/$st.tar.gz" -C "$T/u_$k" || { bad "axis 5: $st.tar.gz does not unpack"; continue; }
         a5f=$FAIL; FAIL=0
         check_bin "$T/u_$k/$st/bin" "axis 5 ($st)"
-        cmp -s "$T/u_$k/$st/bin/cyriusly" scripts/cyriusly || bad "axis 5 ($st): bin/cyriusly is not scripts/cyriusly"
-        [ "$FAIL" = 0 ] && echo "  ok axis 5: $st.tar.gz bin/ holds every [release] scripts entry and cyriusly"
+        # 6.7.16: bin/cyriusly is the compiled version manager, its shell twin scripts/cyriusly
+        # (tests/gates/toolchain/cli_args_never_dropped.sh axis 15b checks the binary's cputype).
+        [ "$(od -An -tx1 -N4 "$T/u_$k/$st/bin/cyriusly" | tr -d ' \n')" = cffaedfe ] || bad "axis 5 ($st): bin/cyriusly is not the compiled version manager (no Mach-O magic)"
+        cmp -s "$T/u_$k/$st/scripts/cyriusly" scripts/cyriusly || bad "axis 5 ($st): scripts/cyriusly (the shell twin) is not the tree's scripts/cyriusly"
+        [ "$FAIL" = 0 ] && echo "  ok axis 5: $st.tar.gz bin/ holds every [release] scripts entry and the compiled cyriusly; scripts/ its shell twin"
         [ "$a5f" = 1 ] && FAIL=1
     done
 fi

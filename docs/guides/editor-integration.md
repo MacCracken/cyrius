@@ -68,9 +68,12 @@ Each `error:` / `warning:` line of the output becomes an LSP `Diagnostic`
 
 ### Build / install
 
-`cyrius-lsp` ships with every install (it is one of the release binaries),
-so the installer already put it in `~/.cyrius/bin/`. Confirm with
-`which cyrius-lsp`. To rebuild it from a cyrius checkout:
+`cyrius-lsp` is one of the release binaries, so a Linux or macOS install
+already put it in `~/.cyrius/bin/`. Confirm with `which cyrius-lsp`. (Until
+6.7.16 the macOS tarballs built a hand list without it.) The Windows install
+has none: cycc_win refuses the server (`sys_fstat` and `sys_readlink` have no
+PE wrapper, and it runs its compiler through fork and pipes). To rebuild it
+from a cyrius checkout:
 
 ```sh
 cyrius lsp           # build programs/cyrius-lsp.cyr → $CYRIUS_HOME/bin/cyrius-lsp (default ~/.cyrius)
@@ -84,9 +87,16 @@ rest of the toolchain.
 The server finds `cycc` and the `cyrius` CLI without relying on `PATH`, in
 this order: `$HOME/.cyrius/bin/` (the active installed version), the
 directory the `cyrius-lsp` binary itself lives in, `./build/`,
-`/usr/local/lib/cyrius/`, then `$CYRIUS_HOME/`. It logs what it found to
-stderr (`[cyrius-lsp] found cycc: …`), which most editors show in their LSP
-log. Inside a project, `cyrius` then runs the toolchain version the
+`/usr/local/lib/cyrius/`, then `$CYRIUS_HOME/`. `HOME` and `CYRIUS_HOME` are
+read with the stdlib's `getenv`, and the environment it hands the `cyrius`
+child is the stdlib's `env_block` (6.7.16): on macOS, which has no `/proc`, the
+server read neither until then, found no compiler and published no diagnostics.
+Its own directory comes from `/proc/self/exe` on Linux, and on macOS from
+`argv[0]` resolved with `fcntl(F_GETPATH)`, so a server launched by a path
+finds the `cycc` beside it with no `HOME` at all; a bare `cyrius-lsp` found
+through `PATH` gives it no directory there. It logs what it found to stderr
+(`[cyrius-lsp] found cycc: …`), which most editors show in their LSP log.
+Inside a project, `cyrius` then runs the toolchain version the
 project's `cyrius.cyml` pins (`cyrius = "…"`, which must be installed), so
 diagnostics match what `cyrius build` sees; outside a project they come from
 `cyrius check` with the toolchain the CLI finds, or the `cycc` found above

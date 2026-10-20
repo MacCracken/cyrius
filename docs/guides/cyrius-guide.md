@@ -8346,6 +8346,10 @@ error, not a short directory: after `FindNextFileW` returns 0 the lister reads
 
 **Environment**
 - `getenv(name)` → pointer to value, or 0
+- `env_block(lenp)` → 0, storing a length of 0 (6.7.16): Windows has no environment block in
+  the stdlib, since `getenv` asks per name. On Linux and macOS it answers the whole environment
+  `getenv` reads, NUL-terminated `NAME=value` entries, its length stored at `lenp` — what a
+  program building a child's envp reads instead of `/proc/self/environ`, which macOS lacks.
 
 Windows has no `/proc/self/environ`; the lookup routes to
 `GetEnvironmentVariableA` (0xF015). The compiler reads its own `CYRIUS_*` knobs

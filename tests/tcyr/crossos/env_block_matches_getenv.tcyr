@@ -1,0 +1,86 @@
+# env_block_matches_getenv.tcyr — 6.7.16
+#
+# lib/io.cyr's `env_block(lenp)`: the environment `getenv` reads, as one block of NUL-terminated
+# `NAME=value` entries, its length stored at `lenp`. cyrius-lsp builds its children's envp from it
+# (it read /proc/self/environ itself, which macOS does not have, so on macOS it found no compiler
+# and its children ran with no environment: issues/2026-10-19-cyrius-lsp-absent-from-macos-and-
+# reads-proc.md). Cross-host because the block comes from a different place on each: Linux reads
+# /proc/self/environ, macOS flattens the entry-stack envp, and Windows (where getenv asks
+# GetEnvironmentVariableA one name at a time) has no block — it answers 0, storing 0, and never opens
+# a `\proc\self\environ` on the current drive.
+#
+# As getenv_environment.tcyr: no environment-specific VALUE is pinned. The name is CYRIUS_TEST_ENV,
+# which the check.sh suite runner supplies, or PATH, which every shell-launched runner has; the block's
+# entry for it must hold exactly what getenv answers.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+
+# The offset of the value of the first `name=` entry in blk[0, n), or -1.
+fn _eb_value_at(blk, n, name): i64 {
+    var nl = strlen(name);
+    var pos = 0;
+    while (pos < n) {
+        var end = pos;
+        while (end < n && load8(blk + end) != 0) { end = end + 1; }
+        if (end - pos > nl && memeq(blk + pos, name, nl) == 1 && load8(blk + pos + nl) == 61) { return pos + nl + 1; }
+        pos = end + 1;
+    }
+    return 0 - 1;
+}
+
+# The number of entries (NUL terminators) in blk[0, n).
+fn _eb_entries(blk, n): i64 {
+    var c = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(blk + i) == 0) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn _eb_check(): i64 {
+    var lenp = alloc(8);
+    store64(lenp, 77);
+    var blk = env_block(lenp);
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: no environment block (getenv asks per name)");
+    assert_eq(blk, 0, "env_block answers 0");
+    assert_eq(load64(lenp), 0, "and stores a length of 0");
+    assert_eq(env_block(0), 0, "env_block(0) answers 0 too, writing nothing");
+    return 0;
+    #endif
+    test_group("the block getenv reads");
+    var name = "CYRIUS_TEST_ENV";
+    var want = getenv(name);
+    if (want == 0) {
+        name = "PATH";
+        want = getenv(name);
+    }
+    assert_neq(want, 0, "getenv finds CYRIUS_TEST_ENV or PATH (the premise)");
+    assert_neq(blk, 0, "env_block answers a block");
+    var n = load64(lenp);
+    assert_eq(n > 0, 1, "its stored length is positive (the 77 placed there was overwritten)");
+    if (blk == 0 || n <= 0 || want == 0) { return 0; }
+    assert_eq(load8(blk + n - 1), 0, "the last entry is NUL-terminated within the length");
+    assert_eq(_eb_entries(blk, n) >= 1, 1, "the block holds at least one entry");
+    var at = _eb_value_at(blk, n, name);
+    assert_eq(at >= 0, 1, "the block holds an entry for the name getenv found");
+    if (at >= 0) {
+        assert_eq(strlen(blk + at), strlen(want), "that entry's value has getenv's length");
+        assert_eq(memeq(blk + at, want, strlen(want)), 1, "and getenv's bytes");
+    }
+    test_group("cached, and lenp optional");
+    var lenp2 = alloc(8);
+    assert_eq(env_block(lenp2), blk, "a second call answers the same block");
+    assert_eq(load64(lenp2), n, "with the same length");
+    assert_eq(env_block(0), blk, "env_block(0) answers the block, storing nothing");
+    return 0;
+}
+
+alloc_init();
+_eb_check();
+var r = assert_summary();

@@ -28,6 +28,8 @@ include "lib/io.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/syscalls.cyr"
+# 6.7.16: argv(0), which _resolve_install_dir opens on macOS (no /proc/self/exe there).
+include "lib/args.cyr"
 # 6.6.10: the declaration reader the CLI uses (`cyrius coverage`, `cyrius distlib`) — ONE
 # answer to "what does this file declare at top level". See lsp_index_file.
 include "cbt/srcscan.cyr"
@@ -695,17 +697,33 @@ fn _lsp_refuse_doc(path, size): i64 {
 }
 
 # Find cycc binary — check common locations
-# v5.11.44: Resolve the LSP binary's install directory via
-# /proc/self/exe — same pattern as
-# programs/cyrius-init.cyr:_resolve_templates_dir. Lets find_cycc
-# locate a co-installed cycc even when the LSP launcher
-# (Claude Code, other editors with a minimal inherited env) wipes
-# PATH and CYRIUS_HOME. Returns a pointer to the dir cstring or 0.
+# v5.11.44: the LSP binary's install directory, so find_cycc / find_cyrius locate a co-installed
+# cycc even when the editor's launcher (Claude Code and others with a minimal inherited env) wipes
+# PATH, CYRIUS_HOME and HOME. A pointer to the directory cstring, or 0.
 # See: docs/development/proposals/archived/cyrius-lsp-argv0-self-resolution.md
+# ⛔ 6.7.16 — macOS has no /proc, so the /proc/self/exe readlink failed there and this answered 0.
+# There, as programs/cyrius-init.cyr's `_self_path` does: open argv(0) and ask fcntl(F_GETPATH = 50)
+# for its real path. A bare argv(0) (no '/') was found through PATH, which this server does not
+# search: opening it would resolve a same-named file in the working directory, so it answers 0.
+# Elsewhere /proc/self/exe, as before. CHANGELOG [6.7.16]
 fn _resolve_install_dir(): i64 {
     var buf = alloc(4096);
-    var n = sys_readlink("/proc/self/exe", buf, 4095);
-    if (n <= 0) { return 0; }
+    var n = 0;
+    #ifdef CYRIUS_TARGET_MACOS
+    args_init();   # the argv API's contract; a no-op on macOS (the entry park already holds argv)
+    var a0 = argv(0);
+    if (a0 == 0 || _lsp_has(a0, "/") == 0) { return 0; }
+    var afd = sys_open(a0, 0, 0);
+    if (afd < 0) { return 0; }
+    var gr = sys_fcntl(afd, 50, buf);
+    sys_close(afd);
+    if (gr < 0) { return 0; }
+    n = strlen(buf);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    n = sys_readlink("/proc/self/exe", buf, 4095);
+    #endif
+    if (n <= 0 || n >= 4096) { return 0; }
     store8(buf + n, 0);
     var i = n - 1;
     while (i >= 0) {
@@ -717,190 +735,76 @@ fn _resolve_install_dir(): i64 {
     return buf;
 }
 
-fn find_cycc(): i64 {
-    # v5.11.54: Try $HOME/.cyrius/bin/cycc FIRST — that's the symlink
-    # to whatever ~/.cyrius/current points at (the LATEST installed
-    # cyrius). Diagnostics should reflect the latest parser's view of
-    # the source: a user editing a v5.11.51+ byte-array-literal file
-    # in a project that pins `cyrius = "5.11.49"` in cyrius.cyml
-    # should NOT see "expected ';'" errors from the .49 parser —
-    # `cyrius build` still respects the pin for the actual binary
-    # output, but the LSP showing OLDER-parser errors is a misleading
-    # papercut (filed 2026-05-13 as gnoboot-lsp-byte-array-literal).
-    # Falls back to v5.11.44's /proc/self/exe resolution if $HOME is
-    # absent (editors with minimal-env LSP launchers — Claude Code
-    # and similar — sometimes don't set HOME).
-    var envfd = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd >= 0) {
-        var hbuf = alloc(32768);
-        var htotal = 0;
-        var hchunk = 1;
-        while (hchunk > 0) {
-            hchunk = syscall(0, envfd, hbuf + htotal, 32768 - htotal);
-            if (hchunk > 0) { htotal += hchunk; }
-        }
-        syscall(3, envfd);
-        var hpos = 0;
-        while (hpos < htotal) {
-            var hend = hpos;
-            while (hend < htotal && load8(hbuf + hend) != 0) { hend += 1; }
-            if (hend - hpos > 5 && memeq(hbuf + hpos, "HOME=", 5) == 1) {
-                var hvstart = hpos + 5;
-                var hvlen = hend - hvstart;
-                var hsb = str_builder_new();
-                var hval = alloc(hvlen + 1);
-                memcpy(hval, hbuf + hvstart, hvlen);
-                store8(hval + hvlen, 0);
-                str_builder_add_cstr(hsb, hval);
-                str_builder_add_cstr(hsb, "/.cyrius/bin/cycc");
-                var p_latest = str_data(str_builder_build(hsb));
-                var fd_latest = syscall(2, p_latest, 0, 0);
-                if (fd_latest >= 0) { syscall(3, fd_latest); return p_latest; }
-            }
-            hpos = hend + 1;
-        }
-    }
-
-    # v5.11.44: Self-resolve via /proc/self/exe. Handles the
-    # editor-LSP-launcher case where PATH + CYRIUS_HOME + HOME are
-    # all absent from the inherited env. Co-installed cycc in the
-    # SAME version-snapshot as the LSP binary — used when the latest
-    # symlink above is unreachable.
-    var install_dir = _resolve_install_dir();
-    if (install_dir != 0) {
-        var sb_self = str_builder_new();
-        str_builder_add_cstr(sb_self, install_dir);
-        str_builder_add_cstr(sb_self, "/cycc");
-        var p_self = str_data(str_builder_build(sb_self));
-        var fd_self = syscall(2, p_self, 0, 0);
-        if (fd_self >= 0) { syscall(3, fd_self); return p_self; }
-    }
-
-    # Try ./build/cycc
-    var p1 = "build/cycc";
-    var fd = syscall(2, p1, 0, 0);
-    if (fd >= 0) { syscall(3, fd); return p1; }
-
-    # Try /usr/local/lib/cyrius/cycc
-    var p2 = "/usr/local/lib/cyrius/cycc";
-    fd = syscall(2, p2, 0, 0);
-    if (fd >= 0) { syscall(3, fd); return p2; }
-
-    # Try CYRIUS_HOME/cycc via /proc/self/environ
-    var envfd2 = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd2 >= 0) {
-        var ebuf = alloc(32768);
-        var etotal = 0;
-        var echunk = 1;
-        while (echunk > 0) {
-            echunk = syscall(0, envfd2, ebuf + etotal, 32768 - etotal);
-            if (echunk > 0) { etotal += echunk; }
-        }
-        syscall(3, envfd2);
-        var pos = 0;
-        while (pos < etotal) {
-            var end = pos;
-            while (end < etotal && load8(ebuf + end) != 0) { end += 1; }
-            if (end - pos > 12 && memeq(ebuf + pos, "CYRIUS_HOME=", 12) == 1) {
-                var vstart = pos + 12;
-                var vlen = end - vstart;
-                var sb = str_builder_new();
-                var val = alloc(vlen + 1);
-                memcpy(val, ebuf + vstart, vlen);
-                store8(val + vlen, 0);
-                str_builder_add_cstr(sb, val);
-                str_builder_add_cstr(sb, "/cycc");
-                var p3 = str_data(str_builder_build(sb));
-                fd = syscall(2, p3, 0, 0);
-                if (fd >= 0) { syscall(3, fd); return p3; }
-            }
-            pos = end + 1;
-        }
-    }
-    return 0;
+# `<$name><suffix>` when the environment variable `name` is set and not empty and that path
+# opens; else 0. The variable is read with getenv (lib/io.cyr): /proc/self/environ on Linux, the
+# entry-stack envp on macOS. ⛔ 6.7.16 — find_cycc / find_cyrius opened /proc/self/environ
+# themselves, which macOS does not have: HOME and CYRIUS_HOME read as unset there, so the server
+# found no cycc ('cycc not found — diagnostics disabled') and published an empty list for a file
+# with an error. CHANGELOG [6.7.16]
+fn _lsp_env_path(name, suffix): i64 {
+    var v = getenv(name);
+    if (v == 0 || load8(v) == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, v);
+    str_builder_add_cstr(sb, suffix);
+    var p = str_data(str_builder_build(sb));
+    var fd = sys_open(p, 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return p;
 }
 
-# v5.11.56: find the `cyrius` wrapper binary. Mirrors find_cycc's
-# search order (HOME/.cyrius/bin → install_dir → ./build → /usr/
-# local/lib/cyrius → $CYRIUS_HOME). Returns 0 if not found;
-# compile_and_capture falls back to raw cycc in that case.
+# `<install dir>/<name>` when the server's own directory holds `name` (see _resolve_install_dir);
+# else 0.
+fn _lsp_sibling(name): i64 {
+    var dir = _resolve_install_dir();
+    if (dir == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    var p = str_data(str_builder_build(sb));
+    var fd = sys_open(p, 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return p;
+}
+
+# `p` when it opens, else 0.
+fn _lsp_if_opens(p): i64 {
+    var fd = sys_open(p, 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return p;
+}
+
+# The compiler the diagnostics run: $HOME/.cyrius/bin/cycc, then the server's own directory, then
+# ./build/cycc, /usr/local/lib/cyrius/cycc and $CYRIUS_HOME/cycc; 0 when none opens.
+# v5.11.54: $HOME/.cyrius/bin/cycc FIRST — the symlink to whatever ~/.cyrius/current points at
+# (the LATEST installed cyrius). Diagnostics reflect the latest parser's view of the source: a
+# user editing a v5.11.51+ byte-array-literal file in a project pinning `cyrius = "5.11.49"`
+# should NOT see "expected ';'" errors from the .49 parser — `cyrius build` still respects the pin
+# for the binary, but older-parser errors in the editor mislead (gnoboot-lsp-byte-array-literal).
+# The install directory (v5.11.44) serves a launcher that passes no HOME.
+fn find_cycc(): i64 {
+    var p = _lsp_env_path("HOME", "/.cyrius/bin/cycc");
+    if (p == 0) { p = _lsp_sibling("cycc"); }
+    if (p == 0) { p = _lsp_if_opens("build/cycc"); }
+    if (p == 0) { p = _lsp_if_opens("/usr/local/lib/cyrius/cycc"); }
+    if (p == 0) { p = _lsp_env_path("CYRIUS_HOME", "/cycc"); }
+    return p;
+}
+
+# v5.11.56: find the `cyrius` wrapper binary, in find_cycc's order ($HOME/.cyrius/bin → the
+# install directory → ./build → /usr/local/lib/cyrius → $CYRIUS_HOME). 0 when not found;
+# compile_and_capture then falls back to raw cycc.
 fn find_cyrius(): i64 {
-    var envfd = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd >= 0) {
-        var hbuf = alloc(32768);
-        var htotal = 0;
-        var hchunk = 1;
-        while (hchunk > 0) {
-            hchunk = syscall(0, envfd, hbuf + htotal, 32768 - htotal);
-            if (hchunk > 0) { htotal += hchunk; }
-        }
-        syscall(3, envfd);
-        var hpos = 0;
-        while (hpos < htotal) {
-            var hend = hpos;
-            while (hend < htotal && load8(hbuf + hend) != 0) { hend += 1; }
-            if (hend - hpos > 5 && memeq(hbuf + hpos, "HOME=", 5) == 1) {
-                var hvstart = hpos + 5;
-                var hvlen = hend - hvstart;
-                var hsb = str_builder_new();
-                var hval = alloc(hvlen + 1);
-                memcpy(hval, hbuf + hvstart, hvlen);
-                store8(hval + hvlen, 0);
-                str_builder_add_cstr(hsb, hval);
-                str_builder_add_cstr(hsb, "/.cyrius/bin/cyrius");
-                var p_latest = str_data(str_builder_build(hsb));
-                var fd_latest = syscall(2, p_latest, 0, 0);
-                if (fd_latest >= 0) { syscall(3, fd_latest); return p_latest; }
-            }
-            hpos = hend + 1;
-        }
-    }
-    var install_dir = _resolve_install_dir();
-    if (install_dir != 0) {
-        var sb_self = str_builder_new();
-        str_builder_add_cstr(sb_self, install_dir);
-        str_builder_add_cstr(sb_self, "/cyrius");
-        var p_self = str_data(str_builder_build(sb_self));
-        var fd_self = syscall(2, p_self, 0, 0);
-        if (fd_self >= 0) { syscall(3, fd_self); return p_self; }
-    }
-    var p1 = "build/cyrius";
-    var fd1 = syscall(2, p1, 0, 0);
-    if (fd1 >= 0) { syscall(3, fd1); return p1; }
-    var p2 = "/usr/local/lib/cyrius/cyrius";
-    var fd2 = syscall(2, p2, 0, 0);
-    if (fd2 >= 0) { syscall(3, fd2); return p2; }
-    var envfd2 = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd2 >= 0) {
-        var ebuf = alloc(32768);
-        var etotal = 0;
-        var echunk = 1;
-        while (echunk > 0) {
-            echunk = syscall(0, envfd2, ebuf + etotal, 32768 - etotal);
-            if (echunk > 0) { etotal += echunk; }
-        }
-        syscall(3, envfd2);
-        var pos = 0;
-        while (pos < etotal) {
-            var end = pos;
-            while (end < etotal && load8(ebuf + end) != 0) { end += 1; }
-            if (end - pos > 12 && memeq(ebuf + pos, "CYRIUS_HOME=", 12) == 1) {
-                var vstart = pos + 12;
-                var vlen = end - vstart;
-                var sb = str_builder_new();
-                var val = alloc(vlen + 1);
-                memcpy(val, ebuf + vstart, vlen);
-                store8(val + vlen, 0);
-                str_builder_add_cstr(sb, val);
-                str_builder_add_cstr(sb, "/cyrius");
-                var p3 = str_data(str_builder_build(sb));
-                var fd3 = syscall(2, p3, 0, 0);
-                if (fd3 >= 0) { syscall(3, fd3); return p3; }
-            }
-            pos = end + 1;
-        }
-    }
-    return 0;
+    var p = _lsp_env_path("HOME", "/.cyrius/bin/cyrius");
+    if (p == 0) { p = _lsp_sibling("cyrius"); }
+    if (p == 0) { p = _lsp_if_opens("build/cyrius"); }
+    if (p == 0) { p = _lsp_if_opens("/usr/local/lib/cyrius/cyrius"); }
+    if (p == 0) { p = _lsp_env_path("CYRIUS_HOME", "/cyrius"); }
+    return p;
 }
 
 # v5.11.56: walk up from filepath looking for cyrius.cyml. Returns
@@ -938,40 +842,35 @@ fn find_project_root(filepath): i64 {
     return 0;
 }
 
-# v5.11.56: read /proc/self/environ and build a NULL-terminated
-# envp[] array forwarding the LSP's environment to a child. The
-# cyrius wrapper needs HOME (for ~/.cyrius resolution) and PATH
-# (for git fallbacks during deps fetch); passing envp=NULL like
-# raw cycc does breaks ~/.cyrius/versions/X.Y.Z/ lookup.
-fn _build_envp_from_proc(): i64 {
-    var envfd = syscall(2, "/proc/self/environ", 0, 0);
-    if (envfd < 0) { return 0; }
-    var buf = alloc(32768);
-    var total = 0;
-    var chunk = 1;
-    while (chunk > 0 && total < 32767) {
-        chunk = syscall(0, envfd, buf + total, 32767 - total);
-        if (chunk > 0) { total += chunk; }
-    }
-    syscall(3, envfd);
-    if (total == 0) { return 0; }
-    store8(buf + total, 0);
-    var count = 1;
+# v5.11.56: a NULL-terminated envp[] forwarding this server's environment to a child, or 0 when
+# it has none. The cyrius wrapper needs HOME (for ~/.cyrius resolution) and PATH (for git fallbacks
+# during deps fetch); an empty envp, as raw cycc gets, breaks ~/.cyrius/versions/X.Y.Z/ lookup.
+# ⛔ 6.7.16 — built from lib/io.cyr's env_block (the block getenv reads), not from
+# /proc/self/environ, which macOS does not have (there the wrapper ran with no environment). The
+# whole environment: the /proc read stopped at 32767 bytes. The entries point into that shared
+# block. CHANGELOG [6.7.16]
+fn _lsp_envp(): i64 {
+    var lenb[8];
+    var blk = env_block(&lenb);
+    var n = load64(&lenb);
+    if (blk == 0 || n <= 0) { return 0; }
+    var count = 0;
     var i = 0;
-    while (i < total - 1) {
-        if (load8(buf + i) == 0) { count = count + 1; }
+    while (i < n) {
+        if (load8(blk + i) == 0) { count = count + 1; }
         i = i + 1;
     }
     var envp = alloc((count + 1) * 8);
-    store64(envp, buf);
-    var ei = 1;
-    var ji = 0;
-    while (ji < total - 1) {
-        if (load8(buf + ji) == 0) {
-            store64(envp + ei * 8, buf + ji + 1);
+    var ei = 0;
+    var start = 0;
+    i = 0;
+    while (i < n) {
+        if (load8(blk + i) == 0) {
+            store64(envp + ei * 8, blk + start);
             ei = ei + 1;
+            start = i + 1;
         }
-        ji = ji + 1;
+        i = i + 1;
     }
     store64(envp + ei * 8, 0);
     return envp;
@@ -1113,7 +1012,7 @@ fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
         }
         store64(&argv + ai, filepath);
         store64(&argv + ai + 8, 0);
-        var envp = _build_envp_from_proc();
+        var envp = _lsp_envp();
         if (project_root == 0) { envp = _lsp_envp_unpinned(envp); }
         if (envp == 0) {
             var envp_empty[1];

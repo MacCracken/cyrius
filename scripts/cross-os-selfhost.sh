@@ -272,9 +272,9 @@ cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.
 # portability gap. If you add a corpus test that reads a file, its input belongs here —
 # a missing input is indistinguishable from a broken port in the failure list.
 if [ -n "$LIBTEST" ]; then
-  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr programs/cyrius-lsp.cyr
 else
-  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr programs/cyrius-lsp.cyr
 fi
 
 # ── 6.7.10 (P5-B): EXECUTION COVERAGE ON THE HARDWARE ─────────────────────────────────────────
@@ -388,6 +388,90 @@ _co_cass_defender() {
   return 0
 }
 
+# ── 6.7.16: cyrius-lsp ON THE MAC HARDWARE ───────────────────────────────────────────────────────
+# The server read HOME, CYRIUS_HOME and its children's environment from /proc/self/environ and its
+# own path from /proc/self/exe, and macOS has no /proc: under an editor's launcher it logged `cycc
+# not found — diagnostics disabled` and published an empty list for a file with an error
+# (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md). It reads them through the
+# stdlib now (getenv; lib/io.cyr's env_block; argv(0) + fcntl(F_GETPATH) on macOS). Each Mac leg
+# builds the server with the host's own native cycc (ad-hoc signed on ecb, which kills an unsigned
+# binary) and drives it over JSON-RPC — initialize, didOpen of _lspp/e.cyr (a one-line syntax error,
+# in a project with its own cyrius.cyml), shutdown, exit — under `env -i` with PATH=/usr/bin:/bin,
+# which lacks every throwaway bin directory:
+#   L1  HOME = a throwaway whose .cyrius/bin holds the host's cycc and native CLI (no ~/.cyrius is
+#       read: ach has none). The server is run from outside that bin/: it must answer initialize,
+#       log `found cycc: <HOME>/.cyrius/bin/cycc`, and publish exactly one error diagnostic on
+#       e.cyr, `unexpected ';'`.
+#   L2  no HOME at all; the server is that bin/'s cyrius-lsp, run by its absolute path: it finds the
+#       same cycc as its own sibling (argv(0) + F_GETPATH) and publishes the same diagnostic.
+#   L3  HOME = a throwaway whose .cyrius/bin/cyrius is a stub that reports its own HOME and PATH as
+#       an `error:` line: the published message must carry the server's HOME and PATH, so the
+#       wrapper child got the server's environment (it ran with none on macOS).
+# A miss fails the leg by name (LSP_FAIL: <host>), with the server's log. Mutations (measured
+# 6.7.16, each leg run from a scratch copy of the tree): the 6.7.15 programs/cyrius-lsp.cyr (the
+# /proc reads) -> L1, L2 and L3 RED on ecb and on ach, every log `cycc not found — diagnostics
+# disabled`; `_lsp_envp` answering 0 -> L3 alone RED on ecb (the stub saw no HOME). CHANGELOG [6.7.16]
+
+# _co_lsp_msg <json> — one Content-Length-framed message.
+_co_lsp_msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c | tr -d ' ')" "$1"; }
+
+# _co_lsp <host> <compile command> <cc> <cli> [<cc's other name>…] — stage, build and run L1-L3 on
+# <host> (from ~/$RD, where <cc> and <cli> already are), pulling the outputs back to $CO_TMP. Fails
+# only when the staging or the build fails; _co_lsp_check grades.
+_co_lsp() {
+  _lh=$1; _lcmd=$2; _lcc=$3; _lcli=$4; shift 4
+  _lx=""
+  for _ln in "$@"; do _lx="$_lx && cp $_lcc _lsph/.cyrius/bin/$_ln"; done
+  _lsg=""
+  [ "$_lh" = ecb ] && _lsg=" && codesign -s - -f _lsp"
+  _LRP=$(ssh $SSHO "$_lh" "cd ~/$RD && pwd") && [ -n "$_LRP" ] || { echo "  lsp: ~/$RD on $_lh could not be resolved"; return 1; }
+  rm -rf "$CO_TMP/_lspst" && mkdir -p "$CO_TMP/_lspst/_lspp" || return 1
+  printf '[package]\nname = "lspleg"\nversion = "0.1.0"\n' > "$CO_TMP/_lspst/_lspp/cyrius.cyml"
+  printf 'fn f(): i64 {\n    return 1 +;\n}\nvar r = f();\n' > "$CO_TMP/_lspst/_lspp/e.cyr"
+  printf '#!/bin/sh\necho "error:e.cyr:1:1: stub-env HOME=[$HOME] PATH=[$PATH]" >&2\nexit 1\n' > "$CO_TMP/_lspst/_lspstub"
+  { _co_lsp_msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+    _co_lsp_msg "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://$_LRP/_lspp/e.cyr\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}"
+    _co_lsp_msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
+    _co_lsp_msg '{"jsonrpc":"2.0","method":"exit"}'; } > "$CO_TMP/_lspst/_lsp.req"
+  (cd "$CO_TMP/_lspst" && tar czf ../_co_lsp.tgz _lspp _lspstub _lsp.req) || return 1
+  scp -q $SSHO "$CO_TMP/_co_lsp.tgz" "$_lh:~/$RD/" \
+    && ssh $SSHO "$_lh" "cd ~/$RD && rm -rf _lspp _lsph _lsph2 && tar xzf _co_lsp.tgz && cat programs/cyrius-lsp.cyr | $_lcmd > _lsp 2> _lsp.berr && test -s _lsp && chmod +x _lsp _lspstub$_lsg \
+      && mkdir -p _lsph/.cyrius/bin _lsph2/.cyrius/bin && cp $_lcc _lsph/.cyrius/bin/cycc$_lx && cp $_lcli _lsph/.cyrius/bin/cyrius && cp _lsp _lsph/.cyrius/bin/cyrius-lsp \
+      && cp $_lcc _lsph2/.cyrius/bin/cycc && cp _lspstub _lsph2/.cyrius/bin/cyrius" \
+    || { echo "  lsp: programs/cyrius-lsp.cyr did not build on $_lh, or the homes could not be staged (~/$RD/_lsp.berr)"; return 1; }
+  ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i HOME=$_LRP/_lsph PATH=/usr/bin:/bin $_LRP/_lsp < ../_lsp.req > ../_lsp1.out 2> ../_lsp1.log" || true
+  ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i PATH=/usr/bin:/bin $_LRP/_lsph/.cyrius/bin/cyrius-lsp < ../_lsp.req > ../_lsp2.out 2> ../_lsp2.log" || true
+  ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i HOME=$_LRP/_lsph2 PATH=/usr/bin:/bin $_LRP/_lsp < ../_lsp.req > ../_lsp3.out 2> ../_lsp3.log" || true
+  for _lf in _lsp1.out _lsp1.log _lsp2.out _lsp2.log _lsp3.out _lsp3.log; do rm -f "$CO_TMP/$_lf"; done
+  scp -q $SSHO "$_lh:~/$RD/_lsp1.out" "$_lh:~/$RD/_lsp1.log" "$_lh:~/$RD/_lsp2.out" "$_lh:~/$RD/_lsp2.log" "$_lh:~/$RD/_lsp3.out" "$_lh:~/$RD/_lsp3.log" "$CO_TMP/" 2>/dev/null || true
+  return 0
+}
+
+# _co_lsp_check <host> — grades L1-L3 from $CO_TMP (the paths are $_LRP's), naming each miss and,
+# on any miss, printing the server's logs.
+_co_lsp_check() {
+  _lbad=0
+  _lu="\"uri\":\"file://$_LRP/_lspp/e.cyr\",\"diagnostics\":"
+  for _li in 1 2; do
+    _lo="$CO_TMP/_lsp$_li.out"; _ll="$CO_TMP/_lsp$_li.log"
+    [ -f "$_lo" ] && [ -f "$_ll" ] || { echo "  lsp L$_li: $1 left no _lsp$_li.out / .log"; _lbad=1; continue; }
+    _lp=$(tr '\r' '\n' < "$_lo" | grep -F "$_lu" || true)
+    grep -q '"capabilities"' "$_lo" || { echo "  lsp L$_li: the server did not answer initialize"; _lbad=1; }
+    grep -qxF "[cyrius-lsp] found cycc: $_LRP/_lsph/.cyrius/bin/cycc" "$_ll" || { echo "  lsp L$_li: the log does not say 'found cycc: $_LRP/_lsph/.cyrius/bin/cycc'"; _lbad=1; }
+    [ "$(printf '%s' "$_lp" | grep -o '"severity":1' | wc -l | tr -d ' ')" = 1 ] && printf '%s' "$_lp" | grep -qF '"message":"unexpected '"';'"'"' \
+      || { echo "  lsp L$_li: e.cyr was not published with exactly one error, \`unexpected ';'\` (got: $(printf '%s' "$_lp" | cut -c1-200))"; _lbad=1; }
+  done
+  _lp=$(tr '\r' '\n' < "$CO_TMP/_lsp3.out" 2>/dev/null | grep -F "$_lu" || true)
+  printf '%s' "$_lp" | grep -qF "stub-env HOME=[$_LRP/_lsph2] PATH=[/usr/bin:/bin]" \
+    || { echo "  lsp L3: the wrapper child did not get the server's HOME and PATH (got: $(printf '%s' "$_lp" | cut -c1-200))"; _lbad=1; }
+  if [ "$_lbad" != 0 ]; then
+    for _li in 1 2 3; do echo "  -- L$_li log ($1) --"; sed 's/^/      /' "$CO_TMP/_lsp$_li.log" 2>/dev/null | head -8; done
+  else
+    echo "  cyrius-lsp on $1: L1 (HOME) and L2 (its own path, no HOME) found cycc and published e.cyr's error; L3's wrapper child saw the server's HOME and PATH"
+  fi
+  return "$_lbad"
+}
+
 case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
@@ -470,6 +554,11 @@ case "$HOST" in
       && _co_cov_posix ecb cyrius_native r1r cycc_aarch64 \
       && _co_cov_check ecb '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ecb — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — cyrius-lsp on arm64 macOS (see _co_lsp): built by r1r; its home holds the native CLI
+    # and r1r as cycc and cycc_aarch64 (the arm64 CLI asks for the latter).
+    _co_lsp ecb "CYRIUS_MACHO_ARM=1 ./r1r" r1r cyrius_native cycc_aarch64 \
+      && _co_lsp_check ecb \
+      || { echo "LSP_FAIL: ecb — cyrius-lsp did not find cycc / publish the file's error / forward its environment under a launcher's minimal env (~/$RD/_lsp*.log, _lsp*.out). NOT SELFHOST_OK."; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -549,6 +638,11 @@ case "$HOST" in
       && _co_cov_posix ach cyrius_native r1 \
       && _co_cov_check ach '3 (1 .tcyr, 2 program(s)), 1 failed' \
       || { echo "SELFHOST_FAIL: ach — coverage --exec (X1: rc 0 and 5/7 executed; X2: rc 1, bad_test's exit 1 named; the temp dir left empty) FAILED (~/$RD/_cov1.*, _cov2.*). NOT SELFHOST_OK."; exit 1; }
+    # 6.7.16 — cyrius-lsp on x86_64 macOS (see _co_lsp): built by r1, unsigned (as every binary here);
+    # ach has no ~/.cyrius, so the throwaway home is the only one.
+    _co_lsp ach "./r1" r1 cyrius_native \
+      && _co_lsp_check ach \
+      || { echo "LSP_FAIL: ach — cyrius-lsp did not find cycc / publish the file's error / forward its environment under a launcher's minimal env (~/$RD/_lsp*.log, _lsp*.out). NOT SELFHOST_OK."; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
