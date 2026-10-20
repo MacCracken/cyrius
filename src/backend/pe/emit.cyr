@@ -602,7 +602,8 @@ fn _pe_flushfb_get(): i64 { return _pe_flushfb_idx; }
 #   0xF03E CreateSymbolicLinkW(link, target, flags) — BOOLEAN (a byte) return; the reroute takes
 #          NARROW paths since 6.7.12 and widens them in the emitter (ESYMLINKW_PE: the link and an
 #          absolute target get `\\?\` at 248+ units, a relative target is decoded only);
-#   0xF03F SetEndOfFile(h) — truncation of an ALREADY-VERIFIED handle, and sys_ftruncate.
+#   0xF03F SetEndOfFile(h) — truncation of an ALREADY-VERIFIED handle, and sys_ftruncate; the
+#          reroute answers 0 / -errno since 6.7.16 (it was the BOOL).
 # CHANGELOG [6.6.9]
 var _pe_getfinfo_ready    = 0;
 var _pe_getfinfo_idx      = 0;

@@ -215,8 +215,8 @@ fn _cxh_dup2(): i64 {
 # 62 and 66 (cxvm maps them back; a Mac's cxvm answered -62 / -66 until 6.7.16); and a number nothing
 # serves answers -ENOSYS 38 — x86_64 Linux's own answer for an unassigned number, cxvm's D55 refusal on
 # every host (spelled the host's way inside cxvm, so the map leaves it 38: Darwin's 38 is ENOTSOCK).
-# 0 the Linux answers, 1 the Windows ones (-40, -1 for the rmdir — the PE peer's sys_rmdir answers -1
-# for every failure — and -38), 2 neither.
+# 0 the Linux answers — a Windows host's too since 6.7.16's D79 (its rmdir answered -1 for every
+# failure: issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md) — 2 neither.
 fn _cxh_errno(): i64 {
     syscall(87, "cxh_el");
     syscall(87, "cxh_et");
@@ -238,7 +238,6 @@ fn _cxh_errno(): i64 {
     var ns = syscall(999);                    # unassigned on x86_64 Linux; not a call cxvm serves
     if (t < 0 || sl != 0 || mk != 0 || nf < 0 || ns != 0 - 38) { return 2; }
     if (lp == 0 - 40 && rd == 0 - 39) { return 0; }
-    if (lp == 0 - 40 && rd == 0 - 1) { return 1; }
     return 2;
 }
 
@@ -486,7 +485,7 @@ _cxh_row(1024, ph == 0, ph == 1);
 var d2 = _cxh_dup2();
 _cxh_row(2048, d2 == 0, d2 == 1);
 var en = _cxh_errno();
-_cxh_row(4096, en == 0, en == 1);
+_cxh_row(4096, en == 0, en == 0);
 # kill's signal is x86_64 Linux's number on every host (6.7.16,
 # issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
 # Darwin host maps the guest's number to its own, and refuses one it lacks with the same -22).

@@ -184,8 +184,8 @@ fn xrmdir(path): i64 {
 # exists; it is the same trap `xrmdir` was added for at v6.5.2.
 #
 # Windows DOES route here (83 is in the PE reroute set); so does `xrmdir` since v6.6.6
-# (0xF03B RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos.
-# CHANGELOG [6.5.7]
+# (0xF03B RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos, and on
+# Windows since 6.7.16 (it answered -1 for every failure there). CHANGELOG [6.5.7] [6.7.16]
 fn xmkdir(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var mn = 0;

@@ -37,7 +37,7 @@
 # issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
 # -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
 # unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
-# ENOTSOCK) (Windows: -40, -1 — the PE peer's sys_rmdir answers -1 for every failure — and -38);
+# ENOTSOCK) (Windows the same since 6.7.16's D79 — its rmdir answered -1 for every failure);
 # kill(getpid(), 99) -22 (6.7.16, issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
 # signal no host has; Windows -38). The signal map itself (SIGUSR1 10 is Darwin's 30, 10 there is
 # SIGBUS) is held by the ecb / ach legs of scripts/cross-os-selfhost.sh, which run the filed repro

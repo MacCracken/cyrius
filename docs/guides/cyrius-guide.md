@@ -8423,10 +8423,26 @@ never fired and `file_close_r` was never `Err`.
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
 | `sys_close(-1)`, `sys_close(-2)` | -9 | 0 | 0; -9 since 6.7.16 |
+| `sys_mkdir(dir)` of an existing directory | -17 | -1 | -1; -17 since 6.7.16 |
+| `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
+| `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
+| `sys_ftruncate` of a pipe or a read-only fd | -22 | -1 | -1; -22 since 6.7.16 |
+| `sys_ftruncate(99, n)` (never opened) | -9 | -1 | -1; -9 since 6.7.16 |
+| `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
 `sys_close(fd)` of a failed open's -1 read as a good close; `file_close_r(-1)` is `Err(IoBadFd)`.
+
+`mkdir`, `unlink` and `rmdir` (`sys_*` and `xmkdir` / `xunlink` / `xrmdir`: `CreateDirectoryW`,
+`DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
+through the same table since 6.7.16 — an existing name -17 (`ERROR_ALREADY_EXISTS`), a non-empty
+directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path -2, access denied
+-13 — where each answered -1 for every failure. `sys_ftruncate` answers -22 for a descriptor it
+cannot truncate, as Linux does: a pipe or a console (the seek is -29 there) and one without write
+access — a read-only descriptor and, on Windows only, an `O_APPEND` one (its handle has
+`FILE_APPEND_DATA` without `FILE_WRITE_DATA`; Linux truncates it). A path that is not valid UTF-8
+still answers -1: no Win32 call is made for it.
 
 A close of fd 0 / 1 / 2 closes the std stream, as on Linux (6.7.16): `sys_close(2)` answers 0, the
 std handle is closed and its slot cleared (`SetStdHandle(.., INVALID_HANDLE_VALUE)`), so a later
