@@ -5315,7 +5315,10 @@ operand is processed or rejected, never silently dropped; and a global `-q`/`-v`
 the operands. `cyrius <verb> --help` (or `-h`) prints exactly the flags the parser accepts, on
 every verb — since 6.7.12 the raw-tail verbs `init`, `port` and `sign-efi` too, whose helpers
 (`cyrius-init`, `cyrsign-efi`) print their usage on stdout and exit 0 (`cyrsign-efi` takes the
-help only as its lone argument and still refuses every other `-` token). `run` is the
+help only as its lone argument and still refuses every other `-` token). `sign-efi` runs the
+`cyrsign-efi` installed beside the CLI — on Windows as a child whose exit code it returns
+(6.7.16: cyrius.exe could not reach the `cyrsign-efi.exe` the tarball ships) — and a missing
+helper is named with the path it looked for, rc 127. `run` is the
 one stop-at-first-positional verb: a flag written after the source belongs to the program
 (`cyrius run -- prog.cyr a` is the same as `cyrius run prog.cyr a`). A value flag given twice
 is an error that names it (`--target=js --target=cx` used to mean cx, silently) — except the

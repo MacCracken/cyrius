@@ -1011,6 +1011,30 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, the CRLF-wrapped deferral 2, run argc a b c 4). Remote output: $WRD\\_cl*.txt. NOT SELFHOST_OK."
       exit 1
     fi
+    # 6.7.16 — `cyrius sign-efi` reaches the cyrsign-efi.exe beside cyrius.exe (the Windows tarball
+    # ships it): rc 0 and its usage. The CLI exec'd the helper in place — `sys_execve` is a -1 stub
+    # on PE — and said "helper not found (Linux-only …)", rc 127. With the helper removed, rc 127
+    # naming cyrsign-efi.exe and programs/cyrsign-efi.cyr. The exit codes are graded on cass with
+    # `if !errorlevel!`; the outputs come back here to be read (no cmd.exe quoting meets them).
+    # tests/gates/platform/win_cli_sign_efi_spawns.sh is the wine twin. CHANGELOG [6.7.16]
+    cat programs/cyrsign-efi.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_se.exe 2>/dev/null
+    _SE1=0; _SE2=0
+    scp -q $SSHO "$CO_TMP"/_co_se.exe "cass:$WRDS"/wh/bin/cyrsign-efi.exe \
+      || { echo "SELFHOST_FAIL: cass — sign-efi: cyrsign-efi.exe could not be staged. NOT SELFHOST_OK."; exit 1; }
+    ssh $SSHO cass "cmd /v /c \"$_CLI sign-efi --help > _se1.txt 2> _se1e.txt & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" || _SE1=1
+    ssh $SSHO cass "cmd /c \"del C:\\cyrius-tests\\$RD\\wh\\bin\\cyrsign-efi.exe\"" || _SE2=1
+    ssh $SSHO cass "cmd /v /c \"$_CLI sign-efi --help > _se2.txt 2> _se2e.txt & if !errorlevel! NEQ 127 (exit 1) else (exit 0)\"" || _SE2=1
+    rm -f "$CO_TMP"/_se1.txt "$CO_TMP"/_se2e.txt
+    scp -q $SSHO "cass:$WRDS/_se1.txt" "cass:$WRDS/_se2e.txt" "$CO_TMP/" 2>/dev/null || true
+    if [ "$_SE1" = 0 ] && [ "$_SE2" = 0 ] \
+      && tr -d '\r' < "$CO_TMP"/_se1.txt 2>/dev/null | grep -qF 'Usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>' \
+      && tr -d '\r' < "$CO_TMP"/_se2e.txt 2>/dev/null | grep -qE 'sign-efi: the cyrsign-efi helper is not installed at .*cyrsign-efi\.exe \(build it with `cyrius build programs/cyrsign-efi\.cyr'; then
+      echo "  sign-efi on cass: cyrius.exe ran cyrsign-efi.exe (rc 0, its usage); without it, rc 127 naming cyrsign-efi.exe"
+    else
+      _co_cass_defender
+      echo "SELFHOST_FAIL: cass — cyrius.exe sign-efi did not reach the cyrsign-efi.exe beside it (want rc 0 and its usage; without it rc 127 naming cyrsign-efi.exe). Remote output: $WRD\\_se*.txt. NOT SELFHOST_OK."
+      exit 1
+    fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
