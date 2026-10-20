@@ -48,6 +48,15 @@
 #       sibling-include row under the same environment: still empty.
 #   R17 the same, with CYRIUS_RESOLVED=0 and CYRIUS_NO_WARN_PIN_DRIFT=0 inherited by the server: empty
 #   R18 a file of that pinned project still reports the pin (the project route is unchanged)
+#   R19 (6.7.16, issues/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, the
+#       LSP sites) the server started with its fd 1 CLOSED: the `cyrius check` child a project file
+#       starts has fd 0 and fd 1 on /dev/null and fd 2 on the stderr pipe. The child redirected with
+#       `sys_dup2(fd, N); sys_close(fd)`: its /dev/null opened AT 1, dup2(1, 1) did nothing and the
+#       close closed it, so the child ran with stdout closed. A stub `cyrius` records its own fds.
+#   R20 the same through the raw cycc route (no CLI found; a loose file): the stub cycc's fd 0 is
+#       the file, fd 1 /dev/null, fd 2 the pipe (its stdout was closed the same way)
+#   R21 the server started with its fd 2 CLOSED still publishes R1's diagnostic (the pipe then
+#       lands at 2 and every redirect keeps it)
 #   R0  (6.7.15) a feeder whose server has already gone ends its pipeline with status 0 under
 #       `bash -eo pipefail`, and the run goes on (the stop-point race below, made deterministic)
 # `LSP_BIN=<binary>` / `CLI_BIN=<binary>` run the gate against another build (the mutations).
@@ -89,6 +98,9 @@
 #   a server that exits at once (LSP_BIN a stub)      every row FAIL but R0 R9 R10 R15, the verdict
 #                                                      printed
 #   that stub, pub / serve without `|| true`          rc 1, no row and no verdict
+# 6.7.16 (measured):
+#   the 6.7.16-open server (dup2 then an unguarded close) R19 R20 FAIL (the child's fd 1 CLOSED)
+#   only _compile_via_wrapper_run guarded              R20 FAIL
 if [ -z "${CY_LSP_GATE_INNER:-}" ] && command -v bash > /dev/null 2>&1; then
     CY_LSP_GATE_INNER=1 exec bash -eo pipefail "$0" "$@"
 fi
@@ -318,6 +330,53 @@ P=$(pub "$W/r18" pin/proj/src/x.cyr)
 if printf '%s' "$P" | grep -qF 'cyrius.cyml pins version 6.5.0 but cyrius binary is not installed'; then
     ok "R18 a file of that pinned project still reports the pin (the project route keeps its redirect)"
 else fail "R18 pin/proj/src/x.cyr: ${P:-none}"; fi
+
+# ── R19 / R20 / R21 (6.7.16): a server started with a std fd closed ─────────────────────────────
+# A stub that records which file each of its standard fds is, into <its path>.fds, and fails like a
+# compile. The record goes through fd 9 and readlink runs as a child reading the stub shell's own
+# /proc/$$/fd/N, so nothing it does lands on a closed standard fd first (a `$(…)` would: its pipe
+# takes the lowest free fd, the closed 1 itself).
+mkdir -p "$W/fdc/.cyrius/bin" "$W/fdr/.cyrius/bin"
+cat > "$W/fdstub" <<'STUB'
+#!/bin/sh
+exec 9> "$0.fds"
+for n in 0 1 2; do
+    printf '%s=' "$n" >&9
+    readlink "/proc/$$/fd/$n" >&9 2> /dev/null || echo CLOSED >&9
+done
+echo "error: stub" >&2
+exit 1
+STUB
+chmod +x "$W/fdstub"
+cp "$W/fdstub" "$W/fdc/.cyrius/bin/cyrius"
+cp "$CC" "$W/fdc/.cyrius/bin/cycc"
+cp "$W/fdstub" "$W/fdr/.cyrius/bin/cycc"
+# serve_closed <cwd> <home> <fd> — serve with the server's <fd> closed; its publishes, one per line.
+serve_closed() {
+    if [ "$3" = 1 ]; then
+        ( cd "$1" && env -i HOME="$2" CYRIUS_HOME="$2/.cyrius" PATH=/usr/bin:/bin timeout 60 "$W/cyrius-lsp" 1>&- 2>> "$W/lsp.log" ) || true
+    else
+        ( cd "$1" && env -i HOME="$2" CYRIUS_HOME="$2/.cyrius" PATH=/usr/bin:/bin timeout 60 "$W/cyrius-lsp" 2>&- ) \
+          | tr '\r' '\n' | grep -o '"uri":"[^"]*","diagnostics":.*' | sed -e "s|file://$W/||" -e 's/Content-Length: [0-9]*$//' || true
+    fi
+}
+{ trap '' PIPE; start; open_msg Open "$W/proj/src/col.cyr"; stop; true; } 2> /dev/null | serve_closed "$W/proj" "$W/fdc" 1
+F19=$(tr '\n' ' ' 2> /dev/null < "$W/fdc/.cyrius/bin/cyrius.fds" || echo "no record")
+case "$F19" in
+    "0=/dev/null 1=/dev/null 2=pipe:"*) ok "R19 server fd 1 closed: the cyrius check child's fds are /dev/null, /dev/null, the pipe" ;;
+    *) fail "R19 server fd 1 closed: the cyrius check child's fds: $F19" ;;
+esac
+{ trap '' PIPE; start; open_msg Open "$W/loose/col.cyr"; stop; true; } 2> /dev/null | serve_closed "$W/loose" "$W/fdr" 1
+F20=$(tr '\n' ' ' 2> /dev/null < "$W/fdr/.cyrius/bin/cycc.fds" || echo "no record")
+case "$F20" in
+    "0=/"*"/loose/col.cyr 1=/dev/null 2=pipe:"*) ok "R20 server fd 1 closed: the raw cycc child's fds are the file, /dev/null, the pipe" ;;
+    *) fail "R20 server fd 1 closed: the raw cycc child's fds: $F20" ;;
+esac
+{ trap '' PIPE; start; open_msg Open "$W/loose/col.cyr"; stop; true; } 2> /dev/null | serve_closed "$W/loose" "$W/h" 2 > "$W/r21"
+P=$(pub "$W/r21" loose/col.cyr)
+if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":13},"end":{"line":1,"character":17}'; then
+    ok "R21 server fd 2 closed: col.cyr's error is still published (line 1, characters 13-17)"
+else fail "R21 server fd 2 closed: ${P:-none}"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G"; exit 1; }
 echo "PASS: $G"

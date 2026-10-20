@@ -2052,6 +2052,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_reads_whole_document.sh"
 # (the CLI, else cycc with `#@incdir`), so a loose file's sibling include resolves. 6.7.14 (D47 /
 # D54) — a loose file reads no pin of the server's working directory (CYRIUS_RESOLVED=1 and
 # CYRIUS_NO_WARN_PIN_DRIFT=1 on its check), while a project file keeps its pin's redirect.
+# 6.7.16 — a server started with its fd 1 closed gives its `cyrius check` / cycc child a /dev/null
+# stdout (each child redirect keeps a fd that is already its target), R19-R21.
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
 
 # 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a

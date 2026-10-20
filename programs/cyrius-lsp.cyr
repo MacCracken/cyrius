@@ -903,6 +903,31 @@ fn _lsp_reap(pid): i64 {
     return w;
 }
 
+# In a child: `fd` made standard fd `target`, then `fd` closed only when it is not `target`.
+# ⛔ 6.7.16 — the children ran `sys_dup2(fd, N); sys_close(fd)`. In a server started with a std fd
+# closed, the child's next open lands AT that fd: dup2(N, N) is a no-op and the close then closed the
+# redirect just made, so the `cyrius check` / cycc child ran with that fd closed (its stdout, with
+# the server's fd 1 closed). lib/process.cyr's `_proc_redirect` since 6.7.15, here.
+# issues/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, CHANGELOG [6.7.16]
+fn _lsp_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
+# In a child: `fd`, a descriptor the SERVER opened (a pipe end), moved above the standard three
+# (F_DUPFD: the lowest free fd >= 3) before the child's first redirect, which could otherwise
+# replace it when it sits at 0 or 1 (a server started with those closed). `fd` itself when it is
+# already above 2, or when no fd is left. lib/regression.cyr's `_regression_lift_fd`, here.
+# CHANGELOG [6.7.16]
+fn _lsp_lift_fd(fd): i64 {
+    if (fd > 2) { return fd; }
+    var nfd = sys_fcntl(fd, F_DUPFD, 3);
+    if (nfd < 0) { return fd; }
+    sys_close(fd);
+    return nfd;
+}
+
 # v5.11.56: fork cyrius wrapper with cwd=project_root, exec
 # `cyrius check --with-deps --no-redirect <filepath>`. Wrapper handles [deps.*]
 # resolution that raw cycc (read source from stdin, no project
@@ -986,12 +1011,12 @@ fn _compile_via_wrapper_run(filepath, project_root, no_redirect): i64 {
     if (pid < 0) { return _lsp_fork_failed(_cyrius_path, pid, pipe_read, pipe_write); }   # 6.6.20
     if (pid == 0) {
         sys_close(pipe_read);
+        pipe_write = _lsp_lift_fd(pipe_write);   # 6.7.16
         var nfdi = sys_open("/dev/null", 0, 0);
-        if (nfdi >= 0) { sys_dup2(nfdi, 0); sys_close(nfdi); }
+        if (nfdi >= 0) { _lsp_redirect(nfdi, 0); }
         var nfdo = sys_open("/dev/null", 1, 0);
-        if (nfdo >= 0) { sys_dup2(nfdo, 1); sys_close(nfdo); }
-        sys_dup2(pipe_write, 2);
-        sys_close(pipe_write);
+        if (nfdo >= 0) { _lsp_redirect(nfdo, 1); }
+        _lsp_redirect(pipe_write, 2);
         # v6.5.16: was a raw `syscall(80, ...)` on the "LSP is x86-only" assumption.
         # A raw x86 number is not portable AND it collides: 80 is the aarch64 peer's
         # SYS_FSTAT, so once the Mach-O arm branch routes 80→fstat64 this call would
@@ -1204,23 +1229,19 @@ fn compile_and_capture(filepath): i64 {
     if (pid == 0) {
         # Child: run cycc with source on stdin, /dev/null on stdout, pipe on stderr
         sys_close(pipe_read);
+        pipe_write = _lsp_lift_fd(pipe_write);   # 6.7.16
 
         var sfd = sys_open(filepath, 0, 0);
         if (sfd < 0) { syscall(60, 1); }
         if (incdir != 0) { sfd = _lsp_feed_incdir(sfd, incdir, pipe_write); }   # 6.7.13
-        sys_dup2(sfd, 0);
-        sys_close(sfd);
+        _lsp_redirect(sfd, 0);   # 6.7.16: each redirect keeps a fd that is already its target
 
         # stdout → /dev/null
         var nfd = sys_open("/dev/null", 1, 0);
-        if (nfd >= 0) {
-            sys_dup2(nfd, 1);
-            sys_close(nfd);
-        }
+        if (nfd >= 0) { _lsp_redirect(nfd, 1); }
 
         # stderr → pipe
-        sys_dup2(pipe_write, 2);
-        sys_close(pipe_write);
+        _lsp_redirect(pipe_write, 2);
 
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, _cycc_path);
