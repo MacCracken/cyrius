@@ -4648,11 +4648,12 @@ fn _gai_seed(S, gi, vi, noff): i64 {
     }
     return GVSI(S, vi);
 }
-# 1 = entry `g` declared slot `vi` and _gvk_pre folded its initializer to a constant.
+# 1 = entry `g` declared slot `vi` and _gvk_pre folded its initializer to an integer constant (`_gvk_ik` 1; a float
+# constant's bits are not the issue's shape, and stay unseeded).
 fn _gai_seed_ent(S, g, vi): i64 {
     if (g >= _gv_ent_cap) { return 0; }
     if ((load64(_gv_ent_base + g * 8) & 0x1FFFFF) - 1 != vi) { return 0; }
-    if (load8(_gvk_ik + g) == 0) { return 0; }
+    if (load8(_gvk_ik + g) != 1) { return 0; }
     return 1;
 }
 
@@ -6107,7 +6108,7 @@ var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cy
 # _gvk_bk 4 (6.7.15): a superseded entry's constant, folded for the compare and not baked.
 var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal, 3 = 1 not replayed
 var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked or folded (bk 1 / 3 / 4)
-var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15)
+var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15), 2 = float bits (6.7.16)
 var _spc_ti = 0;     # the struct walker's token
 var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
 var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
@@ -6187,7 +6188,7 @@ fn _gvk_one(S, gi): i64 {
         _cf_enum = 0;
         if (_cf_ok == 0) { return 0; }
         store8(_gvk_ik + gi, 1);
-    }
+    } else { store8(_gvk_ik + gi, 2); }   # 6.7.16 (D13 (a)): a float constant, its bits
     store64(_gvk_v + gi * 8, v);
     if ((_gv_sup(graw) & 1) != 0) { return 4; }   # 6.7.15: the later constant's value is the slot's
     S64(_vgsi_base + vi * 8, v);
@@ -6201,9 +6202,16 @@ fn _gvk_one(S, gi): i64 {
 # `var G = 0; var b = G; var G = C;` b 0, `var a = f(); var b = a; var a = C;` b f(), and `var G = D;` / `= 0` then
 # `var r = setg(); var G = C;` reset setg's write to C. Now an entry whose integer fold _gvk_one baked (bk 1)
 # supersedes the earlier writers of its slot the same way — a computed one runs into a sink, a constant runs nothing
-# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. A float literal
-# (`_gvk_flt`) keeps its order (not a constant this decision named). The walk also makes the compares pass 1 left to
-# the replay (`_gvc_rec`, see _gvc_add), in declaration order: an integer fold against the slot's constant before it.
+# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. The walk also
+# makes the compares pass 1 left to the replay (`_gvc_rec`, see _gvc_add), in declaration order: a fold against the
+# slot's constant before it.
+# ⛔ 6.7.16 — A FLOAT CONSTANT TOO (the user's decision D13 (a), 2026-10-19; issues/2026-10-18-float-literal-global-
+# redeclaration-keeps-declaration-order.md). A float literal (`_gvk_flt`) and a constant f64 expression (`_gvk_fx`) were
+# baked but kept their order: `var G: f64 = 1.5; var b = load64(&G); var G: f64 = 2.5;` gave b 1.5, a call between the
+# two that wrote G was reset by the later literal's store, and a differing pair was never compared. Their bits
+# (`_gvk_ik` 2) now link as an integer fold does: the later float constant is the value from program start, an earlier
+# float declaration of the name leaves no startup store, and the pair is compared bit for bit (a warning, at the later
+# `=`). A computed float redeclaration still runs in order. CHANGELOG [6.7.16]
 var _gvc_sv = 0;   # per slot: the chain's last constant
 var _gvc_sh = 0;   # per slot: 1 = it has one
 fn _gvk_chain(S, gc): i64 {
@@ -6214,7 +6222,7 @@ fn _gvk_chain(S, gc): i64 {
     var gi = 0;
     while (gi < gc) {
         ri = _gvc_upto(S, ri, gi);
-        if (load8(_gvk_ik + gi) == 1) { _gvk_link(S, gi); }
+        if (load8(_gvk_ik + gi) != 0) { _gvk_link(S, gi); }
         gi = gi + 1;
     }
     _gvc_upto(S, ri, gc);
@@ -6247,7 +6255,8 @@ fn _gvc_cmp(S, slot, v, ti): i64 {
         } }
     return _gvc_set(slot, 1, v);
 }
-# Entry `gi`, an integer fold of its slot: compared at its `=`; it supersedes the slot's earlier writers. Baked (bk 1),
+# Entry `gi`, a constant of its slot (an integer fold, or 6.7.16's float bits): compared at its `=`; it supersedes the
+# slot's earlier writers. Baked (bk 1),
 # all of them; superseded itself (bk 4), by a later list or constant that already superseded every earlier scalar
 # entry, the one writer left is an earlier list — which a literal's pass-1 supersede reaches too (_gv_supersede):
 # `var a[1] = {7}; var a = C; var a[1] = {9};` is C's bytes under the second list, as with `var a = 0x0506;`
@@ -6352,9 +6361,9 @@ fn _gvk_fname(S, k): i64 {
 # § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (bk 1, or 4: folded but superseded) is stepped
 # over by the replay. A superseded constant runs nothing: a later constant is the slot's value (6.7.15, D2 (a): a
 # baked integer fold supersedes like a literal, _gvk_chain). Otherwise the slot's image value is its value and the
-# nearest earlier replayed writer of the slot, if any, is a baked entry of that value — after _gvk_chain that is a
-# float literal's (`_gvk_flt` entries keep their order: a computed initializer or a float of another value before
-# it keeps the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
+# nearest earlier replayed writer of the slot, if any, is a baked entry of that value (after _gvk_chain, which since
+# 6.7.16 supersedes for a float constant too, only a computed initializer or another file's private const before it
+# is left to keep the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
 # dropped: a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3),
 # and an initializer naming another file's private const (the replay reports it) — superseded, each still runs into
 # its sink. cx stores the image value first (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14] [6.7.15]

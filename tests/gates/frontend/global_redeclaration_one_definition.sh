@@ -479,7 +479,15 @@ _nrow WN10 1 5 3:7 'const C = 5;\nvar a = 3;\nvar a = C;\nvar a = 5;\nsyscall(60
 _nrow WN11 2 4 '3:7 4:7' 'const C = 5;\nvar a = 3;\nvar a = C;\nvar a = 4;\nsyscall(60, a);\n'
 _nrow WN12 1 5 4:7 'fn f(): i64 { return 2; }\nvar a = 3;\nvar a = f();\nvar a = 5;\nsyscall(60, a);\n'
 _nrow WN13 1 1 4:13 'const RT = true;\nconst RF = false;\nvar G: bool = RF;\nvar G: bool = RT;\nsyscall(60, G);\n'
-[ "$NW" -ge 38 ] || bad "floor: $NW warning rows ran, want 38"
+# WN14-WN17 — 6.7.16 (the user's decision D13 (a), 2026-10-19): a FLOAT constant pair is compared bit for bit, at the
+#      later `=` (issues/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md; each was silent):
+#      WN14 the filed f64 pair (3:12), WN15 a same-bits pair silent, WN16 an f32 pair, WN17 `= 0` then a float.
+#      MUTATION (6.7.16, a scratch tree): `_gvk_chain` linking integer folds only (6.7.15's `== 1`) -> RED WN14 WN16 WN17.
+_nrow WN14 1 4 3:12 'var G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = 2.5;\nsyscall(60, (b >> 48) & 255);\n'
+_nrow WN15 0 248 '' 'var G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = 1.5;\nsyscall(60, (b >> 48) & 255);\n'
+_nrow WN16 1 64 3:12 'var F: f32 = 1.5;\nvar b = load32(&F);\nvar F: f32 = 2.5;\nsyscall(60, (b >> 24) & 255);\n'
+_nrow WN17 1 248 3:12 'var G: f64 = 0;\nvar b = load64(&G);\nvar G: f64 = 1.5;\nsyscall(60, (b >> 48) & 255);\n'
+[ "$NW" -ge 42 ] || bad "floor: $NW warning rows ran, want 42"
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")

@@ -7695,7 +7695,14 @@ stores: an x86 `kernel;` build's program read 0 (warned "use a constant", which 
 not satisfy), an earlier initializer's read saw 0, and a call in an earlier initializer that
 wrote the global was reset by the store (its write is now kept, as over a literal). Still a
 deferred initializer: a call, a result that is a NaN (its bits are the target's: `0.0 / 0.0`),
-and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned).
+and arithmetic with an integer or enum operand (`1.5 + 1`, which is warned). A *redeclared* float global follows the
+constant redeclaration rule above (6.7.16, the user's decision D13 (a), 2026-10-19): a float
+constant redeclaration is the global's value from program start and an earlier float constant
+declaration of it leaves no startup store — `var G: f64 = 1.5; var b = load64(&G); var G: f64 =
+2.5;` gives `b` 2.5's bits, and `var G: f64 = 1.5;`, then `var r = setg();` (`setg` storing 0.5),
+then `var G: f64 = 2.5;` ends at 0.5. Through 6.7.15 a float redeclaration kept declaration
+order: `b` read 1.5, and the later literal's startup store reset `setg`'s write to 2.5. A computed
+float redeclaration (`var G: f64 = fx();`) still runs in order.
 
 **Kernel builds.** An x86 `kernel;` (or `CYRIUS_KERNEL=1`) build runs the deferred
 initializers **after** the top-level program — its top-level asm (the multiboot shim) must run
@@ -7736,7 +7743,8 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 
 - A redeclaration whose initializer is a compile-time **constant** (an integer
   literal or a foldable integer expression, zero included, or a const or enum name —
-  6.7.15, see *Global Initializers*) is the global's value **from program start**,
+  6.7.15, see *Global Initializers* — or a float constant: a float literal or a constant
+  f64 expression, 6.7.16) is the global's value **from program start**,
   and an earlier constant declaration of it leaves no startup store. An earlier
   *computed* initializer of the same name (`var a = f();`) still runs — its side
   effects happen — but its result is discarded.
@@ -7779,8 +7787,9 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   as the earlier one is (6.7.14: through 6.7.13 only an exact `= NUM ;` was compared,
   so `var a = 5; var a = 2 + 1;` was silent), and a const or enum name, on either side
   (6.7.15: `var a = 3; var a = C;`, `var a = C; var a = 3;`, `= E.B` and `var a = D;
-  var a = C;` were silent). Each later constant is compared with the last constant
-  declared before it. An earlier *computed* initializer has no value to compare, and
+  var a = C;` were silent), and a float constant, bit for bit (6.7.16: `var G: f64 = 1.5;
+  var G: f64 = 2.5;` was silent; a same-bits pair is still silent). Each later constant is
+  compared with the last constant declared before it. An earlier *computed* initializer has no value to compare, and
   stays silent.
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
