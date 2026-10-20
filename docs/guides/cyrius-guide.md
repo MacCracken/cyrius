@@ -8845,13 +8845,16 @@ an agnos program. It reads `--version` and `--syntax-only`, and its environment 
 knob), off the init stack agnos builds at exec (agnos has no `/proc`); maps its 246 MiB arena and
 the preprocessor's 24 MiB source buffer with agnos `mmap` (#27) — a buffer that cannot be mapped
 is named (`error: cannot map the preprocessor's 24 MiB source buffer`, exit 1, on every target);
-and opens each include with agnos `open` (#7: the name and its length). Before 6.7.16 it opened
-`/proc/self/cmdline` with Linux `openat`'s argument shape, so `cycc_cx --version` compiled stdin
-and `--syntax-only` was ignored; it read no environment, so every knob was dead (and a refusal
-naming one — `async fn requires CYRIUS_ASYNC=1` — unactionable); it opened includes with the
-`openat` shape too, so none was found; and it mapped the preprocessor's buffer with Linux `mmap`
-(#9 — agnos `mkdir`), so every compile died. It runs whole under the fake kernel of
-`tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG [6.7.16].
+opens each include with agnos `open` (#7: the name and its length); and checks the working
+directory's `cyrius.cyml` pin against its own version as every host's compiler does (6.7.12's D5:
+a warning, a failure under `CYRIUS_STRICT_PIN=1`, silent under `CYRIUS_NO_WARN_PIN_DRIFT=1`).
+Before 6.7.16 it opened `/proc/self/cmdline` with Linux `openat`'s argument shape, so `cycc_cx
+--version` compiled stdin and `--syntax-only` was ignored; it read no environment, so every knob
+was dead (and a refusal naming one — `async fn requires CYRIUS_ASYNC=1` — unactionable); it
+opened includes with the `openat` shape too, so none was found; it mapped the preprocessor's
+buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died; and it had no pin-drift
+check, so a drifted pin built silently whatever the two pin knobs said. It runs whole under the
+fake kernel of `tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG [6.7.16].
 
 ### AGNOS Syscall ABI
 

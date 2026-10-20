@@ -50,6 +50,11 @@
 # C6: _read_env's macOS init-stack arm serves agnos too (envp after argv's NULL, through r15).
 # Mutant measured: the macOS-only guard restored (the open's env.cyr: no agnos arm, every name
 # answers 0) -> CYRIUS_POISON=1 compiles the unset program, 22 22 (C6 FAIL).
+# C8: the pin-drift check (6.7.12's D5, every host) runs on agnos: a drifted pin warns, CYRIUS_STRICT_PIN
+# fails it, CYRIUS_NO_WARN_PIN_DRIFT silences it. Mutant measured: no agnos arm in _init_cyrius_lib ->
+# no warning, exit 0 under every knob (C8 FAIL); the Linux-shaped open kept -> `sc 7 -100 …`, no
+# warning (C8 FAIL); the x86 read#0 kept -> agnos exit#0 with the fd as its code: every run in a
+# directory holding a cyrius.cyml exits 4 (C1 C2 C4 C6 C8 FAIL). 6.7.16 review.
 # C7: main.cyr's agnos build. Mutants measured: _cmdline_read's agnos return removed -> its first
 # syscall is `sc 7 -100 …` (C7 FAIL); main.cyr's Linux enum alone -> 4 duplicate-symbol warnings.
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
@@ -774,9 +779,12 @@ if [ "$cxok" = 1 ]; then
     printf 'include "inc7.cyr"\nsyscall(60, seven());\n' > "$T/inc/m.cyr"
     (cd "$T/inc" && env -i "$T/sct" "$T/cxag" cli < m.cyr > "$T/c5.log" 3> "$T/c5.cyx" 2>&1)
     vm=x; [ -s "$T/c5.cyx" ] && { vm=0; "$T/cxvm" < "$T/c5.cyx" > /dev/null 2>&1 || vm=$?; }
+    # The include's open is the one naming 8 bytes ("inc7.cyr"): the pin-drift check's probe of
+    # cyrius.cyml (11 bytes, absent here) comes first since 6.7.16. A Linux openat-shaped open
+    # (`sc 7 -100 <ptr> 0 0`) names no length at all.
     check "C5 an include opens as agnos's open#7(name, namelen, 0): exit 0, the .cyx runs to 7" \
         "sc 7 8 0 | exit 0 | 7" \
-        "$(awk '$1 == "sc" && $2 == 7 { print $1, $2, $4, $5; exit }' "$T/c5.log") | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c5.log") | $vm"
+        "$(awk '$1 == "sc" && $2 == 7 && $4 == 8 { print $1, $2, $4, $5; exit }' "$T/c5.log") | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c5.log") | $vm"
     # Its environment comes off the init stack too (the cli child gets the tracer's): CYRIUS_POISON
     # predefines the CYRIUS_POISON macro, so the program's #ifdef arm is taken (11), or not (22).
     printf '#ifdef CYRIUS_POISON\nsyscall(60, 11);\n#endif\nsyscall(60, 22);\n' > "$T/c6.cyr"
@@ -785,6 +793,19 @@ if [ "$cxok" = 1 ]; then
     v0=x; [ -s "$T/c6.cyx" ] && { v0=0; "$T/cxvm" < "$T/c6.cyx" > /dev/null 2>&1 || v0=$?; }
     v1=x; [ -s "$T/c6p.cyx" ] && { v1=0; "$T/cxvm" < "$T/c6p.cyx" > /dev/null 2>&1 || v1=$?; }
     check "C6 it reads its environment: unset -> 22, CYRIUS_POISON=1 -> 11 (the knob's predefine)" "22 11" "$v0 $v1"
+    # C8: the pin-drift check runs on agnos too — 6.7.12's D5 makes it the pin contract on every
+    # host, and the agnos cycc_cx had no arm, so CYRIUS_STRICT_PIN / CYRIUS_NO_WARN_PIN_DRIFT were
+    # dead there. A cyrius.cyml pinning 0.0.1 in the directory: the warning on fd 2 and exit 0; with
+    # CYRIUS_STRICT_PIN=1 exit 1 naming the drift; with CYRIUS_NO_WARN_PIN_DRIFT=1 silent, exit 0.
+    mkdir -p "$T/pin"
+    printf '[package]\nname = "p"\ncyrius = "0.0.1"\n' > "$T/pin/cyrius.cyml"
+    (cd "$T/pin" && env -i "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8.log" 3> /dev/null 2>&1)
+    (cd "$T/pin" && env -i CYRIUS_STRICT_PIN=1 "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8s.log" 3> /dev/null 2>&1)
+    (cd "$T/pin" && env -i CYRIUS_NO_WARN_PIN_DRIFT=1 "$T/sct" "$T/cxag" cli < "$T/c7.cyr" > "$T/c8n.log" 3> /dev/null 2>&1)
+    pdv=$("$CC" --version | sed 's/^cycc //')
+    check "C8 a drifted cyrius.cyml pin on agnos: warned (exit 0); CYRIUS_STRICT_PIN=1 -> exit 1 naming it; CYRIUS_NO_WARN_PIN_DRIFT=1 -> silent" \
+        "warning: cyrius.cyml pins 0.0.1 but cycc is $pdv / exit 0 | error: cyrius.cyml pins 0.0.1 but cycc is $pdv / exit 1 | 0 / exit 0" \
+        "$(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c8.log" | grep -o "^warning: cyrius.cyml pins 0.0.1 but cycc is [^ ]*") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8.log") | $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c8s.log" | grep -o "^error: cyrius.cyml pins 0.0.1 but cycc is [^ ]*") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8s.log") | $(grep -c 'pins 0.0.1' "$T/c8n.log" || true) / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c8n.log")"
 fi
 # C7: src/main.cyr built for agnos is no agnos compiler (its arena is brk, which agnos answers as
 # sync()), but it builds without the duplicate-symbol warnings and its first act is that arena —
