@@ -4496,6 +4496,8 @@ fn _dst_word(S, h, sz): i64 {
 # keeps the WORD store (`_asg_store_w` at width 0 is EPOPC + ESTORE64). Before, `*q = 5` through a
 # `*i32` zeroed the next element. CHANGELOG [6.7.8]
 # 6.7.11: through a `*S` (a struct), `*p = v` copies the struct and `*p OP= v` is refused (`_dst_struct`).
+# 6.7.16: `*(&pi) OP= n` of a typed pointer steps as `pi OP= n` does — `*(&p)` is p, its type kept (6.7.15's D21 A,
+# `_amp_pw`), as `*(&pi) + n` already stepped; it stepped one byte. CHANGELOG [6.7.16]
 fn _deref_store(S, term): i64 {
     var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
@@ -4504,6 +4506,7 @@ fn _deref_store(S, term): i64 {
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
     var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp += n` steps a `**T`'s pointee
+    if (iw == 0) { iw = _amp_pw(S, d + 1, GTI(S)); }   # `*(&pi)` is pi
     EPUSHR(S);            # the address
     var cop = _asg_compound_tok(S);
     if (cop == 0) {

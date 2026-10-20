@@ -23,6 +23,10 @@
 #      content) — and its `q: *P` takes the slot — byte-identical to `var a = &q;` of an i64 parameter
 #      (before: identical to the content load). x86_64, aarch64 and PE; on cx `#naked` is inert (the
 #      by-value parameter is copied in, so only the `*P` half applies there)
+#   R3 6.7.16 — issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md row 1, the
+#      filed repro verbatim: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `q += 1` does (6.7.15's D21 A:
+#      `*(&p)` is p) — exit 44 (14 before: one byte) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm)
+#      and PE (wine); the amp_cop_* rows in T carry its shapes
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -36,6 +40,9 @@
 #                                                    the inferred generic, whose T binds i64, green)
 #   M1  `_addr_is_slot_content` answers 0 (the arm gone) -> RED N the by-value half on x86_64, aarch64
 #                                                    and PE; R1, R2 and T green (no other `&q` reaches it)
+#   M2  (2026-10-19) `_deref_store` without its `_amp_pw` line (the 6.7.16 fix reverted) -> RED 12: R3 (exit
+#                                                    14) on all 5 legs; T on all 7 legs, the 11 amp_cop_*
+#                                                    step rows (the `*u8` control green)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -67,7 +74,7 @@ R1=docs/development/issues/repros/2026-10-10-address-of-pointer-param-over-8b-is
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=19
+FLOOR=41
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -149,6 +156,27 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "R2 $leg: exit $RC, want 80"; fi
 done
 
+echo "R3. 6.7.16: the filed repro verbatim — \`*(&pi) += 1\` of a *i32 steps 4 bytes, as \`q += 1\` (exit 44; 14 = one byte)"
+cat > "$D/cop.cyr" <<'EOF'
+fn run(): i64 {
+  var buf: i64[4];
+  var pi: *i32 = &buf;
+  var q: *i32 = &buf;
+  *(&pi) += 1;
+  q += 1;
+  var a = pi; var b = q; var o = &buf;
+  return (a - o) * 10 + (b - o);
+}
+syscall(60, run());
+EOF
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'R3_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/cop.cyr" "$D/c_$n"
+    if [ "$RC" -eq -1 ]; then bad "R3 $leg: did not build: $(grep -m1 'error' "$D/c_$n.err")"
+    elif [ "$RC" -eq 44 ]; then ok "R3 $leg: exit 44"
+    else bad "R3 $leg: exit $RC, want 44"; fi
+done
+
 echo "N. a #naked fn (compile only): by-value \`&q\` stays the slot's content, a *P parameter's \`&q\` is the slot"
 # nk_src <param type> <initialiser> <out>: one #naked fn, kept by `&nk`, its asm a bare return.
 nk_src() {
@@ -197,4 +225,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

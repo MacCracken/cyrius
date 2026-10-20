@@ -2433,7 +2433,9 @@ and wrote a whole word. `&x + n` is still a byte pointer, so `*(&x + 8)` (and `*
 address. `*(&x) OP= v` is
 refused as `x OP= v` is (*compound assignment to struct 'x' is refused*; write `x = x + b`) — since 6.7.14,
 the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (6.7.5), so `*(&s) += 10`
-turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op.
+turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of a scalar keep the word op. `*(&p) OP= n`
+of a typed pointer is `p OP= n`: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `pi += 1` does (6.7.16; through
+6.7.15 it stepped one byte, where `*(&pi) + 1` stepped the element).
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,

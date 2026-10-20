@@ -130,6 +130,35 @@ fn row_ad_step(): i64 {
     return 1;
 }
 
+# --- 6.7.16: `*(&p) OP= n` of a typed pointer steps as `p OP= n` (6.7.15's D21 A reach; it stepped one byte) ----
+# issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 1. Each row returns the
+# byte distance the pointer moved, so a one-byte step reads as 1 (or 2), never the element's size.
+var AC_GPI: *i32 = 0;
+var AC_TPI: *i32 = 0;
+fn ac_d(p, o): i64 { return p - o; }   # untyped: the byte distance
+fn ac_param(pi: *i32): i64 { var o = pi; *(&pi) += 1; return ac_d(pi, o); }
+fn row_amp_cop_inc(): i64 { var buf: i64[4]; var pi: *i32 = &buf; *(&pi) += 1; return ac_d(pi, &buf); }
+fn row_amp_cop_dec(): i64 { var buf: i64[4]; var pi: *i32 = &buf; pi = pi + 3; *(&pi) -= 1; return ac_d(pi, &buf); }
+fn row_amp_cop_two(): i64 { var buf: i64[4]; var pi: *i32 = &buf; *(&pi) += 2; return ac_d(pi, &buf); }
+fn row_amp_cop_paren(): i64 { var buf: i64[4]; var pi: *i32 = &buf; *((&pi)) += 1; *&pi += 1; return ac_d(pi, &buf); }
+fn row_amp_cop_byte(): i64 { var buf: i64[4]; var pb: *u8 = &buf; *(&pb) += 1; return ac_d(pb, &buf); }   # control: a byte
+fn row_amp_cop_word(): i64 { var buf: i64[4]; var pl: *i64 = &buf; *(&pl) += 1; return ac_d(pl, &buf); }
+fn row_amp_cop_struct(): i64 { var buf: i64[8]; var ps: *Ao24 = &buf; *(&ps) += 1; return ac_d(ps, &buf); }
+fn row_amp_cop_pp(): i64 { var buf: i64[4]; var pp: **i32 = &buf; *(&pp) += 1; return ac_d(pp, &buf); }   # a pointer: 8
+fn row_amp_cop_param(): i64 { var buf: i64[4]; return ac_param(&buf); }
+fn row_amp_cop_global(): i64 { var buf: i64[4]; AC_GPI = &buf; *(&AC_GPI) += 1; return ac_d(AC_GPI, &buf); }
+fn row_amp_cop_for(): i64 {
+    var buf: i64[4];
+    var pi: *i32 = &buf;
+    var n = 0;
+    for (var i = 0; i < 3; *(&pi) += 1) { n = n + 1; i = i + 1; }
+    return ac_d(pi, &buf) * 10 + n;
+}
+var AC_TBUF: i64[4];
+AC_TPI = &AC_TBUF;
+*(&AC_TPI) += 1;
+var AC_TOP = ac_d(AC_TPI, &AC_TBUF);
+
 assert_eq(row_ad_param_field(), 24, "D21: (*(&q)).y and **(&q) of a *Ao16 parameter: its field, its struct");
 assert_eq(row_ad_local_field(), 24, "D21: (*(&q)).y / (*((&q))).x of a *Ao16 local");
 assert_eq(row_ad_global_field(), 24, "D21: (*(&G)).y of a *Ao16 global");
@@ -140,6 +169,18 @@ assert_eq(row_ad_decl(), 41417097, "D21: var v: f64v2 = **(&p); and the untyped 
 assert_eq(row_ad_ptr_arg(), 417417, "D21: rd(*(&p)) and rd(**(&p)) into *f64v2 pass p");
 assert_eq(row_ad_narrow(), 111, "D21: **(&pb) of a *u8 reads and writes one byte; *(&pb + 0) unchanged");
 assert_eq(row_ad_step(), 1, "D21: *(&pi) + 1 steps as pi + 1 (an i64)");
+assert_eq(row_amp_cop_inc(), 4, "6.7.16: *(&pi) += 1 of a *i32 steps 4 bytes, as pi += 1");
+assert_eq(row_amp_cop_dec(), 8, "6.7.16: *(&pi) -= 1 of a *i32 steps back 4 bytes");
+assert_eq(row_amp_cop_two(), 8, "6.7.16: *(&pi) += 2 of a *i32 steps 8 bytes");
+assert_eq(row_amp_cop_paren(), 8, "6.7.16: *((&pi)) += 1 and *&pi += 1 step 4 each");
+assert_eq(row_amp_cop_byte(), 1, "6.7.16 control: *(&pb) += 1 of a *u8 steps one byte");
+assert_eq(row_amp_cop_word(), 8, "6.7.16: *(&pl) += 1 of a *i64 steps 8 bytes");
+assert_eq(row_amp_cop_struct(), 24, "6.7.16: *(&ps) += 1 of a *Ao24 steps 24 bytes");
+assert_eq(row_amp_cop_pp(), 8, "6.7.16: *(&pp) += 1 of a **i32 steps one pointer");
+assert_eq(row_amp_cop_param(), 4, "6.7.16: *(&pi) += 1 of a pi: *i32 parameter steps 4 bytes");
+assert_eq(row_amp_cop_global(), 4, "6.7.16: *(&G) += 1 of a *i32 global steps 4 bytes");
+assert_eq(row_amp_cop_for(), 123, "6.7.16: a for step *(&pi) += 1 steps 4 bytes a turn");
+assert_eq(AC_TOP, 4, "6.7.16: top level *(&G) += 1 of a *i32 global steps 4 bytes");
 assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
 assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
 assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");
