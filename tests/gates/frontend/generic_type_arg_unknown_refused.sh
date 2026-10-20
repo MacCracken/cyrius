@@ -178,7 +178,9 @@
 #      member's and a method's `: Pt<i64>` against the other's `: Pt`; NRX --syntax-only silent, as D6; a control.
 #      Filed: docs/development/issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md
 #      Mutants (2026-10-20): the lane's previous compiler (b56d6abb7) -> RED 14 (NR0-NR12, NRX: built, parse errors,
-#      the impl's line); MNR1 `_tr_rt_bad` without its `_ngt_tail` arm -> RED 2: NR11 NR12 (the impl check's line)
+#      the impl's line); MNR1 `_tr_rt_bad` without its `_ngt_tail` arm -> RED 2: NR11 NR12 (the impl check's line).
+#      NR13 (a find repaired in passing): a union's by-value field, PARSE_UNION_DEF's parallel copy of the struct's
+#      field reader, the same; its mutant (the D7 commit's compiler, 4c6a024a3) -> RED 1: NR13 (the parse error).
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
 #      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
@@ -918,6 +920,9 @@ errs nr11 1 "NR11: a member's : Pt<i64> with an impl's : Pt — the member's lin
 nr nr12 'trait Sh { fn r(self): Pt; }
 impl Sh for P { fn r(self): Pt<i64> { var q: Pt; return q; } }'
 errs nr12 1 "NR12: an impl's : Pt<i64> against a member's : Pt — the method's line alone, in D6's words" "error:<source>:6:29: $NGS"
+nr nr13 'union U { f: Pt<i64>; g: i64<u8>; h: f64<i32>; k; }'
+errs nr13 3 "NR13: a union's by-value fields, as a struct's (was 'expected identifier, got <', the first alone)" \
+    "error:<source>:5:14: $NGS" "error:<source>:5:26: 'i64' $NGI" "error:<source>:5:38: 'f64' $NGI"
 rc=0; "$CC" --syntax-only < "$T/nr2.cyr" > /dev/null 2> "$T/nrx.err" || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/nrx.err"; then ok "NRX: --syntax-only says nothing (as D6's positions)"
 else bad "NRX: --syntax-only rc $rc: $(grep '^error' "$T/nrx.err" | head -1)"; fi

@@ -5526,9 +5526,11 @@ fn PARSE_UNION_DEF(S): i64 {
                         _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
                     }
                 } elif (fscalar > 0) {
+                    _ngt_skip(S);   # 6.7.16: `g: i64<u8>`, as PARSE_STRUCT_DEF's (D7)
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {
+                    _ngt_skip(S);   # 6.7.16: `f: Pt<i64>`, as PARSE_STRUCT_DEF's (D7)
                     _sfield_named(S, si, fnoff, tnoff, 0, noff);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
                 }
             } else {
