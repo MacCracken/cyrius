@@ -21,6 +21,13 @@
 # field before and after other fields, `***`, a union, the struct's own name, a generic struct's self link and
 # `**PB<T>` at its instances and its base — each through the pin (`*h.qq + 1` steps the instance, `*h.qq` is its
 # `*PB<..>`, `**h.qq` its value). The refusals are generic_struct_field.sh PP.
+#
+# 6.7.16 — A FIELD OF A FIELD IN A GENERIC BODY, AND THE BASE'S SIGNATURE LIST. `g.v.v = v` with `g: G1<Box<T>>` was
+# judged a struct use of the parameter `v` (the stub scan read the field name), so `mkn<i32>(33)` was refused; and the
+# base read its `: G1<Box<T>>` as the base G1 while its body's `var g: G1<Box<T>>` is `G1$Box`, so the definition was
+# refused. Rows F18-F22: the filed shape at i64 / i32 / Pt, `q.a.k` beside a parameter `a`, the base's parameters and
+# returns naming instances (`G1<Box<T>>`, `*G1<Box<T>>`, `Box<Pt>`, `Box<i32>`), a bare `: G1<T>` unchanged. The
+# refusal rows are generic_struct_field.sh NF.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -84,6 +91,38 @@ fn pp_hg(): i64 {
     return h.k * 1000000 + (a - c) * 10000 + q.n * 1000 + (**h.qq).v.y * 100 + qi.n * 10 + (e - f) / 8;
 }
 
+# 6.7.16: a field of a field in a generic body; the base's signature lists at T = i64
+struct In { k; }
+struct QA { a: In; }
+struct G1<T> { v: T; }
+fn nf_mkn<T>(v: T): G1<Box<T>> { var g: G1<Box<T>>; g.v.v = v; g.v.n = 7; return g; }
+fn nf_qa<T>(a: T): i64 { var q: QA; q.a.k = 5; return q.a.k; }
+fn nf_r1<T>(g: G1<Box<T>>): i64 { return g.v.v + g.v.n; }
+fn nf_r2<T>(g: *G1<Box<T>>): i64 { return g.v.v * 10 + g.v.n; }
+fn nf_r3<T>(b: Box<Pt>, x: T): i64 { return b.v.y * 10 + b.n + x; }
+fn nf_m1<T>(x: T): Box<Pt> { var b: Box<Pt>; b.v.x = x; b.v.y = 2; b.n = 3; return b; }
+fn nf_m2<T>(x: T): Box<i32> { var b: Box<i32>; b.v = 3; b.n = x; return b; }
+fn nf_mk1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn nf_mkn_all(): i64 {
+    var a = nf_mkn(30); var c = nf_mkn<i32>(1);
+    var p: Pt; p.x = 4; p.y = 5; var d = nf_mkn(p); var e: G1<Box<Pt>> = nf_mkn<Pt>(p);
+    return a.v.v * 100000 + c.v.v * 10000 + d.v.v.x * 1000 + e.v.v.y * 100 + a.v.n * 10 + sizeof(G1<Box<i64>>) / 8;
+}
+fn nf_params(): i64 {
+    var g: G1<Box<i64>>; g.v.v = 1; g.v.n = 2;
+    var q: Box<Pt>; q.v.y = 3; q.n = 4;
+    return nf_r1(g) * 10000 + nf_r2(&g) * 100 + nf_r3(q, 1);
+}
+fn nf_rets(): i64 {
+    var a = nf_m1(4); var b = nf_m2(5);
+    return a.v.x * 1000 + a.v.y * 100 + a.n * 10 + b.v + b.n * 0 + sizeof(Box<i32>) * 10000 + b.n * 100000;
+}
+fn nf_bare(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    var x = nf_mk1(6); var y = nf_mk1<i32>(2); var z = nf_mk1(p);
+    return x.v * 1000 + y.v * 100 + z.v.y * 10 + sizeof(G1);
+}
+
 fn hsum(h: H): i64 { return h.a + h.b.v + h.b.n + h.c; }
 
 fn run(): i64 {
@@ -113,6 +152,11 @@ fn run(): i64 {
     assert_eq(pp_sa(), 123432, "F15: p: **PB<SA> inside SA: PB<SA> holds the whole SA (24 + 8)");
     assert_eq(pp_ll(), 32754, "F16: LL<T>'s next: **LL<T> at LL<Pt>: steps 32, *l.next a *LL<Pt>");
     assert_eq(pp_hg(), 2243462, "F17: HG<T>'s qq: **PB<T>: HG<Pt> steps 24, HG<i64> a *PB<i64>, the base HG steps 16");
+    assert_eq(nf_mkn_all(), 3014572, "F18: : G1<Box<T>> at i64 (16 B), i32, Pt (24 B), explicit — g.v.v = v");
+    assert_eq(nf_qa(9), 5, "F19: q.a.k beside a parameter a: T (no struct use of a)");
+    assert_eq(nf_params(), 31235, "F20: the base's G1<Box<T>>, *G1<Box<T>>, Box<Pt> parameters are the instances");
+    assert_eq(nf_rets(), 624233, "F21: the base's : Box<Pt> and : Box<i32> returns are the instances");
+    assert_eq(nf_bare(), 6248, "F22: a bare : G1<T> return is the base G1 at i64 (unchanged)");
     return 0;
 }
 var r0 = run();

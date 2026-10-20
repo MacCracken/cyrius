@@ -7354,6 +7354,10 @@ struct type argument (6.6.10; before that each of these compiled and returned 0)
 The carrier rule looks one field deep: a field typed `Box<T>` inside another carrier
 (`o.inner.v.y` with `o: Out<T>`) is not followed — bind the value to a `T`-typed
 local first (`var t: T = o.inner.v; return t.y;`), which makes the base the stub.
+Only the name a chain starts with is read: a field of a field — `g.v.v = v` with `g: G1<Box<T>>`,
+`q.a.k` beside a parameter `a: T` — is no use of the parameter its field shares a spelling with
+(6.7.16; through 6.7.15 it was, so `mkn<i32>(33)` was refused *generic 'mkn' has no i64 (or other
+scalar) instance*).
 A generic method's scalar call is refused the same way, naming the method as the call
 spells it: `p.pick(9)` and `p.pick(h)` (an `f64`) are refused *generic 'P.pick' has no
 i64 ... instance*, as `P_pick(p, 9)` is naming `P_pick` (6.7.11; before it they compiled
@@ -7396,6 +7400,13 @@ returns the instance — `return mk(p);` and `return mk<Pt>(p);` included, in th
 register-pair (9-16 byte) and retptr classes alike (6.6.10; before that such a
 type was sized as the base `Box`, where `v: T` is an i64 — `r.v.x` failed to
 parse). As for a `var`, an all-`i64` argument list names the base struct itself.
+A generic's base — its i64 instance — reads its signature's list with `T` bound to i64, as its
+body reads the same annotation: `fn mkn<T>(v: T): G1<Box<T>>` returns a `G1<Box<i64>>` from its base
+(`mkn(33).v.v`) and a `G1<Box<Pt>>` from its `Pt` instance, a bare `: G1<T>` is still the base `G1`,
+and a generic's `b: Box<Pt>`, `b: *Box<Pt>`, `g: G1<Box<T>>` or `: Box<i32>` names the instance in every
+instance, its base included (6.7.16; through 6.7.15 the base read every such list as the base struct,
+so `var g: G1<Box<T>>; .. return g;` was refused at the definition, *a fn returning the struct `G1`
+takes a value of that struct .. got `g` (a `G1$Box`)*, and `b.v.y` did not parse).
 A pointer to one is a return type too: `fn mkp<T>(x: T): *Box<T>` returns a `*Box<Pt>` from
 its `Pt` instance (`mkp<Pt>(p).n`, `var q: *Box<Pt> = mkp(p);`, and a `*Box<T>` carrier
 infers from the call: `gp(mkp(p))`) and a `*Box` from its base (6.7.14; through 6.7.13

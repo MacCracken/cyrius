@@ -14987,6 +14987,9 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (mode == 0) {
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
+        # 6.7.16: a FIELD name (`g.v` of `g.v.v`, `q.a` of `q.a.k`) is no T-typed name or carrier, whatever
+        # parameter it shares a spelling with; modes 1 / 2 read `.`-preceded names for `_gs_mfwd`. CHANGELOG [6.7.16]
+        if (TOKTYP(S, i - 1) == 41) { return 0; }
         # 6.7.1 (C3): a by-value bounded method call is a TRAIT use, never a struct use — whatever i64
         # implements. Whether the i64 base is valid is `_bnd_base_bad`'s judgment (the base skipped, a
         # scalar call refused naming i64); counting the site a struct use made the base the dead stub,
@@ -18671,8 +18674,13 @@ fn _pre_attr_drop(): i64 {
 # from declared var type"). As a parameter type `r.v.x` failed the same way. The type now
 # resolves exactly as a `var b: Box<Pt>` does (parse_decl.cyr): an ALL-i64 argument list is the
 # base struct itself, anything else the deduped `Box$..` instance, with an instance's T bound.
-# A generic's BASE keeps the base struct — its T is unbound in the signature, and pass 1 records
-# the same, so a forward call agrees. A list naming something that does not resolve YET keeps
+# ⛔ 6.7.16 — A generic's BASE reads its list with T bound to i64, as the base's body reads the same
+# annotation: `: G1<T>` is still the base `G1`, but `: G1<Box<T>>` is `G1$Box` and `: Box<Pt>` /
+# `b: *Box<Pt>` / `b: Box<i32>` their instances. The base kept the base struct for ANY list, so
+# `var g: G1<Box<T>>; .. return g;` was refused at the definition (a `G1$Box` into a `G1` return),
+# `b.v.y` of a `b: Box<Pt>` parameter did not parse, and a caller's `Box<Pt>` was "a different struct
+# type". Pass 1, the rough scan and pass 2 all read it here, so a forward call agrees. CHANGELOG [6.7.16]
+# A list naming something that does not resolve YET keeps
 # the base, as before: pass 1 is source-ordered (the definition corrects it once the names are
 # declared), and the signature is read more than once (the pre-parameter rough scan, pass 1), so
 # this is not the place to report it. Cursor on the type name; NOT consumed. CHANGELOG [6.6.10]
@@ -18684,9 +18692,11 @@ fn _gtype_sid(S, fi, base): i64 {
         return base;
     }
     if (GSTP(S, base - 1) == 0) { return base; }
-    if (GFTP(S, fi) != 0) { if (_inst_conc0 == 0) { return base; } }
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
-    if (GFTP(S, fi) != 0) { _bind_generic_call(S, fi, _inst_conc0, _inst_conc1); }
+    if (GFTP(S, fi) != 0) {
+        if (_inst_conc0 == 0) { _bind_generic_call(S, fi, 0 - 8, 0 - 8); }   # 6.7.16: the base, T = i64
+        else { _bind_generic_call(S, fi, _inst_conc0, _inst_conc1); }
+    }
     var r = base;
     if (_targs_resolvable(S, GTI(S) + 2) == 1) {
         var sv = GTI(S);
