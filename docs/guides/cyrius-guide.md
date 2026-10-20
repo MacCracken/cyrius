@@ -1552,7 +1552,8 @@ pointer arithmetic with no `Num_add` dispatch (declare it from a struct value, `
 `mkn(1)`, for the operator) — and another handle, a captured one included, which **binds**: the
 new name is a second handle to the same object. A struct value of ANOTHER
 type is refused by name, a dereference of a `*U` included — `*pu`, `(*pu)`, `*gu()`, `*w.pu`
-(`cannot copy 'pu' into a variable of a different struct/vector type: 'q'`).
+(`cannot copy '*w.pu' into a variable of a different struct/vector type: 'q'`: since 6.7.16 a dereference is named
+as the source spells it, from its `*`; through 6.7.15 by its operand's last name, `'pu'`).
 
 ```cyrius
 struct S8 { v; }
@@ -2398,10 +2399,13 @@ the struct `p` points at exactly as a struct variable in that place does — to 
 8 bytes (or an operator's) the pointer, which the callee copies, so its writes stay in its copy; to a
 `*S` parameter of any size the pointee itself, so a write reaches it. A dereference-led operator result
 is an argument like any other (`take(*p + a)`; at top level a 9-16 byte one is refused by name, as
-`take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass 'pu' to a parameter of a
+`take(GW.s + a)` is). A `*U` of another struct is refused by name (*cannot pass '*pu' to a parameter of a
 different struct type*) at every size and into a `Str` parameter — since 6.7.11 a by-value parameter of 8
 bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` in another struct's impl:
-through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. An untyped `*x`
+through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. The dereference is
+named as the source spells it, from its `*` — `'*gu(pu)'`, `'*w.pu'`, and so in every refusal of a struct value
+dereference: a pointer of another kind (`'*gps(&s)'`), a return (`` `*gu(pu)` ``), a copy (`'*h.pu'`) — since
+6.7.16; through 6.7.15 by its operand's last name (`'pu'`, `'*s'`, `` `*pu` ``). An untyped `*x`
 is still the word it reads. Through 6.7.9 the word the
 dereference read was passed as the struct's address — a crash on every target. Under 8 bytes a
 dereference reads exactly the struct's bytes wherever it is a value — a global declared from it (in
@@ -4109,7 +4113,7 @@ naming the callee or `*pb` (`cannot pass '*pb' to a parameter that is not a poin
 type in a call to 'ri'`) — every dereference whose operand is a `*V`, however written: `**ppb`,
 `*gp(pb)`, `*h.pv`, `*GPV`, `*(pb + 0)`, `*&b`, wrapped, in a closure, at top level (each named as the source
 spells it, `'**ppb'`, `'*gp(pb)'` — 6.7.15; through 6.7.14 by its operand's last name, `'*ppb'`, `'*pb'`, as a
-`*S` dereference of another struct into `*T` was, `'pq'` for `rp(*gq(pq))`; ⚠ through 6.7.13 every spelling but
+`*S` dereference of another struct into `*T` was, `'pq'` for `rp(*gq(pq))` (6.7.16: every struct one too); ⚠ through 6.7.13 every spelling but
 `* NAME` of a local into `*i64`, `*u8`,
 `**T` or a by-value struct of 8 B or less compiled and passed lane 0 as the address — 139 on x86_64 and
 aarch64, a cx guest fault, exit 5 on Windows); and a vector local, call result or `*pb` passed to a **by-value struct**

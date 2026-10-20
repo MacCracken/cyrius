@@ -42,6 +42,8 @@
 #   MP3 `_call_ptr_field` without the explicit `g<..>(` arm -> RED 3: P6, PF1, PF2 refused (PF3, inferred,
 #                                                       stays green; the tcyr does not build)
 #   MP4 `_hl_lastnm` without the type-argument skip -> RED 8: PR1-PR7 name 'U', PB names 'S'
+#   6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): PR2 PR3 PR7 — a dereference
+#   source — are named as written, '*gug<U>()' (they named 'gug'), so MP4 no longer reaches them.
 #
 #   PG (6.7.14, issues/archived/2026-10-14-generic-pointer-to-generic-struct-return-refused.md) a generic declared `: *Box<T>`:
 #      the filed repro verbatim (exit 3; refused twice, "unknown type 'T' as a type argument"), `gp(mkp(p))` 8,
@@ -199,10 +201,10 @@ MV="into a variable of a different struct/vector type"
 prefuse pr1 "cannot copy 'gug' $MV: 'l'" "PR1: l = gug<U>()" \
   'fn main(): i64 { var l = S { 1, 2 }; l = gug<U>(); return l.v; }
 syscall(60, main());'
-prefuse pr2 "cannot copy 'gug' $MV: 'q'" "PR2: var q: S = *gug<U>()" \
+prefuse pr2 "cannot copy '*gug<U>()' $MV: 'q'" "PR2: var q: S = *gug<U>()" \
   'fn main(): i64 { var q: S = *gug<U>(); return q.v; }
 syscall(60, main());'
-prefuse pr3 "cannot copy 'gug' $MV: 'l'" "PR3: l = *gug<U>()" \
+prefuse pr3 "cannot copy '*gug<U>()' $MV: 'l'" "PR3: l = *gug<U>()" \
   'fn main(): i64 { var l = S { 1, 2 }; l = *gug<U>(); return l.v; }
 syscall(60, main());'
 prefuse pr4 "cannot copy 'gug' into a struct field of a different struct type: 's'" "PR4: o.s = gug<U>()" \
@@ -214,7 +216,7 @@ syscall(60, main());'
 prefuse pr6 "cannot pass '*gug<U>()' to a parameter of a different struct type in a call to 'S_sub'" "PR6: a - *gug<U>()" \
   'fn main(): i64 { var a = S { 1, 2 }; var c: S = a - *gug<U>(); return c.v; }
 syscall(60, main());'
-prefuse pr7 "cannot copy 'gug' $MV: 'Z'" "PR7: a declaration-zone var Z: S = *gug<U>()" \
+prefuse pr7 "cannot copy '*gug<U>()' $MV: 'Z'" "PR7: a declaration-zone var Z: S = *gug<U>()" \
   'var Z: S = *gug<U>();
 fn main(): i64 { return Z.v; }
 syscall(60, main());'

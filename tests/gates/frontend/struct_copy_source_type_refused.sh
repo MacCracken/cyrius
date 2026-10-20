@@ -63,6 +63,9 @@
 # ADDRESS-OF another struct, `*(&q)` / `*&u`, refused by name as from `q` itself (issues/2026-10-14-dereference-of-
 # address-of-struct-faults.md; through 6.7.12 R35 / R37 / R38 compiled clean, R36 with a warning). Mutation
 # (2026-10-15): `_hl_dpsid` answering `_hl_psid` (no `&x` arm) -> RED 4: R35-R38 compiled.
+# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): R17-R23 and R35-R38 name the
+# dereference as written, from its `*` — '*pu', '*PU', '*gu()', '*(&q)', '*&u', '*(&GQ)' (they named 'pu', 'PU', 'gu',
+# 'q', 'u', 'GQ'); every printer's rows: struct_arg_type_refused.sh DS.
 #   (struct_field_value_copy.tcyr: MG1-MG3 SIGSEGV at its first through-pointer row, x86 and cxvm)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -229,31 +232,31 @@ echo "=== an assignment from a dereference of a *U of another struct type (6.7.1
 # U's first word.
 SU='var GQ = Q { 1, 2, 3 }; var PU: *Q = &GQ; fn gu(): *Q { return PU; }
 '
-refuse "R17 l = *pu, a local" "cannot copy 'pu' $MV: 'l'" \
+refuse "R17 l = *pu, a local" "cannot copy '\*pu' $MV: 'l'" \
     "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var pu: *Q = &q; var l = Pt { 0, 0 }; l = *pu; return l.x; } syscall(60, go());"
-refuse "R18 o.s = *pu, a struct-typed field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+refuse "R18 o.s = *pu, a struct-typed field" "cannot copy '\*pu' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var pu: *Q = &q; var r: RB; r.v = *pu; return r.v.x; } syscall(60, go());"
-refuse "R19 G = (*PU) at top level" "cannot copy 'PU' $MV: 'G'" \
+refuse "R19 G = (*PU) at top level" "cannot copy '\*PU' $MV: 'G'" \
     "${T}${SU}var G = Pt { 0, 0 }; G = (*PU); syscall(60, G.x);"
-refuse "R20 l = *gu(), a : *Q call" "cannot copy 'gu' $MV: 'l'" \
+refuse "R20 l = *gu(), a : *Q call" "cannot copy '\*gu()' $MV: 'l'" \
     "${T}${SU}fn go(): i64 { var l = Pt { 0, 0 }; l = *gu(); return l.x; } syscall(60, go());"
-refuse "R21 q = *pu into a *Pt's pointee" "cannot copy 'pu' $MV: 'q'" \
+refuse "R21 q = *pu into a *Pt's pointee" "cannot copy '\*pu' $MV: 'q'" \
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var t = Pt { 0, 0 }; var q: *Pt = &t; q = *pu; return t.x; } syscall(60, go());"
-refuse "R22 step a = *pu, 8 B" "cannot copy 'pu' $MV: 'a'" \
+refuse "R22 step a = *pu, 8 B" "cannot copy '\*pu' $MV: 'a'" \
     "${T}fn go(): i64 { var u = Q8 { 1, 2 }; var pu: *Q8 = &u; var a = P8 { 0, 0 }; var i = 0; for (i = 0; i < 1; a = *pu) { i = i + 1; } return a.x; } syscall(60, go());"
-refuse "R23 step r.v = (*pu), a field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+refuse "R23 step r.v = (*pu), a field" "cannot copy '\*pu' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var u = Q { 1, 2, 3 }; var pu: *Q = &u; var r: RB; var i = 0; for (i = 0; i < 1; r.v = (*pu)) { i = i + 1; } return 0; } syscall(60, go());"
 
 # 6.7.13 (issues/archived/2026-10-14-dereference-of-address-of-struct-faults.md): `*(&u)` / `*&u` is the struct `u` names, so
 # a declaration or an assignment from another struct's is refused by name, as from `u` itself. Through 6.7.12 the
 # 16 B declaration SIGSEGV'd (a handle holding u's first field) and the 8 B rows compiled clean.
-refuse "R35 var l: Pt = *(&q), a Q" "cannot copy 'q' $MV: 'l'" \
+refuse "R35 var l: Pt = *(&q), a Q" "cannot copy '\*(&q)' $MV: 'l'" \
     "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var l: Pt = *(&q); return l.x; } syscall(60, go());"
-refuse "R36 l = *&u, 8 B" "cannot copy 'u' $MV: 'l'" \
+refuse "R36 l = *&u, 8 B" "cannot copy '\*&u' $MV: 'l'" \
     "${T}fn go(): i64 { var u = Q8 { 1, 2 }; var l = P8 { 0, 0 }; l = *&u; return l.x; } syscall(60, go());"
-refuse "R37 r.v = *(&q), a struct-typed field" "cannot copy 'q' into a struct field of a different struct type: 'v'" \
+refuse "R37 r.v = *(&q), a struct-typed field" "cannot copy '\*(&q)' into a struct field of a different struct type: 'v'" \
     "${T}fn go(): i64 { var q = Q { 1, 2, 3 }; var r: RB; r.v = *(&q); return r.v.x; } syscall(60, go());"
-refuse "R38 var G: Pt = *(&GQ) at top level" "cannot copy 'GQ' $MV: 'G'" \
+refuse "R38 var G: Pt = *(&GQ) at top level" "cannot copy '\*(&GQ)' $MV: 'G'" \
     "${T}var GQ = Q { 1, 2, 3 }; var G: Pt = *(&GQ); syscall(60, G.x);"
 
 echo "=== a struct-typed FIELD from a *U global, a : *U call, a *U field (6.7.11) ==="

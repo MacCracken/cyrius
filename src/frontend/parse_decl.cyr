@@ -1234,7 +1234,7 @@ fn _fsc_dstar(S, ft, fnoff, term): i64 {
     var ps = _hl_dstar_x(S, GTI(S), term, 1);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dname(S), fnoff); return 0; }   # 6.7.16: '*qq', as written
     _fsc_hsrc(_hl_dx_src(S));
     return 1;
 }
@@ -7431,7 +7431,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
 fn _gci_dx_top(S, noff, pscale): i64 {
     var ps = _hl_dstar(S, GTI(S) + 1);
     if (ps <= 0) { return 0; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    if (_agg_dx_err(S, pscale, 0 - ps, noff) == 1) { return 0; }
     if (STRUCTSZ(S, (0 - pscale) - 1) <= 8) { return 0; }
     return 1;
 }
@@ -7491,7 +7491,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         # marked struct-typed: `var p: P3 = q;` for a `Q3 q` read back a stack address through
         # `p.x`, silently. See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
         if (GLTYPE(S, src_li) != pscale) {
-            _AGG_ASSIGN_TYPE_ERR(S, pscale, GLTYPE(S, src_li), noff, TOKVAL(S, ci_ti));
+            _sci_lsrc_err(S, pscale, GLTYPE(S, src_li), noff, ci_ti, ci_dr);
             return 0;
         }   # same struct sid as b
         # ⛔ 6.6.5 — THE SOURCE MUST BE INLINE, OR THIS IS NOT A COPY AT ALL. This path had no
@@ -8084,7 +8084,7 @@ fn _sci_dexpr(S, noff, pscale): i64 {
     if (pscale <= 0 - 2048) { return 0; }
     var ps = _hl_dstar_x(S, GTI(S) + 1, 5, 1);
     if (ps <= 0) { return 0; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    if (_agg_dx_err(S, pscale, 0 - ps, noff) == 1) { return 0; }
     STI(S, GTI(S) + 1);   # consume '='
     var h = _hl_dx_src(S);
     var sz = STRUCTSZ(S, ps - 1);
@@ -10501,6 +10501,12 @@ fn _sci_star(S, ti): i64 {
     if (TOKTYP(S, ti + 2) != 5) { return 0; }
     return 1;
 }
+# A local source of another struct, the name at token `ti` (`dr` 1: after a `*`, `var q: T = *p;`) — refused by name
+# (`_AGG_ASSIGN_TYPE_ERR`); a dereference is named from its `*`, as the source spells it ('*p'; it was 'p', 6.7.16).
+fn _sci_lsrc_err(S, td, ts, dnoff, ti, dr): i64 {
+    if (dr == 0) { return _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, TOKVAL(S, ti)); }
+    return _agg_span_err(S, td, ts, dnoff, ti - 1, ti + 1, TOKVAL(S, ti));
+}
 # `*p` with `p` a closure capture: 1 = a captured `*T` of the declared type (copied through the
 # word it captured, `_CL_CAP_BASE_RA`); 2 = anything else (the scalar init, as before). A `*U` of
 # another struct is refused by name, as `var q: T = p;` refuses it.
@@ -10508,7 +10514,7 @@ fn _sci_cap_deref(S, snoff, dnoff, pscale): i64 {
     var t = _fsc_cap_src(S, snoff);
     if (t == 0) { return 0; }
     if (_cl_snap_ptrp(_cl_snap_find(S, snoff)) == 0) { return 2; }
-    if (t != pscale) { _AGG_ASSIGN_TYPE_ERR(S, pscale, t, dnoff, snoff); return 2; }
+    if (t != pscale) { _agg_span_err(S, pscale, t, dnoff, GTI(S) + 1, GTI(S) + 3, snoff); return 2; }   # 6.7.16: '*p'
     return 1;
 }
 # `*G` with `G` a global that is not a `*T` of the declared type: a `*U` of another struct is refused
@@ -10518,7 +10524,7 @@ fn _sci_gderef_err(S, snoff, dnoff, pscale): i64 {
     if (gvi < 0) { return 0; }
     var ps = _gv_ptr_sid(S, gvi);
     if (ps <= 0) { return 0; }
-    _AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, dnoff, snoff);
+    _agg_span_err(S, pscale, 0 - ps, dnoff, GTI(S) + 1, GTI(S) + 3, snoff);   # 6.7.16: '*G', the `*` after the `=`
     return 0;
 }
 # ⛔ 6.7.10 (B7-1) — 1 = local `li` is a HANDLE of 8 B or less (the handle line, `_mark_small_init`):
@@ -11728,7 +11734,7 @@ fn _gz_star_src(S, b, pscale, dnoff): i64 {
     if (_sci_star(S, b) == 0) { return 0 - 1; }
     var ps = _gz_pg(S, b);
     if (ps <= 0) { return 0 - 1; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ps, dnoff, TOKVAL(S, b + 1)) == 1) { return 0 - 1; }
+    if (_agg_span_err(S, pscale, 0 - ps, dnoff, b, b + 2, TOKVAL(S, b + 1)) == 1) { return 0 - 1; }   # 6.7.16: '*p'
     var pg = FINDVAR(S, TOKVAL(S, b + 1));
     return pg;
 }
@@ -11763,6 +11769,8 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
 # `_hl_dk` = the parentheses around it; `_hl_dnm` = the operand's last name, for a refusal.
 var _hl_dk = 0;
 var _hl_dnm = 0;
+var _hl_dna = 0 - 1;   # 6.7.16: the `*` of the dereference `_hl_dstar_x` typed last (-1: `_hl_dnm` is `_hl_psrc`'s)
+var _hl_dne = 0 - 1;   # ... and the token after its operand
 fn _hl_dstar(S, ti): i64 { return _hl_dstar_t(S, ti, 5); }
 # ... the same for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of a for
 # step or of the parentheses wrapping it, `_hl_dx_end`).
@@ -11789,7 +11797,32 @@ fn _hl_dstar_x(S, ti, term, pp): i64 {
     if (ps <= 0) { return 0; }
     _hl_dk = a - ti;
     _hl_dnm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));
+    _hl_dna = a;   # 6.7.16: a refusal names [a, pe) as written (`_hl_dname`, `_ret_sid_refuse_d`)
+    _hl_dne = pe;
     return ps;
+}
+# ⛔ 6.7.16 — A DEREFERENCE SOURCE REFUSED BY ITS STRUCT IS NAMED AS THE SOURCE SPELLS IT, FROM ITS `*`: `var s: S8 =
+# *h.pu;` is "cannot copy '*h.pu' ...", `o.s = *qq` '*qq', `l = *gp()` '*gp()' — it was the operand's last name ('pu',
+# 'qq', 'gp'), as 6.7.15's argument arm already spells it (`_src_span_nm`). The dereference `_hl_dstar_x` typed last,
+# rendered now, at the refusal (the span's scratch is uncommitted); else (`_hl_psrc`'s `*T` source) `_hl_dnm`.
+# CHANGELOG [6.7.16]
+fn _hl_dname(S): i64 {
+    if (_hl_dna < 0) { return _hl_dnm; }
+    return _src_span_nm(S, _hl_dna, _hl_dne, _hl_dnm);
+}
+# `_AGG_ASSIGN_TYPE_ERR` for that dereference source into `dnoff` (`td` its type, `ts` the source's): 1 = refused,
+# the source named as `_hl_dname` names it.
+fn _agg_dx_err(S, td, ts, dnoff): i64 {
+    if (_hl_dna < 0) { return _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, _hl_dnm); }
+    return _agg_span_err(S, td, ts, dnoff, _hl_dna, _hl_dne, _hl_dnm);
+}
+# ... for a source spelled by the tokens [a, e) (`dflt` when they have no source spelling), rendered only when it is
+# refused (1).
+fn _agg_span_err(S, td, ts, dnoff, a, e, dflt): i64 {
+    if (td >= 0) { return 0; }
+    if (ts >= 0) { return 0; }
+    if (td == ts) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, _src_span_nm(S, a, e, dflt));
 }
 # The struct the `*S` a dereference's operand [a, e) reads points at — the operand a `**S`, S a plain struct (not a
 # `Str` / tuple / dyn: their own paths) — when `pp` asks, `_hl_dpp` 1; else 0. `pp` 2 (the assignment, `_asg_dstar`)
@@ -12136,7 +12169,7 @@ fn _hl_psrc(S, a, e): i64 {
     if (a >= e) { return 0; }
     if (_hl_addop(S, a, e) > a) {   # ops-6: pointer arithmetic
         var pt = _hl_psid(S, a, e);
-        if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); }
+        if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); _hl_dna = 0 - 1; }
         return pt;
     }
     if (TOKTYP(S, a) != 2) { if (_icall_open_at(S, a) < 0) { return 0; } }   # 6.7.16: `callptr(&f)` (`_hl_ic_psid`)
@@ -12147,6 +12180,7 @@ fn _hl_psrc(S, a, e): i64 {
     var t = _hl_pchain(S, a, e);
     if (_hl_cp != 1) { return 0; }
     _hl_dnm = _hl_pnm(S, a, e);
+    _hl_dna = 0 - 1;
     return t;
 }
 # The name a refusal of the `*T` expression [a, e) names: in pointer arithmetic the pointer operand's (the
@@ -12315,7 +12349,7 @@ fn _hl_name_ty(S, noff): i64 {
 fn _gz_dx_init(S, dgv, gps, dnoff): i64 {
     var ps = _hl_dstar(S, GTI(S));
     if (ps <= 0) { return 0; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, gps, 0 - ps, dnoff, _hl_dnm) == 1) { return 0; }
+    if (_agg_dx_err(S, gps, 0 - ps, dnoff) == 1) { return 0; }
     var sid = 0 - gps;
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (dgv < 0) { return 0; }

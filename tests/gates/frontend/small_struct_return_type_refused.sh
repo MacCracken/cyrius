@@ -99,6 +99,11 @@
 #                                                          base), R56 (the base's error, then the instance's)
 #   real tree                                           -> GREEN (66 refusal rows — floor 66 — and 28 acceptance rows)
 #
+# 6.7.16 — R11b-R11e: a dereference named as written, from its `*` (`*gu(pu)`, `*w.pu`; it was `*pu`), on the four
+# compilers. Mutation (2026-10-19, a scratch tree with the src before the fix, the gate run from it):
+#   the fix reverted                                    -> RED 16: R11b-R11e on each of the four legs
+#   real tree                                           -> GREEN (70 refusal rows — floor 70 — and 28 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -359,6 +364,16 @@ refuse4 "R29 return &p; (p: *S24, a local) from : S24" "$MS — \`&p\` $SLOT p's
 fn main(): i64 { var c: S24 = h(); return c.v; }
 syscall(60, main());
 '
+# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): a dereference is named as the
+# source spells it — `*` and its operand's tokens; it was `*` and the operand's LAST name (`*pu` for `*gu(pu)` and
+# `*w.pu`, `*GU` for `*gu(&GU)`). R11 `return *pu;` reads the same either way. Over 8 B (the pointer arm): struct_arg_type_refused.sh DS5 DS6.
+DG='fn gu(p: *U8): *U8 { return p; }
+struct WP { k; pu: *U8; }
+'
+refuse4 "R11b return *gu(pu); (the filed line)" "$MS — got \`\*gu(pu)\` (a \`U8\`)" "$T$DG"'fn f(): S8 { var u: U8; u.u = 13; var pu: *U8 = &u; return *gu(pu); }'"$E"
+refuse4 "R11c return *w.pu; (a *U8 field)" "$MS — got \`\*w\.pu\` (a \`U8\`)" "$T$DG"'fn f(): S8 { var u: U8; u.u = 13; var w: WP; w.pu = &u; return *w.pu; }'"$E"
+refuse4 "R11d return (*(pu));" "$MS — got \`\*(pu)\` (a \`U8\`)" "$T$DG"'fn f(): S8 { var u: U8; u.u = 13; var pu: *U8 = &u; return (*(pu)); }'"$E"
+refuse4 "R11e return *gu(&GU); (a call on a global)" "$MS — got \`\*gu(&GU)\` (a \`U8\`)" "$T$DG"'fn f(): S8 { return *gu(&GU); }'"$E"
 refuse4 "R30 return &self; (an untyped self) from : S8" "$MS — \`&self\` $SLOT self's slot, not a struct — return self" 'struct S8 { v; }
 impl S8 { fn cp(self): S8 { return &self; } }
 fn main(): i64 { var s: S8; s.v = 3; var c: S8 = s.cp(); return c.v; }
@@ -624,7 +639,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 66 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 66) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 70 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 70) — rows were lost"; exit 1; }
 [ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

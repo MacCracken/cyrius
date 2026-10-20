@@ -96,10 +96,12 @@
 #
 # 6.7.16 — `o.s = *pp` INTO A STRUCT-TYPED FIELD copies the struct `*pp` points at too (issues/2026-10-18-struct-field-
 # destination-from-double-pointer-single-deref-stores-pointer-word.md), so a `**Q3`'s `*qq` into a P3 FIELD is refused by
-# name with the field's words ("cannot copy 'qq' into a struct field of a different struct type: 's'", as `o.s = *pu`
+# name with the field's words ("cannot copy '*qq' into a struct field of a different struct type: 's'", as `o.s = *pu`
 # is): R33 `o.s = *qq` in a fn, R34 top level `GO.s = (*GQQ)` — ONE error each, no binary (both compiled through 6.7.15:
 # the pointer word stored into the field). The copies are double_pointer_struct_value.tcyr's wf_* rows.
 # Mutation (2026-10-19, CYCC=the lane's compiler before the fix): RED 2 — R33 / R34 compile.
+# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): the source is named as written,
+# from its `*` — R33 '*qq', R34 '*GQQ' (they were 'qq', 'GQQ'); every other printer: struct_arg_type_refused.sh DS.
 #
 # 6.7.15 — `**pp OP= v` NAMES ITS OPERAND AS WRITTEN (issues/2026-10-17-double-pointer-compound-refusal-names-the-
 # pointer-as-the-struct.md): the outer `*`'s operand is `*pp`, so the refusal reads "the struct '*pp' points at" with
@@ -350,11 +352,11 @@ frefuse() {  # $1 label  $2 the full error text  $3 source
         printf '  ok(refused): %-31s\n' "$1"; pass=$((pass+1))
     fi
 }
-frefuse "R33 o.s = *qq  (a **Q3, a P3 field)" "cannot copy 'qq' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
+frefuse "R33 o.s = *qq  (a **Q3, a P3 field)" "cannot copy '*qq' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
 fn main(): i64 { var q: Q3 = Q3{7,8,9}; var pq: *Q3 = &q; var qq: **Q3 = &pq; var o: WO; o.s = *qq; return o.s.z; }
 var r = main(); syscall(60, r);
 '
-frefuse "R34 GO.s = (*GQQ)  (top level)" "cannot copy 'GQQ' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
+frefuse "R34 GO.s = (*GQQ)  (top level)" "cannot copy '*GQQ' into a struct field of a different struct type: 's'" "$P3Q3"'struct WO { k; s: P3; }
 var GO = WO{0,0,0,0};
 var GQ = Q3{7,8,9};
 var GPQ: *Q3 = &GQ;

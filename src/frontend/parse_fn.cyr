@@ -1965,8 +1965,17 @@ fn _sarg_type_errf(S, fi, argc, asid, anoff, afi): i64 {
     var ps = GFPSID(S, fi, argc);
     if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff, afi); }   # 6.7.13 (D33): a `*V` records no struct
     if (ps == asid) { return 0; }
-    _sarg_ident_err(S, "cannot pass ", anoff, afi, " to a parameter of a different struct type in a call to ", fi);
+    _sarg_ident_err(S, "cannot pass ", _ess_anm(S, anoff), afi, " to a parameter of a different struct type in a call to ", fi);
     return 1;
+}
+# ⛔ 6.7.16 — A REFUSED DEREFERENCE ARGUMENT IS NAMED AS THE SOURCE SPELLS IT, FROM ITS `*`: `take8(*gu(pu))` is
+# '*gu(pu)', as 6.7.15's address-passed arm names it (`_dro_nm`); it was the operand's last name, 'pu'. `anoff` -2 is the
+# whole dereference `_ess_deref` typed last ([`_ess_da`, `_ess_de`)), rendered here, at the refusal — the span's scratch
+# (`_src_span_nm`) is uncommitted, so it is never rendered before another argument's parse; else `anoff` itself.
+# CHANGELOG [6.7.16]
+fn _ess_anm(S, anoff): i64 {
+    if (anoff != 0 - 2) { return anoff; }
+    return _src_span_nm(S, _ess_da, _ess_de, _ess_nm);
 }
 # ERR_IDENT for an argument refusal: the argument `anoff` — the result of a call to fn `afi`, or (-1) a name — and the
 # callee `fi`, each as the source spells it (`_fn_src_name`). The helper writes at one scratch, so the two names are
@@ -2001,7 +2010,7 @@ fn _sarg_ident_err(S, msg, anoff, afi, tail, fi): i64 {
 # 6.7.14: `afi` as `_sarg_type_errf`'s — a method result is named `S2.dup`. CHANGELOG [6.7.14]
 fn _sarg_svec_err(S, fi, argc, anoff, afi): i64 {
     if (_pvec_param(S, fi, argc) == 0) { return 0; }
-    _sarg_ident_err(S, "cannot pass ", anoff, afi, " to a parameter that is a pointer to a vector type in a call to ", fi);
+    _sarg_ident_err(S, "cannot pass ", _ess_anm(S, anoff), afi, " to a parameter that is a pointer to a vector type in a call to ", fi);
     return 1;
 }
 # The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,
@@ -2544,16 +2553,23 @@ fn _sval_stars(S, st): i64 {
 # The refusal at token `ti` of a struct value — `noff` (a field, call or method name), behind `star` `*`s — passed to a
 # pointer of another kind of `fi`: D5 (a)'s words, without the `&` hint a name gets (D31's `_vec_val_err` is its vector
 # twin). No `_panic`: the parse is in step, so one compile reports every such argument. 0.
+# 6.7.16: a dereference (`star` > 0, `_ess_deref`'s) is named as the source spells it — its `*`s, then its operand's
+# tokens (`*gps(&s)`; it was `*` and the operand's last name, '*s') — rendered here, at the refusal; its once-key is the
+# span's start, not the scratch the span is written at. CHANGELOG [6.7.16]
 fn _sval_kind_err(S, ti, star, noff, fi): i64 {
     if (_panic == 1) { return 0; }
-    if (_derr_seen(ti, "_sval_kind_err", (noff * 31 + fi) * 31 + star, 0) == 1) { return 0; }   # 6.7.15: once
+    var key = noff;
+    if (star > 0) { key = _ess_da; }
+    if (_derr_seen(ti, "_sval_kind_err", (key * 31 + fi) * 31 + star, 0) == 1) { return 0; }   # 6.7.15: once
+    var nm = _fn_src_name(S, FINDFN(S, noff), noff);   # a method by its source name: `Pt.dup`
+    if (star > 0) { nm = _src_span_nm(S, _ess_da + star, _ess_de, noff); }
     var sv = GTI(S);
     STI(S, ti);
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     while (star > 0) { PRSTR("*"); star = star - 1; }
-    PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # a method by its source name: `Pt.dup`
+    PRSTR(S + 0xEC00000 + nm);
     PRSTR("' to a parameter that is not a pointer to its struct type in a call to '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
     PRSTR("' - a struct value is no address\n");
@@ -3159,9 +3175,15 @@ fn _sarg_byval_small(S, fi, argc): i64 {
     var st = GTI(S);
     var asid = _expr_struct_sid(S, st);
     var ps = GPSC(S);
-    if (asid == 0) { asid = _ess_deref(S, st); }   # 6.7.11: `take8(*pu)`
+    var an = _ess_nm;
+    var af = _ess_fi;
+    if (asid == 0) {
+        asid = _ess_deref(S, st);   # 6.7.11: `take8(*pu)`
+        an = 0 - 2;   # 6.7.16: named from its `*` (`_ess_anm`)
+        af = 0 - 1;
+    }
     _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
-    _sarg_type_errf(S, fi, argc, asid, _ess_nm, _ess_fi);
+    _sarg_type_errf(S, fi, argc, asid, an, af);
     if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
     else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
     EPUSHR(S);
@@ -3206,6 +3228,8 @@ fn _sarg_istr_dx(S, fi, argc): i64 {
 # decision, 2026-10-13: refuse by name). The parse and its emission are unchanged. CHANGELOG [6.7.11]
 var _ess_nm = 0;
 var _ess_fi = 0 - 1;   # 6.7.14: ... the fn whose result it names (a method's record), else -1
+var _ess_da = 0 - 1;   # 6.7.16: the `*` of the dereference `_ess_deref` typed last
+var _ess_de = 0 - 1;   # ... and the token after its operand
 fn _expr_struct_sid(S, st): i64 {
     var asid = 0;
     var nm = 0;
@@ -3270,6 +3294,8 @@ fn _ess_deref(S, st): i64 {
     var u = _hl_dpsid(S, a + 1, pe);
     if (u <= 0) { return 0; }
     _ess_nm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));   # 6.7.11: `*gu<U>()` names `gu`
+    _ess_da = a;   # 6.7.16: a refusal names [a, pe) as written (`_ess_anm`, `_sval_kind_err`, `_ret_sid_refuse_d`)
+    _ess_de = pe;
     return u;
 }
 # The struct a whole free call at `ti` returns (`_sarg_call_sid`), after the parse; inside `k`
@@ -3616,7 +3642,7 @@ fn _ret_ptr_src(S): i64 {
     var ds = _hl_dstar_t(S, st, _ret_term);
     if (ds > 0) {
         if (_dx_plain(S, ds) == 0) { return 0 - 1; }
-        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_dnm, 0 - 1, ds, 2); }
+        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse_d(S, st, _hl_dna, _hl_dne, _hl_dnm, ds); }
         return _ret_ptr_copy(S, _hl_dx_src(S));
     }
     var e = _hl_dx_end(S, st, _ret_term);
@@ -3837,7 +3863,10 @@ fn _ret_small_val(S, st): i64 {
     if (asid > 0) {
         if (asid >= 2048) { return 0; }
         if (_dyn_is(S, asid) == 1) { return 0; }   # refused at its own site (6.7.8 V4), once
-        if (asid != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _ess_nm, _ess_fi, asid, kind); }
+        if (asid != _cur_fn_ret_sid) {
+            if (kind == 2) { _ret_sid_refuse_d(S, st, _ess_da, _ess_de, _ess_nm, asid); }
+            else { _ret_sid_refuse(S, st, _ess_nm, _ess_fi, asid, kind); }
+        }
         return 0;
     }
     return _ret_small_ptr(S, st);
@@ -3896,12 +3925,24 @@ fn _ret_small_ptr(S, st): i64 {
     return 0;
 }
 # A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
-# `*U8`)), 2 a dereference (`*pu` (a `U8`)), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
+# `*U8`)), 2 a dereference (`*gu(pu)` (a `U8`), `_ret_sid_refuse_d`), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
 # token `ti`; the parse goes on (no cascade). `nm` the result of a call to fn `fi` is named as the source spells it
 # (`Pt.dup`, `_fn_src_name`; -1: a name as written). CHANGELOG [6.7.15]
 fn _ret_sid_refuse(S, ti, nm, fi, usid, kind): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
+    return _rsr_print(S, ti, _fn_src_name(S, fi, nm), usid, kind);
+}
+# ⛔ 6.7.16 — kind 2 (a dereference) named as the source spells it: `*` and the operand's tokens [a + 1, e) — `return
+# *gu(pu);` is `*gu(pu)`; it was `*` and the operand's last name, `*pu` — rendered here, at the refusal (`dflt` the last
+# name when the tokens have no source spelling); once at the token, keyed by the span's start. CHANGELOG [6.7.16]
+fn _ret_sid_refuse_d(S, ti, a, e, dflt, usid): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((a * 31 + usid) * 31 + 2) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
+    return _rsr_print(S, ti, _src_span_nm(S, a + 1, e, dflt), usid, 2);
+}
+# The refusal's text at token `ti`, the value named `nm` (a pool offset, written as is).
+fn _rsr_print(S, ti, nm, usid, kind): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
@@ -3909,7 +3950,7 @@ fn _ret_sid_refuse(S, ti, nm, fi, usid, kind): i64 {
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
     if (kind == 3) { PRSTR("&"); }
-    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, nm));
+    PRSTR(S + 0xEC00000 + nm);
     PRSTR("` (a `");
     if (kind == 1 || kind == 3) { PRSTR("*"); }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));

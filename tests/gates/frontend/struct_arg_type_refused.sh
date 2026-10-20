@@ -226,6 +226,18 @@
 # the address-passed arm (`_dro_check`), name the argument as written — '*(&p)', '**ppp' (they named 'p', 'ppp'); the
 # multi-target rows are simd_pointer_param.sh OKN.
 #
+# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md) — EVERY STRUCT VALUE DEREFERENCE
+# REFUSED BY ITS STRUCT IS NAMED AS THE SOURCE SPELLS IT, FROM ITS `*` (as the address-passed arm has since 6.7.15): the
+# by-value argument (`_ess_anm`), the pointer-of-another-kind argument (`_sval_kind_err`), the small-struct and pointer-arm
+# returns (`_ret_sid_refuse_d`), the assignment, field, declaration and top-level copies (`_hl_dname`, the `* IDENT` arms)
+# — they quoted the operand's LAST name ('pu' for `*gu(pu)`, 't' for `*gt(&t)`, '*s' for `*gps(&s)`). Re-pinned: D1-D8
+# D3b D13 D14 G4 V11; DS1 the filed repro verbatim (its four errors at their columns), DS2-DS17 each printer and
+# spelling, DSK1 / DSK2 a name and a `*T` source that is no dereference keep their names — DS on the x86_64, aarch64, cx
+# and PE compilers. Mutation (2026-10-19, a scratch tree with the src before the fix, the gate run from it):
+#   the fix reverted                                    -> RED 31: the 13 re-pinned rows, DS1-DS3 DS4b DS5-DS17 (DS4's
+#                                                          '**pp' reads the same either way)
+#   real tree                                           -> GREEN (149 refusal rows — floor 149 — and 41 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -688,7 +700,7 @@ fn mkw(a): W1<i32> { var r: W1<i32>; r.v = a; return r; }
 # The filed repro, verbatim (issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md):
 # it compiled and exited 7 (U8's `u` read as an S8) through 6.7.10, where `take8(u)`, the 16 B `take(*pu)`
 # and `var l: S8 = *pu;` were refused by name.
-refuse "D1 the filed repro, verbatim: take8(*pu)" "cannot pass 'pu' $MA 'take8'" \
+refuse "D1 the filed repro, verbatim: take8(*pu)" "cannot pass '\*pu' $MA 'take8'" \
     'struct S8 { v; }
 struct U8 { u; }
 fn take8(s: S8): i64 { return s.v; }
@@ -699,22 +711,22 @@ DH='struct HP { pt: *T1; ps: *S1; }
 fn gt(t: *T1): *T1 { return t; }
 fn gs(s: *S1): *S1 { return s; }
 '
-refuse "D2 bs1((*tp))" "cannot pass 'tp' $MA 'bs1'" \
+refuse "D2 bs1((*tp))" "cannot pass '\*tp' $MA 'bs1'" \
     "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1((*tp)); } syscall(60, go());"
-refuse "D3 bs1(*gt(&t)), a : *T1 call" "cannot pass 't' $MA 'bs1'" \
+refuse "D3 bs1(*gt(&t)), a : *T1 call" "cannot pass '\*gt(&t)' $MA 'bs1'" \
     "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; return bs1(*gt(&t)); } syscall(60, go());"
-refuse "D3b bs1(*gtg()), a : *T1 call with no argument" "cannot pass 'gtg' $MA 'bs1'" \
+refuse "D3b bs1(*gtg()), a : *T1 call with no argument" "cannot pass '\*gtg()' $MA 'bs1'" \
     "${T}${DH}var GTP: *T1 = 0; fn gtg(): *T1 { return GTP; } fn go(): i64 { var t: T1; t.w = 9; GTP = &t; return bs1(*gtg()); } syscall(60, go());"
-refuse "D4 bs1(*hp.pt), a *T1 field" "cannot pass 'pt' $MA 'bs1'" \
+refuse "D4 bs1(*hp.pt), a *T1 field" "cannot pass '\*hp\.pt' $MA 'bs1'" \
     "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var hp: HP; hp.pt = &t; return bs1(*hp.pt); } syscall(60, go());"
-refuse "D5 bs1(*(tp + 0)), pointer arithmetic" "cannot pass 'tp' $MA 'bs1'" \
+refuse "D5 bs1(*(tp + 0)), pointer arithmetic" "cannot pass '\*(tp + 0)' $MA 'bs1'" \
     "${T}${DH}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*(tp + 0)); } syscall(60, go());"
-refuse "D6 a tail call, bs1(*tp) with tp: *T1 a parameter" "cannot pass 'tp' $MA 'bs1'" \
+refuse "D6 a tail call, bs1(*tp) with tp: *T1 a parameter" "cannot pass '\*tp' $MA 'bs1'" \
     "${T}${DH}fn f(tp: *T1): i64 { return bs1(*tp); } fn go(): i64 { var t: T1; t.w = 9; return f(&t); } syscall(60, go());"
-refuse "D7 bs1(*self) in an impl of T1" "cannot pass 'self' $MA 'bs1'" \
+refuse "D7 bs1(*self) in an impl of T1" "cannot pass '\*self' $MA 'bs1'" \
     "${T}${DH}impl T1 { fn tk(self): i64 { return bs1(*self); } } fn go(): i64 { var t: T1; t.w = 9; return t.tk(); } syscall(60, go());"
 # Into a `Str` handle parameter (any size of the pointee): it SIGSEGV'd (139) through 6.7.10, as `sl(p)` did before 6.7.3.
-refuse "D8 sl(*tp) into s: Str" "cannot pass 'tp' $MA 'sl'" \
+refuse "D8 sl(*tp) into s: Str" "cannot pass '\*tp' $MA 'sl'" \
     "${TS}${T}${DH}fn sl(s: Str): i64 { return str_len(s); } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return sl(*tp); } syscall(60, go());"
 # A generic carrier of the same instance: `*wp` binds T as `wp` does (the lane's review), so `gw$i32` reads
 # the i32 -6 as negative — the base read W1<i32>'s word with W1<i64>'s layout (>= 0: 2, through 6.7.10).
@@ -745,9 +757,9 @@ accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
 # `*&u`, is the struct `u` names, so another struct's is refused by name as `take8(u)` is (through 6.7.12 the 8 B
 # row compiled and passed U's bytes, the 16 B row SIGSEGV'd: the first word passed as the address), and a generic
 # carrier binds T through it as `gw(w)` does (139 through 6.7.12).
-refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass 't' $MA 'bs1'" \
+refuse "D13 bs1(*(&t)), t: T1 into b: S1 (8 B)" "cannot pass '\*(&t)' $MA 'bs1'" \
     "${T}fn go(): i64 { var t: T1; t.w = 9; return bs1(*(&t)); } syscall(60, go());"
-refuse "D14 bs1(*&t) at top level" "cannot pass 'GT1' $MA 'bs1'" \
+refuse "D14 bs1(*&t) at top level" "cannot pass '\*&GT1' $MA 'bs1'" \
     "${T}var GT1 = T1 { 9 }; var r = bs1(*&GT1); syscall(60, r);"
 refuse "D15 bq(*(&p)), p: Pt into b: Q (over 8 B)" "cannot pass '\\*(&p)' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} return bq(*(&p)); } syscall(60, go());"
@@ -787,7 +799,7 @@ accept "G2 gx((b)), gx(*bp), gx((*bp)), gx(*gpb()), gxp((b)) bind T = Pt" \
 # Another struct, wrapped or dereferenced, binds nothing: the base meets it and refuses it by name.
 refuse "G3 gw((t)) with t: T1" "cannot pass 't' $MA 'gw'" \
     "${T}${GW}fn go(): i64 { var t: T1; t.w = 7; return gw((t)); } syscall(60, go());"
-refuse "G4 gw(*tp) with tp: *T1" "cannot pass 'tp' $MA 'gw'" \
+refuse "G4 gw(*tp) with tp: *T1" "cannot pass '\*tp' $MA 'gw'" \
     "${T}${GW}fn go(): i64 { var t: T1; t.w = 7; var tp: *T1 = &t; return gw(*tp); } syscall(60, go());"
 # A tuple literal is not a wrap of its first element: no T from `b`, the literal's refusal names the base.
 refuse "G5 gx((b, 3)): the tuple literal's refusal, naming the base" "this parameter of 'gx' is not a tuple" \
@@ -931,7 +943,7 @@ refuse "V9 ri(w.s8), an 8 B field" "cannot pass 's8' $MV 'ri'" \
     "${T}${WP}${WX}fn go(): i64 { var w: WS; w.s8.x = 42; return ri(w.s8); } syscall(60, go());"
 refuse "V10 ri(mk8()), an 8 B call" "cannot pass 'mk8' $MV 'ri'" \
     "${T}${WP}${WX}fn go(): i64 { return ri(mk8()); } syscall(60, go());"
-refuse "V11 ri(*gps()), a : *Pt call dereferenced" "cannot pass '\*gps' $MV 'ri'" \
+refuse "V11 ri(*gps()), a : *Pt call dereferenced" "cannot pass '\*gps()' $MV 'ri'" \
     "${T}${WP}${WX}fn go(): i64 { return ri(*gps()); } syscall(60, go());"
 refuse "V12 ri(GW2.s) at top level" "cannot pass 's' $MV 'ri'" \
     "${T}${WP}${WX}var r = ri(GW2.s); syscall(60, r);"
@@ -1119,9 +1131,127 @@ struct H { k; q: Q; }
 fn Pt_dup(a: Pt): Pt { return a; }
 fn run(): i64 { var s: Pt; var h: H; h.q = Pt_dup(s); return 0; } syscall(60, run());"
 
+echo "=== 6.7.16: a struct VALUE dereference refused by its struct is named as the source spells it (x86_64, aarch64, cx, PE) ==="
+# issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md: the by-value argument (`_ess_deref`), the
+# pointer-of-another-kind argument, the small-struct and pointer-arm returns and every copy destination (`_hl_dstar_x`,
+# the `* IDENT` declaration arms) quoted the operand's LAST name — `ri(*gps(&s))` '*s', `take8(*gu(pu))` 'pu', `return
+# *gu(pu);` `*pu`, `var s: S8 = *h.pu;` 'pu' — where 6.7.15's address-passed arm already prints the source's spelling.
+# DS1 the filed repro verbatim (its four errors, in order, at their columns), DS2-DS17 each printer and spelling.
+DS='struct Pt { x; y; }
+struct Q3 { a; b; c; }
+struct P3 { x; y; z; }
+struct U8 { u; }
+struct S8 { s; }
+struct T { k; }
+struct O { s: P3; n; }
+struct H { k; pu: *U8; }
+impl T { fn take8(self, s: S8): i64 { return s.s; } }
+fn take8(s: S8): i64 { return s.s; }
+fn ri(p: *i64): i64 { return *p; }
+fn ri2(p: *i64, q: *i64): i64 { return *p + *q; }
+fn gu(p: *U8): *U8 { return p; }
+fn gq(p: *Q3): *Q3 { return p; }
+fn gps(p: *Pt): *Pt { return p; }
+fn gpt(p: *Pt): *Pt { return p; }
+'
+printf '%s' 'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct U8 { u; }
+struct S8 { s; }
+struct H { k; pu: *U8; }
+fn ri(p: *i64): i64 { return *p; }
+fn take8(s: S8): i64 { return s.s; }
+fn gps(p: *Pt): *Pt { return p; }
+fn gu(p: *U8): *U8 { return p; }
+fn f1(): i64 { var s: Pt; return ri(*gps(&s)); }
+fn f2(): i64 { var u: U8; var pu: *U8 = &u; return take8(*gu(pu)); }
+fn f3(): S8 { var u: U8; var pu: *U8 = &u; return *gu(pu); }
+fn f4(): i64 { var u: U8; var h: H; h.pu = &u; var s: S8 = *h.pu; return s.s; }
+syscall(60, f1() + f2());
+' > "$D/ds1.cyr"
+nrefuse=$((nrefuse+1))
+bad=""
+for leg in x86 a64 cx pe; do
+    rc=0
+    case $leg in
+        x86) "$CC" < "$D/ds1.cyr" > "$D/ds1.bin" 2> "$D/ds1.err" || rc=$? ;;
+        a64) [ -n "$A64" ] || continue; "$A64" < "$D/ds1.cyr" > "$D/ds1.bin" 2> "$D/ds1.err" || rc=$? ;;
+        cx)  [ -n "$CXC" ] || continue; "$CXC" < "$D/ds1.cyr" > "$D/ds1.bin" 2> "$D/ds1.err" || rc=$? ;;
+        pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$D/ds1.cyr" > "$D/ds1.bin" 2> "$D/ds1.err" || rc=$? ;;
+    esac
+    at=$(grep '^error' "$D/ds1.err" | sed 's/^error:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ')
+    if [ "$rc" = 0 ] || [ -s "$D/ds1.bin" ] || [ "$at" != "10:37 11:65 12:51 13:58 " ] \
+       || ! grep -q "10:37: cannot pass '\*gps(&s)' to a parameter that is not a pointer to its struct type in a call to 'ri'" "$D/ds1.err" \
+       || ! grep -q "11:65: cannot pass '\*gu(pu)' $MA 'take8'" "$D/ds1.err" \
+       || ! grep -q "12:51: .* got \`\*gu(pu)\` (a \`U8\`)" "$D/ds1.err" \
+       || ! grep -q "13:58: cannot copy '\*h\.pu' into a variable of a different struct/vector type: 's'" "$D/ds1.err"; then
+        bad="$bad $leg(rc=$rc, errors at [$at]: $(grep '^error' "$D/ds1.err" | head -1))"
+    fi
+done
+if [ -z "$bad" ]; then printf '  ok(refused x4): %-37s\n' "DS1 the filed repro, verbatim (4 errors)"; pass=$((pass+1))
+else printf '  FAIL: %-46s%s\n' "DS1 the filed repro, verbatim" "$bad"; fail=$((fail+1)); fi
+refuse4 "DS2 t.take8(*gu(pu)), a method callee" "cannot pass '\*gu(pu)' $MA 'T\.take8'" \
+    "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; var t: T; return t.take8(*gu(pu)); } syscall(60, go());"
+refuse4 "DS3 take8((*gu(pu))), wrapped" "cannot pass '\*gu(pu)' $MA 'take8'" \
+    "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; return take8((*gu(pu))); } syscall(60, go());"
+refuse4 "DS4 ri(**pp) and ri((*gps(&s))), both in one call" "cannot pass '\*\*pp' to a parameter that is not" \
+    "${DS}fn go(): i64 { var s: Pt; var p: *Pt = &s; var pp: **Pt = &p; return ri2(**pp, (*gpt(&s))); } syscall(60, go());" 2
+refuse4 "DS4b ... the second argument named as its own" "cannot pass '\*gpt(&s)' to a parameter that is not" \
+    "${DS}fn go(): i64 { var s: Pt; var p: *Pt = &s; var pp: **Pt = &p; return ri2(**pp, (*gpt(&s))); } syscall(60, go());" 2
+refuse4 "DS5 return *gq(&q); from a P3 fn (over 8 B)" "got \`\*gq(&q)\` (a \`Q3\`)" \
+    "${DS}fn f(): P3 { var q: Q3; return *gq(&q); } syscall(60, 0);"
+refuse4 "DS6 return **pp; from a P3 fn" "got \`\*\*pp\` (a \`Q3\`)" \
+    "${DS}fn f(): P3 { var q: Q3; var pq: *Q3 = &q; var pp: **Q3 = &pq; return **pp; } syscall(60, 0);"
+refuse4 "DS7 return (*gu(pu)); from an S8 fn" "got \`\*gu(pu)\` (a \`U8\`)" \
+    "${DS}fn f(): S8 { var u: U8; var pu: *U8 = &u; return (*gu(pu)); } syscall(60, 0);"
+refuse4 "DS8 l = *gq(&q), an assignment" "cannot copy '\*gq(&q)' into a variable of a different struct/vector type: 'l'" \
+    "${DS}fn go(): i64 { var q: Q3; var l: P3; l = *gq(&q); return l.x; } syscall(60, go());" 1
+refuse4 "DS9 o.s = *gq(&q), a struct field" "cannot copy '\*gq(&q)' into a struct field of a different struct type: 's'" \
+    "${DS}fn go(): i64 { var q: Q3; var o: O; o.s = *gq(&q); return o.n; } syscall(60, go());"
+refuse4 "DS10 var l: P3 = *pq; (* IDENT, a local)" "cannot copy '\*pq' into a variable of a different struct/vector type: 'l'" \
+    "${DS}fn go(): i64 { var q: Q3; var pq: *Q3 = &q; var l: P3 = *pq; return l.x; } syscall(60, go());"
+refuse4 "DS11 var s: S8 = *pu; (8 B)" "cannot copy '\*pu' into a variable of a different struct/vector type: 's'" \
+    "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; var s: S8 = *pu; return s.s; } syscall(60, go());"
+refuse4 "DS12 var l: P3 = *pq; in a closure (a capture)" "cannot copy '\*pq' into a variable of a different struct/vector type: 'l'" \
+    "include \"lib/alloc.cyr\"
+${DS}fn go(): i64 { var q: Q3; var pq: *Q3 = &q; var f = || { var l: P3 = *pq; return l.x; }; return callptr(f); } syscall(60, go());"
+refuse4 "DS13 var l: P3 = *GPQ; in a fn (a global)" "cannot copy '\*GPQ' into a variable of a different struct/vector type: 'l'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GPQ: *Q3 = &GQ;
+fn go(): i64 { var l: P3 = *GPQ; return l.x; } syscall(60, go());"
+refuse4 "DS14 top level var GL: P3 = *GPQ; (the zone)" "cannot copy '\*GPQ' into a variable of a different struct/vector type: 'GL'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GPQ: *Q3 = &GQ;
+var GL: P3 = *GPQ;
+syscall(60, 0);"
+refuse4 "DS15 top level var GL: P3 = *gq(&GQ); (the zone)" "cannot copy '\*gq(&GQ)' into a variable of a different struct/vector type: 'GL'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GL: P3 = *gq(&GQ);
+syscall(60, 0);"
+refuse4 "DS16 top level after a statement: var GL: P3 = (*GPQ);" "cannot copy '\*GPQ' into a variable of a different struct/vector type: 'GL'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GPQ: *Q3 = &GQ;
+syscall(60, 0);
+var GL: P3 = (*GPQ);"
+refuse4 "DS16b top level after a statement: var GL: P3 = *GPQ;" "cannot copy '\*GPQ' into a variable of a different struct/vector type: 'GL'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GPQ: *Q3 = &GQ;
+syscall(60, 0);
+var GL: P3 = *GPQ;"
+refuse4 "DS17 a span over a comment and a line break: one space" "cannot pass '\*gu( pu)' $MA 'take8'" \
+    "${DS}fn go(): i64 { var u: U8; var pu: *U8 = &u; return take8(*gu(  # a comment
+  pu)); } syscall(60, go());"
+# Controls: a name keeps its own spelling, and so does a `*T` source that is no dereference (`_hl_psrc`).
+refuse4 "DSK1 var l: P3 = q; (a name, no dereference)" "cannot copy 'q' into a variable of a different struct/vector type: 'l'" \
+    "${DS}fn go(): i64 { var q: Q3; var l: P3 = q; return l.x; } syscall(60, go());"
+refuse4 "DSK2 l = GPQ (a *Q3 global, no dereference)" "cannot copy 'GPQ' into a variable of a different struct/vector type: 'l'" \
+    "${DS}var GQ = Q3 { 1, 2, 3 };
+var GPQ: *Q3 = &GQ;
+fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
+
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 128 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 128)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 149 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 149)"; fail=$((fail+1)); }
 [ "$naccept" -ge 41 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 41)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
