@@ -1709,7 +1709,11 @@ held the first word, silently), and over 16 bytes the call's own refusal is the 
 struct, a `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
-bytes). An annotation that names no struct is never replaced by the callee's struct:
+bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
+`var k = h.clone();`, alone or ending a chain (`var k = w.s.clone();`, `var k = h.clone().clone();`, `var k =
+mks().clone();`): `k` was an untyped word, `k.len()` was refused *no struct type in scope for 'k'* and `println(k)` /
+`show(k)` took the untyped overload where `show_str` takes a `Str`; `k + 1` is unchanged (the handle's word plus 1).
+An annotation that names no struct is never replaced by the callee's struct:
 `var x: i64 = mk(9);` — or `: u8`, `: f64`, `: bool`, any scalar or handle type — from a fn
 returning a struct over 8 bytes is a compile error since 6.7.11, at the call:
 

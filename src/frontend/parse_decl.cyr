@@ -909,7 +909,10 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # p.area();` was an untyped word, so `a + 1.0` added integers — a generic method's at the instance
 # its arguments reach (`_mcall_gen`: `var w = p.id(h);`; 6.7.11 a struct's, `var w = p.pick(q);`, and a
 # lookahead never reports). CHANGELOG [6.7.9]
+# 6.7.16: this peek runs before the initialiser is parsed, so `_mcall_last` is reset here: the method a chain ends
+# with is then this initialiser's (`_var_rhs_mstr`). CHANGELOG [6.7.16]
 fn _var_rhs_msid(S, ti): i64 {
+    _mcall_last = 0 - 1;
     var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too (`_pair_callee_at` resolves its instance)
     if (o < 0) { return 0; }
     if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
@@ -926,7 +929,8 @@ fn _var_rhs_msid(S, ti): i64 {
 # The untyped declaration's type, judged once its initialiser at `start` is parsed (`sid0` the type the
 # peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
 # result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
-# `sid0`, else a `: f64` method ending a longer chain (`_var_rhs_mchain`). Out of PARSE_VAR (a giant).
+# `sid0`, else a `: f64` method ending a longer chain, or (6.7.16) a `: Str` one ending any (`_var_rhs_mchain`). Out
+# of PARSE_VAR (a giant).
 fn _var_rhs_post(S, sid0, pscale, sl, start, ann): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
     _istr_decl(S, pscale, start, ann);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header; 6.7.14: `*Str`
@@ -979,8 +983,12 @@ fn _sc_small_whole(S, start): i64 {
 # initialiser `ti`..`end` must be one chain `name[<..>](..)?(.name((..))?)*` that ENDS in `.m(..)`,
 # with `;` at `end` — `a + p.area()` and a field read (`_decl_float_copy`'s) are not. -9 (an f64
 # binding) or 0. CHANGELOG [6.7.9]
+# ⛔ 6.7.16 — AND A `: Str` METHOD ENDING IT, ONE CALL OR A CHAIN (`_var_rhs_mstr`): the `Str` struct, a handle binding,
+# as a free `: Str` call's result is (v5.10.4, `var k = str_clone(h);`). `var k = h.clone();`, `var k = w.s.clone();`
+# and `var k = h.clone().clone();` left k an untyped word, so `k.len()` was refused "no struct type in scope for 'k'"
+# and `println(k)` took the cstring overload: a `Str` is 16 B, so the 8 B arm (`_var_rhs_msid`) declined it, and as a
+# handle in rax it has no temp to receive (`_sc_var_receive`). CHANGELOG [6.7.16]
 fn _var_rhs_mchain(S, ti, end): i64 {
-    if (GESTYPE(S) != F64_TYID) { return 0; }
     if (TOKTYP(S, end) != 5) { return 0; }
     var k = ti + 1;
     var o = _gcall_open(S, ti);
@@ -997,7 +1005,17 @@ fn _var_rhs_mchain(S, ti, end): i64 {
     }
     if (k != end) { return 0; }
     if (m == 0) { return 0; }
-    return 0 - 9;
+    if (GESTYPE(S) == F64_TYID) { return 0 - 9; }
+    return _var_rhs_mstr(S);
+}
+# The `Str` struct when the method the chain just parsed ended with (`_mcall_last`, reset by `_var_rhs_msid` before
+# the parse) is declared `: Str`, else 0.
+fn _var_rhs_mstr(S): i64 {
+    if (_mcall_last < 0) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFRS(S, _mcall_last) != ss) { return 0; }
+    return ss;
 }
 
 # 6.7.14 (D7 (a)): past a method name at token k, its explicit type-argument list when `(` follows (`p.id<f64>(h)`),
