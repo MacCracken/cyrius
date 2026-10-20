@@ -12652,10 +12652,16 @@ fn _cst_ctx_val(S, stop, what): i64 {
 # member loop read `h()` as a new member with a constructor, which then failed the link
 # ("undefined function 'h'", "refusing to emit binary"). Past the whole expression instead, by
 # the evaluator's own grammar — when that ends where a member does (`,` `;` `}`); a malformed one
-# (`(1 + }`) stays where it stopped. A case label resyncs at its `:` already. CHANGELOG [6.7.11]
+# (`(1 + }`) stays where it stopped. CHANGELOG [6.7.11]
 # 6.7.15: through `_ce_ctx_close`, which also puts the caller's latch back when the value ends in sync.
+# 6.7.16: a case label too (`stop` its `:`), so a refused label's memo ends at its `:` (`_clm_add`) and the body
+# path's replay steps there silently — it ended where the evaluator stopped, ON the label, so the body's own `:`
+# check said "expected ':', got identifier 'ww'" once a body statement had cleared the latch. CHANGELOG [6.7.16]
 fn _cst_ctx_skip(S, stop, ti, pw): i64 {
-    if (stop >= 0) { return 0; }
+    if (stop >= 0) {
+        _ce_ctx_close(S, ti, pw, stop, stop, stop);
+        return 0;
+    }
     _ce_ctx_close(S, ti, pw, 31, 5, 14);
     return 0;
 }
@@ -12667,9 +12673,13 @@ fn _cst_ctx_skip(S, stop, ti, pw): i64 {
 # the next declaration reports its own error; one that ends elsewhere (`[yy zz]`) keeps the latch. Pass 1 never
 # resyncs: two refused enum values or global array sizes printed only the first (`#assert`: `_assert_open`,
 # parse.cyr). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND A `case` LABEL (`stop` its `:`), which kept its statement's latch: the switch's pre-scan evaluates
+# every label once and is no statement, so nothing resynced between two labels — the second refused label was
+# swallowed (then misreported by the body path, above). Each label is now evaluated with the latch clear and closed
+# at its `:`, the switch's own latch put back. CHANGELOG [6.7.16]
 fn _ce_ctx_open(stop): i64 {
     var pw = _panic;
-    if (stop < 0) { _panic = 0; }   # a case label (`stop` the `:`) keeps its statement's latch
+    _panic = 0;
     return pw;
 }
 fn _ce_ctx_close(S, ti, pw, a, b, c): i64 {

@@ -99,6 +99,13 @@
 #      const fn" and a FALSE "undefined variable 'i64'" before); the run-time body steps it whole, a later name of
 #      its own still reported (Q9). The five filed repros verbatim (Q1-Q5); controls Q24 (a const fn's own body
 #      const keeps 6.7.15's rule), Q25 (an inner typed array named like a local const), Q26 (`p.id<i64>(7)` runs)
+#   W  (6.7.16) every `case` label is evaluated with the latch clear and closed at its `:` (the switch's latch put
+#      back), so a refused label's memo ends at its `:`: a second refused label reports its own refusal — it was
+#      swallowed in the pre-scan and then "expected ':', got identifier 'ww'" in the body path (W1 the filed repro
+#      verbatim, W2 a good label between); the jump table (W5), a refusal inside a label's expression (W6), a call /
+#      string / f64 label (W7), a generic's two instances (W8), a nested switch (W9), a top-level switch (W10), the
+#      statement after the switch (W11), labels after a refused subject (W12). Controls: one refused label is one
+#      error (W3), its body's own error kept (W4), every kind of valid label runs (W13), a jump table of consts (W14)
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_cst_lvalue_check` answering 0 ->
 # L1-L3 BUILD; (6.7.3) `_for_step_assign` without its `_asg_lvalue_refused` check -> L5, L6 BUILD
@@ -159,6 +166,9 @@
 # `_cst_sub_at` without `_refuse_in_sync` -> Q13, Q14 RED; `_ce_fld_refused` without its `_ce_mtargs_at` arm -> Q5-Q10
 # RED; `_ce_fld_said` without `_ce_mx_skip` -> Q5, Q6, Q8-Q10 RED (the run-time body's "undefined variable 'i64'");
 # `_ce_cst_refused` not stepping past the `]` -> Q17, Q18 RED.
+# W (run 2026-10-19): the compiler before the bite (01b5f516d) -> W1, W2, W5-W12 RED (W3, W4, W13, W14 green);
+# `_ce_ctx_open` keeping a case label's latch (6.7.15) -> W12 RED; `_cst_ctx_skip` not closing a case label (no step
+# to the `:`, no latch restore) -> W1, W2, W5, W6, W8-W12 RED; restoring the latch without the step -> the same.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -643,8 +653,38 @@ refusedn q23 1 "Q23: a string const, S[0]" 'const S = "abc";\nfn main(): i64 { v
 refusedn q24 1 "Q24: control — a const fn's own body const keeps \"a subscript is not in a const fn\"" "const fn f(n) {\n    const k = 3;\n    return k[0];\n}\n$FM" "3:13: $KS"
 exits q25 3 "Q25: control — a typed array local named like an outer local const subscripts as the array" 'fn main(): i64 {\n    const L = 5;\n    if (1) { var L: i64[2]; L[0] = 3; return L[0]; }\n    return 0;\n}\nsyscall(60, main());\n'
 exits q26 7 "Q26: control — a generic method called with explicit type arguments in an ordinary fn" 'struct P { x; }\nimpl P { fn id<T>(self, v: T): T { return v; } }\nfn main(): i64 { var p = P { 1 }; return p.id<i64>(7); }\nsyscall(60, main());\n'
+# W (6.7.16) — each `case` label is evaluated with the latch clear and closed at its `:`: a second refused label
+# reports its own refusal, not "expected ':', got identifier 'ww'"
+# (issues/2026-10-18-second-refused-case-label-reported-as-expected-colon.md; W1 the filed repro verbatim, W2 its variant)
+cat > "$T/w1.cyr" <<'EOF'
+fn f(v): i64 {
+    switch (v) {
+        case yy: return 1;
+        case ww: return 2;
+        default: return 0;
+    }
+    return 0;
+}
+syscall(60, f(1));
+EOF
+refusedf w1 2 "W1: the filed repro, two refused labels (was \"4:14: expected ':', got identifier 'ww'\")" "3:14: $CU 'yy'" "4:14: $CU 'ww'"
+WH='fn f(v): i64 {\n    switch (v) {\n'
+WT='        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(1));\n'
+refusedn w2 2 "W2: a good label between them, case 2: (was \"5:14: expected ':'\")" "${WH}        case yy: return 1;\n        case 2: return 3;\n        case ww: return 2;\n${WT}" "3:14: $CU 'yy'" "5:14: $CU 'ww'"
+refusedn w3 1 "W3: a single refused label stays one error" "${WH}        case yy: return 1;\n${WT}" "3:14: $CU 'yy'"
+refusedn w4 2 "W4: a refused label's body reports its own error, as before" "${WH}        case yy: return zz9;\n${WT}" "3:14: $CU 'yy'" "3:28: undefined variable 'zz9'"
+refusedn w5 2 "W5: the jump-table switch (was + \"expected ':', got identifier 'yy'\" and ww's misreport)" "${WH}        case 1: return 1;\n        case 2: return 2;\n        case yy: return 3;\n        case 3: return 4;\n        case ww: return 5;\n        case 4: return 6;\n${WT}" "5:14: $CU 'yy'" "7:14: $CU 'ww'"
+refusedn w6 2 "W6: refusals inside a label's expression, case 1 + yy: / case ww * 2:" "${WH}        case 1 + yy: return 1;\n        case ww * 2: return 2;\n${WT}" "3:18: $CU 'yy'" "4:14: $CU 'ww'"
+refusedn w7 3 "W7: an ordinary fn's call, a string and an f64 label, each its own (was \"expected ':', got identifier 'h'\" alone)" "fn h(): i64 { return 1; }\n${WH}        case h(): return 2;\n        case \"a\": return 3;\n        case 1.5: return 4;\n${WT}" "4:14: 'h' is not a \`const fn\`" "5:14: a case label must be an integer" "6:14: a case label must be an integer"
+refusedn w8 2 "W8: a generic fn's two instances, each label once" 'fn g<T>(v: T): i64 {\n    switch (v) {\n        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, g<i64>(1) + g<i32>(2));\n' "3:14: $CU 'yy'" "4:14: $CU 'ww'"
+refusedn w9 3 "W9: a nested switch's labels after the outer's refused one (was yy lost, two \"expected ':'\")" "${WH}        case 1: {\n            switch (v) { case yy: return 1; case ww: return 2; default: return 0; }\n        }\n        case vv: return 3;\n${WT}" "6:14: $CU 'vv'" "4:31: $CU 'yy'" "4:50: $CU 'ww'"
+refusedn w10 2 "W10: a top-level switch" 'var y = 1;\nswitch (y) {\n    case yy: y = 2;\n    case ww: y = 3;\n    default: y = 4;\n}\nsyscall(60, y);\n' "3:10: $CU 'yy'" "4:10: $CU 'ww'"
+refusedn w11 3 "W11: the statement after the switch still reports its own error" "${WH}        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    var q = zz9;\n    return 0;\n}\nsyscall(60, f(1));\n" "3:14: $CU 'yy'" "4:14: $CU 'ww'" "7:16: undefined variable 'zz9'"
+refusedn w12 3 "W12: the labels after a refused subject report their own (yy was swallowed, ww misreported)" 'fn f(v): i64 {\n    var a: i64[2];\n    switch (a[0][1]) {\n        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(1));\n' "3:17: a subscript's result is an element" "4:14: $CU 'yy'" "5:14: $CU 'ww'"
+exits w13 80 "W13: control — const, enum constant, qualified, expression and literal labels run" 'const A = 1;\nenum E { P = 2, Q = 3 }\nfn f(v): i64 {\n    switch (v) {\n        case A: return 10;\n        case P: return 20;\n        case E.Q: return 30;\n        case A + 3: return 40;\n        case 5: return 50;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(3) + f(4) + f(1));\n'
+exits w14 46 "W14: control — a jump-table switch of const labels runs" 'const B = 10;\nfn f(v): i64 {\n    switch (v) {\n        case B: return 1;\n        case B + 1: return 2;\n        case B + 2: return 4;\n        case B + 3: return 8;\n        case B + 4: return 16;\n        default: return 32;\n    }\n    return 0;\n}\nsyscall(60, f(11) + f(12) + f(13) + f(99));\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), a bare const statement is expected '=' (B), and a subscript of a const and a.m<T>(..) in a const fn name their rule (Q)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), a bare const statement is expected '=' (B), a subscript of a const and a.m<T>(..) in a const fn name their rule (Q), and every refused case label reports its own refusal (W)"
