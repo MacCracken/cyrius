@@ -4772,6 +4772,19 @@ fn _cl_param_tail(S): i64 {
     if (PEEKT(S) == 49) { return _cl_typed_refuse(S); }
     return 0;
 }
+# The next frame slot declared as a closure's untyped parameter `noff` (or, `noff` -1, its hidden env
+# slot): the name, the depth word (which clears the slot's marks) and the type and slice words, as
+# PARSE_FN_DEF's untyped parameter is. The type words are kept per slot INDEX across fns, so a slot
+# left typed by an earlier fn's local (`fn h(w: *Q)`, an enclosing `var w: W`) read the parameter as
+# that type: `|x| x.b` read through *Q, `|k| w.s.gs(k)` bound T = W. CHANGELOG [6.7.16]
+fn _cl_param_slot(S, noff): i64 {
+    var li = GFLC(S);
+    S64(S + 0x5D9D000 + li * 8, noff);
+    SLDEP(S, li, 0);
+    SLTYPE(S, li, 0);
+    SSLICE_W(S, li, 0);
+    return li;
+}
 # From token `q`, a refused parameter tail's end: the `,` or `|` at depth 0, the end of file, or an unmatched closer.
 # `ang` 1 (a type) counts `<` / `>` (`>>`, `>>>`) as brackets too, so `Map<K, V>` is one type; a default's value
 # (`ang` 0) does not, where `<` compares.

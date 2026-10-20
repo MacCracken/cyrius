@@ -7113,9 +7113,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _cl_env_lidx = 0 - 1;
         var cl_env_slot = 0 - 1;
         if (_cl_capturing == 1) {
-            cl_env_slot = GFLC(S);
-            S64(S + 0x5D9D000 + cl_env_slot * 8, 0 - 1);
-            SLDEP(S, cl_env_slot, 0);
+            cl_env_slot = _cl_param_slot(S, 0 - 1);   # 6.7.16: its type words reset too (parse_fn.cyr)
             SFLC(S, cl_env_slot + 1);
             _cl_env_lidx = cl_env_slot;
         }
@@ -7135,9 +7133,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
                 _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse_fn.cyr)
-                var cpli = GFLC(S);
-                S64(S + 0x5D9D000 + cpli * 8, cpnoff);
-                SLDEP(S, cpli, 0);
+                var cpli = _cl_param_slot(S, cpnoff);   # 6.7.16: an untyped slot, whatever an earlier fn left
                 if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
                 SFLC(S, cpli + 1);
                 clpc = clpc + 1;

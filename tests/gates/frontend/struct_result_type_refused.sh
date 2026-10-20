@@ -830,8 +830,8 @@ refuse "AU8 x = callptr(&mkp)" "$UM" "$PQ"'fn main(): i64 { var x = 0; x = callp
 refuse "AU9 for (..; ..; x = mkp())  (a step)" "$UM" "$PQ"'fn main(): i64 { var x = 0; for (var i = 0; i < 1; x = mkp()) { i = i + 1; } return x; }'"$E" one
 refuse "AU10 x = mk3()  (24 B)" "cannot assign 'x' from 'mk3', which returns the struct 'Q3'" "$PQ"'fn main(): i64 { var x = 0; x = mk3(); return x; }'"$E" one
 refuse "AU11 x = (mkp())  (in parentheses)" "$UM" "$PQ"'fn main(): i64 { var x = 0; x = (mkp()); return x; }'"$E" one
-# AU12's leading `var t`: the closure's parameter off slot 0, which Q_add's `x: *Q` left typed (a closure parameter
-# keeps an earlier fn's slot type — filed from this lane, 2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type).
+# AU12's leading `var t` puts the closure's parameter off slot 0, which Q_add's `l: *Q` left typed; since 6.7.16 the
+# parameter is untyped in any slot (CP0-CP7 below).
 refuse "AU12 |x| { x = mkp(); }  (a closure's parameter)" "$UM" "$PQ"'fn main(): i64 { var t = 1; var k = |x| { x = mkp(); return x; }; return callptr(k, t); }'"$E" one
 refuse "AU13 for x in 0..3 { x = mkp(); }  (a for-in name)" "$UM" "$PQ"'fn main(): i64 { for x in 0..3 { x = mkp(); } return 1; }'"$E" one
 accept "AUK1 x = mk1() into var x = 0  (8 B: the word)" "$PQ"'fn main(): i64 { var x = 0; x = mk1(); return x - 300; }'"$E" 33 \
@@ -854,6 +854,90 @@ refuse "AU14 GW2 = mkp()  (a global destructure name declared below)" "cannot as
 var GW1, GW2 = two();'"$E" one
 refuse "AUK5 undefx = mkp()  (an undefined name: its own error)" "undefined variable 'undefx'" "$PQ"'fn main(): i64 { undefx = mkp(); return 1; }'"$E" one
 refuse "AUK4 t = mkp() on a capture  (its own refusal)" "'t' is captured by value; a captured name is not assignable in a closure" "$PQ"'fn main(): i64 { var t = 0; var k = |y| { t = mkp(); return t + y; }; return callptr(k, 0); }'"$E" one
+
+# CP (6.7.16, issues/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md) — A CLOSURE'S PARAMETER IS UNTYPED
+# IN EVERY SLOT. The closure prologue (`_PARSE_FACTOR_IMPL`'s `|params|` arm) wrote only a parameter's name and depth
+# word; the slot's type word (GLTYPE) and slice word are kept per slot INDEX across fns, so a parameter in the slot an
+# earlier fn's typed local or parameter used (here `fn h(w: *Q)`, slot 0) was read as that type: `x.b`, `x.m()` and
+# `x.b = 5` compiled through *Q and faulted (rc 0, exit 139), and `x = mkp()` copied the struct through x (exit 139)
+# where D33 refuses it. Now each parameter (and the hidden env slot) is declared by `_cl_param_slot` (parse_fn.cyr),
+# which resets the type words as PARSE_FN_DEF's untyped parameter does: each is refused as an untyped name's. CP6 /
+# CP7: a plain use is unchanged (exit 42), and an earlier `fn h(w: f64)` no longer makes `x + 1` "f64 arithmetic with
+# a non-f64 right operand". CPX (the end): CP0 / CP1 from the aarch64, cx and PE compilers.
+#   the tree before (13200c3d1)                          -> RED 7: CP0-CP5 (compiled), CP7 (the f64 warning)
+#   `_cl_param_slot` without its SLTYPE reset            -> RED 7: the same
+#   the env slot left on its old writes                  -> GREEN (no use reads the env slot's type: a guard)
+echo "6.7.16 — a closure's parameter is untyped whatever an earlier fn left in its slot:"
+NSF="no struct type in scope for 'x'; a '.field' access needs its struct declaration (missing include?)"
+CPA='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(w: *Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { return x.b; }; return callptr(k, 0); }
+syscall(60, main());
+'
+CPB='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn h(x: *Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { x = mkp(); return x; }; return callptr(k, 0); }
+syscall(60, main());
+'
+refuse_at "CP0 |x| x.b after fn h(w: *Q)  (the filed repro)" "4:42: $NSF" "$CPA"
+refuse_at "CP1 |x| { x = mkp(); }  (the filed D33 row)" "5:36: $UM" "$CPB"
+refuse_at "CP2 |x| x.m()  (a method)" "5:42: no struct type in scope for 'x'; a method call needs its struct declaration (missing include?)" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn m(self): i64 { return self.b; } }
+fn h(w: *Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { return x.m(); }; return callptr(k, 0); }
+syscall(60, main());
+'
+refuse_at "CP3 |x| { x.b = 5; }  (a field store)" "4:36: no struct type in scope for 'x'; a '.field' assignment needs its struct declaration (missing include?)" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(w: *Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { x.b = 5; return 0; }; return callptr(k, 0); }
+syscall(60, main());
+'
+refuse_at "CP4 after fn h(w: Q)  (a struct by value)" "4:42: $NSF" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(w: Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { return x.b; }; return callptr(k, 0); }
+syscall(60, main());
+'
+refuse_at "CP5 a capturing closure (env slot 0, x slot 1)" "4:54: $NSF" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(v, w: *Q): i64 { return 0; }
+fn main(): i64 { var t = 2; var k = |x| { return x.b + t; }; return callptr(k, 0); }
+syscall(60, main());
+'
+refuse_at "CPK1 control: var t = 1; first  (another slot)" "4:53: $NSF" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(w: *Q): i64 { return 0; }
+fn main(): i64 { var t = 1; var k = |x| { return x.b; }; return callptr(k, t); }
+syscall(60, main());
+'
+accept "CP6 |x| x + 1 after fn h(w: *Q)" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(w: *Q): i64 { return 0; }
+fn main(): i64 { var k = |x| { return x + 1; }; return callptr(k, 41); }
+syscall(60, main());
+' 42 'include "lib/syscalls.cyr"
+fn main(): i64 { var k = |x| { return x + 1; }; return callptr(k, 41); }
+syscall(60, main());
+'
+# CP7: the value AND a silent compile (the stale f64 slot type warned "f64 arithmetic with a non-f64 right operand").
+printf '%s' 'include "lib/syscalls.cyr"
+fn h(w: f64): i64 { return 0; }
+fn main(): i64 { var k = |x| { return x + 1; }; return callptr(k, 41); }
+syscall(60, main());
+' > "$D/cp7.cyr"
+naccept=$((naccept+1))
+cp7=$(_run "$D/cp7.cyr")
+if [ "$cp7" = 42 ] && ! grep -q '^warning\|^error' "$D/a.err"; then
+    printf '  ok(accepted): %-27s exit=42, no diagnostic\n' "CP7 |x| x + 1 after fn h(w: f64)"; pass=$((pass+1))
+else
+    printf '  FAIL: %-34s exit=%s, want 42 and no diagnostic (%s)\n' "CP7 |x| x + 1 after fn h(w: f64)" "$cp7" \
+        "$(grep '^warning\|^error' "$D/a.err" | head -1)"; fail=$((fail+1))
+fi
 
 echo "acceptances — the same shapes with matching types, and the right VALUE:"
 accept "K1 var p: Pt = b.v" 'struct Pt { x; y; }
@@ -925,6 +1009,23 @@ G2.a = 5;
 G2.b = 7;
 syscall(60, G2.a * 10 + G2.b);
 '
+
+# CPX (6.7.16) — the closure rows from every cross compiler built from this tree (the frontend is shared; this pins it).
+echo "6.7.16 — the closure rows from the aarch64, cx and PE compilers:"
+cross_rows() {  # $1 the leg's name
+    refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
+    refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
+}
+CC0=$CC
+if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
+    chmod +x "$D/cc_a64"; CC="$D/cc_a64"; cross_rows aarch64
+else printf '  FAIL: aarch64: src/main_aarch64.cyr did not build\n'; fail=$((fail+1)); fi
+if "$CC0" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then
+    chmod +x "$D/cc_cx"; CC="$D/cc_cx"; cross_rows cx
+else printf '  FAIL: cx: src/main_cx.cyr did not build\n'; fail=$((fail+1)); fi
+CC=$CC0; CYRIUS_TARGET_WIN=1; export CYRIUS_TARGET_WIN
+cross_rows pe
+unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 [ "$fail" -eq 0 ] || exit 1
