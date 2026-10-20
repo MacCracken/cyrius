@@ -46,17 +46,16 @@ include "src/frontend/parse.cyr"
 #
 # Flat per-target #ifdef blocks, the same shape as the arena block below
 # (exactly one of MACOS/WIN/LINUX/AGNOS is predefined by the compiling driver):
-# /proc/self/cmdline on Linux + agnos, the parked entry stack on macOS (no
-# /proc there), GetCommandLineW on Windows (the cmdline is one UTF-16LE string,
+# /proc/self/cmdline on Linux, the parked entry stack on macOS and agnos (no
+# /proc on either), GetCommandLineW on Windows (the cmdline is one UTF-16LE string,
 # not NUL-split). Handled BEFORE the arena allocation so `--version` costs
 # nothing. CHANGELOG [6.6.6]
-# The /proc/self/cmdline scan, ONE copy for the Linux and agnos arms below (it was two
-# verbatim blocks). Not compiled on macOS / Windows, which have no /proc and their own arms
-# (on x86 Mach-O its three syscalls alone are ~6 KB of dead code). CHANGELOG [6.6.20]
+# The /proc/self/cmdline scan, Linux only. It served agnos too (6.6.20 merged two verbatim
+# copies into it), but agnos has no /proc — its cycc_cx compiled stdin for `--version` and
+# ignored `--syntax-only` — so agnos reads its argv off the init stack with macOS. CHANGELOG [6.7.16]
 # It scans the whole line _cmdline_read (src/common/util.cyr) reads: a 255-byte read into a
 # local dropped a flag past byte 255. CHANGELOG [6.7.16]
-#ifndef CYRIUS_TARGET_MACOS
-#ifndef CYRIUS_TARGET_WIN
+#ifdef CYRIUS_TARGET_LINUX
 fn _cx_cmdline_flags(): i64 {
     var n = _cmdline_read();
     if (n <= 0) { return 0; }
@@ -81,21 +80,18 @@ fn _cx_cmdline_flags(): i64 {
     }
     return 0;
 }
-#endif
-#endif
-#ifdef CYRIUS_TARGET_LINUX
 _cx_cmdline_flags();
 #endif
-#ifdef CYRIUS_TARGET_AGNOS
-_cx_cmdline_flags();
-#endif
-#ifdef CYRIUS_TARGET_MACOS
+# macOS and agnos: the entry stack (_ARGV_FLAGS_MACHO, src/common/util.cyr). CHANGELOG [6.7.16]
+#ifndef CYRIUS_TARGET_LINUX
+#ifndef CYRIUS_TARGET_WIN
 var _vflags = _ARGV_FLAGS_MACHO();
 if ((_vflags & 1) == 1) {
     _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
     syscall(SYS_EXIT, 0);
 }
 if ((_vflags & 8) == 8) { _syntax_only = 1; }   # --syntax-only. CHANGELOG [6.6.20]
+#endif
 #endif
 #ifdef CYRIUS_TARGET_WIN
 # GetCommandLineW → ONE UTF-16LE string (program path + args, space-separated).

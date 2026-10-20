@@ -12,7 +12,9 @@
 #             `_find_fn_by_name(S, "main", 4)`; main_aarch64, _macho, _native and main_x86_macho
 #             open-coded the same five-deep byte compare.
 #   cmdline — main_cx.cyr's Linux and agnos arms carried two verbatim /proc/self/cmdline scans;
-#             one helper (_cx_cmdline_flags) now serves both. 6.7.16: the READ itself has one
+#             one helper (_cx_cmdline_flags) served both. 6.7.16: it is the Linux arm's alone —
+#             agnos has no /proc, so its cycc_cx reads the init stack with macOS
+#             (_ARGV_FLAGS_MACHO; agnos_peer_fake_kernel.sh axis 14 C3 / C4). The READ itself has one
 #             copy, src/common/util.cyr's _cmdline_read (to EOF, into a 2 MiB mapping; a full
 #             one refused by name). The five /proc drivers each read 255 bytes into their own
 #             buffer, and each cut a TS path past byte 255 (emit_js_per_host_fork.sh axis 5).
@@ -67,7 +69,7 @@ rows=$((rows + 1))
 
 rows=$((rows + 1))
 c=$(code src/main_cx.cyr | grep -c '^fn _cx_cmdline_flags(' || true)
-[ "$c" = 1 ] || bad "cmdline: src/main_cx.cyr defines _cx_cmdline_flags $c time(s) (want 1: one scan for its Linux and agnos arms)"
+[ "$c" = 1 ] || bad "cmdline: src/main_cx.cyr defines _cx_cmdline_flags $c time(s) (want 1: one scan, its Linux arm's)"
 # 6.7.16 — one /proc/self/cmdline reader: the only src/ file whose code names the path is
 # src/common/util.cyr, and each /proc driver reads through _cmdline_read once.
 rows=$((rows + 1))

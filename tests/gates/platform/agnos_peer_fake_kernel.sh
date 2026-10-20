@@ -40,6 +40,11 @@
 # refused preprocessor buffer is named (exit 1). Mutants measured: the open's preprocessor (its
 # raw Linux mmap#9, unchecked) -> `sc 9 0 25165824 3 34`, then signal 11 — every agnos compile
 # died (C1 and C2 FAIL); the agnos arm alone removed -> C1 exit 1 after one #9 (refused by name).
+# C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
+# and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
+# /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
+# no agnos return) -> its first syscall is `sc 7 -100 …` (Linux openat's shape sent to agnos
+# open), no version is written and stdin is compiled; `--syntax-only` is ignored (C3, C4 FAIL).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_peer_fake_kernel: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -716,6 +721,18 @@ if [ "$cxok" = 1 ]; then
     check "C2 a refused preprocessor buffer (mmap#27 of 24 MiB answers 0) is named: exit 1" \
         "txt 2 error: cannot map the preprocessor's 24 MiB source buffer| / exit 1" \
         "$(awk '$1 == "txt" && $2 == 2 { print; exit }' "$T/c2.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c2.log")"
+    # The flags come off the init stack (the tracer hands the child its arguments): agnos has no
+    # /proc/self/cmdline. issues/2026-10-19-cx-agnos-arm-reads-flags-from-proc-agnos-lacks.md
+    "$T/sct" "$T/cxag" cli --version < /dev/null > "$T/c3.log" 2>&1
+    check "C3 \`cycc_cx --version\` writes the version to fd 1 and exits 0, opening nothing" \
+        "txt 1 $("$CC" --version | tr '\n' '|') / exit 0 / 0 open#7" \
+        "$(awk '$1 == "txt" { print; exit }' "$T/c3.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c3.log") / $(awk '$1 == "sc" && $2 == 7 { c++ } END { print c + 0 }' "$T/c3.log") open#7"
+    printf 'var x = nope;\n' > "$T/c4.cyr"
+    "$T/sct" "$T/cxag" cli --syntax-only < "$T/c4.cyr" > "$T/c4.log" 3> /dev/null 2>&1
+    "$T/sct" "$T/cxag" cli < "$T/c4.cyr" > "$T/c4n.log" 3> /dev/null 2>&1
+    check "C4 \`--syntax-only\` is seen: an unresolved name compiles (exit 0); without it, exit 1 naming it" \
+        "exit 0 / exit 1 undefined variable 'nope'" \
+        "$(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c4n.log") $(awk '$1 == "txt" && $2 == 2 { sub(/^txt 2 /, ""); printf "%s", $0 }' "$T/c4n.log" | grep -o "undefined variable 'nope'")"
 fi
 
 echo ""

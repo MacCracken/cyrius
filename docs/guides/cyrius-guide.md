@@ -8837,6 +8837,16 @@ compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `ex
 code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at entry
 `≥ 0x200000` (agnos user-range floor).
 
+**The cx compiler on agnos.** `CYRIUS_TARGET_AGNOS=1 cycc < src/main_cx.cyr` builds `cycc_cx` as
+an agnos program. It reads `--version` and `--syntax-only` off the init stack agnos builds at
+exec (agnos has no `/proc`), and maps its 246 MiB arena and the preprocessor's 24 MiB source
+buffer with agnos `mmap` (#27); a buffer agnos refuses is named
+(`error: cannot map the preprocessor's 24 MiB source buffer`, exit 1 — on every target). Before
+6.7.16 it opened `/proc/self/cmdline` with Linux `openat`'s argument shape, so `cycc_cx
+--version` compiled stdin and `--syntax-only` was ignored, and it mapped the preprocessor's
+buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died. It runs whole under
+`tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14's fake kernel. See CHANGELOG [6.7.16].
+
 ### AGNOS Syscall ABI
 
 agnos defines an append-only syscall surface: **#0–#104 and #106–#111**
@@ -9510,6 +9520,8 @@ Before 6.7.16 they read its first 255 bytes, so a path that ended past them was 
 cut name opened (`error: cannot open '<prefix>'` for a file that exists), and a flag past them
 (`--version`, `--syntax-only`, `--allow-undef`, `--pie`) was ignored. Pinned by
 `tests/gates/toolchain/emit_js_per_host_fork.sh` axis 5. See CHANGELOG [6.7.16].
+The macOS compilers, and `cycc_cx` built for agnos, read their flags off the entry stack instead
+(neither system has a `/proc`; see *The cx compiler on agnos*).
 
 `cyrius build --target=js` runs on every POSIX host. On Windows it **refuses by name**:
 `cycc.exe` has `--emit-js`, but the CLI has no Windows spawn that writes the compiler's output
