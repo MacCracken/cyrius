@@ -18,9 +18,14 @@
 # the base was the stub and an i64 / i32 / f64 carrier was refused; a scalar T's call takes the field's value.
 # Mutation: `_bs_callee` answering -1 (the ordinary `T_m` lookup) -> C1/C2 refused as ambiguous,
 # B4/B5 "no struct type in scope".
+# 6.7.16: a bounded receiver CAPTURED by a closure (K1-K9): `|| v.show()` at a scalar T was "undefined variable 'v'" — the
+# field and method arms' capture rung took a struct capture only — and `self` captured in a trait default instantiated
+# for i64 the same (issues/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md; the rung now hands
+# every capture to the arm an untyped local takes, which calls the bound's impl on the value).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
+include "lib/fnptr.cyr"
 
 struct Pt { x; y; }
 struct Q { v; }
@@ -87,6 +92,18 @@ fn cfp<T: Show>(b: *Bx<T>): i64 { return b.v.show() + b.n; }
 fn cfl<T: Show>(b: Bx<T>): i64 { var c: Bx<T> = b; var r = c.v.show(); return r + c.n; }
 fn cff<T: Fs>(b: Bx<T>): i64 { return b.v.fs(); }
 
+trait Twc { fn base(self): i64; fn twc(self): i64 { var f = || self.base(); return fncall0(f) * 2; } }
+impl Twc for i64 { fn base(self): i64 { return self + 1000; } }
+impl Twc for Pt { fn base(self): i64 { return self.x * 10 + self.y; } }
+trait Add2 { fn add2(self, k): i64; }
+impl Add2 for i64 { fn add2(self, k): i64 { return self + k; } }
+fn kc1<T: Show>(v: T): i64 { var f = || v.show(); return fncall0(f); }
+fn kc2<T: Show>(v: T): i64 { var f = |k| { return v.show() + k; }; return fncall1(f, 1); }
+fn kcn<T: Show>(v: T): i64 { var f = || { var g = || v.show(); return fncall0(g); }; return fncall0(f); }
+fn kct<T: Show>(v: T): i64 { var f = || v.twice(); return fncall0(f); }
+fn kca<T: Add2>(v: T): i64 { var f = |k| v.add2(k); return fncall1(f, 3); }
+fn kcw<T: Twc>(v: T): i64 { return v.twc(); }
+
 fn run(): i64 {
     var p: Pt; p.x = 40; p.y = 2;
     var p2: Pt; p2.x = 40; p2.y = 9;
@@ -138,6 +155,16 @@ fn run(): i64 {
     assert_eq(cfl(bi), 1005, "C7: a var c: Bx<T> carrier, var r = c.v.show();");
     assert_eq(cff(bf), 5, "C8: at f64 (impl Fs for f64)");
     assert_eq(cff(bp), 102, "C9: the same bound at a struct");
+    alloc_init();
+    assert_eq(kc1(p), 402, "K1: || v.show(), a captured struct T");
+    assert_eq(kc1(5), 1005, "K2: || v.show() at i64 (was 'undefined variable v')");
+    assert_eq(kc1<i32>(7), 2007, "K3: at i32");
+    assert_eq(kc2(5), 1006, "K4: beside the closure's own parameter");
+    assert_eq(kcn(5), 1005, "K5: a nested closure's capture of the capture");
+    assert_eq(kct(5), 2010, "K6: a trait default through the captured receiver");
+    assert_eq(kca(5), 8, "K7: a member with an argument, v.add2(k)");
+    assert_eq(kcw(5), 2010, "K8: self captured in a trait default instantiated for i64");
+    assert_eq(kcw(p), 804, "K9: the same default at a struct");
     return 0;
 }
 var r0 = run();

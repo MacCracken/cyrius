@@ -980,13 +980,17 @@ fn _ann_refd_rec(S, i, sc, noff, idx): i64 {
 }
 # 1 = variable `noff`, resolved to `idx` (a global >= 0, a local < -1), was marked by `_ann_refd_mark` in its
 # scope: counted as ERR_IDENT would count the report (`_had_error`, the panic latch: the statement resyncs), not
-# printed. A closure capture is not looked up.
+# printed. 6.7.16: a closure's capture (`idx` in the capture band) is the variable it reads, in the fn that
+# declared it (`_cl_cap_origin`) — a nested closure's capture of a capture too. CHANGELOG [6.7.16]
 fn _ann_refd_said(S, noff, idx): i64 {
     if (_dlv == 0) { return 0; }
     var sc = 0 - 2;
-    if (idx < 0) {
+    if (idx <= 0 - 1000000) {
+        idx = _cl_cap_origin(0 - 1000000 - idx);
         if (idx > 0 - 2) { return 0; }
-        if (idx <= 0 - 1000000) { return 0; }
+        sc = _cl_org_sc;
+    } elif (idx < 0) {
+        if (idx > 0 - 2) { return 0; }
         sc = _cur_fn_ix;
     }
     var n = vec_len(_dlv);

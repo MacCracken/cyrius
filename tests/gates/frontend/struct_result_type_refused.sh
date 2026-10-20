@@ -644,6 +644,119 @@ var X: Foo = 5;
 syscall(60, X.a);
 '
 
+# UC (6.7.16, issues/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md) — `.field`, a field store and
+# `.m()` ON AN UNTYPED CLOSURE CAPTURE take the `sid == 0` arms an untyped local takes. PARSE_FIELD_LOAD's and
+# PARSE_FIELD_STORE's capture rung (`_CL_CAP_FIELD_IDX`) answered for a struct capture only, so an untyped one fell to
+# the globals and "undefined variable 'x'" — at the right column, naming the wrong fault; after a refused annotation it
+# was a second error (the stand-down looked up no capture). Now the rung (`_cl_cap_fld_any`, parse_decl.cyr) hands any
+# capture on as its capture-band index with sid 0: "no struct type in scope for 'x'" in the field / store / method
+# wording, a captured vector's "SIMD vector has no named fields", and the refused-annotation stand-down, which resolves
+# the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse_expr.cyr: the closure context
+# keeps its host fn, `_cl_host_fn`, and the enclosing context, `_cl_ctx_up`). The same arm calls a bounded scalar T's
+# member on a captured receiver (`|| v.show()` at T = i64 was "undefined variable 'v'": tests/tcyr/crossos/
+# trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12). A capture named like a GLOBAL keeps today's reading
+# (the global's field) — refusing it stops a program compiling: the user's call, not this gate's.
+# (Mutants: a scratch copy of src/ with the one change, CYCC= its compiler; CPX's cross compilers come from it too.)
+#   the tree before (4b6958340)                         -> RED 21: UC0-UC2 UC5-UC11 UC13 UC14 ("undefined variable"),
+#                                                          CPX UC0-UC2 on aarch64 / cx / PE
+#   `_cl_cap_fld_any` = `_CL_CAP_FIELD_IDX` (the rung)   -> RED 21: the same
+#   `_ann_refd_said` without its capture arm             -> RED 9: UC2 UC7-UC11 (a second, no-struct error), CPX UC2 x3
+#   `_cl_cap_origin` not following `_cl_ctx_up`          -> RED 2: UC8 UC10 (a capture of a capture)
+echo "6.7.16 — .field / a field store / .m() on an untyped closure capture is an untyped local's:"
+SM="; a method call needs its struct declaration (missing include?)"
+SS="; a '.field' assignment needs its struct declaration (missing include?)"
+UCA='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+UCB='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x = 5; var f = |k| { x.a = k; return x.m(); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+UCC='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Foo = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC0 |k| x.a + k  (the filed repro)" "3:54: $SN 'x'$SA" "$UCA"
+refuse_at "UC1 x.a = k; x.m()  (store, method)" "3:47: $SN 'x'$SS|3:62: $SN 'x'$SM" "$UCB"
+refuse_at "UC2 var x: Foo = 5; |k| x.a  (refused)" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
+refuse_at "UC3 control: outside the closure" "3:39: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x = 5; return x.a; }
+syscall(60, main());
+'
+accept "UC4 control: a struct-typed capture" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Q { a; b; }
+fn main(): i64 { alloc_init(); var x: Q = Q { 1, 2 }; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+' 1 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Q = Q { 1, 2 }; return x.a; }
+syscall(60, main());
+'
+refuse_at "UC5 a captured f64v2's .a" "3:57: SIMD vector has no named fields" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var v: f64v2; var f = |k| { return v.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC6 a nested closure's capture of a capture" "3:68: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x = 5; var f = |k| { var g = |j| { return x.a + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC7 refused: store, method, field" "3:25: unknown type 'Foo' for variable 'x'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Foo = 5; var f = |k| { x.a = k; return x.m() + x.b; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC8 refused, read by a nested closure" "3:25: unknown type 'Foo' for variable 'x'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Foo = 5; var f = |k| { var g = |j| { return x.a + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC9 refused in a closure, nested read" "3:39: unknown type 'Foo' for variable 'x'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var f = |k| { var x: Foo = 5; var g = |j| { return x.a + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC10 refused, two closures deep" "3:25: unknown type 'Foo' for variable 'x'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Foo = 5; var f = |k| { var g = |j| { var h = || x.a; return fncall0(h) + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "UC11 a refused parameter, captured" "3:10: unknown type 'Foo' for parameter 'q'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn h(q: *Foo): i64 { var f = |k| { return q.a + k; }; return fncall1(f, 0); }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "UC13 the shadow of a refused x, captured" "3:25: unknown type 'Foo' for variable 'x'|3:84: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var x: Foo = 5; if (1 == 1) { var x = 7; var f = |k| { return x.a + k; }; return fncall1(f, 0); } return 0; }
+syscall(60, main());
+'
+refuse_at "UC14 y.m<i64>(1) on a capture" "3:58: $SN 'y'$SM" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 { var y = 5; var f = |k| { return y.m<i64>(1) + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+# UC12: --syntax-only (cyrius lint) — silent, rc 0, as for an untyped local.
+for so in UCA UCB UCC; do
+    eval "src=\$$so"
+    printf '%s' "$src" > "$D/so.cyr"
+    rc=0; "$CC" --syntax-only < "$D/so.cyr" > /dev/null 2> "$D/so.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    if [ "$rc" -eq 0 ] && ! grep -q '^error\|^warning' "$D/so.err"; then
+        printf '  ok(silent): UC12 --syntax-only %s\n' "$so"; pass=$((pass+1))
+    else
+        printf '  FAIL: UC12 --syntax-only %s rc=%s: %s\n' "$so" "$rc" "$(head -1 "$D/so.err")"; fail=$((fail+1))
+    fi
+done
+
 # AS (6.7.14, the user's decision D27 (a), 2026-10-16; issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-
 # first-word.md) — a struct result over 8 B ASSIGNED to a scalar (a local, a parameter or a global declared `: i64`,
 # `: u8`, `: f64`, `: cstring`, any annotation naming no struct) is refused with D24's words, "cannot assign 'x: i64'
@@ -1010,11 +1123,15 @@ G2.b = 7;
 syscall(60, G2.a * 10 + G2.b);
 '
 
-# CPX (6.7.16) — the closure rows from every cross compiler built from this tree (the frontend is shared; this pins it).
-echo "6.7.16 — the closure rows from the aarch64, cx and PE compilers:"
+# CPX (6.7.16) — the closure rows (CP0 CP1, UC0-UC2) from every cross compiler built from this tree (the frontend is
+# shared; this pins it). The cross compilers are built from the tree's src/, so a mutant is a tree mutant.
+echo "6.7.16 — the closure rows (CP, UC) from the aarch64, cx and PE compilers:"
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
+    refuse_at "CPX [$1] UC0" "3:54: $SN 'x'$SA" "$UCA"
+    refuse_at "CPX [$1] UC1" "3:47: $SN 'x'$SS|3:62: $SN 'x'$SM" "$UCB"
+    refuse_at "CPX [$1] UC2" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then

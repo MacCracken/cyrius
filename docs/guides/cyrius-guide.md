@@ -6899,6 +6899,13 @@ function's variable was refused `undefined variable`, and an outer capturing clo
 contained a nested closure lost its own captures after it (refused the same way). Pinned by
 `tests/tcyr/crossos/closure_nested_capture.tcyr`.
 
+A captured name is the variable it captures for `.field`, a field store and `.m()` too (6.7.16): on an
+untyped capture each is refused as on the untyped local — *no struct type in scope for 'x'* in the field,
+assignment or method wording, *SIMD vector has no named fields* for a captured vector, nothing more after
+a refused annotation — and a bounded generic's captured receiver calls its bound's impl at a scalar `T`
+(`fn g<T: Show>(v: T) { var f = || v.show(); .. }` at `T = i64`, and `self` captured in a trait default
+instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not.
+
 ## Constants and `const fn` (6.7.2)
 
 ```
