@@ -1410,7 +1410,10 @@ once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15
 step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). Under `cyrius lint`'s
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
-struct by value earns). A call declared `: *Struct` returns
+struct by value earns). The cx compiler accepts them too since 6.7.16: `cycc_cx --syntax-only` refused every call to a
+fn the file does not define (*undefined function(s) called (cx backend)*). Under the flag it writes no `.cyx`, and,
+having no reachability data, it also accepts a reachable such call, which the native compilers refuse there. Without
+the flag it still refuses the call, naming each fn once. A call declared `: *Struct` returns
 no temporary but a pointer, so a field of its result IS an lvalue (6.7.13, the user's decision D8 (a),
 2026-10-15): `gp().n = 5;`, `gp().m += 5;` (the address computed once), `gp().h.n = 5;`, `gpg<H>().n =
 5;` and a method's `o.gp().n = 5;` store through the returned pointer, as `var p: *H = gp(); p.n = 5;`

@@ -411,6 +411,15 @@ var dbase = cp;
 # pass, matching the native gate's `undef_count` shape. cx has no `--allow-undef` (that
 # flag lives in the main.cyr fork), so this is unconditional — which is correct: there is
 # no useful `.cyx` to emit when a call target does not exist.
+#
+# --syntax-only is the exception: it asks "does this file parse?" and its output is never
+# used (`cyrius lint`'s pre-pass reads the diagnostics). A call to a fn this file does not
+# define — a sibling module's — is the frontend's `warning: undefined function 'gp'` there,
+# as on the native forks, so it stops here with _had_error: no refusal, no fixup patching,
+# no .cyx. It was refused, one line per call site. cx has no reachability data, so a
+# reachable undefined call is accepted here too, where the native forks refuse it.
+# CHANGELOG [6.7.16]
+if (_syntax_only == 1) { syscall(SYS_EXIT, _had_error); }
 var cx_undef = 0;
 var ufi = 0;
 while (ufi < GFCNT(S)) {
@@ -430,6 +439,10 @@ while (ufi < GFCNT(S)) {
             PRSTR(S + 0xEC00000 + _fn_src_name(S, uidx, L64(_fnt_names + uidx * 8)));   # 6.7.14: `S.nope`
             syscall(SYS_WRITE, 2, "\n", 1);
             cx_undef = cx_undef + 1;
+            # Marked REPORTED (-2), as the native gate marks it, so a fn is named once, not once
+            # per call site. Nothing reads the table after this walk: the refusal below exits.
+            # CHANGELOG [6.7.16]
+            S64(_fnt_offsets + uidx * 8, 0 - 2);
         }
     }
     ufi = ufi + 1;
