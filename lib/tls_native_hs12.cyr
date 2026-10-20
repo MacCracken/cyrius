@@ -1433,9 +1433,12 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
         var ext_total = _tn_be16_r(body + pos);
         pos = pos + 2;
         if (pos + ext_total != blen) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-        if (_tn_ch_ext_walk(body + pos, ext_total) != 1) {
-            return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
-        }
+        var xw = _tn_ch_ext_walk(ctx, body + pos, ext_total);
+        if (xw < 0) { return xw; }
+        if (xw == 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+        # A type named twice: illegal_parameter (6.7.16's D82, the user, 2026-10-20) — the first
+        # copy was taken. CHANGELOG [6.7.16]
+        if (xw == 2) { return _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED); }
         var ep = 0;
         var el = 0;
         var got = _tn_find_ext(body + pos, ext_total, TLS_EXT_EXTENDED_MASTER_SECRET, &ep, &el);

@@ -25,6 +25,22 @@
 #   W2     T5's ClientHello through tls_native_accept over a socketpair: a fatal decode_error on the
 #          wire. A named SKIP where socketpair is refused.
 # On the lib before D81: T4-T6 and W2 fail (each negotiated).
+#
+# The same issue; the user's decision 6.7.16 D82 (2026-10-20): "Refuse with illegal_parameter".
+# _tn_find_ext takes the first of a repeated type, so the server negotiated on it (the filed row G).
+# RFC 8446 §4.2: no more than one extension of a type in a block — the 1.3 client already refuses a
+# repeat with illegal_parameter (_tn_client_ext_walk, 6.7.14).
+#   G1     the filed row G: the block's first extension (server_name) appended again — refused,
+#          TLS_ERR_HANDSHAKE_FAILED, illegal_parameter, the ctx failed.
+#   G2-G3  a repeat that is not the first entry: supported_versions appended again; the last entry
+#          (key_share) twice, side by side.
+#   G4-G6  a block of more than 32 entries (40 empty unassigned types appended; the walk's one-pass
+#          map): no repeat is answered (G4); the last appended type again (G5) and 0xFFFF twice
+#          (G6) are refused.
+#   G7     framing first: G1's repeat with a 2-byte tail inside the block is decode_error.
+#   W3     G1 through tls_native_accept: a fatal illegal_parameter on the wire. A named SKIP where
+#          socketpair is refused.
+# On the lib before D82: G1-G3, G5-G6 and W3 are answered with a ServerHello; G7 is refused by D81.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -187,6 +203,44 @@ fn _wire13(n): i64 {
     return rc;
 }
 
+# Append an extension of type `et` with `el` zero bytes of data to G_CH's block, which ends a
+# ClientHello of `n` bytes (header included); the block's length grown to match. The new length.
+fn _app(n, et, el): i64 {
+    var eo = _ext_off(G_CH + 4);
+    _tn_be16_w(G_CH + n, et);
+    _tn_be16_w(G_CH + n + 2, el);
+    memset(G_CH + n + 4, 0, el);
+    _tn_be16_w(G_CH + 4 + eo, _tn_be16_r(G_CH + 4 + eo) + 4 + el);
+    return n + 4 + el;
+}
+
+# Append a copy of the block's `i`-th extension (0 the first) to its end, as _app. The new length.
+fn _dup(n, i): i64 {
+    var eo = _ext_off(G_CH + 4);
+    var q = 4 + eo + 2;
+    while (i > 0) {
+        q = q + 4 + _tn_be16_r(G_CH + q + 2);
+        i = i - 1;
+    }
+    var en = 4 + _tn_be16_r(G_CH + q + 2);
+    memcpy(G_CH + n, G_CH + q, en);
+    _tn_be16_w(G_CH + 4 + eo, _tn_be16_r(G_CH + 4 + eo) + en);
+    return n + en;
+}
+
+# A fresh G_CH with 40 empty extensions of unassigned types 0x7A00-0x7A27 appended to its block
+# (more than 32 entries in all). Its length.
+fn _long13(): i64 {
+    _ch13();
+    var n = G_CHN;
+    var i = 0;
+    while (i < 40) {
+        n = _app(n, 0x7A00 + i, 0);
+        i = i + 1;
+    }
+    return n;
+}
+
 alloc_init();
 
 test_group("T: the 1.3 server's ClientHello extension block fills the message");
@@ -233,6 +287,52 @@ if (w == 0 - 999) {
     assert_eq(w, TLS_ERR_BAD_HANDSHAKE, "W2: accept refuses the ClientHello");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_DECODE_ERROR,
       "W2: the server sent a fatal decode_error, in the clear");
+}
+
+test_group("G: an extension type named twice is illegal_parameter (D82)");
+var gl = 0;
+var gn = 1;
+var nm = 0;
+while (gn <= 7) {
+    if (gn == 1) { _ch13(); gl = _dup(G_CHN, 0); nm = "G1: server_name twice (row G)"; }
+    if (gn == 2) { _ch13(); gl = _dup(G_CHN, 1); nm = "G2: supported_versions twice, the second appended"; }
+    if (gn == 3) { _ch13(); gl = _dup(G_CHN, 4); nm = "G3: key_share twice, side by side"; }
+    if (gn == 4) { gl = _long13(); nm = "G4: 45 entries, no type twice: answered"; }
+    if (gn == 5) { gl = _app(_long13(), 0x7A27, 0); nm = "G5: 46 entries, the last type twice"; }
+    if (gn == 6) { gl = _app(_app(_long13(), 0xFFFF, 0), 0xFFFF, 1); nm = "G6: 47 entries, type 0xFFFF twice"; }
+    if (gn == 7) {
+        _ch13();
+        gl = _dup(G_CHN, 0);
+        var e7 = _ext_off(G_CH + 4);
+        _tn_be16_w(G_CH + 4 + e7, _tn_be16_r(G_CH + 4 + e7) + 2);
+        gl = gl + 2;
+        nm = "G7: server_name twice and a 2-byte tail inside the block";
+    }
+    if (gn == 4) {
+        assert_eq(_resp(gl) > 0, 1, nm);
+        assert_eq(_alert(), 0, "  ... no alert recorded");
+    } else {
+        if (gn == 7) {
+            assert_eq(_resp(gl), TLS_ERR_BAD_HANDSHAKE, nm);
+            assert_eq(_alert(), TLS_AD_DECODE_ERROR, "  ... decode_error: framing is refused first");
+        } else {
+            assert_eq(_resp(gl), TLS_ERR_HANDSHAKE_FAILED, nm);
+            assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "  ... illegal_parameter");
+        }
+        assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "  ... the ctx failed");
+    }
+    gn = gn + 1;
+}
+
+test_group("W3: G1's refusal reaches the wire (tls_native_accept)");
+_ch13();
+w = _wire13(_dup(G_CHN, 0));
+if (w == 0 - 999) {
+    assert_eq(1, 1, "W3: SKIP — socketpair refused on this target");
+} else {
+    assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W3: accept refuses server_name twice");
+    assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
+      "W3: the server sent a fatal illegal_parameter, in the clear");
 }
 
 var r = assert_summary();
