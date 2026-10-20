@@ -228,6 +228,25 @@ var TI1 = if (1 == 1) { GP1 } else { mk1() };
 var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
 var TI3 = TI2 + TI2;
 fn ti_read(): i64 { return TI1.a + TI2.a; }
+# --- 6.7.16: a `: Str` METHOD at top level routes its global as a Str (issues/2026-10-18-top-level-untyped-str-method-global-
+# prints-header-bytes.md) ---
+# `var s = BB.mks();` recorded no call (the record wanted `IDENT (`), so `println(s)` printed the header's bytes and
+# `who(s)` took the cstring base (1), where `var t = mks();` routes to `who_str` (2). A whole method call — wrapped, or
+# ending a field chain — routes as the free call does: the zone here, after a statement (TQ5 / TQ6) below.
+struct QB { a; }
+struct QW { b: QB; }
+impl QB {
+    fn qs(self): Str { return str_from("abcde"); }
+    fn qi(self): i64 { return 7; }
+}
+fn mkqw(): QW { var w: QW; w.b.a = 1; return w; }
+var GQB = QB { 1 };
+var GQW = mkqw();
+var TQ1 = GQB.qs();
+var TQ2 = (GQB.qs());
+var TQ3 = GQW.b.qs();
+var TQ4 = GQB.qi();
+fn tq_read(): i64 { return who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3); }
 
 test_group("var x = (mk()); — 9-16 B, fn scope");
 assert_eq(p16(), 34, "(mk()) into a by-value parameter");
@@ -381,6 +400,16 @@ var TJ3 = TJ2 + TJ2;
 TJ1.a = 30;
 assert_eq(TJ1.a + d1(TJ1) + GP1.a, 93, "after a statement: TJ1 is its own P1 (GP1 unchanged), d1(TJ1) by value");
 assert_eq(TJ3.a, 34, "after a statement: an elif chain, TJ2 + TJ2 dispatches PM_add");
+
+test_group("6.7.16: a top-level : Str method global routes as a Str");
+assert_eq(who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3), 222, "the zone: GQB.qs(), (GQB.qs()), GQW.b.qs() route to who_str (111 before)");
+assert_eq(strlen(TQ1) * 10 + strlen(TQ3), 55, "the zone: strlen(TQ1) / strlen(TQ3) take strlen_str");
+assert_eq(who(TQ4), 1, "control: a : i64 method's global stays unrouted");
+assert_eq(tq_read(), 222, "a fn body reads the zone's method Str globals before the replay");
+var TQ5 = GQB.qs();
+var TQ6 = (GQW.b.qs());
+assert_eq(who(TQ5) * 10 + who(TQ6), 22, "after a statement: GQB.qs(), (GQW.b.qs()) route to who_str (11 before)");
+assert_eq(strlen(TQ5), 5, "after a statement: strlen takes strlen_str");
 
 test_group("6.7.15 (D32 / D33): what a struct-result assignment keeps");
 # The user's decisions D32 (a) and D33 (a), 2026-10-18: a struct result over 8 B assigned to a `*T` of another kind or

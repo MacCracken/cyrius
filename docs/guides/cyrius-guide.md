@@ -1754,7 +1754,9 @@ over 8 bytes: struct 'P2'*; through 6.7.15 a 16-byte struct global there was ref
 and `G` stays untyped, as in a fn. A `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
-bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
+bytes), and since 6.7.16 a method call is such a call — `var s = BB.mks();` with `fn mks(self): Str`, `(BB.mks())`, a
+chain ending in one (`W.b.mks()`), a `*B` receiver or `.m<..>(..)`, in the declaration zone or after the first
+statement, the method declared anywhere (through 6.7.15 `println(s)` printed the header's bytes). In a fn, a method declared `: Str` types an untyped declaration as a free `: Str` call does, since 6.7.16 —
 `var k = h.clone();`, alone or ending a chain (`var k = w.s.clone();`, `var k = h.clone().clone();`, `var k =
 mks().clone();`): `k` was an untyped word, `k.len()` was refused *no struct type in scope for 'k'* and `println(k)` /
 `show(k)` took the untyped overload where `show_str` takes a `Str`; `k + 1` is unchanged (the handle's word plus 1).

@@ -5682,12 +5682,117 @@ fn _gv_rhs_call_sid(S, ri): i64 {
     while (TOKTYP(S, ri + k) == 10) { k = k + 1; }
     var a = ri + k;
     if (TOKTYP(S, a) != 2) { return 0; }
-    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return _gvm_rec(S, a, k); }
     var e = _tok_close_paren(S, a + 1);
     if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) == 41) { return _gvm_rec(S, a, k); }   # 6.7.16: `f(..).m(..)`
     if (_pair_unwrap_k(S, e + 1, k, a) < 0) { return 0; }
     if (TOKTYP(S, e + k + 1) != 5) { return 0; }
     return TOKVAL(S, a) + 1;
+}
+# ⛔ 6.7.16 — A WHOLE METHOD CALL ROUTES ITS GLOBAL AS A FREE CALL DOES. `var s = BB.mks();` (a `: Str` method) at top
+# level recorded nothing — the record wanted `IDENT (` — so `println(s)` took the cstring base and printed the Str
+# header's bytes, where `var s = mks2();` prints the string (issues/2026-10-18-top-level-untyped-str-method-global-
+# prints-header-bytes.md). Now a chain ending in a method call — `R.m(..)`, `W.b.m(..)`, `R.mk().m(..)`, `f(..).m(..)`,
+# `.m<..>(..)`, inside any wrap, up to the `;` — records its first token `a` tagged (`_gvd_mtag` + a; a free call's
+# record is a name offset + 1, far below it), resolved when asked (`_gvm_sid`: a method may be defined below the
+# global). CHANGELOG [6.7.16]
+var _gvd_mtag = 0x1000000000000;
+fn _gvm_rec(S, a, k): i64 {
+    var i = _gvm_end(S, a);
+    if (_gvm_m == 0) { return 0; }
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, i + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, i + k) != 5) { return 0; }
+    return _gvd_mtag + a;
+}
+# Past the chain from the name at token `a` — a call `(..)` on it, then `.name` steps, each a field or a method call
+# (`.m(..)`, `.m<..>(..)`) — with `_gvm_m` 1 when its last step is a call.
+var _gvm_m = 0;
+fn _gvm_end(S, a): i64 {
+    _gvm_m = 0;
+    var i = a + 1;
+    if (TOKTYP(S, i) == 10) { i = _tok_close_paren(S, i) + 1; }
+    if (i <= a) { return a; }
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { _gvm_m = 0; return i; }
+        i = _mchain_targs(S, i + 2);
+        _gvm_m = 0;
+        if (TOKTYP(S, i) == 10) {
+            var c = _tok_close_paren(S, i);
+            if (c < 0) { return i; }
+            i = c + 1;
+            _gvm_m = 1;
+        }
+    }
+    return i;
+}
+# A tagged record's struct: what the chain from token `a` returns, typed from the tokens as the member arm types it —
+# a global receiver by its struct (`_glob_name_sid`, a record of its own included; a `*T` global by T) or a non-generic
+# call's return, each field by its struct (a `*T` field by T), each method by its fn (`_meth_fn_at`) — 0 for anything
+# else (a scalar, a generic call's head). Bounded: a receiver whose record leads back here stops at `_gvm_d`.
+var _gvm_d = 0;
+fn _gvm_sid(S, a): i64 {
+    if (_gvm_d >= 8) { return 0; }
+    _gvm_d = _gvm_d + 1;
+    var r = _gvm_walk(S, a);
+    _gvm_d = _gvm_d - 1;
+    if (r <= 0) { return 0; }
+    if (r >= 2048) { return 0; }
+    return r;
+}
+fn _gvm_walk(S, a): i64 {
+    var t = 0;
+    var i = a + 1;
+    if (TOKTYP(S, i) == 10) {
+        var fi = FINDFN(S, TOKVAL(S, a));
+        if (fi < 0) { return 0; }
+        if (GFTP(S, fi) != 0) { return 0; }
+        t = GFRS(S, fi);
+        i = _tok_close_paren(S, i) + 1;
+    } else { t = _gvm_recv(S, TOKVAL(S, a)); }
+    var m = 0;
+    while (TOKTYP(S, i) == 41) {
+        if (t <= 0) { return 0; }
+        if (t >= 2048) { return 0; }
+        var mo = _gz_mopen(S, t, i + 1);
+        if (mo > 0) {
+            var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
+            if (mf < 0) { return 0; }
+            t = GFRS(S, mf);
+            m = 1;
+            i = _call_close(S, mo) + 1;
+        } else {
+            t = _gvm_field(S, t, TOKVAL(S, i + 1));
+            m = 0;
+            i = i + 2;
+        }
+    }
+    if (m == 0) { return 0; }
+    return t;
+}
+# The struct a global receiver named `noff` is: its own (`_glob_name_sid`), else a `*T` global's T; else 0.
+fn _gvm_recv(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    var s = _glob_name_sid(S, noff);
+    if (s > 0) { return s; }
+    var ps = _gv_ptr_sid(S, vi);
+    if (ps > 0) { return ps; }
+    return 0;
+}
+# The struct field `fnoff` of struct `t` is (a `*T` field: T), else 0 (a scalar).
+fn _gvm_field(S, t, fnoff): i64 {
+    var fi = FINDFIELD(S, t - 1, fnoff);
+    if (fi < 0) { return 0; }
+    var fp = _fld_ptr_sid(S, t - 1, fi);
+    if (fp > 0) { return fp; }
+    var ft = GETFTYPE(S, t - 1, fi);
+    if (ft < 0) { return 0; }
+    return ft;
 }
 
 # The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`
@@ -5719,6 +5824,7 @@ fn _glob_name_sid(S, noff): i64 {
     if (gt > 0) { if (GVPM(S, vi) != 0) { return gt; } }
     var cn = GVDSID(S, vi);
     if (cn <= 0) { return 0; }
+    if (cn >= _gvd_mtag) { return _gvm_sid(S, cn - _gvd_mtag); }   # 6.7.16: a method chain's record
     var cfi = FINDFN(S, cn - 1);
     if (cfi < 0) { return 0; }
     var r = GFRS(S, cfi);

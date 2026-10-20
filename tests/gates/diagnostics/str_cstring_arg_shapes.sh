@@ -443,12 +443,12 @@ else _bad "axis 4 not routed: println(gs.data) is not reported as a data pointer
 # (x86_64 here; tests/tcyr/crossos/struct_receive_paren_call.tcyr's TS rows carry it to every leg and host.)
 wrun() {
     build "$T/w5.cyr" 1
-    if [ "$(cat "$T/w5.cyr.rc")" != 0 ]; then _bad "axis 5 $1: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; return; fi
+    if [ "$(cat "$T/w5.cyr.rc")" != 0 ]; then _bad "axis ${WAX:-5} $1: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; return; fi
     chmod +x "$T/w5.cyr.bin"
     out=$("$T/w5.cyr.bin" | tr '\n' ' ' || true)
     if "$T/w5.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
-    if [ "$out" = "$2" ] && [ "$rc" = 0 ]; then _ok "axis 5 $1: prints '$out'"
-    else _bad "axis 5 $1: printed '$out', exit $rc (want '$2', exit 0)"; fi
+    if [ "$out" = "$2" ] && [ "$rc" = 0 ]; then _ok "axis ${WAX:-5} $1: prints '$out'"
+    else _bad "axis ${WAX:-5} $1: printed '$out', exit $rc (want '$2', exit 0)"; fi
 }
 W5H='include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -498,6 +498,108 @@ if [ "$(cat "$T/w5.cyr.rc")" = 0 ]; then
     if [ "$rc" = 88 ]; then _ok "axis 5 controls: (mks()) + 0, (mks() + 0), mks() + 0 stay unrouted; (mks()) routes (88)"
     else _bad "axis 5 controls: exit $rc, want 88 (1112: only the whole wrap routed)"; fi
 else _bad "axis 5 controls: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; fi
+
+# ---- axis 6 (6.7.16): a whole METHOD call (or a chain ending in one) records its global as a free call does ----
+# issues/2026-10-18-top-level-untyped-str-method-global-prints-header-bytes.md: `var s = BB.mks();` with a `: Str` method
+# recorded nothing (`_gv_rhs_call_sid` wanted `IDENT (`), so `println(s)` took the cstring base and printed the Str
+# header's bytes (x86_64 `214 016 ` \n`), in the declaration zone and after a first statement, where `var s = mks2();`
+# prints the string. The chain's first token is recorded tagged and resolved when asked (`_gvm_sid`: the receiver's
+# struct, its fields, the method's declared return), so the method may be declared below. RED on b2f75e9fd: 6a-6f and
+# the controls row (d, e unrouted: 103). Mutations (2026-10-20, a scratch tree each, CYCC=its compiler): the method
+# record removed from `_gv_rhs_call_sid` -> RED 6a-6f + controls; `_gvm_field` finding no field -> 6d + controls;
+# `_gvm_recv` without the `*T` arm -> 6e; `_gvm_sid` without its depth bound -> the self-referring row (the compiler
+# SIGSEGVs: unbounded recursion).
+# (x86_64 here; tests/tcyr/crossos/struct_receive_paren_call.tcyr's TQ rows carry it to every leg and host.)
+WAX=6
+printf '%s\n' 'include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+struct B { a; }
+impl B { fn mks(self): Str { return str_from("abcde"); } }
+var BB = B { 1 };
+var s = BB.mks();
+println(s);' > "$T/w5.cyr"
+wrun "6a the filed repro verbatim (the zone): var s = BB.mks(); println(s)" 'abcde '
+W6H='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+struct B { a; }
+struct W { b: B; }
+impl B {
+    fn mks(self): Str { return str_from("abcde"); }
+    fn mki(self): i64 { return 7; }
+    fn mkg<T>(self, v: T): Str { return str_from("abcde"); }
+}
+fn mkw(): W { var w: W; w.b.a = 1; return w; }
+fn who(s: cstring): i64 { return 1; }
+fn who_str(s: Str): i64 { return 2; }
+var BB = B { 1 };
+var WW = mkw();
+var PB: *B = &BB;'
+printf '%s\n%s\n' "$W6H" 'alloc_init();
+var s = BB.mks();
+println(s);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "6b after a first statement (PARSE_VAR's global arm)" 'abcde '
+printf '%s\n%s\n' "$W6H" 'var s = (BB.mks());
+var t = ((BB.mks()));
+println(s);
+println(t);
+alloc_init();
+var u = (BB.mks());
+println(u);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "6c wrapped (BB.mks()) / ((BB.mks())) in the zone and after" 'abcde abcde abcde '
+printf '%s\n%s\n' "$W6H" 'var s = WW.b.mks();
+println(s);
+alloc_init();
+var t = WW.b.mks();
+println(t);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "6d a field chain W.b.mks() in the zone and after" 'abcde abcde '
+printf '%s\n%s\n' "$W6H" 'var s = PB.mks();
+var t = BB.mkg<i64>(3);
+println(s);
+println(t);
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "6e a *B receiver PB.mks() and an explicit generic method BB.mkg<i64>(3)" 'abcde abcde '
+printf '%s\n' 'include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+struct B { a; }
+var BB = B { 1 };
+var s = BB.mks();
+fn rd(): i64 { println(s); return 0; }
+impl B { fn mks(self): Str { return str_from("abcde"); } }
+rd();
+syscall(60, 0);' > "$T/w5.cyr"
+wrun "6f the method declared below the global; a fn body reads it before the replay" 'abcde '
+# Controls: a non-Str method, a method result inside an expression and a field stay unrouted (the cstring base, 1);
+# the routed shapes go to who_str (2). As an exit code: 11122.
+printf '%s\n%s\n' "$W6H" 'var a = BB.mki();
+var b = BB.mks() + 0;
+var c = BB.a;
+var d = BB.mks();
+var e = WW.b.mks();
+syscall(60, (who(a) * 10000 + who(b) * 1000 + who(c) * 100 + who(d) * 10 + who(e)) % 256);' > "$T/w5.cyr"
+build "$T/w5.cyr" 1
+if [ "$(cat "$T/w5.cyr.rc")" = 0 ]; then
+    chmod +x "$T/w5.cyr.bin"
+    if "$T/w5.cyr.bin" > /dev/null; then rc=0; else rc=$?; fi
+    # 11122 % 256 = 114: a, b, c the cstring base; d, e routed to who_str.
+    if [ "$rc" = 114 ]; then _ok "axis 6 controls: BB.mki(), BB.mks() + 0, BB.a stay unrouted; BB.mks(), WW.b.mks() route (114)"
+    else _bad "axis 6 controls: exit $rc, want 114 (11122: only the whole method chains routed)"; fi
+else _bad "axis 6 controls: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; fi
+# A record that leads back to itself (`var s = s.mks();`, a pair naming each other) is bounded: refused, not a hang.
+printf '%s\n%s\n' "$W6H" 'var s = s.mks();
+var q1 = q2.mks();
+var q2 = q1.mks();
+syscall(60, 0);' > "$T/w5.cyr"
+if timeout 30 "$CC" < "$T/w5.cyr" > "$T/w5.cyr.bin" 2> "$T/w5.cyr.err"; then rc=0; else rc=$?; fi
+if [ "$rc" = 1 ] && grep -q "no struct type in scope for 's'" "$T/w5.cyr.err"; then _ok "axis 6 a self-referring record: refused (rc 1), the compiler finished"
+else _bad "axis 6 a self-referring record: rc $rc (want 1, the receiver refused): $(grep '^error' "$T/w5.cyr.err" | head -1)"; fi
 
 echo "str_cstring_arg_shapes: $pass ok, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
