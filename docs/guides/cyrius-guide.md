@@ -7474,7 +7474,12 @@ describe<i32>(7);   # needs impl Show for i32
   or one two bounds both declare, is a compile error at the generic's **definition**, whether or not
   it is ever called — each one reported, every generic's and every call's of a body (6.7.16; through 6.7.15 the
   first of a compile hid the rest). The call is that trait's method for `T`'s impl: when `T` has two traits giving it
-  an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. Fields are not part of a
+  an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. The explicit spelling (6.7.14) is the same
+  call: `v.other<i64>(1)` is refused as `v.other(1)` is, and a bound's own generic member called with its list —
+  `v.show<i32>(1)` with `trait Show { fn show<V>(self, k: V): i64; }` — calls `T`'s impl's `show` at `V = i32`, a
+  scalar `T` too (6.7.16, the user's D4; through 6.7.15 the explicit spelling escaped the contract and called the
+  instance's own method, and a scalar `T` refused it). A list is read so when every name in it is a type; `v.y < a,
+  b > (c)` stays two comparisons. Fields are not part of a
   trait — `v.x` on a bounded `T` resolves per instance, as on an unbounded one. An **unbounded** `T`
   keeps per-instance resolution: `fn f<T>(v: T) { return v.show(); }` compiles and works for any `T`
   that has a `show`.
@@ -7483,8 +7488,8 @@ describe<i32>(7);   # needs impl Show for i32
   a struct use of `T` — so `gs(bi)` with `bi: Box<i64>` calls `impl Show for i64`'s method with the
   field's value, as `t.show()` on a `t: T` does, and `gs(b)` with a `Box<Pt>` calls Pt's (6.7.14;
   before it the base was the struct stub, and `gs(bi)` was refused "uses its type parameter as a
-  struct"). The contract holds there as on a `T`-typed name: `b.v.other()` with a method no trait of
-  the bound declares, or one two bounds both declare, is a compile error at the generic's definition,
+  struct"). The contract holds there as on a `T`-typed name: `b.v.other()` (or `b.v.other<i64>(1)`, 6.7.16) with a
+  method no trait of the bound declares, or one two bounds both declare, is a compile error at the generic's definition,
   called or not (6.7.15, the user's D5; through 6.7.14 it compiled and called the instance's own
   method). A `*T` field (`p: *T`), and a field whose type parameter has no bound, keep resolving per
   instance.

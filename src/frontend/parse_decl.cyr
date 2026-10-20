@@ -1993,8 +1993,9 @@ var _mx_fi = 0 - 1;   # the method arm's callee, set by `_meth_targs` for the ar
 var _mx_ti = 0 - 1;   # ... and the method's name token
 var _mx_qt = 0;       # ... 1 = a type argument was refused: the arm consumes the arguments, judging none
 # 1 = token nt is a method name `m` followed by `<..>(`, with m no field of struct `sid` and a generic method of it.
+# 6.7.16: at a scalar receiver, a bounded site's (`_mtargs_bs`).
 fn _mtargs_at(S, sid, nt): i64 {
-    if (sid <= 0) { return 0; }
+    if (sid <= 0) { return _mtargs_bs(S, nt); }
     if (sid >= 2048) { return 0; }
     if (_MONOMORPH_OK == 0) { return 0; }
     if (TOKTYP(S, nt) != 2) { return 0; }
@@ -2006,6 +2007,24 @@ fn _mtargs_at(S, sid, nt): i64 {
     var e = _tok_targs_close(S, nt + 2);
     if (e < 0) { return 0; }
     if (TOKTYP(S, e + 1) != 10) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 (the user's D4, 2026-10-19) — A BOUND'S OWN GENERIC MEMBER, CALLED WITH ITS EXPLICIT LIST ON A SCALAR T:
+# `v.show<i64>(1)` / `b.v.show<i64>(1)` with `T: Show`, `trait Show { fn show<V>(self, k: V): i64; }` and T bound to
+# i64. A scalar receiver has no struct, so the member arm never read the list: the name form was "no struct type in
+# scope for 'v'" + "undefined variable 'i64'", the field form "expected ';', got '.'" (and both were the stub base
+# until the site scan took the spelling, `_bnd_mopen`), where `v.show(1)` calls `i64_show`. 1 = token nt is a bounded
+# site recorded with its list whose callee, T's impl method (`_bs_callee`), is generic: the arm reads the list and
+# calls that instance with the value as `self`, as the inferred spelling does. CHANGELOG [6.7.16]
+fn _mtargs_bs(S, nt): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0; }
+    var b = _bs_find(S, nt);
+    if (b < 0) { return 0; }
+    var f = _bs_callee(S, b, 0);
+    if (f < 0) { return 0; }
+    if (GFTP(S, f) == 0) { return 0; }
     return 1;
 }
 # The method arm's name token: `_meth_targs`'s, taken once, else the token before the cursor's `(`.
@@ -2038,7 +2057,7 @@ fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
     var c0 = _parse_one_type_arg(S);
     var c1 = _ta_rest_f(S, mf);   # 6.7.16 (D5)
     _consume_gt(S);
-    _mx_fi = _meth_xinst(S, mf, c0, c1);
+    _mx_fi = _meth_xsite(S, mf, c0, c1, nt);
     _mx_ti = nt;
     var p0 = _panic;
     if (_mx_qt == 1) { _panic = 1; }
@@ -2047,6 +2066,16 @@ fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
     _mx_fi = 0 - 1;
     _mx_ti = 0 - 1;
     return 1;
+}
+# ... at method-name token nt: at a site the bound's contract refused (`_bnd_site_refuse`) nothing is minted — the arm
+# consumes the call quietly, as the inferred spelling's (a mint could report the instance's own errors). CHANGELOG
+# [6.7.16]
+fn _meth_xsite(S, mf, c0, c1, nt): i64 {
+    if (_bs_n > 0) {
+        var b = _bs_find(S, nt);
+        if (b >= 0) { if (L64(_bs_tab + b * 32 + 8) < 0) { _mx_qt = 0; _ta_refd = 0; return mf; } }
+    }
+    return _meth_xinst(S, mf, c0, c1);
 }
 # The fn `p.m<c0, c1>(..)` reaches (generic method mf): its instance, else its base — refused where the free
 # spelling refuses it (`_explicit_generic_call` / `_gen_call_head`).
@@ -2378,6 +2407,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
         if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);

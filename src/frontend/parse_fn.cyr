@@ -10503,17 +10503,50 @@ fn _bnd_sites(S, fi, open): i64 {
         if (t2 == 14) { d = d - 1; if (d == 0) { return 0; } }
         if (t2 == 3) { if (TOKTYP(S, i + 1) == 2) { _bnr_decl(S, tp, blk, i + 1); } }
         if (t2 == 2) {
-            if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { if (TOKTYP(S, i + 3) == 10) {
+            if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { if (_bnd_mopen(S, fi, i + 3) == 1) {
                         if (TOKTYP(S, i - 1) != 41) {
                             var r = _bnr_find(S, TOKVAL(S, i));
                             if (r >= 0) { _bnd_site(S, tp, blk, i, r); }
                         }
                     } } }
-            if (TOKTYP(S, i + 3) == 41) { if (TOKTYP(S, i + 5) == 10) { _bnd_fsite(S, fi, blk, open, i); } }   # 6.7.14
+            if (TOKTYP(S, i + 3) == 41) { if (_bnd_mopen(S, fi, i + 5) == 1) { _bnd_fsite(S, fi, blk, open, i); } }   # 6.7.14
         }
         i = i + 1;
     }
     return 0;
+}
+# ⛔ 6.7.16 (the user's D4, 2026-10-19) — THE EXPLICIT SPELLING `v.m<..>(..)` (6.7.14's D7 (a)) IS A BOUNDED SITE TOO.
+# The scans keyed a call by `name . name (` / `name . f . name (`, so `v.other<i64>(1)` under `T: Show` was no site:
+# it compiled and called the instance's own `other` where `v.other(1)` is refused at the definition, and a bound's own
+# generic member `v.show<i64>(1)` was a struct use of T (the base the stub, refused at a scalar T). 1 = token k, just
+# past a method's name, opens its call: `(`, or a `<..>` list followed by `(` whose every name is a type
+# (`_bnd_tyname`; a type argument is a name, maybe with its own list) — so `v.n < a, b > (c)`, a comparison on a
+# field, stays one. The stub scan reads a site so recorded as a trait use (`_gs_use`, `_gs_bfield`). CHANGELOG [6.7.16]
+fn _bnd_mopen(S, fi, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t == 10) { return 1; }
+    if (t != 19) { return 0; }
+    var e = _tok_targs_close(S, k + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    var j = k + 1;
+    while (j < e) {
+        t = TOKTYP(S, j);
+        if (t == 2) {
+            if (_bnd_tyname(S, fi, TOKVAL(S, j)) == 0) { return 0; }
+        } elif (t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 0; }
+        j = j + 1;
+    }
+    return 1;
+}
+# 1 = the name `noff` is a type a type-argument list can name: generic fi's own type parameter, a scalar, a name the
+# return reader takes (a struct registered so far, Result, Option, cstring, a vector), or a struct, union or enum
+# declared anywhere in the file (pass 1 has not registered one declared below).
+fn _bnd_tyname(S, fi, noff): i64 {
+    if (_is_tparam_of(S, fi, noff) == 1) { return 1; }
+    if (_tn_scalar(L64(S + 0xEC00000 + noff)) != 0) { return 1; }
+    if (_classify_return_type(S, noff) != 0) { return 1; }
+    return _declared_any(S, noff);
 }
 # ⛔ 6.7.14 — A BOUNDED CALL ON A STRUCT CARRIER'S T FIELD: `b.v.show()` with `b: Box<T>` (`v: T`) and
 # `T: Show`. Only a call on a name declared `T` / `*T` was a bounded site, so this one was not, and the stub
@@ -14703,12 +14736,19 @@ fn _gs_gfield_at(S, gnoff, slot, fnoff): i64 {
 fn _gs_bfield(S, i): i64 {
     if (_bs_n == 0) { return 0; }
     if (TOKTYP(S, i + 3) != 41) { return 0; }
-    if (TOKTYP(S, i + 5) != 10) { return 0; }
+    if (_bs_opens(S, i + 5) == 0) { return 0; }   # 6.7.16 (D4): `b.v.m<..>(` too
     var b = _bs_find(S, i + 4);
     if (b < 0) { return 0; }
     if (L64(_bs_tab + b * 32 + 8) < 0) { return 0; }
     if (L64(_bs_tab + b * 32 + 24) != 0) { return 0; }
     return 1;
+}
+# 1 = token k, past a method name, opens a call the site scan may have recorded there: `(`, or an explicit list's `<`
+# (recorded only when `_bnd_mopen` took it, so the site's lookup is the test). CHANGELOG [6.7.16]
+fn _bs_opens(S, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t == 10 || t == 19) { return 1; }
+    return 0;
 }
 # 1 = the type at token a (past a `*`) is the bare name tpn.
 fn _gs_tok_names(S, a, tpn): i64 {
@@ -14904,7 +14944,7 @@ fn _gs_use(S, fi, i, mode): i64 {
         # scalar call refused naming i64); counting the site a struct use made the base the dead stub,
         # which has no scalar instance, so `gb(h)` / `gb<f64>(h)` with only `impl Show for f64` were
         # refused naming i64. CHANGELOG [6.7.11]
-        if (_bs_n > 0) { if (TOKTYP(S, i + 3) == 10) {
+        if (_bs_n > 0) { if (_bs_opens(S, i + 3) == 1) {   # 6.7.16 (D4): `t.m<..>(` too
                 var bsi = _bs_find(S, i + 2);
                 if (bsi >= 0) { if (L64(_bs_tab + bsi * 32 + 8) >= 0) { if (L64(_bs_tab + bsi * 32 + 24) == 0) { return 0; } } }
             } }

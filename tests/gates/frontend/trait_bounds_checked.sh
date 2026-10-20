@@ -121,6 +121,29 @@
 #      Filed: docs/development/issues/2026-10-18-later-bound-contract-refusals-swallowed-in-pass-one.md
 #      Mutant (2026-10-20): the lane's previous compiler (10afe6e68, the fix reverted) -> RED 8: N2, NS0 (both rows),
 #      NS1 (both rows), NS2, NS3, NS4 (one error each).
+#   BX (6.7.16, the user's D4, 2026-10-19) THE EXPLICIT SPELLING `v.m<..>(..)` IS HELD TO THE CONTRACT: the site scan keyed a
+#      call by `name . name (` / `name . f . name (`, so `v.other<i64>(1)` under `T: Show` was no site — it compiled and
+#      called Pt's own `other` (the filed repro exited 154) where `v.other(1)` is refused at the definition; and a bound's
+#      own generic member called so, `v.show<i64>(1)`, was a struct use of T: the base the stub, refused at a scalar T.
+#      `_bnd_mopen` takes `<..>(` after the method's name when every name in the list is a type (`_bnd_tyname`: the
+#      generic's own T, a scalar, a struct / union / enum declared anywhere), so a comparison `v.y < a, c > (1)` stays one;
+#      the stub scan reads the site as a trait use (`_bs_opens` in `_gs_use` / `_gs_bfield`); at a scalar T the member
+#      arm reads the list (`_mtargs_bs`, `_field_load_on`'s scalar arm), and a refused site mints nothing (`_meth_xsite`).
+#      BX0 the filed repro verbatim (7:38, 8:45, the notes on 'v' and 'b.v'); BX1 the definition alone, two in one body;
+#      BX2 a `p: *T`, a `var c: Box<T>`, a `*Box<T>`, the second type parameter, a generic method; BX3 lists of two, of a
+#      struct declared below, of a nested instance; BX4-BX6 a bound's generic member `v.show<i64>(1)` at a struct T, at a
+#      scalar T, and `b.v.show<i64>(1)` at a scalar T (7 each); BX7 the list kept, not re-inferred (sizeof(i16) / (i8) /
+#      (i32)); BX8 a refused site at an instance prints the definition's one error; BXK unchanged — a comparison on a
+#      bounded T's field, `if (v.y < a)`, an unbounded T's explicit call; BXU a list naming no type is no site (the call's
+#      own "unknown type"). The run-time half on every backend: tests/tcyr/crossos/trait_bound_explicit_member.tcyr.
+#      Filed: docs/development/issues/2026-10-18-explicit-method-type-args-escape-bound-contract.md
+#      Mutants (2026-10-20, a one-edit scratch copy of src/ each, CYCC= its cycc): the previous compiler (24a74beff, the
+#      fix reverted) -> RED 9: BX0 (both rows) BX1 BX2 BX3 (built) BX5 BX6 BX7 (the stub) BX8; MBX1 `_bnd_mopen` taking
+#      `(` alone -> RED 9, the same; MBX2 `_bnd_tyname` taking any name -> RED 2: BXK (the comparison refused) BXU; MBX3
+#      `_mtargs_at` without its scalar arm -> RED 3: BX5 BX6 BX7; MBX4 `_bs_opens` taking `(` alone -> RED 3: BX5 BX6 BX7
+#      (the stub); MBX5 `_meth_xsite` minting at a refused site -> RED 1: BX8 (Pt.other<i64>'s own refusal too); MBX6 no
+#      `_meth_targs` in the scalar arm -> RED 3: BX5 BX6 BX7; MBX7 no `_declared_any` -> RED 1: BX3 (a struct declared
+#      below).
 #   VB (6.7.15, the user's D10 (a), 2026-10-18) A VEC ELEMENT'S GENERIC STRUCT IS HELD TO ITS BOUNDS: `var w: Vec<Box<Pt>>
 #      = 0;` with `struct Box<T: Show>` and no `impl Show for Pt` compiled (the filed repro exited 5) — the element's
 #      list was read for names only (6.7.14's D5), the bound judged only where an instance is minted. Judged at the
@@ -773,5 +796,81 @@ ns ns4 'impl Pt { fn m<T: Show>(self, v: T): i64 { return v.other(); } }
 fn g1<T: Show>(v: T): i64 { return v.other(); }'
 errs ns4 2 "NS4: a generic method's refusal (recorded in pass 2) and a fn's both print" "error:<source>:7:53: $BDM" "error:<source>:8:38: $BDM"
 
+# BX — 6.7.16 (the user's D4, 2026-10-19): the explicit spelling `v.m<..>(..)` is held to the contract, and a bound's own
+# generic member called with it is the bound's call (at a scalar T too)
+cat > "$T/bx0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+impl Pt { fn other<V>(self, k: V): i64 { return 77; } }
+struct Box<T> { v: T; n; }
+fn gn<T: Show>(v: T): i64 { return v.other<i64>(1); }
+fn gs<T: Show>(b: Box<T>): i64 { return b.v.other<i64>(1); }
+fn go(): i64 { var p: Pt; p.y = 6; var b: Box<Pt>; b.v.y = 6; return gn(p) + gs(b); }
+syscall(60, go());
+EOF
+errs bx0 2 "BX0: the filed repro verbatim — refused at both definitions (exit 154 before)" "error:<source>:7:38: $BDM" "error:<source>:8:45: $BDM"
+if grep -qF "methods on 'v', or add" "$T/bx0.err" && grep -qF "methods on 'b.v', or add" "$T/bx0.err"; then ok "BX0: the notes name 'v' and 'b.v'"
+else bad "BX0: the notes do not name 'v' and 'b.v': $(grep '^  note' "$T/bx0.err" | tr '\n' ' ')"; fi
+BXH='include "lib/syscalls.cyr"
+trait Show { fn show<V>(self, k: V): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show<V>(self, k: V): i64 { return self.y + sizeof(V); } }
+impl Pt { fn other<V>(self, k: V): i64 { return 77; } }
+struct Box<T> { v: T; n; }'
+bx() { printf '%s\n%s\n%s\n' "$BXH" "$2" "$3" > "$T/$1.cyr"; }
+bx bx1 'fn gn<T: Show>(v: T): i64 { var a = v.other<i64>(1); var b = v.other<i64>(2); return a + b; }' 'syscall(60, 3);'
+errs bx1 2 "BX1: the definition alone, never called — both calls of one body refused there" "error:<source>:7:39: $BDM" "error:<source>:7:64: $BDM"
+bx bx2 'fn gp<T: Show>(p: *T): i64 { return p.other<i32>(1); }
+fn gl<T: Show>(x: T): i64 { var c: Box<T>; c.v = x; var r = c.v.other<i64>(1); return r; }
+fn gq<T: Show>(b: *Box<T>): i64 { return b.v.other<i64>(1); }
+fn g2<U, T: Show>(k: U, b: Box<T>): i64 { return b.v.other<i64>(1) + k; }
+struct Q { k; }
+impl Q { fn m<T: Show>(self, v: T): i64 { return v.other<i64>(1); } }' 'syscall(60, 3);'
+errs bx2 5 "BX2: a p: *T, a var c: Box<T>, a *Box<T>, the second type parameter, a generic method" "error:<source>:7:39: $BDM" "error:<source>:8:65: $BDM" "error:<source>:9:46: $BDM" "error:<source>:10:54: $BDM" "error:<source>:12:52: $BDM"
+bx bx3 'fn gn<T: Show>(v: T): i64 { return v.other<Pt, i64>(1); }
+fn gl<T: Show>(v: T): i64 { return v.other<Later>(1); }
+fn gb<T: Show>(v: T): i64 { return v.other<Box<i64>>(1); }
+struct Later { a; }' 'syscall(60, 3);'
+errs bx3 3 "BX3: lists of two, of a struct declared below, of a nested instance (a \`>>\` close)" "error:<source>:7:38: $BDM" "error:<source>:8:38: $BDM" "error:<source>:9:38: $BDM"
+bx bx4 'fn gn<T: Show>(v: T): i64 { return v.show<i64>(1); }' 'fn go(): i64 { var p: Pt; p.y = 6; return gn(p) - 7; }
+syscall(60, go());'
+exits bx4 7 "BX4: a bound's own generic member, v.show<i64>(1), at a struct T (6 + 8 - 7)"
+BXS='impl Show for i64 { fn show<V>(self, k: V): i64 { return self + sizeof(V); } }'
+bx bx5 "$BXS
+fn gn<T: Show>(v: T): i64 { return v.show<i64>(1); }" 'syscall(60, gn(0 - 1));'
+exits bx5 7 "BX5: ... at a scalar T, impl Show for i64 (refused before: the stub base)"
+bx bx6 "$BXS
+fn gs<T: Show>(b: Box<T>): i64 { return b.v.show<i64>(1); }" 'fn go(): i64 { var b: Box<i64>; b.v = 0 - 1; b.n = 0; return gs(b); }
+syscall(60, go());'
+exits bx6 7 "BX6: the field form b.v.show<i64>(1) at a scalar T (refused before: the stub base)"
+bx bx7 "$BXS
+fn gn<T: Show>(v: T): i64 { return v.show<i16>(1) * 10 + v.show<i8>(1); }
+fn gs<T: Show>(b: Box<T>): i64 { return b.v.show<i32>(1); }" 'fn go(): i64 { var p: Pt; p.y = 1; var b: Box<i64>; b.v = 1; b.n = 0; var c: Box<Pt>; c.v.y = 1; return gn(p) + gn(1) + gs(b) + gs(c); }
+syscall(60, go());'
+exits bx7 74 "BX7: the list is kept, not re-inferred — sizeof(i16), sizeof(i8), sizeof(i32) at a struct and a scalar T (32 + 32 + 5 + 5)"
+bx bxk 'fn g<T: Show>(v: T, a, c): i64 { return id2(v.y < a, c > (1)); }
+fn gf<T: Show>(b: Box<T>, a, c): i64 { return id2(b.v.y < a, c > (1)); }
+fn gi<T: Show>(v: T, a): i64 { if (v.y < a) { return 1; } return 0; }
+fn u<T>(v: T): i64 { return v.other<i64>(1); }
+fn id2(a, b): i64 { return a * 10 + b; }' 'fn go(): i64 { var p: Pt; p.y = 6; var b: Box<Pt>; b.v.y = 6; return g(p, 9, 3) + gf(b, 9, 3) + gi(p, 9) + u(p) - 100; }
+syscall(60, go());'
+exits bxk 0 "BXK: unchanged — a comparison on a bounded T's field (v.y < a, c > (1); not a type list), if (v.y < a), an unbounded T's explicit call (77)"
+bx bxu 'fn gn<T: Show>(v: T): i64 { return v.other<Nope>(1); }' 'fn go(): i64 { var p: Pt; p.y = 6; return gn(p); }
+syscall(60, go());'
+refused bxu "unknown type 'Nope' as a type argument" "BXU: a list naming no type is no site — the call reports its unknown type"
+cat > "$T/bx8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.y; } }
+impl Pt { fn other<V>(self, k: V): i64 { return k.x; } }
+fn gn<T: Show>(v: T): i64 { return v.other<i64>(1); }
+fn go(): i64 { var p: Pt; p.y = 6; return gn(p); }
+syscall(60, go());
+EOF
+errs bx8 1 "BX8: a refused site's call is consumed quietly at the instance — nothing minted, so Pt.other<i64>'s own refusal does not print" "error:<source>:6:38: $BDM"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too (BX, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
