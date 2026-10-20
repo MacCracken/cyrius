@@ -794,7 +794,7 @@ fn _dl_fn_quiet(S, noff, kw, meth): i64 {
 # reporter, and one declared nowhere is still reported. A payload member's constructor is a fn: `_dl_fn_quiet`.
 # CHANGELOG [6.7.15]
 var _dlr = 0;   # the refused names (name offsets), a vec made at the first
-var _dlv = 0;   # (scope, name) pairs: the variables `_ann_refd_mark` marked, a vec made at the first
+var _dlv = 0;   # (scope, name, slot) triples: the variables `_ann_refd_mark` marked, a vec made at the first
 fn _dl_names(S, a, e): i64 {
     var d = 0;
     var i = a;
@@ -869,6 +869,11 @@ fn _dl_refd_ann(S, ti, vnoff): i64 {
 # The stand-down helper the "no struct type in scope" reporters share: variable `vnoff`, declared here — a local
 # or a parameter of the fn being compiled (its `_cur_fn_ix`), at top level a global — took an annotation that was
 # refused (or, `_slit_stray`, a refused struct's literal), so its uses are counted, not reported (`_ann_refd_said`).
+# ⛔ 6.7.16 — THE RECORD IS THE VARIABLE, NOT ITS NAME: (scope, name) stood down every same-named variable of the
+# fn, so `var x: Foo = 5; if (1) { var x = 7; return x.a; }` lost the inner, untyped x's genuine "no struct type
+# in scope for 'x'". The slot is pending (-1) here — the mark comes before the declaration registers — and the
+# registration binds it (`_ann_refd_bind`: a local's, a parameter's, a global's after the fold); a record no
+# registration bound matches by name, as before. CHANGELOG [6.7.16]
 fn _ann_refd_mark(S, vnoff): i64 {
     if (vnoff < 0) { return 0; }
     if (_dlv == 0) { _dlv = vec_new(); }
@@ -876,7 +881,40 @@ fn _ann_refd_mark(S, vnoff): i64 {
     if (GINFN(S) == 1) { sc = _cur_fn_ix; }
     vec_push(_dlv, sc);
     vec_push(_dlv, vnoff);
+    vec_push(_dlv, 0 - 1);
     return 0;
+}
+# A declaration of `noff` registered as `idx` (a global >= 0, a local or parameter `0 - 2 - li`): every record of
+# its scope and name still pending is its. Nothing to do when no variable was marked.
+fn _ann_refd_bind(S, noff, idx): i64 {
+    if (_dlv == 0) { return 0; }
+    var sc = 0 - 2;
+    if (GINFN(S) == 1) { sc = _cur_fn_ix; }
+    var n = vec_len(_dlv);
+    var i = 0;
+    while (i < n) {
+        if (_ann_refd_rec(S, i, sc, noff, 0 - 1) == 1) { vec_set(_dlv, i + 2, idx); }
+        i = i + 3;
+    }
+    return 0;
+}
+# Local slot `li`'s registration (`_ann_refd_bind`), its name read from the slot.
+fn _ann_refd_bind_l(S, li): i64 {
+    if (_dlv == 0) { return 0; }
+    return _ann_refd_bind(S, L64(S + 0x5D9D000 + li * 8), 0 - 2 - li);
+}
+# Global `vi`'s registration (`_ann_refd_bind`), its name read from the slot.
+fn _ann_refd_bind_g(S, vi): i64 {
+    if (_dlv == 0) { return 0; }
+    return _ann_refd_bind(S, L64(_varn_base + vi * 8), vi);
+}
+# 1 = record `i` is scope `sc`'s and names `noff`, and its slot is `idx` or pending (-1): a use (`idx` a slot)
+# matches its bound variable or a pending record; a registration (`idx` -1) only a pending one.
+fn _ann_refd_rec(S, i, sc, noff, idx): i64 {
+    if (vec_get(_dlv, i) != sc) { return 0; }
+    var b = vec_get(_dlv, i + 2);
+    if (b != idx) { if (b != 0 - 1) { return 0; } }
+    return STREQ(S, vec_get(_dlv, i + 1), noff);
 }
 # 1 = variable `noff`, resolved to `idx` (a global >= 0, a local < -1), was marked by `_ann_refd_mark` in its
 # scope: counted as ERR_IDENT would count the report (`_had_error`, the panic latch: the statement resyncs), not
@@ -892,14 +930,12 @@ fn _ann_refd_said(S, noff, idx): i64 {
     var n = vec_len(_dlv);
     var i = 0;
     while (i < n) {
-        if (vec_get(_dlv, i) == sc) {
-            if (STREQ(S, vec_get(_dlv, i + 1), noff) == 1) {
-                _had_error = 1;
-                _panic = 1;
-                return 1;
-            }
+        if (_ann_refd_rec(S, i, sc, noff, idx) == 1) {
+            _had_error = 1;
+            _panic = 1;
+            return 1;
         }
-        i = i + 2;
+        i = i + 3;
     }
     return 0;
 }

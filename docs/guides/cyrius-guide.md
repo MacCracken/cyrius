@@ -216,7 +216,9 @@ name that only *starts* like one gets a hint (`'i8x' is not 'i8' - a type name m
 whole`). A type with no place at a site is refused once, its `<..>` with it
 (`fn f(): Vec<i64>` is one error). The variable or parameter whose annotation was refused adds no error of its own (6.7.15): its
 `.field` reads, field stores and `.m()` calls are the annotation's one error (`var x: Foo = 5; return x.a;`, `fn f(q:
-*Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Not yet a top-level
+*Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Only that variable: a
+same-named one declared in a nested or a sibling block is another variable, and its own errors are reported (6.7.16;
+through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). Not yet a top-level
 `var P: *Foo` global: its uses still add an error naming a struct it never had (filed). Before 6.6.16 most sites matched a prefix
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`

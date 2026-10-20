@@ -2667,10 +2667,12 @@ fn _sl_last_marks(S, li, lbool, st, ann): i64 {
     if (st >= 1) { if (st <= 8) { SLINTD(S, li); } }
     if (GLPTRP(S, li) == 1) { _sl_ptr_ed(S, li, ann); }
     _dsc_stamp(S, li, _dsc_name(S, ann));   # 6.7.8 (D5): a declared scalar a dyn is formed from
+    _ann_refd_bind_l(S, li);   # 6.7.16: a refused annotation's stand-down is this slot's
     return 0;
 }
 fn _gv_last_marks(S, vi, b, st, ann): i64 {
     SVBOOL(S, vi, b);
+    _ann_refd_bind_g(S, vi);   # 6.7.16: a refused annotation's stand-down is this global's (after the fold)
     _gv_ped_set(vi, _ek_of_ptr_ann(S, ann));
     _gv_pvd_set(vi, _ek_vd(S, ann));   # 6.7.12: a `*V`'s vector
     _gv_ppn_set(vi, _ek_pin(S, ann));  # 6.7.13: a `**T`'s pointee

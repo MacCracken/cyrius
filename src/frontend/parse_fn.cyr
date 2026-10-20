@@ -13489,6 +13489,7 @@ fn _param_record(S, li, pnoff, is_async): i64 {
     if (_cur_fn_slp == li + 1) { SLSLICE(S, li, 8 | (8 << 32)); }   # 6.7.8 (C2-6a): see _sl_param_refuse
     _cur_fn_slp = 0;
     _dsc_param_slot(S, li);   # 6.7.8 (D5): last
+    _ann_refd_bind(S, pnoff, 0 - 2 - li);   # 6.7.16: a refused annotation's stand-down is this parameter's
     return 0;
 }
 # ⛔ 6.7.8 (C2-6a) — A SLICE PARAMETER IS REFUSED BY NAME (the user's decision, 2026-10-10: slices

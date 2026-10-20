@@ -5121,6 +5121,7 @@ fn _gvi_store(S, vi): i64 {
 # and the nameless high half has no other reference — an EFLSTORE to it would be patched into a
 # register move and leave the stack slot unwritten. A `lea` keeps a slot in memory.
 fn _w16_local_init(S, lc, ann): i64 {
+    _ann_refd_bind_l(S, lc);   # 6.7.16: a refused slice element's stand-down is this slot's
     if (TOKTYP(S, ann) == 105) {
         _w128_init_place(S, 1, lc);
         SLW128(S, lc);

@@ -133,6 +133,23 @@ refuse() {  # $1 label  $2 expected message  $3 source  [$4 "one" = exactly one 
     fi
 }
 
+# The error lines EXACTLY (`line:col: message`, each line's `error:<source>:` stripped, joined by `|`), and no
+# binary: a row that pins which uses are reported and which stand down. 6.7.16
+refuse_at() {  # $1 label  $2 the expected error lines  $3 source
+    printf '%s' "$3" > "$D/r.cyr"
+    rc=0
+    cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || rc=$?
+    nrefuse=$((nrefuse+1))
+    got=$(grep '^error' "$D/r.err" 2>/dev/null | sed 's/^error:<source>://' | tr '\n' '|' | sed 's/|$//' || true)
+    if [ -s "$D/r.bin" ]; then
+        printf '  FAIL: %-34s still emitted a binary (rc=%s)\n' "$1" "$rc"; fail=$((fail+1))
+    elif [ "$got" != "$2" ]; then
+        printf '  FAIL: %-34s error lines\n    got:  %s\n    want: %s\n' "$1" "$got" "$2"; fail=$((fail+1))
+    else
+        printf '  ok(refused): %-28s\n' "$1"; pass=$((pass+1))
+    fi
+}
+
 _run() {  # $1 source-file -> echoes the exit code, or X when nothing was emitted
     cat "$1" | "$CC" > "$D/a.bin" 2>"$D/a.err" || true
     if [ -s "$D/a.bin" ]; then
@@ -506,6 +523,126 @@ refuse "U28 control: a local named like a refused global" "$MS 'X'" "$UQ"'var X:
 fn g(): i64 { var X = 5; return X.a; }
 syscall(60, g());
 ' 2
+
+# SH1-SH12 (6.7.16, issues/2026-10-18-refused-annotation-stand-down-silences-a-shadowing-block-variable.md) — THE STAND-DOWN
+# IS THE VARIABLE'S, NOT ITS NAME'S. U13-U28's record was (fn, name), so a same-named variable in a nested or sibling
+# block had its own genuine "no struct type in scope" silenced: SH1 (the filed repro, verbatim) printed only 4:12. The
+# record now holds the refused declaration's slot, bound when it registers (`_ann_refd_bind`, parse_fn_def.cyr: a
+# local, a parameter, a slice, a global after the fold), and a use stands down only on that slot. Each row: the exact
+# error lines — the refused variable's own uses (SH2's outer `x.a`) still say nothing, the shadow's are reported.
+#   the tree before (`_ann_refd_said` matching (scope, name) only)   -> RED 10: SH1 SH3-SH11 (the shadow's line missing)
+#   the binding never made (`_ann_refd_bind` returning 0)           -> RED 10: as above (every record stays pending)
+#   `_param_record` not binding                                      -> RED 1: SH4
+#   `_gv_last_marks` not binding                                     -> RED 2: SH5 SH6
+#   real tree                                                        -> GREEN
+echo "6.7.16 — the refused-annotation stand-down is the refused variable's, not every same-named one's:"
+SN="no struct type in scope for"
+SA="; a '.field' access needs its struct declaration (missing include?)"
+refuse_at "SH1 the filed repro (block shadow)" "4:12: unknown type 'Foo' for variable 'x'|5:35: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 {
+    var x: Foo = 5;
+    if (1) { var x = 7; return x.a; }
+    return 0;
+}
+syscall(60, main());
+'
+refuse_at "SH2 the refused x's own x.a: silent" "4:12: unknown type 'Foo' for variable 'x'" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 {
+    var x: Foo = 5;
+    if (1) { var y = x.a; x.b = 2; }
+    return x.a + x.m();
+}
+syscall(60, main());
+'
+refuse_at "SH3 a sibling block's refused x" "4:21: unknown type 'Foo' for variable 'x'|5:35: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn main(): i64 {
+    if (1) { var x: Foo = 5; var y = x.a; }
+    if (1) { var x = 7; return x.a; }
+    return 0;
+}
+syscall(60, main());
+'
+refuse_at "SH4 a refused parameter, shadowed" "3:9: unknown type 'Foo' for parameter 'x'|4:35: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn f(x: Foo): i64 {
+    if (1) { var x = 7; return x.a; }
+    return x.a;
+}
+syscall(60, f(1));
+'
+refuse_at "SH5 top level after a stmt, block" "5:8: unknown type 'Foo' for variable 'x'|6:36: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct Q { a; b; }
+var y = 1;
+y = 2;
+var x: Foo = 5;
+if (1) { var x = 7; syscall(60, x.a); }
+syscall(60, x.a);
+'
+refuse_at "SH6 a zone global, top-level block" "3:8: unknown type 'Foo' for variable 'X'|6:28: $SN 'X'$SA" 'include "lib/syscalls.cyr"
+struct P { a; }
+var X: Foo = 5;
+var y = 1;
+y = 2;
+if (1) { var X = 7; y = X.a; }
+syscall(60, X.a + y);
+'
+refuse_at "SH7 a refused late struct's annotation" "4:1: a \`struct\` declaration must come before the first top-level statement (line 3)|7:35: $SN 'q'$SA" 'include "lib/syscalls.cyr"
+var a = 1;
+a = 2;
+struct Q { y; }
+fn f(): i64 {
+    var q: Q = 0;
+    if (1) { var q = 7; return q.y; }
+    return q.y;
+}
+syscall(60, f());
+'
+refuse_at "SH8 a refused struct's literal" "4:1: a \`struct\` declaration must come before the first top-level statement (line 3)|7:35: $SN 'q'$SA" 'include "lib/syscalls.cyr"
+var a = 1;
+a = 2;
+struct Q { y; }
+fn f(): i64 {
+    var q = Q { 5 };
+    if (1) { var q = 7; return q.y; }
+    return q.y;
+}
+syscall(60, f());
+'
+refuse_at "SH9 the shadow's store and method" "4:12: unknown type 'Foo' for variable 'x'|5:29: $SN 'x'; a '.field' assignment needs its struct declaration (missing include?)|7:35: $SN 'x'; a method call needs its struct declaration (missing include?)" 'include "lib/syscalls.cyr"
+struct P { a; }
+fn f(): i64 {
+    var x: Foo = 5;
+    if (1) { var x = 7; x.a = 3; }
+    x.a = 4;
+    if (1) { var x = 8; return x.m(); }
+    return x.m();
+}
+syscall(60, f());
+'
+refuse_at "SH10 a generic's two instances" "4:12: unknown type 'Foo' for variable 'x'|5:35: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+struct P { a; }
+fn g<T>(v: T): i64 {
+    var x: Foo = 5;
+    if (1) { var x = 7; return x.a; }
+    return x.a;
+}
+syscall(60, g(1) + g<i32>(2));
+'
+refuse_at "SH11 in a closure body" "4:39: unknown type 'Foo' for variable 'x'|4:78: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct P { a; }
+fn main(): i64 { var f = |k| { var x: Foo = 5; if (1) { var x = 7; return x.a; } return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+refuse_at "SH12 a redeclared zone global (folded)" "4:8: unknown type 'Foo' for variable 'X'" 'include "lib/syscalls.cyr"
+struct P { a; }
+var X = 1;
+var X: Foo = 5;
+syscall(60, X.a);
+'
 
 # AS (6.7.14, the user's decision D27 (a), 2026-10-16; issues/2026-10-16-struct-call-result-assigned-to-scalar-keeps-
 # first-word.md) — a struct result over 8 B ASSIGNED to a scalar (a local, a parameter or a global declared `: i64`,
