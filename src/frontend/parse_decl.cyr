@@ -2689,6 +2689,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     if (PEEKT(S) == 28) { return _fld_sub_store(S, idx, sid, off, hop, term); }   # 6.7.8: `h.p[i] = v`
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
+    var lps = _istr_pfs(S, _rlf_si, _rlf_fi);   # 6.7.16 (D19): a `*Str` field, read before the RHS too
     var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
     if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, term); }
     if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `h.x, b = f();`
@@ -2706,6 +2707,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
         var fst_ti = GTI(S);
         PCMPE(S);
         _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
+        _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
     var fst_sz = FIELDSZ(S, ft);
@@ -7822,15 +7824,47 @@ fn _istr_lit(S, ft, t0): i64 {
     return _istr_ra(S, r);
 }
 # `*p = <v>` with the operand [d + 1, ti - 1) typed `*Str`, the value just parsed from `ti`: as `_istr_fsc`.
+# 6.7.16 (D19, below): and `*pp = <v>` with the operand a `**Str` (`*pp` the `*Str` slot it points at, `_istr_dspp`).
 fn _istr_dsto(S, d, ti): i64 {
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
-    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { return 0; }
+    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { return _istr_dspp(S, d, ti, ss); }
+    return _istr_dsv(S, ti);
+}
+# The value just parsed from `ti` into a `Str` slot through a pointer: a global's or a capture's inline `Str` is its
+# header's address in rax; a frame's is refused by name.
+fn _istr_dsv(S, ti): i64 {
     var r = _istr_at(S, ti, GTI(S));
     if (r == 1) {
         return _istr_esc(S, "cannot store the inline Str ",
           " through a pointer - its header lives in this frame and would dangle (store a handle: str_new(data, len))");
     }
+    return _istr_ra(S, r);
+}
+# ⛔ 6.7.16 — AN INLINE `Str` STORED INTO A `*Str` FIELD OR THROUGH A `**Str` TAKES ITS HEADER'S ADDRESS, as 6.7.15's
+# D16 has a `*Str` name take it (the user's D19, 2026-10-19): `w.p = gt`, `GW.p = gt`, `pw.p = gt` (a `*Str` field of a
+# local, a global, through a `*W`) and `*pp = gt` (pp a `**Str`) stored gt's data word — `str_len(w.p)` read the
+# string's bytes as a header. A frame's t is refused by name: into ANY field — a local struct's too — with the words a
+# `Str` field has (`v.s = t`, 6.7.13's D7 (1): D19), through `*pp` with the pointer's. A capture's copy is already its
+# environment address. CHANGELOG [6.7.16]
+# `*pp = <v>` (`_istr_dsto`): the operand [d + 1, ti - 1) a `**Str` (its pointee the `*Str` `_hl_dref_psid` names).
+fn _istr_dspp(S, d, ti, ss): i64 {
+    if (_hl_dref_psid(S, d + 1, ti - 1) != ss) { return 0; }
+    return _istr_dsv(S, ti);
+}
+# 1 = field `fi` of struct `si` (`_fst_on`'s leaf, read before the RHS) is a `*Str`: its pointee `Str` and its step
+# the header's 16 bytes (`_istr_pdst`: no `**Str`).
+fn _istr_pfs(S, si, fi): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_fld_ptr_sid(S, si, fi) != ss) { return 0; }
+    return _istr_pdst(S, _fld_ps_get(S, si, fi), 1);
+}
+# The value of a field store just parsed from `ti` (`_fst_on`), `pf` = `_istr_pfs`'s answer for its field.
+fn _istr_pfld(S, pf, ti): i64 {
+    if (pf == 0) { return 0; }
+    var r = _istr_at(S, ti, GTI(S));
+    if (r == 1) { return _istr_fsc_err(S); }
     return _istr_ra(S, r);
 }
 # ⛔ 6.7.14 — AN INLINE `Str` TAKES A COPY OF A `Str` HANDLE'S HEADER (the user's decision D20 (a), 2026-10-16). `t = a`
