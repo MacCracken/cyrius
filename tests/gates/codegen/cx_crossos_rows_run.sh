@@ -9,7 +9,7 @@
 # runner executes a crossos .tcyr on cxvm, so the cx half of those fixes would otherwise ship as a
 # false green — a row in tests/tcyr/crossos/ proves nothing about cx until something runs it there.
 #
-# ROWS (76, all required — the count is checked, so a row that silently stops running is RED)
+# ROWS (78, all required — the count is checked, so a row that silently stops running is RED)
 #   R1  B01 inline rows (V1: plain / compound for steps and compound-op loads on packed u8 / i8 /
 #       u16 globals and narrow locals): exit 0 AND the `cx-rows B01 ok` marker — native, then cxvm.
 #       On cx this needs B06's width-correct EVSTORE_W / EFLSTORE_W as well as B01's frontend fix.
@@ -125,6 +125,12 @@
 #       its directory walk needs getdents64, its FIFO mknodat, its forked walk wait4 and sleep_ms (a
 #       no-op on cx until 6.7.16, so the 5 s window was ~0): all four answered -38, `2 passed, 6
 #       failed` on every host's cxvm.
+#   R27 (6.7.16; issues/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md)
+#       tests/tcyr/crossos/impl_self_typed.tcyr — an untyped `self` is a `*T`, an impl written ABOVE its struct
+#       included (`Lo_raw(lo)` / `Lo_set(lo, ..)` / `Lt_first(lt)` pass &lo / &lt): native and cxvm each print
+#       `<N> passed, 0 failed`, N derived from the source (21, floor 21), the whole file. Before the fix the impl
+#       above its struct was refused natively and, built, failed on cxvm "guest address out of range: 5"; the
+#       crossos leg runs the file natively on the four hosts, and nothing ran it on cx.
 #   Anti-vacuous: each inline file's native leg is the control (a cx green on a file that is wrong
 #   everywhere is impossible), each .tcyr must match a count derived from its source, and each
 #   inline success needs a stdout marker printed only when every row in it is right.
@@ -189,6 +195,9 @@
 #      mknodat (259) dropped -> RED (5 passed, 3 failed). Its poll (7) arm dropped stays GREEN here:
 #      on this host the forked walks end inside the parent's un-slept WNOHANG loop. The sleep is held
 #      by cx_guest_syscall_refusal.sh R9 (sleep_ms(60) takes 60 ms) and the cx_host_dispatch fixture.
+#   o. (6.7.16, R27; the real tree 78/78) a scratch copy with the fix's src reverted (eafa5a40d: the end of pass 1
+#      re-reads an impl met above its struct), its cycc as CYCC and its main_cx.cyr's cycc_cx as CYCC_CX -> R27 RED on
+#      both legs ("no struct type in scope for 'self'" at 34:38), 76 green.
 # Exit 77 = could not run (no compiler at $CC, no timeout(1)); never a SKIP line with exit 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -754,8 +763,13 @@ elif "$CX" < "$src" > "$T/aw.cyx" 2> "$T/awce"; then
     summary "R26 $src cxvm" "$T/awco" "$RC" "$w"
 else bad "R26 cxvm: cycc_cx does not compile it: $(grep -m1 '^error' "$T/awce")"; fi
 
-WANT=76
+# ── R27 — impl_self_typed (6.7.16): an impl above its struct, its untyped `self` a `*T` on cx too ──
+echo "R27 — impl_self_typed.tcyr (6.7.16: an impl written above its struct), native then cxvm, the count derived from the source:"
+tcyr_native tests/tcyr/crossos/impl_self_typed.tcyr 21
+tcyr_cx     tests/tcyr/crossos/impl_self_typed.tcyr 21
+
+WANT=78
 if [ "$fail" -ne 0 ]; then echo "FAIL: cx_crossos_rows_run — $fail row(s) red, $pass green"; exit 1; fi
 if [ "$pass" -ne "$WANT" ]; then echo "FAIL: cx_crossos_rows_run — $pass rows ran, want $WANT (a row stopped running)"; exit 1; fi
-echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21), and the path-call files (pe_open_failure_errno, open_flags_per_target, atomic_write_temp_exclusive) and the filed file_write_atomic run on cxvm as natively (R22-R25), and audit_walk_fifo's walk, FIFO and forked child (getdents64 / mknodat / wait4 / sleep) on cxvm as natively (R26)"
+echo "PASS: cx_crossos_rows_run — $pass/$WANT rows: V1-V4 hold on cxvm and natively (B01/B02/B03 inline rows, narrow_slot_width + generic_struct_inference + struct_field_value_copy + tuple_values counts derived from source), every crossos file the 16 B pair kept off cx runs there in full, dyn_objects (the checked dyn's forming and calls) runs there whole, var t, v = fncallN(..) + method_pair_result build and run on cx as natively, a folded INT_MIN / -1 global never traps cxvm, the handle line for locals and globals (small_struct_handle_line, small_struct_global_handle_line) holds on cxvm as natively, a pointer into a small by-value struct parameter passes its struct (small_struct_pointer_arg), a struct copy through a small *T copies the struct (small_struct_pointer_copy), u8 / u16 / u32 / f32 fields are their widths (narrow_unsigned_f32_fields), the sakshi fold logs and spans on cx, cx's 4 MiB code region holds a ~4 MB program, refuses a larger one by name, and carries the yukti crossos file (R19-R21), and the path-call files (pe_open_failure_errno, open_flags_per_target, atomic_write_temp_exclusive) and the filed file_write_atomic run on cxvm as natively (R22-R25), and audit_walk_fifo's walk, FIFO and forked child (getdents64 / mknodat / wait4 / sleep) on cxvm as natively (R26), and an impl above its struct types its untyped self on cxvm as natively (R27)"
 exit 0
