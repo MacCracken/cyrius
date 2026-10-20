@@ -70,6 +70,12 @@ fi
 
 n=$(basename "$f")
 b="$W/$n"
+# A program that runs itself as a child (argv(0) / /proc/self/exe) needs an aarch64 binfmt_misc entry
+# under qemu-user: without one the child's execve fails ENOEXEC, the spawn answers 127, and a64 reads
+# as a false aarch64 failure (docs/development/dev-tools-linux.md, Local self-host repro). 6.7.16
+if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] && grep -qE 'argv\(0\)|/proc/self/exe' "$f"; then
+    echo "xb: note: $n spawns itself and this host has no aarch64 binfmt_misc entry (qemu-user-binfmt): its a64 child cannot exec (127), so a64 may fail where pi passes" >&2
+fi
 build/cycc < "$f" > "$b.x" 2> "$b.x.err"; rx=$?
 if [ "$rx" = 0 ]; then chmod +x "$b.x"; "$b.x" > /dev/null 2>&1; ex=$?; else ex="BUILD($rx)"; fi
 "$W/cc_a64" < "$f" > "$b.a" 2> "$b.a.err"; ra=$?
