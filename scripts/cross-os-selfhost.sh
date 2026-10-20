@@ -407,6 +407,11 @@ _co_cass_defender() {
 #   L3  HOME = a throwaway whose .cyrius/bin/cyrius is a stub that reports its own HOME and PATH as
 #       an `error:` line: the published message must carry the server's HOME and PATH, so the
 #       wrapper child got the server's environment (it ran with none on macOS).
+#   L4  L1's HOME, a project _lspf whose entry src/main.cyr includes a.cyr, b.cyr and d.cyr, d.cyr
+#       with an error: opening the clean fragment b.cyr publishes on it ONE Information note,
+#       exactly `checked as part of src/main.cyr, which has 1 error in another file` — a host unit
+#       names no target selector. On x86_64 macOS the host target is also a selectable one, and the
+#       note read `(CYRIUS_MACHO=1)` (the tools lane's review, 6.7.16; that mutant -> L4 RED on ach).
 # A miss fails the leg by name (LSP_FAIL: <host>), with the server's log. Mutations (measured
 # 6.7.16, each leg run from a scratch copy of the tree): the 6.7.15 programs/cyrius-lsp.cyr (the
 # /proc reads) -> L1, L2 and L3 RED on ecb and on ach, every log `cycc not found — diagnostics
@@ -415,7 +420,7 @@ _co_cass_defender() {
 # _co_lsp_msg <json> — one Content-Length-framed message.
 _co_lsp_msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c | tr -d ' ')" "$1"; }
 
-# _co_lsp <host> <compile command> <cc> <cli> [<cc's other name>…] — stage, build and run L1-L3 on
+# _co_lsp <host> <compile command> <cc> <cli> [<cc's other name>…] — stage, build and run L1-L4 on
 # <host> (from ~/$RD, where <cc> and <cli> already are), pulling the outputs back to $CO_TMP. Fails
 # only when the staging or the build fails; _co_lsp_check grades.
 _co_lsp() {
@@ -429,25 +434,37 @@ _co_lsp() {
   printf '[package]\nname = "lspleg"\nversion = "0.1.0"\n' > "$CO_TMP/_lspst/_lspp/cyrius.cyml"
   printf 'fn f(): i64 {\n    return 1 +;\n}\nvar r = f();\n' > "$CO_TMP/_lspst/_lspp/e.cyr"
   printf '#!/bin/sh\necho "error:e.cyr:1:1: stub-env HOME=[$HOME] PATH=[$PATH]" >&2\nexit 1\n' > "$CO_TMP/_lspst/_lspstub"
+  mkdir -p "$CO_TMP/_lspst/_lspf/src" || return 1
+  printf '[package]\nname = "lspfrag"\nversion = "0.1.0"\n\n[build]\nentry = "src/main.cyr"\n' > "$CO_TMP/_lspst/_lspf/cyrius.cyml"
+  printf 'include "src/a.cyr"\ninclude "src/b.cyr"\ninclude "src/d.cyr"\nsyscall(60, total_b());\n' > "$CO_TMP/_lspst/_lspf/src/main.cyr"
+  printf 'var shared_x = 40;\nfn helper_a(): i64 { return 2; }\n' > "$CO_TMP/_lspst/_lspf/src/a.cyr"
+  printf 'fn total_b(): i64 { return shared_x + helper_a(); }\n' > "$CO_TMP/_lspst/_lspf/src/b.cyr"
+  printf 'var d1 = 1;\nvar bad = nope_d + 1;\n' > "$CO_TMP/_lspst/_lspf/src/d.cyr"
+  { _co_lsp_msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+    _co_lsp_msg "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://$_LRP/_lspf/src/b.cyr\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}"
+    _co_lsp_msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
+    _co_lsp_msg '{"jsonrpc":"2.0","method":"exit"}'; } > "$CO_TMP/_lspst/_lsp4.req"
   { _co_lsp_msg '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
     _co_lsp_msg "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://$_LRP/_lspp/e.cyr\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}"
     _co_lsp_msg '{"jsonrpc":"2.0","id":2,"method":"shutdown"}'
     _co_lsp_msg '{"jsonrpc":"2.0","method":"exit"}'; } > "$CO_TMP/_lspst/_lsp.req"
-  (cd "$CO_TMP/_lspst" && tar czf ../_co_lsp.tgz _lspp _lspstub _lsp.req) || return 1
+  (cd "$CO_TMP/_lspst" && tar czf ../_co_lsp.tgz _lspp _lspf _lspstub _lsp.req _lsp4.req) || return 1
   scp -q $SSHO "$CO_TMP/_co_lsp.tgz" "$_lh:~/$RD/" \
-    && ssh $SSHO "$_lh" "cd ~/$RD && rm -rf _lspp _lsph _lsph2 && tar xzf _co_lsp.tgz && cat programs/cyrius-lsp.cyr | $_lcmd > _lsp 2> _lsp.berr && test -s _lsp && chmod +x _lsp _lspstub$_lsg \
+    && ssh $SSHO "$_lh" "cd ~/$RD && rm -rf _lspp _lspf _lsph _lsph2 && tar xzf _co_lsp.tgz && cat programs/cyrius-lsp.cyr | $_lcmd > _lsp 2> _lsp.berr && test -s _lsp && chmod +x _lsp _lspstub$_lsg \
       && mkdir -p _lsph/.cyrius/bin _lsph2/.cyrius/bin && cp $_lcc _lsph/.cyrius/bin/cycc$_lx && cp $_lcli _lsph/.cyrius/bin/cyrius && cp _lsp _lsph/.cyrius/bin/cyrius-lsp \
       && cp $_lcc _lsph2/.cyrius/bin/cycc && cp _lspstub _lsph2/.cyrius/bin/cyrius" \
     || { echo "  lsp: programs/cyrius-lsp.cyr did not build on $_lh, or the homes could not be staged (~/$RD/_lsp.berr)"; return 1; }
   ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i HOME=$_LRP/_lsph PATH=/usr/bin:/bin $_LRP/_lsp < ../_lsp.req > ../_lsp1.out 2> ../_lsp1.log" || true
   ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i PATH=/usr/bin:/bin $_LRP/_lsph/.cyrius/bin/cyrius-lsp < ../_lsp.req > ../_lsp2.out 2> ../_lsp2.log" || true
   ssh $SSHO "$_lh" "cd ~/$RD/_lspp && env -i HOME=$_LRP/_lsph2 PATH=/usr/bin:/bin $_LRP/_lsp < ../_lsp.req > ../_lsp3.out 2> ../_lsp3.log" || true
-  for _lf in _lsp1.out _lsp1.log _lsp2.out _lsp2.log _lsp3.out _lsp3.log; do rm -f "$CO_TMP/$_lf"; done
-  scp -q $SSHO "$_lh:~/$RD/_lsp1.out" "$_lh:~/$RD/_lsp1.log" "$_lh:~/$RD/_lsp2.out" "$_lh:~/$RD/_lsp2.log" "$_lh:~/$RD/_lsp3.out" "$_lh:~/$RD/_lsp3.log" "$CO_TMP/" 2>/dev/null || true
+  ssh $SSHO "$_lh" "cd ~/$RD/_lspf && env -i HOME=$_LRP/_lsph PATH=/usr/bin:/bin $_LRP/_lsp < ../_lsp4.req > ../_lsp4.out 2> ../_lsp4.log" || true
+  for _lf in _lsp1.out _lsp1.log _lsp2.out _lsp2.log _lsp3.out _lsp3.log _lsp4.out _lsp4.log; do rm -f "$CO_TMP/$_lf"; done
+  scp -q $SSHO "$_lh:~/$RD/_lsp1.out" "$_lh:~/$RD/_lsp1.log" "$_lh:~/$RD/_lsp2.out" "$_lh:~/$RD/_lsp2.log" "$_lh:~/$RD/_lsp3.out" "$_lh:~/$RD/_lsp3.log" \
+    "$_lh:~/$RD/_lsp4.out" "$_lh:~/$RD/_lsp4.log" "$CO_TMP/" 2>/dev/null || true
   return 0
 }
 
-# _co_lsp_check <host> — grades L1-L3 from $CO_TMP (the paths are $_LRP's), naming each miss and,
+# _co_lsp_check <host> — grades L1-L4 from $CO_TMP (the paths are $_LRP's), naming each miss and,
 # on any miss, printing the server's logs.
 _co_lsp_check() {
   _lbad=0
@@ -464,10 +481,14 @@ _co_lsp_check() {
   _lp=$(tr '\r' '\n' < "$CO_TMP/_lsp3.out" 2>/dev/null | grep -F "$_lu" || true)
   printf '%s' "$_lp" | grep -qF "stub-env HOME=[$_LRP/_lsph2] PATH=[/usr/bin:/bin]" \
     || { echo "  lsp L3: the wrapper child did not get the server's HOME and PATH (got: $(printf '%s' "$_lp" | cut -c1-200))"; _lbad=1; }
+  _lp=$(tr '\r' '\n' < "$CO_TMP/_lsp4.out" 2>/dev/null | grep -F "\"uri\":\"file://$_LRP/_lspf/src/b.cyr\",\"diagnostics\":" | tail -1 || true)
+  [ "$(printf '%s' "$_lp" | grep -o '"severity":[0-9]' | tr '\n' ' ')" = '"severity":3 ' ] \
+    && printf '%s' "$_lp" | grep -qF '"message":"checked as part of src/main.cyr, which has 1 error in another file"' \
+    || { echo "  lsp L4: the clean fragment b.cyr did not get exactly the host unit's note, no selector (got: $(printf '%s' "$_lp" | cut -c1-240))"; _lbad=1; }
   if [ "$_lbad" != 0 ]; then
-    for _li in 1 2 3; do echo "  -- L$_li log ($1) --"; sed 's/^/      /' "$CO_TMP/_lsp$_li.log" 2>/dev/null | head -8; done
+    for _li in 1 2 3 4; do echo "  -- L$_li log ($1) --"; sed 's/^/      /' "$CO_TMP/_lsp$_li.log" 2>/dev/null | head -8; done
   else
-    echo "  cyrius-lsp on $1: L1 (HOME) and L2 (its own path, no HOME) found cycc and published e.cyr's error; L3's wrapper child saw the server's HOME and PATH"
+    echo "  cyrius-lsp on $1: L1 (HOME) and L2 (its own path, no HOME) found cycc and published e.cyr's error; L3's wrapper child saw the server's HOME and PATH; L4's fragment note names its unit, no selector"
   fi
   return "$_lbad"
 }

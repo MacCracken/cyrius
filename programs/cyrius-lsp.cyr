@@ -1119,7 +1119,10 @@ fn _cu_cfg_name(c): i64 {
 }
 
 # The environment entry that makes an x86_64 cycc compile for target `c`; 0 for none (the host).
+# The host is checked first: on an x86_64 macOS server target 3 IS the host, and a host unit carries
+# no selector (nor names one in its note). CHANGELOG [6.7.16]
 fn _cu_cfg_env(c): i64 {
+    if (c == _cu_host_cfg()) { return 0; }
     if (c == 1) { return "CYRIUS_TARGET_WIN=1"; }
     if (c == 2) { return "CYRIUS_TARGET_AGNOS=1"; }
     if (c == 3) { return "CYRIUS_MACHO=1"; }
