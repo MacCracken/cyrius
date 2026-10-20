@@ -3590,9 +3590,14 @@ operators (6.7.15, the user's decision of 2026-10-18): `take(-5)`, `take((-5))`,
 pass a bool …*. The words name the argument's value: a boolean value (§ bool) — a comparison, `!x`,
 `&&` / `||`, or any of these in parentheses: `take(1 == 1)`, `take(!0)`, `take((1 != 0))`,
 `take(1 < 2 && 3 > 2)` — is *a bool* (6.7.16; until then *an integer*), and an operator applied to
-one is not: `take((1 == 1) + 1)` and `take(!0 + 1)` are *an integer*. A name (a const too), `&t` and
-a one-value call such as `take(one(3))` are words like any other and are passed as the address; it
-is the caller's to make it one.
+one is not: `take((1 == 1) + 1)` and `take(!0 + 1)` are *an integer*. A float literal is a literal
+too (6.7.16, the user's decision of 2026-10-19; until then it compiled and the callee read through the
+double's bits): `take(1.5)`, `take(-1.5)`, `take((2.0))`, `take(1.5 + 1)` — *cannot pass an f64 to
+tuple parameter …* — with the value typed as the operators type it: a float comparison,
+`take(1.5 < 2.0)`, is *a bool*, and `take(1 + 1.5)` (an integer add of 1.5's bits: binary operators
+are typed by their left operand) or `take(1.5 & 1)` *an integer*. A name (a const too, an `f64` one
+included), `&t` and a one-value call such as `take(one(3))` are words like any other and are passed
+as the address; it is the caller's to make it one.
 
 **Where the type goes.** A `var` (a local, or a global in either zone), a parameter, a struct
 field, and a fn's multi-value return `: (T1, T2)` / `: (T1, T2, T3)`:
@@ -3766,7 +3771,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
-| `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`, and a boolean value — `take(1 == 1)`, `take(!0)`, 6.7.16: `cannot pass a bool …`) |
+| `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`, and a boolean value — `take(1 == 1)`, `take(!0)`, 6.7.16: `cannot pass a bool …`; an f64, `take(1.5)`, `take(-1.5)`, `take(1.5 + 1)`, 6.7.16: `cannot pass an f64 …`) |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` (wrapped, `h.p = (f());`, too: this one error, 6.7.15) | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |

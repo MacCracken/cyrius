@@ -2818,8 +2818,12 @@ fn _tup_arg_call(S, fi, argc): i64 {
 # value (139 / 139 / 1 / 5), because only a lone integer literal reached the check. The whole argument is scanned
 # (`_tal_scan`): integer / char literals, `true` / `false`, operators and parentheses only — refused as "an
 # integer", or "a bool" when its every literal is `true` / `false`. A name (a const too), a call, `&` / `*` in front
-# of an operand, a string or a float exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
+# of an operand or a string exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
 # 6.7.16: a boolean value — a comparison, `!x`, `&&` / `||` — is "a bool" too (`_tal_kind`).
+# ⛔ 6.7.16 — A FLOAT LITERAL IS NO TUPLE (D23, the user's decision, 2026-10-19): `take(1.5)`, `take(-1.5)`,
+# `take((2.0))` and `take(1.5 + 1)` compiled and the callee read through the f64's bits (139 / 139 / 1 / 5 on x86_64
+# / aarch64 / cx / PE): `_tal_scan` took no float literal, so the argument was exempt. It takes one now, and an
+# argument whose value is an f64 is refused as "an f64"; a float comparison (`take(1.5 < 2.0)`) is "a bool".
 fn _tup_arg_lit(S, fi, argc): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
@@ -2830,6 +2834,7 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     lk = _tal_kind(S, lk);
     if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
     if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
+    elif (lk == 3) { PRSTR("cannot pass an f64 to tuple parameter "); }
     else { PRSTR("cannot pass an integer to tuple parameter "); }
     var pn = _bx_pname(S, fi, argc);
     if (pn >= 0) {
@@ -2844,8 +2849,8 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     return 1;
 }
 # 6.7.15 (D36) — the argument from token k to its depth-0 `,` / `)`: 1 = made only of integer / char literals,
-# `true` / `false`, operators and parentheses, with an integer or char literal among them; 2 = the same with every
-# literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
+# `true` / `false`, operators and parentheses, with an integer or char literal among them (6.7.16, D23: or a float
+# literal); 2 = the same with every literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
 # between two (in front of one they read or take an address).
 fn _tal_scan(S, k): i64 {
     var n = GTCNT(S);
@@ -2862,7 +2867,7 @@ fn _tal_scan(S, k): i64 {
         } elif (opnd == 1) {
             if (_tal_binop(t) == 0) { return 0; }
             opnd = 0;
-        } elif (t == 1) {
+        } elif (t == 1 || t == 61) {
             ints = 1;
             opnd = 1;
         } elif (t == 169 || t == 170) {
@@ -2893,8 +2898,8 @@ fn _tal_binop(t): i64 {
 # ⛔ 6.7.16 — A COMPARISON, `!x` OR `&&` / `||` ARGUMENT IS "A BOOL". D36's words said "a bool" only when every
 # literal was `true` / `false`, so `take(1 == 1)`, `take(!0)` and `take(1 < 2 && 3 > 2)` said "an integer" where
 # guide § bool counts a comparison, `!x`, `&&` / `||` — or any of these in parentheses — a boolean value. The words
-# follow the argument's value: 2 when every literal is `true` / `false` (D36) or the value is a boolean one, else 1.
-# CHANGELOG [6.7.16]
+# follow the argument's value: 2 when every literal is `true` / `false` (D36) or the value is a boolean one; 3 an
+# f64 (D23); else 1. CHANGELOG [6.7.16]
 fn _tal_kind(S, lk): i64 {
     if (lk == 2) { return 2; }
     var vk = _tty_arg(S, GTI(S));
@@ -2903,8 +2908,11 @@ fn _tal_kind(S, lk): i64 {
 }
 # `_tty_arg` reads a literal-only argument (`_tal_scan` has seen only literals, operators and parentheses) the way
 # PCMPE parses it — `||` / `&&` links, one comparison, PEXPR's `+ - & | ^ ..`, PARSE_TERM's `* / % << ..`, a
-# factor's `-` / `~` / `!` and a parenthesised expression — and answers its value's class: 2 a boolean value, 1 an
-# integer; 0 when the tokens are no single expression or nest past 256 parentheses.
+# factor's `-` / `~` / `!` and a parenthesised expression — and answers its value's class: 2 a boolean value, 3 an
+# f64, 1 an integer; 0 when the tokens are no single expression or nest past 256 parentheses. An f64 is the guide's:
+# a float literal, `-` of one, and `+ - * /` whose LEFT operand is one ("binary operators are typed by their left
+# operand": `1 + 1.5` is an integer add of 1.5's bits); `& | ^ % << >> >>>`, `~` and the saturating / checked
+# operators give an integer.
 var _tty_k = 0;     # the cursor
 var _tty_bad = 0;   # 1 = the reading failed
 fn _tty_arg(S, k): i64 {
@@ -2934,61 +2942,81 @@ fn _tty_atom(S, dep): i64 {
     _tty_add(S, dep);
     return 2;
 }
-# PEXPR's level (`+ - & | ^`, `+% +| +? -% -| -?`), left to right: a link's value is an integer.
+# PEXPR's level (`+ - & | ^`, `+% +| +? -% -| -?`), left to right.
 fn _tty_add(S, dep): i64 {
     var t = _tty_mul(S, dep);
-    while (_tty_op(S, 1) > 0) {
+    var c = _tty_op(S, 1);
+    while (c > 0) {
         _tty_k = _tty_k + 1;
         _tty_mul(S, dep);
-        t = 1;
+        t = _tty_bin(t, c);
+        c = _tty_op(S, 1);
     }
     return t;
 }
-# PARSE_TERM's level (`* / % << >> >>>`, `*% *| *?`), left to right: a link's value is an integer.
+# PARSE_TERM's level (`* / % << >> >>>`, `*% *| *?`), left to right.
 fn _tty_mul(S, dep): i64 {
     var t = _tty_un(S, dep);
-    while (_tty_op(S, 2) > 0) {
+    var c = _tty_op(S, 2);
+    while (c > 0) {
         _tty_k = _tty_k + 1;
         _tty_un(S, dep);
-        t = 1;
+        t = _tty_bin(t, c);
+        c = _tty_op(S, 2);
     }
     return t;
 }
-# The cursor's operator at a level — 0 `||` / `&&`, 1 PEXPR's, 2 PARSE_TERM's, 3 a comparison: 1 when it is one;
-# 0 when it is not, or the reading has failed.
+# A link's value: an f64 left operand stays an f64 through `+ - * /` (and `+% -% *%`); everything else is an integer.
+fn _tty_bin(t, c): i64 {
+    if (c == 1) { if (t == 3) { return 3; } }
+    return 1;
+}
+# The cursor's operator at a level — 0 `||` / `&&`, 1 PEXPR's, 2 PARSE_TERM's, 3 a comparison: 0 when it is none
+# (or the reading has failed); at levels 1 / 2, 1 for one that keeps an f64 left operand's type (`+ - +% -%`,
+# `* / *%`), 2 for one whose value is an integer; else 1.
 fn _tty_op(S, lv): i64 {
     if (_tty_bad == 1) { return 0; }
     var t = TOKTYP(S, _tty_k);
     if (lv == 0) { if (t == 53 || t == 54) { return 1; } return 0; }
     if (lv == 3) { if (t >= 17 && t <= 22) { return 1; } return 0; }
     if (lv == 1) {
-        if (t == 6 || t == 7 || t == 27 || t == 35 || t == 36) { return 1; }
-        if (t >= 113 && t <= 118) { return 1; }
+        if (t == 6 || t == 7 || t == 113 || t == 116) { return 1; }
+        if (t == 27 || t == 35 || t == 36) { return 2; }
+        if (t >= 113 && t <= 118) { return 2; }
         return 0;
     }
-    if (t == 8 || t == 9 || t == 34 || t == 38 || t == 39 || t == 152) { return 1; }
-    if (t >= 119 && t <= 121) { return 1; }
+    if (t == 8 || t == 9 || t == 119) { return 1; }
+    if (t == 34 || t == 38 || t == 39 || t == 152) { return 2; }
+    if (t == 120 || t == 121) { return 2; }
     return 0;
 }
-# A factor: its prefixes, then its operand. The outermost prefix decides — `!` a boolean value, `-` / `~` an
-# integer — and with none, the operand's own class.
+# A factor: its prefixes, then its operand. The outermost prefix decides — `!` a boolean value, `~` an integer, `-`
+# an f64 over an f64 with no `!` / `~` beneath it, else an integer — and with none, the operand's own class.
 fn _tty_un(S, dep): i64 {
     if (_tty_bad == 1) { return 1; }
     var t = TOKTYP(S, _tty_k);
     var pre = t;
+    var bit = 0;   # a `!` / `~` among the prefixes
     while (t == 7 || t == 37 || t == 171) {
+        if (t != 7) { bit = 1; }
         _tty_k = _tty_k + 1;
         t = TOKTYP(S, _tty_k);
     }
     var v = _tty_prim(S, dep, t);
     if (pre == 171) { return 2; }
-    if (pre == 7 || pre == 37) { return 1; }
+    if (pre == 37) { return 1; }
+    if (pre == 7) {
+        if (bit == 0) { if (v == 3) { return 3; } }
+        return 1;
+    }
     return v;
 }
-# An operand: an integer / char literal, `true` / `false`, or a parenthesised expression (its own class).
+# An operand: an integer / char literal, a float literal, `true` / `false`, or a parenthesised expression (its own
+# class).
 fn _tty_prim(S, dep, t): i64 {
     _tty_k = _tty_k + 1;
     if (t == 1) { return 1; }
+    if (t == 61) { return 3; }
     if (t == 169 || t == 170) { return 2; }
     if (t != 10 || dep >= 256) {
         _tty_bad = 1;
