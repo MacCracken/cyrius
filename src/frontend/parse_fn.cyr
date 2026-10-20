@@ -10445,19 +10445,25 @@ fn _bnd_site(S, tp, blk, i, r): i64 {
 # type parameter) or a second trait declares too (tx that trait) — at the method's name, the call recorded as a
 # refused site so the parser consumes it quietly. The receiver, for the note, is the name at ri, or the field
 # chain `ri.f` when mti is two names past it (`b.v.other()`, `_bnd_fsite`; CHANGELOG [6.7.15]).
+# Reported without the panic latch (saved, cleared, put back): the site scan is a pre-scan nothing resyncs, so the
+# first refusal's latch swallowed every later one of the compile — another definition's, or a second in one body —
+# and they were fixed one compile at a time. A repeat at one token still prints once (`_err_once`). CHANGELOG [6.7.16]
 fn _bnd_site_refuse(S, ri, mti, tx, tpn): i64 {
     var m = TOKVAL(S, mti);
+    var p0 = _panic;
+    _panic = 0;
     if (tx >= 0) {
         _bnd_err_at(S, mti, "ambiguous method ", m, ": more than one trait in this type parameter's bound declares it, e.g. ", L64(_tr_tab + tx * 32));
     } else {
         _bnd_err_at(S, mti, "method ", m, " is not in the bound on type parameter ", tpn);
-        if (_err_quiet == 0) {   # 6.7.15: a refusal the panic latch swallowed prints no orphan note
+        if (_err_quiet == 0) {   # 6.7.15: a refusal printed as nothing (a repeat) prints no orphan note
             syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
             PRSTR(S + 0xEC00000 + TOKVAL(S, ri));
             if (mti == ri + 4) { syscall(SYS_WRITE, 2, ".", 1); PRSTR(S + 0xEC00000 + TOKVAL(S, ri + 2)); }
             syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
         }
     }
+    _panic = p0;
     _bs_add(S, mti, 0 - 1, 0, 0);   # refused: its call is consumed quietly
     return 0;
 }

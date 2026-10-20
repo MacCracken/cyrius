@@ -7472,7 +7472,8 @@ describe<i32>(7);   # needs impl Show for i32
 - **A bound is a contract.** On a bounded `T`-typed parameter or local (`v: T`, `p: *T`,
   `var q: T`), `v.m()` must be a method of one of the bound's traits — a method no bound declares,
   or one two bounds both declare, is a compile error at the generic's **definition**, whether or not
-  it is ever called. The call is that trait's method for `T`'s impl: when `T` has two traits giving it
+  it is ever called — each one reported, every generic's and every call's of a body (6.7.16; through 6.7.15 the
+  first of a compile hid the rest). The call is that trait's method for `T`'s impl: when `T` has two traits giving it
   an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. Fields are not part of a
   trait — `v.x` on a bounded `T` resolves per instance, as on an unbounded one. An **unbounded** `T`
   keeps per-instance resolution: `fn f<T>(v: T) { return v.show(); }` compiles and works for any `T`
