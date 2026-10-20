@@ -7122,7 +7122,9 @@ capture's copy). The user's decision D12 (a), 2026-10-18: through 6.7.14 each ra
 base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A tuple literal
 (`g((p, 3))`) binds nothing. An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
-generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
+generic one at its `f64` instance), and (6.7.16) a closure's captured `f64`, as the local it
+captures: `|| gid(h) * 2.0` (the user's D3, 2026-10-19; through 6.7.15 the capture ran the i64
+base on the double's bits) — binds `T = f64` and calls the `f64` instance,
 exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
 is a float multiply and `var v = gid(h);` declares an `f64` (6.7.9; before it the
 call ran the i64 base — `dbl(h)` with `x + x` added the double's bits — and its

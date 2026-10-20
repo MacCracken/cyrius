@@ -13839,10 +13839,14 @@ fn _ic_pscalar(w): i64 {
 # a scalar pointer; 6.7.15 (D12 (a)) a captured struct VALUE its struct through either shape, as a struct local
 # binds (through `p: *T` the call passes the capture's copy's address); any other capture reads as before (a global
 # of its name, else i64). CHANGELOG [6.7.14]
+# ⛔ 6.7.16 — a captured f64 VALUE binds f64 through either shape, as the f64 local it captures does (`_infer_conc_at`'s
+# `_load_lt` rung; the user's D3, 6.7.16's, 2026-10-19: "binds f64, like the local it captures"): `|| gid(h) * 2.0`
+# ran the i64 base and multiplied the double's bits. A captured `*f64` keeps its pointee rung (6.7.15's D11 (a)).
 fn _ic_cap(S, noff, ptr): i64 {
     var esl = _cl_cap_esl(S, noff);
     var t = _cl_snap_type(esl);
     if (_cl_snap_ptrp(esl) == 0) { if (t < 0) { if (t > 0 - 2048) { return 0 - t; } } }
+    if (_cl_snap_ptrp(esl) == 0) { if (t == F64_TYID) { return 0 - 9; } }   # CHANGELOG [6.7.16]
     if (ptr == 0) { return _infer_conc_global(S, noff, 0); }
     if (_cl_snap_ptrp(esl) == 0) { return _infer_conc_global(S, noff, 0); }
     if (t <= 0 - 2048) { return _infer_conc_global(S, noff, 0); }
