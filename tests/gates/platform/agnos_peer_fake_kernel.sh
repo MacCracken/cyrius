@@ -50,6 +50,8 @@
 # C6: _read_env's macOS init-stack arm serves agnos too (envp after argv's NULL, through r15).
 # Mutant measured: the macOS-only guard restored (the open's env.cyr: no agnos arm, every name
 # answers 0) -> CYRIUS_POISON=1 compiles the unset program, 22 22 (C6 FAIL).
+# C7: main.cyr's agnos build. Mutants measured: _cmdline_read's agnos return removed -> its first
+# syscall is `sc 7 -100 …` (C7 FAIL); main.cyr's Linux enum alone -> 4 duplicate-symbol warnings.
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
 # and exits 0 with no open#7; `--syntax-only` lets an unresolved name compile. Mutant measured: the
 # /proc/self/cmdline arm restored (main_cx.cyr's agnos `_cx_cmdline_flags()`, _cmdline_read with
@@ -783,6 +785,18 @@ if [ "$cxok" = 1 ]; then
     v0=x; [ -s "$T/c6.cyx" ] && { v0=0; "$T/cxvm" < "$T/c6.cyx" > /dev/null 2>&1 || v0=$?; }
     v1=x; [ -s "$T/c6p.cyx" ] && { v1=0; "$T/cxvm" < "$T/c6p.cyx" > /dev/null 2>&1 || v1=$?; }
     check "C6 it reads its environment: unset -> 22, CYRIUS_POISON=1 -> 11 (the knob's predefine)" "22 11" "$v0 $v1"
+fi
+# C7: src/main.cyr built for agnos is no agnos compiler (its arena is brk, which agnos answers as
+# sync()), but it builds without the duplicate-symbol warnings and its first act is that arena —
+# refused by name — not a Linux-shaped open of /proc/self/cmdline (_cmdline_read answers 0 there).
+if CYRIUS_TARGET_AGNOS=1 "$CC" < src/main.cyr > "$T/mag" 2> "$T/mag.err"; then
+    chmod +x "$T/mag"
+    env -i "$T/sct" "$T/mag" cli --version < /dev/null > "$T/c7.log" 3> /dev/null 2>&1
+    check "C7 main.cyr for agnos: 0 duplicate-symbol warnings; first syscall brk#12, the arena refused by name, exit 1" \
+        "0 | sc 12 | 1 | exit 1" \
+        "$(grep -c "^warning.*duplicate symbol" "$T/mag.err" || true) | $(awk '$1 == "sc" { print $1, $2; exit }' "$T/c7.log") | $(grep -c "cannot map the 246 MiB compiler arena" "$T/c7.log" || true) | $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c7.log")"
+else
+    echo "  FAIL: src/main.cyr did not build for agnos"; grep -E '^error' "$T/mag.err" | head -3; fails=$((fails + 1))
 fi
 
 echo ""

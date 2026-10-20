@@ -664,8 +664,16 @@
 #   97=RET2 98=RETHI 99=F64ATAN 100=SIZEOF
 
 
-# x86_64 syscall number constants (used by shared cc/ modules)
+# x86_64 syscall number constants (used by shared cc/ modules). An agnos build takes agnos's own
+# (lib/syscalls.cyr defines them again there: with Linux's values that was four "redefined with
+# conflicting value" warnings, as main_cx.cyr had); SYS_BRK stays 12, which agnos answers as
+# sync(), so this driver's arena is refused by name there — it is no agnos compiler (cycc_cx
+# is). CHANGELOG [6.7.16]
+#ifdef CYRIUS_TARGET_AGNOS
+enum Sys { SYS_READ = 5; SYS_WRITE = 1; SYS_OPEN = 7; SYS_CLOSE = 6; SYS_BRK = 12; SYS_EXIT = 0; }
+#else
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }
+#endif
 
 # v5.6.39: version string + length sourced from auto-generated
 # src/version_str.cyr (regenerated from VERSION on every bump).
