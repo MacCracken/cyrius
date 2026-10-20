@@ -27,7 +27,7 @@ fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         var dn = sys_open("/dev/null", 1, 0);
-        if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
+        if (dn >= 0) { _regression_redirect(dn, 1); }   # same-fd guard: CHANGELOG [6.7.16]
         var envp[1];
         store64(&envp, 0);
         sys_execve(cyrld_path, argv, &envp);

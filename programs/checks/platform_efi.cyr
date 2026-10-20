@@ -1946,10 +1946,14 @@ fn _efi_stdlib_fallback_gate(): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
-        sys_dup2(read_fd, 0); sys_close(read_fd);
-        sys_dup2(out_fd, 1); sys_close(out_fd);
+        # read_fd and out_fd were opened in the PARENT: lifted above 2 before the stdin redirect,
+        # then redirected with the same-fd guard (selfhost.cyr `_self_host_pipe`). CHANGELOG [6.7.16]
+        var rfd = _regression_lift_fd(read_fd);
+        var ofd = _regression_lift_fd(out_fd);
+        _regression_redirect(rfd, 0);
+        _regression_redirect(ofd, 1);
         var devnull = sys_open("/dev/null", 1, 0);
-        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        if (devnull >= 0) { _regression_redirect(devnull, 2); }
         var cd_rc = syscall(SYS_CHDIR, efi_cwd);
         if (cd_rc < 0) { sys_exit(126); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B

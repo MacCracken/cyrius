@@ -300,15 +300,18 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
         if (out_path == 0) {
             out_fd = sys_open("/dev/null", 1, 0);
         } else {
-            out_fd = sys_open(out_path, 577, 420);
+            out_fd = sys_open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 420);
         }
         if (out_fd >= 0) {
             sys_dup2(out_fd, 1);
             sys_dup2(out_fd, 2);
-            sys_close(out_fd);
+            # A driver started with fd 1 or 2 closed opened out_fd AT it: closing it then closed
+            # the redirect just made, and the child's output went nowhere. Closed only when it
+            # is neither (lib/regression.cyr's `regression_exec_in_dir3` shape). CHANGELOG [6.7.16]
+            if (out_fd != 1 && out_fd != 2) { sys_close(out_fd); }
         }
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): cmd+arg+NUL = 24 B
         store64(&argv,     bin_path);
         if (arg != 0) {
@@ -357,15 +360,15 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
         if (out_path == 0) {
             out_fd = sys_open("/dev/null", 1, 0);
         } else {
-            out_fd = sys_open(out_path, 577, 420);
+            out_fd = sys_open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 420);
         }
         if (out_fd >= 0) {
             sys_dup2(out_fd, 1);
             sys_dup2(out_fd, 2);
-            sys_close(out_fd);
+            if (out_fd != 1 && out_fd != 2) { sys_close(out_fd); }   # as `_exec_in_dir`'s. CHANGELOG [6.7.16]
         }
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
         store64(&argv, bin_path);
         var off = 8;
@@ -397,15 +400,15 @@ fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
         if (out_path == 0) {
             out_fd = sys_open("/dev/null", 1, 0);
         } else {
-            out_fd = sys_open(out_path, 577, 420);
+            out_fd = sys_open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 420);
         }
         if (out_fd >= 0) {
             sys_dup2(out_fd, 1);
             sys_dup2(out_fd, 2);
-            sys_close(out_fd);
+            if (out_fd != 1 && out_fd != 2) { sys_close(out_fd); }   # as `_exec_in_dir`'s. CHANGELOG [6.7.16]
         }
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + ≤3 args + NUL = 40 B
         store64(&argv, bin_path);
         var off = 8;

@@ -2887,14 +2887,11 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     if (pid == 0) {
         var sfd = sys_open(cap_source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
-        sys_dup2(sfd, 0);
-        sys_close(sfd);
+        _cbt_redirect(sfd, 0);   # same-fd guard: CHANGELOG [6.7.16]
         var ofd = sys_open("/dev/null", O_WRONLY, 0);
-        sys_dup2(ofd, 1);
-        sys_close(ofd);
+        _cbt_redirect(ofd, 1);
         var efd = sys_open(tmperr, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-        sys_dup2(efd, 2);
-        sys_close(efd);
+        _cbt_redirect(efd, 2);
         # Set CYRIUS_STATS=1 in environment — simpler: use env command
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, cc);

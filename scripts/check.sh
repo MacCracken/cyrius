@@ -2686,6 +2686,14 @@ _chk_gate "$ROOT/tests/gates/toolchain/regression_wait_status_checked.sh"
 # tests/tcyr/crossos/regression_out_path_truncated.tcyr and regression_capture_stdin_closed.tcyr.
 _chk_gate "$ROOT/tests/gates/toolchain/regression_child_fd_shapes.sh"
 
+# 6.7.16 — a child the CLI, the check driver or a programs/ tool forks gets the std fds its
+# redirects name with the parent's fd 0, 1 or 2 closed: every redirect goes through a same-fd
+# guard (`_cbt_redirect`, `_regression_redirect`, a twin) and a parent-opened fd is lifted above 2
+# first. Runtime rows: the filed `build --target=js … 1>&-` repro, native / cx builds, run_cx, the
+# cx JIT build and the driver's output row with each std fd closed; a static census of cbt/ and
+# programs/ (no unguarded sys_dup2 / sys_close pair; fixture, mutant and three live mutants).
+_chk_gate "$ROOT/tests/gates/toolchain/cli_child_redirect_closed_std_fds.sh"
+
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
 # return -1 before any fork. Mutation ledger in the header.

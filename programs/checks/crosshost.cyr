@@ -31,12 +31,14 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
         _regression_child_guard(_rg_ppid_pid);
         sys_close(p2c_w);
         sys_close(c2p_r);
-        sys_dup2(p2c_r, 0);
-        sys_close(p2c_r);
-        sys_dup2(c2p_w, 1);
-        sys_close(c2p_w);
+        # Both pipe ends were opened in the PARENT: lifted above 2 before the stdin redirect,
+        # then redirected with the same-fd guard. CHANGELOG [6.7.16]
+        var cin = _regression_lift_fd(p2c_r);
+        var cout = _regression_lift_fd(c2p_w);
+        _regression_redirect(cin, 0);
+        _regression_redirect(cout, 1);
         var dn = sys_open("/dev/null", 1, 0);
-        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
+        if (dn >= 0) { _regression_redirect(dn, 2); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     bin_path);
         store64(&argv + 8, 0);
@@ -105,13 +107,15 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     if (tar_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
     if (tar_pid == 0) {
         _regression_child_guard(_rg_ppid_tar_pid);
-        sys_dup2(wfd, 1);
+        # The unused read end is closed FIRST: a driver started with fd 1 closed made it 1, and
+        # closing it after the redirect onto 1 closed tar's stdout. Then the same-fd guard (fds 0
+        # and 1 closed made the write end 1). CHANGELOG [6.7.16]
         sys_close(rfd);
-        sys_close(wfd);
+        _regression_redirect(wfd, 1);
         var dn0 = sys_open("/dev/null", 0, 0);
-        if (dn0 >= 0) { sys_dup2(dn0, 0); sys_close(dn0); }
+        if (dn0 >= 0) { _regression_redirect(dn0, 0); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         # Exec: tar cf - -C <src_root> <member1> <member2> ...
         # `members` is space-separated; explode to argv. Cap at
         # 32 members which is plenty for src + lib + extras.
@@ -156,13 +160,12 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     if (ssh_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
     if (ssh_pid == 0) {
         _regression_child_guard(_rg_ppid_ssh_pid);
-        sys_dup2(rfd, 0);
-        sys_close(rfd);
-        sys_close(wfd);
+        sys_close(wfd);   # the unused end first, as the tar child's. CHANGELOG [6.7.16]
+        _regression_redirect(rfd, 0);
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need 32 B
         store64(&argv,      "ssh");
         store64(&argv + 8,  target);

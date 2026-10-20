@@ -321,6 +321,18 @@ fn _detect_version(templates_dir, argv0): i64 {
     return 0;
 }
 
+#ifndef CYRIUS_TARGET_WIN
+# In the probe's CHILD: point `target` at `fd` and drop `fd` — unless `fd` already IS `target`.
+# Started with fds 0 and 1 closed, the pipe's write end IS 1, and the old unguarded close closed
+# the redirect it had just made: the probe read nothing. lib/process.cyr's `_proc_redirect`
+# twin. CHANGELOG [6.7.16]
+fn _init_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+#endif
+
 # Run the sibling `cycc --version`, return the first [0-9.] run found.
 fn _cycc_version_probe(argv0): i64 {
     #ifdef CYRIUS_TARGET_WIN
@@ -338,10 +350,9 @@ fn _cycc_version_probe(argv0): i64 {
     if (pid < 0) { sys_close(rfd); sys_close(wfd); return 0; }
     if (pid == 0) {
         sys_close(rfd);
-        sys_dup2(wfd, 1);
-        sys_close(wfd);
+        _init_redirect(wfd, 1);
         var dn = sys_open("/dev/null", 1, 0);
-        if (dn >= 0) { sys_dup2(dn, 2); sys_close(dn); }
+        if (dn >= 0) { _init_redirect(dn, 2); }
         var av[32];
         store64(&av, cycc);
         store64(&av + 8, "--version");

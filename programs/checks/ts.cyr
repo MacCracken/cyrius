@@ -129,11 +129,11 @@ fn _ts_path_arg_gate(): i64 {
 
         _regression_child_guard(_rg_ppid_pid);
         var gfd = sys_open(garbage_path, 0, 0);
-        if (gfd >= 0) { sys_dup2(gfd, 0); sys_close(gfd); }
+        if (gfd >= 0) { _regression_redirect(gfd, 0); }   # same-fd guard: CHANGELOG [6.7.16]
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need
         store64(&argv,      CC_PATH);    # 32 B. argv[4]/envp[1] reserved 8 B
         store64(&argv + 8,  "--parse-ts");  # each → envp[0] overlapped argv[1]
@@ -174,12 +174,11 @@ fn _ts_mode_run(fixture_path, mode_flag): i64 {
     if (pid < 0) { sys_close(fd); return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid_pid);
-        sys_dup2(fd, 0);
-        sys_close(fd);
+        _regression_redirect(_regression_lift_fd(fd), 0);   # opened in the PARENT. CHANGELOG [6.7.16]
         var dn1 = sys_open("/dev/null", 1, 0);
-        if (dn1 >= 0) { sys_dup2(dn1, 1); sys_close(dn1); }
+        if (dn1 >= 0) { _regression_redirect(dn1, 1); }
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];   # 5 ptr slots; `var x[N]` is N BYTES (CLAUDE.md
         store64(&argv,     CC_PATH);   # buffer contract). argv[3]/envp[1]
         store64(&argv + 8, mode_flag); # reserved only 8 B each, so envp[0]
@@ -239,10 +238,14 @@ fn _emit_js_to_file(fixture_path, out_path): i64 {
     if (pid < 0) { sys_close(fd); sys_close(ofd); return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid_pid);
-        sys_dup2(fd, 0); sys_close(fd);
-        sys_dup2(ofd, 1); sys_close(ofd);
+        # fd and ofd were opened in the PARENT: lifted above 2 before the stdin redirect, then
+        # redirected with the same-fd guard. CHANGELOG [6.7.16]
+        var lfd = _regression_lift_fd(fd);
+        var lofd = _regression_lift_fd(ofd);
+        _regression_redirect(lfd, 0);
+        _regression_redirect(lofd, 1);
         var dn2 = sys_open("/dev/null", 1, 0);
-        if (dn2 >= 0) { sys_dup2(dn2, 2); sys_close(dn2); }
+        if (dn2 >= 0) { _regression_redirect(dn2, 2); }
         var argv[40];
         store64(&argv,      CC_PATH);
         store64(&argv + 8,  "--emit-js");
