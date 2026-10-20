@@ -3493,7 +3493,8 @@ fn _call_field(S): i64 {
     if (_call_dotted(S, ti) == 0) { return 0; }
     if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
     var fi = _gen_resolve_call(S, ti);
-    if (fi < 0) { if (_syntax_only == 0) { return _call_undef(S, ti); } }   # 6.7.15: named, its chain stepped over
+    var u = _call_nodef(S, ti, fi);   # 6.7.15 / 6.7.16: an undefined callee named, its chain stepped over
+    if (u >= 0) { return u; }
     var sid = 0;
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) { if (_call_ptr_field(S, ti, fi) == 1) { return 1; } }   # 6.6.17: `: *T`
@@ -3535,10 +3536,11 @@ fn _call_field(S): i64 {
 # ("expected ';', got '.'"; the step fell to `_for_step_assign`, "expected '=', got '('"), and the fn surfaced only in
 # the end-of-compile refusal. Callee token `ti` resolving to no fn (pass 1 registered every definition) is "undefined
 # function 'undefd'" at its name — an ERROR, so --allow-undef cannot compile the line — once, the latch as it was;
-# the call and its `.f` / `.m(..)` / `[..]` chain are stepped over unparsed (the call is never registered, so the
-# end-of-compile refusal adds nothing), rax 0, and `_tsc_n` moves, so the statement and the step step over their
-# tails with no second error. `sizeof` / `mulh64`, lowered by name, keep their path; --syntax-only never gets here (a
-# sibling module's fn, `_cf_unres`). 1 = consumed, 0 = not this shape. CHANGELOG [6.7.15]
+# the call and its `.f` / `.m(..)` / `[..]` chain are stepped over unparsed (this call is not registered: only an
+# earlier or later plain call to the name adds the end-of-compile refusal), rax 0, and `_tsc_n` moves, so the
+# statement and the step step over their tails with no second error. `sizeof` / `mulh64`, lowered by name, keep their
+# path; --syntax-only never gets here (a sibling module's fn, `_cf_unres`). 1 = consumed, 0 = not this shape.
+# CHANGELOG [6.7.15]
 fn _call_undef(S, ti): i64 {
     var noff = TOKVAL(S, ti);
     if (_is_ident_intrinsic(S, noff) == 1) { return 0; }
@@ -3551,6 +3553,28 @@ fn _call_undef(S, ti): i64 {
     SEXW(S, 0);
     _cfo = 0;
     return 1;
+}
+# ⛔ 6.7.16 — and a callee an EARLIER PLAIN CALL registered (`undefd(); undefd().n += 1;`): the entry resolved (fi >= 0)
+# with no return struct, so the field was "cannot take a field of the result of 'undefd': it does not return a struct".
+# The test is the definition, not the entry: `_fn_nodef` (no code and no owner — pass 1 owns every `fn` it scans,
+# `#derive`'s text included, and a generic instance is defined before its call returns). The one definition pass 1
+# registers with no owner is an enum variant's payload constructor (`Some(v)`), whose code is emitted at its enum: a
+# call from a fn above the enum sees neither, so a variant's name keeps the old path (`_fn_enum_var`). -1 = a defined
+# callee: go on; else `_call_field`'s answer. CHANGELOG [6.7.16]
+fn _call_nodef(S, ti, fi): i64 {
+    if (_syntax_only == 1) { return 0 - 1; }
+    if (_fn_nodef(S, fi) == 0) { return 0 - 1; }
+    if (fi >= 0) { if (_fn_enum_var(S, TOKVAL(S, ti)) == 1) { return 0 - 1; } }
+    if (_call_undef(S, ti) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    return 0 - 1;
+}
+# 1 = `noff` names an enum variant (its constant's var slot carries the enum's id).
+fn _fn_enum_var(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVENUMID(S, vi) != 0) { return 1; }
+    return 0;
 }
 
 # ⛔ 6.7.15 — --syntax-only, A FIELD ASSIGNMENT ON A SIBLING MODULE'S CALL (`gp().n = 5;`, the for step `gp().n += 1`,

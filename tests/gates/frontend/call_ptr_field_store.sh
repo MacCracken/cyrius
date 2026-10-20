@@ -26,7 +26,9 @@
 # tail still reported; S8 / S9 controls: a by-value callee this file defines keeps "the result is a temporary");
 # T6-T15 (6.7.15) a top-level METHOD returning a struct by value, its `*T` field subscripted, one error (T6 the filed
 # repro; T13 its in-fn control, exit 5; T14 a genuine non-`*T` subscript in a fn keeps its refusal; T15 the next
-# statement still checked); T16-T18 (6.7.15) the free call's value twin, `var x = mk().p[0];` at top level, one error.
+# statement still checked); T16-T18 (6.7.15) the free call's value twin, `var x = mk().p[0];` at top level, one error;
+# U16-U23 (6.7.16) the undefined fn's `.field` after an earlier plain call to it, named "undefined function" (U16 the
+# filed repro; U20-U23 controls: a callee defined below, a generic's instance, a library fn, an enum constructor).
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -89,6 +91,12 @@
 #                                                     T15 x4 (the second, false "cannot subscript field 'p': it is not
 #                                                     a *T field")
 #   t2 `_call_field`'s refusal arm without its `[..]` step (= the tree before) -> RED 12: T16-T18 x4
+# (6.7.16, the structs lane, unit S4; issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md;
+# the same procedure, 2026-10-19)
+#   n1 `_call_nodef` routing only an unregistered callee (= the tree before) -> RED 16: U16-U19 x4 ("cannot take a field
+#                                                     of the result of 'undefd': it does not return a struct")
+#   n2 `_call_nodef` without its enum-variant exclusion -> RED 4: U23 x4 ("undefined function 'Some'" for a defined
+#                                                     constructor)
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -556,6 +564,69 @@ done
 row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'
 refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an intrinsic, is no undefined fn"
 
+# --- U16-U23 (6.7.16, issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md): the
+# same `.field` after an EARLIER PLAIN CALL to the undefined fn — the call registered the name, so the field resolved to
+# that entry and read "cannot take a field of the result of 'undefd': it does not return a struct". It is named
+# "undefined function 'undefd'" at the field call's name (`_call_nodef`: no code and no owner); the plain call keeps
+# its own warning and end-of-compile refusal (U13), so that refusal follows. U16 is the filed repro verbatim (the field
+# call is 3:26; 3:16 is the plain call).
+# undef_after <name> <fragment> <what>: rc != 0, no binary; the first `^error` line holds <fragment>, it is the only
+# error at a source position, and no line says "does not return a struct".
+undef_after() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        compile "$leg" "$1"
+        n=$(grep -c '^error:<source>' "$T/$1.$leg.err" || true)
+        if [ "$crc" -eq 0 ]; then bad "$1 $3 ($leg): BUILT (rc 0)"
+        elif ! grep '^error' "$T/$1.$leg.err" | head -1 | grep -qF "$2"; then bad "$1 $3 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
+        elif [ "$n" -ne 1 ]; then bad "$1 $3 ($leg): $n errors at a source position (want 1)"
+        elif grep -q 'does not return a struct' "$T/$1.$leg.err"; then bad "$1 $3 ($leg): still says \"does not return a struct\""
+        elif [ -s "$T/$1.$leg" ]; then bad "$1 $3 ($leg): refused, but a binary was written"
+        else ok "$1 $3 ($leg): named"; fi
+    done
+}
+cat > "$T/U16.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+struct H { n; m; }
+fn go(): i64 { undefd(); undefd().n += 1; return 0; }
+syscall(60, go());
+EOF2
+undef_after U16 "<source>:3:26: $UF" "the filed repro: \`undefd(); undefd().n += 1;\`"
+row U17 'fn go(): i64 { var i = 0; undefd(); for (i = 0; i < 3; undefd().n += 1) { i = i + 1; } return i; }'
+undef_after U17 "<source>:12:56: $UF" "the for step \`undefd().n += 1\` after \`undefd();\`"
+row U18 'fn go(): i64 { undefd(); var x = undefd().n; return x; }'
+undef_after U18 "<source>:12:34: $UF" "a factor, \`var x = undefd().n;\` after \`undefd();\`"
+row U19 'fn go(): i64 { return 0; }
+fn later(): i64 { undefd(); return 0; }
+fn more(): i64 { undefd().m(2); return 0; }'
+undef_after U19 "<source>:14:18: $UF" "a method on the result, the plain call in another fn"
+# U20-U23 (controls): a callee DEFINED where the field is taken keeps its path — a struct fn defined below the plain
+# call, a generic's instance, a library fn returning a Str; an enum variant's payload constructor (registered by pass 1
+# with no owner, its code emitted at its enum, below the call) is no undefined fn
+row U20 'fn go(): i64 { mkb(); return mkb().m; }
+fn mkb(): H { var h: H; h.n = 1; h.m = 7; return h; }'
+runs U20 7 "control: \`mkb(); mkb().m\`, mkb defined below"
+row U21 'fn mkg<T>(v: T): T { return v; }
+fn go(): i64 { var h: H = H { 3, 4 }; mkg(h); mkg<H>(h); return mkg(h).m + mkg<H>(h).n; }'
+runs U21 7 "control: a generic's instance after plain calls, inferred and explicit"
+cat > "$T/U22.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+fn go(): i64 { alloc_init(); str_from("abc"); return str_from("abcd").len; }
+syscall(60, go());
+EOF2
+runs U22 4 "control: a library fn returning a Str, after a plain call"
+cat > "$T/U23.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn go(): i64 { Some(5); var x = Some(5).n; return x; }
+enum Opt { Some(v); Non; }
+syscall(60, go());
+EOF2
+refused U23 "3:37: cannot take a field of the result of 'Some': it does not return a struct" "control: an enum constructor called above its enum is no undefined fn"
+
 # --- S (6.7.15, issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md): --syntax-only (lint's
 # pre-pass), a field assignment on a call whose callee this file does not define — a sibling module's — parses its
 # tail silently: it was "cannot assign to a field of a call result: the result is a temporary", true only of a callee
@@ -611,8 +682,8 @@ synonly S8 1 "$MT" "control: a by-value callee this file defines keeps the refus
 srow S9 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mk().n += 1) { i = i + 1; } return 0; }'
 synonly S9 1 "$MT" "control: ... as a for step too"
 
-FLOOR_ROWS=72   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T18
+FLOOR_ROWS=80   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + U16-U23
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
