@@ -158,8 +158,14 @@ fn sched_kicks_dirty_stack(): i64 {
 sched_kicks_dirty_stack();
 #endif
 var kicks = sys_sched_kicks();
+# -ENOSYS in the host's numbering: Darwin's is 78 (its 38 is ENOTSOCK). CHANGELOG [6.7.16]
+#ifdef CYRIUS_TARGET_MACOS
+assert_eq(kicks, 0 - 78, "sys_sched_kicks() is -ENOSYS (Darwin's 78) on macOS");
+#endif
 #ifndef CYRIUS_TARGET_AGNOS
-assert_eq(kicks, 0 - 38, "sys_sched_kicks() is -ENOSYS off agnos");
+#ifndef CYRIUS_TARGET_MACOS
+assert_eq(kicks, 0 - 38, "sys_sched_kicks() is -ENOSYS off agnos and macOS");
+#endif
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
 var kicks_ok = 0;

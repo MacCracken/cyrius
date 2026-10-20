@@ -387,9 +387,11 @@ fn sys_setresgid(rgid, egid, sgid): i64 {
 # ran as unlinkat(3, NULL, 0). Return -ENOSYS instead. Same two-#ifdef shape as
 # sys_utimensat above, which keeps syscall(167) out of the Mach-O emit entirely
 # (no "syscall not routed" warning). See CHANGELOG [6.5.15].
+# The decline is -78, ENOSYS in Darwin's numbering, as every other macOS decline answers (38 is
+# Darwin's ENOTSOCK). CHANGELOG [6.7.16]
 fn sys_prctl(option, arg2, arg3, arg4, arg5): i64 {
     #ifdef CYRIUS_TARGET_MACOS
-    return 0 - 38;
+    return 0 - 78;
     #endif
     #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_PRCTL, option, arg2, arg3, arg4, arg5);

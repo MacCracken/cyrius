@@ -9092,6 +9092,11 @@ The rules, in order:
    `sys_getrlimit` are real (Darwin 123 / 194 — but `RLIMIT_NOFILE` is 8 there, not 7), and the
    xattr calls and `sys_statx` return -78: Darwin's xattr calls take two extra arguments and
    Darwin has no statx. PE and agnos decline all fifteen with -38.
+   ⭐ A stdlib wrapper with no route declines in the HOST's numbering: -78 on both Macs
+   (Darwin's ENOSYS; Darwin's 38 is ENOTSOCK), -38 on Linux, Windows, agnos and cx. Until 6.7.16
+   `sys_prctl`, `sys_gettid` and `sys_sched_kicks` answered -38 on macOS (6.7.16's D76);
+   `tests/gates/platform/macos_declines_answer_darwin_enosys.sh` is the census of every decline a
+   macOS build reaches.
    In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
    then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
    `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,

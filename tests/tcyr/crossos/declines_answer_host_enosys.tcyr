@@ -1,0 +1,50 @@
+# declines_answer_host_enosys.tcyr — 6.7.16 (D76): a stdlib wrapper with no route on the host
+# declines with -ENOSYS in the HOST's numbering. On macOS that is -78, Darwin's ENOSYS, as every
+# macOS decline answers and as the Mach-O syscall path answers a real BSD failure; 38 is Darwin's
+# ENOTSOCK. sys_prctl and sys_gettid answered -38 on both Macs, and so did sys_sched_kicks, which
+# had no macOS arm (filed: `-38 -38 -78` on ecb and ach for prctl / gettid / mount).
+#
+# The other targets keep their answers: Linux runs the real calls (gettid is the main thread's
+# tid, which is the pid), Windows and cx decline gettid with Linux's -38, agnos routes gettid to
+# getpid. sys_sched_kicks is pinned per target in sysinfo_uname.tcyr. The census of every macOS
+# decline in lib/ is tests/gates/platform/macos_declines_answer_darwin_enosys.sh; this file is the
+# hardware half (ecb, ach).
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/sys.cyr"
+
+alloc_init();
+
+var tid = sys_gettid();
+#ifdef CYRIUS_TARGET_MACOS
+test_group("macOS: a decline answers Darwin's ENOSYS (-78)");
+assert_eq(sys_prctl(3, 0, 0, 0, 0), 0 - 78, "sys_prctl(PR_GET_DUMPABLE) is -78 (was -38, Darwin's ENOTSOCK)");
+assert_eq(tid, 0 - 78, "sys_gettid() is -78 (was -38)");
+assert_eq(sys_sched_kicks(), 0 - 78, "sys_sched_kicks() is -78 (was -38)");
+assert_eq(sys_mount("none", "/nonexistent", "tmpfs", 0, 0), 0 - 78, "sys_mount() is -78 (the convention the others now match)");
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+test_group("Linux: the real calls");
+var dump = sys_prctl(3, 0, 0, 0, 0);
+assert(dump == 0 || dump == 1 || dump == 2, "sys_prctl(PR_GET_DUMPABLE) is 0 / 1 / 2");
+assert(tid > 0, "sys_gettid() is a real tid");
+assert_eq(tid, sys_getpid(), "sys_gettid() on the main thread is the pid");
+#endif
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: gettid is not wired (-38, the PE errno numbering)");
+assert_eq(tid, 0 - 38, "sys_gettid() is -38");
+#endif
+#ifdef CYRIUS_TARGET_CX
+test_group("cx: gettid is not wired (-38)");
+assert_eq(tid, 0 - 38, "sys_gettid() is -38");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: gettid is the pid");
+assert_eq(tid, sys_getpid(), "sys_gettid() is sys_getpid()");
+#endif
+
+var r = assert_summary();

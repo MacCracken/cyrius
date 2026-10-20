@@ -2146,6 +2146,12 @@ _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"
 # class shipped eight times. Controls + mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/darwin_syscall_literals_routed.sh"
 
+# 6.7.16 (D76) — every stdlib decline a macOS build reaches answers -78 (Darwin's ENOSYS), never
+# -38 (Linux's ENOSYS, Darwin's ENOTSOCK): a census of lib/ per Mac over the #ifdef frames and fn
+# bodies, the per-target peers derived from the include sites. sys_prctl / sys_gettid /
+# sys_sched_kicks answered -38 there. Controls + mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/platform/macos_declines_answer_darwin_enosys.sh"
+
 # 6.6.10 (bite 14) — the WHOLE .tcyr corpus compiles for PE, x86 Mach-O, arm64 Mach-O and agnos,
 # or the file is on that leg's allowlist, and the allowlists only SHRINK (an allowlisted file that
 # compiles is a FAIL too). Nothing cross-built tests/tcyr outside crossos/: 9 PE, 1 Mach-O and 37

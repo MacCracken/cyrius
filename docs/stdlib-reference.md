@@ -818,9 +818,9 @@ Linux-shaped buffers (v6.5.16), so every accessor works unchanged there; Windows
 | `sysinfo_uptime` / `sysinfo_total_memory` / `sysinfo_free_memory` / `sysinfo_procs` | `(info) → n` | Seconds, bytes (Linux's `mem_unit` applied, saturating) and the process count from a filled buffer |
 | `sysinfo_cpu_user` / `sysinfo_cpu_kern` | `(buf, cpu) → ticks/-1` | agnos only: per-core 100 Hz ticks in ring 3 / ring 0 (`cpu` 0..3) |
 | `sysinfo_blk_read` / `sysinfo_blk_write` | `(buf, tag) → sectors/-1` | agnos only: cumulative sectors per block-device tag |
-| `sys_sched_kicks` | `sys_sched_kicks() → n/-1/-errno` | agnos: reschedule IPIs sent since boot (-1 from a kernel older than 1.57.9); -38 elsewhere |
+| `sys_sched_kicks` | `sys_sched_kicks() → n/-1/-errno` | agnos: reschedule IPIs sent since boot (-1 from a kernel older than 1.57.9); -ENOSYS elsewhere: -78 on macOS (Darwin's ENOSYS, since 6.7.16), -38 on Linux, Windows and cx |
 | `system_uptime` / `system_total_memory` / `system_free_memory` | `() → n/-errno` | One-call forms of the accessors |
-| `sys_gettid` | `sys_gettid() → tid/-errno` | Thread id: Linux `gettid`, agnos its pid; -38 on macOS and Windows |
+| `sys_gettid` | `sys_gettid() → tid/-errno` | Thread id: Linux `gettid`, agnos its pid; -ENOSYS where it is not wired: -78 on macOS (Darwin's ENOSYS, since 6.7.16), -38 on Windows and cx |
 | `is_root` | `is_root() → 0/1` | Effective uid 0 (Linux, macOS), uid 0 (agnos); always 0 on Windows |
 
 ## Identity & Authentication
