@@ -8840,21 +8840,22 @@ compiler's emit codegen: the program-exit epilogue emits `syscall(0)` (agnos `ex
 code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at entry
 `≥ 0x200000` (agnos user-range floor).
 
-**The cx compiler on agnos.** `CYRIUS_TARGET_AGNOS=1 cycc < src/main_cx.cyr` builds `cycc_cx` as
-an agnos program. It reads `--version` and `--syntax-only`, and its environment (every `CYRIUS_*`
-knob), off the init stack agnos builds at exec (agnos has no `/proc`); maps its 246 MiB arena and
-the preprocessor's 24 MiB source buffer with agnos `mmap` (#27) — a buffer that cannot be mapped
-is named (`error: cannot map the preprocessor's 24 MiB source buffer`, exit 1, on every target);
-opens each include with agnos `open` (#7: the name and its length); and checks the working
-directory's `cyrius.cyml` pin against its own version as every host's compiler does (6.7.12's D5:
-a warning, a failure under `CYRIUS_STRICT_PIN=1`, silent under `CYRIUS_NO_WARN_PIN_DRIFT=1`).
-Before 6.7.16 it opened `/proc/self/cmdline` with Linux `openat`'s argument shape, so `cycc_cx
---version` compiled stdin and `--syntax-only` was ignored; it read no environment, so every knob
-was dead (and a refusal naming one — `async fn requires CYRIUS_ASYNC=1` — unactionable); it
-opened includes with the `openat` shape too, so none was found; it mapped the preprocessor's
-buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died; and it had no pin-drift
-check, so a drifted pin built silently whatever the two pin knobs said. It runs whole under the
-fake kernel of `tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG [6.7.16].
+**The cx compiler on agnos.** `CYRIUS_TARGET_AGNOS=1 cycc < src/main_cx.cyr` builds `cycc_cx` as an
+agnos program. It reads `--version` and `--syntax-only`, and its environment (every `CYRIUS_*` knob;
+the first 256 entries, as `getenv` there), off the init stack agnos builds at exec (agnos has no
+`/proc`); maps its 246 MiB arena and the preprocessor's 24 MiB source buffer with agnos `mmap` (#27)
+— a buffer that cannot be mapped is named (`error: cannot map the preprocessor's 24 MiB source
+buffer`, exit 1, on every target); opens each include with agnos `open` (#7: the name and its
+length); and checks the working directory's `cyrius.cyml` pin against its own version as every
+host's compiler does (6.7.12's D5: a warning, a failure under `CYRIUS_STRICT_PIN=1`, silent under
+`CYRIUS_NO_WARN_PIN_DRIFT=1`). Before 6.7.16 it opened `/proc/self/cmdline` with Linux `openat`'s
+argument shape, so `cycc_cx --version` compiled stdin and `--syntax-only` was ignored; it read no
+environment, so every knob was dead (and a refusal naming one — `async fn requires CYRIUS_ASYNC=1` —
+unactionable); it opened includes with the `openat` shape too, so none was found; it mapped the
+preprocessor's buffer with Linux `mmap` (#9 — agnos `mkdir`), so every compile died; and it had no
+pin-drift check, so a drifted pin built silently whatever the two pin knobs said. It runs whole
+under the fake kernel of `tests/gates/platform/agnos_peer_fake_kernel.sh` axis 14. See CHANGELOG
+[6.7.16].
 
 ### AGNOS Syscall ABI
 

@@ -55,6 +55,8 @@
 # no warning, exit 0 under every knob (C8 FAIL); the Linux-shaped open kept -> `sc 7 -100 …`, no
 # warning (C8 FAIL); the x86 read#0 kept -> agnos exit#0 with the fd as its code: every run in a
 # directory holding a cyrius.cyml exits 4 (C1 C2 C4 C6 C8 FAIL). 6.7.16 review.
+# C9: _read_env's envp walk stops after 256 entries on agnos (lib/args_agnos.cyr's bound). Mutant
+# measured: the bound removed -> the knob after 300 entries is read (11; C9 FAIL). 6.7.16 review.
 # C7: main.cyr's agnos build. Mutants measured: _cmdline_read's agnos return removed -> its first
 # syscall is `sc 7 -100 …` (C7 FAIL); main.cyr's Linux enum alone -> 4 duplicate-symbol warnings.
 # C3 / C4: the agnos cycc_cx reads its flags off the init stack — `--version` prints the version
@@ -793,6 +795,20 @@ if [ "$cxok" = 1 ]; then
     v0=x; [ -s "$T/c6.cyx" ] && { v0=0; "$T/cxvm" < "$T/c6.cyx" > /dev/null 2>&1 || v0=$?; }
     v1=x; [ -s "$T/c6p.cyx" ] && { v1=0; "$T/cxvm" < "$T/c6p.cyx" > /dev/null 2>&1 || v1=$?; }
     check "C6 it reads its environment: unset -> 22, CYRIUS_POISON=1 -> 11 (the knob's predefine)" "22 11" "$v0 $v1"
+    # C9: the envp walk is bounded at 256 entries on agnos, as lib/args_agnos.cyr's reader — it runs
+    # for every CYRIUS_* read, and an unterminated envp was walked until it faulted. The knob after
+    # 300 other entries reads as unset (22), with no fault; after 200, it is seen (11).
+    f300=$(i=0; while [ "$i" -lt 300 ]; do printf 'CYF%d=x ' "$i"; i=$((i + 1)); done)
+    f200=$(i=0; while [ "$i" -lt 200 ]; do printf 'CYF%d=x ' "$i"; i=$((i + 1)); done)
+    # shellcheck disable=SC2086
+    env -i $f300 CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c9.log" 3> "$T/c9.cyx" 2>&1
+    # shellcheck disable=SC2086
+    env -i $f200 CYRIUS_POISON=1 "$T/sct" "$T/cxag" cli < "$T/c6.cyr" > "$T/c9b.log" 3> "$T/c9b.cyx" 2>&1
+    v2=x; [ -s "$T/c9.cyx" ] && { v2=0; "$T/cxvm" < "$T/c9.cyx" > /dev/null 2>&1 || v2=$?; }
+    v3=x; [ -s "$T/c9b.cyx" ] && { v3=0; "$T/cxvm" < "$T/c9b.cyx" > /dev/null 2>&1 || v3=$?; }
+    check "C9 the envp walk stops at 256 entries: the knob after 300 others unset (22, exit 0), after 200 seen (11)" \
+        "22 exit 0 | 11" \
+        "$v2 $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c9.log") | $v3"
     # C8: the pin-drift check runs on agnos too — 6.7.12's D5 makes it the pin contract on every
     # host, and the agnos cycc_cx had no arm, so CYRIUS_STRICT_PIN / CYRIUS_NO_WARN_PIN_DRIFT were
     # dead there. A cyrius.cyml pinning 0.0.1 in the directory: the warning on fd 2 and exit 0; with
