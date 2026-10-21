@@ -1777,7 +1777,9 @@ declaration zone since 6.7.15, `var x = mkg1(33);` with `fn mkg1<T>(v: T): G1<T>
 `G1<i32>`, and since 6.7.16 whatever carries the type argument binds it there as the call does: `mkg1(30 + 3)` and
 `mkg1(-3)` are `G1`, `mkg1(1.5)` is `G1<f64>`, a struct carrier `mkc(BX)` with `BX: Box<i32>` is `G1<i32>`, and a
 bounded `struct G1<T: Show>` gives its instance, its bound judged once, at the call — each was *no struct type in
-scope for 'x'* at `x.v` in the zone and bound after the first statement), and one of 9-16 bytes is refused as
+scope for 'x'* at `x.v` in the zone and bound after the first statement; a generic call carrying it is the instance that
+call makes, `mkg1(mkg1(P))` is `G1<G1<Pt>>` and `id(mkg1(P))` is `G1<Pt>`, where the zone refused them as *the
+declaration zone misread whether the initializer of 'x' is a struct value*), and one of 9-16 bytes is refused as
 `var x: P2 = mk2(30);` is (*'mk2' returns a struct by value, and a struct result needs storage in a fn's frame*;
 through 6.7.13 `x` held the first word, silently); over 16 bytes the call's own refusal is the one error. So does a
 whole method, operator or known `&f` result (6.7.15; the user's decisions D34 (a) and D35 (a), 2026-10-18): `var G =

@@ -1912,7 +1912,69 @@ printf '%s\nvar y = b.idm(QB);\nvar QB = mk1();\nfn f(): i64 { return y.a + 33; 
 runs GZT14 33 "the zone: \`b.idm(QB)\` with QB swept below it is Pt, read by a fn body (QB is 0 when y is made)"
 rowt GZT15 'var y = b.idm(Q2);' 'y.a'
 for zw in zone after; do refused "GZT15$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "the $zw: a 16 B binding is the call's one refusal (\`y.a\` adds none)"; done
-[ "$rows" -ge 455 ] || bad "only $rows rows ran (floor 455)"
+
+# ---- 6.7.16 (issues/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md): a zone generic call whose
+# carrying argument is a generic call returning a generic struct's instance — `var x = mkg1(mkg1(P));` — was refused "the
+# declaration zone misread whether the initializer of 'x' is a struct value": the sweep read the inner call by its BASE
+# return through the pair scans' token reader (`_tok_init_sid`, shared with pass 2), minting `G1$G1` where the replay's
+# call returns `G1$G1$Pt`; an outer `: T` call (`id(mkg1(P))`) took `G1` for `G1$Pt` the same way, and a struct carrier
+# given one (`mkc(mkbx(33))`) was a miss. The sweep now reads a carrying generic call as the instance it makes
+# (`_gu_tpg` / `_gu_cg`: `_gu_gen` on the inner name, the struct only, recursively; the classifier's `_gu_ircs` and the
+# struct carrier's `_gsc_call` through `_gu_icg` / `_gu_gsc`). GZC1 the filed repro verbatim; GZC2 `mkg1(mkg1(33))`;
+# GZC3 `mkg1(mkg1<i32>(33))`; GZC4 wrapped; GZC5 three deep; GZC6 a second parameter's list (`mkgp(mkg1(P), 3)`); GZC7
+# an outer `: T` call; GZC8 annotated; GZC9 a `: T` call between; GZC10 GZC11 a struct carrier given a generic call
+# (`Box<i64>`, `Box<i32>`) — each zone and after; GZC12 a fn body passes x to a `G1<G1<Pt>>` parameter before the
+# replay; GZC13 an inner refused list is its one refusal (zone and after).
+#   N89 `_gu_tpg` answering 0                              -> RED 9: GZC1zone GZC3zone-GZC9zone GZC12, x4 legs (misread,
+#                                                           or "cannot pass 'x'")
+#   N90 `_gu_gsc` answering 0                              -> RED 1: GZC10zone x4 ("no struct type in scope for 'x'";
+#                                                           GZC11's explicit `mkbx<i32>` is read by the classifier too)
+GZCH='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Box<T> { v: T; }
+struct Pt { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn mkgp<T, U>(v: T, w: U): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn mkbx<T>(v: T): Box<T> { var g: Box<T>; g.v = v; return g; }
+fn mkc<T>(b: Box<T>): G1<T> { var g: G1<T>; g.v = b.v; return g; }
+fn id<T>(v: T): T { return v; }
+fn take(g: G1<G1<Pt>>): i64 { return g.v.v.a; }
+fn take4(g: G1<i32>): i64 { return g.v; }
+var P = Pt { 33 };'
+# rowc <name> <declarations> <exit expression>: the zone file over $GZCH, and the after one with a first statement
+# before its first `var x`
+rowc() {
+    printf '%s\n%s\nsyscall(60, %s);\n' "$GZCH" "$2" "$3" > "$T/$1zone.cyr"
+    awk '!d && /^var x[ :]/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"
+}
+cat > "$T/GZC1zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var P = Pt { 33 };
+var x = mkg1(mkg1(P));
+syscall(60, x.v.v.a);
+EOF
+awk '!d && /^var x /{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/GZC1zone.cyr" > "$T/GZC1after.cyr"
+rowc GZC2 'var x = mkg1(mkg1(33));' 'x.v.v'
+rowc GZC3 'var x = mkg1(mkg1<i32>(33));' 'x.v.v'
+rowc GZC4 'var x = mkg1(((mkg1(P))));' 'x.v.v.a'
+rowc GZC5 'var x = mkg1(mkg1(mkg1(P)));' 'x.v.v.v.a'
+rowc GZC6 'var x = mkgp(mkg1(P), 3);' 'x.v.v.a'
+rowc GZC7 'var x = id(mkg1(P));' 'x.v.a'
+rowc GZC8 'var x: G1<Pt> = id(mkg1(P));' 'x.v.a'
+rowc GZC9 'var x = mkg1(id(mkg1(P)));' 'x.v.v.a'
+rowc GZC10 'var x = mkc(mkbx(33));' 'x.v'
+rowc GZC11 'var x = mkc(mkbx<i32>(33));' 'take4(x)'
+for n in 1 2 3 4 5 6 7 8 9 10 11; do
+    for zw in zone after; do runs "GZC$n$zw" 33 "the $zw: GZC$n's carrying generic call is the instance it makes"; done
+done
+printf '%s\nvar x = mkg1(mkg1(P));\nfn f(): i64 { return take(x); }\nsyscall(60, f());\n' "$GZCH" > "$T/GZC12.cyr"
+runs GZC12 33 "the zone: a fn body passes x to a \`G1<G1<Pt>>\` parameter before the replay (\"cannot pass 'x'\" before)"
+rowc GZC13 'var x = mkg1(mkg1<*Pt>(3));' '0'
+for zw in zone after; do refused "GZC13$zw" "a type argument is a type name, got '*'" "the $zw: an inner refused list is its one refusal"; done
+[ "$rows" -ge 480 ] || bad "only $rows rows ran (floor 480)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

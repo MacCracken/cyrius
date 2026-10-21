@@ -12483,11 +12483,21 @@ fn _gz_call_rs(S, j): i64 {
     if (fi < 0) { return 0; }
     var r = GFRS(S, fi);
     if (GFTP(S, fi) != 0) {
-        if (r <= 0) { r = _tok_gen_ret_sid(S, j - 1, j - 1, j, fi); }
+        if (r <= 0) { r = _gz_tret(S, j, fi); }   # 6.7.16: a carrying generic call's instance first
         elif (GSTP(S, r - 1) != 0) { _gz_gb = r; }   # `: G<T>`: an instance of G, not G (`_gz_sval`)
     }
     if (r < 0) { return 0; }
     return r;
+}
+# The struct generic `fi`'s `: T` return binds at the call `j`: T's carrying argument as the replay's call reads it when
+# it is a generic call (`_gu_tpg`), else the pair scans' token reader (`_tok_gen_ret_sid`); -1 for a carrier the zone
+# cannot read (no struct). CHANGELOG [6.7.16]
+fn _gz_tret(S, j, fi): i64 {
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    var g = _gu_tpg(S, j, fi, w);
+    if (g != 0) { return g; }
+    return _tok_gen_tp_sid(S, j - 1, j - 1, j, fi, w);
 }
 # `if (c) { a } [elif (d) { b }] else { c }` spanning [b, e): the first branch's struct — a name of a
 # struct global (inline or a handle: the branch takes its struct), else its value's (`_gz_ty`).
@@ -13070,6 +13080,9 @@ fn _gu_xq(S, fi): i64 {
 var _gu_noinst = 0;
 var _gu_miss = 0;
 fn _gu_tp(S, c, fi, w): i64 {
+    var g = _gu_tpg(S, c, fi, w);   # 6.7.16: a carrying generic call is the instance it makes
+    if (g > 0) { return g; }
+    if (g < 0) { _gu_miss = 1; return 0 - 8; }
     var s = _tok_gen_tp_sid(S, c - 1, c - 1, c, fi, w);
     if (s > 0) { return s; }
     var sv = GTI(S);
@@ -13085,6 +13098,71 @@ fn _gu_tp(S, c, fi, w): i64 {
     if (r == 0 - 9) { _gi_sc = 1; }
     return r;
 }
+# ⛔ 6.7.16 — A CARRYING GENERIC CALL IS THE INSTANCE IT MAKES. Type parameter `w` of generic `fi` at the call whose name
+# is token `c` (no explicit list), when its carrying argument is ONE whole generic call (inside any wrap): a `: G<..>`
+# return is the instance that call makes (`_gu_gen` on its name token: the struct only, no fn instance), a `: T` one
+# the struct its own carrier binds (recursively); -1 when it is such a call but the zone cannot read it (`_gu_miss`);
+# 0 when it is no such call (the token reader's and the classifier's). The pair scans' reader (`_tok_init_sid`, shared
+# with pass 2) typed the inner call by its BASE: `var x = mkg1(mkg1(P));` minted `G1$G1` where the replay's call returns
+# `G1$G1$Pt`, and `var x = id(mkg1(P));` took `G1` for `G1$Pt` — refused "the declaration zone misread whether the
+# initializer of 'x' is a struct value". CHANGELOG [6.7.16]
+fn _gu_tpg(S, c, fi, w): i64 {
+    if (TOKTYP(S, c + 1) == 19) { return 0; }
+    _gen_stub(S, fi);
+    var m = GFGM(S, fi);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) { return 0; }
+    var a = _call_arg_for(S, fi, c + 1, pk - 1);
+    if (a < 0) { return 0; }
+    a = _ie_unparen(S, a, _arg_next(S, a));
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != _ie_pe) { return 0; }
+    var gi = FINDFN(S, TOKVAL(S, a));
+    if (gi < 0) { return 0; }
+    if (GFTP(S, gi) == 0) { return 0; }
+    var r = GFRS(S, gi);
+    if (r > 0) { if (r < 2048) { if (GSTP(S, r - 1) != 0) { return _gu_cg(S, a, r); } } }
+    if (r > 0) { return 0; }
+    var w2 = _gen_ret_tp(S, gi);
+    if (w2 < 0) { return 0; }
+    return _gu_tpg(S, a, gi, w2);
+}
+# The instance the generic call at token `a` returning `: G<..>` (G = `g`) makes (`_gu_gen`), the zone reader's state
+# put back (`_gz_gb`, `_gu_hdl`: an inner refused list reaches its base, the outer call's global is no handle for it);
+# -1 = not read.
+fn _gu_cg(S, a, g): i64 {
+    var gb = _gz_gb;
+    var hd = _gu_hdl;
+    _gz_gb = g;
+    var s = _gu_ok(S, _gu_gen(S, a));
+    _gz_gb = gb;
+    _gu_hdl = hd;
+    if (s <= 0) { return 0 - 1; }
+    return s;
+}
+# The zone sweep's `_gsc_call` (a struct carrier given a whole call at token `a`): a generic callee returning `: G<..>`
+# is the instance the call makes (`_gu_cg`, nothing instanced) — `mkc(mkbx(33))` / `mkc(mkbx<i32>(33))` with `fn mkbx<T>(v:
+# T): Box<T>` was a miss (the global untyped, `x.v`: "no struct type in scope for 'x'"); one the zone cannot read is
+# still one (`_gu_miss`). 1 = answered, the struct in `_gu_gsc_s`; 0 = not such a call. CHANGELOG [6.7.16]
+var _gu_gsc_s = 0;
+fn _gu_gsc(S, a): i64 {
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    var r = GFRS(S, fi);
+    if (r <= 0) { return 0; }
+    if (r >= 2048) { return 0; }
+    if (GSTP(S, r - 1) == 0) { return 0; }
+    _gu_gsc_s = _gu_cg(S, a, r);
+    if (_gu_gsc_s < 0) {
+        _gu_miss = 1;
+        _gu_gsc_s = 0;
+    }
+    return 1;
+}
 fn _gu_tp_ic(S, c, fi, w): i64 {
     var m = GFGM(S, fi);
     var pk = w + 1;
@@ -13096,12 +13174,12 @@ fn _gu_tp_ic(S, c, fi, w): i64 {
 }
 # `_ic_call_rs` at the sweep: what the GENERIC call at the cursor (fi its base, `r` its return) returns, with no instance
 # made — a `: T` return is T's binding at this call when that is a struct or f64 (the instance's, `_gtype_tp_ret`), else
-# `r`; a `: G<..>` return (an instance's struct) or a pointer carrier is a miss. CHANGELOG [6.7.16]
+# `r`; a `: G<..>` return the instance the call makes (`_gu_icg`), a pointer carrier a miss. CHANGELOG [6.7.16]
 fn _gu_ircs(S, fi, r, ptr): i64 {
     if (ptr == 1) { _gu_miss = 1; return r; }
     var w = _gen_ret_tp(S, fi);
     if (w < 0) {
-        if (r > 0) { if (r < 2048) { if (GSTP(S, r - 1) != 0) { _gu_miss = 1; } } }
+        if (r > 0) { if (r < 2048) { if (GSTP(S, r - 1) != 0) { return _gu_icg(S, r); } } }
         return r;
     }
     var c = GTI(S);
@@ -13115,6 +13193,14 @@ fn _gu_ircs(S, fi, r, ptr): i64 {
     _gi_sc = sc;
     if (b > 0) { return b; }
     if (b == 0 - 9) { return b; }
+    return r;
+}
+# `_gu_ircs`'s `: G<..>` return (G = `r`, the cursor on the call's name): the instance the call makes (`_gu_cg`), as
+# the replay's call returns it (6.7.16: it was a miss); a call the zone cannot read is still one. CHANGELOG [6.7.16]
+fn _gu_icg(S, r): i64 {
+    var s = _gu_cg(S, GTI(S), r);
+    if (s > 0) { return s; }
+    _gu_miss = 1;
     return r;
 }
 # The struct generic `fi`'s return `: G<..>` (`_gz_gb` G) names under the binding (c0, c1), read by `_gtype_sid` as

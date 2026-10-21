@@ -16386,6 +16386,7 @@ fn _gsc_call(S, a): i64 {
     var o = _gcall_open(S, a);
     if (o < 0) { return 0; }
     if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    if (_gu_noinst == 1) { if (_gu_gsc(S, a) == 1) { return _gu_gsc_s; } }   # 6.7.16: the zone sweep's instance
     var fi = _gen_call_inst(S, a);
     if (fi < 0) { return 0; }
     if (_fn_rpsid != 0) {
