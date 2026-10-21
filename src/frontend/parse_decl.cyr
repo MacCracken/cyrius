@@ -2904,10 +2904,12 @@ var _sl_base_li = 0 - 1;
 var _sfw_fk = 0;
 var _sfw_fn = 0;   # 6.7.3: that field's name (a bool field's refusal names it); _sfw_fk + 16 = a bool
 var _sfw_ft = 0;   # 6.7.13: the field's type, for an inline `Str` element (`_istr_lit`)
+var _sfw_pf = 0;   # 6.7.16: 1 = the field is a `*Str` (`_istr_pfs`), for an inline `Str` element (`_istr_pfld`)
 fn _sfw_set(S, si, fi): i64 {
     _sfw_fk = _fk_bx(S, si, fi);
     _sfw_fn = GETFNAME(S, si, fi);
     _sfw_ft = GETFTYPE(S, si, fi);
+    _sfw_pf = _istr_pfs(S, si, fi);
     return 0;
 }
 # 6.6.12: 1 = the value is already in rax (a nested-literal walk parsed it), consumed on entry.
@@ -2918,6 +2920,8 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     _sfw_fk = 0;
     var ft = _sfw_ft;
     _sfw_ft = 0;
+    var pf = _sfw_pf;
+    _sfw_pf = 0;
     if (_sfw_have == 1) { _sfw_have = 0; }
     else {
         # An element is a one-slot store: a `: stack` pair here kept the tag and dropped the payload
@@ -2929,6 +2933,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
             PCMPE(S);
             _ifs_bx(S, fk, t0, _sfw_fn);
             _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
+            _istr_pfld(S, pf, t0);   # 6.7.16 (D19): ... and into a `*Str` field (`W { gt, 1 }`)
         }
     }
     EPUSHR(S);
@@ -8459,6 +8464,10 @@ fn _istr_pfs(S, si, fi): i64 {
     return _istr_pdst(S, _fld_ps_get(S, si, fi), 1);
 }
 # The value of a field store just parsed from `ti` (`_fst_on`), `pf` = `_istr_pfs`'s answer for its field.
+# ⛔ 6.7.16 — AND A STRUCT LITERAL'S `*Str` ELEMENT (`EMIT_STRUCT_FIELD_W`, the field recorded by `_sfw_set`): `W { gt, 1
+# }` — positional or named, in a fn, in the zone and after a statement, nested — stored gt's data word (`str_len(w.p)`
+# the string's bytes read as a header), and a frame's `W { t, 1 }` compiled silently where `w.p = t` is refused (D19):
+# a global's or a capture's takes its header's address, a frame's is refused with the field's words. CHANGELOG [6.7.16]
 fn _istr_pfld(S, pf, ti): i64 {
     if (pf == 0) { return 0; }
     var r = _istr_at(S, ti, GTI(S));

@@ -208,6 +208,8 @@ fn pa_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; var i = 
 struct WS { p: *Str; n; }
 struct OS { w: WS; pw: *WS; }
 var GWS: WS = WS { 0, 0 };
+var GWSZ: WS = WS { gz, 1 };          # a zone literal's `*Str` element: gz's header (6.7.16, D19)
+var GWSZN: WS = WS { n: 2, p: gz };   # ... named
 fn mkws(): *WS { return &GWS; }
 fn pa_fld_local(): i64 { var w: WS = WS { 0, 1 }; w.p = gt; return str_len(w.p); }
 fn pa_fld_global(): i64 { GWS.p = gt; var r = str_len(GWS.p); GWS.p = 0; return r; }
@@ -291,6 +293,18 @@ fn hf_lit(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &
 fn hf_litn(): i64 { var a = str_from("abcde"); GPS = a; var wp: WP = WP { a, 1 }; var v: W = W { *gsp(), 1 }; var v2: W = W { *wp.p, 1 }; GPS = 0; return (v.s == a) * 100 + (v2.s == a) * 10 + v2.n; }
 fn hf_ret(): i64 { var a = str_from("abcde"); var p: *Str = a; var h: Str = rsp(p); h.len = 2; return (rsp(p) == a) * 100 + (rsp2(p) == a) * 10 + str_len(p); }
 fn hf_zone(): i64 { return (GWZ.s == &gz) * 10 + str_len(GWZ.s); }
+# ── a struct literal's `*Str` element from an inline `Str` takes its header's address, as `w.p = gt` does (6.7.16,
+#    D19): `W { gt, 1 }` stored gt's data word; a frame's `W { t, 1 }` is refused (the gate's PL2) ─────────────────────
+struct WS2 { n; p: *Str; }
+struct OS2 { k; w: WS2; }
+struct UWS { p; n; }
+fn pl_local(): i64 { var w: WS = WS { gt, 1 }; return str_len(w.p); }
+fn pl_named(): i64 { var w: WS = WS { p: gt, n: 1 }; var w2: WS = WS { n: 1, p: (gt) }; return str_len(w.p) * 10 + str_len(w2.p); }
+fn pl_nest(): i64 { var o: OS2 = OS2 { 5, 1, gt }; return str_len(o.w.p) * 10 + o.w.n; }
+fn pl_bind(): i64 { var w: WS = WS { gt, 1 }; w.p.len = 3; var r = gt.len; gt.len = 7; return r; }
+fn pl_cap(): i64 { var t: Str = Str { "abc", 3 }; var c = || { var w: WS = WS { t, 1 }; var w2: WS = WS { p: t, n: 2 }; return str_len(w.p) * 10 + str_len(w2.p); }; return callptr(c); }
+fn pl_zone(): i64 { return str_len(GWSZ.p) * 10 + str_len(GWSZN.p); }
+fn pl_untyped(): i64 { var u: UWS = UWS { gt, 1 }; if (u.p == load64(&gt)) { return 1; } return 0; }
 
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
@@ -395,6 +409,8 @@ GW.s = *GPS;                 # top level: `*GPS` into a `Str` field of a global 
 var GWL: W = W { *GPS, 1 };  # ... and into a literal's `Str` field after a statement
 var R_TOP16 = (GW.s == GPS) * 100 + (GWL.s == GPS) * 10 + str_len(GW.s);
 GW.s = 0;
+var GWSL: WS = WS { gt, 1 };  # top level after a statement: a literal's `*Str` element takes gt's header (6.7.16, D19)
+var R_TOP17 = str_len(GWSL.p);
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -503,6 +519,13 @@ assert_eq(hf_lit(), 1111, "W { *p, 1 }, W { (*p), 2 }, W { **pp, 3 } into a lite
 assert_eq(hf_litn(), 111, "W { *gsp(), 1 } and W { *wp.p, .. }, a literal's Str field");
 assert_eq(hf_ret(), 112, "return *p; / return ((*p)); from a fn returning Str is p: a change through the result is seen through p");
 assert_eq(hf_zone(), 17, "a zone W { *PZ, 1 } into a literal's Str field is PZ");
+assert_eq(pl_local(), 7, "WS { gt, 1 }: a literal's *Str element takes gt's header (D19; the filed repro: the data word)");
+assert_eq(pl_named(), 77, "WS { p: gt, n: 1 } and WS { n: 1, p: (gt) }, named");
+assert_eq(pl_nest(), 71, "OS2 { 5, 1, gt }: the *Str leaf of a nested struct");
+assert_eq(pl_bind(), 3, "WS { gt, 1 } is gt's header: w.p.len = 3 writes gt.len");
+assert_eq(pl_cap(), 33, "a closure: WS { t, 1 } / WS { p: t, n: 2 } of the captured copy");
+assert_eq(pl_zone(), 77, "zone WS { gz, 1 } / WS { n: 2, p: gz }");
+assert_eq(pl_untyped(), 1, "UWS { gt, 1 } into an untyped field keeps gt's first word (D18 (c))");
 assert_eq(pa_fld_local(), 7, "w.p = gt into a *Str field of a local takes gt's header (D19; the filed repro: the data word)");
 assert_eq(pa_fld_global(), 7, "GW.p = gt into a *Str field of a global");
 assert_eq(pa_fld_ptr(), 7, "pw.p = gt through a *W");
@@ -578,6 +601,7 @@ assert_eq(R_TOP14, 7, "top level: *GPP = gt through a **Str global (6.7.16, D19)
 assert_eq(R_TOP15, 77, "top level: gg<Str>(*GPS) / gg(*GPS) pass the header GPS points at (6.7.16)");
 assert_eq(R_TOP12, 107, "top level: GH = *GP into a Str handle global rebinds it to gt's header (6.7.16, D20)");
 assert_eq(R_TOP16, 117, "top level: GW.s = *GPS into a Str field and W { *GPS, 1 } are GPS (6.7.16)");
+assert_eq(R_TOP17, 7, "top level after a statement: WS { gt, 1 } takes gt's header (6.7.16, D19)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

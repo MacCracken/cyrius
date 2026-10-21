@@ -108,6 +108,12 @@
 # `Str` is p, as `v.s = p` and D20's `h = *p` are (the tcyr's hf_* rows, R_TOP16): each stored or returned the header's
 # data word as the handle (HF1, the filed repro verbatim: `161010` exit 43, was `160111` exit 50).
 #
+# 6.7.16 (D19, issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md): a struct
+# LITERAL's `*Str` element from an inline `Str` — `W { gt, 1 }`, named, a nested struct's leaf, in a fn, in the zone and
+# after a statement, a capture's t — takes its header's address, as `w.p = gt` does (the tcyr's pl_* rows, R_TOP17;
+# PL1 / PL3 the filed repro and top-level line: 7, were 0); a frame's `W { t, 1 }` is refused with the field's words
+# (PL2 verbatim, PL2b named, PL2c nested; it compiled, the data word stored). An untyped field keeps the word.
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -120,7 +126,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -215,6 +221,10 @@
 #   2026-10-20 (6.7.16, `*p` into a `Str` field / a literal's / a `: Str` return; the same scratch-copy method):
 #   r1 `_istr_vdx` answers 0 (the fix reverted)    -> RED 14: R1 x7 (16 rows: the hf_* rows, R_TOP16 — the data word as
 #                                                     the handle), HF1 x7 ('160111', exit 50)
+#   2026-10-20 (6.7.16, D19 a struct literal's `*Str` element; the same scratch-copy method):
+#   s1 EMIT_STRUCT_FIELD_W without `_istr_pfld`   -> RED 33: R1 x7 (8 rows: the pl_* rows, R_TOP17 — the data word —
+#      (the fix reverted)                             and the two encoder rows), PL1 x7 (0), PL2 / PL2b / PL2c x4 (each
+#                                                     compiled), PL3 x7 (0)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -337,7 +347,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=186   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16
+FLOOR=194   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -735,6 +745,51 @@ for leg in $XLEGS $OLEGS; do
     else bad "HF1 the filed repro ($leg): '$last', exit $got (want '161010', exit 43: w.s and GW.s are p)"; fi
 done
 
+# --- PL1-PL3: the filed repros (issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md):
+# a struct literal's `*Str` element from an inline `Str` takes its header's address, as `w.p = gt` does (6.7.16, D19;
+# through 6.7.15 the data word: 0) — PL1 verbatim (7), PL3 the filed top-level line (7); a frame's `W { t, 1 }` is
+# refused with the field's words, as `w.p = t` is (PL2 verbatim; it compiled, 0) — named (PL2b) and a nested struct's
+# leaf (PL2c) too ---
+cat > "$T/PL1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+struct W { p: *Str; n; }
+fn go(): i64 { var w: W = W { gt, 1 }; return str_len(w.p); }
+fn main(): i64 { alloc_init(); return go(); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PL1 7 "the filed repro 1: \`W { gt, 1 }\` into a \`*Str\` field takes gt's header (was 0, the data word)" "$XLEGS $OLEGS"
+cat > "$T/PL2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct W { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abc", 3 }; var w: W = W { t, 1 }; return str_len(w.p); }
+fn main(): i64 { alloc_init(); return go(); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+refused PL2 "$MF" "the filed repro 2: a frame's \`W { t, 1 }\` into a \`*Str\` field (D19; it compiled, the data word)"
+row PL2b 'struct WP { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: WP = WP { n: 1, p: (t) }; return str_len(w.p); }'
+refused PL2b "$MF" "\`WP { n: 1, p: (t) }\`, named"
+row PL2c 'struct WP2 { n; p: *Str; }
+struct OP2 { k; w: WP2; }
+fn go(): i64 { var t: Str; var o: OP2 = OP2 { 5, 1, t }; return str_len(o.w.p); }'
+refused PL2c "$MF" "\`OP2 { 5, 1, t }\`, a nested struct's \`*Str\` leaf, of a bare \`var t: Str;\`"
+cat > "$T/PL3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+struct W { p: *Str; n; }
+var GW: W = W { gt, 1 };
+fn main(): i64 { alloc_init(); return str_len(GW.p); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PL3 7 "the filed top-level line: a zone \`var GW: W = W { gt, 1 };\` (was 0)" "$XLEGS $OLEGS"
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -860,7 +915,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=66   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows); the floor is the count that runs
+FLOOR_ROWS=71   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
