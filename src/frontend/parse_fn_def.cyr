@@ -1114,6 +1114,17 @@ fn _tl_decl2(S, t): i64 {
     _tl_decl_end(S, p0, ti);
     return 1;
 }
+# ... and a fn's (PARSE_FN_DEF) and an impl's: a refused signature or impl header over an EMPTY body (`fn h(5) { }`,
+# `impl 5 { }`, a method `fn a(5) { }`) held the latch past its `}` — a body's statement resync releases it otherwise —
+# so the next fn's first statement, the next method's, or a directive (`#deprecated ) )`) lost its error.
+# CHANGELOG [6.7.16]
+fn _tl_impl2(S): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    PARSE_IMPL(S);
+    _tl_decl_end(S, p0, ti);
+    return 1;
+}
 fn _tl_enum_init1(S): i64 {
     var p0 = _panic;
     var ti = GTI(S);
@@ -1126,21 +1137,24 @@ fn _tl_decl_end(S, p0, ti): i64 {
     if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
     return 0;
 }
-# 1 = the tokens from `ti` to the cursor end at the `}` just stepped, with no other `}` and at most one `{` (its own,
-# or none when the header's was refused) — the declaration's body did not run into the next one.
+# 1 = the tokens from `ti` to the cursor end at the `}` just stepped, and it closes the first `{` among them (nothing
+# closed it before: the body did not run into the next declaration) — or, none when the header's was refused, it is
+# the only brace. A fn's or an impl's body holds braces of its own; a struct's or an enum's none.
 fn _tl_decl_synced(S, ti): i64 {
     var e = GTI(S) - 1;
     if (e <= ti) { return 0; }
     if (TOKTYP(S, e) != 14) { return 0; }
-    var o = 0;
+    var d = 0;
+    var seen = 0;
     var k = ti;
     while (k < e) {
         var b = TOKTYP(S, k);
-        if (b == 14) { return 0; }
-        if (b == 13) { o = o + 1; }
+        if (b == 13) { d = d + 1; seen = 1; }
+        if (b == 14) { d = d - 1; if (d <= 0) { return 0; } }
         k = k + 1;
     }
-    if (o > 1) { return 0; }
+    if (seen == 0) { return 1; }
+    if (d != 1) { return 0; }
     return 1;
 }
 
@@ -1263,7 +1277,7 @@ fn _tl_scan2_def(S, t, objok): i64 {
         return 1;
     }
     if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
-    if (t == 77) { PARSE_IMPL(S); return 1; }
+    if (t == 77) { return _tl_impl2(S); }   # 6.7.16: its refusal ends at its `}`
     if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)
     if (t == 78) { _tl_skip_mode(S); return 1; }
     if (t == 79) { if (objok == 1) { _tl_skip_mode(S); return 1; } }
@@ -1665,7 +1679,10 @@ fn PARSE_FN_DEF(S): i64 {
     # emitted a bare 0xC3 at `rbp - fsz` and #GP'd under OVMF. EEXIT restores the parked
     # entry rsp instead, which is depth-independent, so there is nothing per-body to track.
     # See src/common/util.cyr for the whole post-mortem. CHANGELOG [6.6.5]
+    var _fp0 = _panic;   # 6.7.16: a refused signature's latch ends at the body's `}` (`_tl_decl_end`)
+    var _fti = GTI(S);
     var _rf = _PARSE_FN_DEF_IMPL(S);
+    _tl_decl_end(S, _fp0, _fti);
     _lc_n = _lc_sv_n;
     _lc_floor = _lc_sv_f;
     _ce_fn_rname = _rn_sv;

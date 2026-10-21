@@ -74,7 +74,8 @@ need _tl_scan1_mode '_prescan_impl(S);' '_tl_kmode(S, 3);'
 need _tl_pass2 '_tl_scan2(S, objok)' 'SMOD(S, 0);'
 need _tl_scan2 '_tl_directive(S, 1) == 1' '_tl_decl2(S, t)'
 need _tl_decl2 'PARSE_ENUM_DEF(S, 2);' '_tl_skip_struct(S);' '_tl_skip_union(S);'   # 6.7.16
-need _tl_scan2_def 'PARSE_FN_DEF(S);' '_skip_gvar_decl(S);' 'PARSE_IMPL(S);'
+need _tl_scan2_def 'PARSE_FN_DEF(S);' '_skip_gvar_decl(S);' '_tl_impl2(S)'
+need _tl_impl2 'PARSE_IMPL(S);'   # 6.7.16
 need _tl_enum_inits '_tl_enum_init1(S);'
 need _tl_enum_init1 'PARSE_ENUM_DEF(S, 1);'   # 6.7.16
 

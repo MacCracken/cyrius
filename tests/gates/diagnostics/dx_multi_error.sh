@@ -182,12 +182,24 @@ cascade D3 1 ') fn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:1: unexpected
 cascade D4 1 '] fn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:1: unexpected ']'"
 cascade D5 1 'syscall(60, 0));\nfn f(): i64 { if (1) { return 2; } return 1; }\nsyscall(60, f());\n' "1:15: expected ';', got ')'"
 grep -q "unmatched '}'" "$E" && { echo "FAIL: D5: an invented unmatched '}'"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z8, D1-D5)"; exit 1; }
+# D6-D11 (6.7.16, met with the same issue) — A REFUSED SIGNATURE OVER AN EMPTY BODY: `fn h(5) { }`, `impl 5 { }`, a method
+#     `fn a(5) { }`. A body's statement resync is what released the signature's latch, so with no statement it held past
+#     the `}` and the next fn's first statement (D6, D8), the next method's (D9), a directive (D7) or the program's first
+#     statement (D10) lost its error. PARSE_FN_DEF and pass 2's impl step (`_tl_impl2`) release it at the body's `}`
+#     (`_tl_decl_end`). D11 control: a body with a statement was already right. RED on 746548d92 (the lane before the
+#     bite): D6-D10; PARSE_FN_DEF without its release: D6 D7 D9 D10; `_tl_impl2` without: D8.
+cascade D6 2 'fn h(5) { }\nfn g(): i64 { var x = 1 2; return x; }\nsyscall(60, g());\n' "1:6: expected identifier, got number 5" "2:25: expected ';', got number 2"
+cascade D7 3 'fn h(5) { }\n#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:6: expected identifier, got number 5" "2:1: #deprecated needs a message string" "2:13: unexpected ')'"
+cascade D8 2 'impl 5 { }\nfn g(): i64 { var x = 1 2; return x; }\nsyscall(60, g());\n' "1:6: expected identifier, got number 5" "2:25: expected ';', got number 2"
+cascade D9 2 'struct S { a; }\nimpl S {\n    fn a(5) { }\n    fn b(self): i64 { var x = 1 2; return x; }\n}\nsyscall(60, 0);\n' "3:10: expected identifier, got number 5" "4:33: expected ';', got number 2"
+cascade D10 2 'fn h(5) { }\nvar a = 1;\na = 2;\nsyscall(60, 1 2);\n' "1:6: expected identifier, got number 5" "4:15: expected ')', got number 2"
+cascade D11 2 'fn h(5): i64 { return 0; }\nfn g(): i64 { var x = 1 2; return x; }\nsyscall(60, g());\n' "1:6: expected identifier, got number 5" "2:25: expected ';', got number 2"
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z8, D1-D11)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), a stray `)` / `]` at the top level is its own error (D1-D5), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), a stray `)` / `]` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its `}` (D6-D11), valid emits"
 exit 0
