@@ -477,6 +477,10 @@
 # controls) — the tree before RED 60: VO49-VO60 on five legs (x86_64 / aarch64 0, cx 41: one word stored);
 #   M-VO10 `_vsl_tup` reading no tuple literal         -> RED 60: VO49-VO60 on five legs
 #   M-VO11 a tuple element always the declaration's words -> RED 10: VO51 VO60 on five legs
+# and a whole call stored into a field or an element of a call's result (`_vsl_cstore`; rows VO61-VO67, VOC3 the
+# controls) — the tree before RED 35: VO61-VO67 on five legs;
+#   M-VO12 `_vsl_cstore` reading no call               -> RED 35: VO61-VO67 on five legs
+#   M-VO13 `_vsl_cstore` by name only (no `callptr`)   -> RED 5: VO62 on five legs
 # 6.7.16 (met landing D100) — the vector receives' refusals are made in sync (`_refuse_in_sync`): the by-name call's
 # mismatch into a local (`_try_vector_call_assign`), `_vrcv_tyerr` (the starting call, a method, `&f`, a global, another
 # vector; D100's operands and slots), `_vrcv_mscal` (a method starting a declaration) and `_vin_decl` (`var x: i64 =
@@ -2575,10 +2579,18 @@ VAC_ROWS="VAC1"
 # VO49-VO60 (the s16 review) a whole call as a tuple literal's element — an untyped and an annotated declaration's, an
 # assignment's, a tuple argument's, the second element, a multi-value fn's and a method's `return`, a method's call as a
 # middle element, a wrapped explicit instance, the declaration zone, after the first statement (`callptr(&mk2, ..)`), a
-# tuple field's store (f64v4).
+# tuple field's store (f64v4); VO61-VO67 (the s16 review) a whole call stored into a field or an element of a CALL's
+# result — `gp().b`, `callptr(&gp).b`, `gi()[0]`, an explicit instance's `gpg<i64>(1).b`, an inferred generic's (f64v4),
+# `fncall0(&gp).b` from a method, after the first statement.
 VOH="$OPH"'fn take(t): i64 { return t; }
 fn rd(p: *f64v2): i64 { return load64(p); }
 struct Pt { a; b; }
+'
+VOG="$VOH"'var GP: Pt = Pt { 1, 2 };
+var GX: i64[2];
+fn gp(): *Pt { return &GP; }
+fn gi(): *i64 { return &GX; }
+fn gpg<T>(x: T): *Pt { return &GP; }
 '
 vo_src() {  # $1 row id -> source on stdout
     case "$1" in
@@ -2757,6 +2769,28 @@ syscall(60, GT.1 % 256);
 fn r(): i64 { var s: St; s.t = (mk4(41), 3); return s.t.0; }
 syscall(60, r() % 256);
 ' ;;
+    VO61) printf '%s' "$VOG"'fn r(): i64 { gp().b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO62) printf '%s' "$VOG"'fn r(): i64 { callptr(&gp).b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO63) printf '%s' "$VOG"'fn r(): i64 { gi()[0] = mk2(41, 7); return GX[0]; }
+syscall(60, r() % 256);
+' ;;
+    VO64) printf '%s' "$VOG"'fn r(): i64 { gpg<i64>(1).b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO65) printf '%s' "$VOG"'fn r(): i64 { gpg(1).a = mk4(41); return GP.a; }
+syscall(60, r() % 256);
+' ;;
+    VO66) printf '%s' "$VOG"'fn r(): i64 { var s: Mv = Mv { 1 }; fncall0(&gp).b = s.m2(); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO67) printf '%s' "$VOG"'syscall(1, 1, "", 0);
+gp().b = mk2(41, 7);
+syscall(60, GP.b % 256);
+' ;;
     esac
 }
 vo_filed() {  # the issue's `r` per row
@@ -2771,12 +2805,12 @@ vo_filed() {  # the issue's `r` per row
 fn r(): i64 { return take(mk2(41, 7) + 1); }' ;;
     esac
 }
-VO_ROWS="VO1 VO2 VO3 VO4 VO5 VO7 VO8 VO9 VO10 VO11 VO12 VO13 VO14 VO15 VO16 VO17 VO18 VO19 VO20 VO21 VO22 VO23 VO24 VO25 VO26 VO27 VO28 VO29 VO30 VO31 VO32 VO33 VO34 VO35 VO36 VO37 VO38 VO39 VO40 VO41 VO42 VO43 VO44 VO45 VO46 VO47 VO48 VO49 VO50 VO51 VO52 VO53 VO54 VO55 VO56 VO57 VO58 VO59 VO60"
+VO_ROWS="VO1 VO2 VO3 VO4 VO5 VO7 VO8 VO9 VO10 VO11 VO12 VO13 VO14 VO15 VO16 VO17 VO18 VO19 VO20 VO21 VO22 VO23 VO24 VO25 VO26 VO27 VO28 VO29 VO30 VO31 VO32 VO33 VO34 VO35 VO36 VO37 VO38 VO39 VO40 VO41 VO42 VO43 VO44 VO45 VO46 VO47 VO48 VO49 VO50 VO51 VO52 VO53 VO54 VO55 VO56 VO57 VO58 VO59 VO60 VO61 VO62 VO63 VO64 VO65 VO66 VO67"
 VOD="vector return type does not match the declared type"
 VOA="vector return type does not match the assigned variable"
 vo_msg() {
     case "$1" in
-    VO2|VO4|VO5|VO9|VO10|VO15|VO16|VO17|VO18|VO19|VO23|VO26|VO27|VO30|VO32|VO33|VO34|VO35|VO36|VO47|VO51|VO60) echo "$VOA";;
+    VO2|VO4|VO5|VO9|VO10|VO15|VO16|VO17|VO18|VO19|VO23|VO26|VO27|VO30|VO32|VO33|VO34|VO35|VO36|VO47|VO51|VO60|VO61|VO62|VO63|VO64|VO65|VO66|VO67) echo "$VOA";;
     VO11|VO13|VO20) echo "a vector value cannot be returned as i64 - 'mk2' returns a vector";;
     VO48) echo "12:37: expected ';', got number 5";;
     *) echo "$VOD";;
@@ -2823,7 +2857,8 @@ vos_msg() {  # the two errors, one per line
     echo "undefined variable 'zz9'"
 }
 # The controls: a vector call where a vector goes, and the bound vector's lanes in every operator and slot (161); VOC2 a
-# vector call inside a tuple literal element's argument, a multi-value fn's element from a vector parameter (161).
+# vector call inside a tuple literal element's argument, a multi-value fn's element from a vector parameter (161); VOC3
+# a call result's field and element from a vector's lane (161).
 voc_src() {  # $1 row id -> source on stdout; exits 161 when right
     case "$1" in
     VOC1) printf '%s' "$VOH"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
@@ -2841,9 +2876,14 @@ fn r(): i64 { var t = (lanes(mk2(4, 1)), 3); var a, b = two(mk2(41, 7)); var u: 
   if (t.0 != 41 || t.1 != 3 || a != 417 || b != 7 || u.0 != 16 || u.1 != 7) { return 1; } return 161; }
 syscall(60, r() % 256);
 ' ;;
+    VOC3) printf '%s' "$VOG"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn r(): i64 { var w = mk2(41, 7); gp().b = load64(&w); gi()[1] = lanes(mk2(1, 6)); callptr(&gp).a = load64(&w + 8);
+  if (GP.b != 41 || GX[1] != 16 || GP.a != 7) { return 1; } return 161; }
+syscall(60, r() % 256);
+' ;;
     esac
 }
-VOC_ROWS="VOC1 VOC2"
+VOC_ROWS="VOC1 VOC2 VOC3"
 
 
 # ---- 6.7.16 (met landing D100): the vector receives' refusals are made in sync — the statement parses on to its own end,

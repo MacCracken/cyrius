@@ -10047,9 +10047,27 @@ fn _vsl_store(S, eq): i64 {
     if (t == 3 || t == 168) { return 0; }
     if (_vsl_comma(S, s, eq) == 1) { return 0; }
     if (t == 8) { return _vsl_dst(S, s, eq); }
+    if (_vsl_cstore(S, s, eq) == 1) { return 1; }
     if (t != 2) { return 0; }
     var t1 = TOKTYP(S, s + 1);
     if (t1 == 41 || t1 == 28) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.16 (D100, the s16 review) — AND A FIELD OR AN ELEMENT OF A CALL'S RESULT. `gp().b = mk2(41, 7);` (gp `: *P`, a
+# store destination since 6.7.14's call_ptr_field_store), `callptr(&gp).b = ..`, `gi()[0] = ..` (gi `: *i64`) and a
+# generic's `gpg<i64>().b = ..` stored one word (x86_64 / aarch64 0, cx / PE 41): the store arm above reads only a
+# destination that starts NAME `.` / NAME `[`. 1 = the statement at token `s` (`=` at `eq`) starts with a call — by
+# name, an explicit instance, `callptr` / fncallN — whose `)` a `.` or `[` follows before the `=`. CHANGELOG [6.7.16]
+fn _vsl_cstore(S, s, eq): i64 {
+    var o = 0 - 1;
+    var t = TOKTYP(S, s);
+    if (t == 137) { if (TOKTYP(S, s + 1) == 10) { o = s + 1; } }
+    if (t == 2) { o = _gcall_open(S, s); }
+    if (o < 0) { return 0; }
+    var x = _call_close(S, o) + 1;
+    if (x >= eq) { return 0; }
+    var tx = TOKTYP(S, x);
+    if (tx == 41 || tx == 28) { return 1; }
     return 0;
 }
 # The first token of the statement whose `=` is token `eq` (after `;` `{` `}`, or a `for (`), else -1.
