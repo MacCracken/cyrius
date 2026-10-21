@@ -1007,10 +1007,13 @@ fn _var_rhs_msid(S, ti): i64 {
     _mcall_last = 0 - 1;
     var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too (`_pair_callee_at` resolves its instance)
     if (o < 0) { return 0; }
+    var mt = _mco_mt;   # 6.7.16: a chain's last method too (`_mco_*`)
+    var rcv = _mco_rs;
+    if (_mco_ch == 0) { rcv = _recv_sid(S, TOKVAL(S, ti)); }
     if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
     var mf = _pair_callee_at(S, ti);
     if (mf < 0) { return 0; }
-    if (o == ti + 3) { mf = _mcall_gen(S, mf, o, _recv_sid(S, TOKVAL(S, ti)), 0); }
+    if (o == mt + 1) { mf = _mcall_gen(S, mf, o, rcv, 0); }
     var rs = GFRS(S, mf);
     if (rs == 0 - 9) { return rs; }
     if (rs <= 0) { return 0; }
@@ -1437,6 +1440,10 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
     if (IS_STR_FIELD(S, ft) == 1) { return _istr_fsc(S, term); }   # 6.7.13 (D7 (1)): an inline `Str`
     var pr = _fsc_psrc(S, ft, fnoff, term);   # 6.7.11: `o.s = GP` / `gp()` / `w.p` / `GP + n`
     if (pr != 0) { return pr; }
+    if (PEEKT(S) != 2) { if (_pc_mchain(S, GTI(S)) == 1) {   # 6.7.16: a chain's method on a `(..)` / `callptr` head
+            _tup_fsc_call(S, ft, term);
+            _mv_fsc_call(S, ft, term);
+        } }
     if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
@@ -4125,7 +4132,7 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     var st = GTI(S);
     if (_tn_once(S, st) == 0) { return 2; }
     var ct = st;
-    if (_mcall_open(S, st, 0 - 1) >= 0) { ct = st + 2; }   # 6.7.15: `x.m<..>(` names m too
+    if (_mcall_open(S, st, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     var w = "a tuple";
@@ -7201,10 +7208,12 @@ fn _gvi_pair_bind(S): i64 {
 }
 # A capture's first token: a name, or `callptr` (6.7.14; `_dt_call_open_cp`), or (6.7.14, D45) the
 # first `(` of parentheses wrapping one whole call (`_dt_wrap_k`). CHANGELOG [6.7.14]
+# 6.7.16: or a parenthesised method-chain head, `(GW).p.m2()` (`_pw_head`).
 fn _gvi_cap_tok(S): i64 {
     if (PEEKT(S) == 2) { return 1; }
     if (PEEKT(S) == 137) { return 1; }
     if (_dt_wrap_k(S, 5) > 0) { return 1; }
+    if (PEEKT(S) == 10) { if (_pw_head(S, GTI(S)) == 0) { return 1; } }
     return 0;
 }
 # 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
@@ -9110,17 +9119,19 @@ fn _vmc_fi(S, ti): i64 {
 # recogniser knew a single name — `var v = w.s.mv();` bound one word of stack garbage, the other receives refused
 # "got `w`". The method call at token `ti` — `x.m(` / `x.m<..>(` on a single name (`_mcall_open`, `_pair_callee_at`)
 # or on a field chain (`_mch_open`): its `(`, else -1; `_vmc_mf` the method's fn (a generic's base, an explicit
-# instance's), `_vmc_mt` its name token, `_vmc_rs` the receiver's struct. The pair `?` lookaheads
-# (`_tok_method_open`) still type no chain. CHANGELOG [6.7.15]
+# instance's), `_vmc_mt` its name token, `_vmc_rs` the receiver's struct. CHANGELOG [6.7.15]
+# 6.7.16: `_mcall_open` answers a chain itself (`_mco_ch`), as every pair / multi-value asker now reads one.
 var _vmc_mf = 0 - 1;
 var _vmc_mt = 0;
 var _vmc_rs = 0;
 fn _vmc_open(S, ti): i64 {
     var o = _mcall_open(S, ti, 0 - 1);
-    if (o < 0) { return _mch_open(S, ti); }
-    if (_mchain_at(S, _call_close(S, o) + 1) == 1) {   # 6.7.16: `o.gp(..).s.mv()` — the chain's last method
-        var x = _mch_open(S, ti);
-        if (x >= 0) { return x; }
+    if (o < 0) { return 0 - 1; }
+    if (_mco_ch == 1) {   # a chain's last method (6.7.16: `o.gp(..).s.mv()` too)
+        _vmc_mf = _mco_mf;
+        _vmc_mt = _mco_mt;
+        _vmc_rs = _mco_rs;
+        return o;
     }
     _vmc_mf = _pair_callee_at(S, ti);
     _vmc_mt = ti + 2;
@@ -9184,9 +9195,10 @@ fn _mch_mopen(S, sid, nt): i64 {
     return _tok_targs_close(S, nt + 2) + 1;
 }
 # The fn of that method step (its `(` at `o`): an explicit instance's quietly (`_mcall_xquiet`), else `_meth_fn_at`'s.
+# 6.7.16: a token pass (`_mch_tok`) reads the template, as its single-name arm does — it instantiates nothing.
 fn _mch_mfn(S, sid, nt, o): i64 {
     var mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
-    if (o != nt + 1) { mf = _mcall_xquiet(S, mf, nt + 1); }
+    if (o != nt + 1) { if (_mch_tok == 0) { mf = _mcall_xquiet(S, mf, nt + 1); } }
     return mf;
 }
 # The chain's last method: `_vmc_*` set, its `(` returned.
@@ -9222,6 +9234,7 @@ fn _mch_hend(S, ti): i64 {
 var _mch_hx = 0;
 var _mch_nh = 0;
 fn _mch_head(S, ti): i64 {
+    if (_mch_tok == 1) { return _tok_mch_head(S, _mch_ta, ti); }   # 6.7.16: a token pass
     if (TOKTYP(S, ti) == 10) { return _mch_whead(S, ti); }
     _mch_nh = 0;
     var o = _icall_open_at(S, ti);
@@ -9234,6 +9247,55 @@ fn _mch_head(S, ti): i64 {
     _mch_hx = ti + 1;
     _mch_nh = 1;
     return _dyn_base_sid(S, TOKVAL(S, ti));
+}
+# 6.7.16 — `_mch_head` in a token pass (`_mch_tok`: the pair flags' propagation, the mixed-return warning): the head
+# typed from the tokens of the unit starting at token a, never the parser's scope — a name as `_tok_ta_decl` declares it
+# (a struct value or a `*S`; an impl's untyped `self`, `_tok_iself`), a call whose fn is no generic (`_hl_pchain`: a
+# struct or `*S` result — a generic's binding is the parser's alone), a parenthesised one (`_tok_mch_whead`).
+fn _tok_mch_head(S, a, ti): i64 {
+    _mch_nh = 0;
+    if (TOKTYP(S, ti) == 10) { return _tok_mch_whead(S, a, ti); }
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { o = _gcall_open(S, ti); }
+    if (o >= 0) {
+        _mch_hx = _call_close(S, o) + 1;
+        if (TOKTYP(S, ti) == 2) {
+            var fi = FINDFN(S, TOKVAL(S, ti));
+            if (fi < 0) { return 0; }
+            if (GFTP(S, fi) != 0) { return 0; }
+        }
+        return _hl_pchain(S, ti, _mch_hx);
+    }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    _mch_hx = ti + 1;
+    _mch_nh = 1;
+    var sid = _tok_ta_decl(S, a, ti, TOKVAL(S, ti));
+    if (sid <= 0) { sid = _tok_iself(S, a, ti); }
+    if (sid >= 2048) { return 0; }
+    return sid;
+}
+# ... a parenthesised head `( E )`: a `*name` of a name declared `*S`, else a name, a call or a chain (`_mch_ty`, its
+# head typed as above) — inside any parentheses; `_mch_hx` after the `)`.
+fn _tok_mch_whead(S, a, ti): i64 {
+    var c = _call_close(S, ti);
+    var t = 0;
+    if (_tup_lit_at(S, ti) < 0) {
+        var b = _ie_unparen(S, ti + 1, c);
+        var e = _ie_pe;
+        if (TOKTYP(S, b) == 8) { t = _tok_mch_deref(S, a, ti, b, e); }
+        else { t = _mch_ty(S, b, e); }
+    }
+    _mch_hx = c + 1;
+    _mch_nh = 0;
+    return t;
+}
+# `*name` filling [b, e): the struct a name declared `*S` points at, else 0.
+fn _tok_mch_deref(S, a, ti, b, e): i64 {
+    if (e != b + 2) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    var r = _tok_ta_decl(S, a, ti, TOKVAL(S, b + 1));
+    if (_ttd_ptr == 0) { return 0; }
+    return r;
 }
 # A call head at token `ti` (its `(` at `o`, `_mch_hx` after its `)`), as `_call_field` / `_call_ptr_field` /
 # `_icall_chain` take it: a `: *S` fn's S (a generic's too), a struct returned by value (the known `&f`'s), or a
@@ -10429,7 +10491,7 @@ fn _dt_struct_err(S, fi, w): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_dt_struct_err", fi * 4 + w, 1) == 1) { return 0; }   # 6.7.15: once per site
     var ct = GTI(S);
-    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }   # 6.7.15: `x.m<..>(` names m too
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot destructure '");
@@ -10464,11 +10526,15 @@ fn _dt_count_err(S, fi, n, ar): i64 {
 # right-hand side" for `g<i32>(..)` and `p.m(..)`. The method is taken by SHAPE: whether `x` names
 # a struct is the call's own question (PARSE_FIELD_LOAD reports it by name). The `(` that opens
 # the call at the cursor, or -1. CHANGELOG [6.6.16]
+# 6.7.16: a method ending a chain on any receiver (`_mcall_open`'s chain arm, before a call head's own `(`):
+# `w.p.m(`, `f(..).m(`, `(*pw).m(`. CHANGELOG [6.7.16]
 fn _dt_call_open(S): i64 {
     var ti = GTI(S);
+    var m = _mcall_open(S, ti, 0 - 1);   # `x.m(`, by shape; 6.7.15: `x.m<..>(` when m is x's generic method
+    if (m >= 0) { if (_mco_ch == 1) { return m; } }
     var o = _tup_gopen(S, ti);   # 6.7.7 (B4 review): `_gcall_open`, but by its tokens in the zone's pass 1
     if (o >= 0) { return o; }
-    return _mcall_open(S, ti, 0 - 1);   # `x.m(`, by shape; 6.7.15: `x.m<..>(` when m is x's generic method
+    return m;
 }
 # ... or `callptr(fp, ..)`, the multi-value call the destructure and the tuple capture take (the guide's
 # Multi-Return list names it; `fncallN`, its lowering, already captured): a call whose callee is unknown
@@ -10493,8 +10559,7 @@ fn _dt_call_open_cp(S): i64 {
 fn _dt_wrap_k(S, term): i64 {
     var st = GTI(S);
     if (TOKTYP(S, st) != 10) { return 0; }
-    var a = st;
-    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    var a = st + _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head, `((*pw).m2())`
     STI(S, a);
     var o = _dt_call_open_cp(S);
     STI(S, st);
@@ -10519,13 +10584,23 @@ fn _dt_wterm(k, term): i64 {
 # (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m` — a generic
 # method's inferred `x.m(..)` the instance its arguments bind (`_mcall_gen`, quiet), as `x.m<..>(..)` and the
 # free spelling reach theirs: `var a, b = p.mm(h);` typed its `(V, i64)` from the base. CHANGELOG [6.7.16]
+# 6.7.16: a chain's last method, its inferred generic's instance as on a single name (`_dt_mfn`).
 fn _dt_call_fn(S): i64 {
     var ti = GTI(S);
     var fi = 0 - 1;
+    var o = _mcall_open(S, ti, 0 - 1);
+    if (o >= 0) { if (_mco_ch == 1) { return _dt_mfn(S, o, _mco_mf, _mco_mt, _mco_rs); } }
     if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
     else { fi = _pair_callee_at(S, ti); }
     if (fi >= 0) { if (_tok_method_open(S, ti) == 1) { fi = _mcall_gen(S, fi, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0); } }
     return fi;
+}
+# The method `mf` named at token mt on struct `rs`, its call's `(` at o: the instance an inferred generic's arguments
+# bind (`_mcall_gen`, quiet); an explicit one is already its instance.
+fn _dt_mfn(S, o, mf, mt, rs): i64 {
+    if (mf < 0) { return mf; }
+    if (o != mt + 1) { return mf; }
+    return _mcall_gen(S, mf, o, rs, 0);
 }
 
 # Parse: var IDENT = expr ;
@@ -13218,22 +13293,19 @@ fn _gzf_mret(S, mf, w): i64 {
 # 1 = element `k` of the destructure whose right-hand side starts at token ti is an f64, as PARSE_VAR's destructure takes
 # it (`_dt_call_fn`'s callee): an f64 callee's every element, a written `(.., f64, ..)` element (GFRT), or a generic's
 # element naming a type parameter bound to f64 at the call — a free call `mm2<f64>(..)` / `mm2(h)`, a method on a
-# single name `G.gm(..)` / `G.gm<f64>(..)` — inside any parentheses wrapping the call.
+# single name `G.gm(..)` / `G.gm<f64>(..)` — inside any parentheses wrapping the call. 6.7.16: a method ending a chain
+# on any receiver, `GW.p.gm(..)` (`_gzf_mfn`).
 fn _gzf_elem(S, ti, k): i64 {
-    var a = ti;
-    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    var a = ti + _pw_lead(S, ti);
     var fi = 0 - 1;
     var mth = 0;
-    if (_gcall_open(S, a) >= 0) { fi = FINDFN(S, TOKVAL(S, a)); }
-    else {
-        var o = _mcall_open(S, a, 0 - 1);
-        if (o < 0) { return 0; }
-        var rs = _recv_sid(S, TOKVAL(S, a));
-        if (rs <= 0) { return 0; }
-        fi = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);
-        if (fi < 0) { return 0; }
-        _gz_mstep(fi, a + 2, o, rs);
+    var o = _mcall_open(S, a, 0 - 1);
+    if (o >= 0) {
+        fi = _gzf_mfn(S, a, o);
         mth = 1;
+    } else {
+        if (_gcall_open(S, a) < 0) { return 0; }
+        fi = FINDFN(S, TOKVAL(S, a));
     }
     if (fi < 0) { return 0; }
     var r = GFRS(S, fi);
@@ -13245,6 +13317,17 @@ fn _gzf_elem(S, ti, k): i64 {
     if (w < 0) { return 0; }
     if (mth == 1) { return _gzf_mret(S, fi, w); }
     return _gzf_bind(S, a, fi, w);
+}
+# ... the method `_mcall_open` just answered at token a (its `(` at o): its base fn, the step recorded (`_gz_mstep`); -1.
+fn _gzf_mfn(S, a, o): i64 {
+    var mt = _mco_mt;
+    var rs = _mco_rs;
+    if (_mco_ch == 0) { rs = _recv_sid(S, TOKVAL(S, a)); }
+    if (rs <= 0) { return 0 - 1; }
+    var fi = _meth_fn_at(S, rs, TOKVAL(S, mt), mt);
+    if (fi < 0) { return 0 - 1; }
+    _gz_mstep(fi, mt, o, rs);
+    return fi;
 }
 # The type parameter (0 / 1) element `k` of generic `fi`'s `: (..)` return names, alone; else -1.
 fn _gzf_rtp(S, fi, k): i64 {

@@ -2948,6 +2948,12 @@ _chk_gate "$ROOT/tests/gates/frontend/type_args_on_nongeneric_refused.sh"
 # a field-chain or call receiver, and 49 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in
 # the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
+# 6.7.16 — a method ending a chain on any receiver the method arm takes (`w.p.m2()`, `w.q.m2()` through a `*P` field,
+# `w.gp().m2()`, `mk().p.m2()`, `callptr(&gw, &w).p.m2()`, `(*pw).p.m2()`) is a method call to every pair / multi-value
+# lookahead, as on a single name: the destructure ("needs a call" before — the filed repro), a tuple capture, a pair's
+# `?` (SIGSEGV before) / lossy binds / forward, a dyn source, the zone, each refusal word for word, the dropped-tag
+# warning, a forwarder below its caller. x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/method_receiver_chain_lookaheads.sh"
 # 6.7.16 — a generic's multi-value element typed by its type parameter is the instance's binding, as a `: T` return
 # is: `var a, b = mm2<f64>(h);` bound `a` as an integer word (the filed repro 7, want 10), in every spelling — free,
 # inferred, method (the inferred `p.mm(h)` resolved to its instance), a tuple capture (refused before), top level.

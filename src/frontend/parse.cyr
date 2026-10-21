@@ -221,20 +221,86 @@ fn _skip_nested_body(S, k): i64 {
 # before the 256-level nesting bound refused it, recursion_depth_bounded.sh). CHANGELOG [6.7.13]
 fn _pair_unwrap(S, ti): i64 {
     if (TOKTYP(S, ti) != 10) { return ti; }
+    var h = _pw_head(S, ti);   # 6.7.16: a parenthesised method-chain head, inside any wrap
+    if (h >= 0) { return _pw_hchain(S, ti, h); }
     var a = ti;
     while (TOKTYP(S, a) == 10) { a = a + 1; }
-    if (TOKTYP(S, a) != 2) { return 0 - 1; }
-    var o = _pair_ret_open(S, a);
-    if (o < 0) { o = _pair_mopen(S, a); }
+    if (TOKTYP(S, a) != 2) { if (TOKTYP(S, a) != 137) { return 0 - 1; } }   # 6.7.16: a `callptr(..)` head's chain
+    var o = _pair_lead_open(S, a);
     if (o < 0) { return 0 - 1; }
     return _pair_unwrap_k(S, _call_close(S, o) + 1, a - ti, a);
 }
-# The `(` of a method call at token a by its shape — `x.m(`, or `x.m<..>(` (6.7.15) — its callee the asker's to
-# resolve (a comparison `p.n < a > (b)` resolves to none), else -1.
-fn _pair_mopen(S, a): i64 {
-    if (_tok_method_open(S, a) == 1) { return a + 3; }
-    if (_tok_mx_shape(S, a) == 0) { return 0 - 1; }
-    return _tok_targs_close(S, a + 4) + 1;
+# The `(` of the call a value starting at the name (or `callptr`) at token a starts with, by its shape: the last call
+# of a method chain on any receiver (`_pc_shape`: `x.m(`, `x.m<..>(` (6.7.15), 6.7.16 `w.p.m(`, `f(..).m(`), else
+# `name(` / `name<..>(` — its callee the asker's to resolve (a comparison `p.n < a > (b)` resolves to none); else -1.
+fn _pair_lead_open(S, a): i64 {
+    var o = _pc_shape(S, a);
+    if (o >= 0) { return o; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    return _pair_ret_open(S, a);
+}
+# ⛔ 6.7.16 — A METHOD CHAIN BY ITS SHAPE: the `(` of the call ending the chain headed at token h — a name, a call
+# (`f(..)`, `g<..>(..)`, `fncallN(..)`, `callptr(..)`) or a parenthesised head (`_mch_hend`), then `.name` steps, each a
+# field or a call `.m(..)` / `.m<..>(..)` (`_mchain_targs`) — when its last step is a call; else -1 (no step, or a
+# field ends it). Tokens only: the callee is the asker's to resolve. CHANGELOG [6.7.16]
+fn _pc_shape(S, h): i64 {
+    var i = _mch_hend(S, h);
+    var o = 0 - 1;
+    while (_mchain_at(S, i) == 1) {
+        var k = _mchain_targs(S, i + 2);
+        if (TOKTYP(S, k) == 10) {
+            o = k;
+            i = _call_close(S, k) + 1;
+        } else {
+            o = 0 - 1;
+            i = i + 2;
+        }
+    }
+    return o;
+}
+# ⛔ 6.7.16 — A PARENTHESISED RECEIVER HEADS A METHOD CHAIN, it wraps no call: `(*pw).m(..)`, `(w).p.m(..)`, and inside
+# a wrap `((*pw).m(..))`. The outermost of the `(` leading the value at token ti (0 = ti itself) whose `)` a `.name`
+# step follows, else -1. One pass to ti's own `)`: a leading `(` closes the first time the depth falls to its level.
+# CHANGELOG [6.7.16]
+fn _pw_head(S, ti): i64 {
+    var k = 0;
+    while (TOKTYP(S, ti + k) == 10) { k = k + 1; }
+    var d = k;
+    var low = k;
+    var i = ti + k;
+    var h = 0 - 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { d = d + 1; }
+        elif (t == 11) {
+            d = d - 1;
+            if (d < low) {
+                low = d;
+                if (_mchain_at(S, i + 1) == 1) { h = d; }
+                if (d == 0) { return h; }
+            }
+        }
+        elif (t == 12) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# ... the chain headed at token ti + h inside the h `(` before it: its head when its last call closes right before
+# their h `)`, else -1.
+fn _pw_hchain(S, ti, h): i64 {
+    var o = _pc_shape(S, ti + h);
+    if (o < 0) { return 0 - 1; }
+    return _pair_unwrap_k(S, _call_close(S, o) + 1, h, ti + h);
+}
+# The wrapping `(` before the value at token st: up to a parenthesised chain head (`_pw_head`), else all of them.
+fn _pw_lead(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var h = _pw_head(S, st);
+    if (h >= 0) { return h; }
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    return k;
 }
 # `a` when the k tokens from e are each `)` (inside the token stream), else -1.
 fn _pair_unwrap_k(S, e, k, a): i64 {
@@ -1065,6 +1131,7 @@ fn _tok_method_any(S, mnoff): i64 {
 fn _tok_ret_callee(S, a, t): i64 {
     t = _pair_unwrap(S, t);   # 6.7.13: `return (f(..));` forwards as `return f(..);`
     if (t < 0) { return 0 - 1; }
+    if (_pc_mchain(S, t) == 1) { return _tok_mch_fn(S, a, t); }   # 6.7.16: a method chain, any receiver
     if (TOKTYP(S, t) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, t);
     if (o >= 0) {
@@ -1349,6 +1416,7 @@ var _mixed_warned = 0;
 fn _ret_is_variant(S, a, t): i64 {
     t = _pair_unwrap(S, t);
     if (t < 0) { return 1; }
+    if (_pc_mchain(S, t) == 1) { return _riv_chain(S, a, t); }   # 6.7.16: a method chain, any receiver
     if (TOKTYP(S, t) != 2) { return 1; }
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
@@ -1365,6 +1433,20 @@ fn _ret_is_variant(S, a, t): i64 {
         if ((fl & 512) != 0) { return 0; }
     }
     if (nt == 5) { if ((fl & 512) != 0) { return 0; } }
+    return 1;
+}
+# 6.7.16 — `return w.p.m(..)`, `return f(..).m(..)`, `return (*pw).m(..)`: the chain's last method as the tokens resolve
+# it (`_tok_mch_fn`) — a pair, a nullary variant, else plain; unresolved, a `.m(` is unknown (not plain), and a
+# `.m<..>(` may be a comparison (plain), as on a single name. CHANGELOG [6.7.16]
+fn _riv_chain(S, a, t): i64 {
+    var rf = _tok_mch_fn(S, a, t);
+    if (rf < 0) {
+        if (TOKTYP(S, _pc_shape(S, t) - 1) == 2) { return 0; }
+        return 1;
+    }
+    var fl = GFLG(S, rf);
+    if ((fl & 256) != 0) { return 0; }
+    if ((fl & 512) != 0) { return 0; }
     return 1;
 }
 
@@ -1429,7 +1511,7 @@ fn _tok_q_is_pair(S, a, q): i64 {
                 var ct = TOKTYP(S, c);
                 if (_tok_wrap_open(ct) == 1) { return _tok_call_is_pair(S, a, p); }   # 6.7.13: `(f(..))?`
                 if (ct == 20 || ct == 39 || ct == 152) { c = _tok_targs_open(S, c) - 1; }
-                elif (c >= 2) { if (TOKTYP(S, c - 1) == 41) { c = c - 2; } }
+                c = _tok_chain_back(S, c);   # 6.7.16: a method chain's head (`w.p.m(..)?`, `f(..).m(..)?`)
                 var r = _tok_call_is_pair(S, a, c);
                 return r;
             }
@@ -1437,6 +1519,38 @@ fn _tok_q_is_pair(S, a, q): i64 {
         p = p - 1;
     }
     return 0;
+}
+# ⛔ 6.7.16 — the head of the method chain whose step's name is token c, back over `. name`, `. name(..)` and
+# `. name<..>(..)` steps: the name, the call (its name, or `fncallN` / `callptr`) or the parenthesised head before
+# the first `.`; c itself when no `.` precedes it. Through 6.7.15 only `x.m(..)?` stepped back to x, so `w.p.m(..)?`
+# was judged on `p` as a single name and `f(..).m(..)?` was no method at all. CHANGELOG [6.7.16]
+fn _tok_chain_back(S, c): i64 {
+    while (c >= 2) {
+        if (TOKTYP(S, c - 1) != 41) { return c; }
+        var p = c - 2;
+        if (TOKTYP(S, p) == 2) { c = p; }
+        elif (TOKTYP(S, p) == 11) {
+            var h = _tcb_group(S, p);
+            if (h < 0) { return c; }
+            if (TOKTYP(S, h) == 10) { return h; }   # a parenthesised head
+            c = h;
+        }
+        else { return c; }
+    }
+    return c;
+}
+# ... the head of the group whose `)` is token p: a call's name (past its `<..>`), its `fncallN` / `callptr`, or a
+# parenthesised head's `(`; -1 when unmatched.
+fn _tcb_group(S, p): i64 {
+    var op = _tok_open_back(S, p);
+    if (op < 1) { return 0 - 1; }
+    var ct = TOKTYP(S, op - 1);
+    if (ct == 137) { return op - 1; }
+    if (_tok_wrap_open(ct) == 1) { return op; }
+    if (ct == 2) { return op - 1; }
+    var lt = _tok_targs_open(S, op - 1);
+    if (lt < 1) { return 0 - 1; }
+    return lt - 1;
 }
 
 # The mixed-return warning for a CLOSURE, at its plain `return` (token k). `encl` is the name
@@ -1668,18 +1782,19 @@ fn _ensure_pair_flags(S): i64 {
 #   - `x.m(` on a single name typed as a struct (`_recv_sid`, PARSE_FIELD_LOAD's order): `T_m`.
 #     BUILD_METHOD_NAME writes only uncommitted scratch at GNPOS, so the peek is safe — the real
 #     call path does the same.
-# A receiver that is not one name (`a.b.m()`, `f().m()`, an untyped impl `self`) is typed by no
-# call path; it stays -1, today's answer. CHANGELOG [6.6.16]
+#   - 6.7.16: a method ending a chain on any receiver the method arm takes (`_mcall_open`'s chain arm) —
+#     `w.p.m(`, `f(..).m(`, `(*pw).m(`, `p.gp().m(` — its method.
 # ⛔ 6.6.17 (a7): a GENERIC's call answers for the INSTANCE it reaches (`_pair_gen_inst`), not the
 # template — `fn w<T>(p: T, d) { return p.div(d); }` is a pair at T = Pt (`Pt_div` returns Ok/Err)
 # and one value at T = Qt, and the template, whose flag no single answer fits, left `w(p, d)?` on
 # the boxed lowering (rc 139). CHANGELOG [6.6.17]
 fn _pair_callee_at(S, ti): i64 {
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    if (o >= 0) { if (_mco_ch == 1) { return _mco_mf; } }   # 6.7.16: a chain's last method
     if (_gcall_open(S, ti) >= 0) {
         var fi = _pair_gen_inst(S, ti);
         return fi;
     }
-    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
     if (o < 0) { return 0 - 1; }
     var sid = _recv_sid(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0 - 1; }
@@ -1714,9 +1829,25 @@ fn _tok_method_open(S, ti): i64 {
 # m and a generic method m (`_mtargs_at`, the method arm's own test), so `p.n < a > (b)` stays a comparison. x is
 # typed as its asker types it: by the parser's scope (`a` < 0, `_recv_sid`), or from the tokens of the unit
 # starting at token a (`_tok_name_sid`; an impl's untyped `self`, `_tok_iself`). -1 otherwise. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND A METHOD ENDING A CHAIN ON ANY RECEIVER THE METHOD ARM TAKES: a field chain `w.p.m(..)` (`w.q.m(..)`
+# through a `*P` field, `h.w.p.m(..)`, `pw.p.m(..)`, `self.p.m(..)`), a method's result `p.gp().m(..)`, a call `f(..).m(..)`
+# / `fncallN(&f, ..).m(..)`, a parenthesised head `(*pw).m(..)` — `_mch_open`, the vector receive's recogniser since
+# 6.7.15, from the tokens of the unit at `a` when `a` >= 0 (`_mch_tok`). Every asker keyed a method call on `x . m (`
+# with x one name, so `var c, d = w.p.m2();` was "multi-value destructure needs a call on the right-hand side",
+# `var v = w.p.rs(3)?;` took the boxed `?` (SIGSEGV), `var v = w.p.rs(3);` kept a pair's tag in silence, `var t: (i64,
+# i64) = w.p.m2();` was "not a tuple" (issues/2026-10-20-multi-value-method-on-field-chain-receiver-refused-as-destructure-
+# source.md). `_mco_mt` is the answer's method name token (t + 2 on a single name) and, for a chain (`_mco_ch` 1), `_mco_rs`
+# its receiver's struct and `_mco_mf` its fn (an explicit instance's): an asker reads them right after the call.
+# CHANGELOG [6.7.16]
+var _mco_mt = 0;
+var _mco_rs = 0;
+var _mco_mf = 0 - 1;
+var _mco_ch = 0;
 fn _mcall_open(S, t, a): i64 {
-    if (_tok_method_open(S, t) == 1) { return t + 3; }
-    if (_tok_mx_shape(S, t) == 0) { return 0 - 1; }
+    _mco_ch = 0;
+    _mco_mt = t + 2;
+    if (_tok_method_open(S, t) == 1) { return _mco_one(S, t, a, t + 3); }
+    if (_tok_mx_shape(S, t) == 0) { return _mco_chain(S, t, a); }
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m<..>(`: not a single name
     var sid = 0;
     if (a < 0) { sid = _recv_sid(S, TOKVAL(S, t)); }
@@ -1724,8 +1855,83 @@ fn _mcall_open(S, t, a): i64 {
         sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
         if (sid == 0) { sid = _tok_iself(S, a, t); }
     }
-    if (_mtargs_at(S, sid, t + 2) == 0) { return 0 - 1; }
-    return _tok_targs_close(S, t + 4) + 1;
+    if (_mtargs_at(S, sid, t + 2) == 0) { return _mco_chain(S, t, a); }
+    return _mco_one(S, t, a, _tok_targs_close(S, t + 4) + 1);
+}
+# The single name's call `(` at o — unless a chain continues past its `)` to a method (`p.gp().m(..)`): that one's.
+fn _mco_one(S, t, a, o): i64 {
+    if (_mchain_at(S, _call_close(S, o) + 1) == 0) { return o; }
+    var x = _mco_chain(S, t, a);
+    if (x >= 0) { return x; }
+    return o;
+}
+# The chain arm: `_mch_open` at t (the parser's scope, or with `a` >= 0 the unit's tokens), `_mco_*` set from its
+# answer; the vector receive's `_vmc_*` are put back (a lookahead). -1: no chain ending in a method.
+var _mch_tok = 0;   # 1 = `_mch_open` types from the tokens of the unit starting at `_mch_ta` (a token pass)
+var _mch_ta = 0;
+fn _mco_chain(S, t, a): i64 {
+    if (_mco_hgate(S, t) == 0) { return 0 - 1; }
+    var m0 = _vmc_mf;
+    var t0 = _vmc_mt;
+    var r0 = _vmc_rs;
+    var sk = _mch_tok;
+    var sa = _mch_ta;
+    _mch_tok = 0;
+    if (a >= 0) {
+        _mch_tok = 1;
+        _mch_ta = a;
+    }
+    var o = _mch_open(S, t);
+    _mch_tok = sk;
+    _mch_ta = sa;
+    if (o >= 0) {
+        _mco_ch = 1;
+        _mco_mt = _vmc_mt;
+        _mco_rs = _vmc_rs;
+        _mco_mf = _vmc_mf;
+    }
+    _vmc_mf = m0;
+    _vmc_mt = t0;
+    _vmc_rs = r0;
+    return o;
+}
+# 1 = token t may head a method chain (a cheap test, before `_mch_open` scans to the head's end): a name and `.`; a call
+# whose callee may return a struct or a `*S` (a generic, a struct result, a `: *S` fn, `fncallN`); `callptr`; a `(`.
+fn _mco_hgate(S, t): i64 {
+    var tt = TOKTYP(S, t);
+    if (tt == 10) { return 1; }
+    if (tt == 137) { return 1; }
+    if (tt != 2) { return 0; }
+    var nt = TOKTYP(S, t + 1);
+    if (nt == 41) { return 1; }
+    if (nt != 10) { if (nt != 19) { return 0; } }
+    var fi = FINDFN(S, TOKVAL(S, t));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 1; }
+    if (_hl_fn_psid(fi) > 0) { return 1; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) { if (rs < 2048) { return 1; } }
+    return _IS_FNCALL_NAME(S, TOKVAL(S, t));
+}
+# 1 = the value at token t is a method chain ending in a call (`_pc_shape`) other than a single name's one call
+# `x.m(` / `x.m<..>(` (whose arms stay the single-name ones). Tokens only.
+fn _pc_mchain(S, t): i64 {
+    var o = _pc_shape(S, t);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, t) != 2) { return 1; }
+    if (TOKTYP(S, t + 1) != 41) { return 1; }
+    if (o == t + 3) { return 0; }
+    if (TOKTYP(S, t + 3) == 19) { if (o == _tok_targs_close(S, t + 4) + 1) { return 0; } }
+    return 1;
+}
+# The method ending the chain at token t, resolved from the tokens of the unit starting at token a (the token passes:
+# the pair flags' propagation, the mixed-return warning) — its template for an explicit `.m<..>(`, as on a single
+# name; -1 when unresolved.
+fn _tok_mch_fn(S, a, t): i64 {
+    var o = _mcall_open(S, t, a);
+    if (o < 0) { return 0 - 1; }
+    if (_mco_ch == 0) { return 0 - 1; }
+    return _mco_mf;
 }
 # 1 = the tokens at t are `x . m < .. > (` — a method call's explicit spelling, or a comparison: by its shape alone.
 fn _tok_mx_shape(S, t): i64 {
@@ -1765,7 +1971,13 @@ fn _callee_returns_pair_at(S, ti): i64 {
 # pair-returning, but `?` CONSUMES the pair — it propagates the Err half out of the enclosing
 # function and yields the payload alone, so exactly one value reaches the binding. Refusing it
 # would make the propagation operator unusable on the very type it exists for.
+# 6.7.16: a method chain's `?` follows its last call (`f(..).m(..)?`, `(*pw).m(..)?`), not its head's `)`.
 fn _call_is_propagated(S, ti): i64 {
+    var co = _pc_shape(S, ti);
+    if (co >= 0) {
+        if (TOKTYP(S, _call_close(S, co) + 1) == 124) { return 1; }
+        return 0;
+    }
     var _d = 0;
     var _i = ti;
     var _g = 0;
@@ -1825,13 +2037,13 @@ fn _refuse_lossy_pair(S): i64 {
 # `_pair_unwrap` reads it. Linear: the call's close, the run of `)` after it, one `_call_close` from
 # the innermost whole wrap (the outer ones close in the run after it). Asked at the refusal sites
 # only — never in `_callee_returns_pair_at`, which also feeds `_tpair`. CHANGELOG [6.7.14]
+# 6.7.16: the call may end a method chain on any receiver (`_pair_lead_open`), a parenthesised one too (`_pw_lead`).
 fn _pair_vwrap(S, st): i64 {
     if (TOKTYP(S, st) != 10) { return 0 - 1; }
-    var a = st;
-    while (TOKTYP(S, a) == 10) { a = a + 1; }
-    if (TOKTYP(S, a) != 2) { return 0 - 1; }
-    var o = _pair_ret_open(S, a);
-    if (o < 0) { o = _pair_mopen(S, a); }
+    var a = st + _pw_lead(S, st);
+    var o = 0 - 1;
+    if (TOKTYP(S, a) == 10) { o = _pc_shape(S, a); }
+    elif (TOKTYP(S, a) == 2 || TOKTYP(S, a) == 137) { o = _pair_lead_open(S, a); }
     if (o < 0) { return 0 - 1; }
     var e = _call_close(S, o) + 1;
     var m = a - st;

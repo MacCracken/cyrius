@@ -1139,8 +1139,7 @@ fn _mret_ret_ok(S, want): i64 {
     if (h >= 0) {
         if (_ret_tup_idx(S, TOKVAL(S, st + h)) != 0 - 1) { return 1; }
     }
-    var k = 0;
-    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var k = _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head
     return _mret_call_ok(S, st, k, want);
 }
 # ... a whole call `g(..)`, `g<..>(..)`, `x.m(..)` or `callptr(..)` (its callee unknown) inside the
@@ -1156,13 +1155,11 @@ fn _mret_call_ok(S, st, k, want): i64 {
 fn _ret_whole_call(S, st, k): i64 {
     var sv = GTI(S);
     STI(S, st + k);
-    var o = 0 - 1;
     var fi = 0 - 1;
-    if (PEEKT(S) == 137) {
+    var o = _dt_call_open(S);   # 6.7.16: first, for a chain on a `callptr(..)` head's result
+    if (o >= 0) { fi = _dt_call_fn(S); }
+    elif (PEEKT(S) == 137) {
         if (TOKTYP(S, st + k + 1) == 10) { o = st + k + 1; }
-    } else {
-        o = _dt_call_open(S);
-        if (o >= 0) { fi = _dt_call_fn(S); }
     }
     STI(S, sv);
     if (o < 0) { return 0 - 2; }
@@ -3215,7 +3212,7 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     if (free == 0) { PRSTR("..."); }
     else {
         if (free == 2) {
-            PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+            _mc_recv_pr(S, ti);
             PRSTR(".");
         }
         PRSTR(S + 0xEC00000 + noff);
@@ -3226,6 +3223,31 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     _had_error = 1;
     STI(S, sv);
     return 1;
+}
+# The receiver of the method call at token ti as written: its name, or (6.7.16) a chain's source text up to the `.`
+# before its method's name (`_mco_mt`) — `w.p` in `w.p.m(..)`. CHANGELOG [6.7.16]
+fn _mc_recv_pr(S, ti): i64 {
+    var o = _mcall_open(S, ti, 0 - 1);
+    if (o >= 0) { if (_mco_ch == 1) { return _tok_src_pr(S, ti, _mco_mt - 1); } }
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    return 0;
+}
+# The source bytes from token a up to token e, trailing blanks trimmed (`_rcv_ann_pr`'s reading); `...` when the
+# tokens carry no source offsets.
+fn _tok_src_pr(S, a, e): i64 {
+    var x = GTOFF(S, a);
+    var y = GTOFF(S, e);
+    while (y > x) {
+        var c = load8(S + 0x459D000 + y - 1);
+        if (c != 32) { if (c != 9) { if (c != 10) { break; } } }
+        y = y - 1;
+    }
+    if (x > 0) { if (y > x) { if (y - x < 128) {
+                syscall(SYS_WRITE, 2, S + 0x459D000 + x, y - x);
+                return 0;
+            } } }
+    PRSTR("...");
+    return 0;
 }
 fn _mv_count(S, fi): i64 {
     if (GFRS(S, fi) == MULTIRET_SID) { return GFRN(S, fi); }
@@ -3238,7 +3260,7 @@ fn _mv_span(S, a, b, sid, kind): i64 {
     a = _ie_unparen(S, a, b);
     b = _ie_pe;
     if (_mrc_beg == a) { if (_mrc_end == b) { if (_mv_callee(S, _mrc_fi) == 1) {
-                if (_mcall_open(S, a, 0 - 1) >= 0) { return _mv_struct_err(S, a, sid, TOKVAL(S, a + 2), _mrc_fi, kind, 2); }
+                if (_mcall_open(S, a, 0 - 1) >= 0) { return _mv_struct_err(S, a, sid, TOKVAL(S, _mco_mt), _mrc_fi, kind, 2); }
                 return _mv_struct_err(S, a, sid, _mrc_fn, _mrc_fi, kind, 0);   # a longer chain: the method's fn
             } } }
     var o = _gcall_open(S, a);
@@ -3336,7 +3358,7 @@ fn _mv_fsc_call(S, ft, term): i64 {
     if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
     var fi = _dt_call_fn(S);
     if (_mv_callee(S, fi) == 0) { return 0; }
-    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, GTI(S) + 2), fi, 1, 2); }
+    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, _mco_mt), fi, 1, 2); }
     return _mv_struct_err(S, GTI(S), ft, PEEKV(S), fi, 1, 1);
 }
 
@@ -8383,16 +8405,15 @@ fn _ret_mv_fwd(S, st): i64 {
     if (_syntax_only == 1) { return 0; }
     var asy = _fn_async_impl(S, _cur_fn_ix);
     if (asy == 0) { if (_ret_small_cls(S) == 0) { return 0; } }
-    var k = 0;
-    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var k = _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head
     var fi = _ret_whole_call(S, st, k);
     if (_mv_callee(S, fi) == 0) { return 0; }
     if (asy == 1) { return _refuse_async_mv_body(S, st + k, _mv_count(S, fi)); }
     return _ret_mv_small(S, st + k, fi);
 }
-# ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`).
+# ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`; 6.7.16 a chain's `w.p.mk(..)`).
 fn _ret_mv_small(S, ct, fi): i64 {
-    if (_mcall_open(S, ct, 0 - 1) >= 0) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct + 2), fi, 4, 2); }
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, _mco_mt), fi, 4, 2); }
     return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct), fi, 4, 1);
 }
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding

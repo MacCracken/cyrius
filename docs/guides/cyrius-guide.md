@@ -3697,6 +3697,8 @@ var hi, lo, bexp = dd_pow10(k);
 # The destructure requires a CALL as the whole right-hand side (v6.5.21) — `f(..)`, `g<T>(..)`,
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
 # was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
+# A method ending a chain on any receiver is that call too (6.7.16): `var c, d = w.p.m2();`, `h.w.p.m2()`,
+# `w.gp().m2()`, `mk().p.m2()`, `(*pw).p.m2()` — through 6.7.15 "needs a call on the right-hand side".
 # Parentheses around the whole call are transparent: `var a, b = (f(7));`, `a, b = ((f()));`, a for
 # step and both top-level zones destructure as unwrapped (6.7.14, the user's decision of 2026-10-16;
 # they were refused "needs a call"). `(f(7)) + 1` and `(f(7) + 1)` are not one call.
@@ -3893,7 +3895,8 @@ fn capture(): i64 {
 ```
 
 The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
-one whole call — `f(..)`, `g<T>(..)`, `x.m(..)`, or a call through a fn pointer, `fncallN(fp, ..)` or
+one whole call — `f(..)`, `g<T>(..)`, `x.m(..)` (6.7.16: or a method ending a chain on any receiver,
+`var t: (i64, i64) = w.p.m2();`, which was "not a tuple"), or a call through a fn pointer, `fncallN(fp, ..)` or
 `callptr(fp, ..)` (6.7.14: `var t: (i64, i64) = callptr(fp, 5);`, `t = callptr(..)` and a global's were
 refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it but
 parentheses around the whole call, which are transparent: `var t: (i64, i64) = (two(3));`, `t = ((two(3)));` and a
@@ -6543,7 +6546,13 @@ destructured and propagated with `?` exactly like `f(..)` (v6.6.16 — before th
 crashed and a single bind dropped the payload silently). The method's `impl` may sit above or below
 the call (6.7.11 — with the `impl` below its caller, `p.m(..)?` crashed and `var v = p.m(..);`
 kept the tag in silence), and so may the `trait` whose DEFAULT body the impl inherits (6.7.13 — an
-inherited default below its caller crashed the same way).
+inherited default below its caller crashed the same way). So is a method ending a chain on any receiver
+the method arm takes (6.7.16): a field chain `w.p.m(..)` — through a `*P` field, at any depth, from a `*W`
+parameter, `self`, a global or a closure's capture — a method's result `w.gp().m(..)`, a call's `mk().p.m(..)` /
+`callptr(&gw, &w).p.m(..)`, a parenthesised head `(*pw).m(..)`, wrapped or not. Through 6.7.15 every check read a
+single-name receiver only: `w.p.rs(3)?` crashed (the boxed `?`), `var v = w.p.rs(3);` kept the tag in silence, a
+forwarder `return w.p.rs(3);` defined below its caller was one value there, and `return w.p.rs(3);` beside
+`return Ok(..);` drew the dropped-tag warning below.
 
 **Parentheses around a whole pair call are transparent** (6.7.13, the user's decision of 2026-10-15),
 as around a whole struct source: `var v = (f());`, `x = ((f()));`, `h.n = (f());`, `P { (f()), 3 }`
@@ -7399,8 +7408,12 @@ a call, so is `x.m<..>(..)` (6.7.15): a multi-value destructure or re-assignment
 forward, the refusals of a pair bound to one name and of a multi-value call stored as a
 struct, a method declared to return a vector, a `*T` result forming a `dyn`, a top-level
 zone — through 6.7.14 those read the explicit spelling as no call ("multi-value
-destructure needs a call on the right-hand side"; `var v = p.rs<i64>(3)?;` crashed). The
-shape is `.m<..>(` where `m` is a generic method of the receiver's struct and **no field** of
+destructure needs a call on the right-hand side"; `var v = p.rs<i64>(3)?;` crashed). And
+(6.7.16) wherever `x.m(..)` is a call, so is a method ending a chain on any receiver the method
+arm takes — `w.p.m(..)`, `w.p.m<..>(..)`, `w.gp().m(..)`, `mk().p.m(..)`, `(*pw).m(..)` — at
+every one of those lookaheads, each refusal worded as the single name's with the receiver as
+written (``bind it first: `var a, b = w.p.m2(..);` ``; it named `P_m2` with no hint). The
+explicit spelling's shape is `.m<..>(` where `m` is a generic method of the receiver's struct and **no field** of
 it: a field of that name still wins, so `p.n < k` (and `p.n < k >> (j)`) is a comparison. A bound is then met at `f64`: `gb(h)` with
 `fn gb<T: Show>` calls `impl Show for f64`'s method, and is refused without one, as
 `gb<f64>(h)` is — and it needs no `impl Show for i64` (6.7.11: without one, `gb(h)`,
