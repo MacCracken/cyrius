@@ -7074,7 +7074,11 @@ untyped capture each is refused as on the untyped local — *no struct type in s
 assignment or method wording, *SIMD vector has no named fields* for a captured vector, nothing more after
 a refused annotation — and a bounded generic's captured receiver calls its bound's impl at a scalar `T`
 (`fn g<T: Show>(v: T) { var f = || v.show(); .. }` at `T = i64`, and `self` captured in a trait default
-instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not.
+instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not. A global of the
+same name does not reach past the capture (6.7.16, the user's D96, 2026-10-20): `var x = 5; |k| x.a + k`
+beside a struct global `var x = Q { 7, 8 };` is refused *no struct type in scope for 'x'*, as the same
+line is outside the closure — through 6.7.15 it read the GLOBAL's `x.a` (and a field store or `x.m()` the
+global), while `x` alone in the same closure was the capture.
 
 ## Constants and `const fn` (6.7.2)
 

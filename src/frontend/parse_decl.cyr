@@ -631,14 +631,14 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
 # capture take the `sid == 0` arms an untyped local takes: "no struct type in scope for 'x'" in the field, store or
 # method wording, a refused annotation's stand-down (`_ann_refd_said`), a bounded scalar T's member call. The rung
 # returned -1 for them, so the name fell to the globals: "undefined variable 'x'". A captured vector reports "SIMD
-# vector has no named fields" first, as a local does. A global of the same name keeps today's reading (the global's
-# field) — refusing it would stop such a program compiling, the user's call. CHANGELOG [6.7.16]
+# vector has no named fields" first, as a local does. A GLOBAL of the same name is shadowed by the capture, as the
+# local shadows it outside the closure: the user's D96 (6.7.16, 2026-10-20) — the rung answered -1 for it, so `x.a`
+# read the global's field while `x` alone read the capture. CHANGELOG [6.7.16]
 fn _cl_cap_fld_any(S, noff): i64 {
     var r = _CL_CAP_FIELD_IDX(S, noff);
     if (r < 0 - 1) { return r; }
     var e = _cl_cap_esl(S, noff);
     if (e < 0) { return 0 - 1; }
-    if (FINDVAR(S, noff) >= 0) { return 0 - 1; }
     if (_cl_snap_type(e) <= 0 - 2048) { ERR_MSG(S, "SIMD vector has no named fields", 31); }
     _cap_fld_sid = 0;
     return 0 - 1000000 - _cl_cap_find(e);

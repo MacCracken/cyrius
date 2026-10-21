@@ -666,8 +666,15 @@ syscall(60, X.a);
 # the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse_expr.cyr: the closure context
 # keeps its host fn, `_cl_host_fn`, and the enclosing context, `_cl_ctx_up`). The same arm calls a bounded scalar T's
 # member on a captured receiver (`|| v.show()` at T = i64 was "undefined variable 'v'": tests/tcyr/crossos/
-# trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12). A capture named like a GLOBAL keeps today's reading
-# (the global's field) — refusing it stops a program compiling: the user's call, not this gate's.
+# trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12).
+# UCG (6.7.16, the user's D96, 2026-10-20; issues/2026-10-20-closure-untyped-capture-named-like-struct-global-reads-
+# global-field.md) — A CAPTURE NAMED LIKE A STRUCT GLOBAL shadows the global for `.field`, a field store and `.m()`, as
+# the local does outside the closure. The rung answered -1 when a global of the name existed (a `FINDVAR >= 0` test),
+# so `var x = 5; |k| x.a + k` beside `var x = Q { 7, 8 };` exited 7 — the GLOBAL's field — while `x` alone in the same
+# closure read the capture (5). Now refused as UC0 is: UCG0 (the filed repro verbatim), UCG1 (a store and a method),
+# UCG2 (an `i64` capture), UCG3 (an untyped `&q` capture), UCG4 (a nested closure's capture of a capture), on every leg
+# (`uc_rows`), and silent under --syntax-only (UC12). Controls (x86_64): a struct-typed capture reads its own copy (UCG5),
+# a closure capturing no `x` reads the global (UCG6), a plain `x` the capture (UCG7).
 # Every UC row but the UC3 / UC4 controls runs on x86_64 and again from the aarch64, cx and PE compilers (CPX, `uc_rows`).
 # (Mutants: a scratch copy of the tree with the one change, its build/cycc; CPX's cross compilers come from it too.
 # Re-measured 2026-10-20 after the review's CPX extension:)
@@ -676,6 +683,7 @@ syscall(60, X.a);
 #   `_cl_cap_fld_any` = `_CL_CAP_FIELD_IDX` (the rung)   -> RED 48: the same
 #   `_ann_refd_said` without its capture arm             -> RED 24: UC2 UC7-UC11 (a second, no-struct error) x4 legs
 #   `_cl_cap_origin` not following `_cl_ctx_up`          -> RED 8: UC8 UC10 (a capture of a capture) x4 legs
+#   the tree before D96 (4ae0873f3: the `FINDVAR >= 0` exit) -> RED 20: UCG0-UCG4 (compiled: the global's field) x4 legs
 echo "6.7.16 — .field / a field store / .m() on an untyped closure capture is an untyped local's:"
 SM="; a method call needs its struct declaration (missing include?)"
 SS="; a '.field' assignment needs its struct declaration (missing include?)"
@@ -694,6 +702,18 @@ struct Q { a; b; }
 fn main(): i64 { var x: Foo = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
 syscall(60, main());
 '
+UCG='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+var x = Q { 7, 8 };
+fn main(): i64 { var x = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+UCGH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn m(self): i64 { return self.b; } }
+var x = Q { 7, 8 };
+'
 refuse_at "UC0 |k| x.a + k  (the filed repro)" "3:54: $SN 'x'$SA" "$UCA"
 refuse_at "UC1 x.a = k; x.m()  (store, method)" "3:47: $SN 'x'$SS|3:62: $SN 'x'$SM" "$UCB"
 refuse_at "UC2 var x: Foo = 5; |k| x.a  (refused)" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
@@ -702,6 +722,15 @@ struct Q { a; b; }
 fn main(): i64 { var x = 5; return x.a; }
 syscall(60, main());
 '
+accept "UCG5 control: a struct capture, a struct global" "$UCGH"'fn main(): i64 { var x: Q = Q { 1, 2 }; var f = |k| { return x.a * 10 + x.m() + k; }; return fncall1(f, 0); }
+syscall(60, main());
+' 12 'syscall(60, 12);'
+accept "UCG6 control: no x captured: the global" "$UCGH"'fn main(): i64 { var y = 5; var f = |k| { return x.a * 10 + x.m() + k + y; }; return fncall1(f, 0); }
+syscall(60, main());
+' 83 'syscall(60, 83);'
+accept "UCG7 control: a plain x is the capture" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { return x + k; }; return fncall1(f, 1); }
+syscall(60, main());
+' 6 'syscall(60, 6);'
 accept "UC4 control: a struct-typed capture" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 struct Q { a; b; }
@@ -761,8 +790,21 @@ struct Q { a; b; }
 fn main(): i64 { var y = 5; var f = |k| { return y.m<i64>(1) + k; }; return fncall1(f, 0); }
 syscall(60, main());
 '
+    refuse_at "${1}UCG0 D96: the filed repro (a struct global x)" "5:54: $SN 'x'$SA" "$UCG"
+    refuse_at "${1}UCG1 D96: a store and a method" "5:47: $SN 'x'$SS|5:62: $SN 'x'$SM" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { x.a = k; return x.m(); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG2 D96: an i64 capture" "5:59: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var x: i64 = 5; var f = |k| { return x.b + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG3 D96: an untyped &q capture" "5:75: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var q = Q { 3, 4 }; var x = &q; var f = |k| { return x.b + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG4 D96: a nested closure's capture" "5:68: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { var g = |j| { return x.a + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
     # UC12: --syntax-only (cyrius lint) — silent, rc 0, as for an untyped local.
-    for so in UCA UCB UCC; do
+    for so in UCA UCB UCC UCG; do
         eval "src=\$$so"
         printf '%s' "$src" > "$D/so.cyr"
         rc=0; "$CC" --syntax-only < "$D/so.cyr" > /dev/null 2> "$D/so.err" || rc=$?
@@ -1143,7 +1185,8 @@ syscall(60, G2.a * 10 + G2.b);
 '
 
 # CPX (6.7.16) — the closure rows (CP0 CP1, every UC row but the UC3 / UC4 controls: UC0-UC2, `uc_rows`' UC5-UC11 UC13
-# UC14 and UC12's --syntax-only) from every cross compiler built from this tree (the frontend is shared; this pins it).
+# UC14, the UCG rows (D96) and UC12's --syntax-only) from every cross compiler built from this tree (the frontend is
+# shared; this pins it).
 # The cross compilers are built from the tree's src/, so a mutant is a tree mutant.
 echo "6.7.16 — the closure rows (CP, UC) from the aarch64, cx and PE compilers:"
 echo "=== a struct result stored in a name typed by T (6.7.16, the user's D1, 2026-10-19): no scalar instance ==="
@@ -1247,10 +1290,10 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (the genbind review, 2026-10-20: 263 refusals + 37 acceptances with CPX's UC rows on three legs): a lost row
-# block — a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 300 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 300"; exit 1
+# FLOOR (6.7.16's D96, 2026-10-21: 287 refusals + 40 acceptances with CPX's UC / UCG rows on three legs; 300 at the
+# genbind review): a lost row block — a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 327 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 327"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
