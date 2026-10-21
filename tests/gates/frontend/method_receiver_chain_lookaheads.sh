@@ -41,6 +41,9 @@
 #   W  the dropped-tag warning reads the chain's method (x86_64, every receiver): W1 / W3 `return w.p.rs(4);` (and in
 #      parentheses) beside `return Err(2);` draw none (one each before), W2 `return w.p.one();` one, WC1 / WC2 a
 #      comparison `w.p.n < z >> (z)` / `w.p.id < z >> (z)` (id a field and a generic method) one
+#   X  a lookahead instantiates nothing (x86_64): X1 the zone's `var gx, gy = GW.p.mm<f64>(2.5);` exits 12 plain and under
+#      CYRIUS_COVERAGE=1 (the chain arm minted `P_mm$f64` in the zone's pass 1, `_gzf_elem`: SIGSEGV under the mode — met
+#      in check.sh's coverage_mode_corpus at 4a790ef3c; `_mch_nox`, the instance `_mco_inst`'s where the single name's is)
 #   F  the token pass flags a forwarder below its caller (x86_64, every receiver): F1 `var v = fwd(w);` with `fwd`
 #      returning `w.p.rs(3)` and F2 with `fwd`'s only pair route `w.p.rs(3)?` are refused "bind both" (each compiled before)
 #
@@ -73,6 +76,7 @@
 #   M15 the tree before `_icall_dotted` (7cdce3aa1)     -> RED 10: V x7 (MS: SIGSEGV), C17 / C17c / C19 on callptr
 #   M16 the tree before `_ret_expr_head`'s chain arm    -> RED 19: V x7 (MR: the file did not build), C22 / C23 on c d f
 #       (df29930ab)                                        x k i ("returned in two registers ... got `w`")
+#   M17 the tree before `_mch_nox` (4a790ef3c)           -> RED 1: X1 cov (SIGSEGV)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -315,6 +319,27 @@ frow() {
 echo "F. a forwarder below its caller is a pair there"
 frow F1 'return @.rs(3);' "var v = fwd(w); with fwd returning @.rs(3)"
 frow F2 'var v = @.rs(3)?; return v + 0;' "var v = fwd(w); with fwd's only pair route @.rs(3)?"
+
+echo "X. a lookahead instantiates nothing: the zone's GW.p.mm<f64>(2.5) under CYRIUS_COVERAGE=1"
+cat > "$D/x1.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P { k; }
+struct W { p: P; n; }
+impl P { fn mm<V>(self, x: V): (V, i64) { return (x, 7); } }
+var GP: P = P { 1 };
+var GW: W = W { GP, 0 };
+var gx, gy = GW.p.mm<f64>(2.5);
+syscall(60, gy + f64_to(gx * 2.0));
+X
+for mode in plain cov; do
+    xc=0
+    if [ "$mode" = cov ]; then CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D/x1.cov" "$CC" < "$D/x1.cyr" > "$D/x1_$mode" 2> "$D/x1_$mode.err" || xc=$?
+    else "$CC" < "$D/x1.cyr" > "$D/x1_$mode" 2> "$D/x1_$mode.err" || xc=$?; fi
+    if [ "$xc" -ne 0 ]; then bad "X1 $mode: did not build: $(grep -m1 error "$D/x1_$mode.err")"; continue; fi
+    chmod +x "$D/x1_$mode"; xr=0; CYRIUS_COVERAGE_FILE="$D/x1.cov" timeout 60 "$D/x1_$mode" > /dev/null 2>&1 || xr=$?
+    if [ "$xr" -eq 12 ]; then ok "X1 $mode: var gx, gy = GW.p.mm<f64>(2.5); exits 12"
+    else bad "X1 $mode: var gx, gy = GW.p.mm<f64>(2.5); exits $xr, want 12"; fi
+done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

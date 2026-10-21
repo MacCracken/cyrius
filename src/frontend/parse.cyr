@@ -1790,7 +1790,7 @@ fn _ensure_pair_flags(S): i64 {
 # the boxed lowering (rc 139). CHANGELOG [6.6.17]
 fn _pair_callee_at(S, ti): i64 {
     var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
-    if (o >= 0) { if (_mco_ch == 1) { return _mco_mf; } }   # 6.7.16: a chain's last method
+    if (o >= 0) { if (_mco_ch == 1) { return _mco_inst(S, _mco_mf, _mco_mt, o); } }   # 6.7.16: a chain's last method
     if (_gcall_open(S, ti) >= 0) {
         var fi = _pair_gen_inst(S, ti);
         return fi;
@@ -1837,8 +1837,10 @@ fn _tok_method_open(S, ti): i64 {
 # `var v = w.p.rs(3)?;` took the boxed `?` (SIGSEGV), `var v = w.p.rs(3);` kept a pair's tag in silence, `var t: (i64,
 # i64) = w.p.m2();` was "not a tuple" (issues/2026-10-20-multi-value-method-on-field-chain-receiver-refused-as-destructure-
 # source.md). `_mco_mt` is the answer's method name token (t + 2 on a single name) and, for a chain (`_mco_ch` 1), `_mco_rs`
-# its receiver's struct and `_mco_mf` its fn (an explicit instance's): an asker reads them right after the call.
-# CHANGELOG [6.7.16]
+# its receiver's struct and `_mco_mf` its fn — an explicit `.m<..>(` its template, as the single-name arm resolves no
+# instance either (`_mco_inst` does, for an asker that wants it: a lookahead in the declaration zone's pass 1, `_gzf_elem`,
+# must instantiate nothing — a `GW.p.mm<f64>(2.5)` instance minted there SIGSEGV'd the program under CYRIUS_COVERAGE=1):
+# an asker reads them right after the call. CHANGELOG [6.7.16]
 var _mco_mt = 0;
 var _mco_rs = 0;
 var _mco_mf = 0 - 1;
@@ -1869,6 +1871,12 @@ fn _mco_one(S, t, a, o): i64 {
 # answer; the vector receive's `_vmc_*` are put back (a lookahead). -1: no chain ending in a method.
 var _mch_tok = 0;   # 1 = `_mch_open` types from the tokens of the unit starting at `_mch_ta` (a token pass)
 var _mch_ta = 0;
+var _mch_nox = 0;   # 1 = the chain's last method is answered as its template (`_mch_last`), never instantiated
+# The method `mf` named at token mt, its call's `(` at o: an explicit `.m<..>(`'s instance (`_mcall_xquiet`), else mf.
+fn _mco_inst(S, mf, mt, o): i64 {
+    if (o == mt + 1) { return mf; }
+    return _mcall_xquiet(S, mf, mt + 1);
+}
 fn _mco_chain(S, t, a): i64 {
     if (_mco_hgate(S, t) == 0) { return 0 - 1; }
     var m0 = _vmc_mf;
@@ -1876,7 +1884,9 @@ fn _mco_chain(S, t, a): i64 {
     var r0 = _vmc_rs;
     var sk = _mch_tok;
     var sa = _mch_ta;
+    var sx = _mch_nox;
     _mch_tok = 0;
+    _mch_nox = 1;
     if (a >= 0) {
         _mch_tok = 1;
         _mch_ta = a;
@@ -1884,6 +1894,7 @@ fn _mco_chain(S, t, a): i64 {
     var o = _mch_open(S, t);
     _mch_tok = sk;
     _mch_ta = sa;
+    _mch_nox = sx;
     if (o >= 0) {
         _mco_ch = 1;
         _mco_mt = _vmc_mt;

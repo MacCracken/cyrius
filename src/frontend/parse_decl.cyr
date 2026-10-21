@@ -9128,7 +9128,7 @@ fn _vmc_open(S, ti): i64 {
     var o = _mcall_open(S, ti, 0 - 1);
     if (o < 0) { return 0 - 1; }
     if (_mco_ch == 1) {   # a chain's last method (6.7.16: `o.gp(..).s.mv()` too)
-        _vmc_mf = _mco_mf;
+        _vmc_mf = _mco_inst(S, _mco_mf, _mco_mt, o);
         _vmc_mt = _mco_mt;
         _vmc_rs = _mco_rs;
         return o;
@@ -9201,9 +9201,10 @@ fn _mch_mfn(S, sid, nt, o): i64 {
     if (o != nt + 1) { if (_mch_tok == 0) { mf = _mcall_xquiet(S, mf, nt + 1); } }
     return mf;
 }
-# The chain's last method: `_vmc_*` set, its `(` returned.
+# The chain's last method: `_vmc_*` set, its `(` returned. 6.7.16: its template under `_mch_nox` (`_mcall_open`'s).
 fn _mch_last(S, sid, nt, o): i64 {
-    _vmc_mf = _mch_mfn(S, sid, nt, o);
+    if (_mch_nox == 1) { _vmc_mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt); }
+    else { _vmc_mf = _mch_mfn(S, sid, nt, o); }
     _vmc_mt = nt;
     _vmc_rs = sid;
     return o;
@@ -10596,10 +10597,10 @@ fn _dt_call_fn(S): i64 {
     return fi;
 }
 # The method `mf` named at token mt on struct `rs`, its call's `(` at o: the instance an inferred generic's arguments
-# bind (`_mcall_gen`, quiet); an explicit one is already its instance.
+# bind (`_mcall_gen`, quiet), an explicit one's (`_mco_inst`).
 fn _dt_mfn(S, o, mf, mt, rs): i64 {
     if (mf < 0) { return mf; }
-    if (o != mt + 1) { return mf; }
+    if (o != mt + 1) { return _mco_inst(S, mf, mt, o); }
     return _mcall_gen(S, mf, o, rs, 0);
 }
 

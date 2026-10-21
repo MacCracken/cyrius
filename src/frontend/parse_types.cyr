@@ -1364,9 +1364,10 @@ fn _dyn_smchain(S, a, b): i64 {
     if (o < 0) { return 0 - 1; }
     if (_mco_ch == 0) { return 0 - 1; }
     var mf = _mco_mf;
+    var mt = _mco_mt;
     if (_call_close(S, o) != b - 1) { return 0 - 1; }
     if (mf < 0) { return 0; }   # the method reports itself
-    return _dyn_sfn(S, mf, a);
+    return _dyn_sfn(S, _mco_inst(S, mf, mt, o), a);
 }
 # A whole call at token `a` — `f(..)`, `g<..>(..)`, `x.m(..)` — ending at `b` (-1: not one).
 fn _dyn_scall(S, a, b): i64 {
