@@ -3456,7 +3456,9 @@ level); through 6.7.15 `t.data` took the header's address and `t.len` stayed sta
 handle local, parameter or global; `*p` of any `*Str`-typed expression, wrapped, a for step, at top level) rebinds h
 to the header p points at — `h == p` afterwards, as after `h = p`, and a later `h.len = 2` is seen through p (the
 user's decision D20, 2026-10-19; through 6.7.15 h took the header's data word, with the warning *assigning
-non-pointer to typed pointer*). An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
+non-pointer to typed pointer*). A `Str` FIELD is such a handle, and so is a fn's `Str` result: `w.s = *p` (a local's,
+a global's, through a `*W`, nested, a for step, at top level; `**pp` too), a literal's `W { *p, 1 }` and `return *p;`
+from a fn returning `Str` store or return p (since 6.7.16; through 6.7.15 the header's data word). An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
 are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
 (with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
 inline struct (the user's decision D15, 2026-10-18) — assign in each branch instead (`if (c) { t = a; } else { t = b;

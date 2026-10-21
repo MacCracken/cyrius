@@ -102,6 +102,12 @@
 # and 7, were 0 and 0). A frame's t is refused by name into ANY field — a local struct's too (D19: `w.p = t` as `v.s =
 # t`) — with the field's words, and through `*pp` with the pointer's (X15-X19).
 #
+# 6.7.16 (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md): `*p` (p a `*Str`) into a
+# `Str` FIELD — `w.s = *p`, `GW.s = *p`, through a `*W`, nested, a `: *W` call's, a for step, at top level, `**pp` — a
+# literal's `Str` field (`W { *p, 1 }`, in a fn, in the zone and after a statement) and `return *p;` from a fn returning
+# `Str` is p, as `v.s = p` and D20's `h = *p` are (the tcyr's hf_* rows, R_TOP16): each stored or returned the header's
+# data word as the handle (HF1, the filed repro verbatim: `161010` exit 43, was `160111` exit 50).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -114,7 +120,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -206,6 +212,9 @@
 #   2026-10-20 (6.7.16, a `*Str` dereference into a generic's `x: T` at T = Str; the same scratch-copy method):
 #   q1 `_try_push_struct_addr_arg` without its     -> RED 14: R1 x7 (11 rows: the sd_g* rows but the controls, and
 #      `_sarg_istr_dx` arm (the fix reverted)         R_TOP15 — the data word as the header), SD2 x7 (244)
+#   2026-10-20 (6.7.16, `*p` into a `Str` field / a literal's / a `: Str` return; the same scratch-copy method):
+#   r1 `_istr_vdx` answers 0 (the fix reverted)    -> RED 14: R1 x7 (16 rows: the hf_* rows, R_TOP16 — the data word as
+#                                                     the handle), HF1 x7 ('160111', exit 50)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -328,7 +337,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=170   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15
+FLOOR=186   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -686,6 +695,46 @@ for leg in $(legs); do
 done
 runs HD1 5 "the filed repro: \`h = *p;\` into a Str handle rebinds it to the header p points at (D20; was 0, the data word)" "$XLEGS $OLEGS"
 
+# --- HF1: the filed repro (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
+# `w.s = *p` / `GW.s = *p` into a `Str` FIELD (p a `*Str`) is p, as `v.s = p` is (6.7.16; through 6.7.15 the header's
+# data word: `160111`, exit 50), no warning ---
+cat > "$T/HF1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+struct WS { s: Str; n; }
+var GW: WS = WS { 0, 0 };
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var w: WS = WS { str_from("zz"), 1 };
+    var v: WS = WS { str_from("zz"), 1 };
+    w.s = *p;
+    v.s = p;
+    GW.s = *p;
+    fmt_int(sizeof(WS)); fmt_int(w.s == a); fmt_int(w.s == load64(a)); fmt_int(v.s == a); fmt_int(GW.s == load64(a));
+    return str_len(w.s) * 100 + str_len(v.s) * 10 + str_len(GW.s);
+}
+var r = main();
+syscall(SYS_EXIT, r % 256);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" HF1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/HF1.$leg" ]; then bad "HF1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/HF1.$leg.err"; then bad "HF1 ($leg): warned: $(grep '^warning' "$T/HF1.$leg.err" | head -1)"
+    else ok "HF1 \`w.s = *p;\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" HF1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/HF1.$leg" ]; then bad "HF1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" HF1
+    if [ "$got" = 43 ] && [ "$last" = 161010 ]; then ok "HF1 the filed repro ($leg): '$last', exit 43"
+    else bad "HF1 the filed repro ($leg): '$last', exit $got (want '161010', exit 43: w.s and GW.s are p)"; fi
+done
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -811,7 +860,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=64   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2; the floor is the count that runs
+FLOOR_ROWS=66   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
