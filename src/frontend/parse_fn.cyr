@@ -10155,11 +10155,28 @@ fn _tr_rt_pr(S, a, ae): i64 {
     if (a == ae) { PRSTR("i64"); return 0; }
     return _rcv_ann_pr(S, a, ae);
 }
-# Pass 1: a `trait` declaration was recorded by the pre-scan — skip it.
+# Pass 1: a `trait` declaration was recorded by the pre-scan — skip it, its members' third type parameters refused
+# here, in source order with a fn's and a struct's (6.7.16, D92: `_tr_tp3_walk`).
 fn _tl_trait1(S): i64 {
     var ti = GTI(S);
-    if (TOKTYP(S, ti + 1) == 2) { if (TOKTYP(S, ti + 2) == 13) { STI(S, _tr_brace_end(S, ti + 2)); return 0; } }
+    if (TOKTYP(S, ti + 1) == 2) { if (TOKTYP(S, ti + 2) == 13) {
+            var end = _tr_brace_end(S, ti + 2);
+            _tr_tp3_walk(S, ti + 3, end);
+            STI(S, end);
+            return 0;
+        } }
     STI(S, ti + 1);
+    return 0;
+}
+# Each member `fn` of the trait body from token `p` (`end` past its `}`), a default's body stepped: `_tr_tp_third`. A
+# `fn` behind a `*` is a fn-pointer type in a signature, not a member.
+fn _tr_tp3_walk(S, p, end): i64 {
+    while (p < end - 1) {
+        var t = TOKTYP(S, p);
+        if (t == 32) { if (TOKTYP(S, p - 1) != 8) { _tr_tp_third(S, p); } }
+        if (t == 13) { p = _tr_brace_end(S, p); }
+        else { p = p + 1; }
+    }
     return 0;
 }
 # Pass 2: a `trait` declaration — check its shape and skip it (a default is emitted per impl).
@@ -10236,6 +10253,22 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
     }
     if (_trs_bad == 0) { if (i != q) { _trs_end(S, i); } }
     _trs_fn = 0;
+    return 0;
+}
+# ⛔ 6.7.16 (D92) — A TRAIT MEMBER'S OWN THIRD TYPE PARAMETER IS REFUSED AT THE MEMBER, as a fn's, a struct's and the
+# member's default body's are (6.7.16's D8): the reader stepped the member's `<..>` uncounted, so `trait T { fn g<A, B,
+# C>(self, a: A, b: B, c: C): i64; }` compiled, and so did an impl declaring `<A, B>` for it. D8's line at the member's
+# `C` (`_ctp_third`: once per token, the latch put back, under --syntax-only too); `p` is the member's `fn` token. Said
+# in pass 1, in source order with a fn's and a struct's (`_tl_trait1`); a default an impl inherits is read by
+# PARSE_FN_DEF as well, and `_tn_once` keeps it to one line (the user's D92, 2026-10-20). CHANGELOG [6.7.16]
+fn _tr_tp_third(S, p): i64 {
+    if (TOKTYP(S, p + 2) != 19) { return 0; }
+    var k = _tp_nth_at(S, p + 2, 2);
+    if (k < 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, k);
+    _ctp_third(S);
+    STI(S, sv);
     return 0;
 }
 # ⛔ 6.7.15 (D9, D3) — A TRAIT MEMBER'S RETURN TYPE IS HELD TO A FN'S RETURN VOCABULARY FOR `Vec` AND `u128` (`ti` the
@@ -17435,20 +17468,29 @@ fn _tp_later_lt(S, noff): i64 {
 # The type parameters a declaration's `<..>` (its `<` at token `lt`) lists, counted as `_capture_tparams` counts
 # them: each name at the list's own depth that does not follow a bound's `:` or `+`.
 fn _tp_count_at(S, lt): i64 {
+    var n = 0;
+    while (_tp_nth_at(S, lt, n) >= 0) { n = n + 1; }
+    return n;
+}
+# The name token of type parameter `w` (from 0) of the `<..>` at token `lt`, counted as `_tp_count_at` counts, or -1.
+fn _tp_nth_at(S, lt, w): i64 {
     var i = lt + 1;
     var n = 0;
     var d = 1;
     var e = GTCNT(S);
     while (i < e) {
         var t = TOKTYP(S, i);
-        if (t == 12) { return n; }
-        if (t == 2) { if (d == 1) { if (_tp_after_bound(S, i) == 0) { n = n + 1; } } }
+        if (t == 12) { return 0 - 1; }
+        if (t == 2) { if (d == 1) { if (_tp_after_bound(S, i) == 0) {
+                    if (n == w) { return i; }
+                    n = n + 1;
+                } } }
         if (t == 19) { d = d + 1; }
         d = d - _targ_gt_n(t);
-        if (d <= 0) { return n; }
+        if (d <= 0) { return 0 - 1; }
         i = i + 1;
     }
-    return n;
+    return 0 - 1;
 }
 # 1 when the name at token `i` is a bound's trait (it follows `:` or `+`).
 fn _tp_after_bound(S, i): i64 {

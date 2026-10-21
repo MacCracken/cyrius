@@ -7650,7 +7650,9 @@ an `#inline` fn the same). A generic takes at most two type parameters: a third 
 `struct Three<A, B, C>`, bounded or not) is refused at the declaration, once, by name — *a third
 type parameter 'C': a generic takes at most two type parameters* — and its uses say nothing more
 (6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
-`sizeof(C)` as 8 for a 24-byte struct). A
+`sizeof(C)` as 8 for a 24-byte struct). So is a trait member's own third, `trait T { fn g<A, B, C>(self, c: C):
+i64; }`, at the member — with or without a default body, whatever its impls declare (6.7.16, the user's D92; a
+bodiless member's compiled, and so did an impl declaring `<A, B>` for it). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;
