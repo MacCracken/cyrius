@@ -11470,6 +11470,9 @@ fn PARSE_VAR(S): i64 {
             if (scalar_type < 8) {
                 S64(_vars_base + vcnt * 8, scalar_type);
                 SVTYPE(S, vcnt, scalar_type);
+                # A signed iN global sign-extends on load, as PARSE_GVAR_REG's (v6.4.23): one
+                # declared after the first top-level statement read zero-extended. CHANGELOG [6.7.16]
+                SVSGN(S, vcnt, scalar_signed);
                 EVSTORE_W(S, vcnt, scalar_type);
             } else {
                 # 8 (i64 explicit) or 16 (u128) — allocate the full width.

@@ -139,7 +139,7 @@ fn row_ad_step(): i64 {
 # byte distance the pointer moved, so a one-byte step reads as 1 (or 2), never the element's size.
 var AC_GPI: *i32 = 0;
 var AC_TPI: *i32 = 0;
-# The narrow globals of the D21 rows below, declared here, before the first top-level statement.
+# The narrow globals of the D21 rows below (AN_PS / AN_PT, after the first top-level statement, read the same).
 var AN_GQ: i32 = 5;
 var AN_GR: i32 = 9;
 var AN_GB: u8 = 7;
@@ -171,6 +171,11 @@ var AC_TBUF: i64[4];
 AC_TPI = &AC_TBUF;
 *(&AC_TPI) += 1;
 var AC_TOP = ac_d(AC_TPI, &AC_TBUF);
+# 6.7.16: declared after a top-level statement (PARSE_VAR's top-level arm), a signed narrow global read zero-extended
+# (65534 for -2), through `*(&x)` as through x. issues/2026-10-19-signed-narrow-global-declared-after-top-level-
+# statement-reads-zero-extended.md
+var AN_PS: i16 = 0 - 2;
+var AN_PT: i16 = 4;
 
 # --- 6.7.16 (D21, the user's decision, 2026-10-19): `*(&x)` of a NARROW integer x is x, at x's width -------------
 # issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 3. It was the untyped word:
@@ -214,6 +219,7 @@ fn row_amp_narrow_param(): i64 { return an_par(0 - 6, 0 - 2); }
 fn row_amp_narrow_gu8(): i64 { AN_GB = 7; AN_GC = 3; *(&AN_GB) = 0x1FF; return AN_GB * 1000 + AN_GC; }
 fn row_amp_narrow_wrap(): i64 { AN_GB = 255; AN_GC = 3; *(&AN_GB) += 1; return AN_GB * 1000 + AN_GC; }
 fn row_amp_narrow_gi16(): i64 { AN_GS = 0; AN_GT = 4; *(&AN_GS) = 0 - 2; return *(&AN_GS) * 100 - AN_GT; }
+fn row_amp_narrow_after(): i64 { var a = *(&AN_PS); *(&AN_PS) = 0 - 3; return a * 1000 + *(&AN_PS) * 100 - AN_PT; }
 fn row_amp_narrow_for(): i64 {
     AN_GQ = 0 - 2; AN_GR = 9;
     for (var i = 0; i < 3; *(&AN_GQ) += 1) { i = i + 1; }   # -2 -> 1: a word op carried into GR
@@ -258,6 +264,7 @@ assert_eq(row_amp_narrow_param(), 0 - 601, "D21 (6.7.16): *(&x) of an i32 parame
 assert_eq(row_amp_narrow_gu8(), 255003, "D21 (6.7.16): *(&GB) = 0x1FF of a u8 global writes one byte");
 assert_eq(row_amp_narrow_wrap(), 3, "D21 (6.7.16): *(&GB) += 1 of a u8 global 255 wraps, no carry into the next");
 assert_eq(row_amp_narrow_gi16(), 0 - 204, "D21 (6.7.16): *(&GS) of an i16 global: -2 stored and read at 2 bytes");
+assert_eq(row_amp_narrow_after(), 0 - 2304, "D21 (6.7.16): *(&PS) of an i16 global declared after a statement: -2 read, -3 stored, at 2 bytes");
 assert_eq(row_amp_narrow_for(), 19, "D21 (6.7.16): a for step *(&GQ) += 1 at 4 bytes, no carry into the next global");
 assert_eq(row_amp_narrow_expr(), 0, "D21 (6.7.16): *(&a) + 1 and an_id(*(&a)) of an i32 -1");
 assert_eq(row_amp_narrow_plus0(), 1, "D21 control: *(&GQ + 0) is still the byte pointer's word (6.7.11 D15)");

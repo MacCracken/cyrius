@@ -22,7 +22,9 @@ var y: i64 = 42;      # Same thing — an i64 annotation is documentation
 ```
 
 Other annotations do carry meaning: a narrow integer variable (`i8`..`i32`, `u8`..`u32`) is stored
-at its width (a struct field's widths are in [Field types](#field-types-v6610)), an `f64` / `f32`
+at its width and read sign-extended (`iN`) or zero-extended (`uN`) — a global declared after the first
+top-level statement too (6.7.16; a signed one there read zero-extended, `var G: i16 = 0 - 2;` 65534)
+(a struct field's widths are in [Field types](#field-types-v6610)), an `f64` / `f32`
 makes arithmetic on it float, a `*T` steps `sizeof(T)` and takes `p[i]`,
 a `bool` checks every write into it, and a struct type is checked on copies and arguments — see
 [Type names](#type-names-6616) and the sections each one points to.
