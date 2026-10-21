@@ -863,6 +863,132 @@ fn f(p: *Q): i64 { return p.y; }
 syscall(60, q.y + f(&q) + E.B + B);
 ' 12
 
+# ── the five-leg rows (6.7.16, f16 FF5) ─────────────────────────────────────────────────────────────────────────
+# `row5` / `ok5`: each row on the x86_64, PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1) compilers and the
+# aarch64 / cx compilers built from this tree. `row5`: refused (rc != 0, no binary), the `error` / `warning` lines
+# exactly <want>. `ok5`: compiles clean (no such line, a binary) on each, runs <exit> on x86_64. A compiler that does
+# not build is a FAIL (a SKIP is not coverage).
+LEGS="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; LEGS="$LEGS a64"
+else printf '  FAIL: %-46s\n' "src/main_aarch64.cyr did not build"; fail=$((fail+1)); fi
+if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; LEGS="$LEGS cx"
+else printf '  FAIL: %-46s\n' "src/main_cx.cyr did not build"; fail=$((fail+1)); fi
+N5=0
+comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
+    CRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        a64)   timeout 60 "$D/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        cx)    timeout 60 "$D/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+    esac
+}
+row5() {   # <id> <what> <source> <want-lines> [cc-arg]
+    printf '%s' "$3" > "$D/$1.cyr"
+    printf '%s\n' "$4" > "$D/$1.want"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp5 "$leg" "$D/$1.cyr" "$o" "${5:-}"
+        N5=$((N5 + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$CRC" -eq 0 ]; then printf '  FAIL: %s %s: %s: rc 0\n' "$1" "$leg" "$2"; fail=$((fail+1))
+        elif ! cmp -s "$o.got" "$D/$1.want"; then
+            printf '  FAIL: %s %s: %s: got %s lines: %s\n' "$1" "$leg" "$2" "$(wc -l < "$o.got")" "$(tr '\n' '|' < "$o.got")"; fail=$((fail+1))
+        elif [ -s "$o" ] && [ -z "${5:-}" ]; then printf '  FAIL: %s %s: %s: refused, but a binary was written\n' "$1" "$leg" "$2"; fail=$((fail+1))
+        else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
+    done
+}
+ok5() {   # <id> <what> <source> <exit>
+    printf '%s' "$3" > "$D/$1.cyr"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp5 "$leg" "$D/$1.cyr" "$o"
+        N5=$((N5 + 1))
+        if [ "$CRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
+            printf '  FAIL: %s %s: %s: rc %s: %s\n' "$1" "$leg" "$2" "$CRC" "$(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; fail=$((fail+1))
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; x=0; ( ulimit -c 0; timeout 30 "$o" ) > /dev/null 2>&1 || x=$?
+            if [ "$x" = "$4" ]; then printf '  ok: %s %s: %s (exit %s)\n' "$1" "$leg" "$2" "$x"; pass=$((pass+1))
+            else printf '  FAIL: %s %s: %s: exit %s, want %s\n' "$1" "$leg" "$2" "$x" "$4"; fail=$((fail+1)); fi
+        else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
+    done
+}
+ZZ="undefined variable 'zz' (missing include or enum?)"
+DH='include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+'
+
+# DV — 6.7.16 (issues/2026-10-19-refused-declaration-derive-step-takes-enclosing-body-brace.md): A REFUSED DECLARATION'S
+# DERIVE STEP TAKES ONLY WHAT THE DERIVE WROTE. `_dl_derived` stepped every token left on a refused struct's / enum's
+# closing line when it began `fn` / `pub` — where a `#derive` writes its generated fns — so the user's own `fn h()`
+# there was stepped as a derive's: below module scope through the enclosing fn body's or block's `}` ("expected '}',
+# got end of file"), at module scope silently (h never defined). Now only when the preprocessor derived that type
+# (`PP_DERIVE_LAST`), only the `[public] fn` units named `<Type>_..` / `_cy_..` (what PP_DERIVE_* writes, before the
+# user's tail), each through its own braces. DV1 / DV2 the filed repros verbatim (two and three errors: the struct's,
+# then `fn h`'s own "defined inside" / the `pub`'s, and `zz`; no EOF error); DV3 at module scope h is DEFINED (its
+# body's `zz`, its call's arity); DV4 a refused `#derive(Serialize)` struct (Vec / f64 fields: the `_cy_` helpers) in
+# a fn body and after a statement still steps its generated fns, a call of one quiet; DV5 an enum derive, the user's
+# fn after its codecs refused as nested; DV6 a `fn Q_h` on a NON-derived refused struct's line is the user's.
+# MUTATION LEDGER (2026-10-21, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy, so every leg's compiler carries the mutant):
+#   the lane before it (b272c366a)                   -> RED DV1 DV2 DV3 DV5 DV6, 25 (DV4 green: the derive's own fns)
+#   `_dl_derived` without its `PP_DERIVE_LAST` test  -> RED DV6, 5 (`fn Q_h` stepped as a derive's)
+#   `_dl_dname` taking any name                      -> RED DV5, 5 (the user's `fn h` after the codecs stepped)
+#   `_dl_dname` without its `_cy_` arm               -> RED DV4 DV5 Q3, 11 (the helpers parsed: "fn '_cy_vecdec_int'
+#                                                       is defined inside fn 'f'", the walk stopped before the codecs)
+row5 DV1 "filed: a struct then fn h on one line in a fn body" "$(printf 'fn f(): i64 { struct Q { y; } fn h(): i64 { return 1; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body
+error:<source>:1:31: fn 'h' is defined inside fn 'f'; define it at top level"
+row5 DV2 "filed: a struct then pub fn h on one line in a block" "$(printf 'var a = 1;\nif (a == 1) { struct Q { y; } pub fn h(): i64 { return 1; } }\nsyscall(60, a + zz);\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a block
+error:<source>:2:31: a \`pub\` declaration $IR a block
+error:<source>:3:19: $ZZ"
+row5 DV3 "module scope: struct Q {..} fn h(): h is defined" 'var a = 1;
+a = 2;
+struct Q { y; } fn h(): i64 { return zz; }
+syscall(60, h(4));
+' "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:3:40: $ZZ
+error:<source>:4: 'h' expects 0 arguments, got 1"
+row5 DV4 "control: a refused derive's fns still stepped (a body, after a statement)" "${DH}fn f(): i64 {
+#derive(Serialize)
+struct Q { y; v: Vec<i64>; z: f64; }
+return 7 + zz;
+}
+var a = 1;
+a = 2;
+#derive(Serialize)
+pub struct R { y; v: Vec<f64>; }
+var sb = 0;
+R_to_json(0, sb);
+syscall(60, a + f() + zz);
+" "error:<source>:9:1: a \`struct\` declaration $IR a fn body
+error:<source>:10:14: $ZZ
+error:<source>:15:1: a \`pub\` declaration must come before the first top-level statement (line 13)
+error:<source>:18:25: $ZZ"
+row5 DV5 "an enum derive: its codecs stepped, the user's fn after them is not" "${DH}fn f(): i64 {
+#derive(Serialize)
+enum E { A; B; } fn h(): i64 { return 1; }
+return E_from_json_str(0) + zz;
+}
+syscall(60, f());
+" "error:<source>:9:1: an \`enum\` declaration $IR a fn body
+error:<source>:9:651: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:10:31: $ZZ"
+row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf 'fn f(): i64 { struct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body
+error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:1:68: $ZZ"
+
+# The five-leg rows' floor: a row or a leg lost reads RED, never green.
+F5FLOOR=30
+[ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
+
 echo "decl_after_statement_named: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

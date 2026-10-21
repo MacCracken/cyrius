@@ -755,16 +755,52 @@ fn _dl_in_report(S, ti): i64 {
 # 6.7.16: only after a `struct` / `enum` (`pub` / `public` before it or not) — the declarations a `#derive` takes
 # (PP_DERIVE_*): `use m.g; pub var x = 1;` or two `pub fn`s on one line in a fn body stepped the next declaration and
 # the body's own `}` ("expected '}', got end of file"). The declaration's keyword is token `ti`. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — ONLY WHAT THE DERIVE WROTE, NOT THE REST OF THE LINE. A refused `struct Q { y; } fn h() { .. }` stepped the
+# user's own `fn h` as a derive's, and below module scope the enclosing fn body's or block's `}` with it ("expected
+# '}', got end of file"); at module scope h was silently never defined. The derive's output is a run of `[public] fn
+# NAME(..) { .. }` units on the closing line, before the user's own tail (PP_DERIVE_SERIALIZE / _DESER / _ACCESSORS:
+# the bodies, then PP_COPY_TAIL), and every NAME is the type's (`Q_to_json`, `Q_from_json`, `Q_from_json_str`,
+# `Q_<field>`, `Q_set_<field>`; an enum's `E_to_json`, `E_from_json_str`) or a shared helper's (`_cy_enum_name_eq`,
+# `_cy_vecdec_int`, `_cy_vecdec_f64`, `_cy_json_skipval`). So only when the preprocessor derived that type
+# (`PP_DERIVE_LAST`), only those units, each through its own balanced braces (`_skip_nested_body`): the walk stops at
+# anything else, and so never at a `}` that closes a brace opened before it. CHANGELOG [6.7.16]
 fn _dl_derived(S, ti): i64 {
     var k = TOKTYP(S, ti);
-    if (k == 73) { k = TOKTYP(S, ti + 1); }
+    var tn = ti + 1;
+    if (k == 73) { k = TOKTYP(S, ti + 1); tn = ti + 2; }
     if (k != 40) { if (k != 60) { return 0; } }
-    if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
+    if (TOKTYP(S, tn) != 2) { return 0; }
+    if (PP_DERIVE_LAST(S + 0xEC00000 + TOKVAL(S, tn)) == 0) { return 0; }
     var ln = GTLINE(S, GTI(S) - 1);
-    while (PEEKT(S) != 12) {
-        if (GTLINE(S, GTI(S)) != ln) { return 0; }
-        STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) { go = _dl_derived_fn(S, ln, TOKVAL(S, tn)); }
+    return 0;
+}
+# The derive's fn at the cursor, on line `ln` (`fn NAME` / `public fn NAME`, NAME type `tnoff`'s or a shared helper's:
+# `_dl_dname`), stepped through its body's `}`. 1 = stepped.
+fn _dl_derived_fn(S, ln, tnoff): i64 {
+    var i = GTI(S);
+    if (GTLINE(S, i) != ln) { return 0; }
+    if (TOKTYP(S, i) == 73) { i = i + 1; }
+    if (TOKTYP(S, i) != 32) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (_dl_dname(S, TOKVAL(S, i + 1), tnoff) == 0) { return 0; }
+    var e = _skip_nested_body(S, i);
+    if (TOKTYP(S, e) == 12) { STI(S, e); return 0; }
+    STI(S, e + 1);
+    return 1;
+}
+# 1 = fn name `noff` is one a derive of type `tnoff` writes: `<T>_..` or `_cy_..`.
+fn _dl_dname(S, noff, tnoff): i64 {
+    var p = S + 0xEC00000 + noff;
+    if (load8(p) == 95) { if (load8(p + 1) == 99) { if (load8(p + 2) == 121) { if (load8(p + 3) == 95) { return 1; } } } }
+    var q = S + 0xEC00000 + tnoff;
+    var j = 0;
+    while (load8(q + j) != 0) {
+        if (load8(p + j) != load8(q + j)) { return 0; }
+        j = j + 1;
     }
+    if (load8(p + j) == 95) { return 1; }
     return 0;
 }
 # 1 = token type `t` opens a declaration the rule keeps before the first statement.
