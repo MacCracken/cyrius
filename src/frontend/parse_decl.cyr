@@ -2855,9 +2855,11 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     }
     if (fsc == 0) {
         var fst_ti = GTI(S);
-        PCMPE(S);
-        _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
-        _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
+        if (_istr_pfdx(S, lps, term) == 0) {   # 6.7.16 (D73): `w.p = *p` into a `*Str` field is p
+            PCMPE(S);
+            _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
+            _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
+        }
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
     var fst_sz = FIELDSZ(S, ft);
@@ -2929,7 +2931,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
         # consumes the pair. Right before the PCMPE, as T5b's sites. CHANGELOG [6.7.11]
         _refuse_lossy_pair(S);
         var t0 = GTI(S);
-        if (_istr_ldx(S, ft) == 0) {   # 6.7.16: `V { *p, 1 }`, a `*Str`'s `*p` into a `Str` field, is p
+        if (_istr_ldx(S, ft, pf) == 0) {   # 6.7.16: `V { *p, 1 }`, a `*Str`'s `*p` into a `Str` / `*Str` field, is p
             PCMPE(S);
             _ifs_bx(S, fk, t0, _sfw_fn);
             _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
@@ -5888,7 +5890,11 @@ fn _synonly_sib_local(S): i64 {
 # PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
 # declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
 fn _var_value(S): i64 {
-    if (_var_bare_at != GTI(S)) { PCMPE(S); return 0; }
+    if (_var_bare_at != GTI(S)) {
+        if (_istr_pvd(S) == 1) { return 0; }   # 6.7.16 (D73): `var y: *Str = *p;` is p
+        PCMPE(S);
+        return 0;
+    }
     _var_bare_at = 0 - 1;
     _tp_refd_at = GTI(S);
     EMOVI(S, 0);
@@ -8400,18 +8406,61 @@ fn _istr_vdx(S, ti, e): i64 {
     _pw_close(S, k);
     return 1;
 }
-# A struct literal's element at the cursor into field type `ft`: a `Str` field's `*p` is p (`_istr_vdx`, 1: parsed).
-fn _istr_ldx(S, ft): i64 {
-    if (IS_STR_FIELD(S, ft) == 0) { return 0; }
+# A struct literal's element at the cursor into field type `ft` (`pf` 1: a `*Str` field, `_istr_pfs`): a `Str` or `*Str`
+# field's `*p` is p (`_istr_vdx`, 1: parsed).
+fn _istr_ldx(S, ft, pf): i64 {
+    if (IS_STR_FIELD(S, ft) == 0) { if (pf == 0) { return 0; } }
     var ti = GTI(S);
     return _istr_vdx(S, ti, _slit_eend(S, ti));
 }
-# `return <v>;` in a fn returning `Str`, the cursor on the value: `*p` is p (`_istr_vdx`, 1: parsed, the cursor on
-# the `;`).
+# `return <v>;` in a fn returning `Str` or `*Str` (`_istr_rstr`), the cursor on the value: `*p` is p (`_istr_vdx`, 1:
+# parsed, the cursor on the `;`).
 fn _istr_rdx(S): i64 {
-    if (_cur_fn_ret_sid <= 0) { return 0; }
-    if (_cur_fn_ret_sid != _STR_SID(S)) { return 0; }
+    if (_istr_rstr(S) == 0) { return 0; }
     var ti = GTI(S);
+    return _istr_vdx(S, ti, _hl_dx_end(S, ti, 5));
+}
+# 1 = the fn whose body is being parsed returns `Str`, or (6.7.16, D73) `*Str` — its `*T` record (`_fn_rpsid`) `Str` and
+# its step the header's (no `**Str`); never in an inline replay, where `_cur_fn_ix` is the caller's.
+fn _istr_rstr(S): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_cur_fn_ret_sid == ss) { return 1; }
+    if (_cur_fn_ret_sid != 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    if (L64(_fn_rpsid + _cur_fn_ix * 8) != ss) { return 0; }
+    return _istr_pdst(S, _fn_ret_ps(_cur_fn_ix), 1);
+}
+# ⛔ 6.7.16 — `*p` (p a `*Str`) INTO A `*Str` SLOT IS p, THE HEADER'S ADDRESS (the user's D73, 2026-10-20: `*q = *p` — q's
+# first word becomes p, as `*q = *pp` and `*q = gt` store an address since 6.7.13's D7 (1)). Through a `*Str` or a
+# `**Str` (`*q = *p`, `**qq = *p`, `*pp = *p`), into a `*Str` local, parameter or global (`x = *p`, `GX = *p`), a `*Str`
+# declaration (`var y: *Str = *p;`, in a fn and at top level), a `*Str` field (`w.p = *p`) or a literal's `*Str`
+# element, a `p: *Str` argument and `return *p;` from a fn returning `*Str` each took the word `*p` reads — the header's
+# data pointer — as the header's address, silently or with a false "assigning non-pointer to typed pointer". A `Str`
+# value stored where a `*Str` is held is its header's address (D7 (1), 6.7.15's D16, D19), and `*p` is the header p
+# points at (6.7.10's decision 6), so the slot takes p. CHANGELOG [6.7.16]
+# `*d = <v>` (`_deref_store`, the cursor on the value at `ti`, ending at `term`), the operand [d + 1, ti - 1) a `*Str`
+# or a `**Str` (`*pp` the `*Str` slot, `_istr_dspp`): `*p` is p (1: parsed).
+fn _istr_dsdx(S, d, ti, term): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { if (_hl_dref_psid(S, d + 1, ti - 1) != ss) { return 0; } }
+    return _istr_vdx(S, ti, _hl_dx_end(S, ti, term));
+}
+# A `*Str` field's value at the cursor (`_fst_on`, `pf` its `_istr_pfs`, ending at `term`): `*p` is p (1: parsed).
+fn _istr_pfdx(S, pf, term): i64 {
+    if (pf == 0) { return 0; }
+    var ti = GTI(S);
+    return _istr_vdx(S, ti, _hl_dx_end(S, ti, term));
+}
+# A declaration's initialiser at the cursor (`_var_value`, after `var x: * Str =`): `*p` is p (1: parsed).
+fn _istr_pvd(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    if (TOKTYP(S, ti - 4) != 49) { return 0; }
+    if (_istr_pann(S, ti - 3) == 0) { return 0; }
     return _istr_vdx(S, ti, _hl_dx_end(S, ti, 5));
 }
 fn _istr_fsc_err(S): i64 {
@@ -8537,12 +8586,11 @@ fn _istr_dxh(S, noff, term): i64 {
     if (_agc_ovr_is(noff) == 1) { return 0; }
     var d = _istr_dst(S, noff);
     if (d == 0) { return 0; }
-    if (d > 2) { return 0; }
     var k = _hl_dk;
     STI(S, GTI(S) + k + 1);   # the wrap's `(`s and the `*`
     PARSE_FACTOR(S);
     _pw_close(S, k);
-    if (d == 1) { _asg_store_slot(S, FINDLOCAL(S, noff), 0); }
+    if (d == 1 || d == 3) { _asg_store_slot(S, FINDLOCAL(S, noff), 0); }   # 6.7.16 (D73): a `*Str` name (3 / 4) too
     else { _asg_store_slot(S, _findvar_core(S, noff), 1); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
@@ -8625,12 +8673,21 @@ fn _istr_gz(S, dgv, gps): i64 {
         if (gps != 0) { return 0; }
         if (TOKTYP(S, GTI(S) - 4) != 49) { return 0; }
         if (_istr_pann(S, GTI(S) - 3) == 0) { return 0; }
+        if (_istr_gzdx(S, dgv) == 1) { return 1; }   # 6.7.16 (D73): `var P: *Str = *GP;`
     }
     if (_istr_gsrc(S, ss) == 0) { return 0; }
     var pk = _sci_pname(S, GTI(S));
     _istr_ra(S, 2);
     if (dgv >= 0) { _gvi_store(S, dgv); }
     STI(S, GTI(S) + 1 + 2 * pk);   # the name and its wrap: the cursor on `;`
+    return 1;
+}
+# A zone `var P: *Str = <v>;` (`_istr_gz`, cursor on the value): `*GP` is GP (`_istr_vdx`), stored into `dgv` (1, the
+# cursor on the `;`); else 0. CHANGELOG [6.7.16]
+fn _istr_gzdx(S, dgv): i64 {
+    var ti = GTI(S);
+    if (_istr_vdx(S, ti, _hl_dx_end(S, ti, 5)) == 0) { return 0; }
+    if (dgv >= 0) { _gvi_store(S, dgv); }
     return 1;
 }
 # The copy-init destination: `nslots` INLINE slots for `noff` (filler slots, sentinel name -1, then

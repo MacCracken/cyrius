@@ -3477,8 +3477,20 @@ Through a `p: *Str`, `*p` is the header p points at (a dereference of a struct p
 `Str` parameter given a whole dereference of a `*Str` — `str_len(*p)`, `f(**pp)` with `pp: **Str`, `str_len(*w.p)`,
 `h.eq(*p)`, `f(*gp())` — is passed the pointer, the header's address, as `str_len(p)` passes it (since 6.7.15; through
 6.7.14 the dereference read the header's first word, the data pointer, and passed that as the header: `str_len(*p)`
-was 0). A `p: *Str` parameter given `*pp` takes the `*Str` `*pp` reads, and an untyped parameter the word `*p` reads,
-as before. A generic's `x: T` at `T = Str` is passed the header the same way — `gg<Str>(*p)`, the inferred `gg(*p)`
+was 0). A `p: *Str` parameter given `*p` is passed p too (since 6.7.16, D73 below), given `*pp` the `*Str` `*pp`
+reads; an untyped parameter takes the word `*p` reads, as before.
+
+**`*p` into a `*Str` slot is p, the header's address** (since 6.7.16, the user's decision D73, 2026-10-20). A `Str`
+value stored where a `*Str` is held is its header's address (6.7.13's D7 (1), `*ps = gt`), and `*p` is the header p
+points at, so `*q = *p` (q, p `*Str`) makes q's first word p — as `*q = *pp` and `*q = gt` store an address; the header
+q points at then has another header's address as its data word, and keeps its own length (D7 (1)'s model). The same
+holds through a `**Str` (`**qq = *p`, `*pp = *p`), into a `*Str` local, parameter or global (`x = *p`, `GX = *p`), a
+`*Str` declaration (`var y: *Str = *p;`, in a fn, in the declaration zone and after a statement), a `*Str` field (`w.p
+= *p`) or a struct literal's `*Str` element, a `p: *Str` argument and `return *p;` from a fn returning `*Str` — `**pp`
+and every `*Str`-typed spelling of the operand too. Through 6.7.15 each took the word `*p` reads, the header's data
+pointer, as the address (`str_len(q)` the string's bytes read as a header), the names and the declaration with the
+warning *assigning non-pointer to typed pointer*. To copy the header instead, copy its fields (`q.data = p.data; q.len
+= p.len;`). A generic's `x: T` at `T = Str` is passed the header the same way — `gg<Str>(*p)`, the inferred `gg(*p)`
 (which binds `T = Str`), `gg<Str>(**pp)`, a generic method's `o.gm(*p)` (since 6.7.16; through 6.7.15 the instance,
 whose `x` is address-passed, was given the data word: `str_len(x)` 0).
 

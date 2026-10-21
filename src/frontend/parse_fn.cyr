@@ -3448,11 +3448,11 @@ fn _sarg_byval_small(S, fi, argc): i64 {
 # of a `**Str`, `p + n`), to a `Str` parameter `argc` of `fi` (not a `p: *Str` one): only E is parsed — rax = the
 # header's address, as `str_len(p)` passes it — the wrap closed, pushed. 1 = pushed; 0 = not that shape, nothing
 # moved. CHANGELOG [6.7.15]
+# 6.7.16 (D73): and a `p: *Str` parameter — `fps(*p)` passed the data word as the header's address. CHANGELOG [6.7.16]
 fn _sarg_istr_dx(S, fi, argc): i64 {
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
     if (GFPSID(S, fi, argc) != ss) { return 0; }
-    if (_pptr_param(S, fi, argc) == 1) { return 0; }
     var st = GTI(S);
     var a = _ie_unparen(S, st, _arg_next(S, st));
     var pe = _ie_pe;

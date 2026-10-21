@@ -122,6 +122,14 @@
 # zone-lane code kept `Str` out; R_TOP18 and the zone row) — both bound a handle. `var q: *Str = *pp;` and an untyped
 # `var h = *pp;` stay the pointer.
 #
+# 6.7.16 (the user's decision D73, 2026-10-20; issues/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-
+# stores-data-word.md): `*p` (p a `*Str`) into a `*Str` SLOT is p, the header's address — `*q = *p` through a `*Str` or
+# a `**Str` (`**qq = *p`, `*pp = *p`), `x = *p` / `GX = *p` into a `*Str` name, `var y: *Str = *p;` (in a fn, in the
+# zone, after a statement), `w.p = *p` into a `*Str` field, a literal's `*Str` element, a `s: *Str` argument (`fps(*p)`,
+# 6.7.15's arm took only a `Str` parameter) and `return *p;` from a fn returning `*Str` (the tcyr's ds_* rows, R_TOP19).
+# Each took the header's data word (DS1, the filed repro verbatim: `20120121`, was `21020121`), the names and the
+# declaration with a false "assigning non-pointer to typed pointer". `*q = *pp` (already the `*Str`) is unchanged.
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -134,7 +142,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -236,6 +244,11 @@
 #   2026-10-20 (6.7.16, D74 `var u: Str = *pp;` and the top-level twins; the same scratch-copy method):
 #   t1 `_hl_dpp_str` answering mode 2 only, and    -> RED 14: R1 x7 (7 rows: the pps_decl_* copies, the zone row and
 #      `_gz_pnat` without `Str` (the fix reverted)    R_TOP18 — handles), PD1 x7 (15)
+#   2026-10-20 (6.7.16, D73 `*p` into a `*Str` slot; the same scratch-copy method):
+#   u1 every D73 arm reverted (`_istr_dsdx`,       -> RED 14: R1 x7 (17 rows: the ds_* rows, R_TOP19 — the data word),
+#      `_istr_pfdx`, `_istr_pvd`, `_istr_gzdx`,       DS1 x7 ('21020121')
+#      `_istr_ldx`'s `*Str`, `_istr_rstr`'s `*Str`,
+#      `_istr_dxh`'s 3 / 4, `_pptr_param` back)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -358,7 +371,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=202   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18
+FLOOR=220   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -823,6 +836,51 @@ syscall(SYS_EXIT, r);
 EOF
 runs PD1 55 "the filed repro: \`var u: Str = *pp;\` is u's own copy (D74; was 15, a handle)" "$XLEGS $OLEGS"
 
+# --- DS1: the filed repro (issues/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-stores-data-word.md),
+# verbatim: `*q = *p` (q, p `*Str`) stores p — q's first word becomes the header's address, as `*q = *pp` and `*q = gt`
+# store (6.7.16, the user's D73, 2026-10-20; through 6.7.15 the header's data word: `21020121`), no warning ---
+cat > "$T/DS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var pp: **Str = &p;
+    var b = str_from("xy");
+    var q: *Str = b;
+    *q = *p;
+    fmt_int(str_len(q)); fmt_int(load64(q) == load64(a)); fmt_int(load64(q) == a);
+    var c = str_from("uv");
+    var r: *Str = c;
+    *r = *pp;
+    fmt_int(str_len(r)); fmt_int(load64(r) == load64(a)); fmt_int(load64(r) == a);
+    var d = str_from("st");
+    var s: *Str = d;
+    *s = gt;
+    fmt_int(str_len(s)); fmt_int(load64(s) == &gt);
+    return 0;
+}
+syscall(60, main());
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" DS1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/DS1.$leg" ]; then bad "DS1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/DS1.$leg.err"; then bad "DS1 ($leg): warned: $(grep '^warning' "$T/DS1.$leg.err" | head -1)"
+    else ok "DS1 \`*q = *p;\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" DS1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/DS1.$leg" ]; then bad "DS1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" DS1
+    if [ "$got" = 0 ] && [ "$last" = 20120121 ]; then ok "DS1 the filed repro ($leg): '$last'"
+    else bad "DS1 the filed repro ($leg): '$last', exit $got (want '20120121', exit 0: q's first word is p)"; fi
+done
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -948,7 +1006,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=72   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74); the floor is the count that runs
+FLOOR_ROWS=74   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

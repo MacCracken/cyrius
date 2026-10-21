@@ -4754,9 +4754,11 @@ fn _deref_store(S, term): i64 {
             STI(S, GTI(S) + 1);
             _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
             var ti = GTI(S);
-            PCMPE(S);
-            if (_ek_fk(ed) == 2) { _ifs_bx(S, 2, ti, 0); }   # an f32 element: the field's checks
-            _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
+            if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
+                PCMPE(S);
+                if (_ek_fk(ed) == 2) { _ifs_bx(S, 2, ti, 0); }   # an f32 element: the field's checks
+                _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
+            }
         }
     } elif (ed != 0) {
         _arr_sub_load(S, _ek_lw(ed));   # rax = the element at the address
