@@ -7580,7 +7580,9 @@ the bound's impl, a scalar's included. The value is the whole initializer: `x` i
 untyped local, a struct carrier `b: Box<T>` by value (the local is then a carrier, as `var c: Box<T>` is), or a generic
 call whose `: U` / `: G<..U..>` return binds `U` to such a value (`id(x)`, `id<T>(x)`, `idp(&x)`, `mkbox(x)`) — through
 a chain of such locals of any length and calls nested to any depth, as the instance types them. A `*T`
-value (`var y = p;`), `*p`, `x.f` and `x + 1` leave the local untyped, as the instance does. Through 6.7.15 each such
+value (`var y = p;`), `*p`, `x.f` and `x + 1` leave the local untyped, as the instance does, and so does a name a
+closure's own parameter (`|x| { var y = x; .. }`), a `for x in` loop or a destructure's later name (`var q, x = f();`)
+rebinds, where it rebinds it: there `y.b` is refused at the definition. Through 6.7.15 each such
 use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
 words).
 

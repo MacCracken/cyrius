@@ -14,7 +14,8 @@
 # and at a scalar T a body that only uses y as a word runs; the scalar calls of a struct use are refused
 # (struct_result_type_refused.sh TV*). V16-V18 (the D102 review, 2026-10-21): at any length — a 10-copy chain, 9 untyped
 # vars mixing copies and `id(..)`, `id(..)` 9 deep (an 8-level budget left each "no struct type in scope" at the
-# definition).
+# definition). V19-V21: x read after a closure's own `|x|`, a `for x in` loop or a block destructuring `var q, x` is the
+# T value (inside them it is not: struct_result_type_refused.sh TV11-TV11i).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -71,6 +72,10 @@ fn v12<T>(x: T): i64 { var y = x; return y + 1; }
 fn v16<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }
 fn v17<T>(x: T): i64 { var a = x; var b = id(a); var c = b; var d = id(c); var e = d; var f = id(e); var h = f; var i = id(h); var j = i; return j.a * 10 + j.b; }
 fn v18<T>(x: T): i64 { var y = id(id(id(id(id(id(id(id(id(x))))))))); return y.a; }
+fn two(): (i64, i64) { return (1, 2); }
+fn v19<T>(x: T): i64 { var f = |x| { return x + 1; }; var y = x; return y.b + fncall1(f, 1); }
+fn v20<T>(x: T): i64 { var s = 0; for x in 0..3 { s = s + x; } var y = x; return y.b + s; }
+fn v21<T>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } var y = x; return y.b + r; }
 
 fn run(): i64 {
     var s: S8; s.v = 7;
@@ -112,6 +117,9 @@ fn run(): i64 {
     assert_eq(v16(q), 8, "V16: a 10-copy chain of untyped vars at T = Q");
     assert_eq(v17(q), 78, "V17: 9 untyped vars mixing copies and id() at T = Q");
     assert_eq(v18(q), 7, "V18: id(..) nested 9 deep at T = Q");
+    assert_eq(v19(q), 10, "V19: var y = x; after a closure's own |x| reads the T-typed x");
+    assert_eq(v20(q), 11, "V20: var y = x; after a for x in loop reads the T-typed x");
+    assert_eq(v21(q), 11, "V21: var y = x; after a block destructuring var q, x reads the T-typed x");
     return 0;
 }
 alloc_init();

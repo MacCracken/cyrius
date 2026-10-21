@@ -1389,6 +1389,73 @@ refuse_at "TV10s var z = z; ends: the two errors" "7:31: undefined variable 'z' 
 fn main(): i64 { return 0; }
 syscall(60, main());
 '
+# TV11-TV11l (the f16b review of D102, 2026-10-21): a name a closure parameter, a for-in variable or a destructure's
+# later name rebinds is not the T value. `_tok_name_decl` reads only `var NAME` and the fn's own parameters, so D102's
+# readers reached g's `x: T` past `|x|`, `for x in` and `var q, x = two();` (and `idp(p)` past `|p|`, `first(b)` past
+# `|b|`): y counted as T-typed, so a never-called g compiled (TV11, the review's repro verbatim, and TV11c-TV11f; each
+# refused at the definition before D102), `g(5)` named a field of a T value in its note (TV11b), and a bounded
+# `y.show()` called the bound's impl on the word — SIGSEGV at T = Pt (TV11g-TV11i). Each is again the no-struct line at
+# the definition (`_gs_rebound`, parse_fn_def.cyr); the same name read after the closure, after the loop, or after a
+# block holding the destructure is the T value (TV11j-TV11l; generic_struct_only_lines.tcyr V19-V21 on every backend).
+#   MTV8 the tree before this fix (d458f47dc)               -> RED 9: TV11 TV11b-TV11i (TV11g-TV11i: rc 0, exit 139)
+#   MTV9 `_gs_rebound` without its for-in / destructure arms -> RED 4: TV11e TV11f TV11h TV11i
+TVR='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn idp<T>(p: *T): T { var r: T = *p; return r; }
+fn first<T>(b: Box<T>): T { var r: T = b.v; return r; }
+fn two(): (i64, i64) { return (1, 2); }
+'
+TVM='fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "TV11 |x| { var y = x; y.b }: the repro" "4:57: $SN 'y'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { var y = x; return y.b; }; return fncall1(f, 5); }
+fn main(): i64 { return 0; }'
+refuse_at "TV11b g(5): the no-struct line, no stub" "4:57: $SN 'y'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { var y = x; return y.b; }; return fncall1(f, 5); }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse_at "TV11c |p| { var y = idp(p); }" "8:63: $SN 'y'$SA" "$TVR"'fn g<T>(p: *T): i64 { var f = |p| { var y = idp(p); return y.b; }; return fncall1(f, 5); }
+'"$TVM"
+refuse_at "TV11d |b| { var y = first(b); }" "8:69: $SN 'y'$SA" "$TVR"'fn g<T>(b: Box<T>): i64 { var f = |b| { var y = first(b); return y.b; }; return fncall1(f, 5); }
+'"$TVM"
+refuse_at "TV11e for x in 0..3 { var y = x; }" "8:71: $SN 'y'$SA" "$TVR"'fn g<T>(x: T): i64 { var s = 0; for x in 0..3 { var y = x; s = s + y.b; } return s; }
+'"$TVM"
+refuse_at "TV11f var q, x = two(); var y = x;" "8:62: $SN 'y'$SA" "$TVR"'fn g<T>(x: T): i64 { var q, x = two(); var y = x; return y.b + q; }
+'"$TVM"
+TVB='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn two(): (i64, i64) { return (1, 2); }
+'
+TVBM='fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+refuse_at "TV11g bounded |x| y.show() at Pt" "8:66: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var f = |x| { var y = x; return y.show(); }; return fncall1(f, 5); }
+'"$TVBM"
+refuse_at "TV11h bounded for x in: y.show() at Pt" "8:80: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { var y = x; s = s + y.show(); } return s; }
+'"$TVBM"
+refuse_at "TV11i bounded var q, x: y.show() at Pt" "8:70: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var q, x = two(); var y = x; return y.show() + q; }
+'"$TVBM"
+TVQM='fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+accept "TV11j |x| closed before var y = x;: x's" "$TVR"'fn g<T>(x: T): i64 { var f = |x| { return x + 1; }; var y = x; return y.b + fncall1(f, 1); }
+'"$TVQM" 6 'syscall(60, 6);'
+accept "TV11k for x in, then var y = x;: x's" "$TVR"'fn g<T>(x: T): i64 { var s = 0; for x in 0..3 { s = s + x; } var y = x; return y.b + s; }
+'"$TVQM" 7 'syscall(60, 7);'
+accept "TV11l var q, x in a closed block: x's" "$TVR"'fn g<T>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } var y = x; return y.b + r; }
+'"$TVQM" 7 'syscall(60, 7);'
 
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
@@ -1415,11 +1482,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (6.7.16's D102 review, 2026-10-21: 311 refusals + 44 acceptances with CPX's UC / UCG / TVX rows on three legs;
+# FLOOR (6.7.16's D102 review, 2026-10-21: 320 refusals + 47 acceptances with CPX's UC / UCG / TVX rows on three legs;
 # 345 at D102, 327 at D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop
 # dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 355 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 355"; exit 1
+if [ $((nrefuse + naccept)) -lt 367 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 367"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
