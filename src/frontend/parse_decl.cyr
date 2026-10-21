@@ -5882,13 +5882,51 @@ fn _synonly_sib_local(S): i64 {
 # PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
 # declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
 fn _var_value(S): i64 {
-    if (_var_bare_at != GTI(S)) { PCMPE(S); return 0; }
+    if (_var_bare_at != GTI(S)) { _var_value_pc(S); return 0; }
     _var_bare_at = 0 - 1;
     _tp_refd_at = GTI(S);
     EMOVI(S, 0);
     SPSC(S, 0);
     SESTYPE(S, 0);
     SEXW(S, 0);
+    return 0;
+}
+# ⛔ 6.7.16 — AN UNTYPED `var t = ( .. );` WHOSE INITIALIZER WAS REFUSED STANDS DOWN AS A REFUSED ANNOTATION'S DOES.
+# `var t = (1 2);` (no `,`: not a tuple literal, so the parenthesised expression `(1`, refused at `2`) declared t a
+# scalar, and `t.1` added "no struct type in scope for 't'" after "expected ')', got number 2"
+# (issues/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md); `(1 + )` the same. The initializer the
+# latch went up in (0 -> 1), a `(` group after an untyped `var NAME =`, marks NAME (`_ann_refd_mark`: the
+# registration binds it), so `t.1`, `t.0 = 5` and `t.m()` are counted, not reported. An initializer that is no `(`
+# group (`var t = zz;`) keeps its uses' reports. CHANGELOG [6.7.16]
+fn _var_value_pc(S): i64 {
+    var p0 = _panic;
+    var st = GTI(S);
+    PCMPE(S);
+    if (p0 == 0) { if (_var_val_refd(S) == 1) { _var_paren_refd(S, st); } }
+    return 0;
+}
+# 1 = the value just parsed was refused: the latch is up, or the wrap the untyped peel stepped into (`_scv_peel`, in
+# a fn) is not closed where the value stopped — its close (`_scv_disarm`'s `_pw_close`) will refuse it there:
+# `var t = (1 2);` stops at `2` inside the peeled `( .. )`.
+fn _var_val_refd(S): i64 {
+    if (_panic == 1) { return 1; }
+    var i = 0;
+    while (i < _scv_pk) {
+        if (TOKTYP(S, GTI(S) + i) != 11) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The value parsed from token `st` — inside the wrap the untyped peel stepped into (`_scv_un_peel`), if any — began
+# at a `(` right after an untyped `var NAME =`: NAME marked.
+fn _var_paren_refd(S, st): i64 {
+    var b = st;
+    while (TOKTYP(S, b - 1) == 10) { b = b - 1; }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (TOKTYP(S, b - 1) != 4) { return 0; }
+    if (TOKTYP(S, b - 2) != 2) { return 0; }
+    if (TOKTYP(S, b - 3) != 3) { return 0; }
+    _ann_refd_mark(S, TOKVAL(S, b - 2));
     return 0;
 }
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is

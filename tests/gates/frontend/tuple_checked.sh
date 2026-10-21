@@ -1334,6 +1334,29 @@ accept5 tl8 "TL8: --syntax-only: the file parses (R9 is no syntax error; the inv
 lines5 tl9 "TL9: control — the named form keeps its own refusal" "${TW}fn f(): i64 { var w = W { p: (1, 2), q: 3 }; return w.q; }\nsyscall(60, f());\n" "error:<source>:2:30: named init not supported for nested struct fields — use positional"
 exits4 tl10 3 "TL10: control — \`W { 1, 2, 3 }\` (the leaves) runs" "${TW}fn f(): i64 { var w = W { 1, 2, 3 }; return w.q; }\nsyscall(60, f());\n"
 exits4 tl11 3 "TL11: control — \`W { t, 3 }\` with a tuple variable runs" "${TW}fn f(): i64 { var t = (1, 2); var w = W { t, 3 }; return w.q; }\nsyscall(60, f());\n"
+# CT (6.7.16, issues/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md) — `var t = (1 2);` is the
+# parenthesised expression `(1` refused at `2` (no `,`: no tuple literal), and t was declared a scalar, so `t.1` added
+# "no struct type in scope for 't'". An untyped `var NAME = ( .. )` whose initializer was refused (the latch went up in
+# it, or — in a fn — the wrap the untyped peel stepped into is not closed where the value stopped) marks NAME as a
+# refused annotation does (`_ann_refd_mark`, `_var_value_pc`): its `.N` / `.field`, store and method uses are counted,
+# not reported. Only a `(` initializer: `var t = zz; t.1` keeps its second error (CT10), a scalar's `t.1` its own (CT7).
+# MUTATIONS (measured): the lane's compiler before the bite (647bc08c7) -> RED CT1-CT6 CT8 CT9 on every leg;
+# `_var_paren_refd` not marking -> the same; `_var_val_refd` without the peeled wrap's test -> RED CT1 CT4 CT5 CT6 CT8
+# CT9 on every leg (a fn's `(1 2)`; the zone's CT2 and `(1 + )`'s CT3 hold).
+NS="no struct type in scope for 't'; a '.field' access needs its struct declaration (missing include?)"
+lines5 ct1 "CT1: \`var t = (1 2); return t.1;\` (the filed repro): the one error" 'fn f(): i64 { var t = (1 2); return t.1; }\n' "error:<source>:1:26: expected ')', got number 2"
+lines5 ct2 "CT2: after the first statement" 'var a = 1;\na = 2;\nvar t = (1 2);\nsyscall(60, t.1);\n' "error:<source>:3:12: expected ')', got number 2"
+lines5 ct3 "CT3: \`var t = (1 + );\` then \`t.1\`" 'fn f(): i64 { var t = (1 + ); return t.1; }\nsyscall(60, f());\n' "error:<source>:1:28: unexpected ')'"
+lines5 ct4 "CT4: every use — \`t.0 = 5;\`, \`t.m();\`, \`t.1 += 1;\`, \`t.1\`" 'fn f(): i64 {\n    var t = (1 2);\n    t.0 = 5;\n    t.m();\n    t.1 += 1;\n    return t.1;\n}\nsyscall(60, f());\n' "error:<source>:2:16: expected ')', got number 2"
+lines5 ct5 "CT5: a following \`return zz;\` is still reported" 'fn f(): i64 {\n    var t = (1 2);\n    var k = t.1;\n    return zz;\n}\nsyscall(60, f());\n' "error:<source>:2:16: expected ')', got number 2
+error:<source>:4:14: undefined variable 'zz' (missing include or enum?)"
+lines5 ct6 "CT6: a generic at two instances: once" 'fn g<T>(x: T): i64 { var t = (1 2); return t.1; }\nsyscall(60, g(1) + g<i32>(2));\n' "error:<source>:1:33: expected ')', got number 2"
+lines5 ct7 "CT7: control — \`var t = 5; return t.1;\` keeps its error" 'fn f(): i64 { var t = 5; return t.1; }\nsyscall(60, f());\n' "error:<source>:1:36: $NS"
+lines5 ct8 "CT8: two wraps, \`((1 2))\`" 'fn f(): i64 { var t = ((1 2)); return t.1; }\nsyscall(60, f());\n' "error:<source>:1:27: expected ')', got number 2"
+lines5 ct9 "CT9: an inner \`var t = 7;\` is its own variable: its \`t.a\` is reported" 'fn f(): i64 { var t = (1 2); if (1) { var t = 7; return t.a; } return t.1; }\nsyscall(60, f());\n' "error:<source>:1:26: expected ')', got number 2
+error:<source>:1:60: $NS"
+lines5 ct10 "CT10: control — \`var t = zz;\` (no \`(\`) keeps its use's error" 'fn f(): i64 { var t = zz; return t.1; }\nsyscall(60, f());\n' "error:<source>:1:25: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:37: $NS"
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).
@@ -1514,7 +1537,7 @@ if command -v wine > /dev/null 2>&1; then
     else bad "A7 PE: the tcyr did not compile: $(grep '^error' "$T/tv.werr" | head -1)"; fi
 else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
-[ "$X5N" -ge 45 ] || bad "the 5-leg rows (TL): ran $X5N row-legs (floor 45)"
+[ "$X5N" -ge 95 ] || bad "the 5-leg rows (TL, CT): ran $X5N row-legs (floor 95)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); one error per mistake after a tuple refusal (CS), a tuple literal as a struct literal's element (TL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); one error per mistake after a tuple refusal (CS), a tuple literal as a struct literal's element (TL), a refused \`( .. )\` initializer's uses (CT); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
