@@ -343,6 +343,10 @@ fn _prescan_impl_body(S): i64 {
 # or after a depth-0 `}` that is not followed by `else`/`elif` (a statement can end in a
 # brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`). Returns 1 when the
 # statement held a `fn` keyword — a definition PARSE_PROG will parse inside it (6.6.16).
+# 6.7.16: a `)` / `]` that closes nothing (depth 0) is not counted: the depth went negative, so a later fn's body
+# `{ .. }` ended the "statement" at its first `;` and the walk met that fn's `}` as unmatched — `) fn f(): i64 {
+# return 1; }` (or a bare `#deprecated ) )` above a fn) was "unmatched '}' at module scope", the compile stopped,
+# and the real "unexpected ')'" (the directive's own refusal) was never printed. CHANGELOG [6.7.16]
 fn _prescan_skip_stmt(S): i64 {
     var dep = 0;
     var go = 1;
@@ -365,7 +369,8 @@ fn _prescan_skip_stmt(S): i64 {
         if (t == 124) { if (dep >= 1) { _tl_deprecated(S, 0); continue; } }
         if (dep >= 1) { _tl_arm1(t); }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
-        if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
+        if (t == 14) { dep = dep - 1; }
+        elif (t == 11 || t == 29) { if (dep > 0) { dep = dep - 1; } }
         STI(S, GTI(S) + 1);
         if (dep <= 0) {
             if (t == 5) { go = 0; }

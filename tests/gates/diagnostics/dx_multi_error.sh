@@ -84,12 +84,9 @@ done
 #     earlier, unresynced error (the struct field) already held the latch, so ERR_MSG
 #     swallowed the directive's own error — and the unconditional `_panic = 0` after it
 #     un-suppressed the struct error's cascade: 2 errors ('expected identifier', then
-#     "unexpected ')'") for one mistake. Exactly 1 now.
-printf 'struct Q { a; b: ; }\n#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' > "$T"
-rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
-[ "$rc" -ne 0 ] || { echo "FAIL: struct error + bare #deprecated compiled clean"; exit 1; }
-n=$(grep -c '^error:' "$E" || true)
-[ "$n" -eq 1 ] || { echo "FAIL: struct error + bare #deprecated reported $n errors, want 1 (the latch was cleared):"; cat "$E"; exit 1; }
+#     "unexpected ')'") for one mistake. 6.7.16: the struct's refusal ends at its own `}` now (pass 1's and pass 2's
+#     declaration steps), so the directive is no longer under it and reports its own mistakes — row D1 below, which
+#     wants exactly the three. (The guard itself stays: it is right wherever a latch does reach a directive.)
 
 # 2e) 6.7.14 — one mistake, one error (issues/archived/2026-10-08-diagnostic-cascades-and-locationless-eof-errors.md).
 #     Each case prints EXACTLY the errors listed — `cascade <label> <want error count> <file> <head>...`
@@ -172,12 +169,25 @@ cascade Z5 1 "$ZG"'var p = g(1 2);\nvar q = 5;\nsyscall(60, q);\n' "2:13: expect
 cascade Z6 2 "$ZG"'syscall(39);\nvar p = g(1 2);\nvar q = g(3 4);\nsyscall(60, 0);\n' "3:13: expected ')', got number 2" "4:13: expected ')', got number 4"
 cascade Z7 2 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nstruct S { k; }\nimpl S { fn mv(self): f64v2 { return mkv(41, 7); } }\nvar s: S = S { 1 };\nvar w = mkv(41, 7);\nvar v = s.mv();\nsyscall(60, 0);\n' "5:9: 'mkv' returns a vector by value" "6:9: 'mv' returns a vector by value"
 cascade Z8 2 "$ZG"'var a = 1;\nvar p = g(1 2);\nvar b = 2;\nvar q = g(3 4);\nvar c = 3;\nsyscall(60, a + b + c);\n' "3:13: expected ')', got number 2" "5:13: expected ')', got number 4"
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z8)"; exit 1; }
+# D1-D5 (6.7.16, met with issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md) — A `)` /
+#     `]` THAT CLOSES NOTHING at the top level did not stop pass 1's walk of the statements after the first one
+#     (`_prescan_skip_stmt`): its depth went negative, a later fn body's `;` ended the "statement" and the walk met that
+#     fn's `}` as "unmatched '}' at module scope" — which stops the compile, so the real error was never printed. D1 the
+#     2d source (the struct's refusal released at its `}`): its three mistakes; D2 `#deprecated ) )` alone (was the
+#     invented "unmatched '}'" alone); D3 / D4 a stray `)` / `]` before a fn; D5 control: an extra `)` inside a
+#     statement keeps its one error. RED on 9af62f08a (the lane before the bite): D1-D4 ("unmatched '}'").
+cascade D1 3 'struct Q { a; b: ; }\n#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:18: expected identifier, got ';'" "2:1: #deprecated needs a message string" "2:13: unexpected ')'"
+cascade D2 2 '#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:1: #deprecated needs a message string" "1:13: unexpected ')'"
+cascade D3 1 ') fn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:1: unexpected ')'"
+cascade D4 1 '] fn f(): i64 { return 1; }\nsyscall(60, f());\n' "1:1: unexpected ']'"
+cascade D5 1 'syscall(60, 0));\nfn f(): i64 { if (1) { return 2; } return 1; }\nsyscall(60, f());\n' "1:15: expected ';', got ')'"
+grep -q "unmatched '}'" "$E" && { echo "FAIL: D5: an invented unmatched '}'"; kfail=$((kfail + 1)); }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z8, D1-D5)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), a stray `)` / `]` at the top level is its own error (D1-D5), valid emits"
 exit 0
