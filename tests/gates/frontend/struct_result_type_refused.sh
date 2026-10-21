@@ -1273,7 +1273,7 @@ accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
 # though valid at T = Q, and `y = mkp();` on it had 6.7.15's D33 words. y is now a T-typed name (`_gs_uvar` /
-# `_gs_vkind`, parse_fn.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
+# `_gs_vkind`, parse_fn_def.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
 # to such a value, a carrier `b: Box<T>` by value — so its struct uses make the generic a stub, refused at a scalar call
 # with the stub's note (TV1-TV5), compiled when never called (TV6), and a bounded `y.show()` is a bounded site
 # (`_bnr_uvar`; tests/tcyr/crossos/generic_struct_only_lines.tcyr V1-V15 run the struct instances on every backend). A
