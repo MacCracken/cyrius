@@ -12,8 +12,8 @@
 # member keeps the loop's own "expected identifier" (S8). 6.7.15's D1 (a) for a struct literal is the twin
 # (tests/gates/frontend/struct_literal_type_refused.sh CM).
 #
-# Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64 and cx
-# compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
+# Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64, cx and
+# PE (src/main_win.cyr, 6.7.16) compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
 #
 # MUTATION LEDGER (measured; each mutant built from the fixed tree with the one change):
 #   the lane's compiler before F5 (11dfa7bff)      -> RED S1-S7 x86 (each compiled, rc 0); S8 and every A row green
@@ -36,16 +36,20 @@ pass=0; fail=0
 ok()  { echo "  ok   $1"; pass=$((pass + 1)); }
 bad() { echo "  FAIL $1"; fail=$((fail + 1)); }
 
-A64=""; CXCC=""
+A64=""; CXCC=""; PECC=""
 if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
     chmod +x "$D/cc_a64"; A64="$D/cc_a64"
 else bad "aarch64: src/main_aarch64.cyr did not build"; fi
 if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then
     chmod +x "$D/cc_cx"; CXCC="$D/cc_cx"
 else bad "cx: src/main_cx.cyr did not build"; fi
+if "$CC" < src/main_win.cyr > "$D/cc_pe" 2> /dev/null && [ -s "$D/cc_pe" ]; then
+    chmod +x "$D/cc_pe"; PECC="$D/cc_pe"
+else bad "pe: src/main_win.cyr did not build"; fi
 LEGS="x86"
 [ -n "$A64" ] && LEGS="$LEGS a64"
 [ -n "$CXCC" ] && LEGS="$LEGS cx"
+[ -n "$PECC" ] && LEGS="$LEGS pe"
 
 comp() {
     CRC=0
@@ -53,6 +57,7 @@ comp() {
         x86) timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
         a64) timeout 60 "$A64" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
         cx)  timeout 60 "$CXCC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        pe)  timeout 60 "$PECC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
     esac
 }
 # refuse ID LABEL SOURCE WANT [FLAG]: rc != 0, exactly the WANT lines, no binary — on every leg.
@@ -118,6 +123,66 @@ syscall(60, E.B);
 refuse S8 "control: a non-member token keeps 'expected identifier'" 'enum E { A 5 }
 syscall(60, E.A);
 ' "error:<source>:1:12: expected identifier, got number 5"
+
+# U (6.7.16, issues/2026-10-20-malformed-enum-member-use-cascades-no-struct-type-in-scope.md) — a USE of an enum whose
+# body was refused is not a second error. The member loop registered the refused token's VALUE as a member's name
+# offset, so `enum E { A 5 }` declared a constant named whatever the name pool held at offset 5 — "E" — and `E.A` was
+# a field access on it: "no struct type in scope for 'E'" in the zone (U1, U2: since the zone's per-entry latch
+# release), after the first statement (U3) and in a fn's later statement (U4). The token is stepped, never
+# registered, and the enum's name is entered as reported, so a member the body never declared stands down (U5 `E.A`
+# of `enum E { 5 }`, a store U6, a method call U7, the bare name U8). Controls: a name declared nowhere is still
+# reported (U9 `Z.A`, A a member: "'Z' is not an enum"; U10 `Z.Q`: "undefined variable 'Z'"). RED on the lane before
+# this bite: U1-U8 (each a second error).
+UE="error:<source>:1:12: expected identifier, got number 5"
+U5E="error:<source>:1:10: expected identifier, got number 5"
+UF='fn f(): i64 { var z = 1; z = 2; '
+refuse U1 "the zone: enum E { A 5 } then var q = E.A" 'enum E { A 5 }
+var a = 1;
+var q = E.A;
+syscall(60, 0);
+' "$UE"
+refuse U2 "the zone's first entry: var q = E.A" 'enum E { A 5 }
+var q = E.A;
+syscall(60, 0);
+' "$UE"
+refuse U3 "after the first statement: var q = E.A" 'enum E { A 5 }
+var a = 1;
+a = 2;
+var q = E.A;
+syscall(60, 0);
+' "$UE"
+refuse U4 "a fn's later statement: var q = E.A" 'enum E { A 5 }
+'"$UF"'var q = E.A; return q; }
+syscall(60, f());
+' "$UE"
+refuse U5 "a member the body never declared: E.A of enum E { 5 }" 'enum E { 5 }
+'"$UF"'var q = E.A; return q; }
+syscall(60, f());
+' "$U5E"
+refuse U6 "... stored: E.A = 3" 'enum E { 5 }
+'"$UF"'E.A = 3; return 0; }
+syscall(60, f());
+' "$U5E"
+refuse U7 "... called: E.A(3)" 'enum E { 5 }
+'"$UF"'E.A(3); return 0; }
+syscall(60, f());
+' "$U5E"
+refuse U8 "... the bare name: var q = E" 'enum E { 5 }
+'"$UF"'var q = E; return q; }
+syscall(60, f());
+' "$U5E"
+refuse U9 "control: Z.A (A a member, Z declared nowhere)" 'enum E { A 5 }
+var a = 1;
+a = 2;
+var q = Z.A;
+syscall(60, 0);
+' "$UE
+error:<source>:4:9: 'Z' is not an enum"
+refuse U10 "control: Z.Q (both declared nowhere)" 'enum E { 5 }
+'"$UF"'var q = Z.Q; return q; }
+syscall(60, f());
+' "$U5E
+error:<source>:2:44: undefined variable 'Z'"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }
