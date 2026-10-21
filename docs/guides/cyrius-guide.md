@@ -1788,7 +1788,11 @@ error: cannot initialise 'x: i64' from 'mk', which returns the struct 'P3' - dec
 Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y` compiled, and a
 `u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
 (`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
-keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
+keeps; inside a generic fn, `var x: T = mk(9);` is the struct at `T = P3`, and such a generic has no scalar instance:
+`g(5)`, `g(u)` and `g<i32>(5)` are refused at the call, *generic 'g' has no i64 (or other scalar) instance*, its note
+naming the line (6.7.16, the user's D1 of 2026-10-19 — the same for `x = mk(9);` into a `x: T` and `p = mk(9);` into a
+`p: *T` / `**T`, from a call, a method, an operator or a known `&f`; through 6.7.15 the base, which is the `T = i64`
+instance, was not judged and kept the struct's first word, and `g<i32>(5)` was refused in the declaration's words).
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
@@ -1936,8 +1940,12 @@ every size (*… — `&n` is the address of n's slot, not a struct*; a `Str` han
 6.7.15, the user's D18 of 2026-10-18; through 6.7.14 the 8-byte form returned the slot's address as the struct's word
 (a different byte each run) and over 8 bytes the classes' refusals named nothing. `&t` of an inline `Str` or a tuple is
 the address of that value, refused as `&u` of another struct is (*… got `&t` (a `*Str`)*). In a generic fn,
-`var n: T = x; return &n;` is judged per instance — at `<S>` it is the struct, at `<i32>` the slot refusal; the base,
-which is also the `T = i64` instance, is not judged (`h(3)` alone still returns the slot's address).
+`var n: T = x; return &n;` is the struct at `<S>`, and since 6.7.16 (the user's D1, 2026-10-19) such a generic has no
+scalar instance: `h(3)`, `h<i32>(4)` and `&h` are refused at the call, *generic 'h' has no i64 (or other scalar)
+instance*, its note naming the `&n` (so is a generic forwarding its `T` to h, and `n` may be a `p: *T`, a `var n: T` or
+an untyped `var n = x;` from one); a fn returning its own `: T`, and a closure's own `return &n`, are no such generic.
+Through 6.7.15 the base, which is also the `T = i64` instance, was not judged, and `h(3)` returned a dead slot's
+address as the struct (`h<i32>(4)` was the slot's refusal).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
@@ -7383,6 +7391,11 @@ naming `gx`). So does the forwarder's `T`-typed value itself, whole in the carri
 (`fn outer<T>(x: T) { return gx(x); }`, or a `p: *T` / `var y: T` name): `outer(b)` with
 `b: Box<Pt>` calls outer's `Box<Pt>` instance, whose `gx(x)` binds gx's `T` to `Pt`, and `outer(5)` is refused
 naming `outer` (6.7.15; through 6.7.14 the definition was refused naming `gx`).
+Two more lines need `T` to be a struct (6.7.16, the user's D1 of 2026-10-19): `return &n;` with `n` typed by `T` in a fn
+returning a struct (`&n` is that struct only when `T` is it), and a struct result over 8 bytes stored in a name typed
+by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
+kept the struct's first word. The refusal's note names the line that needs a struct (for a forwarder, the forward and
+then that line): *note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter*.
 
 ```
 struct Pt { x; y; }

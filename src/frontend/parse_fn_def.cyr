@@ -477,6 +477,7 @@ fn _tl_pass1(S, objok): i64 {
     # pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining fns after it
     _prescan_tail(S);
     SMOD(S, 0);
+    _gen_rescan(S);   # 6.7.16 (D1): a generic's stub shapes that read a fn or struct declared below it
     _cst_sweep(S);    # 6.7.2: every top-level const evaluated (and checked), used or not
     _pd_sweep(S);     # 6.7.7 (B6): every parameter default too
     # 6.7.14: pass 2 restarts at token 0, in sync — a pass-1 refusal (an enum value, a global array

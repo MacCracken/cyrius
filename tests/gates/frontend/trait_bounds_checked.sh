@@ -583,8 +583,10 @@ exits bdk 12 "BDK: unchanged — an unbounded Box<T> (77), an unbounded slot bes
 mk n1 'fn gb<T: Show>(x: T): i64 { var t = 0; var i = 0; while (i < 1) { t = t + x.show(); i = i + 1; } return t; }
 fn gs<T>(q: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + q.y; i = i + 1; } return s; }' 'var b = gs(5) + gb(3); return b;'
 refused n1 "generic 'gs' has no i64 (or other scalar) instance" "N1: gs(5) + gb(3) — the stub's refusal"
-if grep -q "^  note:" "$T/n1.err"; then bad "N1: an orphan note under the stub's error: $(grep '^  note:' "$T/n1.err" | head -1)"
-else ok "N1: no orphan note for the swallowed gb(3) refusal"; fi
+# 6.7.16 (the user's D1): the stub's refusal carries its own note, the line that needs a struct; no other.
+if grep "^  note:" "$T/n1.err" | grep -vq "'gs' takes a field of a value typed by its type parameter"; then bad "N1: an orphan note under the stub's error: $(grep '^  note:' "$T/n1.err" | grep -v "'gs' takes a field" | head -1)"
+elif ! grep -q "^  note: <source>:[0-9]*:[0-9]*: 'gs' takes a field" "$T/n1.err"; then bad "N1: the stub's own note is missing"
+else ok "N1: the stub's own note, and no orphan note for the swallowed gb(3) refusal"; fi
 # N2 (6.7.15): a contract refusal the latch swallowed (a second definition's `v.other()`, a second `b.v.other()` in one
 # body) printed its note alone under the first's. 6.7.16 (NS below): none is swallowed — four refusals, four errors,
 # each with its note (one error and one note through 6.7.15).

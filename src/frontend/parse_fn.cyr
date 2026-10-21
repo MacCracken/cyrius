@@ -14948,19 +14948,35 @@ fn _gs_body_open(S, i): i64 {
 # Walk the body from token i (just past its `{`) to the matching `}`. mode 0: 1 iff a T-typed name
 # is used as a struct. mode 1: 1 iff the body forwards a T-typed value, or T, to a stub generic.
 # mode 2 (6.7.14): every generic the body forwards its T to, pushed for `_bbs_fwd_bad`; answers 0.
+# 6.7.16 (D1): mode 0 also answers 1 for `return &n;` (`_gs_ret_amp`) and a struct result stored in a name typed by T
+# (`_gs_var_sres`, `_gs_asg_sres`); the token a verdict stands on is `_gsw_ti` (`_gen_stub_note`).
 fn _gs_scan(S, fi, i, mode): i64 {
     var n = GTCNT(S);
     var d = 1;
+    _gsw_k = 0;
+    _gsw_cfi = 0 - 1;
     while (i < n) {
         var t = TOKTYP(S, i);
         if (t == 12) { return 0; }
         if (t == 13) { d = d + 1; }
         if (t == 14) { d = d - 1; if (d == 0) { return 0; } }
-        if (t == 3) { _gs_var(S, fi, i); }
-        if (t == 2) { if (_gs_use(S, fi, i, mode) == 1) { return 1; } }
+        if (t == 3) {
+            _gs_var(S, fi, i);
+            if (mode == 0) { if (_gs_var_sres(S, fi, i) == 1) { return 1; } }
+        }
+        if (t == 33) { if (mode == 0) { if (_gs_ret_amp(S, fi, i) == 1) { return 1; } } }
+        if (t == 2) { if (_gs_use(S, fi, i, mode) == 1) { return _gs_why(i, mode); } }
         i = i + 1;
     }
     return 0;
+}
+# A `_gs_use` verdict at token i: a field (mode 0) or a forward (mode 1), unless the arm named its own kind. 1.
+fn _gs_why(i, mode): i64 {
+    if (_gsw_k != 0) { return 1; }
+    _gsw_ti = i;
+    _gsw_k = 1;
+    if (mode != 0) { _gsw_k = 4; }
+    return 1;
 }
 # `var x: T` / `var x: *T` at token i: x is T-typed from here on. 6.7.11: `var x: [*]G<..T..>` is a
 # carrier (`_gcr_note`); 6.7.16: `var x: **G<..T..>` one the forward scan follows (`_gs_pparam`).
@@ -14982,9 +14998,295 @@ fn _gs_ppvar(S, fi, ni, ti): i64 {
     if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, ni), ti, 256); }
     return 0;
 }
+# ⛔ 6.7.16 (the user's D1, 2026-10-19) — TWO MORE SHAPES OF A BODY THAT ONLY WORKS WHEN T IS A STRUCT. `return &n;` in
+# a fn returning a struct, n typed by T (`var n: T`, `p: *T`, an untyped `var n = x;` from one): `&n` is that struct
+# only when T is it, and at T = i64 the base handed back a dead slot's address (`h(3)`, a different byte each run).
+# And a struct result over 8 B stored in a name typed by T (`var y: T = mkp();`, `y = mkp();`, `p = mkp();` into a
+# `p: *T` / `**T`): at T = i64 it kept the struct's first word. Every scalar INSTANCE refused each line by name
+# (6.7.15's D18, 6.7.11's D24, 6.7.14's D27, 6.7.15's D32), but the base — the T = i64 instance — was exempt
+# (`_ret_gen_base`, `_rcv_tp_base`), so `h(3)` / `g(5)` ran it. The scan now marks such a body a stub, so its scalar
+# calls, `&h` and a forwarder are refused by name at the call, with a note naming the line. The shapes read other
+# fns' returns and struct sizes, which pass 1 may not know yet: a generic whose scan met one is scanned again once
+# pass 1 has registered every fn and struct (`_gen_rescan`). CHANGELOG [6.7.16]
+var _gsw_ti = 0;        # the token the last scan's verdict stands on (`_gen_stub_note`)
+var _gsw_k = 0;         # its kind: 1 a field, 2 `return &n`, 3 a struct result stored, 4 a forward
+var _gsw_cfi = 0;       # a forward's callee
+var _gs_late = 0;       # 1 = the scan met a shape that reads another fn's return or a struct's size
+var _gs_p1end = 0;      # 1 once pass 1 has registered every fn and struct (`_gen_rescan`)
+var _gsl_tab = 0;       # the generics to scan again (a vec)
+# `return &NAME;` (inside any parentheses) at token i, in fi returning a struct, NAME typed by T (`_gs_tdep`), not in a
+# closure literal's body.
+fn _gs_ret_amp(S, fi, i): i64 {
+    var j = _ret_amp_shape(S, i);
+    if (j < 0) { return 0; }
+    _gs_late = 1;
+    if (_gs_fret_struct(S, _gs_open, fi) == 0) { return 0; }
+    if (_gs_tdep(S, fi, _gs_open, j + 1, TOKVAL(S, j + 1), 0) != 1) { return 0; }
+    if (_tok_in_cl(S, _gs_open, i) == 1) { return 0; }
+    _gsw_k = 2;
+    _gsw_ti = j;
+    return 1;
+}
+# The `&` of `return &NAME;` at token i (its `return`), inside any parentheses; -1 for any other return.
+fn _ret_amp_shape(S, i): i64 {
+    var j = i + 1;
+    var k = 0;
+    while (TOKTYP(S, j) == 10) { j = j + 1; k = k + 1; }
+    if (TOKTYP(S, j) != 27) { return 0 - 1; }
+    if (TOKTYP(S, j + 1) != 2) { return 0 - 1; }
+    var e = j + 2;
+    while (k > 0) {
+        if (TOKTYP(S, e) != 11) { return 0 - 1; }
+        e = e + 1;
+        k = k - 1;
+    }
+    if (TOKTYP(S, e) != 5) { return 0 - 1; }
+    return j;
+}
+# 1 = token i sits in the block body of a closure literal inside the body of the fn whose parameter list opens at
+# token o (an enclosing `{` right after the literal's `|` / `||`): its `return` is the closure's.
+fn _tok_in_cl(S, o, i): i64 {
+    if (o < 0) { return 0; }
+    var b = _gs_body_open(S, _tok_close_paren(S, o) + 1);
+    if (b < 0) { return 0; }
+    var k = i - 1;
+    var d = 0;
+    while (k >= b) {
+        var t = TOKTYP(S, k);
+        if (t == 14) { d = d + 1; }
+        elif (t == 13) {
+            if (d > 0) { d = d - 1; }
+            else {
+                var p = TOKTYP(S, k - 1);
+                if (p == 35 || p == 54) { return 1; }
+            }
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+# 1 = fi (its parameter list's `(` at token o) is declared `: S` / `: G<..>` with S a struct, not a type parameter.
+fn _gs_fret_struct(S, o, fi): i64 {
+    if (o < 0) { return 0; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0; }
+    if (TOKTYP(S, c + 1) != 49) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, c + 2)) == 1) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, c + 2)) > 0) { return 1; }
+    return 0;
+}
+# What the name `noff` at token r is declared as, in generic fi whose parameters follow token a: 0 with no type
+# parameter (an annotation naming none, an untyped parameter, an untyped `var` whose initializer reads nothing of
+# T), 1 typed by T (an annotation naming one, an untyped `var` reading a value typed by T, a type parameter or a
+# generic call), 3 a struct already (the base parse judges it), 2 no declaration in fi (a global). CHANGELOG [6.7.16]
+fn _gs_tdep(S, fi, a, r, noff, dep): i64 {
+    if (dep > 8) { return 1; }
+    var d = _tok_name_decl(S, a, r, noff);
+    if (d < 0) { return 2; }
+    if (TOKTYP(S, d + 1) == 49) { return _gs_ann_dep(S, fi, d + 2); }
+    if (TOKTYP(S, d - 1) != 3) { return 0; }   # an untyped parameter: a word at every T
+    if (TOKTYP(S, d + 1) != 4) { return 1; }
+    if (_tok_init_sid(S, a, d, d + 2) > 0) { return 3; }
+    return _gs_init_dep(S, fi, a, d + 2, dep);
+}
+# The annotation at token `at`: 3 when it names a struct (behind any `*`), 1 when it names one of fi's type
+# parameters anywhere (`T`, `*T`, `T[4]`, `Vec<T>`), else 0.
+fn _gs_ann_dep(S, fi, at): i64 {
+    var h = at;
+    while (TOKTYP(S, h) == 8) { h = h + 1; }
+    if (TOKTYP(S, h) == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, h)) == 0) {
+            if (FINDSTRUCT(S, TOKVAL(S, h)) > 0) { return 3; }
+        } }
+    var e = _asa_end(S, at);
+    var j = at;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { return 1; } }
+        j = j + 1;
+    }
+    return 0;
+}
+# An untyped `var`'s initializer from token j: 1 when it reads a value typed by T, a type parameter or a
+# generic fn, else 0 (literals, globals, non-generic calls, fields of other values).
+fn _gs_init_dep(S, fi, a, j, dep): i64 {
+    var e = _gs_expr_end(S, j);
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { if (_gs_name_dep(S, fi, a, j, dep) == 1) { return 1; } }
+        j = j + 1;
+    }
+    return 0;
+}
+fn _gs_name_dep(S, fi, a, j, dep): i64 {
+    if (TOKTYP(S, j - 1) == 41) { return 0; }   # a field's name
+    var noff = TOKVAL(S, j);
+    if (_is_tparam_of(S, fi, noff) == 1) { return 1; }
+    if (_tok_name_decl(S, a, j, noff) >= 0) {
+        if (_gs_tdep(S, fi, a, j, noff, dep + 1) == 1) { return 1; }
+        return 0;
+    }
+    var g = FINDFN(S, noff);
+    if (g >= 0) { if (GFTP(S, g) != 0) { return 1; } }
+    return 0;
+}
+# The token ending the expression that starts at token j: its `;`, or the `,` / closer that ends it.
+fn _gs_expr_end(S, j): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12) { return j; }
+        if (d == 0) { if (t == 5 || t == 31) { return j; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; if (d < 0) { return j; } }
+        j = j + 1;
+    }
+    return n;
+}
+# `var y: T = E;` at token i (its `var`), T one of fi's type parameters: 1 when E is a struct result over 8 B.
+fn _gs_var_sres(S, fi, i): i64 {
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) != 2) { return 0; }
+    if (TOKTYP(S, i + 4) != 4) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, i + 3)) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, i + 5) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i + 1;
+    return 1;
+}
+# `y = E` at token i (y's name), y declared `y: T` / `*T` / `**T`: 1 when E is a struct result over 8 B.
+fn _gs_asg_sres(S, fi, i): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt == 41 || pt == 3 || pt == 49) { return 0; }   # a field, a `var` (`_gs_var_sres`), a label
+    if (_gs_dst_tp(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, i + 2) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i;
+    return 1;
+}
+# 1 = the name at token i is declared with an annotation that is one of fi's type parameters behind any `*`.
+fn _gs_dst_tp(S, fi, i): i64 {
+    var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    var h = d + 2;
+    while (TOKTYP(S, h) == 8) { h = h + 1; }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, h)) == 0) { return 0; }
+    var nt = TOKTYP(S, h + 1);
+    if (nt == 31 || nt == 11 || nt == 4 || nt == 5) { return 1; }
+    return 0;
+}
+# 1 = the expression from token j is a struct result D24 refuses into a scalar: over 8 B, not a `Str` or a dyn.
+fn _gs_sres_big(S, fi, j): i64 {
+    _gs_late = 1;
+    return _rcv_big(S, _gs_sres(S, fi, _gs_open, j, _gs_expr_end(S, j)));
+}
+# The struct the expression [lo, hi) results in, as D24 / D27 / D32 read it: a whole call — free, generic (at the
+# binding the call makes), a method, a known `&f` through fncallN / callptr — inside any parentheses, or one
+# `+ - * /` whose left operand holds a struct with that operator fn; 0 otherwise. fi's parameters follow token a
+# (the scan's `_gs_open`: pass 1 records a generic before its GFDS is set).
+fn _gs_sres(S, fi, a, lo, hi): i64 {
+    while (TOKTYP(S, lo) == 10) {
+        if (_call_close(S, lo) != hi - 1) { break; }
+        lo = lo + 1;
+        hi = hi - 1;
+    }
+    if (hi <= lo) { return 0; }
+    var op = _gs_top_op(S, lo, hi);
+    if (op > 0) { return _gs_op_sid(S, fi, a, lo, op); }
+    if (op < 0) { return 0; }
+    if (TOKTYP(S, hi - 1) != 11) { return 0; }
+    var ic = _icall_sid_at(S, lo);
+    if (ic > 0) {
+        if (_call_close(S, lo + 1) == hi - 1) { return ic; }
+        return 0;
+    }
+    if (TOKTYP(S, lo) == 2) {
+        var o = _gcall_open(S, lo);
+        if (o > lo) { if (_call_close(S, o) == hi - 1) { return _tok_init_sid(S, a, lo, lo); } }
+    }
+    return _gs_mcall_sid(S, fi, a, hi - 1);
+}
+# The struct a method call `x.m(..)` (its `)` at token r, x typed as a receiver is) returns BY VALUE: a declared
+# `: S` (a generic's plain one only), never a `: *S`.
+fn _gs_mcall_sid(S, fi, a, r): i64 {
+    var o = _tok_open_back(S, r);
+    if (o < 3) { return 0; }
+    if (TOKTYP(S, o - 1) != 2) { return 0; }
+    if (TOKTYP(S, o - 2) != 41) { return 0; }
+    var xs = _gs_recv_sid(S, fi, a, o - 3, 0);
+    if (xs <= 0) { return 0; }
+    var cfi = _meth_fn_at(S, xs, TOKVAL(S, o - 1), o - 1);
+    if (cfi < 0) { return 0; }
+    if (GFTP(S, cfi) != 0) { return _gs_ret_sid(S, cfi); }
+    var rs = GFRS(S, cfi);
+    if (rs > 0) { return rs; }
+    return 0;
+}
+# [lo, hi) as a postfix chain (names, `.`, calls, a call's type arguments, subscripts): 0. With exactly one
+# `+ - * /` between two such operands: its token. Anything else: -1.
+fn _gs_top_op(S, lo, hi): i64 {
+    var j = lo;
+    var op = 0;
+    var prev = 0;   # 1 when the token before j ends an operand
+    while (j < hi) {
+        var t = TOKTYP(S, j);
+        if (t == 10 || t == 28) {
+            j = _gs_grp_close(S, j);
+            if (j >= hi) { return 0 - 1; }
+            prev = 1;
+        }
+        elif (t == 2 || t == 1) { prev = 1; }
+        elif (t == 41) { prev = 0; }
+        elif (t == 19) {
+            var e = _tok_targs_close(S, j + 1);
+            if (e < 0) { return 0 - 1; }
+            if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+            j = e;
+        }
+        elif (t >= 6 && t <= 9) {
+            if (prev == 0) { return 0 - 1; }
+            if (op != 0) { return 0 - 1; }
+            op = j;
+            prev = 0;
+        }
+        else { return 0 - 1; }
+        j = j + 1;
+    }
+    return op;
+}
+# The struct `L op R` results in (op at token `op`): the operator fn of L's struct (`P3_add`) declared to return one.
+fn _gs_op_sid(S, fi, a, lo, op): i64 {
+    var ls = _gs_recv_sid(S, fi, a, op - 1, 0);
+    if (ls <= 0) { return 0; }
+    if (_dyn_is(S, ls) == 1) { return 0; }
+    var t = TOKTYP(S, op);
+    var ofi = 0 - 1;
+    if (t == 6) { ofi = _op_fn_peek(S, ls, "add", 3); }
+    if (t == 7) { ofi = _op_fn_peek(S, ls, "sub", 3); }
+    if (t == 8) { ofi = _op_fn_peek(S, ls, "mul", 3); }
+    if (t == 9) { ofi = _op_fn_peek(S, ls, "div", 3); }
+    if (ofi < 0) { return 0; }
+    return GFRS(S, ofi);
+}
+# The `)` / `]` closing the group opened at token j (parentheses and brackets nest together).
+fn _gs_grp_close(S, j): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; if (d == 0) { return j; } }
+        if (t == 5 || t == 12) { return n; }
+        j = j + 1;
+    }
+    return n;
+}
 fn _gs_use(S, fi, i, mode): i64 {
     var nx = TOKTYP(S, i + 1);
     if (mode == 0) {
+        if (nx == 4) { return _gs_asg_sres(S, fi, i); }   # 6.7.16 (D1): `y = mkp();`, y typed by T
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
         # 6.7.16: a FIELD name (`g.v` of `g.v.v`, `q.a` of `q.a.k`) is no T-typed name or carrier, whatever
@@ -15015,6 +15317,7 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (nx == 19) { f = _gs_targs_fwd(S, fi, i + 2); }
     else { f = _gs_fwd_any(S, fi, cfi, i + 1, 0); }
     if (mode == 2) { if (f == 1) { _bbf_push(cfi); } return 0; }
+    if (f == 1) { _gsw_cfi = cfi; }
     return f;
 }
 # 1 iff the call to cfi whose `(` is at `open` passes fi's T: a bare T-typed name in a direct carrying
@@ -15090,6 +15393,7 @@ fn _gs_mfwd(S, fi, i, mode): i64 {
     if (TOKTYP(S, i + 1) == 19) { f = _gs_targs_fwd(S, fi, i + 2); }   # 6.7.14 (D7 (a)): `p.pick<T>(t)`
     else { f = _gs_fwd_any(S, fi, cfi, i + 1, 1); }   # 6.7.14: and `p.pick(b)`, `b: Box<T>`
     if (mode == 2) { if (f == 1) { _bbf_push(cfi); } return 0; }
+    if (f == 1) { _gsw_cfi = cfi; }
     return f;
 }
 # The fn a method call `x.m(` reaches, its name at token i, or -1. x is a single name, a field chain
@@ -15254,9 +15558,30 @@ fn _gen_record(S, fi, open): i64 {
     var pk = _gs_params(S, fi, open);
     var b = _gs_body_open(S, _gs_at);
     var d = 0;
+    _gs_late = 0;
     if (b >= 0) { d = _gs_scan(S, fi, b, 0); }
     SFGM(S, fi, pk | 4 | d);
     _gm_gen = _gm_gen + 1;
+    if (_gs_late == 1) { if (d == 0) { if (_gs_p1end == 0) {   # 6.7.16 (D1): scanned again at pass 1's end
+                if (_gsl_tab == 0) { _gsl_tab = vec_new(); }
+                vec_push(_gsl_tab, fi);
+            } } }
+    return 0;
+}
+# 6.7.16 (D1) — the end of pass 1 (`_tl_pass1`): every fn and struct is registered, so each generic whose scan met a
+# `return &n;` or a struct result stored in a name typed by T is scanned again — a callee or a struct declared below it
+# was unknown then. Only ever more stubs. CHANGELOG [6.7.16]
+fn _gen_rescan(S): i64 {
+    _gs_p1end = 1;
+    if (_gsl_tab == 0) { return 0; }
+    var n = vec_len(_gsl_tab);
+    var k = 0;
+    while (k < n) {
+        var fi = vec_get(_gsl_tab, k);
+        var o = _gen_def_open(S, fi);
+        if (o >= 0) { _gen_record(S, fi, o); }
+        k = k + 1;
+    }
     return 0;
 }
 # The `(` of fi's definition, from its recorded def-start.
@@ -15376,8 +15701,69 @@ fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
     return 0;
 }
 # The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
+# 6.7.16 (D1): the words name the two new shapes too, and a note names the line that needs a struct.
 fn _refuse_gen_stub(S, fi, noff): i64 {
-    _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
+    _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, `&x` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
+    if (_err_quiet == 0) { _gen_stub_note(S, fi); }
+    return 0;
+}
+# ⛔ 6.7.16 (the user's D1, 2026-10-19) — THE NOTE UNDER A STUB'S REFUSAL NAMES THE LINE THAT NEEDS A STRUCT: the stub's
+# own (a field, `return &n;`, a struct result stored), or, for a generic that forwards its T into a stub, the forward
+# and then the line at the end of the chain. Read again from the tokens (`_gs_why_scan`). CHANGELOG [6.7.16]
+fn _gen_stub_note(S, fi): i64 {
+    var g = fi;
+    var hops = 0;
+    var said = 0;
+    while (hops < 1024) {
+        var m = GFGM(S, g);
+        var mode = 1;
+        if ((m & 1) != 0) { mode = 0; }
+        elif ((m & 2) == 0) { return 0; }
+        if (_gs_why_scan(S, g, mode) == 0) { return 0; }
+        if (mode == 0) { _gs_note(S, g); return 0; }
+        if (said == 0) { _gs_note(S, g); said = 1; }
+        if (_gsw_cfi < 0) { return 0; }
+        g = _gsw_cfi;
+        hops = hops + 1;
+    }
+    return 0;
+}
+# fi's scan in `mode` again, on the scan tables `_bbf_swap` keeps aside: 1 = its verdict, at `_gsw_ti` / `_gsw_k`.
+fn _gs_why_scan(S, fi, mode): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    _bbf_swap();
+    _gs_params(S, fi, o);
+    var b = _gs_body_open(S, _gs_at);
+    var r = 0;
+    if (b >= 0) { r = _gs_scan(S, fi, b, mode); }
+    _bbf_swap();
+    return r;
+}
+fn _gs_note(S, g): i64 {
+    PRSTR("  note: ");
+    _err_head_at(S, _gsw_ti);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, g, L64(_fnt_names + g * 8)));
+    PRSTR("'");
+    if (_gsw_k == 1) { PRSTR(" takes a field of a value typed by its type parameter\n"); return 0; }
+    if (_gsw_k == 2) {
+        PRSTR(" returns `&");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _gsw_ti + 1));
+        PRSTR("` as a struct, and ");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _gsw_ti + 1));
+        PRSTR(" is typed by its type parameter\n");
+        return 0;
+    }
+    if (_gsw_k == 3) {
+        PRSTR(" stores a struct result over 8 bytes in '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _gsw_ti));
+        PRSTR("', typed by its type parameter\n");
+        return 0;
+    }
+    PRSTR(" forwards its type parameter to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, _gsw_cfi, L64(_fnt_names + _gsw_cfi * 8)));
+    PRSTR("'\n");
     return 0;
 }
 # `&g`: the address is the base's, so a stub base is refused like a scalar call.

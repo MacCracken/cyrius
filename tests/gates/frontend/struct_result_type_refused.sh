@@ -94,6 +94,17 @@
 #                                                         through 6.7.13)
 #   real tree                                          -> GREEN (64 refusals, 17 acceptances; 6.7.14: 63 / 18, RP16 accepted)
 #
+# 6.7.16 (the user's D1, 2026-10-19; TG0-TG12, TG0n, TA1-TA5, TGX on aarch64 / cx / PE): a struct result over 8 B stored
+# in a name typed by T makes the generic a stub (`_gs_var_sres`, `_gs_asg_sres`, src/frontend/parse_fn.cyr).
+# (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MTG1 the tree before (1135ae069)                    -> RED 19: TG0 TG0n TG1 TG2 TG4-TG12 (compiled, no diagnostic), TG3 (D24's
+#                                                         words), TGX on aarch64 / cx / PE
+#   MTG2 `_gs_var_sres` answering 0                     -> RED 15: TG0 TG0n TG1-TG3 TG6-TG12 (every `var y: T = ..` row), TGX x3
+#   MTG3 `_gs_asg_sres` answering 0                     -> RED 4: TG4 TG4b TG5 TG5b (the assignments)
+#   MTG4 `_gs_sres` without its operator / `&f` / method arms -> RED 3: TG6 (the method), TG8 (`fncall0(&mkp)`), TG9 (the operator)
+#   MTG5 no rescan at pass 1's end                      -> RED 1: TG10 (mkl declared below gl: pass 1 knew no return)
+#   MTG6 `_gs_sres_big` without the size test (`_rcv_big` -> sid > 0) -> RED 2: TA2 TA3 (an 8-byte struct, a `Str`: refused as stubs)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -1126,12 +1137,84 @@ syscall(60, G2.a * 10 + G2.b);
 # CPX (6.7.16) — the closure rows (CP0 CP1, UC0-UC2) from every cross compiler built from this tree (the frontend is
 # shared; this pins it). The cross compilers are built from the tree's src/, so a mutant is a tree mutant.
 echo "6.7.16 — the closure rows (CP, UC) from the aarch64, cx and PE compilers:"
+echo "=== a struct result stored in a name typed by T (6.7.16, the user's D1, 2026-10-19): no scalar instance ==="
+# `var y: T = mkp();` (`y = mkp();`, `p = mkp();` into a `*T` / `**T`) with mkp's struct over 8 B: each scalar instance
+# refused the line by name (6.7.11's D24, 6.7.14's D27, 6.7.15's D32), but the base — the T = i64 instance — was exempt
+# (`_rcv_tp_base`), so `g(5)` / `g(u)` kept the struct's first word (the filed repro: 77, 333 mod 256). The generic is a
+# stub now: its scalar calls are refused by name, the note naming the line. A struct of 8 B or less and a `Str` are one
+# word, which a scalar keeps; the struct instance copies. docs/development/issues/2026-10-18-generic-instance-t-
+# annotation-takes-struct-first-word.md
+TG0='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn g<T>(x: T): i64 { var y: T = mkp(); return y; }
+fn main(): i64 { var u: u8 = 5; return g(u); }
+syscall(60, main());
+'
+TGM="generic 'g' has no i64 (or other scalar) instance"
+refuse "TG0 the filed repro verbatim: g(u)" "$TGM" "$TG0" one
+if grep -q "^  note: <source>:4:26: 'g' stores a struct result over 8 bytes in 'y', typed by its type parameter\$" "$D/r.err"; then
+    printf '  ok(refused): %-28s\n' "TG0n the note names 4:26"; pass=$((pass+1))
+else printf '  FAIL: %-34s %s\n' "TG0n the note" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+TH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct Q { a; b; }
+struct Q8 { a; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn mk8(): Q8 { var q: Q8; q.a = 21; return q; }
+fn mks(): Str { return str_from("abc"); }
+impl Q { fn mk(self): Q { var q: Q; q.a = 301; q.b = 2; return q; } }
+fn Q_add(a: Q, c: Q): Q { var q: Q; q.a = a.a + c.a; q.b = 1; return q; }
+fn g<T>(x: T): i64 { var y: T = mkp(); return y; }
+fn ga<T>(x: T): i64 { var y: T = x; y = mkp(); return 9; }
+fn gpa<T>(y: T): i64 { y = mkp(); return 9; }
+fn gp<T>(x: T): i64 { var p: *T = &x; p = mkp(); return 9; }
+fn gpp<T>(x: T): i64 { var pp: **T = 0; pp = mkp(); return 9; }
+fn gm<T>(x: T): i64 { var b: Q; var y: T = b.mk(); return 9; }
+fn gw<T>(x: T): i64 { var y: T = ((mkp())); return 9; }
+fn gf<T>(x: T): i64 { var y: T = fncall0(&mkp); return 9; }
+fn go<T>(x: T): i64 { var a: Q; a.a = 300; var c: Q; c.a = 1; var y: T = a + c; return 9; }
+fn gl<T>(x: T): i64 { var y: T = mkl(); return 9; }
+fn k<T>(x: T): i64 { return g(x); }
+fn g8<T>(x: T): i64 { var y: T = mk8(); return y; }
+fn gs<T>(x: T): i64 { var y: T = mks(); return 9; }
+fn gq<T>(x: T): i64 { var y: T = mkp(); return y.b - 400; }
+fn gqa<T>(x: T): i64 { var y: T = x; y = mkp(); return y.b - 400; }
+fn gqp<T>(x: T): i64 { var p: *T = &x; p = mkp(); return x.b - 400; }
+fn mkl(): Q { var q: Q; q.a = 1; q.b = 2; return q; }
+'
+TE='
+syscall(60, main());
+'
+refuse "TG1 g(5)" "$TGM" "$TH"'fn main(): i64 { return g(5); }'"$TE" one
+refuse "TG2 g<i64>(5)" "$TGM" "$TH"'fn main(): i64 { return g<i64>(5); }'"$TE" one
+refuse "TG3 g<i32>(5): the stub's words (D24's before)" "$TGM" "$TH"'fn main(): i64 { return g<i32>(5); }'"$TE" one
+refuse "TG4 y = mkp(); (var y: T) at i64 (D27)" "generic 'ga' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return ga(5); }'"$TE" one
+refuse "TG4b y = mkp(); (a y: T parameter)" "generic 'gpa' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gpa(5); }'"$TE" one
+refuse "TG5 p = mkp(); (p: *T) at i64 (D32)" "generic 'gp' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gp(5); }'"$TE" one
+refuse "TG5b pp = mkp(); (pp: **T)" "generic 'gpp' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gpp(5); }'"$TE" one
+refuse "TG6 var y: T = b.mk(); (a method)" "generic 'gm' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gm(5); }'"$TE" one
+refuse "TG7 var y: T = ((mkp())); (wrapped)" "generic 'gw' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gw(5); }'"$TE" one
+refuse "TG8 var y: T = fncall0(&mkp);" "generic 'gf' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gf(5); }'"$TE" one
+refuse "TG9 var y: T = a + c; (Q_add)" "generic 'go' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return go(5); }'"$TE" one
+refuse "TG10 the callee declared below the generic" "generic 'gl' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gl(5); }'"$TE" one
+refuse "TG11 k(5): a generic forwarding its T to g" "generic 'k' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return k(5); }'"$TE" one
+refuse "TG12 &g" "$TGM" "$TH"'fn main(): i64 { var f = &g; return 1; }'"$TE" one
+accept "TA1 g(q) at T = Q copies (y.b 444)" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gq(q); }'"$TE" 44 'syscall(60, 44);'
+accept "TA2 an 8 B result into y: T at i64 keeps its word" "$TH"'fn main(): i64 { return g8(5); }'"$TE" 21 'syscall(60, 21);'
+accept "TA3 a Str result into y: T at i64 keeps its word" "$TH"'fn main(): i64 { alloc_init(); return gs(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA4 y = mkp(); at T = Q copies" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqa(q); }'"$TE" 44 'syscall(60, 44);'
+accept "TA5 p = mkp(); (p: *T) at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqp(q); }'"$TE" 44 'syscall(60, 44);'
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
     refuse_at "CPX [$1] UC0" "3:54: $SN 'x'$SA" "$UCA"
     refuse_at "CPX [$1] UC1" "3:47: $SN 'x'$SS|3:62: $SN 'x'$SM" "$UCB"
     refuse_at "CPX [$1] UC2" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
+    refuse "TGX [$1] TG0" "$TGM" "$TG0" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then

@@ -28,7 +28,9 @@
 # variable then keeps its annotation (so the repro's `x.b` is a second, accurate error). A struct of
 # 8 B or less and a `Str` handle are one word, which the scalar keeps; a dyn result keeps the 6.7.8
 # refusals (`_dyn_var_ann`, V4d / V4n); a generic fn's BASE parse of `var x: T = mkp();` is not judged
-# (`_rcv_tp_base`: each instance judges its own T).
+# (`_rcv_tp_base`: each instance judges its own T). 6.7.16 (the user's D1, 2026-10-19): such a generic has no scalar
+# instance — its scalar calls are refused by name at the call, the stub's words (R13, SA20: `gb<i32>(..)`), so the
+# base that skips the judgement is never the code a scalar call runs; the struct instance is unchanged (K5, SAK5).
 #
 # LEGS: every refused row on the x86_64, aarch64 (cross), cx and PE (CYRIUS_TARGET_WIN=1) compilers —
 # refused, the expected `^error` count, no `^warning`, no binary; every run row on x86_64, aarch64
@@ -366,7 +368,7 @@ row R12 'fn f(): i64 { var x: i64 = mkg<i64>(3); return x; }'
 refused R12 "cannot initialise 'x: i64' from 'mkg', which returns the struct 'Bx' - declare 'x: Bx' or bind a field" "a generic callee"
 row R13 'fn gb<T>(v: T): i64 { var x: T = mkp(); return 0; }
 fn f(): i64 { return gb<i32>(3); }'
-refused R13 "cannot initialise 'x: T' $M16" "a generic instance whose T is i32"
+refused R13 "generic 'gb' has no i64 (or other scalar) instance" "a generic instance whose T is i32: the stub (6.7.16's D1; it was D24's words)"
 row R14 'fn f(): i64 { var x: i32 = mkp(); return x; }'
 refused R14 "cannot initialise 'x: i32' $M16" "\`: i32\`"
 row R15 'fn f(): i64 { var x: u128 = mkp(); return 0; }'
@@ -608,7 +610,7 @@ rowm SA19 "fn f(): i64 { $MB var x: i64 = b.mk().mk(); return x; }"
 refused SA19 "cannot initialise 'x: i64' $MQ" "a method chain ending in a 16 B result"
 rowm SA20 "fn gb<T>(b: Q): i64 { var x: T = b.mk(); return 0; }
 fn f(): i64 { $MB return gb<i32>(b); }"
-refused SA20 "cannot initialise 'x: T' $MQ" "a generic instance whose T is i32"
+refused SA20 "generic 'gb' has no i64 (or other scalar) instance" "a generic instance whose T is i32: the stub (6.7.16's D1; it was D24's words)"
 rowm SA21 "fn f(): i64 { $MB var x: i64 = b.mk(); return x.b; }"
 refused SA21 "cannot initialise 'x: i64' $MQ" "x keeps its \`i64\`: \`x.b\` the second, accurate error" 2
 rowm SA24 "fn f(): i64 { $MO var x: i64 = (a + c); return x; }"
