@@ -551,6 +551,7 @@ fn _tup_elem(S, mode): i64 {
             elif (_tn_class(c) == 6) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not struct ", TOKVAL(S, ti), 0); }
             else { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not ", TOKVAL(S, ti), 0); }
         }
+        if (mode == 0) { _tup_ngt(S, ti, c); }
     } elif (mode == 0) {
         if (t == 31 || t == 11) { _tup_err(S, ti, "an empty element in a tuple type", 0 - 1, 0); }
         elif (t == 8) { _tup_err(S, ti, "a tuple element is i64, f64 or bool, not a pointer `*T`", 0 - 1, 0); }
@@ -561,6 +562,13 @@ fn _tup_elem(S, mode): i64 {
     }
     _tup_skip_elem(S);
     return k;
+}
+# An i64 / f64 / bool element (code `c`) given type arguments, `(i64<u8>, i64)`, is refused at its name with D7's
+# words, once per token (a generic body's instances), silent under --syntax-only; `_tup_skip_elem` steps the list.
+# Mode 0 only: the replay and pass 1's quiet scan say nothing. The user's D93 (2026-10-20). CHANGELOG [6.7.16]
+fn _tup_ngt(S, ti, c): i64 {
+    if (c != _tn_code(1, 8)) { if (c != _tn_code(3, 8)) { if (c != _tn_code(4, 1)) { return 0; } } }
+    return _ngt_refuse(S, ti);
 }
 fn _tup_skip_elem(S): i64 {
     var d = 0;

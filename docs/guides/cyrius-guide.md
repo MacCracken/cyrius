@@ -7442,7 +7442,9 @@ union's), a trait member's type, a multi-value element `(Pt<i64>, i64)`, a `*fn(
 type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]`, a scalar return
 `: i64<u8>`, and `*i32<u8>` as a local, a global, a return or a field — once, at the name, with
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
-rest compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
+rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
+local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
+D93; it compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
 i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
 the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
 6.7.15 the extra argument was read and dropped). A fn or method that is not generic takes none: `nf<i64>(6)`,

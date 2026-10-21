@@ -183,6 +183,15 @@
 #      field reader, the same; its mutant (the D7 commit's compiler, 4c6a024a3) -> RED 1: NR13 (the parse error).
 #      NR14 (a find repaired in passing): a slice's pointer element `[*Pt<i64>]` (`_tn_slice_ptr_el`) the same; its
 #      mutant (the compiler before it, eafa5a40d) -> RED 1: NR14 (the parse errors).
+#   NT (6.7.16, the user's D93, 2026-10-20) A TUPLE ELEMENT GIVEN TYPE ARGUMENTS — `(i64<u8>, i64)`, `(f64<i32>, ..)`,
+#      `(bool<u8>, ..)` in a field, a global, a parameter or a local — compiled with the list stepped unread (`_tup_elem`),
+#      while the same tuple as a trait member's parameter or a multi-value return was refused. D7's line once at the
+#      element's name (`_tup_ngt`), silent under --syntax-only, pass 1's quiet scan and the replay silent. NT0 the filed
+#      tup.cyr verbatim (five lines); NT1 a generic body, three instances (once, beside R4's line); NT2 a global after
+#      the first statement and a nested list; NT3 an element that is no tuple type keeps its own line; NTX; a control.
+#      Filed: docs/development/issues/2026-10-20-tuple-element-scalar-type-arguments-unread.md
+#      Mutant (2026-10-21): the lane's previous compiler (d06199187) -> RED 3: NT0 NT1 NT2 (each built, or R4's line
+#      alone); NT3, NTX and the control green on it.
 #   UC (6.7.16) AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING — `nofn<i64>(1)` — read its type arguments as
 #      comparisons: "undefined variable 'nofn'", "undefined variable 'i64'", "expected ';', got '>'" (three lines for one
 #      mistake); as a statement "expected '=', got '<'" first; under --syntax-only (lint's pre-pass) a sibling module's
@@ -969,6 +978,39 @@ syscall(60, main());
 EOF
 exits nrk 0 "NR control: *Box<Pt> / *Pt / **Pt / *i32 / Box<i64> fields, a member's Pt / Box<i64> / *fn(Box<Pt>), *fn(Box<Pt>) and **Box<Pt> parameters, (Box<i64>, *i32), [Pt], *i32 — unchanged"
 
+# NT (6.7.16, the user's D93, 2026-10-20) — a tuple element given type arguments, `(i64<u8>, i64)`: the element reader
+# (`_tup_elem`: a local, a global, a parameter, a field) stepped the list unread. D7's line once at the element's name.
+cat > "$T/nt0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct H { t: (i64<u8>, f64<i32>); k; }
+var G: (bool<u8>, i64) = (true, 2);
+fn s(u: (i64<u8>, i64)): i64 { var v: (i64<u8>, i64) = (1, 2); return 0; }
+fn main(): i64 { var h: H; h.k = 7; return h.k; }
+syscall(60, main());
+EOF
+errs nt0 5 "NT0: the filed tup.cyr verbatim — five lines, one at each element's name (it compiled: exit 7)" \
+    "error:<source>:2:16: 'i64' $NGI" "error:<source>:2:25: 'f64' $NGI" "error:<source>:3:9: 'bool' $NGI" "error:<source>:4:10: 'i64' $NGI" "error:<source>:4:40: 'i64' $NGI"
+printf 'fn g<T>(x: T): i64 { var v: (i64<u8>, i64) = (1, 2); return 0; }\nfn main(): i64 { g(1); g(2.0); return g<i32>(3); }\n' > "$T/nt1.cyr"
+errs nt1 2 "NT1: a generic body with three instances — the element's line once, beside R4's (as an 'i32' element's)" \
+    "error:<source>:1:29: a tuple type in a generic fn is refused" "error:<source>:1:30: 'i64' $NGI"
+printf 'fn f(): i64 { var a = 1; return a; }\nvar q = f();\nvar w: (f64<u8>, bool<i8>) = (1.0, true);\nfn s(): i64 { var t: (i64, i64<Pt<i64>>) = (1, 2); return t.0; }\nsyscall(60, s());\n' > "$T/nt2.cyr"
+errs nt2 3 "NT2: a global after the first statement (both elements) and a local's second element whose list nests" \
+    "error:<source>:3:9: 'f64' $NGI" "error:<source>:3:18: 'bool' $NGI" "error:<source>:4:28: 'i64' $NGI"
+printf 'fn s(): i64 { var v: (i32<u8>, i64) = (1, 2); return 0; }\nsyscall(60, s());\n' > "$T/nt3.cyr"
+errs nt3 1 "NT3 control: an element that is no tuple type keeps its own line alone" "error:<source>:1:23: a tuple element is i64, f64 or bool, not 'i32'"
+cat > "$T/ntk.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct H { t: (i64, f64); k; }
+var G: (bool, i64) = (true, 2);
+fn s(u: (i64, i64)): i64 { var v: (i64, f64) = (1, 2.0); return u.0 + v.0; }
+fn main(): i64 { var h: H; h.k = 7; return h.k + s((1, 2)) + G.1; }
+syscall(60, main());
+EOF
+exits ntk 11 "NT control: (i64, f64) / (bool, i64) / (i64, i64) in a field, a global, a parameter and a local — unchanged"
+rc=0; "$CC" --syntax-only < "$T/nt0.cyr" > /dev/null 2> "$T/ntx.err" || rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/ntx.err"; then ok "NTX: --syntax-only on nt0 says nothing (as D6 / D7)"
+else bad "NTX: --syntax-only rc $rc: $(grep '^error' "$T/ntx.err" | head -1)"; fi
+
 # UC (6.7.16) — an explicit-generic call of a name that is nothing (`nofn<i64>(1)`): "undefined function 'nofn'" once, at
 # the name (`_ugc_call`, `_stmt_undef_gcall`); the list read only when every name in it is a type here (`_ugc_open`).
 UCH='struct Pt { v; }
@@ -1004,4 +1046,4 @@ for f in uc1 uc2 uc3 uc4 uc5 uc6 uc8; do
 done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16) and at a tuple element (NT, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"
