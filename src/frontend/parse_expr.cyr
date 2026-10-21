@@ -2847,7 +2847,7 @@ fn _tup_lit_stray(S, ti0): i64 {
         _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
     }
     STI(S, _call_close(S, ti0) + 1);
-    _synonly_skip_chain(S);
+    STI(S, _pf_chain_end(S, GTI(S)));   # 6.7.16: `.m(..)`, `.m<..>(..)`, `[..]` too ("expected ';', got '('")
     EMOVI(S, 0);
     SESTYPE(S, 0);
     _cfo = 0;
@@ -3638,12 +3638,14 @@ fn _call_field(S): i64 {
         # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
         if (_syntax_only == 1 && TOKTYP(S, ti + 1) == 10) { PARSE_FNCALL(S, TOKVAL(S, ti)); }
         else { STI(S, _call_close(S, _gcall_open(S, ti)) + 1); }
+        # 6.7.15: the chain past the refusal, its `[..]` too, as a method's (`_method_chain`): `var x = mk().p[0];` added
+        # a false "cannot subscript field 'p'". 6.7.16: whole, before the walk below — a method's explicit list
+        # (`mk().mm<f64>(2.5)` at top level, `fs().mm<f64>(2.5)`) read `<` as less-than ("undefined variable 'f64'").
+        # --syntax-only walks it, its arguments and index parsed. CHANGELOG [6.7.16]
+        if (_syntax_only == 0) { STI(S, _pf_chain_end(S, GTI(S))); }
         _synonly_skip_chain(S);
         # a method on the refused result: its arguments too, or `(` is a second error
         if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
-        # 6.7.15: and the top-level refusal's `[..]` with the chain past it, as a method's (`_method_chain`): `var x =
-        # mk().p[0];` added a false "cannot subscript field 'p'". --syntax-only parses the index. CHANGELOG [6.7.15]
-        if (_syntax_only == 0) { if (sid > 0) { STI(S, _pf_chain_end(S, GTI(S))); } }
         if (_syntax_only == 1) { if (_cf_unres_fn(S, ti, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn (6.7.16: or struct)
         _cfo = 0;
         return 1;
