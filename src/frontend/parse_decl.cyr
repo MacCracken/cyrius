@@ -9215,7 +9215,7 @@ fn _mch_mres(S, sid, nt, o): i64 {
     if (mf < 0) { return 0; }
     var t = GFRS(S, mf);
     if (GFTP(S, mf) != 0) {
-        var w = _gen_ret_tparam(S, mf);
+        var w = _mch_rtp(S, mf);
         if (w >= 0) { return _gu_okc(_mch_bind(S, mf, sid, nt, o, w)); }
         if (_gz_gbase(S, t) == 1) { return _mch_gres(S, mf, sid, nt, o, t); }
     }
@@ -9224,6 +9224,16 @@ fn _mch_mres(S, sid, nt, o): i64 {
         return t;
     }
     return _hl_fn_psid(mf);
+}
+# Which type parameter (0 / 1) generic `fi` returns as `: T` or `: *T` (the struct T binds is the step's either way:
+# by value, or the `*S` the chain continues through), else -1. CHANGELOG [6.7.16]
+fn _mch_rtp(S, fi): i64 {
+    var w = _gen_ret_tparam(S, fi);
+    if (w >= 0) { return w; }
+    var k = _tok_ret_ann(S, fi);
+    if (k < 0) { return 0 - 1; }
+    if (TOKTYP(S, k) != 8) { return 0 - 1; }
+    return _tok_tp_which(S, fi, k + 1);
 }
 # ... a generic method step's `: G<..>` (G = g): the instance of G its binding names (`_gs_ginst`: a struct made, no fn).
 fn _mch_gres(S, mf, sid, nt, o, g): i64 {
@@ -9310,7 +9320,7 @@ fn _tok_mch_head(S, a, ti): i64 {
         if (TOKTYP(S, ti) == 2) {
             var fi = FINDFN(S, TOKVAL(S, ti));
             if (fi < 0) { return 0; }
-            if (GFTP(S, fi) != 0) { return _tok_mch_gret(S, fi); }
+            if (GFTP(S, fi) != 0) { return _tok_mch_gret(S, a, ti, fi); }
         }
         return _hl_pchain(S, ti, _mch_hx);
     }
@@ -9322,18 +9332,21 @@ fn _tok_mch_head(S, a, ti): i64 {
     if (sid >= 2048) { return 0; }
     return sid;
 }
-# ⛔ 6.7.16 — ... a GENERIC call head whose signature names no type parameter as its return: its template's struct or
-# `*S` (a binding changes nothing), as the parser's arm reads it (`_mch_chead`); a `: T` return is the parser's alone
-# (its binding is read from the parser's scope), 0. A forwarder below its caller, `return gw<i64>(2).p.rs(3);` /
-# `return gw(2).p.rs(3);` with `fn gw<V>(x: V): *W`, was no pair there (`var v = fwd();` kept the tag, `gw(2).p.rs(3)?`
-# was not "bind both"). CHANGELOG [6.7.16]
-fn _tok_mch_gret(S, fi): i64 {
-    if (_gen_ret_tparam(S, fi) >= 0) { return 0; }
+# ⛔ 6.7.16 — ... a GENERIC call head (its name token ti): a `: T` / `: *T` return the struct T binds at the call, read
+# from the unit's tokens as the scans read a free generic call's (`_tok_gen_tp_sid`); a return that names no type
+# parameter its template's struct or `*S` (a binding changes nothing), as the parser's arm reads it (`_mch_chead`); a
+# `: G<T>` none (0). A forwarder below its caller, `return gw<i64>(2).p.rs(3);` / `return gw(2).p.rs(3);` with `fn
+# gw<V>(x: V): *W`, was no pair there (`var v = fwd();` kept the tag, `gw(2).p.rs(3)?` was not "bind both"). CHANGELOG
+# [6.7.16]
+fn _tok_mch_gret(S, a, ti, fi): i64 {
+    var w = _mch_rtp(S, fi);
+    if (w >= 0) { return _gu_okc(_tok_gen_tp_sid(S, a, ti, ti, fi, w)); }
     var t = _hl_fn_psid(fi);
     if (t > 0) { return t; }
     t = GFRS(S, fi);
     if (t <= 0) { return 0; }
     if (t >= 2048) { return 0; }
+    if (_gz_gbase(S, t) == 1) { return 0; }
     return t;
 }
 # ... a parenthesised head `( E )`: a `*name` of a name declared `*S`, else a name, a call or a chain (`_mch_ty`, its

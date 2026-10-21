@@ -38,7 +38,9 @@
 #      h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m), callptr(&gpw, &w).p (i), w.p.idv(w).p (g: an
 #      inferred generic step `: V` mid-chain, unresolved before the lane's review: `_mch_bind`), w.p.idv<W>(w).p (e:
 #      an explicit one), (p) (y: a single name's parenthesised head), gw(&w).p (n) and gw<i64>(&w).p (o) (a generic
-#      call head returning `*W`: the token passes typed none, `_tok_mch_gret`); C1h / F1h / F2h on w.p.idv(p) (h); on the
+#      call head returning `*W`: the token passes typed none, `_tok_mch_gret`), w.gpx(&w).p (t) / w.gpx<W>(&w).p (u) (a
+#      generic step returning `*T`) and gwp(&w).p (v) (a generic head returning `*T`; `_mch_rtp`); C1h / F1h / F2h on
+#      w.p.idv(p) (h); on the
 #      callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
 #      C22-C24 a struct return over 8 B of another struct / 2 values / 1 value (each chain said "returned in two
 #      registers ... got `w`", the single name the text it shares now)
@@ -99,6 +101,8 @@
 #                                                          n and o
 #   M0 again for F3 (added after the runs above; base      -> RED 13: F3 on s and every chain (compiled: the tag kept)
 #      0e2e41805's fixpoint)
+#   M22 the tree before `_mch_rtp` (bfec3e0d4)          -> RED 67: V x7 (the file did not build), C1-C17c on t and u, W2 /
+#                                                          F1 / F2 / F3 on t, u and v; simd_return_shapes CR16 x5 too
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -128,7 +132,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=93
+FLOOR=96
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -220,12 +224,13 @@ impl P {
     fn q24(self): Q24 { var q: Q24; q.a = 1; q.b = 4; q.c = 5; return q; }
     fn r16(self): R16 { var r: R16; r.x = 1; r.y = 2; return r; }
 }
-impl W { fn gp(self): *P { var a = self; return a; } }
+impl W { fn gp(self): *P { var a = self; return a; } fn gpx<T>(self, p: *T): *T { return p; } }
 impl P { fn idv<V>(self, x: V): V { return x; } }
 fn mkw(): W { var w: W; w.p.k = 1; w.q = 0; w.n = 0; return w; }
 fn gpw(w: *W): *W { return w; }
-fn gw<V>(x: V): *W { var a = x; return a; }'
-MODES="c d f x k m i g e y n o"
+fn gw<V>(x: V): *W { var a = x; return a; }
+fn gwp<T>(p: *T): *T { return p; }'
+MODES="c d f x k m i g e y n o t u v"
 mode_rcv() {
     case "$1" in
         s) R='p.'; PW='p: P' ;;
@@ -242,6 +247,9 @@ mode_rcv() {
         y) R='(p).'; PW='p: P' ;;
         n) R='gw(&w).p.'; PW='w: W' ;;
         o) R='gw<i64>(&w).p.'; PW='w: W' ;;
+        t) R='w.gpx(&w).p.'; PW='w: W' ;;
+        u) R='w.gpx<W>(&w).p.'; PW='w: W' ;;
+        v) R='gwp(&w).p.'; PW='w: W' ;;
     esac
 }
 # subst <from> <to>: stdin to stdout with every <from> replaced by <to> (literally).

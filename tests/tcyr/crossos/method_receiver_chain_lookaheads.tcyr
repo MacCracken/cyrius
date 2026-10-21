@@ -222,6 +222,14 @@ fn fc_qga(w: FcW): i64 { var v = fc_qgb(w)?; return FcOk(v + 1); }
 fn fc_qgb(w: FcW): i64 { return fc_gw(&w).p.rs(3); }
 fn fc_qxa(w: FcW): i64 { var v = fc_qxb(w)?; return FcOk(v + 2); }
 fn fc_qxb(w: FcW): i64 { return fc_gw<i64>(&w).p.rs(3); }
+# ... and a generic step or head returning `*T` — the struct T binds (the explicit step was typed only through its minted
+# instance, the inferred one and the token passes' not at all)
+impl FcW { fn gpx<T>(self, p: *T): *T { return p; } }
+fn fc_gwp<T>(p: *T): *T { return p; }
+fn fc_xt(): i64 { var w = fc_w(); var a, b = w.gpx(&w).p.m2(); return a * 10 + b; }
+fn fc_xu(): i64 { var w = fc_w(); var a, b = w.gpx<FcW>(&w).p.m2(); return a * 10 + b; }
+fn fc_qpa(w: FcW): i64 { var v = fc_qpb(w)?; return FcOk(v + 1); }
+fn fc_qpb(w: FcW): i64 { return fc_gwp(&w).p.rs(3); }
 fn fc_xpair(which): i64 {
     var w = fc_w();
     var q: FcP = FcP { 2 };
@@ -233,6 +241,7 @@ fn fc_xpair(which): i64 {
     if (which == 3) { t, v = w.p.idv(q).rs(5); }
     if (which == 4) { t, v = fc_qga(w); }
     if (which == 5) { t, v = fc_qxa(w); }
+    if (which == 6) { t, v = fc_qpa(w); }
     return t * 100 + v;
 }
 
@@ -341,6 +350,9 @@ assert_eq(fc_xpair(2), 5, "MX: return w.p.idv(q).rs(3); forwards the pair to a c
 assert_eq(fc_xpair(3), 7, "MX: t, v = w.p.idv(q).rs(5)");
 assert_eq(fc_xpair(4), 5, "MX: return gw(&w).p.rs(3); (gw generic, : *W) forwards the pair to a caller ABOVE it");
 assert_eq(fc_xpair(5), 6, "MX: return gw<i64>(&w).p.rs(3); forwards the pair to a caller ABOVE it");
+assert_eq(fc_xt(), 34, "MX: an inferred generic step returning *T, w.gpx(&w).p.m2() (needs a call before)");
+assert_eq(fc_xu(), 34, "MX: an explicit generic step returning *T, w.gpx<W>(&w).p.m2()");
+assert_eq(fc_xpair(6), 5, "MX: return gwp(&w).p.rs(3); (gwp generic, : *T) forwards the pair to a caller ABOVE it");
 assert_eq(fc_ta(0), 34, "MT: t = (*pw).p.m2(), a dereference head");
 assert_eq(fc_ta(1), 57, "MT: t = (w).p.mm(5), a parenthesised name");
 assert_eq(fc_ta(2), 34, "MT: t = ((*pw).p.m2()), wrapped");
