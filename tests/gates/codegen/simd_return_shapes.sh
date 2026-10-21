@@ -2987,6 +2987,54 @@ vns_msg() {  # the two errors, one per line
 }
 
 
+# ---- 6.7.16 (met landing the review's D100 fixes): an inline literal global after the first statement holds its index
+# while its elements are parsed (`_glit_hold`) — on PE an element's vector call made a hidden global temporary for its
+# result (6.7.12) at the index the literal had registered without counting, overwrote the slot, and the literal's count
+# bump cut the temporary off: the refusal was followed by "undefined variable 'GP'" at the next use (through 6.7.15 that
+# wrong error alone). Rows VG (one error: the refusal) — VG1 a struct literal's whole-call field, VG2 an operand in an
+# annotated literal, VG3 a tuple literal's operand, VG4 a named field's method call — and VGS1 / VGS2 (the name is
+# still not visible inside its own literal: "undefined variable") on host / host IR=3 / cx / aarch64 / win64.
+# Mutations (2026-10-21, measured): M-VG0 the tree before -> RED 4: VG1-VG4 on win64 (the other legs make no temporary);
+# M-VG1 the held slot not marked dead -> RED 10: VGS1 VGS2 on five legs (the literal read its own uninitialised slot).
+vg_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VG1) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP = Pt { mk2(41, 7), 1 };
+syscall(60, GP.b % 256);
+' ;;
+    VG2) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP: Pt = Pt { 1, 1 + mk2(41, 7) };
+syscall(60, GP.b % 256);
+' ;;
+    VG3) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT = (3, 1 + mk2(41, 7));
+syscall(60, GT.1 % 256);
+' ;;
+    VG4) printf '%s' "$VOH"'var GM: Mv = Mv { 1 };
+syscall(1, 1, "", 0);
+var GP = Pt { a: 1, b: GM.m2() };
+syscall(60, GP.a % 256);
+' ;;
+    VGS1) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP = Pt { GP.a, 1 };
+syscall(60, GP.b % 256);
+' ;;
+    VGS2) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT = (GT.0, 1);
+syscall(60, GT.1 % 256);
+' ;;
+    esac
+}
+VG_ROWS="VG1 VG2 VG3 VG4 VGS1 VGS2"
+vg_msg() {
+    case "$1" in
+    VGS1) echo "undefined variable 'GP'";;
+    VGS2) echo "undefined variable 'GT'";;
+    *) echo "vector return type does not match the declared type";;
+    esac
+}
+
+
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -3578,6 +3626,8 @@ refuse_tab_all host "$CC" vn_src "$VN_ROWS" vn_msg
 refuse_tab_all host-ir3 "$CC" vn_src "$VN_ROWS" vn_msg CYRIUS_IR=3
 refuse2_tab_all host "$CC" vns_src "$VNS_ROWS" vns_msg
 refuse2_tab_all host-ir3 "$CC" vns_src "$VNS_ROWS" vns_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" vg_src "$VG_ROWS" vg_msg
+refuse_tab_all host-ir3 "$CC" vg_src "$VG_ROWS" vg_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr vac_src "$VAC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr vac_src "$VAC_ROWS" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
@@ -3634,6 +3684,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_fw_all cx "$W/cycc_cx"
     refuse_tab_all cx "$W/cycc_cx" vn_src "$VN_ROWS" vn_msg
     refuse2_tab_all cx "$W/cycc_cx" vns_src "$VNS_ROWS" vns_msg
+    refuse_tab_all cx "$W/cycc_cx" vg_src "$VG_ROWS" vg_msg
     accept_tab_all cx "$W/cycc_cx" cxr vac_src "$VAC_ROWS"
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
@@ -3691,6 +3742,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_fw_all aarch64 "$W/cycc_a64"
         refuse_tab_all aarch64 "$W/cycc_a64" vn_src "$VN_ROWS" vn_msg
         refuse2_tab_all aarch64 "$W/cycc_a64" vns_src "$VNS_ROWS" vns_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" vg_src "$VG_ROWS" vg_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r vac_src "$VAC_ROWS"
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
@@ -3753,6 +3805,7 @@ if command -v wine > /dev/null 2>&1; then
         refuse_fw_all win64 "$W/cycc_win"
         refuse_tab_all win64 "$W/cycc_win" vn_src "$VN_ROWS" vn_msg
         refuse2_tab_all win64 "$W/cycc_win" vns_src "$VNS_ROWS" vns_msg
+        refuse_tab_all win64 "$W/cycc_win" vg_src "$VG_ROWS" vg_msg
         accept_tab_all win64 "$W/cycc_win" wr_ vac_src "$VAC_ROWS"
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
@@ -3771,7 +3824,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -3800,8 +3853,8 @@ na_floor=$((na_floor + $(set -- $VOC_ROWS; echo $#) * 3))   # 6.7.16 (D100): eve
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

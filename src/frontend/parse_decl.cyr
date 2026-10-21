@@ -3531,6 +3531,19 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — AN INLINE LITERAL GLOBAL HOLDS ITS INDEX WHILE ITS ELEMENTS ARE PARSED. A struct or tuple literal global
+# after the first statement registered its slot at the next index and bumped the count only after its elements, so the
+# name stayed hidden from them (`var cfg = P { cfg, 2 };` reads the outer cfg) — but an element that made a hidden
+# global temporary (`_HTEMP`: on PE a vector call's result storage, 6.7.12) took that same index and overwrote the
+# slot, and the literal's own count bump then cut the temporary off: `var GP = Pt { mk2(41, 7), 1 };`, `var GT = (3, 1 +
+# mk2(41, 7));` printed their refusal and then "undefined variable 'GP'" at the next use (through 6.7.15 that wrong
+# error alone, the refusal never printed). Now the slot is counted at once, marked dead — invisible to every lookup
+# (`_findvar_core`), so the outer name still answers inside — and made live after the elements. CHANGELOG [6.7.16]
+fn _glit_hold(S, vcnt): i64 {
+    SVDEAD(S, vcnt, 1);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
 fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
     var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
@@ -3543,6 +3556,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     S64(_vars_base + vcnt * 8, sz);
     SVTYPE(S, vcnt, sid);
     SVPM(S, vcnt, 2);   # 6.6.5: a top-level literal is INLINE — STRUCTSZ bytes of .bss
+    _glit_hold(S, vcnt);   # 6.7.16: its index held, its name withheld, while the fields are parsed
     var _ps_sv = _sl_base_li;
     _sl_base_li = 0 - 1;
     _STRUCT_INIT_BODY(S, vcnt, sid);
@@ -3552,7 +3566,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
-    SVCNT(S, vcnt + 1);
+    SVDEAD(S, vcnt, 0);   # 6.7.16: the name visible from here (`_glit_hold`)
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 0;
@@ -3882,10 +3896,11 @@ fn _tup_greg(S, noff, sid): i64 {
 # after the elements); `dti` the declaration's token, for its visibility.
 fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
     var vcnt = _tup_greg(S, noff, sid);
+    _glit_hold(S, vcnt);   # 6.7.16: held while the elements are parsed (an element's hidden temporary)
     _tup_elems(S, sid, vcnt, 0 - 1, infer);
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, dti);
-    SVCNT(S, vcnt + 1);
+    SVDEAD(S, vcnt, 0);
     return 0;
 }
 # PARSE_VAR's arm, where its `: stack` pair refusal stood (cursor on `=`): a literal initializer —
