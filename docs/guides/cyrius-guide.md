@@ -1676,7 +1676,11 @@ decision D87 (a) of 2026-10-20): `var t: P = GU;` — in a fn, in the declaratio
 every size, wrapped `(GU)` too, a `Str` declared from a `*U` and a `*Str` into a `P` alike — is *cannot copy 'GU' into
 a variable of a different struct/vector type: 't'*. Through 6.7.15 it compiled: in a fn (and at top level over 8
 bytes) `t` was a handle reading U's object as a P, and at top level at 8 bytes or less `t.v` held GU's address.
-`var t: U = GU;` copies and `var t: *U = GU;` aliases.
+`var t: U = GU;` copies and `var t: *U = GU;` aliases. So is every other `*U` source the assignment refuses — a call or
+method declared `: *U`, a `*U` field, pointer arithmetic on one, wrapped, a generic instance's (`var t: P = gu(&q);`,
+`= h.pu`, `= h.mu()`, `= pu + 0`, `= gg<U>(&q)`), in a fn, the zone and after the first statement, at every size —
+named as spelled: *cannot copy 'gu(&q)' into a variable of a different struct/vector type: 't'* (pointer arithmetic by
+its pointer operand). A `*U` source into a `U` keeps its handle bind, into a `*U` it aliases.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),

@@ -109,6 +109,12 @@
 #      first statement at the `=`, a fn at the `=`, 16 B and 8 B), wrapped, a `Str` declared from a `*U`, a `*Str`
 #      into a P, a 4 B struct, another generic instance; GC17 controls: `var t: U = GU;` copies, `var t: *U = GU;`
 #      aliases (zone, after, fn), the same instance copies
+#   GC18-GC19 (6.7.16, D87 (a) carried to every `*U` source the assignment types — the s16 review): a `*U` CALL, a
+#      method, a field, pointer arithmetic (`p + 0`), wrapped, a generic instance's, into an `S` declaration (U another
+#      struct) is refused, named as spelled ('gu(&GSU)', 'GH.pu', 'GH.mu()'; arithmetic by its pointer operand) — GC18 in
+#      a fn (`_sci_pnu`), the zone and after the first statement (`_gz_pnu_span`), 16 B and 8 B (each compiled and read
+#      U's object as a P: t.y 4, t.v 6); GC19 controls: a `*U` source into a `U` keeps its handle bind, into a `*U`
+#      aliases (9: a later write shows)
 #   GP (Linux x86_64 + aarch64) a 7 B handle GLOBAL onto the last 7 bytes of a mapping: by value,
 #      returned, an operator's right operand, an if-expression branch, `c = G`, and at TOP LEVEL
 #      (a hidden global, no frame) — exit 0, no byte past the object read
@@ -664,6 +670,9 @@
 #                                                      compiled), GC16's five fn rows x4 (16 B, 8 B, wrapped, a `*Str`)
 #   MY5 `_gz_pnu` answering 0 (the tree before it at top level) -> RED 40: GC15 x4, GC16's nine zone / after rows x4
 #                                                      (16 B, 8 B, wrapped, a `Str` declared, 4 B, another instance)
+#   (the s16 review, GC18-GC19, measured 2026-10-21) the tree before -> RED 68: GC18's seventeen rows x4
+#   MY6 `_sci_pnu` answering 0 (no fn arm)             -> RED 32: GC18's eight fn rows x4
+#   MY7 `_gz_pnu_span` answering 0 (no span typed)     -> RED 68: GC18's seventeen rows x4 (the fn arm asks it too)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): B3's `S8_add(a: S8, b: i64)` row runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
@@ -1475,6 +1484,32 @@ glrow "GC17 control: ... after the first statement" 9 "${GU1}${GUA}var t: *U = G
 glrow "GC17 control: ... in a fn" 9 "${GU1}fn f(): i64 { var t: *U = GU; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
 glrow "GC17 control: the same instance *Box<i32> into a Box<i32> copies" 4 \
   'struct Box<T> { v: T; n; }\nvar GB = Box<i32> { 3, 4 };\nvar GBP: *Box<i32> = &GB;\nvar t: Box<i32> = GBP;\nsyscall(60, t.n);\n'
+echo "GC18-GC19. a *U call, method, field or pointer arithmetic into a struct S declaration: refused, named as spelled (6.7.16's D87 (a), the s16 review; x86_64, aarch64, cx, PE)"
+GV1='struct P { x; y; }\nstruct U { a; b; }\nstruct P8 { v; }\nstruct U8 { w; }\nstruct H { k; pu: *U; pu8: *U8; }\nimpl H { fn mu(self): *U { return self.pu; } }\nvar GSU = U { 3, 4 };\nvar GSU8 = U8 { 6 };\nfn gu(p: *U): *U { return p; }\nfn gu8(): *U8 { return &GSU8; }\nfn gg<T>(p: *T): *T { return p; }\nvar GH = H { 1, &GSU, &GSU8 };\n'
+glrow "GC18 in a fn, 16 B: var t: P = gu(&GSU); (t.y read U's b: 4)" "err:error:<source>:13:24: cannot copy 'gu(&GSU)' $GUM't'" "${GV1}fn f(): i64 { var t: P = gu(&GSU); return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn: a method, = GH.mu()" "err:error:<source>:13:24: cannot copy 'GH.mu()' $GUM't'" "${GV1}fn f(): i64 { var t: P = GH.mu(); return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn: a field, = GH.pu" "err:error:<source>:13:24: cannot copy 'GH.pu' $GUM't'" "${GV1}fn f(): i64 { var t: P = GH.pu; return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn: pointer arithmetic, = pu + 0 (named by the pointer operand)" "err:error:<source>:13:43: cannot copy 'pu' $GUM't'" "${GV1}fn f(): i64 { var pu: *U = &GSU; var t: P = pu + 0; return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn: wrapped, = (gu(&GSU))" "err:error:<source>:13:24: cannot copy 'gu(&GSU)' $GUM't'" "${GV1}fn f(): i64 { var t: P = (gu(&GSU)); return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn, 8 B: var t: P8 = gu8();" "err:error:<source>:13:25: cannot copy 'gu8()' $GUM't'" "${GV1}fn f(): i64 { var t: P8 = gu8(); return t.v; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn, 8 B: a field, = GH.pu8" "err:error:<source>:13:25: cannot copy 'GH.pu8' $GUM't'" "${GV1}fn f(): i64 { var t: P8 = GH.pu8; return t.v; }\nsyscall(60, f());\n"
+glrow "GC18 in a fn: a generic instance's *U, = gg<U>(&GSU)" "err:error:<source>:13:24: cannot copy 'gg<U>(&GSU)' $GUM't'" "${GV1}fn f(): i64 { var t: P = gg<U>(&GSU); return t.y; }\nsyscall(60, f());\n"
+glrow "GC18 the zone, 16 B: a call" "err:error:<source>:13:12: cannot copy 'gu(&GSU)' $GUM't'" "${GV1}var t: P = gu(&GSU);\nsyscall(60, t.y);\n"
+glrow "GC18 the zone: a method" "err:error:<source>:13:12: cannot copy 'GH.mu()' $GUM't'" "${GV1}var t: P = GH.mu();\nsyscall(60, t.y);\n"
+glrow "GC18 the zone: pointer arithmetic, = GH.pu + 0" "err:error:<source>:13:12: cannot copy 'GH.pu' $GUM't'" "${GV1}var t: P = GH.pu + 0;\nsyscall(60, t.y);\n"
+glrow "GC18 the zone, 8 B: wrapped, = (gu8())" "err:error:<source>:13:13: cannot copy 'gu8()' $GUM't'" "${GV1}var t: P8 = (gu8());\nsyscall(60, t.v);\n"
+glrow "GC18 the zone, 8 B: a field" "err:error:<source>:13:13: cannot copy 'GH.pu8' $GUM't'" "${GV1}var t: P8 = GH.pu8;\nsyscall(60, t.v);\n"
+glrow "GC18 after the first statement, 16 B: a field" "err:error:<source>:15:10: cannot copy 'GH.pu' $GUM't'" "${GV1}${GUA}var t: P = GH.pu;\nsyscall(60, t.y);\n"
+glrow "GC18 after the first statement: a wrapped method" "err:error:<source>:15:10: cannot copy 'GH.mu()' $GUM't'" "${GV1}${GUA}var t: P = (GH.mu());\nsyscall(60, t.y);\n"
+glrow "GC18 after the first statement, 8 B: a call" "err:error:<source>:15:11: cannot copy 'gu8()' $GUM't'" "${GV1}${GUA}var t: P8 = gu8();\nsyscall(60, t.v);\n"
+glrow "GC18 after the first statement, 8 B: pointer arithmetic" "err:error:<source>:15:11: cannot copy 'GH.pu8' $GUM't'" "${GV1}${GUA}var t: P8 = GH.pu8 + 0;\nsyscall(60, t.v);\n"
+glrow "GC19 control: a *U call into a U declaration keeps its handle bind, in a fn (a later write to GSU shows)" 9 "${GV1}fn f(): i64 { var t: U = gu(&GSU); GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
+glrow "GC19 control: ... in the zone" 9 "${GV1}var t: U = gu(&GSU);\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC19 control: ... a method after the first statement" 9 "${GV1}${GUA}var t: U = GH.mu();\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC19 control: ... 8 B, in a fn" 9 "${GV1}fn f(): i64 { var t: U8 = gu8(); GSU8.w = 9; return t.w; }\nsyscall(60, f());\n"
+glrow "GC19 control: ... 8 B, a field after the first statement" 9 "${GV1}${GUA}var t: U8 = GH.pu8;\nGSU8.w = 9;\nsyscall(60, t.w);\n"
+glrow "GC19 control: a *U call into a *U declaration aliases (the zone)" 9 "${GV1}var t: *U = gu(&GSU);\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC19 control: pointer arithmetic into a *U aliases (a fn)" 9 "${GV1}fn f(): i64 { var t: *U = GH.pu + 0; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
 
 echo "CP. struct copies through a *T of 8 B or less: another struct type refused by name, as over 8 B (x86)"
 crow "CP1 l = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
@@ -2211,4 +2246,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies, and var G: S = P from a *S global's name (R17, GC9, GC10); a struct global of 8 B or less from a source a declaration below it stores is refused by name, as over 8 B (GC11-GC14); a *U global's name into a struct S declaration is refused by name at every size (GC15-GC17)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies, and var G: S = P from a *S global's name (R17, GC9, GC10); a struct global of 8 B or less from a source a declaration below it stores is refused by name, as over 8 B (GC11-GC14); a *U global's name into a struct S declaration is refused by name at every size (GC15-GC17), and a *U call, method, field or pointer arithmetic named as spelled (GC18-GC19)"
