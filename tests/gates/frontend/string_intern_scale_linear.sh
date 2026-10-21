@@ -93,15 +93,23 @@ if (ok == 1) { syscall(60, 42); }
 syscall(60, 1);
 EOF
 }
-best() {  # best-of-3 wall ms for compiling $1 (-1 if any compile fails)
-    b=99999999
+# The pair A / B ($1 / $2), the two programs ALTERNATED (A, B, A, B, A, B), each its best of 3: a
+# load burst from another process lands on both alike instead of on one. Sets T1 / T2 (-1: a compile
+# failed). 6.7.16: the two were timed back to back (all of A, then all of B), so a burst on one side
+# read as a scaling regression ([count] 107 -> 357 ms, 3.3x, in a full check.sh under load; 1.8x alone).
+pair() {
+    T1=99999999; T2=99999999
     for _ in 1 2 3; do
-        s=$(date +%s%N)
-        "$CC" < "$1" > "$1.bin" 2> "$1.err" || { echo -1; return; }
-        e=$(( ($(date +%s%N) - s) / 1000000 ))
-        [ "$e" -lt "$b" ] && b=$e
+        for _f in "$1" "$2"; do
+            s=$(date +%s%N)
+            "$CC" < "$_f" > "$_f.bin" 2> "$_f.err" || { T1=-1; T2=-1; return 0; }
+            e=$(( ($(date +%s%N) - s) / 1000000 ))
+            if [ "$_f" = "$1" ]; then
+                if [ "$e" -lt "$T1" ]; then T1=$e; fi
+            elif [ "$e" -lt "$T2" ]; then T2=$e; fi
+        done
     done
-    echo "$b"
+    return 0
 }
 runs42() {  # runs42 file.bin — 0 iff the program exits 42
     chmod +x "$1"
@@ -111,7 +119,7 @@ runs42() {  # runs42 file.bin — 0 iff the program exits 42
 
 NFAIL=0
 ratio_row() {  # ratio_row name fileA fileB limit10 what
-    T1=$(best "$2"); T2=$(best "$3")
+    pair "$2" "$3"
     if [ "$T1" -lt 0 ] || [ "$T2" -lt 0 ]; then
         echo "  FAIL: [$1] the compile failed: $(grep -h -m1 -i error "$2.err" "$3.err" 2>/dev/null | head -1)"
         NFAIL=$((NFAIL + 1)); return
@@ -124,6 +132,17 @@ ratio_row() {  # ratio_row name fileA fileB limit10 what
     done
     [ "$T1" -lt 1 ] && T1=1
     R10=$(( T2 * 10 / T1 ))
+    # Over the limit: re-measure the pair, up to 3 rounds, each retry said by name. A quadratic pool
+    # scan is over the limit in every round; a burst is not.
+    _r=1
+    while [ "$R10" -gt "$4" ] && [ "$_r" -lt 3 ]; do
+        echo "  retry: [$1] ${T1}ms -> ${T2}ms (${R10}/10x) over the limit, re-measuring the pair (round $((_r + 1)) of 3)"
+        _r=$((_r + 1))
+        pair "$2" "$3"
+        if [ "$T1" -lt 0 ] || [ "$T2" -lt 0 ]; then R10=999; break; fi
+        [ "$T1" -lt 1 ] && T1=1
+        R10=$(( T2 * 10 / T1 ))
+    done
     if [ "$R10" -gt "$4" ]; then
         echo "  FAIL: [$1] $5 costs ${R10}/10x (${T1}ms -> ${T2}ms, limit $(($4 / 10)).$(($4 % 10))x) — interning is scanning the whole string pool again"
         NFAIL=$((NFAIL + 1))
