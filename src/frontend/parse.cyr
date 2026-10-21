@@ -3855,6 +3855,67 @@ fn _is_ident_intrinsic(S, noff): i64 {
     if (_is_sizeof_word(S, noff) == 1) { return 1; }
     return _is_mulh64_word(S, noff);
 }
+# ⛔ 6.7.16 — A BUILTIN OR AN INTRINSIC CALLED WITH A TYPE-ARGUMENT LIST: `load64<i64>(p)`, `syscall<i64>(39)`,
+# `mulh64<i64>(2, 3)`, `sizeof<i64>(H)`. Its arm asks for the `(` right after its name: "expected '(', got '<'", the
+# list then read as comparisons ("undefined variable 'i64'"; a statement's `store64<i64>(&a, 2);` went on to "expected
+# '}', got end of file"), and `mulh64<i64>(2, 3);` as a statement was "undefined function 'mulh64'". Refused once at the
+# name with a fn's words (6.7.16, `_eta_gen`) — "'load64' is not a generic fn: it takes no type arguments" — and the list
+# stepped, so the arm parses its call. ERR_EXPECT asks `_ngt_callee_lt` when it wants a `(`: one hook for every arm.
+# Only a list of type names closing right before a `(` (`_ugc_open`): `sizeof < a` stays what it was. CHANGELOG [6.7.16]
+# The name a callee at token nt that takes no type arguments prints with: a builtin token (a callable one: TOKNAME's
+# `f64_sqrt` / `callptr` and TOKNAME_BUILTIN's, less the keywords `union` `u128` `defer` `secret` `async` `await`) or
+# an IDENT-spelled intrinsic (`sizeof`, `mulh64`). 0 for anything else.
+fn _ngt_callee_name(S, nt): i64 {
+    var t = TOKTYP(S, nt);
+    if (t == 2) {
+        if (_is_ident_intrinsic(S, TOKVAL(S, nt)) == 1) { return S + 0xEC00000 + TOKVAL(S, nt); }
+        return 0;
+    }
+    if (t == 101 || t == 105 || t == 106 || t == 108 || t == 134 || t == 135) { return 0; }
+    if (t == 136 || t == 137) { return TOKNAME(t); }
+    return TOKNAME_BUILTIN(t);
+}
+# The cursor on the `<` after such a callee, opening a type list a `(` follows: refused at the name (once — a generic
+# body's instances share it; silent under --syntax-only, as D6's are; the latch put back, so the call parses in sync)
+# and stepped, the cursor on the `(`. 1 = stepped; 0 = not that shape (cursor untouched).
+fn _ngt_callee_lt(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var nm = _ngt_callee_name(S, nt);
+    if (nm == 0) { return 0; }
+    var o = _ugc_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    _ngt_say_s(S, nt, nm);
+    STI(S, o);
+    return 1;
+}
+fn _ngt_say_s(S, nt, nm): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, nt) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, nt);
+    var tg = "_ngt_say_s";
+    if (_err_once(S, (tg * 31 + nt) * 8 + 7) == 1) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        PRSTR(": '");
+        PRSTR(nm);
+        PRSTR("' is not a generic fn: it takes no type arguments\n");
+        _err_excerpt(S);
+        _had_error = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# `mulh64<i64>(2, 3);` as a statement (cursor on its `<`; `_stmt_undef_gcall`, the name being no fn): the list refused
+# and stepped, then D11's statement — the value parsed, the statement ended at its `;` in sync — its own words standing
+# down (`_stmt_intr_at`). 1 = consumed; 0 = no type list (cursor untouched).
+fn _stmt_intr_targs(S, noff): i64 {
+    var nt = GTI(S) - 1;
+    if (_ngt_callee_lt(S) == 0) { return 0; }
+    return _stmt_intr_at(S, noff, nt);
+}
 # ⛔ 6.7.16 — `mulh64(a, b);` / `sizeof(T);` AS A STATEMENT IS REFUSED BY NAME (the user's D11, 2026-10-19). The
 # `IDENT (` statement arm sent it to PARSE_FNCALL, a call to a fn that cannot exist (6.6.20 reserved the names): the
 # compile was refused for "undefined function 'mulh64'" (`sizeof(H);` with "undefined variable 'H'" first) and
@@ -3864,23 +3925,16 @@ fn _is_ident_intrinsic(S, noff): i64 {
 # statement ending at its `;` in sync (`_refuse_in_sync`), so the next statement is parsed. Cursor on the `(` after the
 # name `noff`; 1 = refused, the statement consumed. `fncallN` is no intrinsic here: its statement arm stays a call. A
 # `.` after the call's `)` (`mulh64(2, 3).n = 5;`) is not the shape: `_stmt_intrinsic_dot`. CHANGELOG [6.7.16]
-fn _stmt_intrinsic(S, noff): i64 {
+fn _stmt_intrinsic(S, noff): i64 { return _stmt_intr_at(S, noff, GTI(S) - 1); }
+# ... the name at token nt (6.7.16: `mulh64<i64>(2, 3);`'s list stepped, `_stmt_intr_targs`). The discarded value's
+# words stand down when the list was refused at nt (`_tn_seen_at`): the statement is one error, at the name.
+fn _stmt_intr_at(S, noff, nt): i64 {
     if (_is_ident_intrinsic(S, noff) == 0) { return 0; }
     var c = _call_close(S, GTI(S)) + 1;
-    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S); } }
-    STI(S, GTI(S) - 1);   # the name
+    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
+    STI(S, nt);   # the name
     _refuse_in_sync(S);
-    var tg = "_stmt_intrinsic";
-    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
-        _err_head(S);
-        PRSTR(": the value of '");
-        PRSTR(S + 0xEC00000 + noff);
-        PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
-        _err_excerpt(S);
-        _had_error = 1;
-        _panic = 1;
-    }
+    if (_tn_seen_at(S, nt) == 0) { _stmt_intr_say(S, noff); }
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
@@ -3892,8 +3946,22 @@ fn _stmt_intrinsic(S, noff): i64 {
 # statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
 # name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
 # resync steps to its `;`. Cursor on the `(`; 1. CHANGELOG [6.7.16]
-fn _stmt_intrinsic_dot(S): i64 {
-    STI(S, GTI(S) - 1);   # the name
+# D11's words for the statement at the cursor (the name `noff`): once, latched.
+fn _stmt_intr_say(S, noff): i64 {
+    var tg = "_stmt_intrinsic";
+    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": the value of '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+fn _stmt_intrinsic_dot(S, nt): i64 {
+    STI(S, nt);   # the name
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
@@ -5882,6 +5950,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
 # global or a struct of the name keeps the old path. Cursor past the name; 1 = consumed through its `;`, 0 = not this
 # shape (cursor untouched). CHANGELOG [6.7.16]
 fn _stmt_undef_gcall(S, noff): i64 {
+    if (_is_ident_intrinsic(S, noff) == 1) { return _stmt_intr_targs(S, noff); }   # 6.7.16: `mulh64<i64>(2, 3);`
     if (_ugc_open(S, GTI(S)) < 0) { return 0; }
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
     if (_cl_capturing == 1) { if (_cl_snap_find(S, noff) >= 0) { return 0; } }

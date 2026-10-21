@@ -692,6 +692,12 @@ fn, so each stays a statement. Neither result has fields: `mulh64(a, b).n = 5;` 
 are one error at the `.`, *expected ';', got '.'*, as `var x = mulh64(a, b).n;` is. Before 6.7.16
 the statement also printed *undefined function 'mulh64'* twice and *refusing to emit binary*
 (`sizeof(T).n` first *undefined variable 'T'*), and under `--syntax-only` only those.
+Neither takes a type-argument list, nor does a builtin (`load64`, `store64`, `syscall`, `callptr`,
+`f64_sqrt`, ...): `mulh64<i64>(2, 3)`, `sizeof<i64>(H)`, `load64<i64>(p)` are refused once, at the
+name, with a fn's words — *'mulh64' is not a generic fn: it takes no type arguments* — and the
+call parses on, so its arguments' errors and the next statement's are reported; the statement
+`mulh64<i64>(2, 3);` is that one error. Before 6.7.16 each was *expected '(', got '<'* with the
+list read as comparisons (*undefined variable 'i64'*), the statement *undefined function 'mulh64'*.
 
 ### Default and named arguments (6.7.7)
 
@@ -7419,7 +7425,8 @@ the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the us
 `p.m<i64>(1)` (on any receiver or chain, a bounded `T`'s member that is not generic included) is refused once, at the
 name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not a generic method: it takes no type
 arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
-'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*). Only a list of type names is read so: `p.n < a, b >
+'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*); an intrinsic or a builtin the same (`mulh64<i64>(2, 3)`,
+`load64<i64>(p)`: *'mulh64' is not a generic fn: ...*). Only a list of type names is read so: `p.n < a, b >
 (c)` stays two comparisons. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
 annotation was refused, an undefined name, an enum's name — `x.m<i64>(1)` is refused as `x.m(1)` is, the list stepped
 (6.7.16; a const said *has no fields*, and each went on to *undefined variable 'i64'*). A token that is no name at all

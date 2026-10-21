@@ -335,6 +335,63 @@ A5_FLOOR=150
 echo "  axis 5: $A5 row-legs on $LEGS; $skips skipped"
 
 echo ""
+# AXIS 6 (6.7.16, f16 FF6) — A TYPE-ARGUMENT LIST ON A CALLEE THAT TAKES NONE IS ONE ERROR AT ITS NAME, in statement and
+# value position (issues/2026-10-19-type-arguments-on-non-generic-fn-call-cascade.md). The filed fn shapes (ng1, ng2)
+# and the method's (ng5) are genbind's `_eta_gen` / `_meth_ngt` since 9ac212def; the intrinsics and the builtins were
+# not: `mulh64<i64>(2, 3);` said "undefined function 'mulh64'", `var x = mulh64<i64>(2, 3);` "expected '(', got '<'" +
+# "undefined variable 'i64'", `load64<i64>(&a)` / `syscall<i64>(60, a)` / `callptr<i64>(&cb)` / `f64_sqrt<f64>(2.0)` the
+# same, a statement's `store64<i64>(&a, 2);` and an `mulh64<T>(..)` in a generic body went on to "expected '}', got end
+# of file" (the next fn read as nested). ERR_EXPECT, asked for a callee's `(`, now asks `_ngt_callee_lt`: a builtin's or an
+# intrinsic's list of type names before its `(` is refused with a fn's words — "'mulh64' is not a generic fn: it takes no
+# type arguments" — and stepped, the call parsed in sync (its arguments' own errors, the next statement's, reported);
+# the statement intrinsic is that one error (`_stmt_intr_targs`; D11's words stand down for it). ng1-ng4 the four filed
+# shapes verbatim, ng5 the method forms, ng6 sizeof and the builtins, ng7 a generic body's two instances once, the
+# arguments checked, top level, two type arguments, ng8 --syntax-only (lint: the list silent, as D6's are; D11's statement
+# line kept), ng9 controls run: a generic `id<i32>(4)`, comparisons `f(a < b, c > (d))` and `sizeof(H) < a`.
+# MUTATION LEDGER (2026-10-21, f16 FF6; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from the copy so every leg's compiler carries the mutant):
+#   the lane before it (68a340f16)                     -> RED ng3 ng4 ng6 ng7 ng8 ng8b on all six legs, 54 assertions
+#   ERR_EXPECT without its `_ngt_callee_lt` hook      -> RED ng3 ng4 ng6 ng7 ng8b, 36 ("expected '(', got '<'")
+#   `_stmt_undef_gcall` without its intrinsic arm     -> RED ng3 ng6 ng7 ng8, 35 ("undefined function 'mulh64'")
+#   `_stmt_intr_at` saying D11's words anyway          -> RED ng3 ng6 ng7, 18 (two errors for the statement)
+#   `_ngt_say_s` latching after its report             -> RED ng6 ng7, 12 (the next statement's / argument's error lost)
+echo "axis 6 — a type-argument list on a callee that takes none is one error at its name, on every leg ($LEGS):"
+A6=0
+NG=" is not a generic fn: it takes no type arguments"
+ZE="undefined variable 'zz' (missing include or enum?)"
+ng() { A5=0; stmt "$@"; A6=$((A6 + A5)); }
+ng ng1 'fn f(a, b): i64 { return a + b; }\nfn go(): i64 { f<i64>(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:2:16: 'f'$NG|"
+ng ng2 'fn f(a, b): i64 { return a + b; }\nfn go(): i64 { var x = f<i64>(2, 3); return x; }\nsyscall(60, go());\n' "error:<source>:2:24: 'f'$NG|"
+ng ng3 'fn go(): i64 { mulh64<i64>(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:1:16: 'mulh64'$NG|"
+ng ng4 'fn go(): i64 { var x = mulh64<i64>(2, 3); return x; }\nsyscall(60, go());\n' "error:<source>:1:24: 'mulh64'$NG|"
+ng ng5 "${SH}"'impl H { fn m2(self, k): i64 { return k; } }\nfn go(): i64 { var h = H { 1, 2 }; h.m2<i64>(2); var y = h.m2<i64>(3); return y + zz; }\nsyscall(60, go());\n' "error:<source>:4:38: 'H.m2' is not a generic method: it takes no type arguments|error:<source>:4:60: 'H.m2' is not a generic method: it takes no type arguments|error:<source>:4:85: $ZE|"
+ng ng6 "${SH}"'fn cb(): i64 { return 1; }\nfn go(): i64 {\n    var a: i64 = 1;\n    var s = sizeof<i64>(H);\n    var l = load64<i64>(&a);\n    store64<i64>(&a, 2);\n    syscall<i64>(60, a);\n    var c = callptr<i64>(&cb);\n    var q = f64_sqrt<f64>(2.0);\n    sizeof<H>(H);\n    return s + l + c + q + zz;\n}\nsyscall(60, go());\n' "error:<source>:6:13: 'sizeof'$NG|error:<source>:7:13: 'load64'$NG|error:<source>:8:5: 'store64'$NG|error:<source>:9:5: 'syscall'$NG|error:<source>:10:13: 'callptr'$NG|error:<source>:11:13: 'f64_sqrt'$NG|error:<source>:12:5: 'sizeof'$NG|error:<source>:13:30: $ZE|"
+ng ng7 'include "lib/syscalls.cyr"\nfn g<T>(x: T): i64 { mulh64<i64>(2, 3); return mulh64<T>(x, 3); }\nfn go(): i64 { mulh64<i64>(zq, 3); return g<i64>(1) + g<i32>(2); }\nvar a = 1;\na = 2;\nmulh64<i64>(2, 3);\nvar b = mulh64<i64, u8>(a, 3);\na = zz;\nsyscall(60, go());\n' "error:<source>:2:22: 'mulh64'$NG|error:<source>:2:48: 'mulh64'$NG|error:<source>:3:16: 'mulh64'$NG|error:<source>:3:30: undefined variable 'zq' (missing include or enum?)|error:<source>:6:1: 'mulh64'$NG|error:<source>:7:9: 'mulh64'$NG|error:<source>:8:7: $ZE|"
+ng ng8 'fn go(): i64 { mulh64<i64>(2, 3); return 0; }\nsyscall(60, go());\n' "error:<source>:1:16: the value of 'mulh64(..)'$SI|" --syntax-only
+# ng8b: --syntax-only says nothing for the value forms (rc 0, no error line) on every leg
+printf '%b' "${SH}"'fn f(a): i64 { return a; }\nfn go(): i64 { var a = 1; var x = mulh64<i64>(2, 3) + load64<i64>(&a) + f<i64>(1) + sizeof<i64>(H); return x; }\nsyscall(60, go());\n' > "$T/ng8b.cyr"
+for leg in $LEGS; do
+    A6=$((A6 + 1))
+    comp "$leg" "$T/ng8b.cyr" "$T/ng8b.$leg" --syntax-only
+    check "ng8b $leg: --syntax-only on the value forms exits 0" 0 "$CRC"
+    check "ng8b $leg: --syntax-only says nothing" "" "$(grep -E '^(error|warning)' "$T/ng8b.$leg.err" | tr '\n' '|')"
+done
+# ng9: controls compile on every leg and run 42 wherever a runner is: a generic's explicit list, comparisons beside a call
+printf '%b' "${SH}"'fn id<T>(x: T): i64 { return x; }\nfn f3(a, b): i64 { return a * 10 + b; }\nfn go(): i64 { var a = 1; var b = 2; var c = 3; var d = 4; var s = sizeof(H) < a; return id<i32>(4) + f3(a < b, c > (d)) + s + 28; }\nsyscall(60, go());\n' > "$T/ng9.cyr"
+for leg in $LEGS; do
+    A6=$((A6 + 1))
+    comp "$leg" "$T/ng9.cyr" "$T/ng9.$leg"
+    check "ng9 $leg: the controls compile" 0 "$CRC"
+    [ "$CRC" = 0 ] && [ -s "$T/ng9.$leg" ] || continue
+    execute "$leg" "$T/ng9.$leg"
+    if [ "$XRC" = -1 ]; then echo "  not run: ng9 $leg — $NOTE"
+    else check "ng9 $leg: id<i32>(4) + f3(a < b, c > (d)) + (sizeof(H) < a) + 28 exits 42" 42 "$XRC"; fi
+done
+A6_FLOOR=60
+[ "$A6" -ge "$A6_FLOOR" ] || { echo "  FAIL: axis 6 ran $A6 row-legs (floor $A6_FLOOR) — rows or legs were lost"; fails=$((fails + 1)); }
+echo "  axis 6: $A6 row-legs on $LEGS"
+
+echo ""
 if [ "$fails" = 0 ]; then
     echo "PASS: intrinsic_names_reserved — sizeof / mulh64 / fncall0..8 are refused as declared names"
     exit 0
