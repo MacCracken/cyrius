@@ -418,5 +418,15 @@ tpx SC2 1 0 - "a : P1 call into a *P1 (an 8-byte struct's word, no address)" 'st
 tpx SC3 2 0 - "str_from(..) into a **Str declaration and global" "${SCH}var GPP: **Str = 0;\nfn main(): i64 {\n    var pp: **Str = str_from(\"x\");\n    GPP = str_from(\"y\");\n    return 0;\n}\nsyscall(60, main());\n"
 tpx SC4 2 0 - "a : Str call that is not the whole value: str_from(..) + 0 into a *Str declaration and global" "${SCH}var GP: *Str = 0;\nfn main(): i64 {\n    var p: *Str = str_from(\"x\") + 0;\n    GP = str_from(\"y\") + 0;\n    return 0;\n}\nsyscall(60, main());\n"
 
+# --- axis 17 (6.7.16; met in the s16 lane's D73 bite) ---
+# A `Str` HANDLE's name into a `*Str` is quiet too: a handle holds the header's address, as a `*Str` does. A `Str` handle
+# GLOBAL (`var p: *Str = GA;`, `GQ = GA;`, `((GA))`, in a fn, after a statement, in the zone) and a closure's captured
+# handle (`var y: *Str = h;`, `GQ = h;`) warned "assigning non-pointer to typed pointer" — a handle LOCAL was already quiet
+# (TH1: 0 warnings, 8 before). These still warn (TH2): an untyped top-level global (`var bb = str_from(..)` is no typed
+# handle at top level) into a `*Str`, a `Str` handle into a `*Q1`. Mutation: `_tp_call_pointee` without its
+# `_tp_hdl_name` arm -> RED TH1 (8 warnings).
+tpx TH1 0 0 54 "a Str handle global / a captured handle into a *Str declaration or global: in a fn, a closure, after a statement, the zone (8 warnings before)" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nvar GA: Str = 0;\nvar GQ: *Str = 0;\nvar GZ: *Str = GA;\nvar GZ2: *Str = (GA);\nfn f(h: Str): i64 {\n    var y: *Str = GA;\n    GQ = ((GA));\n    var c = || { var y3: *Str = h; GQ = h; return str_len(y3); };\n    return str_len(y) + callptr(c) + str_len(GQ);\n}\nvar _ai = alloc_init();\nGA = str_from("ab");\nvar LY: *Str = GA;\nGQ = (GA);\nvar r = str_len(LY) * 10 + str_len(GQ) + f(str_from("xyz")) * 100;\nsyscall(60, r % 256);\n'
+tpx TH2 2 0 - "controls: an untyped top-level global into a *Str, a Str handle into a *Q1 still warn" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nvar GA: Str = 0;\nvar GQ: *Str = 0;\nvar _ai = alloc_init();\nvar bb = str_from("x");\nGQ = bb;\nvar q: *Q1 = GA;\nsyscall(60, 0);\n'
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str (6.7.16)"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str (6.7.16), and a Str handle's name (6.7.16)"
