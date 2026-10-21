@@ -245,12 +245,44 @@ for _sl in 'var x = Q { 1 };\nsyscall(60, x.a);\n' 'fn f(): i64 { var x = Q { 1 
     rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
     if [ "$rc" -ne 0 ] || grep -q '^error' "$E"; then echo "FAIL: L13: --syntax-only refused a sibling struct's literal ($_sl):"; cat "$E"; kfail=$((kfail + 1)); fi
 done
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z13, G1-G2, L1-L13)"; exit 1; }
+# F1-F14 (6.7.16, met while landing issues/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md) — A
+#     `.name` PAST A FIELD THAT IS NO STRUCT IS ONE ERROR, IN ITS OWN WORDS, AT THE NAME: "field 'n' is not a struct: it has
+#     no field 'b'". `w.n.b` (n an i64) read "expected ';', got '.'" (in a condition "expected ')'"), and `w.n.b = 1;` /
+#     `+= 1` added "undefined variable 'b'" to "expected '=', got '.'" (`_fld_tail_bad`, from the read's
+#     `_field_load_on` and the store's `_fst_on`). F1 a read, F2 a store, F3 a compound store, F4 F5 one hop down
+#     (`w.p.a.b`), F6 an f64 / u8 / bool field (the statement's one error), F7 a condition, F8 F9 a global in the zone and
+#     after the first statement, F10 through a `*W` and two names on; F11 a field whose type its declaration refused
+#     (`p: Later`, Later below) stands down: the declaration's one error (it added three); F12 the next name still reports
+#     its own. Controls (run): F13 a struct field's chain (`w.p.a`) and a range after a scalar field (`w.n..5`); F14
+#     --syntax-only (a sibling file's struct) stays silent. RED on the lane before this bite: F1-F12 x4 legs;
+#     `_fld_tail_bad` answering 0: the same; `_fld_rtype_at` answering 0: F11 x4 (3 errors: "field 'p' is not a struct").
+FH='struct Pt { a; }\nstruct W { p: Pt; n; f: f64; u: u8; b: bool; }\n'
+FNS="is not a struct: it has no field"
+cascade_legs F1 1 "$FH"'fn f(): i64 { var w: W; return w.n.b; }\nsyscall(60, f());\n' "3:36: field 'n' $FNS 'b'"
+cascade_legs F2 1 "$FH"'fn f(): i64 { var w: W; w.n.b = 1; return 0; }\nsyscall(60, f());\n' "3:29: field 'n' $FNS 'b'"
+cascade_legs F3 1 "$FH"'fn f(): i64 { var w: W; w.n.b += 1; return 0; }\nsyscall(60, f());\n' "3:29: field 'n' $FNS 'b'"
+cascade_legs F4 1 "$FH"'fn f(): i64 { var w: W; return w.p.a.b; }\nsyscall(60, f());\n' "3:38: field 'a' $FNS 'b'"
+cascade_legs F5 1 "$FH"'fn f(): i64 { var w: W; w.p.a.b = 2; return 0; }\nsyscall(60, f());\n' "3:31: field 'a' $FNS 'b'"
+cascade_legs F6 1 "$FH"'fn f(): i64 { var w: W; return w.f.x + w.u.y + w.b.z; }\nsyscall(60, f());\n' "3:36: field 'f' $FNS 'x'"
+cascade_legs F7 1 "$FH"'fn f(): i64 { var w: W; if (w.n.b == 1) { return 1; } return 0; }\nsyscall(60, f());\n' "3:33: field 'n' $FNS 'b'"
+cascade_legs F8 1 'struct V { n; }\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "3:18: field 'n' $FNS 'q'"
+cascade_legs F9 1 'struct V { n; }\nvar z = 1;\nz = 2;\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "5:18: field 'n' $FNS 'q'"
+cascade_legs F10 1 "$FH"'fn f(pw: *W): i64 { return pw.n.b.c; }\nsyscall(60, 0);\n' "3:33: field 'n' $FNS 'b'"
+cascade_legs F11 1 'struct W { p: Later; }\nstruct Later { a; }\nfn f(): i64 { var w: W; w.p.a = 33; return w.p.a; }\nsyscall(60, f());\n' "1:20: struct field type 'Later' is declared after its use"
+cascade_legs F12 2 "$FH"'fn f(): i64 { var w: W; var t = w.n.b; return u; }\nsyscall(60, f());\n' "3:37: field 'n' $FNS 'b'" "3:48: undefined variable 'u'"
+printf 'struct Pt { a; }\nstruct W { p: Pt; n; }\nfn f(): i64 { var w: W; w.p.a = 30; w.n = 2; var s = 0; for i in w.n..4 { s = s + i; } return w.p.a + s - 2; }\nsyscall(60, f());\n' > "$T"
+rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$O" ]; then echo "FAIL: F13: a struct field's chain / a range after a scalar field did not compile:"; cat "$E"; kfail=$((kfail + 1))
+else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: exit $rc, want 33"; kfail=$((kfail + 1)); }; fi
+printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
+rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
+grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z13, G1-G2, L1-L13, F1-F14)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), valid emits"
 exit 0

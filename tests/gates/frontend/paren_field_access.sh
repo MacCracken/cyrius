@@ -323,7 +323,7 @@ refused Q8 "unknown field 'zz' on struct 'P1'" "(s).zz; a read that does not res
 src Q10 'struct P9 { a; b; }
 fn main(): i64 { var s = P9 { 1, 2 }; (s).a.b; return s.a; }
 syscall(60, main());'
-refused Q10 "expected ';', got '.'" "(s).a.b; a chain that does not parse (a is no struct) keeps its own error"
+refused Q10 "field 'a' is not a struct: it has no field 'b'" "(s).a.b; a chain that does not parse (a is no struct) keeps its own error (6.7.16: in its own words; it was \"expected ';', got '.'\")"
 src Q11 'fn h(): i64 { return undefined_q; }
 fn main(): i64 { var s = P1 { 33 }; (s).zz; return s.a + h(); }
 syscall(60, main());'

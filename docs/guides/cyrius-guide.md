@@ -1347,7 +1347,11 @@ parameter, a closure capture, a call result (`mk().first.next.val`) or a longer 
 and at top level. (Before 6.6.17 it was `expected ';', got '.'`.) A generic struct's `p: *T` field
 does too wherever its instance binds T to a struct: `b.p.y`, `b.p.y = 3` and `b.p.m()` with
 `b: Pb<Pt>` (`struct Pb<T> { p: *T; n; }`), and `b.p.y` inside `fn g<T>(b: Pb<T>)` at `g<Pt>` (6.7.15;
-the chain stopped at `b.p`: `expected ';', got '.'`).
+the chain stopped at `b.p`: `expected ';', got '.'`). A `.name` past a field that is no struct — `w.n.b` with `n` an
+i64, an `f64`, a narrow integer or a `bool` — is refused once, at the name, *field 'n' is not a struct: it has no field
+'b'*, a read, a store and a compound store alike (6.7.16; a read was *expected ';', got '.'*, a store added *undefined
+variable 'b'*); past a field whose type its own declaration refused (`p: Later`, `Later` declared below), that
+declaration's error is the one.
 
 ```
 struct Node { val; next: *Node; }

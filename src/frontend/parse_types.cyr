@@ -5080,6 +5080,7 @@ fn _dlx_from(g): i64 {
 # panic latch THIS error set is cleared again, and every bad field of every struct is reported
 # (not only the first of the file). An error that already held the latch is left alone.
 fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
+    _fld_rtype_add(S, snoff, fnoff);   # 6.7.16: a `.name` past this field stands down (`_fld_tail_bad`)
     if (_panic == 1) { return 0; }
     if (_classify_return_type(S, tnoff) <= 0 - 2048) {
         ERR_IDENT(S, "vector type ", tnoff, " cannot be a struct field type; field ", fnoff);
@@ -5138,6 +5139,7 @@ fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
     var bsid = FINDSTRUCT(S, tnoff);
     if (bsid == si + 1) { return _add_named_field(S, si, fnoff, tnoff); }   # `struct Vec { v: Vec; }`: refused, not a SIGSEGV
     if (bsid == 0) {
+        if (_declared_later(S, tnoff, 40, 101) == 1) { _fld_rtype_add(S, L64(S + 0x1A6018 + si * 8), fnoff); }   # 6.7.16
         if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
                 ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));
                 _panic = 0;

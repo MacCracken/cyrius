@@ -938,6 +938,59 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
     _rlf_off = off;
     return ft;
 }
+# ⛔ 6.7.16 — A `.name` PAST A FIELD THAT IS NO STRUCT is refused once, at the name, in its own words: "field 'n' is not
+# a struct: it has no field 'b'". `w.n.b` (n an i64, an f64, a narrow integer, a bool) read "expected ';', got '.'"
+# (in a condition "expected ')'"), and `w.n.b = 1;` / `+= 1` added "undefined variable 'b'" to "expected '=', got '.'".
+# The leaf `_resolve_leaf_field` published, a `*T` field's hop and a call (`.m(`, `.m<`) already taken; the rest of
+# the chain is stepped and the panic latch keeps the statement to the one error. A field whose type its declaration
+# refused (`p: Later`, Later declared below: `_fld_rtype`) stands down — that declaration's error is the one. Silent
+# under --syntax-only (a sibling file's struct reads as no struct). 1 = refused (the caller stops). CHANGELOG [6.7.16]
+fn _fld_tail_bad(S): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    var n2 = TOKTYP(S, GTI(S) + 2);
+    if (n2 == 10 || n2 == 19) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft > 0) { if (ft < 2048) { return 0; } }
+    if (_fld_ptr_sid(S, _rlf_si, _rlf_fi) > 0) { return 0; }
+    var nti = GTI(S) + 1;
+    var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
+    if (_fld_rtype_at(S, _rlf_si, fnm) == 1) {
+        _panic = 1;
+        _err_n = _err_n + 1;   # counted, as a report the latch swallows is (6.7.16)
+    } else {
+        STI(S, nti);
+        ERR_IDENT(S, "field ", fnm, " is not a struct: it has no field ", TOKVAL(S, nti));
+    }
+    var i = nti + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { break; }
+        i = i + 2;
+    }
+    STI(S, i);
+    return 1;
+}
+# The fields whose declared type was refused (`_refuse_field_type`): (struct name, field name) pairs, so a `.name` past
+# one stands down (`_fld_tail_bad`). CHANGELOG [6.7.16]
+var _fld_rtype = 0;
+fn _fld_rtype_add(S, snoff, fnoff): i64 {
+    if (_fld_rtype == 0) { _fld_rtype = vec_new(); }
+    vec_push(_fld_rtype, snoff);
+    vec_push(_fld_rtype, fnoff);
+    return 0;
+}
+fn _fld_rtype_at(S, si, fnoff): i64 {
+    if (_fld_rtype == 0) { return 0; }
+    var snoff = L64(S + 0x1A6018 + si * 8);
+    var n = vec_len(_fld_rtype);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_fld_rtype, i) == snoff) { if (vec_get(_fld_rtype, i + 1) == fnoff) { return 1; } }
+        i = i + 2;
+    }
+    return 0;
+}
 
 # 6.7.0 (A5, BACKLOG-07) — `var u = s.clone();` where the method returns a struct of 8 B or less:
 # the struct it returns, so `u.len()` resolves (it was `no struct type in scope for 'u'`, while a
@@ -2532,6 +2585,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
     # 6.7.14: --syntax-only, a `.name` / `.m(..)` left past a `*T` field whose T this file does not declare.
     if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_chain_call(S); } }
+    if (_fld_tail_bad(S) == 1) { return 0; }   # 6.7.16: `w.n.b`, n no struct
     if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
     if (hop < 0) { _fls_note(S, pfl_beg, ft); }   # 6.7.6: passive, emits nothing
     if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
@@ -2835,6 +2889,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     }
     # 6.7.14: --syntax-only, a `.name` left past a `*T` field whose T this file does not declare.
     if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_fld_tail(S, term); } }
+    if (_fld_tail_bad(S) == 1) { return 0; }   # 6.7.16: `w.n.b = v`, n no struct
     var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
     if (PEEKT(S) == 28) { return _fld_sub_store(S, idx, sid, off, hop, term); }   # 6.7.8: `h.p[i] = v`
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
