@@ -39,7 +39,9 @@
 #           can see it — and file_create_exclusive's and _io_tmp_taken's CYRIUS_TARGET_WIN arms must
 #           classify a -13 by asking the name (`== 0 - 13`), or file_create_exclusive(dir) is -13
 #           and an atomic write fails at a planted directory instead of moving on (measured on cass:
-#           pe_open_failure_errno and atomic_write_temp_exclusive red).
+#           pe_open_failure_errno and atomic_write_temp_exclusive red). Since 6.7.16 (D95) sys_open
+#           answers that -13 with -17 itself; the two arms stay as the backstop for a refusal of an
+#           existing name that is no directory, and this axis keeps reading them.
 #
 # MUTATION LEDGER — every mutant BUILT AND RUN 2026-10-16 (6.7.14 platform lane, P1; x86_64 Linux
 # + wine 11.19; CYCC=<mutant cycc> for the compiler rows):
