@@ -4985,9 +4985,10 @@ fn _tpv_sid(S, st): i64 {
     if (TOKTYP(S, e + 1) != 41) { return 0; }
     return _asg_rhs_steps(S, e + 1, rs);
 }
-# Where the value `_tpv_sid` types ends: the first of the `)` that wrap it whole, or -1 (its `;`).
+# Where the value `_tpv_sid` types ends: the first of the `)` that wrap it whole, or -1 (its `;`, `_tp_term`).
 var _tpv_ve = 0 - 1;
-# The first token inside the k `(` at `st` that wrap the whole value up to its `;` (k = 0: `st`; `_tpv_ve` -1), or -1
+# The first token inside the k `(` at `st` that wrap the whole value up to its `;` (`_tp_term`) (k = 0: `st`; `_tpv_ve`
+# -1), or -1
 # when they do not wrap it whole (`(a) + 1`, `(a)(b)`). Sets `_tpv_ve`.
 fn _tpv_peel(S, st): i64 {
     _tpv_ve = 0 - 1;
@@ -4997,7 +4998,7 @@ fn _tpv_peel(S, st): i64 {
     var c = _tok_close_paren(S, st + k - 1);
     if (c < 0) { return 0 - 1; }
     if (_pair_unwrap_k(S, c, k, 0) < 0) { return 0 - 1; }
-    if (TOKTYP(S, c + k) != 5) { return 0 - 1; }
+    if (TOKTYP(S, c + k) != _tp_term) { return 0 - 1; }
     _tpv_ve = c;
     return st + k;
 }
@@ -5007,7 +5008,7 @@ fn _tpv_end_at(S, i): i64 {
         if (i == _tpv_ve) { return 1; }
         return 0;
     }
-    if (TOKTYP(S, i) == 5) { return 1; }
+    if (TOKTYP(S, i) == _tp_term) { return 1; }
     return 0;
 }
 fn _asg_rhs_steps(S, di, rsid): i64 {

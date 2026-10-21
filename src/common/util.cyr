@@ -518,6 +518,10 @@ var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attrib
 # v6.5.28 — the declared return sid of the call on the RHS of an assignment, captured before
 # the RHS is parsed (src/frontend/parse.cyr). 0 when the RHS is not a call to a known fn.
 var _asg_ret_sid = 0;
+# 6.7.16 — the token that ends the value the typed-pointer warning judges: `;` (5), or a classic-for step's `)` (11,
+# `_for_step_tpw`, src/frontend/parse_ctrl.cyr). Read by the exemptions (`_tp_null_exempt`, `_tp_str_exempt`, `_tpv_peel`,
+# `_tpv_end_at`).
+var _tp_term = 5;
 # 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
 # constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse_expr.cyr).
 var _asg_ti = 0 - 1;

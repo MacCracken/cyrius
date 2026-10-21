@@ -1284,7 +1284,8 @@ of 2026-10-13.) (Before 6.6.17,
 its last argument's step.)
 That warning fires at every `*T` site (6.7.13, the user's decision D18 (a), 2026-10-15): a declaration in a fn,
 after the first top-level statement and in the declaration zone, and an assignment to a `*T` local, parameter or
-global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
+global — a classic-for step's too (6.7.16: `for (..; ..; p = 7)` into a `*T` said nothing through 6.7.15; a compound
+step `p += 1` is never warned, as the statement is not). Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
 fn and the assignment to a `*Struct` local or a `*T` global warned on it) — under parentheses that wrap it whole
