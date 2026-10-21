@@ -1071,8 +1071,60 @@ error:<source>:3:15: a \`struct\` declaration $IR a fn body"
 row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
 " "error:<source>:1:15: a \`trait\` declaration $IR a fn body" --syntax-only
 
+# UZ — 6.7.16 (issues/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
+# CONTEXT NAMING A LATE (REFUSED) ENUM IS NO SECOND ERROR. A declaration-zone global's array size and an enum's value are
+# evaluated during pass 1's zone scan, before the first statement — and so the late declarations' names (`_dl_fill`) —
+# is known: "unknown name 'E' in a const context", printed BEFORE the enum's own error. Now `_ce_unk` holds the report
+# of a name a later declaration declares (`_ce_zdefer`), latched as the printed one is, and `_ce_zflush` says it at the
+# end of pass 1's tail walk unless a refused declaration declared the name. UZ1 / UZ2 the filed repros verbatim (two
+# errors each before); UZ3 several zone uses, of two late enums (one error per enum); UZ4 control: a zone const and a
+# zone #assert (one error, as before); UZ5 control: a VALID forward zone reference (no statement between) still says
+# "unknown name 'E'" once — after the pass-1 reports between it and the zone's end (UZ6: the struct field's); UZ7 a name
+# declared nowhere is reported in place; UZ8 a held report is said before an unmatched `}` stops the compile; UZ9
+# --syntax-only of UZ1.
+#   the lane before it (8c5be2e81)                   -> RED UZ1 UZ2 UZ3 UZ9 (the early "unknown name 'E'"), UZ6
+#                                                       (its old order), 25
+#   `_ce_unk` without `_ce_zdefer`                   -> RED UZ1 UZ2 UZ3 UZ6 UZ9, 25
+#   `_ce_zflush` saying every held report            -> RED UZ1 UZ2 UZ3 UZ9, 20 (the late enum's name said)
+#   `_ce_zflush` dropping every held report          -> RED UZ5 UZ6 UZ8, 15 (the valid forward reference unsaid:
+#                                                       rc 1, its one error lost)
+#   `_tl_stray_brace` without its `_ce_zflush`       -> RED UZ8, 5
+row5 UZ1 "filed: a zone array size naming a late enum" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)"
+row5 UZ2 "filed: a zone enum value naming a late enum" "$(printf 'enum F { X = E.B }\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)"
+row5 UZ3 "several zone uses of two late enums" 'var arr: i64[E.B];
+var b: i64[E.A];
+enum F { X = E.B, Y = Q.A }
+var a = 1;
+a = 2;
+enum E { A, B }
+enum Q { A }
+syscall(60, zz);
+' "error:<source>:6:1: an \`enum\` declaration must come before the first top-level statement (line 5)
+error:<source>:7:1: an \`enum\` declaration must come before the first top-level statement (line 5)
+error:<source>:8:15: $ZZ"
+row5 UZ4 "control: a zone const and a zone #assert" "$(printf 'const C = E.B;\n#assert E.A == 0\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:5:1: an \`enum\` declaration must come before the first top-level statement (line 4)"
+row5 UZ5 "control: a valid forward zone reference is said once" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:4:15: $ZZ"
+row5 UZ6 "control: ... after the pass-1 reports before the zone's end" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
+" "error:<source>:2:17: unknown type 'Zt' for struct field 'x'
+error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:5:15: $ZZ"
+row5 UZ7 "control: a name declared nowhere is said in place" "$(printf 'var arr: i64[Z.B];\nstruct P { x: Zt; }\nvar a = 1;\na = 2;\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'Z' in a const context
+error:<source>:2:17: unknown type 'Zt' for struct field 'x'
+error:<source>:5:15: $ZZ"
+row5 UZ8 "a held report is said before an unmatched } stops the compile" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\n}\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:4:1: unmatched '}' at module scope"
+row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
+
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=75
+F5FLOOR=120
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

@@ -445,6 +445,7 @@ fn _prescan_tail_loop(S): i64 {
         # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_attr_drop(); }
     }
+    _ce_zflush(S);   # 6.7.16: the zone's held unknown names, every late declaration's names now in
     return 0;
 }
 
@@ -457,6 +458,7 @@ fn _prescan_tail_loop(S): i64 {
 # hint covers the other way to get here: an extra `}` INSIDE a fn ends it early, and the fn's own
 # closing brace is the one left over. CHANGELOG [6.7.9]
 fn _tl_stray_brace(S): i64 {
+    _ce_zflush(S);   # 6.7.16: before the compile stops
     var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
     ERR_MSG(S, "unmatched '}' at module scope", 29);
     if (quiet == 0) { syscall(SYS_WRITE, 2, "  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }

@@ -561,9 +561,11 @@ var r = add(20, 22);   # r = 42
   The same for a use parsed before a declaration refused in a fn body or a block (6.7.16): an earlier
   fn's `q: *Q` or `E.B`, a bound `T: Tr`, `dyn Tr`, `impl Tr for P` — their names are known before any
   use is read.
-  A name declared nowhere is still reported. ⚠ A use inside the declaration zone itself (a zone global's
-  array size or enum value naming a late enum) is evaluated before the first statement is known, and is
-  still reported.
+  A name declared nowhere is still reported. A use inside the declaration zone itself (a zone global's
+  array size or enum value naming a late enum) is evaluated before the first statement is known; its
+  report is held until the late declarations are (6.7.16) and dropped for one of them. ⚠ So a zone array
+  size naming an enum declared LATER IN THE ZONE (valid, but declared after its use) still says "unknown
+  name 'E' in a const context", now after the other pass-1 reports above the first statement.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
