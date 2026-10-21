@@ -3333,15 +3333,10 @@ fn _pf_err(S, e): i64 {
 # One call in PARSE_STMT (cybs's per-fn ceiling). 1 = the statement is consumed. CHANGELOG [6.7.14]
 fn _stmt_paren_field(S): i64 {
     var st = GTI(S);
-    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st); }   # 6.7.15 (D19): `(*p) += 1;`
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st, 1); }   # 6.7.15 (D19): `(*p) += 1;`
     var x = _pf_chain_end(S, _pf_e);
     if (_pf_asg_at(S, x) == 1) {
-        if (_syntax_only == 0) { if (_tn_once(S, _pf_e) == 1) {
-                var p0 = _panic;
-                STI(S, _pf_e);
-                ERR_MSG(S, "cannot assign to a field after parentheses - write the store without them (`s.a = v`)", 85);
-                _panic = p0;
-            } }
+        _pf_store_err(S);
         STI(S, st);
         _cst_skip_sync(S);
         return 1;
@@ -3351,6 +3346,31 @@ fn _stmt_paren_field(S): i64 {
     PARSE_FACTOR(S);
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _expect_step(S, 5);
+    return 1;
+}
+# A store through `( .. ).name` (D24 (a)), refused once at the wrap's `.` (`_pf_e`), the latch as it was; the cursor is
+# left on the `.`. The statement's and (6.7.16) the classic-for step's.
+fn _pf_store_err(S): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tn_once(S, _pf_e) == 0) { return 0; }
+    var p0 = _panic;
+    STI(S, _pf_e);
+    ERR_MSG(S, "cannot assign to a field after parentheses - write the store without them (`s.a = v`)", 85);
+    _panic = p0;
+    return 0;
+}
+# ⛔ 6.7.16 — A CLASSIC-FOR STEP WHOSE DESTINATION IS PARENTHESISED IS REFUSED IN ITS STATEMENT'S WORDS: `(n) = 7`,
+# `(*pn) += 1` (6.7.15's D19), `(pn)[0] = 2` (6.7.16's D22) and `(s).a = 3` (6.7.14's D24 (a)) were "expected '=', got
+# <the token after the `(`>": `_for_step_replay` took the `(` as the destination's name, and the statement's refusals
+# (`_stmt_paren_field`) never saw a step. The statement's readers run with the step's `)` as the end (`_pd_semi` and
+# the chain walkers stop there): the same words, once at the same token, with no skip — PARSE_FOR puts the cursor back
+# after the step. A parenthesised value (`(n + 1) = 7`), a call (`(s).m()`) or no assignment keeps "expected '='".
+# Cursor on the step's `(`: 1 = refused, else 0 with the cursor untouched. CHANGELOG [6.7.16]
+fn _step_paren(S): i64 {
+    var st = GTI(S);
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st, 0); }
+    if (_pf_asg_at(S, _pf_chain_end(S, _pf_e)) == 0) { return 0; }
+    _pf_store_err(S);
     return 1;
 }
 # ⛔ 6.7.15 — `(s).a;` ALONE IS REFUSED AS `s.a;` IS (the user's D60, 2026-10-18; 6.7.14's item 19): since 6.7.14's
@@ -3419,22 +3439,25 @@ fn _pf_last_field(S, i, e): i64 {
 # 6.7.14's D24 (a)); now "an assignment's destination is not parenthesised - write `*p += 1`", the statement quoted
 # without its wraps, once at the `(`, the statement stepped in sync (the latch as it was). The inside must be a place —
 # `* E`, or a name with `.f` / `[i]` steps — so a parenthesised value (`(n + 1) = 7;`, `(f()) = 3;`) or a tuple literal
-# keeps "unexpected '('". Cursor on the statement's `(`: 1 = consumed. CHANGELOG [6.7.15]
-fn _stmt_paren_dst(S, st): i64 {
+# keeps "unexpected '('". Cursor on the statement's `(`: 1 = consumed (`sync` 1: the statement stepped in sync; 0, a
+# classic-for step's (6.7.16, `_step_paren`): the cursor left, PARSE_FOR puts it back). CHANGELOG [6.7.15]
+fn _stmt_paren_dst(S, st, sync): i64 {
     if (TOKTYP(S, st) != 10) { return 0; }
     if (_tup_lit_at(S, st) >= 0) { return 0; }
     var pe = _pw_end;
     var k = _pwrap_k(S, st);
     var e = _pw_end;
     _pw_end = pe;
-    if (TOKTYP(S, e) == 28) { return _stmt_paren_sub(S, st, e); }   # 6.7.16 (D22): `(pn)[0] = 1;`
+    if (TOKTYP(S, e) == 28) { return _stmt_paren_sub(S, st, e, sync); }   # 6.7.16 (D22): `(pn)[0] = 1;`
     if (_pf_asg_at(S, e) == 0) { return 0; }
     if (_pd_place(S, st + k, e - k) == 0) { return 0; }
     var p0 = _panic;
     _pd_err(S, st + k, e - k, e);
     _panic = p0;
-    STI(S, st);
-    _cst_skip_sync(S);
+    if (sync == 1) {
+        STI(S, st);
+        _cst_skip_sync(S);
+    }
     return 1;
 }
 # ⛔ 6.7.16 — A SUBSCRIPT STORE THROUGH A PARENTHESISED BASE STAYS REFUSED, IN THE READ'S WORDS (the user's D22,
@@ -3444,7 +3467,7 @@ fn _stmt_paren_dst(S, st): i64 {
 # q[i])", once at the `(`, the statement stepped in sync (the latch as it was), so the next statement is parsed
 # normally. `e` = the `[` after the outermost `)`; the `[..]` steps must end in an assignment, else 0 (cursor untouched:
 # `(pn)[0];` keeps "unexpected '('"). CHANGELOG [6.7.16]
-fn _stmt_paren_sub(S, st, e): i64 {
+fn _stmt_paren_sub(S, st, e, sync): i64 {
     var x = e;
     while (TOKTYP(S, x) == 28) {
         x = _pf_sq_close(S, x);
@@ -3457,7 +3480,7 @@ fn _stmt_paren_sub(S, st, e): i64 {
     _psub_err(S, ": a subscript's base is a name, a *T field or a call returning *T", 0 - 1,
       " - name the pointer first (var q: *T = ..; q[i])", "", 0);   # once per site: its own `_derr_seen`
     _panic = p0;
-    _cst_skip_sync(S);
+    if (sync == 1) { _cst_skip_sync(S); }
     return 1;
 }
 # 1 = tokens [a, ie) are a place: `* E`, or a name followed by `.name` / `[..]` steps only.

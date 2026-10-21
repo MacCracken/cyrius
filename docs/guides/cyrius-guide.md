@@ -2416,7 +2416,9 @@ literal keep *unexpected '('*. A SUBSCRIPT store through a parenthesised base �
 `(pn)[0] += 1;` — is refused once, at the `(`, in the words the read `(pn)[0]` gets (6.7.16, the user's D22,
 2026-10-19: `a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T =
 ..; q[i])`); it was *unexpected '('*. Dropping the parentheses is no fix there: `*pn[0]` is `*(pn[0])`. A classic-for
-step is not a statement: a parenthesised destination there (`(n) = 7`, `(pn)[0] = 7`) still says *expected '='*.
+step takes the same words, once (6.7.16): `for (..; ..; (n) = 7)`, `(*pn) += 1`, `(pn)[0] = 2` and `(s).a = 3` were
+*expected '=', got* the token after the `(`; a parenthesised value (`(n + 1) = 7`) or a call (`(s).m()`) as a step
+keeps *expected '='*.
 The same holds for a struct fn's **return value** (6.7.6): `return (j);`, `return (mk3(v));`,
 `return ((j));` and `return (a + b);` are `return j;`, `return mk3(v);` and `return a + b;`, in
 both return classes (a retptr struct over 16 bytes, a 9-16 byte struct in two registers) — they
