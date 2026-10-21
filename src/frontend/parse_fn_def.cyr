@@ -433,6 +433,9 @@ fn _prescan_tail_loop(S): i64 {
         # the point. CHANGELOG [6.6.5]
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
         elif (t == 14) { _tl_stray_brace(S); go = 0; }   # an unmatched '}' — refused (6.7.9)
+        # 6.7.16: a `private` marker registers nothing (the pre-pass marked the file or reported the per-item form);
+        # stepped alone, so a `fn` after a per-item one is prescanned and a late declaration's names filled
+        elif (t == 153) { STI(S, GTI(S) + 1); }
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { _tl_arm1(t); STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
@@ -622,7 +625,7 @@ fn _decl_late(S): i64 {
 # The late declaration at the cursor (token `ti`) stepped as its refusal steps it, and reported when `rep` is 1: an
 # inclusion's rest (`_dl_incl`), a `pub var` / `pub const` marker alone (6.7.16: `pub var x = 1;` still declares x,
 # as below module scope), else through its `}` / `;` and a derive's line. Pass 1's fill (`_dl_fill`) steps the same
-# tokens, `rep` 0.
+# tokens, `rep` 0; a per-item `private` before it (`_dl_priv_late`), `rep` 2: its include line reported, not itself.
 fn _dl_late_step(S, ti, rep): i64 {
     var l1 = GTLINE(S, ti);
     var f1 = FM_SITE(S, l1);
@@ -667,6 +670,7 @@ fn _dl_fill(S, t): i64 {
 # fn 'f'". A `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`), so the declaration still declares and a
 # use of it is no "undefined variable". CHANGELOG [6.7.16]
 fn _decl_inner(S): i64 {
+    if (PEEKT(S) == 153) { return _dl_priv(S); }   # 6.7.16: a per-item `private`, at module scope too
     if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
     if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     var ti = GTI(S);
@@ -674,6 +678,43 @@ fn _decl_inner(S): i64 {
     if (_dl_pub_mark(S) == 1) { return 1; }
     _dl_skip_in(S);
     _dl_derived(S, ti);
+    _dl_names(S, ti, GTI(S));
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ⛔ 6.7.16 — A PER-ITEM `private` IN A FN BODY, A BLOCK OR AFTER THE FIRST TOP-LEVEL STATEMENT IS ITS ONE ERROR.
+# `_PRIV_PRESCAN` reports it at the token, once, before either pass, and the zone's `_TL_VIS` steps it; here PARSE_STMT
+# met it where nothing takes it: "unexpected private" as well, and a `private fn g` in a fn body "fn 'g' is defined
+# inside fn 'f'" too. The marker is stepped (`_priv_is_item`, the pre-pass's own test, so the token stepped is the one
+# reported). Then a `var` / `const` / a statement parses on (the variable declares: its use is no "undefined
+# variable"); a `fn` where a fn is defined (module scope, a top-level block: GINFN 0) is left to PARSE_PROG, which
+# defines it; a `fn` in a fn body, or a declaration the declaration-section rule refuses (`_dl_kind`), is stepped as
+# that refusal steps it, its names and fns entered as reported (`_dl_names`, `_dl_quiet`), the per-item error standing
+# for it. The file-level marker (alone on its line) is not this arm's. 1 = consumed (PARSE_STMT returns), 0 = parse on
+# at the cursor. CHANGELOG [6.7.16]
+fn _dl_priv(S): i64 {
+    while (PEEKT(S) == 153) {
+        if (_priv_is_item(S, GTI(S)) == 0) { return 0; }
+        STI(S, GTI(S) + 1);
+    }
+    var ti = GTI(S);
+    if (_IS_FN_KW(S) == 1) {
+        if (GINFN(S) == 0) { return 1; }
+    } elif (_dl_kind(PEEKT(S)) == 0) { return 0; }
+    if (GINFN(S) == 0) { if (_pp_depth <= 1) { return _dl_priv_late(S, ti); } }
+    if (_dl_pub_mark(S) == 1) { return 1; }
+    _dl_skip_in(S);
+    _dl_derived(S, ti);
+    _dl_names(S, ti, GTI(S));
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ... a refused declaration after the first statement (`_decl_late`'s arm, `rep` 2: an include line is still reported,
+# the declaration's own report is the per-item one).
+fn _dl_priv_late(S, ti): i64 {
+    if (_pp_depth != 1) { return 0; }
+    if (_tl_stmt1 < 0) { return 0; }
+    _dl_late_step(S, ti, 2);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
     return 1;
@@ -783,7 +824,7 @@ fn _dl_incl(S, l1, f0, n0, rep): i64 {
 }
 fn _dl_incl_at(S, l1, e, f0, n0, rep): i64 {
     var ti = GTI(S);
-    if (rep == 1) { if (_panic == 0) {
+    if (rep != 0) { if (_panic == 0) {
             PRSTR("error:");
             PRSTR(S + 0x721000 + f0);
             PRSTR(":");

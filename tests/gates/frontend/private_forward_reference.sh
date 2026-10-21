@@ -84,6 +84,7 @@
 #   M15 drop the tail path's `_fnt_strmask` divert        -> the crossos tcyr's tail-position Str
 #         rows read the raw cstr back while the `var r = f(...)` rows beside them stay correct
 #   M16 drop the EOF carve-out in _PRIV_PRESCAN_TOK       -> private_per_item_rejected axis 3b red
+#         (the carve-out is `_priv_is_item`'s since 6.7.16, the test factored out for `_dl_priv`)
 #
 # ⚠ TWO CHANGES IN THIS BITE THAT THIS LEDGER DOES **NOT** COVER, written out rather than
 #   implied by silence:

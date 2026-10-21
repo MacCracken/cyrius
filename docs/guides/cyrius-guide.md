@@ -4581,6 +4581,11 @@ Rules:
   closes the statement and lets an item follow on the same line. ⚠ Until 6.6.5 that
   rejection still flipped the file private and printed itself twice, so a *legitimate* fn
   in the same file was then reported "private to its file" at its caller.
+  In a fn body, a block or after the first top-level statement the per-item form is that
+  one error too (6.7.16; it added "unexpected private", and `private fn g` in a fn body
+  "fn 'g' is defined inside fn 'f'"): a `var` / `const` after it still declares, a `fn`
+  where a fn may be defined is defined, and a `fn` in a fn body or a declaration refused
+  there is stepped with the one error standing for it.
 - `public` marks one item. It is meaningful only inside a `private` file; in an
   ordinary file everything is public already, so it is a no-op you may write for
   documentation.

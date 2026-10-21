@@ -2790,26 +2790,28 @@ fn _PRIV_PRESCAN(S): i64 {
 }
 
 fn _PRIV_PRESCAN_TOK(S, ti): i64 {
-    var ln = GTLINE(S, ti);
-    # THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
-    # file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
-    # too. Anything else sharing the token's line is the per-item misread.
-    # ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
-    # on whatever line the source ended on, so a file whose last byte is the `e` of
-    # `private` — no trailing newline — has the EOF token sharing the marker's line and was
-    # told "per-item `private` is not supported", a rule the author did not break. 6.6.4
-    # refused that source too (`unexpected private` when a statement precedes it), so the
-    # only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
-    var nx = ti + 1;
-    if (nx < GTCNT(S)) {
-        if (TOKTYP(S, nx) != 5) {
-            if (TOKTYP(S, nx) != 12) {
-                if (GTLINE(S, nx) == ln) { _priv_per_item_err(S, ti); return 0; }
-            }
-        }
-    }
-    _PRIV_MARK(FM_FILEID(S, ln));
+    if (_priv_is_item(S, ti) == 1) { _priv_per_item_err(S, ti); return 0; }
+    _PRIV_MARK(FM_FILEID(S, GTLINE(S, ti)));
     return 0;
+}
+# 1 = the `private` at token `ti` is the per-item form (reported by the pre-pass). Also the statement parser's test
+# (`_dl_priv`, parse_fn_def.cyr), so the token it steps is the one reported.
+# THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
+# file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
+# too. Anything else sharing the token's line is the per-item misread.
+# ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
+# on whatever line the source ended on, so a file whose last byte is the `e` of
+# `private` — no trailing newline — has the EOF token sharing the marker's line and was
+# told "per-item `private` is not supported", a rule the author did not break. 6.6.4
+# refused that source too (`unexpected private` when a statement precedes it), so the
+# only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
+fn _priv_is_item(S, ti): i64 {
+    var nx = ti + 1;
+    if (nx >= GTCNT(S)) { return 0; }
+    if (TOKTYP(S, nx) == 5) { return 0; }
+    if (TOKTYP(S, nx) == 12) { return 0; }
+    if (GTLINE(S, nx) != GTLINE(S, ti)) { return 0; }
+    return 1;
 }
 
 # Emitted from the pre-pass, so NOT through ERR_MSG: ERR_MSG sets `_panic`, which exists
