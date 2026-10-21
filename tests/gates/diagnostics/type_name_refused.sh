@@ -447,6 +447,133 @@ refused gp_i64_local  'struct P { a; }\nfn f(): i64 { var g = 7; var x: *i64 = &
 runs gp_P             'struct P { a; b; }\nvar q = P { 7, 9 };\nvar x: *P = &q;\nsyscall(60, x.b);\n' 9
 runs gp_P_late        'struct P { a; b; }\nvar q = P { 7, 9 };\nvar y = 1;\ny = 2;\nvar x: *P = &q;\nx.a = 3;\nsyscall(60, x.b + x.a);\n' 12
 
+# ⛔ 6.7.16 (D68, the user, 2026-10-20: "Refuse it with the local's words"; issues/2026-10-19-scalar-typed-global-field-
+# reads-width-as-struct-id.md) — NOR DOES A SCALAR GLOBAL. An i8..u32 global's var type is its WIDTH (1 / 2 / 4), an
+# f64 / f32 one's F64_TYID / F32_TYID, and `_gv_recv_sid` handed either to the field arms as a struct id:
+# `var g: i32 = 5; g.d` (four structs) COMPILED and read g through the 4th struct's `d` (exit 5), `g.d = 9;` stored
+# through it, `g.m()` called S's method, an i16 global's `g.a` said "unknown field 'a' on struct 'Q'", and an f64 /
+# f32 global's `g.a` / `g.a = 3;` / `g.m()` SIGSEGV'd THE COMPILER (rc 139, no diagnostic). Now each is the local's one
+# error, "no struct type in scope for 'g'; a '.field' access / assignment / a method call needs its struct
+# declaration", rc 1, no binary. sg1-sg5 are the filing's sc1 / sc5 / sc3 / sc4 / sc7 verbatim. Every row runs on
+# the x86_64 compiler, its PE and Mach-O legs, and the aarch64, cx and PE-cross compilers built here from the tree;
+# the controls (sgc_*: a struct global's fields, a `*P` global, a struct numbered as a width) RUN on x86_64, aarch64
+# (qemu-aarch64 — emulation), cx (the tree's cxvm) and both PE legs (wine, a private prefix); Mach-O is built, not
+# run. A cross compiler that does not build is RED; a missing qemu-aarch64 / wine is a SKIP line by name.
+# MUTATION (2026-10-20, f16, a scratch copy of the tree with `_gv_recv_sid`'s two new returns dropped, its 2-stage
+# cycc, this gate run from the copy with CYCC= it): RED every sg row on all six legs, 216 assertions — sg1 / sg2 /
+# sg3 / sg8 / sg9 / sg10 / sg12 / sg13 compiled rc 0 with a binary, sg4 / sg5 / sg6 / sg14 / sg15 rc 139 (the
+# compiler's SIGSEGV), sg7 / sg11 "unknown field 'a' on struct 'Q'" / "... 'd' on struct 'P'"; the sgc rows green.
+WP="$T/wine"
+WHM="$T/whome"
+_wine_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
+ulimit -c 0 2>/dev/null || true
+SGL="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then
+    chmod +x "$T/cc_a64"; SGL="$SGL a64"
+else echo "  FAIL: aarch64 - src/main_aarch64.cyr did not build"; fails=$((fails + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ] \
+   && "$CC" < programs/cxvm.cyr > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ]; then
+    chmod +x "$T/cc_cx" "$T/cxvm"; SGL="$SGL cx"
+else echo "  FAIL: cx - src/main_cx.cyr or programs/cxvm.cyr did not build"; fails=$((fails + 1)); fi
+if "$CC" < src/main_win.cyr > "$T/cc_win" 2> /dev/null && [ -s "$T/cc_win" ]; then
+    chmod +x "$T/cc_win"; SGL="$SGL win"
+else echo "  FAIL: win - src/main_win.cyr (the PE cross compiler) did not build"; fails=$((fails + 1)); fi
+QEMU=0; WINE=0
+if command -v qemu-aarch64 > /dev/null 2>&1; then QEMU=1
+else echo "  SKIP: the sgc aarch64 run leg (qemu-aarch64 not installed; the compile rows still run)"; fi
+if command -v wine > /dev/null 2>&1; then WINE=1
+else echo "  SKIP: the sgc PE run legs (wine not installed; the compile rows still run)"; fi
+# sgcomp <leg> <src> <out>: compile from the checkout (lib/ resolves); the rc in CRC
+sgcomp() {
+    CRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        a64)   timeout 60 "$T/cc_a64" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        cx)    timeout 60 "$T/cc_cx" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        win)   timeout 60 "$T/cc_win" < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+    esac
+}
+# sgexec <leg> <binary>: run it where this box has a runner; the exit in XRC, -1 = not run (NOTE says why)
+sgexec() {
+    XRC=-1; NOTE=""
+    case "$1" in
+        x86)   chmod +x "$2"; XRC=0; timeout 60 "$2" > /dev/null 2>&1 || XRC=$? ;;
+        a64)   if [ "$QEMU" = 1 ]; then chmod +x "$2"; XRC=0; timeout 120 qemu-aarch64 "$2" > /dev/null 2>&1 || XRC=$?
+               else NOTE="qemu-aarch64 not installed"; fi ;;
+        cx)    XRC=0; timeout 120 "$T/cxvm" < "$2" > /dev/null 2>&1 || XRC=$? ;;
+        pe|win) if [ "$WINE" = 1 ]; then
+                   cp "$2" "$2.exe"; XRC=0
+                   (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                       WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "$2.exe" > /dev/null 2>&1) || XRC=$?
+               else NOTE="wine not installed"; fi ;;
+        macho) NOTE="no Mach-O loader on Linux" ;;
+    esac
+}
+SGN=0
+# sg <name> <printf-fmt> <the `error` / `warning` lines, each ended by |>: on every leg rc 1 (never 139), exactly
+# those lines, no binary
+sg() {
+    printf '%b' "$2" > "$T/$1.cyr"
+    for leg in $SGL; do
+        SGN=$((SGN + 1))
+        sgcomp "$leg" "$T/$1.cyr" "$T/$1.$leg"
+        check "$1 $leg: exits 1" 1 "$CRC"
+        check "$1 $leg: error lines" "$3" "$(grep -E '^(error|warning)' "$T/$1.$leg.err" | tr '\n' '|')"
+        check "$1 $leg: emits no binary" 0 "$(wc -c < "$T/$1.$leg" | tr -d ' ')"
+    done
+}
+# sgc <name> <printf-fmt> <exit>: compiles on every leg with no diagnostic, and runs <exit> wherever a runner is
+sgc() {
+    printf '%b' "$2" > "$T/$1.cyr"
+    for leg in $SGL; do
+        SGN=$((SGN + 1))
+        sgcomp "$leg" "$T/$1.cyr" "$T/$1.$leg"
+        check "$1 $leg: compiles" 0 "$CRC"
+        check "$1 $leg: no error / warning" "" "$(grep -E '^(error|warning)' "$T/$1.$leg.err" | tr '\n' '|')"
+        [ "$CRC" = 0 ] && [ -s "$T/$1.$leg" ] || { check "$1 $leg: a binary is written" yes no; continue; }
+        sgexec "$leg" "$T/$1.$leg"
+        if [ "$XRC" = -1 ]; then echo "  not run: $1 $leg - $NOTE"
+        else check "$1 $leg: exits $3" "$3" "$XRC"; fi
+    done
+}
+echo "axis 7 (D68) - a scalar global names no struct at \`.field\`, on every leg ($SGL):"
+SGS="no struct type in scope for 'g'"
+SGA="; a '.field' access needs its struct declaration (missing include?)"
+SGW="; a '.field' assignment needs its struct declaration (missing include?)"
+SGM="; a method call needs its struct declaration (missing include?)"
+SG4='include "lib/syscalls.cyr"\nstruct P { a; }\nstruct Q { b; }\nstruct R { c; }\nstruct S { d; }\n'
+sg sg1  "${SG4}"'var g: i32 = 5;\nsyscall(60, g.d);\n' "error:<source>:7:16: $SGS$SGA|"
+sg sg2  "${SG4}"'var g: i32 = 5;\ng.d = 9;\nsyscall(60, g);\n' "error:<source>:7:5: $SGS$SGW|"
+sg sg3  'include "lib/syscalls.cyr"\nstruct P { a; }\nvar g: u8 = 5;\nsyscall(60, g.a);\n' "error:<source>:4:16: $SGS$SGA|"
+sg sg4  'include "lib/syscalls.cyr"\nstruct P { a; }\nvar g: f64 = 5;\nsyscall(60, g.a);\n' "warning:<source>:3:15: an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)|error:<source>:4:16: $SGS$SGA|"
+sg sg5  'include "lib/syscalls.cyr"\nstruct P { a; }\nvar y = 1;\ny = 2;\nvar g: f64 = 5.0;\nsyscall(60, g.a);\n' "error:<source>:6:16: $SGS$SGA|"
+sg sg6  'include "lib/syscalls.cyr"\nstruct P { a; }\nvar g: f32 = 5.0;\nsyscall(60, g.a);\n' "error:<source>:4:16: $SGS$SGA|"
+sg sg7  'include "lib/syscalls.cyr"\nstruct P { a; }\nstruct Q { b; }\nvar g: i16 = 5;\nsyscall(60, g.a);\n' "error:<source>:5:16: $SGS$SGA|"
+sg sg8  'include "lib/syscalls.cyr"\nstruct P { a; }\nstruct Q { b; }\nvar g: u16 = 5;\nsyscall(60, g.b);\n' "error:<source>:5:16: $SGS$SGA|"
+sg sg9  "${SG4}"'impl S { fn m(self): i64 { return 7; } }\nvar g: i32 = 5;\nsyscall(60, g.m());\n' "error:<source>:8:16: $SGS$SGM|"
+sg sg10 "${SG4}"'var y = 1;\ny = 2;\nvar g: u32 = 5;\ng.d = 9;\nsyscall(60, g.d);\n' "error:<source>:9:5: $SGS$SGW|error:<source>:10:16: $SGS$SGA|"
+sg sg11 "${SG4}"'var g: i8 = 5;\nfn f(): i64 { g.d = 3; return g.d; }\nsyscall(60, f());\n' "error:<source>:7:19: $SGS$SGW|error:<source>:7:34: $SGS$SGA|"
+sg sg12 "${SG4}"'var g: i32 = 5;\ng.d += 1;\nsyscall(60, g);\n' "error:<source>:7:5: $SGS$SGW|"
+sg sg13 "${SG4}"'var g: i32 = 5;\nfn f<T>(x: T): i64 { return g.d; }\nsyscall(60, f(1) + f<i32>(2));\n' "error:<source>:7:32: $SGS$SGA|"
+sg sg14 'include "lib/syscalls.cyr"\nstruct P { a; }\nvar g: f64 = 5.0;\ng.a = 3;\nsyscall(60, 0);\n' "error:<source>:4:5: $SGS$SGW|"
+sg sg15 'include "lib/syscalls.cyr"\nstruct P { a; }\nvar g: f32 = 5.0;\nfn f(): i64 { return g.m(); }\nsyscall(60, f());\n' "error:<source>:4:25: $SGS$SGM|"
+sgc sgc_struct  "${SG4}"'var q = S { 7 };\nvar r: R = R { 2 };\nq.d = q.d + r.c;\nsyscall(60, q.d);\n' 9
+sgc sgc_late    "${SG4}"'var y = 1;\ny = 2;\nvar q = Q { 4 };\nvar s: S = S { 5 };\nq.b = q.b + s.d;\nsyscall(60, q.b);\n' 9
+sgc sgc_ptr     "${SG4}"'var q = S { 7 };\nvar x: *S = &q;\nx.d = x.d + 4;\nsyscall(60, q.d);\n' 11
+sgc sgc_meth    "${SG4}"'impl S { fn m(self): i64 { return self.d + 1; } }\nvar q = S { 6 };\nfn f(): i64 { return q.m(); }\nsyscall(60, f());\n' 7
+# 15 refusal rows and 4 controls on the six legs; a leg that did not build is RED above, this catches lost rows.
+rows=$((rows + 19))
+[ "$SGN" -ge 114 ] || { echo "  FAIL: axis 7 (D68) ran $SGN row-legs (floor 114) - rows or legs were lost"; fails=$((fails + 1)); }
+
 if [ "$rows" -lt 140 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 140)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"

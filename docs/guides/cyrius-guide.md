@@ -221,7 +221,11 @@ same-named one declared in a nested or a sibling block is another variable, and 
 through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). A top-level `var P:
 *Foo` global's uses too (6.7.16; through 6.7.15 they added an error naming a struct it never had, or read the program's
 first struct), and a `*T` global whose `T` is no struct — `var x: *i64 = &g;` — takes no `.field`, as a local does: *no
-struct type in scope for 'x'* (it compiled and read through the first struct). Before 6.6.16 most sites matched a prefix
+struct type in scope for 'x'* (it compiled and read through the first struct). Nor does a scalar global (6.7.16, the
+user's D68, 2026-10-20): `var g: i32 = 5;` then `g.d`, `g.d = 9;` or `g.m()` — any `i8`..`u64`, `f64` or `f32` global —
+is the local's one error, *no struct type in scope for 'g'; a '.field' access needs its struct declaration*. Through
+6.7.15 an `i8`..`u32` global's `.field` compiled and went through whichever struct was declared at the number of its
+byte width (`g.d` on an `i32` read the 4th struct's `d`), and an `f64` / `f32` global's crashed the compiler. Before 6.6.16 most sites matched a prefix
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`

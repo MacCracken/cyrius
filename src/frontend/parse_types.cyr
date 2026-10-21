@@ -2966,11 +2966,17 @@ fn _gv_ptr_sid(S, vi): i64 {
 # added "unknown field 'y' on struct 'var'", beside `struct P { a; }` resolved `x.a` as P's `a`, and a `*i64`
 # global's `x.a` compiled and read through P. 0 here, so the `sid == 0` arms answer as for a local: the refused
 # annotation's stand-down, else "no struct type in scope for 'x'". The vector band (<= -2048) is kept. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (D68) — NOR DOES A SCALAR GLOBAL: an i8..u32 global's var type is its WIDTH (1 / 2 / 4) and an f64 / f32
+# one's F64_TYID / F32_TYID, so `var g: i32 = 5; g.d` read g through the 4th struct's `d` and `g.a` on an f64 global
+# indexed the struct tables at 2^30 (the compiler's SIGSEGV). A declared-integer global (GVINTD) and the float band
+# answer 0, refused as the local is. CHANGELOG [6.7.16]
 fn _gv_recv_sid(S, vi): i64 {
     var p = _gv_ptr_sid(S, vi);
     if (p > 0) { return p; }
     var t = GVTYPE(S, vi);
     if (t < 0) { if (t > 0 - 2048) { return 0; } }
+    if (t >= F64_TYID) { return 0; }
+    if (GVINTD(S, vi) == 1) { return 0; }
     return t;
 }
 # 1 = global `vi`'s slot HOLDS the struct's address: a pointer-mode struct global, or a `*T` one.
