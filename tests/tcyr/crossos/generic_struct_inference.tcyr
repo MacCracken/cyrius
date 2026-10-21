@@ -124,7 +124,9 @@
 # `: T` return received, and the pair scans' token reading of it — `sc_q`'s `?` sits above its
 # wrapper `var p = unbox(b); return p.hbx(d);`, and `hbx` is a pair on Pt but one value on Qc, so
 # only p's type through the carrier flags the wrapper; G4 an `x: T` parameter still binds T first
-# (here the literal's i64: what compiled keeps its meaning); G5 `Box<i32>` instantiates `gsz$i32`
+# (here the literal's i64: what compiled keeps its meaning — `g4sz(&bi, 5)` with `bi: Box<i32>` is refused
+# since 6.7.16, the user's D97, a `*Box<i32>` into the `*Box<i64>` T made: struct_arg_type_refused.sh
+# PD13); G5 `Box<i32>` instantiates `gsz$i32`
 # (a call, a tail call); G6 a call above the generic, and a generic struct declared BELOW the fn
 # naming it; G8 the `*Box<T>` carrier — `&b`, a `*Box<Pt>` local, parameter or call, `&` of a
 # by-value parameter, a Box<Pt> value or call and a struct global (their address passed); G9 (review)
@@ -162,7 +164,8 @@
 #   MG1 `_gs_param` records no struct carrier             -> the file does not build (G1)
 #   MG2 T's slot ignored (always slot 0)                  -> the file does not build (G2)
 #   MG3 `_tok_gen_ret_sid` not following the carrier      -> rc 139 (G3's `?` above its wrapper)
-#   MG4 the struct carrier asked before an `x: T` one     -> G4 (4 for 8)
+#   MG4 the struct carrier asked before an `x: T` one     -> struct_arg_type_refused.sh R18c and PD13 (each
+#       compiled; re-measured 2026-10-21) — G4 here, its carrier a `*Box<i64>` since 6.7.16 (D97), reads 8 either way
 #   MG6 `_tc_generic_divert` blind to a scalar carrier    -> the file does not build (G5, tail)
 #   MG7 no `gsz$i32` for a scalar carrier in the head     -> the file does not build (G5)
 #   MG8 (review) `_gsc_chain` gone (a field chain binds nothing) -> the file does not build (G9's `: T`
@@ -711,7 +714,8 @@ fn run_struct_carrier(): i64 {
     assert_eq(t1 * 100000 + v1 + t2 * 1000000 + v2 * 10, 1000990 + 22003,
         "G3: `w(..)?` above its wrapper `var p = unbox(b); return p.hbx(d);` (the pair scans type p)");
     var bi: Box<i32>; bi.v = 7; bi.n = 8;
-    assert_eq(g4sz(&bi, 5), 8, "G4: an `x: T` parameter still binds T (the literal's i64) over Box<i32>");
+    var bl: Box<i64>; bl.v = 7; bl.n = 8;
+    assert_eq(g4sz(&bl, 5), 8, "G4: an `x: T` parameter binds T (the literal's i64); its carrier a `*Box<i64>`");
     assert_eq(g4sz<i32>(&bi, 5), 4, "control: the explicit `g4sz<i32>`");
     assert_eq(gsz(bi), 408, "G5: Box<i32> instantiates `gsz$i32` (was refused: the Box base)");
     assert_eq(sc_tail(bi), 408, "G5: the same in tail position");

@@ -472,6 +472,8 @@ fn b_i64p_h() {
 }
 
 # ── every size 1..8 B: the six shapes, a guard byte after the object (a field; a global declared after it) ──
+# The `*Bn` parameter rows pass `p` (the `*Bn` aimed at c's first field): `&c` of the enclosing `Cn` is a pointer to
+# another struct, refused since 6.7.16 (the user's D97).
 struct B1 { a: i8; }
 struct C1 { b: B1; g: i8; }
 struct B2 { a: i16; }
@@ -524,10 +526,10 @@ fn z1() {
     GB1 = p;
     if (GB1.a == 5 && ZB1 == 99) { k = k + 1; }
     var r: B1; r.a = 0 - 7;
-    q1_r(&c, r);
+    q1_r(p, r);
     if (c.b.a == 0 - 7 && c.g == 99) { k = k + 1; }
-    k = k + q1_l(&c);
-    q1_g(&c);
+    k = k + q1_l(p);
+    q1_g(p);
     if (c.b.a == 5 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -549,10 +551,10 @@ fn z2() {
     GB2 = p;
     if (GB2.a == 301 && ZB2 == 99) { k = k + 1; }
     var r: B2; r.a = 0 - 300;
-    q2_r(&c, r);
+    q2_r(p, r);
     if (c.b.a == 0 - 300 && c.g == 99) { k = k + 1; }
-    k = k + q2_l(&c);
-    q2_g(&c);
+    k = k + q2_l(p);
+    q2_g(p);
     if (c.b.a == 301 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -582,10 +584,10 @@ fn z3() {
     GB3 = p;
     if (GB3.a == 4 && GB3.b == 5 && GB3.c == 0 - 6 && ZB3 == 99) { k = k + 1; }
     var r: B3; r.a = 1; r.b = 0 - 2; r.c = 3;
-    q3_r(&c, r);
+    q3_r(p, r);
     if (c.b.a == 1 && c.b.b == 0 - 2 && c.b.c == 3 && c.g == 99) { k = k + 1; }
-    k = k + q3_l(&c);
-    q3_g(&c);
+    k = k + q3_l(p);
+    q3_g(p);
     if (c.b.a == 4 && c.b.b == 5 && c.b.c == 0 - 6 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -607,10 +609,10 @@ fn z4() {
     GB4 = p;
     if (GB4.a == 70001 && ZB4 == 99) { k = k + 1; }
     var r: B4; r.a = 0 - 70000;
-    q4_r(&c, r);
+    q4_r(p, r);
     if (c.b.a == 0 - 70000 && c.g == 99) { k = k + 1; }
-    k = k + q4_l(&c);
-    q4_g(&c);
+    k = k + q4_l(p);
+    q4_g(p);
     if (c.b.a == 70001 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -632,10 +634,10 @@ fn z5() {
     GB5 = p;
     if (GB5.a == 7001 && GB5.b == 0 - 5 && ZB5 == 99) { k = k + 1; }
     var r: B5; r.a = 0 - 7000; r.b = 4;
-    q5_r(&c, r);
+    q5_r(p, r);
     if (c.b.a == 0 - 7000 && c.b.b == 4 && c.g == 99) { k = k + 1; }
-    k = k + q5_l(&c);
-    q5_g(&c);
+    k = k + q5_l(p);
+    q5_g(p);
     if (c.b.a == 7001 && c.b.b == 0 - 5 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -664,10 +666,10 @@ fn z6() {
     GB6 = p;
     if (GB6.a == 7002 && GB6.b == 301 && ZB6 == 99) { k = k + 1; }
     var r: B6; r.a = 0 - 7000; r.b = 0 - 300;
-    q6_r(&c, r);
+    q6_r(p, r);
     if (c.b.a == 0 - 7000 && c.b.b == 0 - 300 && c.g == 99) { k = k + 1; }
-    k = k + q6_l(&c);
-    q6_g(&c);
+    k = k + q6_l(p);
+    q6_g(p);
     if (c.b.a == 7002 && c.b.b == 301 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -697,10 +699,10 @@ fn z7() {
     GB7 = p;
     if (GB7.a == 8 && GB7.b == 0 - 301 && GB7.c == 5 && ZB7 == 99) { k = k + 1; }
     var r: B7; r.a = 0 - 7; r.b = 300; r.c = 0 - 4;
-    q7_r(&c, r);
+    q7_r(p, r);
     if (c.b.a == 0 - 7 && c.b.b == 300 && c.b.c == 0 - 4 && c.g == 99) { k = k + 1; }
-    k = k + q7_l(&c);
-    q7_g(&c);
+    k = k + q7_l(p);
+    q7_g(p);
     if (c.b.a == 8 && c.b.b == 0 - 301 && c.b.c == 5 && c.g == 99) { k = k + 1; }
     return k;
 }
@@ -722,10 +724,10 @@ fn z8() {
     GB8 = p;
     if (GB8.a == 11 && GB8.b == 0 - 12 && ZB8 == 99) { k = k + 1; }
     var r: B8; r.a = 0 - 9; r.b = 10;
-    q8_r(&c, r);
+    q8_r(p, r);
     if (c.b.a == 0 - 9 && c.b.b == 10 && c.g == 99) { k = k + 1; }
-    k = k + q8_l(&c);
-    q8_g(&c);
+    k = k + q8_l(p);
+    q8_g(p);
     if (c.b.a == 11 && c.b.b == 0 - 12 && c.g == 99) { k = k + 1; }
     return k;
 }

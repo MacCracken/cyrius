@@ -116,6 +116,42 @@ fn s_chain() { var p: Pt; p.x = 1; p.y = 2; return bs1(p.dup().s1()); }
 # The untyped boundary: no struct recorded, accepted as ever.
 fn u_addr() { var q: Q; q.a = 1; q.b = 2; q.c = 3; return bqp(&q); }
 fn u_untyped() { var q: Q; q.a = 3; q.b = 2; q.c = 1; var u = &q; return bq(u); }
+
+# 6.7.16 (D97, the user's decision, 2026-10-20): a pointer to ANOTHER struct into a `*S` / `**S` parameter is refused
+# (struct_arg_type_refused.sh PD rows); a pointer to the declared struct passes through every source and path the
+# check reads — these compile on each fork and pass the right struct.
+struct WQ { pq: *Q; ppq: **Q; }
+fn bqpp(pp: **Q): i64 { var p: *Q = *pp; return p.a * 100 + p.b * 10 + p.c; }
+fn bqppp(ppp: ***Q): i64 { var pp: **Q = *ppp; return bqpp(pp); }
+fn gq(q: *Q): *Q { return q; }
+fn gpb<T>(b: *Box<T>): i64 { return b.n; }
+fn gppb<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n; }
+impl Q { fn me(self): *Q { return self; } fn tk(self, o: *Q): i64 { return self.c * 10 + o.c; } }
+fn d97_names() {
+    var q: Q; q.a = 1; q.b = 2; q.c = 3;
+    var pq: *Q = &q;
+    var ppq: **Q = &pq;
+    var w: WQ; w.pq = pq; w.ppq = ppq;
+    return bqp(pq) + bqp(pq + 0) + bqp((&q)) + bqpp(&pq) + bqpp(ppq) + bqppp(&ppq) + bqp(w.pq) + bqpp(w.ppq);
+}
+fn d97_calls() {
+    var q: Q; q.a = 1; q.b = 2; q.c = 3;
+    var c = 1;
+    return bqp(gq(&q)) + bqp(q.me()) + bqp(if (c == 1) { &q } else { &q }) + q.tk(&q) + Q_tk(&q, &q) + bqp(b: &q);
+}
+fn d97_tail(pq: *Q) { return bqp(pq); }
+fn d97_tl() { var q: Q; q.a = 1; q.b = 2; q.c = 3; return d97_tail(&q); }
+fn d97_generic() {
+    var b: Box<Pt>; b.n = 8;
+    var pb: *Box<Pt> = &b;
+    return gpb(&b) + gpb<Pt>(&b) * 10 + gppb(&pb) * 100;
+}
+fn d97_untyped() {
+    var q: Q; q.a = 3; q.b = 2; q.c = 1;
+    var u = &q;
+    var a = alloc(24); store64(a, 4); store64(a + 8, 5); store64(a + 16, 6);
+    return bqp(u) + bqp(a);
+}
 fn u_fnptr() { var q: Q; q.a = 0; q.b = 0; q.c = 4; return fncall1(&bq, &q); }
 
 # A `Str` handle parameter: a Str local and a Str-returning call.
@@ -163,6 +199,11 @@ assert_eq(s_chain(), 3, "p.dup().s1() into b: S1");
 assert_eq(u_addr(), 123, "&q into b: *Q");
 assert_eq(u_untyped(), 321, "an untyped pointer into b: Q");
 assert_eq(u_fnptr(), 4, "fncall1(&bq, &q)");
+assert_eq(d97_names(), 984, "D97: a *Q local, pq + 0, (&q), &pq, a **Q, &ppq, a *Q / **Q field into their own Q");
+assert_eq(d97_calls(), 558, "D97: a : *Q call and method, an if-expression, a method's argument, Q_tk by name, a named argument");
+assert_eq(d97_tl(), 123, "D97: a *Q parameter forwarded in tail position");
+assert_eq(d97_generic(), 888, "D97: *Box<T> / **Box<T> bind Pt from &b, gpb<Pt>(&b)");
+assert_eq(d97_untyped(), 777, "D97: an untyped pointer and alloc() still pass");
 assert_eq(h_str(), 52, "a Str local and a Str call into s: Str");
 
 var r = assert_summary();

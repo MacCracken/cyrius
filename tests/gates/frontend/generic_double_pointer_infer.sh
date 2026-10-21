@@ -54,7 +54,8 @@
 #      (92916 before); G2 a **Box<Pt> parameter, field, `: **Box<Pt>` call, `***Box<T>` from `&qq` and a generic
 #      method, 9 each (45; 18 before); G3 a forwarder passing its `pp` (a parameter, a `**Box<T>` local) into a stub
 #      generic is a stub (77; refused "generic 'st' has no i64 instance" before) — on every leg; GK1 `pp.v.n` on a
-#      `**Box<T>` stays refused in an uncalled generic, GK2 a `*Pt`'s `&ps` binds nothing (8). More rows:
+#      `**Box<T>` stays refused in an uncalled generic, GK2 an untyped `&u` binds nothing (8; a `*Pt`'s `&ps`, GK2b,
+#      binds nothing either and is refused since 6.7.16, the user's D97: a `**Pt` into the base's `**Box<i64>`). More rows:
 #      tests/tcyr/crossos/generic_ptr_struct_source.tcyr's pq_* (small_struct_handle_line.sh R12).
 # (2026-10-20, 6.7.16 — the G rows; a scratch copy of the tree with the one change, its 2-stage cycc, CYCC= it:)
 #   MG1 the tree before (03f7ab003)                       -> RED 15: G1 (92916), G2 (10) and G3 (refused "generic 'st'
@@ -424,10 +425,33 @@ include "lib/syscalls.cyr"
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
 fn nb<T>(pp: **Box<T>): i64 { return sizeof(T); }
+fn main(): i64 { var p: Pt; var u = &p; return nb(&u); }
+syscall(60, main());
+X
+xr GK2 "$D/gk2.cyr" 8 "nb(&u) of an untyped pointer binds nothing (the base, sizeof 8)"
+# GK2b: `&ps` of a `*Pt` binds nothing either, so the base's `**Box<i64>` meets a `**Pt` — a pointer to another struct,
+# refused since 6.7.16 (the user's D97; it compiled and ran the base, 8).
+cat > "$D/gk2b.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn nb<T>(pp: **Box<T>): i64 { return sizeof(T); }
 fn main(): i64 { var p: Pt; var ps: *Pt = &p; return nb(&ps); }
 syscall(60, main());
 X
-xr GK2 "$D/gk2.cyr" 8 "nb(&ps) of a *Pt binds nothing (the base, sizeof 8)"
+for leg in x86 a64 cx pe; do
+    r=0
+    case $leg in
+        x86) "$CC" < "$D/gk2b.cyr" > "$D/gk2b" 2> "$D/gk2b.err" || r=$? ;;
+        a64) [ -n "$A64" ] || continue; "$A64" < "$D/gk2b.cyr" > "$D/gk2b" 2> "$D/gk2b.err" || r=$? ;;
+        cx)  [ -n "$CXCC" ] || continue; "$CXCC" < "$D/gk2b.cyr" > "$D/gk2b" 2> "$D/gk2b.err" || r=$? ;;
+        pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$D/gk2b.cyr" > "$D/gk2b" 2> "$D/gk2b.err" || r=$? ;;
+    esac
+    if [ "$r" -ne 0 ] && [ "$(grep -c '^error' "$D/gk2b.err" || true)" -eq 1 ] \
+       && grep -q "cannot pass 'ps' to a parameter of a different struct type in a call to 'nb'" "$D/gk2b.err"; then
+        ok "GK2b $leg: nb(&ps) of a *Pt into the base's **Box<i64> refused once (D97)"
+    else bad "GK2b $leg: nb(&ps): rc $r, $(grep -m1 '^error' "$D/gk2b.err")"; fi
+done
 
 echo "T. $TC ($N rows, $NGI GI / GK / GW / GD)"
 for leg in x86 x86:CYRIUS_IR=3 $OTHER; do

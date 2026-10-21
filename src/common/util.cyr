@@ -1181,6 +1181,35 @@ fn GFPSID(S, fi, pc): i64 {
     if (pc >= load64(row)) { return 0; }
     return L64(row + 8 + pc * 8);
 }
+# 6.7.16 (D97) — a `**S` / `***S` parameter's struct, behind its stars: `(stars << 32) | sid`, 0 = none (a `*S` is
+# GFPSID's). Rows as `_fnt_psid`'s; written by pass 1 (`_pps_scan`) and the definition (`_pps_def_note`), read by the
+# argument check (`_pps_param`). A 0 is written only over a row that exists. CHANGELOG [6.7.16]
+var _fnt_pps = 0;
+fn SFPPS(S, fi, pc, v): i64 {
+    if (fi < 0) { return 0; }
+    if (_fnt_pps == 0) {
+        if (v == 0) { return 0; }
+        _fnt_pps = alloc(131072 * 8);
+    }
+    var row = L64(_fnt_pps + fi * 8);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (pc >= cap) {
+        if (v == 0) { return 0; }
+        row = _psid_grow(row, cap, pc);
+        S64(_fnt_pps + fi * 8, row);
+    }
+    S64(row + 8 + pc * 8, v);
+    return 0;
+}
+fn GFPPS(S, fi, pc): i64 {
+    if (_fnt_pps == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pps + fi * 8);
+    if (row == 0) { return 0; }
+    if (pc >= load64(row)) { return 0; }
+    return L64(row + 8 + pc * 8);
+}
 # 6.6.17 (a3) — a generic INSTANCE's type arguments (`_instantiate_generic_fn`'s conc0 / conc1),
 # two words per fn, 0 = not an instance. Lazy-alloc'd at the max fn cap like _fnt_tparams, so the
 # brk layout does not move. Read by an inline replay of the instance (`_bind_inl_generic`).

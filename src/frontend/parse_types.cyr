@@ -3211,6 +3211,21 @@ fn _pp_sid(pin): i64 {
     if (pin > _pp_n) { return 0; }
     return L64(_pp_sids + pin * 8);
 }
+# 6.7.16 (D97): the struct a pointer whose pointee is pinned `pin` points through to — `**S` (the pin's `*S`), `***S`
+# (one pin further), ... — as `(stars << 32) | sid`, else 0 (a pointee that is no struct pointer). CHANGELOG [6.7.16]
+fn _pps_of_pin(pin): i64 {
+    var d = 2;
+    while (pin > 0) {
+        if (pin > _pp_n) { return 0; }
+        var s = _pp_sid(pin);
+        if (s > 0) { return (d << 32) | s; }
+        var v = L64(_pp_tab + pin * 16);
+        if (v <= 0) { return 0; }
+        pin = _ps_pin(v);
+        d = d + 1;
+    }
+    return 0;
+}
 # The step word of the pointer type whose first `*` is token `a`, the cursor unmoved: `*T`'s as `_ptr_annot`
 # reads it (quiet: the annotation itself reports an unknown T), a pointer's 8 and its own pin, 0 for a T it does
 # not read (a slice, a tuple: refused by the annotation).

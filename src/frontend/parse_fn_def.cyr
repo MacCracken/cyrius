@@ -2815,6 +2815,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 SLTYPE(S, li, 0);
                 if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
                 _psid_def_note(S, fi, pc, pt_sid, struct_mask);   # 6.6.12: see SFPSID (util.cyr); 6.7.3
+                _pps_def_note(S, fi, pc, li);   # 6.7.16 (D97): a `**S`'s struct
                 # v6.4.57 (Gap A) — a scalar f64/f32 param gets the same positive
                 # F64_TYID/F32_TYID tag a `var y: f64` local gets, so parse_expr's
                 # local-load (lt == F64_TYID/F32_TYID) routes ops to the float

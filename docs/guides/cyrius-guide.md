@@ -2272,11 +2272,26 @@ is read the same way: `((p), 1)` is refused as `(p, 1)` is, and since 6.7.13 so 
 — `(*pp, 1)`, `((*pp), 1)`, `(*gp(), 1)`, `(*w.pp, 1)`, `(*(&p), 1)` — a struct value (the user's decision D2 (a),
 2026-10-15; through 6.7.12 it stored P's first word); `(pp, 1)` and `(pp.a, 1)` are i64s. An argument with NO
 struct type stays accepted: `&p` (an address, as
-`var q: *Q = &p;` is), an untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
+`var q: *Q = &p;` is — into a `*S` parameter, since 6.7.16, a pointer to another struct: below), an
+untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
 argument with its own layout — `bq(p)` read past the 16-byte `Pt` (0), `bs(mk1(p))` returned `b.v.y`
 where `b.n` was 8, and `q + mkp()` or `sl(p)` for `sl(s: Str)` SIGSEGV'd.
+
+⚠ **A pointer to ANOTHER struct into a `*S` / `**S` parameter is refused too (6.7.16; the user's decision D97,
+2026-10-20).** The pointee is compared as the value is above: `nc1(&y)` with `y: Box<Pt>` and `fn nc1(p: *Box<i64>)`
+reports `cannot pass 'y' to a parameter of a different struct type in a call to 'nc1'` (a `Box<Pt>` is not a
+`Box<i64>`), and so do `nc4(&q)` with `q: Qd` into `p: *Pt`, `nc4(pq)` with `pq: *Qd`, and `nc2(&q)` with `q:
+*Box<Pt>` into `pp: **Box<i64>` — an `&x` of a struct variable (named `x`) or of a typed pointer (one star more), a
+`*Qd` local, parameter, global, capture, field, `: *Qd` call, method or generic call, `pq + n`, `*ppq` of a `**Qd`,
+an if-expression whose every branch is one, `self` — through a call, a tail call, a method's arguments, a method
+called by its fn name (`Pt_m(&q)`: an untyped `self` is a `*Pt`), a named argument and an operator's right operand,
+at every depth (`**S`, `***S`) and for a generic instance either way (`gb<i64>(&y)` with `p: *Box<T>`). A pointer
+to the declared struct, an untyped pointer (`var u = &p;`, `alloc(..)`), `0` and a pointer of another depth pass.
+Through 6.7.15 every such pointer was passed unchecked and the callee read the other struct at its own offsets
+(`nc1(&y)` returned `y.v.y`, 2, for `y.n`, 9). Into a BY-VALUE struct parameter a typed pointer still converts
+freely (it is copied through, 6.7.10's B7-1b; the user's decision of 2026-10-08).
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
@@ -7428,7 +7443,8 @@ and faulted; `&ps + n` is a byte pointer and binds nothing. A `ppp: ***T` — an
 and `t3(ppps)` hands `take(***ppp)` the struct, exactly as `s3<P3>(ppps)` / `t3<P3>(ppps)` do,
 from every source above and from `&pps` of a `**P3` (through 6.7.14 the i64 base: 8, and a
 fault). A `*S` (one star) into `**T`, a `**S` into `***T`, a `**u8` bind nothing (`i64`), and a
-direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from `x`.
+direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from `x` (and since 6.7.16, the
+user's D97, a `**P3` where a `*Bx<Q2>` carrier made the parameter `**Q2` is a pointer to another struct, refused).
 A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
 as the body reads `Box<T>` — at the base `Box<i64>`, in an instance its own `Box<..>`, so `**pp`
 is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with `q: *Box<Pt>`
