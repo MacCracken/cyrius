@@ -57,6 +57,9 @@
 #          `.mm<f64>(2.5)`, L9 `.a[0]`, `_tup_lit_stray`). Each added "undefined variable 'f64'" / "expected ';',
 #          got '>'" / "expected ';', got '('" / "cannot subscript field 'a'" (the chain skips stepped `.name` and
 #          `(..)` but no list; `_tup_lit_stray` `.name` alone) — met in the review of 6.7.16's s16b lane.
+#   N2/N3  (6.7.16) a method's result with no struct is named as the source spells it, `'P.sc'` (it printed the fn
+#          table's `P_sc`), and a multi-value one's hint spells the call as written, `var t: (i64, i64) =
+#          w.p.m2(..);` (it printed `P_m2(..)`) — `_call_fld_err` / `_mret_fld_err`, met with L6.
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -82,6 +85,8 @@
 # 6.7.16 (L1-L9):
 #   the tree before (b140b51a9: `_mchain_skip` no list, `_call_field` / `_tup_lit_stray` stepping `.name` and one
 #     `(..)`)                                               -> RED 9: L1-L9 (2 or 3 error lines each)
+#   the tree before the method's name (f04b87953)           -> RED 2: N2 (`P_sc`), N3 (`P_m2`, `P_m2(..)`); and
+#                                                              tuple_checked R15c, struct_value_codegen MP4 / MP5
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -330,6 +335,19 @@ refuse L9 "a tuple \`( .. )\` is a value only as" "${L}fn main(): i64 { var x = 
 syscall(60, main());
 " "" one
 
+echo "a method's result with no struct is named as the source spells it (6.7.16):"
+NM='include "lib/syscalls.cyr"
+struct P { k; n; }
+struct W { p: P; }
+impl P { fn m2(self): (i64, i64) { return (3, 4); } fn sc(self): i64 { return 1; } }
+'
+refuse N2 "cannot take a field of the result of 'P\\.sc': it does not return a struct" "${NM}fn main(): i64 { var p: P; var x = p.sc().k; return 0; }
+syscall(60, main());
+" "" one
+refuse N3 "cannot take a field of the result of 'P\\.m2': it returns 2 values - bind them first, \`var t: (i64, i64) = w\\.p\\.m2(\\.\\.);\`" "${NM}fn main(): i64 { var w: W; var x = w.p.m2().k; return 0; }
+syscall(60, main());
+" "" one
+
 echo "--syntax-only (the lint pre-pass):"
 printf '%s' 'fn main(): i64 {
     var r = other(3).y + mkq(1).v.w;
@@ -357,5 +375,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 37 ] || { echo "FAIL: call_result_field: only $pass of the 37 rows passed"; exit 1; }
+[ "$pass" -ge 39 ] || { echo "FAIL: call_result_field: only $pass of the 39 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]

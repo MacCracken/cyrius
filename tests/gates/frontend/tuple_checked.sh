@@ -977,7 +977,7 @@ CC=$CC_SV
 R15="cannot take a field of the result of 'mk': it returns 2 values - bind them first, \`var t: (i64, i64) = mk(..);\`, then read \`t.0\`"
 refused r15a "$R15" "R15a: \`return mk(1).0;\`" "${MK}fn f(): i64 { return mk(1).0; }\nsyscall(60, f());\n"
 refused r15b "$R15" "R15b: in an operand" "${MK}fn f(): i64 { var x = mk(1).0 + 1; return x; }\nsyscall(60, f());\n"
-refused r15c "it returns 2 values - bind them first, \`var t: (i64, f64) = B_mk(..);\`" "R15c: a method's result (its declared values spelled)" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
+refused r15c "cannot take a field of the result of 'B.mk': it returns 2 values - bind them first, \`var t: (i64, f64) = b.mk(..);\`" "R15c: a method's result (its declared values spelled; 6.7.16: the method and the call as written, it printed 'B_mk')" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
 # R16 — a capture refused, mirroring the destructure. Its own texts for a callee class or element that
 # disagrees; a one-value callee, \`f()?\` or any other value is no capture at all — the tuple's "not a tuple"
 # refusal (R12). (\`callptr\` was R16o until 6.7.14: R16cp. A wrapped call was R16l / R16q until 6.7.14: R16pw.)

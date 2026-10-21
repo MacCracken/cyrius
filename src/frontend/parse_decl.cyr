@@ -1940,7 +1940,7 @@ fn _method_chain(S, fi, noff, beg, t): i64 {
     if (fi >= 0) { sid = GFRS(S, fi); }
     if (sid <= 0) {
         if (_hl_fn_psid(fi) > 0) { return _mchain_ptr(S, noff, beg, _hl_fn_psid(fi)); }
-        if (_syntax_only == 0) { _call_fld_err(S, fi, noff); }   # 6.7.7 (T5): + a multi-value one's hint
+        if (_syntax_only == 0) { _call_fld_err(S, fi, noff, beg); }   # 6.7.7 (T5): + a multi-value one's hint
         _mchain_skip(S);
         return 1;
     }

@@ -581,8 +581,8 @@ MPH='struct P { a; b; }\nstruct H { p: *P; }\n'
 exits_file mp1 44 "MP1: var y = h.get().b; (the filed repro, verbatim: refused)" docs/development/issues/repros/2026-10-10-field-of-method-pointer-result-refused.cyr
 exits mp2 43 "MP2: a method defined below its use (pass 1's record)" "${MPH}fn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.get().b * 10 + h.get().a; }\nimpl H { fn get(self): *P { return self.p; } }$E"
 exits mp3 5 "MP3: h.get().b = 5; stores through the method's *P result (6.7.13 D8 (a); refused through 6.7.12)" "${MPH}impl H { fn get(self): *P { return self.p; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; h.get().b = 5; return p.b; }$E"
-refused mp4 "cannot take a field of the result of 'H_gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
-refused mp5 "cannot take a field of the result of 'H_n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
+refused mp4 "cannot take a field of the result of 'H.gi': it does not return a struct" "MP4: a method returning *i64 keeps the refusal" "${MPH}impl H { fn gi(self): *i64 { return 0; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.gi().b; }$E"
+refused mp5 "cannot take a field of the result of 'H.n': it does not return a struct" "MP5: a method returning i64 keeps the refusal" "${MPH}impl H { fn n(self): i64 { return 1; } }\nfn main(): i64 { var p = P { 3, 4 }; var h = H { &p }; return h.n().b; }$E"
 # PE (6.7.11, issues/archived/2026-10-10-paren-wrapped-struct-call-as-nested-literal-element-refused.md; the user's decision
 # (a), 2026-10-13) a free struct call in parentheses as a nested-struct literal element is the element the
 # unwrapped call is (`_spi_pcall`): it was parsed as a scalar for the first leaf, so 16 B, 24 B and 8 B with two

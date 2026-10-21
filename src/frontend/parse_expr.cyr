@@ -3149,24 +3149,27 @@ fn _IFS_K(t): i64 {
 
 # A `.field` on the result of a call (fn `fi`, named `noff`) that returns no struct: refused. 6.7.7
 # (B4, T5, R15): a MULTI-VALUE one is told how to read its values — bind them into a tuple first.
-fn _call_fld_err(S, fi, noff): i64 {
-    if (fi >= 0) { if (GFRS(S, fi) == MULTIRET_SID) { return _mret_fld_err(S, fi, noff); } }
-    ERR_IDENT(S, "cannot take a field of the result of ", noff, ": it does not return a struct", 0 - 1);
+# 6.7.16: a method named as the source spells it (`_err_ident_fn`: `P.sc`, it printed `P_sc`), its hint the call as
+# written from `beg` (the receiver's first token; -1 for a free call). CHANGELOG [6.7.16]
+fn _call_fld_err(S, fi, noff, beg): i64 {
+    if (fi >= 0) { if (GFRS(S, fi) == MULTIRET_SID) { return _mret_fld_err(S, fi, noff, beg); } }
+    _err_ident_fn(S, "cannot take a field of the result of ", noff, fi, ": it does not return a struct", 0 - 1);
     return 0;
 }
-fn _mret_fld_err(S, fi, noff): i64 {
+fn _mret_fld_err(S, fi, noff, beg): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_mret_fld_err", fi * 31 + noff, 1) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot take a field of the result of '");
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
     PRSTR("': it returns ");
     PRNUM(GFRN(S, fi));
     PRSTR(" values - bind them first, `var t: ");
     _mret_spell(S, fi);
     PRSTR(" = ");
-    PRSTR(S + 0xEC00000 + noff);
+    if (beg >= 0) { _tok_src_pr(S, beg, _tok_open_back(S, GTI(S) - 1)); }   # a method: `p.m2`, `w.p.m2`
+    else { PRSTR(S + 0xEC00000 + noff); }
     PRSTR("(..);`, then read `t.0`\n");
     _err_excerpt(S);
     _had_error = 1;
@@ -3269,7 +3272,7 @@ fn _pf_call(S, st, a, k): i64 {
     var sid = GFRS(S, fi);
     if (sid <= 0 || GINFN(S) != 1) {
         if (_syntax_only == 0) {
-            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, a)); }
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, a), 0 - 1); }
             else { _refuse_toplevel_struct_call(S, TOKVAL(S, a)); }
         }
         return _pf_skip(S);
@@ -3632,7 +3635,7 @@ fn _call_field(S): i64 {
     if (sid <= 0 || GINFN(S) != 1) {
         # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
         if (_syntax_only == 0) {
-            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, ti)); }   # 6.7.7 (T5): + a multi-value one's hint
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, ti), 0 - 1); }   # 6.7.7 (T5): + a multi-value one's hint
             else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
         }
         # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
