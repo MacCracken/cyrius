@@ -371,6 +371,14 @@ fn mkamp(): Str { return str_from("abcd"); }
 fn amp_st(): i64 { var t: Str = Str { "xyz", 3 }; *(&t) = gt; var r = t.len; var t2: Str = Str { "xyz", 3 }; var a = str_from("abcde"); *(&t2) = a; a.len = 1; return r * 10 + t2.len; }
 fn amp_st_src(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str = Str { "xyz", 3 }; *(&t) = *p; a.len = 1; var r = t.len; *((&t)) = mkamp(); r = r * 10 + t.len; var w: W = W { str_from("uvwxyz"), 1 }; *&t = w.s; r = r * 10 + t.len; var u: Str = Str { "q", 1 }; *(&t) = *(&u); return r * 10 + t.len; }
 fn amp_st_glob(): i64 { *(&gi) = gt; var r = gi.len; gi.len = 2; var i = 0; var t: Str = Str { "xyz", 3 }; for (i = 0; i < 1; *(&t) = gt) { i = i + 1; } return r * 10 + t.len; }
+# ── an inline `Str` returned from a fn returning `*Str` is its header's address, as into every other `*Str` slot (6.7.16):
+#    `return gt;` returned gt's data word; a frame's `return t;` is refused by name (the gate's X30 / X31) ─────────────
+fn rpg0(): *Str { return gt; }
+fn rpg1(): *Str { return ((gt)); }
+fn rpg2(): *Str { return *(&gt); }
+fn W_rpg(self: *W): *Str { return gt; }
+fn rp_ret(): i64 { var w: W = W { 0, 1 }; return (rpg0() == &gt) * 1000 + (rpg1() == &gt) * 100 + (rpg2() == &gt) * 10 + (w.rpg() == &gt); }
+fn rp_len(): i64 { var p: *Str = rpg0(); p.len = 3; var r = gt.len; gt.len = 7; return r * 10 + str_len(rpg1()); }
 
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
@@ -654,6 +662,8 @@ assert_eq(amp_zone(), 111, "zone var H: Str = *(&gz); / *((&gz)) / var P: *Str =
 assert_eq(amp_st(), 75, "*(&t) = gt / *(&t2) = a (a handle) copy the header into t, as t = gt does (it wrote the first word)");
 assert_eq(amp_st_src(), 5461, "*(&t) = *p, *((&t)) = mkamp(), *&t = w.s, *(&t) = *(&u): each copies, as t = <src> does");
 assert_eq(amp_st_glob(), 77, "*(&gi) = gt into an inline Str global, a for step *(&t) = gt");
+assert_eq(rp_ret(), 1111, "return gt; / ((gt)); / *(&gt); and a method's return gt; from a fn returning *Str: gt's address (the data word before)");
+assert_eq(rp_len(), 37, "the returned *Str is gt's header: p.len = 3 writes gt.len");
 assert_eq(pa_fld_local(), 7, "w.p = gt into a *Str field of a local takes gt's header (D19; the filed repro: the data word)");
 assert_eq(pa_fld_global(), 7, "GW.p = gt into a *Str field of a global");
 assert_eq(pa_fld_ptr(), 7, "pw.p = gt through a *W");

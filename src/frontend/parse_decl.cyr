@@ -8431,11 +8431,18 @@ fn _istr_pdst(S, w, k): i64 {
 }
 # `return <v>;` just parsed from `st` in a fn returning `Str`: a frame's inline `Str` is refused, a global's
 # address returned.
+# ⛔ 6.7.16 — AND IN A FN RETURNING `*Str` (`_istr_rstr`), as an inline `Str` into every other `*Str` slot takes its
+# header's address (6.7.14's D18 (c), 6.7.15's D16, 6.7.16's D19): `return gt;` returned gt's data word (`str_len` of
+# the result the string's bytes read as a header), and a frame's `return t;` compiled — its header dies with the frame.
+# A global's or a capture's is its address; a frame's is refused by name, as from a fn returning `Str`. CHANGELOG [6.7.16]
 fn _istr_ret(S, st): i64 {
-    if (_cur_fn_ret_sid <= 0) { return 0; }
-    if (_cur_fn_ret_sid != _STR_SID(S)) { return 0; }
+    if (_istr_rstr(S) == 0) { return 0; }
     var r = _istr_at(S, st, GTI(S));
     if (r == 1) {
+        if (_cur_fn_ret_sid == 0) {
+            return _istr_esc(S, "cannot return the inline Str ",
+              " from a fn returning *Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))");
+        }
         return _istr_esc(S, "cannot return the inline Str ",
           " from a fn returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))");
     }

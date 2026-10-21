@@ -3440,7 +3440,9 @@ decision D19, 2026-10-19 — through 6.7.15 they stored the data word), and a st
 word) — and an inline `Str` global (its
 static address) anywhere. ⛔ A
 frame's inline `Str` cannot outlive the frame, so these are refused by name: `return t;` from a fn returning `Str` (*cannot return the inline Str 't' from a fn
-returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))*),
+returning Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))*) or, since 6.7.16,
+`*Str` (*... from a fn returning \*Str ...*; it compiled, and `return gt;` from such a fn returned gt's data word where
+it returns gt's address now),
 and a store into a `Str` or `*Str` global, a `Str` field (a struct literal's too) or a `*Str` field (a struct
 literal's too, since 6.7.16: `W { t, 1 }` compiled) — a local struct's too (D19, as `v.s = t` into a local's `Str`
 field is refused) — or through a `*Str` or a `**Str` (*cannot

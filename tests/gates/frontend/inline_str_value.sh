@@ -142,6 +142,11 @@
 # a `Str` field, `*(&u)`; the tcyr's amp_st* rows, R_TOP21) — it wrote v's first word into t.data — and `*(&t) += 1` is
 # refused as `t += 1` is (X29; it stepped t.data).
 #
+# 6.7.16 (met in the s16 lane's D73 / D71 bites): an inline `Str` returned from a fn returning `*Str` takes its header's
+# address, as into every other `*Str` slot (6.7.14's D18 (c), 6.7.15's D16, D19) — `return gt;`, `((gt))`, `*(&gt)`, a
+# method's (the tcyr's rp_* rows); it returned gt's data word — and a frame's `return t;` is refused by name, as from a
+# fn returning `Str` (X30 / X31; it compiled).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -154,7 +159,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -267,6 +272,10 @@
 #                                                     compiled), AMP1 x4 (warned) + x7 ('0 0 1', exit 0)
 #   v2 `_istr_amp_dst` answers 0 (the store side)  -> RED 11: R1 x7 (4 rows: amp_st*, R_TOP21 — the first word stored),
 #                                                     X29 x4 (compiled)
+#   2026-10-20 (6.7.16, an inline `Str` returned from a fn returning `*Str`; the same scratch-copy method):
+#   w1 `_istr_ret` asking `Str` only (the fix       -> RED 15: R1 x7 (4 rows: rp_ret, rp_len — the data word — and the
+#      reverted)                                      two encoder rows the wild `p.len = 3` corrupted), X30 / X31
+#                                                     x4 (each compiled)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -389,7 +398,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=237   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21
+FLOOR=239   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21; + the rp_* rows
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -493,6 +502,15 @@ row X28 'fn go(): i64 { var t: Str; var w: W = W { 0, 1 }; var i = 0; for (i = 0
 refused X28 "$MF" "a for step's \`w.s = *(&t)\` of a bare \`var t: Str;\`"
 row X29 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; *(&t) += 1; return t.len; }'
 refused X29 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "\`*(&t) += 1;\` refused as \`t += 1;\` is (it stepped t.data)"
+# X30 / X31 (6.7.16): a frame's t returned from a fn returning `*Str` — refused as from a fn returning `Str` (it compiled,
+# the data word returned; a global's `return gt;` returns gt's address, the tcyr's rp_* rows).
+MRP="cannot return the inline Str 't' from a fn returning *Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))"
+row X30 'fn mk(): *Str { var t: Str = Str { "abcdefg", 7 }; return t; }
+fn go(): i64 { return str_len(mk()); }'
+refused X30 "$MRP" "\`return t;\` from a fn returning \`*Str\`"
+row X31 'fn mk(): *Str { var t: Str; t.data = "ab"; t.len = 2; return *((&t)); }
+fn go(): i64 { return str_len(mk()); }'
+refused X31 "$MRP" "\`return *((&t));\` of a bare \`var t: Str;\` from a fn returning \`*Str\`"
 
 # --- K: controls (a global's or a capture's header does not dangle; untyped positions keep the word) ---
 row K1 'fn mk(): Str { return gt; }
@@ -1090,7 +1108,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=86   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71); the floor is the count that runs
+FLOOR_ROWS=88   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
