@@ -27,7 +27,8 @@
 #       one error, nothing about qq1 / qq2; M2 the same then `y = zz9;` — two
 #   P   control: 6.7.11's pair refusal `y = f();` then `y = zz9;` — two, as before
 # Every row on the x86_64, aarch64, cx, PE and Mach-O compilers built from this tree: the exact error lines, rc 1,
-# no binary.
+# no binary. 6.7.16 (f16) adds the AS (#assert), H (block-head headers), R (a head's missing `{`) and U (a top-level
+# `var c: S;`) rows, each section with its own ledger below, and the corpus floor at the end.
 #
 # MUTATION LEDGER (2026-10-19; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from
 # that copy with CYCC= it, so every leg's compiler carries the mutant):
@@ -761,6 +762,10 @@ syscall(60, zz);
 error:<source>:5:8: unknown type 'c' for variable 'x'
 error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
 
+# The corpus floor (6.7.16): 79 rows on five legs. The gate had none, so a row lost from the list, or a leg that
+# stopped running, read green.
+FLOOR=395
+if [ $((pass + fail)) -lt "$FLOOR" ]; then bad "$G ran $((pass + fail)) row-legs (floor $FLOOR) - rows or legs were lost"; fi
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0
