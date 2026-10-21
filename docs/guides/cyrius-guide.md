@@ -2191,11 +2191,27 @@ vector annotation is now never dropped: `var v: f64v2 = idg<i64>(5)`, a generic 
 scalar, meets the refusal above.
 
 A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
-7);`, an argument to an untyped parameter, a statement `s.mv(..);`, an operator fn declared to
+7);`, a statement `s.mv(..);`, an operator fn declared to
 return a vector, at top level too — runs, and its vector is discarded, on every target (6.7.12;
 since 6.7.13 an unannotated `var x = callptr(&mkv, ..)` receives it, above). ⚠ Through 6.7.11 on Windows such a call passed no hidden
 result pointer, so the callee wrote the vector through its first argument: a page fault, or
 `s.mv(..)` overwriting `s`.
+
+**A whole vector call is no scalar fn's return value and no word argument** (6.7.16, the user's decision D101,
+2026-10-20), as it is no integer declaration's: `return mkv(41, 7);` from a fn declared `: i64` (or `: f64`, `: *T`, a
+struct of 8 bytes or less, `cstring`, or no annotation), `return s.mv();`, `return mkv(41, 7) + 1;` (a call that starts
+the value), a closure's value (`|k| mkv(k, 7)`, `|k| { return mkv(k, 7); }`), an argument to a parameter that takes a
+word — untyped (`take(mkv(41, 7))`), an integer of any width, `cstring`, `f64` / `f32` — and an argument to a builtin
+or an indirect call (`syscall(60, mkv(..))`, `store64(&x, mkv(..))`, `fncall1(f, mkv(..))`, `callptr(&g, mkv(..))`) are
+refused by name, at the call, in every spelling the receives read (by name, an explicit instance, a method on any head,
+`&f` through fncallN / callptr, inside parentheses): *a vector value cannot be returned as i64 - 'mkv' returns a
+vector*, *a vector value cannot be passed to an integer parameter - 'mkv' returns a vector, passed to parameter 'n' of
+'takei'* (*an f64 parameter* for an `f64` one), *… passed to 'syscall'*. A vector fn's own `return`, a value-form or
+`*V` parameter and a parameter its callee ignores that is declared the vector (`fn takev(x: f64v2)`) are unchanged;
+a bool parameter or return and a struct or pointer parameter keep their own refusals. ⚠ Through 6.7.15 each handed
+over one word — x86_64 / aarch64 rax's leftover (0), cx / Windows lane 0 (41), `return mkv(41, 7) + 1;` 1 / 42 —
+and `return mkv(41, 7);` faulted on Windows (exit 5: the tail call passed `mkv` no hidden result pointer); 6.7.12
+listed the untyped argument among the discarded results.
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that

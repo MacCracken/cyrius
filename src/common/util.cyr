@@ -1662,7 +1662,15 @@ fn SFNE(S, fi, v): i64 { S64(_fnt_codeend + fi * 8, v); return 0; }
 # side struct space + pass &space as hidden first arg in
 # RDI (SysV) or RCX (Win64).
 fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base + fi * 8); }
-fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); } S64(_fnret_base + fi * 8, v); return 0; }
+# 6.7.16 (D101): 1 = some fn returns a vector by value (a descriptor, <= -2048) — the scans that refuse a vector call
+# read as a word (`_vop_rchk`, `_vsc_arg`, `_vsc_ret`) run only then. CHANGELOG [6.7.16]
+var _vret_any = 0;
+fn SFRS(S, fi, v): i64 {
+    if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); }
+    if (v <= 0 - 2048) { _vret_any = 1; }
+    S64(_fnret_base + fi * 8, v);
+    return 0;
+}
 
 # v6.5.21 — per-fn MULTI-VALUE return record, for `fn f(a, b): (f64, f64)`.
 # GFRS holds the marker MULTIRET_SID (0 - 40); the arity and the per-element

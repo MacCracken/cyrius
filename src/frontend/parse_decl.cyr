@@ -9631,6 +9631,259 @@ fn _vcv_more(S): i64 {
     while (TOKTYP(S, x) == 11) { x = x + 1; }
     return _vcall_more(S, x, 5);
 }
+# ⛔ 6.7.16 (D101 A, the user's decision, 2026-10-20) — A WHOLE VECTOR CALL IS NO SCALAR FN'S RETURN VALUE AND NO WORD
+# ARGUMENT, as it is no integer declaration's (6.7.11). `fn r(): i64 { return mk2(41, 7); }` handed back x86_64 / aarch64
+# rax's leftover (0), cx lane 0 (41), and faulted on PE (exit 5: the tail call passed mk2 no hidden result pointer);
+# `return s.m2();`, a closure's expression body (`|k| mk2(41, 7)`), `takei(mk2(41, 7))` into `n: i64`, `take(mk2(41,
+# 7))` into an untyped parameter and a builtin's or an indirect call's argument (`syscall(60, mk2(..))`, `store64(&x,
+# mk2(..))`, `fncall1(f, mk2(..))`) the same word
+# (issues/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-integer-parameter.md). Refused by name at the call
+# (any spelling `_vcall_vt` reads: by name, an explicit instance, a method on any head, `&f` through fncallN / callptr,
+# inside any parentheses wrapping it whole), once, the panic latch set (`_vsc_err`). A vector fn's own `return`, a `*V`
+# or value-form vector parameter, a bool parameter or return and a struct or pointer parameter (6.7.13's D31) keep their
+# own rules and words. CHANGELOG [6.7.16]
+var _vsc_nt = 0;   # the token naming the call `_vop_call` found (the fn's, the method's, `&f`'s)
+# The refusal at token `a`: `kind` 0 "a vector value cannot be returned as i64 - 'mk2' returns a vector" (the fn's return
+# type as written), 1 ".. cannot be passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'n' of
+# 'takei'" (fn `x`'s parameter `y`; an `f64` / `f32` one named so), 2 ".. passed to 'syscall'" (the builtin's or the
+# indirect call's argument list opening at token `x`). Made in sync (`_refuse_in_sync`): the statement parses on to its
+# own end, and the next statement keeps its own errors. 1.
+fn _vsc_err(S, a, kind, x, y): i64 {
+    var sv = GTI(S);
+    STI(S, a);
+    _refuse_in_sync(S);
+    var tg = "_vsc_err";
+    if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        if (kind == 0) {
+            PRSTR(": a vector value cannot be returned as ");
+            _vsc_rtype(S);
+        } else {
+            PRSTR(": a vector value cannot be passed to ");
+            PRSTR(_vsc_pkind(x, y, kind));
+            PRSTR(" parameter");
+        }
+        PRSTR(" - '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _vsc_nt));
+        PRSTR("' returns a vector");
+        if (kind == 1) { _vsc_pof(S, x, y); }
+        if (kind == 2) { _vsc_bname(S, x); }
+        PRSTR("\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# "an integer", or for parameter `ord` of fn `fi` (`kind` 1) declared `f64` / `f32` "an f64" / "an f32".
+fn _vsc_pkind(fi, ord, kind): i64 {
+    if (kind != 1) { return "an integer"; }
+    var pk = _pbool_get(fi, ord);
+    if (pk == 4) { return "an f64"; }
+    if (pk == 3) { return "an f32"; }
+    return "an integer";
+}
+# ", passed to parameter 'n' of 'takei'" (the parameter's name when its definition gives one).
+fn _vsc_pof(S, fi, ord): i64 {
+    PRSTR(", passed to ");
+    var pn = _bx_pname(S, fi, ord);
+    if (pn >= 0) {
+        PRSTR("parameter '");
+        PRSTR(S + 0xEC00000 + pn);
+        PRSTR("' of ");
+    }
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("'");
+    return 0;
+}
+# ", passed to 'syscall'": the builtin, `callptr` or fncallN whose argument list opens at token `o`.
+fn _vsc_bname(S, o): i64 {
+    PRSTR(", passed to '");
+    var t = TOKTYP(S, o - 1);
+    if (t == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, o - 1)); }
+    else { PRSTR(TOKNAME(t)); }
+    PRSTR("'");
+    return 0;
+}
+# The return type of the fn being parsed as its definition writes it (`i64`, `f64`, `*i64`, `P1`); "i64" when it has
+# no annotation (or none can be read: a closure, a replay).
+fn _vsc_rtype(S): i64 {
+    var c = _vsc_rt_at(S);
+    if (c >= 0) {
+        var nm = _src_span_nm(S, c + 1, _vsc_rt_end(S, c), 0 - 1);
+        if (nm >= 0) {
+            PRSTR(S + 0xEC00000 + nm);
+            return 0;
+        }
+    }
+    PRSTR("i64");
+    return 0;
+}
+# The `:` before the return type in the definition of the fn being parsed, else -1 (none, a closure, a replay).
+fn _vsc_rt_at(S): i64 {
+    if (GIDEP(S) != 0) { return 0 - 1; }
+    if (_cur_fn_ix < 0) { return 0 - 1; }
+    var o = _gen_def_open(S, _cur_fn_ix);
+    if (o < 0) { return 0 - 1; }
+    var c = _call_close(S, o) + 1;
+    if (TOKTYP(S, c) != 49) { return 0 - 1; }
+    return c;
+}
+# The token after the return type whose `:` is token `c` (the body's `{`).
+fn _vsc_rt_end(S, c): i64 {
+    var e = c + 1;
+    var t = TOKTYP(S, e);
+    while (t != 13 && t != 5 && t != 12) {
+        e = e + 1;
+        t = TOKTYP(S, e);
+    }
+    return e;
+}
+# 1 = the return type (`:` at token `c`) was refused at its definition (a type name reported there, `_tn_seen_at`):
+# that refusal is the line's (`fn r(): u8 { return mk2(..); }` is not refused twice).
+fn _vsc_rt_bad(S, c): i64 {
+    var e = _vsc_rt_end(S, c);
+    var i = c + 1;
+    while (i < e) {
+        if (_tn_seen_at(S, i) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 = the fn being parsed refuses a vector `return` value in words of its own — a vector fn (the 6.6.6 rule), a struct
+# over 8 B (the struct-return rules), a multi-value fn, a return type refused at its definition — or this is an inline
+# replay's `return` (the callee's, judged at its own definition).
+fn _vsc_rskip(S): i64 {
+    if (GIDEP(S) != 0) { return 1; }
+    if (_cur_fn_ret_scalar <= 0 - 2048) { return 1; }
+    if (_cur_fn_ret_sid > 0) { if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 1; } }
+    if (_cur_fn_ix >= 0) { if (GFRS(S, _cur_fn_ix) == MULTIRET_SID) { return 1; } }
+    var c = _vsc_rt_at(S);
+    if (c >= 0) { if (_vsc_rt_bad(S, c) == 1) { return 1; } }
+    return 0;
+}
+# PARSE_RETURN, `st` the value's first token: a call declared to return a vector (`_vcall_vt`: any spelling, any wrap)
+# that is the whole value or starts it with an operator after it (`return mk2(41, 7) + 1;`, `return (mk2(41, 7) + 1) *
+# 2;`), in a fn that returns none, refused before the tail-call arm takes it. A call that a `.`, `[` or a stray token
+# follows is left to its own refusal; a bool fn keeps its own words.
+fn _vsc_ret(S, st): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (_vsc_rskip(S) == 1) { return 0; }
+    if (_bx_cur_is_bool(S) == 1) { return 0; }
+    if (_vcall_vt(S, st, 5, 1) == 0) { return 0; }
+    var x = _call_close(S, _vcv_o) + 1;
+    while (TOKTYP(S, x) == 11) { x = x + 1; }
+    var t = TOKTYP(S, x);
+    if (t != 5) { if (_tal_binop(t) == 0) { return 0; } }
+    _vsc_nt = _vcv_nt;
+    return _vsc_err(S, _vcv_a, 0, 0, 0);
+}
+# `_bx_pcmpe_arg`, the argument [t, cursor) for parameter `ord` of fn `fi` just parsed: one whole call declared to
+# return a vector into a parameter that takes a word. A bool parameter keeps its own words; a pointer of another kind, a
+# struct, a `*V` and a value-form vector theirs (6.7.13's D27, D30, D31); a callee with no definition the
+# undefined-function path's.
+fn _vsc_arg(S, fi, ord, t): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (fi < 0) { return 0; }
+    var a = _vop_call(S, t, GTI(S));
+    if (a < 0) { return 0; }
+    if (GFDS(S, fi) == 0) { return 0; }
+    if (_pbool_get(fi, ord) == 1) { return 0; }
+    if (_vk_param(S, fi, ord) != 0) { return 0; }
+    if (_pvec_param(S, fi, ord) != 0) { return 0; }
+    if (_pvf_param(S, fi, ord) != 0) { return 0; }
+    return _vsc_err(S, a, 1, fi, ord);
+}
+# PARSE_FACTOR, the factor [ti0, cursor) just parsed: when it is one call declared to return a vector (`_vop_call`), the
+# whole of a word slot that reads it — a builtin's or an indirect call's argument (`_vsl_bopen`), a closure's expression
+# body (`_vop_clb`, its return value) — refused (`_vop_whole`). 0.
+fn _vop_rchk(S, ti0): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    var e = GTI(S);
+    var a = _vop_call(S, ti0, e);
+    if (a < 0) { return 0; }
+    return _vop_whole(S, ti0, e, a);
+}
+# The whole call [ti0, e) (its first token `a`) in the slot around it, refused when the slot takes a word. 1 = refused.
+fn _vop_whole(S, ti0, e, a): i64 {
+    if (ti0 == _vop_clb) {
+        if (_vop_bend(TOKTYP(S, e)) == 1) {
+            if (_vsc_rskip(S) == 1) { return 0; }
+            return _vsc_err(S, a, 0, 0, 0);
+        }
+    }
+    var bo = _vsl_bopen(S, ti0, e);
+    if (bo >= 0) { return _vsc_err(S, a, 2, bo, 0); }
+    return 0;
+}
+# 1 = token type `t` ends a closure's expression body (`;` `,` `)` `]` `}`).
+fn _vop_bend(t): i64 {
+    if (t == 5 || t == 31 || t == 11 || t == 29 || t == 14) { return 1; }
+    return 0;
+}
+# The first token of the one call declared to return a vector that [ti0, e) is, inside any parentheses wrapping it
+# whole (`_vcv_at`'s spellings), else -1; `_vsc_nt` the token naming it. The lookahead's records are put back (it runs
+# inside the parse of a source another reader may have looked ahead at).
+fn _vop_call(S, ti0, e): i64 {
+    if (_vcv_maybe(S, ti0) == 0) { return 0 - 1; }
+    var sa = _vcv_a;
+    var sn = _vcv_nt;
+    var so = _vcv_o;
+    var sc = _vcall_o;
+    var sp = _ie_pe;
+    var a = _ie_unparen(S, ti0, e);
+    var r = 0 - 1;
+    if (_vcv_at(S, a) != 0) { if (_call_close(S, _vcv_o) + 1 == _ie_pe) { r = a; } }
+    if (r >= 0) { _vsc_nt = _vcv_nt; }
+    _vcv_a = sa;
+    _vcv_nt = sn;
+    _vcv_o = so;
+    _vcall_o = sc;
+    _ie_pe = sp;
+    return r;
+}
+# The `(` of a builtin's or an indirect call's argument list (`syscall`, `store64`, `callptr`, fncallN), every argument
+# a word, whose whole argument is the factor [ti0, e); else -1.
+fn _vsl_bopen(S, ti0, e): i64 {
+    if (ti0 < 2) { return 0 - 1; }
+    var nx = TOKTYP(S, e);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    var p = TOKTYP(S, ti0 - 1);
+    if (p != 31) { if (p != 10) { return 0 - 1; } }
+    var o = _vsl_open(S, ti0 - 1);
+    if (o < 1) { return 0 - 1; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 137) { return o; }
+    if (h == 2) {
+        if (_IS_FNCALL_NAME(S, TOKVAL(S, o - 1)) == 1) { return o; }
+        return 0 - 1;
+    }
+    if (TOKNAME_BUILTIN(h) != 0) { return o; }
+    return 0 - 1;
+}
+# The `(` that opens the argument list token `j` (a `(` or a `,`) is in, at its depth; -1 = none in the statement.
+fn _vsl_open(S, j): i64 {
+    var d = 0;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) {
+                if (t == 10) { return j; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        } elif (d == 0) { if (t == 5 || t == 13 || t == 14) { return 0 - 1; } }
+        j = j - 1;
+    }
+    return 0 - 1;
+}
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
 # `ty`: inside its parentheses, the call — on PE passing `dst`'s address as its hidden result pointer,
 # elsewhere storing the vector registers it returns in — then the parentheses' `)`.
