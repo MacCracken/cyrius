@@ -220,6 +220,11 @@ var TM7 = GZB.zmkg<i32>(33);
 var TM8 = GZB + 30;
 var TM9 = GZB.zmk<i32>(33);
 fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
+# 6.7.16 (issues/2026-10-20-zone-annotated-generic-method-instance-result-misread.md): ANNOTATED, the zone refused it
+# "the declaration zone misread whether the initializer of 'TM10' is a struct value"; TN10 / TN11 after a statement.
+var TM10: G1<P1> = GZB.zmkg(GP1);
+var TM11: G1<i32> = GZB.zmkg<i32>(33);
+fn tm_read3(): i64 { return TM10.v.a + zt4(TM11); }
 # --- 6.7.16 (the user's decision D16 (a), 2026-10-19): an if-expression of struct branches binds the struct ---
 # `var G = if (c) { B1 } else { B1 };` at top level bound nothing: `G.a` was "no struct type in scope for 'G'", where in a fn
 # the line binds (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
@@ -388,6 +393,12 @@ var TN6 = GZB.zmkg(GP1);
 var TN7 = GZB.zmkg<i32>(33);
 var TN8 = GZB + 30;
 assert_eq(TN6.v.a + zt4(TN7) + TN8.v, 99, "after a statement: the same three");
+TM10.v.a = 30;
+assert_eq(TM10.v.a + GP1.a + zt4(TM11), 96, "the zone: annotated G1<P1> / G1<i32> from GZB.zmkg (a misread refusal before); TM10 its own copy");
+assert_eq(tm_read3(), 63, "a fn body reads TM10 / TM11 before the replay");
+var TN10: G1<P1> = GZB.zmkg(GP1);
+var TN11: G1<i32> = GZB.zmkg<i32>(33);
+assert_eq(TN10.v.a + zt4(TN11), 66, "after a statement: the same two annotated");
 
 test_group("6.7.16 (D16): an untyped top-level if-expression of struct branches binds the struct");
 assert_eq(TI1.a, 33, "the zone: if (..) { GP1 } else { mk1() } is a P1 (refused at TI1.a before)");

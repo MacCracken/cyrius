@@ -12379,7 +12379,7 @@ fn _gz_chain(S, b, e): i64 {
                 t = _hl_fn_psid(mf);   # a method declared `: *T`
                 k = 6;
             }
-            _gz_gb = 0;
+            _gz_gb = _gz_mgb(S, mf, t, k);   # 6.7.16: a generic method's `: G<..>`, as a free call's
             i = mc + 1;
         } else {
             var fi = FINDFIELD(S, t - 1, TOKVAL(S, i + 1));
@@ -12407,6 +12407,20 @@ fn _gz_mopen(S, t, n): i64 {
     if (TOKTYP(S, n + 1) == 10) { return n + 1; }
     if (_mtargs_at(S, t, n) == 0) { return 0; }
     return _tok_targs_close(S, n + 2) + 1;
+}
+# ⛔ 6.7.16 — A GENERIC METHOD'S `: G<..>` RESULT IS AN INSTANCE OF G, as a free generic call's is (`_gz_call_rs`): the
+# method step of fn `mf` typed `t` (kind `k`) gives G when mf is generic and t a generic struct returned by value, so
+# `_gz_sval` takes the declared instance — `var G: G1<Pt> = b.mkg(P);` / `var G: G1<i32> = b.mkg<i32>(33);` in the
+# declaration zone compared the base `G1` with `G1$Pt`, were judged no struct value and made handles, and the replay
+# refused "the declaration zone misread whether the initializer of 'G' is a struct value". Any instance of G is taken
+# here; the replay's own type check judges which one. 0 = not such a step. CHANGELOG [6.7.16]
+fn _gz_mgb(S, mf, t, k): i64 {
+    if (k != 1) { return 0; }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (GFTP(S, mf) == 0) { return 0; }
+    if (GSTP(S, t - 1) == 0) { return 0; }
+    return t;
 }
 # The method step `_gz_ty` last read: its fn, name token, `(` and receiver's struct (`_gu_minst`).
 fn _gz_mstep(mf, n, mo, rs): i64 {

@@ -1544,6 +1544,49 @@ rowm2 GZM8 'var y = b.mkg<*u8>(33);' 'y.v'
 for zw in zone after; do
     refused "GZM8$zw" "a type argument is a type name, got '*'" "the $zw: \`b.mkg<*u8>(33)\` is the type argument's one refusal (\`y.v\` adds none)"
 done
+# 6.7.16 (issues/2026-10-20-zone-annotated-generic-method-instance-result-misread.md) — ANNOTATED, the same results: `var G:
+# G1<Pt> = b.mkg(P);` / `var G: G1<i32> = b.mkg<i32>(33);` in the zone were refused "the declaration zone misread whether
+# the initializer of 'G' is a struct value" (the method step typed the base `G1`, which `_gz_sval` compared with `G1$Pt`;
+# a free generic call's `: G<..>` is taken as an instance of G through `_gz_gb`, which the method arm cleared). The
+# method step now gives G for a generic method's generic struct return (`_gz_mgb`). GZM13 the filed repro verbatim,
+# GZM14 the filed explicit spelling, GZM15 wrapped, GZM16 `self: V`, GZM17 a `*B1` receiver, GZM18 a write (G its own
+# copy: P unchanged), GZM19 an if-expression of generic method branches, each zone and after; GZM20 a fn body reads
+# G.v.a before the replay; GZM21 a different instance (`var G: G1<i32> = b.mkg(P);`) keeps the one type refusal.
+#   N87 the method arm's `_gz_gb = 0` back                 -> RED 9: GZM13zone-GZM19zone GZM20 A2 (the tcyr's TM10 /
+#                                                           TM11), x4 legs ("misread ... 'G'")
+# rowma <name> <declarations> <exit expression>: the zone file over $GZM, and the after one with a first statement
+# before its first `var G`
+rowma() {
+    printf '%s\n%s\nsyscall(60, %s);\n' "$GZM" "$2" "$3" > "$T/$1zone.cyr"
+    awk '!d && /^var G/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"
+}
+cat > "$T/GZM13zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+struct B1 { a; }
+impl B1 { fn mkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; } }
+var b = B1 { 1 };
+var P = Pt { 33 };
+var G: G1<Pt> = b.mkg(P);
+syscall(60, G.v.a);
+EOF
+awk '!d && /^var G/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/GZM13zone.cyr" > "$T/GZM13after.cyr"
+rowma GZM14 'var G: G1<i32> = b.mkg<i32>(33);' 'G.v'
+rowma GZM15 'var G: G1<Pt> = ((b.mkg(P)));' 'G.v.a'
+rowma GZM16 'var G: G1<B1> = b.me();' 'G.v.a + 32'
+rowma GZM17 'var h: *B1 = &b;
+var G: G1<Pt> = h.mkg(P);' 'G.v.a'
+rowma GZM18 'var G: G1<Pt> = b.mkg(P);
+G.v.a = 40;' 'G.v.a + P.a - 40'
+rowma GZM19 'var G: G1<Pt> = if (1 == 1) { b.mkg(P) } else { b.mkg(P) };' 'G.v.a'
+for n in 13 14 15 16 17 18 19; do
+    for zw in zone after; do runs "GZM$n$zw" 33 "the $zw: GZM$n's annotated generic method result is the declared instance"; done
+done
+printf '%s\nvar G: G1<Pt> = b.mkg(P);\nfn f(): i64 { return G.v.a; }\nsyscall(60, f());\n' "$GZM" > "$T/GZM20.cyr"
+runs GZM20 33 "the zone: a fn body reads the annotated \`G.v.a\` before the replay"
+rowma GZM21 'var G: G1<i32> = b.mkg(P);' '0'
+for zw in zone after; do refused "GZM21$zw" "fn return struct-id differs from declared var type" "the $zw: \`var G: G1<i32> = b.mkg(P);\` (another instance) is its one type refusal"; done
 
 # ---- 6.7.16 (the user's decision D16 (a), 2026-10-19): an untyped top-level if-expression of struct branches binds the
 # struct (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md) -------------------------------
@@ -1798,7 +1841,7 @@ for zw in zone after; do
     done
     runs "GOP2$zw" 33 "the $zw: \`G1_add\` over two generic calls, annotated and untyped"
 done
-[ "$rows" -ge 410 ] || bad "only $rows rows ran (floor 410)"
+[ "$rows" -ge 427 ] || bad "only $rows rows ran (floor 427)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"
