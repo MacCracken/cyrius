@@ -4929,38 +4929,54 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # (a method declared `: Str`), `c = h.name` (a `: Str` field, nested fields walked). Each of those
 # warned "assigning non-pointer to typed pointer" about a value of exactly the local's type.
 # Its own fn so `_PARSE_STMT_IMPL` carries one reference here, not seven (cybs's ceiling).
+# ⛔ 6.7.16 — INTO A `*T`, ONLY ITS OWN STRUCT, AND ONLY THE WHOLE VALUE. The call arm kept ANY struct a call is declared
+# to return, whatever the local points at and whatever followed the call: `p = str_from(..);` into a `*P` local (a `Str`
+# header's address in a `*P`; `p.b` read the length), a `*i64` local or a `p: *P` parameter, `h = mkq();` (an 8-byte
+# struct's word) into a `*Str`, `l = mkh().n;` and `l = str_from(..) + 0;` said nothing, where the `*T` declaration and
+# a `*T` global warn. Into a `*T` (the slot's typed-pointer bit) the value is typed as one whole primary (`_tpv_sid`: a
+# name, a call, either through nested fields) and kept only when it is T (`0 - lt`), so `l = mkh().name;` (a `: Str`
+# field) into a `*Str` stays quiet. A struct local that is no `*T` (a handle) keeps the call arm: a struct call into it
+# is a rebind at any type (6.6.16 (C2)), quiet as its declaration and a handle global are
+# (issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md). Warning text only. CHANGELOG [6.7.16]
 fn _asg_ret_peek(S, noff): i64 {
     _asg_ret_sid = 0;
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) == 10) {
-        var fi = FINDFN(S, PEEKV(S));
-        if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
-        return 0;
-    }
     if (GINFN(S) == 0) { return 0; }
     var li = FINDLOCAL(S, noff);
     if (li < 0) { return 0; }
+    if (GLPTRP(S, li) == 0) { if (_asg_hdl_call(S) == 1) { return 0; } }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }
     if (lt <= 0 - 2048) { return 0; }
-    var rs = _asg_rhs_sid(S);
+    var rs = _tpv_sid(S, GTI(S));
     if (rs == 0 - lt) { _asg_ret_sid = rs; }
     return 0;
 }
-# The struct ONE primary at the cursor evaluates to when it ends at `;`: a name (`_arg_name_sid`:
-# a typed local, a capture, a pointer-mode struct global), or a name followed by nested struct
-# fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return). An inline
-# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek.
-fn _asg_rhs_sid(S): i64 {
-    var ti = GTI(S);
-    var nt = TOKTYP(S, ti + 1);
-    if (nt == 5) {
-        var r = _arg_name_sid(S, PEEKV(S));
-        return r;
-    }
-    if (nt != 41) { return 0; }
-    var k = _asg_rhs_steps(S, ti + 1, _recv_sid(S, PEEKV(S)));
-    return k;
+# ... a local that is no `*T`: a free call at the cursor (`_asg_ret_sid` its declared return, v6.5.28). 1 = a call.
+fn _asg_hdl_call(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var fi = FINDFN(S, PEEKV(S));
+    if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
+    return 1;
+}
+# The struct ONE primary from token `st` evaluates to when it ends at `;`: a name (`_arg_name_sid`: a typed local, a
+# capture, a pointer-mode struct global), a free call `f(..)` (its declared return), or either followed by nested struct
+# fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return). An inline struct field is not a
+# pointer, so it is not typed here. 0 otherwise. A peek.
+fn _tpv_sid(S, st): i64 {
+    if (TOKTYP(S, st) != 2) { return 0; }
+    var nt = TOKTYP(S, st + 1);
+    if (nt == 5) { return _arg_name_sid(S, TOKVAL(S, st)); }
+    if (nt == 41) { return _asg_rhs_steps(S, st + 1, _recv_sid(S, TOKVAL(S, st))); }
+    if (nt != 10) { return 0; }
+    var e = _tok_close_paren(S, st + 1);
+    if (e < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, st));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (TOKTYP(S, e + 1) == 5) { return rs; }
+    if (TOKTYP(S, e + 1) != 41) { return 0; }
+    return _asg_rhs_steps(S, e + 1, rs);
 }
 fn _asg_rhs_steps(S, di, rsid): i64 {
     while (rsid > 0) {

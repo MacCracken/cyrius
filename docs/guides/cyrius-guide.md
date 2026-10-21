@@ -1298,7 +1298,11 @@ literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`,
 is. A call declared `: Str` (a fn, or a method on a name) into a `*Str` is the header's address, the whole value
 up to the `;`, and never warns (6.7.16): `var p: *Str = str_from("ab");`, `GP = h.clone();` into a `*Str` global, a
 zone `var G: *Str = str_from("x");` — through 6.7.15 each warned, where `q = str_from("ab");` into a `*Str` local did
-not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word). A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word) — into a `*T` local
+or a `p: *T` parameter as well (6.7.16: `p = str_from(..);` into a `*P` local, a `*i64` or a `p: *P` parameter, `h =
+mkq();` into a `*Str`, `h = mkh().n;` and `h = str_from(..) + 0;` were silent there through 6.7.15, while the declaration
+and the global warned); a struct call into a handle (`var a: P3 = ..`, no `*`) is a rebind at any type and never warns.
+A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
 not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
