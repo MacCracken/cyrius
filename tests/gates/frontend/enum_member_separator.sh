@@ -32,6 +32,14 @@
 # swallowed `struct Q { a: Foo; }`'s error and the next enum's). `_tl_decl1` takes them too; an unclosed struct run
 # over the next declarations keeps the latch (PSC1).
 #
+# Q (6.7.16, met with the P fix): THE WALKS AFTER PASS 1. Pass 2 (an enum's constructor bodies, a struct's / union's
+# skip) and the enum-init walk re-read each declaration; a refusal's repeat there prints nothing but set the latch,
+# which held into the next thing parsed — a fn body's first statement (Q1, Q4) or the program's first statement (Q2,
+# Q3) lost its error; a refusal pass 2 makes itself (a stack enum's two-field variant) swallowed the same (Q8). Each is
+# released at the declaration's `}` (`_tl_decl2`, `_tl_enum_init1`). And pass 2's struct / union skip says nothing
+# pass 1 did not: a missing `{` was ERR's invented "unexpected identifier 'a'" beside pass 1's "expected '{'" (Q3, Q6),
+# and an unclosed body ran to the watchdog's invented "unexpected end of input (truncated or unbalanced source)" (Q5).
+#
 # Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64 and cx
 # compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
 #
@@ -47,6 +55,12 @@
 #   `_tl_decl_synced` answering 1 always             -> RED G2 G3 PSC1 on every leg (a run-on body's latch released)
 #   the lane's compiler before the PS fix (3adc7ae7b) -> RED PS1-PS6 on every leg (the next struct's error swallowed;
 #                                                      the enum's printed by pass 2 alone)
+#   the lane's compiler before the Q fix (6b80792df) -> RED Q1-Q8 on every leg (Q7: "unexpected '<'", the statement's
+#                                                      error swallowed)
+#   `_tl_decl2` without its release                 -> RED Q1-Q4 Q7 Q8 on every leg
+#   `_tl_enum_init1` without its release            -> RED Q2 on every leg
+#   `_tl_skip_body` reporting with ERR again        -> RED Q3 Q4 Q6 Q7 on every leg
+#   `_tl_skip_body` without its end-of-file stops   -> RED Q5a Q5c Q5d on every leg (Q5b: the `<..>` stop)
 # (A mutant's legs other than x86 are built by it from the real tree, so they stay green.)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -270,6 +284,53 @@ struct Q { a: Foo; }
 struct R { b: Bar; }
 syscall(60, 0);
 ' "error:<source>:1:15: expected identifier, got number 5"
+
+# Q — the walks after pass 1 end each declaration's refusal at its `}` too, and add nothing to pass 1's.
+refuse Q1 "a refused enum, then a fn body's first statement" 'enum E { A 5 }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:25: expected ';', got number 2"
+refuse Q2 "a refused enum, then the program's first statement" 'enum E { A 5 }
+syscall(60, 1 2);
+syscall(60, zz);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: expected ')', got number 2
+error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+refuse Q3 "a struct with no {: one error, then the program's first statement" 'struct P a; }
+syscall(60, 1 2);
+syscall(60, zz);
+' "error:<source>:1:10: expected '{', got identifier 'a'
+error:<source>:2:15: expected ')', got number 2
+error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+refuse Q4 "a struct with no {, then a fn body's first statement" 'struct P a; }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:10: expected '{', got identifier 'a'
+error:<source>:2:25: expected ';', got number 2"
+refuse Q5a "an unclosed struct at the end of file" 'struct P {
+' "error:<source>:1:11: expected '}', got end of file"
+refuse Q5b "an unclosed generic header at the end of file" 'struct P<T
+' "error:<source>:1:11: expected '{', got end of file"
+refuse Q5c "an unclosed union at the end of file" 'union U {
+' "error:<source>:1:10: expected '}', got end of file"
+refuse Q5d "an unclosed generic struct, a field's unknown type" 'struct P<T> { a; b: Foo
+' "error:<source>:1:24: unknown type 'Foo' for struct field 'b'
+error:<source>:1:24: expected '}', got end of file"
+refuse Q6 "a union with no {: one error, then a struct's" 'union U a; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:9: expected '{', got identifier 'a'
+error:<source>:2:18: $F"
+refuse Q7 "a generic union (its refusal, pass 2's), then the program's first statement" 'union U<T> { a; }
+syscall(60, 1 2);
+' "error:<source>:1:8: expected '{', got '<'
+error:<source>:2:15: expected ')', got number 2"
+refuse Q8 "pass 2's own refusal (a stack enum's two fields), then a fn body's" 'enum E: stack { A(x, y) }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:25: stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)
+error:<source>:2:25: expected ';', got number 2"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }

@@ -1092,8 +1092,34 @@ fn _tl_decl1(S, t): i64 {
     if (t == 60) { PARSE_ENUM_DEF(S, 0); }
     elif (t == 40) { PARSE_STRUCT_DEF(S); }
     else { PARSE_UNION_DEF(S); }
-    if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
+    _tl_decl_end(S, p0, ti);
     return 1;
+}
+# ⛔ 6.7.16 — AND IN THE WALKS AFTER IT. Pass 2 (an enum's constructor bodies, a struct's / union's skip) and the
+# enum-init walk re-read each declaration; a refusal's repeat there prints nothing but sets the latch, which held into
+# the next thing parsed: a fn body's first statement (`enum E { A 5 }` then `fn f() { var a = 1 2; .. }` lost f's
+# error) or the program's first statement (`syscall(60, 1 2);`). Released the same way, at the declaration's `}`.
+# CHANGELOG [6.7.16]
+fn _tl_decl2(S, t): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    if (t == 60) { PARSE_ENUM_DEF(S, 2); }   # constructor bodies, before the jmp patch
+    elif (t == 40) { _tl_skip_struct(S); }
+    else { _tl_skip_union(S); }
+    _tl_decl_end(S, p0, ti);
+    return 1;
+}
+fn _tl_enum_init1(S): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    PARSE_ENUM_DEF(S, 1);
+    _tl_decl_end(S, p0, ti);
+    return 0;
+}
+# The latch the declaration from token `ti` set is released when it met it clear (`p0`) and ended in sync.
+fn _tl_decl_end(S, p0, ti): i64 {
+    if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
+    return 0;
 }
 # 1 = the tokens from `ti` to the cursor end at the `}` just stepped, with no other `}` and at most one `{` (its own,
 # or none when the header's was refused) — the declaration's body did not run into the next one.
@@ -1206,9 +1232,7 @@ fn _tl_scan2(S, objok): i64 {
     if (t == 72) { _tl_mod(S); return 1; }
     if (_TL_VIS(S) == 1) { return 1; }
     if (t == 74) { _tl_skip_use(S); return 1; }
-    if (t == 40) { _tl_skip_struct(S); return 1; }
-    if (t == 101) { _tl_skip_union(S); return 1; }
-    if (t == 60) { PARSE_ENUM_DEF(S, 2); return 1; }   # constructor bodies, before the jmp patch
+    if (t == 40 || t == 101 || t == 60) { return _tl_decl2(S, t); }   # 6.7.16: each ends its refusal at its `}`
     if (_TOK_IS_KERNEL(S) == 1) { _tl_skip_mode(S); return 1; }
     # 6.6.9: ONE dispatcher arms every fn attribute and evaluates #assert. See _tl_directive.
     if (_tl_directive(S, 1) == 1) { return 1; }
@@ -1250,7 +1274,10 @@ fn _tl_skip_use(S): i64 {
 # A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
 fn _tl_skip_struct(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 19) {
+        while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { return 0; } STI(S, GTI(S) + 1); }   # 6.7.16: EOF
+        STI(S, GTI(S) + 1);
+    }
     _tl_skip_body(S);
     return 0;
 }
@@ -1261,11 +1288,22 @@ fn _tl_skip_union(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — PASS 2 STEPS THE BODY AS PASS 1 READ IT, AND SAYS NOTHING PASS 1 DID NOT. A missing `{` was ERR's
+# "unexpected identifier 'a'" at the token pass 1 had reported "expected '{', got identifier 'a'" at (now pass 1's own
+# words, a repeat printed as nothing), and the walk ran past the end of file to the watchdog's invented "unexpected
+# end of input (truncated or unbalanced source)" after pass 1's "expected '}', got end of file" (it stops there).
+# CHANGELOG [6.7.16]
 fn _tl_skip_body(S): i64 {
-    if (PEEKT(S) != 13) { ERR(S); }
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    if (PEEKT(S) == 12) { return 0; }
     STI(S, GTI(S) + 1);
     var go = 1;
-    while (go == 1) { if (PEEKT(S) == 14) { go = 0; } else { STI(S, GTI(S) + 1); } }
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 14) { go = 0; }
+        elif (t == 12) { return 0; }
+        else { STI(S, GTI(S) + 1); }
+    }
     STI(S, GTI(S) + 1);
     return 0;
 }
@@ -1276,7 +1314,7 @@ fn _tl_enum_inits(S): i64 {
     STI(S, 0);
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
+        if (PEEKT(S) == 60) { _tl_enum_init1(S); }
         else { if (PEEKT(S) == 12) { go = 0; }
             else { STI(S, GTI(S) + 1); } }
     }

@@ -20,7 +20,8 @@
 #      that re-grows its own dispatch is exactly how the drift started.
 #   H  the shared helpers carry the arms the forks used to (anti-vacuous: an emptied helper
 #      fails here, not only in the self-host). 6.7.16: pass 1's struct / union / enum arm is
-#      `_tl_decl1` (each declaration's refusal released at its own `}`), which carries the three.
+#      `_tl_decl1` (each declaration's refusal released at its own `}`), which carries the three;
+#      pass 2's is `_tl_decl2` and the enum-init walk's `_tl_enum_init1`.
 # MUTATION (6.6.17): restoring main_cx.cyr's own pass-1 loop -> RED rows C and R; dropping the
 # `_prescan_tail(S)` call from _tl_pass1 -> RED row H; main_win.cyr passing objok 0 to pass 2
 # only -> RED row C. The slot-open tree (4a37046b) is RED on C and R for all seven forks.
@@ -71,9 +72,11 @@ need _tl_scan1 '_tl_directive(S, 0) == 1' '_prescan_fn_sig(S);' '_tl_decl1(S, t)
 need _tl_decl1 'PARSE_STRUCT_DEF(S);' 'PARSE_UNION_DEF(S);' 'PARSE_ENUM_DEF(S, 0);'   # 6.7.16: the declaration step
 need _tl_scan1_mode '_prescan_impl(S);' '_tl_kmode(S, 3);'
 need _tl_pass2 '_tl_scan2(S, objok)' 'SMOD(S, 0);'
-need _tl_scan2 '_tl_directive(S, 1) == 1' 'PARSE_ENUM_DEF(S, 2);'
+need _tl_scan2 '_tl_directive(S, 1) == 1' '_tl_decl2(S, t)'
+need _tl_decl2 'PARSE_ENUM_DEF(S, 2);' '_tl_skip_struct(S);' '_tl_skip_union(S);'   # 6.7.16
 need _tl_scan2_def 'PARSE_FN_DEF(S);' '_skip_gvar_decl(S);' 'PARSE_IMPL(S);'
-need _tl_enum_inits 'PARSE_ENUM_DEF(S, 1);'
+need _tl_enum_inits '_tl_enum_init1(S);'
+need _tl_enum_init1 'PARSE_ENUM_DEF(S, 1);'   # 6.7.16
 
 if [ "$fail" -ne 0 ]; then
   echo "FAIL toplevel_scan_shared: $fail row(s) red — a top-level form goes in ONE place (src/frontend/parse_fn_def.cyr _tl_scan1 / _tl_scan2)"
