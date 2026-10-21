@@ -1067,8 +1067,7 @@ fn _tl_scan1(S, objok): i64 {
     if (t == 72) { _tl_mod(S); return 1; }
     if (_TL_VIS(S) == 1) { return 1; }
     if (t == 74) { _tl_use(S); return 1; }
-    if (t == 40) { PARSE_STRUCT_DEF(S); return 1; }
-    if (t == 101) { PARSE_UNION_DEF(S); return 1; }
+    if (t == 40 || t == 101) { return _tl_decl1(S, t); }   # 6.7.16: a struct / union ends its refusal too
     if (t == 3) { PARSE_GVAR_REG(S); return 1; }
     if (_tl_directive(S, 0) == 1) { return 1; }
     if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
@@ -1083,6 +1082,7 @@ fn _tl_scan1(S, objok): i64 {
 # (issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md). A declaration that met the
 # latch clear and ended in sync — past the `}` closing its one `{ .. }`, no brace between (`_tl_decl_synced`) —
 # releases what it set, so the next declaration reports its own (D12's missing separator was released so first).
+# A struct's and a union's refusals the same (a field that is not a name, its type, the declaration's name or `{`).
 # One that ended anywhere else (an unclosed body run into the next declaration, a payload's `( .. )` run past the
 # `}`) keeps it.
 # CHANGELOG [6.7.16]
@@ -1090,6 +1090,8 @@ fn _tl_decl1(S, t): i64 {
     var p0 = _panic;
     var ti = GTI(S);
     if (t == 60) { PARSE_ENUM_DEF(S, 0); }
+    elif (t == 40) { PARSE_STRUCT_DEF(S); }
+    else { PARSE_UNION_DEF(S); }
     if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
     return 1;
 }

@@ -27,6 +27,11 @@
 # into it. An enum whose body ran past its `}` keeps the latch: G2 (unclosed, run over a struct), G3 (a payload's
 # `( .. )` left open, run into a fn body, whose release printed an invented "unmatched '}' at module scope").
 #
+# PS (6.7.16, met with the P fix): a struct's and a union's pass-1 refusals — a field that is not a name, a field's
+# type (`a: 5`, `*5`, `Vec<5>`), the declaration's name — held the same latch to the end of pass 1 (`struct P { 5; }`
+# swallowed `struct Q { a: Foo; }`'s error and the next enum's). `_tl_decl1` takes them too; an unclosed struct run
+# over the next declarations keeps the latch (PSC1).
+#
 # Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64 and cx
 # compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
 #
@@ -39,7 +44,9 @@
 #   the lane's compiler before the P fix (c27ab795f) -> RED G1 P1-P9 on every leg (the later declarations' errors
 #                                                      swallowed)
 #   `_tl_decl1` never releasing                      -> RED S5 S6 G1 P1-P9 on every leg
-#   `_tl_decl_synced` answering 1 always             -> RED G2 G3 on every leg (a run-on body's latch released)
+#   `_tl_decl_synced` answering 1 always             -> RED G2 G3 PSC1 on every leg (a run-on body's latch released)
+#   the lane's compiler before the PS fix (3adc7ae7b) -> RED PS1-PS6 on every leg (the next struct's error swallowed;
+#                                                      the enum's printed by pass 2 alone)
 # (A mutant's legs other than x86 are built by it from the real tree, so they stay green.)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -216,6 +223,53 @@ struct Q { a: Foo; }
 syscall(60, B);
 ' "error:<source>:1:13: expected identifier, got number 5
 error:<source>:3:18: $F"
+
+# PS — a struct's or a union's refusal ends at its own `}` too.
+refuse PS1 "a field that is not a name: struct P { 5; }, then a struct and an enum" 'struct P { 5; }
+struct Q { a: Foo; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:18: $F
+error:<source>:3:12: expected identifier, got number 5"
+refuse PS2 "a field's type: a: 5, a: *5, a: Vec<5>" 'struct P { a: 5; }
+struct R { a: *5; }
+struct T { a: Vec<5>; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:15: expected identifier, got number 5
+error:<source>:2:16: expected identifier, got number 5
+error:<source>:3:19: expected identifier, got number 5
+error:<source>:4:18: $F"
+refuse PS3 "the struct's name: struct 5 { a; }" 'struct 5 { a; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:8: expected identifier, got number 5
+error:<source>:2:18: $F"
+refuse PS4 "a union's field: union U { 5; }" 'union U { 5; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:11: expected identifier, got number 5
+error:<source>:2:18: $F"
+refuse PS5 "a union's name and a union field's type, then an enum" 'union 5 { a; }
+union U { a: 5; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:7: expected identifier, got number 5
+error:<source>:2:14: expected identifier, got number 5
+error:<source>:3:12: expected identifier, got number 5"
+refuse PS6 "--syntax-only: PS1" 'struct P { 5; }
+struct Q { a: Foo; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:18: $F
+error:<source>:3:12: expected identifier, got number 5" --syntax-only
+refuse PSC1 "control: an unclosed struct run over two structs keeps the latch" 'struct P { a; 5
+struct Q { a: Foo; }
+struct R { b: Bar; }
+syscall(60, 0);
+' "error:<source>:1:15: expected identifier, got number 5"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }

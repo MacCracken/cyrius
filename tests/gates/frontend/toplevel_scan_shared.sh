@@ -19,7 +19,8 @@
 #   R  no fork reads the token stream (PEEKT / PEEKV) or calls a scan arm itself — a fork
 #      that re-grows its own dispatch is exactly how the drift started.
 #   H  the shared helpers carry the arms the forks used to (anti-vacuous: an emptied helper
-#      fails here, not only in the self-host).
+#      fails here, not only in the self-host). 6.7.16: pass 1's struct / union / enum arm is
+#      `_tl_decl1` (each declaration's refusal released at its own `}`), which carries the three.
 # MUTATION (6.6.17): restoring main_cx.cyr's own pass-1 loop -> RED rows C and R; dropping the
 # `_prescan_tail(S)` call from _tl_pass1 -> RED row H; main_win.cyr passing objok 0 to pass 2
 # only -> RED row C. The slot-open tree (4a37046b) is RED on C and R for all seven forks.
@@ -66,7 +67,8 @@ done
 need() { b=$(body "$1"); [ -n "$b" ] || { bad "row H: fn $1 is missing from $PF"; return; }
   shift; for s in "$@"; do [ "$(cnt "$b" "$s")" -ge 1 ] || bad "row H: $s is not in its shared scan"; done; }
 need _tl_pass1 '_tl_scan1(S, objok)' '_prescan_tail(S);' 'SMOD(S, 0);'
-need _tl_scan1 '_tl_directive(S, 0) == 1' '_prescan_fn_sig(S);' 'PARSE_STRUCT_DEF(S);' 'PARSE_GVAR_REG(S);' '_tl_use(S);'
+need _tl_scan1 '_tl_directive(S, 0) == 1' '_prescan_fn_sig(S);' '_tl_decl1(S, t)' 'PARSE_GVAR_REG(S);' '_tl_use(S);'
+need _tl_decl1 'PARSE_STRUCT_DEF(S);' 'PARSE_UNION_DEF(S);' 'PARSE_ENUM_DEF(S, 0);'   # 6.7.16: the declaration step
 need _tl_scan1_mode '_prescan_impl(S);' '_tl_kmode(S, 3);'
 need _tl_pass2 '_tl_scan2(S, objok)' 'SMOD(S, 0);'
 need _tl_scan2 '_tl_directive(S, 1) == 1' 'PARSE_ENUM_DEF(S, 2);'
