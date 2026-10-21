@@ -2725,12 +2725,24 @@ fn _tup_ptr_refuse(S, sid, ti, noff): i64 {
 # global yet is left to the replay, which sees every global — a whole tuple declared below is
 # `_gci_below`'s refusal (the real cause; pass 1's generic "not a tuple" came first, a second error),
 # anything else the replay's R12 (`_gvi_tup_late`). CHANGELOG [6.7.11]
+# 6.7.16: and so is a whole struct or tuple VALUE source of another type declared above (`_gci_src`: `var t: (i64, i64)
+# = GSU;`, GSU a struct `U` or a 3-tuple global, `= GW.s`), which the replay's `_gci_init` refuses by name as a fn and
+# the first statement's arm do ("cannot copy 'GSU' into a variable of a different struct/vector type: 't'") — pass 1's
+# "cannot initialize tuple 't' with a value that is not a tuple" came first, a second error (and for a tuple, false).
 fn _tup_svtype_p1(S, vi, sid, noff, ti): i64 {
-    if (_tup_is(S, sid) == 1) { if (_tup_src_later(S, _call_close(S, ti) + 1) == 1) {
+    if (_tup_is(S, sid) == 1) { if (_tup_src_replay(S, _call_close(S, ti) + 1) == 1) {
             SVTYPE(S, vi, sid);
             return 0;
         } }
     return _tup_svtype(S, vi, sid, noff, ti);
+}
+# 1 when the initializer after the `=` at token `eq` is the replay's to judge: a name no global yet (`_tup_src_later`)
+# or a whole struct / tuple value source (`_gci_src`).
+fn _tup_src_replay(S, eq): i64 {
+    if (_tup_src_later(S, eq) == 1) { return 1; }
+    if (TOKTYP(S, eq) != 4) { return 0; }
+    if (_gci_src(S, eq + 1) > 0) { return 1; }
+    return 0;
 }
 # 1 when token `eq` is the `=` of `= NAME ;` / `= NAME.f ..;` (parenthesised or not) and NAME is no
 # global yet.
