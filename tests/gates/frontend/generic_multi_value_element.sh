@@ -26,6 +26,10 @@
 #      the base's own `(f64, i64)` (V3e: that cascade predates 6.7.16)
 #   V4 a top-level destructure after the first statement (and a multi-value assignment, a tuple capture) binds the
 #      f64 element on every leg
+#   V5 the multi-value refusals name the fn and its values as the source spells them: an instance `mt<f64>`,
+#      `P.gm<f64>`, `mt2<i64, f64>` (V5a / V5c / V5d: the refusal an instance can now meet printed `mt$f64`), a method
+#      `Q.pair` (V5b: `Q_pair`), a struct instance element `(Box<Pt>, i64)` (V5e / V5f: `(Box$Pt, i64)`); V5K the same
+#      body at i64 compiles
 #
 # MUTATION LEDGER (2026-10-20; each mutant a scratch copy of the tree with the one change, its 2-stage cycc, this gate
 # run from the copy with CYCC= that cycc, so the aarch64 / cx / PE compilers are built from the mutant too):
@@ -37,6 +41,9 @@
 #                                                           p.mm(h) typed from the base), V4 x5 (GP.mm(4.5))
 #   M4 `_ret_tuple_var` judging a generic's tuple local  -> RED 25: V3a-V3e x4 + each cascade line ("cannot return
 #                                                           tuple 't' (i64, i64) from 'mt$f64'")
+#   M5 `_ret_tup_err` naming the fn table's entry        -> RED 16: V5a-V5d x4 (`mt$f64`, `Q_pair`, `P_gm$f64`,
+#                                                           `mt2$i64$f64`)
+#   M6 `_mret_spell` naming a struct by its table entry   -> RED 8: V5e / V5f x4 (`(Box$Pt, i64)`)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -190,6 +197,36 @@ vrow V3c 'fn mt<V>(x: V): (V, i64) { var t = (x, 7); return t; }' 'mt<f64>(1.5)'
 vrow V3d 'fn mt<V>(x: V, t: (i64, i64)): (V, i64) { return t; }' 'mt<f64>(1.5, (1, 2))' 1 "a t: (i64, i64) parameter returned from mt<f64>"
 vrow V3e 'fn mt<V>(x: V): (f64, i64) { var t: (i64, i64) = (1, 7); return t; }' 'mt<i64>(1)' 1 "the base's own (f64, i64) (a cascade before 6.7.16 too)"
 
+echo "V5. the refusals name the fn and the element types as the source spells them"
+H5='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct P { k; }
+var G: (i64, i64) = (1, 2);
+var GF: (f64, i64) = (1.5, 2);
+fn mt<V>(x: V): (V, i64) { return G; }
+fn mt2<A, B>(a: A, b: B): (B, A) { return G; }
+fn mm2<V>(x: V): (V, i64) { return (x, 7); }
+fn mb(b: Box<Pt>): (Box<Pt>, i64) { return (b, 1); }
+impl P {
+    fn gm<V>(self, x: V): (V, i64) { return G; }
+}'
+nrow() {   # <id> <main body> <fragment> <what> [<declarations>]
+    printf '%s\n%s\nfn main(): i64 { %s return 0; }\nsyscall(60, main());\n' "$H5" "${5:-}" "$2" > "$D/$1.cyr"
+    rf "$1" "$D/$1.cyr" 1 "$3" "$4"
+}
+nrow V5a 'var a, b = mt<f64>(1.5);' "cannot return tuple 'G' (i64, i64) from 'mt<f64>' - it returns (f64, i64)" "return G; from the f64 instance (named 'mt\$f64')"
+nrow V5b 'var q: Q = Q { 1 }; var a, b = q.pair(1);' "cannot return tuple 'GF' (f64, i64) from 'Q.pair' - it returns (i64, i64)" "a method's (named 'Q_pair')" 'struct Q { k; }
+impl Q {
+    fn pair(self, a): (i64, i64) { return GF; }
+}'
+nrow V5c 'var p: P = P { 1 }; var a, b = p.gm(2.5);' "cannot return tuple 'G' (i64, i64) from 'P.gm<f64>' - it returns (f64, i64)" "a generic method's f64 instance (named 'P_gm\$f64')"
+nrow V5d 'var a, b = mt2<i64, f64>(1, 1.5);' "cannot return tuple 'G' (i64, i64) from 'mt2<i64, f64>' - it returns (f64, i64)" "two type parameters (named 'mt2\$i64\$f64')"
+nrow V5e 'var b: Box<Pt>; var t: (i64, i64) = mb(b);' "cannot capture 'mb' into tuple (i64, i64) - it returns 2 values, (Box<Pt>, i64)" "a (Box<Pt>, i64) fn's values (spelled '(Box\$Pt, i64)')"
+nrow V5f 'var b: Box<Pt>; var t: (i64, i64) = mm2<Box<Pt>>(b);' "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (Box<Pt>, i64)" "mm2<Box<Pt>>'s values"
+printf '%s\nfn main(): i64 { var a, b = mt<i64>(1); var c, d = mt(5); return b * 10 + d; }\nsyscall(60, main());\n' "$H5" > "$D/v5k.cyr"
+xr V5K "$D/v5k.cyr" 22 "the same return G; at i64 (the base) compiles"
+
 echo "V4. top level after the first statement: the f64 element binds"
 cat > "$D/v4.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -218,4 +255,4 @@ xr V4 "$D/v4.cyr" 0 "a zone capture, a destructure, a method destructure, a mult
 
 echo "  $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a generic's (V, i64) element is the instance's binding: the filed repro (V1), the tcyr's mv_* spellings (T) on x86_64 / IR / DCE / aarch64 / cx / PE, the checks reading the instance's signature (V2), a generic's tuple local refused once (V3), top level (V4)"
+echo "PASS: $G — a generic's (V, i64) element is the instance's binding: the filed repro (V1), the tcyr's mv_* spellings (T) on x86_64 / IR / DCE / aarch64 / cx / PE, the checks reading the instance's signature (V2), a generic's tuple local refused once (V3), top level (V4), the refusals' spelling (V5)"

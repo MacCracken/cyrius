@@ -3948,7 +3948,7 @@ fn _mret_spell(S, fi): i64 {
         if (e == 1) { PRSTR("f64"); }
         elif (e == 3) { PRSTR("bool"); }
         elif (e == 0) { PRSTR("i64"); }
-        elif (GFRT(S, fi, k) > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRT(S, fi, k) - 1) * 8)); }
+        elif (GFRT(S, fi, k) > 0) { PRSTR(S + 0xEC00000 + _fsn_one(S, GFRT(S, fi, k))); }   # 6.7.16: `Box<Pt>`, not `Box$Pt`
         else { PRSTR("a vector"); }
         k = k + 1;
     }
