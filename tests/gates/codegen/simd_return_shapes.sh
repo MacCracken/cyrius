@@ -486,6 +486,11 @@
 #   M-WS2 `_try_vector_call_assign`'s mismatch not marked -> RED 20: WS1 WS3 WF1 WF3 on five legs
 #   M-WS3 `_vin_decl` not marked                       -> RED 10: WS2 WF2 on five legs
 #   M-WS4 `_vrcv_mscal` not marked                     -> RED 5: WS5 on five legs
+# 6.7.16 (met landing D100) — a refused statement prints no float-type warning (`_FLT_TYPE_WARN` says nothing while the
+# panic latch its error holds is up): D100's `var x: f64 = 1.0 + mk2(41, 7);` printed the refusal and then "f64
+# arithmetic with a non-f64 right operand" about the refused operand (f32, a comparison, an int-left `+` the same). Rows
+# FW (one error, no warning; FW5 the next statement's own warning kept) on host / host IR=3 / cx / aarch64 / win64.
+# Mutation (2026-10-21, measured): M-FW0 the tree before -> RED 25: FW1-FW5 on five legs (FW5 two warnings).
 
 set -eu
 
@@ -2856,6 +2861,53 @@ WF_ROWS="WF1 WF2 WF3 WF4"
 wf_msg() { case "$1" in WF2) echo "vector return type does not match the declared type";; *) echo "vector return type does not match the assigned variable";; esac; }
 
 
+# ---- 6.7.16 (met landing D100): a refused statement prints no float-type warning — the panic latch its error holds is
+# the statement's (`_FLT_TYPE_WARN`): `var x: f64 = 1.0 + mk2(41, 7);` printed D100's refusal and then "f64 arithmetic with
+# a non-f64 right operand" about the same operand (rows FW: one error, no warning; FW1 f64, FW2 f32, FW3 a comparison,
+# FW4 an int-left `+` with an f64 right; FW5 the next statement's own warning still printed) ---------------------------
+FWH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+'
+fw_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    FW1) printf '%s' "$FWH"'fn r(): i64 { var x: f64 = 1.0 + mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW2) printf '%s' "$FWH"'fn r(): i64 { var y: f32 = 1.0; var x: f32 = y * mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW3) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; if (y < mk2(41, 7)) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    FW4) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; var x = 0; x = 1 + mk2(41, 7) + y; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW5) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; var x: f64 = y - mk2(41, 7); var z: f64 = y + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+FW_ROWS="FW1 FW2 FW3 FW4 FW5"
+fw_msg() { case "$1" in FW4) echo "vector return type does not match the assigned variable";; *) echo "vector return type does not match the declared type";; esac; }
+fw_warn() { case "$1" in FW5) echo "2:80: f64 arithmetic with a non-f64 right operand";; *) echo "";; esac; }
+refuse_fw_all() {  # $1 leg label  $2 compiler  [$3 VAR=value]: one error (`fw_msg`), and only `fw_warn`'s warning (or none)
+    for row in $FW_ROWS; do
+        fw_src "$row" > "$W/fw.cyr"
+        rc=0
+        if [ -n "${3:-}" ]; then env "$3" "$2" < "$W/fw.cyr" > "$W/fw.out" 2>"$W/fw.err" || rc=$?
+        else "$2" < "$W/fw.cyr" > "$W/fw.out" 2>"$W/fw.err" || rc=$?; fi
+        nrefuse=$((nrefuse+1))
+        ne=$(grep -c '^error' "$W/fw.err" 2>/dev/null || true)
+        nw=$(grep -c '^warning' "$W/fw.err" 2>/dev/null || true)
+        ww=$(fw_warn "$row")
+        if [ "$ne" != 1 ] || ! grep '^error' "$W/fw.err" | grep -qF -- "$(fw_msg "$row")"; then bad "$1 $row: $ne error lines, want 1 '$(fw_msg "$row")' (rc=$rc)"
+        elif [ -z "$ww" ] && [ "$nw" != 0 ]; then bad "$1 $row: $nw warning lines after the refusal: $(grep '^warning' "$W/fw.err" | tr '\n' ' ')"
+        elif [ -n "$ww" ] && { [ "$nw" != 1 ] || ! grep '^warning' "$W/fw.err" | grep -qF -- "$ww"; }; then bad "$1 $row: want the one warning '$ww', got $nw: $(grep '^warning' "$W/fw.err" | tr '\n' ' ')"
+        elif [ -s "$W/fw.out" ]; then bad "$1 $row: reported but still emitted an artifact"
+        else good "$1 $row refused once, no warning of its own"; fi
+    done
+}
+
+
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -3441,6 +3493,8 @@ refuse2_tab_all host "$CC" ws_src "$WS_ROWS" ws_msg
 refuse2_tab_all host-ir3 "$CC" ws_src "$WS_ROWS" ws_msg CYRIUS_IR=3
 refuse_tab_all host "$CC" wf_src "$WF_ROWS" wf_msg
 refuse_tab_all host-ir3 "$CC" wf_src "$WF_ROWS" wf_msg CYRIUS_IR=3
+refuse_fw_all host "$CC"
+refuse_fw_all host-ir3 "$CC" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr vac_src "$VAC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr vac_src "$VAC_ROWS" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
@@ -3494,6 +3548,7 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     accept_tab_all cx "$W/cycc_cx" cxr voc_src "$VOC_ROWS"
     refuse2_tab_all cx "$W/cycc_cx" ws_src "$WS_ROWS" ws_msg
     refuse_tab_all cx "$W/cycc_cx" wf_src "$WF_ROWS" wf_msg
+    refuse_fw_all cx "$W/cycc_cx"
     accept_tab_all cx "$W/cycc_cx" cxr vac_src "$VAC_ROWS"
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
@@ -3548,6 +3603,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         accept_tab_all aarch64 "$W/cycc_a64" a64r voc_src "$VOC_ROWS"
         refuse2_tab_all aarch64 "$W/cycc_a64" ws_src "$WS_ROWS" ws_msg
         refuse_tab_all aarch64 "$W/cycc_a64" wf_src "$WF_ROWS" wf_msg
+        refuse_fw_all aarch64 "$W/cycc_a64"
         accept_tab_all aarch64 "$W/cycc_a64" a64r vac_src "$VAC_ROWS"
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
@@ -3607,6 +3663,7 @@ if command -v wine > /dev/null 2>&1; then
         accept_tab_all win64 "$W/cycc_win" wr_ voc_src "$VOC_ROWS"
         refuse2_tab_all win64 "$W/cycc_win" ws_src "$WS_ROWS" ws_msg
         refuse_tab_all win64 "$W/cycc_win" wf_src "$WF_ROWS" wf_msg
+        refuse_fw_all win64 "$W/cycc_win"
         accept_tab_all win64 "$W/cycc_win" wr_ vac_src "$VAC_ROWS"
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
@@ -3625,7 +3682,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -3654,8 +3711,8 @@ na_floor=$((na_floor + $(set -- $VOC_ROWS; echo $#) * 3))   # 6.7.16 (D100): eve
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
