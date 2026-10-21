@@ -1847,7 +1847,10 @@ instance, was not judged and kept the struct's first word, and `g<i32>(5)` was r
 A store THROUGH the pointer is one of them too (6.7.16, the user's D99 of 2026-10-20): `*p = mk(9);` with `p: *T`,
 `**pp = mk(9);` with `pp: **T`, `*(p + 0)`, `*w.p` through a `w: Wt<T>` carrier's `*T` field — the generic has no scalar
 instance, its note *'g' stores a struct result over 8 bytes through 'p', a pointer to its type parameter*; at `T = P3`
-the store copies (through 6.7.15 every instance compiled and a scalar one kept the struct's first word).
+the store copies (through 6.7.15 every instance compiled and a scalar one kept the struct's first word). Each of these
+lines reads its result as the parse does — an operator chain `a + c + a`, a receiver in parentheses `(a + c).mk()`, a
+generic call's or method's result as a receiver, a local from a generic call (`var g = mkg1(q); .. g.v.mk()`) — 6.7.16:
+those compiled at `T = i64` and kept the first word.
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first

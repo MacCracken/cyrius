@@ -132,6 +132,18 @@
 #   MDP5 `_gs_dsr_dep` reading no annotation's T        -> RED 1: TA11 (the carrier `w: Wt<T>`)
 #   MDP6 `_dsr_amp` answering 0                         -> RED 2: DP20 DP20b
 #   MDP7 `_dsr_call` answering -1 (records only)        -> RED 25: every free-call row (DP0-DP12 DP17-DP21), DPX x6
+# 6.7.16 (met beside D99) — THE STUB SCAN READS EVERY STRUCT RESULT THE PARSE TYPES: an operator chain `a + c + a`
+# (`_gs_top_op`: the operator applied last, its left side's struct `_gs_sres`), a receiver in parentheses `(a + c).mk()`
+# (`_gs_recv_wrap`), a generic call or method as a receiver (`_gs_rcall_g`, `_gs_mret`), a local from a generic call
+# (`_gs_recv_gvar`) — each generic compiled at i64 and kept the first word. TG23-TG25c, TA14 / TA14b. (2026-10-21, as above:)
+#   MDS1 the tree before (b86a3cb01)                    -> RED 8: TG23 TG23b TG23c TG24 TG24b TG25 TG25b TG25c
+#   MDS2 `_gs_top_op` taking one operator only          -> RED 3: TG23 TG23b TG23c
+#   MDS3 `_gs_recv_wrap` answering 0                    -> RED 2: TG24 TG24b
+#   MDS4 `_gs_rcall_g` answering 0                      -> RED 2: TG25b TG25c
+#   MDS5 `_gs_recv_gvar` answering 0                    -> RED 1: TG25c
+#   MDS6 `_gs_recv_call` without its generic method arm -> RED 1: TG25
+#   (MDP3 re-measured: GREEN — TA13's `gdo` is a stub now, its base not parsed; `_dsr_tdep` is the base parse's guard
+#   for a T-typed store the scan would read no struct from, and no row reaches it)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1291,6 +1303,29 @@ accept "TA12b ... at T = Q copies (its base parse judges nothing)" "$TH"'fn gda<
 fn main(): i64 { var q: Q; return gda(q); }'"$TE" 44 'syscall(60, 44);'
 accept "TA13 *p = a + a + a; (p: *T) at T = Q copies: the base judges no T-typed store" "$TH"'fn gdo<T>(p: *T): i64 { var a: Q; a.a = 0; a.b = 0; *p = a + a + a; return 9; }
 fn main(): i64 { var q: Q; q.a = 5; q.b = 6; gdo(&q); return q.b; }'"$TE" 1 'syscall(60, 1);'
+# TG23-TG25 / TA14 (met beside D99): the stub scan's struct-result reader took one operator only (`_gs_top_op`), a
+# receiver in parentheses as none (`_gs_recv_wrap`) and a generic call or method receiver as its base (`_gs_recv_call`),
+# so each of these generics compiled at i64 and kept the result's first word, where the plain fn refuses the line.
+refuse "TG23 var y: T = a + c + a; (an operator chain)" "generic 'gch' has no i64 (or other scalar) instance" "$TH"'fn gch<T>(x: T): i64 { var a: Q; var c: Q; var y: T = a + c + a; return 9; }
+fn main(): i64 { return gch(5); }'"$TE" one
+refuse "TG23b y = a + c + a; (a chain, y: T)" "generic 'gch2' has no i64 (or other scalar) instance" "$TH"'fn gch2<T>(x: T): i64 { var a: Q; var c: Q; var y: T = x; y = a + c + a; return 9; }
+fn main(): i64 { return gch2(5); }'"$TE" one
+refuse "TG23c *p = a + c + a; (p: *T)" "generic 'gch3' has no i64 (or other scalar) instance" "$TH"'fn gch3<T>(p: *T): i64 { var a: Q; var c: Q; *p = a + c + a; return 9; }
+fn main(): i64 { var x = 5; return gch3(&x); }'"$TE" one
+refuse "TG24 var y: T = (a + c).mk(); (a wrapped receiver)" "generic 'gcw' has no i64 (or other scalar) instance" "$TH"'fn gcw<T>(x: T): i64 { var a: Q; var c: Q; var y: T = (a + c).mk(); return 9; }
+fn main(): i64 { return gcw(5); }'"$TE" one
+refuse "TG24b *p = (a + c).mk(); (p: *T)" "generic 'gcw2' has no i64 (or other scalar) instance" "$TH"'fn gcw2<T>(p: *T): i64 { var a: Q; var c: Q; *p = (a + c).mk(); return 9; }
+fn main(): i64 { var x = 5; return gcw2(&x); }'"$TE" one
+refuse "TG25 *p = b.idm(a).mk(); (a generic method receiver)" "generic 'gcg' has no i64 (or other scalar) instance" "$TH"'fn gcg<T>(p: *T): i64 { var a: Q; var b: B1; *p = b.idm(a).mk(); return 9; }
+fn main(): i64 { var x = 5; return gcg(&x); }'"$TE" one
+refuse "TG25b var y: T = mkg1(a).v.mk(); (a generic call receiver)" "generic 'gcf' has no i64 (or other scalar) instance" "$TH"'fn gcf<T>(x: T): i64 { var a: Q; var y: T = mkg1(a).v.mk(); return 9; }
+fn main(): i64 { return gcf(5); }'"$TE" one
+refuse "TG25c var g = mkg1(a); var y: T = g.v.mk(); (a local from a generic call)" "generic 'gcl' has no i64 (or other scalar) instance" "$TH"'fn gcl<T>(x: T): i64 { var a: Q; var g = mkg1(a); var y: T = g.v.mk(); return 9; }
+fn main(): i64 { return gcl(5); }'"$TE" one
+accept "TA14 var y: T = a + c + a; at T = Q copies" "$TH"'fn gch4<T>(x: T): i64 { var a: Q; a.a = 0; var c: Q; c.a = 0; var y: T = a + c + a; return y.b; }
+fn main(): i64 { var q: Q; return gch4(q); }'"$TE" 1 'syscall(60, 1);'
+accept "TA14b *p = (a + c).mk(); at T = Q copies through p" "$TH"'fn gcw3<T>(p: *T): i64 { var a: Q; var c: Q; *p = (a + c).mk(); return 9; }
+fn main(): i64 { var q: Q; q.b = 6; gcw3(&q); return q.b; }'"$TE" 2 'syscall(60, 2);'
 refuse "TA11 *w.p = mkp(); (a carrier's *T field) at i64" "generic 'gdw' has no i64 (or other scalar) instance" "$TH"'struct Wt<U> { p: *U; }
 fn gdw<T>(w: Wt<T>): i64 { *w.p = mkp(); return 9; }
 fn main(): i64 { var k = 5; var w: Wt<i64>; w.p = &k; return gdw(w); }'"$TE" one
@@ -1414,8 +1449,8 @@ echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals,
 # FLOOR (the genbind review, 2026-10-20: 263 refusals + 37 acceptances with CPX's UC rows on three legs; 6.7.16's
 # generic-callee rows, 2026-10-21: 279 + 41): a lost row block — a source variable emptied, a leg's loop dropped — is
 # RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 365 ]; then   # 6.7.16 (D99): + the DP / TA rows
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 365"; exit 1
+if [ $((nrefuse + naccept)) -lt 375 ]; then   # 6.7.16 (D99): + the DP / TA rows; + TG23-TG25c, TA14
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 375"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
