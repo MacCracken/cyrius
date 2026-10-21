@@ -2809,7 +2809,9 @@ word (its bits). ⚠ Before 6.7.8 a signed element was zero-extended — `-3` in
 `[*Box<i64>]` (6.7.16, the user's D89; they were a parse error, *expected ']', got '<'*): the element is the instance,
 its width the instance's size (a pointer element 8 bytes), its `<..>` read as any annotation's (`[Box<Nope>]` is
 *unknown type 'Nope' as a type argument*). `s[i]` on an 8-byte struct element reads its word, on a 16-byte one its
-address; a store into a struct element is refused (below).
+address; an element of any other width (`[Box<Pt>]` and `[P3]` are 24 bytes, `[Box<i32>]` 12) is refused by name — *a
+slice subscript reads a 1-, 2-, 4-, 8- or 16-byte element - this one is 24 bytes* — so read it at `slice_ptr(&s) + i *
+sizeof(T)` (6.7.16); a store into a struct element is refused (below).
 
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
