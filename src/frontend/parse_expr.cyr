@@ -2778,6 +2778,18 @@ fn _tup_lit_at(S, st): i64 {
     if (_tup_commas(S, lp) == 0) { return 0 - 1; }
     return lp;
 }
+# 6.7.16 — `Color.NOPE` (cursor at NOPE) that `_enum_qual_resolve` reported (-2: a member of no enum, the base an
+# enum): the member and a selector chain after it are consumed and 0 is the value, so the parse goes on in step — it
+# fell back to the field load, "undefined variable 'Color'". 1 = consumed.
+fn _enum_qual_said(S, vi): i64 {
+    if (vi != 0 - 2) { return 0; }
+    STI(S, GTI(S) + 1);
+    _synonly_skip_chain(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
 # R9 — a literal anywhere a VALUE is parsed (PARSE_FACTOR, before its body): every accepting
 # position claims its literal before an expression is parsed, so a factor that opens one is an
 # operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
@@ -5851,6 +5863,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     _cfo = 0;
                     return 0;
                 }
+                if (_enum_qual_said(S, vi) == 1) { return 0; }   # 6.7.16: a member of no enum, reported
             }
             # Not an enum — rewind and do struct field load
             STI(S, dot_ti);

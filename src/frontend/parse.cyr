@@ -3765,23 +3765,54 @@ fn _assert_operands_end(S): i64 {
 # not an enum, or not NAME's enum, reports it and returns FINDVAR's slot (the caller goes on
 # as before, no cascade); -1 when NAME is no global at all (the caller's own path, as
 # before). CHANGELOG [6.6.11]
+# 6.7.16: NAME declared nowhere after a Base that IS an enum is the same "'NOPE' is not a variant of 'Color'", at
+# NAME, and -2 (reported): each caller fell back to its undefined-name report for the BASE — "undefined variable
+# 'Color'", "unknown name 'Color' in a const context" — blaming the enum, which is declared
+# (issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). A Base that is no enum keeps -1.
+# CHANGELOG [6.7.16]
 fn _enum_qual_resolve(S, bti): i64 {
     var bnoff = TOKVAL(S, bti);
     var vn = TOKVAL(S, bti + 2);
     var vi = _enum_variant_in(S, bnoff, vn);
     if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
     var any = FINDVAR(S, vn);
-    if (any < 0) { return 0 - 1; }
+    if (any < 0) { return _enum_qual_none(S, bti, bnoff, vn); }
     var sv = GTI(S);
     if (_enum_id_of(S, bnoff) == 0) {
         STI(S, bti);
+        _refuse_in_sync(S);   # 6.7.16: the caller parses on, so the statement after it is parsed (and reported)
         ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
     } else {
         STI(S, bti + 2);
+        _refuse_in_sync(S);
         ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
     }
     STI(S, sv);
     return any;
+}
+
+# ... `vn` is no global at all: -2 after the report when `bnoff` names an enum, else -1 (the caller's own path).
+fn _enum_qual_none(S, bti, bnoff, vn): i64 {
+    if (_enum_qual_bad(S, bnoff, vn, bti + 2) == 0) { return 0 - 1; }
+    return 0 - 2;
+}
+# "'vn' is not a variant of 'bnoff'" at token `mti` when `bnoff` names an enum (`vn` none of its members): 1 =
+# reported. The resolver's, and the statement / `&` paths' that never reach it (`_enum_qual_store_refused`,
+# `_enum_qual_lv_refuse`, `_stmt_enum_qual`). Not under --syntax-only: a file read alone may lack the other
+# declaration of an enum of that name (one may be declared twice) — its unknown names stay opaque. CHANGELOG [6.7.16]
+fn _enum_qual_bad(S, bnoff, vn, mti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    return _enum_qual_bad_any(S, bnoff, vn, mti);
+}
+# ... under --syntax-only too: a const context names every unknown name there (`_ce_qual_unk`).
+fn _enum_qual_bad_any(S, bnoff, vn, mti): i64 {
+    if (_enum_id_of(S, bnoff) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, mti);
+    _refuse_in_sync(S);   # every caller steps the member (and the statement) on: in sync
+    ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
+    STI(S, sv);
+    return 1;
 }
 
 # The slot of the enum constant `vn` declared in an enum NAMED `bnoff`, or -1. Walks every
@@ -6067,6 +6098,7 @@ fn _masg_ebool(S, fi, k): i64 {
 # 6.6.17 (`_impl_attrs`). The method the statement ENDED with is the one discarded (`_mcall_last`:
 # `p.bump().mu();` discards `mu`'s result; `p.mu().x;` used it).
 fn _stmt_method_call(S, noff): i64 {
+    if (_stmt_enum_qual(S, noff) == 1) { return 0; }   # 6.7.16: `E.m(..);`, E an enum
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
     _mcall_last = 0 - 1;
     var sv = _cpf_st;
@@ -6085,6 +6117,21 @@ fn _stmt_method_call(S, noff): i64 {
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# 6.7.16 — `E.m(..);` (cursor on the dot), E an enum and no variable: the store path's statement (a member, `Color.RED();`,
+# is the "expected '='" `Color.RED;` is; any other name "'m' is not a variant of 'E'", the statement stepped) — the
+# field load blamed the enum, "undefined variable 'Color'". 1 = consumed through its `;`. CHANGELOG [6.7.16]
+fn _stmt_enum_qual(S, noff): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (_enum_id_of(S, noff) == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, sv + 2);
+    if (_enum_qual_store_refused(S, noff, TOKVAL(S, sv + 1)) == 1) { return 1; }
+    STI(S, sv);   # --syntax-only: an unknown member stays opaque (`_enum_qual_bad`), the call parsed as before
     return 0;
 }
 

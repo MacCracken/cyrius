@@ -352,7 +352,10 @@ constant only, the qualified form since 6.6.10.) A plain `var` is not a constant
 refused as a size, as is a negative value. The qualifier must be the constant's OWN enum (since
 6.6.11, here and in every expression): `Foo.BUF` with no enum `Foo` is refused
 with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
-'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
+'Other'` — before 6.6.11 the qualifier was ignored. A name declared nowhere after an
+enum is the same `'NOPE' is not a variant of 'Color'`, in an expression, a const
+context, a case label, an assignment, `&` and a statement alike (6.7.16; it blamed
+the enum: "undefined variable 'Color'", "unknown name 'Color' in a const context"). When two enums share a
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
 

@@ -11896,9 +11896,9 @@ fn _ce_enum(S, noff): i64 {
         vi = _enum_qual_resolve(S, ti);
         STI(S, sv);
         if (_panic != p0) { _ce_err = 1; return 0; }
+        if (vi == 0 - 2) { _ce_err = 1; return 0; }   # 6.7.16: reported under an earlier latch
         if (vi >= 0) { if (GVECP(S, vi) == 1) { _ce_ti = ti + 3; _ce_k = 0; return L64(_vecv_base + vi * 8); } }
-        _ce_unk(S, noff);
-        return 0;
+        return _ce_qual_unk(S, noff, ti);
     } else {
         vi = _findvar_core(S, noff);
         if (vi >= 0) { if (GVECP(S, vi) == 1) { _ce_ti = ti + 1; _ce_k = 0; return L64(_vecv_base + vi * 8); } }
@@ -11907,6 +11907,16 @@ fn _ce_enum(S, noff): i64 {
         _ce_badn(S, "", noff, " is a variable - a const context takes only constants (literals, consts, enum constants, sizeof, const fn calls)");
         return 0;
     }
+    _ce_unk(S, noff);
+    return 0;
+}
+# 6.7.16 — `E.NOPE` the resolver left (-1) in a const context: under --syntax-only, where the resolver keeps an unknown
+# member opaque, E an enum is still "'NOPE' is not a variant of 'E'" — a const context names every unknown name, and
+# this one is the member, not E ("unknown name 'E'"). Else E's own report (`_ce_unk`). CHANGELOG [6.7.16]
+fn _ce_qual_unk(S, noff, ti): i64 {
+    if (_syntax_only == 1) { if (_ce_quiet == 0) {
+            if (_enum_qual_bad_any(S, noff, TOKVAL(S, ti + 2), ti + 2) == 1) { _ce_err = 1; return 0; }
+        } }
     _ce_unk(S, noff);
     return 0;
 }
@@ -13253,17 +13263,30 @@ fn _enum_qual_lv_refuse(S, bnoff, what): i64 {
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     var vn = TOKVAL(S, GTI(S) + 1);
     var vi = _enum_variant_in(S, bnoff, vn);
-    if (vi < 0) { return 0; }
+    if (vi < 0) { return _enum_qual_lv_bad(S, bnoff, vn); }
     STI(S, GTI(S) + 2);
     return _enum_lv_refuse(S, vi, vn, what);
+}
+# 6.7.16: `&E.NOPE`, E an enum declaring no NOPE: "'NOPE' is not a variant of 'E'", stepped — it was "undefined
+# variable 'E'" and "the address of a field is not taken". CHANGELOG [6.7.16]
+fn _enum_qual_lv_bad(S, bnoff, vn): i64 {
+    if (_enum_qual_bad(S, bnoff, vn, GTI(S) + 1) == 0) { return 0; }
+    STI(S, GTI(S) + 2);
+    return 1;
 }
 # PARSE_FIELD_STORE, base `bnoff` naming no variable, `.vn` consumed: `E.A = ..` / `E.A OP= ..` on
 # a variant of an enum named E is refused as `A = ..` is, and the statement stepped over. 6.7.14: with no
 # assignment after it (`E.A;`, `E.A + 1;`) it is the syntax error `A;` is, "expected '='" (it said
 # "cannot assign to enum constant 'A'").
+# 6.7.16: E an enum declaring no `vn` — "'vn' is not a variant of 'E'", the statement stepped — not "undefined
+# variable 'E'" (issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). CHANGELOG [6.7.16]
 fn _enum_qual_store_refused(S, bnoff, vn): i64 {
     var vi = _enum_variant_in(S, bnoff, vn);
-    if (vi < 0) { return 0; }
+    if (vi < 0) {
+        if (_enum_qual_bad(S, bnoff, vn, GTI(S) - 1) == 0) { return 0; }
+        _cst_skip_sync(S);
+        return 1;
+    }
     if (_asg_pair_at(S) == 1) { _enum_lv_refuse(S, vi, vn, "cannot assign to enum constant "); }
     else { ERR_EXPECT(S, 4); }
     _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
