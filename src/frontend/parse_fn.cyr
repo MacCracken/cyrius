@@ -10014,12 +10014,9 @@ fn _tr_rt_rd(S, a, ae): i64 {
 fn _tr_rt_bad(S, a, ae, mem): i64 {
     if (_tr_rt_head(S, a, ae, _tr_rt_nr(mem)) == 1) { return 1; }
     if (mem == 0) { if (_tr_rt_mvfnp(S, a, ae) == 1) { return 1; } }   # 6.7.16: a method's `(*fn( .. ), T)`
-    var k = a;
-    while (k < ae) {   # 6.7.15's D4 arm: a name that is no type, wherever it stands
-        if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
-        k = k + 1;
-    }
-    return _ty_rd_scan(S, a, ae, 0);   # 6.7.16 (D7): `Pt<i64>`, refused by either reader
+    # 6.7.15's D4 arm, a name that is no type — among the names a reader reads (6.7.16's D88: `Result<..>` is read, an
+    # enum's or Option's `<..>` refused at its name) — and 6.7.16's D7 `Pt<i64>`, refused by either reader.
+    return _ty_rd_scan(S, a, ae, 1);
 }
 # 1 when `_tr_rt_bad` counts `_tr_rt_nonret`'s names on a side: a method's always (6.7.15's arm), a member's only
 # where its reader reports them — not under --syntax-only, where it reads them on (`_trs_ret_nonret`).
@@ -10092,15 +10089,18 @@ fn _ty_rd_name(S, k, un): i64 {
 # declares (D5): each refused at the name, and silent under --syntax-only (`_ngt_say_n`, `_ta_over`'s reporter).
 fn _ty_rd_shape(S, k): i64 {
     if (_ngt_tail(S, k) != 0) { return 1; }
+    if (_ngt_hover(S, k) == 1) { return 1; }   # 6.7.16 (D88): `Result<i64, Pt, Pt>`
     return _ta_over(S, k);
 }
-# 1 when a reader reads the `<..>` after name token `k`: a generic struct's, or the builtin `Vec`'s.
+# 1 when a reader reads the `<..>` after name token `k`: a generic struct's, the builtin `Vec`'s, and since 6.7.16's
+# D88 Result's and an enum's that declares type parameters (`_ngt_hread`).
 fn _ty_rd_reads(S, k): i64 {
     var sid = FINDSTRUCT(S, TOKVAL(S, k));
     if (sid > 0) {
         if (GSTP(S, sid - 1) != 0) { return 1; }
         return 0;
     }
+    if (_ngt_hnp(S, TOKVAL(S, k)) > 0) { return 1; }
     return _trs_ret_vec(S, k);
 }
 # The token after the `<..>` whose `<` is token `lt` (a `>>` closes two lists, a `>>>` three).
@@ -10490,7 +10490,8 @@ fn _trs_targs(S, ti): i64 {
 # the member's walk, as the reader's other refusals do. CHANGELOG [6.7.16]
 fn _trs_ngt(S, ti): i64 {
     if (_trs_bad == 1) { return 0; }
-    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    var r = _ngt_refuse(S, ti);
+    if (r == 0 || r == 2) { return 0; }   # 6.7.16 (D88): 2, a Result / generic enum list read clean
     if (_syntax_only == 0) { _trs_bad = 1; }
     return 0;
 }
@@ -17609,7 +17610,9 @@ fn _parse_one_type_arg(S): i64 {
             if (_vec_ann_at(S, GTI(S) - 1) == 0) { return _targ_bad_gen(S, noff); }
             _targ_vec(S, GTI(S) - 1);
         }
-        if (_ngt_refuse(S, GTI(S) - 1) == 1) { _ta_refd = 1; }   # 6.7.15 (D6): `Pt<..>`, `i64<..>` (its type is read)
+        # 6.7.15 (D6): `Pt<..>`, `i64<..>` (its type is read). Not a Result / Option / Tagged / cstring, refused above as
+        # a type argument at all: its list is not read too (6.7.16's D88).
+        if (_c1 > 0 - 16) { if (_ngt_refuse(S, GTI(S) - 1) == 1) { _ta_refd = 1; } }
         # 6.6.17: and its own `<..>` (`Box<Vec<i64>>`), which was left for the enclosing list.
         _ta_pending_gt = _ta_pending_gt + _skip_targ_list(S);
         return _c1;

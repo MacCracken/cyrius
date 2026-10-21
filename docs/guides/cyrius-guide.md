@@ -6510,7 +6510,7 @@ tag and the payload separately (or use a struct).
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
-Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
+Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today); a use's list is held to them (6.7.16, the user's D88): `Result<i64, Pt>` reads its two, `Tri<..>` with four is *'Tri' takes 3 type arguments, 4 given*, and an enum declared without `<..>` given one is *'Color' takes no type arguments* ([Generic Functions](#generic-functions)). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 
 Helper API:
 
@@ -7445,7 +7445,8 @@ variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error na
 it (v6.6.8; an enum's values are i64, so write `i64`) — with type arguments of its own too:
 `g<Nonexist<u8>>(0)` is *unknown type 'Nonexist' as a type argument*, and a type parameter
 written with arguments (`h<T<u8>>`) is *a type parameter takes no type arguments* (6.7.14;
-both ran the i64 base). Only a generic struct takes type arguments: a non-generic struct or
+both ran the i64 base). Only a generic struct takes type arguments (and, by declaration, `Result` or an enum
+that declares its own `<..>` — below): a non-generic struct or
 a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`,
 `Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
 once, at the name: *'Pt' is not a generic struct: it takes no type arguments* (*'i64' takes
@@ -7459,7 +7460,18 @@ type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a gen
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
 rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
 local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
-D93; it compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
+D93; it compiled with the list ignored). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
+declare (6.7.16, the user's D88): one that declares no type parameters — an enum written without `<..>` (declared above
+or below the use), `Option` and `Tagged` (lib/tagged.cyr declares `enum Option: stack`), `cstring`, a program's own
+`enum Result` written without one — given a list (`var e: Color<i64>`, `fn f(p: Option<i64>)`, `s: cstring<i64>`) is
+*'Color' takes no type arguments*, once, at the name, in every position above (where the bare name is refused already —
+an enum return, a type argument — that one line stands alone); `Result` (lib/result.cyr's `enum Result<T, E>`, two
+when no enum declares it) and an enum declaring its own `<..>` have the list READ as a type-argument list — `Result<Nope>`
+is *unknown type 'Nope' as a type argument*, `Result<i64, Pt, Pt>` D5's *'Result' takes 2 type arguments, 3 given*, a
+struct declared further down a name — and name the 8-byte handle whatever the list holds: `fn g(): Result<i64, Pt>`
+compiles. Through 6.7.15 every such list was stepped unread (a name in it was never checked; a trait member's
+`: Result<Nope>` against an impl's `: i64` compiled), and a fn's own `: Option<i64>` / `: Result<..>` return was *expected
+'{', got '<'* with a cascade. Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
 i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
 the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
 6.7.15 the extra argument was read and dropped). A fn or method that is not generic takes none: `nf<i64>(6)`,

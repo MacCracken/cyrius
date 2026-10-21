@@ -2956,6 +2956,7 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_multi_value_element.sh"
 _chk_gate "$ROOT/tests/gates/frontend/mret_struct_element_refused.sh"   # 6.7.16 (D90): a struct value over 8 B is no return element
+_chk_gate "$ROOT/tests/gates/frontend/handle_type_args.sh"   # 6.7.16 (D88): a list after an enum / Result / Option / Tagged / cstring, by declaration
 # 6.7.14 — a `p: *T` parameter binds what its pointer argument points at (`&G` / `&l`, a `*S` global,
 # parameter, capture, field chain or `: *S` call) and an `x: T` one binds no pointer (the user's decision
 # D8 (a), 2026-10-16): only a `*S` local bound, through both shapes. The filed repro's nine rows, a

@@ -348,6 +348,14 @@
 #       one report it has. Mutants (2026-10-20, CYCC= its compiler): the lane's head b690e6a3d -> RED 6: F8r1-F8r6 (two
 #       lines each); `_tr_ret_rf` judging a side by `_tr_rt_bad` (which counts the `Nope` inside `Result<..>`) ->
 #       F8r7 BUILT (rc 0: a dyn formed from an impl whose return differs, reported by no one)
+#       Since 6.7.16's D88 (the user, 2026-10-20: "by declaration: refused where none are declared, read where
+#       declared") Result's list is READ: F8r7's `Nope` is the member reader's "unknown type 'Nope' as a type argument",
+#       alone (the site's line was the one report it had). F8r8 / F8r8b the residual with a dyn formed above the impl: a
+#       method's `: Option<i64>` / `: Result<Pt<i64>>` return against `: i64` was "expected '{', got '<'" plus a
+#       cascade beside the impl's "returns .." line; now the method reader's one line, and the site adds nothing.
+#       (issues/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md, the residual;
+#       issues/2026-10-20-enum-and-handle-type-arguments-unread.md). Mutants (2026-10-21, f16 FG3): handle_type_args.sh's
+#       ledger (the lane before -> RED F8r7 F8r8 F8r8b F8p8 F8p13).
 #   F8p (6.7.16 review) a parameter type its own reader refuses is that refusal alone too: the pair check compared it
 #       and added "parameter 'p' has another type" beside the reader's line (`n: Nope`, D7's `p: *Pt<i64>`, D5's
 #       `b: *Box<i64, Pt>`); such a parameter is now stepped (`_dsq_rf_of`) and the rest compared. F8p1 / F8p2 the
@@ -359,6 +367,9 @@
 #       (a list no reader reads). Mutants (2026-10-20, CYCC= its compiler): the lane's head aff3849ff -> RED 5:
 #       F8p1-F8p5 (two lines; F8p5 named 'a'); `_dsq_rf_of` without the parameter set (`_ty_rd_scan(.., 1)`) -> RED 1:
 #       F8p7 BUILT; `_ty_rd_scan` reading every `<..>` -> RED 2: F8r7 F8p8 BUILT (and traits_checked.sh TRR1 / TRR2)
+#       Since 6.7.16's D88 F8p8's `p: Result<Nope>` is the member reader's line alone (its list is read); F8p13 a member's
+#       `p: Option<i64>` (refused at the name) against `p: i64` — the name's line alone; F8p14 control: `p: Result<i64,
+#       Pt>` (read, nothing refused) against `p: i64` keeps the site's line.
 #       F8p9-F8p11 (a find repaired with them, diagnostics only) a slice or a bare `u128` parameter, each reader's
 #       refusal since 6.7.8 / 6.7.14: `p: [i64]`, an impl's `p: u128`, `p: *[i64]` — the reader's line alone; F8p12 a
 #       `p: *u128` (a type) keeps the site's line. Mutant (2026-10-20): the lane's head ca1c163da -> RED 3: F8p9 F8p10
@@ -690,7 +701,9 @@ refused f08r3 "3:26: 'Pt' is not a generic struct: it takes no type arguments" "
 refused f08r4 "3:25: type 'Color' cannot be a fn return type" "F8r4: dd4 — a member's \`: Color\` (an enum), the impl's \`: i64\`" "${PQ}enum Color { Red, Green }\ntrait T2 { fn sh(self): Color; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\n${FQ}${MQ}"
 refused f08r5 "4:30: type 'u8' cannot be a fn return type" "F8r5: an impl's \`: u8\` under a member with none (the staged file's repro 1)" "${PQ}trait T2 { fn sh(self); }\n${FQ}impl T2 for P { fn sh(self): u8 { return 1; } }\n${MQ}"
 refused f08r6 "2:25: unknown type 'Nope' as a fn return type" "F8r6: a member's \`: Nope\` (the staged file's repro 2)" "${PQ}trait T2 { fn sh(self): Nope; }\n${FQ}impl T2 for P { fn sh(self) { return 1; } }\n${MQ}"
-refused f08r7 "3:36: ${F8M} 'sh' does not match its declaration in trait T2: the return type differs" "F8r7: a member's \`: Result<Nope>\` (its list no reader reads) against \`: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self): Result<Nope>; }\n${FQ}impl T2 for P { fn sh(self): i64 { return 1; } }\n${MQ}"
+refused f08r7 "2:36: unknown type 'Nope' as a type argument" "F8r7: a member's \`: Result<Nope>\` against \`: i64\` — Result's list is read (D88): the reader's line alone" "${PQ}trait T2 { fn sh(self): Result<Nope>; }\n${FQ}impl T2 for P { fn sh(self): i64 { return 1; } }\n${MQ}"
+refused f08r8 "4:30: 'Option' takes no type arguments" "F8r8: the residual — a method's \`: Option<i64>\` against \`: i64\`, the dyn formed above the impl: the method reader's line alone" "${PQ}trait T2 { fn sh(self): i64; }\n${FQ}impl T2 for P { fn sh(self): Option<i64> { return 0; } }\n${MQ}"
+refused f08r8b "5:37: 'Pt' is not a generic struct: it takes no type arguments" "F8r8b: ... a method's \`: Result<Pt<i64>>\`: D7's line inside Result's read list alone" "struct Pt { x; y; }\n${PQ}trait T2 { fn sh(self): i64; }\n${FQ}impl T2 for P { fn sh(self): Result<Pt<i64>> { return 0; } }\n${MQ}"
 # F8p — 6.7.16 review: a parameter type its own reader refuses is that refusal alone; the rest is still compared.
 BQ='struct Box<T> { n: i64; v: T; }\nstruct Pt { x; y; }\n'
 refused f08p1 "4:37: 'Box' takes 1 type argument, 2 given" "F8p1: dd9 — a member's \`b: *Box<i64, Pt>\`, the impl's \`*Box\`" "${BQ}${PQ}trait T2 { fn sh(self, b: *Box<i64, Pt>): i64; }\nimpl T2 for P { fn sh(self, b: *Box): i64 { return 0; } }\n${FQ}${MQ}"
@@ -706,7 +719,9 @@ else bad "F8p5: rc $rc: $(tr '\n' '|' < "$T/f08p5.got")"; fi
 F8PS="${F8M} 'sh' does not match its declaration in trait T2: parameter 'p' has another type"
 refused f08p6 "4:36: $F8PS" "F8p6: a \`p: *Late\` (a struct declared below everything) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: *Late): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}struct Late { z; }\n"
 refused f08p7 "4:36: $F8PS" "F8p7: a by-name \`p: Str\` (no lib/str.cyr) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Str): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
-refused f08p8 "4:36: $F8PS" "F8p8: a \`p: Result<Nope>\` (its list no reader reads) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: Result<Nope>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p8 "2:38: unknown type 'Nope' as a type argument" "F8p8: a \`p: Result<Nope>\` against \`p: i64\` — Result's list is read (D88): the reader's line alone" "${PQ}trait T2 { fn sh(self, p: Result<Nope>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p13 "2:27: 'Option' takes no type arguments" "F8p13: a member's \`p: Option<i64>\` against \`p: i64\` — the name's line alone (D88)" "${PQ}trait T2 { fn sh(self, p: Option<i64>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+refused f08p14 "5:36: $F8PS" "F8p14: control — a \`p: Result<i64, Pt>\` (read, nothing refused) against \`p: i64\` keeps the site's line" "struct Pt { x; y; }\n${PQ}trait T2 { fn sh(self, p: Result<i64, Pt>): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 refused f08p9 "2:27: a slice cannot be a parameter" "F8p9: a member's \`p: [i64]\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: [i64]): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 refused f08p10 "4:32: \`u128\` is not supported as a parameter type yet" "F8p10: an impl's \`p: u128\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: i64): i64; }\n${FQ}impl T2 for P { fn sh(self, p: u128): i64 { return 1; } }\n${MQ}"
 refused f08p11 "2:28: a pointer to a slice is not a type" "F8p11: a member's \`p: *[i64]\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: *[i64]): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
