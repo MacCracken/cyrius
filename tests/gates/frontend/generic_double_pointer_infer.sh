@@ -138,10 +138,10 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 
 TC=tests/tcyr/crossos/double_pointer_deref_step.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
-N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
+N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC" || true)
 FLOOR=51
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
-NGI=$(grep -cE 'assert_eq\(.*"G[IKWD]: ' "$TC")
+NGI=$(grep -cE 'assert_eq\(.*"G[IKWD]: ' "$TC" || true)
 if [ "$NGI" -lt 25 ]; then echo "FAIL: $G: only $NGI GI / GK / GW / GD rows in $TC (floor 25) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -417,8 +417,8 @@ xr G3 "$D/g3.cyr" 77 "fw(&q) / fl(&q) forward a **Box<T> parameter / local into 
 # fields, so the carrier is no struct use of T), and `nb(&ps)` of a `*Pt` into `**Box<T>` binds nothing (the base)
 printf '%s\n' 'include "lib/syscalls.cyr"' 'struct Box<T> { v: T; n; }' \
     'fn bad<T>(pp: **Box<T>): i64 { return pp.v.n; }' 'syscall(60, 1);' > "$D/gk1.cyr"
-"$CC" < "$D/gk1.cyr" > "$D/gk1" 2> "$D/gk1.err"; r=$?
-if [ "$r" -ne 0 ] && [ "$(grep -c "no struct type in scope for 'pp'" "$D/gk1.err")" -eq 1 ]; then ok "GK1: pp.v.n on a pp: **Box<T> refused once (uncalled)"
+r=0; "$CC" < "$D/gk1.cyr" > "$D/gk1" 2> "$D/gk1.err" || r=$?   # `|| r=$?`: a refusal is this row's pass, not `set -e`'s exit
+if [ "$r" -ne 0 ] && [ "$(grep -c "no struct type in scope for 'pp'" "$D/gk1.err" || true)" -eq 1 ]; then ok "GK1: pp.v.n on a pp: **Box<T> refused once (uncalled)"
 else bad "GK1: pp.v.n on a pp: **Box<T>: rc $r, $(grep -m1 '^error' "$D/gk1.err")"; fi
 cat > "$D/gk2.cyr" <<'X'
 include "lib/syscalls.cyr"
