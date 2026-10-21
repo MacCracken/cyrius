@@ -1785,8 +1785,10 @@ B1.mk1();`, `= B1 + B1;`, `= fncall0(&mk1);` or `= callptr(&mk1);` of 8 bytes or
 struct type in scope for 'G'*; in the declaration zone since 6.7.16 a generic method's result too, the instance its call
 reaches: `var y = b.mkg(P);` with `fn mkg<T>(self, v: T): G1<T>` is `G1<Pt>`, `b.mkg<i32>(33)` is `G1<i32>`, the
 annotated `var G: G1<Pt> = b.mkg(P);` holds that instance (it was refused *the declaration zone misread whether the
-initializer of 'G' is a struct value*), and a generic operator fn's result is its base `G1`, as its dispatch calls the
-base), one of 9-16 bytes is refused as `var
+initializer of 'G' is a struct value*), a generic method returning its own `: T` is the struct T binds at the call
+(`var y = b.idm(P);` with `fn idm<T>(self, v: T): T` is `Pt`, as the free `id(P)` is; it bound nothing, and `var y: Pt
+= b.idm(P);` was refused as such a misread), and a generic operator fn's result is its base `G1`, as its dispatch calls
+the base), one of 9-16 bytes is refused as `var
 G: P2 = B2.mk();` is, naming the method as written (*'P2.mk' returns a struct by value, and a struct result needs
 storage in a fn's frame*; through 6.7.14 `G` held the first word, silently), and over 16 bytes the call's own
 refusal is the one error. So does a whole if-expression whose branches are a struct of 8 bytes or less (6.7.16; the

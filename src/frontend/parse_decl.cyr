@@ -12375,11 +12375,12 @@ fn _gz_chain(S, b, e): i64 {
             var mc = _call_close(S, mo);
             t = GFRS(S, mf);
             k = 1;
+            _gz_gb = _gz_mgb(S, mf, t, k);   # 6.7.16: a generic method's `: G<..>`, as a free call's
+            if (t <= 0) { t = _gz_mtb(S, mf); }   # 6.7.16: a generic method's `: T`, its binding at the call
             if (t <= 0) {
                 t = _hl_fn_psid(mf);   # a method declared `: *T`
                 k = 6;
             }
-            _gz_gb = _gz_mgb(S, mf, t, k);   # 6.7.16: a generic method's `: G<..>`, as a free call's
             i = mc + 1;
         } else {
             var fi = FINDFIELD(S, t - 1, TOKVAL(S, i + 1));
@@ -12421,6 +12422,50 @@ fn _gz_mgb(S, mf, t, k): i64 {
     if (GFTP(S, mf) == 0) { return 0; }
     if (GSTP(S, t - 1) == 0) { return 0; }
     return t;
+}
+# ⛔ 6.7.16 — A GENERIC METHOD RETURNING ITS OWN TYPE PARAMETER `: T` IS THE STRUCT T BINDS AT THE CALL, as the instance
+# the member arm reaches returns it (`_gtype_tp_ret`) and as a free generic call's `: T` reads (`_tok_gen_ret_sid`): the
+# step `_gz_mstep` just recorded, T read as the arm binds it — an explicit `.m<..>(` list (`_gu_xlist`), else
+# `_mcall_infer` (`self` at parameter 0; `_gu_mtp`, no fn instance made). `var y = b.idm(P);` with `fn idm<T>(self, v:
+# T): T` bound nothing in the declaration zone (`y.a`: "no struct type in scope for 'y'"), its annotated twin `var y:
+# Pt = b.idm(P);` was refused "the declaration zone misread whether the initializer of 'y' is a struct value"; after
+# the first statement both are the struct. A scalar binding (an i64, an f64) is no struct: 0. CHANGELOG [6.7.16]
+fn _gz_mtb(S, mf): i64 {
+    if (GFTP(S, mf) == 0) { return 0; }
+    var w = _gen_ret_tp(S, mf);
+    if (w < 0) { return 0; }
+    var b = 0;
+    if (TOKTYP(S, _gz_mti + 1) == 19) {
+        if (_gu_xlist(S, _gz_mti, mf) == 0) { return 0; }
+        b = _gu_x0;
+        if (w == 1) { b = _gu_x1; }
+    } else { b = _gu_mtp(S, mf, w); }
+    if (b <= 0) { return 0; }
+    if (b >= 2048) { return 0; }
+    return b;
+}
+# Type parameter `w` of generic method `mf` as the step `_gz_mstep` recorded binds it (`_mcall_infer`, as `_gu_mi`
+# reads it: no instance made, no local in scope, the cursor and `_gi_sc` put back); 0 for a binding the sweep cannot
+# read (`_gu_miss`).
+fn _gu_mtp(S, mf, w): i64 {
+    _gen_stub(S, mf);
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    _gi_sc = 0;
+    _gu_miss = 0;
+    var b = _mcall_infer(S, mf, _gz_mop, w, _gz_mrs);
+    if (_gu_miss == 1) { b = 0; }
+    _gu_noinst = ni;
+    SFLC(S, lc);
+    STI(S, sv);
+    _gi_sc = sc;
+    _gu_miss = ms;
+    return b;
 }
 # The method step `_gz_ty` last read: its fn, name token, `(` and receiver's struct (`_gu_minst`).
 fn _gz_mstep(mf, n, mo, rs): i64 {
@@ -12728,8 +12773,8 @@ fn _gu_zsid(S, ti): i64 {
 # 6.7.15 (D34) — the struct a whole method, operator or known `&f` result at token `b` (up to its `;`, inside any wrap)
 # has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not a free call's
 # (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches (`_gu_minst`; the
-# base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a generic operator fn's its base; and a whole
-# if-expression's struct (`_gu_ie`, D16).
+# base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a `: T` one the struct T binds (`_gz_mtb`), a generic
+# operator fn's its base; and a whole if-expression's struct (`_gu_ie`, D16).
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
@@ -12743,7 +12788,7 @@ fn _gu_wsid(S, b): i64 {
         e = e - 1;
     }
     if (TOKTYP(S, a) == 15) { return _gu_ie(S, t); }
-    if (GSTP(S, t - 1) != 0) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
+    if (_gz_gb == t) { if (_gz_mfi >= 0) { if (GFTP(S, _gz_mfi) != 0) { t = _gu_ok(S, _gu_minst(S, t)); } } }
     if (t <= 0) { return 0; }
     if (_gu_wfree(S, a, e) == 1) { return 0; }
     return t;

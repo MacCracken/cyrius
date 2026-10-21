@@ -1841,7 +1841,78 @@ for zw in zone after; do
     done
     runs "GOP2$zw" 33 "the $zw: \`G1_add\` over two generic calls, annotated and untyped"
 done
-[ "$rows" -ge 427 ] || bad "only $rows rows ran (floor 427)"
+
+# ---- 6.7.16 (issues/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a zone `var y = b.idm(P);` — a
+# GENERIC method returning its own type parameter `: T`, bound to a struct — bound nothing (`y.a`: "no struct type in
+# scope for 'y'"), and its annotated twin `var y: Pt = b.idm(P);` was refused "the declaration zone misread whether the
+# initializer of 'y' is a struct value"; after the first statement both are Pt. The zone reader's method step typed it
+# by the base's return, no struct; it now reads T's binding at the call as the member arm binds it (`_gz_mtb`: an
+# explicit `.m<..>(` list, else `_mcall_infer`, no instance made). GZT1 the filed repro verbatim; GZT2 annotated; GZT3
+# GZT4 the explicit `b.idm<Pt>(P)`, untyped and annotated; GZT5 the control `b.idm(3)` (an i64: untyped); GZT6 `self: V`;
+# GZT7 the second type parameter; GZT8 T bound to a generic instance (`G1<Pt>`); GZT9 a `*B1` receiver; GZT10 an operator
+# over two (`Pt_add`); GZT11 wrapped; GZT12 a write (y its own copy) — each zone and after; GZT13 a fn body reads `y.a`
+# before the replay; GZT14 the carrier a global swept below it; GZT15 a 16 B binding is the call's one refusal (`y.a`
+# added "no struct type in scope" in the zone).
+#   N88 `_gz_mtb` answering 0                              -> RED 14: GZT1zone-GZT4zone GZT6zone-GZT12zone GZT13 GZT14
+#                                                           GZT15zone, x4 legs
+GZT='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+struct P2 { a; b; }
+struct B1 { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn mk1(): Pt { var p: Pt; p.a = 33; return p; }
+fn Pt_add(x: Pt, y: Pt): Pt { var r: Pt; r.a = x.a + y.a; return r; }
+impl B1 {
+    fn idm<T>(self, v: T): T { return v; }
+    fn me2<V>(self: V): V { return self; }
+    fn sel<A, C>(self, a: A, c: C): C { return c; }
+}
+var b = B1 { 1 };
+var P = Pt { 33 };
+var Q2 = P2 { 33, 4 };'
+# rowt <name> <declarations> <exit expression>: the zone file over $GZT, and the after one with a first statement
+# before its first declaration of y, GX or h
+rowt() {
+    printf '%s\n%s\nsyscall(60, %s);\n' "$GZT" "$2" "$3" > "$T/$1zone.cyr"
+    awk '!d && /^var (y|GX|h)[ :]/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"
+}
+cat > "$T/GZT1zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Pt { a; }
+struct B1 { a; }
+struct S8 { a; }
+impl B1 { fn idm<T>(self, v: T): T { return v; } }
+var b = B1 { 1 };
+var P = Pt { 33 };
+var y = b.idm(P);
+syscall(60, y.a);
+EOF
+awk '!d && /^var y /{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/GZT1zone.cyr" > "$T/GZT1after.cyr"
+rowt GZT2 'var y: Pt = b.idm(P);' 'y.a'
+rowt GZT3 'var y = b.idm<Pt>(P);' 'y.a'
+rowt GZT4 'var y: Pt = b.idm<Pt>(P);' 'y.a'
+rowt GZT5 'var y = b.idm(3);' 'y + 30'
+rowt GZT6 'var y = b.me2();' 'y.a + 32'
+rowt GZT7 'var y = b.sel(3, P);' 'y.a'
+rowt GZT8 'var GX = mkg1(P);
+var y = b.idm(GX);' 'y.v.a'
+rowt GZT9 'var h: *B1 = &b;
+var y = h.idm(P);' 'y.a'
+rowt GZT10 'var y = b.idm(P) + b.idm(P);' 'y.a - 33'
+rowt GZT11 'var y = ((b.idm(P)));' 'y.a'
+rowt GZT12 'var y = b.idm(P);
+y.a = 40;' 'y.a + P.a - 40'
+for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    for zw in zone after; do runs "GZT$n$zw" 33 "the $zw: GZT$n's generic method \`: T\` result is the struct T binds"; done
+done
+printf '%s\nvar y = b.idm(P);\nfn f(): i64 { return y.a; }\nsyscall(60, f());\n' "$GZT" > "$T/GZT13.cyr"
+runs GZT13 33 "the zone: a fn body reads \`y.a\` before the replay"
+printf '%s\nvar y = b.idm(QB);\nvar QB = mk1();\nfn f(): i64 { return y.a + 33; }\nsyscall(60, f());\n' "$GZT" > "$T/GZT14.cyr"
+runs GZT14 33 "the zone: \`b.idm(QB)\` with QB swept below it is Pt, read by a fn body (QB is 0 when y is made)"
+rowt GZT15 'var y = b.idm(Q2);' 'y.a'
+for zw in zone after; do refused "GZT15$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "the $zw: a 16 B binding is the call's one refusal (\`y.a\` adds none)"; done
+[ "$rows" -ge 455 ] || bad "only $rows rows ran (floor 455)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"
