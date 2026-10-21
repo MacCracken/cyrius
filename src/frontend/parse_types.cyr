@@ -4483,6 +4483,17 @@ fn _enum_sep_end(S): i64 {
     return 0;
 }
 
+# 6.7.16 — the member at the cursor: its name, or -1 when it is not one ("expected identifier"). The refused token was
+# registered all the same, its value read as a name: a number's (6, 7) or a keyword's named whatever stood at that
+# offset of the name table, so `enum F { X 6 }` then `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with
+# conflicting value", and an enum left unclosed one "duplicate symbol 'enum'" per keyword it ran over. It keeps its
+# position (the next member's value) and its payload / `= value` are read as a member's. CHANGELOG [6.7.16]
+fn _enum_mem_name(S): i64 {
+    if (PEEKT(S) == 2) { return PEEKV(S); }
+    ERR_EXPECT(S, 2);
+    return 0 - 1;
+}
+
 # Parse: enum Name { A; B; C; } — registers variants as global constants
 # Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
 # Pass 1: just register var names + sizes (no code)
@@ -4543,8 +4554,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
         # STALL, and this loop ADVANCES GTI every iteration. See the include-length ifdef bug.
         elif (PEEKT(S) == 12) { ego = 0; }
         else {
-            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-            var vnoff = PEEKV(S);
+            var vnoff = _enum_mem_name(S);
             var vti = GTI(S);
             STI(S, GTI(S) + 1);
             # Check for constructor syntax: Variant(param) | Variant(a, b, ...)
@@ -4580,7 +4590,8 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # enum constant, sizeof, a const fn call) — evaluated once, replayed by token.
                 val = _enum_val(S);
             }
-            if (emit_code == 2) {
+            if (vnoff < 0) { }   # 6.7.16: a refused member is a position, nothing registered or emitted
+            elif (emit_code == 2) {
                 # Pass 2 function section: emit constructor bodies only
                 if (has_ctor == 1) {
                     # v6.5.55 — the pair carries exactly tag + one payload. Reject anything

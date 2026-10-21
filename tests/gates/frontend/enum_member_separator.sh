@@ -12,6 +12,12 @@
 # member keeps the loop's own "expected identifier" (S8). 6.7.15's D1 (a) for a struct literal is the twin
 # (tests/gates/frontend/struct_literal_type_refused.sh CM).
 #
+# G (6.7.16, met with issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): a member
+# token that is not a name is refused and registers NOTHING (`_enum_mem_name`). It was registered all the same, its
+# token value read as a name offset — a number's (6, 7) or a keyword's named whatever stood there in the name table —
+# so `enum F { X 6 }` + `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with conflicting value" and an
+# unclosed enum one "duplicate symbol 'enum'" per keyword it ran over. The refused member keeps its position.
+#
 # Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64 and cx
 # compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
 #
@@ -20,6 +26,7 @@
 #   `_enum_sep` without its error                   -> RED S1-S7 x86
 #   `_enum_sep_end` never releasing the latch       -> RED S5 S6 x86 (the second enum's error swallowed)
 #   `_enum_sep` erring on any non-separator token   -> RED S8 x86 (a missing separator said before "expected identifier")
+#   `_enum_mem_name` answering the refused token's value (453c5393b's registration) -> RED G1-G3 on every leg
 # (A mutant's legs other than x86 are built by it from the real tree, so they stay green.)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -118,6 +125,22 @@ syscall(60, E.B);
 refuse S8 "control: a non-member token keeps 'expected identifier'" 'enum E { A 5 }
 syscall(60, E.A);
 ' "error:<source>:1:12: expected identifier, got number 5"
+
+# G — a refused member registers nothing: no invented "duplicate symbol" warning.
+refuse G1 "two enums, each with a number for a member" 'enum F { X 6 }
+enum G { Y 7 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 6"
+refuse G2 "an unclosed enum running over a struct and an enum" 'enum E { A 5
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5"
+refuse G3 "a payload's ( .. ) running into a fn body" 'enum E: stack { A(x, 5 }
+fn f(): i64 { if (1) { return 2; } return 1; }
+struct Q { a: Foo; }
+syscall(60, f());
+' "error:<source>:1:22: expected identifier, got number 5"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }
