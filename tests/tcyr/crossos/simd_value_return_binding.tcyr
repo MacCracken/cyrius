@@ -116,6 +116,32 @@ fn cr_ret2(h: *CrH): f64v2 { return h.w.s.mg<i64>(50); }
 #     declaration's address is the call's hidden result pointer. ---
 fn iw2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 
+# --- J (6.7.16, issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): a method declared
+#     `: V` on a PARENTHESISED or CALL head — `(*ps).mv()`, `(*pw).s.mv()`, `gw(&w).s.mv()`, a method's result mid-chain
+#     `o.gp(&w).s.mv()` — is the vector at every receive a name head's is. The untyped declaration bound one word of stack
+#     garbage (x86_64 96, IR=3 112, aarch64 168, cx 106, PE 195 for `(*ps).mv()` where 161 is right), `var x: i64 = ..`
+#     stored a word and the annotated declaration was refused "got `(...)`". Raw lane bits, each lane distinct; on Win64
+#     the receive's address is the method's hidden result pointer. ---
+struct JO { k; }
+impl JO { fn gp(self, p: *CrW): *CrW { return p; } }
+fn jgw(p: *CrW): *CrW { return p; }
+fn jret(ps: *CrS): f64v2 { return (*ps).mv(); }
+fn jret2(pw: *CrW): f64v2 { return (*pw).s.mv(); }
+fn jret3(w: *CrW): f64v2 { return jgw(w).s.mv(); }
+
+# --- K (6.7.16, met by the receives review): an `#inline` callee replayed inside a vector-returning fn returns ITS value.
+# The replay carried a vector callee's return class (v6.5.59) and left the vector CALLER's in place for any other callee,
+# so `kin_one`'s `return x + 1;` met the 6.6.6 vector-return rule: the valid fns below were refused ("a vector-returning
+# fn carries its result in a fixed register pair ... got `x`") on every target.
+#inline
+fn kin_one(x): i64 { return x + 1; }
+fn kin_v2(): f64v2 { var w: f64v2; store64(&w, kin_one(40)); store64(&w + 8, kin_one(6)); return w; }
+fn kin_v4(): f64v4 {
+    var w: f64v4;
+    store64(&w, kin_one(0)); store64(&w + 8, kin_one(1)); store64(&w + 16, kin_one(2)); store64(&w + 24, kin_one(3));
+    return w;
+}
+
 fn main(): i64 {
     var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
     var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
@@ -401,6 +427,60 @@ fn main(): i64 {
     assert_eq(load32(&if4) * 1000 + load32(&if4 + 4) * 100 + (load32(&if4 + 8) - 100) * 10 + load32(&if4 + 12) - 100,
       5656, "untyped f32v4 from ((g<T>(..))), every lane");
     assert_eq(is1.k, 1, "the receiver is intact");
+
+    # --- J: a vector method on a parenthesised or call head (6.7.16) ---
+    test_group("J a vector method on (*ps) / (*pw).s / gw(&w).s");
+    var js: CrS = CrS { 1 };
+    var jps: *CrS = &js;
+    var jw: CrW; jw.s.k = 2; jw.j = 5;
+    var jpw: *CrW = &jw;
+    var ju1 = (*jps).mv();
+    assert_eq(load64(&ju1), 41, "untyped var v = (*ps).mv() lane0");
+    assert_eq(load64(&ju1 + 8), 7, "untyped var v = (*ps).mv() lane1");
+    var ju2 = (*jpw).s.mv();
+    assert_eq(cr_lanes(ju2), 42007, "untyped var v = (*pw).s.mv(), both lanes");
+    var ju3 = jgw(&jw).s.mv();
+    assert_eq(cr_lanes(ju3), 42007, "untyped var v = gw(&w).s.mv(), both lanes");
+    var ja1: f64v2 = (*jps).mv();
+    assert_eq(cr_lanes(ja1), 41007, "declared from (*ps).mv(), both lanes");
+    var ja2: f64v2 = (*jpw).s.mv();
+    assert_eq(cr_lanes(ja2), 42007, "declared from (*pw).s.mv(), both lanes");
+    var ja3: f64v2 = jgw(jpw).s.mv();
+    assert_eq(cr_lanes(ja3), 42007, "declared from gw(pw).s.mv(), both lanes");
+    var jx: f64v2 = ge2<i64>(0, 0);
+    jx = (*jps).mv();
+    assert_eq(cr_lanes(jx), 41007, "assigned from (*ps).mv(), both lanes");
+    jx = ge2<i64>(0, 0);
+    jx = (*jpw).s.mv();
+    assert_eq(cr_lanes(jx), 42007, "assigned from (*pw).s.mv(), both lanes");
+    jx = ge2<i64>(0, 0);
+    jx = jgw(&jw).s.mv();
+    assert_eq(cr_lanes(jx), 42007, "assigned from gw(&w).s.mv(), both lanes");
+    assert_eq(cr_lanes((*jps).mv()), 41007, "(*ps).mv() into a value-form parameter");
+    assert_eq(cr_rd(jgw(&jw).s.mv()), 42007, "gw(&w).s.mv() into a *f64v2 parameter");
+    var jr1: f64v2 = jret(jps);
+    assert_eq(cr_lanes(jr1), 41007, "return (*ps).mv() from a f64v2 fn");
+    var jr2: f64v2 = jret2(jpw);
+    assert_eq(cr_lanes(jr2), 42007, "return (*pw).s.mv() from a f64v2 fn");
+    var jr3: f64v2 = jret3(&jw);
+    assert_eq(cr_lanes(jr3), 42007, "return gw(w).s.mv() from a f64v2 fn");
+    var jo: JO = JO { 0 };
+    var ju4 = jo.gp(&jw).s.mv();
+    assert_eq(cr_lanes(ju4), 42007, "untyped from o.gp(&w).s.mv() (a method's result mid-chain)");
+    var ju5 = ((*jps)).mg(60);
+    assert_eq(cr_lanes(ju5), 61008, "untyped from ((*ps)).mg(60) (a generic method)");
+    var ju6 = (*jpw).s.m4();
+    assert_eq(load64(&ju6) * 1000 + load64(&ju6 + 8) * 100 + load64(&ju6 + 16) * 10 + load64(&ju6 + 24), 1232,
+      "untyped f64v4 from (*pw).s.m4(), every lane");
+    assert_eq(js.k * 100 + jw.s.k * 10 + jw.j, 125, "the receivers are intact");
+
+    # --- K: an #inline callee replayed in a vector fn (6.7.16) ---
+    test_group("K an #inline callee replayed inside a vector-returning fn");
+    var kv = kin_v2();
+    assert_eq(cr_lanes(kv), 41007, "kin_one(40) / kin_one(6) stored into an f64v2 fn's local, both lanes");
+    var kv4 = kin_v4();
+    assert_eq(load64(&kv4) * 1000 + load64(&kv4 + 8) * 100 + load64(&kv4 + 16) * 10 + load64(&kv4 + 24), 1234,
+      "kin_one(0..3) into an f64v4 fn's local, every lane");
 
     var r = assert_summary();
     return r;

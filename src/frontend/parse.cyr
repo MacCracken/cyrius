@@ -5684,7 +5684,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
     if (PEEKT(S) != 19) { return 0; }
     if (_MONOMORPH_OK != 1) { return 0; }
     var fi = FINDFN(S, noff);
-    if (fi < 0) { return 0; }
+    if (fi < 0) { return _stmt_undef_gcall(S, noff); }   # 6.7.16: `nofn<i64>(1);`, a generic that is nothing
     if (_eta_gen(S, fi) == 0) { return 0; }   # 6.7.16: `nf<i64>(6);` refused, the list stepped — the `IDENT (` arm
     if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) != 1) { return 0; }
     if (_stmt_call_field(S) == 1) { return 1; }
@@ -5695,6 +5695,27 @@ fn _stmt_explicit_generic(S, noff): i64 {
     _explicit_generic_call(S, noff, fi);
     _cfo = 0;
     _stmt_qmark(S, pair);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# ⛔ 6.7.16 — `nofn<i64>(1);` AS A STATEMENT, the name nothing in any scope, took the assignment path: "expected '=', got
+# '<'", then "undefined variable 'i64'" and "undefined variable 'nofn'" — and under --syntax-only (lint's pre-pass) a
+# sibling module's generic called so was a false "expected '=', got '<'". It is the factor's call (`_ugc_call`): "undefined
+# function 'nofn'" once, and whatever follows the call's chain stepped over with it (`nofn<i64>(1).n = 5;`); under
+# --syntax-only silent, a field store's tail parsed as a sibling's call's is (`_synonly_fld_tail`). A local, a capture, a
+# global or a struct of the name keeps the old path. Cursor past the name; 1 = consumed through its `;`, 0 = not this
+# shape (cursor untouched). CHANGELOG [6.7.16]
+fn _stmt_undef_gcall(S, noff): i64 {
+    if (_ugc_open(S, GTI(S)) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { if (_cl_snap_find(S, noff) >= 0) { return 0; } }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    var tn = _tsc_n;
+    _ugc_call(S, noff);
+    if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
+    if (_asg_pair_at(S) == 1) { _synonly_fld_tail(S, 5); return 1; }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 1;

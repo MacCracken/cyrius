@@ -949,17 +949,30 @@ fn _mret_zero(S, fi): i64 {
 # `_refuse_struct_tuple_return`; D22 A, the user's decision, 2026-10-15): over 16 B the result pointer
 # was never written, at 8 B or less the second value was dropped, at 9-16 B the words came back by ABI
 # coincidence only. `_ret2_in_struct`, once and in sync; a dyn keeps `_mret_land`'s V7 text.
+# ⛔ 6.7.16 — AFTER ITS ARGUMENTS: each refusal was printed at the `ret2` before `(a, b)` was parsed, so `ret2(zz, 1);`
+# in a struct fn or a vector fn (and `return ret2(zz, 1);` in a struct fn), outside a fn or in a 3-value fn was the
+# refusal AND "undefined variable 'zz'" — the arguments' own error comes alone now, as a `return`'s value's does
+# (`_pair_ret_late`). `_ret2_ctx` answers the landing (1 = none: outside a fn), `_ret2_late` refuses once the arguments
+# are parsed, unless they reported an error (`_err_n` since `en`). CHANGELOG [6.7.16]
 fn _ret2_ctx(S, ti): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    return 1;
+}
+fn _ret2_late(S, ti, en): i64 {
+    if (_err_n != en) { return 0; }
     if (GINFN(S) == 1) {
         _ret2_in_struct(S, ti);
         _ret2_in_vector(S, ti);   # 6.7.14 (D43)
         return _ret2_in3(S, ti);
     }
-    if (_tn_once(S, ti) == 0) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 0; }
     var p0 = _panic;
+    var sv = GTI(S);
+    STI(S, ti);
     ERR_MSG(S, "ret2 outside a fn body", 22);
+    STI(S, sv);
     if (p0 == 0) { _panic = 0; }
-    return 1;
+    return 0;
 }
 fn _ret2_in3(S, ti): i64 {
     if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
@@ -1193,7 +1206,15 @@ fn PARSE_RETURN(S): i64 {
     var bad = _mret_ret_check(S, st);
     var he = _had_error;
     var en = _err_n;   # 6.7.16: what the arms refuse, in this statement
+    var pt = _prr_ti;   # 6.7.16: a return inside the value (a closure's, a replay's) keeps this one's pending refusal
+    var pn = _prr_en;
+    var pk = _prr_k;
+    _prr_ti = 0 - 1;
     _PARSE_RETURN_ARMS(S);
+    _pair_ret_late(S);   # 6.7.16: the pair / vector class's refusal, after the value's own parse
+    _prr_ti = pt;
+    _prr_en = pn;
+    _prr_k = pk;
     if (bad == 1) { _mret_ret_late(S, st, he, en); }
     return 0;
 }
@@ -1357,15 +1378,13 @@ fn _PARSE_RETURN_ARMS(S): i64 {
         # f64v4. The PAIR class is untouched: rax:rdx IS its ABI. Refuse here and let the arms
         # below parse the tuple anyway, so the token stream stays in sync for the rest of the
         # body. See `_refuse_simd_return`. CHANGELOG [6.6.6]
-        if (mr_is_tuple == 1) { _refuse_vector_tuple_return(S); }
+        if (mr_is_tuple == 1) { _ret_tup_defer(S); }   # 6.7.16: printed after the literal's parse
         if (mr_is_tuple == 1) { if (mr_commas > 1) {
                 # --- arity 3 ---------------------------------------------------
                 # Push each value but the last, leave the last in rax, then unwind
                 # into the return registers back-to-front. Generalises the arity-2
                 # sequence below; nothing here is arity-2-specific.
-                if (mr_commas > 2) {
-                    ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
-                }
+                if (mr_commas > 2) { _ret_tup_arity(S); }
                 STI(S, GTI(S) + 1);  # consume (
                 _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check, each element
                 EPUSHR(S);                                                          # push a
@@ -1554,7 +1573,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
             var _rc_is256 = _is_simd256(S, _cur_fn_ret_scalar);
             if (_rc_is128 == 1 || _rc_is256 == 1) {
                 if (PEEKT(S) == 2) {
-                    if (_gcall_open(S, GTI(S)) >= 0) {   # IDENT '(' → a call (6.7.13: or `g<T>(`)
+                    if (_ret_vwcall(S) == 1) {   # IDENT '(' → a call (6.7.13: or `g<T>(`; 6.7.16: the whole value)
                         var _rc_noff = PEEKV(S);
                         var _rc_fi = _vcall_fi(S, GTI(S));
                         if (_rc_fi >= 0) {
@@ -2155,7 +2174,7 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     # 6.7.16: `gg<Str>(*p)` — an instance's `x: T` at T = Str is address-passed; `*p` passes p, the header.
     if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # CHANGELOG [6.7.16]
-    if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
+    if (PEEKT(S) == 10) { if (_vmc_phead(S, GTI(S)) < 0) { return _sarg_paren(S, fi, argc, tail); } }   # 6.7.6 (6.7.16: no `(*ps).mv()`)
     if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }   # 6.7.12 (D27): `rd(mkv(..))` into `*V`
     # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
     # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
@@ -2317,6 +2336,7 @@ fn _sarg_pe_vform(S, fi, argc, tail): i64 {
     var ti = GTI(S);
     _sar_ti = ti;
     var c = _pwrap_in(S, ti);   # 6.7.14: inside parentheses wrapping the whole argument, as `_sar_take` reads it
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
     if (c >= 0) {
         STI(S, c);
         if (_spv_one(S, fi, argc, tail, vf) == 1) {
@@ -2842,7 +2862,12 @@ fn _tup_arg_call(S, fi, argc): i64 {
 # value (139 / 139 / 1 / 5), because only a lone integer literal reached the check. The whole argument is scanned
 # (`_tal_scan`): integer / char literals, `true` / `false`, operators and parentheses only — refused as "an
 # integer", or "a bool" when its every literal is `true` / `false`. A name (a const too), a call, `&` / `*` in front
-# of an operand, a string or a float exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
+# of an operand or a string exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
+# 6.7.16: a boolean value — a comparison, `!x`, `&&` / `||` — is "a bool" too (`_tal_kind`).
+# ⛔ 6.7.16 — A FLOAT LITERAL IS NO TUPLE (D23, the user's decision, 2026-10-19): `take(1.5)`, `take(-1.5)`,
+# `take((2.0))` and `take(1.5 + 1)` compiled and the callee read through the f64's bits (139 / 139 / 1 / 5 on x86_64
+# / aarch64 / cx / PE): `_tal_scan` took no float literal, so the argument was exempt. It takes one now, and an
+# argument whose value is an f64 is refused as "an f64"; a float comparison (`take(1.5 < 2.0)`) is "a bool".
 fn _tup_arg_lit(S, fi, argc): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_tup_is(S, ps) == 0) { return 0; }
@@ -2850,8 +2875,11 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     if (lk == 0) { return 0; }
     var o = _gen_def_open(S, fi);
     if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
+    lk = _tal_kind(S, lk);
+    if (lk == 0) { return 0; }   # 6.7.16: no single expression — the parse's own error, alone
     if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
     if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
+    elif (lk == 3) { PRSTR("cannot pass an f64 to tuple parameter "); }
     else { PRSTR("cannot pass an integer to tuple parameter "); }
     var pn = _bx_pname(S, fi, argc);
     if (pn >= 0) {
@@ -2866,8 +2894,8 @@ fn _tup_arg_lit(S, fi, argc): i64 {
     return 1;
 }
 # 6.7.15 (D36) — the argument from token k to its depth-0 `,` / `)`: 1 = made only of integer / char literals,
-# `true` / `false`, operators and parentheses, with an integer or char literal among them; 2 = the same with every
-# literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
+# `true` / `false`, operators and parentheses, with an integer or char literal among them (6.7.16, D23: or a float
+# literal); 2 = the same with every literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
 # between two (in front of one they read or take an address).
 fn _tal_scan(S, k): i64 {
     var n = GTCNT(S);
@@ -2884,7 +2912,7 @@ fn _tal_scan(S, k): i64 {
         } elif (opnd == 1) {
             if (_tal_binop(t) == 0) { return 0; }
             opnd = 0;
-        } elif (t == 1) {
+        } elif (t == 1 || t == 61) {
             ints = 1;
             opnd = 1;
         } elif (t == 169 || t == 170) {
@@ -2911,6 +2939,156 @@ fn _tal_binop(t): i64 {
     if (t == 53 || t == 54 || t == 152) { return 1; }
     if (t >= 113 && t <= 121) { return 1; }
     return 0;
+}
+# ⛔ 6.7.16 — A COMPARISON, `!x` OR `&&` / `||` ARGUMENT IS "A BOOL". D36's words said "a bool" only when every
+# literal was `true` / `false`, so `take(1 == 1)`, `take(!0)` and `take(1 < 2 && 3 > 2)` said "an integer" where
+# guide § bool counts a comparison, `!x`, `&&` / `||` — or any of these in parentheses — a boolean value. The words
+# follow the argument's value: 2 when every literal is `true` / `false` (D36) or the value is a boolean one; 3 an
+# f64 (D23); else 1. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND 0, NOT JUDGED, WHEN THE TOKENS ARE NO SINGLE EXPRESSION. `_tal_scan` checks the vocabulary, not the
+# grammar, so `take(1 < 2 < 3)` (one comparison per operand, _PLOGIC_ATOM), `take(1 == 1 == 1)` and
+# `take((1 +) - 2)` printed "cannot pass an integer to tuple parameter ..." in front of the parse's own error —
+# two errors for one mistake, the first naming the wrong one. The parse reports it alone. CHANGELOG [6.7.16]
+fn _tal_kind(S, lk): i64 {
+    var vk = _tty_arg(S, GTI(S));
+    if (vk == 0) { return 0; }
+    if (lk == 2) { return 2; }
+    return vk;
+}
+# `_tty_arg` reads a literal-only argument (`_tal_scan` has seen only literals, operators and parentheses) the way
+# PCMPE parses it — `||` / `&&` links, one comparison, PEXPR's `+ - & | ^ ..`, PARSE_TERM's `* / % << ..`, a
+# factor's `-` / `~` / `!` and a parenthesised expression — and answers its value's class: 2 a boolean value, 3 an
+# f64, 1 an integer; 0 when the tokens are no single expression or nest past 256 parentheses. An f64 is the value
+# the compiler types f64 (D23: "an f64 when the compiler sees one"): a float literal; `+ - * /` (`+% -% *%`) with
+# one on EITHER side — `1 + 1.5` is an integer add of 1.5's bits, but its result keeps the f64 type (guide § f64:
+# "Only `+ - * /` keep an f64 right operand's type"); a saturating / checked link whose RIGHT operand is one (its
+# result keeps the last operand's type, _int_st); `-` / `~` over one (_int_st keeps it). `& | ^ % << >> >>>` give
+# an integer (6.7.13's D12), `!` a boolean value. CHANGELOG [6.7.16]
+var _tty_k = 0;     # the cursor
+var _tty_bad = 0;   # 1 = the reading failed
+fn _tty_arg(S, k): i64 {
+    _tty_k = k;
+    _tty_bad = 0;
+    var t = _tty_logic(S, 0);
+    if (_tty_bad == 1) { return 0; }
+    var e = TOKTYP(S, _tty_k);
+    if (e != 31) { if (e != 11) { return 0; } }
+    return t;
+}
+# `||` and `&&` (PCMPE, _PLOGIC_AND): a link of either is a boolean value.
+fn _tty_logic(S, dep): i64 {
+    var t = _tty_atom(S, dep);
+    while (_tty_op(S, 0) > 0) {
+        _tty_k = _tty_k + 1;
+        _tty_atom(S, dep);
+        t = 2;
+    }
+    return t;
+}
+# One comparison at most (_PLOGIC_ATOM): a boolean value.
+fn _tty_atom(S, dep): i64 {
+    var t = _tty_add(S, dep);
+    if (_tty_op(S, 3) == 0) { return t; }
+    _tty_k = _tty_k + 1;
+    _tty_add(S, dep);
+    return 2;
+}
+# PEXPR's level (`+ - & | ^`, `+% +| +? -% -| -?`), left to right.
+fn _tty_add(S, dep): i64 {
+    var t = _tty_mul(S, dep);
+    var c = _tty_op(S, 1);
+    var r = 0;
+    while (c > 0) {
+        _tty_k = _tty_k + 1;
+        r = _tty_mul(S, dep);
+        t = _tty_bin(t, c, r);
+        c = _tty_op(S, 1);
+    }
+    return t;
+}
+# PARSE_TERM's level (`* / % << >> >>>`, `*% *| *?`), left to right.
+fn _tty_mul(S, dep): i64 {
+    var t = _tty_un(S, dep);
+    var c = _tty_op(S, 2);
+    var r = 0;
+    while (c > 0) {
+        _tty_k = _tty_k + 1;
+        r = _tty_un(S, dep);
+        t = _tty_bin(t, c, r);
+        c = _tty_op(S, 2);
+    }
+    return t;
+}
+# A link's value from its operator's kind `c` and its operands' classes `t` / `r`: `+ - * /` (`+% -% *%`, kind 1) an
+# f64 when either operand is one; a saturating / checked link (kind 3) an f64 when its right operand is one;
+# everything else an integer.
+fn _tty_bin(t, c, r): i64 {
+    if (c == 1) {
+        if (t == 3) { return 3; }
+        if (r == 3) { return 3; }
+    }
+    if (c == 3) { if (r == 3) { return 3; } }
+    return 1;
+}
+# The cursor's operator at a level — 0 `||` / `&&`, 1 PEXPR's, 2 PARSE_TERM's, 3 a comparison: 0 when it is none
+# (or the reading has failed); at levels 1 / 2, 1 for one with an f64 form (`+ - +% -%`, `* / *%`), 3 for a
+# saturating / checked one (`+| +? -| -?`, `*| *?`), 2 for one whose value is an integer; else 1.
+fn _tty_op(S, lv): i64 {
+    if (_tty_bad == 1) { return 0; }
+    var t = TOKTYP(S, _tty_k);
+    if (lv == 0) { if (t == 53 || t == 54) { return 1; } return 0; }
+    if (lv == 3) { if (t >= 17 && t <= 22) { return 1; } return 0; }
+    if (lv == 1) {
+        if (t == 6 || t == 7 || t == 113 || t == 116) { return 1; }
+        if (t == 27 || t == 35 || t == 36) { return 2; }
+        if (t >= 113 && t <= 118) { return 3; }
+        return 0;
+    }
+    if (t == 8 || t == 9 || t == 119) { return 1; }
+    if (t == 34 || t == 38 || t == 39 || t == 152) { return 2; }
+    if (t == 120 || t == 121) { return 3; }
+    return 0;
+}
+# A factor: its prefixes, then its operand. The outermost prefix decides — `!` a boolean value; `-` / `~` an f64 over
+# an f64 with no `!` beneath it (_int_st keeps the type; `!` clears it), else an integer — and with none, the
+# operand's own class.
+fn _tty_un(S, dep): i64 {
+    if (_tty_bad == 1) { return 1; }
+    var t = TOKTYP(S, _tty_k);
+    var pre = t;
+    var bang = 0;   # a `!` among the prefixes
+    while (t == 7 || t == 37 || t == 171) {
+        if (t == 171) { bang = 1; }
+        _tty_k = _tty_k + 1;
+        t = TOKTYP(S, _tty_k);
+    }
+    var v = _tty_prim(S, dep, t);
+    if (pre == 171) { return 2; }
+    if (pre == 7 || pre == 37) {
+        if (bang == 0) { if (v == 3) { return 3; } }
+        return 1;
+    }
+    return v;
+}
+# An operand: an integer / char literal, a float literal, `true` / `false`, or a parenthesised expression (its own
+# class).
+fn _tty_prim(S, dep, t): i64 {
+    _tty_k = _tty_k + 1;
+    if (t == 1) { return 1; }
+    if (t == 61) { return 3; }
+    if (t == 169 || t == 170) { return 2; }
+    if (t != 10 || dep >= 256) {
+        _tty_bad = 1;
+        return 1;
+    }
+    var v = _tty_logic(S, dep + 1);
+    if (_tty_bad == 1) { return v; }
+    if (TOKTYP(S, _tty_k) != 11) {
+        _tty_bad = 1;
+        return v;
+    }
+    _tty_k = _tty_k + 1;
+    return v;
 }
 # ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
 # stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
@@ -3681,7 +3859,7 @@ fn _ret_struct_pair(S): i64 {
         return 1;
     }
     if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
-        if (_tup_lit_at(S, GTI(S)) < 0) { if (PEEKT(S) != 97) { _refuse_pair_return(S); } }   # 6.7.13: and ret2's
+        if (_tup_lit_at(S, GTI(S)) < 0) { if (PEEKT(S) != 97) { _pair_ret_defer(S); } }   # 6.7.13: and ret2's
     }
     _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
     _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one
@@ -6380,6 +6558,7 @@ fn _sar_take(S, fi, cls, want, dst): i64 {
     var ti = GTI(S);
     _sar_ti = ti;
     var c = _pwrap_in(S, ti);
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
     if (c < 0) { return 0 - 2; }
     STI(S, c);
     var r = _sar_one(S, fi, cls, want, dst);
@@ -7622,14 +7801,18 @@ fn _op_term_cont(t): i64 {
 # expression is neither a method call nor an operator expression (cursor untouched). When it is
 # one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
 # binary is never written). CHANGELOG [6.6.6]
+# 6.7.16: not when the value's parse reported an error of its own (the statement's `_err_n`) — `return zz + 1;` from a
+# 9-16 or > 16 B struct fn was "undefined variable 'zz'" AND this refusal; that error alone now, as at 8 B. CHANGELOG [6.7.16]
 fn _return_struct_expr(S): i64 {
     if (_ret_expr_head(S) == 0) { return 0 - 1; }
     var st = GTI(S);
+    var en = _err_n;
     var w = _sc_arm(S);
     PCMPE(S);
     _sc_want = w;
     var t = _sc_whole(S, st);
     if (t >= 0) { if (_sc_sid == _cur_fn_ret_sid) { return t; } }
+    if (_err_n != en) { return 0; }
     ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
     return 0;
 }
@@ -7752,6 +7935,11 @@ fn _pair_ret_offender(S): i64 {
 # known; through a variable it stays refused (no declared type: X13).
 # 6.7.14 (D35 A): and a whole dereference `* E` (`_vrcv_dsrc`, by its tokens) — E's vector is known once it is parsed,
 # which `_ret_vderef` does (another vector, or none, refused there in this rule's words). CHANGELOG [6.7.14]
+# ⛔ 6.7.16 — THE BY-NAME CALL ONLY WHEN IT IS THE WHOLE VALUE: `return mk2(41, 7) + 1;` from a `: f64v2` fn passed this
+# rule on its first token, so x86_64 / aarch64 returned the call's vector (161, the `+ 1` dropped), cx added the 1 to a
+# lane (165) and Windows' own-call arm stopped at the `+` ("expected ';', got '+'") — there is no vector `+` (X4), and
+# `return s.m2() + 1;` was refused. Refused "got `mk2`" on every target (D24's reading, 6.7.16, at the return).
+# CHANGELOG [6.7.16]
 fn _simd_ret_call_ok(S): i64 {
     if (_ret_vicall(S) == 1) { return 1; }
     if (_ret_vmc(S) == 1) { return 1; }   # 6.7.14 (D39): `return s.mv();`
@@ -7759,14 +7947,23 @@ fn _simd_ret_call_ok(S): i64 {
     var fi = _vcall_fi(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
+    if (_vcall_more(S, _call_close(S, _vcall_o) + 1, 5) == 1) { return 0; }   # 6.7.16: the whole value
     return 1;
 }
-# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (`;` after it), `f` declared
-# to return this fn's vector (`_icall_rs_at`).
+# 6.7.16: 1 = the return value at the cursor is one whole call `f(..)` / `g<T>(..)` (no operator after its `)`,
+# `_vcall_more`) — PARSE_RETURN's Win64 own-call arm took any call that started it, emitting it and stopping at the rest.
+fn _ret_vwcall(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_vcall_more(S, _call_close(S, o) + 1, 5) == 1) { return 0; }
+    return 1;
+}
+# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (no operator after it,
+# `_vcall_more`), `f` declared to return this fn's vector (`_icall_rs_at`).
 fn _ret_vicall(S): i64 {
     if (_icall_rs_at(S, GTI(S)) != _cur_fn_ret_scalar) { return 0; }
     if (_cur_fn_ret_scalar > 0 - 2048) { return 0; }
-    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != 5) { return 0; }
+    if (_vcall_more(S, _call_close(S, GTI(S) + 1) + 1, 5) == 1) { return 0; }
     return 1;
 }
 # On Win64 that call returns through a hidden pointer (int arg 0), as `f(..)` does: into an anonymous temp
@@ -7871,12 +8068,15 @@ fn _cur_fn_returns_vector(S): i64 {
 # declared to return this vector — and (6.7.14) unless it starts with a call naming no fn, inside any parentheses
 # (`_vrcv_nofnw`): the undefined-function path names that one, as the vector local's receive leaves it since 6.7.13
 # ("got `f64v2_splat`" came first). The tail arm diverts such a call here (`_tc_frame_divert`). CHANGELOG [6.7.14]
+# 6.7.16: the refusal is pending until the value is parsed (`_pair_ret_late`): a value's own error comes alone.
 fn _ret_vec_rule(S): i64 {
     if (_cur_fn_returns_vector(S) == 0) { return 0; }
     if (_simd_ret_call_ok(S) == 1) { return 0; }
     var ti = GTI(S);
     if (_vrcv_nofnw(S, ti, _gz_end(S, ti)) == 1) { return 0; }
-    return _refuse_simd_return(S);
+    _pair_ret_defer(S);   # 6.7.16: printed after the value's own parse (`_pair_ret_late`)
+    _prr_k = 2;
+    return 0;
 }
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }
@@ -7899,6 +8099,36 @@ fn _refuse_vector_tuple_return(S): i64 {
     if (_cur_fn_returns_vector(S) == 0) { return 0; }
     _refuse_simd_return(S);
     return 0;
+}
+# ⛔ 6.7.16 — THE LITERAL'S OWN ERROR FIRST, as `_ret_vec_rule`'s and the 9-16 B class's: the multi-value arm printed
+# the refusal above before the literal was parsed, so `return (zz, 1);` from a vector fn or a fn returning a struct (8,
+# 16, 24 B) was the refusal AND "undefined variable 'zz'", and `return (1, 5 + );` the refusal and "unexpected ')'". It
+# is pending (`_pair_ret_late`, kind 3) until the arm has parsed the literal. CHANGELOG [6.7.16]
+fn _ret_tup_defer(S): i64 {
+    _pair_ret_defer(S);
+    _prr_k = 3;
+    return 0;
+}
+# ... and a literal of more than three values (cursor on its `(`): "multi-value return needs 2 or 3 types", whose
+# panic latch keeps the arm's three-value parse quiet — in a fn whose class refuses every tuple (`_ret_tup_cls`), the
+# class's refusal instead, now and latched the same way: it names the mistake (both were printed).
+fn _ret_tup_arity(S): i64 {
+    if (_ret_tup_cls(S) == 0) {
+        ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
+        return 0;
+    }
+    _prr_ti = 0 - 1;
+    _refuse_vector_tuple_return(S);
+    _panic = 1;
+    return 0;
+}
+# 1 = this fn's return class refuses a tuple literal (`_refuse_vector_tuple_return` prints): a vector fn, or a plain
+# struct's outside an inline replay (`_refuse_struct_tuple_return`'s own test).
+fn _ret_tup_cls(S): i64 {
+    if (_cur_fn_returns_vector(S) == 1) { return 1; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    return _dx_plain(S, _cur_fn_ret_sid);
 }
 # ⛔ 6.7.11 — A TUPLE LITERAL IS NOT THE STRUCT A FN DECLARED `: S` RETURNS (the user's decision,
 # 2026-10-13: refused by name in every class). The multi-value arms load rax:rdx[:r3], which is the
@@ -7936,6 +8166,38 @@ fn _refuse_pair_return(S): i64 {
     _pair_ret_offender(S);
     syscall(SYS_WRITE, 2, "`\n", 2);
     _had_error = 1;
+    return 0;
+}
+# ⛔ 6.7.16 — THE VALUE'S OWN ERROR FIRST. The refusal above was printed BEFORE the value was parsed, so a value with an
+# error of its own was two reports: `return zz;` the refusal and "undefined variable 'zz'", `return &(q);` the refusal
+# and "expected identifier", `return 5 + ;` the refusal and "unexpected ';'" — where the 8 B class reports the value's
+# alone (issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). `_ret_struct_pair` records the
+# value's first token and the statement's error count; PARSE_RETURN asks `_pair_ret_late` once its arms have parsed the
+# value: the refusal is printed at that token unless the statement reported an error since (a report or a repeat,
+# `_err_n` — never the file-wide `_had_error`, so an earlier statement's error forces nothing). CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (the receives review) — AND THE VECTOR CLASS'S: `_ret_vec_rule` printed the 6.6.6 refusal before the value
+# was parsed, so a vector fn's `return zz;`, `return &(q);`, `return 5 + ;`, `return zz + 1;`, `return (zz);` and
+# `return q.zz;` were the refusal AND the value's own error. It records its pending refusal here too (`_prr_k` 2).
+var _prr_ti = 0 - 1;   # the refused value's first token, -1 = none pending
+var _prr_en = 0;       # `_err_n` when it was recorded
+var _prr_k = 1;        # the refusal: 1 the pair class's, 2 the vector class's, 3 a tuple literal's (`_ret_tup_defer`)
+fn _pair_ret_defer(S): i64 {
+    _prr_ti = GTI(S);
+    _prr_en = _err_n;
+    _prr_k = 1;
+    return 0;
+}
+fn _pair_ret_late(S): i64 {
+    var ti = _prr_ti;
+    if (ti < 0) { return 0; }
+    _prr_ti = 0 - 1;
+    if (_err_n != _prr_en) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);   # `_err_head` and `_pair_ret_offender` read the cursor's token
+    if (_prr_k == 2) { _refuse_simd_return(S); }
+    elif (_prr_k == 3) { _refuse_vector_tuple_return(S); }
+    else { _refuse_pair_return(S); }
+    STI(S, sv);
     return 0;
 }
 
@@ -8688,15 +8950,23 @@ fn _fnc_pe_vec(S, fi, noff): i64 {
 # A panic latch the caller set (a refused argument) survives the replay: the body's statement ends clear
 # it (`_stmt_resync`), so x86_64 / aarch64 / cx went on to print the next statement's refusal, which a real
 # call (Win64's vector arm, a non-inline fn) leaves latched and skipped. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND NEVER THE CALLER'S VECTOR RETURN: the replay carries a vector CALLEE's class (v6.5.59) and left a
+# vector CALLER's in place for any other callee, so the callee's `return x + 1;` met the 6.6.6 rule — `fn mk():
+# f64v2 { var w: f64v2; store64(&w, one(40)); ..; return w; }` with `#inline fn one(x): i64` was refused "a
+# vector-returning fn carries its result ... got `x`" at the callee's line, on every target. Masked to an untyped
+# caller's 0 too, restored after. CHANGELOG [6.7.16]
 fn _inl_replay_body(S, fi): i64 {
     var sid = _cur_fn_ret_sid;
     var pair = _cur_fn_ret_pair;
+    var rs = _cur_fn_ret_scalar;
     var pn = _panic;
     _cur_fn_ret_sid = 0;
     _cur_fn_ret_pair = 0;
+    if (_is_simd_any(S, GFRS(S, fi)) == 0) { if (_is_simd_any(S, rs) == 1) { _cur_fn_ret_scalar = 0; } }
     _cov_body(S, fi, 0 - 1);
     _cur_fn_ret_sid = sid;
     _cur_fn_ret_pair = pair;
+    _cur_fn_ret_scalar = rs;
     if (pn == 1) { _panic = 1; }
     return 0;
 }
@@ -18895,12 +19165,31 @@ fn _fn_ret_arity(S, fi): i64 {
 }
 # 6.7.14 — 1 = the `ret2` at token k is a whole statement: it starts one (`;` `{` `}` before it) and
 # its `(..)` is followed by the `;` (D42). Anything else is a `ret2` inside an expression.
+# ⛔ 6.7.16 — OR RIGHT AFTER A SWITCH LABEL: `case 1: ret2(1, 2);` / `default: ret2(1, 2);` start a statement too, but the
+# token before was the label's `:`, so the `ret2` read as one inside an expression and the fn's count went unrecorded:
+# `var a, b, c = g2(1);` bound c to a stale register (88 seeded, every target) where `case 1: return (1, 2);` is refused
+# (issues/2026-10-18-ret2-after-case-label-not-counted.md; 6.7.14's D42, kept by 6.7.15's D62). `_ret2_lbl`. CHANGELOG [6.7.16]
 fn _ret2_stmt(S, k): i64 {
     var p = TOKTYP(S, k - 1);
-    if (p != 5 && p != 13 && p != 14) { return 0; }
+    if (p == 49) { if (_ret2_lbl(S, k - 1) == 0) { return 0; } }
+    elif (p != 5 && p != 13 && p != 14) { return 0; }
     if (TOKTYP(S, k + 1) != 10) { return 0; }
     if (TOKTYP(S, _call_close(S, k + 1) + 1) != 5) { return 0; }
     return 1;
+}
+# 1 = the `:` at token c closes a switch label: `default:`, or `case <value>:` — walking back to the `case` crosses no
+# `;` `{` `}` `:` (a case value is a const expression), so a named argument's or a struct literal field's `:` never
+# reaches one.
+fn _ret2_lbl(S, c): i64 {
+    if (TOKTYP(S, c - 1) == 59) { return 1; }
+    var k = c - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 58) { return 1; }
+        if (t == 5 || t == 13 || t == 14 || t == 49) { return 0; }
+        k = k - 1;
+    }
+    return 0;
 }
 # 6.7.14 — 1 = the block `{` at o .. `}` at e is left only through an exit `_prescan_ret_arity`
 # counts: it ends in a `return` or an infinite loop (`_body_ends_in_return`), in a `ret2(..);`

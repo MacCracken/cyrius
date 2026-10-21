@@ -1453,7 +1453,11 @@ does not return a struct is refused too, and so is an assignment to a result's f
 once, at the name — an error, which `--allow-undef` does not downgrade (6.7.15; it was `expected ';', got '.'`, the
 step `expected '=', got '('`, and the fn was named only by the end-of-compile refusal). The same holds after a plain
 call to it (`undefd(); undefd().n += 1;` — 6.7.16; it was *cannot take a field of the result of 'undefd': it does not
-return a struct*); the plain call keeps its own end-of-compile refusal. Under `cyrius lint`'s
+return a struct*); the plain call keeps its own end-of-compile refusal. An explicit-generic call of a name defined
+nowhere — `nofn<i64>(1)`, with or without a `.f` / `.m(..)` / `[i]` after it, as a statement too — is *undefined
+function 'nofn'* the same way, once, at the name (6.7.16; its type arguments were read as comparisons: *undefined
+variable 'i64'*, *expected ';', got '>'* — as a statement *expected '=', got '<'* first), when every name between the
+`<` and `>` is a type here; under `--syntax-only` it is accepted. Under `cyrius lint`'s
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
 struct by value earns) — and so are they when `gp` is defined here as `fn gp(): *Foo` with `Foo` a sibling module's
@@ -1856,7 +1860,9 @@ top-level call keeps its one refusal (a struct result needs a fn's frame).
 ⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
 can carry**: a local of that struct, a call to a fn returning the same struct, a method or
 overloaded operator returning it, or (6.7.11) a pointer to that struct (below). Anything else — a call returning a *different* struct, an
-integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
+integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. A value with
+an error of its own — `return zz;` with `zz` undefined, `return &(q);`, `return 5 + ;` — reports that
+error alone, as at 8 bytes (6.7.16; the refusal came first, then the value's error). Before
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. Since 6.7.11 that includes a call that only STARTS the value: `return mk2(1) ==
 p;` (any operator that does not dispatch — a comparison, `& | ^ % << >>`, `&& ||`) is refused *… got
@@ -1875,11 +1881,14 @@ Through 6.7.10 it took the multi-value path: over 16 bytes the caller's result w
 (it read 0, 0, 0), at 8 bytes or less the second value was dropped, and at 9-16 bytes it gave the
 two words only because that class's registers are the multi-value ones. Build the struct and return
 it: `var p: P3 = P3 { a, b, 0 }; return p;`. A fn declared `: (T1, T2)`, or with no return type,
-returns `(a, b)` as before.
+returns `(a, b)` as before. A literal with an error of its own — `return (zz, 1);` — reports that error
+alone, here and in a vector fn (6.7.16; the refusal came first), and one of four or more values the
+refusal alone (it added "multi-value return needs 2 or 3 types").
 
 The builtin `ret2(a, b)` is the same two values, so it is refused there the same way, in every class and
 `return ret2(..);` too (6.7.13, the user's decision of 2026-10-15): ``a fn returning the struct `P3`
-returns that struct — `ret2` writes two values``. It compiled through 6.7.12 with the same three
+returns that struct — `ret2` writes two values`` — printed once its arguments parse: `ret2(zz, 1);` reports
+`zz` alone (6.7.16; the refusal came first, here, in a vector or 3-value fn and outside a fn). It compiled through 6.7.12 with the same three
 outcomes (0, 0, 0 over 16 bytes; the second value dropped at 8 bytes or less; the two words by
 coincidence at 9-16 bytes). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's
 own and still compiles — and an `#inline` fn's `return ret2(..);` replayed in a 9-16 byte struct fn,
@@ -2006,7 +2015,9 @@ this rule's words (*… got `this expression`*), as `return *p;` itself was thro
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
 multi-value `return (a, b);`, a `callptr(fp, ..)` through a fn pointer held in a variable, a **global** of the
 right vector type, or a call returning a scalar or a different-width vector — is a compile error
-since v6.6.6 naming what it got. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
+since v6.6.6 naming what it got. A value with an error of its own — `return zz;` with `zz` undefined,
+`return &(q);`, `return 5 + ;` — reports that error alone (6.7.16; the refusal came first, then the value's
+error), as the 9-16 byte struct class does. ⚠ Through 6.7.12 `return callptr(&mkv, a, b);` was refused too
 (*… got `this expression`*), though its callee is known. Before v6.6.6 every one of those compiled clean and handed back
 a half-written register pair; `return x + y;` returned `y` unchanged and `return G;` for a
 global read a stale register rather than `G`. The two that are worth spelling out because they
@@ -2019,7 +2030,9 @@ look reasonable:
   store the lanes into a local and return the local. The builtin `ret2(a, b);` is the same pair, so
   it is refused in a vector fn too, by the same text (*… got `ret2`*; 6.7.14, the user's decision of
   2026-10-16): through 6.7.13 it compiled and the caller's vector held whatever the vector registers
-  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own.
+  did (0; 41 on cx). A `ret2` in a closure, or in an `#inline` fn replayed there, is that fn's own — and
+  so is an `#inline` fn's `return` (6.7.16: through 6.7.15 a replayed `return x + 1;` met this rule at the
+  callee's line, so a vector fn storing `one(40)` into its own local was refused).
 * `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
   the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
   wrong lane on Windows.
@@ -2034,7 +2047,11 @@ then passes the local's address as its hidden result pointer, as `mkv(..)` does 
 `self`) — and (6.7.15) on a field chain, `w.s.mv(..)`, `pw.s.mv(..)`, `h.w.s.mv(..)`, `n.ps.mv(..)`
 through a `*S` field, at every destination below a single name's method meets (through 6.7.14 the
 untyped `var v = w.s.mv();` held one word, stack garbage per target, and the other destinations were
-refused *… got `w`*). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
+refused *… got `w`*) — and (6.7.16) on every other receiver the method arm takes: a parenthesised head,
+`(*ps).mv()`, `(*pw).s.mv()`, `(s).mv()`, `(gw(&w)).s.mv()`, a call's result, `gw(&w).s.mv()`, `mks(1).mv()`,
+`callptr(&gw, &w).s.mv()`, and a method's result mid-chain, `o.gp(&w).s.mv()` (through 6.7.15 the untyped declaration
+held one word of stack garbage, an integer destination stored a word — `var x: i64 = (*ps).mv();` — and the annotated
+declaration was refused *… got `(...)`*). An unannotated `var v = callptr(&mkv, ..);` / `fncall2(&mkv, ..)` is an `f64v2` local
 (6.7.13), as `var v = mkv(..);` is — and (6.7.14, the user's decision D37, 2026-10-16: A) so is `var v = s.mv(..);`
 (through 6.7.13 one word: x86_64 / aarch64 1, cx 155, Windows 195 where 161 is right). A method — and (6.7.14)
 `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped too — declared to return another vector is refused as a by-name call is
@@ -2056,7 +2073,19 @@ Parentheses around the whole call are transparent at these destinations too (6.7
 `f64v2` local, and `var x: i64 = (mkv(41, 7));` / `x = (s.mv());` are refused (through 6.7.14 each held one word: 0
 or 1 on x86_64 / aarch64, 154 / 155 on cx, 195 on Windows, and the integer destinations the result's word); and a
 method — or `callptr(&f, ..)` — that STARTS an integer initialiser, `var x: i64 = s.mv() + 1;`, is refused as `mkv(41,
-7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1). Every other source is refused by name (`a value-form vector local is initialised only
+7) + 1` has been since 6.7.11 (6.7.15, D29: A; through 6.7.14 the result's word plus 1) — and so is one that starts
+an ASSIGNMENT's right-hand side, `x = s.mv() + 1;` / `x = callptr(&mkv, 41, 7) + 1;` (6.7.16, the user's decision D25,
+2026-10-19: A), and the parentheses change nothing for a call that starts an integer source either: `var x: i64 =
+(mkv(41, 7)) + 1;`, `x = (mkv(41, 7)) + 1;`, `var x: i64 = (s.mv()) + 1;`, `var x: i64 = (mkv(41, 7) + 1);` and —
+behind any number of leading parentheses, closing anywhere — `var x: i64 = (mkv(41, 7) + 1) * 2;` are refused with the
+unwrapped spelling's words (6.7.16, D26: A; through 6.7.15 each stored the result's word plus 1: 1 on x86_64 / aarch64,
+42 on cx / Windows). There is no vector `+`, so an operator after a vector call is refused at a vector
+destination and at an untyped declaration too (6.7.16, the user's decision D24, 2026-10-19: A): `var w = mkv(41, 7) +
+1;`, `var w: f64v2 = mkv(41, 7) + 1;`, `w = mkv(41, 7) + 1;`, `var w = s.mv() + 1;`, `var w = (s.mv()) + 1;` are refused
+by name (*… got `mkv`* / *… got `s`* / *… got `(...)`*; `var w = (mkv(41, 7) + 1) * 2;` too), and at top level `var w
+= mkv(41, 7) + 1;` is refused as the whole call is (through 6.7.15 the `+ 1` was dropped on x86_64 / aarch64, added to one lane on cx, a parse error on
+Windows, and the method bound one word) — bind the vector first and read its lanes. Every other source is refused by
+name (`a value-form vector local is initialised only
 from a local of its type, a call declared to return it (..) or a dereference of a pointer to its
 type (`*p`) - got `5``): a callee held in a variable (`callptr(fp, 41, 7)`, `fncall2(fp, 41, 7)`; an
 unannotated `var v = callptr(fp, ..)` is one word), a word (`5`, `load64(&w)`, `&w`, a scalar local
@@ -3530,6 +3559,8 @@ var hi, lo, bexp = dd_pow10(k);
 #                                     # values (the third name read a stale register). A body
 #                                     # ending in an infinite loop no `break` leaves, whose exits
 #                                     # are `ret2(..);` statements, is counted too (6.7.15). A
+#                                     # `ret2(..);` statement starts after a `;`, `{` or `}`, or
+#                                     # directly after a `case` / `default` label (6.7.16). A
 #                                     # `ret2` inside an expression is not counted
 #   var q, r = h3(5);                 # and in the other direction: `h3` undeclared, every `return`
 #                                     # `(a, b, c)` — "binds 2 names, but 'h3' returns 3 values"
@@ -3612,8 +3643,18 @@ integer literal, `take(5)`, and a call returning several values, `take(g2(3))` �
 scalar whose `return (a, b)` / `ret2` pass 1 counted too. So is an argument made only of literals and
 operators (6.7.15, the user's decision of 2026-10-18): `take(-5)`, `take((-5))`, `take(5 + 0)`,
 `take(~0)` — *cannot pass an integer to tuple parameter …* — and `take(true)` / `take(false)`, *cannot
-pass a bool …*. A name (a const too), `&t` and a one-value call such as `take(one(3))` are words like
-any other and are passed as the address; it is the caller's to make it one.
+pass a bool …*. The words name the argument's value: a boolean value (§ bool) — a comparison, `!x`,
+`&&` / `||`, or any of these in parentheses: `take(1 == 1)`, `take(!0)`, `take((1 != 0))`,
+`take(1 < 2 && 3 > 2)` — is *a bool* (6.7.16; until then *an integer*), and an operator applied to
+one is not: `take((1 == 1) + 1)` and `take(!0 + 1)` are *an integer*. A float literal is a literal
+too (6.7.16, the user's decision of 2026-10-19; until then it compiled and the callee read through the
+double's bits): `take(1.5)`, `take(-1.5)`, `take((2.0))`, `take(1.5 + 1)` — *cannot pass an f64 to
+tuple parameter …* — an f64 being the value the compiler types f64 ([Types](#types)): `take(1 + 1.5)`
+and `take(2 * 1.5)` too (integer arithmetic on 1.5's bits, whose result keeps the f64 type), and
+`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` *an integer*
+(`& | ^ % << >> >>>` give an integer). A name (a const too, an `f64` one
+included), `&t` and a one-value call such as `take(one(3))` are words like any other and are passed
+as the address; it is the caller's to make it one.
 
 **Where the type goes.** A `var` (a local, or a global in either zone), a parameter, a struct
 field, and a fn's multi-value return `: (T1, T2)` / `: (T1, T2, T3)`:
@@ -3787,7 +3828,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
-| `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`: `cannot pass a bool …`) |
+| `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`, and a boolean value — `take(1 == 1)`, `take(!0)`, 6.7.16: `cannot pass a bool …`; an f64, `take(1.5)`, `take(-1.5)`, `take(1.5 + 1)`, 6.7.16: `cannot pass an f64 …`) |
 | `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` (wrapped, `h.p = (f());`, too: this one error, 6.7.15) | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |

@@ -8760,42 +8760,190 @@ var _vmc_rs = 0;
 fn _vmc_open(S, ti): i64 {
     var o = _mcall_open(S, ti, 0 - 1);
     if (o < 0) { return _mch_open(S, ti); }
+    if (_mchain_at(S, _call_close(S, o) + 1) == 1) {   # 6.7.16: `o.gp(..).s.mv()` — the chain's last method
+        var x = _mch_open(S, ti);
+        if (x >= 0) { return x; }
+    }
     _vmc_mf = _pair_callee_at(S, ti);
     _vmc_mt = ti + 2;
     _vmc_rs = _recv_sid(S, TOKVAL(S, ti));
     return o;
 }
-# `h.f(.g)*.m(` / `.m<..>(` at token `ti`: `h` a name typed as a struct or a pointer to one (`_dyn_base_sid`, a chain's
-# base as `_chain_leaf` reads it), each field an inline struct's (GETFTYPE) or a `*S`'s (`_fld_ptr_sid`) — the hops
-# the method arm takes (`_load_inline_hop`, `_load_hop`) — and `m` a method of the last one's struct (`_meth_fn_at`;
-# `<..>` as the arm reads it, `_mtargs_at`): its `(` and `_vmc_*`, as `_vmc_open`; else -1.
+# The last method of the chain at token `ti` — `h.f(.g)*.m(` / `.m<..>(`, each step a field an inline struct's
+# (GETFTYPE) or a `*S`'s (`_fld_ptr_sid`) or a method whose result is a struct or a `*S` — the hops the method arm takes
+# (`_load_inline_hop`, `_load_hop`, `_method_chain`) — and `m` a method of the last one's struct (`_meth_fn_at`; `<..>`
+# as the arm reads it, `_mtargs_at`): its `(` and `_vmc_*`, as `_vmc_open`; else -1. The head `h` (`_mch_head`): a name
+# typed as a struct or a pointer to one (`_dyn_base_sid`, a chain's base as `_chain_leaf` reads it; then a step at
+# least, `x.m(` is `_mcall_open`'s).
+# ⛔ 6.7.16 — AND ANY HEAD THE METHOD ARM TAKES: a parenthesised one — `(*ps).mv()`, `(*pw).s.mv()`, `(s).mv()`,
+# `(gw(&w)).s.mv()` (`_paren_field`) — a call — `gw(&w).s.mv()`, `mks(1).mv()`, `callptr(&gw, &w).s.mv()` (`_call_field`,
+# `_icall_chain`) — and a method's result mid-chain (`o.gp(&w).s.mv()`). 6.7.15 read a name head only: on any other,
+# `var v = ..;` bound one word of stack garbage, `var x: i64 = ..;` stored a word, `var v: f64v2 = ..;` was refused
+# "got `(...)`" (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md). The typers it
+# asks are lookaheads: their answers stay their callers'. CHANGELOG [6.7.16]
 fn _mch_open(S, ti): i64 {
-    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
     if (ti > 0) { if (TOKTYP(S, ti - 1) == 41) { return 0 - 1; } }   # mid-chain: not its head
-    var i = ti + 1;
-    while (_mchain_at(S, i) == 1) { i = i + 2; }
-    var mt = i - 1;
-    if (mt < ti + 4) { return 0 - 1; }   # a field at least: `h . f . m`
+    if (_mchain_at(S, _mch_hend(S, ti)) == 0) { return 0 - 1; }   # no step after the head, by its shape
     var cf = _cap_fld_sid;
-    var sid = _dyn_base_sid(S, TOKVAL(S, ti));
+    var cp = _hl_cp;
+    var da = _hl_damp;
+    var o = 0 - 1;
+    var sid = _mch_head(S, ti);
+    if (sid > 0) { o = _mch_walk(S, ti, sid, _mch_hx, _mch_nh); }
     _cap_fld_sid = cf;   # a lookahead: the capture lookup's answer stays its caller's
-    var k = ti + 2;
-    while (k < mt) {
-        sid = _mch_hop(S, sid, k);
+    _hl_cp = cp;
+    _hl_damp = da;
+    return o;
+}
+# From token `i` (after the head of struct `sid` at `ti`; `nh` 1 = a name head), the chain's steps to its last method:
+# its `(` and `_vmc_*`, else -1.
+fn _mch_walk(S, ti, sid, i, nh): i64 {
+    while (_mchain_at(S, i) == 1) {
+        var nt = i + 1;
+        var o = _mch_mopen(S, sid, nt);
+        if (o < 0) {
+            sid = _mch_hop(S, sid, nt);
+            i = i + 2;
+        } else {
+            var c = _call_close(S, o) + 1;
+            if (_mchain_at(S, c) == 0) {
+                if (nh == 1) { if (nt == ti + 2) { return 0 - 1; } }   # `x.m(`: `_mcall_open`'s
+                return _mch_last(S, sid, nt, o);
+            }
+            sid = _mch_mres(S, sid, nt, o);
+            i = c;
+        }
         if (sid <= 0) { return 0 - 1; }
-        k = k + 2;
     }
-    var o = i;
-    var mf = _meth_fn_at(S, sid, TOKVAL(S, mt), mt);
-    if (TOKTYP(S, i) == 19) {
-        if (_mtargs_at(S, sid, mt) == 0) { return 0 - 1; }
-        o = _tok_targs_close(S, mt + 2) + 1;
-        mf = _mcall_xquiet(S, mf, i);
-    } elif (TOKTYP(S, i) != 10) { return 0 - 1; }
-    _vmc_mf = mf;
-    _vmc_mt = mt;
+    return 0 - 1;
+}
+# The `(` of the method step whose name is token `nt` on struct `sid` — `.m(`, or `.m<..>(` when m is a generic method
+# and no field of it (`_mtargs_at`, the arm's own test) — else -1: a field.
+fn _mch_mopen(S, sid, nt): i64 {
+    if (TOKTYP(S, nt + 1) == 10) { return nt + 1; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0 - 1; }
+    if (_mtargs_at(S, sid, nt) == 0) { return 0 - 1; }
+    return _tok_targs_close(S, nt + 2) + 1;
+}
+# The fn of that method step (its `(` at `o`): an explicit instance's quietly (`_mcall_xquiet`), else `_meth_fn_at`'s.
+fn _mch_mfn(S, sid, nt, o): i64 {
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    if (o != nt + 1) { mf = _mcall_xquiet(S, mf, nt + 1); }
+    return mf;
+}
+# The chain's last method: `_vmc_*` set, its `(` returned.
+fn _mch_last(S, sid, nt, o): i64 {
+    _vmc_mf = _mch_mfn(S, sid, nt, o);
+    _vmc_mt = nt;
     _vmc_rs = sid;
     return o;
+}
+# The struct a method step's result continues the chain through (`_method_chain`): a struct by value, else a `*S`'s S
+# (`_mchain_ptr`); 0 = none.
+fn _mch_mres(S, sid, nt, o): i64 {
+    var mf = _mch_mfn(S, sid, nt, o);
+    if (mf < 0) { return 0; }
+    var t = GFRS(S, mf);
+    if (t > 0) {
+        if (t >= 2048) { return 0; }
+        return t;
+    }
+    return _hl_fn_psid(mf);
+}
+# The token after the receiver head at `ti` by its shape alone (`_mch_head`'s, untyped): `( .. )`, a call, a name.
+fn _mch_hend(S, ti): i64 {
+    if (TOKTYP(S, ti) == 10) { return _call_close(S, ti) + 1; }
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { o = _gcall_open(S, ti); }
+    if (o >= 0) { return _call_close(S, o) + 1; }
+    return ti + 1;
+}
+# The receiver head at token `ti`: its struct (0: none this reads), `_mch_hx` the token after it, `_mch_nh` 1 for a name.
+# A name (`_dyn_base_sid`); a call `f(..)` / `g<..>(..)` / `fncallN(&f, ..)` / `callptr(&f, ..)` (`_mch_chead`); a
+# parenthesised head (`_mch_whead`).
+var _mch_hx = 0;
+var _mch_nh = 0;
+fn _mch_head(S, ti): i64 {
+    if (TOKTYP(S, ti) == 10) { return _mch_whead(S, ti); }
+    _mch_nh = 0;
+    var o = _icall_open_at(S, ti);
+    if (o < 0) { o = _gcall_open(S, ti); }
+    if (o >= 0) {
+        _mch_hx = _call_close(S, o) + 1;
+        return _mch_chead(S, ti, o);
+    }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    _mch_hx = ti + 1;
+    _mch_nh = 1;
+    return _dyn_base_sid(S, TOKVAL(S, ti));
+}
+# A call head at token `ti` (its `(` at `o`, `_mch_hx` after its `)`), as `_call_field` / `_call_ptr_field` /
+# `_icall_chain` take it: a `: *S` fn's S (a generic's too), a struct returned by value (the known `&f`'s), or a
+# generic's `: T` bound to a struct at this call (`_gen_ret_bound`, a peek); else 0.
+fn _mch_chead(S, ti, o): i64 {
+    var t = _hl_pchain(S, ti, _mch_hx);
+    if (t > 0) { return t; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    t = GFRS(S, fi);
+    if (t > 0) {
+        if (t >= 2048) { return 0; }
+        return t;
+    }
+    var sg = _gi_sc;
+    t = _gen_ret_bound(S, fi, ti, o);
+    _gi_sc = sg;
+    return t;
+}
+# A parenthesised head `( E )` at token `ti` (a tuple literal is none), as `_paren_field` takes it: a dereference `*E`
+# of a `*S` (`_mch_dsid`), a value typed `*S` (`_hl_psid`), else a name, a call or a chain (`_mch_ty`) — inside any
+# parentheses; `_mch_hx` after the `)`.
+fn _mch_whead(S, ti): i64 {
+    var c = _call_close(S, ti);
+    var t = 0;
+    if (_tup_lit_at(S, ti) < 0) {
+        var a = _ie_unparen(S, ti + 1, c);
+        var pe = _ie_pe;
+        if (TOKTYP(S, a) == 8) { t = _mch_dsid(S, a, pe); }
+        else {
+            t = _hl_psid(S, a, pe);
+            if (t <= 0) { t = _mch_ty(S, a, pe); }
+        }
+    }
+    _mch_hx = c + 1;
+    _mch_nh = 0;
+    return t;
+}
+# The struct the one dereference [a, pe) (`*` at `a`, nothing after its operand) reads: its operand's `*S`
+# (`_hl_dpsid`, as `_hl_dstar_t` types it); else 0.
+fn _mch_dsid(S, a, pe): i64 {
+    if (pe - a < 2) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    return _hl_dpsid(S, a + 1, pe);
+}
+# The struct the whole receiver expression [a, e) is: a head (`_mch_head`), then field and method steps up to `e`; else 0.
+fn _mch_ty(S, a, e): i64 {
+    if (a >= e) { return 0; }
+    var sid = _mch_head(S, a);
+    var i = _mch_hx;
+    while (i < e) {
+        if (sid <= 0) { return 0; }
+        if (_mchain_at(S, i) == 0) { return 0; }
+        var nt = i + 1;
+        var o = _mch_mopen(S, sid, nt);
+        if (o < 0) {
+            sid = _mch_hop(S, sid, nt);
+            i = i + 2;
+        } else {
+            sid = _mch_mres(S, sid, nt, o);
+            i = _call_close(S, o) + 1;
+        }
+    }
+    if (i != e) { return 0; }
+    if (sid >= 2048) { return 0; }
+    return sid;
 }
 # The struct field token `k` of struct `sid` leads to: a `*S` field's S, an inline struct field's own; else 0.
 fn _mch_hop(S, sid, k): i64 {
@@ -8867,15 +9015,14 @@ fn _vrcv_src(S, ti, ty, term): i64 {
     var c = ti;
     if (TOKTYP(S, ti) == 10) {
         _vrcv_k = _pwrap_k(S, ti);
-        if (TOKTYP(S, _pw_end) != term) { return 0; }
-        c = ti + _vrcv_k;
+        if (TOKTYP(S, _pw_end) == term) { c = ti + _vrcv_k; }
+        else { _vrcv_k = 0; }   # 6.7.16: no wrap — a method's parenthesised head, `(*ps).mv()`
     }
     var r = 0;
     var o = c + 1;
     if (_icall_rs_at(S, c) == ty) { r = 2; }
     elif (_vrcv_byname(S, c, ty) == 1) {
-        if (_vrcv_k == 0) { return 1; }   # the receives below, as ever (`_vrcv_g`: an explicit instance)
-        r = 1;
+        r = 1;   # unwrapped: the receives below, as ever (`_vrcv_g`: an explicit instance) — 6.7.16 (D24), the whole source only
         o = _vcall_o;   # 6.7.13: past `<..>`
     } elif (_vrcv_mty(S, c) == ty) {
         r = 3;
@@ -8883,8 +9030,8 @@ fn _vrcv_src(S, ti, ty, term): i64 {
     }
     if (r == 0) { return _vrcv_dsrc(S, ti, term); }   # 6.7.13 (D34): a whole `*E`
     var x = _call_close(S, o) + 1;   # the token after the call
-    if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { return 0; } }
-    elif (TOKTYP(S, x) != term) { return 0; }
+    if (_vrcv_k > 0) { if (x != _pw_end - _vrcv_k) { if (_vcall_more(S, x, 11) == 1) { return 0; } } }
+    elif (_vcall_more(S, x, term) == 1) { return 0; }   # 6.7.16: a stray token is the parse's
     return r;
 }
 # ⛔ 6.7.13 (D34 A, the user's decision, 2026-10-15) — `var v: V = *p;` / `v = *p;` WITH `p: *V` COPY THE VECTOR
@@ -8980,12 +9127,20 @@ fn _vrcv_bad(S, ti, ty, term, verb): i64 {
 # token `ti` is declared to return, else 0: by name or an explicit instance `g<T>(..)` (`_vcall_fi`), a method on a
 # single name or a field chain (`_vmc_fi`), `fncallN(&f, ..)` / `callptr(&f, ..)` with the callee written `&f`
 # (`_icall_rs_at`) — inside any parentheses wrapping the whole source [ti, `term`) (`_hl_dx_end`, `_ie_unparen`).
-# `start` 0: the call is the whole source; 1: an unwrapped call may start it (`mk2(..) + 1`). `_vcv_a` the call's first
-# token, `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base)
-# declares no vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
+# `start` 0: the call is the whole source; 1: a call may start it (`mk2(..) + 1`). `_vcv_a` the call's first token,
+# `_vcv_nt` the name its refusals give (the fn's, the method's, `&f`'s). A method its fn (a generic's base) declares no
+# vector is not resolved (`_vmc_vfi`): the scalar receives ask on every assignment. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (D26 A, the user's decision, 2026-10-19) — PARENTHESES CHANGE NOTHING FOR A CALL THAT STARTS THE SOURCE
+# EITHER: with `start` 1 a call behind any leading parentheses — `(mk2(41, 7)) + 1`, `((s.m2())) + 1`, `(mk2(41, 7) +
+# 1) * 2` (`_vcv_wpeel`) — or one that starts the inside of a wrap around the whole source — `(mk2(41, 7) + 1)` — starts
+# it, as unwrapped (guide § Parentheses; 6.7.15's D28 made a whole wrap transparent). `var x: i64 = (mk2(41, 7)) + 1;`, `x =
+# (mk2(41, 7)) + 1;` and `var x: i64 = (s.m2()) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42)
+# where the unwrapped spellings are refused (issues/2026-10-18-vector-call-starting-assignment-or-wrapped-start-stores-
+# a-word.md). CHANGELOG [6.7.16]
 var _vcv_a = 0;
 var _vcv_nt = 0;
 fn _vcall_vt(S, ti, term, start): i64 {
+    if (_vcv_maybe(S, ti) == 0) { return 0; }
     var a = ti;
     var pe = 0 - 1;
     var e = _hl_dx_end(S, ti, term);
@@ -8993,23 +9148,72 @@ fn _vcall_vt(S, ti, term, start): i64 {
         a = _ie_unparen(S, ti, e);
         pe = _ie_pe;
     }
+    if (start == 1) { a = _vcv_wpeel(S, a); }
     _vcv_a = a;
-    _vcv_nt = a;
-    var rs = _icall_rs_at(S, a);
-    var o = a + 1;
-    if (rs > 0 - 2048) {
-        var f = _vcall_fi(S, a);
-        if (f < 0) {
-            f = _vmc_vfi(S, a);
-            _vcv_nt = _vmc_mt;
-        }
-        if (f < 0) { return 0; }
-        rs = GFRS(S, f);
-        o = _vcall_o;
-    } else { _vcv_nt = _icall_fti(S, a); }
-    if (start == 1) { if (a == ti) { return rs; } }
-    if (_call_close(S, o) + 1 != pe) { return 0; }
+    var rs = _vcv_at(S, a);
+    if (rs == 0) { return 0; }
+    if (start == 1) { return rs; }
+    if (_call_close(S, _vcv_o) + 1 != pe) { return 0; }
     return rs;
+}
+# 6.7.16: 0 = no call of `_vcall_vt`'s spellings can start the source at token `ti` — it opens with neither `(`,
+# `callptr`, nor a name followed by `(` / `<` / `.` — so the scans are skipped (every declaration and assignment asks).
+fn _vcv_maybe(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 10) { return 1; }
+    if (t == 137) { return 1; }
+    if (t != 2) { return 0; }
+    t = TOKTYP(S, ti + 1);
+    if (t == 10) { return 1; }
+    if (t == 19) { return 1; }
+    if (t == 41) { return 1; }
+    return 0;
+}
+# The vector the call at token `a` is declared to return (`_vcall_vt`'s spellings), else 0; `_vcv_o` its `(`, `_vcv_nt`
+# the name its refusals give.
+var _vcv_o = 0;
+fn _vcv_at(S, a): i64 {
+    _vcv_nt = a;
+    _vcv_o = a + 1;
+    var rs = _icall_rs_at(S, a);
+    if (rs <= 0 - 2048) {
+        _vcv_nt = _icall_fti(S, a);
+        return rs;
+    }
+    var f = _vcall_fi(S, a);
+    if (f < 0) {
+        f = _vmc_vfi(S, a);
+        _vcv_nt = _vmc_mt;
+    }
+    if (f < 0) { return 0; }
+    _vcv_o = _vcall_o;
+    return GFRS(S, f);
+}
+# The source at token `a` opening with leading parentheses whose first operand is a vector call (`_vcv_at`): the call's
+# first token; else `a`. A `(` that heads a method itself (`(*ps).m2() + 1`, `_vmc_vfi`) is that call; past every
+# leading `(`, the token after them. ⛔ 6.7.16 — AT ANY DEPTH, CLOSING ANYWHERE: the peel took only parentheses whose
+# innermost `)` closed right after the call, so `var x: i64 = (mk2(41, 7) + 1) * 2;`, `x = (mk2(..) + 1) * 2;`, `var x:
+# i64 = (s.m2() * 2) + 1;` and the untyped / top-level `var w = (mk2(..) + 1) * 2;` stored the result's word (x86_64 /
+# aarch64 2, cx 84) where `mk2(41, 7) + 1 * 2` is refused (D24 / D26: parentheses change nothing). CHANGELOG [6.7.16]
+fn _vcv_wpeel(S, a): i64 {
+    var j = a;
+    while (TOKTYP(S, j) == 10) {
+        if (_vcv_at(S, j) != 0) { return j; }
+        j = j + 1;
+    }
+    if (j == a) { return a; }
+    if (_vcv_at(S, j) != 0) { return j; }
+    return a;
+}
+# ⛔ 6.7.16 — `ti` when the source there opens with `(` and is a method declared to return a vector on a parenthesised
+# head (`(*ps).mv()`, `((s)).mv()`: `_vmc_vfi`), which no wrap of the whole source reads (`_pwrap_in` answers -1 for
+# it, as for `(x) + 1`); else -1. For the argument paths that peel a whole wrap first (`_sar_take`, `_sarg_pe_vform`,
+# `_try_push_struct_addr_arg`): `lanes((*ps).mv())` was refused "got `(...)`" and `rd((*ps).mv())` into a `*f64v2`
+# pushed lane 0 as the address (139). CHANGELOG [6.7.16]
+fn _vmc_phead(S, ti): i64 {
+    if (TOKTYP(S, ti) != 10) { return 0 - 1; }
+    if (_vmc_vfi(S, ti) < 0) { return 0 - 1; }
+    return ti;
 }
 # The method call at token `ti` (`_vmc_fi`) when its fn — a generic's base — is declared to return a vector, else -1.
 fn _vmc_vfi(S, ti): i64 {
@@ -9027,11 +9231,47 @@ fn _vrcv_tyerr(S, ti, verb): i64 {
     STI(S, sv);
     return 1;
 }
-# 1 = token `ti` starts a by-name call to a fn declared to return a vector — any: the receives check
-# its type (a different vector is refused there, before the parse).
-fn _vrcv_vcall(S, ti): i64 {
-    if (_vcall_fi(S, ti) < 0) { return 0; }   # 6.7.13: `g<T>(..)` too
+# 1 = token `ti` starts a by-name call to a fn declared to return a vector the by-name paths take or refuse
+# themselves: another vector than `ty` (refused there, before the parse), or `ty`'s when the call is the whole
+# source, ended by `term` (the receives). ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19): a `ty` call that only
+# STARTS the source (`mk2(41, 7) + 1`) is the value-form refusal's — the receives took the call and dropped the rest.
+fn _vrcv_vcall(S, ti, ty, term): i64 {
+    var fi = _vcall_fi(S, ti);   # 6.7.13: `g<T>(..)` too
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != ty) { return 1; }
+    if (_vcall_more(S, _call_close(S, _vcall_o) + 1, term) == 1) { return 0; }
     return 1;
+}
+# 6.7.16 (D24): 1 = token `ti` starts `IDENT (` whose call is the whole initialiser (no operator after its `)`,
+# `_vcall_more`) — what PARSE_VAR's inline 16- / 32-byte receives take; they took any `IDENT (` and dropped what
+# followed the call.
+fn _vrcv_wcall(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    if (_vcall_more(S, _call_close(S, ti + 1) + 1, 5) == 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 — A WHOLE CALL FOLLOWED BY A STRAY TOKEN IS STILL THE WHOLE CALL. The receives and the vector return tell a
+# call that only STARTS the source (D24: `mk2(41, 7) + 1`) by the token after its `)`, and read anything but the
+# terminator as an operator: `var w = mk2(41, 7) 5;`, `var w: f64v2 = mk2(41, 7), x = 1;`, `w = mk2(41, 7) 5;`, `var w =
+# s.m2() 5;` and `return mk2(41, 7) 5;` printed the value-form / 6.6.6 refusal ("... got `mk2`") in front of the
+# parse's own "expected ';', got number 5" — two errors, the first naming the wrong mistake (the method and `&f`
+# spellings since 6.7.13). Only a token an expression continues with — a binary operator (`_tal_binop`), `.`, `[`, a
+# postfix `?` — makes the call a start; the receive or the return takes a call followed by any other, and the parse
+# reports that token alone. 1 = token `x`, after a call's `)` (or the `)`s closing parentheses it is inside: `_vcv_more`),
+# continues the source ended by `term`. CHANGELOG [6.7.16]
+fn _vcall_more(S, x, term): i64 {
+    var t = TOKTYP(S, x);
+    if (t == term) { return 0; }
+    if (_tal_binop(t) == 1) { return 1; }
+    if (t == 41 || t == 28 || t == 124) { return 1; }
+    return 0;
+}
+# `_vcall_more` after the call `_vcall_vt` found (`_vcv_o` its `(`) in a declaration's initialiser (`;` ends it), past
+# the `)`s that close parentheses opened before it (a call that starts the source has only `(` in front of it).
+fn _vcv_more(S): i64 {
+    var x = _call_close(S, _vcv_o) + 1;
+    while (TOKTYP(S, x) == 11) { x = x + 1; }
+    return _vcall_more(S, x, 5);
 }
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
 # `ty`: inside its parentheses, the call — on PE passing `dst`'s address as its hidden result pointer,
@@ -9126,7 +9366,7 @@ fn _vmc_whole(S, ti, term): i64 {
     var mf = _vmc_mf;
     if (mf < 0) { return 0; }
     if (GFRS(S, mf) > 0 - 2048) { return 0; }
-    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
+    if (_vcall_more(S, _call_close(S, o) + 1, term) == 1) { return 0; }   # 6.7.16: a stray token is the parse's
     return _vrcv_mty(S, ti);
 }
 # ⛔ 6.7.14 (D38 A, the user's decision, 2026-10-16) — A METHOD DECLARED TO RETURN A VECTOR INTO A DESTINATION OF
@@ -9185,11 +9425,17 @@ fn _vasg_gnv(S, noff): i64 {
     return 1;
 }
 # The vector the right-hand side at token `ti` (ended by `term`) declares: a by-name call that starts it
-# (`_vcall_fi`, as the local's arm reads it), else a whole call of any spelling (`_vcall_vt`); 0 = none. `_vcv_a` the
-# call.
+# (`_vcall_fi`, as the local's arm reads it), else a call of any spelling that starts it (`_vcall_vt`); 0 = none.
+# `_vcv_a` the call.
+# ⛔ 6.7.16 (D25 A, the user's decision, 2026-10-19) — A METHOD OR `callptr(&f, ..)` THAT STARTS AN ASSIGNMENT'S
+# RIGHT-HAND SIDE IS REFUSED, AS THE BY-NAME CALL IS (6.7.14's D27 (a): one rule for a declaration and an assignment;
+# 6.7.15's D29 refused it starting an initialiser): `x = s.m2() + 1;` and `x = callptr(&mk2, 41, 7) + 1;` stored the
+# result's word plus 1 (x86_64 / aarch64 1, cx / PE 42) where `x = mk2(41, 7) + 1;` is "vector return type does not
+# match the assigned variable" — `start` 1, as the declaration's `_vrcv_mscal` reads it (and D26: wrapped too).
+# CHANGELOG [6.7.16]
 fn _vasg_vt(S, ti, term): i64 {
     var fi = _vcall_fi(S, ti);
-    if (fi < 0) { return _vcall_vt(S, ti, term, 0); }
+    if (fi < 0) { return _vcall_vt(S, ti, term, 1); }
     _vcv_a = ti;
     return GFRS(S, fi);
 }
@@ -9201,7 +9447,7 @@ fn _vrcv_decl_err(S, pscale, start): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (_vrcv_vec(S, pscale) == 0) { return 0; }
     if (_scv_err == 1) { return 0; }
-    if (_vrcv_vcall(S, start) == 1) { return 0; }
+    if (_vrcv_vcall(S, start, pscale, 5) == 1) { return 0; }   # 6.7.16 (D24): not `pscale`'s call that starts it
     if (_vrcv_nofnw(S, start, GTI(S)) == 1) { return 0; }   # 6.7.13: the undefined-function path's (6.7.14: wrapped)
     return _vrcv_err(S, start, "initialised", _vrcv_fptr(S, start, GTI(S)));
 }
@@ -9217,7 +9463,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     var k = _vrcv_src(S, GTI(S), lt, term);
     if (k == 0) {
         _vrcv_bad(S, GTI(S), lt, term, 1);   # a call of another vector, wrapped or not
-        return _vrcv_other(S, term);
+        return _vrcv_other(S, term, lt);
     }
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
     if (k == 4) { _vrcv_demit(S, li, lt, "assigned", noff); }   # 6.7.13 (D34): `*p`
@@ -9226,13 +9472,14 @@ fn _vrcv_asg(S, noff, term): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
-# The assigned source that is no vector: a by-name call declared to return one, and (6.7.13) a call
-# naming no fn (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
+# The assigned source that is no vector of type `lt`: a by-name call declared to return one the path below takes or
+# refuses (`_vrcv_vcall`; 6.7.16, D24: not `lt`'s call that only starts the source), and (6.7.13) a call naming no fn
+# (`_vrcv_nofn`), are the path below's (-1); anything else is parsed and refused by name
 # — once: not when its own parse reported (a vector global's read, `_vecg_refuse`), nor (6.7.14) for a wrapped call
 # naming no fn, which the parse registered — and the statement consumed (1).
-fn _vrcv_other(S, term): i64 {
+fn _vrcv_other(S, term, lt): i64 {
     var ti = GTI(S);
-    if (_vrcv_vcall(S, ti) == 1) { return 0 - 1; }
+    if (_vrcv_vcall(S, ti, lt, term) == 1) { return 0 - 1; }
     if (_vrcv_nofn(S, ti) == 1) { return 0 - 1; }   # 6.7.13: the undefined-function path names it
     var he = _had_error;
     PCMPE(S);
@@ -9938,11 +10185,30 @@ fn _vin_decl(S, pscale, sty, ann): i64 {
         return pscale;
     }
     var fi = _vcall_fi(S, GTI(S) + 1);
-    if (fi < 0) { return pscale; }
+    if (fi < 0) { return _vin_ustart(S, pscale, sty, ann); }   # 6.7.16 (D24): a method / `&f` / a wrap starting it
     var rs = GFRS(S, fi);
     if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
     if (pscale != rs) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
     return pscale;
+}
+# ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19) — AN UNTYPED DECLARATION WHOSE INITIALISER A VECTOR CALL STARTS
+# BUT IS NOT IS REFUSED BY NAME, as every annotated spelling is: `var w = mk2(41, 7) + 1;` dropped the `+ 1` on x86_64 /
+# aarch64 (161), added it to a lane on cx (165) and failed to parse on Windows ("expected ';', got '+'"); `var w =
+# s.m2() + 1;` bound one word (11; cx 165, PE 205) — guide § vector returns: there is no vector `+`. The call's vector
+# is the declaration's, so it meets the value-form refusal (`_vrcv_decl_err`: "a value-form vector local is
+# initialised only from .. - got `mk2`"), as `var w: f64v2 = s.m2() + 1;` does. The by-name call is read above (its
+# start infers, as ever); here a method, `callptr(&f, ..)` / `fncallN(&f, ..)` or a wrapped call that starts it
+# (`_vcall_vt` `start` 1, D26's peel). A whole call is `_vrcv_ity`'s (D37 / D28). In a fn, cursor on the `=`; the
+# declaration's `pscale`. CHANGELOG [6.7.16]
+fn _vin_ustart(S, pscale, sty, ann): i64 {
+    if (pscale != 0) { return pscale; }
+    if (sty != 0) { return pscale; }
+    if (ann != 0) { return pscale; }
+    var rs = _vcall_vt(S, GTI(S) + 1, 5, 1);
+    if (rs == 0) { return 0; }
+    if (_vcv_more(S) == 0) { return 0; }   # 6.7.16: no operator after it — a stray token is the parse's
+    if (_vcall_vt(S, GTI(S) + 1, 5, 0) != 0) { return 0; }   # the whole call: `_vrcv_ity`'s
+    return rs;
 }
 # ⛔ 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18) — A CALL DECLARED TO RETURN A VECTOR INTO A TOP-LEVEL
 # DECLARATION IS REFUSED, as the annotated vector global and the `*V` argument are there (a vector result needs a fn's
@@ -9955,14 +10221,13 @@ fn _vin_top(S, pscale, ann): i64 {
     if (pscale <= 0 - 2048) { return 0; }
     return _vtop_ref(S, GTI(S) + 1, ann);
 }
-# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a whole call declared to return
-# a vector (any spelling, any wrap; annotated, an unwrapped one may start it, `_vcall_vt`) refused — untyped, at the
-# call in the words of a top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method,
-# `&f`); annotated, at the `=`, "vector return type does not match the declared type". 1 = refused.
+# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a call declared to return a
+# vector that is it or starts it (any spelling, any wrap, `_vcall_vt`) refused — untyped, at the call in the words of a
+# top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method, `&f`); annotated, at the
+# `=`, "vector return type does not match the declared type". 1 = refused. 6.7.16 (D24 A): untyped, a call that only
+# starts it too — `var w = mkv(41, 7) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42).
 fn _vtop_ref(S, st, ann): i64 {
-    var start = 0;
-    if (ann != 0) { start = 1; }
-    var rs = _vcall_vt(S, st, 5, start);
+    var rs = _vcall_vt(S, st, 5, 1);
     if (rs == 0) { return 0; }
     if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
     var sv = GTI(S);
@@ -10325,7 +10590,7 @@ fn PARSE_VAR(S): i64 {
     if ((_is_simd128(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # any 16B/1-XMM vector receive
         var _f2c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f2c_look_ti) == 2) {
-            if (TOKTYP(S, _f2c_look_ti + 1) == 10) {
+            if (_vrcv_wcall(S, _f2c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
                 var _f2c_look_noff = TOKVAL(S, _f2c_look_ti);
                 var _f2c_look_fi = FINDFN(S, _f2c_look_noff);
                 if (_f2c_look_fi >= 0) {
@@ -10393,7 +10658,7 @@ fn PARSE_VAR(S): i64 {
     if ((_is_simd256(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _f4c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f4c_look_ti) == 2) {
-            if (TOKTYP(S, _f4c_look_ti + 1) == 10) {
+            if (_vrcv_wcall(S, _f4c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
                 var _f4c_look_noff = TOKVAL(S, _f4c_look_ti);
                 var _f4c_look_fi = FINDFN(S, _f4c_look_noff);
                 if (_f4c_look_fi >= 0) {
