@@ -3349,9 +3349,10 @@ fn _stmt_paren_field(S): i64 {
     return 1;
 }
 # A store through `( .. ).name` (D24 (a)), refused once at the wrap's `.` (`_pf_e`), the latch as it was; the cursor is
-# left on the `.`. The statement's and (6.7.16) the classic-for step's.
+# left on the `.`. The statement's and (6.7.16) the classic-for step's. ⛔ 6.7.16 — under --syntax-only too: the rule
+# reads no type (any `( .. ).name = v` is refused), and lint passed `(s).a = 1;` that the build refuses, where it
+# refuses its D19 / D22 / D60 siblings. CHANGELOG [6.7.16]
 fn _pf_store_err(S): i64 {
-    if (_syntax_only == 1) { return 0; }
     if (_tn_once(S, _pf_e) == 0) { return 0; }
     var p0 = _panic;
     STI(S, _pf_e);

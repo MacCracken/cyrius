@@ -70,6 +70,7 @@
 #   `_for_step_replay` without its `_step_paren` call (= the tree before) -> RED 46: PS10 FS1-FS5 FS9 FS10 on every leg
 #                                                             ("expected '=', got .."; FS1's lines 2-4; FS10's later
 #                                                             statement's error swallowed by the latch), FS8
+#   `_pf_store_err` silent under --syntax-only (= the tree before) -> RED 2: N8, FS11 (rc 0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -521,7 +522,22 @@ if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/FS8.err" || true)" -eq 3 ] && g
    && grep -qF "<source>:6:24: $PD \`*pn += 1\`" "$T/FS8.err" && grep -qF "<source>:7:24: $SB" "$T/FS8.err"; then ok "FS8 --syntax-only refuses the D19 / D22 steps alike"
 else bad "FS8 --syntax-only: rc $crc: $(grep '^error' "$T/FS8.err" | head -3 | tr '\n' '|')"; fi
 
-FLOOR=74   # 6.7.16: + KC1-KC5, A2; + PS0-PS11 (D22); + FS1-FS10 (the for step)
+# 6.7.16 (the s16 lane, met while landing the FS rows): --syntax-only refuses a store through parentheses as the build
+# does — `(s).a = 1;`, `(s).a += 1;` (N8) and the step `(s).a = 3` (FS11) parsed silently under lint (rc 0), while its
+# D19 / D22 / D60 siblings (PS11, FS8, Q9) are refused there; the rule reads no type.
+printf '%s\n' 'struct P1 { a; }' 'fn main(): i64 { var s = P1 { 1 }; (s).a = 1; (s).a += 1; return s.a; }' 'syscall(60, main());' > "$T/N8.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/N8.cyr" > /dev/null 2> "$T/N8.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/N8.err" || true)" -eq 2 ] && grep -qF "<source>:2:39: $FA" "$T/N8.err" \
+   && grep -qF "<source>:2:50: $FA" "$T/N8.err"; then ok "N8 --syntax-only refuses (s).a = 1; and (s).a += 1; as the build does"
+else bad "N8 --syntax-only: rc $crc: $(grep '^error' "$T/N8.err" | head -3 | tr '\n' '|')"; fi
+printf '%s\n' 'struct P1 { a; }' 'fn main(): i64 { var s = P1 { 1 }; var i = 0; for (i = 0; i < 1; (s).a = 3) { i = i + 1; } return 0; }' > "$T/FS11.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/FS11.cyr" > /dev/null 2> "$T/FS11.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/FS11.err" || true)" -eq 1 ] && grep -qF "<source>:2:69: $FA" "$T/FS11.err"; then ok "FS11 --syntax-only refuses the step (s).a = 3"
+else bad "FS11 --syntax-only: rc $crc: $(grep '^error' "$T/FS11.err" | head -2 | tr '\n' '|')"; fi
+
+FLOOR=76   # 6.7.16: + KC1-KC5, A2; + PS0-PS11 (D22); + FS1-FS11, N8 (the for step; --syntax-only's store)
 [ "$rows" -ge "$FLOOR" ] || bad "only $rows rows ran (floor $FLOOR)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails failed ($rows rows, $skips legs skipped)"; exit 1; fi
 echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60); a known &f callee's *S read through the wrap; a subscript store through parentheses refused once in the read's words (D22) ($skips legs skipped)"

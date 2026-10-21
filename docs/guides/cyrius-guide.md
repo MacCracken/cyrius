@@ -2403,7 +2403,7 @@ A `.field` or `.m(..)` written AFTER the parentheses sees through them too (6.7.
 the field or call the method exactly as without them, chains included, and `(s).m();` is a statement — each
 was *expected ';', got '.'* (a statement *unexpected '('*). Parentheses around a value that is no struct
 (`(x + 1).a`) are refused by name, a store through them (`(s).a = v;`, `(s).a += v;`) is refused by name
-(write `s.a = v`), and at top level a struct result is refused once (no frame), as without them.
+(write `s.a = v`; by `cyrius lint`'s `--syntax-only` too since 6.7.16 — it passed them), and at top level a struct result is refused once (no frame), as without them.
 A field READ alone through parentheses is not a statement, as `s.a;` is not (6.7.15, the user's D60, 2026-10-18):
 `(s).a;`, `(p).a;`, `(*p).a;`, `(w).p.a;` are refused once (*the field read 'a' is discarded - a statement is an
 assignment or a call*) — 6.7.14 compiled them and threw the value away. A call anywhere keeps the statement, as
