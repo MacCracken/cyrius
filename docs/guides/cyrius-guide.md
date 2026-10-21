@@ -7414,8 +7414,10 @@ a call, so is `x.m<..>(..)` (6.7.15): a multi-value destructure or re-assignment
 forward, the refusals of a pair bound to one name and of a multi-value call stored as a
 struct, a method declared to return a vector, a `*T` result forming a `dyn`, a top-level
 zone — through 6.7.14 those read the explicit spelling as no call ("multi-value
-destructure needs a call on the right-hand side"; `var v = p.rs<i64>(3)?;` crashed). And
-(6.7.16) wherever `x.m(..)` is a call, so is a method ending a chain on any receiver the method
+destructure needs a call on the right-hand side"; `var v = p.rs<i64>(3)?;` crashed) — and through
+6.7.15 a fn whose only pair route was `p.rg<i64>(5)?` was one value to a caller above it (its `?` was read
+as a free call `rg<i64>(`), so `var v = fwd(w);` there kept the tag in silence; since 6.7.16 it is refused
+"bind both". And (6.7.16) wherever `x.m(..)` is a call, so is a method ending a chain on any receiver the method
 arm takes — `w.p.m(..)`, `w.p.m<..>(..)`, `w.gp().m(..)`, `mk().p.m(..)`, `(*pw).m(..)` — at
 every one of those lookaheads, each refusal worded as the single name's with the receiver as
 written (``bind it first: `var a, b = w.p.m2(..);` ``; it named `P_m2` with no hint). The

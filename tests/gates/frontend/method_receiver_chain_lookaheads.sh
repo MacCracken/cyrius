@@ -53,7 +53,9 @@
 #      under the mode (each minted `P_gq$f64` in the zone's pass 1 and SIGSEGV'd: the review of 6.7.16's lane; `_mch_mres`
 #      types every step from its template, a `: V` / `: G<..>` by a peek of its binding)
 #   F  the token pass flags a forwarder below its caller (x86_64, every receiver): F1 `var v = fwd(w);` with `fwd`
-#      returning `w.p.rs(3)` and F2 with `fwd`'s only pair route `w.p.rs(3)?` are refused "bind both" (each compiled before)
+#      returning `w.p.rs(3)` and F2 with `fwd`'s only pair route `w.p.rs(3)?` are refused "bind both" (each compiled before);
+#      F3 with it `w.p.rg<i64>(3)?` (an explicit generic method) — on the single name too, which compiled through 6.7.15
+#      (`p.rg<i64>(3)?` was judged as a free call `rg<i64>(`; the review of 6.7.16's lane)
 #
 # MUTATION LEDGER (2026-10-21; each mutant a scratch copy of the tree with the one change, its 2-stage cycc, this gate
 # run from the copy with CYCC= that cycc, so the aarch64 / cx / PE compilers are built from the mutant too; C17b came
@@ -95,6 +97,8 @@
 #   M21 the tree before `_tok_mch_gret` (8f484834d)      -> RED 13: V x7 (the forwarder below its caller on a generic
 #                                                          head: the boxed `?`, a crash on every leg), W2 / F1 / F2 on
 #                                                          n and o
+#   M0 again for F3 (added after the runs above; base      -> RED 13: F3 on s and every chain (compiled: the tag kept)
+#      0e2e41805's fixpoint)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -209,6 +213,7 @@ impl P {
     fn m2(self): (i64, i64) { return (3, 4); }
     fn m3(self): (i64, i64, i64) { return (3, 4, 1); }
     fn rs(self, x): i64 { if (x == 0) { return SErr(9); } return SOk(x); }
+    fn rg<V>(self, x: V): i64 { if (x == 0) { return SErr(9); } return SOk(x); }
     fn one(self): i64 { return 5; }
     fn q8(self): Q8 { var q: Q8; q.a = 1; return q; }
     fn q16(self): Q16 { var q: Q16; q.a = 1; q.b = 2; return q; }
@@ -348,6 +353,9 @@ frow() {
 echo "F. a forwarder below its caller is a pair there"
 frow F1 'return @.rs(3);' "var v = fwd(w); with fwd returning @.rs(3)"
 frow F2 'var v = @.rs(3)?; return v + 0;' "var v = fwd(w); with fwd's only pair route @.rs(3)?"
+# F3: an explicit generic method's `?` — the single name's `p.rg<i64>(3)?` was judged as a free call `rg<i64>(` through
+# 6.7.15 (no pair: `var v = fwd(w);` compiled and kept the tag), 6.7.16's `_tok_chain_back` steps back to `p`
+frow F3 'var v = @.rg<i64>(3)?; return v + 0;' "var v = fwd(w); with fwd's only pair route @.rg<i64>(3)?"
 # h: the review's spelling of an inferred step, `w.p.idv(p).rs(3)` (p a local `P`: only where one is in scope)
 crow C1h '' 'var v = @.rs(3);' "$PB" "var v = @.rs(3); (kept the tag in silence)" h
 frow F1h 'return @.rs(3);' "var v = fwd(w); with fwd returning @.rs(3)" h
