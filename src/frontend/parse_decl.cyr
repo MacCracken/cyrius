@@ -4138,6 +4138,7 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (_syntax_only == 1) { return 2; }
     if (_panic == 1) { return 2; }
     var st = GTI(S);
+    if (sid != 0) { if (_vrcv_annbad(S, st) == 1) { return 2; } }   # 6.7.16: a refused annotation's one error
     if (_tn_once(S, st) == 0) { return 2; }
     var ct = st;
     if (_mcall_open(S, st, 0 - 1) >= 0) { ct = st + 2; }   # 6.7.15: `x.m<..>(` names m too
