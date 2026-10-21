@@ -75,13 +75,13 @@
 #     — before (d) existed this mutant read axis 2 PASS ("9 flush tail(s) for 9 site(s)").
 #   _pe_dyn_arity2's 74 arm emits EDELETEF_PE, not a flush  PASS    FAIL(d)  FAIL
 # The xfsync rows and the controls were also run with wine hidden from PATH (what CI has): the
-# two xfsync mutants are still red on axis 2 alone.
+# two xfsync mutants are still red on axis 2 alone. The controls are the fold lane's expected
+# peer change — they must stay green.
 # Added 2026-10-20 at 6.7.16 (6.7.16 pw lane, PW1; wine 11.20):
 #   EFLUSHFB_PE's tail back to `cmp eax,1; sbb rax,rax`      PASS    FAIL     PASS (the rows test
 #     (the pre-D94 fold: every failure -1)                                     `< 0`; path_failure_
 #                                                                              errno.tcyr pins -9 /
-#                                                                              -13: its gate RED) The controls are the fold lane's expected
-# peer change — they must stay green.
+#                                                                              -13: its gate RED)
 #
 # Nothing is written inside the tree: the .tcyr creates CWD-relative files, so both runs happen
 # inside a mktemp -d that is removed on exit.
