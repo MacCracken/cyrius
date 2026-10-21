@@ -174,6 +174,18 @@ fn rd_pu_after(): i64 { return rd_pu() + 1; }
 fn rd_pg(): *RdH { return 0; }
 fn rd_pg(): *RdG { return 100; }
 fn rd_pg_after(): i64 { return rd_pg() + 1; }
+# 6.7.16: and its bool return and parameter kinds — a call between the definitions is checked against the LAST one
+# (an `: i64` then `: bool` call was refused "cannot initialize bool 'x' ...", a `b: bool` then `b: i64` one "cannot
+# pass a value that is not a bool ...")
+fn rd_bl(): i64 { return 5; }
+fn rd_bl_mid(): i64 { var x: bool = rd_bl(); if (x) { return 3; } return 4; }
+fn rd_bl(): bool { return 1 == 1; }
+fn rd_bp(b: bool): i64 { return 1; }
+fn rd_bp_mid(): i64 { return rd_bp(5); }
+fn rd_bp(b: i64): i64 { return b; }
+fn rd_br(): i64 { var x: bool = rd_br(); if (x) { return 1; } return 0; }   # its own call reaches the bool one
+fn rd_br(): bool { return 1 == 1; }
+fn rd_br_after(): i64 { var x: bool = rd_br(); if (x) { return 3; } return 4; }
 
 assert_eq(rd_forward(), 1, "forward call (compiled before both definitions) reaches the last");
 assert_eq(rd_nontail(), 1, "direct call compiled between the definitions reaches the last (was the first)");
@@ -208,5 +220,8 @@ assert_eq(rd_p_after(), 101, "6.7.16: ... a call after both (was 124)");
 assert_eq(rd_pv_after(), 124, "6.7.16: `: i64` then `: *RdH` — the last steps sizeof(RdH)");
 assert_eq(rd_pu_after(), 101, "6.7.16: `: *RdH` then no annotation (was 124)");
 assert_eq(rd_pg_after(), 116, "6.7.16: `: *RdH` then `: *RdG` — the last's step, 16");
+assert_eq(rd_bl_mid(), 3, "6.7.16: `: i64` then `: bool` — a call between binds a bool (was refused)");
+assert_eq(rd_bp_mid(), 5, "6.7.16: `b: bool` then `b: i64` — a call between passes 5 (was refused)");
+assert_eq(rd_br_after(), 3, "6.7.16: an earlier body calling its own name reaches the last (bool) definition (was refused)");
 
 var r = assert_summary();

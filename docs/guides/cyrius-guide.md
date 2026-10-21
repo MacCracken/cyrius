@@ -4614,7 +4614,10 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   typed by the last definition's return too, wherever it sits: with `fn gp(): *H` then
   `fn gp(): i64`, `gp() + 1` adds 1 and `gp().n = 5;` is refused as for one `fn gp(): i64`
   (6.7.16; the first definition's `*H` was kept — `gp() + 1` stepped sizeof(H), the field
-  store wrote through the integer).
+  store wrote through the integer). A call is checked against the last definition's `bool`
+  return and parameters as well, a call compiled between the two included (6.7.16; it was
+  checked against the earlier one), while each earlier body's own `return`s are still checked
+  against its own declaration.
 - **The boundary covers every way of reaching a fn, not just a direct call (v6.6.4).**
   `&_helper` (address-of, then `callptr` / `fncallN`), `s.method()`, a struct-returning
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return

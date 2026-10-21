@@ -1562,6 +1562,8 @@ fn PARSE_FN_DEF(S): i64 {
     _ce_fn_rname = 0 - 1;
     _ce_fn_refd = 0;
     _ce_fn_rtok = 0 - 1;
+    var _bxf_sv = _bx_ldef_fi;    # 6.7.16: an earlier definition's own bool facts are its body's alone (`_bx_fn_reset`)
+    var _bxb_sv = _bx_ldef_bits;
     # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
     # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
     # caller, not to firmware", which is true of a RETURN but not of an EXIT —
@@ -1575,6 +1577,8 @@ fn PARSE_FN_DEF(S): i64 {
     _ce_fn_rname = _rn_sv;
     _ce_fn_refd = _rf_sv;
     _ce_fn_rtok = _rt_sv;
+    _bx_ldef_fi = _bxf_sv;
+    _bx_ldef_bits = _bxb_sv;
     _rd_exit();
     _xd_check(S, 0, "fn body");
     _xdepth = _xd_outer;

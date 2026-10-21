@@ -3849,10 +3849,17 @@ fn _ret_ptr_record(S, fi, quiet): i64 {
 var _rpd_ti = 0 - 1;   # pass 2: the `fn` token of the definition PARSE_FN_DEF reads (`_fn_def_find`)
 fn _ret_ptr_owns(S, fi, quiet): i64 {
     if (quiet == 1) { return 1; }
-    if (_inst_name != 0) { return 1; }   # an instance is minted from the winning definition's tokens
-    if ((GFLG(S, fi) & 2048) == 0) { return 1; }
-    if (GFDS(S, fi) == _rpd_ti + 1) { return 1; }
-    return 0;
+    return 1 - _rdef_loser(S, fi);
+}
+# 1 = pass 2 is reading an EARLIER definition of the redefined fn `fi` (fn flag 2048): pass 1's last definition is
+# GFDS's, the one PARSE_FN_DEF reads `_rpd_ti`'s. A call reaches the last one, so its call facts stay the last's.
+fn _rdef_loser(S, fi): i64 {
+    if (_dyn_p2 == 0) { return 0; }      # pass 1 records every definition in order: the last one's stand
+    if (fi < 0) { return 0; }
+    if (_inst_name != 0) { return 0; }   # an instance is minted from the winning definition's tokens
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    if (GFDS(S, fi) == _rpd_ti + 1) { return 0; }
+    return 1;
 }
 # Pass 1, a redefinition (fn flag 2048) about to record its return: the earlier definition's `*T` records and its
 # return word (GFRS: -8 for a `*T`, as pass 2 zeroes it at each definition) are dropped first.

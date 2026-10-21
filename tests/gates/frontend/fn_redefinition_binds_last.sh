@@ -37,7 +37,8 @@
 # (`_dsg_check`), and so is `async fn` against a plain fn, in pass 1 (`_dsg_async_check`).
 #
 # ROWS (compilers are BUILT FROM THIS TREE into a private dir; build/cycc_* is never read)
-#   PT0-PT11 (6.7.16, every backend): a redefined fn's `: *T` return records are its LAST definition's — see `_ptlegs`.
+#   PT0-PT11 (6.7.16, every backend): a redefined fn's `: *T` return records are its LAST definition's — see `_ptlegs`;
+#   BX1-BX8 (6.7.16, x86_64; the .tcyr runs three on every backend): and its bool return / parameter facts — row 1c.
 #   1. x86_64: the filed repro exits 1 (was 2) and reports no unreachable fn (the winner was);
 #      the three-shape repro exits 111 (was 212); tests/tcyr/crossos/fn_redefinition_last_wins.tcyr
 #      exits 0 (25 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
@@ -122,6 +123,14 @@
 #   q. `_ret_redef_reset` a no-op (pass 1 keeps the first definition's records)
 #                                                                    -> 36 red: as p, and PT3 / rd_p_above (the call
 #        above both definitions)
+#   (the bool facts, row 1c; 92 rows)
+#   r. `_bx_fn_reset` without its earlier-definition arm (= the tree before) -> 9 red: BX1-BX5 (refused / accepted against
+#        the earlier definition) and the .tcyr on every backend (rd_bl_mid, rd_bp_mid, rd_br refused)
+#   s. `_bx_cur_bits` reading the fn's word only -> 9 red: BX1 BX5 BX6-BX8 (an earlier body checked against the last
+#        definition's return) and the .tcyr on every backend
+#   t. `_bx_param` recording an earlier definition's kinds -> 6 red: BX3 BX4 and the .tcyr on every backend
+#   u. PARSE_FN_DEF not putting `_bx_ldef_fi` / `_bx_ldef_bits` back -> 4 red: BX2 BX6 BX7 BX8 (two errors: the
+#        last definition's body checked against the earlier one's return)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -467,6 +476,48 @@ fn h2(): i64 { var fu = f(0); var r = future_force(fu); r = future_force(fu); r 
 fn main(): i64 { alloc_init(); return h() * 10 + h2(); }
 syscall(60, main());" > "$T/async_ctor.cyr"
 _want async_ctor "$T/acc" "" "$T/async_ctor.cyr" 77 "an async fn redefined as a coroutine (was 139)"
+
+# ── row 1c (6.7.16): a call between the definitions is CHECKED against the last one's bool facts too ─────────────────
+# Pass 2 re-recorded each definition's bool return bits and parameter kinds, so a call compiled between two definitions
+# was checked against the earlier one: BX1 `: i64` then `: bool`, `var x: bool = f();` between, was refused (now 3);
+# BX2 the reverse was accepted (x held 5) — now refused as one `: i64` definition is; BX3 / BX4 the same for a
+# parameter `b: bool` / `b: i64` and `f(5)`; BX5 an earlier body calling its own name reaches the last definition.
+# Controls: an earlier body is still checked against its OWN declaration (BX6 `return 5;` in its `: bool` body, BX7 a
+# bool element of its `(bool, i64)`, BX8 a bare `return;`). The .tcyr's rd_bl / rd_bp / rd_br rows run BX1 BX3 BX5
+# on every backend and host.
+_bxsrc() { printf 'include "lib/syscalls.cyr"\n%s\nsyscall(60, go());\n' "$2" > "$T/$1.cyr"; }
+_bxsrc bx1 'fn f(): i64 { return 5; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }
+fn f(): bool { return 1 == 1; }'
+_want bx1 "$T/x86" "" "$T/bx1.cyr" 3 "BX1 \`: i64\` then \`: bool\`, a bool bind between (was refused)"
+_bxsrc bx2 'fn f(): bool { return 1 == 1; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }
+fn f(): i64 { return 5; }'
+_ptrefused bx2 "$T/x86" "$T/bx2.cyr" "3:30: cannot initialize bool 'x' with a value that is not a bool"
+_bxsrc bx3 'fn f(b: bool): i64 { return 1; }
+fn go(): i64 { return f(5); }
+fn f(b: i64): i64 { return b; }'
+_want bx3 "$T/x86" "" "$T/bx3.cyr" 5 "BX3 \`b: bool\` then \`b: i64\`, \`f(5)\` between (was refused)"
+_bxsrc bx4 'fn f(b: i64): i64 { return b; }
+fn go(): i64 { return f(5); }
+fn f(b: bool): i64 { return 1; }'
+_ptrefused bx4 "$T/x86" "$T/bx4.cyr" "3:25: cannot pass a value that is not a bool to bool parameter 'b' of 'f'"
+_bxsrc bx5 'fn f(): i64 { var x: bool = f(); if (x) { return 1; } return 0; }
+fn f(): bool { return 1 == 1; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }'
+_want bx5 "$T/x86" "" "$T/bx5.cyr" 3 "BX5 an earlier body's own call reaches the last (bool) definition (was refused)"
+_bxsrc bx6 'fn f(): bool { return 5; }
+fn f(): i64 { return 5; }
+fn go(): i64 { return f(); }'
+_ptrefused bx6 "$T/x86" "$T/bx6.cyr" "2:23: cannot return a value that is not a bool from bool fn 'f'"
+_bxsrc bx7 'fn f(): (bool, i64) { return (5, 1); }
+fn f(): (i64, i64) { return (5, 1); }
+fn go(): i64 { var a, b = f(); return a + b; }'
+_ptrefused bx7 "$T/x86" "$T/bx7.cyr" "2:31: cannot return a value that is not a bool as a bool element of 'f'"
+_bxsrc bx8 'fn f(): bool { return; }
+fn f(): i64 { return 5; }
+fn go(): i64 { return f(); }'
+_ptrefused bx8 "$T/x86" "$T/bx8.cyr" "2:16: a bare \`return;\` in bool fn 'f' returns 0"
 
 # ── row 2: aarch64 under qemu ───────────────────────────────────────────────────────────────
 if command -v qemu-aarch64 > /dev/null 2>&1; then

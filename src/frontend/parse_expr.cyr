@@ -2164,9 +2164,39 @@ fn _bx_fn_is_bool(S, fi): i64 {
     return 0;
 }
 fn _bx_fname(S, fi): i64 { return L64(_fnt_names + fi * 8); }
+# ⛔ 6.7.16 — A REDEFINED FN'S BOOL FACTS AT A CALL ARE ITS LAST DEFINITION'S. Pass 2 re-recorded each definition's
+# bool return bits and parameter kinds over pass 1's, so a call compiled between `fn f(): i64` and `fn f(): bool` read
+# the first: `var x: bool = f();` was refused (and accepted the other way round, x holding 5); `f(5)` into `b: bool`
+# then `b: i64` refused, the reverse accepted. An earlier definition read in pass 2 (`_rdef_loser`) leaves the fn's
+# records alone: its own return bits, which its body's `return`s are checked against, are `_bx_ldef_bits` (read through
+# `_bx_cur_bits`), and its parameter kinds are its slots' only (`_bx_param`). PARSE_FN_DEF saves and restores the pair,
+# so it is that definition's alone. CHANGELOG [6.7.16]
+var _bx_ldef_fi = 0 - 1;   # the redefined fn whose earlier definition pass 2 is reading (-1: none)
+var _bx_ldef_bits = 0;     # that definition's own bool return bits (4096; 8192 << k)
 fn _bx_fn_reset(S, fi): i64 {
+    if (_rdef_loser(S, fi) == 1) {
+        _bx_ldef_fi = fi;
+        _bx_ldef_bits = 0;
+        return 0;
+    }
     SFLG(S, fi, GFLG(S, fi) & (0 - 61441));   # bits 4096 .. 32768
     _pbool_reset(fi);
+    return 0;
+}
+# Set bool return bit `b` of fn `fi` — an earlier definition's in its own word (see above).
+fn _bx_bit_or(S, fi, b): i64 {
+    if (fi == _bx_ldef_fi) { if (_rdef_loser(S, fi) == 1) { _bx_ldef_bits = _bx_ldef_bits | b; return 0; } }
+    SFLG(S, fi, GFLG(S, fi) | b);
+    return 0;
+}
+# The bool return bits of the fn whose body is being parsed.
+fn _bx_cur_bits(S): i64 {
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_cur_fn_ix == _bx_ldef_fi) { return _bx_ldef_bits; }
+    return GFLG(S, _cur_fn_ix);
+}
+fn _bx_cur_is_bool(S): i64 {
+    if ((_bx_cur_bits(S) & 4096) != 0) { return 1; }
     return 0;
 }
 # A return type `: name` the classifier did not take (rc 0): bool sets bit 4096 and returns an i64
@@ -2174,7 +2204,7 @@ fn _bx_fn_reset(S, fi): i64 {
 fn _bx_sig_ret(S, fi, rc, noff): i64 {
     if (rc != 0) { return rc; }
     if (_bx_is_bool_name(S, noff) == 0) { return 0; }
-    SFLG(S, fi, GFLG(S, fi) | 4096);
+    _bx_bit_or(S, fi, 4096);
     return 0 - 8;
 }
 fn _bx_ret_or_refuse(S, fi, noff): i64 {
@@ -2187,7 +2217,7 @@ fn _bx_mret_note(S, fi, n, ti): i64 {
     if (n >= 3) { return 0; }
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (_bx_is_bool_name(S, TOKVAL(S, ti)) == 0) { return 0; }
-    SFLG(S, fi, GFLG(S, fi) | (8192 << n));
+    _bx_bit_or(S, fi, 8192 << n);
     return 0;
 }
 # Pass 1: the parameter at ordinal `pc` (cursor on its type name, not behind a `*`).
@@ -2223,7 +2253,7 @@ fn _bx_ptype(S, tnoff): i64 {
 # The parameter table keeps 2 for an integer parameter (its readers test `== 1` for a bool), so the
 # #inline replay, which re-registers parameters by name, can re-mark the slot (_inl_param_marks).
 fn _bx_param(S, fi, pc, li, b): i64 {
-    _pbool_set(fi, pc, b);
+    if (fi != _bx_ldef_fi) { _pbool_set(fi, pc, b); }   # 6.7.16: an earlier definition keeps its kinds to its slots
     if (b == 2) {
         SLINTD(S, li);
         b = 0;
@@ -2292,7 +2322,7 @@ fn _bx_pcmpe_ret(S): i64 {
     var t = GTI(S);
     if (_ret_small_cls(S) == 1) { _ret_small_val(S, t); }
     else { PCMPE(S); _istr_ret(S, t); }   # 6.7.13 (D7 (1)): an inline `Str` returned
-    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
     if (_BX_IS(S) == 1) { return 0; }
     return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
 }
@@ -2302,7 +2332,7 @@ fn _bx_pcmpe_mret(S, k): i64 {
     var t = GTI(S);
     PCMPE(S);
     if (_cur_fn_ix < 0) { return 0; }
-    var fl = GFLG(S, _cur_fn_ix);
+    var fl = _bx_cur_bits(S);
     var el = 0;
     if ((fl & (8192 << k)) != 0) { el = 1; }
     if (el == 0) { if (k != 0) { return 0; } if ((fl & 4096) == 0) { return 0; } }
@@ -2312,12 +2342,12 @@ fn _bx_pcmpe_mret(S, k): i64 {
 }
 # A bare `return;` returns 0 — refused in a bool fn (the user's decision, 2026-10-07).
 fn _bx_bare_ret(S): i64 {
-    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
     return _bx_refuse(S, GTI(S) - 1, "a bare `return;` in bool fn ", _bx_fname(S, _cur_fn_ix), " returns 0 - write `return false;`", 0 - 1);
 }
 # `return h(..);` taken as a tail call in a bool fn: h must be a bool fn.
 fn _bx_tc_ret(S, tcfi, ti, tcnoff): i64 {
-    if (_bx_fn_is_bool(S, _cur_fn_ix) == 0) { return 0; }
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
     if (_bx_fn_is_bool(S, tcfi) == 1) { return 0; }
     return _bx_refuse(S, ti, "cannot return ", tcnoff, " (not a bool fn) from bool fn ", _bx_fname(S, _cur_fn_ix));
 }
@@ -2325,7 +2355,7 @@ fn _bx_tc_ret(S, tcfi, ti, tcnoff): i64 {
 # on the fall-through path only — every `return` jumps past it to the landing. The #inline replay
 # of a bool callee lands the same way (_bx_falloff_fi, the CALLEE's fi).
 fn _bx_falloff(S): i64 {
-    if (_bx_fn_is_bool(S, _cur_fn_ix) == 1) { EMOVI(S, 0); }
+    if (_bx_cur_is_bool(S) == 1) { EMOVI(S, 0); }
     return 0;
 }
 fn _bx_falloff_fi(S, fi): i64 {
