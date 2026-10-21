@@ -1701,7 +1701,79 @@ _u1=$("$CC" < "$T/TI20zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreacha
 _u2=$("$CC" < "$T/TI20after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
 if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI20 the zone sweep instanced nothing: '$_u1' in both forms"
 else bad "TI20 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
-[ "$rows" -ge 394 ] || bad "only $rows rows ran (floor 394)"
+
+# ---- 6.7.16 (issues/2026-10-20-zone-sweep-reports-type-argument-refusal-out-of-source-order.md): a zone generic call
+# whose explicit list the call's parse refuses while its names resolve (`mkg1<*Pt>(33)`, `<1>`, `<[i64]>` behind a name,
+# a nested `Pt<i32>` of a non-generic Pt, a nested bound that fails) was parsed by the sweep at the end of pass 1
+# (`_gu_xlist`), which printed the refusal before every earlier line's error. The sweep now reads a list of names only
+# (`_gu_xnames`) under the panic latch with the bounds recorded (`_gu_xq`): a swallowed report is a refused list (G, a
+# handle), and the replay's call reports it once, in source order. GZO0 the filed repro verbatim; GZO1-GZO8 the other
+# shapes, the free call, the method's `.m<..>(` and a carrying argument's call; GZO9 a valid nested bounded list still
+# mints its instance (zone and after); GZO10 the refused nested list's global read in a fn body: the one refusal.
+# (GZ12 keeps `<*u8>`.)
+#   N84 the fix reverted (f365b4bf5's `_gu_xlist`)          -> RED 10: GZO0-GZO8 x4 legs (the type argument's error
+#                                                           first), GZO10 x4 (2 errors, as N85)
+#   N85 `_gu_xq` answering 1 whatever it swallowed         -> RED 1: GZO10 x4 (x is G1$Pt: `x.v + f()` adds "undefined
+#                                                           function 'Pt_add'")
+# order2 <name> <first> <second> <what>: refused on every leg with exactly two `^error` lines, <first> in the first and
+# <second> in the second (each a `line:col: text` fragment) — the source's order
+order2() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        compile "$leg" "$1"
+        n=$(grep -c '^error' "$T/$1.$leg.err" || true)
+        e1=$(grep '^error' "$T/$1.$leg.err" | sed -n 1p || true)
+        e2=$(grep '^error' "$T/$1.$leg.err" | sed -n 2p || true)
+        if [ "$crc" -eq 0 ]; then bad "$1 $4 ($leg): BUILT (rc 0)"
+        elif [ "$n" -ne 2 ]; then bad "$1 $4 ($leg): $n error lines (want 2): $(grep '^error' "$T/$1.$leg.err" | tr '\n' '|')"
+        elif ! printf '%s\n' "$e1" | grep -qF "$2"; then bad "$1 $4 ($leg): first error is not '$2': $e1"
+        elif ! printf '%s\n' "$e2" | grep -qF "$3"; then bad "$1 $4 ($leg): second error is not '$3': $e2"
+        elif [ -s "$T/$1.$leg" ]; then bad "$1 $4 ($leg): refused, but a binary was written"
+        else ok "$1 $4 ($leg): in source order"; fi
+    done
+}
+cat > "$T/GZO0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var e = nope;
+var x = mkg1<*Pt>(33);
+syscall(60, x.v);
+EOF
+order2 GZO0 "5:13: undefined variable 'nope'" "6:14: a type argument is a type name, got '*'" "the filed repro verbatim: line 5's error, then line 6's"
+GZOH='include "lib/syscalls.cyr"
+trait Show { fn show(self): i64; }
+struct G1<T> { v: T; }
+struct Pt { a; }
+struct Qt { a; }
+struct GB<T: Show> { v: T; }
+struct B1 { a; }
+impl Show for Pt { fn show(self): i64 { return self.a; } }
+impl B1 { fn mkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; } }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn mkgp<T, U>(v: T, w: U): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn id<T>(v: T): T { return v; }
+var b = B1 { 1 };'
+# rowo <name> <initialiser of x> <second error>: line 14 `var e = nope;`, line 15 `var x = <initialiser>;`
+rowo() {
+    printf '%s\nvar e = nope;\nvar x = %s;\nsyscall(60, 0);\n' "$GZOH" "$2" > "$T/$1.cyr"
+    order2 "$1" "14:13: undefined variable 'nope'" "$3" "the zone: \`var x = $2;\` is refused after line 14's error"
+}
+rowo GZO1 'mkg1<1>(33)' "15:14: a type argument is a type name, got number 1"
+rowo GZO2 'mkg1<Pt<i32>>(33)' "15:14: 'Pt' is not a generic struct: it takes no type arguments"
+rowo GZO3 'mkg1<GB<Qt>>(33)' "15:21: generic 'GB': its type argument does not implement trait 'Show'"
+rowo GZO4 'mkgp<Pt, [i64]>(33, 1)' "15:18: a slice cannot be a type argument"
+rowo GZO5 'b.mkg<Pt<i32>>(33)' "15:15: 'Pt' is not a generic struct: it takes no type arguments"
+rowo GZO6 'b.mkg<GB<Qt>>(33)' "15:22: generic 'GB': its type argument does not implement trait 'Show'"
+rowo GZO7 'mkg1(id<Pt<i32>>(3))' "15:17: 'Pt' is not a generic struct: it takes no type arguments"
+rowo GZO8 'mkg1(id<*Pt>(3))' "15:17: a type argument is a type name, got '*'"
+printf '%s\nvar P = Pt { 33 };\nfn mkgb(p: Pt): GB<Pt> { var g: GB<Pt>; g.v = p; return g; }\nvar x = mkg1<GB<Pt>>(mkgb(P));\nsyscall(60, x.v.v.a);\n' "$GZOH" > "$T/GZO9zone.cyr"
+zaft GZO9
+for zw in zone after; do runs "GZO9$zw" 33 "the $zw: a valid nested bounded list \`mkg1<GB<Pt>>(..)\` still binds its instance"; done
+printf '%s\nvar x = mkg1<Pt<i32>>(33);\nfn f(): i64 { return x.v; }\nsyscall(60, x.v + f());\n' "$GZOH" > "$T/GZO10.cyr"
+refused GZO10 "'Pt' is not a generic struct: it takes no type arguments" "the zone: a refused nested list's global read in a fn body and an operator: the one refusal"
+[ "$rows" -ge 406 ] || bad "only $rows rows ran (floor 406)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

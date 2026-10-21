@@ -12830,11 +12830,10 @@ fn _gu_minst(S, g): i64 {
     _gz_gb = gb;
     return r;
 }
-# The explicit list `.m<..>(` (its name token `_gz_mti`), read as the free call's is (`_gu_xlist`) when it holds names
-# only (`_gu_xnames`: a `*`, a number, a slice is the call's to refuse, never parsed here); a list the call refuses
-# (`<*u8>`, `<u8>`) is G, as the arm reaches the base (`_meth_xinst`) and the line after the first statement takes it.
+# The explicit list `.m<..>(` (its name token `_gz_mti`), read as the free call's is (`_gu_xlist`); a list the call
+# refuses (`<*u8>`, `<u8>`, `<Pt<i32>>`) is G, as the arm reaches the base (`_meth_xinst`) and the line after the first
+# statement takes it.
 fn _gu_mx(S, mf, g): i64 {
-    if (_gu_xnames(S, _gz_mti + 2) == 0) { return g; }
     if (_gu_xlist(S, _gz_mti, mf) == 0) { return g; }
     var c0 = _gu_x0;
     var c1 = _gu_x1;
@@ -12943,12 +12942,19 @@ fn _gu_gen(S, c): i64 {
     return _gu_inst(S, fi, c0, c1);
 }
 # The explicit type-argument list of the call whose name is token `c`, read as `_gen_resolve_call` reads it, into
-# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses (`_targs_resolvable`). `fi` is the generic fn or method
-# the list belongs to: the rest of the list is read for ITS type parameters, quietly — the call's own parse reports a
-# longer list (6.7.16's D5).
+# `_gu_x0` / `_gu_x1`; 0 = a list the call's own parse refuses. `fi` is the generic fn or method the list belongs to:
+# the rest of the list is read for ITS type parameters, quietly — the call's own parse reports a longer list (6.7.16's
+# D5).
+# ⛔ 6.7.16 — READ QUIETLY: the call's own parse at the replay reports a refused list, once, in source order. The sweep
+# runs at the end of pass 1, before the replay reports any earlier line, and `_targs_resolvable` (the names) is no
+# "the parse reports nothing": `mkg1<*Pt>(33)`, `<1>`, `<[i64]>`, a nested `Pt<i32>` (Pt no generic) or a nested
+# bound that fails was refused here, before an earlier line's error. So a list of anything but names, commas and
+# nested `<..>` is not parsed (`_gu_xnames`), and the parse runs under the panic latch with the bounds recorded, not
+# reported (`_gu_xq`): a report it swallowed answers 0. CHANGELOG [6.7.16]
 var _gu_x0 = 0;
 var _gu_x1 = 0;
 fn _gu_xlist(S, c, fi): i64 {
+    if (_gu_xnames(S, c + 2) == 0) { return 0; }
     if (_targs_resolvable(S, c + 2) == 0) { return 0; }
     var sv = GTI(S);
     var sv_gt = _ta_pending_gt;
@@ -12956,12 +12962,38 @@ fn _gu_xlist(S, c, fi): i64 {
     STI(S, c + 2);
     var sv_xq = _ta_xq;
     _ta_xq = 1;   # 6.7.16 (D5): the call's own parse reports the list
-    _gu_x0 = _parse_one_type_arg(S);
-    _gu_x1 = _ta_rest_f(S, fi);
+    var r = _gu_xq(S, fi);
     _ta_xq = sv_xq;
     _ta_pending_gt = sv_gt;
     STI(S, sv);
-    return 1;
+    return r;
+}
+# The list at the cursor read into `_gu_x0` / `_gu_x1` with every report held back: the panic latch swallows an
+# emitter's (`_err_quiet`), a refused argument marks `_ta_refd`, a failing bound is recorded (`_bnd_quiet_hit`) and
+# never memoised — the replay's parse must still report it. 1 = nothing was refused; the error state is put back.
+fn _gu_xq(S, fi): i64 {
+    var p0 = _panic;
+    var he = _had_error;
+    var eq = _err_quiet;
+    var rf = _ta_refd;
+    var bq = _bnd_quiet;
+    var bh = _bnd_quiet_hit;
+    _panic = 1;
+    _err_quiet = 0;
+    _ta_refd = 0;
+    _bnd_quiet = 1;
+    _bnd_quiet_hit = 0;
+    _gu_x0 = _parse_one_type_arg(S);
+    _gu_x1 = _ta_rest_f(S, fi);
+    var r = 1;
+    if (_err_quiet == 1 || _ta_refd == 1 || _bnd_quiet_hit != 0) { r = 0; }
+    _panic = p0;
+    _had_error = he;
+    _err_quiet = eq;
+    _ta_refd = rf;
+    _bnd_quiet = bq;
+    _bnd_quiet_hit = bh;
+    return r;
 }
 # ⛔ 6.7.16 — THE SWEEP BINDS A TYPE PARAMETER AS PASS 2 DOES, WITH ITS OWN CLASSIFIER. The binding of type parameter
 # `w` of generic `fi` at the call whose name is token `c`: a struct by the pair scans' reader (`_tok_gen_tp_sid`), else
