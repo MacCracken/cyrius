@@ -451,7 +451,7 @@
 # D101's, anything else the declaration's), and as the whole of a word slot (`_vsl_slot`: a store into a field, an
 # element, through a pointer to no vector; a condition, an index, a range bound, a literal's field, `match`'s subject).
 # A value-form vector destination's source keeps its own refusal (`_vop_vd`), a call a top-level declaration refused
-# keeps that one (`_vop_done`); every refusal is made in sync (`_vop_tyerr`). Before (re-measured on this lane):
+# keeps that one (`_vop_done`); every refusal is made in sync (`_vrcv_tyerr`). Before (re-measured on this lane):
 # `var x: i64 = 1 + mk2(41, 7);`, `x = 1 + mk2(..)`, `var w = 1 + mk2(..)`, `take(mk2(41, 7) + 1)` x86_64 / IR=3 /
 # aarch64 1, cx / PE 42; `x += mk2(41, 7)`, `x += s.m2()`, `p.a = mk2(..)`, `*q = mk2(..)` 0 / 41; the filed row 6 0 /
 # 82; `rd(mk2(41, 7) + 1)` and `var q = *mk2(41, 7);` 139 / 139 / 139, cx 0 / 1, PE 5; `if (mk2(41, 7))` took the
@@ -465,13 +465,27 @@
 #   M-VO2 `_vsl_slot` reading no slot                  -> RED 90: VO32-VO47 VOS3 VOS4 on five legs
 #   M-VO3 `_vop_ctx` answering "anything else" always  -> RED 115: VO2 VO4 VO5 VO9-VO11 VO13 VO15-VO20 VO23 VO26 VO27
 #       VO30 VOF VOS2, and RV1-RV4 (a vector fn's own `return`: the 6.6.6 rule's words) on five legs
-#   M-VO4 `_vop_tyerr` not marked in sync              -> RED 20: VOF VOS1-VOS3 on five legs
+#   M-VO4 the refusal not marked in sync (then a wrapper, `_vop_tyerr`; `_vrcv_tyerr` marks itself since the WS bite
+#       below, M-WS1) -> RED 20: VOF VOS1-VOS3 on five legs
 #   M-VO5 no `_vop_vd` exemption                       -> RED 85: OP1-OP5 OP7-OP15 OP19 OP22 OP23 on five legs (a second
 #       error in front of the value-form refusal)
 #   M-VO6 no `_vop_done` exemption                     -> RED 25: OP6 OP17 OP18 OP24 OP25 on five legs (two errors)
 #   M-VO7 `_vsl_dst` exempting an untyped pointer      -> RED 5: VO36 on five legs
 #   M-VO8 the `|` before a closure's body an operator  -> RED 5: VO48 on five legs (a second error before the parse's)
 #   M-VO9 `_vop_ctx` past a closure's body start       -> RED 5: VO20 on five legs (the declaration's words)
+# 6.7.16 (met landing D100) — the vector receives' refusals are made in sync (`_refuse_in_sync`): the by-name call's
+# mismatch into a local (`_try_vector_call_assign`), `_vrcv_tyerr` (the starting call, a method, `&f`, a global, another
+# vector; D100's operands and slots), `_vrcv_mscal` (a method starting a declaration) and `_vin_decl` (`var x: i64 =
+# mk2(..)`). Each latched the panic mid-statement, the statement parsed on to its own `;`, and PARSE_STMT's resync then
+# skipped the NEXT statement: `x = mk2(1, 2); x = zz9;` reported no `zz9`, and a `for` header's init (`for (a = mk2(1,
+# 2); a < 3; a = a + 1)`) lost its condition — "expected ';', got '='" second. Rows WS (two errors: the refusal, the next
+# statement's) and WF (a `for` init, one error) on host / host IR=3 / cx / aarch64 / win64. Mutations (2026-10-21,
+# measured):
+#   M-WS0 the tree before                              -> RED 50: WS1-WS6 WF1-WF4 on five legs
+#   M-WS1 `_vrcv_tyerr` not marked                     -> RED 35: WS4 WS6 WF4, VOF VOS1-VOS3 (D100's) on five legs
+#   M-WS2 `_try_vector_call_assign`'s mismatch not marked -> RED 20: WS1 WS3 WF1 WF3 on five legs
+#   M-WS3 `_vin_decl` not marked                       -> RED 10: WS2 WF2 on five legs
+#   M-WS4 `_vrcv_mscal` not marked                     -> RED 5: WS5 on five legs
 
 set -eu
 
@@ -2771,6 +2785,77 @@ syscall(60, r() % 256);
 VOC_ROWS="VOC1"
 
 
+# ---- 6.7.16 (met landing D100): the vector receives' refusals are made in sync — the statement parses on to its own end,
+# so the NEXT statement keeps its own error (rows WS: two errors, the refusal then "undefined variable 'zz9'") and a
+# `for` header's init is one error (rows WF; the condition was read as consumed: "expected ';', got '='" second) ---------
+# WS1 `x = mk2(..)` (a by-name call into a local), WS2 `var x: i64 = mk2(..)`, WS3 `x = mk2(..) + 1` (a call starting
+# it), WS4 `x = s.m2()`, WS5 `var x: i64 = s.m2() + 1`, WS6 a top-level global assignment, WS7 a top-level annotated
+# declaration after the first statement, WS8 a vector of another type into a vector local (WS7 / WS8 kept the next error
+# before too: their paths resync on their own); WF1-WF4 the `for` init's assignment, annotated declaration, starting
+# call, method.
+WSH="$OPH"'struct Pt { a; b; }
+'
+ws_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    WS1) printf '%s' "$WSH"'fn r(): i64 { var x = 0; x = mk2(1, 2); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS2) printf '%s' "$WSH"'fn r(): i64 { var x: i64 = mk2(1, 2); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS3) printf '%s' "$WSH"'fn r(): i64 { var x = 0; x = mk2(1, 2) + 1; x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS4) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x = 0; x = s.m2(); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS5) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: i64 = s.m2() + 1; x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS6) printf '%s' "$WSH"'var G = 0;
+syscall(1, 1, "", 0);
+G = mk2(1, 2);
+G = zz9;
+syscall(60, G);
+' ;;
+    WS7) printf '%s' "$WSH"'syscall(1, 1, "", 0);
+var X: i64 = mk2(1, 2) + 1;
+var Y = zz9;
+syscall(60, X + Y);
+' ;;
+    WS8) printf '%s' "$WSH"'fn r(): i64 { var w: f64v4 = mk4(1); w = mk2(1, 2); var y = zz9; return y; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+WS_ROWS="WS1 WS2 WS3 WS4 WS5 WS6 WS7 WS8"
+ws_msg() {  # the two errors, one per line
+    case "$1" in
+    WS2|WS5|WS7) echo "vector return type does not match the declared type";;
+    *) echo "vector return type does not match the assigned variable";;
+    esac
+    echo "undefined variable 'zz9'"
+}
+wf_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    WF1) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (a = mk2(1, 2); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF2) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (var b: i64 = mk2(1, 2); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF3) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (a = mk2(1, 2) + 1; a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF4) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var a = 0; for (a = s.m2(); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+WF_ROWS="WF1 WF2 WF3 WF4"
+wf_msg() { case "$1" in WF2) echo "vector return type does not match the declared type";; *) echo "vector return type does not match the assigned variable";; esac; }
+
+
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -3352,6 +3437,10 @@ refuse2_tab_all host "$CC" vos_src "$VOS_ROWS" vos_msg
 refuse2_tab_all host-ir3 "$CC" vos_src "$VOS_ROWS" vos_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr voc_src "$VOC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr voc_src "$VOC_ROWS" CYRIUS_IR=3
+refuse2_tab_all host "$CC" ws_src "$WS_ROWS" ws_msg
+refuse2_tab_all host-ir3 "$CC" ws_src "$WS_ROWS" ws_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" wf_src "$WF_ROWS" wf_msg
+refuse_tab_all host-ir3 "$CC" wf_src "$WF_ROWS" wf_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr vac_src "$VAC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr vac_src "$VAC_ROWS" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
@@ -3403,6 +3492,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_tab_all cx "$W/cycc_cx" vo_src "$VO_ROWS" vo_msg
     refuse2_tab_all cx "$W/cycc_cx" vos_src "$VOS_ROWS" vos_msg
     accept_tab_all cx "$W/cycc_cx" cxr voc_src "$VOC_ROWS"
+    refuse2_tab_all cx "$W/cycc_cx" ws_src "$WS_ROWS" ws_msg
+    refuse_tab_all cx "$W/cycc_cx" wf_src "$WF_ROWS" wf_msg
     accept_tab_all cx "$W/cycc_cx" cxr vac_src "$VAC_ROWS"
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
@@ -3455,6 +3546,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_tab_all aarch64 "$W/cycc_a64" vo_src "$VO_ROWS" vo_msg
         refuse2_tab_all aarch64 "$W/cycc_a64" vos_src "$VOS_ROWS" vos_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r voc_src "$VOC_ROWS"
+        refuse2_tab_all aarch64 "$W/cycc_a64" ws_src "$WS_ROWS" ws_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" wf_src "$WF_ROWS" wf_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r vac_src "$VAC_ROWS"
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
@@ -3512,6 +3605,8 @@ if command -v wine > /dev/null 2>&1; then
         refuse_tab_all win64 "$W/cycc_win" vo_src "$VO_ROWS" vo_msg
         refuse2_tab_all win64 "$W/cycc_win" vos_src "$VOS_ROWS" vos_msg
         accept_tab_all win64 "$W/cycc_win" wr_ voc_src "$VOC_ROWS"
+        refuse2_tab_all win64 "$W/cycc_win" ws_src "$WS_ROWS" ws_msg
+        refuse_tab_all win64 "$W/cycc_win" wf_src "$WF_ROWS" wf_msg
         accept_tab_all win64 "$W/cycc_win" wr_ vac_src "$VAC_ROWS"
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
@@ -3530,7 +3625,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -3559,8 +3654,8 @@ na_floor=$((na_floor + $(set -- $VOC_ROWS; echo $#) * 3))   # 6.7.16 (D100): eve
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
