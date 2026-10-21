@@ -24,6 +24,13 @@
 # win_handle_under) answer -9 for it first (`_win_fd_aliases`); the last two groups pin the public
 # ones. cx serves no socket verb with a pointer argument and a Windows host no flock (-38), so the
 # socket group is skipped there and the lock rows take either answer.
+#
+# An fd the process INHERITED (the 6.7.16 pw review). On a POSIX target `h + k` is only free when
+# the harness handed the process nothing there: run as `./t 5>file`, the rows wrote "x" into the
+# harness's descriptor, truncated it and closed it. Every `h + k` / `s + k` is asked first
+# (`_ufe_free`: F_GETFD answers -9 only for a free slot), and a held one prints a SKIP line and runs
+# none of its rows. On Windows a value with a low bit set is never a handle, so nothing is asked;
+# with no inherited fd the row count per target is unchanged.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -40,6 +47,35 @@ assert_eq(h >= 0, 1, "the fixture opens");
 assert_eq(file_write(h, "abcdefgh", 8), 8, "eight bytes written to it");
 var buf[16];
 
+# 1 when `fd` is no descriptor of this process (see the header), so a row may write to it and close
+# it; 0 for one inherited from the harness.
+fn _ufe_free(fd): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var r = sys_fcntl(fd, 1, 0);               # F_GETFD
+    if (r == 0 - 9) { return 1; }
+    #ifdef CYRIUS_TARGET_CX
+    if (r == 0 - 38) { return 1; }             # a Windows host: no fcntl route, and no low-bit handle
+    #endif
+    return 0;
+    #endif
+}
+
+# `fd`'s free answer, after printing a SKIP line for a held one.
+fn _ufe_check(fd): i64 {
+    var fr = _ufe_free(fd);
+    if (fr == 0) {
+        var sm = "  SKIP: fd ";
+        sys_write(1, sm, strlen(sm));
+        str_print(str_from_int(fd));
+        var sm2 = " is inherited (open in this process); its rows would write to it and close it\n";
+        sys_write(1, sm2, strlen(sm2));
+    }
+    return fr;
+}
+
 #ifdef CYRIUS_TARGET_AGNOS
 # agnos's descriptors are its own table's slots; what it answers for one never handed out is the
 # kernel's (no -errno convention there), so only the fixture's own rows run.
@@ -52,12 +88,14 @@ test_group("an fd beside an open one, never opened itself, is -EBADF (the filed 
 var k = 1;
 while (k < 4) {
     var f = h + k;
-    assert_eq(sys_write(f, "x", 1), 0 - 9, "sys_write(h + k) is -9 (Windows wrote into h's file)");
-    assert_eq(sys_read(f, &buf, 1), 0 - 9, "sys_read(h + k) is -9 (Windows read h's file)");
-    assert_eq(sys_lseek(f, 0, 0), 0 - 9, "sys_lseek(h + k) is -9 (Windows moved h's pointer)");
-    assert_eq(xfsync(f), 0 - 9, "xfsync(h + k) is -9 (Windows flushed h)");
-    assert_eq(sys_ftruncate(f, 1), 0 - 9, "sys_ftruncate(h + k) is -9 (Windows truncated h's file)");
-    assert_eq(sys_close(f), 0 - 9, "sys_close(h + k) is -9 (Windows closed h and answered 0)");
+    if (_ufe_check(f) == 1) {
+        assert_eq(sys_write(f, "x", 1), 0 - 9, "sys_write(h + k) is -9 (Windows wrote into h's file)");
+        assert_eq(sys_read(f, &buf, 1), 0 - 9, "sys_read(h + k) is -9 (Windows read h's file)");
+        assert_eq(sys_lseek(f, 0, 0), 0 - 9, "sys_lseek(h + k) is -9 (Windows moved h's pointer)");
+        assert_eq(xfsync(f), 0 - 9, "xfsync(h + k) is -9 (Windows flushed h)");
+        assert_eq(sys_ftruncate(f, 1), 0 - 9, "sys_ftruncate(h + k) is -9 (Windows truncated h's file)");
+        assert_eq(sys_close(f), 0 - 9, "sys_close(h + k) is -9 (Windows closed h and answered 0)");
+    }
     k = k + 1;
 }
 
@@ -71,13 +109,15 @@ assert_eq(sys_ftruncate(0 - 2, 1), 0 - 9, "sys_ftruncate(-2) is -9");
 test_group("xflock of an fd never opened is -EBADF, and takes no lock");
 var lk = 1;
 while (lk < 4) {
-    var lr = xflock(h + lk, LOCK_EX | LOCK_NB);
-    var lok = 0;
-    if (lr == 0 - 9) { lok = 1; }
-    #ifdef CYRIUS_TARGET_CX
-    if (lr == 0 - 38) { lok = 1; }             # a Windows host has no flock route
-    #endif
-    assert_eq(lok, 1, "xflock(h + k, LOCK_EX) is -9 (Windows locked h's file and answered 0)");
+    if (_ufe_check(h + lk) == 1) {
+        var lr = xflock(h + lk, LOCK_EX | LOCK_NB);
+        var lok = 0;
+        if (lr == 0 - 9) { lok = 1; }
+        #ifdef CYRIUS_TARGET_CX
+        if (lr == 0 - 38) { lok = 1; }         # a Windows host has no flock route
+        #endif
+        assert_eq(lok, 1, "xflock(h + k, LOCK_EX) is -9 (Windows locked h's file and answered 0)");
+    }
     lk = lk + 1;
 }
 var h2 = file_open(p, O_RDONLY, 0);            # opened after: on POSIX it may be h + 1
@@ -106,23 +146,40 @@ var btg, bvv = sock_bind(sk, INADDR_LOOPBACK(), 0);
 assert_eq(is_ok(btg), 1, "it binds to the loopback");
 var sa[32];
 var sl[8];
+var sf1 = _ufe_check(sk + 1);
+var sf2 = _ufe_check(sk + 2);
+var sf3 = _ufe_check(sk + 3);
 var sk1 = 1;
 while (sk1 < 4) {
     store64(&sl, 16);
-    assert_eq(sys_getsockname(sk + sk1, &sa, &sl), 0 - 9, "getsockname(s + k) is -9 (Windows named s)");
+    if (_ufe_free(sk + sk1) == 1) {
+        assert_eq(sys_getsockname(sk + sk1, &sa, &sl), 0 - 9, "getsockname(s + k) is -9 (Windows named s)");
+    }
     sk1 = sk1 + 1;
 }
-assert_eq(sys_listen(sk + 1, 1), 0 - 9, "listen(s + 1) is -9 (Windows made s listen)");
-var et, ev = sock_send(sk + 2, "x", 1);
-assert_eq(is_err_result(et), 1, "sock_send(s + 2) is Err");
-assert_eq(ev, 9, "...EBADF");
-var rt2, rv2 = sock_recv(sk + 3, &buf, 1);
-assert_eq(is_err_result(rt2), 1, "sock_recv(s + 3) is Err");
-assert_eq(rv2, 9, "...EBADF");
-assert_eq(sock_set_nodelay(sk + 1, 1), 0 - 9, "sock_set_nodelay(s + 1) is -9");
-assert_eq(sock_shutdown(sk + 2, 2), 0 - 9, "sock_shutdown(s + 2) is -9");
-assert_eq(fd_wait_ready(sk + 3, 0, 0), 0 - 9, "fd_wait_ready(s + 3) is -9");
-assert_eq(sock_close(sk + 3), 0 - 9, "sock_close(s + 3) is -9 (Windows closed s and answered 0)");
+if (sf1 == 1) {
+    assert_eq(sys_listen(sk + 1, 1), 0 - 9, "listen(s + 1) is -9 (Windows made s listen)");
+}
+if (sf2 == 1) {
+    var et, ev = sock_send(sk + 2, "x", 1);
+    assert_eq(is_err_result(et), 1, "sock_send(s + 2) is Err");
+    assert_eq(ev, 9, "...EBADF");
+}
+if (sf3 == 1) {
+    var rt2, rv2 = sock_recv(sk + 3, &buf, 1);
+    assert_eq(is_err_result(rt2), 1, "sock_recv(s + 3) is Err");
+    assert_eq(rv2, 9, "...EBADF");
+}
+if (sf1 == 1) {
+    assert_eq(sock_set_nodelay(sk + 1, 1), 0 - 9, "sock_set_nodelay(s + 1) is -9");
+}
+if (sf2 == 1) {
+    assert_eq(sock_shutdown(sk + 2, 2), 0 - 9, "sock_shutdown(s + 2) is -9");
+}
+if (sf3 == 1) {
+    assert_eq(fd_wait_ready(sk + 3, 0, 0), 0 - 9, "fd_wait_ready(s + 3) is -9");
+    assert_eq(sock_close(sk + 3), 0 - 9, "sock_close(s + 3) is -9 (Windows closed s and answered 0)");
+}
 store64(&sl, 16);
 assert_eq(sys_getsockname(sk, &sa, &sl), 0, "s itself is still open and bound");
 assert_eq(sock_close(sk), 0, "s closes: 0");
