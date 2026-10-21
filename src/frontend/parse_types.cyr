@@ -4235,7 +4235,10 @@ var _regstruct_dumped = 0;
 fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     if (sc >= 1024) {
-        if (_regstruct_dumped == 0) { DUMP_STRUCTS(S); }
+        # 6.7.16: said once — each refused declaration now ends at its own `}` (`_tl_decl1`), so every struct past the
+        # cap printed it again (78 times for 1,100 structs). The rest are counted. CHANGELOG [6.7.16]
+        if (_regstruct_dumped == 1) { _had_error = 1; _panic = 1; return 0; }
+        DUMP_STRUCTS(S);
         _regstruct_dumped = 1;
         ERR_MSG(S, "too many struct definitions (max 1024)", 38);
         return 0;

@@ -147,6 +147,10 @@ n=$(grep -c 'structs registered' "$D/err")
 [ "$n" = 1 ] || bad "structs: DUMP_STRUCTS ran $n times, want once"
 lines=$(wc -l < "$D/err")
 [ "$lines" -le 1200 ] || bad "structs: $lines stderr lines, want <= 1200 (the dump is once, not per refused struct)"
+# 6.7.16: the refusal itself once too — each refused declaration ends at its own `}` (pass 1's `_tl_decl1`), and every
+# struct past the cap printed it again (78 lines; measured RED at 6b80792df..9af62f08a, 1259 stderr lines).
+n=$(grep -c 'too many struct definitions' "$D/err")
+[ "$n" = 1 ] || bad "structs: the cap refusal printed $n times, want once"
 
 # ── ADDFIELD: 300 fields in one struct (cap 256) ───────────────────────────────────
 {
