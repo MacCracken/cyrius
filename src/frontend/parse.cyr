@@ -5976,6 +5976,7 @@ fn _masg_stmt(S, term): i64 {
 # arity check. 1 = refused.
 # CHANGELOG [6.7.7] (B4 review)
 fn _masg_callee(S, fi, n): i64 {
+    if (_dt_icall_vec(S, 1) == 1) { return 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs > 0) {

@@ -4011,6 +4011,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
 | `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
+| `var a, b = mkv(41, 7);` / `a, b = mkv(41, 7);` (`mkv` returns a vector: a method, an explicit instance, wrapped, `callptr(&mkv, ..)` / `fncallN(&mkv, ..)`, three names, in the declaration zone too; the declaration and the `&f` spellings 6.7.16 — they bound the integer return registers a vector return does not write: x86_64 / aarch64 0, Windows garbage) | `cannot destructure 'mkv' - it returns a vector, not multiple values` / `cannot re-assign from 'mkv' - it returns a vector, not multiple values` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |

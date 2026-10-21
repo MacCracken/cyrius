@@ -10878,6 +10878,7 @@ fn _dt_zone_check(S, n, k): i64 {
     if (_panic == 1) { return 0; }
     _dt_rhs_check_t(S, _dt_wterm(k, 5));   # 6.7.14: `k` wrapping parentheses stepped (`_dt_wrap_in`)
     var fi = _dt_call_fn(S);
+    if (_dt_icall_vec(S, 0) == 1) { return _panic; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
     if (fi >= 0) { _dt_arity_check(S, fi, n); }
     return _panic;
 }
@@ -10888,12 +10889,14 @@ fn _dt_zone_check(S, n, k): i64 {
 # to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). A struct callee
 # is judged by its register words (`_dt_struct_check`) — its DECLARED return, ahead of a recorded
 # `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256),
-# Result / Option / Tagged, a vector — any of which can carry a second word. CHANGELOG [6.6.17]
+# Result / Option / Tagged — any of which can carry a second word. CHANGELOG [6.6.17]
+# A vector is refused since 6.7.16 (`_dt_vec_err`).
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
     if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
         return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " result - a dyn is one value: bind it to one name");
     }
+    if (rs <= 0 - 2048) { return _dt_vec_err(S, fi); }   # 6.7.16: a vector is no multiple values
     if (rs == MULTIRET_SID) {
         if (GFRN(S, fi) != n) {
             ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
@@ -10959,6 +10962,42 @@ fn _dt_struct_err(S, fi, w): i64 {
     _had_error = 1;
     _panic = 1;
     return 0;
+}
+# ⛔ 6.7.16 (met landing 6.7.16's D100) — A VECTOR CALL IS NO MULTIPLE VALUES: `var a, b = mk2(41, 7);` (a method, an
+# explicit instance, wrapped, `var a, b, c = mk4(1);`, in the declaration zone and after the first statement) bound the
+# names to the integer return registers a vector return does not write — x86_64 / IR=3 / aarch64 0 and 0, Windows
+# garbage (195 where 161 is the lanes), cx its lanes by accident — where the assignment `a, b = mk2(..)` is refused (6.7.11,
+# `_tup_cap_class`) and 6.7.14's D27 (a) sets one rule for a declaration and an assignment. Refused by name in the
+# assignment's words, cursor on the call (`name(`, `name<..>(` or `x.m(`). CHANGELOG [6.7.16]
+fn _dt_vec_err(S, fi): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_dt_vec_err", fi, 1) == 1) { return 0; }
+    var ct = GTI(S);
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot destructure '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    PRSTR("' - it returns a vector, not multiple values\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ... and through `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (the cursor on the call; `masg` 1:
+# the assignment `a, b = ..`, in its words, `_tup_cap_err`): refused at `f` when f returns a vector. 1 = refused.
+fn _dt_icall_vec(S, masg): i64 {
+    var ft = _icall_fti(S, GTI(S));
+    if (ft < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ft));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    var sv = GTI(S);
+    STI(S, ft);
+    if (masg == 1) { _tup_cap_err(S, 0, fi, 3, 0); }
+    else { _dt_vec_err(S, fi); }
+    STI(S, sv);
+    return 1;
 }
 # ⛔ 6.7.11 — `n` names bound from undeclared fn `fi`, which returns `ar` values (pass 1,
 # `_prescan_ret_arity`): `var q, r, z = dm(17, 5);` bound z to whatever r8 held, silently, as the
@@ -11170,6 +11209,7 @@ fn PARSE_VAR(S): i64 {
         # 6.7.14 (D45): inside parentheses that wrap the whole call (`_dt_peel`), closed after it.
         var _dt_wk = _dt_peel(S, 5);
         var _dt_fi = _dt_call_fn(S);
+        if (_dt_icall_vec(S, 0) == 1) { _dt_fi = 0 - 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
             if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
