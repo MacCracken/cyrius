@@ -114,6 +114,14 @@
 # PL1 / PL3 the filed repro and top-level line: 7, were 0); a frame's `W { t, 1 }` is refused with the field's words
 # (PL2 verbatim, PL2b named, PL2c nested; it compiled, the data word stored). An untyped field keeps the word.
 #
+# 6.7.16 (the user's decision D74, 2026-10-20; issues/2026-10-19-str-declaration-from-double-str-pointer-single-deref-
+# binds-handle.md): `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var u: Str = p;`, `= *p` and
+# `= **pp` are — `(*pp)`, a `pp: **Str` parameter, a capture, `*GPPS`, `*gpps()`, `*w.pp`, `**ppp` (the tcyr's
+# pps_decl_* rows); it bound u as a handle on the header (PD1, the filed repro verbatim: 55, was 15). At top level, in the
+# declaration zone and after a statement, `var U: Str = *GPP;` and `var V: Str = GP;` copy too (D74 and D18 (a), whose
+# zone-lane code kept `Str` out; R_TOP18 and the zone row) — both bound a handle. `var q: *Str = *pp;` and an untyped
+# `var h = *pp;` stay the pointer.
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -126,7 +134,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -225,6 +233,9 @@
 #   s1 EMIT_STRUCT_FIELD_W without `_istr_pfld`   -> RED 33: R1 x7 (8 rows: the pl_* rows, R_TOP17 — the data word —
 #      (the fix reverted)                             and the two encoder rows), PL1 x7 (0), PL2 / PL2b / PL2c x4 (each
 #                                                     compiled), PL3 x7 (0)
+#   2026-10-20 (6.7.16, D74 `var u: Str = *pp;` and the top-level twins; the same scratch-copy method):
+#   t1 `_hl_dpp_str` answering mode 2 only, and    -> RED 14: R1 x7 (7 rows: the pps_decl_* copies, the zone row and
+#      `_gz_pnat` without `Str` (the fix reverted)    R_TOP18 — handles), PD1 x7 (15)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -347,7 +358,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=194   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17
+FLOOR=202   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -790,6 +801,28 @@ syscall(SYS_EXIT, r);
 EOF
 runs PL3 7 "the filed top-level line: a zone \`var GW: W = W { gt, 1 };\` (was 0)" "$XLEGS $OLEGS"
 
+# --- PD1: the filed repro (issues/2026-10-19-str-declaration-from-double-str-pointer-single-deref-binds-handle.md),
+# verbatim: `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var v: Str = p;` is (6.7.16, the
+# user's D74, 2026-10-20; through 6.7.15 a handle on it: 15) ---
+cat > "$T/PD1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var pp: **Str = &p;
+    var u: Str = *pp;
+    var v: Str = p;
+    a.len = 1;
+    return u.len * 10 + f(v);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PD1 55 "the filed repro: \`var u: Str = *pp;\` is u's own copy (D74; was 15, a handle)" "$XLEGS $OLEGS"
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -915,7 +948,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=71   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows); the floor is the count that runs
+FLOOR_ROWS=72   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

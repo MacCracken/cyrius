@@ -1640,7 +1640,7 @@ a `*S8` / `*P3` global copies the struct `P` points at, at every size, in the de
 statement, as the same line in a fn does (the user's D18 (a), 2026-10-19): `G` is its own copy, and a write to either
 side leaves the other. Through 6.7.15 it kept its 6.7.9 layout — inline, holding the POINTER WORD, at 8 bytes or less
 (`G.v` read the address); a handle bound to `P`'s object over 8. A `P` declared below `G` is refused by name over 8
-bytes (*cannot copy-init 'G' from a global declared below it*), as `*P` is. Alias the object with `var G: *S8 = P;`.
+bytes (*cannot copy-init 'G' from a global declared below it*), as `*P` is. Alias the object with `var G: *S8 = P;`. `S` may be `Str`: `var V: Str = GP;` copies the header GP points at (6.7.16; through 6.7.15 V was a handle on it).
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
@@ -3453,8 +3453,12 @@ local, parameter or global; `*p` of any `*Str`-typed expression: `**pp`, `*w.p`,
 (the user's decision D14, 2026-10-18; through 6.7.14 `t.data` took p, or the header's data word, and `t.len` stayed
 stale). Since 6.7.16 `t = *pp` with `pp: **Str` copies too — `*pp` is the `*Str` it reads (6.7.13's D9 (a)), copied
 through as `t = p` is (a local, parameter, global, field or `: **Str` call's `*pp`, `(*pp)`, a for step, at top
-level); through 6.7.15 `t.data` took the header's address and `t.len` stayed stale. Into a `*Str` or a handle, `q =
-*pp` stays the rebind `q = p` is. A `Str` HANDLE is rebound by every assignment, so `h = *p` with `p: *Str` (h a
+level); through 6.7.15 `t.data` took the header's address and `t.len` stayed stale. So does the declaration: `var u:
+Str = *pp;` (`(*pp)`, a `pp: **Str` parameter's, `*GPPS`, `*gpps()`, `*w.pp`, `**ppp`) is u's own copy, as `var u: Str =
+p;` is (the user's D74, 2026-10-20; through 6.7.15 u was a handle on the header, so a later `a.len = 1` was seen
+through u), and at top level — in the declaration zone and after the first statement — `var U: Str = *GPP;` and `var
+V: Str = GP;` (GP a `*Str` global) copy, as `var W: Str = *GP;` does (D74, D18 (a); through 6.7.15 both bound a
+handle). Into a `*Str` or a handle, `q = *pp` (and `var q: *Str = *pp;`) stays the rebind `q = p` is. A `Str` HANDLE is rebound by every assignment, so `h = *p` with `p: *Str` (h a
 handle local, parameter or global; `*p` of any `*Str`-typed expression, wrapped, a for step, at top level) rebinds h
 to the header p points at — `h == p` afterwards, as after `h = p`, and a later `h.len = 2` is seen through p (the
 user's decision D20, 2026-10-19; through 6.7.15 h took the header's data word, with the warning *assigning

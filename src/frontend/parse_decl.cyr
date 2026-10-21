@@ -11851,7 +11851,16 @@ fn _gz_pnat(S, b, sid): i64 {
     var gvi = _findvar_core(S, TOKVAL(S, a));
     if (gvi < 0) { return 0 - 1; }
     if (_gv_ptr_sid(S, gvi) != sid) { return 0 - 1; }
-    if (_dx_plain(S, sid) == 0) { return 0 - 1; }
+    if (_dx_plain(S, sid) == 0) { return _gz_pnat_str(S, gvi, sid, a); }
+    return a;
+}
+# ⛔ 6.7.16 — AND A `Str` (D18 (a)): a top-level `var V: Str = GP;` with GP a `*Str` global copies the header GP points
+# at, as the same line in a fn copies it (6.7.15) and `var W: Str = *GP;` does at top level — it bound V as a handle on
+# the header. `a` when `sid` is `Str` and global `gvi` a `*Str` (its step the header's: no `**Str`), else -1.
+# CHANGELOG [6.7.16]
+fn _gz_pnat_str(S, gvi, sid, a): i64 {
+    if (sid != _STR_SID(S)) { return 0 - 1; }
+    if (_istr_pdst(S, _gv_ptr_word(S, gvi), 1) == 0) { return 0 - 1; }
     return a;
 }
 # The replay of `var G: S = P;` (`_gz_pnat`, cursor on the initialiser): copied through P into G at every size, the
@@ -13006,7 +13015,7 @@ fn _agg_span_err(S, td, ts, dnoff, a, e, dflt): i64 {
 }
 # The struct the `*S` a dereference's operand [a, e) reads points at — the operand a `**S`, S a plain struct (not a
 # `Str` / tuple / dyn: their own paths) — when `pp` asks, `_hl_dpp` 1; else 0. `pp` 2 (the assignment, `_asg_dstar`)
-# answers `Str` too (`_hl_dpp_str`).
+# and, since 6.7.16, 1 (a declaration) answer `Str` too (`_hl_dpp_str`).
 fn _hl_dpp_sid(S, a, e, pp): i64 {
     if (pp == 0) { return 0; }
     var ps = _hl_dref_psid(S, a, e);
@@ -13016,11 +13025,15 @@ fn _hl_dpp_sid(S, a, e, pp): i64 {
     return ps;
 }
 # ⛔ 6.7.16 — `t = *pp` (pp a `**Str`: `*pp` is a `*Str`) INTO AN INLINE `Str` COPIES THE HEADER, as `t = p` / `t = *p`
-# do since 6.7.15's D14: it stored the header's address into t.data and left t.len stale. 1 = `pp` is 2 (asked by the
-# assignment only: a declaration's mode 1 keeps its own path) and `ps` is `Str` — `_istr_dxa` then copies through the
-# `*Str` the whole `*pp` reads; into a handle or a `*Str` it stays the one-word store, a rebind. CHANGELOG [6.7.16]
+# do since 6.7.15's D14: it stored the header's address into t.data and left t.len stale. 1 = `pp` asks (2 the
+# assignment, 1 a declaration) and `ps` is `Str` — `_istr_dxa` then copies through the `*Str` the whole `*pp` reads; into
+# a handle or a `*Str` it stays the one-word store, a rebind. A field store's mode 1 (`_fsc_dstar`) declines a `Str`.
+# ⛔ 6.7.16 — `var u: Str = *pp;` IS u's OWN COPY OF THE HEADER (the user's D74, 2026-10-20), as `var u: Str = p;`, `=
+# *p` and `= **pp` are: the declaration asked mode 1, which answered no `Str`, so the scalar init bound u as a HANDLE on
+# the header `*pp` points at — a later `a.len = 1` was seen through u. In a fn (`_sci_dexpr`) and at top level, in the
+# declaration zone (`_gz_star` / `_gz_dx_init`) and after a statement (`_gci_dx_top`): `*GPP`, `(*GPP)`. CHANGELOG [6.7.16]
 fn _hl_dpp_str(S, ps, pp): i64 {
-    if (pp != 2) { return 0; }
+    if (pp == 0) { return 0; }
     if (ps != _STR_SID(S)) { return 0; }
     return 1;
 }
