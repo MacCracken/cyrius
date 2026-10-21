@@ -1339,9 +1339,9 @@ crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
 echo "CQ. a struct copy through a *T global / : *T call / *T field: another struct type refused by name (x86)"
 crow "CQ1 l = GU (GU: *U8 a global) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nvar GU: *U8 = &XU;\nfn f() { var l: S8; l.v = 1; l = GU; return l.v; }\nsyscall(60, f());\n'
-crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'l'" \
+crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu()' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn gu(): *U8 { return &XU; }\nfn f() { var l: S8; l.v = 1; l = gu(); return l.v; }\nsyscall(60, f());\n'
-crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'w.pu' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nvar XU = U8 { 4 };\nfn f() { var w = WU { &XU }; var l: S8; l.v = 1; l = w.pu; return l.v; }\nsyscall(60, f());\n'
 crow "CQ4 G = GU at 16 B (GU: *UH) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nvar GU: *UH = &XU;\nvar G = H { 0, 0 };\nfn f() { G = GU; return G.v; }\nsyscall(60, f());\n'

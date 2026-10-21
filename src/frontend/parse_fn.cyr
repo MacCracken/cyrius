@@ -3907,7 +3907,7 @@ fn _ret_ptr_src(S): i64 {
     if (ps <= 0) { return 0 - 1; }
     if (_dx_plain(S, ps) == 0) { return 0 - 1; }
     if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
-    if (ps != _cur_fn_ret_sid) { _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
+    if (ps != _cur_fn_ret_sid) { _ret_ptr_refuse(S, st, a, pe, ps, kind); }
     PCMPE(S);
     var h = _HTEMP(S);
     _HTSTORE(S, h);
@@ -4207,7 +4207,7 @@ fn _ret_small_ptr(S, st): i64 {
     var kind = 1 + 2 * _hl_damp;
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != _cur_fn_ret_sid) { return _ret_sid_refuse(S, st, _hl_pnm(S, a, pe), 0 - 1, ps, kind); }
+    if (ps != _cur_fn_ret_sid) { return _ret_ptr_refuse(S, st, a, pe, ps, kind); }
     _hl_pval_ra(S, ps);
     return 0;
 }
@@ -4227,6 +4227,17 @@ fn _ret_sid_refuse_d(S, ti, a, e, dflt, usid): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(ti, "_ret_sid_refuse", ((a * 31 + usid) * 31 + 2) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
     return _rsr_print(S, ti, _src_span_nm(S, a + 1, e, dflt), usid, 2);
+}
+# ⛔ 6.7.16 — a `*X` return value [a, e) of another struct (`_ret_ptr_src`, `_ret_small_ptr`): kind 1 (a pointer) named as
+# the source spells it — `return gq(&q);` is `gq(&q)`; it was the last name, `q` (the call's argument) — keyed by the
+# span's start; kind 3 (`&u`) by its name after the `&`, as before. CHANGELOG [6.7.16]
+fn _ret_ptr_refuse(S, ti, a, e, usid, kind): i64 {
+    if (kind == 3) { return _ret_sid_refuse(S, ti, _hl_pnm(S, a, e), 0 - 1, usid, kind); }
+    var dflt = _hl_pnm(S, a, e);
+    _hl_pspan(S, a, e);
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((_hl_psa * 31 + usid) * 31 + 1) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
+    return _rsr_print(S, ti, _src_span_nm(S, _hl_psa, _hl_pse, dflt), usid, 1);
 }
 # The refusal's text at token `ti`, the value named `nm` (a pool offset, written as is).
 fn _rsr_print(S, ti, nm, usid, kind): i64 {

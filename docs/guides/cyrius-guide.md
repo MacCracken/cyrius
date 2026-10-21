@@ -2512,7 +2512,10 @@ bytes or less too (`take8(*pu)`, `take8((*pu))`, `take8(*w.pu)`, `take8(*self)` 
 through 6.7.10 it compiled and passed U's bytes); the pointer `take8(pu)` still converts. The dereference is
 named as the source spells it, from its `*` — `'*gu(pu)'`, `'*w.pu'`, and so in every refusal of a struct value
 dereference: a pointer of another kind (`'*gps(&s)'`), a return (`` `*gu(pu)` ``), a copy (`'*h.pu'`) — since
-6.7.16; through 6.7.15 by its operand's last name (`'pu'`, `'*s'`, `` `*pu` ``). An untyped `*x`
+6.7.16; through 6.7.15 by its operand's last name (`'pu'`, `'*s'`, `` `*pu` ``). A `*U` source that is no
+dereference is named the same way (6.7.16): `l = gq(&q)` and `o.s = gq(&q)` refuse `'gq(&q)'`, `l = h.pq` `'h.pq'`,
+`return gq(&q);` `` `gq(&q)` `` — through 6.7.15 the chain's last name, for a call its argument (`'q'`, `'pq'`); in
+pointer arithmetic the pointer operand (`l = gq(&q) + 1` is `'gq(&q)'`). An untyped `*x`
 is still the word it reads. Through 6.7.9 the word the
 dereference read was passed as the struct's address — a crash on every target. Under 8 bytes a
 dereference reads exactly the struct's bytes wherever it is a value — a global declared from it (in

@@ -695,9 +695,91 @@ else
     printf '  FAIL: %-38s exit=%s, want 5\n' "A7 scalar src still only warns" "$a7"; fail=$((fail+1))
 fi
 
+# PN1-PN10 (6.7.16, issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): a `*T` struct source that is
+# no dereference, refused into a struct of another type, is named AS THE SOURCE SPELLS IT — `l = gq(&q)` 'gq(&q)' (it was
+# 'q', the call's argument: the chain's last name), `o.s = gq(&q)` 'gq(&q)', `l = h.pq` 'h.pq' (it was 'pq'), `return
+# gq(&q);` `gq(&q)` (it was `q`) — as 6.7.16 names a dereference and 6.7.15 an argument. PN1 the filed repro verbatim
+# (its four errors, the whole lines); PN2 pointer arithmetic (the pointer operand's side, 'gq(&q)'); PN3 wrapped
+# `(gq(&q))`; PN4 a method `w.mq()`; PN5 a small-struct return `return gq1(&q);` (8 B, `_ret_small_ptr`); PN6 top
+# level `GL = gq(&GQ);`; PN7 a for step into a field. Controls: PN8 `l = GP` keeps 'GP', PN9 `l = *pq` keeps '*pq',
+# PN10 `return &q;` keeps `&q`. Each ONE line per error, no binary, on the x86_64, aarch64, cx and PE compilers (the
+# frontend's words; the cross compilers built from this tree). Mutation (2026-10-20, CYCC=the compiler before the
+# fix): RED 7 — PN1-PN7 name the last identifier.
+"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ] || { echo "FAIL: src/main_aarch64.cyr did not build"; exit 1; }
+"$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ] || { echo "FAIL: src/main_cx.cyr did not build"; exit 1; }
+chmod +x "$D/cc_a64" "$D/cc_cx"
+pnrefuse() {  # $1 label  $2 the error lines, in order (after "error:<source>:")  $3 source
+    printf '%s' "$3" > "$D/pn.cyr"
+    printf '%s\n' "$2" | sed 's/^/error:<source>:/' > "$D/pn.want"
+    nrefuse=$((nrefuse+1))
+    _pnok=1
+    for leg in x86_64 aarch64 cx pe; do
+        rc=0
+        case $leg in
+            x86_64)  "$CC" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || rc=$? ;;
+            aarch64) "$D/cc_a64" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || rc=$? ;;
+            cx)      "$D/cc_cx" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || rc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || rc=$? ;;
+        esac
+        grep '^error' "$D/pn.err" > "$D/pn.got" || true
+        if [ "$rc" -eq 0 ]; then printf '  FAIL: %-38s compiled (rc 0) (%s)\n' "$1" "$leg"; _pnok=0
+        elif ! cmp -s "$D/pn.got" "$D/pn.want"; then printf '  FAIL: %-38s (%s) got: %s\n' "$1" "$leg" "$(tr '\n' '|' < "$D/pn.got")"; _pnok=0
+        elif [ -s "$D/pn.bin" ]; then printf '  FAIL: %-38s refused, but a binary was written (%s)\n' "$1" "$leg"; _pnok=0
+        fi
+    done
+    if [ "$_pnok" -eq 1 ]; then printf '  ok(refused): %-31s (x86_64 aarch64 cx pe)\n' "$1"; pass=$((pass+1)); else fail=$((fail+1)); fi
+}
+PNH='include "lib/syscalls.cyr"
+struct Q3 { a; b; c; }
+struct P3 { x; y; z; }
+struct Q1 { a; }
+struct P1 { x; }
+struct O { s: P3; n; }
+struct H { k; pq: *Q3; }
+impl H { fn mq(self): *Q3 { return self.pq; } }
+fn gq(p: *Q3): *Q3 { return p; }
+fn gq1(p: *Q1): *Q1 { return p; }
+var GQ = Q3 { 1, 2, 3 };
+var GL = P3 { 4, 5, 6 };
+var GP: *Q3 = &GQ;
+'
+pnrefuse "PN1 the filed repro, verbatim" "7:48: cannot copy 'gq(&q)' into a variable of a different struct/vector type: 'l'
+8:43: cannot copy 'gq(&q)' into a struct field of a different struct type: 's'
+9:67: cannot copy 'h.pq' into a variable of a different struct/vector type: 'l'
+10:33: a fn returning the struct \`P3\` takes a value of that struct, or a pointer to one — got \`gq(&q)\` (a \`*Q3\`)" 'include "lib/syscalls.cyr"
+struct Q3 { a; b; c; }
+struct P3 { x; y; z; }
+struct O { s: P3; n; }
+struct H { k; pq: *Q3; }
+fn gq(p: *Q3): *Q3 { return p; }
+fn f1(): i64 { var q: Q3; var l: P3; l = gq(&q); return l.x; }
+fn f2(): i64 { var q: Q3; var o: O; o.s = gq(&q); return o.n; }
+fn f3(): i64 { var q: Q3; var h: H; h.pq = &q; var l: P3; l = h.pq; return l.x; }
+fn f4(): P3 { var q: Q3; return gq(&q); }
+syscall(60, f1());
+'
+pnrefuse "PN2 l = gq(&q) + 1" "14:51: cannot copy 'gq(&q)' into a variable of a different struct/vector type: 'l'" "$PNH"'fn f(): i64 { var q: Q3; var l: P3; l = gq(&q) + 1; return l.x; }
+'
+pnrefuse "PN3 l = (gq(&q))" "14:48: cannot copy 'gq(&q)' into a variable of a different struct/vector type: 'l'" "$PNH"'fn f(): i64 { var q: Q3; var l: P3; l = (gq(&q)); return l.x; }
+'
+pnrefuse "PN4 l = w.mq(), a method" "14:68: cannot copy 'w.mq()' into a variable of a different struct/vector type: 'l'" "$PNH"'fn f(): i64 { var q: Q3; var w: H; w.pq = &q; var l: P3; l = w.mq(); return l.x; }
+'
+pnrefuse "PN5 return gq1(&q); (8 B)" "14:32: a fn returning the struct \`P1\` takes a value of that struct, or a pointer to one — got \`gq1(&q)\` (a \`*Q1\`)" "$PNH"'fn f(): P1 { var q: Q1; return gq1(&q); }
+'
+pnrefuse "PN6 GL = gq(&GQ); top level" "14:13: cannot copy 'gq(&GQ)' into a variable of a different struct/vector type: 'GL'" "$PNH"'GL = gq(&GQ);
+'
+pnrefuse "PN7 step o.s = gq(&GQ)" "14:61: cannot copy 'gq(&GQ)' into a struct field of a different struct type: 's'" "$PNH"'fn f(): i64 { var o: O; var i = 0; for (i = 0; i < 1; o.s = gq(&GQ)) { i = i + 1; } return 0; }
+'
+pnrefuse "PN8 l = GP (control)" "14:32: cannot copy 'GP' into a variable of a different struct/vector type: 'l'" "$PNH"'fn f(): i64 { var l: P3; l = GP; return l.x; }
+'
+pnrefuse "PN9 l = *pq (control)" "14:59: cannot copy '*pq' into a variable of a different struct/vector type: 'l'" "$PNH"'fn f(): i64 { var q: Q3; var pq: *Q3 = &q; var l: P3; l = *pq; return l.x; }
+'
+pnrefuse "PN10 return &q; (control)" "14:43: a fn returning the struct \`P1\` takes a value of that struct, or a pointer to one — got \`&q\` (a \`*Q1\`)" "$PNH"'fn f(): P1 { var q: Q1; var h: P1; return &q; }
+'
+
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 61 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 61)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36
+[ "$nrefuse" -ge 71 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 71)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36, PN1-PN10
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing

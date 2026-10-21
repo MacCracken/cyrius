@@ -1293,7 +1293,7 @@ fn _fsc_psrc(S, ft, fnoff, term): i64 {
     var ps = _hl_psrc(S, a, _ie_pe);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return 0; }
-    if (ps != ft) { _fsc_type_err(S, _hl_dnm, fnoff); return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_pname(S), fnoff); return 0; }   # 6.7.16: 'gq(&q)', as written
     PCMPE(S);
     if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, ft - 1)) == 0) { return 2; }   # 6.7.13: a zero-size T steps 8
     var h = _HTEMP(S);
@@ -12876,6 +12876,8 @@ var _hl_dk = 0;
 var _hl_dnm = 0;
 var _hl_dna = 0 - 1;   # 6.7.16: the `*` of the dereference `_hl_dstar_x` typed last (-1: `_hl_dnm` is `_hl_psrc`'s)
 var _hl_dne = 0 - 1;   # ... and the token after its operand
+var _hl_psa = 0 - 1;   # 6.7.16: the span [_hl_psa, _hl_pse) a `*T` source `_hl_psrc` typed last is named by (`_hl_pspan`)
+var _hl_pse = 0 - 1;
 # `_hl_dstar_x` with no `**S` arm, for a source that ends at `term` (6.7.11: an assignment's — its `;`, or the `)` of
 # a for step or of the parentheses wrapping it, `_hl_dx_end`). A declaration's initialiser asks `_hl_dstar_x(S, ti, 5,
 # 1)` itself (6.7.16, D17 (a): its `*pp` of a `**S` copies at top level too). CHANGELOG [6.7.16]
@@ -13274,7 +13276,7 @@ fn _hl_psrc(S, a, e): i64 {
     if (a >= e) { return 0; }
     if (_hl_addop(S, a, e) > a) {   # ops-6: pointer arithmetic
         var pt = _hl_psid(S, a, e);
-        if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); _hl_dna = 0 - 1; }
+        if (pt > 0) { _hl_dnm = _hl_pnm(S, a, e); _hl_dna = 0 - 1; _hl_pspan(S, a, e); }
         return pt;
     }
     if (TOKTYP(S, a) != 2) { if (_icall_open_at(S, a) < 0) { return 0; } }   # 6.7.16: `callptr(&f)` (`_hl_ic_psid`)
@@ -13286,8 +13288,31 @@ fn _hl_psrc(S, a, e): i64 {
     if (_hl_cp != 1) { return 0; }
     _hl_dnm = _hl_pnm(S, a, e);
     _hl_dna = 0 - 1;
+    _hl_pspan(S, a, e);
     return t;
 }
+# ⛔ 6.7.16 — A REFUSED `*T` STRUCT SOURCE IS NAMED AS THE SOURCE SPELLS IT: `l = gq(&q)` (Q3 into a P3) was "cannot copy
+# 'q' ...", `o.s = gq(&q)` 'q', `l = h.pq` 'pq', `return gq(&q);` `q` — the chain's LAST name (`_hl_pnm`), for a call
+# an argument's. The span the name is read from — in pointer arithmetic the pointer operand's side, as `_hl_pnm` picks
+# it; inside any parentheses — is `_hl_psa` / `_hl_pse`, rendered only at the refusal (`_src_span_nm`'s scratch is
+# uncommitted): 'gq(&q)', 'h.pq', 'w.mq()'; `l = GP` stays 'GP'. The rule 6.7.16 applies to a dereference
+# (`_hl_dname`) and 6.7.15 to an argument. CHANGELOG [6.7.16]
+fn _hl_pspan(S, a, e): i64 {
+    a = _ie_unparen(S, a, e);
+    e = _ie_pe;
+    var k = _hl_addop(S, a, e);
+    if (k > a) {
+        if (_hl_psid(S, a, k) > 0) { return _hl_pspan(S, a, k); }
+        return _hl_pspan(S, k + 1, e);
+    }
+    _hl_psa = a;
+    _hl_pse = e;
+    return 0;
+}
+# `_hl_psrc`'s source as written (`_hl_dnm`, its last name, when the tokens have no source spelling).
+fn _hl_pname(S): i64 { return _src_span_nm(S, _hl_psa, _hl_pse, _hl_dnm); }
+# `_AGG_ASSIGN_TYPE_ERR` for `_hl_psrc`'s source into `dnoff`, named only when refused (1).
+fn _hl_psrc_err(S, td, ts, dnoff): i64 { return _agg_span_err(S, td, ts, dnoff, _hl_psa, _hl_pse, _hl_dnm); }
 # The name a refusal of the `*T` expression [a, e) names: in pointer arithmetic the pointer operand's (the
 # side `_hl_psid` types), else the last name of the chain (`w.pu` -> `pu`, `gu()` -> `gu`).
 fn _hl_pnm(S, a, e): i64 {
