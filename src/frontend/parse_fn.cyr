@@ -7505,7 +7505,7 @@ fn _vecg_rhs_ok(S, start): i64 {
     var v = _CF_TRY(S, start, 5);
     var has = 0;
     if (_cf_ok == 1) { has = 1; }
-    _vecg_init_ok(S, has, v, TOKVAL(S, start - 4));
+    _vecg_init_ok(S, has, v, TOKVAL(S, start - 4), start);
     return 0;
 }
 

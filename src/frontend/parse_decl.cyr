@@ -5743,7 +5743,10 @@ fn _vecg_size(S, vi, desc): i64 {
 }
 # The initializer of a vector global: only a constant 0 (the image is zero) — any other value
 # would be stored as one word. `has` / `v` = the declaration's constant fold (PARSE_GVAR_REG).
-fn _vecg_init_ok(S, has, v, noff): i64 {
+# 6.7.16: `rhs` its first token, 0 with no `=` — `var c: f64v2;` has none to refuse: it is the one "uninitialized
+# variable not allowed" (it added "takes no initializer but 0" first). CHANGELOG [6.7.16]
+fn _vecg_init_ok(S, has, v, noff, rhs): i64 {
+    if (rhs == 0) { return 0; }
     if (has == 1) { if (v == 0) { return 0; } }
     ERR_IDENT(S, "vector global ", noff, " takes no initializer but 0; set it through its address (`&g` with a `*_ptr` form)", 0 - 1);
     return 0;
@@ -6176,7 +6179,7 @@ fn PARSE_GVAR_REG(S): i64 {
             }
         } else {
             _vecg_size(S, vcnt, ann_vec);
-            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff); }
+            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff, rhs_ti); }
             # 6.6.5 — `var G: P = <expr>;` gets ONE 8-byte slot, so the slot HOLDS an address;
             # the literal form above owns STRUCTSZ bytes and IS the struct. Both carry the same
             # positive SVTYPE, so nothing downstream could tell them apart and every `G.field`

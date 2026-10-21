@@ -375,6 +375,17 @@ refused vg_compound     "${VG}    g += 1;\n${VE}" "$VM"
 refused vg_untyped_read "${VG}    var x = g;\n    return x;\n}\nsyscall(60, f());\n" "$VM"
 refused vg_init_dz      'include "lib/simd.cyr"\nvar g: f64v2 = 5;\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
 refused vg_init_late    'include "lib/simd.cyr"\nvar k = 1;\nk = 2;\nvar g: f64v4 = f64v4_make(1, 2, 3, 4);\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
+# 6.7.16 (met with issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var g:
+# f64v2;` in the declaration zone has no initializer to refuse — it is the one "uninitialized variable not allowed".
+# It added "vector global 'g' takes no initializer but 0" first, and that refusal's latch (pass 1 never resyncs)
+# swallowed the next declaration's own error (vg_noinit_next: "unknown type 'Nope' for variable 'd'" was lost).
+# MUTATION (2026-10-20, f16): `_vecg_init_ok` refusing with no `=` again -> RED vg_noinit_dz (2 errors) and
+# vg_noinit_next ("takes no initializer" added, "unknown type 'Nope'" lost), 4 assertions.
+refused vg_noinit_dz    'include "lib/simd.cyr"\nvar g: f64v2;\nsyscall(60, 0);\n' "2:13: uninitialized variable not allowed"
+refused vg_noinit_next  'include "lib/simd.cyr"\nvar g: f64v2;\nvar d: Nope;\nsyscall(60, zz);\n' "3:8: unknown type 'Nope' for variable 'd'" 3
+rows=$((rows + 1))
+check "vg_noinit_next: the declaration's own refusal" yes "$(grep -qF -- "2:13: uninitialized variable not allowed" "$T/vg_noinit_next.err" && echo yes || echo no)"
+check "vg_noinit_next: nothing about an initializer" 0 "$(grep -c 'takes no initializer' "$T/vg_noinit_next.err")"
 # ANTI-VACUOUS: the address, a folded 0 and the routed pointer form all compile and run.
 runs vg_addr_ok 'include "lib/alloc.cyr"\ninclude "lib/simd.cyr"\nvar g: f64v2 = 0 + 0;\nvar n: i64 = 5;\nfn f(): i64 {\n    store64(&g + 8, 9);\n    var s: f64v2 = f64v2_add(&g, &g);\n    return n + (&n - &g);\n}\nsyscall(60, f());\n' 21
 
