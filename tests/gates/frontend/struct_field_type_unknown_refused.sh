@@ -374,7 +374,7 @@ repro7() {   # <name> <what>: the filed repro's seven positions, once each, at t
     k=0
     for l in "3:27: unknown type 'nosuch1' as the Vec element of 'items'" "3:52: a tuple type cannot be a type argument" \
         "4:30: unknown type 'nosuch2' as the Vec element of 'v'" "5:15: unknown type 'nosuch3' as a Vec element" \
-        "8:20: unknown type 'nosuch4' as a Vec element" "9:27: unknown type 'nosuch5' $UTA" \
+        "8:20: unknown type 'nosuch4' as a Vec element" "9:20: unknown type 'nosuch5' $UTA" \
         "11:20: expected a Vec element type, got number 1"; do
         if grep -qF "error:<source>:$l" "$T/$1.err"; then k=$((k + 1)); fi
     done

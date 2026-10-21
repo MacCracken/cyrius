@@ -201,6 +201,13 @@
 #      are tests/tcyr/crossos/slice_generic_element.tcyr.
 #      Filed: docs/development/issues/2026-10-20-generic-struct-slice-element-parse-error.md
 #      Mutant (2026-10-21): the lane's previous compiler (7ec606f70) -> RED 5: NS0-NS4 (the parse errors); NSX green.
+#   NC (6.7.16) A TYPE ARGUMENT'S NAME REFUSAL IS AT THE NAME — "unknown type 'Nope' as a type argument", "'Color' is an
+#      enum, not a type argument" and "generic type-args must be a scalar .. Result/Option/.. are unsupported" pointed at
+#      the token after the name (the `>`, `,` or `<`: both readers had consumed it), where the `Nope<i8>` form and every
+#      annotation refusal point at the name. NC0 one of each, each at its name; the SG / SR / PL / NS rows' positions
+#      moved with it (and generic_struct_field.sh PD2 / PA1 / PA3 / PA4, struct_field_type_unknown_refused.sh VP0 / VP7,
+#      handle_type_args.sh, traits_checked.sh TRR10, dyn_checked.sh F8r7 / F8p8). Mutant (2026-10-21): the lane before
+#      (b7dcf25da) -> RED NC0 and the 20 moved rows.
 #   UC (6.7.16) AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING — `nofn<i64>(1)` — read its type arguments as
 #      comparisons: "undefined variable 'nofn'", "undefined variable 'i64'", "expected ';', got '>'" (three lines for one
 #      mistake); as a statement "expected '=', got '<'" first; under --syntax-only (lint's pre-pass) a sibling module's
@@ -696,32 +703,32 @@ struct Mp<K, V> { k: K; v: V; }
 fn gm(m: Mp<K, V>, b) { return b; }
 syscall(60, 0);
 EOF
-errs sg0 1 "SG0: the filed repro verbatim — refused once, naming 'K' (it compiled, rc 0)" "error:<source>:2:14: unknown type 'K' $TA"
+errs sg0 1 "SG0: the filed repro verbatim — refused once, naming 'K' (it compiled, rc 0)" "error:<source>:2:13: unknown type 'K' $TA"
 SGH='include "lib/syscalls.cyr"
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
 struct Mp<K, V> { k: K; v: V; }'
 sg() { printf '%s\n%s\nsyscall(60, 0);\n' "$SGH" "$2" > "$T/$1.cyr"; }
 sg sg1 'fn gm(m: Mp<Nonexist, i64>, b) { return b; }'
-errs sg1 1 "SG1: a parameter's Mp<Nonexist, i64>" "error:<source>:5:21: unknown type 'Nonexist' $TA"
+errs sg1 1 "SG1: a parameter's Mp<Nonexist, i64>" "error:<source>:5:13: unknown type 'Nonexist' $TA"
 sg sg2 'fn gm(m: *Mp<K, V>, b) { return b; }'
-errs sg2 1 "SG2: a parameter's *Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+errs sg2 1 "SG2: a parameter's *Mp<K, V>" "error:<source>:5:14: unknown type 'K' $TA"
 sg sg3 'fn gm(b): Mp<K, V> { var m: Mp<i64, i64>; return m; }'
-errs sg3 1 "SG3: a return's : Mp<K, V>" "error:<source>:5:15: unknown type 'K' $TA"
+errs sg3 1 "SG3: a return's : Mp<K, V>" "error:<source>:5:14: unknown type 'K' $TA"
 sg sg4 'fn gm(m: Box<Zork>): i64 { return m.n; }
 fn f(): i64 { var b: Box<i64>; b.n = 3; return gm(b); }'
-errs sg4 1 "SG4: m: Box<Zork>, called with a Box<i64> (it took it)" "error:<source>:5:18: unknown type 'Zork' $TA"
+errs sg4 1 "SG4: m: Box<Zork>, called with a Box<i64> (it took it)" "error:<source>:5:14: unknown type 'Zork' $TA"
 sg sg5 'fn ga(m: Box<Box<Zork>>): i64 { return 0; }
 fn gb(m: Mp<Box<Zork>, i64>): i64 { return 0; }
 impl Pt { fn mm(self, m: Box<Zork>): i64 { return 0; } }'
 errs sg5 3 "SG5: nested Box<Box<Zork>>, Mp<Box<Zork>, i64>, a method's Box<Zork> — once each" \
-    "error:<source>:5:22: unknown type 'Zork' $TA" "error:<source>:6:21: unknown type 'Zork' $TA" "error:<source>:7:34: unknown type 'Zork' $TA"
+    "error:<source>:5:18: unknown type 'Zork' $TA" "error:<source>:6:17: unknown type 'Zork' $TA" "error:<source>:7:30: unknown type 'Zork' $TA"
 sg sg6 'fn gm<T>(m: *Box<T>, n: *Mp<T, Zork>): i64 { return sizeof(T); }
 fn f(): i64 { return gm<Pt>(0, 0) + gm<i32>(0, 0) + gm(0, 0); }'
-errs sg6 1 "SG6: a generic's own signature, Zork not its type parameter, three instances — once" "error:<source>:5:36: unknown type 'Zork' $TA"
+errs sg6 1 "SG6: a generic's own signature, Zork not its type parameter, three instances — once" "error:<source>:5:32: unknown type 'Zork' $TA"
 sg sg7 'fn f(): i64 { return gm(0); }
 fn gm(m: *Box<Zork>): i64 { return 0; }'
-errs sg7 1 "SG7: a fn called above its definition (pass 1 read the signature first)" "error:<source>:6:19: unknown type 'Zork' $TA"
+errs sg7 1 "SG7: a fn called above its definition (pass 1 read the signature first)" "error:<source>:6:15: unknown type 'Zork' $TA"
 cat > "$T/sgk.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct Pt { x; y; }
@@ -815,7 +822,7 @@ fn main(): i64 { var a, c = mv(); return c + ap(0); }
 syscall(60, main());
 EOF
 errs sr0 3 "SR0: the filed repro verbatim — each position refused once, at its argument (it compiled: exit 1)" \
-    "error:<source>:3:19: unknown type 'Zork' $TA" "error:<source>:4:36: unknown type 'nosuch' $TA" "error:<source>:5:23: unknown type 'Zork' $TA"
+    "error:<source>:3:15: unknown type 'Zork' $TA" "error:<source>:4:30: unknown type 'nosuch' $TA" "error:<source>:5:19: unknown type 'Zork' $TA"
 SRH='include "lib/syscalls.cyr"
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
@@ -823,19 +830,19 @@ struct P { k; }'
 sr() { printf '%s\n%s\nsyscall(60, 7);\n' "$SRH" "$2" > "$T/$1.cyr"; }
 sr sr1 'fn mv<T>(x: T): (Box<Zork>, T) { return (0, x); }
 fn f(): i64 { var a, c = mv(1); var d, e = mv<i32>(2); return c + e; }'
-errs sr1 1 "SR1: a multi-value element in a generic with two instances — once" "error:<source>:5:26: unknown type 'Zork' $TA"
+errs sr1 1 "SR1: a multi-value element in a generic with two instances — once" "error:<source>:5:22: unknown type 'Zork' $TA"
 sr sr2 'trait Sh { fn a(self, q: *Box<Box<Zork>>): i64; fn b(self): (Box<Zork2>, i64); }'
 errs sr2 2 "SR2: a member's *Box<Box<Zork>> parameter and (Box<Zork2>, i64) return" \
-    "error:<source>:5:39: unknown type 'Zork' $TA" "error:<source>:5:71: unknown type 'Zork2' $TA"
+    "error:<source>:5:35: unknown type 'Zork' $TA" "error:<source>:5:66: unknown type 'Zork2' $TA"
 sr sr2b 'trait Sh { fn a(self, b: Box<nosuch>, c: Nope): i64; }'
-errs sr2b 1 "SR2b: a member's walk ends at its first refusal (one report per member)" "error:<source>:5:36: unknown type 'nosuch' $TA"
+errs sr2b 1 "SR2b: a member's walk ends at its first refusal (one report per member)" "error:<source>:5:30: unknown type 'nosuch' $TA"
 sr sr3 'fn gp<U>(cb: *fn(Box<Zork>, U): i64, u: U): i64 { return 2; }
 fn f(): i64 { var p: Pt; return gp(0, 1) + gp<i32>(0, 2) + gp(0, p); }'
-errs sr3 1 "SR3: *fn(Box<Zork>, U) in a generic with three instances — once" "error:<source>:5:26: unknown type 'Zork' $TA"
+errs sr3 1 "SR3: *fn(Box<Zork>, U) in a generic with three instances — once" "error:<source>:5:22: unknown type 'Zork' $TA"
 sr sr4 'fn ap(p: **Box<Zork>): i64 { return 0; }
 fn aq(cb: *fn(i64): Box<Zork2>): i64 { return 0; }'
 errs sr4 2 "SR4: **Box<Zork> (refused before) and a *fn(..)'s Box<Zork2> return — once each" \
-    "error:<source>:5:20: unknown type 'Zork' $TA" "error:<source>:6:30: unknown type 'Zork2' $TA"
+    "error:<source>:5:16: unknown type 'Zork' $TA" "error:<source>:6:25: unknown type 'Zork2' $TA"
 cat > "$T/srk.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 struct Pt { x; y; }
@@ -868,7 +875,7 @@ fn ap(p: **Box<Zork>, q: Nope): i64 { return 0; }
 syscall(60, 4);
 EOF
 errs pl0 2 "PL0: the filed repro verbatim — the type argument and the next parameter, each once (q: Nope was swallowed)" \
-    "error:<source>:3:20: unknown type 'Zork' $TA" "error:<source>:3:26: unknown type 'Nope' for parameter 'q'"
+    "error:<source>:3:16: unknown type 'Zork' $TA" "error:<source>:3:26: unknown type 'Nope' for parameter 'q'"
 PLH='include "lib/syscalls.cyr"
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }'
@@ -876,12 +883,12 @@ pl() { printf '%s\n%s\nsyscall(60, 4);\n' "$PLH" "$2" > "$T/$1.cyr"; }
 pl pl1 'fn gp<T>(p: **Box<Zork>, q: Nope, t: T): i64 { return 0; }
 fn f(): i64 { return gp(0, 0, 1) + gp<i32>(0, 0, 2); }'
 errs pl1 2 "PL1: a generic's **Box<Zork> (its pin read under the binding) with two instances — each once" \
-    "error:<source>:4:23: unknown type 'Zork' $TA" "error:<source>:4:29: unknown type 'Nope' for parameter 'q'"
+    "error:<source>:4:19: unknown type 'Zork' $TA" "error:<source>:4:29: unknown type 'Nope' for parameter 'q'"
 pl pl2 'fn ap(p: ***Box<Zork>, q: Nope): i64 { return 0; }'
-errs pl2 2 "PL2: ***Box<Zork> — each once" "error:<source>:4:21: unknown type 'Zork' $TA" "error:<source>:4:27: unknown type 'Nope' for parameter 'q'"
+errs pl2 2 "PL2: ***Box<Zork> — each once" "error:<source>:4:17: unknown type 'Zork' $TA" "error:<source>:4:27: unknown type 'Nope' for parameter 'q'"
 pl pl3 'fn ap(p: **Box<Zork>, q: **Box<Zork2>, r: Nope): i64 { return 0; }'
 errs pl3 3 "PL3: two **Box<..> refusals and the parameter after them — each once" \
-    "error:<source>:4:20: unknown type 'Zork' $TA" "error:<source>:4:37: unknown type 'Zork2' $TA" "error:<source>:4:43: unknown type 'Nope' for parameter 'r'"
+    "error:<source>:4:16: unknown type 'Zork' $TA" "error:<source>:4:32: unknown type 'Zork2' $TA" "error:<source>:4:43: unknown type 'Nope' for parameter 'r'"
 printf '%s\nfn ap(p: **Box<Pt>, q: i64): i64 { return q; }\nsyscall(60, ap(0, 4));\n' "$PLH" > "$T/plk.cyr"
 exits plk 4 "PL control: fn ap(p: **Box<Pt>, q: i64) with ap(0, 4), unchanged"
 
@@ -1035,7 +1042,7 @@ struct Box<T> { v: T; n; }'
 ns() { printf '%s\n%s\nfn main(): i64 { return s(); }\n' "$NSH" "$2" > "$T/$1.cyr"; }
 ns ns1 'fn s(): i64 { var e: [Box<Zork>] = 0; var f: slice<*Box<Zork>> = 0; return 7; }'
 errs ns1 2 "NS1: [Box<Zork>] and slice<*Box<Zork>> — the unknown type once each" \
-    "error:<source>:3:31: unknown type 'Zork' as a type argument" "error:<source>:3:61: unknown type 'Zork' as a type argument"
+    "error:<source>:3:27: unknown type 'Zork' as a type argument" "error:<source>:3:57: unknown type 'Zork' as a type argument"
 ns ns2 'fn s(): i64 { var e: [Box<i64, i64>] = 0; var f: slice<Box<i64, Pt>> = 0; var g: [*Box<i32, i32>] = 0; return 7; }'
 errs ns2 3 "NS2: an extra type argument in each spelling — D5's line once each" \
     "error:<source>:3:32: 'Box' takes 1 type argument, 2 given" "error:<source>:3:65: 'Box' takes 1 type argument, 2 given" "error:<source>:3:93: 'Box' takes 1 type argument, 2 given"
@@ -1044,10 +1051,30 @@ errs ns3 2 "NS3: a non-generic struct given arguments inside the list — D7's l
     "error:<source>:3:28: $NGS" "error:<source>:3:55: $NGS"
 ns ns4 'fn g<T>(x: T): i64 { var e: [Box<Zork>] = 0; var f: [Box<T>] = 0; return 1; }
 fn s(): i64 { return g(1) + g(2.0) + g<i32>(3); }'
-errs ns4 1 "NS4: a generic body with three instances — once (its [Box<T>] the instance's)" "error:<source>:3:38: unknown type 'Zork' as a type argument"
+errs ns4 1 "NS4: a generic body with three instances — once (its [Box<T>] the instance's)" "error:<source>:3:34: unknown type 'Zork' as a type argument"
 rc=0; "$CC" --syntax-only < "$T/ns2.cyr" > /dev/null 2> "$T/nsx.err" || rc=$?
 if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/nsx.err"; then ok "NSX: --syntax-only on ns2 says nothing (as an annotation's D5)"
 else bad "NSX: --syntax-only rc $rc: $(grep '^error' "$T/nsx.err" | head -1)"; fi
+
+# NC (6.7.16) — a type argument's name refusal is at the name: "unknown type 'Nope' as a type argument", "'Color' is an
+# enum, not a type argument" and the special-type line pointed at the token after the name (the `>`, `,` or `<`), where
+# the `Nope<i8>` form and every annotation refusal point at the name (`_targ_at_name`, `_reject_special_type_arg`).
+cat > "$T/nc0.cyr" <<'NCEOF'
+struct Box<T> { v: T; n; }
+enum Color { R, G }
+fn g<T>(x: T): i64 { return 1; }
+fn a(): i64 { return g<Nope>(4); }
+fn b(): i64 { var bb: Box<Nope>; return 0; }
+fn c(): i64 { var bb: Box<Color>; return 0; }
+fn d(): i64 { var bb: Box<Option>; return 0; }
+fn e(): i64 { var bb: *Box<Nope> = 0; return 0; }
+fn f(): i64 { return g<Nope<i8>>(4); }
+fn main(): i64 { return 0; }
+NCEOF
+errs nc0 6 "NC0: an explicit call's, a by-value and a pointer annotation's, an enum's and a special type's argument — each at its name (as the Nope<i8> form)" \
+    "error:<source>:4:24: unknown type 'Nope' $TA" "error:<source>:5:27: unknown type 'Nope' $TA" \
+    "error:<source>:6:27: 'Color' is an enum, not a type argument" "error:<source>:7:27: generic type-args must be a scalar" \
+    "error:<source>:8:28: unknown type 'Nope' $TA" "error:<source>:9:24: unknown type 'Nope' $TA"
 
 # UC (6.7.16) — an explicit-generic call of a name that is nothing (`nofn<i64>(1)`): "undefined function 'nofn'" once, at
 # the name (`_ugc_call`, `_stmt_undef_gcall`); the list read only when every name in it is a type here (`_ugc_open`).
@@ -1084,4 +1111,4 @@ for f in uc1 uc2 uc3 uc4 uc5 uc6 uc8; do
 done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16) and at a tuple element (NT, 6.7.16); a generic struct instance declares as a slice element, its list read (NS, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16) and at a tuple element (NT, 6.7.16); a generic struct instance declares as a slice element, its list read (NS, 6.7.16); a type argument's name refusal is at the name (NC, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"

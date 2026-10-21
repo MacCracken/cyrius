@@ -70,7 +70,7 @@
 #   PA (6.7.15, the user's D8 (a), 2026-10-18; docs/development/issues/2026-10-16-pointer-field-generic-type-args-read-only-
 #      at-use.md) a late `p: *G<..>` field's type arguments are checked AT THE FIELD, once, used or not (they were read
 #      only at a use, so an unused field compiled): PA1 the filed repro verbatim (`p: *Box<Zork>`, unused; exit 7
-#      before) refused once at 3:24, PA2 `p: *Box<1>` unused (exit 7 before), PA3 the used form one error line in all,
+#      before) refused once at 3:20, PA2 `p: *Box<1>` unused (exit 7 before), PA3 the used form one error line in all,
 #      PA4 a use in a fn ABOVE the struct one error, PA5 `*Later<Zork>` with the generic Later declared below, PA6
 #      `*Box<Box<Zork>>`, PA7 `struct W<T> { p: *Box<Zork>; }` at two instances, PA8 `*Box<E>` with the enum E declared
 #      below (its enum line, not "unknown type"), PA9 three bad fields of one struct each once (three lines); and what
@@ -320,9 +320,9 @@ syscall(60, 3);
 EOF
 build pd2
 ne=$(grep -c '^error' "$T/pd2.err" || true)
-if [ "$rc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "error:<source>:3:22: unknown type 'Zork' as a type argument" "$T/pd2.err"; then
-    ok "PD2: the filed repro 1, fn mkz(x): **Box<Zork>, refused once at 3:22"
-else bad "PD2: rc $rc, $ne error lines (want 1, at 3:22): $(grep '^error' "$T/pd2.err" | tr '\n' ' ')"; fi
+if [ "$rc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "error:<source>:3:18: unknown type 'Zork' as a type argument" "$T/pd2.err"; then
+    ok "PD2: the filed repro 1, fn mkz(x): **Box<Zork>, refused once at 3:18"
+else bad "PD2: rc $rc, $ne error lines (want 1, at 3:18): $(grep '^error' "$T/pd2.err" | tr '\n' ' ')"; fi
 PDM='fn mk(): **Box<Pt> { var b: *Box<Pt> = alloc(64); b.n = 2; b.v.y = 5; var pp: **Box<Pt> = alloc(8); store64(pp, b); return pp; }'
 PDU='fn main(): i64 { var t: Box<Pt> = **mk(); var p: *Box<Pt> = *mk(); return t.n * 10 + take(**mk()) + p.n * 100 - 200; }'
 PDH='include "lib/syscalls.cyr"
@@ -382,13 +382,13 @@ struct H { p: *Box<Zork>; n; }
 fn main(): i64 { var h: H; h.n = 7; return h.n; }
 syscall(60, main());
 EOF
-one_error pa1 "error:<source>:3:24: $UZ" "PA1: the filed repro, p: *Box<Zork> unused, at the field"
+one_error pa1 "error:<source>:3:20: $UZ" "PA1: the filed repro, p: *Box<Zork> unused, at the field"
 sed 's/\*Box<Zork>/*Box<1>/' "$T/pa1.cyr" > "$T/pa2.cyr"
 one_error pa2 "error:<source>:3:20: a type argument is a type name, got number 1" "PA2: p: *Box<1> unused"
 sed 's/h.n = 7; return h.n;/h.n = 7; h.p.n = 7; return h.p.n;/' "$T/pa1.cyr" > "$T/pa3.cyr"
-one_error pa3 "error:<source>:3:24: $UZ" "PA3: used, h.p.n = 7; return h.p.n;"
+one_error pa3 "error:<source>:3:20: $UZ" "PA3: used, h.p.n = 7; return h.p.n;"
 printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nfn f(h: *H): i64 { return h.p.n; }\nstruct H { p: *Box<Zork>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa4.cyr"
-one_error pa4 "error:<source>:4:24: $UZ" "PA4: used in a fn above the struct"
+one_error pa4 "error:<source>:4:20: $UZ" "PA4: used in a fn above the struct"
 printf 'include "lib/syscalls.cyr"\nstruct H { p: *Later<Zork>; n; }\nstruct Later<T> { v: T; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa5.cyr"
 one_error pa5 "$UZ" "PA5: *Later<Zork>, the generic Later declared below"
 printf 'include "lib/syscalls.cyr"\nstruct Box<T> { v: T; n; }\nstruct H { p: *Box<Box<Zork>>; n; }\nfn main(): i64 { var h: H; h.n = 7; return h.n; }\nsyscall(60, main());\n' > "$T/pa6.cyr"

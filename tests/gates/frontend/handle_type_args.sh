@@ -201,11 +201,11 @@ ${E}4:10: 'Color' $NG
 ${E}5:25: 'Color' $NG"
 row H2 "the filed f(p: Result<Nope>, q: Option<Zork>) (it ran 3)" 'fn f(p: Result<Nope>, q: Option<Zork>): i64 { return 3; }
 fn main(): i64 { return f(0, 0); }
-' "${E}1:20: unknown type 'Nope' $UT
+' "${E}1:16: unknown type 'Nope' $UT
 ${E}1:26: 'Option' $NG"
 row H3 "the filed locals Result<Nope> / Option<Pt<i64>> (it ran 5) — the refused list's Pt<i64> not reported too" 'struct Pt { x; y; }
 fn main(): i64 { var r: Result<Nope> = 0; var o: Option<Pt<i64>> = 0; return 5; }
-' "${E}2:36: unknown type 'Nope' $UT
+' "${E}2:32: unknown type 'Nope' $UT
 ${E}2:50: 'Option' $NG"
 row H4 "fn g(): Option<i64> — one line (it was \"expected '{', got '<'\" + \"undefined variable 'i64'\")" 'fn g(): Option<i64> { return 0; }
 fn main(): i64 { return g(); }
@@ -242,22 +242,22 @@ fn f(a: Result<Nope>, b: **Result<Nope>, c: *fn(Result<Nope>): i64): *Result<Nop
 fn mv(): (Result<Nope>, i64) { return (0, 1); }
 fn g<T>(x: T): i64 { var e: Result<T, Zork> = 0; return 0; }
 fn main(): i64 { var a: [Result<Nope>] = 0; var b: [*Result<Nope>] = 0; var c: slice<Result<Nope>> = 0; var v: Vec<Result<Nope>> = 0; return sizeof(Result<Nope>) + g(1) + g(2.0) + g<i32>(3); }
-' "${E}4:26: unknown type 'Nope' $UT
-${E}4:44: unknown type 'Nope' $UT
-${E}5:25: unknown type 'Nope' $UT
-${E}6:19: unknown type 'Nope' $UT
-${E}7:36: unknown type 'Nope' $UT
-${E}8:20: unknown type 'Nope' $UT
-${E}8:39: unknown type 'Nope' $UT
-${E}8:60: unknown type 'Nope' $UT
-${E}8:82: unknown type 'Nope' $UT
-${E}9:22: unknown type 'Nope' $UT
-${E}10:43: unknown type 'Zork' $UT
-${E}11:37: unknown type 'Nope' $UT
-${E}11:65: unknown type 'Nope' $UT
-${E}11:97: unknown type 'Nope' $UT
-${E}11:127: unknown type 'Nope' $UT
-${E}11:160: unknown type 'Nope' $UT"
+' "${E}4:22: unknown type 'Nope' $UT
+${E}4:40: unknown type 'Nope' $UT
+${E}5:21: unknown type 'Nope' $UT
+${E}6:15: unknown type 'Nope' $UT
+${E}7:32: unknown type 'Nope' $UT
+${E}8:16: unknown type 'Nope' $UT
+${E}8:35: unknown type 'Nope' $UT
+${E}8:56: unknown type 'Nope' $UT
+${E}8:78: unknown type 'Nope' $UT
+${E}9:18: unknown type 'Nope' $UT
+${E}10:39: unknown type 'Zork' $UT
+${E}11:33: unknown type 'Nope' $UT
+${E}11:61: unknown type 'Nope' $UT
+${E}11:93: unknown type 'Nope' $UT
+${E}11:123: unknown type 'Nope' $UT
+${E}11:156: unknown type 'Nope' $UT"
 row H7 "D5: Result<i64, Pt, Pt> as a parameter, a return, a local; in a generic body once" 'struct Pt { x; y; }
 fn a(r: Result<i64, Pt, Pt>): Result<i64, Pt, Pt, i8> { var l: Result<Pt, i64, i64> = 0; return 0; }
 fn g<T>(x: T): i64 { var e: Result<T, Pt, Pt> = 0; return 0; }
@@ -271,21 +271,21 @@ enum Late { LA, LB }
 enum LateG<T> { GA, GB }
 fn main(): i64 { return f(0, 0, 0); }
 ' "${E}1:9: 'Late' $NG
-${E}1:33: unknown type 'Nope' $UT
+${E}1:29: unknown type 'Nope' $UT
 ${E}1:65: 'Late' $NG"
 row H9 "enums declaring their own <..>: Gen<Nope>, Gen<i64, Pt>, Tri<..> given four" 'struct Pt { x; y; }
 enum Gen<T> { GA, GB }
 enum Tri<T, U, V> { TA, TB }
 fn f(a: Gen<Nope>, b: Gen<i64, Pt>, c: Tri<i64, Pt, i8>, d: Tri<i64, i64, i64, Pt>): i64 { return 3; }
 fn main(): i64 { return f(0, 0, 0, 0); }
-' "${E}4:17: unknown type 'Nope' $UT
+' "${E}4:13: unknown type 'Nope' $UT
 ${E}4:32: 'Gen' takes 1 type argument, 2 given
 ${E}4:80: 'Tri' takes 3 type arguments, 4 given"
 row H10 "a program's own enum Result (no list) and enum Option<T>: the declaration decides" 'enum Result: stack { Ok(v); Err(e); }
 enum Option<T>: stack { None(); Some(v); }
 fn h(o: Option<i64>, p: Option<Nope>, r: Result<i64, i64>): i64 { return 1; }
 fn main(): i64 { return h(0, 0, 0); }
-' "${E}3:36: unknown type 'Nope' $UT
+' "${E}3:32: unknown type 'Nope' $UT
 ${E}3:42: 'Result' $NG"
 row H11 "lib/result.cyr and lib/tagged.cyr included" 'include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -298,14 +298,14 @@ fn k(r: Result<Nope>, t: Tagged<i64>): i64 { return 1; }
 fn main(): i64 { var a, b = g(); return b; }
 syscall(60, main());
 ' "${E}7:9: 'Option' $NG
-${E}8:20: unknown type 'Nope' $UT
+${E}8:16: unknown type 'Nope' $UT
 ${E}8:26: 'Tagged' $NG"
 row H12 "a position refusing the bare name keeps its one line; Option<Pt<i64>> is the name's line alone" "${PB}"'fn a(): Color<i64> { return 0; }
 fn b(): i64 { var bx: Box<Option<i64>>; var r: Result<Result<Nope>> = 0; var o: Option<Pt<i64>> = 0; var c: Box<Color<i64>>; return 0; }
 fn main(): i64 { return 0; }
 ' "${E}4:9: type 'Color' cannot be a fn return type
-${E}5:33: generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported
-${E}5:61: generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported
+${E}5:27: generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported
+${E}5:55: generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported
 ${E}5:81: 'Option' $NG
 ${E}5:113: 'Color' is an enum, not a type argument — enum values are i64; write i64"
 row H13 "a trait member's walk goes on past a clean Result / Gen list: the next parameter's own line" 'struct Pt { x; y; }

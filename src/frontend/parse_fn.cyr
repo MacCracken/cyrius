@@ -17520,8 +17520,23 @@ fn _reject_special_type_arg(S, c): i64 {
     if (c <= 0 - 16) {
         _ta_refd = 1;   # 6.7.14
         if (_ta_chk_ok(S) == 0) { return 0; }
+        var sv = GTI(S);
+        STI(S, sv - 1);   # 6.7.16: at the name (`_targ_at_name`'s note)
         ERR_MSG(S, "generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported", 121);
+        STI(S, sv);
     }
+    return 0;
+}
+# ⛔ 6.7.16 — A TYPE ARGUMENT'S NAME REFUSAL IS AT THE NAME. Both callers have consumed the name (`_type_arg_leaf`;
+# `_parse_one_type_arg` before its `<`), so "unknown type 'Nope' as a type argument", "'Color' is an enum, not a type
+# argument" and the special-type line pointed at the token after it — the `>`, the `,` or the `<` — where the
+# `Nope<i8>` form (`_targ_bad_gen`) and every annotation refusal point at the name. The cursor (token `GTI - 1` the
+# name) is put back. CHANGELOG [6.7.16]
+fn _targ_at_name(S, noff): i64 {
+    var sv = GTI(S);
+    STI(S, sv - 1);
+    _refuse_type_arg_name(S, noff);
+    STI(S, sv);
     return 0;
 }
 
@@ -17543,7 +17558,7 @@ fn _type_arg_leaf(S, noff): i64 {
                 return 0 - 8;
             } }
         _ta_refd = 1;
-        if (_ta_chk_ok(S) == 1) { _refuse_type_arg_name(S, noff); }
+        if (_ta_chk_ok(S) == 1) { _targ_at_name(S, noff); }
         return 0 - 8;
     }
     # 6.7.15: a dyn, refused by the dyn pre-pass (`_dyn_targ`), is read as i64 — no `Box$dyn Show` minted to

@@ -639,7 +639,7 @@ lint_is trr8 "TRR8b: --syntax-only keeps the impl's line" \
     "4:30: 'P.sh' returns Result<Pt<i64>>, trait 'T2' declares i64"
 printf 'struct P { a; b; }\ntrait T2 { fn sh(self): Result<Nope>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { var p = P { 1, 2 }; return p.sh(); }\n' > "$T/trr10.cyr"
 lines_are trr10 "TRR10: the D88 filing's repro 2 verbatim (it ran 4) — the member reader's line alone" \
-    "2:36: unknown type 'Nope' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+    "2:32: unknown type 'Nope' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
 lint_is trr10 "TRR10b: --syntax-only is silent, as a member's : Nope is (no name resolved there)"
 printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { return 0; }\n' > "$T/trr11.cyr"
 lines_are trr11 "TRR11: control — a member's Result<i64, Pt> (read, nothing refused) against : i64 keeps the impl's line" \
