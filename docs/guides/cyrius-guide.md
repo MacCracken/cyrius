@@ -3901,7 +3901,8 @@ fn capture(): i64 {
 
 The right-hand side is what the destructure `var a, b = f();` takes ([Multi-Return](#multi-return)):
 one whole call — `f(..)`, `g<T>(..)`, `x.m(..)` (6.7.16: or a method ending a chain on any receiver,
-`var t: (i64, i64) = w.p.m2();`, which was "not a tuple"), or a call through a fn pointer, `fncallN(fp, ..)` or
+`var t: (i64, i64) = w.p.m2();`, which was "not a tuple" — a re-assignment on a parenthesised head too, `t =
+(*pw).p.m2();`, `t = (p).mm(5);`), or a call through a fn pointer, `fncallN(fp, ..)` or
 `callptr(fp, ..)` (6.7.14: `var t: (i64, i64) = callptr(fp, 5);`, `t = callptr(..)` and a global's were
 refused "not a tuple"; its callee is unknown, so its count is not checked) — and nothing around it but
 parentheses around the whole call, which are transparent: `var t: (i64, i64) = (two(3));`, `t = ((two(3)));` and a

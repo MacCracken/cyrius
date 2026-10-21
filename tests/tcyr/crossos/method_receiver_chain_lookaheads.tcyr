@@ -226,6 +226,26 @@ fn fc_xpair(which): i64 {
     return t * 100 + v;
 }
 
+# MT: a tuple RE-assignment from a call ending a chain on a parenthesised head is a capture, as the declaration's is
+# (it was refused "cannot assign a value that is not a tuple")
+var fc_gt2: (i64, i64) = (1, 1);
+fn fc_ta(which): i64 {
+    var w = fc_w();
+    var pw: *FcW = &w;
+    var p: FcP = FcP { 1 };
+    var t: (i64, i64) = (1, 1);
+    var i = 0;
+    if (which == 0) { t = (*pw).p.m2(); }
+    if (which == 1) { t = (w).p.mm(5); }
+    if (which == 2) { t = ((*pw).p.m2()); }
+    if (which == 3) { t = (p).mm(6); }
+    if (which == 4) { t = (w.p).mm(3); }
+    if (which == 5) { for (i = 0; i < 2; t = (*pw).p.mm(i)) { i = i + 1; } }
+    if (which == 6) { fc_gt2 = (w).p.mm(8); t = fc_gt2; }
+    if (which == 7) { fc_gt2 = (FC_GP).mm(2); t = fc_gt2; }
+    return t.0 * 10 + t.1;
+}
+
 # MZ: the top-level zone
 var fc_ga, fc_gb = FC_GW.p.m2();
 var fc_gt: (i64, i64) = FC_GW.p.mm<i64>(4);
@@ -309,6 +329,14 @@ assert_eq(fc_xpair(0), 34, "MX: var v = w.p.idv(q).rs(3)?; (the boxed ? before: 
 assert_eq(fc_xpair(1), 34, "MX: var v = q.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
 assert_eq(fc_xpair(2), 5, "MX: return w.p.idv(q).rs(3); forwards the pair to a caller ABOVE it");
 assert_eq(fc_xpair(3), 7, "MX: t, v = w.p.idv(q).rs(5)");
+assert_eq(fc_ta(0), 34, "MT: t = (*pw).p.m2(), a dereference head");
+assert_eq(fc_ta(1), 57, "MT: t = (w).p.mm(5), a parenthesised name");
+assert_eq(fc_ta(2), 34, "MT: t = ((*pw).p.m2()), wrapped");
+assert_eq(fc_ta(3), 67, "MT: t = (p).mm(6), a single name's parenthesised head");
+assert_eq(fc_ta(4), 37, "MT: t = (w.p).mm(3), a parenthesised chain");
+assert_eq(fc_ta(5), 27, "MT: a for step, t = (*pw).p.mm(i)");
+assert_eq(fc_ta(6), 87, "MT: a global, GT = (w).p.mm(8)");
+assert_eq(fc_ta(7), 27, "MT: a global, GT = (GP).mm(2)");
 assert_eq(fc_ga * 10 + fc_gb, 34, "MZ: a top-level var a, b = GW.p.m2()");
 assert_eq(fc_gt.0 * 10 + fc_gt.1, 47, "MZ: a top-level tuple capture, GW.p.mm<i64>(4)");
 assert_eq(fc_gy, 7, "MZ: a top-level var a, b = GW.p.mm<f64>(2.5): its second value");
@@ -317,6 +345,8 @@ assert_eq(fc_gtp.0 * 10 + fc_gtp.1, 57, "MZ: ... and a tuple capture, var t: (i6
 assert_eq(fc_gq1 * 10 + fc_gq2, 34, "MZ: an explicit generic step mid-chain, var a, b = GW.p.gq<f64>(2.5).m2()");
 assert_eq(fc_gqt.0 * 10 + fc_gqt.1, 34, "MZ: ... a tuple capture, var t: (i64, i64) = GW.p.gq<f64>(2.5).m2()");
 assert_eq(fc_gq3 * 10 + fc_gq4, 34, "MZ: ... after a single name, var a, b = GP.gq<f64>(2.5).m2()");
+fc_gt2 = (FC_GW).p.mm(9);
+assert_eq(fc_gt2.0 * 10 + fc_gt2.1, 97, "MT: a top-level statement, GT = (GW).p.mm(9)");
 var fc_gxok = 0;
 if (fc_gx == 2.5) { fc_gxok = 1; }
 assert_eq(fc_gxok, 1, "MZ: ... and its first value an f64");

@@ -31,12 +31,13 @@
 #   C  each refusal on a chain is the single name's, once, word for word but the receiver its hint spells (x86_64):
 #      C1-C6 a pair bound to one name (`var v =`, `x =`, `store64`, a field, a struct literal, inside a value's
 #      parentheses), C6b the first-call rule, C7 / C8 a multi-value call into a tuple / struct field, C9 / C10 into a
-#      struct assignment / declaration, C11 a small-struct return, C12 / C12b a tuple capture's count / struct, C13
-#      the destructure's count, C14 over 16 B, C15 / C15b a one-value struct / method, C16 a re-assignment from a
-#      struct, C17 / C17b / C17c / C19 a 16 B / 8 B / 24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn
-#      forwarding 3 values / 1 value — each on w.p (c), h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m),
-#      callptr(&gpw, &w).p (i), w.p.idv(w).p (g: an inferred generic step `: V` mid-chain, unresolved before the lane's
-#      review: `_mch_bind`) and w.p.idv<W>(w).p (e: an explicit one), C1h / F1h / F2h on w.p.idv(p) (h); on the
+#      struct assignment / declaration, C11 a small-struct return, C12 / C12b a tuple capture's count / struct,
+#      C12r / C12s a tuple re-assignment's count (bare, wrapped), C13 the destructure's count, C14 over 16 B, C15 /
+#      C15b a one-value struct / method, C16 a re-assignment from a struct, C17 / C17b / C17c / C19 a 16 B / 8 B /
+#      24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn forwarding 3 values / 1 value — each on w.p (c),
+#      h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m), callptr(&gpw, &w).p (i), w.p.idv(w).p (g: an
+#      inferred generic step `: V` mid-chain, unresolved before the lane's review: `_mch_bind`), w.p.idv<W>(w).p (e:
+#      an explicit one) and (p) (y: a single name's parenthesised head); C1h / F1h / F2h on w.p.idv(p) (h); on the
 #      callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
 #      C22-C24 a struct return over 8 B of another struct / 2 values / 1 value (each chain said "returned in two
 #      registers ... got `w`", the single name the text it shares now)
@@ -88,6 +89,8 @@
 #   M19 the tree before `_mch_bind` read an inferred step -> RED 35: V x7 (the file did not build: "needs a call"),
 #       (ca9e73061)                                        C1-C17c on g, W2 on g (unread: no warning), F1 / F2 on g,
 #                                                          C1h / F1h / F2h on h
+#   M20 the tree before `_tup_asg`'s parenthesised head  -> RED 11: V x7 (the file did not build: "not a tuple"), C12r /
+#       (cd9d77e02)                                        C12s on x and y
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -117,7 +120,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=82
+FLOOR=91
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -212,7 +215,7 @@ impl W { fn gp(self): *P { var a = self; return a; } }
 impl P { fn idv<V>(self, x: V): V { return x; } }
 fn mkw(): W { var w: W; w.p.k = 1; w.q = 0; w.n = 0; return w; }
 fn gpw(w: *W): *W { return w; }'
-MODES="c d f x k m i g e"
+MODES="c d f x k m i g e y"
 mode_rcv() {
     case "$1" in
         s) R='p.'; PW='p: P' ;;
@@ -226,6 +229,7 @@ mode_rcv() {
         g) R='w.p.idv(w).p.'; PW='w: W' ;;
         e) R='w.p.idv<W>(w).p.'; PW='w: W' ;;
         h) R='w.p.idv(p).'; PW='w: W' ;;
+        y) R='(p).'; PW='p: P' ;;
     esac
 }
 # subst <from> <to>: stdin to stdout with every <from> replaced by <to> (literally).
@@ -278,6 +282,8 @@ crow C10 '' 'var q: Q16 = @.m2();' "a multi-value call 'm2' does not initialize 
 crow C11 'fn g(@W): Q8 { return @.m2(); }' '' "a multi-value call 'm2' is not returned as struct 'Q8'" "return @.m2(); from a : Q8 fn"
 crow C12 '' 'var t: (i64, i64) = @.m3();' "cannot capture 'm3' into tuple (i64, i64) - it returns 3 values" "var t: (i64, i64) = @.m3(); (not a tuple)"
 crow C12b '' 'var t: (i64, i64) = @.q16();' "cannot capture 'q16' into tuple (i64, i64) - it returns struct 'Q16'" "var t: (i64, i64) = @.q16(); (not a tuple)"
+crow C12r '' 'var t: (i64, i64) = (1, 1); t = @.m3();' "cannot capture 'm3' into tuple (i64, i64) - it returns 3 values" "t = @.m3(); (a re-assignment: not a tuple on a parenthesised head)"
+crow C12s '' 'var t: (i64, i64) = (1, 1); t = (@.m3());' "cannot capture 'm3' into tuple (i64, i64) - it returns 3 values" "t = (@.m3()); (wrapped)"
 crow C13 '' 'var a, b, c = @.m2();' "multi-value destructure count does not match the fn's declared return arity" "var a, b, c = @.m2(); (needs a call)"
 crow C14 '' 'var a, b = @.q24();' "cannot destructure 'q24' - it returns struct 'Q24', which is not in registers" "var a, b = @.q24(); (needs a call)"
 crow C15 '' 'var a, b = @.q8();' "multi-value destructure binds 2 names, but 'P.q8' returns 1 value" "var a, b = @.q8(); (needs a call)"

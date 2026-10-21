@@ -5648,11 +5648,15 @@ fn _asg_struct_dst(S, noff): i64 {
 # literal into a variable of any other aggregate type is refused by name (a scalar's, or a name that
 # is not a variable here, is the stray refusal at its factor). At top level there is no frame for
 # the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
+# ⛔ 6.7.16 — a capture whose call ends a chain on a PARENTHESISED head (`_pw_head`: `t = (*pw).p.m2();`, `t = (p).mm(5);`,
+# `t = ((*pw).p.m2());`, a for step) is a capture, as the declaration's is (`_dt_wrap_k`): it was tried only as a tuple
+# literal and refused "cannot assign a value that is not a tuple". CHANGELOG [6.7.16]
 fn _tup_asg(S, noff, term): i64 {
     if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
     if (PEEKT(S) == 137) { return _tup_asg_call(S, noff, term); }   # 6.7.14: `t = callptr(..);`
     if (PEEKT(S) != 10) { return 0; }
     var st = GTI(S);
+    if (_pw_head(S, st) >= 0) { if (_tup_asg_call(S, noff, term) == 1) { return 1; } }
     var lp = _tup_lit_at(S, st);
     if (lp < 0) { return 0; }
     if (TOKTYP(S, _pw_end) != term) { return 0; }   # an operand (`(1, 2) + u`): the stray refusal
