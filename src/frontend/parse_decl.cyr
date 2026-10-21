@@ -2416,8 +2416,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (sid == 0 && m_bfi < 0) {
             # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
             # swallow the next genuine syntax error), but still CONSUME the argument
-            # list through PCMPE so a grammar error inside it is caught (6.7.16: `_synonly_args`, named arguments too).
-            if (_syntax_only == 1) { _synonly_args(S); return 0; }
+            # list through PCMPE so a grammar error inside it is caught (6.7.16: `_synonly_args`, named arguments too),
+            # and the chain on its result: `a.m(1).g`, `a.m(1).k(2)` were "expected ';', got '.'". CHANGELOG [6.7.16]
+            if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }
             if (_meth_sid0_said(S, noff, pfl_beg, idx) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
             ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
             return 0;
