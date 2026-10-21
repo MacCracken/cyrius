@@ -4079,6 +4079,9 @@ fn _ret_tuple_var(S): i64 {
     if (idx == 0 - 1) { return 0; }
     var sid = _rtv_sid;
     STI(S, ti + j + 1);   # past the `)`s and the `;`
+    # 6.7.16: a tuple LOCAL in a generic was refused at its type (R4), so its return is judged no further — an
+    # instance's `(V, i64)` at f64 no longer matches the refused type's i64 stand-in. CHANGELOG [6.7.16]
+    if (idx < 0 - 1) { if (_tok_in_gen_fn(S, ti) == 1) { return 1; } }
     if (_ret_tup_ok(S, ti, sid) == 0) { return 1; }
     var n = GETFCOUNT(S, sid - 1);
     _fld_addr_ra(S, idx, sid, 0, 0 - 1);
@@ -17849,14 +17852,17 @@ fn _mret_elem(S, fi, quiet): i64 {
         return 0 - 8;
     }
     var t = _classify_return_type(S, PEEKV(S));
+    var tp = 0;
     if (t == 0) {
         if (quiet == 0) { _tn_mret_check(S, GTI(S)); }
+        tp = _gtype_tp_ret(S, fi, PEEKV(S));   # 6.7.16: `(V, i64)` at an instance is V's binding, as a `: T` return
         t = 0 - 8;
     }
     if (t > 0) {
         if (quiet == 0) { t = _gtype_sid_def(S, fi, t); }   # 6.7.15 (D7): `(Box<Zork>, i64)` read at the definition
         else { t = _gtype_sid(S, fi, t); }
     }
+    if (tp != 0) { t = tp; }   # f64 (-9) or a struct; a narrower integer stays an i64 slot. CHANGELOG [6.7.16]
     if (quiet == 0) { _vec_ann_chk(S, GTI(S), 0 - 1); }   # 6.7.14 (D4): `(Vec<T>, i64)` reads T
     if (quiet == 0) { _ngt_refuse(S, GTI(S)); }   # 6.7.16 (D7): `(Pt<i64>, i64)`
     STI(S, GTI(S) + 1);                 # consume the type IDENT

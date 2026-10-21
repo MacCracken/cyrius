@@ -9921,12 +9921,15 @@ fn _dt_wterm(k, term): i64 {
     return term;
 }
 # ...and the fn it REACHES, whose return types type the bindings: a generic's instance
-# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m`.
+# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m` — a generic
+# method's inferred `x.m(..)` the instance its arguments bind (`_mcall_gen`, quiet), as `x.m<..>(..)` and the
+# free spelling reach theirs: `var a, b = p.mm(h);` typed its `(V, i64)` from the base. CHANGELOG [6.7.16]
 fn _dt_call_fn(S): i64 {
     var ti = GTI(S);
     var fi = 0 - 1;
     if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
     else { fi = _pair_callee_at(S, ti); }
+    if (fi >= 0) { if (_tok_method_open(S, ti) == 1) { fi = _mcall_gen(S, fi, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0); } }
     return fi;
 }
 

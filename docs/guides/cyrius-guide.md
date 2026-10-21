@@ -7441,6 +7441,13 @@ through 6.7.14 they compiled as the base `Box`). A generic's own `fn gm<K, V>(m:
 A `: T` return in an instance whose `T` is a struct returns that struct by value,
 as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
 return the struct's address); `Str` keeps its heap-handle return.
+A multi-value return's element typed by a type parameter is the instance's binding the same way:
+`fn mm2<V>(x: V): (V, i64)` returns `(f64, i64)` at `V = f64`, so `var a, b = mm2<f64>(h);` binds `a` as an
+`f64` — in every spelling: the inferred `mm2(h)`, a method's `p.mm<f64>(h)` / inferred `p.mm(h)`, a tuple capture
+`var t: (f64, i64) = mm2<f64>(h);`, a multi-value assignment (6.7.16; through 6.7.15 every instance's `V` element
+was an `i64` word: `a * 2.0` was integer arithmetic on the double's bits, and the `(f64, i64)` capture was refused).
+The checks read the instance's values too: `var t: (i64, i64) = mm2<f64>(h);` is refused (it returns `(f64, i64)`),
+as for a fn written `(f64, i64)`. A narrower integer (`V = i32`) stays an `i64` slot, as `(i32, i64)` does.
 
 ### Generic structs
 

@@ -709,10 +709,15 @@ fn _tok_enclosing_fn(S, ti): i64 {
 # R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
 # tuple have no rule together yet. Generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
 fn _tup_gen_chk(S, ti): i64 {
+    if (_tok_in_gen_fn(S, ti) == 0) { return 0; }
+    return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+}
+# 1 = token `ti` is inside a generic fn's signature or body (`fn name <`), so every tuple type there was refused (R4).
+fn _tok_in_gen_fn(S, ti): i64 {
     var k = _tok_enclosing_fn(S, ti);
     if (k < 0) { return 0; }
     if (TOKTYP(S, k + 2) != 19) { return 0; }
-    return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+    return 1;
 }
 
 # ⛔ 6.7.8 — CHECKED `dyn` (the user's decisions, 2026-10-07): `o: dyn Show` is an ordinary 16-byte
