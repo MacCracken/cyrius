@@ -12,7 +12,9 @@
 # struct carrier `b: Box<T>` — so its field, store, method, `y = mkp()`, forward and closure uses run at a struct T
 # (each was "no struct type in scope for 'y'" at the definition), a bounded `y.show()` calls the bound's impl at every T,
 # and at a scalar T a body that only uses y as a word runs; the scalar calls of a struct use are refused
-# (struct_result_type_refused.sh TV*).
+# (struct_result_type_refused.sh TV*). V16-V18 (the D102 review, 2026-10-21): at any length — a 10-copy chain, 9 untyped
+# vars mixing copies and `id(..)`, `id(..)` 9 deep (an 8-level budget left each "no struct type in scope" at the
+# definition).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -66,6 +68,9 @@ fn v9<T>(x: T): i64 { var y = mkbox(x); return y.v.a * 10 + y.n; }
 fn v10<T>(x: T): i64 { var y = x; var f = |k| { return y.b + k; }; return fncall1(f, 1); }
 fn v11<T: Show>(x: T): i64 { var y = x; var z = id(x); return y.show() + sh(z); }
 fn v12<T>(x: T): i64 { var y = x; return y + 1; }
+fn v16<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }
+fn v17<T>(x: T): i64 { var a = x; var b = id(a); var c = b; var d = id(c); var e = d; var f = id(e); var h = f; var i = id(h); var j = i; return j.a * 10 + j.b; }
+fn v18<T>(x: T): i64 { var y = id(id(id(id(id(id(id(id(id(x))))))))); return y.a; }
 
 fn run(): i64 {
     var s: S8; s.v = 7;
@@ -104,6 +109,9 @@ fn run(): i64 {
     var pp = P { 10 };
     assert_eq(pp.hm(q), 18, "V14: a generic method's var y = x; y.b at T = Q");
     assert_eq(v15(q), 15, "V15: idpp(&p) (pp: **U) and first(bx) (b: Box<U>) at T = Q");
+    assert_eq(v16(q), 8, "V16: a 10-copy chain of untyped vars at T = Q");
+    assert_eq(v17(q), 78, "V17: 9 untyped vars mixing copies and id() at T = Q");
+    assert_eq(v18(q), 7, "V18: id(..) nested 9 deep at T = Q");
     return 0;
 }
 alloc_init();

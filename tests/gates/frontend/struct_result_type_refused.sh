@@ -1361,6 +1361,34 @@ syscall(60, main());
 refuse "TV9n bounded, no impl Show for i64: the bound's" "does not implement trait 'Show'" "$TV9H"'fn main(): i64 { return g(5); }
 syscall(60, main());
 ' one
+# TV10-TV10s (the f16b review of D102, 2026-10-21): neither a chain of untyped copies nor a nest of generic calls is cut
+# short — y takes T's type at any length, as each instance types it. `_gs_vkind` had one 8-level budget for both, so a
+# 10-copy chain (TV10), a chain of 9 mixing copies and `id(..)` (TV10b) and `id(..)` 9 deep (TV10c) stayed untyped:
+# "no struct type in scope for 'y10'" at the definition at T = Q (tests/tcyr/crossos/generic_struct_only_lines.tcyr
+# V16-V18 run them), and at 5 instead of the stub's refusal. A declaration whose own initializer holds the use is no T
+# value, and the walk ends there (TV10s: `var z = z;`, the same two errors as the tree before D102).
+#   MTV6 the lane head before the fix (0ae54834c)           -> RED 11: TV10 TV10n TV10b TV10bn TV10c, TVX TV10 TV10b x3
+#   MTV7 `_gs_vkind` without the `e > u` guard              -> TV10s never ends (the walk re-reads `var z = z;`)
+TV10="$TVH"'fn g<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+TV10b="$TVH"'fn g<T>(x: T): i64 { var a = x; var b = id(a); var c = b; var d = id(c); var e = d; var f = id(e); var h = f; var i = id(h); var j = i; return j.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse "TV10 g(5): a 10-copy chain's y10.b" "$TGM" "$TV10" one
+tv_note "TV10n the note names 7:159" "7:159: 'g' takes a field of a value typed by its type parameter"
+refuse "TV10b g(5): copies and id() mixed, 9" "$TGM" "$TV10b" one
+tv_note "TV10bn the note names 7:144" "7:144: 'g' takes a field of a value typed by its type parameter"
+refuse "TV10c g(5): id(..) nested 9 deep" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = id(id(id(id(id(id(id(id(id(x))))))))); return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+refuse_at "TV10s var z = z; ends: the two errors" "7:31: undefined variable 'z' (missing include or enum?)|7:43: $SN 'z'$SA" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
 
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
@@ -1372,6 +1400,8 @@ cross_rows() {  # $1 the leg's name
     refuse "TGX [$1] TG0" "$TGM" "$TG0" one
     refuse "TVX [$1] TV1" "$TGM" "$TV1" one
     refuse "TVX [$1] TV2" "$TGM" "$TV2" one
+    refuse "TVX [$1] TV10" "$TGM" "$TV10" one
+    refuse "TVX [$1] TV10b" "$TGM" "$TV10b" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1385,11 +1415,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (6.7.16's D102, 2026-10-21: 301 refusals + 44 acceptances with CPX's UC / UCG / TVX rows on three legs; 327 at
-# D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop dropped — is RED, not a
-# shorter green.
-if [ $((nrefuse + naccept)) -lt 345 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 345"; exit 1
+# FLOOR (6.7.16's D102 review, 2026-10-21: 311 refusals + 44 acceptances with CPX's UC / UCG / TVX rows on three legs;
+# 345 at D102, 327 at D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop
+# dropped — is RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 355 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 355"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

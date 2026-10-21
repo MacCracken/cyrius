@@ -15263,6 +15263,7 @@ fn _bbf_scan(S, fi): i64 {
     return 0;
 }
 fn _bbf_swap(): i64 {
+    _gvm_new();
     if (_bbf_t == 0) { _bbf_t = alloc(64); var z = 0; while (z < 8) { S64(_bbf_t + z * 8, 0); z = z + 1; } }
     var a = _gsn; _gsn = L64(_bbf_t); S64(_bbf_t, a);
     a = _gsn_n; _gsn_n = L64(_bbf_t + 8); S64(_bbf_t + 8, a);
@@ -15416,6 +15417,7 @@ fn _gs_gtp(S, lt, slot): i64 {
 fn _gs_params(S, fi, open): i64 {
     _gsn_n = 0;
     _gcr_n = 0;
+    _gvm_new();   # 6.7.16: `_gs_vkind`'s memo (parse_fn_def.cyr) starts empty
     _gs_open = open;
     var i = open + 1;
     var n = GTCNT(S);

@@ -7578,7 +7578,8 @@ its `y.b` makes the generic a stub as `x.b` does — so do `y.m()`, a field stor
 bytes stored in it), a forward of `y` into a stub and a closure reading `y.b` — while a bounded `T`'s `y.show()` calls
 the bound's impl, a scalar's included. The value is the whole initializer: `x` itself, wrapped (`(x)`), another such
 untyped local, a struct carrier `b: Box<T>` by value (the local is then a carrier, as `var c: Box<T>` is), or a generic
-call whose `: U` / `: G<..U..>` return binds `U` to such a value (`id(x)`, `id<T>(x)`, `idp(&x)`, `mkbox(x)`). A `*T`
+call whose `: U` / `: G<..U..>` return binds `U` to such a value (`id(x)`, `id<T>(x)`, `idp(&x)`, `mkbox(x)`) — through
+a chain of such locals of any length and calls nested to any depth, as the instance types them. A `*T`
 value (`var y = p;`), `*p`, `x.f` and `x + 1` leave the local untyped, as the instance does. Through 6.7.15 each such
 use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
 words).

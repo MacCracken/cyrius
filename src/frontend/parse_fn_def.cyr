@@ -4568,6 +4568,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
 # Here rather than there for parse_fn.cyr's fmt / lint headroom; fns resolve wherever they sit. CHANGELOG [6.7.16]
 fn _gs_uvar(S, fi, ni): i64 {
     var k = _gs_vkind(S, fi, ni + 2, 0);
+    _gvm_put(ni + 2, k);
     if (k == 1) { _gsn_add(TOKVAL(S, ni)); }
     if (k == 2) {
         if (_gvk_at >= 0) { _gcr_note(S, fi, TOKVAL(S, ni), _gvk_at, 0); }
@@ -4576,28 +4577,81 @@ fn _gs_uvar(S, fi, ni): i64 {
     return 0;
 }
 # What the whole value from token j (to its `;`, `,` or closer) is in each instance: 1 a value of one of fi's type
-# parameters, 2 a struct carrier by value (`_gvk_at` / `_gvk_call`), 0 neither.
+# parameters, 2 a struct carrier by value (`_gvk_at` / `_gvk_call`), 0 neither. dep counts generic calls nested in
+# arguments (`_gs_cbind`), which only ask for 1. Each instance types a chain of untyped copies and nested calls of any
+# length, so neither is cut short: an 8-level budget the two shared left `var y10 = y9;` (a 10-copy chain), `id(..)` 9
+# deep or a mixed chain of 9 untyped at the i64 base — "no struct type in scope" at the definition where T = Q runs it.
+# Following a declaration is a loop, not a level: it goes to a statement ending before the use, so the walk ends, and
+# a declaration whose own initializer holds the use (`var y = y;`, `var y = id(y);`) is no T value. Nested calls stop
+# at the parser's own 256 levels (`_tok_gen_tp_dep`'s bound). CHANGELOG [6.7.16]
 fn _gs_vkind(S, fi, j, dep): i64 {
-    if (dep > 8) { return 0; }
-    var e = _gs_expr_end(S, j);
-    var k = 0;
-    while (TOKTYP(S, j + k) == 10) { k = k + 1; }
-    var ni = j + k;
-    if (TOKTYP(S, ni) != 2) { return 0; }
-    var x = ni + 1;
-    var nt = TOKTYP(S, x);
-    if (nt == 10 || nt == 19) { x = _gs_vcall_end(S, ni); }
-    if (x < 0) { return 0; }
-    var c = 0;
-    while (c < k) { if (TOKTYP(S, x + c) != 11) { return 0; } c = c + 1; }
-    if (x + k != e) { return 0; }
-    if (x != ni + 1) { return _gs_vcall(S, fi, ni, dep); }
-    var d = _tok_name_decl(S, _gs_open, ni, TOKVAL(S, ni));
-    if (d < 0) { return 0; }
-    if (TOKTYP(S, d + 1) == 49) { return _gs_vann(S, fi, d + 2); }
-    if (TOKTYP(S, d - 1) != 3) { return 0; }
-    if (TOKTYP(S, d + 1) != 4) { return 0; }
-    return _gs_vkind(S, fi, d + 2, dep + 1);
+    if (dep > 256) { return 0; }
+    var u = 0 - 1;   # the use the last declaration came from
+    while (1) {
+        var e = _gs_expr_end(S, j);
+        if (u >= 0) {
+            if (e > u) { return 0; }
+            var m = _gvm_get(j);
+            if (m >= 0) { return m; }
+        }
+        var k = 0;
+        while (TOKTYP(S, j + k) == 10) { k = k + 1; }
+        var ni = j + k;
+        if (TOKTYP(S, ni) != 2) { return 0; }
+        var x = ni + 1;
+        var nt = TOKTYP(S, x);
+        if (nt == 10 || nt == 19) { x = _gs_vcall_end(S, ni); }
+        if (x < 0) { return 0; }
+        var c = 0;
+        while (c < k) { if (TOKTYP(S, x + c) != 11) { return 0; } c = c + 1; }
+        if (x + k != e) { return 0; }
+        if (x != ni + 1) { return _gs_vcall(S, fi, ni, dep); }
+        var d = _tok_name_decl(S, _gs_open, ni, TOKVAL(S, ni));
+        if (d < 0) { return 0; }
+        if (TOKTYP(S, d + 1) == 49) { return _gs_vann(S, fi, d + 2); }
+        if (TOKTYP(S, d - 1) != 3) { return 0; }
+        if (TOKTYP(S, d + 1) != 4) { return 0; }
+        u = ni;
+        j = d + 2;
+    }
+    return 0;
+}
+# `_gs_vkind`'s answer for each untyped `var`'s initializer, kept as the scan reads it (`_gs_uvar`), so following a
+# chain of copies costs a step per declaration, not the chain again at each one (3,000 chained copies: 1.2 s, against
+# 0.13 s in a plain fn and 0.2 s with the old 8-level cut-off). Direct-mapped by the initializer's token: 256 entries
+# of (token, scan, kind, `_gvk_tp`, `_gvk_at`, `_gvk_call`); a scan's start or a swap of the scan tables (`_gvm_new`:
+# `_gs_params`, `_bbf_swap`) makes every entry stale, so a miss only costs the walk. CHANGELOG [6.7.16]
+var _gvm = 0;
+var _gvm_gen = 1;
+fn _gvm_new(): i64 {
+    _gvm_gen = _gvm_gen + 1;
+    return 0;
+}
+fn _gvm_put(j, k): i64 {
+    if (_gvm == 0) {
+        _gvm = alloc(256 * 48);
+        var z = 0;
+        while (z < 256 * 6) { S64(_gvm + z * 8, 0); z = z + 1; }
+    }
+    var p = _gvm + (j & 255) * 48;
+    S64(p, j);
+    S64(p + 8, _gvm_gen);
+    S64(p + 16, k);
+    S64(p + 24, _gvk_tp);
+    S64(p + 32, _gvk_at);
+    S64(p + 40, _gvk_call);
+    return 0;
+}
+# The kind kept for the initializer at token j in this scan (its `_gvk_*` restored), or -1.
+fn _gvm_get(j): i64 {
+    if (_gvm == 0) { return 0 - 1; }
+    var p = _gvm + (j & 255) * 48;
+    if (L64(p) != j) { return 0 - 1; }
+    if (L64(p + 8) != _gvm_gen) { return 0 - 1; }
+    _gvk_tp = L64(p + 24);
+    _gvk_at = L64(p + 32);
+    _gvk_call = L64(p + 40);
+    return L64(p + 16);
 }
 # 1 = the initializer from token j is a value of one of fi's type parameters (`_gs_vkind` 1).
 fn _gs_vk_tp(S, fi, j): i64 {
@@ -4635,6 +4689,7 @@ fn _gs_vcall(S, fi, ni, dep): i64 {
     if (GFTP(S, g) == 0) { return 0; }
     var w = _gen_ret_tp(S, g);
     if (w >= 0) { return _gs_cbind(S, fi, g, ni, w, dep); }
+    if (dep > 0) { return 0; }   # an argument's value: only 1 counts, so no carrier walk (one per slot, at each level)
     if (_gs_vc_slots(S, fi, ni, 0, dep) == 0) { return 0; }
     _gvk_at = 0 - 1;
     _gvk_call = ni;
@@ -4657,16 +4712,24 @@ fn _gs_vc_slots(S, fi, ni, y, dep): i64 {
     var r = 0;
     var j = c + 4;
     var slot = 0;
+    var b0 = 0 - 1;   # each type parameter's binding, read once (`G<U, U>` names U twice)
+    var b1 = 0 - 1;
     while (TOKTYP(S, j) != 12) {
         var t = TOKTYP(S, j);
         if (_gs_targ_whole(S, j) == 1) {
-            var w = 0 - 1;
-            if (TOKVAL(S, j) == (tp & 0xFFFFFFFF) - 1) { w = 0; }
-            if (TOKVAL(S, j) == ((tp >> 32) & 0xFFFFFFFF) - 1) { w = 1; }
-            if (w >= 0) { if (_gs_cbind(S, fi, g, ni, w, dep) == 1) {
-                    r = r + 1;
-                    if (y != 0) { _gcr_add(y, TOKVAL(S, c + 2), slot); }
-                } }
+            var bw = 0;
+            if (TOKVAL(S, j) == (tp & 0xFFFFFFFF) - 1) {
+                if (b0 < 0) { b0 = _gs_cbind(S, fi, g, ni, 0, dep); }
+                bw = b0;
+            }
+            if (TOKVAL(S, j) == ((tp >> 32) & 0xFFFFFFFF) - 1) {
+                if (b1 < 0) { b1 = _gs_cbind(S, fi, g, ni, 1, dep); }
+                bw = b1;
+            }
+            if (bw == 1) {
+                r = r + 1;
+                if (y != 0) { _gcr_add(y, TOKVAL(S, c + 2), slot); }
+            }
         }
         if (t == 31) { slot = slot + 1; }
         if (t != 2 && t != 31) { return r; }   # the list's close, or a nested list: its slots are not whole
