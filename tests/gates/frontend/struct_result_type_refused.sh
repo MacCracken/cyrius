@@ -1269,6 +1269,99 @@ accept "TA6b *p = mkp(); at gd<i32>(5)" "$TH"'fn main(): i64 { return gd<i32>(5)
 accept "TA6c **pp = mkp(); (pp: **T) at i64" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gdq(q); }'"$TE" 44 'syscall(60, 44);'
 
+# TV (6.7.16, the user's D102, 2026-10-20; issues/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
+# — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
+# so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
+# though valid at T = Q, and `y = mkp();` on it had 6.7.15's D33 words. y is now a T-typed name (`_gs_uvar` /
+# `_gs_vkind`, parse_fn.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
+# to such a value, a carrier `b: Box<T>` by value — so its struct uses make the generic a stub, refused at a scalar call
+# with the stub's note (TV1-TV5), compiled when never called (TV6), and a bounded `y.show()` is a bounded site
+# (`_bnr_uvar`; tests/tcyr/crossos/generic_struct_only_lines.tcyr V1-V15 run the struct instances on every backend). A
+# `*T` source and `x + 1` stay untyped, as the instance types them (TV7, TV8). A bounded `y.show()` / `z.show()` (z =
+# `id(x)`) calls the bound's impl at i64 (TV9) and at Pt (TV9p); with no `impl Show for i64` the bound's refusal (TV9n).
+# TVX: TV1 / TV2 on aarch64 / cx / PE.
+# (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MTV1 the tree before D102 (7fd3db958)                -> RED 17: TV0 TV6 TV9 (refused at the definition), TV1-TV5
+#                                                         TV1n TV2n TV5n ("no struct type", D33's words), TVX TV1 TV2 x3
+#   MTV2 `_gs_uvar` adding nothing                      -> RED 10: TV0 TV1 TV1n TV3 TV4 TV5 TV5n, TVX TV1 x3
+#   MTV3 `_gs_dst_tp` without its untyped-var arm       -> RED 5: TV2 TV2n (D33's words), TVX TV2 x3
+#   MTV4 `_bnr_uvar` recording nothing                  -> RED 1: TV9 (refused as a stub at i64)
+#   MTV5 `_gs_vcall` answering 0 (no generic call)      -> RED 2: TV3, TV9 (`z = id(x)`: refused at the definition)
+echo "=== an untyped var y = x; holding a value of T takes T's type in each instance (6.7.16, the user's D102) ==="
+TV0='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var y = x; return y.b; }
+fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+accept "TV0 the filed repro verbatim: 4" "$TV0" 4 'syscall(60, 4);'
+TVH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn id<T>(v: T): T { return v; }
+fn vb<T>(x: T): i64 { return x.b; }
+'
+TV1="$TVH"'fn g<T>(x: T): i64 { var y = x; return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+TV2="$TVH"'fn g<T>(x: T): i64 { var y = x; y = mkp(); return 9; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+# $1 label  $2 the note's text (after "note: <source>:")
+tv_note() {
+    if grep -qF "  note: <source>:$2" "$D/r.err"; then printf '  ok(refused): %-28s\n' "$1"; pass=$((pass+1))
+    else printf '  FAIL: %-34s %s\n' "$1" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+}
+refuse "TV1 g(5): y.b, y = x's" "$TGM" "$TV1" one
+tv_note "TV1n the note names 7:40" "7:40: 'g' takes a field of a value typed by its type parameter"
+refuse "TV2 g(5): y = mkp(), y = x's (D1)" "$TGM" "$TV2" one
+tv_note "TV2n the note names 7:33" "7:33: 'g' stores a struct result over 8 bytes in 'y', typed by its type parameter"
+refuse "TV3 g(5): var y = id(x); y.b" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = id(x); return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+refuse "TV4 g(bx), Box<i64>: var y = b; y.v.b" "$TGM" "$TVH"'fn g<T>(b: Box<T>): i64 { var y = b; return y.v.b; }
+fn main(): i64 { var bx: Box<i64>; bx.v = 1; return g(bx); }
+syscall(60, main());
+' one
+refuse "TV5 g(5): y forwarded to a stub" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = x; return vb(y); }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+tv_note "TV5n the forward's note" "7:40: 'g' forwards its type parameter to 'vb'"
+accept "TV6 never called: compiles" "$TVH"'fn g<T>(x: T): i64 { var y = x; y = mkp(); return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+' 0 'syscall(60, 0);'
+refuse_at "TV7 var y = p; (p: *T): untyped" "7:44: $SN 'y'$SA" "$TVH"'fn g<T>(p: *T): i64 { var y = p; return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "TV8 var y = x + 1;: untyped" "7:47: $SN 'y'$SA" "$TVH"'fn g<T>(x: T): i64 { var y = x + 1; return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+TV9H='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+fn id<T>(v: T): T { return v; }
+fn g<T: Show>(x: T): i64 { var y = x; var z = id(x); return y.show() + z.show(); }
+'
+accept "TV9 bounded y.show() at i64: impl Show for i64" "$TV9H"'impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' 210 'syscall(60, 210);'
+accept "TV9p bounded y.show() at Pt" "$TV9H"'fn main(): i64 { var p = Pt { 3, 4 }; return g(p); }
+syscall(60, main());
+' 68 'syscall(60, 68);'
+refuse "TV9n bounded, no impl Show for i64: the bound's" "does not implement trait 'Show'" "$TV9H"'fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
@@ -1277,6 +1370,8 @@ cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] UC2" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
     uc_rows "CPX [$1] "
     refuse "TGX [$1] TG0" "$TGM" "$TG0" one
+    refuse "TVX [$1] TV1" "$TGM" "$TV1" one
+    refuse "TVX [$1] TV2" "$TGM" "$TV2" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1290,10 +1385,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (6.7.16's D96, 2026-10-21: 287 refusals + 40 acceptances with CPX's UC / UCG rows on three legs; 300 at the
-# genbind review): a lost row block — a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 327 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 327"; exit 1
+# FLOOR (6.7.16's D102, 2026-10-21: 301 refusals + 44 acceptances with CPX's UC / UCG / TVX rows on three legs; 327 at
+# D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop dropped — is RED, not a
+# shorter green.
+if [ $((nrefuse + naccept)) -lt 345 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 345"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

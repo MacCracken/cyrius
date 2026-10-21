@@ -10882,7 +10882,8 @@ fn _bnr_find(S, name): i64 {
 }
 # `name: [*]TN` at token i (a parameter, or the name of a `var`): its bounded slot, recorded; a name
 # re-declared with another type stops being a receiver (slot -1).
-fn _bnr_decl(S, tp, blk, i): i64 {
+fn _bnr_decl(S, fi, tp, blk, i): i64 {
+    if (TOKTYP(S, i + 1) == 4) { if (_bnr_uvar(S, fi, tp, blk, i) == 1) { return 0; } }   # 6.7.16 (D102)
     if (TOKTYP(S, i + 1) != 49) {
         var r0 = _bnr_find(S, TOKVAL(S, i));
         if (r0 >= 0) { S64(_bnr_tab + r0 * 24 + 8, 0 - 1); }
@@ -10902,8 +10903,25 @@ fn _bnr_decl(S, tp, blk, i): i64 {
     if (r >= 0) { S64(_bnr_tab + r * 24 + 8, 0 - 1); }
     return 0;
 }
+# ⛔ 6.7.16 (the user's D102, 2026-10-20) — an untyped `var y = x;` (token i on y) holding a value of a BOUNDED type
+# parameter (`_gs_vkind` 1, on the stub scan's tables `_bnd_sites` keeps current) is a receiver of that parameter's
+# slot, as `var y: T = x;` is: `y.show()` is a bounded site and calls the bound's impl at every T, a scalar's too. It
+# was "no struct type in scope for 'y'" at the definition. 1 = recorded. CHANGELOG [6.7.16]
+fn _bnr_uvar(S, fi, tp, blk, i): i64 {
+    if (TOKTYP(S, i - 1) != 3) { return 0; }
+    _gvk_tp = 0;
+    if (_gs_vkind(S, fi, i + 2, 0) != 1) { return 0; }
+    var slot = 0 - 1;
+    if (_gvk_tp == (tp & 0xFFFFFFFF) - 1) { if (L64(blk) > 0) { slot = 0; } }
+    if (_gvk_tp == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (L64(blk + 72) > 0) { slot = 1; } }
+    if (_gvk_tp == 0) { slot = 0 - 1; }
+    if (slot < 0) { return 0; }
+    _bnr_add(S, TOKVAL(S, i), slot, 0);
+    return 1;
+}
 fn _bs_add(S, ti, tx, tpn, isptr): i64 {
     if (_bs_tab == 0) { _bs_tab = alloc(4096 * 32); }
+    if (_bs_find(S, ti) >= 0) { return 0; }   # 6.7.16: the rescan's second walk (`_gen_rescan`) finds its sites again
     if (_bs_n >= 4096) { _tr_cap(S, ti, "too many bounded method calls (max 4096)", 40); return 0; }
     S64(_bs_tab + _bs_n * 32, ti);
     S64(_bs_tab + _bs_n * 32 + 8, tx);
@@ -10978,6 +10996,7 @@ fn _bnd_sites(S, fi, open): i64 {
     if (open < 0) { return 0; }
     var tp = GFTP(S, fi);
     _bnr_n = 0;
+    _gs_params(S, fi, open);   # 6.7.16 (D102): the stub scan's tables for `_bnr_uvar`; `_gen_record` builds them again
     var i = open + 1;
     var n = GTCNT(S);
     var d = 0;
@@ -10987,7 +11006,7 @@ fn _bnd_sites(S, fi, open): i64 {
         if (d == 0) {
             if (t == 11) { break; }
             if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
-            if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, tp, blk, i); } }
+            if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, fi, tp, blk, i); } }
         }
         if (t == 10 || t == 19 || t == 28) { d = d + 1; }
         if (t == 11 || t == 20 || t == 29) { d = d - 1; }
@@ -11004,7 +11023,7 @@ fn _bnd_sites(S, fi, open): i64 {
         if (t2 == 12) { return 0; }
         if (t2 == 13) { d = d + 1; }
         if (t2 == 14) { d = d - 1; if (d == 0) { return 0; } }
-        if (t2 == 3) { if (TOKTYP(S, i + 1) == 2) { _bnr_decl(S, tp, blk, i + 1); } }
+        if (t2 == 3) { if (TOKTYP(S, i + 1) == 2) { _bnr_decl(S, fi, tp, blk, i + 1); _gs_var(S, fi, i); } }
         if (t2 == 2) {
             if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { if (_bnd_mopen(S, fi, i + 3) == 1) {
                         if (TOKTYP(S, i - 1) != 41) {
@@ -15578,6 +15597,7 @@ fn _gs_why(i, mode): i64 {
 # carrier (`_gcr_note`); 6.7.16: `var x: **G<..T..>` one the forward scan follows (`_gs_pparam`).
 fn _gs_var(S, fi, i): i64 {
     if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (TOKTYP(S, i + 2) == 4) { return _gs_uvar(S, fi, i + 1); }   # 6.7.16 (D102): `var y = x;`
     if (TOKTYP(S, i + 2) != 49) { return 0; }
     var ti = i + 3;
     if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
@@ -15592,6 +15612,223 @@ fn _gs_ppvar(S, fi, ni, ti): i64 {
     while (TOKTYP(S, ti) == 8) { ti = ti + 1; }
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (TOKTYP(S, ti + 1) == 19) { _gcr_note(S, fi, TOKVAL(S, ni), ti, 256); }
+    return 0;
+}
+# ⛔ 6.7.16 (the user's D102, 2026-10-20) — AN UNTYPED `var y = x;` FROM A VALUE OF T IS TYPED BY T. Each instance
+# types y from its initializer — at T = Q, `var y = x;` with `x: T` is a Q copy, as in a plain fn — but the scan saw no
+# T-typed name in y, so the i64 base parsed `y.b` (`y.m()`, `y = mkp();`, a forward of y into a stub, `y.v.b` of a
+# carrier copy) at the definition: "no struct type in scope for 'y'", where `x.b` makes the generic a stub. y is now a
+# T-typed name (`_gsn`), or a struct carrier when its value is one (`_gcr`), so its scalar calls are refused as stubs.
+# The initializer is the WHOLE value, as the instance types it: a name declared `: T` (a parameter, a `var z: T`) or
+# `: G<..T..>` by value, another such untyped `var`, a free generic call whose `: U` / `: G<..U..>` return binds U to
+# such a value (`id(x)`, `id<T>(..)`, `idp(&x)`, `mkbox(x)`: `_gs_vcall`), any of them wrapped in parentheses. A `*T`
+# value, `*p`, `x.f` and `x + 1` stay untyped, as in the instance. CHANGELOG [6.7.16]
+var _gvk_at = 0;        # `_gs_vkind` 2: the carrier annotation's G token, or -1 for a call's result (`_gvk_call`)
+var _gvk_call = 0;      # ... the call's name token
+var _gvk_tp = 0;        # `_gs_vkind` 1: the type parameter's name, 0 when the scan does not know which
+fn _gs_uvar(S, fi, ni): i64 {
+    var k = _gs_vkind(S, fi, ni + 2, 0);
+    if (k == 1) { _gsn_add(TOKVAL(S, ni)); }
+    if (k == 2) {
+        if (_gvk_at >= 0) { _gcr_note(S, fi, TOKVAL(S, ni), _gvk_at, 0); }
+        else { _gs_vc_slots(S, fi, _gvk_call, TOKVAL(S, ni), 0); }
+    }
+    return 0;
+}
+# What the whole value from token j (to its `;`, `,` or closer) is in each instance: 1 a value of one of fi's type
+# parameters, 2 a struct carrier by value (`_gvk_at` / `_gvk_call`), 0 neither.
+fn _gs_vkind(S, fi, j, dep): i64 {
+    if (dep > 8) { return 0; }
+    var e = _gs_expr_end(S, j);
+    var k = 0;
+    while (TOKTYP(S, j + k) == 10) { k = k + 1; }
+    var ni = j + k;
+    if (TOKTYP(S, ni) != 2) { return 0; }
+    var x = ni + 1;
+    var nt = TOKTYP(S, x);
+    if (nt == 10 || nt == 19) { x = _gs_vcall_end(S, ni); }
+    if (x < 0) { return 0; }
+    var c = 0;
+    while (c < k) { if (TOKTYP(S, x + c) != 11) { return 0; } c = c + 1; }
+    if (x + k != e) { return 0; }
+    if (x != ni + 1) { return _gs_vcall(S, fi, ni, dep); }
+    var d = _tok_name_decl(S, _gs_open, ni, TOKVAL(S, ni));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) == 49) { return _gs_vann(S, fi, d + 2); }
+    if (TOKTYP(S, d - 1) != 3) { return 0; }
+    if (TOKTYP(S, d + 1) != 4) { return 0; }
+    return _gs_vkind(S, fi, d + 2, dep + 1);
+}
+# 1 = the initializer from token j is a value of one of fi's type parameters (`_gs_vkind` 1).
+fn _gs_vk_tp(S, fi, j): i64 {
+    if (_gs_vkind(S, fi, j, 0) == 1) { return 1; }
+    return 0;
+}
+# ... an annotation from token at: 1 one of fi's type parameters, whole; 2 a `G<..>` by value (not an array); else 0.
+fn _gs_vann(S, fi, at): i64 {
+    if (TOKTYP(S, at) != 2) { return 0; }
+    var e = _asa_end(S, at);
+    if (_gs_ann_arr(S, at, e) == 1) { return 0; }
+    if (TOKTYP(S, at + 1) == 19) { _gvk_at = at; return 2; }
+    if (e != at + 1) { return 0; }
+    return _gs_vtp(S, fi, at);
+}
+# 1 when the name at token k is one of fi's type parameters (`_gvk_tp` = it), else 0.
+fn _gs_vtp(S, fi, k): i64 {
+    if (_is_tparam_of(S, fi, TOKVAL(S, k)) == 0) { return 0; }
+    _gvk_tp = TOKVAL(S, k);
+    return 1;
+}
+# The token after the free call `g(..)` / `g<..>(..)` whose name is token ni, or -1.
+fn _gs_vcall_end(S, ni): i64 {
+    var o = ni + 1;
+    if (TOKTYP(S, o) == 19) { o = _tok_targs_close(S, ni + 2); if (o < 0) { return 0 - 1; } o = o + 1; }
+    if (TOKTYP(S, o) != 10) { return 0 - 1; }
+    return _call_close(S, o) + 1;
+}
+# ... the call's kind: 1 a `: U` return, U one of the generic's type parameters bound to a value of fi's (`_gs_cbind`);
+# 2 a `: G<..U..>` return with such a U in one of G's slots. Reads another fn's signature: scanned again at pass 1's end.
+fn _gs_vcall(S, fi, ni, dep): i64 {
+    _gs_late = 1;
+    var g = FINDFN(S, TOKVAL(S, ni));
+    if (g < 0) { return 0; }
+    if (GFTP(S, g) == 0) { return 0; }
+    var w = _gen_ret_tp(S, g);
+    if (w >= 0) { return _gs_cbind(S, fi, g, ni, w, dep); }
+    if (_gs_vc_slots(S, fi, ni, 0, dep) == 0) { return 0; }
+    _gvk_at = 0 - 1;
+    _gvk_call = ni;
+    return 2;
+}
+# The slots of the `: G<..>` return of the generic called at token ni whose whole type argument is a type parameter U
+# of the callee bound to a value of fi's (`_gs_cbind`): their count; each is noted as a carrier entry of `y` (a name
+# offset), unless y is 0.
+fn _gs_vc_slots(S, fi, ni, y, dep): i64 {
+    var g = FINDFN(S, TOKVAL(S, ni));
+    if (g < 0) { return 0; }
+    var o = _gen_def_open(S, g);
+    if (o < 0) { return 0; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0; }
+    if (TOKTYP(S, c + 1) != 49) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    if (TOKTYP(S, c + 3) != 19) { return 0; }
+    var tp = GFTP(S, g);
+    var r = 0;
+    var j = c + 4;
+    var slot = 0;
+    while (TOKTYP(S, j) != 12) {
+        var t = TOKTYP(S, j);
+        if (_gs_targ_whole(S, j) == 1) {
+            var w = 0 - 1;
+            if (TOKVAL(S, j) == (tp & 0xFFFFFFFF) - 1) { w = 0; }
+            if (TOKVAL(S, j) == ((tp >> 32) & 0xFFFFFFFF) - 1) { w = 1; }
+            if (w >= 0) { if (_gs_cbind(S, fi, g, ni, w, dep) == 1) {
+                    r = r + 1;
+                    if (y != 0) { _gcr_add(y, TOKVAL(S, c + 2), slot); }
+                } }
+        }
+        if (t == 31) { slot = slot + 1; }
+        if (t != 2 && t != 31) { return r; }   # the list's close, or a nested list: its slots are not whole
+        j = j + 1;
+    }
+    return r;
+}
+# 1 = at the call of the generic g whose name is token ni, g's type parameter w binds to a value of one of fi's type
+# parameters: an explicit type argument naming one (`id<T>(..)`), or the argument that carries w holding such a value —
+# a direct `v: U` parameter's (`_gs_vkind` 1), a `p: *U` parameter's `&v` or `p` declared `*T`, a `pp: **U` parameter's
+# (`_gs_cb_pp`), a struct carrier `b: G<..U..>`'s carrier of the same slot (`_gs_cb_carr`).
+fn _gs_cbind(S, fi, g, ni, w, dep): i64 {
+    if (TOKTYP(S, ni + 1) == 19) { return _gs_cb_ex(S, fi, ni + 2, w); }
+    var o = ni + 1;
+    var m = GFGM(S, g);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) {
+        var f = (m >> (24 + w * 20)) & 0xFFFFF;
+        if (f != 0) { return _gs_cb_carr(S, fi, g, o, f); }
+        var pq = _pp_tparam(S, g, w);
+        if (pq <= 0) { return 0; }
+        var pd = _ppt_d;
+        var pa = _call_arg_for(S, g, o, pq - 1);
+        if (pa < 0) { return 0; }
+        return _gs_cb_pp(S, fi, pa, pd, dep);
+    }
+    var at = _call_arg_for(S, g, o, pk - 1);
+    if (at < 0) { return 0; }
+    if (_ic_ptr_param(S, g, pk - 1) == 1) { return _gs_cb_pp(S, fi, at, 1, dep); }
+    if (_gs_vkind(S, fi, at, dep + 1) == 1) { return 1; }
+    return 0;
+}
+# ... explicit type argument w of the list from token k: 1 when it is one of fi's type parameters, whole.
+fn _gs_cb_ex(S, fi, k, w): i64 {
+    if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31) { return 0; }
+    return _gs_vtp(S, fi, k);
+}
+# ... the argument at token a of a parameter `*` d times then U (d >= 1): 1 when it is `&v` of a name declared `*`
+# d - 1 times then one of fi's type parameters (at d = 1, `&v` of any value of one: `_gs_vkind`), or a name declared
+# with d stars then one, whole.
+fn _gs_cb_pp(S, fi, a, d, dep): i64 {
+    var st = 0;
+    if (TOKTYP(S, a) == 27) {
+        if (d == 1) { if (_gs_vkind(S, fi, a + 1, dep + 1) == 1) { return 1; } return 0; }
+        a = a + 1;
+        st = 1;
+    }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    var dc = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    if (dc < 0) { return 0; }
+    if (TOKTYP(S, dc + 1) != 49) { return 0; }
+    var h = dc + 2;
+    var n = 0;
+    while (TOKTYP(S, h) == 8) { h = h + 1; n = n + 1; }
+    if (n + st != d) { return 0; }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    if (_asa_end(S, h) != h + 1) { return 0; }
+    return _gs_vtp(S, fi, h);
+}
+# ... the argument of g's struct-carrier parameter (GFGM field f: the parameter's index + 1, G's slot at bit 8, G's
+# name token at bits 10-19 from the `(`): 1 when it is (`&` of) a carrier of fi with an entry for that G and slot;
+# `_gvk_tp` the type argument in that slot of the carrier's own annotation, when the scan reads one.
+fn _gs_cb_carr(S, fi, g, o, f): i64 {
+    var go = _gen_def_open(S, g);
+    if (go < 0) { return 0; }
+    var gn = TOKVAL(S, go + ((f >> 10) & 1023));
+    var a = _call_arg_for(S, g, o, (f & 255) - 1);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) == 27) { a = a + 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    if (_gcr_slot(TOKVAL(S, a), gn, (f >> 8) & 1) == 0) { return 0; }
+    _gvk_tp = 0;
+    var dc = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    if (dc < 0) { return 1; }
+    if (TOKTYP(S, dc + 1) != 49) { return 1; }
+    var h = dc + 2;
+    while (TOKTYP(S, h) == 8) { h = h + 1; }
+    if (TOKTYP(S, h + 1) != 19) { return 1; }
+    var j = h + 2;
+    var sl = (f >> 8) & 1;
+    if (sl == 1) { while (TOKTYP(S, j) == 2) { j = j + 1; } if (TOKTYP(S, j) != 31) { return 1; } j = j + 1; }
+    if (_gs_targ_whole(S, j) == 1) { _gs_vtp(S, fi, j); }
+    return 1;
+}
+# 1 = the carrier `noff` has an entry for the struct named `gn` at `slot` (a `**G` one's 256 + slot too).
+fn _gcr_slot(noff, gn, slot): i64 {
+    var e = 0;
+    while (e < _gcr_n) {
+        if (load64(_gcr + e * 24) == noff) {
+            var es = load64(_gcr + e * 24 + 16) & 255;
+            if (es == slot) { if (load64(_gcr + e * 24 + 8) == gn) { return 1; } }
+        }
+        e = e + 1;
+    }
     return 0;
 }
 # ⛔ 6.7.16 (the user's D1, 2026-10-19) — TWO MORE SHAPES OF A BODY THAT ONLY WORKS WHEN T IS A STRUCT. `return &n;` in
@@ -15781,10 +16018,12 @@ fn _gs_asg_sres(S, fi, i): i64 {
     _gsw_ti = i;
     return 1;
 }
-# 1 = the name at token i is declared with an annotation that is one of fi's type parameters behind any `*`.
+# 1 = the name at token i is declared with an annotation that is one of fi's type parameters behind any `*`, or is an
+# untyped `var` holding a value of one (`_gs_vkind`, 6.7.16's D102).
 fn _gs_dst_tp(S, fi, i): i64 {
     var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
     if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) == 4) { if (TOKTYP(S, d - 1) == 3) { return _gs_vk_tp(S, fi, d + 2); } }   # 6.7.16 (D102)
     if (TOKTYP(S, d + 1) != 49) { return 0; }
     var h = d + 2;
     while (TOKTYP(S, h) == 8) { h = h + 1; }
@@ -16196,6 +16435,7 @@ fn _gen_rescan(S): i64 {
     while (k < n) {
         var fi = vec_get(_gsl_tab, k);
         var o = _gen_def_open(S, fi);
+        if (o >= 0) { if (GFBND(S, fi) > 1) { _bnd_sites(S, fi, o); } }   # 6.7.16 (D102): `var y = id(x);` below
         if (o >= 0) { _gen_record(S, fi, o); }
         k = k + 1;
     }

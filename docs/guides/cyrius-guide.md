@@ -7563,6 +7563,16 @@ returning a struct (`&n` is that struct only when `T` is it), and a struct resul
 by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
 kept the struct's first word. The refusal's note names the line that needs a struct (for a forwarder, the forward and
 then that line): *note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter*.
+An untyped local holding a value of `T` takes `T`'s type in each instance (6.7.16, the user's D102 of 2026-10-20):
+`fn g<T>(x: T): i64 { var y = x; return y.b; }` returns `q.b` from `g(q)`, as `var y: T = x;` does, and at a scalar `T`
+its `y.b` makes the generic a stub as `x.b` does — so do `y.m()`, a field store, `y = mk();` (a struct result over 8
+bytes stored in it), a forward of `y` into a stub and a closure reading `y.b` — while a bounded `T`'s `y.show()` calls
+the bound's impl, a scalar's included. The value is the whole initializer: `x` itself, wrapped (`(x)`), another such
+untyped local, a struct carrier `b: Box<T>` by value (the local is then a carrier, as `var c: Box<T>` is), or a generic
+call whose `: U` / `: G<..U..>` return binds `U` to such a value (`id(x)`, `id<T>(x)`, `idp(&x)`, `mkbox(x)`). A `*T`
+value (`var y = p;`), `*p`, `x.f` and `x + 1` leave the local untyped, as the instance does. Through 6.7.15 each such
+use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
+words).
 
 ```
 struct Pt { x; y; }

@@ -7,10 +7,17 @@
 # (the address of a T-typed local is the struct; the result is copied into y, or through p), a forwarder at a struct,
 # an untyped `var n = x;` at a struct, a fn returning its own `: T` (no such generic), and the one-word results a scalar
 # keeps (an 8-byte struct, a `Str` handle).
+# 6.7.16 (the user's D102, 2026-10-20), V1-V15: an untyped `var y = x;` holding a value of T takes T's type in each
+# instance — x itself, wrapped, through another untyped var, a generic call's `: U` / `: Box<U>` result bound to it, a
+# struct carrier `b: Box<T>` — so its field, store, method, `y = mkp()`, forward and closure uses run at a struct T
+# (each was "no struct type in scope for 'y'" at the definition), a bounded `y.show()` calls the bound's impl at every T,
+# and at a scalar T a body that only uses y as a word runs; the scalar calls of a struct use are refused
+# (struct_result_type_refused.sh TV*).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/str.cyr"
+include "lib/fnptr.cyr"
 include "lib/assert.cyr"
 
 struct S8 { v; }
@@ -32,6 +39,34 @@ fn gp<T>(x: T): i64 { var p: *T = &x; p = mkp(); return x.b - 400; }
 fn g8<T>(x: T): i64 { var y: T = mk8(); return y; }
 fn gs<T>(x: T): i64 { var y: T = mks(); return str_len(y); }
 
+struct Box<T> { v: T; n; }
+struct P { k; }
+trait Show { fn show(self): i64; }
+impl Show for Q { fn show(self): i64 { return self.a * 10 + self.b; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+impl Q { fn sum(self): i64 { return self.a + self.b; } }
+impl P { fn hm<T>(self, x: T): i64 { var y = x; return y.b + self.k; } }
+fn id<T>(v: T): T { return v; }
+fn idp<T>(p: *T): T { var r: T = *p; return r; }
+fn mkbox<T>(v: T): Box<T> { var b: Box<T>; b.v = v; b.n = 6; return b; }
+fn idpp<T>(pp: **T): T { var r: T = **pp; return r; }
+fn first<T>(b: Box<T>): T { var r: T = b.v; return r; }
+fn v15<T>(x: T): i64 { var p: *T = &x; var a = idpp(&p); var bx: Box<T>; bx.v = x; var b = first(bx); return a.a + b.b; }
+fn vb<T>(x: T): i64 { return x.b; }
+fn sh<U: Show>(v: U): i64 { return v.show(); }
+fn v1<T>(x: T): i64 { var y = x; return y.b; }
+fn v2<T>(x: T): i64 { var y = x; y = mkp(); return y.b - 400; }
+fn v3<T>(x: T): i64 { var z = (x); var y = z; return y.a * 10 + y.b; }
+fn v4<T>(x: T): i64 { var y = x; y.b = 9; return y.b * 10 + x.b; }
+fn v5<T>(x: T): i64 { var y = x; return y.sum(); }
+fn v6<T>(x: T): i64 { var y = x; return vb(y); }
+fn v7<T>(x: T): i64 { var a = id(x); var b = id<T>(x); var c = idp(&x); return a.a + b.b + c.a; }
+fn v8<T>(b: Box<T>): i64 { var y = b; return y.v.b * 10 + y.n; }
+fn v9<T>(x: T): i64 { var y = mkbox(x); return y.v.a * 10 + y.n; }
+fn v10<T>(x: T): i64 { var y = x; var f = |k| { return y.b + k; }; return fncall1(f, 1); }
+fn v11<T: Show>(x: T): i64 { var y = x; var z = id(x); return y.show() + sh(z); }
+fn v12<T>(x: T): i64 { var y = x; return y + 1; }
+
 fn run(): i64 {
     var s: S8; s.v = 7;
     var c1: S8 = h<S8>(s);
@@ -52,6 +87,23 @@ fn run(): i64 {
     assert_eq(gp(q), 44, "L10: p = mkp() (p: *T) at T = Q copies through p (x.b 444)");
     assert_eq(g8(5), 21, "L11: an 8-byte struct result into y: T at i64 keeps its word");
     assert_eq(gs(5), 3, "L12: a Str result into y: T at i64 keeps its handle");
+    assert_eq(v1(q), 8, "V1: var y = x; y.b at T = Q (the D102 repro's shape)");
+    assert_eq(v2(q), 44, "V2: var y = x; y = mkp() at T = Q copies (y.b 444)");
+    assert_eq(v3(q), 78, "V3: var z = (x); var y = z; at T = Q");
+    assert_eq(v4(q), 98, "V4: y.b = 9 stores into y's copy, x.b stays 8");
+    assert_eq(v5(q), 15, "V5: y.sum() at T = Q");
+    assert_eq(v6(q), 8, "V6: y forwarded to a stub generic at T = Q");
+    assert_eq(v7(q), 22, "V7: id(x), id<T>(x), idp(&x) at T = Q");
+    var bx: Box<Q>; bx.v = q; bx.n = 6;
+    assert_eq(v8(bx), 86, "V8: var y = b (b: Box<T>) at T = Q: y.v.b, y.n");
+    assert_eq(v9(q), 76, "V9: var y = mkbox(x) at T = Q: y.v.a, y.n");
+    assert_eq(v10(q), 9, "V10: a closure reads y.b at T = Q");
+    assert_eq(v11(q), 156, "V11: bounded y.show() and sh(id(x)) at T = Q");
+    assert_eq(v11(5), 210, "V12: bounded y.show() and sh(id(x)) at T = i64 call impl Show for i64");
+    assert_eq(v12(5), 6, "V13: y used as a word at a scalar T runs");
+    var pp = P { 10 };
+    assert_eq(pp.hm(q), 18, "V14: a generic method's var y = x; y.b at T = Q");
+    assert_eq(v15(q), 15, "V15: idpp(&p) (pp: **U) and first(bx) (b: Box<U>) at T = Q");
     return 0;
 }
 alloc_init();
