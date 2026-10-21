@@ -7491,6 +7491,10 @@ fn EMIT_GVAR_INITS(S): i64 {
     if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     var gc = L64(S + 0x19A000);
     var gi = 0;
+    # The latch as the replay found it: pass 2's silent re-read of a refused declaration (`const X;`) set it, and it
+    # keeps PARSE_PROG from reporting that declaration twice. An entry's latch is released at the loop's end, so it
+    # never swallows the program's first statement. CHANGELOG [6.7.16]
+    var p_in = _panic;
     while (gi < gc) {
         # 6.6.6: bits 40+ flag a target a later constant declaration superseded (_gv_supersede).
         var graw = L64(_gvt(S) + gi * 8);
@@ -7609,6 +7613,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         gi = gi + 1;
     }
+    _panic = p_in;
     if (_gvr_n > 0) { _gvr_hide(S, GTCNT(S)); }
     _gv_hide_program(S, 0);
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
