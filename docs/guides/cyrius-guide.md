@@ -1796,7 +1796,9 @@ storage in a fn's frame*; through 6.7.14 `G` held the first word, silently), and
 refusal is the one error. So does a whole if-expression whose branches are a struct of 8 bytes or less (6.7.16; the
 user's decision D16 (a), 2026-10-19): `var G = if (c) { B1 } else { B1 };` is that struct (`G.a` was *no struct type in
 scope for 'G'*; `G + G` dispatches `P1_add`), its first branch's struct as in a fn (a later branch of another type is
-refused once); a 16-byte struct branch is refused naming the struct (*an if expression branch cannot be a struct value
+refused once) — a generic call's or method's branch the instance its call makes, `if (c) { mkg1(P) } else { mkg1(P) }`
+is `G1<Pt>`, as is a branch naming a `G1<Pt>` global (in the declaration zone they bound nothing); a 16-byte struct
+branch is refused naming the struct (*an if expression branch cannot be a struct value
 over 8 bytes: struct 'P2'*; through 6.7.15 a 16-byte struct global there was refused as *a vector, u128 or slice value*)
 and `G` stays untyped, as in a fn. A `Str` and a name keep the word at top level; the overload dispatcher still routes an
 untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends

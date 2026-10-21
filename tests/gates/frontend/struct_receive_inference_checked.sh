@@ -2014,7 +2014,83 @@ rowf GZF6 'var x = mkc(idf(BX));' 'x.v + take4(x) - 33'
 for n in 1 2 3 4 5 6; do
     for zw in zone after; do runs "GZF$n$zw" 33 "the $zw: GZF$n's generic fixed-instance (or carried) return is that instance"; done
 done
-[ "$rows" -ge 492 ] || bad "only $rows rows ran (floor 492)"
+
+# ---- 6.7.16 (issues/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): a zone `var G = if (c) {
+# mkg1(P) } else { mkg1(P) };` bound nothing (`G.v`: "no struct type in scope for 'G'"), where after the first statement
+# and in a fn it binds `G1<Pt>` (D16 (a)): the first branch read as the generic struct's BASE (`_gz_gb`) and `_gu_ie`
+# declined every generic struct — a generic instance global's too (`GSTP` marks an instance as well). The first branch
+# that is a generic call's or method's `: G<..>` result is now the instance its call makes (`_gu_ieg`: `_gu_cg` /
+# `_gu_minst`, the 8 B test the instance's), any other branch's struct its own; the sweep's wide-branch read sizes the
+# instance (`_gu_bwide`), so a 16 B one marks G as refused. TI21 the filed repro verbatim (zone), after and in a fn;
+# TI22 a `b.mkg(P)` branch; TI23 `mkg1<i32>(33)`; TI24 wrapped; TI25 an elif chain; TI26 a write (G its own copy); TI27
+# a `G1<Pt>` global's name; TI28 `G1<i64>`; TI29 `mkg1(33)` (the base), each zone and after; TI30 a fn body reads G
+# before the replay; TI31 a 16 B instance branch: the two branch refusals, no `G.v` cascade (zone and after, a fn body
+# reading G); TI32 another instance in a later branch: the merge's one refusal; TI33 the sweep instances no fn (the
+# zone and after forms report the same unreachable-fn count).
+#   N93 `_gu_ie` declining a `: G<..>` branch (no `_gu_ieg`) -> RED 10: TI21zone-TI26zone TI29zone TI30 TI32zone x4 (TI32:
+#                                                           + "no struct type in scope for 'G'"), TI33 (no build)
+#   N94 `_gu_ie` declining a generic struct (GSTP) again   -> RED 12: TI21zone-TI29zone TI30 TI32zone x4, TI33
+#   N95 `_gu_bwide` without the instance's size            -> RED 1: TI31zone x4 (+ "no struct type in scope for 'G'")
+TIGH='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+struct P2 { a; b; }
+struct B1 { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn take4(g: G1<i32>): i64 { return g.v; }
+fn takep(g: G1<Pt>): i64 { return g.v.a; }
+impl B1 { fn mkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; } }
+var b = B1 { 1 };
+var P = Pt { 33 };
+var Q2 = P2 { 33, 4 };'
+# rowig <name> <declarations> <exit expression>: the zone file over $TIGH (`zafg` makes the after one)
+rowig() { printf '%s\n%s\nsyscall(60, %s);\n' "$TIGH" "$2" "$3" > "$T/$1zone.cyr"; zafg "$1"; }
+cat > "$T/TI21zone.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+var P = Pt { 33 };
+var G = if (1 == 1) { mkg1(P) } else { mkg1(P) };
+syscall(60, G.v.a);
+EOF
+zafg TI21
+cat > "$T/TI21fn.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Pt { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn f(): i64 { var p = Pt { 33 }; var g = if (1 == 1) { mkg1(p) } else { mkg1(p) }; return g.v.a; }
+syscall(60, f());
+EOF
+runs TI21fn 33 "a fn: the filed line's twin binds \`G1<Pt>\` (the control D16 (a) extends)"
+rowig TI22 'var G = if (1 == 1) { b.mkg(P) } else { b.mkg(P) };' 'G.v.a + takep(G) - 33'
+rowig TI23 'var G = if (1 == 1) { mkg1<i32>(33) } else { mkg1<i32>(3) };' 'take4(G) + G.v - 33'
+rowig TI24 'var G = (if (1 == 1) { ((mkg1(P))) } else { mkg1(P) });' 'G.v.a'
+rowig TI25 'var G = if (1 == 2) { mkg1(P) } elif (1 == 1) { b.mkg(P) } else { mkg1(P) };' 'G.v.a'
+rowig TI26 'var G = if (1 == 1) { mkg1(P) } else { mkg1(P) };
+G.v.a = 40;' 'G.v.a + P.a - 40'
+rowig TI27 'var GX = mkg1(P);
+var G = if (1 == 1) { GX } else { GX };' 'G.v.a'
+rowig TI28 'var GY: G1<i64> = mkg1(33);
+var G = if (1 == 1) { GY } else { GY };' 'G.v'
+rowig TI29 'var G = if (1 == 1) { mkg1(33) } else { mkg1(3) };' 'G.v'
+for n in 21 22 23 24 25 26 27 28 29; do
+    for zw in zone after; do runs "TI$n$zw" 33 "the $zw: TI$n's if-expression of generic instance branches binds the instance"; done
+done
+printf '%s\nvar G = if (1 == 1) { mkg1(P) } else { b.mkg(P) };\nfn f(): i64 { return G.v.a + takep(G); }\nsyscall(60, f() - 33);\n' "$TIGH" > "$T/TI30.cyr"
+runs TI30 33 "the zone: a fn body reads \`G.v.a\` and passes G before the replay"
+printf '%s\nvar G = if (1 == 1) { mkg1(Q2) } else { mkg1(Q2) };\nfn f(): i64 { return G.v.a; }\nsyscall(60, G.v.a + f());\n' "$TIGH" > "$T/TI31zone.cyr"
+zafg TI31
+for zw in zone after; do refused "TI31$zw" "an if expression branch cannot be a struct value over 8 bytes: struct 'G1\$P2'" "the $zw: a 16 B instance branch is refused at each branch, no \`G.v\` cascade" 2; done
+rowig TI32 'var G = if (1 == 1) { mkg1(P) } else { mkg1(33) };' 'G.v.a'
+for zw in zone after; do refused "TI32$zw" "if expression branches differ in type: struct 'G1' here, struct 'G1\$Pt' before it" "the $zw: another instance in a later branch is the merge's one refusal"; done
+rows=$((rows + 1))
+_u1=$("$CC" < "$T/TI22zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
+_u2=$("$CC" < "$T/TI22after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
+if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI33 the zone sweep instanced no fn: '$_u1' in both forms"
+else bad "TI33 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
+[ "$rows" -ge 517 ] || bad "only $rows rows ran (floor 517)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

@@ -239,6 +239,10 @@ var TI1 = if (1 == 1) { GP1 } else { mk1() };
 var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
 var TI3 = TI2 + TI2;
 fn ti_read(): i64 { return TI1.a + TI2.a; }
+# 6.7.16 (issues/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): branches that are a generic call's
+# or method's instance bind it (TI4 bound nothing: "no struct type in scope for 'TI4'").
+var TI4 = if (1 == 1) { mkg1(GP1) } else { GZB.zmkg(GP1) };
+fn ti_read2(): i64 { return TI4.v.a; }
 # --- 6.7.16: a `: Str` METHOD at top level routes its global as a Str (issues/2026-10-18-top-level-untyped-str-method-global-
 # prints-header-bytes.md) ---
 # `var s = BB.mks();` recorded no call (the record wanted `IDENT (`), so `println(s)` printed the header's bytes and
@@ -421,6 +425,9 @@ var TJ3 = TJ2 + TJ2;
 TJ1.a = 30;
 assert_eq(TJ1.a + d1(TJ1) + GP1.a, 93, "after a statement: TJ1 is its own P1 (GP1 unchanged), d1(TJ1) by value");
 assert_eq(TJ3.a, 34, "after a statement: an elif chain, TJ2 + TJ2 dispatches PM_add");
+assert_eq(TI4.v.a + ti_read2(), 66, "the zone: if (..) { mkg1(GP1) } else { GZB.zmkg(GP1) } is a G1<P1>, read by a fn body too");
+var TJ4 = if (1 == 1) { mkg1(GP1) } else { GZB.zmkg(GP1) };
+assert_eq(TJ4.v.a, 33, "after a statement: the same");
 
 test_group("6.7.16: a top-level : Str method global routes as a Str");
 assert_eq(who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3), 222, "the zone: GQB.qs(), (GQB.qs()), GQW.b.qs() route to who_str (111 before)");

@@ -12512,13 +12512,20 @@ fn _gz_tret(S, j, fi): i64 {
 }
 # `if (c) { a } [elif (d) { b }] else { c }` spanning [b, e): the first branch's struct — a name of a
 # struct global (inline or a handle: the branch takes its struct), else its value's (`_gz_ty`).
+# 6.7.16: the first branch's value is [`_gz_ieb`, `_gz_iee`), and `_gz_gb` is that value's own (a name sets none), so
+# `_gu_ie` resolves the instance a generic call's branch makes. CHANGELOG [6.7.16]
+var _gz_ieb = 0;
+var _gz_iee = 0;
 fn _gz_ie(S, b, e): i64 {
     _gz_k = 0;
+    _gz_gb = 0;
     if (TOKTYP(S, b + 1) != 10) { return 0; }
     var c = _gz_close(S, b + 1, e);
     if (TOKTYP(S, c + 1) != 13) { return 0; }
     var bc = _gz_close(S, c + 1, e);
     var t = _gz_bty(S, c + 2, bc);
+    _gz_ieb = c + 2;
+    _gz_iee = bc;
     var i = bc + 1;
     while (i < e) {
         var k = TOKTYP(S, i);
@@ -12819,13 +12826,26 @@ fn _gu_wsid(S, b): i64 {
 # first branch reads as (`_gz_ie`), when 8 B or less — `var G = if (1 == 1) { B1 } else { B1 };` was untyped, so `G.a`
 # was "no struct type in scope for 'G'". The first branch's, as the parse's merge keeps it (`_ie_merge`): a later
 # branch of another type is refused there, once, and G is still the first's (no `G.a` cascade, as in a fn). Over 8 B
-# the branches refuse themselves at the replay, naming the struct (`_ie_big_err`), and G stays untyped, as in a fn. A
-# generic struct's base is not bound (a generic call's branch reads as its base, not the instance its call makes). 0 =
-# not bound. CHANGELOG [6.7.16]
+# the branches refuse themselves at the replay, naming the struct (`_ie_big_err`), and G stays untyped, as in a fn.
+# 6.7.16: a first branch that is a generic call's (or method's) `: G<..>` result is the instance its call makes
+# (`_gu_ieg`), as a whole initialiser's is — `var G = if (c) { mkg1(P) } else { mkg1(P) };` bound nothing (`G.v`: "no
+# struct type in scope for 'G'"), where after the first statement and in a fn it binds `G1<Pt>`; the 8 B test is the
+# instance's. Any other branch's struct is its own — a generic instance global's (`GX` of `G1<Pt>`, even `G1<i64>`)
+# was declined with the bases (`GSTP` marks an instance too). 0 = not bound. CHANGELOG [6.7.16]
 fn _gu_ie(S, t): i64 {
+    if (_gz_gb == t) { t = _gu_ieg(S, t, _gz_ieb, _gz_iee); }
+    if (t <= 0) { return 0; }
     if (STRUCTSZ(S, t - 1) > 8) { return 0; }
-    if (GSTP(S, t - 1) != 0) { return 0; }
     return t;
+}
+# The instance the branch value [ab, ae) just read makes, that value a `: G<..>` result (G = `g`, `_gz_gb`): its last
+# step a generic method (`_gu_minst`, the state `_gz_ty` left), else one whole free generic call inside any wrap
+# (`_gu_cg`); 0 when it is neither.
+fn _gu_ieg(S, g, ab, ae): i64 {
+    if (_gz_mfi >= 0) { return _gu_ok(S, _gu_minst(S, g)); }
+    var a = _ie_unparen(S, ab, ae);
+    if (_gu_wfree(S, a, _ie_pe) == 0) { return 0; }
+    return _gu_ok(S, _gu_cg(S, a, g));
 }
 # 6.7.16 — the sweep's twin of `_ie_decl_mark` (parse_ctrl.cyr): the noted global whose whole initialiser at `ti`
 # (inside any wrap) is an if-expression a branch of which the replay refuses as a value over 8 bytes — a struct over
@@ -12875,10 +12895,14 @@ fn _gu_slit0(S, ti): i64 {
     return _ann_refd_mark(S, _slit_decl_name(S, ti - 1));
 }
 # 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes, read from its tokens with the sweep's own readers
-# (nothing instanced, no parse state): a struct over 8 B (`_gz_bty`; a `Str` is a handle), a vector or u128 name
-# (`_ie_wide_name`), a whole call of a non-generic fn returning a vector.
+# (no fn instanced, no parse state): a struct over 8 B (`_gz_bty`; a `Str` is a handle; 6.7.16: a generic call's or
+# method's `: G<..>` result sized as the instance it makes, `_gu_ieg`), a vector or u128 name (`_ie_wide_name`), a whole
+# call of a non-generic fn returning a vector.
 fn _gu_bwide(S, a, b): i64 {
+    _gz_gb = 0;
+    _gz_mfi = 0 - 1;
     var t = _gz_bty(S, a, b);
+    if (t > 0) { if (_gz_gb == t) { t = _gu_ieg(S, t, a, b); } }   # 6.7.16: a generic call's instance, its size
     if (t > 0) {
         if (t == _STR_SID(S)) { return 0; }
         if (STRUCTSZ(S, t - 1) > 8) { return 1; }
