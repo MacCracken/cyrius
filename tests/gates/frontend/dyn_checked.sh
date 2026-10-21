@@ -707,7 +707,7 @@ refused f08p12 "4:36: $F8PS" "F8p12: a \`p: *u128\` (a type) against \`p: i64\` 
 dlines() {   # <name> <what> <source> <want line>...: refused with exactly these error lines, in this order
     nm=$1; what=$2; printf '%b' "$3" > "$T/$nm.cyr"; shift 3
     build "$nm"
-    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    grep '^error' "$T/$nm.err" > "$T/$nm.got" || true
     : > "$T/$nm.want"
     for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
     if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"

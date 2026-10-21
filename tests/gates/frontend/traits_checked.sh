@@ -567,7 +567,7 @@ else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi
 lint_is() {   # <name> <what> [line:col message]...: --syntax-only gives exactly these error lines (none: rc 0, silent)
     nm=$1; what=$2; shift 2
     rc=0; "$CC" --syntax-only < "$T/$nm.cyr" > "$T/$nm.bin" 2> "$T/$nm.err" || rc=$?
-    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    grep '^error' "$T/$nm.err" > "$T/$nm.got" || true
     : > "$T/$nm.want"
     for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
     if [ "$#" -eq 0 ] && [ "$rc" -ne 0 ]; then bad "$what: rc $rc: $(tr '\n' '|' < "$T/$nm.got")"
