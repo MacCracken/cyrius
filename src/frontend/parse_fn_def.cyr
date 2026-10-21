@@ -3141,7 +3141,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (_b3t == 12) { break; }               # EOF guard
             # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
             # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
-            if (_refuse_nested_fn(S) == 0) {
+            if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
                 if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
                 elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
                 STI(S, GTI(S) + 1);

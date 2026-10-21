@@ -114,6 +114,17 @@
 #   MRG4 `_tok_in_cl` answering 0                       -> RED 1: AG5 (a closure's own `return &n` made hc a stub: hc(5) refused)
 #   MRG5 `_gs_tdep` without the untyped-var walk (0)    -> RED 1: RG6 (an untyped `var n = x;` read as typed by no T)
 #   real tree                                           -> GREEN (80 refusal rows — floor 80 — and 33 acceptance rows)
+# 6.7.16 (the user's D2, 2026-10-19; RD1-RD12, AD1-AD4): `return &n;` with n typed with no type parameter is refused at
+# the definition, called or not — the parsed base (`_ret_amp_bare` + `_ret_amp_tdep`) and a stub's skipped base
+# (`_ret_amp_stub`, from PARSE_FN_DEF's skip walk). The same scratch-tree mutants:
+#   MRD1 the tree before (d2742a654)                    -> RED 15: RD1 on the four compilers, RD2, RD4-RD13 (compiled;
+#                                                          RD3, a struct call, was the instance's refusal already)
+#   MRD2 `_ret_amp_bare` exempting the base again       -> RED 11: RD1 x4, RD2, RD4-RD9
+#   MRD3 `_b3_skip_tok` without `_ret_amp_stub`         -> RED 3: RD10-RD12 (the stub's skipped base)
+#   MRD4 `_ret_amp_stub` without `_tok_in_cl`           -> RED 1: AD3 (a closure's own `return &n` refused)
+#   MRD5 `_gs_ann_dep` reading a struct behind any `*`  -> RED 1: RD9 (`**S8` read as a struct pointer)
+#   MRD6 `_gs_init_dep` reading `sizeof(T)`'s T         -> RED 1: RD13 (n read as typed by T: no refusal)
+#   real tree                                           -> GREEN (93 refusal rows — floor 93 — and 37 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -573,6 +584,44 @@ accept "AG4 a : T return is no stub (ht(3) an address)" "$GH"'fn main(): i64 { v
     "$GH"'fn main(): i64 { return 8; }'"$GHE"
 accept "AG5 a closure's own return &n is no stub (hc(5))" "$GH"'fn main(): i64 { var c: S8 = hc(5); return c.v; }'"$GHE" 5 \
     "$GH"'fn main(): i64 { return 5; }'"$GHE"
+echo "=== return &n; (n typed with no type parameter) in a generic (6.7.16, the user's D2, 2026-10-19): refused at the definition ==="
+# `fn h<T>(x: T): S8 { var n = 5; return &n; }` — n can hold no struct at any T, so the line is refused as in a non-generic
+# fn, with D18's words at the `&n`, called or not (`_ret_amp_bare` / `_ret_amp_stub`, src/frontend/parse_fn.cyr). Through
+# 6.7.15 the base exempted it: a generic never called, or called only with an integer, compiled, and `h(3)` returned the
+# slot's address as c.v; a struct call was refused at the instance. A name typed by T is D1's (RG*).
+DH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+var GN = 5;
+'
+DE='
+syscall(60, 3);
+'
+DN="$MS — \`&n\` $SLOT n's slot, $NS"
+refuse4 "RD1 the decision's line, never called: var n = 5; return &n;" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }'"$DE"
+refuse "RD2 called only with an integer, h(3)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }
+fn main(): i64 { var c: S8 = h(3); return c.v; }'"$DE"
+refuse "RD3 called with a struct, h(s): once" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }
+fn main(): i64 { var s: S8; s.v = 7; var c: S8 = h(s); return c.v; }'"$DE"
+refuse "RD4 var n: i64 = 5; (annotated)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: i64 = 5; return &n; }'"$DE"
+refuse "RD5 a k: i32 parameter" "$MS — \`&k\` $SLOT k's slot, $NS" "$DH"'fn h<T>(x: T, k: i32): S8 { return &k; }'"$DE"
+refuse "RD6 an untyped parameter" "$MS — \`&k\` $SLOT k's slot, $NS" "$DH"'fn h<T>(x: T, k): S8 { return &k; }'"$DE"
+refuse "RD7 var n = k + 1; reading no T (k: i64)" "$DN" "$DH"'fn h<T>(x: T, k: i64): S8 { var n = k + 1; return &n; }'"$DE"
+refuse "RD8 var n: *i64 = 0;" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: *i64 = 0; return &n; }'"$DE"
+refuse "RD9 var n: **S8 = 0; (no type parameter)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: **S8 = 0; return &n; }'"$DE"
+refuse "RD10 a stub generic (x.v), never called: its skipped base" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; if (x.v == 1) { return &n; } return x; }'"$DE"
+refuse "RD11 a stub generic's return &GN; (a global), never called" "$MS — \`&GN\` $SLOT GN's slot, $NS" "$DH"'fn h<T>(x: T): S8 { if (x.v == 1) { return &GN; } return x; }'"$DE"
+refuse "RD12 a stub generic, wrapped return ((&n));" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; if (x.v == 1) { return ((&n)); } return x; }'"$DE"
+refuse "RD13 var n = sizeof(T); (an i64 at every T), never called" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = sizeof(T); return &n; }'"$DE"
+# What the definition keeps: a name typed by T (D1's stub, not this refusal), a stub's closure-local `return &n`.
+accept "AD1 var n: T = x; return &n; never called compiles" "$DH"'fn h<T>(x: T): S8 { var n: T = x; return &n; }'"$DE" 3 'syscall(60, 3);'
+accept "AD2 var n = x; (x: T) never called compiles" "$DH"'fn h<T>(x: T): S8 { var n = x; return &n; }'"$DE" 3 'syscall(60, 3);'
+accept "AD3 a stub's closure body keeps its own return &n" "$DH"'fn h<T>(x: T): S8 { var f = || { var n = 5; return &n; }; if (x.v == 1) { return x; } return x; }'"$DE" 3 'syscall(60, 3);'
+accept "AD4 a stub's struct global: return &GS; at S8" "$DH"'var GS = S8 { 9 };
+fn h<T>(x: T): S8 { if (x.v == 1) { return &GS; } return x; }
+fn main(): i64 { var s: S8; s.v = 1; var c: S8 = h(s); return c.v; }
+syscall(60, main());
+' 9 'syscall(60, 9);'
 # What stays: a const's and an enum constant's `&` keep the factor's own refusal (one error).
 refuse "R57 return &N; (a const) keeps its own refusal" "cannot take the address of const 'N'" "$NT"'const N = 3;
 fn h(): S { return &N; }'"$NE"
@@ -712,7 +761,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 80 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 80) — rows were lost"; exit 1; }
-[ "$naccept" -ge 33 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 33) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 93 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 93) — rows were lost"; exit 1; }
+[ "$naccept" -ge 37 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 37) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -3760,8 +3760,14 @@ fn _ret_slot_amp(S, a, pe): i64 {
 }
 # `& IDENT` of a name typed with no struct: refused as a slot when IDENT is a local, a parameter, a capture or a
 # global here (the `&` factor's ladder); 0 for anything else, left to the factor. 1 = refused. A generic's BASE body
-# (T bound to i64) leaves its locals, parameters and captures to its instances: `var n: T = x; return &n;` is the
-# struct at `<S8>` (D4 (a)), so the i64 reading must not refuse the definition. CHANGELOG [6.7.15]
+# (T bound to i64) leaves to its instances a name whose type can come from T: `var n: T = x; return &n;` is the
+# struct at `<S8>` (D4 (a)), so the i64 reading must not refuse the definition (its scalar calls are the stub's
+# refusal, 6.7.16's D1). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (the user's D2, 2026-10-19) — A NAME TYPED WITH NO TYPE PARAMETER IS JUDGED IN THE BASE TOO: `var n = 5;`,
+# `var n: i64`, `k: i32`, an untyped parameter, an untyped `var` reading nothing of T (`_gs_tdep` 0) holds no struct at
+# any T, so `return &n;` is refused at the definition with D18's words, called or not — the base exempted every local,
+# so a generic never called, or called only with an integer, compiled and `h(3)` returned the slot's address as the
+# struct. A stub's base is skipped, not parsed: `_ret_amp_stub` reads its `return &n;` from the tokens. CHANGELOG [6.7.16]
 fn _ret_amp_bare(S, a, noff): i64 {
     if (_asg_lvalue_is(S, noff) == 1) { return 0; }   # a const / an enum constant: the factor's refusal
     var k = 0;
@@ -3769,11 +3775,42 @@ fn _ret_amp_bare(S, a, noff): i64 {
         if (FINDLOCAL(S, noff) >= 0) { k = 1; }
         if (_hl_capn(S, noff) == 1) { k = 1; }
     }
-    if (k == 1) { if (_ret_gen_base(S) == 1) { return 0; } }
+    if (k == 1) { if (_ret_gen_base(S) == 1) { if (_ret_amp_tdep(S, a, noff) != 0) { return 0; } } }
     if (_findvar_core(S, noff) >= 0) { k = 1; }
     if (k == 0) { return 0; }
     _ret_slot_refuse(S, a, noff, 0, 0);
     return 1;
+}
+# `_gs_tdep` of the name the `&` at token a takes, in the generic whose base is being parsed (6.7.16's D2).
+fn _ret_amp_tdep(S, a, noff): i64 {
+    var fi = _cur_fn_ix;
+    return _gs_tdep(S, fi, _gen_def_open(S, fi), a + 1, noff, 0);
+}
+# ⛔ 6.7.16 (the user's D2) — THE BASE OF A STUB GENERIC IS SKIPPED, NOT PARSED (PARSE_FN_DEF's `_b3_skip`), so its
+# `return &n;` never reached `_ret_amp_bare`: it is read from the tokens at each `return` the skip walks (`_b3_skip_tok`),
+# outside a closure literal's body. A name typed with no type parameter (`_gs_tdep` 0) is refused with D18's words, a
+# global as the parsed body judges it (`_ret_slot_amp`); a name typed by T is the stub's (D1). CHANGELOG [6.7.16]
+fn _ret_amp_stub(S): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return 0; }
+    var i = GTI(S);
+    var j = _ret_amp_shape(S, i);
+    if (j < 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_tok_in_cl(S, o, i) == 1) { return 0; }
+    var noff = TOKVAL(S, j + 1);
+    var d = _gs_tdep(S, fi, o, j + 1, noff, 0);
+    if (d == 0) { _ret_slot_refuse(S, j, noff, 0, 0); return 0; }
+    if (d == 2) { _ret_slot_amp(S, j, j + 2); }
+    return 0;
+}
+# A token of a stub generic's skipped base body: a nested `fn` refused (6.6.16, `_refuse_nested_fn`), and (6.7.16's D2)
+# a `return &n;` judged from the tokens (`_ret_amp_stub`). 1 = a nested fn was consumed.
+fn _b3_skip_tok(S): i64 {
+    if (PEEKT(S) == 33) { _ret_amp_stub(S); }
+    return _refuse_nested_fn(S);
 }
 # 1 while a generic fn's base body is parsed (its type parameters bound to i64), not an instance's.
 fn _ret_gen_base(S): i64 {
@@ -15090,15 +15127,16 @@ fn _gs_tdep(S, fi, a, r, noff, dep): i64 {
     if (_tok_init_sid(S, a, d, d + 2) > 0) { return 3; }
     return _gs_init_dep(S, fi, a, d + 2, dep);
 }
-# The annotation at token `at`: 3 when it names a struct (behind any `*`), 1 when it names one of fi's type
-# parameters anywhere (`T`, `*T`, `T[4]`, `Vec<T>`), else 0.
+# The annotation at token `at`: 3 when it is a struct, or one `*` to one (the parse types such a name, and judges its
+# `&` itself), 1 when it names one of fi's type parameters anywhere (`T`, `*T`, `T[4]`, `Vec<T>`, `**Box<T>`), else 0
+# (`i64`, `*i64`, `**S8`, `S8[2]`: no struct at any T). CHANGELOG [6.7.16]
 fn _gs_ann_dep(S, fi, at): i64 {
     var h = at;
-    while (TOKTYP(S, h) == 8) { h = h + 1; }
-    if (TOKTYP(S, h) == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, h)) == 0) {
-            if (FINDSTRUCT(S, TOKVAL(S, h)) > 0) { return 3; }
-        } }
+    if (TOKTYP(S, h) == 8) { h = h + 1; }
     var e = _asa_end(S, at);
+    if (TOKTYP(S, h) == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, h)) == 0) { if (_gs_ann_arr(S, h, e) == 0) {
+                if (FINDSTRUCT(S, TOKVAL(S, h)) > 0) { return 3; }
+            } } }
     var j = at;
     while (j < e) {
         if (TOKTYP(S, j) == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { return 1; } }
@@ -15106,16 +15144,33 @@ fn _gs_ann_dep(S, fi, at): i64 {
     }
     return 0;
 }
+# 1 = the annotation from its type's name at token h to token e is an array (`S8[2]`).
+fn _gs_ann_arr(S, h, e): i64 {
+    while (h < e) {
+        if (TOKTYP(S, h) == 28) { return 1; }
+        h = h + 1;
+    }
+    return 0;
+}
 # An untyped `var`'s initializer from token j: 1 when it reads a value typed by T, a type parameter or a
-# generic fn, else 0 (literals, globals, non-generic calls, fields of other values).
+# generic fn, else 0 (literals, globals, non-generic calls, fields of other values, `sizeof(..)` — an i64 at every T).
 fn _gs_init_dep(S, fi, a, j, dep): i64 {
     var e = _gs_expr_end(S, j);
     while (j < e) {
-        if (TOKTYP(S, j) == 2) { if (_gs_name_dep(S, fi, a, j, dep) == 1) { return 1; } }
+        if (TOKTYP(S, j) == 2) {
+            if (_gs_sizeof_at(S, j) == 1) { j = _call_close(S, j + 1); }
+            elif (_gs_name_dep(S, fi, a, j, dep) == 1) { return 1; }
+        }
         j = j + 1;
     }
     return 0;
 }
+# 1 = token j opens `sizeof(..)`.
+fn _gs_sizeof_at(S, j): i64 {
+    if (TOKTYP(S, j + 1) != 10) { return 0; }
+    return _noff_is(S, TOKVAL(S, j), "sizeof", 6);
+}
+# A name at token j of that initializer: 1 when it is a type parameter, a local or parameter typed by T, or a generic fn.
 fn _gs_name_dep(S, fi, a, j, dep): i64 {
     if (TOKTYP(S, j - 1) == 41) { return 0; }   # a field's name
     var noff = TOKVAL(S, j);

@@ -1945,7 +1945,11 @@ scalar instance: `h(3)`, `h<i32>(4)` and `&h` are refused at the call, *generic 
 instance*, its note naming the `&n` (so is a generic forwarding its `T` to h, and `n` may be a `p: *T`, a `var n: T` or
 an untyped `var n = x;` from one); a fn returning its own `: T`, and a closure's own `return &n`, are no such generic.
 Through 6.7.15 the base, which is also the `T = i64` instance, was not judged, and `h(3)` returned a dead slot's
-address as the struct (`h<i32>(4)` was the slot's refusal).
+address as the struct (`h<i32>(4)` was the slot's refusal). A name typed with no type parameter — `var n = 5;`,
+`var n: i64`, `k: i32`, an untyped parameter, an untyped `var` reading nothing of `T` (`sizeof(T)` is an i64 at every
+`T`), a `**S` — holds no struct at any `T`, so `fn h<T>(x: T): S8 { var n = 5; return &n; }` is refused at the `&n`
+with the words above, called or not, as in a non-generic fn (6.7.16, the user's D2 of 2026-10-19; through 6.7.15 such a
+generic compiled when it was never called, or called only with an integer).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
