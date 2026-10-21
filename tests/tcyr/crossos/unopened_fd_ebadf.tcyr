@@ -1,0 +1,201 @@
+# unopened_fd_ebadf.tcyr — 6.7.16: a close / read / write / seek / fsync / ftruncate of an fd that
+# was never opened answers -9 (EBADF) on every target, and the descriptor beside it is untouched.
+#
+# ⛔ THE DEFECT (issues/2026-10-20-pe-fd-not-multiple-of-four-aliases-the-handle-below-it.md). On
+# Windows an fd above 2 IS the HANDLE, and the NT kernel ignores a HANDLE value's two low bits: fd
+# `h + 1` / `h + 2` / `h + 3` reached CloseHandle / ReadFile / WriteFile / SetFilePointerEx /
+# FlushFileBuffers / SetEndOfFile as the live file `h`. The filed alias printed `52 0 -9 -9` under
+# wine and `244 0 -9 -9` on cass (Linux `3 -9 3 0`): `sys_close(h + 3)` answered 0 and closed `h`,
+# whose own write and close then failed -9; a write to `h + 1` wrote into `h`'s file and an
+# ftruncate of `h + 2` truncated it.
+#
+# THE FIX. Every fd reroute (src/backend/x86/emit.cyr: the close site, and `_pe_fd_to_handle_rcx`
+# behind read / write / seek / fsync / fdatasync / ftruncate) answers -9 for an fd whose low bits are
+# set before any Win32 call, as Linux answers an fd it never handed out. A handle cyrius hands out
+# as an fd above 2 is a multiple of 4, so no live descriptor is refused. The negative fds with a low
+# bit set — -1 / -2 are Windows' current-process / -thread pseudo-handles — take the same -9.
+# Every name is per process (test_scratch). CHANGELOG [6.7.16]
+#
+# The same value reached Winsock and kernel32's lock calls through the stdlib wrappers that hand an
+# fd to a raw handle reroute — on cass `closesocket(s + 3)` closed the socket `s` and answered 0,
+# and `getsockname(s + 1)` / `listen(s + 1)` acted on `s` (wine the same). Those wrappers
+# (lib/syscalls_windows.cyr's socket calls and fd_wait_ready, lib/net.cyr's Winsock primitives,
+# xflock's lock pair, lib/tls_native_conn.cyr's and lib/async_win.cyr's transport leaves,
+# win_handle_under) answer -9 for it first (`_win_fd_aliases`); the last two groups pin the public
+# ones. cx serves no socket verb with a pointer argument and a Windows host no flock (-38), so the
+# socket group is skipped there and the lock rows take either answer.
+#
+# An fd the process INHERITED (the 6.7.16 pw review). On a POSIX target `h + k` is only free when
+# the harness handed the process nothing there: run as `./t 5>file`, the rows wrote "x" into the
+# harness's descriptor, truncated it and closed it. Every `h + k` / `s + k` is asked first
+# (`_ufe_free`: F_GETFD answers -9 only for a free slot), and a held one prints a SKIP line and runs
+# none of its rows. On Windows a value with a low bit set is never a handle, so nothing is asked;
+# with no inherited fd the row count per target is unchanged.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var p = test_scratch("ufe_probe.tmp");
+var h = file_open(p, O_RDWR | O_CREAT | O_TRUNC, 420);
+assert_eq(h >= 0, 1, "the fixture opens");
+assert_eq(file_write(h, "abcdefgh", 8), 8, "eight bytes written to it");
+var buf[16];
+
+# 1 when `fd` is no descriptor of this process (see the header), so a row may write to it and close
+# it; 0 for one inherited from the harness.
+fn _ufe_free(fd): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var r = sys_fcntl(fd, 1, 0);               # F_GETFD
+    if (r == 0 - 9) { return 1; }
+    #ifdef CYRIUS_TARGET_CX
+    if (r == 0 - 38) { return 1; }             # a Windows host: no fcntl route, and no low-bit handle
+    #endif
+    return 0;
+    #endif
+}
+
+# `fd`'s free answer, after printing a SKIP line for a held one.
+fn _ufe_check(fd): i64 {
+    var fr = _ufe_free(fd);
+    if (fr == 0) {
+        var sm = "  SKIP: fd ";
+        sys_write(1, sm, strlen(sm));
+        str_print(str_from_int(fd));
+        var sm2 = " is inherited (open in this process); its rows would write to it and close it\n";
+        sys_write(1, sm2, strlen(sm2));
+    }
+    return fr;
+}
+
+#ifdef CYRIUS_TARGET_AGNOS
+# agnos's descriptors are its own table's slots; what it answers for one never handed out is the
+# kernel's (no -errno convention there), so only the fixture's own rows run.
+var ska = "  SKIP: agnos answers an unopened fd in its own convention; the fixture rows run\n";
+sys_write(1, ska, strlen(ska));
+#endif
+
+#ifndef CYRIUS_TARGET_AGNOS
+test_group("an fd beside an open one, never opened itself, is -EBADF (the filed alias)");
+var k = 1;
+while (k < 4) {
+    var f = h + k;
+    if (_ufe_check(f) == 1) {
+        assert_eq(sys_write(f, "x", 1), 0 - 9, "sys_write(h + k) is -9 (Windows wrote into h's file)");
+        assert_eq(sys_read(f, &buf, 1), 0 - 9, "sys_read(h + k) is -9 (Windows read h's file)");
+        assert_eq(sys_lseek(f, 0, 0), 0 - 9, "sys_lseek(h + k) is -9 (Windows moved h's pointer)");
+        assert_eq(xfsync(f), 0 - 9, "xfsync(h + k) is -9 (Windows flushed h)");
+        assert_eq(sys_ftruncate(f, 1), 0 - 9, "sys_ftruncate(h + k) is -9 (Windows truncated h's file)");
+        assert_eq(sys_close(f), 0 - 9, "sys_close(h + k) is -9 (Windows closed h and answered 0)");
+    }
+    k = k + 1;
+}
+
+test_group("a negative fd is no descriptor in a read, write, seek, fsync or ftruncate either");
+assert_eq(sys_write(0 - 1, "x", 1), 0 - 9, "sys_write(-1) is -9");
+assert_eq(sys_read(0 - 2, &buf, 1), 0 - 9, "sys_read(-2) is -9");
+assert_eq(sys_lseek(0 - 3, 0, 1), 0 - 9, "sys_lseek(-3) is -9");
+assert_eq(xfsync(0 - 1), 0 - 9, "xfsync(-1) is -9");
+assert_eq(sys_ftruncate(0 - 2, 1), 0 - 9, "sys_ftruncate(-2) is -9");
+
+test_group("xflock of an fd never opened is -EBADF, and takes no lock");
+var lk = 1;
+while (lk < 4) {
+    if (_ufe_check(h + lk) == 1) {
+        var lr = xflock(h + lk, LOCK_EX | LOCK_NB);
+        var lok = 0;
+        if (lr == 0 - 9) { lok = 1; }
+        #ifdef CYRIUS_TARGET_CX
+        if (lr == 0 - 38) { lok = 1; }         # a Windows host has no flock route
+        #endif
+        assert_eq(lok, 1, "xflock(h + k, LOCK_EX) is -9 (Windows locked h's file and answered 0)");
+    }
+    lk = lk + 1;
+}
+var h2 = file_open(p, O_RDONLY, 0);            # opened after: on POSIX it may be h + 1
+assert_eq(h2 >= 0, 1, "a second descriptor on the fixture opens");
+var l2 = xflock(h2, LOCK_EX | LOCK_NB);
+var l2ok = 0;
+if (l2 == 0) { l2ok = 1; }
+#ifdef CYRIUS_TARGET_CX
+if (l2 == 0 - 38) { l2ok = 1; }
+#endif
+assert_eq(l2ok, 1, "the file is not locked: another descriptor takes LOCK_EX at once (Windows -11)");
+xflock(h2, LOCK_UN);
+file_close(h2);
+#endif
+
+#ifndef CYRIUS_TARGET_AGNOS
+#ifdef CYRIUS_TARGET_CX
+var skx = "  SKIP: cx serves no socket verb with a pointer argument; the socket group runs natively\n";
+sys_write(1, skx, strlen(skx));
+#endif
+#ifndef CYRIUS_TARGET_CX
+test_group("a socket call on an fd never opened is -EBADF, and the socket beside it is untouched");
+var stg, sk = tcp_socket();
+assert_eq(is_ok(stg), 1, "a TCP socket opens");
+var btg, bvv = sock_bind(sk, INADDR_LOOPBACK(), 0);
+assert_eq(is_ok(btg), 1, "it binds to the loopback");
+var sa[32];
+var sl[8];
+var sf1 = _ufe_check(sk + 1);
+var sf2 = _ufe_check(sk + 2);
+var sf3 = _ufe_check(sk + 3);
+var sk1 = 1;
+while (sk1 < 4) {
+    store64(&sl, 16);
+    if (_ufe_free(sk + sk1) == 1) {
+        assert_eq(sys_getsockname(sk + sk1, &sa, &sl), 0 - 9, "getsockname(s + k) is -9 (Windows named s)");
+    }
+    sk1 = sk1 + 1;
+}
+if (sf1 == 1) {
+    assert_eq(sys_listen(sk + 1, 1), 0 - 9, "listen(s + 1) is -9 (Windows made s listen)");
+}
+if (sf2 == 1) {
+    var et, ev = sock_send(sk + 2, "x", 1);
+    assert_eq(is_err_result(et), 1, "sock_send(s + 2) is Err");
+    assert_eq(ev, 9, "...EBADF");
+}
+if (sf3 == 1) {
+    var rt2, rv2 = sock_recv(sk + 3, &buf, 1);
+    assert_eq(is_err_result(rt2), 1, "sock_recv(s + 3) is Err");
+    assert_eq(rv2, 9, "...EBADF");
+}
+if (sf1 == 1) {
+    assert_eq(sock_set_nodelay(sk + 1, 1), 0 - 9, "sock_set_nodelay(s + 1) is -9");
+}
+if (sf2 == 1) {
+    assert_eq(sock_shutdown(sk + 2, 2), 0 - 9, "sock_shutdown(s + 2) is -9");
+}
+if (sf3 == 1) {
+    assert_eq(fd_wait_ready(sk + 3, 0, 0), 0 - 9, "fd_wait_ready(s + 3) is -9");
+    assert_eq(sock_close(sk + 3), 0 - 9, "sock_close(s + 3) is -9 (Windows closed s and answered 0)");
+}
+store64(&sl, 16);
+assert_eq(sys_getsockname(sk, &sa, &sl), 0, "s itself is still open and bound");
+assert_eq(sock_close(sk), 0, "s closes: 0");
+#endif
+#endif
+
+test_group("the open descriptor beside them is untouched");
+assert_eq(sys_lseek(h, 0, 1), 8, "its file pointer is where its own write left it");
+assert_eq(sys_lseek(h, 0, 2), 8, "its file is still eight bytes long");
+assert_eq(file_write(h, "ijk", 3), 3, "it still writes");
+assert_eq(sys_close(h), 0, "it still closes: 0");
+var r2 = file_open(p, O_RDONLY, 0);
+assert_eq(r2 >= 0, 1, "the fixture reopens");
+assert_eq(file_read(r2, &buf, 16), 11, "it holds its own eleven bytes and nothing else");
+assert_eq(load8(&buf + 8), 105, "...the last write's 'i' at offset 8");
+file_close(r2);
+xunlink(p);
+
+var r = assert_summary();

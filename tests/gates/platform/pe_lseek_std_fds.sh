@@ -36,7 +36,8 @@
 #           before the map and reloaded into rdx / r9 after it, and the frame's `sub` and `add`
 #           equal (0x40, or 0x48 at odd depth). At least 2 sites (anti-vacuous). CI has no wine:
 #           this axis is what pins the fix there. 6.7.16: between the GetStdHandle call and the
-#           SetFilePointerEx call, `call <seek check>; test %rax,%rax; jne` to the frame's `add`; every
+#           SetFilePointerEx call, `call <seek check>; test %rax,%rax; jne` to the frame's `add` (or
+#           to the `jmp` over the low-bit fd's -9, 6.7.16, that lands on it); every
 #           site shares ONE seek-check stub, whose body reads GetFileType, `cmp $0x3` / `je`, `cmp $0x2`
 #           / `jne`, GetConsoleMode, `mov $-29,%rax` and `mov %rbx,%rcx` (the HANDLE kept) in order.
 #   axis 3  BEHAVIOUR under wine (skipped without wine — NOT hardware; the real-cass run is in
@@ -195,7 +196,7 @@ else
                         if (sb == 0 && t[k] ~ /^sub +\$0x[0-9a-f]+,%rsp/) sb = k
                     }
                     ad = 0
-                    for (k = i + 1; k <= n && k <= i + 6; k++) if (t[k] ~ /^add +\$0x[0-9a-f]+,%rsp/) { ad = k; break }
+                    for (k = i + 1; k <= n && k <= i + 9; k++) if (t[k] ~ /^add +\$0x[0-9a-f]+,%rsp/) { ad = k; break }
                     if (cm == 0) why = "BAD:no-std-fd-test(cmp $0x2,%rax)"
                     else if (sd == 0 || s9 == 0) why = "BAD:offset-whence-not-parked-before-GetStdHandle"
                     else if (rd == 0 || r9 == 0) why = "BAD:offset-whence-not-reloaded-after-GetStdHandle"
@@ -207,6 +208,8 @@ else
                     if (kc != 0) { ks = t[kc]; sub(/^call +/, "", ks); sub(/ .*/, "", ks) }
                     if (why == "ok") {
                         jt = t[kc + 2]; sub(/^jne +/, "", jt); sub(/ .*/, "", jt)
+                        # 6.7.16: it may land on the `jmp` over the low-bit fd -9, which lands on the add.
+                        for (k = i + 1; k < ad; k++) if (a[k] == jt && t[k] ~ /^jmp /) { jt = t[k]; sub(/^jmp +/, "", jt); sub(/ .*/, "", jt) }
                         if (kc == 0) why = "BAD:no-seek-check-call-before-it"
                         else if (t[kc + 1] !~ /^test +%rax,%rax/ || t[kc + 2] !~ /^jne /) why = "BAD:the-seek-check-answer-is-not-tested"
                         else if (jt != a[ad]) why = "BAD:-29-does-not-skip-to-the-frame-add(" jt "/" a[ad] ")"

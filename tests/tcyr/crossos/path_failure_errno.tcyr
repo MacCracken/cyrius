@@ -22,6 +22,26 @@
 # both seeks had just accepted); both are -22 now. Darwin truncates its null device as a no-op, so
 # macOS answers its own 0 there (measured on ecb and ach). truncate by path is -22 everywhere, macOS
 # included. A cx guest reads its host's answer: -22 on the x86_64 Linux cxvm.
+#
+# rename / symlink / fsync (issues/2026-10-20-pe-rename-symlink-fsync-answer-minus-one-for-every-
+# failure.md; 6.7.16's D94, the user, 2026-10-20: "Yes, extend D79"). MoveFileExW, CreateSymbolicLinkW
+# and FlushFileBuffers folded their BOOL to -1 for every failure (`dec; sar`, sys_symlink's fold,
+# `cmp; sbb`): the filed rsfail printed `-1 -1 -1` on cass and wine (Linux `-2 -2 -9`). Each FALSE
+# now goes through the same table: a missing source or directory -2, an existing link name -17, a
+# closed fd -9. Linux and macOS fsync a read-only descriptor; Windows refuses it ERROR_ACCESS_DENIED,
+# -13 (it was -1). A Windows without Developer Mode refuses a non-elevated link with a code the
+# table leaves -1; the made-link rows then report that and skip. A path error comes before that
+# refusal (a missing directory -2, an existing name -17), so those rows run everywhere.
+#
+# A directory (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-answer-eacces-not-eisdir.md;
+# 6.7.16's D95, the user, 2026-10-20: "-21 as Linux"). CreateFileW and DeleteFileW refuse a
+# directory ERROR_ACCESS_DENIED, -13 through the table, so the filed dirfail printed `-13 -13 -13
+# -13` on cass and wine (Linux `-21 -21 -21 -21`). On a -13 the Windows peer now asks the name: a
+# directory is -21 (an exclusive create over one -17, Linux's EEXIST); a refusal of anything else
+# stays -13 — a file another handle holds open refuses DeleteFileW with a sharing violation there
+# (Linux unlinks it: 0). Darwin answers an unlink of a directory EPERM (-1), its own errno (measured
+# on ecb and ach); its open and truncate say EISDIR. A read-only open of a directory opens on Linux
+# and macOS and stays -13 on Windows (it takes O_DIRECTORY there).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -46,6 +66,18 @@ nulname = "NUL";
 #endif
 #ifdef CYRIUS_TARGET_MACOS
 nul_ftrunc = 0;
+#endif
+
+# What unlink of a directory answers: EISDIR on Linux and Windows, Darwin's EPERM.
+var unlink_dir = 0 - 21;
+#ifdef CYRIUS_TARGET_MACOS
+unlink_dir = 0 - 1;
+#endif
+
+# What fsync of a read-only descriptor answers: Linux and macOS flush it; Windows refuses it.
+var ro_fsync = 0;
+#ifdef CYRIUS_TARGET_WIN
+ro_fsync = 0 - 13;
 #endif
 
 # The NUL-terminated `a` followed by `b`, in a fresh allocation.
@@ -116,6 +148,87 @@ if (nul >= 0) { sys_close(nul); }
 assert_eq(sys_truncate(nulname, 3), 0 - 22, "truncate of the null device is -22 (Windows answered -1)");
 assert_eq(sys_truncate(m, 3), 0 - 2, "truncate of a missing path is -2 (Windows answered -1)");
 assert_eq(sys_truncate(f, 1), 0, "a good truncate is 0");
+
+test_group("file_rename / xsymlink / xfsync answer the errno (6.7.16's D94)");
+assert_eq(file_rename(m, _pfe_join(d, "/x")), 0 - 2, "rename of a missing path is -2 (Windows answered -1)");
+assert_eq(file_rename(f, _pfe_join(m, "/x")), 0 - 2, "rename into a missing directory is -2 (Windows answered -1)");
+# A path error is answered before Windows' link policy, so these two run elevated or not (a
+# non-elevated process read -1 for both until the 6.7.16 pw review: sys_symlink's flagless retry).
+assert_eq(xsymlink("f", _pfe_join(m, "/l")), 0 - 2, "a link under a missing directory is -2, elevated or not (Windows answered -1)");
+assert_eq(xsymlink("x", f), 0 - 17, "a link over an existing file is -17, elevated or not (Windows answered -1)");
+var lnk = _pfe_join(d, "/l");
+var lk = xsymlink("f", lnk);
+#ifdef CYRIUS_TARGET_WIN
+if (lk == 0 - 1) {
+    var skl = "  SKIP: this Windows refuses a non-elevated link (no Developer Mode); the made-link rows need one\n";
+    sys_write(1, skl, strlen(skl));
+}
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_eq(lk, 0, "a link beside its target is made");
+#endif
+if (lk == 0) {
+    assert_eq(xsymlink("f", lnk), 0 - 17, "a link over an existing link is -17 (Windows answered -1)");
+    assert_eq(xunlink(lnk), 0, "the link unlinks");
+}
+var cf = file_open(f, O_RDONLY, 0);
+file_close(cf);
+assert_eq(xfsync(cf), 0 - 9, "fsync of a closed descriptor is -9 (Windows answered -1)");
+assert_eq(xfsync(0 - 999), 0 - 9, "fsync of a non-descriptor is -9 (the filed rsfail; Windows answered -1)");
+var rf = file_open(f, O_RDONLY, 0);
+assert_eq(rf >= 0, 1, "the fixture opens read-only");
+assert_eq(xfsync(rf), ro_fsync, "fsync of a read-only descriptor: 0, and -13 on Windows (it answered -1)");
+file_close(rf);
+var wf = file_open(f, O_WRONLY, 0);
+assert_eq(xfsync(wf), 0, "fsync of a writable descriptor is 0");
+file_close(wf);
+
+test_group("a directory answers EISDIR (6.7.16's D95)");
+var ud = sys_unlink(d);
+var xud = xunlink(d);
+#ifdef CYRIUS_TARGET_CX
+if (ud == 0 - 1) { ud = 0 - 21; }            # a cx guest on a Darwin host reads Darwin's EPERM
+if (xud == 0 - 1) { xud = 0 - 21; }
+#endif
+assert_eq(ud, unlink_dir, "unlink of a directory is -21 (Darwin -1; Windows answered -13)");
+assert_eq(xud, unlink_dir, "xunlink of a directory is the same (Windows answered -13)");
+assert_eq(sys_truncate(d, 1), 0 - 21, "truncate of a directory is -21 (Windows answered -13)");
+assert_eq(file_open(d, O_WRONLY, 0), 0 - 21, "open of a directory for writing is -21 (Windows answered -13)");
+assert_eq(file_open(d, O_RDWR, 0), 0 - 21, "open of a directory read-write is -21 (Windows answered -13)");
+assert_eq(file_open(d, O_WRONLY | O_CREAT, 420), 0 - 21, "O_CREAT over a directory is -21 (Windows answered -13)");
+assert_eq(file_open(d, O_RDONLY | O_TRUNC, 0), 0 - 21, "O_TRUNC of a directory is -21 (Windows answered -13)");
+assert_eq(file_open(d, O_WRONLY | O_CREAT | O_EXCL, 420), 0 - 17, "an exclusive create over a directory is -17 (EEXIST; real Windows answered -13)");
+assert_eq(file_create_exclusive(d, 420), 0 - 17, "file_create_exclusive of a directory is -17");
+var rdd = file_open(d, O_RDONLY, 0);
+#ifdef CYRIUS_TARGET_WIN
+assert_eq(rdd, 0 - 13, "a read-only open of a directory stays -13 on Windows (O_DIRECTORY opens one)");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_eq(rdd >= 0, 1, "a read-only open of a directory opens");
+if (rdd >= 0) { sys_close(rdd); }
+#endif
+# A refusal of what is no directory stays -13.
+var held = _pfe_join(d, "/held");
+var hf = file_open(held, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_eq(hf >= 0, 1, "a file to hold open is made");
+var hu = sys_unlink(held);
+#ifdef CYRIUS_TARGET_WIN
+assert_eq(hu, 0 - 13, "unlink of a file another handle holds open stays -13 on Windows (a sharing refusal, no directory)");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_eq(hu, 0, "unlink of a file held open is 0");
+#endif
+if (hf >= 0) { sys_close(hf); }
+xunlink(held);
+#ifndef CYRIUS_TARGET_WIN
+var rof = _pfe_join(d, "/ro");
+var rc0 = file_open(rof, O_WRONLY | O_CREAT | O_TRUNC, 292);   # 0444
+if (rc0 >= 0) { sys_close(rc0); }
+if (sys_getuid() != 0) {
+    assert_eq(file_open(rof, O_WRONLY, 0), 0 - 13, "open of a read-only file for writing stays -13");
+}
+xunlink(rof);
+#endif
 
 test_group("cleanup succeeds");
 assert_eq(sys_unlink(f), 0, "unlink of the file is 0");

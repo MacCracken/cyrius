@@ -39,7 +39,9 @@
 #           can see it — and file_create_exclusive's and _io_tmp_taken's CYRIUS_TARGET_WIN arms must
 #           classify a -13 by asking the name (`== 0 - 13`), or file_create_exclusive(dir) is -13
 #           and an atomic write fails at a planted directory instead of moving on (measured on cass:
-#           pe_open_failure_errno and atomic_write_temp_exclusive red).
+#           pe_open_failure_errno and atomic_write_temp_exclusive red). Since 6.7.16 (D95) sys_open
+#           answers that -13 with -17 itself; the two arms stay as the backstop for a refusal of an
+#           existing name that is no directory, and this axis keeps reading them.
 #
 # MUTATION LEDGER — every mutant BUILT AND RUN 2026-10-16 (6.7.14 platform lane, P1; x86_64 Linux
 # + wine 11.19; CYCC=<mutant cycc> for the compiler rows):
@@ -159,6 +161,107 @@
 #                                                           wine: the null-device rows read -9); cass 27 / 27
 #   _win_ftrunc_err's -1 -> -22 dropped (lib)               wine 27 / 27 (wine never answers -1 there);
 #                                                           on cass path_failure_errno 25 / 2 (-1, -1)
+# 6.7.16 — an fd with a LOW BIT set is no descriptor (issues/2026-10-20-pe-fd-not-multiple-of-four-
+# aliases-the-handle-below-it.md; Linux answers -9, which is what the source says). The NT kernel
+# ignores a HANDLE value's two low bits, so fd `h + 1` / `h + 2` / `h + 3` reached CloseHandle /
+# ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile as the live `h`: the
+# filed alias printed `52 0 -9 -9` under wine and `244 0 -9 -9` on cass (Linux `3 -9 3 0` — the
+# close of h + 3 closed h). `_pe_fd_to_handle_rcx`'s fd > 2 arm opens `test $0x3,%al; jne .bad`, and
+# each of its five callers lands .bad on `push $-9; pop %rax` behind a `jmp` over it; the close site
+# sends a low-bit fd to the std-close stub (`cmp $0x2,%rax; jle; test $0x3,%al; je .direct`), whose
+# leading compare is the unsigned `cmp $0x2,%rax; ja` to its -9 arm. Rows: axis 1 and axis 4 run the
+# filed alias (its h, then `-9 3 0`) and tests/tcyr/crossos/unopened_fd_ebadf.tcyr; axis 2 requires
+# the guard before EVERY ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile
+# call of the probe (literal and var-held) and reads the close site's and the stub's new compares.
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix compiler (450ecf2c9)                        axis 2 FAIL (CH BAD: the close site's jg; no
+#                                                           low-bit test before ReadFile); axis 4 FAIL
+#                                                           (alias `52 0 -9 -9`; unopened_fd_ebadf 17 / 15)
+#   the helper's `jnz .bad` never taken (`jo`)              axis 2 FAIL (FG BAD); axis 4 FAIL
+#                                                           (unopened_fd_ebadf 12 / 20); the alias row
+#                                                           PASSES: the close site has its own test
+#   the close site's `je .direct` always taken (`jmp`)      axis 2 FAIL (CH BAD); axis 4 FAIL (alias
+#                                                           `52 0 -9 -9`; unopened_fd_ebadf 25 / 7)
+#   the stub's leading `ja` never taken (`jo`)              axis 2 FAIL (the stub matched 3/15); axis 4
+#                                                           PASSES: GetStdHandle(-fd - 10) refuses the
+#                                                           slot, so the -9 arm answers one Win32 call
+#                                                           later — axis 2 holds the before-any-call rule
+# The same value reached Winsock and kernel32's lock / final-path calls through the stdlib wrappers
+# that hand an fd to a raw handle reroute (measured on cass: closesocket(s + 3) closed the socket s
+# and answered 0, getsockname / listen of s + 1 acted on s; wine the same). Each answers -9 first
+# (`_win_fd_aliases`, lib/syscalls_windows.cyr): the socket calls there and fd_wait_ready, lib/net.cyr's
+# Winsock primitives, xflock's Windows arm, lib/tls_native_conn.cyr's and lib/async_win.cyr's
+# transport leaves and reactor tasks, and win_handle_under (-1, its "cannot" answer).
+#   axis 6  STATIC, the stdlib: every `syscall(<a raw handle reroute>, fd, ..)` in a non-fold lib/
+#           file is preceded IN ITS fn by `_win_fd_aliases(fd)` (SetEndOfFile's 0xF03F excepted: the
+#           emitter's fd map guards it), and the ctx-held sockets of async_win.cyr's three reactor
+#           tasks and win_handle_under's two handles are asked too; floor 24 guarded calls.
+#   axis 4 also runs a Windows-only probe of the private leaves (wrapalias: _tn_os_read /
+#   _tn_os_write / _tn_nb_on / async_relay_once of s + k, win_handle_under of h + 1 and of root + 2):
+#   `-9 -9 -9 -9 1 -1 -1` (the pre-fix lib: `-10057 -10054 0 -10057 1 1 1` — s itself was read,
+#   written, made non-blocking, and h + 1 named h's path).
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix lib (450ecf2c9's six files)                 axis 6 FAIL; axis 4 FAIL (wrapalias as
+#                                                           above; unopened_fd_ebadf no summary, exit
+#                                                           124: after its xflock and socket rows fail,
+#                                                           sock_recv(s + 3) blocks on the socket that
+#                                                           listen(s + 1) made listen)
+#   _net_os_close's guard dropped                           axis 6 FAIL (net.cyr:_net_os_close); axis 4
+#                                                           FAIL (unopened_fd_ebadf 51 / 2: sock_close
+#                                                           (s + 3) answers 0 and s is gone, -10038)
+#   _tn_os_read's guard dropped                             axis 6 FAIL; axis 4 FAIL (wrapalias
+#                                                           `-10057 -9 -9 -9 1 -1 -1`)
+# 6.7.16 — rename / symlink / fsync answer -errno too (issues/2026-10-20-pe-rename-symlink-fsync-
+# answer-minus-one-for-every-failure.md; 6.7.16's D94, "Yes, extend D79"). EMOVEFILEEX_PE folded
+# MoveFileExW's BOOL with `dec; sar`, ESYMLINKW_PE handed back CreateSymbolicLinkW's BOOLEAN (which
+# sys_symlink folded to -1) and EFLUSHFB_PE folded FlushFileBuffers' with `cmp; sbb`: the filed rsfail
+# printed `-1 -1 -1` on cass and wine (Linux `-2 -2 -9`). Each FALSE now goes through the table stub
+# (`_pe_bool_errno`, inside the frame; CreateSymbolicLinkW's BOOLEAN `movzbl %al,%eax` first), and
+# the raw 0xF03E answers 0 / -errno (sys_symlink tests `== 0`). Rows: axis 1 and axis 4 run rsfail
+# verbatim and path_failure_errno.tcyr's rename / link / fsync group; axis 2's probe adds a literal
+# rename (0xF034), link (0xF03E) and fsync (74), and every MoveFileExW / CreateSymbolicLinkW /
+# FlushFileBuffers call must be followed by the table-stub shape.
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix tree (450ecf2c9: compiler + lib)            axis 4 FAIL (path_failure_errno 30 / 7:
+#                                                           every rename / link / fsync row -1)
+#   EMOVEFILEEX_PE's map back to `dec; sar` (after unframe) axis 2 FAIL (a MoveFileExW call without
+#                                                           the table-stub shape); axis 4 FAIL (rsfail
+#                                                           `-1 -2 -9`; path_failure_errno 35 / 2)
+#   ESYMLINKW_PE's map dropped (the BOOLEAN answered)       axis 2 FAIL (CreateSymbolicLinkW, the
+#                                                           same); axis 4 FAIL (rsfail `-2 0 -9`: a
+#                                                           failed link reads as made; 35 / 2)
+#   EFLUSHFB_PE's map back to `cmp; sbb`                    axis 2 FAIL (FlushFileBuffers, the same);
+#                                                           axis 4 FAIL (path_failure_errno 35 / 2:
+#                                                           the closed-fd and read-only rows -1)
+# The pw review: sys_symlink retried CreateSymbolicLinkW without ALLOW_UNPRIVILEGED_CREATE on EVERY
+# failure, and the flagless call fails ERROR_PRIVILEGE_NOT_HELD (-1) in any non-elevated process, so
+# the flagged call's -2 / -17 read -1 there: on cass under `runas /trustlevel:0x20000` (a Basic User
+# token; Developer Mode off) rsfail printed `-2 -1 -9`. The retry is reached only on -22 now
+# (ERROR_INVALID_PARAMETER, a Windows older than 10 1703, which does not know the flag). Wine ignores
+# the privilege and the cass leg runs elevated, so axis 5 reads sys_symlink statically (two 61502
+# calls, the second behind `if (r != 0 - 22) { return r; }`); path_failure_errno.tcyr's
+# missing-directory and existing-name link rows run elevated or not (only the made-link rows skip).
+#   mutant (2026-10-20, 6.7.16 pw review fix; wine 11.20, cass) result
+#   the retry on any failure (`if (r == 0) { return 0; }`,  axis 5 FAIL (67 / 1); axis 4 PASSES (wine).
+#   as b67ed7b83)                                           On cass, Basic User token: rsfail `-2 -1 -9`,
+#                                                           path_failure_errno 46 / 2 (the fix: `-2 -2
+#                                                           -9`, 48 / 0; elevated, both 50 / 0)
+# 6.7.16 — a DIRECTORY answers EISDIR (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-
+# answer-eacces-not-eisdir.md; 6.7.16's D95, "-21 as Linux"). CreateFileW and DeleteFileW refuse a
+# directory ERROR_ACCESS_DENIED, which the table maps to -13: the filed dirfail printed `-13 -13 -13
+# -13` on cass and wine (Linux `-21 -21 -21 -21`). lib/syscalls_windows.cyr asks the name on a -13
+# (GetFileAttributesW, 6.7.14's file_create_exclusive shape): sys_open's write / create / truncate
+# opens of a directory are -21 (an O_CREAT|O_EXCL one -17, Linux's EEXIST), sys_unlink's and
+# xunlink's -21, sys_truncate opens through sys_open; anything that is no directory keeps -13.
+#   axis 5 also reads those arms statically (CI has no wine).
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix lib (2cd5ab993's syscalls_windows / io)      axis 5 FAIL; axis 4 FAIL (dirfail `-13 -13
+#                                                           -13 -13`; path_failure_errno 42 / 7)
+#   `_win_is_dir` never a directory (`return 0`)            axis 4 FAIL (dirfail `-13 -13 -13 -13`;
+#                                                           path_failure_errno 42 / 7); axis 5 PASSES:
+#                                                           the arms are there — behaviour is axis 4's
+#   `_win_is_dir` always a directory (every -13 is -21)     axis 4 FAIL (path_failure_errno 48 / 1:
+#                                                           the held-open file's -13 reads -21)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -169,12 +272,13 @@ T2="$ROOT/tests/tcyr/crossos/pe_open_failure_errno.tcyr"
 T3="$ROOT/tests/tcyr/crossos/lseek_failed_seek.tcyr"
 T4="$ROOT/tests/tcyr/crossos/close_answer.tcyr"
 T5="$ROOT/tests/tcyr/crossos/path_failure_errno.tcyr"
-for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5"; do
+T6="$ROOT/tests/tcyr/crossos/unopened_fd_ebadf.tcyr"
+for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
     [ -f "$f" ] || { echo "FAIL: pe_reroute_failure_errno: $f is missing"; exit 1; }
 done
-# Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's at
-# 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=27
+# Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
+# T6's at 6.7.16.
+F1=10; F2=10; F3=13; F4=13; F5=50; F6=53
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -201,7 +305,7 @@ summary() { tr -d '\r' < "$1" | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*
 
 # axis 1: the POSIX oracle.
 mkdir -p "$D/n"
-for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5"; do
+for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
     t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
     ( cd "$ROOT" && "$CC" < "$t" > "$D/n/$b" 2> "$D/n/$b.err" ) || true
     if [ ! -s "$D/n/$b" ]; then
@@ -321,6 +425,69 @@ fmt_int(b); println("");
 fmt_int(c); println("");
 EOF
 
+# 6.7.16: an fd beside an open one, never opened itself (the filed alias, verbatim). It prints h,
+# then the close of h + 3, the write to h and the close of h: Linux `-9 3 0`.
+cat > "$D/alias.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var h = sys_open("alias_probe.txt", 577, 420);
+p(h);
+p(sys_close(h + 3));          # never opened as an fd: Linux -9
+p(sys_write(h, "abc", 3));    # the file's own fd: Linux 3
+p(sys_close(h));              # Linux 0
+sys_unlink("alias_probe.txt");
+println("");
+EOF
+# 6.7.16's D94: rename / symlink / fsync (the filed rsfail, verbatim; run in an empty directory).
+cat > "$D/rsfail.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var fd = sys_open("rs_t", 577, 420);
+sys_close(fd);
+p(file_rename("rs_missing", "rs_x"));          # rename of a missing path: Linux -2
+p(xsymlink("rs_t", "rs_missing_dir/l"));       # link under a missing directory: Linux -2
+p(xfsync(0 - 999));                            # fsync of a non-descriptor: Linux -9
+println("");
+sys_unlink("rs_t");
+EOF
+# 6.7.16's D95: a directory's unlink / truncate / open for writing (the filed dirfail, verbatim; run
+# in an empty directory).
+cat > "$D/dirfail.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+sys_rmdir("df_d");
+sys_mkdir("df_d", 448);
+p(sys_unlink("df_d"));                  # unlink of a directory: Linux -21
+p(xunlink("df_d"));                     # the same through xunlink: Linux -21
+p(sys_truncate("df_d", 1));             # truncate of a directory: Linux -21
+p(file_open("df_d", O_WRONLY, 0));      # open of a directory for writing: Linux -21
+println("");
+sys_rmdir("df_d");
+EOF
+# "<h> -9 3 0" with h a descriptor above 2 (on PE a multiple of 4): the alias row's verdict.
+alias_ok() {  # $1 = the output line, $2 = 4 on PE (h must be a multiple of 4), 1 natively
+    set -- $1 "$2"
+    [ $# = 5 ] || return 1
+    [ "$2 $3 $4" = "-9 3 0" ] || return 1
+    case "$1" in *[!0-9]*|'') return 1 ;; esac
+    [ $(( $1 % $5 )) = 0 ] && [ "$1" -gt 2 ]
+}
+
 # 6.7.16's D79 / D80: the two filed repros, verbatim. pathfail runs in an empty directory; ftfail
 # with stdout a pipe, and writes its answers to ft.out.
 cat > "$D/pathfail.cyr" <<'EOF'
@@ -382,15 +549,15 @@ sys_exit(0);
 EOF
 
 # axis 1, 6.7.16: the std-fd rows natively.
-for p in closestd trstd close2 clsh_child closeneg pathfail ftfail; do
+for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias rsfail dirfail; do
     ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
     chmod +x "$D/n/$p" 2> /dev/null || true
 done
 clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
-if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ]; then
-    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" | grep -m2 '^error' | tr '\n' ' ')"
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ] || [ ! -s "$D/n/rsfail" ] || [ ! -s "$D/n/dirfail" ]; then
+    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | grep -m2 '^error' | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
     got=$(line "$D/n/cs.out")
@@ -413,12 +580,25 @@ else
     ( cd "$D/n/ft" && ulimit -c 0; ../ftfail 2> /dev/null | cat > /dev/null ) || true
     got=$(line "$D/n/ft/ft.out" 2> /dev/null)
     if [ "$got" = "-22 -9 -2 -9" ]; then ok; else bad "axis 1: the truncate-failure repro (stdout a pipe) natively: '$got' (want '-22 -9 -2 -9')"; fi
+    mkdir -p "$D/n/al"
+    ( cd "$D/n/al" && ulimit -c 0; ../alias > al.out 2> /dev/null ) || true
+    got=$(line "$D/n/al/al.out")
+    if alias_ok "$got" 1; then ok; else bad "axis 1: the fd-alias repro natively: '$got' (want '<h> -9 3 0')"; fi
+    mkdir -p "$D/n/rs"
+    ( cd "$D/n/rs" && ulimit -c 0; ../rsfail > rs.out 2> /dev/null ) || true
+    got=$(line "$D/n/rs/rs.out")
+    if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 1: the rename / symlink / fsync repro natively: '$got' (want '-2 -2 -9')"; fi
+    mkdir -p "$D/n/df"
+    ( cd "$D/n/df" && ulimit -c 0; ../dirfail > df.out 2> /dev/null ) || true
+    got=$(line "$D/n/df/df.out")
+    if [ "$got" = "-21 -21 -21 -21" ]; then ok; else bad "axis 1: the directory repro natively: '$got' (want '-21 -21 -21 -21')"; fi
 fi
 
 # axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
-# CloseHandle call is a site's fd > 2 arm, behind the SIGNED `cmp $0x2,%rax; jg`, whose fd <= 2 arm
-# (0 / 1 / 2 and, D78, every negative fd) calls the std-close stub — or that stub's own call; the
-# stub reads, in order, `test %rax,%rax; js` (a negative fd: -9), GetStdHandle, the -9 arm
+# CloseHandle call is a site's fd > 2 arm, behind the SIGNED `cmp $0x2,%rax; jle` and the low-bit
+# `test $0x3,%al; je`, whose other arm (0 / 1 / 2, D78's negative fds and an fd with a low bit set)
+# calls the std-close stub — or that stub's own call; the stub reads, in order, the unsigned
+# `cmp $0x2,%rax; ja` (a negative or low-bit fd: -9), GetStdHandle, the -9 arm
 # for 0 / INVALID_HANDLE_VALUE, SetStdHandle(.., -1), the GetStdHandle loop that compares every
 # slot with the HANDLE (the one-handle child's stdout lives on that compare), then CloseHandle.
 # Every SetEndOfFile call follows the std-fd map (`cmp $0x2,%rax`, then a GetStdHandle call).
@@ -437,7 +617,7 @@ _std_map_axis() {
                 s = slot(t[i])
                 if (s == ch) {
                     if (t[i-1] ~ /^mov +%rsi,%rcx/) { print "CH stub -"; continue }
-                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^jg / && t[i-5] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
+                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^je / && t[i-5] ~ /^test +\$0x3,%al/ && t[i-6] ~ /^jle / && t[i-7] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
                     print "CH BAD:not-behind-the-std-fd-test"; continue
                 }
                 if (s == se) {
@@ -469,7 +649,7 @@ _std_map_axis() {
             on && $3 ~ /^ret/ { exit }' "$D/dis" > "$D/cstub"
         got=$(awk -v gs="$GS" -v ss="$SS" -v ch="$CH" '
             function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
-            BEGIN { np = split("^test +%rax,%rax|^js |G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
+            BEGIN { np = split("^cmp +\\$0x2,%rax|^ja |G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
             k <= np {
                 if (pat[k] == "G") { if (slot($0) == gs) k++ }
                 else if (pat[k] == "S") { if (slot($0) == ss) k++ }
@@ -484,6 +664,47 @@ _std_map_axis() {
     fi
 }
 
+# axis 2, 6.7.16 (called from axis 2 below): an fd with a low bit set is no descriptor. Every call
+# through the ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile IAT slot is
+# reached from `_pe_fd_to_handle_rcx`'s fd > 2 arm, `test $0x3,%al; jne <bad>; mov %rax,%rcx`, at
+# most 16 instructions before it, and <bad> is `push $0xfffffffffffffff7; pop %rax` with a `jmp`
+# over it right before (the answered path never reads -9). Floors: each API at least twice (the
+# literal and the var-held route; SetEndOfFile once).
+_fd_guard_axis() {
+    FB=$(va FlushFileBuffers)
+    if [ -z "$FB" ]; then bad "axis 2: the probe does not import FlushFileBuffers (an fsync reroute)"; return 0; fi
+    awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v fb="$FB" -v se="$SE" '
+        NF >= 3 { n++; t[n] = $3; a = $1; sub(/^ +/, "", a); sub(/:$/, "", a); ad[n] = "0x" a; at["0x" a] = n }
+        function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
+        function tgt(x,   k) { k = x; sub(/^j[a-z]+ +/, "", k); sub(/ .*/, "", k); return k }
+        END {
+            for (i = 1; i <= n; i++) {
+                s = slot(t[i]); api = ""
+                if (s == rf) api = "ReadFile"; else if (s == wf) api = "WriteFile"
+                else if (s == sf) api = "SetFilePointerEx"; else if (s == fb) api = "FlushFileBuffers"
+                else if (s == se) api = "SetEndOfFile"
+                if (api == "") continue
+                g = 0
+                for (k = i - 1; k >= 1 && k >= i - 16; k--) if (t[k] ~ /^test +\$0x3,%al/) { g = k; break }
+                if (g == 0) { print "FG", api, "BAD:no-low-bit-test-before-it"; continue }
+                if (t[g+1] !~ /^jne / || t[g+2] !~ /^mov +%rax,%rcx/ || t[g-1] !~ /^jmp /) { print "FG", api, "BAD:the-test-is-not-the-fd-map-arm"; continue }
+                b = at[tgt(t[g+1])]
+                if (b == "" || t[b] !~ /^push +\$0xfffffffffffffff7/ || t[b+1] !~ /^pop +%rax/) { print "FG", api, "BAD:jne-does-not-reach-push-minus-9-pop-rax"; continue }
+                if (t[b-1] !~ /^jmp / || tgt(t[b-1]) != ad[b+2]) { print "FG", api, "BAD:no-jmp-over-the-minus-9"; continue }
+                if (b <= i) { print "FG", api, "BAD:the-minus-9-is-before-the-call"; continue }
+                print "FG", api, "ok"
+            }
+        }' "$D/dis" > "$D/fdguard"
+    b=$(awk '$3 != "ok" {print $2 " " $3; exit}' "$D/fdguard")
+    if [ -n "$b" ]; then bad "axis 2: an fd-taking call is not behind the low-bit guard ($b)"; return 0; fi
+    for af in ReadFile:2 WriteFile:2 SetFilePointerEx:2 FlushFileBuffers:2 SetEndOfFile:1; do
+        api=${af%:*}; fl=${af#*:}
+        c=$(awk -v a="$api" '$2 == a' "$D/fdguard" | wc -l | tr -d ' ')
+        if [ "$c" -lt "$fl" ]; then bad "axis 2: only $c $api site(s) behind the low-bit guard (floor $fl)"; return 0; fi
+    done
+    ok
+}
+
 # axis 2 + 3: the emitter shape and the table.
 cat > "$D/shape.cyr" <<'EOF'
 var buf[16];
@@ -496,6 +717,9 @@ fn main(): i64 {
     r = r + syscall(2, "no_such_shape_x", 0, 0);
     r = r + syscall(8, 0 - 999, 0, 0);
     r = r + syscall(3, 0 - 999);
+    r = r + syscall(74, 0 - 999);
+    r = r + syscall(61492, "no_such_shape_a", "no_such_shape_b");
+    r = r + syscall(61502, "no_such_shape_l", "no_such_shape_t", 0);
     r = r + by_number(0, 0 - 999, &buf, 16);
     r = r + by_number1(3, 0 - 999);
     r = r + syscall(3, 2);
@@ -522,8 +746,12 @@ else
     RF=$(va ReadFile); WF=$(va WriteFile); SF=$(va SetFilePointerEx); CF=$(va CreateFileW); GL=$(va GetLastError)
     CH=$(va CloseHandle)
     CD=$(va CreateDirectoryW); DF=$(va DeleteFileW); RD=$(va RemoveDirectoryW); SE=$(va SetEndOfFile)
+    MV=$(va MoveFileExW); SL=$(va CreateSymbolicLinkW); FB=$(va FlushFileBuffers)
     if [ -z "$CD" ] || [ -z "$DF" ] || [ -z "$RD" ] || [ -z "$SE" ]; then
         bad "axis 2: the probe does not import CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile ('$CD' '$DF' '$RD' '$SE')"
+    fi
+    if [ -z "$MV" ] || [ -z "$SL" ] || [ -z "$FB" ]; then
+        bad "axis 2: the probe does not import MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers ('$MV' '$SL' '$FB')"
     fi
     if [ -z "$RF" ] || [ -z "$WF" ] || [ -z "$SF" ] || [ -z "$CF" ] || [ -z "$CH" ]; then
         bad "axis 2: the probe does not import ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle ('$RF' '$WF' '$SF' '$CF' '$CH')"
@@ -531,7 +759,7 @@ else
         bad "axis 2: the probe does not import GetLastError — no failure reads it"
     else
         # Per IAT call site: "<api> <ok|BAD:why> <stub target>". Instruction text only (after the 2nd tab).
-        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" -v ch="$CH" -v cd="$CD" -v df="$DF" -v rd="$RD" -v se="$SE" '
+        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" -v ch="$CH" -v cd="$CD" -v df="$DF" -v rd="$RD" -v se="$SE" -v mv="$MV" -v sl="$SL" -v fb="$FB" '
             NF >= 3 { n++; t[n] = $3 }
             END {
                 for (i = 1; i <= n; i++) {
@@ -543,9 +771,13 @@ else
                     else if (k == ch) api = "CloseHandle"
                     else if (k == cd) api = "CreateDirectoryW"; else if (k == df) api = "DeleteFileW"
                     else if (k == rd) api = "RemoveDirectoryW"; else if (k == se) api = "SetEndOfFile"
+                    else if (k == mv) api = "MoveFileExW"; else if (k == sl) api = "CreateSymbolicLinkW"
+                    else if (k == fb) api = "FlushFileBuffers"
                     if (api == "") continue
                     why = "ok"; j = i + 1
-                    if (api == "CloseHandle" || api == "CreateDirectoryW" || api == "DeleteFileW" || api == "RemoveDirectoryW" || api == "SetEndOfFile") {
+                    # 6.7.16 (D94): CreateSymbolicLinkW returns a one-byte BOOLEAN, widened first.
+                    if (api == "CreateSymbolicLinkW") { if (t[j] !~ /^movzbl +%al,%eax/) why = "BAD:no-movzbl"; j++ }
+                    if (api == "CloseHandle" || api == "CreateDirectoryW" || api == "DeleteFileW" || api == "RemoveDirectoryW" || api == "SetEndOfFile" || api == "MoveFileExW" || api == "CreateSymbolicLinkW" || api == "FlushFileBuffers") {
                         # test; je .fail; xor eax,eax (TRUE: 0); jmp .done; .fail: call <stub>
                         if (t[j] !~ /^test +%eax,%eax/) why = "BAD:no-test-eax"
                         j++
@@ -585,7 +817,7 @@ else
         done
         # 6.7.16 (D79): the BOOL path / truncate calls, at their own floors — mkdir and unlink each a
         # literal and a var-held route (unlink's 0xF035 a third), rmdir and SetEndOfFile literal only.
-        for af in CreateDirectoryW:2 DeleteFileW:3 RemoveDirectoryW:1 SetEndOfFile:1; do
+        for af in CreateDirectoryW:2 DeleteFileW:3 RemoveDirectoryW:1 SetEndOfFile:1 MoveFileExW:1 CreateSymbolicLinkW:1 FlushFileBuffers:3; do
             api=${af%:*}; fl=${af#*:}
             c=$(awk -v a="$api" '$1 == a' "$D/sites" | wc -l | tr -d ' ')
             b=$(awk -v a="$api" '$1 == a && $2 != "ok" {print $2; exit}' "$D/sites")
@@ -595,6 +827,8 @@ else
         done
         # 6.7.16: every CloseHandle and SetEndOfFile call is reached through the std-fd map.
         _std_map_axis
+        # 6.7.16: every fd-taking call is behind the low-bit guard.
+        _fd_guard_axis
         TS=$(awk '$1 != "ReadFile" {print $3}' "$D/sites" | sort -u)
         RS=$(awk '$1 == "ReadFile" {print $3}' "$D/sites" | sort -u)
         if [ "$(printf '%s\n' "$TS" | wc -l | tr -d ' ')" != 1 ] || [ "$(printf '%s\n' "$RS" | wc -l | tr -d ' ')" != 1 ] || [ "$TS" = "$RS" ]; then
@@ -650,6 +884,70 @@ case "$(warm _io_tmp_taken)" in
     *'if (rc == 0 - 13) { return _io_name_exists(tmp); }'*) ok ;;
     *) bad "axis 5: _io_tmp_taken's CYRIUS_TARGET_WIN arm does not classify -13 by asking the name: $(warm _io_tmp_taken | tr -s ' \n' '  ')" ;;
 esac
+
+# axis 5, 6.7.16 (D95): lib/syscalls_windows.cyr asks the name on an open's / unlink's -13.
+SW="$ROOT/lib/syscalls_windows.cyr"
+swfn() { code "$SW" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+case "$(swfn sys_open)" in
+    *'& 196608) == 0) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*'& 192) == 192) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*) ok ;;
+    *) bad "axis 5: sys_open's plain and O_CREAT|O_EXCL arms do not hand CreateFileW's answer to _win_open_eacces: $(swfn sys_open | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn _win_open_eacces)" in
+    *'if (h != 0 - 13) { return h; }'*'if ((flags & 579) == 0) { return h; }'*'_win_is_dir(path) == 0'*'return 0 - 17;'*'return 0 - 21;'*) ok ;;
+    *) bad "axis 5: _win_open_eacces does not classify a -13 (write / create / truncate access, a directory: -21; O_EXCL -17): $(swfn _win_open_eacces | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn _win_is_dir)" in
+    *'syscall(61465, path)'*'(at & 16) != 0'*) ok ;;
+    *) bad "axis 5: _win_is_dir does not read GetFileAttributesW's directory bit: $(swfn _win_is_dir | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn sys_unlink)$(swfn _win_unlink_eacces)$(swfn sys_truncate)$(warm xunlink)" in
+    *'_win_unlink_eacces(path, syscall(87, path))'*'_win_is_dir(path) == 1) { return 0 - 21; }'*'var h = sys_open(path, 1, 0);'*'_win_unlink_eacces(path, syscall(0xF035, path))'*) ok ;;
+    *) bad "axis 5: sys_unlink / xunlink do not classify DeleteFileW's -13, or sys_truncate does not open through sys_open" ;;
+esac
+
+# axis 5, 6.7.16 (D94, the pw review): sys_symlink retries CreateSymbolicLinkW without
+# ALLOW_UNPRIVILEGED_CREATE only on -22 — the flagless call fails ERROR_PRIVILEGE_NOT_HELD (-1) in
+# any non-elevated process, and wine (which ignores the privilege) and the elevated cass leg never
+# see it, so this static row is what holds it.
+ssym=$(swfn sys_symlink)
+nsym=$(printf '%s\n' "$ssym" | grep -c 'syscall(61502,' || true)
+case "$ssym" in
+    *'var r = syscall(61502, linkpath, target, kind | 2);'*'if (r != 0 - 22) { return r; }'*'return syscall(61502, linkpath, target, kind);'*)
+        if [ "$nsym" = 2 ]; then ok
+        else bad "axis 5: sys_symlink makes $nsym CreateSymbolicLinkW calls (want 2: the flagged one, then the flagless retry behind \`r != 0 - 22\`)"; fi ;;
+    *) bad "axis 5: sys_symlink's flagless CreateSymbolicLinkW retry is not reachable only behind \`if (r != 0 - 22) { return r; }\`: $(printf '%s' "$ssym" | tail -5 | tr -s ' \n' '  ')" ;;
+esac
+
+# axis 6, 6.7.16: static — the stdlib wrappers that hand an fd to a raw handle reroute ask
+# `_win_fd_aliases` first. The folds (docs/ecosystem.md's lib/ rows) are not cyrius-edited and call
+# no raw handle reroute; the census reads every other lib/*.cyr.
+FOLDS=$(grep -o '^| `lib/[a-z_0-9]*\.cyr`' "$ROOT/docs/ecosystem.md" | sed 's/^| `lib\///; s/`$//' | tr '\n' ' ')
+[ -n "$FOLDS" ] || bad "axis 6: no fold rows read from docs/ecosystem.md"
+for lf in "$ROOT"/lib/*.cyr; do
+    case " $FOLDS " in *" $(basename "$lf") "*) continue ;; esac
+    awk -v F="$(basename "$lf")" '
+        /^[ \t]*#/ { next }
+        /^fn [A-Za-z_0-9]+\(/ { fn = $2; sub(/\(.*/, "", fn); g = 0; gc = 0 }
+        /_win_fd_aliases\(fd\)/ { g = 1 }
+        /_win_fd_aliases\(load64\(ctx \+ (48|56)\)\)/ { gc = 1 }
+        /syscall\((0xF0[0-9A-Fa-f][0-9A-Fa-f]|61[45][0-9][0-9]), *fd[,)]/ {
+            if ($0 ~ /syscall\((0xF03F|61503), *fd/) next
+            print (g ? "G ok " : "G BAD ") F ":" fn ":" NR
+        }
+        /syscall\(0xF0(29|2A|27), load64\(ctx \+ (48|56)\)/ { print (gc ? "C ok " : "C BAD ") F ":" fn ":" NR }
+        /^fn win_handle_under\(/ { wh = 1 }
+        wh && /_win_fd_aliases\(h\)/ { wa = 1 }
+        wh && /_win_fd_aliases\(root_h\)/ { wb = 1 }
+        wh && /syscall\(0xF04E/ { print ((wa && wb) ? "W ok " : "W BAD ") F ":" fn ":" NR; wh = 0 }
+    ' "$lf"
+done > "$D/census"
+c6=$(awk '$2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+b6=$(awk '$2 == "BAD" {print $3}' "$D/census" | tr '\n' ' ')
+cc6=$(awk '$1 == "C" && $2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+cw6=$(awk '$1 == "W" && $2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+if [ -n "$b6" ]; then bad "axis 6: a stdlib fd reaches a raw handle reroute without asking _win_fd_aliases first: $b6"
+elif [ "$c6" -lt 24 ] || [ "$cc6" -lt 3 ] || [ "$cw6" -lt 1 ]; then bad "axis 6: $c6 guarded raw handle call(s) (floor 24), $cc6 reactor-task one(s) (floor 3), $cw6 win_handle_under (want 1)"
+else ok; fi
 
 # axis 4: behaviour under wine.
 if ! command -v wine > /dev/null 2>&1; then
@@ -739,12 +1037,12 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$@" )
     }
-    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail; do
+    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias rsfail dirfail; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
     done
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
-    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ]; then
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ] || [ ! -s "$D/w/rsfail.exe" ] || [ ! -s "$D/w/dirfail.exe" ]; then
         bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
@@ -781,8 +1079,76 @@ EOF
             timeout 120 wine ftfail.exe < /dev/null 2> /dev/null | cat > /dev/null ) || true
         got=$(line "$D/w/ft/ft.out" 2> /dev/null)
         if [ "$got" = "-22 -9 -2 -9" ]; then ok; else bad "axis 4: the truncate-failure repro (stdout a pipe) under wine: '$got' (want '-22 -9 -2 -9'; '-1 -1 -1 -1' is every step folded to -1)"; fi
+        mkdir -p "$D/w/al" && cp "$D/w/alias.exe" "$D/w/al/"
+        ( cd "$D/w/al" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine alias.exe < /dev/null > al.out 2> /dev/null ) || true
+        got=$(line "$D/w/al/al.out")
+        if alias_ok "$got" 4; then ok; else bad "axis 4: the fd-alias repro under wine: '$got' (want '<h> -9 3 0', h a multiple of 4; '<h> 0 -9 -9' is the close of h + 3 closing h)"; fi
+        mkdir -p "$D/w/rs" && cp "$D/w/rsfail.exe" "$D/w/rs/"
+        ( cd "$D/w/rs" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine rsfail.exe < /dev/null > rs.out 2> /dev/null ) || true
+        got=$(line "$D/w/rs/rs.out")
+        if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 4: the rename / symlink / fsync repro under wine: '$got' (want '-2 -2 -9'; '-1 -1 -1' is every BOOL folded to -1)"; fi
+        mkdir -p "$D/w/df" && cp "$D/w/dirfail.exe" "$D/w/df/"
+        ( cd "$D/w/df" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine dirfail.exe < /dev/null > df.out 2> /dev/null ) || true
+        got=$(line "$D/w/df/df.out")
+        if [ "$got" = "-21 -21 -21 -21" ]; then ok; else bad "axis 4: the directory repro under wine: '$got' (want '-21 -21 -21 -21'; '-13 -13 -13 -13' is ERROR_ACCESS_DENIED unasked)"; fi
     fi
-    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5"; do
+    # 6.7.16: the Windows-only wrappers' leaves (axis 6 holds their shape where wine is absent).
+    cat > "$D/wrapalias.cyr" <<'EOF'
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/fs.cyr"
+include "lib/chrono.cyr"
+include "lib/fnptr.cyr"
+include "lib/atomic.cyr"
+include "lib/async.cyr"
+include "lib/tls.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var st, s = tcp_socket();
+var bt, bv = sock_bind(s, INADDR_LOOPBACK(), 0);
+var buf[16];
+p(_tn_os_read(s + 1, &buf, 1));
+p(_tn_os_write(s + 2, "x", 1));
+p(_tn_nb_on(s + 3));
+p(async_relay_once(0, s + 1, s, &buf, 1));
+sys_mkdir("wa_d", 448);
+var root = sys_open("wa_d", 65536, 0);
+var h = sys_open("wa_d/f", 577, 420);
+p(win_handle_under(h, root));
+p(win_handle_under(h + 1, root));
+p(win_handle_under(h, root + 2));
+sys_close(h);
+sys_close(root);
+sys_unlink("wa_d/f");
+sys_rmdir("wa_d");
+sock_close(s);
+println("");
+EOF
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/wrapalias.cyr" > "$D/w/wrapalias.exe" 2> "$D/wrapalias.werr" ) || true
+    if [ ! -s "$D/w/wrapalias.exe" ]; then bad "axis 4: the PE build of the wrapper probe produced no binary: $(grep -m2 'error' "$D/wrapalias.werr" | tr '\n' ' ')"
+    else
+        mkdir -p "$D/w/wa" && cp "$D/w/wrapalias.exe" "$D/w/wa/"
+        ( cd "$D/w/wa" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine wrapalias.exe < /dev/null > wa.out 2> /dev/null ) || true
+        got=$(line "$D/w/wa/wa.out")
+        if [ "$got" = "-9 -9 -9 -9 1 -1 -1" ]; then ok; else bad "axis 4: the stdlib wrappers of an fd never opened, under wine: '$got' (want '-9 -9 -9 -9 1 -1 -1'; '-10057 -10054 0 -10057 1 1 1' is the socket s / the file h acted on)"; fi
+    fi
+    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$t" > "$D/w/$b.exe" 2> "$D/$b.werr" ) || true
         if [ ! -s "$D/w/$b.exe" ]; then
@@ -802,4 +1168,4 @@ fi
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; ftruncate of a pipe, the null device or a read-only descriptor -22"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile / MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22"

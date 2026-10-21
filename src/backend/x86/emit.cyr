@@ -1816,6 +1816,15 @@ fn _pe_fixed_frame(base, argc): i64 {
     return base;
 }
 
+# 6.7.16 — AN FD WITH A LOW BIT SET IS NO DESCRIPTOR: -9 (EBADF) before any Win32 call, as Linux
+# answers an fd it never handed out. The NT kernel ignores a HANDLE value's two low bits, so
+# `h + 1` / `h + 2` / `h + 3` reached ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers /
+# SetEndOfFile as the live handle `h`: a write to a never-opened fd landed in `h`'s file, an
+# ftruncate truncated it. Every handle cyrius hands out as an fd above 2 (a file, a pipe, a socket,
+# a console since Windows 8) is a multiple of 4, so no live descriptor is refused; a negative fd
+# with a low bit set (-1 / -2: the current-process / -thread pseudo-handles) is refused the same
+# way. Returns where the guard's `jnz .bad` displacement is: the caller lands it on
+# `_pe_fd_bad_tail`, with its answer in rax and its frame not yet undone. CHANGELOG [6.7.16]
 fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
     EB(S, 0x77); EB(S, 0x15);                           # ja +0x15 → .direct (skip std block)
@@ -1826,9 +1835,21 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
     _pe_iat_fixup_add(S, GCP(S), gsh_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (std handle → rcx)
-    EB(S, 0xEB); EB(S, 0x03);                           # jmp +3 → .ready
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (fd IS the handle)
-    return 0;                                            # .ready: rcx = HANDLE
+    EB(S, 0xEB); EB(S, 0x07);                           # jmp +7 → .ready
+    EB(S, 0xA8); EB(S, 0x03);                           # .direct: test al, 3 (a low bit set?)
+    var jb = _pew_j8(S, 0x75);                          # jnz .bad (the caller's -9)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (fd IS the handle)
+    return jb;                                           # .ready: rcx = HANDLE
+}
+
+# The bad-fd answer of an `_pe_fd_to_handle_rcx` caller: the answered path jumps over
+# `.bad: rax = -9`. CHANGELOG [6.7.16]
+fn _pe_fd_bad_tail(S, jb): i64 {
+    EB(S, 0xEB); EB(S, 0x03);                           # jmp +3 → past .bad
+    _pew_land8(S, jb);
+    EB(S, 0x6A); EB(S, 0xF7);                           # .bad: push -9
+    EB(S, 0x58);                                        # pop rax (EBADF)
+    return 0;
 }
 
 # 6.7.14 — A FAILED kernel32 FILE CALL ANSWERS A NEGATIVE ERRNO, as on Linux and macOS.
@@ -1945,9 +1966,12 @@ fn _pew_iat_call(S, idx): i64 {
 # 6.7.16 — THE STD-CLOSE (class 2): `sys_close(0 / 1 / 2)` closes the program's real stdin / stdout
 # / stderr, as on Linux (6.7.16's D30, user, 2026-10-19). The fd went to CloseHandle as the HANDLE
 # value 0 / 1 / 2, which is no handle: the close answered -9 and the stream stayed open. Entered
-# with rax = the fd (0..2, or negative), rsp 8 mod 16; answers rax = 0, or -errno.
+# with rax = the fd (0..2, negative, or above 2 with a low bit set), rsp 8 mod 16; answers rax =
+# 0, or -errno.
 #   - A negative fd is no descriptor: -9 (EBADF) before any Win32 call (6.7.16's D78; ECLOSE_PE's
-#     signed compare sends it here).
+#     signed compare sends it here), and neither is an fd above 2 with a low bit set (the NT kernel
+#     ignores a HANDLE's two low bits: `h + 3` is the live `h`; ECLOSE_PE's `test al, 3` sends it
+#     here): one unsigned `cmp rax, 2; ja` answers both.
 #   - GetStdHandle(-10 - fd) is 0 (no such stream) or INVALID_HANDLE_VALUE (closed already): -9,
 #     Linux's EBADF for a descriptor that is not open. CloseHandle(INVALID_HANDLE_VALUE) would
 #     answer TRUE — it is the current-process pseudo-handle (measured on cass and wine).
@@ -1963,8 +1987,8 @@ fn _pew_stub_close(S, t): i64 {
     var at = GCP(S);
     EB(S, 0x53); EB(S, 0x56); EB(S, 0x57);              # push rbx; push rsi; push rdi (rsp 0 mod 16)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
-    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);              # test rax, rax
-    var j_neg = _pew_j8(S, 0x78);                       # js .ebadf (a negative fd)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
+    var j_neg = _pew_j8(S, 0x77);                       # ja .ebadf (UNSIGNED: negative, or a low-bit fd)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC3);              # mov rbx, rax (the fd)
     EB(S, 0x48); EB(S, 0xF7); EB(S, 0xDB);              # neg rbx
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEB); EB(S, 0x0A); # sub rbx, 10 (rbx = nStdHandle)
@@ -2193,7 +2217,7 @@ fn EWRITE_PE(S): i64 {
     # in rcx (WriteFile's hFile arg). Before this, EWRITE_PE always neg/sub'd the fd
     # into a std-handle index, so sys_write to a file wrote to a bogus handle and
     # failed (found by vr01 on cass).
-    _pe_fd_to_handle_rcx(S, gsh_idx);              # rcx = HANDLE (std or direct)
+    var jb = _pe_fd_to_handle_rcx(S, gsh_idx);     # rcx = HANDLE (std or direct); a low-bit fd: -9
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
     EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x28); # lea r9, [rsp+0x28]
@@ -2225,6 +2249,7 @@ fn EWRITE_PE(S): i64 {
     EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28] (flags kept)
     EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the count)
     _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
+    _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
@@ -2259,6 +2284,10 @@ fn EWRITE_PE(S): i64 {
 # CloseHandle as the HANDLE, and -1 / -2 are the current-process / -thread pseudo-handles, which
 # CloseHandle "closes" with TRUE: `sys_close(-1)` answered 0. A real handle is a small positive
 # multiple of 4, so the signed compare misroutes none. CHANGELOG [6.7.16]
+# An fd above 2 with a LOW BIT set answers -9 too: the NT kernel ignores a HANDLE's two low bits, so
+# `sys_close(h + 3)` closed the live file `h` and answered 0. `test al, 3` sends it to the stub, whose
+# unsigned `cmp rax, 2; ja` answers -9 for it before any Win32 call (`_pe_fd_to_handle_rcx`'s rule).
+# CHANGELOG [6.7.16]
 fn ECLOSE_PE(S): i64 {
     _pe_ensure_closeh(S);
     _pe_ensure_stdio(S);
@@ -2268,8 +2297,10 @@ fn ECLOSE_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
-    EB(S, 0x7F); EB(S, 0x07);                           # jg +7 → .direct (the fd IS the handle; SIGNED)
-    _pe_w32_errno_site(S, 2);                           # call <std-close stub>: rax = 0 / -errno (fd <= 2)
+    EB(S, 0x7E); EB(S, 0x04);                           # jle +4 → .stub (0 / 1 / 2, negative; SIGNED)
+    EB(S, 0xA8); EB(S, 0x03);                           # test al, 3 (a low bit set: no descriptor)
+    EB(S, 0x74); EB(S, 0x07);                           # jz +7 → .direct (the fd IS the handle)
+    _pe_w32_errno_site(S, 2);                           # .stub: call <std-close stub>: rax = 0 / -errno
     EB(S, 0xEB); EB(S, 0x16);                           # jmp +22 → .done
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (hObject)
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CloseHandle]
@@ -2282,8 +2313,8 @@ fn ECLOSE_PE(S): i64 {
 
 # A kernel32 BOOL in eax → 0 (TRUE) or -errno through the shared GetLastError stub (FALSE). Emitted
 # right after the call, while rsp is as it was for it (16-aligned: the stub's `call` needs that).
-# ECLOSE_PE (6.7.15), the narrow-path reroutes (`_pe_path_bool1`) and ESETEOF_PE (6.7.16).
-# CHANGELOG [6.7.16]
+# ECLOSE_PE (6.7.15), the narrow-path reroutes (`_pe_path_bool1`) and ESETEOF_PE (6.7.16); and
+# MoveFileExW, CreateSymbolicLinkW and FlushFileBuffers (6.7.16's D94). CHANGELOG [6.7.16]
 fn _pe_bool_errno(S): i64 {
     EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
     EB(S, 0x74); EB(S, 0x04);                           # jz +4 → .fail
@@ -2416,7 +2447,7 @@ fn EREAD_PE(S): i64 {
     # include READFILE return 0 (the Windows self-host bug: zero includes
     # expanded → 'undefined variable _TARGET_MACHO'). v6.4.26 (R2): now the shared
     # _pe_fd_to_handle_rcx helper (byte-identical to this site's prior emission).
-    _pe_fd_to_handle_rcx(S, gsh_idx);
+    var jb = _pe_fd_to_handle_rcx(S, gsh_idx);     # a low-bit fd: -9 (6.7.16)
     # rcx = handle; reload ReadFile args.
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
@@ -2450,6 +2481,7 @@ fn EREAD_PE(S): i64 {
     EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28] (flags kept)
     EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the count)
     _pe_w32_errno_site(S, 1);                           # call <read stub>: eax = count in, rax out
+    _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
@@ -3099,11 +3131,10 @@ fn EQPF_PE(S): i64 {
 # went to. The helper's GetStdHandle call is made from INSIDE the aligned frame, so it
 # gets the same 16-byte alignment and shadow space as the flush itself.
 #
-# BOOL → 0 / -1 is `cmp eax,1; sbb rax,rax`, not the older dec+sar idiom: it reads only
-# eax, so an unzeroed upper half of rax cannot leak into the result, and any non-zero
-# TRUE maps to 0 rather than to a positive number. An invalid handle, or one opened
-# without write access (O_RDONLY — Linux fsyncs those), comes back -1.
-# CHANGELOG [6.6.7].
+# The BOOL answers 0 (TRUE), or -errno through the shared GetLastError stub (`_pe_bool_errno`,
+# 6.7.16's D94): a bad or closed handle is -9, one opened without write access -13 (O_RDONLY —
+# Linux fsyncs those). Until 6.7.16 every failure was -1 (`cmp eax,1; sbb rax,rax`).
+# CHANGELOG [6.6.7] [6.7.16]
 fn EFLUSHFB_PE(S): i64 {
     _pe_ensure_stdio(S);
     _pe_ensure_flushfb(S);
@@ -3112,13 +3143,13 @@ fn EFLUSHFB_PE(S): i64 {
     EB(S, 0x58);                                        # pop rax (fd)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
-    _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
+    var jb = _pe_fd_to_handle_rcx(S, gsh_idx);          # rcx = HANDLE (std or direct); a low-bit fd: -9
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+FlushFileBuffers]
     _pe_iat_fixup_add(S, GCP(S), fb_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16's D94)
+    _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
-    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
-    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (FALSE → -1, TRUE → 0)
     return 0;
 }
 
@@ -3131,7 +3162,8 @@ fn EFLUSHFB_PE(S): i64 {
 # POSIX contract. CHANGELOG [6.6.9]
 #   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
 #   syscall(0xF03E, link, target, flags) → CreateSymbolicLinkW (argc 4; NARROW UTF-8 paths
-#                                          since 6.7.12 — see ESYMLINKW_PE below the path frame)
+#                                          since 6.7.12 — see ESYMLINKW_PE below the path frame;
+#                                          0 / -errno since 6.7.16, the BOOLEAN before)
 #   syscall(0xF03F, h) → SetEndOfFile (argc 2) — 0, or -errno (no longer the BOOL) since 6.7.16
 fn EGETFINFO_PE(S): i64 {
     _pe_ensure_getfinfo(S);
@@ -3153,11 +3185,12 @@ fn ESETEOF_PE(S): i64 {
     EB(S, 0x58);                                        # pop rax (fd)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
     _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20 (shadow)
-    _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
+    var jb = _pe_fd_to_handle_rcx(S, gsh_idx);          # rcx = HANDLE (std or direct); a low-bit fd: -9
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+SetEndOfFile]
     _pe_iat_fixup_add(S, GCP(S), se_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
     _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16)
+    _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
 }
@@ -3384,10 +3417,10 @@ fn ELSEEK_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x40 (+ parity pad)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (offset)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r9 (whence)
-    _pe_fd_to_handle_rcx(S, gsh_idx);              # rcx = HANDLE (std or direct)
+    var jb = _pe_fd_to_handle_rcx(S, gsh_idx);     # rcx = HANDLE (std or direct); a low-bit fd: -9
     _pe_w32_errno_site(S, 3);                      # call <seek check>: rax = 0, or -29 (pipe / console); rcx kept
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);         # test rax, rax
-    EB(S, 0x75); EB(S, 0x2C);                      # jnz +44 → .done (-29)
+    EB(S, 0x75); EB(S, 0x2C);                      # jnz +44 → .done (-29; via the bad-fd tail's jmp)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # mov r9, [rsp+0x38]
     # Zero the lpNewFilePointer output slot at [rsp+0x28].
@@ -3405,6 +3438,7 @@ fn ELSEEK_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28] (flags kept)
     EB(S, 0x75); EB(S, 0x05);                           # jnz +5 (TRUE: the new offset)
     _pe_w32_errno_site(S, 0);                           # call <stub>: rax = -errno
+    _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
@@ -3912,10 +3946,12 @@ fn EDELETEF_PE(S): i64 {
 # dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
 # not return until the rename is on disk — the Windows analogue of the directory fsync
 # that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
-# atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
-# 0 (success) / -1 (fail) via the dec+sar idiom (EDELETEF_PE's until 6.7.16, which answers
-# -errno now through `_pe_path_bool1`). Frame: `_PE_PATH_FRAME2`
-# (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11]
+# atomic but not durable on Windows (a crash could lose the rename). The BOOL answers 0, or
+# -errno through the shared GetLastError stub (`_pe_bool_errno`, inside the frame, rsp as for
+# the call): a missing source or target directory -2, as Linux (6.7.16's D94; every failure was
+# -1 — `dec rax; sar rax, 63` — until then). Either path refused (invalid UTF-8, too long) is -1
+# without the call, as `_pe_path_bool1`'s. Frame: `_PE_PATH_FRAME2`
+# (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11], [6.7.16]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
     var mv_idx = _pe_movefileex_get();
@@ -3935,8 +3971,8 @@ fn EMOVEFILEEX_PE(S): i64 {
     _pe_widen_path(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
     # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH. Either path
-    # refused -> FALSE without the call.
-    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    # refused -> -1 without the call.
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
     var o1 = _pe_j(S, 0x84);                            # jz out
@@ -3947,12 +3983,11 @@ fn EMOVEFILEEX_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
     _pe_iat_fixup_add(S, GCP(S), mv_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16's D94)
     _pe_j_land(S, o1);
     _pe_j_land(S, o2);
 
     _pe_path_unframe(S);
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
     return 0;
 }
 
@@ -4050,9 +4085,12 @@ fn _pe_wp_target(S, woff, foff): i64 {
 # link, and refused the link) while open() of the same path worked. It now takes NARROW UTF-8
 # paths, as every other path reroute does: the LINK goes through `_pe_widen_path` (absolute and
 # `\\?\` at 248+ units), the TARGET through `_pe_wp_target` (stored verbatim, so decoded only —
-# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → FALSE
-# without the call. BOOLEAN (one byte) → movzx. Frame: `_PE_PATH_FRAME2` (the link's W/F pair,
-# then the target's), probed, rbx-anchored. CHANGELOG [6.6.9], [6.7.12]
+# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → -1
+# without the call. The BOOLEAN (one byte: movzx) answers 0, or -errno through the shared
+# GetLastError stub (`_pe_bool_errno`, inside the frame): a link under a missing directory -2, an
+# existing link path -17, as Linux (6.7.16's D94); it was the BOOLEAN, which sys_symlink folded to
+# -1 for every failure. Frame: `_PE_PATH_FRAME2` (the link's W/F pair, then the target's), probed,
+# rbx-anchored. CHANGELOG [6.6.9], [6.7.12], [6.7.16]
 fn ESYMLINKW_PE(S): i64 {
     _pe_ensure_symlinkw(S);
     var sl_idx = _pe_symlinkw_get();
@@ -4073,8 +4111,8 @@ fn ESYMLINKW_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, 0x48); # mov rsi, [rsp+0x48] (target)
     _pe_wp_target(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
-    # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> FALSE without the call.
-    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> -1 without the call.
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
     var o1 = _pe_j(S, 0x84);                            # jz out
@@ -4085,11 +4123,12 @@ fn ESYMLINKW_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateSymbolicLinkW]
     _pe_iat_fixup_add(S, GCP(S), sl_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
+    _pe_bool_errno(S);                                  # BOOLEAN → 0 / -errno (6.7.16's D94)
     _pe_j_land(S, o1);
     _pe_j_land(S, o2);
 
     _pe_path_unframe(S);
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
     return 0;
 }
 

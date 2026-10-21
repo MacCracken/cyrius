@@ -52,7 +52,7 @@ var x = file_create_exclusive(d, 420);
 assert_eq(x, 0 - 17, "file_create_exclusive(dir) is -17 (Windows' CreateFileW says ACCESS_DENIED)");
 if (x >= 0) { file_close(x); }
 var raw = file_open(d, O_WRONLY | O_CREAT | O_EXCL, 420);
-assert_eq(raw < 0, 1, "the raw O_CREAT|O_EXCL over it is refused (-17; -13 on Windows)");
+assert_eq(raw, 0 - 17, "file_open(dir, O_CREAT|O_EXCL) is -17 too (real Windows answered -13 until 6.7.16)");
 if (raw >= 0) { file_close(raw); }
 xrmdir(d);
 xunlink(f);

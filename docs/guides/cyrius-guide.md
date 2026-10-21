@@ -8569,24 +8569,59 @@ never fired and `file_close_r` was never `Err`.
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
 | `sys_close(-1)`, `sys_close(-2)` | -9 | 0 | 0; -9 since 6.7.16 |
+| `sys_close(h + 3)` (an fd never opened, beside the open `h`) | -9 | 0, and `h` is closed | 0, and `h` is closed; -9 since 6.7.16 |
+| `sys_write` / `sys_read` / `xlseek` / `xfsync` / `sys_ftruncate` of `h + 1` … `h + 3` | -9 | acts on `h` | acts on `h`; -9 since 6.7.16 |
 | `sys_mkdir(dir)` of an existing directory | -17 | -1 | -1; -17 since 6.7.16 |
 | `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
 | `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
 | `sys_ftruncate` of a pipe, the null device (`NUL`) or a read-only fd | -22 (macOS: 0 for `/dev/null`) | -1 | -1; -22 since 6.7.16 |
 | `sys_ftruncate(-999, n)` (not a descriptor) | -9 | -1 | -1; -9 since 6.7.16 |
 | `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
+| `file_rename("missing", "x")`, or into a missing directory | -2 | -1 | -1; -2 since 6.7.16 |
+| `xsymlink(t, "missing_dir/l")` | -2 | -1 | -1; -2 since 6.7.16 |
+| `xsymlink(t, l)` over an existing `l` | -17 | -1 | -1; -17 since 6.7.16 |
+| `xfsync(fd)` of a closed fd | -9 | -1 | -1; -9 since 6.7.16 |
+| `sys_unlink` / `xunlink` of a directory | -21 (-1 macOS: `EPERM`) | -1 | -1; -21 since 6.7.16 |
+| `sys_truncate(dir, n)` | -21 | -1 | -1; -21 since 6.7.16 |
+| `file_open(dir, O_WRONLY, 0)` | -21 | -1 | -13; -21 since 6.7.16 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
 `sys_close(fd)` of a failed open's -1 read as a good close; `file_close_r(-1)` is `Err(IoBadFd)`.
 
+An fd whose two low bits are set — `h + 1`, `h + 2`, `h + 3` beside an open `h` — answers -9 in a
+close, read, write, seek, fsync / fdatasync and ftruncate, before any Win32 call (6.7.16), as Linux
+answers an fd it never handed out. On Windows an fd above 2 IS the handle, and the NT kernel ignores
+a handle value's two low bits, so until 6.7.16 such a value reached the Win32 call as the live `h`:
+`sys_close(h + 3)` answered 0 and closed `h` (its own write and close then failed -9), a write to
+`h + 1` landed in `h`'s file, a `sys_ftruncate(h + 2, n)` truncated it. Every handle cyrius hands
+out as an fd above 2 — a file, a pipe, a socket, a console — is a multiple of 4, so no open
+descriptor is refused; the negative values with a low bit set (-1 / -2 are the current-process /
+-thread pseudo-handles) take the same -9. The socket and lock calls answer -9 for such an fd too
+(Winsock resolves a `SOCKET` the same way — `sock_close(s + 3)` closed the socket `s`): every
+`sock_*` verb, `sys_getsockname` / `sys_getpeername` / `sys_listen`, `fd_wait_ready`, `xflock`, the
+native TLS transport and the async reactor's socket tasks; `win_handle_under` answers -1 for it,
+its "cannot say" answer.
+
 `mkdir`, `unlink` and `rmdir` (`sys_*` and `xmkdir` / `xunlink` / `xrmdir`: `CreateDirectoryW`,
 `DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
 through the same table since 6.7.16 — an existing name -17 (`ERROR_ALREADY_EXISTS`), a non-empty
 directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path -2, access denied
--13 — where each answered -1 for every failure. `sys_ftruncate` answers -22 for a descriptor it
-cannot truncate, as Linux does: a pipe or a console (the seek is -29 there), a device such as `NUL`
-(`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
+-13 — where each answered -1 for every failure. So do `file_rename` / `sys_rename` (`MoveFileExW`),
+`xsymlink` / `sys_symlink` (`CreateSymbolicLinkW`) and `xfsync` / `sys_fsync` / `sys_fdatasync`
+(`FlushFileBuffers`) since the same release (6.7.16's D94): a missing source or directory -2, an
+existing link name -17, a closed fd -9; a link refused by Windows policy (no Developer Mode, not
+elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. A link's path errors
+come before that policy check, so a non-elevated process reads the same -2 / -17 (`sys_symlink`
+retries without `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` only when a Windows older than 10
+1703 refuses the flag, -22). A DIRECTORY answers
+-21 (`EISDIR`) to `sys_unlink` / `xunlink`, `sys_truncate` and an open for writing, as on Linux
+(6.7.16's D95; macOS's unlink of a directory says `EPERM`, -1): `DeleteFileW` and `CreateFileW`
+refuse one `ERROR_ACCESS_DENIED`, so on that -13 the name is asked (`GetFileAttributesW`), and a
+refusal of anything else — a file another handle holds open, which `DeleteFileW` refuses where
+Linux unlinks it — stays -13. `sys_ftruncate`
+answers -22 for a descriptor it cannot truncate, as Linux does: a pipe or a console (the seek is
+-29 there), a device such as `NUL` (`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
 `/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,
 on Windows only, an `O_APPEND` one (its handle has `FILE_APPEND_DATA` without `FILE_WRITE_DATA`;
 Linux truncates it). `sys_truncate("NUL", n)` is -22 too, as `truncate` of `/dev/null` is on Linux
@@ -8643,7 +8678,8 @@ Windows, Linux, macOS and aarch64:
 
 | Flags | Linux | Windows (v6.6.9) |
 |---|---|---|
-| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: `file_open` -13 (`CreateFileW` says `ERROR_ACCESS_DENIED`), `file_create_exclusive` -17 |
+| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: -17 (`file_open` said -13 before 6.7.16 — `CreateFileW` says `ERROR_ACCESS_DENIED` there; `file_create_exclusive` -17 since 6.7.14) |
+| write access, `O_CREAT` or `O_TRUNC` (no `O_NOFOLLOW` / `O_DIRECTORY`) on a directory | -21 | -21 (-13 before 6.7.16) |
 | `O_NOFOLLOW` on a symlink or junction (to a file or a directory) | -40 (-62 macOS) | -40; the target is never opened or truncated |
 | `O_NOFOLLOW` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
 | `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally (the reopen must be the same file) |
@@ -8665,9 +8701,13 @@ handle by file id and refused if the name changed in between. The refusals live 
 which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
 a link, but hands back the link's own handle instead of -40.
 
-⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -13
-(-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
-`O_DIRECTORY` — set always, it would let `O_WRONLY` open a directory.
+⚠ One divergence remains, fail-closed: a plain read-only `open()` of a directory (no `O_DIRECTORY`)
+is -13 (-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd.
+`FILE_FLAG_BACKUP_SEMANTICS` is set **only** for `O_DIRECTORY` — set always, it would let `O_WRONLY`
+open a directory. Under write access, `O_CREAT` or `O_TRUNC` a directory is -21 (`EISDIR`), as on
+Linux, since 6.7.16 (6.7.16's D95): `CreateFileW` refuses it `ERROR_ACCESS_DENIED`, and on that -13
+`sys_open` asks the name (`GetFileAttributesW`) — a directory is -21 (-17 under `O_CREAT|O_EXCL`),
+anything else keeps -13.
 
 Before v6.6.9 all three flags were accepted and ignored: `O_CREAT|O_EXCL` over a dangling
 symlink **created the symlink's target** (with or without `O_NOFOLLOW` — sigil's keyfile,
@@ -8682,7 +8722,9 @@ real on Windows since the same release.
 `fsync` and `fdatasync` — `xfsync(fd)`, or a raw `syscall(74, fd)` / `syscall(75, fd)` — call
 `FlushFileBuffers` on Windows; there is one flush for data and metadata, so both numbers do the
 same thing. A number held in a `var` flushes too since v6.6.9 (before it, the runtime switch a
-`var` number goes through did not carry 74/75 and returned -38 with no warning). A failure is -1. `file_rename` passes
+`var` number goes through did not carry 74/75 and returned -38 with no warning). A failure is its
+negative errno through the Win32 table since 6.7.16 (a bad fd -9, a read-only one -13; -1 before).
+`file_rename` passes
 `MOVEFILE_WRITE_THROUGH`, so `file_write_atomic`'s write → flush → rename is durable as well as
 atomic.
 
@@ -8691,7 +8733,8 @@ exist), a raw 74/75 returned -38, and the rename was not write-through. Code tha
 durability on Windows was told it had it.
 
 > ⚠ One divergence from POSIX: Windows will not flush a handle opened **without write access**.
-> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-1 on Windows**. An `O_APPEND` handle
+> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-13 on Windows** (`ERROR_ACCESS_DENIED`;
+> -1 before 6.7.16). An `O_APPEND` handle
 > (whose Windows access is `FILE_APPEND_DATA`, not `GENERIC_WRITE`) is expected to flush — the NT
 > flush accepts either write right — and `tests/tcyr/crossos/fsync_flushes.tcyr` checks exactly
 > that, and the `O_RDONLY` refusal, on real Windows at every release.
