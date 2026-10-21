@@ -9866,6 +9866,7 @@ fn _tr_check_impl(S, ii): i64 {
     if (trn == 0) { return 0; }
     var tx = L64(_ti_tab + ii * 64 + 48);
     if (tx < 0) {
+        if (_dl_refd_at(S, trn) == 1) { _panic = 1; return 0; }   # 6.7.16: a refused (inner) trait's — its one error stands
         ERR_IDENT(S, "impl of undeclared trait ", trn, " for ", L64(_ti_tab + ii * 64 + 8));
         return 0;
     }
@@ -10537,7 +10538,8 @@ fn _bnd_make(S, tp): i64 {
             var tx = 0 - 1;
             if (_tr_tab != 0) { tx = _tr_find(S, bn); }
             if (tx < 0) {
-                _bnd_err_at(S, L64(_ctp_buf + (slot * 8 + k) * 16 + 8), "unknown trait ", bn, " in the bound on type parameter ", tpn);
+                if (_dl_refd_at(S, bn) == 1) { _panic = 1; }   # 6.7.16: a refused (inner) trait's — its one error stands
+                else { _bnd_err_at(S, L64(_ctp_buf + (slot * 8 + k) * 16 + 8), "unknown trait ", bn, " in the bound on type parameter ", tpn); }
             } else {
                 S64(blk + (slot * 9 + 1 + c) * 8, tx);
                 c = c + 1;

@@ -985,8 +985,94 @@ row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf
 error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
 error:<source>:1:68: $ZZ"
 
+# UI — 6.7.16 (issues/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
+# REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
+# when PARSE_PROG parsed its body, in source order, so an earlier fn's `q: *Q` was "type 'Q' is declared after its use",
+# `E.B` "undefined variable 'E'", and pass 1's bound `T: Tr` "unknown trait 'Tr'" — each printed before or beside the
+# declaration's own error. Now `_dl_inner_fill` (before every pass-1 scan) walks the bodies and enters the names of
+# each declaration `_decl_inner` will refuse; the bound's unknown-trait report (`_bnd_make`), `dyn Tr`'s "is not a
+# trait" (`_dyn_chk`) and `impl Tr for P`'s "impl of undeclared trait" (`_tr_check_impl`) stand down for such a name,
+# counted and latched as the printed refusal is. UI1-UI3 the filed repros verbatim (two errors each before); UI4 an
+# impl method's body; UI5 the other bodies — a nested block in a fn, a `case` arm, a closure, a top-level block, a
+# `pub struct`, a union, a bare member, a case label, a zone const and array size, a literal and sizeof; UI6 the
+# trait's other uses: `dyn Tr`, `impl Tr for P`, a generic struct's bound; UI7 exact: a name declared nowhere is still
+# reported, and a valid top-level struct of the inner one's name still resolves (its unknown field reported); UI8
+# --syntax-only of UI3 (two before); UI9 exact: a zone declaration below its use is no inner one (module scope is not a
+# body) — "declared after its use" still reported.
+#   the lane before it (c5cf2a990)                   -> RED UI1-UI6 UI8, 35 (UI7 green)
+#   `_tl_pass1` without `_dl_inner_fill`             -> RED UI1-UI6 UI8, 35
+#   `_dl_inner_at` without the case arm's `:`        -> RED UI5, 5 (`case 1: struct R`'s R reported at its use)
+#   `_dl_inner_fill` not marking a fn header's `{`   -> RED UI4, 5 (an impl method's body read as the impl's)
+#   `_bnd_make` without its stand-down               -> RED UI3 UI6 UI8, 15 ("unknown trait 'Tr' in the bound")
+#   `_dyn_chk` without its stand-down                -> RED UI6, 5 ("'Tr' is not a trait")
+#   `_tr_check_impl` without its stand-down          -> RED UI6, 5 ("impl of undeclared trait 'Tr' for 'P'")
+#   the fill at module scope too (no `vec_len` test) -> RED UI9, 5 (rc 1 and NO error: `Late` stood down silently)
+#   (measured) a declaration's body read as a body   -> no row RED: only a declaration inside one differs, which is
+#                                                       invalid there and refused before any use of its name
+row5 UI1 "filed: an earlier fn's q: *Q, Q declared in a fn body" "$(printf 'fn g(q: *Q): i64 { return q.y; }\nfn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, g(0) + f());\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+row5 UI2 "filed: an earlier fn's E.B, E declared in a fn body" "$(printf 'fn h(): i64 { return E.B; }\nfn f(): i64 { enum E { A, B } return 1; }\nsyscall(60, h() + f());\n')
+" "error:<source>:2:15: an \`enum\` declaration $IR a fn body"
+row5 UI3 "filed: a later generic's bound T: Tr, Tr declared in a fn body" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
+" "error:<source>:1:15: a \`trait\` declaration $IR a fn body"
+row5 UI4 "an impl method's body" 'fn g(q: *Q): i64 { return q.y + zz; }
+struct P { x; }
+impl P { fn m(self): i64 { struct Q { y; } return 1; } }
+syscall(60, g(0));
+' "error:<source>:1:35: $ZZ
+error:<source>:3:28: a \`struct\` declaration $IR a fn body"
+row5 UI5 "the other bodies and uses: blocks, a case arm, a closure, pub, a union, consts" 'fn g(q: *Q, r: *R, s: *S, t: *T, u: *U, w: *W): i64 { return q.y + r.y + s.y + t.y + u.y + w.y + B + F.D; }
+fn k(x): i64 { switch (x) { case E.A: return 1; } return G.H; }
+const C = E.B;
+var arr: i64[F.D];
+fn m(): i64 { var q = Q { 5 }; return q.y + sizeof(Q); }
+fn f(x): i64 {
+    if (x == 1) { while (x == 0) { struct Q { y; } } }
+    switch (x) { case 1: struct R { y; } }
+    pub struct S { y; }
+    union U { y; z: i32; }
+    enum E { A, B }
+    return 0;
+}
+var cl = |x| { struct T { y; } return x; };
+var a = 1;
+if (a == 1) { struct W { y; } enum F { C, D } }
+fn h(): i64 { if (1 == 1) { enum G { H } } return 0; }
+syscall(60, g(0, 0, 0, 0, 0, 0) + k(1) + C + m() + f(1) + h() + zz);
+' "error:<source>:7:36: a \`struct\` declaration $IR a fn body
+error:<source>:8:26: a \`struct\` declaration $IR a fn body
+error:<source>:9:5: a \`pub\` declaration $IR a fn body
+error:<source>:10:5: a \`union\` declaration $IR a fn body
+error:<source>:11:5: an \`enum\` declaration $IR a fn body
+error:<source>:14:16: a \`struct\` declaration $IR a fn body
+error:<source>:16:15: a \`struct\` declaration $IR a block
+error:<source>:16:31: an \`enum\` declaration $IR a block
+error:<source>:17:29: an \`enum\` declaration $IR a fn body
+error:<source>:18:67: $ZZ"
+row5 UI6 "a refused inner trait's other uses: dyn, impl for, a struct bound" 'struct P { x; }
+fn g(x: dyn Tr): i64 { return 1; }
+impl Tr for P { fn m(self): i64 { return 1; } }
+struct B<T: Tr> { v: T; }
+fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }
+syscall(60, f() + zz);
+' "error:<source>:5:15: a \`trait\` declaration $IR a fn body
+error:<source>:6:21: $ZZ"
+row5 UI7 "exact: a name declared nowhere, a valid top-level struct of the name" 'fn g(q: *Zq): i64 { return q.y; }
+fn h(q: *Q): i64 { return q.w; }
+fn f(): i64 { struct Q { y; } return 1; }
+struct Q { z; }
+syscall(60, g(0) + h(0) + f());
+' "error:<source>:1:10: unknown type 'Zq' for parameter 'q'
+error:<source>:2:30: unknown field 'w' on struct 'Q'
+error:<source>:3:15: a \`struct\` declaration $IR a fn body"
+row5 UI9 "exact: a zone declaration after its use is still reported" "$(printf 'var g: Late = 0;\nstruct Late { a; b; }\nfn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:8: type 'Late' is declared after its use; declare it above the first use
+error:<source>:3:15: a \`struct\` declaration $IR a fn body"
+row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
+" "error:<source>:1:15: a \`trait\` declaration $IR a fn body" --syntax-only
+
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=30
+F5FLOOR=75
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

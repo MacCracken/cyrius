@@ -558,6 +558,9 @@ var r = add(20, 22);   # r = 42
   annotation with no initializer: the no-initializer rule is not said after it), a by-name `s: *Str`
   parameter of a refused `include "lib/str.cyr"`, and a use parsed BEFORE the late declaration (an
   earlier fn's `q: *Q`, a top-level const swept at the end of pass 1) — the names are known from pass 1.
+  The same for a use parsed before a declaration refused in a fn body or a block (6.7.16): an earlier
+  fn's `q: *Q` or `E.B`, a bound `T: Tr`, `dyn Tr`, `impl Tr for P` — their names are known before any
+  use is read.
   A name declared nowhere is still reported. ⚠ A use inside the declaration zone itself (a zone global's
   array size or enum value naming a late enum) is evaluated before the first statement is known, and is
   still reported.

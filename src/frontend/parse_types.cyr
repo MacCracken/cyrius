@@ -990,7 +990,10 @@ fn _dyn_chk(S, ti, plus): i64 {
     var nt = TOKTYP(S, ti + 1);
     if (nt == 19) { return _dyn_err(S, ti, "", sid, 0 - 1, " takes no type arguments - a trait has none"); }
     if (nt == 28) { return _dyn_err(S, ti, "", sid, 0 - 1, " cannot be an array element - hold it in a record (`struct R { o: dyn ..; }`) and make an array of those"); }
-    if (_tr_find(S, noff + 4) < 0) { return _dyn_err(S, ti, "", 0, noff + 4, " is not a trait - `dyn` takes a declared trait's name"); }
+    if (_tr_find(S, noff + 4) < 0) {
+        if (_dl_refd_at(S, noff + 4) == 1) { _tn_once(S, ti); return 1; }   # 6.7.16: a refused (inner) trait's
+        return _dyn_err(S, ti, "", 0, noff + 4, " is not a trait - `dyn` takes a declared trait's name");
+    }
     return _dyn_fn_chk(S, ti);
 }
 # The position: a dyn type is written after a `:` (a var, a parameter, a return type, a field, a
