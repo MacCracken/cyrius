@@ -7611,6 +7611,7 @@ fn EMIT_GVAR_INITS(S): i64 {
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
     # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
     _warn_mixed_pair_returns(S);
+    _dl_pw_late(S);   # 6.7.16: a kernel build replays the globals after the program (parse_fn_def.cyr `_dl_pw_end`)
     return 0;
 }
 

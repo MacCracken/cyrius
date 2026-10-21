@@ -1071,6 +1071,49 @@ error:<source>:3:15: a \`struct\` declaration $IR a fn body"
 row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
 " "error:<source>:1:15: a \`trait\` declaration $IR a fn body" --syntax-only
 
+# UP — 6.7.16 (the f16 review): A PRE-WALK NAME STANDS DOWN ONLY FOR A DECLARATION THAT IS REPORTED. `_dl_inner_fill`
+# enters the names of a declaration at a statement start in ANY body, and pass 2 refuses one only where it parses the
+# body: a trait member's default no impl inherits, a bounded generic's base (a stub until instantiated) and a refused
+# nested fn's stepped body are never parsed — so a use standing down for such a name counted an error no line said (rc 1
+# and NOTHING printed: UP1 UP2 UP4 UP5), or the use's own report was lost (UP3: E's; UP6: Q's beside the nested fn's).
+# Now the entry a stand-down answers through is marked (`_dl_pw_used`) and, once everything is parsed (`_dl_pw_end`),
+# a marked name no reported declaration entered has its declaration reported at the keyword, in `_decl_inner`'s words,
+# once (UP7: three uses of one enum, one line). UP8 / UP9 controls: unused, nothing changes (rc 0, exit 3); the default
+# inherited (the body parsed) — the one report, as before; UP10 a reported declaration of the same name answers the use
+# (the unparsed one stays unsaid); UP11 `dyn Tr` / `impl Tr for P`; UP12 a kernel build's global replay (after the
+# program; x86_64 ELF, a kernel target) reaches the late flush.
+#   the lane before it (6059d821c)                   -> RED UP1-UP7 UP11 UP12 (rc 1 with no line, or the decl's
+#                                                       line missing), 41; UP8 UP9 UP10 green
+#   `_dl_pw_flush` returns at once                   -> RED UP1-UP7 UP11 UP12, 41
+#   `_dl_pw_flush` without its `_dl_rep_has` test    -> RED UP10, 5 (the unparsed Q said too)
+#   `_dl_pw_late` returns at once                    -> RED UP12, 5 (rc 1, nothing printed)
+row5 UP1 "a trait default no impl inherits: its struct used" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP2 "an uninstantiated bounded generic's base: its struct used" "$(printf 'fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }\ntrait Show { fn s(self): i64; }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP3 "a trait default's enum: E.B beside an undefined zz" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + zz; }\nvar r = h();\nsyscall(60, r);\n')
+" "error:<source>:2:30: $ZZ
+error:<source>:1:29: an \`enum\` declaration $IR a fn body"
+row5 UP4 "a trait default's trait: a bound naming it" "$(printf 'trait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nfn g<U: Tr>(x: U): i64 { return 1; }\nfn main(): i64 { return g<i64>(1); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`trait\` declaration $IR a fn body"
+row5 UP5 "a trait default's enum: a zone array size naming it" "$(printf 'var arr: i64[E.B];\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:2:29: an \`enum\` declaration $IR a fn body"
+row5 UP6 "a refused nested fn's body: its struct used" "$(printf 'fn f(): i64 { fn g(): i64 { struct Q { y; } return 1; } return 0; }\nfn h(q: *Q): i64 { return q.y; }\nsyscall(60, h(0) + f());\n')
+" "error:<source>:1:15: fn 'g' is defined inside fn 'f'; define it at top level
+error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP7 "three uses of one unparsed enum: one line" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + B + E.A; }\nvar r = h();\nsyscall(60, r);\n')
+" "error:<source>:1:29: an \`enum\` declaration $IR a fn body"
+ok5 UP8 "control: unused, nothing changes" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" 3
+row5 UP9 "control: the default inherited — its one report" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { a; }\nimpl T for P { }\nfn g(q: *Q): i64 { return 1; }\nfn main(): i64 { var p = P { 1 }; return p.d() + g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP10 "a reported declaration of the name answers the use" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+row5 UP11 "dyn Tr and impl Tr for P, Tr in a trait default" "$(printf 'struct P { x; }\nfn g(x: dyn Tr): i64 { return 1; }\nimpl Tr for P { fn m(self): i64 { return 1; } }\ntrait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nsyscall(60, 0);\n')
+" "error:<source>:4:29: a \`trait\` declaration $IR a fn body"
+one "UP12 a kernel build (x86_64 ELF): a global's E.B, replayed after the program" "$(printf 'kernel;\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nvar g = E.B;\nfn main(): i64 { return g; }\n')
+" "error:<source>:2:29: an \`enum\` declaration $IR a fn body"
+
 # UZ — 6.7.16 (issues/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
 # CONTEXT NAMING A LATE (REFUSED) ENUM IS NO SECOND ERROR. A declaration-zone global's array size and an enum's value are
 # evaluated during pass 1's zone scan, before the first statement — and so the late declarations' names (`_dl_fill`) —
@@ -1124,7 +1167,7 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 " "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
 
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=120
+F5FLOOR=175
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
