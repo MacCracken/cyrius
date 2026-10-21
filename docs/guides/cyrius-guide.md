@@ -676,7 +676,10 @@ discarded - a statement is an assignment or a call* — with or without `--allow
 and `(s).a;` are (6.7.16, the user's D11, 2026-10-19). Before 6.7.16 such a statement compiled as
 a call to an undefined fn of that name: refused for *undefined function 'mulh64'*, and
 `--allow-undef` wrote a binary that died with SIGILL at the line. `fncall0`..`fncall8(..);` call a
-fn, so each stays a statement.
+fn, so each stays a statement. Neither result has fields: `mulh64(a, b).n = 5;` and `sizeof(T).n;`
+are one error at the `.`, *expected ';', got '.'*, as `var x = mulh64(a, b).n;` is. Before 6.7.16
+the statement also printed *undefined function 'mulh64'* twice and *refusing to emit binary*
+(`sizeof(T).n` first *undefined variable 'T'*), and under `--syntax-only` only those.
 
 ### Default and named arguments (6.7.7)
 

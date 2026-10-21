@@ -3749,12 +3749,11 @@ fn _is_ident_intrinsic(S, noff): i64 {
 # call", once at the name, no binary. The value is then parsed under the latch (`sizeof`'s type and all), the
 # statement ending at its `;` in sync (`_refuse_in_sync`), so the next statement is parsed. Cursor on the `(` after the
 # name `noff`; 1 = refused, the statement consumed. `fncallN` is no intrinsic here: its statement arm stays a call. A
-# `.` after the call's `)` (`mulh64(2, 3).n = 5;`) is not the shape: the call statement's field arm keeps its "expected
-# ';', got '.'". CHANGELOG [6.7.16]
+# `.` after the call's `)` (`mulh64(2, 3).n = 5;`) is not the shape: `_stmt_intrinsic_dot`. CHANGELOG [6.7.16]
 fn _stmt_intrinsic(S, noff): i64 {
     if (_is_ident_intrinsic(S, noff) == 0) { return 0; }
     var c = _call_close(S, GTI(S)) + 1;
-    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return 0; } }
+    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S); } }
     STI(S, GTI(S) - 1);   # the name
     _refuse_in_sync(S);
     var tg = "_stmt_intrinsic";
@@ -3768,6 +3767,19 @@ fn _stmt_intrinsic(S, noff): i64 {
         _had_error = 1;
         _panic = 1;
     }
+    PCMPE(S);
+    _expect_step(S, 5);
+    return 1;
+}
+
+# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
+# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
+# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
+# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
+# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
+# resync steps to its `;`. Cursor on the `(`; 1. CHANGELOG [6.7.16]
+fn _stmt_intrinsic_dot(S): i64 {
+    STI(S, GTI(S) - 1);   # the name
     PCMPE(S);
     _expect_step(S, 5);
     return 1;

@@ -293,6 +293,29 @@ stmt st_gen      "${SH}"'fn g<T>(a: T): i64 { sizeof(H); return 0; }\nsyscall(60
 stmt st_expr     "${SH}"'fn go(): i64 { sizeof(H) + 1; return 0; }\nsyscall(60, go());\n' "error:<source>:3:16: the value of 'sizeof(..)'$SI|"
 stmt st_next     "${SH}"'fn go(): i64 {\n    var y = 0;\n    mulh64(2, 3);\n    y = zz9;\n    return y;\n}\nsyscall(60, go());\n' "error:<source>:5:5: the value of 'mulh64(..)'$SI|error:<source>:6:12: undefined variable 'zz9' (missing include or enum?)|"
 stmt st_next_sz  "${SH}"'fn go(): i64 {\n    var y = 0;\n    if (y == 0) { sizeof(H); y = zz8; }\n    return y;\n}\nsyscall(60, go());\n' "error:<source>:5:19: the value of 'sizeof(..)'$SI|error:<source>:5:37: undefined variable 'zz8' (missing include or enum?)|"
+# A `.` after the intrinsic's `)` is no D11 shape: the statement is parsed as the value position parses it, one
+# "expected ';', got '.'" and nothing else (6.7.16, issues/2026-10-19-intrinsic-call-with-field-statement-still-
+# undefined-function.md). The call statement's field arm took the intrinsic for a call to a fn that cannot exist:
+# "expected ';', got '.'", then "undefined function 'mulh64'" twice (`warning:` lines) and "refusing to emit binary"
+# (`sizeof(H)`: "undefined variable 'H'" first); under --syntax-only (what `cyrius lint` runs) ONLY the invented lines,
+# never the `.`. st_fld_filed is the filed repro verbatim; two such statements on a line are two errors, each its own
+# (the resync stops at the first one's `;`). MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_stmt_intrinsic_dot` dropped (the old
+# `return 0` at the `.`) -> RED every st_fld_* / st_sz_fld* row on all six legs.
+FE="expected ';', got '.'"
+stmt st_fld_filed       'struct H { n; m; }\nfn go(): i64 { mulh64(2, 3).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:2:28: $FE|"
+stmt st_fld_store       "${SH}"'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|"
+stmt st_fld_store_undef "${SH}"'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|" --allow-undef
+stmt st_fld_store_syn   "${SH}"'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|" --syntax-only
+stmt st_fld_read        "${SH}"'fn go(): i64 { mulh64(2, 3).n; return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|"
+stmt st_fld_read_undef  "${SH}"'fn go(): i64 { mulh64(2, 3).n; return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|" --allow-undef
+stmt st_fld_meth        "${SH}"'fn go(): i64 { mulh64(2, 3).n += 1; mulh64(4, 5).f(); return 0; }\nsyscall(60, go());\n' "error:<source>:3:28: $FE|error:<source>:3:49: $FE|"
+stmt st_sz_fld          "${SH}"'fn go(): i64 { sizeof(H).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:25: $FE|"
+stmt st_sz_fld_undef    "${SH}"'fn go(): i64 { sizeof(H).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:25: $FE|" --allow-undef
+stmt st_sz_fld_syn      "${SH}"'fn go(): i64 { sizeof(H).n = 5; return 0; }\nsyscall(60, go());\n' "error:<source>:3:25: $FE|" --syntax-only
+stmt st_sz_fld_read     "${SH}"'fn go(): i64 { sizeof(H).n; sizeof(H).n.m; return 0; }\nsyscall(60, go());\n' "error:<source>:3:25: $FE|error:<source>:3:38: $FE|"
+stmt st_fld_top         "${SH}"'mulh64(2, 3).n = 5;\nsizeof(H).n;\nsyscall(60, 0);\n' "error:<source>:3:13: $FE|error:<source>:4:10: $FE|"
+stmt st_fld_gen         "${SH}"'fn g<T>(a: T): i64 { mulh64(2, 3).n = 5; return 0; }\nsyscall(60, g(1) + g<i32>(2));\n' "error:<source>:3:34: $FE|"
+stmt st_fld_next        "${SH}"'fn go(): i64 {\n    var y = 0;\n    mulh64(2, 3).n = 5;\n    y = zz9;\n    return y;\n}\nsyscall(60, go());\n' "error:<source>:5:17: $FE|error:<source>:6:12: undefined variable 'zz9' (missing include or enum?)|"
 # st_val: the value forms compile on every leg and run 16 (2 * 3 >> 64 = 0, + sizeof(H) 16) wherever a runner is
 printf '%b' "${SH}"'fn go(): i64 { var x = mulh64(2, 3); var n = sizeof(H); return x + n; }\nsyscall(60, go());\n' > "$T/st_val.cyr"
 for leg in $LEGS; do
@@ -305,9 +328,9 @@ for leg in $LEGS; do
     if [ "$XRC" = -1 ]; then echo "  not run: st_val $leg — $NOTE"
     else check "st_val $leg: mulh64(2, 3) + sizeof(H) exits 16" 16 "$XRC"; fi
 done
-# The corpus floor: 11 rows (10 refusals + st_val) on all six legs. A leg that did not build is RED above; this
-# catches rows lost from the list.
-A5_FLOOR=66
+# The corpus floor: 25 rows (10 D11 refusals, 14 st_fld / st_sz_fld rows, st_val) on all six legs. A leg that did not
+# build is RED above; this catches rows lost from the list.
+A5_FLOOR=150
 [ "$A5" -ge "$A5_FLOOR" ] || { echo "  FAIL: axis 5 ran $A5 row-legs (floor $A5_FLOOR) — rows or legs were lost"; fails=$((fails + 1)); }
 echo "  axis 5: $A5 row-legs on $LEGS; $skips skipped"
 
