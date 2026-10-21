@@ -395,6 +395,21 @@ fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
 }
 
+# 1 when `fd` cannot be a descriptor on Windows: above 2 with a low bit set. The NT kernel ignores a
+# HANDLE value's two low bits, so such a value reaches a Win32 or Winsock call as the live handle
+# below it — `h + 3` IS `h`: a closesocket(s + 3) closed the socket `s`, a LockFileEx(h + 1) locked
+# `h`'s file. Every handle cyrius hands out as an fd above 2 (a file, a pipe, a socket) is a
+# multiple of 4. The fd reroutes (close / read / write / seek / fsync / ftruncate) refuse such an
+# fd in the emitter; each wrapper that hands an fd to a raw handle reroute (the socket verbs here
+# and in lib/net.cyr, lib/tls_native_conn.cyr, lib/async_win.cyr; xflock; win_handle_under) asks
+# this first and answers -9 (EBADF), as Linux answers an fd it never handed out. CHANGELOG [6.7.16]
+fn _win_fd_aliases(fd): i64 {
+    if (fd > 2) {
+        if ((fd & 3) != 0) { return 1; }
+    }
+    return 0;
+}
+
 # Seek within `fd`. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
 # Rerouted to kernel32!SetFilePointerEx (the 64-bit-capable form).
 # Returns the new offset, or a negative errno when the seek fails: -22
@@ -895,6 +910,7 @@ fn _sw_wsa_err(): i64 {
 # reroute defines only eax, so rax[63:32] is the callee's to leave dirty. CHANGELOG [6.6.16]
 fn fd_wait_ready(fd, want_write, timeout_ms): i64 {
     if (fd < 0) { return 0 - 10038; }                   # INVALID_SOCKET → -WSAENOTSOCK
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }     # never a descriptor (6.7.16)
     var ms = timeout_ms;
     if (ms < 0) { ms = 0 - 1; }
     if (ms > 0x7FFFFFFF) { ms = 0x7FFFFFFF; }
@@ -982,12 +998,14 @@ fn sys_fdatasync(fd): i64 { return syscall(75, fd); }
 # Winsock error, e.g. -10057 WSAENOTCONN). WSAGetLastError is read immediately, before
 # any other call can reset the per-thread last-error. CHANGELOG [6.6.16]
 fn sys_getpeername(fd, addr, addrlen): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }     # never a descriptor (6.7.16)
     var r = syscall(61494, fd, addr, addrlen);
     if ((r & 0xFFFFFFFF) == 0) { return 0; }
     return _sw_wsa_err();           # -WSAGetLastError (0xF024)
 }
 # getsockname (0xF037 → ws2_32!getsockname): same normalization as getpeername.
 fn sys_getsockname(fd, addr, addrlen): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }     # never a descriptor (6.7.16)
     var r = syscall(61495, fd, addr, addrlen);
     if ((r & 0xFFFFFFFF) == 0) { return 0; }
     return _sw_wsa_err();
@@ -998,6 +1016,7 @@ fn sys_getsockname(fd, addr, addrlen): i64 {
 # `fd` is a ws2_32 SOCKET (lib/net.cyr's tcp_socket on PE, real since 6.6.11 — until then it
 # returned -38 there and this comment described a socket nothing could create). CHANGELOG [6.6.10]
 fn sys_listen(fd, backlog): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }     # never a descriptor (6.7.16)
     var r = syscall(0xF033, fd, backlog);
     if ((r & 0xFFFFFFFF) == 0) { return 0; }
     return _sw_wsa_err();           # -WSAGetLastError (0xF024)

@@ -545,6 +545,9 @@ fn xflock(fd, op): i64 {
 # (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -22 for an op that
 # is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), as on Linux; -1 for any other failure. LOCK_UN
 # of an unheld lock is 0 (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass. CHANGELOG [6.7.12]
+# An fd above 2 with a low bit set is -9 (EBADF), as on Linux: LockFileEx ignores a handle's two
+# low bits, so `xflock(h + 1, LOCK_EX)` locked `h`'s file and answered 0 (`_win_fd_aliases`).
+# CHANGELOG [6.7.16]
 #
 # ⛔ A RE-LOCK TO THE MODE THE HANDLE HOLDS IS A NO-OP, as under flock(2) — the sentinel is never
 # let go. A held range relocked on the same handle blocks (exclusive) or stacks (shared), so a
@@ -562,6 +565,7 @@ fn xflock(fd, op): i64 {
 # the new one is taken (a pending locker may get in between, and LOCK_NB may then fail -11).
 # CHANGELOG [6.7.13]
 fn _xflock_win(fd, op): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor: it locks `fd & ~3` (6.7.16)
     var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
     if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
     var r = 0;
@@ -609,6 +613,7 @@ fn _xflock_win_release(fd): i64 {
 # UnlockFileEx of the one byte at `off`: 0 when this handle held a lock on it, 1 when it held none
 # (ERROR_NOT_LOCKED 158), -1 for any other failure (-38: a compiler without the reroute).
 fn _xflock_win_unlock(fd, off): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 1; }   # never a descriptor (_xflock_win answered -9)
     var ov[32];                                # OVERLAPPED: Internal, InternalHigh, Offset:OffsetHigh, hEvent
     store64(&ov, 0);
     store64(&ov + 8, 0);
@@ -625,6 +630,7 @@ fn _xflock_win_unlock(fd, off): i64 {
 # LOCKFILE_FAIL_IMMEDIATELY 1): 0 granted; -11 when it is held elsewhere and `fl` asked not to
 # wait (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -1 otherwise.
 fn _xflock_win_lock(fd, off, fl): i64 {
+    if (_win_fd_aliases(fd) == 1) { return 0 - 1; }   # never a descriptor (_xflock_win answered -9)
     var ov[32];
     store64(&ov, 0);
     store64(&ov + 8, 0);

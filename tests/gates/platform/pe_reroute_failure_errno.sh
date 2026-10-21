@@ -184,6 +184,31 @@
 #                                                           PASSES: GetStdHandle(-fd - 10) refuses the
 #                                                           slot, so the -9 arm answers one Win32 call
 #                                                           later — axis 2 holds the before-any-call rule
+# The same value reached Winsock and kernel32's lock / final-path calls through the stdlib wrappers
+# that hand an fd to a raw handle reroute (measured on cass: closesocket(s + 3) closed the socket s
+# and answered 0, getsockname / listen of s + 1 acted on s; wine the same). Each answers -9 first
+# (`_win_fd_aliases`, lib/syscalls_windows.cyr): the socket calls there and fd_wait_ready, lib/net.cyr's
+# Winsock primitives, xflock's Windows arm, lib/tls_native_conn.cyr's and lib/async_win.cyr's
+# transport leaves and reactor tasks, and win_handle_under (-1, its "cannot" answer).
+#   axis 6  STATIC, the stdlib: every `syscall(<a raw handle reroute>, fd, ..)` in a non-fold lib/
+#           file is preceded IN ITS fn by `_win_fd_aliases(fd)` (SetEndOfFile's 0xF03F excepted: the
+#           emitter's fd map guards it), and the ctx-held sockets of async_win.cyr's three reactor
+#           tasks and win_handle_under's two handles are asked too; floor 24 guarded calls.
+#   axis 4 also runs a Windows-only probe of the private leaves (wrapalias: _tn_os_read /
+#   _tn_os_write / _tn_nb_on / async_relay_once of s + k, win_handle_under of h + 1 and of root + 2):
+#   `-9 -9 -9 -9 1 -1 -1` (the pre-fix lib: `-10057 -10054 0 -10057 1 1 1` — s itself was read,
+#   written, made non-blocking, and h + 1 named h's path).
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix lib (450ecf2c9's six files)                 axis 6 FAIL; axis 4 FAIL (wrapalias as
+#                                                           above; unopened_fd_ebadf no summary, exit
+#                                                           124: after its xflock and socket rows fail,
+#                                                           sock_recv(s + 3) blocks on the socket that
+#                                                           listen(s + 1) made listen)
+#   _net_os_close's guard dropped                           axis 6 FAIL (net.cyr:_net_os_close); axis 4
+#                                                           FAIL (unopened_fd_ebadf 51 / 2: sock_close
+#                                                           (s + 3) answers 0 and s is gone, -10038)
+#   _tn_os_read's guard dropped                             axis 6 FAIL; axis 4 FAIL (wrapalias
+#                                                           `-10057 -9 -9 -9 1 -1 -1`)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -200,7 +225,7 @@ for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
 # T6's at 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=27; F6=32
+F1=10; F2=10; F3=13; F4=13; F5=27; F6=53
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -752,6 +777,37 @@ case "$(warm _io_tmp_taken)" in
     *) bad "axis 5: _io_tmp_taken's CYRIUS_TARGET_WIN arm does not classify -13 by asking the name: $(warm _io_tmp_taken | tr -s ' \n' '  ')" ;;
 esac
 
+# axis 6, 6.7.16: static — the stdlib wrappers that hand an fd to a raw handle reroute ask
+# `_win_fd_aliases` first. The folds (docs/ecosystem.md's lib/ rows) are not cyrius-edited and call
+# no raw handle reroute; the census reads every other lib/*.cyr.
+FOLDS=$(grep -o '^| `lib/[a-z_0-9]*\.cyr`' "$ROOT/docs/ecosystem.md" | sed 's/^| `lib\///; s/`$//' | tr '\n' ' ')
+[ -n "$FOLDS" ] || bad "axis 6: no fold rows read from docs/ecosystem.md"
+for lf in "$ROOT"/lib/*.cyr; do
+    case " $FOLDS " in *" $(basename "$lf") "*) continue ;; esac
+    awk -v F="$(basename "$lf")" '
+        /^[ \t]*#/ { next }
+        /^fn [A-Za-z_0-9]+\(/ { fn = $2; sub(/\(.*/, "", fn); g = 0; gc = 0 }
+        /_win_fd_aliases\(fd\)/ { g = 1 }
+        /_win_fd_aliases\(load64\(ctx \+ (48|56)\)\)/ { gc = 1 }
+        /syscall\((0xF0[0-9A-Fa-f][0-9A-Fa-f]|61[45][0-9][0-9]), *fd[,)]/ {
+            if ($0 ~ /syscall\((0xF03F|61503), *fd/) next
+            print (g ? "G ok " : "G BAD ") F ":" fn ":" NR
+        }
+        /syscall\(0xF0(29|2A|27), load64\(ctx \+ (48|56)\)/ { print (gc ? "C ok " : "C BAD ") F ":" fn ":" NR }
+        /^fn win_handle_under\(/ { wh = 1 }
+        wh && /_win_fd_aliases\(h\)/ { wa = 1 }
+        wh && /_win_fd_aliases\(root_h\)/ { wb = 1 }
+        wh && /syscall\(0xF04E/ { print ((wa && wb) ? "W ok " : "W BAD ") F ":" fn ":" NR; wh = 0 }
+    ' "$lf"
+done > "$D/census"
+c6=$(awk '$2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+b6=$(awk '$2 == "BAD" {print $3}' "$D/census" | tr '\n' ' ')
+cc6=$(awk '$1 == "C" && $2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+cw6=$(awk '$1 == "W" && $2 == "ok"' "$D/census" | wc -l | tr -d ' ')
+if [ -n "$b6" ]; then bad "axis 6: a stdlib fd reaches a raw handle reroute without asking _win_fd_aliases first: $b6"
+elif [ "$c6" -lt 24 ] || [ "$cc6" -lt 3 ] || [ "$cw6" -lt 1 ]; then bad "axis 6: $c6 guarded raw handle call(s) (floor 24), $cc6 reactor-task one(s) (floor 3), $cw6 win_handle_under (want 1)"
+else ok; fi
+
 # axis 4: behaviour under wine.
 if ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP: axis 4 (wine absent — the cass cross-OS leg runs the same .tcyr on real Windows)"
@@ -888,6 +944,56 @@ EOF
             timeout 120 wine alias.exe < /dev/null > al.out 2> /dev/null ) || true
         got=$(line "$D/w/al/al.out")
         if alias_ok "$got" 4; then ok; else bad "axis 4: the fd-alias repro under wine: '$got' (want '<h> -9 3 0', h a multiple of 4; '<h> 0 -9 -9' is the close of h + 3 closing h)"; fi
+    fi
+    # 6.7.16: the Windows-only wrappers' leaves (axis 6 holds their shape where wine is absent).
+    cat > "$D/wrapalias.cyr" <<'EOF'
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/fs.cyr"
+include "lib/chrono.cyr"
+include "lib/fnptr.cyr"
+include "lib/atomic.cyr"
+include "lib/async.cyr"
+include "lib/tls.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var st, s = tcp_socket();
+var bt, bv = sock_bind(s, INADDR_LOOPBACK(), 0);
+var buf[16];
+p(_tn_os_read(s + 1, &buf, 1));
+p(_tn_os_write(s + 2, "x", 1));
+p(_tn_nb_on(s + 3));
+p(async_relay_once(0, s + 1, s, &buf, 1));
+sys_mkdir("wa_d", 448);
+var root = sys_open("wa_d", 65536, 0);
+var h = sys_open("wa_d/f", 577, 420);
+p(win_handle_under(h, root));
+p(win_handle_under(h + 1, root));
+p(win_handle_under(h, root + 2));
+sys_close(h);
+sys_close(root);
+sys_unlink("wa_d/f");
+sys_rmdir("wa_d");
+sock_close(s);
+println("");
+EOF
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/wrapalias.cyr" > "$D/w/wrapalias.exe" 2> "$D/wrapalias.werr" ) || true
+    if [ ! -s "$D/w/wrapalias.exe" ]; then bad "axis 4: the PE build of the wrapper probe produced no binary: $(grep -m2 'error' "$D/wrapalias.werr" | tr '\n' ' ')"
+    else
+        mkdir -p "$D/w/wa" && cp "$D/w/wrapalias.exe" "$D/w/wa/"
+        ( cd "$D/w/wa" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine wrapalias.exe < /dev/null > wa.out 2> /dev/null ) || true
+        got=$(line "$D/w/wa/wa.out")
+        if [ "$got" = "-9 -9 -9 -9 1 -1 -1" ]; then ok; else bad "axis 4: the stdlib wrappers of an fd never opened, under wine: '$got' (want '-9 -9 -9 -9 1 -1 -1'; '-10057 -10054 0 -10057 1 1 1' is the socket s / the file h acted on)"; fi
     fi
     for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)

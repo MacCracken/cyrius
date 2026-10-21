@@ -8590,7 +8590,11 @@ a handle value's two low bits, so until 6.7.16 such a value reached the Win32 ca
 `h + 1` landed in `h`'s file, a `sys_ftruncate(h + 2, n)` truncated it. Every handle cyrius hands
 out as an fd above 2 — a file, a pipe, a socket, a console — is a multiple of 4, so no open
 descriptor is refused; the negative values with a low bit set (-1 / -2 are the current-process /
--thread pseudo-handles) take the same -9.
+-thread pseudo-handles) take the same -9. The socket and lock calls answer -9 for such an fd too
+(Winsock resolves a `SOCKET` the same way — `sock_close(s + 3)` closed the socket `s`): every
+`sock_*` verb, `sys_getsockname` / `sys_getpeername` / `sys_listen`, `fd_wait_ready`, `xflock`, the
+native TLS transport and the async reactor's socket tasks; `win_handle_under` answers -1 for it,
+its "cannot say" answer.
 
 `mkdir`, `unlink` and `rmdir` (`sys_*` and `xmkdir` / `xunlink` / `xrmdir`: `CreateDirectoryW`,
 `DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
