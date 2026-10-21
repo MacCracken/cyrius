@@ -14717,6 +14717,56 @@ fn _param_float(S, li, pc, flt, pack): i64 {
     if (pc == 1) { return pack | (f << 16); }
     return pack;
 }
+# ⛔ 6.7.16 (D72, the user's decision, 2026-10-20) — A NARROW PARAMETER IS NARROWED IN THE FN, LIKE A NARROW LOCAL.
+# `y: u8` / `i8` / `u16` / `i16` / `u32` / `i32` (and a generic `x: T` bound to i8 / i16 / i32) types its slot as a
+# narrow local's: SLTYPE the width and, signed, the negative slice-width mark (`_sl_marks`), so its reads take the
+# width sign- or zero-extended and its stores (`y = v`, `y += 1`, `*(&y) = v`) write it. The ABI is unchanged — the
+# whole register is homed and only its low bytes are read — so a call through a fn pointer narrows too. It was typed
+# 0, the caller's whole word: `wid(0x1FF)` read 511 in a `u8`, and `y += 1` of an `i16` 32767 was 32768. The #inline
+# replay carries the code in the GFIPT pack (field 0x8100 | code, `_ipt_ncode`). CHANGELOG [6.7.16]
+var _pnw_pend = 0;   # the parameter being parsed: its narrow code (the width, | 8 when signed), 0 = none
+# The parameter's type name `tnoff` (one `*` none: `_ptrp_now`): a builtin narrow integer, never a struct so named.
+fn _pnw_note(S, tnoff): i64 {
+    _pnw_pend = 0;
+    if (_ptrp_now(S) != 0) { return 0; }
+    if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
+    var c = _tn_scalar(L64(S + 0xEC00000 + tnoff));
+    var w = _tn_iw(c);
+    if (w < 1) { return 0; }
+    if (w > 4) { return 0; }
+    _pnw_pend = w | (_tn_sgn(c) << 3);
+    return 0;
+}
+# A bound type parameter's code `rc` (`_tp_resolve`: i8 -1, i16 -2, i32 -4; a type argument is no unsigned type).
+fn _pnw_tp(S, rc): i64 {
+    if (_ptrp_now(S) != 0) { return 0; }
+    if (rc == 0 - 1 || rc == 0 - 2 || rc == 0 - 4) { _pnw_pend = (0 - rc) | 8; }
+    return 0;
+}
+# Slot `li` typed by the narrow `code` (0: nothing). The slice-width word is written either way: a slot index keeps an
+# earlier fn's local's mark, which would sign-extend an unsigned parameter.
+fn _pnw_mark(S, li, code): i64 {
+    if (code == 0) { return 0; }
+    var w = code & 7;
+    SLTYPE(S, li, w);
+    if ((code & 8) != 0) { SSLICE_W(S, li, 0 - w); }
+    else { SSLICE_W(S, li, 0); }
+    return 0;
+}
+# The int-class parameter `pc` at slot `li`: the pending code applied, and the inline pack's field set. ⚠ Not in a
+# suspending `async fn`: its parameters live in the coroutine frame, where a narrow slot is refused by name ("a sub-word
+# local in an `async fn` is not supported yet") — that one keeps the word, unchanged, until the user rules on it.
+fn _pnw_apply(S, li, pc, pack): i64 {
+    var code = _pnw_pend;
+    _pnw_pend = 0;
+    if (code == 0) { return pack; }
+    if (_pending_coro == 1) { return pack; }
+    _pnw_mark(S, li, code);
+    var f = 0x8100 | code;
+    if (pc == 0) { return pack | f; }
+    if (pc == 1) { return pack | (f << 16); }
+    return pack;
+}
 # The return of the call `IDENT(` / `IDENT<..>(` at the cursor to fi: FINDFN's entry's, or for a
 # generic the INSTANCE's the call reaches — an f64 (`gid(gid(h))`, 6.7.9) or a struct (6.7.11:
 # `g(mk1(p))` bound T to `mk1`'s base return, the generic `Box`, and was refused against the real

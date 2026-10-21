@@ -2667,6 +2667,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_pfn == 0x00343666) { pt_float = F64_TYID; }
                         elif (_pfn == 0x00323366) { pt_float = F32_TYID; }
                         pt_bool = _bx_ptype(S, tnoff);
+                        _pnw_note(S, tnoff);   # 6.7.16 (D72): a narrow integer is narrowed in the fn
                     }
                     if (_ptc == 1) { str_mask = _pmw(str_mask, pc, 2); }   # 6.6.17 (a10): _pmw, see there
                     elif (_ptc == 2) { cstring_mask = _pmw(cstring_mask, pc, 4); }
@@ -2696,6 +2697,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     if (_tp_c0 != 0) {
                         var _ptpc = _tp_resolve(S, tnoff);
                         if (_ptpc == 0 - 9) { pt_float = F64_TYID; }   # 6.6.17 (a9): `x: T`, T = f64, is an f64 param
+                        _pnw_tp(S, _ptpc);   # 6.7.16 (D72): T = i8 / i16 / i32, a narrow parameter
                         if (_ptpc > 0) {
                             pt_sid = _ptpc;
                             # v6.3.39 (B3) — a tparam-typed param resolved (via the instance
@@ -2819,6 +2821,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # emitters. pt_float is 0 for every non-float param (incl. all of
                 # cycc's) → self-host stays byte-identical.
                 _ipt_pack = _param_float(S, li, pc, pt_float, _ipt_pack);   # 6.6.17 (a9)
+                _ipt_pack = _pnw_apply(S, li, pc, _ipt_pack);   # 6.7.16 (D72): a narrow one's width and sign
                 # 6.6.5 — RECORD THE PARAM ABI INSTEAD OF RE-DERIVING IT AT EVERY USE. A struct
                 # param over 8 B is ADDRESS-passed (`_param_wants_struct_ptr` sets structmask
                 # and the caller pushes `&local`), so its slot holds a pointer; one that fits in

@@ -36,10 +36,17 @@
 #      sign-extended, as one in the declaration zone — prints `-2 -2 -2` (`65534 4294967294 254` before) on x86_64,
 #      x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine); T's amp_narrow_after row and
 #      tests/tcyr/crossos/narrow_global_init_width.tcyr's ps_ rows carry its shapes
+#   R7 6.7.16 (D72, the user's decision, 2026-10-20) — issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md,
+#      the filed repro verbatim: a narrow parameter is narrowed in the fn, like a narrow local — prints
+#      `255 -1 -32768 -32768` (`511 8589934591 32768 -32768` before) on x86_64, CYRIUS_IR=1, CYRIUS_IR=3,
+#      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
 #      / cass / pi
+#   T2 tests/tcyr/crossos/narrow_param_width.tcyr (D72's rows: every width and sign, stack-passed, a fn pointer,
+#      `*(&y)`, `y = v` / `OP=`, a capture, #inline, a generic `x: T`, a method, a default, #regalloc; the controls) on
+#      the same 7 legs, N2 derived from the file the same way (floor FLOOR2)
 #
 # MUTATION LEDGER (2026-10-11; a scratch copy of the tree with the one change, this gate run from that
 # copy with CYCC=<the mutant built from it>):
@@ -62,6 +69,9 @@
 #   M5  (2026-10-21) PARSE_VAR's top-level arm without its SVSGN line (the 6.7.16 fix reverted) -> RED 12: R6
 #                                                    (`65534 4294967294 254`) on all 5 legs; T the amp_narrow_after
 #                                                    row on all 7 legs
+#   M6  (2026-10-21) the parameter loop without its `_pnw_apply` line (the 6.7.16 D72 fix reverted) -> RED 14:
+#                                                    R7 (`511 8589934591 32768 -32768`) and T2 (48 of 59 rows) on all 7
+#                                                    legs
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -95,6 +105,11 @@ for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
 FLOOR=58
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
+TC2=tests/tcyr/crossos/narrow_param_width.tcyr
+[ -f "$TC2" ] || { echo "FAIL: $G: $TC2 is missing"; exit 1; }
+N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
+FLOOR2=59
+if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -239,6 +254,34 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "R6 $leg: exit $RC, '$LAST' (want '-2 -2 -2 ')"; fi
 done
 
+echo "R7. 6.7.16 (D72): the filed repro verbatim — a narrow parameter is narrowed in the fn (\`255 -1 -32768 -32768\`; \`511 8589934591 32768 -32768\` before)"
+cat > "$D/nparam.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+fn pr(x): i64 { fmt_int(x); syscall(SYS_WRITE, 1, " ", 1); return 0; }
+fn wid(y: u8): i64 { return y; }
+fn w32(y: i32): i64 { return y; }
+fn inc(y: i16): i64 { y += 1; return y; }
+fn inc_l(a: i16): i64 { var y: i16 = a; y += 1; return y; }
+fn main(): i64 {
+    pr(wid(0x1FF));          # a u8 holds 0..255
+    pr(w32(0x1FFFFFFFF));    # an i32 holds -2^31..2^31-1
+    pr(inc(0x7FFF));         # i16 32767 + 1
+    pr(inc_l(0x7FFF));       # the same through an i16 local
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf 'R7_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/nparam.cyr" "$D/p_$n"
+    if [ "$RC" -eq -1 ]; then bad "R7 $leg: did not build: $(grep -m1 'error' "$D/p_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "255 -1 -32768 -32768 " ]; then ok "R7 $leg: '$LAST'"
+    else bad "R7 $leg: exit $RC, '$LAST' (want '255 -1 -32768 -32768 ')"; fi
+done
+
 echo "N. a #naked fn (compile only): by-value \`&q\` stays the slot's content, a *P parameter's \`&q\` is the slot"
 # nk_src <param type> <initialiser> <out>: one #naked fn, kept by `&nk`, its asm a bare return.
 nk_src() {
@@ -285,6 +328,15 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     else bad "T $leg: exit $RC, '$LAST' (want '$N passed, 0 failed ($N total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "T2. $TC2 ($N2 rows)"
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TC2" "$D/t2_$n"
+    if [ "$RC" -eq -1 ]; then bad "T2 $leg: the values file did not build: $(grep -m1 'error' "$D/t2_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$N2 passed, 0 failed ($N2 total)" ]; then ok "T2 $leg: $LAST"
+    else bad "T2 $leg: exit $RC, '$LAST' (want '$N2 passed, 0 failed ($N2 total)') $(grep -m3 'FAIL' "$D/t2_$n.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), \`*(&GQ)\` of a narrow global reads its width (R4), a signed narrow global after a statement reads signed (R6), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), \`*(&GQ)\` of a narrow global reads its width (R4), a signed narrow global after a statement reads signed (R6), a narrow parameter is narrowed (R7), and $N + $N2 rows (T / T2) on x86_64 / IR / DCE / aarch64 / cx / PE"

@@ -508,6 +508,15 @@ var r = add(20, 22);   # r = 42
   values and from 252 cxvm trapped "guest stack overflow" — and a value-form vector argument
   (`f64v2`, `f64v4`, `f32v4`, `i32v4`) beside 14 or more integer arguments overwrote the 14th
   one there, because cx's vector registers were integer argument registers from that point.
+- **A narrow parameter holds its type's value** (6.7.16, the user's decision D72, 2026-10-20): `y: u8` /
+  `i8` / `u16` / `i16` / `u32` / `i32` — and a generic's `x: T` at `T = i8` / `i16` / `i32` — is narrowed in
+  the fn, like a narrow local: its reads take its width, sign- or zero-extended, and its stores (`y = v`, `y
+  += 1`, `*(&y) = v`) write its width. With `fn wid(y: u8)`, `wid(0x1FF)` reads 255; `y: i32` given
+  `0x1FFFFFFFF` is -1; `y += 1` of an `i16` 32767 is -32768 — through a fn pointer (`fncall1(&wid, 0x1FF)` is
+  255), a stack-passed parameter, an `#inline` replay and a closure's capture alike. The argument passes whole
+  (the ABI is unchanged) and the callee narrows it. ⚠ Through 6.7.15 it held the caller's whole word (511 in a
+  `u8`) and did not wrap. A suspending `async fn`'s narrow parameter still holds the word: its parameters live
+  in the coroutine frame, where a narrow slot is not supported yet.
 - Forward calls work (functions can call functions defined later). The call reads the callee's whole
   signature wherever the structs it names are declared (6.7.15): a struct parameter (by value or `*S`)
   or a struct return (`: S`, `: *S`, `: Box<S>`) whose struct is declared BELOW the fn — directly, or
@@ -2554,13 +2563,13 @@ the user's D17 (a) of 2026-10-16; through 6.7.13 it operated on x's first word (
 turned s.x 3 into 13. `*(&h) OP= v` of a handle and `*(&n) OP= v` of an `i64` scalar keep the word op. `*(&p) OP= n`
 of a typed pointer is `p OP= n`: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `pi += 1` does (6.7.16; through
 6.7.15 it stepped one byte, where `*(&pi) + 1` stepped the element). **`*(&x)` of a narrow integer `x` is `x`, at its
-width** (6.7.16, the user's decision D21, 2026-10-19): with x an `i8`..`i32` / `u8`..`u32` local or global,
+width** (6.7.16, the user's decision D21, 2026-10-19): with x an `i8`..`i32` / `u8`..`u32` local, parameter or global,
 `*(&x)` reads x's bytes as `x` reads them (sign- or zero-extended) and `*(&x) = v` / `*(&x) OP= v` write x's width,
 as `x = v` / `x OP= v` do — `var y = *(&GQ);` of a packed `i32` global is GQ, `*(&GQ) = 7` leaves the
 next global alone, `*(&a)` of an `i32` -1 is -1. ⚠ Through 6.7.15 it was the untyped word: the read took the next
 global's bytes (5 + (9 << 32) where 5 is right) and an `i32` -1's zero high half (4294967295), and the store wrote 8
-bytes, zeroing the next global. A narrow parameter and a closure's capture keep the word: their own reads load the
-whole slot (a parameter's holds the caller's word) or env word. **`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
+bytes, zeroing the next global. A parameter is x too since 6.7.16 (D72: a narrow parameter is narrowed in the fn; it
+kept the caller's word). A closure's capture keeps its env word, which holds the value. **`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
 decision D71, 2026-10-20): wherever a `Str` value is taken, `*(&t)` / `*&t` is t's header's address, as `t` is (see
 *An inline `Str` passes its header*) — `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) is a second handle on t's header,
 `f(*(&t))`, `fp(*(&t))` into a `*Str`, `gg<Str>(*(&t))`, the inferred `gg(*&t)` (which binds `T = Str`) and
@@ -6992,7 +7001,8 @@ A narrow scalar local (`i8` .. `i32`, `u8` .. `u32`) is captured as its value �
 zero-extended for an unsigned one — exactly as reading it in its own fn gives it, in a nested closure too. ⚠ Through
 6.7.12 the copy took the local's whole 8-byte slot: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 /
 32 bits) on every target, and a positive one could read stale upper bytes (on aarch64 / cx: -249 for 7). A narrow
-parameter was always right. Pinned by `tests/gates/frontend/closure_capture_narrow_scalar.sh`.
+parameter is captured as its value too (6.7.16, D72; through 6.7.15 it held the caller's whole word, which the capture
+copied: `y: u8` given `0x1FF` captured 511). Pinned by `tests/gates/frontend/closure_capture_narrow_scalar.sh`.
 
 Because the environment is heap-allocated, a translation unit that constructs a
 capturing closure must `include "lib/alloc.cyr"` and call `alloc_init()` before

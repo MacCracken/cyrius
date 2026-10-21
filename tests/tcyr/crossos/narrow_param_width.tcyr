@@ -1,0 +1,164 @@
+# narrow_param_width.tcyr — 6.7.16 (D72, the user's decision, 2026-10-20): a narrow parameter is narrowed in the fn,
+# like a narrow local.
+#
+# ⛔ THE DEFECT, through 6.7.15. A parameter declared `y: u8` (i8, u16, i16, u32, i32) was registered untyped (SLTYPE
+# 0), so it held the caller's whole word: `wid(0x1FF)` read 511 in a `u8`, `w32(0x1FFFFFFFF)` 8589934591 in an `i32`,
+# and `y += 1` of an `i16` 32767 was 32768 (an `i16` LOCAL wraps to -32768) — on x86_64, aarch64, cx and PE alike. Now
+# the parameter loop types its slot as a narrow local's (`_pnw_apply`, src/frontend/parse_fn.cyr: SLTYPE the width,
+# a signed one's negative slice-width mark), so every read takes its width sign- or zero-extended and every store
+# writes it. The ABI is unchanged — the whole register is homed and the callee reads its low bytes — so a fn-pointer
+# call narrows too, as does a stack-passed parameter, an `#inline` replay (the GFIPT pack carries the code) and a
+# generic `x: T` at T = i8 / i16 / i32 (a type argument is never unsigned). `*(&y)` reads and writes y's width (D21).
+# issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md
+# Run on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE by tests/gates/frontend/address_of_pointer_param.sh (T2, with
+# the filed repro as R7), on the four hardware hosts by the release gate's cross-OS leg.
+# A slot index keeps the sign mark an earlier fn's local or parameter left on it, so an unsigned parameter's mark is
+# written too (the np_stain* / np_clean3 rows place one deliberately).
+# Mutation ledger (2026-10-21): the pre-fix compiler fails 48 of the 59 rows (the controls and the i64s pass); with
+# `_inl_param_marks` not re-marking the replay's slots, the 2 stained #inline rows fail; with `_pnw_mark` writing no
+# mark for an unsigned parameter, 16 rows fail (each an unsigned one read sign-extended through a stale mark).
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# --- the filed repro's four fns ---------------------------------------------------------------------------------------
+fn wid(y: u8): i64 { return y; }
+fn w32(y: i32): i64 { return y; }
+fn inc(y: i16): i64 { y += 1; return y; }
+fn inc_l(a: i16): i64 { var y: i16 = a; y += 1; return y; }
+
+# --- every width and sign -----------------------------------------------------------------------------------------------
+fn np_u8(y: u8): i64 { return y; }
+fn np_i8(y: i8): i64 { return y; }
+fn np_u16(y: u16): i64 { return y; }
+fn np_i16(y: i16): i64 { return y; }
+fn np_u32(y: u32): i64 { return y; }
+fn np_i32(y: i32): i64 { return y; }
+fn np_i64(y: i64): i64 { return y; }   # control: a word
+fn np_neg(y: i8): i64 { if (y < 0) { return 1; } return 0; }
+fn np_two(x: u8, y: i16): i64 { return x * 100000 + y; }   # the second register parameter
+
+# --- stack-passed: the 7th+ on SysV, the 5th+ on Win64, the 9th+ on aarch64 ----------------------------------------------
+fn np_st5(a, b, c, d, y: i8): i64 { return y; }
+fn np_st7(a, b, c, d, e, f, y: u8): i64 { return y; }
+fn np_st9(a, b, c, d, e, f, g, h, y: i16): i64 { return y; }
+fn np_st10(a, b, c, d, e, f, g, h, y: u16, z: i32): i64 { return y * 10 + z; }
+
+# --- stores into the parameter: `=`, `OP=`, through `*(&y)` (D21) --------------------------------------------------------
+fn np_asg(y: u8): i64 { y = 0x1FF; return y; }
+fn np_dec(y: i8): i64 { y -= 1; return y; }          # -128 - 1 wraps to 127
+fn np_mul(y: u8): i64 { y *= 2; return y; }          # 200 * 2 wraps to 144
+fn np_amp(y: u8): i64 { var a = *(&y); *(&y) = 0x2FF; var b = y; *(&y) += 1; return a * 1000000 + b * 1000 + y; }
+fn np_ampw(y: i16): i64 { *(&y) += 1; return *(&y); }
+fn np_pass(y: u16): i64 { return np_i8(y); }          # a narrow parameter into another
+fn np_arith(y: i32): i64 { return y * 2 + 1; }
+
+# --- a capture, a fn pointer, #inline, generics, a method, a default, #regalloc -------------------------------------------
+fn np_cap(y: i16): i64 { var f = |k| y + k; return fncall1(f, 0); }
+fn np_cap8(y: u8): i64 { var f = |k| y + k; return fncall1(f, 1); }
+#inline
+fn np_inl(y: u8): i64 { return y + 0; }
+#inline
+fn np_inl2(x, y: i16): i64 { return y + x; }
+#inline
+fn np_inl3(y: i8, x): i64 { return y * 10 + x; }
+fn np_g<T>(x: T): i64 { return x; }
+fn np_gi<T>(x: T): i64 { x += 1; return x; }
+# The replay runs at a call inside a fn (a top-level call is a plain call): each row calls from one.
+fn row_inl(): i64 { return np_inl(0x1FF); }
+fn row_inl2(): i64 { return np_inl2(1, 0x1FFFF); }
+fn row_inl3(): i64 { return np_inl3(0xFF, 3); }
+# The replay's slots sit above the caller's locals, and a slot keeps the sign mark the last fn to use its index left:
+# np_stain1 leaves slot 1 signed (b: i8), np_clean3 slot 3 unsigned (d: u8) — the replay re-marks each parameter.
+fn np_stain1(a, b: i8): i64 { return a + b; }
+fn row_inl_u(): i64 { var q = 0; return np_inl(0x1FF) + q; }
+fn np_clean3(a, b, c, d: u8): i64 { return d; }
+# Out of line the same: np_ustain's u8 `b` takes slot 1, which np_stain1b just left signed.
+fn np_stain1b(a, b: i16): i64 { return a + b; }
+fn np_ustain(a, b: u8): i64 { return b; }
+fn row_inl_s(): i64 { var a = 1; var b = 0; return np_inl2(a, 0x1FFFF) + b; }
+fn row_g8(): i64 { return np_g<i8>(0x1FF); }
+fn row_g16(): i64 { return np_g<i16>(0xFFFF); }
+fn row_g32(): i64 { return np_g<i32>(0x1FFFFFFFF); }
+fn row_gi16(): i64 { return np_gi<i16>(0x7FFF); }
+fn row_g64(): i64 { return np_g<i64>(0x1FF); }
+struct NpM { v; }
+impl NpM { fn m(self, y: u8): i64 { return y + self.v; } }
+fn np_dflt(y: u8 = 7): i64 { return y; }
+#regalloc
+fn np_ra(y: u8, n): i64 { var s = 0; var i = 0; while (i < n) { s = s + y; i = i + 1; } return s; }
+
+var NP_TOP = wid(0x1FF);
+
+# the filed repro: want `255 -1 -32768 -32768` (it printed `511 8589934591 32768 -32768`)
+assert_eq(wid(0x1FF), 255, "D72 repro: wid(0x1FF) with y: u8 reads 255 (it read 511)");
+assert_eq(w32(0x1FFFFFFFF), 0 - 1, "D72 repro: w32(0x1FFFFFFFF) with y: i32 reads -1");
+assert_eq(inc(0x7FFF), 0 - 32768, "D72 repro: inc(0x7FFF), y: i16 += 1 wraps to -32768 (it was 32768)");
+assert_eq(inc_l(0x7FFF), 0 - 32768, "D72 repro control: the same through an i16 local");
+# every width and sign
+assert_eq(np_u8(0x1FF), 255, "u8 parameter given 0x1FF: 255");
+assert_eq(np_u8(0x123456789AB), 0xAB, "u8 parameter given a wide word: its low byte");
+assert_eq(np_i8(0x1FF), 0 - 1, "i8 parameter given 0x1FF: -1");
+assert_eq(np_i8(0x180), 0 - 128, "i8 parameter given 0x180: -128");
+assert_eq(np_i8(0x17F), 127, "i8 parameter given 0x17F: 127");
+assert_eq(np_u16(0x1FFFF), 65535, "u16 parameter given 0x1FFFF: 65535");
+assert_eq(np_i16(0x1FFFF), 0 - 1, "i16 parameter given 0x1FFFF: -1");
+assert_eq(np_i16(0x18000), 0 - 32768, "i16 parameter given 0x18000: -32768");
+assert_eq(np_u32(0x1FFFFFFFF), 4294967295, "u32 parameter given 0x1FFFFFFFF: 4294967295");
+assert_eq(np_i32(0x180000000), 0 - 2147483648, "i32 parameter given 0x180000000: -2147483648");
+assert_eq(np_i32(0 - 5), 0 - 5, "i32 parameter given -5: -5");
+assert_eq(np_neg(0xFF), 1, "i8 parameter given 0xFF: y < 0");
+assert_eq(np_two(0x1FF, 0x1FFFF), 25499999, "u8 then i16 parameters: 255 and -1");
+assert_eq(np_arith(0x1FFFFFFFF), 0 - 1, "i32 parameter -1: y * 2 + 1");
+# stack-passed
+assert_eq(np_st5(1, 2, 3, 4, 0x1FF), 0 - 1, "the 5th parameter (stack-passed on Win64), i8 given 0x1FF: -1");
+assert_eq(np_st7(1, 2, 3, 4, 5, 6, 0x1FF), 255, "the 7th parameter (stack-passed on SysV), u8 given 0x1FF: 255");
+assert_eq(np_st9(1, 2, 3, 4, 5, 6, 7, 8, 0x18000), 0 - 32768, "the 9th parameter (stack-passed on aarch64), i16: -32768");
+assert_eq(np_st10(1, 2, 3, 4, 5, 6, 7, 8, 0x10007, 0x1FFFFFFFF), 69, "the 9th and 10th, u16 0x10007 and i32 -1: 7 * 10 - 1");
+# stores
+assert_eq(np_asg(5), 255, "y = 0x1FF into a u8 parameter, then y: 255");
+assert_eq(np_dec(0 - 128), 127, "y -= 1 of an i8 parameter -128 wraps to 127");
+assert_eq(np_mul(200), 144, "y *= 2 of a u8 parameter 200 wraps to 144");
+assert_eq(np_amp(0x1FF), 255255000, "D21: *(&y) of a u8 parameter reads 255; *(&y) = 0x2FF stores 255; *(&y) += 1 wraps to 0");
+assert_eq(np_ampw(0x7FFF), 0 - 32768, "D21: *(&y) += 1 of an i16 parameter 32767 wraps to -32768");
+assert_eq(np_pass(0x80FF), 0 - 1, "a u16 parameter 0x80FF passed to an i8 one: -1");
+# a fn pointer
+assert_eq(fncall1(&wid, 0x1FF), 255, "fncall1(&wid, 0x1FF): 255, the callee narrows");
+assert_eq(fncall1(&np_i16, 0x18000), 0 - 32768, "fncall1(&np_i16, 0x18000): -32768");
+assert_eq(fncall2(&np_two, 0x1FF, 0x1FFFF), 25499999, "fncall2 into u8 / i16 parameters");
+# a capture
+assert_eq(np_cap(0x1FFFF), 0 - 1, "a captured i16 parameter given 0x1FFFF: -1");
+assert_eq(np_cap8(0x1FF), 256, "a captured u8 parameter given 0x1FF: 255 (+ 1)");
+# #inline
+assert_eq(row_inl(), 255, "#inline: a u8 parameter given 0x1FF: 255");
+assert_eq(row_inl2(), 0, "#inline: an i16 second parameter given 0x1FFFF: -1 (+ 1)");
+assert_eq(row_inl3(), 0 - 7, "#inline: an i8 first parameter given 0xFF: -1 (* 10 + 3)");
+assert_eq(row_inl_u(), 255, "#inline: a u8 parameter replayed into a slot an earlier fn left signed: 255");
+assert_eq(row_inl_s(), 0, "#inline: an i16 parameter replayed into a slot an earlier fn left unsigned: -1 (+ 1)");
+assert_eq(np_stain1(1, 0x1FF) + np_clean3(0, 0, 0, 0x1FF), 255, "the two stain fns: i8 -1 + 1, u8 255");
+assert_eq(np_ustain(0, 0x1FF), 255, "a u8 parameter in a slot an earlier fn left signed: 255");
+assert_eq(np_stain1b(1, 0x1FFFF), 0, "its stain fn: i16 -1 + 1");
+# generics: a type argument is i8 / i16 / i32 / i64 (never unsigned); then the out-of-line instances
+assert_eq(np_g<i8>(0x1FF) + np_g<i16>(0x1FFFF), 0 - 2, "np_g<i8> / np_g<i16> called at top level (no replay): -1 each");
+assert_eq(row_g8(), 0 - 1, "np_g<i8>: x: T given 0x1FF: -1");
+assert_eq(row_g16(), 0 - 1, "np_g<i16>: x: T given 0xFFFF: -1");
+assert_eq(row_g32(), 0 - 1, "np_g<i32>: x: T given 0x1FFFFFFFF: -1");
+assert_eq(row_gi16(), 0 - 32768, "np_gi<i16>: x += 1 of 32767 wraps to -32768");
+assert_eq(row_g64(), 511, "control: np_g<i64> keeps the word");
+# a method, a default, #regalloc
+var np_o = NpM { 1 };
+assert_eq(np_o.m(0x1FF), 256, "a method's u8 parameter given 0x1FF: 255 (+ self.v 1)");
+assert_eq(np_dflt(), 7, "a u8 parameter's default 7");
+assert_eq(np_dflt(0x1FF), 255, "a defaulted u8 parameter given 0x1FF: 255");
+assert_eq(np_ra(0x101, 3), 3, "#regalloc: a u8 parameter given 0x101 is 1, summed 3 times");
+# top level
+assert_eq(NP_TOP, 255, "top level: var T = wid(0x1FF) is 255");
+# controls: in range, a word
+assert_eq(wid(7), 7, "control: u8 parameter given 7");
+assert_eq(np_u8(255), 255, "control: u8 parameter given 255");
+assert_eq(np_i16(0 - 7), 0 - 7, "control: i16 parameter given -7");
+assert_eq(np_i32(2147483647), 2147483647, "control: i32 parameter given its max");
+assert_eq(np_u32(4000000000), 4000000000, "control: u32 parameter given 4000000000");
+assert_eq(np_i64(0x1FFFFFFFF), 8589934591, "control: an i64 parameter keeps the word");
+assert_eq(inc(5), 6, "control: i16 parameter 5 += 1");
+var r = assert_summary();
