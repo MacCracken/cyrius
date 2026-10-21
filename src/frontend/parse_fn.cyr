@@ -2961,9 +2961,9 @@ fn _tal_kind(S, lk): i64 {
 # f64, 1 an integer; 0 when the tokens are no single expression or nest past 256 parentheses. An f64 is the value
 # the compiler types f64 (D23: "an f64 when the compiler sees one"): a float literal; `+ - * /` (`+% -% *%`) with
 # one on EITHER side — `1 + 1.5` is an integer add of 1.5's bits, but its result keeps the f64 type (guide § f64:
-# "Only `+ - * /` keep an f64 right operand's type"); a saturating / checked link whose RIGHT operand is one (its
-# result keeps the last operand's type, _int_st); `-` / `~` over one (_int_st keeps it). `& | ^ % << >> >>>` give
-# an integer (6.7.13's D12), `!` a boolean value. CHANGELOG [6.7.16]
+# "Only `+ - * /` keep an f64 right operand's type"); `-` / `~` over one (_int_st keeps it). `& | ^ % << >> >>>` give
+# an integer (6.7.13's D12), and so do the saturating / checked `+| +? -| -? *| *?` (the user's D104, 2026-10-20:
+# EMIT_OVF_CALL clears the type; they kept an f64 right operand's), `!` a boolean value. CHANGELOG [6.7.16]
 var _tty_k = 0;     # the cursor
 var _tty_bad = 0;   # 1 = the reading failed
 fn _tty_arg(S, k): i64 {
@@ -3020,19 +3020,17 @@ fn _tty_mul(S, dep): i64 {
     return t;
 }
 # A link's value from its operator's kind `c` and its operands' classes `t` / `r`: `+ - * /` (`+% -% *%`, kind 1) an
-# f64 when either operand is one; a saturating / checked link (kind 3) an f64 when its right operand is one;
-# everything else an integer.
+# f64 when either operand is one; everything else an integer (a saturating / checked link too: 6.7.16's D104).
 fn _tty_bin(t, c, r): i64 {
     if (c == 1) {
         if (t == 3) { return 3; }
         if (r == 3) { return 3; }
     }
-    if (c == 3) { if (r == 3) { return 3; } }
     return 1;
 }
 # The cursor's operator at a level — 0 `||` / `&&`, 1 PEXPR's, 2 PARSE_TERM's, 3 a comparison: 0 when it is none
-# (or the reading has failed); at levels 1 / 2, 1 for one with an f64 form (`+ - +% -%`, `* / *%`), 3 for a
-# saturating / checked one (`+| +? -| -?`, `*| *?`), 2 for one whose value is an integer; else 1.
+# (or the reading has failed); at levels 1 / 2, 1 for one with an f64 form (`+ - +% -%`, `* / *%`), 2 for one whose
+# value is an integer (`& | ^ % << >> >>>`, the saturating / checked `+| +? -| -? *| *?`); else 1.
 fn _tty_op(S, lv): i64 {
     if (_tty_bad == 1) { return 0; }
     var t = TOKTYP(S, _tty_k);
@@ -3041,12 +3039,12 @@ fn _tty_op(S, lv): i64 {
     if (lv == 1) {
         if (t == 6 || t == 7 || t == 113 || t == 116) { return 1; }
         if (t == 27 || t == 35 || t == 36) { return 2; }
-        if (t >= 113 && t <= 118) { return 3; }
+        if (t >= 113 && t <= 118) { return 2; }
         return 0;
     }
     if (t == 8 || t == 9 || t == 119) { return 1; }
     if (t == 34 || t == 38 || t == 39 || t == 152) { return 2; }
-    if (t == 120 || t == 121) { return 3; }
+    if (t == 120 || t == 121) { return 2; }
     return 0;
 }
 # A factor: its prefixes, then its operand. The outermost prefix decides — `!` a boolean value; `-` / `~` an f64 over

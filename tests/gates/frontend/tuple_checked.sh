@@ -664,13 +664,16 @@ refused4 r17x13 "2:27: $LIT" "R17x13: control — \`take(-(1 == 1))\` stays an i
 # callee read through the double's bits (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE) — \`_tal_scan\` took no token
 # 61. Refused as "an f64" when the compiler types the value f64 (D23: "an f64 when the compiler sees one"): a float
 # literal, \`+ - * /\` with one on EITHER side (R17y8, R17y12-R17y14: \`1 + 1.5\` adds 1.5's bits as an integer, but its
-# result keeps the f64 type, guide § f64), \`-\` / \`~\` over one (R17y15), a saturating link whose right operand is one
-# (R17y16); a float comparison is "a bool" (R17y7), and \`1.5 & 1\` (6.7.13's D12) or a saturating link with an integer
-# right operand "an integer" (R17y17, R17y18, R17y18b). A name exempts it, an \`f64\` const too (R17y11, compiled, not taken).
+# result keeps the f64 type, guide § f64), \`-\` / \`~\` over one (R17y15); a float comparison is "a bool" (R17y7), and
+# \`1.5 & 1\` (6.7.13's D12) or a saturating / checked link whatever its right operand (6.7.16's D104, 2026-10-20: it
+# kept an f64 right operand's type) "an integer" (R17y16-R17y16e, R17y17, R17y18, R17y18b). A name exempts it, an \`f64\`
+# const too (R17y11, compiled, not taken).
 # Mutations (2026-10-20, every leg): \`_tal_scan\` without token 61 -> R17y1-R17y10 BUILD (R17y11 holds); \`_tty_prim\`
 # reading a float literal as an integer (class 1) -> R17y1-R17y6, R17y9, R17y10 name "an integer"; \`_tty_bin\` typing a
-# link by its LEFT operand only (the lane's first reading) -> RED 24: R17y8, R17y12-R17y14b, R17y16 name "an integer";
-# \`_tty_un\` giving \`~\` an integer -> RED 4: R17y15 names "an integer".
+# link by its LEFT operand only (the lane's first reading) -> RED 20 (re-measured at D104: 24 with R17y16's f64 then):
+# R17y8, R17y12-R17y14b name "an integer"; \`_tty_un\` giving \`~\` an integer -> RED 4: R17y15 names "an integer";
+# (2026-10-21, D104) \`_tty_op\` / \`_tty_bin\` giving a saturating / checked link its right operand's f64 again ->
+# RED 24: R17y16-R17y16e name "an f64".
 F64T="cannot pass an f64 to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple"
 refused4 r17y1 "2:27: $F64T" "R17y1: the issue's \`take(1.5)\` verbatim" "${TW}fn f(): i64 { return take(1.5); }\nsyscall(60, f());\n"
 refused4 r17y2 "2:27: $F64T" "R17y2: \`take(-1.5)\`" "${TW}fn f(): i64 { return take(-1.5); }\nsyscall(60, f());\n"
@@ -688,7 +691,12 @@ refused4 r17y13 "2:27: $F64T" "R17y13: \`take(1 / 1.5)\`" "${TW}fn f(): i64 { re
 refused4 r17y14 "2:27: $F64T" "R17y14: \`take(-(1 + 1.5))\`" "${TW}fn f(): i64 { return take(-(1 + 1.5)); }\nsyscall(60, f());\n"
 refused4 r17y14b "2:27: $F64T" "R17y14b: \`take(2 -% 1.5)\`, a wrapping operator" "${TW}fn f(): i64 { return take(2 -% 1.5); }\nsyscall(60, f());\n"
 refused4 r17y15 "2:27: $F64T" "R17y15: \`take(~1.5)\` (\`~\` keeps the f64 type)" "${TW}fn f(): i64 { return take(~1.5); }\nsyscall(60, f());\n"
-refused4 r17y16 "3:27: $F64T" "R17y16: \`take(2 +| 1.5)\`, a saturating link's result keeps its right operand's type" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 +| 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16 "3:27: $LIT" "R17y16: \`take(2 +| 1.5)\` is an integer (D104: a saturating link's result)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 +| 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16a "3:27: $LIT" "R17y16a: \`take(2 +? 1.5)\` is an integer (D104)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 +? 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16b "3:27: $LIT" "R17y16b: \`take(2 -| 1.5)\` is an integer (D104)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 -| 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16c "3:27: $LIT" "R17y16c: \`take(2 -? 1.5)\` is an integer (D104)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 -? 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16d "3:27: $LIT" "R17y16d: \`take(2 *| 1.5)\` is an integer (D104)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(2 *| 1.5); }\nsyscall(60, f());\n"
+refused4 r17y16e "3:27: $LIT" "R17y16e: \`take((2 *? 1.5) * 2)\` is an integer (D104)" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take((2 *? 1.5) * 2); }\nsyscall(60, f());\n"
 refused4 r17y17 "3:27: $LIT" "R17y17: control — \`take(1.5 +| 1)\` is an integer" "include \"lib/overflow.cyr\"\n${TW}fn f(): i64 { return take(1.5 +| 1); }\nsyscall(60, f());\n"
 refused4 r17y18 "2:27: $LIT" "R17y18: control — \`take(1.5 & 1)\` is an integer (6.7.13's D12)" "${TW}fn f(): i64 { return take(1.5 & 1); }\nsyscall(60, f());\n"
 refused4 r17y18b "2:27: $LIT" "R17y18b: control — \`take(-!1.5)\` is an integer (\`!\` clears the type)" "${TW}fn f(): i64 { return take(-!1.5); }\nsyscall(60, f());\n"

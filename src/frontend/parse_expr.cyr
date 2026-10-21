@@ -9375,6 +9375,10 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);
     _int_st(S);   # 6.7.11: `n +| s + 10` — the helper's result is an integer
+    # 6.7.16 (the user's D104, 2026-10-20): and no f64 — `+| +? -| -? *| *?` have no f64 form, so their result is an
+    # integer whatever their right operand, as `&`'s is (6.7.13's D12): `(2 +| x) * 3` with `x: f64` took the f64 arm
+    # for `* 3` ("f64 arithmetic with a non-f64 right operand"). CHANGELOG [6.7.16]
+    SESTYPE(S, 0);
     return 0;
 }
 

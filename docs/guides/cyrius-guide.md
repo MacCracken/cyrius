@@ -154,7 +154,10 @@ operand (6.7.13; `& | ^ % << >> >>>` the user's decision D12, 2026-10-15): with 
 f64`, `(n < x) * 3` is 3 (the comparison still warns `comparison mixes f64 and integer operands`),
 and `(n & x) * 3` multiplies integers. Through 6.7.12 the result kept the f64 type of its right operand,
 so the next operator took the f64 arm (`(n < x) * 3` was 0, with a kind-1 warning naming the wrong mix).
-Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
+So do the saturating / checked `+| +? -| -? *| *?` (6.7.16, the user's decision D104, 2026-10-20): `(n +| x) * 3`
+multiplies integers and `(n +| x) < 3` compares them, with no warning. Through 6.7.15 their result kept an f64 right
+operand's type, so `* 3` took the f64 arm (*f64 arithmetic with a non-f64 right operand*). An operand's own mix still
+warns (`n +| x * 3`: the `x * 3`). Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
@@ -3738,8 +3741,9 @@ too (6.7.16, the user's decision of 2026-10-19; until then it compiled and the c
 double's bits): `take(1.5)`, `take(-1.5)`, `take((2.0))`, `take(1.5 + 1)` — *cannot pass an f64 to
 tuple parameter …* — an f64 being the value the compiler types f64 ([Types](#types)): `take(1 + 1.5)`
 and `take(2 * 1.5)` too (integer arithmetic on 1.5's bits, whose result keeps the f64 type), and
-`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` *an integer*
-(`& | ^ % << >> >>>` give an integer). A name (a const too, an `f64` one
+`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` and `take(2 +| 1.5)`
+*an integer* (`& | ^ % << >> >>>` and the saturating / checked `+| +? -| -? *| *?` give an integer). A name (a const
+too, an `f64` one
 included), `&t` and a one-value call such as `take(one(3))` are words like any other and are passed
 as the address; it is the caller's to make it one.
 
