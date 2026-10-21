@@ -3299,7 +3299,9 @@ untyped parameter, or an omitted return, is `i64`; each type read as an annotati
 or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
 error, formed or not — see *Traits*; since 6.7.16 a parameter or return type its own reader refuses — a member's
 `: u8`, `p: *Pt<i64>`, `b: *Box<i64, Pt>`, `n: Nope` — is that refusal alone, the rest of the signature still
-compared), generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
+compared, and so is a parameter count the impl's own check refuses, or one that differs only by the defaults an impl
+method may not declare; a count the impl's check never reached, after a method it stopped at, is the site's),
+generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
 fills a slot only when the trait member declares that enum (`: Result`), so the call through the dyn returns
 what the trait declares; and the `self` a dyn can feed. For a struct `T` that is an untyped `self`, `self: *T`,
 or a `self: T` over 8 bytes (passed by

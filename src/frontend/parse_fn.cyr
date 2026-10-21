@@ -9874,18 +9874,18 @@ fn _tr_check_impl(S, ii): i64 {
     var e = k + L64(_ti_tab + ii * 64 + 24);
     while (k < e) {
         var m = L64(_tim_tab + k * 24);
-        var tk = _trm_of(S, tx, m);
-        if (tk < 0) {
+        var w = _tr_walk_stop(S, tx, k);   # the walk's two refusals that end it (`_tr_cnt_owned` replays them)
+        if (w == 1) {
             ERR_IDENT(S, "method ", m, " is not declared in trait ", trn);
             return 0;
         }
-        if (L64(_tim_tab + k * 24 + 16) != L64(_trm_tab + tk * 32 + 8)) { if (_tr_dflt_extra(S, k, L64(_trm_tab + tk * 32 + 8)) == 0) {
-                ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
-                return 0;
-            } }
+        if (w == 2) {
+            ERR_IDENT(S, "method ", m, " takes a different number of parameters than its declaration in trait ", trn);
+            return 0;
+        }
         # 6.7.15 (D4): and its return type. Its refusal sets no panic latch (it consumes nothing), so the walk goes on:
         # the next method's mismatch and a missing method report in the same compile. CHANGELOG [6.7.16]
-        _tr_ret_chk(S, ii, tk, k);
+        _tr_ret_chk(S, ii, _trm_of(S, tx, m), k);
         k = k + 1;
     }
     k = L64(_tr_tab + tx * 32 + 8);
@@ -9898,6 +9898,47 @@ fn _tr_check_impl(S, ii): i64 {
         k = k + 1;
     }
     return 0;
+}
+# Where `_tr_check_impl`'s walk ends at impl method `k` (a `_tim_tab` index) of trait `tx`: 1 the trait does not
+# declare it, 2 its parameter count differs (beyond the defaults D13 already named: `_tr_dflt_extra`), 0 neither.
+fn _tr_walk_stop(S, tx, k): i64 {
+    var tk = _trm_of(S, tx, L64(_tim_tab + k * 24));
+    if (tk < 0) { return 1; }
+    var want = L64(_trm_tab + tk * 32 + 8);
+    if (L64(_tim_tab + k * 24 + 16) == want) { return 0; }
+    if (_tr_dflt_extra(S, k, want) == 1) { return 0; }
+    return 2;
+}
+# ⛔ 6.7.16 — FORMING A DYN ADDS NOTHING BESIDE THE IMPL'S OWN PARAMETER-COUNT REFUSAL: the pair check reported its
+# "the parameter count differs" (`_dyn_sig_eq`'s 5) beside the impl's "method 'sh' takes a different number of
+# parameters than its declaration in trait 'T2'" — one difference, two lines. 1 = impl `ii`'s count difference at
+# method `im` is already reported: the impl's check refuses it (a replay of its walk, which ends at the first method
+# the trait does not declare or whose count differs, so a method after one of those keeps the site's line), or it is
+# only defaulted parameters, the definition's "its parameters take no defaults" (D13). Pure — no table, no state —
+# so a dyn formed above the impl reads the same answer. CHANGELOG [6.7.16]
+fn _tr_cnt_owned(S, ii, im): i64 {
+    var tx = L64(_ti_tab + ii * 64 + 48);
+    if (tx < 0) { return 0; }
+    if (_tr_cnt_dflt(S, tx, im) == 1) { return 1; }
+    var k = L64(_ti_tab + ii * 64 + 16);
+    var e = k + L64(_ti_tab + ii * 64 + 24);
+    while (k < e) {
+        var w = _tr_walk_stop(S, tx, k);
+        if (w != 0) {
+            if (w == 2) { if (k == im) { return 1; } }
+            return 0;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+# 1 when impl method `im`'s parameter count differs from its member's only by its defaulted parameters (D13's).
+fn _tr_cnt_dflt(S, tx, im): i64 {
+    var tk = _trm_of(S, tx, L64(_tim_tab + im * 24));
+    if (tk < 0) { return 0; }
+    var want = L64(_trm_tab + tk * 32 + 8);
+    if (L64(_tim_tab + im * 24 + 16) == want) { return 0; }
+    return _tr_dflt_extra(S, im, want);
 }
 # ⛔ 6.7.15 (D4) — AN IMPL METHOD'S RETURN TYPE IS CHECKED AGAINST ITS TRAIT MEMBER'S, at the impl (`ii` the impl,
 # `tk` the member, `k` the method), beside the parameter count: `trait T { fn c(self): f64; }` implemented as

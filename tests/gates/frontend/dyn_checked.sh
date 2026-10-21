@@ -363,6 +363,19 @@
 #       refusal since 6.7.8 / 6.7.14: `p: [i64]`, an impl's `p: u128`, `p: *[i64]` — the reader's line alone; F8p12 a
 #       `p: *u128` (a type) keeps the site's line. Mutant (2026-10-20): the lane's head ca1c163da -> RED 3: F8p9 F8p10
 #       F8p11 (two lines each)
+#   F8c1-F8c6 (6.7.16, f16 FG1; not F8c, generic-ness) a parameter count the impl's own check refuses is that refusal
+#       alone: the site added "the parameter count differs" beside "method 'sh' takes a different number of parameters
+#       than its declaration in trait 'T2'". The site stands down only for a method the impl's check reports
+#       (`_tr_cnt_owned` replays its walk, which ends at the first method the trait does not declare or whose count
+#       differs), or whose count differs only by defaults (D13's "its parameters take no defaults"). F8c1 the filed dd5
+#       verbatim (5:17 alone); F8c2 the dyn formed above the impl; F8c3 / F8c4 controls — an earlier method the trait
+#       does not declare, an earlier count mismatch: the impl's check never reaches 'sh', so the site keeps its line;
+#       F8c5 a default-only difference (D13's line alone); F8c6 a count mismatch beside a default (D13's and the impl's).
+#       Filed: docs/development/issues/2026-10-20-dyn-pair-check-repeats-impl-parameter-count-refusal.md
+#       Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (bda59e432) -> RED
+#       5: F8c1 F8c2 F8c4-F8c6 (the site's line; F8c4 named 'ra'); the hand-off unguarded (`d == 5` always 0) -> RED 2:
+#       F8c3 F8c4; `_tr_cnt_dflt` gone -> RED 1: F8c5; the replay not stopping at a method the trait does not declare ->
+#       RED 1: F8c3
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -689,6 +702,41 @@ refused f08p9 "2:27: a slice cannot be a parameter" "F8p9: a member's \`p: [i64]
 refused f08p10 "4:32: \`u128\` is not supported as a parameter type yet" "F8p10: an impl's \`p: u128\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: i64): i64; }\n${FQ}impl T2 for P { fn sh(self, p: u128): i64 { return 1; } }\n${MQ}"
 refused f08p11 "2:28: a pointer to a slice is not a type" "F8p11: a member's \`p: *[i64]\` — the reader's line alone" "${PQ}trait T2 { fn sh(self, p: *[i64]): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
 refused f08p12 "4:36: $F8PS" "F8p12: a \`p: *u128\` (a type) against \`p: i64\` keeps the site's line" "${PQ}trait T2 { fn sh(self, p: *u128): i64; }\nimpl T2 for P { fn sh(self, p: i64): i64 { return 1; } }\n${FQ}${MQ}"
+# F8c1-F8c6 — 6.7.16 (f16 FG1): a parameter count the impl's own check refuses is that refusal alone; the site adds
+# nothing (`_tr_cnt_owned`), unless the impl's check never reached the method.
+dlines() {   # <name> <what> <source> <want line>...: refused with exactly these error lines, in this order
+    nm=$1; what=$2; printf '%b' "$3" > "$T/$nm.cyr"; shift 3
+    build "$nm"
+    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    : > "$T/$nm.want"
+    for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
+    if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"
+    elif cmp -s "$T/$nm.got" "$T/$nm.want"; then ok "$what: exactly $# line(s)"
+    else bad "$what: got $(tr '\n' '|' < "$T/$nm.got") want $(tr '\n' '|' < "$T/$nm.want")"; fi
+}
+CQ='struct Q { a; }\n'
+FC='fn f(q: *Q): i64 { var o: dyn T2 = q; return 0; }\n'
+F8Q="cannot form dyn T2 from Q - its method"
+CNT="takes a different number of parameters than its declaration in trait 'T2'"
+dlines f08c1 "F8c1: dd5 verbatim — the impl's count refusal alone (the site added 'the parameter count differs')" \
+    'struct P { a; b; }\ntrait T2 { fn sh(self): f64; }\nimpl T2 for P { fn sh(self): f64 { return 1.0; } }\nstruct Q { a; }\nimpl T2 for Q { fn sh(self, k): f64 { return 1.0; } }\nfn f(q: *Q): i64 { var o: dyn T2 = q; return 0; }\nfn main(): i64 { return 0; }\n' \
+    "5:17: method 'sh' $CNT"
+dlines f08c2 "F8c2: the dyn formed ABOVE the impl — the same one line" \
+    "${CQ}trait T2 { fn sh(self): f64; }\n${FC}impl T2 for Q { fn sh(self, k): f64 { return 1.0; } }\n${MQ}" \
+    "4:17: method 'sh' $CNT"
+dlines f08c3 "F8c3: control — the impl's check stops at an earlier method the trait does not declare, so the site keeps its line for 'sh'" \
+    "${CQ}trait T2 { fn sh(self): f64; }\nimpl T2 for Q { fn zz(self): i64 { return 0; } fn sh(self, k): f64 { return 1.0; } }\n${FC}${MQ}" \
+    "3:17: method 'zz' is not declared in trait 'T2'" "4:36: ${F8Q} 'sh' does not match its declaration in trait T2: the parameter count differs"
+dlines f08c4 "F8c4: control — the impl's check stops at an earlier count mismatch ('ra'), so the site keeps its line for 'sh'" \
+    "${CQ}trait T2 { fn ra(self): i64; fn sh(self): f64; }\nimpl T2 for Q { fn ra(self, j): i64 { return 0; } fn sh(self, k): f64 { return 1.0; } }\n${FC}${MQ}" \
+    "3:17: method 'ra' $CNT" "4:36: ${F8Q} 'sh' does not match its declaration in trait T2: the parameter count differs"
+DFL="'sh' implements trait 'T2': its parameters take no defaults (the trait's signature is the contract)"
+dlines f08c5 "F8c5: a count that differs only by a default (D13's refusal) — its line alone (the site added 'the parameter count differs')" \
+    "${CQ}trait T2 { fn sh(self): f64; }\nimpl T2 for Q { fn sh(self, k = 1): f64 { return 1.0; } }\n${FC}${MQ}" \
+    "3:31: $DFL"
+dlines f08c6 "F8c6: a count mismatch beside a default — D13's line and the impl's, not the site's" \
+    "${CQ}trait T2 { fn sh(self): f64; }\nimpl T2 for Q { fn sh(self, k, m = 1): f64 { return 1.0; } }\n${FC}${MQ}" \
+    "3:34: $DFL" "3:17: method 'sh' $CNT"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).

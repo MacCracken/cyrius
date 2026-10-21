@@ -1651,8 +1651,10 @@ fn _dyn_pair_chk(S, ii, tx, ti): i64 {
             fp = L64(_tim_tab + im * 24 + 8);
             var d = _dyn_sig_eq(S, L64(_trm_ft + k * 8), fp);
             # 6.7.15 (D4): a return type that differs is the impl's own refusal (`_tr_ret_chk`), not the site's; and
-            # 6.7.16: a return its own reader refuses is that refusal alone (`_dyn_ret_hand`).
+            # 6.7.16: a return its own reader refuses is that refusal alone (`_dyn_ret_hand`), and so is a parameter
+            # count the impl's check (or D13) reports (`_tr_cnt_owned`).
             if (d == 4) { if (_dyn_ret_hand(S, L64(_trm_ft + k * 8), fp) == 1) { d = 0; } }
+            if (d == 5) { if (_tr_cnt_owned(S, ii, im) == 1) { d = 0; } }   # 6.7.16: the impl's own count refusal
             if (d != 0) { return _dyn_f8(S, ti, ii, m, d); }
         }
         if (_dyn_slot_ok(S, k) == 1) {
