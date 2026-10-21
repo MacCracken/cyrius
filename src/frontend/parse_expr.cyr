@@ -2327,7 +2327,35 @@ fn _mret_sval(S, t): i64 {
     if (asid >= 2048) { return 0; }
     if (_dx_plain(S, asid) == 0) { return _mret_fld_rchk(S, asid); }
     if (STRUCTSZ(S, asid - 1) <= 8) { return 0; }
+    if (_mret_hdl(S, t) == 1) { return 0; }
     return _mret_sval_err(S, t, asid);
+}
+# 1 when the element at token `t` is a HANDLE named whole (wrapped or not): a struct local whose one slot holds the
+# struct's address (`GLAGG` 0 — 6.7.10's handle line: `var a: H = alloc(16);`, `var h: Pt = w;`), not a parameter (a
+# by-value one is copied inline in the prologue), or a pointer-mode struct global (`GVPM` 1). Its word IS the address,
+# so nothing is lost — the element is "its pointer", what the refusal asks for, and it computed right before D90
+# (tests/gates/codegen/small_struct_handle_line.sh C5: the caller's `load64(x)` reads the field). The user's D90
+# refuses nothing that computes correctly. CHANGELOG [6.7.16]
+fn _mret_hdl(S, t): i64 {
+    var ist = _ess_wrap(S, t);
+    if (TOKTYP(S, ist) != 2) { return 0; }
+    if (_ess_k > 0) { if (ist + 1 != _ess_ie) { return 0; } }
+    else {
+        var nx = TOKTYP(S, ist + 1);
+        if (nx != 31) { if (nx != 11) { return 0; } }
+    }
+    var li = FINDLOCAL(S, TOKVAL(S, ist));
+    if (li >= 0) { return _mret_hdl_li(S, li); }
+    var gvi = FINDVAR(S, TOKVAL(S, ist));
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 1) { return 1; }
+    return 0;
+}
+fn _mret_hdl_li(S, li): i64 {
+    if (li < _cur_fn_pslots) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    return 1;
 }
 # ... a whole tuple / dyn field (`_fpk_ft`, the record `_expr_struct_sid` read) is refused at its load as a value, which
 # the armed record stood down (an argument takes it whole): its own line, at the field, as unarmed.
