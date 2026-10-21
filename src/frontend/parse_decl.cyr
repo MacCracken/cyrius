@@ -12687,6 +12687,7 @@ fn _gu_set(S, i, sid): i64 {
 fn _gu_zsid(S, ti): i64 {
     _gu_hdl = 0;
     _gu_iebig(S, ti);   # 6.7.16: a refused branch's global stands down at its uses
+    _gu_slit0(S, ti);   # 6.7.16: and one whose literal names nothing
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_ok(S, _gz_call_rs(S, c));
@@ -12757,6 +12758,26 @@ fn _gu_iebig(S, ti): i64 {
         else { return 0; }
     }
     return 0;
+}
+# 6.7.16 — the sweep's twin of `_slit_undecl` (parse_expr.cyr): the noted global whose whole initialiser at `ti`
+# (inside any wrap) is a struct literal `Q { .. }` / `Q<..> { .. }` whose name is nothing (no struct, variable or fn)
+# is marked as refused, so a fn body compiled before the replay stands down at `x.a`. CHANGELOG [6.7.16]
+fn _gu_slit0(S, ti): i64 {
+    var e = _gz_end(S, ti);
+    var a = ti;
+    while (TOKTYP(S, a) == 10) {
+        if (_gz_close(S, a, e) != e - 1) { break; }
+        a = a + 1;
+        e = e - 1;
+    }
+    var o = _slit_brace(S, a);
+    if (o < 0) { return 0; }
+    if (_slit_close(S, o) + 1 != e) { return 0; }
+    var n = TOKVAL(S, a);
+    if (FINDSTRUCT(S, n) > 0) { return 0; }
+    if (_findvar_core(S, n) >= 0) { return 0; }
+    if (FINDFN(S, n) >= 0) { return 0; }
+    return _ann_refd_mark(S, _slit_decl_name(S, ti - 1));
 }
 # 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes (`_ie_struct_sid`: -1 a vector / u128, or a
 # struct over 8 B), with no parse record to match (`_sc_beg`, `_fpk_ft` cleared, then put back).

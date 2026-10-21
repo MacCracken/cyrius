@@ -210,12 +210,47 @@ KENV=
 GU="uninitialized variable not allowed; use \`var X = 0;\` or initial value"
 cascade_legs G1 1 'var V: f64v2;\nsyscall(60, 0);\n' "1:13: $GU"
 cascade_legs G2 1 'var V: f64v2 = 5;\nsyscall(60, 0);\n' "1:14: vector global 'V' takes no initializer but 0"
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z13, G1-G2)"; exit 1; }
+# L1-L14 (6.7.16, issues/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md) — A STRUCT LITERAL
+#     WHOSE NAME IS NOTHING (no struct, variable or fn) IS ONE ERROR, AT THE NAME. `var x = Q { 1 };` was "undefined
+#     variable 'Q'" and then "expected ';', got '{'"; in a fn the resync stopped inside the braces ("unexpected ';'",
+#     "unexpected '}'", "return outside a fn body"). Where the literal stands whole in a value place — a declaration's
+#     initializer (any balanced wrap), an assignment, `return`, an argument — the name is reported once as before, the
+#     `{ .. }` stepped, and a declared variable marked so `x.a` stands down (`_slit_undecl`; the zone sweep's `_gu_slit0`
+#     for a fn body compiled before the replay). L1 the top-level repro verbatim (2:11 and 3:11); L2 the fn repro verbatim
+#     — 3:15, and line 4's `var y = P { 2 };` (P has two fields) keeps its OWN refusal, a positional literal short of a
+#     field (4:19); L3 after the first statement; L4 wrapped, `Q<i64> { .. }`, named elements, `x.a = 2`, `x.m()`; L5 an
+#     assignment, L6 `return`, L7 an argument; L8 the zone global read in a fn body before the replay; L9 an annotation
+#     naming Q (`var x: Q = Q { 1 };`: the annotation's one error). Controls: L10 `match nn { .. }` (nn nothing) keeps
+#     "undefined variable 'nn'" and parses its body; L11 `var x = 5;` then `x.a` keeps its own error; L12 a declared
+#     struct's literal compiles. L13 --syntax-only (a sibling file's struct): no error — it was a false "expected ';',
+#     got '{'". RED on the lane before this bite: L1-L9 (L2: five errors), L13.
+SQ="undefined variable 'Q' (missing include or enum?)"
+cascade_legs L1 2 'struct P { a; }\nvar x = Q { 1 };\nvar y = R { 2 };\nsyscall(60, 0);\n' "2:11: $SQ" "3:11: undefined variable 'R'"
+cascade_legs L2 2 'struct P { a; b; }\nfn f(): i64 {\n    var x = Q { 1 };\n    var y = P { 2 };\n    return 0;\n}\nsyscall(60, f());\n' "3:15: $SQ" "4:19: unexpected '}'"
+cascade_legs L3 1 'var z = 1;\nz = 2;\nvar x = Q { 1 };\nsyscall(60, x.a);\n' "3:11: $SQ"
+cascade_legs L4 1 'fn f(): i64 {\n    var x = (Q<i64> { a: 1, b: 2 });\n    x.a = 2;\n    x.m();\n    return x.a;\n}\nsyscall(60, f());\n' "2:15: $SQ"
+cascade_legs L5 1 'fn f(): i64 { var x = 0; x = Q { 1 }; return x; }\nsyscall(60, f());\n' "1:32: $SQ"
+cascade_legs L6 1 'fn f(): i64 { return Q { 1 }; }\nsyscall(60, f());\n' "1:24: $SQ"
+cascade_legs L7 1 'fn g(a, b): i64 { return a; }\nfn f(): i64 { return g(Q { 1 }, 2); }\nsyscall(60, f());\n' "2:26: $SQ"
+cascade_legs L8 1 'var x = Q { 1 };\nfn f(): i64 { return x.a; }\nsyscall(60, f() + x.a);\n' "1:11: $SQ"
+cascade_legs L9 1 'fn f(): i64 { var x: Q = Q { 1 }; return x.a; }\nsyscall(60, f());\n' "1:22: unknown type 'Q' for variable 'x'"
+cascade_legs L10 1 'fn f(): i64 {\n    match nn { 5 => { return 1; } _ => { return 2; } }\n    return 0;\n}\nsyscall(60, f());\n' "2:14: undefined variable 'nn'"
+cascade_legs L11 1 'var x = 5;\nfn f(): i64 { return x.a; }\nsyscall(60, f());\n' "2:25: no struct type in scope for 'x'"
+printf 'struct Q { a; }\nfn f(): i64 { var x = Q { 41 }; return x.a + 1; }\nsyscall(60, f());\n' > "$T"
+rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$O" ]; then echo "FAIL: L12: a declared struct's literal did not compile:"; cat "$E"; kfail=$((kfail + 1))
+else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 42 ] || { echo "FAIL: L12: exit $rc, want 42"; kfail=$((kfail + 1)); }; fi
+for _sl in 'var x = Q { 1 };\nsyscall(60, x.a);\n' 'fn f(): i64 { var x = Q { 1 }; return x.a; }\nsyscall(60, f());\n'; do
+    printf '%b' "$_sl" > "$T"
+    rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
+    if [ "$rc" -ne 0 ] || grep -q '^error' "$E"; then echo "FAIL: L13: --syntax-only refused a sibling struct's literal ($_sl):"; cat "$E"; kfail=$((kfail + 1)); fi
+done
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z13, G1-G2, L1-L13)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), valid emits"
 exit 0

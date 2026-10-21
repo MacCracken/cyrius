@@ -5481,6 +5481,7 @@ fn _slit_stray(S, noff): i64 {
     var o = _slit_open(S, ti);
     var rf = 0;
     if (o < 0) { o = _slit_refd(S, ti); rf = 1; }   # 6.7.15: a refused declaration's struct, stepped silently
+    if (o < 0) { o = _slit_undecl(S, ti, noff); rf = 2; }   # 6.7.16: a name that is nothing, reported once
     if (o < 0) { return 0; }
     _slit_beg = ti;
     if (rf == 0) { if (_slit_open_wrap(S, ti, o) == 0) { _slit_err(S, ti, o); } }   # 6.7.15: an unclosed wrap's `)`
@@ -5493,6 +5494,63 @@ fn _slit_stray(S, noff): i64 {
     _cfo = 0;
     _asg_tup_refd = 1;   # and the statement's typed-pointer warning is not given about it
     return 1;
+}
+# ⛔ 6.7.16 — `Q { 1 }` WHERE Q IS NOTHING (no variable, struct or fn): "undefined variable 'Q'" and then the `{` — "expected
+# ';', got '{'" for `var x = Q { 1 };`, and in a fn the resync stopped inside the braces: "unexpected ';'", "unexpected
+# '}'", "return outside a fn body" (five errors; under --syntax-only, where the name is a sibling file's struct, a false
+# "expected ';', got '{'" alone). Where the literal stands whole in a place a value is parsed — a declaration's
+# initializer (inside any balanced wrap), an assignment's right side, `return`, an argument: the name after `=`, `(`, `,`
+# or `return`, its `}` followed by `;`, `)` or `,` — the name is reported once, as before (not under --syntax-only, nor
+# when the declaration's annotation named it and was refused: `var x: Q = Q { 1 };`), the `{ .. }` stepped, and a
+# declared variable marked (`_ann_refd_mark`) so `x.a` stands down. Only that shape: `match x {`, `for i in 0..n {` and
+# a condition's `{` never follow those tokens. The `{` (token `o`), or -1. CHANGELOG [6.7.16]
+fn _slit_undecl(S, ti, noff): i64 {
+    var o = _slit_brace(S, ti);
+    if (o < 0) { return 0 - 1; }
+    if (FINDFN(S, noff) >= 0) { return 0 - 1; }
+    var b = TOKTYP(S, ti - 1);
+    if (b != 4 && b != 10 && b != 31 && b != 33) { return 0 - 1; }
+    var a = TOKTYP(S, _slit_close(S, o) + 1);
+    if (a != 5 && a != 11 && a != 31) { return 0 - 1; }
+    var eq = _slit_wrap_eq(S, ti, o);
+    if (_syntax_only == 0) {
+        if (_slit_ann_said(S, eq, noff) == 1) { _had_error = 1; }
+        else { _undef_var_report(S, noff, " (missing include or enum?)"); }
+    }
+    if (eq > 0) { _ann_refd_mark(S, _slit_decl_name(S, eq)); }
+    return o;
+}
+# The `=` of the `var` declaration whose whole initializer is the literal at name `ti` (its `{` the token `o`), inside
+# `k` balanced wrapping parentheses (`k` `(`s back to the `=`, `k` `)`s after the `}`, then the `;`), or -1.
+fn _slit_wrap_eq(S, ti, o): i64 {
+    var k = 0;
+    while (ti - k - 1 > 0) {
+        if (TOKTYP(S, ti - k - 1) != 10) { break; }
+        k = k + 1;
+    }
+    var e = _slit_close(S, o) + 1;
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e + j) != 11) { return 0 - 1; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, e + k) != 5) { return 0 - 1; }
+    if (_slit_decl_eq(S, ti - k - 1) == 0) { return 0 - 1; }
+    return ti - k - 1;
+}
+# 1 = the declaration whose `=` is token `eq` (-1: none) has an annotation naming `noff` whose type refusal printed
+# (`_tn_seen_at`): `var x: Q = Q { 1 };` is that one error.
+fn _slit_ann_said(S, eq, noff): i64 {
+    if (eq <= 0) { return 0; }
+    var k = eq - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 49) { return 0; }
+        if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) { if (_tn_seen_at(S, k) == 1) { return 1; } } }
+        if (t == 3 || t == 5 || t == 13 || t == 14) { return 0; }
+        k = k - 1;
+    }
+    return 0;
 }
 # 1 = the literal at name `ti` (its `{` the token `o`) is a `var` declaration's whole initializer in an UNCLOSED
 # wrap: `var t: P = (P { 5, 6 };` — only `(`s back to the declaration's `=` (`_slit_decl_eq`), fewer `)`s than

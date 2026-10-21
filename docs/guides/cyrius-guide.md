@@ -1405,6 +1405,9 @@ the whole initializer are transparent: `var q: P = (P { 5, 6 });` is the literal
 and at top level. Through 6.7.13 every one of these, the wrapped initializer too, was `undefined
 variable 'P'` followed by two to five invented errors. A wrap left unclosed (`var q: P = (P { 5, 6 };`)
 is the one error `expected ')', got ';'` (6.7.15; 6.7.14 reported the initializer rule at `P` first).
+A literal whose name is nothing — no struct, variable or fn (`var x = Q { 1 };`, a missing include) — is the one
+error `undefined variable 'Q' (missing include or enum?)` at its name, the literal stepped and `x.a` adding none;
+through 6.7.15 the `{` added "expected ';', got '{'", and in a fn up to three more (6.7.16).
 
 A tuple (`(i64, f64)`, 6.7.7) is an anonymous struct of 8-byte slots named `0`, `1`, …: what this
 section says about a struct value holds for it. See [Tuples](#tuples).
