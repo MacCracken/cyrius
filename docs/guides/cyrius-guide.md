@@ -2805,6 +2805,12 @@ word (its bits). ⚠ Before 6.7.8 a signed element was zero-extended — `-3` in
 `s[0] < 0` was false; code that wants the unsigned value writes `s[i] & 0xFF` (`& 0xFFFF`,
 `& 0xFFFFFFFF`) or declares the slice `[u8]`.
 
+**A struct element.** `[Pt]` declares, and so does a generic struct instance — `[Box<i64>]`, `slice<Box<Pt>>`,
+`[*Box<i64>]` (6.7.16, the user's D89; they were a parse error, *expected ']', got '<'*): the element is the instance,
+its width the instance's size (a pointer element 8 bytes), its `<..>` read as any annotation's (`[Box<Nope>]` is
+*unknown type 'Nope' as a type argument*). `s[i]` on an 8-byte struct element reads its word, on a 16-byte one its
+address; a store into a struct element is refused (below).
+
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
 violation` and exits 134, in every build. The value is checked as a store into an element of `T`:
@@ -7447,7 +7453,8 @@ no type arguments*) (6.7.15, the user's D6; through 6.7.14 the list was skipped 
 name inside it was never checked). Since 6.7.16 (the user's D7) these positions say so too: a
 pointer field `p: *Pt<i64>`, a by-value field `f: Pt<i64>` / `g: i64<u8>` (a struct's or a
 union's), a trait member's type, a multi-value element `(Pt<i64>, i64)`, a `*fn(Pt<i64>): i64`
-type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]`, a scalar return
+type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a generic struct's own list is read there:
+`[Box<i64>]` declares, 6.7.16's D89), a scalar return
 `: i64<u8>`, and `*i32<u8>` as a local, a global, a return or a field — once, at the name, with
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
 rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a

@@ -3919,8 +3919,29 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         _tn_refuse(S, ti, " as the element of slice ", vnoff);
         return 8;
     }
+    var g = _tn_slice_gen(S, ti);   # 6.7.16 (D89): `[Box<i64>]`, the instance
+    if (g > 0) { return _tn_bytes(S, _tn_code(6, g)); }
     _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
     return _tn_bytes(S, c);
+}
+# ⛔ 6.7.16 (the user's D89, 2026-10-20) — A GENERIC STRUCT INSTANCE AS A SLICE ELEMENT: `[Box<i64>]` and
+# `slice<Box<i64>>` were "expected ']', got '<'" (the word form went on to "expected '='" and "undefined variable
+# 'i64'"), where `[Pt]` declares. The element is the instance, read as `var b: Box<i64>` reads it (`_gen_ann_sid`: found
+# or minted, each refusal in its list reported — an unknown type, D5's extra argument), its width the instance's size.
+# Token `ti` the name, its `<` next: the instance's sid with the cursor on the list's last token (the caller steps past
+# it), or 0 when not the shape, nothing moved (a non-generic struct's list is D7's, `_tn_slice_ngt`). A `>>` that also
+# closes `slice<` owes that `>` (`_ta_pending_gt`): the slice's own close, taken. CYRIUS_MONOMORPH=0 steps the list
+# and reads the base, as the annotation does there. CHANGELOG [6.7.16]
+fn _tn_slice_gen(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (_MONOMORPH_OK == 1) { if (GSTP(S, sid - 1) == 0) { return 0; } }
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    _ta_pending_gt = 0;
+    STI(S, GTI(S) - 1);
+    return g;
 }
 # A slice element's non-generic `<..>` (`ti` the name): refused at the name and stepped, the cursor on the list's last
 # token (the caller steps past it). It was "expected ']', got '<'". CHANGELOG [6.7.16]
@@ -4019,8 +4040,24 @@ fn _tn_slice_ptr_el(S, noff): i64 {
         return 0;
     }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    if (_tn_slice_gptr(S) == 1) { return 0; }   # 6.7.16 (D89): `[*Box<i64>]`
     _ngt_skip(S);   # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'")
     return 0;
+}
+# ... `[*Box<i64>]` / `slice<*Box<i64>>`, cursor on the `<` after a generic struct's name: its list read as a pointer
+# field's is (`_targ_chk`: every refusal in it, nothing minted — a pointer is 8 bytes whatever it points at) and
+# stepped; a `>>` closing `slice<` too is the slice's (its caller takes no `>` after it). 1 = stepped. CHANGELOG [6.7.16]
+fn _tn_slice_gptr(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (TOKTYP(S, GTI(S) - 1) != 2) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, GTI(S) - 1));
+    if (sid <= 0) { return 0; }
+    if (_MONOMORPH_OK == 1) {
+        if (GSTP(S, sid - 1) == 0) { return 0; }
+        _targ_chk(S, GTI(S));
+    }
+    SKIP_GENERICS(S);
+    return 1;
 }
 # A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
 # width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
