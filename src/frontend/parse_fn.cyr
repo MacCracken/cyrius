@@ -7901,8 +7901,13 @@ fn _pair_ret_expr_shape(S): i64 {
 # The method / overloaded-operator shape at the cursor: `x.m(`, `x OP`, and (6.7.6) a call or a
 # parenthesised operand that is an operator's LEFT operand, `f(..) OP`, `(x) OP` — a call's result
 # now dispatches (`_op_lst`); a wrap around the WHOLE value was peeled first (`_ret_peel`).
+# ⛔ 6.7.16 — AND A METHOD ENDING A CHAIN ON ANY RECEIVER (`_pc_mchain`): `return w.p.q16();`, `return w.gp().q16();`,
+# `return mk().p.q16();`, `return (*pw).p.q16();`, `return callptr(&gw, w).p.q16();` from a fn returning that struct over
+# 8 B were refused ("returned in two registers ... got `w`" / "return must be a bare local identifier, or a call ..."),
+# where `return p.q16();` on a single name is landed in a temp and returned. CHANGELOG [6.7.16]
 fn _ret_expr_head(S): i64 {
     if (_icall_ret(S) == 1) { return 1; }   # 6.7.11
+    if (_pc_mchain(S, GTI(S)) == 1) { return 1; }   # 6.7.16
     if (PEEKT(S) == 10) {
         _pwrap_k(S, GTI(S));
         return _is_op_dispatch_tok(TOKTYP(S, _pw_end));

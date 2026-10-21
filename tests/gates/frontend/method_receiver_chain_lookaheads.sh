@@ -21,11 +21,13 @@
 #   R0 the filed repro, verbatim: exit 34 (rc 1, "needs a call", before) on x86_64, CYRIUS_IR=3, aarch64 (qemu), cx
 #      (cxvm) and PE (wine)
 #   V  tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and
-#      PE: "N passed, 0 failed (N total)", N derived from the file (floor 62) — destructures, re-assignments, tuple
+#      PE: "N passed, 0 failed (N total)", N derived from the file (floor 68) — destructures, re-assignments, tuple
 #      captures, a 16 B struct, generic methods inferred / explicit / at f64, forwards, a for step, every receiver head,
 #      a pair's `?` / statement `?` / wrapped `?` / destructure / forward (the forwarder below its caller), a `*T`
 #      method as a dyn source, comparisons (`w.a.n < k >> (j)`), the declaration zone; MS a chain on a `callptr(..)`
-#      result as a by-value struct argument (`_icall_dotted`: it pushed a word as the address, SIGSEGV)
+#      result as a by-value struct argument (`_icall_dotted`: it pushed a word as the address, SIGSEGV); MR a struct
+#      over 8 B returned from a chain's method (`_ret_expr_head`: refused before, "returned in two registers ... got `w`" /
+#      "return must be a bare local identifier, or a call ...")
 #   C  each refusal on a chain is the single name's, once, word for word but the receiver its hint spells (x86_64):
 #      C1-C6 a pair bound to one name (`var v =`, `x =`, `store64`, a field, a struct literal, inside a value's
 #      parentheses), C6b the first-call rule, C7 / C8 a multi-value call into a tuple / struct field, C9 / C10 into a
@@ -33,7 +35,9 @@
 #      the destructure's count, C14 over 16 B, C15 / C15b a one-value struct / method, C16 a re-assignment from a
 #      struct, C17 / C17b / C17c / C19 a 16 B / 8 B / 24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn
 #      forwarding 3 values / 1 value — each on w.p (c), h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m),
-#      callptr(&gpw, &w).p (i); on the callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`)
+#      callptr(&gpw, &w).p (i); on the callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
+#      C22-C24 a struct return over 8 B of another struct / 2 values / 1 value (each chain said "returned in two
+#      registers ... got `w`", the single name the text it shares now)
 #   W  the dropped-tag warning reads the chain's method (x86_64, every receiver): W1 / W3 `return w.p.rs(4);` (and in
 #      parentheses) beside `return Err(2);` draw none (one each before), W2 `return w.p.one();` one, WC1 / WC2 a
 #      comparison `w.p.n < z >> (z)` / `w.p.id < z >> (z)` (id a field and a generic method) one
@@ -67,6 +71,8 @@
 #   M13 `_pair_callee_at` without its chain arm         -> RED 56: V x7, C1-C6b x7 (the pair refusals)
 #   M14 `_dt_call_open` without its chain arm           -> RED 82: R0 x5, V x7, C7 / C8 / C11-C16 x7
 #   M15 the tree before `_icall_dotted` (7cdce3aa1)     -> RED 10: V x7 (MS: SIGSEGV), C17 / C17c / C19 on callptr
+#   M16 the tree before `_ret_expr_head`'s chain arm    -> RED 19: V x7 (MR: the file did not build), C22 / C23 on c d f
+#       (df29930ab)                                        x k i ("returned in two registers ... got `w`")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -96,7 +102,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=62
+FLOOR=68
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -174,6 +180,7 @@ struct Q8 { a; }
 struct Q16 { a; b; }
 struct Q24 { a; b; c; }
 struct H2 { a; b; }
+struct R16 { x; y; }
 struct W { p: P; q: *P; n; }
 struct H { w: W; }
 impl P {
@@ -184,6 +191,7 @@ impl P {
     fn q8(self): Q8 { var q: Q8; q.a = 1; return q; }
     fn q16(self): Q16 { var q: Q16; q.a = 1; q.b = 2; return q; }
     fn q24(self): Q24 { var q: Q24; q.a = 1; q.b = 4; q.c = 5; return q; }
+    fn r16(self): R16 { var r: R16; r.x = 1; r.y = 2; return r; }
 }
 impl W { fn gp(self): *P { var a = self; return a; } }
 fn mkw(): W { var w: W; w.p.k = 1; w.q = 0; w.n = 0; return w; }
@@ -262,6 +270,10 @@ crow C17c 'fn t24(q: Q24): i64 { return q.a; }' 't24(@.m2());' "a multi-value ca
 crow C19 'fn tk(t: (i64, i64)): i64 { return t.0; }' 'tk(@.m2());' "is not a tuple argument" "tk(@.m2()) into a tuple parameter"
 crow C20 'fn g3(@W): (i64, i64) { return @.m3(); }' '' "'g3' returns 2 values - return (a, b)" "return @.m3(); from a (i64, i64) fn"
 crow C21 'fn g4(@W): (i64, i64) { return @.one(); }' '' "'g4' returns 2 values - return (a, b)" "return @.one(); from a (i64, i64) fn"
+SRF='struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct'
+crow C22 'fn g5(@W): Q16 { return @.r16(); }' '' "$SRF" "return @.r16(); (another 16 B struct) from a : Q16 fn"
+crow C23 'fn g6(@W): Q16 { return @.m2(); }' '' "$SRF" "return @.m2(); (2 values) from a : Q16 fn"
+crow C24 'fn g7(@W): Q24 { return @.one(); }' '' "$SRF" "return @.one(); (one value) from a : Q24 fn"
 
 # wrow <id> <decls> <want> <what>: <want> dropped-tag warnings, no error, on the single name and every chain.
 WTXT='returns a `: stack` pair on another path but a SINGLE value here'

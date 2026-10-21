@@ -1927,6 +1927,9 @@ was never written. Since 6.7.11 that includes a call that only STARTS the value:
 p;` (any operator that does not dispatch — a comparison, `& | ^ % << >>`, `&& ||`) is refused *… got
 `mk2`*, where it returned the comparison in the first register and mk2's stale second word;
 `return mk2(1);`, `return (mk2(1));` and a dispatching `return mk2(1) + p;` are unchanged. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+The method may end a chain on any receiver, in both classes (6.7.16): `return w.p.q16();`, `return (*pw).p.q16();`,
+`return mk().p.q16();`, `return callptr(&gw, pw).p.q16();` return the struct as `return p.q16();` does — through 6.7.15
+they were refused (*… two registers … got `w`*, *return must be a bare local identifier ...*).
 
 ⚠ **A tuple literal is not the struct (6.7.11).** `return (a, b);` or `return (a, b, c);` in a fn
 declared `: P` is a compile error at every size — a tuple is an anonymous struct, another type
