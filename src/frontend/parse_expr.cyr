@@ -1976,7 +1976,8 @@ fn _int_resb(S): i64 {
     return 0;
 }
 # PARSE_TERM's tail after operator token `typ`: `% << >> >>>` give an integer (`_int_resb`); `* /`, whose
-# f64 arms keep their type, and `*| *?` clear only the step and a struct (`_int_res`).
+# f64 arms keep their type, clear the step and a struct (`_int_res`); `*| *?` reach here as integers
+# (EMIT_OVF_CALL cleared the type: 6.7.16's D104). CHANGELOG [6.7.16]
 fn _int_rest(S, typ): i64 {
     if (typ == 34) { return _int_resb(S); }
     if (typ == 38) { return _int_resb(S); }
