@@ -3183,15 +3183,16 @@ fn _match_arm_test(S, midx, mh): i64 {
 }
 
 fn PARSE_SWITCH(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
     STI(S, GTI(S) + 1);
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     PCMPE(S);
     var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    _blk_open(S, p0, he);
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
     var _sw_m0 = _clm_n;   # 6.7.2: this switch's label memo, trimmed at its end
@@ -3419,11 +3420,12 @@ fn PARSE_MATCH(S): i64 {
     # v5.8.22 bite #2 — capture match-keyword line for exhaustive-
     # coverage diagnostic before STI consumes it.
     var match_line = GTLINE(S, GTI(S));
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
     STI(S, GTI(S) + 1);
+    var he = _hdr_brace(S, GTI(S));
     PCMPE(S);
     var mh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    _blk_open(S, p0, he);
     # Store match value in hidden temp var
     var midx = _HTEMP(S);
     _HTSTORE(S, midx);

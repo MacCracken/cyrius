@@ -892,6 +892,11 @@ loop {
 }
 ```
 
+An error in a header — the condition of an `if` / `elif` / `while` / `for`, a `for .. in` range or collection, a
+`switch` or `match` subject — is that header's: the block is parsed as usual and each of its statements reports its
+own error (6.7.16; through 6.7.15 the block's SECOND statement was skipped with its error, so `if (qq[0] == 1) { y = 1;
+y = zz8; }` reported `qq` alone).
+
 ### `loop` and `do … while` (6.7.5)
 
 `loop { … }` is `while (1) { … }` written plainly: no condition is emitted or tested at its

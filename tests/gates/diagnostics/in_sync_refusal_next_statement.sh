@@ -461,6 +461,124 @@ okrow ASV3 "control: a message holding braces, and a } at module scope on the li
 syscall(60, f(1));
 ' 7
 
+# H — 6.7.16 (issues/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
+# LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
+# classic `for` / `for .. in` / `switch` / `match` that refused left the latch set for the block: its first
+# statement ended latched, PARSE_STMT's resync skipped the SECOND statement, and that statement's error was never
+# reported. `_blk_open` (src/frontend/parse_ctrl.cyr) clears the latch when it was clear as the head began and the
+# cursor's `{` is exactly the header's end. H1 is the filing's program verbatim. Controls: H9 a header left mid-way
+# (`if (y b) {`) keeps the latch; H10 a header inside a closure argument parsed under a statement's own latch keeps it.
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_blk_open` never clearing -> RED H1-H8 and H11-H16 on
+# every leg (70); H9 H10 green.
+row H1 "the filing's program verbatim: an if header's u128 subscript" "${PA}    if (pa[0] == 1) {
+        y = 1;
+        y = zz8;
+        y = zz7;
+    }
+${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U
+error:<source>:7:16: undefined variable 'zz8' (missing include or enum?)
+error:<source>:8:16: undefined variable 'zz7' (missing include or enum?)"
+
+row H2 "while (qq[0] == 1)" "${PA}    while (qq[0] == 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:40: undefined variable 'zz8' (missing include or enum?)"
+
+row H3 "a syntax error in the header: if (y == 0 +)" "${PA}    if (y == 0 +) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:17: unexpected ')'
+error:<source>:5:35: undefined variable 'zz8' (missing include or enum?)"
+
+row H4 "elif (qq[0] == 1)" "${PA}    if (y == 1) { y = 2; } elif (qq[0] == 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:36: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:62: undefined variable 'zz8' (missing include or enum?)"
+
+row H5 "a classic for's condition" "${PA}    for (var i = 0; i < qq[0]; i = i + 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:27: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:59: undefined variable 'zz8' (missing include or enum?)"
+
+row H6 "for i in 0..qq[0]" "${PA}    for i in 0..qq[0] { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:19: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:39: undefined variable 'zz8' (missing include or enum?)"
+
+row H7 "switch (qq[0])" "${PA}    switch (qq[0]) { case 1: y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:15: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:44: undefined variable 'zz8' (missing include or enum?)"
+
+row H8 "a top-level if after the first statement" 'var y = 0;
+y = 1;
+if (qq[0] == 1) { y = 1; y = zz8; }
+syscall(60, 0);
+' "error:<source>:3:7: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:33: undefined variable 'zz8' (missing include or enum?)"
+
+row H9 "control: a header left mid-way keeps the latch" "${PA}    if (y b) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'
+error:<source>:8:21: expected '}', got end of file"
+
+row H10 "control: a header in a closure parsed under the statement's latch" 'fn g(f): i64 { return 0; }
+fn main(): i64 {
+    var a: u128 = 0;
+    var pa: *u128 = &a;
+    var y = pa[0] + g(|x| { if (qq[0] == 1) { var w = 1; w = zz8; } return x; });
+    y = zz7;
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:5:15: cannot subscript 'pa$U
+error:<source>:6:12: undefined variable 'zz7' (missing include or enum?)"
+
+row H11 "match (qq[0])" "${PA}    match (qq[0]) { 1 => { y = 1; y = zz8; } _ => { y = 2; } }
+${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:42: undefined variable 'zz8' (missing include or enum?)"
+
+row H12 "a collection for x in qq[0]" 'include "lib/vec.cyr"
+fn main(): i64 {
+    var y = 0;
+    for x in qq[0] { y = 1; y = zz8; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:4:16: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:36: undefined variable 'zz8' (missing include or enum?)"
+
+row H13 "nested heads, each its own" 'fn main(): i64 {
+    var y = 0;
+    if (qq[0] == 1) { if (pp[0] == 1) { y = 1; y = zz8; } y = zz7; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:3:11: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:29: undefined variable 'pp' (missing include or enum?)
+error:<source>:3:55: undefined variable 'zz8' (missing include or enum?)
+error:<source>:3:66: undefined variable 'zz7' (missing include or enum?)"
+
+row H14 "a generic fn at two instances (once)" 'fn gg<T>(x: T): i64 {
+    var y = 0;
+    while (qq[0] == 1) { y = 1; y = zz8; }
+    return 0;
+}
+fn main(): i64 { gg<i64>(1); gg<i32>(2); return 0; }
+syscall(60, main());
+' "error:<source>:3:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:40: undefined variable 'zz8' (missing include or enum?)"
+
+row H15 "a syntax error in the header and the block, --syntax-only" 'fn main(): i64 {
+    var y = 0;
+    if (y == 0 +) { y = 1; y = 2 +; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:3:17: unexpected ')'
+error:<source>:3:35: unexpected ';'" --syntax-only
+
+row H16 "a top-level while after the first statement, u128 subscript" 'var a: u128 = 0;
+var pa: *u128 = &a;
+var y = 0;
+y = 1;
+while (pa[0] == 1) { y = 1; y = zz8; }
+syscall(60, 0);
+' "error:<source>:5:10: cannot subscript 'pa$U
+error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0
