@@ -1974,7 +1974,47 @@ printf '%s\nvar x = mkg1(mkg1(P));\nfn f(): i64 { return take(x); }\nsyscall(60,
 runs GZC12 33 "the zone: a fn body passes x to a \`G1<G1<Pt>>\` parameter before the replay (\"cannot pass 'x'\" before)"
 rowc GZC13 'var x = mkg1(mkg1<*Pt>(3));' '0'
 for zw in zone after; do refused "GZC13$zw" "a type argument is a type name, got '*'" "the $zw: an inner refused list is its one refusal"; done
-[ "$rows" -ge 480 ] || bad "only $rows rows ran (floor 480)"
+
+# ---- 6.7.16: a generic fn's FIXED instance return is that instance in the zone. An instance re-parses its base's tokens
+# and records the same type parameters, so the zone reader's "a `: G<T>` return" test (`GSTP != 0`) took `fn mkf<T>(v:
+# T): G1<i32>` for `: G<T>` and looked the instance its call makes up under G1, found none: `var x = mkf(P);` and `var x
+# = b.mkfm(P);` bound nothing (`x.v`: "no struct type in scope for 'x'"; after the first statement `G1<i32>`), and
+# GZC's carrying readers missed `idf(mkf(P))` / `mkg1(mkf(P))`. `_gz_gbase` asks for a generic base (not in `_sinst`); a
+# struct carrier given a generic call reads its return as the classifier does (`_gu_gsc` through `_gu_ircs`: a fixed
+# return itself, a `: T` its binding). GZF1-GZF6, each zone and after.
+#   N91 `_gz_gbase` without its `_sinst_base` test         -> RED 5: GZF1zone-GZF5zone x4 ("no struct type in scope")
+#   N92 `_gu_gsc` reading a `: G<..>` base only            -> RED 2: GZF5zone GZF6zone x4
+GZFH='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Box<T> { v: T; }
+struct Pt { a; }
+struct B1 { a; }
+fn mkf<T>(v: T): G1<i32> { var g: G1<i32>; g.v = 33; return g; }
+fn mkbf<T>(v: T): Box<i32> { var g: Box<i32>; g.v = 33; return g; }
+fn mkc<T>(b: Box<T>): G1<T> { var g: G1<T>; g.v = b.v; return g; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn idf<T>(v: T): T { return v; }
+fn take4(g: G1<i32>): i64 { return g.v; }
+impl B1 { fn mkfm<T>(self, v: T): G1<i32> { var g: G1<i32>; g.v = 33; return g; } }
+var b = B1 { 1 };
+var P = Pt { 3 };
+var BX: Box<i32> = Box<i32> { 33 };'
+# rowf <name> <declarations> <exit expression>: the zone file over $GZFH, and the after one (a first statement before
+# its first `var x`)
+rowf() {
+    printf '%s\n%s\nsyscall(60, %s);\n' "$GZFH" "$2" "$3" > "$T/$1zone.cyr"
+    awk '!d && /^var x[ :]/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"
+}
+rowf GZF1 'var x = mkf(P);' 'x.v + take4(x) - 33'
+rowf GZF2 'var x = b.mkfm(P);' 'x.v + take4(x) - 33'
+rowf GZF3 'var x = idf(mkf(P));' 'x.v + take4(x) - 33'
+rowf GZF4 'var x = mkg1(mkf(P));' 'x.v.v'
+rowf GZF5 'var x = mkc(mkbf(P));' 'x.v + take4(x) - 33'
+rowf GZF6 'var x = mkc(idf(BX));' 'x.v + take4(x) - 33'
+for n in 1 2 3 4 5 6; do
+    for zw in zone after; do runs "GZF$n$zw" 33 "the $zw: GZF$n's generic fixed-instance (or carried) return is that instance"; done
+done
+[ "$rows" -ge 492 ] || bad "only $rows rows ran (floor 492)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"
