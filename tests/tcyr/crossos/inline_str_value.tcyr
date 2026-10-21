@@ -214,6 +214,9 @@ var PPZ: **Str = &PZ;
 var UZPP: Str = *PPZ;                 # a zone `Str` declaration from `*pp` of a `**Str` global: a copy (6.7.16, D74)
 var VZP: Str = PZ;                    # ... from a `*Str` global's name: a copy (6.7.16, D18 (a))
 var GYZS: *Str = *PZ;                 # a zone `*Str` declaration from `*PZ` is PZ (6.7.16, D73)
+var HAZ: Str = *(&gz);                # a zone `var H: Str = *(&gz);` is a handle on gz, as `= gz` is (6.7.16, D71)
+var HAZ2: Str = *((&gz));
+var PAZ: *Str = *&gz;
 fn mkws(): *WS { return &GWS; }
 fn pa_fld_local(): i64 { var w: WS = WS { 0, 1 }; w.p = gt; return str_len(w.p); }
 fn pa_fld_global(): i64 { GWS.p = gt; var r = str_len(GWS.p); GWS.p = 0; return r; }
@@ -347,6 +350,27 @@ fn ds_arg(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &
 fn ds_ret(): i64 { var a = str_from("abcde"); var p: *Str = a; return (rps1(p) == a) * 10 + (rps2(p) == a); }
 fn ds_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var b = str_from("xy"); var q: *Str = b; *q = *p; var x: *Str = *p; x.len = 1; return t.len * 10 + (load64(b) == &t); }
 fn ds_zone(): i64 { return (GYZS == PZ) * 10 + str_len(GYZS); }
+# ── `*(&t)` / `*&t` of an inline `Str` t is t itself (6.7.16, the user's D71, 2026-10-20): wherever a `Str` value is
+#    taken it is t's header's address — it was t's data word — and a frame's t keeps every refusal t has (the gate's
+#    X20-X28); an untyped position keeps the word, as t's does ──────────────────────────────────────────────────────
+fn fu1(x): i64 { return x; }
+fn ramp(): Str { return *(&gt); }
+fn amp_decl(): i64 { var t: Str = Str { "xyz", 3 }; var h: Str = *(&t); h.len = 1; var h2 = *(&t); return t.len * 10 + str_len(h2); }
+fn amp_arg(): i64 { var t: Str = Str { "xyz", 3 }; return f(*(&t)) * 1000 + fp(*(&t)) * 100 + gg<Str>(*(&t)) * 10 + gg(*&t); }
+fn amp_meth(): i64 { var t: Str = Str { "xyz", 3 }; var h = str_from("xyz"); return h.eq(*(&t)) * 10 + h.contains(*&t); }
+fn amp_copy(): i64 { var t: Str = Str { "xyz", 3 }; var u: Str = Str { "q", 1 }; u = *(&t); t.len = 1; return u.len; }
+fn amp_rebind(): i64 { var t: Str = Str { "xyz", 3 }; var k = str_from("q"); k = *(&t); var k2: Str = str_from("q"); k2 = *((&t)); return (k == &t) * 10 + (k2 == &t); }
+fn amp_ptr(): i64 { var t: Str = Str { "xyz", 3 }; var p: *Str = 0; p = *(&t); var p2: *Str = *&t; return (p == &t) * 10 + (p2 == &t); }
+fn amp_glob(): i64 { GH = *(&gt); var r = (GH == &gt); GH = 0; GPS = *(&gt); r = r * 10 + (GPS == &gt); GPS = 0; GW.s = *(&gt); r = r * 10 + (GW.s == &gt); GW.s = 0; return r * 10 + (ramp() == &gt); }
+fn amp_fld(): i64 { var w: W = W { 0, 1 }; w.s = *(&gt); var wp: WS = WS { 0, 1 }; wp.p = *(&gt); var l: W = W { *(&gt), 1 }; var lp: WS = WS { *&gt, 1 }; return (w.s == &gt) * 1000 + (wp.p == &gt) * 100 + (l.s == &gt) * 10 + (lp.p == &gt); }
+fn amp_dst(): i64 { var b = str_from("xy"); var ps: *Str = b; *ps = *(&gt); var q: *Str = 0; var pp: **Str = &q; *pp = *(&gt); return (load64(b) == &gt) * 10 + (q == &gt); }
+fn amp_cap(): i64 { var t: Str = Str { "xyz", 3 }; var c = || { var h: Str = *(&t); var w: W = W { 0, 1 }; w.s = *(&t); GH = *(&t); var r = f(*(&t)) * 1000 + str_len(h) * 100 + str_len(w.s) * 10 + str_len(GH); GH = 0; return r; }; return callptr(c); }
+fn amp_untyped(): i64 { var t: Str = Str { "xyz", 3 }; var a = fncall1(&fu1, *(&t)); var b = fu1(*(&t)); return (a == load64(&t)) * 10 + (b == load64(&t)); }
+fn amp_zone(): i64 { return (HAZ == &gz) * 100 + (HAZ2 == &gz) * 10 + (PAZ == &gz); }
+fn mkamp(): Str { return str_from("abcd"); }
+fn amp_st(): i64 { var t: Str = Str { "xyz", 3 }; *(&t) = gt; var r = t.len; var t2: Str = Str { "xyz", 3 }; var a = str_from("abcde"); *(&t2) = a; a.len = 1; return r * 10 + t2.len; }
+fn amp_st_src(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str = Str { "xyz", 3 }; *(&t) = *p; a.len = 1; var r = t.len; *((&t)) = mkamp(); r = r * 10 + t.len; var w: W = W { str_from("uvwxyz"), 1 }; *&t = w.s; r = r * 10 + t.len; var u: Str = Str { "q", 1 }; *(&t) = *(&u); return r * 10 + t.len; }
+fn amp_st_glob(): i64 { *(&gi) = gt; var r = gi.len; gi.len = 2; var i = 0; var t: Str = Str { "xyz", 3 }; for (i = 0; i < 1; *(&t) = gt) { i = i + 1; } return r * 10 + t.len; }
 
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
@@ -468,6 +492,14 @@ var R_TOP19 = (load64(bq) == &gt) * 100 + (GXS == &gt) * 10 + (LYS == &gt);
 GQS = 0;
 GXS = 0;
 GPS = 0;
+var HAL: Str = *(&gt);       # top level after a statement: `*(&gt)` is gt (6.7.16, D71) — a declaration, an inline
+gi4 = *(&gt);                #   Str global's copy, a handle global
+GH = *&gt;
+var R_TOP20 = (HAL == &gt) * 100 + gi4.len * 10 + (GH == &gt);
+*(&gi3) = gt;                # top level: `*(&gi3) = gt` copies gt's header into the inline gi3, as `gi3 = gt` (6.7.16, D71)
+var R_TOP21 = gi3.len;
+gi4.len = 2;
+GH = 0;
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -607,6 +639,21 @@ assert_eq(ds_arg(), 555, "fps2(*p) / fps2(**pp) into a `s: *Str` parameter pass 
 assert_eq(ds_ret(), 11, "return *p; / return ((*p)); from a fn returning *Str return p");
 assert_eq(ds_inl(), 11, "*q = *p / var x: *Str = *p with p an inline Str's header: &t (x.len = 1 writes t.len)");
 assert_eq(ds_zone(), 17, "zone var G: *Str = *PZ; is PZ");
+assert_eq(amp_decl(), 11, "var h: Str = *(&t); is a handle on t (D71; h.len = 1 writes t.len), the untyped var h2 = *(&t) too");
+assert_eq(amp_arg(), 3333, "f(*(&t)) into `s: Str`, fp(*(&t)) into `p: *Str`, gg<Str>(*(&t)), the inferred gg(*&t) (the filed repro: the data word)");
+assert_eq(amp_meth(), 11, "h.eq(*(&t)), h.contains(*&t): a Str method's operand");
+assert_eq(amp_copy(), 3, "u = *(&t) into an inline Str copies t's header, as u = t does");
+assert_eq(amp_rebind(), 11, "k = *(&t) / k2 = *((&t)) rebind a Str handle to t");
+assert_eq(amp_ptr(), 11, "p = *(&t) / var p2: *Str = *&t take t's header's address");
+assert_eq(amp_glob(), 1111, "GH = *(&gt), GPS = *(&gt), GW.s = *(&gt), return *(&gt) from `: Str`: gt's static address");
+assert_eq(amp_fld(), 1111, "w.s / wp.p = *(&gt), W { *(&gt), 1 }, WS { *&gt, 1 }");
+assert_eq(amp_dst(), 11, "*ps = *(&gt) through a *Str, *pp = *(&gt) through a **Str");
+assert_eq(amp_cap(), 3333, "a closure: var h: Str = *(&t), w.s = *(&t), GH = *(&t), f(*(&t)) of the captured copy");
+assert_eq(amp_untyped(), 11, "fncall1(&fu1, *(&t)) / fu1(*(&t)) into an untyped parameter keep t's first word, as t does");
+assert_eq(amp_zone(), 111, "zone var H: Str = *(&gz); / *((&gz)) / var P: *Str = *&gz;");
+assert_eq(amp_st(), 75, "*(&t) = gt / *(&t2) = a (a handle) copy the header into t, as t = gt does (it wrote the first word)");
+assert_eq(amp_st_src(), 5461, "*(&t) = *p, *((&t)) = mkamp(), *&t = w.s, *(&t) = *(&u): each copies, as t = <src> does");
+assert_eq(amp_st_glob(), 77, "*(&gi) = gt into an inline Str global, a for step *(&t) = gt");
 assert_eq(pa_fld_local(), 7, "w.p = gt into a *Str field of a local takes gt's header (D19; the filed repro: the data word)");
 assert_eq(pa_fld_global(), 7, "GW.p = gt into a *Str field of a global");
 assert_eq(pa_fld_ptr(), 7, "pw.p = gt through a *W");
@@ -685,6 +732,8 @@ assert_eq(R_TOP16, 117, "top level: GW.s = *GPS into a Str field and W { *GPS, 1
 assert_eq(R_TOP17, 7, "top level after a statement: WS { gt, 1 } takes gt's header (6.7.16, D19)");
 assert_eq(R_TOP18, 77, "top level after a statement: var U: Str = *GPPS; / var V: Str = (GPS); are copies (6.7.16, D74 / D18 (a))");
 assert_eq(R_TOP19, 111, "top level: *GQS = *GPS, GXS = *GPS, var LYS: *Str = *GPS are GPS (6.7.16, D73)");
+assert_eq(R_TOP20, 171, "top level after a statement: var H: Str = *(&gt); gi4 = *(&gt) copies; GH = *&gt (6.7.16, D71)");
+assert_eq(R_TOP21, 7, "top level: *(&gi3) = gt copies the header (6.7.16, D71)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

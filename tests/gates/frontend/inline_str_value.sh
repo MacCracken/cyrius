@@ -130,6 +130,18 @@
 # Each took the header's data word (DS1, the filed repro verbatim: `20120121`, was `21020121`), the names and the
 # declaration with a false "assigning non-pointer to typed pointer". `*q = *pp` (already the `*Str`) is unchanged.
 #
+# 6.7.16 (the user's decision D71, 2026-10-20; issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md):
+# `*(&t)` / `*&t` of an inline `Str` t is t itself, as 6.7.15's D21 A reads `*(&p)` as p — every D7 (1) arm reads it as
+# the name: `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) binds a handle on t, `f(*(&t))` / `fp(*(&t))` /
+# `gg<Str>(*(&t))` / the inferred `gg(*&t)` / `h.eq(*(&t))` pass its header, `u = *(&t)` copies it into an inline u, `k
+# = *(&t)` rebinds a handle, `p = *(&t)` / `var p: *Str = *&t;` take the address; a global's and a capture's too, in
+# the zone and after a statement (the tcyr's amp_* rows, R_TOP20). It took t's data word (AMP1, the filed repro
+# verbatim: `3 3 3` exit 3 and no warning, was `0 0 1` exit 0 with two false "assigning non-pointer to typed
+# pointer"). A frame's t keeps every refusal t has, named at t (X20-X28). An untyped position keeps the word. The store
+# side too: `*(&t) = v` of an inline `Str` local or global is `t = v` (a copy from `gt`, a handle, `*p`, a `: Str` call,
+# a `Str` field, `*(&u)`; the tcyr's amp_st* rows, R_TOP21) — it wrote v's first word into t.data — and `*(&t) += 1` is
+# refused as `t += 1` is (X29; it stepped t.data).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -142,7 +154,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -249,6 +261,12 @@
 #      `_istr_pfdx`, `_istr_pvd`, `_istr_gzdx`,       DS1 x7 ('21020121')
 #      `_istr_ldx`'s `*Str`, `_istr_rstr`'s `*Str`,
 #      `_istr_dxh`'s 3 / 4, `_pptr_param` back)
+#   2026-10-20 (6.7.16, D71 `*(&t)` of an inline `Str` is t; the same scratch-copy method):
+#   v1 `_istr_amp` answers 0 (the reading         -> RED 54: R1 x7 (a crash — SIGSEGV, a cx guest fault, PE — the
+#      reverted)                                      amp_* rows read t's data word as a header), X20-X28 x4 (each
+#                                                     compiled), AMP1 x4 (warned) + x7 ('0 0 1', exit 0)
+#   v2 `_istr_amp_dst` answers 0 (the store side)  -> RED 11: R1 x7 (4 rows: amp_st*, R_TOP21 — the first word stored),
+#                                                     X29 x4 (compiled)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -371,7 +389,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=220   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19
+FLOOR=237   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -450,6 +468,31 @@ refused X18 "$MP" "\`*pp = t;\` through a \`**Str\`"
 row X19 'struct WP { p: *Str; n; }
 fn go(): i64 { var t: Str; var w: WP = WP { 0, 1 }; var i = 0; for (i = 0; i < 1; w.p = t) { i = i + 1; } return 0; }'
 refused X19 "$MF" "a for step's \`*Str\` field store of a bare \`var t: Str;\`"
+# X20-X28 (6.7.16, D71): `*(&t)` / `*&t` of a frame's t is t, so it keeps every refusal t has, named at t; through
+# 6.7.15 each compiled, t's data word stored or returned.
+row X20 'fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; return *(&t); }
+fn go(): i64 { return f(mk()); }'
+refused X20 "$MR" "\`return *(&t);\` from a fn returning Str (D71)"
+row X21 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = *(&t); return 0; }'
+refused X21 "$MG" "\`G = *(&t);\` into a Str global"
+row X22 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { 0, 1 }; w.s = *(&t); return 0; }'
+refused X22 "$MF" "\`w.s = *(&t);\` into a Str field"
+row X23 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var ps: *Str = new_slot(); *ps = *(&t); return 0; }'
+refused X23 "$MP" "\`*ps = *(&t);\` through a \`*Str\`"
+row X24 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var q: *Str = 0; var pp: **Str = &q; *pp = *((&t)); return 0; }'
+refused X24 "$MP" "\`*pp = *((&t));\` through a \`**Str\`"
+row X25 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { *&t, 1 }; return 0; }'
+refused X25 "$MF" "\`W { *&t, 1 }\`, a literal's Str field"
+row X26 'var GP: *Str = 0;
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; GP = *(&t); return 0; }'
+refused X26 "$MG" "\`GP = *(&t);\` into a \`*Str\` global"
+row X27 'struct WP { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: WP = WP { 0, 1 }; w.p = *(&t); return 0; }'
+refused X27 "$MF" "\`w.p = *(&t);\` into a \`*Str\` field"
+row X28 'fn go(): i64 { var t: Str; var w: W = W { 0, 1 }; var i = 0; for (i = 0; i < 1; w.s = *(&t)) { i = i + 1; } return 0; }'
+refused X28 "$MF" "a for step's \`w.s = *(&t)\` of a bare \`var t: Str;\`"
+row X29 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; *(&t) += 1; return t.len; }'
+refused X29 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "\`*(&t) += 1;\` refused as \`t += 1;\` is (it stepped t.data)"
 
 # --- K: controls (a global's or a capture's header does not dangle; untyped positions keep the word) ---
 row K1 'fn mk(): Str { return gt; }
@@ -881,6 +924,47 @@ for leg in $XLEGS $OLEGS; do
     else bad "DS1 the filed repro ($leg): '$last', exit $got (want '20120121', exit 0: q's first word is p)"; fi
 done
 
+# --- AMP1: the filed repro (issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md), verbatim: `*(&t)`
+# of an inline `Str` is t (6.7.16, the user's D71, 2026-10-20) — `var h: Str = *(&t);` a handle on t, `f(*(&t))`, `u =
+# *(&t)` a copy, `k = *(&t)` a rebind: `3 3 3`, exit 3, no warning (through 6.7.15 `0 0 1`, exit 0, and two false
+# "assigning non-pointer to typed pointer") ---
+cat > "$T/AMP1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var t: Str = Str { "xyz", 3 };
+    var h: Str = *(&t);
+    fmt_int(str_len(h)); syscall(SYS_WRITE, 1, " ", 1);
+    fmt_int(f(*(&t))); syscall(SYS_WRITE, 1, " ", 1);
+    var u: Str = Str { "q", 1 };
+    u = *(&t);
+    fmt_int(u.len); syscall(SYS_WRITE, 1, "\n", 1);
+    var k = str_from("q");
+    k = *(&t);
+    return str_len(k);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" AMP1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/AMP1.$leg" ]; then bad "AMP1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/AMP1.$leg.err"; then bad "AMP1 ($leg): warned: $(grep '^warning' "$T/AMP1.$leg.err" | head -1)"
+    else ok "AMP1 \`u = *(&t);\` / \`k = *(&t);\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" AMP1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/AMP1.$leg" ]; then bad "AMP1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" AMP1
+    if [ "$got" = 3 ] && [ "$last" = "3 3 3" ]; then ok "AMP1 the filed repro ($leg): '$last', exit 3"
+    else bad "AMP1 the filed repro ($leg): '$last', exit $got (want '3 3 3', exit 3: *(&t) is t)"; fi
+done
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -1006,7 +1090,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=74   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73); the floor is the count that runs
+FLOOR_ROWS=86   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71); the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

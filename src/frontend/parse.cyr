@@ -4737,6 +4737,7 @@ fn _dst_word(S, h, sz): i64 {
 # 6.7.16: `*(&pi) OP= n` of a typed pointer steps as `pi OP= n` does — `*(&p)` is p, its type kept (6.7.15's D21 A,
 # `_amp_pw`), as `*(&pi) + n` already stepped; it stepped one byte. CHANGELOG [6.7.16]
 fn _deref_store(S, term): i64 {
+    if (_istr_amp_dst(S, term) == 1) { return 0; }   # 6.7.16 (D71): `*(&t) = v` of an inline `Str` is `t = v`
     var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
     PARSE_FACTOR(S);

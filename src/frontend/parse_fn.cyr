@@ -3448,7 +3448,9 @@ fn _sarg_byval_small(S, fi, argc): i64 {
 # of a `**Str`, `p + n`), to a `Str` parameter `argc` of `fi` (not a `p: *Str` one): only E is parsed — rax = the
 # header's address, as `str_len(p)` passes it — the wrap closed, pushed. 1 = pushed; 0 = not that shape, nothing
 # moved. CHANGELOG [6.7.15]
-# 6.7.16 (D73): and a `p: *Str` parameter — `fps(*p)` passed the data word as the header's address. CHANGELOG [6.7.16]
+# 6.7.16 (D73): and a `p: *Str` parameter — `fps(*p)` passed the data word as the header's address. 6.7.16 (D71): and
+# `*(&t)` of an inline `Str` t, whose operand `&t` is the header's address — into a generic's `x: T` at T = Str it
+# passed t's data word. CHANGELOG [6.7.16]
 fn _sarg_istr_dx(S, fi, argc): i64 {
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
@@ -3459,7 +3461,7 @@ fn _sarg_istr_dx(S, fi, argc): i64 {
     if (pe - a < 2) { return 0; }
     if (TOKTYP(S, a) != 8) { return 0; }
     if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
-    if (_hl_psid(S, a + 1, pe) != ss) { return 0; }
+    if (_hl_psid(S, a + 1, pe) != ss) { if (_istr_amp(S, a, pe) == 0) { return 0; } }   # 6.7.16 (D71): `*(&t)`, `&t`
     STI(S, a + 1);   # past the wrap's `(`s and the `*`
     PARSE_FACTOR(S);
     _pw_close(S, a - st);
@@ -16177,9 +16179,11 @@ fn _ic_arg(S, fi, a, k): i64 {
 }
 # A whole dereference `*E` (its `*` at token a, the whole argument) through `x: T`: the struct E points at, as a
 # struct carrier reads it (`_gsc_deref`: a `*S` name, field, call, `p + n`, `*&l`); i64 otherwise. CHANGELOG [6.7.15]
+# 6.7.16 (D71): `*(&t)` / `*&t` of an inline `Str` t is t, so it binds `Str` as `gg(t)` does (it ran the i64 base).
 fn _ic_deref(S, a): i64 {
     var s = _gsc_deref(S, a);
     if (s > 0) { return s; }
+    if (_istr_amp(S, a, _arg_next(S, a)) != 0) { return _STR_SID(S); }
     return 0 - 8;
 }
 # A field chain `w.p` (the whole argument at token a) through `p: *T`: what its leaf field declared `*S` points at

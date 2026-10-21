@@ -7398,6 +7398,7 @@ fn _tp_call_pointee(S, st, psid): i64 {
 # the value from `st` to the cursor is one name, inside any parentheses, of a `Str` handle local, parameter or global
 # (`_istr_dst` 1 / 2) or a capture of one. CHANGELOG [6.7.16]
 fn _tp_hdl_name(S, st): i64 {
+    if (_istr_at(S, st, GTI(S)) != 0) { return 1; }   # 6.7.16 (D71): `GP = *(&t)` — its address taken, or refused
     var a = _ie_unparen(S, st, GTI(S));
     if (_ie_pe != a + 1) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
@@ -8159,7 +8160,7 @@ fn _uci_ps(S): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     var pk = _sci_pname(S, GTI(S) + 1);
-    if (pk < 0) { return 0; }
+    if (pk < 0) { return _uci_samp(S); }
     var snoff = TOKVAL(S, GTI(S) + 1 + pk);
     var li = FINDLOCAL(S, snoff);
     if (li >= 0) { return _uci_local(S, li); }
@@ -8183,6 +8184,11 @@ fn _uci_glob(S, snoff): i64 {
     if (t <= 0) { return 0; }
     if (_uci_sid_ok(S, 0 - t) == 0) { return 0; }
     return 0 - t;
+}
+# 6.7.16 (D71): `var h = *(&t);` of an inline `Str` t is `var h = t;` — typed `Str`, a handle on t's header.
+fn _uci_samp(S): i64 {
+    if (_istr_samp(S, GTI(S) + 1) == 0) { return 0; }
+    return 0 - _STR_SID(S);
 }
 # `t` (a slot's type) names a struct a name copy takes: not a vector, a tuple or a dyn. 1 / 0.
 fn _uci_sid_ok(S, t): i64 {
@@ -8230,17 +8236,41 @@ fn _uci_cap(S, snoff): i64 {
 # pointer of another kind) keeps the word. CHANGELOG [6.7.13]
 var _istr_ix = 0 - 1;   # the local slot / global index `_istr_name` found
 var _istr_ti = 0 - 1;   # ... and `_istr_at`'s name token
+var _istr_am = 0;       # 6.7.16: 1 = `_istr_at` read the name through `*(& NAME)` (`_istr_amp`)
 # The whole expression [b, e), inside any balanced parentheses, is one name `_istr_name` answers: 1 an inline
 # `Str` local of this frame, 2 an inline `Str` global, 3 a closure's captured copy of one; else 0.
+# 6.7.16 (D71): or `*(& NAME)` / `*&NAME` of one (`_istr_amp`).
 fn _istr_at(S, b, e): i64 {
     var a = _ie_unparen(S, b, e);
-    if (_ie_pe != a + 1) { return 0; }
+    if (_ie_pe != a + 1) { return _istr_amp(S, a, _ie_pe); }
     if (TOKTYP(S, a) != 2) { return 0; }
     _istr_ti = a;
     return _istr_name(S, TOKVAL(S, a));
 }
+# ⛔ 6.7.16 — `*(&t)` OF AN INLINE `Str` IS t ITSELF (the user's D71, 2026-10-20), as 6.7.15's D21 A reads `*(&p)` as p
+# and 6.7.13 reads `*(&s)` of a struct as s: wherever a `Str` value is taken it is t's header's address, and a frame's
+# t keeps every refusal t has, by name. `var h: Str = *(&t);` bound h to t's data word (`str_len(h)` the string's
+# bytes read as a header), `f(*(&t))` passed it, `u = *(&t)` and `k = *(&t)` stored it (with a false "assigning
+# non-pointer to typed pointer"), and `return *(&t);` / `GH = *(&t);` / `w.s = *(&t);` / `*ps = *(&t);` of a frame's t
+# compiled — the would-dangle stores D7 (1) refuses for t. A position that takes no `Str` value keeps the word, as t's
+# does (6.7.13's D18 (c)). CHANGELOG [6.7.16]
+# [a, pe) is a `*` then exactly `& NAME` inside any balanced parentheses (as `_amp_ew` reads it): `_istr_name`'s answer
+# for NAME, `_istr_am` 1; else 0.
+fn _istr_amp(S, a, pe): i64 {
+    if (pe - a < 3) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    var b = _ie_unparen(S, a + 1, pe);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    _istr_ti = b + 1;
+    var r = _istr_name(S, TOKVAL(S, b + 1));
+    if (r != 0) { _istr_am = 1; }
+    return r;
+}
 # Name `noff`, resolved as the factor resolves it (a local, a capture, a global): see `_istr_at`.
 fn _istr_name(S, noff): i64 {
+    _istr_am = 0;
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
     if (GINFN(S) == 1) {
@@ -8271,12 +8301,22 @@ fn _istr_cap(S, noff, ss): i64 {
 }
 # rax = the header's address for `_istr_at`'s answer `k` (a capture's value already is). A frame's escapes into
 # a value as `&t` does (`_fn_local_addr`: a later tail call is an ordinary call — the `jmp` would free it).
+# 6.7.16 (D71): a capture read through `*(&t)` (`_istr_am`) loaded its copy's first word — its `& NAME` is re-read.
 fn _istr_ra(S, k): i64 {
     if (k == 1) {
         _fn_local_addr = 1;
         EFLADDR(S, _istr_ix);
     }
     if (k == 2) { EVADDR(S, _istr_ix); }
+    if (k == 3) { if (_istr_am == 1) { _istr_cap_amp(S); } }
+    return 0;
+}
+# rax = the address of the captured copy `_istr_ti` names: its `& NAME` parsed again (nothing else moves).
+fn _istr_cap_amp(S): i64 {
+    var sv = GTI(S);
+    STI(S, _istr_ti - 1);
+    PARSE_FACTOR(S);
+    STI(S, sv);
     return 0;
 }
 # A frame's inline `Str` (`_istr_at`'s 1) where it would outlive the frame: refused by name at its token, once.
@@ -8299,9 +8339,14 @@ fn _istr_arg(S, fi, k, st): i64 {
 fn _istr_src(S, pscale): i64 {
     if (0 - pscale != _STR_SID(S)) { return 0; }
     var pk = _sci_pname(S, GTI(S) + 1);
-    if (pk < 0) { return 0; }
+    if (pk < 0) { return _istr_samp(S, GTI(S) + 1); }   # 6.7.16 (D71): `*(&t)`
     if (_istr_name(S, TOKVAL(S, GTI(S) + 1 + pk)) == 0) { return 0; }
     return 1;
+}
+# 1 = the initialiser at `ti`, up to its `;`, is `*(& NAME)` of an inline `Str` (`_istr_at` through `_istr_amp`).
+fn _istr_samp(S, ti): i64 {
+    if (_istr_at(S, ti, _gz_end(S, ti)) == 0) { return 0; }
+    return _istr_am;
 }
 # PARSE_VAR's initialiser just parsed from `start` into a `Str` declaration — or, since 6.7.14, a `*Str` one (`ann`
 # the annotation's first token, `_istr_pann`; the user's D18 (c), 2026-10-16: `var p: *Str = t;` takes the header,
@@ -8354,6 +8399,7 @@ fn _istr_asg(S, dnoff, st): i64 {
         } }
     _istr_ra(S, r);
     if (d > 2) { SPSC(S, _hl_name_pw(S, dnoff)); }   # the pointer's step word, as `_istr_pdecl`
+    if (d == 1) { _asg_ret_sid = _STR_SID(S); }   # 6.7.16 (D71): `k = *(&t)` is `k = t` (no typed-pointer warning)
     return 0;
 }
 # Destination `noff` of an assignment: 1 a `Str` handle local or parameter, 2 a `Str` handle global, 3 (6.7.15) a `*Str`
@@ -8429,6 +8475,61 @@ fn _istr_vdx(S, ti, e): i64 {
     STI(S, ti + k + 1);   # the wrap's `(`s and the `*`
     PARSE_FACTOR(S);
     _pw_close(S, k);
+    return 1;
+}
+# ⛔ 6.7.16 — `*(&t) = v` / `*(&t) OP= v` OF AN INLINE `Str` t IS `t = v` / `t OP= v` (the user's D71: `*(&t)` is t):
+# `*(&t) = gt` wrote gt's first word into t.data and left t.len, `*(&t) = a` (a handle) its address, where `t = gt` and
+# `t = a` copy the header; and `*(&t) += 1` stepped t.data, where `t += 1` is refused. A local's or a global's t: the
+# statement's assignment arms run with t's name as their destination (`_istr_amp_asg`), and a compound operator is
+# refused as `t OP= v` is (the statement then parses on). A closure's captured copy keeps the store through `&t`.
+# CHANGELOG [6.7.16]
+# The cursor on the `*` of `*(& NAME)` / `*&NAME`: 1 = done (`term` consumed); 0 = not this shape (cursor untouched).
+fn _istr_amp_dst(S, term): i64 {
+    var d = GTI(S);
+    var e = d + 3;
+    if (TOKTYP(S, d + 1) == 10) {
+        _pwrap_k(S, d + 1);
+        e = _pw_end;
+    }
+    if (e <= d + 2) { return 0; }
+    var r = _istr_amp(S, d, e);
+    if (r == 0) { return 0; }
+    if (r == 3) { return 0; }
+    var noff = TOKVAL(S, _istr_ti);
+    STI(S, e);
+    if (PEEKT(S) == 4) {
+        STI(S, e + 1);   # `=`
+        return _istr_amp_asg(S, noff, term);
+    }
+    if (_asg_pair_at(S) == 1) {
+        _hl_damp = 1;
+        _dst_cop_err(S, noff, 0);   # "compound assignment to struct 't' is refused", as `t += 1`
+        _hl_damp = 0;
+    }
+    STI(S, d);
+    return 0;
+}
+# `NAME = <v>` (the cursor on the value), NAME an inline `Str` local or global: the statement's assignment arms, then
+# its store of a value they leave in rax (an untyped value's word into t.data, warned as the statement warns it).
+fn _istr_amp_asg(S, noff, term): i64 {
+    var st = GTI(S);
+    _asg_tup_refd = 0;
+    _asg_ret_peek(S, noff);
+    var r = _try_aggregate_copy_assign(S, noff, term);
+    if (r == 0) { r = _try_struct_call_assign(S, noff, term); }
+    if (r == 0) {
+        _refuse_lossy_pair(S);
+        r = _pcmpe_struct_assign(S, noff, term);
+    }
+    if (r == 1) { return 1; }
+    var li = 0 - 1;
+    if (GINFN(S) == 1) { li = FINDLOCAL(S, noff); }
+    if (li >= 0) {
+        if (GPSC(S) == 0) { if (_asg_ret_sid <= 0) { if (_asg_tup_refd == 0) { _tp_warn(S, st); } } }
+        _asg_store_slot(S, li, 0);
+    } else { _asg_store_slot(S, _findvar_core(S, noff), 1); }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
     return 1;
 }
 # A struct literal's element at the cursor into field type `ft` (`pf` 1: a `*Str` field, `_istr_pfs`): a `Str` or `*Str`
@@ -8643,8 +8744,14 @@ fn _istr_call(S, fi, n, term): i64 {
 }
 # `t = <src>` just parsed from `st` (`_pcmpe_struct_assign`, no other arm took it): a method's `: Str` result or a `Str`
 # field (`_istr_hsrc`) into an inline `Str` t — its header copied (1, `term` consumed); else 0.
+# 6.7.16 (D71): and `u = *(&t)` of an inline `Str` t — t's header copied, as `u = t` copies it.
 fn _istr_hcp(S, noff, st, term): i64 {
     if (_istr_inl_dst(S, _agc_operand(S, noff)) == 0) { return 0; }
+    var r = _istr_at(S, st, GTI(S));
+    if (r != 0) {
+        _istr_ra(S, r);
+        return _istr_rax_into(S, _agc_li, _agc_gvi, term);
+    }
     if (_istr_hsrc(S, st) == 0) { return 0; }
     return _istr_rax_into(S, _agc_li, _agc_gvi, term);
 }
@@ -8683,7 +8790,11 @@ fn _istr_rax_into(S, dli, dgv, term): i64 {
 fn _istr_gsrc(S, sid): i64 {
     if (sid != _STR_SID(S)) { return 0; }
     var pk = _sci_pname(S, GTI(S));
-    if (pk < 0) { return 0; }
+    if (pk < 0) {   # 6.7.16 (D71): `*(&gt)`
+        if (_istr_samp(S, GTI(S)) == 0) { return 0; }
+        if (_istr_at(S, GTI(S), _gz_end(S, GTI(S))) != 2) { return 0; }
+        return 1;
+    }
     if (_istr_name(S, TOKVAL(S, GTI(S) + pk)) != 2) { return 0; }
     return 1;
 }
@@ -8701,10 +8812,9 @@ fn _istr_gz(S, dgv, gps): i64 {
         if (_istr_gzdx(S, dgv) == 1) { return 1; }   # 6.7.16 (D73): `var P: *Str = *GP;`
     }
     if (_istr_gsrc(S, ss) == 0) { return 0; }
-    var pk = _sci_pname(S, GTI(S));
     _istr_ra(S, 2);
     if (dgv >= 0) { _gvi_store(S, dgv); }
-    STI(S, GTI(S) + 1 + 2 * pk);   # the name and its wrap: the cursor on `;`
+    STI(S, _gz_end(S, GTI(S)));   # the name and its wrap (6.7.16: or `*(&gt)`): the cursor on `;`
     return 1;
 }
 # A zone `var P: *Str = <v>;` (`_istr_gz`, cursor on the value): `*GP` is GP (`_istr_vdx`), stored into `dgv` (1, the

@@ -2558,7 +2558,17 @@ as `x = v` / `x OP= v` do — `var y = *(&GQ);` of a packed `i32` global is GQ, 
 next global alone, `*(&a)` of an `i32` -1 is -1. ⚠ Through 6.7.15 it was the untyped word: the read took the next
 global's bytes (5 + (9 << 32) where 5 is right) and an `i32` -1's zero high half (4294967295), and the store wrote 8
 bytes, zeroing the next global. A narrow parameter and a closure's capture keep the word: their own reads load the
-whole slot (a parameter's holds the caller's word) or env word.
+whole slot (a parameter's holds the caller's word) or env word. **`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
+decision D71, 2026-10-20): wherever a `Str` value is taken, `*(&t)` / `*&t` is t's header's address, as `t` is (see
+*An inline `Str` passes its header*) — `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) is a second handle on t's header,
+`f(*(&t))`, `fp(*(&t))` into a `*Str`, `gg<Str>(*(&t))`, the inferred `gg(*&t)` (which binds `T = Str`) and
+`h.eq(*(&t))` pass it, `u = *(&t)` into an inline `Str` copies it, `k = *(&t)` rebinds a handle, `p = *(&t)` / `var p:
+*Str = *&t;` take it — a global's and a closure's captured copy too, in a fn and at top level; and `*(&t) = v` is `t =
+v` (a copy), `*(&t) OP= v` is refused as `t OP= v` is. A frame's t keeps every refusal t has, named at t: `return
+*(&t);` from a fn returning `Str`, `G = *(&t);`, `w.s = *(&t);`, `*ps = *(&t);`, `W { *&t, 1 }`. ⚠ Through 6.7.15 it
+was t's data word (`str_len(h)` 0), the assignments warned *assigning non-pointer to typed pointer*, the refused stores
+compiled, and `*(&t) = gt` wrote gt's first word into t.data. A position that takes no `Str` value (`fncall1(&f,
+*(&t))`, an untyped parameter) keeps the word, as `t` does.
 
 **A store through a `*S` copies the struct** (6.7.11, the user's decision of 2026-10-13): `*p = v` with
 `p` typed `*S` — a local or parameter (`*self` in an impl method too), a global (`*GP = v`), `*(p + n)`,
@@ -3466,7 +3476,8 @@ to the header p points at — `h == p` afterwards, as after `h = p`, and a later
 user's decision D20, 2026-10-19; through 6.7.15 h took the header's data word, with the warning *assigning
 non-pointer to typed pointer*). A `Str` FIELD is such a handle, and so is a fn's `Str` result: `w.s = *p` (a local's,
 a global's, through a `*W`, nested, a for step, at top level; `**pp` too), a literal's `W { *p, 1 }` and `return *p;`
-from a fn returning `Str` store or return p (since 6.7.16; through 6.7.15 the header's data word). An untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
+from a fn returning `Str` store or return p (since 6.7.16; through 6.7.15 the header's data word). `*(&t)` of an inline `Str` is `t` in each of these positions (6.7.16, D71: see *A dereference of an address-of is the struct it names*). An
+untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
 are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
 (with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
 inline struct (the user's decision D15, 2026-10-18) — assign in each branch instead (`if (c) { t = a; } else { t = b;
