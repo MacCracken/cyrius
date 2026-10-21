@@ -258,7 +258,7 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.15 — Break 2, repair 5 (added at the 6.7.13 integration, 2026-10-16)** (0)
 
 
-**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (176)
+**6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (179)
 
 - [Windows trust store: ProtectedRoots flag 1 against a CurrentUser-added root has never been run end to end](2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
 - [asm_barrier_options.tcyr's header says a wrong barrier word faults (SIGILL), but a wrong option CRm runs as the full-system barrier](2026-10-18-asm-barrier-options-tcyr-header-claims-a-wrong-word-faults.md)
@@ -424,6 +424,9 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [A use of an enum whose body was refused (`enum E { A 5 }` then `E.A`) cascades "no struct type in scope for 'E'" wherever the panic latch does not hide it — in the declaration zone since 7a4f9ecdf](2026-10-20-malformed-enum-member-use-cascades-no-struct-type-in-scope.md)
 - [A struct element of a declared multi-value return (`fn mv(): (Pt, i64)`) hands back the struct's first word, untyped: `return (b, 5)` drops `b.y`, and passing the binding on as a `Pt` faults](2026-10-20-multi-value-struct-element-returns-its-first-word.md)
 - [A `*U` GLOBAL's name into a struct `S` declaration is not refused — `var t: P = GU;` binds a handle (in a fn, and over 8 B at top level) or holds the pointer word (8 B or less at top level), where a `*U` LOCAL is refused by name](2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md)
+- [PE: an fd above 2 that is not a multiple of 4 aliases the live handle below it (the NT kernel ignores a handle's two low bits) — `sys_close(h + 3)` closes file `h`, and a read / write / seek / ftruncate of a never-opened fd acts on another object](2026-10-20-pe-fd-not-multiple-of-four-aliases-the-handle-below-it.md)
+- [PE `file_rename` / `sys_rename`, `xsymlink` / `sys_symlink` and `xfsync` / `sys_fsync` answer -1 for every failure — Linux answers the errno (-2 for a missing path or parent, -9 for a non-descriptor); the same class as 6.7.16's D79, outside its five calls](2026-10-20-pe-rename-symlink-fsync-answer-minus-one-for-every-failure.md)
+- [PE `sys_unlink` / `xunlink`, `sys_truncate` and `file_open(dir, O_WRONLY)` of a DIRECTORY answer -13 (ERROR_ACCESS_DENIED through the Win32 table) — Linux answers -21 (EISDIR)](2026-10-20-pe-unlink-truncate-open-of-a-directory-answer-eacces-not-eisdir.md)
 - [A struct global of 8 B or less declared from a pointer global declared BELOW it compiles and faults at startup (`var A: P8 = *GP8;`, `= GP8;`, `= *GPP8;`) — over 8 B the same line is refused by name](2026-10-20-small-struct-global-from-pointer-global-declared-below-faults-at-startup.md)
 - [A trait member's bare `*fn` parameter (`cb: *fn`) is refused "expected '(', got ')'", where a fn's and an impl method's compile](2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md)
 - [A trait member's own third type parameter is accepted (`trait T { fn g<A, B, C>(..); }`)](2026-10-20-trait-member-third-type-parameter-accepted.md)
