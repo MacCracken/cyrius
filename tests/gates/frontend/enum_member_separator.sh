@@ -12,6 +12,34 @@
 # member keeps the loop's own "expected identifier" (S8). 6.7.15's D1 (a) for a struct literal is the twin
 # (tests/gates/frontend/struct_literal_type_refused.sh CM).
 #
+# G (6.7.16, met with issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): a member
+# token that is not a name is refused and registers NOTHING (`_enum_mem_name`). It was registered all the same, its
+# token value read as a name offset — a number's (6, 7) or a keyword's named whatever stood there in the name table —
+# so `enum F { X 6 }` + `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with conflicting value" and an
+# unclosed enum one "duplicate symbol 'enum'" per keyword it ran over. The refused member keeps its position.
+#
+# P (6.7.16, issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): ANY refusal in an
+# enum declaration — a member that is not a name ("expected identifier, got number 5" / "got ','"), a payload's
+# parameter, the enum's name, its `: stack`, its `{` — ends at the enum's own `}`: pass 1 (no statement resync) held
+# its panic latch to the end of the scan, so every later declaration's error was swallowed (`struct Q { a: Foo; }`,
+# the next enum's). Pass 1's declaration step (`_tl_decl1`) releases a latch the declaration set when it ended in
+# sync — the `}` just stepped, no other `}` and at most one `{` in it; D12's own release (`_enum_sep_end`) is folded
+# into it. An enum whose body ran past its `}` keeps the latch: G2 (unclosed, run over a struct), G3 (a payload's
+# `( .. )` left open, run into a fn body, whose release printed an invented "unmatched '}' at module scope").
+#
+# PS (6.7.16, met with the P fix): a struct's and a union's pass-1 refusals — a field that is not a name, a field's
+# type (`a: 5`, `*5`, `Vec<5>`), the declaration's name — held the same latch to the end of pass 1 (`struct P { 5; }`
+# swallowed `struct Q { a: Foo; }`'s error and the next enum's). `_tl_decl1` takes them too; an unclosed struct run
+# over the next declarations keeps the latch (PSC1).
+#
+# Q (6.7.16, met with the P fix): THE WALKS AFTER PASS 1. Pass 2 (an enum's constructor bodies, a struct's / union's
+# skip) and the enum-init walk re-read each declaration; a refusal's repeat there prints nothing but set the latch,
+# which held into the next thing parsed — a fn body's first statement (Q1, Q4) or the program's first statement (Q2,
+# Q3) lost its error; a refusal pass 2 makes itself (a stack enum's two-field variant) swallowed the same (Q8). Each is
+# released at the declaration's `}` (`_tl_decl2`, `_tl_enum_init1`). And pass 2's struct / union skip says nothing
+# pass 1 did not: a missing `{` was ERR's invented "unexpected identifier 'a'" beside pass 1's "expected '{'" (Q3, Q6),
+# and an unclosed body ran to the watchdog's invented "unexpected end of input (truncated or unbalanced source)" (Q5).
+#
 # Refusal rows compare the whole diagnostic list and check that no binary was written, on the x86_64, aarch64 and cx
 # compilers built from this tree (one front end). Acceptance rows run the x86_64 binary and compare the exit code.
 #
@@ -20,6 +48,19 @@
 #   `_enum_sep` without its error                   -> RED S1-S7 x86
 #   `_enum_sep_end` never releasing the latch       -> RED S5 S6 x86 (the second enum's error swallowed)
 #   `_enum_sep` erring on any non-separator token   -> RED S8 x86 (a missing separator said before "expected identifier")
+#   `_enum_mem_name` answering the refused token's value (453c5393b's registration) -> RED G1-G3 on every leg
+#   the lane's compiler before the P fix (c27ab795f) -> RED G1 P1-P9 on every leg (the later declarations' errors
+#                                                      swallowed)
+#   `_tl_decl1` never releasing                      -> RED S5 S6 G1 P1-P9 on every leg
+#   `_tl_decl_synced` answering 1 always             -> RED G2 G3 PSC1 on every leg (a run-on body's latch released)
+#   the lane's compiler before the PS fix (3adc7ae7b) -> RED PS1-PS6 on every leg (the next struct's error swallowed;
+#                                                      the enum's printed by pass 2 alone)
+#   the lane's compiler before the Q fix (6b80792df) -> RED Q1-Q8 on every leg (Q7: "unexpected '<'", the statement's
+#                                                      error swallowed)
+#   `_tl_decl2` without its release                 -> RED Q1-Q4 Q7 Q8 on every leg
+#   `_tl_enum_init1` without its release            -> RED Q2 on every leg
+#   `_tl_skip_body` reporting with ERR again        -> RED Q3 Q4 Q6 Q7 on every leg
+#   `_tl_skip_body` without its end-of-file stops   -> RED Q5a Q5c Q5d on every leg (Q5b: the `<..>` stop)
 # (A mutant's legs other than x86 are built by it from the real tree, so they stay green.)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -118,6 +159,178 @@ syscall(60, E.B);
 refuse S8 "control: a non-member token keeps 'expected identifier'" 'enum E { A 5 }
 syscall(60, E.A);
 ' "error:<source>:1:12: expected identifier, got number 5"
+
+# G — a refused member registers nothing: no invented "duplicate symbol" warning.
+refuse G1 "two enums, each with a number for a member" 'enum F { X 6 }
+enum G { Y 7 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 6
+error:<source>:2:12: expected identifier, got number 7"
+refuse G2 "an unclosed enum running over a struct and an enum" 'enum E { A 5
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5"
+refuse G3 "a payload's ( .. ) running into a fn body" 'enum E: stack { A(x, 5 }
+fn f(): i64 { if (1) { return 2; } return 1; }
+struct Q { a: Foo; }
+syscall(60, f());
+' "error:<source>:1:22: expected identifier, got number 5"
+
+# P — a refusal in an enum declaration ends at the enum's own `}`: the declarations after it report their own errors.
+F="unknown type 'Foo' for struct field 'a'"
+refuse P1 "the filed repro: enum E { A 5 }, struct Q { a: Foo; }, enum F { X 6 }" 'enum E { A 5 }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6"
+refuse P2 "an empty member: enum E { A, , B }" 'enum E { A, , B }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:13: expected identifier, got ','
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6"
+refuse P3 "a payload's parameter: Some(5), then an enum" 'enum O: stack { Some(5) }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:22: expected identifier, got number 5
+error:<source>:2:12: expected identifier, got number 6"
+refuse P4 "the enum's name: enum 5 { A }" 'enum 5 { A }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:6: expected identifier, got number 5
+error:<source>:2:15: $F"
+refuse P5 "its stack: enum E: 5 { A }" 'enum E: 5 { A }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:9: expected stack, got number 5
+error:<source>:2:15: $F"
+refuse P6 "its brace: enum E A }; a reserved word as a member; pub" 'enum E A }
+enum G { match, B }
+pub enum H { C 5 }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:8: expected '{', got identifier 'A'
+error:<source>:2:10: expected identifier, got reserved keyword 'match' (cannot be used as an identifier; rename the variable/field/fn)
+error:<source>:3:16: expected identifier, got number 5
+error:<source>:4:15: $F"
+refuse P7 "D12's separator, then a member, then a struct" 'enum E { A B }
+enum F { X 6 }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:12: $M
+error:<source>:2:12: expected identifier, got number 6
+error:<source>:3:15: $F"
+refuse P8 "--syntax-only: the filed repro" 'enum E { A 5 }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6" --syntax-only
+refuse P9 "a refused member keeps its position: B == 2 holds after the release" 'enum E { A, 5, B }
+#assert B == 2, "B keeps its position"
+struct Q { a: Foo; }
+syscall(60, B);
+' "error:<source>:1:13: expected identifier, got number 5
+error:<source>:3:15: $F"
+
+# PS — a struct's or a union's refusal ends at its own `}` too.
+refuse PS1 "a field that is not a name: struct P { 5; }, then a struct and an enum" 'struct P { 5; }
+struct Q { a: Foo; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 5"
+refuse PS2 "a field's type: a: 5, a: *5, a: Vec<5>" 'struct P { a: 5; }
+struct R { a: *5; }
+struct T { a: Vec<5>; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:15: expected identifier, got number 5
+error:<source>:2:16: expected identifier, got number 5
+error:<source>:3:19: expected identifier, got number 5
+error:<source>:4:15: $F"
+refuse PS3 "the struct's name: struct 5 { a; }" 'struct 5 { a; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:8: expected identifier, got number 5
+error:<source>:2:15: $F"
+refuse PS4 "a union's field: union U { 5; }" 'union U { 5; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:11: expected identifier, got number 5
+error:<source>:2:15: $F"
+refuse PS5 "a union's name and a union field's type, then an enum" 'union 5 { a; }
+union U { a: 5; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:7: expected identifier, got number 5
+error:<source>:2:14: expected identifier, got number 5
+error:<source>:3:12: expected identifier, got number 5"
+refuse PS6 "--syntax-only: PS1" 'struct P { 5; }
+struct Q { a: Foo; }
+enum E { A 5 }
+syscall(60, 0);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 5" --syntax-only
+refuse PSC1 "control: an unclosed struct run over two structs keeps the latch" 'struct P { a; 5
+struct Q { a: Foo; }
+struct R { b: Bar; }
+syscall(60, 0);
+' "error:<source>:1:15: expected identifier, got number 5"
+
+# Q — the walks after pass 1 end each declaration's refusal at its `}` too, and add nothing to pass 1's.
+refuse Q1 "a refused enum, then a fn body's first statement" 'enum E { A 5 }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:25: expected ';', got number 2"
+refuse Q2 "a refused enum, then the program's first statement" 'enum E { A 5 }
+syscall(60, 1 2);
+syscall(60, zz);
+' "error:<source>:1:12: expected identifier, got number 5
+error:<source>:2:15: expected ')', got number 2
+error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+refuse Q3 "a struct with no {: one error, then the program's first statement" 'struct P a; }
+syscall(60, 1 2);
+syscall(60, zz);
+' "error:<source>:1:10: expected '{', got identifier 'a'
+error:<source>:2:15: expected ')', got number 2
+error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+refuse Q4 "a struct with no {, then a fn body's first statement" 'struct P a; }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:10: expected '{', got identifier 'a'
+error:<source>:2:25: expected ';', got number 2"
+refuse Q5a "an unclosed struct at the end of file" 'struct P {
+' "error:<source>:1:11: expected '}', got end of file"
+refuse Q5b "an unclosed generic header at the end of file" 'struct P<T
+' "error:<source>:1:11: expected '{', got end of file"
+refuse Q5c "an unclosed union at the end of file" 'union U {
+' "error:<source>:1:10: expected '}', got end of file"
+refuse Q5d "an unclosed generic struct, a field's unknown type" 'struct P<T> { a; b: Foo
+' "error:<source>:1:21: unknown type 'Foo' for struct field 'b'
+error:<source>:1:24: expected '}', got end of file"
+refuse Q6 "a union with no {: one error, then a struct's" 'union U a; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:1:9: expected '{', got identifier 'a'
+error:<source>:2:15: $F"
+refuse Q7 "a generic union (its refusal, pass 2's), then the program's first statement" 'union U<T> { a; }
+syscall(60, 1 2);
+' "error:<source>:1:8: expected '{', got '<'
+error:<source>:2:15: expected ')', got number 2"
+refuse Q8 "pass 2's own refusal (a stack enum's two fields), then a fn body's" 'enum E: stack { A(x, y) }
+fn f(): i64 { var a = 1 2; return a; }
+syscall(60, f());
+' "error:<source>:1:25: stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)
+error:<source>:2:25: expected ';', got number 2"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }

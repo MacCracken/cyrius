@@ -1976,7 +1976,8 @@ fn _int_resb(S): i64 {
     return 0;
 }
 # PARSE_TERM's tail after operator token `typ`: `% << >> >>>` give an integer (`_int_resb`); `* /`, whose
-# f64 arms keep their type, and `*| *?` clear only the step and a struct (`_int_res`).
+# f64 arms keep their type, clear the step and a struct (`_int_res`); `*| *?` reach here as integers
+# (EMIT_OVF_CALL cleared the type: 6.7.16's D104). CHANGELOG [6.7.16]
 fn _int_rest(S, typ): i64 {
     if (typ == 34) { return _int_resb(S); }
     if (typ == 38) { return _int_resb(S); }
@@ -2300,7 +2301,7 @@ fn _bx_pcmpe_ret(S): i64 {
 # convention) hands element 0 back in the return register: it is the bool return.
 fn _bx_pcmpe_mret(S, k): i64 {
     var t = GTI(S);
-    PCMPE(S);
+    _mret_sval(S, t);   # PCMPE + 6.7.16's D90: a struct value over 8 B is no element
     if (_cur_fn_ix < 0) { return 0; }
     var fl = GFLG(S, _cur_fn_ix);
     var el = 0;
@@ -2309,6 +2310,86 @@ fn _bx_pcmpe_mret(S, k): i64 {
     if (_BX_IS(S) == 1) { return 0; }
     if (el == 0) { return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1); }
     return _bx_refuse(S, t, "cannot return a value that is not a bool as a bool element of ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
+}
+# ⛔ 6.7.16 (the user's D90, 2026-10-20) — A STRUCT VALUE OVER 8 B IS NO MULTI-VALUE ELEMENT. `return (b, 5);` with a
+# 16-byte `b` — a struct local, parameter or global, a struct-returning call, method or operator, a by-value field,
+# `*p` — handed back the struct's first word: `b.y` was gone, and the caller's binding passed on as the struct faulted.
+# Refused once at the element's first token, in every multi-value fn, declared or not (6.7.13 refuses `return p;` there
+# for the same loss): return its pointer, or its fields as elements. An 8-byte struct is one word and compiles; a `Str`
+# (its name is the header's address), a tuple and a dyn keep their own paths. Not in an #inline replay (the definition
+# reported), not under --syntax-only. The element at token `t` is parsed with the argument's struct-value records armed
+# (`_expr_struct_sid`), which stand a whole tuple / dyn field's own refusal down: said here instead. CHANGELOG [6.7.16]
+fn _mret_sval(S, t): i64 {
+    if (GIDEP(S) != 0) { PCMPE(S); return 0; }
+    if (_syntax_only == 1) { PCMPE(S); return 0; }
+    var asid = _expr_struct_sid(S, t);
+    if (asid == 0) { asid = _ess_deref(S, t); }
+    if (asid <= 0) { return 0; }
+    if (asid >= 2048) { return 0; }
+    if (_dx_plain(S, asid) == 0) { return _mret_fld_rchk(S, asid); }
+    if (STRUCTSZ(S, asid - 1) <= 8) { return 0; }
+    if (_mret_hdl(S, t) == 1) { return 0; }
+    return _mret_sval_err(S, t, asid);
+}
+# 1 = the element at token t, inside any parentheses, is a HANDLE — a pointer-mode struct local (`var a: H =
+# alloc(16);`) or global — whose word is the element: the struct is not lost, so D90 does not refuse it. It was
+# refused once D90 landed (small_struct_handle_line.sh C5's 16 B twin: exit 3 before, refused after; D90's "refuses
+# nothing that computes correctly today"). A by-value parameter and a capture are their own copies. CHANGELOG [6.7.16]
+fn _mret_hdl(S, t): i64 {
+    var k = _pwrap_in(S, t);
+    if (k < 0) { return 0; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    var nt = TOKTYP(S, k + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    var noff = TOKVAL(S, k);
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLAGG(S, li) == 1) { return 0; }
+        if (_local_is_sptr_param(S, li) == 1) { return 0; }
+        return 1;
+    }
+    if (_cl_cap_esl(S, noff) >= 0) { return 0; }
+    var gi = FINDVAR(S, noff);
+    if (gi < 0) { return 0; }
+    if (GVPM(S, gi) == 1) { return 1; }
+    return 0;
+}
+# ... a whole tuple / dyn field (`_fpk_ft`, the record `_expr_struct_sid` read) is refused at its load as a value, which
+# the armed record stood down (an argument takes it whole): its own line, at the field, as unarmed.
+fn _mret_fld_rchk(S, asid): i64 {
+    if (_fpk_ft != asid) { return 0; }
+    var sv = GTI(S);
+    STI(S, _fpk_end);
+    _tup_fld_rchk(S, asid, 0 - 2);
+    STI(S, sv);
+    return 0;
+}
+# ... the refusal at token `t`, struct `asid`, naming the fn as its multi-value refusals do (`_mret_fn`: a generic's
+# instance names its base; a method `P.mv`; a closure "a closure"). No latch: the element is parsed, the statement
+# reads on.
+fn _mret_sval_err(S, t, asid): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(t, "_mret_sval_err", asid, 0) == 1) { return 0; }
+    var fi = _mret_fn(S);
+    var sv = GTI(S);
+    STI(S, t);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
+    else {
+        PRSTR(": '");
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        PRSTR("'");
+    }
+    PRSTR(" returns struct '");
+    PRSTR(S + 0xEC00000 + _fsn_one(S, asid));   # an instance as spelled, `Box<i64>` (after the fn's: one scratch)
+    PRSTR("' (");
+    PRNUM(STRUCTSZ(S, asid - 1));
+    PRSTR(" bytes) as a multi-value element - return its pointer, or its fields as elements\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
 }
 # A bare `return;` returns 0 — refused in a bool fn (the user's decision, 2026-10-07).
 fn _bx_bare_ret(S): i64 {
@@ -2778,14 +2859,29 @@ fn _tup_lit_at(S, st): i64 {
     if (_tup_commas(S, lp) == 0) { return 0 - 1; }
     return lp;
 }
+# 6.7.16 — `Color.NOPE` (cursor at NOPE) that `_enum_qual_resolve` reported (-2: a member of no enum, the base an
+# enum): the member and a selector chain after it are consumed and 0 is the value, so the parse goes on in step — it
+# fell back to the field load, "undefined variable 'Color'". 1 = consumed.
+fn _enum_qual_said(S, vi): i64 {
+    if (vi != 0 - 2) { return 0; }
+    STI(S, GTI(S) + 1);
+    _mlist_step(S);   # 6.7.16: `Color.m<i64>(1)` as `Color.m(1)` — the list was read as comparisons ("undefined variable 'i64'")
+    _synonly_skip_chain(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
 # R9 — a literal anywhere a VALUE is parsed (PARSE_FACTOR, before its body): every accepting
 # position claims its literal before an expression is parsed, so a factor that opens one is an
 # operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
 # Refused by name; the group and a selector chain after it are consumed and 0 is the value, so
 # the parse goes on in step. 1 = refused (the factor is done).
+var _tls_n = 0;   # 6.7.16: the literals R9 refused so far (`_spi_expr` asks whether its element held one)
 fn _tup_lit_stray(S, ti0): i64 {
     if (TOKTYP(S, ti0) != 10) { return 0; }
     if (_tup_commas(S, ti0) == 0) { return 0; }
+    _tls_n = _tls_n + 1;
     if (_tup_ret_wrap(S, ti0) == 1) {   # 6.7.7 (B4 review): `return ((a, b));` names its own spelling
         _tup_err(S, ti0, "a multi-value return is written `return (a, b);` - drop the extra parentheses", 0 - 1, 0);
     } else {
@@ -3975,7 +4071,7 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_sub_undef_said(S, noff) == 0) {   # 6.7.14
                     _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
                     ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
                     _gv_note_blockscoped(S, noff);
@@ -5282,7 +5378,7 @@ var _ppd_end = 0 - 1;   # the token after its operand
 var _ppd_cp = 0 - 1;    # the code pointer after its load
 var _ppd_sid = 0;       # the struct its `*S` result points at
 fn _ppd_note(S, d, w): i64 {
-    _ppd_sid = _pp_sid(_ps_pin(w));
+    _ppd_sid = _pp_sid(S, _ps_pin(w));
     _ppd_beg = d;
     _ppd_end = GTI(S);
     _ppd_cp = GCP(S);
@@ -5570,9 +5666,15 @@ fn _amp_not_name(S): i64 {
     EMOVI(S, 0);
     return 0;
 }
+# The subscript's undefined-base stand-downs: a const fn's check named it (6.7.14), or a refused declaration declared
+# it — `_undef_var_report`'s (6.7.16: `c[0]` after a refused top-level `var c: S;`, an enum member `B[0]`). 1 = said.
+fn _sub_undef_said(S, noff): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 1; }
+    return _dl_name_refd(S, noff);
+}
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
-    if (_dl_refd_at(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr)
+    if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr); 6.7.16: a variable
     ERR_UNDEF(S, noff, tail);   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
     return 0;
@@ -5845,6 +5947,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     _cfo = 0;
                     return 0;
                 }
+                if (_enum_qual_said(S, vi) == 1) { return 0; }   # 6.7.16: a member of no enum, reported
             }
             # Not an enum — rewind and do struct field load
             STI(S, dot_ti);
@@ -9297,6 +9400,10 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, 2);
     _int_st(S);   # 6.7.11: `n +| s + 10` — the helper's result is an integer
+    # 6.7.16 (the user's D104, 2026-10-20): and no f64 — `+| +? -| -? *| *?` have no f64 form, so their result is an
+    # integer whatever their right operand, as `&`'s is (6.7.13's D12): `(2 +| x) * 3` with `x: f64` took the f64 arm
+    # for `* 3` ("f64 arithmetic with a non-f64 right operand"). CHANGELOG [6.7.16]
+    SESTYPE(S, 0);
     return 0;
 }
 

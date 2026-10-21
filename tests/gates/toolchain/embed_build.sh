@@ -133,23 +133,36 @@ head -c 2000000 /dev/urandom > "$P/data/big.bin"
 # min-of-N keeps full sensitivity. The bound is unchanged.
 # Mutation (6.7.14): `_lex_intern` always taking `_lex_intern_scan` (B0b reverted) -> RED.
 # issues/archived/2026-10-15-embed-build-axis6-single-sample-timing-flakes-under-load.md
+# 6.7.16: over the bound, the alternating best-of-3 is measured again, up to 3 rounds, each retry said by name (as
+# string_intern_scale_linear.sh since 2d67b3a3e): a full check.sh while other sessions loaded the box read 1776 vs
+# 727 ms (2.4x; 1.8x alone, the quiet ratio) — the serial slot does not keep out another process. B0b reverted is
+# over the bound in every round; a burst is not. Mutation (6.7.16, B0b reverted): RED after its 3 rounds.
 N6=3
-base_ms=0; emb_ms=0; base_all=""; emb_all=""; i6=0
-while [ $i6 -lt $N6 ]; do
-    printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
-    t0=$(date +%s%N); br; t1=$(date +%s%N)
-    ms=$(( (t1 - t0) / 1000000 )); base_all="$base_all $ms"
-    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"; break; }
-    { [ "$base_ms" = 0 ] || [ "$ms" -lt "$base_ms" ]; } && base_ms=$ms
-    mf big.cyr 'BIG = "data/big.bin"'
-    t0=$(date +%s%N); br; t1=$(date +%s%N)
-    ms=$(( (t1 - t0) / 1000000 )); emb_all="$emb_all $ms"
-    cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"; break; }
-    { [ "$emb_ms" = 0 ] || [ "$ms" -lt "$emb_ms" ]; } && emb_ms=$ms
-    i6=$((i6 + 1))
+x6() {   # one round: N6 alternating builds of each, the minimum of each in base_ms / emb_ms; 1 = a round-trip failed
+    base_ms=0; emb_ms=0; base_all=""; emb_all=""; i6=0
+    while [ $i6 -lt $N6 ]; do
+        printf '[build]\nentry = "base.cyr"\noutput = "build/main"\n' > "$P/cyrius.cyml"
+        t0=$(date +%s%N); br; t1=$(date +%s%N)
+        ms=$(( (t1 - t0) / 1000000 )); base_all="$base_all $ms"
+        cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the hand-written baseline does not round-trip (exit $brc) — the comparison would be meaningless"; return 1; }
+        { [ "$base_ms" = 0 ] || [ "$ms" -lt "$base_ms" ]; } && base_ms=$ms
+        mf big.cyr 'BIG = "data/big.bin"'
+        t0=$(date +%s%N); br; t1=$(date +%s%N)
+        ms=$(( (t1 - t0) / 1000000 )); emb_all="$emb_all $ms"
+        cmp -s "$P/data/big.bin" "$W/got" || { fail "axis 6: the 2,000,000-byte embed does not round-trip (exit $brc): $(grep -E 'error' "$W/b.out" | head -1)"; return 1; }
+        { [ "$emb_ms" = 0 ] || [ "$ms" -lt "$emb_ms" ]; } && emb_ms=$ms
+        i6=$((i6 + 1))
+    done
+    return 0
+}
+r6=1; x6rc=0; x6 || x6rc=1
+while [ "$x6rc" = 0 ] && [ "$emb_ms" -ge $((2 * base_ms + 200)) ] && [ "$r6" -lt 3 ]; do
+    r6=$((r6 + 1))
+    echo "  retry: axis 6: [embed] ${emb_ms} ms vs ${base_ms} ms over 2x, re-measuring (round $r6 of 3)"
+    x6 || x6rc=1
 done
-if [ "$FAIL" = "$x" ]; then
-    [ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms (the best of${emb_all}), the same bytes included last ${base_ms} ms (the best of${base_all}) — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
+if [ "$x6rc" = 0 ]; then
+    [ "$emb_ms" -lt $((2 * base_ms + 200)) ] || fail "axis 6: [embed] build took ${emb_ms} ms (the best of${emb_all}), the same bytes included last ${base_ms} ms (the best of${base_all}), in each of $r6 rounds — over 2x: the embed sits FIRST in the pool, so cycc's literal interning is paying for it (B0b)"
 fi
 [ "$FAIL" = "$x" ] && echo "  ok axis 6: 2,000,000 B + stdlib + 3,000 literals round-trips; ${emb_ms} ms vs ${base_ms} ms hand-written-last (the best of $N6 alternating: embed${emb_all}, last${base_all})"
 

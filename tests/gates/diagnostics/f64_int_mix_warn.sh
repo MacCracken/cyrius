@@ -93,6 +93,11 @@
 #   axis 18 (6.7.13) `var c = f() < 1.0;` with a `: f64` leading call is an integer binding (`_var_rhs_post`): the
 #           repro verbatim exits 1 (3 before: `-c` flipped the sign bit), `0 - c` draws no kind 2, `var x = f() *
 #           2.0;` keeps its f64. The fix reverted (a scratch tree): RED the repro (3), `sub` / `and` (kind 2: 1).
+#   axis 20 (6.7.16, the user's D104, 2026-10-20) the saturating / checked `+| +? -| -? *| *?` with an f64 right operand
+#           give an integer, as `&` does (D12): `(m +| x) * 3` took the f64 arm for `* 3` (kind 1, a float multiply)
+#           and `(m +| x) < 3` warned kind 0; now an integer multiply / comparison, no warning (EMIT_OVF_CALL clears the
+#           type). `m +| x * 3` keeps its operand's own kind 1 (`x * 3`). Mutation (2026-10-21, a scratch tree):
+#           EMIT_OVF_CALL without its `SESTYPE(S, 0)` -> RED every row but `opnd` (wrong exit, kind 1 / kind 0).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -676,5 +681,26 @@ for spec in 'cp@var a = callptr(&f); var y = a + 1.5; return f64_to(y);@4@0' \
     n=$(count "$K1"); [ "$n" = 0 ] || bad "axis 19 ($id): kind-1 warning count $n, want 0"
 done
 
+# --- axis 20 (6.7.16, the user's D104, 2026-10-20): `+| +? -| -? *| *?` give an INTEGER, as `&` does ---
+# issues/2026-10-20-saturating-checked-ops-keep-f64-right-operand-type.md: with an f64 RIGHT operand the result kept
+# the f64 type, so `(m +| x) * 3` took the f64 arm ("f64 arithmetic with a non-f64 right operand", a float multiply)
+# and `(m +| x) < 3` warned "comparison mixes f64 and integer operands". `x` holds f64 bits whose low byte is 3.
+# <id>@<statements>@<exit>@<kind-0>@<kind-1>@<kind-2> warnings, each one program built and run on x86_64.
+for spec in 'sadd@var c = (m +| x) * 3; return c & 255;@30@0@0@0' 'cadd@var c = (m +? x) * 3; return c & 255;@30@0@0@0' \
+            'ssub@var c = (k -| x) * 3; return c & 255;@18@0@0@0' 'csub@var c = (k -? x) * 3; return c & 255;@18@0@0@0' \
+            'smul@var c = (o *| x) * 3; return c & 255;@9@0@0@0' 'cmul@var c = (o *? x) * 3; return c & 255;@9@0@0@0' \
+            'cmp@var c = ((m +| x) < 3) + 5; return c;@5@0@0@0' 'plus@var c = (m -| x) + 1; return c & 255;@5@0@0@0' \
+            'opnd@var c = m +| x * 3; return 7;@7@0@1@0'; do
+    id=${spec%%@*}; rest=${spec#*@}; stmt=${rest%%@*}; rest=${rest#*@}; want=${rest%%@*}; rest=${rest#*@}
+    w0=${rest%%@*}; rest=${rest#*@}; w1=${rest%%@*}; w2=${rest#*@}
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/overflow.cyr"\nfn main(): i64 {\n    var m = 7;\n    var k = 9;\n    var o = 1;\n    var x: f64 = 0.0;\n    store64(&x, 0x3FF0000000000003);\n    %s\n}\nsyscall(60, main());\n' "$stmt" > "$W/a20_$id.cyr"
+    build "$W/a20_$id.cyr"; chmod +x "$W/o" 2>/dev/null || true
+    rc=0; if [ -s "$W/o" ]; then "$W/o" || rc=$?; else rc=none; fi
+    [ "$rc" = "$want" ] || bad "axis 20 ($id: '$stmt'): exit $rc, want $want"
+    n=$(count "$K0"); [ "$n" = "$w0" ] || bad "axis 20 ($id): kind-0 warning count $n, want $w0"
+    n=$(count "$K1"); [ "$n" = "$w1" ] || { bad "axis 20 ($id): kind-1 warning count $n, want $w1"; sed -n 1,3p "$W/e"; }
+    n=$(count "$K2"); [ "$n" = "$w2" ] || bad "axis 20 ($id): kind-2 warning count $n, want $w2"
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer, a comparison bound from a : f64 call too)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies, compound kind 2; kind 4 for an argument; one warning per mix; a comparison / bitwise result is an integer, a comparison bound from a : f64 call too, a saturating / checked result too)"

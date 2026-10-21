@@ -21,8 +21,9 @@
 #
 # ⭐ THE ORACLE IS THE COMPILER, in both directions. A fixture project covering every derive
 # kind × {plain, public, pub, private-file, enum, `: stack`, stacked in both orders, blank and
-# comment lines between, no separators, tabs, typed fields, comments and braces-in-char-
-# literals inside the body, an indented directive, a comment that only LOOKS like one} plus
+# comment lines between, no final separator (6.7.16's D69 requires the others), tabs, typed
+# fields, comments and braces-in-char-literals inside the body, an indented directive, a
+# comment that only LOOKS like one} plus
 # plain / pub / public / wrapped fns, is compiled with CYRIUS_DCE_VERBOSE=1 (nothing is
 # called, so every emitted fn is listed as dead). Then:
 #   1. every name the tool lists is one the compiler emitted;
@@ -124,8 +125,8 @@ struct dv_ad { g; h; }
 struct dv_gap
 {
     # a field-looking comment: nope; and a } brace
-    k: Vec<i64>   # no separator after it
-    m: i32; n
+    k: Vec<i64>;   # a separator, then a comment
+    m: i32; n;
     o;
 }
 
@@ -133,7 +134,7 @@ struct dv_gap
 struct dv_ns { u }
 
 #derive(accessors)
-struct dv_nosep { p q r }
+struct dv_nosep { p; q; r }
 
 #derive(Serialize)
 enum dv_ea { MA = 1; MB = 'x'; MC = -2, MD }

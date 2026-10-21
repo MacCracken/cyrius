@@ -154,7 +154,10 @@ operand (6.7.13; `& | ^ % << >> >>>` the user's decision D12, 2026-10-15): with 
 f64`, `(n < x) * 3` is 3 (the comparison still warns `comparison mixes f64 and integer operands`),
 and `(n & x) * 3` multiplies integers. Through 6.7.12 the result kept the f64 type of its right operand,
 so the next operator took the f64 arm (`(n < x) * 3` was 0, with a kind-1 warning naming the wrong mix).
-Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
+So do the saturating / checked `+| +? -| -? *| *?` (6.7.16, the user's decision D104, 2026-10-20): `(n +| x) * 3`
+multiplies integers and `(n +| x) < 3` compares them, with no warning. Through 6.7.15 their result kept an f64 right
+operand's type, so `* 3` took the f64 arm (*f64 arithmetic with a non-f64 right operand*). An operand's own mix still
+warns (`n +| x * 3`: the `x * 3`). Only `+ - * /` keep an f64 right operand's type (they have f64 forms).
 
 **Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
 `f32` variable are float operations — for a local, a **global**, a top-level statement and a
@@ -221,7 +224,11 @@ same-named one declared in a nested or a sibling block is another variable, and 
 through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). A top-level `var P:
 *Foo` global's uses too (6.7.16; through 6.7.15 they added an error naming a struct it never had, or read the program's
 first struct), and a `*T` global whose `T` is no struct — `var x: *i64 = &g;` — takes no `.field`, as a local does: *no
-struct type in scope for 'x'* (it compiled and read through the first struct). Before 6.6.16 most sites matched a prefix
+struct type in scope for 'x'* (it compiled and read through the first struct). Nor does a scalar global (6.7.16, the
+user's D68, 2026-10-20): `var g: i32 = 5;` then `g.d`, `g.d = 9;` or `g.m()` — any `i8`..`u64`, `f64` or `f32` global —
+is the local's one error, *no struct type in scope for 'g'; a '.field' access needs its struct declaration*. Through
+6.7.15 an `i8`..`u32` global's `.field` compiled and went through whichever struct was declared at the number of its
+byte width (`g.d` on an `i32` read the 4th struct's `d`), and an `f64` / `f32` global's crashed the compiler. Before 6.6.16 most sites matched a prefix
 (`var a: i8x = 300` was an `i8` and read 44, `var p: u8pair;` was a `u8`)
 and read any other name as a silent `i64`; `sizeof(f64)`, `sizeof(u8)` and `sizeof(bool)`
 did not compile. A parameter still takes `Str`, `cstring`, `Result`, `Option` and `Tagged`
@@ -234,7 +241,12 @@ multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dy
 a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
 refused by name (`type 'u8' cannot be a fn return type`; return an `i64`), with a note that lists
 this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn` and `T`).
-`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these. A fn-pointer type is a
+parameter type, not a return type: `fn h(): *fn(i64): i64`, `: **fn( .. )`, a bare `: *fn` and a multi-value
+element `(*fn(i64): i64, i64)` are *a fn-pointer type `*fn( .. )` cannot be a fn return type*, once, at the
+type's first `*`, with the note — under `cyrius lint` too — and the body is read on (6.7.16; through 6.7.15 it was
+*expected identifier, got reserved keyword 'fn' (.. rename the variable/field/fn)*, and a bare `*fn` read the
+body as more of the type: *fn 'main' is defined inside fn 'h'*, *expected '}'*).
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
@@ -254,9 +266,11 @@ Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i
 `Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13); through 6.7.13 the
 other positions and an element's own `<..>` did (the user's D4 (a) and D5 (a), 2026-10-16).
 
-**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
-plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
-`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
+**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8):
+any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
+`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`. A trait
+member takes the bare `*fn` / `**fn` too since 6.7.16 (the user's D91; through 6.7.15 `trait T { fn e(self, cb:
+*fn): i64; }` was *expected '(', got ')'*, though the impl's own method compiled).
 A bare `u128` (no `*`) is refused by name as a parameter since 6.7.14 (see [`u128`
 arithmetic](#operators)); `*u128` and a `*fn( .. )`'s own `u128` are read as before.
 `**T` is a pointer whose step is a pointer's 8, as a `**T` local's is, and `*p` of it is a `*T` (6.7.13, see
@@ -348,7 +362,10 @@ constant only, the qualified form since 6.6.10.) A plain `var` is not a constant
 refused as a size, as is a negative value. The qualifier must be the constant's OWN enum (since
 6.6.11, here and in every expression): `Foo.BUF` with no enum `Foo` is refused
 with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
-'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
+'Other'` — before 6.6.11 the qualifier was ignored. A name declared nowhere after an
+enum is the same `'NOPE' is not a variant of 'Color'`, in an expression, a const
+context, a case label, an assignment, `&` and a statement alike (6.7.16; it blamed
+the enum: "undefined variable 'Color'", "unknown name 'Color' in a const context"). When two enums share a
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
 
@@ -551,13 +568,22 @@ var r = add(20, 22);   # r = 42
   annotation with no initializer: the no-initializer rule is not said after it), a by-name `s: *Str`
   parameter of a refused `include "lib/str.cyr"`, and a use parsed BEFORE the late declaration (an
   earlier fn's `q: *Q`, a top-level const swept at the end of pass 1) — the names are known from pass 1.
-  A name declared nowhere is still reported. ⚠ A use inside the declaration zone itself (a zone global's
-  array size or enum value naming a late enum) is evaluated before the first statement is known, and is
-  still reported.
+  The same for a use parsed before a declaration refused in a fn body or a block (6.7.16): an earlier
+  fn's `q: *Q` or `E.B`, a bound `T: Tr`, `dyn Tr`, `impl Tr for P` — their names are known before any
+  use is read.
+  A name declared nowhere is still reported. A use inside the declaration zone itself (a zone global's
+  array size or enum value naming a late enum) is evaluated before the first statement is known; its
+  report is held until the late declarations are (6.7.16) and dropped for one of them. ⚠ So a zone array
+  size naming an enum declared LATER IN THE ZONE (valid, but declared after its use) still says "unknown
+  name 'E' in a const context", now after the other pass-1 reports above the first statement.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
   SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
+- **A fn has a body.** A signature ended by `;` (`fn h(): i64;`, a trait member's shape — at the top level or in an
+  `impl`) is one error, *expected '{', got ';'*, and what follows is read as the next declaration (6.7.16; through
+  6.7.15 the `;` was taken for the `{` and everything after it was read as the body: *fn 'main' is defined inside fn
+  'h'*, *expected '}', got end of file*, and a forward call to a fn after it lost that fn's signature).
 - **An unmatched `}` at module scope is refused** (6.7.9): `error: unmatched '}' at module scope`,
   with a hint that an extra `}` inside a fn closes it early and leaves the fn's own closing brace
   over. Before 6.7.9 the brace silently ended the unit: everything after it was dropped, the build
@@ -676,7 +702,16 @@ discarded - a statement is an assignment or a call* — with or without `--allow
 and `(s).a;` are (6.7.16, the user's D11, 2026-10-19). Before 6.7.16 such a statement compiled as
 a call to an undefined fn of that name: refused for *undefined function 'mulh64'*, and
 `--allow-undef` wrote a binary that died with SIGILL at the line. `fncall0`..`fncall8(..);` call a
-fn, so each stays a statement.
+fn, so each stays a statement. Neither result has fields: `mulh64(a, b).n = 5;` and `sizeof(T).n;`
+are one error at the `.`, *expected ';', got '.'*, as `var x = mulh64(a, b).n;` is. Before 6.7.16
+the statement also printed *undefined function 'mulh64'* twice and *refusing to emit binary*
+(`sizeof(T).n` first *undefined variable 'T'*), and under `--syntax-only` only those.
+Neither takes a type-argument list, nor does a builtin (`load64`, `store64`, `syscall`, `callptr`,
+`f64_sqrt`, ...): `mulh64<i64>(2, 3)`, `sizeof<i64>(H)`, `load64<i64>(p)` are refused once, at the
+name, with a fn's words — *'mulh64' is not a generic fn: it takes no type arguments* — and the
+call parses on, so its arguments' errors and the next statement's are reported; the statement
+`mulh64<i64>(2, 3);` is that one error. Before 6.7.16 each was *expected '(', got '<'* with the
+list read as comparisons (*undefined variable 'i64'*), the statement *undefined function 'mulh64'*.
 
 ### Default and named arguments (6.7.7)
 
@@ -884,6 +919,14 @@ loop {
     if (skip == 1) { continue; }
 }
 ```
+
+An error in a header — the condition of an `if` / `elif` / `while` / `for`, a `for .. in` range or collection, a
+`switch` or `match` subject — is that header's: the block is parsed as usual and each of its statements reports its
+own error (6.7.16; through 6.7.15 the block's SECOND statement was skipped with its error, so `if (qq[0] == 1) { y = 1;
+y = zz8; }` reported `qq` alone). A body is always braced: `if (c) y = 1;`, `else y = 2;`, `for (..) y = i;` or
+`do y = 1; while (c);` is refused once, *expected '{', got identifier 'y'*, and the code after it is parsed as
+written (6.7.16; through 6.7.15 the parser took the `y` for the `{`, the enclosing body's `}` closed the block, and an
+invented *expected '}', got end of file* followed — as it did after a header left mid-way, `if (y b) { .. }`).
 
 ### `loop` and `do … while` (6.7.5)
 
@@ -1266,7 +1309,8 @@ of 2026-10-13.) (Before 6.6.17,
 its last argument's step.)
 That warning fires at every `*T` site (6.7.13, the user's decision D18 (a), 2026-10-15): a declaration in a fn,
 after the first top-level statement and in the declaration zone, and an assignment to a `*T` local, parameter or
-global. Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
+global — a classic-for step's too (6.7.16: `for (..; ..; p = 7)` into a `*T` said nothing through 6.7.15; a compound
+step `p += 1` is never warned, as the statement is not). Through 6.7.12 a declaration-zone `*T` global (`var p: *i64 = x;` before the first statement) and an
 assignment to a `*T` local or `p: *T` parameter of a scalar `T` (`p = x;`, `p = 3;`) were silent. The literal `0`
 alone is a null pointer and never warns: `var p: *T = 0;`, `p = 0;`, `G = 0;` (through 6.7.12 the declaration in a
 fn and the assignment to a `*Struct` local or a `*T` global warned on it) — under parentheses that wrap it whole
@@ -1280,7 +1324,16 @@ literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`,
 is. A call declared `: Str` (a fn, or a method on a name) into a `*Str` is the header's address, the whole value
 up to the `;`, and never warns (6.7.16): `var p: *Str = str_from("ab");`, `GP = h.clone();` into a `*Str` global, a
 zone `var G: *Str = str_from("x");` — through 6.7.15 each warned, where `q = str_from("ab");` into a `*Str` local did
-not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word). A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
+not. So is every other value whose declared type is `Str`: a `: Str` field (`h.name`, nested `w.h.name`), a `Str`-typed
+name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each of them under
+parentheses that wrap the value whole (`(h.name)`, `((str_from("x")))`) — `var f: *Str = h.name;`, `GZ = h.name;` and the
+zone's `var G: *Str = GW.h.name;` warned through 6.7.15 (the local's `l = h.name;` did not), and a wrapped value warned
+into the local and into a handle too (6.7.16). A field of any other type (`h.n`) and a value its parentheses do not wrap
+whole (`(h.name) + 0`) are judged as any value is. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word) — into a `*T` local
+or a `p: *T` parameter as well (6.7.16: `p = str_from(..);` into a `*P` local, a `*i64` or a `p: *P` parameter, `h =
+mkq();` into a `*Str`, `h = mkh().n;` and `h = str_from(..) + 0;` were silent there through 6.7.15, while the declaration
+and the global warned); a struct call into a handle (`var a: P3 = ..`, no `*`) is a rebind at any type and never warns.
+A value refused by name — `p = &a[1];` (*&a[i] is not supported*), a struct result over 8 bytes (D14) — is
 not warned about as well.
 ⚠ Before 6.6.17 the step depended on where `p` was declared: a local `*i8` / `*i16` /
 `*i32` stepped 1 and every other local `*T` 8 (`*u8` too), a parameter or a captured
@@ -1314,7 +1367,11 @@ the struct's closing `}`, under the struct's own type arguments: `qq: **Box<Pt>`
 `struct HG<T> { qq: **Box<T>; }` and `struct LL<T> { next: **LL<T>; }` compile, and `*h.qq + 1` steps the
 instance's size. (Through 6.7.15 such a field minted the instance in the middle of the struct's own fields: one it
 named first lost its fields — *unknown field 'v' on struct 'Box$Pt'* — and a generic struct's own-T field was
-*unknown type 'T' as a type argument*.)
+*unknown type 'T' as a type argument*.) A field of two stars or more points at a struct declared below it as the
+one-star field does (6.7.16, the user's D103, 2026-10-20): `struct A { k; p: **B; } struct B { x; }`, `p: **Box<B>`,
+`***B`, and two structs pointing at each other through `**B` / `**A` compile, `*a.p + 1` steps `sizeof(B)` and
+`var q: *B = *a.p;` / `**a.p` read through it; a by-value `B` field below is still refused. (Through 6.7.15 the field
+was refused at its struct, *type 'B' is declared after its use* / *unknown type 'B' as a type argument*.)
 
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
@@ -1364,6 +1421,13 @@ var w = r.br.x - r.tl.x;   # 10
 var a = Point { 1, 2 };
 var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
+
+A struct's (and a union's) fields are separated by `;`; the last one may omit it (`struct Point { x; y }`).
+A missing `;` between two fields is one error at the second, a line break being no separator (6.7.16, the
+user's decision D69, 2026-10-20): `struct P { a b }`, `struct Q { x: i64 y: i64 }` and one field per line
+with no `;` are `expected ';' between struct fields` (`... union fields`), once per declaration. ⚠ Through
+6.7.15 each compiled, every field at the offset the separated form gives. A `,` is no field separator
+(*expected identifier, got ','*).
 
 Both forms initialise a global anywhere at top level and a local in a fn. Before 6.7.14 the **named**
 form was refused in the declaration section (top level, before the first top-level statement):
@@ -2748,6 +2812,12 @@ word (its bits). ⚠ Before 6.7.8 a signed element was zero-extended — `-3` in
 `s[0] < 0` was false; code that wants the unsigned value writes `s[i] & 0xFF` (`& 0xFFFF`,
 `& 0xFFFFFFFF`) or declares the slice `[u8]`.
 
+**A struct element.** `[Pt]` declares, and so does a generic struct instance — `[Box<i64>]`, `slice<Box<Pt>>`,
+`[*Box<i64>]` (6.7.16, the user's D89; they were a parse error, *expected ']', got '<'*): the element is the instance,
+its width the instance's size (a pointer element 8 bytes), its `<..>` read as any annotation's (`[Box<Nope>]` is
+*unknown type 'Nope' as a type argument*). `s[i]` on an 8-byte struct element reads its word, on a 16-byte one its
+address; a store into a struct element is refused (below).
+
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
 violation` and exits 134, in every build. The value is checked as a store into an element of `T`:
@@ -3098,6 +3168,12 @@ fn demo(): i64 {
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
   statements. One after it is one error by name (6.7.14; see *Functions*).
+- **An impl body holds only `fn` definitions** (and the directives and `pub` / `public` before one), as a
+  trait body holds only `fn` declarations. Anything else there — a `struct`, an `enum`, a `var`, a stray
+  token — is one error at it, *an impl body holds only `fn` definitions - in impl 'A'* (`... in impl 'Tr'
+  for 'A'`), and the body reads on: the methods after it are defined (6.7.16; through 6.7.15 it was
+  "expected '}', got struct" and the rest of the body was read as top-level code, two or three invented
+  errors, the methods after it lost).
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
@@ -3110,8 +3186,12 @@ fn demo(): i64 {
   and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). So is the rest of the
   set since 6.7.16 (the user's D9): `: u8`..`: u64`, `: f32` and an enum are *type 'u8' cannot be a fn return type*,
   and `: *fn(i64): i64` is *a fn-pointer type `*fn( .. )` cannot be a fn return type* (that one under `cyrius lint`
-  too, as a fn's `: *fn( .. )` grammar refusal is); through 6.7.15 each compiled. Declare `: i64` or a pointer
+  too, as a fn's `: *fn( .. )` is — the same line, a bare `: *fn` too); through 6.7.15 each compiled. Declare `: i64` or a pointer
   instead. `: *Vec<i64>`, `: *u128`, `: *Color` and a parameter `v: Vec<i64>` or `cb: *fn(i64): u128` are unchanged.
+  The impl's line is left out beside a member's refusal — the member's error is the one report — and beside a
+  method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16). Under `cyrius lint`,
+  which does not report a member's `: u8`..`: f32` or enum return, or a `Pt<i64>` / `i64<u8>` on either side, an impl
+  whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*
@@ -3244,7 +3324,9 @@ untyped parameter, or an omitted return, is `i64`; each type read as an annotati
 or `Box<Box<i64>>` and `Box<Box<i64> >`, are one type — 6.7.16; since 6.7.15 a return that differs is the impl's own
 error, formed or not — see *Traits*; since 6.7.16 a parameter or return type its own reader refuses — a member's
 `: u8`, `p: *Pt<i64>`, `b: *Box<i64, Pt>`, `n: Nope` — is that refusal alone, the rest of the signature still
-compared), generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
+compared, and so is a parameter count the impl's own check refuses, or one that differs only by the defaults an impl
+method may not declare; a count the impl's check never reached, after a method it stopped at, is the site's),
+generic-ness and `...`; the value class — a method returning a `: stack` pair (`return Ok(..);`)
 fills a slot only when the trait member declares that enum (`: Result`), so the call through the dyn returns
 what the trait declares; and the `self` a dyn can feed. For a struct `T` that is an untyped `self`, `self: *T`,
 or a `self: T` over 8 bytes (passed by
@@ -3524,6 +3606,15 @@ var hi, lo, bexp = dd_pow10(k);
 # In a generic it is one report, naming the generic (`'gr' returns 2 values ..`) however many
 # instances re-parse the body, and none beside an error the statement already has (`return 1, 2;`
 # is `expected ';'` alone) — 6.7.16; it was one line per instance, each naming `gr$P`.
+# Each ELEMENT of `return (a, b[, c]);` is one word, so a struct value over 8 bytes is refused there —
+# a struct local, parameter or global, a call, method or operator returning one, a by-value field,
+# `*p` — at the element, in every multi-value fn, declared or not (6.7.16, the user's D90; it handed
+# back the struct's first word, and the caller's binding passed on as the struct faulted):
+#   fn mv(): (Pt, i64) { var b: Pt; return (b, 5); }  # 'mv' returns struct 'Pt' (16 bytes) as a multi-
+#                                     # value element - return its pointer, or its fields as elements
+#   return (&b, 5);   return (b.x, b.y, 5);           # its pointer, or its fields
+# An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is. A handle
+# (`var q: Pt = alloc(16);`, a pointer-mode global) is its word — the pointer — and is returned as it always was.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the
@@ -3651,8 +3742,9 @@ too (6.7.16, the user's decision of 2026-10-19; until then it compiled and the c
 double's bits): `take(1.5)`, `take(-1.5)`, `take((2.0))`, `take(1.5 + 1)` — *cannot pass an f64 to
 tuple parameter …* — an f64 being the value the compiler types f64 ([Types](#types)): `take(1 + 1.5)`
 and `take(2 * 1.5)` too (integer arithmetic on 1.5's bits, whose result keeps the f64 type), and
-`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` *an integer*
-(`& | ^ % << >> >>>` give an integer). A name (a const too, an `f64` one
+`take(~1.5)`. A float comparison, `take(1.5 < 2.0)`, is *a bool*, and `take(1.5 & 1)` and `take(2 +| 1.5)`
+*an integer* (`& | ^ % << >> >>>` and the saturating / checked `+| +? -| -? *| *?` give an integer). A name (a const
+too, an `f64` one
 included), `&t` and a one-value call such as `take(one(3))` are words like any other and are passed
 as the address; it is the caller's to make it one.
 
@@ -4553,6 +4645,11 @@ Rules:
   closes the statement and lets an item follow on the same line. ⚠ Until 6.6.5 that
   rejection still flipped the file private and printed itself twice, so a *legitimate* fn
   in the same file was then reported "private to its file" at its caller.
+  In a fn body, a block or after the first top-level statement the per-item form is that
+  one error too (6.7.16; it added "unexpected private", and `private fn g` in a fn body
+  "fn 'g' is defined inside fn 'f'"): a `var` / `const` after it still declares, a `fn`
+  where a fn may be defined is defined, and a `fn` in a fn body or a declaration refused
+  there is stepped with the one error standing for it.
 - `public` marks one item. It is meaningful only inside a `private` file; in an
   ordinary file everything is public already, so it is a no-op you may write for
   documentation.
@@ -4832,7 +4929,13 @@ vector type (`sizeof(i16v8)` is 16) all size, and a miss names the type —
 `unknown type 'i8zz' in #assert sizeof` — with no second `#assert failed`. An
 `#assert` with no message and no `;` ends at the end of its line —
 before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
-`return 42;` dropped the return). A failing `#assert` no longer stops the
+`return 42;` dropped the return). A refused `#assert` ends there too: the
+statement on the next line is parsed and its own error reported (6.7.16;
+through 6.7.15, with no `;`, that statement was skipped, its error unreported).
+In a block, a `}` on the assert's line closes the block: `{ #assert 1 == 1, "m" }`
+is refused once, *#assert: expected `;` or a line break before `}`* (through
+6.7.15 the assert ate the `}` and the error was an invented *expected '}', got
+end of file*); write `{ #assert 1 == 1, "m"; }`. A failing `#assert` no longer stops the
 compile on the spot: every failing assert and any other error in the file is
 reported, and no binary is written.
 
@@ -6980,7 +7083,11 @@ untyped capture each is refused as on the untyped local — *no struct type in s
 assignment or method wording, *SIMD vector has no named fields* for a captured vector, nothing more after
 a refused annotation — and a bounded generic's captured receiver calls its bound's impl at a scalar `T`
 (`fn g<T: Show>(v: T) { var f = || v.show(); .. }` at `T = i64`, and `self` captured in a trait default
-instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not.
+instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not. A global of the
+same name does not reach past the capture (6.7.16, the user's D96, 2026-10-20): `var x = 5; |k| x.a + k`
+beside a struct global `var x = Q { 7, 8 };` is refused *no struct type in scope for 'x'*, as the same
+line is outside the closure — through 6.7.15 it read the GLOBAL's `x.a` (and a field store or `x.m()` the
+global), while `x` alone in the same closure was the capture.
 
 ## Constants and `const fn` (6.7.2)
 
@@ -7359,18 +7466,24 @@ no type arguments*) (6.7.15, the user's D6; through 6.7.14 the list was skipped 
 name inside it was never checked). Since 6.7.16 (the user's D7) these positions say so too: a
 pointer field `p: *Pt<i64>`, a by-value field `f: Pt<i64>` / `g: i64<u8>` (a struct's or a
 union's), a trait member's type, a multi-value element `(Pt<i64>, i64)`, a `*fn(Pt<i64>): i64`
-type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]`, a scalar return
+type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a generic struct's own list is read there:
+`[Box<i64>]` declares, 6.7.16's D89), a scalar return
 `: i64<u8>`, and `*i32<u8>` as a local, a global, a return or a field — once, at the name, with
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
-rest compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
+rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
+local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
+D93; it compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
 i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
 the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
 6.7.15 the extra argument was read and dropped). A fn or method that is not generic takes none: `nf<i64>(6)`,
 `p.m<i64>(1)` (on any receiver or chain, a bounded `T`'s member that is not generic included) is refused once, at the
 name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not a generic method: it takes no type
 arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
-'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*). Only a list of type names is read so: `p.n < a, b >
-(c)` stays two comparisons. A token that is no name at all
+'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*); an intrinsic or a builtin the same (`mulh64<i64>(2, 3)`,
+`load64<i64>(p)`: *'mulh64' is not a generic fn: ...*). Only a list of type names is read so: `p.n < a, b >
+(c)` stays two comparisons. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
+annotation was refused, an undefined name, an enum's name — `x.m<i64>(1)` is refused as `x.m(1)` is, the list stepped
+(6.7.16; a const said *has no fields*, and each went on to *undefined variable 'i64'*). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses
@@ -7459,6 +7572,19 @@ returning a struct (`&n` is that struct only when `T` is it), and a struct resul
 by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
 kept the struct's first word. The refusal's note names the line that needs a struct (for a forwarder, the forward and
 then that line): *note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter*.
+An untyped local holding a value of `T` takes `T`'s type in each instance (6.7.16, the user's D102 of 2026-10-20):
+`fn g<T>(x: T): i64 { var y = x; return y.b; }` returns `q.b` from `g(q)`, as `var y: T = x;` does, and at a scalar `T`
+its `y.b` makes the generic a stub as `x.b` does — so do `y.m()`, a field store, `y = mk();` (a struct result over 8
+bytes stored in it), a forward of `y` into a stub and a closure reading `y.b` — while a bounded `T`'s `y.show()` calls
+the bound's impl, a scalar's included. The value is the whole initializer: `x` itself, wrapped (`(x)`), another such
+untyped local, a struct carrier `b: Box<T>` by value (the local is then a carrier, as `var c: Box<T>` is), or a generic
+call whose `: U` / `: G<..U..>` return binds `U` to such a value (`id(x)`, `id<T>(x)`, `idp(&x)`, `mkbox(x)`) — through
+a chain of such locals of any length and calls nested to any depth, as the instance types them. A `*T`
+value (`var y = p;`), `*p`, `x.f` and `x + 1` leave the local untyped, as the instance does, and so does a name a
+closure's own parameter (`|x| { var y = x; .. }`), a `for x in` loop or a destructure's later name (`var q, x = f();`)
+rebinds, where it rebinds it: there `y.b` is refused at the definition. Through 6.7.15 each such
+use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
+words).
 
 ```
 struct Pt { x; y; }
@@ -7571,7 +7697,9 @@ an `#inline` fn the same). A generic takes at most two type parameters: a third 
 `struct Three<A, B, C>`, bounded or not) is refused at the declaration, once, by name — *a third
 type parameter 'C': a generic takes at most two type parameters* — and its uses say nothing more
 (6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
-`sizeof(C)` as 8 for a 24-byte struct). A
+`sizeof(C)` as 8 for a 24-byte struct). So is a trait member's own third, `trait T { fn g<A, B, C>(self, c: C):
+i64; }`, at the member — with or without a default body, whatever its impls declare (6.7.16, the user's D92; a
+bodiless member's compiled, and so did an impl declaring `<A, B>` for it). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;
@@ -7825,7 +7953,10 @@ string literal, a top-level destructure
 `var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
 startup, in declaration order. (`= 0` is deferred only
 because the static path reserves 0 for "no value"; since 6.7.14 it emits no startup code — see
-below.) An uninitialized top-level `var x;` is an error — write `var x = 0;`.
+below.) An uninitialized top-level `var x;` is an error — write `var x = 0;`. So is `var c: S;` of a struct or vector
+type at top level (only a fn's frame holds one uninitialized): after the first top-level statement it is refused once,
+*uninitialized struct locals only allowed inside a function*, and its uses add nothing (6.7.16; through 6.7.15 the
+statement after it was skipped and each use of `c` added *undefined variable 'c'*).
 
 **An initializer that names an enum constant is a constant too (6.6.16).** `var x = A;`,
 `var x = E.A;`, `var x = A + 1;`, `var x: u8 = A;` — any initializer that folds once enum

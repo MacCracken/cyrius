@@ -159,6 +159,186 @@ else
   echo "FAIL private_per_item_rejected axis7: a lib file present only in the staged CYRIUS_HOME did not resolve — the compiles are not reading the staged home"; fail=1
 fi
 
+# ── PI: BELOW MODULE SCOPE AND AFTER THE FIRST STATEMENT (6.7.16) ─────────────────────────────────────────────────
+# issues/2026-10-19-per-item-private-below-module-scope-is-two-errors.md. In the declaration zone `private var x = 1;`
+# was one error (`_TL_VIS` steps the marker); in a fn body, a block or after the first top-level statement PARSE_STMT
+# met the token the pre-pass had already reported: "unexpected private" too, and `private fn g` in a fn body "fn 'g'
+# is defined inside fn 'f'" as well — two or three errors for one mistake. Now `_dl_priv` (src/frontend/
+# parse_fn_def.cyr, from `_decl_inner`) steps the marker (`_priv_is_item`, the pre-pass's own test): a `var` /
+# `const` / statement after it parses and declares; a `fn` where a fn is defined (module scope, a top-level block) is
+# defined; a `fn` in a fn body, or a declaration the declaration-section rule refuses, is stepped as that refusal
+# steps it, its names and fns entered as reported. Pass 1's tail walk steps a `private` alone, so a `fn` after it is
+# prescanned and a late declaration's names are filled before any use is parsed. Every row on five legs: the
+# x86_64, PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1) compilers and the aarch64 / cx compilers built from
+# this tree — the exact error lines, rc != 0, no binary; the controls compile clean on each and run on x86_64.
+#   PI1-PI3  the filed repros verbatim: one error each (two, two and three before)
+#   PI4  the body parses on: `private var x` used (no "undefined variable 'x'"), `private const C`, `private x = 2;`,
+#        a switch arm, after the first statement — each one error + the next mistake (`zz`) reported
+#   PI5  a `fn` where a fn is defined is DEFINED: after the first statement (its body's `zz`, a call's arity), called
+#        before it (prescanned: no "undefined function"), in a top-level block
+#   PI6  a `fn` in a fn body is stepped: its body unread, a call of it adds nothing, the outer body parses on
+#   PI7  a declaration after the marker: `private struct` / `enum` / `pub var` in a fn body and a block, a late
+#        `private struct Q` used before (an earlier fn's `q: *Q`) and after (`Q { 5 }`, `q.y`) — one error + `zz`
+#   PI8  a generic fn at two instances: once
+#   PI9  a late include whose file holds `private struct Q`: the per-item error and the include line's (two sites)
+#   PC1-PC3 controls: the zone's `private var x = 1;` one error; the file-level `private` line (compiles, runs 7);
+#        the file-level line after the first statement keeps its "unexpected private"
+# MUTATION LEDGER (2026-10-21, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy, so every leg's compiler carries the mutant):
+#   the lane before it (448601b3d)                    -> RED PI1-PI9, 45 row-legs (PI9: "unexpected private" too)
+#   `_decl_inner` without its `_dl_priv` line         -> RED PI1-PI9, 45
+#   `_dl_priv` leaving a fn-body `fn` to PARSE_PROG   -> RED PI3 PI6 PI8, 15 ("fn 'g' is defined inside fn 'f'")
+#   `_dl_priv` stepping a module-scope `fn` too       -> RED PI5, 5 (g's body unread, its call's arity unchecked)
+#   pass 1's tail walk without its `private` step     -> RED PI7, 5 ("type 'Q' is declared after its use")
+#   `_dl_incl_at` reporting for `rep` 1 only          -> RED PI9, 5 (the include line not reported)
+LEGS="x86 pe macho"
+if "$T/cc" < "$R/src/main_aarch64.cyr" > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"; LEGS="$LEGS a64"
+else echo "FAIL private_per_item_rejected: src/main_aarch64.cyr did not build"; fail=1; fi
+if "$T/cc" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ]; then chmod +x "$T/cc_cx"; LEGS="$LEGS cx"
+else echo "FAIL private_per_item_rejected: src/main_cx.cyr did not build"; fail=1; fi
+PIN=0
+pcomp() {   # <leg> <src> <out>: rc in PRC
+  PRC=0
+  case "$1" in
+    x86)   timeout 60 "$T/cc" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
+    pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$T/cc" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
+    macho) CYRIUS_MACHO=1 timeout 60 "$T/cc" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
+    a64)   timeout 60 "$T/cc_a64" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
+    cx)    timeout 60 "$T/cc_cx" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
+  esac
+}
+# pirow <id> <what> <source> <want-lines>: refused on every leg (rc != 0, no binary), its error / warning lines exactly
+pirow() {
+  printf '%s' "$3" > "$T/$1.cyr"
+  printf '%s\n' "$4" > "$T/$1.want"
+  for leg in $LEGS; do
+    o="$T/$1_$leg"
+    pcomp "$leg" "$T/$1.cyr" "$o"
+    PIN=$((PIN + 1))
+    grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+    if [ "$PRC" -eq 0 ]; then echo "FAIL private_per_item_rejected $1 $leg: $2: rc 0 - want the refusal"; fail=1
+    elif ! cmp -s "$o.got" "$T/$1.want"; then echo "FAIL private_per_item_rejected $1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"; fail=1
+    elif [ -s "$o" ]; then echo "FAIL private_per_item_rejected $1 $leg: $2: refused, but a binary was written"; fail=1
+    else echo "  ok $1 $leg: $2"; fi
+  done
+}
+# piok <id> <what> <source> <exit>: compiles clean on every leg (no error / warning line, a binary), runs <exit> on x86_64
+piok() {
+  printf '%s' "$3" > "$T/$1.cyr"
+  for leg in $LEGS; do
+    o="$T/$1_$leg"
+    pcomp "$leg" "$T/$1.cyr" "$o"
+    PIN=$((PIN + 1))
+    if [ "$PRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
+      echo "FAIL private_per_item_rejected $1 $leg: $2: rc $PRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; fail=1
+    elif [ "$leg" = x86 ]; then
+      chmod +x "$o"; x=0; timeout 30 "$o" > /dev/null 2>&1 || x=$?
+      if [ "$x" = "$4" ]; then echo "  ok $1 $leg: $2 (exit $4)"; else echo "FAIL private_per_item_rejected $1 $leg: $2: exit $x, want $4"; fail=1; fi
+    else echo "  ok $1 $leg: $2"; fi
+  done
+}
+PI='per-item `private` is not supported; put `private` alone on a line to make the file private'
+ZZ="undefined variable 'zz' (missing include or enum?)"
+
+pirow PI1 "filed: private var in a fn body" "$(printf 'fn f(): i64 { private var x = 1; return x; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: $PI"
+pirow PI2 "filed: private var after the first statement" "$(printf 'var a = 1;\na = 2;\nprivate var x = 1;\nsyscall(60, x);\n')
+" "error:<source>:3:1: $PI"
+pirow PI3 "filed: private fn in a fn body" "$(printf 'fn f(): i64 { private fn g(): i64 { return 1; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: $PI"
+pirow PI4 "the body parses on: var / const / a statement / a switch arm / top level" 'fn f(): i64 {
+    private var x = 1;
+    private const C = 5;
+    var y = 1;
+    private y = 2;
+    switch (y) { case 2: private var w = 3; return x + C + w + zz; }
+    return x + y + C + zz;
+}
+var a = 1;
+a = 2;
+private var x = 1;
+syscall(60, f() + x + zz);
+' "error:<source>:2:5: $PI
+error:<source>:3:5: $PI
+error:<source>:5:5: $PI
+error:<source>:6:26: $PI
+error:<source>:11:1: $PI
+error:<source>:6:66: $ZZ
+error:<source>:7:26: $ZZ
+error:<source>:12:25: $ZZ"
+pirow PI5 "a fn where a fn is defined: defined (after code, called before it, in a block)" 'var a = 1;
+a = 2;
+a = g(1) + h();
+private fn g(n): i64 { return n + zz; }
+private fn h(): i64 { return 3; }
+if (a == 1) { private fn k(): i64 { return qq; } a = k(); }
+syscall(60, h(7) + a);
+' "error:<source>:4:1: $PI
+error:<source>:5:1: $PI
+error:<source>:6:15: $PI
+error:<source>:4:37: $ZZ
+error:<source>:6:46: undefined variable 'qq' (missing include or enum?)
+error:<source>:7: 'h' expects 0 arguments, got 1"
+pirow PI6 "a fn in a fn body: stepped, its call quiet, the body parses on" 'fn f(): i64 {
+    private fn g(): i64 { return qq; }
+    private fn h(n);
+    return g() + h(1) + zz;
+}
+syscall(60, f());
+' "error:<source>:2:5: $PI
+error:<source>:3:5: $PI
+error:<source>:4:27: $ZZ"
+pirow PI7 "a declaration after the marker: stepped, its names used quietly" 'fn h(q: *Q): i64 { return q.y; }
+fn f(): i64 {
+    private struct S { y; }
+    private enum E { A, B }
+    private pub var x = 1;
+    var s = S { 4 };
+    return s.y + E.B + x + zz;
+}
+var a = 1;
+a = 2;
+if (a == 2) { private struct T { t; } var t = T { 1 }; a = t.t + zz; }
+private struct Q { y; }
+var q = Q { 5 };
+syscall(60, h(&q) + q.y + f() + zz);
+' "error:<source>:3:5: $PI
+error:<source>:4:5: $PI
+error:<source>:5:5: $PI
+error:<source>:11:15: $PI
+error:<source>:12:1: $PI
+error:<source>:7:30: $ZZ
+error:<source>:11:68: $ZZ
+error:<source>:14:35: $ZZ"
+pirow PI8 "a generic fn at two instances: once" 'fn f<T>(v: T): i64 {
+    private var x = 1;
+    private fn g(): i64 { return 1; }
+    return x + zz;
+}
+syscall(60, f<i64>(1) + f<i32>(2));
+' "error:<source>:2:5: $PI
+error:<source>:3:5: $PI
+error:<source>:4:18: $ZZ"
+mkdir -p "$T/pi9"
+printf 'fn pa(): i64 { return 1; }\nprivate struct PQ { y; }\nfn pf(): i64 { return 2; }\n' > "$T/pi9/pq.cyr"
+CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1; export CYRIUS_ALLOW_ABSOLUTE_INCLUDES   # the included file lives in the scratch dir
+pirow PI9 "a late include holding a per-item private struct: both sites" "var a = 1;
+a = 2;
+include \"$T/pi9/pq.cyr\"
+syscall(60, pa() + pf());
+" "error:$T/pi9/pq.cyr:2:1: $PI
+error:<source>:3:1: an include of a file that declares a \`struct\` ($T/pi9/pq.cyr:2) must come before the first top-level statement (line 2)"
+unset CYRIUS_ALLOW_ABSOLUTE_INCLUDES
+pirow PC1 "control: the zone's private var (one error, as before)" "$(printf 'private var x = 1;\nsyscall(60, x + zz);\n')
+" "error:<source>:1:1: $PI
+error:<source>:2:19: $ZZ"
+piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper(): i64 { return 7; }\nsyscall(60, helper());\n')
+" 7
+pirow PC3 "control: the file-level line after the first statement" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a);\n')
+" "error:<source>:3:1: unexpected private"
+# The corpus floor (6.7.16): 12 rows on five legs. A row or a leg lost reads RED, never green.
+[ "$PIN" -ge 60 ] || { echo "FAIL private_per_item_rejected: the PI rows ran $PIN row-legs (floor 60) - rows or legs were lost"; fail=1; }
+
 [ $fail -eq 0 ] || exit 1
-echo "PASS private_per_item_rejected: per-item form errors ONCE, does not privatise the file, and the own-line / 'private;' / at-EOF forms still work (lib resolved from a CYRIUS_HOME staged from the tree)"
+echo "PASS private_per_item_rejected: per-item form errors ONCE, does not privatise the file, and the own-line / 'private;' / at-EOF forms still work (lib resolved from a CYRIUS_HOME staged from the tree); below module scope and after the first statement it is the one error, $PIN row-legs on $LEGS"
 exit 0

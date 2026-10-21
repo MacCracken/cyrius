@@ -33,7 +33,9 @@
 # filed repro; U20-U23 controls: a callee defined below, a generic's instance, a library fn, an enum constructor);
 # S10-S22 (6.7.16) --syntax-only, a callee defined HERE declared `: *Foo` with Foo a sibling's struct parses its field
 # assignment silently too (S10 the filed repro; S17 a grammar error in the value still reported; S18-S22 controls: `: Foo`
-# by value, `**Foo` and `*i64` keep "the result is a temporary", a Foo declared here takes D8 (a)'s store).
+# by value, `**Foo` and `*i64` keep "the result is a temporary", a Foo declared here takes D8 (a)'s store); U24 (6.7.16)
+# control: the for step `mulh64(2, 3).n = 5` keeps its own one error, no undefined fn; U14 (6.7.16) is ONE error line,
+# no warning — the statement printed "undefined function 'mulh64'" on `warning:` lines.
 #
 # MUTATION LEDGER (2026-10-15; each mutant a scratch copy of the tree (src, lib, programs, this gate and its tcyr)
 # with the one change, its cycc built from the mutated src, this gate run from the copy with CYCC= that cycc):
@@ -84,7 +86,9 @@
 #                                                     U12 x3 (refused as before, but not naming the fn)
 #   u2 `_call_undef` without its `_tsc_n` move    -> RED 32: the statement / step rows (U1 U2 U4 U6 U8-U11 x4: "the
 #                                                     result is a temporary" or "expected ';'" after the named error)
-#   u3 `_call_undef` without its intrinsic guard  -> RED 4: U14 x4 ("undefined function 'mulh64'")
+#   u3 `_call_undef` without its intrinsic guard  -> RED 4: U14 x4 ("undefined function 'mulh64'"). Re-measured 6.7.16
+#                                                     (f16, 2026-10-20): RED 4, U24 x4 — the statement form takes
+#                                                     `_stmt_intrinsic_dot` since then, and U14 stays green under u3
 # (6.7.15, unit S6; issues/archived/2026-10-17-syntax-only-sibling-ptr-call-field-store-false-temporary.md; the same procedure)
 #   s1 neither `_cf_unres` arm (= the tree before) -> RED 21: S1-S7 x3 (the false "the result is a temporary"; S5-S7
 #                                                     its error in place of the tail's own)
@@ -571,18 +575,21 @@ for leg in $(legs); do
         ok "U13 control: \`undefd();\` keeps the warning and the end-of-compile refusal ($leg)"
     else bad "U13 control ($leg): rc $crc, $(grep '^error' "$T/U13.$leg.err" | head -1 || true)"; fi
 done
-# U14 / U15 (controls): an intrinsic lowered by name is no undefined fn — `mulh64(2, 3).n = 5;` (a statement, which
-# reaches the call statement's field arm) and `var x = mulh64(2, 3).n;` keep "expected ';', got '.'"
+# U14 / U15 (controls): an intrinsic lowered by name is no undefined fn — `mulh64(2, 3).n = 5;` (a statement) and
+# `var x = mulh64(2, 3).n;` are each ONE error, "expected ';', got '.'", no warning, no binary. ⛔ 6.7.16: U14 read only
+# `^error` lines for "undefined function 'mulh64'", so it passed while the statement still printed "warning: undefined
+# function 'mulh64'" twice and "error: refusing to emit binary" (a check that shared the defect read green); it is now
+# `refused`'s exact count (issues/2026-10-19-intrinsic-call-with-field-statement-still-undefined-function.md:
+# `_stmt_intrinsic_dot`, src/frontend/parse.cyr — the statement no longer reaches the call statement's field arm).
 row U14 'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }'
-rows=$((rows + 1))
-for leg in $(legs); do
-    compile "$leg" U14
-    if [ "$crc" -ne 0 ] && grep '^error' "$T/U14.$leg.err" | head -1 | grep -qF "expected ';', got '.'" \
-       && ! grep -q "^error.*undefined function 'mulh64'" "$T/U14.$leg.err"; then ok "U14 control: \`mulh64(2, 3).n = 5;\` is no undefined fn ($leg)"
-    else bad "U14 control ($leg): rc $crc, $(grep '^error' "$T/U14.$leg.err" | head -1 || true)"; fi
-done
+refused U14 "expected ';', got '.'" "control: \`mulh64(2, 3).n = 5;\`, an intrinsic, is no undefined fn"
 row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'
 refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an intrinsic, is no undefined fn"
+# U24 (control, 6.7.16): the classic-for step `mulh64(2, 3).n = 5` is no undefined fn either — the step's own "expected
+# '=', got '('", as for `f()` as a step, once. U14 no longer reaches the call field arm, so this is the row
+# `_call_undef`'s intrinsic guard answers to (ledger u3).
+row U24 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mulh64(2, 3).n = 5) { i = i + 1; } return 0; }'
+refused U24 "expected '=', got '('" "control: the for step \`mulh64(2, 3).n = 5\`, an intrinsic, is no undefined fn"
 
 # --- U16-U23 (6.7.16, issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md): the
 # same `.field` after an EARLIER PLAIN CALL to the undefined fn — the call registered the name, so the field resolved to
@@ -815,8 +822,8 @@ syndef S21 0 + "control: Foo declared here, D8 (a)'s store"
 printf '%s\n%s\n' 'fn gi(): *i64 { return 0; }' 'fn go(): i64 { gi().n = 5; return 0; }' > "$T/S22.cyr"
 syndef S22 1 "$MT" "control: \`: *i64\`, a T that resolves to no struct, keeps the refusal"
 
-FLOOR_ROWS=96   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs)
+FLOOR_ROWS=97   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs), U24 (f16)
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

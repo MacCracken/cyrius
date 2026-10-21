@@ -57,7 +57,8 @@
 #      all-`i64` list as its base struct (`Box<i64>` IS `Box`, 6.6.10's rule). The first cut compared tokens and
 #      refused programs that compiled and ran (exit 4 on the slot-open compiler b2e1f4c4): TRS1 `Box<Box<i64>>` against
 #      `Box<Box<i64> >` (the review's shape), TRS2 `Box<i64>` against `Box`, TRS3 `*Box<i64>` against `*Box`,
-#      TRS4 a `>>>` close, a nested `Box<Box<i64>>` against `Box<Box>` and an all-i64 list inside a multi-value — each 4;
+#      TRS4 a `>>>` close, a nested `Box<Box<i64>>` against `Box<Box>` and an all-i64 list inside a multi-value — each 4
+#      (its `d` returns `(b.n, 2)`: 6.7.16's D90 refuses the 16-byte `b` itself as an element);
 #      TRS5 / TRS6 a different argument stays refused (`Box<i32>`, `Box<Box<i32> >`), TRS7 a struct that is not the
 #      member's. Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (0ca74300) -> RED 4: TRS1-TRS4 (refused); MTRS1 `_tr_ret_differs` back on `_dyn_ty_eq` (normalisation off) -> the
@@ -104,6 +105,23 @@
 #      `--syntax-only`, where D5 is silent, dd7 keeps the impl's line (lint's one report of it). Mutant (2026-10-20):
 #      the lane's head aff3849ff -> RED 2: TRR3 TRR4 (two lines); `_ta_over`'s arm without its `_syntax_only` guard ->
 #      RED 1: TRR6 (no line)
+#      TRR9 (6.7.16, f16 FG1) `--syntax-only` keeps the impl's "returns .., trait declares .." line where the reader's own
+#      refusal is silent under lint, as TRR6 does for D5: a member's `: u8` / `: f32` / enum (D9) and either side's
+#      `Pt<i64>` / `i64<u8>` (D7 / 6.7.15's D6) were counted as refused, and lint passed the program (rc 0, no line;
+#      6.7.15 printed the line). TRR9-TRR9d the review's dd2 / dd1 / dd3 / dd4, each 6.7.15's text; TRR9e control: an
+#      impl's `: u8` against a member's `: i64` stays silent under lint (6.7.15's verdict: a method's `: u8` arm is
+#      6.7.15's); TRR9f / TRR9g the method's side (`: *Pt<i64>`, `: i64<u8>`); TRR9h two members, one line each, and
+#      TRR9i the full compile of it — the members' refusals alone (unchanged). Filed:
+#      docs/development/issues/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md
+#      Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (3482cd42e) -> RED 7:
+#      TRR9 TRR9b-TRR9d TRR9f-TRR9h (rc 0, no line); `_tr_rt_nr` counting a member's names under lint -> RED 4: TRR9
+#      TRR9b TRR9d TRR9h; `_ty_rd_name`'s `_ngt_tail` arm unguarded -> RED 4: TRR9c TRR9f TRR9g TRR9h; `_tr_rt_nr`
+#      dropping the method's names under lint too -> RED 1: TRR9e
+#   FP (6.7.16, f16 FG2) a fn's `: *fn( .. )` / `: **fn( .. )` / bare `: *fn` return, and a multi-value element, is the
+#      member's one line ("a fn-pointer type `*fn( .. )` cannot be a fn return type") at its first `*`, the body read on
+#      — it was "expected identifier, got reserved keyword 'fn' (.. rename ..)" and, bare, a cascade; see the block
+#   BF (6.7.16, f16 FG2, the user's D91) a member's bare `cb: *fn` / `cb: **fn` parameter is a type, as a fn's: it was
+#      "expected '(', got ')'"; see the block
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -129,7 +147,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 build() { rc=0; "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?; }
 refused() {   # <name> <message fragment> <what>
     build "$1"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1)"
@@ -218,7 +236,7 @@ at() {   # <name> <line:col> <message fragment>: an error line at that position 
 }
 refused_at() {   # <name> <message fragment> <line:col> <what>: refused ONCE, at that position
     build "$1"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$4: BUILT (rc 0)"
     elif ! at "$1" "$3" "$2"; then bad "$4: refused, but not as expected at $3: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$4: $n error lines (want 1): $(grep '^error' "$T/$1.err" | tr '\n' '|')"
@@ -229,7 +247,7 @@ if [ ! -f "$REPRO" ]; then bad "TS1/TS2: the filed repro is missing ($REPRO)"
 else
     cp "$REPRO" "$T/ts1.cyr"
     build ts1
-    n=$(grep -c '^error' "$T/ts1.err")
+    n=$(grep -c '^error' "$T/ts1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "TS1/TS2: the filed repro BUILT (rc 0)"
     else
         if at ts1 9:19 "expected ')', got '+'"; then ok "TS1: the repro's required member reports at \`+\` (9:19)"
@@ -325,11 +343,13 @@ printf "$R"'trait T { fn c(self): Nope; }\nimpl T for P { fn c(self): i64 { retu
 refused_at tr8 "unknown type 'Nope' as a fn return type" 3:23 "TR8: a member's return its reader refuses — that refusal alone"
 printf "$R"'trait T { fn c(self): i64; }\nimpl T for P { fn c(self): u8 { return 4; } }\nsyscall(60, 0);\n' > "$T/tr8b.cyr"
 refused_at tr8b "type 'u8' cannot be a fn return type" 4:28 "TR8b: an impl's return a fn's reader refuses (: u8) — that refusal alone"
-# 6.7.16: a method's `*fn( .. )` return is PARSE_FN_DEF's grammar refusal; the impl's "'P.d' returns *fn(i64): i64,
-# trait 'T' declares i64" line beside it (4:28) was a second report of it. Mutant (2026-10-20): the lane's previous
-# compiler (00d27769b, `_tr_rt_bad` reading a `*fn( .. )` on the member side only) -> RED 1: TR8c (two lines).
+# 6.7.16: a method's `*fn( .. )` return is PARSE_FN_DEF's refusal; the impl's "'P.d' returns *fn(i64): i64, trait 'T'
+# declares i64" line beside it (4:28) was a second report of it. Mutant (2026-10-20): the lane's previous compiler
+# (00d27769b, `_tr_rt_bad` reading a `*fn( .. )` on the member side only) -> RED 1: TR8c (two lines). Since f16 FG2 the
+# method's refusal is the member's fn-pointer line at the `*` (it was "expected identifier, got reserved keyword 'fn'"
+# at 4:29; see FP).
 printf "$R"'trait T { fn d(self): i64; }\nimpl T for P { fn d(self): *fn(i64): i64 { return 0; } }\nsyscall(60, 0);\n' > "$T/tr8c.cyr"
-refused_at tr8c "expected identifier, got reserved keyword 'fn'" 4:29 "TR8c: an impl's *fn( .. ) return — the fn's grammar refusal alone"
+refused_at tr8c 'a fn-pointer type `*fn( .. )` cannot be a fn return type' 4:28 "TR8c: an impl's *fn( .. ) return — the fn's own refusal alone"
 # ── TRS (6.7.15, the D4 review fix) — one type spelled two ways is one type ──
 BX='struct Box<T> { n: i64; v: T; }\nstruct Pt { x: i64; y: i64; }\n'
 printf "$BX"'trait T { fn c(self): Box<Box<i64>>; }\nimpl T for Pt { fn c(self): Box<Box<i64> > { var b: Box<Box<i64> >; b.n = 4; return b; } }\nfn main(): i64 { var p: Pt; var r: Box<Box<i64> > = p.c(); return r.n; }\n' > "$T/trs1.cyr"
@@ -338,7 +358,7 @@ printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box 
 exits trs2 4 "TRS2: Box<i64> against Box (the base struct)"
 printf 'include "lib/alloc.cyr"\n'"$BX"'trait T { fn c(self): *Box<i64>; }\nimpl T for Pt { fn c(self): *Box { var q: *Box = alloc(16); q.n = 4; return q; } }\nfn main(): i64 { var p: Pt; var r: *Box = p.c(); return r.n; }\n' > "$T/trs3.cyr"
 exits trs3 4 "TRS3: *Box<i64> against *Box"
-printf "$BX"'trait T { fn c(self): Box<Box<Box<i64>>>; fn d(self): (Box<i64>, i64); fn e(self): Box<Box<i64>>; }\nimpl T for Pt {\n  fn c(self): Box<Box<Box> > { var b: Box<Box<Box<i64> > >; b.n = 1; return b; }\n  fn d(self): (Box, i64) { var b: Box; b.n = 1; return (b, 2); }\n  fn e(self): Box<Box> { var b: Box<Box>; b.n = 1; return b; }\n}\nfn main(): i64 { var p: Pt; var r: Box<Box<Box>> = p.c(); var w, k = p.d(); var e: Box<Box> = p.e(); return r.n + k + e.n; }\n' > "$T/trs4.cyr"
+printf "$BX"'trait T { fn c(self): Box<Box<Box<i64>>>; fn d(self): (Box<i64>, i64); fn e(self): Box<Box<i64>>; }\nimpl T for Pt {\n  fn c(self): Box<Box<Box> > { var b: Box<Box<Box<i64> > >; b.n = 1; return b; }\n  fn d(self): (Box, i64) { var b: Box; b.n = 1; return (b.n, 2); }\n  fn e(self): Box<Box> { var b: Box<Box>; b.n = 1; return b; }\n}\nfn main(): i64 { var p: Pt; var r: Box<Box<Box>> = p.c(); var w, k = p.d(); var e: Box<Box> = p.e(); return r.n + k + e.n; }\n' > "$T/trs4.cyr"
 exits trs4 4 "TRS4: a >>> close, an all-i64 list in a multi-value, a nested Box<Box<i64>> against Box<Box>"
 printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box<i32> { var b: Box<i32>; b.n = 4; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs5.cyr"
 refused_at trs5 "'Pt.c' returns Box<i32>, trait 'T' declares Box<i64>" 4:29 "TRS5: Box<i32> against Box<i64> stays refused"
@@ -351,7 +371,7 @@ lines_are() {   # <name> <what> <line:col|message>...: refused with exactly thes
     nm=$1; what=$2; shift 2
     build "$nm"
     if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
-    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    grep '^error' "$T/$nm.err" > "$T/$nm.got" || true
     : > "$T/$nm.want"
     for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
     if cmp -s "$T/$nm.got" "$T/$nm.want"; then ok "$what: exactly $# lines"
@@ -465,7 +485,7 @@ FR="cannot be a fn return type"
 FP='a fn-pointer type `*fn( .. )` cannot be a fn return type'
 lines_are tm1 "TM1: the filed repro verbatim (it built: exit 4) — one line per member" \
     "4:24: type 'u8' $FR" "4:40: type 'f32' $FR" "4:57: type 'Color' $FR" "4:76: $FP" "4:103: type 'u64' $FR"
-n=$(grep -c "^  note: a return type is a struct" "$T/tm1.err")
+n=$(grep -c "^  note: a return type is a struct" "$T/tm1.err" || true)
 if [ "$n" -eq 5 ]; then ok "TM1b: ... each with a fn's return-type note"; else bad "TM1b: $n notes (want 5)"; fi
 cat > "$T/tm2.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -514,9 +534,9 @@ syscall(60, main());
 EOF
 exits tm2 56 "TM2: what a fn returns still compiles in a member — i64, f64, bool, Pt, *u8, Result, its own U, i8/i16/i32, cstring, Option, Tagged, *Color, (u8, Color), Box<i64>, a union, **u64"
 rc=0; "$CC" --syntax-only < "$T/tm1.cyr" > "$T/tm3.bin" 2> "$T/tm3.err" || rc=$?
-grep '^error' "$T/tm3.err" > "$T/tm3.got"
+grep '^error' "$T/tm3.err" > "$T/tm3.got" || true
 printf 'error:<source>:4:76: %s\n' "$FP" > "$T/tm3.want"
-if [ "$rc" -ne 0 ] && cmp -s "$T/tm3.got" "$T/tm3.want"; then ok "TM3: --syntax-only reports the *fn( .. ) line alone (a fn's : *fn( .. ) is its grammar refusal there)"
+if [ "$rc" -ne 0 ] && cmp -s "$T/tm3.got" "$T/tm3.want"; then ok "TM3: --syntax-only reports the *fn( .. ) line alone (as it does a fn's : *fn( .. ))"
 else bad "TM3: --syntax-only rc $rc: $(tr '\n' '|' < "$T/tm3.got")"; fi
 printf 'include "lib/syscalls.cyr"\nstruct P { x; }\nenum Color { Red, Green }\ntrait Sh { fn a(self): u8; fn b(self): f32; fn c(self): Color; fn e(self): u64; }\nsyscall(60, 4);\n' > "$T/tm3b.cyr"
 rc=0; "$CC" --syntax-only < "$T/tm3b.cyr" > "$T/tm3b.bin" 2> "$T/tm3b.err" || rc=$?
@@ -547,10 +567,245 @@ refused_at trr4 "'Box' takes 1 type argument, 2 given" 5:39 "TRR4: dd8 — the i
 printf "$BR"'trait T2 { fn sh(self): Option<Box<i64, Pt>>; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr5.cyr"
 refused_at trr5 "'P.sh' returns i64, trait 'T2' declares Option<Box<i64, Pt>>" 5:30 "TRR5: a member's : Option<Box<i64, Pt>> (its list unread) keeps the impl's line"
 rc=0; "$CC" --syntax-only < "$T/trr3.cyr" > "$T/trr6.bin" 2> "$T/trr6.err" || rc=$?
-grep '^error' "$T/trr6.err" > "$T/trr6.got"
+grep '^error' "$T/trr6.err" > "$T/trr6.got" || true
 printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt>\n" > "$T/trr6.want"
 if [ "$rc" -ne 0 ] && cmp -s "$T/trr6.got" "$T/trr6.want"; then ok "TRR6: --syntax-only (D5 silent there) keeps dd7's impl line"
 else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi
+# ── TRR9 (6.7.16, f16 FG1) — lint keeps the impl's line where the reader's own refusal is silent under lint ──
+lint_is() {   # <name> <what> [line:col message]...: --syntax-only gives exactly these error lines (none: rc 0, silent)
+    nm=$1; what=$2; shift 2
+    rc=0; "$CC" --syntax-only < "$T/$nm.cyr" > "$T/$nm.bin" 2> "$T/$nm.err" || rc=$?
+    grep '^error' "$T/$nm.err" > "$T/$nm.got" || true
+    : > "$T/$nm.want"
+    for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
+    if [ "$#" -eq 0 ] && [ "$rc" -ne 0 ]; then bad "$what: rc $rc: $(tr '\n' '|' < "$T/$nm.got")"
+    elif [ "$#" -ne 0 ] && [ "$rc" -eq 0 ]; then bad "$what: rc 0, no line"
+    elif ! cmp -s "$T/$nm.got" "$T/$nm.want"; then bad "$what: got $(tr '\n' '|' < "$T/$nm.got") want $(tr '\n' '|' < "$T/$nm.want")"
+    else ok "$what: --syntax-only rc $rc, exactly $# line(s)"; fi
+}
+PQ='struct P { a; b; }\n'
+printf "$PQ"'trait T2 { fn sh(self): u8; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nfn main(): i64 { return 0; }\n' > "$T/trr9.cyr"
+lint_is trr9 "TRR9: dd2 — a member's : u8 (D9, silent under lint) against : i64 keeps the impl's line (6.7.15's)" \
+    "3:30: 'P.sh' returns i64, trait 'T2' declares u8"
+printf "$PQ"'trait T2 { fn sh(self): u8; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nimpl T2 for P { fn sh(self) { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9b.cyr"
+lint_is trr9b "TRR9b: dd1 — the impl with no return type, the dyn formed above it: at the method's name" \
+    "4:20: 'P.sh' returns i64, trait 'T2' declares u8"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): *Pt<i64>; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nimpl T2 for P { fn sh(self): *Pt { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9c.cyr"
+lint_is trr9c "TRR9c: dd3 — a member's : *Pt<i64> (D7, silent under lint) against : *Pt" \
+    "5:30: 'P.sh' returns *Pt, trait 'T2' declares *Pt<i64>"
+printf "$PQ"'enum Color { Red, Green }\ntrait T2 { fn sh(self): Color; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nfn main(): i64 { return 0; }\n' > "$T/trr9d.cyr"
+lint_is trr9d "TRR9d: dd4 — a member's enum return against : i64" \
+    "4:30: 'P.sh' returns i64, trait 'T2' declares Color"
+printf "$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): u8 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9e.cyr"
+lint_is trr9e "TRR9e: control — an impl's : u8 against a member's : i64 stays silent under lint (6.7.15's verdict)"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): *Pt; }\nimpl T2 for P { fn sh(self): *Pt<i64> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9f.cyr"
+lint_is trr9f "TRR9f: the method's side — an impl's : *Pt<i64> (6.7.15's D6, silent under lint) against : *Pt" \
+    "4:30: 'P.sh' returns *Pt<i64>, trait 'T2' declares *Pt"
+printf "$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): i64<u8> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9g.cyr"
+lint_is trr9g "TRR9g: the method's side — an impl's scalar : i64<u8> against : i64" \
+    "3:30: 'P.sh' returns i64<u8>, trait 'T2' declares i64"
+printf "$PQ"'trait T2 { fn sh(self): f32; fn t(self): i64<u8>; }\nimpl T2 for P { fn sh(self): i64 { return 0; } fn t(self): i64 { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9h.cyr"
+lint_is trr9h "TRR9h: a member's : f32 and its scalar : i64<u8> — one impl line each" \
+    "3:30: 'P.sh' returns i64, trait 'T2' declares f32" "3:60: 'P.t' returns i64, trait 'T2' declares i64<u8>"
+lines_are trr9h "TRR9i: TRR9h compiled — the members' refusals alone (no impl line beside them)" \
+    "2:25: type 'f32' $FR" "2:42: 'i64' takes no type arguments"
+
+# ── FP (6.7.16, f16 FG2) — a fn's fn-pointer return is the member's one line, the body read on ──
+# PARSE_FN_DEF's return reader took `: *fn(i64): i64` as a `*T` and met `fn` as a name: "expected identifier, got
+# reserved keyword 'fn' (cannot be used as an identifier; rename the variable/field/fn)" — there is nothing to rename;
+# a bare `: *fn` (and a nested `: *fn(..): *fn(..)`) went on to read the type's rest as the body ("fn 'main' is defined
+# inside fn 'h'", "expected '}', got end of file"); a multi-value element added pass 1's "expected ')', got fn" and
+# "'h' returns 2 values". Now the member's words (`_trs_fnp_refuse`) at the type's first `*`, with the return note,
+# under --syntax-only too, the type stepped (`_fnp_ty_end`) and the body parsed; pass 1 records nothing for it. A
+# member's bare `: *fn;` was "expected '(', got ';'": the same line now. An impl adds no "returns .." line beside a
+# method's own refusal (a multi-value element too); a member's multi-value `*fn( .. )` element keeps the impl's line.
+# Filed: docs/development/issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md
+# Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc, CYCC= it): the lane before it (d280e29e1)
+#   -> RED 18: TR8c FP1-FP8b FP10-FP11b FP13-FP13c; `_ret_ann_alt`'s arm gone -> RED 14 (all but the multi-value rows
+#   FP7 FP8 FP8b); `_mret_elem`'s arm gone -> RED 3: FP7 FP8 FP8b; the method-side stand-down gone from `_tr_rt_bad` ->
+#   RED 2: FP8 FP8b (the impl's line), and from the dyn hand-off (`_tr_ret_rf`) -> RED 1: FP8 (the site's line); the
+#   stand-down on the member's side too -> RED 1: FP9 (it BUILT: nobody refused it); `_trs_ret_fnp` requiring the `(`
+#   -> RED 7: FP3 FP4b FP7 FP10 FP11 FP11b FP13c; pass 1 stepping it unrecorded (no `_ret_ptr_annot`, the triage's
+#   plan) -> RED 3: FP13 FP13b FP13c (each use "assigning non-pointer to typed pointer"); pass 2 not recording it ->
+#   RED 1: FP13b (an instance minted in pass 2)
+cat > "$T/fp1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn h(): *fn(i64): i64 { return 0; }
+fn main(): i64 { return 4; }
+syscall(60, main());
+EOF
+lines_are fp1 "FP1: the filed repro verbatim — the fn-pointer line at its *" "2:9: $FP"
+n=$(grep -c "^  note: a return type is a struct" "$T/fp1.err" || true)
+if [ "$n" -eq 1 ]; then ok "FP1b: ... with a fn's return-type note"; else bad "FP1b: $n notes (want 1)"; fi
+printf 'include "lib/syscalls.cyr"\nfn h(): **fn(i64): i64 { return 0; }\nfn main(): i64 { return 4; }\nsyscall(60, main());\n' > "$T/fp2.cyr"
+lines_are fp2 "FP2: a **fn( .. ) return — one line at its first *" "2:9: $FP"
+printf 'include "lib/syscalls.cyr"\nfn h(): *fn { return 0; }\nfn main(): i64 { return 4; }\nsyscall(60, main());\n' > "$T/fp3.cyr"
+lines_are fp3 "FP3: a bare *fn return — one line, no cascade (it read the body as the type)" "2:9: $FP"
+lint_is fp1 "FP4: --syntax-only of FP1 — the same line" "2:9: $FP"
+lint_is fp3 "FP4b: --syntax-only of FP3 — the same line, no cascade" "2:9: $FP"
+printf 'include "lib/syscalls.cyr"\nfn h(): *fn(i64): *fn(i64): i64 { return 0; }\nfn main(): i64 { return 4; }\nsyscall(60, main());\n' > "$T/fp5.cyr"
+lines_are fp5 "FP5: a *fn( .. ) whose own return is a *fn( .. ) — one line" "2:9: $FP"
+printf 'include "lib/syscalls.cyr"\nfn h(): *fn(i64): i64 { return 1 2; }\nfn main(): i64 { return 4; }\nsyscall(60, main());\n' > "$T/fp6.cyr"
+lines_are fp6 "FP6: the body is read on — its own mistake is its own line" "2:9: $FP" "2:34: expected ';', got number 2"
+printf 'include "lib/syscalls.cyr"\nfn h(): (*fn(i64): i64, i64) { return (0, 1); }\nfn k(): (i64, *fn) { return (0, 1); }\nfn main(): i64 { var a, b = h(); var c, d = k(); return b + d; }\nsyscall(60, main());\n' > "$T/fp7.cyr"
+lines_are fp7 "FP7: a multi-value element *fn( .. ) / bare *fn — one line each (no pass-1 \"expected ')'\", no \"returns 2 values\")" \
+    "2:10: $FP" "3:15: $FP"
+printf "$R"'trait T { fn d(self): (i64, i64); }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn d(self): (*fn(i64): i64, i64) { return (0, 1); } }\nfn g(q: *P): i64 { var o: dyn T = q; return 0; }\nsyscall(60, 0);\n' > "$T/fp8.cyr"
+lines_are fp8 "FP8: an impl's multi-value *fn( .. ) element, a dyn formed above and below — the method's line alone" "5:29: $FP"
+lint_is fp8 "FP8b: ... under --syntax-only" "5:29: $FP"
+printf "$R"'trait T { fn d(self): (*fn(i64): i64, i64); }\nimpl T for P { fn d(self): (i64, i64) { return (0, 1); } }\nsyscall(60, 0);\n' > "$T/fp9.cyr"
+lines_are fp9 "FP9: control — a member's multi-value *fn( .. ) element (read on by its reader) keeps the impl's line" \
+    "4:28: 'P.d' returns (i64, i64), trait 'T' declares (*fn(i64): i64, i64)"
+printf "$R"'trait T { fn d(self): *fn; }\nsyscall(60, 0);\n' > "$T/fp10.cyr"
+lines_are fp10 "FP10: a member's bare : *fn return — the fn-pointer line (it was \"expected '(', got ';'\")" "3:23: $FP"
+printf "$R"'trait T { fn d(self): i64; }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn d(self): *fn { return 0; } }\nsyscall(60, 0);\n' > "$T/fp11.cyr"
+lines_are fp11 "FP11: an impl's bare *fn return, a dyn formed above — the method's line alone (no impl line, no cascade)" "5:28: $FP"
+printf "$R"'trait T { fn d(self): *fn; }\nimpl T for P { fn d(self): *fn { return 0; } }\nsyscall(60, 0);\n' > "$T/fp11b.cyr"
+lines_are fp11b "FP11b: a member and its method both : *fn — one line each" "3:23: $FP" "4:28: $FP"
+printf 'include "lib/syscalls.cyr"\nfn one(x: i64): i64 { return x; }\nfn ap(cb: *fn(i64): i64): i64 { return fncall1(cb, 2); }\nfn aq(cb: *fn): i64 { return 1; }\nfn ar(cb: **fn): i64 { return 1; }\nfn pu(): *u8 { return 0; }\nfn main(): i64 { return ap(&one) + aq(&one) + ar(0) + pu(); }\nsyscall(60, main());\n' > "$T/fp12.cyr"
+exits fp12 4 "FP12: control — *fn( .. ) / bare *fn / **fn parameters and a : *u8 return unchanged"
+fpuse() {   # <name> <what> <want-line>: exactly that one error and no warning (a refused return's uses add nothing)
+    build "$1"
+    grep -E '^(error|warning)' "$T/$1.err" > "$T/$1.got" || true
+    printf 'error:<source>:%s\n' "$3" > "$T/$1.want"
+    if [ "$rc" -ne 0 ] && cmp -s "$T/$1.got" "$T/$1.want"; then ok "$2: the one error, no warning"
+    else bad "$2: rc $rc: $(tr '\n' '|' < "$T/$1.got")"; fi
+}
+printf 'include "lib/syscalls.cyr"\nfn main(): i64 { var q: *i32 = h(); var r = h() + 1; var s: *u8 = h(); return 4; }\nfn h(): *fn(i64): i64 { return 0; }\nsyscall(60, main());\n' > "$T/fp13.cyr"
+fpuse fp13 "FP13: a forward call's result into *i32 / *u8 adds no \"assigning non-pointer to typed pointer\"" "3:9: $FP"
+printf 'include "lib/syscalls.cyr"\nfn h<T>(x: T): *fn(T): i64 { return 0; }\nfn main(): i64 { var q: *i32 = h(1); var w: *u8 = h<i32>(2); return 4; }\nsyscall(60, main());\n' > "$T/fp13b.cyr"
+fpuse fp13b "FP13b: a generic's — an explicit instance minted in pass 2 too" "2:16: $FP"
+printf "$R"'impl P { fn h(self): *fn { return 0; } }\nfn main(): i64 { var p = P { 1 }; var q: *i32 = p.h(); return 4; }\nsyscall(60, main());\n' > "$T/fp13c.cyr"
+fpuse fp13c "FP13c: an inherent method's bare *fn return, its call into *i32" "3:22: $FP"
+
+# ── BF (6.7.16, f16 FG2, the user's D91) — a member's bare `*fn` parameter is a type, as a fn's ──
+# The trait reader's `*fn` arm required the `(` ("expected '(', got ')'"), though 6.7.11's D34 (b) gave a fn's
+# parameter a bare `*fn` and the impl's own method compiled with it. Now `cb: *fn` / `cb: **fn` read as a fn's do; a
+# member's bare `: *fn` RETURN stays refused (FP10's line). BF1 the filed bf.cyr verbatim (exit 3); BF2 `cb: **fn`;
+# BF3 --syntax-only of BF1 (rc 0); BF4 a bare `*fn` inside a member's `*fn( .. )` list and as its own return, and a
+# `**fn` in the list — as a fn's parameter reader reads them; BF5 a member's `cb: *fn(i64): i64` unchanged; BF6 a
+# member's bare `*fn` against a method's `cb: i64` — the impl compiles (parameter types are not compared by the impl
+# check, the guide's word; dyn_checked.sh F8bf3 is the formed-dyn guard).
+# Filed: docs/development/issues/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
+# Mutant (2026-10-21): the lane before it (6ee893493) -> RED 5: BF1-BF4 BF6 ("expected '(', got ')'")
+cat > "$T/bf1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x; }
+trait T { fn e(self, cb: *fn): i64; }
+impl T for P { fn e(self, cb: *fn): i64 { return 3; } }
+fn main(): i64 { var p = P { 1 }; return p.e(0); }
+syscall(60, main());
+EOF
+exits bf1 3 "BF1: the filed repro verbatim (it was \"expected '(', got ')'\")"
+printf "$R"'trait T { fn e(self, cb: **fn): i64; }\nimpl T for P { fn e(self, cb: **fn): i64 { return 3; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf2.cyr"
+exits bf2 3 "BF2: a member's cb: **fn"
+lint_is bf1 "BF3: --syntax-only of BF1 — clean"
+printf "$R"'trait T { fn e(self, cb: *fn(*fn, **fn): *fn): i64; }\nimpl T for P { fn e(self, cb: *fn(*fn, **fn): *fn): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf4.cyr"
+exits bf4 4 "BF4: a bare *fn / **fn inside a member's *fn( .. ) list and as its own return"
+printf "$R"'fn one(x: i64): i64 { return x + 1; }\ntrait T { fn e(self, cb: *fn(i64): i64): i64; }\nimpl T for P { fn e(self, cb: *fn(i64): i64): i64 { return fncall1(cb, 4); } }\nfn main(): i64 { var p = P { 1 }; return p.e(&one); }\nsyscall(60, main());\n' > "$T/bf5.cyr"
+exits bf5 5 "BF5: a member's cb: *fn(i64): i64 unchanged"
+printf "$R"'trait T { fn e(self, cb: *fn): i64; }\nimpl T for P { fn e(self, cb: i64): i64 { return 6; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf6.cyr"
+exits bf6 6 "BF6: a member's bare *fn against a method's cb: i64 — the impl check compares no parameter types"
+
+# ── IB (6.7.16, f16 FF5) — a member of an impl body that is not a `fn` is one error, by name ──
+# PARSE_IMPL's loop took directives, `pub` and `fn`; anything else ended it at "expected '}', got struct" (`var`, `enum`,
+# a number), the `}` it wanted taken for that token, so the member's own braces and the rest of the body were read as
+# top-level code ("expected '=', got '{'", "undefined variable 'z'", "undefined variable 'Q'") and the methods after it
+# were never defined. Now "an impl body holds only `fn` definitions - in impl 'A'" (`- in impl 'Tr' for 'A'`), as a
+# trait body's A7, at the member; it is stepped (`_impl_member_bad`: through its `;` or its own braces), its names
+# entered as reported, and the body read on in sync; pass 1 steps it too, so the methods after it are registered. Each
+# row on five legs (x86_64, PE and Mach-O env legs, the aarch64 / cx compilers built from this tree): the exact error
+# lines, rc != 0, no binary. IB1 a struct member, the method after it called; IB2 a `var`, a stray number after the
+# last method; IB3 an enum member of a trait impl; IB4 the struct's name used before and after the impl (an earlier
+# fn's `q: *Q`, `Q { 1 }`) adds nothing; IB5 --syntax-only of IB1; IB6 control: directives, `pub` methods and a
+# `#deprecated` one still build (run on x86_64: 7); IB7 a mistake in the method after the member is its own error.
+# Mutants (2026-10-21, a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it):
+#   the lane before it (bf1a3a6b2)                         -> RED IB1-IB5 IB7, 30 (the old "expected '}', got .." cascade)
+#   PARSE_IMPL's loop ending at the member (pass 1 stepping) -> RED IB1-IB5 IB7, 30
+#   `_prescan_impl_body` ending at the member               -> RED IB4, 5 (the struct's name not entered before `g`'s
+#                                                              `q: *Q` is read)
+#   `_impl_member_bad` keeping the report's latch          -> RED IB7, 5 (the method's own mistake swallowed)
+IL="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"; IL="$IL a64"
+else bad "IB: src/main_aarch64.cyr did not build"; fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ]; then chmod +x "$T/cc_cx"; IL="$IL cx"
+else bad "IB: src/main_cx.cyr did not build"; fi
+IBN=0
+ibc() {   # <leg> <src> <out> [cc-arg]: rc in IRC
+    IRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        a64)   timeout 60 "$T/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        cx)    timeout 60 "$T/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+    esac
+}
+ibrow() {   # <id> <what> <source> <want-lines> [cc-arg]
+    printf '%s' "$3" > "$T/$1.cyr"
+    printf '%s\n' "$4" > "$T/$1.want"
+    for leg in $IL; do
+        o="$T/$1_$leg"
+        ibc "$leg" "$T/$1.cyr" "$o" "${5:-}"
+        IBN=$((IBN + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$IRC" -eq 0 ]; then bad "$1 $leg: $2: rc 0"
+        elif ! cmp -s "$o.got" "$T/$1.want"; then bad "$1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"
+        elif [ -s "$o" ] && [ -z "${5:-}" ]; then bad "$1 $leg: $2: refused, but a binary was written"
+        else ok "$1 $leg: $2"; fi
+    done
+}
+IM='an impl body holds only `fn` definitions - in impl'
+IZ="undefined variable 'zz' (missing include or enum?)"
+ibrow IB1 "a struct member; the method after it is defined" 'struct A { y; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:4:23: $IZ"
+ibrow IB2 "a var member, a stray number after the last method" 'struct A { y; }
+impl A { var x = 1; fn m(self): i64 { return 1; } 5 }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:2:51: $IM 'A'
+error:<source>:4:23: $IZ"
+ibrow IB3 "an enum member of a trait impl" 'struct A { y; }
+trait Tr { fn m(self): i64; }
+impl Tr for A { enum E { X } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:3:17: $IM 'Tr' for 'A'
+error:<source>:5:23: $IZ"
+ibrow IB4 "the refused member's name used before and after the impl" 'struct A { y; }
+fn g(q: *Q): i64 { return q.z; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+fn h(): i64 { var q = Q { 1 }; return q.z; }
+syscall(60, g(0) + h() + zz);
+' "error:<source>:3:10: $IM 'A'
+error:<source>:5:28: $IZ"
+ibrow IB7 "a mistake in the method after a member is its own error" 'struct A { y; }
+impl A { var x = 1; fn m(self): i64 { return 1 2; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:2:48: expected ';', got number 2
+error:<source>:4:23: $IZ"
+ibrow IB5 "--syntax-only: IB1's shape" 'struct A { y; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m());
+' "error:<source>:2:10: $IM 'A'" --syntax-only
+printf 'struct A { y; }\nimpl A {\n    #must_use\n    fn m(self): i64 { return 3; }\n    pub fn n(self): i64 { return 4; }\n    #deprecated("old")\n    fn o(self): i64 { return 0; }\n}\nvar a: A = A { 1 };\nsyscall(60, a.m() + a.n());\n' > "$T/ib6.cyr"
+for leg in $IL; do
+    ibc "$leg" "$T/ib6.cyr" "$T/ib6_$leg"
+    IBN=$((IBN + 1))
+    if [ "$IRC" -ne 0 ] || [ ! -s "$T/ib6_$leg" ] || grep -qE '^(error|warning)' "$T/ib6_$leg.err"; then bad "IB6 $leg: a well-formed impl: rc $IRC: $(grep -E '^(error|warning)' "$T/ib6_$leg.err" | tr '\n' '|')"
+    elif [ "$leg" = x86 ]; then chmod +x "$T/ib6_x86"; got=0; "$T/ib6_x86" || got=$?
+        if [ "$got" -eq 7 ]; then ok "IB6 x86: a well-formed impl (directives, pub) builds: exit 7"; else bad "IB6 x86: exit $got, want 7"; fi
+    else ok "IB6 $leg: a well-formed impl builds"; fi
+done
+[ "$IBN" -ge 35 ] || bad "IB: the rows ran $IBN row-legs (floor 35) - rows or legs were lost"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16), and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"

@@ -27,7 +27,9 @@
 #       one error, nothing about qq1 / qq2; M2 the same then `y = zz9;` — two
 #   P   control: 6.7.11's pair refusal `y = f();` then `y = zz9;` — two, as before
 # Every row on the x86_64, aarch64, cx, PE and Mach-O compilers built from this tree: the exact error lines, rc 1,
-# no binary.
+# no binary. 6.7.16 (f16) adds the AS (#assert), H (block-head headers), R (a head's missing `{`), U (a top-level
+# `var c: S;`) and BB (a fn signature with no body) rows, each section with its own ledger below, and the corpus floor
+# at the end.
 #
 # MUTATION LEDGER (2026-10-19; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from
 # that copy with CYCC= it, so every leg's compiler carries the mutant):
@@ -251,6 +253,605 @@ syscall(60, main());
 ' "error:<source>:5:9: a \`: stack\` enum returns two values — bind both: \`var tag, val = f();\`
 error:<source>:6:12: $Z"
 
+# okrow <id> <what> <source> <exit>: compiles on every leg (rc 0, no error / warning line, a binary), runs <exit> on x86
+okrow() {
+    printf '%s' "$3" > "$D/$1.cyr"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp "$leg" "$D/$1.cyr" "$o"
+        if [ "$CRC" -ne 0 ]; then bad "$1 $leg: $2: rc $CRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"
+        elif grep -qE '^(error|warning)' "$o.err"; then bad "$1 $leg: $2: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"
+        elif [ ! -s "$o" ]; then bad "$1 $leg: $2: no binary"
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; XRC=0; timeout 60 "$o" > /dev/null 2>&1 || XRC=$?
+            if [ "$XRC" -eq "$4" ]; then ok "$1 $leg: $2 (exit $4)"; else bad "$1 $leg: $2: exit $XRC, want $4"; fi
+        else ok "$1 $leg: $2"; fi
+    done
+}
+
+# AS — 6.7.16 (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): AN #assert IS
+# LINE-TERMINATED, SO A REFUSED ONE ENDS IN SYNC AT ITS LINE, not only at its `;`. `_assert_end` (src/frontend/
+# parse.cyr) put the caller's latch back only when the tail ended at a `;`: `#assert zz9 == 1` with no `;` kept it,
+# and the statement on the next line was skipped by the resync with its own error (after the first top-level
+# statement and in a fn body; the declaration zone's resync stops at the next declaration keyword). The refused
+# expression is now stepped to its grammar's end (`_ce_extent`, what pass 1 skips) when that is a well-bracketed
+# stretch with no `;`, and the tail ends the directive there. AS1 is the filing's program verbatim. AS12 (control):
+# an unclosed `(` is no such stretch — it resyncs as before, one error, nothing invented.
+# And (met in passing, the brief's same-family item) IN A BLOCK the tail stops at the `}` on its line that closes
+# the block: it ate it, so `{ #assert 1 == 1 }` added "expected '}', got end of file" to its one refusal (AS13), and
+# `{ #assert 1 == 1, "m" }` was that invented error alone — now "#assert: expected `;` or a line break before `}`"
+# (AS14), in a fn's block, a top-level block (AS16), an impl body (AS17, AS18) and a switch arm (AS19). At module
+# scope a `}` on the line closes nothing and the tail takes it as before.
+# MUTATION LEDGER (2026-10-20, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy with CYCC= it, so every leg's compiler carries the mutant):
+#   `_asrt_synced` back to the `;`-only rule (6.7.15's)  -> RED AS1 AS2 AS4 AS6 AS7 AS8 AS9 AS11 on every leg, 40 (the
+#                                                           next statement's error missing); AS3 and the rest green
+#   `_asrt_ext` not stepping to the extent               -> RED AS7 AS8, 10 (the wrapped expression's next line parsed
+#                                                           as a statement, or the next statement swallowed)
+#   `_asrt_in_blk` returning 0 (the tail eats the `}`)   -> RED AS13-AS20, 40 (the invented "expected '}'", or it alone)
+A9="unknown name 'zz9' in a const context"
+ZZ="undefined variable 'zz' (missing include or enum?)"
+AB="#assert: expected \`;\` or a line break before \`}\`"
+row AS1 "the filing's program verbatim: a refused #assert, no ';', then a statement" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:15: $ZZ"
+
+row AS2 "in a fn body" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS3 "with its ';' (unchanged)" 'var a = 1;
+a = 2;
+#assert zz9 == 1;
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:15: $ZZ"
+
+row AS4 "two refused #asserts on consecutive lines, then a statement" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+#assert zz8 == 1
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:9: unknown name 'zz8' in a const context
+error:<source>:5:15: $ZZ"
+
+row AS5 "a refused #assert as the last line, after a statement's error" 'var a = 1;
+a = 2;
+syscall(60, zz);
+#assert zz9 == 1
+' "error:<source>:3:15: $ZZ
+error:<source>:4:9: $A9"
+
+row AS6 "junk after the expression, no ';'" 'fn f(): i64 {
+    var y = 0;
+    #assert 1 == 1 junk
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:20: #assert: expected \`,\` or \`;\` after the expression
+error:<source>:4:11: $ZZ"
+
+row AS7 "a wrapped expression refused on its first line" 'fn f(): i64 {
+    var y = 0;
+    #assert (zz9 +
+        1) == 1
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:14: $A9
+error:<source>:5:11: $ZZ"
+
+row AS8 "a wrapped message" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1,
+        "m"
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:5:11: $ZZ"
+
+row AS9 "with a message, no ';'" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1, "m"
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS10 "the last line alone" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+' "error:<source>:3:9: $A9"
+
+row AS11 "a refused #assert in a generic fn at two instances (once)" 'fn g<T>(x: T): i64 {
+    var y = 0;
+    #assert zz9 == 1
+    y = zz;
+    return y;
+}
+syscall(60, g(1) + g<i32>(2));
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS12 "control: an unclosed ( still resyncs, nothing invented" 'fn f(x): i64 {
+    var y = 0;
+    #assert (zz9 + 1 == 1
+    y = zz;
+    return y;
+}
+syscall(60, f(1));
+' "error:<source>:3:14: $A9"
+
+row AS13 "a block's } on the #assert's line: its refusal alone" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1 } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:45: #assert: expected \`,\` or \`;\` after the expression"
+
+row AS14 "a block's } after the message" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1, "m" } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:50: $AB"
+
+row AS15 "a refused #assert before a block's }" 'fn f(x): i64 { if (x == 1) { #assert zz9 == 1 } return zz; }
+syscall(60, f(1));
+' "error:<source>:1:38: $A9
+error:<source>:1:58: $ZZ"
+
+row AS16 "a top-level block's }" 'var c = 1;
+if (c == 1) { #assert 1 == 1, "m" }
+syscall(60, zz);
+' "error:<source>:2:35: $AB
+error:<source>:3:15: $ZZ"
+
+row AS17 "an impl body's }" 'struct S { a; }
+impl S { #assert 1 == 1 }
+syscall(60, zz);
+' "error:<source>:2:25: #assert: expected \`,\` or \`;\` after the expression
+error:<source>:3:15: $ZZ"
+
+row AS18 "an impl body's } after the message" 'struct S { a; }
+impl S { #assert 1 == 1, "m" }
+syscall(60, zz);
+' "error:<source>:2:30: $AB
+error:<source>:3:15: $ZZ"
+
+row AS19 "a switch arm's }" 'fn f(x): i64 { switch (x) { case 1: #assert 1 == 1, "m" } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:57: $AB"
+
+row AS20 "AS13 under --syntax-only" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1 } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:45: #assert: expected \`,\` or \`;\` after the expression" --syntax-only
+
+okrow ASV1 "control: a block's #assert with its ';', and on its own line" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1; } if (x == 1) { #assert 2 == 2, "m";
+} if (x == 1) { #assert 3 == 3
+} return 7; }
+syscall(60, f(1));
+' 7
+
+okrow ASV2 "control: an impl body's and a top-level block's #assert" 'struct S { a; }
+impl S {
+    #assert 1 == 1
+    fn m(self): i64 { return 5; }
+}
+impl S { #assert 1 == 1, "m"; fn n(self): i64 { return 4; } }
+var c = 1;
+if (c == 1) { #assert 1 == 1; }
+fn main(): i64 { var s = S { 1 }; return s.m() + s.n(); }
+syscall(60, main());
+' 9
+
+okrow ASV3 "control: a message holding braces, and a } at module scope on the line (taken by the tail)" 'fn f(x): i64 {
+    #assert 1 == 1, "a { b }"
+    return 7;
+}
+#assert 1 == 1, "m" }
+syscall(60, f(1));
+' 7
+
+# H — 6.7.16 (issues/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
+# LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
+# classic `for` / `for .. in` / `switch` / `match` that refused left the latch set for the block: its first
+# statement ended latched, PARSE_STMT's resync skipped the SECOND statement, and that statement's error was never
+# reported. `_blk_open` (src/frontend/parse_ctrl.cyr) clears the latch when it was clear as the head began and the
+# cursor's `{` is exactly the header's end. H1 is the filing's program verbatim. Controls: H9 a header left mid-way
+# (`if (y b) {`) keeps the latch; H10 a header inside a closure argument parsed under a statement's own latch keeps it.
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_blk_open` never clearing -> RED H1-H8 and H11-H16 on
+# every leg (70); H9 H10 green.
+row H1 "the filing's program verbatim: an if header's u128 subscript" "${PA}    if (pa[0] == 1) {
+        y = 1;
+        y = zz8;
+        y = zz7;
+    }
+${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U
+error:<source>:7:16: undefined variable 'zz8' (missing include or enum?)
+error:<source>:8:16: undefined variable 'zz7' (missing include or enum?)"
+
+row H2 "while (qq[0] == 1)" "${PA}    while (qq[0] == 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:40: undefined variable 'zz8' (missing include or enum?)"
+
+row H3 "a syntax error in the header: if (y == 0 +)" "${PA}    if (y == 0 +) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:17: unexpected ')'
+error:<source>:5:35: undefined variable 'zz8' (missing include or enum?)"
+
+row H4 "elif (qq[0] == 1)" "${PA}    if (y == 1) { y = 2; } elif (qq[0] == 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:36: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:62: undefined variable 'zz8' (missing include or enum?)"
+
+row H5 "a classic for's condition" "${PA}    for (var i = 0; i < qq[0]; i = i + 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:27: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:59: undefined variable 'zz8' (missing include or enum?)"
+
+row H6 "for i in 0..qq[0]" "${PA}    for i in 0..qq[0] { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:19: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:39: undefined variable 'zz8' (missing include or enum?)"
+
+row H7 "switch (qq[0])" "${PA}    switch (qq[0]) { case 1: y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:15: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:44: undefined variable 'zz8' (missing include or enum?)"
+
+row H8 "a top-level if after the first statement" 'var y = 0;
+y = 1;
+if (qq[0] == 1) { y = 1; y = zz8; }
+syscall(60, 0);
+' "error:<source>:3:7: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:33: undefined variable 'zz8' (missing include or enum?)"
+
+row H9 "control: a header left mid-way keeps the latch" "${PA}    if (y b) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'"
+
+row H10 "control: a header in a closure parsed under the statement's latch" 'fn g(f): i64 { return 0; }
+fn main(): i64 {
+    var a: u128 = 0;
+    var pa: *u128 = &a;
+    var y = pa[0] + g(|x| { if (qq[0] == 1) { var w = 1; w = zz8; } return x; });
+    y = zz7;
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:5:15: cannot subscript 'pa$U
+error:<source>:6:12: undefined variable 'zz7' (missing include or enum?)"
+
+row H11 "match (qq[0])" "${PA}    match (qq[0]) { 1 => { y = 1; y = zz8; } _ => { y = 2; } }
+${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:42: undefined variable 'zz8' (missing include or enum?)"
+
+row H12 "a collection for x in qq[0]" 'include "lib/vec.cyr"
+fn main(): i64 {
+    var y = 0;
+    for x in qq[0] { y = 1; y = zz8; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:4:16: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:36: undefined variable 'zz8' (missing include or enum?)"
+
+row H13 "nested heads, each its own" 'fn main(): i64 {
+    var y = 0;
+    if (qq[0] == 1) { if (pp[0] == 1) { y = 1; y = zz8; } y = zz7; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:3:11: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:29: undefined variable 'pp' (missing include or enum?)
+error:<source>:3:55: undefined variable 'zz8' (missing include or enum?)
+error:<source>:3:66: undefined variable 'zz7' (missing include or enum?)"
+
+row H14 "a generic fn at two instances (once)" 'fn gg<T>(x: T): i64 {
+    var y = 0;
+    while (qq[0] == 1) { y = 1; y = zz8; }
+    return 0;
+}
+fn main(): i64 { gg<i64>(1); gg<i32>(2); return 0; }
+syscall(60, main());
+' "error:<source>:3:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:40: undefined variable 'zz8' (missing include or enum?)"
+
+row H15 "a syntax error in the header and the block, --syntax-only" 'fn main(): i64 {
+    var y = 0;
+    if (y == 0 +) { y = 1; y = 2 +; }
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:3:17: unexpected ')'
+error:<source>:3:35: unexpected ';'" --syntax-only
+
+row H16 "a top-level while after the first statement, u128 subscript" 'var a: u128 = 0;
+var pa: *u128 = &a;
+var y = 0;
+y = 1;
+while (pa[0] == 1) { y = 1; y = zz8; }
+syscall(60, 0);
+' "error:<source>:5:10: cannot subscript 'pa$U
+error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
+
+# R — 6.7.16 (met with H, the same `{` step): A HEAD WHOSE `{` IS NOT WHERE THE PARSER STANDS KEEPS ITS BRACES. The
+# `{` check stepped one token whatever it was, so the block's `}` closed the enclosing body and "expected '}', got end
+# of file" was invented at the end of the file — after a header left mid-way (H9 printed it, R1) and after a body
+# written without braces (R2-R8), with the next statement's own error lost or a stray "unexpected else" (R3). Now a
+# mid-way header is stepped to its end (its `{` opens the block, the latch kept), a brace-less body is that one
+# statement (refused once, "expected '{', got ..."), and a `switch` / `match` with no `{` is refused and skipped to
+# its statement's end (R9, R10; `match y 1 => ..` said "expected '>', got number 2" and two invented lines).
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_blk_open`'s mid-way step dropped -> RED H9 R1 R11
+# on every leg (15: the invented "expected '}'", or the block parsed as one statement); its no-`{` arm stepping one
+# token again (the old recovery) -> RED R2-R8 R10 R13-R15 (55); R9 and R12 hold under either (the switch's / the
+# match's skip reaches the same end).
+row R1 "a mid-way header, then a statement" "${PA}    if (y b) { y = 1; }
+    y = zz8;
+${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R2 "if (c) y = 1; with no braces" "${PA}    if (y == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R3 "if and else with no braces" "${PA}    if (y == 1) y = 1; else y = 2;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
+error:<source>:5:29: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R4 "an elif with no braces" "${PA}    if (y == 1) { y = 1; } elif (y == 2) y = 3;
+    y = zz8;
+${TAIL}" "error:<source>:5:42: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R5 "a while with no braces" "${PA}    while (y == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:20: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R6 "a classic for with no braces" "${PA}    for (var i = 0; i < 3; i = i + 1) y = i;
+    y = zz8;
+${TAIL}" "error:<source>:5:39: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R7 "a for .. in with no braces" "${PA}    for i in 0..3 y = i;
+    y = zz8;
+${TAIL}" "error:<source>:5:19: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R8 "a do with no braces" "${PA}    do y = 2; while (y == 1);
+    y = zz8;
+${TAIL}" "error:<source>:5:8: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R9 "a switch with no {" "${PA}    switch (y) case 1: y = 2;
+    y = zz8;
+${TAIL}" "error:<source>:5:16: expected '{', got case
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R10 "a match with no {" "${PA}    match y 1 => { y = 2; }
+    y = zz8;
+${TAIL}" "error:<source>:5:13: expected '{', got number 1
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R11 "a for .. in range with junk before its {" "${PA}    for i in 0..3 junk { y = 1; }
+    y = zz8;
+${TAIL}" "error:<source>:5:19: expected '{', got identifier 'junk'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R12 "a match subject with junk before its {" "${PA}    match y junk { 1 => { y = 2; } }
+    y = zz8;
+${TAIL}" "error:<source>:5:13: expected '{', got identifier 'junk'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R13 "nested ifs with no braces" "${PA}    if (y == 1) if (y == 2) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got if
+error:<source>:5:29: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R14 "a top-level if with no braces, after the first statement" 'var y = 0;
+y = 1;
+if (y == 1) y = 2;
+syscall(60, zz8);
+' "error:<source>:3:13: expected '{', got identifier 'y'
+error:<source>:4:16: undefined variable 'zz8' (missing include or enum?)"
+
+row R15 "a refused header and no braces" "${PA}    if (qq[0] == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:11: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:21: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+# U — 6.7.16 (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var c: S;` AT
+# TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
+# IN SYNC AND DECLARES `c` AS REPORTED. PARSE_VAR's arm latched with no mark — the resync skipped the next statement
+# — and registered a fn-local slot no top-level use reads, so each use of `c` added "undefined variable 'c'".
+# `_usl_top` (src/frontend/parse_decl.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
+# (`_dl_var_refd_add`, parse_fn_def.cyr) that `_undef_var_report`, the subscript's undefined base and a multi-value
+# target stand down at (`_dl_name_refd`; U6: the subscript's arm missed a refused late enum's member as well). U1 is
+# the filing's program verbatim. Controls: U5 the declaration in a fn compiles and runs; U7 a type annotation
+# spelled `c` is still "unknown type 'c'" (a variable's mark, not a type's).
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_usl_top` without `_refuse_in_sync` -> RED U4 U8 on
+# every leg (10: the next statement swallowed with its error); without `_dl_var_refd_add` -> RED U1 U2 U3 (15: the
+# uses' "undefined variable 'c'").
+row U1 "the filing's program verbatim" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+var d = 9;
+c = 4;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:7:15: undefined variable 'zz' (missing include or enum?)"
+
+row U2 "c = 4; directly after the declaration" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+c = 4;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
+row U3 "every use of c stands down" 'struct Str { p; n; }
+impl Str { fn m(self): i64 { return 1; } }
+fn g(x): i64 { return 0; }
+fn two(): (i64, i64) { return (1, 2); }
+var q = 0;
+q = 1;
+var c: Str;
+c.p = 4;
+q = c.p + c.m() + g(c) + g(&c);
+c += 1;
+c.n += 1;
+c[0] = 1;
+q = c[1];
+q, c = two();
+fn h(): i64 { var w: Str = c; return w.p + c.n; }
+syscall(60, zz);
+' "error:<source>:7:11: uninitialized struct locals only allowed inside a function
+error:<source>:16:15: undefined variable 'zz' (missing include or enum?)"
+
+row U4 "a vector type at top level" 'var q = 0;
+q = 1;
+var c: f64v2;
+syscall(60, zz);
+' "error:<source>:3:13: uninitialized struct locals only allowed inside a function
+error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+
+row U8 "the next statement's own error, directly after" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+q = zz5;
+syscall(60, 0);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:5:8: undefined variable 'zz5' (missing include or enum?)"
+
+okrow U5 "control: the declaration in a fn compiles and runs" 'struct Str { p; n; }
+fn f(): i64 { var c: Str; c.p = 3; c.n = 4; return c.p + c.n; }
+var q = 0;
+q = 1;
+syscall(60, f());
+' 7
+
+row U6 "a refused late enum's member as a subscript base" 'enum E { A; B; }
+var y = 1;
+y = 2;
+enum F { C; }
+y = C[0];
+syscall(60, zz);
+' "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
+row U7 "control: a type annotation spelled c is still refused" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+var x: c = 5;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:5:8: unknown type 'c' for variable 'x'
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
+# BB — 6.7.16 (f16 FG2, met with issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md):
+# A FN SIGNATURE WITH NO BODY (`fn h(): i64;`, a trait member's shape) IS ONE ERROR, "expected '{', got ';'". PARSE_FN_DEF
+# took the `;` for the `{`, so the declarations after it were read as the body ("fn 'main' is defined inside fn 'h'",
+# "expected '}', got end of file"), and pass 1's `_prescan_skip_fn` ran on to the next fn's `}`, leaving it
+# unregistered. The `;` now stands for an empty body (`_fn_body_open`, `_fn_has_body`), and pass 1 stops at it.
+#   BB1 a fn, then main's own error; BB2 an inherent impl's method, then the next method's own error; BB3 a generic one
+#   (its call is replayed inline: it read the next fn as the body); BB4 one below its caller, a fn after it called from
+#   the top level; BB4b a forward call to a fn after it reads that fn's pass-1 facts (a struct return); BB5 no return type, and parameters — each its own line (the latch is
+#   released at the `;`); BB6 BB1 under --syntax-only; BB7 control: a body whose first token is `;` is a body (refused
+#   "unexpected ';'" as before); BB8 control: a fn, an impl method and a generic with bodies build (x86_64: exit 3); BB9
+#   a bounded generic whose i64 base is a stub (`_b3_skip`: its skip ran on into main's body).
+# Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc, this gate run with CYCC= it — the x86_64,
+# PE and Mach-O legs; the aarch64 / cx compilers are built from the tree): the lane before it (817768e2f) -> RED 24:
+# BB1-BB6 BB9 on the three legs ("fn 'main' is defined inside fn 'h'", "expected '}'", BB4b mk's invented line);
+# `_cov_body` reading the `;` as a body -> RED 24, the same; `_prescan_skip_fn` not stopping at the `;` -> RED 3: BB4b
+# (the fn after it unregistered in pass 1); `_fn_body_close` keeping the latch -> RED 3: BB5 (j's line swallowed); the
+# stub skip of a bounded generic's i64 base left on (`_b3_skip = 1`) -> RED 3: BB9
+row BB1 "a fn with no body, then main's own error" 'fn h(): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:1:12: expected '{', got ';'
+error:<source>:2:31: undefined variable 'zz' (missing include or enum?)"
+
+row BB2 "an impl method with no body, then the next method's own error" 'struct P { x; }
+impl P { fn h(self): i64; fn k(self): i64 { return 1 + yy; } }
+fn main(): i64 { var p = P { 1 }; return p.k(); }
+syscall(60, main());
+' "error:<source>:2:25: expected '{', got ';'
+error:<source>:2:58: undefined variable 'yy' (missing include or enum?)"
+
+row BB3 "a generic with no body, called (replayed inline)" 'fn g<T>(x: T): T;
+fn main(): i64 { return g(3) + zz; }
+syscall(60, main());
+' "error:<source>:1:17: expected '{', got ';'
+error:<source>:2:34: undefined variable 'zz' (missing include or enum?)"
+
+row BB4 "below its caller; the fn after it registered in pass 1" 'fn main(): i64 { return h() + zz; }
+fn h(): i64;
+fn k(): i64 { return 2; }
+syscall(60, main() + k());
+' "error:<source>:1:33: undefined variable 'zz' (missing include or enum?)
+error:<source>:2:12: expected '{', got ';'"
+
+row BB4b "a forward call past it reads pass 1's facts (mk's struct return: no \"no struct type in scope for 'p'\")" 'struct Pt { x; y; z; }
+fn main(): i64 { var p = mk(); return p.z; }
+fn h(): i64;
+fn mk(): Pt { var p: Pt; p.z = 3; return p; }
+syscall(60, main() + zz);
+' "error:<source>:3:12: expected '{', got ';'
+error:<source>:5:24: undefined variable 'zz' (missing include or enum?)"
+
+row BB5 "no return type, and parameters" 'fn h();
+fn j(a, b);
+fn main(): i64 { return zz; }
+syscall(60, main());
+' "error:<source>:1:7: expected '{', got ';'
+error:<source>:2:11: expected '{', got ';'
+error:<source>:3:27: undefined variable 'zz' (missing include or enum?)"
+
+row BB6 "BB1 under --syntax-only" 'fn h(): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:1:12: expected '{', got ';'" --syntax-only
+
+row BB7 "control: a body whose first token is a \`;\` is read as a body (refused as before)" 'fn h(): i64 { ; return 3; }
+fn main(): i64 { return h() + zz; }
+syscall(60, main());
+' "error:<source>:1:15: unexpected ';'
+error:<source>:2:33: undefined variable 'zz' (missing include or enum?)"
+
+row BB9 "a bounded generic with no body (its i64 base a skipped stub: the skip ran into main's body)" 'trait Show { fn show(self): i64; }
+fn g<T: Show>(x: T): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:2:25: expected '{', got ';'
+error:<source>:3:31: undefined variable 'zz' (missing include or enum?)"
+
+okrow BB8 "control: the shapes beside it build — a one-statement fn, an impl method, a generic" 'struct P { x; }
+impl P { fn k(self): i64 { return self.x; } }
+fn h(): i64 { return 1; }
+fn g<T>(x: T): T { return x; }
+fn main(): i64 { var p = P { 1 }; return h() + p.k() + g(1); }
+syscall(60, main());
+' 3
+
+# The corpus floor (6.7.16): 89 rows on five legs. The gate had none, so a row lost from the list, or a leg that
+# stopped running, read green.
+FLOOR=445
+if [ $((pass + fail)) -lt "$FLOOR" ]; then bad "$G ran $((pass + fail)) row-legs (floor $FLOOR) - rows or legs were lost"; fi
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

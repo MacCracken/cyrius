@@ -2700,11 +2700,13 @@ fn _coro_land_suspends(S): i64 {
     return 0;
 }
 # A loop body: one more loop and one more break target for the statements inside it.
-fn _loop_body(S, scoped): i64 {
+fn _loop_body(S, scoped): i64 { return _loop_body_b(S, scoped, 1); }
+# ... `bb` 0: a body of one statement, no braces (`_blk_open`, parse_ctrl.cyr). CHANGELOG [6.7.16]
+fn _loop_body_b(S, scoped, bb): i64 {
     _loop_depth = _loop_depth + 1;
     _brk_depth = _brk_depth + 1;
     if (scoped == 1) { SCOPE_PUSH(S); }
-    PARSE_PROG(S);
+    _blk_body(S, bb);
     if (scoped == 1) { SCOPE_POP(S); }
     _loop_depth = _loop_depth - 1;
     _brk_depth = _brk_depth - 1;
@@ -2788,26 +2790,28 @@ fn _PRIV_PRESCAN(S): i64 {
 }
 
 fn _PRIV_PRESCAN_TOK(S, ti): i64 {
-    var ln = GTLINE(S, ti);
-    # THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
-    # file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
-    # too. Anything else sharing the token's line is the per-item misread.
-    # ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
-    # on whatever line the source ended on, so a file whose last byte is the `e` of
-    # `private` — no trailing newline — has the EOF token sharing the marker's line and was
-    # told "per-item `private` is not supported", a rule the author did not break. 6.6.4
-    # refused that source too (`unexpected private` when a statement precedes it), so the
-    # only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
-    var nx = ti + 1;
-    if (nx < GTCNT(S)) {
-        if (TOKTYP(S, nx) != 5) {
-            if (TOKTYP(S, nx) != 12) {
-                if (GTLINE(S, nx) == ln) { _priv_per_item_err(S, ti); return 0; }
-            }
-        }
-    }
-    _PRIV_MARK(FM_FILEID(S, ln));
+    if (_priv_is_item(S, ti) == 1) { _priv_per_item_err(S, ti); return 0; }
+    _PRIV_MARK(FM_FILEID(S, GTLINE(S, ti)));
     return 0;
+}
+# 1 = the `private` at token `ti` is the per-item form (reported by the pre-pass). Also the statement parser's test
+# (`_dl_priv`, parse_fn_def.cyr), so the token it steps is the one reported.
+# THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
+# file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
+# too. Anything else sharing the token's line is the per-item misread.
+# ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
+# on whatever line the source ended on, so a file whose last byte is the `e` of
+# `private` — no trailing newline — has the EOF token sharing the marker's line and was
+# told "per-item `private` is not supported", a rule the author did not break. 6.6.4
+# refused that source too (`unexpected private` when a statement precedes it), so the
+# only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
+fn _priv_is_item(S, ti): i64 {
+    var nx = ti + 1;
+    if (nx >= GTCNT(S)) { return 0; }
+    if (TOKTYP(S, nx) == 5) { return 0; }
+    if (TOKTYP(S, nx) == 12) { return 0; }
+    if (GTLINE(S, nx) != GTLINE(S, ti)) { return 0; }
+    return 1;
 }
 
 # Emitted from the pre-pass, so NOT through ERR_MSG: ERR_MSG sets `_panic`, which exists
@@ -3183,15 +3187,16 @@ fn _match_arm_test(S, midx, mh): i64 {
 }
 
 fn PARSE_SWITCH(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
     STI(S, GTI(S) + 1);
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     PCMPE(S);
     var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
     var _sw_m0 = _clm_n;   # 6.7.2: this switch's label memo, trimmed at its end
@@ -3419,11 +3424,12 @@ fn PARSE_MATCH(S): i64 {
     # v5.8.22 bite #2 — capture match-keyword line for exhaustive-
     # coverage diagnostic before STI consumes it.
     var match_line = GTLINE(S, GTI(S));
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
     STI(S, GTI(S) + 1);
+    var he = _hdr_brace(S, GTI(S));
     PCMPE(S);
     var mh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Store match value in hidden temp var
     var midx = _HTEMP(S);
     _HTSTORE(S, midx);
@@ -3635,28 +3641,105 @@ var _assert_rep_ti = 0 - 1;
 # (`_assert_end`). Two refused `#assert`s printed only the first — the declaration zone never resyncs, and in a fn
 # the resync skipped the next statement — and one after another declaration's latched error printed "#assert
 # failed" in place of its refusal. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AN #assert IS LINE-TERMINATED, SO ITS REFUSAL ENDS IN SYNC AT ITS LINE TOO, not only at its `;`
+# (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): `#assert zz9 == 1` with no
+# `;` kept the latch, and the statement on the next line was skipped by the resync, its own error unreported. The
+# refused expression is stepped to its grammar's end (`_ce_extent`, what pass 1 skips — the evaluator stops at the
+# refusal, maybe a line short), when that is a well-bracketed stretch with no `;` (`_asrt_span_ok`), then the tail
+# ends the directive. And IN A BLOCK the tail stops at the `}` on its line that closes the block (`_asrt_in_blk`):
+# it ate it, so `{ #assert 1 == 1 }` added "expected '}', got end of file" to its refusal, and `{ #assert 1 == 1,
+# "m" }` was that invented error alone — now "expected `;` or a line break before `}`". At module scope a `}` there
+# closes nothing and the tail still takes it. CHANGELOG [6.7.16]
+var _asrt_ti = 0;     # the #assert's first expression token (`_assert_open`)
+var _asrt_impl = 0;   # 1 = an impl body's directive (`_impl_dir`): its `}` closes the body
 fn _assert_open(S): i64 {
     var pw = _panic;
     STI(S, GTI(S) + 1);
+    _asrt_ti = GTI(S);
     _panic = 0;
     _ce_asrt = 1;
     return pw;
 }
 fn _assert_end(S, pw): i64 {
-    _assert_tail(S);
-    if (_panic == 1) { if (TOKTYP(S, GTI(S) - 1) != 5) { return 0; } }
+    var e = 0 - 1;
+    if (_panic == 1) { e = _asrt_ext(S); }
+    var bs = _assert_tail(S);
+    if (bs == 1) { _asrt_brace_err(S); }
+    if (_panic == 1) { if (_asrt_synced(S, e, bs) == 0) { return 0; } }
     _panic = pw;
     return 0;
 }
+# 1 = the tail stopped at the enclosing block's `}` (left for the block), else 0.
 fn _assert_tail(S): i64 {
     var ln = GTLINE(S, GTI(S) - 1);
     if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
+    var bd = 0;
+    var blk = _asrt_in_blk(S);
     while (PEEKT(S) != 5 && PEEKT(S) != 12) {
         if (GTLINE(S, GTI(S)) != ln) { break; }
+        if (PEEKT(S) == 13) { bd = bd + 1; }
+        if (PEEKT(S) == 14) {
+            if (bd == 0) { if (blk == 1) { return 1; } }
+            else { bd = bd - 1; }
+        }
         STI(S, GTI(S) + 1);
     }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
+}
+# 1 = the #assert sits in a braced body: a fn's, a nested block's (`_pp_depth` > 1) or an impl's.
+fn _asrt_in_blk(S): i64 {
+    if (GINFN(S) == 1) { return 1; }
+    if (_pp_depth > 1) { return 1; }
+    return _asrt_impl;
+}
+# An impl body's directive (pass 1's `_prescan_impl_body`, pass 2's `_impl_attrs`): `_tl_directive` with the body's
+# `}` closing an #assert's line. CHANGELOG [6.7.16]
+fn _impl_dir(S, arm): i64 {
+    _asrt_impl = 1;
+    var r = _tl_directive(S, arm);
+    _asrt_impl = 0;
+    return r;
+}
+fn _asrt_brace_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    ERR_MSG(S, "#assert: expected `;` or a line break before `}`", 48);
+    return 0;
+}
+# A refused #assert's expression (from `_asrt_ti`): its grammar extent, the cursor stepped there (and past its
+# `,`) when the evaluator stopped short; -1 when the extent is no well-bracketed stretch (an unclosed `(` runs on).
+fn _asrt_ext(S): i64 {
+    var e = _ce_extent(S, _asrt_ti);
+    if (_asrt_span_ok(S, _asrt_ti, e) == 0) { return 0 - 1; }
+    if (e > GTI(S)) {
+        STI(S, e);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    }
+    return e;
+}
+# 1 = tokens [a, b) hold no `;` / EOF and balance `(`..`)` and `{`..`}` each, never closing more than opened.
+fn _asrt_span_ok(S, a, b): i64 {
+    var p = 0;
+    var c = 0;
+    while (a < b) {
+        var t = TOKTYP(S, a);
+        if (t == 5 || t == 12) { return 0; }
+        if (t == 10) { p = p + 1; }
+        if (t == 11) { p = p - 1; if (p < 0) { return 0; } }
+        if (t == 13) { c = c + 1; }
+        if (t == 14) { c = c - 1; if (c < 0) { return 0; } }
+        a = a + 1;
+    }
+    if (p != 0) { return 0; }
+    if (c != 0) { return 0; }
+    return 1;
+}
+# The refused directive ended in sync: at its `;`, at its block's `}` (`bs`), or past its whole expression (`e`).
+fn _asrt_synced(S, e, bs): i64 {
+    if (TOKTYP(S, GTI(S) - 1) == 5) { return 1; }
+    if (bs == 1) { return 1; }
+    if (e < 0) { return 0; }
+    return 1;
 }
 
 # 6.6.10 — the operands of an #assert (`ATOM [OP ATOM]`) may be followed only by `,` (the
@@ -3684,23 +3767,54 @@ fn _assert_operands_end(S): i64 {
 # not an enum, or not NAME's enum, reports it and returns FINDVAR's slot (the caller goes on
 # as before, no cascade); -1 when NAME is no global at all (the caller's own path, as
 # before). CHANGELOG [6.6.11]
+# 6.7.16: NAME declared nowhere after a Base that IS an enum is the same "'NOPE' is not a variant of 'Color'", at
+# NAME, and -2 (reported): each caller fell back to its undefined-name report for the BASE — "undefined variable
+# 'Color'", "unknown name 'Color' in a const context" — blaming the enum, which is declared
+# (issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). A Base that is no enum keeps -1.
+# CHANGELOG [6.7.16]
 fn _enum_qual_resolve(S, bti): i64 {
     var bnoff = TOKVAL(S, bti);
     var vn = TOKVAL(S, bti + 2);
     var vi = _enum_variant_in(S, bnoff, vn);
     if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
     var any = FINDVAR(S, vn);
-    if (any < 0) { return 0 - 1; }
+    if (any < 0) { return _enum_qual_none(S, bti, bnoff, vn); }
     var sv = GTI(S);
     if (_enum_id_of(S, bnoff) == 0) {
         STI(S, bti);
+        _refuse_in_sync(S);   # 6.7.16: the caller parses on, so the statement after it is parsed (and reported)
         ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
     } else {
         STI(S, bti + 2);
+        _refuse_in_sync(S);
         ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
     }
     STI(S, sv);
     return any;
+}
+
+# ... `vn` is no global at all: -2 after the report when `bnoff` names an enum, else -1 (the caller's own path).
+fn _enum_qual_none(S, bti, bnoff, vn): i64 {
+    if (_enum_qual_bad(S, bnoff, vn, bti + 2) == 0) { return 0 - 1; }
+    return 0 - 2;
+}
+# "'vn' is not a variant of 'bnoff'" at token `mti` when `bnoff` names an enum (`vn` none of its members): 1 =
+# reported. The resolver's, and the statement / `&` paths' that never reach it (`_enum_qual_store_refused`,
+# `_enum_qual_lv_refuse`, `_stmt_enum_qual`). Not under --syntax-only: a file read alone may lack the other
+# declaration of an enum of that name (one may be declared twice) — its unknown names stay opaque. CHANGELOG [6.7.16]
+fn _enum_qual_bad(S, bnoff, vn, mti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    return _enum_qual_bad_any(S, bnoff, vn, mti);
+}
+# ... under --syntax-only too: a const context names every unknown name there (`_ce_qual_unk`).
+fn _enum_qual_bad_any(S, bnoff, vn, mti): i64 {
+    if (_enum_id_of(S, bnoff) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, mti);
+    _refuse_in_sync(S);   # every caller steps the member (and the statement) on: in sync
+    ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
+    STI(S, sv);
+    return 1;
 }
 
 # The slot of the enum constant `vn` declared in an enum NAMED `bnoff`, or -1. Walks every
@@ -3741,6 +3855,67 @@ fn _is_ident_intrinsic(S, noff): i64 {
     if (_is_sizeof_word(S, noff) == 1) { return 1; }
     return _is_mulh64_word(S, noff);
 }
+# ⛔ 6.7.16 — A BUILTIN OR AN INTRINSIC CALLED WITH A TYPE-ARGUMENT LIST: `load64<i64>(p)`, `syscall<i64>(39)`,
+# `mulh64<i64>(2, 3)`, `sizeof<i64>(H)`. Its arm asks for the `(` right after its name: "expected '(', got '<'", the
+# list then read as comparisons ("undefined variable 'i64'"; a statement's `store64<i64>(&a, 2);` went on to "expected
+# '}', got end of file"), and `mulh64<i64>(2, 3);` as a statement was "undefined function 'mulh64'". Refused once at the
+# name with a fn's words (6.7.16, `_eta_gen`) — "'load64' is not a generic fn: it takes no type arguments" — and the list
+# stepped, so the arm parses its call. ERR_EXPECT asks `_ngt_callee_lt` when it wants a `(`: one hook for every arm.
+# Only a list of type names closing right before a `(` (`_ugc_open`): `sizeof < a` stays what it was. CHANGELOG [6.7.16]
+# The name a callee at token nt that takes no type arguments prints with: a builtin token (a callable one: TOKNAME's
+# `f64_sqrt` / `callptr` and TOKNAME_BUILTIN's, less the keywords `union` `u128` `defer` `secret` `async` `await`) or
+# an IDENT-spelled intrinsic (`sizeof`, `mulh64`). 0 for anything else.
+fn _ngt_callee_name(S, nt): i64 {
+    var t = TOKTYP(S, nt);
+    if (t == 2) {
+        if (_is_ident_intrinsic(S, TOKVAL(S, nt)) == 1) { return S + 0xEC00000 + TOKVAL(S, nt); }
+        return 0;
+    }
+    if (t == 101 || t == 105 || t == 106 || t == 108 || t == 134 || t == 135) { return 0; }
+    if (t == 136 || t == 137) { return TOKNAME(t); }
+    return TOKNAME_BUILTIN(t);
+}
+# The cursor on the `<` after such a callee, opening a type list a `(` follows: refused at the name (once — a generic
+# body's instances share it; silent under --syntax-only, as D6's are; the latch put back, so the call parses in sync)
+# and stepped, the cursor on the `(`. 1 = stepped; 0 = not that shape (cursor untouched).
+fn _ngt_callee_lt(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var nm = _ngt_callee_name(S, nt);
+    if (nm == 0) { return 0; }
+    var o = _ugc_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    _ngt_say_s(S, nt, nm);
+    STI(S, o);
+    return 1;
+}
+fn _ngt_say_s(S, nt, nm): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, nt) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, nt);
+    var tg = "_ngt_say_s";
+    if (_err_once(S, (tg * 31 + nt) * 8 + 7) == 1) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        PRSTR(": '");
+        PRSTR(nm);
+        PRSTR("' is not a generic fn: it takes no type arguments\n");
+        _err_excerpt(S);
+        _had_error = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# `mulh64<i64>(2, 3);` as a statement (cursor on its `<`; `_stmt_undef_gcall`, the name being no fn): the list refused
+# and stepped, then D11's statement — the value parsed, the statement ended at its `;` in sync — its own words standing
+# down (`_stmt_intr_at`). 1 = consumed; 0 = no type list (cursor untouched).
+fn _stmt_intr_targs(S, noff): i64 {
+    var nt = GTI(S) - 1;
+    if (_ngt_callee_lt(S) == 0) { return 0; }
+    return _stmt_intr_at(S, noff, nt);
+}
 # ⛔ 6.7.16 — `mulh64(a, b);` / `sizeof(T);` AS A STATEMENT IS REFUSED BY NAME (the user's D11, 2026-10-19). The
 # `IDENT (` statement arm sent it to PARSE_FNCALL, a call to a fn that cannot exist (6.6.20 reserved the names): the
 # compile was refused for "undefined function 'mulh64'" (`sizeof(H);` with "undefined variable 'H'" first) and
@@ -3749,25 +3924,44 @@ fn _is_ident_intrinsic(S, noff): i64 {
 # call", once at the name, no binary. The value is then parsed under the latch (`sizeof`'s type and all), the
 # statement ending at its `;` in sync (`_refuse_in_sync`), so the next statement is parsed. Cursor on the `(` after the
 # name `noff`; 1 = refused, the statement consumed. `fncallN` is no intrinsic here: its statement arm stays a call. A
-# `.` after the call's `)` (`mulh64(2, 3).n = 5;`) is not the shape: the call statement's field arm keeps its "expected
-# ';', got '.'". CHANGELOG [6.7.16]
-fn _stmt_intrinsic(S, noff): i64 {
+# `.` after the call's `)` (`mulh64(2, 3).n = 5;`) is not the shape: `_stmt_intrinsic_dot`. CHANGELOG [6.7.16]
+fn _stmt_intrinsic(S, noff): i64 { return _stmt_intr_at(S, noff, GTI(S) - 1); }
+# ... the name at token nt (6.7.16: `mulh64<i64>(2, 3);`'s list stepped, `_stmt_intr_targs`). The discarded value's
+# words stand down when the list was refused at nt (`_tn_seen_at`): the statement is one error, at the name.
+fn _stmt_intr_at(S, noff, nt): i64 {
     if (_is_ident_intrinsic(S, noff) == 0) { return 0; }
     var c = _call_close(S, GTI(S)) + 1;
-    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return 0; } }
-    STI(S, GTI(S) - 1);   # the name
+    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
+    STI(S, nt);   # the name
     _refuse_in_sync(S);
+    if (_tn_seen_at(S, nt) == 0) { _stmt_intr_say(S, noff); }
+    PCMPE(S);
+    _expect_step(S, 5);
+    return 1;
+}
+
+# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
+# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
+# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
+# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
+# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
+# resync steps to its `;`. Cursor on the `(`; 1. CHANGELOG [6.7.16]
+# D11's words for the statement at the cursor (the name `noff`): once, latched.
+fn _stmt_intr_say(S, noff): i64 {
     var tg = "_stmt_intrinsic";
-    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
-        _err_head(S);
-        PRSTR(": the value of '");
-        PRSTR(S + 0xEC00000 + noff);
-        PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
-        _err_excerpt(S);
-        _had_error = 1;
-        _panic = 1;
-    }
+    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": the value of '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+fn _stmt_intrinsic_dot(S, nt): i64 {
+    STI(S, nt);   # the name
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
@@ -4805,38 +4999,87 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # (a method declared `: Str`), `c = h.name` (a `: Str` field, nested fields walked). Each of those
 # warned "assigning non-pointer to typed pointer" about a value of exactly the local's type.
 # Its own fn so `_PARSE_STMT_IMPL` carries one reference here, not seven (cybs's ceiling).
+# ⛔ 6.7.16 — INTO A `*T`, ONLY ITS OWN STRUCT, AND ONLY THE WHOLE VALUE. The call arm kept ANY struct a call is declared
+# to return, whatever the local points at and whatever followed the call: `p = str_from(..);` into a `*P` local (a `Str`
+# header's address in a `*P`; `p.b` read the length), a `*i64` local or a `p: *P` parameter, `h = mkq();` (an 8-byte
+# struct's word) into a `*Str`, `l = mkh().n;` and `l = str_from(..) + 0;` said nothing, where the `*T` declaration and
+# a `*T` global warn. Into a `*T` (the slot's typed-pointer bit) the value is typed as one whole primary (`_tpv_sid`: a
+# name, a call, either through nested fields) and kept only when it is T (`0 - lt`), so `l = mkh().name;` (a `: Str`
+# field) into a `*Str` stays quiet. A struct local that is no `*T` (a handle) keeps the call arm: a struct call into it
+# is a rebind at any type (6.6.16 (C2)), quiet as its declaration and a handle global are
+# (issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md). Warning text only. CHANGELOG [6.7.16]
 fn _asg_ret_peek(S, noff): i64 {
     _asg_ret_sid = 0;
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) == 10) {
-        var fi = FINDFN(S, PEEKV(S));
-        if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
-        return 0;
-    }
     if (GINFN(S) == 0) { return 0; }
     var li = FINDLOCAL(S, noff);
     if (li < 0) { return 0; }
+    if (GLPTRP(S, li) == 0) { if (_asg_hdl_call(S) == 1) { return 0; } }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }
     if (lt <= 0 - 2048) { return 0; }
-    var rs = _asg_rhs_sid(S);
+    var rs = _tpv_sid(S, GTI(S));
     if (rs == 0 - lt) { _asg_ret_sid = rs; }
     return 0;
 }
-# The struct ONE primary at the cursor evaluates to when it ends at `;`: a name (`_arg_name_sid`:
-# a typed local, a capture, a pointer-mode struct global), or a name followed by nested struct
-# fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return). An inline
-# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek.
-fn _asg_rhs_sid(S): i64 {
-    var ti = GTI(S);
-    var nt = TOKTYP(S, ti + 1);
-    if (nt == 5) {
-        var r = _arg_name_sid(S, PEEKV(S));
-        return r;
+# ... a local that is no `*T`: a free call at the cursor, under parentheses that wrap the whole value (`_tpv_peel`)
+# (`_asg_ret_sid` its declared return, v6.5.28). 1 = a call.
+fn _asg_hdl_call(S): i64 {
+    var a = _tpv_peel(S, GTI(S));
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
+    return 1;
+}
+# The struct ONE primary from token `st` evaluates to when it is the whole value: a name (`_arg_name_sid`: a typed
+# local, a capture, a pointer-mode struct global), a free call `f(..)` (its declared return), or either followed by
+# nested struct fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return), under any
+# parentheses that wrap it whole (`(h.name)`, `((f(..)))`: the guide's whole-wrap transparency, 6.7.16). An inline
+# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek. The local's arm (`_asg_ret_peek`) and
+# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse_decl.cyr) read it, so they agree.
+fn _tpv_sid(S, st): i64 {
+    var a = _tpv_peel(S, st);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (_tpv_end_at(S, a + 1) == 1) { return _arg_name_sid(S, TOKVAL(S, a)); }
+    if (nt == 41) { return _asg_rhs_steps(S, a + 1, _recv_sid(S, TOKVAL(S, a))); }
+    if (nt != 10) { return 0; }
+    var e = _tok_close_paren(S, a + 1);
+    if (e < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (_tpv_end_at(S, e + 1) == 1) { return rs; }
+    if (TOKTYP(S, e + 1) != 41) { return 0; }
+    return _asg_rhs_steps(S, e + 1, rs);
+}
+# Where the value `_tpv_sid` types ends: the first of the `)` that wrap it whole, or -1 (its `;`, `_tp_term`).
+var _tpv_ve = 0 - 1;
+# The first token inside the k `(` at `st` that wrap the whole value up to its `;` (`_tp_term`) (k = 0: `st`; `_tpv_ve`
+# -1), or -1
+# when they do not wrap it whole (`(a) + 1`, `(a)(b)`). Sets `_tpv_ve`.
+fn _tpv_peel(S, st): i64 {
+    _tpv_ve = 0 - 1;
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    if (k == 0) { return st; }
+    var c = _tok_close_paren(S, st + k - 1);
+    if (c < 0) { return 0 - 1; }
+    if (_pair_unwrap_k(S, c, k, 0) < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + k) != _tp_term) { return 0 - 1; }
+    _tpv_ve = c;
+    return st + k;
+}
+# 1 = token `i` ends the value `_tpv_sid` types (`_tpv_peel`'s end, else a `;`).
+fn _tpv_end_at(S, i): i64 {
+    if (_tpv_ve >= 0) {
+        if (i == _tpv_ve) { return 1; }
+        return 0;
     }
-    if (nt != 41) { return 0; }
-    var k = _asg_rhs_steps(S, ti + 1, _recv_sid(S, PEEKV(S)));
-    return k;
+    if (TOKTYP(S, i) == _tp_term) { return 1; }
+    return 0;
 }
 fn _asg_rhs_steps(S, di, rsid): i64 {
     while (rsid > 0) {
@@ -4844,7 +5087,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
         if (TOKTYP(S, di + 2) == 10) {
             var e = _tok_close_paren(S, di + 2);
             if (e < 0) { return 0; }
-            if (TOKTYP(S, e + 1) != 5) { return 0; }
+            if (_tpv_end_at(S, e + 1) == 0) { return 0; }
             var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
             if (mf < 0) { return 0; }
             var ms = GFRS(S, mf);
@@ -4854,7 +5097,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
         var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
         if (fx < 0) { return 0; }
         var ft = GETFTYPE(S, rsid - 1, fx);
-        if (TOKTYP(S, di + 2) == 5) {
+        if (_tpv_end_at(S, di + 2) == 1) {
             if (IS_STR_FIELD(S, ft) == 1) { return ft; }
             return 0;
         }
@@ -5707,6 +5950,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
 # global or a struct of the name keeps the old path. Cursor past the name; 1 = consumed through its `;`, 0 = not this
 # shape (cursor untouched). CHANGELOG [6.7.16]
 fn _stmt_undef_gcall(S, noff): i64 {
+    if (_is_ident_intrinsic(S, noff) == 1) { return _stmt_intr_targs(S, noff); }   # 6.7.16: `mulh64<i64>(2, 3);`
     if (_ugc_open(S, GTI(S)) < 0) { return 0; }
     if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
     if (_cl_capturing == 1) { if (_cl_snap_find(S, noff) >= 0) { return 0; } }
@@ -5899,7 +6143,7 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
     var gi = FINDVAR(S, nm);
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
-        if (_ce_name_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it
+        if (_sub_undef_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it; 6.7.16: a refused declaration declared it
         ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
         _gv_note_blockscoped(S, nm);
         _panic = p0;
@@ -5974,6 +6218,7 @@ fn _masg_ebool(S, fi, k): i64 {
 # 6.6.17 (`_impl_attrs`). The method the statement ENDED with is the one discarded (`_mcall_last`:
 # `p.bump().mu();` discards `mu`'s result; `p.mu().x;` used it).
 fn _stmt_method_call(S, noff): i64 {
+    if (_stmt_enum_qual(S, noff) == 1) { return 0; }   # 6.7.16: `E.m(..);`, E an enum
     var pair = _callee_returns_pair_at(S, GTI(S) - 1);
     _mcall_last = 0 - 1;
     var sv = _cpf_st;
@@ -5992,6 +6237,21 @@ fn _stmt_method_call(S, noff): i64 {
     _stmt_qmark(S, pair);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# 6.7.16 — `E.m(..);` (cursor on the dot), E an enum and no variable: the store path's statement (a member, `Color.RED();`,
+# is the "expected '='" `Color.RED;` is; any other name "'m' is not a variant of 'E'", the statement stepped) — the
+# field load blamed the enum, "undefined variable 'Color'". 1 = consumed through its `;`. CHANGELOG [6.7.16]
+fn _stmt_enum_qual(S, noff): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (_enum_id_of(S, noff) == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, sv + 2);
+    if (_enum_qual_store_refused(S, noff, TOKVAL(S, sv + 1)) == 1) { return 1; }
+    STI(S, sv);   # --syntax-only: an unknown member stays opaque (`_enum_qual_bad`), the call parsed as before
     return 0;
 }
 
@@ -6049,9 +6309,7 @@ fn _nested_fn_mark(S, noff, kw): i64 {
 fn _nested_fn_encl(S): i64 {
     if (_cur_fn_ix < 0) { PRSTR("a fn body"); return 0; }
     var p = S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8);
-    if (load8(p) == 95 && load8(p + 1) == 95 && load8(p + 2) == 99 && load8(p + 3) == 108) {
-        if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { PRSTR("a closure"); return 0; }
-    }
+    if (_fn_is_closure(S, _cur_fn_ix) == 1) { PRSTR("a closure"); return 0; }
     PRSTR("fn '");
     var l = 0;
     while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
@@ -6060,6 +6318,13 @@ fn _nested_fn_encl(S): i64 {
     return 0;
 }
 
+# 1 = fn `fi` is a closure's `__clNNNNN` entry (a refusal says "a closure", never its table name). CHANGELOG [6.7.16]
+fn _fn_is_closure(S, fi): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    if (load8(p) != 95 || load8(p + 1) != 95 || load8(p + 2) != 99 || load8(p + 3) != 108) { return 0; }
+    if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { return 1; }
+    return 0;
+}
 # Refuse the `fn` / `async fn` at the cursor when it is inside a fn body (GINFN == 1).
 # 1 = refused: reported once, consumed through its body's `}` (or a bodiless header's `;`, never
 # past EOF). 0 = not a nested fn: nothing moved. Small and with no tail call (cybs).

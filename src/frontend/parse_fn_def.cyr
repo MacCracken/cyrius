@@ -333,8 +333,8 @@ fn _prescan_impl_body(S): i64 {
         elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
         elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
         elif (t == 32) { _tr_mod_for(S); _prescan_fn_sig(S); _tr_mod_back(S); }   # 6.7.0: its prefix
-        elif (_tl_directive(S, 0) == 1) { }            # 6.6.17: directives on a method (_impl_attrs)
-        else { go = 0; }
+        elif (_impl_dir(S, 0) == 1) { }                # 6.6.17: directives on a method (_impl_attrs)
+        else { go = _impl_member_bad(S, 0, 0, 0); }   # 6.7.16: a member that is not a fn, stepped (PARSE_IMPL reports it)
     }
     return 0;
 }
@@ -343,6 +343,10 @@ fn _prescan_impl_body(S): i64 {
 # or after a depth-0 `}` that is not followed by `else`/`elif` (a statement can end in a
 # brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`). Returns 1 when the
 # statement held a `fn` keyword — a definition PARSE_PROG will parse inside it (6.6.16).
+# 6.7.16: a `)` / `]` that closes nothing (depth 0) is not counted: the depth went negative, so a later fn's body
+# `{ .. }` ended the "statement" at its first `;` and the walk met that fn's `}` as unmatched — `) fn f(): i64 {
+# return 1; }` (or a bare `#deprecated ) )` above a fn) was "unmatched '}' at module scope", the compile stopped,
+# and the real "unexpected ')'" (the directive's own refusal) was never printed. CHANGELOG [6.7.16]
 fn _prescan_skip_stmt(S): i64 {
     var dep = 0;
     var go = 1;
@@ -365,7 +369,8 @@ fn _prescan_skip_stmt(S): i64 {
         if (t == 124) { if (dep >= 1) { _tl_deprecated(S, 0); continue; } }
         if (dep >= 1) { _tl_arm1(t); }
         if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
-        if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
+        if (t == 14) { dep = dep - 1; }
+        elif (t == 11 || t == 29) { if (dep > 0) { dep = dep - 1; } }
         STI(S, GTI(S) + 1);
         if (dep <= 0) {
             if (t == 5) { go = 0; }
@@ -428,6 +433,9 @@ fn _prescan_tail_loop(S): i64 {
         # the point. CHANGELOG [6.6.5]
         elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
         elif (t == 14) { _tl_stray_brace(S); go = 0; }   # an unmatched '}' — refused (6.7.9)
+        # 6.7.16: a `private` marker registers nothing (the pre-pass marked the file or reported the per-item form);
+        # stepped alone, so a `fn` after a per-item one is prescanned and a late declaration's names filled
+        elif (t == 153) { STI(S, GTI(S) + 1); }
         elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { _tl_arm1(t); STI(S, GTI(S) + 1); }
         elif (t == 124) { _tl_deprecated(S, 0); }       # the pass-1 arm itself, so it records too
         # ⚠ 6.6.16 — a statement holding a `fn` (a definition inside a top-level block, which
@@ -437,6 +445,7 @@ fn _prescan_tail_loop(S): i64 {
         # leaves unmarked, whose every call would then warn falsely.
         elif (_prescan_skip_stmt(S) == 1) { _pre_attr_drop(); }
     }
+    _ce_zflush(S);   # 6.7.16: the zone's held unknown names, every late declaration's names now in
     return 0;
 }
 
@@ -449,6 +458,7 @@ fn _prescan_tail_loop(S): i64 {
 # hint covers the other way to get here: an extra `}` INSIDE a fn ends it early, and the fn's own
 # closing brace is the one left over. CHANGELOG [6.7.9]
 fn _tl_stray_brace(S): i64 {
+    _ce_zflush(S);   # 6.7.16: before the compile stops
     var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
     ERR_MSG(S, "unmatched '}' at module scope", 29);
     if (quiet == 0) { syscall(SYS_WRITE, 2, "  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
@@ -466,6 +476,7 @@ fn _tl_stray_brace(S): i64 {
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
     _dyn_fold(S);     # 6.7.8: `dyn X` -> one identifier token, BEFORE any prepass records an index
+    _dl_inner_fill(S);   # 6.7.16: the names a declaration in a fn body or a block declares, before any use is read
     _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
     _dyn_prepass(S);  # 6.7.8: each folded `dyn X` registered (its struct) and checked where it stands
     _cst_prepass(S);  # 6.7.2 (B1): every top-level const, wherever it sits (a size-0 pending slot)
@@ -617,7 +628,7 @@ fn _decl_late(S): i64 {
 # The late declaration at the cursor (token `ti`) stepped as its refusal steps it, and reported when `rep` is 1: an
 # inclusion's rest (`_dl_incl`), a `pub var` / `pub const` marker alone (6.7.16: `pub var x = 1;` still declares x,
 # as below module scope), else through its `}` / `;` and a derive's line. Pass 1's fill (`_dl_fill`) steps the same
-# tokens, `rep` 0.
+# tokens, `rep` 0; a per-item `private` before it (`_dl_priv_late`), `rep` 2: its include line reported, not itself.
 fn _dl_late_step(S, ti, rep): i64 {
     var l1 = GTLINE(S, ti);
     var f1 = FM_SITE(S, l1);
@@ -662,6 +673,7 @@ fn _dl_fill(S, t): i64 {
 # fn 'f'". A `pub var` / `pub const` steps its marker alone (`_dl_pub_mark`), so the declaration still declares and a
 # use of it is no "undefined variable". CHANGELOG [6.7.16]
 fn _decl_inner(S): i64 {
+    if (PEEKT(S) == 153) { return _dl_priv(S); }   # 6.7.16: a per-item `private`, at module scope too
     if (GINFN(S) == 0) { if (_pp_depth <= 1) { return 0; } }
     if (_dl_kind(PEEKT(S)) == 0) { return 0; }
     var ti = GTI(S);
@@ -669,6 +681,43 @@ fn _decl_inner(S): i64 {
     if (_dl_pub_mark(S) == 1) { return 1; }
     _dl_skip_in(S);
     _dl_derived(S, ti);
+    _dl_names(S, ti, GTI(S));
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ⛔ 6.7.16 — A PER-ITEM `private` IN A FN BODY, A BLOCK OR AFTER THE FIRST TOP-LEVEL STATEMENT IS ITS ONE ERROR.
+# `_PRIV_PRESCAN` reports it at the token, once, before either pass, and the zone's `_TL_VIS` steps it; here PARSE_STMT
+# met it where nothing takes it: "unexpected private" as well, and a `private fn g` in a fn body "fn 'g' is defined
+# inside fn 'f'" too. The marker is stepped (`_priv_is_item`, the pre-pass's own test, so the token stepped is the one
+# reported). Then a `var` / `const` / a statement parses on (the variable declares: its use is no "undefined
+# variable"); a `fn` where a fn is defined (module scope, a top-level block: GINFN 0) is left to PARSE_PROG, which
+# defines it; a `fn` in a fn body, or a declaration the declaration-section rule refuses (`_dl_kind`), is stepped as
+# that refusal steps it, its names and fns entered as reported (`_dl_names`, `_dl_quiet`), the per-item error standing
+# for it. The file-level marker (alone on its line) is not this arm's. 1 = consumed (PARSE_STMT returns), 0 = parse on
+# at the cursor. CHANGELOG [6.7.16]
+fn _dl_priv(S): i64 {
+    while (PEEKT(S) == 153) {
+        if (_priv_is_item(S, GTI(S)) == 0) { return 0; }
+        STI(S, GTI(S) + 1);
+    }
+    var ti = GTI(S);
+    if (_IS_FN_KW(S) == 1) {
+        if (GINFN(S) == 0) { return 1; }
+    } elif (_dl_kind(PEEKT(S)) == 0) { return 0; }
+    if (GINFN(S) == 0) { if (_pp_depth <= 1) { return _dl_priv_late(S, ti); } }
+    if (_dl_pub_mark(S) == 1) { return 1; }
+    _dl_skip_in(S);
+    _dl_derived(S, ti);
+    _dl_names(S, ti, GTI(S));
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ... a refused declaration after the first statement (`_decl_late`'s arm, `rep` 2: an include line is still reported,
+# the declaration's own report is the per-item one).
+fn _dl_priv_late(S, ti): i64 {
+    if (_pp_depth != 1) { return 0; }
+    if (_tl_stmt1 < 0) { return 0; }
+    _dl_late_step(S, ti, 2);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
     return 1;
@@ -709,16 +758,52 @@ fn _dl_in_report(S, ti): i64 {
 # 6.7.16: only after a `struct` / `enum` (`pub` / `public` before it or not) — the declarations a `#derive` takes
 # (PP_DERIVE_*): `use m.g; pub var x = 1;` or two `pub fn`s on one line in a fn body stepped the next declaration and
 # the body's own `}` ("expected '}', got end of file"). The declaration's keyword is token `ti`. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — ONLY WHAT THE DERIVE WROTE, NOT THE REST OF THE LINE. A refused `struct Q { y; } fn h() { .. }` stepped the
+# user's own `fn h` as a derive's, and below module scope the enclosing fn body's or block's `}` with it ("expected
+# '}', got end of file"); at module scope h was silently never defined. The derive's output is a run of `[public] fn
+# NAME(..) { .. }` units on the closing line, before the user's own tail (PP_DERIVE_SERIALIZE / _DESER / _ACCESSORS:
+# the bodies, then PP_COPY_TAIL), and every NAME is the type's (`Q_to_json`, `Q_from_json`, `Q_from_json_str`,
+# `Q_<field>`, `Q_set_<field>`; an enum's `E_to_json`, `E_from_json_str`) or a shared helper's (`_cy_enum_name_eq`,
+# `_cy_vecdec_int`, `_cy_vecdec_f64`, `_cy_json_skipval`). So only when the preprocessor derived that type
+# (`PP_DERIVE_LAST`), only those units, each through its own balanced braces (`_skip_nested_body`): the walk stops at
+# anything else, and so never at a `}` that closes a brace opened before it. CHANGELOG [6.7.16]
 fn _dl_derived(S, ti): i64 {
     var k = TOKTYP(S, ti);
-    if (k == 73) { k = TOKTYP(S, ti + 1); }
+    var tn = ti + 1;
+    if (k == 73) { k = TOKTYP(S, ti + 1); tn = ti + 2; }
     if (k != 40) { if (k != 60) { return 0; } }
-    if (PEEKT(S) != 32) { if (PEEKT(S) != 73) { return 0; } }
+    if (TOKTYP(S, tn) != 2) { return 0; }
+    if (PP_DERIVE_LAST(S + 0xEC00000 + TOKVAL(S, tn)) == 0) { return 0; }
     var ln = GTLINE(S, GTI(S) - 1);
-    while (PEEKT(S) != 12) {
-        if (GTLINE(S, GTI(S)) != ln) { return 0; }
-        STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) { go = _dl_derived_fn(S, ln, TOKVAL(S, tn)); }
+    return 0;
+}
+# The derive's fn at the cursor, on line `ln` (`fn NAME` / `public fn NAME`, NAME type `tnoff`'s or a shared helper's:
+# `_dl_dname`), stepped through its body's `}`. 1 = stepped.
+fn _dl_derived_fn(S, ln, tnoff): i64 {
+    var i = GTI(S);
+    if (GTLINE(S, i) != ln) { return 0; }
+    if (TOKTYP(S, i) == 73) { i = i + 1; }
+    if (TOKTYP(S, i) != 32) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (_dl_dname(S, TOKVAL(S, i + 1), tnoff) == 0) { return 0; }
+    var e = _skip_nested_body(S, i);
+    if (TOKTYP(S, e) == 12) { STI(S, e); return 0; }
+    STI(S, e + 1);
+    return 1;
+}
+# 1 = fn name `noff` is one a derive of type `tnoff` writes: `<T>_..` or `_cy_..`.
+fn _dl_dname(S, noff, tnoff): i64 {
+    var p = S + 0xEC00000 + noff;
+    if (load8(p) == 95) { if (load8(p + 1) == 99) { if (load8(p + 2) == 121) { if (load8(p + 3) == 95) { return 1; } } } }
+    var q = S + 0xEC00000 + tnoff;
+    var j = 0;
+    while (load8(q + j) != 0) {
+        if (load8(p + j) != load8(q + j)) { return 0; }
+        j = j + 1;
     }
+    if (load8(p + j) == 95) { return 1; }
     return 0;
 }
 # 1 = token type `t` opens a declaration the rule keeps before the first statement.
@@ -778,7 +863,7 @@ fn _dl_incl(S, l1, f0, n0, rep): i64 {
 }
 fn _dl_incl_at(S, l1, e, f0, n0, rep): i64 {
     var ti = GTI(S);
-    if (rep == 1) { if (_panic == 0) {
+    if (rep != 0) { if (_panic == 0) {
             PRSTR("error:");
             PRSTR(S + 0x721000 + f0);
             PRSTR(":");
@@ -902,6 +987,7 @@ fn _dl_member_at(S, i): i64 {
     var b = TOKTYP(S, i - 1);
     if (b != 13 && b != 31 && b != 5) { return 0; }
     _dl_refd_add(S, TOKVAL(S, i));
+    if (_dl_pre == 1) { return 0; }   # 6.7.16: the pre-walk enters names only (no fn is registered yet)
     if (TOKTYP(S, i + 1) == 10) { _dl_fn_quiet(S, TOKVAL(S, i), i, 0); }   # `Ok2(v)`: its constructor
     return 0;
 }
@@ -918,6 +1004,94 @@ fn _dl_refd_at(S, noff): i64 {
     var i = 0;
     while (i < n) {
         if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# ⛔ 6.7.16 — A REFUSED TOP-LEVEL `var c: S;` (after the first statement: an uninitialized struct or vector, which only
+# a fn's frame holds) DECLARES `c` AS REPORTED: it registered a fn-local slot no top-level use reads, so each use
+# added "undefined variable 'c'" (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md).
+# A VARIABLE's name, kept apart from `_dlr` (whose names a type annotation also asks about): `_undef_var_report`
+# reads both. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AN INNER DECLARATION'S NAMES ARE KNOWN BEFORE PASS 1 READS ANY USE. A `struct` / `enum` / `union` / `trait`
+# in a fn body or a block is refused when PARSE_PROG parses that body (`_decl_inner`, pass 2, in source order), which
+# entered its names (`_dl_names`) only then: a use parsed before it was a second error — an earlier fn's `q: *Q` "type
+# 'Q' is declared after its use", `E.B` "undefined variable 'E'", and from pass 1 a bound `T: Tr` "unknown trait 'Tr'",
+# a `dyn Tr` "'Tr' is not a trait", an `impl Tr for P` "impl of undeclared trait" (pass 2's check of pass 1's impl).
+# This walk runs before every pass-1 scan (`_tl_pass1`, after `_dyn_fold`). It follows the braces: a `{` after a `fn
+# NAME` header (`_IS_FN_KW`'s definition, not a `*fn(..)` type) opens a body, one after a declaration's header
+# (struct, enum, union, trait, impl, mod) a declaration's body — never a body itself, though a method's in it is — and
+# any other `{` is its enclosing one's kind (a block, a closure; at module scope a top-level block). At a statement
+# start in a body (after `{`, `}`, `;` or a case's `:`) a declaration `_decl_inner` always refuses is stepped as it
+# steps it (`_dl_skip_in`; the cursor put back) and its names entered (`_dl_names`, `_dl_pre`: names only — nothing
+# is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
+# the same name still resolves. CHANGELOG [6.7.16]
+var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
+fn _dl_inner_fill(S): i64 {
+    var n = GTCNT(S);
+    var sv = GTI(S);
+    var stk = vec_new();   # one entry per open `{`: 1 a body (code), 0 a declaration's
+    var pend = 0;          # the header the next `{` closes: 1 a fn's, 2 a declaration's, 0 none
+    var ppd = 0;           # the bracket depth that header was met at
+    var pd = 0;
+    _dl_pre = 1;
+    var i = 0;
+    while (i < n) {
+        var k = TOKTYP(S, i);
+        if (k == 10 || k == 28) { pd = pd + 1; }
+        elif (k == 11 || k == 29) { if (pd > 0) { pd = pd - 1; } }
+        elif (k == 13) {
+            var c = _dl_brace_in(stk);
+            if (pend != 0) { if (pd == ppd) { c = 2 - pend; pend = 0; } }
+            vec_push(stk, c);
+        }
+        elif (k == 14) { if (vec_len(stk) > 0) { vec_pop(stk); } }
+        elif (k == 5) { if (pd == ppd) { pend = 0; } }
+        elif (k == 32) { if (TOKTYP(S, i + 1) == 2) { pend = 1; ppd = pd; } }
+        elif (_dl_kind(k) == 1) {
+            if (vec_len(stk) > 0) { if (_dl_brace_in(stk) == 1) { _dl_inner_at(S, i); } }   # in a body, not module scope
+            if (k != 73) { pend = 2; ppd = pd; }
+        }
+        i = i + 1;
+    }
+    _dl_pre = 0;
+    STI(S, sv);
+    return 0;
+}
+# The kind a `{` with no header of its own takes: its enclosing brace's, a body (1) at module scope.
+fn _dl_brace_in(stk): i64 {
+    var l = vec_len(stk);
+    if (l == 0) { return 1; }
+    return vec_get(stk, l - 1);
+}
+# A declaration keyword at token `i` in a body: at a statement start, a `struct` / `enum` / `union` / `trait` (`pub`
+# before it or not) — what `_decl_inner` refuses and `_dl_names` names — its names entered.
+fn _dl_inner_at(S, i): i64 {
+    var b = TOKTYP(S, i - 1);
+    if (b != 13 && b != 14 && b != 5 && b != 49) { return 0; }
+    var k = TOKTYP(S, i);
+    if (k == 73) { k = TOKTYP(S, i + 1); }
+    if (k != 40 && k != 60 && k != 101 && k != 167) { return 0; }
+    STI(S, i);
+    _dl_skip_in(S);
+    _dl_names(S, i, GTI(S));
+    return 0;
+}
+var _dlvr = 0;   # the refused variables' names, a vec made at the first
+fn _dl_var_refd_add(S, noff): i64 {
+    if (_dlvr == 0) { _dlvr = vec_new(); }
+    vec_push(_dlvr, noff);
+    return 0;
+}
+# 1 = `noff` names a variable a refused declaration declared (`_dl_var_refd_add`), or what `_dl_refd_at` answers.
+fn _dl_name_refd(S, noff): i64 {
+    if (_dl_refd_at(S, noff) == 1) { return 1; }
+    if (_dlvr == 0) { return 0; }
+    if (noff < 0) { return 0; }
+    var n = vec_len(_dlvr);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, vec_get(_dlvr, i), noff) == 1) { _had_error = 1; return 1; }
         i = i + 1;
     }
     return 0;
@@ -1043,15 +1217,90 @@ fn _tl_scan1(S, objok): i64 {
     if (t == 72) { _tl_mod(S); return 1; }
     if (_TL_VIS(S) == 1) { return 1; }
     if (t == 74) { _tl_use(S); return 1; }
-    if (t == 40) { PARSE_STRUCT_DEF(S); return 1; }
-    if (t == 101) { PARSE_UNION_DEF(S); return 1; }
+    if (t == 40 || t == 101) { return _tl_decl1(S, t); }   # 6.7.16: a struct / union ends its refusal too
     if (t == 3) { PARSE_GVAR_REG(S); return 1; }
     if (_tl_directive(S, 0) == 1) { return 1; }
     if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
     if (t == 168) { _cst_skip_decl(S); return 1; }   # 6.7.2 (B1): recorded by `_cst_prepass`
-    if (t == 60) { PARSE_ENUM_DEF(S, 0); return 1; }
+    if (t == 60) { return _tl_decl1(S, t); }
     var r = _tl_scan1_mode(S, t, objok);
     return r;
+}
+# ⛔ 6.7.16 — A PASS-1 DECLARATION'S REFUSAL ENDS AT ITS OWN `}`. Pass 1 has no statement resync, so a refusal's panic
+# latch held to the end of the scan and swallowed every later declaration's error: `enum E { A 5 }` then `struct Q {
+# a: Foo; }` and `enum F { X 6 }` printed the enum's "expected identifier" alone
+# (issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md). A declaration that met the
+# latch clear and ended in sync — past the `}` closing its one `{ .. }`, no brace between (`_tl_decl_synced`) —
+# releases what it set, so the next declaration reports its own (D12's missing separator was released so first).
+# A struct's and a union's refusals the same (a field that is not a name, its type, the declaration's name or `{`).
+# One that ended anywhere else (an unclosed body run into the next declaration, a payload's `( .. )` run past the
+# `}`) keeps it.
+# CHANGELOG [6.7.16]
+fn _tl_decl1(S, t): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    if (t == 60) { PARSE_ENUM_DEF(S, 0); }
+    elif (t == 40) { PARSE_STRUCT_DEF(S); }
+    else { PARSE_UNION_DEF(S); }
+    _tl_decl_end(S, p0, ti);
+    return 1;
+}
+# ⛔ 6.7.16 — AND IN THE WALKS AFTER IT. Pass 2 (an enum's constructor bodies, a struct's / union's skip) and the
+# enum-init walk re-read each declaration; a refusal's repeat there prints nothing but sets the latch, which held into
+# the next thing parsed: a fn body's first statement (`enum E { A 5 }` then `fn f() { var a = 1 2; .. }` lost f's
+# error) or the program's first statement (`syscall(60, 1 2);`). Released the same way, at the declaration's `}`.
+# CHANGELOG [6.7.16]
+fn _tl_decl2(S, t): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    if (t == 60) { PARSE_ENUM_DEF(S, 2); }   # constructor bodies, before the jmp patch
+    elif (t == 40) { _tl_skip_struct(S); }
+    else { _tl_skip_union(S); }
+    _tl_decl_end(S, p0, ti);
+    return 1;
+}
+# ... and a fn's (PARSE_FN_DEF) and an impl's: a refused signature or impl header over an EMPTY body (`fn h(5) { }`,
+# `impl 5 { }`, a method `fn a(5) { }`) held the latch past its `}` — a body's statement resync releases it otherwise —
+# so the next fn's first statement, the next method's, or a directive (`#deprecated ) )`) lost its error.
+# CHANGELOG [6.7.16]
+fn _tl_impl2(S): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    PARSE_IMPL(S);
+    _tl_decl_end(S, p0, ti);
+    return 1;
+}
+fn _tl_enum_init1(S): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    PARSE_ENUM_DEF(S, 1);
+    _tl_decl_end(S, p0, ti);
+    return 0;
+}
+# The latch the declaration from token `ti` set is released when it met it clear (`p0`) and ended in sync.
+fn _tl_decl_end(S, p0, ti): i64 {
+    if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
+    return 0;
+}
+# 1 = the tokens from `ti` to the cursor end at the `}` just stepped, and it closes the first `{` among them (nothing
+# closed it before: the body did not run into the next declaration) — or, none when the header's was refused, it is
+# the only brace. A fn's or an impl's body holds braces of its own; a struct's or an enum's none.
+fn _tl_decl_synced(S, ti): i64 {
+    var e = GTI(S) - 1;
+    if (e <= ti) { return 0; }
+    if (TOKTYP(S, e) != 14) { return 0; }
+    var d = 0;
+    var seen = 0;
+    var k = ti;
+    while (k < e) {
+        var b = TOKTYP(S, k);
+        if (b == 13) { d = d + 1; seen = 1; }
+        if (b == 14) { d = d - 1; if (d <= 0) { return 0; } }
+        k = k + 1;
+    }
+    if (seen == 0) { return 1; }
+    if (d != 1) { return 0; }
+    return 1;
 }
 
 fn _tl_scan1_mode(S, t, objok): i64 {
@@ -1147,9 +1396,7 @@ fn _tl_scan2(S, objok): i64 {
     if (t == 72) { _tl_mod(S); return 1; }
     if (_TL_VIS(S) == 1) { return 1; }
     if (t == 74) { _tl_skip_use(S); return 1; }
-    if (t == 40) { _tl_skip_struct(S); return 1; }
-    if (t == 101) { _tl_skip_union(S); return 1; }
-    if (t == 60) { PARSE_ENUM_DEF(S, 2); return 1; }   # constructor bodies, before the jmp patch
+    if (t == 40 || t == 101 || t == 60) { return _tl_decl2(S, t); }   # 6.7.16: each ends its refusal at its `}`
     if (_TOK_IS_KERNEL(S) == 1) { _tl_skip_mode(S); return 1; }
     # 6.6.9: ONE dispatcher arms every fn attribute and evaluates #assert. See _tl_directive.
     if (_tl_directive(S, 1) == 1) { return 1; }
@@ -1175,7 +1422,7 @@ fn _tl_scan2_def(S, t, objok): i64 {
         return 1;
     }
     if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
-    if (t == 77) { PARSE_IMPL(S); return 1; }
+    if (t == 77) { return _tl_impl2(S); }   # 6.7.16: its refusal ends at its `}`
     if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)
     if (t == 78) { _tl_skip_mode(S); return 1; }
     if (t == 79) { if (objok == 1) { _tl_skip_mode(S); return 1; } }
@@ -1191,7 +1438,10 @@ fn _tl_skip_use(S): i64 {
 # A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
 fn _tl_skip_struct(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 19) {
+        while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { return 0; } STI(S, GTI(S) + 1); }   # 6.7.16: EOF
+        STI(S, GTI(S) + 1);
+    }
     _tl_skip_body(S);
     return 0;
 }
@@ -1202,11 +1452,22 @@ fn _tl_skip_union(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — PASS 2 STEPS THE BODY AS PASS 1 READ IT, AND SAYS NOTHING PASS 1 DID NOT. A missing `{` was ERR's
+# "unexpected identifier 'a'" at the token pass 1 had reported "expected '{', got identifier 'a'" at (now pass 1's own
+# words, a repeat printed as nothing), and the walk ran past the end of file to the watchdog's invented "unexpected
+# end of input (truncated or unbalanced source)" after pass 1's "expected '}', got end of file" (it stops there).
+# CHANGELOG [6.7.16]
 fn _tl_skip_body(S): i64 {
-    if (PEEKT(S) != 13) { ERR(S); }
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    if (PEEKT(S) == 12) { return 0; }
     STI(S, GTI(S) + 1);
     var go = 1;
-    while (go == 1) { if (PEEKT(S) == 14) { go = 0; } else { STI(S, GTI(S) + 1); } }
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 14) { go = 0; }
+        elif (t == 12) { return 0; }
+        else { STI(S, GTI(S) + 1); }
+    }
     STI(S, GTI(S) + 1);
     return 0;
 }
@@ -1217,7 +1478,7 @@ fn _tl_enum_inits(S): i64 {
     STI(S, 0);
     var go = 1;
     while (go == 1) {
-        if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 1); }
+        if (PEEKT(S) == 60) { _tl_enum_init1(S); }
         else { if (PEEKT(S) == 12) { go = 0; }
             else { STI(S, GTI(S) + 1); } }
     }
@@ -1563,7 +1824,10 @@ fn PARSE_FN_DEF(S): i64 {
     # emitted a bare 0xC3 at `rbp - fsz` and #GP'd under OVMF. EEXIT restores the parked
     # entry rsp instead, which is depth-independent, so there is nothing per-body to track.
     # See src/common/util.cyr for the whole post-mortem. CHANGELOG [6.6.5]
+    var _fp0 = _panic;   # 6.7.16: a refused signature's latch ends at the body's `}` (`_tl_decl_end`)
+    var _fti = GTI(S);
     var _rf = _PARSE_FN_DEF_IMPL(S);
+    _tl_decl_end(S, _fp0, _fti);
     _lc_n = _lc_sv_n;
     _lc_floor = _lc_sv_f;
     _ce_fn_rname = _rn_sv;
@@ -3041,8 +3305,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _sptr_params_localize(S);   # 6.6.16 (C7): a struct parameter over 8 B is copied in, here
     _dsg_check(S, fi, noff, _defstart_ti);   # 6.6.20: a redefinition must be called the same way
     # Parse body
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    _fn_body_open(S);   # 6.7.16: its `{`, or a `;` refused as an empty body
     # Emit jmp placeholder for defer flag init (backpatched after body)
     var defer_init_jmp = EJMP0(S);
     var body_cp = GCP(S);
@@ -3104,7 +3367,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # site now gets. CHANGELOG [6.6.10]
     var _b3_skip = 0;
     if (_gen_base == 1 && _inst_conc0 == 0) {
-        if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = 1; }   # 6.7.1: or not a valid i64 instance of its bounds
+        if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = _fn_has_body(S); }   # 6.7.1: or not a valid i64 instance of its bounds
     }
     # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
     # in the heap object the runtime hands back on every resume, and the fn top dispatches to
@@ -3195,7 +3458,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
     }
     if (_gen_base == 1) { _tp_clear(S); }
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    _fn_body_close(S);   # 6.7.16: its `}`, or a refused `;` body's latch released
     # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
     if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
         SFBE(S, fi, GTI(S));
@@ -4298,4 +4561,386 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _coro_was = 0;   # v6.5.69: per-fn, consumed by the constructor above
     }
     return 0;
+}
+
+# ⛔ 6.7.16 (the user's D102, 2026-10-20) — the stub scan's and the bounded-site scan's reading of an untyped `var y = E;`
+# holding a value of a type parameter (the why, the shapes and the tables: parse_fn.cyr, beside `_gs_var` and `_bnr_decl`).
+# Here rather than there for parse_fn.cyr's fmt / lint headroom; fns resolve wherever they sit. CHANGELOG [6.7.16]
+fn _gs_uvar(S, fi, ni): i64 {
+    var k = _gs_vkind(S, fi, ni + 2, 0);
+    _gvm_put(ni + 2, k);
+    if (k == 1) { _gsn_add(TOKVAL(S, ni)); }
+    if (k == 2) {
+        if (_gvk_at >= 0) { _gcr_note(S, fi, TOKVAL(S, ni), _gvk_at, 0); }
+        else { _gs_vc_slots(S, fi, _gvk_call, TOKVAL(S, ni), 0); }
+    }
+    return 0;
+}
+# What the whole value from token j (to its `;`, `,` or closer) is in each instance: 1 a value of one of fi's type
+# parameters, 2 a struct carrier by value (`_gvk_at` / `_gvk_call`), 0 neither. dep counts generic calls nested in
+# arguments (`_gs_cbind`), which only ask for 1. Each instance types a chain of untyped copies and nested calls of any
+# length, so neither is cut short: an 8-level budget the two shared left `var y10 = y9;` (a 10-copy chain), `id(..)` 9
+# deep or a mixed chain of 9 untyped at the i64 base — "no struct type in scope" at the definition where T = Q runs it.
+# Following a declaration is a loop, not a level: it goes to a statement ending before the use, so the walk ends, and
+# a declaration whose own initializer holds the use (`var y = y;`, `var y = id(y);`) is no T value. Nested calls stop
+# at the parser's own 256 levels (`_tok_gen_tp_dep`'s bound). CHANGELOG [6.7.16]
+fn _gs_vkind(S, fi, j, dep): i64 {
+    if (dep > 256) { return 0; }
+    var u = 0 - 1;   # the use the last declaration came from
+    while (1) {
+        var e = _gs_expr_end(S, j);
+        if (u >= 0) {
+            if (e > u) { return 0; }
+            var m = _gvm_get(j);
+            if (m >= 0) { return m; }
+        }
+        var k = 0;
+        while (TOKTYP(S, j + k) == 10) { k = k + 1; }
+        var ni = j + k;
+        if (TOKTYP(S, ni) != 2) { return 0; }
+        var x = ni + 1;
+        var nt = TOKTYP(S, x);
+        if (nt == 10 || nt == 19) { x = _gs_vcall_end(S, ni); }
+        if (x < 0) { return 0; }
+        var c = 0;
+        while (c < k) { if (TOKTYP(S, x + c) != 11) { return 0; } c = c + 1; }
+        if (x + k != e) { return 0; }
+        if (x != ni + 1) { return _gs_vcall(S, fi, ni, dep); }
+        var d = _tok_name_decl(S, _gs_open, ni, TOKVAL(S, ni));
+        if (d < 0) { return 0; }
+        if (_gs_rebound(S, d, ni, TOKVAL(S, ni)) == 1) { return 0; }
+        if (TOKTYP(S, d + 1) == 49) { return _gs_vann(S, fi, d + 2); }
+        if (TOKTYP(S, d - 1) != 3) { return 0; }
+        if (TOKTYP(S, d + 1) != 4) { return 0; }
+        u = ni;
+        j = d + 2;
+    }
+    return 0;
+}
+# `_gs_vkind`'s answer for each untyped `var`'s initializer, kept as the scan reads it (`_gs_uvar`), so following a
+# chain of copies costs a step per declaration, not the chain again at each one (3,000 chained copies: 1.2 s, against
+# 0.13 s in a plain fn and 0.2 s with the old 8-level cut-off). Direct-mapped by the initializer's token: 256 entries
+# of (token, scan, kind, `_gvk_tp`, `_gvk_at`, `_gvk_call`); a scan's start or a swap of the scan tables (`_gvm_new`:
+# `_gs_params`, `_bbf_swap`) makes every entry stale, so a miss only costs the walk. CHANGELOG [6.7.16]
+var _gvm = 0;
+var _gvm_gen = 1;
+fn _gvm_new(): i64 {
+    _gvm_gen = _gvm_gen + 1;
+    return 0;
+}
+fn _gvm_put(j, k): i64 {
+    if (_gvm == 0) {
+        _gvm = alloc(256 * 48);
+        var z = 0;
+        while (z < 256 * 6) { S64(_gvm + z * 8, 0); z = z + 1; }
+    }
+    var p = _gvm + (j & 255) * 48;
+    S64(p, j);
+    S64(p + 8, _gvm_gen);
+    S64(p + 16, k);
+    S64(p + 24, _gvk_tp);
+    S64(p + 32, _gvk_at);
+    S64(p + 40, _gvk_call);
+    return 0;
+}
+# The kind kept for the initializer at token j in this scan (its `_gvk_*` restored), or -1.
+fn _gvm_get(j): i64 {
+    if (_gvm == 0) { return 0 - 1; }
+    var p = _gvm + (j & 255) * 48;
+    if (L64(p) != j) { return 0 - 1; }
+    if (L64(p + 8) != _gvm_gen) { return 0 - 1; }
+    _gvk_tp = L64(p + 24);
+    _gvk_at = L64(p + 32);
+    _gvk_call = L64(p + 40);
+    return L64(p + 16);
+}
+# 1 = the initializer from token j is a value of one of fi's type parameters (`_gs_vkind` 1).
+fn _gs_vk_tp(S, fi, j): i64 {
+    if (_gs_vkind(S, fi, j, 0) == 1) { return 1; }
+    return 0;
+}
+# ... an annotation from token at: 1 one of fi's type parameters, whole; 2 a `G<..>` by value (not an array); else 0.
+fn _gs_vann(S, fi, at): i64 {
+    if (TOKTYP(S, at) != 2) { return 0; }
+    var e = _asa_end(S, at);
+    if (_gs_ann_arr(S, at, e) == 1) { return 0; }
+    if (TOKTYP(S, at + 1) == 19) { _gvk_at = at; return 2; }
+    if (e != at + 1) { return 0; }
+    return _gs_vtp(S, fi, at);
+}
+# 1 when the name at token k is one of fi's type parameters (`_gvk_tp` = it), else 0.
+fn _gs_vtp(S, fi, k): i64 {
+    if (_is_tparam_of(S, fi, TOKVAL(S, k)) == 0) { return 0; }
+    _gvk_tp = TOKVAL(S, k);
+    return 1;
+}
+# The token after the free call `g(..)` / `g<..>(..)` whose name is token ni, or -1.
+fn _gs_vcall_end(S, ni): i64 {
+    var o = ni + 1;
+    if (TOKTYP(S, o) == 19) { o = _tok_targs_close(S, ni + 2); if (o < 0) { return 0 - 1; } o = o + 1; }
+    if (TOKTYP(S, o) != 10) { return 0 - 1; }
+    return _call_close(S, o) + 1;
+}
+# ... the call's kind: 1 a `: U` return, U one of the generic's type parameters bound to a value of fi's (`_gs_cbind`);
+# 2 a `: G<..U..>` return with such a U in one of G's slots. Reads another fn's signature: scanned again at pass 1's end.
+fn _gs_vcall(S, fi, ni, dep): i64 {
+    _gs_late = 1;
+    var g = FINDFN(S, TOKVAL(S, ni));
+    if (g < 0) { return 0; }
+    if (GFTP(S, g) == 0) { return 0; }
+    var w = _gen_ret_tp(S, g);
+    if (w >= 0) { return _gs_cbind(S, fi, g, ni, w, dep); }
+    if (dep > 0) { return 0; }   # an argument's value: only 1 counts, so no carrier walk (one per slot, at each level)
+    if (_gs_vc_slots(S, fi, ni, 0, dep) == 0) { return 0; }
+    _gvk_at = 0 - 1;
+    _gvk_call = ni;
+    return 2;
+}
+# The slots of the `: G<..>` return of the generic called at token ni whose whole type argument is a type parameter U
+# of the callee bound to a value of fi's (`_gs_cbind`): their count; each is noted as a carrier entry of `y` (a name
+# offset), unless y is 0.
+fn _gs_vc_slots(S, fi, ni, y, dep): i64 {
+    var g = FINDFN(S, TOKVAL(S, ni));
+    if (g < 0) { return 0; }
+    var o = _gen_def_open(S, g);
+    if (o < 0) { return 0; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0; }
+    if (TOKTYP(S, c + 1) != 49) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    if (TOKTYP(S, c + 3) != 19) { return 0; }
+    var tp = GFTP(S, g);
+    var r = 0;
+    var j = c + 4;
+    var slot = 0;
+    var b0 = 0 - 1;   # each type parameter's binding, read once (`G<U, U>` names U twice)
+    var b1 = 0 - 1;
+    while (TOKTYP(S, j) != 12) {
+        var t = TOKTYP(S, j);
+        if (_gs_targ_whole(S, j) == 1) {
+            var bw = 0;
+            if (TOKVAL(S, j) == (tp & 0xFFFFFFFF) - 1) {
+                if (b0 < 0) { b0 = _gs_cbind(S, fi, g, ni, 0, dep); }
+                bw = b0;
+            }
+            if (TOKVAL(S, j) == ((tp >> 32) & 0xFFFFFFFF) - 1) {
+                if (b1 < 0) { b1 = _gs_cbind(S, fi, g, ni, 1, dep); }
+                bw = b1;
+            }
+            if (bw == 1) {
+                r = r + 1;
+                if (y != 0) { _gcr_add(y, TOKVAL(S, c + 2), slot); }
+            }
+        }
+        if (t == 31) { slot = slot + 1; }
+        if (t != 2 && t != 31) { return r; }   # the list's close, or a nested list: its slots are not whole
+        j = j + 1;
+    }
+    return r;
+}
+# 1 = at the call of the generic g whose name is token ni, g's type parameter w binds to a value of one of fi's type
+# parameters: an explicit type argument naming one (`id<T>(..)`), or the argument that carries w holding such a value —
+# a direct `v: U` parameter's (`_gs_vkind` 1), a `p: *U` parameter's `&v` or `p` declared `*T`, a `pp: **U` parameter's
+# (`_gs_cb_pp`), a struct carrier `b: G<..U..>`'s carrier of the same slot (`_gs_cb_carr`).
+fn _gs_cbind(S, fi, g, ni, w, dep): i64 {
+    if (TOKTYP(S, ni + 1) == 19) { return _gs_cb_ex(S, fi, ni + 2, w); }
+    var o = ni + 1;
+    var m = GFGM(S, g);
+    var pk = w + 1;
+    if ((m & 4) != 0) { pk = (m >> (8 + w * 8)) & 255; }
+    if (pk == 0) {
+        var f = (m >> (24 + w * 20)) & 0xFFFFF;
+        if (f != 0) { return _gs_cb_carr(S, fi, g, o, f); }
+        var pq = _pp_tparam(S, g, w);
+        if (pq <= 0) { return 0; }
+        var pd = _ppt_d;
+        var pa = _call_arg_for(S, g, o, pq - 1);
+        if (pa < 0) { return 0; }
+        return _gs_cb_pp(S, fi, pa, pd, dep);
+    }
+    var at = _call_arg_for(S, g, o, pk - 1);
+    if (at < 0) { return 0; }
+    if (_ic_ptr_param(S, g, pk - 1) == 1) { return _gs_cb_pp(S, fi, at, 1, dep); }
+    if (_gs_vkind(S, fi, at, dep + 1) == 1) { return 1; }
+    return 0;
+}
+# ... explicit type argument w of the list from token k: 1 when it is one of fi's type parameters, whole.
+fn _gs_cb_ex(S, fi, k, w): i64 {
+    if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    var kt = TOKTYP(S, k + 1);
+    if (kt != 20 && kt != 31) { return 0; }
+    return _gs_vtp(S, fi, k);
+}
+# ... the argument at token a of a parameter `*` d times then U (d >= 1): 1 when it is `&v` of a name declared `*`
+# d - 1 times then one of fi's type parameters (at d = 1, `&v` of any value of one: `_gs_vkind`), or a name declared
+# with d stars then one, whole.
+fn _gs_cb_pp(S, fi, a, d, dep): i64 {
+    var st = 0;
+    if (TOKTYP(S, a) == 27) {
+        if (d == 1) { if (_gs_vkind(S, fi, a + 1, dep + 1) == 1) { return 1; } return 0; }
+        a = a + 1;
+        st = 1;
+    }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    var dc = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    if (dc < 0) { return 0; }
+    if (_gs_rebound(S, dc, a, TOKVAL(S, a)) == 1) { return 0; }
+    if (TOKTYP(S, dc + 1) != 49) { return 0; }
+    var h = dc + 2;
+    var n = 0;
+    while (TOKTYP(S, h) == 8) { h = h + 1; n = n + 1; }
+    if (n + st != d) { return 0; }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    if (_asa_end(S, h) != h + 1) { return 0; }
+    return _gs_vtp(S, fi, h);
+}
+# ... the argument of g's struct-carrier parameter (GFGM field f: the parameter's index + 1, G's slot at bit 8, G's
+# name token at bits 10-19 from the `(`): 1 when it is (`&` of) a carrier of fi with an entry for that G and slot;
+# `_gvk_tp` the type argument in that slot of the carrier's own annotation, when the scan reads one.
+fn _gs_cb_carr(S, fi, g, o, f): i64 {
+    var go = _gen_def_open(S, g);
+    if (go < 0) { return 0; }
+    var gn = TOKVAL(S, go + ((f >> 10) & 1023));
+    var a = _call_arg_for(S, g, o, (f & 255) - 1);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) == 27) { a = a + 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    if (_gcr_slot(TOKVAL(S, a), gn, (f >> 8) & 1) == 0) { return 0; }
+    _gvk_tp = 0;
+    var dc = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    var sh = dc;
+    if (sh < 0) { sh = _gs_open; }
+    if (_gs_rebound(S, sh, a, TOKVAL(S, a)) == 1) { return 0; }
+    if (dc < 0) { return 1; }
+    if (TOKTYP(S, dc + 1) != 49) { return 1; }
+    var h = dc + 2;
+    while (TOKTYP(S, h) == 8) { h = h + 1; }
+    if (TOKTYP(S, h + 1) != 19) { return 1; }
+    var j = h + 2;
+    var sl = (f >> 8) & 1;
+    if (sl == 1) { while (TOKTYP(S, j) == 2) { j = j + 1; } if (TOKTYP(S, j) != 31) { return 1; } j = j + 1; }
+    if (_gs_targ_whole(S, j) == 1) { _gs_vtp(S, fi, j); }
+    return 1;
+}
+# ⛔ 6.7.16 (the D102 review, 2026-10-21) — A NAME REBOUND BY A CLOSURE PARAMETER, A FOR-IN VARIABLE OR A DESTRUCTURE
+# IS NOT THE T VALUE. `_tok_name_decl` reads `var NAME` and the fn's own parameters only, so in `fn g<T>(x: T): i64 {
+# var f = |x| { var y = x; return y.b; }; .. }` the readers above reached g's `x: T` and took y for a T value, though in
+# every instance it copies the closure's own untyped parameter — and so for `for x in 0..3 { var y = x; .. }` and the
+# second name of `var q, x = two();`, and `idp(p)` under `|p|`, `first(b)` under `|b|`: the generic became a stub, so
+# never called it compiled (refused at the definition before D102: "no struct type in scope for 'y'"), a scalar call's
+# note blamed a field of a T value, and a bounded `y.show()` called the bound's impl on the word (SIGSEGV at T = Pt).
+# 1 = a binding between tokens d and ni (the declaration found, the use) that `_tok_name_decl` does not read binds
+# noff where ni sits. CHANGELOG [6.7.16]
+fn _gs_rebound(S, d, ni, noff): i64 {
+    var t = d + 1;
+    var le = 0 - 1;   # the last literal's closing bar: a body may open another literal there (`|a| |x| ..`)
+    while (t < ni) {
+        var tt = TOKTYP(S, t);
+        if (tt == 35) {
+            var lp = 0;
+            if (t - 1 == le) { lp = 1; }
+            elif (_cl_lit_pos(S, t) == 1) { lp = 1; }
+            if (lp == 1) {
+                var e = _cl_lit_end(S, t);
+                if (e > t) {
+                    le = e;
+                    if (_gs_cl_param(S, t, e, noff) == 1) { if (_gs_cl_body_end(S, e) > ni) { return 1; } }
+                }
+            }
+        }
+        elif (tt == 55) { if (_gs_forin_holds(S, t, ni, noff) == 1) { return 1; } }
+        elif (tt == 3) { if (_gs_mvar_holds(S, t, ni, noff) == 1) { return 1; } }
+        t = t + 1;
+    }
+    return 0;
+}
+# 1 = the parameter list between the bars at tokens t and e names noff (a refused `x: T` is read whole, as
+# `_cl_prescan_lit` reads it).
+fn _gs_cl_param(S, t, e, noff): i64 {
+    var j = t + 1;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
+        j = j + 1;
+        if (TOKTYP(S, j) == 49) { j = _cl_ptail_end(S, j + 1, 1); }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 = `for NAME in .. { .. }` at token t binds noff and its body holds ni (the body: the first `{` outside parentheses
+# and brackets, as `_cl_prescan_forin` reads it).
+fn _gs_forin_holds(S, t, ni, noff): i64 {
+    if (TOKTYP(S, t + 1) != 2) { return 0; }
+    if (TOKTYP(S, t + 2) != 76) { return 0; }
+    if (STREQ(S, TOKVAL(S, t + 1), noff) == 0) { return 0; }
+    var k = t + 3;
+    var dp = 0;
+    while (k < ni) {
+        var u = TOKTYP(S, k);
+        if (u == 10 || u == 28) { dp = dp + 1; }
+        if (u == 11 || u == 29) { dp = dp - 1; }
+        if (dp == 0) { if (u == 13) { if (_tok_skip_block(S, k, GTCNT(S)) > ni) { return 1; } return 0; } }
+        k = k + 1;
+    }
+    return 0;
+}
+# 1 = `var a, b[, c] = ..` at token t binds noff as a later name (`_tok_name_decl` reads only `a`), in a block still
+# open at ni.
+fn _gs_mvar_holds(S, t, ni, noff): i64 {
+    if (TOKTYP(S, t + 1) != 2) { return 0; }
+    if (TOKTYP(S, t + 2) != 31) { return 0; }
+    var j = t + 3;
+    var hit = 0;
+    while (TOKTYP(S, j) == 2) {
+        if (STREQ(S, TOKVAL(S, j), noff) == 1) { hit = 1; }
+        if (TOKTYP(S, j + 1) != 31) { break; }
+        j = j + 2;
+    }
+    if (hit == 0) { return 0; }
+    var b = 0;
+    var k = j;
+    while (k < ni) {
+        var u = TOKTYP(S, k);
+        if (u == 13) { b = b + 1; }
+        if (u == 14) { b = b - 1; if (b < 0) { return 0; } }
+        k = k + 1;
+    }
+    return 1;
+}
+# The last token of the body after the closing bar at token e: a block's `}`, or what ends an expression body.
+fn _gs_cl_body_end(S, e): i64 {
+    if (TOKTYP(S, e + 1) == 13) { return _tok_skip_block(S, e + 1, GTCNT(S)); }
+    return _tok_expr_end(S, e + 1);
+}
+# 1 = the carrier `noff` has an entry for the struct named `gn` at `slot` (a `**G` one's 256 + slot too).
+fn _gcr_slot(noff, gn, slot): i64 {
+    var e = 0;
+    while (e < _gcr_n) {
+        if (load64(_gcr + e * 24) == noff) {
+            var es = load64(_gcr + e * 24 + 16) & 255;
+            if (es == slot) { if (load64(_gcr + e * 24 + 8) == gn) { return 1; } }
+        }
+        e = e + 1;
+    }
+    return 0;
+}
+# ⛔ 6.7.16 (the user's D102, 2026-10-20) — an untyped `var y = x;` (token i on y) holding a value of a BOUNDED type
+# parameter (`_gs_vkind` 1, on the stub scan's tables `_bnd_sites` keeps current) is a receiver of that parameter's
+# slot, as `var y: T = x;` is: `y.show()` is a bounded site and calls the bound's impl at every T, a scalar's too. It
+# was "no struct type in scope for 'y'" at the definition. 1 = recorded. CHANGELOG [6.7.16]
+fn _bnr_uvar(S, fi, tp, blk, i): i64 {
+    if (TOKTYP(S, i - 1) != 3) { return 0; }
+    _gvk_tp = 0;
+    if (_gs_vkind(S, fi, i + 2, 0) != 1) { return 0; }
+    var slot = 0 - 1;
+    if (_gvk_tp == (tp & 0xFFFFFFFF) - 1) { if (L64(blk) > 0) { slot = 0; } }
+    if (_gvk_tp == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (L64(blk + 72) > 0) { slot = 1; } }
+    if (_gvk_tp == 0) { slot = 0 - 1; }
+    if (slot < 0) { return 0; }
+    _bnr_add(S, TOKVAL(S, i), slot, 0);
+    return 1;
 }

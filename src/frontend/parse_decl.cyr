@@ -631,14 +631,14 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
 # capture take the `sid == 0` arms an untyped local takes: "no struct type in scope for 'x'" in the field, store or
 # method wording, a refused annotation's stand-down (`_ann_refd_said`), a bounded scalar T's member call. The rung
 # returned -1 for them, so the name fell to the globals: "undefined variable 'x'". A captured vector reports "SIMD
-# vector has no named fields" first, as a local does. A global of the same name keeps today's reading (the global's
-# field) — refusing it would stop such a program compiling, the user's call. CHANGELOG [6.7.16]
+# vector has no named fields" first, as a local does. A GLOBAL of the same name is shadowed by the capture, as the
+# local shadows it outside the closure: the user's D96 (6.7.16, 2026-10-20) — the rung answered -1 for it, so `x.a`
+# read the global's field while `x` alone read the capture. CHANGELOG [6.7.16]
 fn _cl_cap_fld_any(S, noff): i64 {
     var r = _CL_CAP_FIELD_IDX(S, noff);
     if (r < 0 - 1) { return r; }
     var e = _cl_cap_esl(S, noff);
     if (e < 0) { return 0 - 1; }
-    if (FINDVAR(S, noff) >= 0) { return 0 - 1; }
     if (_cl_snap_type(e) <= 0 - 2048) { ERR_MSG(S, "SIMD vector has no named fields", 31); }
     _cap_fld_sid = 0;
     return 0 - 1000000 - _cl_cap_find(e);
@@ -1834,9 +1834,22 @@ var _mcall_last = 0 - 1;
 # 6.7.15 — the `.name` read past a base that resolved to nothing (PARSE_FIELD_LOAD's undefined arm, the cursor
 # after the name): 2 when `(` follows — a method call, which `_cst_fld_at` names "has no methods" on a const —
 # else 0, a field read. CHANGELOG [6.7.15]
+# 6.7.16 — and `.m<types>(` (`_mlist_end`): a method call too, its list stepped to the `(` — `L.m<i64>(1)` on a local
+# const said "has no fields" and `zq.m<i64>(1)` on an undefined name went on to read `<i64>` as a comparison ("undefined
+# variable 'i64'", printed under the latch). CHANGELOG [6.7.16]
 fn _cst_fld_st(S): i64 {
     if (PEEKT(S) == 10) { return 2; }
+    if (_mlist_step(S) == 1) { return 2; }
     return 0;
+}
+# 6.7.16 — the cursor past `.m` on a receiver of no struct (an undefined name, a local const, a name of an enum that
+# declares no m): a `<types>(` there (`_mlist_end` at sid 0) is a method call's list, stepped to its `(` so the call is
+# refused as `.m(..)` is, not read as comparisons of the type names. 1 = stepped. CHANGELOG [6.7.16]
+fn _mlist_step(S): i64 {
+    var e = _mlist_end(S, 0, GTI(S) - 1);
+    if (e < 0) { return 0; }
+    STI(S, e + 1);
+    return 1;
 }
 # 6.7.15 — the method arm's `sid == 0` refusal ("no struct type in scope for 'a'"), out of `_field_load_on`
 # (a cybs-ceiling fn): a const receiver is "const 'C' has no methods" (`_cst_fld_at`), and in the run-time body
@@ -2137,6 +2150,15 @@ fn _mtargs_ng(S, sid, nt): i64 {
     }
     if (_mlist_end(S, sid, nt) >= 0) { return 1; }
     return 0;
+}
+# 6.7.16 — `_meth_ngt` for `_field_load_on`'s `sid == 0` arm, asked BEFORE its const and refused-annotation checks: a
+# const `C.m<i64>(1)` was "has no fields" and a refused annotation's `x.m<i64>(1)` stood down, each with the cursor on
+# the `<` — the list then read as comparisons ("undefined variable 'i64'"); stepped first, both are their `.m(1)`. Not
+# in a refused const fn's run-time body: its field stand-down (`_ce_fld_said`) steps `.m<..>(..)` whole, so a later
+# name of the statement's own is still reported. 1 = taken. CHANGELOG [6.7.16]
+fn _meth_ngt0(S, noff, fnoff, beg, idx, sid): i64 {
+    if (_ce_fn_refd != 0) { return 0; }
+    return _meth_ngt(S, noff, fnoff, beg, idx, sid);
 }
 # The `>` closing `.m<..>(`'s list at method-name token nt when it is a type list (`_tylist_at`) followed by `(` and m
 # no field of struct sid (sid <= 0: a receiver of no known struct); else -1.
@@ -2507,9 +2529,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
         if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain, `.m<..>(` too
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
+        if (_meth_ngt0(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)` / `C.m<i64>(1)`, as `.m(1)`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
-        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)`, as `q.m(1)`
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
@@ -3227,8 +3249,14 @@ fn _spi_pcall(S): i64 {
 # method / operator call returning a struct). A scalar is left in rax (2) for the first leaf.
 # A struct call refused at top level (no frame) is the whole field (4), so its refusal is the
 # only error.
+# `_spi_tup_refd` (6.7.16): an element in which the factor refused a tuple literal (R9: `W { (1, 2), 3 }` for a tuple
+# or struct field, `(1, 2) + 1`, `g((1, 2))`, any wrap) is the whole field too, as 6.6.12's refused value: the walk
+# carried the element into the field's first leaf, wanted one value more and met the `}` — "unexpected '}'" after
+# the literal's own error (alone under --syntax-only, where R9 says nothing: an invented syntax error)
+# (issues/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md). CHANGELOG [6.7.16]
 fn _spi_expr(S, ft): i64 {
     var st = GTI(S);
+    var tl0 = _tls_n;
     var pk = _spi_epk(S, st);   # 6.7.13: the arms below run inside a wrap of the whole element
     var sv = _fla_want;
     var svl = _fla_lit;
@@ -3247,6 +3275,7 @@ fn _spi_expr(S, ft): i64 {
     _fla_lit = svl;
     if (_spi_refused(S, st, pk) == 1) { return 4; }
     if (_slit_whole(S, st + pk, pk) == 1) { return 4; }   # 6.7.14 (D12 (a)): a refused `P { .. }` is the field
+    if (_tls_n != tl0) { return 4; }   # 6.7.16: a tuple literal R9 refused in the element (`_spi_tup_refd`)
     var t = _sc_whole(S, st);
     if (t >= 0) {
         _fsc_reset();
@@ -5743,7 +5772,10 @@ fn _vecg_size(S, vi, desc): i64 {
 }
 # The initializer of a vector global: only a constant 0 (the image is zero) — any other value
 # would be stored as one word. `has` / `v` = the declaration's constant fold (PARSE_GVAR_REG).
-fn _vecg_init_ok(S, has, v, noff): i64 {
+# 6.7.16: `rhs` its first token, 0 with no `=` — `var c: f64v2;` has none to refuse: it is the one "uninitialized
+# variable not allowed" (it added "takes no initializer but 0" first). CHANGELOG [6.7.16]
+fn _vecg_init_ok(S, has, v, noff, rhs): i64 {
+    if (rhs == 0) { return 0; }
     if (has == 1) { if (v == 0) { return 0; } }
     ERR_IDENT(S, "vector global ", noff, " takes no initializer but 0; set it through its address (`&g` with a `*_ptr` form)", 0 - 1);
     return 0;
@@ -5753,6 +5785,18 @@ fn _vecg_refuse(S, vi): i64 {
     if (GVVEC(S, vi) == 0) { return 0; }
     ERR_IDENT(S, "vector global ", L64(_varn_base + vi * 8), " is read and written through its address (`&g` with a `*_ptr` form); a value-form vector is a local", 0 - 1);
     return 1;
+}
+# ⛔ 6.7.16 — `var c: S;` AT TOP LEVEL (PARSE_VAR, after the first statement; an uninitialized struct or vector, which
+# only a fn's frame holds) is refused IN SYNC, at its `;` — the refusal latched with no mark, so the resync skipped
+# the next statement — and declares nothing: it registered a fn-local slot no top-level use reads, so each use of
+# `c` added "undefined variable 'c'". `c` is entered as reported (`_dl_var_refd_add`): its uses stand down. The `;`
+# is stepped. CHANGELOG [6.7.16]
+fn _usl_top(S, noff): i64 {
+    _refuse_in_sync(S);
+    ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
+    _dl_var_refd_add(S, noff);
+    STI(S, GTI(S) + 1);
+    return 0;
 }
 # The declaration ladder's named-type head (`_tn_head`, cursor on the annotation). 6.7.8 (C2-6a): a
 # slice is refused by name (the user's decision, 2026-10-10: "a slice declared in the declaration
@@ -5860,13 +5904,51 @@ fn _synonly_sib_local(S): i64 {
 # PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
 # declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
 fn _var_value(S): i64 {
-    if (_var_bare_at != GTI(S)) { PCMPE(S); return 0; }
+    if (_var_bare_at != GTI(S)) { _var_value_pc(S); return 0; }
     _var_bare_at = 0 - 1;
     _tp_refd_at = GTI(S);
     EMOVI(S, 0);
     SPSC(S, 0);
     SESTYPE(S, 0);
     SEXW(S, 0);
+    return 0;
+}
+# ⛔ 6.7.16 — AN UNTYPED `var t = ( .. );` WHOSE INITIALIZER WAS REFUSED STANDS DOWN AS A REFUSED ANNOTATION'S DOES.
+# `var t = (1 2);` (no `,`: not a tuple literal, so the parenthesised expression `(1`, refused at `2`) declared t a
+# scalar, and `t.1` added "no struct type in scope for 't'" after "expected ')', got number 2"
+# (issues/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md); `(1 + )` the same. The initializer the
+# latch went up in (0 -> 1), a `(` group after an untyped `var NAME =`, marks NAME (`_ann_refd_mark`: the
+# registration binds it), so `t.1`, `t.0 = 5` and `t.m()` are counted, not reported. An initializer that is no `(`
+# group (`var t = zz;`) keeps its uses' reports. CHANGELOG [6.7.16]
+fn _var_value_pc(S): i64 {
+    var p0 = _panic;
+    var st = GTI(S);
+    PCMPE(S);
+    if (p0 == 0) { if (_var_val_refd(S) == 1) { _var_paren_refd(S, st); } }
+    return 0;
+}
+# 1 = the value just parsed was refused: the latch is up, or the wrap the untyped peel stepped into (`_scv_peel`, in
+# a fn) is not closed where the value stopped — its close (`_scv_disarm`'s `_pw_close`) will refuse it there:
+# `var t = (1 2);` stops at `2` inside the peeled `( .. )`.
+fn _var_val_refd(S): i64 {
+    if (_panic == 1) { return 1; }
+    var i = 0;
+    while (i < _scv_pk) {
+        if (TOKTYP(S, GTI(S) + i) != 11) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The value parsed from token `st` — inside the wrap the untyped peel stepped into (`_scv_un_peel`), if any — began
+# at a `(` right after an untyped `var NAME =`: NAME marked.
+fn _var_paren_refd(S, st): i64 {
+    var b = st;
+    while (TOKTYP(S, b - 1) == 10) { b = b - 1; }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (TOKTYP(S, b - 1) != 4) { return 0; }
+    if (TOKTYP(S, b - 2) != 2) { return 0; }
+    if (TOKTYP(S, b - 3) != 3) { return 0; }
+    _ann_refd_mark(S, TOKVAL(S, b - 2));
     return 0;
 }
 # ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
@@ -6164,7 +6246,7 @@ fn PARSE_GVAR_REG(S): i64 {
             }
         } else {
             _vecg_size(S, vcnt, ann_vec);
-            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff); }
+            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff, rhs_ti); }
             # 6.6.5 — `var G: P = <expr>;` gets ONE 8-byte slot, so the slot HOLDS an address;
             # the literal form above owns STRUCTSZ bytes and IS the struct. Both carry the same
             # positive SVTYPE, so nothing downstream could tell them apart and every `G.field`
@@ -7270,7 +7352,7 @@ fn _tp_null_exempt(S, st): i64 {
     if (TOKTYP(S, a) != 1) { return 0; }
     if (TOKVAL(S, a) != 0) { return 0; }
     if (_pair_unwrap_k(S, a + 1, k, a) < 0) { return 0; }
-    if (TOKTYP(S, a + 1 + k) != 5) { return 0; }
+    if (TOKTYP(S, a + 1 + k) != _tp_term) { return 0; }
     return 1;
 }
 # ⛔ 6.7.15 — A STRING LITERAL'S ADDRESS PLUS OR MINUS AN INTEGER, AND THE LITERAL IN PARENTHESES, ARE ITS ADDRESS TOO:
@@ -7298,7 +7380,7 @@ fn _tp_str_exempt(S, st): i64 {
         e = e + 2;
     }
     if (_pair_unwrap_k(S, e, k - j, a) < 0) { return 0; }
-    if (TOKTYP(S, e + k - j) != 5) { return 0; }
+    if (TOKTYP(S, e + k - j) != _tp_term) { return 0; }
     return 1;
 }
 # The warning (at the cursor) into a `*T`, unless the value starting at `st` is exempt or was refused already (an
@@ -7340,46 +7422,21 @@ fn _tp_warn_gasg(S, gvi, st): i64 {
 # (a `Str` is a handle: `_rcv_big`), which is what a `*Str` holds, so `var p: *Str = str_from(..);`, a zone
 # `var G: *Str = str_from(..);` and `GP = str_from(..);` / `GP = h.clone();` into a `*Str` global no longer warn
 # "assigning non-pointer to typed pointer" — the `*Str` local's assignment was already quiet (`_asg_ret_sid`, v6.5.28)
-# (issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). 1 = the value from `st` to
-# its `;` is one call — a free fn (`f(..)`) or a method on a name, through nested struct fields (`h.m(..)`,
-# `w.h.m(..)`, `_asg_rhs_steps`) — whose declared return is `psid`, the destination's pointee, and that is `Str`. Any
-# other struct's call keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is
-# returned as its word, not an address; over 8 B is D14's refusal). Warning text only.
+# (issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). Any other struct's call
+# keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is returned as its word,
+# not an address; over 8 B is D14's refusal). Warning text only.
+# ⛔ 6.7.16 — AND EVERY OTHER VALUE THE `*Str` LOCAL TAKES. A `: Str` FIELD is a pointer slot (its value is the header's
+# address), but this took calls only, so `var f: *Str = h.name;` and `GZ = h.name;` warned where `l = h.name;` into the
+# local did not (issues/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md); so did a
+# `Str`-typed name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each
+# of those and the call under parentheses that wrap the value whole (`(h.name)`, `(str_from(..))` — in the local too).
+# 1 = the value from `st` to its `;` is one primary the local's arm types as the destination's pointee (`_tpv_sid`,
+# parse.cyr: the same reader) and that pointee is `Str`. A field of any other type (`h.n`) is still warned about.
 fn _tp_call_pointee(S, st, psid): i64 {
     if (st < 0) { return 0; }
     if (psid <= 0) { return 0; }
     if (psid != _STR_SID(S)) { return 0; }
-    if (TOKTYP(S, st) != 2) { return 0; }
-    var nt = TOKTYP(S, st + 1);
-    if (nt == 10) { return _tp_fcall_ret(S, st, psid); }
-    if (nt != 41) { return 0; }
-    if (_tp_ends_call(S, st) == 0) { return 0; }
-    if (_asg_rhs_steps(S, st + 1, _recv_sid(S, TOKVAL(S, st))) == psid) { return 1; }
-    return 0;
-}
-# ... the free call `f(..)` at `st`, the whole value: 1 = f is declared `: psid`.
-fn _tp_fcall_ret(S, st, psid): i64 {
-    var e = _tok_close_paren(S, st + 1);
-    if (e < 0) { return 0; }
-    if (TOKTYP(S, e + 1) != 5) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, st));
-    if (fi < 0) { return 0; }
-    if (GFRS(S, fi) == psid) { return 1; }
-    return 0;
-}
-# ... 1 = the value from `st` ends `)` before its `;`: a call, not a field read (`h.name`).
-fn _tp_ends_call(S, st): i64 {
-    var e = st;
-    var n = GTCNT(S);
-    while (e < n) {
-        var t = TOKTYP(S, e);
-        if (t == 5) {
-            if (TOKTYP(S, e - 1) == 11) { return 1; }
-            return 0;
-        }
-        if (t == 12) { return 0; }
-        e = e + 1;
-    }
+    if (_tpv_sid(S, st) == psid) { return 1; }
     return 0;
 }
 # A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
@@ -10510,9 +10567,7 @@ fn PARSE_VAR(S): i64 {
     # frame offset — so `&p` points at the BOTTOM of the struct,
     # which is where field 0 lives.
     if (pscale < 0 && PEEKT(S) == 5) {
-        if (GINFN(S) != 1) {
-            ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
-        }
+        if (GINFN(S) != 1) { return _usl_top(S, noff); }   # 6.7.16: refused in sync, `noff` entered as reported
         var sv_sid = 0 - pscale;
         var sv_sz = 0;
         # SIMD band (sentinel <= -2048, below the struct-sid range): size via
@@ -13038,7 +13093,7 @@ fn _hl_psid(S, a, e): i64 {
 # names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
 fn _hl_dref_psid(S, a, e): i64 {
     var sid = _hl_amp_psid(S, a, e);   # 6.7.15 (D21 A): `*(&ps)` is ps
-    if (sid <= 0) { sid = _pp_sid(_ps_pin(_hl_pw(S, a, e))); }
+    if (sid <= 0) { sid = _pp_sid(S, _ps_pin(_hl_pw(S, a, e))); }
     _hl_cp = 0;
     if (sid <= 0) { return 0; }
     _hl_cp = 1;

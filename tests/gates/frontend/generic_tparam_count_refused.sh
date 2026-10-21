@@ -24,9 +24,13 @@
 #   G   a generic body forwarding `g3<T, T, T>`, two instances: one line
 #   O   two refusals in source order (a fn's above a struct's)
 #   X   --syntax-only reports it (rc 1)
+#   T   (6.7.16, f16 FG2, the user's D92) a trait member's own third type parameter, at the member: trm.cyr / trm2.cyr
+#       verbatim (they built), a default inherited / overridden / unreached / below its impl (one line each), lint,
+#       member and impl both `<A, B, C>` (one line per declaration, source order), four / bounded / after a bounded
+#       second, a fn's + a member's + a struct's in source order; T8 control: `<V: Show + Eq, U>` and `<U>` members
 #   C   controls, unchanged: `<T: Show + Eq, U>`, an enum-erased `<T, E>` and a two-parameter struct build and
 #       exit 36 on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
-#   A   R1 refused with the same line by the aarch64, cx and PE compilers
+#   A   R1 (and T1) refused with the same line by the aarch64, cx and PE compilers (T1: and the Mach-O env leg)
 #
 # MUTATION (2026-10-20):
 #   M1  CYCC = the lane's previous compiler (e65308eb2, D5 without D8) -> RED 15: every R, S, B, M, F, L, G, O and
@@ -34,6 +38,12 @@
 #       old bound line instead); C and A [a64] / [cx] green (those two cross compilers are built from the tree's src)
 #   M2  a scratch copy of the tree without `_ta_x3`'s check in `_ta_xrefuse` (the uses not quieted) -> RED 9: R2-R4,
 #       S1, M1, F1, F2, L1, G1 (the declaration's line and a count line at each use)
+# MUTATION (2026-10-21, f16 FG2; a scratch copy of src/ with the one change, its cycc, CYCC= it):
+#   M3  the lane before it (02adedff4) -> RED 10: T1 T2 T3b T3c T4-T7, A [pe] / A [macho] T1 (each built, T5 / T7 the
+#       impl's or the struct's line alone; T3 / T3d green: an inherited default was PARSE_FN_DEF's already)
+#   M4  the report made in pass 2 by the member's signature walk (`_tr_sig_check`, the triage's plan) instead of
+#       `_tl_trait1`'s -> RED 2: T5 T7 (the member's line after pass 1's); `_tl_trait1` not walking at all -> M3's 10
+#   M5  `_tp_nth_at` counting a bound's trait names as parameters -> RED 2: T6 (at `Nope`), T8 (`Eq` refused)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -65,7 +75,7 @@ lines() {
     rc=0
     if [ $# -ge 4 ]; then sh -c "$4" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
     else "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?; fi
-    got=$(grep '^error' "$D/$1.err" | sed 's/^error:<source>://' | tr '\n' '|' | sed 's/|$//')
+    got=$( (grep '^error' "$D/$1.err" || true) | sed 's/^error:<source>://' | tr '\n' '|' | sed 's/|$//')   # no line: '' (bash -eo pipefail)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$got" != "$2" ]; then bad "$3: got [$got], want [$2]"
     else ok "$3: $2"; fi
@@ -134,6 +144,64 @@ lines o1 "1:13: a third type parameter 'C': $M|2:16: a third type parameter 'C':
 # ── X: --syntax-only ────────────────────────────────────────────────────────────────────────────────────────
 lines g3 "2:13: a third type parameter 'C': $M" "X1: --syntax-only reports it" "$CC --syntax-only"
 
+# ── T: a trait member's own third type parameter (6.7.16, f16 FG2, the user's D92) ─────────────────────────────
+# The trait reader stepped a member's `<..>` uncounted, so a bodiless member's third compiled, and so did an impl
+# declaring two for it; a default body was refused (PARSE_FN_DEF reads it). Now D8's line at the member's name, in
+# pass 1 in source order (`_tl_trait1` -> `_tr_tp3_walk`), once per token.
+# Filed: docs/development/issues/2026-10-20-trait-member-third-type-parameter-accepted.md
+cat > "$D/trm.cyr" <<'EOF'
+trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }
+struct P { x; }
+fn main(): i64 { return 3; }
+EOF
+lines trm "1:22: a third type parameter 'C': $M" "T1: trm.cyr verbatim (it built: exit 3)"
+cat > "$D/trm2.cyr" <<'EOF'
+trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }
+struct P { x; }
+impl T for P { fn g<A, B>(self, a: A, b: B, c: i64): i64 { return 4; } }
+fn main(): i64 { var p = P { 1 }; return p.g(1, 2, 3); }
+EOF
+lines trm2 "1:22: a third type parameter 'C': $M" "T2: trm2.cyr verbatim — an impl declaring <A, B> for it (it built: exit 4)"
+cat > "$D/trm3.cyr" <<'EOF'
+trait T { fn g<A, B, C>(self, c: C): i64 { return sizeof(C); } }
+struct S3 { a; b; c; }
+struct P { x; }
+impl T for P { }
+fn main(): i64 { var p = P { 1 }; var s = S3 { 1, 2, 3 }; return p.g(s); }
+EOF
+lines trm3 "1:22: a third type parameter 'C': $M" "T3: the filing's default body, inherited — still one line"
+printf 'trait T { fn g<A, B, C>(self, c: C): i64 { return sizeof(C); } }\nstruct P { x; }\nimpl T for P { fn g<A, B>(self, c: i64): i64 { return 5; } }\nfn main(): i64 { var p = P { 1 }; return p.g(2); }\n' > "$D/t3b.cyr"
+lines t3b "1:22: a third type parameter 'C': $M" "T3b: a default every impl overrides — one line"
+printf 'trait T { fn g<A, B, C>(self, c: C): i64 { return sizeof(C); } }\nstruct P { x; }\nfn main(): i64 { return 3; }\n' > "$D/t3c.cyr"
+lines t3c "1:22: a third type parameter 'C': $M" "T3c: a default no impl reaches — one line"
+printf 'struct P { x; }\nimpl T for P { }\ntrait T { fn g<A, B, C>(self, c: C): i64 { return 1; } }\nfn main(): i64 { var p = P { 1 }; return p.g(3); }\n' > "$D/t3d.cyr"
+lines t3d "3:22: a third type parameter 'C': $M" "T3d: the trait below the impl that inherits its default — one line"
+lines trm "1:22: a third type parameter 'C': $M" "T4: --syntax-only reports it" "$CC --syntax-only"
+printf 'trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }\nstruct P { x; }\nimpl T for P { fn g<A, B, C>(self, a: A, b: B, c: C): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.g(1, 2, 3); }\n' > "$D/t5.cyr"
+lines t5 "1:22: a third type parameter 'C': $M|3:27: a third type parameter 'C': $M" "T5: member and impl both <A, B, C> — one line per declaration, in source order"
+printf 'trait Show { fn show(self): i64; }\ntrait T { fn g<A, B, C, D>(self, a: A): i64; fn h<X, Y, Z: Show>(self): i64; fn i<U, V: Nope, W>(self): i64; fn k<U>(self, cb: *fn(i64): i64, u: U): i64; }\nfn main(): i64 { return 3; }\n' > "$D/t6.cyr"
+lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M" \
+    "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third"
+printf 'fn g4<A, B, C>(a: A): i64 { return 1; }\ntrait T { fn g<A, B, C>(self): i64; }\nstruct F<A, B, C> { a: A; }\nfn main(): i64 { return 2; }\n' > "$D/t7.cyr"
+lines t7 "1:13: a third type parameter 'C': $M|2:22: a third type parameter 'C': $M|3:16: a third type parameter 'C': $M" \
+    "T7: a fn's, a member's and a struct's, in source order"
+cat > "$D/t8.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+trait Eq { fn eq(self, o): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.x; } }
+impl Eq for Pt { fn eq(self, o): i64 { return 1; } }
+trait T { fn g<V: Show + Eq, U>(self, v: V, u: U): i64; fn h<U>(self, cb: *fn(i64): i64, u: U): U; }
+struct P { x; }
+impl T for P { fn g<V: Show + Eq, U>(self, v: V, u: U): i64 { return v.show() + sizeof(U); } fn h<U>(self, cb: *fn(i64): i64, u: U): U { return u; } }
+fn main(): i64 { var p = P { 1 }; var q = Pt { 3, 4 }; return P_g(p, q, 5) + p.h(0, 25); }
+EOF
+rc=0; "$CC" < "$D/t8.cyr" > "$D/t8.bin" 2> "$D/t8.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "T8: control — <V: Show + Eq, U> and <U> members: rc $rc: $(grep '^error' "$D/t8.err" | head -1)"
+else chmod +x "$D/t8.bin"; got=0; "$D/t8.bin" || got=$?
+    if [ "$got" -eq 36 ]; then ok "T8: control — <V: Show + Eq, U> and <U> members build and run: exit 36"; else bad "T8: exit $got, want 36"; fi
+fi
+
 # ── C: controls, every leg ──────────────────────────────────────────────────────────────────────────────────
 cat > "$D/c.cyr" <<'EOF'
 trait Show { fn show(self): i64; }
@@ -189,7 +257,11 @@ done
 [ -n "$A64" ] && lines g3 "2:13: a third type parameter 'C': $M" "A [a64]: R1" "$A64"
 [ -n "$CXCC" ] && lines g3 "2:13: a third type parameter 'C': $M" "A [cx]: R1" "$CXCC"
 lines g3 "2:13: a third type parameter 'C': $M" "A [pe]: R1" "CYRIUS_TARGET_WIN=1 $CC"
+[ -n "$A64" ] && lines trm "1:22: a third type parameter 'C': $M" "A [a64]: T1" "$A64"
+[ -n "$CXCC" ] && lines trm "1:22: a third type parameter 'C': $M" "A [cx]: T1" "$CXCC"
+lines trm "1:22: a third type parameter 'C': $M" "A [pe]: T1" "CYRIUS_TARGET_WIN=1 $CC"
+lines trm "1:22: a third type parameter 'C': $M" "A [macho]: T1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
+echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
 exit 0

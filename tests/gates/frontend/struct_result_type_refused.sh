@@ -666,8 +666,15 @@ syscall(60, X.a);
 # the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse_expr.cyr: the closure context
 # keeps its host fn, `_cl_host_fn`, and the enclosing context, `_cl_ctx_up`). The same arm calls a bounded scalar T's
 # member on a captured receiver (`|| v.show()` at T = i64 was "undefined variable 'v'": tests/tcyr/crossos/
-# trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12). A capture named like a GLOBAL keeps today's reading
-# (the global's field) — refusing it stops a program compiling: the user's call, not this gate's.
+# trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12).
+# UCG (6.7.16, the user's D96, 2026-10-20; issues/2026-10-20-closure-untyped-capture-named-like-struct-global-reads-
+# global-field.md) — A CAPTURE NAMED LIKE A STRUCT GLOBAL shadows the global for `.field`, a field store and `.m()`, as
+# the local does outside the closure. The rung answered -1 when a global of the name existed (a `FINDVAR >= 0` test),
+# so `var x = 5; |k| x.a + k` beside `var x = Q { 7, 8 };` exited 7 — the GLOBAL's field — while `x` alone in the same
+# closure read the capture (5). Now refused as UC0 is: UCG0 (the filed repro verbatim), UCG1 (a store and a method),
+# UCG2 (an `i64` capture), UCG3 (an untyped `&q` capture), UCG4 (a nested closure's capture of a capture), on every leg
+# (`uc_rows`), and silent under --syntax-only (UC12). Controls (x86_64): a struct-typed capture reads its own copy (UCG5),
+# a closure capturing no `x` reads the global (UCG6), a plain `x` the capture (UCG7).
 # Every UC row but the UC3 / UC4 controls runs on x86_64 and again from the aarch64, cx and PE compilers (CPX, `uc_rows`).
 # (Mutants: a scratch copy of the tree with the one change, its build/cycc; CPX's cross compilers come from it too.
 # Re-measured 2026-10-20 after the review's CPX extension:)
@@ -676,6 +683,7 @@ syscall(60, X.a);
 #   `_cl_cap_fld_any` = `_CL_CAP_FIELD_IDX` (the rung)   -> RED 48: the same
 #   `_ann_refd_said` without its capture arm             -> RED 24: UC2 UC7-UC11 (a second, no-struct error) x4 legs
 #   `_cl_cap_origin` not following `_cl_ctx_up`          -> RED 8: UC8 UC10 (a capture of a capture) x4 legs
+#   the tree before D96 (4ae0873f3: the `FINDVAR >= 0` exit) -> RED 20: UCG0-UCG4 (compiled: the global's field) x4 legs
 echo "6.7.16 — .field / a field store / .m() on an untyped closure capture is an untyped local's:"
 SM="; a method call needs its struct declaration (missing include?)"
 SS="; a '.field' assignment needs its struct declaration (missing include?)"
@@ -694,6 +702,18 @@ struct Q { a; b; }
 fn main(): i64 { var x: Foo = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
 syscall(60, main());
 '
+UCG='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+var x = Q { 7, 8 };
+fn main(): i64 { var x = 5; var f = |k| { return x.a + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+UCGH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+impl Q { fn m(self): i64 { return self.b; } }
+var x = Q { 7, 8 };
+'
 refuse_at "UC0 |k| x.a + k  (the filed repro)" "3:54: $SN 'x'$SA" "$UCA"
 refuse_at "UC1 x.a = k; x.m()  (store, method)" "3:47: $SN 'x'$SS|3:62: $SN 'x'$SM" "$UCB"
 refuse_at "UC2 var x: Foo = 5; |k| x.a  (refused)" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
@@ -702,6 +722,15 @@ struct Q { a; b; }
 fn main(): i64 { var x = 5; return x.a; }
 syscall(60, main());
 '
+accept "UCG5 control: a struct capture, a struct global" "$UCGH"'fn main(): i64 { var x: Q = Q { 1, 2 }; var f = |k| { return x.a * 10 + x.m() + k; }; return fncall1(f, 0); }
+syscall(60, main());
+' 12 'syscall(60, 12);'
+accept "UCG6 control: no x captured: the global" "$UCGH"'fn main(): i64 { var y = 5; var f = |k| { return x.a * 10 + x.m() + k + y; }; return fncall1(f, 0); }
+syscall(60, main());
+' 83 'syscall(60, 83);'
+accept "UCG7 control: a plain x is the capture" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { return x + k; }; return fncall1(f, 1); }
+syscall(60, main());
+' 6 'syscall(60, 6);'
 accept "UC4 control: a struct-typed capture" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 struct Q { a; b; }
@@ -761,8 +790,21 @@ struct Q { a; b; }
 fn main(): i64 { var y = 5; var f = |k| { return y.m<i64>(1) + k; }; return fncall1(f, 0); }
 syscall(60, main());
 '
+    refuse_at "${1}UCG0 D96: the filed repro (a struct global x)" "5:54: $SN 'x'$SA" "$UCG"
+    refuse_at "${1}UCG1 D96: a store and a method" "5:47: $SN 'x'$SS|5:62: $SN 'x'$SM" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { x.a = k; return x.m(); }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG2 D96: an i64 capture" "5:59: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var x: i64 = 5; var f = |k| { return x.b + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG3 D96: an untyped &q capture" "5:75: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var q = Q { 3, 4 }; var x = &q; var f = |k| { return x.b + k; }; return fncall1(f, 0); }
+syscall(60, main());
+'
+    refuse_at "${1}UCG4 D96: a nested closure's capture" "5:68: $SN 'x'$SA" "$UCGH"'fn main(): i64 { var x = 5; var f = |k| { var g = |j| { return x.a + j; }; return fncall1(g, k); }; return fncall1(f, 0); }
+syscall(60, main());
+'
     # UC12: --syntax-only (cyrius lint) — silent, rc 0, as for an untyped local.
-    for so in UCA UCB UCC; do
+    for so in UCA UCB UCC UCG; do
         eval "src=\$$so"
         printf '%s' "$src" > "$D/so.cyr"
         rc=0; "$CC" --syntax-only < "$D/so.cyr" > /dev/null 2> "$D/so.err" || rc=$?
@@ -1143,7 +1185,8 @@ syscall(60, G2.a * 10 + G2.b);
 '
 
 # CPX (6.7.16) — the closure rows (CP0 CP1, every UC row but the UC3 / UC4 controls: UC0-UC2, `uc_rows`' UC5-UC11 UC13
-# UC14 and UC12's --syntax-only) from every cross compiler built from this tree (the frontend is shared; this pins it).
+# UC14, the UCG rows (D96) and UC12's --syntax-only) from every cross compiler built from this tree (the frontend is
+# shared; this pins it).
 # The cross compilers are built from the tree's src/, so a mutant is a tree mutant.
 echo "6.7.16 — the closure rows (CP, UC) from the aarch64, cx and PE compilers:"
 echo "=== a struct result stored in a name typed by T (6.7.16, the user's D1, 2026-10-19): no scalar instance ==="
@@ -1226,6 +1269,194 @@ accept "TA6b *p = mkp(); at gd<i32>(5)" "$TH"'fn main(): i64 { return gd<i32>(5)
 accept "TA6c **pp = mkp(); (pp: **T) at i64" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gdq(q); }'"$TE" 44 'syscall(60, 44);'
 
+# TV (6.7.16, the user's D102, 2026-10-20; issues/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
+# — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
+# so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
+# though valid at T = Q, and `y = mkp();` on it had 6.7.15's D33 words. y is now a T-typed name (`_gs_uvar` /
+# `_gs_vkind`, parse_fn_def.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
+# to such a value, a carrier `b: Box<T>` by value — so its struct uses make the generic a stub, refused at a scalar call
+# with the stub's note (TV1-TV5), compiled when never called (TV6), and a bounded `y.show()` is a bounded site
+# (`_bnr_uvar`; tests/tcyr/crossos/generic_struct_only_lines.tcyr V1-V15 run the struct instances on every backend). A
+# `*T` source and `x + 1` stay untyped, as the instance types them (TV7, TV8). A bounded `y.show()` / `z.show()` (z =
+# `id(x)`) calls the bound's impl at i64 (TV9) and at Pt (TV9p); with no `impl Show for i64` the bound's refusal (TV9n).
+# TVX: TV1 / TV2 on aarch64 / cx / PE.
+# (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MTV1 the tree before D102 (7fd3db958)                -> RED 17: TV0 TV6 TV9 (refused at the definition), TV1-TV5
+#                                                         TV1n TV2n TV5n ("no struct type", D33's words), TVX TV1 TV2 x3
+#   MTV2 `_gs_uvar` adding nothing                      -> RED 10: TV0 TV1 TV1n TV3 TV4 TV5 TV5n, TVX TV1 x3
+#   MTV3 `_gs_dst_tp` without its untyped-var arm       -> RED 5: TV2 TV2n (D33's words), TVX TV2 x3
+#   MTV4 `_bnr_uvar` recording nothing                  -> RED 1: TV9 (refused as a stub at i64)
+#   MTV5 `_gs_vcall` answering 0 (no generic call)      -> RED 2: TV3, TV9 (`z = id(x)`: refused at the definition)
+echo "=== an untyped var y = x; holding a value of T takes T's type in each instance (6.7.16, the user's D102) ==="
+TV0='include "lib/syscalls.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var y = x; return y.b; }
+fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+accept "TV0 the filed repro verbatim: 4" "$TV0" 4 'syscall(60, 4);'
+TVH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn id<T>(v: T): T { return v; }
+fn vb<T>(x: T): i64 { return x.b; }
+'
+TV1="$TVH"'fn g<T>(x: T): i64 { var y = x; return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+TV2="$TVH"'fn g<T>(x: T): i64 { var y = x; y = mkp(); return 9; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+# $1 label  $2 the note's text (after "note: <source>:")
+tv_note() {
+    if grep -qF "  note: <source>:$2" "$D/r.err"; then printf '  ok(refused): %-28s\n' "$1"; pass=$((pass+1))
+    else printf '  FAIL: %-34s %s\n' "$1" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+}
+refuse "TV1 g(5): y.b, y = x's" "$TGM" "$TV1" one
+tv_note "TV1n the note names 7:40" "7:40: 'g' takes a field of a value typed by its type parameter"
+refuse "TV2 g(5): y = mkp(), y = x's (D1)" "$TGM" "$TV2" one
+tv_note "TV2n the note names 7:33" "7:33: 'g' stores a struct result over 8 bytes in 'y', typed by its type parameter"
+refuse "TV3 g(5): var y = id(x); y.b" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = id(x); return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+refuse "TV4 g(bx), Box<i64>: var y = b; y.v.b" "$TGM" "$TVH"'fn g<T>(b: Box<T>): i64 { var y = b; return y.v.b; }
+fn main(): i64 { var bx: Box<i64>; bx.v = 1; return g(bx); }
+syscall(60, main());
+' one
+refuse "TV5 g(5): y forwarded to a stub" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = x; return vb(y); }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+tv_note "TV5n the forward's note" "7:40: 'g' forwards its type parameter to 'vb'"
+accept "TV6 never called: compiles" "$TVH"'fn g<T>(x: T): i64 { var y = x; y = mkp(); return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+' 0 'syscall(60, 0);'
+refuse_at "TV7 var y = p; (p: *T): untyped" "7:44: $SN 'y'$SA" "$TVH"'fn g<T>(p: *T): i64 { var y = p; return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "TV8 var y = x + 1;: untyped" "7:47: $SN 'y'$SA" "$TVH"'fn g<T>(x: T): i64 { var y = x + 1; return y.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+TV9H='include "lib/syscalls.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+fn id<T>(v: T): T { return v; }
+fn g<T: Show>(x: T): i64 { var y = x; var z = id(x); return y.show() + z.show(); }
+'
+accept "TV9 bounded y.show() at i64: impl Show for i64" "$TV9H"'impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' 210 'syscall(60, 210);'
+accept "TV9p bounded y.show() at Pt" "$TV9H"'fn main(): i64 { var p = Pt { 3, 4 }; return g(p); }
+syscall(60, main());
+' 68 'syscall(60, 68);'
+refuse "TV9n bounded, no impl Show for i64: the bound's" "does not implement trait 'Show'" "$TV9H"'fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+# TV10-TV10s (the f16b review of D102, 2026-10-21): neither a chain of untyped copies nor a nest of generic calls is cut
+# short — y takes T's type at any length, as each instance types it. `_gs_vkind` had one 8-level budget for both, so a
+# 10-copy chain (TV10), a chain of 9 mixing copies and `id(..)` (TV10b) and `id(..)` 9 deep (TV10c) stayed untyped:
+# "no struct type in scope for 'y10'" at the definition at T = Q (tests/tcyr/crossos/generic_struct_only_lines.tcyr
+# V16-V18 run them), and at 5 instead of the stub's refusal. A declaration whose own initializer holds the use is no T
+# value, and the walk ends there (TV10s: `var z = z;`, the same two errors as the tree before D102).
+#   MTV6 the lane head before the fix (0ae54834c)           -> RED 11: TV10 TV10n TV10b TV10bn TV10c, TVX TV10 TV10b x3
+#   MTV7 `_gs_vkind` without the `e > u` guard              -> TV10s never ends (the walk re-reads `var z = z;`)
+TV10="$TVH"'fn g<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+TV10b="$TVH"'fn g<T>(x: T): i64 { var a = x; var b = id(a); var c = b; var d = id(c); var e = d; var f = id(e); var h = f; var i = id(h); var j = i; return j.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse "TV10 g(5): a 10-copy chain's y10.b" "$TGM" "$TV10" one
+tv_note "TV10n the note names 7:159" "7:159: 'g' takes a field of a value typed by its type parameter"
+refuse "TV10b g(5): copies and id() mixed, 9" "$TGM" "$TV10b" one
+tv_note "TV10bn the note names 7:144" "7:144: 'g' takes a field of a value typed by its type parameter"
+refuse "TV10c g(5): id(..) nested 9 deep" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var y = id(id(id(id(id(id(id(id(id(x))))))))); return y.b; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+refuse_at "TV10s var z = z; ends: the two errors" "7:31: undefined variable 'z' (missing include or enum?)|7:43: $SN 'z'$SA" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+# TV11-TV11l (the f16b review of D102, 2026-10-21): a name a closure parameter, a for-in variable or a destructure's
+# later name rebinds is not the T value. `_tok_name_decl` reads only `var NAME` and the fn's own parameters, so D102's
+# readers reached g's `x: T` past `|x|`, `for x in` and `var q, x = two();` (and `idp(p)` past `|p|`, `first(b)` past
+# `|b|`): y counted as T-typed, so a never-called g compiled (TV11, the review's repro verbatim, and TV11c-TV11f; each
+# refused at the definition before D102), `g(5)` named a field of a T value in its note (TV11b), and a bounded
+# `y.show()` called the bound's impl on the word — SIGSEGV at T = Pt (TV11g-TV11i). Each is again the no-struct line at
+# the definition (`_gs_rebound`, parse_fn_def.cyr); the same name read after the closure, after the loop, or after a
+# block holding the destructure is the T value (TV11j-TV11l; generic_struct_only_lines.tcyr V19-V21 on every backend).
+#   MTV8 the tree before this fix (d458f47dc)               -> RED 9: TV11 TV11b-TV11i (TV11g-TV11i: rc 0, exit 139)
+#   MTV9 `_gs_rebound` without its for-in / destructure arms -> RED 4: TV11e TV11f TV11h TV11i
+TVR='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn idp<T>(p: *T): T { var r: T = *p; return r; }
+fn first<T>(b: Box<T>): T { var r: T = b.v; return r; }
+fn two(): (i64, i64) { return (1, 2); }
+'
+TVM='fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "TV11 |x| { var y = x; y.b }: the repro" "4:57: $SN 'y'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { var y = x; return y.b; }; return fncall1(f, 5); }
+fn main(): i64 { return 0; }'
+refuse_at "TV11b g(5): the no-struct line, no stub" "4:57: $SN 'y'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { var y = x; return y.b; }; return fncall1(f, 5); }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse_at "TV11c |p| { var y = idp(p); }" "8:63: $SN 'y'$SA" "$TVR"'fn g<T>(p: *T): i64 { var f = |p| { var y = idp(p); return y.b; }; return fncall1(f, 5); }
+'"$TVM"
+refuse_at "TV11d |b| { var y = first(b); }" "8:69: $SN 'y'$SA" "$TVR"'fn g<T>(b: Box<T>): i64 { var f = |b| { var y = first(b); return y.b; }; return fncall1(f, 5); }
+'"$TVM"
+refuse_at "TV11e for x in 0..3 { var y = x; }" "8:71: $SN 'y'$SA" "$TVR"'fn g<T>(x: T): i64 { var s = 0; for x in 0..3 { var y = x; s = s + y.b; } return s; }
+'"$TVM"
+refuse_at "TV11f var q, x = two(); var y = x;" "8:62: $SN 'y'$SA" "$TVR"'fn g<T>(x: T): i64 { var q, x = two(); var y = x; return y.b + q; }
+'"$TVM"
+TVB='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn two(): (i64, i64) { return (1, 2); }
+'
+TVBM='fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+refuse_at "TV11g bounded |x| y.show() at Pt" "8:66: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var f = |x| { var y = x; return y.show(); }; return fncall1(f, 5); }
+'"$TVBM"
+refuse_at "TV11h bounded for x in: y.show() at Pt" "8:80: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { var y = x; s = s + y.show(); } return s; }
+'"$TVBM"
+refuse_at "TV11i bounded var q, x: y.show() at Pt" "8:70: $SN 'y'$SM" "$TVB"'fn g<T: Show>(x: T): i64 { var q, x = two(); var y = x; return y.show() + q; }
+'"$TVBM"
+TVQM='fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+accept "TV11j |x| closed before var y = x;: x's" "$TVR"'fn g<T>(x: T): i64 { var f = |x| { return x + 1; }; var y = x; return y.b + fncall1(f, 1); }
+'"$TVQM" 6 'syscall(60, 6);'
+accept "TV11k for x in, then var y = x;: x's" "$TVR"'fn g<T>(x: T): i64 { var s = 0; for x in 0..3 { s = s + x; } var y = x; return y.b + s; }
+'"$TVQM" 7 'syscall(60, 7);'
+accept "TV11l var q, x in a closed block: x's" "$TVR"'fn g<T>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } var y = x; return y.b + r; }
+'"$TVQM" 7 'syscall(60, 7);'
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
@@ -1234,6 +1465,10 @@ cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] UC2" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
     uc_rows "CPX [$1] "
     refuse "TGX [$1] TG0" "$TGM" "$TG0" one
+    refuse "TVX [$1] TV1" "$TGM" "$TV1" one
+    refuse "TVX [$1] TV2" "$TGM" "$TV2" one
+    refuse "TVX [$1] TV10" "$TGM" "$TV10" one
+    refuse "TVX [$1] TV10b" "$TGM" "$TV10b" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1247,10 +1482,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (the genbind review, 2026-10-20: 263 refusals + 37 acceptances with CPX's UC rows on three legs): a lost row
-# block — a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 300 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 300"; exit 1
+# FLOOR (6.7.16's D102 review, 2026-10-21: 320 refusals + 47 acceptances with CPX's UC / UCG / TVX rows on three legs;
+# 345 at D102, 327 at D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop
+# dropped — is RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 367 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 367"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

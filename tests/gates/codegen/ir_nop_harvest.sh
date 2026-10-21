@@ -42,7 +42,7 @@ chmod +x "$T/ir3"
 # went RED when 6.7.8's C2-1 extraction took `_PARSE_FACTOR_IMPL` under the per-fn compactor's
 # 1024-entry caps (`_nrn` / `_jsn`, parse_fn.cyr) and its last 499 NOPs went. CHANGELOG [6.7.8]
 command -v llvm-objdump >/dev/null 2>&1 || { echo "FAIL ir_nop_harvest: llvm-objdump is not installed - the NOP count cannot be taken"; exit 1; }
-llvm-objdump -d "$T/ir3" > "$T/dis" 2>/dev/null
+llvm-objdump -d "$T/ir3" > "$T/dis" 2>/dev/null || true   # its failure is read below, by the instruction count
 NI=$(grep -cE '^ *[0-9a-f]+:' "$T/dis" || true)
 if [ -z "$NI" ] || [ "$NI" -lt 100000 ]; then
   echo "FAIL ir_nop_harvest: the IR=3 build disassembles to ${NI:-0} instructions (a cycc is ~500,000) - llvm-objdump could not read it"
@@ -61,7 +61,9 @@ fi
 # the moment the default build crossed a 4 KB page — 20,480 B, five pages, from a +1,040 B .text change. A smaller IR=3
 # build is no regression; step 3 below is what proves it correct. Rows (2026-10-20): this gate at 69a6e0469 (the
 # two-sided check) -> RED "delta 20480"; the one-sided check GREEN there; an IR=3 size planted 45,056 B larger (24,576 B
-# over the default once padded) -> RED "+24576". CHANGELOG [6.7.16]
+# over the default once padded) -> RED "+24576". f16 rows (2026-10-20, 450ecf2c9, under sh AND bash -eo pipefail): the
+# merged tree -16,384 -> PASS; SI planted at SD - 20,480 (F4's shape) -> PASS; SD + 20,000 -> PASS; SD + 24,576 -> RED.
+# CHANGELOG [6.7.16]
 SD=$(stat -c%s "$T/stage1"); SI=$(stat -c%s "$T/ir3")
 D=$(( SI - SD ))
 if [ "$D" -gt 20000 ]; then
@@ -69,9 +71,11 @@ if [ "$D" -gt 20000 ]; then
   exit 1
 fi
 
-# 3. THE REAL ASSERTION: the IR-built compiler works and is a fixpoint with the default one.
-"$T/ir3" < "$R/src/main.cyr" > "$T/ir3out" 2>"$T/e3"
-rc=$?
+# 3. THE REAL ASSERTION: the IR-built compiler works and is a fixpoint with the default one. The rc is taken with `||`
+# so a failing compile prints its FAIL line under `bash -eo pipefail` too (a bare `cmd; rc=$?` exited there, silent,
+# at the command: row, an IR=3 compiler planted as `exit 7` -> "rc=7" with no FAIL line). CHANGELOG [6.7.16]
+rc=0
+"$T/ir3" < "$R/src/main.cyr" > "$T/ir3out" 2>"$T/e3" || rc=$?
 if [ $rc -ne 0 ]; then
   echo "FAIL ir_nop_harvest: the IR=3-built cycc cannot compile (rc=$rc) — stale IR node CPs."
   sed -n 1,3p "$T/e3"; exit 1

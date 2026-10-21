@@ -2766,6 +2766,7 @@ _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
 _chk_gate "$ROOT/tests/gates/frontend/enum_member_separator.sh"   # 6.7.16 (D12): `enum E { A B }` is one error at B
+_chk_gate "$ROOT/tests/gates/frontend/struct_field_separator.sh"   # 6.7.16 (D69): `struct P { a b }` is one error at b
 _chk_gate "$ROOT/tests/gates/frontend/if_expr_checked.sh"   # 6.7.4 (B3)
 _chk_gate "$ROOT/tests/gates/frontend/loop_do_checked.sh"   # 6.7.5 (B5)
 _chk_gate "$ROOT/tests/gates/frontend/default_named_args_checked.sh"   # 6.7.7 (B6); 6.7.11 SC rows (the source scanners)
@@ -2954,6 +2955,7 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
 # The checks read the instance's signature; a generic's tuple local is refused once. x86 / IR / DCE / aarch64 / cx /
 # PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_multi_value_element.sh"
+_chk_gate "$ROOT/tests/gates/frontend/mret_struct_element_refused.sh"   # 6.7.16 (D90): a struct value over 8 B is no return element
 # 6.7.14 — a `p: *T` parameter binds what its pointer argument points at (`&G` / `&l`, a `*S` global,
 # parameter, capture, field chain or `: *S` call) and an `x: T` one binds no pointer (the user's decision
 # D8 (a), 2026-10-16): only a `*S` local bound, through both shapes. The filed repro's nine rows, a

@@ -31,6 +31,7 @@
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"
+include "lib/overflow.cyr"
 
 struct C4 { r: u8; g: u8; b: u8; a: u8; }          # 4 B (32 through 6.7.9)
 struct S8 { v; }
@@ -167,6 +168,14 @@ fn c_bxor() { var m = 7; var xb = f64_bits3(); var c = (m ^ xb) * 3; return c & 
 fn c_mod() { var m = 64; var xb = f64_bits3(); var c = (m % xb) * 3; return c; }
 fn c_shl() { var m = 7; var xb = f64_bits3(); var c = (m << xb) * 3; return c; }
 fn c_shr() { var m = 64; var xb = f64_bits3(); var c = (m >> xb) * 3; return c; }
+# 6.7.16 (the user's D104, 2026-10-20) — the saturating / checked `+| +? -| -? *| *?` give an INTEGER too: they kept an
+# f64 right operand's type, so `(m +| x) * 3` took the f64 arm (a float multiply of the sum's bits by 3's).
+fn c_sadd() { var m = 7; var xb = f64_bits3(); var c = (m +| xb) * 3; return c & 255; }
+fn c_cadd() { var m = 7; var xb = f64_bits3(); var c = (m +? xb) * 3; return c & 255; }
+fn c_ssub() { var m = 9; var xb = f64_bits3(); var c = (m -| xb) * 3; return c & 255; }
+fn c_csub() { var m = 9; var xb = f64_bits3(); var c = (m -? xb) * 3; return c & 255; }
+fn c_smul() { var m = 1; var xb = f64_bits3(); var c = (m *| xb) * 3; return c & 255; }
+fn c_cmul() { var m = 1; var xb = f64_bits3(); var c = (m *? xb) * 3; return c & 255; }
 # 6.7.13 (issues/archived/2026-10-14-f64-leading-call-types-comparison-binding-f64.md) — `var c = f() < 1.0;` with a `: f64`
 # leading call bound c as an f64 (the leading call's type), so `-c` was a float negation: the sign bit flipped
 # (0x8000000000000001, the repro: 3 where 1 is right) and `0 - c` warned kind 2. The f64 binding holds only
@@ -344,6 +353,12 @@ assert_eq(c_bxor(), 12, "(m ^ x) * 3 is an integer (D12 (a))");
 assert_eq(c_mod(), 192, "(m % x) * 3 is an integer (D12 (a))");
 assert_eq(c_shl(), 168, "(m << x) * 3 is an integer (D12 (a))");
 assert_eq(c_shr(), 24, "(m >> x) * 3 is an integer (D12 (a))");
+assert_eq(c_sadd(), 30, "(m +| x) * 3 is an integer (D104)");
+assert_eq(c_cadd(), 30, "(m +? x) * 3 is an integer (D104)");
+assert_eq(c_ssub(), 18, "(m -| x) * 3 is an integer (D104)");
+assert_eq(c_csub(), 18, "(m -? x) * 3 is an integer (D104)");
+assert_eq(c_smul(), 9, "(m *| x) * 3 is an integer (D104)");
+assert_eq(c_cmul(), 9, "(m *? x) * 3 is an integer (D104)");
 assert_eq(l_lt(), 0 - 1, "var c = f() < 1.0; -c is -1 (the repro: the sign bit flipped)");
 assert_eq(l_eq(), 0 - 1, "var c = f() == 0.5; -c is -1");
 assert_eq(l_le(), 0 - 1, "var c = f() <= 0.5; -c is -1");

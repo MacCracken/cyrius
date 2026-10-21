@@ -863,6 +863,270 @@ fn f(p: *Q): i64 { return p.y; }
 syscall(60, q.y + f(&q) + E.B + B);
 ' 12
 
+# ── the five-leg rows (6.7.16, f16 FF5) ─────────────────────────────────────────────────────────────────────────
+# `row5` / `ok5`: each row on the x86_64, PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1) compilers and the
+# aarch64 / cx compilers built from this tree. `row5`: refused (rc != 0, no binary), the `error` / `warning` lines
+# exactly <want>. `ok5`: compiles clean (no such line, a binary) on each, runs <exit> on x86_64. A compiler that does
+# not build is a FAIL (a SKIP is not coverage).
+LEGS="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; LEGS="$LEGS a64"
+else printf '  FAIL: %-46s\n' "src/main_aarch64.cyr did not build"; fail=$((fail+1)); fi
+if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; LEGS="$LEGS cx"
+else printf '  FAIL: %-46s\n' "src/main_cx.cyr did not build"; fail=$((fail+1)); fi
+N5=0
+comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
+    CRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        a64)   timeout 60 "$D/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        cx)    timeout 60 "$D/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+    esac
+}
+row5() {   # <id> <what> <source> <want-lines> [cc-arg]
+    printf '%s' "$3" > "$D/$1.cyr"
+    printf '%s\n' "$4" > "$D/$1.want"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp5 "$leg" "$D/$1.cyr" "$o" "${5:-}"
+        N5=$((N5 + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$CRC" -eq 0 ]; then printf '  FAIL: %s %s: %s: rc 0\n' "$1" "$leg" "$2"; fail=$((fail+1))
+        elif ! cmp -s "$o.got" "$D/$1.want"; then
+            printf '  FAIL: %s %s: %s: got %s lines: %s\n' "$1" "$leg" "$2" "$(wc -l < "$o.got")" "$(tr '\n' '|' < "$o.got")"; fail=$((fail+1))
+        elif [ -s "$o" ] && [ -z "${5:-}" ]; then printf '  FAIL: %s %s: %s: refused, but a binary was written\n' "$1" "$leg" "$2"; fail=$((fail+1))
+        else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
+    done
+}
+ok5() {   # <id> <what> <source> <exit>
+    printf '%s' "$3" > "$D/$1.cyr"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp5 "$leg" "$D/$1.cyr" "$o"
+        N5=$((N5 + 1))
+        if [ "$CRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
+            printf '  FAIL: %s %s: %s: rc %s: %s\n' "$1" "$leg" "$2" "$CRC" "$(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; fail=$((fail+1))
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; x=0; ( ulimit -c 0; timeout 30 "$o" ) > /dev/null 2>&1 || x=$?
+            if [ "$x" = "$4" ]; then printf '  ok: %s %s: %s (exit %s)\n' "$1" "$leg" "$2" "$x"; pass=$((pass+1))
+            else printf '  FAIL: %s %s: %s: exit %s, want %s\n' "$1" "$leg" "$2" "$x" "$4"; fail=$((fail+1)); fi
+        else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
+    done
+}
+ZZ="undefined variable 'zz' (missing include or enum?)"
+DH='include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+'
+
+# DV — 6.7.16 (issues/2026-10-19-refused-declaration-derive-step-takes-enclosing-body-brace.md): A REFUSED DECLARATION'S
+# DERIVE STEP TAKES ONLY WHAT THE DERIVE WROTE. `_dl_derived` stepped every token left on a refused struct's / enum's
+# closing line when it began `fn` / `pub` — where a `#derive` writes its generated fns — so the user's own `fn h()`
+# there was stepped as a derive's: below module scope through the enclosing fn body's or block's `}` ("expected '}',
+# got end of file"), at module scope silently (h never defined). Now only when the preprocessor derived that type
+# (`PP_DERIVE_LAST`), only the `[public] fn` units named `<Type>_..` / `_cy_..` (what PP_DERIVE_* writes, before the
+# user's tail), each through its own braces. DV1 / DV2 the filed repros verbatim (two and three errors: the struct's,
+# then `fn h`'s own "defined inside" / the `pub`'s, and `zz`; no EOF error); DV3 at module scope h is DEFINED (its
+# body's `zz`, its call's arity); DV4 a refused `#derive(Serialize)` struct (Vec / f64 fields: the `_cy_` helpers) in
+# a fn body and after a statement still steps its generated fns, a call of one quiet; DV5 an enum derive, the user's
+# fn after its codecs refused as nested; DV6 a `fn Q_h` on a NON-derived refused struct's line is the user's.
+# MUTATION LEDGER (2026-10-21, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy, so every leg's compiler carries the mutant):
+#   the lane before it (b272c366a)                   -> RED DV1 DV2 DV3 DV5 DV6, 25 (DV4 green: the derive's own fns)
+#   `_dl_derived` without its `PP_DERIVE_LAST` test  -> RED DV6, 5 (`fn Q_h` stepped as a derive's)
+#   `_dl_dname` taking any name                      -> RED DV5, 5 (the user's `fn h` after the codecs stepped)
+#   `_dl_dname` without its `_cy_` arm               -> RED DV4 DV5 Q3, 11 (the helpers parsed: "fn '_cy_vecdec_int'
+#                                                       is defined inside fn 'f'", the walk stopped before the codecs)
+row5 DV1 "filed: a struct then fn h on one line in a fn body" "$(printf 'fn f(): i64 { struct Q { y; } fn h(): i64 { return 1; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body
+error:<source>:1:31: fn 'h' is defined inside fn 'f'; define it at top level"
+row5 DV2 "filed: a struct then pub fn h on one line in a block" "$(printf 'var a = 1;\nif (a == 1) { struct Q { y; } pub fn h(): i64 { return 1; } }\nsyscall(60, a + zz);\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a block
+error:<source>:2:31: a \`pub\` declaration $IR a block
+error:<source>:3:19: $ZZ"
+row5 DV3 "module scope: struct Q {..} fn h(): h is defined" 'var a = 1;
+a = 2;
+struct Q { y; } fn h(): i64 { return zz; }
+syscall(60, h(4));
+' "error:<source>:3:1: a \`struct\` declaration $L
+error:<source>:3:40: $ZZ
+error:<source>:4: 'h' expects 0 arguments, got 1"
+row5 DV4 "control: a refused derive's fns still stepped (a body, after a statement)" "${DH}fn f(): i64 {
+#derive(Serialize)
+struct Q { y; v: Vec<i64>; z: f64; }
+return 7 + zz;
+}
+var a = 1;
+a = 2;
+#derive(Serialize)
+pub struct R { y; v: Vec<f64>; }
+var sb = 0;
+R_to_json(0, sb);
+syscall(60, a + f() + zz);
+" "error:<source>:9:1: a \`struct\` declaration $IR a fn body
+error:<source>:10:14: $ZZ
+error:<source>:15:1: a \`pub\` declaration must come before the first top-level statement (line 13)
+error:<source>:18:25: $ZZ"
+row5 DV5 "an enum derive: its codecs stepped, the user's fn after them is not" "${DH}fn f(): i64 {
+#derive(Serialize)
+enum E { A; B; } fn h(): i64 { return 1; }
+return E_from_json_str(0) + zz;
+}
+syscall(60, f());
+" "error:<source>:9:1: an \`enum\` declaration $IR a fn body
+error:<source>:9:651: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:10:31: $ZZ"
+row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf 'fn f(): i64 { struct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body
+error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:1:68: $ZZ"
+
+# UI — 6.7.16 (issues/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
+# REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
+# when PARSE_PROG parsed its body, in source order, so an earlier fn's `q: *Q` was "type 'Q' is declared after its use",
+# `E.B` "undefined variable 'E'", and pass 1's bound `T: Tr` "unknown trait 'Tr'" — each printed before or beside the
+# declaration's own error. Now `_dl_inner_fill` (before every pass-1 scan) walks the bodies and enters the names of
+# each declaration `_decl_inner` will refuse; the bound's unknown-trait report (`_bnd_make`), `dyn Tr`'s "is not a
+# trait" (`_dyn_chk`) and `impl Tr for P`'s "impl of undeclared trait" (`_tr_check_impl`) stand down for such a name,
+# counted and latched as the printed refusal is. UI1-UI3 the filed repros verbatim (two errors each before); UI4 an
+# impl method's body; UI5 the other bodies — a nested block in a fn, a `case` arm, a closure, a top-level block, a
+# `pub struct`, a union, a bare member, a case label, a zone const and array size, a literal and sizeof; UI6 the
+# trait's other uses: `dyn Tr`, `impl Tr for P`, a generic struct's bound; UI7 exact: a name declared nowhere is still
+# reported, and a valid top-level struct of the inner one's name still resolves (its unknown field reported); UI8
+# --syntax-only of UI3 (two before); UI9 exact: a zone declaration below its use is no inner one (module scope is not a
+# body) — "declared after its use" still reported.
+#   the lane before it (c5cf2a990)                   -> RED UI1-UI6 UI8, 35 (UI7 green)
+#   `_tl_pass1` without `_dl_inner_fill`             -> RED UI1-UI6 UI8, 35
+#   `_dl_inner_at` without the case arm's `:`        -> RED UI5, 5 (`case 1: struct R`'s R reported at its use)
+#   `_dl_inner_fill` not marking a fn header's `{`   -> RED UI4, 5 (an impl method's body read as the impl's)
+#   `_bnd_make` without its stand-down               -> RED UI3 UI6 UI8, 15 ("unknown trait 'Tr' in the bound")
+#   `_dyn_chk` without its stand-down                -> RED UI6, 5 ("'Tr' is not a trait")
+#   `_tr_check_impl` without its stand-down          -> RED UI6, 5 ("impl of undeclared trait 'Tr' for 'P'")
+#   the fill at module scope too (no `vec_len` test) -> RED UI9, 5 (rc 1 and NO error: `Late` stood down silently)
+#   (measured) a declaration's body read as a body   -> no row RED: only a declaration inside one differs, which is
+#                                                       invalid there and refused before any use of its name
+row5 UI1 "filed: an earlier fn's q: *Q, Q declared in a fn body" "$(printf 'fn g(q: *Q): i64 { return q.y; }\nfn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, g(0) + f());\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+row5 UI2 "filed: an earlier fn's E.B, E declared in a fn body" "$(printf 'fn h(): i64 { return E.B; }\nfn f(): i64 { enum E { A, B } return 1; }\nsyscall(60, h() + f());\n')
+" "error:<source>:2:15: an \`enum\` declaration $IR a fn body"
+row5 UI3 "filed: a later generic's bound T: Tr, Tr declared in a fn body" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
+" "error:<source>:1:15: a \`trait\` declaration $IR a fn body"
+row5 UI4 "an impl method's body" 'fn g(q: *Q): i64 { return q.y + zz; }
+struct P { x; }
+impl P { fn m(self): i64 { struct Q { y; } return 1; } }
+syscall(60, g(0));
+' "error:<source>:1:35: $ZZ
+error:<source>:3:28: a \`struct\` declaration $IR a fn body"
+row5 UI5 "the other bodies and uses: blocks, a case arm, a closure, pub, a union, consts" 'fn g(q: *Q, r: *R, s: *S, t: *T, u: *U, w: *W): i64 { return q.y + r.y + s.y + t.y + u.y + w.y + B + F.D; }
+fn k(x): i64 { switch (x) { case E.A: return 1; } return G.H; }
+const C = E.B;
+var arr: i64[F.D];
+fn m(): i64 { var q = Q { 5 }; return q.y + sizeof(Q); }
+fn f(x): i64 {
+    if (x == 1) { while (x == 0) { struct Q { y; } } }
+    switch (x) { case 1: struct R { y; } }
+    pub struct S { y; }
+    union U { y; z: i32; }
+    enum E { A, B }
+    return 0;
+}
+var cl = |x| { struct T { y; } return x; };
+var a = 1;
+if (a == 1) { struct W { y; } enum F { C, D } }
+fn h(): i64 { if (1 == 1) { enum G { H } } return 0; }
+syscall(60, g(0, 0, 0, 0, 0, 0) + k(1) + C + m() + f(1) + h() + zz);
+' "error:<source>:7:36: a \`struct\` declaration $IR a fn body
+error:<source>:8:26: a \`struct\` declaration $IR a fn body
+error:<source>:9:5: a \`pub\` declaration $IR a fn body
+error:<source>:10:5: a \`union\` declaration $IR a fn body
+error:<source>:11:5: an \`enum\` declaration $IR a fn body
+error:<source>:14:16: a \`struct\` declaration $IR a fn body
+error:<source>:16:15: a \`struct\` declaration $IR a block
+error:<source>:16:31: an \`enum\` declaration $IR a block
+error:<source>:17:29: an \`enum\` declaration $IR a fn body
+error:<source>:18:67: $ZZ"
+row5 UI6 "a refused inner trait's other uses: dyn, impl for, a struct bound" 'struct P { x; }
+fn g(x: dyn Tr): i64 { return 1; }
+impl Tr for P { fn m(self): i64 { return 1; } }
+struct B<T: Tr> { v: T; }
+fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }
+syscall(60, f() + zz);
+' "error:<source>:5:15: a \`trait\` declaration $IR a fn body
+error:<source>:6:21: $ZZ"
+row5 UI7 "exact: a name declared nowhere, a valid top-level struct of the name" 'fn g(q: *Zq): i64 { return q.y; }
+fn h(q: *Q): i64 { return q.w; }
+fn f(): i64 { struct Q { y; } return 1; }
+struct Q { z; }
+syscall(60, g(0) + h(0) + f());
+' "error:<source>:1:10: unknown type 'Zq' for parameter 'q'
+error:<source>:2:30: unknown field 'w' on struct 'Q'
+error:<source>:3:15: a \`struct\` declaration $IR a fn body"
+row5 UI9 "exact: a zone declaration after its use is still reported" "$(printf 'var g: Late = 0;\nstruct Late { a; b; }\nfn f(): i64 { struct Q { y; } return 1; }\nsyscall(60, f());\n')
+" "error:<source>:1:8: type 'Late' is declared after its use; declare it above the first use
+error:<source>:3:15: a \`struct\` declaration $IR a fn body"
+row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
+" "error:<source>:1:15: a \`trait\` declaration $IR a fn body" --syntax-only
+
+# UZ — 6.7.16 (issues/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
+# CONTEXT NAMING A LATE (REFUSED) ENUM IS NO SECOND ERROR. A declaration-zone global's array size and an enum's value are
+# evaluated during pass 1's zone scan, before the first statement — and so the late declarations' names (`_dl_fill`) —
+# is known: "unknown name 'E' in a const context", printed BEFORE the enum's own error. Now `_ce_unk` holds the report
+# of a name a later declaration declares (`_ce_zdefer`), latched as the printed one is, and `_ce_zflush` says it at the
+# end of pass 1's tail walk unless a refused declaration declared the name. UZ1 / UZ2 the filed repros verbatim (two
+# errors each before); UZ3 several zone uses, of two late enums (one error per enum); UZ4 control: a zone const and a
+# zone #assert (one error, as before); UZ5 control: a VALID forward zone reference (no statement between) still says
+# "unknown name 'E'" once — after the pass-1 reports between it and the zone's end (UZ6: the struct field's); UZ7 a name
+# declared nowhere is reported in place; UZ8 a held report is said before an unmatched `}` stops the compile; UZ9
+# --syntax-only of UZ1.
+#   the lane before it (8c5be2e81)                   -> RED UZ1 UZ2 UZ3 UZ9 (the early "unknown name 'E'"), UZ6
+#                                                       (its old order), 25
+#   `_ce_unk` without `_ce_zdefer`                   -> RED UZ1 UZ2 UZ3 UZ6 UZ9, 25
+#   `_ce_zflush` saying every held report            -> RED UZ1 UZ2 UZ3 UZ9, 20 (the late enum's name said)
+#   `_ce_zflush` dropping every held report          -> RED UZ5 UZ6 UZ8, 15 (the valid forward reference unsaid:
+#                                                       rc 1, its one error lost)
+#   `_tl_stray_brace` without its `_ce_zflush`       -> RED UZ8, 5
+row5 UZ1 "filed: a zone array size naming a late enum" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)"
+row5 UZ2 "filed: a zone enum value naming a late enum" "$(printf 'enum F { X = E.B }\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)"
+row5 UZ3 "several zone uses of two late enums" 'var arr: i64[E.B];
+var b: i64[E.A];
+enum F { X = E.B, Y = Q.A }
+var a = 1;
+a = 2;
+enum E { A, B }
+enum Q { A }
+syscall(60, zz);
+' "error:<source>:6:1: an \`enum\` declaration must come before the first top-level statement (line 5)
+error:<source>:7:1: an \`enum\` declaration must come before the first top-level statement (line 5)
+error:<source>:8:15: $ZZ"
+row5 UZ4 "control: a zone const and a zone #assert" "$(printf 'const C = E.B;\n#assert E.A == 0\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:5:1: an \`enum\` declaration must come before the first top-level statement (line 4)"
+row5 UZ5 "control: a valid forward zone reference is said once" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:4:15: $ZZ"
+row5 UZ6 "control: ... after the pass-1 reports before the zone's end" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
+" "error:<source>:2:15: unknown type 'Zt' for struct field 'x'
+error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:5:15: $ZZ"
+row5 UZ7 "control: a name declared nowhere is said in place" "$(printf 'var arr: i64[Z.B];\nstruct P { x: Zt; }\nvar a = 1;\na = 2;\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'Z' in a const context
+error:<source>:2:15: unknown type 'Zt' for struct field 'x'
+error:<source>:5:15: $ZZ"
+row5 UZ8 "a held report is said before an unmatched } stops the compile" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\n}\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:4:1: unmatched '}' at module scope"
+row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
+
+# The five-leg rows' floor: a row or a leg lost reads RED, never green.
+F5FLOOR=120
+[ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
+
 echo "decl_after_statement_named: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

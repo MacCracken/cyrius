@@ -244,7 +244,7 @@ fi
 # untyped fields (so each struct is over 16 B and its header line names its size) and the size
 # the header prints is compared with `sizeof` compiled by build/cycc. Then the class boundaries.
 echo "H8 — every field shape sized as the compiler sizes it; the class boundaries:"
-SHAPES='f;|f: i8;|f: u8;|f: i16;|f: u16;|f: i32;|f: u32;|f: f32;|f: i64;|f: u64;|f: f64;|f: bool;|f: cstring;|f: Str;|f: Option;|f: Result;|f: Tagged;|f: *Q3;|f: **u8;|f: *Box<i64>;|f: Vec<i64>;|f: Vec;|f: E;|f: Q3;|f: R24;|f: UU;|f: (i64, i64);|f: (i64, f64, bool);|f: dyn Show;|a: u8 b: u16 c: u32 d: f32|x: Q3; y: C2;'
+SHAPES='f;|f: i8;|f: u8;|f: i16;|f: u16;|f: i32;|f: u32;|f: f32;|f: i64;|f: u64;|f: f64;|f: bool;|f: cstring;|f: Str;|f: Option;|f: Result;|f: Tagged;|f: *Q3;|f: **u8;|f: *Box<i64>;|f: Vec<i64>;|f: Vec;|f: E;|f: Q3;|f: R24;|f: UU;|f: (i64, i64);|f: (i64, f64, bool);|f: dyn Show;|a: u8; b: u16; c: u32; d: f32;|x: Q3; y: C2;'
 { echo 'include "lib/str.cyr"'
   echo 'include "lib/vec.cyr"'
   echo 'struct Q3 { a: u8; b: u8; c: u8; }'
@@ -367,7 +367,7 @@ printf '%s\n' 'struct VB { v: Vec; p1; p2; }' 'struct Vec { a; b; c; }' 'struct 
   echo 'pz(sizeof(VA)); syscall(60, 0);'; } > vop.cyr
 rcvo=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> "$D/vop.err") || rcvo=$?
 check "cycc refuses the field whose struct Vec is declared below it, by name, once" "1 1 1" \
-    "$rcvo $(grep -c "^error:<source>:1:19: struct field type 'Vec' is declared after its use; declare it before 'VB'" vop.err || true) $(grep -c '^error' vop.err || true)"
+    "$rcvo $(grep -c "^error:<source>:1:16: struct field type 'Vec' is declared after its use; declare it before 'VB'" vop.err || true) $(grep -c '^error' vop.err || true)"
 grep -v 'struct VB' vop.cyr > vopa.cyr
 { (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vopa.cyr" > "$D/vopa" 2> /dev/null) && chmod +x vopa && ./vopa > vo.cc 2> /dev/null; } || :
 check "cycc's sizeof: struct Vec above the field 40 B" "40" "$(paste -sd' ' vo.cc 2> /dev/null)"

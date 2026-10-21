@@ -27,7 +27,19 @@ cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -f "$T" "$E" "$O"' EXIT
+X=$(mktemp -d) && [ -d "$X" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+# The five-leg rows' PE runs use a PRIVATE wine prefix under $X (never ~/.wine), torn down with its server dir on
+# exit (`-k` leaves /tmp/.wine-<uid>/server-<dev>-<ino> behind) — tuple_checked.sh's helper.
+WP="$X/wine"
+WHM="$X/whome"
+_x_down() {
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
+}
+trap '_x_down; rm -rf "$X"; rm -f "$T" "$E" "$O"' EXIT
 
 # Compile $T and put stderr in $E. NEVER merge stderr into the binary stream.
 build() { "$CC" < "$T" > "$O" 2>"$E" || true; }
@@ -364,11 +376,12 @@ tpx() {   # <name> <want warnings> <want errors> <want exit or -> <what> <source
     x=-
     if [ "$4" != - ] && [ -s "$O" ]; then chmod +x "$O"; x=0; "$O" > /dev/null 2>&1 || x=$?; fi
     if [ "$n" -ne "$2" ] || [ "$ne" -ne "$3" ] || [ "$x" != "$4" ]; then
-        echo "  FAIL axis 14 $1: $5 — $n warning(s) / $ne error(s) / exit $x, want $2 / $3 / $4"; fail=1
-    else echo "  ok axis 14 $1: $5 — $n / $ne / exit $x"; fi
+        echo "  FAIL axis $AX $1: $5 — $n warning(s) / $ne error(s) / exit $x, want $2 / $3 / $4"; fail=1
+    else echo "  ok axis $AX $1: $5 — $n / $ne / exit $x"; fi
 }
 RS=docs/development/issues/repros/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript
 [ -f "$RS.cyr" ] && [ -f "$RS-zone.cyr" ] && [ -f "$RS-address-of-subscript.cyr" ] || { echo "FAIL: typed_pointer_warn_sign: $RS*.cyr missing"; exit 1; }
+AX=14   # the axis `tpx` names in its lines (its axis 15 and 16 rows said 'axis 14')
 tpx S0 0 0 218 "the filed repro 1 verbatim: var s: *u8 = \"abc\"; t = \"xyz\"; (2 warnings before)" "$(cat "$RS.cyr")"
 tpx S0z 0 0 98 "the filed zone repro verbatim: var p: *u8 = \"abc\"; (1 warning before)" "$(cat "$RS-zone.cyr")"
 tpx S0a 0 1 - "the filed &a[i] repro verbatim: p = &a[1]; refused once (a warning beside it before)" "$(cat "$RS-address-of-subscript.cyr")"
@@ -395,6 +408,7 @@ tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'v
 # expression is judged as before (SLK1, SLK2). Warning text only: no binary changes (each row's exit is the one before).
 #   `_tp_exempt` without `_tp_str_exempt` (the literal alone, the lane before the bite) -> RED 6: SL0 (2) SL1 (6)
 #                                                                 SL2 (4) SL3 (3) SL4 (1) SL5 (1)
+AX=15
 tpx SL0 0 0 218 "the filed repro verbatim: \"abc\" + 1 and (\"xyz\") into a *u8 (2 warnings before)" 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var s: *u8 = "abc" + 1;\n    var t: *u8 = ("xyz");\n    return load8(s) + load8(t);\n}\nsyscall(60, main());\n'
 tpx SL1 0 0 111 "fn: \"abc\" + 1, (\"xyz\"), ((\"x\")), \"abc\" - 0, (\"abc\" + 1), (\"abc\") + n are quiet" 'fn main(): i64 {\n    var n = 1;\n    var a: *u8 = "abc" + 1;\n    var b: *u8 = ("xyz");\n    var c: *u8 = (("x"));\n    var d: *u8 = "abc" - 0;\n    var e: *u8 = ("abc" + 1);\n    var f: *u8 = ("abc") + n;\n    return load8(a) + load8(b) + load8(c) + load8(d) + load8(e) + load8(f) - 520;\n}\nsyscall(60, main());\n'
 tpx SL2 0 0 135 "assignments: t = (\"xyz\"); t = \"abc\" + n; into a *u8 local, a parameter, a *u8 global" 'var G: *u8 = 0;\nfn f(p: *u8): i64 {\n    var n = 2;\n    var t: *u8 = 0;\n    t = ("xyz");\n    var r = load8(t);\n    t = "abc" + n;\n    p = (("pq")) + 1;\n    G = ("g") - 0;\n    return r + load8(t) + load8(p) + load8(G) - 300;\n}\nsyscall(60, f(0));\n'
@@ -406,17 +420,112 @@ tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 
 
 # --- axis 16 (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md) ---
 # A `: Str` call into a `*Str` declaration or global is quiet now (tests/gates/diagnostics/false_warnings_valid_shapes.sh
-# SP0 SP1): `_tp_call_pointee` takes only a call whose declared return IS the pointee and that pointee a `Str` (a handle,
-# the header's address). These still warn: a `: Q1` call (an 8-byte struct, its word) into a `*Str` — a declaration in a
+# SP0 SP1): `_tp_call_pointee` takes only a value whose declared type IS the pointee and that pointee a `Str` (a handle,
+# the header's address) — since the field bite, every value the `*T` local's arm types (`_tpv_sid`: a call, a method,
+# a `: Str` field, a `Str` name, wrapped whole; false_warnings_valid_shapes.sh SF0-SF3). These still warn: a `: Q1` call (an 8-byte struct, its word) into a `*Str` — a declaration in a
 # fn and in the zone, a global assignment, the method forms (SC1); a `: P1` call into a `*P1` (a struct of 8 B or less is
 # returned as its word, not an address — SC2); `str_from(..)` into a `**Str` (SC3); a `: Str` call that is not the
 # whole value (SC4). Mutation: `_tp_call_pointee` without its `Str` test -> RED SC2 and axis 12's z_8b (0 warnings, the
-# struct's word taken as an address); `_tp_fcall_ret` without its whole-value test -> RED SC4.
+# struct's word taken as an address); `_tpv_sid` taking a call's return whatever follows the call (its whole-value test,
+# `_tpv_end_at`) -> RED SC4 (6.7.16's first form, `_tp_fcall_ret`, is gone).
+AX=16
 SCH='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nstruct H { name: Str; n; }\nfn H_mq(self: H): Q1 { var q: Q1; q.a = 3; return q; }\nfn mkq(): Q1 { var q: Q1; q.a = 3; return q; }\nvar _ai = alloc_init();\n'
 tpx SC1 5 0 - "a : Q1 call into a *Str: a declaration, a global, the zone, the method forms (5 warnings)" "${SCH}var GP: *Str = 0;\nvar GQ: *Str = mkq();\nfn main(): i64 {\n    var h: H = alloc(16);\n    var p: *Str = mkq();\n    GP = mkq();\n    var m: *Str = h.mq();\n    GP = h.mq();\n    return 0;\n}\nsyscall(60, main());\n"
 tpx SC2 1 0 - "a : P1 call into a *P1 (an 8-byte struct's word, no address)" 'struct P1 { a; }\nfn mk1(): P1 { var p: P1; p.a = 7; return p; }\nfn main(): i64 { var o: *P1 = mk1(); return 0; }\nsyscall(60, main());\n'
 tpx SC3 2 0 - "str_from(..) into a **Str declaration and global" "${SCH}var GPP: **Str = 0;\nfn main(): i64 {\n    var pp: **Str = str_from(\"x\");\n    GPP = str_from(\"y\");\n    return 0;\n}\nsyscall(60, main());\n"
 tpx SC4 2 0 - "a : Str call that is not the whole value: str_from(..) + 0 into a *Str declaration and global" "${SCH}var GP: *Str = 0;\nfn main(): i64 {\n    var p: *Str = str_from(\"x\") + 0;\n    GP = str_from(\"y\") + 0;\n    return 0;\n}\nsyscall(60, main());\n"
 
+# ── the five-leg rows (6.7.16) ────────────────────────────────────────────────────────────────────
+# `tp5` compiles a row on x86_64, PE and Mach-O (the env legs of $CC) and on the aarch64 / cx compilers built from this
+# tree, and wants rc 0, a binary, and EXACTLY its warning lines (`L:C` each, "assigning non-pointer to typed pointer";
+# no other error or warning line) on each; a row with an exit runs on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine).
+# A missing qemu-aarch64 / wine is said by name and fails the gate (a SKIP is not coverage).
+X5=0
+X5N=0
+_x5_init() {
+    [ "$X5" -eq 1 ] && return 0
+    X5=1
+    X5L="x86_64 pe macho"
+    if "$CC" < src/main_aarch64.cyr > "$X/cc_a64" 2> /dev/null && [ -s "$X/cc_a64" ]; then chmod +x "$X/cc_a64"; X5L="$X5L aarch64"
+    else echo "  FAIL five-leg rows: src/main_aarch64.cyr did not build"; fail=1; fi
+    if "$CC" < src/main_cx.cyr > "$X/cc_cx" 2> /dev/null && [ -s "$X/cc_cx" ] && "$CC" < programs/cxvm.cyr > "$X/cxvm" 2> /dev/null && [ -s "$X/cxvm" ]; then
+        chmod +x "$X/cc_cx" "$X/cxvm"; X5L="$X5L cx"
+    else echo "  FAIL five-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fail=1; fi
+    command -v qemu-aarch64 > /dev/null 2>&1 || { echo "  FAIL five-leg rows: qemu-aarch64 is not installed (the aarch64 runs)"; fail=1; }
+    command -v wine > /dev/null 2>&1 || { echo "  FAIL five-leg rows: wine is not installed (the PE runs)"; fail=1; }
+}
+_x5_cc() {   # <leg> <name>: $X/<name>.<leg> (+ .err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  timeout 60 "$CC" < "$X/$2.cyr" > "$X/$2.$1" 2> "$X/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$X/$2.cyr" > "$X/$2.$1" 2> "$X/$2.$1.err" || rc=$? ;;
+        macho)   CYRIUS_MACHO=1 timeout 60 "$CC" < "$X/$2.cyr" > "$X/$2.$1" 2> "$X/$2.$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$X/cc_a64" < "$X/$2.cyr" > "$X/$2.$1" 2> "$X/$2.$1.err" || rc=$? ;;
+        cx)      timeout 60 "$X/cc_cx" < "$X/$2.cyr" > "$X/$2.$1" 2> "$X/$2.$1.err" || rc=$? ;;
+    esac
+}
+_x5_run() {   # <leg> <name>: the exit in $got ('-' for a leg that does not run here)
+    got=0
+    case $1 in
+        x86_64)  timeout 30 "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
+        aarch64) timeout 60 qemu-aarch64 "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
+        cx)      timeout 60 "$X/cxvm" < "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
+        pe)      mkdir -p "$WHM"; cp "$X/$2.$1" "$X/$2.exe"
+                 (cd "$X" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+                     WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$2.exe" > /dev/null 2>&1) || got=$? ;;
+        *)       got=- ;;
+    esac
+}
+tp5() {   # <name> <what> <source (printf %b)> <want warnings: `L:C` per line, or empty> <want exit or ->
+    _x5_init
+    printf '%b' "$3" > "$X/$1.cyr"
+    : > "$X/$1.want"
+    for lc in $4; do echo "warning:<source>:$lc: assigning non-pointer to typed pointer" >> "$X/$1.want"; done
+    for leg in $X5L; do
+        _x5_cc "$leg" "$1"
+        X5N=$((X5N + 1))
+        grep -E '^(error|warning)' "$X/$1.$leg.err" > "$X/$1.$leg.got" || true
+        if [ "$rc" -ne 0 ] || [ ! -s "$X/$1.$leg" ]; then echo "  FAIL axis $AX $1 ($leg): $2 — rc $rc: $(grep '^error' "$X/$1.$leg.err" | head -1)"; fail=1; continue; fi
+        if ! cmp -s "$X/$1.$leg.got" "$X/$1.want"; then echo "  FAIL axis $AX $1 ($leg): $2 — got $(wc -l < "$X/$1.$leg.got") line(s): $(tr '\n' '|' < "$X/$1.$leg.got") want: $(tr '\n' '|' < "$X/$1.want")"; fail=1; continue; fi
+        x=-
+        if [ "$5" != - ]; then chmod +x "$X/$1.$leg"; _x5_run "$leg" "$1"; x=$got; fi
+        if [ "$x" != - ] && [ "$x" != "$5" ]; then echo "  FAIL axis $AX $1 ($leg): $2 — exit $x, want $5"; fail=1
+        else echo "  ok axis $AX $1 ($leg): $2 — $(wc -l < "$X/$1.$leg.got") warning(s), exit $x"; fi
+    done
+}
+
+# --- axis 16, the `*T` LOCAL (6.7.16; issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
+# The local arm kept ANY struct a call is declared to return (v6.5.28), whatever the local points at and whatever followed
+# the call, so `p = str_from(..);` into a `*P` local said nothing where the declaration and a `*P` global warn — p held a
+# `Str` header's address and `p.b` read its length. Into a `*T` local or `p: *T` parameter (the typed-pointer bit) the
+# value is now typed as one whole primary and kept only when it is T (`_asg_ret_peek` / `_tpv_sid`, parse.cyr); a handle
+# (`var a: P3 = ..`, no `*`) keeps the call arm: a struct call into it is a rebind at any type (6.6.16 (C2)), quiet as its
+# declaration and a handle global are. Warning text only: each row's binary and exit are the ones before.
+#   the lane's compiler before the bite (54f7790b)                          -> RED SC5 (11:24 missing) SC6 (none of 5)
+#   `_asg_ret_peek` without the handle arm (a `P3` handle typed as a `*T`)    -> RED SC7 (`a = str_from(..)` warned)
+#   `_tpv_sid` taking a call's return whatever follows the call              -> RED SC6 (`mkh().n`, `str_from(..) + 0`) SC7
+#   `_tpv_sid` not walking the fields after a call                            -> RED SC7 (`mkh().name`, `mkh().nm()` warned)
+tp5 SC5 "the filed repro verbatim: p = str_from(..); into a *P local warns, as GP = .. and var d: *P = .. do (11 was quiet)" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct P { a; b; }\nvar GP: *P = 0;\nfn main(): i64 {\n    alloc_init();\n    var s: P;\n    s.a = 1;\n    s.b = 2;\n    var p: *P = &s;\n    p = str_from("abc");\n    GP = str_from("abc");\n    var d: *P = str_from("abc");\n    return p.b + s.b * 10;\n}\nsyscall(60, main());\n' "11:24 12:25 13:32" 23
+SCL='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct P { a; b; }\nstruct P1 { a; }\nstruct P3 { a; b; c; }\nstruct Q1 { a; }\nstruct H { name: Str; n; }\nfn mk1(): P1 { var r: P1; r.a = 7; return r; }\nfn mkp(): P { var r: P; r.a = 4; r.b = 5; return r; }\nfn mkq(): Q1 { var q: Q1; q.a = 3; return q; }\nfn mkh(): H { var h: H = alloc(16); h.name = str_from("cd"); h.n = 4; return h; }\nfn H_nm(self: H): Str { return self.name; }\n'
+tp5 SC6 "into a *T: a p: *P parameter, a *i64 local, an 8-byte struct's word, a call's i64 field, a call that is not the whole value (all quiet before)" "${SCL}fn fp(p: *P): i64 {\n    p = str_from(\"abc\");\n    return 0;\n}\nfn main(): i64 {\n    alloc_init();\n    var x = 1;\n    var q: *i64 = &x;\n    q = str_from(\"abc\");\n    var h: *Str = 0;\n    h = mkq();\n    h = mkh().n;\n    h = str_from(\"x\") + 0;\n    var s: P;\n    return fp(&s);\n}\nsyscall(60, main());\n" "14:24 21:24 23:14 24:16 25:26" 0
+tp5 SC7 "controls, quiet: a : Str call / field / method into a *Str, into a Str handle, a : P1 / : P call copied through a *P1 / *P, a Str call into a P3 handle (a rebind)" "${SCL}fn main(): i64 {\n    alloc_init();\n    var h: *Str = 0;\n    h = str_from(\"abc\");\n    var t: Str = str_from(\"x\");\n    t = str_from(\"wxyz\");\n    var l: *Str = 0;\n    l = mkh().name;\n    var m: *Str = 0;\n    m = mkh().nm();\n    var s1: P1;\n    var o: *P1 = &s1;\n    o = mk1();\n    var s: P;\n    var p: *P = &s;\n    p = mkp();\n    var a: P3 = alloc(24);\n    a = str_from(\"ab\");\n    var u = a;\n    return str_len(h) + str_len(t) * 2 + str_len(l) * 3 + str_len(m) * 4 + s1.a * 5 + s.b * 6 + str_len(u) * 7;\n}\nsyscall(60, main());\n" "" 104
+
+# --- axis 17, the classic-for STEP (6.7.16; met with issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
+# The warning is given at every `*T` site (6.7.13's D18 (a)), but a plain classic-for step `p = 7` / `G = 7` / `q = x`
+# into a `*T` local, parameter or global (or a struct handle) said nothing: the step shared the statement's store and
+# its aggregate dispatch (6.6.12, 6.6.20), not its warning. `_for_step_tpw` (parse_ctrl.cyr) is the statement's test,
+# with the step's `)` as the value's end for the exemptions (`_tp_term`), so `p = 0`, `p = (0)`, a string literal, a
+# pointer, a `: Str` call into a `*Str` (wrapped too) and a struct call into a handle stay quiet; a compound step `q += 1`
+# is never warned (as the statement). The tuple (R12) and `&a[i]` refusals in a step are not warned beside.
+# Warning text only: each row's binary is the one before.
+#   the lane's compiler before the bite (ff48c444)                         -> RED FS1 (none of 7) FS3 (4:25 missing)
+#   `_for_step_tpw` judging with `_tp_term` left at `;`                     -> RED FS2 (the null / string / wrap exemptions) FS3
+#   `_for_step_aggregate`'s `_asg_ret_peek` with `_tp_term` left at `;`     -> RED FS2 (`h = (str_from(..))` warned)
+AX=17
+tp5 FS1 "a plain step into a *T: a *P local, a *P global, a *i64, a : Str call into a *P, a P3 handle, x + 1, a p: *P parameter (all quiet before)" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct P { a; b; }\nstruct P3 { a; b; c; }\nvar G: *P = 0;\nvar GI: *i64 = 0;\nfn fp(p: *P): i64 {\n    var j = 0;\n    for (j = 0; j < 1; p = 9) { j = j + 1; }\n    return 0;\n}\nfn main(): i64 {\n    alloc_init();\n    var s: P;\n    var p: *P = &s;\n    var x = 3;\n    var q: *i64 = &x;\n    var a: P3 = alloc(24);\n    var i = 0;\n    for (i = 0; i < 1; p = 7) { i = i + 1; }\n    for (i = 0; i < 1; G = 7) { i = i + 1; }\n    for (i = 0; i < 1; q = x) { i = i + 1; }\n    for (i = 0; i < 1; p = str_from("ab")) { i = i + 1; }\n    for (i = 0; i < 1; a = 5) { i = i + 1; }\n    for (i = 0; i < 1; GI = x + 1) { i = i + 1; }\n    return fp(&s);\n}\nsyscall(60, main());\n' "9:29 20:29 21:29 22:29 23:42 24:29 25:34" 0
+tp5 FS2 "controls, quiet: p = 0, p = (0), G = 0, a string literal (+ 1, wrapped), a pointer, a : *i64 call, a : Str call into a *Str (wrapped), a Str call into a P3 handle, q += 0" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct P { a; b; }\nstruct P3 { a; b; c; }\nvar G: *P = 0;\nvar Y = 4;\nfn gp(): *i64 { return &Y; }\nfn main(): i64 {\n    alloc_init();\n    var s: P;\n    s.a = 1;\n    s.b = 2;\n    var p: *P = &s;\n    var x = 3;\n    var q: *i64 = &x;\n    var u: *u8 = 0;\n    var h: *Str = 0;\n    var a: P3 = alloc(24);\n    var i = 0;\n    for (i = 0; i < 1; p = 0) { i = i + 1; }\n    for (i = 0; i < 1; p = (0)) { i = i + 1; }\n    for (i = 0; i < 1; G = 0) { i = i + 1; }\n    for (i = 0; i < 1; u = "abc") { i = i + 1; }\n    var r = load8(u);\n    for (i = 0; i < 1; u = ("abc") + 1) { i = i + 1; }\n    r = r + load8(u);\n    for (i = 0; i < 1; q = gp()) { i = i + 1; }\n    r = r + load64(q);\n    for (i = 0; i < 1; q = &x) { i = i + 1; }\n    r = r + load64(q);\n    for (i = 0; i < 1; h = (str_from("wxyz"))) { i = i + 1; }\n    r = r + str_len(h);\n    for (i = 0; i < 1; h = str_from("v")) { i = i + 1; }\n    r = r + str_len(h);\n    for (i = 0; i < 1; a = str_from("xy")) { i = i + 1; }\n    var w = a;\n    r = r + str_len(w);\n    for (i = 0; i < 1; p = &s) { i = i + 1; }\n    r = r + p.b;\n    for (i = 0; i < 1; q += 0) { i = i + 1; }\n    return r;\n}\nsyscall(60, main());\n' "" 211
+tp5 FS3 "top level: a step G = 7 into a *P global warns, G = 0 does not" 'struct P { a; b; }\nvar G: *P = 0;\nvar i = 0;\nfor (i = 0; i < 1; G = 7) { i = i + 1; }\nfor (i = 0; i < 1; G = 0) { i = i + 1; }\nsyscall(60, i);\n' "4:25" 1
+[ "$X5N" -ge 30 ] || { echo "  FAIL axes 16-17: the five-leg rows ran $X5N row-legs (floor 30)"; fail=1; }
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
-echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str (6.7.16)"
+echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str, a call into a *T local only of T (6.7.16); a classic-for step warns as the statement does (6.7.16)"

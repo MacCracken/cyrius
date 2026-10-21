@@ -1,0 +1,93 @@
+# slice_generic_element.tcyr — 6.7.16 (the user's D89, 2026-10-20) — a generic struct INSTANCE as a slice element
+# declares, as `[Pt]` does: `var e: [Box<i64>] = 0;`, `var f: slice<Box<i64>> = 0;` and `var g: [*Box<i64>] = 0;` were a
+# parse error ("expected ']', got '<'"; the word form went on to "expected '='" and "undefined variable 'i64'"). The
+# element is the instance, its width the instance's size, as `var b: Box<i64>` sizes it; a pointer element is 8 bytes.
+# A read is what `[Pt]`'s is: a 16-byte element reads as its address (`_slice_idx_get_16`), an 8-byte one as its word, a
+# pointer element as the pointer. The refusals in an element's list (an unknown type, D5's extra argument) are
+# tests/gates/frontend/generic_type_arg_unknown_refused.sh's NS rows; the store into a struct element stays refused
+# (slice_position_refused.sh R13a).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct Two<T> { a: T; b: T; }
+
+var BUF: i64[8];
+
+fn fill(): i64 {
+    var i = 0;
+    while (i < 8) { store64(&BUF + i * 8, i + 1); i = i + 1; }
+    return 0;
+}
+
+# ---- S: the three filed spellings, and the >> / >>> closes ----
+fn spellings(): i64 {
+    fill();
+    var e: [Box<i64>] = 0;
+    slice_set(&e, &BUF, 4);
+    assert_eq(e[1] - e[0], 16, "S1: [Box<i64>] is 16 bytes a stride (sizeof(Box<i64>))");
+    assert_eq(load64(e[1]), 3, "S1: e[1] is the element at BUF + 16 (its address, as [Pt]'s 16-byte element)");
+    assert_eq(slice_len(&e), 4, "S1: slice_len");
+    var f: slice<Box<i64>> = 0;
+    slice_set(&f, &BUF, 3);
+    assert_eq(load64(f[2]), 5, "S2: slice<Box<i64>> (its >> closes the slice): f[2] at BUF + 32");
+    var g: [*Box<i64>] = 0;
+    slice_set(&g, &BUF, 3);
+    assert_eq(g[1], 2, "S3: [*Box<i64>] is a pointer element: 8 bytes, read as the word");
+    var k: slice<*Box<Pt>> = 0;
+    slice_set(&k, &BUF, 5);
+    assert_eq(k[4], 5, "S4: slice<*Box<Pt>> (>>): k[4] the fifth word");
+    assert_eq(slice_len(&k), 5, "S4: slice_len");
+    var w: slice<*Box<Box<i64>>> = 0;
+    slice_set(&w, &BUF, 2);
+    assert_eq(w[1], 2, "S5: slice<*Box<Box<i64>>> (>>> closes three)");
+    var n: [Box<Box<i64>>] = 0;
+    slice_set(&n, &BUF, 1);
+    assert_eq(slice_len(&n), 1, "S6: [Box<Box<i64>>] (24 bytes) declares");
+    return 0;
+}
+
+# ---- W: the width is the instance's ----
+fn widths(): i64 {
+    fill();
+    var t: [Two<i32>] = 0;
+    slice_set(&t, &BUF, 4);
+    assert_eq(sizeof(Two<i32>), 8, "W1: sizeof(Two<i32>) is 8");
+    assert_eq(t[2], 3, "W1: [Two<i32>]'s 8-byte element reads as its word, BUF + 16");
+    var u: [Two<i64>] = 0;
+    slice_set(&u, &BUF, 4);
+    assert_eq(u[1] - u[0], 16, "W2: [Two<i64>] strides 16");
+    var p: [Pt] = 0;
+    slice_set(&p, &BUF, 4);
+    assert_eq(load64(u[1]), load64(p[1]), "W3: [Two<i64>] and [Pt] (both 16 bytes) read the same element");
+    return 0;
+}
+
+# ---- G: a generic body's [Two<T>], per instance ----
+fn gw<T>(q: *i64): i64 {
+    var e: [Two<T>] = 0;
+    slice_set(&e, q, 2);
+    return e[1];
+}
+fn generics(): i64 {
+    fill();
+    assert_eq(gw<i32>(&BUF), 2, "G1: gw<i32>: [Two<i32>] is 8 bytes — e[1] the word at BUF + 8");
+    assert_eq(gw<i64>(&BUF) - &BUF, 16, "G2: gw<i64>: [Two<i64>] is 16 bytes — e[1] the address BUF + 16");
+    return 0;
+}
+
+fn run(): i64 {
+    spellings();
+    widths();
+    generics();
+    return 0;
+}
+
+alloc_init();
+run();
+var r = assert_summary();

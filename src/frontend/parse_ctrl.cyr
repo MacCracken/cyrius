@@ -114,6 +114,104 @@ fn PATCHXP(S): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — A REFUSAL LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`
+# (issues/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md). An `if` / `elif` /
+# `while` / `for` / `for .. in` / `switch` / `match` header that refused (`pa[0]` through a `*u128`, an undefined
+# `qq[0]`, `y == 0 +`) left the latch set for the block: its first statement ended latched, PARSE_STMT's resync
+# skipped the SECOND one, and that statement's own error was never reported. When the latch was clear as the head
+# began (`p0`: a caller parsing under its own latch keeps it) and the cursor's `{` is exactly where the header ends
+# (`he`: past its `(..)`, or a `for .. in` / `match` header's first depth-0 `{`), the header ended where its grammar
+# says and the latch is cleared before the block. A header left mid-way (`if (a b) {`) is not at its end there,
+# and keeps the latch. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND A HEAD WHOSE `{` IS NOT WHERE THE PARSER STANDS KEEPS ITS BRACES. The `{` check stepped one token
+# whatever it was, so the block's `}` closed the ENCLOSING body and "expected '}', got end of file" was invented at
+# the end of the file: a header left mid-way (`if (y b) {`: the cursor on its `)`) and a body with no braces (`if (c)
+# y = 1;`, `else y = 2;`, `for (..) y = i;`, `do y = 1; while (c);`). A header left mid-way is refused where it
+# stopped (silent under its own latch) and stepped to its end (`he`, when only header tokens lie between), so its
+# `{` opens the block, the latch kept; with no `{` there the one statement is the body (refused where it starts,
+# that latch cleared: nothing was stepped); and a `switch` / `match` with no `{` is refused and skipped to its
+# statement's end. 1 = a `{` was stepped. CHANGELOG [6.7.16]
+fn _blk_open(S, p0, he): i64 {
+    if (GTI(S) == he) { if (p0 == 0) { _panic = 0; } }
+    elif (_hdr_skip_ok(S, he) == 1) {
+        ERR_EXPECT(S, 13);
+        STI(S, he);
+    }
+    if (PEEKT(S) == 13) {
+        STI(S, GTI(S) + 1);
+        return 1;
+    }
+    var pb = _panic;
+    ERR_EXPECT(S, 13);
+    if (pb == 0) { _panic = 0; }   # reported where the body starts, nothing stepped: in sync
+    return 0;
+}
+# 1 = the cursor is short of its header's end `he` — a `{`, or the token after its `)` — with only header tokens
+# between (no `;`, `{`, `}` or EOF).
+fn _hdr_skip_ok(S, he): i64 {
+    if (he <= GTI(S)) { return 0; }
+    if (TOKTYP(S, he) != 13) { if (TOKTYP(S, he - 1) != 11) { return 0; } }
+    var k = GTI(S);
+    while (k < he) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 13 || t == 14 || t == 12) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+# The body after `_blk_open`: the braced block (`bb` 1), else one statement. `_blk_close` steps the block's `}`.
+fn _blk_body(S, bb): i64 {
+    if (bb == 1) { PARSE_PROG(S); return 0; }
+    _PARSE_STMT_NESTED(S);
+    return 0;
+}
+fn _blk_close(S, bb): i64 {
+    if (bb == 0) { return 0; }
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# A `switch` / `match` with no `{` (reported): skipped to its statement's end — a depth-0 `;`, or the `}` that closes
+# a `{` it opened — leaving an enclosing `}` alone.
+fn _blk_skip_body(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (t == 13) { d = d + 1; }
+        if (t == 14) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+            if (d == 0) { STI(S, GTI(S) + 1); return 0; }
+        }
+        if (t == 5) { if (d == 0) { STI(S, GTI(S) + 1); return 0; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# The token after a header's `(..)` at `op` (its `{`, when well formed), -1 when `op` is no `(`.
+fn _hdr_end(S, op): i64 {
+    if (TOKTYP(S, op) != 10) { return 0 - 1; }
+    return _call_close(S, op) + 1;
+}
+# A brace-less header from token `ti` (a `for .. in` range or collection, a `match` subject): its first `{`
+# outside `(..)` / `[..]`, -1 at a `;`, `}` or EOF first, or at an `=` outside them (a match arm's `=>`: its `{`
+# was left out).
+fn _hdr_brace(S, ti): i64 {
+    var d = 0;
+    while (ti < GTCNT(S)) {
+        var t = TOKTYP(S, ti);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (d == 0) {
+            if (t == 13) { return ti; }
+            if (t == 4) { return 0 - 1; }
+        }
+        if (t == 5 || t == 14 || t == 12) { return 0 - 1; }
+        ti = ti + 1;
+    }
+    return 0 - 1;
+}
+
 # Parse: if (cond) { stmts } [else { stmts }]
 # Parse elif chain as recursive: each elif is essentially else { if (...) { } ... }
 # ⛔ 6.6.17 (a6): an `elif` body and the `else` after it are scopes, as the `if` arm's are
@@ -121,24 +219,24 @@ fn PATCHXP(S): i64 {
 # fn scope `elif { var t } else { var t }` was "duplicate variable", and at top level the name
 # stayed visible after the chain. CHANGELOG [6.6.17]
 fn PARSE_ELIF(S, cond_patch): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open
     # Emit jmp-to-end for previous branch
     var skip = EJMP0(S);
     # Patch previous condition-false to land here (+ any && extras)
     PATCHXP(S);
     EPATCH(S, cond_patch);
     # Parse new condition
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     var patch = ECOND(S);
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    var bb = _blk_open(S, p0, he);
     SCOPE_PUSH(S);
-    PARSE_PROG(S);
+    _blk_body(S, bb);
     SCOPE_POP(S);
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    _blk_close(S, bb);
     # Check for more elif/else
     if (PEEKT(S) == 50) {
         STI(S, GTI(S) + 1);
@@ -148,13 +246,11 @@ fn PARSE_ELIF(S, cond_patch): i64 {
             var skip2 = EJMP0(S);
             PATCHXP(S);
             EPATCH(S, patch);
-            if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-            STI(S, GTI(S) + 1);
+            var bb2 = _blk_open(S, 1, 0 - 1);
             SCOPE_PUSH(S);
-            PARSE_PROG(S);
+            _blk_body(S, bb2);
             SCOPE_POP(S);
-            if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-            STI(S, GTI(S) + 1);
+            _blk_close(S, bb2);
             EPATCH(S, skip2);
         } else {
             PATCHXP(S);
@@ -166,20 +262,20 @@ fn PARSE_ELIF(S, cond_patch): i64 {
 }
 
 fn PARSE_IF(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open
     STI(S, GTI(S) + 1);  # consume IF
     var saved_lv = GLVAR(S);
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);  # consume (
     var patch = ECOND(S);
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);  # consume )
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);  # consume {
+    var bb = _blk_open(S, p0, he);  # consume {
     SCOPE_PUSH(S);
-    PARSE_PROG(S);
+    _blk_body(S, bb);
     SCOPE_POP(S);
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);  # consume }
+    _blk_close(S, bb);  # consume }
     if (PEEKT(S) == 50) {
         # elif
         STI(S, GTI(S) + 1);
@@ -190,13 +286,11 @@ fn PARSE_IF(S): i64 {
             var skip = EJMP0(S);
             PATCHXP(S);
             EPATCH(S, patch);
-            if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-            STI(S, GTI(S) + 1);
+            var bb2 = _blk_open(S, 1, 0 - 1);
             SCOPE_PUSH(S);
-            PARSE_PROG(S);
+            _blk_body(S, bb2);
             SCOPE_POP(S);
-            if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-            STI(S, GTI(S) + 1);
+            _blk_close(S, bb2);
             EPATCH(S, skip);
         } else {
             PATCHXP(S);
@@ -629,6 +723,7 @@ fn _ie_struct_result(S, st): i64 {
 
 # Parse: while (cond) { stmts }
 fn PARSE_WHILE(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open
     STI(S, GTI(S) + 1);  # consume WHILE
     var saved_lv = GLVAR(S);
     # Save and set loop context for break/continue
@@ -652,16 +747,15 @@ fn PARSE_WHILE(S): i64 {
     # a1 = loop_top (non-zero → triggers BB split per ir_build_bbs).
     var _ire_lt = IR_ENABLED(S);
     if (_ire_lt >= 1) { ir_emit(S, IR_NOP, 0, loop_top, 0); }
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     var patch = ECOND(S);
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
-    _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    var bb = _blk_open(S, p0, he);
+    _loop_body_b(S, 1, bb);   # 6.6.7: counts the loop for break/continue
+    _blk_close(S, bb);
     EJMP(S, loop_top);
     PATCHXP(S);
     EPATCH(S, patch);
@@ -755,11 +849,9 @@ fn PARSE_DO(S): i64 {
     var cfw = L64(S + 0x18F898);
     var top = _loop_open(S);
     var cb = _cont_open(S);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
-    _loop_body(S, 1);
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    var bb = _blk_open(S, 1, 0 - 1);   # 6.7.16: `do y = 1; while (c);` keeps its braces
+    _loop_body_b(S, 1, bb);
+    _blk_close(S, bb);
     _cont_close(S, cb);   # every `continue` lands here, on the condition
     _flags_reflect_rax = 0;
     var patch = 0 - 1;
@@ -811,8 +903,33 @@ fn _for_step_aggregate(S, noff): i64 {
     if (_try_struct_call_assign(S, noff, 11) == 1) { return 1; }
     if (_try_vector_call_assign(S, noff, 11) == 1) { return 1; }
     _refuse_lossy_pair(S);
+    _tp_term = 11;
+    _asg_ret_peek(S, noff);   # 6.7.16: the value's declared type, as the statement reads it (`_for_step_tpw`)
+    _tp_term = 5;
     var r = _pcmpe_struct_assign(S, noff, 11);   # PCMPE + `_asg_ufv`, as in the statement
     return r;
+}
+# ⛔ 6.7.16 — A PLAIN STEP INTO A `*T` WARNS AS THE STATEMENT DOES. "assigning non-pointer to typed pointer" is given at
+# every `*T` site (6.7.13's D18 (a)), and a classic-for step `p = x` / `G = 7` into a `*T` local, parameter or global (a
+# struct local too) said nothing: the step shares the statement's store, not its warning. The statement arm's test
+# (`_PARSE_STMT_IMPL`) on the step's value at `st` (-1: a compound step, never warned), `aps` its pointer scale; the
+# exemptions read the step's `)` as its end (`_tp_term`), so `p = 0`, `p = "ab"`, `p = (0)` stay quiet. Warning text only.
+# CHANGELOG [6.7.16]
+fn _for_step_tpw(S, idx, g, st, aps): i64 {
+    if (st < 0) { return 0; }
+    if (aps != 0) { return 0; }
+    if (_asg_tup_refd != 0) { return 0; }
+    _tp_term = 11;
+    if (g == 1) {
+        if (GVTYPE(S, idx) < 0) { _tp_warn_gasg(S, idx, st); }
+    } else {
+        var lt = GLTYPE(S, idx);
+        if (lt < 0 || GLPTRP(S, idx) == 1) {
+            if (_asg_ret_sid <= 0) { if (lt > 0 - 2048) { _tp_warn(S, st); } }
+        }
+    }
+    _tp_term = 5;
+    return 0;
 }
 # ⛔ 6.7.14 — A STEP THAT IS NO ASSIGNMENT (`c.inc()`, `f()`) IS REFUSED AND NOTHING MORE IS PARSED. The
 # refusal stepped one token and parsed the rest as the step's value, so `c.inc()` compiled `inc()` as a call
@@ -868,20 +985,22 @@ fn _for_step_assign(S, noff): i64 {
     } else {
         # 6.6.11: a plain step re-judges (`_asg_ufv`), as the statement does — set by
         # `_pcmpe_struct_assign`'s PCMPE.
+        _asg_tup_refd = 0;
         if (_for_step_aggregate(S, noff) == 1) { return 0; }
     }
+    var aps = GPSC(S);   # 6.7.16: the value's pointer scale, for `_for_step_tpw`
     var idx = 0 - 1;
     if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
     # 6.6.12: the statement arm's width-dispatched store (_asg_store_slot), not an 8-byte copy.
     # 6.7.6 (D2): a plain step rounds an f64 into an f32 and refuses a whole typed array, as the
     # statement does (_asg_plain_chk, parse.cyr).
-    if (idx >= 0) { _asg_plain_chk(S, idx, 0, step_ti); _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
+    if (idx >= 0) { _for_step_tpw(S, idx, 0, step_ti, aps); _asg_plain_chk(S, idx, 0, step_ti); _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
     else {
         idx = FINDVAR(S, noff);
         # 6.7.9: a name declared nowhere is the statement's "undefined variable" — this stored
         # nothing, silently, so `j = i + 1` / `yy += 1` as a step never moved the loop. Not under
         # --syntax-only (a sibling module's global; the statement skips it too). CHANGELOG [6.7.9]
-        if (idx >= 0) { _asg_plain_chk(S, idx, 1, step_ti); _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
+        if (idx >= 0) { _for_step_tpw(S, idx, 1, step_ti, aps); _asg_plain_chk(S, idx, 1, step_ti); _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
         else { if (_syntax_only == 0) { _asg_undef_report(S, noff); } }
     }
     # 6.7.8: the scalar store ends the step, so its `)` is checked here, as the statement checks its
@@ -923,6 +1042,7 @@ fn _for_step_replay(S): i64 {
 }
 
 fn PARSE_FOR(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open
     STI(S, GTI(S) + 1);
     var slv = GLVAR(S);
     SCOPE_PUSH(S);
@@ -1039,9 +1159,9 @@ fn PARSE_FOR(S): i64 {
                 ECALLCLEAN(S, 2);
                 _HTSTORE(S, fiitem);
                 # Body
-                if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
-                _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
-                if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
+                var fibb = _blk_open(S, p0, _hdr_brace(S, fiti + 2));
+                _loop_body_b(S, 1, fibb);   # 6.6.7: counts the loop for break/continue
+                _blk_close(S, fibb);
                 _cont_close(S, ficfwb);   # continue lands here, before the step
                 # Step: idx = idx + 1
                 _HTLOAD(S, fili);
@@ -1093,9 +1213,9 @@ fn PARSE_FOR(S): i64 {
             ECMPR(S);
             var ficond = EJCC(S, 0x8D);
             # Body
-            if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
-            _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
-            if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
+            var fibb2 = _blk_open(S, p0, _hdr_brace(S, fiti + 2));
+            _loop_body_b(S, 1, fibb2);   # 6.6.7: counts the loop for break/continue
+            _blk_close(S, fibb2);
             _cont_close(S, ficfwb2);   # continue lands here, before the step
             # Step: var = var + 1
             _HTLOAD(S, fili);
@@ -1120,6 +1240,7 @@ fn PARSE_FOR(S): i64 {
         }
         STI(S, fiti);
     }
+    var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     _PARSE_STMT_NESTED(S);   # 6.6.16: the init is inside the `for` (parse.cyr)
@@ -1155,11 +1276,9 @@ fn PARSE_FOR(S): i64 {
             else { STI(S, GTI(S) + 1); } }
     }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
-    _loop_body(S, 0);   # 6.6.7: counts the loop (the for's scope is already open)
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    var bb = _blk_open(S, p0, he);
+    _loop_body_b(S, 0, bb);   # 6.6.7: counts the loop (the for's scope is already open)
+    _blk_close(S, bb);
     _cont_close(S, cfwb);   # continue lands here, the step expression
     # Emit step: replay as assignment or compound assignment
     var sti = GTI(S);

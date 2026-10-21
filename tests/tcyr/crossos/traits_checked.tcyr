@@ -11,6 +11,8 @@
 # duplicate trait / method, a non-`fn` member) are tests/gates/frontend/traits_checked.sh.
 # 6.7.16: a generic member's own `<U>` after a `*fn(..)` in its signature (`Ap.ap`; it was "unknown type 'U'"), and a
 # member's `cb: *fn(i64): u128` (`Ap.ap2`; refused as a `u128` parameter), called through the receiver with a fn pointer.
+# 6.7.16 (D91): a member's bare `cb: *fn` / `cb: **fn` parameter (`Cb`; it was "expected '(', got ')'"), called through
+# the receiver and through a dyn formed from the impl.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -46,6 +48,12 @@ impl Ap for R {
     fn ap2(self, cb: *fn(i64): u128): i64 { return fncall1(cb, self.n) * 2; }
 }
 fn tc_inc(x): i64 { return x + 1; }
+trait Cb { fn cbe(self, cb: *fn): i64; fn cbp(self, cb: **fn): i64; }
+impl Cb for R {
+    fn cbe(self, cb: *fn): i64 { return fncall1(cb, self.n) * 3; }
+    fn cbp(self, cb: **fn): i64 { return self.n + 40; }
+}
+fn tc_dyn_cb(q: *R): i64 { var o: dyn Cb = q; return o.cbe(&tc_inc); }
 
 fn run(): i64 {
     var p = P { 1, 2 };
@@ -68,6 +76,10 @@ fn run(): i64 {
     assert_eq(ra.ap(&tc_inc, 30), 30, "a generic member's <U> after a *fn(..) parameter: its own u");
     assert_eq(ra.n, 8, "... and the *fn(..) it was given, called through self");
     assert_eq(ra.ap2(&tc_inc), 18, "a member's cb: *fn(i64): u128 parameter, called through self");
+    var rc = R { 5 };
+    assert_eq(rc.cbe(&tc_inc), 18, "a member's bare cb: *fn parameter, called through self");
+    assert_eq(rc.cbp(0), 45, "a member's bare cb: **fn parameter");
+    assert_eq(tc_dyn_cb(&rc), 18, "... the bare *fn one through a dyn formed from the impl");
     return 0;
 }
 

@@ -330,6 +330,20 @@ fn shadow(): i64 {
     };
     return callptr(g);
 }
+# 6.7.16 (the user's D96, 2026-10-20): `.field` and a field method on a capture named like a struct global read the
+# capture — its copy for a struct capture (`sp.x`, `sp.sum()`); an untyped capture's `.field` is refused, as outside
+# the closure (struct_result_type_refused.sh UCG) — and a closure that captures no `sp` reads the global.
+impl Pt { fn sum(self): i64 { return self.x * 10 + self.y; } }
+fn shadowf(): i64 {
+    var sp: Pt = Pt { 3, 4 };
+    var g = |k| { return sp.x * 1000 + sp.y * 100 + sp.sum() + k; };
+    return fncall1(g, 1);
+}
+fn shadowg(): i64 {
+    var u = 2;
+    var g = |k| { return sp.x * 1000 + sp.y * 100 + sp.sum() + k + u; };
+    return fncall1(g, 0);
+}
 
 # ── 6.7.16: a closure's PARAMETER is untyped, whatever an earlier fn left in its frame slot ──────
 # The closure prologue wrote a parameter's name and depth word only; the slot's type word is kept per
@@ -407,6 +421,8 @@ assert_eq(dcvec(), 82341234, "decl var w: f32v4 = v is a copy: lanes 1..4, a wri
 assert_eq(dcvecc(), 1234, "decl var w: f32v4 = v: non-closure control");
 
 assert_eq(shadow(), 343434, "a global named like the capture does not win: field store, assign, decl");
+assert_eq(shadowf(), 3435, "a struct global named like the capture does not win: .field, .m() (D96)");
+assert_eq(shadowg(), 8991, "no capture of the name: .field / .m() read the struct global");
 
 assert_eq(cpq(), 42, "closure parameter after fn h(w: *Pt): an untyped word");
 assert_eq(cpf(), 41, "closure parameter after fn h(w: f64): integer arithmetic");
