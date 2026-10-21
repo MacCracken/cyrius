@@ -12,6 +12,10 @@
 #
 # THE FIX. 74/75 at argc 2 → EFLUSHFB_PE → kernel32!FlushFileBuffers (BOOL → 0/-1 through
 # `cmp eax,1; sbb rax,rax`); xfsync's PE arm is `syscall(74, fd)`; MoveFileExW gets r8d = 9.
+# 6.7.16 (6.7.16's D94, "Yes, extend D79"): the BOOL answers 0, or -errno through the shared
+# GetLastError table stub (`_pe_bool_errno`: `test %eax,%eax; je; xor %eax,%eax; jmp; call
+# <table>`) — a bad fd -9, a read-only one -13 — where every failure was -1. A flush tail is now
+# that shape right after the call through FlushFileBuffers' IAT slot.
 #
 # THE AXES.
 #   axis 1  POSIX ORACLE (always). tests/tcyr/crossos/fsync_flushes.tcyr runs natively and must
@@ -19,7 +23,8 @@
 #           of a written fd succeeds), not a table this gate and the emitter made up together.
 #   axis 2  EMITTER SHAPE (always, needs objdump). The PE build of that .tcyr must (a) import
 #           kernel32!FlushFileBuffers (read from the import directory, not a strings scan),
-#           (b) carry at least one `cmp $0x1,%eax; sbb %rax,%rax` flush tail per literal
+#           (b) carry at least one flush tail (6.7.16: FlushFileBuffers' IAT call, then `test
+#           %eax,%eax; je; xor %eax,%eax; jmp; call <table stub>`) per literal
 #           74/75 site in the .tcyr, PLUS one per direct `syscall(74|75, fd)` in xfsync's
 #           CYRIUS_TARGET_WIN arm in lib/io.cyr (the .tcyr always calls xfsync, so that site
 #           is always compiled in), PLUS one per fsync/fdatasync site in
@@ -70,7 +75,12 @@
 #     — before (d) existed this mutant read axis 2 PASS ("9 flush tail(s) for 9 site(s)").
 #   _pe_dyn_arity2's 74 arm emits EDELETEF_PE, not a flush  PASS    FAIL(d)  FAIL
 # The xfsync rows and the controls were also run with wine hidden from PATH (what CI has): the
-# two xfsync mutants are still red on axis 2 alone. The controls are the fold lane's expected
+# two xfsync mutants are still red on axis 2 alone.
+# Added 2026-10-20 at 6.7.16 (6.7.16 pw lane, PW1; wine 11.20):
+#   EFLUSHFB_PE's tail back to `cmp eax,1; sbb rax,rax`      PASS    FAIL     PASS (the rows test
+#     (the pre-D94 fold: every failure -1)                                     `< 0`; path_failure_
+#                                                                              errno.tcyr pins -9 /
+#                                                                              -13: its gate RED) The controls are the fold lane's expected
 # peer change — they must stay green.
 #
 # Nothing is written inside the tree: the .tcyr creates CWD-relative files, so both runs happen
@@ -161,7 +171,19 @@ else
     need=$((nsites + nxf + npeer))
     ncf=$(grep -c 'CreateFileW' "$D/imp" || true)
     nfb=$(grep -c 'FlushFileBuffers' "$D/imp" || true)
-    ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis" || true)
+    # 6.7.16: a flush tail is the call through FlushFileBuffers' IAT slot followed by the table
+    # stub's BOOL shape (`_pe_bool_errno`).
+    fbslot=$(objdump -p "$D/ff.exe" 2>/dev/null | awk '$NF == "FlushFileBuffers" {print $1; exit}' || true)
+    fbva=""
+    [ -n "$fbslot" ] && fbva=$(printf '0x%x' $((0x140000000 + 0x$fbslot)))
+    ntail=$(awk -F'\t' -v fb="$fbva" '
+        function fbcall(x) { return fb != "" && x ~ /^call +\*0x[0-9a-f]+\(%rip\)/ && x ~ ("# " fb "$") }
+        NF >= 3 { n++; t[n] = $3 }
+        END {
+            for (i = 1; i <= n; i++)
+                if (fbcall(t[i]) && t[i+1] ~ /^test +%eax,%eax/ && t[i+2] ~ /^je / && t[i+3] ~ /^xor +%eax,%eax/ && t[i+4] ~ /^jmp / && t[i+5] ~ /^call +0x[0-9a-f]+/) c++
+            print c + 0
+        }' "$D/dis" || true)
     # MoveFileExW call sites, found by the IAT slot they call through (6.6.11: the argument
     # setup that used to anchor this — `lea 0x230(%rsp),%rdx` — went away when the path widen
     # moved into a probed frame; the call target is register- and frame-independent).
@@ -174,13 +196,17 @@ else
         nwt=$(awk -v va="$mvva" '/mov[[:space:]]+\$0x9,%r8d/ {p=1; next} p && $NF == va && /call/ {n++} {p=0} END {print n+0}' "$D/dis" || true)
     fi
     # (d): "<switches> <74 candidates> <75 candidates> <74 arms that flush> <75 arms that flush>"
-    dyn=$(awk '
+    dyn=$(awk -v fb="$fbva" '
         /48 3d 57 00 00 00[[:space:]]+cmp/ {sw++; cur=0; p=0; next}
         /48 3d 4a 00 00 00[[:space:]]+cmp/ {d74++; cur=74; p=0; next}
         /48 3d 4b 00 00 00[[:space:]]+cmp/ {d75++; cur=75; p=0; next}
         /[[:space:]]48 3d [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f][[:space:]]+cmp/ {cur=0; p=0; next}
-        /cmp[[:space:]]+\$0x1,%eax/ {p=1; next}
-        p && /sbb[[:space:]]+%rax,%rax/ { if (cur == 74) t74++; if (cur == 75) t75++; cur = 0 }
+        fb != "" && /call[[:space:]]+\*0x[0-9a-f]+\(%rip\)/ && $NF == fb {p=1; next}
+        p == 1 && /test[[:space:]]+%eax,%eax/ {p=2; next}
+        p == 2 && /[[:space:]]je[[:space:]]/ {p=3; next}
+        p == 3 && /xor[[:space:]]+%eax,%eax/ {p=4; next}
+        p == 4 && /[[:space:]]jmp[[:space:]]/ {p=5; next}
+        p == 5 && /[[:space:]]call[[:space:]]+0x/ { if (cur == 74) t74++; if (cur == 75) t75++; cur = 0 }
         {p=0}
         END {print sw+0, d74+0, d75+0, t74+0, t75+0}' "$D/dis")
     set -- $dyn
@@ -196,7 +222,7 @@ else
         echo "  FAIL axis 2: the PE build does not import FlushFileBuffers — fsync/fdatasync are not routed"
         fail=1
     elif [ "$ntail" -lt "$need" ]; then
-        echo "  FAIL axis 2: $ntail flush tail(s) (cmp \$1,eax; sbb rax,rax) for $need site(s) ($nsites literal 74/75 in the .tcyr + $nxf in xfsync + $npeer in the Windows peer)"
+        echo "  FAIL axis 2: $ntail flush tail(s) (FlushFileBuffers, then test eax; je; xor eax; jmp; call <table>) for $need site(s) ($nsites literal 74/75 in the .tcyr + $nxf in xfsync + $npeer in the Windows peer)"
         fail=1
     elif [ "$nmv" -lt 1 ]; then
         echo "  FAIL axis 2 (anti-vacuous): no MoveFileExW argument setup in the PE build — file_rename is gone"

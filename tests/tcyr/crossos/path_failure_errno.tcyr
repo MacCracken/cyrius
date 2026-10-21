@@ -22,6 +22,15 @@
 # both seeks had just accepted); both are -22 now. Darwin truncates its null device as a no-op, so
 # macOS answers its own 0 there (measured on ecb and ach). truncate by path is -22 everywhere, macOS
 # included. A cx guest reads its host's answer: -22 on the x86_64 Linux cxvm.
+#
+# rename / symlink / fsync (issues/2026-10-20-pe-rename-symlink-fsync-answer-minus-one-for-every-
+# failure.md; 6.7.16's D94, the user, 2026-10-20: "Yes, extend D79"). MoveFileExW, CreateSymbolicLinkW
+# and FlushFileBuffers folded their BOOL to -1 for every failure (`dec; sar`, sys_symlink's fold,
+# `cmp; sbb`): the filed rsfail printed `-1 -1 -1` on cass and wine (Linux `-2 -2 -9`). Each FALSE
+# now goes through the same table: a missing source or directory -2, an existing link name -17, a
+# closed fd -9. Linux and macOS fsync a read-only descriptor; Windows refuses it ERROR_ACCESS_DENIED,
+# -13 (it was -1). A Windows without Developer Mode refuses a non-elevated link with a code the
+# table leaves -1; the link rows then report that and skip.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -46,6 +55,12 @@ nulname = "NUL";
 #endif
 #ifdef CYRIUS_TARGET_MACOS
 nul_ftrunc = 0;
+#endif
+
+# What fsync of a read-only descriptor answers: Linux and macOS flush it; Windows refuses it.
+var ro_fsync = 0;
+#ifdef CYRIUS_TARGET_WIN
+ro_fsync = 0 - 13;
 #endif
 
 # The NUL-terminated `a` followed by `b`, in a fresh allocation.
@@ -116,6 +131,37 @@ if (nul >= 0) { sys_close(nul); }
 assert_eq(sys_truncate(nulname, 3), 0 - 22, "truncate of the null device is -22 (Windows answered -1)");
 assert_eq(sys_truncate(m, 3), 0 - 2, "truncate of a missing path is -2 (Windows answered -1)");
 assert_eq(sys_truncate(f, 1), 0, "a good truncate is 0");
+
+test_group("file_rename / xsymlink / xfsync answer the errno (6.7.16's D94)");
+assert_eq(file_rename(m, _pfe_join(d, "/x")), 0 - 2, "rename of a missing path is -2 (Windows answered -1)");
+assert_eq(file_rename(f, _pfe_join(m, "/x")), 0 - 2, "rename into a missing directory is -2 (Windows answered -1)");
+var lnk = _pfe_join(d, "/l");
+var lk = xsymlink("f", lnk);
+#ifdef CYRIUS_TARGET_WIN
+if (lk == 0 - 1) {
+    var skl = "  SKIP: this Windows refuses a non-elevated link (no Developer Mode); the link rows need one\n";
+    sys_write(1, skl, strlen(skl));
+}
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_eq(lk, 0, "a link beside its target is made");
+#endif
+if (lk == 0) {
+    assert_eq(xsymlink("f", lnk), 0 - 17, "a link over an existing name is -17 (Windows answered -1)");
+    assert_eq(xsymlink("f", _pfe_join(m, "/l")), 0 - 2, "a link under a missing directory is -2 (Windows answered -1)");
+    assert_eq(xunlink(lnk), 0, "the link unlinks");
+}
+var cf = file_open(f, O_RDONLY, 0);
+file_close(cf);
+assert_eq(xfsync(cf), 0 - 9, "fsync of a closed descriptor is -9 (Windows answered -1)");
+assert_eq(xfsync(0 - 999), 0 - 9, "fsync of a non-descriptor is -9 (the filed rsfail; Windows answered -1)");
+var rf = file_open(f, O_RDONLY, 0);
+assert_eq(rf >= 0, 1, "the fixture opens read-only");
+assert_eq(xfsync(rf), ro_fsync, "fsync of a read-only descriptor: 0, and -13 on Windows (it answered -1)");
+file_close(rf);
+var wf = file_open(f, O_WRONLY, 0);
+assert_eq(xfsync(wf), 0, "fsync of a writable descriptor is 0");
+file_close(wf);
 
 test_group("cleanup succeeds");
 assert_eq(sys_unlink(f), 0, "unlink of the file is 0");

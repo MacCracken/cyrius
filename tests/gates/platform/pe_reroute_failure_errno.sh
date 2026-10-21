@@ -209,6 +209,28 @@
 #                                                           (s + 3) answers 0 and s is gone, -10038)
 #   _tn_os_read's guard dropped                             axis 6 FAIL; axis 4 FAIL (wrapalias
 #                                                           `-10057 -9 -9 -9 1 -1 -1`)
+# 6.7.16 — rename / symlink / fsync answer -errno too (issues/2026-10-20-pe-rename-symlink-fsync-
+# answer-minus-one-for-every-failure.md; 6.7.16's D94, "Yes, extend D79"). EMOVEFILEEX_PE folded
+# MoveFileExW's BOOL with `dec; sar`, ESYMLINKW_PE handed back CreateSymbolicLinkW's BOOLEAN (which
+# sys_symlink folded to -1) and EFLUSHFB_PE folded FlushFileBuffers' with `cmp; sbb`: the filed rsfail
+# printed `-1 -1 -1` on cass and wine (Linux `-2 -2 -9`). Each FALSE now goes through the table stub
+# (`_pe_bool_errno`, inside the frame; CreateSymbolicLinkW's BOOLEAN `movzbl %al,%eax` first), and
+# the raw 0xF03E answers 0 / -errno (sys_symlink tests `== 0`). Rows: axis 1 and axis 4 run rsfail
+# verbatim and path_failure_errno.tcyr's rename / link / fsync group; axis 2's probe adds a literal
+# rename (0xF034), link (0xF03E) and fsync (74), and every MoveFileExW / CreateSymbolicLinkW /
+# FlushFileBuffers call must be followed by the table-stub shape.
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix tree (450ecf2c9: compiler + lib)            axis 4 FAIL (path_failure_errno 30 / 7:
+#                                                           every rename / link / fsync row -1)
+#   EMOVEFILEEX_PE's map back to `dec; sar` (after unframe) axis 2 FAIL (a MoveFileExW call without
+#                                                           the table-stub shape); axis 4 FAIL (rsfail
+#                                                           `-1 -2 -9`; path_failure_errno 35 / 2)
+#   ESYMLINKW_PE's map dropped (the BOOLEAN answered)       axis 2 FAIL (CreateSymbolicLinkW, the
+#                                                           same); axis 4 FAIL (rsfail `-2 0 -9`: a
+#                                                           failed link reads as made; 35 / 2)
+#   EFLUSHFB_PE's map back to `cmp; sbb`                    axis 2 FAIL (FlushFileBuffers, the same);
+#                                                           axis 4 FAIL (path_failure_errno 35 / 2:
+#                                                           the closed-fd and read-only rows -1)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -225,7 +247,7 @@ for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
 # T6's at 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=27; F6=53
+F1=10; F2=10; F3=13; F4=13; F5=37; F6=53
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -389,6 +411,24 @@ p(sys_close(h));              # Linux 0
 sys_unlink("alias_probe.txt");
 println("");
 EOF
+# 6.7.16's D94: rename / symlink / fsync (the filed rsfail, verbatim; run in an empty directory).
+cat > "$D/rsfail.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var fd = sys_open("rs_t", 577, 420);
+sys_close(fd);
+p(file_rename("rs_missing", "rs_x"));          # rename of a missing path: Linux -2
+p(xsymlink("rs_t", "rs_missing_dir/l"));       # link under a missing directory: Linux -2
+p(xfsync(0 - 999));                            # fsync of a non-descriptor: Linux -9
+println("");
+sys_unlink("rs_t");
+EOF
 # "<h> -9 3 0" with h a descriptor above 2 (on PE a multiple of 4): the alias row's verdict.
 alias_ok() {  # $1 = the output line, $2 = 4 on PE (h must be a multiple of 4), 1 natively
     set -- $1 "$2"
@@ -459,14 +499,14 @@ sys_exit(0);
 EOF
 
 # axis 1, 6.7.16: the std-fd rows natively.
-for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias; do
+for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias rsfail; do
     ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
     chmod +x "$D/n/$p" 2> /dev/null || true
 done
 clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
-if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ]; then
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ] || [ ! -s "$D/n/rsfail" ]; then
     bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | grep -m2 '^error' | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
@@ -494,6 +534,10 @@ else
     ( cd "$D/n/al" && ulimit -c 0; ../alias > al.out 2> /dev/null ) || true
     got=$(line "$D/n/al/al.out")
     if alias_ok "$got" 1; then ok; else bad "axis 1: the fd-alias repro natively: '$got' (want '<h> -9 3 0')"; fi
+    mkdir -p "$D/n/rs"
+    ( cd "$D/n/rs" && ulimit -c 0; ../rsfail > rs.out 2> /dev/null ) || true
+    got=$(line "$D/n/rs/rs.out")
+    if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 1: the rename / symlink / fsync repro natively: '$got' (want '-2 -2 -9')"; fi
 fi
 
 # axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
@@ -620,6 +664,8 @@ fn main(): i64 {
     r = r + syscall(8, 0 - 999, 0, 0);
     r = r + syscall(3, 0 - 999);
     r = r + syscall(74, 0 - 999);
+    r = r + syscall(61492, "no_such_shape_a", "no_such_shape_b");
+    r = r + syscall(61502, "no_such_shape_l", "no_such_shape_t", 0);
     r = r + by_number(0, 0 - 999, &buf, 16);
     r = r + by_number1(3, 0 - 999);
     r = r + syscall(3, 2);
@@ -646,8 +692,12 @@ else
     RF=$(va ReadFile); WF=$(va WriteFile); SF=$(va SetFilePointerEx); CF=$(va CreateFileW); GL=$(va GetLastError)
     CH=$(va CloseHandle)
     CD=$(va CreateDirectoryW); DF=$(va DeleteFileW); RD=$(va RemoveDirectoryW); SE=$(va SetEndOfFile)
+    MV=$(va MoveFileExW); SL=$(va CreateSymbolicLinkW); FB=$(va FlushFileBuffers)
     if [ -z "$CD" ] || [ -z "$DF" ] || [ -z "$RD" ] || [ -z "$SE" ]; then
         bad "axis 2: the probe does not import CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile ('$CD' '$DF' '$RD' '$SE')"
+    fi
+    if [ -z "$MV" ] || [ -z "$SL" ] || [ -z "$FB" ]; then
+        bad "axis 2: the probe does not import MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers ('$MV' '$SL' '$FB')"
     fi
     if [ -z "$RF" ] || [ -z "$WF" ] || [ -z "$SF" ] || [ -z "$CF" ] || [ -z "$CH" ]; then
         bad "axis 2: the probe does not import ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle ('$RF' '$WF' '$SF' '$CF' '$CH')"
@@ -655,7 +705,7 @@ else
         bad "axis 2: the probe does not import GetLastError — no failure reads it"
     else
         # Per IAT call site: "<api> <ok|BAD:why> <stub target>". Instruction text only (after the 2nd tab).
-        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" -v ch="$CH" -v cd="$CD" -v df="$DF" -v rd="$RD" -v se="$SE" '
+        awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v cf="$CF" -v ch="$CH" -v cd="$CD" -v df="$DF" -v rd="$RD" -v se="$SE" -v mv="$MV" -v sl="$SL" -v fb="$FB" '
             NF >= 3 { n++; t[n] = $3 }
             END {
                 for (i = 1; i <= n; i++) {
@@ -667,9 +717,13 @@ else
                     else if (k == ch) api = "CloseHandle"
                     else if (k == cd) api = "CreateDirectoryW"; else if (k == df) api = "DeleteFileW"
                     else if (k == rd) api = "RemoveDirectoryW"; else if (k == se) api = "SetEndOfFile"
+                    else if (k == mv) api = "MoveFileExW"; else if (k == sl) api = "CreateSymbolicLinkW"
+                    else if (k == fb) api = "FlushFileBuffers"
                     if (api == "") continue
                     why = "ok"; j = i + 1
-                    if (api == "CloseHandle" || api == "CreateDirectoryW" || api == "DeleteFileW" || api == "RemoveDirectoryW" || api == "SetEndOfFile") {
+                    # 6.7.16 (D94): CreateSymbolicLinkW returns a one-byte BOOLEAN, widened first.
+                    if (api == "CreateSymbolicLinkW") { if (t[j] !~ /^movzbl +%al,%eax/) why = "BAD:no-movzbl"; j++ }
+                    if (api == "CloseHandle" || api == "CreateDirectoryW" || api == "DeleteFileW" || api == "RemoveDirectoryW" || api == "SetEndOfFile" || api == "MoveFileExW" || api == "CreateSymbolicLinkW" || api == "FlushFileBuffers") {
                         # test; je .fail; xor eax,eax (TRUE: 0); jmp .done; .fail: call <stub>
                         if (t[j] !~ /^test +%eax,%eax/) why = "BAD:no-test-eax"
                         j++
@@ -709,7 +763,7 @@ else
         done
         # 6.7.16 (D79): the BOOL path / truncate calls, at their own floors — mkdir and unlink each a
         # literal and a var-held route (unlink's 0xF035 a third), rmdir and SetEndOfFile literal only.
-        for af in CreateDirectoryW:2 DeleteFileW:3 RemoveDirectoryW:1 SetEndOfFile:1; do
+        for af in CreateDirectoryW:2 DeleteFileW:3 RemoveDirectoryW:1 SetEndOfFile:1 MoveFileExW:1 CreateSymbolicLinkW:1 FlushFileBuffers:3; do
             api=${af%:*}; fl=${af#*:}
             c=$(awk -v a="$api" '$1 == a' "$D/sites" | wc -l | tr -d ' ')
             b=$(awk -v a="$api" '$1 == a && $2 != "ok" {print $2; exit}' "$D/sites")
@@ -896,12 +950,12 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$@" )
     }
-    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias; do
+    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias rsfail; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
     done
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
-    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ]; then
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ] || [ ! -s "$D/w/rsfail.exe" ]; then
         bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
@@ -944,6 +998,12 @@ EOF
             timeout 120 wine alias.exe < /dev/null > al.out 2> /dev/null ) || true
         got=$(line "$D/w/al/al.out")
         if alias_ok "$got" 4; then ok; else bad "axis 4: the fd-alias repro under wine: '$got' (want '<h> -9 3 0', h a multiple of 4; '<h> 0 -9 -9' is the close of h + 3 closing h)"; fi
+        mkdir -p "$D/w/rs" && cp "$D/w/rsfail.exe" "$D/w/rs/"
+        ( cd "$D/w/rs" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine rsfail.exe < /dev/null > rs.out 2> /dev/null ) || true
+        got=$(line "$D/w/rs/rs.out")
+        if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 4: the rename / symlink / fsync repro under wine: '$got' (want '-2 -2 -9'; '-1 -1 -1' is every BOOL folded to -1)"; fi
     fi
     # 6.7.16: the Windows-only wrappers' leaves (axis 6 holds their shape where wine is absent).
     cat > "$D/wrapalias.cyr" <<'EOF'
@@ -1015,4 +1075,4 @@ fi
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile / MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22"

@@ -734,7 +734,10 @@ fn sys_truncate(path, length): i64 {
 # is asked first (Developer Mode lets a normal user create links with it); a Windows too old
 # to know the flag refuses it, so the call is retried without. ⚠ Without Developer Mode a
 # NON-elevated process cannot create a link at all and this returns -1 — a Windows policy,
-# not a missing route. 0 on success, -1 on failure.
+# not a missing route (ERROR_PRIVILEGE_NOT_HELD, a code the Win32 table leaves -1). 0 on
+# success, or the second call's negative errno, as Linux answers: a link under a missing
+# directory -2, an existing link path -17 (6.7.16's D94; every failure was -1 before). A
+# resolved target too long to probe is still -1, as a path the widen refuses is.
 # ⛔ 6.7.12 — both paths go to the reroute NARROW (UTF-8), and the emitter widens them: the link
 # path is made absolute and `\\?\`-prefixed at 248+ units, as open() / mkdir() / rename() do;
 # the target is stored verbatim, so a relative one is decoded only ('/' → '\'), never made
@@ -785,9 +788,10 @@ fn sys_symlink(target, linkpath): i64 {
     if (at != 4294967295) {
         if ((at & 16) != 0) { kind = 1; }         # SYMBOLIC_LINK_FLAG_DIRECTORY
     }
-    if (syscall(61502, linkpath, target, kind | 2) != 0) { return 0; }   # narrow (6.7.12)
-    if (syscall(61502, linkpath, target, kind) != 0) { return 0; }
-    return 0 - 1;
+    # 0 / -errno since 6.7.16 (the BOOLEAN before), so success is `== 0`. CHANGELOG [6.7.16]
+    if (syscall(61502, linkpath, target, kind | 2) == 0) { return 0; }   # narrow (6.7.12)
+    var r = syscall(61502, linkpath, target, kind);
+    return r;
 }
 # Filesystem statistics by path. Declines on Windows: the nearest peer is GetDiskFreeSpaceExW,
 # a kernel32 import with three out-params and a wide path — a different contract, not a
@@ -969,9 +973,10 @@ fn sys_mount(source, target, fstype, flags, data): i64 { return 0 - 38; }
 fn sys_umount2(target, flags): i64 { return 0 - 38; }
 # Flush a file (data + metadata) to storage. NOT a decline like the block above: it issues
 # the LINUX number 74 — the sys_mkdir/sys_unlink 83/87 shape — so the PE backend owns the
-# meaning. With the 6.6.7 route, 74/75 at argc 2 go to kernel32!FlushFileBuffers (0 /
-# negative); without it the unrouted literal returns -38/-ENOSYS. Either way a bogus fd reads
-# < 0 and no caller is told a flush happened that did not. Consumers (patra's fdatasync sites,
+# meaning. With the 6.6.7 route, 74/75 at argc 2 go to kernel32!FlushFileBuffers (0, or the
+# negative errno through the Win32 table since 6.7.16's D94 — a bad fd -9, a read-only one -13;
+# -1 for every failure before); without it the unrouted literal returns -38/-ENOSYS. Either way a
+# bogus fd reads < 0 and no caller is told a flush happened that did not. Consumers (patra's fdatasync sites,
 # the write-tmp + fsync + rename pattern) name these, so without them a PE build is refused.
 fn sys_fsync(fd): i64 { return syscall(74, fd); }
 # Flush file data only. Windows has no data-only flush, so the route is the same
@@ -1107,8 +1112,9 @@ fn sys_qpc_ns(): i64 {
 
 # rename(old, new) — REAL, not a degrade: 0xF034 (61492) → kernel32!MoveFileExW with
 # MOVEFILE_REPLACE_EXISTING, live since v6.4.57 and already the Windows arm of
-# lib/io.cyr's portable `file_rename`. Returns 0 on success / -1 on failure (the BOOL is
-# folded to the POSIX contract by the emitter), which is what POSIX callers check.
+# lib/io.cyr's portable `file_rename`. Returns 0 on success, or the negative errno through the
+# Win32 table, as rename(2) answers — a missing source -2 (6.7.16's D94; -1 for every failure
+# before).
 # ⚠ Unlike rename(2) this CAN move across volumes (MOVEFILE_COPY_ALLOWED is not set, so
 # it does not; a cross-volume move fails, as rename(2) does with EXDEV).
 fn sys_rename(oldpath, newpath): i64 { return syscall(61492, oldpath, newpath); }

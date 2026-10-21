@@ -8577,6 +8577,10 @@ never fired and `file_close_r` was never `Err`.
 | `sys_ftruncate` of a pipe, the null device (`NUL`) or a read-only fd | -22 (macOS: 0 for `/dev/null`) | -1 | -1; -22 since 6.7.16 |
 | `sys_ftruncate(-999, n)` (not a descriptor) | -9 | -1 | -1; -9 since 6.7.16 |
 | `sys_truncate("missing", n)` | -2 | -1 | -1; -2 since 6.7.16 |
+| `file_rename("missing", "x")`, or into a missing directory | -2 | -1 | -1; -2 since 6.7.16 |
+| `xsymlink(t, "missing_dir/l")` | -2 | -1 | -1; -2 since 6.7.16 |
+| `xsymlink(t, l)` over an existing `l` | -17 | -1 | -1; -17 since 6.7.16 |
+| `xfsync(fd)` of a closed fd | -9 | -1 | -1; -9 since 6.7.16 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
@@ -8600,9 +8604,13 @@ its "cannot say" answer.
 `DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
 through the same table since 6.7.16 — an existing name -17 (`ERROR_ALREADY_EXISTS`), a non-empty
 directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path -2, access denied
--13 — where each answered -1 for every failure. `sys_ftruncate` answers -22 for a descriptor it
-cannot truncate, as Linux does: a pipe or a console (the seek is -29 there), a device such as `NUL`
-(`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
+-13 — where each answered -1 for every failure. So do `file_rename` / `sys_rename` (`MoveFileExW`),
+`xsymlink` / `sys_symlink` (`CreateSymbolicLinkW`) and `xfsync` / `sys_fsync` / `sys_fdatasync`
+(`FlushFileBuffers`) since the same release (6.7.16's D94): a missing source or directory -2, an
+existing link name -17, a closed fd -9; a link refused by Windows policy (no Developer Mode, not
+elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. `sys_ftruncate`
+answers -22 for a descriptor it cannot truncate, as Linux does: a pipe or a console (the seek is
+-29 there), a device such as `NUL` (`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
 `/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,
 on Windows only, an `O_APPEND` one (its handle has `FILE_APPEND_DATA` without `FILE_WRITE_DATA`;
 Linux truncates it). `sys_truncate("NUL", n)` is -22 too, as `truncate` of `/dev/null` is on Linux
@@ -8698,7 +8706,9 @@ real on Windows since the same release.
 `fsync` and `fdatasync` — `xfsync(fd)`, or a raw `syscall(74, fd)` / `syscall(75, fd)` — call
 `FlushFileBuffers` on Windows; there is one flush for data and metadata, so both numbers do the
 same thing. A number held in a `var` flushes too since v6.6.9 (before it, the runtime switch a
-`var` number goes through did not carry 74/75 and returned -38 with no warning). A failure is -1. `file_rename` passes
+`var` number goes through did not carry 74/75 and returned -38 with no warning). A failure is its
+negative errno through the Win32 table since 6.7.16 (a bad fd -9, a read-only one -13; -1 before).
+`file_rename` passes
 `MOVEFILE_WRITE_THROUGH`, so `file_write_atomic`'s write → flush → rename is durable as well as
 atomic.
 
@@ -8707,7 +8717,8 @@ exist), a raw 74/75 returned -38, and the rename was not write-through. Code tha
 durability on Windows was told it had it.
 
 > ⚠ One divergence from POSIX: Windows will not flush a handle opened **without write access**.
-> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-1 on Windows**. An `O_APPEND` handle
+> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-13 on Windows** (`ERROR_ACCESS_DENIED`;
+> -1 before 6.7.16). An `O_APPEND` handle
 > (whose Windows access is `FILE_APPEND_DATA`, not `GENERIC_WRITE`) is expected to flush — the NT
 > flush accepts either write right — and `tests/tcyr/crossos/fsync_flushes.tcyr` checks exactly
 > that, and the `O_RDONLY` refusal, on real Windows at every release.

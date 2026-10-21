@@ -2313,8 +2313,8 @@ fn ECLOSE_PE(S): i64 {
 
 # A kernel32 BOOL in eax → 0 (TRUE) or -errno through the shared GetLastError stub (FALSE). Emitted
 # right after the call, while rsp is as it was for it (16-aligned: the stub's `call` needs that).
-# ECLOSE_PE (6.7.15), the narrow-path reroutes (`_pe_path_bool1`) and ESETEOF_PE (6.7.16).
-# CHANGELOG [6.7.16]
+# ECLOSE_PE (6.7.15), the narrow-path reroutes (`_pe_path_bool1`) and ESETEOF_PE (6.7.16); and
+# MoveFileExW, CreateSymbolicLinkW and FlushFileBuffers (6.7.16's D94). CHANGELOG [6.7.16]
 fn _pe_bool_errno(S): i64 {
     EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax (the BOOL)
     EB(S, 0x74); EB(S, 0x04);                           # jz +4 → .fail
@@ -3131,11 +3131,10 @@ fn EQPF_PE(S): i64 {
 # went to. The helper's GetStdHandle call is made from INSIDE the aligned frame, so it
 # gets the same 16-byte alignment and shadow space as the flush itself.
 #
-# BOOL → 0 / -1 is `cmp eax,1; sbb rax,rax`, not the older dec+sar idiom: it reads only
-# eax, so an unzeroed upper half of rax cannot leak into the result, and any non-zero
-# TRUE maps to 0 rather than to a positive number. An invalid handle, or one opened
-# without write access (O_RDONLY — Linux fsyncs those), comes back -1.
-# CHANGELOG [6.6.7].
+# The BOOL answers 0 (TRUE), or -errno through the shared GetLastError stub (`_pe_bool_errno`,
+# 6.7.16's D94): a bad or closed handle is -9, one opened without write access -13 (O_RDONLY —
+# Linux fsyncs those). Until 6.7.16 every failure was -1 (`cmp eax,1; sbb rax,rax`).
+# CHANGELOG [6.6.7] [6.7.16]
 fn EFLUSHFB_PE(S): i64 {
     _pe_ensure_stdio(S);
     _pe_ensure_flushfb(S);
@@ -3148,8 +3147,7 @@ fn EFLUSHFB_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+FlushFileBuffers]
     _pe_iat_fixup_add(S, GCP(S), fb_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
-    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (FALSE → -1, TRUE → 0)
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16's D94)
     _pe_fd_bad_tail(S, jb);                             # (6.7.16) .bad: rax = -9
     _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
     return 0;
@@ -3164,7 +3162,8 @@ fn EFLUSHFB_PE(S): i64 {
 # POSIX contract. CHANGELOG [6.6.9]
 #   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
 #   syscall(0xF03E, link, target, flags) → CreateSymbolicLinkW (argc 4; NARROW UTF-8 paths
-#                                          since 6.7.12 — see ESYMLINKW_PE below the path frame)
+#                                          since 6.7.12 — see ESYMLINKW_PE below the path frame;
+#                                          0 / -errno since 6.7.16, the BOOLEAN before)
 #   syscall(0xF03F, h) → SetEndOfFile (argc 2) — 0, or -errno (no longer the BOOL) since 6.7.16
 fn EGETFINFO_PE(S): i64 {
     _pe_ensure_getfinfo(S);
@@ -3947,10 +3946,12 @@ fn EDELETEF_PE(S): i64 {
 # dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
 # not return until the rename is on disk — the Windows analogue of the directory fsync
 # that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
-# atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
-# 0 (success) / -1 (fail) via the dec+sar idiom (EDELETEF_PE's until 6.7.16, which answers
-# -errno now through `_pe_path_bool1`). Frame: `_PE_PATH_FRAME2`
-# (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11]
+# atomic but not durable on Windows (a crash could lose the rename). The BOOL answers 0, or
+# -errno through the shared GetLastError stub (`_pe_bool_errno`, inside the frame, rsp as for
+# the call): a missing source or target directory -2, as Linux (6.7.16's D94; every failure was
+# -1 — `dec rax; sar rax, 63` — until then). Either path refused (invalid UTF-8, too long) is -1
+# without the call, as `_pe_path_bool1`'s. Frame: `_PE_PATH_FRAME2`
+# (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11], [6.7.16]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
     var mv_idx = _pe_movefileex_get();
@@ -3970,8 +3971,8 @@ fn EMOVEFILEEX_PE(S): i64 {
     _pe_widen_path(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
     # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH. Either path
-    # refused -> FALSE without the call.
-    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    # refused -> -1 without the call.
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
     var o1 = _pe_j(S, 0x84);                            # jz out
@@ -3982,12 +3983,11 @@ fn EMOVEFILEEX_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
     _pe_iat_fixup_add(S, GCP(S), mv_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_bool_errno(S);                                  # BOOL → 0 / -errno (6.7.16's D94)
     _pe_j_land(S, o1);
     _pe_j_land(S, o2);
 
     _pe_path_unframe(S);
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
     return 0;
 }
 
@@ -4085,9 +4085,12 @@ fn _pe_wp_target(S, woff, foff): i64 {
 # link, and refused the link) while open() of the same path worked. It now takes NARROW UTF-8
 # paths, as every other path reroute does: the LINK goes through `_pe_widen_path` (absolute and
 # `\\?\` at 248+ units), the TARGET through `_pe_wp_target` (stored verbatim, so decoded only —
-# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → FALSE
-# without the call. BOOLEAN (one byte) → movzx. Frame: `_PE_PATH_FRAME2` (the link's W/F pair,
-# then the target's), probed, rbx-anchored. CHANGELOG [6.6.9], [6.7.12]
+# except an ABSOLUTE target, which takes the same `\\?\` at 248+ units). Either refused → -1
+# without the call. The BOOLEAN (one byte: movzx) answers 0, or -errno through the shared
+# GetLastError stub (`_pe_bool_errno`, inside the frame): a link under a missing directory -2, an
+# existing link path -17, as Linux (6.7.16's D94); it was the BOOLEAN, which sys_symlink folded to
+# -1 for every failure. Frame: `_PE_PATH_FRAME2` (the link's W/F pair, then the target's), probed,
+# rbx-anchored. CHANGELOG [6.6.9], [6.7.12], [6.7.16]
 fn ESYMLINKW_PE(S): i64 {
     _pe_ensure_symlinkw(S);
     var sl_idx = _pe_symlinkw_get();
@@ -4108,8 +4111,8 @@ fn ESYMLINKW_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, 0x48); # mov rsi, [rsp+0x48] (target)
     _pe_wp_target(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
-    # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> FALSE without the call.
-    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    # args: rcx = link_wide, rdx = target_wide, r8d = flags. Either refused -> -1 without the call.
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
     EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
     var o1 = _pe_j(S, 0x84);                            # jz out
@@ -4120,11 +4123,12 @@ fn ESYMLINKW_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateSymbolicLinkW]
     _pe_iat_fixup_add(S, GCP(S), sl_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
+    _pe_bool_errno(S);                                  # BOOLEAN → 0 / -errno (6.7.16's D94)
     _pe_j_land(S, o1);
     _pe_j_land(S, o2);
 
     _pe_path_unframe(S);
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
     return 0;
 }
 
