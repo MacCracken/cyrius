@@ -888,8 +888,9 @@ fn dp(p: **Pt<i64>): i64 { return 0; }
 fn main(): i64 { var h: H; h.k = 7; return h.k + ap(0) + dp(0); }
 syscall(60, main());
 EOF
-errs nr0 5 "NR0: the filed stage1 verbatim — a pointer field, a trait member, a multi-value element, a *fn(..) and a ** parameter, each once at the name (it compiled: exit 7)" \
-    "error:<source>:3:16: $NGS" "error:<source>:4:26: $NGS" "error:<source>:5:11: $NGS" "error:<source>:6:15: $NGS" "error:<source>:7:12: $NGS"
+errs nr0 6 "NR0: the filed stage1 verbatim — a pointer field, a trait member, a multi-value element, a *fn(..) and a ** parameter, each once at the name (it compiled: exit 7); and, since 6.7.16's D90, mv's \`return (p, 3)\` of the 16-byte p" \
+    "error:<source>:3:16: $NGS" "error:<source>:4:26: $NGS" "error:<source>:5:11: $NGS" "error:<source>:6:15: $NGS" "error:<source>:7:12: $NGS" \
+    "error:<source>:5:46: 'mv' returns struct 'Pt' (16 bytes) as a multi-value element - return its pointer, or its fields as elements"
 cat > "$T/nr1.cyr" <<'EOF'
 struct Pt { x; y; }
 fn f(): i64<u8> { return 3; }
@@ -959,9 +960,9 @@ struct Box<T> { v: T; n; }
 struct H { p: *Box<Pt>; q: *Pt; r: **Pt; s: *i32; b: Box<i64>; v: Pt; k; }
 trait Sh { fn m(self, p: Pt, b: Box<i64>, c: *fn(Box<Pt>): i64): (Pt, i64); }
 struct P { k; }
-impl Sh for P { fn m(self, p: Pt, b: Box<i64>, c: *fn(Box<Pt>): i64): (Pt, i64) { return (p, 3); } }
+impl Sh for P { fn m(self, p: Pt, b: Box<i64>, c: *fn(Box<Pt>): i64): (Pt, i64) { return (p.x, 3); } }
 fn ap(cb: *fn(Box<Pt>): i64, p: **Box<Pt>): i64 { return 4; }
-fn mv(): (Box<i64>, *i32) { var b: Box<i64>; return (b, 0); }
+fn mv(): (Box<i64>, *i32) { var b: Box<i64>; return (b.n, 0); }
 fn r(): i64 { return 5; }
 fn main(): i64 {
     var h: H; h.k = 1;
