@@ -10381,6 +10381,10 @@ fn _trs_params(S, i, q): i64 {
     return i;
 }
 # A type from token `i`; the token after it. `tail` / `nm` name the site in an unknown-type refusal.
+# ⛔ 6.7.16 (D91) — A BARE `*fn` (`cb: *fn`, `cb: **fn`) IS A MEMBER'S PARAMETER TYPE, as it is a fn's (6.7.11's D34 (b),
+# `_pty_fn`) and an impl method's: the reader required the `(` ("expected '(', got ')'"), so a trait could not declare
+# the method its impl compiles. A member's bare `: *fn` RETURN stays refused, before this reader (`_trs_ret_refused`,
+# the fn-pointer line) (the user's D91, 2026-10-20). CHANGELOG [6.7.16]
 fn _trs_type(S, i, q, tail, nm): i64 {
     var st = 0;
     while (TOKTYP(S, i) == 8) {
@@ -10405,8 +10409,8 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     var t = TOKTYP(S, i);
     if (t == 105) { return _trs_u128(S, i, st, nm); }   # u128 (6.7.14: not a parameter / return type yet)
     if (t == 10) { return _trs_inner(S, i + 1, q, tail, nm); }   # a tuple
-    if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`
-            if (TOKTYP(S, i + 1) != 10) { return _trs_err(S, i + 1, 10); }
+    if (t == 32) { if (st == 1) {   # `*fn( .. ) [: T]`, or a bare `*fn` (6.7.16, D91)
+            if (TOKTYP(S, i + 1) != 10) { return i + 1; }
             i = _trs_inner(S, i + 2, q, tail, nm);
             if (_trs_bad == 0) { if (TOKTYP(S, i) == 49) { i = _trs_fnret(S, i + 1, q, tail, nm); } }
             return i;

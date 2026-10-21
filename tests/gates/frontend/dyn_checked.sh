@@ -376,6 +376,15 @@
 #       5: F8c1 F8c2 F8c4-F8c6 (the site's line; F8c4 named 'ra'); the hand-off unguarded (`d == 5` always 0) -> RED 2:
 #       F8c3 F8c4; `_tr_cnt_dflt` gone -> RED 1: F8c5; the replay not stopping at a method the trait does not declare ->
 #       RED 1: F8c3
+#   F8bf1-F8bf4 (6.7.16, f16 FG2; not F8f, a scalar self; the user's D91) a member's bare `cb: *fn` parameter is a type, as a fn's and a method's
+#       are: the trait reader refused it ("expected '(', got ')'"). F8bf1 a dyn formed from an impl whose member and
+#       method both take `cb: *fn` — no F8 line, it runs (3 + 3); F8bf2 `cb: **fn` the same; guards (a widening on the
+#       wrong side would silence them): F8bf3 a member's `cb: *fn` against a method's `cb: i64`, F8bf4 against a method's
+#       `cb: *fn(i64): i64` — the site's "parameter 'cb' has another type" each.
+#       Filed: docs/development/issues/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
+#       Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (6ee893493) -> RED
+#       4: F8bf1-F8bf4 ("expected '(', got ')'"); the parameter side counting a `*fn` as reader-refused (`_dsq_rf_one`
+#       asking `_trs_ret_fnp`, the widening on the wrong side) -> RED 2: F8bf3 F8bf4 (no line: the mismatch silenced)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -737,6 +746,15 @@ dlines f08c5 "F8c5: a count that differs only by a default (D13's refusal) — i
 dlines f08c6 "F8c6: a count mismatch beside a default — D13's line and the impl's, not the site's" \
     "${CQ}trait T2 { fn sh(self): f64; }\nimpl T2 for Q { fn sh(self, k, m = 1): f64 { return 1.0; } }\n${FC}${MQ}" \
     "3:34: $DFL" "3:17: method 'sh' $CNT"
+# F8bf1-F8bf4 — 6.7.16 (f16 FG2, D91): a member's bare `*fn` parameter is a type; the pair check compares it as one.
+F8F="cannot form dyn T2 from P - its method 'sh' does not match its declaration in trait T2: parameter 'cb' has another type"
+FF='fn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(0); }\nfn main(): i64 { var p = P { 1, 2 }; return f(&p) + p.sh(0); }\nsyscall(60, main());\n'
+exits f08bf1 6 "F8bf1: a dyn from an impl whose member and method both take \`cb: *fn\` — no F8 line, it runs" "${PQ}trait T2 { fn sh(self, cb: *fn): i64; }\nimpl T2 for P { fn sh(self, cb: *fn): i64 { return 3; } }\n${FF}"
+exits f08bf2 6 "F8bf2: \`cb: **fn\` the same" "${PQ}trait T2 { fn sh(self, cb: **fn): i64; }\nimpl T2 for P { fn sh(self, cb: **fn): i64 { return 3; } }\n${FF}"
+dlines f08bf3 "F8bf3: guard — a member's \`cb: *fn\` against a method's \`cb: i64\` keeps the site's line" \
+    "${PQ}trait T2 { fn sh(self, cb: *fn): i64; }\nimpl T2 for P { fn sh(self, cb: i64): i64 { return 3; } }\n${FF}" "4:36: $F8F"
+dlines f08bf4 "F8bf4: guard — a member's bare \`cb: *fn\` against a method's \`cb: *fn(i64): i64\` keeps the site's line" \
+    "${PQ}trait T2 { fn sh(self, cb: *fn): i64; }\nimpl T2 for P { fn sh(self, cb: *fn(i64): i64): i64 { return 3; } }\n${FF}" "4:36: $F8F"
 # (review, 2026-10-10) The value class: a call through a dyn returns what the trait member declares
 # (its prototype's flag), so a slot method returning a `: stack` pair under a member that declares one
 # value is refused — `o.div(d)?` took the boxed lowering and dereferenced the tag (rc 139).

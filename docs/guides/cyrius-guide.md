@@ -263,9 +263,11 @@ Through 6.7.10 these positions skipped the `<..>` unread, so `var v: Vec<(i64, i
 `Vec<nosuchtype>` and `Vec<1 + 2>` compiled (the user's decision (a), 2026-10-13); through 6.7.13 the
 other positions and an element's own `<..>` did (the user's D4 (a) and D5 (a), 2026-10-16).
 
-**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8),
-plus a bare `*fn`: any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
-`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`.
+**A parameter's type is read whole (6.7.11)**, by the grammar a trait member's signature uses (6.7.8):
+any number of `*`, then `u128`, a tuple, `*fn( .. )` with an optional `: T`, a bare
+`*fn`, or a name with its `<..>` — `fn f(p: **i64)`, `fn g(p: ***Pt)`, `fn ap(cb: *fn(i64): i64, x)`. A trait
+member takes the bare `*fn` / `**fn` too since 6.7.16 (the user's D91; through 6.7.15 `trait T { fn e(self, cb:
+*fn): i64; }` was *expected '(', got ')'*, though the impl's own method compiled).
 A bare `u128` (no `*`) is refused by name as a parameter since 6.7.14 (see [`u128`
 arithmetic](#operators)); `*u128` and a `*fn( .. )`'s own `u128` are read as before.
 `**T` is a pointer whose step is a pointer's 8, as a `**T` local's is, and `*p` of it is a `*T` (6.7.13, see

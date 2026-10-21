@@ -119,6 +119,8 @@
 #   FP (6.7.16, f16 FG2) a fn's `: *fn( .. )` / `: **fn( .. )` / bare `: *fn` return, and a multi-value element, is the
 #      member's one line ("a fn-pointer type `*fn( .. )` cannot be a fn return type") at its first `*`, the body read on
 #      — it was "expected identifier, got reserved keyword 'fn' (.. rename ..)" and, bare, a cascade; see the block
+#   BF (6.7.16, f16 FG2, the user's D91) a member's bare `cb: *fn` / `cb: **fn` parameter is a type, as a fn's: it was
+#      "expected '(', got ')'"; see the block
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -675,6 +677,35 @@ fpuse fp13b "FP13b: a generic's — an explicit instance minted in pass 2 too" "
 printf "$R"'impl P { fn h(self): *fn { return 0; } }\nfn main(): i64 { var p = P { 1 }; var q: *i32 = p.h(); return 4; }\nsyscall(60, main());\n' > "$T/fp13c.cyr"
 fpuse fp13c "FP13c: an inherent method's bare *fn return, its call into *i32" "3:22: $FP"
 
+# ── BF (6.7.16, f16 FG2, the user's D91) — a member's bare `*fn` parameter is a type, as a fn's ──
+# The trait reader's `*fn` arm required the `(` ("expected '(', got ')'"), though 6.7.11's D34 (b) gave a fn's
+# parameter a bare `*fn` and the impl's own method compiled with it. Now `cb: *fn` / `cb: **fn` read as a fn's do; a
+# member's bare `: *fn` RETURN stays refused (FP10's line). BF1 the filed bf.cyr verbatim (exit 3); BF2 `cb: **fn`;
+# BF3 --syntax-only of BF1 (rc 0); BF4 a bare `*fn` inside a member's `*fn( .. )` list and as its own return, and a
+# `**fn` in the list — as a fn's parameter reader reads them; BF5 a member's `cb: *fn(i64): i64` unchanged; BF6 a
+# member's bare `*fn` against a method's `cb: i64` — the impl compiles (parameter types are not compared by the impl
+# check, the guide's word; dyn_checked.sh F8bf3 is the formed-dyn guard).
+# Filed: docs/development/issues/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
+# Mutant (2026-10-21): the lane before it (6ee893493) -> RED 5: BF1-BF4 BF6 ("expected '(', got ')'")
+cat > "$T/bf1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x; }
+trait T { fn e(self, cb: *fn): i64; }
+impl T for P { fn e(self, cb: *fn): i64 { return 3; } }
+fn main(): i64 { var p = P { 1 }; return p.e(0); }
+syscall(60, main());
+EOF
+exits bf1 3 "BF1: the filed repro verbatim (it was \"expected '(', got ')'\")"
+printf "$R"'trait T { fn e(self, cb: **fn): i64; }\nimpl T for P { fn e(self, cb: **fn): i64 { return 3; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf2.cyr"
+exits bf2 3 "BF2: a member's cb: **fn"
+lint_is bf1 "BF3: --syntax-only of BF1 — clean"
+printf "$R"'trait T { fn e(self, cb: *fn(*fn, **fn): *fn): i64; }\nimpl T for P { fn e(self, cb: *fn(*fn, **fn): *fn): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf4.cyr"
+exits bf4 4 "BF4: a bare *fn / **fn inside a member's *fn( .. ) list and as its own return"
+printf "$R"'fn one(x: i64): i64 { return x + 1; }\ntrait T { fn e(self, cb: *fn(i64): i64): i64; }\nimpl T for P { fn e(self, cb: *fn(i64): i64): i64 { return fncall1(cb, 4); } }\nfn main(): i64 { var p = P { 1 }; return p.e(&one); }\nsyscall(60, main());\n' > "$T/bf5.cyr"
+exits bf5 5 "BF5: a member's cb: *fn(i64): i64 unchanged"
+printf "$R"'trait T { fn e(self, cb: *fn): i64; }\nimpl T for P { fn e(self, cb: i64): i64 { return 6; } }\nfn main(): i64 { var p = P { 1 }; return p.e(0); }\nsyscall(60, main());\n' > "$T/bf6.cyr"
+exits bf6 6 "BF6: a member's bare *fn against a method's cb: i64 — the impl check compares no parameter types"
+
 # ── IB (6.7.16, f16 FF5) — a member of an impl body that is not a `fn` is one error, by name ──
 # PARSE_IMPL's loop took directives, `pub` and `fn`; anything else ended it at "expected '}', got struct" (`var`, `enum`,
 # a number), the `}` it wanted taken for that token, so the member's own braces and the rest of the body were read as
@@ -776,4 +807,4 @@ done
 [ "$IBN" -ge 35 ] || bad "IB: the rows ran $IBN row-legs (floor 35) - rows or legs were lost"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16), and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
