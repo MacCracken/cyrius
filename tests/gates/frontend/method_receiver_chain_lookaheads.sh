@@ -21,18 +21,19 @@
 #   R0 the filed repro, verbatim: exit 34 (rc 1, "needs a call", before) on x86_64, CYRIUS_IR=3, aarch64 (qemu), cx
 #      (cxvm) and PE (wine)
 #   V  tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and
-#      PE: "N passed, 0 failed (N total)", N derived from the file (floor 59) — destructures, re-assignments, tuple
+#      PE: "N passed, 0 failed (N total)", N derived from the file (floor 62) — destructures, re-assignments, tuple
 #      captures, a 16 B struct, generic methods inferred / explicit / at f64, forwards, a for step, every receiver head,
 #      a pair's `?` / statement `?` / wrapped `?` / destructure / forward (the forwarder below its caller), a `*T`
-#      method as a dyn source, comparisons (`w.a.n < k >> (j)`), the declaration zone
+#      method as a dyn source, comparisons (`w.a.n < k >> (j)`), the declaration zone; MS a chain on a `callptr(..)`
+#      result as a by-value struct argument (`_icall_dotted`: it pushed a word as the address, SIGSEGV)
 #   C  each refusal on a chain is the single name's, once, word for word but the receiver its hint spells (x86_64):
 #      C1-C6 a pair bound to one name (`var v =`, `x =`, `store64`, a field, a struct literal, inside a value's
 #      parentheses), C6b the first-call rule, C7 / C8 a multi-value call into a tuple / struct field, C9 / C10 into a
 #      struct assignment / declaration, C11 a small-struct return, C12 / C12b a tuple capture's count / struct, C13
 #      the destructure's count, C14 over 16 B, C15 / C15b a one-value struct / method, C16 a re-assignment from a
-#      struct, C17 / C17b / C19 a 16 B / 8 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn forwarding 3
-#      values / 1 value — each on w.p (c), h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m),
-#      callptr(&gpw, &w).p (i)
+#      struct, C17 / C17b / C17c / C19 a 16 B / 8 B / 24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn
+#      forwarding 3 values / 1 value — each on w.p (c), h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m),
+#      callptr(&gpw, &w).p (i); on the callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`)
 #   W  the dropped-tag warning reads the chain's method (x86_64, every receiver): W1 / W3 `return w.p.rs(4);` (and in
 #      parentheses) beside `return Err(2);` draw none (one each before), W2 `return w.p.one();` one, WC1 / WC2 a
 #      comparison `w.p.n < z >> (z)` / `w.p.id < z >> (z)` (id a field and a generic method) one
@@ -65,6 +66,7 @@
 #       scope (no `_mch_tok` arm)
 #   M13 `_pair_callee_at` without its chain arm         -> RED 56: V x7, C1-C6b x7 (the pair refusals)
 #   M14 `_dt_call_open` without its chain arm           -> RED 82: R0 x5, V x7, C7 / C8 / C11-C16 x7
+#   M15 the tree before `_icall_dotted` (7cdce3aa1)     -> RED 10: V x7 (MS: SIGSEGV), C17 / C17c / C19 on callptr
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -94,7 +96,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=59
+FLOOR=62
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -254,9 +256,10 @@ crow C14 '' 'var a, b = @.q24();' "cannot destructure 'q24' - it returns struct 
 crow C15 '' 'var a, b = @.q8();' "multi-value destructure binds 2 names, but 'P.q8' returns 1 value" "var a, b = @.q8(); (needs a call)"
 crow C15b '' 'var a, b = @.one();' "multi-value destructure binds 2 names, but 'P.one' returns 1 value" "var a, b = @.one(); (needs a call)"
 crow C16 '' 'var a = 0; var b = 0; a, b = @.q24();' "cannot re-assign from 'q24' - it returns struct 'Q24'" "a, b = @.q24(); (needs a call)"
-crow C17 'fn tq(q: Q16): i64 { return q.a; }' 'tq(@.m2());' "a multi-value call 'm2' is not a struct 'Q16' argument" "tq(@.m2()) into a struct parameter (named 'P_m2', no hint)" "c d f x k m"
+crow C17 'fn tq(q: Q16): i64 { return q.a; }' 'tq(@.m2());' "a multi-value call 'm2' is not a struct 'Q16' argument" "tq(@.m2()) into a struct parameter (named 'P_m2', no hint)"
 crow C17b 'fn t8(q: Q8): i64 { return q.a; }' 't8(@.m2());' "a multi-value call 'm2' is not a struct 'Q8' argument" "t8(@.m2()) into an 8-byte struct parameter"
-crow C19 'fn tk(t: (i64, i64)): i64 { return t.0; }' 'tk(@.m2());' "is not a tuple argument" "tk(@.m2()) into a tuple parameter" "c d f x k m"
+crow C17c 'fn t24(q: Q24): i64 { return q.a; }' 't24(@.m2());' "a multi-value call 'm2' is not a struct 'Q24' argument" "t24(@.m2()) into a 24-byte struct parameter"
+crow C19 'fn tk(t: (i64, i64)): i64 { return t.0; }' 'tk(@.m2());' "is not a tuple argument" "tk(@.m2()) into a tuple parameter"
 crow C20 'fn g3(@W): (i64, i64) { return @.m3(); }' '' "'g3' returns 2 values - return (a, b)" "return @.m3(); from a (i64, i64) fn"
 crow C21 'fn g4(@W): (i64, i64) { return @.one(); }' '' "'g4' returns 2 values - return (a, b)" "return @.one(); from a (i64, i64) fn"
 

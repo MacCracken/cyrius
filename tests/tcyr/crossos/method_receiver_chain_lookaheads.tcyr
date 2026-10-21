@@ -157,6 +157,15 @@ fn fc_cmp(k, j): i64 {
     return a + b * 2 + c * 4;
 }
 
+# MS: a chain on a `callptr(..)` result as a by-value struct argument, as on a direct call's: it pushed a word as the
+# struct's address (SIGSEGV on every target)
+struct FcWQ { q: FcQ16; n; }
+fn fc_gwq(w: *FcWQ): *FcWQ { return w; }
+fn fc_tq(q: FcQ16): i64 { return q.a * 10 + q.b; }
+fn fc_s1(): i64 { var w = fc_w(); return fc_tq(callptr(&fc_gpw, &w).p.q16()); }
+fn fc_s2(): i64 { var wq: FcWQ; wq.q.a = 5; wq.q.b = 6; wq.n = 0; return fc_tq(callptr(&fc_gwq, &wq).q); }
+fn fc_s3(): i64 { var w = fc_w(); return fc_tq((callptr(&fc_gpw, &w).p.q16())); }
+
 # MZ: the top-level zone
 var fc_ga, fc_gb = FC_GW.p.m2();
 var fc_gt: (i64, i64) = FC_GW.p.mm<i64>(4);
@@ -217,6 +226,9 @@ assert_eq(fc_d3(), 45, "MY: an argument, dk0(dw.d.me(3))");
 assert_eq(fc_d4(), 46, "MY: return dw.d.me(4) from a dyn fn");
 assert_eq(fc_d5(), 47, "MY: a dereference head, (*pd).d.me(5)");
 assert_eq(fc_cmp(5, 0), 47, "MC: w.a.n < k >> (j) and w.b.id < k >> (j) (id a field AND a generic method) compare");
+assert_eq(fc_s1(), 34, "MS: tq(callptr(&gpw, &w).p.q16()), a method's struct result (SIGSEGV before)");
+assert_eq(fc_s2(), 56, "MS: tq(callptr(&gwq, &wq).q), a struct field (SIGSEGV before)");
+assert_eq(fc_s3(), 34, "MS: tq((callptr(&gpw, &w).p.q16())), wrapped (SIGSEGV before)");
 assert_eq(fc_ga * 10 + fc_gb, 34, "MZ: a top-level var a, b = GW.p.m2()");
 assert_eq(fc_gt.0 * 10 + fc_gt.1, 47, "MZ: a top-level tuple capture, GW.p.mm<i64>(4)");
 assert_eq(fc_gy, 7, "MZ: a top-level var a, b = GW.p.mm<f64>(2.5): its second value");
