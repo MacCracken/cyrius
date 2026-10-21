@@ -770,13 +770,18 @@ fn sys_truncate(path, length): i64 {
 # resolved the way the link will resolve it (a relative target against the LINK's directory):
 # a directory gets SYMBOLIC_LINK_FLAG_DIRECTORY, anything else — including a target that does
 # not exist yet, a dangling link — a file link. SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
-# is asked first (Developer Mode lets a normal user create links with it); a Windows too old
-# to know the flag refuses it, so the call is retried without. ⚠ Without Developer Mode a
-# NON-elevated process cannot create a link at all and this returns -1 — a Windows policy,
-# not a missing route (ERROR_PRIVILEGE_NOT_HELD, a code the Win32 table leaves -1). 0 on
-# success, or the second call's negative errno, as Linux answers: a link under a missing
-# directory -2, an existing link path -17 (6.7.16's D94; every failure was -1 before). A
-# resolved target too long to probe is still -1, as a path the widen refuses is.
+# is asked first (Developer Mode lets a normal user create links with it); a Windows older than
+# 10 1703 does not know the flag and refuses it ERROR_INVALID_PARAMETER (-22), so ONLY that
+# answer is retried without the flag. Any other answer stands: the flagless call fails
+# ERROR_PRIVILEGE_NOT_HELD (-1) in every non-elevated process, Developer Mode or not, so a retry
+# on any failure replaced the flagged call's -2 / -17 with -1 (measured on cass under `runas
+# /trustlevel:0x20000`, 6.7.16 pw review). ⚠ Without Developer Mode a NON-elevated process
+# cannot create a link at all and this returns -1 — a Windows policy, not a missing route
+# (ERROR_PRIVILEGE_NOT_HELD, a code the Win32 table leaves -1); a path error is answered before
+# that check. 0 on success, or the flagged call's negative errno, as Linux answers: a link under
+# a missing directory -2, an existing link path -17, elevated or not (6.7.16's D94; every failure
+# was -1 before). A resolved target too long to probe is still -1, as a path the widen refuses
+# is.
 # ⛔ 6.7.12 — both paths go to the reroute NARROW (UTF-8), and the emitter widens them: the link
 # path is made absolute and `\\?\`-prefixed at 248+ units, as open() / mkdir() / rename() do;
 # the target is stored verbatim, so a relative one is decoded only ('/' → '\'), never made
@@ -827,10 +832,11 @@ fn sys_symlink(target, linkpath): i64 {
     if (at != 4294967295) {
         if ((at & 16) != 0) { kind = 1; }         # SYMBOLIC_LINK_FLAG_DIRECTORY
     }
-    # 0 / -errno since 6.7.16 (the BOOLEAN before), so success is `== 0`. CHANGELOG [6.7.16]
-    if (syscall(61502, linkpath, target, kind | 2) == 0) { return 0; }   # narrow (6.7.12)
-    var r = syscall(61502, linkpath, target, kind);
-    return r;
+    # 0 / -errno since 6.7.16 (the BOOLEAN before); the flagless retry only on -22 (see above).
+    # CHANGELOG [6.7.16]
+    var r = syscall(61502, linkpath, target, kind | 2);   # narrow (6.7.12)
+    if (r != 0 - 22) { return r; }
+    return syscall(61502, linkpath, target, kind);
 }
 # Filesystem statistics by path. Declines on Windows: the nearest peer is GetDiskFreeSpaceExW,
 # a kernel32 import with three out-params and a wide path — a different contract, not a

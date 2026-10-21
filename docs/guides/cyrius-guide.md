@@ -8611,7 +8611,10 @@ directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path 
 `xsymlink` / `sys_symlink` (`CreateSymbolicLinkW`) and `xfsync` / `sys_fsync` / `sys_fdatasync`
 (`FlushFileBuffers`) since the same release (6.7.16's D94): a missing source or directory -2, an
 existing link name -17, a closed fd -9; a link refused by Windows policy (no Developer Mode, not
-elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. A DIRECTORY answers
+elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. A link's path errors
+come before that policy check, so a non-elevated process reads the same -2 / -17 (`sys_symlink`
+retries without `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` only when a Windows older than 10
+1703 refuses the flag, -22). A DIRECTORY answers
 -21 (`EISDIR`) to `sys_unlink` / `xunlink`, `sys_truncate` and an open for writing, as on Linux
 (6.7.16's D95; macOS's unlink of a directory says `EPERM`, -1): `DeleteFileW` and `CreateFileW`
 refuse one `ERROR_ACCESS_DENIED`, so on that -13 the name is asked (`GetFileAttributesW`), and a

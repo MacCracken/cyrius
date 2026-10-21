@@ -231,6 +231,19 @@
 #   EFLUSHFB_PE's map back to `cmp; sbb`                    axis 2 FAIL (FlushFileBuffers, the same);
 #                                                           axis 4 FAIL (path_failure_errno 35 / 2:
 #                                                           the closed-fd and read-only rows -1)
+# The pw review: sys_symlink retried CreateSymbolicLinkW without ALLOW_UNPRIVILEGED_CREATE on EVERY
+# failure, and the flagless call fails ERROR_PRIVILEGE_NOT_HELD (-1) in any non-elevated process, so
+# the flagged call's -2 / -17 read -1 there: on cass under `runas /trustlevel:0x20000` (a Basic User
+# token; Developer Mode off) rsfail printed `-2 -1 -9`. The retry is reached only on -22 now
+# (ERROR_INVALID_PARAMETER, a Windows older than 10 1703, which does not know the flag). Wine ignores
+# the privilege and the cass leg runs elevated, so axis 5 reads sys_symlink statically (two 61502
+# calls, the second behind `if (r != 0 - 22) { return r; }`); path_failure_errno.tcyr's
+# missing-directory and existing-name link rows run elevated or not (only the made-link rows skip).
+#   mutant (2026-10-20, 6.7.16 pw review fix; wine 11.20, cass) result
+#   the retry on any failure (`if (r == 0) { return 0; }`,  axis 5 FAIL (67 / 1); axis 4 PASSES (wine).
+#   as b67ed7b83)                                           On cass, Basic User token: rsfail `-2 -1 -9`,
+#                                                           path_failure_errno 46 / 2 (the fix: `-2 -2
+#                                                           -9`, 48 / 0; elevated, both 50 / 0)
 # 6.7.16 — a DIRECTORY answers EISDIR (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-
 # answer-eacces-not-eisdir.md; 6.7.16's D95, "-21 as Linux"). CreateFileW and DeleteFileW refuse a
 # directory ERROR_ACCESS_DENIED, which the table maps to -13: the filed dirfail printed `-13 -13 -13
@@ -263,7 +276,7 @@ for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
 # T6's at 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=49; F6=53
+F1=10; F2=10; F3=13; F4=13; F5=50; F6=53
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -888,6 +901,19 @@ esac
 case "$(swfn sys_unlink)$(swfn _win_unlink_eacces)$(swfn sys_truncate)$(warm xunlink)" in
     *'_win_unlink_eacces(path, syscall(87, path))'*'_win_is_dir(path) == 1) { return 0 - 21; }'*'var h = sys_open(path, 1, 0);'*'_win_unlink_eacces(path, syscall(0xF035, path))'*) ok ;;
     *) bad "axis 5: sys_unlink / xunlink do not classify DeleteFileW's -13, or sys_truncate does not open through sys_open" ;;
+esac
+
+# axis 5, 6.7.16 (D94, the pw review): sys_symlink retries CreateSymbolicLinkW without
+# ALLOW_UNPRIVILEGED_CREATE only on -22 — the flagless call fails ERROR_PRIVILEGE_NOT_HELD (-1) in
+# any non-elevated process, and wine (which ignores the privilege) and the elevated cass leg never
+# see it, so this static row is what holds it.
+ssym=$(swfn sys_symlink)
+nsym=$(printf '%s\n' "$ssym" | grep -c 'syscall(61502,' || true)
+case "$ssym" in
+    *'var r = syscall(61502, linkpath, target, kind | 2);'*'if (r != 0 - 22) { return r; }'*'return syscall(61502, linkpath, target, kind);'*)
+        if [ "$nsym" = 2 ]; then ok
+        else bad "axis 5: sys_symlink makes $nsym CreateSymbolicLinkW calls (want 2: the flagged one, then the flagless retry behind \`r != 0 - 22\`)"; fi ;;
+    *) bad "axis 5: sys_symlink's flagless CreateSymbolicLinkW retry is not reachable only behind \`if (r != 0 - 22) { return r; }\`: $(printf '%s' "$ssym" | tail -5 | tr -s ' \n' '  ')" ;;
 esac
 
 # axis 6, 6.7.16: static — the stdlib wrappers that hand an fd to a raw handle reroute ask

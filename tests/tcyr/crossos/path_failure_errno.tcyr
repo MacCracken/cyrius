@@ -30,7 +30,8 @@
 # now goes through the same table: a missing source or directory -2, an existing link name -17, a
 # closed fd -9. Linux and macOS fsync a read-only descriptor; Windows refuses it ERROR_ACCESS_DENIED,
 # -13 (it was -1). A Windows without Developer Mode refuses a non-elevated link with a code the
-# table leaves -1; the link rows then report that and skip.
+# table leaves -1; the made-link rows then report that and skip. A path error comes before that
+# refusal (a missing directory -2, an existing name -17), so those rows run everywhere.
 #
 # A directory (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-answer-eacces-not-eisdir.md;
 # 6.7.16's D95, the user, 2026-10-20: "-21 as Linux"). CreateFileW and DeleteFileW refuse a
@@ -151,11 +152,15 @@ assert_eq(sys_truncate(f, 1), 0, "a good truncate is 0");
 test_group("file_rename / xsymlink / xfsync answer the errno (6.7.16's D94)");
 assert_eq(file_rename(m, _pfe_join(d, "/x")), 0 - 2, "rename of a missing path is -2 (Windows answered -1)");
 assert_eq(file_rename(f, _pfe_join(m, "/x")), 0 - 2, "rename into a missing directory is -2 (Windows answered -1)");
+# A path error is answered before Windows' link policy, so these two run elevated or not (a
+# non-elevated process read -1 for both until the 6.7.16 pw review: sys_symlink's flagless retry).
+assert_eq(xsymlink("f", _pfe_join(m, "/l")), 0 - 2, "a link under a missing directory is -2, elevated or not (Windows answered -1)");
+assert_eq(xsymlink("x", f), 0 - 17, "a link over an existing file is -17, elevated or not (Windows answered -1)");
 var lnk = _pfe_join(d, "/l");
 var lk = xsymlink("f", lnk);
 #ifdef CYRIUS_TARGET_WIN
 if (lk == 0 - 1) {
-    var skl = "  SKIP: this Windows refuses a non-elevated link (no Developer Mode); the link rows need one\n";
+    var skl = "  SKIP: this Windows refuses a non-elevated link (no Developer Mode); the made-link rows need one\n";
     sys_write(1, skl, strlen(skl));
 }
 #endif
@@ -163,8 +168,7 @@ if (lk == 0 - 1) {
 assert_eq(lk, 0, "a link beside its target is made");
 #endif
 if (lk == 0) {
-    assert_eq(xsymlink("f", lnk), 0 - 17, "a link over an existing name is -17 (Windows answered -1)");
-    assert_eq(xsymlink("f", _pfe_join(m, "/l")), 0 - 2, "a link under a missing directory is -2 (Windows answered -1)");
+    assert_eq(xsymlink("f", lnk), 0 - 17, "a link over an existing link is -17 (Windows answered -1)");
     assert_eq(xunlink(lnk), 0, "the link unlinks");
 }
 var cf = file_open(f, O_RDONLY, 0);
