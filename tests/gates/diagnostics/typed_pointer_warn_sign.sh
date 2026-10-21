@@ -371,11 +371,12 @@ tpx() {   # <name> <want warnings> <want errors> <want exit or -> <what> <source
     x=-
     if [ "$4" != - ] && [ -s "$O" ]; then chmod +x "$O"; x=0; "$O" > /dev/null 2>&1 || x=$?; fi
     if [ "$n" -ne "$2" ] || [ "$ne" -ne "$3" ] || [ "$x" != "$4" ]; then
-        echo "  FAIL axis 14 $1: $5 — $n warning(s) / $ne error(s) / exit $x, want $2 / $3 / $4"; fail=1
-    else echo "  ok axis 14 $1: $5 — $n / $ne / exit $x"; fi
+        echo "  FAIL axis $AX $1: $5 — $n warning(s) / $ne error(s) / exit $x, want $2 / $3 / $4"; fail=1
+    else echo "  ok axis $AX $1: $5 — $n / $ne / exit $x"; fi
 }
 RS=docs/development/issues/repros/2026-10-16-typed-pointer-warning-string-literal-and-address-of-subscript
 [ -f "$RS.cyr" ] && [ -f "$RS-zone.cyr" ] && [ -f "$RS-address-of-subscript.cyr" ] || { echo "FAIL: typed_pointer_warn_sign: $RS*.cyr missing"; exit 1; }
+AX=14   # the axis `tpx` names in its lines (its axis 15 and 16 rows said 'axis 14')
 tpx S0 0 0 218 "the filed repro 1 verbatim: var s: *u8 = \"abc\"; t = \"xyz\"; (2 warnings before)" "$(cat "$RS.cyr")"
 tpx S0z 0 0 98 "the filed zone repro verbatim: var p: *u8 = \"abc\"; (1 warning before)" "$(cat "$RS-zone.cyr")"
 tpx S0a 0 1 - "the filed &a[i] repro verbatim: p = &a[1]; refused once (a warning beside it before)" "$(cat "$RS-address-of-subscript.cyr")"
@@ -402,6 +403,7 @@ tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'v
 # expression is judged as before (SLK1, SLK2). Warning text only: no binary changes (each row's exit is the one before).
 #   `_tp_exempt` without `_tp_str_exempt` (the literal alone, the lane before the bite) -> RED 6: SL0 (2) SL1 (6)
 #                                                                 SL2 (4) SL3 (3) SL4 (1) SL5 (1)
+AX=15
 tpx SL0 0 0 218 "the filed repro verbatim: \"abc\" + 1 and (\"xyz\") into a *u8 (2 warnings before)" 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var s: *u8 = "abc" + 1;\n    var t: *u8 = ("xyz");\n    return load8(s) + load8(t);\n}\nsyscall(60, main());\n'
 tpx SL1 0 0 111 "fn: \"abc\" + 1, (\"xyz\"), ((\"x\")), \"abc\" - 0, (\"abc\" + 1), (\"abc\") + n are quiet" 'fn main(): i64 {\n    var n = 1;\n    var a: *u8 = "abc" + 1;\n    var b: *u8 = ("xyz");\n    var c: *u8 = (("x"));\n    var d: *u8 = "abc" - 0;\n    var e: *u8 = ("abc" + 1);\n    var f: *u8 = ("abc") + n;\n    return load8(a) + load8(b) + load8(c) + load8(d) + load8(e) + load8(f) - 520;\n}\nsyscall(60, main());\n'
 tpx SL2 0 0 135 "assignments: t = (\"xyz\"); t = \"abc\" + n; into a *u8 local, a parameter, a *u8 global" 'var G: *u8 = 0;\nfn f(p: *u8): i64 {\n    var n = 2;\n    var t: *u8 = 0;\n    t = ("xyz");\n    var r = load8(t);\n    t = "abc" + n;\n    p = (("pq")) + 1;\n    G = ("g") - 0;\n    return r + load8(t) + load8(p) + load8(G) - 300;\n}\nsyscall(60, f(0));\n'
@@ -421,6 +423,7 @@ tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 
 # whole value (SC4). Mutation: `_tp_call_pointee` without its `Str` test -> RED SC2 and axis 12's z_8b (0 warnings, the
 # struct's word taken as an address); `_tpv_sid` taking a call's return whatever follows the call (its whole-value test,
 # `_tpv_end_at`) -> RED SC4 (6.7.16's first form, `_tp_fcall_ret`, is gone).
+AX=16
 SCH='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nstruct H { name: Str; n; }\nfn H_mq(self: H): Q1 { var q: Q1; q.a = 3; return q; }\nfn mkq(): Q1 { var q: Q1; q.a = 3; return q; }\nvar _ai = alloc_init();\n'
 tpx SC1 5 0 - "a : Q1 call into a *Str: a declaration, a global, the zone, the method forms (5 warnings)" "${SCH}var GP: *Str = 0;\nvar GQ: *Str = mkq();\nfn main(): i64 {\n    var h: H = alloc(16);\n    var p: *Str = mkq();\n    GP = mkq();\n    var m: *Str = h.mq();\n    GP = h.mq();\n    return 0;\n}\nsyscall(60, main());\n"
 tpx SC2 1 0 - "a : P1 call into a *P1 (an 8-byte struct's word, no address)" 'struct P1 { a; }\nfn mk1(): P1 { var p: P1; p.a = 7; return p; }\nfn main(): i64 { var o: *P1 = mk1(); return 0; }\nsyscall(60, main());\n'
