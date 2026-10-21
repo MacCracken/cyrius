@@ -9945,11 +9945,13 @@ fn _vop_eq(S, j): i64 {
 # ⛔ 6.7.16 (D100: wherever it sits) — AND A WHOLE VECTOR CALL IN EVERY OTHER WORD SLOT. Stored into a field, an element
 # or through a pointer to no vector (`s.a = mk2(41, 7);`, `a[0] = mk2(..)`, `*p = mk2(..)` with `p: *i64` or untyped,
 # `*(&x) = mk2(..)` of a scalar x), and as a condition (`if (mk2(..))`, `elif`, `while`, `switch`, a `for` condition,
-# `match mk2(..) {`), an index (`a[mk2(..)]`), a range bound (`0..mk2(..)`) or a struct literal's field (`Pt { mk2(..),
-# 1 }`), it was read as a word (x86_64 / aarch64 0, cx / PE 41), where a declaration and a name's assignment refuse it
-# (6.7.11, 6.7.14's D38, 6.7.15). The slot the whole factor [ti0, e) fills (no operator beside it), by its tokens: 1 a
-# store (refused "vector return type does not match the assigned variable"), 2 any of the others (".. the declared
-# type"); 0 a slot its own reader judges (a declaration, a name's assignment, a `return`, a call's argument, a
+# `match mk2(..) {`), an index (`a[mk2(..)]`), a range bound (`0..mk2(..)`), a struct literal's field (`Pt { mk2(..),
+# 1 }`) or a tuple literal's element (`(mk2(..), 3)` as a declaration's, an assignment's, an argument's or a multi-value
+# `return`'s value, in a fn or at top level), it was read as a word (x86_64 / aarch64 0, cx / PE 41), where a
+# declaration and a name's assignment refuse it (6.7.11, 6.7.14's D38, 6.7.15). The slot the whole factor [ti0, e) fills
+# (no operator beside it), by its tokens: 1 a store (refused "vector return type does not match the assigned
+# variable"), 2 any of the others (".. the declared type"), 3 a tuple literal's element (an assignment's: 1's words,
+# else 2's); 0 a slot its own reader judges (a declaration, a name's assignment, a `return`, a call's argument, a
 # statement, an if-expression branch, a store through a `*V`) or none read here. CHANGELOG [6.7.16]
 fn _vsl_slot(S, ti0, e): i64 {
     var p = TOKTYP(S, ti0 - 1);
@@ -9964,7 +9966,17 @@ fn _vsl_slot(S, ti0, e): i64 {
     if (p == 10) { if (n == 11) { if (_vsl_cond(S, ti0 - 1) == 1) { return 2; } } }
     if (p == 13 || p == 31 || p == 49) { if (_vsl_lit(S, ti0 - 1, n) == 1) { return 2; } }
     if (p == 5) { if (n == 5) { if (_vsl_forc(S, ti0 - 1) == 1) { return 2; } } }
+    if (p == 10 || p == 31) { if (n == 31 || n == 11) { if (_vsl_tup(S, ti0 - 1) == 1) { return 3; } } }
     return 0;
+}
+# Token `j` (`(` or `,`) is in a tuple literal `(a, b)`: the `(` that opens its group groups an expression
+# (`_vop_gparen`: no call's, no condition's) and has a comma at its own depth (`_tup_commas`). 1.
+fn _vsl_tup(S, j): i64 {
+    var o = _vsl_open(S, j);
+    if (o < 0) { return 0; }
+    if (_vop_gparen(S, o) == 0) { return 0; }
+    if (_tup_commas(S, o) == 0) { return 0; }
+    return 1;
 }
 # The `(` at token `o` opens a condition: `if` `elif` `while` `switch`.
 fn _vsl_cond(S, o): i64 {
@@ -10134,6 +10146,10 @@ fn _vop_whole(S, ti0, e, a): i64 {
     var sk = _vsl_slot(S, ti0, e);
     if (sk == 1) { return _vrcv_tyerr(S, a, 1); }   # a store into a field, an element, through a pointer to no vector
     if (sk == 2) { return _vrcv_tyerr(S, a, 0); }   # a condition, an index, a range bound, a literal's field
+    if (sk == 3) {   # a tuple literal's element: in the words of what receives the literal
+        if (_vop_ctx(S, ti0) == 2) { return _vrcv_tyerr(S, a, 1); }
+        return _vrcv_tyerr(S, a, 0);
+    }
     return 0;
 }
 # 1 = token type `t` ends a closure's expression body (`;` `,` `)` `]` `}`).

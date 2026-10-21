@@ -473,6 +473,10 @@
 #   M-VO7 `_vsl_dst` exempting an untyped pointer      -> RED 5: VO36 on five legs
 #   M-VO8 the `|` before a closure's body an operator  -> RED 5: VO48 on five legs (a second error before the parse's)
 #   M-VO9 `_vop_ctx` past a closure's body start       -> RED 5: VO20 on five legs (the declaration's words)
+# The s16 review (2026-10-21, measured): a whole call as a tuple literal's element (`_vsl_tup`; rows VO49-VO60, VOC2 the
+# controls) — the tree before RED 60: VO49-VO60 on five legs (x86_64 / aarch64 0, cx 41: one word stored);
+#   M-VO10 `_vsl_tup` reading no tuple literal         -> RED 60: VO49-VO60 on five legs
+#   M-VO11 a tuple element always the declaration's words -> RED 10: VO51 VO60 on five legs
 # 6.7.16 (met landing D100) — the vector receives' refusals are made in sync (`_refuse_in_sync`): the by-name call's
 # mismatch into a local (`_try_vector_call_assign`), `_vrcv_tyerr` (the starting call, a method, `&f`, a global, another
 # vector; D100's operands and slots), `_vrcv_mscal` (a method starting a declaration) and `_vin_decl` (`var x: i64 =
@@ -2567,7 +2571,11 @@ VAC_ROWS="VAC1"
 # f64v4, f32v4; VO29 into an `f64`; VO30 inside a term; VO31 `&&`; VO32-VO36 a whole call stored into a field, through a
 # `*i64`, an element, `*(&x)`, an untyped pointer; VO37-VO46 a whole call as a condition (`if`, `while`, a `for`'s,
 # `elif`, `switch`), an index, a range bound, a struct literal's field (positional, named), `match`'s subject; VO47 a
-# top-level field store; VO48 a closure's expression body followed by a stray token (the parse's one error, as SX).
+# top-level field store; VO48 a closure's expression body followed by a stray token (the parse's one error, as SX);
+# VO49-VO60 (the s16 review) a whole call as a tuple literal's element — an untyped and an annotated declaration's, an
+# assignment's, a tuple argument's, the second element, a multi-value fn's and a method's `return`, a method's call as a
+# middle element, a wrapped explicit instance, the declaration zone, after the first statement (`callptr(&mk2, ..)`), a
+# tuple field's store (f64v4).
 VOH="$OPH"'fn take(t): i64 { return t; }
 fn rd(p: *f64v2): i64 { return load64(p); }
 struct Pt { a; b; }
@@ -2708,6 +2716,47 @@ syscall(60, GP.a % 256);
     VO48) printf '%s' "$VOH"'fn r(): i64 { var f = |k| mk2(k, 7) 5; return 1; }
 syscall(60, r() % 256);
 ' ;;
+    VO49) printf '%s' "$VOH"'fn r(): i64 { var t = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO50) printf '%s' "$VOH"'fn r(): i64 { var t: (i64, i64) = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO51) printf '%s' "$VOH"'fn r(): i64 { var t: (i64, i64) = (1, 2); t = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO52) printf '%s' "$VOH"'fn tk(t: (i64, i64)): i64 { return t.0; }
+fn r(): i64 { return tk((mk2(41, 7), 3)); }
+syscall(60, r() % 256);
+' ;;
+    VO53) printf '%s' "$VOH"'fn r(): i64 { var t = (3, mk2(41, 7)); return t.1; }
+syscall(60, r() % 256);
+' ;;
+    VO54) printf '%s' "$VOH"'fn two(): (i64, i64) { return (mk2(41, 7), 3); }
+fn r(): i64 { var a, b = two(); return a; }
+syscall(60, r() % 256);
+' ;;
+    VO55) printf '%s' "$VOH"'impl Pt { fn tw(self): (i64, i64) { return (3, mk2(41, 7)); } }
+fn r(): i64 { var p = Pt { 1, 2 }; var a, b = p.tw(); return b; }
+syscall(60, r() % 256);
+' ;;
+    VO56) printf '%s' "$VOH"'fn r(): i64 { var s: Mv = Mv { 1 }; var t = (1, s.m2(), 3); return t.1; }
+syscall(60, r() % 256);
+' ;;
+    VO57) printf '%s' "$VOH"'fn r(): i64 { var t = ((mkg<i64>(41, 7)), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO58) printf '%s' "$VOH"'var GT = (mk2(41, 7), 3);
+syscall(60, GT.0 % 256);
+' ;;
+    VO59) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT: (i64, i64) = (3, callptr(&mk2, 41, 7));
+syscall(60, GT.1 % 256);
+' ;;
+    VO60) printf '%s' "$VOH"'struct St { t: (i64, i64); }
+fn r(): i64 { var s: St; s.t = (mk4(41), 3); return s.t.0; }
+syscall(60, r() % 256);
+' ;;
     esac
 }
 vo_filed() {  # the issue's `r` per row
@@ -2722,12 +2771,12 @@ vo_filed() {  # the issue's `r` per row
 fn r(): i64 { return take(mk2(41, 7) + 1); }' ;;
     esac
 }
-VO_ROWS="VO1 VO2 VO3 VO4 VO5 VO7 VO8 VO9 VO10 VO11 VO12 VO13 VO14 VO15 VO16 VO17 VO18 VO19 VO20 VO21 VO22 VO23 VO24 VO25 VO26 VO27 VO28 VO29 VO30 VO31 VO32 VO33 VO34 VO35 VO36 VO37 VO38 VO39 VO40 VO41 VO42 VO43 VO44 VO45 VO46 VO47 VO48"
+VO_ROWS="VO1 VO2 VO3 VO4 VO5 VO7 VO8 VO9 VO10 VO11 VO12 VO13 VO14 VO15 VO16 VO17 VO18 VO19 VO20 VO21 VO22 VO23 VO24 VO25 VO26 VO27 VO28 VO29 VO30 VO31 VO32 VO33 VO34 VO35 VO36 VO37 VO38 VO39 VO40 VO41 VO42 VO43 VO44 VO45 VO46 VO47 VO48 VO49 VO50 VO51 VO52 VO53 VO54 VO55 VO56 VO57 VO58 VO59 VO60"
 VOD="vector return type does not match the declared type"
 VOA="vector return type does not match the assigned variable"
 vo_msg() {
     case "$1" in
-    VO2|VO4|VO5|VO9|VO10|VO15|VO16|VO17|VO18|VO19|VO23|VO26|VO27|VO30|VO32|VO33|VO34|VO35|VO36|VO47) echo "$VOA";;
+    VO2|VO4|VO5|VO9|VO10|VO15|VO16|VO17|VO18|VO19|VO23|VO26|VO27|VO30|VO32|VO33|VO34|VO35|VO36|VO47|VO51|VO60) echo "$VOA";;
     VO11|VO13|VO20) echo "a vector value cannot be returned as i64 - 'mk2' returns a vector";;
     VO48) echo "12:37: expected ';', got number 5";;
     *) echo "$VOD";;
@@ -2773,7 +2822,8 @@ vos_msg() {  # the two errors, one per line
     esac
     echo "undefined variable 'zz9'"
 }
-# The controls: a vector call where a vector goes, and the bound vector's lanes in every operator and slot (161).
+# The controls: a vector call where a vector goes, and the bound vector's lanes in every operator and slot (161); VOC2 a
+# vector call inside a tuple literal element's argument, a multi-value fn's element from a vector parameter (161).
 voc_src() {  # $1 row id -> source on stdout; exits 161 when right
     case "$1" in
     VOC1) printf '%s' "$VOH"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
@@ -2785,9 +2835,15 @@ fn r(): i64 { var s: Mv = Mv { 1 }; var p: Pt = Pt { 1, 2 }; var a: i64[4]; a[0]
   var f = |k| lanes(mk2(k, 7)) + 1; if (fncall1(f, 41) != 418) { return 3; } return 161; }
 syscall(60, r() % 256);
 ' ;;
+    VOC2) printf '%s' "$VOH"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(w: f64v2): (i64, i64) { return (lanes(w), load64(&w + 8)); }
+fn r(): i64 { var t = (lanes(mk2(4, 1)), 3); var a, b = two(mk2(41, 7)); var u: (i64, i64) = (1, 2); u = (lanes(mk2(1, 6)), b);
+  if (t.0 != 41 || t.1 != 3 || a != 417 || b != 7 || u.0 != 16 || u.1 != 7) { return 1; } return 161; }
+syscall(60, r() % 256);
+' ;;
     esac
 }
-VOC_ROWS="VOC1"
+VOC_ROWS="VOC1 VOC2"
 
 
 # ---- 6.7.16 (met landing D100): the vector receives' refusals are made in sync — the statement parses on to its own end,

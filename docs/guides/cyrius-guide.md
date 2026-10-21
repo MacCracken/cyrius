@@ -2221,10 +2221,11 @@ top-level `var X = 1 + mkv(..)`, `return 1 + mkv(..)`), the right side of a comp
 (`take(mkv(41, 7) + 1)`, `if (mkv(..) == 1)`, `1 && mkv(..)`), a closure's (`|k| k + mkv(k, 7)`), and a whole call stored
 into a field, an element or through a pointer to no vector (`s.a = mkv(..)`, `a[0] = ..`, `*p = ..` with `p: *i64` or
 an untyped `p`, `*(&x) = ..`), used as a condition (`if`, `elif`, `while`, `switch`, a `for` condition, `match`), an
-index (`a[mkv(..)]`), a range bound (`0..mkv(..)`) or a struct literal's field (`Pt { mkv(..), 1 }`) is refused at the
-call, once, in the words of what receives it: *vector return type does not match the declared type* (a declaration, an
-argument, a condition, an index, a bound, a field of a literal), *… the assigned variable* (an assignment or a store),
-and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
+index (`a[mkv(..)]`), a range bound (`0..mkv(..)`), a struct literal's field (`Pt { mkv(..), 1 }`) or a tuple literal's
+element (`var t = (mkv(..), 3);`, `t = (3, mkv(..));`, `tk((mkv(..), 3))`, a multi-value `return (mkv(..), 3);`) is
+refused at the call, once, in the words of what receives it: *vector return type does not match the declared type* (a
+declaration, an argument, a condition, an index, a bound, a field or element of a literal, a multi-value `return`), *…
+the assigned variable* (an assignment or a store, a tuple literal assigned), and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
 6.7.15 each compiled and used one word — x86_64 / aarch64 rax's leftover (`1 + mkv(41, 7)` gave 1, `x += mkv(..)` 0),
 cx / Windows lane 0 (42, 41) — and `rd(mkv(41, 7) + 1)` into a `*f64v2` and `*mkv(41, 7)` crashed (139; cx a wrong
 word; Windows exit 5).
