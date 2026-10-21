@@ -4610,7 +4610,11 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   arity, since v6.5.37). Two definitions **in one file** are likewise still a duplicate —
   that is a redefinition of one symbol, not a collision between two files. Every call
   reaches the last definition (6.6.20), and under `CYRIUS_DCE=1` an earlier one keeps
-  nothing alive: a fn only a losing body calls is unreachable and removed (6.7.14).
+  nothing alive: a fn only a losing body calls is unreachable and removed (6.7.14). A call is
+  typed by the last definition's return too, wherever it sits: with `fn gp(): *H` then
+  `fn gp(): i64`, `gp() + 1` adds 1 and `gp().n = 5;` is refused as for one `fn gp(): i64`
+  (6.7.16; the first definition's `*H` was kept — `gp() + 1` stepped sizeof(H), the field
+  store wrote through the integer).
 - **The boundary covers every way of reaching a fn, not just a direct call (v6.6.4).**
   `&_helper` (address-of, then `callptr` / `fncallN`), `s.method()`, a struct-returning
   call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return

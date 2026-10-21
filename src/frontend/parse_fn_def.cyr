@@ -252,6 +252,12 @@ fn _fn_by_defti(S, noff, ti): i64 {
     }
     return 0 - 1;
 }
+# Pass 2: `_fn_by_defti` for the definition PARSE_FN_DEF reads, its `fn` token noted for `_ret_ptr_owns` (a redefined
+# fn's earlier definition records no `*T` return). CHANGELOG [6.7.16]
+fn _fn_def_find(S, noff, ti): i64 {
+    _rpd_ti = ti;
+    return _fn_by_defti(S, noff, ti);
+}
 
 # 6.6.5 — the VERBATIM pass-1 impl brace-skip the seven forks used to carry inline. Kept
 # as its own fn so `_prescan_impl` can replay it and pass 1's net cursor advance is
@@ -1869,7 +1875,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # An instance (`_inst_name != 0`) is re-parsed from the BASE's tokens, so its def-start
     # names the base — it deliberately bypasses this and keeps the v6.6.4 inherited bit.
     var fi = 0 - 1;
-    if (_inst_name == 0) { fi = _fn_by_defti(S, noff, _defstart_ti); }
+    if (_inst_name == 0) { fi = _fn_def_find(S, noff, _defstart_ti); }
     if (fi >= 0) {
         # ⚠ Only when nothing has CLAIMED the entry yet. Two same-file definitions of one
         # name share an entry (that is a redefinition, not a collision — it must keep

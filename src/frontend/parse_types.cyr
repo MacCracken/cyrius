@@ -3818,21 +3818,51 @@ fn _ret_ptr_annot(S, fi, quiet): i64 {
     return 0;
 }
 fn _ret_ptr_record(S, fi, quiet): i64 {
-    _ret_ptr_unk(S, fi);                     # 6.7.16: --syntax-only, a T this file does not declare
+    var w = _ret_ptr_owns(S, fi, quiet);     # 6.7.16: 0 = a redefined fn's earlier definition, read in pass 2
+    if (w == 1) { _ret_ptr_unk(S, fi); }     # 6.7.16: --syntax-only, a T this file does not declare
     var psid = _ret_ptr_sid(S, quiet);       # 6.7.11: T bound to a struct too
-    if (psid > 0) {
-        if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
-        S64(_fn_rpsid + fi * 8, psid);
-    }
+    if (psid > 0) { if (w == 1) {
+            if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
+            S64(_fn_rpsid + fi * 8, psid);
+        } }
     var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
     var vd = _ek_vd(S, GTI(S));           # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
     var pn = 0;                           # 6.7.13: a `**T`'s pointee (6.7.15: pass 2's, when unresolved in pass 1)
     if (_ret_ptr_unres(S, quiet) == 0) { pn = _ek_pin(S, GTI(S)); }
     var ps = _ptr_annot(S, 0 - 1, quiet);
     SFRS(S, fi, 0 - 8);
-    if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
-    S64(_fn_rps + fi * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));
+    if (w == 1) {
+        if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
+        S64(_fn_rps + fi * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));
+    }
     if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
+    return 0;
+}
+# ⛔ 6.7.16 — A REDEFINED FN'S `*T` RECORDS ARE THE WINNING DEFINITION'S. The step word (`_fn_rps`), the pointee struct
+# (`_fn_rpsid`) and the --syntax-only byte (`_fn_rpun`) were written only by a `: *T` return and never cleared, so with
+# `fn gp(): *H` then `fn gp(): i64` (the duplicate warning: the last definition wins) every call kept the first one's
+# `*H`: `gp() + 1` stepped sizeof(H) (124, not 101), `gp().b = 5` stored through the i64 (139), on every target. Pass 1
+# starts each redefinition's return afresh (`_ret_redef_reset`), so its last definition's return is what a call above
+# or between the definitions reads; pass 2 re-reads the definitions in order, so an earlier one records no `*T`
+# (`_ret_ptr_owns`: pass 1's last definition is fn flag 2048's GFDS) and only refuses its own T and types its own
+# returns. CHANGELOG [6.7.16]
+var _rpd_ti = 0 - 1;   # pass 2: the `fn` token of the definition PARSE_FN_DEF reads (`_fn_def_find`)
+fn _ret_ptr_owns(S, fi, quiet): i64 {
+    if (quiet == 1) { return 1; }
+    if (_inst_name != 0) { return 1; }   # an instance is minted from the winning definition's tokens
+    if ((GFLG(S, fi) & 2048) == 0) { return 1; }
+    if (GFDS(S, fi) == _rpd_ti + 1) { return 1; }
+    return 0;
+}
+# Pass 1, a redefinition (fn flag 2048) about to record its return: the earlier definition's `*T` records and its
+# return word (GFRS: -8 for a `*T`, as pass 2 zeroes it at each definition) are dropped first.
+fn _ret_redef_reset(S, fi): i64 {
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    if (fi < 0 || fi >= 131072) { return 0; }
+    if (_fn_rps != 0) { S64(_fn_rps + fi * 8, 0); }
+    if (_fn_rpsid != 0) { S64(_fn_rpsid + fi * 8, 0); }
+    if (_fn_rpun != 0) { store8(_fn_rpun + fi, 0); }
+    SFRS(S, fi, 0);
     return 0;
 }
 # 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last

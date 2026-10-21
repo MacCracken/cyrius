@@ -19033,6 +19033,7 @@ fn _prescan_sig_facts(S, fi, start_ti, pasync): i64 {
 # `_prescan_fn_sig` (6.7.8): a trait-object call's prototype is recorded from its trait member's
 # signature the same way (`_dyn_proto`, parse_types.cyr).
 fn _prescan_ret_type(S, fi): i64 {
+    _ret_redef_reset(S, fi);   # 6.7.16: a redefinition's return is its own (parse_types.cyr)
     if (PEEKT(S) != 49) { return 0; }   # optional `: ReturnType`
     STI(S, GTI(S) + 1);     # consume ':'
     if (PEEKT(S) == 10) {

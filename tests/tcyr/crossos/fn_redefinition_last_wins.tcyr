@@ -156,6 +156,25 @@ fn rd_kp62(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
     a48, a49, a50, a51, a52, a53, a54, a55, a56, a57, a58, a59, a60, a61, q: RdT3): i64 { rd_keep = &rd_gg; return 0; }
 fn rd_kp62_check(): i64 { rd_keep = &rd_gg; rd_probe(0); var bp = rd_dmark; var r = rd_kp62_tail(0); return r * 10 + rd_depth_code(bp); }
 
+# 6.7.16: a `: *T` definition redefined with another return — a call steps by the LAST definition's return, wherever it
+# was compiled (it kept the first's `*RdH`: `rd_p() + 1` stepped sizeof(RdH) = 24, 124 for 101).
+struct RdH { a; b; c; }
+struct RdG { a; b; }
+fn rd_p_above(): i64 { return rd_p() + 1; }
+fn rd_p(): *RdH { return 0; }
+fn rd_p_mid(): i64 { return rd_p() + 1; }
+fn rd_p(): i64 { return 100; }
+fn rd_p_after(): i64 { return rd_p() + 1; }
+fn rd_pv(): i64 { return 100; }
+fn rd_pv(): *RdH { return 100; }
+fn rd_pv_after(): i64 { return rd_pv() + 1; }
+fn rd_pu(): *RdH { return 0; }
+fn rd_pu() { return 100; }
+fn rd_pu_after(): i64 { return rd_pu() + 1; }
+fn rd_pg(): *RdH { return 0; }
+fn rd_pg(): *RdG { return 100; }
+fn rd_pg_after(): i64 { return rd_pg() + 1; }
+
 assert_eq(rd_forward(), 1, "forward call (compiled before both definitions) reaches the last");
 assert_eq(rd_nontail(), 1, "direct call compiled between the definitions reaches the last (was the first)");
 assert_eq(rd_tail(), 1, "tail call compiled between the definitions reaches the last");
@@ -183,5 +202,11 @@ assert_eq(rd_kv_check(), 32, "by-value then `*T`: the call reaches the `*T` body
 assert_eq(rd_kp_check(), 71, "`*T` then by-value: the call reaches the copying body, so the later tail call keeps its jmp");
 assert_eq(rd_kv62_check(), 32, "... at parameter 62: by-value then `*T` diverts");
 assert_eq(rd_kp62_check(), 71, "... at parameter 62: `*T` then by-value keeps its jmp (was 72: every ordinal past 61 read not copied)");
+assert_eq(rd_p_above(), 101, "6.7.16: `: *RdH` then `: i64` — a call above both steps by the last's i64 (was 124)");
+assert_eq(rd_p_mid(), 101, "6.7.16: ... a call between the definitions (was 124)");
+assert_eq(rd_p_after(), 101, "6.7.16: ... a call after both (was 124)");
+assert_eq(rd_pv_after(), 124, "6.7.16: `: i64` then `: *RdH` — the last steps sizeof(RdH)");
+assert_eq(rd_pu_after(), 101, "6.7.16: `: *RdH` then no annotation (was 124)");
+assert_eq(rd_pg_after(), 116, "6.7.16: `: *RdH` then `: *RdG` — the last's step, 16");
 
 var r = assert_summary();

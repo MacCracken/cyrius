@@ -3647,8 +3647,8 @@ fn _fn_nodef(S, fi): i64 {
     return 1;
 }
 # 1 = `_call_field` arms `_cf_unres` for callee token `ti`'s fn `fi`: no definition here (`_fn_nodef`), or (6.7.16) one
-# declared `: *T` (GFRS's -8) whose T this file does not declare (`_fn_ret_unk`), so no struct was recorded for it
-# (`_hl_fn_psid`). A `: Foo` result by value keeps "the result is a temporary"; a `*T` whose T is declared here took
+# declared `: *T` whose T this file does not declare (`_fn_ret_unk`), so no struct was recorded for it (`_hl_fn_psid`) —
+# the winning definition's, of a redefined fn (the byte, not GFRS: pass 2 re-reads an earlier definition's return). A `: Foo` result by value keeps "the result is a temporary"; a `*T` whose T is declared here took
 # D8 (a)'s store. An enum variant's payload constructor called above its enum has no code and no owner yet, but it is
 # defined here (`_call_nodef`'s exclusion): `Some(5).n = 1;` was accepted, where the build refuses it. CHANGELOG [6.7.16]
 fn _cf_unres_fn(S, ti, fi): i64 {
@@ -3656,7 +3656,6 @@ fn _cf_unres_fn(S, ti, fi): i64 {
         if (fi >= 0) { if (_fn_enum_var(S, TOKVAL(S, ti)) == 1) { return 0; } }
         return 1;
     }
-    if (GFRS(S, fi) != 0 - 8) { return 0; }
     if (_hl_fn_psid(fi) != 0) { return 0; }
     return _fn_ret_unk(fi);
 }
