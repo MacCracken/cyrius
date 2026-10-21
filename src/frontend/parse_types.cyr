@@ -175,10 +175,13 @@ fn _tn_resolve_at(S, ti): i64 {
     if (_tn_tparam(S, ti, noff) == 1) { return _tn_code(4, 7); }
     return 0;
 }
+# The signature's own `<T>` is read before the enclosing body's: in a signature `_arr_fn_tparam` finds no body and
+# walks back over every earlier fn, so each generic definition cost the whole file before it. Each test only
+# accepts, so the order changes no verdict. CHANGELOG [6.7.16]
 fn _tn_tparam(S, ti, noff): i64 {
     if (_is_own_tparam(S, noff) == 1) { return 1; }
-    if (_arr_fn_tparam(S, ti, noff) == 1) { return 1; }
-    return _tn_sig_tparam(S, ti, noff);
+    if (_tn_sig_tparam(S, ti, noff) == 1) { return 1; }
+    return _arr_fn_tparam(S, ti, noff);
 }
 # Is `noff` (at token `ti`, in a fn SIGNATURE — a param or return type) one of that fn's own
 # `<T, ..>`? The signature holds no `{`, `}` or `;`, so meeting one means `ti` is not in one. A `fn`
@@ -367,13 +370,15 @@ fn _ngt_tail(S, nti): i64 {
     return " takes no type arguments";
 }
 # The refusal itself, at name token `nti` (`tail` its words): once, silent under --syntax-only, the latch put back. 1.
-fn _ngt_say(S, nti, tail): i64 {
+fn _ngt_say(S, nti, tail): i64 { return _ngt_say_n(S, nti, TOKVAL(S, nti), tail); }
+# ... naming `noff` (6.7.16: a method as the source spells it, `Pt.m`).
+fn _ngt_say_n(S, nti, noff, tail): i64 {
     if (_syntax_only == 1) { return 1; }
     if (_panic == 1) { return 1; }
     if (_tn_once(S, nti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, nti);
-    ERR_IDENT(S, "", TOKVAL(S, nti), tail, 0 - 1);
+    ERR_IDENT(S, "", noff, tail, 0 - 1);
     STI(S, sv);
     _panic = 0;
     return 1;
@@ -704,10 +709,15 @@ fn _tok_enclosing_fn(S, ti): i64 {
 # R4 — a tuple type in a GENERIC fn (its signature or its body) is refused: a type parameter and a
 # tuple have no rule together yet. Generic when `fn name <` (CYRIUS_MONOMORPH=0 binds nothing).
 fn _tup_gen_chk(S, ti): i64 {
+    if (_tok_in_gen_fn(S, ti) == 0) { return 0; }
+    return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+}
+# 1 = token `ti` is inside a generic fn's signature or body (`fn name <`), so every tuple type there was refused (R4).
+fn _tok_in_gen_fn(S, ti): i64 {
     var k = _tok_enclosing_fn(S, ti);
     if (k < 0) { return 0; }
     if (TOKTYP(S, k + 2) != 19) { return 0; }
-    return _tup_err(S, ti, "a tuple type in a generic fn is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+    return 1;
 }
 
 # ⛔ 6.7.8 — CHECKED `dyn` (the user's decisions, 2026-10-07): `o: dyn Show` is an ordinary 16-byte
@@ -3048,7 +3058,6 @@ fn _ps_vdesc(w): i64 {
 var _pp_tab = 0;    # 2 words per pin (1..16383): the pointee's step word (or 0 - T's token - 1), its field entry (-1)
 var _pp_n = 0;
 var _pp_cap = 0;    # the pins `_pp_tab` / `_pp_sids` hold (index 0 unused), doubled as they fill
-var _pp_late = 0;   # set when `_pp_word_at` pinned a late `**S` (the field records its binding)
 # ⛔ 6.7.14 — A PINNED WORD IS BIT 62 PLUS A 14-BIT PIN IN BITS 48-61. The pin rode bits 56-62 (126 pins), and since a
 # pin carries its pointee's struct (6.7.13) two same-size structs take two pins, so 127 distinct `**S` structs were
 # refused "max 126" where one pin per size had served them. A `**T`'s pointee is a pointer, so its word names no
@@ -3186,8 +3195,7 @@ fn _pp_word_at(S, a, si, ent): i64 {
     if (t == 8) { return _ps_pw(8, _pp_pin_at(S, a, si, ent)); }
     if (t != 2) { if (t != 105) { return 0; } }
     if (si >= 0) { if (t == 2) { if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) {
-                _pp_late = 1;
-                return 0 - (a + 2);
+                return 0 - (a + 2);   # late: its field records the binding (`_fld_pp_one`, every `**` field's)
             } } }
     var sv = GTI(S);
     STI(S, a + 1);
@@ -3541,6 +3549,7 @@ fn _ptr_step_peek(S, vnoff, quiet): i64 {
     if (sid <= 0) { return ps; }
     if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
     if (quiet == 1) { if (GSTP(S, sid - 1) == 0) { return ps; } }   # 6.7.15 (D6): pass 2 refuses `*Pt<..>`
+    if (_ppk_nomint == 1) { if (GSTP(S, sid - 1) != 0) { _fld_targ_chk(S, ti); return ps; } }   # 6.7.16
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
     STI(S, ti);
@@ -3560,18 +3569,78 @@ fn _add_ptr_field(S, si, fnoff): i64 {
     var vd = _ek_vd(S, GTI(S));             # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
     var ann = GTI(S);
     var ps = _fld_ptr_late(S);
-    if (ps == 0) { ps = _ptr_annot(S, fnoff, 0); }
+    if (ps == 0) { ps = _fld_ptr_annot(S, fnoff, ann); }
     var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
     if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
     if (ent >= 8192) { return 0; }
     if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
-    _pp_late = 0;
-    var pn = _pp_pin_at(S, ann, si, ent);   # 6.7.13: a `**T`'s pointee (a `**S` of this struct pinned late)
-    S64(_fld_ps + ent * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));   # a late struct T (`0 - token`) keeps its form
+    S64(_fld_ps + ent * 8, _ps_vw(_ps_word(ps, ed), vd));   # a late struct T (`0 - token`) keeps its form
     if (ps < 0) { _fld_pb_note(S, ent, si); }
-    elif (_pp_late == 1) { _fld_pb_note(S, ent, si); }
+    _fld_pp_push(S, ann, ent, si);   # 6.7.13: a `**T`'s pointee, pinned at the struct's `}` (6.7.16)
+    return 0;
+}
+# ⛔ 6.7.16 — A `**G<..>` FIELD MINTS ITS INSTANCE AFTER THE STRUCT'S `}`. A struct's fields fill one run of the field
+# pool, and a `**Box<S16>` field minted `Box<S16>` in the middle of that run — its annotation sized the instance it
+# never uses (a `**` steps 8) and its pin sized it again — so the instance's fields took the slots the struct's next
+# field then overwrote: `b.v` / `b.n` of a `Box<S16>` were "unknown field" ever after (`**Box<A>` inside A also sized
+# Box<A> with the A so far). The annotation now checks its type arguments without minting (`_fld_targ_chk`, as a
+# `*Box<..>` field's, 6.7.15's D8), and the pin is taken at the `}` (`_fld_pp_end`), the struct whole and its run
+# closed. CHANGELOG [6.7.16]
+var _ppk_nomint = 0;   # `_ptr_step_peek` checks a generic's list without minting it
+fn _fld_ptr_annot(S, fnoff, ann): i64 {
+    if (TOKTYP(S, ann + 1) != 8) { return _ptr_annot(S, fnoff, 0); }
+    _ppk_nomint = 1;
+    var ps = _ptr_annot(S, fnoff, 0);
+    _ppk_nomint = 0;
+    return ps;
+}
+var _fpp = 0;     # 3 words per pending pin: the annotation's first `*`, the field entry, the struct
+var _fpp_n = 0;
+var _fpp_cap = 0;
+fn _fld_pp_push(S, ann, ent, si): i64 {
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 8) { return 0; }
+    if (_fpp_n >= _fpp_cap) {
+        var t = alloc((_fpp_cap * 2 + 16) * 24);
+        _tab_copy(t, _fpp, _fpp_n * 3);
+        _fpp = t;
+        _fpp_cap = _fpp_cap * 2 + 16;
+    }
+    S64(_fpp + _fpp_n * 24, ann);
+    S64(_fpp + _fpp_n * 24 + 8, ent);
+    S64(_fpp + _fpp_n * 24 + 16, si);
+    _fpp_n = _fpp_n + 1;
+    return 0;
+}
+# At struct si's `}`: its pending pins, in field order (a pin may mint an instance, whose own run of pending pins
+# above these is its own). CHANGELOG [6.7.16]
+fn _fld_pp_end(S, si): i64 {
+    var b = _fpp_n;
+    while (b > 0) {
+        if (L64(_fpp + (b - 1) * 24 + 16) != si) { break; }
+        b = b - 1;
+    }
+    var e = _fpp_n;
+    var k = b;
+    while (k < e) {
+        _fld_pp_one(S, si, L64(_fpp + k * 24), L64(_fpp + k * 24 + 8));
+        k = k + 1;
+    }
+    _fpp_n = b;
+    return 0;
+}
+# One pending pin (`ann` the field's first `*`, `ent` its entry), read under the struct's own binding as a late `*S<..>`
+# field's is (`_fld_pb_note`: an instance's arguments, the definition's T -> i64): `struct W<T> { p: **Box<T>; }` read
+# `Box<T>` unbound, "unknown type 'T' as a type argument". A `**S` of this struct is pinned late. CHANGELOG [6.7.16]
+fn _fld_pp_one(S, si, ann, ent): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_note(S, ent, si);
+    _fld_pb_bind(S, ent);
+    var pn = _pp_pin_at(S, ann, si, ent);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    S64(_fld_ps + ent * 8, _ps_pw(L64(_fld_ps + ent * 8), pn));
     return 0;
 }
 # ⛔ 6.6.20 — the binding a late `*S<..>` field is re-read under. `_fld_ps_get` / `_fld_ptr_sid`
@@ -4016,8 +4085,8 @@ fn _tn_param_check(S, pnoff, fi, ptc): i64 {
     if (ptc != 0) { return _tn_byname_refd(S, pnoff); }
     var ti = GTI(S);
     if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
+    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }   # the captured `<T>` first: no scan. CHANGELOG [6.7.16]
     if (_tn_resolve_at(S, ti) != 0) { return 0; }
-    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }
     _tn_refuse_var(S, ti, " for parameter ", pnoff);
     return 0;
 }
@@ -4856,35 +4925,94 @@ fn _is_own_tparam(S, noff): i64 {
     return 0;
 }
 
-# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60)
-# followed by the name — LATER in the token stream?
+# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60; only those, the
+# keywords `_dlx_pos` holds) followed by the name — LATER in the token stream?
+# ⛔ 6.7.16 — read from `_dlx_pos`, the declarations' positions, not every token from the cursor to the end of the
+# file: a type parameter in a generic fn's signature reaches this once per resolution (`x: *T` three times), so N
+# generic definitions cost N x the file — 3000 `fn oK<T>(x: *T)` took 6.2 s. CHANGELOG [6.7.16]
 fn _declared_later(S, noff, ta, tb): i64 {
-    var k = GTI(S);
-    var n = GTCNT(S);
-    while (k + 1 < n) {
+    _dlx_build(S);
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
         var t = TOKTYP(S, k);
-        if (t == ta || t == tb) {
-            if (TOKTYP(S, k + 1) == 2) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
-        }
-        k = k + 1;
+        if (t == ta || t == tb) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when a struct, union or enum of this name is declared anywhere in the token stream (above or below the cursor):
+# a name a type-argument list can take before pass 1 has registered it (`_bnd_tyname`). CHANGELOG [6.7.16]
+fn _declared_any(S, noff): i64 {
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        if (STREQ(S, TOKVAL(S, L64(_dlx_pos + i * 8) + 1), noff) == 1) { return 1; }
+        i = i + 1;
     }
     return 0;
 }
 
 # 1 when a GENERIC struct or union of this name (`struct NAME <`) is declared later in the token stream. 6.7.15
 fn _declared_later_gen(S, noff): i64 {
-    var k = GTI(S);
+    _dlx_build(S);
     var n = GTCNT(S);
-    while (k + 2 < n) {
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
         var t = TOKTYP(S, k);
-        if (t == 40 || t == 101) {
-            if (TOKTYP(S, k + 1) == 2) { if (TOKTYP(S, k + 2) == 19) {
+        if (t == 40 || t == 101) { if (k + 2 < n) { if (TOKTYP(S, k + 2) == 19) {
                     if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; }
-                } }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The token positions `k` of every `struct`, `union` or `enum` keyword followed by a name (`k + 1` an identifier),
+# ascending — what the two scans above test, built once per token stream (`_dlx_tc`, its token count + 1; the only
+# rewrite after the lexer, `_dyn_fold`, changes the count, and none touches a keyword or the name after one).
+var _dlx_pos = 0;
+var _dlx_n = 0;
+var _dlx_tc = 0;
+fn _dlx_build(S): i64 {
+    var n = GTCNT(S);
+    if (_dlx_tc == n + 1) { return 0; }
+    var c = 0;
+    var k = 0;
+    while (k + 1 < n) {
+        c = c + _dlx_at(S, k);
+        k = k + 1;
+    }
+    _dlx_pos = alloc(c * 8 + 8);
+    _dlx_n = 0;
+    k = 0;
+    while (k + 1 < n) {
+        if (_dlx_at(S, k) == 1) {
+            S64(_dlx_pos + _dlx_n * 8, k);
+            _dlx_n = _dlx_n + 1;
         }
         k = k + 1;
     }
+    _dlx_tc = n + 1;
     return 0;
+}
+fn _dlx_at(S, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t != 40 && t != 101 && t != 60) { return 0; }
+    if (TOKTYP(S, k + 1) == 2) { return 1; }
+    return 0;
+}
+# The first index of `_dlx_pos` at or after token `g`.
+fn _dlx_from(g): i64 {
+    var lo = 0;
+    var hi = _dlx_n;
+    while (lo < hi) {
+        var m = (lo + hi) / 2;
+        if (L64(_dlx_pos + m * 8) < g) { lo = m + 1; } else { hi = m; }
+    }
+    return lo;
 }
 
 # The refusal. The cursor is already past the type name, so the declaration parses on: the
@@ -5497,6 +5625,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
+    _fld_pp_end(S, si);   # 6.7.16: its `**G<..>` fields' pins, the run closed
     _sdef_tp_ti = _sv_tp_ti;
     if (_sdef_bb > 0) { SSBB(S, si, _sdef_bb); }   # 6.7.1 (C3)
     _sdef_bb = _sv_sbb;
@@ -5569,6 +5698,7 @@ fn PARSE_UNION_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
+    _fld_pp_end(S, si);   # 6.7.16: as PARSE_STRUCT_DEF's
     _sdef_tp_ti = _sv_tp_ti;
     _chk_struct_redef(S, _uprev, sid, _uname_ti);
     return 0;

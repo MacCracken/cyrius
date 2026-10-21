@@ -21,7 +21,7 @@
 # 6.7.14: the same generics called inside fns that RETURN a struct by value (8 / 16 / 24 B), T a struct or a
 # scalar, a one-call body and a global body — a replayed `return` is the callee's (`rcall`, `rz16`, `rz24`). And
 # `var h: S = gpg<S>();` in a fn is a handle to the struct the call points at (`hb*`); a generic declared
-# `: *Box<T>` compiles and its call is a `*Box<..>` (`pb*`).
+# `: *Box<T>` compiles and its call is a `*Box<..>` (`pb*`). 6.7.16: a `pp: **Box<T>` parameter carries T (`pq_*`).
 #
 # CROSS-HOST: tests/gates/codegen/small_struct_handle_line.sh R12 runs this file on x86_64 (plain,
 # CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine); the release gate's
@@ -628,6 +628,47 @@ fn pb3(): i64 { var q: *Box<S24> = mkp(G24); return q.n * 100 + q.v.w * 10 + q.v
 fn pb4(): i64 { return mkp(5).n * 10 + mkp(5).v; }
 fn pb5(): i64 { var q: *Box<S8> = mkp<S8>(G8); q.v.v = 9; return q.v.v * 10 + G8.v + gnb(q) * 100; }
 
+# ── 6.7.16: a `pp: **Box<T>` parameter carries T — the `**` twin of `gnb`'s `*Box<T>` ──
+# `ppn(&q)` with `q: *Box<S16>` inferred nothing and ran the i64 base, reading `Box<S16>.n` at `Box<i64>`'s offset
+# (`v.w`: 88 for 96), where `ppn<S16>(&q)` reads n. A `**G<..T..>` parameter is a struct carrier read through its
+# pointers (`_gen_infer_sc` -> `_ic_pp_arg`): `&q`, a `**Box<S16>` local / parameter / global / field / `: **Box<S16>`
+# call, wrapped, `***Box<T>` one pointee down, a generic method, a second type parameter, a second slot, a scalar
+# instance, a forward into a stub. Each returns `n * 10 + sizeof(T)`: 96 at S16, 84 at i32, 78 for `Box<i64>`'s base.
+# issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md
+struct PPr<A, B> { a: A; b: B; n; }
+struct PHB { k; qq: **Box<S16>; }
+fn ppn<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n * 10 + sizeof(T); }
+fn pp3<T>(ppp: ***Box<T>): i64 { var b: *Box<T> = **ppp; return b.n * 10 + sizeof(T); }
+fn pp2<T, U>(x: T, pp: **Box<U>): i64 { var b: *Box<U> = *pp; return b.n * 10 + sizeof(U) + sizeof(T) * 100; }
+fn ppr<T>(pp: **PPr<i64, T>): i64 { var b: *PPr<i64, T> = *pp; return b.n * 10 + sizeof(T); }
+fn ppfw<T>(pp: **Box<T>): i64 { return ppn(pp); }
+fn ppst<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.v.w; }
+fn ppfs<T>(pp: **Box<T>): i64 { return ppst(pp); }
+fn ppfl<T>(pp: **Box<T>): i64 { var qq: **Box<T> = pp; return ppst(qq); }
+impl S8 { fn ppm<T>(self, pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n * 10 + sizeof(T) + self.v * 1000; } }
+var GQ: *Box<S16> = 0;
+var GQQ: **Box<S16> = 0;
+fn ppvia(qq: **Box<S16>): i64 { return ppn(qq); }
+fn ppmk(): **Box<S16> { return &GQ; }
+fn pq_addr(): i64 { var q: *Box<S16> = mkp(G16); return ppn(&q); }
+fn pq_i64(): i64 { var x: Box<i64>; x.n = 7; var p: *Box<i64> = &x; return ppn(&p); }
+fn pq_local(): i64 { var q: *Box<S16> = mkp(G16); var qq: **Box<S16> = &q; return ppn(qq); }
+fn pq_param(): i64 { var q: *Box<S16> = mkp(G16); return ppvia(&q); }
+fn pq_glob(): i64 { GQ = mkp(G16); GQQ = &GQ; return ppn(GQQ) * 1000 + ppn(&GQ); }
+fn pq_field(): i64 { var q: *Box<S16> = mkp(G16); var h: PHB; h.qq = &q; return ppn(h.qq); }
+fn pq_call(): i64 { GQ = mkp(G16); return ppn(ppmk()); }
+fn pq_deep(): i64 { var q: *Box<S16> = mkp(G16); var qq: **Box<S16> = &q; var qqq: ***Box<S16> = &qq; return pp3(qqq) * 1000 + pp3(&qq); }
+fn pq_meth(): i64 { var s: S8; s.v = 3; var q: *Box<S16> = mkp(G16); return s.ppm(&q); }
+fn pq_two(): i64 { var q: *Box<S16> = mkp(G16); return pp2(G16, &q); }
+fn pq_slot1(): i64 { var r: PPr<i64, S16>; r.n = 4; var pr: *PPr<i64, S16> = &r; return ppr(&pr); }
+fn pq_i32(): i64 { var q: *Box<i32> = mkp<i32>(3); return ppn(&q); }
+fn pq_wrap(): i64 { var q: *Box<S16> = mkp(G16); var qq: **Box<S16> = &q; return ppn((&q)) * 1000 + ppn((qq)); }
+fn pq_fwd(): i64 { var q: *Box<S16> = mkp(G16); return ppfw(&q) * 1000 + ppfs(&q) * 10 + ppfl(&q); }
+fn pq_expl(): i64 { var q: *Box<S16> = mkp(G16); return ppn<S16>(&q); }
+fn pq_ctl(): i64 { var s: S16; var ps: *S16 = &s; var ppq: **S16 = &ps; var r: PPr<i64, S16>; r.n = 4; var pr: *PPr<i64, S16> = &r; return gp_ctl1(&ps) + gp_ctl1(ppq) * 0 + gp_ctl2(&pr); }
+fn gp_ctl1(pp: **S16): i64 { return 1; }
+fn gp_ctl2(pp: **PPr<i64, S16>): i64 { return ppr(pp) * 10; }
+
 # ── top level: a declaration-zone `var Z: S = *gpg<S>();`, then statements ──
 var Z16: S16 = *gpg<S16>();
 var Z24: S24 = *gpg<S24>();
@@ -732,4 +773,20 @@ assert_eq(pb2(), 808, "6.7.14: mkp<S16>(G16).n, .v.w through the explicit instan
 assert_eq(pb3(), 883, "6.7.14: var q: *Box<S24> = mkp(G24) reads its fields");
 assert_eq(pb4(), 85, "6.7.14: mkp(5).n, .v — the i64 base, *Box");
 assert_eq(pb5(), 8895, "6.7.14: *Box<S8> from mkp<S8>(G8): a copy of G8 in the box (G8 untouched), gnb(q) 88");
+assert_eq(pq_addr(), 96, "6.7.16: ppn(&q), pp: **Box<T> given &q of a *Box<S16> binds S16 (88: the i64 base)");
+assert_eq(pq_i64(), 78, "6.7.16: ppn(&p) of a *Box<i64> is the base (n 7, sizeof 8), unchanged");
+assert_eq(pq_local(), 96, "6.7.16: ppn(qq), a **Box<S16> local");
+assert_eq(pq_param(), 96, "6.7.16: ppn(qq), a **Box<S16> parameter");
+assert_eq(pq_glob(), 96096, "6.7.16: ppn(GQQ), a **Box<S16> global, and ppn(&GQ)");
+assert_eq(pq_field(), 96, "6.7.16: ppn(h.qq), a **Box<S16> field");
+assert_eq(pq_call(), 96, "6.7.16: ppn(ppmk()), a : **Box<S16> call");
+assert_eq(pq_deep(), 96096, "6.7.16: pp3(qqq) of a ***Box<S16> and pp3(&qq), ppp: ***Box<T> (6.7.15's D24 A)");
+assert_eq(pq_meth(), 3096, "6.7.16: s.ppm(&q), a generic method's pp: **Box<T>");
+assert_eq(pq_two(), 1696, "6.7.16: pp2(G16, &q), U through **Box<U> beside T through x: T");
+assert_eq(pq_slot1(), 56, "6.7.16: ppr(&pr), T in the second slot of **PPr<i64, T>");
+assert_eq(pq_i32(), 84, "6.7.16: ppn(&q) of a *Box<i32> calls the i32 instance (n at 4)");
+assert_eq(pq_wrap(), 96096, "6.7.16: ppn((&q)), ppn((qq)) — a wrapped argument (6.7.15's D22 A)");
+assert_eq(pq_fwd(), 96088, "6.7.16: a forwarder's ppn(pp), and pp / a **Box<T> local forwarded into a stub (v.w 8)");
+assert_eq(pq_expl(), 96, "6.7.16: ppn<S16>(&q), the explicit spelling, unchanged");
+assert_eq(pq_ctl(), 561, "6.7.16: a **S16 into a **S16 parameter (1); ppr(pp) of a **PPr<i64, S16> parameter (56)");
 var r = assert_summary();

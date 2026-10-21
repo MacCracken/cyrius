@@ -63,6 +63,20 @@
 #      field chains, P8g a `: *P` call + 0 — each 4 (refused naming P.pick: the parser bound P, the scan nothing);
 #      P8K `gd(pp - pp)` (a distance) and `gd(&GP0 + 0)` (a byte pointer) bind nothing in either: `o(5)` meets the
 #      parser's own "no struct type in scope for 'r'", once, not a stub refusal naming o — x86_64
+#   PQ (6.7.16) THE SCAN READS A `pp: **T` BINDING (6.7.14's D40 A) AND A GENERIC `: *T` CALL AS THE PARSER BINDS THEM:
+#      `var r = gd2(&GPP); r.pick(t)` and `var r = gd(gpi(&GP0)); r.pick(t)` in a generic were refused naming the stub
+#      method P.pick (the scan answered 0 — no `**T` rung, and `_tok_ta_pcall` read a fn that is not generic only — so
+#      `r` was untyped there and the forward of T into P_pick unseen), where the parser binds P. PQ0a / PQ0b the filed
+#      programs verbatim, each 4 — every leg; through `pp: **T` (`_tok_pp_tp` -> `_tok_pp_arg`): PQ1 a `**P` parameter,
+#      PQ2 local, PQ3 global, PQ4 `&pl` of a `*P` local, PQ5 wrapped, PQ6 `pp + 0`, PQ7 / PQ8 a `**P` field of a global
+#      / a local, PQ9 a `: **P` call, PQ10-PQ12 `***T` from `&pp`, `&GPPP`, a `***P` local, PQ13 / PQ14 a generic
+#      `: **U` call, inferred and explicit; a generic `: *U` call (`_tok_ta_gpcall`): PQ15 two deep, PQ16 explicit,
+#      PQ17 U carried by value, PQ18 from a `*P` global, PQ19 `+ 0`; a `pp: **Box<T>` carrier (`_tok_sc_pp`): PQ20
+#      `&GBP`, PQ21 `&qb`, PQ22 a `**Box<P>` parameter, PQ23 `***Box<T>` — each 4 (refused naming P.pick before) —
+#      x86_64; PQK1-PQK9 what the parser binds no struct from (`&px` of a `*i64`, a `*P` global into `**T`, a distance,
+#      a `**P` global into `***T`, a `*Box<P>` global into `**Box<T>`, a pointer T, a `*P` / `**P` / `*Box<P>` local one
+#      star short) binds none in the scan: `o(5)` meets the parser's
+#      own "no struct type in scope for 'r'" once, not a stub refusal naming o — x86_64
 #   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
 #      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
 #      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
@@ -92,7 +106,7 @@
 #   T  tests/tcyr/crossos/generic_method_struct_arg.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
-#      / cass / pi
+#      / cass / pi (6.7.16: floor 63 -> 68, its PQ rows — the tree before refuses the file naming P.pick)
 #
 # MUTATION LEDGER (2026-10-14; a scratch copy of the tree with the one change, this gate run from that
 # copy with CYCC=<the mutant built from it>):
@@ -171,6 +185,19 @@
 #   MT4 `_tok_ta_decl` without a `var p: *S` local      -> RED P1, P3c, P5b, P7a
 #   MT5 `_tok_ta_arg` without `_pwrap_in`              -> RED P5a, P5b, P7b
 #   MT6 `_tok_ta_arg` without its chain arm            -> RED P3a, P3b, P3c
+# 6.7.16 (the PQ rows; 2026-10-20, a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from
+# it with CYCC=):
+#   MQ1 the tree before (00ea63744)                    -> RED 33: PQ0a / PQ0b on every leg, PQ1-PQ23 (each refused
+#                                                         naming P.pick); PQK1-PQK9 green
+#   MQ2 `_tok_gen_tp_sid` without the `**T` rung       -> RED 19: PQ0a on every leg, PQ1-PQ14
+#   MQ3 `_tok_ta_pcall` without its generic arm        -> RED 10: PQ0b on every leg, PQ15-PQ19
+#   MQ4 `_tok_gen_sc_sid` reading no bit-9 carrier     -> RED 4: PQ20-PQ23
+#   MQ5 `_tpl_name` without its global arm             -> RED 10: PQ0a on every leg, PQ3 PQ5 PQ11 PQ13 PQ20
+#   MQ6 `_tok_pp_arg` without its arithmetic arm       -> RED 1: PQ6
+#   MQ7 `_tpl_name` not counting the stars             -> RED 3: PQK7-PQK9 (the scan bound P: o a stub, refused naming o)
+#   MQ8 `_tok_pp_arith` reading a `-`'s right side     -> RED 1: PQK3 (as MQ7)
+#   MQ9 `_tpl_chain` answering 0                       -> RED 2: PQ7 PQ8
+#   MQ10 `_tpl_call` without its generic arm            -> RED 2: PQ13 PQ14
 # 6.7.15 (the P8 rows; 2026-10-18, CYCC= the mutant):
 #   MP0 the fix reverted (the lane's previous compiler) -> RED P8a-P8g (the parser bound nothing: "no struct type in
 #                                                         scope for 'r'"); P8K green
@@ -209,7 +236,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-method-call-runs-i64-base.c
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=63
+FLOOR=68
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -678,6 +705,107 @@ ne=$(grep -c '^error' "$D/px.err" || true)
 if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/px.err"; then ok "PX: gid(pp) with a \`pp: *P\` parameter binds no struct: the parser's own error at r.pick, once"
 else bad "PX: o(5, &GP0): rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/px.err" | tr '\n' ' ')"; fi
 
+echo "PQ. the stub scan reads a pp: **T binding and a generic : *T call as the parser binds them (6.7.16)"
+# PQ0a / PQ0b the two filed programs, verbatim (issues/2026-10-18-generic-token-scans-miss-double-pointer-and-generic-
+# pointer-call-binding.md): each exits 4 (refused naming P.pick before).
+cat > "$D/pq0a.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+var GPP: *P = &GP0;
+fn gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+fn o<T>(t: T): i64 { var r = gd2(&GPP); return r.pick(t); }
+fn m(): i64 { var q = Q { 3, 4 }; return o(q); }
+syscall(60, m());
+X
+xr PQ0a "$D/pq0a.cyr" 4 "the filed repro, var r = gd2(&GPP); r.pick(t)"
+cat > "$D/pq0b.cyr" <<'X'
+include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+var GPP: *P = &GP0;
+fn gpi<T>(x: *T): *T { return x; }
+fn gd<T>(x: *T): T { var t: T = *x; return t; }
+fn o<T>(t: T): i64 { var r = gd(gpi(&GP0)); return r.pick(t); }
+fn m(): i64 { var q = Q { 3, 4 }; return o(q); }
+syscall(60, m());
+X
+xr PQ0b "$D/pq0b.cyr" 4 "the generic : *T call, var r = gd(gpi(&GP0)); r.pick(t)"
+PQH='include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+struct W2 { k; pp: **P; }
+struct Box<T> { v: T; n; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+var GPP: *P = &GP0;
+var GPPP: **P = &GPP;
+var GW2 = W2 { 0, &GPP };
+var GBUF[32];
+var GBP: *Box<P> = &GBUF;
+fn mkpp(): **P { return &GPP; }
+fn gd<T>(x: *T): T { var t: T = *x; return t; }
+fn gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+fn gd3<T>(ppp: ***T): T { var t: T = ***ppp; return t; }
+fn gpi<T>(x: *T): *T { return x; }
+fn gpv<T>(x: T): *T { return &GP0; }
+fn gpp<U>(x: **U): **U { return x; }
+fn unb2<T>(pp: **Box<T>): T { var b: *Box<T> = *pp; return b.v; }
+fn unb3<T>(ppp: ***Box<T>): T { var b: *Box<T> = **ppp; return b.v; }'
+# qrow <id> <o's parameters after t> <o's body> <m's arguments after q> <what>: `o(q..)` on a Q { 3, 4 } exits 4 (x86_64)
+qrow() {
+    printf '%s\nfn o<T>(t: T%s): i64 { %s }\nfn m(): i64 { var q = Q { 3, 4 }; return o(q%s); }\nsyscall(60, m());\n' "$PQH" "$2" "$3" "$4" > "$D/$1.cyr"
+    run_leg x86 "$D/$1.cyr" "$D/$1"
+    if [ "$RC" -eq -1 ]; then bad "$1: $5 did not build: $(grep -m1 'error' "$D/$1.err")"
+    elif [ "$RC" -eq 4 ]; then ok "$1: $5 exits 4"
+    else bad "$1: $5 exits $RC, want 4"; fi
+}
+qrow PQ1 ', pp: **P' 'var r = gd2(pp); return r.pick(t);' ', &GPP' "gd2(pp), a \`pp: **P\` parameter"
+qrow PQ2 '' 'var pp: **P = &GPP; var r = gd2(pp); return r.pick(t);' '' "gd2(pp), a \`**P\` local"
+qrow PQ3 '' 'var r = gd2(GPPP); return r.pick(t);' '' "gd2(GPPP), a \`**P\` global"
+qrow PQ4 '' 'var pl: *P = &GP0; var r = gd2(&pl); return r.pick(t);' '' "gd2(&pl), a \`*P\` local"
+qrow PQ5 '' 'var r = gd2((&GPP)); return r.pick(t);' '' "gd2((&GPP)), wrapped (D22 A)"
+qrow PQ6 '' 'var pp: **P = &GPP; var r = gd2(pp + 0); return r.pick(t);' '' "gd2(pp + 0) (D23 A)"
+qrow PQ7 '' 'var r = gd2(GW2.pp); return r.pick(t);' '' "gd2(GW2.pp), a global's \`**P\` field"
+qrow PQ8 '' 'var w = W2 { 0, &GPP }; var r = gd2(w.pp); return r.pick(t);' '' "gd2(w.pp), a local's \`**P\` field"
+qrow PQ9 '' 'var r = gd2(mkpp()); return r.pick(t);' '' "gd2(mkpp()), a \`: **P\` call"
+qrow PQ10 '' 'var pp: **P = &GPP; var r = gd3(&pp); return r.pick(t);' '' "gd3(&pp), \`ppp: ***T\` (D24 A)"
+qrow PQ11 '' 'var r = gd3(&GPPP); return r.pick(t);' '' "gd3(&GPPP), a \`**P\` global's address"
+qrow PQ12 '' 'var pp: **P = &GPP; var ppp: ***P = &pp; var r = gd3(ppp); return r.pick(t);' '' "gd3(ppp), a \`***P\` local"
+qrow PQ13 '' 'var r = gd2(gpp(&GPP)); return r.pick(t);' '' "gd2(gpp(&GPP)), a generic \`: **U\` call"
+qrow PQ14 '' 'var r = gd2(gpp<P>(&GPP)); return r.pick(t);' '' "gd2(gpp<P>(&GPP)), explicit"
+qrow PQ15 '' 'var r = gd(gpi(gpi(&GP0))); return r.pick(t);' '' "gd(gpi(gpi(&GP0))), two generic \`: *T\` calls"
+qrow PQ16 '' 'var r = gd(gpi<P>(&GP0)); return r.pick(t);' '' "gd(gpi<P>(&GP0)), explicit"
+qrow PQ17 '' 'var r = gd(gpv(GP0)); return r.pick(t);' '' "gd(gpv(GP0)), U carried by value"
+qrow PQ18 '' 'var r = gd(gpi(GPP)); return r.pick(t);' '' "gd(gpi(GPP)), a \`*P\` global"
+qrow PQ19 '' 'var r = gd(gpi(&GP0) + 0); return r.pick(t);' '' "gd(gpi(&GP0) + 0) (D23 A)"
+qrow PQ20 '' 'var r = unb2(&GBP); return r.pick(t);' '' "unb2(&GBP), a \`pp: **Box<T>\` carrier"
+qrow PQ21 '' 'var qb: *Box<P> = GBP; var r = unb2(&qb); return r.pick(t);' '' "unb2(&qb), a \`*Box<P>\` local"
+qrow PQ22 ', pb: **Box<P>' 'var r = unb2(pb); return r.pick(t);' ', &GBP' "unb2(pb), a \`**Box<P>\` parameter"
+qrow PQ23 '' 'var qb: *Box<P> = GBP; var pb: **Box<P> = &qb; var r = unb3(&pb); return r.pick(t);' '' "unb3(&pb), \`ppp: ***Box<T>\`"
+# PQK <id> <body> <what>: binds nothing in the parser and the scan alike — `o(5)` meets the parser's own error at r.pick,
+# once, not a stub refusal naming o (a scan binding P there makes o a stub).
+qk() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { return o(5); }\nsyscall(60, m());\n' "$PQH" "$2" > "$D/$1.cyr"
+    erc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || erc=$?
+    ne=$(grep -c '^error' "$D/$1.err" || true)
+    if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/$1.err"; then ok "$1: $3 binds nothing: the parser's own error at r.pick, once"
+    else bad "$1: $3: rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+qk PQK1 'var x = 5; var px: *i64 = &x; var r = gd2(&px); return r.pick(t);' "gd2(&px) of a \`*i64\`"
+qk PQK2 'var r = gd2(GPP); return r.pick(t);' "gd2(GPP), a \`*P\` into \`**T\`"
+qk PQK3 'var pp: **P = &GPP; var r = gd2(pp - pp); return r.pick(t);' "gd2(pp - pp), a distance"
+qk PQK4 'var r = gd3(GPPP); return r.pick(t);' "gd3(GPPP), a \`**P\` into \`***T\`"
+qk PQK5 'var r = unb2(GBP); return r.pick(t);' "unb2(GBP), a \`*Box<P>\` into \`**Box<T>\`"
+qk PQK6 'var r = gd(gpi(GPPP)); return r.pick(t);' "gd(gpi(GPPP)): gpi binds \`*P\`, gd's T a pointer"
+qk PQK7 'var pl: *P = &GP0; var r = gd2(pl); return r.pick(t);' "gd2(pl), a \`*P\` local into \`**T\`"
+qk PQK8 'var pp: **P = &GPP; var r = gd3(pp); return r.pick(t);' "gd3(pp), a \`**P\` local into \`***T\`"
+qk PQK9 'var qb: *Box<P> = GBP; var r = unb2(qb); return r.pick(t);' "unb2(qb), a \`*Box<P>\` local into \`**Box<T>\`"
+
 echo "L. the explicit spelling x.m<..>(..) in the method-call lookaheads (6.7.15)"
 # The filed repro, verbatim (the issue's text).
 cat > "$D/l0.cyr" <<'X'
@@ -934,4 +1062,4 @@ nrow N7 "$D/n7.cyr" "6:65: generic 'P.bm': its type argument does not implement 
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15) and its pp: **T / generic : *T call binding (PQ, 6.7.16), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

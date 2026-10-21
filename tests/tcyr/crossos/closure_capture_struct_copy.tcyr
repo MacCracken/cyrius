@@ -331,6 +331,35 @@ fn shadow(): i64 {
     return callptr(g);
 }
 
+# ── 6.7.16: a closure's PARAMETER is untyped, whatever an earlier fn left in its frame slot ──────
+# The closure prologue wrote a parameter's name and depth word only; the slot's type word is kept per
+# slot INDEX across fns, so the fn just before (`_cph`'s `w: *Pt`, `_cpf`'s `w: f64`, slot 0) typed
+# the parameter: `x.y` read through *Pt (SIGSEGV), `x + 1` was f64 arithmetic with a warning
+# (issues/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md).
+fn _cph(w: *Pt): i64 { return 0; }
+fn cpq(): i64 { var k = |x| { return x + 1; }; return callptr(k, 41); }
+fn _cpf(w: f64): i64 { return 0; }
+fn cpf(): i64 { var k = |x| { return x * 2 + 1; }; return callptr(k, 20); }
+fn _cph2(v, w: *Pt): i64 { return 0; }
+fn cpcap(): i64 { var t = 2; var k = |x| { return x + t; }; return callptr(k, 40); }
+
+# A capturing closure's env takes slot 0, so its first parameter sits at the enclosing fn's slot 1 —
+# here the base of the 16 B `var w: GW` — and kept GW's type: a generic given `k` bound T = GW
+# (`w.s.gs(k)` called the GW instance, whose `a + self.k` is the undefined `GW_add`; `_cpid(k)` and
+# `_cpsz(k)` copied 16 bytes through k, SIGSEGV)
+# (issues/2026-10-18-generic-method-on-field-chain-in-closure-binds-captured-struct.md).
+struct GS { k; }
+struct GW { s: GS; j; }
+impl GS { fn gs<T>(self, a: T): i64 { return a + self.k; } }
+fn _cpid<T>(x: T): T { return x; }
+fn _cpsz<T>(x: T): i64 { return sizeof(T); }
+fn gfc(): i64 { var w: GW; w.s.k = 1; var g = |k| w.s.gs(k); return fncall1(g, 41); }
+fn gfcp(): i64 { var w: GW; w.s.k = 1; w.j = 0; var p: *GW = &w; var g = |k| p.s.gs(k); return fncall1(g, 41); }
+fn gfcs(): i64 { var s: GS; s.k = 1; var g = |k| s.gs(k); return fncall1(g, 41); }
+fn gfid(): i64 { var w: GW; w.s.k = 1; w.j = 1; var g = |k| w.j + _cpid(k); return fncall1(g, 40); }
+fn gfsz(): i64 { var w: GW; w.s.k = 1; w.j = 1; var u = 1; var g = |k| _cpsz(k) + u; return fncall1(g, 40); }
+fn gfjsz(): i64 { var w: GW; w.s.k = 1; w.j = 3; var u = 1; var g = |k| w.j + _cpsz(k) + u; return fncall1(g, 40); }
+
 alloc_init();
 
 assert_eq(repro(), 34, "M3 repro: b.v = p inside a closure (was 80 on x86 and PE, 208 on aarch64)");
@@ -378,5 +407,15 @@ assert_eq(dcvec(), 82341234, "decl var w: f32v4 = v is a copy: lanes 1..4, a wri
 assert_eq(dcvecc(), 1234, "decl var w: f32v4 = v: non-closure control");
 
 assert_eq(shadow(), 343434, "a global named like the capture does not win: field store, assign, decl");
+
+assert_eq(cpq(), 42, "closure parameter after fn h(w: *Pt): an untyped word");
+assert_eq(cpf(), 41, "closure parameter after fn h(w: f64): integer arithmetic");
+assert_eq(cpcap(), 42, "capturing closure: env slot 0, the parameter in slot 1 after fn h(v, w: *Pt)");
+assert_eq(gfc(), 42, "|k| w.s.gs(k): a captured inline struct's field chain; k binds i64 (the filed repro)");
+assert_eq(gfcp(), 42, "|k| p.s.gs(k): a captured *GW's field chain");
+assert_eq(gfcs(), 42, "|k| s.gs(k): a single-name capture receiver (control)");
+assert_eq(gfid(), 41, "|k| w.j + _cpid(k): k binds i64 beside a captured struct");
+assert_eq(gfsz(), 9, "|k| _cpsz(k) + u: k is 8 bytes, a 16 B struct local at its slot index");
+assert_eq(gfjsz(), 12, "|k| w.j + _cpsz(k) + u");
 
 var r = assert_summary();

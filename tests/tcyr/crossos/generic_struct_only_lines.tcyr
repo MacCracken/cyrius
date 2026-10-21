@@ -1,0 +1,59 @@
+# generic_struct_only_lines.tcyr — 6.7.16 (the user's D1, 2026-10-19): a generic whose body only works when T is a
+# struct — `return &n;` with n typed by T in a fn returning a struct, or a struct result over 8 B stored in a name typed
+# by T (`var y: T = mkp();`, `y = mkp();`, `p = mkp();` into a `*T`) — has no scalar instance: its scalar calls are
+# refused by name (tests/gates/frontend/small_struct_return_type_refused.sh RG*, struct_result_type_refused.sh TG*).
+# Through 6.7.15 the base, the T = i64 instance, ran such a line: `h(3)` returned a dead slot's address as the struct,
+# `g(5)` kept the struct's first word. These rows pin what still compiles, on every backend: the struct instances
+# (the address of a T-typed local is the struct; the result is copied into y, or through p), a forwarder at a struct,
+# an untyped `var n = x;` at a struct, a fn returning its own `: T` (no such generic), and the one-word results a scalar
+# keeps (an 8-byte struct, a `Str` handle).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct S8 { v; }
+struct Q { a; b; }
+struct Q8 { a; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn mk8(): Q8 { var q: Q8; q.a = 21; return q; }
+fn mks(): Str { return str_from("abc"); }
+impl Q { fn mk(self): Q { var q: Q; q.a = 301; q.b = 2; return q; } }
+
+fn h<T>(x: T): S8 { var n: T = x; return &n; }
+fn k<T>(x: T): S8 { return h(x); }
+fn hu<T>(x: T): S8 { var n = x; return &n; }
+fn ht<T>(x: T): T { var n: T = x; return &n; }
+fn g<T>(x: T): i64 { var y: T = mkp(); return y.b - 400; }
+fn gm<T>(x: T): i64 { var b: Q; var y: T = b.mk(); return y.a - 300; }
+fn ga<T>(x: T): i64 { var y: T = x; y = mkp(); return y.a - 300; }
+fn gp<T>(x: T): i64 { var p: *T = &x; p = mkp(); return x.b - 400; }
+fn g8<T>(x: T): i64 { var y: T = mk8(); return y; }
+fn gs<T>(x: T): i64 { var y: T = mks(); return str_len(y); }
+
+fn run(): i64 {
+    var s: S8; s.v = 7;
+    var c1: S8 = h<S8>(s);
+    assert_eq(c1.v, 7, "L1: h<S8>(s): &n of the T-typed n is the struct");
+    var c2: S8 = h(s);
+    assert_eq(c2.v, 7, "L2: h(s) inferred");
+    var c3: S8 = k(s);
+    assert_eq(c3.v, 7, "L3: a forwarder k(s) at S8");
+    var c4: S8 = hu(s);
+    assert_eq(c4.v, 7, "L4: an untyped var n = x at S8");
+    var c5: S8 = ht(s);
+    assert_eq(c5.v, 7, "L5: a : T return at S8");
+    assert_eq(ht(3) != 0, 1, "L6: a : T return at i64 is no stub (an address)");
+    var q: Q; q.a = 7; q.b = 8;
+    assert_eq(g(q), 44, "L7: var y: T = mkp() at T = Q copies (y.b 444)");
+    assert_eq(gm(q), 1, "L8: var y: T = b.mk() at T = Q copies (y.a 301)");
+    assert_eq(ga(q), 33, "L9: y = mkp() at T = Q copies (y.a 333)");
+    assert_eq(gp(q), 44, "L10: p = mkp() (p: *T) at T = Q copies through p (x.b 444)");
+    assert_eq(g8(5), 21, "L11: an 8-byte struct result into y: T at i64 keeps its word");
+    assert_eq(gs(5), 3, "L12: a Str result into y: T at i64 keeps its handle");
+    return 0;
+}
+alloc_init();
+var r0 = run();
+var r = assert_summary();

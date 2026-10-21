@@ -1,0 +1,1039 @@
+# generic_forward_chain_deep.tcyr — 6.7.16: a chain of 200 generics forwarding their T, called at f64, compiles and runs
+# on every host's own compiler (issues/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md).
+#
+# An instance is parsed when a call first reaches it, nested inside that call, so the chain below instantiates o199$f64
+# inside main's call, o198$f64 inside o199$f64's, and so on to the bounded `describe`. Two compiler limits refused it:
+# the parser's nesting bound (256 levels, two per link: 122 links were "nesting too deep (over 256 levels)") — the
+# instance's body now counts its own levels, and the stack itself bounds the chain (6 MB, ~300 links; the stack and the
+# frames differ per host, which is why this runs on all four) — and on x86 (Linux, PE, Intel macOS) the enclosing fn's
+# jump-target table (1023), which held every nested instance's targets: ~190 links, or ~210 distinct generics called
+# from one fn (W below), were "function exceeds 1023 jump targets (x86 LASE cap)". An instance's code is now opaque to
+# the fns around it and its targets stay its own. The refusals past the stack are
+# tests/gates/frontend/trait_bounds_checked.sh F14d-F14h and tests/gates/diagnostics/recursion_depth_bounded.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+trait Show { fn show(self): i64; }
+fn describe<T: Show>(x: T): i64 { return x.show(); }
+impl Show for f64 { fn show(self): i64 { return 5; } }
+
+# B: 200 bounded links — o0 calls `describe`, oK forwards to oK-1.
+fn o0<T>(x: T): i64 { return describe(x); }
+fn o1<T>(x: T): i64 { return o0(x); }
+fn o2<T>(x: T): i64 { return o1(x); }
+fn o3<T>(x: T): i64 { return o2(x); }
+fn o4<T>(x: T): i64 { return o3(x); }
+fn o5<T>(x: T): i64 { return o4(x); }
+fn o6<T>(x: T): i64 { return o5(x); }
+fn o7<T>(x: T): i64 { return o6(x); }
+fn o8<T>(x: T): i64 { return o7(x); }
+fn o9<T>(x: T): i64 { return o8(x); }
+fn o10<T>(x: T): i64 { return o9(x); }
+fn o11<T>(x: T): i64 { return o10(x); }
+fn o12<T>(x: T): i64 { return o11(x); }
+fn o13<T>(x: T): i64 { return o12(x); }
+fn o14<T>(x: T): i64 { return o13(x); }
+fn o15<T>(x: T): i64 { return o14(x); }
+fn o16<T>(x: T): i64 { return o15(x); }
+fn o17<T>(x: T): i64 { return o16(x); }
+fn o18<T>(x: T): i64 { return o17(x); }
+fn o19<T>(x: T): i64 { return o18(x); }
+fn o20<T>(x: T): i64 { return o19(x); }
+fn o21<T>(x: T): i64 { return o20(x); }
+fn o22<T>(x: T): i64 { return o21(x); }
+fn o23<T>(x: T): i64 { return o22(x); }
+fn o24<T>(x: T): i64 { return o23(x); }
+fn o25<T>(x: T): i64 { return o24(x); }
+fn o26<T>(x: T): i64 { return o25(x); }
+fn o27<T>(x: T): i64 { return o26(x); }
+fn o28<T>(x: T): i64 { return o27(x); }
+fn o29<T>(x: T): i64 { return o28(x); }
+fn o30<T>(x: T): i64 { return o29(x); }
+fn o31<T>(x: T): i64 { return o30(x); }
+fn o32<T>(x: T): i64 { return o31(x); }
+fn o33<T>(x: T): i64 { return o32(x); }
+fn o34<T>(x: T): i64 { return o33(x); }
+fn o35<T>(x: T): i64 { return o34(x); }
+fn o36<T>(x: T): i64 { return o35(x); }
+fn o37<T>(x: T): i64 { return o36(x); }
+fn o38<T>(x: T): i64 { return o37(x); }
+fn o39<T>(x: T): i64 { return o38(x); }
+fn o40<T>(x: T): i64 { return o39(x); }
+fn o41<T>(x: T): i64 { return o40(x); }
+fn o42<T>(x: T): i64 { return o41(x); }
+fn o43<T>(x: T): i64 { return o42(x); }
+fn o44<T>(x: T): i64 { return o43(x); }
+fn o45<T>(x: T): i64 { return o44(x); }
+fn o46<T>(x: T): i64 { return o45(x); }
+fn o47<T>(x: T): i64 { return o46(x); }
+fn o48<T>(x: T): i64 { return o47(x); }
+fn o49<T>(x: T): i64 { return o48(x); }
+fn o50<T>(x: T): i64 { return o49(x); }
+fn o51<T>(x: T): i64 { return o50(x); }
+fn o52<T>(x: T): i64 { return o51(x); }
+fn o53<T>(x: T): i64 { return o52(x); }
+fn o54<T>(x: T): i64 { return o53(x); }
+fn o55<T>(x: T): i64 { return o54(x); }
+fn o56<T>(x: T): i64 { return o55(x); }
+fn o57<T>(x: T): i64 { return o56(x); }
+fn o58<T>(x: T): i64 { return o57(x); }
+fn o59<T>(x: T): i64 { return o58(x); }
+fn o60<T>(x: T): i64 { return o59(x); }
+fn o61<T>(x: T): i64 { return o60(x); }
+fn o62<T>(x: T): i64 { return o61(x); }
+fn o63<T>(x: T): i64 { return o62(x); }
+fn o64<T>(x: T): i64 { return o63(x); }
+fn o65<T>(x: T): i64 { return o64(x); }
+fn o66<T>(x: T): i64 { return o65(x); }
+fn o67<T>(x: T): i64 { return o66(x); }
+fn o68<T>(x: T): i64 { return o67(x); }
+fn o69<T>(x: T): i64 { return o68(x); }
+fn o70<T>(x: T): i64 { return o69(x); }
+fn o71<T>(x: T): i64 { return o70(x); }
+fn o72<T>(x: T): i64 { return o71(x); }
+fn o73<T>(x: T): i64 { return o72(x); }
+fn o74<T>(x: T): i64 { return o73(x); }
+fn o75<T>(x: T): i64 { return o74(x); }
+fn o76<T>(x: T): i64 { return o75(x); }
+fn o77<T>(x: T): i64 { return o76(x); }
+fn o78<T>(x: T): i64 { return o77(x); }
+fn o79<T>(x: T): i64 { return o78(x); }
+fn o80<T>(x: T): i64 { return o79(x); }
+fn o81<T>(x: T): i64 { return o80(x); }
+fn o82<T>(x: T): i64 { return o81(x); }
+fn o83<T>(x: T): i64 { return o82(x); }
+fn o84<T>(x: T): i64 { return o83(x); }
+fn o85<T>(x: T): i64 { return o84(x); }
+fn o86<T>(x: T): i64 { return o85(x); }
+fn o87<T>(x: T): i64 { return o86(x); }
+fn o88<T>(x: T): i64 { return o87(x); }
+fn o89<T>(x: T): i64 { return o88(x); }
+fn o90<T>(x: T): i64 { return o89(x); }
+fn o91<T>(x: T): i64 { return o90(x); }
+fn o92<T>(x: T): i64 { return o91(x); }
+fn o93<T>(x: T): i64 { return o92(x); }
+fn o94<T>(x: T): i64 { return o93(x); }
+fn o95<T>(x: T): i64 { return o94(x); }
+fn o96<T>(x: T): i64 { return o95(x); }
+fn o97<T>(x: T): i64 { return o96(x); }
+fn o98<T>(x: T): i64 { return o97(x); }
+fn o99<T>(x: T): i64 { return o98(x); }
+fn o100<T>(x: T): i64 { return o99(x); }
+fn o101<T>(x: T): i64 { return o100(x); }
+fn o102<T>(x: T): i64 { return o101(x); }
+fn o103<T>(x: T): i64 { return o102(x); }
+fn o104<T>(x: T): i64 { return o103(x); }
+fn o105<T>(x: T): i64 { return o104(x); }
+fn o106<T>(x: T): i64 { return o105(x); }
+fn o107<T>(x: T): i64 { return o106(x); }
+fn o108<T>(x: T): i64 { return o107(x); }
+fn o109<T>(x: T): i64 { return o108(x); }
+fn o110<T>(x: T): i64 { return o109(x); }
+fn o111<T>(x: T): i64 { return o110(x); }
+fn o112<T>(x: T): i64 { return o111(x); }
+fn o113<T>(x: T): i64 { return o112(x); }
+fn o114<T>(x: T): i64 { return o113(x); }
+fn o115<T>(x: T): i64 { return o114(x); }
+fn o116<T>(x: T): i64 { return o115(x); }
+fn o117<T>(x: T): i64 { return o116(x); }
+fn o118<T>(x: T): i64 { return o117(x); }
+fn o119<T>(x: T): i64 { return o118(x); }
+fn o120<T>(x: T): i64 { return o119(x); }
+fn o121<T>(x: T): i64 { return o120(x); }
+fn o122<T>(x: T): i64 { return o121(x); }
+fn o123<T>(x: T): i64 { return o122(x); }
+fn o124<T>(x: T): i64 { return o123(x); }
+fn o125<T>(x: T): i64 { return o124(x); }
+fn o126<T>(x: T): i64 { return o125(x); }
+fn o127<T>(x: T): i64 { return o126(x); }
+fn o128<T>(x: T): i64 { return o127(x); }
+fn o129<T>(x: T): i64 { return o128(x); }
+fn o130<T>(x: T): i64 { return o129(x); }
+fn o131<T>(x: T): i64 { return o130(x); }
+fn o132<T>(x: T): i64 { return o131(x); }
+fn o133<T>(x: T): i64 { return o132(x); }
+fn o134<T>(x: T): i64 { return o133(x); }
+fn o135<T>(x: T): i64 { return o134(x); }
+fn o136<T>(x: T): i64 { return o135(x); }
+fn o137<T>(x: T): i64 { return o136(x); }
+fn o138<T>(x: T): i64 { return o137(x); }
+fn o139<T>(x: T): i64 { return o138(x); }
+fn o140<T>(x: T): i64 { return o139(x); }
+fn o141<T>(x: T): i64 { return o140(x); }
+fn o142<T>(x: T): i64 { return o141(x); }
+fn o143<T>(x: T): i64 { return o142(x); }
+fn o144<T>(x: T): i64 { return o143(x); }
+fn o145<T>(x: T): i64 { return o144(x); }
+fn o146<T>(x: T): i64 { return o145(x); }
+fn o147<T>(x: T): i64 { return o146(x); }
+fn o148<T>(x: T): i64 { return o147(x); }
+fn o149<T>(x: T): i64 { return o148(x); }
+fn o150<T>(x: T): i64 { return o149(x); }
+fn o151<T>(x: T): i64 { return o150(x); }
+fn o152<T>(x: T): i64 { return o151(x); }
+fn o153<T>(x: T): i64 { return o152(x); }
+fn o154<T>(x: T): i64 { return o153(x); }
+fn o155<T>(x: T): i64 { return o154(x); }
+fn o156<T>(x: T): i64 { return o155(x); }
+fn o157<T>(x: T): i64 { return o156(x); }
+fn o158<T>(x: T): i64 { return o157(x); }
+fn o159<T>(x: T): i64 { return o158(x); }
+fn o160<T>(x: T): i64 { return o159(x); }
+fn o161<T>(x: T): i64 { return o160(x); }
+fn o162<T>(x: T): i64 { return o161(x); }
+fn o163<T>(x: T): i64 { return o162(x); }
+fn o164<T>(x: T): i64 { return o163(x); }
+fn o165<T>(x: T): i64 { return o164(x); }
+fn o166<T>(x: T): i64 { return o165(x); }
+fn o167<T>(x: T): i64 { return o166(x); }
+fn o168<T>(x: T): i64 { return o167(x); }
+fn o169<T>(x: T): i64 { return o168(x); }
+fn o170<T>(x: T): i64 { return o169(x); }
+fn o171<T>(x: T): i64 { return o170(x); }
+fn o172<T>(x: T): i64 { return o171(x); }
+fn o173<T>(x: T): i64 { return o172(x); }
+fn o174<T>(x: T): i64 { return o173(x); }
+fn o175<T>(x: T): i64 { return o174(x); }
+fn o176<T>(x: T): i64 { return o175(x); }
+fn o177<T>(x: T): i64 { return o176(x); }
+fn o178<T>(x: T): i64 { return o177(x); }
+fn o179<T>(x: T): i64 { return o178(x); }
+fn o180<T>(x: T): i64 { return o179(x); }
+fn o181<T>(x: T): i64 { return o180(x); }
+fn o182<T>(x: T): i64 { return o181(x); }
+fn o183<T>(x: T): i64 { return o182(x); }
+fn o184<T>(x: T): i64 { return o183(x); }
+fn o185<T>(x: T): i64 { return o184(x); }
+fn o186<T>(x: T): i64 { return o185(x); }
+fn o187<T>(x: T): i64 { return o186(x); }
+fn o188<T>(x: T): i64 { return o187(x); }
+fn o189<T>(x: T): i64 { return o188(x); }
+fn o190<T>(x: T): i64 { return o189(x); }
+fn o191<T>(x: T): i64 { return o190(x); }
+fn o192<T>(x: T): i64 { return o191(x); }
+fn o193<T>(x: T): i64 { return o192(x); }
+fn o194<T>(x: T): i64 { return o193(x); }
+fn o195<T>(x: T): i64 { return o194(x); }
+fn o196<T>(x: T): i64 { return o195(x); }
+fn o197<T>(x: T): i64 { return o196(x); }
+fn o198<T>(x: T): i64 { return o197(x); }
+fn o199<T>(x: T): i64 { return o198(x); }
+
+# Z: 200 links with no bound, ending in sizeof(T) — 8 at f64.
+fn z0<T>(x: T): i64 { return sizeof(T); }
+fn z1<T>(x: T): i64 { return z0(x); }
+fn z2<T>(x: T): i64 { return z1(x); }
+fn z3<T>(x: T): i64 { return z2(x); }
+fn z4<T>(x: T): i64 { return z3(x); }
+fn z5<T>(x: T): i64 { return z4(x); }
+fn z6<T>(x: T): i64 { return z5(x); }
+fn z7<T>(x: T): i64 { return z6(x); }
+fn z8<T>(x: T): i64 { return z7(x); }
+fn z9<T>(x: T): i64 { return z8(x); }
+fn z10<T>(x: T): i64 { return z9(x); }
+fn z11<T>(x: T): i64 { return z10(x); }
+fn z12<T>(x: T): i64 { return z11(x); }
+fn z13<T>(x: T): i64 { return z12(x); }
+fn z14<T>(x: T): i64 { return z13(x); }
+fn z15<T>(x: T): i64 { return z14(x); }
+fn z16<T>(x: T): i64 { return z15(x); }
+fn z17<T>(x: T): i64 { return z16(x); }
+fn z18<T>(x: T): i64 { return z17(x); }
+fn z19<T>(x: T): i64 { return z18(x); }
+fn z20<T>(x: T): i64 { return z19(x); }
+fn z21<T>(x: T): i64 { return z20(x); }
+fn z22<T>(x: T): i64 { return z21(x); }
+fn z23<T>(x: T): i64 { return z22(x); }
+fn z24<T>(x: T): i64 { return z23(x); }
+fn z25<T>(x: T): i64 { return z24(x); }
+fn z26<T>(x: T): i64 { return z25(x); }
+fn z27<T>(x: T): i64 { return z26(x); }
+fn z28<T>(x: T): i64 { return z27(x); }
+fn z29<T>(x: T): i64 { return z28(x); }
+fn z30<T>(x: T): i64 { return z29(x); }
+fn z31<T>(x: T): i64 { return z30(x); }
+fn z32<T>(x: T): i64 { return z31(x); }
+fn z33<T>(x: T): i64 { return z32(x); }
+fn z34<T>(x: T): i64 { return z33(x); }
+fn z35<T>(x: T): i64 { return z34(x); }
+fn z36<T>(x: T): i64 { return z35(x); }
+fn z37<T>(x: T): i64 { return z36(x); }
+fn z38<T>(x: T): i64 { return z37(x); }
+fn z39<T>(x: T): i64 { return z38(x); }
+fn z40<T>(x: T): i64 { return z39(x); }
+fn z41<T>(x: T): i64 { return z40(x); }
+fn z42<T>(x: T): i64 { return z41(x); }
+fn z43<T>(x: T): i64 { return z42(x); }
+fn z44<T>(x: T): i64 { return z43(x); }
+fn z45<T>(x: T): i64 { return z44(x); }
+fn z46<T>(x: T): i64 { return z45(x); }
+fn z47<T>(x: T): i64 { return z46(x); }
+fn z48<T>(x: T): i64 { return z47(x); }
+fn z49<T>(x: T): i64 { return z48(x); }
+fn z50<T>(x: T): i64 { return z49(x); }
+fn z51<T>(x: T): i64 { return z50(x); }
+fn z52<T>(x: T): i64 { return z51(x); }
+fn z53<T>(x: T): i64 { return z52(x); }
+fn z54<T>(x: T): i64 { return z53(x); }
+fn z55<T>(x: T): i64 { return z54(x); }
+fn z56<T>(x: T): i64 { return z55(x); }
+fn z57<T>(x: T): i64 { return z56(x); }
+fn z58<T>(x: T): i64 { return z57(x); }
+fn z59<T>(x: T): i64 { return z58(x); }
+fn z60<T>(x: T): i64 { return z59(x); }
+fn z61<T>(x: T): i64 { return z60(x); }
+fn z62<T>(x: T): i64 { return z61(x); }
+fn z63<T>(x: T): i64 { return z62(x); }
+fn z64<T>(x: T): i64 { return z63(x); }
+fn z65<T>(x: T): i64 { return z64(x); }
+fn z66<T>(x: T): i64 { return z65(x); }
+fn z67<T>(x: T): i64 { return z66(x); }
+fn z68<T>(x: T): i64 { return z67(x); }
+fn z69<T>(x: T): i64 { return z68(x); }
+fn z70<T>(x: T): i64 { return z69(x); }
+fn z71<T>(x: T): i64 { return z70(x); }
+fn z72<T>(x: T): i64 { return z71(x); }
+fn z73<T>(x: T): i64 { return z72(x); }
+fn z74<T>(x: T): i64 { return z73(x); }
+fn z75<T>(x: T): i64 { return z74(x); }
+fn z76<T>(x: T): i64 { return z75(x); }
+fn z77<T>(x: T): i64 { return z76(x); }
+fn z78<T>(x: T): i64 { return z77(x); }
+fn z79<T>(x: T): i64 { return z78(x); }
+fn z80<T>(x: T): i64 { return z79(x); }
+fn z81<T>(x: T): i64 { return z80(x); }
+fn z82<T>(x: T): i64 { return z81(x); }
+fn z83<T>(x: T): i64 { return z82(x); }
+fn z84<T>(x: T): i64 { return z83(x); }
+fn z85<T>(x: T): i64 { return z84(x); }
+fn z86<T>(x: T): i64 { return z85(x); }
+fn z87<T>(x: T): i64 { return z86(x); }
+fn z88<T>(x: T): i64 { return z87(x); }
+fn z89<T>(x: T): i64 { return z88(x); }
+fn z90<T>(x: T): i64 { return z89(x); }
+fn z91<T>(x: T): i64 { return z90(x); }
+fn z92<T>(x: T): i64 { return z91(x); }
+fn z93<T>(x: T): i64 { return z92(x); }
+fn z94<T>(x: T): i64 { return z93(x); }
+fn z95<T>(x: T): i64 { return z94(x); }
+fn z96<T>(x: T): i64 { return z95(x); }
+fn z97<T>(x: T): i64 { return z96(x); }
+fn z98<T>(x: T): i64 { return z97(x); }
+fn z99<T>(x: T): i64 { return z98(x); }
+fn z100<T>(x: T): i64 { return z99(x); }
+fn z101<T>(x: T): i64 { return z100(x); }
+fn z102<T>(x: T): i64 { return z101(x); }
+fn z103<T>(x: T): i64 { return z102(x); }
+fn z104<T>(x: T): i64 { return z103(x); }
+fn z105<T>(x: T): i64 { return z104(x); }
+fn z106<T>(x: T): i64 { return z105(x); }
+fn z107<T>(x: T): i64 { return z106(x); }
+fn z108<T>(x: T): i64 { return z107(x); }
+fn z109<T>(x: T): i64 { return z108(x); }
+fn z110<T>(x: T): i64 { return z109(x); }
+fn z111<T>(x: T): i64 { return z110(x); }
+fn z112<T>(x: T): i64 { return z111(x); }
+fn z113<T>(x: T): i64 { return z112(x); }
+fn z114<T>(x: T): i64 { return z113(x); }
+fn z115<T>(x: T): i64 { return z114(x); }
+fn z116<T>(x: T): i64 { return z115(x); }
+fn z117<T>(x: T): i64 { return z116(x); }
+fn z118<T>(x: T): i64 { return z117(x); }
+fn z119<T>(x: T): i64 { return z118(x); }
+fn z120<T>(x: T): i64 { return z119(x); }
+fn z121<T>(x: T): i64 { return z120(x); }
+fn z122<T>(x: T): i64 { return z121(x); }
+fn z123<T>(x: T): i64 { return z122(x); }
+fn z124<T>(x: T): i64 { return z123(x); }
+fn z125<T>(x: T): i64 { return z124(x); }
+fn z126<T>(x: T): i64 { return z125(x); }
+fn z127<T>(x: T): i64 { return z126(x); }
+fn z128<T>(x: T): i64 { return z127(x); }
+fn z129<T>(x: T): i64 { return z128(x); }
+fn z130<T>(x: T): i64 { return z129(x); }
+fn z131<T>(x: T): i64 { return z130(x); }
+fn z132<T>(x: T): i64 { return z131(x); }
+fn z133<T>(x: T): i64 { return z132(x); }
+fn z134<T>(x: T): i64 { return z133(x); }
+fn z135<T>(x: T): i64 { return z134(x); }
+fn z136<T>(x: T): i64 { return z135(x); }
+fn z137<T>(x: T): i64 { return z136(x); }
+fn z138<T>(x: T): i64 { return z137(x); }
+fn z139<T>(x: T): i64 { return z138(x); }
+fn z140<T>(x: T): i64 { return z139(x); }
+fn z141<T>(x: T): i64 { return z140(x); }
+fn z142<T>(x: T): i64 { return z141(x); }
+fn z143<T>(x: T): i64 { return z142(x); }
+fn z144<T>(x: T): i64 { return z143(x); }
+fn z145<T>(x: T): i64 { return z144(x); }
+fn z146<T>(x: T): i64 { return z145(x); }
+fn z147<T>(x: T): i64 { return z146(x); }
+fn z148<T>(x: T): i64 { return z147(x); }
+fn z149<T>(x: T): i64 { return z148(x); }
+fn z150<T>(x: T): i64 { return z149(x); }
+fn z151<T>(x: T): i64 { return z150(x); }
+fn z152<T>(x: T): i64 { return z151(x); }
+fn z153<T>(x: T): i64 { return z152(x); }
+fn z154<T>(x: T): i64 { return z153(x); }
+fn z155<T>(x: T): i64 { return z154(x); }
+fn z156<T>(x: T): i64 { return z155(x); }
+fn z157<T>(x: T): i64 { return z156(x); }
+fn z158<T>(x: T): i64 { return z157(x); }
+fn z159<T>(x: T): i64 { return z158(x); }
+fn z160<T>(x: T): i64 { return z159(x); }
+fn z161<T>(x: T): i64 { return z160(x); }
+fn z162<T>(x: T): i64 { return z161(x); }
+fn z163<T>(x: T): i64 { return z162(x); }
+fn z164<T>(x: T): i64 { return z163(x); }
+fn z165<T>(x: T): i64 { return z164(x); }
+fn z166<T>(x: T): i64 { return z165(x); }
+fn z167<T>(x: T): i64 { return z166(x); }
+fn z168<T>(x: T): i64 { return z167(x); }
+fn z169<T>(x: T): i64 { return z168(x); }
+fn z170<T>(x: T): i64 { return z169(x); }
+fn z171<T>(x: T): i64 { return z170(x); }
+fn z172<T>(x: T): i64 { return z171(x); }
+fn z173<T>(x: T): i64 { return z172(x); }
+fn z174<T>(x: T): i64 { return z173(x); }
+fn z175<T>(x: T): i64 { return z174(x); }
+fn z176<T>(x: T): i64 { return z175(x); }
+fn z177<T>(x: T): i64 { return z176(x); }
+fn z178<T>(x: T): i64 { return z177(x); }
+fn z179<T>(x: T): i64 { return z178(x); }
+fn z180<T>(x: T): i64 { return z179(x); }
+fn z181<T>(x: T): i64 { return z180(x); }
+fn z182<T>(x: T): i64 { return z181(x); }
+fn z183<T>(x: T): i64 { return z182(x); }
+fn z184<T>(x: T): i64 { return z183(x); }
+fn z185<T>(x: T): i64 { return z184(x); }
+fn z186<T>(x: T): i64 { return z185(x); }
+fn z187<T>(x: T): i64 { return z186(x); }
+fn z188<T>(x: T): i64 { return z187(x); }
+fn z189<T>(x: T): i64 { return z188(x); }
+fn z190<T>(x: T): i64 { return z189(x); }
+fn z191<T>(x: T): i64 { return z190(x); }
+fn z192<T>(x: T): i64 { return z191(x); }
+fn z193<T>(x: T): i64 { return z192(x); }
+fn z194<T>(x: T): i64 { return z193(x); }
+fn z195<T>(x: T): i64 { return z194(x); }
+fn z196<T>(x: T): i64 { return z195(x); }
+fn z197<T>(x: T): i64 { return z196(x); }
+fn z198<T>(x: T): i64 { return z197(x); }
+fn z199<T>(x: T): i64 { return z198(x); }
+
+# W: 300 distinct generics, each instantiated inside ONE fn (`wide`), each with a branch of its own.
+fn w0<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w1<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w2<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w3<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w4<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w5<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w6<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w7<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w8<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w9<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w10<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w11<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w12<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w13<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w14<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w15<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w16<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w17<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w18<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w19<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w20<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w21<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w22<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w23<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w24<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w25<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w26<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w27<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w28<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w29<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w30<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w31<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w32<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w33<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w34<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w35<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w36<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w37<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w38<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w39<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w40<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w41<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w42<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w43<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w44<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w45<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w46<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w47<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w48<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w49<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w50<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w51<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w52<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w53<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w54<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w55<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w56<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w57<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w58<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w59<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w60<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w61<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w62<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w63<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w64<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w65<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w66<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w67<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w68<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w69<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w70<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w71<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w72<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w73<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w74<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w75<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w76<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w77<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w78<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w79<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w80<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w81<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w82<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w83<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w84<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w85<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w86<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w87<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w88<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w89<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w90<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w91<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w92<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w93<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w94<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w95<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w96<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w97<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w98<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w99<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w100<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w101<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w102<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w103<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w104<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w105<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w106<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w107<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w108<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w109<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w110<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w111<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w112<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w113<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w114<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w115<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w116<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w117<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w118<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w119<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w120<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w121<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w122<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w123<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w124<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w125<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w126<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w127<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w128<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w129<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w130<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w131<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w132<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w133<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w134<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w135<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w136<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w137<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w138<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w139<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w140<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w141<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w142<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w143<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w144<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w145<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w146<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w147<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w148<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w149<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w150<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w151<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w152<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w153<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w154<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w155<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w156<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w157<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w158<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w159<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w160<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w161<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w162<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w163<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w164<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w165<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w166<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w167<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w168<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w169<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w170<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w171<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w172<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w173<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w174<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w175<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w176<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w177<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w178<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w179<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w180<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w181<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w182<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w183<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w184<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w185<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w186<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w187<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w188<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w189<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w190<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w191<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w192<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w193<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w194<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w195<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w196<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w197<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w198<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w199<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w200<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w201<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w202<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w203<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w204<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w205<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w206<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w207<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w208<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w209<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w210<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w211<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w212<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w213<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w214<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w215<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w216<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w217<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w218<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w219<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w220<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w221<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w222<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w223<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w224<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w225<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w226<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w227<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w228<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w229<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w230<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w231<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w232<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w233<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w234<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w235<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w236<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w237<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w238<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w239<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w240<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w241<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w242<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w243<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w244<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w245<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w246<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w247<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w248<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w249<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w250<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w251<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w252<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w253<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w254<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w255<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w256<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w257<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w258<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w259<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w260<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w261<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w262<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w263<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w264<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w265<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w266<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w267<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w268<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w269<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w270<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w271<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w272<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w273<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w274<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w275<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w276<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w277<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w278<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w279<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w280<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w281<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w282<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w283<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w284<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w285<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w286<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w287<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w288<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w289<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w290<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w291<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w292<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w293<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w294<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w295<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w296<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w297<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w298<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+fn w299<T>(x: T): i64 { if (sizeof(T) == 8) { return 1; } return 0; }
+
+fn chain_bounded(): i64 { var h: f64 = 1.5; return o199(h); }
+fn chain_sizeof(): i64 { var h: f64 = 1.5; return z199(h); }
+fn wide(): i64 {
+    var h: f64 = 1.5;
+    var s = 0;
+    s = s + w0(h);
+    s = s + w1(h);
+    s = s + w2(h);
+    s = s + w3(h);
+    s = s + w4(h);
+    s = s + w5(h);
+    s = s + w6(h);
+    s = s + w7(h);
+    s = s + w8(h);
+    s = s + w9(h);
+    s = s + w10(h);
+    s = s + w11(h);
+    s = s + w12(h);
+    s = s + w13(h);
+    s = s + w14(h);
+    s = s + w15(h);
+    s = s + w16(h);
+    s = s + w17(h);
+    s = s + w18(h);
+    s = s + w19(h);
+    s = s + w20(h);
+    s = s + w21(h);
+    s = s + w22(h);
+    s = s + w23(h);
+    s = s + w24(h);
+    s = s + w25(h);
+    s = s + w26(h);
+    s = s + w27(h);
+    s = s + w28(h);
+    s = s + w29(h);
+    s = s + w30(h);
+    s = s + w31(h);
+    s = s + w32(h);
+    s = s + w33(h);
+    s = s + w34(h);
+    s = s + w35(h);
+    s = s + w36(h);
+    s = s + w37(h);
+    s = s + w38(h);
+    s = s + w39(h);
+    s = s + w40(h);
+    s = s + w41(h);
+    s = s + w42(h);
+    s = s + w43(h);
+    s = s + w44(h);
+    s = s + w45(h);
+    s = s + w46(h);
+    s = s + w47(h);
+    s = s + w48(h);
+    s = s + w49(h);
+    s = s + w50(h);
+    s = s + w51(h);
+    s = s + w52(h);
+    s = s + w53(h);
+    s = s + w54(h);
+    s = s + w55(h);
+    s = s + w56(h);
+    s = s + w57(h);
+    s = s + w58(h);
+    s = s + w59(h);
+    s = s + w60(h);
+    s = s + w61(h);
+    s = s + w62(h);
+    s = s + w63(h);
+    s = s + w64(h);
+    s = s + w65(h);
+    s = s + w66(h);
+    s = s + w67(h);
+    s = s + w68(h);
+    s = s + w69(h);
+    s = s + w70(h);
+    s = s + w71(h);
+    s = s + w72(h);
+    s = s + w73(h);
+    s = s + w74(h);
+    s = s + w75(h);
+    s = s + w76(h);
+    s = s + w77(h);
+    s = s + w78(h);
+    s = s + w79(h);
+    s = s + w80(h);
+    s = s + w81(h);
+    s = s + w82(h);
+    s = s + w83(h);
+    s = s + w84(h);
+    s = s + w85(h);
+    s = s + w86(h);
+    s = s + w87(h);
+    s = s + w88(h);
+    s = s + w89(h);
+    s = s + w90(h);
+    s = s + w91(h);
+    s = s + w92(h);
+    s = s + w93(h);
+    s = s + w94(h);
+    s = s + w95(h);
+    s = s + w96(h);
+    s = s + w97(h);
+    s = s + w98(h);
+    s = s + w99(h);
+    s = s + w100(h);
+    s = s + w101(h);
+    s = s + w102(h);
+    s = s + w103(h);
+    s = s + w104(h);
+    s = s + w105(h);
+    s = s + w106(h);
+    s = s + w107(h);
+    s = s + w108(h);
+    s = s + w109(h);
+    s = s + w110(h);
+    s = s + w111(h);
+    s = s + w112(h);
+    s = s + w113(h);
+    s = s + w114(h);
+    s = s + w115(h);
+    s = s + w116(h);
+    s = s + w117(h);
+    s = s + w118(h);
+    s = s + w119(h);
+    s = s + w120(h);
+    s = s + w121(h);
+    s = s + w122(h);
+    s = s + w123(h);
+    s = s + w124(h);
+    s = s + w125(h);
+    s = s + w126(h);
+    s = s + w127(h);
+    s = s + w128(h);
+    s = s + w129(h);
+    s = s + w130(h);
+    s = s + w131(h);
+    s = s + w132(h);
+    s = s + w133(h);
+    s = s + w134(h);
+    s = s + w135(h);
+    s = s + w136(h);
+    s = s + w137(h);
+    s = s + w138(h);
+    s = s + w139(h);
+    s = s + w140(h);
+    s = s + w141(h);
+    s = s + w142(h);
+    s = s + w143(h);
+    s = s + w144(h);
+    s = s + w145(h);
+    s = s + w146(h);
+    s = s + w147(h);
+    s = s + w148(h);
+    s = s + w149(h);
+    s = s + w150(h);
+    s = s + w151(h);
+    s = s + w152(h);
+    s = s + w153(h);
+    s = s + w154(h);
+    s = s + w155(h);
+    s = s + w156(h);
+    s = s + w157(h);
+    s = s + w158(h);
+    s = s + w159(h);
+    s = s + w160(h);
+    s = s + w161(h);
+    s = s + w162(h);
+    s = s + w163(h);
+    s = s + w164(h);
+    s = s + w165(h);
+    s = s + w166(h);
+    s = s + w167(h);
+    s = s + w168(h);
+    s = s + w169(h);
+    s = s + w170(h);
+    s = s + w171(h);
+    s = s + w172(h);
+    s = s + w173(h);
+    s = s + w174(h);
+    s = s + w175(h);
+    s = s + w176(h);
+    s = s + w177(h);
+    s = s + w178(h);
+    s = s + w179(h);
+    s = s + w180(h);
+    s = s + w181(h);
+    s = s + w182(h);
+    s = s + w183(h);
+    s = s + w184(h);
+    s = s + w185(h);
+    s = s + w186(h);
+    s = s + w187(h);
+    s = s + w188(h);
+    s = s + w189(h);
+    s = s + w190(h);
+    s = s + w191(h);
+    s = s + w192(h);
+    s = s + w193(h);
+    s = s + w194(h);
+    s = s + w195(h);
+    s = s + w196(h);
+    s = s + w197(h);
+    s = s + w198(h);
+    s = s + w199(h);
+    s = s + w200(h);
+    s = s + w201(h);
+    s = s + w202(h);
+    s = s + w203(h);
+    s = s + w204(h);
+    s = s + w205(h);
+    s = s + w206(h);
+    s = s + w207(h);
+    s = s + w208(h);
+    s = s + w209(h);
+    s = s + w210(h);
+    s = s + w211(h);
+    s = s + w212(h);
+    s = s + w213(h);
+    s = s + w214(h);
+    s = s + w215(h);
+    s = s + w216(h);
+    s = s + w217(h);
+    s = s + w218(h);
+    s = s + w219(h);
+    s = s + w220(h);
+    s = s + w221(h);
+    s = s + w222(h);
+    s = s + w223(h);
+    s = s + w224(h);
+    s = s + w225(h);
+    s = s + w226(h);
+    s = s + w227(h);
+    s = s + w228(h);
+    s = s + w229(h);
+    s = s + w230(h);
+    s = s + w231(h);
+    s = s + w232(h);
+    s = s + w233(h);
+    s = s + w234(h);
+    s = s + w235(h);
+    s = s + w236(h);
+    s = s + w237(h);
+    s = s + w238(h);
+    s = s + w239(h);
+    s = s + w240(h);
+    s = s + w241(h);
+    s = s + w242(h);
+    s = s + w243(h);
+    s = s + w244(h);
+    s = s + w245(h);
+    s = s + w246(h);
+    s = s + w247(h);
+    s = s + w248(h);
+    s = s + w249(h);
+    s = s + w250(h);
+    s = s + w251(h);
+    s = s + w252(h);
+    s = s + w253(h);
+    s = s + w254(h);
+    s = s + w255(h);
+    s = s + w256(h);
+    s = s + w257(h);
+    s = s + w258(h);
+    s = s + w259(h);
+    s = s + w260(h);
+    s = s + w261(h);
+    s = s + w262(h);
+    s = s + w263(h);
+    s = s + w264(h);
+    s = s + w265(h);
+    s = s + w266(h);
+    s = s + w267(h);
+    s = s + w268(h);
+    s = s + w269(h);
+    s = s + w270(h);
+    s = s + w271(h);
+    s = s + w272(h);
+    s = s + w273(h);
+    s = s + w274(h);
+    s = s + w275(h);
+    s = s + w276(h);
+    s = s + w277(h);
+    s = s + w278(h);
+    s = s + w279(h);
+    s = s + w280(h);
+    s = s + w281(h);
+    s = s + w282(h);
+    s = s + w283(h);
+    s = s + w284(h);
+    s = s + w285(h);
+    s = s + w286(h);
+    s = s + w287(h);
+    s = s + w288(h);
+    s = s + w289(h);
+    s = s + w290(h);
+    s = s + w291(h);
+    s = s + w292(h);
+    s = s + w293(h);
+    s = s + w294(h);
+    s = s + w295(h);
+    s = s + w296(h);
+    s = s + w297(h);
+    s = s + w298(h);
+    s = s + w299(h);
+    return s;
+}
+
+assert_eq(chain_bounded(), 5, "B: 200 bounded links at f64 reach describe (5)");
+assert_eq(chain_sizeof(), 8, "Z: 200 links at f64 keep T = f64 to the end (sizeof 8)");
+assert_eq(o3(2.5), 5, "B2: a short piece of the same chain, called directly");
+assert_eq(wide(), 300, "W: 300 generics instantiated inside one fn, each at f64");
+var r = assert_summary();

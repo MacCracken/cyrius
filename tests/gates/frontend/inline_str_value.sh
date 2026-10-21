@@ -70,6 +70,11 @@
 # a `Str` parameter — `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`, `h.eq(*p)` — passes the header p points at (its
 # address, p), as `str_len(p)` does; it passed the header's first word, the data pointer, as the header (SD1, the filed
 # repro verbatim: 5555, was 5500).
+# 6.7.16 (issues/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md): ... and into a generic's `x: T`
+# at T = Str, which is address-passed (its struct-mask bit set, so the by-value arm never ran) — `gg<Str>(*p)`, the
+# inferred `gg(*p)` (6.7.15's D12 (a) binds T = Str), wrapped, `*w.p`, `**pp`, `*gsp()`, a second argument, a tail
+# call, a capture, a forwarder, a generic method, top level (the tcyr's sd_g* rows, R_TOP15): the header's data word
+# went in as the header (SD2, the filed repro verbatim: 43, was 244).
 #
 # 6.7.15 (the user's decision D14, 2026-10-18; issues/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-
 # stores-one-word.md): `t = p` and `t = *p` with t an inline `Str` and p a `*Str` copy the header p points at, as `t = a`
@@ -107,6 +112,7 @@
 # (7), D18c `var p: *Str = gt;` (7, no warning); D21a / D21b the D21 filed repro in the zone and after a first
 # statement (33), D21c a source declared below binds (33, D17), D22a / D22b the untyped top-level declaration's word
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
+# SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
@@ -197,6 +203,9 @@
 #                                                     encoder rows), X15-X17 X19 x4, FD1 x7 (0)
 #   o3 `_istr_dspp` answers 0 (no `*pp`)           -> RED 18: R1 x7 (6 rows: the `*pp` rows, R_TOP14), X18 x4, FD2
 #                                                     x7 (0)
+#   2026-10-20 (6.7.16, a `*Str` dereference into a generic's `x: T` at T = Str; the same scratch-copy method):
+#   q1 `_try_push_struct_addr_arg` without its     -> RED 14: R1 x7 (11 rows: the sd_g* rows but the controls, and
+#      `_sarg_istr_dx` arm (the fix reverted)         R_TOP15 — the data word as the header), SD2 x7 (244)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -319,7 +328,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=158   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19)
+FLOOR=170   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -566,6 +575,24 @@ for leg in $XLEGS $OLEGS; do
     if [ "$got" -eq 0 ] && [ "$last" = "5555" ]; then ok "SD1 the filed repro: str_len(*p) / str_len(**pp) pass the header ($leg): $last"
     else bad "SD1 ($leg): exit $got, prints '$last' (want 5555; 5500 = the data word passed as the header)"; fi
 done
+# --- SD2: the filed repro (issues/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md), verbatim:
+# `gg<Str>(*p)` / `gg(*p)` into a generic's `x: T` at T = Str (address-passed) pass the header p points at (6.7.16; the
+# header's data word through 6.7.15: 500 % 256 = 244) ---
+cat > "$T/SD2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn gg<T>(x: T): i64 { return str_len(x); }
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var h = str_from("abcde");
+    var p: *Str = h;
+    return f(*p) * 100 + gg<Str>(*p) * 10 + gg(*p);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs SD2 43 "the filed repro: f(*p) / gg<Str>(*p) / gg(*p) pass the header (555 % 256; was 244, the data word into the generic)" "$XLEGS $OLEGS"
 
 # --- D14: the filed repro (issues/archived/2026-10-17-inline-str-assigned-from-str-pointer-or-if-expression-stores-one-word.md), verbatim ---
 cat > "$T/D14a.cyr" <<'EOF'
@@ -784,7 +811,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=63   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19); the floor is the count that runs
+FLOOR_ROWS=64   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

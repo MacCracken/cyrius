@@ -94,6 +94,38 @@ fn mr_k40(x) { return x + 40; }
 fn mr_fall_inline(x): (i64, i64) { mr_k40(x); }
 fn mr_empty(): (i64, i64) { }
 
+# --- 6.7.16: a generic's element typed by its type parameter is the instance's binding, as a `: T` return is
+# (issues/2026-10-18-generic-multi-value-type-parameter-element-binds-i64.md): `(V, i64)` at V = f64 binds an f64 (it
+# bound an i64 word: `a * 2.0` was integer arithmetic on the double's bits), in every spelling — the explicit and the
+# inferred free call, the explicit, inferred and free method call, a tuple capture (refused before: "it returns 2
+# values, (i64, i64)"), a multi-value assignment, a wrap, a for step, a closure, arity 3, a second type parameter, a
+# generic forwarding its V. A narrower integer stays an i64 slot (i32: 12).
+fn mv_mm2<V>(x: V): (V, i64) { return (x, 7); }
+fn mv_m3<V>(x: V): (i64, V, V) { return (1, x, x); }
+fn mv_ab<A, B>(a: A, b: B): (B, A) { return (b, a); }
+fn mv_fwd<V>(x: V): (V, i64) { return mv_mm2(x); }
+struct MvP { k; }
+impl MvP {
+    fn mm<V>(self, x: V): (V, i64) { return (x, self.k); }
+}
+fn mv_free(): i64 { var h: f64 = 1.5; var a, b = mv_mm2<f64>(h); return f64_to(a * 2.0) + b; }
+fn mv_infer(): i64 { var h: f64 = 1.5; var a, b = mv_mm2(h); return f64_to(a * 2.0) + b; }
+fn mv_mx(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var a, b = p.mm<f64>(h); return f64_to(a * 2.0) + b; }
+fn mv_mi(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var a, b = p.mm(h); return f64_to(a * 2.0) + b; }
+fn mv_mf(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var a, b = MvP_mm<f64>(&p, h); return f64_to(a * 2.0) + b; }
+fn mv_cap(): i64 { var h: f64 = 1.5; var t: (f64, i64) = mv_mm2<f64>(h); return f64_to(t.0 * 2.0) + t.1; }
+fn mv_capa(): i64 { var h: f64 = 1.5; var t: (f64, i64) = (0.0, 0); t = mv_mm2(h); return f64_to(t.0 * 2.0) + t.1; }
+fn mv_capm(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var t: (f64, i64) = p.mm(h); return f64_to(t.0 * 2.0) + t.1; }
+fn mv_masg(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var a: f64 = 0.0; var b = 0; a, b = mv_mm2<f64>(h); var r = f64_to(a * 2.0) + b; a, b = p.mm(h); return r * 100 + f64_to(a * 2.0) + b; }
+fn mv_wrap(): i64 { var h: f64 = 1.5; var a, b = (mv_mm2<f64>(h)); var c, d = ((mv_mm2(h))); return (f64_to(a * 2.0) + b) * 100 + f64_to(c * 2.0) + d; }
+fn mv_step(): i64 { var a: f64 = 0.0; var b = 0; var i = 0; for (i = 0; i < 1; a, b = mv_mm2(1.5)) { i = i + 1; } return f64_to(a * 2.0) + b; }
+fn mv_clo(): i64 { var h: f64 = 1.5; var c = || { var a, b = mv_mm2<f64>(h); return f64_to(a * 2.0) + b; }; return callptr(c); }
+fn mv_ar3(): i64 { var h: f64 = 1.5; var a, b, c = mv_m3<f64>(h); return f64_to(b * 2.0) + f64_to(c * 4.0) + a; }
+fn mv_two(): i64 { var h: f64 = 1.5; var a, b = mv_ab<i64, f64>(4, h); var c, d = mv_ab(h, 5); return (f64_to(a * 2.0) + b) * 100 + f64_to(d * 2.0) + c; }
+fn mv_gfwd(): i64 { var h: f64 = 1.5; var a, b = mv_fwd<f64>(h); var c, d = mv_fwd(h); return (f64_to(a * 2.0) + b) * 100 + f64_to(c * 2.0) + d; }
+fn mv_i32(): i64 { var h: i32 = 5; var a, b = mv_mm2<i32>(h); var c, d = mv_mm2(h); return (a + b) * 100 + c + d; }
+fn mv_i64(): i64 { var a, b = mv_mm2<i64>(5); var c, d = mv_mm2(6); return (a + b) * 100 + c + d; }
+
 fn main(): i64 {
     # 1. undeclared arity 2 — order-sensitive
     var q, r = mr_divmod(10, 3);
@@ -241,6 +273,25 @@ fn main(): i64 {
     mr_fall2(0);
     var fh = rethi();
     assert_eq(fh, 0, "fall-off then rethi(): the second register is 0");
+
+    # 6.7.16: a generic's `(V, i64)` element at V = f64 binds an f64 (the filed repro: 7, the double's bits as an integer)
+    assert_eq(mv_free(), 10, "generic (V, i64) at f64: var a, b = mm2<f64>(h) binds a as f64 (the filed repro: 7)");
+    assert_eq(mv_infer(), 10, "generic (V, i64): the inferred mm2(h)");
+    assert_eq(mv_mx(), 10, "generic method (V, i64): p.mm<f64>(h)");
+    assert_eq(mv_mi(), 10, "generic method (V, i64): the inferred p.mm(h)");
+    assert_eq(mv_mf(), 10, "generic method (V, i64): the free spelling MvP_mm<f64>(&p, h)");
+    assert_eq(mv_cap(), 10, "var t: (f64, i64) = mm2<f64>(h) captures (refused before: 'it returns (i64, i64)')");
+    assert_eq(mv_capa(), 10, "t = mm2(h) into a (f64, i64) tuple");
+    assert_eq(mv_capm(), 10, "var t: (f64, i64) = p.mm(h)");
+    assert_eq(mv_masg(), 1010, "a, b = mm2<f64>(h) / a, b = p.mm(h)");
+    assert_eq(mv_wrap(), 1010, "var a, b = (mm2<f64>(h)) / ((mm2(h)))");
+    assert_eq(mv_step(), 10, "a for step a, b = mm2(1.5)");
+    assert_eq(mv_clo(), 10, "a destructure inside a closure");
+    assert_eq(mv_ar3(), 10, "(i64, V, V) at f64: the second and third values");
+    assert_eq(mv_two(), 708, "(B, A) at <i64, f64> and inferred <f64, i64>");
+    assert_eq(mv_gfwd(), 1010, "a generic forwarding V: mv_fwd<f64>(h) / mv_fwd(h)");
+    assert_eq(mv_i32(), 1212, "(V, i64) at i32 stays an i64 slot: 5 + 7");
+    assert_eq(mv_i64(), 1213, "(V, i64) at i64 unchanged");
 
     var r2 = assert_summary();
     return r2;

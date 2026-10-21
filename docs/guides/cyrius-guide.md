@@ -791,7 +791,11 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   after an `impl Trait for T` method's own refusal). A direct call `V2_add(a, b)` fills it as usual.
 - **`cyrius lint`** (`--syntax-only`) accepts a file that calls a sibling module's fn by name, or
   whose default names a sibling's const. The grammar refusals (a positional argument after a
-  named one, a name through `fncallN`) still fire there.
+  named one, a name through `fncallN`) still fire there. A call in the chain of a receiver whose
+  struct a sibling declares — `a.h.k(1)`, `a.m<i64>(1)`, `a.h.m<i64>(1)` — parses there too, its
+  arguments checked (6.7.16; it was *expected ';', got '('* / *got '>'*), and so does a local of a sibling's struct
+  type, `var a: Foo;` / `var b: Box<i64>;` (6.7.16; it was *uninitialized variable not allowed*, which lint does not
+  count as context — `var p: *Foo;` still owes its value).
 - **For stdlib authors:** the compiler itself calls some library fns with a FIXED argument
   count: `alloc`, `vec_len`, `vec_get`, `str_from`, `future_force`, `future_pending`, the
   `_slice_idx_get_N` family and `_slice_idx_addr` (6.7.8, the slice store), the `_chk_*` /
@@ -1305,7 +1309,12 @@ whether or not the field is used, as a `b: Box<Zork>` field's are: `p: *Box<Zork
 'Zork' as a type argument" and `p: *Box<1>` "a type argument is a type name, got number 1" — a
 struct declared further down is a name there, so `*Box<B>` / `*Box<A>` still point
 two structs at each other (6.7.15, the user's decision D8 (a), 2026-10-18; through 6.7.14 the list was
-read only at a use, so an unused field compiled).
+read only at a use, so an unused field compiled). A `**G<..>` field (two stars or more) mints its instance after
+the struct's closing `}`, under the struct's own type arguments: `qq: **Box<Pt>`, `p: **Box<A>` inside `A`,
+`struct HG<T> { qq: **Box<T>; }` and `struct LL<T> { next: **LL<T>; }` compile, and `*h.qq + 1` steps the
+instance's size. (Through 6.7.15 such a field minted the instance in the middle of the struct's own fields: one it
+named first lost its fields — *unknown field 'v' on struct 'Box$Pt'* — and a generic struct's own-T field was
+*unknown type 'T' as a type argument*.)
 
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
@@ -1779,7 +1788,13 @@ error: cannot initialise 'x: i64' from 'mk', which returns the struct 'P3' - dec
 Before 6.7.11 the declaration silently became a `P3` behind its annotation (`x.y` compiled, and a
 `u8` held a value over 255). Declare the struct (`var x: P3 = mk(9);`) or bind the field you want
 (`var x: i64 = mk(9).z;`). A struct of 8 bytes or less and a `Str` are one word, which a scalar
-keeps; inside a generic fn, `var x: T = mk(9);` is judged per instance (`T = P3` is the struct).
+keeps; inside a generic fn, `var x: T = mk(9);` is the struct at `T = P3`, and such a generic has no scalar instance:
+`g(5)`, `g(u)` and `g<i32>(5)` are refused at the call, *generic 'g' has no i64 (or other scalar) instance*, its note
+naming the line (6.7.16, the user's D1 of 2026-10-19 — the same for `x = mk(9);` into a `x: T` and `p = mk(9);` into a
+`p: *T` / `**T`, from a call, a method, an operator or a known `&f`; through 6.7.15 the base, which is the `T = i64`
+instance, was not judged and kept the struct's first word, and `g<i32>(5)` was refused in the declaration's words).
+A store THROUGH the pointer, `*p = mk(9);` (`**pp = mk(9);`), is not one of these lines: it is not judged, and
+compiles at every instance as before.
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
@@ -1927,8 +1942,16 @@ every size (*… — `&n` is the address of n's slot, not a struct*; a `Str` han
 6.7.15, the user's D18 of 2026-10-18; through 6.7.14 the 8-byte form returned the slot's address as the struct's word
 (a different byte each run) and over 8 bytes the classes' refusals named nothing. `&t` of an inline `Str` or a tuple is
 the address of that value, refused as `&u` of another struct is (*… got `&t` (a `*Str`)*). In a generic fn,
-`var n: T = x; return &n;` is judged per instance — at `<S>` it is the struct, at `<i32>` the slot refusal; the base,
-which is also the `T = i64` instance, is not judged (`h(3)` alone still returns the slot's address).
+`var n: T = x; return &n;` is the struct at `<S>`, and since 6.7.16 (the user's D1, 2026-10-19) such a generic has no
+scalar instance: `h(3)`, `h<i32>(4)` and `&h` are refused at the call, *generic 'h' has no i64 (or other scalar)
+instance*, its note naming the `&n` (so is a generic forwarding its `T` to h, and `n` may be a `p: *T`, a `var n: T` or
+an untyped `var n = x;` from one); a fn returning its own `: T`, and a closure's own `return &n`, are no such generic.
+Through 6.7.15 the base, which is also the `T = i64` instance, was not judged, and `h(3)` returned a dead slot's
+address as the struct (`h<i32>(4)` was the slot's refusal). A name typed with no type parameter — `var n = 5;`,
+`var n: i64`, `k: i32`, an untyped parameter, an untyped `var` reading nothing of `T` (`sizeof(T)` is an i64 at every
+`T`), a `**S` — holds no struct at any `T`, so `fn h<T>(x: T): S8 { var n = 5; return &n; }` is refused at the `&n`
+with the words above, called or not, as in a non-generic fn (6.7.16, the user's D2 of 2026-10-19; through 6.7.15 such a
+generic compiled when it was never called, or called only with an integer).
 
 ⚠ **Through a fn pointer (6.7.11), the callee written `&f`.** `fncall1(&mk, 5)` and `callptr(&mk, 5)`
 know their callee, and carry its struct result as `mk(5)` does — the hidden pointer over 16 bytes,
@@ -3411,7 +3434,9 @@ Through a `p: *Str`, `*p` is the header p points at (a dereference of a struct p
 `h.eq(*p)`, `f(*gp())` — is passed the pointer, the header's address, as `str_len(p)` passes it (since 6.7.15; through
 6.7.14 the dereference read the header's first word, the data pointer, and passed that as the header: `str_len(*p)`
 was 0). A `p: *Str` parameter given `*pp` takes the `*Str` `*pp` reads, and an untyped parameter the word `*p` reads,
-as before. ⚠ Not yet a generic's `x: T` at `T = Str` (`gg<Str>(*p)` still passes the data word — filed): pass `p`.
+as before. A generic's `x: T` at `T = Str` is passed the header the same way — `gg<Str>(*p)`, the inferred `gg(*p)`
+(which binds `T = Str`), `gg<Str>(**pp)`, a generic method's `o.gm(*p)` (since 6.7.16; through 6.7.15 the instance,
+whose `x` is address-passed, was given the data word: `str_len(x)` 0).
 
 At top level, `var H: Str = gt;` with `gt` an inline `Str` global binds a handle global to gt's static
 header, as the same line in a fn does — in the declaration zone and after the first statement alike (the
@@ -6909,6 +6934,13 @@ function's variable was refused `undefined variable`, and an outer capturing clo
 contained a nested closure lost its own captures after it (refused the same way). Pinned by
 `tests/tcyr/crossos/closure_nested_capture.tcyr`.
 
+A captured name is the variable it captures for `.field`, a field store and `.m()` too (6.7.16): on an
+untyped capture each is refused as on the untyped local — *no struct type in scope for 'x'* in the field,
+assignment or method wording, *SIMD vector has no named fields* for a captured vector, nothing more after
+a refused annotation — and a bounded generic's captured receiver calls its bound's impl at a scalar `T`
+(`fn g<T: Show>(v: T) { var f = || v.show(); .. }` at `T = i64`, and `self` captured in a trait default
+instantiated for `i64`). Through 6.7.15 each was *undefined variable 'x'*, valid or not.
+
 ## Constants and `const fn` (6.7.2)
 
 ```
@@ -7132,7 +7164,9 @@ capture's copy). The user's decision D12 (a), 2026-10-18: through 6.7.14 each ra
 base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A tuple literal
 (`g((p, 3))`) binds nothing. An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
-generic one at its `f64` instance) — binds `T = f64` and calls the `f64` instance,
+generic one at its `f64` instance), and (6.7.16) a closure's captured `f64`, as the local it
+captures: `|| gid(h) * 2.0` (the user's D3, 2026-10-19; through 6.7.15 the capture ran the i64
+base on the double's bits) — binds `T = f64` and calls the `f64` instance,
 exactly as `g<f64>(h)` does, and a `: T` return there is an `f64`: `gid(h) * 2.0`
 is a float multiply and `var v = gid(h);` declares an `f64` (6.7.9; before it the
 call ran the i64 base — `dbl(h)` with `x + x` added the double's bits — and its
@@ -7224,8 +7258,14 @@ direct or struct carrier wins over `**T`: `fn mix<T>(pp: **T, x: T)` binds from 
 A `pp: **Box<T>` parameter (T the generic's own) compiles since 6.7.15, its pointee read
 as the body reads `Box<T>` — at the base `Box<i64>`, in an instance its own `Box<..>`, so `**pp`
 is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with `q: *Box<Pt>`
-(through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). ⚠ It
-infers nothing yet: `nb(&q)` runs the `i64` base (filed) — write `nb<Pt>(&q)`.
+(through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). It
+carries `T` as `p: *Box<T>` does (6.7.16): a call reads its whole argument through its pointers,
+as a `pp: **T` reads its own — `&q` of a `*Box<Pt>`, a `**Box<Pt>` local, parameter, global,
+field or `: **Box<Pt>` call, wrapped — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
+`nb$Pt` as `nb<Pt>(&q)` does; a `ppp: ***Box<T>` reads one pointee down per extra star, a
+`Pair<i64, T>` its slot, a `Box<i32>` its scalar, on a free call and a generic method alike.
+Through 6.7.15 `nb(&q)` ran the `i64` base and read `Box<Pt>.n` at `Box<i64>`'s offset. Anything
+else (`&ps` of a `*Pt`, a `*Box<Pt>` into `**Box<T>`) binds nothing.
 
 **Through a generic struct parameter** (6.7.8). A `T` that no `x: T` parameter
 carries is inferred through a parameter whose generic struct names it as a whole
@@ -7284,7 +7324,12 @@ the list stepped (a scalar return, a by-value field and a slice element were par
 rest compiled with the list ignored). Under `--syntax-only` each is silent, as D6's are. A list longer than its generic declares — `var b: Box<i64,
 i64>;` with `struct Box<T>`, `g<i32, Pt>(5)` on `fn g<T>`, in any position — is refused once, at
 the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the user's D5; through
-6.7.15 the extra argument was read and dropped). A token that is no name at all
+6.7.15 the extra argument was read and dropped). A fn or method that is not generic takes none: `nf<i64>(6)`,
+`p.m<i64>(1)` (on any receiver or chain, a bounded `T`'s member that is not generic included) is refused once, at the
+name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not a generic method: it takes no type
+arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
+'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*). Only a list of type names is read so: `p.n < a, b >
+(c)` stays two comparisons. A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses
@@ -7339,6 +7384,10 @@ struct type argument (6.6.10; before that each of these compiled and returned 0)
 The carrier rule looks one field deep: a field typed `Box<T>` inside another carrier
 (`o.inner.v.y` with `o: Out<T>`) is not followed — bind the value to a `T`-typed
 local first (`var t: T = o.inner.v; return t.y;`), which makes the base the stub.
+Only the name a chain starts with is read: a field of a field — `g.v.v = v` with `g: G1<Box<T>>`,
+`q.a.k` beside a parameter `a: T` — is no use of the parameter its field shares a spelling with
+(6.7.16; through 6.7.15 it was, so `mkn<i32>(33)` was refused *generic 'mkn' has no i64 (or other
+scalar) instance*).
 A generic method's scalar call is refused the same way, naming the method as the call
 spells it: `p.pick(9)` and `p.pick(h)` (an `f64`) are refused *generic 'P.pick' has no
 i64 ... instance*, as `P_pick(p, 9)` is naming `P_pick` (6.7.11; before it they compiled
@@ -7348,9 +7397,15 @@ name into such a method — `fn o<T>(p: P, t: T) { return p.pick(t); }`, or a
 generic method's `self.pick(w)` — is a stub too: `o(p, 5)` is refused, `o(p, q)`
 calls `o$Q`. The receiver may be a name, a field chain (`h.p.pick(t)`, `x.hp.p.pick(t)`
 through a `*H` field) or a call's result (`mk().pick(t)`, `mkh().p.pick(t)`, a method
-call's `h.gp().pick(t)`, a generic's plain `: P` return).
+call's `h.gp().pick(t)`, a generic's plain `: P` return). A local typed by a generic call is
+typed as the parser binds the call: `var r = gd2(&GPP); return r.pick(t);` with
+`fn gd2<T>(pp: **T): T` and `GPP: *P`, and `var r = gd(gpi(&GP0));` with `fn gpi<T>(x: *T): *T`,
+forward `t` into `P.pick` as `gd2<P>(&GPP)` does — every `**T` source (a `**P` local,
+parameter, global or field, `&pl`, a `: **P` call, a generic `: **U` one, wrapped, `+ 0`, a
+`***T`), a generic `: *U` call at any depth, and a `pp: **Box<T>` carrier (6.7.16; through
+6.7.15 such a forwarder was refused naming `P.pick`, its i64 base reaching the stub method).
 A `T` forwarded inside a struct carrier counts the same: a struct carrier's name (`gx(b)`
-with `b: Box<T>`) or a generic call carrying `T` (`gx(mk1(x))`, `gx(mk1<T>(x))`, nested
+with `b: Box<T>`; 6.7.16: a `pp: **Box<T>` parameter or local into a stub's `**Box<U>`) or a generic call carrying `T` (`gx(mk1(x))`, `gx(mk1<T>(x))`, nested
 `gx(wrap(b))`) passed to a stub `fn gx<T>(b: Box<T>)` — or to a stub generic method — makes the
 forwarder a stub: `outer(p)` and `outer<Pt>(p)` call `outer$Pt`, `outer(5)` is refused naming
 `outer` (6.7.14; through 6.7.13 the forwarder's definition was refused, called or not,
@@ -7358,6 +7413,11 @@ naming `gx`). So does the forwarder's `T`-typed value itself, whole in the carri
 (`fn outer<T>(x: T) { return gx(x); }`, or a `p: *T` / `var y: T` name): `outer(b)` with
 `b: Box<Pt>` calls outer's `Box<Pt>` instance, whose `gx(x)` binds gx's `T` to `Pt`, and `outer(5)` is refused
 naming `outer` (6.7.15; through 6.7.14 the definition was refused naming `gx`).
+Two more lines need `T` to be a struct (6.7.16, the user's D1 of 2026-10-19): `return &n;` with `n` typed by `T` in a fn
+returning a struct (`&n` is that struct only when `T` is it), and a struct result over 8 bytes stored in a name typed
+by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
+kept the struct's first word. The refusal's note names the line that needs a struct (for a forwarder, the forward and
+then that line): *note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter*.
 
 ```
 struct Pt { x; y; }
@@ -7375,6 +7435,13 @@ returns the instance — `return mk(p);` and `return mk<Pt>(p);` included, in th
 register-pair (9-16 byte) and retptr classes alike (6.6.10; before that such a
 type was sized as the base `Box`, where `v: T` is an i64 — `r.v.x` failed to
 parse). As for a `var`, an all-`i64` argument list names the base struct itself.
+A generic's base — its i64 instance — reads its signature's list with `T` bound to i64, as its
+body reads the same annotation: `fn mkn<T>(v: T): G1<Box<T>>` returns a `G1<Box<i64>>` from its base
+(`mkn(33).v.v`) and a `G1<Box<Pt>>` from its `Pt` instance, a bare `: G1<T>` is still the base `G1`,
+and a generic's `b: Box<Pt>`, `b: *Box<Pt>`, `g: G1<Box<T>>` or `: Box<i32>` names the instance in every
+instance, its base included (6.7.16; through 6.7.15 the base read every such list as the base struct,
+so `var g: G1<Box<T>>; .. return g;` was refused at the definition, *a fn returning the struct `G1`
+takes a value of that struct .. got `g` (a `G1$Box`)*, and `b.v.y` did not parse).
 A pointer to one is a return type too: `fn mkp<T>(x: T): *Box<T>` returns a `*Box<Pt>` from
 its `Pt` instance (`mkp<Pt>(p).n`, `var q: *Box<Pt> = mkp(p);`, and a `*Box<T>` carrier
 infers from the call: `gp(mkp(p))`) and a `*Box` from its base (6.7.14; through 6.7.13
@@ -7390,6 +7457,13 @@ through 6.7.14 they compiled as the base `Box`). A generic's own `fn gm<K, V>(m:
 A `: T` return in an instance whose `T` is a struct returns that struct by value,
 as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
 return the struct's address); `Str` keeps its heap-handle return.
+A multi-value return's element typed by a type parameter is the instance's binding the same way:
+`fn mm2<V>(x: V): (V, i64)` returns `(f64, i64)` at `V = f64`, so `var a, b = mm2<f64>(h);` binds `a` as an
+`f64` — in every spelling: the inferred `mm2(h)`, a method's `p.mm<f64>(h)` / inferred `p.mm(h)`, a tuple capture
+`var t: (f64, i64) = mm2<f64>(h);`, a multi-value assignment (6.7.16; through 6.7.15 every instance's `V` element
+was an `i64` word: `a * 2.0` was integer arithmetic on the double's bits, and the `(f64, i64)` capture was refused).
+The checks read the instance's values too: `var t: (i64, i64) = mm2<f64>(h);` is refused (it returns `(f64, i64)`),
+as for a fn written `(f64, i64)`. A narrower integer (`V = i32`) stays an `i64` slot, as `(i32, i64)` does.
 
 ### Generic structs
 
@@ -7486,8 +7560,14 @@ describe<i32>(7);   # needs impl Show for i32
 - **A bound is a contract.** On a bounded `T`-typed parameter or local (`v: T`, `p: *T`,
   `var q: T`), `v.m()` must be a method of one of the bound's traits — a method no bound declares,
   or one two bounds both declare, is a compile error at the generic's **definition**, whether or not
-  it is ever called. The call is that trait's method for `T`'s impl: when `T` has two traits giving it
-  an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. Fields are not part of a
+  it is ever called — each one reported, every generic's and every call's of a body (6.7.16; through 6.7.15 the
+  first of a compile hid the rest). The call is that trait's method for `T`'s impl: when `T` has two traits giving it
+  an `m` (`Pt_Size_size`, `Pt_Other_size`), `<T: Size>` calls `Size`'s. The explicit spelling (6.7.14) is the same
+  call: `v.other<i64>(1)` is refused as `v.other(1)` is, and a bound's own generic member called with its list —
+  `v.show<i32>(1)` with `trait Show { fn show<V>(self, k: V): i64; }` — calls `T`'s impl's `show` at `V = i32`, a
+  scalar `T` too (6.7.16, the user's D4; through 6.7.15 the explicit spelling escaped the contract and called the
+  instance's own method, and a scalar `T` refused it). A list is read so when every name in it is a type; `v.y < a,
+  b > (c)` stays two comparisons. Fields are not part of a
   trait — `v.x` on a bounded `T` resolves per instance, as on an unbounded one. An **unbounded** `T`
   keeps per-instance resolution: `fn f<T>(v: T) { return v.show(); }` compiles and works for any `T`
   that has a `show`.
@@ -7496,8 +7576,8 @@ describe<i32>(7);   # needs impl Show for i32
   a struct use of `T` — so `gs(bi)` with `bi: Box<i64>` calls `impl Show for i64`'s method with the
   field's value, as `t.show()` on a `t: T` does, and `gs(b)` with a `Box<Pt>` calls Pt's (6.7.14;
   before it the base was the struct stub, and `gs(bi)` was refused "uses its type parameter as a
-  struct"). The contract holds there as on a `T`-typed name: `b.v.other()` with a method no trait of
-  the bound declares, or one two bounds both declare, is a compile error at the generic's definition,
+  struct"). The contract holds there as on a `T`-typed name: `b.v.other()` (or `b.v.other<i64>(1)`, 6.7.16) with a
+  method no trait of the bound declares, or one two bounds both declare, is a compile error at the generic's definition,
   called or not (6.7.15, the user's D5; through 6.7.14 it compiled and called the instance's own
   method). A `*T` field (`p: *T`), and a field whose type parameter has no bound, keep resolving per
   instance.
@@ -7534,8 +7614,13 @@ describe<i32>(7);   # needs impl Show for i32
   included, "uses its type parameter as a struct"; 6.7.14 judged a chain only 64 forwards deep, so a
   65th forwarder's base was refused at its definition — 6.7.15 judges each generic once, at any depth). A
   generic method, as the forward target or in the note, is named as the source spells it, `P.bk` (6.7.16; it
-  printed the fn table's `P_bk`). The call that instantiates such a chain at another type is still held to the parser's nesting bound: about 120
-  forwards, past which it is *nesting too deep (over 256 levels)*, a chain without a bound alike.
+  printed the fn table's `P_bk`). The call that instantiates such a chain at another type parses each link's instance
+  inside the call that reaches it, so the chain is bounded by the compiler's stack, not by the parser's 256 nesting
+  levels (an instance's body counts its own): about 300 links compile (a few fewer with the Windows compiler), and a
+  longer chain is refused *nesting too deep (N generic instances, each parsed inside the call that reaches it, used
+  over 6 MB of the compiler's stack)*, a chain without a bound alike. Until 6.7.16 it was about 120 links (*over 256
+  levels*), and on x86 about 190 (*function exceeds 1023 jump targets*, which also refused one fn calling ~210
+  distinct generics: an instance's jump targets now stay its own).
 
 Before 6.7.1 `<T: Show>` minted a SECOND type parameter named `Show`, so `describe(p)` with a struct
 was refused as "a struct beside a second type argument", and no bound was checked. Dispatch is

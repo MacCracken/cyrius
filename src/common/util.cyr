@@ -2655,6 +2655,20 @@ var _wd_eof = 0;
 # not nested at all) can never accumulate its way to the bound.
 var _rdepth = 0;
 
+# ⛔ 6.7.16 — THE 256 LEVELS ARE LEXICAL: A GENERIC'S INSTANCE STARTS ITS OWN COUNT, AND THE STACK ITSELF IS BOUNDED.
+# An instance is parsed when a call first reaches it, nested inside that call (`_instantiate_generic_fn` ->
+# PARSE_FN_DEF), so a chain of generics forwarding their T spent two of the 256 levels per link: 122 forwarders called
+# at f64 were refused "over 256 levels" with no level of the source over 2 deep. Each instance's body is counted from 0
+# (`_rd_inst_enter`), and what does bound a chain is the native stack: `_rd_enter` refuses once the parse is more than
+# 6 MB (`_RD_STACK`) below the first frame it saw (`_rd_sp0`) — 2 MB under the 8 MB stack of Linux, macOS and
+# aarch64 and of PE's reserve, the margin for the frames between two checks. An instance level costs ~20 KB, so
+# ~300 links compile. A counter, not this probe, still bounds lexical nesting: hostile source is refused at 256
+# exactly as before. The compiler runs natively on every host (cycc_cx too; only its OUTPUT runs on cxvm), so the
+# stack is the one downward-growing native stack the 6.5.19 note above asked for. CHANGELOG [6.7.16]
+var _rd_sp0 = 0;
+var _rd_inst = 0;   # how many generic instances the parse is inside
+var _RD_STACK = 6291456;
+
 # Called from the two recursive-descent chokepoints — the PARSE_STMT and PEXPR wrappers
 # — which between them cover all six crashing vectors. Returns 1 if the caller must not
 # descend (it never returns at all once the bound trips, but the shape keeps the call
@@ -2667,11 +2681,43 @@ fn _rd_enter(S): i64 {
         syscall(SYS_WRITE, 2, ": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
         syscall(SYS_EXIT, 1);
     }
+    var m[8];
+    var sp = &m;
+    if (_rd_sp0 == 0) { _rd_sp0 = sp; }
+    if (_rd_sp0 - sp > _RD_STACK) { _rd_stack_refuse(S); }
     return 0;
 }
 
 fn _rd_exit(): i64 {
     _rdepth = _rdepth - 1;
+    return 0;
+}
+
+# The stack bound's refusal. Past it only a chain of generic instances can be (each body is held to 256 levels).
+fn _rd_stack_refuse(S): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    if (_rd_inst > 0) {
+        PRSTR(": nesting too deep (");
+        PRNUM(_rd_inst);
+        PRSTR(" generic instances, each parsed inside the call that reaches it, used over 6 MB of the compiler's stack)\n");
+    } else {
+        PRSTR(": nesting too deep (over 6 MB of the compiler's stack — truncated or hostile source)\n");
+    }
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
+# Around an instance's PARSE_FN_DEF: its body's levels count from 0. Returns the enclosing count for `_rd_inst_exit`.
+fn _rd_inst_enter(): i64 {
+    var d = _rdepth;
+    _rdepth = 0;
+    _rd_inst = _rd_inst + 1;
+    return d;
+}
+fn _rd_inst_exit(d): i64 {
+    _rdepth = d;
+    _rd_inst = _rd_inst - 1;
     return 0;
 }
 

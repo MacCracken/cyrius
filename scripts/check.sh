@@ -2761,6 +2761,7 @@ _chk_gate "$ROOT/tests/gates/frontend/traits_checked.sh"
 _chk_gate "$ROOT/tests/gates/frontend/generic_struct_field.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/trait_bounds_checked.sh"   # 6.7.1 (C3)
 _chk_gate "$ROOT/tests/gates/frontend/bound_forward_chain_scale.sh"   # 6.7.15 (the memoised bound judgement; serial)
+_chk_gate "$ROOT/tests/gates/frontend/generic_definitions_scale_linear.sh"   # 6.7.16 (a signature's type parameter scans nothing; serial)
 _chk_gate "$ROOT/tests/gates/frontend/const_checked.sh"   # 6.7.2 (B1, C1)
 _chk_gate "$ROOT/tests/gates/frontend/bool_checked.sh"    # 6.7.3 (B2)
 _chk_gate "$ROOT/tests/gates/frontend/enum_const_not_lvalue.sh"   # 6.7.3 (repair lane)
@@ -2934,6 +2935,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_count_refused.sh"
 # (the user's D8). Its uses say nothing more, a bound on it goes with it, source order, --syntax-only, the
 # controls x86 / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_tparam_count_refused.sh"
+# 6.7.16 — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call
+# parsed as its plain spelling: `nf<i64>(6)` / `p.m<i64>(1)` read the `<` as less-than ("undefined variable 'nf'",
+# "unknown field 'm'" + "undefined variable 'i64'"). A fn, a method on every receiver, a bounded T's member, no such
+# method, --syntax-only silent, comparisons and generic callees unchanged, every cross compiler. Mutation ledger in
+# the header.
+_chk_gate "$ROOT/tests/gates/frontend/type_args_on_nongeneric_refused.sh"
 # 6.7.11 — a generic METHOD call reaches the instance its arguments bind, as the free spelling does: a
 # struct binding ran the i64 base (`p.pick(q)` returned 0 from the dead stub; a `Box<V>` carrier was
 # refused), and a scalar binding of a stub is refused naming the fn (the user's decision A, 2026-10-13;
@@ -2941,6 +2948,12 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_tparam_count_refused.sh"
 # a field-chain or call receiver, and 49 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in
 # the header.
 _chk_gate "$ROOT/tests/gates/frontend/generic_method_infer.sh"
+# 6.7.16 — a generic's multi-value element typed by its type parameter is the instance's binding, as a `: T` return
+# is: `var a, b = mm2<f64>(h);` bound `a` as an integer word (the filed repro 7, want 10), in every spelling — free,
+# inferred, method (the inferred `p.mm(h)` resolved to its instance), a tuple capture (refused before), top level.
+# The checks read the instance's signature; a generic's tuple local is refused once. x86 / IR / DCE / aarch64 / cx /
+# PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_multi_value_element.sh"
 # 6.7.14 — a `p: *T` parameter binds what its pointer argument points at (`&G` / `&l`, a `*S` global,
 # parameter, capture, field chain or `: *S` call) and an `x: T` one binds no pointer (the user's decision
 # D8 (a), 2026-10-16): only a `*S` local bound, through both shapes. The filed repro's nine rows, a

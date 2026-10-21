@@ -34,6 +34,11 @@
 #      refused naming i64 (F6), and an explicit struct argument without its impl, `gb<R>(r)`, gets one
 #      note naming R (F7; the refused instance's base call added an i64 note).
 #      Filed: docs/development/issues/archived/2026-10-11-bounded-generic-f64-impl-needs-i64-impl.md
+#   C  6.7.16 (the user's D3, 6.7.16's, 2026-10-19: "binds f64, like the local it captures") — a closure's
+#      captured f64 binds T = f64 as the f64 local it captures does: the filed repro, verbatim, exits 33 (30
+#      before: mc() ran the i64 base on the double's bits, 0) on x86_64, CYRIUS_IR=3, aarch64, cx and PE, with
+#      no warning on x86_64 (one before: "integer arithmetic with an f64 right operand"); `_ic_cap`'s f64 rung.
+#      Filed: docs/development/issues/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
 #   T  tests/tcyr/crossos/generic_f64_result.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -69,6 +74,10 @@
 #       fix reverted)                                 T: the file does not build on any leg
 #   M13 `_explicit_generic_call` without its       -> RED F5 (two notes: f64, then i64) and F7 (two notes:
 #       `_ta_explicit = 2` (the base re-judged)       R, then i64); every run row green
+# 6.7.16 (2026-10-20, the same method):
+#   M14 `_ic_cap` without its f64 rung (the tree   -> RED C (exit 30) on every leg, C's warning; T 11 of 69 on
+#       before it)                                    every leg (the captured-f64 rows; a captured i64 and a
+#                                                     captured *f64 stay green)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -100,7 +109,7 @@ R1=docs/development/issues/repros/2026-10-10-generic-call-f64-result-untyped.cyr
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=56
+FLOOR=69
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -151,6 +160,25 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     elif [ "$RC" -eq 0 ]; then ok "R1 $leg: exit 0"
     else bad "R1 $leg: exit $RC, want 0"; fi
 done
+
+echo "C. a closure's captured f64 binds f64, as the local it captures (6.7.16, D3): the filed repro exits 33"
+cat > "$D/c3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn gid<T>(x: T): T { return x; }
+fn m(): i64 { var h: f64 = 1.5; return f64_to(gid(h) * 2.0); }
+fn mc(): i64 { var h: f64 = 1.5; var f = || f64_to(gid(h) * 2.0); return fncall0(f); }
+syscall(60, m() * 10 + mc());
+EOF
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'C_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/c3.cyr" "$D/c_$n"
+    if [ "$RC" -eq -1 ]; then bad "C $leg: did not build: $(grep -m1 'error' "$D/c_$n.err")"
+    elif [ "$RC" -eq 33 ]; then ok "C $leg: exit 33"
+    else bad "C $leg: exit $RC, want 33 (30 = the captured h ran the i64 base)"; fi
+done
+nw=$(grep -c 'warning' "$D/c_C_x86.err" 2>/dev/null || true)
+if [ "$nw" -eq 0 ]; then ok "C x86: no warning"
+else bad "C x86: $nw warning(s), want none: $(grep -m1 'warning' "$D/c_C_x86.err")"; fi
 
 echo "W. x86_64 warnings: a generic's f64 result mixes like an f64 value"
 "$CC" < "$R1" > "$D/w_r1" 2> "$D/w_r1.err" || true
@@ -332,4 +360,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic call whose T = f64 is inferred or names T only in its return is an f64: the filed repro (R1) on x86_64 / IR / aarch64 / cx / PE, the warnings (W) and the bound (B) on x86_64, a bound with no i64 impl met at f64 (F) on x86_64 / IR / aarch64 / cx / PE, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic call whose T = f64 is inferred or names T only in its return is an f64: the filed repro (R1) on x86_64 / IR / aarch64 / cx / PE, a captured f64 (C) on every leg, the warnings (W) and the bound (B) on x86_64, a bound with no i64 impl met at f64 (F) on x86_64 / IR / aarch64 / cx / PE, and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

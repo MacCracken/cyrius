@@ -226,7 +226,9 @@
 #      replayed `return` is the callee's (through 6.7.13 the file did not build: refused by the caller's class);
 #      6.7.14 (76 -> 83): `var h: S = gpg<S>();` in a fn is a handle at 8 / 16 / 24 B, inferred too (through 6.7.13
 #      refused: the annotation was dropped, "no struct type in scope for 'h'"); 6.7.14 (83 -> 88): a generic
-#      declared `: *Box<T>` compiles and its call is a `*Box<..>` (through 6.7.13 refused at its definition)
+#      declared `: *Box<T>` compiles and its call is a `*Box<..>` (through 6.7.13 refused at its definition);
+#      6.7.16 (88 -> 104): a `pp: **Box<T>` parameter carries T from every `**Box<S16>` source (the `pq_*` rows;
+#      through 6.7.15 the i64 base ran, 88 for 96 — generic_double_pointer_infer.sh G)
 #   R13 (6.7.11, issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md and
 #      issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md)
 #      tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr on the same legs (floor 75): a `*T` LOCAL returned
@@ -973,7 +975,7 @@ done
 TGP=tests/tcyr/crossos/generic_ptr_struct_source.tcyr
 [ -f "$TGP" ] || { echo "FAIL: $G: $TGP is missing"; exit 1; }
 NGP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TGP")
-GPFLOOR=88
+GPFLOOR=104
 if [ "$NGP" -lt "$GPFLOOR" ]; then echo "FAIL: $G: only $NGP rows in $TGP (floor $GPFLOOR) — rows were lost"; exit 1; fi
 echo "R12. $TGP ($NGP rows: a generic call declared : *T is a struct source)"
 for leg in $XLEGS $OTHER; do

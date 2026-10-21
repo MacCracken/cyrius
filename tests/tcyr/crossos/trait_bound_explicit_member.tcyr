@@ -1,0 +1,114 @@
+# trait_bound_explicit_member.tcyr — 6.7.16 (the user's D4, 2026-10-19): a bound's own GENERIC member called with its
+# explicit type-argument list (6.7.14's D7 (a) spelling) on a bounded T, at run time, on every backend
+# (issues/2026-10-18-explicit-method-type-args-escape-bound-contract.md).
+#
+# The bound's contract site scan keyed a call by `name . name (`, so `v.show<i32>(1)` was no bounded site: the stub
+# scan read it as a struct use of T, the base was the stub, and at a SCALAR T (`impl Show for i64`) the call was refused
+# ("uses its type parameter as a struct", "no struct type in scope for 'v'", "expected ';', got '.'") where the inferred
+# `v.show(1)` calls `i64_show`. The explicit spelling is now a bounded site, read as a trait use, and at a scalar T the
+# member arm reads the list and calls T's impl method's instance with the value as `self`. The list is KEPT, not
+# re-inferred: `show<V>` returns the receiver's y (or value) plus sizeof(V), so `<i32>` / `<i16>` / `<i8>` give 4 / 2 / 1
+# where the argument `1` alone would bind V = i64 (8). A name, a carrier's T field (`b.v`, `*Box<T>`, a `var c: Box<T>`),
+# a `*T` at a struct T, a `var q: T`, a generic method — returned, received by `var`, a statement, an operand, an
+# argument, and an f64 member received by an untyped `var` (the lookaheads type the explicit call as the inferred one).
+# The refusals (a method no trait of the bound declares, `v.other<i64>(1)`) are tests/gates/frontend/
+# trait_bounds_checked.sh BX.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+trait Show {
+    fn show<V>(self, k: V): i64;
+    fn shf<V>(self, k: V): f64;
+}
+struct Pt { x; y; }
+impl Show for Pt {
+    fn show<V>(self, k: V): i64 { return self.y + sizeof(V); }
+    fn shf<V>(self, k: V): f64 { return 2.5; }
+}
+impl Show for i64 {
+    fn show<V>(self, k: V): i64 { return self + sizeof(V); }
+    fn shf<V>(self, k: V): f64 { return 2.5; }
+}
+struct Box<T> { v: T; n; }
+struct Q { k; }
+impl Q { fn m<T: Show>(self, v: T): i64 { return v.show<i8>(1); } }
+
+fn id(x): i64 { return x; }
+fn a1<T: Show>(v: T): i64 { return v.show<i32>(1); }
+fn a2<T: Show>(v: T): i64 { var r = v.show<i16>(1); return r; }
+fn a3<T: Show>(v: T): i64 { v.show<i8>(1); return v.show<i8>(1); }
+fn a4<T: Show>(v: T): i64 { return v.show<i32>(1) + v.show<i8>(1); }
+fn a5<T: Show>(v: T): i64 { return id(v.show<i32>(1)); }
+fn a6<T: Show>(v: T): i64 { var h = v.shf<i32>(1); if (h > 2.0) { return 1; } return 0; }
+fn a7<T: Show>(v: T): i64 { var h: f64 = v.shf<i32>(1); if (h > 2.0) { return 1; } return 0; }
+fn a8<T: Show>(v: T): i64 { var q: T = v; return q.show<i32>(1); }
+fn a9<T: Show>(v: T): i64 { return v.show<i64>(1); }
+fn ap<T: Show>(p: *T): i64 { return p.show<i32>(1); }
+fn b1<T: Show>(b: Box<T>): i64 { return b.v.show<i32>(1); }
+fn b2<T: Show>(b: Box<T>): i64 { var r = b.v.show<i16>(1); return r; }
+fn b3<T: Show>(b: Box<T>): i64 { b.v.show<i8>(1); return b.v.show<i8>(1); }
+fn b4<T: Show>(b: Box<T>): i64 { return b.v.show<i32>(1) + b.v.show<i8>(1); }
+fn b5<T: Show>(b: Box<T>): i64 { return id(b.v.show<i32>(1)); }
+fn b6<T: Show>(b: Box<T>): i64 { var h = b.v.shf<i32>(1); if (h > 2.0) { return 1; } return 0; }
+fn b7<T: Show>(b: *Box<T>): i64 { return b.v.show<i32>(1); }
+fn b8<T: Show>(x: T): i64 { var c: Box<T>; c.v = x; var r = c.v.show<i16>(1); return r; }
+fn b9<T: Show>(b: Box<T>): i64 { return b.v.show<i64>(1); }
+
+fn run(): i64 {
+    var p: Pt;
+    p.x = 0;
+    p.y = 6;
+    var bp: Box<Pt>;
+    bp.v.y = 6;
+    bp.n = 0;
+    var bi: Box<i64>;
+    bi.v = 6;
+    bi.n = 0;
+    var q: Q;
+    q.k = 0;
+    assert_eq(a1(p), 10, "a1 Pt: v.show<i32>(1) returned");
+    assert_eq(a1(6), 10, "a1 i64: v.show<i32>(1) at a scalar T");
+    assert_eq(a1<Pt>(p), 10, "a1<Pt>");
+    assert_eq(a1<i64>(6), 10, "a1<i64>");
+    assert_eq(a2(p), 8, "a2 Pt: var r = v.show<i16>(1)");
+    assert_eq(a2(6), 8, "a2 i64");
+    assert_eq(a3(p), 7, "a3 Pt: a statement, then returned");
+    assert_eq(a3(6), 7, "a3 i64");
+    assert_eq(a4(p), 17, "a4 Pt: two operands");
+    assert_eq(a4(6), 17, "a4 i64");
+    assert_eq(a5(p), 10, "a5 Pt: an argument");
+    assert_eq(a5(6), 10, "a5 i64");
+    assert_eq(a6(p), 1, "a6 Pt: an f64 member into an untyped var");
+    assert_eq(a6(6), 1, "a6 i64");
+    assert_eq(a7(p), 1, "a7 Pt: into a var: f64");
+    assert_eq(a7(6), 1, "a7 i64");
+    assert_eq(a8(p), 10, "a8 Pt: var q: T");
+    assert_eq(a8(6), 10, "a8 i64");
+    assert_eq(a9(p) - 7, 7, "a9 Pt: the filed shape, v.show<i64>(1)");
+    assert_eq(a9(0 - 1), 7, "a9 i64");
+    assert_eq(ap(&p), 10, "ap: p: *T at a struct T");
+    assert_eq(b1(bp), 10, "b1 Box<Pt>: b.v.show<i32>(1)");
+    assert_eq(b1(bi), 10, "b1 Box<i64>: a scalar T field");
+    assert_eq(b2(bp), 8, "b2 Box<Pt>");
+    assert_eq(b2(bi), 8, "b2 Box<i64>");
+    assert_eq(b3(bp), 7, "b3 Box<Pt>");
+    assert_eq(b3(bi), 7, "b3 Box<i64>");
+    assert_eq(b4(bp), 17, "b4 Box<Pt>");
+    assert_eq(b4(bi), 17, "b4 Box<i64>");
+    assert_eq(b5(bp), 10, "b5 Box<Pt>");
+    assert_eq(b5(bi), 10, "b5 Box<i64>");
+    assert_eq(b6(bp), 1, "b6 Box<Pt>: an f64 member");
+    assert_eq(b6(bi), 1, "b6 Box<i64>");
+    assert_eq(b7(&bp), 10, "b7 *Box<Pt>");
+    assert_eq(b7(&bi), 10, "b7 *Box<i64>");
+    assert_eq(b8(p), 8, "b8 Pt: var c: Box<T>");
+    assert_eq(b8(5), 7, "b8 i64");
+    assert_eq(b9(bi) - 7, 7, "b9 Box<i64>: the filed field shape at a scalar T");
+    assert_eq(q.m(p), 7, "Q.m Pt: a generic method's bounded parameter");
+    assert_eq(q.m(5), 6, "Q.m i64");
+    return 0;
+}
+var r0 = run();
+var rr = assert_summary();
+syscall(60, rr);

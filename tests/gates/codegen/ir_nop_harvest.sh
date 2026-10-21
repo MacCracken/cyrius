@@ -55,11 +55,17 @@ if [ "$N" -ge 14000 ]; then
   exit 1
 fi
 
-# 2. no size regression against the default path.
+# 2. no size regression against the default path: the IR=3 build is not LARGER than the default by more than 20000
+# B (un-harvested it was +65,320). ⛔ 6.7.16 — ONE-SIDED. The check took |IR=3 - default| of the page-padded file sizes, so an
+# IR=3 build SMALLER than the default (it harvests more: .text 2,447,889 vs 2,464,833 at the genbind lane's GB2) went RED
+# the moment the default build crossed a 4 KB page — 20,480 B, five pages, from a +1,040 B .text change. A smaller IR=3
+# build is no regression; step 3 below is what proves it correct. Rows (2026-10-20): this gate at 69a6e0469 (the
+# two-sided check) -> RED "delta 20480"; the one-sided check GREEN there; an IR=3 size planted 45,056 B larger (24,576 B
+# over the default once padded) -> RED "+24576". CHANGELOG [6.7.16]
 SD=$(stat -c%s "$T/stage1"); SI=$(stat -c%s "$T/ir3")
-D=$(( SI - SD )); [ "$D" -lt 0 ] && D=$(( -D ))
+D=$(( SI - SD ))
 if [ "$D" -gt 20000 ]; then
-  echo "FAIL ir_nop_harvest: IR=3 build is $SI B vs default $SD B (delta $D). Un-harvested delta was +65320."
+  echo "FAIL ir_nop_harvest: IR=3 build is $SI B vs default $SD B (+$D). Un-harvested delta was +65320."
   exit 1
 fi
 

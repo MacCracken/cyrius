@@ -539,6 +539,97 @@ for f in so_bad1 so_bad2; do
     check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 done
 
+# ── AXIS 14 (6.7.16) — a CALL in the chain of a receiver whose struct this file cannot see: `a.m<i64>(1)` (6.7.14's
+# explicit spelling), `a.h.k(1)`, `a.h.m<i64>(1)` with `a: Foo` and Foo (with `h: *Foo`) a sibling's. The receiver has no
+# struct here, and `--syntax-only` walked the rest as `.field`s: the `<` was read as less-than and the stray `>` /
+# `(` reported — "expected ';', got '>'" / "got '('" — a syntax error the file does not have (6.7.16's D4 put a bounded T
+# bound to a scalar on the same path: trait_bounds_checked.sh BXS). The chain walk (`_synonly_chain_call`) steps a
+# method's list by its shape (`_synonly_mlist`) and parses each call's arguments. ANTI-VACUOUS: a syntax error inside
+# such a call's arguments is still reported, at its token. RED on f272ffabf (the bite before): every --syntax-only and
+# LINTED row of so14a-so14d, and the three position rows (the stray `<` / `(` reported, not the error inside).
+# MUTATIONS (2026-10-20, a one-edit scratch copy of src/ each, installed as build/cycc): `_synonly_chain_call` without
+# `_synonly_mlist` -> so14a, so14c, so14d RED (+ the so14_bad1 / so14_bad3 position rows); the `sid == 0` arm back on
+# `_synonly_skip_chain` -> so14a-so14d RED (+ all three position rows).
+# so14e (the genbind review fix): a NAMED argument in those calls — `a.k(x: 1)`, `a.h.k(x: 2)`, `a.m<i64>(x: 2)` — was
+# "expected ')', got ':'" (each argument went straight to PCMPE); `_synonly_args` steps the `name:` label, and the
+# single-name method arm (`a.k(..)`, `_field_load_on`'s `sid == 0` arm) parses its list through it. ANTI-VACUOUS:
+# so14_bad4 / so14_bad5, a named argument followed by a stray token, are refused at it. MUTATIONS (2026-10-20, a
+# scratch copy of src/ each, installed as build/cycc): `_synonly_args` without the label step -> RED 5: so14e's three
+# --syntax-only / LINTED rows, the so14_bad4 / so14_bad5 position rows (the `:` reported); the method arm back on its own
+# PCMPE loop -> RED 4: so14e's three, so14_bad5's position row.
+# so14f (met beside that fix): the CHAIN on a single-name call's result — `a.r(1).g`, `a.r(2).k(3)` — was "expected ';',
+# got '.'" (the arm parsed the arguments and returned; the `a.h.r(4).g` spelling already walked it): the arm is
+# `_synonly_chain_call`. ANTI-VACUOUS: so14_bad6 `a.r(1).k(2 3)` is refused at the stray token. MUTATION (2026-10-20, as
+# above): the arm back on `_synonly_args` -> RED 4: so14f's three, so14_bad6's position row (the `.` at 2:11 reported).
+echo "axis 14 — a call in the chain of a receiver whose struct is in a SIBLING file passes --syntax-only and lint:"
+printf 'struct Foo { g; h: *Foo; }\nimpl Foo { fn m<V>(self, x: V) { return x + self.g; } fn k(self, x) { return x; } fn r(self, x): Foo { var q: Foo; q.g = x; q.h = 0; return q; } }\n' > "$T/w/so14_sib.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1);\n    return a.m<i64>(2) + a.g;\n}\nvar r = 0;\n' > "$T/w/so14a.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.k(1);\n    return a.h.k(2) + a.h.g;\n}\nvar r = 0;\n' > "$T/w/so14b.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1);\n    return a.h.m<i64>(2);\n}\nvar r = 0;\n' > "$T/w/so14c.cyr"
+printf 'fn f(a: Foo): i64 {\n    var v = a.m<i64>(1);\n    return v + a.h.m<Foo>(a);\n}\nvar r = 0;\n' > "$T/w/so14d.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.k(x: 1);\n    return a.h.k(x: 2) + a.m<i64>(x: 2) + a.h.m<i64>(x: 3) + a.m(x: 4);\n}\nvar r = 0;\n' > "$T/w/so14e.cyr"
+printf 'fn f(a: Foo): i64 {\n    var x = a.r(1).g;\n    return a.r(2).k(3) + a.h.r(4).g + x;\n}\nvar r = 0;\n' > "$T/w/so14f.cyr"
+for f in so14a so14b so14c so14d so14e so14f; do
+    cat "$T/w/so14_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+    check "premise: $f compiles once Foo is in scope" 0 "$j_rc"
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1;\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad1.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.k(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad2.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad3.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.h.k(x: 1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad4.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.k(x: 1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad5.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.r(1).k(2 3);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad6.cyr"
+for x in so14_bad1:2:15 so14_bad2:2:13 so14_bad3:2:18 so14_bad4:2:16 so14_bad5:2:14 so14_bad6:2:16; do
+    f=${x%%:*}; at=${x#*:}
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "ANTI-VACUOUS: $f, a syntax error inside the call, is refused by --syntax-only" "yes" "$([ "$s_rc" != 0 ] && echo yes || echo no)"
+    check "ANTI-VACUOUS: $f names it at $at, alone" "1 1" "$(grep -c '^error' "$T/se") $(grep -cE "^error:<source>:$at: expected " "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+done
+
+# ── AXIS 15 (6.7.16) — a LOCAL of a sibling module's struct: `var a: Foo;`, `var b: Box<i64>;` with Foo / Box declared
+# in another file. A struct local takes no initializer; under `--syntax-only` the name answers no type, its
+# annotation's refusal is silent, and the bare-declaration rule said "uninitialized variable not allowed" — not a
+# context message, so lint refused the file. `_synonly_sib_local` accepts a name no type answers there. ANTI-VACUOUS:
+# `var p: *Foo;` (a pointer needs its value) and `var x: i64;` keep the refusal, and still refuse lint. RED on
+# 9ac212def (the bite before): every --syntax-only and LINTED row of so15a / so15b. MUTATION (2026-10-20, a scratch
+# copy of src/ installed as build/cycc): `_synonly_sib_local` answering 0 -> the same rows RED.
+echo "axis 15 — a local of a SIBLING file's struct type passes --syntax-only and lint:"
+printf 'struct Foo { g; h: *Foo; }\nstruct Box<T> { v: T; n; }\n' > "$T/w/so15_sib.cyr"
+printf 'fn f(): i64 {\n    var a: Foo;\n    a.g = 1;\n    return a.g;\n}\nvar r = f();\n' > "$T/w/so15a.cyr"
+printf 'fn f(): i64 {\n    var b: Box<i64>;\n    b.n = 2;\n    var c: Box<Foo>;\n    return b.n + c.n;\n}\nvar r = f();\n' > "$T/w/so15b.cyr"
+for f in so15a so15b; do
+    cat "$T/w/so15_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+    check "premise: $f compiles once its structs are in scope" 0 "$j_rc"
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'fn f(): i64 {\n    var p: *Foo;\n    return 0;\n}\nvar r = f();\n' > "$T/w/so15_bad1.cyr"
+printf 'fn f(): i64 {\n    var x: i64;\n    return 0;\n}\nvar r = f();\n' > "$T/w/so15_bad2.cyr"
+for f in so15_bad1 so15_bad2; do
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "ANTI-VACUOUS: $f keeps 'uninitialized variable not allowed' under --syntax-only" "yes 1" "$([ "$s_rc" != 0 ] && echo yes || echo no) $(grep -c '^error:<source>:2:[0-9]*: uninitialized variable not allowed' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+done
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: lint-reports-unparseable — lint tells the truth about parsing AND still lints"

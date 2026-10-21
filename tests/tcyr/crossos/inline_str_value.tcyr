@@ -242,6 +242,21 @@ fn sd_inl(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = t; return f(
 fn sd_ptr(): i64 { var h = str_from("abcde"); var p: *Str = h; var pp: **Str = &p; return fp(*pp); }
 fn sd_pp(): i64 { var h = str_from("abcde"); var p: *Str = h; var pp: **Str = &p; var ppp: ***Str = &pp; return str_len(*pp) * 100 + f(*pp) * 10 + f(***ppp); }
 fn sd_untyped(): i64 { var h = str_from("abcde"); var p: *Str = h; if (fu(*p) == load64(h)) { return 1; } return 0; }
+# ── ... and into a generic's `x: T` at T = Str, which is address-passed (6.7.16): `gg<Str>(*p)` / `gg(*p)` passed the data word ──
+fn gg2<T>(k, x: T): i64 { return str_len(x) + k; }
+fn ggf<T>(x: T): i64 { return gg(x); }
+fn O_gm<T>(self: *O, x: T): i64 { return str_len(x) + self.k; }
+fn sd_gen(): i64 { var h = str_from("abcde"); var p: *Str = h; return gg<Str>(*p) * 10 + gg(*p); }
+fn sd_gwrap(): i64 { var h = str_from("abcde"); var p: *Str = h; return gg<Str>((*p)) * 100 + gg(((*p))) * 10 + gg<Str>(*(p + 0)); }
+fn sd_gchain(): i64 { var h = str_from("abcde"); var w: WP = WP { h, 1 }; var p: *Str = h; var pp: **Str = &p; return gg<Str>(*w.p) * 10 + gg<Str>(**pp); }
+fn sd_gcall(): i64 { var h = str_from("abcde"); GPS = h; var w: WP = WP { h, 1 }; var r = gg<Str>(*gsp()) * 100 + gg<Str>(*w.sp()) * 10 + gg(*GPS); GPS = 0; return r; }
+fn sd_gsecond(): i64 { var h = str_from("abcde"); var p: *Str = h; return gg2<Str>(30, *p); }
+fn sd_gtl(p: *Str): i64 { return gg<Str>(*p); }
+fn sd_gcap(): i64 { var h = str_from("abcde"); var p: *Str = h; var c = || { return gg<Str>(*p) * 10 + gg(*p); }; return callptr(c); }
+fn sd_gfwd(): i64 { var h = str_from("abcde"); var p: *Str = h; return ggf<Str>(*p) * 10 + ggf(*p); }
+fn sd_gmeth(): i64 { var h = str_from("abcde"); var p: *Str = h; var o: O = O { 30 }; return o.gm<Str>(*p) * 100 + o.gm(*p) - O_gm<Str>(&o, *p); }
+fn sd_ginl(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = t; return gg<Str>(*p) * 10 + gg(*p); }
+fn sd_gctl(): i64 { var h = str_from("abcde"); var p: *Str = h; var t: Str = Str { "abcdefg", 7 }; return gg<Str>(h) * 1000 + gg<Str>(p) * 100 + gg(h) * 10 + gg<Str>(t); }
 fn pa_cap(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = || { var p: *Str = 0; p = t; GPS = t; return str_len(p) * 10 + str_len(GPS); }; return callptr(c); }
 # ── `h = *p` into a `Str` handle rebinds h to the header p points at, as `h = p` does (6.7.16, D20) ─────────────
 fn hd_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var h = str_from("zz"); h = *p; a.len = 3; return (h == p) * 100 + str_len(h); }
@@ -351,6 +366,8 @@ var R_TOP13 = str_len(GWS.p);
 GWS.p = 0;
 *GPPS = gt;                  # top level: through a `**Str` global (6.7.16, D19)
 var R_TOP14 = str_len(GPS);
+GPS = gt;                    # top level: `gg<Str>(*GPS)` / `gg(*GPS)` into a generic's `x: T` at T = Str (6.7.16)
+var R_TOP15 = gg<Str>(*GPS) * 10 + gg(*GPS);
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -472,6 +489,17 @@ assert_eq(sd_inl(), 7, "f(*p) with p bound to an inline Str's header");
 assert_eq(sd_ptr(), 5, "fp(*pp) into a `p: *Str` parameter passes the `*Str` *pp reads (unchanged)");
 assert_eq(sd_pp(), 555, "str_len(*pp) / f(*pp) pass the `*Str` *pp reads (unchanged); f(***ppp) the header (was 0)");
 assert_eq(sd_untyped(), 1, "fu(*p) into an untyped parameter keeps the word the dereference reads (unchanged)");
+assert_eq(sd_gen(), 55, "gg<Str>(*p) / gg(*p) into a generic's x: T at T = Str pass the header (the filed repro: 0 and 0)");
+assert_eq(sd_gwrap(), 555, "gg<Str>((*p)), gg(((*p))), gg<Str>(*(p + 0))");
+assert_eq(sd_gchain(), 55, "gg<Str>(*w.p) (a `*Str` field) / gg<Str>(**pp)");
+assert_eq(sd_gcall(), 555, "gg<Str>(*gsp()) / gg<Str>(*w.sp()) / gg(*GPS), a `: *Str` call, method and global");
+assert_eq(sd_gsecond(), 35, "gg2<Str>(30, *p), the second argument");
+assert_eq(sd_gtl(str_from("abcde")), 5, "return gg<Str>(*p); a tail call");
+assert_eq(sd_gcap(), 55, "gg<Str>(*p) / gg(*p) of a captured `*Str`");
+assert_eq(sd_gfwd(), 55, "ggf<Str>(*p) / ggf(*p), a generic forwarding its T = Str");
+assert_eq(sd_gmeth(), 3500, "o.gm<Str>(*p) / o.gm(*p) / O_gm<Str>(&o, *p), a generic method's x: T");
+assert_eq(sd_ginl(), 77, "gg<Str>(*p) / gg(*p) with p bound to an inline Str's header");
+assert_eq(sd_gctl(), 5557, "gg<Str>(h) / gg<Str>(p) / gg(h) / gg<Str>(t) (unchanged controls)");
 assert_eq(g_ret(), 77, "return gt / return (gt) from a fn returning Str: the static address");
 assert_eq(g_decl(), 77, "var h: Str = gt; var k = gt;");
 assert_eq(g_bind(), 3, "var h: Str = gt binds gt's header");
@@ -505,6 +533,7 @@ assert_eq(R_TOP10, 7, "top level: gi = *GP copies the header (D14)");
 assert_eq(R_TOP11, 77, "top level: gi = *GPP of a **Str global copies the header (6.7.16)");
 assert_eq(R_TOP13, 7, "top level: GW.p = gt into a *Str field of a global (6.7.16, D19)");
 assert_eq(R_TOP14, 7, "top level: *GPP = gt through a **Str global (6.7.16, D19)");
+assert_eq(R_TOP15, 77, "top level: gg<Str>(*GPS) / gg(*GPS) pass the header GPS points at (6.7.16)");
 assert_eq(R_TOP12, 107, "top level: GH = *GP into a Str handle global rebinds it to gt's header (6.7.16, D20)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");

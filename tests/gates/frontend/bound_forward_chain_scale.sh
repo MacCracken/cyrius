@@ -9,21 +9,24 @@
 # refused at a definition. The verdict is memoised per generic now and the cap is gone (the correctness rows are
 # trait_bounds_checked.sh F12-F15e); this gate is the cost half. Measured (2026-10-18, x86_64, best of 3):
 #
-#     shape                                        capped (6.7.14)   uncapped, no memo   memoised
-#     1500 forwards, never called                  895 ms (refused)  4,797 ms            644 ms
-#     the same, defined deepest first              896 ms (refused)  5,359 ms            640 ms
-#     3000 forwards called at f64 (nesting refusal) 3,412 ms          32,966 ms           2,356 ms
-#     the same chains with no bound (the floor)    721 / 721 / 2,543 ms
+#     shape                                        capped (6.7.14)   uncapped, no memo   memoised   6.7.16
+#     1500 forwards, never called                  895 ms (refused)  4,797 ms            644 ms     59 ms
+#     the same, defined deepest first              896 ms (refused)  5,359 ms            640 ms     66 ms
+#     3000 forwards called at f64 (nesting refusal) 3,412 ms          32,966 ms           2,356 ms   75 ms
+#     the same chains with no bound (the floor)    721 / 721 / 2,543 ms                            65 / 65 / 85 ms
+#
+# The 6.7.16 column (2026-10-20): a signature's type parameter no longer scans the file
+# (generic_definitions_scale_linear.sh), so the floor itself is linear in the chain's length.
 #
 # ⚠ THE ACCEPTANCE IS A RATIO, NOT A WALL-CLOCK BOUND (the globals_scale_linear.sh rule): each bounded chain against
 # the SAME chain with the bound removed (no judgement runs at all), best of 3 each (T3 2); the bounded one must cost under
-# 2x it — memoised ~0.9x, a quadratic judgement 6-14x. The chain without a bound is itself superlinear in the number
-# of generic definitions (a pre-existing cost, filed), which a ratio against it cancels out. Timings are DATA: no
-# `set -e`.
+# 2x it — memoised ~0.9x, a quadratic judgement 6-14x. A ratio against the unbounded chain measures the judgement
+# alone, whatever the rest of the compile costs. Timings are DATA: no `set -e`.
 #
 # ROWS: T1 a 1500-deep chain never called (each base is judged at its definition) in source order, T2 defined deepest
 # first (the first judgement walks the whole chain), T3 the filed 3000-deep chain called at f64, whose one error is
-# the instance-nesting refusal (no definition refused).
+# the instance-nesting refusal (no definition refused) — since 6.7.16 the stack bound's (`_rd_enter`: about 300 links
+# instantiate before it; trait_bounds_checked.sh F14d-F14g).
 #
 # MUTATION PROOF (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): `_bbm_get` answering -1 (no memo,
 # no cap) -> RED T1 T2 T3 (7.2x / 7.1x / 15.3x); the 6.7.14 compiler -> RED T1 T2 (refused at o65's definition) and T3
@@ -76,7 +79,7 @@ row() {  # <id> <n> <order> <call> <what> <runs>
         fi
     else
         ne=$(grep -c '^error' "$D/$1.b.cyr.err" || true)
-        if [ "$RB" -eq 0 ] || [ "$ne" -ne 1 ] || ! grep -q "nesting too deep (over 256 levels" "$D/$1.b.cyr.err"; then
+        if [ "$RB" -ne 1 ] || [ "$ne" -ne 1 ] || ! grep -q "nesting too deep ([0-9]* generic instances" "$D/$1.b.cyr.err"; then
             echo "  FAIL: [$1] $5: not the nesting refusal alone (rc $RB, $ne errors): $(grep '^error' "$D/$1.b.cyr.err" | head -2 | tr '\n' '|')"
             NFAIL=$((NFAIL + 1)); return
         fi

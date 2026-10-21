@@ -41,21 +41,43 @@ fn _synonly_skip_chain(S): i64 {
 # source (the v6.5.19 class). The rest of the chain is walked as `_synonly_skip_chain` walks it, and each
 # `(args)` in it parsed through PCMPE, so a grammar error inside one is still caught. The store's tail is
 # `_synonly_fld_tail`'s. --syntax-only emits nothing: no compiled output changes. CHANGELOG [6.7.14]
+# 6.7.16: and a method's explicit list (`.m<..>(`, `_synonly_mlist`) stepped before its arguments; the walk serves a
+# receiver of no known struct too (`_field_load_on`'s `sid == 0` and unknown-field arms), where `x.m<i64>(1)` was
+# "expected ';', got '>'" and `x.f.m(1)` "expected ';', got '('" — a bounded T bound to a scalar among them (6.7.16's D4).
 fn _synonly_chain_call(S): i64 {
     var go = 1;
     while (go == 1) {
         _synonly_skip_chain(S);
+        _synonly_mlist(S);
         if (PEEKT(S) == 10) { _synonly_args(S); }
         else { go = 0; }
     }
     return 0;
 }
-# `(args)` at the cursor: each argument through PCMPE, the `)` consumed.
+# A `<..>` at the cursor that a `(` follows and that holds names, `,` and angle brackets alone: stepped, the cursor on
+# the `(` (by its shape — a file read alone cannot see the types another file declares). CHANGELOG [6.7.16]
+fn _synonly_mlist(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var e = _tok_targs_close(S, GTI(S) + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    var j = GTI(S) + 1;
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (t != 2 && t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 0; }
+        j = j + 1;
+    }
+    STI(S, e + 1);
+    return 1;
+}
+# `(args)` at the cursor: each argument through PCMPE, the `)` consumed. A named argument's `name:` label is stepped
+# first (`_pd_label_at`): `a.h.m(k: 2)` is valid once the struct is in scope, and was "expected ')', got ':'". CHANGELOG [6.7.16]
 fn _synonly_args(S): i64 {
     STI(S, GTI(S) + 1);   # consume (
     if (PEEKT(S) != 11) {
         var go = 1;
         while (go == 1) {
+            if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
             PCMPE(S);
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { go = 0; }
@@ -604,6 +626,23 @@ fn _CL_CAP_FIELD_IDX(S, noff): i64 {
     _cap_fld_sid = 0 - _cft;
     return 0 - 1000000 - _cfc;
 }
+# ⛔ 6.7.16 — PARSE_FIELD_LOAD / PARSE_FIELD_STORE's capture rung: a struct capture (`_CL_CAP_FIELD_IDX`), and every
+# other capture of the closure too — its capture-band index with sid 0, so `x.a`, `x.a = ..` and `x.m()` on an untyped
+# capture take the `sid == 0` arms an untyped local takes: "no struct type in scope for 'x'" in the field, store or
+# method wording, a refused annotation's stand-down (`_ann_refd_said`), a bounded scalar T's member call. The rung
+# returned -1 for them, so the name fell to the globals: "undefined variable 'x'". A captured vector reports "SIMD
+# vector has no named fields" first, as a local does. A global of the same name keeps today's reading (the global's
+# field) — refusing it would stop such a program compiling, the user's call. CHANGELOG [6.7.16]
+fn _cl_cap_fld_any(S, noff): i64 {
+    var r = _CL_CAP_FIELD_IDX(S, noff);
+    if (r < 0 - 1) { return r; }
+    var e = _cl_cap_esl(S, noff);
+    if (e < 0) { return 0 - 1; }
+    if (FINDVAR(S, noff) >= 0) { return 0 - 1; }
+    if (_cl_snap_type(e) <= 0 - 2048) { ERR_MSG(S, "SIMD vector has no named fields", 31); }
+    _cap_fld_sid = 0;
+    return 0 - 1000000 - _cl_cap_find(e);
+}
 # ⛔ 6.7.11 — A CLOSURE READS ITS CAPTURED SLICE'S `.ptr` / `.len`. The slice arm of the field read
 # is a fn-local's (`_slice_lw`) and `_CL_CAP_FIELD_IDX` takes a struct capture only, so `s.len`
 # inside a closure that captured `s` was "undefined variable 's'", while `slice_len(&s)` read the
@@ -866,7 +905,7 @@ fn _rlf_more(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 2) == 10) { return 0; }
-    if (_mtargs_at(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)`
+    if (_mtargs_ng(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)` (6.7.16: `w.v.m<i64>(h)`)
     return 1;
 }
 fn _resolve_leaf_field(S, si, fi, off): i64 {
@@ -1701,7 +1740,9 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
-            if (lt < 0) { sid = 0 - lt; }
+            # 6.7.16: the vector band is no struct id — sid 0 (its arm stays quiet behind the latch); `0 - lt` read
+            # struct 2092's tables: `v.m()` went on to "undefined function 'enum.m'" and refused the binary for it.
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field load (s.ptr / s.len).
             # A slice fn-local has GLTYPE=0 and _slice_lw>0 (per-local
@@ -1751,7 +1792,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     }
     if (idx == 0 - 1) {
         if (_cl_cslice_field(S, noff, fnoff) == 1) { return 0; }   # 6.7.11: a captured slice's .ptr / .len
-        var _cfx = _CL_CAP_FIELD_IDX(S, noff);
+        var _cfx = _cl_cap_fld_any(S, noff);   # 6.7.16: an untyped capture too
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }
     if (idx == 0 - 1) {
@@ -1937,7 +1978,7 @@ fn _ptr_park(S, psid): i64 {
 fn _fld_meth_inline(S, ft): i64 {
     if (PEEKT(S) != 41) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_at(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
+    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_ng(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
     if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
     return 1;   # 6.7.15: a `Str` field too — `_load_inline_hop` passes its value (`_load_str_hop`)
 }
@@ -1993,8 +2034,9 @@ var _mx_fi = 0 - 1;   # the method arm's callee, set by `_meth_targs` for the ar
 var _mx_ti = 0 - 1;   # ... and the method's name token
 var _mx_qt = 0;       # ... 1 = a type argument was refused: the arm consumes the arguments, judging none
 # 1 = token nt is a method name `m` followed by `<..>(`, with m no field of struct `sid` and a generic method of it.
+# 6.7.16: at a scalar receiver, a bounded site's (`_mtargs_bs`).
 fn _mtargs_at(S, sid, nt): i64 {
-    if (sid <= 0) { return 0; }
+    if (sid <= 0) { return _mtargs_bs(S, nt); }
     if (sid >= 2048) { return 0; }
     if (_MONOMORPH_OK == 0) { return 0; }
     if (TOKTYP(S, nt) != 2) { return 0; }
@@ -2006,6 +2048,24 @@ fn _mtargs_at(S, sid, nt): i64 {
     var e = _tok_targs_close(S, nt + 2);
     if (e < 0) { return 0; }
     if (TOKTYP(S, e + 1) != 10) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 (the user's D4, 2026-10-19) — A BOUND'S OWN GENERIC MEMBER, CALLED WITH ITS EXPLICIT LIST ON A SCALAR T:
+# `v.show<i64>(1)` / `b.v.show<i64>(1)` with `T: Show`, `trait Show { fn show<V>(self, k: V): i64; }` and T bound to
+# i64. A scalar receiver has no struct, so the member arm never read the list: the name form was "no struct type in
+# scope for 'v'" + "undefined variable 'i64'", the field form "expected ';', got '.'" (and both were the stub base
+# until the site scan took the spelling, `_bnd_mopen`), where `v.show(1)` calls `i64_show`. 1 = token nt is a bounded
+# site recorded with its list whose callee, T's impl method (`_bs_callee`), is generic: the arm reads the list and
+# calls that instance with the value as `self`, as the inferred spelling does. CHANGELOG [6.7.16]
+fn _mtargs_bs(S, nt): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0; }
+    var b = _bs_find(S, nt);
+    if (b < 0) { return 0; }
+    var f = _bs_callee(S, b, 0);
+    if (f < 0) { return 0; }
+    if (GFTP(S, f) == 0) { return 0; }
     return 1;
 }
 # The method arm's name token: `_meth_targs`'s, taken once, else the token before the cursor's `(`.
@@ -2038,13 +2098,93 @@ fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
     var c0 = _parse_one_type_arg(S);
     var c1 = _ta_rest_f(S, mf);   # 6.7.16 (D5)
     _consume_gt(S);
-    _mx_fi = _meth_xinst(S, mf, c0, c1);
+    _mx_fi = _meth_xsite(S, mf, c0, c1, nt);
     _mx_ti = nt;
     var p0 = _panic;
     if (_mx_qt == 1) { _panic = 1; }
     _field_load_on(S, noff, fnoff, beg, idx, sid);
     if (_mx_qt == 1) { _panic = p0; _mx_qt = 0; }
     _mx_fi = 0 - 1;
+    _mx_ti = 0 - 1;
+    return 1;
+}
+# ... at method-name token nt: at a site the bound's contract refused (`_bnd_site_refuse`) nothing is minted — the arm
+# consumes the call quietly, as the inferred spelling's (a mint could report the instance's own errors). CHANGELOG
+# [6.7.16]
+fn _meth_xsite(S, mf, c0, c1, nt): i64 {
+    if (_bs_n > 0) {
+        var b = _bs_find(S, nt);
+        if (b >= 0) { if (L64(_bs_tab + b * 32 + 8) < 0) { _mx_qt = 0; _ta_refd = 0; return mf; } }
+    }
+    return _meth_xinst(S, mf, c0, c1);
+}
+# ⛔ 6.7.16 — A TYPE-ARGUMENT LIST ON A CALLEE THAT TAKES NONE: `p.m<i64>(1)` with `fn m(self, k)`, `w.v.m<i64>(1)`, a
+# bounded T's non-generic member `v.show<i64>()` / `b.v.show<i64>()`, `nf<i64>(6)` / `nf<i64>(6);` with `fn nf(a)`. The
+# `<` was read as less-than: "unknown field 'm' on struct 'Pt'" + "undefined variable 'i64'", "no struct type in scope
+# for 'v'", "expected ';', got '.'", "undefined variable 'nf'" + "expected ';', got '>'" — two or three errors, none
+# naming the list. Refused once at the callee's name with D6 / D7's words for `Pt<i64>` — "'Pt.m' is not a generic
+# method: it takes no type arguments", "'nf' is not a generic fn: ..." — the list stepped and the call parsed as
+# `p.m(1)` / `nf(6)`, so nothing cascades. Only a list whose every name is a type (`_tylist_at`): `p.n < a, b > (c)`
+# keeps its comparison reading. CHANGELOG [6.7.16]
+# 1 = token nt is `.m<..>(`'s method on struct `sid` that takes type arguments (`_mtargs_at`), or any other `.m<types>(`
+# with m no field of sid (`_mlist_end`); at a scalar field (sid <= 0), a bounded site's — the field walks stop at it for
+# the member arm.
+fn _mtargs_ng(S, sid, nt): i64 {
+    if (_mtargs_at(S, sid, nt) == 1) { return 1; }
+    if (sid <= 0) {
+        if (_mngt_at(S, sid, nt) >= 0) { return 1; }
+        return 0;
+    }
+    if (_mlist_end(S, sid, nt) >= 0) { return 1; }
+    return 0;
+}
+# The `>` closing `.m<..>(`'s list at method-name token nt when it is a type list (`_tylist_at`) followed by `(` and m
+# no field of struct sid (sid <= 0: a receiver of no known struct); else -1.
+fn _mlist_end(S, sid, nt): i64 {
+    if (TOKTYP(S, nt) != 2) { return 0 - 1; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0 - 1; }
+    if (sid >= 2048) { return 0 - 1; }
+    if (sid > 0) { if (FINDFIELD(S, sid - 1, TOKVAL(S, nt)) >= 0) { return 0 - 1; } }
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    if (_tylist_at(S, nt + 2, e, 0 - 1) == 0) { return 0 - 1; }
+    return e;
+}
+# The method `.m<..>(` at token nt reaches when it is NOT generic, the list a type list; else -1. On struct sid: m no
+# field of it (a field keeps the comparison); at sid <= 0, a bounded site's callee (a scalar T's impl method).
+fn _mngt_at(S, sid, nt): i64 {
+    if (_mlist_end(S, sid, nt) < 0) { return 0 - 1; }
+    var mf = 0 - 1;
+    if (sid <= 0) {
+        if (_bs_n == 0) { return 0 - 1; }
+        var b = _bs_find(S, nt);
+        if (b < 0) { return 0 - 1; }
+        mf = _bs_callee(S, b, 0);
+    } else {
+        mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    }
+    if (mf < 0) { return 0 - 1; }
+    if (GFTP(S, mf) != 0) { return 0 - 1; }
+    return mf;
+}
+# The member arm past a list it does not take (cursor on the `<` past the method's name; receiver (idx, sid)): a
+# method that is not generic refused (`_mngt_at`), and any `.m<types>(` (`_mlist_end`: no such method, a receiver of
+# no known struct) stepped too — the call parsed from its `(` as the plain spelling is, which reports what `p.m(1)`
+# reports. 1 = taken; 0 = not that shape.
+fn _meth_ngt(S, noff, fnoff, beg, idx, sid): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var e = _mlist_end(S, sid, nt);
+    if (e < 0) { return 0; }
+    var mf = _mngt_at(S, sid, nt);
+    if (mf >= 0) {
+        var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
+        _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
+    }
+    STI(S, e + 1);
+    _mx_ti = nt;   # the arm's method name, not the list's `>`
+    _field_load_on(S, noff, fnoff, beg, idx, sid);
     _mx_ti = 0 - 1;
     return 1;
 }
@@ -2276,21 +2416,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (sid == 0 && m_bfi < 0) {
             # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
             # swallow the next genuine syntax error), but still CONSUME the argument
-            # list through PCMPE so a grammar error inside it is caught.
-            if (_syntax_only == 1) {
-                STI(S, GTI(S) + 1);            # consume (
-                if (PEEKT(S) != 11) {
-                    var sogo = 1;
-                    while (sogo == 1) {
-                        PCMPE(S);
-                        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                        else { sogo = 0; }
-                    }
-                }
-                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                STI(S, GTI(S) + 1);            # consume )
-                return 0;
-            }
+            # list through PCMPE so a grammar error inside it is caught (6.7.16: `_synonly_args`, named arguments too),
+            # and the chain on its result: `a.m(1).g`, `a.m(1).k(2)` were "expected ';', got '.'". CHANGELOG [6.7.16]
+            if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }
             if (_meth_sid0_said(S, noff, pfl_beg, idx) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
             ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
             return 0;
@@ -2377,18 +2505,21 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     if (sid == 0) {
         # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
-        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain, `.m<..>(` too
+        if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
+        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)`, as `q.m(1)`
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) {
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.14 (D7 (a)): `p.id<f64>(h)`
+        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `p.m<i64>(1)`, as `p.m(1)`
         # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
         # silent and do not _panic (which would swallow the next real syntax error).
-        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain
         ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
         return 0;
     }
@@ -2621,7 +2752,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
             if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
-            if (lt < 0) { sid = 0 - lt; }
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }   # 6.7.16: as the load's (no struct 2092)
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field store (s.ptr = expr;
             # s.len = expr;). Mirror of the slice-load path in
@@ -2639,7 +2770,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
     }
     if (idx == 0 - 1) {
         if (_cl_cslice_cap(S, noff) >= 0) { return _cl_cslice_store_err(S, noff); }   # 6.7.11
-        var _cfx = _CL_CAP_FIELD_IDX(S, noff);
+        var _cfx = _cl_cap_fld_any(S, noff);   # 6.7.16: an untyped capture too
         if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
     }
     if (idx == 0 - 1) {
@@ -3807,7 +3938,7 @@ fn _mret_spell(S, fi): i64 {
         if (e == 1) { PRSTR("f64"); }
         elif (e == 3) { PRSTR("bool"); }
         elif (e == 0) { PRSTR("i64"); }
-        elif (GFRT(S, fi, k) > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRT(S, fi, k) - 1) * 8)); }
+        elif (GFRT(S, fi, k) > 0) { PRSTR(S + 0xEC00000 + _fsn_one(S, GFRT(S, fi, k))); }   # 6.7.16: `Box<Pt>`, not `Box$Pt`
         else { PRSTR("a vector"); }
         k = k + 1;
     }
@@ -5690,10 +5821,41 @@ fn _decl_ann_refd(S): i64 {
 var _var_bare_at = 0 - 1;
 fn _var_eq_step(S): i64 {
     if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
-    _decl_eq_err(S);
+    if (_synonly_sib_local(S) == 0) { _decl_eq_err(S); }   # 6.7.16: `var a: Foo;`, Foo a sibling's (lint)
     if (PEEKT(S) == 5) { _var_bare_at = GTI(S); return 1; }
     STI(S, GTI(S) + 1);
     return 0;
+}
+# ⛔ 6.7.16 — `--syntax-only` (cyrius lint), A LOCAL OF A SIBLING MODULE'S STRUCT: `var a: Foo;` / `var b: Box<i64>;`
+# with Foo / Box declared in another file. A struct local takes no initializer, but here the name answers no type, its
+# annotation's refusal is silent under the flag, and the bare-declaration rule read a word with no value: "uninitialized
+# variable not allowed", which lint does not count as context (`_lint_msg_is_context`), so lint refused the file —
+# the ordinary layout of a manifest that concatenates modules (the v6.5.19 class). 1 = the declaration whose `;` is at
+# the cursor is `var NAME: X;` or `var NAME: X<..>;` with X a name no type answers here: accepted, as the unit's build
+# accepts it. `var p: *Foo;` (a pointer needs its value), `var x: i64;` and a type this file declares keep the
+# refusal. CHANGELOG [6.7.16]
+fn _synonly_sib_local(S): i64 {
+    if (_syntax_only != 1) { return 0; }
+    if (PEEKT(S) != 5) { return 0; }
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    var a = k + 3;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (a + 1 != GTI(S)) {
+        if (TOKTYP(S, a + 1) != 19) { return 0; }
+        if (_tok_targs_close(S, a + 2) != GTI(S) - 1) { return 0; }
+    }
+    if (_tn_resolve_at(S, a) != 0) { return 0; }
+    return 1;
 }
 # PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
 # declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
@@ -9749,12 +9911,15 @@ fn _dt_wterm(k, term): i64 {
     return term;
 }
 # ...and the fn it REACHES, whose return types type the bindings: a generic's instance
-# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m`.
+# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m` — a generic
+# method's inferred `x.m(..)` the instance its arguments bind (`_mcall_gen`, quiet), as `x.m<..>(..)` and the
+# free spelling reach theirs: `var a, b = p.mm(h);` typed its `(V, i64)` from the base. CHANGELOG [6.7.16]
 fn _dt_call_fn(S): i64 {
     var ti = GTI(S);
     var fi = 0 - 1;
     if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
     else { fi = _pair_callee_at(S, ti); }
+    if (fi >= 0) { if (_tok_method_open(S, ti) == 1) { fi = _mcall_gen(S, fi, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0); } }
     return fi;
 }
 

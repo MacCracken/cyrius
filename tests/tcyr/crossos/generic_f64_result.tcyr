@@ -24,6 +24,7 @@ include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/assert.cyr"
+include "lib/fnptr.cyr"
 
 fn gf_gid<T>(x: T): T { return x; }
 fn gf_gid2<T>(x: T, k): T { return x; }
@@ -69,6 +70,27 @@ struct GfB { v; }
 impl GfB { fn bt<V: GfTag>(self, w: V): i64 { return w.tag() + self.v; } }
 
 var GF_G: f64 = 1.5;
+
+# 6.7.16 — A CAPTURED f64 BINDS T = f64, as the f64 local it captures does (the user's D3, 6.7.16's, 2026-10-19:
+# "binds f64, like the local it captures"). The capture rung (`_ic_cap`) read every capture that is no struct and
+# no pointer as a global of its name, so `|| gf_gid(h) * 2.0` ran the i64 base and multiplied the double's bits
+# (0, with "integer arithmetic with an f64 right operand"). Each row returns its value as an f64, compared as bits.
+# Filed: docs/development/issues/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
+fn gfc_m(): i64 { var h: f64 = 1.5; return f64_to(gf_gid(h) * 2.0); }
+fn gfc_mc(): i64 { var h: f64 = 1.5; var f = || f64_to(gf_gid(h) * 2.0); return fncall0(f); }
+fn gfc_val(): f64 { var h: f64 = 1.5; var f = || gf_gid(h) * 2.0; var r: f64 = fncall0(f); return r; }
+fn gfc_var(): f64 { var h: f64 = 1.5; var f = || { var y = gf_gid(h); return y * 2.0; }; var r: f64 = fncall0(f); return r; }
+fn gfc_prm(h: f64): f64 { var f = || gf_gid(h) * 2.0; var r: f64 = fncall0(f); return r; }
+fn gfc_nest(): f64 { var h: f64 = 1.5; var f = || { var g = || gf_gid(h) * 2.0; return fncall0(g); }; var r: f64 = fncall0(f); return r; }
+fn gfc_arg(): f64 { var h: f64 = 1.5; var f = |k| gf_gid(h) * f64_from(k); var r: f64 = fncall1(f, 2); return r; }
+fn gfc_dbl(): f64 { var h: f64 = 1.5; var f = || gf_dbl(h); var r: f64 = fncall0(f); return r; }
+fn gfc_ord(): f64 { var h: f64 = 1.5; var f = || gf_gid3(h, 1, 2) * 2.0; var r: f64 = fncall0(f); return r; }
+fn gfc_two(): f64 { var h: f64 = 1.5; var f = || gf_g2(1, h) * 2.0; var r: f64 = fncall0(f); return r; }
+fn gfc_meth(): f64 { var h: f64 = 1.5; var p = GfP { 5 }; var f = || p.id(h) * 2.0; var r: f64 = fncall0(f); return r; }
+fn gfc_bnd(): i64 { var h: f64 = 1.5; var f = || gf_bnd(h); return fncall0(f); }
+fn gfc_int(): i64 { var k = 7; var f = || gf_gid(k) * 2; return fncall0(f); }
+fn gf_gp<T>(q: *T): T { return *q; }
+fn gfc_ptr(): f64 { var h: f64 = 1.5; var ph: *f64 = &h; var f = || gf_gp(ph) * 2.0; var r: f64 = fncall0(f); return r; }
 
 fn main(): i64 {
     alloc_init();
@@ -160,6 +182,21 @@ fn main(): i64 {
     assert_eq(GfP_id(&p, h) * 2.0, 3.0, "GfP_id(&p, h) * 2.0 (the free spelling)");
     assert_eq(GfP_id<f64>(&p, h) * 2.0, 3.0, "GfP_id<f64>(&p, h) * 2.0 (the explicit control)");
     assert_eq(p.id(7) * 2, 14, "p.id(7) * 2 (V = i64)");
+
+    test_group("a captured f64 binds f64, as the local it captures (6.7.16, D3)");
+    assert_eq(gfc_m() * 10 + gfc_mc(), 33, "the filed repro: m() * 10 + mc() (mc() was 0: the i64 base)");
+    assert_eq(gfc_val(), 3.0, "|| gf_gid(h) * 2.0 is an f64 value");
+    assert_eq(gfc_var(), 3.0, "var y = gf_gid(h); y * 2.0 in a closure (an f64 binding)");
+    assert_eq(gfc_prm(h), 3.0, "a captured f64 PARAMETER");
+    assert_eq(gfc_nest(), 3.0, "a nested closure's capture of a capture");
+    assert_eq(gfc_arg(), 3.0, "beside the closure's own parameter: gf_gid(h) * f64_from(k)");
+    assert_eq(gfc_dbl(), 3.0, "gf_dbl(h): x + x is an f64 add");
+    assert_eq(gfc_ord(), 3.0, "gf_gid3(h, 1, 2) * 2.0 (an ordinary call)");
+    assert_eq(gfc_two(), 3.0, "the second type parameter: gf_g2(1, h) * 2.0");
+    assert_eq(gfc_meth(), 3.0, "a generic method: p.id(h) * 2.0, both captured");
+    assert_eq(gfc_bnd(), 5, "gf_bnd(h) calls the f64 impl (was the i64 impl, on the bits)");
+    assert_eq(gfc_int(), 14, "a captured i64 still binds i64");
+    assert_eq(gfc_ptr(), 3.0, "a captured *f64 through q: *T binds f64 (6.7.15's D11 (a), unchanged)");
     return assert_summary();
 }
 fn gf_later<T>(x: T): T { return x; }

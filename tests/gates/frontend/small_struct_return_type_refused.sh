@@ -104,6 +104,28 @@
 #   the fix reverted                                    -> RED 16: R11b-R11e on each of the four legs
 #   real tree                                           -> GREEN (70 refusal rows — floor 70 — and 28 acceptance rows)
 #
+# 6.7.16 (the user's D1, 2026-10-19; RG1-RG9, RG1n, RG4n, AG1-AG5; R55 now the stub's words): `return &n;` with n typed by T
+# makes the generic a stub (`_gs_ret_amp`, src/frontend/parse_fn.cyr), its note naming the line (`_gen_stub_note`).
+# (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MRG1 the tree before (1135ae069)                    -> RED 16: R55 R55b (the slot's words), RG1 on the four compilers (compiled, no
+#                                                          diagnostic), RG1n, RG2 (the slot's words), RG3-RG9, RG4n
+#   MRG2 `_gs_ret_amp` answering 0                      -> RED 16: as MRG1
+#   MRG3 no rescan at pass 1's end (`_gen_rescan` a no-op) -> RED 1: RG8 (Lt declared below h: pass 1 knew no struct return)
+#   MRG4 `_tok_in_cl` answering 0                       -> RED 1: AG5 (a closure's own `return &n` made hc a stub: hc(5) refused)
+#   MRG5 `_gs_tdep` without the untyped-var walk (0)    -> RED 1: RG6 (an untyped `var n = x;` read as typed by no T)
+#   real tree                                           -> GREEN (80 refusal rows — floor 80 — and 33 acceptance rows)
+# 6.7.16 (the user's D2, 2026-10-19; RD1-RD12, AD1-AD4): `return &n;` with n typed with no type parameter is refused at
+# the definition, called or not — the parsed base (`_ret_amp_bare` + `_ret_amp_tdep`) and a stub's skipped base
+# (`_ret_amp_stub`, from PARSE_FN_DEF's skip walk). The same scratch-tree mutants:
+#   MRD1 the tree before (d2742a654)                    -> RED 15: RD1 on the four compilers, RD2, RD4-RD13 (compiled;
+#                                                          RD3, a struct call, was the instance's refusal already)
+#   MRD2 `_ret_amp_bare` exempting the base again       -> RED 11: RD1 x4, RD2, RD4-RD9
+#   MRD3 `_b3_skip_tok` without `_ret_amp_stub`         -> RED 3: RD10-RD12 (the stub's skipped base)
+#   MRD4 `_ret_amp_stub` without `_tok_in_cl`           -> RED 1: AD3 (a closure's own `return &n` refused)
+#   MRD5 `_gs_ann_dep` reading a struct behind any `*`  -> RED 1: RD9 (`**S8` read as a struct pointer)
+#   MRD6 `_gs_init_dep` reading `sizeof(T)`'s T         -> RED 1: RD13 (n read as typed by T: no refusal)
+#   real tree                                           -> GREEN (93 refusal rows — floor 93 — and 37 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -495,11 +517,111 @@ refuse "R54 return &tu; (a tuple) from : S24: another aggregate" "$MS — got \`
 fn main(): i64 { var c: S24 = h(); return c.v; }
 syscall(60, main());
 '
-refuse "R55 return &n; (n: T) in a generic, instances i32 / i16 / i64" "$MS — \`&n\` $SLOT n's slot, $NS" "$NT"'fn hg<T>(x: T): S { var n: T = x; return &n; }
-fn h(): S { var c: S = hg<i32>(4); var d: S = hg<i16>(5); return hg(3); }'"$NE"
+# 6.7.16 (the user's D1, 2026-10-19): such a generic has no scalar instance — `hg<i32>(4)` is the stub's refusal now (it
+# was the slot's words), each call once (the i64 call: RG1).
+refuse "R55 return &n; (n: T) in a generic, hg<i32>(4)" "generic 'hg' has no i64 (or other scalar) instance" "$NT"'fn hg<T>(x: T): S { var n: T = x; return &n; }
+fn h(): S { var c: S = hg<i32>(4); return c; }'"$NE"
+refuse "R55b return &n; (n: T) in a generic, hg<i16>(5)" "generic 'hg' has no i64 (or other scalar) instance" "$NT"'fn hg<T>(x: T): S { var n: T = x; return &n; }
+fn h(): S { return hg<i16>(5); }'"$NE"
 refuse "R56 return &n; (n: T) at <U8>: another struct" "$MS — got \`&n\` (a \`\*U8\`)" "$NT"'struct U8 { u; }
 fn hg<T>(x: T): S { var n: T = x; return &n; }
 fn h(): S { var u: U8; return hg<U8>(u); }'"$NE"
+echo "=== return &n; (n typed by T) in a generic (6.7.16, the user's D1, 2026-10-19): it has no scalar instance ==="
+# `&n` is the struct only when T is the fn's struct, so the generic is a stub: a scalar call, an explicit scalar type
+# argument, `&h` and a generic forwarding its T to it are refused by name at the call, the note naming the line that
+# needs a struct. Through 6.7.15 the base (the T = i64 instance) was exempt and `h(3)` returned a dead slot's address
+# as c.v (200 / 248, a different byte each run). docs/development/issues/2026-10-18-generic-base-return-address-of-
+# local-unjudged-at-i64.md
+GST="generic 'h' has no i64 (or other scalar) instance"
+refuse4 "RG1 the filed repro verbatim: h(3)" "$GST" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+fn h<T>(x: T): S8 { var n: T = x; return &n; }
+fn main(): i64 { alloc_init(); var c: S8 = h(3); return c.v; }
+syscall(60, main());
+'
+if grep -q "^  note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter\$" "$D/r.err"; then
+    printf '  ok(refused): %-44s\n' "RG1n the note names 4:42, the \`&n\`"; pass=$((pass+1))
+else printf '  FAIL: %-50s %s\n' "RG1n the note" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+GH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+struct P { a; }
+fn h<T>(x: T): S8 { var n: T = x; return &n; }
+fn k<T>(x: T): S8 { return h(x); }
+fn hp<T>(p: *T): S8 { return &p; }
+fn hu<T>(x: T): S8 { var n = x; return &n; }
+fn hw<T>(x: T): S8 { var n: T = x; return ((&n)); }
+fn hl<T>(x: T): Lt { var n: T = x; return &n; }
+struct Lt { v; }
+impl P { fn hm<T>(self, x: T): S8 { var n: T = x; return &n; } }
+fn ht<T>(x: T): T { var n: T = x; return &n; }
+fn hc<T>(x: T): S8 { var f = |y| { var n: T = y; return &n; }; var q: S8; q.v = (fncall1(f, x) != 0) + 4; return q; }
+'
+GHE='
+alloc_init();
+syscall(60, main());
+'
+refuse "RG2 h<i32>(4): the stub's words (the slot's before)" "$GST" "$GH"'fn main(): i64 { var c: S8 = h<i32>(4); return c.v; }'"$GHE"
+refuse "RG3 &h" "$GST" "$GH"'fn main(): i64 { var f = &h; return 1; }'"$GHE"
+refuse "RG4 k(3): a generic forwarding its T to h" "generic 'k' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var c: S8 = k(3); return c.v; }'"$GHE"
+if grep -q "^  note: <source>:6:28: 'k' forwards its type parameter to 'h'\$" "$D/r.err" && grep -q "^  note: <source>:5:42: 'h' returns" "$D/r.err"; then
+    printf '  ok(refused): %-44s\n' "RG4n the notes: the forward, then h's line"; pass=$((pass+1))
+else printf '  FAIL: %-50s %s\n' "RG4n the notes" "$(grep '^  note' "$D/r.err" | tr '\n' ' ')"; fail=$((fail+1)); fi
+refuse "RG5 return &p; (p: *T) at T = i64" "generic 'hp' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var n = 3; var c: S8 = hp(&n); return c.v; }'"$GHE"
+refuse "RG6 an untyped var n = x; (x: T)" "generic 'hu' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var c: S8 = hu(3); return c.v; }'"$GHE"
+refuse "RG7 return ((&n)); wrapped" "generic 'hw' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var c: S8 = hw(3); return c.v; }'"$GHE"
+refuse "RG8 a struct declared below the generic" "generic 'hl' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var c: Lt = hl(3); return c.v; }'"$GHE"
+refuse "RG9 a generic method, p.hm(3)" "generic 'P.hm' has no i64 (or other scalar) instance" "$GH"'fn main(): i64 { var p: P; var c: S8 = p.hm(3); return c.v; }'"$GHE"
+# What a struct call, a `: T` return and a closure's own `return &n` keep.
+accept "AG1 h<S8>(s) and h(s): the struct (unchanged)" "$GH"'fn main(): i64 { var s: S8; s.v = 7; var c: S8 = h<S8>(s); var d: S8 = h(s); return c.v + d.v; }'"$GHE" 14 \
+    "$GH"'fn main(): i64 { var s: S8; s.v = 14; return s.v; }'"$GHE"
+accept "AG2 k(s): the forwarder at S8 (unchanged)" "$GH"'fn main(): i64 { var s: S8; s.v = 7; var c: S8 = k(s); return c.v; }'"$GHE" 7 \
+    "$GH"'fn main(): i64 { var s: S8; s.v = 7; return s.v; }'"$GHE"
+accept "AG3 hu(s): an untyped var n = x at S8" "$GH"'fn main(): i64 { var s: S8; s.v = 7; var c: S8 = hu(s); return c.v; }'"$GHE" 7 \
+    "$GH"'fn main(): i64 { var s: S8; s.v = 7; return s.v; }'"$GHE"
+accept "AG4 a : T return is no stub (ht(3) an address)" "$GH"'fn main(): i64 { var s: S8; s.v = 7; var c: S8 = ht(s); return c.v + (ht(3) != 0); }'"$GHE" 8 \
+    "$GH"'fn main(): i64 { return 8; }'"$GHE"
+accept "AG5 a closure's own return &n is no stub (hc(5))" "$GH"'fn main(): i64 { var c: S8 = hc(5); return c.v; }'"$GHE" 5 \
+    "$GH"'fn main(): i64 { return 5; }'"$GHE"
+echo "=== return &n; (n typed with no type parameter) in a generic (6.7.16, the user's D2, 2026-10-19): refused at the definition ==="
+# `fn h<T>(x: T): S8 { var n = 5; return &n; }` — n can hold no struct at any T, so the line is refused as in a non-generic
+# fn, with D18's words at the `&n`, called or not (`_ret_amp_bare` / `_ret_amp_stub`, src/frontend/parse_fn.cyr). Through
+# 6.7.15 the base exempted it: a generic never called, or called only with an integer, compiled, and `h(3)` returned the
+# slot's address as c.v; a struct call was refused at the instance. A name typed by T is D1's (RG*).
+DH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+var GN = 5;
+'
+DE='
+syscall(60, 3);
+'
+DN="$MS — \`&n\` $SLOT n's slot, $NS"
+refuse4 "RD1 the decision's line, never called: var n = 5; return &n;" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }'"$DE"
+refuse "RD2 called only with an integer, h(3)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }
+fn main(): i64 { var c: S8 = h(3); return c.v; }'"$DE"
+refuse "RD3 called with a struct, h(s): once" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; return &n; }
+fn main(): i64 { var s: S8; s.v = 7; var c: S8 = h(s); return c.v; }'"$DE"
+refuse "RD4 var n: i64 = 5; (annotated)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: i64 = 5; return &n; }'"$DE"
+refuse "RD5 a k: i32 parameter" "$MS — \`&k\` $SLOT k's slot, $NS" "$DH"'fn h<T>(x: T, k: i32): S8 { return &k; }'"$DE"
+refuse "RD6 an untyped parameter" "$MS — \`&k\` $SLOT k's slot, $NS" "$DH"'fn h<T>(x: T, k): S8 { return &k; }'"$DE"
+refuse "RD7 var n = k + 1; reading no T (k: i64)" "$DN" "$DH"'fn h<T>(x: T, k: i64): S8 { var n = k + 1; return &n; }'"$DE"
+refuse "RD8 var n: *i64 = 0;" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: *i64 = 0; return &n; }'"$DE"
+refuse "RD9 var n: **S8 = 0; (no type parameter)" "$DN" "$DH"'fn h<T>(x: T): S8 { var n: **S8 = 0; return &n; }'"$DE"
+refuse "RD10 a stub generic (x.v), never called: its skipped base" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; if (x.v == 1) { return &n; } return x; }'"$DE"
+refuse "RD11 a stub generic's return &GN; (a global), never called" "$MS — \`&GN\` $SLOT GN's slot, $NS" "$DH"'fn h<T>(x: T): S8 { if (x.v == 1) { return &GN; } return x; }'"$DE"
+refuse "RD12 a stub generic, wrapped return ((&n));" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = 5; if (x.v == 1) { return ((&n)); } return x; }'"$DE"
+refuse "RD13 var n = sizeof(T); (an i64 at every T), never called" "$DN" "$DH"'fn h<T>(x: T): S8 { var n = sizeof(T); return &n; }'"$DE"
+# What the definition keeps: a name typed by T (D1's stub, not this refusal), a stub's closure-local `return &n`.
+accept "AD1 var n: T = x; return &n; never called compiles" "$DH"'fn h<T>(x: T): S8 { var n: T = x; return &n; }'"$DE" 3 'syscall(60, 3);'
+accept "AD2 var n = x; (x: T) never called compiles" "$DH"'fn h<T>(x: T): S8 { var n = x; return &n; }'"$DE" 3 'syscall(60, 3);'
+accept "AD3 a stub's closure body keeps its own return &n" "$DH"'fn h<T>(x: T): S8 { var f = || { var n = 5; return &n; }; if (x.v == 1) { return x; } return x; }'"$DE" 3 'syscall(60, 3);'
+accept "AD4 a stub's struct global: return &GS; at S8" "$DH"'var GS = S8 { 9 };
+fn h<T>(x: T): S8 { if (x.v == 1) { return &GS; } return x; }
+fn main(): i64 { var s: S8; s.v = 1; var c: S8 = h(s); return c.v; }
+syscall(60, main());
+' 9 'syscall(60, 9);'
 # What stays: a const's and an enum constant's `&` keep the factor's own refusal (one error).
 refuse "R57 return &N; (a const) keeps its own refusal" "cannot take the address of const 'N'" "$NT"'const N = 3;
 fn h(): S { return &N; }'"$NE"
@@ -639,7 +761,7 @@ syscall(60, main());
 '
 
 echo "small_struct_return_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-[ "$nrefuse" -ge 70 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 70) — rows were lost"; exit 1; }
-[ "$naccept" -ge 28 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 28) — rows were lost"; exit 1; }
+[ "$nrefuse" -ge 93 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 93) — rows were lost"; exit 1; }
+[ "$naccept" -ge 37 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 37) — rows were lost"; exit 1; }
 [ "$fail" -eq 0 ] || exit 1
 exit 0
