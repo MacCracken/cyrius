@@ -178,10 +178,44 @@ fn _cov_hit(S, fi): i64 {
 # A body's start, then its PARSE_PROG: `_PARSE_FN_DEF_IMPL`'s (`ti` its `fn` token) and the
 # `#inline` replay's in `PARSE_FNCALL` (`ti` -1: the callee's body re-parsed inside the CALLER, so
 # every replay bumps the callee's counter) — each that fn's one PARSE_PROG, swapped 1-for-1.
+# ⛔ 6.7.16 — A FN SIGNATURE WITH NO BODY (`fn h(): i64;`, a trait member's shape — at the top level or in an impl) IS
+# ONE ERROR, "expected '{', got ';'". The `;` was taken for the `{`, so the declarations after it were read as the body
+# ("fn 'main' is defined inside fn 'h'", "expected '}', got end of file"), and pass 1's skip (`_prescan_skip_fn`) ran
+# on to the next fn's `}`, so that fn was never registered. The `;` now stands for an empty body: it is left where the
+# body starts, so the body reads nothing (`_cov_body`, and so does an inline replay of it; a generic base's stub skip
+# is off), the `}` check takes the `;` and releases the latch (`_fn_body_close`), and pass 1 stops at it.
+# CHANGELOG [6.7.16]
+fn _fn_body_open(S): i64 {
+    if (PEEKT(S) == 13) { STI(S, GTI(S) + 1); return 0; }
+    ERR_EXPECT(S, 13);
+    if (PEEKT(S) == 5) { return 0; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The body's `}` (the cursor on it), which the caller takes. A signature with no body has its `;` here: its latch, which
+# quieted this check, is released — the refusal is whole, and the next declaration reports its own errors.
+fn _fn_body_close(S): i64 {
+    if (PEEKT(S) == 14) { return 0; }
+    if (_fn_has_body(S) == 0) {
+        _panic = 0;
+        return 0;
+    }
+    ERR_EXPECT(S, 14);
+    return 0;
+}
+# 0 when the cursor, a fn body's start, is the `;` of a signature with no body (`_fn_body_open`): a `;` with no `{`
+# before it. 1 otherwise (a body's first token follows its `{`).
+fn _fn_has_body(S): i64 {
+    var i = GTI(S);
+    if (TOKTYP(S, i) != 5) { return 1; }
+    if (TOKTYP(S, i - 1) == 13) { return 1; }
+    return 0;
+}
 # Nothing when the mode is off or the fn is the compiler's own. A `#naked` fn has no frame and a
 # raw-asm body: no hit, and its line is recorded as not instrumented (`- ` in the dump). A replay
 # inside a `#naked` CALLER gets no hit either (it would push and clobber inside the raw body).
 fn _cov_body(S, fi, ti): i64 {
+    if (_fn_has_body(S) == 0) { return 0; }   # 6.7.16: `fn h(): i64;` — no body to read (`_fn_body_open`)
     if (_cov_mode == 1) {
         if (_cov_own(S, fi) == 0) {
             if (_cur_fn_naked == 1) {

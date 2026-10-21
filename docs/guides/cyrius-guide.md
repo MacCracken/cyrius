@@ -577,6 +577,10 @@ var r = add(20, 22);   # r = 42
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
   SIGSEGV). A local function is a closure: `var sq = |x| x * x;`.
+- **A fn has a body.** A signature ended by `;` (`fn h(): i64;`, a trait member's shape — at the top level or in an
+  `impl`) is one error, *expected '{', got ';'*, and what follows is read as the next declaration (6.7.16; through
+  6.7.15 the `;` was taken for the `{` and everything after it was read as the body: *fn 'main' is defined inside fn
+  'h'*, *expected '}', got end of file*, and a forward call to a fn after it lost that fn's signature).
 - **An unmatched `}` at module scope is refused** (6.7.9): `error: unmatched '}' at module scope`,
   with a hint that an extra `}` inside a fn closes it early and leaves the fn's own closing brace
   over. Before 6.7.9 the brace silently ended the unit: everything after it was dropped, the build

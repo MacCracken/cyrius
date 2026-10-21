@@ -27,8 +27,9 @@
 #       one error, nothing about qq1 / qq2; M2 the same then `y = zz9;` — two
 #   P   control: 6.7.11's pair refusal `y = f();` then `y = zz9;` — two, as before
 # Every row on the x86_64, aarch64, cx, PE and Mach-O compilers built from this tree: the exact error lines, rc 1,
-# no binary. 6.7.16 (f16) adds the AS (#assert), H (block-head headers), R (a head's missing `{`) and U (a top-level
-# `var c: S;`) rows, each section with its own ledger below, and the corpus floor at the end.
+# no binary. 6.7.16 (f16) adds the AS (#assert), H (block-head headers), R (a head's missing `{`), U (a top-level
+# `var c: S;`) and BB (a fn signature with no body) rows, each section with its own ledger below, and the corpus floor
+# at the end.
 #
 # MUTATION LEDGER (2026-10-19; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from
 # that copy with CYCC= it, so every leg's compiler carries the mutant):
@@ -762,9 +763,94 @@ syscall(60, zz);
 error:<source>:5:8: unknown type 'c' for variable 'x'
 error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
 
-# The corpus floor (6.7.16): 79 rows on five legs. The gate had none, so a row lost from the list, or a leg that
+# BB — 6.7.16 (f16 FG2, met with issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md):
+# A FN SIGNATURE WITH NO BODY (`fn h(): i64;`, a trait member's shape) IS ONE ERROR, "expected '{', got ';'". PARSE_FN_DEF
+# took the `;` for the `{`, so the declarations after it were read as the body ("fn 'main' is defined inside fn 'h'",
+# "expected '}', got end of file"), and pass 1's `_prescan_skip_fn` ran on to the next fn's `}`, leaving it
+# unregistered. The `;` now stands for an empty body (`_fn_body_open`, `_fn_has_body`), and pass 1 stops at it.
+#   BB1 a fn, then main's own error; BB2 an inherent impl's method, then the next method's own error; BB3 a generic one
+#   (its call is replayed inline: it read the next fn as the body); BB4 one below its caller, a fn after it called from
+#   the top level; BB4b a forward call to a fn after it reads that fn's pass-1 facts (a struct return); BB5 no return type, and parameters — each its own line (the latch is
+#   released at the `;`); BB6 BB1 under --syntax-only; BB7 control: a body whose first token is `;` is a body (refused
+#   "unexpected ';'" as before); BB8 control: a fn, an impl method and a generic with bodies build (x86_64: exit 3); BB9
+#   a bounded generic whose i64 base is a stub (`_b3_skip`: its skip ran on into main's body).
+# Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc, this gate run with CYCC= it — the x86_64,
+# PE and Mach-O legs; the aarch64 / cx compilers are built from the tree): the lane before it (817768e2f) -> RED 24:
+# BB1-BB6 BB9 on the three legs ("fn 'main' is defined inside fn 'h'", "expected '}'", BB4b mk's invented line);
+# `_cov_body` reading the `;` as a body -> RED 24, the same; `_prescan_skip_fn` not stopping at the `;` -> RED 3: BB4b
+# (the fn after it unregistered in pass 1); `_fn_body_close` keeping the latch -> RED 3: BB5 (j's line swallowed); the
+# stub skip of a bounded generic's i64 base left on (`_b3_skip = 1`) -> RED 3: BB9
+row BB1 "a fn with no body, then main's own error" 'fn h(): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:1:12: expected '{', got ';'
+error:<source>:2:31: undefined variable 'zz' (missing include or enum?)"
+
+row BB2 "an impl method with no body, then the next method's own error" 'struct P { x; }
+impl P { fn h(self): i64; fn k(self): i64 { return 1 + yy; } }
+fn main(): i64 { var p = P { 1 }; return p.k(); }
+syscall(60, main());
+' "error:<source>:2:25: expected '{', got ';'
+error:<source>:2:58: undefined variable 'yy' (missing include or enum?)"
+
+row BB3 "a generic with no body, called (replayed inline)" 'fn g<T>(x: T): T;
+fn main(): i64 { return g(3) + zz; }
+syscall(60, main());
+' "error:<source>:1:17: expected '{', got ';'
+error:<source>:2:34: undefined variable 'zz' (missing include or enum?)"
+
+row BB4 "below its caller; the fn after it registered in pass 1" 'fn main(): i64 { return h() + zz; }
+fn h(): i64;
+fn k(): i64 { return 2; }
+syscall(60, main() + k());
+' "error:<source>:1:33: undefined variable 'zz' (missing include or enum?)
+error:<source>:2:12: expected '{', got ';'"
+
+row BB4b "a forward call past it reads pass 1's facts (mk's struct return: no \"no struct type in scope for 'p'\")" 'struct Pt { x; y; z; }
+fn main(): i64 { var p = mk(); return p.z; }
+fn h(): i64;
+fn mk(): Pt { var p: Pt; p.z = 3; return p; }
+syscall(60, main() + zz);
+' "error:<source>:3:12: expected '{', got ';'
+error:<source>:5:24: undefined variable 'zz' (missing include or enum?)"
+
+row BB5 "no return type, and parameters" 'fn h();
+fn j(a, b);
+fn main(): i64 { return zz; }
+syscall(60, main());
+' "error:<source>:1:7: expected '{', got ';'
+error:<source>:2:11: expected '{', got ';'
+error:<source>:3:27: undefined variable 'zz' (missing include or enum?)"
+
+row BB6 "BB1 under --syntax-only" 'fn h(): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:1:12: expected '{', got ';'" --syntax-only
+
+row BB7 "control: a body whose first token is a \`;\` is read as a body (refused as before)" 'fn h(): i64 { ; return 3; }
+fn main(): i64 { return h() + zz; }
+syscall(60, main());
+' "error:<source>:1:15: unexpected ';'
+error:<source>:2:33: undefined variable 'zz' (missing include or enum?)"
+
+row BB9 "a bounded generic with no body (its i64 base a skipped stub: the skip ran into main's body)" 'trait Show { fn show(self): i64; }
+fn g<T: Show>(x: T): i64;
+fn main(): i64 { return 3 + zz; }
+syscall(60, main());
+' "error:<source>:2:25: expected '{', got ';'
+error:<source>:3:31: undefined variable 'zz' (missing include or enum?)"
+
+okrow BB8 "control: the shapes beside it build — a one-statement fn, an impl method, a generic" 'struct P { x; }
+impl P { fn k(self): i64 { return self.x; } }
+fn h(): i64 { return 1; }
+fn g<T>(x: T): T { return x; }
+fn main(): i64 { var p = P { 1 }; return h() + p.k() + g(1); }
+syscall(60, main());
+' 3
+
+# The corpus floor (6.7.16): 89 rows on five legs. The gate had none, so a row lost from the list, or a leg that
 # stopped running, read green.
-FLOOR=395
+FLOOR=445
 if [ $((pass + fail)) -lt "$FLOOR" ]; then bad "$G ran $((pass + fail)) row-legs (floor $FLOOR) - rows or legs were lost"; fi
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

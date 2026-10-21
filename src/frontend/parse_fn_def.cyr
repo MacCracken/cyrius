@@ -3305,8 +3305,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _sptr_params_localize(S);   # 6.6.16 (C7): a struct parameter over 8 B is copied in, here
     _dsg_check(S, fi, noff, _defstart_ti);   # 6.6.20: a redefinition must be called the same way
     # Parse body
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
+    _fn_body_open(S);   # 6.7.16: its `{`, or a `;` refused as an empty body
     # Emit jmp placeholder for defer flag init (backpatched after body)
     var defer_init_jmp = EJMP0(S);
     var body_cp = GCP(S);
@@ -3368,7 +3367,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # site now gets. CHANGELOG [6.6.10]
     var _b3_skip = 0;
     if (_gen_base == 1 && _inst_conc0 == 0) {
-        if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = 1; }   # 6.7.1: or not a valid i64 instance of its bounds
+        if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = _fn_has_body(S); }   # 6.7.1: or not a valid i64 instance of its bounds
     }
     # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
     # in the heap object the runtime hands back on every resume, and the fn top dispatches to
@@ -3459,7 +3458,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
     }
     if (_gen_base == 1) { _tp_clear(S); }
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    _fn_body_close(S);   # 6.7.16: its `}`, or a refused `;` body's latch released
     # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
     if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
         SFBE(S, fi, GTI(S));
