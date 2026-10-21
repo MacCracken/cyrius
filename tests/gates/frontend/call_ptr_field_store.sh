@@ -117,6 +117,9 @@
 #   q3 `_ret_ptr_unk` recorded in pass 2 only      -> RED 4: S13 x4 (the callee defined below the statement)
 # (`_cf_unres_fn`'s GFRS -8 and `_hl_fn_psid` tests are guards no current path reaches: the byte is 1 only for a `*T`
 # record whose T resolved to nothing, which records no struct.)
+# (6.7.16, the s16 lane, unit SS1; issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md;
+# the same procedure, 2026-10-20)
+#   e1 `_cf_unres_fn` without its enum-variant exclusion (= the tree before) -> RED 20: S23-S23d x4 (rc 0, accepted)
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -654,8 +657,8 @@ refused U23 "3:37: cannot take a field of the result of 'Some': it does not retu
 # is a call-registered fn with no definition). On the x86_64, aarch64, PE and cx compilers. The cx leg is 6.7.16's
 # (issues/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md): cx refused every call to a fn the file does not
 # define even under --syntax-only ("undefined function(s) called (cx backend)", rc 1, `gp` listed once per call).
-# synonly <name> <want-rc> <fragment|-> <what>: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
-# "warning: undefined function 'gp'"; else ONE `^error` line holding <fragment>.
+# synonly <name> <want-rc> <fragment|-> <what> [<fn>]: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
+# "warning: undefined function '<fn>'" (default gp); else ONE `^error` line holding <fragment>.
 synonly() {
     rows=$((rows + 1))
     for leg in x86_64 aarch64 pe cx; do
@@ -672,7 +675,7 @@ synonly() {
         if [ "$crc" -ne "$2" ]; then bad "$1 $4 ($leg): rc $crc (want $2): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
         elif [ "$3" = - ]; then
             if [ "$n" -ne 0 ]; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
-            elif ! grep -q "^warning: undefined function 'gp'" "$T/$1.$leg.err"; then bad "$1 $4 ($leg): no undefined-function warning"
+            elif ! grep -q "^warning: undefined function '${5:-gp}'" "$T/$1.$leg.err"; then bad "$1 $4 ($leg): no undefined-function warning"
             else ok "$1 $4 ($leg): accepted"; fi
         elif [ "$n" -ne 1 ]; then bad "$1 $4 ($leg): $n error lines (want 1)"
         elif ! grep '^error' "$T/$1.$leg.err" | grep -qF "$3"; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
@@ -815,8 +818,39 @@ syndef S21 0 + "control: Foo declared here, D8 (a)'s store"
 printf '%s\n%s\n' 'fn gi(): *i64 { return 0; }' 'fn go(): i64 { gi().n = 5; return 0; }' > "$T/S22.cyr"
 syndef S22 1 "$MT" "control: \`: *i64\`, a T that resolves to no struct, keeps the refusal"
 
-FLOOR_ROWS=96   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs)
+# --- S23 (6.7.16, issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md): --syntax-only,
+# an enum variant's payload constructor called in a fn ABOVE its enum — registered by pass 1 with no owner, its code
+# emitted at the enum — read as a sibling module's fn (`_fn_nodef`), so `Some(5).n = 1;` parsed silently (rc 0) where
+# the full build refuses it ("does not return a struct", U23). The variant is defined here: `_cf_unres_fn` excludes it
+# (`_fn_enum_var`, as `_call_nodef` does), so it takes the defined callee's path — refused once, as with the enum above
+# (S23e). S23 is the filed repro verbatim; S23full its full compile (unchanged). S23a-S23d the step, `+=`, a `: stack`
+# enum's constructor, a nested field; S23f (control) a unit variant called (`Non()`: no fn of that name here) keeps a
+# sibling module's path.
+cat > "$T/S23.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn go(): i64 { Some(5).n = 1; return 0; }
+enum Opt { Some(v); Non; }
+syscall(60, go());
+EOF2
+syndef S23 1 "3:26: $MT" "the filed repro: \`Some(5).n = 1;\` in a fn above its enum"
+refused S23 "3:20: cannot take a field of the result of 'Some': it does not return a struct" "the filed repro, a full compile (unchanged)"
+erow() { printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\n%s\nenum Opt { Some(v); Non; }\nenum SR: stack { SOk(v); SErr(e); }\n' "$2" > "$T/$1.cyr"; }
+erow S23a 'fn go(): i64 { var i = 0; for (i = 0; i < 1; Some(5).n += 1) { i = i + 1; } return 0; }'
+syndef S23a 1 "3:56: $MT" "the for step \`Some(5).n += 1\` above the enum"
+erow S23b 'fn go(): i64 { Some(5).n += 1; return 0; }'
+syndef S23b 1 "3:26: $MT" "\`Some(5).n += 1;\`"
+erow S23c 'fn go(): i64 { SOk(5).n = 1; return 0; }'
+syndef S23c 1 "3:25: $MT" "a \`: stack\` enum's constructor"
+erow S23d 'fn go(): i64 { Some(5).h.n = 1; return 0; }'
+syndef S23d 1 "$MT" "a nested field"
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\nenum Opt { Some(v); Non; }\nfn go(): i64 { Some(5).n = 1; return 0; }\nsyscall(60, go());\n' > "$T/S23e.cyr"
+syndef S23e 1 "4:26: $MT" "control: the enum above the fn"
+erow S23f 'fn go(): i64 { Non().n = 1; return 0; }'
+synonly S23f 0 - "control: a unit variant called, \`Non().n = 1;\`, keeps a sibling module's path" Non
+
+FLOOR_ROWS=104  # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs), S23-S23f (s16)
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

@@ -1461,7 +1461,9 @@ variable 'i64'*, *expected ';', got '>'* — as a statement *expected '=', got '
 `--syntax-only`, where that fn is a sibling module's, `gp().n = 5;` and the step `gp().n += 1` are accepted, their value
 still parsed (6.7.15; they were *the result is a temporary*, which only a callee this file defines as returning a
 struct by value earns) — and so are they when `gp` is defined here as `fn gp(): *Foo` with `Foo` a sibling module's
-struct (6.7.16); a `: Foo` result by value, a `: **Foo` and a `: *i64` keep the refusal. The cx compiler accepts them
+struct (6.7.16); a `: Foo` result by value, a `: **Foo` and a `: *i64` keep the refusal, and so does an enum variant's
+constructor called in a fn above its enum (`Some(5).n = 1;` — defined here, not a sibling's: 6.7.16, it was accepted
+there and refused with the enum above). The cx compiler accepts them
 too since 6.7.16: `cycc_cx --syntax-only` refused every call to a fn the file does not define (*undefined function(s)
 called (cx backend)*). Under the flag it writes no `.cyx`, and, having no reachability data, it also accepts a
 reachable such call, which the native compilers refuse there. Without the flag it still refuses the call, naming

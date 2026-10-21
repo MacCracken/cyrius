@@ -3565,7 +3565,7 @@ fn _call_field(S): i64 {
         # 6.7.15: and the top-level refusal's `[..]` with the chain past it, as a method's (`_method_chain`): `var x =
         # mk().p[0];` added a false "cannot subscript field 'p'". --syntax-only parses the index. CHANGELOG [6.7.15]
         if (_syntax_only == 0) { if (sid > 0) { STI(S, _pf_chain_end(S, GTI(S))); } }
-        if (_syntax_only == 1) { if (_cf_unres_fn(S, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn (6.7.16: or struct)
+        if (_syntax_only == 1) { if (_cf_unres_fn(S, ti, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn (6.7.16: or struct)
         _cfo = 0;
         return 1;
     }
@@ -3646,12 +3646,16 @@ fn _fn_nodef(S, fi): i64 {
     if (GFFI(S, fi) != 0) { return 0; }
     return 1;
 }
-# 1 = `_call_field` arms `_cf_unres` for fn `fi`: no definition here (`_fn_nodef`), or (6.7.16) one declared `: *T`
-# (GFRS's -8) whose T this file does not declare (`_fn_ret_unk`), so no struct was recorded for it (`_hl_fn_psid`). A
-# `: Foo` result by value keeps "the result is a temporary"; a `*T` whose T is declared here took D8 (a)'s store.
-# CHANGELOG [6.7.16]
-fn _cf_unres_fn(S, fi): i64 {
-    if (_fn_nodef(S, fi) == 1) { return 1; }
+# 1 = `_call_field` arms `_cf_unres` for callee token `ti`'s fn `fi`: no definition here (`_fn_nodef`), or (6.7.16) one
+# declared `: *T` (GFRS's -8) whose T this file does not declare (`_fn_ret_unk`), so no struct was recorded for it
+# (`_hl_fn_psid`). A `: Foo` result by value keeps "the result is a temporary"; a `*T` whose T is declared here took
+# D8 (a)'s store. An enum variant's payload constructor called above its enum has no code and no owner yet, but it is
+# defined here (`_call_nodef`'s exclusion): `Some(5).n = 1;` was accepted, where the build refuses it. CHANGELOG [6.7.16]
+fn _cf_unres_fn(S, ti, fi): i64 {
+    if (_fn_nodef(S, fi) == 1) {
+        if (fi >= 0) { if (_fn_enum_var(S, TOKVAL(S, ti)) == 1) { return 0; } }
+        return 1;
+    }
     if (GFRS(S, fi) != 0 - 8) { return 0; }
     if (_hl_fn_psid(fi) != 0) { return 0; }
     return _fn_ret_unk(fi);
