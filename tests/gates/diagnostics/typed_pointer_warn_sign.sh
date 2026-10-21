@@ -28,11 +28,16 @@ T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: typed_pointer_warn_sig
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 X=$(mktemp -d) && [ -d "$X" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-# The five-leg rows' PE runs use a PRIVATE wine prefix under $X (never ~/.wine), its server stopped on exit.
+# The five-leg rows' PE runs use a PRIVATE wine prefix under $X (never ~/.wine), torn down with its server dir on
+# exit (`-k` leaves /tmp/.wine-<uid>/server-<dev>-<ino> behind) — tuple_checked.sh's helper.
+WP="$X/wine"
+WHM="$X/whome"
 _x_down() {
-    [ -d "$X/wine" ] || return 0
-    WINEPREFIX="$X/wine" wineserver -k >/dev/null 2>&1 || true
-    WINEPREFIX="$X/wine" wineserver -w >/dev/null 2>&1 || true
+    [ -d "$WP" ] || return 0
+    _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+    WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+    WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+    rm -rf "$_ws" || true
 }
 trap '_x_down; rm -rf "$X"; rm -f "$T" "$E" "$O"' EXIT
 
@@ -465,8 +470,8 @@ _x5_run() {   # <leg> <name>: the exit in $got ('-' for a leg that does not run 
         x86_64)  timeout 30 "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
         aarch64) timeout 60 qemu-aarch64 "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
         cx)      timeout 60 "$X/cxvm" < "$X/$2.$1" > /dev/null 2>&1 || got=$? ;;
-        pe)      mkdir -p "$X/whome"; cp "$X/$2.$1" "$X/$2.exe"
-                 (cd "$X" && WINEPREFIX="$X/wine" HOME="$X/whome" XDG_CACHE_HOME="$X/whome/.cache" WINEDEBUG=-all \
+        pe)      mkdir -p "$WHM"; cp "$X/$2.$1" "$X/$2.exe"
+                 (cd "$X" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
                      WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$2.exe" > /dev/null 2>&1) || got=$? ;;
         *)       got=- ;;
     esac

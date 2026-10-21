@@ -19,11 +19,16 @@ cd "$ROOT" || { echo "FAIL: false_warnings_valid_shapes: cannot cd to $ROOT"; ex
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: false_warnings_valid_shapes: no compiler at $CC"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: false_warnings_valid_shapes: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-# The five-leg rows' PE runs use a PRIVATE wine prefix under $D (never ~/.wine), its server stopped on exit.
+# The five-leg rows' PE runs use a PRIVATE wine prefix under $D (never ~/.wine), torn down with its server dir on
+# exit (`-k` leaves /tmp/.wine-<uid>/server-<dev>-<ino> behind) — tuple_checked.sh's helper.
+WP="$D/wine"
+WHM="$D/whome"
 _d_down() {
-  [ -d "$D/wine" ] || return 0
-  WINEPREFIX="$D/wine" wineserver -k >/dev/null 2>&1 || true
-  WINEPREFIX="$D/wine" wineserver -w >/dev/null 2>&1 || true
+  [ -d "$WP" ] || return 0
+  _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+  WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+  WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+  rm -rf "$_ws" || true
 }
 trap '_d_down; rm -rf "$D"' EXIT
 fail=0
@@ -344,8 +349,8 @@ _f5_run() {   # <leg> <name>: the exit in $got ('-' for a leg that does not run 
     x86_64)  timeout 30 "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
     aarch64) timeout 60 qemu-aarch64 "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
     cx)      timeout 60 "$D/cxvm" < "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
-    pe)      mkdir -p "$D/whome"; cp "$D/$2.$1" "$D/$2.exe"
-             (cd "$D" && WINEPREFIX="$D/wine" HOME="$D/whome" XDG_CACHE_HOME="$D/whome/.cache" WINEDEBUG=-all \
+    pe)      mkdir -p "$WHM"; cp "$D/$2.$1" "$D/$2.exe"
+             (cd "$D" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
                WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$2.exe" > /dev/null 2>&1) || got=$? ;;
     *)       got=- ;;
   esac
