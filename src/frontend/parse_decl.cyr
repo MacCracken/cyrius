@@ -9296,8 +9296,8 @@ fn _mch_head(S, ti): i64 {
 }
 # 6.7.16 — `_mch_head` in a token pass (`_mch_tok`: the pair flags' propagation, the mixed-return warning): the head
 # typed from the tokens of the unit starting at token a, never the parser's scope — a name as `_tok_ta_decl` declares it
-# (a struct value or a `*S`; an impl's untyped `self`, `_tok_iself`), a call whose fn is no generic (`_hl_pchain`: a
-# struct or `*S` result — a generic's binding is the parser's alone), a parenthesised one (`_tok_mch_whead`).
+# (a struct value or a `*S`; an impl's untyped `self`, `_tok_iself`), a call (`_hl_pchain`: a struct or `*S` result; a
+# generic's `_tok_mch_gret`), a parenthesised one (`_tok_mch_whead`).
 fn _tok_mch_head(S, a, ti): i64 {
     _mch_nh = 0;
     if (TOKTYP(S, ti) == 10) { return _tok_mch_whead(S, a, ti); }
@@ -9308,7 +9308,7 @@ fn _tok_mch_head(S, a, ti): i64 {
         if (TOKTYP(S, ti) == 2) {
             var fi = FINDFN(S, TOKVAL(S, ti));
             if (fi < 0) { return 0; }
-            if (GFTP(S, fi) != 0) { return 0; }
+            if (GFTP(S, fi) != 0) { return _tok_mch_gret(S, fi); }
         }
         return _hl_pchain(S, ti, _mch_hx);
     }
@@ -9319,6 +9319,20 @@ fn _tok_mch_head(S, a, ti): i64 {
     if (sid <= 0) { sid = _tok_iself(S, a, ti); }
     if (sid >= 2048) { return 0; }
     return sid;
+}
+# ⛔ 6.7.16 — ... a GENERIC call head whose signature names no type parameter as its return: its template's struct or
+# `*S` (a binding changes nothing), as the parser's arm reads it (`_mch_chead`); a `: T` return is the parser's alone
+# (its binding is read from the parser's scope), 0. A forwarder below its caller, `return gw<i64>(2).p.rs(3);` /
+# `return gw(2).p.rs(3);` with `fn gw<V>(x: V): *W`, was no pair there (`var v = fwd();` kept the tag, `gw(2).p.rs(3)?`
+# was not "bind both"). CHANGELOG [6.7.16]
+fn _tok_mch_gret(S, fi): i64 {
+    if (_gen_ret_tparam(S, fi) >= 0) { return 0; }
+    var t = _hl_fn_psid(fi);
+    if (t > 0) { return t; }
+    t = GFRS(S, fi);
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    return t;
 }
 # ... a parenthesised head `( E )`: a `*name` of a name declared `*S`, else a name, a call or a chain (`_mch_ty`, its
 # head typed as above) — inside any parentheses; `_mch_hx` after the `)`.

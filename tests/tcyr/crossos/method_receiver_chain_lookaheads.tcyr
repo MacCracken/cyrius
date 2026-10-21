@@ -214,6 +214,13 @@ fn fc_qv(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = w.p.idv(q).rs(3)?; retur
 fn fc_qvs(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = q.idv(q).rs(3)?; return FcOk(v + 30); }
 fn fc_qva(w: FcW): i64 { var v = fc_qvb(w)?; return FcOk(v + 1); }
 fn fc_qvb(w: FcW): i64 { var q: FcP = FcP { 1 }; return w.p.idv(q).rs(3); }
+# ... and a forwarder below its caller whose chain starts at a GENERIC call with a concrete `*W` return (the token pass
+# typed no generic head: the caller's `?` took the boxed lowering)
+fn fc_gw<V>(x: V): *FcW { var a = x; return a; }
+fn fc_qga(w: FcW): i64 { var v = fc_qgb(w)?; return FcOk(v + 1); }
+fn fc_qgb(w: FcW): i64 { return fc_gw(&w).p.rs(3); }
+fn fc_qxa(w: FcW): i64 { var v = fc_qxb(w)?; return FcOk(v + 2); }
+fn fc_qxb(w: FcW): i64 { return fc_gw<i64>(&w).p.rs(3); }
 fn fc_xpair(which): i64 {
     var w = fc_w();
     var q: FcP = FcP { 2 };
@@ -223,6 +230,8 @@ fn fc_xpair(which): i64 {
     if (which == 1) { t, v = fc_qvs(w); }
     if (which == 2) { t, v = fc_qva(w); }
     if (which == 3) { t, v = w.p.idv(q).rs(5); }
+    if (which == 4) { t, v = fc_qga(w); }
+    if (which == 5) { t, v = fc_qxa(w); }
     return t * 100 + v;
 }
 
@@ -329,6 +338,8 @@ assert_eq(fc_xpair(0), 34, "MX: var v = w.p.idv(q).rs(3)?; (the boxed ? before: 
 assert_eq(fc_xpair(1), 34, "MX: var v = q.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
 assert_eq(fc_xpair(2), 5, "MX: return w.p.idv(q).rs(3); forwards the pair to a caller ABOVE it");
 assert_eq(fc_xpair(3), 7, "MX: t, v = w.p.idv(q).rs(5)");
+assert_eq(fc_xpair(4), 5, "MX: return gw(&w).p.rs(3); (gw generic, : *W) forwards the pair to a caller ABOVE it");
+assert_eq(fc_xpair(5), 6, "MX: return gw<i64>(&w).p.rs(3); forwards the pair to a caller ABOVE it");
 assert_eq(fc_ta(0), 34, "MT: t = (*pw).p.m2(), a dereference head");
 assert_eq(fc_ta(1), 57, "MT: t = (w).p.mm(5), a parenthesised name");
 assert_eq(fc_ta(2), 34, "MT: t = ((*pw).p.m2()), wrapped");

@@ -37,7 +37,8 @@
 #      24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn forwarding 3 values / 1 value — each on w.p (c),
 #      h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m), callptr(&gpw, &w).p (i), w.p.idv(w).p (g: an
 #      inferred generic step `: V` mid-chain, unresolved before the lane's review: `_mch_bind`), w.p.idv<W>(w).p (e:
-#      an explicit one) and (p) (y: a single name's parenthesised head); C1h / F1h / F2h on w.p.idv(p) (h); on the
+#      an explicit one), (p) (y: a single name's parenthesised head), gw(&w).p (n) and gw<i64>(&w).p (o) (a generic
+#      call head returning `*W`: the token passes typed none, `_tok_mch_gret`); C1h / F1h / F2h on w.p.idv(p) (h); on the
 #      callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
 #      C22-C24 a struct return over 8 B of another struct / 2 values / 1 value (each chain said "returned in two
 #      registers ... got `w`", the single name the text it shares now)
@@ -91,6 +92,9 @@
 #                                                          C1h / F1h / F2h on h
 #   M20 the tree before `_tup_asg`'s parenthesised head  -> RED 11: V x7 (the file did not build: "not a tuple"), C12r /
 #       (cd9d77e02)                                        C12s on x and y
+#   M21 the tree before `_tok_mch_gret` (8f484834d)      -> RED 13: V x7 (the forwarder below its caller on a generic
+#                                                          head: the boxed `?`, a crash on every leg), W2 / F1 / F2 on
+#                                                          n and o
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -120,7 +124,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=91
+FLOOR=93
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -214,8 +218,9 @@ impl P {
 impl W { fn gp(self): *P { var a = self; return a; } }
 impl P { fn idv<V>(self, x: V): V { return x; } }
 fn mkw(): W { var w: W; w.p.k = 1; w.q = 0; w.n = 0; return w; }
-fn gpw(w: *W): *W { return w; }'
-MODES="c d f x k m i g e y"
+fn gpw(w: *W): *W { return w; }
+fn gw<V>(x: V): *W { var a = x; return a; }'
+MODES="c d f x k m i g e y n o"
 mode_rcv() {
     case "$1" in
         s) R='p.'; PW='p: P' ;;
@@ -230,6 +235,8 @@ mode_rcv() {
         e) R='w.p.idv<W>(w).p.'; PW='w: W' ;;
         h) R='w.p.idv(p).'; PW='w: W' ;;
         y) R='(p).'; PW='p: P' ;;
+        n) R='gw(&w).p.'; PW='w: W' ;;
+        o) R='gw<i64>(&w).p.'; PW='w: W' ;;
     esac
 }
 # subst <from> <to>: stdin to stdout with every <from> replaced by <to> (literally).
