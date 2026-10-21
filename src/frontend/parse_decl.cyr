@@ -12260,10 +12260,14 @@ fn _gz_rsid(S, a, d): i64 {
 }
 # [b, p) OP [p + 1, ..): an overloaded `+ - * /` dispatches on its left operand's struct (`_gz_lty`)
 # and has its operator fn's struct return; any other operator, or no dispatch, gives no struct.
+# 6.7.16: the result is the operator fn's, never an instance a generic call or method in the left operand names
+# (`_gz_gb` cleared): `var G: G1<i32> = mkg1<i32>(30) + mkg1<i32>(3);` was judged a struct value through it and the
+# replay added "the declaration zone misread ..." to the operator's own refusal. CHANGELOG [6.7.16]
 fn _gz_op(S, b, p): i64 {
     var t = TOKTYP(S, p);
     var lt = _gz_lty(S, b, p);
     _gz_k = 0;
+    _gz_gb = 0;
     if (lt <= 0) { return 0; }
     var ofi = 0 - 1;
     if (t == 6 || t == 113) { ofi = _gz_opfn(S, lt, "add"); }

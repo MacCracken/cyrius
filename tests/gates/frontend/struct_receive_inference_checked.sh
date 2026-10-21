@@ -1773,7 +1773,32 @@ zaft GZO9
 for zw in zone after; do runs "GZO9$zw" 33 "the $zw: a valid nested bounded list \`mkg1<GB<Pt>>(..)\` still binds its instance"; done
 printf '%s\nvar x = mkg1<Pt<i32>>(33);\nfn f(): i64 { return x.v; }\nsyscall(60, x.v + f());\n' "$GZOH" > "$T/GZO10.cyr"
 refused GZO10 "'Pt' is not a generic struct: it takes no type arguments" "the zone: a refused nested list's global read in a fn body and an operator: the one refusal"
-[ "$rows" -ge 406 ] || bad "only $rows rows ran (floor 406)"
+
+# ---- 6.7.16: an operator's result is never the instance its left operand's generic call names. The zone reader kept
+# `_gz_gb` (a whole generic call's `: G<..>`) from the operator's left operand, so `var G: G1<i32> = mkg1<i32>(30) +
+# mkg1<i32>(3);` (no `G1$i32_add`) was judged a struct value and the replay added "the declaration zone misread whether
+# the initializer of 'G' is a struct value" to the missing operator's one refusal; after a first statement, the one
+# refusal (`_gz_op` clears it). GOP1 zone / after: the one error, no misread; GOP2 a valid operator over two generic
+# calls (`G1_add` on the base), annotated and untyped, runs in the zone and after.
+#   N86 `_gz_op` without its `_gz_gb = 0`                  -> RED 1: GOP1zone x4 (2 errors: + the misread)
+GOPH='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }'
+printf '%s\nfn G1_add<T>(l: G1<T>, r: G1<T>): G1<T> { var g: G1<T>; g.v = l.v + r.v; return g; }\nvar G: G1<i32> = mkg1<i32>(30) + mkg1<i32>(3);\nsyscall(60, G.v);\n' "$GOPH" > "$T/GOP1zone.cyr"
+printf '%s\nfn G1_add(l: G1, r: G1): G1 { var g: G1; g.v = l.v + r.v; return g; }\nvar G: G1 = mkg1(30) + mkg1(3);\nvar H = mkg1(30) + mkg1(3);\nsyscall(60, G.v + H.v - 33);\n' "$GOPH" > "$T/GOP2zone.cyr"
+for n in 1 2; do awk '!d && /^var G/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/GOP${n}zone.cyr" > "$T/GOP${n}after.cyr"; done
+for zw in zone after; do
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        compile "$leg" "GOP1$zw"
+        n=$(grep -c '^error' "$T/GOP1$zw.$leg.err" || true)
+        if [ "$crc" -ne 0 ] && [ "$n" -eq 1 ] && grep -qE "^error: (refusing to emit binary with 1 reachable undefined function|undefined function\(s\) called \(cx backend\))" "$T/GOP1$zw.$leg.err" \
+           && ! grep -q "misread" "$T/GOP1$zw.$leg.err"; then ok "GOP1$zw the $zw: \`mkg1<i32>(30) + mkg1<i32>(3)\` with no \`G1\$i32_add\` is its one refusal ($leg)"
+        else bad "GOP1$zw the $zw: want the missing operator's one refusal, no misread ($leg, rc $crc): $(grep '^error' "$T/GOP1$zw.$leg.err" | tr '\n' '|')"; fi
+    done
+    runs "GOP2$zw" 33 "the $zw: \`G1_add\` over two generic calls, annotated and untyped"
+done
+[ "$rows" -ge 410 ] || bad "only $rows rows ran (floor 410)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"
