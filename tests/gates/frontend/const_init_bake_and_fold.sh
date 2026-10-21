@@ -84,6 +84,14 @@
 #          last INTEGER constant: a float constant between it and the list stops the search (L11, the zone review's
 #          program: 0, and L12: 9 — stepping past the float seeded the const it superseded, 5 / 14), a const after the
 #          float seeds (L13: 14, the control)
+#   L14-L24 6.7.16 (the user's decision D86 (a), 2026-10-20): a list over an untyped FLOAT constant keeps the float's
+#          bytes it does not list, as over the integer spelling of those bits
+#          (issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md), by value on every
+#          leg: the filed x12 (L14: 0 -> 63) and x14 (L15: a literal before the float, 5 -> 0), a const before the
+#          float (L16: 0 -> 63; L11 / L12, its low bytes, do not move), the listed byte kept under the float's (L17: 9
+#          -> 72), a constant f64 expression (L18: 0 -> 64), a negated literal (L19: 0 -> 191), an f64 const name (L20:
+#          0 -> 63), a float between two lists (L21: 0 -> 63), an earlier initializer's read (L22: 0 -> 63); controls: a
+#          later pass-1 literal is the seed (L23: 14), a computed float is no constant (L24: 0)
 #   T13-T16 6.7.16: tests/tcyr/crossos/global_array_initializer.tcyr on the same four legs
 #   S33    6.7.16 (D15 (a)): `var M: f64 = 1.5 + 1;` (warned) is byte-identical to `= 1.5` — no startup store
 #   D1-D3  D11's repros A, B and B's `%` twin exit 5 / 8 / 3 on x86_64, aarch64 and cx (PE: the crossos file
@@ -152,6 +160,9 @@
 # MUTATION (measured, 6.7.16, a scratch copy of the tree at cbb267ab3's src — the zone review's fix): `_gai_seed`
 # stepping past a float constant (`_gai_seed_ent` 0 for `_gvk_ik` 2) -> 10 red: L11 / L12 on all three legs (5 / 14: the
 # const the float superseded seeded the list), T13-T16 (GRKF 0x0509); L13 stays green.
+# MUTATION (measured, 6.7.16, a scratch copy of the tree — D86 (a)): `_gai_seed_ent` answering 2 for a float constant
+# (`_gvk_ik` 2: the walk stops at the static init, the tree before the fix) -> 31 red: L14-L22 on all three legs (L23 /
+# L24, the controls, stay green), T13-T16 (4 of the tcyr's rows each).
 # MUTATION (measured, 6.7.14, a mutated scratch copy of the tree, every leg built from it): _gvk_quiet returning 0
 # (every store kept, as 6.6.16 - 6.7.13) -> 26 red: S0-S7, K1, O11 - O13 on all three legs, D1-D3 on x86_64 and cx
 # (the SIGFPE, 136); _gvk_prev returning -1 (no earlier writer considered) -> 12 red: O3 / O4 / O6 / O8 on all
@@ -397,7 +408,18 @@ L9|14|const C = 0x0506;\nfn g(): i64 { return a; }\nvar b = g();\nvar a = C;\nva
 L10|14|var a = 0x0506;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
 L11|0|const C = 0x0506;\nvar a = C;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a >> 8) & 255);\n
 L12|9|const C = 0x0506;\nvar a = C;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
-L13|14|const C = 0x0506;\nvar a = 1.5;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n"
+L13|14|const C = 0x0506;\nvar a = 1.5;\nvar a = C;\nvar a[1] = {9};\nsyscall(60, (a & 255) + (a >> 8));\n
+L14|63|var K = 1.5;\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) & 255);\n
+L15|0|var a = 0x0506;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a >> 8) & 255);\n
+L16|63|const C = 0x0506;\nvar a = C;\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a >> 56) & 255);\n
+L17|72|var K = 1.5;\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) + (load64(&K) & 255));\n
+L18|64|var K = 1.5 + 1.0;\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) & 255);\n
+L19|191|var K = -1.5;\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) & 255);\n
+L20|63|const CF = 1.5;\nvar K = CF;\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) & 255);\n
+L21|63|var a[1] = {7};\nvar a = 1.5;\nvar a[1] = {9};\nsyscall(60, (a >> 56) & 255);\n
+L22|63|fn g(): i64 { return K; }\nvar b = g();\nvar K = 1.5;\nvar K[1] = {9};\nsyscall(60, (b >> 56) & 255);\n
+L23|14|var K = 1.5;\nvar K = 0x0506;\nvar K[1] = {9};\nsyscall(60, (K & 255) + (K >> 8));\n
+L24|0|fn f(): f64 { return 1.5; }\nvar K = f();\nvar K[1] = {9};\nsyscall(60, (load64(&K) >> 56) & 255);\n"
 
 # leg NAME COMPILER RUNNER... — every row compiled by COMPILER and run (RUNNER prefix; "cx" runs the .cyx on cxvm).
 leg() {

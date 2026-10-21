@@ -4854,19 +4854,19 @@ fn _gai_blob(S, vi, eb, k, seed): i64 {
     store64(b + 8, eb | (k << 8));
     return b;
 }
-# ⛔ 6.7.16 — THE SEED IS THE SLOT'S LAST INTEGER CONSTANT BEFORE THE LIST, HOWEVER IT IS SPELLED
+# ⛔ 6.7.16 — THE SEED IS THE SLOT'S LAST SCALAR CONSTANT BEFORE THE LIST, HOWEVER IT IS SPELLED
 # (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md). It was the static init,
 # which only a pass-1 literal writes: a const- or enum-named scalar (`var a = C; var a[1] = {9};`) is a deferred entry
 # the list supersedes (_gvk_one's bk 4: folded, not baked), so the list dropped its bytes (0x0009, where `var a =
 # 0x0506;` gives 0x0509), and `var a = 0x0506; var a = C;` seeded the stale literal. Now the nearest earlier entry
 # of slot `vi` that folded to an integer (`_gvk_ik` 1; a computed one is no constant and is stepped past, as the
 # literal's static init outlives it) is the seed, unless a pass-1 constant redeclaration came after it
-# (_gv_supersede's bit 43): then that literal, the static init, is. A nearer FLOAT constant (`_gvk_ik` 2; it
-# supersedes the slot's earlier writers, D13 (a)) stops the walk at the static init, the seed before 6.7.16:
-# stepping past it seeded the integer constant it superseded (`var a = C; var a = 1.5; var a[1] = {9};` kept C's
-# byte). Whether a float's bits seed a list is
-# issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md. `gi` = the list's entry,
-# `noff` its name. CHANGELOG [6.7.16]
+# (_gv_supersede's bit 43): then that literal, the static init, is. A FLOAT constant is a constant too (`_gvk_ik` 2,
+# its bits; the user's D86 (a), 2026-10-20): a list over `var K = 1.5;` keeps 1.5's bytes it does not list
+# (0x3FF8000000000009), as the integer spelling of those bits does — it seeded the static init (the float is a
+# deferred entry the list supersedes: no bake), so 1.5's bytes were dropped, and a pass-1 literal before the float
+# read through (`var a = 0x0506; var a = 1.5; var a[1] = {9};` 0x0509). A struct / tuple literal of constants
+# (`_gvk_ik` 3) stops the walk at the static init. `gi` = the list's entry, `noff` its name. CHANGELOG [6.7.16]
 fn _gai_seed(S, gi, vi, noff): i64 {
     if (_gvx_m == 0) { return GVSI(S, vi); }
     var e = _nm_get(S, _gvx_m, noff);
@@ -4884,16 +4884,17 @@ fn _gai_seed(S, gi, vi, noff): i64 {
     }
     return GVSI(S, vi);
 }
-# Entry `g` against slot `vi`: 1 = it declared the slot and _gvk_pre folded its initializer to an integer constant
-# (`_gvk_ik` 1); 2 = it declared the slot with another constant — a float's bits (`_gvk_ik` 2), a struct / tuple
-# literal of constants (3) — which stops _gai_seed's walk; 0 = neither (another slot, a computed initializer).
+# Entry `g` against slot `vi`: 1 = it declared the slot and _gvk_pre folded its initializer to a scalar constant
+# (`_gvk_ik` 1, an integer; 2, a float's bits, D86 (a)), its value in `_gvk_v`; 2 = it declared the slot with a
+# struct / tuple literal of constants (`_gvk_ik` 3), which stops _gai_seed's walk; 0 = neither (another slot, a
+# computed initializer).
 fn _gai_seed_ent(S, g, vi): i64 {
     if (g >= _gv_ent_cap) { return 0; }
     if ((load64(_gv_ent_base + g * 8) & 0x1FFFFF) - 1 != vi) { return 0; }
     var ik = load8(_gvk_ik + g);
-    if (ik == 1) { return 1; }
     if (ik == 0) { return 0; }
-    return 2;
+    if (ik == 3) { return 2; }
+    return 1;
 }
 
 # One element at token `ti`, written at byte `off` of blob `b` (b == 0: checked only). An empty
