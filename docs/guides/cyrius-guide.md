@@ -1844,8 +1844,10 @@ keeps; inside a generic fn, `var x: T = mk(9);` is the struct at `T = P3`, and s
 naming the line (6.7.16, the user's D1 of 2026-10-19 — the same for `x = mk(9);` into a `x: T` and `p = mk(9);` into a
 `p: *T` / `**T`, from a call, a method, an operator or a known `&f`; through 6.7.15 the base, which is the `T = i64`
 instance, was not judged and kept the struct's first word, and `g<i32>(5)` was refused in the declaration's words).
-A store THROUGH the pointer, `*p = mk(9);` (`**pp = mk(9);`), is not one of these lines: it is not judged, and
-compiles at every instance as before.
+A store THROUGH the pointer is one of them too (6.7.16, the user's D99 of 2026-10-20): `*p = mk(9);` with `p: *T`,
+`**pp = mk(9);` with `pp: **T`, `*(p + 0)`, `*w.p` through a `w: Wt<T>` carrier's `*T` field — the generic has no scalar
+instance, its note *'g' stores a struct result over 8 bytes through 'p', a pointer to its type parameter*; at `T = P3`
+the store copies (through 6.7.15 every instance compiled and a scalar one kept the struct's first word).
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first
@@ -1897,7 +1899,14 @@ through it, unchanged. Into any other `*T` an ASSIGNMENT is refused with the sam
 decision D32, 2026-10-18): `p = mkp();` into a `*i64` / `*u8` / `**P2` local, parameter or global — the free
 call, a method, an operator, a known `&f`, a `for` step, in parentheses, in a fn or at top level — is *cannot
 assign 'p: \*i64' from 'mkp', which returns the struct 'P2' - declare 'p: P2' and take `&p`* (through 6.7.14 it
-stored the struct's first word as the pointer, and `*p` faulted). A global declaration is judged the same (6.7.14; the user's decision D28,
+stored the struct's first word as the pointer, and `*p` faulted). A store THROUGH a pointer to a scalar is refused
+the same way (6.7.16; the user's decision D99, 2026-10-20): `*p = mkp();` with `p: *i64` — a `*u8` / `*f64` / `*bool`,
+a local, parameter, global, capture, field or `: *i64` call, `*(p + n)`, `**pp` of a `**i64`, and `*pp` of a `**i64`
+or a `**Q` of another struct (a pointer slot, D32's own) — from a call, a method, an operator, a known `&f`, in
+parentheses, in a `for` step, is *cannot assign '\*p: i64' from 'mkp', which returns the struct 'P2' - store it
+through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first word, silently); `*(&x) = mkp();` is `x =
+mkp();`, judged as that assignment; 8 bytes or less and a `Str` keep their word, a field of the result (`*p =
+mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was
@@ -7610,7 +7619,7 @@ naming `gx`). So does the forwarder's `T`-typed value itself, whole in the carri
 naming `outer` (6.7.15; through 6.7.14 the definition was refused naming `gx`).
 Two more lines need `T` to be a struct (6.7.16, the user's D1 of 2026-10-19): `return &n;` with `n` typed by `T` in a fn
 returning a struct (`&n` is that struct only when `T` is it), and a struct result over 8 bytes stored in a name typed
-by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
+by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`, and — 6.7.16, D99 — `*p = mk();` through one) — at `T = i64` they returned a dead slot's address and
 kept the struct's first word. A generic callee's result is the one its call makes at its binding (6.7.16): `var y: T =
 mkg1(q);` with `q` a 16-byte `Q` stores a `G1<Q>`, as do `b.mkg(q)` and `b + q` (a generic operator fn binds as its
 call does, D85 (a)), and a `: U` method or operator fn returning `q` stores the `Q` — each needs a struct, where they

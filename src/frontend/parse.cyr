@@ -4763,11 +4763,178 @@ fn _dst_amp_nm(S, d): i64 {
     while (TOKTYP(S, i) == 10) { i = i + 1; }
     return TOKVAL(S, i + 1);
 }
+# ⛔ 6.7.16 (D99, the user's decision, 2026-10-20) — A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR IS
+# REFUSED, as its sibling stores are: `*p = mkp();` with `p: *i64` and mkp returning a 16-byte Q stored Q's first word
+# (the filed repro exited 77), silently, where `var y: i64 = mkp();` (6.7.11's D24), `y = mkp();` (6.7.14's D27) and
+# `p = mkp();` (6.7.15's D32) are refused. The dereference `*E` at token `d` (its operand ends at `oe`) whose operand is
+# a typed pointer to no struct, by its declared word (`_hl_pw`: a `*i64` / `*u8` / `*f64` / `*bool` name, field, call
+# or `p + n`; `**pp` of a `**i64`; `*pp` of a `**i64` or of a `**S` of another struct: a pointer slot, D32's own), and
+# the value [ti, cursor) one whole struct result over 8 B (a free or generic call, a method, an operator, a known `&f`
+# call, wrapped; not a `Str`, a dyn, 8 B or less): "cannot assign '*p: i64' from 'mkp', which returns the struct 'Q' -
+# store it through a '*Q' or bind a field", at the call, once. `*(&x) = mkp()` is `x = mkp()` (D27 / D33 judge x). In
+# a generic's base parse a destination typed by its type parameter is the stub rule's (D1: `g(5)` has no scalar
+# instance, `_gs_asg_sres`); each instance judges its own. CHANGELOG [6.7.16]
+fn _dsr_sres(S, d, oe, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var sid = 0;
+    var fno = 0;
+    var at = ti;
+    var afi = 0 - 1;
+    if (_sc_whole(S, ti) != 0 - 2) {
+        sid = _sc_sid;
+        fno = _sc_fn;
+        afi = _sc_fi;
+        at = _sc_beg;
+    } else {
+        var c = _dsr_call(S, ti);
+        if (c < 0) { return 0; }
+        var cfi = _pair_gen_inst(S, c);   # parsed already: the instance its call made (a dedup hit)
+        if (cfi < 0) { return 0; }
+        sid = GFRS(S, cfi);
+        fno = TOKVAL(S, c);
+        afi = cfi;
+        at = c;
+    }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    if (_dsr_amp(S, d, oe, ti, at, fno, afi, sid) == 1) { return 1; }
+    var w = _hl_pw(S, d + 1, oe);
+    if (w <= 0) { return 0; }
+    if (_ps_pinned(w) == 1) {
+        if (_pp_sid(_ps_pin(w)) == sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
+    } else {
+        if (_hl_dpsid(S, d + 1, oe) > 0) { return 0; }   # a struct pointee: `_dst_struct`'s
+        if (_ps_vdesc(w) != 0) { return 0; }
+    }
+    if (_dsr_tdep(S, d + 1, oe, d) == 1) { return 0; }
+    return _dsr_err(S, d, oe, w, at, fno, afi, sid);
+}
+# The whole free call (`f(..)` / `g<..>(..)`, not dotted) the value at token ti is, inside any parentheses that wrap
+# all of it up to the cursor: its name token, else -1.
+fn _dsr_call(S, ti): i64 {
+    var k = 0;
+    while (TOKTYP(S, ti + k) == 10) { k = k + 1; }
+    var c = ti + k;
+    if (TOKTYP(S, c) != 2) { return 0 - 1; }
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0 - 1; }
+    if (_icall_open_at(S, c) >= 0) { return 0 - 1; }
+    var e = _call_close(S, o) + 1;
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, e + i) != 11) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (e + k != GTI(S)) { return 0 - 1; }
+    return c;
+}
+# `*(&x) = E` / `*&x = E` (the operand exactly `& NAME` inside any parentheses) is `x = E`: judged as that assignment is
+# (D27 / D32 / D33, `_asa_refuse`). 1 = this shape (refused or not).
+fn _dsr_amp(S, d, oe, ti, at, fno, afi, sid): i64 {
+    var b = _ie_unparen(S, d + 1, oe);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    _rcv_fi = afi;
+    _asa_refuse(S, TOKVAL(S, b + 1), d, at, fno, sid);
+    _rcv_fi = 0 - 1;
+    return 1;
+}
+# 1 = in a generic's BASE parse (`_inst_name` 0) the operand [a, e) may be typed by its type parameter: a name that is
+# one, a name declared with one (`_asa_ann` back from `from`), a call of a generic fn — each instance judges it.
+fn _dsr_tdep(S, a, e, from): i64 {
+    if (_inst_name != 0) { return 0; }
+    var i = a;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (TOKTYP(S, i - 1) != 41) {
+                if (_rcv_tp_base(S, i) == 1) { return 1; }
+                var gf = FINDFN(S, TOKVAL(S, i));
+                if (gf >= 0) { if (GFTP(S, gf) != 0) { return 1; } }
+                var an = _asa_ann(S, TOKVAL(S, i), from);
+                if (an > 0) { if (_dsr_ann_tp(S, an) == 1) { return 1; } }
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dsr_ann_tp(S, an): i64 {
+    var e = _asa_end(S, an);
+    var i = an;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (_rcv_tp_base(S, i) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The refusal at the call token `at` (fn `fn` / `afi`, struct `sid`), the destination `*E` spelled from its `*` at d,
+# its type from the operand's declared word `w`. 1.
+fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, at) == 0) { return 1; }
+    var dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1));
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot assign '");
+    PRSTR(S + 0xEC00000 + dn);
+    _dsr_tn(S, w, 1);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
+    PRSTR("', which returns the struct '");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' - store it through a '*");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' or bind a field\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 1;
+}
+# The type a dereference of step word `w` reaches, after ": " when `lead` is 1: a scalar by its element kind (`i64`,
+# `u8`, `i32`, `f64`, `f32`, `bool`), a pointer slot `*` and its pointee (a struct by name); nothing for a kind the word
+# does not carry.
+fn _dsr_tn(S, w, lead): i64 {
+    if (_ps_pinned(w) == 1) {
+        var ps = _pp_sid(_ps_pin(w));
+        var iw = _pp_inner(S, w);
+        if (ps <= 0) { if (iw <= 0) { return 0; } }
+        if (lead == 1) { PRSTR(": "); }
+        PRSTR("*");
+        if (ps > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8)); return 0; }
+        return _dsr_tn(S, iw, 0);
+    }
+    var ed = (w >> 40) & 0xFF;
+    var nm = _dsr_kname(ed, _ps_step(w));
+    if (nm == 0) { return 0; }
+    if (lead == 1) { PRSTR(": "); }
+    PRSTR(nm);
+    return 0;
+}
+fn _dsr_kname(ed, st): i64 {
+    var k = _ek_fk(ed);
+    if (k == 1) { return "f64"; }
+    if (k == 2) { return "f32"; }
+    if (k == 16) { return "bool"; }
+    var wd = _ek_w(ed);
+    if (wd == 0) { if (st == 8) { return "i64"; } return 0; }
+    if (wd == 8) { return "i64"; }
+    if ((ed & 0x40) != 0) {
+        if (wd == 1) { return "i8"; }
+        if (wd == 2) { return "i16"; }
+        if (wd == 4) { return "i32"; }
+        return 0;
+    }
+    if (wd == 1) { return "u8"; }
+    if (wd == 2) { return "u16"; }
+    if (wd == 4) { return "u32"; }
+    return 0;
+}
 fn _deref_store(S, term): i64 {
     if (_istr_amp_dst(S, term) == 1) { return 0; }   # 6.7.16 (D71): `*(&t) = v` of an inline `Str` is `t = v`
     var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
     PARSE_FACTOR(S);
+    var oe = GTI(S);   # 6.7.16 (D99): the operand's end, for `_dsr_sres`
     if (_dst_struct(S, term, d) == 1) { return 0; }
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
@@ -4783,7 +4950,9 @@ fn _deref_store(S, term): i64 {
             _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
             var ti = GTI(S);
             if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
+                _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
                 PCMPE(S);
+                _dsr_sres(S, d, oe, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`
                 _dst_fk_chk(S, ed, ti, d);   # an f32 element: the field's checks; 6.7.16 (D70): `*(&f)` / `*(&b)`
                 _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
             }
