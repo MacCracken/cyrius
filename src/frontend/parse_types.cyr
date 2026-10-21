@@ -5095,6 +5095,7 @@ fn _add_named_field(S, si, fnoff, tnoff): i64 {
     var k = _field_name_kind(S, tnoff);
     if (k < 0) {
         _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));
+        SKIP_GENERICS(S);   # 6.7.16: `a: Zt<i64>` — the refused name's list, else "expected identifier, got '<'"
         k = 0;
     }
     var nw = _ek_w(_ek_of_code(_tn_scalar(L64(S + 0xEC00000 + tnoff))));

@@ -444,5 +444,33 @@ done
 rc=0; ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$T/vp0.cyr" > "$T/vp7_pe.bin" 2> "$T/vp7_pe.err" ) || rc=$?
 repro7 vp7_pe "VP7 PE: the filed repro, CYRIUS_TARGET_WIN=1"
 
+# UL (6.7.16, f16 FF6; met with issues/2026-10-19-struct-and-union-fields-need-no-separator.md): an UNKNOWN field type
+# written with a type-argument list (`a: Zt<i64>`) is its one "unknown type" error — the list is stepped with it. It
+# was left for the field loop: "expected identifier, got '<'" at the same column, and that latch swallowed the next
+# field's own error (UL1's `b: Zq<..>`). The struct and union arms share `_add_named_field`. Exact lines on the x86_64,
+# PE and Mach-O compilers and the aarch64 / cx compilers built from this tree (V7's).
+# MUTATION (2026-10-21, f16 FF6, a scratch copy, its 2-stage cycc, this gate run from it): `_add_named_field` without
+# its SKIP_GENERICS -> RED UL on every leg (four "expected identifier, got '<'", `Zq` lost).
+printf 'struct Box<T> { v: T; }\nstruct P { a: Zt<i64>; b: Zq<Box<i64>>; }\nunion U { a: Zt<i64>; }\nstruct R { a: Zt<i64> }\nstruct Q { a: Zt<i64> b; }\nfn h(): i64 { return zz; }\nsyscall(60, h());\n' > "$T/ul.cyr"
+UF="for struct field 'a'"
+printf '%s\n' "error:<source>:2:17: unknown type 'Zt' $UF" "error:<source>:2:29: unknown type 'Zq' for struct field 'b'" \
+    "error:<source>:3:16: unknown type 'Zt' $UF" "error:<source>:4:17: unknown type 'Zt' $UF" \
+    "error:<source>:5:17: unknown type 'Zt' $UF" "error:<source>:5:23: expected ';' between struct fields" \
+    "error:<source>:6:24: undefined variable 'zz' (missing include or enum?)" > "$T/ul.want"
+for leg in x86 pe macho aarch64 cx; do
+    rc=0
+    case "$leg" in
+        x86)   ( cd "$ROOT" && "$CC" < "$T/ul.cyr" > "$T/ul_$leg.bin" 2> "$T/ul_$leg.err" ) || rc=$? ;;
+        pe)    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$T/ul.cyr" > "$T/ul_$leg.bin" 2> "$T/ul_$leg.err" ) || rc=$? ;;
+        macho) ( cd "$ROOT" && CYRIUS_MACHO=1 "$CC" < "$T/ul.cyr" > "$T/ul_$leg.bin" 2> "$T/ul_$leg.err" ) || rc=$? ;;
+        *)     if [ ! -s "$T/cc_$leg" ]; then bad "UL $leg: NOT RUN — no $leg compiler (V7 builds it)"; continue; fi
+               ( cd "$ROOT" && "$T/cc_$leg" < "$T/ul.cyr" > "$T/ul_$leg.bin" 2> "$T/ul_$leg.err" ) || rc=$? ;;
+    esac
+    grep -E '^(error|warning)' "$T/ul_$leg.err" > "$T/ul_$leg.got" || true
+    if [ "$rc" -eq 0 ]; then bad "UL $leg: BUILT (rc 0)"
+    elif ! cmp -s "$T/ul_$leg.got" "$T/ul.want"; then bad "UL $leg: got $(tr '\n' '|' < "$T/ul_$leg.got")"
+    else ok "UL $leg: an unknown field type's <..> is stepped with its one error, the next field's own kept"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: struct_field_type_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J), a different struct type into a struct field is refused (K), a \`Vec<T>\` annotation reads its T as the field form does (V), in every other position too, and a Vec element's own \`<..>\` is read (VP / VQ, 6.7.14)"
+echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J), a different struct type into a struct field is refused (K), a \`Vec<T>\` annotation reads its T as the field form does (V), in every other position too, and a Vec element's own \`<..>\` is read (VP / VQ, 6.7.14), an unknown field type's list stepped with it (UL)"
