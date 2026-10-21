@@ -117,8 +117,16 @@ rf RF2 'syscall(7 0);\nsyscall(60, 2);\n' 1:11
 rf RF3 'var n = 60;\nsyscall(n 0);\nsyscall(60, 2);\n' 2:11
 printf 'var n = 7;\nvar r = syscall(n, 1, 2, 3, 4, 5);\nsyscall(60, 0);\n' > "$D/rf4.cyr"
 ( cd "$D" && CYRIUS_TARGET_WIN=1 "$CC" < rf4.cyr > rf4.exe 2> rf4.err ) || bad "RF4: the valid non-literal call did not compile"
-grep -q '^warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity' "$D/rf4.err" \
-    || { bad "RF4: a valid non-literal call at an unrouted arity no longer warns:"; head -c 300 "$D/rf4.err"; echo; }
+grep -q '^warning:<source>:2:9: syscall(<non-literal number>, ...) with 5 argument(s) has no Windows-routable syscall of this arity' "$D/rf4.err" \
+    || { bad "RF4: a valid non-literal call at an unrouted arity no longer warns at its site:"; head -c 300 "$D/rf4.err"; echo; }
+# 6.7.16: the non-literal warning names its site and arity, once per site, as the literal one does since 6.6.10 — it
+# was a bare `warning: syscall(<non-literal number>, ...)` line naming neither, printed once per parse of a generic
+# body (RF5: 4 bare lines for 3 sites; met beside RF1-RF3). Mutant: `_pe_warn_dyn`'s `_warn_seen` dropped — RF5 red.
+printf 'fn z(n): i64 { return syscall(n, 1, 2, 3, 4, 5); }\nfn y(n): i64 {\n    return syscall(n, 1, 2, 3, 4, 5) + syscall(n, 1, 2, 3, 4, 5, 6);\n}\nfn gg<T>(n: T): i64 { return syscall(n, 1, 2, 3, 4, 5); }\nvar r = z(1) + y(2) + gg(3) + gg<i32>(4);\nsyscall(60, 0);\n' > "$D/rf5.cyr"
+( cd "$D" && CYRIUS_TARGET_WIN=1 "$CC" < rf5.cyr > rf5.exe 2> rf5.err ) || bad "RF5: the non-literal calls did not compile"
+_rf5=$(grep '^warning' "$D/rf5.err" | sed 's/: syscall(<non-literal number>, ...) with 5 argument(s) has no Windows-routable syscall of this arity.*//' | tr '\n' ' ')
+[ "$_rf5" = "warning:<source>:1:23 warning:<source>:3:12 warning:<source>:5:30 " ] \
+    || { bad "RF5: want one sited warning per non-literal call (1:23 3:12 5:30), got: $_rf5"; }
 
 [ "$fail" = 0 ] || exit 1
 echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9); a refused call warns at nothing (6.7.16)"

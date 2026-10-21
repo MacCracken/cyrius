@@ -1496,8 +1496,8 @@ fn _sc_argc_refuse(S, n): i64 {
     return 1;
 }
 var _pe_unrouted_noted = 0;
-fn _pe_warn_unrouted(S, sc_num, argc): i64 {
-    if (_panic == 1) { return 0; }   # a refused call (`syscall(60 0)`): its arity is unknown. CHANGELOG [6.7.16]
+# The call's `syscall` token, the cursor just past its `)`.
+fn _sc_site_ti(S): i64 {
     var ti = GTI(S) - 1;
     var depth = 0;
     while (ti > 0) {
@@ -1510,6 +1510,11 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
         ti = ti - 1;
     }
     if (ti > 0) { ti = ti - 1; }
+    return ti;
+}
+fn _pe_warn_unrouted(S, sc_num, argc): i64 {
+    if (_panic == 1) { return 0; }   # a refused call (`syscall(60 0)`): its arity is unknown. CHANGELOG [6.7.16]
+    var ti = _sc_site_ti(S);
     if (_warn_seen(ti, "_pe_warn_unrouted", sc_num * 4096 + argc) == 1) { return 0; }   # 6.7.15: once per site
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head_at(S, ti);
@@ -1526,13 +1531,20 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     return 0;
 }
 
-# The non-literal-number twin of `_pe_warn_unrouted`: no route at this arity. A refused call's arity is unknown, so it
-# says nothing there. CHANGELOG [6.7.16]
-fn _pe_warn_dyn(S): i64 {
+# The non-literal-number twin of `_pe_warn_unrouted`: no route at this arity, named at the call's site, once per site
+# and arity (it was a bare `warning:` line naming neither). A refused call's arity is unknown, so it says nothing there.
+# CHANGELOG [6.7.16]
+fn _pe_warn_dyn(S, argc): i64 {
     if (_panic == 1) { return 0; }
+    var ti = _sc_site_ti(S);
+    if (_warn_seen(ti, "_pe_warn_dyn", argc) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": syscall(<non-literal number>, ...) with ", 42);
+    PRNUM(argc - 1);
     syscall(SYS_WRITE, 2,
-      "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
-      252);
+      " argument(s) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
+      221);
     return 0;
 }
 
@@ -7023,7 +7035,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # issue 2026-06-09-pe-syscall-variable-number-not-rerouted.md.
             if (sc_num < 0) {
                 var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
-                if (_dynrc == 2) { _pe_warn_dyn(S); }
+                if (_dynrc == 2) { _pe_warn_dyn(S, argc); }
                 _cfo = 0;
                 return 0;
             }
