@@ -1611,11 +1611,54 @@ EOF
 zafg TI3
 TIB="an if expression branch cannot be a struct value over 8 bytes: struct 'P2'"
 for zw in zone after; do
-    refused "TI3$zw" "$TIB" "the $zw: a 16 B struct branch is refused naming the struct, at each branch, + the \`G.a\` cascade (as in a fn)" 3
-    if [ "$(grep -c "$TIB" "$T/TI3$zw.x86_64.err" || true)" = 2 ] && grep -q "no struct type in scope for 'G'" "$T/TI3$zw.x86_64.err"; then
-        ok "TI3$zw both branch refusals name 'P2'; the third line is the \`G.a\` cascade"
-    else bad "TI3$zw want two struct-named branch refusals and the cascade: $(grep '^error' "$T/TI3$zw.x86_64.err" | tr '\n' '|')"; fi
+    refused "TI3$zw" "$TIB" "the $zw: a 16 B struct branch is refused naming the struct, at each branch — no \`G.a\` cascade (6.7.16)" 2
+    if [ "$(grep -c "$TIB" "$T/TI3$zw.x86_64.err" || true)" = 2 ] && ! grep -q "no struct type in scope" "$T/TI3$zw.x86_64.err"; then
+        ok "TI3$zw both branch refusals name 'P2'; no \`G.a\` cascade"
+    else bad "TI3$zw want two struct-named branch refusals and no cascade: $(grep '^error' "$T/TI3$zw.x86_64.err" | tr '\n' '|')"; fi
 done
+# ---- 6.7.16 (issues/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md): a declaration
+# whose if-expression branch is refused as over 8 bytes is not a second error at its use. The refusal left the variable
+# untyped and unmarked, so `g.a` / `G.a` added "no struct type in scope" after the two branch refusals — in a fn, the zone,
+# after the first statement, and in a fn body compiled before the replay. When the if-expression is a `var`
+# declaration's whole initialiser (inside any balanced wrap), the variable is marked as refused (`_ie_decl_mark`; the zone
+# sweep's `_gu_iebig` for a global a fn reads first): its `.field` read and store and its method calls stand down,
+# counted. TI3 (above) the zone / after repro verbatim; TI12 the fn repro verbatim; TI13 a fn body reads the global before
+# the replay (zone / after); TI14 wrapped, an elif chain, a store and a method call; TI15 a u128 branch (zone / after, a fn
+# and the program); TI16 a vector branch in a fn. Controls: TI17 an ASSIGNMENT's if-expression (g an integer: its own
+# error), TI18 an inner same-named `var g = 5;` (its own), TI19 an integer if-expression global (G.a still reported).
+#   N82 `_ie_decl_mark` marking nothing                    -> RED TI3after TI12 TI13after TI14 TI15after TI16 x4 (the zone's
+#                                                           are the sweep's; after a statement PARSE_PROG compiles in order)
+#   N83 `_gu_iebig` marking nothing                        -> RED TI13zone TI15zone x4 (a fn body before the replay)
+TIW='include "lib/syscalls.cyr"
+struct P2 { a; b; }
+var B2 = P2 { 33, 4 };'
+cat > "$T/TI12.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P2 { a; b; }
+var B2 = P2 { 33, 4 };
+fn f(): i64 { var g = if (1 == 1) { B2 } else { B2 }; return g.a; }
+syscall(60, f());
+EOF
+refused TI12 "$TIB" "a fn (the filed repro verbatim): the two branch refusals, no \`g.a\` cascade" 2
+printf '%s\nvar G = if (1 == 1) { B2 } else { B2 };\nfn f(): i64 { return G.a; }\nsyscall(60, f() + G.a);\n' "$TIW" > "$T/TI13zone.cyr"
+zafg TI13
+for zw in zone after; do refused "TI13$zw" "$TIB" "the $zw: a fn body compiled before the replay reads \`G.a\`: no cascade" 2; done
+printf '%s\nfn f(): i64 { var g = (if (1 == 1) { B2 } elif (1 == 2) { B2 } else { B2 }); g.a = 5; g.m(); return g.a; }\nsyscall(60, f());\n' "$TIW" > "$T/TI14.cyr"
+refused TI14 "$TIB" "a fn: wrapped, an elif chain, \`g.a = 5\`, \`g.m()\`: the three branch refusals alone" 3
+TIV="an if expression branch cannot be a vector, u128 or slice value"
+printf 'include "lib/syscalls.cyr"\nvar V: u128 = 5;\nvar G = if (1 == 1) { V } else { V };\nfn f(): i64 { return G.a; }\nsyscall(60, f() + G.a);\n' > "$T/TI15zone.cyr"
+zafg TI15
+for zw in zone after; do refused "TI15$zw" "$TIV" "the $zw: a u128 branch, \`G.a\` in a fn and the program: no cascade" 2; done
+printf '%s\nfn f(): i64 { var v: f64v2; var g = if (1 == 1) { v } else { v }; return g.a; }\nsyscall(60, f());\n' "$TIW" > "$T/TI16.cyr"
+refused TI16 "$TIV" "a fn: a vector branch, no \`g.a\` cascade" 2
+printf '%s\nfn f(): i64 { var g = 0; g = if (1 == 1) { B2 } else { B2 }; return g.a; }\nsyscall(60, f());\n' "$TIW" > "$T/TI17.cyr"
+refused TI17 "$TIB" "control: an assignment's if-expression (g an integer) — \`g.a\` is its own error" 3
+if grep -q "no struct type in scope for 'g'" "$T/TI17.x86_64.err"; then ok "TI17 the integer g's own \`g.a\` error"; else bad "TI17 lost the integer g's \`g.a\` error"; fi
+printf '%s\nfn f(): i64 { var g = if (1 == 1) { B2 } else { B2 }; if (1 == 1) { var g = 5; return g.a; } return 0; }\nsyscall(60, f());\n' "$TIW" > "$T/TI18.cyr"
+refused TI18 "$TIB" "control: an inner \`var g = 5;\` — its \`g.a\` is its own error" 3
+printf '%s\nvar G = if (1 == 1) { 1 } else { 2 };\nfn f(): i64 { return G.a; }\nsyscall(60, f());\n' "$TIW" > "$T/TI19.cyr"
+refused TI19 "no struct type in scope for 'G'" "control: an integer if-expression global — \`G.a\` is still reported"
+
 rowi TI4 'var G = if (1 == 1) { B1 } else { C1 };
 var H = G + G;' 'H.a'
 rowi TI5 'var G = if (1 == 2) { C1 } elif (1 == 1) { B1 } else { C1 };' 'G.a'
@@ -1635,7 +1678,7 @@ for zw in zone after; do
     refused "TI11$zw" "if expression branches differ in type: struct 'Q1' here, struct 'P1' before it" "the $zw: two struct types are refused once; G is the first branch's (no \`G.a\` cascade, as in a fn)"
 done
 
-[ "$rows" -ge 381 ] || bad "only $rows rows ran (floor 381)"
+[ "$rows" -ge 391 ] || bad "only $rows rows ran (floor 391)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16)"
+echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

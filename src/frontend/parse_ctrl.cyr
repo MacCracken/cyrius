@@ -222,9 +222,10 @@ fn PARSE_IF(S): i64 {
 # Per-expression state (nesting-safe), 8 words: [0] class (0 none yet, 1 integer, 2 f64, 3 f32,
 # 4 a small struct), [8] its sid, [16] every branch boolean, [24] any f64 / f32 TYPED (not only
 # flagged), [32] the common float-builtin flag (-1 unset), [40] the common pointer scale (-1 unset),
-# [48] the widest SEXW, [56] the expression's first token, [64] every branch a pointer (6.7.11).
+# [48] the widest SEXW, [56] the expression's first token, [64] every branch a pointer (6.7.11), [72] a branch refused
+# as a value over 8 bytes (6.7.16, `_ie_big`).
 fn PARSE_IF_EXPR(S): i64 {
-    var st = alloc(72);
+    var st = alloc(80);
     S64(st, 0);
     S64(st + 8, 0);
     S64(st + 16, 1);
@@ -234,6 +235,7 @@ fn PARSE_IF_EXPR(S): i64 {
     S64(st + 48, 0);
     S64(st + 56, GTI(S));
     S64(st + 64, 1);
+    S64(st + 72, 0);
     _ie_arm(S, st);
     _ie_finish(S, st);
     return 1;
@@ -468,13 +470,13 @@ fn _ie_kind(S, st, bti): i64 {
     var typed = 0;
     # 6.7.6 (FE): a u128 `+` / `-` RESULT (the D2 stamp, carried across a `)`) is a u128 value, refused
     # as a u128 name is (`_ie_wide_name`) — `{ b - 0 }` compiled and its high word was lost.
-    if (_W128_IS(S) == 1) { _ie_big_err(S, bti, 0); return 0; }
+    if (_W128_IS(S) == 1) { return _ie_big(S, st, bti, 0); }
     if (isb == 0) {
         sid = _ie_struct_sid(S, bti);
-        if (sid < 0) { _ie_big_err(S, bti, 0); return 0; }
+        if (sid < 0) { return _ie_big(S, st, bti, 0); }
         if (sid > 0) { if (sid == _STR_SID(S)) { sid = 0; } }   # a Str is a handle (a pointer word) by design
         if (sid > 0) {
-            if (STRUCTSZ(S, sid - 1) > 8) { _ie_big_err(S, bti, sid); return 0; }
+            if (STRUCTSZ(S, sid - 1) > 8) { return _ie_big(S, st, bti, sid); }
             cl = 4;
         } else {
             var ck = _ie_call_fk(S, bti);
@@ -556,6 +558,33 @@ fn _ie_mix_err(S, ti, c0, s0, cl, sid): i64 {
     if (c0 + cl == 3) { PRSTR("  note: every branch is one kind - write a float literal (2.0) or f64_from(n) for an integer\n"); }
     return 1;
 }
+# A branch refused as a value over 8 bytes (`_ie_big_err`), noted for the join (`_ie_decl_mark`).
+fn _ie_big(S, st, bti, sid): i64 {
+    S64(st + 72, 1);
+    return _ie_big_err(S, bti, sid);
+}
+# ⛔ 6.7.16 — A DECLARATION WHOSE IF-EXPRESSION WAS REFUSED IS NOT A SECOND ERROR AT ITS USE. A branch over 8 bytes is
+# refused (`_ie_big_err`) and the variable it initialises is left untyped, so `var g = if (c) { B2 } else { B2 };` then
+# `g.a` added "no struct type in scope for 'g'" — in a fn, the zone and after the first statement. When the
+# if-expression (its `if` at `ift`, the cursor past its last `}`) is a `var` declaration's whole initialiser, inside any
+# balanced wrap, the variable is marked as one whose initialiser was refused (`_ann_refd_mark`): its `.field` read and
+# store and its method calls stand down, counted (`_fld_sid0_said`). The zone sweep marks a global the same way
+# (`_gu_iebig`), for a fn body compiled before the replay. CHANGELOG [6.7.16]
+fn _ie_decl_mark(S, ift): i64 {
+    var k = 0;
+    while (ift - k - 1 > 0) {
+        if (TOKTYP(S, ift - k - 1) != 10) { break; }
+        k = k + 1;
+    }
+    var e = GTI(S);
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, e + k) != 5) { return 0; }
+    return _ann_refd_mark(S, _slit_decl_name(S, ift - k - 1));
+}
 fn _ie_big_err(S, ti, sid): i64 {
     if (_ie_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
@@ -580,6 +609,7 @@ fn _ie_big_err(S, ti, sid): i64 {
 # pointer, which must never cross a patched jump; `_cfo` would fold a following `+ 3` into the last
 # branch. The B2 stamp goes on LAST, and only when every branch was boolean.
 fn _ie_finish(S, st): i64 {
+    if (L64(st + 72) == 1) { _ie_decl_mark(S, L64(st + 56)); }
     _flags_reflect_rax = 0;
     _last_push_cp = 0 - 1;
     _last_emovca_cp = 0 - 1;

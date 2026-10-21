@@ -12686,6 +12686,7 @@ fn _gu_set(S, i, sid): i64 {
 # operator / known `&f` result (`_gu_wsid`). 0 none.
 fn _gu_zsid(S, ti): i64 {
     _gu_hdl = 0;
+    _gu_iebig(S, ti);   # 6.7.16: a refused branch's global stands down at its uses
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_ok(S, _gz_call_rs(S, c));
@@ -12729,6 +12730,52 @@ fn _gu_ie(S, t): i64 {
     if (STRUCTSZ(S, t - 1) > 8) { return 0; }
     if (GSTP(S, t - 1) != 0) { return 0; }
     return t;
+}
+# 6.7.16 — the sweep's twin of `_ie_decl_mark` (parse_ctrl.cyr): the noted global whose whole initialiser at `ti`
+# (inside any wrap) is an if-expression a branch of which the replay refuses as a value over 8 bytes — a struct over
+# 8 B, a vector, a u128, read from its tokens as the parse reads it (`_gu_bwide`) — is marked as refused
+# (`_ann_refd_mark`), so a fn body compiled before the replay stands down at `G.a`, as the replay's own mark makes the
+# program's uses do. CHANGELOG [6.7.16]
+fn _gu_iebig(S, ti): i64 {
+    var e = _gz_end(S, ti);
+    var a = ti;
+    while (TOKTYP(S, a) == 10) {
+        if (_gz_close(S, a, e) != e - 1) { break; }
+        a = a + 1;
+        e = e - 1;
+    }
+    if (TOKTYP(S, a) != 15) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var i = _gz_close(S, a + 1, e) + 1;
+    while (i < e) {
+        if (TOKTYP(S, i) != 13) { return 0; }
+        var bc = _gz_close(S, i, e);
+        if (_gu_bwide(S, i + 1, bc) == 1) { return _ann_refd_mark(S, _slit_decl_name(S, ti - 1)); }
+        i = bc + 1;
+        if (TOKTYP(S, i) == 50) { i = _gz_close(S, i + 1, e) + 1; }   # `elif (c)`
+        elif (TOKTYP(S, i) == 23) { i = i + 1; }                      # `else`
+        else { return 0; }
+    }
+    return 0;
+}
+# 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes (`_ie_struct_sid`: -1 a vector / u128, or a
+# struct over 8 B), with no parse record to match (`_sc_beg`, `_fpk_ft` cleared, then put back).
+fn _gu_bwide(S, a, b): i64 {
+    var sv = GTI(S);
+    var sb = _sc_beg;
+    var fk = _fpk_ft;
+    _sc_beg = 0 - 1;
+    _fpk_ft = 0;
+    STI(S, b);
+    var sid = _ie_struct_sid(S, a);
+    STI(S, sv);
+    _sc_beg = sb;
+    _fpk_ft = fk;
+    if (sid < 0) { return 1; }
+    if (sid == 0) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 1; }
+    return 0;
 }
 # ⛔ 6.7.16 — A ZONE GENERIC METHOD'S GENERIC STRUCT RESULT IS ITS INSTANCE. The struct the last method step `_gz_ty`
 # read (`_gz_mfi` generic, returning `: G<..>`, G = `g`) returns at its call: its type arguments as the parser's member
