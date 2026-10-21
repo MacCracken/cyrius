@@ -143,9 +143,15 @@ The script runs once per wave. For each lane, in parallel:
   known_skips: ['<gate>', ...],          // the check.sh SKIPs this release expects; [] when none
   coauthor: 'Co-Authored-By: <name> <email>',
   hosts: ['ecb macOS arm64', 'ach Intel macOS', 'cass Windows', 'pi aarch64 Linux'],   // ~/.ssh/config aliases
-  lanes: [{ name, wt: '<abs worktree>', base: '<sha the lane was cut from>', units: ['G1', ...], heap: true? }]
+  lanes: [{ name, wt: '<abs worktree>', base: '<sha the lane was cut from>', units: ['G1', ...], heap: true?,
+            notes: { '<unit>': '<text>' }? }]   // a resumed run: what each listed unit already did
 }
 ```
+
+A run stopped part-way (an account limit, a killed session) is resumed by running the script again with
+`units` cut to the units not yet finished. Give a unit that was mid-way a `notes` entry naming what it already
+committed and what it left uncommitted in the worktree; its agent verifies that and continues from it.
+`base` stays the lane's cut point, so the review still covers every bite of the lane.
 
 - **Reads:** the briefs.
 - **Writes:**

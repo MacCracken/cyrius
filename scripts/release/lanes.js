@@ -22,7 +22,9 @@ export const meta = {
 //   coauthor: 'Co-Authored-By: <name> <email>',   the commit trailer line
 //   hosts: ['ecb macOS arm64', ...],   the verification hosts, by ~/.ssh/config alias + what each is
 //   lanes: [{ name, wt: '<abs worktree>', base: '<sha or branch the lane was cut from>',
-//             units: ['G1', ...], heap: true? (the lane carries a heap-layout bite) }]
+//             units: ['G1', ...], heap: true? (the lane carries a heap-layout bite),
+//             notes: { '<unit>': '<text>' }? (a resumed run: what that unit already committed or left
+//                                             uncommitted in the worktree, put in its agent's prompt) }]
 // }
 // inputs:  <c6>/<tag>_briefs/<lane>_<unit>.md (scripts/release/briefs.py), decisions.file, the
 //          issue files in each worktree. <tag> = ver without dots.
@@ -106,7 +108,9 @@ const IMPL = (l, u) => {
   return `You implement ONE unit of cyrius ${VER} (${REL}): lane ${l.name}, unit ${u}.
 Your brief: ${C6}/${TAG}_briefs/${l.name}_${u}.md — read it first: the issues, the triage evidence, the USER DECISIONS (final; all ${DEC.count} with their questions and answers are in ${DEC.file}) and a fix plan whose line numbers you must re-verify against the current code (earlier units of this lane may have moved them; read \`git log --oneline ${l.base}..HEAD\` and ${C6}/${TAG}_handoff_${l.name}.md for what this lane already did).
 Read each issue file in docs/development/issues/ fully before coding.
-
+${l.notes && l.notes[u] ? `
+THIS UNIT WAS STARTED BY AN EARLIER RUN THAT STOPPED PART-WAY (verify each claim against git log, git status and git diff in the worktree before building on it): ${l.notes[u]}
+` : ''}
 ${rules(l, scr)}
 
 COMMITS: one commit per issue (or per decision item when one issue carries several), each with its regression rows; message "${VER} ${l.name}: <what changed> (issues/<file>.md)", then a blank line and "${COAUTHOR}". Do not move or edit the issue files themselves (integration archives them).
