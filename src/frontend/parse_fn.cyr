@@ -9929,8 +9929,8 @@ fn _tr_ret_differs(S, tp, fp): i64 {
     _trr_b = _dyn_ret_at(S, b);
     _trr_be = _dps_te;
     if (_ty_norm_eq(S, _trr_a, _trr_ae, _trr_b, _trr_be) == 1) { return 0; }   # `Box<i64>` is `Box`, `>>` is `> >`
-    if (_tr_rt_bad(S, _trr_a, _trr_ae) == 1) { return 0; }
-    if (_tr_rt_bad(S, _trr_b, _trr_be) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_a, _trr_ae, 1) == 1) { return 0; }
+    if (_tr_rt_bad(S, _trr_b, _trr_be, 0) == 1) { return 0; }
     return 1;
 }
 # ⛔ 6.7.16 — FORMING A DYN ADDS NOTHING BESIDE A RETURN ITS OWN READER REFUSES. `_tr_ret_differs` answers 0 both when
@@ -9957,7 +9957,7 @@ fn _tr_ret_rf(S, tp, fp): i64 {
 }
 # 1 when return type [a, ae) is one its reader refuses: its head (`_tr_rt_head`), or a name it reads (`_ty_rd_scan`).
 fn _tr_rt_rd(S, a, ae): i64 {
-    if (_tr_rt_head(S, a, ae) == 1) { return 1; }
+    if (_tr_rt_head(S, a, ae, 1) == 1) { return 1; }
     return _ty_rd_scan(S, a, ae, 1);
 }
 # 1 when the return type [a, ae) is refused by its own reader — the trait's for a member, PARSE_FN_DEF's for a method,
@@ -9965,8 +9965,12 @@ fn _tr_rt_rd(S, a, ae): i64 {
 # not take (`_tn_ret_report`'s: u8..u64, f32, an enum) and a `*fn( .. )` (a method's is PARSE_FN_DEF's grammar
 # refusal, so the impl's "returns .." line beside it was a second report of one error), and a non-generic `Pt<..>` /
 # `i64<..>` where a reader reads it (6.7.16's D7 at a member, 6.7.15's D6 at a method). CHANGELOG [6.7.16]
-fn _tr_rt_bad(S, a, ae): i64 {
-    if (_tr_rt_head(S, a, ae) == 1) { return 1; }
+# Under --syntax-only a shape counts only where its reader reports it there (`mem` 1 = the member's side): a member's
+# `: u8` / `: f32` / enum (D9) and either side's `Pt<i64>` (D7 / D6) are silent there, so the impl's "returns .., trait
+# declares .." line is lint's one report of the program, as it was in 6.7.15 — counting them left lint silent on it
+# (issues/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md). CHANGELOG [6.7.16]
+fn _tr_rt_bad(S, a, ae, mem): i64 {
+    if (_tr_rt_head(S, a, ae, _tr_rt_nr(mem)) == 1) { return 1; }
     var k = a;
     while (k < ae) {   # 6.7.15's D4 arm: a name that is no type, wherever it stands
         if (TOKTYP(S, k) == 2) { if (_tn_resolve_at(S, k) == 0) { return 1; } }
@@ -9974,14 +9978,21 @@ fn _tr_rt_bad(S, a, ae): i64 {
     }
     return _ty_rd_scan(S, a, ae, 0);   # 6.7.16 (D7): `Pt<i64>`, refused by either reader
 }
+# 1 when `_tr_rt_bad` counts `_tr_rt_nonret`'s names on a side: a method's always (6.7.15's arm), a member's only
+# where its reader reports them — not under --syntax-only, where it reads them on (`_trs_ret_nonret`).
+fn _tr_rt_nr(mem): i64 {
+    if (mem == 0) { return 1; }
+    if (_syntax_only == 1) { return 0; }
+    return 1;
+}
 # The head of return type [a, ae) when a fn's return does not take it: a slice, `u128`, `Vec`, `_tr_rt_nonret`'s
-# names, a `*fn( .. )` — each its reader's refusal.
-fn _tr_rt_head(S, a, ae): i64 {
+# names (with `nr`), a `*fn( .. )` — each its reader's refusal.
+fn _tr_rt_head(S, a, ae, nr): i64 {
     if (a == ae) { return 0; }
     if (_sl_ann_at(S, a) == 1) { return 1; }
     if (TOKTYP(S, a) == 105) { return 1; }
     if (_trs_ret_vec(S, a) == 1) { return 1; }
-    if (_tr_rt_nonret(S, a) == 1) { return 1; }
+    if (nr == 1) { if (_tr_rt_nonret(S, a) == 1) { return 1; } }
     if (_trs_ret_fnp(S, a) == 1) { return 1; }
     return 0;
 }
@@ -10003,12 +10014,17 @@ fn _ty_rd_scan(S, a, ae, un): i64 {
     return 0;
 }
 fn _ty_rd_name(S, k, un): i64 {
-    if (_ngt_tail(S, k) != 0) { return 1; }
-    if (_syntax_only == 0) { if (_ta_over(S, k) == 1) { return 1; } }   # D5's shape; silent under lint, as D5 is
+    if (_syntax_only == 0) { if (_ty_rd_shape(S, k) == 1) { return 1; } }   # silent under lint, as D7 / D5 are
     if (un == 0) { return 0; }
     if (_tn_resolve_at(S, k) != 0) { return 0; }
     if (un == 2) { if (_classify_param_type(S, TOKVAL(S, k)) != 0) { return 0; } }   # `s: Str`, a vector
     return 1;
+}
+# 1 when name token `k` is `Pt<i64>` / `i64<u8>` (D7 / D6) or a generic struct given more type arguments than it
+# declares (D5): each refused at the name, and silent under --syntax-only (`_ngt_say_n`, `_ta_over`'s reporter).
+fn _ty_rd_shape(S, k): i64 {
+    if (_ngt_tail(S, k) != 0) { return 1; }
+    return _ta_over(S, k);
 }
 # 1 when a reader reads the `<..>` after name token `k`: a generic struct's, or the builtin `Vec`'s.
 fn _ty_rd_reads(S, k): i64 {

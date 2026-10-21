@@ -104,6 +104,18 @@
 #      `--syntax-only`, where D5 is silent, dd7 keeps the impl's line (lint's one report of it). Mutant (2026-10-20):
 #      the lane's head aff3849ff -> RED 2: TRR3 TRR4 (two lines); `_ta_over`'s arm without its `_syntax_only` guard ->
 #      RED 1: TRR6 (no line)
+#      TRR9 (6.7.16, f16 FG1) `--syntax-only` keeps the impl's "returns .., trait declares .." line where the reader's own
+#      refusal is silent under lint, as TRR6 does for D5: a member's `: u8` / `: f32` / enum (D9) and either side's
+#      `Pt<i64>` / `i64<u8>` (D7 / 6.7.15's D6) were counted as refused, and lint passed the program (rc 0, no line;
+#      6.7.15 printed the line). TRR9-TRR9d the review's dd2 / dd1 / dd3 / dd4, each 6.7.15's text; TRR9e control: an
+#      impl's `: u8` against a member's `: i64` stays silent under lint (6.7.15's verdict: a method's `: u8` arm is
+#      6.7.15's); TRR9f / TRR9g the method's side (`: *Pt<i64>`, `: i64<u8>`); TRR9h two members, one line each, and
+#      TRR9i the full compile of it — the members' refusals alone (unchanged). Filed:
+#      docs/development/issues/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md
+#      Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (3482cd42e) -> RED 7:
+#      TRR9 TRR9b-TRR9d TRR9f-TRR9h (rc 0, no line); `_tr_rt_nr` counting a member's names under lint -> RED 4: TRR9
+#      TRR9b TRR9d TRR9h; `_ty_rd_name`'s `_ngt_tail` arm unguarded -> RED 4: TRR9c TRR9f TRR9g TRR9h; `_tr_rt_nr`
+#      dropping the method's names under lint too -> RED 1: TRR9e
 #   V  (6.7.8) ANTI-VACUOUS: what a fn signature takes still compiles in a member — a struct or an
 #      enum declared BELOW the trait, a generic member's own `<U>`, tuples and a multi-value return,
 #      `Vec<T>` / `*T` / `**T` / `u128` / `*fn(..)` / a nested generic / `...` / a by-name `Str`
@@ -551,6 +563,44 @@ grep '^error' "$T/trr6.err" > "$T/trr6.got"
 printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt>\n" > "$T/trr6.want"
 if [ "$rc" -ne 0 ] && cmp -s "$T/trr6.got" "$T/trr6.want"; then ok "TRR6: --syntax-only (D5 silent there) keeps dd7's impl line"
 else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi
+# ── TRR9 (6.7.16, f16 FG1) — lint keeps the impl's line where the reader's own refusal is silent under lint ──
+lint_is() {   # <name> <what> [line:col message]...: --syntax-only gives exactly these error lines (none: rc 0, silent)
+    nm=$1; what=$2; shift 2
+    rc=0; "$CC" --syntax-only < "$T/$nm.cyr" > "$T/$nm.bin" 2> "$T/$nm.err" || rc=$?
+    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    : > "$T/$nm.want"
+    for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
+    if [ "$#" -eq 0 ] && [ "$rc" -ne 0 ]; then bad "$what: rc $rc: $(tr '\n' '|' < "$T/$nm.got")"
+    elif [ "$#" -ne 0 ] && [ "$rc" -eq 0 ]; then bad "$what: rc 0, no line"
+    elif ! cmp -s "$T/$nm.got" "$T/$nm.want"; then bad "$what: got $(tr '\n' '|' < "$T/$nm.got") want $(tr '\n' '|' < "$T/$nm.want")"
+    else ok "$what: --syntax-only rc $rc, exactly $# line(s)"; fi
+}
+PQ='struct P { a; b; }\n'
+printf "$PQ"'trait T2 { fn sh(self): u8; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nfn main(): i64 { return 0; }\n' > "$T/trr9.cyr"
+lint_is trr9 "TRR9: dd2 — a member's : u8 (D9, silent under lint) against : i64 keeps the impl's line (6.7.15's)" \
+    "3:30: 'P.sh' returns i64, trait 'T2' declares u8"
+printf "$PQ"'trait T2 { fn sh(self): u8; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nimpl T2 for P { fn sh(self) { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9b.cyr"
+lint_is trr9b "TRR9b: dd1 — the impl with no return type, the dyn formed above it: at the method's name" \
+    "4:20: 'P.sh' returns i64, trait 'T2' declares u8"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): *Pt<i64>; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nimpl T2 for P { fn sh(self): *Pt { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9c.cyr"
+lint_is trr9c "TRR9c: dd3 — a member's : *Pt<i64> (D7, silent under lint) against : *Pt" \
+    "5:30: 'P.sh' returns *Pt, trait 'T2' declares *Pt<i64>"
+printf "$PQ"'enum Color { Red, Green }\ntrait T2 { fn sh(self): Color; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn f(q: *P): i64 { var o: dyn T2 = q; return 0; }\nfn main(): i64 { return 0; }\n' > "$T/trr9d.cyr"
+lint_is trr9d "TRR9d: dd4 — a member's enum return against : i64" \
+    "4:30: 'P.sh' returns i64, trait 'T2' declares Color"
+printf "$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): u8 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9e.cyr"
+lint_is trr9e "TRR9e: control — an impl's : u8 against a member's : i64 stays silent under lint (6.7.15's verdict)"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): *Pt; }\nimpl T2 for P { fn sh(self): *Pt<i64> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9f.cyr"
+lint_is trr9f "TRR9f: the method's side — an impl's : *Pt<i64> (6.7.15's D6, silent under lint) against : *Pt" \
+    "4:30: 'P.sh' returns *Pt<i64>, trait 'T2' declares *Pt"
+printf "$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): i64<u8> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9g.cyr"
+lint_is trr9g "TRR9g: the method's side — an impl's scalar : i64<u8> against : i64" \
+    "3:30: 'P.sh' returns i64<u8>, trait 'T2' declares i64"
+printf "$PQ"'trait T2 { fn sh(self): f32; fn t(self): i64<u8>; }\nimpl T2 for P { fn sh(self): i64 { return 0; } fn t(self): i64 { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr9h.cyr"
+lint_is trr9h "TRR9h: a member's : f32 and its scalar : i64<u8> — one impl line each" \
+    "3:30: 'P.sh' returns i64, trait 'T2' declares f32" "3:60: 'P.t' returns i64, trait 'T2' declares i64<u8>"
+lines_are trr9h "TRR9i: TRR9h compiled — the members' refusals alone (no impl line beside them)" \
+    "2:25: type 'f32' $FR" "2:42: 'i64' takes no type arguments"
 
 # ── IB (6.7.16, f16 FF5) — a member of an impl body that is not a `fn` is one error, by name ──
 # PARSE_IMPL's loop took directives, `pub` and `fn`; anything else ended it at "expected '}', got struct" (`var`, `enum`,
