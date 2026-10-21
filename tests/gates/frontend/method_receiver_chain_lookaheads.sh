@@ -43,7 +43,11 @@
 #      comparison `w.p.n < z >> (z)` / `w.p.id < z >> (z)` (id a field and a generic method) one
 #   X  a lookahead instantiates nothing (x86_64): X1 the zone's `var gx, gy = GW.p.mm<f64>(2.5);` exits 12 plain and under
 #      CYRIUS_COVERAGE=1 (the chain arm minted `P_mm$f64` in the zone's pass 1, `_gzf_elem`: SIGSEGV under the mode — met
-#      in check.sh's coverage_mode_corpus at 4a790ef3c; `_mch_nox`, the instance `_mco_inst`'s where the single name's is)
+#      in check.sh's coverage_mode_corpus at 4a790ef3c; the instance `_mco_inst`'s where the single name's is); X2 an
+#      explicit generic step in the MIDDLE of a chain there — `GW.p.gq<f64>(2.5).m2()` destructured, captured, after a
+#      single name `GP.gq<f64>(2.5).m2()`, on a parenthesised head, ending in `.mm<f64>(2.5)` — each exits its plain value
+#      under the mode (each minted `P_gq$f64` in the zone's pass 1 and SIGSEGV'd: the review of 6.7.16's lane; `_mch_mres`
+#      types every step from its template, a `: V` / `: G<..>` by a peek of its binding)
 #   F  the token pass flags a forwarder below its caller (x86_64, every receiver): F1 `var v = fwd(w);` with `fwd`
 #      returning `w.p.rs(3)` and F2 with `fwd`'s only pair route `w.p.rs(3)?` are refused "bind both" (each compiled before)
 #
@@ -77,6 +81,8 @@
 #   M16 the tree before `_ret_expr_head`'s chain arm    -> RED 19: V x7 (MR: the file did not build), C22 / C23 on c d f
 #       (df29930ab)                                        x k i ("returned in two registers ... got `w`")
 #   M17 the tree before `_mch_nox` (4a790ef3c)           -> RED 1: X1 cov (SIGSEGV)
+#   M18 the tree before `_mch_mres` read the template    -> RED 5: X2 x2a-x2e cov (SIGSEGV)
+#       (ed17925c9)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -106,7 +112,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=68
+FLOOR=74
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -340,6 +346,32 @@ for mode in plain cov; do
     if [ "$xr" -eq 12 ]; then ok "X1 $mode: var gx, gy = GW.p.mm<f64>(2.5); exits 12"
     else bad "X1 $mode: var gx, gy = GW.p.mm<f64>(2.5); exits $xr, want 12"; fi
 done
+
+# X2: a generic step in the MIDDLE of a chain, in the zone (the lookahead minted an explicit step's instance there:
+# `_mch_mres`) — each exits its plain value under the mode too.
+XH='include "lib/syscalls.cyr"
+struct P { k; }
+struct W { p: P; n; }
+impl P { fn gq<V>(self, x: V): *P { return self; } fn m2(self): (i64, i64) { return (3, 4); } fn mm<V>(self, x: V): (V, i64) { return (x, 7); } }
+var GP: P = P { 1 };
+var GW: W = W { GP, 0 };'
+x2row() {
+    printf '%s\n%s\n%s\n' "$XH" "$2" "$3" > "$D/$1.cyr"
+    for mode in plain cov; do
+        xc=0
+        if [ "$mode" = cov ]; then CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$D/$1.cov" "$CC" < "$D/$1.cyr" > "$D/$1_$mode" 2> "$D/$1_$mode.err" || xc=$?
+        else "$CC" < "$D/$1.cyr" > "$D/$1_$mode" 2> "$D/$1_$mode.err" || xc=$?; fi
+        if [ "$xc" -ne 0 ]; then bad "X2 $1 $mode: $2 did not build: $(grep -m1 error "$D/$1_$mode.err")"; continue; fi
+        chmod +x "$D/$1_$mode"; xr=0; CYRIUS_COVERAGE_FILE="$D/$1.cov" timeout 60 "$D/$1_$mode" > /dev/null 2>&1 || xr=$?
+        if [ "$xr" -eq "$4" ]; then ok "X2 $1 $mode: $2 exits $4"
+        else bad "X2 $1 $mode: $2 exits $xr, want $4"; fi
+    done
+}
+x2row x2a 'var ga, gb = GW.p.gq<f64>(2.5).m2();' 'syscall(60, ga * 10 + gb);' 34
+x2row x2b 'var ga, gb = GP.gq<f64>(2.5).m2();' 'syscall(60, ga * 10 + gb);' 34
+x2row x2c 'var gt: (i64, i64) = GW.p.gq<f64>(2.5).m2();' 'syscall(60, gt.0 * 10 + gt.1);' 34
+x2row x2d 'var ga, gb = (GW).p.gq<f64>(2.5).m2();' 'syscall(60, ga * 10 + gb);' 34
+x2row x2e 'var ga, gb = GW.p.gq<f64>(2.5).mm<f64>(2.5);' 'syscall(60, gb + f64_to(ga * 2.0));' 12
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi

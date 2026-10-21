@@ -194,12 +194,27 @@ fn fc_ret24(which): i64 {
     return q.a * 100 + q.b * 10 + q.c;
 }
 
+# MX: a generic method in the middle of a chain is typed without instantiating it (an explicit one was minted by the
+# lookahead — in the zone's pass 1 too, where the program then SIGSEGV'd under CYRIUS_COVERAGE=1)
+struct FcG1<T> { v: T; n; }
+impl FcP {
+    fn gq<V>(self, x: V): *FcP { return self; }
+    fn idv<V>(self, x: V): V { return x; }
+    fn mkg<V>(self, x: V): FcG1<V> { var g: FcG1<V>; g.v = x; g.n = 5; return g; }
+}
+fn fc_xq(): i64 { var w = fc_w(); var h: f64 = 2.5; var a, b = w.p.gq<f64>(h).m2(); return a * 10 + b; }
+fn fc_xv(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.idv<FcP>(q).m2(); return a * 10 + b; }
+fn fc_xg(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.mkg<FcP>(q).v.m2(); return a * 10 + b; }
+
 # MZ: the top-level zone
 var fc_ga, fc_gb = FC_GW.p.m2();
 var fc_gt: (i64, i64) = FC_GW.p.mm<i64>(4);
 var fc_gx, fc_gy = FC_GW.p.mm<f64>(2.5);
 var fc_gz, fc_gw = (FC_GW).p.m2();
 var fc_gtp: (i64, i64) = (FC_GW).p.mm(5);
+var fc_gq1, fc_gq2 = FC_GW.p.gq<f64>(2.5).m2();
+var fc_gqt: (i64, i64) = FC_GW.p.gq<f64>(2.5).m2();
+var fc_gq3, fc_gq4 = FC_GP.gq<f64>(2.5).m2();
 
 assert_eq(fc_dt(), 34, "MD: the filed repro's shape, var c, d = w.p.m2() (refused: needs a call)");
 assert_eq(fc_dt3(), 345, "MD: three names, w.p.m3()");
@@ -263,11 +278,17 @@ assert_eq(fc_ret(2), 34, "MR: return callptr(&gpw, pw).p.q16();");
 assert_eq(fc_ret(3), 34, "MR: return w.gp().q16();");
 assert_eq(fc_ret24(0), 351, "MR: return w.p.q24(); from a : Q24 fn (refused before)");
 assert_eq(fc_ret24(1), 352, "MR: return mkw(2).p.q24();");
+assert_eq(fc_xq(), 34, "MX: an explicit generic step returning *P, w.p.gq<f64>(h).m2()");
+assert_eq(fc_xv(), 34, "MX: an explicit generic step returning its V, w.p.idv<P>(q).m2()");
+assert_eq(fc_xg(), 34, "MX: an explicit generic step returning G1<V>, w.p.mkg<P>(q).v.m2()");
 assert_eq(fc_ga * 10 + fc_gb, 34, "MZ: a top-level var a, b = GW.p.m2()");
 assert_eq(fc_gt.0 * 10 + fc_gt.1, 47, "MZ: a top-level tuple capture, GW.p.mm<i64>(4)");
 assert_eq(fc_gy, 7, "MZ: a top-level var a, b = GW.p.mm<f64>(2.5): its second value");
 assert_eq(fc_gz * 10 + fc_gw, 34, "MZ: a top-level parenthesised head, var a, b = (GW).p.m2()");
 assert_eq(fc_gtp.0 * 10 + fc_gtp.1, 57, "MZ: ... and a tuple capture, var t: (i64, i64) = (GW).p.mm(5)");
+assert_eq(fc_gq1 * 10 + fc_gq2, 34, "MZ: an explicit generic step mid-chain, var a, b = GW.p.gq<f64>(2.5).m2()");
+assert_eq(fc_gqt.0 * 10 + fc_gqt.1, 34, "MZ: ... a tuple capture, var t: (i64, i64) = GW.p.gq<f64>(2.5).m2()");
+assert_eq(fc_gq3 * 10 + fc_gq4, 34, "MZ: ... after a single name, var a, b = GP.gq<f64>(2.5).m2()");
 var fc_gxok = 0;
 if (fc_gx == 2.5) { fc_gxok = 1; }
 assert_eq(fc_gxok, 1, "MZ: ... and its first value an f64");
