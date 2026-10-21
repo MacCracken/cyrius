@@ -4951,32 +4951,64 @@ fn _asg_ret_peek(S, noff): i64 {
     if (rs == 0 - lt) { _asg_ret_sid = rs; }
     return 0;
 }
-# ... a local that is no `*T`: a free call at the cursor (`_asg_ret_sid` its declared return, v6.5.28). 1 = a call.
+# ... a local that is no `*T`: a free call at the cursor, under parentheses that wrap the whole value (`_tpv_peel`)
+# (`_asg_ret_sid` its declared return, v6.5.28). 1 = a call.
 fn _asg_hdl_call(S): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    var fi = FINDFN(S, PEEKV(S));
+    var a = _tpv_peel(S, GTI(S));
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
     if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
     return 1;
 }
-# The struct ONE primary from token `st` evaluates to when it ends at `;`: a name (`_arg_name_sid`: a typed local, a
-# capture, a pointer-mode struct global), a free call `f(..)` (its declared return), or either followed by nested struct
-# fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return). An inline struct field is not a
-# pointer, so it is not typed here. 0 otherwise. A peek.
+# The struct ONE primary from token `st` evaluates to when it is the whole value: a name (`_arg_name_sid`: a typed
+# local, a capture, a pointer-mode struct global), a free call `f(..)` (its declared return), or either followed by
+# nested struct fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return), under any
+# parentheses that wrap it whole (`(h.name)`, `((f(..)))`: the guide's whole-wrap transparency, 6.7.16). An inline
+# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek. The local's arm (`_asg_ret_peek`) and
+# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse_decl.cyr) read it, so they agree.
 fn _tpv_sid(S, st): i64 {
-    if (TOKTYP(S, st) != 2) { return 0; }
-    var nt = TOKTYP(S, st + 1);
-    if (nt == 5) { return _arg_name_sid(S, TOKVAL(S, st)); }
-    if (nt == 41) { return _asg_rhs_steps(S, st + 1, _recv_sid(S, TOKVAL(S, st))); }
+    var a = _tpv_peel(S, st);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (_tpv_end_at(S, a + 1) == 1) { return _arg_name_sid(S, TOKVAL(S, a)); }
+    if (nt == 41) { return _asg_rhs_steps(S, a + 1, _recv_sid(S, TOKVAL(S, a))); }
     if (nt != 10) { return 0; }
-    var e = _tok_close_paren(S, st + 1);
+    var e = _tok_close_paren(S, a + 1);
     if (e < 0) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, st));
+    var fi = FINDFN(S, TOKVAL(S, a));
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
-    if (TOKTYP(S, e + 1) == 5) { return rs; }
+    if (_tpv_end_at(S, e + 1) == 1) { return rs; }
     if (TOKTYP(S, e + 1) != 41) { return 0; }
     return _asg_rhs_steps(S, e + 1, rs);
+}
+# Where the value `_tpv_sid` types ends: the first of the `)` that wrap it whole, or -1 (its `;`).
+var _tpv_ve = 0 - 1;
+# The first token inside the k `(` at `st` that wrap the whole value up to its `;` (k = 0: `st`; `_tpv_ve` -1), or -1
+# when they do not wrap it whole (`(a) + 1`, `(a)(b)`). Sets `_tpv_ve`.
+fn _tpv_peel(S, st): i64 {
+    _tpv_ve = 0 - 1;
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    if (k == 0) { return st; }
+    var c = _tok_close_paren(S, st + k - 1);
+    if (c < 0) { return 0 - 1; }
+    if (_pair_unwrap_k(S, c, k, 0) < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + k) != 5) { return 0 - 1; }
+    _tpv_ve = c;
+    return st + k;
+}
+# 1 = token `i` ends the value `_tpv_sid` types (`_tpv_peel`'s end, else a `;`).
+fn _tpv_end_at(S, i): i64 {
+    if (_tpv_ve >= 0) {
+        if (i == _tpv_ve) { return 1; }
+        return 0;
+    }
+    if (TOKTYP(S, i) == 5) { return 1; }
+    return 0;
 }
 fn _asg_rhs_steps(S, di, rsid): i64 {
     while (rsid > 0) {
@@ -4984,7 +5016,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
         if (TOKTYP(S, di + 2) == 10) {
             var e = _tok_close_paren(S, di + 2);
             if (e < 0) { return 0; }
-            if (TOKTYP(S, e + 1) != 5) { return 0; }
+            if (_tpv_end_at(S, e + 1) == 0) { return 0; }
             var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
             if (mf < 0) { return 0; }
             var ms = GFRS(S, mf);
@@ -4994,7 +5026,7 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
         var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
         if (fx < 0) { return 0; }
         var ft = GETFTYPE(S, rsid - 1, fx);
-        if (TOKTYP(S, di + 2) == 5) {
+        if (_tpv_end_at(S, di + 2) == 1) {
             if (IS_STR_FIELD(S, ft) == 1) { return ft; }
             return 0;
         }

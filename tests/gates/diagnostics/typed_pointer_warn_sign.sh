@@ -413,12 +413,14 @@ tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 
 
 # --- axis 16 (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md) ---
 # A `: Str` call into a `*Str` declaration or global is quiet now (tests/gates/diagnostics/false_warnings_valid_shapes.sh
-# SP0 SP1): `_tp_call_pointee` takes only a call whose declared return IS the pointee and that pointee a `Str` (a handle,
-# the header's address). These still warn: a `: Q1` call (an 8-byte struct, its word) into a `*Str` — a declaration in a
+# SP0 SP1): `_tp_call_pointee` takes only a value whose declared type IS the pointee and that pointee a `Str` (a handle,
+# the header's address) — since the field bite, every value the `*T` local's arm types (`_tpv_sid`: a call, a method,
+# a `: Str` field, a `Str` name, wrapped whole; false_warnings_valid_shapes.sh SF0-SF3). These still warn: a `: Q1` call (an 8-byte struct, its word) into a `*Str` — a declaration in a
 # fn and in the zone, a global assignment, the method forms (SC1); a `: P1` call into a `*P1` (a struct of 8 B or less is
 # returned as its word, not an address — SC2); `str_from(..)` into a `**Str` (SC3); a `: Str` call that is not the
 # whole value (SC4). Mutation: `_tp_call_pointee` without its `Str` test -> RED SC2 and axis 12's z_8b (0 warnings, the
-# struct's word taken as an address); `_tp_fcall_ret` without its whole-value test -> RED SC4.
+# struct's word taken as an address); `_tpv_sid` taking a call's return whatever follows the call (its whole-value test,
+# `_tpv_end_at`) -> RED SC4 (6.7.16's first form, `_tp_fcall_ret`, is gone).
 SCH='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nstruct H { name: Str; n; }\nfn H_mq(self: H): Q1 { var q: Q1; q.a = 3; return q; }\nfn mkq(): Q1 { var q: Q1; q.a = 3; return q; }\nvar _ai = alloc_init();\n'
 tpx SC1 5 0 - "a : Q1 call into a *Str: a declaration, a global, the zone, the method forms (5 warnings)" "${SCH}var GP: *Str = 0;\nvar GQ: *Str = mkq();\nfn main(): i64 {\n    var h: H = alloc(16);\n    var p: *Str = mkq();\n    GP = mkq();\n    var m: *Str = h.mq();\n    GP = h.mq();\n    return 0;\n}\nsyscall(60, main());\n"
 tpx SC2 1 0 - "a : P1 call into a *P1 (an 8-byte struct's word, no address)" 'struct P1 { a; }\nfn mk1(): P1 { var p: P1; p.a = 7; return p; }\nfn main(): i64 { var o: *P1 = mk1(); return 0; }\nsyscall(60, main());\n'

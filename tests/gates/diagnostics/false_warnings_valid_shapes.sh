@@ -19,7 +19,13 @@ cd "$ROOT" || { echo "FAIL: false_warnings_valid_shapes: cannot cd to $ROOT"; ex
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: false_warnings_valid_shapes: no compiler at $CC"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: false_warnings_valid_shapes: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'rm -rf "$D"' EXIT
+# The five-leg rows' PE runs use a PRIVATE wine prefix under $D (never ~/.wine), its server stopped on exit.
+_d_down() {
+  [ -d "$D/wine" ] || return 0
+  WINEPREFIX="$D/wine" wineserver -k >/dev/null 2>&1 || true
+  WINEPREFIX="$D/wine" wineserver -w >/dev/null 2>&1 || true
+}
+trap '_d_down; rm -rf "$D"' EXIT
 fail=0
 bad() { echo "  FAIL: false_warnings_valid_shapes $1"; fail=$((fail + 1)); }
 # chk <row> <file> <needle> <want-count> [<want-exit>]
@@ -303,6 +309,186 @@ syscall(SYS_EXIT, r);
 EOF
 chk "SP1 (methods, a nested receiver, the zone, after the first statement)" sp1.cyr "assigning non-pointer to typed pointer" 0 112
 
+# ── the five-leg rows (6.7.16) ────────────────────────────────────────────────────────────────────
+# `fw5` compiles a row on x86_64, PE and Mach-O (the env legs of $CC) and on the aarch64 / cx compilers built from this
+# tree, and wants rc 0, a binary, and EXACTLY its typed-pointer warning lines (`L:C` each; no other error or warning
+# line) on each; with an exit it runs on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine). A missing tool is named and
+# fails the gate (a SKIP is not coverage).
+F5=0
+F5N=0
+_f5_init() {
+  [ "$F5" -eq 1 ] && return 0
+  F5=1
+  F5L="x86_64 pe macho"
+  if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; F5L="$F5L aarch64"
+  else bad "five-leg rows: src/main_aarch64.cyr did not build"; fi
+  if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ] && "$CC" < programs/cxvm.cyr > "$D/cxvm" 2> /dev/null && [ -s "$D/cxvm" ]; then
+    chmod +x "$D/cc_cx" "$D/cxvm"; F5L="$F5L cx"
+  else bad "five-leg rows: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
+  command -v qemu-aarch64 > /dev/null 2>&1 || bad "five-leg rows: qemu-aarch64 is not installed (the aarch64 runs)"
+  command -v wine > /dev/null 2>&1 || bad "five-leg rows: wine is not installed (the PE runs)"
+}
+_f5_cc() {   # <leg> <name>: $D/<name>.<leg> (+ .err); rc in $rc
+  rc=0
+  case $1 in
+    x86_64)  timeout 60 "$CC" < "$D/$2.cyr" > "$D/$2.$1" 2> "$D/$2.$1.err" || rc=$? ;;
+    pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$D/$2.cyr" > "$D/$2.$1" 2> "$D/$2.$1.err" || rc=$? ;;
+    macho)   CYRIUS_MACHO=1 timeout 60 "$CC" < "$D/$2.cyr" > "$D/$2.$1" 2> "$D/$2.$1.err" || rc=$? ;;
+    aarch64) timeout 60 "$D/cc_a64" < "$D/$2.cyr" > "$D/$2.$1" 2> "$D/$2.$1.err" || rc=$? ;;
+    cx)      timeout 60 "$D/cc_cx" < "$D/$2.cyr" > "$D/$2.$1" 2> "$D/$2.$1.err" || rc=$? ;;
+  esac
+}
+_f5_run() {   # <leg> <name>: the exit in $got ('-' for a leg that does not run here)
+  got=0
+  case $1 in
+    x86_64)  timeout 30 "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
+    aarch64) timeout 60 qemu-aarch64 "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
+    cx)      timeout 60 "$D/cxvm" < "$D/$2.$1" > /dev/null 2>&1 || got=$? ;;
+    pe)      mkdir -p "$D/whome"; cp "$D/$2.$1" "$D/$2.exe"
+             (cd "$D" && WINEPREFIX="$D/wine" HOME="$D/whome" XDG_CACHE_HOME="$D/whome/.cache" WINEDEBUG=-all \
+               WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine "./$2.exe" > /dev/null 2>&1) || got=$? ;;
+    *)       got=- ;;
+  esac
+}
+fw5() {   # <row> <file in $D> <want warnings: `L:C` per line, or empty> <want exit or ->
+  _f5_init
+  n5="${2%.cyr}"
+  : > "$D/$n5.want"
+  for lc in $3; do echo "warning:<source>:$lc: assigning non-pointer to typed pointer" >> "$D/$n5.want"; done
+  for leg in $F5L; do
+    _f5_cc "$leg" "$n5"
+    F5N=$((F5N + 1))
+    grep -E '^(error|warning)' "$D/$n5.$leg.err" > "$D/$n5.$leg.got" || true
+    if [ "$rc" -ne 0 ] || [ ! -s "$D/$n5.$leg" ]; then bad "$1 ($leg): rc $rc: $(grep '^error' "$D/$n5.$leg.err" | head -1)"; continue; fi
+    if ! cmp -s "$D/$n5.$leg.got" "$D/$n5.want"; then bad "$1 ($leg): got $(wc -l < "$D/$n5.$leg.got") line(s): $(tr '\n' '|' < "$D/$n5.$leg.got") want: $(tr '\n' '|' < "$D/$n5.want")"; continue; fi
+    if [ "$4" != - ]; then
+      chmod +x "$D/$n5.$leg"; _f5_run "$leg" "$n5"
+      if [ "$got" != - ] && [ "$got" != "$4" ]; then bad "$1 ($leg): exit $got, want $4"; fi
+    fi
+  done
+}
+
+# SF (6.7.16; issues/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a `: Str` FIELD
+# is a pointer slot (its value is the header's address), so a `: Str` field into a `*Str` declaration (in a fn, the zone,
+# after the first statement) or a `*Str` global's assignment is quiet, as `l = h.name;` into the local already was
+# (6.6.17). `_tp_call_pointee` took calls only (the value had to end `)`); it now reads what the local's arm reads
+# (`_tpv_sid`, parse.cyr), so with the field came the rest of that class: a `Str`-typed name (`GS`), a field or a method
+# of a call's result (`mkh().name`, `mkh().nm()`), and each of them and the call under parentheses that wrap the value
+# whole (`(h.name)`, `((str_from(..)))` — into the local and a handle too, where a wrapped value warned while the bare
+# one did not). SF0 the filed repro verbatim (2 warnings before, exit 6); SF1 nested `w.h.name` (5 before); SF2 the
+# siblings (13 before); SF3 controls: an i64 field (`h.n`, wrapped too) and a value the parentheses do not wrap whole
+# still warn, at their lines (the zone's at its replay, last). Warning text only: every row's binary is the one before (exits unchanged).
+#   the lane's compiler before the bite (7bab85ee)                -> RED SF0 SF1 SF2 (2, 5 and 13 warnings)
+#   `_tp_call_pointee` with 6.7.16's earlier calls-only test      -> RED SF0 SF1 SF2 (the fields, the names, the wraps)
+#   `_tpv_peel` refusing any wrap                                 -> RED SF2 (the wrapped siblings, the handle)
+#   `_tpv_peel` without its `;` test (`(h.name) + 0` taken whole)  -> RED SF3 (18:31, 19:28 missing)
+#   `_asg_hdl_call` not peeling                                    -> RED SF2 (`k = (str_from(..))` into a P3 handle)
+cat > "$D/sf0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct H { name: Str; n; }
+var GZ: *Str = 0;
+fn main(): i64 {
+    alloc_init();
+    var h: H = alloc(16);
+    h.name = str_from("nm");
+    var f: *Str = h.name;
+    GZ = h.name;
+    var l: *Str = 0;
+    l = h.name;
+    return str_len(f) + str_len(GZ) + str_len(l);
+}
+syscall(60, main());
+EOF
+fw5 "SF0 (the filed repro verbatim: a : Str field into a *Str declaration and global; 2 warnings before)" sf0.cyr "" 6
+cat > "$D/sf1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct H { name: Str; n; }
+struct W { h: H; k; }
+var _ai = alloc_init();
+fn mkw(): i64 { var w: W = alloc(32); w.h.name = str_from("zone"); return w; }
+var GW: W = mkw();
+var GZ: *Str = GW.h.name;
+var GG: *Str = 0;
+fn main(): i64 {
+    var w: W = alloc(32);
+    w.h.name = str_from("xyz");
+    var f: *Str = w.h.name;
+    GG = w.h.name;
+    return str_len(f) + str_len(GG) * 10 + str_len(GZ) * 20;
+}
+var z = 1;
+z = 2;
+var GL: *Str = GW.h.name;
+GG = GW.h.name;
+var r = main();
+syscall(60, r + str_len(GL) + str_len(GG));
+EOF
+fw5 "SF1 (nested w.h.name into a declaration, a global, the zone, after the first statement; 5 before)" sf1.cyr "" 120
+cat > "$D/sf2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct H { name: Str; n; }
+struct P3 { a; b; c; }
+fn H_nm(self: H): Str { return self.name; }
+fn mkh(): H { var h: H = alloc(16); h.name = str_from("cd"); h.n = 4; return h; }
+var _ai = alloc_init();
+var GS: Str = str_from("gs");
+var GA: *Str = GS;
+var GB: *Str = (GS);
+var GZ: *Str = 0;
+fn main(): i64 {
+    var h: H = alloc(16);
+    h.name = str_from("nm");
+    var a: *Str = GS;
+    var b: *Str = mkh().name;
+    var c: *Str = mkh().nm();
+    var d: *Str = (h.name);
+    var e: *Str = ((str_from("abc")));
+    var f: *Str = (mkh().nm());
+    GZ = mkh().name;
+    var g = str_len(GZ);
+    GZ = (h.name);
+    var l: *Str = 0;
+    l = (h.name);
+    var m: *Str = 0;
+    m = ((str_from("wxyz")));
+    var k: P3 = alloc(24);
+    k = (str_from("ab"));
+    var u = k;
+    return str_len(a) + str_len(b) + str_len(c) + str_len(d) + str_len(e) + str_len(f) + g + str_len(GZ) + str_len(l) + str_len(m) + str_len(GA) + str_len(GB) + str_len(u);
+}
+syscall(60, main());
+EOF
+fw5 "SF2 (a Str name, a call's field and method, each wrapped whole, into a *Str and a handle; 13 before)" sf2.cyr "" 29
+cat > "$D/sf3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct H { name: Str; n; }
+var _ai = alloc_init();
+fn mkh(): i64 { var h: H = alloc(16); h.name = str_from("cd"); h.n = 4; return h; }
+var GH: H = mkh();
+var GK: *Str = GH.n;
+var GZ: *Str = 0;
+fn main(): i64 {
+    var h: H = alloc(16);
+    h.name = str_from("nm");
+    h.n = 1;
+    var a: *Str = h.n;
+    var b: *Str = (h.n);
+    GZ = h.n;
+    var l: *Str = 0;
+    l = h.n;
+    var c: *Str = (h.name) + 0;
+    l = (str_from("x")) + 0;
+    return 0;
+}
+syscall(60, main());
+EOF
+fw5 "SF3 (controls: an i64 field, wrapped too, and a value its parentheses do not wrap whole still warn)" sf3.cyr "13:22 14:24 15:13 17:12 18:31 19:28 7:20" 0
+[ "$F5N" -ge 20 ] || bad "SF: the five-leg rows ran $F5N row-legs (floor 20)"
+
 if [ "$fail" -ne 0 ]; then echo "FAIL false_warnings_valid_shapes: $fail row(s) red"; exit 1; fi
-echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a)); \`(0)\` wrapped whole is the null literal; a \`: Str\` call into a \`*Str\` is its pointer"
+echo "PASS false_warnings_valid_shapes: fns in top-level blocks are not 'undefined' (a fn defined nowhere still is); a same-typed global / Str method / Str field (nested too) assigned into a typed local is not 'non-pointer' (int, foreign struct, i64 field and i64 method still are); \`*pp\` of a \`**T\` is a \`*T\` (D9 (a)); \`(0)\` wrapped whole is the null literal; a \`: Str\` call into a \`*Str\` is its pointer, and so are a \`: Str\` field, a \`Str\` name, a call's \`Str\` field or method, each wrapped whole (five legs)"
 exit 0

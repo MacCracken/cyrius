@@ -1298,7 +1298,12 @@ literal under parentheses that wrap it whole (6.7.15): `"abc" + 1`, `"abc" - n`,
 is. A call declared `: Str` (a fn, or a method on a name) into a `*Str` is the header's address, the whole value
 up to the `;`, and never warns (6.7.16): `var p: *Str = str_from("ab");`, `GP = h.clone();` into a `*Str` global, a
 zone `var G: *Str = str_from("x");` — through 6.7.15 each warned, where `q = str_from("ab");` into a `*Str` local did
-not. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word) — into a `*T` local
+not. So is every other value whose declared type is `Str`: a `: Str` field (`h.name`, nested `w.h.name`), a `Str`-typed
+name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each of them under
+parentheses that wrap the value whole (`(h.name)`, `((str_from("x")))`) — `var f: *Str = h.name;`, `GZ = h.name;` and the
+zone's `var G: *Str = GW.h.name;` warned through 6.7.15 (the local's `l = h.name;` did not), and a wrapped value warned
+into the local and into a handle too (6.7.16). A field of any other type (`h.n`) and a value its parentheses do not wrap
+whole (`(h.name) + 0`) are judged as any value is. Any other struct's call keeps the warning (a struct of 8 B or less is returned as its word) — into a `*T` local
 or a `p: *T` parameter as well (6.7.16: `p = str_from(..);` into a `*P` local, a `*i64` or a `p: *P` parameter, `h =
 mkq();` into a `*Str`, `h = mkh().n;` and `h = str_from(..) + 0;` were silent there through 6.7.15, while the declaration
 and the global warned); a struct call into a handle (`var a: P3 = ..`, no `*`) is a rebind at any type and never warns.
