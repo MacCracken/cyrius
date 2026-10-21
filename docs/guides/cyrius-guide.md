@@ -1214,7 +1214,8 @@ too**, copied through as `l = p` is: `l = *pp`, `G = *pp` (in a fn and at top le
 step, and in a fn `var t: S = *pp;` / `(*pp)` copy the struct `*pp` points at — **and since 6.7.16 a top-level `var G:
 S = *GPP;` too** (`(*GPP)`, `*gpp()`, `*W.pp`; in the declaration zone and after the first statement, at every size: the
 user's D17 (a), 2026-10-19 — through 6.7.15 G was a handle on the struct, and a `**Q`'s `*GQQ` into an `S` global
-compiled; it is refused by name now, and so is a `**S` global declared below G over 8 bytes, as `*P` is); into a `*S` or a handle
+compiled; it is refused by name now, and so is a `**S` global declared below G, as `*P` is — at 8 bytes or less when a
+declaration below stores it at run time, 6.7.16); into a `*S` or a handle
 `q = *pp` stays the rebind `q = p` is; a `**Q`'s `*qq` into an `S` is refused by name (*cannot copy '\*qq' into a
 variable of a different struct/vector type*). **Since 6.7.16 a struct-typed FIELD destination copies too:** `o.s =
 *pp`, `G.s = *pp`, `w.s = *pp` through a `*W`, `o.s = (*pp)`, a for step and a top-level `G.s = *GPP` copy the struct
@@ -1661,8 +1662,10 @@ and in 6.7.10 before the fix `q` was a handle holding that sum.
 a `*S8` / `*P3` global copies the struct `P` points at, at every size, in the declaration zone and after the first
 statement, as the same line in a fn does (the user's D18 (a), 2026-10-19): `G` is its own copy, and a write to either
 side leaves the other. Through 6.7.15 it kept its 6.7.9 layout — inline, holding the POINTER WORD, at 8 bytes or less
-(`G.v` read the address); a handle bound to `P`'s object over 8. A `P` declared below `G` is refused by name over 8
-bytes (*cannot copy-init 'G' from a global declared below it*), as `*P` is. Alias the object with `var G: *S8 = P;`. `S` may be `Str`: `var V: Str = GP;` copies the header GP points at (6.7.16; through 6.7.15 V was a handle on it).
+(`G.v` read the address); a handle bound to `P`'s object over 8. A `P` declared below `G` is refused by name, as `*P`
+is (*cannot copy-init 'G' from a global declared below it*) — at every size since 6.7.16: 8 bytes or less `G` copied
+through `P` before `P`'s own initializer had stored it (SIGSEGV at startup; see *the source must be declared above
+the copy*, below). Alias the object with `var G: *S8 = P;`. `S` may be `Str`: `var V: Str = GP;` copies the header GP points at (6.7.16; through 6.7.15 V was a handle on it).
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
@@ -2232,7 +2235,14 @@ struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: 
 `var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
 globals are initialised in declaration order and `A` has not been initialised when `B` copies it;
 so is a call's field whose fn is declared below the copy in the leading block (`cannot copy-init 'G'
-from a field of a call to a fn declared below it`).
+from a field of a call to a fn declared below it`). **At 8 bytes or less too (6.7.16):** a source —
+a whole global, a field chain's global, a `*T` global's name, any dereference — that a declaration
+BELOW the copy stores at run time is refused with the same words (`var A: P8 = *GP8;` above `var GP8:
+*P8 = &GS8;` read address 0 and faulted at startup; `var A: P8 = GS;` above `var GS = P8 { f() };` read
+0). One the image holds from program start — a literal of constants (`var GS = P8 { 6 };`), a
+constant — is no ordering problem there and is read, as any constant declared below is (6.7.15's D2
+(a), 6.7.16's D14 (a)); over 8 bytes it is refused all the same (G's layout is decided before the
+source is seen).
 
 ⚠ **A struct ARGUMENT is checked against its parameter (v6.7.3).** An argument whose static struct
 type differs from the parameter's is refused by name, as the same copy into a variable is

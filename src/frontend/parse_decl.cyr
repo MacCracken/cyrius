@@ -7567,6 +7567,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         var graw = L64(_gvt(S) + gi * 8);
         var gsup = _gv_sup(graw);
         var sti = _gv_tok(graw);
+        _gvr_gi = gi;   # 6.7.16: the entry a copy source's store is ordered against (_gvr_unset)
         if (_gvr_n > 0) { _gvr_hide(S, sti); }   # 6.7.15: a refused type change, as the source reads here
         STI(S, sti);
         # Each entry starts with the panic latch clear, as a fn's statement does (the cursor is re-seated at
@@ -7995,7 +7996,10 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
     }
     if (_AGG_ASSIGN_TYPE_ERR(S, gps, 0 - ss, dnoff, _gci_nm) == 1) { return 0; }
     if (dgv < 0) { return 0; }
-    if (STRUCTSZ(S, ss - 1) <= 8) { return 0; }
+    if (STRUCTSZ(S, ss - 1) <= 8) {   # 6.7.16: a source a later entry stores is refused at every size (_gvr_below)
+        if (_gvr_below(S, GTI(S), dnoff) == 1) { return _gci_below(S, dnoff); }
+        return 0;
+    }
     if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
     if (_gci_take(S, ss) == 1) { _agc_copy_bytes(S, 0 - 1, dgv, 0 - 2, 0 - 1, STRUCTSZ(S, ss - 1)); }
     _gv_slvar(S, dgv);
@@ -12137,15 +12141,76 @@ fn _gz_pnat_str(S, gvi, sid, a): i64 {
     if (_istr_pdst(S, _gv_ptr_word(S, gvi), 1) == 0) { return 0 - 1; }
     return a;
 }
+# ⛔ 6.7.16 — A COPY SOURCE A LATER ENTRY STORES IS REFUSED AT EVERY SIZE (issues/2026-10-20-small-struct-global-from-
+# pointer-global-declared-below-faults-at-startup.md). Over 8 B pass 1 registers G inline only when its source is
+# declared above it (`_gci_inline`), so a source declared below leaves G a handle and the replay refuses it by name
+# (`_gci_below`). 8 B or less the layout is the end-of-pass-1 sweep's (`_gz_sval`), which sees every global, so the
+# replay copied through a `*T` global its own initializer had not stored yet: `var A: P8 = *GP8;` / `= GP8;` / `=
+# *GPP8;` / `= (*GP8);` above `var GP8: *P8 = &GS8;` read address 0 and faulted at startup (SIGSEGV), and a whole struct
+# global declared below (`var A: P8 = GS;` above `var GS = P8 { f() };`) was read before its store (0). 1 = a global the
+# initializer at token `b` (to its `;`) reads — a name not after a `.` — was first declared below the entry being
+# replayed (`_gvr_gi`, declaring `dnoff`) and is stored by a later entry: none before this one writes it and a later one
+# does, at run time. A global whose value is in the image from program start (a constant, 6.7.15's D2 (a); a literal of
+# constants, 6.7.16's D14 (a)) is no ordering problem and is read. CHANGELOG [6.7.16]
+var _gvr_gi = 0;   # the entry EMIT_GVAR_INITS is replaying
+fn _gvr_below(S, b, dnoff): i64 {
+    var e = _gz_end(S, b);
+    var gs = _gv_ent_slot(S, _gvr_gi, 0, dnoff);
+    var k = b;
+    while (k < e) {
+        if (TOKTYP(S, k) == 2) { if (TOKTYP(S, k - 1) != 41) {
+                var gvi = _findvar_core(S, TOKVAL(S, k));
+                if (gvi > gs) { if (_gvr_unset(S, gvi) == 1) { return 1; } }
+            } }
+        k = k + 1;
+    }
+    return 0;
+}
+# 1 = global `gvi` is stored by an entry after `_gvr_gi` and by none before it.
+fn _gvr_unset(S, gvi): i64 {
+    if (_gvx_m == 0) { return 0; }
+    var e = _nm_get(S, _gvx_m, L64(_varn_base + gvi * 8));
+    var later = 0;
+    while (e != 0) {
+        var w = _gvr_writes(S, load64(_gvx_rec + (e - 1) * 8), gvi);
+        if (w == 1) { return 0; }
+        if (w == 2) { later = 1; }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return later;
+}
+# Deferred-entry target `r` (entry * 4 + target, _gvx_rec1) against global `gvi`: 1 = an entry before `_gvr_gi` writes
+# it (a live target: no later constant superseded it); 2 = a later one stores it at run time (live, and no constant
+# the image holds from program start); 0 = neither.
+fn _gvr_writes(S, r, gvi): i64 {
+    var g = r >> 2;
+    var k = r & 3;
+    if (g == _gvr_gi) { return 0; }
+    if (g >= _gv_ent_cap) { return 0; }
+    if (((load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF) - 1 != gvi) { return 0; }
+    if (((_gv_sup(L64(_gvt(S) + g * 8)) >> k) & 1) != 0) { return 0; }
+    if (g < _gvr_gi) { return 1; }
+    if (k == 0) { if (_gvr_const(g) == 1) { return 0; } }
+    return 2;
+}
+# 1 = entry `g` is a constant the image holds from program start: a baked scalar (`_gvk_bk` 1 / 3), a baked literal (2),
+# a literal of constants the replay bakes (`_gvk_ik` 3).
+fn _gvr_const(g): i64 {
+    var b = load8(_gvk_bk + g);
+    if (b == 1 || b == 2 || b == 3) { return 1; }
+    if (load8(_gvk_ik + g) == 3) { return 1; }
+    return 0;
+}
 # The replay of `var G: S = P;` (`_gz_pnat`, cursor on the initialiser): copied through P into G at every size, the
 # cursor left on the `;` (1); 0 = not one. A P pass 1 could not see over 8 B (declared below G: G a handle) is refused,
-# as `*P` is (`_gci_below`). CHANGELOG [6.7.16]
+# as `*P` is (`_gci_below`); and 8 B or less, a P a later entry stores (`_gvr_below`). CHANGELOG [6.7.16]
 fn _gz_pn_init(S, dgv, gps, dnoff): i64 {
     var sid = 0 - gps;
     var a = _gz_pnat(S, GTI(S), sid);
     if (a < 0) { return 0; }
     if (dgv < 0) { return 0; }
     if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
+    if (_gvr_below(S, GTI(S), dnoff) == 1) { return _gci_below(S, dnoff); }
     var pg = FINDVAR(S, TOKVAL(S, a));
     STI(S, _gz_end(S, GTI(S)));
     if (pg < 0) { return 1; }
@@ -13483,7 +13548,7 @@ fn _gz_star_src(S, b, pscale, dnoff): i64 {
 # The replay of `var G: T = *p;` (cursor on the `*`): over 8 B copied through p into the inline G pass
 # 1 registered (`_gci_inline`), the cursor left on the `;` (1); 8 B or less, the value store copies
 # its word (0). A p pass 1 could not see (declared below G) is refused, as `_gci_below` refuses a
-# whole source declared below.
+# whole source declared below — and 8 B or less a p a later entry stores (`_gvr_below`, 6.7.16).
 fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
@@ -13492,8 +13557,12 @@ fn _gz_star_init(S, dgv, gps, dnoff): i64 {
     var pg = _gz_star_src(S, b, gps, dnoff);
     if (pg < 0) { return 0; }
     var sid = 0 - gps;
-    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
     if (dgv < 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) {
+        if (_gvr_below(S, b, dnoff) == 0) { return 0; }
+        STI(S, b + 1);
+        return _gci_below(S, dnoff);
+    }
     STI(S, b + 1);
     if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
     STI(S, b + 2);
@@ -14128,23 +14197,31 @@ fn _hl_name_ty(S, noff): i64 {
 # fn declared below G) is refused by name, as a whole source declared below is (`_gci_below`).
 # 6.7.16 (D17 (a)): `*pp` of a `**S` (`_hl_dstar_x`'s mode 1) is copied through the `*S` it reads at EVERY size — the
 # value store would keep that pointer word (a handle). CHANGELOG [6.7.16]
+# 6.7.16: and 8 B or less, a dereference reading a global a later entry stores (`_gvr_below`: `(*GP8)`, `*GPP8`) is
+# refused the same way — it read address 0 at startup. CHANGELOG [6.7.16]
 fn _gz_dx_init(S, dgv, gps, dnoff): i64 {
     var ps = _hl_dstar_x(S, GTI(S), 5, 1);
     if (ps <= 0) { return 0; }
     var dpp = _hl_dpp;
     if (_agg_dx_err(S, gps, 0 - ps, dnoff) == 1) { return 0; }
     var sid = 0 - gps;
-    if (STRUCTSZ(S, sid - 1) <= 8) { if (dpp == 0) { return 0; } }
     if (dgv < 0) { return 0; }
-    _hl_dpp = dpp;
-    if (GVPM(S, dgv) != 2) {
-        ERR_IDENT(S, "cannot copy-init ", dnoff,
-          " from a dereference of a global or fn declared below it (declare it first): ", _hl_dnm);
-        while (PEEKT(S) != 5) { STI(S, GTI(S) + 1); }
-        return 1;
+    if (STRUCTSZ(S, sid - 1) <= 8) {
+        if (_gvr_below(S, GTI(S), dnoff) == 1) { return _gz_dx_below(S, dnoff); }
+        if (dpp == 0) { return 0; }
     }
+    _hl_dpp = dpp;
+    if (GVPM(S, dgv) != 2) { return _gz_dx_below(S, dnoff); }
     var h = _hl_dx_src(S);
     _agc_copy_bytes(S, 0 - 1, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, sid - 1));
     _gv_slvar(S, dgv);
+    return 1;
+}
+# `_gz_dx_init`'s refusal: the dereference reads a global or fn declared below G (`_hl_dnm`, its operand's last name),
+# the cursor left on the `;`. 1.
+fn _gz_dx_below(S, dnoff): i64 {
+    ERR_IDENT(S, "cannot copy-init ", dnoff,
+      " from a dereference of a global or fn declared below it (declare it first): ", _hl_dnm);
+    while (PEEKT(S) != 5) { STI(S, GTI(S) + 1); }
     return 1;
 }
