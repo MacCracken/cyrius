@@ -1666,6 +1666,12 @@ side leaves the other. Through 6.7.15 it kept its 6.7.9 layout — inline, holdi
 is (*cannot copy-init 'G' from a global declared below it*) — at every size since 6.7.16: 8 bytes or less `G` copied
 through `P` before `P`'s own initializer had stored it (SIGSEGV at startup; see *the source must be declared above
 the copy*, below). Alias the object with `var G: *S8 = P;`. `S` may be `Str`: `var V: Str = GP;` copies the header GP points at (6.7.16; through 6.7.15 V was a handle on it).
+A `*U` global of ANOTHER struct is refused by name, as a `*U` local, `*GU` and `t = GU` are (6.7.16, the user's
+decision D87 (a) of 2026-10-20): `var t: P = GU;` — in a fn, in the declaration zone and after the first statement, at
+every size, wrapped `(GU)` too, a `Str` declared from a `*U` and a `*Str` into a `P` alike — is *cannot copy 'GU' into
+a variable of a different struct/vector type: 't'*. Through 6.7.15 it compiled: in a fn (and at top level over 8
+bytes) `t` was a handle reading U's object as a P, and at top level at 8 bytes or less `t.v` held GU's address.
+`var t: U = GU;` copies and `var t: *U = GU;` aliases.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),

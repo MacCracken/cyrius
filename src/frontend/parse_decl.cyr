@@ -7755,10 +7755,23 @@ fn _sci_cap_src(S, snoff, dnoff, pscale): i64 {
 fn _sci_gsrc_type(S, snoff): i64 {
     var gvi = FINDVAR(S, snoff);
     if (gvi < 0) { return 0; }
-    if (GVPM(S, gvi) != 2) { return 0; }
+    if (GVPM(S, gvi) != 2) { return _sci_gpu_type(S, gvi); }
     var gt = GVTYPE(S, gvi);
     if (gt <= 0) { return 0; }
     return 0 - gt;
+}
+# ⛔ 6.7.16 — A `*U` GLOBAL'S NAME INTO AN `S` DECLARATION IS REFUSED BY NAME, AT EVERY SIZE (the user's D87 (a),
+# 2026-10-20; issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), as a `*U`
+# local (6.6.6 / 6.7.0), its dereference `*GU` and the assignment `t = GU` are: `var t: P = GU;` (U another struct) bound
+# a handle reading U's object as a P, in a fn and at top level over 8 B, and held GU's address as the struct's word
+# at top level at 8 B or less. A `*U` global (no struct value: GVPM 0, U a struct, `_gv_ptr_sid`) is typed `0 - U`
+# here, so the fn's refusal names it ("cannot copy 'GU' into a variable of a different struct/vector type: 't'"); the
+# same name of the declared struct was taken first (`_sci_gptr_src`: a copy). At top level `_gz_pnu`. CHANGELOG [6.7.16]
+fn _sci_gpu_type(S, gvi): i64 {
+    if (GVPM(S, gvi) != 0) { return 0; }
+    var ps = _gv_ptr_sid(S, gvi);
+    if (ps <= 0) { return 0; }
+    return 0 - ps;
 }
 
 # ⛔ 6.6.11 — `var s: Box<Pt> = mk(r.v);` — a generic call whose instance (here Box<i64>: the
@@ -8032,6 +8045,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     var dx = 0;       # 6.7.10 (review): 1 = any other dereference of a `*T` (`_gci_dx_top`)
     var pn = 0 - 1;   # 6.7.16 (D18 (a)): `var G: T = P;` — P a `*T` global's name (`_gz_pnat`), copied at every size
     if (ss == 0) {
+        if (_gci_pnu_top(S, noff, pscale) == 1) { return 0; }   # 6.7.16 (D87 (a)): a `*U` of another struct, by name
         pn = _gz_pnat(S, GTI(S) + 1, sid);
         if (pn >= 0) {
             pg = FINDVAR(S, TOKVAL(S, pn));
@@ -12103,8 +12117,9 @@ fn _gz_fsrc(S, b, sid): i64 {
 }
 # `var G: T = P;` with P a `*U` global's NAME (inside any parentheses): 1 = [b, its `;`) is such a name — a struct
 # value to the sweep (8 B or less, G inline). 6.7.10 (B7-1g) left it the layout it had until the user decided; 6.7.16's
-# D18 (a): a `*T` name of the declared struct copies at every size (`_gz_pnat`). A `*U` of another struct keeps the
-# 6.7.9 layout (8 B or less, the pointer word; over 8 B, a handle bound to P's object).
+# D18 (a): a `*T` name of the declared struct copies at every size (`_gz_pnat`); 6.7.16's D87 (a): a `*U` of another
+# struct is refused by name at the replay and after the first statement (`_gz_pnu`) — it kept the 6.7.9 layout (8 B or
+# less, the pointer word; over 8 B, a handle bound to P's object).
 fn _gz_pname(S, b): i64 {
     var a = _ie_unparen(S, b, _gz_end(S, b));
     if (_ie_pe != a + 1) { return 0; }
@@ -12113,6 +12128,41 @@ fn _gz_pname(S, b): i64 {
     if (gvi < 0) { return 0; }
     if (_gv_ptr_sid(S, gvi) <= 0) { return 0; }
     return 1;
+}
+# D87 (a)'s shape at top level: the initialiser at token `b` (up to its `;`, inside any parentheses) is the name of a
+# `*U` global, U a struct other than the declared `sid` (a struct or a `Str`; a tuple or dyn keeps its own rules): U,
+# its name's token in `_gz_pnu_ti`; else 0. CHANGELOG [6.7.16]
+var _gz_pnu_ti = 0;
+fn _gz_pnu(S, b, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var a = _ie_unparen(S, b, _gz_end(S, b));
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var gvi = _findvar_core(S, TOKVAL(S, a));
+    if (gvi < 0) { return 0; }
+    var u = 0 - _sci_gpu_type(S, gvi);
+    if (u <= 0) { return 0; }
+    if (u == sid) { return 0; }
+    _gz_pnu_ti = a;
+    return u;
+}
+# The replay's refusal of it (cursor on the initialiser): by name, as the fn's (`_sci_gsrc_type`), the cursor left on
+# the `;` (1); 0 = not one.
+fn _gz_pnu_init(S, gps, dnoff): i64 {
+    var u = _gz_pnu(S, GTI(S), 0 - gps);
+    if (u <= 0) { return 0; }
+    _AGG_ASSIGN_TYPE_ERR(S, gps, 0 - u, dnoff, TOKVAL(S, _gz_pnu_ti));
+    STI(S, _gz_end(S, GTI(S)));
+    return 1;
+}
+# PARSE_VAR's top-level arm's (cursor on its `=`): 1 = refused by name; the arm's value store then reads the name, as
+# after the other refusals there (`_gz_star_src`).
+fn _gci_pnu_top(S, noff, pscale): i64 {
+    var u = _gz_pnu(S, GTI(S) + 1, 0 - pscale);
+    if (u <= 0) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - u, noff, TOKVAL(S, _gz_pnu_ti));
 }
 # ⛔ 6.7.16 (D18 (a)) — A TOP-LEVEL `var G: S = P;` WITH P A `*S` GLOBAL'S NAME IS A COPY, AT EVERY SIZE (the user's
 # decision, 2026-10-19), in the declaration zone and after the first statement, as the same line in a fn is (6.7.0):
@@ -12206,9 +12256,9 @@ fn _gvr_const(g): i64 {
 # as `*P` is (`_gci_below`); and 8 B or less, a P a later entry stores (`_gvr_below`). CHANGELOG [6.7.16]
 fn _gz_pn_init(S, dgv, gps, dnoff): i64 {
     var sid = 0 - gps;
-    var a = _gz_pnat(S, GTI(S), sid);
-    if (a < 0) { return 0; }
     if (dgv < 0) { return 0; }
+    var a = _gz_pnat(S, GTI(S), sid);
+    if (a < 0) { return _gz_pnu_init(S, gps, dnoff); }   # 6.7.16 (D87 (a)): a `*U` of another struct, by name
     if (GVPM(S, dgv) != 2) { return _gci_below(S, dnoff); }
     if (_gvr_below(S, GTI(S), dnoff) == 1) { return _gci_below(S, dnoff); }
     var pg = FINDVAR(S, TOKVAL(S, a));
