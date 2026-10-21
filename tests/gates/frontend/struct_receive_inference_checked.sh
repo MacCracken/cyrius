@@ -1678,7 +1678,30 @@ for zw in zone after; do
     refused "TI11$zw" "if expression branches differ in type: struct 'Q1' here, struct 'P1' before it" "the $zw: two struct types are refused once; G is the first branch's (no \`G.a\` cascade, as in a fn)"
 done
 
-[ "$rows" -ge 391 ] || bad "only $rows rows ran (floor 391)"
+# TI20 (6.7.16): the zone sweep's wide-branch read (`_gu_bwide`) reads tokens only. Its first form asked the parse's
+# branch classifier, whose call arm resolves a generic call (`_pair_gen_inst`): at the sweep that instanced `gen<P1>`
+# early and moved the program's fn layout — `var G = if (1 == 1) { gen(B1) } else { gen(B1) };` in the zone compiled
+# to other bytes than before (182 unreachable fns where the after-a-statement form, and the compiler before, say 183).
+# Both forms report the same count and run alike. RED with `_gu_bwide` back on `_ie_struct_sid`: TI20.
+TIG='include "lib/syscalls.cyr"
+struct P1 { a; }
+fn gen<T>(x: T): T { return x; }
+fn mk(): P1 { var p: P1; p.a = 7; return p; }
+var B1 = P1 { 9 };
+var G = if (1 == 1) { gen(B1) } else { gen(B1) };
+var H = if (1 == 2) { mk() } else { gen<P1>(B1) };
+fn f(): i64 { return G.a + H.a; }
+syscall(60, f());'
+printf '%s\n' "$TIG" > "$T/TI20zone.cyr"
+zafg TI20
+runs TI20zone 18 "the zone: if-expressions of generic calls bind P1"
+runs TI20after 18 "after a first statement: the same"
+rows=$((rows + 1))
+_u1=$("$CC" < "$T/TI20zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
+_u2=$("$CC" < "$T/TI20after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
+if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI20 the zone sweep instanced nothing: '$_u1' in both forms"
+else bad "TI20 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
+[ "$rows" -ge 394 ] || bad "only $rows rows ran (floor 394)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

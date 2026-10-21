@@ -12790,24 +12790,27 @@ fn _gu_slit0(S, ti): i64 {
     if (FINDFN(S, n) >= 0) { return 0; }
     return _ann_refd_mark(S, _slit_decl_name(S, ti - 1));
 }
-# 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes (`_ie_struct_sid`: -1 a vector / u128, or a
-# struct over 8 B), with no parse record to match (`_sc_beg`, `_fpk_ft` cleared, then put back).
+# 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes, read from its tokens with the sweep's own readers
+# (nothing instanced, no parse state): a struct over 8 B (`_gz_bty`; a `Str` is a handle), a vector or u128 name
+# (`_ie_wide_name`), a whole call of a non-generic fn returning a vector.
 fn _gu_bwide(S, a, b): i64 {
-    var sv = GTI(S);
-    var sb = _sc_beg;
-    var fk = _fpk_ft;
-    _sc_beg = 0 - 1;
-    _fpk_ft = 0;
-    STI(S, b);
-    var sid = _ie_struct_sid(S, a);
-    STI(S, sv);
-    _sc_beg = sb;
-    _fpk_ft = fk;
-    if (sid < 0) { return 1; }
-    if (sid == 0) { return 0; }
-    if (sid == _STR_SID(S)) { return 0; }
-    if (STRUCTSZ(S, sid - 1) > 8) { return 1; }
-    return 0;
+    var t = _gz_bty(S, a, b);
+    if (t > 0) {
+        if (t == _STR_SID(S)) { return 0; }
+        if (STRUCTSZ(S, t - 1) > 8) { return 1; }
+        return 0;
+    }
+    var a2 = _ie_unparen(S, a, b);
+    var b2 = _ie_pe;
+    if (TOKTYP(S, a2) != 2) { return 0; }
+    if (b2 == a2 + 1) { return _ie_wide_name(S, TOKVAL(S, a2)); }
+    var o = _gcall_open(S, a2);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != b2) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a2));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    return _is_simd_any(S, GFRS(S, fi));
 }
 # ⛔ 6.7.16 — A ZONE GENERIC METHOD'S GENERIC STRUCT RESULT IS ITS INSTANCE. The struct the last method step `_gz_ty`
 # read (`_gz_mfi` generic, returning `: G<..>`, G = `g`) returns at its call: its type arguments as the parser's member
