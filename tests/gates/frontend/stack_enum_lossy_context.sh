@@ -69,7 +69,7 @@ accept() {
     grep -E '^error' "$T/p.err" | head -2 | sed 's/^/    /'
     exit 1
   }
-  chmod +x "$T/p"; "$T/p"; got=$?
+  chmod +x "$T/p"; got=0; "$T/p" || got=$?
   [ "$got" -eq "$3" ] || { echo "FAIL stack_enum_lossy_context $2: $1 ran but gave ${got}, expected $3"; exit 1; }
 }
 
@@ -397,8 +397,10 @@ fn mk3(n) { if (n < 0) { return R3Err(1); } return R3Ok(n); }
 fn main(): i64 { var t, v = mk3(2); return late_two(v); }
 var e = main();
 EOF
-"$CC" < "$T/w.cyr" > "$T/w" 2>"$T/w.err"
-UNDEF=$(grep -c "undefined function" "$T/w.err")
+"$CC" < "$T/w.cyr" > "$T/w" 2>"$T/w.err" || {
+  echo "FAIL stack_enum_lossy_context axis13: the late-helper program was REFUSED but is legal:"
+  grep -E '^error' "$T/w.err" | head -2 | sed 's/^/    /'; exit 1; }
+UNDEF=$(grep -c "undefined function" "$T/w.err" || true)
 [ "$UNDEF" -eq 0 ] || {
   echo "FAIL stack_enum_lossy_context axis13: $UNDEF 'undefined function' warning(s) for fns"
   echo "  defined in this very file — the propagation pass is minting fn-table entries again."
@@ -610,7 +612,7 @@ refuse_at() {
     echo "FAIL stack_enum_lossy_context $2: $1 COMPILED — the payload is silently dropped."
     exit 1
   fi
-  _n=$(grep -c '^error' "$T/p.err")
+  _n=$(grep -c '^error' "$T/p.err" || true)
   _at=$(awk -v n="$3" 'index($0, n) { print NR ":" index($0, n); exit }' "$T/p.cyr")
   if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$_at: .*bind both" "$T/p.err"; then
     echo "FAIL stack_enum_lossy_context $2: $1 — want ONE 'bind both' error at $_at, got $_n:"
@@ -857,7 +859,7 @@ synonly_refuse() {   # <axis> <needle>: one 'bind both' error at <needle>, under
   cat > "$T/x.cyr"
   "$CC" --syntax-only < "$T/x.cyr" > /dev/null 2> "$T/x.err" && {
     echo "FAIL stack_enum_lossy_context $1: --syntax-only accepted a lossy field store"; exit 1; }
-  _n=$(grep -c '^error' "$T/x.err")
+  _n=$(grep -c '^error' "$T/x.err" || true)
   _at=$(awk -v n="$2" 'index($0, n) { print NR ":" index($0, n); exit }' "$T/x.cyr")
   if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$_at: .*bind both" "$T/x.err"; then
     echo "FAIL stack_enum_lossy_context $1: --syntax-only — want ONE 'bind both' error at $_at, got $_n:"
@@ -1036,7 +1038,7 @@ if grep -q "^warning" "$T/w16.err"; then
   echo "FAIL stack_enum_lossy_context axis16h: the impl-method prescan produced warnings (a minted entry?):"
   grep "^warning" "$T/w16.err" | head -3 | sed 's/^/    /'; exit 1
 fi
-chmod +x "$T/w16"; "$T/w16"; got=$?
+chmod +x "$T/w16"; got=0; "$T/w16" || got=$?
 # 16i: Pt_A_m(p, 4)? above the impls (the T_Tr_m prefix) is Ok(10) -> 11; Pt_B_m(p, 4) + 2 = 12.
 [ "$got" -eq 23 ] || { echo "FAIL stack_enum_lossy_context axis16i: the trait-collision method gave ${got}, expected 23"; exit 1; }
 refuse_at "store64(&s, p.div(d)) above the impl" axis16j "p.div(d));" <<EOF
@@ -1255,7 +1257,7 @@ rm -f "$T/r17"
 if "$CC" < "$R17" > "$T/r17" 2>"$T/r17.err"; then
   echo "FAIL stack_enum_lossy_context axis17a: the issue's repro COMPILED — its struct-literal elements keep the tag."; exit 1
 fi
-_n=$(grep -c '^error' "$T/r17.err")
+_n=$(grep -c '^error' "$T/r17.err" || true)
 for _l in "fn lit_positional" "fn lit_named" "var G = P"; do
   _w=$(awk -v l="$_l" 'index($0, l) == 1 { print NR ":" index($0, "f(7)"); exit }' "$R17")
   grep -q "^error:<source>:$_w: .*bind both" "$T/r17.err" || {
@@ -1758,7 +1760,7 @@ _qf_cc() {
 qf_refuse() {
     for leg in $QLEGS; do
         if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context $2 ($leg): $1 COMPILED — the forward pair is read as one value."; exit 1; fi
-        _n=$(grep -c '^error' "$T/q.$leg.err")
+        _n=$(grep -c '^error' "$T/q.$leg.err" || true)
         if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$3: .*bind both" "$T/q.$leg.err"; then
             echo "FAIL stack_enum_lossy_context $2 ($leg): $1 — want ONE 'bind both' error at $3, got $_n:"
             grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
