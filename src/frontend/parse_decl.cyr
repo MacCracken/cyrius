@@ -6198,7 +6198,7 @@ fn PARSE_GVAR_REG(S): i64 {
             }
         } else {
             _vecg_size(S, vcnt, ann_vec);
-            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff); }
+            if (ann_vec != 0) { if (rhs_ti > 0) { _vecg_init_ok(S, cf_has, cf_val, noff); } }   # 6.7.16: none is the replay's
             # 6.6.5 — `var G: P = <expr>;` gets ONE 8-byte slot, so the slot HOLDS an address;
             # the literal form above owns STRUCTSZ bytes and IS the struct. Both carry the same
             # positive SVTYPE, so nothing downstream could tell them apart and every `G.field`
