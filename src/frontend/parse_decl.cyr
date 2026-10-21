@@ -12804,6 +12804,27 @@ fn _gz_pnu(S, b, sid): i64 {
     _gz_pnu_ti = a;
     return u;
 }
+# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
+# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
+# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
+# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
+# the line. 1 = such a store. CHANGELOG [6.7.16]
+fn _gs_sub_sres(S, fi, i): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
+    var eq = _gs_dsr_eq(S, i);
+    if (eq < 0) { return 0; }
+    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    if (TOKTYP(S, d + 2) != 8) { return 0; }
+    if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
+    _gsw_k = 5;
+    _gsw_ti = i;
+    return 1;
+}
 # ⛔ 6.7.16 (D87 (a), the s16 review) — AND A `*U` CALL, FIELD OR POINTER ARITHMETIC, as the assignment refuses them
 # (`_hl_psrc_copy`): `var l: P3 = gq(&q);` (gq `: *Q3`), `= h.pq`, `= w.mq()`, `= pq + 0`, wrapped, at every size, in a
 # fn (`_sci_pnu`), the declaration zone and after the first statement (`_gz_pnu_span`), bound a handle reading U's object

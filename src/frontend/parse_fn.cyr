@@ -15893,6 +15893,7 @@ fn _gs_use(S, fi, i, mode): i64 {
     var nx = TOKTYP(S, i + 1);
     if (mode == 0) {
         if (nx == 4) { return _gs_asg_sres(S, fi, i); }   # 6.7.16 (D1): `y = mkp();`, y typed by T
+        if (nx == 28) { return _gs_sub_sres(S, fi, i); }   # 6.7.16 (D99): `p[i] = mkp();`, p a `*T`
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
         # 6.7.16: a FIELD name (`g.v` of `g.v.v`, `q.a` of `q.a.k`) is no T-typed name or carrier, whatever

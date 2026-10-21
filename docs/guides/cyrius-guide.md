@@ -1911,7 +1911,9 @@ the same way (6.7.16; the user's decision D99, 2026-10-20): `*p = mkp();` with `
 a local, parameter, global, capture, field or `: *i64` call, `*(p + n)`, `**pp` of a `**i64`, and `*pp` of a `**i64`
 or a `**Q` of another struct (a pointer slot, D32's own) — from a call, a method, an operator, a known `&f`, in
 parentheses, in a `for` step, is *cannot assign '\*p: i64' from 'mkp', which returns the struct 'P2' - store it
-through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first word, silently); `*(&x) = mkp();` is `x =
+through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first word, silently); so is the subscript
+store `p[i] = mkp();` through the same pointers (`w.pi[0] = ..`, `gi()[0] = ..`, a `*i64` global, at top level too:
+*cannot assign 'p[0]: i64' …*), and a generic's `p[0] = mkp();` with `p: *T` has no scalar instance (D1); `*(&x) = mkp();` is `x =
 mkp();`, judged as that assignment; 8 bytes or less and a `Str` keep their word, a field of the result (`*p =
 mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
