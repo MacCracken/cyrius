@@ -15241,6 +15241,9 @@ fn _gs_var_sres(S, fi, i): i64 {
 fn _gs_asg_sres(S, fi, i): i64 {
     var pt = TOKTYP(S, i - 1);
     if (pt == 41 || pt == 3 || pt == 49) { return 0; }   # a field, a `var` (`_gs_var_sres`), a label
+    # A dereference store `*p = E` (`**pp = E`) writes through p, not into it: no scalar instance judged it, and D1
+    # names `y = E` / `p = E` only, so the instances stay as they were. CHANGELOG [6.7.16]
+    if (pt == 8) { return 0; }
     if (_gs_dst_tp(S, fi, i) == 0) { return 0; }
     if (_gs_sres_big(S, fi, i + 2) == 0) { return 0; }
     _gsw_k = 3;

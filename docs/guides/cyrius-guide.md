@@ -1793,6 +1793,8 @@ keeps; inside a generic fn, `var x: T = mk(9);` is the struct at `T = P3`, and s
 naming the line (6.7.16, the user's D1 of 2026-10-19 — the same for `x = mk(9);` into a `x: T` and `p = mk(9);` into a
 `p: *T` / `**T`, from a call, a method, an operator or a known `&f`; through 6.7.15 the base, which is the `T = i64`
 instance, was not judged and kept the struct's first word, and `g<i32>(5)` was refused in the declaration's words).
+A store THROUGH the pointer, `*p = mk(9);` (`**pp = mk(9);`), is not one of these lines: it is not judged, and
+compiles at every instance as before.
 The same holds through a fn pointer whose callee is written `&f` (6.7.12; the user's decision D28,
 2026-10-15): `var x: i64 = fncall1(&mk, 9);` and `var x: i64 = callptr(&mk, 9);` carry `mk`'s struct
 result, so they are refused with the same words, naming `mk` (through 6.7.11 they read its first

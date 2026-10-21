@@ -94,7 +94,7 @@
 #                                                         through 6.7.13)
 #   real tree                                          -> GREEN (64 refusals, 17 acceptances; 6.7.14: 63 / 18, RP16 accepted)
 #
-# 6.7.16 (the user's D1, 2026-10-19; TG0-TG12, TG0n, TA1-TA5, TGX on aarch64 / cx / PE): a struct result over 8 B stored
+# 6.7.16 (the user's D1, 2026-10-19; TG0-TG12, TG0n, TA1-TA6d, TGX on aarch64 / cx / PE): a struct result over 8 B stored
 # in a name typed by T makes the generic a stub (`_gs_var_sres`, `_gs_asg_sres`, src/frontend/parse_fn.cyr).
 # (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
 #   MTG1 the tree before (1135ae069)                    -> RED 19: TG0 TG0n TG1 TG2 TG4-TG12 (compiled, no diagnostic), TG3 (D24's
@@ -104,6 +104,7 @@
 #   MTG4 `_gs_sres` without its operator / `&f` / method arms -> RED 3: TG6 (the method), TG8 (`fncall0(&mkp)`), TG9 (the operator)
 #   MTG5 no rescan at pass 1's end                      -> RED 1: TG10 (mkl declared below gl: pass 1 knew no return)
 #   MTG6 `_gs_sres_big` without the size test (`_rcv_big` -> sid > 0) -> RED 2: TA2 TA3 (an 8-byte struct, a `Str`: refused as stubs)
+#   MTG7 `_gs_asg_sres` without its `*` test (the review fix) -> RED 3: TA6 TA6b TA6c (`*p = mkp();` made the generic a stub)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1183,6 +1184,9 @@ fn gs<T>(x: T): i64 { var y: T = mks(); return 9; }
 fn gq<T>(x: T): i64 { var y: T = mkp(); return y.b - 400; }
 fn gqa<T>(x: T): i64 { var y: T = x; y = mkp(); return y.b - 400; }
 fn gqp<T>(x: T): i64 { var p: *T = &x; p = mkp(); return x.b - 400; }
+fn gd<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return 9; }
+fn gdd<T>(x: T): i64 { var p: *T = &x; var pp: **T = &p; **pp = mkp(); return 9; }
+fn gdq<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return x.b - 400; }
 fn mkl(): Q { var q: Q; q.a = 1; q.b = 2; return q; }
 '
 TE='
@@ -1207,6 +1211,12 @@ accept "TA2 an 8 B result into y: T at i64 keeps its word" "$TH"'fn main(): i64 
 accept "TA3 a Str result into y: T at i64 keeps its word" "$TH"'fn main(): i64 { alloc_init(); return gs(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA4 y = mkp(); at T = Q copies" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqa(q); }'"$TE" 44 'syscall(60, 44);'
 accept "TA5 p = mkp(); (p: *T) at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqp(q); }'"$TE" 44 'syscall(60, 44);'
+# TA6-TA6d: a store THROUGH the pointer is not one of D1's lines — it compiled at every instance before the stub rule
+# (41ca7d41c: g(5) and g<i32>(5) rc 0) and still does; whether it is judged is its own question (the review's filing).
+accept "TA6 *p = mkp(); (p: *T) at i64: not a stub" "$TH"'fn main(): i64 { return gd(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA6b *p = mkp(); at gd<i32>(5)" "$TH"'fn main(): i64 { return gd<i32>(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA6c **pp = mkp(); (pp: **T) at i64" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gdq(q); }'"$TE" 44 'syscall(60, 44);'
 
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
