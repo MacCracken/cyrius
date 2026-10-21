@@ -3432,7 +3432,9 @@ Through a `p: *Str`, `*p` is the header p points at (a dereference of a struct p
 `h.eq(*p)`, `f(*gp())` — is passed the pointer, the header's address, as `str_len(p)` passes it (since 6.7.15; through
 6.7.14 the dereference read the header's first word, the data pointer, and passed that as the header: `str_len(*p)`
 was 0). A `p: *Str` parameter given `*pp` takes the `*Str` `*pp` reads, and an untyped parameter the word `*p` reads,
-as before. ⚠ Not yet a generic's `x: T` at `T = Str` (`gg<Str>(*p)` still passes the data word — filed): pass `p`.
+as before. A generic's `x: T` at `T = Str` is passed the header the same way — `gg<Str>(*p)`, the inferred `gg(*p)`
+(which binds `T = Str`), `gg<Str>(**pp)`, a generic method's `o.gm(*p)` (since 6.7.16; through 6.7.15 the instance,
+whose `x` is address-passed, was given the data word: `str_len(x)` 0).
 
 At top level, `var H: Str = gt;` with `gt` an inline `Str` global binds a handle global to gt's static
 header, as the same line in a fn does — in the declaration zone and after the first statement alike (the

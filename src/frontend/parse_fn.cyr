@@ -2131,6 +2131,8 @@ fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
     var pvf = _sarg_pe_vform(S, fi, argc, tail);   # 6.7.14: Win64's value-form vector parameter, `_sar_src`'s sources
     if (pvf >= 0) { return pvf; }
     if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
+    # 6.7.16: `gg<Str>(*p)` — an instance's `x: T` at T = Str is address-passed; `*p` passes p, the header.
+    if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # CHANGELOG [6.7.16]
     if (PEEKT(S) == 10) { return _sarg_paren(S, fi, argc, tail); }   # 6.7.6
     if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }   # 6.7.12 (D27): `rd(mkv(..))` into `*V`
     # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
