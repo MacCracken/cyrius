@@ -511,8 +511,7 @@ syscall(60, 0);
 error:<source>:3:33: undefined variable 'zz8' (missing include or enum?)"
 
 row H9 "control: a header left mid-way keeps the latch" "${PA}    if (y b) { y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'
-error:<source>:8:21: expected '}', got end of file"
+${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'"
 
 row H10 "control: a header in a closure parsed under the statement's latch" 'fn g(f): i64 { return 0; }
 fn main(): i64 {
@@ -578,6 +577,97 @@ while (pa[0] == 1) { y = 1; y = zz8; }
 syscall(60, 0);
 ' "error:<source>:5:10: cannot subscript 'pa$U
 error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
+
+# R — 6.7.16 (met with H, the same `{` step): A HEAD WHOSE `{` IS NOT WHERE THE PARSER STANDS KEEPS ITS BRACES. The
+# `{` check stepped one token whatever it was, so the block's `}` closed the enclosing body and "expected '}', got end
+# of file" was invented at the end of the file — after a header left mid-way (H9 printed it, R1) and after a body
+# written without braces (R2-R8), with the next statement's own error lost or a stray "unexpected else" (R3). Now a
+# mid-way header is stepped to its end (its `{` opens the block, the latch kept), a brace-less body is that one
+# statement (refused once, "expected '{', got ..."), and a `switch` / `match` with no `{` is refused and skipped to
+# its statement's end (R9, R10; `match y 1 => ..` said "expected '>', got number 2" and two invented lines).
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_blk_open`'s mid-way step dropped -> RED H9 R1 R11
+# on every leg (15: the invented "expected '}'", or the block parsed as one statement); its no-`{` arm stepping one
+# token again (the old recovery) -> RED R2-R8 R10 R13-R15 (55); R9 and R12 hold under either (the switch's / the
+# match's skip reaches the same end).
+row R1 "a mid-way header, then a statement" "${PA}    if (y b) { y = 1; }
+    y = zz8;
+${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R2 "if (c) y = 1; with no braces" "${PA}    if (y == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R3 "if and else with no braces" "${PA}    if (y == 1) y = 1; else y = 2;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
+error:<source>:5:29: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R4 "an elif with no braces" "${PA}    if (y == 1) { y = 1; } elif (y == 2) y = 3;
+    y = zz8;
+${TAIL}" "error:<source>:5:42: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R5 "a while with no braces" "${PA}    while (y == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:20: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R6 "a classic for with no braces" "${PA}    for (var i = 0; i < 3; i = i + 1) y = i;
+    y = zz8;
+${TAIL}" "error:<source>:5:39: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R7 "a for .. in with no braces" "${PA}    for i in 0..3 y = i;
+    y = zz8;
+${TAIL}" "error:<source>:5:19: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R8 "a do with no braces" "${PA}    do y = 2; while (y == 1);
+    y = zz8;
+${TAIL}" "error:<source>:5:8: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R9 "a switch with no {" "${PA}    switch (y) case 1: y = 2;
+    y = zz8;
+${TAIL}" "error:<source>:5:16: expected '{', got case
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R10 "a match with no {" "${PA}    match y 1 => { y = 2; }
+    y = zz8;
+${TAIL}" "error:<source>:5:13: expected '{', got number 1
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R11 "a for .. in range with junk before its {" "${PA}    for i in 0..3 junk { y = 1; }
+    y = zz8;
+${TAIL}" "error:<source>:5:19: expected '{', got identifier 'junk'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R12 "a match subject with junk before its {" "${PA}    match y junk { 1 => { y = 2; } }
+    y = zz8;
+${TAIL}" "error:<source>:5:13: expected '{', got identifier 'junk'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R13 "nested ifs with no braces" "${PA}    if (y == 1) if (y == 2) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:17: expected '{', got if
+error:<source>:5:29: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+
+row R14 "a top-level if with no braces, after the first statement" 'var y = 0;
+y = 1;
+if (y == 1) y = 2;
+syscall(60, zz8);
+' "error:<source>:3:13: expected '{', got identifier 'y'
+error:<source>:4:16: undefined variable 'zz8' (missing include or enum?)"
+
+row R15 "a refused header and no braces" "${PA}    if (qq[0] == 1) y = 1;
+    y = zz8;
+${TAIL}" "error:<source>:5:11: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:21: expected '{', got identifier 'y'
+error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
 
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

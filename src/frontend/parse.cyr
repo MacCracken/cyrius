@@ -2700,11 +2700,13 @@ fn _coro_land_suspends(S): i64 {
     return 0;
 }
 # A loop body: one more loop and one more break target for the statements inside it.
-fn _loop_body(S, scoped): i64 {
+fn _loop_body(S, scoped): i64 { return _loop_body_b(S, scoped, 1); }
+# ... `bb` 0: a body of one statement, no braces (`_blk_open`, parse_ctrl.cyr). CHANGELOG [6.7.16]
+fn _loop_body_b(S, scoped, bb): i64 {
     _loop_depth = _loop_depth + 1;
     _brk_depth = _brk_depth + 1;
     if (scoped == 1) { SCOPE_PUSH(S); }
-    PARSE_PROG(S);
+    _blk_body(S, bb);
     if (scoped == 1) { SCOPE_POP(S); }
     _loop_depth = _loop_depth - 1;
     _brk_depth = _brk_depth - 1;
@@ -3192,7 +3194,7 @@ fn PARSE_SWITCH(S): i64 {
     var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
-    _blk_open(S, p0, he);
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
     var _sw_m0 = _clm_n;   # 6.7.2: this switch's label memo, trimmed at its end
@@ -3425,7 +3427,7 @@ fn PARSE_MATCH(S): i64 {
     var he = _hdr_brace(S, GTI(S));
     PCMPE(S);
     var mh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
-    _blk_open(S, p0, he);
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Store match value in hidden temp var
     var midx = _HTEMP(S);
     _HTSTORE(S, midx);

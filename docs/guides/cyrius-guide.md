@@ -895,7 +895,10 @@ loop {
 An error in a header — the condition of an `if` / `elif` / `while` / `for`, a `for .. in` range or collection, a
 `switch` or `match` subject — is that header's: the block is parsed as usual and each of its statements reports its
 own error (6.7.16; through 6.7.15 the block's SECOND statement was skipped with its error, so `if (qq[0] == 1) { y = 1;
-y = zz8; }` reported `qq` alone).
+y = zz8; }` reported `qq` alone). A body is always braced: `if (c) y = 1;`, `else y = 2;`, `for (..) y = i;` or
+`do y = 1; while (c);` is refused once, *expected '{', got identifier 'y'*, and the code after it is parsed as
+written (6.7.16; through 6.7.15 the parser took the `y` for the `{`, the enclosing body's `}` closed the block, and an
+invented *expected '}', got end of file* followed — as it did after a header left mid-way, `if (y b) { .. }`).
 
 ### `loop` and `do … while` (6.7.5)
 
