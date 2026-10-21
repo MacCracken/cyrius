@@ -3131,6 +3131,12 @@ fn demo(): i64 {
   be declared above or below its impls. Traits and impls go in the declaration section (before the
   first top-level statement), like `struct` and `enum` — unlike a `fn`, which may also follow
   statements. One after it is one error by name (6.7.14; see *Functions*).
+- **An impl body holds only `fn` definitions** (and the directives and `pub` / `public` before one), as a
+  trait body holds only `fn` declarations. Anything else there — a `struct`, an `enum`, a `var`, a stray
+  token — is one error at it, *an impl body holds only `fn` definitions - in impl 'A'* (`... in impl 'Tr'
+  for 'A'`), and the body reads on: the methods after it are defined (6.7.16; through 6.7.15 it was
+  "expected '}', got struct" and the rest of the body was read as top-level code, two or three invented
+  errors, the methods after it lost).
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type

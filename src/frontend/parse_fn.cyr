@@ -14062,7 +14062,7 @@ fn PARSE_IMPL(S): i64 {
             _impl_attrs(S, 1);         # 6.6.17: `#deprecated` / `#must_use` / ... on a method
             if (_TL_VIS(S) == 1) { }   # v6.5.0: `pub`/`public` on an impl method
             if (PEEKT(S) == 32) { _tr_mod_for(S); PARSE_FN_DEF(S); _tr_mod_back(S); }
-            else { igo = 0; }
+            else { igo = _impl_member_bad(S, trait_noff, type_noff, 1); }   # 6.7.16
         }
     }
     _tr_defaults(S, _cur_ii, 1);       # 6.7.0 (A1): the trait's defaults this impl does not define
@@ -14074,6 +14074,31 @@ fn PARSE_IMPL(S): i64 {
     _cur_iself_sid = 0;        # top-level code after the impl is no method body
     SMOD(S, saved_mod);
     return 0;
+}
+
+# ⛔ 6.7.16 — A MEMBER OF AN impl BODY THAT IS NOT A `fn` IS ONE ERROR, BY NAME. The loop took only directives, `pub` and
+# `fn`, and anything else ended it at "expected '}', got struct" (or `var`, `enum`, a number) — the closing `}` taken for
+# that token, so the member's own braces and the rest of the body were parsed as top-level code: "expected '=', got '{'",
+# "undefined variable 'z'", "undefined variable 'Q'", and the methods after it never defined. Now, as a trait body's
+# non-`fn` member is ("a trait body holds only `fn` declarations"), "an impl body holds only `fn` definitions - in impl
+# 'A'" (`impl 'Tr' for 'A'`) at the member, which is stepped as a refused declaration is (`_dl_skip_in`: through its `;`
+# or its own braces, never the body's `}`), its names and fns entered as reported (`_dl_names`, `_dl_quiet`), and the
+# body read on — in sync, so the latch is put back. Pass 1 (`rep` 0) steps it silently, so the methods after it are
+# registered. 1 = stepped (the loop goes on), 0 = the body's `}` or the end of input. CHANGELOG [6.7.16]
+fn _impl_member_bad(S, trn, tn, rep): i64 {
+    var t = PEEKT(S);
+    if (t == 14 || t == 12) { return 0; }
+    var ti = GTI(S);
+    if (rep == 1) {
+        var p0 = _panic;
+        if (trn == 0) { ERR_IDENT(S, "an impl body holds only `fn` definitions - in impl ", tn, 0, 0 - 1); }
+        else { ERR_IDENT(S, "an impl body holds only `fn` definitions - in impl ", trn, " for ", tn); }
+        _panic = p0;
+    }
+    _dl_skip_in(S);
+    _dl_names(S, ti, GTI(S));
+    _dl_quiet(S, ti, GTI(S));
+    return 1;
 }
 
 # ⛔ 6.6.17 — DIRECTIVES IN AN impl BODY. Its loop took only `pub` and `fn`, so `#deprecated("..")`

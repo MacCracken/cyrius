@@ -552,5 +552,105 @@ printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt
 if [ "$rc" -ne 0 ] && cmp -s "$T/trr6.got" "$T/trr6.want"; then ok "TRR6: --syntax-only (D5 silent there) keeps dd7's impl line"
 else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi
 
+# ── IB (6.7.16, f16 FF5) — a member of an impl body that is not a `fn` is one error, by name ──
+# PARSE_IMPL's loop took directives, `pub` and `fn`; anything else ended it at "expected '}', got struct" (`var`, `enum`,
+# a number), the `}` it wanted taken for that token, so the member's own braces and the rest of the body were read as
+# top-level code ("expected '=', got '{'", "undefined variable 'z'", "undefined variable 'Q'") and the methods after it
+# were never defined. Now "an impl body holds only `fn` definitions - in impl 'A'" (`- in impl 'Tr' for 'A'`), as a
+# trait body's A7, at the member; it is stepped (`_impl_member_bad`: through its `;` or its own braces), its names
+# entered as reported, and the body read on in sync; pass 1 steps it too, so the methods after it are registered. Each
+# row on five legs (x86_64, PE and Mach-O env legs, the aarch64 / cx compilers built from this tree): the exact error
+# lines, rc != 0, no binary. IB1 a struct member, the method after it called; IB2 a `var`, a stray number after the
+# last method; IB3 an enum member of a trait impl; IB4 the struct's name used before and after the impl (an earlier
+# fn's `q: *Q`, `Q { 1 }`) adds nothing; IB5 --syntax-only of IB1; IB6 control: directives, `pub` methods and a
+# `#deprecated` one still build (run on x86_64: 7); IB7 a mistake in the method after the member is its own error.
+# Mutants (2026-10-21, a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it):
+#   the lane before it (bf1a3a6b2)                         -> RED IB1-IB5 IB7, 30 (the old "expected '}', got .." cascade)
+#   PARSE_IMPL's loop ending at the member (pass 1 stepping) -> RED IB1-IB5 IB7, 30
+#   `_prescan_impl_body` ending at the member               -> RED IB4, 5 (the struct's name not entered before `g`'s
+#                                                              `q: *Q` is read)
+#   `_impl_member_bad` keeping the report's latch          -> RED IB7, 5 (the method's own mistake swallowed)
+IL="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"; IL="$IL a64"
+else bad "IB: src/main_aarch64.cyr did not build"; fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ]; then chmod +x "$T/cc_cx"; IL="$IL cx"
+else bad "IB: src/main_cx.cyr did not build"; fi
+IBN=0
+ibc() {   # <leg> <src> <out> [cc-arg]: rc in IRC
+    IRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        a64)   timeout 60 "$T/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+        cx)    timeout 60 "$T/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || IRC=$? ;;
+    esac
+}
+ibrow() {   # <id> <what> <source> <want-lines> [cc-arg]
+    printf '%s' "$3" > "$T/$1.cyr"
+    printf '%s\n' "$4" > "$T/$1.want"
+    for leg in $IL; do
+        o="$T/$1_$leg"
+        ibc "$leg" "$T/$1.cyr" "$o" "${5:-}"
+        IBN=$((IBN + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$IRC" -eq 0 ]; then bad "$1 $leg: $2: rc 0"
+        elif ! cmp -s "$o.got" "$T/$1.want"; then bad "$1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"
+        elif [ -s "$o" ] && [ -z "${5:-}" ]; then bad "$1 $leg: $2: refused, but a binary was written"
+        else ok "$1 $leg: $2"; fi
+    done
+}
+IM='an impl body holds only `fn` definitions - in impl'
+IZ="undefined variable 'zz' (missing include or enum?)"
+ibrow IB1 "a struct member; the method after it is defined" 'struct A { y; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:4:23: $IZ"
+ibrow IB2 "a var member, a stray number after the last method" 'struct A { y; }
+impl A { var x = 1; fn m(self): i64 { return 1; } 5 }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:2:51: $IM 'A'
+error:<source>:4:23: $IZ"
+ibrow IB3 "an enum member of a trait impl" 'struct A { y; }
+trait Tr { fn m(self): i64; }
+impl Tr for A { enum E { X } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:3:17: $IM 'Tr' for 'A'
+error:<source>:5:23: $IZ"
+ibrow IB4 "the refused member's name used before and after the impl" 'struct A { y; }
+fn g(q: *Q): i64 { return q.z; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+fn h(): i64 { var q = Q { 1 }; return q.z; }
+syscall(60, g(0) + h() + zz);
+' "error:<source>:3:10: $IM 'A'
+error:<source>:5:28: $IZ"
+ibrow IB7 "a mistake in the method after a member is its own error" 'struct A { y; }
+impl A { var x = 1; fn m(self): i64 { return 1 2; } }
+var a: A = A { 1 };
+syscall(60, a.m() + zz);
+' "error:<source>:2:10: $IM 'A'
+error:<source>:2:48: expected ';', got number 2
+error:<source>:4:23: $IZ"
+ibrow IB5 "--syntax-only: IB1's shape" 'struct A { y; }
+impl A { struct Q { z; } fn m(self): i64 { return 1; } }
+var a: A = A { 1 };
+syscall(60, a.m());
+' "error:<source>:2:10: $IM 'A'" --syntax-only
+printf 'struct A { y; }\nimpl A {\n    #must_use\n    fn m(self): i64 { return 3; }\n    pub fn n(self): i64 { return 4; }\n    #deprecated("old")\n    fn o(self): i64 { return 0; }\n}\nvar a: A = A { 1 };\nsyscall(60, a.m() + a.n());\n' > "$T/ib6.cyr"
+for leg in $IL; do
+    ibc "$leg" "$T/ib6.cyr" "$T/ib6_$leg"
+    IBN=$((IBN + 1))
+    if [ "$IRC" -ne 0 ] || [ ! -s "$T/ib6_$leg" ] || grep -qE '^(error|warning)' "$T/ib6_$leg.err"; then bad "IB6 $leg: a well-formed impl: rc $IRC: $(grep -E '^(error|warning)' "$T/ib6_$leg.err" | tr '\n' '|')"
+    elif [ "$leg" = x86 ]; then chmod +x "$T/ib6_x86"; got=0; "$T/ib6_x86" || got=$?
+        if [ "$got" -eq 7 ]; then ok "IB6 x86: a well-formed impl (directives, pub) builds: exit 7"; else bad "IB6 x86: exit $got, want 7"; fi
+    else ok "IB6 $leg: a well-formed impl builds"; fi
+done
+[ "$IBN" -ge 35 ] || bad "IB: the rows ran $IBN row-legs (floor 35) - rows or legs were lost"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
