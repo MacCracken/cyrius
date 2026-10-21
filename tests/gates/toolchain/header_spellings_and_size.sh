@@ -244,7 +244,7 @@ fi
 # untyped fields (so each struct is over 16 B and its header line names its size) and the size
 # the header prints is compared with `sizeof` compiled by build/cycc. Then the class boundaries.
 echo "H8 — every field shape sized as the compiler sizes it; the class boundaries:"
-SHAPES='f;|f: i8;|f: u8;|f: i16;|f: u16;|f: i32;|f: u32;|f: f32;|f: i64;|f: u64;|f: f64;|f: bool;|f: cstring;|f: Str;|f: Option;|f: Result;|f: Tagged;|f: *Q3;|f: **u8;|f: *Box<i64>;|f: Vec<i64>;|f: Vec;|f: E;|f: Q3;|f: R24;|f: UU;|f: (i64, i64);|f: (i64, f64, bool);|f: dyn Show;|a: u8 b: u16 c: u32 d: f32|x: Q3; y: C2;'
+SHAPES='f;|f: i8;|f: u8;|f: i16;|f: u16;|f: i32;|f: u32;|f: f32;|f: i64;|f: u64;|f: f64;|f: bool;|f: cstring;|f: Str;|f: Option;|f: Result;|f: Tagged;|f: *Q3;|f: **u8;|f: *Box<i64>;|f: Vec<i64>;|f: Vec;|f: E;|f: Q3;|f: R24;|f: UU;|f: (i64, i64);|f: (i64, f64, bool);|f: dyn Show;|a: u8; b: u16; c: u32; d: f32;|x: Q3; y: C2;'
 { echo 'include "lib/str.cyr"'
   echo 'include "lib/vec.cyr"'
   echo 'struct Q3 { a: u8; b: u8; c: u8; }'

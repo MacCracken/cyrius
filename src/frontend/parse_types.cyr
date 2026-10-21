@@ -4482,6 +4482,25 @@ fn _enum_sep(S, emit_code): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — STRUCT AND UNION FIELDS ARE SEPARATED BY `;` (the user's D69, 2026-10-20: refused by name). After a field
+# (cursor past it, its type read): a `;` is stepped; the `}` / end of file is left (`struct P { a; b }` stays valid); a
+# name — the next field — is "expected ';' between struct fields" ("... union fields"), at it, and the field is read
+# from there. `struct P { a b }`, `struct Q { x: i64 y: i64 }` and one field per line with no `;` compiled, each field
+# at the offset the separated form gives (issues/2026-10-19-struct-and-union-fields-need-no-separator.md) — D12's enum
+# members (`_enum_sep`) and 6.7.15's D1 (a) struct literal elements (`_slit_sep`) for the third brace list. Once per
+# declaration: the report latches to the declaration's `}`, which releases it (`_tl_decl1`), so the next declaration
+# reports its own; a generic struct's instance re-reads its definition (`_inst_name`) and says nothing. Any other
+# token keeps the loop's own "expected identifier". `un` 1 = a union. CHANGELOG [6.7.16]
+fn _fld_sep(S, un): i64 {
+    var t = PEEKT(S);
+    if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+    if (t != 2) { return 0; }
+    if (_inst_name != 0) { return 0; }
+    if (un == 1) { ERR_MSG(S, "expected ';' between union fields", 33); }
+    else { ERR_MSG(S, "expected ';' between struct fields", 34); }
+    return 0;
+}
+
 # 6.7.16 — the member at the cursor: its name, or -1 when it is not one ("expected identifier"). The refused token was
 # registered all the same, its value read as a name: a number's (6, 7) or a keyword's named whatever stood at that
 # offset of the name table, so `enum F { X 6 }` then `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with
@@ -5634,7 +5653,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
             } else {
                 ADDFIELD(S, si, fnoff);
             }
-            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+            _fld_sep(S, 0);   # 6.7.16 (D69): `;` between fields
         }
     }
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
@@ -5707,7 +5726,7 @@ fn PARSE_UNION_DEF(S): i64 {
             } else {
                 ADDFIELD(S, si, fnoff);
             }
-            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+            _fld_sep(S, 1);   # 6.7.16 (D69): `;` between fields
         }
     }
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.

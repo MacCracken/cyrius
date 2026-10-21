@@ -1404,6 +1404,13 @@ var a = Point { 1, 2 };
 var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
 
+A struct's (and a union's) fields are separated by `;`; the last one may omit it (`struct Point { x; y }`).
+A missing `;` between two fields is one error at the second, a line break being no separator (6.7.16, the
+user's decision D69, 2026-10-20): `struct P { a b }`, `struct Q { x: i64 y: i64 }` and one field per line
+with no `;` are `expected ';' between struct fields` (`... union fields`), once per declaration. ⚠ Through
+6.7.15 each compiled, every field at the offset the separated form gives. A `,` is no field separator
+(*expected identifier, got ','*).
+
 Both forms initialise a global anywhere at top level and a local in a fn. Before 6.7.14 the **named**
 form was refused in the declaration section (top level, before the first top-level statement):
 `undefined variable 'x'`.

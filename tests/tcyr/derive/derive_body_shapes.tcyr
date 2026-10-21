@@ -72,12 +72,13 @@ struct TabSp	{
     b:	i16;
 }
 
-# --- fields with no `;`, and a K&R brace on its own line ---
+# --- no `;` after the last field, and a K&R brace on its own line ---
+# (a line break is no separator: the `;`s between NoSemi's fields are required since 6.7.16, the user's decision D69)
 #derive(Serialize)
 struct NoSemi
 {
-    a: i8
-    b: i32
+    a: i8;
+    b: i32;
     c: i64
 }
 
@@ -167,10 +168,10 @@ fn main() {
 
     var ns = alloc(13); store8(ns, 7); store32(ns + 1, 70000); store64(ns + 5, 1234);
     sb = str_builder_new(); NoSemi_to_json(ns, sb);
-    cstr_is(json_of_sb(sb), "{\"a\":7,\"b\":70000,\"c\":1234}", "no semicolons: Serialize");
+    cstr_is(json_of_sb(sb), "{\"a\":7,\"b\":70000,\"c\":1234}", "no final semicolon: Serialize");
     var ns2 = NoSemi_from_json_str("{\"a\":7,\"b\":70000,\"c\":1234}");
-    assert_eq(load32(ns2 + 1), 70000, "no semicolons: Deserialize b");
-    assert_eq(load64(ns2 + 5), 1234, "no semicolons: Deserialize c");
+    assert_eq(load32(ns2 + 1), 70000, "no final semicolon: Deserialize b");
+    assert_eq(load64(ns2 + 5), 1234, "no final semicolon: Deserialize c");
 
     var bl = alloc(16); Blank_set_a(bl, 4); Blank_set_b(bl, 6);
     sb = str_builder_new(); Blank_to_json(bl, sb);
