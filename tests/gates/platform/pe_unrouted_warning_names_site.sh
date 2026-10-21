@@ -98,5 +98,27 @@ if grep -q 'is not routed' "$D/st.err"; then
     grep 'is not routed' "$D/st.err" | cut -c1-160
 fi
 
+# 6.7.16: a REFUSED call draws its error alone. `syscall(60 0);` (no `,`) stops at the `0`, so the arity the two
+# routing warnings judge is unknown: the literal arm warned "syscall 60 with 0 argument(s) is not routed" at 1:1 (its
+# walk back to the `syscall` token found no `)`) and the non-literal arm "no Windows-routable syscall of this arity" —
+# an invented warning after the one error, at the file's first column. Met beside
+# issues/2026-10-20-zone-replay-last-entry-latch-swallows-first-statement-error.md. Mutant: either arm's `_panic` check
+# dropped — RF1 / RF2 or RF3 red. RF4 (control): a valid non-literal call at an arity no route takes still warns.
+rf() {
+    printf '%b' "$2" > "$D/rf.cyr"
+    _rc=0; ( cd "$D" && CYRIUS_TARGET_WIN=1 "$CC" < rf.cyr > rf.exe 2> rf.err ) || _rc=$?
+    _e=$(grep -c '^error' "$D/rf.err" || true); _w=$(grep -c '^warning' "$D/rf.err" || true)
+    if [ "$_rc" = 0 ] || [ "$_e" != 1 ] || [ "$_w" != 0 ] || ! grep -q "^error:<source>:$3: expected ')', got number 0" "$D/rf.err"; then
+        bad "$1: a refused call: rc $_rc, $_e error(s) + $_w warning(s), want the $3 error alone:"; grep '^error\|^warning' "$D/rf.err" | cut -c1-160
+    fi
+}
+rf RF1 'syscall(60 0);\nsyscall(60, 2);\n' 1:12
+rf RF2 'syscall(7 0);\nsyscall(60, 2);\n' 1:11
+rf RF3 'var n = 60;\nsyscall(n 0);\nsyscall(60, 2);\n' 2:11
+printf 'var n = 7;\nvar r = syscall(n, 1, 2, 3, 4, 5);\nsyscall(60, 0);\n' > "$D/rf4.cyr"
+( cd "$D" && CYRIUS_TARGET_WIN=1 "$CC" < rf4.cyr > rf4.exe 2> rf4.err ) || bad "RF4: the valid non-literal call did not compile"
+grep -q '^warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity' "$D/rf4.err" \
+    || { bad "RF4: a valid non-literal call at an unrouted arity no longer warns:"; head -c 300 "$D/rf4.err"; echo; }
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9)"
+echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9); a refused call warns at nothing (6.7.16)"

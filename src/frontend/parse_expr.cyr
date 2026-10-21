@@ -1497,6 +1497,7 @@ fn _sc_argc_refuse(S, n): i64 {
 }
 var _pe_unrouted_noted = 0;
 fn _pe_warn_unrouted(S, sc_num, argc): i64 {
+    if (_panic == 1) { return 0; }   # a refused call (`syscall(60 0)`): its arity is unknown. CHANGELOG [6.7.16]
     var ti = GTI(S) - 1;
     var depth = 0;
     while (ti > 0) {
@@ -1522,6 +1523,16 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     syscall(SYS_WRITE, 2,
       "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,11,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError) + 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx) + 0xF04E (kernel32: GetFinalPathNameByHandleW).\n",
       1686);
+    return 0;
+}
+
+# The non-literal-number twin of `_pe_warn_unrouted`: no route at this arity. A refused call's arity is unknown, so it
+# says nothing there. CHANGELOG [6.7.16]
+fn _pe_warn_dyn(S): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2,
+      "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
+      252);
     return 0;
 }
 
@@ -7012,11 +7023,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # issue 2026-06-09-pe-syscall-variable-number-not-rerouted.md.
             if (sc_num < 0) {
                 var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
-                if (_dynrc == 2) {
-                    syscall(SYS_WRITE, 2,
-                      "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
-                      252);
-                }
+                if (_dynrc == 2) { _pe_warn_dyn(S); }
                 _cfo = 0;
                 return 0;
             }
