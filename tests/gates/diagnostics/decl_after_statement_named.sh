@@ -1110,12 +1110,12 @@ row5 UZ5 "control: a valid forward zone reference is said once" "$(printf 'var a
 " "error:<source>:1:14: unknown name 'E' in a const context
 error:<source>:4:15: $ZZ"
 row5 UZ6 "control: ... after the pass-1 reports before the zone's end" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
-" "error:<source>:2:17: unknown type 'Zt' for struct field 'x'
+" "error:<source>:2:15: unknown type 'Zt' for struct field 'x'
 error:<source>:1:14: unknown name 'E' in a const context
 error:<source>:5:15: $ZZ"
 row5 UZ7 "control: a name declared nowhere is said in place" "$(printf 'var arr: i64[Z.B];\nstruct P { x: Zt; }\nvar a = 1;\na = 2;\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'Z' in a const context
-error:<source>:2:17: unknown type 'Zt' for struct field 'x'
+error:<source>:2:15: unknown type 'Zt' for struct field 'x'
 error:<source>:5:15: $ZZ"
 row5 UZ8 "a held report is said before an unmatched } stops the compile" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\n}\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'E' in a const context

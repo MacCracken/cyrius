@@ -367,7 +367,7 @@ printf '%s\n' 'struct VB { v: Vec; p1; p2; }' 'struct Vec { a; b; c; }' 'struct 
   echo 'pz(sizeof(VA)); syscall(60, 0);'; } > vop.cyr
 rcvo=0; (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vop.cyr" > "$D/vop" 2> "$D/vop.err") || rcvo=$?
 check "cycc refuses the field whose struct Vec is declared below it, by name, once" "1 1 1" \
-    "$rcvo $(grep -c "^error:<source>:1:19: struct field type 'Vec' is declared after its use; declare it before 'VB'" vop.err || true) $(grep -c '^error' vop.err || true)"
+    "$rcvo $(grep -c "^error:<source>:1:16: struct field type 'Vec' is declared after its use; declare it before 'VB'" vop.err || true) $(grep -c '^error' vop.err || true)"
 grep -v 'struct VB' vop.cyr > vopa.cyr
 { (cd "$ROOT" && "$ROOT/build/cycc" < "$D/vopa.cyr" > "$D/vopa" 2> /dev/null) && chmod +x vopa && ./vopa > vo.cc 2> /dev/null; } || :
 check "cycc's sizeof: struct Vec above the field 40 B" "40" "$(paste -sd' ' vo.cc 2> /dev/null)"

@@ -184,14 +184,14 @@ struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
 ' "error:<source>:1:12: expected identifier, got number 5
-error:<source>:2:18: $F
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 6"
 refuse P2 "an empty member: enum E { A, , B }" 'enum E { A, , B }
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
 ' "error:<source>:1:13: expected identifier, got ','
-error:<source>:2:18: $F
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 6"
 refuse P3 "a payload's parameter: Some(5), then an enum" 'enum O: stack { Some(5) }
 enum F { X 6 }
@@ -202,12 +202,12 @@ refuse P4 "the enum's name: enum 5 { A }" 'enum 5 { A }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:6: expected identifier, got number 5
-error:<source>:2:18: $F"
+error:<source>:2:15: $F"
 refuse P5 "its stack: enum E: 5 { A }" 'enum E: 5 { A }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:9: expected stack, got number 5
-error:<source>:2:18: $F"
+error:<source>:2:15: $F"
 refuse P6 "its brace: enum E A }; a reserved word as a member; pub" 'enum E A }
 enum G { match, B }
 pub enum H { C 5 }
@@ -216,27 +216,27 @@ syscall(60, 0);
 ' "error:<source>:1:8: expected '{', got identifier 'A'
 error:<source>:2:10: expected identifier, got reserved keyword 'match' (cannot be used as an identifier; rename the variable/field/fn)
 error:<source>:3:16: expected identifier, got number 5
-error:<source>:4:18: $F"
+error:<source>:4:15: $F"
 refuse P7 "D12's separator, then a member, then a struct" 'enum E { A B }
 enum F { X 6 }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:12: $M
 error:<source>:2:12: expected identifier, got number 6
-error:<source>:3:18: $F"
+error:<source>:3:15: $F"
 refuse P8 "--syntax-only: the filed repro" 'enum E { A 5 }
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
 ' "error:<source>:1:12: expected identifier, got number 5
-error:<source>:2:18: $F
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 6" --syntax-only
 refuse P9 "a refused member keeps its position: B == 2 holds after the release" 'enum E { A, 5, B }
 #assert B == 2, "B keeps its position"
 struct Q { a: Foo; }
 syscall(60, B);
 ' "error:<source>:1:13: expected identifier, got number 5
-error:<source>:3:18: $F"
+error:<source>:3:15: $F"
 
 # PS — a struct's or a union's refusal ends at its own `}` too.
 refuse PS1 "a field that is not a name: struct P { 5; }, then a struct and an enum" 'struct P { 5; }
@@ -244,7 +244,7 @@ struct Q { a: Foo; }
 enum E { A 5 }
 syscall(60, 0);
 ' "error:<source>:1:12: expected identifier, got number 5
-error:<source>:2:18: $F
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 5"
 refuse PS2 "a field's type: a: 5, a: *5, a: Vec<5>" 'struct P { a: 5; }
 struct R { a: *5; }
@@ -254,17 +254,17 @@ syscall(60, 0);
 ' "error:<source>:1:15: expected identifier, got number 5
 error:<source>:2:16: expected identifier, got number 5
 error:<source>:3:19: expected identifier, got number 5
-error:<source>:4:18: $F"
+error:<source>:4:15: $F"
 refuse PS3 "the struct's name: struct 5 { a; }" 'struct 5 { a; }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:8: expected identifier, got number 5
-error:<source>:2:18: $F"
+error:<source>:2:15: $F"
 refuse PS4 "a union's field: union U { 5; }" 'union U { 5; }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:11: expected identifier, got number 5
-error:<source>:2:18: $F"
+error:<source>:2:15: $F"
 refuse PS5 "a union's name and a union field's type, then an enum" 'union 5 { a; }
 union U { a: 5; }
 enum E { A 5 }
@@ -277,7 +277,7 @@ struct Q { a: Foo; }
 enum E { A 5 }
 syscall(60, 0);
 ' "error:<source>:1:12: expected identifier, got number 5
-error:<source>:2:18: $F
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 5" --syntax-only
 refuse PSC1 "control: an unclosed struct run over two structs keeps the latch" 'struct P { a; 5
 struct Q { a: Foo; }
@@ -315,13 +315,13 @@ refuse Q5b "an unclosed generic header at the end of file" 'struct P<T
 refuse Q5c "an unclosed union at the end of file" 'union U {
 ' "error:<source>:1:10: expected '}', got end of file"
 refuse Q5d "an unclosed generic struct, a field's unknown type" 'struct P<T> { a; b: Foo
-' "error:<source>:1:24: unknown type 'Foo' for struct field 'b'
+' "error:<source>:1:21: unknown type 'Foo' for struct field 'b'
 error:<source>:1:24: expected '}', got end of file"
 refuse Q6 "a union with no {: one error, then a struct's" 'union U a; }
 struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:9: expected '{', got identifier 'a'
-error:<source>:2:18: $F"
+error:<source>:2:15: $F"
 refuse Q7 "a generic union (its refusal, pass 2's), then the program's first statement" 'union U<T> { a; }
 syscall(60, 1 2);
 ' "error:<source>:1:8: expected '{', got '<'

@@ -5054,6 +5054,37 @@ fn _dlx_from(g): i64 {
 # (not only the first of the file). An error that already held the latch is left alone.
 fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
     if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, _fty_at(S, tnoff));   # 6.7.16: at the type's name
+    _refuse_fty_say(S, tnoff, fnoff, snoff);
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# 6.7.16 — the token of field type `tnoff` at or before the cursor (a refusal reports at it: the cursor is past the
+# name, or past its `Vec<..>` / `<..>`, and the caret stood one token past the type it names — `a: Zt;` at the `;`);
+# the cursor when no such name is within reach. CHANGELOG [6.7.16]
+fn _fty_at(S, tnoff): i64 {
+    var k = GTI(S);
+    var lo = k - 16;
+    if (lo < 0) { lo = 0; }
+    while (k >= lo) {
+        if (TOKTYP(S, k) == 2) { if (STREQ(S, TOKVAL(S, k), tnoff) == 1) { return k; } }
+        k = k - 1;
+    }
+    return GTI(S);
+}
+# "field 'a' makes a struct contain itself: 'own'", at field type `tnoff`'s name; the latch put back.
+fn _fty_self(S, fnoff, tnoff, own): i64 {
+    var sv = GTI(S);
+    STI(S, _fty_at(S, tnoff));
+    ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", own);
+    PRSTR("  note: a link to another one is an i64 (pointer) field\n");
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+fn _refuse_fty_say(S, tnoff, fnoff, snoff): i64 {
     if (_classify_return_type(S, tnoff) <= 0 - 2048) {
         ERR_IDENT(S, "vector type ", tnoff, " cannot be a struct field type; field ", fnoff);
     } elif (_declared_later(S, tnoff, 40, 101) == 1) {
@@ -5067,7 +5098,6 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
             PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
         }
     }
-    _panic = 0;
     return 0;
 }
 
@@ -5079,11 +5109,7 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
 fn _add_named_field(S, si, fnoff, tnoff): i64 {
     var fsid = FINDSTRUCT(S, tnoff);
     if (fsid == si + 1) {
-        if (_panic == 0) {
-            ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", tnoff);
-            PRSTR("  note: a link to another one is an i64 (pointer) field\n");
-            _panic = 0;
-        }
+        if (_panic == 0) { _fty_self(S, fnoff, tnoff, tnoff); }
         ADDFIELD(S, si, fnoff);
         return 0;
     }
@@ -5113,7 +5139,10 @@ fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
     if (bsid == si + 1) { return _add_named_field(S, si, fnoff, tnoff); }   # `struct Vec { v: Vec; }`: refused, not a SIGSEGV
     if (bsid == 0) {
         if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
+                var sv = GTI(S);
+                STI(S, _fty_at(S, tnoff));   # 6.7.16: at `Vec`
                 ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));
+                STI(S, sv);
                 _panic = 0;
             } }
     }
@@ -5468,11 +5497,7 @@ fn _sfield_named(S, si, fnoff, tnoff, stp, own): i64 {
             if (fs > 0) { if (GSTP(S, fs - 1) != 0) {
                     if (STREQ(S, tnoff, own) == 1 || _targs_name(S, GTI(S) + 1, own) == 1) {
                         # Reported at the definition; an instance re-parse (`W$i32`) stays quiet.
-                        if (_panic == 0 && _sname_minted(S, si) == 0) {
-                            ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", own);
-                            PRSTR("  note: a link to another one is an i64 (pointer) field\n");
-                            _panic = 0;
-                        }
+                        if (_panic == 0 && _sname_minted(S, si) == 0) { _fty_self(S, fnoff, tnoff, own); }
                         _ta_pending_gt = 0;
                         _skip_targ_list(S);
                         ADDFIELD(S, si, fnoff);
