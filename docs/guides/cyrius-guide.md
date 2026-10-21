@@ -7590,7 +7590,10 @@ naming `outer` (6.7.15; through 6.7.14 the definition was refused naming `gx`).
 Two more lines need `T` to be a struct (6.7.16, the user's D1 of 2026-10-19): `return &n;` with `n` typed by `T` in a fn
 returning a struct (`&n` is that struct only when `T` is it), and a struct result over 8 bytes stored in a name typed
 by `T` (`var y: T = mk();`, `y = mk();`, `p = mk();` into a `*T`) — at `T = i64` they returned a dead slot's address and
-kept the struct's first word. The refusal's note names the line that needs a struct (for a forwarder, the forward and
+kept the struct's first word. A generic callee's result is the one its call makes at its binding (6.7.16): `var y: T =
+mkg1(q);` with `q` a 16-byte `Q` stores a `G1<Q>`, as do `b.mkg(q)` and `b + q` (a generic operator fn binds as its
+call does, D85 (a)), and a `: U` method or operator fn returning `q` stores the `Q` — each needs a struct, where they
+were read as the base's `G1` (8 bytes) or as no struct. The refusal's note names the line that needs a struct (for a forwarder, the forward and
 then that line): *note: <source>:4:42: 'h' returns \`&n\` as a struct, and n is typed by its type parameter*.
 
 ```

@@ -105,6 +105,16 @@
 #   MTG5 no rescan at pass 1's end                      -> RED 1: TG10 (mkl declared below gl: pass 1 knew no return)
 #   MTG6 `_gs_sres_big` without the size test (`_rcv_big` -> sid > 0) -> RED 2: TA2 TA3 (an 8-byte struct, a `Str`: refused as stubs)
 #   MTG7 `_gs_asg_sres` without its `*` test (the review fix) -> RED 3: TA6 TA6b TA6c (`*p = mkp();` made the generic a stub)
+# 6.7.16 — D1 AT A GENERIC CALLEE (TG13-TG22, TA7-TA10, TGX TG13 / TG17 on aarch64 / cx / PE): its result is read at the
+# binding its call, method or operator makes (`_gs_gcall`, `_gs_mret`, `_gs_opg` — the operator's since D85 (a) calls
+# that instance). (Each mutant: a scratch copy of the tree with the one change, its cycc built from it, this gate run
+# from the copy; 2026-10-21.)
+#   MTG8 the tree before (6bc8e2206)                    -> RED 16: TG13-TG22 (compiled, no diagnostic), TGX TG13 / TG17
+#                                                         on aarch64 / cx / PE
+#   MTG9 `_gs_gcall` answering `_tok_init_sid`'s        -> RED 8: TG13 TG14 TG19 TG20 TG22, TGX TG13 x3
+#   MTG10 `_gs_mret` answering `_gs_ret_sid`'s          -> RED 2: TG15 TG16
+#   MTG11 `_gs_opg` answering the base's GFRS           -> RED 6: TG17 TG18 TG21, TGX TG17 x3
+#   MTG12 `_gs_mtp` without `_cam_open` (parameter k read at position k) -> RED 2: TG15 TG16
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1198,6 +1208,33 @@ fn gd<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return 9; }
 fn gdd<T>(x: T): i64 { var p: *T = &x; var pp: **T = &p; **pp = mkp(); return 9; }
 fn gdq<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return x.b - 400; }
 fn mkl(): Q { var q: Q; q.a = 1; q.b = 2; return q; }
+struct G1<U> { v: U; }
+struct B1 { a; }
+struct E1 { a; }
+fn mkg1<U>(v: U): G1<U> { var g: G1<U>; g.v = v; return g; }
+fn B1_add<U>(l: B1, r: U): G1<U> { var g: G1<U>; g.v = r; return g; }
+fn E1_add<U>(l: E1, r: U): U { return r; }
+impl B1 {
+    fn mkg<U>(self, v: U): G1<U> { var g: G1<U>; g.v = v; return g; }
+    fn idm<U>(self, v: U): U { return v; }
+}
+fn pk2<A, C>(a: A, c: C): G1<A> { var g: G1<A>; g.v = a; return g; }
+struct G2<A, C> { a: A; }
+fn pk3<A, C>(a: A, c: C): G2<A, C> { var g: G2<A, C>; g.a = a; return g; }
+fn gc3<T>(x: T): i64 { var q: Q; var y: T = pk3(q, 5); return 9; }
+fn gc<T>(x: T): i64 { var q: Q; q.a = 1; var y: T = mkg1(q); return 9; }
+fn gcx<T>(x: T): i64 { var q: Q; var y: T = mkg1<Q>(q); return 9; }
+fn gcm<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b.mkg(q); return 9; }
+fn gct<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b.idm(q); return 9; }
+fn gco<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b + q; return 9; }
+fn gce<T>(x: T): i64 { var e: E1; var q: Q; var y: T = e + q; return 9; }
+fn gca<T>(x: T): i64 { var q: Q; var y: T = x; y = mkg1(q); return 9; }
+fn gc2<T>(x: T): i64 { var q: Q; var y: T = pk2(q, 5); return 9; }
+fn gck<T>(x: T): i64 { return gco(x); }
+fn gk1<T>(x: T): i64 { var y: T = mkg1(x); return 9; }
+fn gk2<T>(x: T): i64 { var b: B1; var y: T = b + x; return 9; }
+fn gk3<T>(x: T): i64 { var q: Q8; q.a = 21; var y: T = mkg1(q); return y; }
+fn gk4<T>(x: T): i64 { var q: Q; q.a = 3; q.b = 44; var y: T = mkg1(q); return y.v.b; }
 '
 TE='
 syscall(60, main());
@@ -1227,6 +1264,22 @@ accept "TA6 *p = mkp(); (p: *T) at i64: not a stub" "$TH"'fn main(): i64 { retur
 accept "TA6b *p = mkp(); at gd<i32>(5)" "$TH"'fn main(): i64 { return gd<i32>(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA6c **pp = mkp(); (pp: **T) at i64" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gdq(q); }'"$TE" 44 'syscall(60, 44);'
+# 6.7.16 — D1 AT A GENERIC CALLEE: its result is read at the binding its call makes (`_gs_gcall`, `_gs_mret`, `_gs_opg`),
+# a generic operator fn's at its dispatch's (D85 (a)). Each compiled and kept the 16 B `G1<Q>`'s (or Q's) first word.
+refuse "TG13 var y: T = mkg1(q); (G1<Q>)" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
+refuse "TG14 var y: T = mkg1<Q>(q);" "generic 'gcx' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gcx(5); }'"$TE" one
+refuse "TG15 var y: T = b.mkg(q); (a method)" "generic 'gcm' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gcm(5); }'"$TE" one
+refuse "TG16 var y: T = b.idm(q); (a : U method)" "generic 'gct' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gct(5); }'"$TE" one
+refuse "TG17 var y: T = b + q; (B1_add<Q>)" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
+refuse "TG18 var y: T = e + q; (a : U operator)" "generic 'gce' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gce(5); }'"$TE" one
+refuse "TG19 y = mkg1(q); (y: T)" "generic 'gca' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gca(5); }'"$TE" one
+refuse "TG20 var y: T = pk2(q, 5); (one name of two)" "generic 'gc2' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc2(5); }'"$TE" one
+refuse "TG21 gck(5): a generic forwarding its T to gco" "generic 'gck' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gck(5); }'"$TE" one
+refuse "TG22 var y: T = pk3(q, 5); (G2<Q, i64>)" "generic 'gc3' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc3(5); }'"$TE" one
+accept "TA7 var y: T = mkg1(x); (x: T) at i64: not a stub" "$TH"'fn main(): i64 { return gk1(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA8 var y: T = b + x; (x: T) at i64: not a stub" "$TH"'fn main(): i64 { return gk2(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA9 an 8 B G1<Q8> into y: T at i64 keeps its word" "$TH"'fn main(): i64 { return gk3(5); }'"$TE" 21 'syscall(60, 21);'
+accept "TA10 var y: T = mkg1(q); at T = G1<Q> copies" "$TH"'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return gk4(mkg1(q)); }'"$TE" 44 'syscall(60, 44);'
 
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
@@ -1236,6 +1289,8 @@ cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] UC2" "3:25: unknown type 'Foo' for variable 'x'" "$UCC"
     uc_rows "CPX [$1] "
     refuse "TGX [$1] TG0" "$TGM" "$TG0" one
+    refuse "TGX [$1] TG13" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
+    refuse "TGX [$1] TG17" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1249,10 +1304,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (the genbind review, 2026-10-20: 263 refusals + 37 acceptances with CPX's UC rows on three legs): a lost row
-# block — a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 300 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 300"; exit 1
+# FLOOR (the genbind review, 2026-10-20: 263 refusals + 37 acceptances with CPX's UC rows on three legs; 6.7.16's
+# generic-callee rows, 2026-10-21: 279 + 41): a lost row block — a source variable emptied, a leg's loop dropped — is
+# RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 320 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 320"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

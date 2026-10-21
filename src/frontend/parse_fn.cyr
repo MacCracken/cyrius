@@ -5931,8 +5931,13 @@ fn _pd_c14_note(S): i64 {
 # (`_call_arg_start`); with one, a positional before the first label, else the value after the
 # label naming parameter k, else -1. So `g(n: 2, x: p)` instantiates `g$Pt` as `g(p, 2)` does.
 fn _call_arg_for(S, fi, open, k): i64 {
+    if (open == _cam_open) {   # 6.7.16: a method call the stub scan reads (`_gs_mtp`): parameter k at position k - 1
+        if (k < 1) { return 0 - 1; }
+        return _call_arg_pk(S, fi, open, k, k - 1);
+    }
     return _call_arg_pk(S, fi, open, k, k);
 }
+var _cam_open = 0 - 1;   # the `(` of the method call `_gs_mtp` reads, else -1
 # ... where `pk` is the POSITION that passes parameter k: k on a free call, k - 1 on a method call,
 # whose `self` (parameter 0) is the receiver and not in the list (`_mcall_infer`, 6.7.9).
 fn _call_arg_pk(S, fi, open, k, pk): i64 {
@@ -15626,7 +15631,7 @@ fn _gs_sres(S, fi, a, lo, hi): i64 {
     }
     if (hi <= lo) { return 0; }
     var op = _gs_top_op(S, lo, hi);
-    if (op > 0) { return _gs_op_sid(S, fi, a, lo, op); }
+    if (op > 0) { return _gs_op_sid(S, fi, a, lo, op, hi); }
     if (op < 0) { return 0; }
     if (TOKTYP(S, hi - 1) != 11) { return 0; }
     var ic = _icall_sid_at(S, lo);
@@ -15636,7 +15641,7 @@ fn _gs_sres(S, fi, a, lo, hi): i64 {
     }
     if (TOKTYP(S, lo) == 2) {
         var o = _gcall_open(S, lo);
-        if (o > lo) { if (_call_close(S, o) == hi - 1) { return _tok_init_sid(S, a, lo, lo); } }
+        if (o > lo) { if (_call_close(S, o) == hi - 1) { return _gs_gcall(S, a, lo); } }
     }
     return _gs_mcall_sid(S, fi, a, hi - 1);
 }
@@ -15651,7 +15656,7 @@ fn _gs_mcall_sid(S, fi, a, r): i64 {
     if (xs <= 0) { return 0; }
     var cfi = _meth_fn_at(S, xs, TOKVAL(S, o - 1), o - 1);
     if (cfi < 0) { return 0; }
-    if (GFTP(S, cfi) != 0) { return _gs_ret_sid(S, cfi); }
+    if (GFTP(S, cfi) != 0) { return _gs_mret(S, a, o, cfi, xs); }
     var rs = GFRS(S, cfi);
     if (rs > 0) { return rs; }
     return 0;
@@ -15689,7 +15694,7 @@ fn _gs_top_op(S, lo, hi): i64 {
     return op;
 }
 # The struct `L op R` results in (op at token `op`): the operator fn of L's struct (`P3_add`) declared to return one.
-fn _gs_op_sid(S, fi, a, lo, op): i64 {
+fn _gs_op_sid(S, fi, a, lo, op, hi): i64 {
     var ls = _gs_recv_sid(S, fi, a, op - 1, 0);
     if (ls <= 0) { return 0; }
     if (_dyn_is(S, ls) == 1) { return 0; }
@@ -15700,7 +15705,100 @@ fn _gs_op_sid(S, fi, a, lo, op): i64 {
     if (t == 8) { ofi = _op_fn_peek(S, ls, "mul", 3); }
     if (t == 9) { ofi = _op_fn_peek(S, ls, "div", 3); }
     if (ofi < 0) { return 0; }
+    if (GFTP(S, ofi) != 0) { return _gs_opg(S, ofi, a, lo, op, hi); }   # 6.7.16 (D85 (a))
     return GFRS(S, ofi);
+}
+# ⛔ 6.7.16 — THE STUB SCAN READS A GENERIC CALLEE'S RESULT AT THE BINDING ITS CALL MAKES (6.7.16's D1 at a generic
+# callee; D85 (a) for an operator, whose dispatch calls that instance since). `var y: T = mkg1(q);` (q a `Q`: the
+# result a `G1<Q>`, 16 B), `var y: T = b.mkg(q);` and `var y: T = b + q;` (`fn B_add<U>(l: B, r: U): G1<U>`) were read
+# as the base `G1` (8 B: no stub), and a generic method's or operator fn's `: T` as no struct, so `g(5)` compiled and
+# kept the result's first word where `var y: T = mkp();` is refused. Each binding is read from the tokens as the pair
+# scans read a call's (`_tok_gen_tp_sid`, names typed back from the expression: an operator's operands as its arguments
+# 0 and 1, `_opp_on`; a method's from position 1, its `self` the receiver, `_gs_mtp`), a `: G<..>` instance minted at
+# pass 1's end (`_gs_p1end`: the scan that met the line runs again there). A binding the tokens do not give (a scalar,
+# a name they cannot type) is read as the base reads it, i64. CHANGELOG [6.7.16]
+fn _gs_gcall(S, a, lo): i64 {
+    var r = _tok_init_sid(S, a, lo, lo);
+    var cfi = FINDFN(S, TOKVAL(S, lo));
+    if (cfi < 0) { return r; }
+    if (_gs_gdep(S, cfi, r) == 0) { return r; }
+    var c0 = _tok_gen_tp_sid(S, a, lo, lo, cfi, 0);
+    var c1 = 0;
+    if (_gs_tp2(S, cfi) == 1) { c1 = _tok_gen_tp_sid(S, a, lo, lo, cfi, 1); }
+    return _gs_ginst(S, cfi, r, c0, c1);
+}
+# The struct generic operator fn `ofi` returns at [lo, op) OP [op + 1, hi), its type parameters bound as its dispatch
+# binds them (`_op_gen_head`): a `: T` the struct T binds, a `: G<..>` the instance (`_gs_ginst`), a fixed return itself.
+fn _gs_opg(S, ofi, a, lo, op, hi): i64 {
+    var r = GFRS(S, ofi);
+    var w = _gen_ret_tp(S, ofi);
+    if (w < 0) { if (_gs_gdep(S, ofi, r) == 0) { return r; } }
+    var k = _opp_park(S);
+    var l = _opi_l;
+    var rr = _opi_r;
+    _opi_l = lo;
+    _opi_r = op + 1;
+    _opp_on(S, op, hi);
+    var c0 = _tok_gen_tp_sid(S, a, lo, _OPI_OPEN - 1, ofi, 0);
+    var c1 = 0;
+    if (_gs_tp2(S, ofi) == 1) { c1 = _tok_gen_tp_sid(S, a, lo, _OPI_OPEN - 1, ofi, 1); }
+    _opp_off(S);
+    _opi_l = l;
+    _opi_r = rr;
+    _opp_unpark(S, k);
+    if (w == 0) { return _gu_okc(c0); }
+    if (w == 1) { return _gu_okc(c1); }
+    return _gs_ginst(S, ofi, r, c0, c1);
+}
+# The struct generic method `cfi` returns at the call whose `(` is token o (receiver struct xs): a plain `: S` (a binding
+# changes nothing, `_gs_ret_sid`), else at the binding the call makes — a `: T` the struct T binds, a `: G<..>` the
+# instance (`_gs_ginst`).
+fn _gs_mret(S, a, o, cfi, xs): i64 {
+    var rs = _gs_ret_sid(S, cfi);
+    if (rs > 0) { return rs; }
+    var w = _gen_ret_tp(S, cfi);
+    var r = GFRS(S, cfi);
+    if (w < 0) { if (_gs_gdep(S, cfi, r) == 0) { return 0; } }
+    var c0 = _gs_mtp(S, a, o, cfi, 0, xs);
+    var c1 = 0;
+    if (_gs_tp2(S, cfi) == 1) { c1 = _gs_mtp(S, a, o, cfi, 1, xs); }
+    if (w == 0) { return _gu_okc(c0); }
+    if (w == 1) { return _gu_okc(c1); }
+    return _gs_ginst(S, cfi, r, c0, c1);
+}
+# Type parameter `w` of generic method `cfi` at the call whose `(` is token o, from the tokens: `self` carrying it binds
+# the receiver's struct xs, any other carrier its argument at its position (parameter k at k - 1, `_cam_open`), read as
+# a free call's (`_tok_gen_tp_sid`); 0 when cfi's carriers are not recorded.
+fn _gs_mtp(S, a, o, cfi, w, xs): i64 {
+    var m = GFGM(S, cfi);
+    if ((m & 4) == 0) { return 0; }
+    if (((m >> (8 + w * 8)) & 255) == 1) { return _gu_okc(xs); }
+    var sv = _cam_open;
+    _cam_open = o;
+    var c = _tok_gen_tp_sid(S, a, o, o - 1, cfi, w);
+    _cam_open = sv;
+    return c;
+}
+# 1 = generic `cfi`'s base result `r` is a generic struct's base (`: G<..>`), read once every struct is registered.
+fn _gs_gdep(S, cfi, r): i64 {
+    if (GFTP(S, cfi) == 0) { return 0; }
+    if (_gs_p1end == 0) { return 0; }
+    return _gz_gbase(S, r);
+}
+fn _gs_tp2(S, fi): i64 {
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { return 1; }
+    return 0;
+}
+# The instance generic `cfi`'s `: G<..>` return (G = g) names under the struct bindings (c0, c1) the tokens gave, a
+# scalar or no binding read as the base's i64 (the base's reading); G when neither is a struct.
+fn _gs_ginst(S, cfi, g, c0, c1): i64 {
+    if (c0 <= 0) { if (c1 <= 0) { return g; } }
+    if (c0 <= 0) { c0 = 0 - 8; }
+    if (_gs_tp2(S, cfi) == 0) { c1 = 0; }
+    elif (c1 <= 0) { c1 = 0 - 8; }
+    var s = _gu_inst_g(S, cfi, g, c0, c1);
+    if (s <= 0) { return g; }
+    return s;
 }
 # The `)` / `]` closing the group opened at token j (parentheses and brackets nest together).
 fn _gs_grp_close(S, j): i64 {

@@ -398,7 +398,7 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
 # binds it (`_gen_arg_whole`).
 fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var r = 0;
-    if (TOKTYP(S, j + 1) == 19) {
+    if (_tok_gen_xl(S, j) == 1) {
         var k = j + 2;
         if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
         if (TOKTYP(S, k) != 2) { return 0; }
@@ -419,6 +419,13 @@ fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     return _tok_ta_arg(S, a, i, at, _ic_ptr_param(S, fi, pk - 1));
+}
+# 1 = the call at token j names an explicit type-argument list (`g<..>(`); an operator's binding (`_gs_opg`: j + 1 the
+# `_OPI_OPEN` mark, no token) has none. CHANGELOG [6.7.16]
+fn _tok_gen_xl(S, j): i64 {
+    if (j + 1 == _OPI_OPEN) { return 0; }
+    if (TOKTYP(S, j + 1) == 19) { return 1; }
+    return 0;
 }
 # ⛔ 6.7.16 — THE SCAN READS A `pp: **T` BINDING AS THE PARSER MAKES IT (6.7.14's D40 A, `_gen_infer_ind`): T that no
 # `x: T` / `p: *T` parameter and no struct carrier carries rides the first parameter declared `*..*T` (`_pp_tparam`,
