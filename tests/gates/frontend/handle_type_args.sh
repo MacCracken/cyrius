@@ -36,6 +36,13 @@
 #   H13 a trait member's walk goes on past a clean `Result<i64, Pt>` / `Gen<i64>` list (a refusal ends it, as D7's):
 #       the next parameter's own "unknown type" line
 #   HX  --syntax-only: H1-H4 and H6-H9 silent, rc 0
+#   M0b CYRIUS_MONOMORPH=0 is read before pass 1 by every driver (a find repaired in passing): main_cx.cyr,
+#       main_aarch64_native.cyr and main_aarch64_macho.cyr read it after, so pass 1 ran with the default flag and a
+#       pointer field's `*Color<i64>` / `*Pt<i64>` was refused under the flag on cx and the native aarch64 compiler
+#       (stepped on x86_64, PE, Mach-O x86 and the aarch64 cross compiler); run on the five legs and the native aarch64
+#       compiler under qemu. Mutant: the drivers before (src/main_cx.cyr, src/main_aarch64_native.cyr at 636939df9) ->
+#       RED M0b [cx] M0b [native]. The aarch64 Mach-O driver runs on macOS only: verified on ecb (the old driver refused
+#       both fields under the flag, the new one compiles the program and it exits 4).
 #   K1-K4 acceptance, run on x86_64, aarch64 (qemu-aarch64), cx (the tree's cxvm) and PE (wine, a private prefix): a
 #       `: Result<i64, Pt>` return (exit 7); with lib/result.cyr, called above and below its definition (11); every read
 #       position with a struct declared further down named in the list (3); an enum's own `Gen<i64>` (5)
@@ -103,15 +110,17 @@ else echo "  SKIP: the aarch64 run leg (qemu-aarch64 not installed; its refusal 
 if command -v wine > /dev/null 2>&1; then WINE=1
 else echo "  SKIP: the PE run leg (wine not installed; its refusal rows still run)"; skips=$((skips + 1)); fi
 
-# comp <leg> <src> <out> [cc-arg]: the rc in CRC
+# comp <leg> <src> <out> [cc-arg]: the rc in CRC; `CENV` (an assignment, default a no-op) is set for the compile
+CENV=CYRIUS_GATE_NOOP=1
 comp() {
     CRC=0
     case "$1" in
-        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
-        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
-        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
-        a64)   timeout 60 "$D/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
-        cx)    timeout 60 "$D/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        x86)   env "$CENV" timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        pe)    env "$CENV" CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        macho) env "$CENV" CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        a64)   env "$CENV" timeout 60 "$D/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        cx)    env "$CENV" timeout 60 "$D/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
+        native) env "$CENV" timeout 300 qemu-aarch64 "$D/cc_native" ${4:-} < "$2" > "$3" 2> "$3.err" || CRC=$? ;;
     esac
 }
 # execute <leg> <binary>: the exit in XRC, -1 = not run (NOTE says why)
@@ -119,7 +128,7 @@ execute() {
     XRC=-1; NOTE=""
     case "$1" in
         x86)   chmod +x "$2"; XRC=0; timeout 60 "$2" > /dev/null 2>&1 || XRC=$? ;;
-        a64)   if [ "$QEMU" = 1 ]; then chmod +x "$2"; XRC=0; timeout 120 qemu-aarch64 "$2" > /dev/null 2>&1 || XRC=$?
+        a64|native) if [ "$QEMU" = 1 ]; then chmod +x "$2"; XRC=0; timeout 120 qemu-aarch64 "$2" > /dev/null 2>&1 || XRC=$?
                else NOTE="qemu-aarch64 not installed"; fi ;;
         cx)    XRC=0; timeout 120 "$D/cxvm" < "$2" > /dev/null 2>&1 || XRC=$? ;;
         pe)    if [ "$WINE" = 1 ]; then
@@ -338,6 +347,35 @@ fn f(a: Gen<i64>): i64 { var l: Gen<i8> = GB; return a + l; }
 fn main(): i64 { var h: H; h.g = GB; h.k = 3; return f(h.g) + h.k; }
 syscall(60, main());
 ' 5
+
+echo "M0b — every driver reads CYRIUS_MONOMORPH before pass 1 ($LEGS, and the native aarch64 compiler under qemu):"
+# main_cx.cyr, main_aarch64_native.cyr and main_aarch64_macho.cyr read it AFTER pass 1, so pass 1 ran with the default
+# flag under CYRIUS_MONOMORPH=0: a pointer field's `*Color<i64>` / `*Pt<i64>` was refused there, stepped on every
+# other driver (a find repaired in passing; the Mach-O driver runs only on macOS — verified on ecb, not here).
+M0L="$LEGS"
+if [ "$QEMU" = 1 ] && [ -x "$D/cc_a64" ]; then
+    if "$D/cc_a64" < src/main_aarch64_native.cyr > "$D/cc_native" 2> /dev/null && [ -s "$D/cc_native" ]; then chmod +x "$D/cc_native"; M0L="$M0L native"
+    else bad "native: src/main_aarch64_native.cyr did not build"; fi
+else echo "  SKIP: the native aarch64 compiler leg (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
+CENV=CYRIUS_MONOMORPH=0
+printf '%s' 'include "lib/syscalls.cyr"
+enum Color { Red, Green }
+struct Pt { x; y; }
+struct H { p: *Color<i64>; q: *Pt<i64>; k; }
+fn main(): i64 { var h: H; h.k = 4; return h.k; }
+syscall(60, main());
+' > "$D/M0b.cyr"
+for leg in $M0L; do
+    o="$D/M0b_$leg"; comp "$leg" "$D/M0b.cyr" "$o"; N=$((N + 1))
+    if [ "$CRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
+        bad "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64>: rc $CRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; continue
+    fi
+    execute "$leg" "$o"
+    if [ "$XRC" = -1 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64> (compiled; not run: $NOTE)"
+    elif [ "$XRC" = 4 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64> (exit 4)"
+    else bad "M0b [$leg]: exit $XRC, want 4"; fi
+done
+CENV=CYRIUS_GATE_NOOP=1
 
 if [ "$N" -lt 125 ]; then bad "corpus floor: $N row-legs (want >= 125)"; fi
 echo "$G: $pass ok, $fail FAIL, $skips SKIP ($N row-legs)"
