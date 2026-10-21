@@ -2213,6 +2213,22 @@ over one word — x86_64 / aarch64 rax's leftover (0), cx / Windows lane 0 (41),
 and `return mkv(41, 7);` faulted on Windows (exit 5: the tail call passed `mkv` no hidden result pointer); 6.7.12
 listed the untyped argument among the discarded results.
 
+**A vector call is no operand anywhere, and no word slot's whole value** (6.7.16, the user's decision D100, 2026-10-20:
+A) — wherever it sits, not only where it IS or STARTS an integer declaration's or assignment's source (6.7.11, D24-D26
+above): a later operand (`var x: i64 = 1 + mkv(41, 7);`, `x = 1 + mkv(..)`, an untyped `var w = 1 + mkv(..)`, a
+top-level `var X = 1 + mkv(..)`, `return 1 + mkv(..)`), the right side of a compound assignment (`x += mkv(..)`, `s.a +=
+..`, `*p += ..`), a unary operator's operand (`-mkv(..)`, `!`, `~`, `*`), an operand inside an argument or a condition
+(`take(mkv(41, 7) + 1)`, `if (mkv(..) == 1)`, `1 && mkv(..)`), a closure's (`|k| k + mkv(k, 7)`), and a whole call stored
+into a field, an element or through a pointer to no vector (`s.a = mkv(..)`, `a[0] = ..`, `*p = ..` with `p: *i64` or
+an untyped `p`, `*(&x) = ..`), used as a condition (`if`, `elif`, `while`, `switch`, a `for` condition, `match`), an
+index (`a[mkv(..)]`), a range bound (`0..mkv(..)`) or a struct literal's field (`Pt { mkv(..), 1 }`) is refused at the
+call, once, in the words of what receives it: *vector return type does not match the declared type* (a declaration, an
+argument, a condition, an index, a bound, a field of a literal), *… the assigned variable* (an assignment or a store),
+and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
+6.7.15 each compiled and used one word — x86_64 / aarch64 rax's leftover (`1 + mkv(41, 7)` gave 1, `x += mkv(..)` 0),
+cx / Windows lane 0 (42, 41) — and `rd(mkv(41, 7) + 1)` into a `*f64v2` and `*mkv(41, 7)` crashed (139; cx a wrong
+word; Windows exit 5).
+
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a

@@ -1909,7 +1909,7 @@ fn PARSE_FACTOR(S): i64 {
     if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
-    _vop_rchk(S, _ti0);         # 6.7.16 (D101): a whole vector call is no word argument, no closure's value
+    _vop_rchk(S, _ti0);         # 6.7.16 (D100 / D101): a vector call is no operand, no word argument or slot
     _pk_post(S, _ti0);          # 6.7.8 (C2-5): a name's, a `*T` field's, a call's kind is its own
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its

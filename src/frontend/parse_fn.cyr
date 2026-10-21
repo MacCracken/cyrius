@@ -2768,6 +2768,7 @@ fn _svc_toplevel_at(S, ti, nt): i64 {
     var sv = GTI(S);
     STI(S, ti);
     _svc_nm = TOKVAL(S, nt);
+    _vop_done = ti;   # 6.7.16 (D100): the call's one refusal
     _svc_toplevel_err(S);
     STI(S, sv);
     return 1;
@@ -7298,6 +7299,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _had_error);
     vec_push(_scv_vec, _scv_un);
     vec_push(_scv_vec, _dvi_want);   # 6.7.14 (D36)
+    vec_push(_scv_vec, _vop_vd);     # 6.7.16 (D100)
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -7307,6 +7309,7 @@ fn _scv_restore(d): i64 {
     _fla_want = vec_get(_scv_vec, d + 3);
     _scv_un = vec_get(_scv_vec, d + 5);
     _dvi_want = vec_get(_scv_vec, d + 6);
+    _vop_vd = vec_get(_scv_vec, d + 7);
     vec_truncate(_scv_vec, d);
     return 0;
 }
@@ -7319,6 +7322,7 @@ fn _scv_restore(d): i64 {
 fn _scv_arm(S, pscale, ext): i64 {
     var d = _scv_save();
     _scv_top_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`; 6.7.13: + top level
+    _vop_vd = _vrcv_vec(S, pscale);   # 6.7.16 (D100): a vector declaration's source is its own refusal's
     _scv_pk = 0;
     _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {
