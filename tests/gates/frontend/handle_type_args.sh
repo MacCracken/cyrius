@@ -36,6 +36,10 @@
 #   H13 a trait member's walk goes on past a clean `Result<i64, Pt>` / `Gen<i64>` list (a refusal ends it, as D7's):
 #       the next parameter's own "unknown type" line
 #   HX  --syntax-only: H1-H4 and H6-H9 silent, rc 0
+#   M0  CYRIUS_MONOMORPH=0 (no list read or refused, a generic struct its base): a return, a by-value / union field and
+#       a slice element step the list as an annotation does — `fn g(): Result<i64, Pt>`, `f: Box<i64>`, `[Result<i64,
+#       Pt>]` were "expected '{', got '<'", "expected identifier, got '<'", "expected ']', got '<'" (a find repaired in
+#       passing: `_ngt_hread` answers 2 there). Mutant: the commit before (f18d5d0ae) -> RED M0 on every leg
 #   M0b CYRIUS_MONOMORPH=0 is read before pass 1 by every driver (a find repaired in passing): main_cx.cyr,
 #       main_aarch64_native.cyr and main_aarch64_macho.cyr read it after, so pass 1 ran with the default flag and a
 #       pointer field's `*Color<i64>` / `*Pt<i64>` was refused under the flag on cx and the native aarch64 compiler
@@ -348,6 +352,23 @@ fn main(): i64 { var h: H; h.g = GB; h.k = 3; return f(h.g) + h.k; }
 syscall(60, main());
 ' 5
 
+echo "M0 — CYRIUS_MONOMORPH=0 reads no list and refuses none: each position steps it ($LEGS):"
+CENV=CYRIUS_MONOMORPH=0
+runs M0 "a by-value field Box<i64> / Result<i64, Pt> / Color<i64>, a union field, a Result<i64, Pt> and an i64<u8> return, [Result<i64, Pt>], [*Gen<i64>], slice<Color<i64>> (3 + 1 + 2)" 'include "lib/syscalls.cyr"
+include "lib/slice.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+enum Color { Red, Green }
+enum Gen<T> { GA, GB }
+struct H { f: Box<i64>; r: Result<i64, Pt>; c: Color<i64>; k; }
+union U { r: Result<i64, Pt>; b: i64<u8>; }
+fn g(): Result<i64, Pt> { return 3; }
+fn h(): i64<u8> { return 1; }
+fn main(): i64 { var hh: H; hh.k = 2; var s: [Result<i64, Pt>] = 0; var t: [*Gen<i64>] = 0; var w: slice<Color<i64>> = 0; return g() + h() + hh.k + slice_len(&s) + slice_len(&t) + slice_len(&w); }
+syscall(60, main());
+' 6
+CENV=CYRIUS_GATE_NOOP=1
+
 echo "M0b — every driver reads CYRIUS_MONOMORPH before pass 1 ($LEGS, and the native aarch64 compiler under qemu):"
 # main_cx.cyr, main_aarch64_native.cyr and main_aarch64_macho.cyr read it AFTER pass 1, so pass 1 ran with the default
 # flag under CYRIUS_MONOMORPH=0: a pointer field's `*Color<i64>` / `*Pt<i64>` was refused there, stepped on every
@@ -377,7 +398,7 @@ for leg in $M0L; do
 done
 CENV=CYRIUS_GATE_NOOP=1
 
-if [ "$N" -lt 125 ]; then bad "corpus floor: $N row-legs (want >= 125)"; fi
+if [ "$N" -lt 130 ]; then bad "corpus floor: $N row-legs (want >= 130)"; fi
 echo "$G: $pass ok, $fail FAIL, $skips SKIP ($N row-legs)"
 if [ "$fail" -ne 0 ]; then echo "FAIL: $G — $fail row(s) red"; exit 1; fi
 echo "PASS: $G — a type-argument list after an enum, Option, Tagged or cstring is refused once at the name; after Result or an enum declaring its own <..> it is read (an unknown name, D7's shape and D5's extra argument refused, a struct declared below a name), silent under --syntax-only; Result<i64, Pt> compiles and runs in every position"

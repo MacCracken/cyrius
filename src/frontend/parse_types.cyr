@@ -413,10 +413,15 @@ fn _enum_decl_lt(S, noff): i64 {
 # declared count refused once (D5's words, `_ta_extra`) — the cursor, the owed closers, the read's flags and a latch
 # it set put back. Not under --syntax-only (silent, as D6 / D7: no name is resolved there). 2 = the shape (the caller
 # steps the list), 3 = the shape with an argument refused in it, 0 = not the shape.
+# ⛔ 6.7.16 — under CYRIUS_MONOMORPH=0 (no list is read or refused, a generic struct is its base) every `Name<..>`
+# answers 2, so the positions that step a list only when told (`_ngt_skip`: a return, a by-value field, `[*X<..>]`;
+# `_tn_slice_ngt`: `[X<..>]`, `slice<X<..>>`) step it as an annotation does there: `fn g(): Result<i64, Pt>`,
+# `f: Box<i64>` and `[Result<i64, Pt>]` were "expected '{', got '<'", "expected identifier, got '<'" and "expected
+# ']', got '<'". CHANGELOG [6.7.16]
 fn _ngt_hread(S, nti): i64 {
-    if (_MONOMORPH_OK != 1) { return 0; }
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
+    if (_MONOMORPH_OK != 1) { return 2; }
     var noff = TOKVAL(S, nti);
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     var np = _ngt_hnp(S, noff);
