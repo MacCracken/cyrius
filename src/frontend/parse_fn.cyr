@@ -17418,7 +17418,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _gen_msp = 0;
     var sv_rd = _rd_inst_enter();     # 6.7.16: the instance's levels count from 0 (`_rd_enter`)
     var sv_opp = _opp_park(S);        # 6.7.16: the body parsed with no operand's end read as `)` (`_op_gen_head`)
+    var sv_pn = _panic;               # 6.7.16: the enclosing statement's panic latch (`_inst_relatch`)
     PARSE_FN_DEF(S);
+    _inst_relatch(sv_pn);
     _opp_unpark(S, sv_opp);
     _rd_inst_exit(sv_rd);
     _gen_msp = sv_msp;
@@ -17446,6 +17448,15 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
 }
 
 # ⛔ 6.6.17 — A PENDING fn ATTRIBUTE BELONGS TO THE DEFINITION IT PRECEDES, NOT TO AN INSTANCE.
+# ⛔ 6.7.16 — AN INSTANCE MINTED INSIDE A STATEMENT ALREADY IN ERROR LEAVES ITS LATCH SET: PARSE_FN_DEF clears the panic
+# latch for the instance's own body (its errors are its own), and the enclosing statement then reported again —
+# `var a, b = q.idv(q.idv(q)).m2();` was "multi-value destructure needs a call on the right-hand side" and then, past
+# the inner call's instance, "cannot take a field of the result of 'P.idv'", where `q.idv(5).m2()` (no instance)
+# reports once. The latch the statement held before the instance is set again after it. CHANGELOG [6.7.16]
+fn _inst_relatch(sv): i64 {
+    if (sv == 1) { _panic = 1; }
+    return 0;
+}
 # The instance above is emitted by PARSE_FN_DEF itself, which consumed whatever `#must_use` /
 # `#deprecated` / `#pure` / ... was armed: an attribute written before a top-level statement that
 # instantiates `g<i32>` marked `g$i32` (deprecated — every call to it warned) and was gone by the
