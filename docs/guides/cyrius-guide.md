@@ -4839,7 +4839,13 @@ vector type (`sizeof(i16v8)` is 16) all size, and a miss names the type —
 `unknown type 'i8zz' in #assert sizeof` — with no second `#assert failed`. An
 `#assert` with no message and no `;` ends at the end of its line —
 before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
-`return 42;` dropped the return). A failing `#assert` no longer stops the
+`return 42;` dropped the return). A refused `#assert` ends there too: the
+statement on the next line is parsed and its own error reported (6.7.16;
+through 6.7.15, with no `;`, that statement was skipped, its error unreported).
+In a block, a `}` on the assert's line closes the block: `{ #assert 1 == 1, "m" }`
+is refused once, *#assert: expected `;` or a line break before `}`* (through
+6.7.15 the assert ate the `}` and the error was an invented *expected '}', got
+end of file*); write `{ #assert 1 == 1, "m"; }`. A failing `#assert` no longer stops the
 compile on the spot: every failing assert and any other error in the file is
 reported, and no binary is written.
 

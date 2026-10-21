@@ -251,6 +251,216 @@ syscall(60, main());
 ' "error:<source>:5:9: a \`: stack\` enum returns two values — bind both: \`var tag, val = f();\`
 error:<source>:6:12: $Z"
 
+# okrow <id> <what> <source> <exit>: compiles on every leg (rc 0, no error / warning line, a binary), runs <exit> on x86
+okrow() {
+    printf '%s' "$3" > "$D/$1.cyr"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp "$leg" "$D/$1.cyr" "$o"
+        if [ "$CRC" -ne 0 ]; then bad "$1 $leg: $2: rc $CRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"
+        elif grep -qE '^(error|warning)' "$o.err"; then bad "$1 $leg: $2: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"
+        elif [ ! -s "$o" ]; then bad "$1 $leg: $2: no binary"
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; XRC=0; timeout 60 "$o" > /dev/null 2>&1 || XRC=$?
+            if [ "$XRC" -eq "$4" ]; then ok "$1 $leg: $2 (exit $4)"; else bad "$1 $leg: $2: exit $XRC, want $4"; fi
+        else ok "$1 $leg: $2"; fi
+    done
+}
+
+# AS — 6.7.16 (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): AN #assert IS
+# LINE-TERMINATED, SO A REFUSED ONE ENDS IN SYNC AT ITS LINE, not only at its `;`. `_assert_end` (src/frontend/
+# parse.cyr) put the caller's latch back only when the tail ended at a `;`: `#assert zz9 == 1` with no `;` kept it,
+# and the statement on the next line was skipped by the resync with its own error (after the first top-level
+# statement and in a fn body; the declaration zone's resync stops at the next declaration keyword). The refused
+# expression is now stepped to its grammar's end (`_ce_extent`, what pass 1 skips) when that is a well-bracketed
+# stretch with no `;`, and the tail ends the directive there. AS1 is the filing's program verbatim. AS12 (control):
+# an unclosed `(` is no such stretch — it resyncs as before, one error, nothing invented.
+# And (met in passing, the brief's same-family item) IN A BLOCK the tail stops at the `}` on its line that closes
+# the block: it ate it, so `{ #assert 1 == 1 }` added "expected '}', got end of file" to its one refusal (AS13), and
+# `{ #assert 1 == 1, "m" }` was that invented error alone — now "#assert: expected `;` or a line break before `}`"
+# (AS14), in a fn's block, a top-level block (AS16), an impl body (AS17, AS18) and a switch arm (AS19). At module
+# scope a `}` on the line closes nothing and the tail takes it as before.
+# MUTATION LEDGER (2026-10-20, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy with CYCC= it, so every leg's compiler carries the mutant):
+#   `_asrt_synced` back to the `;`-only rule (6.7.15's)  -> RED AS1 AS2 AS4 AS6 AS7 AS8 AS9 AS11 on every leg, 40 (the
+#                                                           next statement's error missing); AS3 and the rest green
+#   `_asrt_ext` not stepping to the extent               -> RED AS7 AS8, 10 (the wrapped expression's next line parsed
+#                                                           as a statement, or the next statement swallowed)
+#   `_asrt_in_blk` returning 0 (the tail eats the `}`)   -> RED AS13-AS20, 40 (the invented "expected '}'", or it alone)
+A9="unknown name 'zz9' in a const context"
+ZZ="undefined variable 'zz' (missing include or enum?)"
+AB="#assert: expected \`;\` or a line break before \`}\`"
+row AS1 "the filing's program verbatim: a refused #assert, no ';', then a statement" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:15: $ZZ"
+
+row AS2 "in a fn body" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS3 "with its ';' (unchanged)" 'var a = 1;
+a = 2;
+#assert zz9 == 1;
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:15: $ZZ"
+
+row AS4 "two refused #asserts on consecutive lines, then a statement" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+#assert zz8 == 1
+syscall(60, zz);
+' "error:<source>:3:9: $A9
+error:<source>:4:9: unknown name 'zz8' in a const context
+error:<source>:5:15: $ZZ"
+
+row AS5 "a refused #assert as the last line, after a statement's error" 'var a = 1;
+a = 2;
+syscall(60, zz);
+#assert zz9 == 1
+' "error:<source>:3:15: $ZZ
+error:<source>:4:9: $A9"
+
+row AS6 "junk after the expression, no ';'" 'fn f(): i64 {
+    var y = 0;
+    #assert 1 == 1 junk
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:20: #assert: expected \`,\` or \`;\` after the expression
+error:<source>:4:11: $ZZ"
+
+row AS7 "a wrapped expression refused on its first line" 'fn f(): i64 {
+    var y = 0;
+    #assert (zz9 +
+        1) == 1
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:14: $A9
+error:<source>:5:11: $ZZ"
+
+row AS8 "a wrapped message" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1,
+        "m"
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:5:11: $ZZ"
+
+row AS9 "with a message, no ';'" 'fn f(): i64 {
+    var y = 0;
+    #assert zz9 == 1, "m"
+    y = zz;
+    return y;
+}
+syscall(60, f());
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS10 "the last line alone" 'var a = 1;
+a = 2;
+#assert zz9 == 1
+' "error:<source>:3:9: $A9"
+
+row AS11 "a refused #assert in a generic fn at two instances (once)" 'fn g<T>(x: T): i64 {
+    var y = 0;
+    #assert zz9 == 1
+    y = zz;
+    return y;
+}
+syscall(60, g(1) + g<i32>(2));
+' "error:<source>:3:13: $A9
+error:<source>:4:11: $ZZ"
+
+row AS12 "control: an unclosed ( still resyncs, nothing invented" 'fn f(x): i64 {
+    var y = 0;
+    #assert (zz9 + 1 == 1
+    y = zz;
+    return y;
+}
+syscall(60, f(1));
+' "error:<source>:3:14: $A9"
+
+row AS13 "a block's } on the #assert's line: its refusal alone" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1 } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:45: #assert: expected \`,\` or \`;\` after the expression"
+
+row AS14 "a block's } after the message" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1, "m" } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:50: $AB"
+
+row AS15 "a refused #assert before a block's }" 'fn f(x): i64 { if (x == 1) { #assert zz9 == 1 } return zz; }
+syscall(60, f(1));
+' "error:<source>:1:38: $A9
+error:<source>:1:58: $ZZ"
+
+row AS16 "a top-level block's }" 'var c = 1;
+if (c == 1) { #assert 1 == 1, "m" }
+syscall(60, zz);
+' "error:<source>:2:35: $AB
+error:<source>:3:15: $ZZ"
+
+row AS17 "an impl body's }" 'struct S { a; }
+impl S { #assert 1 == 1 }
+syscall(60, zz);
+' "error:<source>:2:25: #assert: expected \`,\` or \`;\` after the expression
+error:<source>:3:15: $ZZ"
+
+row AS18 "an impl body's } after the message" 'struct S { a; }
+impl S { #assert 1 == 1, "m" }
+syscall(60, zz);
+' "error:<source>:2:30: $AB
+error:<source>:3:15: $ZZ"
+
+row AS19 "a switch arm's }" 'fn f(x): i64 { switch (x) { case 1: #assert 1 == 1, "m" } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:57: $AB"
+
+row AS20 "AS13 under --syntax-only" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1 } return 7; }
+syscall(60, f(1));
+' "error:<source>:1:45: #assert: expected \`,\` or \`;\` after the expression" --syntax-only
+
+okrow ASV1 "control: a block's #assert with its ';', and on its own line" 'fn f(x): i64 { if (x == 1) { #assert 1 == 1; } if (x == 1) { #assert 2 == 2, "m";
+} if (x == 1) { #assert 3 == 3
+} return 7; }
+syscall(60, f(1));
+' 7
+
+okrow ASV2 "control: an impl body's and a top-level block's #assert" 'struct S { a; }
+impl S {
+    #assert 1 == 1
+    fn m(self): i64 { return 5; }
+}
+impl S { #assert 1 == 1, "m"; fn n(self): i64 { return 4; } }
+var c = 1;
+if (c == 1) { #assert 1 == 1; }
+fn main(): i64 { var s = S { 1 }; return s.m() + s.n(); }
+syscall(60, main());
+' 9
+
+okrow ASV3 "control: a message holding braces, and a } at module scope on the line (taken by the tail)" 'fn f(x): i64 {
+    #assert 1 == 1, "a { b }"
+    return 7;
+}
+#assert 1 == 1, "m" }
+syscall(60, f(1));
+' 7
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

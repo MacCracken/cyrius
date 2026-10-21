@@ -14001,7 +14001,7 @@ fn PARSE_IMPL(S): i64 {
 # arm 0 in pass 1 (`_prescan_impl_body`) consumes, and records a `#deprecated` for the method it
 # registers, so a call parsed before the impl warns too.
 fn _impl_attrs(S, arm): i64 {
-    while (_tl_directive(S, arm) == 1) { }
+    while (_impl_dir(S, arm) == 1) { }   # 6.7.16: an #assert's line ends at the body's `}`
     return 0;
 }
 

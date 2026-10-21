@@ -3635,28 +3635,105 @@ var _assert_rep_ti = 0 - 1;
 # (`_assert_end`). Two refused `#assert`s printed only the first — the declaration zone never resyncs, and in a fn
 # the resync skipped the next statement — and one after another declaration's latched error printed "#assert
 # failed" in place of its refusal. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AN #assert IS LINE-TERMINATED, SO ITS REFUSAL ENDS IN SYNC AT ITS LINE TOO, not only at its `;`
+# (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): `#assert zz9 == 1` with no
+# `;` kept the latch, and the statement on the next line was skipped by the resync, its own error unreported. The
+# refused expression is stepped to its grammar's end (`_ce_extent`, what pass 1 skips — the evaluator stops at the
+# refusal, maybe a line short), when that is a well-bracketed stretch with no `;` (`_asrt_span_ok`), then the tail
+# ends the directive. And IN A BLOCK the tail stops at the `}` on its line that closes the block (`_asrt_in_blk`):
+# it ate it, so `{ #assert 1 == 1 }` added "expected '}', got end of file" to its refusal, and `{ #assert 1 == 1,
+# "m" }` was that invented error alone — now "expected `;` or a line break before `}`". At module scope a `}` there
+# closes nothing and the tail still takes it. CHANGELOG [6.7.16]
+var _asrt_ti = 0;     # the #assert's first expression token (`_assert_open`)
+var _asrt_impl = 0;   # 1 = an impl body's directive (`_impl_dir`): its `}` closes the body
 fn _assert_open(S): i64 {
     var pw = _panic;
     STI(S, GTI(S) + 1);
+    _asrt_ti = GTI(S);
     _panic = 0;
     _ce_asrt = 1;
     return pw;
 }
 fn _assert_end(S, pw): i64 {
-    _assert_tail(S);
-    if (_panic == 1) { if (TOKTYP(S, GTI(S) - 1) != 5) { return 0; } }
+    var e = 0 - 1;
+    if (_panic == 1) { e = _asrt_ext(S); }
+    var bs = _assert_tail(S);
+    if (bs == 1) { _asrt_brace_err(S); }
+    if (_panic == 1) { if (_asrt_synced(S, e, bs) == 0) { return 0; } }
     _panic = pw;
     return 0;
 }
+# 1 = the tail stopped at the enclosing block's `}` (left for the block), else 0.
 fn _assert_tail(S): i64 {
     var ln = GTLINE(S, GTI(S) - 1);
     if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
+    var bd = 0;
+    var blk = _asrt_in_blk(S);
     while (PEEKT(S) != 5 && PEEKT(S) != 12) {
         if (GTLINE(S, GTI(S)) != ln) { break; }
+        if (PEEKT(S) == 13) { bd = bd + 1; }
+        if (PEEKT(S) == 14) {
+            if (bd == 0) { if (blk == 1) { return 1; } }
+            else { bd = bd - 1; }
+        }
         STI(S, GTI(S) + 1);
     }
     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
+}
+# 1 = the #assert sits in a braced body: a fn's, a nested block's (`_pp_depth` > 1) or an impl's.
+fn _asrt_in_blk(S): i64 {
+    if (GINFN(S) == 1) { return 1; }
+    if (_pp_depth > 1) { return 1; }
+    return _asrt_impl;
+}
+# An impl body's directive (pass 1's `_prescan_impl_body`, pass 2's `_impl_attrs`): `_tl_directive` with the body's
+# `}` closing an #assert's line. CHANGELOG [6.7.16]
+fn _impl_dir(S, arm): i64 {
+    _asrt_impl = 1;
+    var r = _tl_directive(S, arm);
+    _asrt_impl = 0;
+    return r;
+}
+fn _asrt_brace_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    ERR_MSG(S, "#assert: expected `;` or a line break before `}`", 48);
+    return 0;
+}
+# A refused #assert's expression (from `_asrt_ti`): its grammar extent, the cursor stepped there (and past its
+# `,`) when the evaluator stopped short; -1 when the extent is no well-bracketed stretch (an unclosed `(` runs on).
+fn _asrt_ext(S): i64 {
+    var e = _ce_extent(S, _asrt_ti);
+    if (_asrt_span_ok(S, _asrt_ti, e) == 0) { return 0 - 1; }
+    if (e > GTI(S)) {
+        STI(S, e);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    }
+    return e;
+}
+# 1 = tokens [a, b) hold no `;` / EOF and balance `(`..`)` and `{`..`}` each, never closing more than opened.
+fn _asrt_span_ok(S, a, b): i64 {
+    var p = 0;
+    var c = 0;
+    while (a < b) {
+        var t = TOKTYP(S, a);
+        if (t == 5 || t == 12) { return 0; }
+        if (t == 10) { p = p + 1; }
+        if (t == 11) { p = p - 1; if (p < 0) { return 0; } }
+        if (t == 13) { c = c + 1; }
+        if (t == 14) { c = c - 1; if (c < 0) { return 0; } }
+        a = a + 1;
+    }
+    if (p != 0) { return 0; }
+    if (c != 0) { return 0; }
+    return 1;
+}
+# The refused directive ended in sync: at its `;`, at its block's `}` (`bs`), or past its whole expression (`e`).
+fn _asrt_synced(S, e, bs): i64 {
+    if (TOKTYP(S, GTI(S) - 1) == 5) { return 1; }
+    if (bs == 1) { return 1; }
+    if (e < 0) { return 0; }
+    return 1;
 }
 
 # 6.6.10 — the operands of an #assert (`ATOM [OP ATOM]`) may be followed only by `,` (the

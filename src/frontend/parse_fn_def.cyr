@@ -333,7 +333,7 @@ fn _prescan_impl_body(S): i64 {
         elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
         elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
         elif (t == 32) { _tr_mod_for(S); _prescan_fn_sig(S); _tr_mod_back(S); }   # 6.7.0: its prefix
-        elif (_tl_directive(S, 0) == 1) { }            # 6.6.17: directives on a method (_impl_attrs)
+        elif (_impl_dir(S, 0) == 1) { }                # 6.6.17: directives on a method (_impl_attrs)
         else { go = 0; }
     }
     return 0;
