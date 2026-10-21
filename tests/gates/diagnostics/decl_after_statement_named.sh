@@ -985,6 +985,56 @@ row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf
 error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
 error:<source>:1:68: $ZZ"
 
+# DV7 — 6.7.16 (the f16 review): ONLY THE NAMES THE DERIVE WROTE. `_dl_dname` took ANY `<Type>_..` / `_cy_..` on a DERIVED
+# refused declaration's line as the derive's, so a user's `fn Q_h` there was stepped and its body never parsed (DV6 is
+# the NON-derived struct). Now exactly the names that registration emitted (lex_pp.cyr PP_DERIVE_CODEC / PP_DERIVE_FAM):
+# the codecs `<T>_to_json`, `<T>_from_json_str`, a struct's `<T>_from_json`; the accessors `<T>_<field>` /
+# `<T>_set_<field>` for a field of the declaration; a `_cy_` helper only on the line that emitted it; each name once
+# (a second `fn Q_set_y` is the user's duplicate). DV7 the review's dq.cyr verbatim (module scope, accessors); DV7b in a
+# fn body (the user's `fn Q_h` refused as nested, not stepped); DV7c `fn Q_y` on a Serialize-only struct (no accessors);
+# DV7d `fn Q_set_y` after the derive's own; DV7e a `_cy_json_skipval` on a later derive's line (the helper was the first
+# one's), an enum's `E_from_json` (an enum codec writes none), `T_w` (no field w).
+#   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
+#   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
+#   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
+row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
+" "error:<source>:4:1: a \`struct\` declaration $L
+error:<source>:4:273: $ZZ
+error:<source>:5: 'Q_h' expects 0 arguments, got 1"
+row5 DV7b "... in a fn body: the user's fn refused as nested" "$(printf 'fn f(): i64 {\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
+" "error:<source>:3:1: a \`struct\` declaration $IR a fn body
+error:<source>:3:248: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:3:285: $ZZ"
+row5 DV7c "fn Q_y on a Serialize-only struct is the user's" "${DH}var a = 1;
+a = 2;
+#derive(Serialize)
+struct Q { y; } fn Q_y(): i64 { return zz; }
+syscall(60, Q_y(4));
+" "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:10:2096: $ZZ
+error:<source>:11: 'Q_y' expects 0 arguments, got 1"
+row5 DV7d "a second fn Q_set_y (the user's duplicate) is the user's" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_set_y(): i64 { return zz; }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: a \`struct\` declaration $L
+error:<source>:4:277: $ZZ"
+row5 DV7e "a later line's _cy_ helper, an enum's E_from_json, T_w (no field)" "${DH}var a = 1;
+a = 2;
+#derive(Serialize)
+struct Q { y; }
+#derive(Serialize)
+struct R { y; } fn _cy_json_skipval(): i64 { return zz; }
+#derive(Serialize)
+enum E { A; B; } fn E_from_json(): i64 { return zz2; }
+#derive(accessors)
+struct T { y; } fn T_w(): i64 { return zz3; }
+syscall(60, 0);
+" "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:12:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:12:1587: $ZZ
+error:<source>:14:1: an \`enum\` declaration must come before the first top-level statement (line 8)
+error:<source>:14:685: undefined variable 'zz2' (missing include or enum?)
+error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:16:274: undefined variable 'zz3' (missing include or enum?)"
+
 # UI — 6.7.16 (issues/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
 # REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
 # when PARSE_PROG parsed its body, in source order, so an earlier fn's `q: *Q` was "type 'Q' is declared after its use",
@@ -1167,7 +1217,7 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 " "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
 
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=175
+F5FLOOR=200
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
