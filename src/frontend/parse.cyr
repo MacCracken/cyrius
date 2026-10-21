@@ -6309,9 +6309,7 @@ fn _nested_fn_mark(S, noff, kw): i64 {
 fn _nested_fn_encl(S): i64 {
     if (_cur_fn_ix < 0) { PRSTR("a fn body"); return 0; }
     var p = S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8);
-    if (load8(p) == 95 && load8(p + 1) == 95 && load8(p + 2) == 99 && load8(p + 3) == 108) {
-        if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { PRSTR("a closure"); return 0; }
-    }
+    if (_fn_is_closure(S, _cur_fn_ix) == 1) { PRSTR("a closure"); return 0; }
     PRSTR("fn '");
     var l = 0;
     while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
@@ -6320,6 +6318,13 @@ fn _nested_fn_encl(S): i64 {
     return 0;
 }
 
+# 1 = fn `fi` is a closure's `__clNNNNN` entry (a refusal says "a closure", never its table name). CHANGELOG [6.7.16]
+fn _fn_is_closure(S, fi): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    if (load8(p) != 95 || load8(p + 1) != 95 || load8(p + 2) != 99 || load8(p + 3) != 108) { return 0; }
+    if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { return 1; }
+    return 0;
+}
 # Refuse the `fn` / `async fn` at the cursor when it is inside a fn body (GINFN == 1).
 # 1 = refused: reported once, consumed through its body's `}` (or a bodiless header's `;`, never
 # past EOF). 0 = not a nested fn: nothing moved. Small and with no tail call (cybs).

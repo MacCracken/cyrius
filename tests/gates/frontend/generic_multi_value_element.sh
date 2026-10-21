@@ -26,6 +26,9 @@
 #      the base's own `(f64, i64)` (V3e: that cascade predates 6.7.16)
 #   V4 a top-level destructure after the first statement (and a multi-value assignment, a tuple capture) binds the
 #      f64 element on every leg
+#   (6.7.16, the user's D90: a struct value over 8 B is no `return ( .. )` element, mret_struct_element_refused.sh —
+#   V2b's and V5f's instance body `return (x, 7)` at a struct V is that refusal too, a second line; the (Pt, i64) /
+#   (Box<Pt>, i64) controls `mm3` / `mb` return a field, a word, so their rows keep one line.)
 #   V5 the multi-value refusals name the fn and its values as the source spells them: an instance `mt<f64>`,
 #      `P.gm<f64>`, `mt2<i64, f64>` (V5a / V5c / V5d: the refusal an instance can now meet printed `mt$f64`), a method
 #      `Q.pair` (V5b: `Q_pair`), a struct instance element `(Box<Pt>, i64)` (V5e / V5f: `(Box$Pt, i64)`); V5K the same
@@ -177,11 +180,11 @@ echo "V2. the checks read the instance's signature"
 H='include "lib/syscalls.cyr"
 struct Pt { x; y; }
 fn mm2<V>(x: V): (V, i64) { return (x, 7); }
-fn mm3(p: Pt): (Pt, i64) { return (p, 7); }'
+fn mm3(p: Pt): (Pt, i64) { return (p.x, 7); }'
 printf '%s\nfn main(): i64 { var h: f64 = 1.5; var t: (i64, i64) = mm2<f64>(h); return t.1; }\nsyscall(60, main());\n' "$H" > "$D/v2a.cyr"
 rf V2a "$D/v2a.cyr" 1 "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (f64, i64)" "var t: (i64, i64) = mm2<f64>(h); (it compiled: the double's bits as t.0)"
 printf '%s\nfn main(): i64 { var p: Pt = Pt { 3, 4 }; var t: (i64, i64) = mm2<Pt>(p); return t.1; }\nsyscall(60, main());\n' "$H" > "$D/v2b.cyr"
-rf V2b "$D/v2b.cyr" 1 "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (Pt, i64)" "var t: (i64, i64) = mm2<Pt>(p); (it compiled: the struct's first word)"
+rf V2b "$D/v2b.cyr" 2 "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (Pt, i64)" "var t: (i64, i64) = mm2<Pt>(p); (it compiled: the struct's first word) — and the instance's return (x, 7), D90's line"
 printf '%s\nfn main(): i64 { var p: Pt = Pt { 3, 4 }; var t: (i64, i64) = mm3(p); return t.1; }\nsyscall(60, main());\n' "$H" > "$D/v2c.cyr"
 rf V2c "$D/v2c.cyr" 1 "cannot capture 'mm3' into tuple (i64, i64) - it returns 2 values, (Pt, i64)" "the non-generic (Pt, i64) control (unchanged)"
 
@@ -207,13 +210,13 @@ var GF: (f64, i64) = (1.5, 2);
 fn mt<V>(x: V): (V, i64) { return G; }
 fn mt2<A, B>(a: A, b: B): (B, A) { return G; }
 fn mm2<V>(x: V): (V, i64) { return (x, 7); }
-fn mb(b: Box<Pt>): (Box<Pt>, i64) { return (b, 1); }
+fn mb(b: Box<Pt>): (Box<Pt>, i64) { return (b.n, 1); }
 impl P {
     fn gm<V>(self, x: V): (V, i64) { return G; }
 }'
-nrow() {   # <id> <main body> <fragment> <what> [<declarations>]
+nrow() {   # <id> <main body> <fragment> <what> [<declarations>] [<error lines>, default 1]
     printf '%s\n%s\nfn main(): i64 { %s return 0; }\nsyscall(60, main());\n' "$H5" "${5:-}" "$2" > "$D/$1.cyr"
-    rf "$1" "$D/$1.cyr" 1 "$3" "$4"
+    rf "$1" "$D/$1.cyr" "${6:-1}" "$3" "$4"
 }
 nrow V5a 'var a, b = mt<f64>(1.5);' "cannot return tuple 'G' (i64, i64) from 'mt<f64>' - it returns (f64, i64)" "return G; from the f64 instance (named 'mt\$f64')"
 nrow V5b 'var q: Q = Q { 1 }; var a, b = q.pair(1);' "cannot return tuple 'GF' (f64, i64) from 'Q.pair' - it returns (i64, i64)" "a method's (named 'Q_pair')" 'struct Q { k; }
@@ -223,7 +226,7 @@ impl Q {
 nrow V5c 'var p: P = P { 1 }; var a, b = p.gm(2.5);' "cannot return tuple 'G' (i64, i64) from 'P.gm<f64>' - it returns (f64, i64)" "a generic method's f64 instance (named 'P_gm\$f64')"
 nrow V5d 'var a, b = mt2<i64, f64>(1, 1.5);' "cannot return tuple 'G' (i64, i64) from 'mt2<i64, f64>' - it returns (f64, i64)" "two type parameters (named 'mt2\$i64\$f64')"
 nrow V5e 'var b: Box<Pt>; var t: (i64, i64) = mb(b);' "cannot capture 'mb' into tuple (i64, i64) - it returns 2 values, (Box<Pt>, i64)" "a (Box<Pt>, i64) fn's values (spelled '(Box\$Pt, i64)')"
-nrow V5f 'var b: Box<Pt>; var t: (i64, i64) = mm2<Box<Pt>>(b);' "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (Box<Pt>, i64)" "mm2<Box<Pt>>'s values"
+nrow V5f 'var b: Box<Pt>; var t: (i64, i64) = mm2<Box<Pt>>(b);' "cannot capture 'mm2' into tuple (i64, i64) - it returns 2 values, (Box<Pt>, i64)" "mm2<Box<Pt>>'s values — and the instance's return (x, 7), D90's line" '' 2
 printf '%s\nfn main(): i64 { var a, b = mt<i64>(1); var c, d = mt(5); return b * 10 + d; }\nsyscall(60, main());\n' "$H5" > "$D/v5k.cyr"
 xr V5K "$D/v5k.cyr" 22 "the same return G; at i64 (the base) compiles"
 

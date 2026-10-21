@@ -3593,6 +3593,14 @@ var hi, lo, bexp = dd_pow10(k);
 # In a generic it is one report, naming the generic (`'gr' returns 2 values ..`) however many
 # instances re-parse the body, and none beside an error the statement already has (`return 1, 2;`
 # is `expected ';'` alone) — 6.7.16; it was one line per instance, each naming `gr$P`.
+# Each ELEMENT of `return (a, b[, c]);` is one word, so a struct value over 8 bytes is refused there —
+# a struct local, parameter or global, a call, method or operator returning one, a by-value field,
+# `*p` — at the element, in every multi-value fn, declared or not (6.7.16, the user's D90; it handed
+# back the struct's first word, and the caller's binding passed on as the struct faulted):
+#   fn mv(): (Pt, i64) { var b: Pt; return (b, 5); }  # 'mv' returns struct 'Pt' (16 bytes) as a multi-
+#                                     # value element - return its pointer, or its fields as elements
+#   return (&b, 5);   return (b.x, b.y, 5);           # its pointer, or its fields
+# An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the

@@ -57,7 +57,8 @@
 #      all-`i64` list as its base struct (`Box<i64>` IS `Box`, 6.6.10's rule). The first cut compared tokens and
 #      refused programs that compiled and ran (exit 4 on the slot-open compiler b2e1f4c4): TRS1 `Box<Box<i64>>` against
 #      `Box<Box<i64> >` (the review's shape), TRS2 `Box<i64>` against `Box`, TRS3 `*Box<i64>` against `*Box`,
-#      TRS4 a `>>>` close, a nested `Box<Box<i64>>` against `Box<Box>` and an all-i64 list inside a multi-value — each 4;
+#      TRS4 a `>>>` close, a nested `Box<Box<i64>>` against `Box<Box>` and an all-i64 list inside a multi-value — each 4
+#      (its `d` returns `(b.n, 2)`: 6.7.16's D90 refuses the 16-byte `b` itself as an element);
 #      TRS5 / TRS6 a different argument stays refused (`Box<i32>`, `Box<Box<i32> >`), TRS7 a struct that is not the
 #      member's. Mutants (2026-10-18, a one-edit scratch copy of src/ each, CYCC= its cycc): the lane's previous compiler
 #      (0ca74300) -> RED 4: TRS1-TRS4 (refused); MTRS1 `_tr_ret_differs` back on `_dyn_ty_eq` (normalisation off) -> the
@@ -357,7 +358,7 @@ printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box 
 exits trs2 4 "TRS2: Box<i64> against Box (the base struct)"
 printf 'include "lib/alloc.cyr"\n'"$BX"'trait T { fn c(self): *Box<i64>; }\nimpl T for Pt { fn c(self): *Box { var q: *Box = alloc(16); q.n = 4; return q; } }\nfn main(): i64 { var p: Pt; var r: *Box = p.c(); return r.n; }\n' > "$T/trs3.cyr"
 exits trs3 4 "TRS3: *Box<i64> against *Box"
-printf "$BX"'trait T { fn c(self): Box<Box<Box<i64>>>; fn d(self): (Box<i64>, i64); fn e(self): Box<Box<i64>>; }\nimpl T for Pt {\n  fn c(self): Box<Box<Box> > { var b: Box<Box<Box<i64> > >; b.n = 1; return b; }\n  fn d(self): (Box, i64) { var b: Box; b.n = 1; return (b, 2); }\n  fn e(self): Box<Box> { var b: Box<Box>; b.n = 1; return b; }\n}\nfn main(): i64 { var p: Pt; var r: Box<Box<Box>> = p.c(); var w, k = p.d(); var e: Box<Box> = p.e(); return r.n + k + e.n; }\n' > "$T/trs4.cyr"
+printf "$BX"'trait T { fn c(self): Box<Box<Box<i64>>>; fn d(self): (Box<i64>, i64); fn e(self): Box<Box<i64>>; }\nimpl T for Pt {\n  fn c(self): Box<Box<Box> > { var b: Box<Box<Box<i64> > >; b.n = 1; return b; }\n  fn d(self): (Box, i64) { var b: Box; b.n = 1; return (b.n, 2); }\n  fn e(self): Box<Box> { var b: Box<Box>; b.n = 1; return b; }\n}\nfn main(): i64 { var p: Pt; var r: Box<Box<Box>> = p.c(); var w, k = p.d(); var e: Box<Box> = p.e(); return r.n + k + e.n; }\n' > "$T/trs4.cyr"
 exits trs4 4 "TRS4: a >>> close, an all-i64 list in a multi-value, a nested Box<Box<i64>> against Box<Box>"
 printf "$BX"'trait T { fn c(self): Box<i64>; }\nimpl T for Pt { fn c(self): Box<i32> { var b: Box<i32>; b.n = 4; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trs5.cyr"
 refused_at trs5 "'Pt.c' returns Box<i32>, trait 'T' declares Box<i64>" 4:29 "TRS5: Box<i32> against Box<i64> stays refused"
