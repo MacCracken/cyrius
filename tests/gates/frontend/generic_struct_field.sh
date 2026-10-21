@@ -128,6 +128,27 @@
 #   MNF2 `_gs_use` without its field-name test          -> RED 15: NF1-NF3 on every leg (refused naming the stub)
 #   MNF3 `_gtype_sid` keeping the base for a generic's base -> RED 20: NF1 ("a fn returning the struct `G1` .. got `g` (a
 #                                                           `G1$Box`)"), NF3, NF5, NF6 on every leg
+#
+#   PL (6.7.16, the user's D103, 2026-10-20; issues/2026-10-20-double-pointer-struct-field-to-struct-declared-below-
+#      refused.md) a `**B` / `**Box<B>` field (any depth) to a struct declared BELOW its struct compiles, as the one-star
+#      `*B` field (6.6.17, 6.7.15's D8 (a)): it was refused at the field — "type 'B' is declared after its use" (the
+#      annotation read the pointee) / "unknown type 'B' as a type argument" (the pin at the `}` minted `Box<B>`). The
+#      annotation is consumed with its type arguments checked as a late `*B` field's (`_fld_pp_late`), and the pin is late
+#      (`_pp_word_at`: B's token; sized by `_pp_inner`, its struct named by `_pp_sid` at the use). PL1 the filed repro
+#      verbatim (3), PL2 its `**Box<B>` spelling (3), PL3 `*a.p + 1` steps sizeof(B), `var q: *B = *a.p`, `var v: B = **a.p`
+#      (232), PL4 the same through `**Box<B>` (103), PL5 `***B` (25), PL6 A / B pointing at each other through `**B` /
+#      `**A` (43), PL7 a union's `**B` (30), PL8 `**Later<Pt>` with both declared below (69), PL9 a fn above B reading
+#      the field and passing `**a.p` to a `*B` parameter (32), PL10 a generic struct's `W<i32> { p: **B; }` (7) — on every
+#      leg; PLK1 a by-value `B` field below stays refused, PLK2 `**Zork`, PLK4 `**Box<Zork>`: one error each, as before;
+#      PLK3 `**B<i64>` (B no generic, below) D7's one line, as `*B<i64>` (it was "declared after its use").
+#   (2026-10-21; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MPL1 the tree before D103 (2f8900ebe)                 -> RED 51: PL1-PL10 on every leg (refused at the field), PLK3
+#                                                           ("type 'B' is declared after its use", where `*B<i64>` gives D7's)
+#   MPL2 `_fld_pp_late` answering 0 (the annotation)      -> RED 41: PL1 PL3 PL5-PL10 on every leg ("declared after its
+#                                                           use"), PLK3
+#   MPL3 `_pp_word_at` without its late arm (the pin)     -> RED 35: PL2 PL4 ("unknown type 'B' as a type argument"), PL3
+#                                                           PL5 PL7-PL9 (the pin read B unknown: a fault, or a step of 8)
+#                                                           on every leg
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -665,6 +686,110 @@ xr NF6 "$T/nf6.cyr" 53 "the base's returns : Box<Pt> (retptr) and : Box<i32> (tw
 printf 'include "lib/syscalls.cyr"\ntrait Show { fn show(self): i64; }\nstruct Pt { x; y; }\nstruct Bx<T: Show> { v: T; }\nfn mk<T>(v: T): Bx<Pt> { var b: Bx<Pt>; return b; }\nsyscall(60, 0);\n' > "$T/nfk1.cyr"
 refused_once nfk1 "does not implement trait 'Show'" "NFK1: a generic's : Bx<Pt>, Pt not Show: once"
 
+# PL — 6.7.16 (D103): a `**B` / `**Box<B>` field to a struct declared below its struct, on every leg.
+cat > "$T/pl1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; p: **B; }
+struct B { x; }
+fn main(): i64 { var a: A; a.k = 3; return a.k; }
+syscall(60, main());
+EOF
+xr PL1 "$T/pl1.cyr" 3 "the filed repro verbatim, p: **B with B below"
+cat > "$T/pl2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct A { k; p: **Box<B>; }
+struct B { x; }
+fn main(): i64 { var a: A; a.k = 3; return a.k; }
+syscall(60, main());
+EOF
+xr PL2 "$T/pl2.cyr" 3 "the filing's p: **Box<B> spelling"
+cat > "$T/pl3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; p: **B; m; }
+struct B { x; y; z; }
+fn go(): i64 {
+    var b: B; b.x = 1; b.y = 2; b.z = 3; var pb: *B = &b;
+    var a: A; a.k = 4; a.m = 5; a.p = &pb;
+    var e = *a.p + 1; var c = *a.p; var q: *B = *a.p; var v: B = **a.p;
+    return (e - c) * 100 + q.y * 10 + v.z + a.k + a.m;
+}
+syscall(60, go() - 2200);
+EOF
+xr PL3 "$T/pl3.cyr" 232 "*a.p + 1 steps 24, var q: *B = *a.p, var v: B = **a.p"
+cat > "$T/pl4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct Box<T> { v: T; n; }
+struct A { k; p: **Box<B>; m; }
+struct B { x; y; z; }
+fn go(): i64 {
+    var b: Box<B>; b.v.y = 2; b.n = 6; var pb: *Box<B> = &b;
+    var a: A; a.k = 4; a.m = 5; a.p = &pb;
+    var e = *a.p + 1; var c = *a.p; var q: *Box<B> = *a.p; var v: Box<B> = **a.p;
+    return (e - c) + q.n * 10 + v.v.y + a.k + a.m;
+}
+syscall(60, go());
+EOF
+xr PL4 "$T/pl4.cyr" 103 "through **Box<B>: steps 32, q.n, v.v.y"
+cat > "$T/pl5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; p: ***B; }
+struct B { x; y; }
+fn go(): i64 { var b: B; b.x = 7; b.y = 9; var pb: *B = &b; var ppb: **B = &pb; var a: A; a.p = &ppb; var q: *B = **a.p; var e = **a.p + 1; return q.y + (e - q); }
+syscall(60, go());
+EOF
+xr PL5 "$T/pl5.cyr" 25 "***B: **a.p is a *B stepping 16"
+cat > "$T/pl6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; pb: **B; }
+struct B { j; pa: **A; }
+fn go(): i64 { var a: A; var b: B; a.k = 3; b.j = 4; var pa: *A = &a; var pb: *B = &b; a.pb = &pb; b.pa = &pa; var qb: *B = *a.pb; var qa: *A = *qb.pa; return qb.j * 10 + qa.k; }
+syscall(60, go());
+EOF
+xr PL6 "$T/pl6.cyr" 43 "A / B pointing at each other through **B / **A"
+cat > "$T/pl7.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+union U { p: **B; raw; }
+struct B { x; y; z; }
+fn go(): i64 { var b: B; b.y = 6; var pb: *B = &b; var u: U; u.p = &pb; var q: *B = *u.p; var e = *u.p + 1; return q.y + (e - q); }
+syscall(60, go());
+EOF
+xr PL7 "$T/pl7.cyr" 30 "a union's **B"
+cat > "$T/pl8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; p: **Later<Pt>; }
+struct Later<T> { v: T; n; }
+struct Pt { x; y; }
+fn go(): i64 { var l: Later<Pt>; l.v.y = 4; l.n = 5; var pl: *Later<Pt> = &l; var a: A; a.p = &pl; var q: *Later<Pt> = *a.p; var e = *a.p + 1; return q.v.y * 10 + q.n + (e - q); }
+syscall(60, go());
+EOF
+xr PL8 "$T/pl8.cyr" 69 "**Later<Pt>, both declared below: steps 24"
+cat > "$T/pl9.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct A { k; p: **B; }
+fn tk(q: *B): i64 { return q.z; }
+fn go(): i64 { var b: B; b.z = 8; var pb: *B = &b; var a: A; a.p = &pb; var c = *a.p; var e = *a.p + 1; return (e - c) + tk(**a.p); }
+struct B { x; y; z; }
+syscall(60, go());
+EOF
+xr PL9 "$T/pl9.cyr" 32 "a fn above B: *a.p + 1 steps 24, tk(**a.p) into a *B"
+cat > "$T/pl10.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct W<T> { v: T; p: **B; }
+struct B { x; y; }
+fn go(): i64 { var b: B; b.y = 7; var pb: *B = &b; var w: W<i32>; w.p = &pb; var q: *B = *w.p; return q.y; }
+syscall(60, go());
+EOF
+xr PL10 "$T/pl10.cyr" 7 "a generic struct W<i32>'s p: **B"
+printf 'include "lib/syscalls.cyr"\nstruct A { k; p: B; }\nstruct B { x; }\nfn main(): i64 { var a: A; a.k = 3; return a.k; }\nsyscall(60, main());\n' > "$T/plk1.cyr"
+one_error plk1 "struct field type 'B' is declared after its use" "PLK1: a by-value B field below stays refused"
+printf 'include "lib/syscalls.cyr"\nstruct A { k; p: **Zork; }\nfn main(): i64 { var a: A; a.k = 3; return a.k; }\nsyscall(60, main());\n' > "$T/plk2.cyr"
+one_error plk2 "unknown type 'Zork' as the target of pointer 'p'" "PLK2: **Zork"
+printf 'include "lib/syscalls.cyr"\nstruct A { k; p: **B<i64>; }\nstruct B { x; }\nfn main(): i64 { var a: A; a.k = 3; return a.k; }\nsyscall(60, main());\n' > "$T/plk3.cyr"
+one_error plk3 "'B' is not a generic struct: it takes no type arguments" "PLK3: **B<i64>, B below and no generic"
+printf 'include "lib/syscalls.cyr"\n%s\nstruct A { k; p: **Box<Zork>; }\nfn main(): i64 { var a: A; a.k = 3; return a.k; }\nsyscall(60, main());\n' "$BX" > "$T/plk4.cyr"
+one_error plk4 "$UZ" "PLK4: **Box<Zork>"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_struct_field — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: generic_struct_field — $skips HF leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF), a **G<..> field mints its instance after the struct's } under the struct's binding (PP), and a generic's base reads its signature's instance list at T = i64 while a field of a field is no parameter use (NF)"
+echo "PASS: generic_struct_field — a field naming its own struct is refused once (S1-S4), #derive walks nested type arguments (D1) and refuses an inline instance by its layout backstop (D2), b: Box<i32> runs (C), a generic call declared : *T is a struct source (P, PF, PR, PB), a generic declared : *Box<T> compiles (PG), pass 1 leaves an unresolved : **Box<..> return's pin to pass 2 (PD), a pointer field's type arguments are checked at the field once (PA), a generic struct's *T field hops in its instance on x86_64 / IR / aarch64 / cx / PE (HF), a **G<..> field mints its instance after the struct's } under the struct's binding (PP), a generic's base reads its signature's instance list at T = i64 while a field of a field is no parameter use (NF), and a **B / **Box<B> field points at a struct declared below (PL)"

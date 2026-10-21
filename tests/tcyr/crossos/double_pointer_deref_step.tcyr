@@ -241,6 +241,27 @@ fn r_vec(): i64 {
     return (x - y) * 100 + sp_hi(**ppb) - load64(q);   # 1600 + 22 - 11
 }
 
+# LB (6.7.16, the user's D103, 2026-10-20): a `**B`, `**Bx<B>` and `***B` field to a struct declared BELOW its struct
+# (LbB, after these fns), and two structs pointing at each other so: `*a.p + 1` steps sizeof(LbB), `var q: *LbB =
+# *a.p;` reads its fields, `**a.p` passes the struct to a `*LbB` parameter; `**a.ppp` is a `*LbB`. Each field was
+# refused at its struct ("type 'LbB' is declared after its use" / "unknown type 'LbB' as a type argument").
+struct LbA { k; p: **LbB; pb: **Bx<LbB>; ppp: ***LbB; m; }
+fn lb_take(q: *LbB): i64 { return q.z; }
+fn lb_rows(): i64 {
+    var b: LbB; b.x = 1; b.y = 2; b.z = 3; var pb: *LbB = &b; var ppb: **LbB = &pb;
+    var bx: Bx<LbB>; bx.w.y = 7; var pbx: *Bx<LbB> = &bx;
+    var a: LbA; a.k = 4; a.m = 5; a.p = &pb; a.pb = &pbx; a.ppp = &ppb;
+    var q: *LbB = *a.p;
+    var e = *a.p + 1;
+    var w: *Bx<LbB> = *a.pb;
+    var f = *a.pb + 1;
+    var r: *LbB = **a.ppp;
+    var bk: *LbA = b.back_of(&a);
+    return (e - q) * 100000 + (f - w) * 1000 + q.y * 100 + w.w.y * 10 + lb_take(**a.p) + r.x - 1 + bk.k - 4;
+}
+struct LbB { x; y; z; back: **LbA; }
+impl LbB { fn back_of(self, a: *LbA): *LbA { var pa: *LbA = a; var ppa: **LbA = &pa; self.back = ppa; var t: *LbA = *self.back; return t; } }
+
 GP = &GA;
 GA[0] = 3; GA[1] = 4; GA[2] = 5;
 # A `**T` global past the first statement (a declaration-zone one does not parse yet: issues/2026-10-14-declaration-
@@ -426,4 +447,5 @@ assert_eq(gi_deep2(), 42424242, "GD: &pps of a **P3, a ***P3 field, global and :
 assert_eq(gi_deep3(), 42424242, "GD: (ppps), ppps + 0, a forwarder and a : T result (var v = r3(ppps); v.c)");
 assert_eq(gi_deep4(), 434324, "GD: a generic method's ***T, a captured ***P3, a named argument");
 assert_eq(gi_dctl(), 244081, "GD: s3<P3>(ppps) unchanged; a ***i32 binds i32; a **P3 and &ps into ***T bind nothing");
+assert_eq(lb_rows(), 3264273, "LB: **LbB / **Bx<LbB> / ***LbB fields to a struct declared below, and back (D103)");
 var r = assert_summary();

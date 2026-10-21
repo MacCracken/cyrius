@@ -5353,7 +5353,7 @@ var _ppd_end = 0 - 1;   # the token after its operand
 var _ppd_cp = 0 - 1;    # the code pointer after its load
 var _ppd_sid = 0;       # the struct its `*S` result points at
 fn _ppd_note(S, d, w): i64 {
-    _ppd_sid = _pp_sid(_ps_pin(w));
+    _ppd_sid = _pp_sid(S, _ps_pin(w));
     _ppd_beg = d;
     _ppd_end = GTI(S);
     _ppd_cp = GCP(S);

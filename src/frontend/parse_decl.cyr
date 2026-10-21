@@ -13093,7 +13093,7 @@ fn _hl_psid(S, a, e): i64 {
 # names the pointee `*S` (`_pp_sid`): S, `_hl_cp` 1; else 0. CHANGELOG [6.7.14]
 fn _hl_dref_psid(S, a, e): i64 {
     var sid = _hl_amp_psid(S, a, e);   # 6.7.15 (D21 A): `*(&ps)` is ps
-    if (sid <= 0) { sid = _pp_sid(_ps_pin(_hl_pw(S, a, e))); }
+    if (sid <= 0) { sid = _pp_sid(S, _ps_pin(_hl_pw(S, a, e))); }
     _hl_cp = 0;
     if (sid <= 0) { return 0; }
     _hl_cp = 1;

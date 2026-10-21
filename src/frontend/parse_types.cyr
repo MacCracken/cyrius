@@ -3197,14 +3197,27 @@ fn _pp_pin_at(S, ann, si, ent): i64 {
 # The struct the pointee annotation `*T` at token `a` points at (`_ptr_ann_sid_tp`: a bound T too), the struct being
 # declared for a late `**S` field (`v` < 0), else 0 (a scalar, a vector, a pointer). CHANGELOG [6.7.13]
 fn _pp_psid(S, a, si, v): i64 {
-    if (v < 0) { return si + 1; }
+    if (v < 0) {
+        if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) { return si + 1; }
+        return 0;   # 6.7.16 (D103): declared below — named at the use (`_pp_sid`)
+    }
     return _ptr_ann_sid_tp(S, a);
 }
-# The struct pin `pin`'s pointee `*S` points at, else 0.
-fn _pp_sid(pin): i64 {
+# The struct pin `pin`'s pointee `*S` points at, else 0. 6.7.16 (D103): a late pin with no struct recorded (a `**B`
+# field, B declared below it) names it now, under its field's binding, as `_pp_inner` sizes it.
+fn _pp_sid(S, pin): i64 {
     if (pin <= 0) { return 0; }
     if (pin > _pp_n) { return 0; }
-    return L64(_pp_sids + pin * 8);
+    var r = L64(_pp_sids + pin * 8);
+    if (r != 0) { return r; }
+    var v = L64(_pp_tab + pin * 16);
+    if (v >= 0) { return 0; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, L64(_pp_tab + pin * 16 + 8));
+    r = _ptr_ann_sid_tp(S, 0 - v - 2);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    if (r < 0) { r = 0; }
+    return r;
 }
 # The step word of the pointer type whose first `*` is token `a`, the cursor unmoved: `*T`'s as `_ptr_annot`
 # reads it (quiet: the annotation itself reports an unknown T), a pointer's 8 and its own pin, 0 for a T it does
@@ -3216,6 +3229,7 @@ fn _pp_word_at(S, a, si, ent): i64 {
     if (si >= 0) { if (t == 2) { if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) {
                 return 0 - (a + 2);   # late: its field records the binding (`_fld_pp_one`, every `**` field's)
             } } }
+    if (si >= 0) { if (_pp_late_name(S, a + 1) == 1) { return 0 - (a + 2); } }   # 6.7.16 (D103): declared below
     var sv = GTI(S);
     STI(S, a + 1);
     var ps = _ptr_step_peek(S, 0 - 1, 1);
@@ -3361,7 +3375,7 @@ fn _ic_parith(S, a, e): i64 {
 # The struct step word `w`'s pin names (its pointee `*S`'s S), 6.7.15 (D11) else its pointee word's scalar
 # (`_pp_inner`: a `**i32`'s `*i32`), else i64.
 fn _ic_pp_sid(S, w): i64 {
-    var s = _pp_sid(_ps_pin(w));
+    var s = _pp_sid(S, _ps_pin(w));
     if (s <= 0) { return _ic_pscalar(_pp_inner(S, w)); }
     return _ic_pp_ok(S, s);
 }
@@ -3610,10 +3624,43 @@ fn _add_ptr_field(S, si, fnoff): i64 {
 var _ppk_nomint = 0;   # `_ptr_step_peek` checks a generic's list without minting it
 fn _fld_ptr_annot(S, fnoff, ann): i64 {
     if (TOKTYP(S, ann + 1) != 8) { return _ptr_annot(S, fnoff, 0); }
+    if (_fld_pp_late(S, ann) == 1) { return 8; }   # 6.7.16 (D103): `**B`, B declared below
     _ppk_nomint = 1;
     var ps = _ptr_annot(S, fnoff, 0);
     _ppk_nomint = 0;
     return ps;
+}
+# ⛔ 6.7.16 (the user's D103, 2026-10-20) — A `**B` / `**Box<B>` FIELD POINTS AT A STRUCT DECLARED BELOW, AS `*B` DOES.
+# 6.6.17 sizes a one-star `p: *B` field at its use (`_fld_ptr_late`), so two structs can point at each other; a field
+# with two stars or more read its pointee at the field — "type 'B' is declared after its use" — and its pin at the
+# struct's `}` minted `Box<B>` there — "unknown type 'B' as a type argument". Such a field's annotation is now consumed
+# with its type arguments checked as the late `*B` field's are (`_fld_targ_chk`, `_fld_ngt`), and its pin is late
+# (`_pp_word_at`: B's token, sized at the dereference by `_pp_inner`, its struct named there by `_pp_sid`), at any depth.
+# A by-value `B` field below stays refused. CHANGELOG [6.7.16]
+# The field annotation whose first `*` is token `ann` (two stars or more): 1 when its pointee past the stars is a struct
+# or union declared further down, or a generic one declared above whose type arguments do not resolve yet (`Box<B>`,
+# or no type: `_fld_targ_chk` refuses that) — checked and consumed; else 0, the cursor untouched.
+fn _fld_pp_late(S, ann): i64 {
+    var ti = ann;
+    while (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (_pp_late_name(S, ti) == 0) { return 0; }
+    _fld_targ_chk(S, ti);
+    _fld_ngt(S, ti);
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    return 1;
+}
+# 1 when the pointee name at token ti is a struct or union declared further down, or a generic struct declared above
+# whose `<..>` after it does not resolve yet.
+fn _pp_late_name(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sid = FINDSTRUCT(S, noff);
+    if (sid <= 0) { return _declared_later(S, noff, 40, 101); }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    if (_targs_resolvable(S, ti + 2) == 1) { return 0; }
+    return 1;
 }
 var _fpp = 0;     # 3 words per pending pin: the annotation's first `*`, the field entry, the struct
 var _fpp_n = 0;

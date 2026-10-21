@@ -1364,7 +1364,11 @@ the struct's closing `}`, under the struct's own type arguments: `qq: **Box<Pt>`
 `struct HG<T> { qq: **Box<T>; }` and `struct LL<T> { next: **LL<T>; }` compile, and `*h.qq + 1` steps the
 instance's size. (Through 6.7.15 such a field minted the instance in the middle of the struct's own fields: one it
 named first lost its fields — *unknown field 'v' on struct 'Box$Pt'* — and a generic struct's own-T field was
-*unknown type 'T' as a type argument*.)
+*unknown type 'T' as a type argument*.) A field of two stars or more points at a struct declared below it as the
+one-star field does (6.7.16, the user's D103, 2026-10-20): `struct A { k; p: **B; } struct B { x; }`, `p: **Box<B>`,
+`***B`, and two structs pointing at each other through `**B` / `**A` compile, `*a.p + 1` steps `sizeof(B)` and
+`var q: *B = *a.p;` / `**a.p` read through it; a by-value `B` field below is still refused. (Through 6.7.15 the field
+was refused at its struct, *type 'B' is declared after its use* / *unknown type 'B' as a type argument*.)
 
 A `*Struct` variable — a local, a global or a parameter — takes **dot syntax**: `p.val`,
 `p.val = 3`, `p.next.val`, `p.m(..)` read and write through the pointer, and `p = q` rebinds
