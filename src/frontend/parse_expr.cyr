@@ -5276,6 +5276,11 @@ fn _amp_pw(S, a, e): i64 {
 # (`_ek_*`: the width, | 0x40 when signed), else 0 — a narrow parameter's too (6.7.16, D72: typed as a narrow local).
 # A closure's capture (one env word, holding the value) keeps the word, which its own read loads whole. `&x + n` is
 # still a byte pointer (6.7.11's D15). CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (D70, the user's decision, 2026-10-20) — AND AN `f64` / `f32` / `bool` VARIABLE: `*(&f)` is f, with f's
+# type — the kinds 0x28 / 0x24 / 0x68 (`_amp_fkl` / `_amp_fkg`), so `*(&f) + 1.0` is a float add (it was integer
+# arithmetic on f's bits, warned), `*(&f) = 2.5` / `*(&f) += 1.0` store and add as floats (an f32 at its 4 bytes),
+# and `*(&b)` of a bool is a boolean — the bool overload, the bool checks (`_dst_fk_chk` / `_dst_fk_cop` name b, as
+# `b = v` / `b += v` do). A local (a parameter too) or a global; a capture keeps its word. CHANGELOG [6.7.16]
 fn _amp_ew(S, a, e): i64 {
     var b = _ie_unparen(S, a, e);
     if (_ie_pe != b + 2) { return 0; }
@@ -5290,21 +5295,41 @@ fn _amp_ew(S, a, e): i64 {
     return _amp_gew(S, _findvar_core(S, noff));
 }
 # A scalar local's kind when it is an `i8`..`i32` / `u8`..`u32` — SLTYPE 1 / 2 / 4, signed by its negative
-# slice-width word, as the name's own read takes it — else 0 (an aggregate, an array, a pointer, a bool).
+# slice-width word, as the name's own read takes it — or (D70) an `f64` / `f32` / `bool` — else 0 (an aggregate, an
+# array, a pointer).
 fn _amp_lew(S, li): i64 {
     if (GLPTRP(S, li) != 0) { return 0; }
     if (GLSPAN(S, li) != 0) { return 0; }
     if (GLAEW(S, li) != 0) { return 0; }
-    if (GLBOOL(S, li) != 0) { return 0; }
+    if (GLBOOL(S, li) != 0) { return 0x68; }
     var lt = GLTYPE(S, li);
+    var fk = _amp_fkl(lt);
+    if (fk != 0) { return fk; }
     if (lt != 1) { if (lt != 2) { if (lt != 4) { return 0; } } }
     if (GSLICE_W(S, li) < 0) { return lt | 0x40; }
     return lt;
 }
+# The kind of a float slot type (F64_TYID 0x28, F32_TYID 0x24), else 0 (D70).
+fn _amp_fkl(t): i64 {
+    if (t == F64_TYID) { return 0x28; }
+    if (t == F32_TYID) { return 0x24; }
+    return 0;
+}
+# A scalar global's `f64` / `f32` / `bool` kind (D70): its 8-byte slot, no array (GVSGN >= 0x100) or struct value.
+fn _amp_fkg(S, vi): i64 {
+    if (L64(_vars_base + vi * 8) != 8) { return 0; }
+    if (GVSGN(S, vi) >= 0x100) { return 0; }
+    if (GVPM(S, vi) != 0) { return 0; }
+    if (GVBOOL(S, vi) == 1) { return 0x68; }
+    return _amp_fkl(GVTYPE(S, vi));
+}
 # A global's kind when it is a packed `i8`..`i32` / `u8`..`u32` scalar (its var size 1 / 2 / 4, GVSGN 1 when
-# signed), as the name's own read takes it — else 0 (a struct value under 8 B, an array, any 8-byte slot).
+# signed), as the name's own read takes it, or (D70) an `f64` / `f32` / `bool` scalar — else 0 (a struct value under
+# 8 B, an array, any other 8-byte slot).
 fn _amp_gew(S, vi): i64 {
     if (vi < 0) { return 0; }
+    var fk = _amp_fkg(S, vi);
+    if (fk != 0) { return fk; }
     if (GVTYPE(S, vi) <= 0) { return 0; }
     var sz = L64(_vars_base + vi * 8);
     if (sz != 1) { if (sz != 2) { if (sz != 4) { return 0; } } }

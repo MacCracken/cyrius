@@ -2569,7 +2569,15 @@ as `x = v` / `x OP= v` do — `var y = *(&GQ);` of a packed `i32` global is GQ, 
 next global alone, `*(&a)` of an `i32` -1 is -1. ⚠ Through 6.7.15 it was the untyped word: the read took the next
 global's bytes (5 + (9 << 32) where 5 is right) and an `i32` -1's zero high half (4294967295), and the store wrote 8
 bytes, zeroing the next global. A parameter is x too since 6.7.16 (D72: a narrow parameter is narrowed in the fn; it
-kept the caller's word). A closure's capture keeps its env word, which holds the value. **`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
+kept the caller's word). A closure's capture keeps its env word, which holds the value. **And of an `f64` / `f32` /
+`bool` variable** (6.7.16, the user's decision D70, 2026-10-20) `*(&f)` is f, with f's type: `var g: f64 = *(&f) + 1.0;`
+is 2.5, `*(&f) = 2.5` and `*(&f) += 1.0` store and add as floats (an `f32` at its 4 bytes; an f64 into an `f32` rounds
+and an integer constant warns, as `f = v` does), and `*(&b)` of a bool is a boolean value — a `b: bool` argument, a
+bool declaration, an if-expression's bool branch take it — while `*(&b) = 5` and `*(&b) += 1` are refused naming b, as
+`b = 5` and `b += 1` are; a local, a parameter or a global, in a fn, a for step and at top level. ⚠ Through 6.7.15 it
+was the untyped word: `*(&f) + 1.0` added the two bit patterns as integers (warned *integer arithmetic with an f64
+right operand*), and `*(&b)` was an integer, refused into a bool. A closure's captured f64 keeps its env word.
+**`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
 decision D71, 2026-10-20): wherever a `Str` value is taken, `*(&t)` / `*&t` is t's header's address, as `t` is (see
 *An inline `Str` passes its header*) — `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) is a second handle on t's header,
 `f(*(&t))`, `fp(*(&t))` into a `*Str`, `gg<Str>(*(&t))`, the inferred `gg(*&t)` (which binds `T = Str`) and
@@ -7153,7 +7161,8 @@ Write `x != 0` to make a bool of an integer. Arithmetic over a bool is an intege
 `ok + 0`, `-ok`, `~ok` and `(a < b) + 1` are refused into a bool. An untyped variable stays an
 integer whatever initialised it (`var x = a < b;` then `var c: bool = x;` is refused) — inference
 would change what existing programs do. Raw memory is not checked: `store64(p, 7)` and `*p = 7`
-through a `*bool`, and `ret2`, write what they are given; a `*p` read is an integer.
+through a `*bool`, and `ret2`, write what they are given; a `*p` read is an integer. (`*(&b)` of a bool variable is
+b itself, read and checked as b is — 6.7.16, D70.)
 
 **A bool reads as the integer 0 or 1 everywhere** — `n + ok`, `ok * 4`, a bool passed to an
 `i64` parameter — and a condition (`if`, `while`, `&&`) still takes any integer.

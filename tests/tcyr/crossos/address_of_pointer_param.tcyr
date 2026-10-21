@@ -25,6 +25,12 @@
 # 6.7.16 — `*(&pi) OP= n` steps as `pi OP= n` (the amp_cop_* rows; it stepped one byte), and (the user's D21,
 # 2026-10-19) `*(&x)` of a narrow integer x reads and writes x's width, as x itself (the amp_narrow_* rows; it was the
 # untyped word). issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md
+#
+# 6.7.16 (D70, the user's decision, 2026-10-20) — `*(&f)` of an f64 / f32 / bool variable is f, with f's type (the
+# amp_float_* rows): `*(&f) + 1.0` is a float add (it was an integer add of f's bits, warned), `*(&f) = 2.5` and
+# `*(&f) += 1.0` store and add as floats (an f32 at its 4 bytes), and `*(&b)` of a bool is a boolean (a `b: bool`
+# argument, a bool declaration, an if-expression's bool branch). A capture keeps its env word (the control).
+# issues/2026-10-19-dereference-of-address-of-float-variable-is-untyped-word.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
@@ -229,8 +235,76 @@ fn row_amp_narrow_expr(): i64 { var a: i32 = 0 - 1; return (*(&a) + 1) * 10 + an
 fn row_amp_narrow_plus0(): i64 { AN_GQ = 5; AN_GR = 9; if (*(&AN_GQ + 0) == 5 + (9 << 32)) { return 1; } return 0; }
 fn row_amp_narrow_capture(): i64 { var a: i32 = 0 - 1; var f = |k| *(&a) + k; return fncall1(f, 0); }
 fn row_amp_narrow_word(): i64 { var n = 0x123456789; return *(&n); }
+
+# --- 6.7.16 (D70): `*(&f)` of an f64 / f32 / bool variable is f, with f's type -------------------------------------------
+var AF_G: f64 = 1.5;
+var AF_S: f32 = 2.5;
+var AF_N = 7;          # the global after AF_S: a store through `*(&AF_S)` keeps it
+var AF_B: bool = true;
+fn af_tb(x: bool): i64 { if (x) { return 1; } return 0; }
+fn af_par(x: f64): i64 { return f64_to((*(&x) + 1.0) * 10.0); }
+fn af_pst(x: f64): i64 { *(&x) += 1.0; return f64_to(x * 10.0); }
+fn af_bpar(b: bool): i64 { return af_tb(*(&b)); }
+fn row_amp_float_local(): i64 { var f: f64 = 1.5; var g: f64 = *(&f) + 1.0; return f64_to(g * 10.0); }
+fn row_amp_float_global(): i64 { AF_G = 1.5; return f64_to((*(&AF_G) + 1.0) * 10.0); }
+fn row_amp_float_param(): i64 { return af_par(1.5) * 100 + af_pst(1.5); }
+fn row_amp_float_store(): i64 {
+    var f: f64 = 1.5;
+    *(&f) = 2.5;
+    var a = f64_to(f * 10.0);
+    *(&f) += 1.0;
+    return a * 100 + f64_to(f * 10.0);
+}
+fn row_amp_float_gstore(): i64 { AF_G = 1.5; *(&AF_G) = 4.5; *(&AF_G) *= 2.0; return f64_to(AF_G * 10.0); }
+fn row_amp_float_wrap(): i64 { var f: f64 = 1.5; return f64_to((*((&f)) + *&f) * 10.0); }
+fn row_amp_float_f32(): i64 {
+    var s: f32 = 2.5;
+    var r = 0;
+    if (*(&s) == s) { r = r + 1; }
+    *(&s) = 1.5;                      # an f64 into an f32 rounds, as `s = 1.5` does
+    if (load32(&s) == 0x3FC00000) { r = r + 10; }
+    *(&s) += f32_from(1.0);
+    if (load32(&s) == 0x40200000) { r = r + 100; }
+    return r;
+}
+fn row_amp_float_f32_4(): i64 {
+    var s: f32 = 2.5;
+    store64(&s, (0x77 << 56) | load32(&s));
+    *(&s) = 1.5;                      # an f32 is stored at its 4 bytes: the high half is kept
+    var r = (load64(&s) >> 56) * 10;
+    if (load32(&s) == 0x3FC00000) { r = r + 1; }
+    return r;
+}
+fn row_amp_float_gf32(): i64 {
+    AF_N = 7;
+    AF_S = 2.5;
+    var r = 0;
+    if (*(&AF_S) == AF_S) { r = r + 1; }
+    *(&AF_S) = 0.5;
+    if (load32(&AF_S) == 0x3F000000) { r = r + 10; }
+    if (AF_N == 7) { r = r + 100; }
+    return r;
+}
+fn row_amp_float_bool(): i64 {
+    var b: bool = true;
+    var c: bool = *(&b);              # a boolean value: a bool declaration takes it
+    var r = af_tb(*(&b)) * 1000 + c * 100 + af_bpar(false) * 10 + af_tb(*(&AF_B));
+    *(&b) = false;
+    var e: bool = if (r > 0) { *(&b) } else { true };   # an if-expression's bool branch
+    return r * 10 + e;
+}
+fn row_amp_float_for(): i64 {
+    var f: f64 = 0.5;
+    var n = 0;
+    for (var i = 0; i < 3; *(&f) += 1.0) { i = i + 1; n = n + 1; }
+    return f64_to(f * 10.0) * 10 + n;
+}
+fn row_amp_float_capture(): i64 { var f: f64 = 2.0; var k = |z| *(&f) + z; if (fncall1(k, 0) == load64(&f)) { return 1; } return 0; }
 *(&AN_TQ) = 7;
 var AN_TOPV = *(&AN_TQ) * 10 + AN_TR;
+var AF_TF: f64 = 0.5;
+*(&AF_TF) += 1.0;
+var AF_TOPV = f64_to(*(&AF_TF) * 10.0);
 
 assert_eq(row_ad_param_field(), 24, "D21: (*(&q)).y and **(&q) of a *Ao16 parameter: its field, its struct");
 assert_eq(row_ad_local_field(), 24, "D21: (*(&q)).y / (*((&q))).x of a *Ao16 local");
@@ -271,6 +345,19 @@ assert_eq(row_amp_narrow_plus0(), 1, "D21 control: *(&GQ + 0) is still the byte 
 assert_eq(row_amp_narrow_capture(), 0 - 1, "D21 control: *(&a) of a captured i32 -1 is its env word, -1");
 assert_eq(row_amp_narrow_word(), 0x123456789, "D21 control: *(&n) of an i64 is the word");
 assert_eq(AN_TOPV, 79, "D21 (6.7.16): top level *(&TQ) = 7 and its read at 4 bytes");
+assert_eq(row_amp_float_local(), 25, "D70 (6.7.16): var g: f64 = *(&f) + 1.0 of an f64 local 1.5 is 2.5");
+assert_eq(row_amp_float_global(), 25, "D70 (6.7.16): *(&G) + 1.0 of an f64 global 1.5 is 2.5");
+assert_eq(row_amp_float_param(), 2525, "D70 (6.7.16): *(&x) + 1.0 and *(&x) += 1.0 of an x: f64 parameter 1.5");
+assert_eq(row_amp_float_store(), 2535, "D70 (6.7.16): *(&f) = 2.5, then *(&f) += 1.0, as floats");
+assert_eq(row_amp_float_gstore(), 90, "D70 (6.7.16): *(&G) = 4.5, *(&G) *= 2.0 of an f64 global");
+assert_eq(row_amp_float_wrap(), 30, "D70 (6.7.16): *((&f)) + *&f of an f64 1.5 is 3.0");
+assert_eq(row_amp_float_f32(), 111, "D70 (6.7.16): *(&s) of an f32 local == s; *(&s) = 1.5 rounds; *(&s) += 1.0f");
+assert_eq(row_amp_float_f32_4(), 1191, "D70 (6.7.16): *(&s) = 1.5 of an f32 stores its 4 bytes, the slot's high half kept");
+assert_eq(row_amp_float_gf32(), 111, "D70 (6.7.16): *(&S) of an f32 global == S; *(&S) = 0.5; the next global kept");
+assert_eq(row_amp_float_bool(), 11010, "D70 (6.7.16): *(&b) of a bool is a boolean: a bool argument, declaration, if-expression branch");
+assert_eq(row_amp_float_for(), 353, "D70 (6.7.16): a for step *(&f) += 1.0 adds 1.0 a turn");
+assert_eq(AF_TOPV, 15, "D70 (6.7.16): top level *(&TF) += 1.0 of an f64 global 0.5, then its read");
+assert_eq(row_amp_float_capture(), 1, "D70 control: *(&f) of a captured f64 is its env word (an integer + 0)");
 assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
 assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
 assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");
