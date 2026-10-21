@@ -6083,6 +6083,7 @@ fn PARSE_GVAR_REG(S): i64 {
             _pub_pending = _dg_pub;
             dgs3 = _gv_reg8(S, dg3, 0, sti);
         }
+        _gzf_dt_reg(S, dgs1, dgs2, dgs3);   # 6.7.16 (D98): its f64 elements, typed at the end of pass 1
         _gv_defer(S, sti, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
         _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
         return 0;
@@ -6301,6 +6302,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var gvi = _gv_fold_b(S, vcnt, sti, ann_bool);   # 6.6.6: a redeclaration reuses the global's slot; 6.7.14: + bool
     _gz_reg(S, gvi, is_struct, ssid, ann_sid, rhs_ti);   # 6.7.10 (B7-1g): judged at the end of pass 1
     _gu_reg(S, gvi, ann_ti + is_struct, rhs_ti);         # 6.7.14 (D29 / D30): an untyped whole call, typed there
+    _gzf_reg(S, gvi, ann_ti + is_struct, rhs_ti, 0 - 1);   # 6.7.16 (D98): an untyped f64 call, typed there too
     _GVAR_VIS(S, gvi, sti);
     _gv_last_marks(S, gvi, ann_bool, ann_scalar, ann_ti);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer and u128 marks
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
@@ -11548,6 +11550,7 @@ fn PARSE_VAR(S): i64 {
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
         if (ann_ti == 0) { pscale = _gu_late(S, pscale, scv_start); }   # 6.7.14 (D29 / D30): `var x = mk1();`
+        lfloat = _gzf_late(lfloat, pscale, scalar_type + slice_elt_w + dfc, _ti_inferred_sid);   # 6.7.16 (D98)
         var vcnt = GVCNT(S);
         S64(_varn_base + vcnt * 8, noff);
         if (lfloat != 0) {
@@ -12974,14 +12977,23 @@ fn _gu_reg(S, gvi, typed, ti): i64 {
 # 6.7.16: to a fixpoint — a reading may take another noted global's struct (`mkc(BX)`, BX swept below it), which the
 # replay reads as the sweep left it, so the notes are read again until none changes (one pass per note at most).
 # CHANGELOG [6.7.16]
+# 6.7.16 (D98): and the f64 notes (`_gzf_pass`) in the same fixpoint — an f64 global can bind a generic call's T, and a
+# struct one a method's receiver. CHANGELOG [6.7.16]
 fn _gu_sweep(S): i64 {
-    if (_gu_v == 0) { return 0; }
+    if (_gu_v == 0) { if (_gzf_v == 0) { return 0; } }
     var sv = GTI(S);
-    var n = vec_len(_gu_v);
+    var n = 0;
+    if (_gu_v != 0) { n = vec_len(_gu_v); }
+    var m = 0;
+    if (_gzf_v != 0) { m = vec_len(_gzf_v); }
     var k = 0;
-    while (_gu_pass(S, n) == 1) {
+    var go = 1;
+    while (go == 1) {
+        go = 0;
+        if (n > 0) { if (_gu_pass(S, n) == 1) { go = 1; } }
+        if (m > 0) { if (_gzf_pass(S, m) == 1) { go = 1; } }
         k = k + 3;
-        if (k > n) { break; }
+        if (k > n + m) { go = 0; }
     }
     STI(S, sv);
     return 0;
@@ -13013,6 +13025,251 @@ fn _gu_set(S, i, sid): i64 {
     SVTYPE(S, gvi, 0);
     SVPM(S, gvi, 0);
     return 0;
+}
+# ⛔ 6.7.16 (D98, the user's decision, 2026-10-20) — AN UNTYPED DECLARATION-ZONE GLOBAL FROM AN f64 CALL IS AN f64, AND SO
+# IS A ZONE DESTRUCTURE'S f64 ELEMENT, as the same line in a fn and after the first statement types it (PARSE_VAR's
+# `_ti_inferred_sid` -9 — `_gzf_late` there — and its destructure's GFRS / GFRT). `var ZA, ZB = mm3(1.5);` (mm3 written
+# `: (f64, i64)`) bound ZA an untyped word holding the double's bits, so `f64_to(ZA * 2.0) + ZB` warned "integer
+# arithmetic with an f64 right operand" and was 7 where 10 is right; `var Y = mkf(1.5);` (mkf `: f64`) the same. The
+# zone's initialiser is parsed only by the replay — after every fn body, and in a `kernel;` build after the program —
+# so its type is read from the tokens at the end of pass 1 (`_gu_sweep`), nothing instantiated (`_gu_tp`, `_gu_mtp`,
+# `_gu_xlist`), and every reader sees it. Notes: (slot, initialiser token, element — -1 a single name —, verdict, the
+# slot's float-initialiser mark before it). CHANGELOG [6.7.16]
+var _gzf_v = 0;
+# PARSE_VAR's global arm (after the first statement), the untyped initialiser parsed: F64_TYID when the line takes an
+# f64 as in a fn (`inf` its `_ti_inferred_sid`, -9; `ps` its pointer / struct, `other` any scalar width, slice element
+# or float copy it took), else `lfloat` as it was.
+fn _gzf_late(lfloat, ps, other, inf): i64 {
+    if (lfloat != 0) { return lfloat; }
+    if (ps != 0) { return 0; }
+    if (other != 0) { return 0; }
+    if (inf != 0 - 9) { return 0; }
+    return F64_TYID;
+}
+fn _gzf_reg(S, gvi, typed, ti, k): i64 {
+    if (typed != 0) { return 0; }
+    if (ti <= 0) { return 0; }
+    if (gvi < 0) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t != 2) { if (t != 10) { return 0; } }
+    if (_gzf_v == 0) { _gzf_v = vec_new(); }
+    vec_push(_gzf_v, gvi);
+    vec_push(_gzf_v, ti);
+    vec_push(_gzf_v, k);
+    vec_push(_gzf_v, 0);
+    vec_push(_gzf_v, 0);
+    return 0;
+}
+# PARSE_GVAR_REG's destructure (the cursor on its `=`): each name's slot noted with its element.
+fn _gzf_dt_reg(S, g1, g2, g3): i64 {
+    if (PEEKT(S) != 4) { return 0; }
+    var ti = GTI(S) + 1;
+    _gzf_reg(S, g1, 0, ti, 0);
+    _gzf_reg(S, g2, 0, ti, 1);
+    if (g3 >= 0) { _gzf_reg(S, g3, 0, ti, 2); }
+    return 0;
+}
+# One reading of the `m` note words; 1 = a global's type changed. A slot typed here loses its float-initialiser mark
+# (`_UFV_G`: an untyped global holding a float's bits), as a declared f64 has none; untyped again, it gets it back.
+fn _gzf_pass(S, m): i64 {
+    var ch = 0;
+    var i = 0;
+    while (i < m) {
+        var gvi = vec_get(_gzf_v, i);
+        var ti = vec_get(_gzf_v, i + 1);
+        var k = vec_get(_gzf_v, i + 2);
+        var f = 0;
+        if (k < 0) { f = _gzf_init(S, ti, _gz_end(S, ti)); }
+        else { f = _gzf_elem(S, ti, k); }
+        if (f != vec_get(_gzf_v, i + 3)) {
+            vec_set(_gzf_v, i + 3, f);
+            if (f == 1) {
+                vec_set(_gzf_v, i + 4, _gzf_gfi(gvi));
+                SVTYPE(S, gvi, F64_TYID);
+                SGFI(S, gvi, 0);
+            } else {
+                SVTYPE(S, gvi, 0);
+                SGFI(S, gvi, vec_get(_gzf_v, i + 4));
+            }
+            ch = 1;
+        }
+        i = i + 5;
+    }
+    return ch;
+}
+fn _gzf_gfi(vi): i64 {
+    if (_gfi_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    return load8(_gfi_base + vi);
+}
+# 1 = the untyped zone initialiser [b, e) is an f64 by PARSE_VAR's rule: a leading free call (`_var_rhs_csid`), a call
+# through `fncallN(&f, ..)` / `callptr(&f, ..)` (`_var_rhs_if64`) or a whole call in parentheses (`_var_rhs_wsid`) that
+# returns f64, the whole initialiser still an f64 (`_gzf_lead`); or one chain `x.m(..)` / `w.p.m(..)` / `f().m(..)` that
+# ends in a method returning f64 (`_var_rhs_msid`, `_var_rhs_mchain`).
+fn _gzf_init(S, b, e): i64 {
+    if (b >= e) { return 0; }
+    var t = TOKTYP(S, b);
+    if (t == 10) { return _gzf_wrap(S, b, e); }
+    if (t != 2) { return 0; }
+    if (_icall_open_at(S, b) >= 0) {
+        if (_icall_rs_at(S, b) != 0 - 9) { return 0; }
+        return _gzf_lead(S, b, e);
+    }
+    if (_gcall_open(S, b) >= 0) { if (_call_dotted(S, b) == 0) {
+            if (_gzf_call(S, b) == 0) { return 0; }
+            return _gzf_lead(S, b, e);
+        } }
+    return _gzf_chain(S, b, e);
+}
+# ... `(` at b: parentheses that wrap one whole free call or known `&f` call returning f64, whatever follows the wrap.
+fn _gzf_wrap(S, b, e): i64 {
+    var pe = _pw_end;
+    var k = _pwrap_k(S, b);
+    _pw_end = pe;
+    var c = b + k;
+    if (_icall_open_at(S, c) >= 0) {
+        if (_icall_rs_at(S, c) != 0 - 9) { return 0; }
+    } else {
+        if (TOKTYP(S, c) != 2) { return 0; }
+        if (_var_rhs_call(S, c) == 0) { return 0; }
+        if (_call_ends_at(S, c, 11) == 0) { return 0; }
+        if (_gzf_call(S, c) == 0) { return 0; }
+    }
+    return _gzf_lead(S, b, e);
+}
+# 1 = [b, e) keeps its leading operand's type through the parse: no operator, or only `+ - * /` (`+%`, `-%`, `*%`)
+# applied last down its left side — the f64 arithmetic its leading f64 drives; a comparison, a logic link, `% & | ^ <<
+# >>` give an integer (6.7.13's `GESTYPE` test in `_var_rhs_post`).
+fn _gzf_lead(S, b, e): i64 {
+    var mx = _gz_mx;
+    _gz_mx = 1;
+    var p = _gz_split(S, b, e);
+    _gz_mx = mx;
+    if (p == 0 - 1) { return 1; }
+    if (p < 0) { return 0; }
+    var t = TOKTYP(S, p);
+    if (t == 6 || t == 113 || t == 7 || t == 116 || t == 8 || t == 119 || t == 9) { return _gzf_lead(S, b, p); }
+    return 0;
+}
+# 1 = the free call `f(..)` / `g<..>(..)` at token c returns f64: its fn's `: f64`, or a generic's `: T` with T bound to
+# f64 at this call (`_gzf_bind`).
+fn _gzf_call(S, c): i64 {
+    var fi = FINDFN(S, TOKVAL(S, c));
+    if (fi < 0) { return 0; }
+    var r = GFRS(S, fi);
+    if (r == 0 - 9) { return 1; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    if (r > 0) { return 0; }
+    var w = _gen_ret_tp(S, fi);
+    if (w < 0) { return 0; }
+    return _gzf_bind(S, c, fi, w);
+}
+# 1 = type parameter `w` of generic `fi` binds f64 at the free call whose name is token c: its explicit list as the call
+# parses it (`_gu_xlist`), else its carrying argument as the sweep reads it (`_gu_tp`; a miss binds nothing).
+fn _gzf_bind(S, c, fi, w): i64 {
+    var b = 0;
+    if (TOKTYP(S, c + 1) == 19) {
+        if (_gu_xlist(S, c, fi) == 0) { return 0; }
+        b = _gu_x0;
+        if (w == 1) { b = _gu_x1; }
+    } else {
+        var sc = _gi_sc;
+        var ms = _gu_miss;
+        _gi_sc = 0;
+        _gu_miss = 0;
+        b = _gu_tp(S, c, fi, w);
+        if (_gu_miss == 1) { b = 0; }
+        _gi_sc = sc;
+        _gu_miss = ms;
+    }
+    if (b == 0 - 9) { return 1; }
+    return 0;
+}
+# ... a whole chain [b, e) ending in a method call (`_gz_chain` records its last method step) that returns f64.
+fn _gzf_chain(S, b, e): i64 {
+    var ft = _gz_mfi;
+    _gz_mfi = 0 - 1;
+    _gz_chain(S, b, e);
+    var mf = _gz_mfi;
+    _gz_mfi = ft;
+    if (mf < 0) { return 0; }
+    if (_call_close(S, _gz_mop) != e - 1) { return 0; }
+    return _gzf_mret(S, mf, 0 - 1);
+}
+# 1 = method `mf` (the step `_gz_mstep` recorded: its name token, `(` and receiver) returns f64 — written, or a generic's
+# type parameter bound to f64 at the call; `w` the type parameter its return names (-1: read from its `: T`).
+fn _gzf_mret(S, mf, w): i64 {
+    if (w < 0) {
+        if (GFRS(S, mf) == 0 - 9) { return 1; }
+        if (GFTP(S, mf) == 0) { return 0; }
+        if (GFRS(S, mf) > 0) { return 0; }
+        w = _gen_ret_tp(S, mf);
+        if (w < 0) { return 0; }
+    }
+    var b = 0;
+    if (TOKTYP(S, _gz_mti + 1) == 19) {
+        if (_gu_xlist(S, _gz_mti, mf) == 0) { return 0; }
+        b = _gu_x0;
+        if (w == 1) { b = _gu_x1; }
+    } else { b = _gu_mtp(S, mf, w); }
+    if (b == 0 - 9) { return 1; }
+    return 0;
+}
+# 1 = element `k` of the destructure whose right-hand side starts at token ti is an f64, as PARSE_VAR's destructure takes
+# it (`_dt_call_fn`'s callee): an f64 callee's every element, a written `(.., f64, ..)` element (GFRT), or a generic's
+# element naming a type parameter bound to f64 at the call — a free call `mm2<f64>(..)` / `mm2(h)`, a method on a
+# single name `G.gm(..)` / `G.gm<f64>(..)` — inside any parentheses wrapping the call.
+fn _gzf_elem(S, ti, k): i64 {
+    var a = ti;
+    while (TOKTYP(S, a) == 10) { a = a + 1; }
+    var fi = 0 - 1;
+    var mth = 0;
+    if (_gcall_open(S, a) >= 0) { fi = FINDFN(S, TOKVAL(S, a)); }
+    else {
+        var o = _mcall_open(S, a, 0 - 1);
+        if (o < 0) { return 0; }
+        var rs = _recv_sid(S, TOKVAL(S, a));
+        if (rs <= 0) { return 0; }
+        fi = _meth_fn_at(S, rs, TOKVAL(S, a + 2), a + 2);
+        if (fi < 0) { return 0; }
+        _gz_mstep(fi, a + 2, o, rs);
+        mth = 1;
+    }
+    if (fi < 0) { return 0; }
+    var r = GFRS(S, fi);
+    if (r == 0 - 9) { return 1; }
+    if (r != MULTIRET_SID) { return 0; }
+    if (GFRT(S, fi, k) == 0 - 9) { return 1; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    var w = _gzf_rtp(S, fi, k);
+    if (w < 0) { return 0; }
+    if (mth == 1) { return _gzf_mret(S, fi, w); }
+    return _gzf_bind(S, a, fi, w);
+}
+# The type parameter (0 / 1) element `k` of generic `fi`'s `: (..)` return names, alone; else -1.
+fn _gzf_rtp(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0 - 1; }
+    var c = _tok_close_paren(S, o);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, c + 2) != 10) { return 0 - 1; }
+    var i = c + 3;
+    var n = 0;
+    while (n < k) {
+        i = _pl_next(S, i);
+        if (TOKTYP(S, i) != 31) { return 0 - 1; }
+        i = i + 1;
+        n = n + 1;
+    }
+    if (TOKTYP(S, i) != 2) { return 0 - 1; }
+    var nx = TOKTYP(S, i + 1);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    var rn = TOKVAL(S, i) + 1;
+    var tp = GFTP(S, fi);
+    if ((tp & 0xFFFFFFFF) == rn) { return 0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == rn) { return 1; }
+    return 0 - 1;
 }
 # The struct the zone initialiser at token `ti` binds, from its tokens: a whole free call's return (`_gz_call_rs`: a
 # generic's fixed or bound `: T` return; 6.7.15, a generic struct's instance through `_gu_gen`), else a whole method /

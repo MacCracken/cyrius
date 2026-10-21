@@ -83,7 +83,12 @@ initialiser is still an f64 (6.7.13): `var x = f() * 2.0;` is an f64, `var c = f
 `var c = f() > 0.1 && k == 1;` are the integer 0 / 1 a comparison is (through 6.7.12 `c` was typed
 f64, so `-c` flipped its sign bit and `0 - c` warned). The leading call may be in parentheses (6.7.14):
 `var x = (f()) * 2.0;` is an f64 and `var c = (f()) < 1.0;` an integer, as without them (`x` was an untyped
-word holding the product's bits). It does NOT cover an **untyped**
+word holding the product's bits). An untyped GLOBAL takes the same type at top level — after the first statement, and
+in the declaration zone above it, whose initialiser is read from its tokens at the end of pass 1 so that every fn body
+and later global sees it (6.7.16, the user's decision D98, 2026-10-20: `var Y = mkf(1.5);` was an untyped word at top
+level, so `Y * 2.0` warned and computed on the bits) — and a zone destructure binds its `f64` elements as a fn's
+does: `var ZA, ZB = mm3(1.5);` with `fn mm3(x: f64): (f64, i64)`, a generic's `(V, i64)` at V = f64, a method's.
+It does NOT cover an **untyped**
 variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
 untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
 knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
