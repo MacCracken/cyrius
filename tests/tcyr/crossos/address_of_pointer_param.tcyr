@@ -29,7 +29,9 @@
 # 6.7.16 (D70, the user's decision, 2026-10-20) — `*(&f)` of an f64 / f32 / bool variable is f, with f's type (the
 # amp_float_* rows): `*(&f) + 1.0` is a float add (it was an integer add of f's bits, warned), `*(&f) = 2.5` and
 # `*(&f) += 1.0` store and add as floats (an f32 at its 4 bytes), and `*(&b)` of a bool is a boolean (a `b: bool`
-# argument, a bool declaration, an if-expression's bool branch). A capture keeps its env word (the control).
+# argument, a bool declaration, an if-expression's bool branch). A capture keeps its env word (the control). As a dyn
+# source `*(&b)` is b, so it takes bool's impl (D70's "the bool overload"; `*(&f)` f64's, `*(&h)` of a narrow `h` its
+# type's — the amp_float_dyn rows; each was refused "cannot form dyn .. from this expression").
 # issues/2026-10-19-dereference-of-address-of-float-variable-is-untyped-word.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
@@ -39,6 +41,14 @@ include "lib/fnptr.cyr"
 struct Ao16 { x; y; }        # 16 B: the size the defect needed
 struct Ao8 { x; }            # 8 B
 struct Ao24 { a; b; c; }     # 24 B: the retptr class
+# 6.7.16 (D70): the amp_float_dyn rows' trait (declared here, before the first top-level statement).
+trait AfNum { fn num(self): i64; }
+impl AfNum for i64 { fn num(self): i64 { return self + 1000; } }
+impl AfNum for bool { fn num(self): i64 { return self + 5000; } }
+impl AfNum for f64 { fn num(self: f64): i64 { var y: f64 = self * 2.0; if (y == 5.0) { return 6000; } return 6001; } }
+impl AfNum for f32 { fn num(self): i64 { if ((self & 0xFFFFFFFF) == 0x40200000) { return 7000; } return 7001; } }
+impl AfNum for i16 { fn num(self): i64 { return self + 4000; } }
+struct AfW { o: dyn AfNum; }
 
 # --- a `*T` parameter: `&q` is its slot, so `load64(&q)` is q ------------------------------------
 fn ao16_slot(q: *Ao16): i64 { return load64(&q); }
@@ -300,6 +310,26 @@ fn row_amp_float_for(): i64 {
     return f64_to(f * 10.0) * 10 + n;
 }
 fn row_amp_float_capture(): i64 { var f: f64 = 2.0; var k = |z| *(&f) + z; if (fncall1(k, 0) == load64(&f)) { return 1; } return 0; }
+fn af_nk(o: dyn AfNum): i64 { var w: AfW = AfW { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }
+fn af_rb(b: bool): dyn AfNum { return *(&b); }
+var AF_GF: f64 = 2.5;
+fn row_amp_float_dyn(): i64 {
+    var b: bool = false;
+    var f: f64 = 2.5;
+    var s: f32 = 2.5;
+    var h: i16 = 0 - 3;
+    var r = 0;
+    if (af_nk(*(&b)) == 5000) { r = r + 1; }          # an argument: bool's impl
+    if (af_nk(*&f) == 6000) { r = r + 10; }           # f64's
+    if (af_nk(*(&s)) == 7000) { r = r + 100; }        # f32's
+    if (af_nk(*(&h)) == 3997) { r = r + 1000; }       # a narrow i16's (D21)
+    var o: dyn AfNum = *((&b));
+    if (af_nk(o) == 5000) { r = r + 10000; }          # a declaration
+    o = *(&AF_GF);
+    if (af_nk(o) == 6000) { r = r + 100000; }         # an assignment, a global
+    if (af_nk(af_rb(true)) == 5001) { r = r + 1000000; }   # a return
+    return r;
+}
 *(&AN_TQ) = 7;
 var AN_TOPV = *(&AN_TQ) * 10 + AN_TR;
 var AF_TF: f64 = 0.5;
@@ -358,6 +388,7 @@ assert_eq(row_amp_float_bool(), 11010, "D70 (6.7.16): *(&b) of a bool is a boole
 assert_eq(row_amp_float_for(), 353, "D70 (6.7.16): a for step *(&f) += 1.0 adds 1.0 a turn");
 assert_eq(AF_TOPV, 15, "D70 (6.7.16): top level *(&TF) += 1.0 of an f64 global 0.5, then its read");
 assert_eq(row_amp_float_capture(), 1, "D70 control: *(&f) of a captured f64 is its env word (an integer + 0)");
+assert_eq(row_amp_float_dyn(), 1111111, "D70 (6.7.16): *(&b) / *&f / *(&s) / *(&h) as a dyn source take bool's / f64's / f32's / i16's impl");
 assert_eq(row_slot16(), 1, "*Ao16 (16 B) parameter: load64(&q) is q");
 assert_eq(row_slot24(), 1, "*Ao24 (24 B) parameter: load64(&q) is q");
 assert_eq(row_second(), 1, "*Ao16 as the second parameter: load64(&q) is q");

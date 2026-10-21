@@ -1237,7 +1237,19 @@ fn _dyn_src_in(S, a, b): i64 {
         c = _dyn_schain(S, a, b);
         if (c >= 0) { return c; }
     }
+    var dn = _dyn_amp_name(S, a, b);   # 6.7.16 (D70): `*(&b)` is b
+    if (dn >= 0) { return _dyn_src_name(S, dn); }
     return _dyn_f5(S, a);
+}
+# ⛔ 6.7.16 (D70, the user's decision, 2026-10-20: "`*(&b)` of a bool is a boolean, so it takes the bool overload") —
+# `*(& NAME)` / `*&NAME` (any parentheses) of a variable the dereference types as itself — a narrow integer (6.7.16's
+# D21), an `f64` / `f32` / `bool` (D70): `_amp_ew` — is NAME as a dyn source, so `var o: dyn Num = *(&b);` takes
+# bool's impl, `*(&f)` f64's, as `= b` / `= f` do (the data word is the value it reads). It was refused "cannot form
+# dyn Num from this expression". The NAME's token, else -1. CHANGELOG [6.7.16]
+fn _dyn_amp_name(S, a, b): i64 {
+    if (TOKTYP(S, a) != 8) { return 0 - 1; }
+    if (_amp_ew(S, a + 1, b) == 0) { return 0 - 1; }
+    return _ie_unparen(S, a + 1, b) + 1;
 }
 fn _dyn_lit(s, n): i64 {
     _dsr_tp = s;

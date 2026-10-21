@@ -2573,10 +2573,11 @@ kept the caller's word). A closure's capture keeps its env word, which holds the
 `bool` variable** (6.7.16, the user's decision D70, 2026-10-20) `*(&f)` is f, with f's type: `var g: f64 = *(&f) + 1.0;`
 is 2.5, `*(&f) = 2.5` and `*(&f) += 1.0` store and add as floats (an `f32` at its 4 bytes; an f64 into an `f32` rounds
 and an integer constant warns, as `f = v` does), and `*(&b)` of a bool is a boolean value — a `b: bool` argument, a
-bool declaration, an if-expression's bool branch take it — while `*(&b) = 5` and `*(&b) += 1` are refused naming b, as
-`b = 5` and `b += 1` are; a local, a parameter or a global, in a fn, a for step and at top level. ⚠ Through 6.7.15 it
+bool declaration, an if-expression's bool branch take it, and as a dyn source it takes bool's impl as `b` does (a narrow
+integer's `*(&h)` its type's) — while `*(&b) = 5` and `*(&b) += 1` are refused naming b, as `b = 5` and `b += 1` are;
+a local, a parameter or a global, in a fn, a for step and at top level. ⚠ Through 6.7.15 it
 was the untyped word: `*(&f) + 1.0` added the two bit patterns as integers (warned *integer arithmetic with an f64
-right operand*), and `*(&b)` was an integer, refused into a bool. A closure's captured f64 keeps its env word.
+right operand*), and `*(&b)` was an integer, refused into a bool and as a dyn source. A closure's captured f64 keeps its env word.
 **`*(&t)` of an inline `Str` is `t`** (6.7.16, the user's
 decision D71, 2026-10-20): wherever a `Str` value is taken, `*(&t)` / `*&t` is t's header's address, as `t` is (see
 *An inline `Str` passes its header*) — `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) is a second handle on t's header,
@@ -3229,7 +3230,7 @@ a `return` in a fn declared `: dyn Tr` — the compiler forms a dyn from a sourc
 | `&p` — an inline struct local, a by-value struct parameter, an inline struct global | p's struct | `&p` |
 | a `*T` local, parameter or global; an untyped impl `self`; a pointer-mode handle (`var h: Sq = alloc(8);`) | `T` | the pointer |
 | a `*T` field (`h.pp`); a call or a method returning `*T` | `T` | the pointer |
-| a **declared** scalar — a local, global or parameter annotated with an integer type, `f64`, `f32`, `bool`, an enum or `cstring` | the annotation | the **value** |
+| a **declared** scalar — a local, global or parameter annotated with an integer type, `f64`, `f32`, `bool`, an enum or `cstring`; `*(&x)` / `*&x` of a narrow integer, `f64`, `f32` or `bool` one (6.7.16, D70) | the annotation | the **value** |
 | a literal: `5`, `-5`, `'A'` (`i64`), `2.5` (`f64`), `true` / `false` (`bool`) | as listed | the value |
 | another dyn of the same trait (a name, a field, a call returning one) | — | a copy |
 

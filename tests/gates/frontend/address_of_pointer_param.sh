@@ -85,6 +85,9 @@
 #   M7  (2026-10-21) `_amp_lew` / `_amp_gew` without their D70 kinds (the 6.7.16 fix reverted) -> RED 13: R5
 #                                                    (`9223372036854775807 25 1`, warned) on all 5 legs; R5d (built
 #                                                    clean); T on all 7 legs (the bool rows refused: it did not build)
+#   M8  (2026-10-21) `_dyn_amp_name` answers -1 (`*(&b)` as a dyn source refused again) -> RED 7: T on all 7 legs
+#                                                    (row_amp_float_dyn's sources refused "cannot form dyn AfNum": it did
+#                                                    not build)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -116,7 +119,7 @@ R1=docs/development/issues/repros/2026-10-10-address-of-pointer-param-over-8b-is
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=71
+FLOOR=72
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 TC2=tests/tcyr/crossos/narrow_param_width.tcyr
 [ -f "$TC2" ] || { echo "FAIL: $G: $TC2 is missing"; exit 1; }
