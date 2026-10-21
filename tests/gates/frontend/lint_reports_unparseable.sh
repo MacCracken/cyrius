@@ -550,13 +550,21 @@ done
 # MUTATIONS (2026-10-20, a one-edit scratch copy of src/ each, installed as build/cycc): `_synonly_chain_call` without
 # `_synonly_mlist` -> so14a, so14c, so14d RED (+ the so14_bad1 / so14_bad3 position rows); the `sid == 0` arm back on
 # `_synonly_skip_chain` -> so14a-so14d RED (+ all three position rows).
+# so14e (the genbind review fix): a NAMED argument in those calls — `a.k(x: 1)`, `a.h.k(x: 2)`, `a.m<i64>(x: 2)` — was
+# "expected ')', got ':'" (each argument went straight to PCMPE); `_synonly_args` steps the `name:` label, and the
+# single-name method arm (`a.k(..)`, `_field_load_on`'s `sid == 0` arm) parses its list through it. ANTI-VACUOUS:
+# so14_bad4 / so14_bad5, a named argument followed by a stray token, are refused at it. MUTATIONS (2026-10-20, a
+# scratch copy of src/ each, installed as build/cycc): `_synonly_args` without the label step -> RED 5: so14e's three
+# --syntax-only / LINTED rows, the so14_bad4 / so14_bad5 position rows (the `:` reported); the method arm back on its own
+# PCMPE loop -> RED 4: so14e's three, so14_bad5's position row.
 echo "axis 14 — a call in the chain of a receiver whose struct is in a SIBLING file passes --syntax-only and lint:"
 printf 'struct Foo { g; h: *Foo; }\nimpl Foo { fn m<V>(self, x: V) { return x + self.g; } fn k(self, x) { return x; } }\n' > "$T/w/so14_sib.cyr"
 printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1);\n    return a.m<i64>(2) + a.g;\n}\nvar r = 0;\n' > "$T/w/so14a.cyr"
 printf 'fn f(a: Foo): i64 {\n    a.h.k(1);\n    return a.h.k(2) + a.h.g;\n}\nvar r = 0;\n' > "$T/w/so14b.cyr"
 printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1);\n    return a.h.m<i64>(2);\n}\nvar r = 0;\n' > "$T/w/so14c.cyr"
 printf 'fn f(a: Foo): i64 {\n    var v = a.m<i64>(1);\n    return v + a.h.m<Foo>(a);\n}\nvar r = 0;\n' > "$T/w/so14d.cyr"
-for f in so14a so14b so14c so14d; do
+printf 'fn f(a: Foo): i64 {\n    a.k(x: 1);\n    return a.h.k(x: 2) + a.m<i64>(x: 2) + a.h.m<i64>(x: 3) + a.m(x: 4);\n}\nvar r = 0;\n' > "$T/w/so14e.cyr"
+for f in so14a so14b so14c so14d so14e; do
     cat "$T/w/so14_sib.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
     j_rc=0
     ( cd "$T/w" && "$CYCC" < "joined_$f.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
@@ -571,7 +579,9 @@ done
 printf 'fn f(a: Foo): i64 {\n    a.m<i64>(1;\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad1.cyr"
 printf 'fn f(a: Foo): i64 {\n    a.h.k(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad2.cyr"
 printf 'fn f(a: Foo): i64 {\n    a.h.m<i64>(1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad3.cyr"
-for x in so14_bad1:2:15 so14_bad2:2:13 so14_bad3:2:18; do
+printf 'fn f(a: Foo): i64 {\n    a.h.k(x: 1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad4.cyr"
+printf 'fn f(a: Foo): i64 {\n    a.k(x: 1 2);\n    return 0;\n}\nvar r = 0;\n' > "$T/w/so14_bad5.cyr"
+for x in so14_bad1:2:15 so14_bad2:2:13 so14_bad3:2:18 so14_bad4:2:16 so14_bad5:2:14; do
     f=${x%%:*}; at=${x#*:}
     s_rc=0
     ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?

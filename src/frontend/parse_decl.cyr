@@ -70,12 +70,14 @@ fn _synonly_mlist(S): i64 {
     STI(S, e + 1);
     return 1;
 }
-# `(args)` at the cursor: each argument through PCMPE, the `)` consumed.
+# `(args)` at the cursor: each argument through PCMPE, the `)` consumed. A named argument's `name:` label is stepped
+# first (`_pd_label_at`): `a.h.m(k: 2)` is valid once the struct is in scope, and was "expected ')', got ':'". CHANGELOG [6.7.16]
 fn _synonly_args(S): i64 {
     STI(S, GTI(S) + 1);   # consume (
     if (PEEKT(S) != 11) {
         var go = 1;
         while (go == 1) {
+            if (_pd_label_at(S, GTI(S)) == 1) { STI(S, GTI(S) + 2); }
             PCMPE(S);
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { go = 0; }
@@ -2414,21 +2416,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (sid == 0 && m_bfi < 0) {
             # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
             # swallow the next genuine syntax error), but still CONSUME the argument
-            # list through PCMPE so a grammar error inside it is caught.
-            if (_syntax_only == 1) {
-                STI(S, GTI(S) + 1);            # consume (
-                if (PEEKT(S) != 11) {
-                    var sogo = 1;
-                    while (sogo == 1) {
-                        PCMPE(S);
-                        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                        else { sogo = 0; }
-                    }
-                }
-                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                STI(S, GTI(S) + 1);            # consume )
-                return 0;
-            }
+            # list through PCMPE so a grammar error inside it is caught (6.7.16: `_synonly_args`, named arguments too).
+            if (_syntax_only == 1) { _synonly_args(S); return 0; }
             if (_meth_sid0_said(S, noff, pfl_beg, idx) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
             ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
             return 0;
