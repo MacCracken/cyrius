@@ -141,7 +141,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 build() { rc=0; "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || rc=$?; }
 refused() {   # <name> <message fragment> <what>
     build "$1"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines (want 1)"
@@ -230,7 +230,7 @@ at() {   # <name> <line:col> <message fragment>: an error line at that position 
 }
 refused_at() {   # <name> <message fragment> <line:col> <what>: refused ONCE, at that position
     build "$1"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$4: BUILT (rc 0)"
     elif ! at "$1" "$3" "$2"; then bad "$4: refused, but not as expected at $3: $(grep '^error' "$T/$1.err" | head -1)"
     elif [ "$n" -ne 1 ]; then bad "$4: $n error lines (want 1): $(grep '^error' "$T/$1.err" | tr '\n' '|')"
@@ -241,7 +241,7 @@ if [ ! -f "$REPRO" ]; then bad "TS1/TS2: the filed repro is missing ($REPRO)"
 else
     cp "$REPRO" "$T/ts1.cyr"
     build ts1
-    n=$(grep -c '^error' "$T/ts1.err")
+    n=$(grep -c '^error' "$T/ts1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "TS1/TS2: the filed repro BUILT (rc 0)"
     else
         if at ts1 9:19 "expected ')', got '+'"; then ok "TS1: the repro's required member reports at \`+\` (9:19)"
@@ -363,7 +363,7 @@ lines_are() {   # <name> <what> <line:col|message>...: refused with exactly thes
     nm=$1; what=$2; shift 2
     build "$nm"
     if [ "$rc" -eq 0 ]; then bad "$what: BUILT (rc 0)"; return; fi
-    grep '^error' "$T/$nm.err" > "$T/$nm.got"
+    grep '^error' "$T/$nm.err" > "$T/$nm.got" || true
     : > "$T/$nm.want"
     for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$T/$nm.want"; done
     if cmp -s "$T/$nm.got" "$T/$nm.want"; then ok "$what: exactly $# lines"
@@ -477,7 +477,7 @@ FR="cannot be a fn return type"
 FP='a fn-pointer type `*fn( .. )` cannot be a fn return type'
 lines_are tm1 "TM1: the filed repro verbatim (it built: exit 4) — one line per member" \
     "4:24: type 'u8' $FR" "4:40: type 'f32' $FR" "4:57: type 'Color' $FR" "4:76: $FP" "4:103: type 'u64' $FR"
-n=$(grep -c "^  note: a return type is a struct" "$T/tm1.err")
+n=$(grep -c "^  note: a return type is a struct" "$T/tm1.err" || true)
 if [ "$n" -eq 5 ]; then ok "TM1b: ... each with a fn's return-type note"; else bad "TM1b: $n notes (want 5)"; fi
 cat > "$T/tm2.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -526,7 +526,7 @@ syscall(60, main());
 EOF
 exits tm2 56 "TM2: what a fn returns still compiles in a member — i64, f64, bool, Pt, *u8, Result, its own U, i8/i16/i32, cstring, Option, Tagged, *Color, (u8, Color), Box<i64>, a union, **u64"
 rc=0; "$CC" --syntax-only < "$T/tm1.cyr" > "$T/tm3.bin" 2> "$T/tm3.err" || rc=$?
-grep '^error' "$T/tm3.err" > "$T/tm3.got"
+grep '^error' "$T/tm3.err" > "$T/tm3.got" || true
 printf 'error:<source>:4:76: %s\n' "$FP" > "$T/tm3.want"
 if [ "$rc" -ne 0 ] && cmp -s "$T/tm3.got" "$T/tm3.want"; then ok "TM3: --syntax-only reports the *fn( .. ) line alone (a fn's : *fn( .. ) is its grammar refusal there)"
 else bad "TM3: --syntax-only rc $rc: $(tr '\n' '|' < "$T/tm3.got")"; fi
@@ -559,7 +559,7 @@ refused_at trr4 "'Box' takes 1 type argument, 2 given" 5:39 "TRR4: dd8 — the i
 printf "$BR"'trait T2 { fn sh(self): Option<Box<i64, Pt>>; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr5.cyr"
 refused_at trr5 "'P.sh' returns i64, trait 'T2' declares Option<Box<i64, Pt>>" 5:30 "TRR5: a member's : Option<Box<i64, Pt>> (its list unread) keeps the impl's line"
 rc=0; "$CC" --syntax-only < "$T/trr3.cyr" > "$T/trr6.bin" 2> "$T/trr6.err" || rc=$?
-grep '^error' "$T/trr6.err" > "$T/trr6.got"
+grep '^error' "$T/trr6.err" > "$T/trr6.got" || true
 printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt>\n" > "$T/trr6.want"
 if [ "$rc" -ne 0 ] && cmp -s "$T/trr6.got" "$T/trr6.want"; then ok "TRR6: --syntax-only (D5 silent there) keeps dd7's impl line"
 else bad "TRR6: --syntax-only rc $rc: $(tr '\n' '|' < "$T/trr6.got")"; fi

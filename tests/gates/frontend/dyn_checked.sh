@@ -403,7 +403,7 @@ build() { rc=0; timeout 60 "$CC" < "$T/$1.cyr" > "$T/$1.bin" 2> "$T/$1.err" || r
 refused() {   # <name> <message fragment> <what> <source>
     printf '%b' "$4" > "$T/$1.cyr"
     build "$1"
-    n=$(grep -c '^error' "$T/$1.err")
+    n=$(grep -c '^error' "$T/$1.err" || true)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$rc" -eq 124 ]; then bad "$3: the compiler did not finish (timeout)"
     elif ! grep -qF "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
@@ -690,7 +690,7 @@ refused f08p3 "4:34: 'Box' takes 1 type argument, 2 given" "F8p3: dd11 — a mem
 refused f08p4 "4:32: unknown type 'Nope' for parameter 'n'" "F8p4: an impl's \`n: Nope\` under an untyped \`n\` (the staged file's repro 3)" "${PQ}trait T2 { fn sh(self, n): i64; }\n${FQ}impl T2 for P { fn sh(self, n: Nope): i64 { return 1; } }\n${MQ}"
 printf '%b' "${PQ}trait T2 { fn sh(self, a: Nope, b: f64): i64; }\nimpl T2 for P { fn sh(self, a: i64, b: i64): i64 { return 1; } }\n${FQ}${MQ}" > "$T/f08p5.cyr"
 build f08p5
-grep '^error' "$T/f08p5.err" > "$T/f08p5.got"
+grep '^error' "$T/f08p5.err" > "$T/f08p5.got" || true
 printf "error:<source>:2:27: unknown type 'Nope' for parameter 'a'\nerror:<source>:4:36: ${F8M} 'sh' does not match its declaration in trait T2: parameter 'b' has another type\n" > "$T/f08p5.want"
 if [ "$rc" -ne 0 ] && cmp -s "$T/f08p5.got" "$T/f08p5.want"; then ok "F8p5: a refused \`a: Nope\` is stepped and the later \`b: f64\` / \`b: i64\` still named — exactly 2 lines"
 else bad "F8p5: rc $rc: $(tr '\n' '|' < "$T/f08p5.got")"; fi
@@ -924,7 +924,7 @@ refused pw5 "'pass' returns a struct by value, and a struct result needs storage
 exits h28a 49 "H28a: \`dyn\` and its trait split across a newline and a comment fold to one type" "${HP}fn k(o: dyn\n    # a comment\n    Show): i64 { return dw(o); }\n${FM}    return k(o);\n${ME}"
 printf '%b' "${SH}fn f(o: dyn\n    Nope): i64 { return 0; }\nsyscall(60, 0);\n" > "$T/h28b.cyr"
 build h28b
-cl=$(grep -A2 '^error' "$T/h28b.err" | sed -n 3p)
+cl=$(grep -A2 '^error' "$T/h28b.err" | sed -n 3p || true)
 if [ "$rc" -ne 0 ] && grep -qF "error:<source>:4:9: 'Nope' is not a trait" "$T/h28b.err" && [ "$cl" = "            ^" ]; then ok "H28b: a diagnostic on a folded \`dyn Nope\` points at \`dyn\` (4:9, the caret under it)"
 else bad "H28b: rc $rc: $(head -3 "$T/h28b.err" | tr '\n' '|')"; fi
 exits h28c 7 "H28c: a unit spelling no \`dyn\` folds nothing (\`dynamo\` stays a name)" 'fn f(): i64 { var dynamo = 7; return dynamo; }\nsyscall(60, f());\n'
