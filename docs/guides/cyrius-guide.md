@@ -3701,7 +3701,9 @@ var hi, lo, bexp = dd_pow10(k);
 # `x.m(..)`, and a call through a fn pointer, `fncallN(fp, ..)` or `callptr(fp, ..)` (6.7.13: `callptr`
 # was refused "needs a call"); a callee held in a variable is unknown, so its count is not checked.
 # A method ending a chain on any receiver is that call too (6.7.16): `var c, d = w.p.m2();`, `h.w.p.m2()`,
-# `w.gp().m2()`, `mk().p.m2()`, `(*pw).p.m2()` — through 6.7.15 "needs a call on the right-hand side".
+# `w.gp().m2()`, `mk().p.m2()`, `(*pw).p.m2()` — through 6.7.15 "needs a call on the right-hand side". A generic
+# step in the chain is typed as the method arm types it: `w.p.idv(q).m2()` / `w.p.idv<P>(q).m2()` with
+# `fn idv<V>(self, x: V): V` continue through the struct V binds (`P`), a `: G<V>` through that instance of G.
 # Parentheses around the whole call are transparent: `var a, b = (f(7));`, `a, b = ((f()));`, a for
 # step and both top-level zones destructure as unwrapped (6.7.14, the user's decision of 2026-10-16;
 # they were refused "needs a call"). `(f(7)) + 1` and `(f(7) + 1)` are not one call.

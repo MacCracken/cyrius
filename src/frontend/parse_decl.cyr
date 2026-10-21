@@ -9232,13 +9232,39 @@ fn _mch_gres(S, mf, sid, nt, o, g): i64 {
 }
 # ... type parameter `w` of generic method `mf` at the step whose name is token nt (its `(` at o, on struct sid), read
 # without instantiating: an explicit `.m<..>(` list as the zone reads it (`_gu_xlist`; a token pass as its scans read
-# one, `_tok_gen_tp_sid`); 0 = none read.
+# one, `_tok_gen_tp_sid`), an inferred `.m(` the argument that carries it as the method arm binds it (`_mch_itp`; a token
+# pass from the unit's tokens, `_gs_mtp`) — an inferred step's `: V` was no struct, so `var a, b = w.p.idv(q).m2();` was
+# "needs a call", `w.p.idv(q).rs(3)?` took the boxed `?` (SIGSEGV) and `var v = w.p.idv(q).rs(3);` kept the tag in
+# silence; 0 = none read. CHANGELOG [6.7.16]
 fn _mch_bind(S, mf, sid, nt, o, w): i64 {
-    if (o == nt + 1) { return 0; }
+    if (o == nt + 1) {
+        if (_mch_tok == 1) { return _gs_mtp(S, _mch_ta, o, mf, w, sid); }
+        return _mch_itp(S, mf, o, w, sid);
+    }
     if (_mch_tok == 1) { return _tok_gen_tp_sid(S, _mch_ta, nt, nt, mf, w); }
     if (_gu_xlist(S, nt, mf) == 0) { return 0; }
     if (w == 1) { return _gu_x1; }
     return _gu_x0;
+}
+# `_mcall_infer` at the inferred step (its `(` at o, receiver struct sid) in the parser's scope, as `_gu_mtp` reads the
+# zone's: no fn instance made (`_gu_noinst`; a binding it cannot read without one is a miss, 0), the cursor and
+# `_gi_sc` put back.
+fn _mch_itp(S, mf, o, w, sid): i64 {
+    _gen_stub(S, mf);
+    var sv = GTI(S);
+    var ni = _gu_noinst;
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gu_noinst = 1;
+    _gi_sc = 0;
+    _gu_miss = 0;
+    var b = _mcall_infer(S, mf, o, w, sid);
+    if (_gu_miss == 1) { b = 0; }
+    _gu_noinst = ni;
+    STI(S, sv);
+    _gi_sc = sc;
+    _gu_miss = ms;
+    return b;
 }
 # The token after the receiver head at `ti` by its shape alone (`_mch_head`'s, untyped): `( .. )`, a call, a name.
 fn _mch_hend(S, ti): i64 {

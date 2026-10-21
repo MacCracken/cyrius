@@ -205,6 +205,26 @@ impl FcP {
 fn fc_xq(): i64 { var w = fc_w(); var h: f64 = 2.5; var a, b = w.p.gq<f64>(h).m2(); return a * 10 + b; }
 fn fc_xv(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.idv<FcP>(q).m2(); return a * 10 + b; }
 fn fc_xg(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.mkg<FcP>(q).v.m2(); return a * 10 + b; }
+# ... an INFERRED one too, its `: V` / `: G<V>` the struct its argument binds (it was no struct: "needs a call")
+fn fc_xi(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.idv(q).m2(); return a * 10 + b; }
+fn fc_xs(): i64 { var q: FcP = FcP { 1 }; var a, b = q.idv(q).m2(); return a * 10 + b; }
+fn fc_xgi(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.mkg(q).v.m2(); return a * 10 + b; }
+fn fc_xd(): i64 { var w = fc_w(); var pw: *FcW = &w; var q: FcP = FcP { 1 }; var t: (i64, i64) = (*pw).p.idv(q).mm(2); return t.0 * 10 + t.1; }
+fn fc_qv(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = w.p.idv(q).rs(3)?; return FcOk(v + 30); }
+fn fc_qvs(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = q.idv(q).rs(3)?; return FcOk(v + 30); }
+fn fc_qva(w: FcW): i64 { var v = fc_qvb(w)?; return FcOk(v + 1); }
+fn fc_qvb(w: FcW): i64 { var q: FcP = FcP { 1 }; return w.p.idv(q).rs(3); }
+fn fc_xpair(which): i64 {
+    var w = fc_w();
+    var q: FcP = FcP { 2 };
+    var t = 0;
+    var v = 0;
+    if (which == 0) { t, v = fc_qv(w); }
+    if (which == 1) { t, v = fc_qvs(w); }
+    if (which == 2) { t, v = fc_qva(w); }
+    if (which == 3) { t, v = w.p.idv(q).rs(5); }
+    return t * 100 + v;
+}
 
 # MZ: the top-level zone
 var fc_ga, fc_gb = FC_GW.p.m2();
@@ -281,6 +301,14 @@ assert_eq(fc_ret24(1), 352, "MR: return mkw(2).p.q24();");
 assert_eq(fc_xq(), 34, "MX: an explicit generic step returning *P, w.p.gq<f64>(h).m2()");
 assert_eq(fc_xv(), 34, "MX: an explicit generic step returning its V, w.p.idv<P>(q).m2()");
 assert_eq(fc_xg(), 34, "MX: an explicit generic step returning G1<V>, w.p.mkg<P>(q).v.m2()");
+assert_eq(fc_xi(), 34, "MX: an inferred generic step returning its V, w.p.idv(q).m2() (needs a call before)");
+assert_eq(fc_xs(), 34, "MX: ... after a single name, q.idv(q).m2() (needs a call before)");
+assert_eq(fc_xgi(), 34, "MX: an inferred generic step returning G1<V>, w.p.mkg(q).v.m2() (needs a call before)");
+assert_eq(fc_xd(), 27, "MX: a tuple capture on a dereference head, (*pw).p.idv(q).mm(2) (not a tuple before)");
+assert_eq(fc_xpair(0), 34, "MX: var v = w.p.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(fc_xpair(1), 34, "MX: var v = q.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(fc_xpair(2), 5, "MX: return w.p.idv(q).rs(3); forwards the pair to a caller ABOVE it");
+assert_eq(fc_xpair(3), 7, "MX: t, v = w.p.idv(q).rs(5)");
 assert_eq(fc_ga * 10 + fc_gb, 34, "MZ: a top-level var a, b = GW.p.m2()");
 assert_eq(fc_gt.0 * 10 + fc_gt.1, 47, "MZ: a top-level tuple capture, GW.p.mm<i64>(4)");
 assert_eq(fc_gy, 7, "MZ: a top-level var a, b = GW.p.mm<f64>(2.5): its second value");

@@ -35,7 +35,9 @@
 #      the destructure's count, C14 over 16 B, C15 / C15b a one-value struct / method, C16 a re-assignment from a
 #      struct, C17 / C17b / C17c / C19 a 16 B / 8 B / 24 B struct and a tuple argument, C20 / C21 a `(i64, i64)` fn
 #      forwarding 3 values / 1 value — each on w.p (c), h.w.p (d), w.q (f), (*pw).p (x), mkw().p (k), w.gp() (m),
-#      callptr(&gpw, &w).p (i); on the callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
+#      callptr(&gpw, &w).p (i), w.p.idv(w).p (g: an inferred generic step `: V` mid-chain, unresolved before the lane's
+#      review: `_mch_bind`) and w.p.idv<W>(w).p (e: an explicit one), C1h / F1h / F2h on w.p.idv(p) (h); on the
+#      callptr head C17 / C17c / C19 compiled through 6.7.16's first fix (`_icall_dotted`);
 #      C22-C24 a struct return over 8 B of another struct / 2 values / 1 value (each chain said "returned in two
 #      registers ... got `w`", the single name the text it shares now)
 #   W  the dropped-tag warning reads the chain's method (x86_64, every receiver): W1 / W3 `return w.p.rs(4);` (and in
@@ -83,6 +85,9 @@
 #   M17 the tree before `_mch_nox` (4a790ef3c)           -> RED 1: X1 cov (SIGSEGV)
 #   M18 the tree before `_mch_mres` read the template    -> RED 5: X2 x2a-x2e cov (SIGSEGV)
 #       (ed17925c9)
+#   M19 the tree before `_mch_bind` read an inferred step -> RED 35: V x7 (the file did not build: "needs a call"),
+#       (ca9e73061)                                        C1-C17c on g, W2 on g (unread: no warning), F1 / F2 on g,
+#                                                          C1h / F1h / F2h on h
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -112,7 +117,7 @@ TL=tests/tcyr/crossos/method_receiver_chain_lookaheads.tcyr
 [ -f "$TL" ] || { echo "FAIL: $G: $TL is missing"; exit 1; }
 # One row per `assert_eq(` call. The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TL")
-FLOOR=74
+FLOOR=82
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TL (floor $FLOOR) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
@@ -204,9 +209,10 @@ impl P {
     fn r16(self): R16 { var r: R16; r.x = 1; r.y = 2; return r; }
 }
 impl W { fn gp(self): *P { var a = self; return a; } }
+impl P { fn idv<V>(self, x: V): V { return x; } }
 fn mkw(): W { var w: W; w.p.k = 1; w.q = 0; w.n = 0; return w; }
 fn gpw(w: *W): *W { return w; }'
-MODES="c d f x k m i"
+MODES="c d f x k m i g e"
 mode_rcv() {
     case "$1" in
         s) R='p.'; PW='p: P' ;;
@@ -217,6 +223,9 @@ mode_rcv() {
         k) R='mkw().p.'; PW='zz' ;;
         m) R='w.gp().'; PW='w: W' ;;
         i) R='callptr(&gpw, &w).p.'; PW='w: W' ;;
+        g) R='w.p.idv(w).p.'; PW='w: W' ;;
+        e) R='w.p.idv<W>(w).p.'; PW='w: W' ;;
+        h) R='w.p.idv(p).'; PW='w: W' ;;
     esac
 }
 # subst <from> <to>: stdin to stdout with every <from> replaced by <to> (literally).
@@ -306,9 +315,10 @@ wrow WC1 'fn f(@W, z): i64 { if (z == 1) { return SErr(2); } return @.n < z >> (
 wrow WC2 'impl P { fn id<V>(self, x: V): V { return x; } }
 fn f(@W, z): i64 { if (z == 1) { return SErr(2); } return @.id < z >> (z); }' 1 "return @.id < z >> (z); (id a field and a generic method)"
 
-# frow <id> <fwd body> <what>: `var v = fwd(w);` above `fwd` is refused "bind both" on the single name and every chain.
+# frow <id> <fwd body> <what> [modes]: `var v = fwd(w);` above `fwd` is refused "bind both" on the single name and every
+# chain.
 frow() {
-    for m in s $MODES; do
+    for m in s ${4:-$MODES}; do
         mode_rcv "$m"
         { printf '%s\n' "$HDR"
           printf 'fn main(): i64 { var w: W; w.p.k = 1; var v = fwd(w); return v; }\n'
@@ -325,6 +335,10 @@ frow() {
 echo "F. a forwarder below its caller is a pair there"
 frow F1 'return @.rs(3);' "var v = fwd(w); with fwd returning @.rs(3)"
 frow F2 'var v = @.rs(3)?; return v + 0;' "var v = fwd(w); with fwd's only pair route @.rs(3)?"
+# h: the review's spelling of an inferred step, `w.p.idv(p).rs(3)` (p a local `P`: only where one is in scope)
+crow C1h '' 'var v = @.rs(3);' "$PB" "var v = @.rs(3); (kept the tag in silence)" h
+frow F1h 'return @.rs(3);' "var v = fwd(w); with fwd returning @.rs(3)" h
+frow F2h 'var v = @.rs(3)?; return v + 0;' "var v = fwd(w); with fwd's only pair route @.rs(3)?" h
 
 echo "X. a lookahead instantiates nothing: the zone's GW.p.mm<f64>(2.5) under CYRIUS_COVERAGE=1"
 cat > "$D/x1.cyr" <<'X'
