@@ -218,7 +218,7 @@ cascade_legs G2 1 'var V: f64v2 = 5;\nsyscall(60, 0);\n' "1:14: vector global 'V
 #     `{ .. }` stepped, and a declared variable marked so `x.a` stands down (`_slit_undecl`; the zone sweep's `_gu_slit0`
 #     for a fn body compiled before the replay). L1 the top-level repro verbatim (2:11 and 3:11); L2 the fn repro verbatim
 #     — 3:15, and line 4's `var y = P { 2 };` (P has two fields) keeps its OWN refusal, a positional literal short of a
-#     field (4:19); L3 after the first statement; L4 wrapped, `Q<i64> { .. }`, named elements, `x.a = 2`, `x.m()`; L5 an
+#     field (4:19, "missing struct field in initializer" since 6.7.16; "unexpected '}'" before); L3 after the first statement; L4 wrapped, `Q<i64> { .. }`, named elements, `x.a = 2`, `x.m()`; L5 an
 #     assignment, L6 `return`, L7 an argument; L8 the zone global read in a fn body before the replay; L9 an annotation
 #     naming Q (`var x: Q = Q { 1 };`: the annotation's one error). Controls: L10 `match nn { .. }` (nn nothing) keeps
 #     "undefined variable 'nn'" and parses its body; L11 `var x = 5;` then `x.a` keeps its own error; L12 a declared
@@ -226,7 +226,7 @@ cascade_legs G2 1 'var V: f64v2 = 5;\nsyscall(60, 0);\n' "1:14: vector global 'V
 #     got '{'". RED on the lane before this bite: L1-L9 (L2: five errors), L13.
 SQ="undefined variable 'Q' (missing include or enum?)"
 cascade_legs L1 2 'struct P { a; }\nvar x = Q { 1 };\nvar y = R { 2 };\nsyscall(60, 0);\n' "2:11: $SQ" "3:11: undefined variable 'R'"
-cascade_legs L2 2 'struct P { a; b; }\nfn f(): i64 {\n    var x = Q { 1 };\n    var y = P { 2 };\n    return 0;\n}\nsyscall(60, f());\n' "3:15: $SQ" "4:19: unexpected '}'"
+cascade_legs L2 2 'struct P { a; b; }\nfn f(): i64 {\n    var x = Q { 1 };\n    var y = P { 2 };\n    return 0;\n}\nsyscall(60, f());\n' "3:15: $SQ" "4:19: missing struct field in initializer"
 cascade_legs L3 1 'var z = 1;\nz = 2;\nvar x = Q { 1 };\nsyscall(60, x.a);\n' "3:11: $SQ"
 cascade_legs L4 1 'fn f(): i64 {\n    var x = (Q<i64> { a: 1, b: 2 });\n    x.a = 2;\n    x.m();\n    return x.a;\n}\nsyscall(60, f());\n' "2:15: $SQ"
 cascade_legs L5 1 'fn f(): i64 { var x = 0; x = Q { 1 }; return x; }\nsyscall(60, f());\n' "1:32: $SQ"

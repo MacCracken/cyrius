@@ -3059,6 +3059,7 @@ fn _spi_is_nested(S, ft): i64 {
 # A scalar / pointer / Str / Vec leaf: its own width, at its own offset. A carried scalar
 # (kind 2) is its value, already in rax.
 fn _spi_leaf(S, tidx, si, fi, off): i64 {
+    if (_spi_pk != 2) { if (PEEKT(S) == 14) { return _spi_short(S); } }   # 6.7.16
     if (_spi_pk == 2) { _sfw_have = 1; }
     _spi_pk = 0;
     _sfw_set(S, si, fi);
@@ -3072,6 +3073,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     var ft = GETFTYPE(S, si, fi);
     var est = 0 - 1;   # the element's first token, when it starts here
     if (_spi_pk == 0) {
+        if (PEEKT(S) == 14) { return _spi_short(S); }   # 6.7.16
         est = GTI(S);
         _spi_pfi = 0 - 1;
         _spi_pk = _spi_src(S, ft);
@@ -3098,6 +3100,15 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — A POSITIONAL LITERAL SHORT OF A FIELD (`P { 2 }` for `struct P { a; b; }`) is "missing struct field in
+# initializer" at its `}`, as the named form short of one is: the walk parsed the `}` as the next leaf's value,
+# "unexpected '}'", naming no rule. Once (the statement latched, in sync), nothing stored for the leaves left.
+# CHANGELOG [6.7.16]
+fn _spi_short(S): i64 {
+    _refuse_in_sync(S);
+    ERR_MSG(S, "missing struct field in initializer", 35);
+    return 0;
+}
 # The carried value was this whole field (stored, or refused by name): drop it, eat its `,`.
 fn _spi_took(S): i64 {
     _spi_pk = 0;

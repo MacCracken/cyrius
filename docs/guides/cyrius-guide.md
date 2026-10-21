@@ -1388,7 +1388,9 @@ decision D1 (a), 2026-10-18): `var q = Point { 10 20 };` and `var q = Point { y:
 `expected ',' between struct literal elements`. ⚠ Through 6.7.14 both compiled, the values landing
 where the commas would have put them. A tuple literal's missing comma is the same one error, named for
 the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` (6.7.16; 6.7.15 said
-"struct literal").
+"struct literal"). A positional literal sets every leaf: one short of a field (`Point { 10 }`, `Rect { 0, 0 }`) is
+`missing struct field in initializer` at its `}`, as the named form short of one is (6.7.16; through 6.7.15
+`unexpected '}'`).
 
 **A struct literal is an initializer.** It is the whole initializer of a declaration (`var p = P { .. };`,
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
