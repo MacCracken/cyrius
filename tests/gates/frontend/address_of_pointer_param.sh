@@ -46,7 +46,10 @@
 #   R7 6.7.16 (D72, the user's decision, 2026-10-20) — issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md,
 #      the filed repro verbatim: a narrow parameter is narrowed in the fn, like a narrow local — prints
 #      `255 -1 -32768 -32768` (`511 8589934591 32768 -32768` before) on x86_64, CYRIUS_IR=1, CYRIUS_IR=3,
-#      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes
+#      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes. R7a (x86_64, CYRIUS_ASYNC=1):
+#      a non-suspending `async fn`'s `y: u8` given 0x1FF is 255 too (511 before; exit 1, 2 = not 255) — a suspending
+#      one's parameters live in the coroutine frame, where a narrow slot is refused by name, and keep the word (the
+#      user's call)
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
@@ -76,9 +79,9 @@
 #   M5  (2026-10-21) PARSE_VAR's top-level arm without its SVSGN line (the 6.7.16 fix reverted) -> RED 12: R6
 #                                                    (`65534 4294967294 254`) on all 5 legs; T the amp_narrow_after
 #                                                    row on all 7 legs
-#   M6  (2026-10-21) the parameter loop without its `_pnw_apply` line (the 6.7.16 D72 fix reverted) -> RED 14:
+#   M6  (2026-10-21) the parameter loop without its `_pnw_apply` line (the 6.7.16 D72 fix reverted) -> RED 15:
 #                                                    R7 (`511 8589934591 32768 -32768`) and T2 (48 of 59 rows) on all 7
-#                                                    legs
+#                                                    legs, R7a (exit 2)
 #   M7  (2026-10-21) `_amp_lew` / `_amp_gew` without their D70 kinds (the 6.7.16 fix reverted) -> RED 13: R5
 #                                                    (`9223372036854775807 25 1`, warned) on all 5 legs; R5d (built
 #                                                    clean); T on all 7 legs (the bool rows refused: it did not build)
@@ -345,6 +348,28 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     elif [ "$RC" -eq 0 ] && [ "$LAST" = "255 -1 -32768 -32768 " ]; then ok "R7 $leg: '$LAST'"
     else bad "R7 $leg: exit $RC, '$LAST' (want '255 -1 -32768 -32768 ')"; fi
 done
+
+echo "R7a. 6.7.16 (D72): a non-suspending async fn's narrow parameter is narrowed too (x86_64, CYRIUS_ASYNC=1; exit 1)"
+cat > "$D/nasync.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/async.cyr"
+async fn ns(y: u8): i64 { return y; }
+fn main(): i64 { alloc_init(); var f = ns(0x1FF); return future_force(f); }
+var rr = main();
+if (rr == 255) { syscall(60, 1); }
+syscall(60, 2);
+EOF
+rc=0; CYRIUS_ASYNC=1 "$CC" < "$D/nasync.cyr" > "$D/nasync" 2> "$D/nasync.err" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$D/nasync" ]; then bad "R7a: did not build (rc $rc): $(grep -m1 'error' "$D/nasync.err")"
+else
+    chmod +x "$D/nasync"; got=0; timeout 30 "$D/nasync" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq 1 ]; then ok "R7a: async fn ns(y: u8) given 0x1FF reads 255 (exit 1)"
+    else bad "R7a: exit $got, want 1 (2: y was not 255)"; fi
+fi
 
 echo "N. a #naked fn (compile only): by-value \`&q\` stays the slot's content, a *P parameter's \`&q\` is the slot"
 # nk_src <param type> <initialiser> <out>: one #naked fn, kept by `&nk`, its asm a bare return.
