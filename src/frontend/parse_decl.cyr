@@ -3227,8 +3227,14 @@ fn _spi_pcall(S): i64 {
 # method / operator call returning a struct). A scalar is left in rax (2) for the first leaf.
 # A struct call refused at top level (no frame) is the whole field (4), so its refusal is the
 # only error.
+# `_spi_tup_refd` (6.7.16): an element in which the factor refused a tuple literal (R9: `W { (1, 2), 3 }` for a tuple
+# or struct field, `(1, 2) + 1`, `g((1, 2))`, any wrap) is the whole field too, as 6.6.12's refused value: the walk
+# carried the element into the field's first leaf, wanted one value more and met the `}` — "unexpected '}'" after
+# the literal's own error (alone under --syntax-only, where R9 says nothing: an invented syntax error)
+# (issues/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md). CHANGELOG [6.7.16]
 fn _spi_expr(S, ft): i64 {
     var st = GTI(S);
+    var tl0 = _tls_n;
     var pk = _spi_epk(S, st);   # 6.7.13: the arms below run inside a wrap of the whole element
     var sv = _fla_want;
     var svl = _fla_lit;
@@ -3247,6 +3253,7 @@ fn _spi_expr(S, ft): i64 {
     _fla_lit = svl;
     if (_spi_refused(S, st, pk) == 1) { return 4; }
     if (_slit_whole(S, st + pk, pk) == 1) { return 4; }   # 6.7.14 (D12 (a)): a refused `P { .. }` is the field
+    if (_tls_n != tl0) { return 4; }   # 6.7.16: a tuple literal R9 refused in the element (`_spi_tup_refd`)
     var t = _sc_whole(S, st);
     if (t >= 0) {
         _fsc_reset();

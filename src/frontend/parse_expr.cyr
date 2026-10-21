@@ -2795,9 +2795,11 @@ fn _enum_qual_said(S, vi): i64 {
 # operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
 # Refused by name; the group and a selector chain after it are consumed and 0 is the value, so
 # the parse goes on in step. 1 = refused (the factor is done).
+var _tls_n = 0;   # 6.7.16: the literals R9 refused so far (`_spi_expr` asks whether its element held one)
 fn _tup_lit_stray(S, ti0): i64 {
     if (TOKTYP(S, ti0) != 10) { return 0; }
     if (_tup_commas(S, ti0) == 0) { return 0; }
+    _tls_n = _tls_n + 1;
     if (_tup_ret_wrap(S, ti0) == 1) {   # 6.7.7 (B4 review): `return ((a, b));` names its own spelling
         _tup_err(S, ti0, "a multi-value return is written `return (a, b);` - drop the extra parentheses", 0 - 1, 0);
     } else {

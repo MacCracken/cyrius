@@ -1260,6 +1260,80 @@ printf 'fn f(): i64 {\n    var b: *i64 = (1, 2);\n    var c: *i64 = 5;\n    retu
 build cs9s
 if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/cs9s.err")" -eq 1 ] && [ "$(grep -c '^warning' "$T/cs9s.err")" -eq 1 ] && grep -q "^warning:<source>:3:20: assigning non-pointer to typed pointer" "$T/cs9s.err"; then ok "CS9s: control — the next declaration's own warning (3:20) is still given"
 else bad "CS9s: control: $(grep '^error\|^warning' "$T/cs9s.err" | tr '\n' '|') (want R9 at 2:19 and the warning at 3:20)"; fi
+# ── TL / CT (6.7.16): one error per mistake, exact lines on five legs ───────────────────────────────
+# `lines5` compiles a row on x86_64, PE and Mach-O (the env legs of $CC) and on the aarch64 / cx compilers built
+# from this tree, and wants EXACTLY its error / warning lines, rc != 0 and no binary on each (`accept5`: rc 0 and
+# nothing said, a binary written — the --syntax-only rows).
+X5=0
+X5N=0
+_x5_init() {
+    [ "$X5" -eq 1 ] && return 0
+    X5=1
+    X5L="x86_64 pe macho"
+    if "$CC" < src/main_aarch64.cyr > "$T/x5_a64" 2> /dev/null && [ -s "$T/x5_a64" ]; then chmod +x "$T/x5_a64"; X5L="$X5L aarch64"
+    else bad "the 5-leg rows: src/main_aarch64.cyr did not build"; fi
+    if "$CC" < src/main_cx.cyr > "$T/x5_cx" 2> /dev/null && [ -s "$T/x5_cx" ]; then chmod +x "$T/x5_cx"; X5L="$X5L cx"
+    else bad "the 5-leg rows: src/main_cx.cyr did not build"; fi
+}
+_x5_cc() {   # <leg> <name> [flag]: $T/<name>.<leg> (+ .err); rc in $rc
+    rc=0
+    case $1 in
+        x86_64)  timeout 60 "$CC" ${3:-} < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${3:-} < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        macho)   CYRIUS_MACHO=1 timeout 60 "$CC" ${3:-} < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        aarch64) timeout 60 "$T/x5_a64" ${3:-} < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+        cx)      timeout 60 "$T/x5_cx" ${3:-} < "$T/$2.cyr" > "$T/$2.$1" 2> "$T/$2.$1.err" || rc=$? ;;
+    esac
+}
+lines5() {   # <name> <what> <source (printf %b)> <want lines> [flag]
+    _x5_init
+    printf '%b' "$3" > "$T/$1.cyr"
+    printf '%s\n' "$4" > "$T/$1.want"
+    for leg in $X5L; do
+        _x5_cc "$leg" "$1" "${5:-}"
+        X5N=$((X5N + 1))
+        grep -E '^(error|warning)' "$T/$1.$leg.err" > "$T/$1.$leg.got" || true
+        if [ "$rc" -eq 0 ]; then bad "$2 ($leg): BUILT (rc 0)"
+        elif ! cmp -s "$T/$1.$leg.got" "$T/$1.want"; then bad "$2 ($leg): got $(wc -l < "$T/$1.$leg.got") lines: $(tr '\n' '|' < "$T/$1.$leg.got")"
+        elif [ -s "$T/$1.$leg" ]; then bad "$2 ($leg): refused, but a binary was written"
+        else ok "$2 ($leg)"; fi
+    done
+}
+accept5() {   # <name> <what> <source (printf %b)> <flag>: rc 0, no error / warning line, on every leg
+    _x5_init
+    printf '%b' "$3" > "$T/$1.cyr"
+    for leg in $X5L; do
+        _x5_cc "$leg" "$1" "$4"
+        X5N=$((X5N + 1))
+        if [ "$rc" -ne 0 ] || grep -qE '^(error|warning)' "$T/$1.$leg.err"; then bad "$2 ($leg): rc $rc: $(grep -E '^(error|warning)' "$T/$1.$leg.err" | head -2 | tr '\n' '|')"
+        else ok "$2 ($leg)"; fi
+    done
+}
+# TL (6.7.16, issues/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md) — a tuple literal as
+# a struct literal's element is R9's refusal (the guide lists no such position), and ONLY that: the walk carried the
+# refused element into the nested field's first leaf, wanted one value more and met the `}` — "unexpected '}'" (under
+# --syntax-only, where R9 says nothing, an invented syntax error alone). An element in which the factor refused a
+# literal is the whole field now (`_spi_expr` kind 4, as 6.6.12's refused value): a tuple field or a struct field, the
+# literal whole, wrapped or inside the element (`(1, 2) + 1`, `g((1, 2))`), in a fn and in both global zones.
+# MUTATIONS (measured): the lane's compiler before the bite (0f22fa897) -> RED TL1-TL8 on every leg; `_spi_expr`
+# without its `_tls_n` test -> RED TL1-TL8 on every leg.
+R9V="a tuple \`( .. )\` is a value only as a \`var\` initializer, assigned to a tuple variable or field, as a tuple argument, or after \`return\` - here one value is expected"
+TW='struct W { p: (i64, i64); q; }\n'
+lines5 tl1 "TL1: \`W { (1, 2), 3 }\` (the filed repro): R9 alone" "${TW}fn f(): i64 { var w = W { (1, 2), 3 }; return w.q; }\nsyscall(60, f());\n" "error:<source>:2:27: $R9V"
+lines5 tl2 "TL2: \`W { (1, 2) }\`, a one-field struct (the filing's second shape)" 'struct W { p: (i64, i64); }\nfn f(): i64 { var w = W { (1, 2) }; return 0; }\nsyscall(60, f());\n' "error:<source>:2:27: $R9V"
+lines5 tl3 "TL3: a struct field's element \`(1, 2)\` (\`p: In\`)" 'struct In { a; b; }\nstruct W { p: In; q; }\nfn f(): i64 { var w = W { (1, 2), 3 }; return w.q; }\nsyscall(60, f());\n' "error:<source>:3:27: $R9V"
+lines5 tl4 "TL4: the literal inside the element: \`(1, 2) + 1\`, \`g((1, 2))\`" "${TW}fn g(x): i64 { return x; }\nfn f(): i64 {\n    var w = W { (1, 2) + 1, 3 };\n    var v = W { g((3, 4)), 5 };\n    return w.q + v.q;\n}\nsyscall(60, f());\n" "error:<source>:4:17: $R9V
+error:<source>:5:19: $R9V"
+lines5 tl5 "TL5: the declaration zone, and after the first statement" "${TW}var w = W { (1, 2), 3 };\nvar a = 1;\na = 2;\nvar v = W { (5, 6), 7 };\nsyscall(60, w.q + v.q);\n" "error:<source>:2:13: $R9V
+error:<source>:5:13: $R9V"
+lines5 tl6 "TL6: wrapped, \`((1, 2))\`; then the next statement's own error" "${TW}fn f(): i64 {\n    var w = W { ((1, 2)), 3 };\n    var z = 1 2;\n    return w.q;\n}\nsyscall(60, f());\n" "error:<source>:3:18: $R9V
+error:<source>:4:15: expected ';', got number 2"
+lines5 tl7 "TL7: an annotated \`var w: W = W { (1, 2), 3 };\`, then the next statement's own error" "${TW}fn f(): i64 {\n    var w: W = W { (1, 2), 3 };\n    var z = 1 2;\n    return w.q;\n}\nsyscall(60, f());\n" "error:<source>:3:20: $R9V
+error:<source>:4:15: expected ';', got number 2"
+accept5 tl8 "TL8: --syntax-only: the file parses (R9 is no syntax error; the invented \`}\` error is gone)" "${TW}fn f(): i64 { var w = W { (1, 2), 3 }; return w.q; }\nsyscall(60, f());\n" --syntax-only
+lines5 tl9 "TL9: control — the named form keeps its own refusal" "${TW}fn f(): i64 { var w = W { p: (1, 2), q: 3 }; return w.q; }\nsyscall(60, f());\n" "error:<source>:2:30: named init not supported for nested struct fields — use positional"
+exits4 tl10 3 "TL10: control — \`W { 1, 2, 3 }\` (the leaves) runs" "${TW}fn f(): i64 { var w = W { 1, 2, 3 }; return w.q; }\nsyscall(60, f());\n"
+exits4 tl11 3 "TL11: control — \`W { t, 3 }\` with a tuple variable runs" "${TW}fn f(): i64 { var t = (1, 2); var w = W { t, 3 }; return w.q; }\nsyscall(60, f());\n"
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap
 # frame, whose slots ascend, holds the block whole).
@@ -1440,6 +1514,7 @@ if command -v wine > /dev/null 2>&1; then
     else bad "A7 PE: the tcyr did not compile: $(grep '^error' "$T/tv.werr" | head -1)"; fi
 else echo "  SKIP A7 PE — wine not installed"; skips=$((skips + 1)); fi
 
+[ "$X5N" -ge 45 ] || bad "the 5-leg rows (TL): ran $X5N row-legs (floor 45)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: tuple_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: tuple_checked — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); one error per mistake after a tuple refusal (CS); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
+echo "PASS: tuple_checked — tuples: the lexer (L); the type in a var, a struct field and a parameter, \`t.N\`, copies (S, P); the literal in its five positions, wrapped, in both zones and a kernel build (C, S1, S4, K1, PW, AS); every open shape refused by name (R1-R13, R17, R21); the bridge — captures, \`return t;\`, \`a, b = f();\` — and its refusals (R14-R20, AS2); a tuple captured by a closure across an await (AS3); the zone's pass 1 reading a generic call by its tokens (ZG); a captured tuple re-assigned whole (CL); one error per mistake after a tuple refusal (CS), a tuple literal as a struct literal's element (TL); \`cyrius header\` and the LSP read a tuple parameter (T1, T2); --syntax-only silent (X); with default and named arguments (I1-I4); tuple_values.tcyr on x86 / IR / DCE / aarch64 / cx / PE (A)"
