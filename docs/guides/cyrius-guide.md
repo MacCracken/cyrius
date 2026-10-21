@@ -1802,8 +1802,9 @@ reaches: `var y = b.mkg(P);` with `fn mkg<T>(self, v: T): G1<T>` is `G1<Pt>`, `b
 annotated `var G: G1<Pt> = b.mkg(P);` holds that instance (it was refused *the declaration zone misread whether the
 initializer of 'G' is a struct value*), a generic method returning its own `: T` is the struct T binds at the call
 (`var y = b.idm(P);` with `fn idm<T>(self, v: T): T` is `Pt`, as the free `id(P)` is; it bound nothing, and `var y: Pt
-= b.idm(P);` was refused as such a misread), and a generic operator fn's result is its base `G1`, as its dispatch calls
-the base), one of 9-16 bytes is refused as `var
+= b.idm(P);` was refused as such a misread), and a generic operator fn's result is the instance its operands bind, as
+its dispatch calls it — `var y = b + P;` with `fn P1_add<T>(l: P1, r: T): G1<T>` is `G1<Pt>`, `b + 3` the base `G1`
+(6.7.16's D85 (a); see *A generic operator fn*)), one of 9-16 bytes is refused as `var
 G: P2 = B2.mk();` is, naming the method as written (*'P2.mk' returns a struct by value, and a struct result needs
 storage in a fn's frame*; through 6.7.14 `G` held the first word, silently), and over 16 bytes the call's own
 refusal is the one error. So does a whole if-expression whose branches are a struct of 8 bytes or less (6.7.16; the
@@ -2418,6 +2419,33 @@ layout under T's name) and is a hard error from v6.6.5.
 position with no arity check, so `fn V2_add(a, b, c)` built clean and bound `c` to whatever was
 in the third argument register — `a + b` returned a number computed partly from garbage. A
 struct-returning operator is still two parameters: the hidden return pointer is not one of them.
+
+⚠ **A generic operator fn binds its type parameters as its call does** (6.7.16; the user's decision D85 (a),
+2026-10-20). The left operand is argument 0 and the right operand argument 1, read exactly as the free call
+`P1_add(b, p)` reads them, so the operator calls the instance that call calls:
+
+```cyrius
+struct G1<T> { v: T; }
+struct P1 { a; }
+struct Pt { a; }
+fn P1_add<T>(l: P1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+
+fn f(): i64 {
+    var b = P1 { 30 };
+    var p = Pt { 33 };
+    var y = b + p;          # P1_add<Pt>: y is a G1<Pt>, y.v.a reads 33 — as P1_add(b, p)
+    var n = b + 3;          # T binds i64: the base, n.v is 3
+    return y.v.a;
+}
+```
+
+The same in the declaration zone and after the first statement. A struct carrier (`r: Box<T>`), a `p: *T` (`b +
+&p`), an f64 (`b + 1.5` is a `G1<f64>`), a type parameter on the left operand (`fn P1_add<T>(l: T, r: Pt)`) and a
+`: T` return bind as in the call; a right operand the call would bind nothing from (a field `b + w.s`, a method result
+`b + p.dup()`) binds nothing here. A scalar binding of a generic whose body uses T as a struct, or of one whose bound i64 fails, is refused
+naming the operator fn (*generic 'P1_add' has no i64 (or other scalar) instance*), as the call is, and a 9-16 byte or
+larger instance result at top level needs a fn's frame, as the call's does. Through 6.7.15 the dispatch called the i64
+base: `y.v` held `p`'s address, silently, and `y.v.a` was refused.
 
 ### Parentheses, struct operands and `Str` fields (6.7.6)
 

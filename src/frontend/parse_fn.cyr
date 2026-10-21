@@ -5936,6 +5936,7 @@ fn _call_arg_for(S, fi, open, k): i64 {
 # ... where `pk` is the POSITION that passes parameter k: k on a free call, k - 1 on a method call,
 # whose `self` (parameter 0) is the receiver and not in the list (`_mcall_infer`, 6.7.9).
 fn _call_arg_pk(S, fi, open, k, pk): i64 {
+    if (open == _OPI_OPEN) { return _opi_arg(pk); }   # 6.7.16 (D85 (a)): an operator's operand (`_op_gen_head`)
     if (_pd_named_at(S, open) == 0) { return _call_arg_start(S, open, pk); }
     var q = open + 1;
     var pc = 0;
@@ -15215,6 +15216,12 @@ fn _gs_gtp(S, lt, slot): i64 {
 # The parameter list at token `open` (its `(`): collect the T-typed parameter names and return the
 # 1-based index of the first parameter carrying each type parameter, packed as GFGM bits 8-23.
 fn _gs_params(S, fi, open): i64 {
+    var k = _opp_park(S);   # 6.7.16: a signature read with no operand's end read as `)`
+    var r = _gs_params_w(S, fi, open);
+    _opp_unpark(S, k);
+    return r;
+}
+fn _gs_params_w(S, fi, open): i64 {
     _gsn_n = 0;
     _gcr_n = 0;
     _gs_open = open;
@@ -15349,6 +15356,12 @@ fn _gs_body_open(S, i): i64 {
 # 6.7.16 (D1): mode 0 also answers 1 for `return &n;` (`_gs_ret_amp`) and a struct result stored in a name typed by T
 # (`_gs_var_sres`, `_gs_asg_sres`); the token a verdict stands on is `_gsw_ti` (`_gen_stub_note`).
 fn _gs_scan(S, fi, i, mode): i64 {
+    var k = _opp_park(S);   # 6.7.16: a body read with no operand's end read as `)`
+    var r = _gs_scan_w(S, fi, i, mode);
+    _opp_unpark(S, k);
+    return r;
+}
+fn _gs_scan_w(S, fi, i, mode): i64 {
     var n = GTCNT(S);
     var d = 1;
     _gsw_k = 0;
@@ -16525,6 +16538,142 @@ fn _gen_call_head(S, fi, noff): i64 {
     if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
     return fi;
 }
+# ⛔ 6.7.16 — A GENERIC OPERATOR fn IS CALLED AT THE INSTANCE ITS OPERANDS BIND, as its free call is (the user's
+# decision D85 (a), 2026-10-20): `b + p` with `fn P1_add<T>(l: P1, r: T): G1<T>` and p a `Pt` called the i64 base (y.v
+# held p's address) where `P1_add(b, p)` calls `P1_add$Pt`. The left operand [beg, opti) is argument 0 and the right
+# one (from the cursor to where PARSE_TERM ends it, `_opr_end`) argument 1, each read by the call's own readers
+# (`_gen_infer_tp`, through `_call_arg_pk`'s operator arm) with its end read as the call's `)` (`_opp_on`); then the
+# instance, or a scalar call of a stub or a base whose bound fails refused, as `_gen_call_head` decides — named at the
+# operator. Before the dispatch decides how the result returns and the operands pass: the instance's. `fi` the
+# operator fn; returns the fn to call. CHANGELOG [6.7.16]
+var _OPI_OPEN = 0 - 7;   # the "`(`" an operator's binding is read at (`_call_arg_pk`): no token
+var _opi_l = 0 - 1;      # the left operand's first token while the binding is read
+var _opi_r = 0 - 1;      # the right operand's
+fn _opi_arg(pk): i64 {
+    if (pk == 0) { return _opi_l; }
+    if (pk == 1) { return _opi_r; }
+    return 0 - 1;
+}
+fn _op_gen_head(S, fi, beg, opti): i64 {
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (fi < 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    _gen_stub(S, fi);   # records GFGM before any end reads as `)`
+    var sv = GTI(S);
+    var sc = _gi_sc;
+    var e = _opr_end(S, sv);
+    _gi_sc = 0;
+    var c0 = _op_gen_bind(S, fi, beg, opti, e, 0);
+    var c1 = _op_gen_bind(S, fi, beg, opti, e, 1);
+    STI(S, opti);
+    var ofi = _op_gen_pick(S, fi, c0, c1);
+    STI(S, sv);
+    _gi_sc = sc;
+    return ofi;
+}
+# Type parameter `w` of generic operator fn `fi` as its dispatch binds it: [b, p) OP [p + 1, e) read as the call's
+# arguments 0 and 1 (`_gen_infer_tp`, through `_call_arg_pk`'s operator arm), each operand's end read as its `)`.
+fn _op_gen_bind(S, fi, b, p, e, w): i64 {
+    var k = _opp_park(S);
+    var l = _opi_l;
+    var r = _opi_r;
+    _opi_l = b;
+    _opi_r = p + 1;
+    _opp_on(S, p, e);
+    var c = _gen_infer_tp(S, fi, _OPI_OPEN, w);
+    _opp_off(S);
+    _opi_l = l;
+    _opi_r = r;
+    _opp_unpark(S, k);
+    return c;
+}
+fn _op_gen_pick(S, fi, c0, c1): i64 {
+    var noff = L64(_fnt_names + fi * 8);
+    if (c0 > 0 || c1 > 0) { return _gen_call_struct(S, fi, noff, c0, c1); }
+    if (_gen_sc_inst(S, fi) == 1) { return _gen_call_struct(S, fi, noff, c0, c1); }
+    if (_bnd_base_bad(S, fi) == 1) { _refuse_bnd_base(S, fi, noff); return fi; }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, fi, noff); }
+    return fi;
+}
+# The token after the right operand PARSE_TERM reads from token i (`_op_rhs`): factors joined by `* / % << >> >>> *%
+# *| *?` (`_op_term_cont`), each after its prefixes (`- * & ~ !`) with its `.name`, call, subscript and `?` steps. Each
+# shape the readers judge whole (a name, a call, a wrap, `*E`, `&n`, a field chain, a float literal) ends where the
+# parse ends it; any other operand binds nothing wherever its end is read.
+fn _opr_end(S, i): i64 {
+    var n = GTCNT(S);
+    var opd = 0;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 28) {
+            i = _gz_close(S, i, n) + 1;
+            opd = 1;
+        } elif (opd == 0) {
+            if (t == 7 || t == 8 || t == 27 || t == 37 || t == 171) { i = i + 1; }
+            else {
+                i = _opr_head(S, i);
+                opd = 1;
+            }
+        } elif (t == 41) { i = i + 2; }
+        elif (_op_term_cont(t) == 1) {
+            if (t != 124) { opd = 0; }
+            i = i + 1;
+        } else { return i; }
+    }
+    if (i >= n) { return n - 1; }
+    return i;
+}
+# The token after an operand's head at token i: past `f<..>` (its `(` next) of a generic call, past a struct literal
+# `Q { .. }` / `Q<..> { .. }`, else past the one token.
+fn _opr_head(S, i): i64 {
+    if (TOKTYP(S, i) != 2) { return i + 1; }
+    var o = _gcall_open(S, i);
+    if (o > i + 1) { return o; }
+    var b = _slit_brace(S, i);
+    if (b > 0) { if (FINDSTRUCT(S, TOKVAL(S, i)) > 0) { return _slit_close(S, b) + 1; } }
+    return i + 1;
+}
+# The two operand ends `_op_gen_head` reads as the call's `)` (token type 11), and their own types, put back by
+# `_opp_off`. Every other read of the tokens while they are set — an instance's body (`_instantiate_generic_fn`), a
+# generic's signature or body scan (`_gs_params`, `_gs_scan`) — parks them (`_opp_park` / `_opp_unpark`). A `,`, a
+# `)` or the EOF token stays as it is.
+var _opp_a = 0 - 1;
+var _opp_at = 0;
+var _opp_b = 0 - 1;
+var _opp_bt = 0;
+fn _opp_on(S, a, b): i64 {
+    _opp_a = a;
+    _opp_at = TOKTYP(S, a);
+    _opp_b = b;
+    _opp_bt = TOKTYP(S, b);
+    _opp_put(S, a, _opp_at, 11);
+    _opp_put(S, b, _opp_bt, 11);
+    return 0;
+}
+fn _opp_off(S): i64 {
+    if (_opp_a < 0) { return 0; }
+    _opp_put(S, _opp_b, _opp_bt, _opp_bt);
+    _opp_put(S, _opp_a, _opp_at, _opp_at);
+    _opp_a = 0 - 1;
+    _opp_b = 0 - 1;
+    return 0;
+}
+fn _opp_put(S, i, t, v): i64 {
+    if (t == 11 || t == 31 || t == 12) { return 0; }
+    S64(S + 0x8C00000 + i * 8, v);
+    return 0;
+}
+# The ends set (packed, 0 = none), put back to their own types and cleared; `_opp_unpark` sets them again.
+fn _opp_park(S): i64 {
+    if (_opp_a < 0) { return 0; }
+    var k = ((_opp_a + 1) << 32) | (_opp_b + 1);
+    _opp_off(S);
+    return k;
+}
+fn _opp_unpark(S, k): i64 {
+    if (k == 0) { return 0; }
+    _opp_on(S, ((k >> 32) & 0xFFFFFFFF) - 1, (k & 0xFFFFFFFF) - 1);
+    return 0;
+}
 # ⛔ 6.7.11 — A GENERIC METHOD CALL `p.m(..)` REACHES THE INSTANCE ITS ARGUMENTS BIND, as the free
 # spelling `P_m(p, ..)` does (`_gen_call_head`), before `self` and the arguments, with the `(` at
 # `open`. 6.7.9 took only an f64 binding: a struct one called the i64 base, the dead stub when the
@@ -17000,7 +17149,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var sv_msp = _gen_msp;            # 6.7.15: a method call's spelling names its own refusals, not the body's
     _gen_msp = 0;
     var sv_rd = _rd_inst_enter();     # 6.7.16: the instance's levels count from 0 (`_rd_enter`)
+    var sv_opp = _opp_park(S);        # 6.7.16: the body parsed with no operand's end read as `)` (`_op_gen_head`)
     PARSE_FN_DEF(S);
+    _opp_unpark(S, sv_opp);
     _rd_inst_exit(sv_rd);
     _gen_msp = sv_msp;
     _attr_unpark(attrs);

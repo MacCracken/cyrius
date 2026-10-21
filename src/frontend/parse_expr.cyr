@@ -9306,8 +9306,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     # 6.6.6 (bite 14 review): an operator fn returning a struct BY VALUE takes its own path, so
     # every other dispatch below stays byte-identical. `beg` = the lhs's first token.
     var ofp = _op_fn_peek(S, stype, op_str, op_len);
+    var gfp = ofp;
+    ofp = _op_gen_head(S, ofp, beg, GTI(S) - 1);   # 6.7.16 (D85 (a)): a generic one's instance, as its call's
     if (_op_agg_ret(S, ofp) == 1) {
-        return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg);
+        return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg, ofp);
     }
     var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
     # For struct vars, push address instead of value (6.6.20: and for a `*S` operand at any size)
@@ -9323,6 +9325,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    if (ofp != gfp) { ofi = ofp; opnoff = L64(_fnt_names + ofi * 8); }   # 6.7.16: the instance (`_op_gen_head`)
     _callee_site_checks(S, ofi, opnoff, opti);   # v6.5.0: operator overloading is its own call path
     # ⛔ 6.6.6 (bite 14 review) — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An
     # operator always passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever
@@ -9368,11 +9371,12 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # X8 on aarch64) and the record a destination takes. One wrinkle: a <= 8 B lhs is passed BY
 # VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
-fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
+fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg, gfi): i64 {
     var opti = GTI(S) - 1;   # the operator (see EMIT_OP_DISPATCH)
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    if (gfi != ofi) { ofi = gfi; opnoff = L64(_fnt_names + ofi * 8); }   # 6.7.16: `gfi`, a generic one's instance
     var svar = _op_lhs_sv(S, ofi, beg, opti);   # GESVAR, or (6.6.20) a `*S` operand's address
     _op_lhs_check(S, ofi, stype, beg);   # 6.7.3
     var park = 0 - 1;

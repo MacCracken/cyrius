@@ -12351,7 +12351,7 @@ fn _gz_ty(S, b, e): i64 {
     var p = _gz_split(S, b, e);
     _gz_mx = mx;
     if (p == 0 - 2) { return 0; }
-    if (p >= 0) { return _gz_op(S, b, p); }
+    if (p >= 0) { return _gz_op(S, b, p, e); }
     return _gz_unary(S, b, e);
 }
 # A binary operator token's level: 1 the `+` / `-` loop (PEXPR, with `& | ^` and the overflow forms),
@@ -12434,7 +12434,9 @@ fn _gz_rsid(S, a, d): i64 {
 # 6.7.16: the result is the operator fn's, never an instance a generic call or method in the left operand names
 # (`_gz_gb` cleared): `var G: G1<i32> = mkg1<i32>(30) + mkg1<i32>(3);` was judged a struct value through it and the
 # replay added "the declaration zone misread ..." to the operator's own refusal. CHANGELOG [6.7.16]
-fn _gz_op(S, b, p): i64 {
+# 6.7.16 (D85 (a)): a GENERIC operator fn's result is the instance's its operands bind, the right operand [p + 1, e)
+# (`_gz_opg`). CHANGELOG [6.7.16]
+fn _gz_op(S, b, p, e): i64 {
     var t = TOKTYP(S, p);
     var lt = _gz_lty(S, b, p);
     _gz_k = 0;
@@ -12447,6 +12449,7 @@ fn _gz_op(S, b, p): i64 {
     elif (t == 9) { ofi = _gz_opfn(S, lt, "div"); }
     if (ofi < 0) { return 0; }
     var r = GFRS(S, ofi);
+    if (GFTP(S, ofi) != 0) { r = _gz_opg(S, ofi, r, b, p, e); }
     if (r <= 0) { return 0; }
     _gz_k = 1;
     _gz_mfi = ofi;
@@ -12456,12 +12459,20 @@ fn _gz_op(S, b, p): i64 {
 # The struct an operator's left operand [b, p) dispatches on (`_op_lst`): a struct result, an inline
 # global, a field, a dereference, `-g`; a handle sets no expression type (pointer arithmetic), nor does a
 # `Str` or a `*T` itself. 6.7.10: a field (5) and a dereference (7) dispatch (the user's decision 11).
+# 6.7.16: a generic call's or method's `: G<..>` result (`_gz_gb`) is the instance its call makes (`_gu_ieg`), the
+# struct the parse dispatches on — `mkg1<i32>(30) + ..` looks up `G1$i32_add`, never the base's `G1_add`; read as the
+# base, a generic `G1_add<T>` bound T to i32 and the sweep judged `var G: G1<i32> = mkg1<i32>(30) + mkg1<i32>(3);` a
+# struct value the replay's missing operator is not. CHANGELOG [6.7.16]
 fn _gz_lty(S, b, p): i64 {
     var t = _gz_ty(S, b, p);
     if (_gz_k == 3) { return 0; }
     if (_gz_k == 6) { return 0; }
     if (t >= 2048) { return 0; }
     if (t == _STR_SID(S)) { return 0; }
+    if (t > 0) { if (_gz_gb == t) {
+            var s = _gu_ieg(S, t, b, p);
+            if (s > 0) { return s; }
+        } }
     return t;
 }
 # `StructName_op` looked up without committing its name (`_op_fn_peek`, quietly: a dyn has none).
@@ -12471,6 +12482,55 @@ fn _gz_opfn(S, sid, op): i64 {
     var fi = FINDFN(S, BUILD_OP_NAME(S, sid, op, 3));
     SNPOS(S, np);
     return fi;
+}
+# ⛔ 6.7.16 — A GENERIC OPERATOR fn'S RESULT IN THE ZONE IS THE INSTANCE'S ITS DISPATCH CALLS (the user's decision D85
+# (a), 2026-10-20): what generic operator fn `fi` (its base returning `r`) returns at [b, p) OP [p + 1, e), its type
+# parameters read as the dispatch reads them (`_op_gen_head`: the operands as the call's arguments, each end read as
+# its `)`), with no fn instance made (`_gu_noinst`, as `_gu_mi` reads a method's): `r` for an i64 binding (the base),
+# else the instance's — a `: G<..>` the struct it names (`_gu_inst`), a `: T` the struct T binds, a fixed return
+# itself; 0 for a binding the sweep cannot read (`_gu_miss`). `var y = b + p;` with `fn P1_add<T>(l: P1, r: T):
+# G1<T>` was the base `G1` here (`y.v.a`: "field 'v' is not a struct"), the replay's dispatch the instance. CHANGELOG [6.7.16]
+fn _gz_opg(S, fi, r, b, p, e): i64 {
+    _gen_stub(S, fi);
+    var sv = GTI(S);
+    var lc = GFLC(S);
+    var ni = _gu_noinst;
+    var sc = _gi_sc;
+    var ms = _gu_miss;
+    _gu_noinst = 1;
+    SFLC(S, 0);
+    _gi_sc = 0;
+    _gu_miss = 0;
+    var c0 = _op_gen_bind(S, fi, b, p, e, 0);
+    var c1 = 0;
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) != 0) { c1 = _op_gen_bind(S, fi, b, p, e, 1); }
+    var inst = _gu_mbind(S, fi, c0, c1);
+    _gu_noinst = ni;
+    SFLC(S, lc);
+    STI(S, sv);
+    _gi_sc = sc;
+    _gu_miss = ms;
+    if (inst < 0) { return 0; }
+    if (inst == 0) { return r; }
+    var w = _gen_ret_tp(S, fi);
+    if (w == 0) { return _gu_okc(c0); }
+    if (w == 1) { return _gu_okc(c1); }
+    if (_gz_gbase(S, r) == 1) { return _gu_inst_g(S, fi, r, c0, c1); }
+    return r;
+}
+# `_gu_inst` for generic struct `g` (`_gz_gb` while it reads, put back).
+fn _gu_inst_g(S, fi, g, c0, c1): i64 {
+    var gb = _gz_gb;
+    _gz_gb = g;
+    var s = _gu_inst(S, fi, c0, c1);
+    _gz_gb = gb;
+    return s;
+}
+# A binding as a struct (0 for a scalar).
+fn _gu_okc(c): i64 {
+    if (c <= 0) { return 0; }
+    if (c >= 2048) { return 0; }
+    return c;
 }
 # No binary operator: a name or call chain (`_gz_chain`); anything else gives no struct — `-x` too, an
 # integer (6.7.11, the user's decision (a): `_neg_int` clears the struct type, so `-G + H` never
@@ -12973,7 +13033,7 @@ fn _gu_zsid(S, ti): i64 {
 # has, read from the tokens as the replay parses it (`_gz_ty`, a call's result: kind 1) — not a free call's
 # (`_gu_call`'s). 6.7.16: a GENERIC method's generic struct result is the instance its call reaches (`_gu_minst`; the
 # base was declined, `b.mkg(P)` / `b.mkg<i32>(33)` bound nothing), a `: T` one the struct T binds (`_gz_mtb`), a generic
-# operator fn's its base; and a whole if-expression's struct (`_gu_ie`, D16).
+# operator fn's the instance's its operands bind (`_gz_opg`, D85 (a)); and a whole if-expression's struct (`_gu_ie`, D16).
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
@@ -13096,9 +13156,9 @@ fn _gu_bwide(S, a, b): i64 {
 # arm binds them — an explicit list as `_meth_targs` / `_meth_xinst` read it (`_gu_mx`), else `_mcall_gen`'s inference
 # (`_gu_mi`: `_mcall_infer`, `self` at parameter 0, no fn instance made) — then G for the base, else the instance its
 # return names (`_gu_inst`), the one the replay's call reaches. `var y = b.mkg(P);` / `b.mkg<i32>(33)` bound nothing in
-# the zone (`y.v`: "no struct type in scope for 'y'") and bound the instance after the first statement. A GENERIC
-# OPERATOR fn is G: its dispatch (EMIT_OP_DISPATCH) calls the base, as after the first statement. 0 = not read here.
-# CHANGELOG [6.7.16]
+# the zone (`y.v`: "no struct type in scope for 'y'") and bound the instance after the first statement. No method step
+# recorded (`_gz_mti` -1) is G; an operator's result is read whole by `_gz_op` (`_gz_opg`), which leaves no `_gz_gb`.
+# 0 = not read here. CHANGELOG [6.7.16]
 fn _gu_minst(S, g): i64 {
     if (_gz_mti < 0) { return g; }
     var gb = _gz_gb;

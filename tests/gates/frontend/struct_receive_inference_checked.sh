@@ -1465,7 +1465,8 @@ done
 # (`_gz_mopen`, and as one operand in `_gz_split`, `_gz_mxopen`: the member arm's own `_mtargs_at` test) and resolves the
 # method's type arguments as the member arm binds them (`_gu_minst`: an explicit list as `_meth_xinst` reads it, else
 # `_mcall_infer`, `self` at parameter 0, no fn instance made), then the instance its `: G<..>` names (`_gu_inst`). A
-# GENERIC OPERATOR fn's result is its base G, as its dispatch calls the base. GZM1 the filed repro verbatim, GZM2 the
+# GENERIC OPERATOR fn bound to i64 (GZM3's `b + 32`) is its base G, as its dispatch calls the base (6.7.16's D85 (a): a
+# struct binding is its instance, GOG below). GZM1 the filed repro verbatim, GZM2 the
 # filed explicit spelling, GZM3 a generic operator fn (`b + 32`, `B1_add<T>`), each zone and after; GZM4 `self: V`
 # (G1<B1>), GZM5 an f64 argument (G1<f64>), GZM6 a struct carrier, GZM7 a nested list `<G1<i32>>`, GZM8 a refused list
 # `<*u8>`: the one refusal; GZM9 an explicit generic method returning a plain struct, untyped and annotated (`var G: S8 =` was refused
@@ -1842,6 +1843,137 @@ for zw in zone after; do
     runs "GOP2$zw" 33 "the $zw: \`G1_add\` over two generic calls, annotated and untyped"
 done
 
+# ---- 6.7.16 (issues/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md; the user's decision D85 (a),
+# 2026-10-20): A GENERIC OPERATOR fn BINDS ITS TYPE PARAMETERS AS ITS CALL DOES. With `fn B1_add<T>(l: B1, r: T): G1<T>`
+# the dispatch called the i64 base whatever its operands were: `var y = b + P;` (P a `Pt`) held P's address in `y.v`
+# (`y.v.a`: "field 'v' is not a struct: it has no field 'a'"), where `B1_add(b, P)` calls `B1_add$Pt`; the declaration
+# zone's sweep read the base's `G1` too. The dispatch reads the left operand as argument 0 and the right one as argument
+# 1 with the call's own readers (`_op_gen_head`: `_gen_infer_tp` through `_call_arg_pk`'s operator arm, each operand's
+# end read as its `)`) and calls the instance, or refuses a stub's scalar call as the call does; the zone's sweep reads
+# the same binding with no fn instance made (`_gz_opg`), and reads an operator's left operand that is a generic call's
+# `: G<..>` result as the instance its call makes (`_gz_lty`: GOP1zone went RED without it once the zone read generic
+# operator fns). GOG0 the filed repro verbatim (its `y.v * 1000` is the missing `Pt_mul`'s one refusal, as decided).
+# Each row zone and after (the fn rows: crossos/struct_operator_result_binding.tcyr's GO*): GOG1 the filed shape
+# (`y.v.a`), GOG2 annotated `var y: G1<Pt> = b + P;`, GOG3 T on the left operand (`fn C1_add<T>(l: T, r:
+# Pt)`), GOG4 a struct carrier (`r: Box<T>`: a `Box<Pt>` and a `Box<i32>`), GOG5 an f64 (`b + 1.5`: `G1<f64>`), GOG6 a
+# `: T` return, GOG7 `r: *T` given `&P`, GOG8 the right operand wrapped, a dereference, a call, a generic call carrying
+# it (`id(P)`) and one making an instance (`mkg1(P)`: `G1<G1<Pt>>`), GOG9 `-` / `*` / `/`, GOG10 a field right operand
+# binds nothing (`b + P.a`: i64, as `B1_add(b, P.a)` binds), GOG11 a stub generic (`s + 3` is the call's refusal, `s +
+# P` runs), GOG12 a 16 B instance at top level is the call's no-frame refusal, GOG13 a fn body reads `y.v.a` before the
+# replay, GOG14 a generic fn whose operator's right operand instances that same generic (its body parsed again while the
+# operand is read); GZM3 (`b + 32`: the base) is the i64 control. (Each mutant: a scratch copy of the tree with the one change,
+# its compilers built from it, this gate run from the copy; 2026-10-21.)
+#   N96 the tree before it (e77a2b66a's src)               -> RED 27: GOG0 (BUILT), GOG1-GOG9, GOG11, GOG11r, GOG12 zone
+#                                                           and after, GOG13, GOG14, x4 legs (`y.v.a` "field 'v' is not
+#                                                           a struct", the stub's and the 16 B call's refusals BUILT);
+#                                                           GOG10 green
+#   N97 `_op_gen_head` answering fi (the base)             -> RED 27 (as N96)
+#   N98 `_gz_opg` answering r (the zone reads the base)    -> RED 11: GOG1zone-GOG9zone GOG12zone GOG13, x4 ("the
+#                                                           declaration zone misread ..." / "field 'v' is not a struct")
+#   N99 `_opp_put` writing nothing (no end read as `)`)    -> RED 25: GOG0 GOG1-GOG9 GOG11 GOG12 zone and after, GOG13 GOG14,
+#                                                           x4
+#   N100 `_opr_end` without its `.name` step               -> RED 2: GOG10zone GOG10after x4 (`P` of `P.a` read whole)
+#   N101 `_gz_lty` without `_gu_ieg`                       -> RED 1: GOP1zone x4 (2 errors: + the misread)
+#   N102 `_instantiate_generic_fn` without `_opp_park`     -> RED 1: GOG14 x4 ("expected ';', got ')'": the instance's
+#                                                           body read the operand's end as `)`)
+GOGH='include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct Box<T> { v: T; }
+struct Pt { a; }
+struct P2 { a; b; }
+struct B1 { a; }
+struct C1 { a; }
+struct D1 { a; }
+struct E1 { a; }
+struct F1 { a; }
+struct S1 { a; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
+fn id<T>(x: T): T { return x; }
+fn mkp(n): Pt { var p: Pt; p.a = n; return p; }
+fn B1_add<T>(l: B1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+fn B1_sub<T>(l: B1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+fn B1_mul<T>(l: B1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+fn B1_div<T>(l: B1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+fn C1_add<T>(l: T, r: Pt): G1<T> { var g: G1<T>; g.v = l; return g; }
+fn D1_add<T>(l: D1, r: Box<T>): G1<T> { var g: G1<T>; g.v = r.v; return g; }
+fn E1_add<T>(l: E1, r: T): T { return r; }
+fn F1_add<T>(l: F1, r: *T): G1<T> { var g: G1<T>; g.v = *r; return g; }
+fn S1_add<T>(l: S1, r: T): i64 { return r.a; }
+fn take4(g: G1<i32>): i64 { return g.v; }
+var b = B1 { 1 };
+var c = C1 { 33 };
+var d = D1 { 1 };
+var e = E1 { 1 };
+var f1 = F1 { 1 };
+var s = S1 { 1 };
+var P = Pt { 33 };
+var Q: *Pt = &P;
+var BX: Box<Pt> = Box<Pt> { P };
+var BI: Box<i32> = Box<i32> { 33 };
+var Q2 = P2 { 30, 3 };'
+# rowgo <name> <declarations, the first `var y`> <exit expression>: the zone file over $GOGH and its after twin
+rowgo() {
+    printf '%s\n%s\nsyscall(60, %s);\n' "$GOGH" "$2" "$3" > "$T/$1zone.cyr"
+    awk '!d && /^var y/{print "var Z0 = 0; Z0 = 1;"; d = 1} {print}' "$T/$1zone.cyr" > "$T/$1after.cyr"
+}
+# GOG0 the filed repro verbatim: `y` is a `G1<Pt>`, so `y.v * 1000` is a `Pt` with no `Pt_mul` - the decided result is
+# the missing operator's one refusal (it compiled and exited 9: y.v held p's address).
+cat > "$T/GOG0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct G1<T> { v: T; }
+struct P1 { a; }
+struct Pt { a; }
+fn P1_add<T>(l: P1, r: T): G1<T> { var g: G1<T>; g.v = r; return g; }
+fn f(): i64 {
+    var b = P1 { 30 };
+    var p = Pt { 33 };
+    var y = b + p;
+    var z = P1_add(b, p);
+    return y.v * 1000 + z.v.a;
+}
+syscall(60, f() % 256);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" GOG0
+    n=$(grep -c '^error' "$T/GOG0.$leg.err" || true)
+    if [ "$crc" -ne 0 ] && [ "$n" -eq 1 ] && grep -q "undefined function 'Pt_mul'" "$T/GOG0.$leg.err" \
+       && grep -qE "^error: (refusing to emit binary with 1 reachable undefined function|undefined function\(s\) called \(cx backend\))" "$T/GOG0.$leg.err"; then
+        ok "GOG0 the filed repro: \`y.v * 1000\` is a \`Pt\` with no \`Pt_mul\`, the one refusal ($leg)"
+    else bad "GOG0 the filed repro: want the missing \`Pt_mul\`'s one refusal ($leg, rc $crc): $(grep -E '^(error|warning)' "$T/GOG0.$leg.err" | tr '\n' '|')"; fi
+done
+rowgo GOG1 'var y = b + P;' 'y.v.a'
+rowgo GOG2 'var y: G1<Pt> = b + P;' 'y.v.a'
+rowgo GOG3 'var y = c + P;' 'y.v.a'
+rowgo GOG4 'var y = d + BX;
+var y2 = d + BI;' 'y.v.a + take4(y2) + y2.v - 66'
+rowgo GOG5 'var y = b + 1.5;' 'f64_to(y.v * 22.0)'
+rowgo GOG6 'var y = e + P;' 'y.a'
+rowgo GOG7 'var y = f1 + &P;' 'y.v.a'
+rowgo GOG8 'var y = b + (P);
+var y2 = b + *Q;
+var y3 = b + mkp(33);
+var y4 = b + id(P);
+var y5 = b + mkg1(P);' 'y.v.a + y2.v.a + y3.v.a + y4.v.a + y5.v.v.a - 132'
+rowgo GOG9 'var y = b - P;
+var y2 = b * P;
+var y3 = b / P;' 'y.v.a + y2.v.a + y3.v.a - 66'
+rowgo GOG10 'var y = b + P.a;' 'y.v + 0'
+rowgo GOG11 'var y = s + P;' 'y'
+for n in 1 2 3 4 5 6 7 8 9 10 11; do
+    for zw in zone after; do runs "GOG$n$zw" 33 "the $zw: GOG$n's generic operator fn binds T as its call does"; done
+done
+rowgo GOG11r 'var y = s + 3;' 'y'
+rowgo GOG12 'var y = b + Q2;' 'y.v.a'
+for zw in zone after; do
+    refused "GOG11r$zw" "generic 'S1_add' has no i64 (or other scalar) instance" "the $zw: \`s + 3\` of a stub generic is the call's refusal"
+    refused "GOG12$zw" "'B1_add<P2>' returns a struct by value, and a struct result needs storage in a fn's frame" "the $zw: a 16 B instance has no frame at top level, as the call's"
+done
+printf '%s\nvar y = b + P;\nfn f(): i64 { return y.v.a; }\nsyscall(60, f());\n' "$GOGH" > "$T/GOG13.cyr"
+runs GOG13 33 "the zone: a fn body reads \`y.v.a\` of \`b + P\` before the replay (\`G1<Pt>\`)"
+printf '%s\nfn h<T>(x: T, n): Pt { var r: Pt; r.a = n; if (n == 0) { return r; } var y = b + h(P, n - 1); r.a = y.v.a + 11; return r; }\nfn f(): i64 { var q = h(5, 3); return q.a; }\nsyscall(60, f());\n' "$GOGH" > "$T/GOG14.cyr"
+runs GOG14 33 "a generic fn whose operator's right operand instances that same generic (\`b + h(P, n - 1)\`, its body parsed again inside the operand's read)"
+
 # ---- 6.7.16 (issues/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a zone `var y = b.idm(P);` — a
 # GENERIC method returning its own type parameter `: T`, bound to a struct — bound nothing (`y.a`: "no struct type in
 # scope for 'y'"), and its annotated twin `var y: Pt = b.idm(P);` was refused "the declaration zone misread whether the
@@ -2090,7 +2222,7 @@ _u1=$("$CC" < "$T/TI22zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreacha
 _u2=$("$CC" < "$T/TI22after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
 if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI33 the zone sweep instanced no fn: '$_u1' in both forms"
 else bad "TI33 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
-[ "$rows" -ge 517 ] || bad "only $rows rows ran (floor 517)"
+[ "$rows" -ge 546 ] || bad "only $rows rows ran (floor 546)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

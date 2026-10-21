@@ -206,7 +206,8 @@ fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG
 # --- 6.7.16: a generic method's generic struct result (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
 # `var y = b.mkg(P);` / `b.mkg<i32>(33)` with `fn mkg<T>(self, v: T): G1<T>` bound nothing in the zone (`y.v`: "no
 # struct type in scope for 'y'"); they are the instance the call reaches, as after the first statement (TN*, below). A
-# generic operator fn's result is its base (`ZB_add<T>`: the dispatch calls the base); TM9 an explicit generic method
+# generic operator fn bound to i64 (`GZB + 30`, `ZB_add<T>`) is its base, as its call's (6.7.16's D85 (a): a struct
+# binding is its instance, struct_operator_result_binding.tcyr's GO*); TM9 an explicit generic method
 # returning a plain struct.
 struct ZB { a; }
 impl ZB {
@@ -396,7 +397,7 @@ assert_eq(TH10.v.zshow() + zt4(TH11), 67, "after a statement: a bounded ZG, a st
 test_group("6.7.16: a zone generic method's generic struct result is the instance its call reaches");
 assert_eq(TM6.v.a, 33, "the zone: GZB.zmkg(GP1) is a G1<P1> (refused at TM6.v before)");
 assert_eq(TM7.v + zt4(TM7), 66, "the zone: GZB.zmkg<i32>(33) is a G1<i32>");
-assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn's base G1");
+assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn bound to i64: its base G1");
 assert_eq(TM9.a, 33, "the zone: GZB.zmk<i32>(33), an explicit generic method's plain struct");
 assert_eq(tm_read2(), 132, "a fn body reads them before the replay");
 var TN6 = GZB.zmkg(GP1);
