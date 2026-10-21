@@ -7072,8 +7072,9 @@ fn _call_close(S, o): i64 {
 
 # ⛔ 6.7.16 — ... and `callptr(..)` at token `ti` followed by a chain, a by-value struct argument: `take(callptr(&gw,
 # &w).p.q16())` / `take(callptr(&gw, &w).p)` is the struct its last step gives, as `take(gw(&w).p.q16())` is through
-# `_call_dotted` (`_push_struct_expr_arg`) — it pushed a word as the struct's address (SIGSEGV on every target), and a
-# multi-value method there (`take(callptr(..).p.m2())`, a tuple parameter too) compiled. 1 / 0. CHANGELOG [6.7.16]
+# `_call_dotted` (`_push_struct_expr_arg`) — it pushed a word as the struct's address (a crash on every target: SIGSEGV
+# on x86_64 / aarch64, an access violation on PE, a guest address fault on cx), and a multi-value method there
+# (`take(callptr(..).p.m2())`, a tuple parameter too) compiled. 1 / 0. CHANGELOG [6.7.16]
 fn _icall_dotted(S, ti): i64 {
     if (TOKTYP(S, ti) != 137) { return 0; }
     var o = _icall_open_at(S, ti);

@@ -25,7 +25,7 @@
 #      captures, a 16 B struct, generic methods inferred / explicit / at f64, forwards, a for step, every receiver head,
 #      a pair's `?` / statement `?` / wrapped `?` / destructure / forward (the forwarder below its caller), a `*T`
 #      method as a dyn source, comparisons (`w.a.n < k >> (j)`), the declaration zone; MS a chain on a `callptr(..)`
-#      result as a by-value struct argument (`_icall_dotted`: it pushed a word as the address, SIGSEGV); MR a struct
+#      result as a by-value struct argument (`_icall_dotted`: it pushed a word as the address, a crash); MR a struct
 #      over 8 B returned from a chain's method (`_ret_expr_head`: refused before, "returned in two registers ... got `w`" /
 #      "return must be a bare local identifier, or a call ...")
 #   C  each refusal on a chain is the single name's, once, word for word but the receiver its hint spells (x86_64):
@@ -83,7 +83,7 @@
 #       scope (no `_mch_tok` arm)
 #   M13 `_pair_callee_at` without its chain arm         -> RED 56: V x7, C1-C6b x7 (the pair refusals)
 #   M14 `_dt_call_open` without its chain arm           -> RED 82: R0 x5, V x7, C7 / C8 / C11-C16 x7
-#   M15 the tree before `_icall_dotted` (7cdce3aa1)     -> RED 10: V x7 (MS: SIGSEGV), C17 / C17c / C19 on callptr
+#   M15 the tree before `_icall_dotted` (7cdce3aa1)     -> RED 10: V x7 (MS: a crash on each leg), C17 / C17c / C19 on callptr
 #   M16 the tree before `_ret_expr_head`'s chain arm    -> RED 19: V x7 (MR: the file did not build), C22 / C23 on c d f
 #       (df29930ab)                                        x k i ("returned in two registers ... got `w`")
 #   M17 the tree before `_mch_nox` (4a790ef3c)           -> RED 1: X1 cov (SIGSEGV)

@@ -158,7 +158,8 @@ fn fc_cmp(k, j): i64 {
 }
 
 # MS: a chain on a `callptr(..)` result as a by-value struct argument, as on a direct call's: it pushed a word as the
-# struct's address (SIGSEGV on every target)
+# struct's address (a crash on every target: SIGSEGV on x86_64 / aarch64, an access violation on PE, a guest address
+# fault on cx)
 struct FcWQ { q: FcQ16; n; }
 fn fc_gwq(w: *FcWQ): *FcWQ { return w; }
 fn fc_tq(q: FcQ16): i64 { return q.a * 10 + q.b; }
@@ -318,9 +319,9 @@ assert_eq(fc_d3(), 45, "MY: an argument, dk0(dw.d.me(3))");
 assert_eq(fc_d4(), 46, "MY: return dw.d.me(4) from a dyn fn");
 assert_eq(fc_d5(), 47, "MY: a dereference head, (*pd).d.me(5)");
 assert_eq(fc_cmp(5, 0), 47, "MC: w.a.n < k >> (j) and w.b.id < k >> (j) (id a field AND a generic method) compare");
-assert_eq(fc_s1(), 34, "MS: tq(callptr(&gpw, &w).p.q16()), a method's struct result (SIGSEGV before)");
-assert_eq(fc_s2(), 56, "MS: tq(callptr(&gwq, &wq).q), a struct field (SIGSEGV before)");
-assert_eq(fc_s3(), 34, "MS: tq((callptr(&gpw, &w).p.q16())), wrapped (SIGSEGV before)");
+assert_eq(fc_s1(), 34, "MS: tq(callptr(&gpw, &w).p.q16()), a method's struct result (a crash before)");
+assert_eq(fc_s2(), 56, "MS: tq(callptr(&gwq, &wq).q), a struct field (a crash before)");
+assert_eq(fc_s3(), 34, "MS: tq((callptr(&gpw, &w).p.q16())), wrapped (a crash before)");
 assert_eq(fc_ret(0), 34, "MR: return w.p.q16(); from a : Q16 fn (refused before)");
 assert_eq(fc_ret(1), 34, "MR: return (*pw).p.q16();");
 assert_eq(fc_ret(2), 34, "MR: return callptr(&gpw, pw).p.q16();");
