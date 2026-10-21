@@ -159,6 +159,31 @@
 #                                                           wine: the null-device rows read -9); cass 27 / 27
 #   _win_ftrunc_err's -1 -> -22 dropped (lib)               wine 27 / 27 (wine never answers -1 there);
 #                                                           on cass path_failure_errno 25 / 2 (-1, -1)
+# 6.7.16 — an fd with a LOW BIT set is no descriptor (issues/2026-10-20-pe-fd-not-multiple-of-four-
+# aliases-the-handle-below-it.md; Linux answers -9, which is what the source says). The NT kernel
+# ignores a HANDLE value's two low bits, so fd `h + 1` / `h + 2` / `h + 3` reached CloseHandle /
+# ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile as the live `h`: the
+# filed alias printed `52 0 -9 -9` under wine and `244 0 -9 -9` on cass (Linux `3 -9 3 0` — the
+# close of h + 3 closed h). `_pe_fd_to_handle_rcx`'s fd > 2 arm opens `test $0x3,%al; jne .bad`, and
+# each of its five callers lands .bad on `push $-9; pop %rax` behind a `jmp` over it; the close site
+# sends a low-bit fd to the std-close stub (`cmp $0x2,%rax; jle; test $0x3,%al; je .direct`), whose
+# leading compare is the unsigned `cmp $0x2,%rax; ja` to its -9 arm. Rows: axis 1 and axis 4 run the
+# filed alias (its h, then `-9 3 0`) and tests/tcyr/crossos/unopened_fd_ebadf.tcyr; axis 2 requires
+# the guard before EVERY ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile
+# call of the probe (literal and var-held) and reads the close site's and the stub's new compares.
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix compiler (450ecf2c9)                        axis 2 FAIL (CH BAD: the close site's jg; no
+#                                                           low-bit test before ReadFile); axis 4 FAIL
+#                                                           (alias `52 0 -9 -9`; unopened_fd_ebadf 17 / 15)
+#   the helper's `jnz .bad` never taken (`jo`)              axis 2 FAIL (FG BAD); axis 4 FAIL
+#                                                           (unopened_fd_ebadf 12 / 20); the alias row
+#                                                           PASSES: the close site has its own test
+#   the close site's `je .direct` always taken (`jmp`)      axis 2 FAIL (CH BAD); axis 4 FAIL (alias
+#                                                           `52 0 -9 -9`; unopened_fd_ebadf 25 / 7)
+#   the stub's leading `ja` never taken (`jo`)              axis 2 FAIL (the stub matched 3/15); axis 4
+#                                                           PASSES: GetStdHandle(-fd - 10) refuses the
+#                                                           slot, so the -9 arm answers one Win32 call
+#                                                           later — axis 2 holds the before-any-call rule
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -169,12 +194,13 @@ T2="$ROOT/tests/tcyr/crossos/pe_open_failure_errno.tcyr"
 T3="$ROOT/tests/tcyr/crossos/lseek_failed_seek.tcyr"
 T4="$ROOT/tests/tcyr/crossos/close_answer.tcyr"
 T5="$ROOT/tests/tcyr/crossos/path_failure_errno.tcyr"
-for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5"; do
+T6="$ROOT/tests/tcyr/crossos/unopened_fd_ebadf.tcyr"
+for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
     [ -f "$f" ] || { echo "FAIL: pe_reroute_failure_errno: $f is missing"; exit 1; }
 done
-# Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's at
-# 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=27
+# Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
+# T6's at 6.7.16.
+F1=10; F2=10; F3=13; F4=13; F5=27; F6=32
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -201,7 +227,7 @@ summary() { tr -d '\r' < "$1" | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*
 
 # axis 1: the POSIX oracle.
 mkdir -p "$D/n"
-for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5"; do
+for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
     t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
     ( cd "$ROOT" && "$CC" < "$t" > "$D/n/$b" 2> "$D/n/$b.err" ) || true
     if [ ! -s "$D/n/$b" ]; then
@@ -321,6 +347,32 @@ fmt_int(b); println("");
 fmt_int(c); println("");
 EOF
 
+# 6.7.16: an fd beside an open one, never opened itself (the filed alias, verbatim). It prints h,
+# then the close of h + 3, the write to h and the close of h: Linux `-9 3 0`.
+cat > "$D/alias.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+var h = sys_open("alias_probe.txt", 577, 420);
+p(h);
+p(sys_close(h + 3));          # never opened as an fd: Linux -9
+p(sys_write(h, "abc", 3));    # the file's own fd: Linux 3
+p(sys_close(h));              # Linux 0
+sys_unlink("alias_probe.txt");
+println("");
+EOF
+# "<h> -9 3 0" with h a descriptor above 2 (on PE a multiple of 4): the alias row's verdict.
+alias_ok() {  # $1 = the output line, $2 = 4 on PE (h must be a multiple of 4), 1 natively
+    set -- $1 "$2"
+    [ $# = 5 ] || return 1
+    [ "$2 $3 $4" = "-9 3 0" ] || return 1
+    case "$1" in *[!0-9]*|'') return 1 ;; esac
+    [ $(( $1 % $5 )) = 0 ] && [ "$1" -gt 2 ]
+}
+
 # 6.7.16's D79 / D80: the two filed repros, verbatim. pathfail runs in an empty directory; ftfail
 # with stdout a pipe, and writes its answers to ft.out.
 cat > "$D/pathfail.cyr" <<'EOF'
@@ -382,15 +434,15 @@ sys_exit(0);
 EOF
 
 # axis 1, 6.7.16: the std-fd rows natively.
-for p in closestd trstd close2 clsh_child closeneg pathfail ftfail; do
+for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias; do
     ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
     chmod +x "$D/n/$p" 2> /dev/null || true
 done
 clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
-if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ]; then
-    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" | grep -m2 '^error' | tr '\n' ' ')"
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ]; then
+    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | grep -m2 '^error' | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
     got=$(line "$D/n/cs.out")
@@ -413,12 +465,17 @@ else
     ( cd "$D/n/ft" && ulimit -c 0; ../ftfail 2> /dev/null | cat > /dev/null ) || true
     got=$(line "$D/n/ft/ft.out" 2> /dev/null)
     if [ "$got" = "-22 -9 -2 -9" ]; then ok; else bad "axis 1: the truncate-failure repro (stdout a pipe) natively: '$got' (want '-22 -9 -2 -9')"; fi
+    mkdir -p "$D/n/al"
+    ( cd "$D/n/al" && ulimit -c 0; ../alias > al.out 2> /dev/null ) || true
+    got=$(line "$D/n/al/al.out")
+    if alias_ok "$got" 1; then ok; else bad "axis 1: the fd-alias repro natively: '$got' (want '<h> -9 3 0')"; fi
 fi
 
 # axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
-# CloseHandle call is a site's fd > 2 arm, behind the SIGNED `cmp $0x2,%rax; jg`, whose fd <= 2 arm
-# (0 / 1 / 2 and, D78, every negative fd) calls the std-close stub — or that stub's own call; the
-# stub reads, in order, `test %rax,%rax; js` (a negative fd: -9), GetStdHandle, the -9 arm
+# CloseHandle call is a site's fd > 2 arm, behind the SIGNED `cmp $0x2,%rax; jle` and the low-bit
+# `test $0x3,%al; je`, whose other arm (0 / 1 / 2, D78's negative fds and an fd with a low bit set)
+# calls the std-close stub — or that stub's own call; the stub reads, in order, the unsigned
+# `cmp $0x2,%rax; ja` (a negative or low-bit fd: -9), GetStdHandle, the -9 arm
 # for 0 / INVALID_HANDLE_VALUE, SetStdHandle(.., -1), the GetStdHandle loop that compares every
 # slot with the HANDLE (the one-handle child's stdout lives on that compare), then CloseHandle.
 # Every SetEndOfFile call follows the std-fd map (`cmp $0x2,%rax`, then a GetStdHandle call).
@@ -437,7 +494,7 @@ _std_map_axis() {
                 s = slot(t[i])
                 if (s == ch) {
                     if (t[i-1] ~ /^mov +%rsi,%rcx/) { print "CH stub -"; continue }
-                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^jg / && t[i-5] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
+                    if (t[i-1] ~ /^mov +%rax,%rcx/ && t[i-2] ~ /^jmp / && t[i-3] ~ /^call +0x[0-9a-f]+/ && t[i-4] ~ /^je / && t[i-5] ~ /^test +\$0x3,%al/ && t[i-6] ~ /^jle / && t[i-7] ~ /^cmp +\$0x2,%rax/) { print "CH site " tgt(t[i-3]); continue }
                     print "CH BAD:not-behind-the-std-fd-test"; continue
                 }
                 if (s == se) {
@@ -469,7 +526,7 @@ _std_map_axis() {
             on && $3 ~ /^ret/ { exit }' "$D/dis" > "$D/cstub"
         got=$(awk -v gs="$GS" -v ss="$SS" -v ch="$CH" '
             function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
-            BEGIN { np = split("^test +%rax,%rax|^js |G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
+            BEGIN { np = split("^cmp +\\$0x2,%rax|^ja |G|^cmp +\\$0x1,%rax|^ja |^mov +\\$0xfffffffffffffff7,%rax|^mov +\\$0xffffffffffffffff,%rdx|S|G|^cmp +%rsi,%rax|^je |^cmp +\\$0xfffffff3,%edi|^jne |^mov +%rsi,%rcx|C", pat, "|"); k = 1 }
             k <= np {
                 if (pat[k] == "G") { if (slot($0) == gs) k++ }
                 else if (pat[k] == "S") { if (slot($0) == ss) k++ }
@@ -484,6 +541,47 @@ _std_map_axis() {
     fi
 }
 
+# axis 2, 6.7.16 (called from axis 2 below): an fd with a low bit set is no descriptor. Every call
+# through the ReadFile / WriteFile / SetFilePointerEx / FlushFileBuffers / SetEndOfFile IAT slot is
+# reached from `_pe_fd_to_handle_rcx`'s fd > 2 arm, `test $0x3,%al; jne <bad>; mov %rax,%rcx`, at
+# most 16 instructions before it, and <bad> is `push $0xfffffffffffffff7; pop %rax` with a `jmp`
+# over it right before (the answered path never reads -9). Floors: each API at least twice (the
+# literal and the var-held route; SetEndOfFile once).
+_fd_guard_axis() {
+    FB=$(va FlushFileBuffers)
+    if [ -z "$FB" ]; then bad "axis 2: the probe does not import FlushFileBuffers (an fsync reroute)"; return 0; fi
+    awk -F'\t' -v rf="$RF" -v wf="$WF" -v sf="$SF" -v fb="$FB" -v se="$SE" '
+        NF >= 3 { n++; t[n] = $3; a = $1; sub(/^ +/, "", a); sub(/:$/, "", a); ad[n] = "0x" a; at["0x" a] = n }
+        function slot(x,   k) { k = x; if (k !~ /^call +\*0x[0-9a-f]+\(%rip\)/) return ""; sub(/.*# /, "", k); return k }
+        function tgt(x,   k) { k = x; sub(/^j[a-z]+ +/, "", k); sub(/ .*/, "", k); return k }
+        END {
+            for (i = 1; i <= n; i++) {
+                s = slot(t[i]); api = ""
+                if (s == rf) api = "ReadFile"; else if (s == wf) api = "WriteFile"
+                else if (s == sf) api = "SetFilePointerEx"; else if (s == fb) api = "FlushFileBuffers"
+                else if (s == se) api = "SetEndOfFile"
+                if (api == "") continue
+                g = 0
+                for (k = i - 1; k >= 1 && k >= i - 16; k--) if (t[k] ~ /^test +\$0x3,%al/) { g = k; break }
+                if (g == 0) { print "FG", api, "BAD:no-low-bit-test-before-it"; continue }
+                if (t[g+1] !~ /^jne / || t[g+2] !~ /^mov +%rax,%rcx/ || t[g-1] !~ /^jmp /) { print "FG", api, "BAD:the-test-is-not-the-fd-map-arm"; continue }
+                b = at[tgt(t[g+1])]
+                if (b == "" || t[b] !~ /^push +\$0xfffffffffffffff7/ || t[b+1] !~ /^pop +%rax/) { print "FG", api, "BAD:jne-does-not-reach-push-minus-9-pop-rax"; continue }
+                if (t[b-1] !~ /^jmp / || tgt(t[b-1]) != ad[b+2]) { print "FG", api, "BAD:no-jmp-over-the-minus-9"; continue }
+                if (b <= i) { print "FG", api, "BAD:the-minus-9-is-before-the-call"; continue }
+                print "FG", api, "ok"
+            }
+        }' "$D/dis" > "$D/fdguard"
+    b=$(awk '$3 != "ok" {print $2 " " $3; exit}' "$D/fdguard")
+    if [ -n "$b" ]; then bad "axis 2: an fd-taking call is not behind the low-bit guard ($b)"; return 0; fi
+    for af in ReadFile:2 WriteFile:2 SetFilePointerEx:2 FlushFileBuffers:2 SetEndOfFile:1; do
+        api=${af%:*}; fl=${af#*:}
+        c=$(awk -v a="$api" '$2 == a' "$D/fdguard" | wc -l | tr -d ' ')
+        if [ "$c" -lt "$fl" ]; then bad "axis 2: only $c $api site(s) behind the low-bit guard (floor $fl)"; return 0; fi
+    done
+    ok
+}
+
 # axis 2 + 3: the emitter shape and the table.
 cat > "$D/shape.cyr" <<'EOF'
 var buf[16];
@@ -496,6 +594,7 @@ fn main(): i64 {
     r = r + syscall(2, "no_such_shape_x", 0, 0);
     r = r + syscall(8, 0 - 999, 0, 0);
     r = r + syscall(3, 0 - 999);
+    r = r + syscall(74, 0 - 999);
     r = r + by_number(0, 0 - 999, &buf, 16);
     r = r + by_number1(3, 0 - 999);
     r = r + syscall(3, 2);
@@ -595,6 +694,8 @@ else
         done
         # 6.7.16: every CloseHandle and SetEndOfFile call is reached through the std-fd map.
         _std_map_axis
+        # 6.7.16: every fd-taking call is behind the low-bit guard.
+        _fd_guard_axis
         TS=$(awk '$1 != "ReadFile" {print $3}' "$D/sites" | sort -u)
         RS=$(awk '$1 == "ReadFile" {print $3}' "$D/sites" | sort -u)
         if [ "$(printf '%s\n' "$TS" | wc -l | tr -d ' ')" != 1 ] || [ "$(printf '%s\n' "$RS" | wc -l | tr -d ' ')" != 1 ] || [ "$TS" = "$RS" ]; then
@@ -739,12 +840,12 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$@" )
     }
-    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail; do
+    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
     done
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
-    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ]; then
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ]; then
         bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
@@ -781,8 +882,14 @@ EOF
             timeout 120 wine ftfail.exe < /dev/null 2> /dev/null | cat > /dev/null ) || true
         got=$(line "$D/w/ft/ft.out" 2> /dev/null)
         if [ "$got" = "-22 -9 -2 -9" ]; then ok; else bad "axis 4: the truncate-failure repro (stdout a pipe) under wine: '$got' (want '-22 -9 -2 -9'; '-1 -1 -1 -1' is every step folded to -1)"; fi
+        mkdir -p "$D/w/al" && cp "$D/w/alias.exe" "$D/w/al/"
+        ( cd "$D/w/al" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine alias.exe < /dev/null > al.out 2> /dev/null ) || true
+        got=$(line "$D/w/al/al.out")
+        if alias_ok "$got" 4; then ok; else bad "axis 4: the fd-alias repro under wine: '$got' (want '<h> -9 3 0', h a multiple of 4; '<h> 0 -9 -9' is the close of h + 3 closing h)"; fi
     fi
-    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5"; do
+    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$t" > "$D/w/$b.exe" 2> "$D/$b.werr" ) || true
         if [ ! -s "$D/w/$b.exe" ]; then
@@ -802,4 +909,4 @@ fi
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; ftruncate of a pipe, the null device or a read-only descriptor -22"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22"

@@ -387,6 +387,10 @@ fn _win_truncate_verified(h, path): i64 {
 # -1 / -2 are the current-process / -thread pseudo-handles, which it
 # "closes" with TRUE, so until 6.7.16 `sys_close(-1)` answered 0.
 # CHANGELOG [6.7.16]
+# An fd above 2 with a low bit set answers -9 too, in this close and in
+# the read / write / seek / fsync / ftruncate reroutes: the NT kernel
+# ignores a handle value's two low bits, so until 6.7.16
+# `sys_close(h + 3)` closed the open `h` and answered 0. CHANGELOG [6.7.16]
 fn sys_close(fd) {
     return syscall(SYS_CLOSE, fd);
 }

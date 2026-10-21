@@ -8569,6 +8569,8 @@ never fired and `file_close_r` was never `Err`.
 | `xlseek(fd, -1, SEEK_SET)` | -22 | 0 | -22 |
 | `sys_close(-999)` | -9 | 0 (a good close: 1) | 0 (a good close: 1); -9 since 6.7.15 (a good close: 0) |
 | `sys_close(-1)`, `sys_close(-2)` | -9 | 0 | 0; -9 since 6.7.16 |
+| `sys_close(h + 3)` (an fd never opened, beside the open `h`) | -9 | 0, and `h` is closed | 0, and `h` is closed; -9 since 6.7.16 |
+| `sys_write` / `sys_read` / `xlseek` / `xfsync` / `sys_ftruncate` of `h + 1` … `h + 3` | -9 | acts on `h` | acts on `h`; -9 since 6.7.16 |
 | `sys_mkdir(dir)` of an existing directory | -17 | -1 | -1; -17 since 6.7.16 |
 | `sys_rmdir(dir)` of a non-empty directory | -39 (-66 macOS) | -1 | -1; -39 since 6.7.16 |
 | `sys_unlink` / `sys_rmdir` of a missing path | -2 | -1 | -1; -2 since 6.7.16 |
@@ -8579,6 +8581,16 @@ never fired and `file_close_r` was never `Err`.
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
 `sys_close(fd)` of a failed open's -1 read as a good close; `file_close_r(-1)` is `Err(IoBadFd)`.
+
+An fd whose two low bits are set — `h + 1`, `h + 2`, `h + 3` beside an open `h` — answers -9 in a
+close, read, write, seek, fsync / fdatasync and ftruncate, before any Win32 call (6.7.16), as Linux
+answers an fd it never handed out. On Windows an fd above 2 IS the handle, and the NT kernel ignores
+a handle value's two low bits, so until 6.7.16 such a value reached the Win32 call as the live `h`:
+`sys_close(h + 3)` answered 0 and closed `h` (its own write and close then failed -9), a write to
+`h + 1` landed in `h`'s file, a `sys_ftruncate(h + 2, n)` truncated it. Every handle cyrius hands
+out as an fd above 2 — a file, a pipe, a socket, a console — is a multiple of 4, so no open
+descriptor is refused; the negative values with a low bit set (-1 / -2 are the current-process /
+-thread pseudo-handles) take the same -9.
 
 `mkdir`, `unlink` and `rmdir` (`sys_*` and `xmkdir` / `xunlink` / `xrmdir`: `CreateDirectoryW`,
 `DeleteFileW`, `RemoveDirectoryW`), `sys_ftruncate` and `sys_truncate` answer a failure's errno
