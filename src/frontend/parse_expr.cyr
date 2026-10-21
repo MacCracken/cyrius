@@ -9690,6 +9690,7 @@ fn _PEXPR_IMPL(S): i64 {
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     if (_panic == 1) { return 0; }   # 6.7.16: the statement has its error; its operands' types are that error's cascade
+    if (_err_n != _flt_en) { return 0; }   # 6.7.16: and one that does not latch (`undefined variable`, a tuple's)
     if (_warn_seen(GTI(S), "_FLT_TYPE_WARN", kind) == 1) { return 0; }   # 6.7.15: once per token and kind
     syscall(SYS_WRITE, 2, "warning:", 8);
     _err_head(S);

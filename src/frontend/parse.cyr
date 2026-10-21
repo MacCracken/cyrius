@@ -6367,7 +6367,10 @@ fn PARSE_STMT(S): i64 {
     var _xd0 = _xdepth;
     var ov = _agc_ovr;   # 6.7.11: a statement nested in a `*p = v` source is no `*p` destination (`_dst_arms`)
     _agc_ovr = 0;
+    var fe = _flt_en;   # 6.7.16: this statement's errors are counted from here (`_FLT_TYPE_WARN`)
+    _flt_en = _err_n;
     _PARSE_STMT_IMPL(S);
+    _flt_en = fe;
     _agc_ovr = ov;
     _rd_exit();
     _xd_check(S, _xd0, "statement");

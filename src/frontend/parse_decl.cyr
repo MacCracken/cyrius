@@ -7590,6 +7590,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # Each entry starts with the panic latch clear, as a fn's statement does (the cursor is re-seated at
         # its `var`, so no resync): an earlier entry's error latched through every later one. CHANGELOG [6.7.16]
         _panic = 0;
+        _flt_en = _err_n;   # 6.7.16: and its own errors counted from here (`_FLT_TYPE_WARN`)
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume IDENT

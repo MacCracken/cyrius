@@ -499,6 +499,11 @@
 # arithmetic with a non-f64 right operand" about the refused operand (f32, a comparison, an int-left `+` the same). Rows
 # FW (one error, no warning; FW5 the next statement's own warning kept) on host / host IR=3 / cx / aarch64 / win64.
 # Mutation (2026-10-21, measured): M-FW0 the tree before -> RED 25: FW1-FW5 on five legs (FW5 two warnings).
+# The s16 review (2026-10-21, measured): a statement that reported an error that does not latch prints no float-type
+# warning either (`_FLT_TYPE_WARN` asks `_err_n` against `_flt_en`, set by PARSE_STMT and each zone replay entry; a tuple's
+# refusal, `_dyn_ebeg`, now counted) — rows FW6-FW13. The tree before -> RED 40: FW6-FW13 on five legs (a warning after
+# the error); M-FW1 the count not asked -> RED 40 (the same rows); M-FW2 `_dyn_ebeg` not counting -> RED 10: FW6 FW11 on
+# five legs; M-FW3 no zone entry reset -> RED 5: FW9 on five legs (C's own warning lost).
 
 set -eu
 
@@ -2961,6 +2966,10 @@ wf_msg() { case "$1" in WF2) echo "vector return type does not match the declare
 # the statement's (`_FLT_TYPE_WARN`): `var x: f64 = 1.0 + mk2(41, 7);` printed D100's refusal and then "f64 arithmetic with
 # a non-f64 right operand" about the same operand (rows FW: one error, no warning; FW1 f64, FW2 f32, FW3 a comparison,
 # FW4 an int-left `+` with an f64 right; FW5 the next statement's own warning still printed) ---------------------------
+# FW6-FW13 (the s16 review): an error that does not latch — a tuple used as a value (FW6, FW11 f32), an undefined name
+# (FW7, FW10 a comparison, FW13 a generic's body at two instances) — stands the warning down too (`_err_n` since the
+# statement began, `_flt_en`); the next statement's own warning prints (FW8, FW9 the declaration zone's next entry,
+# FW12 after the first statement, FW13).
 FWH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 '
 fw_src() {  # $1 row id -> source on stdout
@@ -2980,11 +2989,57 @@ syscall(60, r() % 256);
     FW5) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; var x: f64 = y - mk2(41, 7); var z: f64 = y + 1; return 1; }
 syscall(60, r() % 256);
 ' ;;
+    FW6) printf '%s' "$FWH"'fn r(): i64 { var t = (1, 2); var f: f64 = 1.0 + t; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW7) printf '%s' "$FWH"'fn r(): i64 { var f: f64 = 1.0 + undefined_q; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW8) printf '%s' "$FWH"'fn r(): i64 { var f: f64 = 1.0 + undefined_q; var g = 1; var h: f64 = 1.0 + g; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW9) printf '%s' "$FWH"'var A: f64 = 1.0 + undefined_q;
+var B = 1;
+var C: f64 = 1.0 + B;
+syscall(60, 1);
+' ;;
+    FW10) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; if (y < undefined_q) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    FW11) printf '%s' "$FWH"'fn r(): i64 { var t = (1, 2); var y: f32 = 1.0; var x: f32 = y * t; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW12) printf '%s' "$FWH"'syscall(1, 1, "", 0);
+var A: f64 = 1.0 + undefined_q;
+var B = 1;
+var C: f64 = 1.0 + B;
+syscall(60, 1);
+' ;;
+    FW13) printf '%s' "$FWH"'fn g<T>(x: T): i64 { var f: f64 = 1.0 + undefined_q; var h: f64 = 1.0 + x; return 1; }
+fn r(): i64 { return g(1) + g(2); }
+syscall(60, r() % 256);
+' ;;
     esac
 }
-FW_ROWS="FW1 FW2 FW3 FW4 FW5"
-fw_msg() { case "$1" in FW4) echo "vector return type does not match the assigned variable";; *) echo "vector return type does not match the declared type";; esac; }
-fw_warn() { case "$1" in FW5) echo "2:80: f64 arithmetic with a non-f64 right operand";; *) echo "";; esac; }
+FW_ROWS="FW1 FW2 FW3 FW4 FW5 FW6 FW7 FW8 FW9 FW10 FW11 FW12 FW13"
+fw_msg() {
+    case "$1" in
+    FW4) echo "vector return type does not match the assigned variable";;
+    FW6|FW11) echo "tuple 't' used as a value";;
+    FW7|FW8|FW9|FW10|FW12|FW13) echo "undefined variable 'undefined_q'";;
+    *) echo "vector return type does not match the declared type";;
+    esac
+}
+fw_warn() {
+    case "$1" in
+    FW5) echo "2:80: f64 arithmetic with a non-f64 right operand";;
+    FW8) echo "2:78: f64 arithmetic with a non-f64 right operand";;
+    FW9) echo "4:21: f64 arithmetic with a non-f64 right operand";;
+    FW12) echo "5:21: f64 arithmetic with a non-f64 right operand";;
+    FW13) echo "2:74: f64 arithmetic with a non-f64 right operand";;
+    *) echo "";;
+    esac
+}
 refuse_fw_all() {  # $1 leg label  $2 compiler  [$3 VAR=value]: one error (`fw_msg`), and only `fw_warn`'s warning (or none)
     for row in $FW_ROWS; do
         fw_src "$row" > "$W/fw.cyr"

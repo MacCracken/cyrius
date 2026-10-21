@@ -3429,6 +3429,9 @@ var _err_quiet = 0;  # 1: the last emitter printed nothing (the panic latch, or 
 # statement refuse something" is this count before and after it, never the file-wide `_had_error` (PARSE_RETURN's
 # count check, parse_fn.cyr). CHANGELOG [6.7.16]
 var _err_n = 0;
+# 6.7.16 — `_err_n` where the statement being parsed began (PARSE_STMT; each declaration-zone replay entry): a float-type
+# warning stands down once the statement has reported an error (`_FLT_TYPE_WARN`). CHANGELOG [6.7.16]
+var _flt_en = 0;
 # The emitters' head: 0 = print nothing (the panic latch holds, or this report at the cursor's token was
 # printed already: `_had_error` and the latch are set as the print would have), 1 = print it.
 fn _err_once(S, id): i64 {
