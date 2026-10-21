@@ -7846,7 +7846,10 @@ string literal, a top-level destructure
 `var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
 startup, in declaration order. (`= 0` is deferred only
 because the static path reserves 0 for "no value"; since 6.7.14 it emits no startup code — see
-below.) An uninitialized top-level `var x;` is an error — write `var x = 0;`.
+below.) An uninitialized top-level `var x;` is an error — write `var x = 0;`. So is `var c: S;` of a struct or vector
+type at top level (only a fn's frame holds one uninitialized): after the first top-level statement it is refused once,
+*uninitialized struct locals only allowed inside a function*, and its uses add nothing (6.7.16; through 6.7.15 the
+statement after it was skipped and each use of `c` added *undefined variable 'c'*).
 
 **An initializer that names an enum constant is a constant too (6.6.16).** `var x = A;`,
 `var x = E.A;`, `var x = A + 1;`, `var x: u8 = A;` — any initializer that folds once enum

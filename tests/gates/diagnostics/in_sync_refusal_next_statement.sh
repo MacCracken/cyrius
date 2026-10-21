@@ -669,6 +669,98 @@ ${TAIL}" "error:<source>:5:11: undefined variable 'qq' (missing include or enum?
 error:<source>:5:21: expected '{', got identifier 'y'
 error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
 
+# U — 6.7.16 (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var c: S;` AT
+# TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
+# IN SYNC AND DECLARES `c` AS REPORTED. PARSE_VAR's arm latched with no mark — the resync skipped the next statement
+# — and registered a fn-local slot no top-level use reads, so each use of `c` added "undefined variable 'c'".
+# `_usl_top` (src/frontend/parse_decl.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
+# (`_dl_var_refd_add`, parse_fn_def.cyr) that `_undef_var_report`, the subscript's undefined base and a multi-value
+# target stand down at (`_dl_name_refd`; U6: the subscript's arm missed a refused late enum's member as well). U1 is
+# the filing's program verbatim. Controls: U5 the declaration in a fn compiles and runs; U7 a type annotation
+# spelled `c` is still "unknown type 'c'" (a variable's mark, not a type's).
+# MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_usl_top` without `_refuse_in_sync` -> RED U4 U8 on
+# every leg (10: the next statement swallowed with its error); without `_dl_var_refd_add` -> RED U1 U2 U3 (15: the
+# uses' "undefined variable 'c'").
+row U1 "the filing's program verbatim" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+var d = 9;
+c = 4;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:7:15: undefined variable 'zz' (missing include or enum?)"
+
+row U2 "c = 4; directly after the declaration" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+c = 4;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
+row U3 "every use of c stands down" 'struct Str { p; n; }
+impl Str { fn m(self): i64 { return 1; } }
+fn g(x): i64 { return 0; }
+fn two(): (i64, i64) { return (1, 2); }
+var q = 0;
+q = 1;
+var c: Str;
+c.p = 4;
+q = c.p + c.m() + g(c) + g(&c);
+c += 1;
+c.n += 1;
+c[0] = 1;
+q = c[1];
+q, c = two();
+fn h(): i64 { var w: Str = c; return w.p + c.n; }
+syscall(60, zz);
+' "error:<source>:7:11: uninitialized struct locals only allowed inside a function
+error:<source>:16:15: undefined variable 'zz' (missing include or enum?)"
+
+row U4 "a vector type at top level" 'var q = 0;
+q = 1;
+var c: f64v2;
+syscall(60, zz);
+' "error:<source>:3:13: uninitialized struct locals only allowed inside a function
+error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+
+row U8 "the next statement's own error, directly after" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+q = zz5;
+syscall(60, 0);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:5:8: undefined variable 'zz5' (missing include or enum?)"
+
+okrow U5 "control: the declaration in a fn compiles and runs" 'struct Str { p; n; }
+fn f(): i64 { var c: Str; c.p = 3; c.n = 4; return c.p + c.n; }
+var q = 0;
+q = 1;
+syscall(60, f());
+' 7
+
+row U6 "a refused late enum's member as a subscript base" 'enum E { A; B; }
+var y = 1;
+y = 2;
+enum F { C; }
+y = C[0];
+syscall(60, zz);
+' "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
+row U7 "control: a type annotation spelled c is still refused" 'struct Str { p; n; }
+var q = 0;
+q = 1;
+var c: Str;
+var x: c = 5;
+syscall(60, zz);
+' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
+error:<source>:5:8: unknown type 'c' for variable 'x'
+error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

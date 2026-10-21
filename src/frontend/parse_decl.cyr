@@ -5754,6 +5754,18 @@ fn _vecg_refuse(S, vi): i64 {
     ERR_IDENT(S, "vector global ", L64(_varn_base + vi * 8), " is read and written through its address (`&g` with a `*_ptr` form); a value-form vector is a local", 0 - 1);
     return 1;
 }
+# ⛔ 6.7.16 — `var c: S;` AT TOP LEVEL (PARSE_VAR, after the first statement; an uninitialized struct or vector, which
+# only a fn's frame holds) is refused IN SYNC, at its `;` — the refusal latched with no mark, so the resync skipped
+# the next statement — and declares nothing: it registered a fn-local slot no top-level use reads, so each use of
+# `c` added "undefined variable 'c'". `c` is entered as reported (`_dl_var_refd_add`): its uses stand down. The `;`
+# is stepped. CHANGELOG [6.7.16]
+fn _usl_top(S, noff): i64 {
+    _refuse_in_sync(S);
+    ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
+    _dl_var_refd_add(S, noff);
+    STI(S, GTI(S) + 1);
+    return 0;
+}
 # The declaration ladder's named-type head (`_tn_head`, cursor on the annotation). 6.7.8 (C2-6a): a
 # slice is refused by name (the user's decision, 2026-10-10: "a slice declared in the declaration
 # zone" — `var GS: [u8] = 0;` was `expected '=', got identifier 'u8'`, `slice<u8>` "unknown type
@@ -10510,9 +10522,7 @@ fn PARSE_VAR(S): i64 {
     # frame offset — so `&p` points at the BOTTOM of the struct,
     # which is where field 0 lives.
     if (pscale < 0 && PEEKT(S) == 5) {
-        if (GINFN(S) != 1) {
-            ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
-        }
+        if (GINFN(S) != 1) { return _usl_top(S, noff); }   # 6.7.16: refused in sync, `noff` entered as reported
         var sv_sid = 0 - pscale;
         var sv_sz = 0;
         # SIMD band (sentinel <= -2048, below the struct-sid range): size via

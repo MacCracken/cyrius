@@ -922,6 +922,30 @@ fn _dl_refd_at(S, noff): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.16 — A REFUSED TOP-LEVEL `var c: S;` (after the first statement: an uninitialized struct or vector, which only
+# a fn's frame holds) DECLARES `c` AS REPORTED: it registered a fn-local slot no top-level use reads, so each use
+# added "undefined variable 'c'" (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md).
+# A VARIABLE's name, kept apart from `_dlr` (whose names a type annotation also asks about): `_undef_var_report`
+# reads both. CHANGELOG [6.7.16]
+var _dlvr = 0;   # the refused variables' names, a vec made at the first
+fn _dl_var_refd_add(S, noff): i64 {
+    if (_dlvr == 0) { _dlvr = vec_new(); }
+    vec_push(_dlvr, noff);
+    return 0;
+}
+# 1 = `noff` names a variable a refused declaration declared (`_dl_var_refd_add`), or what `_dl_refd_at` answers.
+fn _dl_name_refd(S, noff): i64 {
+    if (_dl_refd_at(S, noff) == 1) { return 1; }
+    if (_dlvr == 0) { return 0; }
+    if (noff < 0) { return 0; }
+    var n = vec_len(_dlvr);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, vec_get(_dlvr, i), noff) == 1) { _had_error = 1; return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
 # `_tn_refuse`'s stand-down: the type name at token `ti` is a refused declaration's, so the annotation is not
 # reported again, and the variable it annotates (`vnoff`, -1 for none) is marked (`_ann_refd_mark`). 1 = stood down.
 fn _dl_refd_ann(S, ti, vnoff): i64 {

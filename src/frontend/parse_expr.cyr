@@ -3975,7 +3975,7 @@ fn _arr_sub_addr(S, noff): i64 {
     if (pw > 0) { d = (pw >> 40) & 0xFF; }   # a `*T`: T's descriptor rides the step word
     var aw = _ek_w(d);
     if (k == 0) {
-        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_ce_name_said(S, noff) == 0) {   # 6.7.14
+        if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_sub_undef_said(S, noff) == 0) {   # 6.7.14
                     _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
                     ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
                     _gv_note_blockscoped(S, noff);
@@ -5570,9 +5570,15 @@ fn _amp_not_name(S): i64 {
     EMOVI(S, 0);
     return 0;
 }
+# The subscript's undefined-base stand-downs: a const fn's check named it (6.7.14), or a refused declaration declared
+# it — `_undef_var_report`'s (6.7.16: `c[0]` after a refused top-level `var c: S;`, an enum member `B[0]`). 1 = said.
+fn _sub_undef_said(S, noff): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 1; }
+    return _dl_name_refd(S, noff);
+}
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
-    if (_dl_refd_at(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr)
+    if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr); 6.7.16: a variable
     ERR_UNDEF(S, noff, tail);   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
     return 0;
