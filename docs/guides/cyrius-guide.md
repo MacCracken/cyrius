@@ -238,7 +238,12 @@ multi-value `(T1, T2)` / `(T1, T2, T3)` (see [Multi-Return](#multi-return)), `dy
 a generic fn's first or second type parameter — `fn f(): u8`, `: u64`, `: f32` and an enum are
 refused by name (`type 'u8' cannot be a fn return type`; return an `i64`), with a note that lists
 this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn` and `T`).
-`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these.
+`cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these. A fn-pointer type is a
+parameter type, not a return type: `fn h(): *fn(i64): i64`, `: **fn( .. )`, a bare `: *fn` and a multi-value
+element `(*fn(i64): i64, i64)` are *a fn-pointer type `*fn( .. )` cannot be a fn return type*, once, at the
+type's first `*`, with the note — under `cyrius lint` too — and the body is read on (6.7.16; through 6.7.15 it was
+*expected identifier, got reserved keyword 'fn' (.. rename the variable/field/fn)*, and a bare `*fn` read the
+body as more of the type: *fn 'main' is defined inside fn 'h'*, *expected '}'*).
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
@@ -3162,9 +3167,10 @@ fn demo(): i64 {
   and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). So is the rest of the
   set since 6.7.16 (the user's D9): `: u8`..`: u64`, `: f32` and an enum are *type 'u8' cannot be a fn return type*,
   and `: *fn(i64): i64` is *a fn-pointer type `*fn( .. )` cannot be a fn return type* (that one under `cyrius lint`
-  too, as a fn's `: *fn( .. )` grammar refusal is); through 6.7.15 each compiled. Declare `: i64` or a pointer
+  too, as a fn's `: *fn( .. )` is — the same line, a bare `: *fn` too); through 6.7.15 each compiled. Declare `: i64` or a pointer
   instead. `: *Vec<i64>`, `: *u128`, `: *Color` and a parameter `v: Vec<i64>` or `cb: *fn(i64): u128` are unchanged.
-  The impl's line is left out beside a member's refusal — the member's error is the one report. Under `cyrius lint`,
+  The impl's line is left out beside a member's refusal — the member's error is the one report — and beside a
+  method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16). Under `cyrius lint`,
   which does not report a member's `: u8`..`: f32` or enum return, or a `Pt<i64>` / `i64<u8>` on either side, an impl
   whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
