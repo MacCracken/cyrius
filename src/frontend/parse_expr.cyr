@@ -2784,6 +2784,7 @@ fn _tup_lit_at(S, st): i64 {
 fn _enum_qual_said(S, vi): i64 {
     if (vi != 0 - 2) { return 0; }
     STI(S, GTI(S) + 1);
+    _mlist_step(S);   # 6.7.16: `Color.m<i64>(1)` as `Color.m(1)` — the list was read as comparisons ("undefined variable 'i64'")
     _synonly_skip_chain(S);
     EMOVI(S, 0);
     SESTYPE(S, 0);

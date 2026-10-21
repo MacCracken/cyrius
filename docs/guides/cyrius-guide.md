@@ -7420,7 +7420,9 @@ the first extra argument: *'Box' takes 1 type argument, 2 given* (6.7.16, the us
 name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not a generic method: it takes no type
 arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
 'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*). Only a list of type names is read so: `p.n < a, b >
-(c)` stays two comparisons. A token that is no name at all
+(c)` stays two comparisons. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
+annotation was refused, an undefined name, an enum's name — `x.m<i64>(1)` is refused as `x.m(1)` is, the list stepped
+(6.7.16; a const said *has no fields*, and each went on to *undefined variable 'i64'*). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
 it is — *a type argument is a type name, got number 1* — and `u128` by its text (*u128
 cannot be a type argument*); the rest of that argument is skipped, so the statement parses

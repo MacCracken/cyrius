@@ -1834,9 +1834,22 @@ var _mcall_last = 0 - 1;
 # 6.7.15 — the `.name` read past a base that resolved to nothing (PARSE_FIELD_LOAD's undefined arm, the cursor
 # after the name): 2 when `(` follows — a method call, which `_cst_fld_at` names "has no methods" on a const —
 # else 0, a field read. CHANGELOG [6.7.15]
+# 6.7.16 — and `.m<types>(` (`_mlist_end`): a method call too, its list stepped to the `(` — `L.m<i64>(1)` on a local
+# const said "has no fields" and `zq.m<i64>(1)` on an undefined name went on to read `<i64>` as a comparison ("undefined
+# variable 'i64'", printed under the latch). CHANGELOG [6.7.16]
 fn _cst_fld_st(S): i64 {
     if (PEEKT(S) == 10) { return 2; }
+    if (_mlist_step(S) == 1) { return 2; }
     return 0;
+}
+# 6.7.16 — the cursor past `.m` on a receiver of no struct (an undefined name, a local const, a name of an enum that
+# declares no m): a `<types>(` there (`_mlist_end` at sid 0) is a method call's list, stepped to its `(` so the call is
+# refused as `.m(..)` is, not read as comparisons of the type names. 1 = stepped. CHANGELOG [6.7.16]
+fn _mlist_step(S): i64 {
+    var e = _mlist_end(S, 0, GTI(S) - 1);
+    if (e < 0) { return 0; }
+    STI(S, e + 1);
+    return 1;
 }
 # 6.7.15 — the method arm's `sid == 0` refusal ("no struct type in scope for 'a'"), out of `_field_load_on`
 # (a cybs-ceiling fn): a const receiver is "const 'C' has no methods" (`_cst_fld_at`), and in the run-time body
@@ -2137,6 +2150,15 @@ fn _mtargs_ng(S, sid, nt): i64 {
     }
     if (_mlist_end(S, sid, nt) >= 0) { return 1; }
     return 0;
+}
+# 6.7.16 — `_meth_ngt` for `_field_load_on`'s `sid == 0` arm, asked BEFORE its const and refused-annotation checks: a
+# const `C.m<i64>(1)` was "has no fields" and a refused annotation's `x.m<i64>(1)` stood down, each with the cursor on
+# the `<` — the list then read as comparisons ("undefined variable 'i64'"); stepped first, both are their `.m(1)`. Not
+# in a refused const fn's run-time body: its field stand-down (`_ce_fld_said`) steps `.m<..>(..)` whole, so a later
+# name of the statement's own is still reported. 1 = taken. CHANGELOG [6.7.16]
+fn _meth_ngt0(S, noff, fnoff, beg, idx, sid): i64 {
+    if (_ce_fn_refd != 0) { return 0; }
+    return _meth_ngt(S, noff, fnoff, beg, idx, sid);
 }
 # The `>` closing `.m<..>(`'s list at method-name token nt when it is a type list (`_tylist_at`) followed by `(` and m
 # no field of struct sid (sid <= 0: a receiver of no known struct); else -1.
@@ -2507,9 +2529,9 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # tail first (see _synonly_skip_chain) so nothing is left dangling.
         if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain, `.m<..>(` too
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
+        if (_meth_ngt0(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)` / `C.m<i64>(1)`, as `.m(1)`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
         if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
-        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)`, as `q.m(1)`
         ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
         return 0;
     }

@@ -685,6 +685,153 @@ exits w13 80 "W13: control — const, enum constant, qualified, expression and l
 exits w14 46 "W14: control — a jump-table switch of const labels runs" 'const B = 10;\nfn f(v): i64 {\n    switch (v) {\n        case B: return 1;\n        case B + 1: return 2;\n        case B + 2: return 4;\n        case B + 3: return 8;\n        case B + 4: return 16;\n        default: return 32;\n    }\n    return 0;\n}\nsyscall(60, f(11) + f(12) + f(13) + f(99));\n'
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
+# MX (6.7.16, f16 FF6) — `x.m<T>(..)` ON A RECEIVER WITH NO STRUCT IS A METHOD CALL
+# (issues/2026-10-19-explicit-method-type-args-on-receiver-with-no-struct-read-as-comparison.md). A const, a local
+# const, a variable whose annotation was refused, an undefined name and an enum's name took `.m` as a FIELD and read
+# `<i64>` as a comparison: "const 'C' has no fields" + "undefined variable 'i64'" (the `C.m(1)` words are "has no
+# methods"), "unknown type 'Foo'" + "undefined variable 'i64'", "undefined variable 'zq'" + "'i64'", "'m' is not a
+# variant of 'Color'" + "'i64'". A `<types>(` after the name (`_mlist_end`) is stepped to its `(` first — the `sid == 0`
+# arm asks `_meth_ngt` before the const and stand-down checks, PARSE_FIELD_LOAD's undefined arm `_cst_fld_st`, the
+# enum arm `_enum_qual_said` — so each is refused as its `.m(1)` is. A list that is not all types keeps its reading
+# (MX8). MX1-MX3 the filed repros verbatim (MX1: genbind's `_meth_ngt` since 9ac212def), MX4 every receiver in a value,
+# MX5 as statements, MX6 at top level after the first statement, MX7 --syntax-only silent (the filed `p.id<f64>(1.5)`
+# among them), MX9 the r3 const-fn shape under --syntax-only is one line. Five legs: the x86_64, PE (CYRIUS_TARGET_WIN=1)
+# and Mach-O (CYRIUS_MACHO=1) compilers and the aarch64 / cx compilers built from this tree — the error lines exactly.
+# MUTATION LEDGER (2026-10-21, f16 FF6; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from that copy so every leg carries the mutant):
+#   the lane before it (f8256705b)                         -> RED MX2 MX3 MX4 MX5 MX6, 25
+#   the `sid == 0` arm asking `_meth_ngt` last (as before)  -> RED MX2 MX3 MX4 MX5 MX6, 25 (the const / refused type)
+#   `_cst_fld_st` without `_mlist_step`                    -> RED MX4 MX5, 10 (the local const, the undefined name)
+#   `_enum_qual_said` without `_mlist_step`                -> RED MX4 MX6, 10 (the enum's name)
+#   no `_meth_ngt` in the `sid == 0` arm                   -> RED MX1-MX6, 30
+#   `_meth_ngt0` without its `_ce_fn_refd` test            -> RED Q9, 1 (the stepped call's later `zz9` swallowed)
+MXLEGS="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$T/mx_a64" 2> /dev/null && [ -s "$T/mx_a64" ]; then chmod +x "$T/mx_a64"; MXLEGS="$MXLEGS a64"
+else bad "MX: src/main_aarch64.cyr did not build"; fi
+if "$CC" < src/main_cx.cyr > "$T/mx_cx" 2> /dev/null && [ -s "$T/mx_cx" ]; then chmod +x "$T/mx_cx"; MXLEGS="$MXLEGS cx"
+else bad "MX: src/main_cx.cyr did not build"; fi
+NMX=0
+mxcomp() {   # <leg> <src> <out> [cc-arg]: rc in MRC
+    MRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || MRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || MRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || MRC=$? ;;
+        a64)   timeout 60 "$T/mx_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || MRC=$? ;;
+        cx)    timeout 60 "$T/mx_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || MRC=$? ;;
+    esac
+}
+mxrow() {   # <id> <what> <source> <want error lines> [cc-arg]: refused, the `error` / `warning` lines exactly
+    printf '%s' "$3" > "$T/$1.cyr"
+    printf '%s\n' "$4" > "$T/$1.want"
+    for leg in $MXLEGS; do
+        o="$T/$1_$leg"; mxcomp "$leg" "$T/$1.cyr" "$o" "${5:-}"; NMX=$((NMX + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$MRC" -eq 0 ]; then bad "$1 [$leg]: $2: rc 0"
+        elif ! cmp -s "$o.got" "$T/$1.want"; then bad "$1 [$leg]: $2: got $(wc -l < "$o.got") line(s): $(tr '\n' '|' < "$o.got")"
+        else ok "$1 [$leg]: $2"; fi
+    done
+}
+mxsyn() {   # <id> <what> <source>: --syntax-only says nothing, rc 0, on every leg
+    printf '%s' "$3" > "$T/$1.cyr"
+    for leg in $MXLEGS; do
+        o="$T/$1_$leg"; mxcomp "$leg" "$T/$1.cyr" "$o" --syntax-only; NMX=$((NMX + 1))
+        if [ "$MRC" -ne 0 ] || grep -qE '^(error|warning)' "$o.err"; then
+            bad "$1 [$leg]: $2: rc $MRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"
+        else ok "$1 [$leg]: $2"; fi
+    done
+}
+MXN="a method call needs its struct declaration (missing include?)"
+MXZ="undefined variable 'zz' (missing include or enum?)"
+mxrow MX1 "filed: a.m<i64>(1) on an untyped local" 'fn g(n) {
+    var a = n;
+    return a.m<i64>(1);
+}
+fn main() { return 0; }
+var r = main();
+' "error:<source>:3:20: no struct type in scope for 'a'; $MXN"
+mxrow MX2 "filed: C.m<i64>(1) on a const is \"has no methods\" (was \"has no fields\" + \"undefined variable 'i64'\")" 'const C = 5; fn main(): i64 { return C.m<i64>(1); }
+' "error:<source>:1:39: const 'C' has no methods - a const has no storage"
+mxrow MX3 "filed: x.m<i64>(1) on a refused annotation stands down (was + \"undefined variable 'i64'\")" 'fn main(): i64 { var x: Foo = 5; return x.m<i64>(1); }
+' "error:<source>:1:25: unknown type 'Foo' for variable 'x'"
+mxrow MX4 "every receiver in a value: a parameter, two type arguments, a local const, an undefined name, an enum, a global, an argument" 'const C = 5;
+enum Color { RED, BLUE }
+var gg = 5;
+fn id(x) { return x; }
+fn g(n) {
+    const L = 5;
+    var a = n;
+    var x: Foo = 5;
+    var v1 = n.m<i64>(1);
+    var v2 = a.m<i64, u8>(1, 2);
+    var v3 = L.m<i64>(1);
+    var v4 = zq.m<i64>(1);
+    var v5 = Color.m<i64>(1);
+    var v6 = gg.m<i64>(1);
+    var v7 = x.m<i64>(1);
+    var v8 = id(C.m<i64>(1));
+    return zz;
+}
+var r = g(1);
+' "error:<source>:8:12: unknown type 'Foo' for variable 'x'
+error:<source>:9:22: no struct type in scope for 'n'; $MXN
+error:<source>:10:26: no struct type in scope for 'a'; $MXN
+error:<source>:11:15: const 'L' has no methods - a const has no storage
+error:<source>:12:23: undefined variable 'zq'
+error:<source>:13:20: 'm' is not a variant of 'Color'
+error:<source>:14:23: no struct type in scope for 'gg'; $MXN
+error:<source>:16:18: const 'C' has no methods - a const has no storage
+error:<source>:17:14: $MXZ"
+mxrow MX5 "as statements, the next statement's error kept" 'const C = 5;
+enum Color { RED, BLUE }
+fn g(n) {
+    const L = 5;
+    n.m<i64>(1);
+    L.m<i64>(1);
+    C.m<i64>(1);
+    zq.m<i64>(1);
+    Color.m<i64>(1);
+    return zz;
+}
+var r = g(1);
+' "error:<source>:5:13: no struct type in scope for 'n'; $MXN
+error:<source>:6:6: const 'L' has no methods - a const has no storage
+error:<source>:7:6: const 'C' has no methods - a const has no storage
+error:<source>:8:14: undefined variable 'zq'
+error:<source>:9:11: 'm' is not a variant of 'Color'
+error:<source>:10:14: $MXZ"
+mxrow MX6 "at top level, in the zone and after the first statement" 'const C = 5;
+enum Color { RED, BLUE }
+var t = 1;
+var g = C.m<i64>(1);
+t = 2;
+var h = t.m<i64>(1);
+var k = Color.m<i64>(1);
+t.m<i64>(1);
+var w = zz;
+' "error:<source>:4:10: const 'C' has no methods - a const has no storage
+error:<source>:6:17: no struct type in scope for 't'; $MXN
+error:<source>:7:15: 'm' is not a variant of 'Color'
+error:<source>:8:9: no struct type in scope for 't'; $MXN
+error:<source>:9:11: $MXZ"
+mxsyn MX7a "--syntax-only: filed p.id<f64>(1.5) on a parameter (was \"expected ';', got '>'\")" 'fn g(p) { return p.id<f64>(1.5); }
+'
+mxsyn MX7b "--syntax-only: the const, the refused annotation, the undefined name, two type arguments" 'const C = 5; fn main(): i64 { var x: Foo = 5; var a = C.m<i64>(1); return x.m<i64>(1) + zq.m<i64, u8>(1, 2) + a; }
+'
+mxrow MX8 "control: a list that is not all types keeps its comparison reading (C.m < a, b > (1))" 'const C = 5;
+fn id2(a, b): i64 { return a * 10 + b; }
+fn g(n) { var a = 9; var b = 3; return id2(C.m < a, b > (1)); }
+var r = g(1);
+' "error:<source>:3:45: const 'C' has no fields - a const has no storage"
+mxrow MX9 "--syntax-only: the r3 const-fn shape is one line" 'const fn f(n) {
+    var a = n;
+    return a.m<i64>(1);
+}
+fn main() { return 0; }
+var r = main();
+' "error:<source>:3:13: a method call is not in a const fn: it calls only const fns" --syntax-only
+[ "$NMX" -ge 50 ] || bad "MX: the five-leg rows ran $NMX row-legs (floor 50)"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: const_checked — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: const_checked — $skips leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), a bare const statement is expected '=' (B), a subscript of a const and a.m<T>(..) in a const fn name their rule (Q), and every refused case label reports its own refusal (W)"
+echo "PASS: const_checked — consts are not lvalues (L), initializers and const fn bodies are const contexts checked by name (I, D), evaluations that cannot finish or have no target-independent answer are refused (E), one name one declaration (U), visibility and #deprecated hold in const contexts (V), a const fn's arity is the run time's (G), a refused annotation is one error, the const still bound (A), and well-formed consts run (C), a refused const holds no cascade latch (S), an #inline / generic body's local const ends with its replay (R, x86 + aarch64), a field on a const fn's local or on a const names its rule once (F), so do a method call and a subscript (K), a refused const fn's check holds no latch into its body (X), nor does a refused in-place const context in sync (P), a bare const statement is expected '=' (B), a subscript of a const and a.m<T>(..) in a const fn name their rule (Q), every refused case label reports its own refusal (W), and x.m<T>(..) on a receiver with no struct is its .m(..)'s one error (MX, five legs)"
