@@ -1073,9 +1073,42 @@ fn _tl_scan1(S, objok): i64 {
     if (_tl_directive(S, 0) == 1) { return 1; }
     if (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); return 1; }   # v6.3.5 CO-01: register + ABI masks
     if (t == 168) { _cst_skip_decl(S); return 1; }   # 6.7.2 (B1): recorded by `_cst_prepass`
-    if (t == 60) { PARSE_ENUM_DEF(S, 0); return 1; }
+    if (t == 60) { return _tl_decl1(S, t); }
     var r = _tl_scan1_mode(S, t, objok);
     return r;
+}
+# ⛔ 6.7.16 — A PASS-1 DECLARATION'S REFUSAL ENDS AT ITS OWN `}`. Pass 1 has no statement resync, so a refusal's panic
+# latch held to the end of the scan and swallowed every later declaration's error: `enum E { A 5 }` then `struct Q {
+# a: Foo; }` and `enum F { X 6 }` printed the enum's "expected identifier" alone
+# (issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md). A declaration that met the
+# latch clear and ended in sync — past the `}` closing its one `{ .. }`, no brace between (`_tl_decl_synced`) —
+# releases what it set, so the next declaration reports its own (D12's missing separator was released so first).
+# One that ended anywhere else (an unclosed body run into the next declaration, a payload's `( .. )` run past the
+# `}`) keeps it.
+# CHANGELOG [6.7.16]
+fn _tl_decl1(S, t): i64 {
+    var p0 = _panic;
+    var ti = GTI(S);
+    if (t == 60) { PARSE_ENUM_DEF(S, 0); }
+    if (p0 == 0) { if (_tl_decl_synced(S, ti) == 1) { _panic = 0; } }
+    return 1;
+}
+# 1 = the tokens from `ti` to the cursor end at the `}` just stepped, with no other `}` and at most one `{` (its own,
+# or none when the header's was refused) — the declaration's body did not run into the next one.
+fn _tl_decl_synced(S, ti): i64 {
+    var e = GTI(S) - 1;
+    if (e <= ti) { return 0; }
+    if (TOKTYP(S, e) != 14) { return 0; }
+    var o = 0;
+    var k = ti;
+    while (k < e) {
+        var b = TOKTYP(S, k);
+        if (b == 14) { return 0; }
+        if (b == 13) { o = o + 1; }
+        k = k + 1;
+    }
+    if (o > 1) { return 0; }
+    return 1;
 }
 
 fn _tl_scan1_mode(S, t, objok): i64 {

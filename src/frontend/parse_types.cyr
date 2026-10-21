@@ -4464,22 +4464,15 @@ fn FIELDOFF(S, si, fi): i64 {
 # separator stays valid); a name — the next member — is "expected ';' or ',' between enum members", at it, once
 # (pass 1 reports; the passes after it re-read the same tokens), and the member is read from there. `enum E { A B }`
 # compiled, B = 1 as `{ A, B }` gives (issues/2026-10-18-enum-members-need-no-separator.md); 6.7.15's D1 (a) for a
-# struct literal, `_slit_sep`. Any other token keeps the member loop's own "expected identifier". CHANGELOG [6.7.16]
+# struct literal, `_slit_sep`. Any other token keeps the member loop's own "expected identifier". The latch the
+# report sets is released at the enum's own `}` (`_tl_decl1`, as every pass-1 refusal of the declaration).
+# CHANGELOG [6.7.16]
 fn _enum_sep(S, emit_code): i64 {
     var t = PEEKT(S);
     if (t == 5 || t == 31) { STI(S, GTI(S) + 1); return 0; }
     if (t != 2) { return 0; }
     if (emit_code != 0) { return 0; }
-    if (_panic == 0) { _enum_sep_lat = 1; }
     ERR_MSG(S, "expected ';' or ',' between enum members", 40);
-    return 0;
-}
-# ... and the latch that report set is released at the enum's own `}`: the declaration ends in sync, so the
-# next enum's missing separator is its own error (pass 1 has no statement resync to release it).
-var _enum_sep_lat = 0;
-fn _enum_sep_end(S): i64 {
-    if (_enum_sep_lat == 1) { if (PEEKT(S) == 14) { _panic = 0; } }
-    _enum_sep_lat = 0;
     return 0;
 }
 
@@ -4809,7 +4802,6 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     # `enum E {` truncated mid-body exited 0 and cycc emitted a binary for a file that
     # simply stops — trading a SIGSEGV for silent acceptance, which is worse.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    _enum_sep_end(S);
     STI(S, GTI(S) + 1);
     return 0;
 }
