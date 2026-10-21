@@ -8581,6 +8581,9 @@ never fired and `file_close_r` was never `Err`.
 | `xsymlink(t, "missing_dir/l")` | -2 | -1 | -1; -2 since 6.7.16 |
 | `xsymlink(t, l)` over an existing `l` | -17 | -1 | -1; -17 since 6.7.16 |
 | `xfsync(fd)` of a closed fd | -9 | -1 | -1; -9 since 6.7.16 |
+| `sys_unlink` / `xunlink` of a directory | -21 (-1 macOS: `EPERM`) | -1 | -1; -21 since 6.7.16 |
+| `sys_truncate(dir, n)` | -21 | -1 | -1; -21 since 6.7.16 |
+| `file_open(dir, O_WRONLY, 0)` | -21 | -1 | -13; -21 since 6.7.16 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
@@ -8608,7 +8611,12 @@ directory -39 (`ERROR_DIR_NOT_EMPTY`; macOS answers its own 66), a missing path 
 `xsymlink` / `sys_symlink` (`CreateSymbolicLinkW`) and `xfsync` / `sys_fsync` / `sys_fdatasync`
 (`FlushFileBuffers`) since the same release (6.7.16's D94): a missing source or directory -2, an
 existing link name -17, a closed fd -9; a link refused by Windows policy (no Developer Mode, not
-elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. `sys_ftruncate`
+elevated: `ERROR_PRIVILEGE_NOT_HELD`, which the table leaves -1) is still -1. A DIRECTORY answers
+-21 (`EISDIR`) to `sys_unlink` / `xunlink`, `sys_truncate` and an open for writing, as on Linux
+(6.7.16's D95; macOS's unlink of a directory says `EPERM`, -1): `DeleteFileW` and `CreateFileW`
+refuse one `ERROR_ACCESS_DENIED`, so on that -13 the name is asked (`GetFileAttributesW`), and a
+refusal of anything else — a file another handle holds open, which `DeleteFileW` refuses where
+Linux unlinks it — stays -13. `sys_ftruncate`
 answers -22 for a descriptor it cannot truncate, as Linux does: a pipe or a console (the seek is
 -29 there), a device such as `NUL` (`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
 `/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,
@@ -8667,7 +8675,8 @@ Windows, Linux, macOS and aarch64:
 
 | Flags | Linux | Windows (v6.6.9) |
 |---|---|---|
-| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: `file_open` -13 (`CreateFileW` says `ERROR_ACCESS_DENIED`), `file_create_exclusive` -17 |
+| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | -17 (`file_open` was -1 before 6.7.14); the link's target is never created. A name that is a **directory**: -17 (`file_open` said -13 before 6.7.16 — `CreateFileW` says `ERROR_ACCESS_DENIED` there; `file_create_exclusive` -17 since 6.7.14) |
+| write access, `O_CREAT` or `O_TRUNC` (no `O_NOFOLLOW` / `O_DIRECTORY`) on a directory | -21 | -21 (-13 before 6.7.16) |
 | `O_NOFOLLOW` on a symlink or junction (to a file or a directory) | -40 (-62 macOS) | -40; the target is never opened or truncated |
 | `O_NOFOLLOW` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
 | `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally (the reopen must be the same file) |
@@ -8689,9 +8698,13 @@ handle by file id and refused if the name changed in between. The refusals live 
 which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
 a link, but hands back the link's own handle instead of -40.
 
-⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -13
-(-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
-`O_DIRECTORY` — set always, it would let `O_WRONLY` open a directory.
+⚠ One divergence remains, fail-closed: a plain read-only `open()` of a directory (no `O_DIRECTORY`)
+is -13 (-EACCES; -1 before 6.7.14) on Windows, where Linux returns a read fd.
+`FILE_FLAG_BACKUP_SEMANTICS` is set **only** for `O_DIRECTORY` — set always, it would let `O_WRONLY`
+open a directory. Under write access, `O_CREAT` or `O_TRUNC` a directory is -21 (`EISDIR`), as on
+Linux, since 6.7.16 (6.7.16's D95): `CreateFileW` refuses it `ERROR_ACCESS_DENIED`, and on that -13
+`sys_open` asks the name (`GetFileAttributesW`) — a directory is -21 (-17 under `O_CREAT|O_EXCL`),
+anything else keeps -13.
 
 Before v6.6.9 all three flags were accepted and ignored: `O_CREAT|O_EXCL` over a dangling
 symlink **created the symlink's target** (with or without `O_NOFOLLOW` — sigil's keyfile,

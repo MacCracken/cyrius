@@ -231,6 +231,22 @@
 #   EFLUSHFB_PE's map back to `cmp; sbb`                    axis 2 FAIL (FlushFileBuffers, the same);
 #                                                           axis 4 FAIL (path_failure_errno 35 / 2:
 #                                                           the closed-fd and read-only rows -1)
+# 6.7.16 — a DIRECTORY answers EISDIR (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-
+# answer-eacces-not-eisdir.md; 6.7.16's D95, "-21 as Linux"). CreateFileW and DeleteFileW refuse a
+# directory ERROR_ACCESS_DENIED, which the table maps to -13: the filed dirfail printed `-13 -13 -13
+# -13` on cass and wine (Linux `-21 -21 -21 -21`). lib/syscalls_windows.cyr asks the name on a -13
+# (GetFileAttributesW, 6.7.14's file_create_exclusive shape): sys_open's write / create / truncate
+# opens of a directory are -21 (an O_CREAT|O_EXCL one -17, Linux's EEXIST), sys_unlink's and
+# xunlink's -21, sys_truncate opens through sys_open; anything that is no directory keeps -13.
+#   axis 5 also reads those arms statically (CI has no wine).
+#   mutant (2026-10-20, 6.7.16 pw lane, PW1; wine 11.20)     result
+#   the pre-fix lib (2cd5ab993's syscalls_windows / io)      axis 5 FAIL; axis 4 FAIL (dirfail `-13 -13
+#                                                           -13 -13`; path_failure_errno 42 / 7)
+#   `_win_is_dir` never a directory (`return 0`)            axis 4 FAIL (dirfail `-13 -13 -13 -13`;
+#                                                           path_failure_errno 42 / 7); axis 5 PASSES:
+#                                                           the arms are there — behaviour is axis 4's
+#   `_win_is_dir` always a directory (every -13 is -21)     axis 4 FAIL (path_failure_errno 48 / 1:
+#                                                           the held-open file's -13 reads -21)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -247,7 +263,7 @@ for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
 # T6's at 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=37; F6=53
+F1=10; F2=10; F3=13; F4=13; F5=49; F6=53
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
 TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
@@ -429,6 +445,25 @@ p(xfsync(0 - 999));                            # fsync of a non-descriptor: Linu
 println("");
 sys_unlink("rs_t");
 EOF
+# 6.7.16's D95: a directory's unlink / truncate / open for writing (the filed dirfail, verbatim; run
+# in an empty directory).
+cat > "$D/dirfail.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+alloc_init();
+fn p(v): i64 { fmt_int(v); sys_write(1, " ", 1); return 0; }
+sys_rmdir("df_d");
+sys_mkdir("df_d", 448);
+p(sys_unlink("df_d"));                  # unlink of a directory: Linux -21
+p(xunlink("df_d"));                     # the same through xunlink: Linux -21
+p(sys_truncate("df_d", 1));             # truncate of a directory: Linux -21
+p(file_open("df_d", O_WRONLY, 0));      # open of a directory for writing: Linux -21
+println("");
+sys_rmdir("df_d");
+EOF
 # "<h> -9 3 0" with h a descriptor above 2 (on PE a multiple of 4): the alias row's verdict.
 alias_ok() {  # $1 = the output line, $2 = 4 on PE (h must be a multiple of 4), 1 natively
     set -- $1 "$2"
@@ -499,14 +534,14 @@ sys_exit(0);
 EOF
 
 # axis 1, 6.7.16: the std-fd rows natively.
-for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias rsfail; do
+for p in closestd trstd close2 clsh_child closeneg pathfail ftfail alias rsfail dirfail; do
     ( cd "$ROOT" && "$CC" < "$D/$p.cyr" > "$D/n/$p" 2> "$D/n/$p.err" ) || true
     chmod +x "$D/n/$p" 2> /dev/null || true
 done
 clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
-if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ] || [ ! -s "$D/n/rsfail" ]; then
+if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ] || [ ! -s "$D/n/rsfail" ] || [ ! -s "$D/n/dirfail" ]; then
     bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | grep -m2 '^error' | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
@@ -538,6 +573,10 @@ else
     ( cd "$D/n/rs" && ulimit -c 0; ../rsfail > rs.out 2> /dev/null ) || true
     got=$(line "$D/n/rs/rs.out")
     if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 1: the rename / symlink / fsync repro natively: '$got' (want '-2 -2 -9')"; fi
+    mkdir -p "$D/n/df"
+    ( cd "$D/n/df" && ulimit -c 0; ../dirfail > df.out 2> /dev/null ) || true
+    got=$(line "$D/n/df/df.out")
+    if [ "$got" = "-21 -21 -21 -21" ]; then ok; else bad "axis 1: the directory repro natively: '$got' (want '-21 -21 -21 -21')"; fi
 fi
 
 # axis 2, 6.7.16 (called from axis 2 below, after $D/dis, $D/imp, va and $CH are set): every
@@ -831,6 +870,26 @@ case "$(warm _io_tmp_taken)" in
     *) bad "axis 5: _io_tmp_taken's CYRIUS_TARGET_WIN arm does not classify -13 by asking the name: $(warm _io_tmp_taken | tr -s ' \n' '  ')" ;;
 esac
 
+# axis 5, 6.7.16 (D95): lib/syscalls_windows.cyr asks the name on an open's / unlink's -13.
+SW="$ROOT/lib/syscalls_windows.cyr"
+swfn() { code "$SW" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+case "$(swfn sys_open)" in
+    *'& 196608) == 0) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*'& 192) == 192) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*) ok ;;
+    *) bad "axis 5: sys_open's plain and O_CREAT|O_EXCL arms do not hand CreateFileW's answer to _win_open_eacces: $(swfn sys_open | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn _win_open_eacces)" in
+    *'if (h != 0 - 13) { return h; }'*'if ((flags & 579) == 0) { return h; }'*'_win_is_dir(path) == 0'*'return 0 - 17;'*'return 0 - 21;'*) ok ;;
+    *) bad "axis 5: _win_open_eacces does not classify a -13 (write / create / truncate access, a directory: -21; O_EXCL -17): $(swfn _win_open_eacces | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn _win_is_dir)" in
+    *'syscall(61465, path)'*'(at & 16) != 0'*) ok ;;
+    *) bad "axis 5: _win_is_dir does not read GetFileAttributesW's directory bit: $(swfn _win_is_dir | tr -s ' \n' '  ')" ;;
+esac
+case "$(swfn sys_unlink)$(swfn _win_unlink_eacces)$(swfn sys_truncate)$(warm xunlink)" in
+    *'_win_unlink_eacces(path, syscall(87, path))'*'_win_is_dir(path) == 1) { return 0 - 21; }'*'var h = sys_open(path, 1, 0);'*'_win_unlink_eacces(path, syscall(0xF035, path))'*) ok ;;
+    *) bad "axis 5: sys_unlink / xunlink do not classify DeleteFileW's -13, or sys_truncate does not open through sys_open" ;;
+esac
+
 # axis 6, 6.7.16: static — the stdlib wrappers that hand an fd to a raw handle reroute ask
 # `_win_fd_aliases` first. The folds (docs/ecosystem.md's lib/ rows) are not cyrius-edited and call
 # no raw handle reroute; the census reads every other lib/*.cyr.
@@ -950,12 +1009,12 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$@" )
     }
-    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias rsfail; do
+    for p in closestd trstd close2 clsh_child clreuse closeneg pathfail ftfail alias rsfail dirfail; do
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/$p.cyr" > "$D/w/$p.exe" 2> "$D/$p.werr" ) || true
     done
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
-    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ] || [ ! -s "$D/w/rsfail.exe" ]; then
+    if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ] || [ ! -s "$D/w/rsfail.exe" ] || [ ! -s "$D/w/dirfail.exe" ]; then
         bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
@@ -1004,6 +1063,12 @@ EOF
             timeout 120 wine rsfail.exe < /dev/null > rs.out 2> /dev/null ) || true
         got=$(line "$D/w/rs/rs.out")
         if [ "$got" = "-2 -2 -9" ]; then ok; else bad "axis 4: the rename / symlink / fsync repro under wine: '$got' (want '-2 -2 -9'; '-1 -1 -1' is every BOOL folded to -1)"; fi
+        mkdir -p "$D/w/df" && cp "$D/w/dirfail.exe" "$D/w/df/"
+        ( cd "$D/w/df" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+            timeout 120 wine dirfail.exe < /dev/null > df.out 2> /dev/null ) || true
+        got=$(line "$D/w/df/df.out")
+        if [ "$got" = "-21 -21 -21 -21" ]; then ok; else bad "axis 4: the directory repro under wine: '$got' (want '-21 -21 -21 -21'; '-13 -13 -13 -13' is ERROR_ACCESS_DENIED unasked)"; fi
     fi
     # 6.7.16: the Windows-only wrappers' leaves (axis 6 holds their shape where wine is absent).
     cat > "$D/wrapalias.cyr" <<'EOF'

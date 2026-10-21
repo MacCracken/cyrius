@@ -222,7 +222,9 @@ fn sys_read(fd, buf, count) {
 # equivalent and is dropped. Returns a handle usable by
 # sys_read/write/close, or a negative errno: CreateFileW's failure mapped
 # by the reroute since 6.7.14 (-2 not found, -13 access denied — a plain
-# open of a directory too —, -17 exists for O_CREAT|O_EXCL, -22, -36 ...;
+# read-only open of a directory too; -21 for one under write access,
+# O_CREAT or O_TRUNC, as Linux, since 6.7.16's D95 —, -17 exists for
+# O_CREAT|O_EXCL (a directory too), -22, -36 ...;
 # -1 for a Win32 code with no POSIX peer and for a path that cannot be
 # widened; until 6.7.14 every failure was -1),
 # -40 (-ELOOP) for O_NOFOLLOW on a symlink or junction (to a file or a
@@ -232,9 +234,44 @@ fn sys_read(fd, buf, count) {
 # See the OFlags note. CHANGELOG [6.6.9]
 fn sys_open(path, flags, mode) {
     # Neither O_NOFOLLOW nor O_DIRECTORY; or O_CREAT|O_EXCL, whose CREATE_NEW never follows.
-    if ((flags & 196608) == 0) { return syscall(SYS_OPEN, path, flags, mode); }
-    if ((flags & 192) == 192) { return syscall(SYS_OPEN, path, flags, mode); }
+    if ((flags & 196608) == 0) { return _win_open_eacces(path, flags, syscall(SYS_OPEN, path, flags, mode)); }
+    if ((flags & 192) == 192) { return _win_open_eacces(path, flags, syscall(SYS_OPEN, path, flags, mode)); }
     return _win_open_checked(path, flags, mode);
+}
+
+# 6.7.16 — A DIRECTORY ANSWERS EISDIR, as on Linux (6.7.16's D95, the user, 2026-10-20: "-21 as
+# Linux"). CreateFileW and DeleteFileW refuse a directory with ERROR_ACCESS_DENIED, which the Win32
+# table maps to -13, so an open of a directory for writing (or creating / truncating), its
+# truncate and its unlink answered -13 where Linux answers -21. When -13 comes back the name is
+# asked (GetFileAttributesW, 0xF019 — 6.7.14's file_create_exclusive shape): a directory is -21; a
+# real permission or sharing refusal on anything else stays -13. 1 when `path` names a directory
+# (a directory link too: it carries the directory attribute). CHANGELOG [6.7.16]
+fn _win_is_dir(path): i64 {
+    var at = syscall(61465, path);              # GetFileAttributesW (narrow)
+    if (at == 4294967295) { return 0; }         # INVALID_FILE_ATTRIBUTES
+    if ((at & 16) != 0) { return 1; }           # FILE_ATTRIBUTE_DIRECTORY
+    return 0;
+}
+
+# An open's answer `h` once -13 is asked about: a directory under write access, O_CREAT or O_TRUNC
+# is -21 — and under O_CREAT|O_EXCL -17, as Linux's EEXIST (real Windows' CREATE_NEW refuses an
+# existing directory ERROR_ACCESS_DENIED; wine already says ERROR_FILE_EXISTS); a read-only open of
+# a directory keeps its -13 (Linux opens one: CreateFileW needs FILE_FLAG_BACKUP_SEMANTICS, which
+# only O_DIRECTORY asks for). CHANGELOG [6.7.16]
+fn _win_open_eacces(path, flags, h): i64 {
+    if (h != 0 - 13) { return h; }
+    if ((flags & 579) == 0) { return h; }       # O_RDONLY without O_CREAT / O_TRUNC
+    if (_win_is_dir(path) == 0) { return h; }
+    if ((flags & 192) == 192) { return 0 - 17; }
+    return 0 - 21;
+}
+
+# An unlink's answer `r` once -13 is asked about: a directory is -21 (DeleteFileW refuses one
+# ERROR_ACCESS_DENIED). Shared by sys_unlink and lib/io.cyr's xunlink. CHANGELOG [6.7.16]
+fn _win_unlink_eacces(path, r): i64 {
+    if (r != 0 - 13) { return r; }
+    if (_win_is_dir(path) == 1) { return 0 - 21; }
+    return r;
 }
 
 # Attributes (low dword) and reparse tag (high dword) of an OPEN handle, via
@@ -567,7 +604,8 @@ fn sys_mkdir(path, mode): i64 { return syscall(83, path, mode); }
 # unlink — routed to kernel32!DeleteFileW by the PE backend's syscall(87) reroute
 # (_pe_ensure_deletef, v5.11.22). (Was a no-op `return 0` stub through v6.3.42 —
 # VR-01 surfaced the file was never deleted.)
-fn sys_unlink(path): i64 { return syscall(87, path); }
+# A directory answers -21, as Linux, where DeleteFileW's refusal read -13 (6.7.16's D95).
+fn sys_unlink(path): i64 { return _win_unlink_eacces(path, syscall(87, path)); }
 # Remove an empty directory — kernel32!RemoveDirectoryW through the 0xF03B reroute (the one
 # lib/io.cyr's xrmdir already uses). 6.6.10: the reroute existed since 6.6.6 but no
 # `sys_rmdir` did, so a portable caller of the POSIX name failed to COMPILE for PE
@@ -716,10 +754,11 @@ fn _win_ftrunc_err(e): i64 {
 }
 # Set a file's length by path — REAL since 6.6.9: opens the path for writing (following a
 # link, as truncate(2) does), then sys_ftruncate. Same returns, and a failed open answers its own
-# errno (-2 for a missing path; -1 until 6.7.16). CHANGELOG [6.6.9] [6.7.16]
+# errno (-2 for a missing path; -1 until 6.7.16; a directory -21, as Linux — 6.7.16's D95 — through
+# sys_open). CHANGELOG [6.6.9] [6.7.16]
 fn sys_truncate(path, length): i64 {
     if (length < 0) { return 0 - 22; }
-    var h = syscall(SYS_OPEN, path, 1, 0);   # O_WRONLY
+    var h = sys_open(path, 1, 0);            # O_WRONLY
     if (h < 0) { return h; }
     var r = sys_ftruncate(h, length);
     syscall(SYS_CLOSE, h);
