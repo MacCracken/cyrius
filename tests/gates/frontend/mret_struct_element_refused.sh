@@ -19,16 +19,18 @@
 #   M3  a fn declared `: (i64, i64)`                     M4  an undeclared fn
 #   M5  `return (mk(), 5)`, a struct-returning call
 #   M6  a by-value parameter, a value global, a by-value field `w.v`, `*pp`, `**ppp`, a method `b.dup()`, an operator
-#       `b + b`, a wrapped `((b))`, a handle `var q: Pt = alloc(16)`, the middle element of three, `Box<Pt>` (24 B) —
-#       each one line at its element
+#       `b + b`, a wrapped `((b))`, the middle element of three, `Box<Pt>` (24 B) — each one line at its element
 #   M7  a method `P8.mv` and a closure, named as the source spells them
 #   M8  a generic `fn g<T>(x: T): (T, i64)` called with a Pt and a scalar — once, naming 'g'
 #   M9  two struct elements — one line each        M10 the next fn's own error is reported (no latch)
 #   M11 --syntax-only: silent, rc 0
 #   M12 controls whose own refusal stays alone: a tuple `t`, a tuple field `w.t`, a dyn `d`, a dyn field `h.d`
-#   K1-K3 acceptance, run on x86_64, aarch64 (qemu-aarch64), cx (the tree's cxvm) and PE (wine, a private prefix): an
+#   K1-K4 acceptance, run on x86_64, aarch64 (qemu-aarch64), cx (the tree's cxvm) and PE (wine, a private prefix): an
 #       8-byte struct element passed on whole (9); word, `&b`, `*Pt`, `b.x` and `Str` elements; the corpus's
-#       `(Box<i64>, i64)` returning a word (tests/tcyr/frontend/nested_type_args.tcyr's shape)
+#       `(Box<i64>, i64)` returning a word (tests/tcyr/frontend/nested_type_args.tcyr's shape); K4 (6.7.16, f16b FG4) a
+#       16-byte HANDLE (`var q: Pt = alloc(16)`, a handle global, wrapped) is its word, not a struct value — D90's
+#       "refuses nothing that computes correctly today", and small_struct_handle_line.sh C5's 16 B twin (exit 3 through
+#       FG3's first cut, which refused it here as M6e: `_mret_hdl`, parse_expr.cyr)
 #
 # Refusal rows compare the whole error / warning list and check that no binary was written, on five legs: the x86_64
 # compiler, its PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1) legs, and the aarch64 and cx compilers built from
@@ -42,6 +44,7 @@
 #                                                        tuple / dyn field's own refusal down: `w.t` COMPILED)
 #   `_mret_sval_err` without its closure arm          -> RED M7 on every leg, 5 ('__cl00NNN' named)
 #   `_mret_sval` refusing an 8-byte struct            -> RED K1 on every leg, 5
+#   `_mret_sval` without `_mret_hdl` (FG3's first cut) -> RED K4 on every leg, 5 (refused: "returns struct 'Pt'")
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -u
@@ -198,7 +201,7 @@ error:<source>:8:117: 'mv' $PT"
 row M6d "a method result b.dup(), an operator result b + b, a wrapped ((b))" "$(hm3 'fn mv(): (i64, i64, i64) { var b: Pt; b.x = 9; return (b.dup(), b + b, ((b))); }')" "error:<source>:8:56: 'mv' $PT
 error:<source>:8:65: 'mv' $PT
 error:<source>:8:72: 'mv' $PT"
-row M6e "a handle var q: Pt = alloc(16), the middle element of three" "$(hm3 'fn mv(): (i64, i64, i64) { var q: Pt = alloc(16); q.x = 9; return (1, q, 5); }')" "error:<source>:8:71: 'mv' $PT"
+row M6e "an inline value var q = Pt { 9, 0 }, the middle element of three" "$(hm3 'fn mv(): (i64, i64, i64) { var q = Pt { 9, 0 }; return (1, q, 5); }')" "error:<source>:8:60: 'mv' $PT"
 row M6f "a generic instance Box<Pt> (24 B)" "$H"'struct Box<T> { v: T; n; }
 fn mv(): (i64, i64) { var b: Box<Pt>; b.n = 9; return (b, 5); }
 fn main(): i64 { var a, c = mv(); return c; }
@@ -266,9 +269,25 @@ fn mv(): (Box<i64>, i64) { return (3, 4); }
 fn main(): i64 { var a, b = mv(); return a + b; }
 syscall(60, main());
 ' 7
+runs K4 "a 16-byte handle element is its word: a local, wrapped, a handle global (6.7.16)" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Pt { x; y; }
+var GQ: Pt = 0;
+fn mv(): (i64, i64, i64) { var q: Pt = alloc(16); q.x = 9; return (1, q, 5); }
+fn mw(): (i64, i64) { var q: Pt = alloc(16); q.y = 4; return ((q), 2); }
+fn mg(): (i64, i64) { GQ = alloc(16); GQ.x = 7; return (GQ, 3); }
+fn main(): i64 {
+    alloc_init();
+    var a, c, d = mv();
+    var e, f = mw();
+    var g, h = mg();
+    return load64(c) + load64(e + 8) + load64(g) + a + d + f + h;
+}
+syscall(60, main());
+' 31
 
-# The floor: 19 refusal rows, 1 quiet row and 3 acceptance rows on five legs. A leg that did not build is RED above.
-FLOOR=115
+# The floor: 19 refusal rows, 1 quiet row and 4 acceptance rows on five legs. A leg that did not build is RED above.
+FLOOR=120
 [ "$N" -ge "$FLOOR" ] || bad "the rows ran $N row-legs (floor $FLOOR) — rows or legs were lost"
 echo "$G: $pass passed, $fail failed, $skips skipped"
 [ "$fail" -eq 0 ] || exit 1

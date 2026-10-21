@@ -3613,7 +3613,8 @@ var hi, lo, bexp = dd_pow10(k);
 #   fn mv(): (Pt, i64) { var b: Pt; return (b, 5); }  # 'mv' returns struct 'Pt' (16 bytes) as a multi-
 #                                     # value element - return its pointer, or its fields as elements
 #   return (&b, 5);   return (b.x, b.y, 5);           # its pointer, or its fields
-# An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is.
+# An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is. A handle
+# (`var q: Pt = alloc(16);`, a pointer-mode global) is its word — the pointer — and is returned as it always was.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the

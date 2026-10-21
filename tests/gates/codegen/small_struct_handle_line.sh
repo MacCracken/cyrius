@@ -1269,6 +1269,15 @@ crow "C5 return (a, 1) with a handle: the element is its word" 3 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn f(): (i64, i64) { var a: S8 = alloc(8); a.v = 3; return (a, 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
 crow "C5 its 16 B twin" 3 \
   'include "lib/alloc.cyr"\nstruct H { v; w; }\nfn f(): (i64, i64) { var a: H = alloc(16); a.v = 3; return (a, 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
+# C5w / C5s / C5g (6.7.16): a 16 B HANDLE element is no struct value for 6.7.16's D90 — wrapped, second, a handle global
+# (`_mret_hdl`, parse_expr.cyr: D90's refusal took the twin above, exit 3 before it). The tree before -> RED 4: C5 twin,
+# C5w, C5s, C5g ("returns struct 'H' (16 bytes) as a multi-value element").
+crow "C5w the 16 B handle wrapped, ((a), 1)" 3 \
+  'include "lib/alloc.cyr"\nstruct H { v; w; }\nfn f(): (i64, i64) { var a: H = alloc(16); a.v = 3; return ((a), 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
+crow "C5s the 16 B handle second, (1, a)" 3 \
+  'include "lib/alloc.cyr"\nstruct H { v; w; }\nfn f(): (i64, i64) { var a: H = alloc(16); a.v = 3; return (1, a); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(y));\n'
+crow "C5g a 16 B handle global, (GA, 1)" 3 \
+  'include "lib/alloc.cyr"\nstruct H { v; w; }\nvar GA: H = 0;\nfn f(): (i64, i64) { GA = alloc(16); GA.v = 3; return (GA, 1); }\nalloc_init();\nvar x, y = f();\nsyscall(60, load64(x));\n'
 crow "C6 a U8 handle returned from an S8 fn refused by name (6.7.11)" "refuse:a fn returning the struct .S8. takes a value of that struct, or a pointer to one — got .u. (a .U8.)" \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nstruct U8 { u; }\nfn f(): S8 { var u: U8 = alloc(8); u.u = 3; return u; }\nfn g() { var q: S8 = f(); return q.v; }\nalloc_init();\nsyscall(60, g());\n'
 
