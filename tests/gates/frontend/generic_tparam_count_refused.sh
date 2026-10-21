@@ -75,7 +75,7 @@ lines() {
     rc=0
     if [ $# -ge 4 ]; then sh -c "$4" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
     else "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?; fi
-    got=$(grep '^error' "$D/$1.err" | sed 's/^error:<source>://' | tr '\n' '|' | sed 's/|$//')
+    got=$( (grep '^error' "$D/$1.err" || true) | sed 's/^error:<source>://' | tr '\n' '|' | sed 's/|$//')   # no line: '' (bash -eo pipefail)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$got" != "$2" ]; then bad "$3: got [$got], want [$2]"
     else ok "$3: $2"; fi
