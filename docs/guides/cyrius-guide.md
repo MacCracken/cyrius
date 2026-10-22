@@ -2621,7 +2621,10 @@ handle, `var u: *Pt = pp;` with `pp: **Pt`, `var pp: **Pt = u;` with `u: *Pt` �
 capture, in a fn, the declaration zone and after the first statement — reports `cannot initialise 'u: *Pt' from '&h',
 a '**Pt' - a pointer of another depth`; through 6.7.16 `u` held the handle's slot and `u.x` read its word as the Pt.
 A pointer of the annotation's depth still converts (to any struct, `var q: *Q = &p;`), and `*pp`, an untyped
-pointer, `0` and an inline struct (its address, D17) pass.
+pointer, `0` and an inline struct (its address, D17) pass. The ASSIGNMENT is judged the same: `u = &h;`, `v = pp;`,
+`pp = u;` into a local, parameter or global declared a pointer to a struct at another depth (in a fn, a `for` step or
+at top level) reports `cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of another depth`; a store THROUGH the
+name (`*pp = u`, `**pp = p`) keeps its own rules.
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
