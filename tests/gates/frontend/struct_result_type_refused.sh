@@ -2098,6 +2098,85 @@ syscall(60, main());
 accept "RBK7 for x in x.a..5: the start's x" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in x.a..5 { s = s + 1; } return s; }
 '"$RBQM" 2 'syscall(60, 2);'
 
+# RBN (6.7.17, the user's D1, the integrator's ruling at the genr finish pass): NEVER CALLED, IN A SKIPPED BASE TOO.
+# A generic whose i64 base is not parsed — bounded with no `impl` of its bound for i64, or a stub (`var k = x.y;`
+# elsewhere) — was judged only in its instances, so its rebound `x.show()` / `x.y` (a closure's `|x|`, a `for x in`,
+# a destructure's later name) compiled when never called; D1 refuses them at the definition, called or not, as the
+# same body with `impl Show for i64` (a parsed base) does. RBN rows: never called x {closure, for-in, destructure} x
+# {method, field} x {an i64 impl, none, a stub base}: each exactly the parsed base's line (`_rbs_begin` / `_rbs_tok`,
+# parse_fn_def.cyr). RBNC: called at Pt with no i64 impl, still exactly one line (the instance's report at the same
+# token is the same report). RBNK: g's own x past the rebindings, a destructure's right-hand side and a range's start
+# in a skipped base still compile and run. RBNX: RBN on aarch64 / cx / PE.
+# (each a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it; MRBN1 the compiler
+# alone, run from the real tree with CYCC=, so its aarch64 / cx legs cross-build the fixed src)
+#   MRBN1 the compiler before the fix (l6717-integ 761023ca2) -> RED 15: the 12 none / stub rows and RBNS (compiled,
+#                                                               rc 0), RBNX [pe] x2; the i64 rows, RBNC, RBNK green
+#   MRBN2 `_rbs_tok` reporting nothing                        -> RED 19: the 12 none / stub rows, RBNS, RBNX x6
+#   MRBN3 `_rbs_use` without its statement arm (no store)     -> RED 1: RBNS (the '.field' access words)
+RBNB='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Pt { fn other(self): i64 { return 77; } }
+fn two(): (i64, i64) { return (1, 2); }
+'
+RBNI='impl Show for i64 { fn show(self): i64 { return self + 100; } }
+'
+RBNO='# no impl Show for i64
+'
+RBNM='fn main(): i64 { return 0; }
+syscall(60, main());
+'
+rbn_g() {  # $1 form (cl fi ds)  $2 use  $3 "stub" for the stub base -> the generic's line
+    if [ "${3:-}" = stub ]; then
+        case $1 in
+            cl) printf 'fn g<T>(x: T): i64 { var k = x.y; var f = |x| { return %s; }; return fncall1(f, 5) + k; }\n' "$2" ;;
+            fi) printf 'fn g<T>(x: T): i64 { var k = x.y; var s = 0; for x in 0..2 { s = s + %s; } return s + k; }\n' "$2" ;;
+            ds) printf 'fn g<T>(x: T): i64 { var k = x.y; var q, x = two(); return %s + q + k; }\n' "$2" ;;
+        esac
+    else
+        case $1 in
+            cl) printf 'fn g<T: Show>(x: T): i64 { var f = |x| { return %s; }; return fncall1(f, 5); }\n' "$2" ;;
+            fi) printf 'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { s = s + %s; } return s; }\n' "$2" ;;
+            ds) printf 'fn g<T: Show>(x: T): i64 { var q, x = two(); return %s + q; }\n' "$2" ;;
+        esac
+    fi
+}
+rbn_rows() {  # $1 form  $2 / $3 the method / field line:col with a parsed or bound-bad base  $4 / $5 the stub's
+    refuse_at "RBN i64 $1 x.show()" "$2: $SN 'x'$SM" "$RBNB$RBNI$(rbn_g $1 'x.show()')
+$RBNM"
+    refuse_at "RBN i64 $1 x.y" "$3: $SN 'x'$SA" "$RBNB$RBNI$(rbn_g $1 'x.y')
+$RBNM"
+    refuse_at "RBN none $1 x.show()" "$2: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g $1 'x.show()')
+$RBNM"
+    refuse_at "RBN none $1 x.y" "$3: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g $1 'x.y')
+$RBNM"
+    refuse_at "RBN stub $1 x.other()" "$4: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g $1 'x.other()' stub)
+$RBNM"
+    refuse_at "RBN stub $1 x.y" "$5: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g $1 'x.y' stub)
+$RBNM"
+}
+rbn_rows cl 9:55 9:52 9:63 9:59
+rbn_rows fi 9:69 9:66 9:77 9:73
+rbn_rows ds 9:59 9:57 9:67 9:64
+refuse_at "RBNS none: a statement |x| { x.y = 3; }" "9:46: $SN 'x'$SS" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { x.y = 3; return 0; }; return fncall1(f, 5); }
+'"$RBNM"
+RBNP='fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+refuse_at "RBNC none, called at Pt: one line" "9:55: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g cl 'x.show()')
+$RBNP"
+accept "RBNK1 none: g's own x past |x| and for x in" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } return x.show() + fncall1(f, 1) + s; }
+'"$RBNP" 27 'syscall(60, 27);'
+accept "RBNK2 stub: var q, x = pr2(x.y); the RHS's x" "$RBNB$RBNO"'fn pr2(v): (i64, i64) { return (v, 1); }
+fn g<T>(x: T): i64 { var q, x = pr2(x.y); return q + x; }
+'"$RBNP" 5 'syscall(60, 5);'
+accept "RBNK3 none: for x in x.y..9, the start's x" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var s = 0; for x in x.y..9 { s = s + 1; } return s; }
+'"$RBNP" 5 'syscall(60, 5);'
+accept "RBNK4 none, never called: g's own x past the rebindings" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var q, z = two(); return x.show() + fncall1(f, 1) + q + z; }
+'"$RBNM" 0 'syscall(60, 0);'
+
 # WR (6.7.17, met reviewing the genr lane): a whole argument's wrap carries what it wraps in the stub scan too, as the
 # parser binds it (the guide: parentheses around the WHOLE argument carry what they wrap). `vb((x))`, `gxw((b))`,
 # `var r = idp((&x)); r.b` and `var r = first((b)); r.a` forwarded / typed nothing (`_gs_arg_named`, `_gs_carries`,
@@ -2198,6 +2277,10 @@ cross_rows() {  # $1 the leg's name
     refuse_at "RBX [$1] RB1" "7:69: $SN 'x'$SM" "$RB1"
     refuse_at "RBX [$1] RB2" "8:59: $SN 'x'$SM" "$RB2"
     refuse_at "RBX [$1] RB4" "4:46: $SN 'x'$SA" "$RB4"
+    refuse_at "RBNX [$1] none cl x.show()" "9:55: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g cl 'x.show()')
+$RBNM"
+    refuse_at "RBNX [$1] stub fi x.y" "9:73: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g fi 'x.y' stub)
+$RBNM"
     refuse "TGX [$1] TG13" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
     refuse "TGX [$1] TG17" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
     refuse_at "DPX [$1] DP0" "6:44: $(printf '%s' "$DM" | tr -d '\\')" "$DP0S"
@@ -2233,10 +2316,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review); D1 (genr) + 44; the genr review's WR + 8, CF + 5): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review); D1 (genr) + 44; the genr review's WR + 8, CF + 5; the genr finish's RBN + 30): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 638 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 638"; exit 1
+if [ $((nrefuse + naccept)) -lt 668 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 668"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

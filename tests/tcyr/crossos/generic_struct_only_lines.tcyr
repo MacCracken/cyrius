@@ -24,6 +24,9 @@
 # 6.7.17 (met reviewing the genr lane), V29-V33: a whole argument's wrap carries what it wraps in the stub scan, as the
 # parser binds it — `vb((x))`, `pp.hm((x))`, `gxw((b))`, `var r = idp((&x));`, `var r = first((b));` forward / type T
 # as their unwrapped spellings do (each was refused at the definition: struct_result_type_refused.sh WR*).
+# 6.7.17 (D1, the genr finish pass), V34-V35: in a SKIPPED base too — a bound with no `impl` for i64, a stub — g's own x
+# past a closure's `|x|`, a `for x in` and a destructure is the T value (inside them the rebound x is refused at the
+# definition, never called included: struct_result_type_refused.sh RBN*).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -98,6 +101,10 @@ fn v30<T>(x: T): i64 { var pp = P { 1 }; return pp.hm((x)); }
 fn v31<T>(b: Box<T>): i64 { return gxw((b)); }
 fn v32<T>(x: T): i64 { var r = idp((&x)); return r.b; }
 fn v33<T>(b: Box<T>): i64 { var r = first((b)); return r.a; }
+trait Sh3 { fn s3(self): i64; }
+impl Sh3 for Q { fn s3(self): i64 { return self.a * 10 + self.b; } }
+fn v34<T: Sh3>(x: T): i64 { var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } var q, z = two(); return x.s3() + fncall1(f, 1) + s + q + z; }
+fn v35<T>(x: T): i64 { var k = x.b; var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } return x.a + k + fncall1(f, 1) + s; }
 
 fn run(): i64 {
     var s: S8; s.v = 7;
@@ -156,6 +163,8 @@ fn run(): i64 {
     assert_eq(v31(bx), 14, "V31: gxw((b)), a wrapped carrier forward");
     assert_eq(v32(q), 8, "V32: var r = idp((&x)); r.b");
     assert_eq(v33(bx), 7, "V33: var r = first((b)); r.a");
+    assert_eq(v34(q), 84, "V34: a bound with no impl for i64: g's own x.s3() past |x|, for x in and var q, z");
+    assert_eq(v35(q), 18, "V35: a stub base: g's own x.a past |x| and for x in");
     return 0;
 }
 alloc_init();

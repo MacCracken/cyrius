@@ -3790,9 +3790,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     if (_b3_skip == 1) {
         var _b3_bd = 1;
+        _rbs_begin(S, fi);   # 6.7.17 (D1): a rebound T-typed name's `x.f` / `x.m(` here, refused as a plain fn's
         while (_b3_bd > 0) {
             var _b3t = PEEKT(S);
             if (_b3t == 12) { break; }               # EOF guard
+            _rbs_tok(S);
             # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
             # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
             if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
@@ -5489,6 +5491,90 @@ fn _gs_cfv_tp(S, fi, a, sl): i64 {
     if (sl > 1) { return 0; }
     if (sl == 1) { while (TOKTYP(S, j) == 2) { j = j + 1; } if (TOKTYP(S, j) != 31) { return 0; } j = j + 1; }
     if (_gs_targ_whole(S, j) == 1) { _gs_vtp(S, fi, j); }
+    return 0;
+}
+# ⛔ 6.7.17 (the user's D1, 2026-10-22) — A REBOUND T-TYPED NAME IS REFUSED AT THE DEFINITION IN A SKIPPED BASE TOO. A
+# generic whose i64 base is not parsed (PARSE_FN_DEF's `_b3_skip`: a stub — `x.y` elsewhere in its body — or a bounded
+# one with no `impl` of its bound for i64) had its body judged only in its instances, so `|x| { return x.show(); }`,
+# `for x in 0..2 { .. x.y .. }` or `var q, x = two(); x.y` on its `x: T` compiled when the generic was never called —
+# where D1 refuses them at the definition, called or not, as it does with an i64 base. The skip now reports the first
+# such use as the plain fn's parse does, at the token the parser reports it on and in the parser's own words (so an
+# instance's report there is the same report, once): a method call at its `(`, a field store (a statement `x.f ..`
+# that is no method chain) and a field read at the token after the field name. The first only: the parser's resync
+# after a read refused at a statement's `;` swallows the next statement, so a token walk reporting every one would
+# invent errors an instance does not make (a called generic's instances report the rest, as before). `_rbs_begin`
+# reads it on the stub scan's tables of fi (swapped in, `_bbf_swap`); `_rbs_tok` reports it when the skip reaches its
+# token. CHANGELOG [6.7.17]
+var _rbs_r = 0 - 1;   # the report token, -1 = none
+var _rbs_nm = 0;      # the rebound name
+var _rbs_kd = 0;      # 1 a field read, 2 a field store, 3 a method call
+fn _rbs_begin(S, fi): i64 {
+    _rbs_r = 0 - 1;
+    if (_syntax_only == 1) { return 0; }   # the parser's `sid == 0` arms are silent there
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    _bbf_swap();
+    _gs_params(S, fi, o);
+    var t = _gs_body_open(S, _gs_at);
+    var n = GTCNT(S);
+    var dp = 1;
+    while (t > 0 && t < n) {
+        var tt = TOKTYP(S, t);
+        if (tt == 12) { break; }
+        if (tt == 13) { dp = dp + 1; }
+        elif (tt == 14) { dp = dp - 1; if (dp == 0) { break; } }
+        elif (tt == 3) { _gs_var(S, fi, t); }   # the scan's T-typed locals, as `_gs_scan` meets them
+        elif (tt == 2) { if (_rbs_use(S, o, t) == 1) { break; } }
+        t = t + 1;
+    }
+    _bbf_swap();
+    return 0;
+}
+# ... the use at token t, when it is `x.f` / `x.m(` on a T-typed name or a carrier (`_gsn`, `_gcr`) rebound where it
+# sits: its report token and kind recorded, 1.
+fn _rbs_use(S, o, t): i64 {
+    if (TOKTYP(S, t + 1) != 41) { return 0; }
+    var ft = TOKTYP(S, t + 2);
+    if (ft != 2 && ft != 1) { return 0; }
+    if (TOKTYP(S, t - 1) == 41) { return 0; }   # a field's name, not a receiver
+    var noff = TOKVAL(S, t);
+    if (_gsn_has(noff) == 0) { if (_gcr_has(noff) == 0) { return 0; } }
+    if (_gs_rebound_at(S, o, t) == 0) { return 0; }
+    var r = t + 3;
+    var kind = 1;
+    if (TOKTYP(S, r) == 19) {   # `x.m<..>(`
+        var c = _tok_targs_close(S, r + 1);
+        if (c > 0) { if (TOKTYP(S, c + 1) == 10) { r = c + 1; } }
+    }
+    if (TOKTYP(S, r) == 10) { kind = 3; }
+    else {
+        var pt = TOKTYP(S, t - 1);
+        if (pt == 5 || pt == 13 || pt == 14) {   # a statement: PARSE_FIELD_STORE unless a method chain
+            var k = t + 3;
+            while (TOKTYP(S, k) == 41 && TOKTYP(S, k + 1) == 2) { k = k + 2; }
+            if (TOKTYP(S, k) != 10 && TOKTYP(S, k) != 19) { kind = 2; }
+        }
+    }
+    _rbs_r = r;
+    _rbs_nm = noff;
+    _rbs_kd = kind;
+    return 1;
+}
+# ... at each token the skip walks: the use's report there (none when a consumed nested fn stepped over it).
+fn _rbs_tok(S): i64 {
+    if (_rbs_r < 0) { return 0; }
+    if (GTI(S) < _rbs_r) { return 0; }
+    var at = _rbs_r;
+    _rbs_r = 0 - 1;
+    if (GTI(S) != at) { return 0; }
+    var pv = _panic;
+    var m = "no struct type in scope for ";
+    if (_rbs_kd == 3) {
+        ERR_IDENT(S, m, _rbs_nm, "; a method call needs its struct declaration (missing include?)", 0 - 1);
+    } elif (_rbs_kd == 2) {
+        ERR_IDENT(S, m, _rbs_nm, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
+    } else { ERR_IDENT(S, m, _rbs_nm, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1); }
+    _panic = pv;   # the skip steps on; nothing after the base is latched by it
     return 0;
 }
 # 1 = the carrier `noff` has an entry for the struct named `gn` at `slot` (a `**G` one's 256 + slot too).

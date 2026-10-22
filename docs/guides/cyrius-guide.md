@@ -8225,9 +8225,10 @@ the bound's impl on the closure's word (SIGSEGV at `T = Pt`; `g(7)` ran it throu
 the generic a stub, compiled when never called. The rebinding reaches where the parser binds it: a range's end bound
 reads the loop variable (`for x in 0..x.b`), its start bound and a collection the enclosing `x` (`for x in x.a..5`), and
 a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s own `x` read after the closure, the
-loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A bounded
-generic with no `impl` of its bound for `i64` has no base to parse (its body is judged in each instance), so there a
-rebound `x.other()` is refused at its first instance, not at the definition.
+loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A generic
+whose `i64` base is not parsed — a bounded one with no `impl` of its bound for `i64`, or a stub — refuses its first
+such use at the definition all the same, never called included, with the same words at the same place (its other
+lines are judged in each instance).
 
 ```
 struct Pt { x; y; }
