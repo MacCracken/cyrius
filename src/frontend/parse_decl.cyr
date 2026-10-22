@@ -7429,12 +7429,12 @@ fn _gvi_expr(S, gps): i64 {
 fn _gvi_scalar(S): i64 {
     var st = GTI(S);
     var he = _had_error;
+    var en = _err_n;
     var ps = _gvi_ptr_ann(S, st);
     _scv_top_ann(S, ps);   # 6.7.13: D24 in the declaration zone; 6.7.14: D14 (D28 (a))
     _sc_beg = 0 - 1;
     PCMPE(S);
-    _scv_err = 0;
-    if (he == 0) { _scv_err = _had_error; }
+    _scv_err = _own_err(en, he);   # 6.7.17: after an earlier error too
     _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
     if (_gu_untyped(S, st) == 1) { _gu_zref(S, st); }   # 6.7.14 (D30): `var x = mk2(30);`; 6.7.15 (D35): `= B2.mk();`
     return 0;
@@ -10834,11 +10834,12 @@ fn _vrcv_other(S, term, lt): i64 {
     if (_vrcv_vcall(S, ti, lt, term) == 1) { return 0 - 1; }
     if (_vrcv_nofn(S, ti) == 1) { return 0 - 1; }   # 6.7.13: the undefined-function path names it
     var he = _had_error;
+    var en = _err_n;
     var vd = _vop_vd;
     _vop_vd = 1;   # 6.7.16 (D100): a vector call operand in it is this refusal's
     PCMPE(S);
     _vop_vd = vd;
-    if (he == 0) { if (_had_error == 1) { he = 2; } }
+    if (_own_err(en, he) == 1) { he = 2; }   # 6.7.17: after an earlier error too
     if (_vrcv_nofnw(S, ti, GTI(S)) == 1) { he = 2; }   # 6.7.14: wrapped, the parse registered it
     if (he != 2) { _vrcv_err(S, ti, "assigned", _vrcv_fptr(S, ti, GTI(S))); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
