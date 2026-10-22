@@ -6034,8 +6034,25 @@ fn _undef_var_report(S, noff, tail): i64 {
 # is the constant 0 of a sibling file's name), its value 0; or the call `_ugc_call` takes.
 fn _undef_read(S, noff): i64 {
     if (_ugc_call(S, noff) == 1) { return 0; }
-    if (_syntax_only == 0) { _undef_var_report(S, noff, " (missing include or enum?)"); }
+    if (_syntax_only == 0) { _undef_var_report(S, noff, " (missing include or enum?)"); _undef_tlist(S); }
     EMOVI(S, 0);
+    return 0;
+}
+# 6.7.17 review — a name read with a list of type names and no call: `var f = g<i32>;`, `nf<i64> + 1`, `callptr(g<i32>,
+# 3)`, `zz<i64>`. The name's "undefined variable" stood, and its list was then read as comparisons — "undefined variable
+# 'i32'" + "expected ';', got '>'" — three lines for one mistake (`&g<i32>` and `nofn<i64>(1)` were made one line). The
+# list is stepped after the name's report, so that is the one line. Not under --syntax-only (nothing reported there).
+# Cursor past the name. CHANGELOG [6.7.17]
+fn _undef_tlist(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var lt = GTI(S);
+    var e = _tok_targs_close(S, lt + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) == 10) { return 0; }
+    var ok = 0;
+    if (_MONOMORPH_OK != 1) { ok = _tylist_fl(S, lt + 1, e); }
+    else { ok = _tylist_at(S, lt + 1, e, 0 - 1); }
+    if (ok == 1) { STI(S, e + 1); }
     return 0;
 }
 # ⛔ 6.7.16 — `nofn<i64>(1)`, AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING: its type arguments were read as

@@ -2369,6 +2369,41 @@ fn _fn_lp_find(S): i64 {
     }
     return 0;
 }
+# 6.7.17 (the review of genb) — A LIST THAT ENDS `,)` HAS NO COUNT FOR THE ARITY CHECK TO JUDGE (`_CHECK_ARITY`): `f(1,)`
+# is refused at its `)` ("unexpected ')'") and `fn f(a,)` at its `)` ("expected identifier, got ')'"), and the check then
+# counted the empty entry — "'f' expects 1 argument, got 2" at the call, "'f' expects 2 arguments, got 1" at every call
+# of the definition — a second line for the one mistake. It stands down there, as for an unclosed list (6.7.14, `g(1;`)
+# and a refused declaration's uses. 1 only on a program already refused, so nothing that compiles is touched.
+# CHANGELOG [6.7.17]
+fn _ar_trail(S, fi): i64 {
+    if (_ar_trail_call(S) == 1) { return 1; }
+    return _ar_trail_def(S, fi);
+}
+# The call just read ends `,)` — the cursor past its `)` (or its `);`), where `_ar_site` finds it.
+fn _ar_trail_call(S): i64 {
+    var t = GTI(S) - 1;
+    if (t < 2) { return 0; }
+    if (TOKTYP(S, t) == 5) { t = t - 1; }
+    if (TOKTYP(S, t) != 11) { return 0; }
+    if (TOKTYP(S, t - 1) == 31) { return 1; }
+    return 0;
+}
+# Fn `fi`'s definition has a parameter list ending `,)`.
+fn _ar_trail_def(S, fi): i64 {
+    var k = GFDS(S, fi);
+    if (k <= 0) { return 0; }
+    k = k + 1;
+    if (TOKTYP(S, k) == 19) {
+        k = _tok_targs_close(S, k + 1);
+        if (k < 0) { return 0; }
+        k = k + 1;
+    }
+    if (TOKTYP(S, k) != 10) { return 0; }
+    var c = _tok_close_paren(S, k);
+    if (c < 1) { return 0; }
+    if (TOKTYP(S, c - 1) == 31) { return 1; }
+    return 0;
+}
 
 fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;

@@ -60,6 +60,13 @@
 #           `_dt_annk`, PARSE_VAR, PARSE_GVAR_REG, EMIT_GVAR_INITS); --syntax-only says it too; no `=` is what `var a,
 #           b;` says. MUTATION (2026-10-22): the compiler before (ba69fd9d4) -> RED 34 (every axis-9 refusal row on each
 #           leg, da_two and the --syntax-only row; da_ctl green).
+#           6.7.17 review (genb): a `,` with NO name after it is no destructure — `var b: i64, = 0;`, `var b: , = 0;`
+#           (type_name_refused.sh va_comma), `var b: i64, 5 = 0;`, a top-level `var b: *i64, = 0;` keep the annotation
+#           reader's one line; the refusal above had taken them ("a multi-value destructure's names take no type
+#           annotation: 'b'" + "expected identifier, got '='"). An empty annotation on a real destructure name (`var a:
+#           , b = ..`, `var a, b: = ..`) is still refused. MUTATION (2026-10-22): the compiler before the review fix
+#           (l6717-integ 45c7ff467) -> RED dn_comma, dn_empty, dn_num, dn_zone on the x86_64 and PE legs (two lines;
+#           the aarch64 / cx legs are built from the tree's src); da_empty1 / da_emptyk green (controls).
 #   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/archived/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
@@ -506,17 +513,25 @@ refused7 da_three "${TH9}fn t(): i64 { var a: i64, b: (i64, i64), c: Box<i64, i6
 refused7 da_zone "${TWO8}var a: i64, b: i64 = two(3);\nsyscall(60, a * 10 + b);\n" "2:5: $DA9: 'a'"
 refused7 da_top "${TWO8}syscall(1, 1, \"\", 0);\nvar a, b: i64 = two(3);\nsyscall(60, a * 10 + b);\n" "3:8: $DA9: 'b'"
 refused7 da_for "${TWO8}fn t(): i64 { var c = 0; for (var a: i64, b = two(1); a < 0; a = a + 1) { c = b; } return c; }\nsyscall(60, t());\n" "2:35: $DA9: 'a'"
+# 6.7.17 review: a `,` with no name after it is no destructure — the annotation reader's own line, once
+refused7 dn_comma "${TWO8}fn t(): i64 { var b: i64, = 0; return b; }\nsyscall(60, t());\n" "2:25: expected '=', got ','"
+refused7 dn_empty "${TWO8}fn t(): i64 { var b: , = 0; return b; }\nsyscall(60, t());\n" "2:22: expected a type for variable 'b', got ','"
+refused7 dn_num "${TWO8}fn t(): i64 { var b: i64, 5 = 0; return b; }\nsyscall(60, t());\n" "2:25: expected '=', got ','"
+refused7 dn_zone "${TWO8}syscall(1, 1, \"\", 0);\nvar b: *i64, = 0;\nsyscall(60, b);\n" "3:12: expected '=', got ','"
+# ... and an empty annotation on a real destructure name is still the destructure's refusal (controls)
+refused7 da_empty1 "${TWO8}fn t(): i64 { var a: , b = two(3); return a * 10 + b; }\nsyscall(60, t());\n" "2:19: $DA9: 'a'"
+refused7 da_emptyk "${TWO8}fn t(): i64 { var a, b: = two(3); return a * 10 + b; }\nsyscall(60, t());\n" "2:22: $DA9: 'b'"
 # no `=`: what `var a, b;` reports, once
 refused7 da_noeq "fn t(): i64 { var a: i64, b: i64; return 3; }\nsyscall(60, t());\n" "1:33: expected '=', got ';'"
 # two statements: one line each, and the program's next error still its own
 rows=$((rows + 1))
 printf "${TWO8}fn t(): i64 { var a: i64, b = two(3); var c, d: i64 = two(4); return a + b + c + d + zq; }\nsyscall(60, t());\n" > "$T/da_two.cyr"
-"$CC" < "$T/da_two.cyr" > "$T/da_two.bin" 2> "$T/da_two.err"
+"$CC" < "$T/da_two.cyr" > "$T/da_two.bin" 2> "$T/da_two.err" || true   # refused (rc 1): bash -eo pipefail
 check "da_two: two statements, one line each, then 'zq'" "2:19 'a'|2:46 'd'|undefined variable 'zq'" \
     "$(grep '^error' "$T/da_two.err" | sed -n "s/^error:<source>:\([0-9:]*\): .*: \('[a-z]*'\).*/\1 \2/p;s/^error:<source>:[0-9:]*: \(undefined variable 'zq'\).*/\1/p" | tr '\n' '|' | sed 's/|$//')"
 # --syntax-only (cyrius lint) reports it too (a parse-level refusal, nothing resolved)
 rows=$((rows + 1))
-"$CC" --syntax-only < "$T/da_both.cyr" > /dev/null 2> "$T/da_both.so"
+"$CC" --syntax-only < "$T/da_both.cyr" > /dev/null 2> "$T/da_both.so" || true
 check "da_both: --syntax-only names it, once" 1 "$(grep -c "^error.*$DA9" "$T/da_both.so")"
 # controls: an annotated plain var beside a destructure, a list's own `,` inside an annotation
 runs7 da_ctl "${TWO8}struct Box<T> { v: T; n; }\nfn t(): i64 { var a: i64 = 5; var c, d = two(3); var q: Box<i64> = 0; var e: (i64, i64) = two(1); return a + c * 10 + d; }\nsyscall(60, t());\n" 39
