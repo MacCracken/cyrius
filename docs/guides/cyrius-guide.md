@@ -1493,8 +1493,11 @@ section says about a struct value holds for it. See [Tuples](#tuples).
 A positional literal fills the **leaves** of the struct in declaration order, descending into
 every nested struct field (at any depth), and writes each leaf at its own offset and width. For
 a nested struct field it also takes a whole struct **value** of that field's type — a local, a
-parameter, a global, a struct-typed field (`b.v`), or a call, method or operator returning it —
-copied byte for byte. A value whose type is the FIRST field of the nested struct fills that
+parameter, a global, a struct-typed field (`b.v`), a call, method or operator returning it, or
+(since 6.7.17) a dereference `*pq` of a `*T` (`*pp` of a `**T` too, wrapped or not) — copied byte for byte. Through
+6.7.16 a dereference was a word carried into the field's first leaf: `Box { *pp, 5 }` with a 16-byte field was
+"missing struct field in initializer", and another struct's word filled the leaf silently (refused by name now, as a
+name of that struct is). A value whose type is the FIRST field of the nested struct fills that
 inner struct (`struct Outer { t; b: Box; }` with `struct Box { v: Point; n; }`:
 `Outer { 1, a, 4 }`), and a struct of any other type is a compile error naming both. At top
 level a call returning a 9-16 byte struct has no frame to land in and is refused by name (call

@@ -3162,7 +3162,7 @@ fn _spi_nested(S, tidx, li, si, fi, off): i64 {
         if (PEEKT(S) == 14) { return _spi_short(S); }   # 6.7.16
         est = GTI(S);
         _spi_pfi = 0 - 1;
-        _spi_pk = _spi_src(S, ft);
+        _spi_pk = _spi_src(S, ft, GETFNAME(S, si, fi));
     }
     if (_spi_pk == 4) { return _spi_took(S); }
     if (_spi_pk == 1 || _spi_pk == 3) {
@@ -3226,9 +3226,9 @@ fn _spi_first_fk(S, ft): i64 {
     return 0;
 }
 
-# The initialiser at the cursor, for a nested struct field of type `ft`. Returns the kind
+# The initialiser at the cursor, for a nested struct field of type `ft` (named `fnm`). Returns the kind
 # (see `_spi_pk`); 0 = nothing parsed (the leaves parse it).
-fn _spi_src(S, ft): i64 {
+fn _spi_src(S, ft, fnm): i64 {
     if (PEEKT(S) == 2) {
         var nx = TOKTYP(S, GTI(S) + 1);
         if (nx == 31 || nx == 14) { return _spi_name(S); }
@@ -3240,7 +3240,38 @@ fn _spi_src(S, ft): i64 {
         var rp = _spi_pcall(S);
         if (rp != 0) { return rp; }
     }
+    var rd = _spi_dsrc(S, ft, fnm);   # 6.7.17: a dereference `*pq`
+    if (rd != 0) { return rd; }
     return _spi_expr(S, ft);
+}
+# ⛔ 6.7.17 — A DEREFERENCE AS A NESTED STRUCT FIELD'S ELEMENT IS THE STRUCT IT READS (6.7.10's decision 6: `*p` is a
+# struct value at every size), as the name it points at is (6.6.12): `O { *pq, 5 }` with `pq: *Q2` into `v: Q2` copies
+# `*pq`, a struct on the field's first-field chain fills that inner struct, and another struct is refused by name
+# (*cannot copy '*pq' into a struct field of a different struct type: 'v'*). It was a word read carried into the nested
+# field's first leaf: a 16-byte element was "missing struct field in initializer" (its second word taken from the next
+# element) and another struct's word filled the leaf, silently. `*pp` of a `**S` is the `*S` it reads, copied through
+# as a `*S` name is. CHANGELOG [6.7.17]
+# The element at the cursor (up to its `,` / `}`) is one dereference `* E` inside any wrap, E typed `*U` (U a plain
+# struct; `_hl_dstar_e`'s mode 1): 1 = its pointer parked and recorded (`_spi_ps` U), 4 = refused (the element parsed);
+# else 0, nothing moved.
+fn _spi_dsrc(S, ft, fnm): i64 {
+    var ti = GTI(S);
+    var e = _slit_eend(S, ti);
+    if (e < 0) { return 0; }
+    var ps = _hl_dstar_e(S, ti, e, 1);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { if (_spi_chain_has(S, ft, ps) == 0) { return _spi_dref(S, fnm); } }
+    _fsc_hsrc(_hl_dx_src(S));
+    _spi_ps = ps;
+    _spi_pn = 0;
+    return 1;
+}
+# ... refused by name, the element parsed (4: the whole field).
+fn _spi_dref(S, fnm): i64 {
+    _fsc_type_err(S, _hl_dname(S), fnm);
+    PCMPE(S);
+    return 4;
 }
 # 6.7.14 — a named struct in parentheses that wrap the whole element (`HE { 7, (q0), 8 }`, `((q0))`) is the
 # element the unwrapped name is (guide § Parentheses; 6.7.11's D44). It was an expression whose word went into
