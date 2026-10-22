@@ -9009,8 +9009,9 @@ to answer -1 for every lock. Every other failure answers its errno through the W
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
 is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op — one that is
 not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB`, the op read whole — is -22 whatever
-the fd and takes, drops or changes no lock, on every target (6.7.17's D37 / D97 / D104): each arm
-checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host. Through
+the fd and takes, drops or changes no lock, on Linux, macOS and Windows (6.7.17's D37 / D97 / D104): each
+arm checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host (a Windows
+host's cxvm routes no flock: -38 for every op; agnos's arm hands the op to its kernel). Through
 6.7.16 Linux and macOS passed the op to the kernel. Linux's flock(2) answers an op carrying
 `LOCK_MAND` (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits —
 0x100000002 took the exclusive lock and 0x100000008 let it go, each answering 0 (D104). Darwin's
