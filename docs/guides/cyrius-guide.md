@@ -3223,7 +3223,9 @@ reads it (`[Vec<Nope>]` is *unknown type 'Nope' as the Vec element of 's'*, `[Ve
 for 's', got '*'*); `[*Vec<T>]`, `[**Vec<T>]`, `[*u128]` and `slice<*u128>` are 8-byte pointer elements. Through 6.7.16
 each was *expected ']', got '<'* / *expected ']', got u128* (the word form *expected '=', got ..*). A `>>` / `>>>` that
 closes more than the element and the slice is the slice's own error at it: `[Vec<i64>>]` is *expected ']', got '>>'*,
-`slice<Vec<i64>>>` *expected '=', got '>>>'*. The positions a decision refuses stay refused by name: a tuple element
+`slice<Vec<i64>>>` *expected '=', got '>>>'* — a generic struct's and a `Result<..>`'s list too, behind `*`s or not
+(through 6.7.16 `var s: [Box<i64>>] = 0;` compiled, the extra level dropped). The positions a decision refuses stay
+refused by name: a tuple element
 (6.7.7), `dyn Tr` (6.7.8), a slice of slices (6.7.8).
 
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after

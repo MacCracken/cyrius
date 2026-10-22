@@ -42,6 +42,9 @@
 #   VG  a Vec element's refusals are a local's, one line (an unknown name, a tuple, a pointer, a second argument), and a
 #       closer that closes more than the slice may is the slice's own error at it (`[Vec<i64>>]`, `slice<Vec<i64>>>`,
 #       `slice<Vec<Vec<i64>>>>`'s trailing `>`)
+#   VO  (met landing D105) the same over-closer through the lists that read before it — a generic struct's (D89),
+#       Result<..>, behind `*`s or not, and under CYRIUS_MONOMORPH=0 — compiled with the extra level dropped through
+#       6.7.16: `var s: [Box<i64>>] = 0;` built; now the slice's error at that closer; VO8 a control
 #   T   each values file on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine):
 #       "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`):
 #       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P), tests/tcyr/crossos/sizeof_pointer_type.tcyr (Z),
@@ -67,6 +70,7 @@
 #                                                         ']', got u128" / "got '<'"), VG1-VG7 (7), T
 #                                                         slice_element_any_type on every leg (6: did not build)
 #   MV1 `_sl_el_over` answering 0                       -> RED 3: VG5 VG6 VG7 (the over-closer compiled)
+#   MO0 the tree before the VO fix (380fd7b65)         -> RED 7: VO1-VO7 (each compiled, the extra level dropped)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -254,6 +258,21 @@ refused VG4 "1:35: expected '>' after the Vec element type for 's', got ','" "VG
 refused VG5 "1:33: expected ']', got '>>'" "VG5 [Vec<i64>>]: the >> closes more than the element" "${F}var s: [Vec<i64>>] = 0;${E}"
 refused VG6 "1:38: expected '=', got '>>>'" "VG6 slice<Vec<i64>>>: the >>> closes more than the slice" "${F}var s: slice<Vec<i64>>> = 0;${E}"
 refused VG7 "1:45: expected '=', got '>'" "VG7 slice<Vec<Vec<i64>>>>: a > after the closer that closed the slice" "${F}var s: slice<Vec<Vec<i64>>>> = 0;${E}"
+
+echo "VO. (met) an element list closed by a >> / >>> that closes more than the element and the slice: the slice's error"
+BX='struct Box<T> { v: T; }\n'
+refused VO1 "2:33: expected ']', got '>>'" "VO1 [Box<i64>>]" "${BX}${F}var s: [Box<i64>>] = 0;${E}"
+refused VO2 "2:38: expected '=', got '>>>'" "VO2 slice<Box<i64>>>" "${BX}${F}var s: slice<Box<i64>>> = 0;${E}"
+refused VO3 "2:45: expected '=', got '>'" "VO3 slice<Box<Box<i64>>>>: a > after the closer that closed the slice" "${BX}${F}var s: slice<Box<Box<i64>>>> = 0;${E}"
+refused VO4 "2:34: expected ']', got '>>'" "VO4 [*Box<i64>>]" "${BX}${F}var s: [*Box<i64>>] = 0;${E}"
+refused VO5 "2:41: expected ']', got '>>'" "VO5 [Result<i64, i64>>]" "${BX}${F}var s: [Result<i64, i64>>] = 0;${E}"
+refused VO6 "2:42: expected ']', got '>>'" "VO6 [*Result<i64, i64>>]" "${BX}${F}var s: [*Result<i64, i64>>] = 0;${E}"
+printf '%b' "${BX}${F}var s: [Box<i64>>] = 0;${E}" > "$D/vo7.cyr"
+rc=0; CYRIUS_MONOMORPH=0 timeout 60 "$CC" < "$D/vo7.cyr" > "$D/vo7.bin" 2> "$D/vo7.err" || rc=$?
+got=$(grep -E '^(error|warning)' "$D/vo7.err" | tr '\n' '|')
+if [ "$rc" -ne 0 ] && [ "$got" = "error:<source>:2:33: expected ']', got '>>'|" ]; then ok "VO7 [Box<i64>>] under CYRIUS_MONOMORPH=0"
+else bad "VO7 [Box<i64>>] under CYRIUS_MONOMORPH=0: rc $rc: $got"; fi
+builds vo8 "VO8 control: slice<*Box<Box<i64>>> (its >>> closes the slice)" 3 "${BX}${F}var s: slice<*Box<Box<i64>>> = 0;${E}"
 
 for tc in $TCS; do
     TC=${tc%%:*}; FLOOR=${tc##*:}
