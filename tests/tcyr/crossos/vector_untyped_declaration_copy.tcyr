@@ -1,0 +1,60 @@
+# vector_untyped_declaration_copy.tcyr — 6.7.17 (D95, the user's decision, 2026-10-22: "in a fn, copy the vector"): an
+# untyped declaration from a vector value that is no call, `var x = w;`, copies the vector, as `var x: f64v2 = w;` does,
+# on every target.
+#
+# `var x = w;` with w a vector local, a by-value vector parameter or a closure's captured vector bound ONE word, lane 0
+# (`fn r(): i64 { var w: f64v2 = mk2(4, 7); var x = w; return rd(&x); }` read 44 where 47 is right, on x86_64, aarch64,
+# cx and Windows; a capture's word was garbage). x is a vector local now, copied from w — a by-value parameter on Win64
+# is passed by address, which this file runs on cass. Every lane is read back weighted, so a lost or stale lane changes
+# the value; each side is written after the copy, so an alias shows. The top-level refusal (`var X = *GP;`) is
+# tests/gates/codegen/simd_return_shapes.sh rows VDK / VDS; in this directory so the release gate runs it on ecb / ach /
+# cass / pi.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
+fn rd4(p): i64 { return ((load64(p) * 10 + load64(p + 8)) * 10 + load64(p + 16)) * 10 + load64(p + 24); }
+fn rdf(p): i64 { return ((load32(p) * 10 + load32(p + 4)) * 10 + load32(p + 8)) * 10 + load32(p + 12); }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+
+# The decision's repro, and the copy's independence both ways.
+fn r_local(): i64 { var w: f64v2 = mk2(4, 7); var x = w; return rd(&x); }
+fn r_indep(): i64 {
+    var w: f64v2 = mk2(4, 7); var x = (w); store64(&w, 1);
+    var y = w; store64(&y, 9);
+    return rd(&x) * 1000 + rd(&w);
+}
+# A by-value parameter (f64v2, f64v4: Win64 passes both by address), and the copy into a value-form parameter.
+fn p2(w: f64v2): i64 { var x = w; store64(&w, 1); return lanes(x); }
+fn p4(w: f64v4): i64 { var x = w; store64(&w, 9); return rd4(&x); }
+fn r_p2(): i64 { return p2(mk2(4, 7)); }
+fn r_p4(): i64 { return p4(mk4(1, 2, 3, 4)); }
+# A closure's captures, and a copy captured by a nested closure.
+fn r_caps(): i64 {
+    var w: f64v2 = mk2(4, 7); var w4: f64v4 = mk4(5, 6, 7, 8);
+    var f = |k| { var c = w; return rd(&c) + k; };
+    var g = |k| { var c = w4; return rd4(&c) + k; };
+    var x = w;
+    var h = |k| { var c = x; var n = |j| { var e = c; return rd(&e) + j; }; return fncall1(n, k); };
+    return fncall1(f, 0) + fncall1(g, 0) + fncall1(h, 0);
+}
+# f32v4 and i32v4.
+fn r_wide(): i64 {
+    var wf: f32v4; store32(&wf, 3); store32(&wf + 4, 1); store32(&wf + 8, 4); store32(&wf + 12, 1);
+    var xf = wf; store32(&wf, 9);
+    var wi: i32v4; store64(&wi, 5); store64(&wi + 8, 6); var xi = wi;
+    return rdf(&xf) * 100 + rd(&xi);
+}
+
+alloc_init();
+assert_eq(r_local(), 47, "var x = w; copies both lanes (the decision's repro: 44 before)");
+assert_eq(r_indep(), 47017, "a copy, wrapped too: writing w leaves x, writing the copy leaves w");
+assert_eq(r_p2(), 47, "a by-value f64v2 parameter's copy, passed on by value");
+assert_eq(r_p4(), 1234, "a by-value f64v4 parameter's copy");
+assert_eq(r_caps(), 47 + 5678 + 47, "a captured f64v2 / f64v4, and a copy captured by a nested closure");
+assert_eq(r_wide(), 314100 + 56, "f32v4 and i32v4");
+var r = assert_summary();

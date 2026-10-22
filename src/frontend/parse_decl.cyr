@@ -8508,14 +8508,22 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
 # answer is the source's `0 - sid` and the declaration goes on as the annotated form (its copy-init, or
 # the inline word at 8 B or less) — so a closure's snapshot carries q's type. Anything else is 0, and
 # stays what it was: a `*T` (laundered through an untyped name it is a plain word), a handle, a tuple, a
-# dyn, a vector, and any declaration at top level (an untyped global keeps the word). 6.7.13 (D6 (b)): and
+# dyn, a vector global, and any declaration at top level (an untyped global keeps the word). 6.7.13 (D6 (b)): and
 # an inline struct global (`_uci_glob`). CHANGELOG [6.7.12]
+# ⛔ 6.7.17 (D95, the user's decision, 2026-10-22: "in a fn, copy the vector") — AND A VECTOR VALUE THAT IS NO CALL: a
+# value-form vector local, a by-value vector parameter or a closure's captured vector (`_vnm_lty`, D24's names) answers
+# its descriptor, so `var x = w;` copies as `var x: f64v2 = w;` does — as `var v = *p;` (6.7.14's D36) and a struct's
+# `var q = s;` do. It bound one word, lane 0: `fn r(): i64 { var w: f64v2 = mk2(4, 7); var x = w; return rd(&x); }` 44
+# on every target where the copy reads 47, `lanes(x)` refused, a capture's word garbage. At top level the same value is
+# refused (`_vtop_vval`). CHANGELOG [6.7.17]
 fn _uci_ps(S): i64 {
     if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
     var pk = _sci_pname(S, GTI(S) + 1);
     if (pk < 0) { return _uci_samp(S); }
     var snoff = TOKVAL(S, GTI(S) + 1 + pk);
+    var vt = _vnm_lty(S, snoff);   # 6.7.17 (D95): `var x = w;`, `var x = (w);`
+    if (vt != 0) { return vt; }
     var li = FINDLOCAL(S, snoff);
     if (li >= 0) { return _uci_local(S, li); }
     var c = _uci_cap(S, snoff);
@@ -11081,7 +11089,8 @@ fn _vsc_rval(S, st): i64 {
 }
 # PARSE_VAR (cursor on the `=`), a declaration annotated no vector, struct or bool — an integer, a float, a pointer,
 # `cstring`, an enum, `u128`, a slice — whose whole initialiser is a vector that is no call: refused as the call is
-# there (6.7.11), naming it. An untyped declaration is unchanged. 0.
+# there (6.7.11), naming it. An untyped one is D95's (6.7.17): in a fn a copy (`_uci_ps`), at top level refused
+# (`_vtop_vval`). 0.
 fn _vin_vval(S, pscale, ann): i64 {
     if (ann == 0) { return 0; }
     if (pscale < 0) { return 0; }
@@ -12296,15 +12305,43 @@ fn _vin_top(S, pscale, ann): i64 {
 # vector that is it or starts it (any spelling, any wrap, `_vcall_vt`) refused — untyped, at the call in the words of a
 # top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method, `&f`); annotated, at the
 # `=`, "vector return type does not match the declared type". 1 = refused. 6.7.16 (D24 A): untyped, a call that only
-# starts it too — `var w = mkv(41, 7) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42).
+# starts it too — `var w = mkv(41, 7) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42). 6.7.17
+# (D95): untyped, a vector value that is no call (`_vtop_vval`).
 fn _vtop_ref(S, st, ann): i64 {
     var rs = _vcall_vt(S, st, 5, 1);
-    if (rs == 0) { return 0; }
+    if (rs == 0) {
+        if (ann == 0) { return _vtop_vval(S, st); }   # 6.7.17 (D95): `var X = *GP;`
+        return 0;
+    }
     if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
     if (_vrcv_annbad(S, st - 1) == 1) { return 1; }   # 6.7.16: a refused annotation's one error
     var sv = GTI(S);
     STI(S, st - 1);
     ERR_MSG(S, "vector return type does not match the declared type", 51);
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.17 (D95, the user's decision, 2026-10-22: "at top level refuse it as `var w = mkv(..)` is") — AN UNTYPED
+# TOP-LEVEL DECLARATION FROM A VECTOR VALUE THAT IS NO CALL IS REFUSED, as the vector call is there (`_svc_toplevel_at`:
+# a vector needs storage in a fn's frame; a vector global takes no initializer but 0). `var X = *GP;` — `(*GP)`,
+# `**GPP`, `*(&GW)`, `*gp()` — bound lane 0, silently, on every target (`var X = *GP;` 4 with *GP = (4, 7)). In a fn
+# the same declaration copies (`_uci_ps`; `var v = *p;` is 6.7.14's D36). The whole initialiser at token `st` a vector
+# value that is no call (`_vval_at`): refused at the value, naming it as written, in the call's shape. 1 = refused.
+# CHANGELOG [6.7.17]
+fn _vtop_vval(S, st): i64 {
+    if (_vval_at(S, st, _hl_dx_end(S, st, 5)) == 0) { return 0; }
+    _vop_done = _vvl_a;   # its one refusal (D100 / D24's readers stand down)
+    if (_panic == 1) { return 1; }
+    if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }
+    var sv = GTI(S);
+    STI(S, _vvl_a);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    _vval_pnm(S);
+    PRSTR("' is a vector, and a vector value needs storage in a fn's frame - copy it inside a fn\n");
+    _err_excerpt(S);
+    _had_error = 1;
     STI(S, sv);
     return 1;
 }

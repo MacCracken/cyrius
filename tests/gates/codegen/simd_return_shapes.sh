@@ -3753,6 +3753,152 @@ vsk_msg() {
     VSK11) echo "- got \`load64\`";;
     esac
 }
+# ---- 6.7.17 (D95, the user's decision, 2026-10-22: "in a fn, copy the vector; at top level refuse it as `var w =
+# mkv(..)` is"): an UNTYPED declaration from a vector value that is no call — rows VD run (a copy), VDK / VDS refused ---
+# `var x = w;` in a fn, w a vector local, a by-value vector parameter or a closure's capture, bound ONE word, lane 0: the
+# filed repro (VD1) exited 44 on x86_64 / IR=3 / aarch64 / cx / PE where the copy reads 47, `lanes(x)` was refused
+# "value-form SIMD arg must be a 16-byte vector" and a capture's word was garbage (80; cx 208). It is a copy now, as
+# `var x: f64v2 = w;` is (`_uci_ps` answers the vector, D24's `_vnm_lty`). At top level `var X = *GP;` — `(*GP)`,
+# `*(&GW)`, `**GPP`, `*gp(GP)` — bound lane 0 (4) and is refused as `var w = mkv(..)` is there (`_vtop_vval`), in the
+# declaration zone and after the first statement.
+# VD1 the decision's repro verbatim (47); VD2 every source at once (161): a local, wrapped, a by-value f64v2 / f64v4
+# parameter (Win64 passes it by address), a capture of an f64v2 / f64v4, a copy of a copy captured by a nested
+# closure, f32v4, i32v4, a method's parameter, a `for` init, each side written after the copy, `lanes(x)`, `&x + 8`,
+# the copy reassigned whole, `pass(x)`; VD3 the controls kept (D36's `var v = *pv;`, an annotated copy, a struct's
+# `var q = s;`). VDK1-VDK6 top level (each compiled, lane 0); VDK7 the copy is a vector, so `take(x)` is D24's
+# refusal naming x (it compiled, 4). VDS1 / VDS2: refused in sync, the next statement's own error kept.
+# Mutations (2026-10-22, measured; a scratch build of the tree with the one change):
+#   M-VD0 the tree before (l6717-integ, 45c7ff467)  -> RED 55: VD1 (44), VD2 (refused: `lanes(u)` "value-form SIMD arg
+#                                                    must be a 16-byte vector", `u = mk2(..)` "vector return type does
+#                                                    not match the assigned variable"), VDK1-VDK7 and VDS1 VDS2 (each
+#                                                    compiled) on five legs; VD3 green
+#   M-VD1 `_uci_ps` without its vector arm          -> RED 15: VD1 VD2 VDK7 on five legs; VDK1-VDK6 VDS green
+#   M-VD2 `_vtop_ref` without `_vtop_vval`          -> RED 40: VDK1-VDK6 VDS1 VDS2 on five legs; VD green
+VDH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
+fn take(t): i64 { return t; }
+'
+VDG="$VDH"'fn gp(p: *f64v2): *f64v2 { return p; }
+var GW: f64v2 = 0;
+var GP: *f64v2 = &GW;
+var GPP: **f64v2 = &GP;
+'
+vd_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VD1) printf '%s' "$VDH"'fn r(): i64 { var w: f64v2 = mk2(4, 7); var x = w; return rd(&x); }
+syscall(60, r());
+' ;;
+    VD2) printf '%s' 'include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
+fn rd4(p): i64 { return ((load64(p) * 10 + load64(p + 8)) * 10 + load64(p + 16)) * 10 + load64(p + 24); }
+fn rdf(p): i64 { return ((load32(p) * 10 + load32(p + 4)) * 10 + load32(p + 8)) * 10 + load32(p + 12); }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn pass(x: f64v2): f64v2 { return x; }
+fn p2(w: f64v2): i64 { var x = w; store64(&w, 1); return rd(&x); }
+fn p4(w: f64v4): i64 { var x = w; store64(&w, 9); return rd4(&x); }
+struct Q { k; }
+impl Q { fn m(self, w: f64v2): i64 { var x = (w); return rd(&x); } }
+fn r(): i64 {
+    var bad = 0;
+    var w: f64v2 = mk2(4, 7);
+    var x = w; if (rd(&x) != 47) { bad = bad | 1; }
+    var y = (((w))); if (rd(&y) != 47) { bad = bad | 2; }
+    if (p2(w) != 47) { bad = bad | 4; }
+    if (p4(mk4(1, 2, 3, 4)) != 1234) { bad = bad | 8; }
+    var f = |k| { var c = w; return rd(&c) + k; }; if (fncall1(f, 1) != 48) { bad = bad | 16; }
+    var w4: f64v4 = mk4(5, 6, 7, 8);
+    var g = |k| { var c = w4; return rd4(&c) + k; }; if (fncall1(g, 0) != 5678) { bad = bad | 32; }
+    var h = |k| { var c = x; var n = |j| { var e = c; return rd(&e) + j; }; return fncall1(n, k); }; if (fncall1(h, 2) != 49) { bad = bad | 64; }
+    var wf: f32v4; store32(&wf, 3); store32(&wf + 4, 1); store32(&wf + 8, 4); store32(&wf + 12, 1);
+    var xf = wf; store32(&wf, 9); if (rdf(&xf) != 3141) { bad = bad | 128; }
+    var wi: i32v4; store64(&wi, 5); store64(&wi + 8, 6); var xi = wi; if (rd(&xi) != 56) { bad = bad | 256; }
+    var q: Q; if (q.m(w) != 47) { bad = bad | 512; }
+    var n = 0; for (var z = w; n < 1; n = n + 1) { n = n + rd(&z); } if (n != 48) { bad = bad | 1024; }
+    store64(&x, 1); if (rd(&w) != 47) { bad = bad | 2048; }
+    var u = w; store64(&w, 2); if (rd(&u) != 47) { bad = bad | 4096; }
+    if (lanes(u) != 47) { bad = bad | 8192; }
+    if (load64(&u + 8) != 7) { bad = bad | 16384; }
+    u = mk2(1, 2); if (rd(&u) != 12) { bad = bad | 32768; }
+    var pu = pass(u); var cu = pu; if (rd(&cu) != 12) { bad = bad | 65536; }
+    if (bad != 0) { return bad % 251 + 1; }
+    return 161;
+}
+alloc_init();
+syscall(60, r() % 256);
+' ;;
+    VD3) printf '%s' "$VDH"'struct Pt { a; b; }
+fn r(): i64 {
+    var w: f64v2 = mk2(4, 7); var pv: *f64v2 = &w;
+    var v = *pv; var a: f64v2 = w; var s: Pt = Pt { 3, 4 }; var q = s; store64(&w, 1);
+    if (rd(&v) != 47) { return 1; }
+    if (rd(&a) != 47) { return 2; }
+    if (q.a * 10 + q.b != 34) { return 3; }
+    return 161;
+}
+syscall(60, r());
+' ;;
+    esac
+}
+VD_ROWS="VD1 VD2 VD3"
+vd_want() { case "$1" in VD1) echo 47;; *) echo 161;; esac; }
+vdk_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VDK1) printf '%s' "$VDG"'var X = *GP;
+syscall(60, X % 256);
+' ;;
+    VDK2) printf '%s' "$VDG"'store64(&GW, 4);
+var X = *GP;
+syscall(60, X % 256);
+' ;;
+    VDK3) printf '%s' "$VDG"'store64(&GW, 4);
+var X = (*GP);
+syscall(60, X % 256);
+' ;;
+    VDK4) printf '%s' "$VDG"'var X = *(&GW);
+syscall(60, X % 256);
+' ;;
+    VDK5) printf '%s' "$VDG"'var X = **GPP;
+syscall(60, X % 256);
+' ;;
+    VDK6) printf '%s' "$VDG"'store64(&GW, 4);
+var X = *gp(GP);
+syscall(60, X % 256);
+' ;;
+    VDK7) printf '%s' "$VDH"'fn r(): i64 { var w: f64v2 = mk2(4, 7); var x = w; return take(x); }
+syscall(60, r());
+' ;;
+    esac
+}
+VDK_ROWS="VDK1 VDK2 VDK3 VDK4 VDK5 VDK6 VDK7"
+VDT="is a vector, and a vector value needs storage in a fn's frame - copy it inside a fn"
+vdk_msg() {
+    case "$1" in
+    VDK1|VDK2) echo "'*GP' $VDT";;
+    VDK3) echo "'*GP' $VDT";;
+    VDK4) echo "'*(&GW)' $VDT";;
+    VDK5) echo "'**GPP' $VDT";;
+    VDK6) echo "'*gp(GP)' $VDT";;
+    VDK7) echo "a vector value cannot be passed to an integer parameter - 'x' is a vector, passed to parameter 't' of 'take'";;
+    esac
+}
+vds_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VDS1) printf '%s' "$VDG"'var X = *GP;
+var Y = zz9;
+syscall(60, 0);
+' ;;
+    VDS2) printf '%s' "$VDG"'store64(&GW, 4);
+var X = *GP;
+var Y = zz9;
+syscall(60, 0);
+' ;;
+    esac
+}
+VDS_ROWS="VDS1 VDS2"
+vds_msg() { echo "'*GP' $VDT"; echo "undefined variable 'zz9'"; }
 # 6.7.17: a table's rows built by the leg's compiler (`$7` an env assignment, or none) and run, each exiting `$6 <row>`.
 accept_want_all() {  # $1 leg label  $2 compiler  $3 runner fn name  $4 source fn  $5 rows  $6 want fn  [$7 VAR=value]
     for row in $5; do
@@ -4664,6 +4810,12 @@ accept_want_all host "$CC" hostr vs_src "$VS_ROWS" vs_want
 accept_want_all host-ir3 "$CC" hostr vs_src "$VS_ROWS" vs_want CYRIUS_IR=3
 refuse_tab_all host "$CC" vsk_src "$VSK_ROWS" vsk_msg
 refuse_tab_all host-ir3 "$CC" vsk_src "$VSK_ROWS" vsk_msg CYRIUS_IR=3
+accept_want_all host "$CC" hostr vd_src "$VD_ROWS" vd_want
+accept_want_all host-ir3 "$CC" hostr vd_src "$VD_ROWS" vd_want CYRIUS_IR=3
+refuse_tab_all host "$CC" vdk_src "$VDK_ROWS" vdk_msg
+refuse_tab_all host-ir3 "$CC" vdk_src "$VDK_ROWS" vdk_msg CYRIUS_IR=3
+refuse2_tab_all host "$CC" vds_src "$VDS_ROWS" vds_msg
+refuse2_tab_all host-ir3 "$CC" vds_src "$VDS_ROWS" vds_msg CYRIUS_IR=3
 refuse2_tab_all host "$CC" ws_src "$WS_ROWS" ws_msg
 refuse2_tab_all host-ir3 "$CC" ws_src "$WS_ROWS" ws_msg CYRIUS_IR=3
 refuse_tab_all host "$CC" wf_src "$WF_ROWS" wf_msg
@@ -4736,6 +4888,9 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     lines_vtw_all cx "$W/cycc_cx"
     accept_want_all cx "$W/cycc_cx" cxr vs_src "$VS_ROWS" vs_want
     refuse_tab_all cx "$W/cycc_cx" vsk_src "$VSK_ROWS" vsk_msg
+    accept_want_all cx "$W/cycc_cx" cxr vd_src "$VD_ROWS" vd_want
+    refuse_tab_all cx "$W/cycc_cx" vdk_src "$VDK_ROWS" vdk_msg
+    refuse2_tab_all cx "$W/cycc_cx" vds_src "$VDS_ROWS" vds_msg
     refuse2_tab_all cx "$W/cycc_cx" ws_src "$WS_ROWS" ws_msg
     refuse_tab_all cx "$W/cycc_cx" wf_src "$WF_ROWS" wf_msg
     refuse_fw_all cx "$W/cycc_cx"
@@ -4803,6 +4958,9 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         lines_vtw_all aarch64 "$W/cycc_a64"
         accept_want_all aarch64 "$W/cycc_a64" a64r vs_src "$VS_ROWS" vs_want
         refuse_tab_all aarch64 "$W/cycc_a64" vsk_src "$VSK_ROWS" vsk_msg
+        accept_want_all aarch64 "$W/cycc_a64" a64r vd_src "$VD_ROWS" vd_want
+        refuse_tab_all aarch64 "$W/cycc_a64" vdk_src "$VDK_ROWS" vdk_msg
+        refuse2_tab_all aarch64 "$W/cycc_a64" vds_src "$VDS_ROWS" vds_msg
         refuse2_tab_all aarch64 "$W/cycc_a64" ws_src "$WS_ROWS" ws_msg
         refuse_tab_all aarch64 "$W/cycc_a64" wf_src "$WF_ROWS" wf_msg
         refuse_fw_all aarch64 "$W/cycc_a64"
@@ -4875,6 +5033,9 @@ if command -v wine > /dev/null 2>&1; then
         lines_vtw_all win64 "$W/cycc_win"
         accept_want_all win64 "$W/cycc_win" wr_ vs_src "$VS_ROWS" vs_want
         refuse_tab_all win64 "$W/cycc_win" vsk_src "$VSK_ROWS" vsk_msg
+        accept_want_all win64 "$W/cycc_win" wr_ vd_src "$VD_ROWS" vd_want
+        refuse_tab_all win64 "$W/cycc_win" vdk_src "$VDK_ROWS" vdk_msg
+        refuse2_tab_all win64 "$W/cycc_win" vds_src "$VDS_ROWS" vds_msg
         refuse2_tab_all win64 "$W/cycc_win" ws_src "$WS_ROWS" ws_msg
         refuse_tab_all win64 "$W/cycc_win" wf_src "$WF_ROWS" wf_msg
         refuse_fw_all win64 "$W/cycc_win"
@@ -4899,7 +5060,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS $VL_ROWS $VLS_ROWS $VER_ROWS $VTW_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG; 6.7.17: + VSK, VCO, VL, VLS, VER, VTW (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS $VL_ROWS $VLS_ROWS $VER_ROWS $VTW_ROWS $VDK_ROWS $VDS_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG; 6.7.17: + VSK, VCO, VL, VLS, VER, VTW, VDK, VDS (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -4927,11 +5088,12 @@ na_floor=$((na_floor + $(set -- $VAC_ROWS; echo $#) * 3))   # 6.7.16 (D101): eve
 na_floor=$((na_floor + $(set -- $VOC_ROWS; echo $#) * 3))   # 6.7.16 (D100): every VOC row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $VS_ROWS; echo $#) * 3))   # 6.7.17 (D23): every VS row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $VLC_ROWS; echo $#) * 3))   # 6.7.17 (D24): every VLC row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $VD_ROWS; echo $#) * 3))   # 6.7.17 (D95): every VD row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VS_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS $VL_ROWS $VLS_ROWS $VLC_ROWS $VER_ROWS $VTW_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row"; vs_src "$row"; vsk_src "$row"; vco_src "$row"; vl_src "$row"; vls_src "$row"; vlc_src "$row"; ver_src "$row"; vtw_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VS_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS $VL_ROWS $VLS_ROWS $VLC_ROWS $VER_ROWS $VTW_ROWS $VD_ROWS $VDK_ROWS $VDS_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row"; vs_src "$row"; vsk_src "$row"; vco_src "$row"; vl_src "$row"; vls_src "$row"; vlc_src "$row"; ver_src "$row"; vtw_src "$row"; vd_src "$row"; vdk_src "$row"; vds_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
@@ -4944,6 +5106,8 @@ n=$(grep -c "$VAM" src/frontend/parse_decl.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$VAM' — reworded?"
 n=$(grep -c "$VLD - '" src/frontend/parse_decl.cyr || true)   # 6.7.17 (D24)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$VLD - ' — reworded?"
+n=$(grep -c "$VDT" src/frontend/parse_decl.cyr || true)   # 6.7.17 (D95)
+[ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$VDT' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
