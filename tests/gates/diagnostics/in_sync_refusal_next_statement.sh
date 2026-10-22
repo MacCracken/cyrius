@@ -23,6 +23,7 @@
 #       undefined `qq[0]`, B4 a non-`*T` field `h.f[0]`, B5 `&a[0]`, B6 `a[0][1]`, B7 a `var` initializer, B8 a
 #       classic-for step `*pa = 1`, B9 a generic fn at two instances (once each), B10 top level after the first
 #       statement (three), B11 three refusals in a row (three), B12 B11 under --syntax-only (what `cyrius lint` runs)
+#       B13 / B14 an undefined `.field` base `qq.b` (6.7.17)
 #   M   a refusal that leaves the statement mid-way still resyncs to its `;`: M1 `y = pa[0 qq1 qq2;` then `y = 1;` —
 #       one error, nothing about qq1 / qq2; M2 the same then `y = zz9;` — two
 #   P   control: 6.7.11's pair refusal `y = f();` then `y = zz9;` — two, as before
@@ -151,6 +152,28 @@ row B3 "an undefined base qq[0]" 'fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:3:9: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:9: $Z"
+
+# B13 / B14 (6.7.17, met in FD1) — an undefined `.field` base read latched with no mark: `y = qq.b; y = zz9;` lost
+# zz9's error, `var y = qq.b; zy.c = 1;` zy's (`_refuse_in_sync` in PARSE_FIELD_LOAD's undefined-base arm).
+row B13 "an undefined .field base qq.b" 'fn main(): i64 {
+    var y = 0;
+    y = qq.b;
+    y = zz9;
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:3:9: undefined variable 'qq'
+error:<source>:4:9: $Z"
+row B14 "an undefined .field base in a var initializer, then a field store" 'fn main(): i64 {
+    var y = qq.b;
+    zy.c = 1;
+    y = zz9;
+    return 0;
+}
+syscall(60, main());
+' "error:<source>:2:13: undefined variable 'qq'
+error:<source>:3:5: undefined variable 'zy'
 error:<source>:4:9: $Z"
 
 row B4 "a field that is not a *T" 'struct H { f; }
