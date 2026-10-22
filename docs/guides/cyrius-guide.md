@@ -2319,6 +2319,21 @@ word; Windows exit 5). An operand in a multi-value `return`'s element (`return (
 (6.7.17): through 6.7.16 it compiled in a declared one (x86_64 / aarch64 4, cx / Windows 45) and an undeclared one said
 D101's *… cannot be returned as i64*.
 
+**A vector value that is no call follows the call** (6.7.17, the user's decision D24, 2026-10-22: refuse them): a
+vector local, a by-value vector parameter, a closure's captured vector and a dereference of a pointer to a vector
+(`*pv`, `**ppv`, `*(&w)`) are refused in every word slot above, at the value, naming it as written — an argument to a
+parameter that takes a word (`take(w)`: *a vector value cannot be passed to an integer parameter - 'w' is a vector,
+passed to parameter 't' of 'take'*; *… passed to 'syscall'*), a `return` from a fn that returns no vector (`return w;`,
+`return 1 + w;`, a closure's value: *a vector value cannot be returned as i64 - 'w' is a vector*), a declaration
+annotated no vector, struct or bool (`var x: i64 = w;`, `: f64`, `: *T`, `: u128`, at top level `var X: i64 = *GP;`),
+an operand, a condition, an index, a range bound, a literal's field (*vector type does not match the declared type -
+'w' is a vector*), an assignment or a store to anything that is no vector (`x = w;`, `x += w`, `p.a = w`, `*pi = w`:
+*vector type does not match the assigned variable - 'w' is a vector*). A tuple literal's element keeps its own words
+(*a tuple element is i64, f64 or bool, not a vector* — `((w), 3)` and `(*pv, 3)` too, which compiled), a multi-value
+`return`'s D25's, a bool's, a struct's and a pointer of another kind's their own, a vector global its own. Read a lane
+through the vector's address (`load64(&w)`, `load64(&w + 8)`). ⚠ Through 6.7.16 each compiled and read lane 0, the same
+on every target (`take(w)`, `return w;`, `var x: i64 = w;` and `if (w)` 4, `1 + w` 5 with `w` = (4, 7); `*w` crashed).
+
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
