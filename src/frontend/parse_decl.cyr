@@ -11327,14 +11327,14 @@ fn _vnm_arr(S, noff, k): i64 {
 }
 # ⛔ 6.7.17 (D109, the user's decision, 2026-10-22: "refuse it by name - pass `&a`") — AN ARRAY'S NAME INTO A POINTER
 # PARAMETER IS REFUSED. An array's name read as a word is its first word (a typed array's element 0, § compound
-# assignment), so `fn tp(p: *i64)`, `var a: i64[4]; a[0] = 5; tp(a)` passed 5 as the address — a SIGSEGV on every target
-# (139; an array of vectors into `p: *f64v2`, a global's, a closure's capture, a bare `var b[N]` the same). The whole
-# argument [t, cursor) a name of an array — a local (element-typed or bare), a closure's captured one, a global — into
-# a parameter declared a pointer (`p: *T`, `**T`, a generic's `*T`): "cannot pass array 'a' to pointer parameter 'p' of
-# 'tp' - an array's name is its first element; pass &a for its address". A direct call, a method, a generic, a known
-# `&f` through callptr / fncallN (`_arr_iarg`) and a fn pointer held in a name declared `*fn( .. )` (its parameter
-# read from the annotation, `_fpt_ptr_param`). Once per argument, no latch (the next argument is judged). CHANGELOG
-# [6.7.17]
+# assignment), so `fn tp(p: *i64)`, `var a: i64[4]; a[0] = 5; tp(a)` passed 5 as the address — a fault on every target
+# (139 on Linux, cxvm's guest fault, a Windows access violation; an array of vectors into `p: *f64v2`, a global's, a
+# closure's capture, a bare `var b[N]` the same). The whole argument [t, cursor) a name of an array — a local
+# (element-typed or bare), a closure's captured one, a global — into a parameter declared a pointer (`p: *T`, `**T`, a
+# generic's `*T`): "cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name is its first element; pass
+# &a for its address". A direct call, a method, a generic, a known `&f` through callptr / fncallN (`_arr_iarg`) and a fn
+# pointer held in a name declared `*fn( .. )` (its parameter read from the annotation, `_fpt_ptr_param`). Once per
+# argument, no latch (the next argument is judged). CHANGELOG [6.7.17]
 fn _arr_name_at(S, t, e): i64 {
     var a = _ie_unparen(S, t, e);
     if (_ie_pe != a + 1) { return 0 - 1; }
