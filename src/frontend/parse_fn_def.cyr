@@ -6020,17 +6020,18 @@ fn _gs_dsr_stmt(S, fi, i): i64 {
     while (TOKTYP(S, a) == 8) { a = a + 1; }
     var eq = _gs_dsr_eq(S, a);
     if (eq < 0) { return 0; }
-    var lt = TOKTYP(S, eq - 1);
+    var de = _gs_cop_de(S, eq);   # 6.7.17 (D15): `*p += R` too
+    var lt = TOKTYP(S, de - 1);
     if (lt != 2) { if (lt != 11) { if (lt != 29) { return 0; } } }
     var nm = 0 - 1;
     var j = a;
-    while (j < eq) {
+    while (j < de) {
         if (TOKTYP(S, j) == 2) { if (nm < 0) { if (_gs_dsr_dep(S, fi, j) == 1) { nm = j; } } }
         j = j + 1;
     }
     if (nm < 0) { return 0; }
     if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
-    if (lt == 2) { nm = eq - 1; }
+    if (lt == 2) { nm = de - 1; }
     _gsw_k = 5;
     _gsw_ti = nm;
     return 1;

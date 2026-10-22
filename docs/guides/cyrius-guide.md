@@ -2095,7 +2095,9 @@ less and a `Str` keep their word. A COMPOUND assignment is judged as its `=` for
 2026-10-22): `y += mk3();`, `*p += mk3();`, `w.n -= mk3();`, `b[0] |= mk3();`, `p += mk3();` into a `*i64`, a slice's
 `.len`, in a `for` step or at top level, are refused with that destination's words (*cannot assign 'y: i64' from 'mk3',
 which returns the struct 'P2' - declare 'y: P2' or bind a field*; through 6.7.16 they combined the struct's first
-word, silently). A global declaration is judged the same (6.7.14; the user's decision D28,
+word, silently). In a generic, the same store into a destination typed by `T` (`y += mk3();` with `y: T`, `*p +=
+..` and `p[0] += ..` with `p: *T`, `b.v += ..` with `b: *Box<T>`) has no scalar instance, as its `=` form (D1's
+rule): `g(5)` is refused naming the line. A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was

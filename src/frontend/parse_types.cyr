@@ -3464,7 +3464,8 @@ fn _pps_of_pin(S, pin): i64 {
 # (6.7.3 let a typed pointer convert freely). The whole argument [a, e), just pushed, to parameter `k` of `fi`: when the
 # parameter points through its stars to struct S (`_pps_param`) and the argument — by the compiler's own typing
 # (`_pa_sid`) — through as many to another struct, it is refused at the argument, `&y` named `y`, once, in 6.7.3's
-# words. An untyped pointer, `0`, a pointer of another depth and a pointer to the declared struct pass. Every call's
+# words. An untyped pointer, `0` and a pointer to the declared struct pass (a pointer of another depth passed too
+# through 6.7.16 — refused since, below). Every call's
 # argument loop (`_arg_push_snap`: a call, a method's arguments, a named one, a tail call — a generic instance's
 # parameters are its own) and an operator's right operand (`_op_arg_check`). 1 = refused. CHANGELOG [6.7.16]
 # ⛔ 6.7.17 (D10 / D11, the user's decisions, 2026-10-22) — AND INTO A BY-VALUE STRUCT PARAMETER, AND AT ANOTHER DEPTH.
