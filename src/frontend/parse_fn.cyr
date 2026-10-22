@@ -13324,11 +13324,15 @@ fn _cst_skip_sync(S): i64 {
     return 0;
 }
 # Cursor on a top-level `const NAME = ...;` the pre-scan recorded: step over it (no code).
+# 6.7.17: and at a declaration keyword beginning a later line (`_gv_entry_cut`): a `const C = 1` missing its `;` stepped
+# the fns after it to the first statement's `;`, unregistered and unparsed, their errors never reported. CHANGELOG [6.7.17]
 fn _cst_skip_decl(S): i64 {
     _pub_pending = 0;
     var d = 0;
+    var st = GTI(S);
     while (PEEKT(S) != 12) {
         var t = PEEKT(S);
+        if (d <= 0) { if (_gv_entry_cut(S, st) == 1) { return 0; } }
         if (t == 10 || t == 13 || t == 28) { d = d + 1; }
         if (t == 11 || t == 14 || t == 29) { d = d - 1; }
         if (t == 5) { if (d <= 0) { STI(S, GTI(S) + 1); return 0; } }

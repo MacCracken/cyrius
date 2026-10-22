@@ -5816,11 +5816,11 @@ fn _skip_gvar_decl(S, sti): i64 {
     }
     return 0;
 }
-# 1 = the cursor, at brace depth 0 in the zone `var` entry from token `sti`, ends that entry: a declaration keyword
-# that begins a later line than the token before it — fn (not a `*fn(` type's), async fn, var, const, struct, enum,
-# union, impl, trait, mod, use, pub, private, or a top-level directive (#assert, #pe_import, the fn attributes,
-# `#deprecated(".."`). None of them is ever inside an initializer at depth 0 (a closure's body is depth 1), so a valid
-# entry never ends early. CHANGELOG [6.7.17]
+# 1 = the cursor, at depth 0 in the zone `var` entry from token `sti` (or a const's, `_cst_skip_decl`), ends it: a
+# declaration keyword that begins a later line than the token before it — fn (not a `*fn(` type's), async fn, var,
+# const, struct, enum, union, impl, trait, mod, use, pub, private, or a top-level directive (#assert, #pe_import, the
+# fn attributes, `#deprecated(".."`). None of them is ever inside an initializer at depth 0 (a closure's body is depth
+# 1), so a valid entry never ends early. CHANGELOG [6.7.17]
 fn _gv_entry_cut(S, sti): i64 {
     var ti = GTI(S);
     if (ti <= sti) { return 0; }

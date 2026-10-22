@@ -40,6 +40,8 @@
 #   Z   the zone: `var g = 1` before a struct (Z1), a `var h = zz;` (Z2: h its own entry), a const (Z3), an #assert
 #       (Z4), a closure entry before a fn (Z5), an enum and impl (Z6), a destructure (Z7); ZA valid multi-line
 #       entries (a closure body, a `*fn` type, continued initializers) compile and run unchanged
+#   C   a const missing its `;`: C1 a top-level `const C = 1` before two fns, C2 a refused `N = 2` (N a const)
+#       before a `var` — the declaration after it is parsed, its error reported
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -57,7 +59,8 @@
 # On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
 # On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
 # On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
-# struct, `var h` swallowed, their errors never reported); Z3 ZA green.
+# struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
+# RED: C1 C2.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -478,6 +481,25 @@ var q = k
 fn main(): i64 { return callptr(f, k) + q; }
 syscall(60, main());
 ' 8
+
+# ---- C: a const missing its `;` (`_cst_skip_decl` ends at the declaration after it too)
+row C1 "a top-level const C = 1 before two fns" 'const C = 1
+fn f1(): i64 { return zz1; }
+fn f2(): i64 { return zz2; }
+syscall(60, f1() + C);
+' "error:<source>:2:1: expected ';' after a const's value
+error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)
+error:<source>:3:26: undefined variable 'zz2' (missing include or enum?)"
+row C2 "a refused const assignment N = 2 before a var" 'fn f(): i64 {
+    var x = 0;
+    const N = 1;
+    N = 2
+    var y = zz;
+    return x;
+}
+syscall(60, f());
+' "error:<source>:4:7: cannot assign to const 'N' - a const has no storage (declare it \`var\` to change it)
+error:<source>:5:15: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
