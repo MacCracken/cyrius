@@ -16670,7 +16670,7 @@ fn _gcall_open(S, ti): i64 {
     var nt = TOKTYP(S, ti + 1);
     if (nt == 10) { return ti + 1; }
     if (nt != 19) { return 0 - 1; }
-    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return _gcall_open_fl(S, ti); }   # 6.7.17 (D7): opened, refused at its arm
     var fi = FINDFN(S, TOKVAL(S, ti));
     if (fi < 0) { return 0 - 1; }
     if (GFTP(S, fi) == 0) { return 0 - 1; }

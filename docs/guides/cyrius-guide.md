@@ -7748,7 +7748,11 @@ definition's base *is* its i64 instantiation: the body is emitted once with
 argument (`add<i32>`, `Box<Point>`) is **monomorphized on demand**: the
 specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
-dispatch — `T` is resolved entirely at compile time. An instance is named by its
+dispatch — `T` is resolved entirely at compile time. With monomorphization turned off
+(`CYRIUS_MONOMORPH=0`) an explicit call — `g<i32>(3)`, `p.m<i32>(1)`, in any position — is refused by name at its
+`<`: *explicit type arguments need monomorphization (CYRIUS_MONOMORPH=0 turns it off)*, once, and read as the base
+call, so nothing cascades (6.7.17, the user's D7; it was *undefined function 'g'*, or *'Pt.m' is not a generic
+method*). An instance is named by its
 type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own name
 for a struct — and a struct named exactly like a scalar (`struct f64`, which
 `add<f64>` then binds) is marked `.f64`, so a scalar type argument never shares an

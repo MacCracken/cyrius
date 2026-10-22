@@ -33,6 +33,22 @@
 # MUTATION (2026-10-20): CYCC = the lane's previous compiler (f201704a2, before the fix) -> RED 26: every R, P,
 # F and B row and A [pe] (each builds, or P6 / P7 / F6 report the enclosing statement's errors instead); X, E,
 # C and A [a64] / [cx] green (those two cross compilers are built from the tree's src).
+#
+#   M   (6.7.17, the user's D7, 2026-10-22: "Refuse it by name") AN EXPLICIT TYPE-ARGUMENT CALL UNDER
+#       CYRIUS_MONOMORPH=0: `g<i32>(3)` of a defined `fn g<T>` was "undefined function 'g'" (the explicit arm was
+#       compiled only under monomorphization; as a statement "expected '=', got '<'" and two more; a generic method's
+#       `p.m<i32>(1)` "'Pt.m' is not a generic method"). Now "explicit type arguments need monomorphization
+#       (CYRIUS_MONOMORPH=0 turns it off)" at the `<`, once, the list stepped and the BASE call parsed, so nothing
+#       cascades: M1 the filed repro verbatim under the flag (one line) and in the default build (exit 2); M2 the next
+#       statement's own error still reported; M3 every position — a statement, `.n` on the result, a field store, an
+#       element store, a `var` initializer, an argument, a return, a classic-for step, a generic method (an expression
+#       and a statement), a forward `g<T>(x)` in a generic body, a struct type argument `g<Pt>(p)` (never the i64
+#       base silently) — one line each; M4 a fn that is not generic keeps 6.7.16's words under the flag ("'nf' is not
+#       a generic fn"; it was the same cascade); M5 comparisons `h(a < b)`, `nf(c > a)` keep their reading (exit 2);
+#       MX --syntax-only says nothing, as 6.7.15's D6; A [a64] / [cx] / [pe] / [macho] M1. Issue row 5:
+#       issues/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
+#       compiler before (9444bd9a2) -> RED M1-M4, MX on m3a (lint's "expected '=', got '<'") and A [pe] / [macho] M1
+#       (the undefined-fn line, the cascades).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -223,6 +239,73 @@ for L in $LEGS; do
     if [ "$RC" -eq 38 ]; then ok "C [$L]: the controls exit 38"; else bad "C [$L]: exit $RC, want 38"; fi
 done
 
+# ── M: an explicit type-argument call under CYRIUS_MONOMORPH=0 (6.7.17, the user's D7) ─────────────────────────
+NM="explicit type arguments need monomorphization (CYRIUS_MONOMORPH=0 turns it off)"
+M0="CYRIUS_MONOMORPH=0 $CC"
+cat > "$D/m1.cyr" <<'EOF'
+fn g<T>(x: T): i64 { return 1; }
+fn main(): i64 { return g(1) + g<i32>(3); }
+syscall(60, main());
+EOF
+one m1 "2:33: $NM" "M1 [mono0]: the filed repro verbatim (it was \"undefined function 'g'\")" "$M0"
+rc=0; "$CC" < "$D/m1.cyr" > "$D/m1d.bin" 2> "$D/m1d.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "M1 [default]: rc $rc: $(grep '^error' "$D/m1d.err" | head -1)"
+else chmod +x "$D/m1d.bin"; got=0; "$D/m1d.bin" || got=$?
+    if [ "$got" -eq 2 ]; then ok "M1 [default]: unchanged, exit 2"; else bad "M1 [default]: exit $got, want 2"; fi
+fi
+printf 'struct Pt { x; y; }\nfn g<T>(x: T): i64 { return sizeof(T); }\nfn main(): i64 { var p: Pt; var a = g<Pt>(p); var b = 1 2; return a; }\nsyscall(60, main());\n' > "$D/m2.cyr"
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$D/m2.cyr" > /dev/null 2> "$D/m2.err" || rc=$?
+got=$(grep '^error' "$D/m2.err" | sed 's/^error:<source>://' | tr '\n' '|')
+if [ "$rc" -ne 0 ] && [ "$got" = "3:38: $NM|3:57: expected ';', got number 2|" ]; then ok "M2 [mono0]: g<Pt>(p) refused, and the next statement's own error"
+else bad "M2 [mono0]: rc $rc: $got"; fi
+MH='struct Pt { x; y; }
+struct H { n; m; }
+var GHB[16];
+fn g<T>(x: T): i64 { return 1; }
+fn gp<T>(x: T): *H { return &GHB; }
+fn ga<T>(x: T): *i64 { return &GHB; }
+impl Pt { fn m<V>(self, k: V): i64 { return self.y + k; } }
+fn h(a): i64 { return a; }
+fn nf(a): i64 { return a; }'
+mm() { printf '%s\n%s\nsyscall(60, main());\n' "$MH" "$2" > "$D/$1.cyr"; }
+mm m3a 'fn main(): i64 { g<i32>(3); return 2; }'
+one m3a "10:19: $NM" "M3a [mono0]: a statement (it was \"expected '=', got '<'\" + 2)" "$M0"
+mm m3b 'fn main(): i64 { return gp<i32>(3).n + 2; }'
+one m3b "10:27: $NM" "M3b [mono0]: .n on the result" "$M0"
+mm m3c 'fn main(): i64 { gp<i32>(3).n = 5; return 1; }'
+one m3c "10:20: $NM" "M3c [mono0]: a field store through the result" "$M0"
+mm m3d 'fn main(): i64 { ga<i32>(3)[0] = 5; return 1; }'
+one m3d "10:20: $NM" "M3d [mono0]: an element store through the result" "$M0"
+mm m3e 'fn main(): i64 { var r = g<i32>(3); return r; }'
+one m3e "10:27: $NM" "M3e [mono0]: a var initializer" "$M0"
+mm m3f 'fn main(): i64 { return h(g<i8>(2)); }'
+one m3f "10:28: $NM" "M3f [mono0]: an argument" "$M0"
+mm m3g 'fn k(): i64 { return g<i32>(3); }
+fn main(): i64 { return k(); }'
+one m3g "10:23: $NM" "M3g [mono0]: a return" "$M0"
+mm m3h 'fn main(): i64 { var i = 0; for (i = 0; i < 1; ga<i32>(3)[0] = 5) { i = 1; } return 1; }'
+one m3h "10:50: $NM" "M3h [mono0]: a classic-for step" "$M0"
+mm m3i 'fn main(): i64 { var p: Pt; p.y = 1; return p.m<i32>(1); }'
+one m3i "10:48: $NM" "M3i [mono0]: a generic method (it was \"'Pt.m' is not a generic method\")" "$M0"
+mm m3j 'fn main(): i64 { var p: Pt; p.y = 1; p.m<i32>(1); return 4; }'
+one m3j "10:41: $NM" "M3j [mono0]: a generic method as a statement" "$M0"
+mm m3k 'fn fw<T>(x: T): i64 { return g<T>(x); }
+fn main(): i64 { return fw(1); }'
+one m3k "10:31: $NM" "M3k [mono0]: a forward g<T>(x) in a generic body" "$M0"
+mm m4 'fn main(): i64 { return nf<i64>(6); }'
+one m4 "10:25: 'nf' is not a generic fn: it takes no type arguments" "M4 [mono0]: a fn that is not generic keeps 6.7.16's words (it cascaded)" "$M0"
+mm m5 'fn main(): i64 { var a = 1; var b = 2; var c = 3; return h(a < b) + nf(c > a); }'
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$D/m5.cyr" > "$D/m5.bin" 2> "$D/m5.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "M5 [mono0]: rc $rc: $(grep '^error' "$D/m5.err" | head -1)"
+else chmod +x "$D/m5.bin"; got=0; "$D/m5.bin" || got=$?
+    if [ "$got" -eq 2 ]; then ok "M5 [mono0]: comparisons keep their reading (exit 2)"; else bad "M5 [mono0]: exit $got, want 2"; fi
+fi
+for x in m1 m3a m3i; do
+    rc=0; CYRIUS_MONOMORPH=0 "$CC" --syntax-only < "$D/$x.cyr" > /dev/null 2> "$D/$x.so" || rc=$?
+    if [ "$rc" -eq 0 ] && [ "$(grep -c '^error' "$D/$x.so")" -eq 0 ]; then ok "MX [mono0]: --syntax-only on $x is silent"
+    else bad "MX [mono0]: --syntax-only on $x: rc $rc: $(grep '^error' "$D/$x.so" | tr '\n' '|')"; fi
+done
+
 # ── A: the refusal from every cross compiler ─────────────────────────────────────────────────────────────────
 if [ -n "$A64" ]; then
     one ta "2:34: 'Box' takes 1 type argument, 2 given" "A [a64]: R1" "$A64"
@@ -234,7 +317,11 @@ if [ -n "$CXCC" ]; then
 fi
 one ta "2:34: 'Box' takes 1 type argument, 2 given" "A [pe]: R1" "CYRIUS_TARGET_WIN=1 $CC"
 one f1 "3:32: 'g' takes 1 type argument, 2 given" "A [pe]: F1" "CYRIUS_TARGET_WIN=1 $CC"
+[ -n "$A64" ] && one m1 "2:33: $NM" "A [a64]: M1" "CYRIUS_MONOMORPH=0 $A64"
+[ -n "$CXCC" ] && one m1 "2:33: $NM" "A [cx]: M1" "CYRIUS_MONOMORPH=0 $CXCC"
+one m1 "2:33: $NM" "A [pe]: M1" "CYRIUS_MONOMORPH=0 CYRIUS_TARGET_WIN=1 $CC"
+one m1 "2:33: $NM" "A [macho]: M1" "CYRIUS_MONOMORPH=0 CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a type-argument list longer than its generic declares is refused once, at the first extra argument (the user's D5): the filed repros (R), every struct position (P) and fn-call position (F), a generic body once (B), silent under --syntax-only (X), an empty argument as before (E), the controls on x86_64 / aarch64 / cx / PE (C) and the refusal from every cross compiler (A)"
+echo "PASS: $G — a type-argument list longer than its generic declares is refused once, at the first extra argument (the user's D5): the filed repros (R), every struct position (P) and fn-call position (F), a generic body once (B), silent under --syntax-only (X), an empty argument as before (E), an explicit call under CYRIUS_MONOMORPH=0 refused by name (M, 6.7.17's D7), the controls on x86_64 / aarch64 / cx / PE (C) and the refusal from every cross compiler (A)"
 exit 0

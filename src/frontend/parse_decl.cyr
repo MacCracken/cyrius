@@ -2242,6 +2242,15 @@ fn _mngt_at(S, sid, nt): i64 {
     if (GFTP(S, mf) != 0) { return 0 - 1; }
     return mf;
 }
+# The refusal of method `mf`'s list at name token `nt`: "'Pt.m' is not a generic method: ..."; 6.7.17 (D7): a generic
+# one under CYRIUS_MONOMORPH=0 (which records no list) is the free call's refusal at its `<` (`_eta_nm_say`) — it was
+# "'Pt.m' is not a generic method", false. CHANGELOG [6.7.17]
+fn _meth_ngt_say(S, nt, mf): i64 {
+    if (_MONOMORPH_OK != 1) { if (_fn_gen_tok(S, mf) == 1) { return _eta_nm_say(S, nt + 1); } }
+    var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
+    _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
+    return 0;
+}
 # The member arm past a list it does not take (cursor on the `<` past the method's name; receiver (idx, sid)): a
 # method that is not generic refused (`_mngt_at`), and any `.m<types>(` (`_mlist_end`: no such method, a receiver of
 # no known struct) stepped too — the call parsed from its `(` as the plain spelling is, which reports what `p.m(1)`
@@ -2252,10 +2261,7 @@ fn _meth_ngt(S, noff, fnoff, beg, idx, sid): i64 {
     var e = _mlist_end(S, sid, nt);
     if (e < 0) { return 0; }
     var mf = _mngt_at(S, sid, nt);
-    if (mf >= 0) {
-        var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
-        _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
-    }
+    if (mf >= 0) { _meth_ngt_say(S, nt, mf); }
     STI(S, e + 1);
     _mx_ti = nt;   # the arm's method name, not the list's `>`
     _field_load_on(S, noff, fnoff, beg, idx, sid);
