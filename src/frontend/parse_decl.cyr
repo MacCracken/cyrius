@@ -1708,8 +1708,7 @@ fn _fla_assign(S, noff, term): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
     if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }   # never a deref-band handle: G is not written
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -2788,8 +2787,7 @@ fn _fst_pslot(S, idx, sid, off, hop, term): i64 {
     return _psl_store(S, term, ps, nm);
 }
 fn _fst_end(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 0;
 }
 # v6.5.19 --syntax-only, a `.field` store whose struct or field this file cannot see: silent, no
@@ -9051,8 +9049,7 @@ fn _istr_amp_cap(S, d, e, noff, term): i64 {
     var ss = _STR_SID(S);
     if (_dst_arms(S, term, ss, h, noff) == 1) { return 1; }
     _dst_word(S, h, STRUCTSZ(S, ss - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `NAME = <v>` (the cursor on the value), NAME an inline `Str` local or global: the statement's assignment arms, then
@@ -9074,8 +9071,7 @@ fn _istr_amp_asg(S, noff, term): i64 {
         if (GPSC(S) == 0) { if (_asg_ret_sid <= 0) { if (_asg_tup_refd == 0) { _tp_warn(S, st); } } }
         _asg_store_slot(S, li, 0);
     } else { _asg_store_slot(S, _findvar_core(S, noff), 1); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # A struct literal's element at the cursor into field type `ft` (`pf` 1: a `*Str` field, `_istr_pfs`): a `Str` or `*Str`
@@ -9242,8 +9238,7 @@ fn _istr_dxa(S, noff, ps, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, nb); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), nb); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # ⛔ 6.7.16 — `h = *p` INTO A `Str` HANDLE (p a `*Str`) REBINDS h TO THE HEADER p POINTS AT (the user's D20,
@@ -9264,8 +9259,7 @@ fn _istr_dxh(S, noff, term): i64 {
     _pw_close(S, k);
     if (d == 1 || d == 3) { _asg_store_slot(S, FINDLOCAL(S, noff), 0); }   # 6.7.16 (D73): a `*Str` name (3 / 4) too
     else { _asg_store_slot(S, _findvar_core(S, noff), 1); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override —
@@ -9332,8 +9326,7 @@ fn _istr_rax_into(S, dli, dgv, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, nb); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), nb); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # ⛔ 6.7.17 — D18 AT EVERY `Str` SLOT (the user's D18, 2026-10-22: a struct value of another type into a `Str` handle is
@@ -9646,8 +9639,7 @@ fn _try_vector_call_assign(S, noff, term): i64 {
         if (vns == 4) { EFLSTORE_F64V4_PAIR(S, dst_li); }
         else { EFLSTORE_F64V2_PAIR(S, dst_li); }
     }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -11589,8 +11581,7 @@ fn _vrcv_asg(S, noff, term): i64 {
     if (_vrcv_k == 0) { if (k == 1) { return 0 - 1; } }   # (6.7.13: `g<T>(..)` too — `_vcall_fi` there)
     if (k == 4) { _vrcv_demit(S, li, lt, "assigned", noff); }   # 6.7.13 (D34): `*p`
     else { _vrcv_emit(S, li, lt, k); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The assigned source that is no vector of type `lt`: a by-name call declared to return one the path below takes or
@@ -11611,8 +11602,7 @@ fn _vrcv_other(S, term, lt): i64 {
     if (_own_err(en, he) == 1) { he = 2; }   # 6.7.17: after an earlier error too
     if (_vrcv_nofnw(S, ti, GTI(S)) == 1) { he = 2; }   # 6.7.14: wrapped, the parse registered it
     if (he != 2) { _vrcv_err(S, ti, "assigned", _vrcv_fptr(S, ti, GTI(S))); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.13 — THE REFUSAL NAMES WHAT IT REFUSES, AND ITS ADVICE FITS THE SOURCE. Since 6.7.11 the text ended

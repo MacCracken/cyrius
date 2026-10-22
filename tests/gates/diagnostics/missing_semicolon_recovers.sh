@@ -31,7 +31,8 @@
 #       from this expression"), D2 before the fn's `}`
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
 #   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
-#       before the fn's `}`, T2 a struct copy `*q = o` before a `return`
+#       before the fn's `}`, T2 a struct copy `*q = o` before a `return`, T3 / T4 a field store before the `}` / a
+#       `return`, T5 a call's field `gp().n = 5` before the `}`
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -46,6 +47,7 @@
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
 # On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
+# On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -297,6 +299,32 @@ fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:7:5: expected ';', got return
 error:<source>:7:14: $UZ"
+
+row T3 "a field store p.n = 5 before the fn's }" 'struct P { n; m; }
+fn f(): i64 {
+    var p = P { 1, 2 };
+    p.n = 5 }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:4:13: expected ';', got '}'
+error:<source>:5:24: $UZ"
+row T4 "a field store p.n = 5 then a return" 'struct P { n; m; }
+fn f(): i64 {
+    var p = P { 1, 2 };
+    p.n = 5
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:5:5: expected ';', got return
+error:<source>:5:14: $UZ"
+row T5 "a call's field gp().n = 5 before the fn's }" 'struct P { n; m; }
+var gq = P { 1, 2 };
+fn gp(): *P { return &gq; }
+fn f(): i64 { gp().n = 5 }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:4:26: expected ';', got '}'
+error:<source>:5:24: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
