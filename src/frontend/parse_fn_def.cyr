@@ -22,9 +22,9 @@ fn _warn_undefined_prepass(S): i64 {
     var wfc = GFNC(S);
     while (wfi < wfc) {
         if (L64(_fnt_offsets + wfi * 8) < 0 && GFFI(S, wfi) == 0) {
-            syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
+            _ew("warning: undefined function '", 29);
             PRSTR(S + 0xEC00000 + _fn_src_name(S, wfi, L64(_fnt_names + wfi * 8)));   # 6.7.14: `S.nope`
-            syscall(SYS_WRITE, 2, "'\n", 2);
+            _ew("'\n", 2);
             _tr_undef_note(S, L64(_fnt_names + wfi * 8));   # 6.7.0: an ambiguous trait method
         }
         wfi = wfi + 1;
@@ -160,18 +160,18 @@ fn _tl_assert(S, arm): i64 {
 fn _warn_large_static(totvar, dvb, dcn): i64 {
     totvar = totvar - _cov_bytes;   # 6.7.10: the execution-coverage band and map are the mode's, not the program's
     if (totvar <= 131072) { return 0; }
-    syscall(SYS_WRITE, 2, "warning: large static data (", 28);
+    _ew("warning: large static data (", 28);
     PRNUM(totvar);
-    syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 46);
+    _ew(" bytes) — consider alloc() for buffers >4KB\n", 46);
     # CYRIUS_DCE=1 NOPs the CODE of dead fns but does NOT free their bss reservations —
     # users hitting this warning should know that "set CYRIUS_DCE=1" is NOT the fix.
     # CHANGELOG [5.11.62]
     if (dvb > 0) {
-        syscall(SYS_WRITE, 2, "  hint: ", 8);
+        _ew("  hint: ", 8);
         PRNUM(dvb);
-        syscall(SYS_WRITE, 2, " bytes inside ", 14);
+        _ew(" bytes inside ", 14);
         PRNUM(dcn);
-        syscall(SYS_WRITE, 2, " unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
+        _ew(" unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
     }
     return 0;
 }
@@ -534,7 +534,7 @@ fn _tl_stray_brace(S): i64 {
     _ce_zflush(S);   # 6.7.16: before the compile stops
     var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
     ERR_MSG(S, "unmatched '}' at module scope", 29);
-    if (quiet == 0) { syscall(SYS_WRITE, 2, "  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
+    if (quiet == 0) { _ew("  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -837,7 +837,7 @@ fn _dl_in_say(S, ti, infn): i64 {
     if (_panic == 1) { return 0; }
     var id = "declaration section";
     if (_ce_err_dup(S, (id * 31 + 19) * 8 + 4) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
     PRSTR(": ");
     _dl_art_kw(S, ti);
@@ -979,7 +979,7 @@ fn _dl_kind(t): i64 {
 # statement's file is named too when it is another (`f0` != `f1`).
 fn _dl_report(S, ti, f1, f0, n0): i64 {
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
     PRSTR(": ");
     _dl_art_kw(S, ti);
@@ -997,7 +997,7 @@ fn _dl_art_kw(S, ti): i64 {
     var p = S + 0x459D000 + GTOFF(S, ti);
     var n = 0;
     while (ISALNUM(load8(p + n)) == 1) { n = n + 1; }
-    if (n == 0) { PRSTR(TOKNAME(t)); } else { syscall(SYS_WRITE, 2, p, n); }
+    if (n == 0) { PRSTR(TOKNAME(t)); } else { _ew(p, n); }
     PRSTR("`");
     return 0;
 }
@@ -1858,14 +1858,14 @@ fn _async_refuse_arity(S, fi_f, noff_f, pc): i64 {
     if (_coro_was == 1) { return 0; }
     if (pc <= 8) { return 0; }
     if (_panic == 1) { return 1; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     var dti = GFDS(S, fi_f) - 1;
     if (dti >= 0) { _err_head_at(S, dti); } else { _err_head(S); }
-    syscall(SYS_WRITE, 2, ": async fn `", 12);
+    _ew(": async fn `", 12);
     PRSTR(S + 0xEC00000 + noff_f);
-    syscall(SYS_WRITE, 2, "` takes ", 8);
+    _ew("` takes ", 8);
     PRNUM(pc);
-    syscall(SYS_WRITE, 2, " parameters; an async fn that never awaits takes at most 8 (its Future is forced through fncall0..fncall8)\n", 107);
+    _ew(" parameters; an async fn that never awaits takes at most 8 (its Future is forced through fncall0..fncall8)\n", 107);
     _had_error = 1;
     return 1;
 }
@@ -1968,7 +1968,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     EPUSHR(S);
     var fc = GFCNT(S);
     if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        _ew("error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi_impl);
@@ -2066,13 +2066,13 @@ var _fileid_dump_init = 0;
 
 fn _fileid_dump_note(S, fi, noff): i64 {
     PRNUM(GFFI(S, fi) - 1);
-    syscall(SYS_WRITE, 2, " ", 1);
+    _ew(" ", 1);
     # v6.5.0 Phase 2: also surface the visibility bit, so the gate can assert on the
     # decision and not merely on the file partition.
-    if ((GFLG(S, fi) & 64) != 0) { syscall(SYS_WRITE, 2, "P ", 2); }
-    else { syscall(SYS_WRITE, 2, "- ", 2); }
+    if ((GFLG(S, fi) & 64) != 0) { _ew("P ", 2); }
+    else { _ew("- ", 2); }
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     return 0;
 }
 
@@ -2198,11 +2198,11 @@ fn _fn_redirect(S, fi, noff, ti): i64 {
         _fnr_add(old, GFNE(S, fi));   # 6.7.14: its calls are no dead-code roots (util.cyr)
         return 0;
     }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+    _ew(": duplicate fn '", 16);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "': internal: its earlier body is shorter than a jump, so the calls bound to it cannot be redirected\n", 100);
+    _ew("': internal: its earlier body is shorter than a jump, so the calls bound to it cannot be redirected\n", 100);
     _had_error = 1;
     return 0;
 }
@@ -2352,18 +2352,18 @@ fn _dsg_check(S, fi, noff, ti): i64 {
 }
 # The error both checks print. `fid` is the earlier definition's origin (GFFI form).
 fn _dsg_report(S, noff, ti, what, fid): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+    _ew(": duplicate fn '", 16);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' disagrees about its ", 22);
-    if (what == 1) { syscall(SYS_WRITE, 2, "return type", 11); }
-    if (what == 2) { syscall(SYS_WRITE, 2, "parameter types", 15); }
-    if (what == 3) { syscall(SYS_WRITE, 2, "variadic parameter list", 23); }
-    if (what == 4) { syscall(SYS_WRITE, 2, "`async` marker", 14); }
-    syscall(SYS_WRITE, 2, " with the one in ", 17);
+    _ew("' disagrees about its ", 22);
+    if (what == 1) { _ew("return type", 11); }
+    if (what == 2) { _ew("parameter types", 15); }
+    if (what == 3) { _ew("variadic parameter list", 23); }
+    if (what == 4) { _ew("`async` marker", 14); }
+    _ew(" with the one in ", 17);
     _fm_print_fid(S, fid);
-    syscall(SYS_WRITE, 2, " (last definition wins, so calls compiled against that one would reach this body through the wrong calling convention)\n", 119);
+    _ew(" (last definition wins, so calls compiled against that one would reach this body through the wrong calling convention)\n", 119);
     _had_error = 1;
     return 0;
 }
@@ -2559,13 +2559,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         #    so the consumer gets both ends of the collision instead of having to
         #    infer "which copy wins" from a single position, which is the wrong
         #    inference the filing had to retract twice.
-        syscall(SYS_WRITE, 2, "warning:", 8);
+        _ew("warning:", 8);
         _err_head_at(S, _defstart_ti);
-        syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+        _ew(": duplicate fn '", 16);
         PRSTR(S + 0xEC00000 + noff);
-        syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
+        _ew("' (last definition wins; first defined in ", 42);
         _fm_print_fid(S, GFFI(S, fi));
-        syscall(SYS_WRITE, 2, ")\n", 2);
+        _ew(")\n", 2);
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
     if (_cfn_here == 1) {   # 6.7.2 (C1): `const fn` — marked (pass 1 did too) and checked ONCE, here
@@ -2740,11 +2740,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # picker self-skips).
         if (_has_inline_asm == 0) { if (_AARCH64_BACKEND == 0) { SFRA(S, fi, _ra_cap); } }
         else {
-            syscall(SYS_WRITE, 2, "warning:", 8);
+            _ew("warning:", 8);
             _err_head(S);
-            syscall(SYS_WRITE, 2, ": '", 3);
+            _ew(": '", 3);
             PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 74);
+            _ew("': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 74);
         }
         _regalloc_pending = 0;
     }
@@ -3571,17 +3571,17 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # a stdlib fn at a different arity is precisely the hazard this now refuses.
     if (_dup_prev_pc >= 0) {
         if (_dup_prev_pc != pc) {
-            syscall(SYS_WRITE, 2, "error:", 6);
+            _ew("error:", 6);
             _err_head_at(S, _defstart_ti);
-            syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+            _ew(": duplicate fn '", 16);
             PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "' disagrees about arity: this one takes ", 40);
+            _ew("' disagrees about arity: this one takes ", 40);
             PRNUM(pc);
-            syscall(SYS_WRITE, 2, ", the one in ", 13);
+            _ew(", the one in ", 13);
             _fm_print_fid(S, _dup_prev_fid);
-            syscall(SYS_WRITE, 2, " takes ", 7);
+            _ew(" takes ", 7);
             PRNUM(_dup_prev_pc);
-            syscall(SYS_WRITE, 2, " (last definition wins, so calls to the other arity would silently mis-bind)\n", 77);
+            _ew(" (last definition wins, so calls to the other arity would silently mis-bind)\n", 77);
             _had_error = 1;
         }
         _dup_prev_pc = 0 - 1;
@@ -4239,34 +4239,34 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 #   ra: fi=<fi> fn_start=<cp> fn_end=<cp> flc=<n>
                 #   ra:   lidx=<lidx> count=<n> first=<cp> last=<cp> span=<bytes>
                 if (_ra_dump_enabled == 1) {
-                    syscall(SYS_WRITE, 2, "ra: fi=", 7);
+                    _ew("ra: fi=", 7);
                     PRNUM(fi);
-                    syscall(SYS_WRITE, 2, " fn_start=", 10);
+                    _ew(" fn_start=", 10);
                     PRNUM(ra_start);
-                    syscall(SYS_WRITE, 2, " fn_end=", 8);
+                    _ew(" fn_end=", 8);
                     PRNUM(ra_end);
-                    syscall(SYS_WRITE, 2, " flc=", 5);
+                    _ew(" flc=", 5);
                     PRNUM(ra_flc);
-                    syscall(SYS_WRITE, 2, " pc=", 4);
+                    _ew(" pc=", 4);
                     PRNUM(pc);
-                    syscall(SYS_WRITE, 2, "\n", 1);
+                    _ew("\n", 1);
                     var _rad_li = pc;
                     while (_rad_li < ra_flc) {
                         var _rad_c = load64(&ra_counts + _rad_li * 8);
                         if (_rad_c > 0) {
                             var _rad_f = load64(&ra_first + _rad_li * 8);
                             var _rad_l = load64(&ra_last + _rad_li * 8);
-                            syscall(SYS_WRITE, 2, "ra:   lidx=", 11);
+                            _ew("ra:   lidx=", 11);
                             PRNUM(_rad_li);
-                            syscall(SYS_WRITE, 2, " count=", 7);
+                            _ew(" count=", 7);
                             PRNUM(_rad_c);
-                            syscall(SYS_WRITE, 2, " first=", 7);
+                            _ew(" first=", 7);
                             PRNUM(_rad_f);
-                            syscall(SYS_WRITE, 2, " last=", 6);
+                            _ew(" last=", 6);
                             PRNUM(_rad_l);
-                            syscall(SYS_WRITE, 2, " span=", 6);
+                            _ew(" span=", 6);
                             PRNUM(_rad_l - _rad_f);
-                            syscall(SYS_WRITE, 2, "\n", 1);
+                            _ew("\n", 1);
                         }
                         _rad_li = _rad_li + 1;
                     }
@@ -5629,7 +5629,7 @@ fn _tok_src_pr(S, a, e): i64 {
         y = y - 1;
     }
     if (x > 0) { if (y > x) { if (y - x < 128) {
-                syscall(SYS_WRITE, 2, S + 0x459D000 + x, y - x);
+                _ew(S + 0x459D000 + x, y - x);
                 return 0;
             } } }
     PRSTR("...");
@@ -5958,13 +5958,13 @@ fn _tpl_beg(S, k): i64 {
     if (_tn_once(S, k) == 0) { return 0; }
     _tpl_sv = GTI(S);
     STI(S, k);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     return 1;
 }
 fn _tpl_fin(S): i64 {
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, _tpl_sv);

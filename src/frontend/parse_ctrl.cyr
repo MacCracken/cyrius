@@ -639,7 +639,7 @@ fn _ie_mix_err(S, ti, c0, s0, cl, sid): i64 {
     if (_ie_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": if expression branches differ in type: ");
     _ie_kname(S, cl, sid);
@@ -683,7 +683,7 @@ fn _ie_big_err(S, ti, sid): i64 {
     if (_ie_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     if (sid > 0) {
         PRSTR(": an if expression branch cannot be a struct value over 8 bytes: ");

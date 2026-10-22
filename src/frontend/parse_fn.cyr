@@ -171,13 +171,13 @@ fn _fnhash_health(S): i64 {
         }
         sl = sl + 1;
     }
-    syscall(SYS_WRITE, 2, "  fn_name_hash: ", 16);
+    _ew("  fn_name_hash: ", 16);
     PRNUM(used);
-    syscall(SYS_WRITE, 2, " / ", 3);
+    _ew(" / ", 3);
     PRNUM(slots);
-    syscall(SYS_WRITE, 2, " slots, maxprobe ", 17);
+    _ew(" slots, maxprobe ", 17);
     PRNUM(maxd);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     return maxd;
 }
 
@@ -241,7 +241,7 @@ fn _OVERLOAD_SUFFIX(S, noff): i64 {
 fn _fnt_grow(S): i64 {
     var nc = _fnt_cap * 2;
     if (nc > 131072) {
-        syscall(SYS_WRITE, 2, "error: too many functions (max 131072)\n", 39);
+        _ew("error: too many functions (max 131072)\n", 39);
         syscall(SYS_EXIT, 1);
     }
     var oc = _fnt_cap;
@@ -996,7 +996,7 @@ fn _ret2_in_struct(S, ti): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
@@ -1021,7 +1021,7 @@ fn _ret2_in_vector(S, ti): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `ret2`\n");
     _err_excerpt(S);
@@ -1103,7 +1103,7 @@ fn _mret_err_ident(S, fi, tail): i64 {
     var msg = "";
     var noff = L64(_fnt_names + fi * 8);
     if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + (0 - 1)) * 8 + 3) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
@@ -1317,18 +1317,18 @@ fn _PARSE_RETURN_ARMS(S): i64 {
                             if (_cur_fn_is_pure == 1) {
                                 var _tcf = GFLG(S, tcfi);
                                 if (_tcf & 16 != 0) {
-                                    syscall(SYS_WRITE, 2, "warning:", 8);
+                                    _ew("warning:", 8);
                                     _err_head_at(S, _tc_wti);
-                                    syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
+                                    _ew(": #pure fn calls #io fn '", 25);
                                     PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
-                                    syscall(SYS_WRITE, 2, "'\n", 2);
+                                    _ew("'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
-                                    syscall(SYS_WRITE, 2, "warning:", 8);
+                                    _ew("warning:", 8);
                                     _err_head_at(S, _tc_wti);
-                                    syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
+                                    _ew(": #pure fn calls #alloc fn '", 28);
                                     PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
-                                    syscall(SYS_WRITE, 2, "'\n", 2);
+                                    _ew("'\n", 2);
                                 }
                             }
                             # v6.2.41 — arity check on the tail-call path
@@ -1988,23 +1988,23 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     # site (the v6.4.62 multi-error contract). `_had_error` alone withholds the binary.
     # 6.7.15: once per call and text (`_derr_seen`, at the call's `(`) — a generic body is parsed per instance.
     if (_derr_seen(_ar_site(S), "_CHECK_ARITY", ((fi * 31 + noff) * 1024 + argc) * 2 + _ar_self, 0) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     FM_LOOKUP(S, line);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # 6.7.14: `S.two`, `g<i32>`
-    syscall(SYS_WRITE, 2, "' expects ", 10);
+    _ew("' expects ", 10);
     var sf = _ar_self;    # 6.7.14: a method form counts as written, without `self` —
     if (pc == 0) { sf = 0; }   # unless the method takes no parameter: then the receiver is the extra one
     mn = mn - sf;
     if (mn < 0) { mn = 0; }
     pc = pc - sf;
-    if (mn != pc) { PRNUM(mn); syscall(SYS_WRITE, 2, " to ", 4); }   # 6.7.7: "1 to 3 arguments"
+    if (mn != pc) { PRNUM(mn); _ew(" to ", 4); }   # 6.7.7: "1 to 3 arguments"
     PRNUM(pc);
-    syscall(SYS_WRITE, 2, " argument", 9);
-    if (pc != 1 || mn != pc) { syscall(SYS_WRITE, 2, "s", 1); }
-    syscall(SYS_WRITE, 2, ", got ", 6);
+    _ew(" argument", 9);
+    if (pc != 1 || mn != pc) { _ew("s", 1); }
+    _ew(", got ", 6);
     PRNUM(argc - sf);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _had_error = 1;
     return 0;
 }
@@ -2072,7 +2072,7 @@ fn _sarg_ident_err(S, msg, anoff, afi, tail, fi): i64 {
     var cn = L64(_fnt_names + fi * 8);
     if (afi < 0) { return ERR_IDENT(S, msg, anoff, tail, _fn_src_name(S, fi, cn)); }
     if (_err_once(S, (((msg * 31 + anoff) * 31 + tail) * 31 + cn) * 8 + 3) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": ");
     PRSTR(msg);
@@ -2444,7 +2444,7 @@ fn _vec_kind_err(S, noff, fi): i64 {
 fn _agg_kind_err(S, noff, fi, kind): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_agg_kind_err", (noff * 31 + fi) * 31 + kind, 0) == 1) { return 0; }   # 6.7.15: once
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     PRSTR(S + 0xEC00000 + noff);
@@ -2484,7 +2484,7 @@ fn _vk_param(S, fi, k): i64 {
 fn _vec_val_err(S, star, noff, fi, kd): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_vec_val_err", ((noff * 31 + fi) * 31 + kd) * 2 + star, 0) == 1) { return 0; }   # 6.7.15
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     if (star == 1) { PRSTR("*"); }
@@ -2657,7 +2657,7 @@ fn _sval_kind_err(S, ti, star, noff, fi): i64 {
     if (star > 0) { nm = _src_span_nm(S, _ess_da + star, _ess_de, noff); }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     while (star > 0) { PRSTR("*"); star = star - 1; }
@@ -2752,7 +2752,7 @@ fn _svc_kind(S, fi, argc): i64 {
 }
 fn _svc_toplevel_err(S): i64 {
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + _svc_nm);
@@ -3120,7 +3120,7 @@ fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
     if (_tn_once(S, ti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a multi-value call '");
     PRSTR(S + 0xEC00000 + noff);
@@ -3197,7 +3197,7 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     if (_tn_once(S, ti) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a multi-value call '");
     PRSTR(S + 0xEC00000 + noff);
@@ -4031,7 +4031,7 @@ fn _ret_gen_base(S): i64 {
 fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
@@ -4233,7 +4233,7 @@ fn _ret_sid_refuse_d(S, ti, a, e, dflt, usid): i64 {
 }
 # The refusal's text at token `ti`, the value named `nm` (a pool offset, written as is).
 fn _rsr_print(S, ti, nm, usid, kind): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
@@ -4372,7 +4372,7 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot return tuple '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
@@ -4811,13 +4811,13 @@ fn _pd_refuse_row(row, shape): i64 {
 fn _pd_eo(S, ti): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, ti) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     return 1;
 }
 fn _pd_ec(S, ti): i64 {
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     var sv = GTI(S);
     STI(S, ti);
     _err_excerpt(S);
@@ -4831,9 +4831,9 @@ fn _pd_say(S, ti, msg): i64 {
     return _pd_ec(S, ti);
 }
 fn _pd_q(S, noff): i64 {
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
     return 0;
 }
 # "parameter 'p' of 'f'"
@@ -5510,13 +5510,13 @@ fn _pd_d19(S, noff, fi): i64 {
 }
 # "error:<file>:<line>: <a>'<name>'<b>", the arity check's form. Returns 1.
 fn _pd_line_err(S, line, a, noff, b): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     FM_LOOKUP(S, line);
     PRSTR(": ");
     PRSTR(a);
     _pd_q(S, noff);
     PRSTR(b);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _had_error = 1;
     return 1;
 }
@@ -6367,11 +6367,11 @@ fn _sca_print_arg(S): i64 {
     if (_sca_di > 0) {
         var d = _sca_d0;
         while (d < _sca_di) {                     # the nested fields before the last step
-            syscall(SYS_WRITE, 2, ".", 1);
+            _ew(".", 1);
             PRSTR(S + 0xEC00000 + TOKVAL(S, d + 1));
             d = d + 2;
         }
-        syscall(SYS_WRITE, 2, ".", 1);
+        _ew(".", 1);
         PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
         if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }
     }
@@ -6381,27 +6381,27 @@ fn _sca_print_head(S): i64 {
     var ti = GTI(S);
     PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
     if (_sca_shape == 1) { _sca_print_call_args(S, ti); }
-    if (_sca_shape == 2) { syscall(SYS_WRITE, 2, "<..>(..)", 8); }
+    if (_sca_shape == 2) { _ew("<..>(..)", 8); }
     return 0;
 }
 # A call's argument list as the message shows it: `()`, `(x)` for one bare IDENT, else `(..)`.
 fn _sca_print_call_args(S, ti): i64 {
     if (TOKTYP(S, ti + 2) == 11) {
-        syscall(SYS_WRITE, 2, "()", 2);
+        _ew("()", 2);
         return 0;
     }
     if (TOKTYP(S, ti + 2) == 2) { if (TOKTYP(S, ti + 3) == 11) {
-            syscall(SYS_WRITE, 2, "(", 1);
+            _ew("(", 1);
             PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
-            syscall(SYS_WRITE, 2, ")", 1);
+            _ew(")", 1);
             return 0;
         } }
-    syscall(SYS_WRITE, 2, "(..)", 4);
+    _ew("(..)", 4);
     return 0;
 }
 fn _sca_print_op(S): i64 {
     var ti = GTI(S);
-    if (_sca_op == 0) { syscall(SYS_WRITE, 2, "..", 2); }
+    if (_sca_op == 0) { _ew("..", 2); }
     if (_sca_op == 1) { _sca_print_head(S); }
     if (_sca_op == 2) { _sca_print_arg(S); }
     if (_sca_op == 3) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2)); }
@@ -6451,30 +6451,30 @@ fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
     var k = _str_arg_kind(S, ssid);
     if (k == 0) { return 0; }
     if (_warn_seen(GTI(S), "_check_str_cstring_arg", ((fi * 31 + argc) * 31 + noff) * 4 + k) == 1) { return 0; }   # 6.7.15
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    if (k == 1) { syscall(SYS_WRITE, 2, ": passing Str-typed '", 21); }
-    else { syscall(SYS_WRITE, 2, ": passing a Str's data pointer '", 32); }
+    if (k == 1) { _ew(": passing Str-typed '", 21); }
+    else { _ew(": passing a Str's data pointer '", 32); }
     _sca_print_arg(S);
-    syscall(SYS_WRITE, 2, "' to '", 6);
+    _ew("' to '", 6);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-    syscall(SYS_WRITE, 2, "' which expects a cstring", 25);
-    if (k == 1) { syscall(SYS_WRITE, 2, " (a Str is a {data, len} header, not a char*)\n", 46); }
-    else { syscall(SYS_WRITE, 2, " (a Str's bytes are not NUL-terminated at its length)\n", 54); }
+    _ew("' which expects a cstring", 25);
+    if (k == 1) { _ew(" (a Str is a {data, len} header, not a char*)\n", 46); }
+    else { _ew(" (a Str's bytes are not NUL-terminated at its length)\n", 54); }
     _sca_print_hint(S, fi, argc);
     return 0;
 }
 fn _sca_print_hint(S, fi, argc): i64 {
-    syscall(SYS_WRITE, 2, "  hint: ", 8);
+    _ew("  hint: ", 8);
     var sib = _sca_sibling(S, fi, argc);
     if (sib >= 0) {
-        syscall(SYS_WRITE, 2, "call '", 6);
+        _ew("call '", 6);
         PRSTR(S + 0xEC00000 + L64(_fnt_names + sib * 8));
-        syscall(SYS_WRITE, 2, "', which takes a Str, or ", 25);
+        _ew("', which takes a Str, or ", 25);
     }
-    syscall(SYS_WRITE, 2, "pass str_cstr(", 14);
+    _ew("pass str_cstr(", 14);
     _sca_print_op(S);
-    syscall(SYS_WRITE, 2, ") for a NUL-terminated copy, or annotate the param `: Str`\n", 59);
+    _ew(") for a NUL-terminated copy, or annotate the param `: Str`\n", 59);
     return 0;
 }
 
@@ -6494,14 +6494,14 @@ fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
     if (PEEKV(S) == 0) { return 0; }
     if (_pm_cstr(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
     if (_derr_seen(GTI(S), "_check_int_lit_cstring_arg", (fi * 31 + argc) * 31 + noff, 0) == 1) { return 0; }   # 6.7.15
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
+    _ew(": passing integer literal ", 26);
     PRNUM(PEEKV(S));
-    syscall(SYS_WRITE, 2, " to '", 5);
+    _ew(" to '", 5);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-    syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
-    syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
+    _ew("' which expects a cstring (a POINTER, not a number)\n", 52);
+    _ew("  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
     _had_error = 1;
     return 0;
 }
@@ -6753,7 +6753,7 @@ fn _sar_err(S, ti, fi): i64 {
     if (_derr_seen(ti, "_sar_err", fi, 0) == 1) { return 0; }   # 6.7.15: once per site
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a value-form vector argument to '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
@@ -7928,8 +7928,8 @@ fn _pair_ret_offender(S): i64 {
     if (PEEKT(S) == 1) { PRNUM(PEEKV(S)); return 0; }
     # 6.6.6 — a parenthesised return is either a tuple or a grouped expression; both read as
     # `(...)` and both are refusable shapes for a vector return. CHANGELOG [6.6.6]
-    if (PEEKT(S) == 10) { syscall(SYS_WRITE, 2, "(...)", 5); return 0; }
-    syscall(SYS_WRITE, 2, "this expression", 15);
+    if (PEEKT(S) == 10) { _ew("(...)", 5); return 0; }
+    _ew("this expression", 15);
     return 0;
 }
 # ⛔ 6.6.6 — A SIMD-RETURNING FN ACCEPTED ANY RETURN EXPRESSION. The same shape as the pair
@@ -8099,11 +8099,11 @@ fn _ret_vec_rule(S): i64 {
 fn _refuse_simd_return(S): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_refuse_simd_return", 0, 0) == 1) { return 0; }   # 6.7.15: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
+    _ew(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
     _pair_ret_offender(S);   # names the construct; not pair-specific despite the name
-    syscall(SYS_WRITE, 2, "`\n", 2);
+    _ew("`\n", 2);
     _had_error = 1;
     return 0;
 }
@@ -8161,7 +8161,7 @@ fn _refuse_struct_tuple_return(S): i64 {
     if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_refuse_struct_tuple_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
@@ -8176,13 +8176,13 @@ fn _refuse_pair_return(S): i64 {
     if (_panic == 1) { return 0; }
     if (_slit_at(S, GTI(S)) == 1) { return 0; }   # 6.7.14 (D12 (a)): the factor refuses the literal, once
     if (_derr_seen(GTI(S), "_refuse_pair_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);
+    _ew(": a fn returning the 9-16 byte struct `", 39);
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
-    syscall(SYS_WRITE, 2, "` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
+    _ew("` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
     _pair_ret_offender(S);
-    syscall(SYS_WRITE, 2, "`\n", 2);
+    _ew("`\n", 2);
     _had_error = 1;
     return 0;
 }
@@ -8237,11 +8237,11 @@ fn _is_op_dispatch_tok(t): i64 {
 # was refused. Refused by name until the capture exists. CHANGELOG [6.6.6]
 fn _refuse_async_simd_param(S, pnoff): i64 {
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
+    _ew(": async fn parameter '", 22);
     PRSTR(S + 0xEC00000 + pnoff);
-    syscall(SYS_WRITE, 2, "' is a value-form vector, which an `async fn` does not capture yet — pass a pointer to it\n", 92);
+    _ew("' is a value-form vector, which an `async fn` does not capture yet — pass a pointer to it\n", 92);
     _had_error = 1;
     return 0;
 }
@@ -8258,9 +8258,9 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     if (_agc_plain_big(S, lt) == 0) { return 0; }
     if (_dyn_is(S, 0 - lt) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
+    _ew(": async fn parameter '", 22);
     PRSTR(S + 0xEC00000 + pnoff);
     if (_tup_is(S, 0 - lt) == 1) {   # 6.7.7 (B4): a tuple has no pointer form (`*( .. )` is refused)
         PRSTR("' is a tuple ");
@@ -8269,11 +8269,11 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
         _had_error = 1;
         return 0;
     }
-    syscall(SYS_WRITE, 2, "' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
+    _ew("' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
     PRSTR(S + 0xEC00000 + pnoff);
-    syscall(SYS_WRITE, 2, ": *", 3);
+    _ew(": *", 3);
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
-    syscall(SYS_WRITE, 2, "`)\n", 3);
+    _ew("`)\n", 3);
     _had_error = 1;
     return 0;
 }
@@ -8292,11 +8292,11 @@ fn _refuse_async_struct_return(S, fnoff, fi): i64 {
     if (_ret_agg_class(S, fi) == 0) { return 0; }
     if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": `async fn ", 12);
+    _ew(": `async fn ", 12);
     PRSTR(S + 0xEC00000 + fnoff);
-    syscall(SYS_WRITE, 2, "` returns a struct by value, and a Future carries one i64 — return a pointer to it\n", 85);
+    _ew("` returns a struct by value, and a Future carries one i64 — return a pointer to it\n", 85);
     _had_error = 1;
     return 0;
 }
@@ -8314,11 +8314,11 @@ fn _refuse_async_struct_return(S, fnoff, fi): i64 {
 fn _refuse_async_vec_return(S, fnoff, fi): i64 {
     if (_is_simd_any(S, GFRS(S, fi)) == 0) { return 0; }
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": `async fn ", 12);
+    _ew(": `async fn ", 12);
     PRSTR(S + 0xEC00000 + fnoff);
-    syscall(SYS_WRITE, 2, "` returns a value-form vector, which an `async fn` does not capture yet — return a pointer to it\n", 99);
+    _ew("` returns a value-form vector, which an `async fn` does not capture yet — return a pointer to it\n", 99);
     _had_error = 1;
     return 0;
 }
@@ -8395,13 +8395,13 @@ fn _ret_mv_small(S, ct, fi): i64 {
 # "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
 # them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).
 fn _async_mv_say(S, noff, cut, n): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": `async fn ");
     var nm = S + 0xEC00000 + noff;
     var len = 0;
     while (load8(nm + len) != 0) { len = len + 1; }
-    syscall(SYS_WRITE, 2, nm, len - cut);
+    _ew(nm, len - cut);
     PRSTR("` returns ");
     PRNUM(n);
     PRSTR(" values, and a Future carries one i64 - return a pointer to a struct holding them\n");
@@ -8421,11 +8421,11 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # 6.7.15: a method `Pt.dup`, not `Pt_dup`
-    syscall(SYS_WRITE, 2, "' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
+    _ew("' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
     _had_error = 1;
     _tsc_n = _tsc_n + 1;
     return 0;
@@ -8518,18 +8518,18 @@ fn _simd_arg_second_pass(S, tbl, cnt): i64 {
 fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
     if (GFLG(S, fi) & 4 == 0) { return 0; }
     if (_dep_seen(ti, fi) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-    syscall(SYS_WRITE, 2, "' is deprecated", 15);
+    _ew("' is deprecated", 15);
     var _dep_msg = GFDM(S, fi);
     if (_dep_msg != 0) {
         var _dep_len = _dep_msg & 0xFFFFFFFF;
-        syscall(SYS_WRITE, 2, ": ", 2);
-        syscall(SYS_WRITE, 2, _lit_ptr(S, _dep_msg), _dep_len);   # 6.6.17: a side-table message
+        _ew(": ", 2);
+        _ew(_lit_ptr(S, _dep_msg), _dep_len);   # 6.6.17: a side-table message
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     return 1;
 }
 
@@ -8691,11 +8691,11 @@ fn _vis_check(S, fi, noff, ti): i64 {
     # A fail-fast exit here would make adopting `private` on a large file an
     # N-compile-cycles-to-find-N-callers exercise.
     if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _ew("' is private to its file\n", 25);
     _had_error = 1;
     return 1;
 }
@@ -8772,11 +8772,11 @@ fn _vis_report_late(S, fi, caller, ti): i64 {
     if (callee == 0) { return 0; }
     if (callee == caller) { return 0; }
     if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
-    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _ew("' is private to its file\n", 25);
     _had_error = 1;
     return 1;
 }
@@ -8794,7 +8794,7 @@ var _vis_degraded_said = 0;
 fn _vis_degraded_note(): i64 {
     if (_vis_degraded_said != 0) { return 0; }
     _vis_degraded_said = 1;
-    syscall(SYS_WRITE, 2, "warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 83);
+    _ew("warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 83);
     return 0;
 }
 
@@ -8863,18 +8863,18 @@ fn _pure_effect_warn(S, fi, noff): i64 {
     if (fi < 0) { return 0; }
     var fl = GFLG(S, fi);
     if (fl & 16 != 0) {
-        syscall(SYS_WRITE, 2, "warning:", 8);
+        _ew("warning:", 8);
         _err_head(S);
-        syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
+        _ew(": #pure fn calls #io fn '", 25);
         PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-        syscall(SYS_WRITE, 2, "'\n", 2);
+        _ew("'\n", 2);
     }
     if (fl & 32 != 0) {
-        syscall(SYS_WRITE, 2, "warning:", 8);
+        _ew("warning:", 8);
         _err_head(S);
-        syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
+        _ew(": #pure fn calls #alloc fn '", 28);
         PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
-        syscall(SYS_WRITE, 2, "'\n", 2);
+        _ew("'\n", 2);
     }
     return 0;
 }
@@ -9790,11 +9790,11 @@ fn _tr_undef_note(S, noff): i64 {
             if (k >= 0) {
                 var m = noff + k;
                 if (_ti_provides(S, i, m) == 1) { if (_tr_providers(S, tn, m) >= 2) { if (_tr_inh == 0) {
-                            syscall(SYS_WRITE, 2, "  note: it is ambiguous - more than one trait gives '", 53);
+                            _ew("  note: it is ambiguous - more than one trait gives '", 53);
                             PRSTR(S + 0xEC00000 + tn);
-                            syscall(SYS_WRITE, 2, "' this method; call it by its trait-qualified name, e.g. '", 58);
+                            _ew("' this method; call it by its trait-qualified name, e.g. '", 58);
                             PRSTR(S + 0xEC00000 + _tr_scratch(S, _tr_prefix(S, i, m), m, 8192));
-                            syscall(SYS_WRITE, 2, "'\n", 2);
+                            _ew("'\n", 2);
                             return 1;
                         } } }
             }
@@ -10071,7 +10071,7 @@ fn _tr_ret_err(S, ii, m, at): i64 {
     if (_tn_once(S, at) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, at);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + L64(_ti_tab + ii * 64 + 8));
@@ -10222,7 +10222,7 @@ fn _trs_fnp_refuse(S, ti): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a fn-pointer type `*fn( .. )` cannot be a fn return type\n");
     _err_excerpt(S);
@@ -10684,13 +10684,13 @@ fn _bnd_check(S, g, c0, c1): i64 {
             # 6.7.14: the same refusal at the same token in another instance of the enclosing generic
             # (`gb<T>(x)` in `o<i32>` and `o<i16>`) is printed as nothing by the error latch: so is its note.
             if (_err_quiet == 1) { return 1; }
-            syscall(SYS_WRITE, 2, "  note: the bound on type parameter '", 37);
+            _ew("  note: the bound on type parameter '", 37);
             PRSTR(S + 0xEC00000 + (((tp >> (slot * 32)) & 0xFFFFFFFF) - 1));
-            syscall(SYS_WRITE, 2, "' needs `impl ", 14);
+            _ew("' needs `impl ", 14);
             PRSTR(S + 0xEC00000 + L64(_tr_tab + tx * 32));
-            syscall(SYS_WRITE, 2, " for ", 5);
+            _ew(" for ", 5);
             _bnd_pr_conc(S, conc);
-            syscall(SYS_WRITE, 2, "`, and there is none\n", 21);
+            _ew("`, and there is none\n", 21);
             return 1;
         }
         slot = slot + 1;
@@ -10833,10 +10833,10 @@ fn _bnd_site_refuse(S, ri, mti, tx, tpn): i64 {
     } else {
         _bnd_err_at(S, mti, "method ", m, " is not in the bound on type parameter ", tpn);
         if (_err_quiet == 0) {   # 6.7.15: a refusal printed as nothing (a repeat) prints no orphan note
-            syscall(SYS_WRITE, 2, "  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
+            _ew("  note: a bound is the contract for a bounded type parameter - call only its traits' methods on '", 97);
             PRSTR(S + 0xEC00000 + TOKVAL(S, ri));
-            if (mti == ri + 4) { syscall(SYS_WRITE, 2, ".", 1); PRSTR(S + 0xEC00000 + TOKVAL(S, ri + 2)); }
-            syscall(SYS_WRITE, 2, "', or add a trait that declares this one to the bound\n", 54);
+            if (mti == ri + 4) { _ew(".", 1); PRSTR(S + 0xEC00000 + TOKVAL(S, ri + 2)); }
+            _ew("', or add a trait that declares this one to the bound\n", 54);
         }
     }
     _panic = p0;
@@ -12520,7 +12520,7 @@ fn _ce_xmix_err(S, ti, c0, cl): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }   # a const fn's body: its definition check and every call
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": if expression branches differ in type: ");
     _ce_xkname(cl);
@@ -14542,7 +14542,7 @@ fn _u128_refuse(S, ti, what): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": `u128` is not supported as ");
     PRSTR(what);
@@ -14693,7 +14693,7 @@ fn _pty_err(S, ti, loud): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": expected a type");
     var pn = _pty_pnoff(S);
@@ -14763,11 +14763,11 @@ fn _inl_param_why(S): i64 {
 # run — v6.5.63's contract is that an ignored `#inline` says so. `noff` is the user's name `f`.
 # CHANGELOG [6.7.14]
 fn _inl_async_warn(S, noff): i64 {
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": #inline ignored: async fn '", 29);
+    _ew(": #inline ignored: async fn '", 29);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' runs through its Future\n", 26);
+    _ew("' runs through its Future\n", 26);
     _err_excerpt(S);
     return 0;
 }
@@ -16119,7 +16119,7 @@ fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
     if (_gen_msp == 0) { return ERR_IDENT(S, msg, noff, tail, noff2); }
     if (_fn_src_name(S, fi, noff) == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }
     if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": generic '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
@@ -16142,7 +16142,7 @@ fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
     var msg = "generic ";
     var noff2 = L64(_fnt_names + fi2 * 8);
     if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": generic '");
     if (_gen_msp == 0) { PRSTR(S + 0xEC00000 + noff); }
@@ -17237,7 +17237,7 @@ fn _ta_xrefuse(S, at, np, n, gk, gi): i64 {
     if (gk == 2) { nm = _fn_src_name(S, gi, L64(_fnt_names + gi * 8)); }   # `g`, a method's `P.m`
     var sv = GTI(S);
     STI(S, at);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + nm);

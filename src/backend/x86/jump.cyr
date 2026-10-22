@@ -71,7 +71,7 @@ fn EJMP(S, target): i64 {
         # → silent wrong codegen. HARD-ERROR now, not the old silent warn: no real
         # function comes near 1023 targets (0 hits across cycc self-host + the whole
         # differential corpus), so this is byte-identical for every real program.
-        syscall(SYS_WRITE, 2, "error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
+        _ew("error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -124,7 +124,7 @@ fn EPATCH(S, off): i64 {
         # the jump-target table overflow bug (v6.3.21): same 1023 cap as EJMP — hard-error rather than silently
         # drop the landing pad (which would let LASE mis-eliminate). Shared count, so
         # whichever of EJMP/EPATCH reaches the cap first errors.
-        syscall(SYS_WRITE, 2, "error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
+        _ew("error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
         syscall(SYS_EXIT, 1);
     }
     return 0;

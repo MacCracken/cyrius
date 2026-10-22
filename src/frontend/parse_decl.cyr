@@ -3953,7 +3953,7 @@ fn _tup_arity_err(S, ti, sid, n): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": tuple ");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
@@ -4373,7 +4373,7 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (_tn_once(S, st) == 0) { return 2; }
     var ct = st;
     if (_mcall_open(S, st, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     var w = "a tuple";
     if (sid == 0) {
@@ -4952,7 +4952,7 @@ fn _gai_cap_err(S, cap, bare): i64 {
         return 0;
     }
     if (_panic == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": array initializer has more elements than the array holds (");
     PRNUM(cap);
@@ -5252,7 +5252,7 @@ fn _gai_range_err(S, ti, v, eb, lo, hi): i64 {
     if (_panic == 1) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": array initializer value ");
     PRNUM(v);
@@ -5458,11 +5458,11 @@ fn _gv_clear(S, vi): i64 {
 
 # One global cannot have two shapes: code compiled against the first would read the second.
 fn _gv_shape_err(S, noff): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": global '", 10);
+    _ew(": global '", 10);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' redeclared with a different type or size (a global has one definition; rename one)\n", 85);
+    _ew("' redeclared with a different type or size (a global has one definition; rename one)\n", 85);
     _had_error = 1;
     return 0;
 }
@@ -7117,7 +7117,7 @@ fn _gvk_dst(S, sti, a, b, c): i64 {
 fn _gvk_warn(S, sti): i64 {
     if (_gvk_late != 1) { return 0; }
     if (_had_error != 0) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, sti + 1);
     PRSTR(": in a kernel build the initializer of '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, sti + 1));
@@ -10614,7 +10614,7 @@ fn _vsc_err(S, a, kind, x, y): i64 {
     _refuse_in_sync(S);
     var tg = "_vsc_err";
     if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         if (kind == 0) {
             PRSTR(": a vector value cannot be returned as ");
@@ -11173,7 +11173,7 @@ fn _vop_tyerr(S, a, verb): i64 {
     _refuse_in_sync(S);
     var tg = "_vop_tyerr";
     if (_err_once(S, (tg * 31 + verb) * 8 + 4) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         if (verb == 0) { PRSTR(": vector type does not match the declared type - '"); }
         else { PRSTR(": vector type does not match the assigned variable - '"); }
@@ -11647,7 +11647,7 @@ fn _vrcv_err(S, ti, verb, fp): i64 {
     if (_derr_seen(ti, "_vrcv_err", verb * 2 + fp, 0) == 1) { return 0; }   # 6.7.15: once per site
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a value-form vector local is ");
     PRSTR(verb);
@@ -11865,7 +11865,7 @@ fn _rcv_say(S, ti, fnoff, sid, pscale, ann, noff): i64 {
     var ae = eq;
     if (_rcv_asg_e >= 0) { ae = _rcv_asg_e; }
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(_rcv_head());
     PRSTR(S + 0xEC00000 + noff);
@@ -12105,7 +12105,7 @@ fn _rcv_ann_pr(S, ann, eq): i64 {
         e = e - 1;
     }
     if (a > 0) { if (e > a) { if (e - a < 128) {
-                syscall(SYS_WRITE, 2, S + 0x459D000 + a, e - a);
+                _ew(S + 0x459D000 + a, e - a);
                 return 0;
             } } }
     if (TOKTYP(S, ann) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ann)); return 0; }
@@ -12300,7 +12300,7 @@ fn _dt_struct_err(S, fi, w): i64 {
     if (_derr_seen(GTI(S), "_dt_struct_err", fi * 4 + w, 1) == 1) { return 0; }   # 6.7.15: once per site
     var ct = GTI(S);
     if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot destructure '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
@@ -12327,7 +12327,7 @@ fn _dt_vec_err(S, fi): i64 {
     if (_derr_seen(GTI(S), "_dt_vec_err", fi, 1) == 1) { return 0; }
     var ct = GTI(S);
     if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot destructure '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
@@ -12541,7 +12541,7 @@ fn _vtop_vval(S, st): i64 {
     if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }
     var sv = GTI(S);
     STI(S, _vvl_a);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     _vval_pnm(S);

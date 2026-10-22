@@ -97,11 +97,11 @@ fn _mode_unsupported(S, a64): i64 {
     if (fmt == 3) { if (km != 1) { bad = 1; } }
     if (fmt == 0) { if (a64 == 1) { if (km != 1) { bad = 1; } } }
     if (bad == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error: `", 8);
+    _ew("error: `", 8);
     PRSTR(_mode_word(km));
-    syscall(SYS_WRITE, 2, "` is not supported for ", 23);
+    _ew("` is not supported for ", 23);
     PRSTR(_fmt_word(fmt));
-    syscall(SYS_WRITE, 2, " output (no emitter for it on this target: x86_64 ELF implements kernel;/shared;/object;, aarch64 ELF kernel;, PE kernel; only)\n", 128);
+    _ew(" output (no emitter for it on this target: x86_64 ELF implements kernel;/shared;/object;, aarch64 ELF kernel;, PE kernel; only)\n", 128);
     return 1;
 }
 
@@ -357,11 +357,11 @@ fn RECFIX(S, idx): i64 {
 # unguarded path. See CHANGELOG [6.1.35].
 fn _check_output_cap(S, filesz): i64 {
     if (filesz > _output_cap) {
-        syscall(SYS_WRITE, 2, "error: output too large (", 25);
+        _ew("error: output too large (", 25);
         PRNUM(filesz);
-        syscall(SYS_WRITE, 2, "/", 1);
+        _ew("/", 1);
         PRNUM(_output_cap);
-        syscall(SYS_WRITE, 2, " bytes)", 7);
+        _ew(" bytes)", 7);
         var vcount = GVCNT(S);
         var top1_sz = 0; var top1_ix = 0 - 1;
         var top2_sz = 0; var top2_ix = 0 - 1;
@@ -382,33 +382,33 @@ fn _check_output_cap(S, filesz): i64 {
             vi = vi + 1;
         }
         if (top1_ix >= 0) {
-            syscall(SYS_WRITE, 2, "\n  largest vars:\n    ", 21);
+            _ew("\n  largest vars:\n    ", 21);
             PRNUM(top1_sz);
-            syscall(SYS_WRITE, 2, " bytes: ", 8);
+            _ew(" bytes: ", 8);
             var nptr = S + 0xEC00000 + L64(_varn_base + top1_ix * 8);
             var nlen = 0;
             while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
-            syscall(SYS_WRITE, 2, nptr, nlen);
+            _ew(nptr, nlen);
             if (top2_ix >= 0) {
-                syscall(SYS_WRITE, 2, "\n    ", 5);
+                _ew("\n    ", 5);
                 PRNUM(top2_sz);
-                syscall(SYS_WRITE, 2, " bytes: ", 8);
+                _ew(" bytes: ", 8);
                 nptr = S + 0xEC00000 + L64(_varn_base + top2_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
-                syscall(SYS_WRITE, 2, nptr, nlen);
+                _ew(nptr, nlen);
             }
             if (top3_ix >= 0) {
-                syscall(SYS_WRITE, 2, "\n    ", 5);
+                _ew("\n    ", 5);
                 PRNUM(top3_sz);
-                syscall(SYS_WRITE, 2, " bytes: ", 8);
+                _ew(" bytes: ", 8);
                 nptr = S + 0xEC00000 + L64(_varn_base + top3_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
-                syscall(SYS_WRITE, 2, nptr, nlen);
+                _ew(nptr, nlen);
             }
         }
-        syscall(SYS_WRITE, 2, "\n  tip: heap-allocate large var buf[N] arrays (alloc(N) + pointer)\n", 67);
+        _ew("\n  tip: heap-allocate large var buf[N] arrays (alloc(N) + pointer)\n", 67);
         syscall(SYS_EXIT, 1);
     }
     return 0;
