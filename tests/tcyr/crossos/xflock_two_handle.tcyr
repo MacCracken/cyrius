@@ -11,6 +11,15 @@
 # A cx guest on a WINDOWS host's cxvm has no flock route (its PE peer is a stub, so cxvm answers
 # every xflock -38): there the lock rows are named as not run instead of failing, 6.7.16's D28 shape
 # (they failed 24 of 36 on wine's cxvm.exe). CHANGELOG [6.7.17]
+# A BAD OP on an open fd is -22 (EINVAL) and changes no lock, on every target (6.7.17's D97, the
+# user, 2026-10-22: "validate the op in the macOS arm — a bad op is -22, as D37"). Linux's flock(2)
+# checks the op before anything else (an op that is not LOCK_SH, LOCK_EX or LOCK_UN, + LOCK_NB, is
+# -22), and so does the Windows arm. Darwin's flock read such an op its own way — one naming LOCK_UN
+# unlocked, else one naming LOCK_EX locked exclusive, else one naming LOCK_SH shared, whatever other
+# bits it carried, and one naming none was -9 — so macOS answered 3, 7 and 18 with 0 and the
+# exclusive lock, 17 with 0 and the shared one, 9, 10 and 24 with 0 and the lock let go, and 0, 4
+# and 16 with -9 (measured on ecb and ach). The macOS arm, and cxvm's flock on a Darwin host, check
+# the op first since 6.7.17. CHANGELOG [6.7.17]
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -27,6 +36,20 @@ var XF_SH = 1;
 var XF_EX = 2;
 var XF_NB = 4;
 var XF_UN = 8;
+
+# Bad op `op` on A, which holds `held` (0: no lock; XF_EX: the exclusive one): -22, and A's lock is
+# what it was — B's LOCK_EX|LOCK_NB is 0 (B lets go at once) when A held none, -EAGAIN when A held
+# LOCK_EX. Afterwards A is put back in `held`, whatever the op did.
+fn xf_badop(a, b, op, held, what, after): i64 {
+    assert_eq(xflock(a, op), 0 - 22, what);
+    var want = 0;
+    if (held != 0) { want = 0 - XF_EAGAIN; }
+    var rb = xflock(b, XF_EX | XF_NB);
+    if (rb == 0) { xflock(b, XF_UN); }
+    assert_eq(rb, want, after);
+    if (held == 0) { xflock(a, XF_UN); } else { xflock(a, held); }
+    return 0;
+}
 
 var path = test_scratch("cyrius_xflock_two_handle.tmp");
 xunlink(path);
@@ -95,6 +118,24 @@ if (xf_route == 1) {
     assert_eq(xflock(a, XF_UN), 0, "A: LOCK_UN -> 0");
     assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
     assert_eq(xflock(a, 0) < 0, 1, "an op that is none of LOCK_SH / LOCK_EX / LOCK_UN is refused");
+
+    test_group("a bad op on an open fd is -EINVAL and changes no lock (6.7.17's D97)");
+    var nolk = "  B: LOCK_EX|LOCK_NB -> 0 after it: A took no lock";
+    xf_badop(a, b, 0, 0, "A: op 0 -> -22 (macOS -9)", nolk);
+    xf_badop(a, b, 4, 0, "A: op 4 (LOCK_NB alone) -> -22 (macOS -9)", nolk);
+    xf_badop(a, b, 16, 0, "A: op 16 (no lock bit) -> -22 (macOS -9)", nolk);
+    xf_badop(a, b, 3, 0, "A: op 3 (LOCK_SH | LOCK_EX) -> -22 (macOS 0, locked exclusive)", nolk);
+    xf_badop(a, b, 7, 0, "A: op 7 (LOCK_SH | LOCK_EX | LOCK_NB) -> -22 (macOS 0, locked exclusive)", nolk);
+    xf_badop(a, b, 18, 0, "A: op 18 (LOCK_EX | 16) -> -22 (macOS 0, locked exclusive)", nolk);
+    xf_badop(a, b, 17, 0, "A: op 17 (LOCK_SH | 16) -> -22 (macOS 0, locked shared)", nolk);
+    assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX -> 0");
+    var kept = "  B: LOCK_EX|LOCK_NB -> -EAGAIN after it: A kept its lock";
+    xf_badop(a, b, 9, XF_EX, "A: op 9 (LOCK_UN | LOCK_SH) -> -22 (macOS 0, unlocked)", kept);
+    xf_badop(a, b, 10, XF_EX, "A: op 10 (LOCK_UN | LOCK_EX) -> -22 (macOS 0, unlocked)", kept);
+    xf_badop(a, b, 24, XF_EX, "A: op 24 (LOCK_UN | 16) -> -22 (macOS 0, unlocked)", kept);
+    assert_eq(xflock(a, XF_UN | XF_NB), 0, "A: op 12 (LOCK_UN | LOCK_NB) is a good op -> 0, unlocked");
+    assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 once A let go");
+    assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
 
     file_close(c);
     file_close(b);
