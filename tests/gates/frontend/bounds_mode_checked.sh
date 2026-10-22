@@ -67,11 +67,12 @@
 #       CYRIUS_COVERAGE, CYRIUS_COVERAGE_FILE); floor 2 (the tool loop, the install step). And the
 #       shell twin's setup arm unsets CYRIUS_COVERAGE_FILE with the three. Its run-time half is
 #       tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh row C.
-#       (6.7.17) E4f: the COMPILED developer helpers. The self-build that lived in scripts/dev (xb.sh)
-#       became a cyrius program, with the other helpers, under programs/dev (programs/folds and
-#       programs/release beside it), which E4's shell scan never reads: every one whose code
+#       (6.7.17) E4f: the COMPILED developer helpers. The self-builds that lived in scripts/dev (xb.sh)
+#       and in build-cycc-verify.sh's --fixpoint / --install became cyrius programs, with the other
+#       helpers, under programs/dev (programs/folds and programs/release beside it), which E4's shell
+#       scan never reads: every one whose code
 #       names a src/main*.cyr fork drops CYRIUS_BOUNDS, CYRIUS_POISON and CYRIUS_COVERAGE from the
-#       environment its compiles get (`hc_env_unset(<env>, "<var>")`) before that line; floor 2 (xb, ab).
+#       environment its compiles get (`hc_env_unset(<env>, "<var>")`) before that line; floor 3 (xb, ab, fixpoint).
 #       Named out: programs/dev/helper_common.cyr (it names src/main.cyr to recognise a checkout and
 #       compiles nothing).
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
@@ -426,7 +427,7 @@ for s in $(find programs/dev programs/folds programs/release -name '*.cyr' 2>/de
     [ -n "$b" ] && echo "$s $b" >> "$T/e4f"
 done
 e4fn=$(grep -c . "$T/e4f" || true)
-if [ "$e4fn" -lt 2 ]; then bad "E4f found $e4fn compiled helper(s) naming a src/main*.cyr fork (floor 2: xb, ab) — the scan is blind"; fi
+if [ "$e4fn" -lt 3 ]; then bad "E4f found $e4fn compiled helper(s) naming a src/main*.cyr fork (floor 3: xb, ab, fixpoint) — the scan is blind"; fi
 while read -r s b; do
     e4bad=""
     for v in CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE; do

@@ -1,0 +1,193 @@
+# programs/dev/fixpoint.cyr — the guarded three-stage self-host fixpoint of the checkout's source,
+# and the atomic install of build/cycc once the source reaches it.
+#
+# Usage:  cyrius run programs/dev/fixpoint.cyr --fixpoint <scratch-dir>   (c2 == c3 check only)
+#         cyrius run programs/dev/fixpoint.cyr --install <scratch-dir>    (rebuild build/cycc at a fixpoint)
+#
+#   c1 = build/cycc(src/main.cyr), c2 = c1(src/main.cyr), c3 = c2(src/main.cyr)
+#
+# each written to <scratch-dir>/c1..c3 (a relative <scratch-dir> is the caller's; stderr beside
+# each as c<N>.err, kept for inspection); every stage must exit 0 with a non-empty output, and
+# c2 == c3 is required (c1 may differ from c2: build/cycc can lag the source by a codegen change —
+# the two-step bootstrap of ADR-005). --fixpoint stops there: "does the edited source reach a
+# fixpoint?", asked before deciding to install. --install then copies c2 to a temp file inside
+# build/ and renames it over build/cycc — atomic, and never a write over a binary that may be
+# running. Exit codes:
+#   0 — the fixpoint holds (--fixpoint); build/cycc replaced by c2 == c3 (--install)
+#   1 — c1 failed or wrote nothing; also a usage / setup error
+#   2 — c2 or c3 failed or wrote nothing, or c2 != c3
+#   4 — the replace of build/cycc failed (--install)
+# build/cycc is untouched on every non-zero exit, and by --fixpoint always.
+#
+# The compiles run in the DEFAULT mode: CYRIUS_BOUNDS / CYRIUS_POISON / CYRIUS_COVERAGE are dropped
+# from their environment (gate row E4, tests/gates/frontend/bounds_mode_checked.sh). The checkout:
+# $CYRIUS_REPO, else the one the current directory is in.
+#
+# ⚠ This program is compiled by a cyrius compiler and checks one — a check that shares a defect
+# with what it checks reads GREEN (CLAUDE.md). So the verdicts are not this program's own bytes:
+# every comparison is an exec of `cmp -s`, every digest an exec of `sha256sum`, and `cyrius run`
+# builds it with the installed (tagged) toolchain's compiler, not the build/cycc it rebuilds.
+#
+# These were scripts/build-cycc-verify.sh's --fixpoint and --install modes, with byte-identical
+# output (the golden row in tests/gates/toolchain/dev_helpers_match_golden.sh); the script keeps
+# its verify mode (CI's trust-root job). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "fixpoint";
+
+fn _errln(c): i64 { hc_errc(c); hc_errc("\n"); return 0; }
+
+# `cmp -s a b`: 1 when the files are the same bytes.
+fn _same(a, b): i64 {
+    if (hc_run(hc_argv("cmp", "-s", a, b, 0, 0), 0, 0, 0, 0, 0, 0) == 0) { return 1; }
+    return 0;
+}
+
+# `sha256sum <f> | cut -d' ' -f1`
+fn _sha(f): i64 {
+    var out = hc_capture(hc_argv("sha256sum", f, 0, 0, 0, 0), 0, 0, 0, 0);
+    var sp = hc_findb(out, 32, 0);
+    if (sp < 0) { return hc_rstrip_set(out, "\n"); }
+    return hc_sub(out, 0, sp);
+}
+
+fn _size(pathc): i64 {
+    var s = hc_read(pathc);
+    if (s == 0) { return 0; }
+    return hc_n(s);
+}
+
+fn main(): i64 {
+    args_init();
+    var usage = "usage: cyrius run programs/dev/fixpoint.cyr --fixpoint <scratch-dir> | --install <scratch-dir>";
+    if (argc() != 3) { _errln(usage); return 1; }
+    var flag = hc_arg(1);
+    var mode = 0;
+    if (hc_eqc(flag, "--fixpoint") == 1) { mode = 1; }
+    if (hc_eqc(flag, "--install") == 1) { mode = 2; }
+    if (mode == 0) { _errln(usage); return 1; }
+    var sd = hc_arg(2);
+    if (hc_n(sd) == 0) { hc_errc("ERROR: "); hc_err(flag); hc_errc(" needs a scratch directory\n"); return 1; }
+    # parsed before the cd, so a relative <scratch-dir> is the caller's
+    var stages = sd;
+    if (hc_at(sd, 0) != 47) { stages = hc_cat3(hc_pwd(), hc_s("/"), sd); }
+    var root = hc_repo_root_sh();
+    if (root == 0) {
+        hc_errc("ERROR: no cyrius checkout here (run it from the checkout, or set CYRIUS_REPO)\n");
+        return 1;
+    }
+    if (sys_chdir(hc_cstr(root)) != 0) { hc_errc("ERROR: cannot cd to "); hc_err(root); hc_errc("\n"); return 1; }
+    var env = hc_env_list();
+    hc_env_unset(env, "CYRIUS_BOUNDS");
+    hc_env_unset(env, "CYRIUS_POISON");
+    hc_env_unset(env, "CYRIUS_COVERAGE");
+    var cc = hc_joinc(root, "build/cycc");
+    var src = hc_joinc(root, "src/main.cyr");
+    if (hc_access_x(hc_cstr(cc)) == 0) {
+        hc_errc("ERROR: "); hc_err(cc); hc_errc(" missing — run 'sh bootstrap/bootstrap.sh' first.\n");
+        return 1;
+    }
+    if (hc_is_file(hc_cstr(src)) == 0) {
+        hc_errc("ERROR: "); hc_err(src); hc_errc(" missing — repo layout broken?\n");
+        return 1;
+    }
+    if (mode == 2) { hc_outc("=== cycc self-host fixpoint + install (stages in "); }
+    else { hc_outc("=== cycc self-host fixpoint (stages in "); }
+    hc_out(stages);
+    hc_outc(") ===\n");
+    if (hc_mkdirs(hc_cstr(stages)) != 0) { hc_errc("ERROR: cannot create "); hc_err(stages); hc_errc("\n"); return 1; }
+    var prev = cc;
+    var n = 1;
+    while (n <= 3) {
+        var cn = hc_joinc(stages, hc_cstr(hc_ccat("c", hc_itoa(n))));
+        var cerr = hc_catc(cn, ".err");
+        var sb = hc_sb();
+        hc_sbc(sb, "  [");
+        hc_sbi(sb, n);
+        hc_sbc(sb, "/3] cat src/main.cyr | ");
+        hc_sba(sb, hc_basename(prev));
+        hc_sbc(sb, " > c");
+        hc_sbi(sb, n);
+        hc_sbc(sb, "...\n");
+        hc_out(hc_sbend(sb));
+        var fail_rc = 2;
+        if (n == 1) { fail_rc = 1; }
+        var rc = hc_run(hc_argv(hc_cstr(prev), 0, 0, 0, 0, 0), env, 0, hc_cstr(src), hc_cstr(cn), hc_cstr(cerr), 0);
+        if (rc != 0) {
+            hc_errc("  FAIL: stage c");
+            hc_err(hc_itoa(n));
+            hc_errc(" compile failed (stderr: ");
+            hc_err(cerr);
+            hc_errc(")\n");
+            var es = hc_read(hc_cstr(cerr));
+            if (es != 0) {
+                # head -20: the bytes up to the 20th newline
+                var e = 0;
+                var k = 0;
+                while (k < 20) {
+                    var nl = hc_findb(es, 10, e);
+                    if (nl < 0) { e = hc_n(es); break; }
+                    e = nl + 1;
+                    k = k + 1;
+                }
+                hc_err(hc_sub(es, 0, e));
+            }
+            return fail_rc;
+        }
+        var sz = _size(hc_cstr(cn));
+        if (sz == 0) {
+            hc_errc("  FAIL: stage c");
+            hc_err(hc_itoa(n));
+            hc_errc(" is EMPTY — the compiler exited 0 and wrote nothing\n");
+            return fail_rc;
+        }
+        sys_chmod(hc_cstr(cn), 0x1ED);
+        hc_outc("        c");
+        hc_out(hc_itoa(n));
+        hc_outc(" ");
+        hc_out(hc_itoa(sz));
+        hc_outc(" bytes\n");
+        prev = cn;
+        n = n + 1;
+    }
+    var c2 = hc_cstr(hc_joinc(stages, "c2"));
+    var c3 = hc_cstr(hc_joinc(stages, "c3"));
+    if (_same(c2, c3) == 0) {
+        hc_errc("  FAIL: fixpoint diverged — c2 != c3\n");
+        hc_errc("        c2: "); hc_err(_sha(c2)); hc_errc("\n");
+        hc_errc("        c3: "); hc_err(_sha(c3)); hc_errc("\n");
+        return 2;
+    }
+    hc_outc("        FIXPOINT OK (c2 == c3 at ");
+    hc_out(hc_itoa(_size(c2)));
+    hc_outc(" B)\n");
+    if (mode == 1) { return 0; }
+    var was = "replaced";
+    if (_same(c2, hc_cstr(cc)) == 1) { was = "already byte-identical to c2"; }
+    # a temp in build/ itself, so the rename is on one filesystem (atomic)
+    var tmp = 0;
+    var tries = 0;
+    while (tmp == 0 && tries < 100) {
+        var cand = hc_cat(hc_joinc(root, "build/.cycc-install."), hc_rand_name(6));
+        var fd = sys_open(hc_cstr(cand), O_WRONLY | O_CREAT | O_EXCL, 0x180);
+        if (fd >= 0) { sys_close(fd); tmp = cand; }
+        tries = tries + 1;
+    }
+    if (tmp == 0) { hc_errc("  FAIL: mktemp in build/ failed, build/cycc untouched\n"); return 4; }
+    var ok = 0;
+    if (hc_run(hc_argv("cp", c2, hc_cstr(tmp), 0, 0, 0), 0, 0, 0, 0, 0, 0) == 0) {
+        if (sys_chmod(hc_cstr(tmp), 0x1ED) == 0) {
+            if (sys_rename(hc_cstr(tmp), hc_cstr(cc)) == 0) { ok = 1; }
+        }
+    }
+    if (ok == 1) {
+        hc_outc("\n=== INSTALLED build/cycc (");
+        hc_outc(was);
+        hc_outc(") ===\n");
+        return 0;
+    }
+    sys_unlink(hc_cstr(tmp));
+    hc_errc("  FAIL: replacing build/cycc failed — build/cycc untouched\n");
+    return 4;
+}

@@ -133,12 +133,12 @@ fn _compile(cc, src, out): i64 {
 }
 
 fn _run(dir_arg, d): i64 {
-    var root = hc_repo_root(0);
+    var root = hc_repo_root_sh();
     if (root == 0) {
         hc_errc("probe: no cyrius checkout here (run it from the checkout, or set CYRIUS_REPO)\n");
         return 2;
     }
-    var cwd0 = hc_getcwd();
+    var cwd0 = hc_pwd();
     # a path from the caller's cwd wins; otherwise <dir> is read from the checkout root
     if (hc_at(d, 0) != 47) {
         if (hc_is_dir(hc_cstr(d)) == 1) { d = hc_cat3(cwd0, hc_s("/"), d); }

@@ -1,0 +1,22 @@
+rc=2
+--- stdout
+=== cycc self-host fixpoint (stages in @T@/fp_flip_fixpoint/../st_flip_fixpoint) ===
+  [1/3] cat src/main.cyr | cycc > c1...
+        c1 117 bytes
+  [2/3] cat src/main.cyr | c1 > c2...
+        c2 117 bytes
+  [3/3] cat src/main.cyr | c2 > c3...
+        c3 117 bytes
+--- stderr
+  FAIL: fixpoint diverged — c2 != c3
+        c2: 7743b12e33c475a7e8892d04128eca2ff60733e78ed7b1fd1d6d22948977a585
+        c3: a8071ddcd62b94d11326ab5f1d137dbcb46ac8edb777646d86a021e555abddf0
+--- build/
+cycc
+--- build/cycc
+#!/bin/sh
+case "$(tail -n 1 "$0")" in
+'#M:A') sed '$ s/#M:A/#M:B/' "$0" ;;
+*) sed '$ s/#M:B/#M:A/' "$0" ;;
+esac
+#M:A

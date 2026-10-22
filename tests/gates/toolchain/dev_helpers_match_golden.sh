@@ -31,7 +31,10 @@
 #   envprobe           the line keys (the values are the machine's)
 #   ab                 two refs of a scratch repository, times masked: a refusal (rc 4) and a
 #                      signal death (rc -11, Python's spelling), and the usage errors
-# FLOOR: the axis count is at least 7.
+#   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
+#                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
+#                      stage, an empty stage, an install that replaces and one that finds it equal
+# FLOOR: the axis count is at least 8.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -40,6 +43,7 @@
 #   xb's cx leg reporting its BUILD rc one high                                    -> RED xb
 #   envprobe's ulimit line keyed `ulimit-n` (a key the script never printed)       -> RED envprobe
 #   ab's "same input (<new> src)" row given the wrong pair                         -> RED ab
+#   fixpoint's c2 == c3 compare made a byte count compare                          -> RED fixpoint
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
@@ -73,6 +77,7 @@ _build probe programs/dev/probe.cyr
 _build xb programs/dev/xb.cyr
 _build envprobe programs/dev/envprobe.cyr
 _build ab programs/dev/ab.cyr
+_build fixpoint programs/dev/fixpoint.cyr
 
 # _golden <golden path under $G> <actual file>: one case of the current axis.
 _golden() {
@@ -119,7 +124,7 @@ done
 R="$T/regen_err"
 mkdir -p "$R/docs/development/issues"
 printf '# Issues\n\n## Not the queue\n' > "$R/docs/development/issues/README.md"
-"$BIN/regen_issue_index" "$R" > "$T/o" 2> "$T/e"; rc=$?
+(cd "$T" && "$BIN/regen_issue_index" regen_err > "$T/o" 2> "$T/e"); rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "regen_issue_index/no_section" "$T/rep"
 _axis_end "regen_issue_index: two issue sets and the missing-section error match the replaced script"
@@ -222,7 +227,7 @@ CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD~1 HEAD --runs 2 --repo "$AR" > "$T/o" 2> 
 _abmask "$T/o" > "$T/om"
 _rep "$T/rep" "$rc" "$T/om" "$T/e"
 _golden "ab/two_refs" "$T/rep"
-CYRIUS_SCRATCH="$T/abs" "$BIN/ab" nosuchref HEAD --repo "$AR" > "$T/o" 2> "$T/e"; rc=$?
+(cd "$T" && CYRIUS_SCRATCH="$T/abs" "$BIN/ab" nosuchref HEAD --repo ab_repo > "$T/o" 2> "$T/e"); rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "ab/not_a_commit" "$T/rep"
 CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD HEAD --runs 0 --repo "$AR" > "$T/o" 2> "$T/e"; rc=$?
@@ -232,8 +237,31 @@ left=$(ls -A "$T/abs" 2>/dev/null | wc -l)
 [ "$left" = 0 ] || _fail "ab left $left temp dir(s) in its scratch"
 _axis_end "ab: the A/B table (times masked), a refusal, a signal death and the errors match the replaced script"
 
+# ── fixpoint (build-cycc-verify.sh's --fixpoint / --install until 6.7.17) ──────────────────
+# Each stand-in build/cycc is a shell "compiler" whose output is itself a compiler script: one that
+# reproduces itself (a fixpoint at c1; installed: "already byte-identical"), one that grows each
+# stage (c2 != c3), one that flips one byte each stage (c2 != c3 at the same size), one that fails
+# at c1, one that writes nothing, one whose c1 fails at c2, and one whose c1 differs from build/cycc
+# but is a fixpoint (installed: "replaced").
+_axis_begin
+for c in selfrep diverge flip fail1 empty1 fail2 lag; do
+    for m in fixpoint install; do
+        FR="$T/fp_${c}_$m"
+        mkdir -p "$FR/build" "$FR/src"
+        cp "$F/fixpoint/$c.sh" "$FR/build/cycc"
+        chmod +x "$FR/build/cycc"
+        printf 'var x = 1;\n' > "$FR/src/main.cyr"
+        printf '[package]\n' > "$FR/cyrius.cyml"
+        (cd "$FR" && CYRIUS_REPO="$FR" "$BIN/fixpoint" --$m "../st_${c}_$m" > "$T/o" 2> "$T/e"); rc=$?
+        ls -A "$FR/build" > "$T/buildls"
+        _rep "$T/rep" "$rc" "$T/o" "$T/e" build/ "$T/buildls" build/cycc "$FR/build/cycc"
+        _golden "fixpoint/$c.$m" "$T/rep"
+    done
+done
+_axis_end "fixpoint: --fixpoint and --install over seven stand-in compilers match build-cycc-verify.sh's modes"
+
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 7 ] || _fail "only $AXES axes ran (floor 7)"
+[ "$AXES" -ge 8 ] || _fail "only $AXES axes ran (floor 8)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1

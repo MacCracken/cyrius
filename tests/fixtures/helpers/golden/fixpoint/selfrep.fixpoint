@@ -1,0 +1,16 @@
+rc=0
+--- stdout
+=== cycc self-host fixpoint (stages in @T@/fp_selfrep_fixpoint/../st_selfrep_fixpoint) ===
+  [1/3] cat src/main.cyr | cycc > c1...
+        c1 19 bytes
+  [2/3] cat src/main.cyr | c1 > c2...
+        c2 19 bytes
+  [3/3] cat src/main.cyr | c2 > c3...
+        c3 19 bytes
+        FIXPOINT OK (c2 == c3 at 19 B)
+--- stderr
+--- build/
+cycc
+--- build/cycc
+#!/bin/sh
+cat "$0"

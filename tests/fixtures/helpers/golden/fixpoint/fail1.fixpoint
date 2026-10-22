@@ -1,0 +1,13 @@
+rc=1
+--- stdout
+=== cycc self-host fixpoint (stages in @T@/fp_fail1_fixpoint/../st_fail1_fixpoint) ===
+  [1/3] cat src/main.cyr | cycc > c1...
+--- stderr
+  FAIL: stage c1 compile failed (stderr: @T@/fp_fail1_fixpoint/../st_fail1_fixpoint/c1.err)
+error: boom
+line2
+--- build/
+cycc
+--- build/cycc
+#!/bin/sh
+echo "error: boom" >&2; echo "line2" >&2; exit 3

@@ -19,7 +19,9 @@ reads and writes.
 | `ab.cyr` | `cyrius run programs/dev/ab.cyr <old_ref> <new_ref> [--runs N]` — A/B self-compile timing of two refs' committed compilers (own sources and same input) |
 | `envprobe.cyr` | `cyrius run programs/dev/envprobe.cyr` — a dev machine's inventory (sysctls, limits, locale, binfmt, network); diff two boxes' outputs |
 | `keepboth.cyr` | `cyrius run programs/dev/keepboth.cyr [--sep] <file>` — resolve every conflict block by keeping both sides; exits 1 when there was none |
+| `fixpoint.cyr` | `cyrius run programs/dev/fixpoint.cyr --install <scratch-dir>` — rebuild `build/cycc` from the source at a fixpoint (c1 = build/cycc(src), c2 = c1(src), c3 = c2(src); c2 == c3 required; build/cycc replaced by an atomic rename); `--fixpoint <scratch-dir>` runs the same stages and check and installs nothing |
 
-Rebuilding `build/cycc` from the source at a fixpoint is `sh scripts/build-cycc-verify.sh --install <scratch-dir>`
-(c1 = build/cycc(src), c2 = c1(src), c3 = c2(src); c2 == c3 required; build/cycc replaced by an atomic rename);
-`--fixpoint <scratch-dir>` runs the same stages and check and installs nothing.
+`fixpoint.cyr` was `scripts/build-cycc-verify.sh`'s `--install` / `--fixpoint` (the script keeps its verify
+mode, CI's trust-root job). It is compiled by a cyrius compiler and checks one, so its verdicts are not its own
+bytes: every comparison is an exec of `cmp -s` and every digest of `sha256sum`, and `cyrius run` builds it with
+the installed (tagged) toolchain's compiler, not the `build/cycc` it rebuilds.

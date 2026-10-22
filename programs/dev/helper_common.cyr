@@ -1201,15 +1201,30 @@ fn hc_capture(argv, env, cwd, errp, tmo_ms): i64 {
 
 # ── the checkout and the scratch dir ─────────────────────────────────────────────────────
 
-# The cyrius checkout a helper works on: `explicit` when given (a Str, else 0), else
-# $CYRIUS_REPO, else the nearest directory at or above the current one holding src/main.cyr
-# and cyrius.cyml (the helpers run from the checkout; the scripts they replaced took their own
-# location). Absolute; 0 when none is found.
+# The cyrius checkout a Python-replacing helper works on: `explicit` when given (a Str, else 0),
+# else $CYRIUS_REPO — each as written, the way the scripts used them — else the nearest directory
+# at or above the current one holding src/main.cyr and cyrius.cyml (the helpers run from the
+# checkout; the scripts they replaced took their own location). 0 when none is found.
 fn hc_repo_root(explicit): i64 {
-    if (explicit != 0) { return hc_abspath(explicit); }
+    if (explicit != 0) { return explicit; }
     var e = hc_getenv_ne("CYRIUS_REPO");
-    if (e != 0) { return hc_abspath(e); }
-    var d = hc_getcwd();
+    if (e != 0) { return e; }
+    return _hc_find_root(hc_getcwd());
+}
+
+# The same for a shell-replacing helper: $CYRIUS_REPO as written when absolute (a relative one is
+# taken from the shell's current directory, $PWD), else the checkout around $PWD.
+fn hc_repo_root_sh(): i64 {
+    var e = hc_getenv_ne("CYRIUS_REPO");
+    if (e != 0) {
+        if (hc_at(e, 0) == 47) { return e; }
+        return hc_cat3(hc_pwd(), hc_s("/"), e);
+    }
+    return _hc_find_root(hc_pwd());
+}
+
+fn _hc_find_root(start): i64 {
+    var d = start;
     loop {
         var a = hc_d(hc_dup(hc_joinc(d, "src/main.cyr")));
         var b = hc_d(hc_dup(hc_joinc(d, "cyrius.cyml")));
@@ -1219,6 +1234,22 @@ fn hc_repo_root(explicit): i64 {
         if (hc_n(d) == 0) { return 0; }
     }
     return 0;
+}
+
+# The shell's `pwd`: $PWD when it names the current directory (the logical path, links kept),
+# else the kernel's.
+fn hc_pwd(): i64 {
+    var p = hc_getenv_ne("PWD");
+    if (p != 0) {
+        if (hc_at(p, 0) == 47) {
+            var a[256];
+            var b[256];
+            if (sys_stat(hc_cstr(p), &a) == 0 && sys_stat(".", &b) == 0) {
+                if (load64(&a) == load64(&b) && load64(&a + 8) == load64(&b + 8)) { return p; }
+            }
+        }
+    }
+    return hc_getcwd();
 }
 
 # The scratch root: $CYRIUS_SCRATCH, else ${XDG_CACHE_HOME:-$HOME/.cache}/c6.
