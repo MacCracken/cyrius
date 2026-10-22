@@ -15606,7 +15606,9 @@ fn _gs_dst_tp(S, fi, i): i64 {
 # 1 = the expression from token j is a struct result D24 refuses into a scalar: over 8 B, not a `Str` or a dyn.
 fn _gs_sres_big(S, fi, j): i64 {
     _gs_late = 1;
-    return _rcv_big(S, _gs_sres(S, fi, _gs_open, j, _gs_expr_end(S, j)));
+    var e = _gs_expr_end(S, j);
+    if (_rcv_big(S, _gs_sres(S, fi, _gs_open, j, e)) == 1) { return 1; }
+    return _gs_sval_big(S, j, e);   # 6.7.17 (D106): a struct value that is no call
 }
 # The struct the expression [lo, hi) results in, as D24 / D27 / D32 read it: a whole call — free, generic (at the
 # binding the call makes), a method, a known `&f` through fncallN / callptr — inside any parentheses, or one

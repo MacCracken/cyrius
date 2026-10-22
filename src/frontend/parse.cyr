@@ -5288,7 +5288,9 @@ fn _cop_sres(S, ti, cd): i64 {
     if (op != s + 1) { return 0; }
     if (TOKTYP(S, s) != 2) { return 0; }
     _rcv_fi = _dsr_afi;
+    _rcv_isv = _dsr_isv;   # 6.7.17 (D106): `y += q`
     var r = _asa_refuse(S, TOKVAL(S, s), op, _dsr_at, _dsr_fno, _dsr_sid);
+    _rcv_isv = 0;
     _rcv_fi = 0 - 1;
     return r;
 }
@@ -5801,7 +5803,7 @@ fn _dsr_rec(S, ti): i64 {
         at = _sc_beg;
     } else {
         var c = _dsr_call(S, ti);
-        if (c < 0) { return 0; }
+        if (c < 0) { return _dsr_val(S, ti); }   # 6.7.17 (D106): a struct value that is no call
         var cfi = _pair_gen_inst(S, c);   # parsed already: the instance its call made (a dedup hit)
         if (cfi < 0) { return 0; }
         sid = GFRS(S, cfi);
@@ -5814,7 +5816,84 @@ fn _dsr_rec(S, ti): i64 {
     _dsr_fno = fno;
     _dsr_at = at;
     _dsr_afi = afi;
+    _dsr_isv = 0;
     return 1;
+}
+# ⛔ 6.7.17 (D106, the user's decision, 2026-10-22: "refuse it as the struct call is there", the struct twin of D24)
+# — A STRUCT VALUE THAT IS NO CALL INTO A WORD SLOT: `y = q;`, `var z: i64 = q;`, `w.n = q;`, `buf[0] = q;`, `*p = q;`,
+# `y += q;` and `W { q, 0 }` kept q's first word (77 for `q = Q { 333, 444 }`), silently, where each refuses `mkp()`.
+# The value [a0, e), inside any parentheses wrapping it whole, is one struct value over 8 B (`_rcv_big`: not a `Str`,
+# a dyn, 8 B or less, which keep their word as the call's result does; not a tuple): an inline local, a by-value
+# parameter, a captured copy or an inline global (`_hl_amp_sid` — a handle, a `*T` and a `Str` hold an address), a
+# dereference of a pointer to a struct (`*pq`, `**ppq`, `*(&q)`, `*w.pq`: `_hl_dpsid`) or a chain ending in a
+# struct-typed field (`w.q`, `pw.v.q`: `_hl_pchain`). Its struct, `_ssv_a` / `_ssv_e` the span a refusal names
+# (`_ssv_pr`), else 0. Each struct-call refusal reads it beside its call record (`_dsr_rec`, `_dsr_isv` 1), and the
+# name assignment (`_asa_sval`) and the typed declaration (`_svin_val`, the zone's `_svin_zval`) ask it: the call's
+# words with "which is the struct 'Q'" for "which returns the struct 'Q'". CHANGELOG [6.7.17]
+var _dsr_isv = 0;
+var _ssv_a = 0;
+var _ssv_e = 0;
+fn _ssv_at(S, a0, e): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var a = _ie_unparen(S, a0, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 0; }
+    var t = TOKTYP(S, a);
+    var sid = 0;
+    if (t == 2) {
+        if (pe == a + 1) { sid = _hl_amp_sid(S, TOKVAL(S, a)); }
+        else { sid = _ssv_fld(S, a, pe); }
+    } elif (t == 8) {
+        if (pe - a >= 2) { if (_gz_split(S, a, pe) == 0 - 1) { sid = _hl_dpsid(S, a + 1, pe); } }
+    }
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    _ssv_a = a;
+    _ssv_e = pe;
+    return sid;
+}
+# ... a chain [a, pe) whose last step is a struct-typed FIELD (no call after it): that field's struct, else 0.
+fn _ssv_fld(S, a, pe): i64 {
+    var dot = _hl_lastdot(S, a, pe);
+    if (dot < 0) { return 0; }
+    if (dot + 2 != pe) { return 0; }
+    if (TOKTYP(S, dot + 1) != 2) { return 0; }
+    var t = _hl_pchain(S, a, pe);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return t;
+}
+# The span `_ssv_at` read, as the source spells it, on stderr.
+fn _ssv_pr(S): i64 {
+    var nm = TOKVAL(S, _ssv_a);
+    if (_ssv_e != _ssv_a + 1) { nm = _src_span_nm(S, _ssv_a, _ssv_e, TOKVAL(S, _ssv_e - 1)); }
+    PRSTR(S + 0xEC00000 + nm);
+    return 0;
+}
+# ... `_dsr_rec`'s twin for the value [ti, cursor): 1 with `_dsr_isv` 1, its struct `_dsr_sid`, reported at its first
+# token. CHANGELOG [6.7.17]
+fn _dsr_val(S, ti): i64 {
+    var sid = _ssv_at(S, ti, GTI(S));
+    if (sid <= 0) { return 0; }
+    _dsr_sid = sid;
+    _dsr_fno = TOKVAL(S, _ssv_a);
+    _dsr_at = _ssv_a;
+    _dsr_afi = 0 - 1;
+    _dsr_isv = 1;
+    return 1;
+}
+# `y = q;` (`_pcmpe_struct_assign`, the value [st, cursor) just parsed, `noff` no struct): refused as `y = mkp();` is
+# (`_asa_refuse`: D27 / D32 / D33's words), naming the value. 1 = refused, `term` consumed. CHANGELOG [6.7.17]
+fn _asa_sval(S, noff, st, term): i64 {
+    var sid = _ssv_at(S, st, GTI(S));
+    if (sid <= 0) { return 0; }
+    _rcv_isv = 1;
+    var r = _asa_refuse(S, noff, st - 1, _ssv_a, TOKVAL(S, _ssv_a), sid);
+    _rcv_isv = 0;
+    if (r == 0) { return 0; }
+    return _asa_term(S, term);
 }
 # The store through the pointer [a, e) (`from` the destination's first token, for `_dsr_tdep`), spelled [na, ne), of
 # `_dsr_rec`'s result: refused when the pointer reaches no struct of its own (a scalar, a pointer slot of another
@@ -5871,7 +5950,9 @@ fn _dsr_amp(S, d, oe, ti, at, fno, afi, sid): i64 {
     if (TOKTYP(S, b) != 27) { return 0; }
     if (TOKTYP(S, b + 1) != 2) { return 0; }
     _rcv_fi = afi;
+    _rcv_isv = _dsr_isv;   # 6.7.17 (D106): `*(&x) = q`
     _asa_refuse(S, TOKVAL(S, b + 1), d, at, fno, sid);
+    _rcv_isv = 0;
     _rcv_fi = 0 - 1;
     return 1;
 }
@@ -5926,8 +6007,13 @@ fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
     PRSTR(S + 0xEC00000 + dn);
     _dsr_ty(S, w, tm, tk);
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
-    PRSTR("', which returns the struct '");
+    if (_dsr_isv == 1) {   # 6.7.17 (D106): a struct value, named as written
+        _ssv_pr(S);
+        PRSTR("', which is the struct '");
+    } else {
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
+        PRSTR("', which returns the struct '");
+    }
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
     PRSTR("' - store it through a '*");
     PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
@@ -6253,7 +6339,9 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
         if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
         if (_istr_hcp(S, noff, st, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `Str` method result / field
         _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st);   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
-        _istr_asg(S, noff, st); return 0;   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` handle
+        _istr_asg(S, noff, st);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` handle
+        if (dt == 0) { return _asa_sval(S, noff, st, term); }   # 6.7.17 (D106): `y = q;`, q a struct value
+        return 0;
     }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
