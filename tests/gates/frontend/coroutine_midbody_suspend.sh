@@ -86,7 +86,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a1.cyr" > "$T/a1" 2>"$T/a1.err" || {
   echo "FAIL coroutine_midbody_suspend axis1: probe did not compile"; grep -m2 '^error' "$T/a1.err"; exit 1; }
-chmod +x "$T/a1"; timeout 30 "$T/a1"; got=$?
+chmod +x "$T/a1"; got=0; timeout 30 "$T/a1" || got=$?
 if [ $got -ne 0 ]; then
   echo "FAIL coroutine_midbody_suspend axis1: exit $got"
   echo "  101-163 = the body top ran that many times minus 100 (a real suspend runs it ONCE)"
@@ -114,7 +114,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a2.cyr" > "$T/a2" 2>"$T/a2.err" || {
   echo "FAIL coroutine_midbody_suspend axis2: the no-await async fn did not compile"; grep -m2 '^error' "$T/a2.err"; exit 1; }
-chmod +x "$T/a2"; "$T/a2"; g2=$?
+chmod +x "$T/a2"; g2=0; "$T/a2" || g2=$?
 [ "$g2" -eq 42 ] || { echo "FAIL coroutine_midbody_suspend axis2: deferred-then-forced async gave $g2, expected 42."; echo "  The transform fired on a body with no suspend point and mistook its parameter for a frame."; exit 1; }
 
 # ── axis 3 — the shipped async fixtures must be bit-for-bit unaffected ───────────────────
@@ -373,7 +373,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a5.cyr" > "$T/a5" 2>"$T/a5.err" || {
   echo "FAIL coroutine_midbody_suspend axis5: the 3-parameter coroutine did not compile"; grep -m2 '^error' "$T/a5.err"; exit 1; }
-chmod +x "$T/a5"; timeout 30 "$T/a5"; g5=$?
+chmod +x "$T/a5"; g5=0; timeout 30 "$T/a5" || g5=$?
 [ "$g5" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis5: 3-param coroutine exit $g5 (201 = a+b+c wrong, 101+ = body top re-ran)"; exit 1; }
 
 # ── axis 6 — a suspend INSIDE A LOOP, which is the filed consumer shape ──────────────────
@@ -410,7 +410,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a6.cyr" > "$T/a6" 2>"$T/a6.err" || {
   echo "FAIL coroutine_midbody_suspend axis6: the in-loop suspend did not compile"; grep -m2 '^error' "$T/a6.err"; exit 1; }
-chmod +x "$T/a6"; timeout 30 "$T/a6"; g6=$?
+chmod +x "$T/a6"; g6=0; timeout 30 "$T/a6" || g6=$?
 [ "$g6" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis6: suspend inside a loop gave $g6 (201 = accumulator wrong across iterations)"; exit 1; }
 
 # ── axis 7 — &local across a suspend (v6.5.70; refused at v6.5.69) ───────────────────────
@@ -439,7 +439,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a7.cyr" > "$T/a7" 2>"$T/a7.err" || {
   echo "FAIL coroutine_midbody_suspend axis7: &local in a coroutine did not compile"; grep -m2 '^error' "$T/a7.err"; exit 1; }
-chmod +x "$T/a7"; timeout 30 "$T/a7"; g7=$?
+chmod +x "$T/a7"; g7=0; timeout 30 "$T/a7" || g7=$?
 [ "$g7" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis7: a local array did not survive two suspends (exit $g7)"; exit 1; }
 
 # ── axis 8 — ARITY LADDER: the v6.5.69 silent miscompile ─────────────────────────────────
@@ -469,7 +469,7 @@ var e = main();
 EOF
 CYRIUS_ASYNC=1 "$T/stage1" < "$T/a8.cyr" > "$T/a8" 2>"$T/a8.err" || {
   echo "FAIL coroutine_midbody_suspend axis8: the arity ladder did not compile"; grep -m2 '^error' "$T/a8.err"; exit 1; }
-chmod +x "$T/a8"; timeout 30 "$T/a8"; g8=$?
+chmod +x "$T/a8"; g8=0; timeout 30 "$T/a8" || g8=$?
 [ "$g8" -eq 0 ] || {
   echo "FAIL coroutine_midbody_suspend axis8: exit $g8 — 71/81 = the async form is wrong at that"
   echo "  arity while 60/70/80 (the 6-param async and the PLAIN fns) would have been correct."
@@ -606,7 +606,7 @@ CYRIUS_ASYNC=1 "$T/stage1" < "$T/a9.cyr" > "$T/a9" 2>"$T/a9.err" || {
   echo "  (a REFUSAL here is a capability regression — 6.6.4 compiled this and answered correctly)"
   grep -m2 '^error' "$T/a9.err"; exit 1; }
 [ -s "$T/a9" ] || { echo "FAIL coroutine_midbody_suspend axis9: empty binary"; exit 1; }
-chmod +x "$T/a9"; timeout 30 "$T/a9"; g9=$?
+chmod +x "$T/a9"; g9=0; timeout 30 "$T/a9" || g9=$?
 [ "$g9" -eq 0 ] || {
   echo "FAIL coroutine_midbody_suspend axis9: exit $g9 — 91/92 = \`&q\` and \`q.v\` disagree on which"
   echo "  frame a single-slot struct local lives in; 93/94 = a multi-word struct local reads the wrong"
