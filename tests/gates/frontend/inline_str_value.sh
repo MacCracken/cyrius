@@ -184,7 +184,7 @@
 # the inferred `gg(h)`), wrapped — is a `Str` handle global, in the declaration zone and after the first statement, as
 # the same line in a fn is: `bb.len` reads 3 (ZS1, the filed repro verbatim; ZS2 the zone line; the tcyr's zs_* rows),
 # where it was "no struct type in scope for 'bb'". Its value is unchanged (the header's address). A name keeps its word
-# (`var H = gt;`, D22a / D22b), and so do a field read and an if-expression (the tcyr's zs_word row).
+# (`var H = gt;`, D22a / D22b), and so do a field read and an if-expression of handles (ZS3, ZS4: `G.len` refused).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
@@ -205,7 +205,8 @@
 # `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
 # refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
 # on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); ZS1 the D22 filed repro
-# verbatim (3 on every leg), ZS2 its zone line (6.7.17, D22); CMP a handle into the retyped methods builds
+# verbatim (3 on every leg), ZS2 its zone line, ZS3 / ZS4 a field read and an if-expression keep their word (6.7.17,
+# D22); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -1328,6 +1329,28 @@ alloc_init();
 syscall(60, rd());
 EOF
 runs ZS2 3 "the filed zone line: \`var bb = str_from(..);\` above a fn reading \`bb.len\`"
+# ZS3 / ZS4 (6.7.17, the finish pass): D22 types only a whole call — a field read and an if-expression of `Str` handles
+# keep their word after the first statement, as in a fn (`G.len` refused by name). Mutation (2026-10-22): `_gu_lstr`
+# answering `Str` for every line -> RED ZS3 x4, ZS4 x4 (each compiled).
+cat > "$T/ZS3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct ZW { s: Str; n; }
+alloc_init();
+var gw = ZW { str_from("ab"), 1 };
+var G = gw.s;
+syscall(60, G.len);
+EOF
+refused ZS3 "no struct type in scope for 'G'" "a field read keeps its word: \`var G = gw.s;\` after a statement"
+cat > "$T/ZS4.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+alloc_init();
+var c = 1;
+var G = if (c == 1) { str_from("ab") } else { str_from("abc") };
+syscall(60, G.len);
+EOF
+refused ZS4 "no struct type in scope for 'G'" "an if-expression of handles keeps its word, after a statement"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1386,7 +1409,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=126   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1, ZS2 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=128   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1-ZS4 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
