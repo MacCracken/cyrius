@@ -18315,7 +18315,9 @@ fn _classify_return_type(S, rt_noff): i64 {
 fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     STI(S, GTI(S) + 1);  # consume name
-    if (PEEKT(S) == 19) { while (PEEKT(S) != 20 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    # 6.7.17: the `<..>` NESTED (`_skip_targ_list`), as `_capture_tparams` reads it: to the first `>`, a bound's
+    # `<T: Show<i64>>` (one `>>`) ran pass 1 past the file's end, every later declaration unscanned. CHANGELOG [6.7.17]
+    SKIP_GENERICS(S);
     # 6.7.7: the parameter list as one balanced `( .. )` first, so nothing in a parameter default
     # (a refused `{`) is taken for the body. The same cursor for every list that holds no brace.
     if (PEEKT(S) == 10) {

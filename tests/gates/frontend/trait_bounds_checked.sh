@@ -189,6 +189,8 @@
 #      function 'main'" with the later fn bodies never parsed — and `<T: Show<i64> >` added "expected '{', got '>'".
 #      DS1 / DS2 D5's line and the next fn's own error, both spellings; DS3 (control) bounded structs, then a bounded
 #      generic below them (exit 4). Mutant (2026-10-22): the compiler before (e65604d5d) -> RED DS1 DS2.
+#      DS4 the same class in pass 1's fn skip (`_prescan_skip_fn`): `fn d<U: Show<i64>>` stepped pass 1 past the end
+#      of the file, so a later struct's field error was never reported. Mutant: 5ffeb0420 (DS1's fix alone) -> RED DS4.
 #   DL (6.7.17, met in genb GB1) A BOUND'S REFUSAL PUTS THE PANIC LATCH BACK (`_bnd_make`): pass 1 has no statement
 #      resync, so `fn c<U: Nope2>`'s "unknown trait" held the latch to the end of the scan and swallowed every later
 #      generic's bound refusal and every later struct's field error. DL1 a fn's, a struct's and a fn's unknown bound,
@@ -907,6 +909,9 @@ errs ds2 2 "DS2: struct B<T: Show<i64> > — no \"expected '{', got '>'\"" \
     "error:<source>:2:13: a trait in a bound takes no type arguments: 'Show'" "error:<source>:3:28: expected ';', got number 2"
 printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nstruct B<T: Show> { a: T; }\nstruct C<T, U: Show> { a: T; b: U; }\nfn g<T: Show>(v: T): i64 { return v.show(); }\nfn main(): i64 { var c: C<i8, i64>; c.b = 3; return c.b + g(1); }\nsyscall(60, main());\n' > "$T/ds3.cyr"
 exits ds3 4 "DS3: bounded structs, then a bounded generic below them"
+printf 'trait Show { fn show(self): i64; }\nfn d<U: Show<i64>>(u: U): i64 { return 1; }\nstruct Q { a: Foo; }\nsyscall(60, 3);\n' > "$T/ds4.cyr"
+errs ds4 2 "DS4: fn d<U: Show<i64>> — D5's line, and the next struct's own (pass 1's fn skip)" \
+    "error:<source>:2:9: a trait in a bound takes no type arguments: 'Show'" "error:<source>:3:15: unknown type 'Foo' for struct field 'a'"
 
 # DL — 6.7.17: a bound's refusal puts the panic latch back (`_bnd_make`)
 UTB="in the bound on type parameter"
