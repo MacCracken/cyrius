@@ -185,6 +185,13 @@
 #   MCO3 `_esub_assign` without its `_cop_dst`          -> RED 2: CO10 CO11 (an array's element; `p[0]` judged by its word)
 #   MCO4 `_slice_fld_store` without its `_cop_dst = 2`  -> RED 1: CO14
 #   MCO5 the float arm warning beside a refusal         -> RED 1: CO8w
+#   (the review, 2026-10-22: CO20-CO24 the same stores through a generic's T at a scalar instance, a stub as their `=`
+#   forms are; COK4 / COK5; COX CO21 on aarch64 / cx / PE)
+#   (each a scratch copy of src / lib / tests / programs — the AS0 rows read docs/, so they are red in every copy)
+#   MCO6 the tree before it (the integration head)      -> RED 9: CO20-CO24 (compiled, the first word added: 78), CO24b
+#                                                          (the i32 instance's own "cannot assign 'y: T'"), COX CO21 x3
+#   MCO7 `_gs_cop_de` answering eq (no compound pair)   -> RED 6: CO21-CO23, COX CO21 x3
+#   MCO8 `_gs_cop_asg` answering 0                      -> RED 3: CO20 CO24 CO24b
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1713,6 +1720,29 @@ refuse "CO19 a field's for step" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn
 accept "COK1 y += mkp().a, a field of the result" "$CQ"'fn g(): i64 { var y = 1; y += mkp().a; return y - 300; }'"$FTE" 34 'syscall(60, 34);'
 accept "COK2 an 8 B result keeps its word" "$CQ"'fn g(): i64 { var y = 1; y += mk8(); return y; }'"$FTE" 10 'syscall(60, 10);'
 accept "COK3 y += (mkp()).b, a wrapped result's field" "$CQ"'fn g(): i64 { var y = 1; y += (mkp()).b; return y - 400; }'"$FTE" 45 'syscall(60, 45);'
+# 6.7.17 (D15, its review) — THROUGH A GENERIC'S T: at a scalar instance `y += R` (y: T), `*p += R` / `p[0] -= R`
+# (p: *T), `b.v |= R` (b: *Box<T>) and a for step combined Q's first word (78), silently (CO24b: `gc<i32>` was refused
+# in the instance's words, "cannot assign 'y: T'", where `y = R` is a stub): the base parse leaves a T-typed store to
+# the D1 stub scan (`_dsr_tdep`), which read only the `=` forms. Now it reads `OP=` as its `=` form (`_gs_cop_de`,
+# `_gs_cop_asg`): no scalar instance, the call refused naming the line. COK4 / COK5: 8 B and a field of the result
+# keep their word.
+CGM="generic 'gc' has no i64 (or other scalar) instance"
+refuse "CO20 y += mkp(); (y: T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp(); return 7; }
+fn g(): i64 { return gc(1); }'"$FTE" one
+refuse "CO21 *p += mkp(); (p: *T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { *p += mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
+refuse "CO22 p[0] -= mkp(); (p: *T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { p[0] -= mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
+refuse "CO23 b.v |= mkp(); (b: *Box<T>) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(b: *Box<T>): i64 { b.v |= mkp(); return 7; }
+fn g(): i64 { var b: Box<i64>; b.v = 1; return gc(&b); }'"$FTE" one
+refuse "CO24 a for step y += mkp(); (y: T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; for (var i = 0; i < 1; y += mkp()) { i = 1; } return 7; }
+fn g(): i64 { return gc(1); }'"$FTE" one
+refuse "CO24b gc<i32>(1): the stub's words, as y = mkp() has" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp(); return 7; }
+fn g(): i64 { return gc<i32>(1); }'"$FTE" one
+accept "COK4 *p += mk8(); (p: *T), 8 B keeps its word" "$CQ"'fn gc<T>(p: *T): i64 { *p += mk8(); return 0; }
+fn g(): i64 { var z = 1; gc(&z); return z; }'"$FTE" 10 'syscall(60, 10);'
+accept "COK5 y += mkp().a; (y: T), a field of the result" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp().a; return y - 300; }
+fn g(): i64 { return gc(1); }'"$FTE" 34 'syscall(60, 34);'
 
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
@@ -2098,6 +2128,8 @@ fn main(): i64 { return gds(5); }'"$TE" one
     refuse "UPX [$1] UP5" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
     refuse "COX [$1] CO5" "cannot assign '\*p' from 'mkp'" "$CQ"'fn g(): i64 { var x = 10; var p = &x; *p += mkp(); return x; }'"$FTE" one
     refuse "COX [$1] CO7" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; w.n += mkp(); return w.n; }'"$FTE" one
+    refuse "COX [$1] CO21" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { *p += mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
     refuse "FEX [$1] FE1" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
     refuse "FEX [$1] FE15b" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
     refuse "FEX [$1] FE17" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
@@ -2117,10 +2149,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29; D1 (genr) + 44): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review); D1 (genr) + 44): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 614 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 614"; exit 1
+if [ $((nrefuse + naccept)) -lt 625 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 625"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

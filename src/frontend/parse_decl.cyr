@@ -13915,8 +13915,9 @@ fn _gs_fst_sres(S, fi, i): i64 {
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
     var eq = _gs_dsr_eq(S, i);
     if (eq < 0) { return 0; }
-    if (TOKTYP(S, eq - 1) != 2) { return 0; }
-    if (TOKTYP(S, eq - 2) != 41) { return 0; }
+    var de = _gs_cop_de(S, eq);   # 6.7.17 (D15): `b.v += R`
+    if (TOKTYP(S, de - 1) != 2) { return 0; }
+    if (TOKTYP(S, de - 2) != 41) { return 0; }
     if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
     if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
     _gsw_k = 3;
@@ -13966,6 +13967,28 @@ fn _gs_lit_els(S, fi, i, nm): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.17 (D15, the user's decision, 2026-10-22) — THE D1 STUB SCAN READS A COMPOUND `OP=` STORE AS ITS `=` FORM: at a
+# scalar T, `y += R` (y typed by T), `*p += R` (p a `*T`), `p[0] += R` and `b.v += R` (b reading T) combine a struct
+# result over 8 B with a word, which a plain fn refuses (`_cop_sres`, parse.cyr) and the base parse leaves to the scan
+# (`_dsr_tdep`), so `g(5)` compiled and added Q's first word. The end of a store's destination whose `=` is at token eq:
+# eq, or eq - 1 when an `OP` token before it makes the pair a compound assignment. CHANGELOG [6.7.17]
+fn _gs_cop_de(S, eq): i64 {
+    if (_is_cop_tok(TOKTYP(S, eq - 1)) == 1) { return eq - 1; }
+    return eq;
+}
+# ... `y OP= R` at token i (y's name, an `OP` and `=` after it), y declared with T (`_gs_dst_tp`), R a struct result
+# over 8 B: `_gs_asg_sres`'s judgment of `y = R`. 1 = such a store.
+fn _gs_cop_asg(S, fi, i): i64 {
+    if (TOKTYP(S, i + 2) != 4) { return 0; }
+    var pt = TOKTYP(S, i - 1);
+    if (pt == 41 || pt == 3 || pt == 49) { return 0; }   # a field, a `var`, a label
+    if (pt == 8) { return 0; }   # `*p OP= R`: `_gs_dsr_stmt`'s
+    if (_gs_dst_tp(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, i + 3) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i;
+    return 1;
+}
 # ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
 # statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
 # T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
@@ -13976,7 +13999,7 @@ fn _gs_sub_sres(S, fi, i): i64 {
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
     var eq = _gs_dsr_eq(S, i);
     if (eq < 0) { return 0; }
-    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    if (TOKTYP(S, _gs_cop_de(S, eq) - 1) != 29) { return 0; }   # 6.7.17 (D15): `p[i] += R` too
     var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
     if (d < 0) { return 0; }
     if (TOKTYP(S, d + 1) != 49) { return 0; }
