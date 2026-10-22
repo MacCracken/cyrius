@@ -346,11 +346,12 @@ fn _tn_seen_at(S, ti): i64 {
 # list was skipped unread, so `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`, `var b: Box<Pt<nosuch>>;`,
 # `fn f(p: Pt<i64>)` and `Vec<Pt<nosuch>>` compiled and a name inside the list was never checked. Refused once, at the
 # name (the user's D6 (a), 2026-10-18), as `_tn_refuse` refuses an annotation: the caller skips the list as before and
-# reads the name's own type, so nothing cascades. A dyn (`dyn Show<..>`) is the dyn pre-pass's; a generic struct, `Vec`,
-# Result / Option / Tagged, cstring, an enum and a type parameter are not this shape. 1 = the shape. CHANGELOG [6.7.15]
+# reads the name's own type, so nothing cascades. A dyn (`dyn Show<..>`) is the dyn pre-pass's; a generic struct, `Vec`
+# and a type parameter are not this shape. 1 = refused. 6.7.16 (D88): 2 / 3 = a Result / generic enum list read, 3
+# when the read refused an argument in it; the caller steps the list after any of them. CHANGELOG [6.7.15]
 fn _ngt_refuse(S, nti): i64 {
     var tail = _ngt_tail(S, nti);
-    if (tail == 0) { return 0; }
+    if (tail == 0) { return _ngt_hread(S, nti); }
     return _ngt_say(S, nti, tail);
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
@@ -366,8 +367,117 @@ fn _ngt_tail(S, nti): i64 {
         if (_dyn_is(S, sid) == 1) { return 0; }
         return " is not a generic struct: it takes no type arguments";
     }
-    if (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 0) { return 0; }
-    return " takes no type arguments";
+    if (_ngt_scalar(L64(S + 0xEC00000 + noff)) == 1) { return " takes no type arguments"; }
+    if (_ngt_hnp(S, noff) == 0) { return " takes no type arguments"; }   # 6.7.16 (D88): `Color<i64>`, `Option<..>`
+    return 0;
+}
+# ⛔ 6.7.16 (the user's D88, 2026-10-20) — `Name<..>` WHERE NAME IS AN ENUM, Result, Option, Tagged OR cstring: the
+# list was stepped unread in every position, so `var e: Color<i64>`, `fn f(p: Result<Nope>)` and `s: cstring<i64>`
+# compiled (a name in the list that is no type included), and a fn's own `: Option<i64>` return was a parse error. By
+# declaration: a name that declares no type parameters — an enum declared without `<..>`, Option and Tagged
+# (lib/tagged.cyr declares none), cstring — is refused once at the name with D7's words (`_ngt_tail`); Result
+# (lib/result.cyr's `enum Result<T, E>`, two when no enum declares it) and an enum declaring its own `<..>` have the
+# list READ (`_ngt_hread`): each argument as a type argument is read, nothing minted, and D5's count. CHANGELOG [6.7.16]
+# The type parameters handle name `noff` declares — an enum's from its declaration's `<..>` (0 without one, above or
+# below the use), Result's 2 when no enum declares it, Option's / Tagged's / cstring's 0 — or -1 when it is no enum,
+# Result, Option, Tagged or cstring.
+fn _ngt_hnp(S, noff): i64 {
+    var c = _tn_resolve(S, noff);
+    if (_tn_class(c) != 4) { return 0 - 1; }
+    var v = _tn_val(c);
+    if (v < 2 || v > 6) { return 0 - 1; }
+    var lt = _enum_decl_lt(S, noff);
+    if (lt >= 0) { return _tp_count_at(S, lt); }
+    if (lt == 0 - 1) { return 0; }
+    if (v == 3) { return 2; }
+    return 0;
+}
+# The `<` of the declaration `enum NAME <..>` of `noff` (any position in the file); -1 when it is declared with no
+# list, -2 when no enum of that name is declared.
+fn _enum_decl_lt(S, noff): i64 {
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        if (TOKTYP(S, k) == 60) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) {
+                if (TOKTYP(S, k + 2) == 19) { return k + 2; }
+                return 0 - 1;
+            } }
+        i = i + 1;
+    }
+    return 0 - 2;
+}
+# ... the list after handle name token `nti` that declares type parameters: read from its `<` as a pointer field's
+# generic list is (`_fld_targ_chk`) — each argument by `_parse_one_type_arg`, nothing minted, no bound judged, a struct
+# declared further down a name (`_ta_late`: the handle is 8 bytes whatever its arguments are), the arguments past the
+# declared count refused once (D5's words, `_ta_extra`) — the cursor, the owed closers, the read's flags and a latch
+# it set put back. Not under --syntax-only (silent, as D6 / D7: no name is resolved there). 2 = the shape (the caller
+# steps the list), 3 = the shape with an argument refused in it, 0 = not the shape.
+# ⛔ 6.7.16 — under CYRIUS_MONOMORPH=0 (no list is read or refused, a generic struct is its base) every `Name<..>`
+# answers 2, so the positions that step a list only when told (`_ngt_skip`: a return, a by-value field, `[*X<..>]`;
+# `_tn_slice_ngt`: `[X<..>]`, `slice<X<..>>`) step it as an annotation does there: `fn g(): Result<i64, Pt>`,
+# `f: Box<i64>` and `[Result<i64, Pt>]` were "expected '{', got '<'", "expected identifier, got '<'" and "expected
+# ']', got '<'". CHANGELOG [6.7.16]
+fn _ngt_hread(S, nti): i64 {
+    if (TOKTYP(S, nti) != 2) { return 0; }
+    if (TOKTYP(S, nti + 1) != 19) { return 0; }
+    if (_MONOMORPH_OK != 1) { return 2; }
+    var noff = TOKVAL(S, nti);
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    var np = _ngt_hnp(S, noff);
+    if (np <= 0) { return 0; }
+    if (_syntax_only == 1) { return 2; }
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    var sv_pn = _panic;
+    var sv_ck = _ta_chk;
+    var sv_lt = _ta_late;
+    var sv_rf = _ta_refd;
+    var sv_nj = _tck_nj;
+    var sv_vb = _ta_vbnd;
+    _ta_chk = 1;
+    _ta_late = 1;
+    _ta_refd = 0;
+    _ta_vbnd = 0;
+    _ta_pending_gt = 0;
+    STI(S, nti + 2);
+    _tck_last = 0;
+    _ngt_hargs(S, np, noff);
+    _tck_take();
+    var rf = _ta_refd;
+    _ta_chk = sv_ck;
+    _ta_late = sv_lt;
+    _ta_refd = sv_rf;
+    _tck_nj = sv_nj;
+    _ta_vbnd = sv_vb;
+    _ta_pending_gt = sv_gt;
+    if (sv_pn == 0) { _panic = 0; }
+    STI(S, sv);
+    return 2 + rf;
+}
+# ... its `np` arguments from the cursor (the first argument), then the extra check naming `noff`.
+fn _ngt_hargs(S, np, noff): i64 {
+    _parse_one_type_arg(S);
+    var k = 1;
+    while (k < np) {
+        if (_ta_comma(S) == 0) { k = np; }
+        else { _parse_one_type_arg(S); k = k + 1; }
+    }
+    var gk = 1;
+    if (_ta_xq == 1) { gk = 0; }   # quiet in a lookahead, as `_ta_rest`
+    _ta_extra(S, np, gk, noff);
+    return 0;
+}
+# 1 when handle name token `k` that declares type parameters is given more than it declares — the shape `_ngt_hread`
+# refuses (D5's words), read off the tokens: the impl check counts it as its reader's refusal (`_ty_rd_shape`).
+fn _ngt_hover(S, k): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, k)) > 0) { return 0; }
+    var np = _ngt_hnp(S, TOKVAL(S, k));
+    if (np <= 0) { return 0; }
+    if (_ta_list_n(S, k + 1) <= np) { return 0; }
+    return 1;
 }
 # The refusal itself, at name token `nti` (`tail` its words): once, silent under --syntax-only, the latch put back. 1.
 fn _ngt_say(S, nti, tail): i64 { return _ngt_say_n(S, nti, TOKVAL(S, nti), tail); }
@@ -391,7 +501,7 @@ fn _ngt_say_n(S, nti, noff, tail): i64 {
 # cascades (the user's D7, 2026-10-19). Cursor past a name: its non-generic `<..>` refused and stepped. CHANGELOG [6.7.16]
 fn _ngt_skip(S): i64 {
     if (PEEKT(S) != 19) { return 0; }
-    if (_ngt_refuse(S, GTI(S) - 1) == 1) { SKIP_GENERICS(S); }
+    if (_ngt_refuse(S, GTI(S) - 1) != 0) { SKIP_GENERICS(S); }   # 6.7.16 (D88): 2 / 3, a list read
     return 0;
 }
 # 1 when the name (its first 8 bytes `n`) is a builtin scalar: i8..i64, u8..u64, f32, f64, bool.

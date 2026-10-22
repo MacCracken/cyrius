@@ -321,19 +321,23 @@ LEX(S);
 # Emit initial jmp over fn bodies (bytecode JMP)
 var jmp_patch = EJMP0(S);
 
-# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
-
-# v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
-# body skip it fed. See src/main.cyr for the full note.
-
-# v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
+# v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr). ⛔ 6.7.16: read
+# BEFORE pass 1, as main.cyr (v6.3.33) and main_aarch64.cyr / main_win.cyr / main_x86_macho.cyr (v6.3.39) read it —
+# here it was read after, so pass 1 ran with the default flag under CYRIUS_MONOMORPH=0: generic structs' GSTP captured
+# and every pass-1 type-argument refusal made (`p: *Color<i64>` in a struct refused, where every other driver steps
+# it). CHANGELOG [6.7.16]
 var _mono_env = _read_env("CYRIUS_MONOMORPH");
 if (_mono_env != 0) {
     if (load8(_mono_env) == 48 && load8(_mono_env + 1) == 0) {
         _MONOMORPH_OK = 0;
     }
 }
+
+# Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
+
+# v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
+# body skip it fed. See src/main.cyr for the full note.
 
 # Pass 2: Parse struct and fn definitions (vars already registered)
 _tl_pass2(S, 0);   # 6.6.17: the ONE pass-2 dispatch, shared by every fork

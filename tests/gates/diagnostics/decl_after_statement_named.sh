@@ -985,6 +985,56 @@ row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf
 error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
 error:<source>:1:68: $ZZ"
 
+# DV7 — 6.7.16 (the f16 review): ONLY THE NAMES THE DERIVE WROTE. `_dl_dname` took ANY `<Type>_..` / `_cy_..` on a DERIVED
+# refused declaration's line as the derive's, so a user's `fn Q_h` there was stepped and its body never parsed (DV6 is
+# the NON-derived struct). Now exactly the names that registration emitted (lex_pp.cyr PP_DERIVE_CODEC / PP_DERIVE_FAM):
+# the codecs `<T>_to_json`, `<T>_from_json_str`, a struct's `<T>_from_json`; the accessors `<T>_<field>` /
+# `<T>_set_<field>` for a field of the declaration; a `_cy_` helper only on the line that emitted it; each name once
+# (a second `fn Q_set_y` is the user's duplicate). DV7 the review's dq.cyr verbatim (module scope, accessors); DV7b in a
+# fn body (the user's `fn Q_h` refused as nested, not stepped); DV7c `fn Q_y` on a Serialize-only struct (no accessors);
+# DV7d `fn Q_set_y` after the derive's own; DV7e a `_cy_json_skipval` on a later derive's line (the helper was the first
+# one's), an enum's `E_from_json` (an enum codec writes none), `T_w` (no field w).
+#   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
+#   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
+#   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
+row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
+" "error:<source>:4:1: a \`struct\` declaration $L
+error:<source>:4:273: $ZZ
+error:<source>:5: 'Q_h' expects 0 arguments, got 1"
+row5 DV7b "... in a fn body: the user's fn refused as nested" "$(printf 'fn f(): i64 {\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
+" "error:<source>:3:1: a \`struct\` declaration $IR a fn body
+error:<source>:3:248: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:3:285: $ZZ"
+row5 DV7c "fn Q_y on a Serialize-only struct is the user's" "${DH}var a = 1;
+a = 2;
+#derive(Serialize)
+struct Q { y; } fn Q_y(): i64 { return zz; }
+syscall(60, Q_y(4));
+" "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:10:2096: $ZZ
+error:<source>:11: 'Q_y' expects 0 arguments, got 1"
+row5 DV7d "a second fn Q_set_y (the user's duplicate) is the user's" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_set_y(): i64 { return zz; }\nsyscall(60, 0);\n')
+" "error:<source>:4:1: a \`struct\` declaration $L
+error:<source>:4:277: $ZZ"
+row5 DV7e "a later line's _cy_ helper, an enum's E_from_json, T_w (no field)" "${DH}var a = 1;
+a = 2;
+#derive(Serialize)
+struct Q { y; }
+#derive(Serialize)
+struct R { y; } fn _cy_json_skipval(): i64 { return zz; }
+#derive(Serialize)
+enum E { A; B; } fn E_from_json(): i64 { return zz2; }
+#derive(accessors)
+struct T { y; } fn T_w(): i64 { return zz3; }
+syscall(60, 0);
+" "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:12:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:12:1587: $ZZ
+error:<source>:14:1: an \`enum\` declaration must come before the first top-level statement (line 8)
+error:<source>:14:685: undefined variable 'zz2' (missing include or enum?)
+error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)
+error:<source>:16:274: undefined variable 'zz3' (missing include or enum?)"
+
 # UI — 6.7.16 (issues/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
 # REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
 # when PARSE_PROG parsed its body, in source order, so an earlier fn's `q: *Q` was "type 'Q' is declared after its use",
@@ -1071,6 +1121,49 @@ error:<source>:3:15: a \`struct\` declaration $IR a fn body"
 row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }\nfn g<T: Tr>(x: T): i64 { return 1; }\nsyscall(60, g<i64>(1) + f());\n')
 " "error:<source>:1:15: a \`trait\` declaration $IR a fn body" --syntax-only
 
+# UP — 6.7.16 (the f16 review): A PRE-WALK NAME STANDS DOWN ONLY FOR A DECLARATION THAT IS REPORTED. `_dl_inner_fill`
+# enters the names of a declaration at a statement start in ANY body, and pass 2 refuses one only where it parses the
+# body: a trait member's default no impl inherits, a bounded generic's base (a stub until instantiated) and a refused
+# nested fn's stepped body are never parsed — so a use standing down for such a name counted an error no line said (rc 1
+# and NOTHING printed: UP1 UP2 UP4 UP5), or the use's own report was lost (UP3: E's; UP6: Q's beside the nested fn's).
+# Now the entry a stand-down answers through is marked (`_dl_pw_used`) and, once everything is parsed (`_dl_pw_end`),
+# a marked name no reported declaration entered has its declaration reported at the keyword, in `_decl_inner`'s words,
+# once (UP7: three uses of one enum, one line). UP8 / UP9 controls: unused, nothing changes (rc 0, exit 3); the default
+# inherited (the body parsed) — the one report, as before; UP10 a reported declaration of the same name answers the use
+# (the unparsed one stays unsaid); UP11 `dyn Tr` / `impl Tr for P`; UP12 a kernel build's global replay (after the
+# program; x86_64 ELF, a kernel target) reaches the late flush.
+#   the lane before it (6059d821c)                   -> RED UP1-UP7 UP11 UP12 (rc 1 with no line, or the decl's
+#                                                       line missing), 41; UP8 UP9 UP10 green
+#   `_dl_pw_flush` returns at once                   -> RED UP1-UP7 UP11 UP12, 41
+#   `_dl_pw_flush` without its `_dl_rep_has` test    -> RED UP10, 5 (the unparsed Q said too)
+#   `_dl_pw_late` returns at once                    -> RED UP12, 5 (rc 1, nothing printed)
+row5 UP1 "a trait default no impl inherits: its struct used" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP2 "an uninstantiated bounded generic's base: its struct used" "$(printf 'fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }\ntrait Show { fn s(self): i64; }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP3 "a trait default's enum: E.B beside an undefined zz" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + zz; }\nvar r = h();\nsyscall(60, r);\n')
+" "error:<source>:2:30: $ZZ
+error:<source>:1:29: an \`enum\` declaration $IR a fn body"
+row5 UP4 "a trait default's trait: a bound naming it" "$(printf 'trait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nfn g<U: Tr>(x: U): i64 { return 1; }\nfn main(): i64 { return g<i64>(1); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`trait\` declaration $IR a fn body"
+row5 UP5 "a trait default's enum: a zone array size naming it" "$(printf 'var arr: i64[E.B];\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:2:29: an \`enum\` declaration $IR a fn body"
+row5 UP6 "a refused nested fn's body: its struct used" "$(printf 'fn f(): i64 { fn g(): i64 { struct Q { y; } return 1; } return 0; }\nfn h(q: *Q): i64 { return q.y; }\nsyscall(60, h(0) + f());\n')
+" "error:<source>:1:15: fn 'g' is defined inside fn 'f'; define it at top level
+error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP7 "three uses of one unparsed enum: one line" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + B + E.A; }\nvar r = h();\nsyscall(60, r);\n')
+" "error:<source>:1:29: an \`enum\` declaration $IR a fn body"
+ok5 UP8 "control: unused, nothing changes" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" 3
+row5 UP9 "control: the default inherited — its one report" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { a; }\nimpl T for P { }\nfn g(q: *Q): i64 { return 1; }\nfn main(): i64 { var p = P { 1 }; return p.d() + g(0); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 UP10 "a reported declaration of the name answers the use" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+row5 UP11 "dyn Tr and impl Tr for P, Tr in a trait default" "$(printf 'struct P { x; }\nfn g(x: dyn Tr): i64 { return 1; }\nimpl Tr for P { fn m(self): i64 { return 1; } }\ntrait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nsyscall(60, 0);\n')
+" "error:<source>:4:29: a \`trait\` declaration $IR a fn body"
+one "UP12 a kernel build (x86_64 ELF): a global's E.B, replayed after the program" "$(printf 'kernel;\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nvar g = E.B;\nfn main(): i64 { return g; }\n')
+" "error:<source>:2:29: an \`enum\` declaration $IR a fn body"
+
 # UZ — 6.7.16 (issues/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
 # CONTEXT NAMING A LATE (REFUSED) ENUM IS NO SECOND ERROR. A declaration-zone global's array size and an enum's value are
 # evaluated during pass 1's zone scan, before the first statement — and so the late declarations' names (`_dl_fill`) —
@@ -1124,7 +1217,7 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 " "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
 
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=120
+F5FLOOR=200
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

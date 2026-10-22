@@ -98,10 +98,27 @@
 #      lane's base b73e8d5fe). TRR1 that program — the impl's line, once; TRR2 `Option<Pt<i64>>` with a dyn formed above
 #      the impl — the impl's line alone (the lane's head printed the site's "the return type differs" instead).
 #      Mutant (2026-10-20): the lane's previous compiler (b667c0c69) -> RED 2: TRR1 (built), TRR2 (the site's line)
+#      Since 6.7.16's D88 (the user, 2026-10-20: "by declaration") such a list is no longer unread: Result's is READ
+#      and an enum's / Option's / Tagged's / cstring's refused at the name, so TRR1 is D7's line at `Pt` alone, TRR2 and
+#      TRR5 "'Option' takes no type arguments" alone (each was the impl's line); TRR7 / TRR8 the residual — a METHOD's
+#      `: Option<i64>` / `: Result<Pt<i64>>` against a member's `: i64` was "expected '{', got '<'" plus a cascade, with
+#      the impl's "returns .." line beside it; now the method reader's one line (TRR7b / TRR8b: under --syntax-only,
+#      where that line is silent, the impl's line is lint's one report, as TRR9's); TRR10 the D88 filing's repro 2
+#      (a member's `: Result<Nope>` against `: i64`, which compiled) — the reader's "unknown type 'Nope'" alone, TRR10b
+#      silent under lint as a member's `: Nope` is; TRR11 control: a member's `Result<i64, Pt>` against `: i64` keeps
+#      the impl's line, TRR11b both sides `Result<i64, Pt>` with a dyn formed build. TRR12: 6.7.15's D4 arm in
+#      `_tr_rt_bad` ("a name that is no type, wherever it stands") counts only the names a reader reads
+#      (`_ty_rd_scan(.., 1)`): a member's own `: U<Nope>` (a type parameter's list, read by no reader) against an impl's
+#      `: i64` stood the impl's line down and compiled, reported by no one; now the impl's line.
+#      TRR13 / TRR13b a member's / a method's `Result<i64, Pt, Pt>` (D5's, read off the tokens: `_ngt_hover`) — the
+#      reader's line alone; TRR13c under --syntax-only, where D5 is silent, the impl's line.
+#      Filed: docs/development/issues/2026-10-20-enum-and-handle-type-arguments-unread.md,
+#      docs/development/issues/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md (the residual)
+#      Mutants (2026-10-21, f16 FG3): see handle_type_args.sh's ledger
 #      TRR3-TRR6 (D5's shape): a generic struct given more type arguments than it declares is its reader's refusal too
 #      (`_ta_over`), so the impl adds no "returns .." line beside "'Box' takes 1 type argument, 2 given": TRR3 the
 #      review's dd7 (a member's `: Box<i64, Pt>`, the impl's `: Box`), TRR4 dd8 (the impl's `: Box<i64, Pt>`) — the
-#      reader's line alone; TRR5 `Option<Box<i64, Pt>>` (a list no reader reads) keeps the impl's line; TRR6 under
+#      reader's line alone; TRR5 `Option<Box<i64, Pt>>` (a list no reader read; since D88 the name's refusal) TRR6 under
 #      `--syntax-only`, where D5 is silent, dd7 keeps the impl's line (lint's one report of it). Mutant (2026-10-20):
 #      the lane's head aff3849ff -> RED 2: TRR3 TRR4 (two lines); `_ta_over`'s arm without its `_syntax_only` guard ->
 #      RED 1: TRR6 (no line)
@@ -556,16 +573,16 @@ refused_at tm6 "type 'Color' $FR" 3:23 "TM6: an enum declared below the trait"
 
 # ── TRR (6.7.16 review) — a reader-refused side is judged by the names a reader reads ──
 printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Result<Pt<i64>>; }\nimpl T for P { fn c(self): i64 { return 4; } }\nsyscall(60, 0);\n' > "$T/trr1.cyr"
-refused_at trr1 "'P.c' returns i64, trait 'T' declares Result<Pt<i64>>" 5:28 "TRR1: a member's : Result<Pt<i64>> (its list unread) against : i64 — the impl's line (it built)"
+refused_at trr1 "'Pt' is not a generic struct: it takes no type arguments" 4:30 "TRR1: a member's : Result<Pt<i64>> against : i64 — Result's list is read (D88): D7's line at Pt alone"
 printf "$R"'struct Pt { x; y; }\ntrait T { fn c(self): Option<Pt<i64>>; }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn c(self): i64 { return 4; } }\nsyscall(60, 0);\n' > "$T/trr2.cyr"
-refused_at trr2 "'P.c' returns i64, trait 'T' declares Option<Pt<i64>>" 6:28 "TRR2: ... : Option<Pt<i64>> with a dyn formed above the impl — the impl's line alone"
+refused_at trr2 "'Option' takes no type arguments" 4:23 "TRR2: ... : Option<Pt<i64>> with a dyn formed above the impl — the name's line alone (D88)"
 BR='struct Box<T> { n: i64; v: T; }\nstruct Pt { x; y; }\nstruct P { a; b; }\n'
 printf "$BR"'trait T2 { fn sh(self): Box<i64, Pt>; }\nimpl T2 for P { fn sh(self): Box { var b: Box; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trr3.cyr"
 refused_at trr3 "'Box' takes 1 type argument, 2 given" 4:34 "TRR3: dd7 — a member's : Box<i64, Pt>, the impl's : Box — the reader's line alone"
 printf "$BR"'trait T2 { fn sh(self): Box; }\nimpl T2 for P { fn sh(self): Box<i64, Pt> { var b: Box; return b; } }\nfn main(): i64 { return 0; }\n' > "$T/trr4.cyr"
 refused_at trr4 "'Box' takes 1 type argument, 2 given" 5:39 "TRR4: dd8 — the impl's : Box<i64, Pt> — the reader's line alone"
 printf "$BR"'trait T2 { fn sh(self): Option<Box<i64, Pt>>; }\nimpl T2 for P { fn sh(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr5.cyr"
-refused_at trr5 "'P.sh' returns i64, trait 'T2' declares Option<Box<i64, Pt>>" 5:30 "TRR5: a member's : Option<Box<i64, Pt>> (its list unread) keeps the impl's line"
+refused_at trr5 "'Option' takes no type arguments" 4:25 "TRR5: a member's : Option<Box<i64, Pt>> — the name's line alone (D88; it was the impl's line)"
 rc=0; "$CC" --syntax-only < "$T/trr3.cyr" > "$T/trr6.bin" 2> "$T/trr6.err" || rc=$?
 grep '^error' "$T/trr6.err" > "$T/trr6.got" || true
 printf "error:<source>:5:30: 'P.sh' returns Box, trait 'T2' declares Box<i64, Pt>\n" > "$T/trr6.want"
@@ -609,6 +626,37 @@ lint_is trr9h "TRR9h: a member's : f32 and its scalar : i64<u8> — one impl lin
     "3:30: 'P.sh' returns i64, trait 'T2' declares f32" "3:60: 'P.t' returns i64, trait 'T2' declares i64<u8>"
 lines_are trr9h "TRR9i: TRR9h compiled — the members' refusals alone (no impl line beside them)" \
     "2:25: type 'f32' $FR" "2:42: 'i64' takes no type arguments"
+# ── TRR7 / TRR8 / TRR10 / TRR11 (6.7.16, f16 FG3, the user's D88) — a list after Result / Option / an enum, by declaration ──
+printf "$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): Option<i64> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr7.cyr"
+lines_are trr7 "TRR7: the residual — a method's : Option<i64> against : i64 is the reader's one line (it was the impl's + \"expected '{', got '<'\" + \"undefined variable 'i64'\")" \
+    "3:30: 'Option' takes no type arguments"
+lint_is trr7 "TRR7b: --syntax-only (the reader's line silent) keeps the impl's line" \
+    "3:30: 'P.sh' returns Option<i64>, trait 'T2' declares i64"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): Result<Pt<i64>> { return 0; } }\nfn main(): i64 { return 0; }\n' > "$T/trr8.cyr"
+lines_are trr8 "TRR8: the residual — a method's : Result<Pt<i64>> is D7's one line inside Result's read list (it was the impl's + \"expected '{', got '<'\" + \"expected '}'\")" \
+    "4:37: 'Pt' is not a generic struct: it takes no type arguments"
+lint_is trr8 "TRR8b: --syntax-only keeps the impl's line" \
+    "4:30: 'P.sh' returns Result<Pt<i64>>, trait 'T2' declares i64"
+printf 'struct P { a; b; }\ntrait T2 { fn sh(self): Result<Nope>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { var p = P { 1, 2 }; return p.sh(); }\n' > "$T/trr10.cyr"
+lines_are trr10 "TRR10: the D88 filing's repro 2 verbatim (it ran 4) — the member reader's line alone" \
+    "2:32: unknown type 'Nope' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)"
+lint_is trr10 "TRR10b: --syntax-only is silent, as a member's : Nope is (no name resolved there)"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { return 0; }\n' > "$T/trr11.cyr"
+lines_are trr11 "TRR11: control — a member's Result<i64, Pt> (read, nothing refused) against : i64 keeps the impl's line" \
+    "4:30: 'P.sh' returns i64, trait 'T2' declares Result<i64, Pt>"
+printf 'include "lib/syscalls.cyr"\nstruct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt>; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(); }\nimpl T2 for P { fn sh(self): Result<i64, Pt> { return self.a + 4; } }\nfn main(): i64 { var p = P { 2, 0 }; return f(&p); }\nsyscall(60, main());\n' > "$T/trr11b.cyr"
+exits trr11b 6 "TRR11b: control — member and method both Result<i64, Pt>, called through a formed dyn"
+printf 'struct P { a; }\ntrait T { fn g<U>(self): U<Nope>; }\nimpl T for P { fn g<U>(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr12.cyr"
+lines_are trr12 "TRR12: a name inside a list no reader reads (a member's own U<Nope>) is not counted as refused — the impl's line (it compiled, reported by no one)" \
+    "3:31: 'P.g' returns i64, trait 'T' declares U<Nope>"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt, Pt>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { return 0; }\n' > "$T/trr13.cyr"
+lines_are trr13 "TRR13: a member's Result<i64, Pt, Pt> (D5, read off the tokens: \`_ngt_hover\`) — the reader's line alone" \
+    "3:41: 'Result' takes 2 type arguments, 3 given"
+lint_is trr13 "TRR13c: --syntax-only (D5 silent there) keeps the impl's line, as TRR6" \
+    "4:30: 'P.sh' returns i64, trait 'T2' declares Result<i64, Pt, Pt>"
+printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): i64; }\nimpl T2 for P { fn sh(self): Result<i64, Pt, Pt> { return 4; } }\nfn main(): i64 { return 0; }\n' > "$T/trr13b.cyr"
+lines_are trr13b "TRR13b: the method's Result<i64, Pt, Pt> — the reader's line alone" \
+    "4:46: 'Result' takes 2 type arguments, 3 given"
 
 # ── FP (6.7.16, f16 FG2) — a fn's fn-pointer return is the member's one line, the body read on ──
 # PARSE_FN_DEF's return reader took `: *fn(i64): i64` as a `*T` and met `fn` as a name: "expected identifier, got

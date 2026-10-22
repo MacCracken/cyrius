@@ -13,6 +13,10 @@
 # `P.mv`, a closure "a closure"), no latch (the statement reads on), silent under --syntax-only. The declaration
 # `(Pt, i64)`, a word element, an 8-byte struct element (one word: it compiles and passes on whole), a `Str` (its name
 # is the header's address), `&b`, a `*Pt` and `b.x` keep compiling; a tuple's and a dyn's own refusals stay theirs.
+# A HANDLE named whole keeps compiling too (`_mret_hdl`): a struct local whose one slot holds the address (6.7.10's
+# handle line: `var q: Pt = alloc(16);`, `var h: Pt = w;`) or a pointer-mode global — its word IS the struct's address,
+# nothing is lost (it computed right before D90: tests/gates/codegen/small_struct_handle_line.sh C5), and D90 refuses
+# nothing that computes correctly. The D90 bite refused it (M6e), which turned C5 red; fixed in its own commit.
 #
 #   M1  the filed mv.cyr verbatim                       M2  the filed `take(b)` program verbatim
 #   M2b the filed `return b.y` program: the refusal, and the untyped binding's own line (unchanged)
@@ -27,10 +31,9 @@
 #   M12 controls whose own refusal stays alone: a tuple `t`, a tuple field `w.t`, a dyn `d`, a dyn field `h.d`
 #   K1-K4 acceptance, run on x86_64, aarch64 (qemu-aarch64), cx (the tree's cxvm) and PE (wine, a private prefix): an
 #       8-byte struct element passed on whole (9); word, `&b`, `*Pt`, `b.x` and `Str` elements; the corpus's
-#       `(Box<i64>, i64)` returning a word (tests/tcyr/frontend/nested_type_args.tcyr's shape); K4 (6.7.16, f16b FG4) a
-#       16-byte HANDLE (`var q: Pt = alloc(16)`, a handle global, wrapped) is its word, not a struct value — D90's
-#       "refuses nothing that computes correctly today", and small_struct_handle_line.sh C5's 16 B twin (exit 3 through
-#       FG3's first cut, which refused it here as M6e: `_mret_hdl`, parse_expr.cyr)
+#       `(Box<i64>, i64)` returning a word (tests/tcyr/frontend/nested_type_args.tcyr's shape); K4 a handle element —
+#       `alloc(16)`, a word, wrapped, a pointer-mode global, the middle of three — its pointer, read through (20); K4b
+#       (6.7.16, f16b FG4, the same fix landed beside it) a 16-byte handle local, wrapped, a handle global is its word
 #
 # Refusal rows compare the whole error / warning list and check that no binary was written, on five legs: the x86_64
 # compiler, its PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1) legs, and the aarch64 and cx compilers built from
@@ -44,7 +47,7 @@
 #                                                        tuple / dyn field's own refusal down: `w.t` COMPILED)
 #   `_mret_sval_err` without its closure arm          -> RED M7 on every leg, 5 ('__cl00NNN' named)
 #   `_mret_sval` refusing an 8-byte struct            -> RED K1 on every leg, 5
-#   `_mret_sval` without `_mret_hdl` (FG3's first cut) -> RED K4 on every leg, 5 (refused: "returns struct 'Pt'")
+#   `_mret_sval` without `_mret_hdl` (the D90 bite)   -> RED K4 on every leg, 5 (and small_struct_handle_line.sh C5)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -u
@@ -201,7 +204,8 @@ error:<source>:8:117: 'mv' $PT"
 row M6d "a method result b.dup(), an operator result b + b, a wrapped ((b))" "$(hm3 'fn mv(): (i64, i64, i64) { var b: Pt; b.x = 9; return (b.dup(), b + b, ((b))); }')" "error:<source>:8:56: 'mv' $PT
 error:<source>:8:65: 'mv' $PT
 error:<source>:8:72: 'mv' $PT"
-row M6e "an inline value var q = Pt { 9, 0 }, the middle element of three" "$(hm3 'fn mv(): (i64, i64, i64) { var q = Pt { 9, 0 }; return (1, q, 5); }')" "error:<source>:8:60: 'mv' $PT"
+row M6e "the middle element of three" "$(hm3 'fn mv(): (i64, i64, i64) { var q: Pt; q.x = 9; return (1, q, 5); }')" "error:<source>:8:59: 'mv' $PT"
+row M6g "an inline value var q = Pt { 9, 0 }, the middle element of three" "$(hm3 'fn mv(): (i64, i64, i64) { var q = Pt { 9, 0 }; return (1, q, 5); }')" "error:<source>:8:60: 'mv' $PT"
 row M6f "a generic instance Box<Pt> (24 B)" "$H"'struct Box<T> { v: T; n; }
 fn mv(): (i64, i64) { var b: Box<Pt>; b.n = 9; return (b, 5); }
 fn main(): i64 { var a, c = mv(); return c; }
@@ -263,13 +267,35 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' 44
+runs K4 "a HANDLE element is its pointer: var q: Pt = alloc(16), var h: Pt = w (a word), ((q)), a pointer-mode global, the middle of three — the caller reads the fields through it (small_struct_handle_line.sh C5's shape; 4 + 4 + 4 + 4 + 4)" 'include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct Pt { x; y; }
+var GH: Pt = 0;
+fn m1(): (Pt, i64) { var q: Pt = alloc(16); q.x = 9; q.y = 4; return (q, 5); }
+fn m2(w): (i64, i64) { var h: Pt = w; return (h, 5); }
+fn m3(): (i64, i64) { var q: Pt = alloc(16); q.y = 4; return (((q)), 5); }
+fn m4(): (i64, i64) { return (GH, 5); }
+fn m5(): (i64, i64, i64) { var q: Pt = alloc(16); q.y = 4; return (1, q, 5); }
+fn main(): i64 {
+    var a1, c1 = m1();
+    var w = alloc(16); store64(w + 8, 4);
+    var a2, c2 = m2(w);
+    var a3, c3 = m3();
+    GH = alloc(16); GH.y = 4;
+    var a4, c4 = m4();
+    var b5, a5, c5 = m5();
+    return load64(a1 + 8) + load64(a2 + 8) + load64(a3 + 8) + load64(a4 + 8) + load64(a5 + 8);
+}
+alloc_init();
+syscall(60, main());
+' 20
 runs K3 "the corpus's (Box<i64>, i64) returning a word (nested_type_args.tcyr's shape)" 'include "lib/syscalls.cyr"
 struct Box<T> { v: T; n; }
 fn mv(): (Box<i64>, i64) { return (3, 4); }
 fn main(): i64 { var a, b = mv(); return a + b; }
 syscall(60, main());
 ' 7
-runs K4 "a 16-byte handle element is its word: a local, wrapped, a handle global (6.7.16)" 'include "lib/syscalls.cyr"
+runs K4b "a 16-byte handle element is its word: a local, wrapped, a handle global (6.7.16)" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 struct Pt { x; y; }
 var GQ: Pt = 0;

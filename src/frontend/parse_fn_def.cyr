@@ -743,7 +743,9 @@ fn _dl_pub_mark(S): i64 {
 # "a `struct` declaration belongs to the declaration section at top level, not inside a fn body" (or "... not
 # inside a block"), at the keyword `ti`; once per token (a generic's instances, an inline replay) and not over a
 # refused const fn's check of the same token (`_ce_err_dup`). No panic latch: the body's next statement is its own.
-fn _dl_in_report(S, ti): i64 {
+fn _dl_in_report(S, ti): i64 { return _dl_in_say(S, ti, GINFN(S)); }
+# ... `infn` 1 "a fn body", 0 "a block" (the pre-walk's flush, `_dl_pw_flush`, says what its walk saw).
+fn _dl_in_say(S, ti, infn): i64 {
     _had_error = 1;
     if (_panic == 1) { return 0; }
     var id = "declaration section";
@@ -753,7 +755,7 @@ fn _dl_in_report(S, ti): i64 {
     PRSTR(": ");
     _dl_art_kw(S, ti);
     PRSTR(" declaration belongs to the declaration section at top level, not inside ");
-    if (GINFN(S) == 1) { PRSTR("a fn body\n"); } else { PRSTR("a block\n"); }
+    if (infn == 1) { PRSTR("a fn body\n"); } else { PRSTR("a block\n"); }
     _err_excerpt(S);
     return 0;
 }
@@ -773,13 +775,26 @@ fn _dl_in_report(S, ti): i64 {
 # `_cy_vecdec_int`, `_cy_vecdec_f64`, `_cy_json_skipval`). So only when the preprocessor derived that type
 # (`PP_DERIVE_LAST`), only those units, each through its own balanced braces (`_skip_nested_body`): the walk stops at
 # anything else, and so never at a `}` that closes a brace opened before it. CHANGELOG [6.7.16]
+var _dl_dv_a = 0;    # the derived declaration being stepped: its first token
+var _dl_dv_e = 0;    # ... and the token past its `}`
+var _dl_dv_r = 0;    # ... its `#derive` registration (PP_DERIVE_LAST, 1-based)
+var _dl_dv_en = 0;   # ... 1 for an enum
+var _dl_dv_seen = 0; # ... the names its walk stepped (a vec): a second fn of one name is the user's
 fn _dl_derived(S, ti): i64 {
     var k = TOKTYP(S, ti);
     var tn = ti + 1;
     if (k == 73) { k = TOKTYP(S, ti + 1); tn = ti + 2; }
     if (k != 40) { if (k != 60) { return 0; } }
     if (TOKTYP(S, tn) != 2) { return 0; }
-    if (PP_DERIVE_LAST(S + 0xEC00000 + TOKVAL(S, tn)) == 0) { return 0; }
+    var r = PP_DERIVE_LAST(S + 0xEC00000 + TOKVAL(S, tn));
+    if (r == 0) { return 0; }
+    _dl_dv_a = ti;
+    _dl_dv_e = GTI(S);
+    _dl_dv_r = r;
+    _dl_dv_en = 0;
+    if (k == 60) { _dl_dv_en = 1; }
+    if (_dl_dv_seen == 0) { _dl_dv_seen = vec_new(); }
+    vec_truncate(_dl_dv_seen, 0);
     var ln = GTLINE(S, GTI(S) - 1);
     var go = 1;
     while (go == 1) { go = _dl_derived_fn(S, ln, TOKVAL(S, tn)); }
@@ -794,23 +809,78 @@ fn _dl_derived_fn(S, ln, tnoff): i64 {
     if (TOKTYP(S, i) != 32) { return 0; }
     if (TOKTYP(S, i + 1) != 2) { return 0; }
     if (_dl_dname(S, TOKVAL(S, i + 1), tnoff) == 0) { return 0; }
+    if (_dl_dv_once(S, TOKVAL(S, i + 1)) == 0) { return 0; }
     var e = _skip_nested_body(S, i);
     if (TOKTYP(S, e) == 12) { STI(S, e); return 0; }
     STI(S, e + 1);
     return 1;
 }
-# 1 = fn name `noff` is one a derive of type `tnoff` writes: `<T>_..` or `_cy_..`.
+# ⛔ 6.7.16 — 1 = fn name `noff` is EXACTLY one the derive of type `tnoff` (`_dl_derived`'s declaration) wrote: a shared
+# helper its registration emitted (`_cy_enum_name_eq`, `_cy_vecdec_int`, `_cy_vecdec_f64`, `_cy_json_skipval`: once per
+# compilation, so not every derive's line holds one); when it emitted the codecs, `<T>_to_json`, `<T>_from_json_str`
+# and a struct's `<T>_from_json`; when it emitted accessors, `<T>_<field>` / `<T>_set_<field>` for a field between the
+# declaration's braces. Any `<T>_..` / `_cy_..` was taken, so a user's `fn Q_h` on a derived refused struct's line was
+# stepped as the derive's and its body never parsed (its errors lost). CHANGELOG [6.7.16]
 fn _dl_dname(S, noff, tnoff): i64 {
     var p = S + 0xEC00000 + noff;
-    if (load8(p) == 95) { if (load8(p + 1) == 99) { if (load8(p + 2) == 121) { if (load8(p + 3) == 95) { return 1; } } } }
+    var fam = PP_DERIVE_FAM(_dl_dv_r);
+    if ((fam & 2) != 0) { if (PP_CSEQ(p, "_cy_enum_name_eq") == 1) { return 1; } }
+    if ((fam & 4) != 0) { if (PP_CSEQ(p, "_cy_vecdec_int") == 1) { return 1; } }
+    if ((fam & 8) != 0) { if (PP_CSEQ(p, "_cy_vecdec_f64") == 1) { return 1; } }
+    if ((fam & 16) != 0) { if (PP_CSEQ(p, "_cy_json_skipval") == 1) { return 1; } }
     var q = S + 0xEC00000 + tnoff;
     var j = 0;
     while (load8(q + j) != 0) {
         if (load8(p + j) != load8(q + j)) { return 0; }
         j = j + 1;
     }
-    if (load8(p + j) == 95) { return 1; }
+    if (load8(p + j) != 95) { return 0; }
+    j = j + 1;
+    if (PP_DERIVE_CODEC(_dl_dv_r) == 1) {
+        if (PP_CSEQ(p + j, "to_json") == 1) { return 1; }
+        if (PP_CSEQ(p + j, "from_json_str") == 1) { return 1; }
+        if (_dl_dv_en == 0) { if (PP_CSEQ(p + j, "from_json") == 1) { return 1; } }
+    }
+    if ((fam & 1) == 0) { return 0; }
+    if (_dl_dfield(S, noff + j) == 1) { return 1; }
+    if (load8(p + j) != 115) { return 0; }       # `set_`
+    if (load8(p + j + 1) != 101) { return 0; }
+    if (load8(p + j + 2) != 116) { return 0; }
+    if (load8(p + j + 3) != 95) { return 0; }
+    return _dl_dfield(S, noff + j + 4);
+}
+# 1 = the walk has not stepped a fn named `noff` yet (recorded): the derive writes each name once, so a second one —
+# the user's own, a duplicate of a derive's — is parsed as the user's.
+fn _dl_dv_once(S, noff): i64 {
+    var n = vec_len(_dl_dv_seen);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, vec_get(_dl_dv_seen, i), noff) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_dl_dv_seen, noff);
+    return 1;
+}
+# 1 = name offset `noff` is a field of the declaration `_dl_derived` steps: a name at depth 1 of its braces, after the
+# `{` or a field's `;` / `,`, before a `:`, `;`, `,` or the `}`.
+fn _dl_dfield(S, noff): i64 {
+    var d = 0;
+    var i = _dl_dv_a;
+    while (i < _dl_dv_e) {
+        var k = TOKTYP(S, i);
+        if (k == 13) { d = d + 1; }
+        if (k == 14) { d = d - 1; }
+        if (k == 2) { if (d == 1) { if (_dl_dfield_at(S, i) == 1) { if (STREQ(S, TOKVAL(S, i), noff) == 1) { return 1; } } } }
+        i = i + 1;
+    }
     return 0;
+}
+fn _dl_dfield_at(S, i): i64 {
+    var b = TOKTYP(S, i - 1);
+    if (b != 13 && b != 5 && b != 31) { return 0; }
+    var a = TOKTYP(S, i + 1);
+    if (a != 49 && a != 5 && a != 31 && a != 14) { return 0; }
+    return 1;
 }
 # 1 = token type `t` opens a declaration the rule keeps before the first statement.
 fn _dl_kind(t): i64 {
@@ -1009,7 +1079,7 @@ fn _dl_refd_at(S, noff): i64 {
     var n = vec_len(_dlr);
     var i = 0;
     while (i < n) {
-        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; return 1; }
+        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; _dl_pw_used(i); return 1; }
         i = i + 1;
     }
     return 0;
@@ -1033,6 +1103,9 @@ fn _dl_refd_at(S, noff): i64 {
 # is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
 # the same name still resolves. CHANGELOG [6.7.16]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
+var _dlpn = 0;     # `_dlr`'s first `_dlpn` entries are the pre-walk's (`_dl_inner_fill`)
+var _dlpk = 0;     # per pre-walk entry: its declaration's keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words)
+var _dlpu = 0;     # per pre-walk entry: 1 once a stand-down answered through it (`_dl_refd_at`), 2 once flushed
 fn _dl_inner_fill(S): i64 {
     var n = GTCNT(S);
     var sv = GTI(S);
@@ -1048,23 +1121,26 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 11 || k == 29) { if (pd > 0) { pd = pd - 1; } }
         elif (k == 13) {
             var c = _dl_brace_in(stk);
-            if (pend != 0) { if (pd == ppd) { c = 2 - pend; pend = 0; } }
+            if (pend == 1) { if (pd == ppd) { c = 3; pend = 0; } }
+            if (pend == 2) { if (pd == ppd) { c = 0; pend = 0; } }
             vec_push(stk, c);
         }
         elif (k == 14) { if (vec_len(stk) > 0) { vec_pop(stk); } }
         elif (k == 5) { if (pd == ppd) { pend = 0; } }
         elif (k == 32) { if (TOKTYP(S, i + 1) == 2) { pend = 1; ppd = pd; } }
         elif (_dl_kind(k) == 1) {
-            if (vec_len(stk) > 0) { if (_dl_brace_in(stk) == 1) { _dl_inner_at(S, i); } }   # in a body, not module scope
+            if (vec_len(stk) > 0) { if (_dl_brace_in(stk) != 0) { _dl_inner_at(S, i, _dl_brace_in(stk)); } }   # in a body, not module scope
             if (k != 73) { pend = 2; ppd = pd; }
         }
         i = i + 1;
     }
     _dl_pre = 0;
+    if (_dlr != 0) { _dlpn = vec_len(_dlr); }
     STI(S, sv);
     return 0;
 }
-# The kind a `{` with no header of its own takes: its enclosing brace's, a body (1) at module scope.
+# The kind a `{` with no header of its own takes: its enclosing brace's, a body (1) at module scope. A fn's body
+# (and every body inside it) is 3, a declaration's 0.
 fn _dl_brace_in(stk): i64 {
     var l = vec_len(stk);
     if (l == 0) { return 1; }
@@ -1072,7 +1148,8 @@ fn _dl_brace_in(stk): i64 {
 }
 # A declaration keyword at token `i` in a body: at a statement start, a `struct` / `enum` / `union` / `trait` (`pub`
 # before it or not) — what `_decl_inner` refuses and `_dl_names` names — its names entered.
-fn _dl_inner_at(S, i): i64 {
+# Each name entered is recorded with the keyword (`_dlpk`, the body's kind `bk`: 3 a fn's) for `_dl_pw_flush`.
+fn _dl_inner_at(S, i, bk): i64 {
     var b = TOKTYP(S, i - 1);
     if (b != 13 && b != 14 && b != 5 && b != 49) { return 0; }
     var k = TOKTYP(S, i);
@@ -1080,8 +1157,75 @@ fn _dl_inner_at(S, i): i64 {
     if (k != 40 && k != 60 && k != 101 && k != 167) { return 0; }
     STI(S, i);
     _dl_skip_in(S);
+    var n0 = 0;
+    if (_dlr != 0) { n0 = vec_len(_dlr); }
     _dl_names(S, i, GTI(S));
+    if (_dlpk == 0) { _dlpk = vec_new(); _dlpu = vec_new(); }
+    var f = 0;
+    if (bk == 3) { f = 1; }
+    if (_dlr != 0) {
+        while (n0 < vec_len(_dlr)) { vec_push(_dlpk, i * 2 + f); vec_push(_dlpu, 0); n0 = n0 + 1; }
+    }
     return 0;
+}
+# ⛔ 6.7.16 — A PRE-WALK NAME STANDS DOWN ONLY FOR A DECLARATION THAT IS REPORTED. The walk above enters the names of
+# every declaration at a statement start in ANY body, and pass 2 refuses one only where it parses the body: a trait
+# member's default no impl inherits, a bounded generic's base (a stub until instantiated) and a refused nested fn's
+# stepped body are never parsed. A use standing down for such a name (`_dl_refd_at`: the annotation, the variable, the
+# const context, the bound, `dyn`, `impl .. for`) counted an error no line said — rc 1 and nothing printed, or the
+# use's own report lost. So the entry a stand-down answers through is marked (`_dl_pw_used`), and once everything is
+# parsed (`_dl_pw_end`: the top-level PARSE_PROG's end; a kernel build's global replay after it) each marked name no
+# reported declaration entered (an entry past `_dlpn`: `_decl_inner`, a late or a private declaration's refusal) has
+# its declaration reported at the keyword, in `_decl_inner`'s words — one line per declaration (`_ce_err_dup`). A name
+# nothing used is untouched: nothing that compiled changes. CHANGELOG [6.7.16]
+fn _dl_pw_used(i): i64 {
+    if (i >= _dlpn) { return 0; }
+    if (vec_get(_dlpu, i) == 0) { vec_set(_dlpu, i, 1); }
+    return 0;
+}
+var _pp_done = 0;   # 1 once the top-level PARSE_PROG has ended
+fn _dl_pw_end(S): i64 {
+    if (_pp_depth != 0) { return 0; }
+    if (GINFN(S) != 0) { return 0; }
+    if (PEEKT(S) != 12) { return 0; }
+    _pp_done = 1;
+    return _dl_pw_flush(S);
+}
+fn _dl_pw_late(S): i64 {
+    if (_pp_done == 0) { return 0; }
+    return _dl_pw_flush(S);
+}
+fn _dl_pw_flush(S): i64 {
+    if (_dlpn == 0) { return 0; }
+    var sv = GTI(S);
+    var p0 = _panic;
+    var i = 0;
+    while (i < _dlpn) {
+        if (vec_get(_dlpu, i) == 1) {
+            vec_set(_dlpu, i, 2);
+            if (_dl_rep_has(S, vec_get(_dlr, i)) == 0) { _dl_pw_say(S, vec_get(_dlpk, i)); }
+        }
+        i = i + 1;
+    }
+    _panic = p0;
+    STI(S, sv);
+    return 0;
+}
+# 1 = a reported declaration (an entry of `_dlr` past the pre-walk's) declared name `noff`.
+fn _dl_rep_has(S, noff): i64 {
+    var n = vec_len(_dlr);
+    var i = _dlpn;
+    while (i < n) {
+        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dl_pw_say(S, k): i64 {
+    var ti = k / 2;
+    STI(S, ti);
+    _panic = 0;
+    return _dl_in_say(S, ti, k - ti * 2);
 }
 var _dlvr = 0;   # the refused variables' names, a vec made at the first
 fn _dl_var_refd_add(S, noff): i64 {

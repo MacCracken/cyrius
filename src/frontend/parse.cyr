@@ -7465,6 +7465,7 @@ fn PARSE_PROG(S): i64 {
     # See _vis_check (src/frontend/parse_fn.cyr). CHANGELOG [6.6.5]
     _vis_check_deferred(S);
     _pp_depth = _pp_depth - 1;
+    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse_fn_def.cyr)
     # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
     # applies. See PP_NOTE_HOST_ONLY.
     var _ho = _pp_hostonly_hit;

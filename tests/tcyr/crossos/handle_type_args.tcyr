@@ -1,0 +1,70 @@
+# handle_type_args.tcyr — 6.7.16 (the user's D88, 2026-10-20: "by declaration: refused where none are declared, read
+# where declared") — a type-argument list after `Result` (lib/result.cyr's `enum Result<T, E>`) or after an enum that
+# declares its own `<..>` is READ, and the type it names is the 8-byte handle it always was: `fn g(): Result<i64, Pt>`
+# was a parse error ("expected '{', got '<'", and the declarations after it read as its body); in every other position
+# the list was stepped unread. These run — a `Result<i64, Pt>` return called above and below its definition, a
+# generic's `Result<T, Pt>`, parameters, locals, a field, a pointer field naming a struct declared further down, a
+# trait member and its method through a formed dyn, `sizeof`, a slice and a Vec element, an enum's own `Gen<i64>`.
+# The refusals (an enum / Option / Tagged / cstring given a list, a name in Result's list that is no type, D5's extra
+# argument) are tests/gates/frontend/handle_type_args.sh.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+include "lib/slice.cyr"
+include "lib/result.cyr"
+include "lib/vec.cyr"
+
+struct Pt { x; y; }
+var BUF: i64[4];
+struct Hold { r: Result<i64, Pt>; p: *Result<Later, i64>; k; }
+enum Gen<T> { GA, GB }
+trait Rs { fn rs(self, r: Result<i64, Pt>): Result<i64, Pt>; }
+impl Rs for Pt { fn rs(self, r: Result<i64, Pt>): Result<i64, Pt> { return Ok(self.x + r); } }
+
+fn fwd(): i64 { var t, v = mk_ok(5); return t * 100 + v; }
+fn mk_ok(n): Result<i64, Pt> { return Ok(n); }
+fn mk_err(n): Result<i64, Pt> { return Err(n); }
+fn back(): i64 { var t, v = mk_err(4); return t * 100 + v; }
+fn gres<T>(x: T): Result<T, Pt> { return Ok(x); }
+fn take(r: Result<i64, Pt>, g: Gen<i64>, pr: *Result<Pt>): i64 { return r * 10 + g; }
+
+fn run(): i64 {
+    assert_eq(fwd(), 5, "R1: a call above its `: Result<i64, Pt>` definition: tag 0 (Ok), payload 5");
+    assert_eq(back(), 104, "R2: a call below: tag 1 (Err), payload 4");
+    var t, v = gres(9);
+    assert_eq(t * 100 + v, 9, "R3: a generic's `: Result<T, Pt>`, inferred");
+    var t2, v2 = gres<i32>(3);
+    assert_eq(v2, 3, "R3: ... explicit <i32>");
+    assert_eq(take(4, GB, 0), 41, "R4: parameters `Result<i64, Pt>`, `Gen<i64>`, `*Result<Pt>`");
+    var l: Result<i64, Pt> = 6;
+    var g: Gen<i64> = GB;
+    assert_eq(l + g, 7, "R5: locals `Result<i64, Pt>`, `Gen<i64>`");
+    var h: Hold;
+    h.r = 8; h.p = 0; h.k = 2;
+    assert_eq(h.r + h.k, 10, "R6: a `Result<i64, Pt>` field, a `*Result<Later, i64>` field (Later declared below)");
+    var p = Pt { 30, 1 };
+    var o: dyn Rs = &p;
+    var dt, dv = o.rs(2);
+    assert_eq(dt * 100 + dv, 32, "R7: a trait member and its method `rs(self, r: Result<i64, Pt>): Result<i64, Pt>`, through a dyn");
+    var bt, bv = p.rs(3);
+    assert_eq(bv, 33, "R7: ... and directly");
+    assert_eq(sizeof(Result<i64, Pt>), 8, "R8: sizeof(Result<i64, Pt>) is the handle's 8");
+    store64(&BUF, 11); store64(&BUF + 8, 12); store64(&BUF + 16, 13);
+    var s: [Result<i64, Pt>] = 0;
+    slice_set(&s, &BUF, 3);
+    assert_eq(s[1], 12, "R9: a `[Result<i64, Pt>]` slice: an 8-byte element, read as its word");
+    var sg: slice<Gen<i64>> = 0;
+    slice_set(&sg, &BUF, 3);
+    assert_eq(sg[2] + slice_len(&sg), 16, "R9: `slice<Gen<i64>>` (its `>>` closes the slice)");
+    var w: Vec<Result<i64, Pt>> = vec_new();
+    vec_push(w, 21);
+    assert_eq(vec_get(w, 0), 21, "R10: a `Vec<Result<i64, Pt>>` element");
+    return 0;
+}
+
+struct Later { a; b; }
+
+alloc_init();
+run();
+var r = assert_summary();

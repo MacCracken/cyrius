@@ -61,6 +61,12 @@
 #   `_tl_enum_init1` without its release            -> RED Q2 on every leg
 #   `_tl_skip_body` reporting with ERR again        -> RED Q3 Q4 Q6 Q7 on every leg
 #   `_tl_skip_body` without its end-of-file stops   -> RED Q5a Q5c Q5d on every leg (Q5b: the `<..>` stop)
+#   (the f16 review) the lane before it (edcf462c8) -> RED PT1-PT7 on every leg (each header's latch swallowed the
+#                                                      rest; PT3 an invented "expected '{', got ';'"; PT7 the statement)
+#   `_tl_trait1` stepping one token again           -> RED PT1-PT6 on every leg (pass 1 stopped at the trait)
+#   `_tr_hdr_step` without its release              -> RED PT4 PT5 on every leg (the next trait's header swallowed)
+#   `_tl_trait2` without `_tl_decl_end`             -> RED PT7 on every leg
+#   `_tr_hdr_end` without its declaration stop      -> RED PT5 on every leg (`trait U` took struct Q's body)
 # (A mutant's legs other than x86 are built by it from the real tree, so they stay green.)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -289,6 +295,60 @@ struct Q { a: Foo; }
 struct R { b: Bar; }
 syscall(60, 0);
 ' "error:<source>:1:15: expected identifier, got number 5"
+
+# PT — a trait's refused header ends at the trait's end (6.7.16, the f16 review): pass 1 steps the trait (its body, or
+# past a `;`, or to the next declaration) and goes on; pass 2 reports the header and releases its latch there; a member's
+# refusal releases it at the trait's `}` (PT7: the program's first statement was swallowed).
+refuse PT1 "trait 5 { }, then a struct, an enum and a fn's mistake" 'trait 5 { }
+struct Q { a: Foo; }
+enum F { X 6 }
+fn f(): i64 { return zz; }
+syscall(60, f());
+' "error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6
+error:<source>:1:7: expected identifier, got number 5
+error:<source>:4:24: undefined variable 'zz' (missing include or enum?)"
+refuse PT2 "trait T 5 { }" 'trait T 5 { }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6
+error:<source>:1:9: expected '{', got number 5"
+refuse PT3 "trait T<X> { fn m(self): i64; }: no member read as a top-level fn" 'trait T<X> { fn m(self): i64; }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6
+error:<source>:1:8: expected '{', got '<'"
+refuse PT4 "trait T: U { .. } and trait { .. } (no name)" 'trait T: U { fn m(self): i64; }
+trait { fn m(self): i64; }
+struct Q { a: Foo; }
+syscall(60, 0);
+' "error:<source>:3:15: $F
+error:<source>:1:8: expected '{', got ':'
+error:<source>:2:7: expected identifier, got '{'"
+refuse PT5 "trait T; and a trait with no body before a struct" 'trait T;
+trait U
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:3:15: $F
+error:<source>:4:12: expected identifier, got number 6
+error:<source>:1:8: expected '{', got ';'
+error:<source>:3:1: expected '{', got struct"
+refuse PT6 "--syntax-only: PT1's header" 'trait 5 { }
+struct Q { a: Foo; }
+enum F { X 6 }
+syscall(60, 0);
+' "error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6
+error:<source>:1:7: expected identifier, got number 5" --syntax-only
+refuse PT7 "a trait member's refusal, then the program's first statement" 'trait T { var x; }
+syscall(60, 1 2);
+' "error:<source>:1:11: a trait body holds only \`fn\` declarations - in trait 'T'
+error:<source>:2:15: expected ')', got number 2"
 
 # Q — the walks after pass 1 end each declaration's refusal at its `}` too, and add nothing to pass 1's.
 refuse Q1 "a refused enum, then a fn body's first statement" 'enum E { A 5 }

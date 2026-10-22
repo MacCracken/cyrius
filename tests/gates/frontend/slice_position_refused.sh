@@ -300,6 +300,31 @@ refused r10 "cannot store a value that is not a bool into a bool element of 's'"
     "${SL}fn f(): i64 { var b: i64[8]; var s: [bool] = 0; slice_set(&s, &b, 2); s[1] = 1; return 0; }\nsyscall(60, f());\n"
 refused r7 "a subscript's result is an element, not an array" "R7: s[1][2] = 5" "${SB}    s[1][2] = 5;\n${SE}"
 
+# ── R14: a READ of an element no `_slice_idx_get_W` serves is refused by name (6.7.16, the f16 review) ───────
+# lib/slice.cyr reads a 1-, 2-, 4-, 8- or 16-byte element; a 12- or 24-byte one (`[P3]`, and since D89 a generic
+# instance) was the false "slice subscript requires include "lib/slice.cyr"" with the include there. The width named
+# is the element's size: `[Box<Pt>]` / `slice<Box<Pt>>` 24 = sizeof(Box<Pt>) (R14s), `[W<i32>]` 12.
+#   (measured) the lane before it (b2ae86cc5) -> RED R14a R14b R14c R14d R14f (the include message); R14e R14s green
+R14="a slice subscript reads a 1-, 2-, 4-, 8- or 16-byte element - this one is"
+R14T=": read at slice_ptr(&s) + i * sizeof(T)"
+SG="${SL}struct Pt { x; y; }\nstruct Box<T> { v: T; n; }\nstruct W<T> { a: T; b: T; c: T; }\nstruct P3 { a; b; c; }\nvar BUF: i64[16];\n"
+refused r14a "cannot subscript 'e': $R14 24 bytes$R14T" "R14a: [Box<Pt>] read (24 B), lib/slice.cyr included" \
+    "${SG}fn f(): i64 { var e: [Box<Pt>] = 0; slice_set(&e, &BUF, 4); var x = e[1]; return x; }\nsyscall(60, f());\n"
+refused r14b "cannot subscript 'e': $R14 24 bytes$R14T" "R14b: slice<Box<Pt>> read (24 B)" \
+    "${SG}fn f(): i64 { var e: slice<Box<Pt>> = 0; slice_set(&e, &BUF, 4); return e[1] - e[0]; }\nsyscall(60, f());\n"
+refused r14c "cannot subscript 'e': $R14 12 bytes$R14T" "R14c: [W<i32>] read (12 B)" \
+    "${SG}fn f(): i64 { var e: [W<i32>] = 0; slice_set(&e, &BUF, 4); return e[1]; }\nsyscall(60, f());\n"
+refused r14d "cannot subscript 'e': $R14 24 bytes$R14T" "R14d: [P3] read (24 B)" \
+    "${SG}fn f(): i64 { var e: [P3] = 0; slice_set(&e, &BUF, 4); return e[1]; }\nsyscall(60, f());\n"
+exits r14e 16 "R14e: control: [Box<i64>] (16 B) reads its address" \
+    "${SG}fn f(): i64 { var e: [Box<i64>] = 0; slice_set(&e, &BUF, 4); return e[1] - e[0]; }\nsyscall(60, f());\n"
+exits r14s 24 "R14s: sizeof(Box<Pt>) is the width R14a names" "${SG}syscall(60, sizeof(Box<Pt>));\n"
+printf '%b' "${SG}fn f(): i64 { var e: [Box<Pt>] = 0; slice_set(&e, &BUF, 4); var x = e[1]; return x + zz; }\nsyscall(60, f());\n" > "$T/r14f.cyr"
+rc=0; timeout 60 "$CC" < "$T/r14f.cyr" > "$T/r14f.bin" 2> "$T/r14f.err" || rc=$?
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/r14f.err")" -eq 2 ] && grep '^error' "$T/r14f.err" | head -1 | grep -qF "24 bytes" \
+    && grep '^error' "$T/r14f.err" | tail -1 | grep -qF "undefined variable 'zz'"; then ok "R14f: in sync: the next statement's mistake is reported"
+else bad "R14f: want the refusal then zz's: rc $rc: $(grep '^error' "$T/r14f.err" | tr '\n' '|')"; fi
+
 # ── E: `OP=` loads the element as `s[i]` reads it ───────────────────────────────────────────────
 # Each compound is computed both ways on the same negative element; equal results exit 0, else the
 # first disagreeing row's number.

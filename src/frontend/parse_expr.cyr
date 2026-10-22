@@ -2386,28 +2386,32 @@ fn _mret_sval(S, t): i64 {
     if (_mret_hdl(S, t) == 1) { return 0; }
     return _mret_sval_err(S, t, asid);
 }
-# 1 = the element at token t, inside any parentheses, is a HANDLE — a pointer-mode struct local (`var a: H =
-# alloc(16);`) or global — whose word is the element: the struct is not lost, so D90 does not refuse it. It was
-# refused once D90 landed (small_struct_handle_line.sh C5's 16 B twin: exit 3 before, refused after; D90's "refuses
-# nothing that computes correctly today"). A by-value parameter and a capture are their own copies. CHANGELOG [6.7.16]
+# 1 when the element at token `t` is a HANDLE named whole (wrapped or not): a struct local whose one slot holds the
+# struct's address (`GLAGG` 0 — 6.7.10's handle line: `var a: H = alloc(16);`, `var h: Pt = w;`), not a parameter (a
+# by-value one is copied inline in the prologue), or a pointer-mode struct global (`GVPM` 1). Its word IS the address,
+# so nothing is lost — the element is "its pointer", what the refusal asks for, and it computed right before D90
+# (tests/gates/codegen/small_struct_handle_line.sh C5: the caller's `load64(x)` reads the field). The user's D90
+# refuses nothing that computes correctly. CHANGELOG [6.7.16]
 fn _mret_hdl(S, t): i64 {
-    var k = _pwrap_in(S, t);
-    if (k < 0) { return 0; }
-    if (TOKTYP(S, k) != 2) { return 0; }
-    var nt = TOKTYP(S, k + 1);
-    if (nt != 31 && nt != 11) { return 0; }
-    var noff = TOKVAL(S, k);
-    var li = FINDLOCAL(S, noff);
-    if (li >= 0) {
-        if (GLAGG(S, li) == 1) { return 0; }
-        if (_local_is_sptr_param(S, li) == 1) { return 0; }
-        return 1;
+    var ist = _ess_wrap(S, t);
+    if (TOKTYP(S, ist) != 2) { return 0; }
+    if (_ess_k > 0) { if (ist + 1 != _ess_ie) { return 0; } }
+    else {
+        var nx = TOKTYP(S, ist + 1);
+        if (nx != 31) { if (nx != 11) { return 0; } }
     }
-    if (_cl_cap_esl(S, noff) >= 0) { return 0; }
-    var gi = FINDVAR(S, noff);
-    if (gi < 0) { return 0; }
-    if (GVPM(S, gi) == 1) { return 1; }
+    var li = FINDLOCAL(S, TOKVAL(S, ist));
+    if (li >= 0) { return _mret_hdl_li(S, li); }
+    var gvi = FINDVAR(S, TOKVAL(S, ist));
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 1) { return 1; }
     return 0;
+}
+fn _mret_hdl_li(S, li): i64 {
+    if (li < _cur_fn_pslots) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    return 1;
 }
 # ... a whole tuple / dyn field (`_fpk_ft`, the record `_expr_struct_sid` read) is refused at its load as a value, which
 # the armed record stood down (an argument takes it whole): its own line, at the field, as unarmed.
@@ -4728,6 +4732,7 @@ fn _slice_sub_read(S, li): i64 {
     var sw = _slice_lw(S, li);   # 6.7.8 (C2-2a): behind the slice bit (a stale width is no slice)
     if (sw > 0) { if (PEEKT(S) == 28) {
             if (_ek_lw(_slice_led(S, li)) < 0) { return _slice_sub_sread(S, li); }   # 6.7.8 (C2-6c)
+            if (_slice_rd_w(sw) == 0) { return _slice_rd_wide(S, li, sw); }   # 6.7.16: a 12- / 24-byte element
             var tb = GTI(S);
             var bk = _bck_open(S, 0 - 2);   # 6.7.8 (C2-8): the bounds check, against s.len
             STI(S, GTI(S) + 1);  # consume [
@@ -4775,6 +4780,42 @@ fn _slice_sub_read(S, li): i64 {
             STI(S, GTI(S) + 1);  # consume ]
             return 1;
         } }
+    return 0;
+}
+# 1 = lib/slice.cyr has a `_slice_idx_get_W` for an element of `sw` bytes.
+fn _slice_rd_w(sw): i64 {
+    if (sw == 1 || sw == 2 || sw == 4 || sw == 8 || sw == 16) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.16 — A SLICE ELEMENT OF ANY OTHER WIDTH IS REFUSED BY NAME. The read calls `_slice_idx_get_W`, which exists for a
+# 1-, 2-, 4-, 8- and 16-byte element only, so a 12- or 24-byte one (`[P3]`; since D89 a generic instance, `[Box<Pt>]`,
+# `[W<i32>]`) was the false "slice subscript requires include "lib/slice.cyr"" with the include there. Now the width is
+# named at the `[` (the store's words, `_slice_sub_addr`), and the subscript stepped in sync. CHANGELOG [6.7.16]
+fn _slice_rd_wide(S, li, sw): i64 {
+    _sub_wide_err(S, L64(S + 0x5D9D000 + li * 8), sw);
+    STI(S, GTI(S) + 1);  # consume [
+    PCMPE(S);
+    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+    STI(S, GTI(S) + 1);  # consume ]
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
+fn _sub_wide_err(S, noff, sw): i64 {
+    if (_panic == 1) { return 0; }
+    _refuse_in_sync(S);
+    if (_derr_seen(GTI(S), "_sub_wide_err", noff * 31 + sw, 1) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot subscript '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("': a slice subscript reads a 1-, 2-, 4-, 8- or 16-byte element - this one is ");
+    PRNUM(sw);
+    PRSTR(" bytes: read at slice_ptr(&s) + i * sizeof(T)\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
     return 0;
 }
 # ⛔ 6.7.8 (C2-6c) — A SIGNED SLICE ELEMENT IS READ SIGN-EXTENDED (the user's decision, 2026-10-10).
