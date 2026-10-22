@@ -666,7 +666,9 @@ lines_are trr13b "TRR13b: the method's Result<i64, Pt, Pt> — the reader's line
 # "'h' returns 2 values". Now the member's words (`_trs_fnp_refuse`) at the type's first `*`, with the return note,
 # under --syntax-only too, the type stepped (`_fnp_ty_end`) and the body parsed; pass 1 records nothing for it. A
 # member's bare `: *fn;` was "expected '(', got ';'": the same line now. An impl adds no "returns .." line beside a
-# method's own refusal (a multi-value element too); a member's multi-value `*fn( .. )` element keeps the impl's line.
+# method's own refusal (a multi-value element too). 6.7.17 (the user's D9, 2026-10-22): a member's multi-value
+# `*fn( .. )` element is the fn's line too (`_trs_mv_fnp`), once, at its `*` — through 6.7.16 the member compiled and
+# kept the impl's line (FP9) — and the impl's line is left out beside it on that side as well (FP9, FP9f).
 # Filed: docs/development/issues/archived/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md
 # Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc, CYCC= it): the lane before it (d280e29e1)
 #   -> RED 18: TR8c FP1-FP8b FP10-FP11b FP13-FP13c; `_ret_ann_alt`'s arm gone -> RED 14 (all but the multi-value rows
@@ -676,6 +678,10 @@ lines_are trr13b "TRR13b: the method's Result<i64, Pt, Pt> — the reader's line
 #   -> RED 7: FP3 FP4b FP7 FP10 FP11 FP11b FP13c; pass 1 stepping it unrecorded (no `_ret_ptr_annot`, the triage's
 #   plan) -> RED 3: FP13 FP13b FP13c (each use "assigning non-pointer to typed pointer"); pass 2 not recording it ->
 #   RED 1: FP13b (an instance minted in pass 2)
+# Mutants (2026-10-22, D9; the same way): the lane before it (660ec3eaf) -> RED 7: FP9 FP9b FP9c FP9f (the impl's line
+#   alone), FP9d FP9e (BUILT), FP9h (the method's line alone); `_trs_mv_fnp` answering 0 -> RED the same 7; `_tr_rt_bad`
+#   without the member-side stand-down -> RED 3: FP9 FP9c FP9f (the impl's line beside it); `_tr_ret_rf` without it ->
+#   RED 1: FP9f (the site's line)
 cat > "$T/fp1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 fn h(): *fn(i64): i64 { return 0; }
@@ -702,8 +708,26 @@ printf "$R"'trait T { fn d(self): (i64, i64); }\nfn f(q: *P): i64 { var o: dyn T
 lines_are fp8 "FP8: an impl's multi-value *fn( .. ) element, a dyn formed above and below — the method's line alone" "5:29: $FP"
 lint_is fp8 "FP8b: ... under --syntax-only" "5:29: $FP"
 printf "$R"'trait T { fn d(self): (*fn(i64): i64, i64); }\nimpl T for P { fn d(self): (i64, i64) { return (0, 1); } }\nsyscall(60, 0);\n' > "$T/fp9.cyr"
-lines_are fp9 "FP9: control — a member's multi-value *fn( .. ) element (read on by its reader) keeps the impl's line" \
-    "4:28: 'P.d' returns (i64, i64), trait 'T' declares (*fn(i64): i64, i64)"
+lines_are fp9 "FP9: a member's multi-value *fn( .. ) element is the fn's line at its * (6.7.17, the user's D9) — no impl line" \
+    "3:24: $FP"
+n=$(grep -c "^  note: a return type is a struct" "$T/fp9.err" || true)
+if [ "$n" -eq 1 ]; then ok "FP9b: ... with a fn's return-type note"; else bad "FP9b: $n notes (want 1)"; fi
+lint_is fp9 "FP9c: ... under --syntax-only, as a fn's element is" "3:24: $FP"
+cat > "$T/fp9d.cyr" <<'EOF'
+struct P { x; }
+trait T { fn e(self): (*fn(i64): i64, i64); }
+fn main(): i64 { return 3; }
+syscall(60, main());
+EOF
+lines_are fp9d "FP9d: the filed repro verbatim (through 6.7.16 it built, exit 3)" "2:24: $FP"
+printf "$R"'trait T { fn d(self): (i64, *fn); fn e(self): (i64, **fn(i64): i64, i64); }\nsyscall(60, 0);\n' > "$T/fp9e.cyr"
+lines_are fp9e "FP9e: a bare *fn and a **fn( .. ) element after the first — one line per member, at its *" "3:29: $FP" "3:53: $FP"
+printf "$R"'trait T { fn d(self): (*fn(i64): i64, i64); }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn d(self): (i64, i64) { return (0, 1); } }\nsyscall(60, 0);\n' > "$T/fp9f.cyr"
+lines_are fp9f "FP9f: ... a dyn formed above the impl — the member's line alone (no site line)" "3:24: $FP"
+printf "$R"'trait T { fn d(self, cb: *fn(i64): i64): (i64, i64); }\nimpl T for P { fn d(self, cb: *fn(i64): i64): (i64, i64) { return (callptr(cb, 2), 1); } }\nfn one(x: i64): i64 { return x + 1; }\nfn main(): i64 { var p = P { 0 }; var a, b = p.d(&one); return a + b; }\nsyscall(60, main());\n' > "$T/fp9g.cyr"
+exits fp9g 4 "FP9g: control — a member's *fn( .. ) PARAMETER beside a plain multi-value return, unchanged"
+printf "$R"'trait T { fn d(self): (*fn(i64): i64, i64); }\nimpl T for P { fn d(self): (*fn(i64): i64, i64) { return (0, 1); } }\nsyscall(60, 0);\n' > "$T/fp9h.cyr"
+lines_are fp9h "FP9h: a member and its method both (*fn( .. ), i64) — one line each, as FP11b's bare *fn" "3:24: $FP" "4:29: $FP"
 printf "$R"'trait T { fn d(self): *fn; }\nsyscall(60, 0);\n' > "$T/fp10.cyr"
 lines_are fp10 "FP10: a member's bare : *fn return — the fn-pointer line (it was \"expected '(', got ';'\")" "3:23: $FP"
 printf "$R"'trait T { fn d(self): i64; }\nfn f(q: *P): i64 { var o: dyn T = q; return 0; }\nimpl T for P { fn d(self): *fn { return 0; } }\nsyscall(60, 0);\n' > "$T/fp11.cyr"
@@ -856,4 +880,4 @@ done
 [ "$IBN" -ge 35 ] || bad "IB: the rows ran $IBN row-legs (floor 35) - rows or legs were lost"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16), and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
+echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16) — a member's multi-value *fn( .. ) element too (FP9, 6.7.17, D9) — and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"

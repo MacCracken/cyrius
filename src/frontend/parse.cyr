@@ -161,6 +161,9 @@ fn _tok_skip_block(S, k, n): i64 {
 #     a bodiless `fn x(..);` ends at its `;` instead of swallowing the next block, and a body
 #     ends at its matching `}`.
 # Never past the EOF token (12, the stream's last): a truncated or unbalanced source ends there.
+# ⛔ 6.7.17 (D8) — A `fn` BEHIND A `*` IS A FN-POINTER TYPE, NOT A UNIT: k itself. A local's `var c: *fn(i64): i64 =
+# pick(x)?;` was stepped to its `;` as a refused nested fn, so the scans never saw the `?` in it — a caller above took
+# `b(x)?` as the boxed `?` and dereferenced the tag (rc 139). CHANGELOG [6.7.17]
 fn _skip_nested_body(S, k): i64 {
     var n = GTCNT(S);
     var t = TOKTYP(S, k);
@@ -168,6 +171,7 @@ fn _skip_nested_body(S, k): i64 {
     if (t == 13) {
         if (_tok_is_closure_body(S, k) == 1) { e = _tok_skip_block(S, k, n); }
     } elif (t == 32) {
+        if (_tn_fnptr_kw(S, k) == 1) { return k; }
         e = n;
         var pd = 0;
         var j = k + 1;
@@ -5782,7 +5786,8 @@ fn _asa_back(S, noff, k, loc): i64 {
                 if (h != 0 - 2) { return h; }
             }
         } elif (d == 0) {
-            if (t == 32) { if (loc == 1) { return _asa_prm(S, noff, k); } }
+            # 6.7.17 (D8): the fn's own `fn`, not a local's `*fn( .. )` (`_tok_fn_kw`)
+            if (t == 32) { if (loc == 1) { if (_tok_fn_kw(S, k) == 1) { return _asa_prm(S, noff, k); } } }
             if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
                     var r = _asa_bind(S, k, lb);
                     if (r != 0 - 2) { return r; }

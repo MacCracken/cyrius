@@ -9962,6 +9962,7 @@ fn _tr_ret_rf(S, tp, fp): i64 {
     if (a < 0 || b < 0) { return 0; }
     var ra = _dyn_ret_at(S, a);
     var re = _dps_te;
+    if (_tr_rt_mvfnp(S, ra, re) == 1) { return 1; }   # 6.7.17 (D9): the member's `(*fn( .. ), T)` too
     if (_tr_rt_rd(S, ra, re) == 1) { return 1; }
     var rb = _dyn_ret_at(S, b);
     var rbe = _dps_te;
@@ -9984,7 +9985,7 @@ fn _tr_rt_rd(S, a, ae): i64 {
 # (issues/archived/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md). CHANGELOG [6.7.16]
 fn _tr_rt_bad(S, a, ae, mem): i64 {
     if (_tr_rt_head(S, a, ae, _tr_rt_nr(mem)) == 1) { return 1; }
-    if (mem == 0) { if (_tr_rt_mvfnp(S, a, ae) == 1) { return 1; } }   # 6.7.16: a method's `(*fn( .. ), T)`
+    if (_tr_rt_mvfnp(S, a, ae) == 1) { return 1; }   # 6.7.16: a method's `(*fn( .. ), T)`; 6.7.17 (D9): a member's
     # 6.7.15's D4 arm, a name that is no type — among the names a reader reads (6.7.16's D88: `Result<..>` is read, an
     # enum's or Option's `<..>` refused at its name) — and 6.7.16's D7 `Pt<i64>`, refused by either reader.
     return _ty_rd_scan(S, a, ae, 1);
@@ -10137,7 +10138,11 @@ fn _tr_sig_check(S, tx, p, op, q): i64 {
     var i = _trs_params(S, op + 1, q);
     if (_trs_bad == 0) {
         if (TOKTYP(S, i) == 49) {
-            if (TOKTYP(S, i + 1) == 10) { i = _trs_type(S, i + 1, q, " in a multi-value return type", 0 - 1); }
+            if (TOKTYP(S, i + 1) == 10) {   # 6.7.17 (D9): a `*fn( .. )` element is refused first
+                if (_trs_mv_fnp(S, i + 1, q) == 0) {
+                    i = _trs_type(S, i + 1, q, " in a multi-value return type", 0 - 1);
+                }
+            }
             elif (_trs_ret_refused(S, i + 1) == 0) { i = _trs_type(S, i + 1, q, " as a fn return type", 0 - 1); }
         }
     }
@@ -14575,6 +14580,10 @@ fn _pty_list(S, i, loud): i64 {
         i = j;
     }
     if (TOKTYP(S, i) == 11) { return i + 1; }
+    if (_pty_rpx < 0) {   # 6.7.17 (D8): a declaration's, `_ptr_fnp_rp`
+        _pty_rpx = i;
+        _pty_rpn = 1 - _pty_bad;
+    }
     _pty_bad = 1;   # the parameter loop reports the `)` it expects here
     return i;
 }
@@ -14588,7 +14597,7 @@ fn _pty_name(S, i): i64 {
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
-    _tn_refuse_var(S, i, " for parameter ", _pty_pnoff(S));
+    _tn_refuse_var(S, i, _pty_what(), _pty_pnoff(S));
     return 0;
 }
 # ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the
@@ -14618,6 +14627,7 @@ fn _pty_gen_end(S, i): i64 {
 }
 # The parameter's name (the token before its `:`), or -1.
 fn _pty_pnoff(S): i64 {
+    if (_pty_dk != 0) { return _pty_dn; }   # 6.7.17 (D8): a declaration's `*fn( .. )`
     if (TOKTYP(S, _pty_ts - 2) != 2) { return 0 - 1; }
     if (TOKTYP(S, _pty_ts - 1) != 49) { return 0 - 1; }
     return TOKVAL(S, _pty_ts - 2);
@@ -14638,7 +14648,8 @@ fn _pty_err(S, ti, loud): i64 {
     PRSTR(": expected a type");
     var pn = _pty_pnoff(S);
     if (pn >= 0) {
-        PRSTR(" for parameter '");
+        PRSTR(_pty_what());
+        PRSTR("'");
         PRSTR(S + 0xEC00000 + pn);
         PRSTR("'");
     }

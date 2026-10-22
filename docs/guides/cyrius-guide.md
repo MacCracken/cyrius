@@ -250,10 +250,18 @@ refused by name (`type 'u8' cannot be a fn return type`; return an `i64`), with 
 this whole set (6.7.11; it used to leave out `bool`, the multi-value form, `dyn` and `T`).
 `cyrius lint` (`--syntax-only`) resolves no type names, so it never reports these. A fn-pointer type is a
 parameter type, not a return type: `fn h(): *fn(i64): i64`, `: **fn( .. )`, a bare `: *fn` and a multi-value
-element `(*fn(i64): i64, i64)` are *a fn-pointer type `*fn( .. )` cannot be a fn return type*, once, at the
+element `(*fn(i64): i64, i64)` — a trait member's too, since 6.7.17 (the user's D9, 2026-10-22; through 6.7.16 the
+member compiled) — are *a fn-pointer type `*fn( .. )` cannot be a fn return type*, once, at the
 type's first `*`, with the note — under `cyrius lint` too — and the body is read on (6.7.16; through 6.7.15 it was
 *expected identifier, got reserved keyword 'fn' (.. rename the variable/field/fn)*, and a bare `*fn` read the
 body as more of the type: *fn 'main' is defined inside fn 'h'*, *expected '}'*).
+It is also the type of a local, a global (either zone), a struct or union field and a slice element (6.7.17, the
+user's D8, 2026-10-22): `var c: *fn(i64): i64 = &f;`, `var G: *fn = 0;`, `struct H { cb: *fn(i64): i64; k; }`
+(16 bytes) and `var s: [*fn(i64): i64]` each declare the one 8-byte word a parameter's does — a bare `*fn` and
+`**fn( .. )` too — and its names are read as a parameter's are, each refusal once with the declaration's words
+(*unknown type 'Nope' for variable 'c'*, *... for struct field 'cb'*, *expected ')', got identifier 'i64'*).
+Through 6.7.16 each was *expected identifier, got reserved keyword 'fn'* followed by *undefined variable 'i64'* and
+*assigning non-pointer to typed pointer* (a global's also *expected '=', got '('*).
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
@@ -300,7 +308,11 @@ with no type at all — the `=` or `;` right after it — is the same error at t
 `var b: = 0;` is `expected a type for variable 'b', got '='` and reads `= 0` as its initializer;
 `var G: ;` is `... got ';'`, and only that. ⚠ Through 6.7.14 the `=` was read as the type, so the
 error was `expected '=', got number 0` at the initializer, and in the declaration zone `var c: ;
-var d = 2;` compiled with `c` = 2.
+var d = 2;` compiled with `c` = 2. A `*` with no type after it is the same error (6.7.17): `var p: *+ = x;` is
+`expected a type for variable 'p', got '+'`, as a parameter's `p: *+` is (it was *expected identifier, got '+'*; a
+field's `k: *+` keeps that, as `k: +` does). And a declaration whose `*T` annotation is refused — `var p: *Nope = x;`,
+`*fn(Nope)`, `*+` — reports that one error, not also *assigning non-pointer to typed pointer* about its value (6.7.17;
+6.7.11 did so for `*( .. )` only).
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 
@@ -3399,10 +3411,13 @@ fn demo(): i64 {
   and D3; through 6.7.14 both compiled, and an impl spelled `: i64` satisfied the `u128` one). So is the rest of the
   set since 6.7.16 (the user's D9): `: u8`..`: u64`, `: f32` and an enum are *type 'u8' cannot be a fn return type*,
   and `: *fn(i64): i64` is *a fn-pointer type `*fn( .. )` cannot be a fn return type* (that one under `cyrius lint`
-  too, as a fn's `: *fn( .. )` is — the same line, a bare `: *fn` too); through 6.7.15 each compiled. Declare `: i64` or a pointer
+  too, as a fn's `: *fn( .. )` is — the same line, a bare `: *fn` too); through 6.7.15 each compiled. So is a member's
+  multi-value element `fn e(self): (*fn(i64): i64, i64);` since 6.7.17 (the user's D9, 2026-10-22), at the element's
+  `*`, once per member; through 6.7.16 it compiled, though no impl could define it. Declare `: i64` or a pointer
   instead. `: *Vec<i64>`, `: *u128`, `: *Color` and a parameter `v: Vec<i64>` or `cb: *fn(i64): u128` are unchanged.
   The impl's line is left out beside a member's refusal — the member's error is the one report — and beside a
-  method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16). Under `cyrius lint`,
+  method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16; a member's
+  multi-value element too, 6.7.17). Under `cyrius lint`,
   which does not report a member's `: u8`..`: f32` or enum return, or a `Pt<i64>` / `i64<u8>` on either side, an impl
   whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15.
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
@@ -7157,7 +7172,13 @@ when the callee is written `&f` (6.7.11): a callee held in a variable returns on
 
 A parameter that holds a fn pointer can say so (6.7.11): `fn ap(cb: *fn(i64): i64, x: i64)`, or a
 bare `cb: *fn`. It is one word; `fncall1(cb, x)` / `callptr(cb, x)` call through it, and the
-signature is not checked against the fn a caller passes (see *Type names*).
+signature is not checked against the fn a caller passes (see *Type names*). So can a local, a global, a
+struct or union field and a slice element since 6.7.17 (the user's D8): `var c: *fn(i64): i64 = &dbl;`,
+`struct H { cb: *fn(i64): i64; k; }` — each one word, called through as the parameter is (`fncall1(c, 5)`,
+`callptr(h.cb, 5)`). A fn's address `&f` and a closure literal are pointers to the typed-pointer check, as a
+variable's `&x` is: into a `*fn( .. )` (or any `*T`) they say nothing (6.7.17; through 6.7.16 `var c: *fn(i64): i64 =
+&dbl;`, `cb = &inc;` into a parameter and `= |x| x + 1` warned *assigning non-pointer to typed pointer*). `&f + 1` and
+an untyped variable holding `&f` still warn.
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:

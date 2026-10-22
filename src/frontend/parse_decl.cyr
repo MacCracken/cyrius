@@ -317,7 +317,7 @@ fn _arr_fn_tparam(S, ti, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
     var k = ti - 1;
     while (k >= 0) {
-        if (TOKTYP(S, k) == 32) {
+        if (_tok_fn_kw(S, k) == 1) {   # 6.7.17 (D8): not a local's `*fn( .. )`
             if (_tok_body_spans(S, k, ti) == 1) {
                 if (TOKTYP(S, k + 2) != 19) { return 0; }   # `fn name <`
                 var j = k + 3;
@@ -7213,7 +7213,12 @@ fn _gvi_ann(S, slot): i64 {
         STI(S, GTI(S) + 1);   # consume ')'
         return 0 - tsid;
     }
+    var a0 = GTI(S);
     var ps = _gvi_stars(S);
+    if (ps == 1) { if (PEEKT(S) == 32) {   # 6.7.17 (D8): `*fn( .. )`, read by pass 1 — stepped as it stepped it
+            STI(S, _ptr_fnp_end(S, a0, 0 - 1, 1, " for variable "));
+            return 0;
+        } }
     if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): a slice, refused by name at registration — stepped whole
         _sl_ann_skip(S);
         return 0;
@@ -7469,7 +7474,35 @@ fn _gvi_ptr_ann(S, st): i64 {
 fn _tp_exempt(S, st): i64 {
     if (st < 0) { return 0; }
     if (_tp_null_exempt(S, st) == 1) { return 1; }
+    if (_tp_fna_exempt(S, st) == 1) { return 1; }
     return _tp_str_exempt(S, st);
+}
+# ⛔ 6.7.17 — A FN'S ADDRESS IS A POINTER, AS EVERY OTHER `&name` IS, AND SO IS A CLOSURE LITERAL (its value is a fn
+# pointer). `&x` of a variable is a pointer to this check (6.5.29: scale 1), `&f` of a fn carried no scale, so the one
+# value a `*fn( .. )` holds warned "assigning non-pointer to typed pointer": `var c: *fn(i64): i64 = &dbl;` (6.7.17's
+# D8), a zone or late global's, `c = &inc;`, `cb = &inc;` into a `cb: *fn( .. )` parameter, `G = &inc;`, a for step,
+# `var g: *fn(i64): i64 = |x| x + 1;`. 1 = from `st` to its terminator (`_tp_term`), under any parentheses that wrap
+# it whole: `&` and one name (a variable's `&x` never reaches here), or a closure literal (`|` / `||` first; bare, it
+# runs to the value's end). `&f + 1` is judged as before. Warning text only. CHANGELOG [6.7.17]
+fn _tp_fna_exempt(S, st): i64 {
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var a = st + k;
+    var t = TOKTYP(S, a);
+    if (t == 35 || t == 54) { return _tp_cl_whole(S, st, k); }
+    if (t != 27) { return 0; }
+    if (TOKTYP(S, a + 1) != 2) { return 0; }
+    if (_pair_unwrap_k(S, a + 2, k, a) < 0) { return 0; }
+    if (TOKTYP(S, a + 2 + k) != _tp_term) { return 0; }
+    return 1;
+}
+# A closure literal at token `st + k` under the k `(` at `st`: 1 when they wrap it whole (k 0: it is the value).
+fn _tp_cl_whole(S, st, k): i64 {
+    if (k == 0) { return 1; }
+    var c = _call_close(S, st + k - 1);
+    if (_pair_unwrap_k(S, c + 1, k - 1, c) < 0) { return 0; }
+    if (TOKTYP(S, c + k) != _tp_term) { return 0; }
+    return 1;
 }
 # 1 = from `st` to its `;`: the integer literal 0 under any parentheses that wrap it whole — `0`, `(0)`, `((0))` (the
 # guide's whole-wrap transparency, as the string literal's arm peels it). `var p: *i64 = (0);`, `p = (0);` and a zone
@@ -7526,11 +7559,23 @@ fn _tp_warn(S, st): i64 {
 fn _tp_warn_gv(S, slot, st): i64 {
     if (slot < 0) { return 0; }
     if (GVTYPE(S, slot) >= 0) { return 0; }
+    if (_ann_said(S, _tp_decl_var(S, st), st) == 1) { return 0; }   # 6.7.17: its annotation was refused (`_ann_said`)
     if (GPSC(S) != 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_tn_seen_at(S, st) == 1) { return 0; }
     if (_tp_call_pointee(S, st, _gv_ptr_sid(S, slot)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
+}
+# The `var` of the zone declaration whose initializer starts at token `st` (st itself when none is met first).
+fn _tp_decl_var(S, st): i64 {
+    var k = st - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 3) { return k; }
+        if (t == 5 || t == 13 || t == 14) { return st; }
+        k = k - 1;
+    }
+    return st;
 }
 # PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
 # warning, unless the line is refused — at its call (D14, `_ptr_refd_ti`) or inside its initialiser (`_scv_err`, as

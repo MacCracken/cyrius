@@ -5203,23 +5203,42 @@ fn _tr_rt_nr(mem): i64 {
     return 1;
 }
 # 1 when the multi-value return [a, ae) (`a` its `(`) has an element that is a fn-pointer type (`*fn( .. )`, a bare
-# `*fn`): PARSE_FN_DEF refuses it by name since 6.7.16 (`_mret_elem`), so on a METHOD's side the impl's "returns .."
-# line beside it is a second report of one error. A member's reader reads such an element on, so its side keeps the
-# impl's line. CHANGELOG [6.7.16]
+# `*fn`): PARSE_FN_DEF refuses it by name since 6.7.16 (`_mret_elem`), and a member's reader since 6.7.17 (the user's
+# D9, `_trs_mv_fnp`), so on either side the impl's "returns .." line beside it is a second report of one error.
+# CHANGELOG [6.7.16] [6.7.17]
 fn _tr_rt_mvfnp(S, a, ae): i64 {
-    if (a == ae) { return 0; }
-    if (TOKTYP(S, a) != 10) { return 0; }
+    if (_tr_mv_fnp_at(S, a, ae) < 0) { return 0; }
+    return 1;
+}
+# The first such element's first `*`, else -1 (the walk ends at the list's `)`).
+fn _tr_mv_fnp_at(S, a, ae): i64 {
+    if (a == ae) { return 0 - 1; }
+    if (TOKTYP(S, a) != 10) { return 0 - 1; }
     var k = a + 1;
     var d = 1;
     while (k < ae) {
         var t = TOKTYP(S, k);
-        if (d == 1) { if (_tr_mv_elem_at(S, k) == 1) { if (_trs_ret_fnp(S, k) == 1) { return 1; } } }
+        if (d == 1) { if (_tr_mv_elem_at(S, k) == 1) { if (_trs_ret_fnp(S, k) == 1) { return k; } } }
         if (t == 10 || t == 19) { d = d + 1; }
         elif (t == 11) { d = d - 1; }
         else { d = d - _targ_gt_n(t); }
+        if (d <= 0) { return 0 - 1; }
         k = k + 1;
     }
-    return 0;
+    return 0 - 1;
+}
+# ⛔ 6.7.17 (the user's D9, 2026-10-22) — A MEMBER'S MULTI-VALUE ELEMENT `*fn( .. )` IS REFUSED WITH THE FN'S WORDS,
+# as a fn's `(*fn(i64): i64, i64)` is (`_mret_elem`, 6.7.16): `trait T { fn e(self): (*fn(i64): i64, i64); }`
+# compiled, though no impl could define it (the method's own return is refused). One line at the first such element's
+# `*`, with the return note, under --syntax-only too (`_trs_fnp_refuse`); the member's walk ends there
+# (`_tr_sig_check`). The multi-value return whose `(` is token `a` (`q` the member's `;` / body): 1 = refused.
+# CHANGELOG [6.7.17]
+fn _trs_mv_fnp(S, a, q): i64 {
+    var k = _tr_mv_fnp_at(S, a, q);
+    if (k < 0) { return 0; }
+    _trs_bad = 1;
+    _trs_fnp_refuse(S, k);
+    return 1;
 }
 # 1 when token `k` begins an element of a list: it follows the `(` or a `,`.
 fn _tr_mv_elem_at(S, k): i64 {

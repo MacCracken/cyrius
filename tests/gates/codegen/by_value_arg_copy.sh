@@ -504,6 +504,9 @@ for mode in plain IR3 DCE; do
     chmod +x "$T/tc_$mode"; got=0; cpu_run 60 900 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
     tcyr_ok "$lbl" "$T/tc_$mode.out" "$got"
 done
+# 6.7.17 — the emulated legs' deadline is 300 s, as the other gates' (param_type_grammar.sh): cxvm interprets the
+# tcyr's 3,000,000-deep tail-call rows in ~86 s on a loaded box (load ~55, base 6.7.16's own cxvm and bytecode), so
+# 120 s killed a correct run (A5 "exit 124") under check.sh's parallel pool.
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"

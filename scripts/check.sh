@@ -3023,6 +3023,11 @@ _chk_gate "$ROOT/tests/gates/frontend/address_of_pointer_param.sh"
 # (`a: 5`, `a: +`, `a: ;`, a string) is refused by name, once. The two filed repros, 21 refusals, the
 # pass agreement and 23 rows, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/param_type_grammar.sh"
+# 6.7.17 — a `*fn( .. )` declares a local, a global (either zone), a struct / union field and a slice element as the one
+# pointer word a parameter's does (the user's D8): the filed repros with no error or warning, a refusal inside the type
+# once with the declaration's words, the token scans (a `*fn`'s `fn` is no fn's own) and the rows of
+# tests/tcyr/crossos/fn_pointer_typed_holders.tcyr, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/fn_pointer_holders.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
