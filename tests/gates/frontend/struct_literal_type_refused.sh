@@ -220,6 +220,17 @@ var GQP: *Q = &GQ;
 var G = Box { (*GQP), 5 };
 syscall(60, G.n);
 ' only
+# R14 / R14b (6.7.17, met in the finish pass): a literal with elements PAST its last field is ONE error — `Pt { 1, 2, 3, 4 }`
+# in a fn was "expected '}', got number 3" and then "unexpected ';'" and "return outside a fn body": the close took the
+# `3` for its `}`, the declaration the `,` for its `;`, and the literal's own `}` closed the fn (one element too many
+# happened to land on the `}`). After a refused element the same two followed (R14b). Measured (2026-10-22): the
+# integration's compiler (CYCC) -> RED R14 R14b (3 error lines each).
+refuse "R14 Pt { 1, 2, 3, 4 } in a fn" "expected '}', got number 3" "$T"'fn f(): i64 { var p = Pt { 1, 2, 3, 4 }; return p.x; }
+syscall(60, f());
+' only
+refuse "R14b Box { q, 1, 2, 3 }: a refusal, then extras" "cannot copy 'q' into a struct field of a different struct type: 'v'" "$T"'fn f(): i64 { var q: Q; var b = Box { q, 1, 2, 3 }; return b.n; }
+syscall(60, f());
+' only
 # The top-level refusal is the ONLY error: the refused value is taken as the whole nested field, not
 # descended into (which reported the values it was then short as "unexpected '}'").
 T5="$T"'fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }

@@ -3176,12 +3176,14 @@ fn _mv_callee_any(S, fi): i64 {
     if (_fn_ret_arity(S, fi) != 0) { return 1; }
     return 0;
 }
-# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle.
+# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle — but `Str` (6.7.17,
+# the user's D99: a multi-value call into a `Str` slot is refused as into a struct slot). CHANGELOG [6.7.17]
 fn _mv_named(S, sid): i64 {
     if (sid <= 0) { return 0; }
     if (sid >= 2048) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
+    if (sid == _STR_SID(S)) { return 1; }   # 6.7.17 (D99): a `Str` slot refuses it as a struct slot does
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
 }
@@ -3253,7 +3255,7 @@ fn _mv_span(S, a, b, sid, kind): i64 {
 fn _mv_arg_call(S, fi, argc): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_mv_named(S, ps) == 0) { return 0; }
-    if (_pm_copies(fi, argc) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
     var ti = GTI(S);
     var o = _gcall_open(S, ti);
     if (o < 0) { return 0; }
@@ -3267,13 +3269,13 @@ fn _mv_arg_call(S, fi, argc): i64 {
 fn _mv_arg_mrc(S, fi, argc, st): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_mv_named(S, ps) == 0) { return 0; }
-    if (_pm_copies(fi, argc) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
     return _mv_span(S, st, GTI(S), ps, 0);
 }
 # ... and a by-value parameter of 8 B or less (`_sarg_byval_small`: one word, never address-passed).
 fn _mv_small_arg(S, fi, argc, st): i64 {
     var ps = GFPSID(S, fi, argc);
-    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_mv_named(S, ps) == 0 || _mv_pstr(S, fi, argc) == 1) { return 0; }   # 6.7.17 (D99): a `*Str` takes a word
     return _mv_span(S, st, GTI(S), ps, 0);
 }
 # A struct-typed declaration (`pscale` = `0 - sid`; a local or a global in either zone) whose initialiser
