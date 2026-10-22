@@ -1669,6 +1669,7 @@ fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base
 # 6.7.16 (D100 / D101): 1 = some fn returns a vector by value (a descriptor, <= -2048) — the scans that refuse a vector
 # call read as a word (`_vop_rchk`, `_vsc_arg`, `_vsc_ret`) run only then. CHANGELOG [6.7.16]
 var _vret_any = 0;
+var _vty_any = 0;   # 6.7.17: some local, parameter or pointer is typed a vector (`SLTYPE`, `_ps_vw`)
 fn SFRS(S, fi, v): i64 {
     if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); }
     if (v <= 0 - 2048) { _vret_any = 1; }
@@ -2068,7 +2069,13 @@ fn SCOPE_POP(S): i64 {
 fn GPSC(S): i64 { return L64(S + 0x18F890); }
 fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
 fn GLTYPE(S, li): i64 { return L64(S + 0x5DDD000 + li * 8); }
-fn SLTYPE(S, li, v): i64 { S64(S + 0x5DDD000 + li * 8, v); return 0; }
+# 6.7.17 (D24 / D25): a local or parameter typed a vector (a descriptor, <= -2048) marks `_vty_any`, as a `*V` step word
+# does (`_ps_vw`) — the scans for a vector value that is no call (`_vval_at`) run only then. CHANGELOG [6.7.17]
+fn SLTYPE(S, li, v): i64 {
+    if (v <= 0 - 2048) { _vty_any = 1; }
+    S64(S + 0x5DDD000 + li * 8, v);
+    return 0;
+}
 
 # v5.8.14 §6 — TYPE_SLICE element-type tracking.
 # Parallel-array stash for slice-typed locals: 576 entries × 8B,

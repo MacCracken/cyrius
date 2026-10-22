@@ -3203,6 +3203,7 @@ fn _ek_vd(S, ann): i64 {
 }
 fn _ps_vw(w, vd): i64 {
     if (w <= 0) { return w; }
+    if (vd != 0) { _vty_any = 1; }   # 6.7.17: a `*V` (`_vval_at` reads `*pv`)
     return w | (vd << 48);
 }
 # The vector (its descriptor sid, >= 2048) step word `w` points at, or 0.

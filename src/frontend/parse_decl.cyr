@@ -10426,6 +10426,71 @@ fn _vop_call(S, ti0, e): i64 {
     _ie_pe = sp;
     return r;
 }
+# ⛔ 6.7.17 (D24 / D25, the user's decisions, 2026-10-22) — A VECTOR VALUE THAT IS NO CALL. The vector (its descriptor,
+# <= -2048) [a0, e) is, inside any parentheses wrapping it whole: a name of a value-form vector local or parameter or
+# of a closure's captured vector (a vector global keeps its own refusal, `_vecg_refuse`), or one dereference of a
+# pointer to a vector — `*pv`, `**ppv`, `*gp()`, `*h.pv`, `*(pv + 1)`, `*(&w)` (6.7.13's D34: the vector) — by its
+# tokens (`_hl_pw`, `_amp_vd`); `_vvl_a` / `_vvl_e` the span its refusal names. Else 0. Asked only when some local,
+# parameter or pointer is typed a vector (`_vty_any`). CHANGELOG [6.7.17]
+var _vvl_a = 0;
+var _vvl_e = 0;
+fn _vval_at(S, a0, e): i64 {
+    if (_vty_any == 0) { return 0; }
+    var a = _ie_unparen(S, a0, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 0; }
+    var t = TOKTYP(S, a);
+    var vt = 0;
+    if (t == 2) { if (pe == a + 1) { vt = _vnm_lty(S, TOKVAL(S, a)); } }
+    elif (t == 8) { vt = _vval_dref(S, a, pe); }
+    if (vt == 0) { return 0; }
+    _vvl_a = a;
+    _vvl_e = pe;
+    return vt;
+}
+# The vector type of the name `noff` in a fn: a value-form vector local or parameter, a closure's captured vector; 0.
+fn _vnm_lty(S, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt <= 0 - 2048) { return lt; }
+        return 0;
+    }
+    if (_hl_capn(S, noff) == 1) { return _cl_cap_vec(S, noff); }
+    return 0;
+}
+# ... the dereference [d, pe) (`*` at `d`), one and nothing after it, whose operand points at a vector: its type; 0.
+fn _vval_dref(S, d, pe): i64 {
+    if (pe - d < 2) { return 0; }
+    if (_gz_split(S, d, pe) != 0 - 1) { return 0; }
+    var vd = _ps_vdesc(_hl_pw(S, d + 1, pe));
+    if (vd == 0) { vd = _amp_vd(S, d + 1, pe); }
+    if (vd == 0) { return 0; }
+    return 0 - vd;
+}
+# The span `_vval_at` read, as the source spells it, on stderr.
+fn _vval_pnm(S): i64 {
+    var nm = 0 - 1;
+    if (_vvl_e == _vvl_a + 1) { nm = TOKVAL(S, _vvl_a); }
+    else { nm = _src_span_nm(S, _vvl_a, _vvl_e, 0 - 1); }
+    if (nm < 0) { nm = _hl_lastnm(S, _vvl_a, _vvl_e, TOKVAL(S, _vvl_a)); }
+    PRSTR(S + 0xEC00000 + nm);
+    return 0;
+}
+# The vector type `vt` (a descriptor, <= -2048) by its name — `f64v2`, `f32v8`, `i16v8`, `u8v16` — on stderr: the
+# lane kind (bits 0-1: 1 f, 2 i, 0 u), the lane's bits and the lane count (`_vec_desc`'s fields).
+fn _vty_pr(vt): i64 {
+    var dsc = (0 - vt) - 2048;
+    var k = dsc & 3;
+    if (k == 1) { PRSTR("f"); }
+    elif (k == 2) { PRSTR("i"); }
+    else { PRSTR("u"); }
+    PRNUM(8 << ((dsc >> 2) & 7));
+    PRSTR("v");
+    PRNUM(1 << ((dsc >> 5) & 7));
+    return 0;
+}
 # The `(` of a builtin's or an indirect call's argument list (`syscall`, `store64`, `callptr`, fncallN), every argument
 # a word, whose whole argument is the factor [ti0, e); else -1.
 fn _vsl_bopen(S, ti0, e): i64 {

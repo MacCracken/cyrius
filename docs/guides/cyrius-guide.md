@@ -3820,6 +3820,13 @@ var hi, lo, bexp = dd_pow10(k);
 # An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is. A
 # HANDLE named whole is its pointer and stays an element: `var q: Pt = alloc(16); return (q, 5);` (a
 # struct local initialised from an address, or a pointer-mode global) hands back the address, as before.
+# A VECTOR value is no element either (6.7.17, the user's D25) — a vector local, parameter or closure
+# capture, `*pv`, `**ppv`, `*(&w)` — refused at the element in the same shape (it handed back lane 0):
+#   fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }  # 'two' returns vector 'f64v2' (16
+#                                     # bytes) as a multi-value element - return its pointer, or its
+#                                     # lanes as elements
+#   return (load64(&v), load64(&v + 8), 3);   fn lp(pv: *f64v2): (*f64v2, i64) { return (pv, 2); }
+# The declaration `(f64v2, i64)` stays as it is; a vector CALL as the element is refused in D100's words.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the
