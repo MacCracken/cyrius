@@ -7174,6 +7174,9 @@ fn that otherwise returns one value (`fn f(x): i64 { var v = g(x)?; … }`),
 with the every-path rule (*"returns a `: stack` pair on another path but
 a SINGLE value here"*, see *Bind the pair as a pair*) — a warning, not an
 error: declare the fn `: Result` and return a variant on every path.
+`return g(x)?;` is such a single value too (6.7.17; through 6.7.16 it
+was read as forwarding g's pair and said nothing, in a fn, an impl
+method and a closure, for `(g(x))?` and `callptr(&g, x)?` alike).
 
 ## No try / catch — design decision
 
