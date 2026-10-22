@@ -1193,8 +1193,9 @@ fn _dl_refd_at(S, noff): i64 {
 # declared after its use"). CHANGELOG [6.7.17]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
 # Per declaration the walk met (`_dl_pw_rec`): its keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words). None is
-# recorded before `_dl_pw_skip` (`_dl_inner_at`: a derive's fns).
+# recorded in the window `_dl_pw_skip0`..`_dl_pw_skip` (`_dl_inner_at`: a derive's fns, after the declaration's `}`).
 var _dlpd = 0;
+var _dl_pw_skip0 = 0;
 var _dl_pw_skip = 0;
 fn _dl_inner_fill(S): i64 {
     var n = GTCNT(S);
@@ -1251,7 +1252,10 @@ fn _dl_inner_at(S, i, bk): i64 {
     _dl_names(S, i, e);
     STI(S, e);
     _dl_derived(S, i);
-    _dl_pw_skip = GTI(S);   # a `#derive`'s fns there (`public fn E_to_json`) are the compiler's, stepped with it
+    # A `#derive`'s fns there (`public fn E_to_json`) are the compiler's, stepped with it: only that window, after the
+    # `}` — a declaration inside this one (a refused inner trait's default) is still recorded. CHANGELOG [6.7.17]
+    _dl_pw_skip0 = e;
+    _dl_pw_skip = GTI(S);
     return 0;
 }
 # ⛔ 6.7.17 — AN INNER DECLARATION IS REFUSED WHEREVER IT SITS, ITS BODY COMPILED OR NOT (the user's decision D33,
@@ -1265,7 +1269,7 @@ fn _dl_inner_at(S, i, bk): i64 {
 # once (`_ce_err_dup`), so one pass 2 reported stays one line, and two bodies declaring one name are two.
 # CHANGELOG [6.7.17]
 fn _dl_pw_rec(i, bk): i64 {
-    if (i < _dl_pw_skip) { return 0; }
+    if (i >= _dl_pw_skip0) { if (i < _dl_pw_skip) { return 0; } }
     if (_dlpd == 0) { _dlpd = vec_new(); }
     var f = 0;
     if (bk == 3) { f = 1; }

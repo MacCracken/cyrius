@@ -591,8 +591,8 @@ var r = add(20, 22);   # r = 42
   the recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the
   user's decision D33): in a trait default no impl inherits, in a bounded generic fn or method that is
   never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in the body of a
-  refused nested fn or a refused `impl`'s method. Through 6.7.16 such a declaration compiled — said only
-  once a use of its name stood down. Those bodies are not parsed, so their declarations are said at the
+  refused nested fn, a refused `impl`'s method or a refused `trait`'s default. Through 6.7.16 such a
+  declaration compiled — said only once a use of its name stood down. Those bodies are not parsed, so their declarations are said at the
   end of the parse, after its other errors. Either way, a use of what the refused declaration names
   adds no error of its own (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
   `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
