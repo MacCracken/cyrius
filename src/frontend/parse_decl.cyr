@@ -9537,9 +9537,10 @@ fn _mch_hop(S, sid, k): i64 {
 # argument at token `at` — inside any wrap — when it is a receiver head the method arm takes (`_mch_head`: a name, a call,
 # a parenthesised value) and at least one `.field` / `.m(..)` step, each typed as the arm types it (`_mch_hop`,
 # `_mch_mres`): `_acv_is` 1 and the binding through `x: T` (`ptr` 0) or `p: *T` (1) in the parser's encoding (a struct
-# > 0, a scalar < 0, i64 -8); `_acv_is` 0 when it is no such chain (its readers' own arms decide). `ta` >= 0: from the
-# tokens of the unit starting at token ta (a token pass, `_mch_tok`), struct answers only. Its readers: `_ic_arg`,
-# `_tok_ta_arg`. CHANGELOG [6.7.17]
+# > 0, a scalar < 0, i64 -8) — or (2) the struct a carrier `b: G<T>` / `b: *G<T>` reads, held or pointed at; `_acv_is`
+# 0 when it is no such chain (its readers' own arms decide). `ta` >= 0: from the tokens of the unit starting at token
+# ta (a token pass, `_mch_tok`), struct answers only. Its readers: `_ic_arg`, `_tok_ta_arg`, `_gsc_arg`, `_tok_sc_arg`.
+# CHANGELOG [6.7.17]
 var _acv_is = 0;
 var _acv_k = 0;   # the last step: 1 a field (`_acv_s` its struct, `_acv_f` its index), 2 a method
 var _acv_s = 0;
@@ -9613,22 +9614,24 @@ fn _acv_walk(S, b): i64 {
     return 0;
 }
 # A field leaf (`_acv_s`, `_acv_f`): an inline struct field its struct (a tuple or a dyn: none); a `*S` field S through
-# `p: *T` only — 6.7.14's D8: through `x: T` no pointer binds — and a scalar pointee its scalar there (6.7.15's D11).
+# `p: *T` or a carrier only — 6.7.14's D8: through `x: T` no pointer binds — and a scalar pointee its scalar through
+# `p: *T` (6.7.15's D11).
 fn _acv_fld(S, ptr, ta): i64 {
     var si = _acv_s - 1;
     var ps = _fld_ptr_sid(S, si, _acv_f);
     if (ps > 0) {
-        if (ptr == 1) { return ps; }
-        return 0 - 8;
+        if (ptr == 0) { return 0 - 8; }
+        return ps;
     }
     var ft = GETFTYPE(S, si, _acv_f);
     if (ft > 0) { if (ft < 2048) { return _ic_pp_ok(S, ft); } }
-    if (ptr == 0) { return 0 - 8; }
+    if (ptr != 1) { return 0 - 8; }
     if (ta >= 0) { return 0 - 8; }
     return _ic_pscalar(_fld_ps_get(S, si, _acv_f));
 }
 # A method leaf (receiver struct `_acv_s`, name token `_acv_f`, `(` `_acv_o`): the struct it returns by value
-# (`_acv_mval`); through `p: *T` also the struct a `: *S` one points at (`_acv_mptr`) and a `: *i32` one's scalar.
+# (`_acv_mval`); through `p: *T` or a carrier also the struct a `: *S` one points at (`_acv_mptr`), and through `p: *T`
+# a `: *i32` one's scalar.
 fn _acv_meth(S, ptr, ta): i64 {
     var rs = _acv_s;   # a binding read below may run a nested `_acv_bind`
     var nt = _acv_f;
@@ -9640,6 +9643,7 @@ fn _acv_meth(S, ptr, ta): i64 {
     if (ptr == 0) { return 0 - 8; }
     v = _acv_mptr(S, mf, rs, nt, o);
     if (v > 0) { return v; }
+    if (ptr != 1) { return 0 - 8; }
     if (ta >= 0) { return 0 - 8; }
     if (GFTP(S, mf) != 0) { return 0 - 8; }
     return _ic_pscalar(_fn_ret_ps(mf));

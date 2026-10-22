@@ -85,6 +85,11 @@
 #      field, a `: *P` method, a `: P` method — each 4 (x86_64); PFK1-PFK3 a scalar field, a `*P` field and a `: *P`
 #      method through `x: T` bind nothing in either: `o(5)` meets the parser's own error once; PFZ the declaration
 #      zone (`var GZ = sz(GWQ.q);` 16, `gid(GWV.p)` / `gid(GB.mp())` P globals): 126 on every leg
+#   PG (6.7.17, met beside D2) A STRUCT CARRIER `b: Box<T>` / `b: *Box<T>` GIVEN A FIELD OR A METHOD BINDS T IN THE PARSER
+#      AND THE SCAN ALIKE (`_acv_bind` mode 2 from `_gsc_arg` and `_tok_sc_arg`): an inline `Box<P>` field (PG1 global,
+#      PG2 local, PG6 nested, PG7 a call head, PG8 after a method) and a `: Box<P>` / `: *Box<P>` method (PG4, PG5) were
+#      refused "a different struct type" against the i64 base; PG3, a `*Box<P>` field, the parser bound (6.7.8) and the
+#      scan did not (`_tok_sc_arg` had no chain arm), so o's base was refused naming P.pick — each 4 (x86_64)
 #   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
 #      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
 #      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
@@ -213,6 +218,11 @@
 #   MF2 `_tok_ta_arg` without its `_acv_bind` arm      -> RED 17: PF1-PF14 (the parser bound P, the scan nothing:
 #                                                         o's base refused naming P.pick), PFZ (the zone's reader)
 #   MF5 `_ic_arg` without its `_acv_bind` arm          -> RED 17: PF1-PF14, PFZ ("the declaration zone misread")
+#   MG1 the tree before the carrier arm (b726c3236)    -> RED 8: PG1 PG2 PG4-PG8 ("a different struct type"), PG3
+#                                                         (the stub refusal naming P.pick)
+#   MG2 `_tok_sc_arg` without its `_acv_bind` arm      -> RED 8: PG1-PG8 (the parser bound P, the scan nothing)
+#   MG3 `_gsc_arg` without its `_acv_bind` arm         -> RED 7: PG1 PG2 PG4-PG8 ("a different struct type"); PG3 green
+#                                                         (6.7.8's `_gsc_chain`)
 # 6.7.15 (the P8 rows; 2026-10-18, CYCC= the mutant):
 #   MP0 the fix reverted (the lane's previous compiler) -> RED P8a-P8g (the parser bound nothing: "no struct type in
 #                                                         scope for 'r'"); P8K green
@@ -885,6 +895,43 @@ pfk PFK3 'var b = B { 0 }; var r = gid(b.mpp()); return r.pick(t);' "gid(b.mpp()
 printf '%s\nvar GZ = sz(GWQ.q);\nvar GZR = gid(GWV.p);\nvar GZM = gid(GB.mp());\nfn m(): i64 { return GZ + GZR.n * 10 + GZM.n * 100; }\nsyscall(60, m());\n' "$PFH" > "$D/pfz.cyr"
 xr PFZ "$D/pfz.cyr" 126 "the zone: sz(GWQ.q) + gid(GWV.p).n * 10 + gid(GB.mp()).n * 100"
 
+echo "PG. a struct carrier given a field or a method binds in the scan as the parser binds it (6.7.17, met beside D2)"
+PGH='include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+struct H { k; b: Box<P>; pb: *Box<P>; }
+struct HW { h: H; }
+struct B { k; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GBX: Box<P> = Box<P> { 1, 2 };
+var GH: H = H { 0, 1, 2, 0 };
+var GHW: HW = HW { 0, 1, 2, 0 };
+impl B {
+    fn mkb(self): Box<P> { var x: Box<P>; return x; }
+    fn mpb(self): *Box<P> { return &GBX; }
+    fn mh(self): H { var h: H; return h; }
+}
+fn mkh(): H { var h: H; return h; }
+fn unv<T>(b: Box<T>): T { return b.v; }
+fn unp<T>(b: *Box<T>): T { return b.v; }'
+# pgrow <id> <body of the generic o<T>(t: T)> <what>: `o(q)` on a Q { 3, 4 } exits 4 (x86_64)
+pgrow() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { var q = Q { 3, 4 }; return o(q); }\nsyscall(60, m());\n' "$PGH" "$2" > "$D/$1.cyr"
+    run_leg x86 "$D/$1.cyr" "$D/$1"
+    if [ "$RC" -eq -1 ]; then bad "$1: $3 did not build: $(grep -m1 'error' "$D/$1.err")"
+    elif [ "$RC" -eq 4 ]; then ok "$1: $3 exits 4"
+    else bad "$1: $3 exits $RC, want 4"; fi
+}
+pgrow PG1 'var r = unv(GH.b); return r.pick(t);' "unv(GH.b), a global's inline \`Box<P>\` field"
+pgrow PG2 'var h: H; var r = unv(h.b); return r.pick(t);' "unv(h.b), a local's"
+pgrow PG3 'GH.pb = &GBX; var r = unp(GH.pb); return r.pick(t);' "unp(GH.pb), a \`*Box<P>\` field (6.7.8's parser arm; the scan read none)"
+pgrow PG4 'var b = B { 0 }; var r = unv(b.mkb()); return r.pick(t);' "unv(b.mkb()), a \`: Box<P>\` method"
+pgrow PG5 'var b = B { 0 }; var r = unp(b.mpb()); return r.pick(t);' "unp(b.mpb()), a \`: *Box<P>\` method"
+pgrow PG6 'var r = unv(GHW.h.b); return r.pick(t);' "unv(GHW.h.b), a nested field"
+pgrow PG7 'var r = unv(mkh().b); return r.pick(t);' "unv(mkh().b), a call head"
+pgrow PG8 'var b = B { 0 }; var r = unv(b.mh().b); return r.pick(t);' "unv(b.mh().b), a field after a method"
+
 echo "L. the explicit spelling x.m<..>(..) in the method-call lookaheads (6.7.15)"
 # The filed repro, verbatim (the issue's text).
 cat > "$D/l0.cyr" <<'X'
@@ -1141,4 +1188,4 @@ nrow N7 "$D/n7.cyr" "6:65: generic 'P.bm': its type argument does not implement 
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15) and its pp: **T / generic : *T call binding (PQ, 6.7.16), a struct-typed field / struct-returning method (PF, 6.7.17), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15) and its pp: **T / generic : *T call binding (PQ, 6.7.16), a struct-typed field / struct-returning method (PF, 6.7.17) and a struct carrier given one (PG), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

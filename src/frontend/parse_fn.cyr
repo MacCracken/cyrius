@@ -16305,6 +16305,8 @@ fn _gsc_g(S, fi, off): i64 {
 # 4 for 8). A GENERIC call is typed by the instance it reaches (`_gsc_call`), explicit or inferred.
 # CHANGELOG [6.7.8], [6.7.9]
 fn _gsc_arg(S, a): i64 {
+    var cv = _acv_bind(S, a, 0 - 1, 2);   # 6.7.17: a field / method chain on any head, its leaf inline, `*G<X>` or a call
+    if (_acv_is == 1) { return _gu_okc(cv); }
     var t = TOKTYP(S, a);
     if (t == 10) { return _gsc_wrap(S, a); }    # 6.7.11: `gw((w))`
     if (t == 8) { return _gsc_deref(S, a); }    # 6.7.11: `gw(*wp)`
@@ -16340,8 +16342,11 @@ fn _gsc_deref(S, a): i64 {
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
-# i64 base, `Box<i64>`'s layout, silently (4 for 8). Any other leaf binds nothing (an inline `G<X>`
-# field keeps the base's own refusal). The walk is `_chain_leaf` (parse_types.cyr). CHANGELOG [6.7.8]
+# i64 base, `Box<i64>`'s layout, silently (4 for 8). The walk is `_chain_leaf` (parse_types.cyr). CHANGELOG [6.7.8]
+# ⛔ 6.7.17 — AN INLINE `G<X>` FIELD AND A METHOD RETURNING `G<X>` / `*G<X>` BIND X TOO, on any receiver head, as a G<X>
+# local or a free call does (the user's D2, 2026-10-22: a struct-typed field and a struct-returning method bind as a
+# struct local or a free call): `gx(h.b)`, `gx(o.mkb())`, `gpx(o.mpb())`, `gx(w.gp().b)` were refused "a different
+# struct type" against the i64 base. `_gsc_arg` reads them first (`_acv_bind`, mode 2); this arm is its fallback.
 fn _gsc_chain(S, a): i64 {
     var l = _chain_leaf(S, a);
     if (l == 0) { return 0; }

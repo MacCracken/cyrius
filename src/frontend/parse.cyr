@@ -867,6 +867,10 @@ fn _tok_sc_pp(S, a, i, at, g, f, d): i64 {
 # ... the X the whole argument at token at holds in the slot of G (the generic struct g) — as
 # `_gsc_arg` reads it.
 fn _tok_sc_arg(S, a, i, at, g, f): i64 {
+    var ta = a;
+    if (ta < 0) { ta = 0; }
+    var cv = _acv_bind(S, at, ta, 2);   # 6.7.17 (D2): a field / method chain on any head, as `_gsc_arg` reads it
+    if (_acv_is == 1) { return _tok_sc_cv(S, cv, g, f); }
     at = _pwrap_in(S, at);   # 6.7.11: `gw((w))`, as `_gsc_wrap`
     if (at < 0) { return 0; }
     if (TOKTYP(S, at) == 8) { return _tok_sc_deref(S, a, i, at + 1, g, f); }   # 6.7.11: `gw(*wp)`
@@ -883,6 +887,15 @@ fn _tok_sc_arg(S, a, i, at, g, f): i64 {
     elif (nt == 10 || nt == 19) { if (_tok_call_whole(S, at) == 1) { r = _tok_sc_call(S, a, i, at, g, f); } }
     if (r > 0) { if (GSTP(S, r - 1) == 0) { return r; } }
     return 0;
+}
+# ... the X in G's slot of the struct `cv` a chain holds or points at (`_acv_bind`), else 0. CHANGELOG [6.7.17]
+fn _tok_sc_cv(S, cv, g, f): i64 {
+    if (cv <= 0) { return 0; }
+    if (cv >= 2048) { return 0; }
+    var r = _tsp_conc(S, cv, g, f);
+    if (r <= 0) { return 0; }
+    if (GSTP(S, r - 1) != 0) { return 0; }
+    return r;
 }
 # ⛔ 6.7.11 — a whole call `f(..)` / `f<..>(..)` (token at): the X in T's slot of the instance it returns,
 # as `_gsc_call` binds it. A GENERIC callee is read through its own type parameters: declared `: G<..,

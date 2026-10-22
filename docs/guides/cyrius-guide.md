@@ -7666,7 +7666,12 @@ instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
 WHOLE argument must be the instance: a local or by-value parameter, a struct
 global, or a call returning it — or a pointer to one, which binds what it POINTS AT:
 `&b`, a `bp: *Box<Pt>` name or a call returning one, a field declared
-`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). That
+`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). An
+inline `b: Box<Pt>` field and a method returning `Box<Pt>` or `*Box<Pt>` bind it too, on
+every receiver head and call path a struct-typed field binds `x: T` (6.7.17, the user's D2,
+2026-10-22): `gx(h.b)`, `gx(hw.h.b)`, `gx(pw.b)`, `gx(mkh().b)`, `gx(o.mh().b)`, `gx(o.mkb())`,
+`gpx(o.mpb())` call `gx$Pt` / `gpx$Pt` — through 6.7.16 they reached the base, refused as a
+different struct type. That
 holds through a `*Box<T>` parameter, which also takes a `Box<Pt>` value (the call
 passes its address), and through a by-value `b: Box<T>` — address-passed when the
 instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
