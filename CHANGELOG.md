@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.7.16] — 2026-10-21
+
 ## [6.7.15] — 2026-10-19
 
 **Break 2, repair 5 — what 6.7.14 filed: 119 issues closed in seven lanes over four waves — wave 0 on main (the check
