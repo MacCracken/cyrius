@@ -113,8 +113,8 @@ else
   rc=0
   ( HOME="$T/fakehome" TMPDIR="$T/rt" CYRIUS="$SB/cyrius" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 \
       CYRIUS_NO_WARN_PIN_DRIFT=1 sh "$REPRO" "$V" ) > "$T/r1.out" 2>&1 || rc=$?
-  ncl=$(grep -c 'compiler: ' "$T/r1.out")
-  nst=$(grep -c "compiler: $SB/cycc\$" "$T/r1.out")
+  ncl=$(grep -c 'compiler: ' "$T/r1.out" || true)
+  nst=$(grep -c "compiler: $SB/cycc\$" "$T/r1.out" || true)
   if [ "$rc" -ne 0 ]; then
     _bad "row 1: the filed repro exited $rc (0 = fixed, 1-3 = defect rows, 99 = a control failed)"
     sed 's/^/      /' "$T/r1.out" | cut -c1-170 | head -20
@@ -194,7 +194,7 @@ COL_OUT=$(awk 'NR == 8 { t = $0; p = 0; last = 0; while ((i = index(t, "return 0
   || { echo "FAIL $G: setup: could not locate the two returns in the mixed fixture ($COL_IN/$COL_OUT)"; exit 1; }
 
 # _build <compiler> <fixture>: compile; sets BRC, leaves $T/<c>.<fx>.err and the binary $T/<c>.<fx>
-_build() { "$T/$1" < "$T/$2.cyr" > "$T/$1.$2" 2> "$T/$1.$2.err"; BRC=$?; }
+_build() { BRC=0; "$T/$1" < "$T/$2.cyr" > "$T/$1.$2" 2> "$T/$1.$2.err" || BRC=$?; }
 for c in x86 aarch64; do
   for f in $ROW2 pairfn; do
     _build "$c" "$f"
@@ -209,7 +209,7 @@ for c in x86 aarch64; do
       continue
     fi
     if [ "$c" = x86 ]; then
-      chmod +x "$T/$c.$f"; "$T/$c.$f" > /dev/null 2>&1; RRC=$?
+      chmod +x "$T/$c.$f"; RRC=0; "$T/$c.$f" > /dev/null 2>&1 || RRC=$?
       [ "$RRC" -eq 0 ] || { _bad "$c $f: built clean but ran to exit $RRC, expected 0"; continue; }
     fi
     pass=$((pass + 1))
@@ -219,7 +219,7 @@ for c in x86 aarch64; do
   if [ "$BRC" -ne 0 ]; then
     _bad "$c mixed: build rc $BRC (the fixture must build — the warning is a warning)"
   else
-    n=$(grep -c "$NEEDLE" "$T/$c.mixed.err")
+    n=$(grep -c "$NEEDLE" "$T/$c.mixed.err" || true)
     if [ "$n" -ne 1 ]; then
       _bad "$c mixed: $n mixed-return warning(s), expected exactly 1"
       grep "$NEEDLE" "$T/$c.mixed.err" | cut -c1-120 | sed 's/^/      /'
@@ -232,7 +232,7 @@ for c in x86 aarch64; do
   fi
   # row 5: controls
   _build "$c" ctl_mix
-  n=$(grep -c "$NEEDLE" "$T/$c.ctl_mix.err")
+  n=$(grep -c "$NEEDLE" "$T/$c.ctl_mix.err" || true)
   if [ "$BRC" -ne 0 ] || [ "$n" -ne 1 ]; then
     _bad "$c control: a REAL mixed return gave build rc $BRC and $n warning(s), expected rc 0 and 1"
   else
@@ -255,7 +255,7 @@ for c in x86 aarch64; do
       grep -E '^(error|warning)' "$T/$c.$f.err" | head -2 | cut -c1-170 | sed 's/^/      /'
       continue
     fi
-    n=$(grep -c "$NEEDLE" "$T/$c.$f.err")
+    n=$(grep -c "$NEEDLE" "$T/$c.$f.err" || true)
     if [ "$n" -ne 1 ]; then
       _bad "$c $f: $n mixed-return warning(s), expected exactly 1 (the closure's own)"
       grep "$NEEDLE" "$T/$c.$f.err" | cut -c1-120 | sed 's/^/      /'
