@@ -538,7 +538,7 @@ refused u01 "declare dyn Show 'o' ${UM}struct locals are not zeroed" "U1: \`var 
 refused u02a "declare Hd 'h' ${UM}it holds a dyn" "U2a: \`var h: Hd;\`, Hd holding a dyn" "${SH}struct Hd { a; o: dyn Show; }\nfn f(): i64 { var h: Hd; h.a = 1; return h.a; }\nsyscall(60, 0);\n"
 refused u02b "declare H2 'h' ${UM}it holds a dyn" "U2b: through a nested struct field" "${SH}struct Hd { a; o: dyn Show; }\nstruct H2 { h: Hd; b; }\nfn f(): i64 { var h: H2; return 0; }\nsyscall(60, 0);\n"
 refused u02c "an array of Hd in a fn is refused" "U2c: \`var hs: Hd[4];\`" "${SH}struct Hd { a; o: dyn Show; }\nfn f(): i64 { var hs: Hd[4]; return 0; }\nsyscall(60, 0);\n"
-refused u02d "declare Box\$Hd 'b' ${UM}it holds a dyn" "U2d: through a generic instance \`Box<Hd>\`" "${SH}struct Hd { a; o: dyn Show; }\nstruct Box<T> { v: T; }\nfn f(): i64 { var b: Box<Hd>; return 0; }\nsyscall(60, 0);\n"
+refused u02d "declare Box<Hd> 'b' ${UM}it holds a dyn" "U2d: through a generic instance \`Box<Hd>\`" "${SH}struct Hd { a; o: dyn Show; }\nstruct Box<T> { v: T; }\nfn f(): i64 { var b: Box<Hd>; return 0; }\nsyscall(60, 0);\n"
 exits u03 3 "U3: a struct holding no dyn is still declared uninitialised (unchanged)" "${SH}struct Q { a; b; }\nfn f(): i64 { var q: Q; q.a = 1; q.b = 2; return q.a + q.b; }\nsyscall(60, f());\n"
 
 # ── V: opacity — a dyn is not a value (decision 7) ─────────────────────────────────────────────────

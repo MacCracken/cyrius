@@ -2218,9 +2218,9 @@ printf '%s\nvar G = if (1 == 1) { mkg1(P) } else { b.mkg(P) };\nfn f(): i64 { re
 runs TI30 33 "the zone: a fn body reads \`G.v.a\` and passes G before the replay"
 printf '%s\nvar G = if (1 == 1) { mkg1(Q2) } else { mkg1(Q2) };\nfn f(): i64 { return G.v.a; }\nsyscall(60, G.v.a + f());\n' "$TIGH" > "$T/TI31zone.cyr"
 zafg TI31
-for zw in zone after; do refused "TI31$zw" "an if expression branch cannot be a struct value over 8 bytes: struct 'G1\$P2'" "the $zw: a 16 B instance branch is refused at each branch, no \`G.v\` cascade" 2; done
+for zw in zone after; do refused "TI31$zw" "an if expression branch cannot be a struct value over 8 bytes: struct 'G1<P2>'" "the $zw: a 16 B instance branch is refused at each branch, no \`G.v\` cascade" 2; done
 rowig TI32 'var G = if (1 == 1) { mkg1(P) } else { mkg1(33) };' 'G.v.a'
-for zw in zone after; do refused "TI32$zw" "if expression branches differ in type: struct 'G1' here, struct 'G1\$Pt' before it" "the $zw: another instance in a later branch is the merge's one refusal"; done
+for zw in zone after; do refused "TI32$zw" "if expression branches differ in type: struct 'G1' here, struct 'G1<Pt>' before it" "the $zw: another instance in a later branch is the merge's one refusal"; done
 rows=$((rows + 1))
 _u1=$("$CC" < "$T/TI22zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
 _u2=$("$CC" < "$T/TI22after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
