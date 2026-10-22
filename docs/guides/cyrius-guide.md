@@ -8544,12 +8544,16 @@ since v6.6.7, `LockFileEx` / `UnlockFileEx` for `xflock` since 6.7.12, …) behi
 `xflock` on Windows locks ONE sentinel byte at offset 2^63 − 1, never the file's data: Windows
 byte locks are mandatory, so it excludes other lockers and leaves every handle's reads and writes
 alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35), where it used
-to answer -1 for every lock. As under flock, re-taking the mode a handle already holds is a no-op
-that never lets go of the lock (6.7.13 — 6.7.12 dropped and re-took it, and a handle waiting for
-the lock got in between); the held mode is recorded as a lock on one more byte beside the sentinel
-(2^63 − 2 for `LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies with the handle. Changing the mode
-(SH ↔ EX) drops the old lock first, as flock's conversion does. `cyrlint` flags a raw `sys_open`
-with literal flags for exactly this reason and points at the wrappers.
+to answer -1 for every lock. Every other failure answers its errno through the Win32 table the fd
+reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
+is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). The arm reads the code
+with `syscall(0xF04F)`, the last error as -errno through that table. As under flock, re-taking the
+mode a handle already holds is a no-op that never lets go of the lock (6.7.13 — 6.7.12 dropped and
+re-took it, and a handle waiting for the lock got in between); the held mode is recorded as a lock
+on one more byte beside the sentinel (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies
+with the handle. Changing the mode (SH ↔ EX) drops the old lock first, as flock's conversion does.
+`cyrlint` flags a raw `sys_open` with literal flags for exactly this reason and points at the
+wrappers.
 `xgetdents(fd, buf, n)` answers as Linux's getdents64 does on every target that has one: the whole
 records that fit in `n`, then -22 (-EINVAL) when the next does not — on macOS too since 6.7.16
 (6.7.16's D77), where `n` under 64 is -22 and Darwin's `getdirentries64` is never handed a buffer
@@ -8969,6 +8973,7 @@ never fired and `file_close_r` was never `Err`.
 | `file_open(dir, O_WRONLY, 0)` | -21 | -1 | -13; -21 since 6.7.16 |
 | `file_rename` / `sys_rename` of a directory onto an existing file | -20 (the file kept) | 0, and the file is gone | 0, and the file is gone; -20 since 6.7.17 (the file kept) |
 | `file_rename` / `sys_rename` of a file onto a directory | -21 | -1 | -13; -21 since 6.7.17 |
+| `xflock(fd, LOCK_EX)` of a closed fd, `xflock(-4, LOCK_EX)` | -9 | -1 | -1; -9 since 6.7.17 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a

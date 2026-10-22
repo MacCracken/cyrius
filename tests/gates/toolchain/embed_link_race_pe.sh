@@ -18,10 +18,11 @@
 # THE AXES
 #   axis 1  `syscall(0xF04E, h, buf, cch, flags)` (argc 5) builds with CYRIUS_TARGET_WIN=1 and is
 #           not reported as unrouted; one argument short, it IS reported (literal-and-arity).
-#   axis 2  the routed-number note names `0xF04E (kernel32: GetFinalPathNameByHandleW)` and ENDS
-#           with it: the note is one literal with a hand-counted byte length, and a length left at
-#           its old value silently cuts the newest entries off the end. (This gate pins the END;
-#           pe_lockfileex_reroute.sh now checks 0xF04C-0xF04D is present and followed.)
+#   axis 2  the routed-number note names `0xF04E (kernel32: GetFinalPathNameByHandleW)` and is
+#           printed WHOLE past it: the note is one literal with a hand-counted byte length, and a
+#           length left at its old value silently cuts the newest entries off the end. (6.7.17:
+#           0xF04F follows it, and the END is pinned by the newest reroute's gate,
+#           pe_last_error_reroute.sh axis 6b; here the entry must be present and followed.)
 #   axis 3  the axis-1 build IMPORTS GetFinalPathNameByHandleW (objdump -p; skipped by name
 #           without an objdump that reads PE).
 #   axis 4  STATIC: `_embed_open`'s CYRIUS_TARGET_WIN arm calls `_embed_open_win`, which asks
@@ -102,12 +103,14 @@ build fps "0xF04E, 0, &b, 32"
 if grep -q "syscall 61518 with 3 argument" "$D/fps.err"; then ok
 else bad "axis 1: syscall(0xF04E, 3 args) (one argument short) was not reported"; fi
 
-# axis 2: the note names 0xF04E and ENDS with it.
+# axis 2: the note names 0xF04E and is printed whole past it (6.7.17: 0xF04F is the newest entry,
+# so pe_last_error_reroute.sh axis 6b pins the END). CHANGELOG [6.7.17]
 if grep -q '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/fps.err"; then
     note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/fps.err" || true)
     case "$note" in
+        *'+ 0xF04E (kernel32: GetFinalPathNameByHandleW) + '*) ok ;;
         *'+ 0xF04E (kernel32: GetFinalPathNameByHandleW).') ok ;;
-        *'0xF04E (kernel32: GetFinalPathNameByHandleW)'*) bad "axis 2: the note names 0xF04E but does not END with it — its byte count is wrong" ;;
+        *'0xF04E (kernel32: GetFinalPathNameByHandleW)'*) bad "axis 2: the note names 0xF04E but is cut short after it — its byte count is wrong" ;;
         *) bad "axis 2: the routed-number note does not name 0xF04E (kernel32: GetFinalPathNameByHandleW) — or it is cut short: ...$(printf '%s' "$note" | tail -c 60)" ;;
     esac
 else

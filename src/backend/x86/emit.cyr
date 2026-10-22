@@ -2747,6 +2747,22 @@ fn EGETLASTERR_PE(S): i64 {
     return 0;
 }
 
+# 6.7.17 — syscall(0xF04F) → the thread's last error as -errno through the ONE Win32 table (argc 1):
+# the shared table stub (`_pe_w32_errno_site`, class 0) reads GetLastError and maps it as every
+# failing reroute does — ERROR_INVALID_HANDLE -9, ERROR_ACCESS_DENIED -13, …; a code with no row is
+# -1. For a stdlib arm that reads a code itself first: xflock's Windows arm keeps LOCK_NB contention
+# -11 and ERROR_NOT_LOCKED, and answers every other LockFileEx / UnlockFileEx failure with this, so a
+# closed handle is -9 as on Linux (6.7.17's D37; it answered -1). Read it right after the call it
+# explains, as 0xF04B (GetLastError does not change the code, so the two may follow each other).
+# CHANGELOG [6.7.17]
+fn ELASTERRNO_PE(S): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    _pe_align_frame(S, 0x20);                           # push rbx; mov rbx,rsp; and rsp,-16; sub rsp, 0x20
+    _pe_w32_errno_site(S, 0);                           # call <table>: rax = -errno
+    _pe_align_unframe(S);                               # mov rsp, rbx; pop rbx
+    return 0;
+}
+
 # 6.7.12 — syscall(0xF04C, h, flags, 0, lenLo, lenHi, &ov) → kernel32!LockFileEx (argc 7) and
 # syscall(0xF04D, h, 0, lenLo, lenHi, &ov) → kernel32!UnlockFileEx (argc 6); each a BOOL,
 # zero-extended. xflock's Windows arm (lib/io.cyr) — it answered -1 for every lock, so patra's

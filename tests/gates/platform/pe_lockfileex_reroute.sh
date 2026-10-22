@@ -30,6 +30,13 @@
 #           pinned (6.7.13): 0 for a byte this handle held, 1 for ERROR_NOT_LOCKED — axis 6's
 #           re-lock probe reads that 0 as "held in this mode", so a helper answering otherwise
 #           silently restores 6.7.12's unlock-first re-lock while axis 6 still sees its call site.
+#           6.7.17 (D37: "Linux's errno via the Windows error table"): a NEGATIVE fd is -9 in
+#           _xflock_win before any helper reaches Windows (-1 is the current-process pseudo-handle);
+#           each helper answers a failure it does not read itself (contention -11, ERROR_NOT_LOCKED)
+#           with `syscall(0xF04F)` — the code through the one Win32 table, a closed handle -9 — and
+#           _xflock_win / _xflock_win_release pass that errno on: neither has a `return 0 - 1;`
+#           (every such failure answered -1). The behaviour rows are unopened_fd_ebadf.tcyr's
+#           (wine: axis 5 does not run it; pe_last_error_reroute.sh axis 6d pins 0xF04F's -9).
 #   axis 5  BEHAVIOUR under wine (skipped without wine — NOT hardware; the cass cross-OS leg of
 #           the release gate runs the same .tcyr): the filed repro exits 11 (xflock LOCK_EX -> 0;
 #           10 before), tests/tcyr/crossos/xflock_two_handle.tcyr's PE build reports 0 failed
@@ -79,6 +86,15 @@
 #                                                                catch it either)
 #   _xflock_win_unlock answers 0 for ERROR_NOT_LOCKED (158)      axis 4 FAIL; axis 5 FAILS by HANGING
 #                                                                (an unheld mode byte reads as held)
+# 6.7.17 (plat lane, PL3) — every mutant BUILT AND RUN 2026-10-22 (x86_64 Linux + wine 11.20):
+#   _xflock_win's `fd < 0` check removed                         axis 4 FAIL (under wine LockFileEx
+#                                                                of -4 / -1 answers -9 anyway: only
+#                                                                this axis holds "never handed to
+#                                                                Windows")
+#   _xflock_win_lock's last line back to `return 0 - 1;`         axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 2 rows (-1 for -9)
+#   _xflock_win_release folds to `return 0 - 1;` again           axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 1 row (LOCK_UN -1)
 # Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -193,6 +209,20 @@ else
     # re-lock silently goes back to 6.7.12's unlock-first gap. CHANGELOG [6.7.13]
     printf '%s\n' "$ubody" | grep -q 'if (u > 0) { return 0; }' \
         || bad "axis 4: _xflock_win_unlock does not answer 0 for a lock this handle held (the re-lock probe would never fire: 6.7.12's unlock-first re-lock)"
+    # 6.7.17 (D37): a negative fd never reaches Windows; every other failure answers its errno
+    # through the one Win32 table (0xF04F), and nothing folds it back to -1. CHANGELOG [6.7.17]
+    neg=$(printf '%s\n' "$body" | grep -n 'if (fd < 0) { return 0 - 9; }' | head -1 | cut -d: -f1)
+    hlp=$(printf '%s\n' "$body" | grep -n '_xflock_win_\(unlock\|lock\|release\)(' | head -1 | cut -d: -f1)
+    if [ -z "$neg" ] || [ -z "$hlp" ] || [ "$neg" -ge "$hlp" ]; then
+        bad "axis 4: _xflock_win does not answer a negative fd -9 before its first lock call (6.7.17's D37: line '${neg}', first helper '${hlp}')"
+    fi
+    printf '%s\n' "$lbody" | grep -q 'return syscall(0xF04F);' \
+        || bad "axis 4: _xflock_win_lock does not answer a failure's errno through the Win32 table (syscall(0xF04F); 6.7.17's D37)"
+    printf '%s\n' "$ubody" | grep -q 'return syscall(0xF04F);' \
+        || bad "axis 4: _xflock_win_unlock does not answer a failure's errno through the Win32 table (syscall(0xF04F); 6.7.17's D37)"
+    if printf '%s\n%s\n' "$body" "$(fnbody _xflock_win_release)" | grep -q 'return 0 - 1;'; then
+        bad "axis 4: _xflock_win or _xflock_win_release folds a failure to -1 (6.7.17's D37: pass the errno on)"
+    fi
     [ "$fail" = "$f4" ] && ok
 fi
 
