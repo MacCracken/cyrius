@@ -26,7 +26,9 @@
 #      method (`o.nw(n)`), a generic (`gk<i64>(n)`), the `sizeof` intrinsic — takes no copy (each did
 #      before); K10-K15 one that may write does: a global store (`wg`), an operator fn its body runs
 #      on a struct parameter (`hop(w)`, `v + 1`), a call to a writer (`hw2`), a writing method
-#      (`o.wm`), a writing generic (`gw<i64>`), a recursive helper (`rr`, conservatively)
+#      (`o.wm`), a writing generic (`gw<i64>`), a recursive helper (`rr`, conservatively); K16 / K17 a
+#      helper whose if-expression `if (c) { v } else { w } - 1` (`* 1`) runs S1's operator fn (its `}` read
+#      as ending no operand, the `-` / `*` was a unary one: no copy before the review fix)
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -115,6 +117,8 @@
 #   M27 `_call_meth_fn` resolves no method                    -> C18, TU5, TU2 (SIGSEGV)
 #   M28 `_fnw_gen_name` resolves no generic                   -> C19, TU6, TU2 (SIGSEGV)
 #   M29 `_fnw_tok_plain` answers 1 (no token writes)          -> K1, K3, AS1; the tcyr's `bump` rows
+#   M30 `_tok_opnd_end` without `}` (the pre-fix line)        -> K16, K17; the tcyr's `w_ife_sub` / `w_ife_mul`
+#                                                              rows (11) on x86 / IR3 / DCE / aarch64 / cx / PE
 #   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
 #   allow-list's, for a `{` the scan does not read)
 set -u
@@ -178,7 +182,9 @@ K11@hop(w)@K
 K12@hw2(n)@K
 K13@o.wm(n)@K
 K14@gw<i64>(n)@K
-K15@rr(n)@K'
+K15@rr(n)@K
+K16@ife(1, s1, s1)@K
+K17@ifm(1, s1, s1)@K'
 {
     printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
@@ -188,10 +194,12 @@ K15@rr(n)@K'
     printf 'var GW = 0;\nfn idn(x): i64 { return x + 1; }\nfn Big_nw(self, x): i64 { return x; }\nfn gk<T>(x: T): i64 { return 7; }\n'
     printf 'fn wg(x): i64 { GW = x; return 0; }\nfn hop(v: W): i64 { return v + 1; }\nfn hw2(x): i64 { return wg(x) + 1; }\n'
     printf 'fn Big_wm(self, x): i64 { GW = x; return 0; }\nfn gw<T>(x: T): i64 { GW = 1; return 0; }\nfn rr(x): i64 { if (x > 100) { return rr(x - 1); } return x; }\n'
+    printf 'struct S1 { a: i64; }\nfn S1_sub(x: S1, y): i64 { GW = 1; return 5; }\nfn S1_mul(x: S1, y): i64 { GW = 1; return 6; }\n'
+    printf 'fn ife(c, v: S1, w: S1): i64 { return if (c) { v } else { w } - 1; }\nfn ifm(c, v: S1, w: S1): i64 { return if (c) { v } else { w } * 1; }\n'
     echo "$ROWS" | while IFS='@' read -r id arg kind; do
         for f in rd rp; do
             nm=p; [ "$f" = rp ] && nm=q
-            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var pw: *W = &w;\n    var pq: *HW = &h;\n    var pn: *i64 = &n;\n    var o2: OP2;\n    o2.n = 0;\n    o2.p = &h;\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
+            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var pw: *W = &w;\n    var pq: *HW = &h;\n    var pn: *i64 = &n;\n    var o2: OP2;\n    o2.n = 0;\n    o2.p = &h;\n    var s1: S1 = S1 { 1 };\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
         done
     done
     printf 'fn zend(): i64 { return 0; }\nsyscall(60, zend());\n'
@@ -218,7 +226,7 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 35 ] || bad "C/K: $((nr + nf)) rows judged, want 35"
+    [ $((nr + nf)) -eq 37 ] || bad "C/K: $((nr + nf)) rows judged, want 37"
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────

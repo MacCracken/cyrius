@@ -5918,10 +5918,12 @@ fn _targ_at_name(S, noff): i64 {
 # and through a `*T` field (`_name_struct_val`), and a dereference whose operand may be one is a struct value. The
 # operator half counts a BINARY `+ - * /` only (`_tok_binop_at`): a lone `*p` or `-w` dispatches nothing, so
 # `a - *p` and `rd(b, -w)` take no copy. CHANGELOG [6.7.17]
-# 1 = token type `t` ends an operand, so an operator token after it is binary: a name, a literal, `)`, `]`, a `?`.
+# 1 = token type `t` ends an operand, so an operator token after it is binary: a name, a literal, `)`, `]`, a `?`,
+# and a `}` — an if-expression's: `if (c) { v } else { w } - 1` runs a struct operand's operator fn, and read as a
+# unary `-` / `*` the summary missed its write (CHANGELOG [6.7.17]).
 fn _tok_opnd_end(t): i64 {
     if (t == 2 || t == 11 || t == 29 || t == 1 || t == 30) { return 1; }
-    if (t == 61 || t == 169 || t == 170 || t == 124) { return 1; }
+    if (t == 61 || t == 169 || t == 170 || t == 124 || t == 14) { return 1; }
     return 0;
 }
 # The struct a typed-pointer name at token `i` points at when a `.field` follows it (`pw.x`), else 0.
