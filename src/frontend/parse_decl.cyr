@@ -12322,13 +12322,14 @@ fn _dt_rhs_check_t(S, term): i64 {
         sc = sc + 1;
     }
     if (TOKTYP(S, sc + 1) != term) {
-        if (_dt_rhs_end(S, sc + 1) == 0) { ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59); }
+        if (_dt_rhs_end(S, sc + 1) == 1) { return 0; }
+        ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
     }
     return 0;
 }
 # 6.7.17 — 1 = token `k` after the call ends the statement with its `;` missing (`}`, EOF, a statement keyword): the
-# terminator's own "expected ';'" is the error (`a, b = two(3) }` was "needs a call on the right-hand side", and `two(3)`
-# is one). CHANGELOG [6.7.17]
+# terminator's own "expected ';'" is the error (`a, b = two(3) }` was "needs a call on the right-hand side", and
+# `two(3)` is one). CHANGELOG [6.7.17]
 fn _dt_rhs_end(S, k): i64 {
     var t = TOKTYP(S, k);
     if (t == 14 || t == 12) { return 1; }
