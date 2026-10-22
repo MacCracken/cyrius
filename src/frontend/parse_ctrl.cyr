@@ -1050,16 +1050,32 @@ fn _for_semis(S, he): i64 {
     if (he < 0) { return 0 - 1; }
     var d = 0;
     var n = 0;
+    var s1 = 0;
+    var s2 = 0;
     var i = GTI(S);
     while (i < he) {
         var t = TOKTYP(S, i);
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         elif (t == 11 || t == 29 || t == 14) { d = d - 1; }
-        elif (t == 5) { if (d == 1) { n = n + 1; } }
+        elif (t == 5) { if (d == 1) { n = n + 1; if (n == 1) { s1 = i; } else { s2 = i; } } }
         i = i + 1;
     }
-    if (n >= 2) { return 0 - 1; }
+    if (n == 2) { return _for_empty(S, s1, s2, he); }
+    if (n > 2) { return 0 - 1; }
     return _err_n;
+}
+# ... a clause left empty (`for (;;)`, `for (; c;)`, `for (i = 0; c; )`) is the guide's refusal — all three are
+# required — said once, at it: it was "unexpected ';'" twice and "expected '=', got '{'" (`for (;;)`), the step's after
+# the body. The header is then read as one missing a `;` (the error count before the report). CHANGELOG [6.7.17]
+fn _for_empty(S, s1, s2, he): i64 {
+    var e = 0 - 1;
+    if (s1 == GTI(S) + 1) { e = s1; }
+    elif (s2 == s1 + 1) { e = s2; }
+    elif (he - 1 == s2 + 1) { e = he - 1; }
+    if (e < 0) { return 0 - 1; }
+    var n0 = _err_n;
+    _bnd_errm_at(S, e, "a `for` clause is empty - all three are required (`loop { }` loops without them)", 80);
+    return n0;
 }
 # ... the init reported it (the count moved past `fsm`): the rest of the header is that error's — latched, and the
 # condition read at the header's `)` (the body's `_blk_open` releases the latch).

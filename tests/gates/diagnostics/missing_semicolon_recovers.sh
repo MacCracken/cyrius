@@ -26,7 +26,9 @@
 #   R   a `return`'s `;` (src/frontend/parse_fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
 #       R3 a call's return before the fn's `}`
 #   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
-#       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's
+#       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's;
+#       F7-F11 an empty clause (`for (;;)`, `for (; c;)`, an empty condition / step / init — the guide's refusal) is
+#       one error, named, at the clause (`_for_empty`)
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
 #       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
@@ -60,7 +62,7 @@
 # On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
 # On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
 # struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
-# RED: C1 C2.
+# RED: C1 C2. On bd7abcdb4 (before `_for_empty`) RED: F7-F11 ("unexpected ';'" twice, "expected '=', got '{'").
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -284,6 +286,23 @@ error:<source>:4:36: $UZ"
 row F6 "a compound step after the missing ;: for (var i = 0; i < 3 i += 1)" "${FH}    for (var i = 0; i < 3 i += 1) { b = zz; }
 ${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
 error:<source>:4:43: $UZ"
+
+FE="a \`for\` clause is empty - all three are required (\`loop { }\` loops without them)"
+row F7 "for (;;): the guide's refusal, once" "${FH}    for (;;) { b = zz; break; }
+${FT}" "error:<source>:4:10: $FE
+error:<source>:4:22: $UZ"
+row F8 "for (; c;)" "${FH}    for (; b < 3;) { b = zz; }
+${FT}" "error:<source>:4:10: $FE
+error:<source>:4:28: $UZ"
+row F9 "an empty condition" "${FH}    for (var i = 0; ; i = i + 1) { b = zz; }
+${FT}" "error:<source>:4:21: $FE
+error:<source>:4:42: $UZ"
+row F10 "an empty step" "${FH}    for (var i = 0; i < 3; ) { b = zz; }
+${FT}" "error:<source>:4:28: $FE
+error:<source>:4:38: $UZ"
+row F11 "an empty init" "${FH}    for (; b < 3; b = b + 1) { b = zz; }
+${FT}" "error:<source>:4:10: $FE
+error:<source>:4:38: $UZ"
 
 # ---- D: a `dyn` initializer's `;` (src/frontend/parse_types.cyr)
 DH='trait Show { fn show(self): i64; }
