@@ -26,7 +26,7 @@ export const meta = {
 //             notes: { '<unit>': '<text>' }? (a resumed run: what that unit already committed or left
 //                                             uncommitted in the worktree, put in its agent's prompt) }]
 // }
-// inputs:  <c6>/<tag>_briefs/<lane>_<unit>.md (scripts/release/briefs.py), decisions.file, the
+// inputs:  <c6>/<tag>_briefs/<lane>_<unit>.md (programs/release/briefs.cyr), decisions.file, the
 //          issue files in each worktree. <tag> = ver without dots.
 // outputs: commits on each lane branch l<tag>-<lane>; <c6>/<tag>_handoff_<lane>.md (appended);
 //          <c6>/<tag>_staging/<lane>/*.md (issue files for integration to place); the return value
