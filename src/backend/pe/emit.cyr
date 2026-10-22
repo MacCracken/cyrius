@@ -268,11 +268,11 @@ fn _pe_imp_add(name): i64 {
     while (load8(name + nlen) != 0) { nlen = nlen + 1; }
     if (_pe_imp_count >= 256) {
         _ew("error: too many PE imports (max 256)\n", 37);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (_pe_imp_buf_pos + nlen + 1 > 4096) {
         _ew("error: PE import name buffer full (4096 B)\n", 43);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(&_pe_imp_name_offs + _pe_imp_count * 8, _pe_imp_buf_pos);
     var i = 0;
@@ -343,7 +343,7 @@ fn _pe_register_import(S, idx_addr, name, dll_id): i64 {
             while (load8(name + nlen) != 0) { nlen = nlen + 1; }
             _ew(name, nlen);
             _ew("' not available in EFI mode (CYRIUS_TARGET_EFI=1)\n", 50);
-            syscall(SYS_EXIT, 1);
+            _die(1);
         }
     }
     S64(idx_addr, 1 + _pe_pending_imp_count);
@@ -1509,11 +1509,11 @@ fn _pe_pending_imp_add(S, name): i64 {
     while (load8(name + nlen) != 0) { nlen = nlen + 1; }
     if (_pe_pending_imp_count >= 256) {
         _ew("error: too many #pe_import directives (max 256)\n", 48);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (_pe_pending_imp_pos + nlen + 1 > 4096) {
         _ew("error: #pe_import name buffer full (4096 B)\n", 44);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(&_pe_pending_imp_offs + _pe_pending_imp_count * 8,
       _pe_pending_imp_pos);
@@ -1789,7 +1789,7 @@ fn _pe_layout(S): i64 {
             if (_pe_reloc_count >= _PE_RELOC_CAP) {
                 _ew(
                   "error: PE base-relocation table full - raise _PE_RELOC_CAP in src/backend/pe/emit.cyr\n", 86);
-                syscall(SYS_EXIT, 1);
+                _die(1);
             }
         }
         rl_fi = rl_fi + 1;

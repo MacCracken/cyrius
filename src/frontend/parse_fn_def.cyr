@@ -535,7 +535,7 @@ fn _tl_stray_brace(S): i64 {
     var quiet = _panic;   # ERR_MSG prints nothing under an earlier error; nor does the hint
     ERR_MSG(S, "unmatched '}' at module scope", 29);
     if (quiet == 0) { _ew("  hint: if it was meant to close a fn or block, a '}' above it closed that one too soon\n", 88); }
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -2108,7 +2108,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var fc = GFCNT(S);
     if (fc >= 1048576) {
         _ew("error: fixup table full (1048576)\n", 34);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi_impl);
     EPOPC(S);

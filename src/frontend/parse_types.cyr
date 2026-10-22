@@ -2291,7 +2291,7 @@ fn _dyn_fill(S, ii): i64 {
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 _ew("error: fixup table full (1048576)\n", 34);
-                syscall(SYS_EXIT, 1);
+                _die(1);
             }
             ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi);
             EPUSHR(S);
@@ -7202,6 +7202,6 @@ fn CHK_ENUM_SHADOW(S, noff): i64 {
     _ew(": variable '", 12);
     PRSTR(S + 0xEC00000 + noff);
     _ew("' shadows an enum constant (rename the variable)\n", 49);
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }

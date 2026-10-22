@@ -258,7 +258,7 @@ fn EW(S, w): i64 {
         _ew("error: EW misaligned at cp=", 27);
         PRNUM(cp);
         _ew(" (not 4-byte boundary; shared parse.cyr leaked x86 bytes to aarch64 stream?)\n", 77);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     EB(S, w & 0xFF);
     EB(S, (w >> 8) & 0xFF);
@@ -778,11 +778,11 @@ fn _esx_arm(S, src, dst): i64 {
     if (_esx_short(src) == 1) { return 0; }
     if (src > 4095) {
         _ew("error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (dst > 65535) {
         _ew("error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
     EW(S, 0x54000041);                                      # b.ne past the movz
@@ -810,11 +810,11 @@ fn _esx_arm_atfd(S, src, dst): i64 {
     }
     if (src > 4095) {
         _ew("error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (dst > 65535) {
         _ew("error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
     EW(S, 0x540000A1);                                      # b.ne past the four body words
@@ -1901,7 +1901,7 @@ fn _esx_fold_die(st, q, src, why): i64 {
     PRSTR("): ");
     PRSTR(why);
     PRSTR("\n");
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 # 0 when body [bs, be) relocates soundly, else why not. A load/store naming x8 as Rt, Rt2 or Rn
@@ -2408,7 +2408,7 @@ fn _esx_stub_site(S, n): i64 {
         var nc = _esx_scap * 2;
         if (nc < 64) { nc = 64; }
         var nl = alloc(nc * 16);
-        if (nl == 0) { PRSTR("error: ESYSXLAT stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+        if (nl == 0) { PRSTR("error: ESYSXLAT stub sites: alloc failed\n"); _die(1); }
         var i = 0;
         while (i < _esx_ns * 2) { store64(nl + i * 8, load64(_esx_sl + i * 8)); i = i + 1; }
         _esx_sl = nl;
@@ -2444,7 +2444,7 @@ fn ESYSX_STUBS(S): i64 {
                     PRSTR("error: internal: ESYSXLAT stub site at code offset ");
                     PRNUM(site);
                     PRSTR(" is no longer its bl placeholder (did a pass move code?)\n");
-                    syscall(SYS_EXIT, 1);
+                    _die(1);
                 }
                 store32(_codebuf_base + site, 0x94000000 | (((stub - site) >> 2) & 0x3FFFFFF));
             }
@@ -2459,7 +2459,7 @@ fn ESYSX_STUBS(S): i64 {
             PRSTR("error: internal: a variable-number syscall site of class ");
             PRNUM(load64(_esx_sl + j * 16 + 8));
             PRSTR(" got no ESYSXLAT stub\n");
-            syscall(SYS_EXIT, 1);
+            _die(1);
         }
         j = j + 1;
     }
@@ -2471,7 +2471,7 @@ fn _esx_stubs_drained(): i64 {
         PRSTR("error: internal: ");
         PRNUM(_esx_ns);
         PRSTR(" variable-number syscall site(s) reached FIXUP unpatched — this driver never called ESYSX_STUBS\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }

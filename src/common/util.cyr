@@ -152,7 +152,7 @@ fn _grow_g1(): i64 { _varn_base = _grow_one(_varn_base, _var_cap); _grow_g2(); r
 fn _var_grow(S): i64 {
     if (_var_cap * 2 > 1048576) {
         _ew("error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     _grow_g1();
     return 0;
@@ -190,7 +190,7 @@ fn GENUMC(S): i64 { return L64(S + 0x214000); }
 fn SENUMC(S, v): i64 {
     if (v >= 1024) {
         _ew("error: enum table full (1024) — too many enum decls\n", 54);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x214000, v);
     return 0;
@@ -230,7 +230,7 @@ fn _fixup_grow(S): i64 {
     # can't grow unbounded into OOM).
     if (nc > 67108864) {
         _ew("error: fixup table exceeds 64M entries\n", 39);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var nb = alloc(nc * 16);
     var used = L64(S + 0x18FCA8) * 16;
@@ -846,7 +846,7 @@ fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
     if (nc > 67108864) {
         _ew("error: codebuf exceeds 64 MiB (program too large)\n", 50);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var nb = alloc(nc);
     var used = GCP(S);
@@ -1047,7 +1047,7 @@ fn GVW128(S, vi): i64 {
 fn SFLC(S, v): i64 {
     if (v >= 16384) {
         _ew("error: too many stack slots in one function (max 16384)\n", 56);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (_lfi_base != 0) { _lfi_clear(S, v); }
     S64(S + 0x18DA10, v);
@@ -1826,7 +1826,7 @@ fn ADDXP(S, p): i64 {
     var c = GXPC(S);
     if (c >= 8) {
         _ew("error: too many && conditions (max 8)\n", 38);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x18F848 + c * 8, p);
     SXPC(S, c + 1);
@@ -2219,6 +2219,13 @@ fn _ew(b, n): i64 {
     if (_ew_mute == 1) { if (_ew_say == 0) { return n; } }
     return syscall(SYS_WRITE, 2, b, n);
 }
+# ⛔ 6.7.17 — EVERY EXIT THE PARSE CAN REACH GOES THROUGH `_die`: the files `_ew`'s census reads (an error's own exit, a
+# cap's refusal, an internal error). One exit is what lets the diagnostics the parse holds be written before the
+# process ends (zone-replay's source order, `_eb_end`). diagnostic_exit_census.sh holds them to it. CHANGELOG [6.7.17]
+fn _die(code): i64 {
+    syscall(SYS_EXIT, code);
+    return 0;
+}
 
 # Print a number to stderr (decimal)
 fn PRNUM(n): i64 {
@@ -2298,7 +2305,7 @@ fn _write_out_failed(written, len, eno): i64 {
     _ew(" bytes): errno ", 15);
     PRNUM(eno);
     _ew("\n", 1);
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -2808,7 +2815,7 @@ fn _rd_enter(S): i64 {
         _ew("error:", 6);
         _err_head(S);
         _ew(": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var m[8];
     var sp = &m;
@@ -2833,7 +2840,7 @@ fn _rd_stack_refuse(S): i64 {
     } else {
         PRSTR(": nesting too deep (over 6 MB of the compiler's stack — truncated or hostile source)\n");
     }
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -3047,7 +3054,7 @@ fn _wd_tick(S): i64 {
         _wd_stall = _wd_stall + 1;
         if (_wd_stall > 500000) {
             _ew("error: parser recovery aborted (desync — too many errors)\n", 60);
-            syscall(SYS_EXIT, _had_error);
+            _die(_had_error);
         }
     } else {
         _wd_last = g;
@@ -3100,7 +3107,7 @@ fn _wd_eof_tick(S): i64 {
         _ew("error:", 6);
         _err_head(S);
         _ew(": unexpected end of input (truncated or unbalanced source)\n", 59);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }
@@ -3954,7 +3961,7 @@ fn _cmdline_refuse(why): i64 {
     PRSTR("error: ");
     PRSTR(why);
     PRSTR(" (/proc/self/cmdline is read whole; a cut copy is never scanned)\n");
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 #endif

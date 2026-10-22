@@ -1,5 +1,5 @@
 #!/bin/sh
-# diagnostic_writer_census.sh — every diagnostic byte the parser and the emitters write goes through `_ew` (6.7.17).
+# diagnostic_writer_census.sh — every diagnostic byte the parser and the emitters write goes through `_ew`, every exit through `_die` (6.7.17).
 #
 # WHY. A trait default no impl inherits and a generic base pass 2 steps (a stub, or a bounded generic i64 does not
 # satisfy) are never parsed by the build; 6.7.17 reads each once for its syntax after the image is built
@@ -39,5 +39,24 @@ fi
 ncalls=$(cat $FILES | grep -o '[^A-Za-z0-9_]_ew(' | wc -l)
 [ "$ncalls" -ge 600 ] || { echo "  FAIL: only $ncalls \`_ew(\` calls (floor 600)"; fail=$((fail+1)); }
 grep -q '^fn _ew(b, n): i64 {' src/common/util.cyr || { echo "  FAIL: \`_ew\` is not defined in util.cyr"; fail=$((fail+1)); }
+# ⛔ 6.7.17 — AND EVERY EXIT IN THESE FILES GOES THROUGH `_die` (util.cyr). The parse HOLDS its diagnostics to print them
+# in source order (zone-replay, `_eb_end`), so a raw `syscall(SYS_EXIT, ..)` reached mid-parse — an error's own exit, a
+# cap's refusal, an internal error — would end the process with them unwritten. Raw exits: `syscall(SYS_EXIT|60|93, `
+# and agnos's two-argument `syscall(0, x)`, comments and string literals excluded. The one left is `_die`'s own.
+# MUTATION (2026-10-22): one `_die(1)` in parse_fn_def.cyr put back as `syscall(SYS_EXIT, 1)` -> RED.
+rawx=$(grep -nE 'syscall\((SYS_EXIT|60|93), |syscall\(0, [^,()]*\)' $FILES | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
+    | grep -vE '"[^"]*syscall\(' || true)
+nrawx=$(printf '%s\n' "$rawx" | grep -c . || true)
+ownx=$(printf '%s\n' "$rawx" | grep -c '^src/common/util.cyr:.*    syscall(SYS_EXIT, code);' || true)
+if [ "$nrawx" -ne 1 ] || [ "$ownx" -ne 1 ]; then
+    echo "  FAIL: raw exits outside \`_die\` ($nrawx found, want only _die's own):"
+    printf '%s\n' "$rawx" | grep -v '    syscall(SYS_EXIT, code);' | sed 's/^/        /' | head -20
+    fail=$((fail+1))
+else
+    echo "  ok: no raw exit in the $nf files but \`_die\`'s own"
+fi
+ndie=$(cat $FILES | grep -o '[^A-Za-z0-9_]_die(' | wc -l)
+[ "$ndie" -ge 90 ] || { echo "  FAIL: only $ndie \`_die(\` calls (floor 90)"; fail=$((fail+1)); }
+grep -q '^fn _die(code): i64 {' src/common/util.cyr || { echo "  FAIL: \`_die\` is not defined in util.cyr"; fail=$((fail+1)); }
 if [ "$fail" -ne 0 ]; then echo "FAIL: diagnostic_writer_census — $fail"; exit 1; fi
-echo "PASS: diagnostic_writer_census — $ncalls diagnostic writes in $nf files, all through \`_ew\`"
+echo "PASS: diagnostic_writer_census — $ncalls diagnostic writes in $nf files, all through \`_ew\`; $ndie exits, all through \`_die\`"

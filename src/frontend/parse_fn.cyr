@@ -242,7 +242,7 @@ fn _fnt_grow(S): i64 {
     var nc = _fnt_cap * 2;
     if (nc > 131072) {
         _ew("error: too many functions (max 131072)\n", 39);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var oc = _fnt_cap;
     _fnt_cstrmask  = _fnt_copy_table(_fnt_cstrmask,  oc, nc);

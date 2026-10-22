@@ -409,7 +409,7 @@ fn _check_output_cap(S, filesz): i64 {
             }
         }
         _ew("\n  tip: heap-allocate large var buf[N] arrays (alloc(N) + pointer)\n", 67);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }
