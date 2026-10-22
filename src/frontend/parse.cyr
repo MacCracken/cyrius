@@ -7273,15 +7273,18 @@ fn _masg_stmt(S, term): i64 {
     var x1 = _masg_target(S, t0, 1);
     var x2 = 0 - 1;
     if (n == 3) { x2 = _masg_target(S, t0, 2); }
+    var d0 = _dt_dfr_n();   # 6.7.17: a refusal the chain's own error may stand for (`_dt_dfr_say`)
     var wk = _dt_peel(S, term);   # 6.7.14 (D45): `a, b = (f());`, closed after the call
-    var fi = _dt_call_fn(S);
+    var fi = _dt_call_fn_d(S);
     if (_masg_callee(S, fi, n) == 1) {
         _masg_skip(S);
+        _dt_dfr_say(S, d0);
         _pw_close(S, wk);
         return _masg_end(S, term);
     }
     _masg_bools(S, t0, n, fi);
     PCMPE(S);
+    _dt_dfr_say(S, d0);
     _pw_close(S, wk);
     _tup_drain_push(S, n);
     if (n == 3) {

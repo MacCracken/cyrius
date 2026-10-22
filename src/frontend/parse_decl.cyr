@@ -8093,12 +8093,14 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
             var ewk = _dt_wrap_in(S, 5);   # 6.7.14 (D45): `var a, b = (f(7));`
+            var ed0 = _dt_dfr_n();   # 6.7.17
             var edz = _dt_zone_check(S, egn, ewk);   # 6.6.17 (a5)
             var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
             if (egn == 3) { ei3 = _gv_target(S, _gv_ent_slot(S, gi, 2, eg3), gsup, 2); }
             PCMPE(S);
+            _dt_dfr_say(S, ed0);
             _pw_close(S, ewk);
             if (ei1 >= 0) { EVSTORE(S, ei1); }
             if (egn == 3) {
@@ -12436,6 +12438,7 @@ fn _dt_annk(S): i64 {
 fn _dt_rhs_check_t(S, term): i64 {
     var sc = _dt_call_open_cp(S);   # 6.7.13: `callptr(fp, ..)` too. CHANGELOG [6.7.13]
     if (sc < 0) {
+        if (_dt_chain_m(S, term) == 1) { return _dt_dfr_push(S); }   # 6.7.17: the chain's own error first
         ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         sc = GTI(S) + 1;
     }
@@ -12448,7 +12451,89 @@ fn _dt_rhs_check_t(S, term): i64 {
     }
     if (TOKTYP(S, sc + 1) != term) {
         if (_dt_rhs_end(S, sc + 1) == 1) { return 0; }
+        if (_dt_chain_m(S, term) == 1) { return _dt_dfr_push(S); }   # 6.7.17: `q.one().m2()`, `one` an i64
         ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+    }
+    return 0;
+}
+# ⛔ 6.7.17 — A METHOD CHAIN THE LOOKAHEAD CANNOT TYPE REPORTS ITS OWN ERROR, NOT THE DESTRUCTURE'S. `var a, b =
+# q.one().m2();` (`one` returning an i64) was "multi-value destructure needs a call on the right-hand side", where
+# `var a = q.one().m2();` names the mistake: "cannot take a field of the result of 'P.one': it does not return a
+# struct" (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, row 3). A right-hand side the call
+# lookahead does not read as one whole call (`_dt_call_open_cp`: none, or one the chain goes on past) but that ends,
+# at `term`, in a method call `.m(..)` on a receiver (`_dt_chain_m`) defers the refusal (`_dt_dfr_push`: its token
+# and the error counts): each destructure form reads the value, then `_dt_dfr_say` reports it at that token only when
+# the value's parse reported nothing of its own — a chain the parse accepts is still refused, as before. The inner
+# call is not the destructure's callee (`_dt_call_fn_d`). CHANGELOG [6.7.17]
+var _dtd = 0;       # the deferred refusals: (token, `_err_n`, `_had_error`) per entry, a vec made at the first
+fn _dt_chain_m(S, term): i64 {
+    var a = GTI(S);
+    var i = a;
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (d == 0) {
+            if (t == term) { break; }
+            if (t == 5 || t == 12 || t == 14) { return 0; }
+        }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        if (d < 0) { return 0; }
+        i = i + 1;
+    }
+    if (i >= n) { return 0; }
+    while (TOKTYP(S, a) == 10) {   # inside parentheses that wrap the whole value
+        if (_gz_close(S, a, i) != i - 1) { break; }
+        a = a + 1;
+        i = i - 1;
+    }
+    if (TOKTYP(S, i - 1) != 11) { return 0; }
+    var o = i - 1;
+    while (o > a) {
+        if (_gz_close(S, o, i) == i - 1) { break; }
+        o = o - 1;
+    }
+    if (TOKTYP(S, o - 1) != 2) { return 0; }
+    if (TOKTYP(S, o - 2) != 41) { return 0; }
+    if (o - 2 <= a) { return 0; }
+    return 1;
+}
+fn _dt_dfr_push(S): i64 {
+    if (_panic == 1) { return ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59); }
+    if (_dtd == 0) { _dtd = vec_new(); }
+    vec_push(_dtd, GTI(S));
+    vec_push(_dtd, _err_n);
+    vec_push(_dtd, _had_error);
+    return 0;
+}
+# A destructure form's callee (`_dt_call_fn`): none when its refusal was deferred at the cursor — the call the lookahead
+# read is the chain's inner one, and its arity is not the destructure's ("'P.one' returns 1 value").
+fn _dt_call_fn_d(S): i64 {
+    if (_dtd != 0) { if (vec_len(_dtd) > 0) { if (vec_get(_dtd, vec_len(_dtd) - 3) == GTI(S)) { return 0 - 1; } } }
+    return _dt_call_fn(S);
+}
+# The deferred refusals' count, before a destructure form's check: its `_dt_dfr_say` reads what is above it.
+fn _dt_dfr_n(): i64 {
+    if (_dtd == 0) { return 0; }
+    return vec_len(_dtd);
+}
+# After the value's parse: each refusal deferred since `d0` is reported at its token unless the parse reported an
+# error of its own (`_own_err`).
+fn _dt_dfr_say(S, d0): i64 {
+    if (_dtd == 0) { return 0; }
+    while (vec_len(_dtd) > d0) {
+        var k = vec_len(_dtd) - 3;
+        var ti = vec_get(_dtd, k);
+        var en = vec_get(_dtd, k + 1);
+        var he = vec_get(_dtd, k + 2);
+        vec_truncate(_dtd, k);
+        if (_own_err(en, he) == 0) {
+            var sv = GTI(S);
+            STI(S, ti);
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+            STI(S, sv);
+        }
     }
     return 0;
 }
@@ -12479,7 +12564,7 @@ fn _dt_peel(S, term): i64 {
 fn _dt_zone_check(S, n, k): i64 {
     if (_panic == 1) { return 0; }
     _dt_rhs_check_t(S, _dt_wterm(k, 5));   # 6.7.14: `k` wrapping parentheses stepped (`_dt_wrap_in`)
-    var fi = _dt_call_fn(S);
+    var fi = _dt_call_fn_d(S);
     if (_dt_icall_vec(S, 0) == 1) { return _panic; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
     if (fi >= 0) { _dt_arity_check(S, fi, n); }
     _dt_icall_pair(S, n);   # 6.7.17: through a known `&f`
@@ -12996,8 +13081,9 @@ fn PARSE_VAR(S): i64 {
         # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
         # 6.6.17 (a5): factored into `_dt_rhs_check_t`, which the declaration-zone replay shares.
         # 6.7.14 (D45): inside parentheses that wrap the whole call (`_dt_peel`), closed after it.
+        var _dt_d0 = _dt_dfr_n();   # 6.7.17: a refusal the chain's own error may stand for
         var _dt_wk = _dt_peel(S, 5);
-        var _dt_fi = _dt_call_fn(S);
+        var _dt_fi = _dt_call_fn_d(S);
         if (_dt_icall_vec(S, 0) == 1) { _dt_fi = 0 - 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
         _dt_icall_pair(S, _dt_n);   # 6.7.17: `var a, b, c = callptr(&f, 4);` / `fncall1(&f, 4)`, f a pair
         if (_dt_fi >= 0) {
@@ -13013,6 +13099,7 @@ fn PARSE_VAR(S): i64 {
             }
         }
         PCMPE(S);
+        _dt_dfr_say(S, _dt_d0);
         _pw_close(S, _dt_wk);
         # rax = first value, rdx = second value (from ret2/return (a,b))
         if (GINFN(S) == 1) {

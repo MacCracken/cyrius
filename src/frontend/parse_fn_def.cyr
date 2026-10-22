@@ -6663,7 +6663,8 @@ fn _opp_unpark(S, k): i64 {
 # `var a, b = q.idv(gsz(q)).m2();` is "multi-value destructure needs a call on the right-hand side" and then, past the
 # inner call's instance `gsz$P`, was "cannot take a field of the result of 'P.idv'", where `q.idv(5).m2()` (no
 # instance) reports once. The latch the statement held before the instance is set again after it. CHANGELOG [6.7.16]
-# (6.7.16's example, `q.idv(q.idv(q))`, is a valid destructure since 6.7.17's D2.)
+# (6.7.16's example, `q.idv(q.idv(q))`, is a valid destructure since 6.7.17's D2; and since 6.7.17 the chain's own error
+# stands in the destructure's place, `_dt_dfr_push` — `.. .m2() + 1` is the shape that still latches first.)
 fn _inst_relatch(sv): i64 {
     if (sv == 1) { _panic = 1; }
     return 0;

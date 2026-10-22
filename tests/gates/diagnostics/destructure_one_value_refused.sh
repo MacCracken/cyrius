@@ -536,7 +536,32 @@ check "da_both: --syntax-only names it, once" 1 "$(grep -c "^error.*$DA9" "$T/da
 # controls: an annotated plain var beside a destructure, a list's own `,` inside an annotation
 runs7 da_ctl "${TWO8}struct Box<T> { v: T; n; }\nfn t(): i64 { var a: i64 = 5; var c, d = two(3); var q: Box<i64> = 0; var e: (i64, i64) = two(1); return a + c * 10 + d; }\nsyscall(60, t());\n" 39
 
-if [ "$rows" -lt 150 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 150)"; exit 1; fi
+
+echo "axis 10 - a method chain the lookahead cannot type reports its own error, not the destructure's (6.7.17):"
+# issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 3: `var a, b = q.one().m2();` (`one` an i64)
+# was "multi-value destructure needs a call on the right-hand side" while `var a = q.one().m2();` names the mistake; the
+# refusal is deferred (`_dt_dfr_push`) and said only when the chain's parse says nothing (`_dt_dfr_say`), and the inner
+# call's arity is not the destructure's (it was "'P.one' returns 1 value" once deferred). dc_repro the filed repro
+# verbatim; wrapped, a free call's result, the assignment, a for step, the zone, after the first statement. Controls:
+# an operator after the chain and a chain the parse stops on (`q.k.m2()`) keep the destructure's refusal; a typed chain
+# runs. RED with l6717-integ's build/cycc as CYCC (the x86 leg; the others build from the tree): dc_repro dc_wrap
+# dc_free dc_asg dc_for dc_zone dc_top. Mutant: `_dt_call_fn_d` without its deferred test -> RED all but dc_wrap ("binds 2
+# names, but 'P.one' returns 1 value").
+DC10="cannot take a field of the result of"
+P10='struct P { k; }\nimpl P { fn one(self): i64 { return 34; } fn m2(self): (i64, i64) { return (3, 4); } fn me(self): P { return self; } }\nfn g1(): i64 { return 1; }\n'
+refused7 dc_repro 'struct P { k; }\nimpl P { fn one(self): i64 { return 34; } fn m2(self): (i64, i64) { return (3, 4); } }\nfn r(): i64 { var q = P { 1 }; var a, b = q.one().m2(); return a + b; }\nsyscall(60, r());\n' "3:50: $DC10 'P.one': it does not return a struct"
+refused7 dc_wrap "${P10}fn r(): i64 { var q = P { 1 }; var a, b = ((q.one().m2())); return a + b; }\nsyscall(60, r());\n" "4:52: $DC10 'P.one'"
+refused7 dc_free "${P10}fn r(): i64 { var a, b = g1().m2(); return a + b; }\nsyscall(60, r());\n" "4:28: $DC10 'g1'"
+refused7 dc_asg "${P10}fn r(): i64 { var q = P { 1 }; var a = 0; var b = 0; a, b = q.one().m2(); return a + b; }\nsyscall(60, r());\n" "4:68: $DC10 'P.one'"
+refused7 dc_for "${P10}fn r(): i64 { var q = P { 1 }; var a = 0; var b = 0; for (a = 0; a < 3; a, b = q.one().m2()) { } return a + b; }\nsyscall(60, r());\n" "4:87: $DC10 'P.one'"
+refused7 dc_zone "${P10}var q = P { 1 };\nvar a, b = q.one().m2();\nsyscall(60, a + b);\n" "5:19: $DC10 'P.one'"
+refused7 dc_top "${P10}syscall(1, 1, \"\", 0);\nvar q = P { 1 };\nvar a, b = q.one().m2();\nsyscall(60, a + b);\n" "6:19: $DC10 'P.one'"
+DCN="multi-value destructure needs a call on the right-hand side"
+refused7 dc_ctl_op "${P10}fn r(): i64 { var q = P { 1 }; var a, b = q.one().m2() + 1; return a + b; }\nsyscall(60, r());\n" "4:43: $DCN"
+refused7 dc_ctl_fld "${P10}fn r(): i64 { var q = P { 1 }; var a, b = q.k.m2(); return a + b; }\nsyscall(60, r());\n" "4:43: $DCN"
+runs7 dc_ctl_ok "${P10}fn r(): i64 { var q = P { 1 }; var a, b = q.me().m2(); return a + b; }\nsyscall(60, r());\n" 7
+
+if [ "$rows" -lt 195 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 195)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: destructure_one_value_refused - $skips leg(s) of axis 7 could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: destructure_one_value_refused ($rows rows)"

@@ -66,7 +66,10 @@
 #          after the destructure's refusal (`_inst_relatch`, met with the review's inferred-step probes). 6.7.16's
 #          rows spelled the inner call `q.idv(q)` / `w.p.idv(q)`, which bound the outer V i64 then; since 6.7.17 (the
 #          user's D2, 2026-10-22) a generic method's struct result binds as a free call's, so those statements are
-#          valid destructures: N4c / N5c compile and run (34).
+#          valid destructures: N4c / N5c compile and run (34). 6.7.17 (issues/2026-10-21-refused-source-cascades-or-names-
+#          the-wrong-error.md, row 3): a chain ending in a method call reports its own error, not the destructure's
+#          (`_dt_dfr_push`), so N4 / N5 are the chain's one error; N4o / N5o (`.. + 1`: the destructure's refusal
+#          latched before the instance) keep `_inst_relatch` covered.
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -96,7 +99,7 @@
 #                                                              tuple_checked R15c, struct_value_codegen MP4 / MP5
 #   the tree before `_inst_relatch` (be2efe073)             -> RED 2: N4, N5 (2 error lines each)
 # 6.7.17 (2026-10-22, a scratch copy of src/ with the one change, its 2-stage cycc as CYCC):
-#   `_inst_relatch` a no-op                                 -> RED 2: N4, N5 (2 error lines each)
+#   `_inst_relatch` a no-op                                 -> RED 2: N4, N5 (2 error lines each); 6.7.17: N4o, N5o
 #   the tree before D2 (3e8756f2a)                          -> RED 2: N4c, N5c (refused "multi-value destructure
 #                                                              needs a call on the right-hand side")
 #
@@ -367,10 +370,16 @@ struct W { p: P; }
 impl P { fn idv<V>(self, x: V): V { return x; } fn m2(self): (i64, i64) { return (3, 4); } }
 fn gsz<T>(v: T): i64 { return sizeof(T); }
 '
-refuse N4 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(gsz(q)).m2(); return a * 10 + b; }
+refuse N4 "6:62: cannot take a field of the result of 'P.idv': it does not return a struct" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(gsz(q)).m2(); return a * 10 + b; }
 syscall(60, main());
 " "" one
-refuse N5 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(gsz(w.p)).m2(); return a * 10 + b; }
+refuse N5 "6:76: cannot take a field of the result of 'P.idv': it does not return a struct" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(gsz(w.p)).m2(); return a * 10 + b; }
+syscall(60, main());
+" "" one
+refuse N4o "6:49: multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(gsz(q)).m2() + 1; return a * 10 + b; }
+syscall(60, main());
+" "" one
+refuse N5o "6:59: multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(gsz(w.p)).m2() + 1; return a * 10 + b; }
 syscall(60, main());
 " "" one
 # runs34 <label> <source>: compiles, one binary, exits 34
@@ -418,5 +427,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 43 ] || { echo "FAIL: call_result_field: only $pass of the 43 rows passed"; exit 1; }
+[ "$pass" -ge 45 ] || { echo "FAIL: call_result_field: only $pass of the 45 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]
