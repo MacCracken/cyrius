@@ -189,13 +189,24 @@ echo "axis 7: gates that ignore \$CYCC do not grow (ratchet)"
 # diagnostics/derive_non_struct_rejected.sh (placed from the 6.6.7 reviews) and set this
 # ceiling at what remained. LOWER it as gates are converted; never raise it — a new gate
 # writes the CYCC form. Derived, printed, and floor-checked so a blind grep cannot pass.
-CYCC_CEIL=63   # 6.7.7: lowered to what the tree measures (its note asked; 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh; 6.6.11: B06, B10, B11 converted four more)
-NHARD=$(grep -lE '^CC="?\$ROOT/build/cycc"?$' tests/gates/*/*.sh | grep -c . || true)
+# 6.7.17: the reader takes every spelling the tree uses — `CC="$ROOT/build/cycc"`, `CC="$R/build/cycc"`,
+# `CC=build/cycc` and an unconditional `CYCC="$ROOT/build/cycc"` (which overrides the caller's $CYCC).
+# It read only the first, so 38 of the 95 gates that pin build/cycc were invisible to it and a new
+# gate written `CC="$R/build/cycc"` grew the set unseen; the ceiling moved from 63 to what the
+# corrected reader measures — a reader fix, not growth. The reader is checked on each spelling
+# below, so a narrowed regex goes RED. CHANGELOG [6.7.17]
+CYCC_CEIL=95   # 6.7.17: the corrected reader's count (63 under the old one; 6.7.7: lowered to what the tree measured; 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh; 6.6.11: B06, B10, B11 converted four more)
+HARD_RE='^(CC|CYCC)="?(\$ROOT/|\$R/)?build/cycc"?$'
+for _sp in 'CC="$ROOT/build/cycc"' 'CC="$R/build/cycc"' 'CC=build/cycc' 'CC=$ROOT/build/cycc' 'CYCC="$ROOT/build/cycc"'; do
+    printf '%s\n' "$_sp" | grep -qE "$HARD_RE" || _fail "the ratchet's reader does not count the hard-coded spelling $_sp"
+done
+printf '%s\n' 'CC="${CYCC:-$ROOT/build/cycc}"' | grep -qE "$HARD_RE" && _fail "the ratchet's reader counts the \$CYCC form as hard-coded"
+NHARD=$(grep -lE "$HARD_RE" tests/gates/*/*.sh | grep -c . || true)
 NSOFT=$(grep -lE 'CYCC:-' tests/gates/*/*.sh | grep -c . || true)
 [ "$NSOFT" -ge 10 ] || _fail "only $NSOFT gate(s) honour \$CYCC — the ratchet's reader is blind"
 if [ "$NHARD" -gt "$CYCC_CEIL" ]; then
-    _fail "$NHARD gates hard-code CC=\"\$ROOT/build/cycc\" (ceiling $CYCC_CEIL) — write CC=\${CYCC:-\"\$ROOT/build/cycc\"}"
-    grep -lE '^CC="?\$ROOT/build/cycc"?$' tests/gates/*/*.sh | sed 's/^/      /' | tail -5
+    _fail "$NHARD gates hard-code build/cycc (ceiling $CYCC_CEIL) — write CC=\${CYCC:-\"\$ROOT/build/cycc\"}"
+    grep -lE "$HARD_RE" tests/gates/*/*.sh | sed 's/^/      /' | tail -5
 fi
 [ "$NHARD" -lt "$CYCC_CEIL" ] && echo "  note: $NHARD < ceiling $CYCC_CEIL — lower CYCC_CEIL in this gate to $NHARD"
 echo "  $NHARD hard-coded (ceiling $CYCC_CEIL), $NSOFT honour \$CYCC"
