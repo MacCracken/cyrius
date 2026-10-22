@@ -40,6 +40,9 @@
 #   M0  the fix reverted (HEAD e65604d5d's src)         -> RED 43: R1-R4 on every leg and RL (the keyword line), G1-G12
 #                                                         (the keyword line, or "expected ']'" + "undefined variable"),
 #                                                         S1-S3 (the keyword line), S4 S5 (compiled), T on every leg
+#                                                         — the gate as it stood at 343f710c7; with the W and Y rows
+#                                                         (below) the same tree is RED 51: + W1-W5, WC3 (its `*fn`
+#                                                         local is the keyword line), Y1 Y2 (measured 2026-10-22)
 #   M1  `_ptr_annot` without its `fn` arm               -> RED 33: r1 r2 r4 (pass 1 reads a zone global there too), G1-G4
 #                                                         G7-G10 G12, S1-S3, T on every leg
 #   M2  `_gvi_ann` without its `fn` arm                 -> RED 13: r2 and RL r2 ("expected '=', got '('"), G3 G10, T
