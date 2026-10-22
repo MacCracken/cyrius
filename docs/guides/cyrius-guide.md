@@ -1747,6 +1747,12 @@ method declared `: *U`, a `*U` field, pointer arithmetic on one, wrapped, a gene
 `= h.pu`, `= h.mu()`, `= pu + 0`, `= gg<U>(&q)`), in a fn, the zone and after the first statement, at every size —
 named as spelled: *cannot copy 'gu(&q)' into a variable of a different struct/vector type: 't'* (pointer arithmetic by
 its pointer operand). A `*U` source into a `U` keeps its handle bind, into a `*U` it aliases.
+A pointer of another DEPTH is refused the same way (6.7.17, the user's decision D12 of 2026-10-22): `var g: P3 = pp;`
+with `pp: **P3` — a local, a parameter, a global, a capture, a `**P3` field, a `: **P3` call, `pp + n`, `*ppp` of a
+`***P3`, wrapped, through a generic's `T`, a `**Str` into a `Str` — in a fn, in the declaration zone and after the
+first statement, at every size, is *cannot copy 'pp' into a variable of a different struct/vector type: 'g'*. Through
+6.7.16 it copied `sizeof(P3)` bytes through pp's `*P3` slot (`g.x` was the struct's address, the rest read past the
+slot). Write `var g: P3 = *pp;` (a copy of the struct, 6.7.16's D17 (a)) or `= ps`; `var g: *P3 = *pp;` aliases.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),

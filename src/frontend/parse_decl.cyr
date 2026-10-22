@@ -8090,6 +8090,10 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
     if (_istr_gz(S, dgv, gps) == 1) { return 1; }   # 6.7.14 (D21 (a), D18 (c)): an inline `Str` global's address
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
+    if (_sci_ppsrc(S, GTI(S), dnoff, gps) == 1) {   # 6.7.17 (D12): a `**S`, by name
+        STI(S, _gz_end(S, GTI(S)));
+        return 1;
+    }
     var ss = _gci_src(S, GTI(S));
     if (ss == 0) {
         if (_gz_pn_init(S, dgv, gps, dnoff) == 1) { return 1; }   # 6.7.16 (D18 (a)): a `*T` global's name
@@ -8127,6 +8131,7 @@ fn _gci_below(S, dnoff): i64 {
 # value store. Registered AFTER the source, in PARSE_VAR's own order.
 fn _gci_toplevel(S, noff, pscale): i64 {
     if (pscale <= 0 - 2048) { return 0; }
+    if (_sci_ppsrc(S, GTI(S) + 1, noff, pscale) == 1) { return 0; }   # 6.7.17 (D12): a `**S`, by name
     var sid = 0 - pscale;
     var ss = _gci_src(S, GTI(S) + 1);
     var pg = 0 - 1;   # 6.7.10 (B7-1g): `var G: T = *p;` — p's slot (`*p` is a struct value)
@@ -8202,6 +8207,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (PEEKT(S) != 4) { return 0; }
     if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
+    if (_sci_ppsrc(S, GTI(S) + 1, noff, pscale) == 1) { return 0; }   # 6.7.17 (D12): a `**S`, by name
     if (_sci_dpp(S, pscale) == 1) { return _sci_dexpr(S, noff, pscale); }   # 6.7.15: `*pp` of a `**S`
     if (_sci_pnu(S, noff, pscale) == 1) { return 0; }   # 6.7.16 (D87 (a)): a `*U` call, field, `p + n`, by name
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
@@ -12522,6 +12528,27 @@ fn _sci_star(S, ti): i64 {
     if (TOKTYP(S, ti) != 8) { return 0; }
     if (TOKTYP(S, ti + 1) != 2) { return 0; }
     if (TOKTYP(S, ti + 2) != 5) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.17 (D12, the user's decision, 2026-10-22) — A POINTER OF ANOTHER DEPTH INTO A STRUCT DECLARATION IS REFUSED BY
+# NAME. `var g: P3 = pp;` with `pp: **P3` copied 24 bytes through pp's `*P3` slot (g.x was s's address, the rest read
+# past the slot), in a fn and at top level (the zone and after the first statement), as did a `**P3` parameter,
+# global, capture, field, `: **P3` call, `pp + n` and `*ppp` of a `***P3`: no decision makes a `**T` name a struct
+# value (6.7.10's handle line makes a `*T` one; 6.7.16's D17 (a) makes `*pp` one). The initialiser at token `b`, up
+# to its `;`, one whole pointer whose pointee is itself a pointer to a struct (`_hl_pw`'s pin, `_pps_of_pin`), into
+# a struct `pscale`: "cannot copy 'pp' into a variable of a different struct/vector type: 'g'", named as spelled
+# inside any parentheses. `= *pp` (a copy) and `= ps` are unchanged. 1 = refused. CHANGELOG [6.7.17]
+fn _sci_ppsrc(S, b, dnoff, pscale): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    var e = _gz_end(S, b);
+    var w = _hl_pw(S, b, e);
+    if (_ps_pinned(w) == 0) { return 0; }
+    if (_pps_of_pin(S, _ps_pin(w)) <= 0) { return 0; }
+    var a = _ie_unparen(S, b, e);
+    var pe = _ie_pe;
+    ERR_IDENT(S, "cannot copy ", _src_span_nm(S, a, pe, TOKVAL(S, pe - 1)),
+      " into a variable of a different struct/vector type: ", dnoff);
     return 1;
 }
 # A local source of another struct, the name at token `ti` (`dr` 1: after a `*`, `var q: T = *p;`) — refused by name
