@@ -4746,7 +4746,11 @@ fn _sl_err_ptr(S, ti): i64 {
 }
 # A slice's pointer element `[*T]` / `slice<*T>`, cursor past its `*`: T checked by name and
 # consumed; `*[U]` / `*slice<U>` refused by name and consumed whole.
+# ⛔ 6.7.17 (the user's D93, 2026-10-22) — ANY NUMBER OF `*`: `[**i64]`, `[**fn( .. )]`, `slice<**T>` (deeper too) read
+# the rest as `[*T]` reads T, an 8-byte element (a pointer's), as `var p: **i64` is a pointer elsewhere. The second `*`
+# was taken for T: "expected ']', got '*'" (`slice<**T>`: "expected '=', got '*'") and a cascade. CHANGELOG [6.7.17]
 fn _tn_slice_ptr_el(S, noff): i64 {
+    while (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }
     if (_sl_ann_at(S, GTI(S)) == 1) {
         _sl_err_ptr(S, GTI(S));
         _sl_ann_skip(S);

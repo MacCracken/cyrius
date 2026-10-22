@@ -3185,6 +3185,12 @@ address; an element of any other width (`[Box<Pt>]` and `[P3]` are 24 bytes, `[B
 slice subscript reads a 1-, 2-, 4-, 8- or 16-byte element - this one is 24 bytes* — so read it at `slice_ptr(&s) + i *
 sizeof(T)` (6.7.16); a store into a struct element is refused (below).
 
+**A pointer element.** `[*T]` / `slice<*T>` is an 8-byte element whose `T` is read by name (an unknown one is *unknown
+type 'Nope' as the target of pointer 's'*), and so is one behind any number of `*` (6.7.17, the user's D93,
+2026-10-22): `[**i64]`, `[***i64]`, `slice<**i64>`, `[**fn(i64): i64]`, `[**Box<i64>]` each declare the same 8-byte
+element, refused as the one-star element is. Through 6.7.16 the second `*` was read as `T` — *expected ']', got '*'*
+(`slice<**T>`: *expected '=', got '*'*).
+
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
 violation` and exits 134, in every build. The value is checked as a store into an element of `T`:
