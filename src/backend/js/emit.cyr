@@ -511,10 +511,12 @@ fn _ej_export_specs(ts_base, src, off): i64 {
 # ================================================================
 fn _TS_JS(ts_base, src, idx): i64 {
     if (idx < 0) { return 0; }
-    # Revisit detection (tree invariant; reuses the idle parse stack).
+    # Revisit detection (tree invariant; reuses the idle parse stack,
+    # which TS_JS_EMIT has allocated before the walk starts).
     if (idx < 8192) {
-        if (load64(&_ts_cst + idx * 8) != 0) { _js_walk_err = 1; return 0; }
-        store64(&_ts_cst + idx * 8, 1);
+        var seen = _ts_cst_buf() + idx * 8;
+        if (load64(seen) != 0) { _js_walk_err = 1; return 0; }
+        store64(seen, 1);
     }
     var k = TS_AST_KIND(ts_base, idx);
     var span = TS_AST_SPAN(ts_base, idx);
@@ -897,12 +899,20 @@ fn TS_JS_EMIT(ts_base, src): i64 {
 
     var root = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ROOT_NODE);
 
-    # Zero the revisit scratch for reachable nodes.
+    # Zero the revisit scratch for reachable nodes. The scratch is the parse
+    # stack, alloc()'d on first use: a program with no statement never pushed,
+    # so take it here, and name a failed allocation rather than walk address 0.
+    # CHANGELOG [6.7.17]
+    var cst = _ts_cst_buf();
+    if (cst == 0) {
+        syscall(SYS_WRITE, 2, "error: cannot allocate the TS scratch stack\n", 44);
+        return 1;
+    }
     var nc = TS_AST_NODE_COUNT(ts_base);
     var zlim = nc;
     if (zlim > 8192) { zlim = 8192; }
     var z = 0;
-    while (z < zlim) { store64(&_ts_cst + z * 8, 0); z = z + 1; }
+    while (z < zlim) { store64(cst + z * 8, 0); z = z + 1; }
 
     _collect_type_names(ts_base, src, root);
 
