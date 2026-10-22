@@ -317,7 +317,7 @@ for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
     sum=$(summary "$D/n/$b.out"); np=${sum% *}; nf=${sum#* }
     if [ -z "$sum" ] || [ "$nrc" != 0 ] || [ "$nf" != 0 ] || [ "$np" -lt "$fl" ]; then
         bad "axis 1: $b.tcyr natively: '${sum:-no summary}' (exit $nrc, floor $fl)"
-        tr -d '\r' < "$D/n/$b.out" | grep -m4 'FAIL:' | sed 's/^/      /'
+        grep -m4 'FAIL:' "$D/n/$b.out" | tr -d '\r' | sed 's/^/      /'
     else ok; fi
 done
 
@@ -557,7 +557,7 @@ clsh_parent "$D/n/clsh_child" > "$D/clsh_parent_n.cyr"
 ( cd "$ROOT" && "$CC" < "$D/clsh_parent_n.cyr" > "$D/n/clsh_parent" 2> "$D/n/clsh_parent.err" ) || true
 chmod +x "$D/n/clsh_parent" 2> /dev/null || true
 if [ ! -s "$D/n/closestd" ] || [ ! -s "$D/n/trstd" ] || [ ! -s "$D/n/close2" ] || [ ! -s "$D/n/clsh_child" ] || [ ! -s "$D/n/clsh_parent" ] || [ ! -s "$D/n/closeneg" ] || [ ! -s "$D/n/pathfail" ] || [ ! -s "$D/n/ftfail" ] || [ ! -s "$D/n/alias" ] || [ ! -s "$D/n/rsfail" ] || [ ! -s "$D/n/dirfail" ]; then
-    bad "axis 1: a native build of the std-fd probes produced no binary: $(cat "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | grep -m2 '^error' | tr '\n' ' ')"
+    bad "axis 1: a native build of the std-fd probes produced no binary: $(awk '/^error/ && n++ < 2' "$D/n/closestd.err" "$D/n/trstd.err" "$D/n/close2.err" "$D/n/clsh_child.err" "$D/n/clsh_parent.err" "$D/n/closeneg.err" "$D/n/pathfail.err" "$D/n/ftfail.err" "$D/n/alias.err" | tr '\n' ' ')"
 else
     ( cd "$D/n" && ulimit -c 0; ./closestd > cs.out 2> cs.err ) || true
     got=$(line "$D/n/cs.out")
@@ -877,7 +877,9 @@ fi
 # reader below a pipe exits before its input ends: awk reads the file itself, and warm's arm reader
 # stops printing at #endif rather than exiting — behind `grep -v`, an exit at the brace killed grep
 # with SIGPIPE, and under `bash -eo pipefail` (GitHub's run: shell) `ssym=$(swfn …)` stopped the
-# gate with rc 141 and no verdict (3 of 100 runs). CHANGELOG [6.7.17]
+# gate with rc 141 and no verdict (3 of 100 runs). The same holds for the whole gate: a run's FAIL
+# lines and an error's first lines are read where the file lies, never behind `tr` / `cat`
+# (gates_verdict_under_pipefail.sh axis 3 scans for the shape). CHANGELOG [6.7.17]
 fnbody() { awk -v n="fn $1(" '/^[[:space:]]*#[^a-z]/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO"; }
 warm() { fnbody "$1" | awk 'w < 2 && /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 && /^[[:space:]]*#endif/ { w = 2 } w == 1 { print }'; }
 case "$(warm file_create_exclusive)" in
@@ -1047,7 +1049,7 @@ EOF
     clsh_parent clsh_child.exe > "$D/clsh_parent_w.cyr"
     ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/clsh_parent_w.cyr" > "$D/w/clsh_parent.exe" 2> "$D/clsh_parent.werr" ) || true
     if [ ! -s "$D/w/closestd.exe" ] || [ ! -s "$D/w/trstd.exe" ] || [ ! -s "$D/w/close2.exe" ] || [ ! -s "$D/w/clsh_child.exe" ] || [ ! -s "$D/w/clsh_parent.exe" ] || [ ! -s "$D/w/clreuse.exe" ] || [ ! -s "$D/w/closeneg.exe" ] || [ ! -s "$D/w/pathfail.exe" ] || [ ! -s "$D/w/ftfail.exe" ] || [ ! -s "$D/w/alias.exe" ] || [ ! -s "$D/w/rsfail.exe" ] || [ ! -s "$D/w/dirfail.exe" ]; then
-        bad "axis 4: a PE build of the std-fd probes produced no binary: $(cat "$D"/*.werr | grep -m2 '^error' | tr '\n' ' ')"
+        bad "axis 4: a PE build of the std-fd probes produced no binary: $(awk '/^error/ && n++ < 2' "$D"/*.werr | tr '\n' ' ')"
     else
         _wrun closestd.exe < /dev/null > "$D/w/cs.out" 2> "$D/w/cs.err" || true
         got=$(line "$D/w/cs.out")
@@ -1163,7 +1165,7 @@ EOF
         sum=$(summary "$D/$b.wout"); np=${sum% *}; nf=${sum#* }
         if [ -z "$sum" ] || [ "$wrc" != 0 ] || [ "$nf" != 0 ] || [ "$np" -lt "$fl" ]; then
             bad "axis 4: $b.tcyr under wine: '${sum:-no summary}' (exit $wrc, floor $fl)"
-            tr -d '\r' < "$D/$b.wout" | grep -m6 'FAIL:' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/$b.wout" | tr -d '\r' | sed 's/^/      /'
         else ok; fi
     done
     WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true

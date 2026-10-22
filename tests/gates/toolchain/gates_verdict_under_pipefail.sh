@@ -35,7 +35,12 @@
 #     `grep -v` is still writing the rest of a large file (cbt/manifest.cyr 123 KB, lib/io.cyr,
 #     lib/syscalls_windows.cyr), grep dies of SIGPIPE, and `eo=$(fnbody …)` stopped the gate with
 #     rc 141 and NO output — embed_link_race_pe on 89 of 100 runs, the other two on 3-4 of 100.
-#     awk now reads the file itself, and no reader below a pipe exits before its input ends.
+#     awk now reads the file itself, and no reader below a pipe exits before its input ends —
+#     anywhere in the three (the 6.7.17 review): `objdump -p X | grep -qE …` under `if` read a
+#     present import as missing (a 15.5 KB listing: 49 of 300 runs), a `tr … | grep -q` could miss
+#     a SKIP line, `printf "$body" | grep -q` / `| grep -n … | head -1` and a failing run's
+#     `tr … | grep -m6 'FAIL:'` stopped or lied once their input outgrew one write. Axis 3 scans
+#     them for the shape.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -48,13 +53,22 @@
 #   axis 2  each gate in GATES, run as `bash -eo pipefail <gate>`, exits 0 with a last line
 #           starting PASS (or 77 with a last line starting SKIP: a gate that could not run says
 #           so by name). check.sh runs each of them under `sh` as its own row.
+#   axis 3  STATIC, over NOPIPE: no early-exiting reader below a pipe — `grep` with -q / -m / -l /
+#           -L, head, read, cmp, an awk whose script exits, a sed whose script quits — on any
+#           command line (comments skipped, `\` continuations joined). Its latent cases pass axis 2
+#           (a writer whose output fits one write never meets the early exit), so only a scan holds
+#           them. The scanner proves it sees on two fixtures: every early spelling is reported, and
+#           the safe ones (a file grepped where it lies, a here-document, grep -c / -n, tail, an awk
+#           that stops printing, `||`, a `while read` loop) are not.
 # Mutation (6.7.15): any gate's fix reverted (axis 2's `|| true` dropped, the census's
 # `for-each-ref` back to `git tag … | head -1`, axis 5's `prc=0; ( … ) || prc=$?` back to
 # `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines; 6.7.16: the
 # agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1);
 # 6.7.17: embed_link_race_pe.sh's fnbody back behind `code "$1" |` -> RED (STOPPED, rc 141, no
-# output).
-# Add a gate to GATES when its pipefail stop or false verdict is fixed.
+# output); pe_lockfileex_reroute.sh's UnlockFileEx import check back to `objdump … | grep -qE` ->
+# axis 3 RED naming the line; the scanner's grep-option test dropped -> axis 3 RED (the early
+# fixture's grep rows unreported).
+# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.17]
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -133,5 +147,108 @@ for g in $GATES; do
 done
 [ "$N" -ge 3 ] || _fail "axis 2: only $N gates listed (floor 3) — the list was emptied"
 
+# ── axis 3: no early-exiting reader below a pipe in the NOPIPE gates ────────────────────
+NOPIPE="tests/gates/toolchain/embed_link_race_pe.sh
+tests/gates/platform/pe_lockfileex_reroute.sh
+tests/gates/platform/pe_reroute_failure_errno.sh"
+# _early FILE: "LINE: text" for each command line with a reader below a single `|` that can stop
+# before its input ends.
+_early() {
+    awk '
+    function word_after(s, i,    t) { t = substr(s, i); sub(/^[[:space:]]+/, "", t); return t }
+    function script(t,    a, b, n, k, w) {   # the first single-quoted script, else the first operand
+        a = index(t, "\047")
+        if (a > 0) { b = index(substr(t, a + 1), "\047"); if (b > 0) return substr(t, a + 1, b - 1) }
+        n = split(t, w, /[[:space:]]+/)
+        for (k = 1; k <= n; k++) if (w[k] != "" && substr(w[k], 1, 1) != "-") return w[k]
+        return ""
+    }
+    function early(t,    cmd, rest, n, k, tok) {
+        if (!match(t, /^[A-Za-z_][A-Za-z_0-9]*/)) return 0
+        cmd = substr(t, 1, RLENGTH); rest = substr(t, RLENGTH + 1)
+        if (cmd == "head" || cmd == "read" || cmd == "cmp" || cmd == "line") return 1
+        if (cmd == "grep") {
+            n = split(rest, tok, /[[:space:]]+/)
+            for (k = 1; k <= n; k++) {
+                if (tok[k] == "") continue
+                if (substr(tok[k], 1, 1) != "-") break
+                if (tok[k] ~ /^-[A-Za-z0-9]*[qlLm]/ || tok[k] ~ /^--(quiet|silent|max-count|files-with)/) return 1
+            }
+            return 0
+        }
+        if (cmd == "awk") return script(rest) ~ /(^|[^A-Za-z_0-9])exit([^A-Za-z_0-9]|$)/
+        if (cmd == "sed") return script(rest) ~ /(^|[;{}[:space:]0-9$\/])[qQ][0-9]*[[:space:]]*($|[;}])/
+        return 0
+    }
+    !cont && /^[[:space:]]*#/ { next }
+    {
+        if (!cont) { start = FNR; buf = "" }
+        if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; cont = 1; next }
+        buf = buf $0; cont = 0
+        L = length(buf)
+        for (i = 1; i <= L; i++) {
+            if (substr(buf, i, 1) != "|") continue
+            if (i > 1 && substr(buf, i - 1, 1) == "|") continue
+            if (i < L && substr(buf, i + 1, 1) == "|") continue
+            if (early(word_after(buf, i + 1))) { printf "%d: %s\n", start, buf; break }
+        }
+    }' "$1"
+}
+# The scanner sees: each of the 15 early spellings (one command line each) is reported ...
+cat > "$D/early.fx" <<'XEOF'
+x=$(printf '%s\n' "$b" | grep -q 'p')
+printf '%s\n' "$b" | grep -qE 'p' || bad x
+objdump -p f | grep -E -q 'p'
+tr -d '\r' < f | grep -m6 'FAIL:' | sed 's/^/ /'
+cat f | grep -m 2 '^error'
+cat f | grep -l x
+cat f | grep --quiet x
+a=$(printf '%s\n' "$b" | grep -n 'p' | head -1 | cut -d: -f1)
+awk '{ print }' f \
+    | awk '/x/ { print; exit }'
+yes | sed 1q
+yes | sed -n '/x/{p;q}'
+cmd | read v
+cmd | cmp -s - f
+bad "it reads: $(cat a b | grep -m2 '^error' | tr '\n' ' ')"
+yes | sed -n 5q
+XEOF
+# ... and none of the safe ones is.
+cat > "$D/safe.fx" <<'XEOF'
+grep -q 'p' f
+grep -m6 'FAIL:' f | tr -d '\r' | sed 's/^/ /'
+n=$(printf '%s\n' "$b" | grep -c 'p' || true)
+x=$(tr -d '\r' < f | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*\) failed.*/\1 \2/p' | tail -1)
+fnbody "$1" | awk 'w < 2 && /^#ifdef/ { w = 1; next } w == 1 { print; w = 2 }'
+awk '/^fn x\(/ { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO" \
+    | awk 'w == 1 { print }'
+cmd || head -1 f
+printf '%s' "$x" | tr -s ' '
+cmd | while read l; do :; done
+    # a comment | grep -q x
+awk '/^error/ && n++ < 2' f1 f2 | tr '\n' ' '
+    grep -n -m1 -e "$2" <<EOF | cut -d: -f1
+od -An -v -tx4 -w4 f | tr -d ' ' > g
+BEGIN { np = split("^cmp +\\$0x2,%rax|^ja |G|^cmp +\\$0x1,%rax", pat, "|") }
+XEOF
+f3=$FAILS
+ne=$(_early "$D/early.fx" | wc -l | tr -d ' ')
+[ "$ne" = 15 ] || _fail "axis 3: the scanner reports $ne of the fixture's 15 early readers (the lines it saw: $(_early "$D/early.fx" | cut -d: -f1 | tr '\n' ' ')) — it is blind to the rest"
+if [ -n "$(_early "$D/safe.fx")" ]; then
+    _fail "axis 3: the scanner reports a safe spelling: $(_early "$D/safe.fx" | tr '\n' ' ')"
+fi
+ng=0
+for g in $NOPIPE; do
+    ng=$((ng + 1))
+    if [ ! -f "$g" ]; then _fail "axis 3: $g is listed but missing"; continue; fi
+    _early "$g" > "$D/early.out"
+    if [ -s "$D/early.out" ]; then
+        _fail "axis 3: $g has a reader below a pipe that can stop before its input ends (its writer dies of SIGPIPE, which pipefail reads as the pipeline failing):"
+        sed 's/^/        /' "$D/early.out"
+    fi
+done
+[ "$ng" -ge 3 ] || _fail "axis 3: only $ng gates listed in NOPIPE (floor 3)"
+[ "$FAILS" = "$f3" ] && echo "  ok: axis 3: no early-exiting reader below a pipe in the $ng NOPIPE gates (the scanner reports all 15 early spellings and none of the safe ones)"
+
 if [ "$FAILS" != 0 ]; then echo "FAIL: $NAME ($FAILS)"; exit 1; fi
-echo "PASS: $NAME ($N gates reach their verdict under bash -eo pipefail; the checker tells a stop from a verdict)"
+echo "PASS: $NAME ($N gates reach their verdict under bash -eo pipefail; the checker tells a stop from a verdict; no early-exiting reader below a pipe in the $ng NOPIPE gates)"

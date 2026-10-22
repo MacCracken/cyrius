@@ -129,8 +129,17 @@ fi
 # One fn, comment lines dropped: from `fn NAME(` to its closing brace. awk reads the file itself:
 # behind a `grep -v` pipe, its exit at the brace killed grep (still writing the rest of the file)
 # with SIGPIPE, and under `bash -eo pipefail` (GitHub's run: shell) `eo=$(fnbody …)` stopped the
-# gate with rc 141 and no verdict on 89 of 100 runs. CHANGELOG [6.7.17]
+# gate with rc 141 and no verdict on 89 of 100 runs. No reader below a pipe exits before its input
+# ends anywhere in this gate: has greps a body through a here-document, and a file is grepped where
+# it lies (gates_verdict_under_pipefail.sh axis 3 scans for the shape). CHANGELOG [6.7.17]
 fnbody() { awk -v f="$2" '/^[[:space:]]*#/ { next } index($0, "fn " f "(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$1"; }
+# has TEXT PATTERN: TEXT has a line matching PATTERN (grep stops at the first match, with no writer
+# left to kill).
+has() {
+    grep -q -e "$2" <<EOF
+$1
+EOF
+}
 f4=$fail
 eo=$(fnbody "$MF" _embed_open)
 warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF
@@ -142,16 +151,16 @@ case "$warm" in
     *'return _embed_open_win(path, fl);'*) ;;
     *) bad "axis 4: _embed_open's CYRIUS_TARGET_WIN arm does not return _embed_open_win(path, fl) (it reads: $(printf '%s' "$warm" | tr -s ' \n' ' '))" ;;
 esac
-printf '%s\n' "$eo" | grep -q 'walk = 0' && bad "axis 4: _embed_open still skips the walk somewhere (walk = 0 — the arm64-macOS whole-path open)"
+has "$eo" 'walk = 0' && bad "axis 4: _embed_open still skips the walk somewhere (walk = 0 — the arm64-macOS whole-path open)"
 eow=$(fnbody "$MF" _embed_open_win)
 if [ -z "$eow" ]; then
     bad "axis 4: cbt/manifest.cyr has no _embed_open_win"
 else
-    printf '%s\n' "$eow" | grep -q 'var under = win_handle_under(fd, rh);' \
+    has "$eow" 'var under = win_handle_under(fd, rh);' \
         || bad "axis 4: _embed_open_win does not ask win_handle_under(fd, rh)"
-    printf '%s\n' "$eow" | grep -q 'if (under != 1)' \
+    has "$eow" 'if (under != 1)' \
         || bad "axis 4: _embed_open_win does not refuse every answer but 1 (a -1 'cannot tell' must refuse too)"
-    printf '%s\n' "$eow" | grep -q 'return 0 - 40;' \
+    has "$eow" 'return 0 - 40;' \
         || bad "axis 4: _embed_open_win does not refuse with -ELOOP (0 - 40)"
 fi
 whu=$(fnbody "$FW" win_handle_under)
@@ -159,13 +168,13 @@ fhp=$(fnbody "$FW" _fs_handle_under_path)
 if [ -z "$whu" ] || [ -z "$fhp" ]; then
     bad "axis 4: lib/fs_win.cyr lacks win_handle_under or _fs_handle_under_path"
 else
-    printf '%s\n' "$whu" | grep -q 'syscall(0xF04E, root_h, &a, 32768, 0)' \
+    has "$whu" 'syscall(0xF04E, root_h, &a, 32768, 0)' \
         || bad "axis 4: win_handle_under does not ask GetFinalPathNameByHandleW (0xF04E, argc 5) for the root"
-    printf '%s\n' "$fhp" | grep -q 'syscall(0xF04E, h, &b, 32768, 0)' \
+    has "$fhp" 'syscall(0xF04E, h, &b, 32768, 0)' \
         || bad "axis 4: _fs_handle_under_path does not ask GetFinalPathNameByHandleW (0xF04E, argc 5) for the file"
-    printf '%s\n' "$fhp" | grep -q 'if (load16(&b + na \* 2) == 92) { return 1; }' \
+    has "$fhp" 'if (load16(&b + na \* 2) == 92) { return 1; }' \
         || bad "axis 4: _fs_handle_under_path does not require a separator after the root's prefix (C:\\proj would hold C:\\project)"
-    printf '%s\n' "$whu$fhp" | grep -q 'return 1; }' || bad "axis 4: win_handle_under never answers 1"
+    has "$whu$fhp" 'return 1; }' || bad "axis 4: win_handle_under never answers 1"
 fi
 [ "$fail" = "$f4" ] && ok
 
@@ -197,7 +206,7 @@ grade() {  # $1 = label, $2 = output file, $3 = exit code, $4 = floor
     if [ -z "$s" ]; then bad "axis 6 ($1): no summary (exit $3)"
     elif [ "$3" != 0 ] || [ "$nf" != 0 ]; then
         bad "axis 6 ($1): $np passed, $nf failed (exit $3)"
-        tr -d '\r' < "$2" | grep -m6 'FAIL:' | sed 's/^/      /'
+        grep -m6 'FAIL:' "$2" | tr -d '\r' | sed 's/^/      /'
     elif [ "$np" -lt "$4" ]; then bad "axis 6 ($1): only $np rows ran (floor $4)"
     else ok; fi
 }
@@ -234,7 +243,7 @@ else
         ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             wine eo.exe > "$D/w.out" 2>&1 ) || wrc=$?
-        if tr -d '\r' < "$D/w.out" | grep -q 'SKIP: the directory-link rows'; then
+        if grep -q 'SKIP: the directory-link rows' "$D/w.out"; then
             bad "axis 6 (PE): this wine refused to create the directory link, so the race rows did not run"
         else
             grade "PE" "$D/w.out" "$wrc" 30
