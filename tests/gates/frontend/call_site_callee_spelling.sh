@@ -23,6 +23,8 @@
 #   N6   `g<f64v2>(b)` (a refused type argument): no line names the minted `g$..`; a call line, if any, `g<f64v2>`
 #   N7   controls, unchanged: a plain fn, a free fn named like a method (`S_x`, no impl), a `mod` fn (`mm_f`)
 #   N8   the aarch64 cross compiler (built from this tree, when present) names `S.ri` and `S.nope` too
+#   N9   a fn named from a struct instance — `B<i32>_add` (an operator fn), `B<i32>.nope` (a method) — on every
+#        backend: x86_64, PE, Mach-O x86 / arm, aarch64, cx (6.7.17)
 #
 # MUTATIONS (measured, 6.7.14, the mutant as CYCC; N8 uses the tree's aarch64 compiler): `_fn_src_name` returning
 # `noff` at its top -> 19 rows RED, N1-N6 (the mangled names); `_prescan_meth_note` never called -> 12 RED, N1, N2a-d
@@ -246,7 +248,41 @@ else
   echo "  NOTE: call_site_callee_spelling N8 not run — no build/cycc_aarch64 (build it from src/main_aarch64.cyr)"
 fi
 
-[ "$rows" -ge 23 ] || bad "only $rows rows ran"
+# N9 (6.7.17, FD1) — a fn named from a struct INSTANCE: `b + 1` on a `B<i32>` looks up the operator fn `B$i32_add` (the
+# instance's table name and `_add`), and `b.nope()` a method recorded under the instance. Every backend's
+# undefined-function warning and cx's refusal printed `B$i32_add` and `B.nope` (the `$` cut); `_fn_src_name` spells the
+# instance as written (`_fsn_dm`, `_fsn_tn`): `B<i32>_add`, `B<i32>.nope` on x86_64, PE, Mach-O x86 and arm, aarch64
+# and cx (the cross compilers built from this tree, each leg its own row).
+cat > "$D/N9a.cyr" <<'EOF'
+struct B<T> { v: T; w: i64; u: i64; }
+fn main(): i64 { var b: B<i32>; var x = b + 1; return 0; }
+syscall(60, main());
+EOF
+cat > "$D/N9b.cyr" <<'EOF'
+struct B<T> { v: T; w: i64; u: i64; }
+fn main(): i64 { var b: B<i32>; return b.nope(); }
+syscall(60, main());
+EOF
+n9ok=1
+"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null && chmod +x "$D/cc_a64" || { bad "N9: src/main_aarch64.cyr did not build"; n9ok=0; }
+"$CC" < src/main_cx.cyr > "$D/cc_cx" 2>/dev/null && chmod +x "$D/cc_cx" || { bad "N9: src/main_cx.cyr did not build"; n9ok=0; }
+printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$CC" > "$D/cc_pe"
+printf '#!/bin/sh\nCYRIUS_MACHO=1 exec "%s"\n' "$CC" > "$D/cc_mo"
+printf '#!/bin/sh\nCYRIUS_MACHO_ARM=1 exec "%s"\n' "$D/cc_a64" > "$D/cc_moa"
+chmod +x "$D/cc_pe" "$D/cc_mo" "$D/cc_moa"
+if [ "$n9ok" = 1 ]; then
+  for leg in x86 pe mo a64 moa; do
+    case $leg in x86) c=$CC ;; *) c="$D/cc_$leg" ;; esac
+    diag "N9a.$leg" "warning: undefined function 'B<i32>_add'|warning: undefined function 'B<i32>_add' (reachable call site)|error: refusing to emit binary with 1 reachable undefined function(s) (pass --allow-undef to downgrade)|" "$c" < "$D/N9a.cyr"
+    diag "N9b.$leg" "warning: undefined function 'B<i32>.nope'|warning: undefined function 'B<i32>.nope' (reachable call site)|error: refusing to emit binary with 1 reachable undefined function(s) (pass --allow-undef to downgrade)|" "$c" < "$D/N9b.cyr"
+  done
+  diag N9a.cx "warning: undefined function 'B<i32>_add'|error: undefined function(s) called (cx backend):|" "$D/cc_cx" < "$D/N9a.cyr"
+  grep -qx '  - B<i32>_add' "$D/N9a.cx.err" || bad "N9a.cx: the refusal's list does not name B<i32>_add: $(grep '^  - ' "$D/N9a.cx.err" | head -1)"
+  diag N9b.cx "warning: undefined function 'B<i32>.nope'|error: undefined function(s) called (cx backend):|" "$D/cc_cx" < "$D/N9b.cyr"
+  grep -qx '  - B<i32>.nope' "$D/N9b.cx.err" || bad "N9b.cx: the refusal's list does not name B<i32>.nope: $(grep '^  - ' "$D/N9b.cx.err" | head -1)"
+fi
+
+[ "$rows" -ge 35 ] || bad "only $rows rows ran"
 if [ "$fail" -ne 0 ]; then echo "FAIL call_site_callee_spelling: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS call_site_callee_spelling: $rows rows — call-site diagnostics name a method \`S.ri\` and a generic call \`g<i32>\`; a method form's arity counts as written"
+echo "PASS call_site_callee_spelling: $rows rows — call-site diagnostics name a method \`S.ri\` and a generic call \`g<i32>\`; a method form's arity counts as written; a fn named from a struct instance \`B<i32>_add\` / \`B<i32>.nope\` on every backend"
 exit 0

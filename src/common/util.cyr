@@ -3630,6 +3630,56 @@ fn _sn_pr(S, sid): i64 {
     PRSTR(S + 0xEC00000 + b);
     return 0;
 }
+# 6.7.17 — A FN NAME MINTED FROM AN INSTANCE'S TABLE NAME IS SPELLED WITH THE INSTANCE AS WRITTEN. An operator fn of
+# `B<i32>` is looked up as `B$i32_add`, and the undefined-function warnings of every backend's fixup (and the cx
+# backend's refusal) printed that: "undefined function 'B$i32_add'". The longest struct-instance table name that begins
+# the name at pool offset `nm` and is followed by `_` or its end: its 1-based id, its length in `_sn_plen`; else 0.
+# `_fn_src_name` writes the instance through `_fsn_conc` (`B<i32>_add`), and a method record's type the same
+# (`B<i32>.nope`, where the `$` cut said `B.nope`). CHANGELOG [6.7.17]
+var _sn_plen = 0;
+fn _sn_prefix(S, nm): i64 {
+    var sc = GSTC(S);
+    var best = 0;
+    _sn_plen = 0;
+    var i = 0;
+    while (i < sc) {
+        if (_sinst_base(i + 1) > 0) {
+            var sn = S + 0xEC00000 + L64(S + 0x1A6018 + i * 8);
+            var q = S + 0xEC00000 + nm;
+            var k = 0;
+            var go = 1;
+            while (go == 1) {
+                if (load8(sn + k) == 0) { go = 0; }
+                elif (load8(sn + k) != load8(q + k)) { go = 2; }
+                else { k = k + 1; }
+            }
+            if (go == 0) { if (k > _sn_plen) { if (load8(q + k) == 0 || load8(q + k) == 95) { best = i + 1; _sn_plen = k; } } }
+        }
+        i = i + 1;
+    }
+    return best;
+}
+# `_fsn_spell`'s type name at pool offset `tn` written at `wp`: a struct instance as written (`B<i32>`), anything else up
+# to its first `$`. CHANGELOG [6.7.17]
+fn _fsn_tn(S, wp, tn, lim): i64 {
+    var c = _sn_prefix(S, tn);
+    if (c > 0) { if (load8(S + 0xEC00000 + tn + _sn_plen) == 0) { return _fsn_conc(S, wp, c, lim, 0); } }
+    return _fsn_put(S, wp, tn, lim, 1);
+}
+# `_fsn_spell`'s plain name `nm` (no method record, no instance record): its instance prefix as written and the rest
+# as is (`B<i32>_add`), at GNPOS uncommitted; `nm` itself when it begins with no instance. CHANGELOG [6.7.17]
+fn _fsn_dm(S, nm): i64 {
+    var c = _sn_prefix(S, nm);
+    if (c == 0) { return nm; }
+    var pl = _sn_plen;
+    NPOS_GUARD(S, 1024);
+    var b = GNPOS(S);
+    var lim = b + 960;
+    var wp = _fsn_conc(S, b, c, lim, 0);
+    wp = _fsn_put(S, wp, nm + pl, lim, 0);
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
 # Struct `sid` (1-based) as an ERR_IDENT name (or `_psub_err`'s): below every pool offset and every "none".
 fn _ei_sid(sid): i64 { return 0 - 1000 - sid; }
 # An ERR_IDENT name: a pool offset, or a struct (`_ei_sid`).
