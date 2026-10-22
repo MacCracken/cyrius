@@ -1312,7 +1312,7 @@ fn _dyn_err(S, ti, msg, sid, noff, tail): i64 {
         _dyn_ps(S, sid);
         if (noff >= 0) { syscall(SYS_WRITE, 2, " ", 1); }
     }
-    if (noff >= 0) { _dyn_pq(S, noff); }
+    if (noff >= 0 || noff <= 0 - 1000) { _dyn_pq(S, noff); }   # 6.7.17: or a struct (`_ei_sid`)
     if (tail != 0) { PRSTR(tail); }
     return _dyn_eend(S);
 }
@@ -1340,11 +1340,11 @@ fn _dyn_eend(S): i64 {
     STI(S, _dyn_esv);
     return 1;
 }
-fn _dyn_ps(S, sid): i64 { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8)); return 0; }
+fn _dyn_ps(S, sid): i64 { _sn_pr(S, sid); return 0; }
 fn _dyn_pn(S, noff): i64 { PRSTR(S + 0xEC00000 + noff); return 0; }
 fn _dyn_pq(S, noff): i64 {
     syscall(SYS_WRITE, 2, "'", 1);
-    PRSTR(S + 0xEC00000 + noff);
+    _ei_pr(S, noff);   # 6.7.17: or a struct (`_ei_sid`)
     syscall(SYS_WRITE, 2, "'", 1);
     return 0;
 }
@@ -1378,6 +1378,7 @@ fn _dyn_tx(S, sid): i64 { return _tr_find(S, L64(S + 0x1A6018 + (sid - 1) * 8) +
 var _ti_dyn = 0;    # per impl (4096 words): 0 never formed, 1 refused, else (its vtable global + 1) << 1
 var _dsr_tp = 0;    # FORM: the type T's name, its bytes ...
 var _dsr_tn = 0;    # ... and their count
+var _dsr_tsid = 0;  # 6.7.17: ... or the struct it names (1-based), printed as written (`B<i32>`); 0 = print the bytes
 var _dsr_ii = 0;    # FORM: the impl of the dyn's trait for T
 var _dsr_ds = 0;    # the dyn being formed (its sid), for the refusals' words
 var _dsc_tn = 0;    # per frame slot (16384 words): a declared scalar's annotation name — read only behind bit 63 (SLDSC)
@@ -1449,6 +1450,7 @@ fn _dyn_amp_name(S, a, b): i64 {
 fn _dyn_lit(s, n): i64 {
     _dsr_tp = s;
     _dsr_tn = n;
+    _dsr_tsid = 0;
     return 1;
 }
 # FORM from T named at `noff` (a struct's name, or a declared scalar's annotation).
@@ -1457,9 +1459,14 @@ fn _dyn_tset(S, noff): i64 {
     var n = 0;
     while (load8(_dsr_tp + n) != 0) { n = n + 1; }
     _dsr_tn = n;
+    _dsr_tsid = 0;
     return 1;
 }
-fn _dyn_sform(S, sid): i64 { return _dyn_tset(S, L64(S + 0x1A6018 + (sid - 1) * 8)); }
+fn _dyn_sform(S, sid): i64 {
+    _dyn_tset(S, L64(S + 0x1A6018 + (sid - 1) * 8));
+    _dsr_tsid = sid;
+    return 1;
+}
 # One name: a local, a closure's capture, a global.
 fn _dyn_src_name(S, a): i64 {
     var nm = TOKVAL(S, a);
@@ -1797,7 +1804,7 @@ fn _dyn_f6(S, ti, tx): i64 {
     PRSTR("no `impl ");
     _dyn_pn(S, L64(_tr_tab + tx * 32));
     PRSTR(" for ");
-    syscall(SYS_WRITE, 2, _dsr_tp, _dsr_tn);
+    if (_dsr_tsid > 0) { _sn_pr(S, _dsr_tsid); } else { syscall(SYS_WRITE, 2, _dsr_tp, _dsr_tn); }   # 6.7.17
     PRSTR("` - a ");
     _dyn_ps(S, _dsr_ds);
     PRSTR(" is formed only from a type that implements ");
@@ -5697,7 +5704,7 @@ fn _chk_struct_redef(S, prev, sid, name_ti): i64 {
     _err_head_at(S, name_ti);
     if (ISUNION(S, sid - 1) == 1) { syscall(SYS_WRITE, 2, ": union '", 9); }
     else { syscall(SYS_WRITE, 2, ": struct '", 10); }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     syscall(SYS_WRITE, 2, "' redefined with a different layout — the FIRST definition is the one used (sizeof, field offsets, every access)\n", 115);
     return 0;
 }
@@ -5950,7 +5957,7 @@ fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
         if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
                 var sv = GTI(S);
                 STI(S, _fty_at(S, tnoff));   # 6.7.16: at `Vec`
-                ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", L64(S + 0x1A6018 + si * 8));
+                ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", _ei_sid(si + 1));
                 STI(S, sv);
                 _panic = 0;
             } }

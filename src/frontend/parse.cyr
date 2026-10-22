@@ -4981,7 +4981,7 @@ fn _asg_compound_load(S, noff): i64 {
     _asg_cstep = 0;
     _bx_compound(S, noff);   # 6.7.3 (B2): refused into a bool
     if (_cur_iself_sid > 0) { if (_noff_is(S, noff, "self", 4) == 1) {   # 6.7.0 (A4): `self += n`
-            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
+            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", _ei_sid(_cur_iself_sid), ": declare `self: *T` to step whole elements", 0 - 1);
         } }
     var li = FINDLOCAL(S, noff);
     _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
@@ -5928,9 +5928,9 @@ fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
     PRSTR("' from '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
     PRSTR("', which returns the struct '");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR("' - store it through a '*");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR("' or bind a field\n");
     _err_excerpt(S);
     STI(S, sv);
@@ -5982,7 +5982,7 @@ fn _dsr_tn(S, w, lead): i64 {
         if (ps <= 0) { if (iw <= 0) { return 0; } }
         if (lead == 1) { PRSTR(": "); }
         PRSTR("*");
-        if (ps > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8)); return 0; }
+        if (ps > 0) { _sn_pr(S, ps); return 0; }
         return _dsr_tn(S, iw, 0);
     }
     var ed = (w >> 40) & 0xFF;

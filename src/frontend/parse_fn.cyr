@@ -999,7 +999,7 @@ fn _ret2_in_struct(S, ti): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    _sn_pr(S, _cur_fn_ret_sid);
     PRSTR("` returns that struct — `ret2` writes two values\n");
     _err_excerpt(S);
     STI(S, sv);
@@ -3126,7 +3126,7 @@ fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
     PRSTR(S + 0xEC00000 + noff);
     if (_tamv_fld == 1) { PRSTR("' is not stored into a tuple field - bind it first: `var t: "); }   # 6.7.7 (T5)
     else { PRSTR("' is not a tuple argument - bind it first: `var t: "); }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8));
+    _sn_pr(S, ps);
     PRSTR(" = ");
     if (tail != 0) {
         PRSTR(S + 0xEC00000 + noff);
@@ -3204,7 +3204,7 @@ fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
     elif (kind == 3) { PRSTR("' is not assigned to struct '"); }
     elif (kind == 4) { PRSTR("' is not returned as struct '"); }
     else { PRSTR("' is not a struct '"); }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     if (kind == 0) { PRSTR("' argument"); }
     elif (kind == 1) { PRSTR("' field"); }
     else { PRSTR("'"); }
@@ -4032,7 +4032,7 @@ fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    _sn_pr(S, _cur_fn_ret_sid);
     PRSTR("` takes a value of that struct, or a pointer to one — `&");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR("` is the address of ");
@@ -4047,7 +4047,7 @@ fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
         PRSTR(S + 0xEC00000 + noff);
         PRSTR(" is a `");
         if (cp != 0) { PRSTR("*"); }
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (t - 1) * 8));
+        _sn_pr(S, t);
         PRSTR("`");
     }
     PRSTR("\n");
@@ -4234,14 +4234,14 @@ fn _rsr_print(S, ti, nm, usid, kind): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head_at(S, ti);
     PRSTR(": a fn returning the struct `");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    _sn_pr(S, _cur_fn_ret_sid);
     PRSTR("` takes a value of that struct, or a pointer to one — got `");
     if (kind == 2) { PRSTR("*"); }
     if (kind == 3) { PRSTR("&"); }
     PRSTR(S + 0xEC00000 + nm);
     PRSTR("` (a `");
     if (kind == 1 || kind == 3) { PRSTR("*"); }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (usid - 1) * 8));
+    _sn_pr(S, usid);
     PRSTR("`)\n");
     _had_error = 1;
     return 0;
@@ -4375,7 +4375,7 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
     PRSTR(": cannot return tuple '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
     PRSTR("' ");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     if (kind == 2) { PRSTR(" from an `async fn` - it returns one value"); }
     elif (kind == 3) {
         PRSTR(" from '");
@@ -4387,7 +4387,7 @@ fn _ret_tup_err(S, ti, sid, kind): i64 {
         PRSTR(" - a fn returns at most 3 values: return its elements, or pass the tuple to a parameter");
     } else {
         PRSTR(" - a tuple is returned by a fn declared with its values, `: ");
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        _sn_pr(S, sid);
         PRSTR("`");
     }
     PRSTR("\n");
@@ -8162,7 +8162,7 @@ fn _refuse_struct_tuple_return(S): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": a fn returning the struct `");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    _sn_pr(S, _cur_fn_ret_sid);
     PRSTR("` returns that struct — `");
     if (_tup_commas(S, GTI(S)) > 1) { PRSTR("(a, b, c)"); } else { PRSTR("(a, b)"); }
     PRSTR("` is a tuple, another type\n");
@@ -8177,7 +8177,7 @@ fn _refuse_pair_return(S): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    _sn_pr(S, _cur_fn_ret_sid);
     syscall(SYS_WRITE, 2, "` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
     _pair_ret_offender(S);
     syscall(SYS_WRITE, 2, "`\n", 2);
@@ -8262,7 +8262,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     PRSTR(S + 0xEC00000 + pnoff);
     if (_tup_is(S, 0 - lt) == 1) {   # 6.7.7 (B4): a tuple has no pointer form (`*( .. )` is refused)
         PRSTR("' is a tuple ");
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
+        _sn_pr(S, (0 - lt));
         PRSTR(", which an `async fn` does not capture yet - pass its elements as separate parameters\n");
         _had_error = 1;
         return 0;
@@ -8270,7 +8270,7 @@ fn _refuse_async_struct_param(S, li, pnoff): i64 {
     syscall(SYS_WRITE, 2, "' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
     PRSTR(S + 0xEC00000 + pnoff);
     syscall(SYS_WRITE, 2, ": *", 3);
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + ((0 - lt) - 1) * 8));
+    _sn_pr(S, (0 - lt));
     syscall(SYS_WRITE, 2, "`)\n", 3);
     _had_error = 1;
     return 0;
@@ -10638,8 +10638,8 @@ fn _bnd_memo_seen(g, c0, c1): i64 {
 }
 # Print the concrete type's name, for a refusal.
 fn _bnd_pr_conc(S, conc): i64 {
-    if (_pn_is(conc) == 1) { return _pn_pr(S, conc); }   # 6.7.16 (D10): `Box$R`, never minted
-    if (conc > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (conc - 1) * 8)); return 0; }
+    if (_pn_is(conc) == 1) { return _pn_pr(S, conc); }   # 6.7.16 (D10): never minted; 6.7.17: `Box<R>`
+    if (conc > 0) { _sn_pr(S, conc); return 0; }
     if (conc == 0 - 4) { PRSTR("i32"); }
     elif (conc == 0 - 2) { PRSTR("i16"); }
     elif (conc == 0 - 1) { PRSTR("i8"); }
@@ -11269,7 +11269,7 @@ fn _refuse_bnd_fwd(S, fi, noff): i64 {
         PRSTR("  note: '");
         PRSTR(S + 0xEC00000 + _fn_src_name(S, r, L64(_fnt_names + r * 8)));
         PRSTR("' instantiates the bounded generic struct '");
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+        _sn_pr(S, _bbs_why);
         PRSTR("' with its type parameter, and i64 does not satisfy its bound\n");
         return 0;
     }
@@ -11294,7 +11294,7 @@ fn _refuse_bnd_base(S, fi, noff): i64 {
     if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
     if (_bnd_memo_seen(fi, 0 - 8, 0 - 8) == 1) { return 0; }
-    _gen_ident_err(S, fi, noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (_bbs_why - 1) * 8));
+    _gen_ident_err(S, fi, noff, " has no i64 instance: it instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", _ei_sid(_bbs_why));
     return 0;
 }
 
@@ -11313,7 +11313,7 @@ fn _bnd_sbase(S, sid): i64 {
     if (bb <= 0) { return 0; }
     if (_bnd_quiet == 1) { if (_bnd_quiet_hit == 0) { _bnd_quiet_hit = sid; } return 1; }
     if (_bnd_memo_seen(0 - 1 - si, 0 - 8, 0 - 8) == 1) { return 1; }
-    ERR_IDENT(S, "generic struct ", L64(S + 0x1A6018 + si * 8), " has no i64 instance: a field instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", L64(S + 0x1A6018 + (bb - 1) * 8));
+    ERR_IDENT(S, "generic struct ", _ei_sid(si + 1), " has no i64 instance: a field instantiates a bounded generic struct with its type parameter, and i64 does not satisfy the bound of ", _ei_sid(bb));
     return 1;
 }
 # 1 iff the type-argument list at token j (just past `<`) is written with no type parameter that is
@@ -14411,7 +14411,7 @@ fn _iself_arith_check(S, noff): i64 {
     if (PEEKT(S) == 28) { bad = 1; }
     if (GTI(S) >= 2) { if (_iself_arith_tok(TOKTYP(S, GTI(S) - 2)) == 1) { bad = 1; } }
     if (bad == 0) { return 0; }
-    ERR_IDENT(S, "arithmetic on an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": read fields with `self.field`, or declare `self: *T` to step whole elements of ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8));
+    ERR_IDENT(S, "arithmetic on an untyped `self` is refused - in an impl it points at ", _ei_sid(_cur_iself_sid), ": read fields with `self.field`, or declare `self: *T` to step whole elements of ", _ei_sid(_cur_iself_sid));
     return 1;
 }
 fn _iself_arith_tok(t): i64 {
@@ -16113,9 +16113,9 @@ fn _gen_ident_err(S, fi, noff, tail, noff2): i64 {
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
     PRSTR("'");
     if (tail != 0) { PRSTR(tail); }
-    if (noff2 >= 0) {
+    if (noff2 >= 0 || noff2 <= 0 - 1000) {   # 6.7.17: or a struct (`_ei_sid`)
         PRSTR("'");
-        PRSTR(S + 0xEC00000 + noff2);
+        _ei_pr(S, noff2);
         PRSTR("'");
     }
     PRSTR("\n");
@@ -17679,39 +17679,27 @@ fn _pn_is(c): i64 {
     if (c <= 0 - 1000000) { return 1; }
     return 0;
 }
-# Print pending instance `c` as `_mint_generic_name` spells its would-be name (`Box$R`, `Pair$i64$<Box$R>`).
+# Print pending instance `c` as the source spells it (`Box<R>`, `Pair<i64, Box<R>>`): its would-be table name
+# (`Box$R`) was printed until 6.7.17 (`_sn_pr`). CHANGELOG [6.7.17]
 fn _pn_pr(S, c): i64 {
     var e = _pn_tab + (0 - 1000000 - c) * 24;
-    var sid = load64(e);
     var c1 = load64(e + 16);
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
-    PRSTR("$");
-    if (c1 == 0) {
-        _pn_pr_arg(S, load64(e + 8), 0);
-        return 0;
+    _sn_pr(S, load64(e));
+    PRSTR("<");
+    _pn_pr_arg(S, load64(e + 8));
+    if (c1 != 0) {
+        PRSTR(", ");
+        _pn_pr_arg(S, c1);
     }
-    _pn_pr_arg(S, load64(e + 8), 1);
-    PRSTR("$");
-    _pn_pr_arg(S, c1, 1);
+    PRSTR(">");
     return 0;
 }
-# One argument of it: a pending instance in full (`frag`: a two-parameter list's fragment, bracketed), anything else
-# written by `_append_conc_name` / `_append_conc_frag2` into the name pool's scratch, uncommitted, and printed.
-fn _pn_pr_arg(S, c, frag): i64 {
-    if (_pn_is(c) == 1) {
-        if (frag == 1) { PRSTR("<"); }
-        _pn_pr(S, c);
-        if (frag == 1) { PRSTR(">"); }
-        return 0;
-    }
-    if (c == 0) { c = 0 - 8; }   # unbound reads as i64, as the bound check reads it
-    NPOS_GUARD(S, _conc_frag_len(S, c) + 4);
-    var b = GNPOS(S);
-    var w = 0;
-    if (frag == 1) { w = _append_conc_frag2(S, b, c); } else { w = _append_conc_name(S, b, c); }
-    store8(S + 0xEC00000 + w, 0);
-    PRSTR(S + 0xEC00000 + b);
-    return 0;
+# One argument of it: a pending instance in full, anything else as `_sn_pr` spells it (unbound reads as i64, as the
+# bound check reads it).
+fn _pn_pr_arg(S, c): i64 {
+    if (_pn_is(c) == 1) { return _pn_pr(S, c); }
+    if (c == 0) { c = 0 - 8; }
+    return _sn_pr(S, c);
 }
 # 1 when a list read as (c0, c1) names an instance, not the all-i64 (or unbound) base (`_targ_inst`'s rule).
 fn _targ_is_inst(c0, c1): i64 {

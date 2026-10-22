@@ -8375,7 +8375,7 @@ describe<i32>(7);   # needs impl Show for i32
   minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
   Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked),
   and an element whose argument is itself an instance — `Vec<Box<Box<R>>>`, `Vec<SB<UB<R>>>` — as `var b: Box<Box<R>>;`
-  is, its note naming `impl Show for Box$R`: no impl can name an instance, so a bound on one never holds (6.7.16, the
+  is, its note naming `impl Show for Box<R>` (the instance as written, 6.7.17): no impl can name an instance, so a bound on one never holds (6.7.16, the
   user's D10; through 6.7.15 that element compiled).
   An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused

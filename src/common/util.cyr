@@ -3402,6 +3402,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
 # caller hand-count bytes, and a miscount silently truncates or over-reads.
 # `tail` = 0 for none; `noff2` = -1 for none (else a second name, quoted).
 # CHANGELOG [6.5.19].
+# 6.7.17: either name may be a struct, `_ei_sid(sid)`, printed as the source spells it (`_sn_pr`).
 fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
     if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }   # 6.7.14
     syscall(SYS_WRITE, 2, "error:", 6);
@@ -3409,18 +3410,43 @@ fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
     syscall(SYS_WRITE, 2, ": ", 2);
     PRSTR(msg);
     syscall(SYS_WRITE, 2, "'", 1);
-    PRSTR(S + 0xEC00000 + noff);
+    _ei_pr(S, noff);
     syscall(SYS_WRITE, 2, "'", 1);
     if (tail != 0) { PRSTR(tail); }
-    if (noff2 >= 0) {
+    if (noff2 >= 0 || noff2 <= 0 - 1000) {
         syscall(SYS_WRITE, 2, "'", 1);
-        PRSTR(S + 0xEC00000 + noff2);
+        _ei_pr(S, noff2);
         syscall(SYS_WRITE, 2, "'", 1);
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
+    return 0;
+}
+
+# ⛔ 6.7.17 — A STRUCT IS NAMED AS THE SOURCE SPELLS IT. The struct table holds a generic instance by its minted name
+# (`B$i32`), and every diagnostic that printed a struct's table name said so: "unknown field 'zq' on struct 'B$i32'".
+# `_sn_pr` prints struct `sid` (1-based; or any type code `_fsn_conc` spells) as written — `B<i32>`, `Box<Pt>`, a
+# plain struct its name —
+# at once, from the name pool's scratch at GNPOS + 2048: past `_fn_src_name`'s (GNPOS) and `_src_span_nm`'s
+# (GNPOS + 1024), which a message may hold while it prints a struct. A refusal that keys its once-only record on the
+# name keys it on `_ei_sid(sid)`, never on a scratch offset, which moves as names are minted: an instance's refusal
+# still prints once. CHANGELOG [6.7.17]
+fn _sn_pr(S, sid): i64 {
+    NPOS_GUARD(S, 3072);
+    var b = GNPOS(S) + 2048;
+    var wp = _fsn_conc(S, b, sid, b + 960, 0);
+    store8(S + 0xEC00000 + wp, 0);
+    PRSTR(S + 0xEC00000 + b);
+    return 0;
+}
+# Struct `sid` (1-based) as an ERR_IDENT name (or `_psub_err`'s): below every pool offset and every "none".
+fn _ei_sid(sid): i64 { return 0 - 1000 - sid; }
+# An ERR_IDENT name: a pool offset, or a struct (`_ei_sid`).
+fn _ei_pr(S, x): i64 {
+    if (x <= 0 - 1000) { return _sn_pr(S, 0 - 1000 - x); }
+    PRSTR(S + 0xEC00000 + x);
     return 0;
 }
 

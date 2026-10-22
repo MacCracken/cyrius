@@ -4351,8 +4351,7 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
     if (pw > 0) {
         var sid = _sub_ptr_sid(S, noff, k, ix);
         if (sid > 0) {
-            return _sub_err(S, noff, el, " - step with p + i to an element of struct ",
-              L64(S + 0x1A6018 + (sid - 1) * 8));
+            return _sub_err(S, noff, el, " - step with p + i to an element of struct ", _ei_sid(sid));
         }
         return _sub_err(S, noff, el, " - its element is a pointer, string, enum or vector; load at p + i", 0 - 1);
     }
@@ -4384,9 +4383,9 @@ fn _sub_err(S, noff, a, b, n2): i64 {
     PRSTR("'");
     PRSTR(a);
     PRSTR(b);
-    if (n2 >= 0) {
+    if (n2 >= 0 || n2 <= 0 - 1000) {   # 6.7.17: or a struct (`_ei_sid`)
         PRSTR("'");
-        PRSTR(S + 0xEC00000 + n2);
+        _ei_pr(S, n2);
         PRSTR("'");
     }
     syscall(SYS_WRITE, 2, "\n", 1);
@@ -4641,7 +4640,7 @@ fn _psub_err(S, hd, nt, a, b, n2): i64 {
     PRSTR(b);
     if (n2 != 0) {
         PRSTR("'");
-        PRSTR(n2);
+        if (n2 <= 0 - 1000) { _ei_pr(S, n2); } else { PRSTR(n2); }   # 6.7.17: a struct (`_ei_sid`)
         PRSTR("'");
     }
     syscall(SYS_WRITE, 2, "\n", 1);
@@ -4678,7 +4677,7 @@ fn _psub_ed(S, w, h, nt): i64 {
     else { sid = _sub_ret_sid(S); }
     var el = ": a subscript takes an integer, f64, f32 or bool element";
     if (sid > 0) {
-        return _psub_err(S, hd, nt, el, " - its element is struct ", S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        return _psub_err(S, hd, nt, el, " - its element is struct ", _ei_sid(sid));
     }
     return _psub_err(S, hd, nt, el, " - its element is a pointer, string, enum or vector", 0);
 }
