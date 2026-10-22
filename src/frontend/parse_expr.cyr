@@ -1364,6 +1364,7 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     var cst = _icall_mark(S);
     PCMPE(S);                               # eval callee → rax
     var cfi = _icall_callee(S, cst);
+    var cp_ce = GTI(S);                     # 6.7.17 (D109): the callee's end, for `_arr_iarg`
     var cp_v = _icall_slot(S);
     EFLSTORE(S, cp_v);                      # spill the callee VALUE
     var cp_idx = 0;
@@ -1382,7 +1383,9 @@ fn _PINDIRECT_CALL_IN(S): i64 {
     while (PEEKT(S) == 31) {                # ',' → another arg
         STI(S, GTI(S) + 1);                 # consume ','
         if (_pd_label_at(S, GTI(S)) == 1) { _pd_icall_named(S, cst); }   # 6.7.7 (B6): C7
+        var cp_at = GTI(S);
         PCMPE(S);                           # eval arg → rax
+        _arr_iarg(S, cfi, cp_argc, cp_at, cst, cp_ce);   # 6.7.17 (D109): an array's name into a pointer parameter
         EPUSHR(S);                          # push arg
         cp_argc = cp_argc + 1;
     }
@@ -2452,6 +2455,7 @@ fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
     _vsc_arg(S, fi, ord, t);   # 6.7.16 (D101): a whole vector call into a parameter that takes a word
+    _arr_parg(S, fi, ord, t);   # 6.7.17 (D109): an array's name into a pointer parameter
     var pk = _pbool_get(fi, ord);
     if (pk == 4) { _IFS_CHECK(S, 1, t); return 0; }
     if (pk == 3) { _IFS_CHECK(S, 2, t); _f32_init_round(S, F32_TYID); return 0; }

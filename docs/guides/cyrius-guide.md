@@ -1204,6 +1204,15 @@ A plain assignment to a whole **typed array** is refused by name too (6.7.6): `v
 a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
 `b = v` still writes its first word.
 
+An array's name passed to a POINTER parameter is refused by name (6.7.17, the user's decision
+D109, 2026-10-22): read as a word the name is its first element, so `fn tp(p: *i64)`, `var a:
+i64[4]; a[0] = 5; tp(a)` passed 5 as the address (a SIGSEGV on every target). Into any parameter
+declared a pointer — a fn's, a method's, a generic's `*T`, a known `&f` through `callptr` /
+`fncallN`, a fn pointer declared `*fn( .. )` — from a local, a global, a closure's capture or a
+bare `var b[N]`, it is *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name
+is its first element; pass &a for its address*. An untyped parameter still takes the first element
+(`take(a)`).
+
 ## Memory
 
 ```

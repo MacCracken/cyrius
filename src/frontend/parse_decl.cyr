@@ -11322,6 +11322,123 @@ fn _vnm_arr(S, noff, k): i64 {
     if (d == 0) { return 0; }
     return 0 - 2048 - d;
 }
+# ⛔ 6.7.17 (D109, the user's decision, 2026-10-22: "refuse it by name - pass `&a`") — AN ARRAY'S NAME INTO A POINTER
+# PARAMETER IS REFUSED. An array's name read as a word is its first word (a typed array's element 0, § compound
+# assignment), so `fn tp(p: *i64)`, `var a: i64[4]; a[0] = 5; tp(a)` passed 5 as the address — a SIGSEGV on every target
+# (139; an array of vectors into `p: *f64v2`, a global's, a closure's capture, a bare `var b[N]` the same). The whole
+# argument [t, cursor) a name of an array — a local (element-typed or bare), a closure's captured one, a global — into
+# a parameter declared a pointer (`p: *T`, `**T`, a generic's `*T`): "cannot pass array 'a' to pointer parameter 'p' of
+# 'tp' - an array's name is its first element; pass &a for its address". A direct call, a method, a generic, a known
+# `&f` through callptr / fncallN (`_arr_iarg`) and a fn pointer held in a name declared `*fn( .. )` (its parameter
+# read from the annotation, `_fpt_ptr_param`). Once per argument, no latch (the next argument is judged). CHANGELOG
+# [6.7.17]
+fn _arr_name_at(S, t, e): i64 {
+    var a = _ie_unparen(S, t, e);
+    if (_ie_pe != a + 1) { return 0 - 1; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    var noff = TOKVAL(S, a);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLTYPE(S, li) != 0) { return 0 - 1; }
+            if (GLSPAN(S, li) == 0) { return 0 - 1; }
+            if (GLBARR(S, li) == 1) { return a; }
+            if (GSLICE_W(S, li) > 0 - 0x1000000000000) { return 0 - 1; }
+            return a;
+        }
+        if (_hl_capn(S, noff) == 1) {
+            if (_cl_snap_arr(_cl_snap_find(S, noff)) == 1) { return a; }
+            return 0 - 1;
+        }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0 - 1; }
+    if (_arr_gdesc(S, gi) != 0) { return a; }
+    if (_arr_gbare(S, gi) == 1) { return a; }
+    return 0 - 1;
+}
+fn _arr_parg_err(S, a, pn, fnoff, ord): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(a, "_arr_parg_err", ord, 0) == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, a);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass array '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, a));
+    PRSTR("' to pointer parameter ");
+    if (pn >= 0) {
+        PRSTR("'");
+        PRSTR(S + 0xEC00000 + pn);
+        PRSTR("'");
+    } else { PRNUM(ord + 1); }
+    PRSTR(" of '");
+    PRSTR(S + 0xEC00000 + fnoff);
+    PRSTR("' - an array's name is its first element; pass &");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, a));
+    PRSTR(" for its address\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# A direct call's (a method's, a generic's) argument [t, cursor) for parameter `ord` of `fi`. 0.
+fn _arr_parg(S, fi, ord, t): i64 {
+    if (fi < 0) { return 0; }
+    var a = _arr_name_at(S, t, GTI(S));
+    if (a < 0) { return 0; }
+    if (_pptr_param(S, fi, ord) == 0) { return 0; }
+    _arr_parg_err(S, a, _bx_pname(S, fi, ord), _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), ord);
+    return 0;
+}
+# An indirect call's argument [t, cursor) for parameter `ord`: the known `&f` callee `cfi`, else the callee
+# expression [cst, ce) when it is a name declared `*fn( .. )`. 0.
+fn _arr_iarg(S, cfi, ord, t, cst, ce): i64 {
+    var a = _arr_name_at(S, t, GTI(S));
+    if (a < 0) { return 0; }
+    if (cfi >= 0) { return _arr_parg(S, cfi, ord, t); }
+    var c = _ie_unparen(S, cst, ce);
+    if (_ie_pe != c + 1) { return 0; }
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (_fpt_ptr_param(S, c, ord) == 0) { return 0; }
+    _arr_parg_err(S, a, 0 - 1, TOKVAL(S, c), ord);
+    return 0;
+}
+# 1 = the name at token k is declared a fn pointer `*fn( P0, P1, .. )` (a local or parameter of the fn being parsed,
+# else a global above) whose parameter `ord` is a pointer (`*..`).
+fn _fpt_ptr_param(S, k, ord): i64 {
+    var noff = TOKVAL(S, k);
+    var a0 = 0;
+    if (GINFN(S) == 1) { if (_cur_fn_ix >= 0) { a0 = GFDS(S, _cur_fn_ix) - 1; } }
+    if (a0 < 0) { a0 = 0; }
+    var i = _tok_name_decl(S, a0, k, noff);
+    if (i < 0) { if (a0 > 0) { i = _tok_name_decl(S, 0, k, noff); } }
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 1) != 49) { return 0; }
+    if (TOKTYP(S, i + 2) != 8) { return 0; }
+    if (TOKTYP(S, i + 3) != 32) { return 0; }
+    if (TOKTYP(S, i + 4) != 10) { return 0; }
+    var j = i + 5;
+    var d = 0;
+    var n = 0;
+    var start = 1;
+    var tc = GTCNT(S);
+    while (j < tc) {
+        var tt = TOKTYP(S, j);
+        if (d == 0) {
+            if (tt == 11) { return 0; }
+            if (start == 1) {
+                if (n == ord) { if (tt == 8) { return 1; } return 0; }
+                start = 0;
+            }
+            if (tt == 31) { n = n + 1; start = 1; }
+        }
+        if (tt == 10) { d = d + 1; }
+        if (tt == 11) { d = d - 1; }
+        j = j + 1;
+    }
+    return 0;
+}
 # The vector type of the name `noff` in a fn: a value-form vector local or parameter, a closure's captured vector; 0.
 fn _vnm_lty(S, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
