@@ -3217,6 +3217,15 @@ element, refused as the one-star element is. Through 6.7.16 the second `*` was r
 (`slice<**T>`: *expected '=', got '*'*). A pointer to a tuple, `[*(i64, i64)]`, is *a tuple type cannot be a pointer
 target `*( .. )`*, as `var p: *(i64, i64)` is (6.7.17; it was *expected ']', got '('*).
 
+**Any type valid elsewhere (6.7.17, the user's D105, 2026-10-22).** An element is any type a local takes: `[Vec<i64>]`
+/ `slice<Vec<T>>` hold the 8-byte `vec_new()` handle `var v: Vec<i64>` declares, its `T` read as that annotation
+reads it (`[Vec<Nope>]` is *unknown type 'Nope' as the Vec element of 's'*, `[Vec<*i64>]` *expected a Vec element type
+for 's', got '*'*); `[*Vec<T>]`, `[**Vec<T>]`, `[*u128]` and `slice<*u128>` are 8-byte pointer elements. Through 6.7.16
+each was *expected ']', got '<'* / *expected ']', got u128* (the word form *expected '=', got ..*). A `>>` / `>>>` that
+closes more than the element and the slice is the slice's own error at it: `[Vec<i64>>]` is *expected ']', got '>>'*,
+`slice<Vec<i64>>>` *expected '=', got '>>>'*. The positions a decision refuses stay refused by name: a tuple element
+(6.7.7), `dyn Tr` (6.7.8), a slice of slices (6.7.8).
+
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
 violation` and exits 134, in every build. The value is checked as a store into an element of `T`:

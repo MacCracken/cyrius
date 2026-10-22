@@ -1,0 +1,89 @@
+# slice_element_any_type.tcyr — 6.7.17 (the user's D105, 2026-10-22). A SLICE ELEMENT IS ANY TYPE VALID ELSEWHERE:
+# `[Vec<i64>]` / `slice<Vec<T>>` hold the 8-byte `vec_new()` handle `var v: Vec<i64>` declares; `[*Vec<T>]`,
+# `[**Vec<T>]`, `[*u128]` and `slice<*u128>` the 8-byte pointer element (D93's).
+#
+# ⛔ THE DEFECT, every release through 6.7.16. The element reader took `Vec` as a name and stopped at its `<` ("expected
+# ']', got '<'"; `slice<Vec<i64>>` "expected '=', got '<'" and "undefined variable 'i64'"), and a pointer element read a
+# NAME after its `*`, so `[*u128]` was "expected ']', got u128" — while `[u128]`, `[Box<i64>]` and the same annotations
+# on a local compiled.
+#
+# ⚠ WHY crossos/: each element is read and stored through the target's slice sequence (the bounds check, the 8-byte
+# load) and a Vec handle crosses each target's call ABI; tests/gates/frontend/pointer_type_positions.sh runs this file on
+# x86_64 / aarch64 (qemu) / cx / PE (wine), the release gate on pi, ecb, ach and cass.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/slice.cyr"
+include "lib/assert.cyr"
+
+fn _sea_mk(a, b): i64 {
+    var v: Vec<i64> = vec_new();
+    vec_push(v, a);
+    vec_push(v, b);
+    return v;
+}
+
+fn _sea_vec(): i64 {
+    var v0: Vec<i64> = _sea_mk(1, 2);
+    var v1: Vec<i64> = _sea_mk(30, 40);
+    var buf: i64[2];
+    store64(&buf, v0);
+    store64(&buf + 8, v1);
+    var s: [Vec<i64>] = 0;
+    slice_of(&s, &buf, 2);
+    assert_eq(slice_len(&s), 2, "a [Vec<i64>] slice's length");
+    assert_eq(vec_get(s[1], 1), 40, "a [Vec<i64>] element is the handle");
+    s[0] = v1;
+    assert_eq(vec_get(s[0], 0), 30, "... stored through s[i]");
+    var t: slice<Vec<i64>> = 0;
+    slice_of(&t, &buf, 2);
+    assert_eq(vec_len(t[1]), 2, "a slice<Vec<i64>> element");
+    var n: [Vec<Vec<i64>>] = 0;
+    var outer: Vec<Vec<i64>> = vec_new();
+    vec_push(outer, v0);
+    var ob: i64[1];
+    store64(&ob, outer);
+    slice_of(&n, &ob, 1);
+    assert_eq(vec_get(vec_get(n[0], 0), 1), 2, "a [Vec<Vec<i64>>] element");
+    return 0;
+}
+
+fn _sea_ptr(): i64 {
+    var v: Vec<i64> = _sea_mk(7, 8);
+    var pv: *Vec<i64> = &v;
+    var buf: i64[1];
+    store64(&buf, &v);
+    var s: [*Vec<i64>] = 0;
+    slice_of(&s, &buf, 1);
+    assert_eq(vec_get(load64(s[0]), 1), 8, "a [*Vec<i64>] element points at the handle");
+    var pb: i64[1];
+    store64(&pb, &pv);
+    var q: slice<**Vec<i64>> = 0;
+    slice_of(&q, &pb, 1);
+    assert_eq(vec_get(load64(load64(q[0])), 0), 7, "a slice<**Vec<i64>> element");
+    var w: u128 = 9;
+    var ub: i64[1];
+    store64(&ub, &w);
+    var u: [*u128] = 0;
+    slice_of(&u, &ub, 1);
+    assert_eq(load64(u[0]), 9, "a [*u128] element points at the u128's low word");
+    var u2: slice<*u128> = 0;
+    slice_of(&u2, &ub, 1);
+    assert_eq(load64(u2[0] + 8), 0, "a slice<*u128> element: its high word");
+    return 0;
+}
+
+fn _sea_gen<T>(x: T): i64 {
+    var v: Vec<T> = vec_new();
+    vec_push(v, x);
+    var b: i64[1];
+    store64(&b, v);
+    var s: [Vec<T>] = 0;
+    slice_of(&s, &b, 1);
+    return vec_get(s[0], 0);
+}
+
+var _a = _sea_vec();
+var _b = _sea_ptr();
+assert_eq(_sea_gen(5), 5, "a generic fn's [Vec<T>] at T = i64");
+var r = assert_summary();

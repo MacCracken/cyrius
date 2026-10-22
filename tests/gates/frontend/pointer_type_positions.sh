@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/pointer_type_positions.sh — 6.7.17 (the user's D93 and D94, 2026-10-22)
+# tests/gates/frontend/pointer_type_positions.sh — 6.7.17 (the user's D93, D94 and D105, 2026-10-22)
 #
 # A POINTER TYPE IS A POINTER TYPE IN EVERY POSITION THAT TAKES ONE. The lanes met two positions that read one `*`
 # and then a name, where `var p: **i64` / `*fn( .. )` are types elsewhere:
@@ -7,6 +7,12 @@
 #      "undefined variable 'i64'", `slice<**i64>` was "expected '=', got '*'". `_tn_slice_ptr_el`
 #      (src/frontend/parse_types.cyr) now steps every `*` and reads the rest as `[*T]` reads T: the same 8-byte element,
 #      the same refusals by name.
+#   V  (D105) a slice element is any type valid elsewhere — `[*u128]` was "expected ']', got u128", `[Vec<i64>]` /
+#      `[*Vec<i64>]` "expected ']', got '<'" (`slice<..>`: "expected '=', got '<'" + "undefined variable 'i64'"), while
+#      `[u128]`, `[Box<i64>]` and a local `*u128` / `Vec<i64>` / `*Vec<i64>` compiled. `_tn_slice_w` reads a `Vec<T>`
+#      element as `var v: Vec<T>` does (`_tn_slice_vec`, the 8-byte handle), `_tn_slice_ptr_el` a `*u128` and a
+#      `*Vec<T>` (`_tn_slice_vptr`), D93's 8-byte pointer element; a closer closing more than the slice may is its error
+#      (`_sl_el_over`).
 #   Z  (D94) a sizeof operand — `sizeof(*i64)` was "expected identifier, got '*'" (`sizeof(*fn(i64): i64)` a cascade),
 #      in an expression, a const context and `#assert` alike. `_sizeof_type` hands a `*` to `_sizeof_ptr`
 #      (src/frontend/parse_types.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse_fn.cyr) passes it on:
@@ -31,9 +37,15 @@
 #       `sizeof(*fn( .. ))` and 6.6.17's `sizeof(Box<i64>)` missed the message (and the 12-token look-back missed a long
 #       operand): each output carried the message's bytes. ZM1-ZM3 build on every leg with no marker in the output;
 #       ZM4 a control
+#   V   `[*u128]` and `[*Vec<i64>]` (the user's repros verbatim), `slice<*u128>`, `[Vec<i64>]`, `slice<Vec<Vec<i64>>>`,
+#       `[**Vec<i64>]`: no error, no warning, exit 3 on x86_64 / aarch64 / cx / PE; VL each under --syntax-only
+#   VG  a Vec element's refusals are a local's, one line (an unknown name, a tuple, a pointer, a second argument), and a
+#       closer that closes more than the slice may is the slice's own error at it (`[Vec<i64>>]`, `slice<Vec<i64>>>`,
+#       `slice<Vec<Vec<i64>>>>`'s trailing `>`)
 #   T   each values file on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine):
 #       "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`):
-#       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P), tests/tcyr/crossos/sizeof_pointer_type.tcyr (Z)
+#       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P), tests/tcyr/crossos/sizeof_pointer_type.tcyr (Z),
+#       tests/tcyr/crossos/slice_element_any_type.tcyr (V)
 #
 # MUTATION LEDGER (2026-10-22; a scratch copy of the tree, this gate run from that copy with CYCC=<its compiler>;
 # measured):
@@ -51,6 +63,10 @@
 #   MG0 the tree before the PG7 fix (720b4aee8)       -> RED 2: PG7 PG8 ("expected ']', got '('" / "expected '=', got '('")
 #   MM0 the tree before the ZM fix (9314c587e)         -> RED 12: ZM1-ZM3 on every leg (the message in the output)
 #   MM1 the look-back kept at 12 tokens                 -> RED 4: ZM2 on every leg (a 15-token operand)
+#   MV0 the tree before D105 (l6717-integ de360e593)    -> RED 43: V1-V6 on every leg (24) and V1L-V6L (6) ("expected
+#                                                         ']', got u128" / "got '<'"), VG1-VG7 (7), T
+#                                                         slice_element_any_type on every leg (6: did not build)
+#   MV1 `_sl_el_over` answering 0                       -> RED 3: VG5 VG6 VG7 (the over-closer compiled)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -80,6 +96,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 # The values files and their floors: one row per `assert_eq(` call (none defines it). A floor keeps a gutted file from
 # passing.
 TCS="tests/tcyr/crossos/slice_pointer_element_stars.tcyr:10 tests/tcyr/crossos/sizeof_pointer_type.tcyr:17"
+TCS="$TCS tests/tcyr/crossos/slice_element_any_type.tcyr:10"
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -221,6 +238,23 @@ nomsg zm2 "ZM2 sizeof(*fn(i64, i64): i64) == sizeof(**fn(i64): i64)" 'sizeof(*fn
 nomsg zm3 "ZM3 sizeof(Box<i64>) (6.6.17's form)" 'sizeof(Box<i64>) == 16'
 nomsg zm4 "ZM4 control: sizeof(i64)" 'sizeof(i64) == 8'
 
+echo "V. a slice element is any type valid elsewhere (D105): no error, no warning, exit 3"
+builds v1 "V1 the repro verbatim, [*u128]" 3 "${F}var s: [*u128] = 0;${E}"
+builds v2 "V2 the repro verbatim, [*Vec<i64>]" 3 "${F}var s: [*Vec<i64>] = 0;${E}"
+builds v3 "V3 slice<*u128>" 3 "${F}var s: slice<*u128> = 0;${E}"
+builds v4 "V4 [Vec<i64>]" 3 "${F}var s: [Vec<i64>] = 0;${E}"
+builds v5 "V5 slice<Vec<Vec<i64>>> (its >>> closes the slice)" 3 "${F}var s: slice<Vec<Vec<i64>>> = 0;${E}"
+builds v6 "V6 [**Vec<i64>]" 3 "${F}var s: [**Vec<i64>] = 0;${E}"
+
+echo "VG. a Vec element's refusals are a local's, one line; a closer closing more than the slice may is the slice's error"
+refused VG1 "1:30: $NT as the Vec element of 's'" "VG1 [Vec<Nope>]" "${F}var s: [Vec<Nope>] = 0;${E}"
+refused VG2 "1:31: a tuple type cannot be a Vec element" "VG2 [*Vec<(i64, i64)>]" "${F}var s: [*Vec<(i64, i64)>] = 0;${E}"
+refused VG3 "1:30: expected a Vec element type for 's', got '*'" "VG3 [Vec<*i64>] (as a local's Vec<*i64>)" "${F}var s: [Vec<*i64>] = 0;${E}"
+refused VG4 "1:35: expected '>' after the Vec element type for 's', got ','" "VG4 [**Vec<i64, i64>]" "${F}var s: [**Vec<i64, i64>] = 0;${E}"
+refused VG5 "1:33: expected ']', got '>>'" "VG5 [Vec<i64>>]: the >> closes more than the element" "${F}var s: [Vec<i64>>] = 0;${E}"
+refused VG6 "1:38: expected '=', got '>>>'" "VG6 slice<Vec<i64>>>: the >>> closes more than the slice" "${F}var s: slice<Vec<i64>>> = 0;${E}"
+refused VG7 "1:45: expected '=', got '>'" "VG7 slice<Vec<Vec<i64>>>>: a > after the closer that closed the slice" "${F}var s: slice<Vec<Vec<i64>>>> = 0;${E}"
+
 for tc in $TCS; do
     TC=${tc%%:*}; FLOOR=${tc##*:}
     [ -f "$TC" ] || { bad "T: $TC is missing"; continue; }
@@ -238,4 +272,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a pointer type behind any number of \`*\` is a slice's pointer element (P, PG; the user's D93) and a sizeof operand, 8 (Z, ZG; the user's D94), and the values files (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a pointer type behind any number of \`*\` is a slice's pointer element (P, PG; the user's D93) a sizeof operand, 8 (Z, ZG; the user's D94), a slice element is any type valid elsewhere (V, VG; the user's D105), and the values files (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
