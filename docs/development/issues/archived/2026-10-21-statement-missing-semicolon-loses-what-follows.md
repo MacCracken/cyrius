@@ -1,6 +1,8 @@
-# A statement missing its `;` before a `}` or a statement keyword loses what follows: the next fn is "defined inside" the last, and later statements' own errors are never reported — OPEN
+# A statement missing its `;` before a `}` or a statement keyword loses what follows: the next fn is "defined inside" the last, and later statements' own errors are never reported — RESOLVED
 
-**Status:** 🟡 **OPEN** — a cross-cutting repair of a day or more (43 sites in six frontend files plus the zone replay's
+> ✅ **RESOLVED in v6.7.17** (feb lane, unit FB1, `bc51aa5c6`, `99355d191`, `11bbb4141`, `b91579399`, `0b606cc77`, `c3dea492b`, `958534651`, `063eeadf7`, `ed2f66ae0`, `36c6cb47f`, `d3867b9b6`, `1094715eb`, `bd7abcdb4`, `8c7997d14`, met `82bef3a5b`, `0896f7c7b`, `b7ba1ee30`, review fixes `f83155934`, `39bec7c84`; no decision needed): a statement missing its `;` is "expected ';'" and no longer steps the block's `}` or the next statement's keyword — every terminator site (`var` / declarations, `return`, assignments, stores, field stores, dyn, destructures, the C-style `for` header) ends in sync, a resync steps through the `}` of each `{` the statement left open, and a declaration-zone `var` or a `const` missing its `;` ends at the declaration after it; a whole call missing its `;` still types what it initialises. Met: a `#` attribute token is named in a diagnostic, an empty classic-`for` clause is one error, an `asm { }` missing its `}` is one error. Rows: missing_semicolon_recovers.sh (S1-S3 the filed repros verbatim, 63 rows × four legs), tokname_every_emitted_token.sh. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — a cross-cutting repair of a day or more (43 sites in six frontend files plus the zone replay's
 latch); a first fix was tried in the f16 lane and reverted, and the f16 lane stopped on it.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (feb lane, wave 2, unit FB1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** the f16 lane, unit FG2.

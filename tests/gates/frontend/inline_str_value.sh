@@ -147,7 +147,7 @@
 # method's (the tcyr's rp_* rows); it returned gt's data word — and a frame's `return t;` is refused by name, as from a
 # fn returning `Str` (X30 / X31; it compiled).
 #
-# 6.7.17 (the user's decision D18, 2026-10-22; issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md row 1): a struct
+# 6.7.17 (the user's decision D18, 2026-10-22; issues/archived/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md row 1): a struct
 # value of another type assigned into a `Str` HANDLE — a local, a parameter, a global; from a call, a
 # method, an operator, an if-expression, `fncall0(&mkq)`, an inline struct name or global, a field, a dereference, wrapped,
 # a for step, at top level — is refused by name with the words the same assignment into a `P` handle has (SH1-SH15 but

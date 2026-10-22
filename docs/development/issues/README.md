@@ -261,30 +261,8 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (0)
 
 
-**6.7.17 — the full security audit + the refactor / optimization review** (22)
+**6.7.17 — the cleanup of the remaining issues (the user, 2026-10-22)** (0)
 
-- [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
-- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
-- [The developer and release helpers moved into `scripts/` (Python and shell) are converted to cyrius — sovereignty, long term](2026-10-19-dev-helper-scripts-converted-to-cyrius.md)
-- [A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal (`var p = g(1 2);` then `const X;` prints 3:8 before 2:13)](2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md)
-- [The 6.7.16 changes beyond the decisions' text — keep or restore each](2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md)
-- [Diagnostics print the compiler's internal position or name: columns past an in-line expansion are the expanded line's, an undefined name's caret sits on the token after it, and a generic instance is named by its mangled table name (`B$i32`)](2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md)
-- [Top-level directive lines read less than their line: `#assert`'s and `include`'s tails are skipped unread (silently dropping code), `use` takes no module path, and a `private` line after the first statement swallows the next error](2026-10-21-directive-line-tails-unread-use-without-path-late-private.md)
-- [A `*fn( .. )` type outside a parameter: a local, a global or a field is refused as a reserved-keyword identifier with a cascade, and a trait member's multi-value element compiles where a fn's is refused](2026-10-21-fn-pointer-type-outside-a-parameter.md)
-- [Generic parameter and type-argument lists are judged by position: a parameter list takes any token, a trait member's bound is unchecked, `union U<T>` is refused only by pass 2, a type parameter's own `<..>` is unread (a parse error as a return), and an explicit call is "undefined function" under `CYRIUS_MONOMORPH=0`](2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md)
-- [A generic call's `x: T` argument that is a struct-typed FIELD or a struct-returning METHOD call binds `T = i64`: `sizeof(T)` is 8 for a 16-byte struct, and `.b` on the value is refused](2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md)
-- [A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still read as T: a bounded `x.show()` on it calls the bound's impl on the word (SIGSEGV at T = Pt), and `x.b` makes the generic a stub](2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-read-as-t-sigsegv.md)
-- [A struct, enum or trait declared inside a body pass 2 never parses — a trait default no impl inherits, an uninstantiated bounded generic — is never refused](2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md)
-- [Windows answers beyond D79 / D94 / D95: a rename of a directory onto an existing file replaces the file (Linux -20, the file kept), a rename of a file onto a directory answers -13 (Linux -21), and `xflock` answers -1 for a closed or negative fd (Linux -9)](2026-10-21-pe-rename-onto-other-kind-and-xflock-answers-beyond-d79-d94-d95.md)
-- [One mistake, more errors or the wrong one: an explicit generic call whose type-argument list is refused cascades into the receive / argument checks, a declaration whose initializer is refused leaves its name untyped, and an untypable chain's destructure says "needs a call"](2026-10-21-refused-source-cascades-or-names-the-wrong-error.md)
-- [A `: stack`-pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` with a known `&f` is no pair: `?` takes the boxed lowering (SIGSEGV) and a one-wide bind keeps the tag in silence](2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md)
-- [A statement missing its `;` before a `}` or a statement keyword loses what follows: the next fn is "defined inside" the last, and later statements' own errors are never reported](2026-10-21-statement-missing-semicolon-loses-what-follows.md)
-- [`Str` shapes beyond D19 / D20 / D71 / D73: a struct result assigned into a `Str` handle (SIGSEGV), a nested literal's `*Str`-sourced leaf, a captured inline `Str`'s `*(&t) = v`, a `Str` field's named init, and a top-level untyped `str_from`](2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md)
-- [Struct and pointer shapes beyond D97 / D99 take a word or another struct's bytes in silence: a pointer of another struct or another depth at a call or a declaration, and a struct value stored through an untyped pointer, into a `*Q` slot, into a scalar field or element, by a compound assignment, or into a `*P` declaration](2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md)
-- [A suspending `async fn`'s narrow parameter holds the caller's word — D72 narrows every other parameter](2026-10-21-suspending-async-fn-narrow-parameter-holds-caller-word.md)
-- [The native TLS 1.3 server checks each key_share against supported_groups by a linear scan — one 16 KB ClientHello costs ~24 ms of server CPU, quadratic in peer-chosen counts (CYRIUS-2026-0037)](2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md)
-- [A value builtin as a bare statement: `load8(p);` compiles while `load16(p);` / `load32(p);` / `load64(p);` / `f32_from(x);` / `f32_to(x);` are "unexpected load16"](2026-10-21-value-builtin-statement-load8-compiles-load16-unexpected.md)
-- [A vector value in a word position beyond D100 / D101: a store through a `*V` writes one word, a vector LOCAL read as a word is its lane 0, and a multi-value fn's vector element is read as one word](2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md)
 
 **Open by design — placed arcs, not bugs** (6)
 

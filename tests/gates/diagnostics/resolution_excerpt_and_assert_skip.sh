@@ -165,7 +165,7 @@ n=$(grep -c '#assert failed: inl' "$WORK/inl.err" || true)
 grep -q '#assert failed: top' "$WORK/inl.err" || fail "axis 7: a second, independent failing #assert was not reported"
 
 # ── axis 8: ONLY `;` OR THE LINE'S END AFTER THE MESSAGE (6.7.17, the user's D28, 2026-10-22) ─────────────────────────
-# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (rows 1 and 2). `_assert_tail`
+# issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (rows 1 and 2). `_assert_tail`
 # (src/frontend/parse.cyr) skipped whatever followed the message to the next `;` or the line's end, unread:
 # `#assert 1 == 1, "m" junk` compiled, and in an impl body the tail ate the next method up to its `;` — pass 2 then
 # ended the impl at the method's `}`, and the program after it was never compiled (exit 0, not 9). Now one error at the
@@ -322,7 +322,7 @@ var s = S { 1 };
 syscall(60, s.m());' 5
 atrun AC6 "control: a # comment after the message" '#assert 1 == 1, "m"  # note
 syscall(60, 9);' 9
-# AT12-AT18 (6.7.17, FC1 — issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md's class, met by the
+# AT12-AT18 (6.7.17, FC1 — issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md's class, met by the
 # fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse_fn_def.cyr), so a use
 # of it adds no error of its own (the guide's 6.7.15 rule) — each was "undefined variable 'z'" at every use, a fn "undefined
 # function 'g'" + "refusing to emit binary", a struct "unknown type 'S'", an enum's members "undefined variable". AT12 a

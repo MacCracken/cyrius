@@ -1,6 +1,8 @@
-# A generic call's `x: T` argument that is a struct-typed FIELD or a struct-returning METHOD call binds `T = i64`: `sizeof(T)` is 8 for a 16-byte struct, and `.b` on the value is refused — OPEN
+# A generic call's `x: T` argument that is a struct-typed FIELD or a struct-returning METHOD call binds `T = i64`: `sizeof(T)` is 8 for a 16-byte struct, and `.b` on the value is refused — RESOLVED
 
-**Status:** 🟡 **OPEN** — binding the struct changes what a valid program computes (`sizeof(T)`, the instance called);
+> ✅ **RESOLVED in v6.7.17** (genr lane, unit GA3, `b726c3236`, `504f2e47f`, `58587ae10` + review fixes `97918d988`, `4cca110c7`, `efe220468`; D2, "Yes, as a struct local or a free call does"): a struct-typed field or a struct-returning method given as a generic's argument binds T to that struct, as a struct local or a free call does — through the parser's `_ic_arg` and the token scans' `_tok_ta_arg`, a `b: Box<T>` / `*Box<T>` carrier, and `pp: **T` / `**Box<T>`; a wrapped whole argument `((x))` and a struct literal argument bind too. Rows: generic_method_infer.sh, generic_t_return_decl.sh, call_result_field.sh, struct_result_type_refused.sh. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — binding the struct changes what a valid program computes (`sizeof(T)`, the instance called);
 the s16 lane stopped on it (its unit SZ2's blocked B2).
 **Placement:** 6.7.17 — the cleanup of the remaining issues (genr lane, wave 1, unit GA3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D2 — Yes, as a struct local or a free call does.

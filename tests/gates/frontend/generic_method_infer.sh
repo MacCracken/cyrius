@@ -849,7 +849,7 @@ qk PQK8 'var pp: **P = &GPP; var r = gd3(pp); return r.pick(t);' "gd3(pp), a \`*
 # PQKD <id> <body> <what> <arg>: 6.7.17 (the user's D11, 2026-10-22) — a pointer one star short of a `**Box<T>` is a
 # pointer of another depth, refused at the argument: its FIRST error is D11's, naming the argument and both types, and
 # the scan still binds nothing (no stub refusal naming o). The parser's "no struct type in scope for 'r'" may follow:
-# a refused initializer leaves r untyped (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 2,
+# a refused initializer leaves r untyped (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 2,
 # the fec lane's stand-down) — the one other error accepted. CHANGELOG [6.7.17]
 qkd() {
     printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { return o(5); }\nsyscall(60, m());\n' "$PQH" "$2" > "$D/$1.cyr"

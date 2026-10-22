@@ -1981,7 +1981,7 @@ EOF
 # `_stmt_call_pair`. A callee held in a variable stays a word (IC7), a `&f` naming a parameter or a local is no fn
 # (IC15), nor a closure's parameter (IC16), the destructure binds both as before (IC6), and a pair METHOD chained on a
 # known callee's struct result (`callptr(&mk3, 5).dv(d)?`) stays that method's pair, not mk3's word (IC17, IC17b).
-# (issues/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md) The legs are axis QF's.
+# (issues/archived/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md) The legs are axis QF's.
 # Mutations (scratch trees, CYCC= the mutant, every IC row run alone on every leg, run 2026-10-22): the tree before's
 # `_callee_returns_pair_at` (asking `_pair_callee_at`) -> IC1-IC5m IC8 IC10 IC13 IC14 IC14b red (139 / compiled; IC9
 # IC11 IC12 stay green: the token passes flag the forwarder); `_tok_ret_callee` without its icall arm -> IC9 IC10 IC11

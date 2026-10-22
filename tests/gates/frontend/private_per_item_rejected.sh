@@ -366,7 +366,7 @@ error:<source>:2:17: $ZZ"
 piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper(): i64 { return 7; }\nsyscall(60, helper());\n')
 " 7
 # ── PL: THE FILE-LEVEL LINE AFTER THE FIRST STATEMENT (6.7.17, the user's D31, 2026-10-22: "Accept it") ──────────────
-# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 5). `_PRIV_PRESCAN` already marked
+# issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 5). `_PRIV_PRESCAN` already marked
 # the file from the line wherever it sits (the guide: "the WHOLE file, wherever in it the marker sits"); only PARSE_STMT
 # refused it — "unexpected private", and with no `;` the refusal's latch swallowed the next statement's own error
 # (`zz` never reported). `_dl_priv_file` (src/frontend/parse_fn_def.cyr) steps the marker and an optional `;` at module

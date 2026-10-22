@@ -3,7 +3,7 @@
 # tls13_key_share_scan_linear.sh — 6.7.17: the native TLS 1.3 server's key_share loop costs
 # O(shares), not shares x groups (CYRIUS-2026-0037).
 #
-# issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md. RFC 8446 §4.2.8 refuses
+# issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md. RFC 8446 §4.2.8 refuses
 # a key_share for a group the client did not list in supported_groups; _tn_parse_client_hello
 # answered it by calling _tn_sg_has — a re-validation and a walk of the whole list — once per
 # share. Both counts are the peer's: one 16 KB ClientHello of 1,610 one-byte shares on the last of

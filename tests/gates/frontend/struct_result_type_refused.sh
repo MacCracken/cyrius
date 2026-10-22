@@ -153,7 +153,7 @@
 #   MDS6 `_gs_recv_call` without its generic method arm -> RED 1: TG25
 #   (MDP3 re-measured: GREEN — TA13's `gdo` is a stub now, its base not parsed; `_dsr_tdep` is the base parse's guard
 #   for a T-typed store the scan would read no struct from, and no row reaches it)
-# 6.7.17 (D13, the user's decision, 2026-10-22; issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md
+# 6.7.17 (D13, the user's decision, 2026-10-22; issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md
 # row B1) — THE SAME STORE THROUGH AN UNTYPED POINTER is refused in D99's words without the type, "cannot assign '*p'
 # from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_untyped`, parse.cyr): UP0
 # the filed repro verbatim (exit 77 through 6.7.16: Q's first word), UP1-UP13 (`alloc`, `*(p + 8)`, an untyped global,
@@ -1570,7 +1570,7 @@ accept "TA15c p[0] = 7; (p: *T) at i64 is no stub" "$TH"'fn gdk<T>(x: T): i64 { 
 fn main(): i64 { return gdk(5); }'"$TE" 14 'syscall(60, 14);'
 
 echo "=== 6.7.17 (D13): a struct result over 8 B stored through an UNTYPED pointer is refused, in D99's words without the type ==="
-# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B1 — `*p = mkp();` with `var p = &x;`
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B1 — `*p = mkp();` with `var p = &x;`
 # stored Q's first word (77), silently. UP0 the filed repro verbatim; UP1-UP13 every untyped operand and struct result;
 # UPK1-UPK5 a field of the result, an 8 B result, a `Str`, a `*Q` of its own struct, `*(&q)` keep their store.
 UPM="cannot assign '\*p' from 'mkp', which returns the struct 'Q' - store it through a '\*Q' or bind a field"
@@ -1606,7 +1606,7 @@ accept "UPK4 *(&q) of a Q is q = mkp()" "$DQ"'fn main(): i64 { var q: Q; *(&q) =
 accept "UPK5 an untyped store of a word keeps it" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = 7; return x; }'"$TE" 7 'syscall(60, 7);'
 
 echo "=== 6.7.17 (D16): a struct result over 8 B stored into a scalar FIELD or an array ELEMENT is refused, as its siblings ==="
-# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B4 — `w.n = mkp();` and `buf[0] = mkp();`
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B4 — `w.n = mkp();` and `buf[0] = mkp();`
 # kept Q's first word (77; the globals' 154), silently. FE0-FE0c the filed repros verbatim; FE1-FE17 every field store
 # (through a `*W`, a chain, a capture, a for step, top level, narrow / float / `*i64` / `*Pt` fields, a method, an
 # operator, 24 B, wrapped, `fncall0`), every array element (an index variable, `u8[N]`, a global at top level), a
@@ -1700,7 +1700,7 @@ accept "FEK6 buf[0] = mkp().b, a field of the result" "$FQ"'fn g(): i64 { var bu
 accept "FEK7 a Str result into an i64 field keeps its handle" "$FQ"'fn g(): i64 { alloc_init(); var w = W { 1, 0 }; w.n = mks(); var s: Str = w.n; return s.len(); }'"$FTE" 3 'syscall(60, 3);'
 
 echo "=== 6.7.17 (D15): a compound assignment with a struct result over 8 B on its right is refused, in its = form's words ==="
-# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B3 — `*p += mk3();` and `y += mk3();` added
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B3 — `*p += mk3();` and `y += mk3();` added
 # Q's first word (the filed repro exited 116), silently. CO0 the filed repro verbatim (its two lines, each its `=` form's
 # words); CO1-CO19 every OP= destination (a typed / untyped / parameter / global name, top level, `*p` typed and untyped,
 # `*(&x)`, a field, an f64 field, a captured struct's field, an array's and a `*i64`'s element, a global array, a
@@ -1970,7 +1970,7 @@ syscall(60, main());
 # "no struct type in scope for 'y10'" at the definition at T = Q (tests/tcyr/crossos/generic_struct_only_lines.tcyr
 # V16-V18 run them), and at 5 instead of the stub's refusal. A declaration whose own initializer holds the use is no T
 # value, and the walk ends there (TV10s: `var z = z;`, the undefined name alone — 6.7.17: z, its refused initializer's,
-# stands down at `z.b`, issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md; it was two errors).
+# stands down at `z.b`, issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md; it was two errors).
 #   MTV6 the lane head before the fix (0ae54834c)           -> RED 11: TV10 TV10n TV10b TV10bn TV10c, TVX TV10 TV10b x3
 #   MTV7 `_gs_vkind` without the `e > u` guard              -> TV10s never ends (the walk re-reads `var z = z;`)
 TV10="$TVH"'fn g<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }

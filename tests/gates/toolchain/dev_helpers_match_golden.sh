@@ -9,7 +9,7 @@
 # deliverable — read long term means the toolchain's own tooling is cyrius (the user: "scripts
 # worth keeping will need to be converted at some point"). 6.7.17 converted them into
 # programs/dev, programs/folds and programs/release
-# (docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md). A conversion is
+# (docs/development/issues/archived/2026-10-19-dev-helper-scripts-converted-to-cyrius.md). A conversion is
 # only as good as its sameness: each golden under tests/fixtures/helpers/golden/ is the REPLACED
 # script's own output on the fixture input, captured before the script was removed, and each axis
 # runs the cyrius program on the same input and compares byte for byte. The one exception is named

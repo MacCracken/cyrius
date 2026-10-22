@@ -46,7 +46,7 @@
 #       base silently) — one line each; M4 a fn that is not generic keeps 6.7.16's words under the flag ("'nf' is not
 #       a generic fn"; it was the same cascade); M5 comparisons `h(a < b)`, `nf(c > a)` keep their reading (exit 2);
 #       MX --syntax-only says nothing, as 6.7.15's D6; A [a64] / [cx] / [pe] / [macho] M1. Issue row 5:
-#       issues/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
+#       issues/archived/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
 #       compiler before (9444bd9a2) -> RED M1-M4, MX on m3a (lint's "expected '=', got '<'") and A [pe] / [macho] M1
 #       (the undefined-fn line, the cascades).
 set -u

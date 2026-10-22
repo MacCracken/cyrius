@@ -1,6 +1,8 @@
-# A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal (`var p = g(1 2);` then `const X;` prints 3:8 before 2:13) — OPEN
+# A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal (`var p = g(1 2);` then `const X;` prints 3:8 before 2:13) — RESOLVED
 
-**Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone at aa0d05620, x86_64; the shared
+> ✅ **RESOLVED in v6.7.17** (zr lane, unit ZR1, `e3d59ddc1` (P1a), `7785bfd3d` (P1b), `4fc427213` (P1c), `f22d4a2b3` (P2), met `a46882ed7`; no decision needed — diagnostic order): the parse's diagnostics print in SOURCE ORDER — every exit the parse can reach goes through one `_die`, the diagnostics from pass 1's start to the last parse's end (PARSE_PROG and the declaration-zone replay) are held as records and written stably sorted by their token's position, so the zone entry's error prints before a later pass-1 refusal; an exit or a vec abort mid-parse, and a compiler fault on Linux, write what is held first (macOS / Windows / cx under CYRIUS_DIAG_UNBUFFERED=1); the bytes are unchanged, only their order. The gates that pinned the old order were re-pinned to source order. Rows: dx_multi_error.sh ZO1-ZO10 (ZO1 the filed repro verbatim) on the x86_64, aarch64, cx and PE compilers. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone at aa0d05620, x86_64; the shared
 front end, every target) against the slot-open compiler (b73e8d5fe's build/cycc).
 **Placement:** 6.7.17 — the cleanup of the remaining issues (zr lane, wave 3, unit ZR1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Severity:** Low — a refused program's diagnostics out of source order; nothing that compiles changes.

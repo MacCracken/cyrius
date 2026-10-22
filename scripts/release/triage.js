@@ -29,7 +29,7 @@ export const meta = {
 //          heap_layout_change, risk}], order, groups, cross_lane, ordering_constraints }]
 //          (save it as <c6>/<tag>_triage.json). Writes no file outside its scratch.
 //
-// converted to cyrius later: docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md
+// converted to cyrius later: docs/development/issues/archived/2026-10-19-dev-helper-scripts-converted-to-cyrius.md
 // (a Workflow script has no cyrius form; that issue records the choice for it.)
 const need = (v, what) => { if (v === undefined || v === null || v === '') throw new Error(`triage.js: args.${what} is required`); return v }
 const C6 = need(args.c6, 'c6')

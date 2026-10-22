@@ -10,7 +10,7 @@
 # parameter's grammar (`_ptr_fnp_end`, src/frontend/parse_types.cyr), its names checked with the declaration's words,
 # once, and step a pointer's 8 (`fncallN` / `callptr` call through the word as through a parameter). A `fn` behind a
 # `*` is a fn-pointer type to the token scans too (`_skip_nested_body`, src/frontend/parse.cyr; `_tok_fn_kw`).
-# Filed: docs/development/issues/2026-10-21-fn-pointer-type-outside-a-parameter.md
+# Filed: docs/development/issues/archived/2026-10-21-fn-pointer-type-outside-a-parameter.md
 #
 #   R  the filed repros verbatim — a local, a declaration-zone global, a field — and a global after the first
 #      statement: no error and no warning, exit 3, on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); RL each under

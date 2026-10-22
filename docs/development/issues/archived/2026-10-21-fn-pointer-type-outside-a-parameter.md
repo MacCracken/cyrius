@@ -1,6 +1,8 @@
-# A `*fn( .. )` type outside a parameter: a local, a global or a field is refused as a reserved-keyword identifier with a cascade, and a trait member's multi-value element compiles where a fn's is refused — OPEN
+# A `*fn( .. )` type outside a parameter: a local, a global or a field is refused as a reserved-keyword identifier with a cascade, and a trait member's multi-value element compiles where a fn's is refused — RESOLVED
 
-**Status:** 🟡 **OPEN** — where a fn-pointer type may stand beyond a parameter is undecided; each option changes what
+> ✅ **RESOLVED in v6.7.17** (genc lane, unit GB2, `343f710c7` (D8), `313adedb4` (D9), met `660ec3eaf`, `79a311056`, `37f70d4bb`; the finish pass's D93 `2c0dade0e`, D94 `9314c587e`, D105 `380fd7b65` and review fixes `720b4aee8`, `a490451bb`, `942781650`, `1a6539afe`): a `*fn( .. )` declares a local, a global, a struct / union field and a slice element as the one pointer word a parameter's does (D8), and `&f` / a closure literal are pointers to the typed-pointer check; a trait member's multi-value element `*fn( .. )` is refused with a fn's words, once, at its `*` (D9). The finish pass: a slice element takes any number of `*` (D93) and is any type valid elsewhere (D105), and `sizeof(*T)` is 8 (D94). Rows: fn_pointer_holders.sh, tests/tcyr fn_pointer_typed_holders.tcyr, traits_checked.sh. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — where a fn-pointer type may stand beyond a parameter is undecided; each option changes what
 compiles.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (genc lane, wave 1, unit GB2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D8 — Accept it as a one-word pointer.

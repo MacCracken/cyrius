@@ -1,6 +1,8 @@
-# Diagnostics print the compiler's internal position or name: columns past an in-line expansion are the expanded line's, an undefined name's caret sits on the token after it, and a generic instance is named by its mangled table name (`B$i32`) — OPEN
+# Diagnostics print the compiler's internal position or name: columns past an in-line expansion are the expanded line's, an undefined name's caret sits on the token after it, and a generic instance is named by its mangled table name (`B$i32`) — RESOLVED
 
-**Status:** 🟡 **OPEN** — three repairs of a day or more each (row 2 also a decision: the guide's own example shows
+> ✅ **RESOLVED in v6.7.17** (fed lane, unit FD1, `471eab165` + `a72858b60` (P1), `e81944b32` + `b83651bbf` + `8ff8d28ef` (P2, D34), `7908bbfea` (P3), `8f3fad73b`, review fixes `b32f07b2a`, `852029294`, `bb53ea074`; D34, "Point at the name"): a struct is named as the source spells it — a generic instance as `B<i32>`, never the minted `B$i32`, in every refusal and every backend's undefined-function warning; an undefined name is reported at the name with the caret under it, not at the token after it; a diagnostic past an in-line expansion (`#derive`, a macro) reports the source column and shows the source line. Met: an undefined `.field` base no longer skips the next statement; four struct-return refusals show their excerpt. Rows: dx_diag_format.sh MN1-MN20, CR1-CR12, EX1-EX4, XM1-XM11; in_sync_refusal_next_statement.sh B13 / B14. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — three repairs of a day or more each (row 2 also a decision: the guide's own example shows
 today's caret); the f16 lane stopped on all three.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (fed lane, wave 2, unit FD1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D34 — Point at the name.

@@ -1501,7 +1501,7 @@ accept4 "PDK5 an if-expression with a 0 branch" \
     "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var c = 1; return nc4(if (c == 1) { &p } else { 0 }); } syscall(60, go());" 7
 
 echo "=== 6.7.17 (D10 / D11): a pointer to another struct into a by-value struct, a pointer of another depth (x86_64, aarch64, cx, PE) ==="
-# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse_types.cyr)
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse_types.cyr)
 # now reads a BY-VALUE struct parameter as depth 0 (it takes a `*S` of its own struct: B7-1b's copy) and refuses a
 # pointer whose stars differ from the parameter's (`_pa_derr`, both types named); `&h` of a handle is a `**S`
 # (`_pa_hamp`). PV1 / PX1 / PX2 the filed repros verbatim.

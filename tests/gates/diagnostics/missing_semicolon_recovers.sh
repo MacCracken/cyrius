@@ -10,7 +10,7 @@
 # token, `zz` never reported). A statement that stepped a stray `{` left its `}` to be taken as the block's end
 # ("unexpected ';'", "return outside a fn body"). In the declaration zone pass 1 / pass 2 stepped a `;`-less
 # `var g = 1` to the next `;` at depth 0, swallowing the declarations after it and their errors.
-# (issues/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
+# (issues/archived/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
 #
 # THE FIX. Every statement-terminator site — the 46 literal `;` sites in six frontend files and the 25 `term` sites
 # the assignments share with the classic-for step — steps only a token that is not a recovery point (`_expect_step`,

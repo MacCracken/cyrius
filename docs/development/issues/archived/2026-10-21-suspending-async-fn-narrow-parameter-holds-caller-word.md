@@ -1,6 +1,8 @@
-# A suspending `async fn`'s narrow parameter holds the caller's word — D72 narrows every other parameter — OPEN
+# A suspending `async fn`'s narrow parameter holds the caller's word — D72 narrows every other parameter — RESOLVED
 
-**Status:** 🟡 **OPEN** — narrowing it as D72 decided either refuses such a fn or makes a narrow coroutine-frame slot
+> ✅ **RESOLVED in v6.7.17** (vald lane, unit VD1, `3ee8ec6a7` + review fixes `92680bc2d`, `cdb6062eb`, `e9aa2a409`, `384e739aa`, `4fc6fcd03`; D27, "Narrowed, as 6.7.16's D72"): a suspending async fn's narrow parameter and local hold their type's value — EFLLOAD_W / EFLSTORE_W address the coroutine frame through the width ladder (`_ECORO_LOAD_W` / `_ECORO_STORE_W`) instead of refusing, so the filed repro reads the narrowed value, not the caller's word; an 8-byte typed-pointer local in a coroutine, refused through 6.7.16 by the misnamed sub-word message, compiles. Rows: coroutine_midbody_suspend.sh, closure_capture_narrow_scalar.sh A1, address_of_pointer_param.sh R7 / R7a. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — narrowing it as D72 decided either refuses such a fn or makes a narrow coroutine-frame slot
 compile; both change what compiles, so the s16 lane kept the word and stopped (its unit SS3's blocked item).
 **Placement:** 6.7.17 — the cleanup of the remaining issues (vald lane, wave 1, unit VD1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D27 — Narrowed, as 6.7.16's D72.

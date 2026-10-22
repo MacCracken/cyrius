@@ -4,11 +4,11 @@
 # `*pv = v` with `pv: *f64v2` wrote ONE word: from a local its lane 0 (`*pv = u;` read 42 where 47 is right), from a
 # call whatever word its result register held — rax / x0 on x86_64 and aarch64 (2), lane 0 on cx and Windows (42,
 # where the call writes through a hidden result pointer) — and `*(&w) = ..` the same
-# (issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The receive is the vector's own now:
-# a call into a frame temporary (SysV xmm / AAPCS64 v / cx registers, Win64's hidden pointer), then copied through the
-# pointer. Every lane is read back weighted, so a lost or stale lane changes the value. The compile-time refusals are
-# tests/gates/codegen/simd_return_shapes.sh rows VSK; in this directory so the release gate runs it on ecb / ach / cass
-# / pi.
+# (issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The receive is the vector's
+# own now: a call into a frame temporary (SysV xmm / AAPCS64 v / cx registers, Win64's hidden pointer), then copied
+# through the pointer. Every lane is read back weighted, so a lost or stale lane changes the value. The compile-time
+# refusals are tests/gates/codegen/simd_return_shapes.sh rows VSK; in this directory so the release gate runs it on ecb
+# / ach / cass / pi.
 include "lib/syscalls.cyr"
 include "lib/fnptr.cyr"
 include "lib/alloc.cyr"

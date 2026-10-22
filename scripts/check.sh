@@ -2419,7 +2419,7 @@ _chk_gate "$ROOT/tests/gates/diagnostics/diagnostic_writer_census.sh"
 # aarch64, cx, PE and Mach-O. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/in_sync_refusal_next_statement.sh"
 # 6.7.17 — a statement missing its `;` is one error and what follows is parsed: the next fn is not "inside" the last,
-# the next statement's own error is reported, a zone `var` entry ends where its `;` is missing (issues/2026-10-21-
+# the next statement's own error is reported, a zone `var` entry ends where its `;` is missing (issues/archived/2026-10-21-
 # statement-missing-semicolon-loses-what-follows.md). x86_64, PE, aarch64, cx. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/missing_semicolon_recovers.sh"
 # 6.7.17 — a builtin's or an identifier intrinsic's malformed call (`var y = load8;`, `store8(p;`, `iv_add(p, p;`) is

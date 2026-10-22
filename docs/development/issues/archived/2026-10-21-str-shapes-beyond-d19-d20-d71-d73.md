@@ -1,6 +1,8 @@
-# `Str` shapes beyond D19 / D20 / D71 / D73: a struct result assigned into a `Str` handle (SIGSEGV), a nested literal's `*Str`-sourced leaf, a captured inline `Str`'s `*(&t) = v`, a `Str` field's named init, and a top-level untyped `str_from` — OPEN
+# `Str` shapes beyond D19 / D20 / D71 / D73: a struct result assigned into a `Str` handle (SIGSEGV), a nested literal's `*Str`-sourced leaf, a captured inline `Str`'s `*(&t) = v`, a `Str` field's named init, and a top-level untyped `str_from` — RESOLVED
 
-**Status:** 🟡 **OPEN** — each fix changes what compiles or computes beyond the decided answers; the f16 and s16 lanes
+> ✅ **RESOLVED in v6.7.17** (valb lane, unit VB1, `7ac6f02ff` + `9d0149083` + `03082b20a` (D18), `9312d6d24` (D19), `e29376442` (D20), `bff68bf08` (D21), `3de26d3e3` (D22), met `818d8e92c`, `f040edb38`, `749c65517`, `88f4f3997`, `4cedbfaa1`, `025ad6a12`; the finish pass's D98 `6b37cde17`, D99 `4196cc4c1`, met `21b18dff9`): a struct value of another type into a `Str` handle or slot is refused by name (D18); `O { *p, 1, 2 }` stores p, the header's address (D19); `*(&t) = v` copies into a closure's copy of t (D20); a struct literal's named `Str` field compiles (D21); an untyped top-level declaration from a whole call returning `Str` is a `Str` handle global (D22); a `Str` name as a nested literal's first leaf stores the header (D98), and a multi-value call into a `Str` slot is refused (D99). Rows: inline_str_value.sh SH / SP / NS / CA / NM / ZS / ND rows and tests/tcyr/crossos/inline_str_value.tcyr, struct_copy_type_checked.sh NW1-NW6, struct_literal_type_refused.sh R13 / R13b / A5. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — each fix changes what compiles or computes beyond the decided answers; the f16 and s16 lanes
 stopped on them.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (valb lane, wave 1, unit VB1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D18 — Refuse it.

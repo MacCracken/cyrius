@@ -1,6 +1,8 @@
-# Windows answers beyond D79 / D94 / D95: a rename of a directory onto an existing file replaces the file (Linux -20, the file kept), a rename of a file onto a directory answers -13 (Linux -21), and `xflock` answers -1 for a closed or negative fd (Linux -9) — OPEN
+# Windows answers beyond D79 / D94 / D95: a rename of a directory onto an existing file replaces the file (Linux -20, the file kept), a rename of a file onto a directory answers -13 (Linux -21), and `xflock` answers -1 for a closed or negative fd (Linux -9) — RESOLVED
 
-**Status:** 🟡 **OPEN** — each fix changes what a Windows call computes beyond the decided answers (D79 / D94: a failure
+> ✅ **RESOLVED in v6.7.17** (plat lane, unit PL3, `050b8be20` (D35 / D36), `7f10c0d06` (D37), `0d22b5acd`, review fixes `8560f9edf`, `673f84e5e`, `83dbf4744`, `c2b358301`, `327d171e8`, `ddaef9884`, `1bec06ef2`, `56a959e49`; the finish pass's D96 `fe96a2534`, D97 `8f77af105`, D104 `fe8795441`, `1fa0c4b54`): on Windows a directory renamed onto an existing file answers -20 and keeps the file (D35), a file renamed onto a directory -21 (D36), and xflock of a closed or negative fd -9 with every other LockFileEx / UnlockFileEx failure its errno through the Win32 table (D37); a cross-volume rename answers -18 (EXDEV, D96); a bad xflock op is -22 whatever the fd on Windows, macOS (D97) and Linux (D104). Rows: pe_reroute_failure_errno.sh, pe_lockfileex_reroute.sh, pe_last_error_reroute.sh, tests/tcyr path_failure_errno.tcyr and unopened_fd_ebadf.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — each fix changes what a Windows call computes beyond the decided answers (D79 / D94: a failure
 answers the Win32 table's errno; D95: -21 for unlink / truncate / open of a directory); the pw lane stopped on all three.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (plat lane, wave 1, unit PL3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D35 — Refuse with -20, as Linux.

@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.16** (2026-10-21) — Break 2 repair 6, what 6.7.15 filed and what 6.7.16's own waves found: 188 issues closed in sixteen lanes over five waves (wave 0 on main: the cross-project gates ripped out, the fold wave, the ProtectedRoots measurement); 23 left unplaced at the close (the user, 2026-10-21); CYRIUS-2026-0037 recorded; the folds sigil 3.13.13, patra 1.16.6, yukti 2.3.18, sandhi 1.13.3 · cycc **2,822,280 B** · `cycc-native-aarch64` **3,084,584 B** · **680** `.tcyr`, **369** in `crossos/` · **106** `lib/*.cyr` · **578** shell gates under `tests/gates/<bucket>/` · api-surface **5,892** · **31** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
+**Current head: v6.7.16** (2026-10-21) — the cleanup, every remaining placed issue: 22 issues closed in seventeen lanes over four waves (wave 0 on main: the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9, and D39–D90 keeping each 6.7.16 change beyond the decisions' text); 111 decisions (D1–D109 the user's, all as recommended; D110, D111 the agent's recommended defaults, for the user's review); CYRIUS-2026-0037 fixed; the helper scripts converted to cyrius · cycc **⟪SIZE⟫ B** · `cycc-native-aarch64` **⟪ARM-SIZE⟫ B** · **694** `.tcyr`, **382** in `crossos/` · **106** `lib/*.cyr` · **587** shell gates under `tests/gates/<bucket>/` · api-surface **5,919** · **9** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -50,8 +50,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.16 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) |
-| 6.7.17 | **the cleanup** (the user, 2026-10-22: "cleanup the remaining issues and make sure we foldin updated bayan, sandhi and sankoch"): every remaining open issue — the 19 filed unplaced at the 6.7.16 close, the two placed here before, the helper scripts converted to cyrius — fixed with the open's 91 decisions (all as recommended); the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9 |
+| 6.7.0 – 6.7.17 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) · the cleanup: every remaining placed issue, the fold wave bayan / sandhi / sankoch (6.7.17) |
 | 6.7.18 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
 | 6.7.19 → | what the 6.7.18 reviews produce — the number of releases is open, set at 6.7.18's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
@@ -86,27 +85,7 @@ the handle line and size-independent struct copies, and P5-B execution coverage 
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
 
-### 6.7.17 — the cleanup (the user, 2026-10-22)
-
-The user (2026-10-22): "lets do 6.7.17 and cleanup the remaining issues and make sure we foldin updated bayan, sandhi and
-sankoch as they have been updated and are on 6.7.16"; then "go with Recommended decisions after triage finishes". The
-triage (five read-only agents on `bbb771d26`, `~/.cache/c6/6717_triage.json`) found all 22 items open; 91 decisions, all
-as recommended — D1–D38 on the class issues, D39–D90 keep each of the 6.7.16 changes beyond the decisions' text, D91
-moves the audit and the refactor review to 6.7.18 (the roadmap's own order: after the queue is at 0). Each issue's
-**Placement** line names its wave and unit; each decision is on its issue's **Decision** line.
-
-- **Wave 0, on main:** the fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9; cyrius's callers on bayan's typed
-  lookups) and the keep-everything bite of the 6.7.16 beyond-decisions list (D39–D90).
-- **Wave 1, thirteen lanes in parallel** (each independent unit its own lane): gena (the tail call's by-value copy),
-  genr (a rebound type-parameter name D1, a struct field / method argument binding T D2), genb (parameter and
-  type-argument lists D3–D7), genc (fn-pointer types D8–D9), vala (struct and pointer shapes D10–D17), valb (`Str`
-  shapes D18–D22), valc (a vector value in a word position D23–D25, the `: stack` pair through callptr D26), vald (a
-  suspending async fn's narrow parameter D27), fea (directive-line tails D28–D31, value builtins as statements D32), feg
-  (an inner declaration pass 2 never parses D33), plat (CYRIUS-2026-0037's key_share scan, PE rename / xflock
-  D35–D37), plst (the self-compile static advisory), tool (the helper scripts converted to cyrius D38).
-- **Wave 2:** feb (a statement missing its `;`), fec (refused-source cascades), fed (diagnostics: instance names, the
-  caret on the name D34, columns past an in-line expansion).
-- **Wave 3:** zr (the zone replay's error order — every diagnostic in source order).
+6.7.17 — the cleanup — ✅ shipped: its record (the 22 issues, the decisions D1–D111, the fold wave) is CHANGELOG [6.7.17], one line in [completed-phases.md](completed-phases.md); the issues are in [issues/archived/](issues/archived/).
 
 ### 6.7.18 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18; and from 6.7.17 at the 6.7.17 open, 2026-10-22 — D91: the cleanup first)
 
@@ -154,9 +133,6 @@ cannot pack filed.
   gaps the folds and the repair releases exposed, and retire hand-rolled patterns the language now covers. ⚠ A lib
   file `src/` includes must stay compilable by cybs (no new syntax there); a public symbol's removal or semantic change
   is the user's call (`removed_symbol_census.sh`); a fold's improvement lands in its SOURCE repo and is re-vendored.
-
-- Filed 2026-10-12 / 13 (the 6.7.10 lanes and their reviews):
-  - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](issues/2026-10-13-self-compile-prints-large-static-advisory.md);
 
 
 ### 6.7.19 → — what the reviews produce, then the closeout (number open)

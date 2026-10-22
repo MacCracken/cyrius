@@ -6302,9 +6302,9 @@ fn _var_value_pc(S): i64 {
 # a refused annotation's do (the guide's 6.7.15 rule: a use of what the refused declaration names adds no error of its
 # own). `var y = QQ; return y.a;` added "no struct type in scope for 'y'" after "undefined variable 'QQ'", and the
 # zone's `var y = mkw().p;` (refused: "needs storage in a fn's frame") the same at `y.a`
-# (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3). The value parsed from token `st` (inside
-# any wrap the untyped peel stepped into) reported an error of its own (`_own_err` since `en` / `he`, the latch, or a
-# frameless struct call's refusal, which counts only `_tsc_n` since `tn`), it is an untyped `var NAME =`'s, and its
+# (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3). The value parsed from token `st`
+# (inside any wrap the untyped peel stepped into) reported an error of its own (`_own_err` since `en` / `he`, the latch,
+# or a frameless struct call's refusal, which counts only `_tsc_n` since `tn`), it is an untyped `var NAME =`'s, and its
 # shape is one that types a variable — a postfix chain (`_ini_chain`: a name, a call, a field, a method, a subscript,
 # inside any parentheses): NAME is marked (`_ann_refd_mark`: the registration binds it to its slot, so a same-named
 # variable elsewhere still reports). An operator or a literal fixes the value as no struct (`var y = QQ + 1; y.a`
@@ -11266,18 +11266,19 @@ fn _vop_call(S, ti0, e): i64 {
 # 6.7.16's D100 / D101 refuse a vector CALL as an operand, a scalar return, a word argument and the whole of a word slot;
 # a vector LOCAL (a parameter, a capture) or a dereference of a pointer to a vector in the same places read its lane 0,
 # silently and alike on every target: `take(w)`, `return w;` from an `: i64` fn, `var x: i64 = w;`, `1 + w` and `if (w)`
-# gave 4 / 4 / 4 / 5 / 4 with `w` = (4, 7) (issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 2).
-# Each reader that refuses the call now refuses the value (`_vval_at`) in the call's words, naming it as written —
-# D101's "a vector value cannot be passed to an integer parameter - 'w' is a vector, passed to parameter 't' of 'take'"
-# / ".. cannot be returned as i64 - 'w' is a vector", D100's "vector type does not match the declared type - 'w' is a
-# vector" (".. the assigned variable" for an assignment or a store): an argument (`_vsc_arg`), a builtin's or an
-# indirect call's argument, an operand, a compound right side, a store into a field / an element / through a pointer
-# to no vector, a condition, an index, a range bound, a literal's field (`_vop_rchk`), a `return` (`_vsc_ret`), a
-# declaration annotated no vector, struct or bool (`_vin_vval`) and an assignment to a variable that is none
-# (`_vasg_vval`). A tuple literal's element keeps its own refusal (`_tup_elem_bad`), a multi-value `return`'s D25's
-# (`_mret_vval`), a bool's, a struct's and a pointer of another kind's theirs, a vector global its own (`_vecg_refuse`).
-# `_vop_val`: the first token of the vector value [ti0, e) is — a call (`_vop_call`) or (`_vsc_vn` 1) a value that is
-# none, its span in `_vvl_a` / `_vvl_e` — else -1. CHANGELOG [6.7.17]
+# gave 4 / 4 / 4 / 5 / 4 with `w` = (4, 7)
+# (issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 2). Each reader that refuses the
+# call now refuses the value (`_vval_at`) in the call's words, naming it as written — D101's "a vector value cannot be
+# passed to an integer parameter - 'w' is a vector, passed to parameter 't' of 'take'" / ".. cannot be returned as i64 -
+# 'w' is a vector", D100's "vector type does not match the declared type - 'w' is a vector" (".. the assigned variable"
+# for an assignment or a store): an argument (`_vsc_arg`), a builtin's or an indirect call's argument, an operand, a
+# compound right side, a store into a field / an element / through a pointer to no vector, a condition, an index, a
+# range bound, a literal's field (`_vop_rchk`), a `return` (`_vsc_ret`), a declaration annotated no vector, struct or
+# bool (`_vin_vval`) and an assignment to a variable that is none (`_vasg_vval`). A tuple literal's element keeps its
+# own refusal (`_tup_elem_bad`), a multi-value `return`'s D25's (`_mret_vval`), a bool's, a struct's and a pointer of
+# another kind's theirs, a vector global its own (`_vecg_refuse`). `_vop_val`: the first token of the vector value [ti0,
+# e) is — a call (`_vop_call`) or (`_vsc_vn` 1) a value that is none, its span in `_vvl_a` / `_vvl_e` — else -1.
+# CHANGELOG [6.7.17]
 var _vsc_vn = 0;
 fn _vop_val(S, ti0, e): i64 {
     _vsc_vn = 0;
@@ -12459,9 +12460,9 @@ fn _dt_rhs_check_t(S, term): i64 {
 # ⛔ 6.7.17 — A METHOD CHAIN THE LOOKAHEAD CANNOT TYPE REPORTS ITS OWN ERROR, NOT THE DESTRUCTURE'S. `var a, b =
 # q.one().m2();` (`one` returning an i64) was "multi-value destructure needs a call on the right-hand side", where
 # `var a = q.one().m2();` names the mistake: "cannot take a field of the result of 'P.one': it does not return a
-# struct" (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, row 3). A right-hand side the call
-# lookahead does not read as one whole call (`_dt_call_open_cp`: none, or one the chain goes on past) but that ends,
-# at `term`, in a method call `.m(..)` on a receiver (`_dt_chain_m`) defers the refusal (`_dt_dfr_push`: its token
+# struct" (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, row 3). A right-hand side the
+# call lookahead does not read as one whole call (`_dt_call_open_cp`: none, or one the chain goes on past) but that
+# ends, at `term`, in a method call `.m(..)` on a receiver (`_dt_chain_m`) defers the refusal (`_dt_dfr_push`: its token
 # and the error counts): each destructure form reads the value, then `_dt_dfr_say` reports it at that token only when
 # the value's parse reported nothing of its own — a chain the parse accepts is still refused, as before. The inner
 # call is not the destructure's callee (`_dt_call_fn_d`). CHANGELOG [6.7.17]

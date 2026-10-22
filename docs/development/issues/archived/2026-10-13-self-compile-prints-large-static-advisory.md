@@ -1,6 +1,8 @@
-# The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line) — OPEN
+# The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line) — RESOLVED
 
-**Status:** 🟡 **OPEN** — verified 2026-10-13: `cat src/main.cyr | build/cycc` (2,114,376 B, 6.7.10) exits 0 and prints
+> ✅ **RESOLVED in v6.7.17** (plst lane, unit PL2, `b25295503`, `e5d270dbd` + review fixes `9185e7bc8`, `c2da02f39`; no decision needed): the compiler's own self-compile prints no "large static data" advisory — the TypeScript front end's 64 KB node-index scratch stack (`var _ts_cst[8192];`, half of cycc's var data, untouched by a plain cyrius compile) is alloc()'d on first TS use through `_ts_cst_buf()` (cycc 2,822,280 -> 2,756,792 B at the bite); the two gates that read the advisory follow its removal (coverage_exec_hits.sh H6 on src/main.cyr plus a 128 KB pad). Met: `--parse-ts` names the failing token's line (`b225802e4`), and the OVMF EFI boot rows wait for the firmware to come to rest instead of a fixed 12 s (`e60a1c0dc`). Rows: self_compile_no_large_static_advisory.sh (every fork source and each host's self-host shape; a 160 KB control still warns). CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — verified 2026-10-13: `cat src/main.cyr | build/cycc` (2,114,376 B, 6.7.10) exits 0 and prints
 `warning: large static data (142016 bytes) — consider alloc() for buffers >4KB`; the installed 6.7.9 compiler on
 6.7.9's own sources (`git archive 6.7.9 src lib`) prints the same advisory at 141,760 B. The output is
 byte-identical to `build/cycc`; only stderr carries the noise.
