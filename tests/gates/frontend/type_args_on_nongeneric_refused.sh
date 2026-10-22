@@ -63,6 +63,13 @@
 #       AD1-AD5 plain and under the flag (a local, a global's initializer, a callptr argument, `&gg<i32>(3)`); ADK the
 #       controls (`&gg < a` a comparison, `&gg` / `&nf` taken and called: exit 10). Mutant (2026-10-22): the compiler
 #       before (dd2ac95fc) -> RED 12: AD1-AD5 on both legs, A [pe] / [macho] AD2 (A [a64] / [cx] build from the tree).
+#   BV  (6.7.17, the review of genb, no decision: refused already, as a cascade) A NAME READ WITH A LIST OF TYPE NAMES
+#       AND NO CALL — `var f = gg<i32>;`, `nf<i64> + 1`, a global's initializer, `callptr(gg<Box<i64>>, 3)`, `zz<Pt, i64>`:
+#       the name's "undefined variable" and its list then read as comparisons ("undefined variable 'i32'" + "expected
+#       ';', got '>'"). The list is stepped after the name's line (`_undef_tlist`, parse_expr.cyr): one line, the next
+#       error the program's own; plain and under the flag. Mutant (2026-10-22): the compiler before the fix (the review
+#       branch at 9515b522e) -> RED BV1-BV5 on both legs (three lines each), A [pe] BV1; A [a64] / [cx] BV1 build from
+#       the tree.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -328,17 +335,42 @@ for leg in plain mono0; do
     if [ "$got" -eq 10 ]; then ok "ADK [$leg]: &gg < a a comparison, &gg and &nf taken and called: exit 10"; else bad "ADK [$leg]: exit $got, want 10"; fi
 done
 
+# ── BV: a name read with a list of type names and no call (6.7.17 review of genb) ───────────────────────────
+# `var f = gg<i32>;`, `nf<i64> + 1`, a global's initializer, `callptr(gg<i32>, 3)`, `zz<Pt>`: the name's "undefined
+# variable" and then the list read as comparisons — "undefined variable 'i32'" + "expected ';', got '>'". The list is
+# stepped after the name's line (`_undef_tlist`), so that line is the one report; the next error is the program's own.
+UV="undefined variable"
+mk bv1 'fn gg<T>(x: T): i64 { return 1; }
+fn go(): i64 { var f = gg<i32>; return 3; }'
+mk bv2 'fn go(): i64 { return nf<i64> + 1; }'
+mk bv3 'fn gg<T>(x: T): i64 { return 1; }
+var GV = gg<i32>;
+fn go(): i64 { return 3; }'
+mk bv4 'fn go(): i64 { return zz<Pt, i64> + 1; }'
+mk bv5 'fn gg<T>(x: T): i64 { return 1; }
+fn go(): i64 { return callptr(gg<Box<i64>>, 3) + zq; }'
+for leg in plain mono0; do
+    C="$CC"; [ "$leg" = mono0 ] && C="CYRIUS_MONOMORPH=0 $CC"
+    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "BV1 [$leg]: var f = gg<i32>; — the generic fn's name, one line" "$C"
+    tpl bv2 "11:25: $UV 'nf' (missing include or enum?)" "BV2 [$leg]: nf<i64> + 1 — a fn that is not generic" "$C"
+    tpl bv3 "12:12: $UV 'gg' (missing include or enum?)" "BV3 [$leg]: a global's initializer" "$C"
+    tpl bv4 "11:25: $UV 'zz' (missing include or enum?)" "BV4 [$leg]: zz<Pt, i64> — a name that is nothing" "$C"
+    tpl bv5 "12:33: $UV 'gg' (missing include or enum?)|12:52: $UV 'zq' (missing include or enum?)" "BV5 [$leg]: callptr(gg<Box<i64>>, 3) + zq — then the program's own" "$C"
+done
+
 # ── A: the refusal from every cross compiler ─────────────────────────────────────────────────────────────────
 A64="$D/cc_a64"; CXCC="$D/cc_cx"
 if "$CC" < src/main_aarch64.cyr > "$A64" 2> /dev/null && [ -s "$A64" ]; then chmod +x "$A64"
     one r1 "11:23: $FN" "A [a64]: R1" "$A64"; one m1 "11:45: $MT" "A [a64]: M1" "$A64"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [a64]: TP1" "$A64"
     one ad2 "12:25: $AW" "A [a64]: AD2" "$A64"
+    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [a64]: BV1" "$A64"
 else bad "aarch64: src/main_aarch64.cyr did not build"; fi
 if "$CC" < src/main_cx.cyr > "$CXCC" 2> /dev/null && [ -s "$CXCC" ]; then chmod +x "$CXCC"
     one r1 "11:23: $FN" "A [cx]: R1" "$CXCC"; one m1 "11:45: $MT" "A [cx]: M1" "$CXCC"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [cx]: TP1" "$CXCC"
     one ad2 "12:25: $AW" "A [cx]: AD2" "$CXCC"
+    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [cx]: BV1" "$CXCC"
 else bad "cx: src/main_cx.cyr did not build"; fi
 one r1 "11:23: $FN" "A [pe]: R1" "CYRIUS_TARGET_WIN=1 $CC"
 one m1 "11:45: $MT" "A [pe]: M1" "CYRIUS_TARGET_WIN=1 $CC"
@@ -346,8 +378,9 @@ tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1" "CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1 under the flag" "CYRIUS_MONOMORPH=0 CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [macho]: TP1" "CYRIUS_MACHO=1 $CC"
 one ad2 "12:25: $AW" "A [pe]: AD2" "CYRIUS_TARGET_WIN=1 $CC"
+tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [pe]: BV1" "CYRIUS_TARGET_WIN=1 $CC"
 one ad2 "12:25: $AW" "A [macho]: AD2" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call parsed as its plain spelling: a fn (R), a method (M), a bounded T's member (B), no such method / an untyped receiver as the plain spelling (U), silent under --syntax-only (X), comparisons and generic callees unchanged (K), a type parameter written with arguments refused in every position (TP, 6.7.17's D6), &-of a fn written with a type-argument list (AD, 6.7.17), every cross compiler (A)"
+echo "PASS: $G — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call parsed as its plain spelling: a fn (R), a method (M), a bounded T's member (B), no such method / an untyped receiver as the plain spelling (U), silent under --syntax-only (X), comparisons and generic callees unchanged (K), a type parameter written with arguments refused in every position (TP, 6.7.17's D6), &-of a fn written with a type-argument list (AD, 6.7.17), a name read with one and no call (BV, 6.7.17), every cross compiler (A)"
 exit 0
