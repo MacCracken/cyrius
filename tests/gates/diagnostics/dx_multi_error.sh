@@ -152,6 +152,15 @@ KU='struct P { x; }\nfn main() {\n'
 cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:9: undefined variable 't'"
 cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:9: undefined variable 't'" "4:16: undefined variable 'u'"
 cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:8: undefined variable 't'"
+# KT (6.7.17, the review of genb) a list ending `,)` — a call's `h(1,)` is "unexpected ')'" and a definition's `fn h(a,)`
+#    "expected identifier, got ')'"; the arity check then counted the empty entry: "'h' expects 1 argument, got 2" at
+#    the call, "'h' expects 2 arguments, got 1" at each call of the definition. It stands down there (`_ar_trail`, as
+#    for an unclosed list, K8). KT1 a call, KT2 a method call, KT3 the definition; KT4 control: another call's real
+#    arity error is still reported. RED on the review branch before the fix (9c7f1e370): KT1-KT4 (the extra line).
+cascade KT1 1 'fn h(a) { return a; }\nfn main() {\n    var y = h(1,);\n    return y;\n}\nvar r = main();\n' "3:17: unexpected ')'"
+cascade KT2 1 'struct P { x; }\nimpl P { fn m(self, a) { return a; } }\nfn main() {\n    var p = P { 1 };\n    return p.m(1,);\n}\nvar r = main();\n' "5:18: unexpected ')'"
+cascade KT3 1 'fn h(a,) { return 3; }\nfn main() {\n    return h(1) + h(1, 2);\n}\nvar r = main();\n' "1:8: expected identifier, got ')'"
+cascade KT4 2 'fn h(a) { return a; }\nfn k() { return h(1, 2); }\nfn main() {\n    var y = h(1,);\n    return y + k();\n}\nvar r = main();\n' "2: 'h' expects 1 argument, got 2" "4:17: unexpected ')'"
 # Z1-Z8 (6.7.16, issues/archived/2026-10-18-zone-replay-reports-only-first-latched-error.md) — THE DECLARATION ZONE REPORTS ONE ERROR
 #     PER DECLARATION, as a fn's statements do. EMIT_GVAR_INITS replayed its entries without releasing the panic latch,
 #     so the first latched error swallowed every later entry's: Z1 (the filed repro, verbatim) printed only 2:13, Z2 one
@@ -301,12 +310,12 @@ else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: 
 printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, Z1-Z13, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray `)` / `]` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its `}` (D6-D11), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending `,)` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray `)` / `]` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its `}` (D6-D11), valid emits"
 exit 0
