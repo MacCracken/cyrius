@@ -196,6 +196,27 @@ fn eff_ife_ran(): i64 {
     return r * 100 + G.a;
 }
 fn nw_add(x): i64 { return x + 1; }
+# ... a callee the summary must read as a writer though its body names no store: an operator fn run on a local that
+# holds a struct global (`var v = GVV; v + 1`), on a parenthesised struct global (`(GVV) + 1`), on a struct global
+# whose name a block's `var` declares (the global past the block), an assignment to a global G whose name a block's
+# `var` declares (`G = GBK` past the block copies GBK into G), and a call an `&` routes to a `_ptr` sibling, or an
+# i64-returning call to an `_int` sibling, that writes G — each read 11 had its summary rule been missing
+var GVV: V = V { 1, 2, 3 };
+var GBK: Big = Big { 11, 2, 3 };
+fn w_val(x): i64 { var v = GVV; return v + 1; }
+fn w_paren(x): i64 { return (GVV) + 1; }
+fn w_shadow(x): i64 { if (x == 5) { var GVV = 0; } return GVV + 1; }
+fn w_asg(x): i64 { if (x == 99) { var G = 0; G = 1; } G = GBK; return 0; }
+fn w_ps(x): i64 { return x; }
+fn w_ps_ptr(p): i64 { G.a = G.a + 10; return 0; }
+fn w_is(x: cstring): i64 { return 0; }
+fn w_is_int(x): i64 { G.a = G.a + 10; return 0; }
+fn eff_val(): i64 { G.a = 1; return rd(G, w_val(0)); }
+fn eff_paren(): i64 { G.a = 1; return rd(G, w_paren(0)); }
+fn eff_shadow(): i64 { G.a = 1; return rd(G, w_shadow(0)); }
+fn eff_asg(): i64 { G.a = 1; return rd(G, w_asg(5)); }
+fn eff_psib(): i64 { var k = 0; G.a = 1; return rd(G, w_ps(&k)); }
+fn eff_isib(): i64 { G.a = 1; return rd(G, w_is(nw_add(1))); }
 fn nw_field(ph: *HV): i64 { return ph.n + 1; }
 fn Big_nwm(self, x): i64 { return x + 1; }
 fn nw_gen<T>(t: T, x): i64 { return x + 1; }
@@ -430,6 +451,12 @@ assert_eq(eff_cycle(), 1, "... a mutual recursion that stores to G: rd(G, cyc_a(
 assert_eq(eff_ife_sub(), 1, "... an operator fn on an if-expression (`.. else { w } - 1`): rd(G, w_ife_sub(1, s, s))");
 assert_eq(eff_ife_mul(), 1, "... the `* 1` twin: rd(G, w_ife_mul(1, s, s))");
 assert_eq(eff_ife_ran(), 5621, "control: the if-expression's S1_sub / S1_mul run (5, 6; G.a 1 + 20)");
+assert_eq(eff_val(), 1, "... an operator fn on a local holding a struct global: rd(G, w_val(0)), var v = GVV; v + 1");
+assert_eq(eff_paren(), 1, "... on a parenthesised struct global: rd(G, w_paren(0)), (GVV) + 1");
+assert_eq(eff_shadow(), 1, "... on a struct global a block's var names: rd(G, w_shadow(0))");
+assert_eq(eff_asg(), 1, "... an assignment to G past a block's var G: rd(G, w_asg(5)), G = GBK");
+assert_eq(eff_psib(), 1, "... a call an & routes to a writing _ptr sibling: rd(G, w_ps(&k))");
+assert_eq(eff_isib(), 1, "... a call routed to a writing _int sibling: rd(G, w_is(nw_add(1)))");
 assert_eq(nw_vals(), 0, "a callee that writes nothing (direct, a field read, a method, a generic both ways; a load and f64_add inline): the value as written");
 G.a = 1;
 assert_eq(nwalk(G, 1000000, 0), 1000001, "the issue's shape: return nwalk(G, n - 1, nw_add(acc)) 1,000,000 deep (its jmp)");

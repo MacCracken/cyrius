@@ -30,7 +30,14 @@
 #      helper whose if-expression `if (c) { v } else { w } - 1` (`* 1`) runs S1's operator fn (its `}` read
 #      as ending no operand, the `-` / `*` was a unary one: no copy before the review fix); C21 a read-only
 #      builtin written inline (`load64(&n) + 1`) takes no copy, as the summary's allow-list reads one
-#      (`_fnw_builtin_tok`; a copy before the review fix, where a helper wrapping it took none)
+#      (`_fnw_builtin_tok`; a copy before the review fix, where a helper wrapping it took none); the summary's
+#      soundness rules, each a K row that takes the copy: K18 a local holding a struct global (`var v = w0;
+#      v - 1`, `_fnw_val_ok`), K19 a parenthesised struct global (`(w0) - 1`, `_fnw_paren_ok`), K20 a struct
+#      global whose name a block's `var` declares (`_fnw_name_ok`), K21 an assignment to a global whose name a
+#      block's `var` declares (`_fnw_assignable`), K22 a call an `&` routes to a writing `_ptr` sibling
+#      (`kq(&n)`) and K23 one routed to a writing `_int` sibling (`ki(idn(n))`, `_fnw_resolve`); C22 the
+#      control: `var v = x; v - 1` on a scalar takes none. K24 (its own probe: lib/str.cyr) a call routed to a
+#      writing `_str` sibling takes the copy and reads b as written
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -125,6 +132,15 @@
 #   M30 `_tok_opnd_end` without `}` (the pre-fix line)        -> K16, K17; the tcyr's `w_ife_sub` / `w_ife_mul`
 #                                                              rows (11) on x86 / IR3 / DCE / aarch64 / cx / PE
 #   M31 `_fn_nowrite` without its depth bound (the pre-fix line) -> TD (rc 139: cycc's SIGSEGV)
+#   M32 `_fnw_val_ok` answers 1                                -> K18, K19; the tcyr's `w_val` / `w_paren` rows (11)
+#   M33 `_fnw_paren_ok` answers 1                              -> K19; the tcyr's `w_paren` row
+#   M34 `_fnw_name_ok` without its `_sarg_gv_sid` line          -> K18-K20; the tcyr's `w_val` / `w_paren` / `w_shadow`
+#   M35 `_fnw_assignable` without its `_findvar_core` line      -> K21; the tcyr's `w_asg` row
+#   M36 `_fnw_resolve` without its `_fnc_ptr_sib` line          -> K22; the tcyr's `w_psib` row
+#   M37 `_fnw_resolve` without its `_fnt_ovstr` line            -> K24 (exit 187: p read 11)
+#   M39 `_fnw_resolve` without its `_fnt_ovint` line            -> K23; the tcyr's `w_isib` row
+#   (M32-M36 and M39: the tcyr's rows on x86 / IR3 / DCE and PE, which compile with CYCC= the mutant; the aarch64 /
+#   cx legs build their compilers from the tree's src)
 #   M38 `_span_may_write` reads every builtin as a write (the pre-fix line) -> C21, TU8, TU2 (SIGSEGV); the tcyr's
 #                                                              1,000,000-deep `nwalk_l` on x86 / IR3 / DCE (SIGSEGV)
 #                                                              and PE (wine: exit 1)
@@ -194,7 +210,14 @@ K14@gw<i64>(n)@K
 K15@rr(n)@K
 K16@ife(1, s1, s1)@K
 K17@ifm(1, s1, s1)@K
-C21@load64(&n) + 1@C'
+C21@load64(&n) + 1@C
+K18@kv(n)@K
+K19@kp(n)@K
+K20@ks(n)@K
+K21@ka(n)@K
+K22@kq(&n)@K
+K23@ki(idn(n))@K
+C22@kv2(n)@C'
 {
     printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
@@ -206,6 +229,10 @@ C21@load64(&n) + 1@C'
     printf 'fn Big_wm(self, x): i64 { GW = x; return 0; }\nfn gw<T>(x: T): i64 { GW = 1; return 0; }\nfn rr(x): i64 { if (x > 100) { return rr(x - 1); } return x; }\n'
     printf 'struct S1 { a: i64; }\nfn S1_sub(x: S1, y): i64 { GW = 1; return 5; }\nfn S1_mul(x: S1, y): i64 { GW = 1; return 6; }\n'
     printf 'fn ife(c, v: S1, w: S1): i64 { return if (c) { v } else { w } - 1; }\nfn ifm(c, v: S1, w: S1): i64 { return if (c) { v } else { w } * 1; }\n'
+    printf 'var w0: W = W { 1, 2, 3 };\nfn W_sub(x: *W, y): i64 { GW = 1; return 0; }\n'
+    printf 'fn kv(x): i64 { var v = w0; return v - 1; }\nfn kp(x): i64 { return (w0) - 1; }\nfn ks(x): i64 { if (x == 5) { var w0 = 0; } return w0 - 1; }\n'
+    printf 'fn ka(x): i64 { if (x == 99) { var GW = 0; GW = 1; } GW = x; return 0; }\nfn kq(x): i64 { return x; }\nfn kq_ptr(p): i64 { GW = 1; return 0; }\n'
+    printf 'fn ki(x: cstring): i64 { return 0; }\nfn ki_int(x): i64 { GW = 1; return 0; }\nfn kv2(x): i64 { var v = x; return v - 1; }\n'
     echo "$ROWS" | while IFS='@' read -r id arg kind; do
         for f in rd rp; do
             nm=p; [ "$f" = rp ] && nm=q
@@ -236,7 +263,47 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 38 ] || bad "C/K: $((nr + nf)) rows judged, want 38"
+    [ $((nr + nf)) -eq 45 ] || bad "C/K: $((nr + nf)) rows judged, want 45"
+fi
+# K24: a call routed to a `_str` sibling (lib/str.cyr's Str) — `kt(s)` reaches `kt_str`, which writes b through GP
+cat > "$T/k24.cyr" <<'K24EOF'
+include "lib/str.cyr"
+struct Big { a: i64; b: i64; c: i64; }
+var GP = 0;
+fn rd(s: Big, z): i64 { return s.a; }
+fn rp(s: *Big, z): i64 { return s.a; }
+fn kt(x): i64 { return 0; }
+fn kt_str(x: Str): i64 { store64(GP, 11); return 0; }
+fn pK24(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var s: Str = str_from("ab");
+    GP = &b;
+    var r = rd(b, kt(s));
+    return r;
+}
+fn qK24(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var s: Str = str_from("ab");
+    GP = &b;
+    var r = rp(b, kt(s));
+    return r;
+}
+fn zend(): i64 { return 0; }
+alloc_init();
+syscall(60, pK24() * 16 + qK24() + zend());
+K24EOF
+rc=0; CYRIUS_SYMS="$T/k24.syms" "$CC" < "$T/k24.cyr" > "$T/k24.bin" 2> "$T/k24.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "K24: the probe did not build: $(grep '^error' "$T/k24.err" | head -1)"
+else
+    chmod +x "$T/k24.bin"; got=0; timeout 10 "$T/k24.bin" || got=$?
+    sort "$T/k24.syms" > "$T/k24.sorted"
+    _k=$(awk 'f { print a " " $1; exit } $2 == "pK24" { a = $1; f = 1 }' "$T/k24.sorted"); _l=$(awk 'f { print a " " $1; exit } $2 == "qK24" { a = $1; f = 1 }' "$T/k24.sorted")
+    if [ -z "$_k" ] || [ -z "$_l" ]; then bad "K24: the symbol map does not size pK24 / qK24"
+    else
+        sp=$(( 0x${_k#* } - 0x${_k% *} )); sq=$(( 0x${_l#* } - 0x${_l% *} ))
+        if [ "$sp" -gt "$sq" ] && [ "$got" -eq 27 ]; then ok "K24: rd(b, kt(s)) — kt_str, a writing \`_str\` sibling — copies b ($sp B > rp's $sq B) and reads 1: exit 27"
+        else bad "K24: rd(b, kt(s)) is $sp B, rp's $sq B, exit $got — want a copy and exit 27 (187: rd read kt_str's write)"; fi
+    fi
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────
