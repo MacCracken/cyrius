@@ -5304,7 +5304,9 @@ fn _rbn_scan(S, o): i64 {
         if (tt == 13) { dp = dp + 1; }
         if (tt == 14) { dp = dp - 1; if (dp == 0) { return 0; } }
         if (tt == 35) { le = _rbn_lit(S, t, le); }
-        elif (tt == 55) { if (TOKTYP(S, t + 1) == 2) { if (TOKTYP(S, t + 2) == 76) { _rbn_add(S, TOKVAL(S, t + 1)); } } }
+        elif (tt == 55) {
+            if (TOKTYP(S, t + 1) == 2) { if (TOKTYP(S, t + 2) == 76) { _rbn_add(S, TOKVAL(S, t + 1)); } }
+        }
         elif (tt == 3) { _rbn_mvar(S, t); }
         t = t + 1;
     }
