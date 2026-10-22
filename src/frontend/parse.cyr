@@ -4523,7 +4523,7 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     _agc_src_operand(S, src_noff);
     var sh = _agc_hdl();
     if (dh == 1) { if (sh == 1) { return 0; } }
-    if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return _agc_refd(); }
     # A CAPTURED handle or `*T` (B7-1c) is a source the copy goes through (its word is the address),
     # never a rebind — as over 8 B, where `_agc_src_operand` answers a capture as a value.
     if (_agc_li == 0 - 2) { sh = _hl_cap_addr(S, src_noff); }
@@ -5843,6 +5843,15 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 # 1 after that refusal, for the statement: its typed-pointer warning is not given about the tuple
 # (its slot type is `0 - sid`, the pointer form). Cleared by each statement assignment. CHANGELOG [6.7.11]
 var _asg_tup_refd = 0;
+# ⛔ 6.7.17 — A REFUSED COPY FROM A STRUCT GLOBAL OF ANOTHER TYPE DRAWS NO TYPED-POINTER WARNING BESIDE IT: `GP = GU;`,
+# `p = GU;` (a `*P` destination) and even `t = GU;` into an inline P local, a for step too, printed "assigning
+# non-pointer to typed pointer" after "cannot copy 'GU' into a variable of a different struct/vector type" — the
+# statement's value store went on and judged the global's address. The statement is marked refused, as 6.7.16's DSW
+# rows mark `l = *pq`. 0 (the arm's "not a copy"). CHANGELOG [6.7.17]
+fn _agc_refd(): i64 {
+    _asg_tup_refd = 1;
+    return 0;
+}
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
     if (_agc_t >= 0) { return 0; }
@@ -6339,7 +6348,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
-    if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }
+    if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return _agc_refd(); }
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;

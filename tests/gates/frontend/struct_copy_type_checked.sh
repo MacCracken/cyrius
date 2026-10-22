@@ -113,6 +113,10 @@
 # W2 C6's top-level `**GPP -= 1`, W3 `*(*pp) += 1`, W4 `***ppp *= 2` ('**ppp'), W5 a for step, W6 a generic called at
 # two types (once); W7 / W8 `*p += 1` and `*(&s) -= 1` keep their wording — each ONE error, the full text grepped.
 # Mutation (2026-10-18, CYCC=the lane's compiler before the fix): RED 6 — W1-W6 name 'pp' / 'GPP' / 'ppp'.
+# 6.7.17 (met beside the user's D17): GW1-GW5 — a refused copy from a struct GLOBAL of another type (`GP = GU`, `p = GU`,
+# `t = GU`, after the first statement, a for step) draws its one error and NO "assigning non-pointer to typed pointer"
+# beside it, on x86_64 / aarch64 / cx / PE (`_agc_refd`). Mutation (2026-10-22, CYCC=the 6.7.16 compiler, e65604d5d):
+# RED 5 — GW1-GW5 warned.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -777,9 +781,49 @@ pnrefuse "PN9 l = *pq (control)" "14:59: cannot copy '*pq' into a variable of a 
 pnrefuse "PN10 return &q; (control)" "14:43: a fn returning the struct \`P1\` takes a value of that struct, or a pointer to one — got \`&q\` (a \`*Q1\`)" "$PNH"'fn f(): P1 { var q: Q1; var h: P1; return &q; }
 '
 
+# GW (6.7.17, met beside the user's D17): a refused copy from a struct GLOBAL of another type printed "assigning non-pointer
+# to typed pointer" beside its refusal — `GP = GU;` / `p = GU;` into a `*P`, `t = GU;` into an inline P, after the
+# first statement and in a for step (`_agc_refd` marks the statement refused). gwrefuse: the one error line on the
+# four compilers, and no warning.
+gwrefuse() {  # $1 label  $2 the error line (after "error:<source>:")  $3 source
+    printf '%s' "$3" > "$D/pn.cyr"
+    for leg in x86_64 aarch64 cx pe; do
+        case $leg in
+            x86_64)  "$CC" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || true ;;
+            aarch64) "$D/cc_a64" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || true ;;
+            cx)      "$D/cc_cx" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || true ;;
+            pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/pn.cyr" > "$D/pn.bin" 2> "$D/pn.err" || true ;;
+        esac
+        if grep -q '^warning' "$D/pn.err"; then
+            printf '  FAIL: %-38s a warning beside it (%s): %s\n' "$1" "$leg" "$(grep '^warning' "$D/pn.err" | head -1)"
+            nrefuse=$((nrefuse+1)); fail=$((fail+1)); return
+        fi
+    done
+    pnrefuse "$1" "$2" "$3"
+}
+GWH='struct P { a; b; }
+struct U { c; d; }
+var GU = U { 7, 2 };
+var GT = P { 1, 1 };
+var GP: *P = &GT;
+'
+gwrefuse "GW1 GP = GU; (a *P global)" "6:23: cannot copy 'GU' into a variable of a different struct/vector type: 'GP'" "$GWH"'fn main(): i64 { GP = GU; return 0; } syscall(60, main());
+'
+gwrefuse "GW2 p = GU; (a *P local)" "6:39: cannot copy 'GU' into a variable of a different struct/vector type: 'p'" "$GWH"'fn main(): i64 { var p: *P = &GT; p = GU; return 0; } syscall(60, main());
+'
+gwrefuse "GW3 t = GU; (an inline P local)" "6:42: cannot copy 'GU' into a variable of a different struct/vector type: 't'" "$GWH"'fn main(): i64 { var t = P { 1, 1 }; t = GU; return 0; } syscall(60, main());
+'
+gwrefuse "GW4 after the first top-level statement" "8:6: cannot copy 'GU' into a variable of a different struct/vector type: 'GP'" "$GWH"'var k = 0;
+k = 1;
+GP = GU;
+syscall(60, 0);
+'
+gwrefuse "GW5 a for step" "6:46: cannot copy 'GU' into a variable of a different struct/vector type: 'GP'" "$GWH"'fn main(): i64 { for (var i = 0; i < 1; GP = GU) { i = 1; } return 0; } syscall(60, main());
+'
+
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 71 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 71)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36, PN1-PN10
+[ "$nrefuse" -ge 76 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 76)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36, PN1-PN10; 6.7.17: + GW1-GW5
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing
