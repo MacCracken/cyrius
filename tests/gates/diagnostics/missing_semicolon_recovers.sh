@@ -33,6 +33,8 @@
 #   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
 #       before the fn's `}`, T2 a struct copy `*q = o` before a `return`, T3 / T4 a field store before the `}` / a
 #       `return`, T5 a call's field `gp().n = 5` before the `}`
+#   M   a destructure's call missing its `;`: M1 `x, y = two(3)` before the `}`, M2 `var a, b = two(3)` before a
+#       `return` — "expected ';'", not "needs a call on the right-hand side"; M3 the control `two(3) + 1` keeps it
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -48,6 +50,7 @@
 # parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
 # On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
 # On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
+# On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -343,6 +346,35 @@ fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:4:26: expected ';', got '}'
 error:<source>:5:24: $UZ"
+
+# ---- M: a destructure's call missing its `;` is "expected ';'", not "needs a call on the right-hand side"
+row M1 "x, y = two(3) before the fn's }" 'fn two(a) { return (a, 4); }
+fn f(): i64 {
+    var x = 0;
+    var y = 0;
+    x, y = two(3) }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:5:19: expected ';', got '}'
+error:<source>:6:24: $UZ"
+row M2 "var a, b = two(3) then a return" 'fn two(a) { return (a, 4); }
+fn f(): i64 {
+    var a, b = two(3)
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:4:5: expected ';', got return
+error:<source>:4:14: $UZ"
+row M3 "control: x, y = two(3) + 1; keeps its refusal" 'fn two(a) { return (a, 4); }
+fn f(): i64 {
+    var x = 0;
+    var y = 0;
+    x, y = two(3) + 1;
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:5:12: multi-value destructure needs a call on the right-hand side
+error:<source>:6:14: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
