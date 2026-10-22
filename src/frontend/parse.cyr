@@ -1674,15 +1674,15 @@ fn _tcb_group(S, p): i64 {
 # The mixed-return warning for a CLOSURE, at its plain `return` (token k). `encl` is the name
 # offset of the top-level fn whose body holds the closure, or -1 (top level, an impl method).
 fn _warn_closure_mixed_at(S, k, encl): i64 {
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, k);
-    syscall(SYS_WRITE, 2, ": a closure", 11);
+    _ew(": a closure", 11);
     if (encl >= 0) {
-        syscall(SYS_WRITE, 2, " in `", 5);
+        _ew(" in `", 5);
         PRSTR(S + 0xEC00000 + encl);
-        syscall(SYS_WRITE, 2, "`", 1);
+        _ew("`", 1);
     }
-    syscall(SYS_WRITE, 2, " returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 228);
+    _ew(" returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 228);
     return 0;
 }
 
@@ -1798,15 +1798,15 @@ fn _warn_mixed_body(S, a, j, nm, fi, tn): i64 {
     return 0;
 }
 fn _warn_mixed_at(S, k, nm, fi, tn): i64 {
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, k);
-    syscall(SYS_WRITE, 2, ": `", 3);
+    _ew(": `", 3);
     if (tn != 0) {
         PRSTR(S + 0xEC00000 + tn);
-        syscall(SYS_WRITE, 2, ".", 1);
+        _ew(".", 1);
     } elif (fi >= 0) { nm = _fn_src_name(S, fi, L64(_fnt_names + fi * 8)); }
     PRSTR(S + 0xEC00000 + nm);
-    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 229);
+    _ew("` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 229);
     return 0;
 }
 # ⛔ 6.7.15 — AN impl METHOD AND AN INHERITED TRAIT DEFAULT ARE JUDGED TOO. The walk above takes depth-0 `fn` tokens only,
@@ -2229,7 +2229,36 @@ fn _stmt_resync(S, before): i64 {
             var t = TOKTYP(S, GTI(S) - 1);
             if (t == 5 || t == 14) { _panic = 0; return 0; }
         } }
+    _resync_close(S, before);
     _sync_skip(S);
+    return 0;
+}
+# ... first through the `}` of each `{` the statement opened (tokens [before, cursor)) and left unclosed: an error
+# stepped it as a stray token (`a = 2 { 3 };`: "expected ';', got '{'"), so its `}` is the statement's, not the
+# block's end — taken as the block's end, the rest of the fn parsed at top level ("unexpected ';'", "return outside a
+# fn body"). Everything inside is the broken statement's. Not when the statement ended at its own `;`: then the open
+# `{` is one a construct reported unclosed (`var p = P { 1, 2;`: "expected '}', got ';'"), and the `}` after is the
+# block's. Never past EOF. CHANGELOG [6.7.17]
+fn _resync_close(S, before): i64 {
+    var d = 0;
+    var i = before;
+    var c = GTI(S);
+    var n = GTCNT(S) - 1;   # the EOF token
+    if (c > n) { c = n; }
+    if (c > before) { if (TOKTYP(S, c - 1) == 5) { return 0; } }
+    while (i < c) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { d = d + 1; }
+        elif (t == 14) { if (d > 0) { d = d - 1; } }
+        i = i + 1;
+    }
+    while (d > 0 && i < n) {
+        var u = TOKTYP(S, i);
+        if (u == 13) { d = d + 1; }
+        elif (u == 14) { d = d - 1; }
+        i = i + 1;
+    }
+    if (i > c) { STI(S, i); }
     return 0;
 }
 
@@ -3178,9 +3207,9 @@ fn _priv_is_item(S, ti): i64 {
 fn _priv_per_item_err(S, ti): i64 {
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": per-item `private` is not supported; put `private` alone on a line to make the file private\n", 94);
+    _ew(": per-item `private` is not supported; put `private` alone on a line to make the file private\n", 94);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, sv);
@@ -3315,9 +3344,9 @@ fn _ensure_stack_arrays(S): i64 {
     if (load8(e) == 48) {
         if (load8(e + 1) == 0) {
             _STACK_ARRAYS = 0;
-            syscall(SYS_WRITE, 2, "warning: CYRIUS_STACK_ARRAYS=0 — `var arr[N]` locals are shared .bss globals, not per-thread stack.\n", 102);
-            syscall(SYS_WRITE, 2, "  This REVERTS the mechanism sigil 3.12.3 relies on to fix its RSA verify bypass; crypto scratch\n", 97);
-            syscall(SYS_WRITE, 2, "  buffers become cross-thread shared again. Do not use for anything that verifies signatures.\n", 94);
+            _ew("warning: CYRIUS_STACK_ARRAYS=0 — `var arr[N]` locals are shared .bss globals, not per-thread stack.\n", 102);
+            _ew("  This REVERTS the mechanism sigil 3.12.3 relies on to fix its RSA verify bypass; crypto scratch\n", 97);
+            _ew("  buffers become cross-thread shared again. Do not use for anything that verifies signatures.\n", 94);
         }
     }
     return _STACK_ARRAYS;
@@ -3392,8 +3421,8 @@ include "src/frontend/parse_fn_def.cyr"
 fn _ends_guard(S, ec): i64 {
     if (ec >= 256) {
         if (_derr_seen(GTI(S), "_ends_guard", 0, 0) == 1) { return 1; }   # 6.7.15: once per site
-        syscall(SYS_WRITE, 2, "error:", 6); _err_head(S);
-        syscall(SYS_WRITE, 2, ": too many case/arm bodies in one switch/match (max 256)\n", 57);
+        _ew("error:", 6); _err_head(S);
+        _ew(": too many case/arm bodies in one switch/match (max 256)\n", 57);
         _had_error = 1;
         return 1;
     }
@@ -3951,28 +3980,28 @@ fn PARSE_MATCH(S): i64 {
 # over more than one enum (`eid` 0) or `cov` of enum `eid`'s variants covered. CHANGELOG [6.7.15]
 fn _match_dup_warn(S, noff): i64 {
     if (_warn_seen(GTI(S), "_match_dup_warn", noff) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": duplicate match arm '", 23);
+    _ew(": duplicate match arm '", 23);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "'\n", 2);
+    _ew("'\n", 2);
     return 0;
 }
 fn _match_cov_warn(S, line, eid, cov): i64 {
     if (_warn_seen(GTI(S), "_match_cov_warn", eid * 65536 + cov) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     FM_LOOKUP(S, line);
     if (eid == 0) {
-        syscall(SYS_WRITE, 2, ": match arms span multiple enums (exhaustive-coverage check skipped)\n", 69);
+        _ew(": match arms span multiple enums (exhaustive-coverage check skipped)\n", 69);
         return 0;
     }
-    syscall(SYS_WRITE, 2, ": non-exhaustive match over enum '", 34);
+    _ew(": non-exhaustive match over enum '", 34);
     PRSTR(S + 0xEC00000 + GENUMNM(S, eid - 1));
-    syscall(SYS_WRITE, 2, "' — covers ", 13);
+    _ew("' — covers ", 13);
     PRNUM(cov);
-    syscall(SYS_WRITE, 2, " of ", 4);
+    _ew(" of ", 4);
     PRNUM(GENUMVCNT(S, eid - 1));
-    syscall(SYS_WRITE, 2, " variants; add `_ =>` to opt out\n", 33);
+    _ew(" variants; add `_ =>` to opt out\n", 33);
     return 0;
 }
 
@@ -4305,7 +4334,7 @@ fn _ngt_say_s(S, nt, nm): i64 {
     STI(S, nt);
     var tg = "_ngt_say_s";
     if (_err_once(S, (tg * 31 + nt) * 8 + 7) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         PRSTR(": '");
         PRSTR(nm);
@@ -4399,7 +4428,7 @@ fn _stmt_intr_bare(S, noff): i64 {
 # and the key `k`): once, latched. CHANGELOG [6.7.16] [6.7.17]
 fn _stmt_val_say(S, tg, k, nm): i64 {
     if (_err_once(S, (tg * 31 + k) * 8 + 7) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": the value of '");
     PRSTR(nm);
@@ -4477,7 +4506,7 @@ fn _RSV_INTRINSIC_DECL(S, noff, ti, isfn): i64 {
     }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": reserved intrinsic name '");
     PRSTR(S + 0xEC00000 + noff);
@@ -4732,8 +4761,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -4794,8 +4822,7 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # ⛔ 6.7.11 — AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT (6.7.10 decision 6: `*p` is a struct
@@ -4834,8 +4861,7 @@ fn _asg_dstar(S, noff, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle
@@ -4861,8 +4887,7 @@ fn _hl_val_into(S, term, sid, dli, dgv): i64 {
     else { tg = _hl_gtemp(S); EVSTORE(S, tg); }   # 6.7.10 (B7-1g): top level, a hidden global
     if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
     _agc_copy_bytes(S, dli, dgv, t, tg, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # `a = mk(..);` — a free call returning a struct of 8 B or less (class 0, in rax) into a HANDLE `a` of
@@ -5192,7 +5217,7 @@ fn _asg_undef_report(S, noff): i64 {
 fn _asg_cap_name(S, noff): i64 {
     if (_cl_snap_find(S, noff) < 0) { return 0; }
     if (_derr_seen(GTI(S), "_asg_cap_name", noff, 0) == 1) { _bx_undef_ti = GTI(S); return 1; }   # 6.7.15: once
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     PRSTR(S + 0xEC00000 + noff);
@@ -5346,8 +5371,7 @@ fn _dst_struct(S, term, d): i64 {
     _HTSTORE(S, h);
     if (_dst_arms(S, term, sid, h, nm) == 1) { return 1; }
     _dst_word(S, h, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.17 (D14, the user's decision, 2026-10-22: "copy through the slot") — A STRUCT VALUE STORED INTO A `*S` SLOT
@@ -5384,8 +5408,7 @@ fn _psl_store(S, term, sid, nm): i64 {
     _agc_ovr_pp = sv;
     if (r == 1) { return 1; }
     _dst_word(S, hs, 8);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # 1 = the value [st, its `term`) is provably no struct value, by its tokens: empty, an address `&x`, a literal, a name
@@ -5459,8 +5482,7 @@ fn _dst_vec(S, term, d): i64 {
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     if (_dvec_rcv(S, term, 0 - vd, h, nm) == 1) { return 1; }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `*pv OP= v` through a pointer to a vector, refused by name as `w OP= v` is (`_asg_wide_refused`): `*(&w)` is w; else
@@ -5475,7 +5497,7 @@ fn _dvec_cop_err(S, d): i64 {
     }
     if (_panic == 1) { return 0; }
     if (_tn_once(S, GTI(S)) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": compound assignment to the vector '");
     _dst_spell(S, nm, _sval_stars(S, d + 1));
@@ -5581,7 +5603,7 @@ fn _dst_cop_err(S, nm, star): i64 {
 fn _dst_cop_pp(S, nm, star): i64 {
     if (_panic == 1) { return 0; }
     if (_tn_once(S, GTI(S)) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": compound assignment to the struct '");
     _dst_spell(S, nm, star);
@@ -6028,7 +6050,7 @@ fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
     if (dn == 0) { dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1)); }
     var sv = GTI(S);
     STI(S, at);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot assign '");
     PRSTR(S + 0xEC00000 + dn);
@@ -6165,8 +6187,7 @@ fn _deref_store(S, term): i64 {
     }
     if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from
     _asg_store_w(S, _ek_lw(ed));   # rcx = the address, rax = the value; a word when ed is 0
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 0;
 }
 
@@ -6381,8 +6402,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var pdli = _agc_li;
     if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
     _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -6460,8 +6480,7 @@ fn _asa_rec(S, noff, st, term): i64 {
     return _asa_term(S, term);
 }
 fn _asa_term(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
@@ -6696,8 +6715,7 @@ fn _asg_paren(S, noff, term, which): i64 {
     else { r = _pcmpe_struct_assign(S, noff, 11); }
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
-        if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, term);
         return 1;
     }
     if (which == 2) { _pw_close(S, k); return 0; }
@@ -6763,8 +6781,7 @@ fn _tup_asg(S, noff, term): i64 {
     _tup_elems(S, sid, 0, t, 0);
     _pw_close(S, lp - st);
     _agc_from_temp(S, t, dli, dgv, n, sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.7 (B4, T5) — `t = f();` / `G = f();` (a for step too, `term` 11): a multi-value call CAPTURED
@@ -6794,8 +6811,7 @@ fn _tup_asg_call(S, noff, term): i64 {
             if (gv >= 0) { SLVAR(S, gv); }
         }
     }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The tuple a destination name holds, else 0 — lookups only, nothing reported: a local (in a fn)
@@ -6929,8 +6945,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
 # match). An unowned break was never patched: its rel32 kept the chain link, a wild jump.
 fn _PARSE_BREAK(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_brk_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "break cannot leave a defer body", 31); return 0; }
         ERR_MSG(S, "break outside a loop or switch", 30);
@@ -6949,8 +6964,7 @@ fn _PARSE_BREAK(S): i64 {
 # fn last had a loop (SIGSEGV), or into the enclosing fn's loop from a closure.
 fn _PARSE_CONTINUE(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_loop_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "continue cannot leave a defer body", 34); return 0; }
         ERR_MSG(S, "continue outside a loop", 23);
@@ -7058,7 +7072,7 @@ fn _PARSE_DEFER(S): i64 {
     # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
     var dci = L64(S + 0x1AC020);
     if (dci >= 64) {
-        syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 38);
+        _ew("error: too many defer blocks (max 64)\n", 38);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x1AC028 + dci * 24, dstart);
@@ -7091,11 +7105,11 @@ fn _must_use_warn(S, noff): i64 {
         var _mu_flags = GFLG(S, _mu_fi);
         if (_mu_flags & 1 != 0) {
             if (_warn_seen(GTI(S), "_must_use_warn", _mu_fi * 31 + noff) == 1) { return 0; }   # 6.7.15: once
-            syscall(SYS_WRITE, 2, "warning:", 8);
+            _ew("warning:", 8);
             _err_head(S);
-            syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
+            _ew(": #must_use result of '", 23);
             PRSTR(S + 0xEC00000 + _fn_src_name(S, _mu_fi, noff));   # 6.7.14: `S.m`, `g<i32>`
-            syscall(SYS_WRITE, 2, "' is discarded\n", 15);
+            _ew("' is discarded\n", 15);
         }
     }
     return 0;
@@ -7208,8 +7222,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
     _explicit_generic_call(S, noff, fi);
     _cfo = 0;
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.7.16 — `nofn<i64>(1);` AS A STATEMENT, the name nothing in any scope, took the assignment path: "expected '=', got
@@ -7230,8 +7243,7 @@ fn _stmt_undef_gcall(S, noff): i64 {
     _ugc_call(S, noff);
     if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
     if (_asg_pair_at(S) == 1) { _synonly_fld_tail(S, 5); return 1; }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
@@ -7291,6 +7303,7 @@ fn _masg_stmt(S, term): i64 {
 # CHANGELOG [6.7.7] (B4 review)
 fn _masg_callee(S, fi, n): i64 {
     if (_dt_icall_vec(S, 1) == 1) { return 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
+    _dt_icall_pair(S, n);   # 6.7.17: a known `&f`'s `: stack` pair, three names
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs > 0) {
@@ -7311,8 +7324,7 @@ fn _masg_store(S, x): i64 {
     return 0;
 }
 fn _masg_end(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The targets after the first, cursor on its `,`: their count (2..3), the cursor left on `=`; 0 = a
@@ -7357,7 +7369,7 @@ fn _masg_not_plain(S, what): i64 {
 fn _masg_err(S, msg, tail): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_masg_err", msg * 31 + tail, 0) == 1) { return 0; }   # 6.7.15: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": ");
     PRSTR(msg);
@@ -7506,8 +7518,7 @@ fn _stmt_method_call(S, noff): i64 {
     if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -7584,7 +7595,7 @@ fn _nested_fn_encl(S): i64 {
     PRSTR("fn '");
     var l = 0;
     while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
-    syscall(SYS_WRITE, 2, p, l);
+    _ew(p, l);
     PRSTR("'");
     return 0;
 }
@@ -7619,7 +7630,7 @@ fn _refuse_nested_fn(S): i64 {
     if (TOKTYP(S, kw) == 134) { kw = kw + 1; }    # `async fn`
     if (TOKTYP(S, kw) != 32) { return 0; }
     if (_nested_fn_seen(kw) == 0) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         if (TOKTYP(S, kw + 1) == 2) {
             PRSTR(": fn '");
@@ -7636,6 +7647,24 @@ fn _refuse_nested_fn(S): i64 {
     var e = _skip_nested_body(S, kw);
     if (TOKTYP(S, e) != 12) { e = e + 1; }
     STI(S, e);
+    return 1;
+}
+
+# 6.7.17 — a token an `asm { }` body cannot hold. A statement keyword, `asm` or the end of file: the block's `}` is
+# missing — "expected '}'" there, nothing stepped, and the block ends in sync (the latch as it was), so the next
+# statement is parsed; anything else is reported and stepped. 0 = the block ended. The body loop stepped nothing after
+# its report: `asm { 0x90;` then `asm { .. }` printed "unexpected asm" and spun to "parser recovery aborted (desync —
+# too many errors)", nothing after it parsed. CHANGELOG [6.7.17]
+fn _asm_bad(S): i64 {
+    var p0 = _panic;
+    var t = PEEKT(S);
+    if (t == 12 || t == 48 || _sync_kw(S, t) == 1) {   # 48: the next `asm`
+        ERR_EXPECT(S, 14);
+        if (p0 == 0) { _panic = 0; }
+        return 0;
+    }
+    ERR(S);
+    STI(S, GTI(S) + 1);
     return 1;
 }
 
@@ -7682,9 +7711,9 @@ fn _PARSE_STMT_NESTED(S): i64 {
 # CHANGELOG [6.7.15]
 fn _unsafe_nest_warn(S): i64 {
     if (_warn_seen(GTI(S), "_unsafe_nest_warn", 0) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": nested @unsafe block\n", 23);
+    _ew(": nested @unsafe block\n", 23);
     return 0;
 }
 fn _PARSE_STMT_IMPL(S): i64 {
@@ -7728,17 +7757,17 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (_panic == 1) { lhs = 1; }
         if (lhs == 0) { if (GTI(S) > _assert_rep_ti) {
                 _assert_rep_ti = GTI(S);
-                syscall(SYS_WRITE, 2, "error:", 6);
+                _ew("error:", 6);
                 _err_head(S);
-                syscall(SYS_WRITE, 2, ": #assert failed", 16);
+                _ew(": #assert failed", 16);
                 if (PEEKT(S) == 30) {
                     # String token value is (offset << 32) | length
                     var sv = PEEKV(S);
                     var slen = sv & 0xFFFFFFFF;
-                    syscall(SYS_WRITE, 2, ": ", 2);
-                    syscall(SYS_WRITE, 2, _lit_ptr(S, sv), slen);   # 6.6.17: a side-table message
+                    _ew(": ", 2);
+                    _ew(_lit_ptr(S, sv), slen);   # 6.6.17: a side-table message
                 }
-                syscall(SYS_WRITE, 2, "\n", 1);
+                _ew("\n", 1);
                 # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
                 # BEFORE PARSE_PROG parses the top-level `var` initialisers, so exiting here lost
                 # an earlier syntax error (`var x = ;` then a failing assert printed only the
@@ -7860,7 +7889,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var ssend = EJMP0(S);
         var sdci = L64(S + 0x1AC020);
         if (sdci >= 64) {
-            syscall(SYS_WRITE, 2, "error: too many defer/secret blocks (max 64)\n", 45);
+            _ew("error: too many defer/secret blocks (max 64)\n", 45);
             syscall(SYS_EXIT, 1);
         }
         S64(S + 0x1AC028 + sdci * 24, ssbody);
@@ -7908,8 +7937,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);                         # consume NUM
         if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }  # need ']'
         STI(S, GTI(S) + 1);                         # consume ']'
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }    # need ';'
-        STI(S, GTI(S) + 1);                         # consume ';'
+        _expect_step(S, 5);                         # consume ';'
         if (stk_size <= 0) {
             ERR_MSG(S, "stack var size must be > 0", 26);
         }
@@ -7989,10 +8017,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
                 # `in` lexes as the for-in keyword: the backend's ASM_KW_IN (6.7.14)
                 elif (PEEKT(S) == 76) { ASM_KW_IN(S); }
-                else { ERR(S); }
+                else { ago = _asm_bad(S); }
             }
         }
-        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
         # aarch64 requires every instruction 4-byte aligned. Existing
         # lib/*.cyr asm blocks are x86-specific byte sequences that the
         # aarch64 backend pastes verbatim; if the length isn't a multiple
@@ -8215,8 +8243,8 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # `_threads_active = 1;` (a global declared in a sibling module) and
                 # therefore on all 74 repos that vendor it. See _syntax_only.
                 if (_syntax_only == 1) {
-                    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                    STI(S, GTI(S) + 1);
+                    if (_unp_names == 1) { _asg_undef_report(S, noff); }   # 6.7.17 (D110): a never-parsed body's read
+                    _expect_step(S, 5);
                     return 0;
                 }
                 _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
@@ -8230,8 +8258,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
         }
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 5);
         return 0;
     }
     if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
@@ -8315,11 +8342,11 @@ fn PARSE_PROG(S): i64 {
     if (_pp_srcline_seen == 1) { _ho = _pp_hostonly_user; }
     if (_ho == 1) {
         if (L64(S + 0x18FCA0) == 1) {
-            syscall(SYS_WRITE, 2, "error: bare-metal build includes host-only module: ", 51);
+            _ew("error: bare-metal build includes host-only module: ", 51);
             var _hol = 0;
             while (load8(&_pp_hostonly_name + _hol) != 0) { _hol = _hol + 1; }
-            syscall(SYS_WRITE, 2, &_pp_hostonly_name, _hol);
-            syscall(SYS_WRITE, 2, " (marked #host_only; not available under CYRIUS_KERNEL)\n", 56);
+            _ew(&_pp_hostonly_name, _hol);
+            _ew(" (marked #host_only; not available under CYRIUS_KERNEL)\n", 56);
             syscall(SYS_EXIT, 1);
         }
     }

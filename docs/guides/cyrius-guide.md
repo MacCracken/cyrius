@@ -473,8 +473,10 @@ element as `store8/16/32` do. There is **no bounds check** — unless the progra
 [**bounds-checked mode**](#the-bounds-checked-mode-678) (6.7.8: `#bounds`, `--bounds`), where `a[i]`
 is checked against the array's N and `p[i]` for a negative index only (`slice<T>` is the checked
 spelling of a pointer with a length). Inside a capturing closure an
-array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
-captured pointer's subscript reaches the memory it points at.
+array's subscript reads and writes the closure's captured COPY, as `&a` there does, and its
+name read as a word is the copy's first word — a typed array's element 0, as in its frame
+(6.7.17; through 6.7.16 it was the copy's ADDRESS: `take(a)` 8 on x86_64, 248 on cx, where 4
+was right); a captured pointer's subscript reaches the memory it points at.
 
 The element is a value of its declared type, as a variable of `T` would be (6.7.8): an `f64`
 is an f64 (`p[1] * 2.0`, `p[1] < 3.0` are float operations); an `f32` is its 4 bytes, in
@@ -1203,6 +1205,15 @@ is not parsed (6.7.11: a `: stack` pair there was refused a second time).
 A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
 a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
 `b = v` still writes its first word.
+
+An array's name passed to a POINTER parameter is refused by name (6.7.17, the user's decision
+D109, 2026-10-22): read as a word the name is its first element, so `fn tp(p: *i64)`, `var a:
+i64[4]; a[0] = 5; tp(a)` passed 5 as the address (a SIGSEGV on every target). Into any parameter
+declared a pointer — a fn's, a method's, a generic's `*T`, a known `&f` through `callptr` /
+`fncallN`, a fn pointer declared `*fn( .. )` — from a local, a global, a closure's capture or a
+bare `var b[N]`, it is *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name
+is its first element; pass &a for its address*. An untyped parameter still takes the first element
+(`take(a)`).
 
 ## Memory
 
@@ -2475,7 +2486,10 @@ An ARRAY of vectors is refused in the same slots (6.7.17, the user's decision D1
 read as a word is its element 0, so `var wa: f64v2[2]; take(wa)` passed element 0's lane 0 — `take(wa)`, `return wa;`,
 `var x: i64 = wa;`, `if (wa)`, `1 + wa`, `x = wa`, `syscall(60, wa)`, a tuple or multi-value element, a local or a
 global, in a fn or at top level — and each is *… - 'wa' is an array of vectors* now. Pass its address (`rd(&wa)`,
-`&wa + 16` is element 1) or read a lane (`load64(&wa)`).
+`&wa + 16` is element 1) or read a lane (`load64(&wa)`). So is an UNTYPED declaration from one (the user's decision
+D108, 2026-10-22): `var x = wa;` in a fn, a closure, and `var X = GA;` at top level bound that lane 0 and are *'wa' is
+an array of vectors - an untyped declaration binds one word, its element 0's lane 0; take its address: `var p:
+*f64v2 = &wa;`* (an array is no vector for D95 to copy; an `i64` array's `var x = a;` is its element 0, unchanged).
 
 **An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
 = w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a
@@ -3621,7 +3635,8 @@ fn demo(): i64 {
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
   name that names nothing, or a stray token before the `;` is an error — in a required member and in
-  a default every impl overrides alike (a default an impl inherits is parsed as that impl's method).
+  a default every impl overrides alike (a default an impl inherits is parsed as that impl's method; the body of one
+  no impl inherits is read for its syntax, 6.7.17 — see *Generic Functions*).
   ⚠ Before 6.7.8 only the parameter count was read; the rest compiled unread. The impl's own check
   compares its parameter count and its return type (above). A member's return is held to a fn's return set: `fn a(self):
   Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
@@ -7031,6 +7046,8 @@ a[i] = f();              # ✗ an element                (6.7.7)
 *p = f();                # ✗ through a pointer         (6.7.7)
 x += f();                # ✗ any compound `OP=`        (6.7.7)
 var p = P { f(), 3 };    # ✗ a struct-literal element  (6.7.11) — named, a global's, a nested leaf too
+var t, v, w = f();       # ✗ three names (6.7.17): "binds 3 names, but 'f' returns 2 values" — a
+                         #   variant holds one payload; `callptr(&f, ..)` / `fncallN(&f, ..)` too
 
 var t, v = f();          # ✓ bind both halves
 t, v = f();              # ✓ re-assign both halves     (6.7.7)
@@ -8252,7 +8269,12 @@ a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s
 loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A generic
 whose `i64` base is not parsed — a bounded one with no `impl` of its bound for `i64`, or a stub — refuses its first
 such use at the definition all the same, never called included, with the same words at the same place (its other
-lines are judged in each instance).
+lines are judged in each instance). A base no call ever instantiates — like a trait default no impl inherits, or every
+impl overrides — is still read once for its syntax (6.7.17; every fn body is parsed, called or not): a syntax error in
+it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and so is a name undefined in
+every instance, one that does not depend on `T` (`return zz;` is *undefined variable 'zz'*, as in a plain fn nothing
+calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22); nothing else
+in it is judged. Through 6.7.16 such a body compiled unread.
 
 ```
 struct Pt { x; y; }

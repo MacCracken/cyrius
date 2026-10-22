@@ -230,7 +230,7 @@ fn _ir_arena_init(): i64 {
     return 0;
 }
 fn _ir_arena_refused(): i64 {
-    syscall(SYS_WRITE, 2, "error: cannot allocate the IR arena (CYRIUS_IR)\n", 48);
+    _ew("error: cannot allocate the IR arena (CYRIUS_IR)\n", 48);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -245,7 +245,7 @@ fn _ir_copy8(dst, src, n): i64 {
 fn _ir_nodes_grow(): i64 {
     var nc = _ir_ncap * 2;
     if (nc > 67108864) {
-        syscall(SYS_WRITE, 2, "error: IR node table exceeds 64M nodes\n", 39);
+        _ew("error: IR node table exceeds 64M nodes\n", 39);
         syscall(SYS_EXIT, 1);
     }
     var b = alloc(nc * 20);
@@ -261,7 +261,7 @@ fn _ir_nodes_grow(): i64 {
 fn _ir_bbs_grow(): i64 {
     var nc = _ir_bcap * 2;
     if (nc > 16777216) {
-        syscall(SYS_WRITE, 2, "error: IR block table exceeds 16M blocks\n", 41);
+        _ew("error: IR block table exceeds 16M blocks\n", 41);
         syscall(SYS_EXIT, 1);
     }
     var b = alloc(nc * 48);
@@ -1514,26 +1514,26 @@ fn ir_build_edges(S): i64 {
 
 fn ir_dump(S): i64 {
     var ncnt = IR_NCNT(S);
-    syscall(SYS_WRITE, 2, "=== IR DUMP (", 13);
+    _ew("=== IR DUMP (", 13);
     PRNUM(ncnt);
-    syscall(SYS_WRITE, 2, " nodes) ===\n", 12);
+    _ew(" nodes) ===\n", 12);
     var i = 0;
     while (i < ncnt) {
         var op = IR_NODE_OP(S, i);
         var a1 = IR_NODE_A1(S, i);
         var a2 = IR_NODE_A2(S, i);
-        syscall(SYS_WRITE, 2, "  ", 2);
+        _ew("  ", 2);
         PRNUM(i);
-        syscall(SYS_WRITE, 2, ": ", 2);
+        _ew(": ", 2);
         var name = _ir_opname(op);
         PRSTR(name);
         if (a1 != 0 || a2 != 0) {
-            syscall(SYS_WRITE, 2, " (", 2);
+            _ew(" (", 2);
             if (a1 != 0) { PRNUM(a1); }
-            if (a2 != 0) { syscall(SYS_WRITE, 2, ", ", 2); PRNUM(a2); }
-            syscall(SYS_WRITE, 2, ")", 1);
+            if (a2 != 0) { _ew(", ", 2); PRNUM(a2); }
+            _ew(")", 1);
         }
-        syscall(SYS_WRITE, 2, "\n", 1);
+        _ew("\n", 1);
         i = i + 1;
     }
     return 0;
@@ -1728,9 +1728,9 @@ fn _wp_dead_xfer(S, src, tgt): i64 {
     if (_wp_removed_at(S, tgt) == 0) { return 0; }
     var op = load8(_codebuf_base + src - 1);
     if (op == 0xE8 || op == 0xE9) { _wp_ud2(src - 1); return 1; }
-    syscall(SYS_WRITE, 2, "error: dead-code elimination: the rel32 at code offset ", 55);
+    _ew("error: dead-code elimination: the rel32 at code offset ", 55);
     PRNUM(src);
-    syscall(SYS_WRITE, 2, " (opcode byte ", 14);
+    _ew(" (opcode byte ", 14);
     PRNUM(op);
     PRSTR(") survives but aims into removed code, and only a call or jmp can be neutralised;");
     PRSTR(" refusing to emit\n");

@@ -58,6 +58,7 @@ def unesc(lit):
 PATS = [
     re.compile(r'syscall\(\s*(?:1|SYS_WRITE)\s*,\s*[0-9A-Za-z_]+\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
     re.compile(r'sys_write\(\s*[0-9A-Za-z_]+\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
+    re.compile(r'(?<![A-Za-z0-9_])_ew\(\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),   # 6.7.17: the compiler's stderr writer
     re.compile(r'ERR_MSG\(\s*S\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
     re.compile(r'WARN\(\s*S\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
 ]

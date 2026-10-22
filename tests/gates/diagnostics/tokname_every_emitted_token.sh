@@ -9,9 +9,15 @@
 #   axis 1  the derivation (issues/archived/2026-10-08-tokname-operator-tokens-unnamed.md): every number in an
 #           `ADDTOK(S, N` of src/frontend/*.cyr or a `return N` of LEXKW_EXT, minus 0 (LEXKW_EXT's
 #           "not a keyword"), has an arm in TOKNAME, TOKNAME_OP or TOKNAME_BUILTIN. A floor on the
-#           emitted set keeps a regex that matches nothing from passing.
+#           emitted set keeps a regex that matches nothing from passing. 6.7.17: and every `return N * 16` of
+#           LEXATTRWORD (src/frontend/lex_attr.cyr) — the `#` attributes, emitted as `ADDTOK(S, atk >> 4, 0)`, which
+#           the `ADDTOK(S, N` regex never saw — has one in TOKNAME_ATTR (`#deprecated` is 124, `?`'s).
 #   axis 2  the filed loop: `var x <OP> 1;` reports "expected '=', got '<OP>'" for each of the 25
-#           (`1.5` reads "got float literal"); no row says "got unknown".
+#           (`1.5` reads "got float literal"); no row says "got unknown". 6.7.17: the nine attributes the same way
+#           (`var x #assert 1;` -> "got #assert"; a zone `var g = 1` before `#assert ..` said "got unknown").
+#
+# MEASURED (6.7.17): on the parent (no TOKNAME_ATTR) axis 1 is RED naming 107 109 110 122 125 126 127 133
+# 163, axis 2 RED on the nine attribute rows.
 #
 # MUTATION (measured, 6.7.14): TOKNAME_OP removed (the fn and TOKNAME's call) -> axis 1 RED naming
 # the 24 numbers, axis 2 RED on 24 of 25 rows (all but `>>>`, named since 6.7.5).
@@ -27,9 +33,10 @@ bad() { echo "  FAIL: tokname_every_emitted_token $1"; fail=$((fail + 1)); }
 
 # axis 1 — the derivation.
 { grep -ohE "ADDTOK\(S, *[0-9]+" src/frontend/*.cyr | grep -oE "[0-9]+$"
-  awk '/^fn LEXKW_EXT/,/^}/' src/frontend/lex.cyr | grep -oE "return [0-9]+" | grep -oE "[0-9]+"; } \
+  awk '/^fn LEXKW_EXT/,/^}/' src/frontend/lex.cyr | grep -oE "return [0-9]+" | grep -oE "[0-9]+"
+  awk '/^fn LEXATTRWORD/,/^}/' src/frontend/lex_attr.cyr | grep -oE "return [0-9]+ \* 16" | grep -oE "[0-9]+ " | tr -d ' '; } \
   | grep -vx 0 | sort -u > "$D/em"
-awk '/^fn TOKNAME_BUILTIN/,/^}/; /^fn TOKNAME_OP/,/^}/; /^fn TOKNAME\(/,/^}/' src/common/util.cyr \
+awk '/^fn TOKNAME_BUILTIN/,/^}/; /^fn TOKNAME_OP/,/^}/; /^fn TOKNAME_ATTR/,/^}/; /^fn TOKNAME\(/,/^}/' src/common/util.cyr \
   | grep -oE "typ == [0-9]+" | grep -oE "[0-9]+" | sort -u > "$D/nm"
 ne=$(wc -l < "$D/em" | tr -d ' ')
 rows=$((rows + 1))
@@ -56,8 +63,11 @@ for op in '<=' '>=' '%' '&' '|' '^' '<<' '>>' '&&' '||' '~' '?' '+%' '+|' '+?' '
   row "$op" "'$op'"
 done
 row '1.5' 'float literal'
-[ "$rows" -ge 27 ] || bad "only $rows rows ran"
+for at in '#assert' '#regalloc' '#pe_import' '#must_use' '#pure' '#io' '#alloc' '#naked' '#inline'; do
+  row "$at" "$at"
+done
+[ "$rows" -ge 36 ] || bad "only $rows rows ran"
 
 if [ "$fail" -ne 0 ]; then echo "FAIL tokname_every_emitted_token: $fail of $rows row(s) red"; exit 1; fi
-echo "PASS tokname_every_emitted_token: $rows rows — all $ne token numbers the lexer emits have a name, and the 25 operator / literal rows name their token (never 'got unknown')"
+echo "PASS tokname_every_emitted_token: $rows rows — all $ne token numbers the lexer emits have a name, and the 25 operator / literal rows and the nine attribute rows name their token (never 'got unknown')"
 exit 0

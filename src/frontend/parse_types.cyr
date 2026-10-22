@@ -339,7 +339,7 @@ fn _tn_prefix_note(S, noff): i64 {
     PRSTR("  note: '");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR("' is not '");
-    syscall(SYS_WRITE, 2, S + 0xEC00000 + noff, k);
+    _ew(S + 0xEC00000 + noff, k);
     PRSTR("' - a type name must match whole\n");
     return 0;
 }
@@ -676,7 +676,7 @@ fn _tn_var_err(S, ti, noff): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": expected a type for variable '");
     PRSTR(S + 0xEC00000 + noff);
@@ -1347,7 +1347,7 @@ fn _dyn_err(S, ti, msg, sid, noff, tail): i64 {
     PRSTR(msg);
     if (sid > 0) {
         _dyn_ps(S, sid);
-        if (noff >= 0) { syscall(SYS_WRITE, 2, " ", 1); }
+        if (noff >= 0) { _ew(" ", 1); }
     }
     if (noff >= 0 || noff <= 0 - 1000) { _dyn_pq(S, noff); }   # 6.7.17: or a struct (`_ei_sid`)
     if (tail != 0) { PRSTR(tail); }
@@ -1365,13 +1365,13 @@ fn _dyn_ebeg(S, ti): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     _dyn_esv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     return 1;
 }
 fn _dyn_eend(S): i64 {
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, _dyn_esv);
@@ -1380,9 +1380,9 @@ fn _dyn_eend(S): i64 {
 fn _dyn_ps(S, sid): i64 { _sn_pr(S, sid); return 0; }
 fn _dyn_pn(S, noff): i64 { PRSTR(S + 0xEC00000 + noff); return 0; }
 fn _dyn_pq(S, noff): i64 {
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
     _ei_pr(S, noff);   # 6.7.17: or a struct (`_ei_sid`)
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
     return 0;
 }
 # The trait a dyn struct `sid` names (`dyn Show` -> Show's index), -1 when none.
@@ -1841,7 +1841,7 @@ fn _dyn_f6(S, ti, tx): i64 {
     PRSTR("no `impl ");
     _dyn_pn(S, L64(_tr_tab + tx * 32));
     PRSTR(" for ");
-    if (_dsr_tsid > 0) { _sn_pr(S, _dsr_tsid); } else { syscall(SYS_WRITE, 2, _dsr_tp, _dsr_tn); }   # 6.7.17
+    if (_dsr_tsid > 0) { _sn_pr(S, _dsr_tsid); } else { _ew(_dsr_tp, _dsr_tn); }   # 6.7.17
     PRSTR("` - a ");
     _dyn_ps(S, _dsr_ds);
     PRSTR(" is formed only from a type that implements ");
@@ -2290,7 +2290,7 @@ fn _dyn_fill(S, ii): i64 {
         if (fi >= 0) {
             var fc = GFCNT(S);
             if (fc >= 1048576) {
-                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                _ew("error: fixup table full (1048576)\n", 34);
                 syscall(SYS_EXIT, 1);
             }
             ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi);
@@ -2333,7 +2333,9 @@ fn _dyn_emit(S, dsid, idx): i64 {
     return 0;
 }
 # The terminator of a source from token `st`: its first depth-0 `term`, or the `)` / `]` / `}` that
-# closes what it sits in.
+# closes what it sits in. 6.7.17: a statement's source (`term` `;`) also ends at a depth-0 statement keyword — its
+# `;` is missing there (`var o: dyn Show = &p` then `return zz;` was "cannot form dyn Show from this expression", the
+# `return` and `zz` read as the source). CHANGELOG [6.7.17]
 fn _dyn_ext(S, st, term): i64 {
     var k = st;
     var d = 0;
@@ -2341,7 +2343,7 @@ fn _dyn_ext(S, st, term): i64 {
     while (k < n) {
         var t = TOKTYP(S, k);
         if (t == 12) { return k; }
-        if (d == 0) { if (t == term) { return k; } }
+        if (d == 0) { if (t == term) { return k; } if (term == 5) { if (_sync_kw_at(S, k, t) == 1) { return k; } } }
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         if (t == 11 || t == 29 || t == 14) {
             if (d == 0) { return k; }
@@ -2383,8 +2385,7 @@ fn _dyn_var_init(S, noff, dsid): i64 {
         SVCNT(S, vc + 1);
     }
     STI(S, en);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # The declaration zone's `var G: dyn S = src;` (EMIT_GVAR_INITS, through `_gvi_tuple`; cursor on
@@ -2406,8 +2407,7 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     }
     STI(S, en);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # `o = src;` into a dyn variable (`_try_aggregate_copy_assign`'s first line; a for step's `term` 11):
@@ -2431,8 +2431,7 @@ fn _dyn_asg(S, noff, term): i64 {
         _agc_from_temp(S, t, dli, dgv, n, dsid);
     }
     STI(S, en);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `h.o = src;` / `hp.o = src;` (`_fsc_src`'s first lines, `ft` the field's dyn): built in a frame
@@ -3561,7 +3560,7 @@ fn _pa_derr(S, fi, sa, sp, dp): i64 {
     var sv = GTI(S);
     STI(S, _pa_b);
     if (_err_once(S, ((sa * 31 + sp) * 31 + dp) * 8 + 6) == 0) { STI(S, sv); return 1; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot pass '");
     PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
@@ -3601,7 +3600,7 @@ fn _ppd_val(S, ti, e, ann, noff): i64 {
     if (_tn_once(S, _pa_b) == 0) { return 1; }
     var sv = GTI(S);
     STI(S, _pa_b);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot initialise '");
     PRSTR(S + 0xEC00000 + noff);
@@ -4876,12 +4875,12 @@ fn _sl_err(S, ti, a, b): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     PRSTR(a);
     PRSTR(b);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     STI(S, sv);
@@ -5188,19 +5187,19 @@ fn SVSGN(S, vi, v): i64 { S64(_vsgn_base + vi * 8, v); return 0; }
 # blamed the user instead of the deps. kybernet 2026-04-27 surfacing).
 fn DUMP_STRUCTS(S): i64 {
     var sc = GSTC(S);
-    syscall(SYS_WRITE, 2, "note: ", 6);
+    _ew("note: ", 6);
     PRNUM(sc);
-    syscall(SYS_WRITE, 2, " structs registered (deps usually fill most via auto-prepend); names follow:\n", 77);
+    _ew(" structs registered (deps usually fill most via auto-prepend); names follow:\n", 77);
     var i = 0;
     while (i < sc) {
         var noff = L64(S + 0x1A6018 + i * 8);
-        syscall(SYS_WRITE, 2, "  #", 3);
+        _ew("  #", 3);
         PRNUM(i);
-        syscall(SYS_WRITE, 2, " ", 1);
+        _ew(" ", 1);
         var nlen = 0;
         while (load8(S + 0xEC00000 + noff + nlen) != 0) { nlen = nlen + 1; }
-        syscall(SYS_WRITE, 2, S + 0xEC00000 + noff, nlen);
-        syscall(SYS_WRITE, 2, "\n", 1);
+        _ew(S + 0xEC00000 + noff, nlen);
+        _ew("\n", 1);
         i = i + 1;
     }
     return 0;
@@ -5896,12 +5895,12 @@ fn _struct_same_layout(S, a, b): i64 {
 fn _chk_struct_redef(S, prev, sid, name_ti): i64 {
     if (prev == 0) { return 0; }
     if (_struct_same_layout(S, prev - 1, sid - 1) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, name_ti);
-    if (ISUNION(S, sid - 1) == 1) { syscall(SYS_WRITE, 2, ": union '", 9); }
-    else { syscall(SYS_WRITE, 2, ": struct '", 10); }
+    if (ISUNION(S, sid - 1) == 1) { _ew(": union '", 9); }
+    else { _ew(": struct '", 10); }
     _sn_pr(S, sid);
-    syscall(SYS_WRITE, 2, "' redefined with a different layout — the FIRST definition is the one used (sizeof, field offsets, every access)\n", 115);
+    _ew("' redefined with a different layout — the FIRST definition is the one used (sizeof, field offsets, every access)\n", 115);
     return 0;
 }
 
@@ -6385,7 +6384,7 @@ fn _vec_tok_err(S, ti, vnoff, what): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": expected ");
     PRSTR(what);
@@ -6834,18 +6833,18 @@ fn _gv_note_blockscoped(S, noff): i64 {
     _pd_c14_note(S);         # 6.7.7 (B6): `syscall(n: 60, ..)` — a named argument to a builtin
     var k = _gv_blockscoped(S, noff);
     if (k == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "note: '", 7);
+    _ew("note: '", 7);
     PRSTR(S + 0xEC00000 + noff);
     if (k == 3) { return _gv_note_loopvar(S); }
-    syscall(SYS_WRITE, 2, "' was declared inside a top-level block and goes out of scope at its '}'\n", 73);
-    syscall(SYS_WRITE, 2, "      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)\n", 76);
-    syscall(SYS_WRITE, 2, "      declare it at top level, before the block, to use it after the block\n", 75);
+    _ew("' was declared inside a top-level block and goes out of scope at its '}'\n", 73);
+    _ew("      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)\n", 76);
+    _ew("      declare it at top level, before the block, to use it after the block\n", 75);
     return 0;
 }
 
 fn _gv_note_loopvar(S): i64 {
-    syscall(SYS_WRITE, 2, "' is a `for ... in` loop variable and goes out of scope at the end of its loop\n", 79);
-    syscall(SYS_WRITE, 2, "      to use a value after the loop, assign it to a variable declared before the loop\n", 86);
+    _ew("' is a `for ... in` loop variable and goes out of scope at the end of its loop\n", 79);
+    _ew("      to use a value after the loop, assign it to a variable declared before the loop\n", 86);
     return 0;
 }
 
@@ -7044,11 +7043,11 @@ fn _vis_check_var(S, vi, noff): i64 {
     _vcv_last_vi = vi;
     _vcv_last_line = _vcv_line;
     if (_derr_seen(GTI(S), "_vis_check_var", vi, 0) == 1) { return 1; }   # 6.7.15: once per site (an instance)
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": '", 3);
+    _ew(": '", 3);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _ew("' is private to its file\n", 25);
     _had_error = 1;
     return 1;
 }
@@ -7112,11 +7111,11 @@ fn CHK_ENUM_OVER_VAR(S, noff, newval): i64 {
     if (pi < 0) { return 0; }
     if (GVECP(S, pi) == 1) { return 0; }                 # prior is an enum const: CHKDUPVAL
     if (_gv_has_lit(pi) == 1) { return 0; }              # prior constant recorded, zero too (6.7.12): CHKDUPVAL
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
+    _ew(": duplicate symbol '", 20);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' is an enum constant here and a global variable before it (computed) — every use now reads the constant, including the variable's own module\n", 144);
+    _ew("' is an enum constant here and a global variable before it (computed) — every use now reads the constant, including the variable's own module\n", 144);
     return 0;
 }
 
@@ -7140,11 +7139,11 @@ fn CHKDUPVAL(S, noff, newval): i64 {
 # CHKDUPVAL's warning at the cursor, shared by the declaration zone's replay compare (_gvk_link, parse_decl.cyr),
 # which reports a pair whose earlier or later constant only the replay folds. CHANGELOG [6.7.15]
 fn _dupval_warn(S, noff): i64 {
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
+    _ew(": duplicate symbol '", 20);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
+    _ew("' redefined with conflicting value (last definition wins)\n", 58);
     # v6.5.50 — a `SYS_*` redefinition is not a cosmetic name collision, and the
     # generic wording above hides that. The stdlib's syscall numbers are ARCH-AWARE
     # (lib/syscalls.cyr -> syscalls_x86_64_linux.cyr / syscalls_aarch64_linux.cyr);
@@ -7162,10 +7161,10 @@ fn _dupval_warn(S, noff): i64 {
         if (load8(S + 0xEC00000 + noff + 1) == 89) {
             if (load8(S + 0xEC00000 + noff + 2) == 83) {
                 if (load8(S + 0xEC00000 + noff + 3) == 95) {
-                    syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
-                    syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
-                    syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
-                    syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
+                    _ew("note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
+                    _ew("      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
+                    _ew("      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
+                    _ew("      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
                 } } } }
     return 0;
 }
@@ -7198,11 +7197,11 @@ fn CHK_ENUM_SHADOW(S, noff): i64 {
     var pi = _findvar_core(S, noff);
     if (pi < 0) { return 0; }
     if (GVENUMID(S, pi) == 0) { return 0; }   # prior symbol is a plain var, not an enum const
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": variable '", 12);
+    _ew(": variable '", 12);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "' shadows an enum constant (rename the variable)\n", 49);
+    _ew("' shadows an enum constant (rename the variable)\n", 49);
     syscall(SYS_EXIT, 1);
     return 0;
 }

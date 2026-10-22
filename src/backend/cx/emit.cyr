@@ -62,21 +62,21 @@ var _CX_CODE_CAP = 4194304;
 
 # The refusal names the limit, the bytes emitted and the fn being emitted (top level when none).
 fn _cx_code_overflow(S, cp): i64 {
-    syscall(SYS_WRITE, 2, "error: cx bytecode exceeds the cx code region (", 47);
+    _ew("error: cx bytecode exceeds the cx code region (", 47);
     PRNUM(_CX_CODE_CAP);
-    syscall(SYS_WRITE, 2, " B): ", 5);
+    _ew(" B): ", 5);
     PRNUM(cp);
-    syscall(SYS_WRITE, 2, " B emitted when ", 16);
+    _ew(" B emitted when ", 16);
     if (_cur_fn_ix >= 0) {
-        syscall(SYS_WRITE, 2, "fn '", 4);
+        _ew("fn '", 4);
         PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
-        syscall(SYS_WRITE, 2, "' (its code starts at byte ", 27);
+        _ew("' (its code starts at byte ", 27);
         PRNUM(L64(_fnt_offsets + _cur_fn_ix * 8));
-        syscall(SYS_WRITE, 2, ")", 1);
+        _ew(")", 1);
     } else {
-        syscall(SYS_WRITE, 2, "top-level code", 14);
+        _ew("top-level code", 14);
     }
-    syscall(SYS_WRITE, 2, " reached it — build this program for a native target\n", 55);
+    _ew(" reached it — build this program for a native target\n", 55);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -607,7 +607,7 @@ fn ECALLFIX(S, fnidx): i64 {
     CX_EMIT(S, 96, 0, 0, 0);  # call +0 (placeholder)
     var fc = GFCNT(S);
     if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        _ew("error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     var faddr = S + 0x150B000 + fc * 16;
@@ -816,13 +816,13 @@ fn EJMP0(S): i64 {
 
 # A jz / jnz offset past 16 bits (+-32768 instructions) is refused by name, never wrapped.
 fn _cx_far_branch_refuse(S): i64 {
-    syscall(SYS_WRITE, 2, "error: a conditional branch spans more than 128 KiB of cx bytecode in ", 70);
+    _ew("error: a conditional branch spans more than 128 KiB of cx bytecode in ", 70);
     if (_cur_fn_ix >= 0) {
-        syscall(SYS_WRITE, 2, "fn '", 4);
+        _ew("fn '", 4);
         PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
-        syscall(SYS_WRITE, 2, "'\n", 2);
+        _ew("'\n", 2);
     } else {
-        syscall(SYS_WRITE, 2, "top-level code\n", 15);
+        _ew("top-level code\n", 15);
     }
     syscall(SYS_EXIT, 1);
     return 0;
@@ -853,7 +853,7 @@ fn EPATCH(S, off): i64 {
 fn RECFIX(S, idx): i64 {
     var fc = GFCNT(S);
     if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        _ew("error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     var addr = S + 0x150B000 + fc * 16;
@@ -1341,7 +1341,7 @@ fn ESADDR(S, soff): i64 {
     CX_MOVI(S, 0, 0);  # placeholder
     var fc = GFCNT(S);
     if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        _ew("error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     var faddr = S + 0x150B000 + fc * 16;
@@ -1394,7 +1394,7 @@ fn ETAILJMP(S, fnidx): i64 {
     CX_EMIT(S, 80, 0, 0, 0);      # jmp +0 (placeholder, patched by the ftype-2 fixup)
     var fc = GFCNT(S);
     if (fc >= 1048576) {
-        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        _ew("error: fixup table full (1048576)\n", 34);
         syscall(SYS_EXIT, 1);
     }
     var faddr = S + 0x150B000 + fc * 16;
@@ -1440,9 +1440,9 @@ fn ASM_KW_IN(S): i64 {
 fn _cx_mode_refused(S): i64 {
     var km = L64(S + 0x18FCA0);
     if (km == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error: `", 8);
-    if (km == 1) { syscall(SYS_WRITE, 2, "kernel;", 7); } else { syscall(SYS_WRITE, 2, "shared;", 7); }
-    syscall(SYS_WRITE, 2, "` is not supported by the cx bytecode backend (a .cyx is a cxvm program; there is no kernel image or shared object to emit)\n", 124);
+    _ew("error: `", 8);
+    if (km == 1) { _ew("kernel;", 7); } else { _ew("shared;", 7); }
+    _ew("` is not supported by the cx bytecode backend (a .cyx is a cxvm program; there is no kernel image or shared object to emit)\n", 124);
     return 1;
 }
 # 6.6.11 — modules OUTSIDE the cx target's scope, refused BY NAME before anything is lexed.
@@ -1477,9 +1477,9 @@ fn _cx_scope_refused(S): i64 {
         var n = 0;
         while (load8(nm + pos + n) != 0) { n = n + 1; }
         if (_cx_out_of_scope(nm + pos, n) == 1) {
-            syscall(SYS_WRITE, 2, "error: ", 7);
+            _ew("error: ", 7);
             PRSTR(nm + pos);
-            syscall(SYS_WRITE, 2, " is outside the cx target's scope (the TLS stack and the sigil bundle are refused by name: several MB of bytecode for a single-threaded test VM) — build it for a native target\n", 178);
+            _ew(" is outside the cx target's scope (the TLS stack and the sigil bundle are refused by name: several MB of bytecode for a single-threaded test VM) — build it for a native target\n", 178);
             bad = 1;
         }
         pos = pos + n + 1;
