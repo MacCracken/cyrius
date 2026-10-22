@@ -7,7 +7,7 @@ export const meta = {
 // tool: one read-only agent per lane group premise-checks each of its issues against the slot-open
 // compiler (the filed repro run verbatim), says whether the fix needs the user's decision (and
 // drafts the question), and drafts the fix plan. Its result, saved as <c6>/<tag>_triage.json, is
-// what the decisions are asked from and what scripts/release/briefs.py reads.
+// what the decisions are asked from and what programs/release/briefs.cyr reads.
 // (meta stays the first statement: the Workflow tool requires it there, as a pure literal.)
 //
 // usage:   the Workflow tool, with this file as scriptPath and the args below.

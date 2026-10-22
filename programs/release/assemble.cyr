@@ -1,0 +1,241 @@
+# programs/release/assemble.cyr — at a release's close, after the release gate: assemble the
+# CHANGELOG entry and the ecosystem-migration section from the drafts in the docs dir. The
+# CHANGELOG's placeholder header for the release ("## [X.Y.Z] — <date>", written by
+# version-bump.sh) is replaced by the dated header and the entry: the head (its @GATEHEAD@,
+# @DRIVER@, @SHELL@ and @BENCH@ filled from the gate), each lane's section, then the extra parts.
+# The migration section (the intro, then each lane's notes) goes above "### <prev>" in
+# docs/development/ecosystem-migration.md.
+#
+# usage:   cyrius run programs/release/assemble.cyr --ver X.Y.Z --prev X.Y.W --date YYYY-MM-DD
+#            --lanes a,b,... [--extra p,q,...] [--mig-extra r,...] [--gatehead SHA] [--driver N]
+#            [--shell N] [--bench MS] [--dry] [--repo <checkout>] [--c6 <dir>] [--docs DIR]
+#            [--intro FILE]
+#   --lanes      in CHANGELOG order; each has <docs>/changelog_<lane>.md and migration_<lane>.md
+#   --extra      CHANGELOG-only parts after the lanes, <docs>/changelog_<part>.md
+#                (default: integration,filed)
+#   --mig-extra  migration-only parts after the lanes, <docs>/migration_<part>.md (default: none)
+#   --gatehead / --driver / --shell / --bench  fill @GATEHEAD@ / @DRIVER@ / @SHELL@ / @BENCH@ in
+#                the head (each is required when the head carries its placeholder)
+#   --dry        print the line counts; write nothing
+# inputs:  <docs>/changelog_head.md, changelog_<part>.md, migration_<part>.md (default <docs>:
+#          <c6>/<tag>_docs/ — scripts/release/docs.js writes the lane drafts, the release writes the
+#          head, integration and filed parts); <intro> (default <docs>/migration_intro.md: the
+#          "### X.Y.Z" heading and the paragraph under it); the checkout's CHANGELOG.md and
+#          docs/development/ecosystem-migration.md
+# outputs: those two files, edited in place (each replaced atomically); "CHANGELOG +N lines,
+#          migration +M lines" on stdout. Exit 1, writing nothing, when the placeholder header or
+#          the "### <prev>" anchor is not there exactly once, the header is not the EMPTY
+#          placeholder (header, blank line, the previous "## [" — so a second run refuses),
+#          "### X.Y.Z" is already in the migration doc, or a placeholder is left unfilled.
+#
+# It replaced scripts/release/assemble.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/release/common.cyr"
+
+# [x.strip() for x in (s or '').split(',') if x.strip()]
+fn _names(s): i64 {
+    var out = vec_new();
+    if (s == 0) { return out; }
+    var parts = hc_split(s, 44);
+    var i = 0;
+    while (i < vec_len(parts)) {
+        var x = hc_strip(vec_get(parts, i));
+        if (hc_n(x) > 0) { vec_push(out, x); }
+        i = i + 1;
+    }
+    return out;
+}
+
+var _D = 0;
+fn _part(f): i64 {
+    return hc_catc(hc_rstrip_set(rc_rd(hc_join2(_D, f)), "\n"), "\n");
+}
+
+# ^## \[<ver>\] — \d{4}-\d{2}-\d{2}\n (re.M) at line start `p`: the match end, or -1.
+fn _hdr_at(s, p, ver): i64 {
+    var pre = hc_cat3(hc_s("## ["), ver, hc_s("] — "));
+    if (hc_at_str(s, p, pre) == 0) { return 0 - 1; }
+    var i = p + hc_n(pre);
+    var l = 0;
+    var groups = 0;
+    while (groups < 3) {
+        var want = 4;
+        if (groups > 0) { want = 2; }
+        var k = 0;
+        while (k < want) {
+            if (i >= hc_n(s)) { return 0 - 1; }
+            var cp = hc_u8(s, i, &l);
+            if (hc_nd_value(cp) < 0) { return 0 - 1; }
+            i = i + l;
+            k = k + 1;
+        }
+        groups = groups + 1;
+        if (groups < 3) {
+            if (i >= hc_n(s) || hc_at(s, i) != 45) { return 0 - 1; }
+            i = i + 1;
+        }
+    }
+    if (i >= hc_n(s) || hc_at(s, i) != 10) { return 0 - 1; }
+    return i + 1;
+}
+
+fn main(): i64 {
+    var usage = "assemble --ver X.Y.Z --prev X.Y.W --date YYYY-MM-DD --lanes a,b,... [options]";
+    rc_options("assemble", usage, 1, 1);
+    hc_opt("prev", 1);
+    hc_opt("lanes", 1);
+    hc_opt("extra", 1);
+    hc_opt("mig-extra", 1);
+    hc_opt("gatehead", 1);
+    hc_opt("driver", 1);
+    hc_opt("shell", 1);
+    hc_opt("bench", 1);
+    hc_opt("docs", 1);
+    hc_opt("intro", 1);
+    hc_parse("assemble", usage, 0);
+    var miss = vec_new();
+    if (hc_optv("ver") == 0) { vec_push(miss, hc_s("--ver")); }
+    if (hc_optv("date") == 0) { vec_push(miss, hc_s("--date")); }
+    if (hc_optv("prev") == 0) { vec_push(miss, hc_s("--prev")); }
+    if (hc_optv("lanes") == 0) { vec_push(miss, hc_s("--lanes")); }
+    if (vec_len(miss) > 0) {
+        _hc_usage_err("assemble", usage, hc_ccat("the following arguments are required: ", hc_join(miss, ", ")));
+    }
+    rc_finish(1, 0);
+    var repo = RC_REPO;
+    _D = hc_optv("docs");
+    if (_D == 0) { _D = rc_in_c6("docs"); }
+    var prev = hc_optv("prev");
+    var extra = hc_optv("extra");
+    if (extra == 0) { extra = hc_s("integration,filed"); }
+    var mig_extra = hc_optv("mig-extra");
+
+    var head = _part(hc_s("changelog_head.md"));
+    var keys = hc_split(hc_s("gatehead driver shell bench"), 32);
+    var ki = 0;
+    while (ki < vec_len(keys)) {
+        var k = vec_get(keys, ki);
+        ki = ki + 1;
+        var up = hc_sb();
+        hc_sbc(up, "@");
+        var ci = 0;
+        while (ci < hc_n(k)) { hc_sbb(up, hc_at(k, ci) - 32); ci = ci + 1; }
+        hc_sbc(up, "@");
+        var ph = hc_sbend(up);
+        var v = hc_optv(hc_cstr(k));
+        if (hc_has_s(head, ph) == 1) {
+            if (v == 0) { rc_exit(hc_cat3(hc_s("changelog_head.md carries "), ph, hc_ccat(": pass --", k))); }
+            head = hc_replace(head, ph, v);
+        }
+    }
+    var parts = vec_new();
+    vec_push(parts, head);
+    var lanes = _names(hc_optv("lanes"));
+    var ex = _names(extra);
+    var li = 0;
+    while (li < vec_len(lanes)) {
+        vec_push(parts, _part(hc_cat3(hc_s("changelog_"), vec_get(lanes, li), hc_s(".md"))));
+        li = li + 1;
+    }
+    li = 0;
+    while (li < vec_len(ex)) {
+        vec_push(parts, _part(hc_cat3(hc_s("changelog_"), vec_get(ex, li), hc_s(".md"))));
+        li = li + 1;
+    }
+    var body = hc_join(parts, "\n");
+    var p = hc_joinc(repo, "CHANGELOG.md");
+    var s = rc_rd(p);
+    var n = 0;
+    var first = 0 - 1;
+    var first_end = 0;
+    var ls = 0;
+    while (ls < hc_n(s)) {
+        var e = _hdr_at(s, ls, RC_VER);
+        if (e >= 0) {
+            n = n + 1;
+            if (first < 0) { first = ls; first_end = e; }
+        }
+        var nl = hc_findb(s, 10, ls);
+        if (nl < 0) { break; }
+        ls = nl + 1;
+    }
+    if (n != 1) {
+        var m1 = hc_sb();
+        hc_sbc(m1, "CHANGELOG.md: the \"## [");
+        hc_sba(m1, RC_VER);
+        hc_sbc(m1, "] — <date>\" placeholder header appears ");
+        hc_sbi(m1, n);
+        hc_sbc(m1, " times (want 1)");
+        rc_exit(hc_sbend(m1));
+    }
+    # only the EMPTY placeholder version-bump.sh writes (the header, a blank line, the previous
+    # "## ["): an assembled header matches too, and a second run would insert the whole entry
+    # again
+    var after = hc_lstrip(hc_sub(s, first_end, hc_n(s)));
+    if (hc_pre(after, "## [") == 0) {
+        var why1 = hc_s("] is not the empty placeholder (already assembled?) — nothing written");
+        rc_exit(hc_cat3(hc_s("CHANGELOG.md: ["), RC_VER, why1));
+    }
+    var nh = hc_sb();
+    hc_sbc(nh, "## [");
+    hc_sba(nh, RC_VER);
+    hc_sbc(nh, "] — ");
+    hc_sba(nh, RC_DATE);
+    hc_sbc(nh, "\n\n");
+    var s2 = hc_cat(hc_cat3(hc_sub(s, 0, first), hc_sbend(nh), body), hc_sub(s, first_end, hc_n(s)));
+    var intro_p = hc_optv("intro");
+    if (intro_p == 0) { intro_p = hc_joinc(_D, "migration_intro.md"); }
+    var intro = hc_catc(hc_rstrip_set(rc_rd(intro_p), "\n"), "\n\n");
+    var mparts = vec_new();
+    vec_push(mparts, intro);
+    var mex = _names(mig_extra);
+    li = 0;
+    while (li < vec_len(lanes)) {
+        vec_push(mparts, _part(hc_cat3(hc_s("migration_"), vec_get(lanes, li), hc_s(".md"))));
+        li = li + 1;
+    }
+    li = 0;
+    while (li < vec_len(mex)) {
+        vec_push(mparts, _part(hc_cat3(hc_s("migration_"), vec_get(mex, li), hc_s(".md"))));
+        li = li + 1;
+    }
+    var mig = hc_catc(hc_join(mparts, "\n"), "\n");
+    var pm = hc_joinc(repo, "docs/development/ecosystem-migration.md");
+    var sm = rc_rd(pm);
+    var anchor = hc_cat3(hc_s("### "), prev, hc_s("\n"));
+    var ac = hc_count(sm, anchor);
+    if (ac != 1) {
+        var m2 = hc_sb();
+        hc_sbc(m2, "ecosystem-migration.md: \"### ");
+        hc_sba(m2, prev);
+        hc_sbc(m2, "\" appears ");
+        hc_sbi(m2, ac);
+        hc_sbc(m2, " times (want 1)");
+        rc_exit(hc_sbend(m2));
+    }
+    # re.search(r'^### ' + re.escape(ver) + r'\n', sm, re.M)
+    var vh = hc_cat3(hc_s("### "), RC_VER, hc_s("\n"));
+    var at = 0;
+    loop {
+        var k2 = hc_find(sm, vh, at);
+        if (k2 < 0) { break; }
+        if (k2 == 0 || hc_at(sm, k2 - 1) == 10) {
+            var why2 = hc_s("\" (already assembled?) — nothing written");
+            rc_exit(hc_cat3(hc_s("ecosystem-migration.md already has \"### "), RC_VER, why2));
+        }
+        at = k2 + 1;
+    }
+    var sm2 = hc_replace_n(sm, anchor, hc_cat(mig, anchor), 1);
+    rc_wr(p, s2, RC_DRY);
+    rc_wr(pm, sm2, RC_DRY);
+    var msg = hc_sb();
+    if (RC_DRY == 1) { hc_sbc(msg, "(dry) "); }
+    hc_sbc(msg, "CHANGELOG +");
+    hc_sbi(msg, hc_countc(body, "\n"));
+    hc_sbc(msg, " lines, migration +");
+    hc_sbi(msg, hc_countc(mig, "\n"));
+    hc_sbc(msg, " lines\n");
+    hc_out(hc_sbend(msg));
+    return 0;
+}

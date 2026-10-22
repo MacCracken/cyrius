@@ -94,61 +94,13 @@ fn _tc_slice(a, b): i64 {
     return hc_sbend(sb);
 }
 
-# ── Python repr (str and tuple-of-str) ───────────────────────────────────────────────────
-
-fn _tc_printable(cp): i64 {
-    if (cp == 32) { return 1; }
-    if (cp < 32 || cp == 127) { return 0; }
-    if (cp < 127) { return 1; }
-    var c = unicode_category(cp);
-    if (c == GC_CC || c == GC_CF || c == GC_CS || c == GC_CO || c == GC_CN) { return 0; }
-    if (c == GC_ZL || c == GC_ZP || c == GC_ZS) { return 0; }
-    return 1;
-}
-
-fn _tc_hex(sb, v, digits): i64 {
-    var hexd = "0123456789abcdef";
-    var k = digits - 1;
-    while (k >= 0) {
-        hc_sbb(sb, load8(hexd + ((v >> (k * 4)) & 15)));
-        k = k - 1;
-    }
-    return 0;
-}
-
-# repr(s) for a UTF-8 Str.
-fn tc_repr(s): i64 {
-    var has_sq = hc_findb(s, 39, 0) >= 0;
-    var has_dq = hc_findb(s, 34, 0) >= 0;
-    var q = 39;
-    if (has_sq && !has_dq) { q = 34; }
-    var sb = hc_sb();
-    hc_sbb(sb, q);
-    var i = 0;
-    var l = 0;
-    while (i < hc_n(s)) {
-        var cp = hc_u8(s, i, &l);
-        i = i + l;
-        if (cp == q || cp == 92) { hc_sbb(sb, 92); hc_sbb(sb, cp); }
-        elif (cp == 9) { hc_sbc(sb, "\\t"); }
-        elif (cp == 10) { hc_sbc(sb, "\\n"); }
-        elif (cp == 13) { hc_sbc(sb, "\\r"); }
-        elif (cp < 32 || cp == 127) { hc_sbc(sb, "\\x"); _tc_hex(sb, cp, 2); }
-        elif (cp < 127) { hc_sbb(sb, cp); }
-        elif (_tc_printable(cp) == 1) { hc_sb_cp(sb, cp); }
-        elif (cp <= 0xFF) { hc_sbc(sb, "\\x"); _tc_hex(sb, cp, 2); }
-        elif (cp <= 0xFFFF) { hc_sbc(sb, "\\u"); _tc_hex(sb, cp, 4); }
-        else { hc_sbc(sb, "\\U"); _tc_hex(sb, cp, 8); }
-    }
-    hc_sbb(sb, q);
-    return hc_sbend(sb);
-}
+# ── Python repr (str and tuple-of-str): hc_pyrepr (programs/dev/helper_common.cyr) ──
 
 # repr of one code point as a 1-char str.
 fn _tc_repr_cp(cp): i64 {
     var sb = hc_sb();
     hc_sb_cp(sb, cp);
-    return tc_repr(hc_sbend(sb));
+    return hc_pyrepr(hc_sbend(sb));
 }
 
 # repr(key) for a key tuple (a vec of Str): ('a',) / ('a', 'b')
@@ -158,7 +110,7 @@ fn _tc_repr_key(k): i64 {
     var i = 0;
     while (i < vec_len(k)) {
         if (i > 0) { hc_sbc(sb, ", "); }
-        hc_sba(sb, tc_repr(vec_get(k, i)));
+        hc_sba(sb, hc_pyrepr(vec_get(k, i)));
         i = i + 1;
     }
     if (vec_len(k) == 1) { hc_sbc(sb, ","); }
@@ -432,7 +384,7 @@ fn _tc_skip_until_b(pos, expectc, error_on, error_on_eof): i64 {
     if (new_pos < 0) {
         new_pos = _tc_n;
         if (error_on_eof == 1) {
-            _tc_raise(hc_ccat("Expected ", tc_repr(hc_s(expectc))), new_pos);
+            _tc_raise(hc_ccat("Expected ", hc_pyrepr(hc_s(expectc))), new_pos);
             return 0;
         }
     }
@@ -1034,7 +986,7 @@ fn _tc_parse_inline_table_b(pos): i64 {
         if (_tc_err != 0) { return 0; }
         if (nest == 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
         if (_td_get(nest, stem) != 0) {
-            _tc_raise(hc_ccat("Duplicate inline table key ", tc_repr(stem)), pos);
+            _tc_raise(hc_ccat("Duplicate inline table key ", hc_pyrepr(stem)), pos);
             return 0;
         }
         _td_set(nest, stem, value);

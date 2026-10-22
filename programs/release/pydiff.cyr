@@ -1,0 +1,359 @@
+# programs/release/pydiff.cyr — Python's difflib.unified_diff for the release steps: the same
+# SequenceMatcher (its longest-match search, the autojunk rule for sequences of 200 lines or more —
+# a line seen more than len/100 + 1 times is "popular" and never starts a match — and the
+# grouped opcodes with 3 lines of context), so roadmap_state's --dry prints the hunks
+# roadmap-state.py printed. Not a program. CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+# ── b2j: line -> the indices it holds in b (a hash table of chains) ─────────────────────────
+
+fn _pd_hash(s): i64 {
+    var h = 0xcbf29ce484222325;
+    var i = 0;
+    while (i < hc_n(s)) {
+        h = (h ^ hc_at(s, i)) * 0x100000001b3;
+        i = i + 1;
+    }
+    return h & 0x7FFFFFFFFFFFFFFF;
+}
+
+var _pd_cap = 0;
+var _pd_slots = 0;   # each slot: a vec of [line, vec of indices]
+
+fn _pd_find(s): i64 {
+    var h = _pd_hash(s) % _pd_cap;
+    var chain = load64(_pd_slots + h * 8);
+    if (chain == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(chain)) {
+        if (hc_eq(vec_get(vec_get(chain, i), 0), s) == 1) { return vec_get(chain, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _pd_add(s, j): i64 {
+    var e = _pd_find(s);
+    if (e == 0) {
+        var h = _pd_hash(s) % _pd_cap;
+        var chain = load64(_pd_slots + h * 8);
+        if (chain == 0) { chain = vec_new(); store64(_pd_slots + h * 8, chain); }
+        e = vec_new();
+        vec_push(e, s);
+        vec_push(e, vec_new());
+        vec_push(e, 0);   # popular
+        vec_push(chain, e);
+    }
+    vec_push(vec_get(e, 1), j);
+    return 0;
+}
+
+var _pd_a = 0;
+var _pd_b = 0;
+# j2len rows: lengths and the row each was written for
+var _pd_len0 = 0;
+var _pd_len1 = 0;
+var _pd_stamp0 = 0;
+var _pd_stamp1 = 0;
+
+fn _pd_chain_b(): i64 {
+    var n = vec_len(_pd_b);
+    _pd_cap = n * 2 + 7;
+    _pd_slots = alloc(_pd_cap * 8);
+    var i = 0;
+    while (i < _pd_cap) { store64(_pd_slots + i * 8, 0); i = i + 1; }
+    var j = 0;
+    while (j < n) { _pd_add(vec_get(_pd_b, j), j); j = j + 1; }
+    if (n >= 200) {
+        var ntest = n / 100 + 1;
+        var k = 0;
+        while (k < _pd_cap) {
+            var chain = load64(_pd_slots + k * 8);
+            if (chain != 0) {
+                var q = 0;
+                while (q < vec_len(chain)) {
+                    var e = vec_get(chain, q);
+                    if (vec_len(vec_get(e, 1)) > ntest) { vec_set(e, 2, 1); }
+                    q = q + 1;
+                }
+            }
+            k = k + 1;
+        }
+    }
+    return 0;
+}
+
+# find_longest_match(alo, ahi, blo, bhi): the match [i, j, k] at out.
+fn _pd_longest(alo, ahi, blo, bhi, out): i64 {
+    var besti = alo;
+    var bestj = blo;
+    var bestsize = 0;
+    # j2len as two rows, swapped per i; an entry is valid only when stamped by the previous row
+    var row = 0;
+    var i = alo;
+    while (i < ahi) {
+        var cur_len = _pd_len0;
+        var cur_st = _pd_stamp0;
+        var prev_len = _pd_len1;
+        var prev_st = _pd_stamp1;
+        if (row % 2 == 1) { cur_len = _pd_len1; cur_st = _pd_stamp1; prev_len = _pd_len0; prev_st = _pd_stamp0; }
+        var e = _pd_find(vec_get(_pd_a, i));
+        if (e != 0 && vec_get(e, 2) == 0) {
+            var js = vec_get(e, 1);
+            var q = 0;
+            while (q < vec_len(js)) {
+                var j = vec_get(js, q);
+                q = q + 1;
+                if (j < blo) { continue; }
+                if (j >= bhi) { break; }
+                var k = 1;
+                if (j > 0) {
+                    if (load64(prev_st + (j - 1) * 8) == row) { k = load64(prev_len + (j - 1) * 8) + 1; }
+                }
+                store64(cur_len + j * 8, k);
+                store64(cur_st + j * 8, row + 1);
+                if (k > bestsize) { besti = i - k + 1; bestj = j - k + 1; bestsize = k; }
+            }
+        }
+        row = row + 1;
+        i = i + 1;
+    }
+    # stamp space is per call: move past every stamp this call wrote
+    _pd_stamp_reset();
+    # extend with equal lines on each end (no line is junk; popular ones may extend a match)
+    while (besti > alo && bestj > blo && hc_eq(vec_get(_pd_a, besti - 1), vec_get(_pd_b, bestj - 1)) == 1) {
+        besti = besti - 1;
+        bestj = bestj - 1;
+        bestsize = bestsize + 1;
+    }
+    loop {
+        if (besti + bestsize >= ahi || bestj + bestsize >= bhi) { break; }
+        if (hc_eq(vec_get(_pd_a, besti + bestsize), vec_get(_pd_b, bestj + bestsize)) == 0) { break; }
+        bestsize = bestsize + 1;
+    }
+    store64(out, besti);
+    store64(out + 8, bestj);
+    store64(out + 16, bestsize);
+    return 0;
+}
+
+fn _pd_stamp_reset(): i64 {
+    var n = vec_len(_pd_b) + 1;
+    var i = 0;
+    while (i < n) {
+        store64(_pd_stamp0 + i * 8, 0 - 1);
+        store64(_pd_stamp1 + i * 8, 0 - 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _pd_cmp_blocks(x, y): i64 {
+    var a = vec_get(x, 0) - vec_get(y, 0);
+    if (a != 0) { return a; }
+    var b = vec_get(x, 1) - vec_get(y, 1);
+    if (b != 0) { return b; }
+    return vec_get(x, 2) - vec_get(y, 2);
+}
+
+fn _pd_triple(a, b, c): i64 {
+    var t = vec_new();
+    vec_push(t, a);
+    vec_push(t, b);
+    vec_push(t, c);
+    return t;
+}
+
+fn _pd_blocks(): i64 {
+    var la = vec_len(_pd_a);
+    var lb = vec_len(_pd_b);
+    var queue = vec_new();
+    var q0 = vec_new();
+    vec_push(q0, 0); vec_push(q0, la); vec_push(q0, 0); vec_push(q0, lb);
+    vec_push(queue, q0);
+    var blocks = vec_new();
+    var m: i64[3];
+    while (vec_len(queue) > 0) {
+        var t = vec_pop(queue);
+        var alo = vec_get(t, 0);
+        var ahi = vec_get(t, 1);
+        var blo = vec_get(t, 2);
+        var bhi = vec_get(t, 3);
+        _pd_longest(alo, ahi, blo, bhi, &m);
+        var i = m[0];
+        var j = m[1];
+        var k = m[2];
+        if (k > 0) {
+            vec_push(blocks, _pd_triple(i, j, k));
+            if (alo < i && blo < j) {
+                var q1 = vec_new();
+                vec_push(q1, alo); vec_push(q1, i); vec_push(q1, blo); vec_push(q1, j);
+                vec_push(queue, q1);
+            }
+            if (i + k < ahi && j + k < bhi) {
+                var q2 = vec_new();
+                vec_push(q2, i + k); vec_push(q2, ahi); vec_push(q2, j + k); vec_push(q2, bhi);
+                vec_push(queue, q2);
+            }
+        }
+    }
+    hc_sort_by(blocks, &_pd_cmp_blocks);
+    var out = vec_new();
+    var i1 = 0;
+    var j1 = 0;
+    var k1 = 0;
+    var x = 0;
+    while (x < vec_len(blocks)) {
+        var bl = vec_get(blocks, x);
+        x = x + 1;
+        var i2 = vec_get(bl, 0);
+        var j2 = vec_get(bl, 1);
+        var k2 = vec_get(bl, 2);
+        if (i1 + k1 == i2 && j1 + k1 == j2) { k1 = k1 + k2; }
+        else {
+            if (k1 > 0) { vec_push(out, _pd_triple(i1, j1, k1)); }
+            i1 = i2;
+            j1 = j2;
+            k1 = k2;
+        }
+    }
+    if (k1 > 0) { vec_push(out, _pd_triple(i1, j1, k1)); }
+    vec_push(out, _pd_triple(la, lb, 0));
+    return out;
+}
+
+# An opcode: [tag, i1, i2, j1, j2]; tags 1 equal, 2 replace, 3 delete, 4 insert.
+fn _pd_op(tag, i1, i2, j1, j2): i64 {
+    var o = vec_new();
+    vec_push(o, tag); vec_push(o, i1); vec_push(o, i2); vec_push(o, j1); vec_push(o, j2);
+    return o;
+}
+
+fn _pd_opcodes(): i64 {
+    var i = 0;
+    var j = 0;
+    var ans = vec_new();
+    var bl = _pd_blocks();
+    var x = 0;
+    while (x < vec_len(bl)) {
+        var b = vec_get(bl, x);
+        x = x + 1;
+        var ai = vec_get(b, 0);
+        var bj = vec_get(b, 1);
+        var size = vec_get(b, 2);
+        var tag = 0;
+        if (i < ai && j < bj) { tag = 2; }
+        elif (i < ai) { tag = 3; }
+        elif (j < bj) { tag = 4; }
+        if (tag != 0) { vec_push(ans, _pd_op(tag, i, ai, j, bj)); }
+        i = ai + size;
+        j = bj + size;
+        if (size > 0) { vec_push(ans, _pd_op(1, ai, i, bj, j)); }
+    }
+    return ans;
+}
+
+fn _pd_min(a, b): i64 { if (a < b) { return a; } return b; }
+fn _pd_max(a, b): i64 { if (a > b) { return a; } return b; }
+
+fn _pd_range(start, stop): i64 {
+    var beginning = start + 1;
+    var length = stop - start;
+    if (length == 1) { return hc_itoa(beginning); }
+    if (length == 0) { beginning = beginning - 1; }
+    return hc_cat3(hc_itoa(beginning), hc_s(","), hc_itoa(length));
+}
+
+# difflib.unified_diff(a, b, fromfile, tofile) over two vecs of lines (each with its line end, as
+# splitlines(True) gives them): the concatenated output ("" when the two are equal).
+fn pd_unified(a, b, fromfile, tofile): i64 {
+    _pd_a = a;
+    _pd_b = b;
+    var lb = vec_len(b) + 1;
+    _pd_len0 = alloc(lb * 8);
+    _pd_len1 = alloc(lb * 8);
+    _pd_stamp0 = alloc(lb * 8);
+    _pd_stamp1 = alloc(lb * 8);
+    _pd_stamp_reset();
+    _pd_chain_b();
+    var codes = _pd_opcodes();
+    if (vec_len(codes) == 0) { vec_push(codes, _pd_op(1, 0, 1, 0, 1)); }
+    var n = 3;
+    var c0 = vec_get(codes, 0);
+    if (vec_get(c0, 0) == 1) {
+        var f1 = _pd_max(vec_get(c0, 1), vec_get(c0, 2) - n);
+        var f3 = _pd_max(vec_get(c0, 3), vec_get(c0, 4) - n);
+        vec_set(codes, 0, _pd_op(1, f1, vec_get(c0, 2), f3, vec_get(c0, 4)));
+    }
+    var cl = vec_get(codes, vec_len(codes) - 1);
+    if (vec_get(cl, 0) == 1) {
+        var l2 = _pd_min(vec_get(cl, 2), vec_get(cl, 1) + n);
+        var l4 = _pd_min(vec_get(cl, 4), vec_get(cl, 3) + n);
+        vec_set(codes, vec_len(codes) - 1, _pd_op(1, vec_get(cl, 1), l2, vec_get(cl, 3), l4));
+    }
+    var nn = n + n;
+    var groups = vec_new();
+    var group = vec_new();
+    var x = 0;
+    while (x < vec_len(codes)) {
+        var o = vec_get(codes, x);
+        x = x + 1;
+        var tag = vec_get(o, 0);
+        var i1 = vec_get(o, 1);
+        var i2 = vec_get(o, 2);
+        var j1 = vec_get(o, 3);
+        var j2 = vec_get(o, 4);
+        if (tag == 1 && i2 - i1 > nn) {
+            vec_push(group, _pd_op(tag, i1, _pd_min(i2, i1 + n), j1, _pd_min(j2, j1 + n)));
+            vec_push(groups, group);
+            group = vec_new();
+            i1 = _pd_max(i1, i2 - n);
+            j1 = _pd_max(j1, j2 - n);
+        }
+        vec_push(group, _pd_op(tag, i1, i2, j1, j2));
+    }
+    if (vec_len(group) > 0) {
+        if (!(vec_len(group) == 1 && vec_get(vec_get(group, 0), 0) == 1)) { vec_push(groups, group); }
+    }
+    var sb = hc_sb();
+    var g = 0;
+    while (g < vec_len(groups)) {
+        var gr = vec_get(groups, g);
+        if (g == 0) {
+            hc_sbc(sb, "--- ");
+            hc_sba(sb, fromfile);
+            hc_sbc(sb, "\n+++ ");
+            hc_sba(sb, tofile);
+            hc_sbc(sb, "\n");
+        }
+        g = g + 1;
+        var first = vec_get(gr, 0);
+        var last = vec_get(gr, vec_len(gr) - 1);
+        hc_sbc(sb, "@@ -");
+        hc_sba(sb, _pd_range(vec_get(first, 1), vec_get(last, 2)));
+        hc_sbc(sb, " +");
+        hc_sba(sb, _pd_range(vec_get(first, 3), vec_get(last, 4)));
+        hc_sbc(sb, " @@\n");
+        var y = 0;
+        while (y < vec_len(gr)) {
+            var op = vec_get(gr, y);
+            y = y + 1;
+            var t2 = vec_get(op, 0);
+            var k = 0;
+            if (t2 == 1) {
+                k = vec_get(op, 1);
+                while (k < vec_get(op, 2)) { hc_sbc(sb, " "); hc_sba(sb, vec_get(a, k)); k = k + 1; }
+                continue;
+            }
+            if (t2 == 2 || t2 == 3) {
+                k = vec_get(op, 1);
+                while (k < vec_get(op, 2)) { hc_sbc(sb, "-"); hc_sba(sb, vec_get(a, k)); k = k + 1; }
+            }
+            if (t2 == 2 || t2 == 4) {
+                k = vec_get(op, 3);
+                while (k < vec_get(op, 4)) { hc_sbc(sb, "+"); hc_sba(sb, vec_get(b, k)); k = k + 1; }
+            }
+        }
+    }
+    return hc_sbend(sb);
+}

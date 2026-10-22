@@ -5,8 +5,8 @@ export const meta = {
 }
 // scripts/release/docs.js — the release-docs pass of a cyrius release, for Claude Code's Workflow
 // tool: after the lanes are merged, one agent per lane drafts that lane's part of the release docs
-// into the docs dir (never into a repo); scripts/release/assemble.py and archive.py consume them at
-// the close. (meta stays the first statement: the Workflow tool requires it there, as a pure literal.)
+// into the docs dir (never into a repo); programs/release/assemble.cyr and archive.cyr consume them
+// at the close. (meta stays the first statement: the Workflow tool requires it there, as a pure literal.)
 //
 // usage:   the Workflow tool, with this file as scriptPath and the args below; one run per release
 //          (or per batch of lanes).

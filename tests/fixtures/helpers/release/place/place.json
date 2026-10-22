@@ -1,0 +1,15 @@
+{
+ "decision_ids": "1-3, 5",
+ "special": [
+  {
+   "file": "d.md",
+   "placement": "**Placement:** 9.9.1 — {label} (moved to 9.9.1 by the user) — never 7.x.",
+   "decisions": [
+    "**Decision (user, 2026-10-22, at the 9.8.7 open):** D9 — moved.",
+    "**Decision (user, 2026-10-22, at the 9.8.7 open):** D10 — also."
+   ],
+   "decisions_after": "**Decision (user, 2026-01-01",
+   "decision_count": 5
+  }
+ ]
+}

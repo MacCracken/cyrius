@@ -1,0 +1,33 @@
+rc=0
+--- stdout
+would place 4 from the units + 1 special; decision lines 8 ; files changed 4
+   a.md
+   b.md
+   c.md
+   d.md
+--- stderr
+--- tree
+== ./docs/development/issues/a.md
+# A — OPEN
+
+**Status:** open
+**Placement:** 9.8.7 — the cleanup (to be placed) — never 7.x. Text after is kept.
+**Severity:** Low
+
+body
+== ./docs/development/issues/b.md
+# B — OPEN
+**Placement:** 9.8.7 — wave label (a parenthetical
+that wraps onto a second line) — never 7.x.
+continuation line kept
+**Kind:** bug
+== ./docs/development/issues/c.md
+# C
+**Placement:** 9.8.7 — c label (x) — never 7.x.
+== ./docs/development/issues/d.md
+# D special
+**Placement:** 9.8.7 — special one (old) — never 7.x.
+**Decision (user, 2026-01-01, at the 9.8.6 open):** D3 — earlier.
+== ./docs/development/issues/e.md
+# E — never placed for this release
+**Placement:** 9.9.0 — later (x) — never 7.x.

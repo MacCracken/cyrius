@@ -1,0 +1,45 @@
+[
+ {
+  "id": 1,
+  "issue": "i2.md",
+  "question": "Q1?",
+  "options": [
+   {
+    "label": "A",
+    "effect": "ea"
+   },
+   {
+    "label": "B",
+    "effect": "eb"
+   }
+  ],
+  "rec_label": "B",
+  "why": "because"
+ },
+ {
+  "id": 2,
+  "issue": "i2.md",
+  "question": "Q2?",
+  "options": [
+   {
+    "label": "Only",
+    "effect": "eo"
+   }
+  ],
+  "rec_label": "Only",
+  "why": "w2"
+ },
+ {
+  "id": 3,
+  "issue": "i9.md",
+  "question": "Q3 elsewhere?",
+  "options": [
+   {
+    "label": "X",
+    "effect": "ex"
+   }
+  ],
+  "rec_label": "X",
+  "why": "why3"
+ }
+]

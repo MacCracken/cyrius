@@ -103,6 +103,43 @@ fn hc_rfind(s, ndl, end): i64 {
     return 0 - 1;
 }
 
+# A Horspool skip table for needle `ndl` (256 slots of the shift for each last byte), for
+# hc_bmh_find: one table, many haystacks (a scan of a whole tree for a set of names).
+fn hc_bmh_table(ndl): i64 {
+    var m = hc_n(ndl);
+    var t = alloc(256 * 8);
+    var i = 0;
+    while (i < 256) { store64(t + i * 8, m); i = i + 1; }
+    i = 0;
+    while (i + 1 < m) { store64(t + hc_at(ndl, i) * 8, m - 1 - i); i = i + 1; }
+    return t;
+}
+
+# The first index >= from where `ndl` starts (Horspool, with ndl's table), or -1.
+fn hc_bmh_find(s, ndl, tbl, from): i64 {
+    var m = hc_n(ndl);
+    var n = hc_n(s);
+    if (m == 0) { return from; }
+    var d = hc_d(s);
+    var nd = hc_d(ndl);
+    var last = load8(nd + m - 1);
+    var i = from;
+    while (i + m <= n) {
+        var c = load8(d + i + m - 1);
+        if (c == last) {
+            if (memeq(d + i, nd, m - 1) == 1) { return i; }
+        }
+        i = i + load64(tbl + c * 8);
+    }
+    return 0 - 1;
+}
+
+# s[k:].startswith(t) for a Str t.
+fn hc_at_str(s, k, t): i64 {
+    if (k < 0 || k + hc_n(t) > hc_n(s)) { return 0; }
+    return memeq(hc_d(s) + k, hc_d(t), hc_n(t));
+}
+
 fn hc_has(s, c): i64 {
     if (hc_findc(s, c, 0) >= 0) { return 1; }
     return 0;
@@ -1408,3 +1445,86 @@ fn hc_optv(namec): i64 {
 }
 fn hc_npos(): i64 { return vec_len(_hc_pos); }
 fn hc_pos(i): i64 { return vec_get(_hc_pos, i); }
+
+# ── Python repr and UTF-8 validity ───────────────────────────────────────────────────────
+
+# str.isprintable() for one code point (repr keeps a printable one as it is).
+fn hc_py_printable(cp): i64 {
+    if (cp == 32) { return 1; }
+    if (cp < 32 || cp == 127) { return 0; }
+    if (cp < 127) { return 1; }
+    var c = unicode_category(cp);
+    if (c == GC_CC || c == GC_CF || c == GC_CS || c == GC_CO || c == GC_CN) { return 0; }
+    if (c == GC_ZL || c == GC_ZP || c == GC_ZS) { return 0; }
+    return 1;
+}
+
+fn hc_sb_hex(sb, v, digits): i64 {
+    var hexd = "0123456789abcdef";
+    var k = digits - 1;
+    while (k >= 0) {
+        hc_sbb(sb, load8(hexd + ((v >> (k * 4)) & 15)));
+        k = k - 1;
+    }
+    return 0;
+}
+
+# Python repr(s) for a UTF-8 Str: its quote choice, its escapes, the printable kept.
+fn hc_pyrepr(s): i64 {
+    var has_sq = hc_findb(s, 39, 0) >= 0;
+    var has_dq = hc_findb(s, 34, 0) >= 0;
+    var q = 39;
+    if (has_sq && !has_dq) { q = 34; }
+    var sb = hc_sb();
+    hc_sbb(sb, q);
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(s)) {
+        var cp = hc_u8(s, i, &l);
+        i = i + l;
+        if (cp == q || cp == 92) { hc_sbb(sb, 92); hc_sbb(sb, cp); }
+        elif (cp == 9) { hc_sbc(sb, "\\t"); }
+        elif (cp == 10) { hc_sbc(sb, "\\n"); }
+        elif (cp == 13) { hc_sbc(sb, "\\r"); }
+        elif (cp < 32 || cp == 127) { hc_sbc(sb, "\\x"); hc_sb_hex(sb, cp, 2); }
+        elif (cp < 127) { hc_sbb(sb, cp); }
+        elif (hc_py_printable(cp) == 1) { hc_sb_cp(sb, cp); }
+        elif (cp <= 0xFF) { hc_sbc(sb, "\\x"); hc_sb_hex(sb, cp, 2); }
+        elif (cp <= 0xFFFF) { hc_sbc(sb, "\\u"); hc_sb_hex(sb, cp, 4); }
+        else { hc_sbc(sb, "\\U"); hc_sb_hex(sb, cp, 8); }
+    }
+    hc_sbb(sb, q);
+    return hc_sbend(sb);
+}
+
+# 1 when the bytes are valid UTF-8 (what Python's decode accepts: no overlongs, no surrogates,
+# nothing past U+10FFFF).
+fn hc_utf8_ok(s): i64 {
+    var i = 0;
+    var n = hc_n(s);
+    while (i < n) {
+        var b = hc_at(s, i);
+        if (b < 0x80) { i = i + 1; continue; }
+        var k = 0;
+        var cp = 0;
+        var min = 0;
+        if ((b & 0xE0) == 0xC0) { k = 1; cp = b & 0x1F; min = 0x80; }
+        elif ((b & 0xF0) == 0xE0) { k = 2; cp = b & 0x0F; min = 0x800; }
+        elif ((b & 0xF8) == 0xF0) { k = 3; cp = b & 0x07; min = 0x10000; }
+        else { return 0; }
+        if (i + k >= n + 1) { return 0; }
+        var j = 1;
+        while (j <= k) {
+            if (i + j >= n) { return 0; }
+            var c = hc_at(s, i + j);
+            if ((c & 0xC0) != 0x80) { return 0; }
+            cp = (cp << 6) | (c & 0x3F);
+            j = j + 1;
+        }
+        if (cp < min) { return 0; }
+        if (cp >= 0xD800 && cp <= 0xDFFF) { return 0; }
+        if (cp > 0x10FFFF) { return 0; }
+        i = i + k + 1;
+    }
+    return 1;
+}

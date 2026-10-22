@@ -1,0 +1,584 @@
+# programs/release/pyfmt.cyr — Python's string.Formatter().vformat(template, (), values) for the
+# release steps: `{name}`, `{name[key]}`, `{{` / `}}`, a conversion (!s !r !a) and the format-spec
+# mini-language (fill, align, sign, #, 0, width, grouping, precision, type) for the two kinds of
+# value a release template holds — an int and a str — and one mapping (roadmap_state's `placed`,
+# a defaultdict(int)). roadmap_state's templates are Python format strings, so the step that
+# replaced roadmap-state.py fills them as Python did. Not a program. CHANGELOG [6.7.17]
+#
+# A value set is a vec of [name (Str), kind, value]: kind 1 an int, 2 a Str, 3 a mapping (a vec of
+# [key Str, int], absent keys 0). A name with no value calls the caller's missing handler; any
+# other error ends with pf_err set.
+
+include "programs/dev/helper_common.cyr"
+
+var pf_err = 0;
+var pf_missing = 0;   # the missing-name handler: fn(name Str) (it does not return)
+
+fn _pf_fail(msg): i64 {
+    if (pf_err == 0) { pf_err = msg; }
+    return 0;
+}
+
+fn pf_set_int(vals, namec, v): i64 { return _pf_set(vals, hc_s(namec), 1, v); }
+fn pf_set_str(vals, name, v): i64 { return _pf_set(vals, name, 2, v); }
+fn _pf_set(vals, name, kind, v): i64 {
+    var i = 0;
+    while (i < vec_len(vals)) {
+        var e = vec_get(vals, i);
+        if (hc_eq(vec_get(e, 0), name) == 1) { vec_set(e, 1, kind); vec_set(e, 2, v); return 0; }
+        i = i + 1;
+    }
+    var n = vec_new();
+    vec_push(n, name);
+    vec_push(n, kind);
+    vec_push(n, v);
+    vec_push(vals, n);
+    return 0;
+}
+fn _pf_get(vals, name): i64 {
+    var i = 0;
+    while (i < vec_len(vals)) {
+        if (hc_eq(vec_get(vec_get(vals, i), 0), name) == 1) { return vec_get(vals, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A formatted object: kind 1 int / 2 str, value.
+var _pf_kind = 0;
+var _pf_val = 0;
+
+# repr of a mapping: defaultdict(<class 'int'>, {'k': n, ...})
+fn _pf_map_repr(m): i64 {
+    var sb = hc_sb();
+    hc_sbc(sb, "defaultdict(<class 'int'>, {");
+    var i = 0;
+    while (i < vec_len(m)) {
+        if (i > 0) { hc_sbc(sb, ", "); }
+        var me2 = vec_get(m, i);
+        if (vec_len(me2) > 2 && vec_get(me2, 2) == 1) { hc_sba(sb, vec_get(me2, 0)); }
+        else { hc_sba(sb, hc_pyrepr(vec_get(me2, 0))); }
+        hc_sbc(sb, ": ");
+        hc_sbi(sb, vec_get(vec_get(m, i), 1));
+        i = i + 1;
+    }
+    hc_sbc(sb, "})");
+    return hc_sbend(sb);
+}
+
+# Resolve a field name (`name`, `name[key]` ...) into _pf_kind / _pf_val; 1, or 0 on an error.
+fn _pf_field(vals, fname): i64 {
+    var n = hc_n(fname);
+    var i = 0;
+    while (i < n && hc_at(fname, i) != 91 && hc_at(fname, i) != 46) { i = i + 1; }
+    var first = hc_sub(fname, 0, i);
+    var isnum = 0;
+    if (hc_n(first) == 0) { isnum = 1; }
+    else {
+        isnum = 1;
+        var q = 0;
+        while (q < hc_n(first)) {
+            if (hc_at(first, q) < 48 || hc_at(first, q) > 57) { isnum = 0; }
+            q = q + 1;
+        }
+    }
+    if (isnum == 1) { _pf_fail(hc_s("IndexError: tuple index out of range")); return 0; }
+    var e = _pf_get(vals, first);
+    if (e == 0) {
+        if (pf_missing != 0) { fncall1(pf_missing, first); }
+        _pf_fail(hc_ccat("KeyError: ", hc_pyrepr(first)));
+        return 0;
+    }
+    _pf_kind = vec_get(e, 1);
+    _pf_val = vec_get(e, 2);
+    while (i < n) {
+        var c = hc_at(fname, i);
+        if (c == 46) {
+            # an int's .real / .numerator (itself), .imag (0), .denominator (1); nothing else
+            var a0 = i + 1;
+            var a1 = a0;
+            while (a1 < n && hc_at(fname, a1) != 46 && hc_at(fname, a1) != 91) { a1 = a1 + 1; }
+            var attr = hc_sub(fname, a0, a1);
+            i = a1;
+            if (_pf_kind == 1 && (hc_eqc(attr, "real") == 1 || hc_eqc(attr, "numerator") == 1)) { continue; }
+            if (_pf_kind == 1 && hc_eqc(attr, "imag") == 1) { _pf_val = 0; continue; }
+            if (_pf_kind == 1 && hc_eqc(attr, "denominator") == 1) { _pf_val = 1; continue; }
+            _pf_fail(hc_ccat("attribute access in a format field is not supported: .", attr));
+            return 0;
+        }
+        # [key]
+        var j = i + 1;
+        while (j < n && hc_at(fname, j) != 93) { j = j + 1; }
+        if (j >= n) { _pf_fail(hc_s("ValueError: Missing ']' in format string")); return 0; }
+        var key = hc_sub(fname, i + 1, j);
+        i = j + 1;
+        if (i < n && hc_at(fname, i) != 91 && hc_at(fname, i) != 46) {
+            _pf_fail(hc_s("ValueError: Only '.' or '[' may follow ']' in format field specifier"));
+            return 0;
+        }
+        var keyint = 0;
+        var kisint = 1;
+        if (hc_n(key) == 0) { kisint = 0; }
+        var q2 = 0;
+        while (q2 < hc_n(key)) {
+            if (hc_at(key, q2) < 48 || hc_at(key, q2) > 57) { kisint = 0; }
+            q2 = q2 + 1;
+        }
+        if (kisint == 1) { hc_pyint(key, &keyint); }
+        if (_pf_kind == 3) {
+            # a defaultdict(int): a missing key reads 0 AND is inserted (a later `{placed}` shows it)
+            var v = 0;
+            var m = _pf_val;
+            var k = 0;
+            var hit = 0;
+            while (k < vec_len(m)) {
+                var me = vec_get(m, k);
+                var mint = 0;
+                if (vec_len(me) > 2) { mint = vec_get(me, 2); }
+                if (mint == kisint && hc_eq(vec_get(me, 0), key) == 1) { v = vec_get(me, 1); hit = 1; }
+                k = k + 1;
+            }
+            if (hit == 0) {
+                var ne = vec_new();
+                vec_push(ne, key);
+                vec_push(ne, 0);
+                vec_push(ne, kisint);
+                vec_push(m, ne);
+            }
+            _pf_kind = 1;
+            _pf_val = v;
+        } elif (_pf_kind == 2) {
+            if (kisint == 0) { _pf_fail(hc_s("TypeError: string indices must be integers, not 'str'")); return 0; }
+            var len = hc_ulen(_pf_val);
+            if (keyint >= len) { _pf_fail(hc_s("IndexError: string index out of range")); return 0; }
+            var off = hc_uoff(_pf_val, keyint);
+            var ln = 0;
+            hc_u8(_pf_val, off, &ln);
+            _pf_val = hc_sub(_pf_val, off, off + ln);
+        } else {
+            _pf_fail(hc_s("TypeError: 'int' object is not subscriptable"));
+            return 0;
+        }
+    }
+    return 1;
+}
+
+# ── the format spec ──────────────────────────────────────────────────────────────────────
+
+fn _pf_pad(body_pre, body, fill, align, width): i64 {
+    var len = hc_ulen(body_pre) + hc_ulen(body);
+    if (width <= len) { return hc_cat(body_pre, body); }
+    var pad = width - len;
+    var sb = hc_sb();
+    var left = 0;
+    var right = 0;
+    if (align == 60) { right = pad; }
+    elif (align == 62) { left = pad; }
+    elif (align == 94) { left = pad / 2; right = pad - left; }
+    var k = 0;
+    if (align == 61) {
+        hc_sba(sb, body_pre);
+        while (k < pad) { hc_sb_cp(sb, fill); k = k + 1; }
+        hc_sba(sb, body);
+        return hc_sbend(sb);
+    }
+    while (k < left) { hc_sb_cp(sb, fill); k = k + 1; }
+    hc_sba(sb, body_pre);
+    hc_sba(sb, body);
+    k = 0;
+    while (k < right) { hc_sb_cp(sb, fill); k = k + 1; }
+    return hc_sbend(sb);
+}
+
+# Digits of the non-negative integer v in `base`.
+fn _pf_digits(v, base, upper): i64 {
+    if (v == 0) { return hc_s("0"); }
+    var dig = "0123456789abcdef";
+    if (upper == 1) { dig = "0123456789ABCDEF"; }
+    var tmp = alloc(72);
+    var n = 0;
+    while (v > 0) { store8(tmp + n, load8(dig + (v % base))); v = v / base; n = n + 1; }
+    var sb = hc_sb();
+    while (n > 0) { n = n - 1; hc_sbb(sb, load8(tmp + n)); }
+    return hc_sbend(sb);
+}
+
+# Insert a separator every `every` digits from the right of a digit string.
+fn _pf_group(d, sep, every): i64 {
+    var n = hc_n(d);
+    var sb = hc_sb();
+    var i = 0;
+    while (i < n) {
+        if (i > 0 && (n - i) % every == 0) { hc_sbb(sb, sep); }
+        hc_sbb(sb, hc_at(d, i));
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# Round the decimal digit string `d` (an integer, exactly) to `keep` leading digits, half to
+# even; the rounded digits (may gain a digit: 999 -> 1000) at the same scale.
+fn _pf_round_digits(d, keep): i64 {
+    var n = hc_n(d);
+    if (keep >= n) { return d; }
+    var head = hc_sub(d, 0, keep);
+    var first = hc_at(d, keep) - 48;
+    var rest_zero = 1;
+    var i = keep + 1;
+    while (i < n) { if (hc_at(d, i) != 48) { rest_zero = 0; } i = i + 1; }
+    var up = 0;
+    if (first > 5) { up = 1; }
+    elif (first == 5) {
+        if (rest_zero == 0) { up = 1; }
+        else {
+            var last = 0;
+            if (keep > 0) { last = hc_at(d, keep - 1) - 48; }
+            if (last % 2 == 1) { up = 1; }
+        }
+    }
+    var sb = hc_sb();
+    if (up == 0) { hc_sba(sb, head); }
+    else {
+        # add one to head
+        var buf = alloc(keep + 2);
+        var carry = 1;
+        var j = keep - 1;
+        while (j >= 0) {
+            var dv = hc_at(head, j) - 48 + carry;
+            if (dv == 10) { dv = 0; carry = 1; } else { carry = 0; }
+            store8(buf + j + 1, 48 + dv);
+            j = j - 1;
+        }
+        if (carry == 1) { store8(buf, 49); hc_sba(sb, hc_mk(buf, keep + 1)); }
+        else { hc_sba(sb, hc_mk(buf + 1, keep)); }
+    }
+    # back to the original scale
+    var k = keep;
+    while (k < n) { hc_sbb(sb, 48); k = k + 1; }
+    return hc_sbend(sb);
+}
+
+# An int formatted with a float type (f F % e E g G), exactly.
+fn _pf_int_as_float(v, ty, prec, alt): i64 {
+    var neg = 0;
+    if (v < 0) { neg = 1; v = 0 - v; }
+    var d = hc_itoa(v);
+    var sb = hc_sb();
+    if (ty == 37) {
+        d = hc_cat(d, hc_s("00"));
+        if (hc_eqc(d, "000") == 1) { d = hc_s("0"); }
+    }
+    if (ty == 102 || ty == 70 || ty == 37) {
+        if (prec < 0) { prec = 6; }
+        hc_sba(sb, d);
+        if (prec > 0 || alt == 1) { hc_sbc(sb, "."); }
+        var k = 0;
+        while (k < prec) { hc_sbc(sb, "0"); k = k + 1; }
+        if (ty == 37) { hc_sbc(sb, "%"); }
+        return hc_sbend(sb);
+    }
+    var g = 0;
+    if (ty == 103 || ty == 71) { g = 1; }
+    if (prec < 0) { prec = 6; }
+    if (g == 1 && prec == 0) { prec = 1; }
+    var sig = prec + 1;
+    if (g == 1) { sig = prec; }
+    var r = _pf_round_digits(d, sig);
+    var exp = hc_n(d) - 1;
+    if (hc_n(r) > hc_n(d)) { exp = exp + 1; }
+    var rp = hc_sb();
+    hc_sba(rp, r);
+    while (hc_sblen(rp) < sig) { hc_sbb(rp, 48); }
+    var mant = hc_sub(hc_sbend(rp), 0, sig);
+    if (v == 0) { exp = 0; }
+    if (g == 1) {
+        if (exp >= 0 - 4 && exp < prec) {
+            # fixed: the integer itself (its digits past `sig` are zeros once rounded)
+            var fixed = hc_sub(r, 0, hc_n(r));
+            if (hc_n(r) > hc_n(d)) { fixed = hc_sub(r, 0, hc_n(d) + 1); }
+            else { fixed = hc_sub(r, 0, hc_n(d)); }
+            hc_sba(sb, fixed);
+            if (alt == 1) {
+                hc_sbc(sb, ".");
+                var z = hc_n(fixed);
+                while (z < prec) { hc_sbc(sb, "0"); z = z + 1; }
+            }
+            return hc_sbend(sb);
+        }
+        # scientific with trailing zeros dropped (unless #)
+        var m2 = mant;
+        if (alt == 0) { m2 = hc_rstrip_set(mant, "0"); if (hc_n(m2) == 0) { m2 = hc_s("0"); } }
+        hc_sbb(sb, hc_at(m2, 0));
+        if (hc_n(m2) > 1 || alt == 1) { hc_sbc(sb, "."); hc_sba(sb, hc_sub(m2, 1, hc_n(m2))); }
+        if (ty == 71) { hc_sbc(sb, "E"); } else { hc_sbc(sb, "e"); }
+    } else {
+        hc_sbb(sb, hc_at(mant, 0));
+        if (prec > 0 || alt == 1) { hc_sbc(sb, "."); hc_sba(sb, hc_sub(mant, 1, hc_n(mant))); }
+        if (ty == 69) { hc_sbc(sb, "E"); } else { hc_sbc(sb, "e"); }
+    }
+    hc_sbc(sb, "+");
+    if (exp < 10) { hc_sbc(sb, "0"); }
+    hc_sbi(sb, exp);
+    return hc_sbend(sb);
+}
+
+# A number's output: the sign / prefix, the integer digits (grouped every `every` when asked —
+# through the padding too when the fill is 0 and the alignment `=`), then the rest.
+fn _pf_num_out(pre, intpart, rest, fill, align, width, grouping, every): i64 {
+    if (grouping == 0) { return _pf_pad(pre, hc_cat(intpart, rest), fill, align, width); }
+    var g = _pf_group(intpart, grouping, every);
+    if (align == 61 && fill == 48) {
+        var want = width - hc_ulen(pre) - hc_ulen(rest);
+        var plain = intpart;
+        while (hc_n(g) < want) {
+            plain = hc_ccat("0", plain);
+            g = _pf_group(plain, grouping, every);
+        }
+        return hc_cat3(pre, g, rest);
+    }
+    return _pf_pad(pre, hc_cat(g, rest), fill, align, width);
+}
+
+# format(obj, spec) for the current _pf_kind / _pf_val.
+fn _pf_format(spec): i64 {
+    var cps = vec_new();
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(spec)) { vec_push(cps, hc_u8(spec, i, &l)); i = i + l; }
+    var n = vec_len(cps);
+    var p = 0;
+    var fill = 32;
+    var fill_given = 0;
+    var align = 0;
+    if (n >= 2) {
+        var a2 = vec_get(cps, 1);
+        if (a2 == 60 || a2 == 62 || a2 == 94 || a2 == 61) { fill = vec_get(cps, 0); fill_given = 1; align = a2; p = 2; }
+    }
+    if (align == 0 && n >= 1) {
+        var a1 = vec_get(cps, 0);
+        if (a1 == 60 || a1 == 62 || a1 == 94 || a1 == 61) { align = a1; p = 1; }
+    }
+    var sign = 0;
+    if (p < n) { var s = vec_get(cps, p); if (s == 43 || s == 45 || s == 32) { sign = s; p = p + 1; } }
+    var zflag = 0;
+    if (p < n && vec_get(cps, p) == 122) { zflag = 1; p = p + 1; }
+    var alt = 0;
+    if (p < n && vec_get(cps, p) == 35) { alt = 1; p = p + 1; }
+    var zero = 0;
+    if (p < n && vec_get(cps, p) == 48) { zero = 1; p = p + 1; }
+    var width = 0;
+    while (p < n && vec_get(cps, p) >= 48 && vec_get(cps, p) <= 57) {
+        width = width * 10 + (vec_get(cps, p) - 48);
+        p = p + 1;
+    }
+    var grouping = 0;
+    if (p < n && (vec_get(cps, p) == 44 || vec_get(cps, p) == 95)) { grouping = vec_get(cps, p); p = p + 1; }
+    var prec = 0 - 1;
+    if (p < n && vec_get(cps, p) == 46) {
+        p = p + 1;
+        if (p >= n || vec_get(cps, p) < 48 || vec_get(cps, p) > 57) {
+            _pf_fail(hc_s("ValueError: Format specifier missing precision"));
+            return 0;
+        }
+        prec = 0;
+        while (p < n && vec_get(cps, p) >= 48 && vec_get(cps, p) <= 57) {
+            prec = prec * 10 + (vec_get(cps, p) - 48);
+            p = p + 1;
+        }
+    }
+    var ty = 0;
+    if (p < n) { ty = vec_get(cps, p); p = p + 1; }
+    if (p < n) { _pf_fail(hc_s("ValueError: Invalid format specifier")); return 0; }
+    # the zero flag: a fill of 0 when none was given, and for a number with no alignment, `=`
+    if (zero == 1 && fill_given == 0) {
+        fill = 48;
+        if (align == 0 && _pf_kind == 1) { align = 61; }
+    }
+    if (_pf_kind == 2) {
+        if (ty != 0 && ty != 115) {
+            _pf_fail(hc_s("ValueError: Unknown format code for object of type 'str'"));
+            return 0;
+        }
+        if (sign != 0) { _pf_fail(hc_s("ValueError: Sign not allowed in string format specifier")); return 0; }
+        if (alt == 1) {
+            _pf_fail(hc_s("ValueError: Alternate form (#) not allowed in string format specifier"));
+            return 0;
+        }
+        if (align == 61) {
+            _pf_fail(hc_s("ValueError: '=' alignment not allowed in string format specifier"));
+            return 0;
+        }
+        if (grouping != 0) { _pf_fail(hc_s("ValueError: Cannot specify ',' with 's'.")); return 0; }
+        var sv = _pf_val;
+        if (prec >= 0) { sv = hc_uhead(sv, prec); }
+        if (align == 0) { align = 60; }
+        return _pf_pad(hc_s(""), sv, fill, align, width);
+    }
+    # an int
+    var v = _pf_val;
+    if (align == 0) { align = 62; }
+    if (ty == 102 || ty == 70 || ty == 37 || ty == 101 || ty == 69 || ty == 103 || ty == 71) {
+        var body = _pf_int_as_float(v, ty, prec, alt);
+        var pre = hc_s("");
+        if (v < 0) { pre = hc_s("-"); }
+        elif (sign == 43) { pre = hc_s("+"); }
+        elif (sign == 32) { pre = hc_s(" "); }
+        # the integer part: the leading digits
+        var ie = 0;
+        while (ie < hc_n(body) && hc_at(body, ie) >= 48 && hc_at(body, ie) <= 57) { ie = ie + 1; }
+        return _pf_num_out(pre, hc_sub(body, 0, ie), hc_sub(body, ie, hc_n(body)), fill, align, width, grouping, 3);
+    }
+    if (zflag == 1) {
+        _pf_fail(hc_s("ValueError: Negative zero coercion (z) not allowed in integer format specifier"));
+        return 0;
+    }
+    if (prec >= 0) { _pf_fail(hc_s("ValueError: Precision not allowed in integer format specifier")); return 0; }
+    var neg = 0;
+    var av = v;
+    if (v < 0) { neg = 1; av = 0 - v; }
+    var digits = 0;
+    var prefix = hc_s("");
+    if (ty == 0 || ty == 100 || ty == 110) {
+        digits = hc_itoa(av);
+        if (grouping != 0) {
+            if (ty == 110) { _pf_fail(hc_s("ValueError: Cannot specify ',' with 'n'.")); return 0; }
+            digits = _pf_group(digits, grouping, 3);
+        }
+    } elif (ty == 98 || ty == 111 || ty == 120 || ty == 88) {
+        var base = 16;
+        if (ty == 98) { base = 2; }
+        if (ty == 111) { base = 8; }
+        var up = 0;
+        if (ty == 88) { up = 1; }
+        digits = _pf_digits(av, base, up);
+        if (grouping == 44) { _pf_fail(hc_s("ValueError: Cannot specify ',' with this format code.")); return 0; }
+        if (grouping == 95) { digits = _pf_group(digits, 95, 4); }
+        if (alt == 1) {
+            if (ty == 98) { prefix = hc_s("0b"); }
+            if (ty == 111) { prefix = hc_s("0o"); }
+            if (ty == 120) { prefix = hc_s("0x"); }
+            if (ty == 88) { prefix = hc_s("0X"); }
+        }
+    } elif (ty == 99) {
+        if (grouping != 0) { _pf_fail(hc_s("ValueError: Cannot specify ',' with 'c'.")); return 0; }
+        if (sign != 0) { _pf_fail(hc_s("ValueError: Sign not allowed with integer format specifier 'c'")); return 0; }
+        if (neg == 1 || av > 0x10FFFF) { _pf_fail(hc_s("OverflowError: %c arg not in range(0x110000)")); return 0; }
+        if (alt == 1) {
+            _pf_fail(hc_s("ValueError: Alternate form (#) not allowed with integer format specifier 'c'"));
+            return 0;
+        }
+        var sb = hc_sb();
+        hc_sb_cp(sb, av);
+        return _pf_pad(hc_s(""), hc_sbend(sb), fill, align, width);
+    } else {
+        _pf_fail(hc_s("ValueError: Unknown format code for object of type 'int'"));
+        return 0;
+    }
+    var pre2 = hc_s("");
+    if (neg == 1) { pre2 = hc_s("-"); }
+    elif (sign == 43) { pre2 = hc_s("+"); }
+    elif (sign == 32) { pre2 = hc_s(" "); }
+    pre2 = hc_cat(pre2, prefix);
+    var every = 3;
+    if (ty == 98 || ty == 111 || ty == 120 || ty == 88) { every = 4; }
+    var plain = digits;
+    if (grouping != 0) { plain = hc_replace(digits, hc_mk(&grouping, 1), hc_s("")); }
+    return _pf_num_out(pre2, plain, hc_s(""), fill, align, width, grouping, every);
+}
+
+# The conversion: !s (as it is), !r / !a (repr: a str quoted, an int as it is).
+fn _pf_convert(conv): i64 {
+    if (conv == 0) { return 1; }
+    if (conv == 115) {
+        if (_pf_kind == 1) { _pf_val = hc_itoa(_pf_val); _pf_kind = 2; }
+        elif (_pf_kind == 3) { _pf_val = _pf_map_repr(_pf_val); _pf_kind = 2; }
+        return 1;
+    }
+    if (conv == 114 || conv == 97) {
+        if (_pf_kind == 1) { _pf_val = hc_itoa(_pf_val); }
+        elif (_pf_kind == 3) { _pf_val = _pf_map_repr(_pf_val); }
+        else { _pf_val = hc_pyrepr(_pf_val); }
+        _pf_kind = 2;
+        return 1;
+    }
+    _pf_fail(hc_s("ValueError: Unknown conversion specifier"));
+    return 0;
+}
+
+# Formatter().vformat(t, (), vals): the result, or 0 with pf_err set.
+fn pf_vformat(t, vals): i64 { return _pf_vformat(t, vals, 2); }
+
+fn _pf_vformat(t, vals, depth): i64 {
+    if (depth < 0) { _pf_fail(hc_s("ValueError: Max string recursion exceeded")); return 0; }
+    var sb = hc_sb();
+    var n = hc_n(t);
+    var i = 0;
+    while (i < n) {
+        var c = hc_at(t, i);
+        if (c == 125) {
+            if (i + 1 < n && hc_at(t, i + 1) == 125) { hc_sbb(sb, 125); i = i + 2; continue; }
+            _pf_fail(hc_s("ValueError: Single '}' encountered in format string"));
+            return 0;
+        }
+        if (c != 123) { hc_sbb(sb, c); i = i + 1; continue; }
+        if (i + 1 < n && hc_at(t, i + 1) == 123) { hc_sbb(sb, 123); i = i + 2; continue; }
+        # a field: up to its matching `}`
+        var j = i + 1;
+        var level = 1;
+        while (j < n) {
+            var cj = hc_at(t, j);
+            if (cj == 123) { level = level + 1; }
+            elif (cj == 125) { level = level - 1; if (level == 0) { break; } }
+            j = j + 1;
+        }
+        if (j >= n) { _pf_fail(hc_s("ValueError: expected '}' before end of string")); return 0; }
+        var field = hc_sub(t, i + 1, j);
+        i = j + 1;
+        # field_name [!conv] [:spec] — the name ends at the first `!` or `:` outside brackets
+        var k = 0;
+        var inb = 0;
+        while (k < hc_n(field)) {
+            var ck = hc_at(field, k);
+            if (ck == 91) { inb = 1; }
+            elif (ck == 93) { inb = 0; }
+            elif (inb == 0 && (ck == 33 || ck == 58)) { break; }
+            k = k + 1;
+        }
+        var fname = hc_sub(field, 0, k);
+        var conv = 0;
+        var spec = hc_s("");
+        if (k < hc_n(field) && hc_at(field, k) == 33) {
+            if (k + 1 >= hc_n(field)) {
+                _pf_fail(hc_s("ValueError: end of string while looking for conversion specifier"));
+                return 0;
+            }
+            conv = hc_at(field, k + 1);
+            k = k + 2;
+            if (k < hc_n(field) && hc_at(field, k) != 58) {
+                _pf_fail(hc_s("ValueError: expected ':' after conversion specifier"));
+                return 0;
+            }
+        }
+        if (k < hc_n(field) && hc_at(field, k) == 58) { spec = hc_sub(field, k + 1, hc_n(field)); }
+        if (_pf_field(vals, fname) == 0) { return 0; }
+        if (_pf_convert(conv) == 0) { return 0; }
+        var kind = _pf_kind;
+        var val = _pf_val;
+        var spec2 = _pf_vformat(spec, vals, depth - 1);
+        if (spec2 == 0) { return 0; }
+        _pf_kind = kind;
+        _pf_val = val;
+        if (_pf_kind == 3) {
+            if (hc_n(spec2) > 0) {
+                _pf_fail(hc_s("TypeError: unsupported format string passed to collections.defaultdict.__format__"));
+                return 0;
+            }
+            hc_sba(sb, _pf_map_repr(_pf_val));
+            continue;
+        }
+        var out = _pf_format(spec2);
+        if (out == 0) { return 0; }
+        hc_sba(sb, out);
+    }
+    return hc_sbend(sb);
+}

@@ -1,0 +1,4 @@
+rc=1
+--- stdout
+--- stderr
+changelog_head.md carries @BENCH@: pass --bench

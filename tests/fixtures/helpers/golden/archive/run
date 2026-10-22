@@ -1,0 +1,76 @@
+rc=0
+--- stdout
+NO STATUS LINE: 2026-01-03-c.md
+4 archived; 5 files repointed
+   CHANGELOG.md
+   crlf.md
+   docs/development/issues/README.md
+   docs/development/issues/archived/2026-01-00-old.md
+   docs/other.md
+--- stderr
+--- status
+ M CHANGELOG.md
+ M crlf.md
+ M docs/development/issues/README.md
+ M docs/development/issues/archived/2026-01-00-old.md
+RM docs/development/issues/2026-01-01-a.md -> docs/development/issues/archived/2026-01-01-a.md
+RM docs/development/issues/2026-01-02-b.md -> docs/development/issues/archived/2026-01-02-b.md
+RM docs/development/issues/2026-01-03-c.md -> docs/development/issues/archived/2026-01-03-c.md
+RM docs/development/issues/2026-01-04-d.md -> docs/development/issues/archived/2026-01-04-d.md
+ M docs/other.md
+--- tree
+== ./CHANGELOG.md
+# Changelog
+
+- fixed [a](docs/development/issues/archived/2026-01-01-a.md)
+== ./build/ignored.md
+build/ is not repointed: issues/2026-01-01-a.md
+== ./crlf.md
+line one
+issues/archived/2026-01-03-c.md
+== ./docs/development/issues/2026-01-05-e.md
+# E stays open — OPEN
+**Status:** open
+== ./docs/development/issues/README.md
+# Issues
+
+- [a](archived/2026-01-01-a.md)
+- [b](archived/2026-01-02-b.md) and x2026-01-02-b.md and archived/2026-01-02-b.md
+- [c](./2026-01-03-c.md)
+== ./docs/development/issues/archived/2026-01-00-old.md
+# Old — RESOLVED
+see [a](2026-01-01-a.md) and issues/archived/2026-01-02-b.md
+== ./docs/development/issues/archived/2026-01-01-a.md
+# A thing — RESOLVED
+
+> ✅ **RESOLVED in v9.8.7** (lane one).
+> ✅ also closed by lane two.
+
+**Status:** ✅ **RESOLVED in v9.8.7** (see the banner). Was: open, see below
+**Placement:** 9.8.7 — x (y) — never 7.x.
+Links: [b](2026-01-02-b.md)
+== ./docs/development/issues/archived/2026-01-02-b.md
+# B thing — RESOLVED
+
+> ✅ **RESOLVED in v9.8.7** (b).
+
+**Severity:** Low
+**Status:** ✅ **RESOLVED in v9.8.7** (see the banner). Was: partial
+**Status:** second status kept
+== ./docs/development/issues/archived/2026-01-03-c.md
+# C thing with no state word — RESOLVED
+
+> ✅ **RESOLVED** (c).
+
+no status line here
+== ./docs/development/issues/archived/2026-01-04-d.md
+# D — CLOSED (not a cyrius bug)
+
+> ⛔ **NOT A CYRIUS BUG** — closed.
+
+**Status:** ✅ **CLOSED — NOT A CYRIUS BUG (v9.8.7)** (see the banner). Was: open
+== ./docs/other.md
+see docs/development/issues/archived/2026-01-01-a.md and issues/archived/2026-01-02-b.md
+and issues/archived/2026-01-04-d.md
+== ./notutf8.md
+issues/2026-01-01-a.md �� broken

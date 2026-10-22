@@ -42,10 +42,18 @@
 #   cymlcheck          116 TOML cases in [[entries]] blocks (every tomllib error class, mutated
 #                      documents, nesting either side of Python's recursion limit), CR LF, the
 #                      `---` terminator, and the git-tracked content/**.cyml walk
+#   place              Placement / Decision lines, a special re-placement, --dry, the refusal
+#   briefs             every brief shape (notes, extra decisions, cross-lane, a group-less lane), --dry
+#   archive            banners, titles, Status lines, git mv, every repointed link, --dry, a missing file
+#   assemble           the CHANGELOG entry and the migration section, --dry, both refusals
+#   roadmap_state      --derive, every template operation dry and real (a Python regex, a Python
+#                      format string, difflib's diff), the refusals
+#   no Python          `find scripts -name '*.py'` is empty, and no file under scripts/ has a
+#                      python #! line (the issue's acceptance: scripts/ holds no Python)
 #   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
 #                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
 #                      stage, an empty stage, an install that replaces and one that finds it equal
-# FLOOR: the axis count is at least 12.
+# FLOOR: the axis count is at least 18.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -58,6 +66,12 @@
 #   run_ci's step tail cut at 100 code points, not 110                             -> RED run_ci, sibci
 #   run_ci's `- run: |-` header kept as the script's first line (run-ci.py's bug) -> RED run_ci (YAML)
 #   run_ci's step env: not applied                                                 -> RED run_ci (YAML)
+#   place's Decision lines put before the placement's continuation lines           -> RED place
+#   briefs' cross-lane note taken from the lane itself, not the `from` lane        -> RED briefs
+#   archive's bare-name rule applied in archived/ too                              -> RED archive
+#   assemble's migration parts joined without the blank line                       -> RED assemble
+#   pyre's lazy repeat made greedy                                                 -> RED roadmap_state
+#   a scripts/x.py planted (and, apart, an extension-less #!/usr/bin/env python3)  -> RED no Python
 #   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 set -u
@@ -97,6 +111,11 @@ _build fixpoint programs/dev/fixpoint.cyr
 _build run_ci programs/folds/run_ci.cyr
 _build sibci programs/folds/sibci.cyr
 _build cymlcheck programs/folds/cymlcheck.cyr
+_build place programs/release/place.cyr
+_build briefs programs/release/briefs.cyr
+_build archive programs/release/archive.cyr
+_build assemble programs/release/assemble.cyr
+_build roadmap_state programs/release/roadmap_state.cyr
 
 # _golden <golden path under $G> <actual file>: one case of the current axis.
 _golden() {
@@ -267,6 +286,145 @@ left=$(ls -A "$T/abs" 2>/dev/null | wc -l)
 [ "$left" = 0 ] || _fail "ab left $left temp dir(s) in its scratch"
 _axis_end "ab: the A/B table (times masked), a refusal, a signal death and the errors match the replaced script"
 
+# ── the release steps (scripts/release/*.py until 6.7.17) ───────────────────────────────────
+RF="$F/release"
+C6="$T/c6"
+mkdir -p "$C6"
+# _tree <dir>: every file under <dir> (no .git), sorted, each named then shown
+_tree() { (cd "$1" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | while IFS= read -r f; do echo "== $f"; cat "$f"; done); }
+
+# place: the units' and the plan's Placement and Decision lines (a wrapped parenthetical, text after
+# `never 7.x.`, decision_ids, a special re-placement after an earlier Decision line), --dry, and an
+# issue with no Placement line for the release
+_axis_begin
+PL="$T/place_repo"
+for m in dry run; do
+    rm -rf "$PL"
+    mkdir -p "$PL/docs/development/issues"
+    cp "$RF/place/issues/"*.md "$PL/docs/development/issues/"
+    d=""
+    [ "$m" = dry ] && d=--dry
+    "$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/place/units.json" \
+        --decisions "$RF/place/decisions.json" --plan "$RF/place/place.json" $d > "$T/o" 2> "$T/e"; rc=$?
+    _tree "$PL" > "$T/tree"
+    _rep "$T/rep" "$rc" "$T/o" "$T/e" tree "$T/tree"
+    _golden "place/$m" "$T/rep"
+done
+"$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/place/units_bad.json" \
+    --decisions "$RF/place/decisions.json" --plan "$RF/place/none.json" > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "place/no_line" "$T/rep"
+_axis_end "place: Placement and Decision lines, a special re-placement, --dry and the refusal match place.py"
+
+# briefs: every brief shape (a preamble, unit notes, an extra decision, a cross-lane note, a lane
+# with no triage group of its own, an issue triaged in another lane, list / str / null fields)
+_axis_begin
+for m in dry run; do
+    BO="$T/briefs_$m"
+    d=""
+    [ "$m" = dry ] && d=--dry
+    "$BIN/briefs" --repo "$T" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/briefs/units.json" \
+        --triage "$RF/briefs/triage.json" --decisions "$RF/briefs/decisions.json" \
+        --notes "$RF/briefs/brief_notes.json" --out "$BO" $d > "$T/o" 2> "$T/e"; rc=$?
+    : > "$T/tree"
+    [ -d "$BO" ] && _tree "$BO" > "$T/tree"
+    _rep "$T/rep" "$rc" "$T/o" "$T/e" briefs "$T/tree"
+    _golden "briefs/$m" "$T/rep"
+done
+_axis_end "briefs: every brief shape, --dry included, matches briefs.py"
+
+# archive: titles (OPEN, PARTIAL, none), banners (two lanes for one file, NOT A CYRIUS BUG), the
+# Status line (none, two), and the repointing (bare names in the index, ../ in archived/, issues/
+# paths elsewhere, build/ skipped, a non-UTF-8 file skipped, CR LF), --dry, and a banner naming a
+# file that is not open
+_axis_begin
+for m in dry run; do
+    AV="$T/archive_$m"
+    mkdir -p "$AV"
+    cp -R "$RF/archive/tree/." "$AV/"
+    git init -q "$AV"
+    git -C "$AV" -c user.email=gate@local -c user.name=gate add -A
+    git -C "$AV" -c user.email=gate@local -c user.name=gate -c commit.gpgsign=false commit -q -m t
+    d=""
+    [ "$m" = dry ] && d=--dry
+    "$BIN/archive" --repo "$AV" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs" $d > "$T/o" 2> "$T/e"; rc=$?
+    git -C "$AV" status --porcelain > "$T/st"
+    _tree "$AV" > "$T/tree"
+    _rep "$T/rep" "$rc" "$T/o" "$T/e" status "$T/st" tree "$T/tree"
+    _golden "archive/$m" "$T/rep"
+done
+"$BIN/archive" --repo "$T/archive_dry" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs_missing" > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "archive/missing" "$T/rep"
+_axis_end "archive: the banners, titles, Status lines, the git mv and every repointed link match archive.py"
+
+# assemble: the head's placeholders, the lane and extra parts, the migration intro and parts,
+# --dry, the real run, a second run (refused), a head placeholder with no value
+_axis_begin
+AS="$T/assemble_repo"
+mkdir -p "$AS"
+cp -R "$RF/assemble/repo/." "$AS/"
+for m in dry run again; do
+    d=""
+    [ "$m" = dry ] && d=--dry
+    "$BIN/assemble" --repo "$AS" --c6 "$C6" --docs "$RF/assemble/docs" --ver 9.8.7 --prev 9.8.6 \
+        --date 2026-10-22 --lanes l1,l2 --mig-extra extra --gatehead abc1234 --driver '1 / 1' \
+        --shell '2 / 2' --bench 99 $d > "$T/o" 2> "$T/e"; rc=$?
+    _tree "$AS" > "$T/tree"
+    _rep "$T/rep" "$rc" "$T/o" "$T/e" tree "$T/tree"
+    _golden "assemble/$m" "$T/rep"
+done
+AS2="$T/assemble_repo2"
+mkdir -p "$AS2"
+cp -R "$RF/assemble/repo/." "$AS2/"
+"$BIN/assemble" --repo "$AS2" --c6 "$C6" --docs "$RF/assemble/docs" --ver 9.8.7 --prev 9.8.6 \
+    --date 2026-10-22 --lanes l1 --gatehead abc1234 --driver x --shell y > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "assemble/no_bench" "$T/rep"
+_axis_end "assemble: the CHANGELOG entry and the migration section, --dry and both refusals match assemble.py"
+
+# roadmap_state: --derive over a scratch tree (dirs named like files, hidden files, a section
+# table from a stand-in ELF), the template's every operation (sub with flags and groups, replace,
+# cut, row, row keep_from, insert_after_row; format specs, placed[...] and --set values) dry and
+# real, a placeholder with no value, a missing row, an issue still placed in the release
+_axis_begin
+RS="$T/rs_repo"
+mkdir -p "$RS/tests/tcyr/crossos" "$RS/tests/tcyr/sub" "$RS/tests/tcyr/dir.tcyr" "$RS/tests/gates/a" \
+    "$RS/tests/gates/b" "$RS/lib/sub.cyr" "$RS/build" "$RS/docs/development"
+: > "$RS/tests/tcyr/a.tcyr"; : > "$RS/tests/tcyr/b.tcyr"; : > "$RS/tests/tcyr/sub/c.tcyr"
+: > "$RS/tests/tcyr/crossos/d.tcyr"; : > "$RS/tests/tcyr/.e.tcyr"; : > "$RS/tests/tcyr/f.txt"
+: > "$RS/tests/gates/a/x.sh"; : > "$RS/tests/gates/b/y.sh"; : > "$RS/tests/gates/z.sh"
+: > "$RS/lib/a.cyr"; : > "$RS/lib/b.cyr"; : > "$RS/lib/.hidden.cyr"
+cp "$RF/roadmap_state/cycc.elf" "$RS/build/cycc"
+cp "$RF/roadmap_state/arm.bin" "$RS/build/cycc-native-aarch64"
+cp "$RF/roadmap_state/api-surface.snapshot" "$RS/docs/api-surface.snapshot"
+cp -R "$RF/roadmap_state/docs/." "$RS/docs/development/"
+cp -R "$RS/docs/development/." "$T/rs_docs_orig/" 2>/dev/null || { mkdir -p "$T/rs_docs_orig"; cp -R "$RS/docs/development/." "$T/rs_docs_orig/"; }
+"$BIN/roadmap_state" --repo "$RS" --ver 9.8.7 --derive > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "roadmap_state/derive" "$T/rep"
+for m in dry run; do
+    d=""
+    [ "$m" = dry ] && d=--dry
+    "$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.8.7 --template "$RF/roadmap_state/template.json" \
+        --date 2026-10-22 --set gatehead=abc1234 --set driver='1 / 1' --set bench=99 --set archived=3 $d \
+        > "$T/o" 2> "$T/e"; rc=$?
+    _tree "$RS/docs/development" > "$T/tree"
+    _rep "$T/rep" "$rc" "$T/o" "$T/e" docs "$T/tree"
+    _golden "roadmap_state/$m" "$T/rep"
+done
+for c in missing norow; do
+    "$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.8.7 --template "$RF/roadmap_state/template_$c.json" \
+        > "$T/o" 2> "$T/e"; rc=$?
+    _rep "$T/rep" "$rc" "$T/o" "$T/e"
+    _golden "roadmap_state/$c" "$T/rep"
+done
+"$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.9.0 --template "$RF/roadmap_state/template.json" \
+    > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "roadmap_state/still_placed" "$T/rep"
+_axis_end "roadmap_state: --derive, a template of every operation dry and real, and the refusals match roadmap-state.py"
+
 # ── fixpoint (build-cycc-verify.sh's --fixpoint / --install until 6.7.17) ──────────────────
 # Each stand-in build/cycc is a shell "compiler" whose output is itself a compiler script: one that
 # reproduces itself (a fixpoint at c1; installed: "already byte-identical"), one that grows each
@@ -394,8 +552,23 @@ _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "cymlcheck/tracked" "$T/rep"
 _axis_end "cymlcheck: 116 TOML cases, the recursion limit, CR LF and the tracked-tree walk match cymlcheck.py (tomllib)"
 
+# ── no Python under scripts/ ─────────────────────────────────────────────────────────────
+# The conversion's acceptance (the issue): scripts/ holds no Python. Every file is looked at — by
+# name (*.py) and by its #! line (a python interpreter) — so a renamed or extension-less Python
+# helper is seen too. The anti-vacuous floor: the scan read at least the shell scripts it knows.
+_axis_begin
+PYF=$(find scripts -type f -name '*.py' | LC_ALL=C sort)
+[ -z "$PYF" ] || _fail "scripts/ holds Python: $(echo "$PYF" | tr '\n' ' ')"
+nscan=0
+for f in $(find scripts -type f | LC_ALL=C sort); do
+    nscan=$((nscan + 1))
+    if head -1 "$f" 2>/dev/null | grep -qE '^#!.*python'; then _fail "$f is a Python script (its #! line)"; fi
+done
+[ "$nscan" -ge 30 ] || _fail "the scripts/ scan read only $nscan files (floor 30)"
+_axis_end "scripts/ holds no Python ($nscan files read: no *.py, no python #! line)"
+
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 12 ] || _fail "only $AXES axes ran (floor 12)"
+[ "$AXES" -ge 18 ] || _fail "only $AXES axes ran (floor 18)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1

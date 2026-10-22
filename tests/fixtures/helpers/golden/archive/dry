@@ -1,0 +1,57 @@
+rc=0
+--- stdout
+NO STATUS LINE: 2026-01-03-c.md
+4 would be archived; 6 files would be repointed
+   CHANGELOG.md
+   crlf.md
+   docs/development/issues/2026-01-01-a.md
+   docs/development/issues/README.md
+   docs/development/issues/archived/2026-01-00-old.md
+   docs/other.md
+--- stderr
+--- status
+--- tree
+== ./CHANGELOG.md
+# Changelog
+
+- fixed [a](docs/development/issues/2026-01-01-a.md)
+== ./build/ignored.md
+build/ is not repointed: issues/2026-01-01-a.md
+== ./crlf.md
+line one
+issues/2026-01-03-c.md
+== ./docs/development/issues/2026-01-01-a.md
+# A thing — OPEN
+
+
+**Status:** open, see below
+**Placement:** 9.8.7 — x (y) — never 7.x.
+Links: [b](2026-01-02-b.md)
+== ./docs/development/issues/2026-01-02-b.md
+# B thing  —  PARTIAL  
+**Severity:** Low
+**Status:** partial
+**Status:** second status kept
+== ./docs/development/issues/2026-01-03-c.md
+# C thing with no state word
+no status line here
+== ./docs/development/issues/2026-01-04-d.md
+# D — OPEN
+**Status:** open
+== ./docs/development/issues/2026-01-05-e.md
+# E stays open — OPEN
+**Status:** open
+== ./docs/development/issues/README.md
+# Issues
+
+- [a](2026-01-01-a.md)
+- [b](2026-01-02-b.md) and x2026-01-02-b.md and archived/2026-01-02-b.md
+- [c](./2026-01-03-c.md)
+== ./docs/development/issues/archived/2026-01-00-old.md
+# Old — RESOLVED
+see [a](../2026-01-01-a.md) and issues/2026-01-02-b.md
+== ./docs/other.md
+see docs/development/issues/2026-01-01-a.md and issues/archived/2026-01-02-b.md
+and issues/2026-01-04-d.md
+== ./notutf8.md
+issues/2026-01-01-a.md �� broken

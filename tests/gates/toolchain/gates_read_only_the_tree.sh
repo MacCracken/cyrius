@@ -51,8 +51,9 @@
 # scratch subshell's `../elf` run or `< ../in` redirect. The patterns above were measured on the
 # 6.7.16 tree: zero hits, with no allowlist.
 #
-# WHAT IT DOES NOT SCAN, AND WHY: the development helpers — programs/dev and programs/folds
-# (cyrius since 6.7.17; the scripts/dev and scripts/folds they replaced) and scripts/release. They
+# WHAT IT DOES NOT SCAN, AND WHY: the development helpers — programs/dev, programs/folds and
+# programs/release (cyrius since 6.7.17; the scripts/dev, scripts/folds and scripts/release Python
+# and shell they replaced) and scripts/release's Workflow scripts (triage.js, lanes.js, docs.js). They
 # are the helpers moved into the tree on 2026-10-19 (scratch from CYRIUS_SCRATCH, a fold's CI run
 # in an isolated copy, release bookkeeping) — tools a developer runs by hand, which may
 # legitimately name a sibling checkout (a fold's CI runs in the FOLD's repo). No gate runs the
