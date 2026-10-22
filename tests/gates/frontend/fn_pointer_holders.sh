@@ -23,6 +23,11 @@
 #      compiled); `p = mk3();` after one names `p: *i64` (D14 at an assignment: it was judged as an untyped `p`), and
 #      `c = mk3();` into one names `c: *fn(i64): i64`; the walk for the enclosing fn met a `*fn( .. )` PARAMETER's
 #      `fn` as well (6.7.7 - 6.7.16), so a tuple (R4) or a dyn (T11) in a generic fn with one compiled: S4, S5
+#   W  (met landing D8) a fn's address `&f` and a closure literal are pointers to the typed-pointer check, as a
+#      variable's `&x` is (6.5.29): `var c: *fn(i64): i64 = &dbl;`, `cb = &inc;` into a `cb: *fn( .. )` parameter, a
+#      zone / late / assigned global, a for step, `|x| x + 1`, `|| 4`, wrapped `((&f))` / `((|x| x))`, `&f` into a `*i64`,
+#      `&P_m` — each warned "assigning non-pointer to typed pointer" through 6.7.16 (`_tp_fna_exempt`,
+#      src/frontend/parse_decl.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
 #   T  tests/tcyr/crossos/fn_pointer_typed_holders.tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 #      cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`)
 #
@@ -42,6 +47,12 @@
 #   M7  `_asa_back` meeting a `*fn` as its fn's header  -> RED 2: S2 S3 ("cannot assign 'p' .. or bind a field")
 #   M8  a missing `)` not stepped to the `=` / `;`      -> RED 2: G9 (+ the warning), G10 (+ "expected '='")
 #   M9  `_pty_what` keeping the parameter's words       -> RED 9: G1-G8 G12 ("for parameter 'c'")
+# W, measured the same way on the D8 commit (343f710c7):
+#   MW0 the D8 commit itself (no `_tp_fna_exempt`)      -> RED 5: W1-W5 (2-4 warnings each)
+#   MW1 `_tp_exempt` not asking `_tp_fna_exempt`        -> RED 5: W1-W5
+#   MW2 a wrapped closure not taken (`_tp_cl_whole` 0)  -> RED 1: W4 (`((|x| x))`)
+#   MW3 `&f` taken without its terminator check         -> RED 1: WC2 (`&f + 0` silent)
+#   MW4 a closure taken however it is wrapped           -> RED 1: WC3 (`(|x| x) + 1` silent)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -189,6 +200,47 @@ refused S4 "1:48: a tuple type in a generic fn is refused - a type parameter and
 refused S5 "4:55: a dyn type in a generic fn is refused - a type parameter and a dyn do not combine yet" \
     "S5 a dyn local in a generic fn with a bare *fn parameter (it compiled)" \
     'struct P { a; }\ntrait Tr { fn m(self): i64; }\nimpl Tr for P { fn m(self): i64 { return self.a; } }\nfn g<T>(cb: *fn, x: T): i64 { var p = P { 1 }; var o: dyn Tr = &p; return 0; }\nsyscall(60, g(0, 1));\n'
+
+echo "W. a fn's address and a closure literal are pointers: no \"assigning non-pointer to typed pointer\""
+# quiet <name> <what> <want-exit> <body>: compiles (x86_64) with no error or warning and exits <want-exit>
+quiet() {
+    printf '%b' "$4" > "$D/$1.cyr"
+    rc=0; timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
+    w=$(grep -cE '^(error|warning)' "$D/$1.err" || true)
+    if [ "$rc" -ne 0 ]; then bad "$2: rc $rc: $(grep -m1 '^error' "$D/$1.err")"
+    elif [ "$w" -ne 0 ]; then bad "$2: $w line(s): $(grep -E '^(error|warning)' "$D/$1.err" | head -2 | tr '\n' '|')"
+    else
+        chmod +x "$D/$1.bin"; got=0; timeout 10 "$D/$1.bin" > /dev/null 2>&1 || got=$?
+        if [ "$got" -eq "$3" ]; then ok "$2: silent, exit $got"; else bad "$2: exit $got, want $3"; fi
+    fi
+}
+# warns <name> <want-line> <what> <body>: compiles with exactly that one warning line (`L:C`, the text implied)
+warns() {
+    printf '%b' "$4" > "$D/$1.cyr"
+    rc=0; timeout 60 "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
+    grep -E '^(error|warning)' "$D/$1.err" > "$D/$1.got" || true
+    printf 'warning:<source>:%s: assigning non-pointer to typed pointer\n' "$2" > "$D/$1.want"
+    if [ "$rc" -ne 0 ]; then bad "$3: rc $rc: $(grep -m1 '^error' "$D/$1.err")"
+    elif cmp -s "$D/$1.got" "$D/$1.want"; then ok "$3: the one warning"
+    else bad "$3: got $(tr '\n' '|' < "$D/$1.got") want warning at $2"; fi
+}
+FH='include "lib/fnptr.cyr"\ninclude "lib/alloc.cyr"\nfn dbl(x): i64 { return x * 2; }\nfn inc(x): i64 { return x + 1; }\n'
+quiet W1 "W1 a local declared from &f, (&f) and ((&f))" 10 \
+    "${FH}fn f(): i64 { var c: *fn(i64): i64 = &dbl; var d: *fn = (&inc); var e: *fn(i64): i64 = ((&dbl)); return fncall1(c, 1) + fncall1(d, 1) + fncall1(e, 3); }\nsyscall(60, f());\n"
+quiet W2 "W2 a zone global and a global after the first statement from &f, a top-level assignment" 5 \
+    "${FH}var G: *fn(i64): i64 = &dbl;\nG = &inc;\nvar H: *fn(i64): i64 = (&dbl);\nsyscall(60, fncall1(G, 1) + fncall1(H, 1) + 1);\n"
+quiet W3 "W3 assignments: a local, a cb: *fn( .. ) parameter (it warned since 6.7.11), a global in a fn, a for step" 9 \
+    "${FH}var G: *fn(i64): i64 = 0;\nfn f(cb: *fn(i64): i64): i64 { var c: *fn(i64): i64 = 0; c = &dbl; cb = &inc; G = &dbl; for (var i = 0; i < 1; c = &inc) { i = i + 1; } return fncall1(c, 2) + fncall1(cb, 1) + fncall1(G, 2); }\nsyscall(60, f(0));\n"
+quiet W4 "W4 a closure literal — bare, zero-parameter, wrapped — and a zone global's" 11 \
+    "${FH}var Z: *fn = |x| x + 5;\nfn f(): i64 { var a: *fn(i64): i64 = |x| x + 1; var b: *fn = || 4; var c: *fn = ((|x| x)); return fncall1(a, 1) + fncall0(b) + fncall1(c, 0) + fncall1(Z, 0); }\nsyscall(60, f());\n"
+quiet W5 "W5 any typed pointer takes it, as it takes a variable's &x: a *i64, an impl method's &P_m" 4 \
+    "${FH}struct P { x; }\nimpl P { fn m(self): i64 { return self.x; } }\nfn f(): i64 { var q: *i64 = &dbl; var c: *fn(i64): i64 = &P_m; var p = P { 4 }; return fncall1(c, &p); }\nsyscall(60, f());\n"
+warns WC1 "2:47" "WC1 control: an untyped variable holding &f still warns" \
+    'fn inc(x): i64 { return x + 1; }\nfn main(): i64 { var q = &inc; var r: *i64 = q; return 0; }\nsyscall(60, main());\n'
+warns WC2 "2:40" "WC2 control: &f + 0 (arithmetic, not the whole &f) still warns" \
+    'fn inc(x): i64 { return x + 1; }\nfn main(): i64 { var s: *i64 = &inc + 0; return 0; }\nsyscall(60, main());\n'
+warns WC3 "2:42" "WC3 control: (|x| x) + 1 still warns" \
+    'fn inc(x): i64 { return x + 1; }\nfn main(): i64 { var v: *fn = (|x| x) + 1; return 0; }\nsyscall(60, main());\n'
 
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do

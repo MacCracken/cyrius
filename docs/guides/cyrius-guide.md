@@ -7132,7 +7132,10 @@ bare `cb: *fn`. It is one word; `fncall1(cb, x)` / `callptr(cb, x)` call through
 signature is not checked against the fn a caller passes (see *Type names*). So can a local, a global, a
 struct or union field and a slice element since 6.7.17 (the user's D8): `var c: *fn(i64): i64 = &dbl;`,
 `struct H { cb: *fn(i64): i64; k; }` — each one word, called through as the parameter is (`fncall1(c, 5)`,
-`callptr(h.cb, 5)`).
+`callptr(h.cb, 5)`). A fn's address `&f` and a closure literal are pointers to the typed-pointer check, as a
+variable's `&x` is: into a `*fn( .. )` (or any `*T`) they say nothing (6.7.17; through 6.7.16 `var c: *fn(i64): i64 =
+&dbl;`, `cb = &inc;` into a parameter and `= |x| x + 1` warned *assigning non-pointer to typed pointer*). `&f + 1` and
+an untyped variable holding `&f` still warn.
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:
