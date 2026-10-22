@@ -2443,6 +2443,17 @@ an operand, a condition, an index, a range bound, a literal's field (*vector typ
 through the vector's address (`load64(&w)`, `load64(&w + 8)`). ⚠ Through 6.7.16 each compiled and read lane 0, the same
 on every target (`take(w)`, `return w;`, `var x: i64 = w;` and `if (w)` 4, `1 + w` 5 with `w` = (4, 7); `*w` crashed).
 
+**An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
+= w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a
+local of w's vector type copied from w, as `var x: f64v2 = w;` does, as the untyped `var v = *p;` does (D36, above)
+and as a struct's `var q = s;` does: `lanes(x)` passes it, `&x + 8` is its second lane, writing either one leaves the
+other, and x meets every vector rule (`take(x)` is refused, above). At top level the same declaration — `var X =
+*GP;`, `(*GP)`, `**GPP`, `*gp(GP)`, `*(&GW)` — is refused as `var w = mkv(41, 7);` is there, in the declaration zone
+and after the first statement: *'\*GP' is a vector, and a vector value needs storage in a fn's frame - copy it inside
+a fn*. ⚠ Through 6.7.16 both bound one word, lane 0, on every target: `fn r(): i64 { var w: f64v2 = mkv(4, 7); var x =
+w; return rd(&x); }` gave 44 where the copy reads 47, `lanes(x)` was refused (*value-form SIMD arg must be a 16-byte
+vector*), a captured vector's word was garbage, and `var X = *GP;` was 4.
+
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
